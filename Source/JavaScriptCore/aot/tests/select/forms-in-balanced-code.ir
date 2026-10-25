@@ -1,0 +1,70 @@
+# Only fast code has the long forms in line. Balanced code calls where compact code calls: equality and order of strings of any text, an empty array literal, concat, shift. What is shorter than the call stays in line
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass Select
+# RUN(SHAPES): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="haveSameText" parameters=[{type=string}, {type=string}] results=[{type=boolean}] {
+    v2 = StrictEq v0, v1
+    Return v2
+}
+# SHAPES: f0 b0 Balanced
+# CHECK-LABEL: function f0 name="haveSameText"
+# CHECK: = StrictEq v0, v1 form=Generic
+
+function f1 name="haveSameTextInALoop" parameters=[{type=string}, {type=string}] results=[{type=boolean}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = StrictEq v0, v1
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+}
+# SHAPES: f1 b1 Fast
+# CHECK-LABEL: function f1 name="haveSameTextInALoop"
+# CHECK: = StrictEq v0, v1 form=Strings
+
+function f2 name="haveSameKind" parameters=[{type="circle"|"square"}, {type="circle"|"square"}] results=[{type=boolean}] {
+    v2 = StrictEq v0, v1
+    Return v2
+}
+# SHAPES: f2 b0 Balanced
+# CHECK-LABEL: function f2 name="haveSameKind"
+# CHECK: = StrictEq v0, v1 form=Strings
+
+function f3 name="comesFirst" parameters=[{type=string}, {type=string}] results=[{type=boolean}] {
+    v2 = Less v0, v1
+    Return v2
+# CHECK: = Less v0, v1 form=Generic
+}
+
+function f4 name="emptyLiteral" results=[{type=Array<anything>}] {
+    v0 = NewArray contents=anything
+    Return v0
+# CHECK-NOT: Profiled
+# CHECK: Return v0
+}
+
+function f5 name="concat" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=Array<anything, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeConcat/2
+    Return v2
+# CHECK-NOT: CallInline
+# CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=ArrayPrototypeConcat/2
+# CHECK-NOT: CallInline
+}
+
+function f6 name="shift" parameters=[{type=Array<anything, pristine[Storage]>}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=ArrayPrototypeShift/0
+    Return v1
+# CHECK-NOT: CallInline
+# CHECK: v1:{{*}}= CallBuiltin v0 overload=ArrayPrototypeShift/0
+# CHECK-NOT: CallInline
+}
+
+function f7 name="pop" parameters=[{type=Array<anything, pristine[Storage]>}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=ArrayPrototypePop/0
+    Return v1
+# CHECK: TryCallInline v0 inlineBuiltin=ArrayPop overload=ArrayPrototypePop/0
+}

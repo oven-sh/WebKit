@@ -1,0 +1,27 @@
+# A build that validates checks at run time what the jump in place of a decided test assumes
+# FORM: Prepared
+# OPTIONS: validate
+# RUN: pass SimplifyControlFlow
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="behindTheTestThatPassed" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(), notTaken b4()
+  b1():
+    v3 = Call v1
+    v4 = RequireObjectCoercible v0 name="length"
+    v5 = TypeTest v4 testedType=string
+    Branch v5 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v6):
+    v7 = GetStringLength v6
+    Return v7
+  b3(v8):
+    v9 = Call v1, -, v8
+    Return v9
+  b4():
+    Return v1
+# CHECK: ValidateType v4 validatedType=string
+# CHECK-NEXT: = AssumeType v4 castType=string
+}

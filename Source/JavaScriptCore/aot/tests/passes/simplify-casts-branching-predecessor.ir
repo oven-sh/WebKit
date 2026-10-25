@@ -1,0 +1,44 @@
+# A check at the head of a merge block stays when a predecessor ends in a branch: a test in front of the branch would also run on its other path
+# FORM: Prepared
+# RUN: pass SimplifyCasts
+# STATISTIC: SimplifyCastsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="branchEdgeNeedsCheck" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2(v0)
+  b1():
+    v2 = Integer integer=1
+    Jump -> next b2(v2)
+  b2(v3):
+    v4 = Check v3 castType=number
+    Return v4
+# CHECK-NEXT: b0(v0: anything, v1: boolean):
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2(v0)
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v2: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b2(v2)
+# CHECK-NEXT: b2(v3: anything):
+# CHECK-NEXT: v4: number = Check v3 castType=number
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+}
+
+function f1 name="jumpEdgeNeedsCheck" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+    v2 = Integer integer=1
+    Branch v1 -> taken b1(), notTaken b2(v2)
+  b1():
+    Jump -> next b2(v0)
+  b2(v3):
+    v4 = Check v3 castType=number
+    Return v4
+# CHECK-NEXT: b0(v0: anything, v1: boolean):
+# CHECK-NEXT: v2: 1 = Integer integer=1
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2(v2)
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Jump -> next b2(v0)
+# CHECK-NEXT: b2(v3: anything):
+# CHECK-NEXT: v4: number = Check v3 castType=number
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+}

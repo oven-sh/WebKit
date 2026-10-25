@@ -1,0 +1,33 @@
+# Every object and array in the tree of a Data operation is a site, numbered in preorder with the primitives counted.
+# RUN: valueflow-body f0
+# CHECK: body f0: nodes=2 sites=6 edges=0 edgesOnceReached=0 seeds=1 statements=4
+# CHECK-NEXT: n0 result
+# CHECK-NEXT: n1 thrown
+# CHECK-NEXT: s0 v0 ordinal=0 layout=L0
+# CHECK-NEXT: s1 v0 ordinal=1 class=Array
+# CHECK-NEXT: s2 v0 ordinal=3 layout=L1
+# CHECK-NEXT: s3 v1 ordinal=0 class=Array
+# CHECK-NEXT: s4 v2 ordinal=0 layout=L2
+# CHECK-NEXT: s5 v3 ordinal=0 class=Array
+# CHECK-NEXT: reached: seed n0 <- undefined
+# CHECK-NEXT: Data v0 () throws n1
+# CHECK-NEXT: Data v1 () throws n1
+# CHECK-NEXT: Data v2 () throws n1
+# CHECK-NEXT: Data v3 () throws n1
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 name="Outer" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Inner" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="WithExtraKey" fields=[{key="p" declared={type=anything} flags=[IsRequired]}]
+data d0 root=Object{layout=L0 members=[{key="a" value=Array{contents=anything elements=[Number{value=1}, Object{layout=L1 members=[{key="b" value=String{value="x"}}]}]}}, {key="c" value=Null}]}
+data d1 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Number{value=5}, Number{value=6}, Number{value=7}, Number{value=8}, Number{value=9}]}
+data d2 root=Object{layout=L2 members=[{key="p" value=Number{value=10}}, {key="extra" value=Number{value=11}}]}
+data d3 root=Array{contents=number elements=[Number{value=20}, Hole, Number{value=21}]}
+function f0 name="data" results=[{type=anything}] {
+    v0 = Data data=d0
+    v1 = Data data=d1
+    v2 = Data data=d2
+    v3 = Data data=d3
+    Return
+}

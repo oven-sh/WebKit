@@ -1,0 +1,28 @@
+# Array.from([1]), where the library's from calls `items[Symbol.iterator]()`
+# The code behind Array.from (runtimefunction 48) is entered with operands nobody knows and reads a member of one of them under a symbol, the name of a protocol. What a call of Array.from reads from its operand and calls on it
+# the records say where the call is: there Array.prototype.values is used. Here the read hands out no member of the table, so the methods of other classes under the same name are not used:
+# the image has no code for Map.prototype.entries.
+# Without records: member-under-a-symbol-of-an-unknown-operand-in-library-code-that-no-record-describes-is-used.ir
+# LIBRARY: own
+# RUN: valueflow-solve used
+# CHECK-NOT: MapPrototypeEntries
+# RUN(WHY): valueflow-why flag=h6
+# WHY: flag=h6
+# WHY-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=47 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = Builtin builtin=Array
+    v3 = PropGet v2 key="from"
+    v4 = Call v3, v2, v1 calleeKey="from"
+    Return
+}
+function f1 name="from" role=Library flags=[HasThis] enclosingRuntimeFunction=47 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v4 = PropGet v1 key=@@iterator
+    v5 = Call v4, v1
+    Return v5
+}

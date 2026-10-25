@@ -28,6 +28,7 @@
 
 #if ENABLE(JIT)
 
+#include "AOTRemovableFeature.h"
 #include "CCallHelpers.h"
 #include "CacheableIdentifierInlines.h"
 #include "CallLinkInfo.h"
@@ -1824,8 +1825,9 @@ bool AccessCase::canBeShared(const AccessCase& lhs, const AccessCase& rhs)
     return true;
 }
 
-void AccessCase::operator delete(AccessCase* accessCase, std::destroying_delete_t)
+NEVER_INLINE void AccessCase::operator delete(AccessCase* accessCase, std::destroying_delete_t)
 {
+    JSC_REMOVABLE_DEFINITION(JIT, static_cast<void (*)(AccessCase*, std::destroying_delete_t)>(&AccessCase::operator delete));
     accessCase->runWithDowncast([](auto* accessCase) {
         std::destroy_at(accessCase);
         std::decay_t<decltype(*accessCase)>::freeAfterDestruction(accessCase);

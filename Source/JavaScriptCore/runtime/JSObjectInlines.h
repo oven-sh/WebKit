@@ -42,6 +42,10 @@
 #include "TypedArrayType.h"
 #include "VM.h"
 
+#if ENABLE(AOT)
+#include "AOTPropertyWalk.h"
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
@@ -379,7 +383,7 @@ inline void JSObject::putDirectWithoutTransition(VM& vm, PropertyName propertyNa
     ASSERT(!value.isCustomGetterSetter());
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
-    if (structure->hasImmutableProperties() && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
+    if (structure->isImmutableProperty(propertyName.uid()) && !vm.allowLazyMaterializationOfImmutablePropertiesCount) [[unlikely]]
         return;
     PropertyOffset offset = prepareToPutDirectWithoutTransition(vm, propertyName, attributes, structureID, structure);
     putDirectOffset(vm, offset, value);
@@ -410,7 +414,7 @@ ALWAYS_INLINE PropertyOffset JSObject::prepareToPutDirectWithoutTransition(VM& v
             result = offset;
         });
     if (mayBePrototype()) [[unlikely]]
-        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
+        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add, this, propertyName.uid());
     return result;
 }
 
@@ -495,6 +499,65 @@ ALWAYS_INLINE bool JSObject::hasOwnProperty(JSGlobalObject* globalObject, unsign
     return const_cast<JSObject*>(this)->methodTable()->getOwnPropertySlotByIndex(const_cast<JSObject*>(this), globalObject, propertyName, slot);
 }
 
+ALWAYS_INLINE void JSObject::growOutOfLineStorageForTransition(VM& vm, Structure* next)
+{
+    StructureID structureID = this->structureID();
+    Structure* structure = structureID.decode();
+    if (structure->outOfLineCapacity() == next->outOfLineCapacity())
+        return;
+    ASSERT(next != structure);
+    nukeStructureAndSetButterfly(vm, structureID, allocateMoreOutOfLineStorage(vm, structure->outOfLineCapacity(), next->outOfLineCapacity()));
+}
+
+ALWAYS_INLINE void JSObject::setStructureForAddedProperty(VM& vm, Structure* previous, Structure* next, PropertyOffset offset, PutPropertySlot& slot)
+{
+    if (vm.mayHaveUncacheableTransitions()) [[unlikely]] {
+        setStructureForAddedPropertySlow(vm, previous, next, offset, slot);
+        return;
+    }
+    setStructure(vm, next);
+    slot.setNewProperty(this, offset);
+}
+
+ALWAYS_INLINE void JSObject::didAddPropertyWithTransition(VM& vm, PropertyName propertyName)
+{
+    if (mayBePrototype()) [[unlikely]] {
+        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add, this, propertyName.uid());
+        return;
+    }
+#if ENABLE(AOT)
+    // A class object of compiled code reports what its method table is asked for, and native code may put a property on one without asking.
+    if (type() == CompiledClosureType) [[unlikely]]
+        AOT::PropertyWalk::didAddPropertyToClosure(vm, this, propertyName.uid());
+#endif
+}
+
+ALWAYS_INLINE bool JSObject::tryPutDirectByExistingTransition(VM& vm, PropertyName propertyName, JSValue value, unsigned attributes)
+{
+    Structure* structure = this->structure();
+    if (structure->isDictionary() || structure->mayHaveImmutableProperties() || structure->isCompiledStructure())
+        return false;
+    PropertyOffset offset;
+    Structure* newStructure = Structure::addPropertyTransitionToExistingStructure(structure, propertyName, attributes, offset);
+    if (!newStructure)
+        return false;
+    if (!newStructure->previousID()) [[unlikely]]
+        newStructure->restoreTransitionChain(structure);
+
+    growOutOfLineStorageForTransition(vm, newStructure);
+
+    validateOffset(offset);
+    ASSERT(newStructure->isValidOffset(offset));
+
+    // This assertion verifies that the concurrent GC won't read garbage if the concurrentGC
+    // is running at the same time we put without transitioning.
+    ASSERT(!getDirect(offset) || !JSValue::encode(getDirect(offset)));
+    putDirectOffset(vm, offset, value);
+    setStructure(vm, newStructure);
+    didAddPropertyWithTransition(vm, propertyName);
+    return true;
+}
+
 template<JSObject::PutMode mode>
 ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName propertyName, JSValue value, unsigned newAttributes, PutPropertySlot& slot)
 {
@@ -507,7 +570,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
     // Refused, unless the engine is materializing a property the object logically already has (AllowLazyMaterializationOfImmutableProperties).
-    if (structure->hasImmutableProperties()) [[unlikely]] {
+    if (structure->isImmutableProperty(propertyName.uid())) [[unlikely]] {
         if (mode == PutModePut || !vm.allowLazyMaterializationOfImmutablePropertiesCount)
             return ReadonlyPropertyChangeError;
     }
@@ -550,7 +613,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                 DeferredStructureTransitionWatchpointFire deferred(vm, structure);
                 setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferred));
                 if (mayBePrototype()) [[unlikely]]
-                    vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
+                    vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
             } else {
                 ASSERT(!(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
                 slot.setExistingProperty(this, offset);
@@ -563,8 +626,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         slot.setNewProperty(this, offset);
         if (attributes & PropertyAttribute::ReadOnly)
             this->structure()->setContainsReadOnlyProperties();
-        if (mayBePrototype()) [[unlikely]]
-            vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
+        didAddPropertyWithTransition(vm, propertyName);
         return { };
     }
 
@@ -586,10 +648,8 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             // is running at the same time we put without transitioning.
             ASSERT(!getDirect(offset) || !JSValue::encode(getDirect(offset)));
             putDirectOffset(vm, offset, value);
-            setStructure(vm, newStructure);
-            slot.setNewProperty(this, offset);
-            if (mayBePrototype()) [[unlikely]]
-                vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
+            setStructureForAddedProperty(vm, structure, newStructure, offset, slot);
+            didAddPropertyWithTransition(vm, propertyName);
             return { };
         }
     }
@@ -611,7 +671,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);
             setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferredWatchpointFire));
             if (mayBePrototype()) [[unlikely]]
-                vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
+                vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
         } else {
             ASSERT(!(currentAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
             slot.setExistingProperty(this, offset);
@@ -619,6 +679,11 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 
         return { };
     }
+
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && (structure->isCompiledStructure() || type() == SlimClosureType)) [[unlikely]]
+        return putDirectToCompiledObject(vm, propertyName, value, newAttributes, mode, slot);
+#endif
 
     if constexpr (mode == PutModePut) {
         if (!isStructureExtensible()) [[unlikely]]
@@ -644,12 +709,10 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     // is running at the same time we put without transitioning.
     ASSERT(!getDirect(offset) || !JSValue::encode(getDirect(offset)));
     putDirectOffset(vm, offset, value);
-    setStructure(vm, newStructure);
-    slot.setNewProperty(this, offset);
+    setStructureForAddedProperty(vm, structure, newStructure, offset, slot);
     if (newAttributes & PropertyAttribute::ReadOnly)
         newStructure->setContainsReadOnlyProperties();
-    if (mayBePrototype()) [[unlikely]]
-        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
+    didAddPropertyWithTransition(vm, propertyName);
     return { };
 }
 
@@ -892,8 +955,17 @@ ALWAYS_INLINE bool JSObject::getPrivateFieldSlot(JSObject* object, JSGlobalObjec
 
     unsigned attributes;
     PropertyOffset offset = structure->get(vm, propertyName, attributes);
-    if (offset == invalidOffset)
+    if (offset == invalidOffset) {
+#if ENABLE(AOT)
+        if (AOT::PropertyWalk::isCompiledObject(object)) [[unlikely]] {
+            if (JSValue value = AOT::PropertyWalk::getDirect(vm, object, propertyName, nullptr)) {
+                slot.setValue(object, static_cast<unsigned>(PropertyAttribute::None), value);
+                return true;
+            }
+        }
+#endif
         return false;
+    }
 
     JSValue value = object->getDirect(offset);
 #if ASSERT_ENABLED
@@ -918,7 +990,13 @@ inline bool JSObject::hasPrivateField(JSGlobalObject* globalObject, PropertyName
     ASSERT(propertyName.isPrivateName());
     VM& vm = getVM(globalObject);
     unsigned attributes;
-    return structure()->get(vm, propertyName, attributes) != invalidOffset;
+    if (structure()->get(vm, propertyName, attributes) != invalidOffset)
+        return true;
+#if ENABLE(AOT)
+    if (AOT::PropertyWalk::isCompiledObject(this)) [[unlikely]]
+        return !!AOT::PropertyWalk::getDirect(vm, this, propertyName, nullptr);
+#endif
+    return false;
 }
 
 inline bool JSObject::getPrivateField(JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
@@ -967,6 +1045,10 @@ inline void JSObject::definePrivateField(JSGlobalObject* globalObject, PropertyN
         return;
     }
 
+    // Freezing an object does not keep private fields from being added to it.
+    if (structure()->hasFrozenElementsInPlace()) [[unlikely]]
+        moveFrozenElementsToSparseMap(vm);
+
     if (structure()->hasImmutableProperties()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Cannot define private field on object with immutable properties"_s);
         return;
@@ -1009,11 +1091,25 @@ ALWAYS_INLINE void JSObject::getNonReifiedStaticPropertyNames(VM& vm, PropertyNa
     }
 }
 
+#if ENABLE(AOT)
+// A compiled object has a brand as a private field. So has every object for the brand of a compiled class.
+ALWAYS_INLINE bool JSObject::hasPrivateBrandAsField(VM& vm, JSValue brand) const
+{
+    return vm.hasCompiledCode() && getDirect(vm, &asSymbol(brand)->uid());
+}
+#endif
+
 inline bool JSObject::hasPrivateBrand(JSGlobalObject*, JSValue brand)
 {
     ASSERT(brand.isSymbol() && asSymbol(brand)->uid().isPrivate());
     Structure* structure = this->structure();
-    return structure->isBrandedStructure() && uncheckedDowncast<BrandedStructure>(structure)->checkBrand(asSymbol(brand));
+    if (structure->isBrandedStructure() && uncheckedDowncast<BrandedStructure>(structure)->checkBrand(asSymbol(brand)))
+        return true;
+#if ENABLE(AOT)
+    return hasPrivateBrandAsField(vm(), brand);
+#else
+    return false;
+#endif
 }
 
 inline void JSObject::checkPrivateBrand(JSGlobalObject* globalObject, JSValue brand)
@@ -1023,8 +1119,13 @@ inline void JSObject::checkPrivateBrand(JSGlobalObject* globalObject, JSValue br
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     Structure* structure = this->structure();
-    if (!structure->isBrandedStructure() || !uncheckedDowncast<BrandedStructure>(structure)->checkBrand(asSymbol(brand)))
+    if (!structure->isBrandedStructure() || !uncheckedDowncast<BrandedStructure>(structure)->checkBrand(asSymbol(brand))) {
+#if ENABLE(AOT)
+        if (hasPrivateBrandAsField(vm, brand)) [[unlikely]]
+            return;
+#endif
         throwException(globalObject, scope, createPrivateMethodAccessError(globalObject));
+    }
 }
 
 inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue brand)
@@ -1043,6 +1144,27 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
     if (type() == WebAssemblyGCObjectType) {
         throwTypeError(globalObject, scope, "Cannot add private method to a WebAssembly GC object"_s);
         return;
+    }
+
+#if ENABLE(AOT)
+    if (AOT::PropertyWalk::isCompiledObject(this)) [[unlikely]] {
+        UniquedStringImpl* uid = &asSymbol(brand)->uid();
+        if (AOT::PropertyWalk::getDirect(vm, this, uid, nullptr)) {
+            throwException(globalObject, scope, createReinstallPrivateMethodError(globalObject));
+            return;
+        }
+        AOT::PropertyWalk::putDirect(vm, this, uid, brand, static_cast<unsigned>(PropertyAttribute::None));
+        return;
+    }
+    if (type() == SlimClosureType) [[unlikely]] {
+        AOT::PropertyWalk::materializeLazyProperties(vm, this);
+        structure = this->structure();
+    }
+#endif
+
+    if (structure->hasFrozenElementsInPlace()) [[unlikely]] {
+        moveFrozenElementsToSparseMap(vm);
+        structure = this->structure();
     }
 
     if (structure->hasImmutableProperties()) [[unlikely]] {

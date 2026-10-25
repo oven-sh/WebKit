@@ -1,0 +1,55 @@
+# An object that makes its closures on demand over one shared environment is on the heap, and so is the environment in its hidden field: the closures are cells of the heap that hold it
+# FORM: Prepared
+# RUN: frame-plan
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="state" fields=[{key="state" declared={type=anything}}]
+layout L1 name="Store" fields=[{key="get" declared={type=f3} flags=[IsRequired] flow={location={initialization=SetAtCreation deferral=CapturesEnvironment deferredFunction=f3} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="set" declared={type=f4} flags=[IsRequired] flow={location={initialization=SetAtCreation deferral=CapturesEnvironment deferredFunction=f4} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {declared={type=env L0} flags=[IsRequired, IsHidden] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L1] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType] closureEnvironmentField=2}
+
+function f0 name="nothingEscapes" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f3 [isMadeOnDemand]
+    v3 = NewClosure function=f4 [isMadeOnDemand]
+    v4 = NewObject -, v2, v3, v1 layout=L1 fields=[0, 1, 2]
+    v5 = ShapeTest v4 layouts=[L1]
+    Return v5
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v1: Heap HeldByHeapCell by v4(3)
+# CHECK-NEXT: v2: Heap LayoutDefersClosures
+# CHECK-NEXT: v3: Heap LayoutDefersClosures
+# CHECK-NEXT: v4: Heap LayoutDefersClosures
+
+function f1 name="objectIsReturned" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f3 [isMadeOnDemand]
+    v3 = NewClosure function=f4 [isMadeOnDemand]
+    v4 = NewObject -, v2, v3, v1 layout=L1 fields=[0, 1, 2]
+    Return v4
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v1: Heap
+# CHECK-NEXT: v2: Heap
+# CHECK-NEXT: v3: Heap
+# CHECK-NEXT: v4: Heap
+
+function f2 name="environmentThatNoObjectKeeps" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = GetEnvironmentField v1 layout=L0 field=0
+    v3 = ToBoolean v2
+    Return v3
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v1: Frame
+
+function f3 name="get" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}
+# CHECK-LABEL: function f3
+function f4 name="set" kind=Arrow captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Return
+}

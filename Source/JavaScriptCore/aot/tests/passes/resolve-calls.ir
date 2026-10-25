@@ -1,0 +1,293 @@
+# A call whose callee is proven becomes a direct call: one case per kind of call site, beside the case that stays
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Task" constructor=f7 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f8 mutability=Fixed}, {key="size" kind=Getter function=f9 mutability=Fixed}, {key="size" kind=Setter function=f10 mutability=Fixed}, {key="make" side=Static function=f11 mutability=Fixed}]}
+function f0 name="plain" results=[{type=anything}] {
+    Return
+}
+function f1 name="other" results=[{type=anything}] {
+    Return
+}
+function f2 name="counter" captures=[{type=number}, {type=string}] results=[{type=anything}] {
+    Return
+}
+function f3 name="scale" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Return
+}
+function f4 name="receiver" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f5 name="without-body" results=[{type=anything}]
+function f6 name="steps" role=CoroutineBody results=[{type=anything}] creator=Coroutine{kind=Generator ramp=f42 body=f6} {
+    Return
+}
+function f7 name="Task" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L0}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f8 name="run" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f9 name="size" kind=Getter flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+    Return
+}
+function f10 name="size" kind=Setter flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f11 name="make" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+
+function f12 name="closure-created-here" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+    v2 = NewClosure v0, v1 function=f2
+    v3 = Call v2
+    Return v3
+# CHECK: v2: f2 = NewClosure v0, v1 function=f2
+# CHECK-NEXT: = CallDirect v0, v1 function=f2
+# CHECK-NOT: v2
+}
+function f13 name="captures-read-from-closure" parameters=[{type=f2}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+# CHECK: [[count]]: number = GetCapture v0 function=f2
+# CHECK-NEXT: [[label]]: string = GetCapture v0 function=f2 index=1
+# CHECK-NEXT: = CallDirect [[count]], [[label]] function=f2
+# CHECK-NOT: = Call v
+}
+function f14 name="exact-function" parameters=[{type=f0}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect function=f0
+# CHECK-NOT: = Call v
+}
+function f15 name="two-functions" parameters=[{type=f0|f1}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+# CHECK: [[test]]: boolean = TypeTest v0 testedType=f0
+# CHECK-NEXT: Branch [[test]] -> taken [[first]](| 0), notTaken [[second]](| 0)
+# CHECK-NOT: TypeTest
+# CHECK: [[first]]({{*}}: f0):
+# CHECK-NEXT: = CallDirect function=f0
+# CHECK: [[second]]({{*}}: f1):
+# CHECK-NEXT: = CallDirect function=f1
+# CHECK-NOT: = Call v
+}
+function f16 name="function-or-undefined" parameters=[{type=undefined|f0}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+# CHECK: [[isFunction]]: boolean = TypeTest v0 testedType=f0
+# CHECK-NEXT: Branch [[isFunction]] -> taken [[direct]](| 0), notTaken [[rest]](| 0)
+# CHECK: [[direct]]({{*}}: f0):
+# CHECK-NEXT: = CallDirect function=f0
+# CHECK: [[rest]]([[narrowed]]: undefined) frequency=Unlikely:
+# CHECK-NEXT: = Call [[narrowed]]
+}
+function f17 name="two-sites" parameters=[{type=f0}, {type=f1}] results=[{type=anything}] {
+    v2 = Call v0
+    v3 = Call v1
+    Return v3
+# CHECK: = CallDirect function=f0
+# CHECK: = CallDirect function=f1
+# CHECK-NOT: = Call v
+}
+function f18 name="any-function" parameters=[{type=function}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+# CHECK-NEXT: b0(v0: function):
+# CHECK-NEXT: v1: anything = Call v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}
+function f19 name="unknown-callee" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1: anything = Call v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}
+function f20 name="expected-callee" parameters=[{type=f0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ f0):
+    v1 = Call v0
+    Return v1
+# CHECK-NEXT: b0(v0: anything ~ f0):
+# CHECK-NEXT: v1: anything = Call v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}
+function f21 name="callee-without-body" parameters=[{type=f5}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+# CHECK-NEXT: b0(v0: f5):
+# CHECK-NEXT: v1: anything = Call v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}
+function f22 name="generator-body" parameters=[{type=f6}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+# CHECK-NEXT: b0(v0: f6):
+# CHECK-NEXT: v1: anything = Call v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}
+function f23 name="class-constructor-called" parameters=[{type=f7}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+# CHECK-NEXT: b0(v0: f7):
+# CHECK-NEXT: v1: anything = Call v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}
+function f24 name="missing-argument" parameters=[{type=f3}, {type=number}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+# CHECK: [[missing]]: undefined = Undefined
+# CHECK-NEXT: = CallDirect v1, [[missing]] function=f3
+}
+function f25 name="surplus-argument" parameters=[{type=f3}, {type=number}, {type=string}] results=[{type=anything}] {
+    v3 = Call v0, -, v1, v2, v2
+    Return v3
+# CHECK: = CallDirect v1, v2 function=f3
+}
+function f26 name="converted-argument" parameters=[{type=f3}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1, v1
+    Return v2
+# CHECK: [[assumed]]: number = AssumeType v1 castType=number
+# CHECK-NEXT: = CallDirect [[assumed]], v1 function=f3
+}
+function f27 name="this-value" parameters=[{type=f4}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, v1
+    Return v2
+# CHECK: = CallDirect v1 function=f4
+}
+function f28 name="no-this-value" parameters=[{type=f4}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+# CHECK: [[this]]: undefined = Undefined
+# CHECK-NEXT: = CallDirect [[this]] function=f4
+}
+function f29 name="never-inlined" parameters=[{type=f0}] results=[{type=anything}] {
+    v1 = Call v0 [isNeverInlined]
+    Return v1
+# CHECK: = CallDirect function=f0 [isNeverInlined]
+}
+function f30 name="access-site" parameters=[{type=f0}] results=[{type=anything}] {
+    v1 = Call v0 accessSite=7
+    Return v1
+# CHECK: = CallDirect function=f0 accessSite=7
+}
+function f31 name="under-handler" parameters=[{type=f0|f1}] results=[{type=anything}] {
+  b0(v0: f0|f1) handler=b2():
+    v1 = Call v0
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+# CHECK: b0(v0: f0|f1) handler=b2():
+# CHECK: TypeTest v0 testedType=f0
+# CHECK: ({{*}}: f0) handler=b2():
+# CHECK-NEXT: = CallDirect function=f0
+# CHECK: ({{*}}: f1) handler=b2():
+# CHECK-NEXT: = CallDirect function=f1
+}
+
+function f32 name="method" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0, v1 calleeKey="run"
+    Return v3
+# CHECK-NEXT: b0(v0: L0, v1: anything):
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: = CallDirect v0, v1 function=f8
+# CHECK-NOT: PropGet
+# CHECK-NOT: = Call v
+}
+function f33 name="method-of-nullable-receiver" parameters=[{type=undefined|L0}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0, v1 calleeKey="run"
+    Return v3
+# CHECK-NEXT: b0(v0: undefined|L0, v1: anything):
+# CHECK-NEXT: v2: L0 = RequireObjectCoercible v0 name="run"
+# CHECK-NEXT: = CallDirect v2, v1 function=f8
+# CHECK-NOT: PropGet
+}
+function f34 name="method-read-as-value" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="run"
+    Return v1
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: = PropGet v0 key="run"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}
+function f35 name="method-of-expected-receiver" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0, v1 calleeKey="run"
+    Return v3
+# CHECK-NEXT: b0(v0: anything ~ L0, v1: anything):
+# CHECK-NEXT: = PropGet v0 key="run"
+# CHECK-NEXT: = Call v2, v0, v1 calleeKey="run"
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+}
+function f36 name="accessors" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="size"
+    PropSet v0, v1 key="size"
+    Return v1
+# CHECK: = CallDirect v0 function=f9
+# CHECK: = CallDirect v0, v1 function=f10
+# CHECK-NOT: = Prop
+# CHECK-NOT: PropSet
+}
+function f37 name="static-method" parameters=[{type=f7}] results=[{type=anything}] {
+    v1 = PropGet v0 key="make"
+    v2 = Call v1, v0 calleeKey="make"
+    Return v2
+# CHECK-NEXT: b0(v0: f7):
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: = CallDirect v0 function=f11
+# CHECK-NOT: PropGet
+}
+function f38 name="unknown-static-member" parameters=[{type=f7}] results=[{type=anything}] {
+    v1 = PropGet v0 key="prototype"
+    v2 = Call v1, v0 calleeKey="prototype"
+    Return v2
+# CHECK-NEXT: b0(v0: f7):
+# CHECK-NEXT: = PropGet v0 key="prototype"
+# CHECK-NEXT: = Call v1, v0 calleeKey="prototype"
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+}
+function f39 name="construct" parameters=[{type=f7}] results=[{type=anything}] {
+    v1 = Construct v0
+    Return v1
+# CHECK: [[object]]: L0 = NewObject layout=L0
+# CHECK-NEXT: = CallDirect [[object]], v0 function=[[version]] [isConstruction]
+# CHECK-NOT: = Construct
+}
+function f40 name="construct-unknown" parameters=[{type=function}] results=[{type=anything}] {
+    v1 = Construct v0
+    Return v1
+# CHECK-NEXT: b0(v0: function):
+# CHECK-NEXT: = Construct v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}
+function f41 name="function-prototype-call" parameters=[{type=f4}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=FunctionPrototypeCall/0 builtinCallForm=Whole
+    Return v2
+# CHECK: v2: anything = Call v0, v1
+# CHECK-NOT: CallBuiltin
+}
+function f42 name="steps" role=CoroutineRamp results=[{type=anything}] creator=Coroutine{kind=Generator ramp=f42 body=f6} {
+    Return
+}
+# CHECK: function [[version]] name="Task"{{*}}role=AllocatedThisVersion
+# STATISTIC: CallsResolved = 22

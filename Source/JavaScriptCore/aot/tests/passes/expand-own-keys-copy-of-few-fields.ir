@@ -1,0 +1,25 @@
+# An arm of `{ ...source }` loads and stores field by field, about 25 instructions and 330 bytes a field, and the operation copies a record by its words in about 280 instructions whatever its size:
+# from twelve fields on the arm is the slower of the two. An order of more than eight fields has no arm.
+# FORM: Prepared optimizing
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Eight" fields=[{key="f0" declared={type=number}}, {key="f1" declared={type=number}}, {key="f2" declared={type=number}}, {key="f3" declared={type=number}}, {key="f4" declared={type=number}}, {key="f5" declared={type=number}}, {key="f6" declared={type=number}}, {key="f7" declared={type=number}}] flow={constructorOrders=[{fields=[0, 1, 2, 3, 4, 5, 6, 7]}]}
+layout L1 name="Nine" fields=[{key="f0" declared={type=number}}, {key="f1" declared={type=number}}, {key="f2" declared={type=number}}, {key="f3" declared={type=number}}, {key="f4" declared={type=number}}, {key="f5" declared={type=number}}, {key="f6" declared={type=number}}, {key="f7" declared={type=number}}, {key="f8" declared={type=number}}] flow={constructorOrders=[{fields=[0, 1, 2, 3, 4, 5, 6, 7, 8]}]}
+
+function f0 name="copyOfEightFields" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = CopyObject v0
+    Return v1
+# CHECK: = NewObject {{*}} layout=L0 fields=[0, 1, 2, 3, 4, 5, 6, 7]
+}
+
+function f1 name="copyOfNineFields" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L1):
+    v1 = CopyObject v0
+    Return v1
+# CHECK-NOT: NewObject
+# CHECK: v1: object = CopyObject v0
+# CHECK-NOT: NewObject
+}

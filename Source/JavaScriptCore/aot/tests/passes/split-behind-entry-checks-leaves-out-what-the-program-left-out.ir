@@ -1,0 +1,49 @@
+# The type of a parameter that holds a reference lists `undefined` and `null` whatever the program has written, and two flags say what the program has left out.
+# The tests at the entrance test for the type without that: the typed body holds a reference, and `undefined` and `null` go to the generic version.
+#   f1 leftOut: `node: Node`: one test for L0
+#   f2 written: `node: Node | undefined`: `null` alone is left out: one test for undefined|L0
+#   f3 mayArrive: main passes a value that may be `undefined`: an ordinary value of the parameter, which no test at the entrance may turn away: as it was
+# FORM: Prepared
+# RUN: pass SplitBehindEntryChecks VerifyProgram
+# STATISTIC: FunctionsSplitBehindEntryChecks = 3
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+layout L0 name="Node" fields=[{key="kind" declared={type=number}}]
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Parameter
+typesite w2 module=m0 position=30 kind=Parameter
+
+function f0 name="main" kind=Module parameters=[{type=undefined|L0}, {type=L0}] results=[{type=anything}] {
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v4, -, v0 callees=[f3]
+    v6 = Call v2, -, v1 callees=[f1]
+    v7 = Call v3, -, v0 callees=[f2]
+    Return
+}
+function f1 name="leftOut" module=m0 position=100 flags=[IsChecked] length=1 parameters=[{type=undefined|null|L0 site=w0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|L0):
+    v1 = Check v0 castType=undefined|null|L0 site=w0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="leftOut" module=m0 position=100 role=EntryChecks
+# CHECK: = TypeTest v0 testedType=L0
+function f2 name="written" module=m0 position=200 flags=[IsChecked] length=1 parameters=[{type=undefined|null|L0 site=w1 flags=[IsExpected, OmitsNull]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|L0):
+    v1 = Check v0 castType=undefined|null|L0 site=w1
+    Return v1
+}
+# CHECK-LABEL: function f2 name="written" module=m0 position=200 role=EntryChecks
+# CHECK: = TypeTest v0 testedType=undefined|L0
+function f3 name="mayArrive" module=m0 position=300 flags=[IsChecked] length=1 parameters=[{type=undefined|null|L0 site=w2 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|L0):
+    v1 = Check v0 castType=undefined|null|L0 site=w2
+    Return v1
+}
+# CHECK-LABEL: function f3 name="mayArrive" module=m0 position=300 role=EntryChecks
+# CHECK: = TypeTest v0 testedType=undefined|null|L0
+# CHECK: name="leftOut" module=m0 position=100 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=L0 site=w0}]
+# CHECK: name="written" module=m0 position=200 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|L0 site=w1}]
+# CHECK: name="mayArrive" module=m0 position=300 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w2}]

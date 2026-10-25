@@ -1,0 +1,47 @@
+# any = first = { kept } or second or odd = { valueOf: somethingNoTableLists }; any + 1; plain = { held }; plain + 1
+# The variable holds more than the analysis follows in one set, so the untracked object stands for the three and is converted in their place. A lookup through it answers by name, and under valueOf lies a function nobody knows:
+# the untracked object is handed to it, so every object that it stands for escapes, with what it holds. The plain object lies beside it in the hub and is asked by itself. It stays in the program.
+# OPTIONS: limit=MaxValueFlowSetMembers:2
+# STATISTIC: MaxValueFlowSetMembersHits >= 1
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+# RUN(ESCAPED): valueflow-why escaped=f1 escaped=f2 escaped-layout=L3
+# ESCAPED: escaped=f1
+# ESCAPED-NEXT: n0 escaped
+# ESCAPED: escaped=f2
+# ESCAPED-NEXT: not held
+# ESCAPED: escaped-layout=L3
+# ESCAPED-NOT: escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First" fields=[{key="kept" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Second"
+layout L2 name="Odd" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Plain" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="any" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject layout=L1 fields=[]
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="somethingThatNoTableLists" [isFreeName]
+    v5 = NewObject -, v4 layout=L2 fields=[0]
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v2 variable=g0
+    PutModuleVariable v5 variable=g0
+    v9 = GetModuleVariable variable=g0
+    v10 = Integer integer=1
+    v11 = Add v9, v10
+    v12 = NewClosure function=f2
+    v13 = NewObject -, v12 layout=L3 fields=[0]
+    v14 = Add v13, v10
+    Return
+}
+function f1 name="kept" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="held" kind=Arrow results=[{type=anything}] {
+    Return
+}

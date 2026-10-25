@@ -1,0 +1,94 @@
+# One step of each loop. record = { a: first }; for (name in record) record[name]();   other = { constructor: second }; for (name in other) { delete other[name]; other[name]() }
+# heir = Object.create({ c: third }); for (name in heir) heir[name]();   names = { d: 1 }; target = { e: fourth }; for (name in names) target[name]()
+# The enumeration has listed the property that the read finds, and no member that the engine makes is enumerable: not Object.prototype.constructor, not hasOwnProperty. So the callee is what the program has stored.
+# What is inherited from an object of the program is found. Where the program deletes from the object the lookup may go on to a member of the same name: of a name that the program has written there, and of no other. A name out of another object may spell any member.
+# RUN: valueflow-solve calls
+# CHECK: f0 v7 -> f1
+# CHECK-NOT: f0 v7 -> f1 {{*}}Object
+# CHECK: f0 v16 -> Object f2
+# CHECK: f0 v26 -> {{*}}f3
+# CHECK: f0 v36 -> {{*}}Object
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Other" fields=[{key="constructor" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Above" fields=[{key="c" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Names" fields=[{key="d" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="Target" fields=[{key="e" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = ForInOpen v1
+    Jump -> next b1()
+  b1():
+    v3 = ForInStep v2, v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b3(), notTaken b2()
+  b2():
+    v6 = ElemGet v1, v5
+    v7 = Call v6, v1
+    Jump -> next b3()
+  b3():
+    v8 = NewClosure function=f2
+    v9 = NewObject -, v8 layout=L1 fields=[0]
+    v10 = ForInOpen v9
+    Jump -> next b4()
+  b4():
+    v11 = ForInStep v10, v9
+    v12 = ResultAt v11
+    v13 = ResultAt v11 index=1
+    Branch v12 -> taken b6(), notTaken b5()
+  b5():
+    v14 = ElemDelete v9, v13
+    v15 = ElemGet v9, v13
+    v16 = Call v15, v9
+    Jump -> next b6()
+  b6():
+    v17 = NewClosure function=f3
+    v18 = NewObject -, v17 layout=L2 fields=[0]
+    v19 = Builtin builtin=ObjectCreate
+    v20 = Call v19, -, v18
+    v21 = ForInOpen v20
+    Jump -> next b7()
+  b7():
+    v22 = ForInStep v21, v20
+    v23 = ResultAt v22
+    v24 = ResultAt v22 index=1
+    Branch v23 -> taken b9(), notTaken b8()
+  b8():
+    v25 = ElemGet v20, v24
+    v26 = Call v25, v20
+    Jump -> next b9()
+  b9():
+    v27 = Integer integer=1
+    v28 = NewObject -, v27 layout=L3 fields=[0]
+    v29 = NewClosure function=f4
+    v30 = NewObject -, v29 layout=L4 fields=[0]
+    v31 = ForInOpen v28
+    Jump -> next b10()
+  b10():
+    v32 = ForInStep v31, v28
+    v33 = ResultAt v32
+    v34 = ResultAt v32 index=1
+    Branch v33 -> taken b12(), notTaken b11()
+  b11():
+    v35 = ElemGet v30, v34
+    v36 = Call v35, v30
+    Jump -> next b12()
+  b12():
+    Return
+}
+function f1 name="first" results=[{type=anything}] {
+    Return
+}
+function f2 name="second" results=[{type=anything}] {
+    Return
+}
+function f3 name="third" results=[{type=anything}] {
+    Return
+}
+function f4 name="fourth" results=[{type=anything}] {
+    Return
+}

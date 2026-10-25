@@ -27,6 +27,7 @@
 #include "UnlinkedMetadataTable.h"
 
 #include "BytecodeStructs.h"
+#include "UnlinkedMetadataTableInlines.h"
 #include <wtf/CheckedArithmetic.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -111,7 +112,7 @@ bool UnlinkedMetadataTable::finalize()
 
     unsigned offset;
     {
-        CheckedUint32 checkedOffset = s_offset16TableSize;
+        CheckedUint32 checkedOffset = offsetOfFirstMetadata;
         Offset32* buffer = preprocessBuffer();
         for (unsigned i = 0; i < s_offsetTableEntries - 1 && !checkedOffset.hasOverflowed(); i++) {
             unsigned numberOfEntries = buffer[i];
@@ -124,9 +125,7 @@ bool UnlinkedMetadataTable::finalize()
             ASSERT(alignment <= s_maxMetadataAlignment);
 
 #if CPU(ADDRESS64)
-            // This is only necessary for the first metadata entry, if the buffer
-            // is 4-byte aligned and the entry has an alignment requirement of 8
-            ASSERT(checkedOffset.value() == roundUpToMultipleOf(alignment, checkedOffset.value()) || checkedOffset.value() == s_offset16TableSize);
+            ASSERT(checkedOffset.value() == roundUpToMultipleOf(alignment, checkedOffset.value()));
 #endif
             unsigned alignedOffset = roundUpToMultipleOf(alignment, checkedOffset.value());
             if (alignedOffset < checkedOffset.value()) {
@@ -172,7 +171,7 @@ bool UnlinkedMetadataTable::finalize()
         ASSERT(!checkedValueProfileSize.hasOverflowed());
         offset = checkedOffset.value();
         buffer[s_offsetTableEntries - 1] = offset;
-        m_is32Bit = offset > UINT16_MAX;
+        m_is32Bit = offset > UINT16_MAX || metadataTablesAlwaysHave32BitOffsets();
     }
 
 #if ENABLE(METADATA_STATISTICS)

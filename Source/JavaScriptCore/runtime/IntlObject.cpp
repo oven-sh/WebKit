@@ -29,6 +29,7 @@
 #include "config.h"
 #include "IntlObject.h"
 
+#include "AOTRemovableFeature.h"
 #include "Error.h"
 #include "FunctionPrototype.h"
 #include "GlobalObjectMethodTable.h"
@@ -1629,6 +1630,14 @@ bool isUnicodeLanguageId(StringView string)
 bool isWellFormedCurrencyCode(StringView currency)
 {
     return currency.length() == 3 && currency.containsOnly<isASCIIAlpha>();
+}
+
+bool ensureCollationIsAvailable(JSGlobalObject* globalObject)
+{
+    if (!isFeatureRemoved(RemovableFeature::IntlCollation)) [[likely]]
+        return true;
+    Bun__throwForRemovedFeature(globalObject, static_cast<uint16_t>(RemovableFeature::IntlCollation));
+    return false;
 }
 
 std::optional<Vector<char, 32>> canonicalizeLocaleIDWithoutNullTerminator(const char* localeID)

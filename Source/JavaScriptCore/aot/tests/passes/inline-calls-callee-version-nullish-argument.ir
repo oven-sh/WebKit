@@ -1,0 +1,52 @@
+# A call that may pass undefined gets a copy whose parameter keeps the undefined and null that the callee's own parameter has
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: CalleeVersions = 3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}
+function f1 name="apply" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+# REPEAT: i = 2..13
+    v%(i+1) = Add v%(i), v1
+# END REPEAT
+    Return v14
+}
+function f2 name="applyOptional" parameters=[{type=undefined|function}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+# REPEAT: i = 2..13
+    v%(i+1) = Add v%(i), v1
+# END REPEAT
+    Return v14
+}
+
+function f3 name="alwaysPassesFunction" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f0
+    v2 = CallDirect v1, v0 function=f1
+    Return v2
+}
+# CHECK-LABEL: function f3 name="alwaysPassesFunction"
+# CHECK: = CallDirect v1, v0 function=[[forDouble]]
+
+function f4 name="mayPassUndefined" parameters=[{type=undefined|f0}, {type=anything}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f1
+    v3 = CallDirect v0, v1 function=f2
+    v4 = CallDirect v0, v1 function=f2
+    Return v4
+}
+# CHECK-LABEL: function f4 name="mayPassUndefined"
+# CHECK: = CallDirect v0, v1 function=[[forDoubleOrNullish]]
+# CHECK-NEXT: = CallDirect v0, v1 function=[[forDoubleOrUndefined]]
+# CHECK-NEXT: = CallDirect v0, v1 function=[[forDoubleOrUndefined]]
+# CHECK: function [[forDouble]] name="apply" {{*}}role=CalleeVersion {{*}}parameters=[{type=f0}, {type=anything}]
+# CHECK-NEXT: b0(v0: f0, v1: anything):
+# CHECK: function [[forDoubleOrNullish]] name="apply" {{*}}role=CalleeVersion {{*}}parameters=[{type=undefined|null|f0}, {type=anything}]
+# CHECK-NEXT: b0(v0: undefined|null|f0, v1: anything):
+# CHECK: function [[forDoubleOrUndefined]] name="applyOptional" {{*}}role=CalleeVersion {{*}}parameters=[{type=undefined|f0}, {type=anything}]
+# CHECK-NEXT: b0(v0: undefined|f0, v1: anything):
+# CHECK-NOT: role=CalleeVersion

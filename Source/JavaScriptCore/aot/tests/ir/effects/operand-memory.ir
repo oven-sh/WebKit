@@ -1,0 +1,66 @@
+# The per-object writes of a row land in the operands that the row says it writes; a row that names none may write every reference operand, and a direct call follows the summary of each parameter
+# FORM: Prepared
+# RUN: operands summaries
+# RUN(PLAIN): operands f5
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="a" declared={type=anything}}]
+layout L1 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="appendElements" parameters=[{type=Array<anything>}, {type=Array<anything, pristine[Storage, Names]>}] results=[{type=undefined}] {
+    AppendElements v0, v1
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v2 AppendElements 0: [Inspects, WritesContents] reads(Elements/1, ArrayStorage) writes(Elements/1, ArrayStorage)
+# CHECK-NEXT: v2 AppendElements 1: [Inspects, ReadsContents, RetainsContents] reads(Elements/1, ArrayStorage)
+# CHECK-NOT: writes
+function f1 name="putArrayElement" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=int[0, 10]}, {type=number}, {type=object}] results=[{type=undefined}] {
+    PutArrayElement v0, v1, v3 level=Proven
+    PutArrayElement v0, v2, v3 level=Proven
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v4 PutArrayElement 0: [Inspects, WritesContents] reads(Elements/1, ArrayStorage) writes(Elements/1, ArrayStorage)
+# CHECK-NEXT: v4 PutArrayElement 1: [Inspects]
+# CHECK-NOT: reads
+# CHECK: v4 PutArrayElement 2: [Retains] in operand 0 reads(Elements/1, ArrayStorage)
+# CHECK-NOT: writes
+# CHECK: v5 PutArrayElement 0: [Inspects, WritesContents] reads(Elements/1, ArrayStorage) writes(NamedProperties, Elements/1, ArrayStorage)
+# CHECK-NEXT: v5 PutArrayElement 1: [Inspects]
+# CHECK-NEXT: v5 PutArrayElement 2: [Retains] in operand 0 reads(Elements/1, ArrayStorage)
+# CHECK-NOT: writes
+function f2 name="setMappedArgument" parameters=[{type=Arguments}, {type=object}] results=[{type=undefined}] {
+    SetMappedArgument v0, v1 index=0
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v2 SetMappedArgument 0: [Inspects, WritesContents] writes(Elements/1)
+# CHECK-NEXT: v2 SetMappedArgument 1: [Retains] in operand 0
+# CHECK-NOT: writes
+function f3 name="releaseEnvironment" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    ReleaseEnvironment v1
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK: v2 ReleaseEnvironment 0: [Inspects] writes(EnvironmentFields)
+function f4 name="writesFirstReadsSecond" parameters=[{type=L1}, {type=L1}] results=[{type=undefined}] {
+    v2 = GetSlot v1 key="x" receivers=[L1] level=Proven
+    PutSlot v0, -, v2 key="x" receivers=[L1] level=Proven
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v2 GetSlot 0: [Inspects] reads(ObjectFields/1)
+# CHECK-NOT: writes
+# CHECK: v3 PutSlot 0: [Inspects] writes(ObjectFields/1)
+function f5 name="callsDirectly" parameters=[{type=L1}, {type=L1}] results=[{type=undefined}] {
+    v2 = CallDirect v0, v1 function=f4
+    Return
+}
+# CHECK-LABEL: function f5
+# CHECK-NEXT: v2 CallDirect 0: [Inspects] writes(ObjectFields/1)
+# CHECK-NEXT: v2 CallDirect 1: [Inspects]
+# CHECK-NOT: writes
+# PLAIN-LABEL: function f5
+# PLAIN-NEXT: v2 CallDirect 0: [Inspects, Retains, {{*}}] reads(EnvironmentFields, ObjectFields, {{*}}) writes(EnvironmentFields, ObjectFields,
+# PLAIN-NEXT: v2 CallDirect 1: [Inspects, Retains, {{*}}] reads(EnvironmentFields, ObjectFields, {{*}}) writes(EnvironmentFields, ObjectFields,

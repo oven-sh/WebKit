@@ -1,0 +1,30 @@
+# The call graph counts one call of the function, in main, and has seen every use of its closure. The call in the entrypoint, which was made since, comes on top of that one:
+# the body stays for main, so the entrypoint calls it and holds no second copy
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot only-passes=EstimateHeat,SummarizeForInlining,InlineCalls
+# RUN: pipeline InlineCalls
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v2, -, v1
+    Return v3
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = Call {{*}}callees=[f1]
+
+function f1 name="calledAtOnePlace" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToNumber v0
+# REPEAT: i = 1..21
+    v%(i+1) = Mul v%(i), v1
+# END REPEAT
+    Return v22
+}
+# CHECK-LABEL: name="calledAtOnePlace" module=m0 role=GenericEntrypoint
+# CHECK-NOT: = Mul
+# CHECK: = CallDirect {{*}}function=f1
+# CHECK-NOT: = Mul

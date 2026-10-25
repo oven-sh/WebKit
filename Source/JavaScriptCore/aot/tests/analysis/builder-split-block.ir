@@ -1,0 +1,63 @@
+# Several cuts of one block in one pass: the parts keep its frequency and its handler
+# FORM: Prepared
+# RUN: split-block function=f0 block=b1 indexes=0,2,5
+# RUN(COVERED): split-block function=f1 block=b0 indexes=1,2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="cuts" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
+    Branch v0 -> taken b1(v1), notTaken b2()
+  b1(v2) frequency=Unlikely:
+    v3 = Add v2, v2
+    v4 = Add v3, v2
+    v5 = Add v4, v3
+    v6 = Add v5, v4
+    v7 = Add v6, v5
+    Jump -> next b3(v7)
+  b2():
+    Jump -> next b3(v1)
+  b3(v8):
+    Return v8
+}
+function f1 name="coveredBlock" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number) handler=b1(v1):
+    v2 = Add v1, v1
+    v3 = Call v0, -, v2
+    Return v3
+  b1(v4) role=CatchHandler:
+    v5 = CatchValue
+    Return v5
+}
+# CHECK: function f0
+# CHECK-NOT: handler=
+# CHECK: Branch v0 -> taken b1(v1), notTaken b2()
+# CHECK-NEXT: b1(v2: number) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[A]]()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b3(v1)
+# CHECK-NEXT: b3(v8: number):
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: [[A]]() frequency=Unlikely:
+# CHECK-NEXT: v3: number = Add v2, v2
+# CHECK-NEXT: v4: number = Add v3, v2
+# CHECK-NEXT: Jump -> next [[B]]()
+# CHECK-NEXT: [[B]]() frequency=Unlikely:
+# CHECK-NEXT: v5: number = Add v4, v3
+# CHECK-NEXT: v6: number = Add v5, v4
+# CHECK-NEXT: v7: number = Add v6, v5
+# CHECK-NEXT: Jump -> next [[C]]()
+# CHECK-NEXT: [[C]]() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b3(v7)
+# CHECK-NEXT: }
+# COVERED: function f1
+# COVERED-NEXT: b0(v0: anything, v1: number) handler=b1(v1):
+# COVERED-NEXT: v2: number = Add v1, v1
+# COVERED-NEXT: Jump -> next [[A]]()
+# COVERED-NEXT: b1(v4: number) role=CatchHandler:
+# COVERED-NEXT: v5: anything = CatchValue
+# COVERED-NEXT: Return v5
+# COVERED-NEXT: [[A]]() handler=b1(v1):
+# COVERED-NEXT: v3: anything = Call v0, -, v2
+# COVERED-NEXT: Jump -> next [[B]]()
+# COVERED-NEXT: [[B]]() handler=b1(v1):
+# COVERED-NEXT: Return v3
+# COVERED-NEXT: }

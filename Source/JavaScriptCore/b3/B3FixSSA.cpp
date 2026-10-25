@@ -153,6 +153,9 @@ void fixSSAGlobally(Procedure& proc, IndexSet<Value*>& valuesToDelete)
                     return nullptr;
                 
                 Value* phi = proc.add<Value>(Phi, variable->type(), block->at(0)->origin());
+                if (proc.knownInductions().hasDemoted()) [[unlikely]]
+                    proc.knownInductions().didCreatePhi(variable, block, phi);
+                proc.knownProperties().didCreatePhi(variable, phi);
                 if (B3FixSSAInternal::verbose) {
                     dataLog(
                         "Adding Phi for ", pointerDump(variable), " at ", *block, ": ",
@@ -264,6 +267,12 @@ void fixSSAGlobally(Procedure& proc, IndexSet<Value*>& valuesToDelete)
     }
 }
 
+void forgetDemotedValues(Procedure& proc)
+{
+    proc.knownInductions().clearDemoted();
+    proc.knownProperties().clearDemoted();
+}
+
 } // anonymous namespace
 
 void demoteValues(Procedure& proc, const IndexSet<Value*>& values)
@@ -272,11 +281,16 @@ void demoteValues(Procedure& proc, const IndexSet<Value*>& values)
     UncheckedKeyHashMap<Value*, Variable*> phiMap;
 
     // Create stack slots.
+    auto addVariableFor = [&](Value* value) {
+        Variable* variable = proc.addVariable(value->type());
+        proc.knownProperties().didDemote(value, variable);
+        return variable;
+    };
     for (Value* value : values.values(proc.values())) {
-        map.add(value, proc.addVariable(value->type()));
+        map.add(value, addVariableFor(value));
 
         if (value->opcode() == Phi)
-            phiMap.add(value, proc.addVariable(value->type()));
+            phiMap.add(value, addVariableFor(value));
     }
 
     if (B3FixSSAInternal::verbose) {
@@ -301,7 +315,7 @@ void demoteValues(Procedure& proc, const IndexSet<Value*>& values)
             // generate for the allocation fast path).
             Value* value = block->predecessor(0)->last();
             Variable* variable = map.get(value);
-            if (variable) {
+            if (variable && block->predecessor(0)->successorBlock(0) == block) {
                 RELEASE_ASSERT(block->numPredecessors() == 1); // Critical edges better be broken.
                 insertionSet.insert<VariableValue>(0, Set, value->origin(), variable, value);
             }
@@ -348,8 +362,10 @@ bool fixSSA(Procedure& proc)
 {
     PhaseScope phaseScope(proc, "fixSSA"_s);
 
-    if (proc.variables().isEmpty())
+    if (proc.variables().isEmpty()) {
+        forgetDemotedValues(proc);
         return false;
+    }
     
     IndexSet<Value*> valuesToDelete;
     if (fixSSALocally(proc, valuesToDelete)) {
@@ -366,12 +382,15 @@ bool fixSSA(Procedure& proc)
                     return true;
                 });
         }
+        forgetDemotedValues(proc);
         return false;
     }
 
     breakCriticalEdges(proc);
 
     fixSSAGlobally(proc, valuesToDelete);
+
+    forgetDemotedValues(proc);
 
     proc.deleteAllVariables();
 

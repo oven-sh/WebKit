@@ -25,6 +25,8 @@
 
 #include "config.h"
 #include "LLIntEntrypoint.h"
+#include "AOTInterpreterSlowPaths.h"
+#include "AOTRemovableFeature.h"
 #include "CodeBlock.h"
 #include "HeapInlines.h"
 #include "JITCode.h"
@@ -256,8 +258,14 @@ MacroAssemblerCodeRef<JSEntryPtrTag> genericReturnPointEntrypoint(OpcodeSize siz
     return { };
 }
 
-void setEntrypoint(CodeBlock* codeBlock)
+NEVER_INLINE void setEntrypoint(CodeBlock* codeBlock)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, setEntrypoint);
+#if ENABLE(AOT)
+    if (codeBlock->vm().hasCompiledCode() || Options::crashIfInterpreterIsUsed())
+        AOT::willRunInInterpreter(codeBlock);
+#endif
+
     switch (codeBlock->codeType()) {
     case GlobalCode:
         setProgramEntrypoint(codeBlock);

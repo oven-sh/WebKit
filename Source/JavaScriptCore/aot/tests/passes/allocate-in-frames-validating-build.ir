@@ -1,0 +1,45 @@
+# In a validating build objects and closures are on the heap: a check reads the header of the cell that a proof names, and a cell of a frame may have none. Environments stay in frames, and so do arrays, which have their header wherever they lie
+# FORM: Prepared
+# OPTIONS: validate
+# RUN: frame-plan
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Record" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L0] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType]}
+layout L1 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="record" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = ShapeTest v1 layouts=[L0]
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v1: Heap
+
+function f1 name="closure" results=[{type=anything}] {
+    v0 = NewClosure function=f3
+    v1 = ShapeTest v0 layouts=[L0]
+    Return v1
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v0: Heap
+
+function f2 name="environment" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = GetEnvironmentField v1 layout=L1 field=0
+    v3 = ToBoolean v2
+    Return v3
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v1: Frame
+
+function f3 name="callback" kind=Arrow results=[{type=anything}] {
+    Return
+}
+
+function f4 name="array" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewArray v0 contents=anything
+    v2 = StrictEq v1, v0
+    Return v2
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v1: Frame

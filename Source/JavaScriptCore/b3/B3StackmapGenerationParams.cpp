@@ -49,7 +49,9 @@ RegisterSet StackmapGenerationParams::unavailableRegisters() const
     
     RegisterSet unsavedCalleeSaves = RegisterSet::calleeSaveRegisters();
     ASSERT(!unsavedCalleeSaves.hasAnyWideRegisters());
-    unsavedCalleeSaves.exclude(m_context.code->calleeSaveRegisters());
+    unsavedCalleeSaves.merge(m_context.code->policy().registers.savedByCallee);
+    if (m_context.frameIsSetUp)
+        unsavedCalleeSaves.exclude(m_context.code->calleeSaveRegisters());
 
     result.merge(unsavedCalleeSaves);
 
@@ -96,6 +98,14 @@ StackmapGenerationParams::StackmapGenerationParams(
     StackmapValue* value, const Vector<ValueRep>& reps, Air::GenerationContext& context)
     : m_value(value)
     , m_reps(reps)
+    , m_context(context)
+{
+}
+
+StackmapGenerationParams::StackmapGenerationParams(
+    StackmapValue* value, Reps&& reps, Air::GenerationContext& context)
+    : m_value(value)
+    , m_reps(WTF::move(reps))
     , m_context(context)
 {
 }

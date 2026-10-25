@@ -1,0 +1,149 @@
+# A read of a method or of a deferred closure field needs no function object when its value is only called
+# FORM: Prepared
+# RUN: property-access
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="saved" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Instance name="Scanner" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed prototypeNamesAreComplete=true namedMembers=[{key="m" function=f1 mutability=Fixed}, {key="capturing" function=f2 mutability=Fixed}, {key="recursive" function=f3 mutability=Fixed}]}
+layout L1 name="Widget" fields=[{key="onObject" declared={type=f4} flow={location={stores=AtMostOnce deferral=CapturesObject deferredFunction=f4} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="onNothing" declared={type=f5} flow={location={stores=AtMostOnce deferral=CapturesNothing deferredFunction=f5} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="eager" declared={type=f5} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 name="OtherWidget" fields=[{key="onNothing" declared={type=f6} flow={location={stores=AtMostOnce deferral=CapturesNothing deferredFunction=f6} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L3 name="SameWidget" fields=[{key="onNothing" declared={type=f5} flow={location={stores=AtMostOnce deferral=CapturesNothing deferredFunction=f5} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="Scanner" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="m" kind=Method flags=[HasThis] results=[{type=anything}]
+function f2 name="capturing" kind=Method flags=[HasThis] captures=[{type=number}] results=[{type=anything}]
+function f3 name="recursive" kind=Method flags=[HasThis, TakesCallee] results=[{type=anything}]
+function f4 name="onObject" kind=Arrow captures=[{type=L1}] results=[{type=anything}]
+function f5 name="onNothing" kind=Arrow results=[{type=anything}]
+function f6 name="onNothing" kind=Arrow results=[{type=anything}]
+
+function f7 name="member-call" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0 calleeKey="m"
+    Return v2
+}
+# CHECK: F7 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+function f8 name="called-twice" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0
+    v3 = Call v1
+    Return v3
+}
+# CHECK-NEXT: F8 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+function f9 name="called-through-upcast" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m"
+    v2 = Upcast v1 castType=anything
+    v3 = Call v2, v0 calleeKey="m"
+    Return v3
+}
+# CHECK-NEXT: F9 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+function f10 name="called-with-argument-list" parameters=[{type=L0}, {type=Array<anything>}] results=[{type=anything}] {
+    v2 = PropGet v0 key="m"
+    v3 = CallList v2, v0, v1 calleeKey="m"
+    Return v3
+}
+# CHECK-NEXT: F10 v2 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+function f11 name="called-and-stored" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0 calleeKey="m"
+    PutModuleVariable v1 variable=g0
+    Return v2
+}
+# CHECK-NEXT: F11 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+function f12 name="called-and-stored-through-upcast" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m"
+    v2 = Upcast v1 castType=anything
+    v3 = Call v1, v0 calleeKey="m"
+    PutModuleVariable v2 variable=g0
+    Return v3
+}
+# CHECK-NEXT: F12 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+function f13 name="returned" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m"
+    Return v1
+}
+# CHECK-NEXT: F13 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+function f14 name="never-used" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m"
+    Return
+}
+# CHECK-NEXT: F14 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+function f15 name="passed-as-this" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v1
+    Return v2
+}
+# CHECK-NEXT: F15 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+function f16 name="passed-as-argument" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0, v1
+    Return v2
+}
+# CHECK-NEXT: F16 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+function f17 name="passed-along-an-edge" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m"
+    Jump -> next b1(v1)
+  b1(v2):
+    v3 = Call v2, v0
+    Return v3
+}
+# CHECK-NEXT: F17 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+function f18 name="constructed" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m"
+    v2 = Construct v1
+    Return v2
+}
+# CHECK-NEXT: F18 v1 PropGet [[m]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F1)
+function f19 name="method-with-capture" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="capturing"
+    v2 = Call v1, v0 calleeKey="capturing"
+    Return v2
+}
+# CHECK-NEXT: F19 v1 PropGet [[capturing]]: form=ByName level=Unknown receivers=[L0] member=(Method level=Proven holder=L0 method=F2)
+function f20 name="method-names-itself" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="recursive"
+    v2 = Call v1, v0 calleeKey="recursive"
+    Return v2
+}
+# CHECK-NEXT: F20 v1 PropGet [[recursive]]: form=Method level=Proven receivers=[L0] member=(Method level=Proven holder=L0 method=F3)
+
+function f21 name="deferred-closure-over-the-object-called" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="onObject"
+    v2 = Call v1, v0 calleeKey="onObject"
+    Return v2
+}
+# CHECK-NEXT: F21 v1 PropGet [[onObject]]: form=Method level=Proven receivers=[L1] member=(Field level=Proven holder=L1 field=0)
+function f22 name="deferred-closure-over-the-object-read" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="onObject"
+    Return v1
+}
+# CHECK-NEXT: F22 v1 PropGet [[onObject]]: form=Slot level=Proven operation=GetDeferredClosureSlot receivers=[L1] member=(Field level=Proven holder=L1 field=0)
+function f23 name="deferred-closure-over-nothing-called" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="onNothing"
+    v2 = Call v1, v0 calleeKey="onNothing"
+    Return v2
+}
+# CHECK-NEXT: F23 v1 PropGet [[onNothing]]: form=Method level=Proven receivers=[L1] member=(Field level=Proven holder=L1 field=1)
+function f24 name="deferred-closure-over-nothing-read" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="onNothing"
+    Return v1
+}
+# CHECK-NEXT: F24 v1 PropGet [[onNothing]]: form=Slot level=Proven operation=GetDeferredClosureSlot receivers=[L1] member=(Field level=Proven holder=L1 field=1)
+function f25 name="eager-closure-field-called" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="eager"
+    v2 = Call v1, v0 calleeKey="eager"
+    Return v2
+}
+# CHECK-NEXT: F25 v1 PropGet [[eager]]: form=Slot level=Proven operation=GetSlot receivers=[L1] member=(Field level=Proven holder=L1 field=2)
+function f26 name="members-defer-the-same-function" parameters=[{type=L1|L3}] results=[{type=anything}] {
+    v1 = PropGet v0 key="onNothing"
+    v2 = Call v1, v0 calleeKey="onNothing"
+    Return v2
+}
+# CHECK-NEXT: F26 v1 PropGet [[onNothing]]: form=Method level=Proven receivers=[L1, L3] member=(Field level=Proven)
+function f27 name="members-defer-different-functions" parameters=[{type=L1|L2}] results=[{type=anything}] {
+    v1 = PropGet v0 key="onNothing"
+    v2 = Call v1, v0 calleeKey="onNothing"
+    Return v2
+}
+# CHECK-NEXT: F27 v1 PropGet [[onNothing]]: form=Slot level=Proven operation=GetDeferredClosureSlot receivers=[L1, L2] member=(Field level=Proven)

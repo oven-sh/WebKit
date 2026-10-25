@@ -34,6 +34,9 @@
 #include "WebAssemblyFunction.h"
 #include <JavaScriptCore/ExceptionHelpers.h>
 #include <wtf/text/MakeString.h>
+#if ENABLE(AOT)
+#include <JavaScriptCore/AOTCompiledCallee.h>
+#endif
 
 namespace JSC {
 
@@ -164,6 +167,10 @@ inline double JSFunction::originalLength(VM& vm)
     if (inherits<JSRemoteFunction>())
         return uncheckedDowncast<JSRemoteFunction>(this)->length(vm);
     if (isHostFunction()) {
+#if ENABLE(AOT)
+        if (isCompiledClosure())
+            return AOT::CompiledCallee::length(this);
+#endif
         // The original length is captured in NativeExecutable at creation time.
         return uncheckedDowncast<NativeExecutable>(executable())->length();
     }
@@ -201,6 +208,10 @@ inline JSString* JSFunction::originalName(JSGlobalObject* globalObject)
     }
 
     if (isHostFunction()) {
+#if ENABLE(AOT)
+        if (isCompiledClosure())
+            return jsString(vm, AOT::CompiledCallee::name(this));
+#endif
         // Mirror the JS path below: build a fresh JSString from the original name stored on
         // NativeExecutable. NativeExecutable is shared and uniquely keyed by name, so this
         // always returns the original (creation-time) value even after the JSFunction's "name"
@@ -300,6 +311,7 @@ inline CallData JSFunction::getCallDataInline(JSCell* cell)
     CallData callData;
 
     JSFunction* thisObject = uncheckedDowncast<JSFunction>(cell);
+    ASSERT(!thisObject->isCompiledClosure());
     if (thisObject->isHostFunction()) {
         callData.type = CallData::Type::Native;
         callData.native.function = thisObject->nativeFunction();
@@ -323,6 +335,7 @@ inline CallData JSFunction::getConstructDataInline(JSCell* cell)
     CallData constructData;
 
     JSFunction* thisObject = uncheckedDowncast<JSFunction>(cell);
+    ASSERT(!thisObject->isCompiledClosure());
     if (thisObject->isHostFunction()) {
         if (thisObject->inherits<JSBoundFunction>()) {
             if (uncheckedDowncast<JSBoundFunction>(thisObject)->canConstruct()) {

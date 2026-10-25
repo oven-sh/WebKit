@@ -1,0 +1,125 @@
+# The type of a value behind a Check holds in the typed blocks alone, so only a test says what comes by. A comparison with one text, taken, lets that text by and nothing else, as a test for its type does. A comparison with a number, taken, lets numbers by and nothing else: not that number alone, for 0 and -0 are equal, and so are an integer and the same number kept as a double. A comparison with a value that is behind a Check itself lets everything by. In the generic version that value is what the check has turned away, so on neither side does the comparison keep anything out, of a value behind no check either.
+# RUN: valueflow-body f0 f1 f2 f3 f4
+# CHECK: body f0: nodes=7 sites=0 edges=5 edgesOnceReached=0 seeds=1 statements=0
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 result
+# CHECK-NEXT: n2 thrown
+# CHECK-NEXT: n3 filter v1 : string
+# CHECK-NEXT: n4 merge
+# CHECK-NEXT: n5 filter & "a"
+# CHECK-NEXT: n6 filter - "a"
+# CHECK-NEXT: edge n0 -> n3
+# CHECK-NEXT: edge n3 -> n5
+# CHECK-NEXT: edge n3 -> n6
+# CHECK-NEXT: edge n5 -> n1
+# CHECK-NEXT: edge n6 -> n1
+# CHECK-NEXT: reached: seed n2 <- unknown
+# CHECK-NEXT: returns n0 & "a" as it came, the rest in n4
+# CHECK-NEXT: returns n0 - "a" as it came, the rest in n4
+# CHECK-NEXT: observed v1: n0
+# CHECK-NEXT: body f1: nodes=7 sites=0 edges=5 edgesOnceReached=0 seeds=1 statements=0
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 result
+# CHECK-NEXT: n2 thrown
+# CHECK-NEXT: n3 filter v1 : number
+# CHECK-NEXT: n4 merge
+# CHECK-NEXT: n5 filter & number
+# CHECK-NEXT: n6 filter - 0
+# CHECK-NEXT: edge n0 -> n3
+# CHECK-NEXT: edge n3 -> n5
+# CHECK-NEXT: edge n3 -> n6
+# CHECK-NEXT: edge n5 -> n1
+# CHECK-NEXT: edge n6 -> n1
+# CHECK-NEXT: reached: seed n2 <- unknown
+# CHECK-NEXT: returns n0 & number as it came, the rest in n4
+# CHECK-NEXT: returns n0 - 0 as it came, the rest in n4
+# CHECK-NEXT: observed v1: n0
+# CHECK-NEXT: body f2: nodes=6 sites=0 edges=2 edgesOnceReached=0 seeds=1 statements=0
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 parameter v1
+# CHECK-NEXT: n2 result
+# CHECK-NEXT: n3 thrown
+# CHECK-NEXT: n4 filter v2 : string
+# CHECK-NEXT: n5 merge
+# CHECK-NEXT: edge n0 -> n4
+# CHECK-NEXT: edge n4 -> n2
+# CHECK-NEXT: reached: seed n3 <- unknown
+# CHECK-NEXT: returns n0 : string as it came, the rest in n5
+# CHECK-NEXT: observed v2: n0
+# CHECK-NEXT: body f3: nodes=7 sites=0 edges=5 edgesOnceReached=0 seeds=0 statements=0
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 result
+# CHECK-NEXT: n2 thrown
+# CHECK-NEXT: n3 filter v1 : string
+# CHECK-NEXT: n4 merge
+# CHECK-NEXT: n5 filter & "a"
+# CHECK-NEXT: n6 filter - "a"
+# CHECK-NEXT: edge n0 -> n3
+# CHECK-NEXT: edge n3 -> n5
+# CHECK-NEXT: edge n3 -> n6
+# CHECK-NEXT: edge n5 -> n1
+# CHECK-NEXT: edge n6 -> n1
+# CHECK-NEXT: returns n0 & "a" as it came, the rest in n4
+# CHECK-NEXT: returns n0 - "a" as it came, the rest in n4
+# CHECK-NEXT: observed v2: n3
+# CHECK-NEXT: observed v1: n0
+# CHECK-NEXT: body f4: nodes=5 sites=0 edges=1 edgesOnceReached=0 seeds=1 statements=0
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 parameter v1
+# CHECK-NEXT: n2 result
+# CHECK-NEXT: n3 thrown
+# CHECK-NEXT: n4 merge
+# CHECK-NEXT: edge n0 -> n2
+# CHECK-NEXT: reached: seed n3 <- unknown
+# CHECK-NEXT: returns n0 as it came, the rest in n4
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="equalToText" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 castType=string
+    v2 = String string="a"
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    Return v4
+  b2(v5):
+    Return v5
+}
+function f1 name="equalToInteger" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 castType=number
+    v2 = Integer integer=0
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    Return v4
+  b2(v5):
+    Return v5
+}
+function f2 name="equalToWhatIsBehindACheckToo" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v0 castType=string
+    v3 = Check v1 castType="a"
+    v4 = StrictEq v2, v3
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    Return v5
+  b2(v6):
+    Return v6
+}
+function f3 name="testedForItsType" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 castType=string
+    v2 = TypeTest v1 testedType="a"
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Return v3
+  b2(v4):
+    Return v4
+}
+function f4 name="whatIsBehindNoCheckEqualToWhatIs" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v1 castType="a"
+    v3 = StrictEq v0, v2
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    Return v4
+  b2(v5):
+    Return v5
+}

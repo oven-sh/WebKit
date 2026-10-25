@@ -1,0 +1,32 @@
+# Generated: one chain of 4200 Strcats ends in the source of a RegExp created from a string. Sites read the chain at decreasing depths, deepest first, so the first walk that reaches
+# the end has almost no stack left. summarizeRegExp() needs regExpCompilerStackSize there. A chain that is too deep gets no pattern and a warning, not a compiler crash.
+# FORM: Selected
+# RUN: pass CollectRegExpLiterals
+# DIAGNOSTIC: RegExpWithoutCode
+# CHECK: regexp requests:
+
+module m0 path="main.js" displayPath="main.js"
+# REPEAT: i = 0..36; a = 4200 3906 3632 3378 3141 2921 2717 2527 2350 2185 2032 1890 1758 1635 1520 1414 1315 1223 1137 1057 983 914 850 791 735 684 636 591 550 511 476 442 411 382 356 331 308
+variable g%(i) name="depth%(a)" module=m0 declared={type=string}
+# END REPEAT
+# REPEAT: i = 0..36; a = 4200 3906 3632 3378 3141 2921 2717 2527 2350 2185 2032 1890 1758 1635 1520 1414 1315 1223 1137 1057 983 914 850 791 735 684 636 591 550 511 476 442 411 382 356 331 308
+function f%(i) name="atDepth%(a)" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g%(i)
+    v1 = CallInline -, v0 inlineBuiltin=NewRegExp overload=RegExp/4 @%(i+1)
+    Return v1
+}
+# END REPEAT
+function f37 name="chain" results=[{type=anything}] {
+    v0 = String string="p+"
+    v1 = CallInline -, v0 inlineBuiltin=NewRegExp overload=RegExp/4 @38
+    v2 = CallInline v1 inlineBuiltin=RegExpSource overload=RegExpPrototypeSource/0
+    v3 = String string="a"
+    v4 = Strcat v2, v3
+# REPEAT: i = 4..4202
+    v%(i+1) = Strcat v%(i), v3
+# END REPEAT
+# REPEAT: i = 0..36; a = 4203 3909 3635 3381 3144 2924 2720 2530 2353 2188 2035 1893 1761 1638 1523 1417 1318 1226 1140 1060 986 917 853 794 738 687 639 594 553 514 479 445 414 385 359 334 311
+    PutModuleVariable v%(a) variable=g%(i)
+# END REPEAT
+    Return v2
+}

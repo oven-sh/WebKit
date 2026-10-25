@@ -1,0 +1,48 @@
+# The cases of a switch over integers that lie within 64 values of each other and lead to at most three places: one test of the range, and one test of a bit for each place where the range has gaps
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot
+# RUN: generate-code calls
+# STATISTIC: SwitchesTestedByWindow = 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="withoutGap" parameters=[{type=i32}] results=[{type=i32}] {
+    Switch v0 cases=[243, 245, 244, 246] -> case b1(), case b1(), case b1(), case b1(), otherwise b2()
+  b1():
+    v1 = Integer integer=1
+    Return v1
+  b2():
+    v2 = Integer integer=0
+    Return v2
+}
+function f1 name="withGaps" parameters=[{type=i32}] results=[{type=i32}] {
+    Switch v0 cases=[10, 12, 40, 73] -> case b1(), case b1(), case b1(), case b1(), otherwise b2()
+  b1():
+    v1 = Integer integer=1
+    Return v1
+  b2():
+    v2 = Integer integer=0
+    Return v2
+}
+function f2 name="twoPlaces" parameters=[{type=i32}] results=[{type=i32}] {
+    Switch v0 cases=[1, 2, 5, 6] -> case b1(), case b3(), case b1(), case b3(), otherwise b2()
+  b1():
+    v1 = Integer integer=1
+    Return v1
+  b2():
+    v2 = Integer integer=0
+    Return v2
+  b3():
+    v3 = Integer integer=2
+    Return v3
+}
+function f3 name="wider" parameters=[{type=i32}] results=[{type=i32}] {
+    Switch v0 cases=[100, 164, 130, 131] -> case b1(), case b1(), case b1(), case b1(), otherwise b2()
+  b1():
+    v1 = Integer integer=1
+    Return v1
+  b2():
+    v2 = Integer integer=0
+    Return v2
+}
+# CHECK: f0: size={{*}}
+# CHECK: f3: size={{*}}

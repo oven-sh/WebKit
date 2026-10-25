@@ -1,0 +1,33 @@
+# The definition of a static field that nothing reads stays: whether the field exists decides where a store by name to the class or a subclass goes
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadExports
+# OPTIONS: only-passes=RemoveUnreadExports
+# STATISTIC: UnreadVariableStoresRemoved = 1
+# CHECK: variable g0 name="count"{{*}}owner=L0{{*}}writers=AllKnown stores=AtMostOnce{{*}}reads=NeverRead
+# CHECK: variable g1 name="unread"{{*}}writers=AllKnown stores=Never{{*}}reads=NeverRead
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="count" module=m0 declared={type=number} owner=L0
+variable g1 name="unread" module=m0 declared={type=anything}
+layout L0 kind=Instance name="Counter" constructor=f1 staticFields=[{key="count" variable=g0}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Double number=1.5
+    v1 = NewClosure function=f1
+    v2 = NewClass v1 layout=L0
+    PutModuleVariable v0 variable=g0
+    v4 = FinishClass v2 layout=L0
+    PutModuleVariable v0 variable=g1
+    Return
+# CHECK: = NewClass
+# CHECK-NEXT: PutModuleVariable v0 variable=g0
+# CHECK-NEXT: = FinishClass
+# CHECK-NEXT: Return
+}
+
+function f1 name="Counter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}

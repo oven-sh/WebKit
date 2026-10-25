@@ -1,0 +1,59 @@
+# Creating an arguments object takes all it reads as operands, so it binds no block to the frame
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SummarizeForInlining
+
+module m0 path="main.js" displayPath="main.js"
+evalscope e0
+function f0 name="createsUnmappedArguments" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=object}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    Return v3
+}
+# CHECK: f0: barrier=None
+# CHECK-NOT: boundToFrame
+
+function f1 name="createsMappedArguments" flags=[IsSloppy, TakesCallee, HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=object}] {
+  b0(v0: function, v1: int[0, 4294967295], v2: anything, v3: Array):
+    v4 = CreateMappedArguments v0, v1, v3, v2
+    Return v4
+}
+# CHECK: f1: barrier=None
+# CHECK-NOT: boundToFrame
+
+function f2 name="createsArgumentsInRareBlock" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = TypeTest v1 testedType=number
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2() frequency=Rare:
+    v4 = CreateUnmappedArguments v0, v2, v1
+    Return v4
+}
+# CHECK: f2: barrier=None
+# CHECK-NOT: boundToFrame
+
+function f3 name="createsArgumentsAndEvaluatesText" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=object}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = Undefined
+    v5 = DirectEval v1, v4 evalScope=e0
+    Return v3
+}
+# CHECK: f3: barrier=None {{*}} boundToFrame=[b0]
+
+function f4 name="createsUnmappedArguments" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] thisType={type=anything} results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
+    v2 = GetRestLength firstArgument=0
+    v3 = TypeTest v1 testedType=undefined
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2():
+    v4 = GetArgument argumentIndex=0
+    v5 = CreateRest firstArgument=1
+    v6 = CallDirect v2, v4, v5 function=f0
+    Return v6
+}
+# CHECK: f4: barrier=NotInlinable {{*}} boundToFrame=[b0 b2]
+# CHECK: outcome: Unchanged

@@ -1,0 +1,113 @@
+# A concatenation is marked as a likely key where each of its uses on the usual paths leads to the key of a lookup, also through a cast and through a block parameter
+# FORM: Prepared
+# RUN: pass CreateStringBuilders
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="keyOfTwoParts" parameters=[{type=anything}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = Add v1, v2
+    v4 = ElemGet v0, v3
+    Return v4
+}
+# CHECK-LABEL: name="keyOfTwoParts"
+# CHECK: v3: string = Strcat v1, v2 [isLikelyKey]
+
+function f1 name="keyThroughBlockParameter" parameters=[{type=Map}, {type=string}, {type=string}, {type=boolean}] results=[{type=anything}] {
+    v4 = String string=":"
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Strcat v1, v4, v2
+    Jump -> next b3(v5)
+  b2():
+    v6 = Add v2, v1
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = CallBuiltin v0, v7 overload=MapPrototypeGet/0
+    Return v8
+}
+# CHECK-LABEL: name="keyThroughBlockParameter"
+# CHECK: v5: string = Strcat v1, v4, v2 [isLikelyKey]
+# CHECK: v6: string = Strcat v2, v1 [isLikelyKey]
+
+function f2 name="keyThroughCasts" parameters=[{type=anything}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = String string=","
+    v4 = Strcat v1, v3, v2
+    v5 = Upcast v4 castType=anything
+    v6 = Check v5 castType=string
+    v7 = ElemGet v0, v6
+    Return v7
+}
+# CHECK-LABEL: name="keyThroughCasts"
+# CHECK: v4: string = Strcat v1, v3, v2 [isLikelyKey]
+
+function f3 name="blockParameterIsReturned" parameters=[{type=Map}, {type=string}, {type=string}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+    v5 = String string=":"
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Strcat v1, v5, v2
+    Jump -> next b3(v6)
+  b2():
+    v7 = Add v2, v1
+    Jump -> next b3(v7)
+  b3(v8):
+    v9 = CallBuiltin v0, v8 overload=MapPrototypeGet/0
+    Return v8
+}
+# CHECK-LABEL: name="blockParameterIsReturned"
+# CHECK-NOT: isLikelyKey
+# CHECK: v7: string = Add v2, v1
+
+function f4 name="castIsPassedOn" parameters=[{type=anything}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = String string=","
+    v4 = Strcat v1, v3, v2
+    v5 = Upcast v4 castType=anything
+    v6 = ElemGet v0, v5
+    v7 = Call v6, -, v5
+    Return v7
+}
+# CHECK-LABEL: name="castIsPassedOn"
+# CHECK-NOT: isLikelyKey
+
+function f5 name="objectInKeyOfTwoParts" parameters=[{type=anything}, {type=string}, {type=anything}] results=[{type=anything}] {
+    v3 = Add v1, v2
+    v4 = ElemGet v0, v3
+    Return v4
+}
+# CHECK-LABEL: name="objectInKeyOfTwoParts"
+# CHECK-NOT: isLikelyKey
+# CHECK: v3: string = Add v1, v2
+
+function f6 name="stringIsTheObjectRead" parameters=[{type=string}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = Add v0, v1
+    v4 = ElemGet v3, v2
+    Return v4
+}
+# CHECK-LABEL: name="stringIsTheObjectRead"
+# CHECK-NOT: isLikelyKey
+
+function f7 name="passedOnOffTheUsualPath" parameters=[{type=Map}, {type=string}, {type=string}, {type=boolean}] results=[{type=anything}] {
+    v4 = Add v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v5 = CallBuiltin v0, v4 overload=MapPrototypeGet/0
+    Return v5
+  b2() frequency=Rare:
+    v6 = PropGet v0 key="get"
+    v7 = Call v6, v0, v4
+    Return v7
+}
+# CHECK-LABEL: name="passedOnOffTheUsualPath"
+# CHECK: v4: string = Strcat v1, v2 [isLikelyKey]
+
+function f8 name="onlyPassedOnOffTheUsualPath" parameters=[{type=Map}, {type=string}, {type=string}, {type=boolean}] results=[{type=anything}] {
+    v4 = Add v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v3
+  b2() frequency=Rare:
+    v5 = PropGet v0 key="get"
+    v6 = Call v5, v0, v4
+    Return v6
+}
+# CHECK-LABEL: name="onlyPassedOnOffTheUsualPath"
+# CHECK-NOT: isLikelyKey

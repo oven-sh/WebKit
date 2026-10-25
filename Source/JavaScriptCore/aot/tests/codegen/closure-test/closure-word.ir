@@ -1,0 +1,64 @@
+# In an image with one instance the upper half of its closure word names the function of a slim closure that is as it was created, and no other cell has that word at that place. Where the type of the tested value admits every function nothing follows from a refusal, so the test is that one comparison, in cold code too. Where the type lists its functions a closure that has got a property must pass, so what is neither a closure as created nor a compiled object goes to the stub. A closure that is only called stays as it was created, and there the comparison decides alone
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsCold disable=pass:InlineCalls
+# RUN: generate-code calls
+# RUN(IR): pipeline Select
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="register" [isFreeName]
+    v6 = Call v5, -, v0, v1, v2, v3
+    v7 = NewClosure function=f5
+    v8 = NewClosure function=f6
+    v9 = PropGet v4 key="choice" [isFreeName]
+    v10 = ToBoolean v9
+    Branch v10 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v7)
+  b2():
+    Jump -> next b3(v8)
+  b3(v11: f5|f6):
+    v12 = CallDirect v11 function=f7
+    Return v12
+}
+function f1 name="first" results=[{type=anything}] {
+    Return
+}
+function f2 name="second" results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}
+function f3 name="callsExpected" parameters=[{type=f1 flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+function f4 name="callsOneOfTwoThatEscaped" parameters=[{type=f1|f2}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+function f5 name="onlyCalled" results=[{type=anything}] {
+    v0 = Integer integer=5
+    Return v0
+}
+function f6 name="alsoOnlyCalled" results=[{type=anything}] {
+    v0 = Integer integer=6
+    Return v0
+}
+function f7 name="callsOneOfTwoOnlyCalled" parameters=[{type=f5|f6}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+# IR-LABEL: function f3 name="callsExpected"
+# IR: = IsClosureOf v0 function=f1
+# CHECK: f3: size=
+# CHECK-NOT: stub ValueIsClosureOf
+# CHECK: f4: size=
+# CHECK: stub ValueIsClosureOf x1
+# CHECK: f7: size=
+# CHECK-NOT: stub ValueIsClosureOf

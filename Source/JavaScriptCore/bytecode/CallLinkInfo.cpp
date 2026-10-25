@@ -387,6 +387,8 @@ JSGlobalObject* CallLinkInfo::globalObjectForSlowPath(JSCell* owner)
     auto [codeBlock, bytecodeIndex] = retrieveCaller(owner);
     if (codeBlock)
         return codeBlock->globalObject();
+    if (auto* globalObject = dynamicDowncast<JSGlobalObject>(owner))
+        return globalObject;
 #if ENABLE(WEBASSEMBLY)
     auto* module = dynamicDowncast<JSWebAssemblyModule>(owner);
     if (module)

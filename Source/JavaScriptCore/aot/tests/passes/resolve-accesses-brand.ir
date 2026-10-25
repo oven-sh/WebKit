@@ -1,0 +1,42 @@
+# The read of a brand on a proven instance of a class that is evaluated once is a slot read nobody uses; where the class may be evaluated again or the receiver is unknown the operation stays and tests the brand at run time
+# FORM: Prepared
+# RUN: pass ResolveAccesses
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Once" constructor=f0 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None fieldCreation=OnlyAtConstruction} classFlow={evaluations=AtMostOnce}
+layout L1 kind=Instance name="Repeated" constructor=f1 fields=[{key=#"#"@L1 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None fieldCreation=OnlyAtConstruction}
+layout L2 kind=Instance name="Unrelated" constructor=f2 flow={baseState=None impossibleMutations=[AddProperty]} classFlow={evaluations=AtMostOnce}
+
+function f0 name="Once" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="Repeated" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f2 name="Unrelated" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+
+function f3 name="instance" parameters=[{type=L0}, {type=classtoken}] results=[{type=boolean}] {
+    v2 = PrivateGet v0, v1 layout=L0
+    v3 = PrivateHas v0, v1 layout=L0
+    Return v3
+# CHECK: v2: classtoken = GetSlot v0 key=#"#"@L0 receivers=[L0] level=Proven
+# CHECK-NEXT: v3: true = Boolean boolean=true
+}
+function f4 name="class-may-be-evaluated-again" parameters=[{type=L1}, {type=classtoken}] results=[{type=boolean}] {
+    v2 = PrivateGet v0, v1 layout=L1
+    v3 = PrivateHas v0, v1 layout=L1
+    Return v3
+# CHECK: v2: classtoken = PrivateGet v0, v1 layout=L1
+# CHECK-NEXT: v3: boolean = PrivateHas v0, v1 layout=L1
+}
+function f5 name="unknown-receiver" parameters=[{type=anything}, {type=classtoken}] results=[{type=boolean}] {
+    v2 = PrivateGet v0, v1 layout=L0
+    v3 = PrivateHas v0, v1 layout=L0
+    Return v3
+# CHECK: v2: classtoken = PrivateGet v0, v1 layout=L0
+# CHECK-NEXT: v3: boolean = PrivateHas v0, v1 layout=L0
+}
+function f6 name="instance-of-an-unrelated-class" parameters=[{type=L2}, {type=classtoken}] results=[{type=boolean}] {
+    v2 = PrivateHas v0, v1 layout=L0
+    v3 = PrivateGet v0, v1 layout=L0
+    Return v2
+# CHECK: v2: false = Boolean
+# CHECK-NEXT: v3: classtoken = PrivateGet v0, v1 layout=L0
+}

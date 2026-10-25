@@ -1,0 +1,81 @@
+# An allocation whose layout the prototype decides is built as a copy of itself, with what its operands were at the allocation: they travel with the object, and an operand that is a virtual object is built in front of it
+# FORM: Prepared optimizing
+# RUN: pass SinkAllocations
+# OPTIONS: check=VerifyEachPass
+# STATISTIC: AllocationsRemoved = 2
+# STATISTIC: AllocationsSunk = 4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="A" constructor=f5
+layout L1 kind=Instance name="B" base=L0 constructor=f6 supertypes=[L0] flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1]}
+layout L2 name="Record" fields=[{key="x" declared={type=anything}}]
+function f0 name="builtBehindJoinWithCell" parameters=[{type=boolean}, {type=anything}, {type=object}, {type=boolean}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v4 = GetConstructPrototype v1 layout=L0
+    v5 = NewObject v4 layout=L0
+    Jump -> next b3(v5)
+  b2():
+    Jump -> next b3(v2)
+  b3(v6: object):
+    Branch v3 -> taken b4(), notTaken b5()
+  b4():
+    Return v6
+  b5():
+    Return v1
+# CHECK: v4: object = GetConstructPrototype v1 layout=L0
+# CHECK: Jump -> next b3({{*}}, {{*}}, v4)
+# CHECK: b3([[tag0]]: i32, [[cell0]]: object, [[prototype0]]: object):
+# CHECK: Switch [[tag0]]
+# CHECK: = NewObject [[prototype0]] layout=L0
+}
+
+function f1 name="operandIsVirtualObject" parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v1 layout=L2 fields=[0]
+    v3 = NewObject v2 layout=L0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return v3
+  b2():
+    Return v1
+# CHECK: b0(
+# CHECK-NEXT: Branch v0
+# CHECK: b1():
+# CHECK-NEXT: [[record1]]:{{*}}= NewObject -, v1 layout=L2 fields=[0]
+# CHECK-NEXT: [[object1]]:{{*}}= NewObject [[record1]] layout=L0
+# CHECK-NEXT: Return [[object1]]
+}
+
+function f2 name="operandIsReadOfVirtualObject" parameters=[{type=boolean}, {type=object}] results=[{type=anything}] {
+    v2 = NewObject -, v1 layout=L2 fields=[0]
+    v3 = PropGet v2 key="x" receivers=[L2]
+    v4 = AssumeType v3 castType=object
+    v5 = NewObject v4 layout=L0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return v5
+  b2():
+    Return v1
+# CHECK-NOT: layout=L2
+# CHECK: b1():
+# CHECK-NEXT: [[object2]]:{{*}}= NewObject v4 layout=L0
+# CHECK-NEXT: Return [[object2]]
+}
+
+function f3 name="neverUsed" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v0
+# CHECK-NOT: NewObject
+}
+
+function f4 name="usedAtOnce" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+# CHECK: v2:{{*}}= NewObject v1 layout=L0
+# CHECK-NEXT: Return v2
+}
+
+function f5 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] constructedClass=L0
+function f6 name="B" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=object}] constructedClass=L1

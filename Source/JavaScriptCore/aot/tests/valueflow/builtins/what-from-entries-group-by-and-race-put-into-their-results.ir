@@ -1,0 +1,175 @@
+# What three built-ins put into what they make.
+# Object.values(Object.fromEntries(pairs))[0]: the first of the values of the new object is not `undefined` alone. The flow goes through the model of the built-in (aot/builtins/models/Objects.ts, as the front end
+# emits it), which defines each value under its key.
+# Object.groupBy(items, key).all[0].double(): the groups hold the items, whatever kind of iterable they come out of: the model again. (await Promise.race([Promise.resolve(item)])).double(): the race settles with what
+# the promise among its elements holds, not with the promise. A method that is called only on such a value is reached. The method of a class whose instances go nowhere is not.
+# FORM: AsRead
+# RUN: flow
+# RUN(UNREACHED): valueflow-solve unreached
+# CHECK-NOT: function f1 result 0 type=undefined
+# CHECK: function f2
+# UNREACHED-NOT: unreached f5
+# UNREACHED-NOT: unreached f7
+# UNREACHED: unreached f10
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="Grouped" constructor=f4 fields=[]
+layout L1 kind=Instance name="Raced" constructor=f6 fields=[]
+layout L2 kind=Instance name="Kept" constructor=f9 fields=[]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    v2 = CallDirect function=f3
+    v3 = NewClosure function=f9
+    v4 = NewClass v3 layout=L2
+    v5 = NewClosure function=f10
+    DefineMethod v4, v5 layout=L2 key="double"
+    v7 = FinishClass v4 layout=L2
+    v8 = Construct v7
+    Return v0
+}
+function f1 name="valuesOfWhatFromEntriesMade" results=[{type=anything}] {
+    v0 = String string="a"
+    v1 = Integer integer=1
+    v2 = NewArray v0, v1 contents=anything
+    v3 = NewArray v2 contents=anything
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectFromEntries
+    v6 = Call v5, v4, v3
+    v7 = Builtin builtin=ObjectValues
+    v8 = Call v7, v4, v6
+    v9 = Integer integer=0
+    v10 = ElemGet v8, v9
+    Return v10
+}
+function f2 name="methodOfAnItemInAGroup" results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f5
+    DefineMethod v1, v2 layout=L0 key="double"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = NewArray v5 contents=anything
+    v7 = Builtin builtin=Object
+    v8 = Builtin builtin=ObjectGroupBy
+    v9 = NewClosure function=f8
+    v10 = Call v8, v7, v6, v9
+    v11 = PropGet v10 key="all"
+    v12 = Integer integer=0
+    v13 = ElemGet v11, v12
+    v14 = PropGet v13 key="double"
+    v15 = Call v14, v13 calleeKey="double"
+    Return v15
+}
+function f3 name="methodOfWhatARaceSettlesWith" flags=[IsAsync] results=[{type=anything}] {
+    v0 = NewClosure function=f6
+    v1 = NewClass v0 layout=L1
+    v2 = NewClosure function=f7
+    DefineMethod v1, v2 layout=L1 key="double"
+    v4 = FinishClass v1 layout=L1
+    v5 = Construct v4
+    v6 = Builtin builtin=Promise
+    v7 = Builtin builtin=PromiseResolve
+    v8 = Call v7, v6, v5
+    v9 = NewArray v8 contents=anything
+    v10 = Builtin builtin=PromiseRace
+    v11 = Call v10, v6, v9
+    v12 = Await v11
+    v13 = PropGet v12 key="double"
+    v14 = Call v13, v12 calleeKey="double"
+    Return v14
+}
+function f4 name="Grouped" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f5 name="double" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=4
+    Return v1
+}
+function f6 name="Raced" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f7 name="double" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=4
+    Return v1
+}
+function f8 name="key" kind=Arrow results=[{type=anything}] {
+    v0 = String string="all"
+    Return v0
+}
+function f9 name="Kept" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2 fields=[]
+    Return v2
+}
+function f10 name="double" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=4
+    Return v1
+}
+function f11 name="fromEntries" module=m1 kind=Method role=Model length=1 enclosingRuntimeFunction=131082 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Builtin builtin=ObjectPrototype
+    v4 = Call v2, v1, v3 calleeName="create"
+    v5 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = IteratorResume v5
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    Return v4
+  b3() handler=b4():
+    v10 = Integer
+    v11 = ElemGet v9, v10
+    v12 = Integer integer=1
+    v13 = ElemGet v9, v12
+    v14 = Convert v4 declared={type=object flags=[IsFromCompiler]}
+    ElemDefine v14, v11, v13
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v5:
+    v16 = CatchException
+    IteratorClose v5 completion=Throw
+    Rethrow v16
+}
+function f12 name="groupBy" module=m1 kind=Method role=Model length=2 enclosingRuntimeFunction=131083 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectCreate
+    v4 = Null
+    v5 = Call v3, v2, v4 calleeName="create"
+    v6 = Integer
+    v7 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v9 = IteratorResume v7
+    v10 = ResultAt v9
+    v11 = ResultAt v9 index=1
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    Return v5
+  b3() handler=b4():
+    v12 = NewArray contents=anything
+    v13 = Call v1, -, v11, v6 calleeName="callback"
+    v14 = ToPropertyKey v13
+    v15 = Convert v5 declared={type=object flags=[IsFromCompiler]}
+    ElemDefine v15, v14, v12
+    v17 = PropGet v12 key="length"
+    ElemDefine v12, v17, v11
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v7:
+    v19 = CatchException
+    IteratorClose v7 completion=Throw
+    Rethrow v19
+}
+runtimefunction id=131082 function=f11
+runtimefunction id=131083 function=f12

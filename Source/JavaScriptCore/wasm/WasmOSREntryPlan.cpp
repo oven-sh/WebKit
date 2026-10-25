@@ -26,7 +26,7 @@
 #include "config.h"
 #include "WasmOSREntryPlan.h"
 
-#if ENABLE(WEBASSEMBLY_OMGJIT)
+#if ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)
 
 #include "HeapCellInlines.h"
 #include "JITCompilation.h"
@@ -182,4 +182,4 @@ void OSREntryPlan::work()
 
 } } // namespace JSC::Wasm
 
-#endif // ENABLE(WEBASSEMBLY_OMGJIT)
+#endif // ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)

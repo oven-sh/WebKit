@@ -1,0 +1,26 @@
+# A store needs no barrier of its own when every path from it reaches another store to the same owner.
+# FORM: Placed
+# RUN: pass RemoveRedundantBarriers
+# STATISTIC: BarriersCoveredLater = 1
+# STATISTIC: BarriersOnUnmarkableOwners = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+function f0 name="covered-on-all-paths" captures=[{type=env L0}] parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: env L0 @Cell, v1: anything @JSValue, v2: boolean @Boolean):
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    PutEnvironmentField v0, v1 layout=L0 field=1
+    Jump -> next b3()
+  b2():
+    PutEnvironmentField v0, v1 layout=L0 field=1
+    Jump -> next b3()
+  b3():
+    v6 @JSValue = Undefined
+    Return v6
+}
+# CHECK: outcome: Changed
+# CHECK: PutEnvironmentField v0, v1 layout=L0 [laterBarrierCovers]
+# CHECK-COUNT-2: PutEnvironmentField v0, v1 layout=L0 field=1
+# CHECK-NOT: laterBarrierCovers

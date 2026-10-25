@@ -1,0 +1,12 @@
+# A hot entrypoint takes the body of its function in beside a body that a call keeps: the copy is compiled for the calls by value alone
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass heat=EverythingIsHot only-passes=EstimateHeat,SummarizeForInlining,InlineCalls
+# RUN: pipeline InlineCalls
+
+# CHECK-LABEL: name="alsoCalledByName" module=m0 role=GenericEntrypoint
+# CHECK-NOT: = CallDirect
+# CHECK-COUNT-13: = Mul
+# CHECK-LABEL: name="enteredThroughClosuresAlone" module=m0 role=GenericEntrypoint
+# CHECK-NOT: = CallDirect
+# CHECK-COUNT-13: = Mul
+# PROGRAM-OF: inline-calls-entrypoint-of-shared-body.ir

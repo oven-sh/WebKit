@@ -1,0 +1,52 @@
+# A check that cannot fail loses its test and stays as an upcast where only one of operand and result has literal strings
+# FORM: Prepared optimizing
+# RUN: pass SimplifyCasts
+# STATISTIC: SimplifyCastsChanges = 4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="onlyOperandHasLiterals" parameters=[{type="a"|"b"}] results=[{type=string}] {
+    v1: string = Check v0 castType=string
+    Return v1
+# CHECK-NEXT: b0(v0: "a"|"b"):
+# CHECK-NEXT: v1: string = Upcast v0 castType=string
+# CHECK-NEXT: Return v1
+}
+
+function f1 name="onlyResultHasLiterals" parameters=[{type=number}] results=[{type=number|"a"}] {
+    v1: number|"a" = Check v0 castType=number|"a"
+    Return v1
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v1: number|"a" = Upcast v0 castType=number|"a"
+# CHECK-NEXT: Return v1
+}
+
+function f2 name="bothHaveLiterals" parameters=[{type="a"|"b"}] results=[{type=string}] {
+    v1 = Check v0 castType=string
+    Return v1
+# CHECK-NEXT: b0(v0: "a"|"b"):
+# CHECK-NEXT: Return v0
+}
+
+function f3 name="neitherHasLiterals" parameters=[{type=string}] results=[{type=string}] {
+    v1 = Check v0 castType=string
+    Return v1
+# CHECK-NEXT: b0(v0: string):
+# CHECK-NEXT: Return v0
+}
+
+function f4 name="checkCanFail" parameters=[{type=string}] results=[{type=string}] {
+    v1 = Check v0 castType="a"|"b"
+    Return v1
+# CHECK-NEXT: b0(v0: string):
+# CHECK-NEXT: v1: "a"|"b" = Check v0 castType="a"|"b"
+# CHECK-NEXT: Return v1
+}
+
+function f5 name="upcastStays" parameters=[{type="a"|"b"}] results=[{type=string}] {
+    v1: string = Upcast v0 castType=string
+    Return v1
+# CHECK-NEXT: b0(v0: "a"|"b"):
+# CHECK-NEXT: v1: string = Upcast v0 castType=string
+# CHECK-NEXT: Return v1
+}

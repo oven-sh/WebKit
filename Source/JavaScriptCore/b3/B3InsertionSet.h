@@ -74,9 +74,15 @@ public:
     
     Value* insertClone(size_t index, Value*);
 
-    void execute(BasicBlock*);
+    void execute(BasicBlock* block)
+    {
+        if (!m_insertions.isEmpty())
+            executeInsertions(block);
+    }
 
 private:
+    void executeInsertions(BasicBlock*);
+
     Procedure& m_procedure;
     Vector<Insertion, 8> m_insertions;
 

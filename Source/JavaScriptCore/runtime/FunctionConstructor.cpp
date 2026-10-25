@@ -21,6 +21,7 @@
 #include "config.h"
 #include "FunctionConstructor.h"
 
+#include "AOTRemovableFeature.h"
 #include "ExceptionHelpers.h"
 #include "FunctionPrototype.h"
 #include "GlobalObjectMethodTable.h"
@@ -58,7 +59,7 @@ JSC_DEFINE_HOST_FUNCTION(callFunctionConstructor, (JSGlobalObject* globalObject,
 }
 
 FunctionConstructor::FunctionConstructor(VM& vm, Structure* structure)
-    : InternalFunction(vm, structure, callFunctionConstructor, constructWithFunctionConstructor)
+    : InternalFunction(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callFunctionConstructor), JSC_REGISTERED_HOST_FUNCTION(constructWithFunctionConstructor))
 {
 }
 
@@ -214,8 +215,9 @@ JSObject* constructFunction(JSGlobalObject* globalObject, const ArgList& args, c
     RELEASE_AND_RETURN(scope, constructFunctionSkippingEvalEnabledCheck(globalObject, WTF::move(code), lexicallyScopedFeatures, functionName, sourceOrigin, sourceURL, taintedOrigin, position, -1, functionConstructorParametersEndPosition, functionConstructionMode, newTarget));
 }
 
-JSObject* constructFunctionSkippingEvalEnabledCheck(JSGlobalObject* globalObject, String&& program, LexicallyScopedFeatures lexicallyScopedFeatures, const Identifier& functionName, const SourceOrigin& sourceOrigin, const String& sourceURL, SourceTaintedness taintedOrigin, const TextPosition& position, int overrideLineNumber, std::optional<int> functionConstructorParametersEndPosition, FunctionConstructionMode functionConstructionMode, JSValue newTarget)
+NEVER_INLINE JSObject* constructFunctionSkippingEvalEnabledCheck(JSGlobalObject* globalObject, String&& program, LexicallyScopedFeatures lexicallyScopedFeatures, const Identifier& functionName, const SourceOrigin& sourceOrigin, const String& sourceURL, SourceTaintedness taintedOrigin, const TextPosition& position, int overrideLineNumber, std::optional<int> functionConstructorParametersEndPosition, FunctionConstructionMode functionConstructionMode, JSValue newTarget)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, constructFunctionSkippingEvalEnabledCheck);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 

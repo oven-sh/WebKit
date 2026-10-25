@@ -28,7 +28,12 @@
 #include "JSObjectInlines.h"
 #include "MarkedVector.h"
 #include "ObjectConstructor.h"
+#include "StructureArrayStorageInlines.h"
 #include "StructureCreateInlines.h"
+
+#if ENABLE(AOT)
+#include "AOTPropertyWalkInlines.h"
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -69,7 +74,7 @@ ALWAYS_INLINE void objectAssignIndexedPropertiesFast(JSGlobalObject* globalObjec
     RETURN_IF_EXCEPTION(scope, void());
 }
 
-ALWAYS_INLINE bool checkStructureForClone(Structure* structure)
+ALWAYS_INLINE bool checkStructureForClone(Structure* structure, bool requiresQuickEnumeration = true)
 {
     static constexpr bool verbose = false;
 
@@ -133,7 +138,7 @@ ALWAYS_INLINE bool checkStructureForClone(Structure* structure)
         return false;
     }
 
-    if (!structure->isQuickPropertyAccessAllowedForEnumeration()) {
+    if (requiresQuickEnumeration && !structure->isQuickPropertyAccessAllowedForEnumeration()) {
         dataLogLnIf(verbose, "target has symbol properties (right now we disable this optimization in this case since we cannot detect private symbol properties)");
         return false;
     }
@@ -303,17 +308,42 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
     properties.shrink(0);
     values.clear();
 
+    ASSERT(!target->structure()->isCompiledStructure());
+
     if (source->hasNonReifiedStaticProperties())
         return false;
 
     Structure* sourceStructure = source->structure();
-    if (!sourceStructure->canPerformFastPropertyEnumerationCommon())
+    if (!sourceStructure->canPerformFastPropertyEnumerationCommon()) {
+#if ENABLE(AOT)
+        if (sourceStructure->isCompiledStructure()) {
+            EnsureStillAliveScope sourceScope(source);
+            auto result = AOT::PropertyWalk::forEachOwnPropertyInline(vm, source, AOT::PropertyWalk::Filter::StringsAndSymbols, [&](const AOT::PropertyWalk::OwnProperty& property) {
+                if ((property.attributes & PropertyAttribute::DontEnum) || PropertyName(property.name).isPrivateName())
+                    return IterationStatus::Continue;
+                if (property.name == vm.propertyNames->underscoreProto.impl())
+                    return IterationStatus::Done;
+                properties.append(property.name);
+                values.appendWithCrashOnOverflow(property.value);
+                return IterationStatus::Continue;
+            });
+            if (result != AOT::PropertyWalk::Result::Completed)
+                return false;
+            if (properties.size())
+                target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
+            return true;
+        }
+#endif
         return false;
+    }
 
     if (objectCloneFast(vm, target, source))
         return true;
 
     if (source->canHaveExistingOwnIndexedGetterSetterProperties())
+        return false;
+
+    if (source->canHaveExistingOwnIndexedProperties() && target->structure()->holesMustForwardToPrototype(target)) [[unlikely]]
         return false;
 
     EnsureStillAliveScope sourceStructureScope(sourceStructure);

@@ -1,0 +1,31 @@
+# A concat with more operands than the limit stays a call
+# RUN: compile
+# RUN(SELECTED): pipeline Select
+# OPTIONS: limit=MaxInlineConcatOperands:1 heat=EverythingIsHot
+# LOSS: MaxInlineConcatOperands f1
+# CHECK: loss MaxInlineConcatOperands
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="publish" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f1 name="concatenatesTwo" parameters=[{type=Array<number>}, {type=Array<number>}, {type=number}] results=[{type=anything}] {
+    v3 = PropGet v0 key="concat"
+    v4 = Call v3, v0, v1, v2 calleeKey="concat"
+    Return v4
+}
+# Only its entrypoint enters the function, so the body is there
+# SELECTED-LABEL: name="concatenatesTwo" module=m0 role=GenericEntrypoint
+# SELECTED: [[array]]: Array<number> = AssumeType v2 castType=Array<number>
+# SELECTED: [[other]]: Array<number> = AssumeType v3 castType=Array<number>
+# SELECTED: [[number]]: number = AssumeType v4 castType=number
+# SELECTED-NOT: inlineBuiltin=ArrayConcat
+# SELECTED: = CallBuiltin [[array]], [[other]], [[number]] overload=ArrayPrototypeConcat/
+# SELECTED-NOT: inlineBuiltin=ArrayConcat

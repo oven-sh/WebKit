@@ -1,0 +1,6 @@
+# A fixpoint that reaches its limit counts it and goes on with valid IR
+# OPTIONS: limit=MaxOptimizationRounds:1 check=VerifyEachPass
+# RUN: pipeline NumberLiteralStrings
+# LOSS: MaxOptimizationRounds f0
+# CHECK: function f0
+# PROGRAM-OF: work-limit.ir

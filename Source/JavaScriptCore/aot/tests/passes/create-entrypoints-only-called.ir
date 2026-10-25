@@ -1,0 +1,20 @@
+# The closure of a hoisted declaration that is only called, or never read, is never created, so the function gets no generic entrypoint
+# FORM: Prepared
+# RUN: pass CreateEntrypoints
+# STATISTIC: GenericEntrypoints = 1
+# CHECK-COUNT-1: role=GenericEntrypoint{{*}}derivation={source=f2}
+# CHECK-NOT: role=GenericEntrypoint
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="onlyCalled" module=m0 declared={type=anything} initialization=Function function=f0 flow={stores=Never reads=OnlyCalled}
+variable g1 name="neverRead" module=m0 declared={type=anything} initialization=Function function=f1 flow={stores=Never reads=NeverRead}
+variable g2 name="readAsValue" module=m0 declared={type=anything} initialization=Function function=f2 flow={stores=Never}
+function f0 name="onlyCalled" results=[{type=undefined}] {
+    Return
+}
+function f1 name="neverRead" results=[{type=undefined}] {
+    Return
+}
+function f2 name="readAsValue" results=[{type=undefined}] {
+    Return
+}

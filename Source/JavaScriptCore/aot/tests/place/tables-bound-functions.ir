@@ -1,0 +1,73 @@
+# A bound function whose closure is a value has a row: its generic entrypoint, the one of its target, the bound arguments and, where the target has captures of its own, the slot of the target's closure. One that is only called has none
+# A target that captures nothing, and whose closures stay as created, is not captured: any closure of it answers instanceof alike
+# A plain function constructs, so the function bound to it does: the run time constructs the target, whose closure is captured for its prototype object, with the bound arguments out of the slots that the row names.
+# RUN: tables
+# RUN(BOUND): tables functions
+# RUN(TARGET): tables functions
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="bind"
+    v2 = Undefined
+    v3 = Integer integer=1
+    v4 = Call v1, v0, v2, v3 calleeKey="bind"
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="publish" [isFreeName]
+    v7 = Call v6, -, v4
+    v8 = NewClosure function=f2
+    v9 = PropGet v8 key="bind"
+    v10 = Call v9, v8, v2, v3 calleeKey="bind"
+    v11 = Call v10, -, v3
+    v12 = NewClosure function=f4
+    v13 = Call v6, -, v12
+    v14 = NewClosure function=f5
+    v15 = PropGet v14 key="bind"
+    v16 = Call v15, v14, v2, v5, v5 calleeKey="bind"
+    v17 = Call v6, -, v16
+    Return
+}
+function f1 name="published" kind=Arrow parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Add v0, v1
+    Return v2
+}
+function f2 name="onlyCalled" kind=Arrow parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="publish" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return v4
+}
+function f3 name="capturing" kind=Arrow captures=[{type=anything}] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Add v0, v1
+    v4 = Add v3, v2
+    Return v4
+}
+function f4 name="bindCapturing" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure v0 function=f3
+    v2 = PropGet v1 key="bind"
+    v3 = Undefined
+    v4 = Integer integer=1
+    v5 = Call v2, v1, v3, v4 calleeKey="bind"
+    Return v5
+}
+
+function f5 name="constructing" kind=Plain parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Add v0, v1
+    v4 = Add v3, v2
+    Return v4
+}
+
+# CHECK: magic ok
+# CHECK: boundFunctions 3 48
+# BOUND: function [[bound]] name="published" callable=Bound {{*}}captures=1
+# BOUND: function [[boundCapturing]] name="capturing" callable=Bound {{*}}captures=3
+# BOUND: function [[boundConstructing]] name="constructing" callable=Bound {{*}}captures=3
+# BOUND: bound function=[[bound]] target={{*}} arguments=1 targetClosureSlot=- constructs=false firstArgumentSlot=0 capturedArguments=0
+# BOUND-NEXT: bound function=[[boundCapturing]] target={{*}} arguments=1 targetClosureSlot=[[slot]] constructs=false
+# BOUND-NEXT: bound function=[[boundConstructing]] target={{*}} arguments=2 targetClosureSlot=2 constructs=true firstArgumentSlot=0 capturedArguments=2
+# BOUND-NOT: bound function=
+# TARGET: function [[target]] name="published" callable=Arrow {{*}}length=
+# TARGET: function [[capturingTarget]] name="capturing" callable=Arrow {{*}}length=
+# TARGET: bound function={{*}} target=[[target]] arguments=1
+# TARGET-NEXT: bound function={{*}} target=[[capturingTarget]] arguments=1

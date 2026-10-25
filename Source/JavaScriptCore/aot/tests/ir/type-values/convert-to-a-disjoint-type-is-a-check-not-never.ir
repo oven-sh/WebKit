@@ -1,0 +1,67 @@
+# The types say that these conversions fail every time. Each is a Check like any other: nothing throws, and where the test fails control leaves for the generic version,
+# which is made later as a copy of the code behind the Check. So that code stays, typed as behind a test that passed: the result has the target type, not never, and nothing is cut
+# FORM: AsRead
+# RUN: pass TypeValues VerifyProgram
+# STATISTIC: RequestsResolvedToCheck = 3
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Assertion
+typesite w1 module=m0 position=20 kind=Assertion
+typesite w2 module=m0 position=30 kind=Result
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+layout L1 name="Point3" fields=[{key="x" declared={type=number}}, {key="z" declared={type=number}}] supertypes=[L0]
+layout L2 name="Label" fields=[{key="text" declared={type=string}}]
+variable g0 name="last" module=m0 declared={type=anything} initialization=Undefined
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+function f0 name="numberIntoString" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = Convert v0 declared={type=string site=w0} illTypedCause=Assertion
+    PutModuleVariable v1 variable=g0
+    v3 = Strcat v1, v1
+    Return v3
+# CHECK: b0(v0: number):
+# CHECK-NEXT: v1: string = Check v0 castType=string site=w0
+# CHECK-NEXT: PutModuleVariable v1 variable=g0
+# CHECK-NEXT: v3: string = Strcat v1, v1
+# CHECK-NEXT: Return v3
+}
+function f1 name="layoutOutsideTheFamily" results=[{type=anything}] {
+    v0 = NewObject layout=L2
+    v1 = Convert v0 declared={type=L0 site=w1} illTypedCause=Assertion
+    v2 = PropGet v1 key="x"
+    Return v2
+# CHECK: v0: L2 = NewObject layout=L2
+# CHECK-NEXT: v1: L0|L1 = Check v0 castType=L0|L1 site=w1
+# CHECK-NOT: never
+# CHECK: = PropGet v1 key="x"
+# CHECK-NEXT: Return v2
+}
+function f2 name="oneArmOfAJoin" parameters=[{type=boolean}, {type=number}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Convert v1 declared={type=string site=w0} illTypedCause=Assertion
+    Jump -> next b3(v2)
+  b2():
+    v3 = String string="none"
+    Jump -> next b3(v3)
+  b3(v4):
+    Return v4
+# CHECK: Branch v0 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v2: string = Check v1 castType=string site=w0
+# CHECK-NEXT: Jump -> next b3(v2)
+# CHECK: Jump -> next b3(v3)
+# CHECK-NEXT: b3(v4: string):
+# CHECK-NEXT: Return v4
+}
+function f3 name="tailCall" results=[{type=string site=w2}] {
+    v0 = CallDirect function=f4
+    ReturnCall v0 casts=[{declared={type=string site=w2}}]
+# CHECK: v0: number = CallDirect function=f4
+# CHECK-NEXT: ReturnCall v0 casts=[{declared={type=string site=w2} resolution=Check}]
+}
+function f4 name="count" results=[{type=number}] {
+    v0 = Integer integer=1
+    Return v0
+}

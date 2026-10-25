@@ -1,0 +1,5 @@
+# Module variables, free names, environment fields and static fields pass the back-end checks in compact code
+# RUN: compile
+# OPTIONS: heat=everything-is-cold validate check=validate-back-end only-passes=EstimateHeat,ResolveAccesses
+# CHECK: image not empty
+# PROGRAM-OF: fast.ir

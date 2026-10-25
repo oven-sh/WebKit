@@ -28,6 +28,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "AOTRemovableFeature.h"
 #include "AuxiliaryBarrierInlines.h"
 #include "DeferredWorkTimer.h"
 #include "Exception.h"
@@ -346,8 +347,9 @@ static void compileAndInstantiate(VM& vm, JSGlobalObject* globalObject, JSPromis
     }));
 }
 
-JSValue JSWebAssembly::instantiate(JSGlobalObject* globalObject, JSPromise* promise, JSModuleLoader* moduleLoader, RefPtr<SourceProvider>&& sourceProvider, const Identifier& moduleKey, JSValue argument)
+NEVER_INLINE JSValue JSWebAssembly::instantiate(JSGlobalObject* globalObject, JSPromise* promise, JSModuleLoader* moduleLoader, RefPtr<SourceProvider>&& sourceProvider, const Identifier& moduleKey, JSValue argument)
 {
+    JSC_REMOVABLE_DEFINITION(WebAssembly, &JSWebAssembly::instantiate);
     VM& vm = globalObject->vm();
     std::optional<WebAssemblyCompileOptions> compileOptions;
     if (Options::useWasmJSStringBuiltins())

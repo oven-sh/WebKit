@@ -1,0 +1,16 @@
+# In the middle of the optimization stage the operations of AsRead and of Prepared are legal together, and those of selection are not
+# FORM: Prepared optimizing
+# RUN: verify optimizing
+# DIAGNOSTIC: OpcodeNotInForm 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bad" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = PropGetAndTest v0 key="x"
+    Return
+}
+function f1 name="good" parameters=[{type=anything}, {type=string}] results=[{type=undefined}] {
+    v2 = IteratorOpen v0
+    IteratorClose v2
+    v4 = GetStringLength v1
+    Return
+}

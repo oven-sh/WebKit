@@ -1,0 +1,69 @@
+# An int32 stays in its register around a call and takes one instruction to become a value of any type; a number that may be a double is spilled around the call and costs a handful to become one.
+# So a counter that goes into a call which stays a call is wanted as an int32, and the number that bounds it is tested in front of the loop.
+# Where the call is copied in, what the copy does with the counter decides: added to a number, it is wanted as a number.
+# RUN: pipeline Select
+# OPTIONS: check=VerifyEachPass
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="count" [isFreeName]
+    v2 = ToNumber v1
+    v3 = CallDirect v2 function=f1
+    v4 = CallDirect v2 function=f2
+    v5 = PropGet v0 key="sink" [isFreeName]
+    v6 = Call v5, -, v3, v4
+    Return
+}
+function f1 name="handsTheCounterToALargeFunction" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Less v2, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = CallDirect v2 function=f3
+    v7 = Add v3, v6
+    v8 = Increment v2
+    Jump -> next b1(v8, v7)
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f1 name="handsTheCounterToALargeFunction"
+# CHECK: = TypeTest v0 testedType=i32
+# CHECK: LoopHint
+# CHECK-NEXT: = Less {{*}}form=Integers
+# CHECK: = CallDirect {{*}}function=f3
+
+function f2 name="handsTheCounterToASmallFunction" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Less v2, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = CallDirect v2, v3 function=f4
+    v7 = Increment v2
+    Jump -> next b1(v7, v6)
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f2 name="handsTheCounterToASmallFunction"
+# CHECK-NOT: TypeTest
+# CHECK: = Less {{*}}form=Numbers
+# CHECK-NOT: TypeTest
+
+function f3 name="large" parameters=[{type=anything}] results=[{type=number}] {
+    v1 = ToNumber v0
+# REPEAT: i = 1..120
+    v%(i+1) = Mul v%(i), v1
+# END REPEAT
+    Return v121
+}
+function f4 name="small" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = Add v1, v0
+    Return v2
+}

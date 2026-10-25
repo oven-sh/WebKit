@@ -1,0 +1,42 @@
+# x < y where the numbers arrive boxed: they are compared as they are: behind one test of both tags it is a comparison of two int32, and nothing is unboxed to a double.
+# An int32 beside a boxed number stays an int32. A number that is a double already is compared as a double
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: pass ChooseRepresentations
+# RUN(CODE): generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="twoTestedNumbers" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+    v2 = AssumeType v0 castType=number
+    v3 = AssumeType v1 castType=undefined|number
+    v4 = Less v2, v3 form=Numbers
+    Return v4
+# CHECK-NOT: Unbox
+# CHECK: v4: boolean @Boolean = Less v2, v3 form=Numbers
+}
+
+function f1 name="branchOnBoxedNumberAndInt32" parameters=[{type=anything}, {type=i32}] results=[{type=i32}] {
+    v2 = TypeTest v0 testedType=number
+    TestAndBranch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3: number):
+    v4 = GreaterEq v3, v1 form=Numbers
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=1
+    Return v5
+  b3():
+    Return v1
+# CHECK: b1(v3: number @JSValue):
+# CHECK-NEXT: v4: boolean @Boolean = GreaterEq v3, v1 form=Numbers
+}
+
+function f2 name="doubleStaysDouble" parameters=[{type=number}, {type=anything}] results=[{type=boolean}] {
+    v2 = AssumeType v1 castType=number
+    v3 = Mul v0, v0 form=Numbers
+    v4 = LessEq v3, v2 form=Numbers
+    Return v4
+}
+# CHECK-LABEL: function f2 name="doubleStaysDouble"
+# CHECK-NOT: Unbox
+# CHECK: v4: boolean @Boolean = LessEq v3, v2 form=Numbers
+# CODE-NOT: no code

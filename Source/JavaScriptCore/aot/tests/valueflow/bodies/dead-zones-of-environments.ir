@@ -1,0 +1,24 @@
+# A field of an environment whose type has a dead zone holds nothing until its first store, and the allocation leaves it out: the body seeds it. A field that the allocation lists, and one without a dead zone, hold only what is stored
+# RUN: valueflow-body f0
+# CHECK: body f0: nodes=3 sites=0 edges=0 edgesOnceReached=2 seeds=2 statements=0
+# CHECK: reached: edge n0 -> L0.0
+# CHECK-NEXT: reached: edge n0 -> L0.1
+# CHECK-NEXT: reached: seed n1 <- closure f1
+# CHECK-NEXT: reached: seed L0.0 <- absent
+# CHECK-NOT: seed
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 kind=Environment module=m0 position=20 fields=[{declared={type=anything|absent}}, {declared={type=anything|absent}}, {declared={type=anything}}]
+function f0 name="owner" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[1]
+    v2 = NewClosure v1 function=f1
+    PutEnvironmentField v1, v0 layout=L0
+    Return v2
+}
+function f1 name="reader" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = CheckInitialized v1 name="late"
+    Return v2
+}

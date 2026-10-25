@@ -1,0 +1,145 @@
+# A member of a receiver typed as one built-in class without a proof waits for a test: ResolveBuiltins places none, PlaceTypeTests tests and the generic operation stays on the failing side
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# RUN(PLACED): pass ResolveBuiltins PlaceTypeTests
+# CHECK: outcome: Unchanged
+# PLACED: outcome: Unchanged
+# PLACED: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="methodOfClassNeverPristine" parameters=[{type=WeakRef}] results=[{type=anything}] {
+    v1 = PropGet v0 key="deref"
+    v2 = Call v1, v0 calleeKey="deref"
+    Return v2
+# PLACED-NOT: IsPristine
+# PLACED: v1: anything = PropGet v0 key="deref"
+# PLACED-NEXT: Jump -> next [[test0]]()
+# PLACED-NOT: IsPristine
+# PLACED: anything = CallBuiltin v0 overload=WeakRefPrototypeDeref/0
+# PLACED-NOT: IsPristine
+# PLACED: [[test0]]():
+# PLACED-NEXT: [[isDeref]]: boolean = TypeTest v1 testedType=builtin(WeakRefPrototypeDeref)
+# PLACED-NEXT: Branch [[isDeref]] -> taken [[fast0]](| 0), notTaken [[generic0]](
+# PLACED-NEXT: frequency=Unlikely
+# PLACED-NEXT: anything = Call {{*}}, v0 calleeKey="deref"
+# PLACED-NOT: IsPristine
+}
+
+function f1 name="methodUnderHandler" parameters=[{type=WeakRef}] results=[{type=anything}] {
+  b0(v0: WeakRef) handler=b2():
+    v1 = PropGet v0 key="deref"
+    v2 = Call v1, v0 calleeKey="deref"
+    Jump -> next b1()
+  b1():
+    Return v2
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+# PLACED: ({{*}}: builtin(WeakRefPrototypeDeref)) handler=b2():
+# PLACED-NEXT: anything = CallBuiltin v0 overload=WeakRefPrototypeDeref/0
+# PLACED: TypeTest v1 testedType=builtin(WeakRefPrototypeDeref)
+# PLACED: frequency=Unlikely handler=b2():
+# PLACED-NEXT: anything = Call {{*}}, v0 calleeKey="deref"
+}
+
+function f2 name="methodOfLockedClass" parameters=[{type=RegExp}, {type=string}] results=[{type=anything}] {
+    v2 = PropGet v0 key="test"
+    v3 = Call v2, v0, v1 calleeKey="test"
+    Return v3
+# PLACED: [[isPristine2]]: boolean = IsPristine v0 builtinClass=RegExp aspects=[Names]
+# PLACED-NEXT: Branch [[isPristine2]] -> taken
+# PLACED-NOT: IsPristine
+# PLACED: = Builtin builtin=RegExpPrototypeTest
+# PLACED-NOT: IsPristine
+# PLACED: boolean = CallBuiltin v0, v1 overload=RegExpPrototypeTest/0 [needsPristineReceiver]
+# PLACED: frequency=Unlikely
+# PLACED: anything = PropGet v0 key="test"
+# PLACED: anything = Call {{*}}, v0, v1 calleeKey="test"
+}
+
+function f3 name="getterOfLockedClass" parameters=[{type=RegExp}] results=[{type=anything}] {
+    v1 = PropGet v0 key="sticky"
+    Return v1
+# PLACED: [[isPristine3]]: boolean = IsPristine v0 builtinClass=RegExp aspects=[Names]
+# PLACED-NEXT: Branch [[isPristine3]] -> taken
+# PLACED: boolean = CallBuiltin v0 overload=RegExpPrototypeSticky/0
+# PLACED: frequency=Unlikely
+# PLACED-NEXT: anything = PropGet v0 key="sticky"
+}
+
+function f4 name="getterOfClassNeverPristine" parameters=[{type=Symbol}] results=[{type=anything}] {
+    v1 = PropGet v0 key="description"
+    Return v1
+# PLACED-NEXT: b0(v0: Symbol):
+# PLACED-NEXT: v1: anything = PropGet v0 key="description"
+# PLACED-NEXT: Return v1
+}
+
+function f5 name="receiverAsArgument" parameters=[{type=Uint8Array}] results=[{type=anything}] {
+    v1 = PropGet v0 key="set"
+    v2 = Call v1, v0, v0 calleeKey="set"
+    Return v2
+# PLACED: IsPristine v0 builtinClass=Uint8Array aspects=[Names]
+# PLACED: undefined = CallBuiltin v0, v0 overload=TypedArrayPrototypeSet/0
+# PLACED: frequency=Unlikely
+# PLACED: anything = Call {{*}}, v0, v0 calleeKey="set"
+}
+
+function f6 name="nullableReceiver" parameters=[{type=null|RegExp}] results=[{type=anything}] {
+    v1 = PropGet v0 key="test"
+    Return v1
+# PLACED: IsPristine v0 builtinClass=RegExp aspects=[Names]
+# PLACED: = Builtin builtin=RegExpPrototypeTest
+# PLACED: frequency=Unlikely
+# PLACED-NEXT: anything = PropGet v0 key="test"
+}
+
+function f7 name="wrapperObject" parameters=[{type=String}] results=[{type=anything}] {
+    v1 = PropGet v0 key="trim"
+    v2 = Call v1, v0 calleeKey="trim"
+    Return v2
+# PLACED-NOT: IsPristine
+# PLACED: v1: anything = PropGet v0 key="trim"
+# PLACED-NEXT: Jump -> next [[test7]]()
+# PLACED: [[text]]: string = ToString v0
+# PLACED-NEXT: string = CallBuiltin [[text]] overload=StringPrototypeTrim/0
+# PLACED: [[test7]]():
+# PLACED-NEXT: boolean = TypeTest v1 testedType=builtin(StringPrototypeTrim)
+# PLACED: frequency=Unlikely
+# PLACED-NEXT: anything = Call {{*}}, v0 calleeKey="trim"
+}
+
+function f8 name="receiverWithProvenContents" parameters=[{type=Array<number, proven>}, {type=i32}] results=[{type=anything}] {
+    v2 = PropGet v0 key="at"
+    v3 = Call v2, v0, v1 calleeKey="at"
+    Return v3
+# PLACED: IsPristine v0 builtinClass=Array
+# PLACED: undefined|number = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0 [needsPristineReceiver]
+# PLACED: frequency=Unlikely
+# PLACED: anything = Call {{*}}, v0, v1 calleeKey="at"
+}
+
+function f9 name="expectedReceiver" parameters=[{type=RegExp flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ RegExp):
+    v1 = PropGet v0 key="sticky"
+    Return v1
+# PLACED: [[isRegExp]]: boolean{{*}} = TypeTest v0 testedType=RegExp
+# PLACED-NEXT: Branch [[isRegExp]] -> taken [[tested9]](| 0)
+# PLACED: boolean = CallBuiltin [[regExp]] overload=RegExpPrototypeSticky/0
+# PLACED: frequency=Unlikely
+# PLACED-NEXT: anything = PropGet v0 key="sticky"
+# PLACED: [[tested9]]([[regExp]]: RegExp):
+# PLACED-NEXT: boolean = IsPristine [[regExp]] builtinClass=RegExp aspects=[Names]
+}
+
+function f10 name="methodOfClassWithLockedMembers" parameters=[{type=Map}, {type=string}] results=[{type=anything}] {
+    v2 = PropGet v0 key="get"
+    v3 = Call v2, v0, v1 calleeKey="get"
+    Return v3
+# PLACED: boolean = IsPristine v0 builtinClass=Map aspects=[Names]
+# PLACED: = Builtin builtin=MapPrototypeGet
+# PLACED: anything = CallBuiltin v0, v1 overload=MapPrototypeGet/0
+# PLACED: frequency=Unlikely
+# PLACED: anything = PropGet v0 key="get"
+# PLACED: anything = Call {{*}}, v0, v1 calleeKey="get"
+}

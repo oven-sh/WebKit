@@ -1,0 +1,22 @@
+# The number of callees resolved in front of one loop has no limit
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: ResolvedCallTargetGroups = 13
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="thirteen-callees" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+# REPEAT: i = 0..12
+    v%(i+15) = Call v%(i)
+# END REPEAT
+    Branch v13 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-COUNT-13: = ResolveCallTarget
+# CHECK-NOT: = ResolveCallTarget
+# CHECK: Jump -> next b1()
+# CHECK-NOT: = Call v
+# CHECK-COUNT-13: = CallResolved

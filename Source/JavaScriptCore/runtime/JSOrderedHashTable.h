@@ -41,6 +41,12 @@ public:
 
     DECLARE_VISIT_CHILDREN;
 
+    template<typename Visitor>
+    ALWAYS_INLINE static void visitFields(JSOrderedHashTable* thisObject, Visitor& visitor)
+    {
+        visitor.append(thisObject->m_storage);
+    }
+
     JSOrderedHashTable(VM& vm, Structure* structure)
         : Base(vm, structure)
     {
@@ -55,10 +61,24 @@ public:
         Base::finishCreation(vm);
 
         if (base->m_storage) {
+#if ENABLE(AOT)
+            if (Helper::isCompact(*base->m_storage.get())) [[unlikely]] {
+                JSCell* storage = AOT::CompactStorage::copy(globalObject, base->m_storage.get());
+                RETURN_IF_EXCEPTION(scope, void());
+                m_storage.set(vm, this, storage);
+                return;
+            }
+#endif
             Storage* storage = Helper::copy(globalObject, base->storageRef());
             RETURN_IF_EXCEPTION(scope, void());
             m_storage.set(vm, this, storage);
         }
+    }
+
+    ALWAYS_INLINE bool hasCompactStorage() const
+    {
+        JSCell* storage = m_storage.get();
+        return storage && Helper::isCompact(*storage);
     }
 
     ALWAYS_INLINE JSValue* getKeySlot(JSGlobalObject* globalObject, JSValue key, uint32_t hash)
@@ -71,6 +91,10 @@ public:
     ALWAYS_INLINE bool has(JSGlobalObject* globalObject, JSValue key)
     {
         if (m_storage) {
+#if ENABLE(AOT)
+            if (Helper::isCompact(*m_storage.get())) [[unlikely]]
+                return AOT::CompactStorage::has(globalObject, m_storage.get(), key);
+#endif
             auto result = Helper::find(globalObject, storageRef(), key);
             return result.entryKeyIndex != Helper::InvalidTableIndex;
         }
@@ -82,8 +106,20 @@ public:
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if ENABLE(AOT)
+        if (!m_storage && vm.hasCompiledCode()) [[unlikely]] {
+            JSCell* storage = AOT::CompactStorage::tryCreateForFirstEntry(globalObject, Traits::hasValueData, key, value);
+            RETURN_IF_EXCEPTION(scope, void());
+            m_storage.set(vm, this, storage);
+        }
+#endif
         materializeIfNeeded(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
+
+#if ENABLE(AOT)
+        if (Helper::isCompact(*m_storage.get())) [[unlikely]]
+            RELEASE_AND_RETURN(scope, AOT::CompactStorage::add(globalObject, this, m_storage.get(), key, value));
+#endif
 
         RELEASE_AND_RETURN(scope, Helper::add(globalObject, this, storageRef(), key, value));
     }
@@ -100,8 +136,13 @@ public:
 
     ALWAYS_INLINE bool remove(JSGlobalObject* globalObject, JSValue key)
     {
-        if (m_storage)
+        if (m_storage) {
+#if ENABLE(AOT)
+            if (Helper::isCompact(*m_storage.get())) [[unlikely]]
+                return AOT::CompactStorage::remove(globalObject, this, m_storage.get(), key);
+#endif
             return Helper::remove(globalObject, this, storageRef(), key);
+        }
         return false;
     }
     ALWAYS_INLINE bool removeNormalized(JSGlobalObject* globalObject, JSValue key, uint32_t hash)
@@ -113,15 +154,27 @@ public:
 
     ALWAYS_INLINE uint32_t size()
     {
-        if (m_storage)
+        if (m_storage) {
+#if ENABLE(AOT)
+            if (Helper::isCompact(*m_storage.get())) [[unlikely]]
+                return AOT::CompactStorage::aliveEntryCount(m_storage.get());
+#endif
             return Helper::aliveEntryCount(storageRef());
+        }
         return 0;
     }
 
     ALWAYS_INLINE void clear(JSGlobalObject* globalObject)
     {
-        if (m_storage)
+        if (m_storage) {
+#if ENABLE(AOT)
+            if (Helper::isCompact(*m_storage.get())) [[unlikely]] {
+                AOT::CompactStorage::clear(globalObject, this, m_storage.get());
+                return;
+            }
+#endif
             Helper::clear(globalObject, this, storageRef());
+        }
     }
 
     ALWAYS_INLINE void materializeIfNeeded(JSGlobalObject* globalObject)
@@ -132,6 +185,14 @@ public:
         if (m_storage)
             return;
 
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode()) [[unlikely]] {
+            JSCell* storage = AOT::CompactStorage::tryCreate(globalObject, Traits::hasValueData);
+            RETURN_IF_EXCEPTION(scope, void());
+            m_storage.set(vm, this, storage);
+            return;
+        }
+#endif
         Storage* storage = Helper::tryCreate(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         m_storage.set(vm, this, storage);
@@ -157,11 +218,11 @@ public:
 
     ALWAYS_INLINE Storage& storageRef()
     {
-        ASSERT(m_storage);
-        return *m_storage.get();
+        ASSERT(m_storage && !hasCompactStorage());
+        return *uncheckedDowncast<Storage>(m_storage.get());
     }
 
-    WriteBarrier<Storage> m_storage;
+    WriteBarrier<JSCell> m_storage;
 };
 
 class JSOrderedHashMap : public JSOrderedHashTable<MapTraits> {
@@ -192,6 +253,12 @@ public:
     }
     ALWAYS_INLINE JSValue get(JSGlobalObject* globalObject, JSValue key)
     {
+#if ENABLE(AOT)
+        if (hasCompactStorage()) [[unlikely]] {
+            JSValue result = AOT::CompactStorage::find(globalObject, m_storage.get(), key);
+            return result.isEmpty() ? jsUndefined() : result;
+        }
+#endif
         JSValue result = getImpl(globalObject, [&](Storage& storage) ALWAYS_INLINE_LAMBDA {
             return Helper::find(globalObject, storage, key);
         });
@@ -219,24 +286,31 @@ public:
         materializeIfNeeded(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
 
-        Storage& storage = storageRef();
+#if ENABLE(AOT)
+        if (Helper::isCompact(*m_storage.get())) [[unlikely]] {
+            JSValue value = AOT::CompactStorage::find(globalObject, m_storage.get(), key);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (value)
+                return value;
+        } else
+#endif
+        {
+            Storage& storage = storageRef();
 
-        JSValue value;
+            auto result = Helper::find(globalObject, storage, key);
+            RETURN_IF_EXCEPTION(scope, { });
 
-        auto result = Helper::find(globalObject, storage, key);
+            if (Helper::isValidTableIndex(result.entryKeyIndex))
+                return Helper::get(storage, result.entryKeyIndex + 1);
+        }
+
+        JSValue value = getValueFunctor();
         RETURN_IF_EXCEPTION(scope, { });
 
-        if (Helper::isValidTableIndex(result.entryKeyIndex))
-            value = Helper::get(storage, result.entryKeyIndex + 1);
-        else {
-            value = getValueFunctor();
-            RETURN_IF_EXCEPTION(scope, { });
-
-            // Call to getValueFunctor can modify our state, so we need to re-check the index
-            // There is a chance that callback inserts an entry for this |key|.
-            add(globalObject, key, value);
-            RETURN_IF_EXCEPTION(scope, { });
-        }
+        // Call to getValueFunctor can modify our state, so we need to re-check the index
+        // There is a chance that callback inserts an entry for this |key|.
+        add(globalObject, key, value);
+        RETURN_IF_EXCEPTION(scope, { });
 
         return value;
     }

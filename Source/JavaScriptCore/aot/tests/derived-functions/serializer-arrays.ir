@@ -1,0 +1,132 @@
+# An array member is written by one loop per storage its elements allow, an odd element falls back alone, and only behind an element that may have run user code are the guards renewed
+# FORM: Prepared
+# RUN: derived-functions Serializer:L0 Serializer:L1 Serializer:L2
+# STATISTIC: SerializersCreated = 4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Numbers" fields=[{key="list" declared={type=Array<number>}}] flow={constructorOrders=[{fields=[0]}]}
+layout L1 name="Strings" fields=[{key="list" declared={type=Array<string>}}] flow={constructorOrders=[{fields=[0]}]}
+layout L2 name="Items" fields=[{key="list" declared={type=Array<L3>}}] flow={constructorOrders=[{fields=[0]}]}
+layout L3 name="Item" fields=[{key="x" declared={type=number}}] flow={constructorOrders=[{fields=[0]}]}
+
+# CHECK: function {{*}}creator=Serializer{layout=L0}
+# CHECK: [[numbers]]: Array<number> = GetSlot v0, {{*}} key="list" receivers=[L0] level=Expected
+# CHECK-NOT: JSONAppendKey
+# CHECK: [[pristine0]]: boolean = IsPristine [[numbers]] builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch [[pristine0]] -> taken [[isPristine0]](| 0), notTaken
+# CHECK-NOT: JSONAppendKey
+# CHECK: = StringBuilderCheckpoint v1
+# CHECK: = JSONAppendKey v1, {{*}} string="list"
+# CHECK: = StringBuilderAppendJSON v1, [[numbers]],
+# CHECK: [[isPristine0]]([[pristineGuard0]]: guard):
+# CHECK-NEXT: [[length0]]:{{*}}= GetArrayLength [[numbers]], [[pristineGuard0]]
+# CHECK-NEXT: [[zero0]]: 0 = Integer
+# CHECK-NEXT: [[isEmpty0]]: boolean = StrictEq [[length0]], [[zero0]]
+# CHECK-NEXT: Branch [[isEmpty0]] -> taken [[empty0]](), notTaken [[hasElements0]]()
+# CHECK: [[empty0]]():
+# CHECK-NEXT: [[emptyKey0]]: buildercursor = JSONAppendKey v1, {{*}} string="list"
+# CHECK-NEXT: = JSONAppendToken v1, [[emptyKey0]] jsonToken=EmptyArray
+# CHECK: [[hasElements0]]():
+# CHECK-NEXT: [[isInt32]]: boolean = HasArrayStorage [[numbers]] arrayStorage=Int32
+# CHECK-NEXT: Branch [[isInt32]] -> taken [[int32]](| 0), notTaken [[notInt32]]()
+# CHECK: [[int32]]([[int32Guard]]: guard):
+# CHECK-NEXT: [[int32Key]]: buildercursor = JSONAppendKey v1, {{*}} string="list"
+# CHECK-NEXT: = JSONAppendToken v1, [[int32Key]] jsonToken=OpenArray
+# CHECK-NEXT: = AllGuards [[pristineGuard0]], [[int32Guard]]
+# CHECK: [[notInt32]]():
+# CHECK-NEXT: [[isDouble]]: boolean = HasArrayStorage [[numbers]] arrayStorage=Double
+# CHECK-NEXT: Branch [[isDouble]] -> taken [[double]](| 0), notTaken [[notDouble]]()
+# CHECK: ([[i0]]:{{*}}, {{*}}: buildercursor, [[g0]]: guard):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[e0]]: undefined|i32{{*}}= GetArrayElement [[numbers]], [[i0]], [[g0]] arrayStorage=Int32 [keyIsIntegral]
+# CHECK-NEXT: [[isHole0]]: boolean = TypeTest [[e0]] testedType=undefined
+# CHECK-NEXT: Branch [[isHole0]] -> taken [[hole0]](| 0), notTaken [[integer0]](| 0)
+# CHECK: [[hole0]]({{*}}: undefined):
+# CHECK: = JSONAppendToken v1, {{*}} jsonToken=Null
+# CHECK: [[integer0]]([[int0]]: i32):
+# CHECK: = JSONAppendInteger v1, {{*}}, [[int0]]
+# CHECK: = JSONAppendToken v1, {{*}} jsonToken=Comma
+# CHECK: = JSONAppendToken v1, {{*}} jsonToken=CloseArray
+# CHECK: [[notDouble]]():
+# CHECK-NEXT: = HasArrayStorage [[numbers]] arrayStorage=Contiguous
+# CHECK: LoopHint
+# CHECK-NEXT: [[e1]]: undefined|number{{*}}= GetArrayElement [[numbers]], {{*}} arrayStorage=Double [keyIsIntegral]
+# CHECK: = JSONAppendNumber v1,
+# CHECK: LoopHint
+# CHECK-NEXT: = GetArrayElement [[numbers]], {{*}} arrayStorage=Contiguous [keyIsIntegral]
+# CHECK: = JSONAppendNumber v1,
+
+# CHECK: function {{*}}creator=Serializer{layout=L1}
+# CHECK: [[strings]]: Array<string> = GetSlot v0, {{*}} key="list" receivers=[L1] level=Expected
+# CHECK: = IsPristine [[strings]] builtinClass=Array aspects=[Storage, Names]
+# CHECK-NOT: arrayStorage=Int32
+# CHECK-NOT: arrayStorage=Double
+# CHECK: = HasArrayStorage [[strings]] arrayStorage=Contiguous
+# CHECK-NOT: arrayStorage=Int32
+# CHECK-NOT: arrayStorage=Double
+# CHECK: = GetArrayElement [[strings]], {{*}} arrayStorage=Contiguous [keyIsIntegral]
+# CHECK: ([[string1]]: string):
+# CHECK: = JSONAppendString v1, {{*}}, [[string1]]
+# CHECK-NOT: arrayStorage=Int32
+# CHECK-NOT: arrayStorage=Double
+
+# CHECK: function {{*}}creator=Serializer{layout=L2}
+# CHECK: [[items]]: Array<L3> = GetSlot v0, {{*}} key="list" receivers=[L2] level=Expected
+# CHECK: [[length2]]:{{*}}= GetArrayLength [[items]],
+# CHECK: [[loop2]]([[i2]]:{{*}}, {{*}}: buildercursor, [[g2]]: guard):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[e2]]:{{*}}= GetArrayElement [[items]], [[i2]], [[g2]] arrayStorage=Contiguous [keyIsIntegral]
+# CHECK: ([[cursorAfterPlain2]]: buildercursor):
+# CHECK: [[nextAfterPlain2]]:{{*}}= Add [[i2]],
+# CHECK-NEXT: [[hasNextAfterPlain2]]: boolean = Less [[nextAfterPlain2]], [[length2]]
+# CHECK-NEXT: Branch [[hasNextAfterPlain2]] -> taken [[goOnAfterPlain2]](| 0), notTaken
+# CHECK: [[isPrimitive2]]:{{*}}= TypeTest {{*}} testedType=null|boolean|number|string
+# CHECK-NEXT: Branch [[isPrimitive2]] -> taken [[primitive2]](| 0), notTaken [[cell2]](| 0)
+# CHECK: [[gaveUp2]]() frequency=Rare:
+# CHECK-NEXT: = StringBuilderAppendJSON v1, [[object2]], [[i2]]
+# CHECK: ([[object2]]: object ~ L3):
+# CHECK-NEXT: [[shape2]]: boolean = ShapeTest [[object2]] layouts=[L3]
+# CHECK: [[outcome2]]:{{*}}= CallDirect [[object2]], v1 function=[[serializerOfItem]]
+# CHECK-NEXT: Switch [[outcome2]] cases=[1] -> case [[written2]](), otherwise [[unknown2]]()
+# CHECK: [[unknown2]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[gaveUp2]]()
+# CHECK: [[written2]]():
+# CHECK-NEXT: [[roomAfterItem2]]: buildercursor = StringBuilderReserve v1
+# CHECK-NEXT: Jump -> next [[afterUnknownCode2]]([[roomAfterItem2]])
+# CHECK: [[afterUnknownCode2]]({{*}}: buildercursor):
+# CHECK: [[next2]]:{{*}}= Add [[i2]],
+# CHECK-NEXT: [[hasNext2]]: boolean = Less [[next2]], [[length2]]
+# CHECK-NEXT: Branch [[hasNext2]] -> taken [[renew2]](| 0), notTaken
+# CHECK: [[primitive2]]([[narrowed2]]:{{*}}) frequency=Rare:
+# CHECK: = JSONAppendValue v1, {{*}}, [[narrowed2]] jsonPosition=Element
+# CHECK: [[cell2]]([[other2]]:{{*}}) frequency=Rare:
+# CHECK-NEXT: = StringBuilderAppendJSON v1, [[other2]], [[i2]]
+# CHECK: [[goOnAfterPlain2]]([[nextIndexAfterPlain2]]:{{*}}):
+# CHECK-NEXT: [[commaAfterPlain2]]: buildercursor = JSONAppendToken v1, [[cursorAfterPlain2]] jsonToken=Comma
+# CHECK-NEXT: Jump -> next [[loop2]]([[nextIndexAfterPlain2]], [[commaAfterPlain2]], [[g2]])
+# CHECK: [[renew2]]([[nextIndex2]]:{{*}}):
+# CHECK-NEXT: [[pristineAgain]]: boolean = IsPristine [[items]] builtinClass=Array aspects=[Storage, Names]
+# CHECK-NEXT: Branch [[pristineAgain]] -> taken [[storageAgainBlock]](| 0), notTaken
+# CHECK: [[stale2]]() frequency=Rare:
+# CHECK-NEXT: StringBuilderCommit v1,
+# CHECK-NEXT: Jump -> next [[byName2]]([[nextIndex2]])
+# CHECK: [[storageAgainBlock]]([[pristineGuardAgain]]: guard):
+# CHECK-NEXT: = HasArrayStorage [[items]] arrayStorage=Contiguous
+# CHECK: ([[storageGuardAgain]]: guard):
+# CHECK-NEXT: [[renewed2]]: guard = AllGuards [[pristineGuardAgain]], [[storageGuardAgain]]
+# CHECK-NEXT: [[lengthNow]]:{{*}}= GetArrayLength [[items]], [[renewed2]]
+# CHECK-NEXT: [[stillInside]]: boolean = Less [[nextIndex2]], [[lengthNow]]
+# CHECK-NEXT: Branch [[stillInside]] -> taken [[goOn2]](), notTaken [[shorter2]]()
+# CHECK: [[goOn2]]():
+# CHECK-NEXT: [[comma2]]: buildercursor = JSONAppendToken v1, {{*}} jsonToken=Comma
+# CHECK-NEXT: Jump -> next [[loop2]]([[nextIndex2]], [[comma2]], [[renewed2]])
+# CHECK: [[shorter2]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[stale2]]()
+# CHECK: [[byName2]]([[j2]]:{{*}}) frequency=Rare:
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[read2]]:{{*}}= ElemGet [[items]], [[j2]]
+# CHECK: = JSONAppendToken v1, {{*}} jsonToken=Comma
+# CHECK: = StringBuilderAppendJSON v1, [[read2]], [[j2]]
+# CHECK: [[afterJ2]]:{{*}}= Add [[j2]],
+# CHECK-NEXT: = Less [[afterJ2]], [[length2]]
+# CHECK: function [[serializerOfItem]] {{*}}creator=Serializer{layout=L3}

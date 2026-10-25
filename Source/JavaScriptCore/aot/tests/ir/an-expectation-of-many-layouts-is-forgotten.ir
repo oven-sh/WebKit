@@ -1,0 +1,45 @@
+# function read(props) { return props.value }  in a file that is not checked, or `props: any` in one that is: the checker says what the uses say, `{ value }`, and that is every layout of the program with a `value`.
+# Such a list is no guess: the object that comes is as often none of them, the test fails, and what stands behind the test goes by name with it.
+# A list of more than sixteen is forgotten as the program is read: at a parameter, at a value, at a field. A list of sixteen stays, and so does a long one that the checker has checked.
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: layout L17 name="Holder" fields=[{key="few" declared={type=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15 flags=[IsExpected]}{{*}}{key="many" declared={type=anything}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+# REPEAT: i = 0..16
+layout L%(i) name="T%(i)" fields=[{key="k%(i)" declared={type=number} flags=[IsRequired]}]
+# END REPEAT
+layout L17 name="Holder" fields=[{key="few" declared={type=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15 flags=[IsExpected]} flags=[IsRequired]}, {key="many" declared={type=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16 flags=[IsExpected]} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="outside" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v2, -, v1
+    v4 = NewClosure function=f2
+    v5 = Call v4, -, v1
+    v6 = NewClosure function=f3
+    v7 = Call v6, -, v1
+    v8 = NewObject -, v1, v1 layout=L17 fields=[0, 1]
+    PropSet v0, v8 key="holder" mode=Strict
+    Return
+}
+function f1 name="few" parameters=[{type=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15 flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = Convert v0 declared={type=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15 flags=[IsExpected]}
+    Return v1
+# CHECK: parameters=[{type=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15 flags=[IsExpected]}]
+# CHECK: b0(v0: anything ~ L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15):
+}
+function f2 name="many" parameters=[{type=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16 flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = Convert v0 declared={type=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16 flags=[IsExpected]}
+    Return v1
+# CHECK: parameters=[{type=anything}]
+# CHECK: b0(v0: anything):
+# CHECK-NOT: L15|L16
+}
+function f3 name="manyChecked" flags=[IsChecked] parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Convert v0 declared={type=L0|L1|L2|L3|L4|L5|L6|L7|L8|L9|L10|L11|L12|L13|L14|L15|L16}
+    Return v1
+# CHECK: L15|L16
+}

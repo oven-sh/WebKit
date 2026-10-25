@@ -30,9 +30,13 @@
 #pragma once
 
 #include <JavaScriptCore/BytecodeIndex.h>
+#include <JavaScriptCore/ExecutableInfo.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/MacroAssemblerCodeRef.h>
+#include <JavaScriptCore/SourceOrigin.h>
 #include <JavaScriptCore/VMEntryRecord.h>
+#include <JavaScriptCore/VariableEnvironment.h>
+#include <optional>
 #include <span>
 #include <wtf/HashMap.h>
 #include <wtf/Platform.h>
@@ -49,6 +53,11 @@ using Opcode = OpcodeID;
 #endif
 
 class CallLinkInfo;
+namespace AOT {
+class CompiledFrameIterator;
+struct CompiledFrameExit;
+struct CompiledHandler;
+}
 #if ENABLE(WEBASSEMBLY)
 namespace Wasm {
 class Callee;
@@ -66,6 +75,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     class CachedCall;
     class MicrotaskCall;
     class CodeBlock;
+    class DirectEvalCodeCache;
     class EvalExecutable;
     class Exception;
     class FunctionExecutable;
@@ -80,6 +90,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     class ModuleProgramExecutable;
     class Register;
     class JSAsyncFunctionGenerator;
+    class JSPromise;
     class JSGenerator;
     class JSObject;
     class JSScope;
@@ -117,13 +128,16 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         CatchInfo() = default;
 
         CatchInfo(const HandlerInfo*, CodeBlock*);
+#if ENABLE(AOT)
+        CatchInfo(const AOT::CompiledHandler&);
+#endif
 #if ENABLE(WEBASSEMBLY)
         CatchInfo(const Wasm::HandlerInfo*, const Wasm::Callee*);
 #endif
 
         bool m_valid { false };
         HandlerType m_type;
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
         CodePtr<ExceptionHandlerPtrTag> m_nativeCode;
         CodePtr<ExceptionHandlerPtrTag> m_nativeCodeForDispatchAndCatch;
 #endif
@@ -163,6 +177,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         JSValue executeModuleProgram(JSModuleRecord*, ModuleProgramExecutable*, JSGlobalObject*, JSModuleEnvironment*, JSValue sentValue, JSValue resumeMode);
         JSValue executeCall(JSObject* function, const CallData&, JSValue thisValue, JSCell* context, const ArgList&);
         JSObject* executeConstruct(JSObject* function, const CallData&, const ArgList&, JSValue newTarget);
+        JSValue executeConstructAllowingPrimitiveResult(JSObject* function, const CallData&, const ArgList&, JSValue newTarget);
         JSValue executeEval(EvalExecutable*, JSValue thisValue, JSScope*);
 
         void getArgumentsData(CallFrame*, JSFunction*&, ptrdiff_t& firstParameterIndex, Register*& argv, int& argc);
@@ -171,8 +186,25 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         void notifyDebuggerOfExceptionToBeThrown(VM&, JSGlobalObject*, CallFrame*, Exception*);
         NEVER_INLINE void debug(CallFrame*, DebugHookType, JSValue data);
         static String stackTraceAsString(VM&, const Vector<StackFrame>&);
+        JS_EXPORT_PRIVATE static void appendAsyncStackFrame(VM&, JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator*);
+        JS_EXPORT_PRIVATE static void appendAsyncStackFrame(VM&, JSCell* owner, Vector<StackFrame>& results, JSCell* awaiter);
+        JS_EXPORT_PRIVATE static JSCell* asyncFunctionIn(JSValue context);
+        JS_EXPORT_PRIVATE static JSPromise* asyncFunctionPromise(JSCell* awaiter);
+        JS_EXPORT_PRIVATE static JSCell* appendDirectAsyncCallers(VM&, JSCell* owner, Vector<StackFrame>& results, JSCell* awaiter, size_t maxStackSize);
 
         void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr);
+        struct StackTraceStart {
+            CallFrame* callFrame { nullptr };
+            const AOT::CompiledFrameExit* compiledFrameExit { nullptr };
+            EntryFrame* entryFrameOfFramesAbove { nullptr };
+            size_t numberOfFramesAbove { 0 };
+            size_t framesToSkip { 0 };
+            JSCell* caller { nullptr };
+            // If set, the walk ends at the first compiled frame that is shown and hands it over, unless frames of suspended async functions belong above it.
+            std::optional<AOT::CompiledFrameIterator>* compiledFramesBelow { nullptr };
+        };
+        JS_EXPORT_PRIVATE void appendStackTrace(JSCell* owner, Vector<StackFrame>& results, const StackTraceStart&, size_t maxStackSize);
+        void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSCell* awaiter, size_t maxStackSize);
         bool isExceptionCaughtByUserCatchClause();
 
     private:
@@ -202,6 +234,26 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     };
 
     JSValue eval(CallFrame*, JSValue thisValue, JSScope*, CodeBlock* callerBaselineCodeBlock, BytecodeIndex, LexicallyScopedFeatures);
+
+    struct DirectEvalCaller {
+        CallFrame* callFrame;
+        JSScope* scope;
+        JSValue thisValue;
+        SourceOrigin sourceOrigin;
+        LexicallyScopedFeatures lexicallyScopedFeatures;
+        DerivedContextType derivedContextType;
+        EvalContextType evalContextType;
+        NeedsClassFieldInitializer needsClassFieldInitializer;
+        PrivateBrandRequirement privateBrandRequirement;
+        bool isArrowFunctionContext;
+        bool isInsideOrdinaryFunction;
+        const PrivateNameEnvironment* privateNames { nullptr };
+        CodeBlock* codeBlockWithCache { nullptr };
+        DirectEvalCodeCache* cache { nullptr };
+        JSCell* cacheOwner { nullptr };
+        BytecodeIndex callSite;
+    };
+    JSValue evaluateDirectEval(JSGlobalObject*, JSValue program, const DirectEvalCaller&);
 
     inline CallFrame* calleeFrameForVarargs(CallFrame*, unsigned numUsedStackSlots, unsigned argumentCountIncludingThis);
 

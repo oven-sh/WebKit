@@ -28,6 +28,7 @@
 namespace JSC {
 
 class CallLinkInfo;
+namespace AOT { struct ReturnAddressTrace; }
 
 class ErrorInstance : public JSNonFinalObject {
 public:
@@ -51,6 +52,7 @@ public:
     typedef String (*SourceAppender) (const String& originalMessage, StringView sourceText, RuntimeType, SourceTextWhereErrorOccurred);
 
     DECLARE_EXPORT_INFO;
+    DECLARE_VISIT_CHILDREN;
 
     static size_t estimatedSize(JSCell*, VM&);
 
@@ -120,10 +122,18 @@ public:
     
     JS_EXPORT_PRIVATE String tryGetMessageForDebugging();
 
-    Vector<StackFrame>* stackTrace() LIFETIME_BOUND { return m_stackTrace.get(); }
+    Vector<StackFrame>* stackTrace() LIFETIME_BOUND
+    {
+        if (m_returnAddresses) [[unlikely]]
+            materializeStackTrace();
+        return m_stackTrace.get();
+    }
+    AOT::ReturnAddressTrace* returnAddresses() const { return m_returnAddresses; }
+    const Vector<StackFrame>* framesBesideReturnAddresses() const { return m_stackTrace.get(); }
 
     bool materializeErrorInfoIfNeeded(VM&);
     bool materializeErrorInfoIfNeeded(VM&, PropertyName);
+    static bool isLazilyMaterialized(VM&, PropertyName);
 
     // Replaces the stack trace captured by finishCreationForEmbedderError() with information that
     // came from somewhere else, such as a structured clone of an embedder error. The properties are
@@ -160,11 +170,14 @@ protected:
     JS_EXPORT_PRIVATE static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
 
     void computeErrorInfo(VM&, bool allocationAllowed);
+    JS_EXPORT_PRIVATE void materializeStackTrace();
+    bool tryRetainReturnAddresses(VM&, bool useCurrentFrame, JSCell* subclassCaller, std::unique_ptr<Vector<StackFrame>>& otherFrames);
     bool materializeCapturedStackPropertyIfSaved(VM&);
 
     SourceAppender m_sourceAppender { nullptr };
     // Frames captured by the constructor
     std::unique_ptr<Vector<StackFrame>> m_stackTrace;
+    AOT::ReturnAddressTrace* m_returnAddresses { nullptr };
     // Frames captured by Error.captureStackTrace()
     std::unique_ptr<Vector<StackFrame>> m_capturedStackTrace;
 

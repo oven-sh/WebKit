@@ -1,0 +1,38 @@
+# Module variables and fields of environments are nodes of the program: a read is that node, a store is an edge that holds once the body is reached, and neither is a statement. An environment itself carries no value.
+# RUN: valueflow-body f0 f1
+# CHECK: body f0: nodes=4 sites=0 edges=0 edgesOnceReached=3 seeds=1 statements=0
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 parameter v1
+# CHECK-NEXT: n2 result
+# CHECK-NEXT: n3 thrown
+# CHECK-NEXT: reached: edge n0 -> g0
+# CHECK-NEXT: reached: edge n0 -> L0.0
+# CHECK-NEXT: reached: edge n1 -> L0.1
+# CHECK-NEXT: reached: seed n2 <- closure f1
+# CHECK-NEXT: body f1: nodes=3 sites=2 edges=1 edgesOnceReached=0 seeds=0 statements=1
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 result
+# CHECK-NEXT: n2 thrown
+# CHECK-NEXT: s0 v3 result of a built-in
+# CHECK-NEXT: s1 v3 contents of the result of a built-in
+# CHECK-NEXT: edge g0 -> n1
+# CHECK-NEXT: Call v3 (L0.1, -, g0) throws n2
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 kind=Environment module=m0 position=20 fields=[{declared={type=anything}}, {declared={type=anything}}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="stores" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PutModuleVariable v0 variable=g0
+    v3 = NewObject -, v1 layout=L0 fields=[1]
+    PutEnvironmentField v3, v0 layout=L0
+    v5 = NewClosure v3 function=f1
+    Return v5
+}
+function f1 name="reads" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=1
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v1, -, v2
+    Return v2
+}

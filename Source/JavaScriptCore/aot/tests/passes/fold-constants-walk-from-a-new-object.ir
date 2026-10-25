@@ -1,0 +1,45 @@
+# `this instanceof F` in the body of F, behind the allocation of `this`: the walk up from an object that was handed no prototype meets the prototype object of its own class,
+# where no object of the layout ever gets another prototype. It stays where the object was handed a prototype, where one of the layout may get another, and for another class.
+# FORM: Prepared
+# RUN: pass FoldConstants
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Kept" constructor=f0 flags=[IsConstructorFunction] flow={baseState=None impossibleMutations=[ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed}
+layout L1 kind=Instance name="Moved" constructor=f1 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed}
+function f0 name="Kept" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=undefined}] {
+  b0(v0: anything ~ L0):
+    Return
+}
+function f1 name="Moved" flags=[HasThis] thisType={type=L1 flags=[IsExpected]} results=[{type=undefined}] {
+  b0(v0: anything ~ L1):
+    Return
+}
+function f2 name="born-with-the-prototype-object-of-its-class" parameters=[{type=f0}] results=[{type=boolean}] {
+    v1 = NewObject layout=L0
+    v2 = GetClassPrototype v0 layout=L0
+    v3 = HasInPrototypeChain v1, v2
+    Return v3
+# CHECK: v3: true = Boolean boolean=true
+}
+function f3 name="handed-a-prototype" parameters=[{type=f0}, {type=object}] results=[{type=boolean}] {
+    v2 = NewObject v1 layout=L0
+    v3 = GetClassPrototype v0 layout=L0
+    v4 = HasInPrototypeChain v2, v3
+    Return v4
+# CHECK: = HasInPrototypeChain v2, v3
+}
+function f4 name="one-of-the-layout-may-get-another" parameters=[{type=f1}] results=[{type=boolean}] {
+    v1 = NewObject layout=L1
+    v2 = GetClassPrototype v0 layout=L1
+    v3 = HasInPrototypeChain v1, v2
+    Return v3
+# CHECK: = HasInPrototypeChain v1, v2
+}
+function f5 name="another-class" parameters=[{type=f1}] results=[{type=boolean}] {
+    v1 = NewObject layout=L0
+    v2 = GetClassPrototype v0 layout=L1
+    v3 = HasInPrototypeChain v1, v2
+    Return v3
+# CHECK: = HasInPrototypeChain v1, v2
+}

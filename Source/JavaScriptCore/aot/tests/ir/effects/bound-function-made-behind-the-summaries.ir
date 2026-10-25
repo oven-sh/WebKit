@@ -1,0 +1,31 @@
+# A bound function that was made behind the summaries calls its target and does nothing else. A built-in that is handed one does no more than the call of unknown code that it replaces,
+# which leaves out the variable that only compiled code writes
+# FORM: Prepared optimizing
+# RUN: effects summaries-before=f2 f0
+# RUN(BOUND): check-replacement summaries-before=f2 f0 v4 v3
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="onlyCompiledCodeWrites" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown}
+function f0 name="waits" parameters=[{type=Promise}, {type=anything}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+    v2 = NewClosure function=f2
+    v3 = Call v1, v0, v2, v2 calleeKey="then"
+    v4 = CallBuiltin v0, v2, v2 overload=PromisePrototypeThen/0
+    v5 = NewClosure function=f3
+    v6 = Call v1, v0, v5, v5 calleeKey="then"
+    v7 = CallBuiltin v0, v5, v5 overload=PromisePrototypeThen/0
+    Return
+}
+function f1 name="target" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame] {
+    Return v0
+}
+function f2 name="target" kind=Arrow role=BoundFunction parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] derivation={source=f1} creator=BoundFunction{target=f1} {
+    v1 = CallDirect v0 function=f1
+    ReturnCall v1 requirement=Allowed
+}
+function f3 name="other" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame] {
+    Return v0
+}
+# CHECK: v3 Call: reads(all) writes(ObjectFields,
+# CHECK: v4 CallBuiltin: reads({{*}}) writes(PromiseState, StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK: v7 CallBuiltin: unknownCode
+# BOUND: valid

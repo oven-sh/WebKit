@@ -116,18 +116,6 @@ static ALWAYS_INLINE EncodedJSValue throwVMToThisNumberError(JSGlobalObject* glo
     return throwVMTypeError(globalObject, scope, WTF::makeString("thisNumberValue called on incompatible "_s, typeString.data));
 }
 
-// The largest finite floating point number is 1.mantissa * 2^(0x7fe-0x3ff).
-// Since 2^N in binary is a one bit followed by N zero bits. 1 * 2^3ff requires
-// at most 1024 characters to the left of a decimal point, in base 2 (1025 if
-// we include a minus sign). For the fraction, a value with an exponent of 0
-// has up to 52 bits to the right of the decimal point. Each decrement of the
-// exponent down to a minimum of -0x3fe adds an additional digit to the length
-// of the fraction. As such the maximum fraction size is 1075 (1076 including
-// a point). We pick a buffer size such that can simply place the point in the
-// center of the buffer, and are guaranteed to have enough space in each direction
-// fo any number of digits an IEEE number may require to represent.
-typedef char RadixBuffer[2180];
-
 static inline char* LEGACY_NODELETE int52ToStringWithRadix(char* startOfResultString, int64_t int52Value, unsigned radix)
 {
     bool negative = false;
@@ -149,7 +137,7 @@ static inline char* LEGACY_NODELETE int52ToStringWithRadix(char* startOfResultSt
     return startOfResultString;
 }
 
-static char* toStringWithRadixInternal(RadixBuffer& buffer, double originalNumber, unsigned radix)
+char* toStringWithRadixInternal(RadixBuffer& buffer, double originalNumber, unsigned radix)
 {
     ASSERT(std::isfinite(originalNumber));
     ASSERT(radix >= 2 && radix <= 36);

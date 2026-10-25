@@ -1,0 +1,64 @@
+# The front end sends a request at every conversion. Where the value is proven to lie inside the target type the request asks for nothing: it goes, and its users take the value itself.
+# That is how a conversion that the families cover costs nothing. At the end: the same conversions from a wider type keep a test
+# FORM: AsRead
+# RUN: pass TypeValues VerifyProgram
+# STATISTIC: RequestsResolvedToNothing = 5
+# STATISTIC: RequestsResolvedToUpcast = 0
+# STATISTIC: RequestsResolvedToCheck = 2
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Variable
+typesite w1 module=m0 position=20 kind=Parameter
+typesite w2 module=m0 position=30 kind=Assertion
+layout L0 name="Shape" fields=[{key="area" declared={type=number}}]
+layout L1 name="Circle" fields=[{key="area" declared={type=number}}, {key="radius" declared={type=number}}] supertypes=[L0]
+layout L2 name="Square" fields=[{key="area" declared={type=number}}, {key="side" declared={type=number}}] supertypes=[L0]
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+function f0 name="constant" results=[{type=anything}] {
+    v0 = Integer integer=2
+    v1 = Convert v0 declared={type=undefined|null|number site=w0}
+    Return v1
+# CHECK: v0: 2 = Integer integer=2
+# CHECK-NEXT: Return v0
+}
+function f1 name="sameType" parameters=[{type=undefined|null|number site=w1}] results=[{type=anything}] {
+    v1 = Convert v0 declared={type=undefined|null|number site=w0}
+    Return v1
+# CHECK: b0(v0: undefined|null|number):
+# CHECK-NEXT: Return v0
+}
+function f2 name="allocation" results=[{type=anything}] {
+    v0 = NewObject layout=L1
+    v1 = Convert v0 declared={type=undefined|null|L0 site=w0}
+    Return v1
+# CHECK: v0: L1 = NewObject layout=L1
+# CHECK-NEXT: Return v0
+}
+function f3 name="narrowerFamily" parameters=[{type=L1 site=w1}] results=[{type=anything}] {
+    v1 = Convert v0 declared={type=L0 site=w0}
+    Return v1
+# CHECK: b0(v0: L1):
+# CHECK-NEXT: Return v0
+}
+function f4 name="membersOfTheFamily" parameters=[{type=undefined|L1|L2 site=w1}] results=[{type=anything}] {
+    v1 = Convert v0 declared={type=undefined|null|L0 site=w0}
+    Return v1
+# CHECK: b0(v0: undefined|L1|L2):
+# CHECK-NEXT: Return v0
+}
+function f5 name="widerFamily" parameters=[{type=L0 site=w1}] results=[{type=anything}] {
+    v1 = Convert v0 declared={type=L1 site=w2} illTypedCause=Assertion
+    Return v1
+# CHECK: b0(v0: L0|L1|L2):
+# CHECK-NEXT: v1: L1 = Check v0 castType=L1 site=w2
+# CHECK-NEXT: Return v1
+}
+function f6 name="widerPrimitives" parameters=[{type=undefined|null|number site=w1}] results=[{type=anything}] {
+    v1 = Convert v0 declared={type=number site=w2} illTypedCause=Assertion
+    Return v1
+# CHECK: b0(v0: undefined|null|number):
+# CHECK-NEXT: v1: number = Check v0 castType=number site=w2
+# CHECK-NEXT: Return v1
+}

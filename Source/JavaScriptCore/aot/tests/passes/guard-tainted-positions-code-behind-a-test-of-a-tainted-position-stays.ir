@@ -1,0 +1,26 @@
+# A branch that the declared type of a capture or of a variable decides is not decided for good: a Check in another function may have turned a value away, and the generic version of that function
+# stores it all the same. GuardTaintedPositions then puts a Check behind the read, and the generic version of the reader is a copy of the code behind that Check. So TypeValues cuts nothing:
+# an arm that it had cut would be missing from the copy. Where no Check comes, the arm is cut as soon as GuardTaintedPositions is through
+# FORM: AsRead
+# RUN: pass TypeValues GuardTaintedPositions VerifyProgram
+# STATISTIC: TaintedPositions = 2
+# STATISTIC: ChecksOnTaintedPositions = 2
+# CHECK-LABEL: function f1 name="testsCapture"
+# CHECK: [[checked]]: string = Check v0 castType=string cause=AddedByPass
+# CHECK: = TypeTest [[checked]] testedType=number
+# CHECK: b1([[narrowed]]: never):
+# CHECK-NEXT: [[one]]: 1 = Integer integer=1
+# CHECK-NEXT: Return [[one]]
+# CHECK-LABEL: function f2 name="testsVariable"
+# CHECK: [[checked]]: string = Check [[read]] castType=string cause=AddedByPass
+# CHECK: b1([[narrowed]]: never):
+# CHECK-NEXT: [[one]]: 1 = Integer integer=1
+# CHECK-NEXT: Return [[one]]
+# CHECK-LABEL: function f3 name="testsVariableThatKeepsItsType"
+# CHECK: b1([[narrowed]]: never):
+# CHECK-NEXT: Unreachable
+# A value that no run produces ends its block
+# CHECK-LABEL: function f4 name="noValue"
+# CHECK: v1: never = ToObject v0
+# CHECK-NEXT: Unreachable
+# PROGRAM-OF: ../ir/type-values/cuts-nothing-before-the-reads-are-guarded.ir

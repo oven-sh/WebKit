@@ -1,0 +1,41 @@
+# shown = { go: one }; answer = somethingNoTableLists(Date, shown); answer.parse = two; Date.now(); Date.parse(); shown.go(); shown.parse()
+# A callee nobody knows is handed an object of the program and a built-in object of the realm, so from now on code that nobody compiles may store into what has escaped.
+# The object of the program may hold anything under every name, and what the program stores through the unknown object may lie on it.
+# The run time locks the members of the objects of the realm that compiled code relies on, so as long as no code runs that the build has not seen, a member of such an object holds what the table says.
+# RUN: valueflow-solve calls
+# CHECK: f0 v5 -> unknown
+# CHECK: f0 v9 -> DateNow
+# CHECK: f0 v11 -> DateParse
+# CHECK: f0 v13 -> unknown f1
+# CHECK: f0 v15 -> unknown {{*}}f2
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen-code no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Shown" fields=[{key="go" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=Date
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="somethingThatNoTableLists" [isFreeName]
+    v5 = Call v4, -, v2, v1
+    v6 = NewClosure function=f2
+    PropSet v5, v6 key="parse" mode=Strict
+    v8 = PropGet v2 key="now"
+    v9 = Call v8, v2
+    v10 = PropGet v2 key="parse"
+    v11 = Call v10, v2
+    v12 = PropGet v1 key="go"
+    v13 = Call v12, v1
+    v14 = PropGet v1 key="parse"
+    v15 = Call v14, v1
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}
+function f2 name="two" results=[{type=anything}] {
+    Return
+}

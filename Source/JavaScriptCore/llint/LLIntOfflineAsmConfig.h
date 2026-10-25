@@ -108,6 +108,12 @@
 #define OFFLINE_ASM_JIT_CAGE 0
 #endif
 
+#if ENABLE(AOT) && !ENABLE(C_LOOP)
+#define OFFLINE_ASM_AOT 1
+#else
+#define OFFLINE_ASM_AOT 0
+#endif
+
 #if ENABLE(WEBASSEMBLY)
 #define OFFLINE_ASM_WEBASSEMBLY 1
 #else

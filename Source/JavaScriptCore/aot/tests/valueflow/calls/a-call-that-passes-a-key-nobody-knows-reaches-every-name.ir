@@ -1,0 +1,52 @@
+# As in calls-that-pass-constant-keys-are-told-apart.ir, and then emit(table, "re" + "quest", 7): the key may be any name, so the number reaches both listeners.
+# What the calls with a constant pass stays apart.
+# RUN: valueflow-why values=f1:v1 values=f2:v1
+# CHECK: values=f1:v1
+# CHECK: operand 0 {{*}} 2 members: primitive{{*}} object{{*}}@f0
+# CHECK: values=f2:v1
+# CHECK: operand 0 {{*}} 2 members: primitive{{*}} object{{*}}@f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Table"
+layout L1 name="Request" fields=[{key="url" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Failure" fields=[{key="code" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewClosure function=f3
+    v2 = NewClosure function=f4
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = String string="request"
+    v6 = String string="failure"
+    v7 = Call v1, -, v0, v5, v3
+    v8 = Call v1, -, v0, v6, v4
+    v9 = Integer integer=1
+    v10 = NewObject -, v9 layout=L1 fields=[0]
+    v11 = NewObject -, v9 layout=L2 fields=[0]
+    v12 = Call v2, -, v0, v5, v10
+    v13 = Call v2, -, v0, v6, v11
+    v14 = String string="re"
+    v15 = String string="quest"
+    v16 = Add v14, v15
+    v17 = Integer integer=7
+    v18 = Call v2, -, v0, v16, v17
+    Return
+}
+function f1 name="takesRequest" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="url"
+    Return v1
+}
+function f2 name="takesFailure" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="code"
+    Return v1
+}
+function f3 name="on" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    ElemSet v0, v1, v2
+    Return
+}
+function f4 name="emit" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = ElemGet v0, v1
+    v4 = Call v3, -, v2
+    Return v4
+}

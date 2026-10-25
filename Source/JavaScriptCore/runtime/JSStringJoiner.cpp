@@ -315,6 +315,50 @@ JSString* JSOnlyStringsAndInt32sJoiner::joinImpl(JSGlobalObject* globalObject, c
     return jsString(vm, WTF::move(result));
 }
 
+#if ENABLE(AOT)
+template<typename CharacterType>
+static inline String joinInt32s(JSGlobalObject* globalObject, const double* numbers, unsigned size, std::span<const CharacterType> separator, unsigned joinedLength)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    std::span<CharacterType> data;
+    String result = StringImpl::tryCreateUninitialized(joinedLength, data);
+    if (result.isNull()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return { };
+    }
+    appendStringToData(data, static_cast<int32_t>(numbers[0]));
+    for (unsigned i = 1; i < size; ++i) {
+        appendStringToData(data, separator);
+        appendStringToData(data, static_cast<int32_t>(numbers[i]));
+    }
+    ASSERT(data.data() == result.span<CharacterType>().data() + joinedLength);
+    return result;
+}
+
+JSString* JSOnlyStringsAndInt32sJoiner::joinImpl(JSGlobalObject* globalObject, const double* data, unsigned length)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!length)
+        return jsEmptyString(vm);
+
+    CheckedInt32 separatorLength = m_separator.length();
+    CheckedInt32 totalSeparatorsLength = separatorLength * (CheckedInt32(length) - 1);
+    CheckedInt32 totalLength = totalSeparatorsLength + m_accumulatedStringsLength;
+    if (totalLength.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return { };
+    }
+
+    String result = m_separator.is8Bit() ? joinInt32s<Latin1Character>(globalObject, data, length, m_separator.span8(), totalLength) : joinInt32s<char16_t>(globalObject, data, length, m_separator.span16(), totalLength);
+    RETURN_IF_EXCEPTION(scope, { });
+    return jsString(vm, WTF::move(result));
+}
+#endif
+
 template JSString* JSOnlyStringsAndInt32sJoiner::joinImpl<Int32Shape>(JSGlobalObject*, const WriteBarrier<Unknown>*, unsigned);
 template JSString* JSOnlyStringsAndInt32sJoiner::joinImpl<ContiguousShape>(JSGlobalObject*, const WriteBarrier<Unknown>*, unsigned);
 

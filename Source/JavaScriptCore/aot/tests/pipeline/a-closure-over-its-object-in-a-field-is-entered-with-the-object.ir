@@ -1,0 +1,59 @@
+# class Button { constructor(n) { this.n = n; this.handler = x => this.n + x } }  function press(button) { return button.handler(2) }
+# passes/resolve-calls-deferred-closure-field.ir says: "a call of a field that always holds a closure of one function over its own object enters the function directly and reads no slot".
+# It writes `deferral=CapturesObject deferredFunction=..` by hand. In a build DeferClosuresInFields writes them, behind the last run of ResolveCalls: from the text of a program the call reads the slot and the capture
+# TODO: calls: that a field holds a closure over its own object is known only behind the last run of ResolveCalls, ResolveAccesses, SplitUnions and PlaceTypeTests
+# FORM: AsRead
+# RUN: pipeline ResolveCalls
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# CHECK-LABEL: function f4 name="press"
+# CHECK-NOT: GetCapture
+# CHECK: = CallDirect v0,
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Button" constructor=f1 fields=[{key="n" declared={type=anything} flags=[IsRequired]}, {key="handler" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="publish" [isFreeName]
+    v5 = Integer
+    Jump -> next b1(v5)
+  b1(v6):
+    LoopHint
+    v8 = Integer integer=100000
+    v9 = Less v6, v8
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = Construct v2, -, v6
+    v11 = CallDirect v10 function=f4
+    v12 = Call v4, -, v11
+    v13 = Increment v6
+    Jump -> next b1(v13)
+  b3():
+    Return
+}
+function f1 name="Button" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropDefine v3, v1 key="n"
+    v5 = NewClosure v3 function=f2
+    PropDefine v3, v5 key="handler"
+    Return v3
+}
+function f2 name="handler" kind=Arrow captures=[{type=L0}] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="n"
+    v3 = Add v2, v1
+    Return v3
+}
+function f3 name="unused" results=[{type=anything}] {
+    Return
+}
+function f4 name="press" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="handler"
+    v2 = Integer integer=2
+    v3 = Call v1, v0, v2 calleeKey="handler"
+    Return v3
+}

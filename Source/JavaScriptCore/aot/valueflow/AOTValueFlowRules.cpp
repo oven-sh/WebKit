@@ -1,0 +1,524 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTValueFlowRules.h"
+
+#if ENABLE(AOT)
+
+#include "AOTValueFlowBuiltins.h"
+#include "AOTValueFlowRulesHeap.h"
+#include "AOTValueFlowRulesModules.h"
+#include "AOTValueFlowRulesProtocolsInternal.h"
+
+namespace JSC { namespace AOT { namespace Typed {
+
+static ValueSetID unknownValueFrom(ValueFlowRuleContext& context, ValueFlowUnknownSource source)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    context.noteUnknownSource(source);
+    if (context.leavesOut(source))
+        return universe.anyPrimitive();
+    return context.maker().unite(universe.anyPrimitive(), universe.unknownObjectAlone());
+}
+
+ValueSetID undescribedValueThatIsNoBuffer(ValueFlowRuleContext& context) { return unknownValueFrom(context, ValueFlowUnknownSource::UndescribedNativeResult); }
+
+ValueSetID unknownValue(ValueFlowRuleContext& context, ValueFlowUnknownSource source)
+{
+    if (source == ValueFlowUnknownSource::UndescribedNativeResult) {
+        if (BuiltinID prototype = context.program().builtins().at(BuiltinClasses::Buffer).prototype)
+            context.add(context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins), context.maker().of(context.universe().objectOf(prototype)));
+    }
+    return unknownValueFrom(context, source);
+}
+
+static void runConvert(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+{
+    if (!statement.result)
+        return;
+    const ValueFlowOperand& converted = context.operandsOf(statement)[0];
+    if (context.program().at(statement.function).at(statement.site).illTypedCause() == IllTypedCause::None) {
+        context.connect(converted, statement.result);
+        return;
+    }
+
+    ClimbingSet value = context.valueOf(converted);
+    context.add(statement.result, without(context, value, ValueFlowUniverse::untrackedObject()));
+    if (mayBeUntrackedObject(context, value))
+        context.add(statement.result, context.maker().intersect(unknownValue(context, ValueFlowUnknownSource::UncheckedConversionOfUntracked), context.universe().objects()));
+}
+
+static void runNewDictionary(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    ValueFlowObjectID site = universe.siteObject(statement);
+    ClimbingSet dictionary = only(context, site ? site : universe.resultOf(Builtins::ObjectCreate, 0));
+    context.add(context.written(dictionary, prototypeLinkName), only(context, universe.objectOf(Builtins::ObjectPrototype)));
+    if (statement.result)
+        context.add(statement.result, dictionary);
+}
+
+void callInProtocol(ValueFlowRuleContext& context, const ValueFlowProtocolCall& call)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    if (!context.meet(call.callees, universe.callables()))
+        return;
+    ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
+    ClimbingSet builtinFunctions = context.restrict(call.callees, universe.builtinFunctionsOfProtocols());
+    if (call.origin == ValueFlowCalleeOrigin::MemberFoundUnderName && context.contains(call.callees, ValueFlowUniverse::unknownObject())) {
+        context.forEachMember(context.valueWithin(ClimbingSet(universe.builtinFunctionsOfProtocols()), escaped), [&](ValueFlowObjectID callee) {
+            if (context.program().builtins().at(universe.builtinOf(callee)).origin != BuiltinOrigin::Host)
+                noteCallOfBuiltin(universe.builtinOf(callee), ValueFlowCallKind::CallByNativeCode, context);
+        });
+    }
+
+    ValueFlowStatement protocol;
+    protocol.function = context.functionOfStatement();
+    protocol.result = call.result;
+    applyEventsOfCall(protocol, context, builtinFunctions);
+
+    if (holdsSomething(context, builtinFunctions)) {
+        Vector<ValueFlowOperand, 2> arguments;
+        for (ValueFlowNodeID argument : call.arguments)
+            arguments.append({ argument, ValueSets::nothing, ValueSets::anything });
+        ValueFlowBuiltinCall application;
+        application.kind = ValueFlowCallKind::CallByNativeCode;
+        application.thisValue = context.operandHolding(call.thisValue);
+        application.arguments = arguments.span();
+        application.otherArguments = { { }, call.otherArguments, ValueSets::anything };
+        application.result = call.result;
+        application.thrown = escaped;
+        context.forEachMember(builtinFunctions, [&](ValueFlowObjectID callee) {
+            BuiltinID builtin = universe.builtinOf(callee);
+            application.resultObject = universe.resultOf(builtin, 0);
+            application.contentsObject = universe.resultOf(builtin, 1);
+            applyBuiltin(builtin, application, context);
+        });
+    }
+
+    RELEASE_ASSERT(call.arguments.size() <= numberOfGroupedArguments);
+    ClimbingSet others = context.restrict(call.callees, context.maker().intersect(universe.callables(), ValueSets::complement(universe.builtinFunctionsOfProtocols())));
+    forEachPartOfCallees(context, others, [&](ClimbingSet callees) {
+        ValueFlowCallGroup group = context.group(callees, ValueFlowCallKind::CallByNativeCode, call.origin);
+        context.add(group.thisValue, call.thisValue);
+        for (unsigned index = 0; index < call.arguments.size(); ++index)
+            context.connect(call.arguments[index], group.argument(index));
+        context.add(group.otherArguments, call.otherArguments);
+        if (call.result)
+            context.connect(group.result, call.result);
+        context.connect(group.thrown, escaped);
+    });
+}
+
+static constexpr ValueFlowNameKind kindsOfMembers[] { ValueFlowNameKind::EveryProperty, ValueFlowNameKind::EveryGetter, ValueFlowNameKind::EverySetter };
+
+static bool isRaised(ValueFlowRuleContext& context, ValueFlowHostNode flag) { return mayBeUnknownObject(context, context.valueOf(context.nodes().ofHost(flag))); }
+static bool isRaisedSinceLastRun(ValueFlowRuleContext& context, ValueFlowHostNode flag) { return mayBeUnknownObject(context, context.newSince(context.nodes().ofHost(flag))); }
+
+static LayoutID layoutOfInstance(ValueFlowRuleContext& context, ValueFlowObjectID object)
+{
+    LayoutID layout = context.universe().layoutOf(object);
+    return layout && context.program().at(layout).kind == LayoutKind::Instance ? layout : LayoutID();
+}
+
+static bool isConstructedByProgram(ValueFlowRuleContext& context, ValueFlowObjectID object) { return layoutOfInstance(context, object) || context.universe().kindOf(object) == ValueFlowObjectKind::ConstructedObject; }
+
+static bool mayCodeOutsideImageRun(ValueFlowRuleContext& context)
+{
+    return isRaised(context, ValueFlowHostNode::CodeOutsideImageIsLoaded) || std::ranges::any_of(context.program().modules, [](const Module& module) {
+        return module.kind == ModuleKind::External && module.externalKind == ExternalKind::UncompiledCode;
+    });
+}
+
+static void followWhatHasArrived(ValueFlowRuleContext& context, ClimbingSet arrived)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    ValueFlowNodeID escapedNode = ValueFlowProgramNodes::escaped();
+
+    ClimbingSet holdersOfExports = context.restrict(arrived, universe.holdersOfLibraryExports());
+    if (holdsSomething(context, holdersOfExports) && !mayCodeOutsideImageRun(context)) {
+        context.add(context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode), holdersOfExports);
+        context.add(context.nodes().ofHost(ValueFlowHostNode::HoldersOfExportsInEscapedObjects), holdersOfExports);
+        arrived = context.restrict(arrived, ValueSets::complement(universe.holdersOfLibraryExports()));
+    }
+
+    Vector<ValueFlowObjectID, 64> instances;
+    context.forEachMember(known(context, arrived), [&](ValueFlowObjectID object) {
+        if (isConstructedByProgram(context, object))
+            instances.append(object);
+    });
+    ClimbingSet others = context.restrict(arrived, ValueSets::complement(context.maker().of(instances.span())));
+
+    for (ValueFlowNameKind kind : kindsOfMembers)
+        context.connect(context.read(arrived, { kind, 0 }), escapedNode);
+    context.connect(context.masked(context.read(arrived, { ValueFlowNameKind::CopiedFrom, 0 }), ValueSets::complement(universe.builtinTables().heap().objectsHoldingOnlyWhatWasWritten())), escapedNode);
+    context.connect(context.masked(context.read(others, prototypeLinkName), ValueSets::complement(universe.builtinTables().heap().objectsThatLetInUnseenCode())), escapedNode);
+    context.add(escapedNode, objectsHeldFromCreation(context, others));
+    for (const ValueFlowClassOfEntries& classOfEntries : universe.builtinTables().heap().classesOfEntries()) {
+        if (context.meet(arrived, classOfEntries.entries))
+            context.add(escapedNode, only(context, classOfEntries.prototype));
+    }
+    context.mark(arrived, ObjectMutation::ReachNativeCode);
+
+    letNativeCodeStepIterators(context, arrived);
+    ValueSetID describedByEntries = universe.builtinTables().closuresThatEntriesDescribe();
+    context.forEachMember(context.restrict(arrived, describedByEntries), [&](ValueFlowObjectID closure) {
+        enterCodeThatEntryDescribes(closure, context);
+    });
+    context.forEachMember(context.restrict(arrived, context.maker().intersect(universe.closures(), ValueSets::complement(describedByEntries))), [&](ValueFlowObjectID closure) {
+        enterFromNativeCode(context, universe.closureFunction(closure));
+    });
+}
+
+static ValueFlowObjectID familyOfInstance(ValueFlowRuleContext& context, ValueFlowObjectID object)
+{
+    if (LayoutID layout = layoutOfInstance(context, object))
+        return context.universe().instanceOf(layout);
+    return context.universe().kindOf(object) == ValueFlowObjectKind::ConstructedObject ? object : ValueFlowObjectID();
+}
+
+static ValueSetID instancesOfFamily(ValueFlowRuleContext& context, ValueFlowObjectID family)
+{
+    if (LayoutID layout = context.universe().layoutOf(family))
+        return context.universe().objectsWith(layout);
+    return context.maker().of(family);
+}
+
+static void lookUpThroughInstances(ValueFlowRuleContext& context, ValueFlowObjectID family)
+{
+    const Program& program = context.program();
+    const ValueFlowUniverse& universe = context.universe();
+    ValueFlowNodeID escapedNode = ValueFlowProgramNodes::escaped();
+    ValueSetID instances = instancesOfFamily(context, family);
+
+    bool unseenCodeRuns = isRaised(context, ValueFlowHostNode::UnseenCodeRuns);
+    ClimbingSet untrackedObject(universe.untrackedObjectAlone());
+    ValueSetID functions = context.maker().unite(universe.closures(), universe.builtinFunctions());
+    ValueSetID passedByNativeCode = unknownValue(context, ValueFlowUnknownSource::ParameterOfEscapedFunction);
+    ValueFlowName constructorName = ValueFlowName::property(program.keyOf(BuiltinNames::constructor));
+    ValueFlowNodeID constructorsNode = context.nodes().ofHost(ValueFlowHostNode::ConstructorsAboveEscapedInstances);
+
+    ClimbingSet chain = context.valueOf(context.lookup(context.valueWithin(ClimbingSet(instances), escapedNode), prototypeLinkName));
+    if (mayBeUntrackedObject(context, chain))
+        context.add(escapedNode, untrackedObject);
+    ClimbingSet objectsOfProgram = context.restrict(known(context, chain), ValueSets::complement(universe.builtinObjects()));
+    ClimbingSet above = context.restrict(objectsOfProgram, ValueSets::complement(instances));
+    above = context.unite(above, context.restrict(context.valueOf(context.read(ClimbingSet(instances), prototypeLinkName)), instances));
+    if (!holdsSomething(context, above))
+        return;
+    if (unseenCodeRuns)
+        context.add(escapedNode, above);
+    context.add(context.nodes().ofHost(ValueFlowHostNode::ObjectsAboveEscapedInstances), above);
+
+    ClimbingSet found;
+    auto take = [&](ValueFlowNodeID members) {
+        context.connect(context.masked(members, ValueSets::complement(functions)), escapedNode);
+        found = context.unite(found, context.restrict(context.valueOf(members), functions));
+    };
+    bool mayBeLost = context.holdsAnyOf(above, ValueFlowProgramNodes::lost());
+    for (ValueFlowNameKind kind : kindsOfMembers) {
+        take(context.read(above, { kind, 0 }));
+        if (mayBeLost)
+            take(context.read(untrackedObject, { kind, 0 }));
+    }
+    context.add(constructorsNode, context.restrict(objectsHeldFromCreation(context, above), universe.closures()));
+    context.connect(context.masked(context.read(above, constructorName), universe.closures()), constructorsNode);
+    if (mayBeLost)
+        context.connect(context.masked(context.read(untrackedObject, constructorName), universe.closures()), constructorsNode);
+
+    Vector<ValueFlowObjectID, 16> functionsOfLibrary;
+    context.forEachMember(context.restrict(found, universe.closures()), [&](ValueFlowObjectID closure) {
+        FunctionRole role = program.at(universe.closureFunction(closure)).role;
+        if (role == FunctionRole::Library || role == FunctionRole::Model)
+            functionsOfLibrary.append(closure);
+    });
+    ValueSetID handedOut = context.maker().of(functionsOfLibrary.span());
+    context.add(escapedNode, handedOut);
+    ClimbingSet called = context.restrict(found, ValueSets::complement(handedOut));
+    if (!holdsSomething(context, called))
+        return;
+
+    ValueFlowCallGroup group = context.group(called, ValueFlowCallKind::CallByNativeCode);
+    context.connect(context.masked(escapedNode, instances), group.thisValue);
+    ValueFlowObjectID makersOfProxies[] { universe.objectOf(Builtins::Proxy), universe.objectOf(Builtins::ProxyRevocable) };
+    if (holdsSomething(context, context.valueWithin(ClimbingSet(context.maker().of(makersOfProxies)), context.nodes().ofHost(ValueFlowHostNode::RunBuiltins))))
+        context.add(group.thisValue, universe.unknownObjectAlone());
+    context.add(group.otherArguments, passedByNativeCode);
+    context.connect(group.result, escapedNode);
+    context.connect(group.thrown, escapedNode);
+}
+
+static void runLookupThroughInstances(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+{
+    context.newSince(statement.result);
+    lookUpThroughInstances(context, ValueFlowObjectID(context.nameOfKey().payload));
+}
+
+static void lookUpThroughFamiliesOf(ValueFlowRuleContext& context, ClimbingSet arrived)
+{
+    Vector<ValueFlowObjectID, 16> families;
+    context.forEachMember(known(context, arrived), [&](ValueFlowObjectID object) {
+        if (ValueFlowObjectID family = familyOfInstance(context, object))
+            families.append(family);
+    });
+    if (families.isEmpty())
+        return;
+
+    ValueSetID& familiesMet = context.rememberedByStatement();
+    ValueSetID familiesMetBefore = familiesMet ? familiesMet : ValueSets::nothing;
+    familiesMet = context.maker().unite(familiesMetBefore, context.maker().of(families.span()));
+    context.forEachMember(ClimbingSet(context.maker().intersect(familiesMet, ValueSets::complement(familiesMetBefore))), [&](ValueFlowObjectID family) {
+        context.lookup(ClimbingSet(instancesOfFamily(context, family)), { ValueFlowNameKind::FoundThroughEscapedInstances, family.index() });
+        lookUpThroughInstances(context, family);
+    });
+}
+
+static void letNativeCodeCallBoundFunctions(ValueFlowRuleContext& context, ClimbingSet escapedCallables)
+{
+    if (!holdsSomething(context, escapedCallables))
+        return;
+    ValueFlowNodeID escapedNode = ValueFlowProgramNodes::escaped();
+    ValueSetID passedByNativeCode = unknownValue(context, ValueFlowUnknownSource::ParameterOfEscapedFunction);
+    for (ValueFlowCallKind kind : { ValueFlowCallKind::CallByNativeCode, ValueFlowCallKind::ConstructByNativeCode }) {
+        ValueFlowCallGroup group = context.group(escapedCallables, kind);
+        context.add(group.otherArguments, passedByNativeCode);
+        context.connect(group.result, escapedNode);
+        context.connect(group.thrown, escapedNode);
+    }
+}
+
+static void letNativeCodeTestAgainstBoundFunctions(ValueFlowRuleContext& context, ClimbingSet escapedCallables)
+{
+    if (!holdsSomething(context, escapedCallables))
+        return;
+    letNativeCodeTestAgainst(context, { context.read(escapedCallables, { ValueFlowNameKind::HiddenSlot, BuiltinSlots::BoundFunctionTarget.index() }), ValueSets::nothing, ValueSets::anything });
+}
+
+static void letUnseenCodeCreateRecords(ValueFlowRuleContext& context, ClimbingSet escapedObjects)
+{
+    const Program& program = context.program();
+    const ValueFlowUniverse& universe = context.universe();
+    constexpr OptionSet<LayoutFlags> flagsOfOtherLayouts { LayoutFlags::HasHeritage, LayoutFlags::IsConstructorFunction, LayoutFlags::HasMembersWithoutLayout, LayoutFlags::IsTypeParameter, LayoutFlags::IsNeverAllocated, LayoutFlags::IsWrittenUnderDictionaryType, LayoutFlags::IsDerived, LayoutFlags::IsOfCreatedObject };
+    Vector<ValueFlowObjectID, 16> records;
+    context.forEachMember(known(context, escapedObjects), [&](ValueFlowObjectID object) {
+        LayoutID id = universe.layoutOf(object);
+        if (!id || object == universe.instanceOf(id))
+            return;
+        const Layout& layout = program.at(id);
+        if (layout.kind != LayoutKind::Record || layout.constructor || layout.base || layout.flags.containsAny(flagsOfOtherLayouts) || layout.fields.isEmpty())
+            return;
+        bool holdsValuesAsTheyAre = std::ranges::all_of(layout.fields, [&](const Field& field) {
+            const Type& type = program.at(field.declared.type);
+            return field.key && (type.isAnything() || (!type.anyFunction && type.functions.isEmpty()));
+        });
+        if (holdsValuesAsTheyAre)
+            records.append(universe.instanceOf(id));
+    });
+    if (records.isEmpty())
+        return;
+    ValueSetID created = context.maker().of(records.span());
+    context.add(context.nodes().ofHost(ValueFlowHostNode::RecordsMadeByParsers), created);
+    context.add(context.written(ClimbingSet(created), prototypeLinkName), only(context, universe.objectOf(Builtins::ObjectPrototype)));
+    context.add(ValueFlowProgramNodes::escaped(), created);
+}
+
+static void runEscape(const ValueFlowStatement&, ValueFlowRuleContext& context)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    ValueFlowNodeID escapedNode = ValueFlowProgramNodes::escaped();
+    ClimbingSet escaped = context.valueOf(escapedNode);
+    ClimbingSet arrived = context.newSince(escapedNode);
+    bool writesSinceLastRun = isRaisedSinceLastRun(context, ValueFlowHostNode::UnknownCodeWrites);
+    bool unseenCodeRunsSinceLastRun = isRaisedSinceLastRun(context, ValueFlowHostNode::UnseenCodeRuns);
+    if (isRaisedSinceLastRun(context, ValueFlowHostNode::CodeOutsideImageIsLoaded))
+        arrived = context.unite(arrived, context.restrict(escaped, universe.holdersOfLibraryExports()));
+
+    if (holdsSomething(context, arrived))
+        followWhatHasArrived(context, arrived);
+
+    if (context.holdsAnyOf(known(context, escaped), ValueFlowProgramNodes::lost())) {
+        ClimbingSet untrackedObject(universe.untrackedObjectAlone());
+        for (ValueFlowNameKind kind : kindsOfMembers)
+            context.connect(context.read(untrackedObject, { kind, 0 }), escapedNode);
+        context.connect(context.read(untrackedObject, prototypeLinkName), escapedNode);
+    }
+
+    ClimbingSet writable = writesSinceLastRun || unseenCodeRunsSinceLastRun ? escaped : arrived;
+    if (mayUnknownCodeWrite(context) && holdsSomething(context, writable))
+        letAnythingHappenTo(context, writable);
+
+    if (isRaised(context, ValueFlowHostNode::UnseenCodeRuns))
+        letUnseenCodeCreateRecords(context, unseenCodeRunsSinceLastRun ? escaped : arrived);
+
+    letNativeCodeSettlePromises(context, context.valueWithin(ClimbingSet(universe.otherCallables()), escapedNode));
+    letNativeCodeCallBoundFunctions(context, context.restrict(arrived, universe.otherCallables()));
+    letNativeCodeTestAgainstBoundFunctions(context, context.valueWithin(ClimbingSet(universe.otherCallables()), escapedNode));
+    lookUpThroughFamiliesOf(context, arrived);
+}
+
+#define FOR_EACH_OPERATION_WITH_RULE(v) \
+    v(Call, runCall) \
+    v(CallList, runCall) \
+    v(Construct, runCall) \
+    v(ConstructList, runCall) \
+    v(SuperConstruct, runCall) \
+    v(SuperConstructList, runCall) \
+    v(Convert, runConvert) \
+    v(NewDictionary, runNewDictionary) \
+    v(NewClass, runNewClass) \
+    v(DefineMethod, runDefineMethod) \
+    v(ResolveHeritage, runReadOfPrototypeProperty) \
+    v(GetClassPrototype, runReadOfPrototypeProperty) \
+    v(GetConstructPrototype, runReadOfPrototypeProperty) \
+    v(IteratorOpen, runIterationOperation) \
+    v(IteratorResume, runIterationOperation) \
+    v(IteratorClose, runIterationOperation) \
+    v(AppendSpread, runIterationOperation) \
+    v(StepArrayIterator, runStepOfLibrary) \
+    v(MapNext, runStepOfLibrary) \
+    v(SetNext, runStepOfLibrary) \
+    v(ResumeGenerator, runGeneratorOperation) \
+    v(StepGenerator, runGeneratorOperation) \
+    v(Await, runAwait) \
+    v(CreatePromise, runPromiseOperation) \
+    v(ResolvePromise, runPromiseOperation) \
+    v(RejectPromise, runPromiseOperation) \
+    v(InstanceOf, runInstanceOf) \
+    v(Add, runArithmetic) \
+    v(Sub, runArithmetic) \
+    v(Mul, runArithmetic) \
+    v(Div, runArithmetic) \
+    v(Mod, runArithmetic) \
+    v(Pow, runArithmetic) \
+    v(BitAnd, runArithmetic) \
+    v(BitOr, runArithmetic) \
+    v(BitXor, runArithmetic) \
+    v(LShift, runArithmetic) \
+    v(RShift, runArithmetic) \
+    v(Negate, runArithmetic) \
+    v(ToNumeric, runArithmetic) \
+    v(Increment, runArithmetic) \
+    v(Decrement, runArithmetic) \
+    v(BitNot, runArithmetic) \
+    v(ToPropertyKey, runToPropertyKey) \
+    v(TryPutDoubleIndex, runHeapOperation)
+
+bool hasRuleOfItsOwn(Opcode opcode)
+{
+    switch (opcode) {
+#define RETURN_TRUE(opcode, rule) case Opcode::opcode:
+    FOR_EACH_OPERATION_WITH_RULE(RETURN_TRUE)
+#undef RETURN_TRUE
+        return true;
+    default:
+        return isModuleOperation(opcode) || isHeapOperation(opcode);
+    }
+}
+
+static void runOperation(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+{
+    switch (statement.opcode) {
+#define RUN_RULE(opcode, rule) \
+    case Opcode::opcode: \
+        return rule(statement, context);
+    FOR_EACH_OPERATION_WITH_RULE(RUN_RULE)
+#undef RUN_RULE
+    default:
+        if (isModuleOperation(statement.opcode))
+            return runModuleOperation(statement, context);
+        RELEASE_ASSERT(isHeapOperation(statement.opcode));
+        return runHeapOperation(statement, context);
+    }
+}
+
+static void runRuleOnNodesNamed(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+{
+    switch (statement.kind) {
+    case ValueFlowStatementKind::Operation:
+        return runOperation(statement, context);
+    case ValueFlowStatementKind::CallGroup:
+        return runCallGroup(statement, context);
+    case ValueFlowStatementKind::ModuleEvaluation:
+        return runModuleEvaluation(statement, context);
+    case ValueFlowStatementKind::Coroutine:
+        return runCoroutine(statement, context);
+    case ValueFlowStatementKind::HostRoots:
+        return runHostRoots(statement, context);
+    case ValueFlowStatementKind::UsedBuiltins:
+        return runUsedBuiltins(statement, context);
+    case ValueFlowStatementKind::UnseenCode:
+        return runUnseenCode(statement, context);
+    case ValueFlowStatementKind::ModulesLoadedByName:
+        return runModulesLoadedByName(statement, context);
+    case ValueFlowStatementKind::Escape:
+        return runEscape(statement, context);
+    case ValueFlowStatementKind::Lookup:
+        switch (context.nameOfKey().kind) {
+        case ValueFlowNameKind::OpenedIterators:
+            return runOpenedIterators(statement, context);
+        case ValueFlowNameKind::IteratedValues:
+            return runIteratedValues(statement, context);
+        case ValueFlowNameKind::IteratorResults:
+            return runIteratorResults(statement, context);
+        case ValueFlowNameKind::AwaitedValue:
+            return runAwaitedValue(statement, context);
+        case ValueFlowNameKind::FoundThroughEscapedInstances:
+            return runLookupThroughInstances(statement, context);
+        case ValueFlowNameKind::Property:
+        case ValueFlowNameKind::Getter:
+        case ValueFlowNameKind::Setter:
+        case ValueFlowNameKind::Elements:
+        case ValueFlowNameKind::UnknownKey:
+        case ValueFlowNameKind::GetterUnderUnknownKey:
+        case ValueFlowNameKind::SetterUnderUnknownKey:
+        case ValueFlowNameKind::EveryProperty:
+        case ValueFlowNameKind::EveryGetter:
+        case ValueFlowNameKind::EverySetter:
+        case ValueFlowNameKind::PrototypeLink:
+        case ValueFlowNameKind::CopiedFrom:
+        case ValueFlowNameKind::DeletedMember:
+        case ValueFlowNameKind::DeletedMemberUnderUnknownKey:
+        case ValueFlowNameKind::RedefinedMember:
+        case ValueFlowNameKind::RedefinedMemberUnderUnknownKey:
+        case ValueFlowNameKind::PrivateField:
+        case ValueFlowNameKind::Slot:
+        case ValueFlowNameKind::HiddenSlot:
+        case ValueFlowNameKind::InternalFields:
+        case ValueFlowNameKind::SteppedValues:
+        case ValueFlowNameKind::ReturnedValue:
+        case ValueFlowNameKind::SentValues:
+        case ValueFlowNameKind::OpenedBy:
+        case ValueFlowNameKind::ResolvedPromises:
+        case ValueFlowNameKind::RejectedPromises:
+        case ValueFlowNameKind::AllocatedAs:
+        case ValueFlowNameKind::MemberWritten:
+        case ValueFlowNameKind::EveryMemberWritten:
+        case ValueFlowNameKind::EveryMemberRead:
+        case ValueFlowNameKind::RestArgument:
+        case ValueFlowNameKind::AddedNames:
+            return runLookup(statement, context);
+        }
+    case ValueFlowStatementKind::Behavior:
+        return runBehavior(statement, context);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void runValueFlowRule(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+{
+    const ValueFlowInstancedFunctions* instanced = context.instancedFunctions();
+    if (!instanced || !instanced->find(statement.function))
+        return runRuleOnNodesNamed(statement, context);
+    context.makeInstanceOfOtherCalls(statement.function);
+    context.forEachMember(context.unite(context.valueOf(context.markersOf(statement.function)), only(context, ValueFlowInstancedFunctions::markerOfOtherCalls())), [&](ValueFlowObjectID marker) {
+        ValueFlowRuleContext::InstanceOfRun instance(context, statement.function, marker);
+        runRuleOnNodesNamed(statement, context);
+    });
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

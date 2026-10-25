@@ -1,0 +1,296 @@
+# Undefined converts to NaN, and the hole of Double storage is a NaN. So where every use of an element converts it to a number, a read in a loop from an array that the loop does not change tests the bounds alone and takes a hole for NaN. That a hole reads as undefined is a fact about the prototypes: their test and the test of the kind stand on the edge that enters the loop, and a turn has the test of the bounds. Each function behind the first three differs from them in the one thing that costs the form: its read tests that the element is there
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# RUN(PLAN): test-placement
+# RUN(READ): pass PlaceTypeTests
+# RUN(ONCE): pass PlaceTypeTests
+# RUN(NONE): pass PlaceTypeTests
+# STATISTIC: ElementPresenceTestsPlaced = 10
+
+module m0 path="main.js" displayPath="main.js"
+
+# sum += l[j], with sum: number
+function f0 name="sum" parameters=[{type=Array<number, proven>}, {type=int[0, 1000]}] results=[{type=number}] {
+    v2 = Integer integer=0
+    v3 = Double number=0.5
+    Jump -> next b1(v2, v3)
+  b1(v4: int[0, 1000], v5: number):
+    LoopHint
+    v7 = Less v4, v1
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = ElemGet v0, v8
+    v10 = Add v5, v9
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    Jump -> next b1(v12, v10)
+  b3():
+    Return v5
+}
+# PLAN-LABEL: function f0
+# PLAN-NEXT: stretch 0: test IsPristine v0 builtinClass=Array aspects=[Storage] on b0.0; test HasArrayStorage v0 arrayStorage=Double on b0.0; test IsInBounds v0, {{*}} before v9; uses v9; cloned
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f0 name="sum"
+# CHECK: Jump -> next [[front0]](
+# CHECK: [[front0]](
+# CHECK-NEXT: [[isPristine0]]: boolean = IsPristine v0 builtinClass=Array aspects=[Storage]
+# CHECK-NEXT: Branch [[isPristine0]] -> taken [[pristineBlock0]](| 0), notTaken
+# CHECK: [[pristineBlock0]]({{*}}: guard):
+# CHECK-NEXT: = HasArrayStorage v0 arrayStorage=Double
+# READ-LABEL: function f0 name="sum"
+# READ: : number = GetArrayElement v0, v8, {{*}} arrayStorage=Double level=Expected [keyIsIntegral, isInBounds, readsHoleAsNaN]
+# ONCE-LABEL: function f0 name="sum"
+# ONCE-NOT: = HasArrayStorage
+# ONCE: = IsPristine v0
+# ONCE-NOT: = IsPristine
+# ONCE: = HasArrayStorage v0
+# ONCE-NOT: = IsPristine
+# ONCE-NOT: = HasArrayStorage
+# NONE-LABEL: function f0 name="sum"
+# NONE-NOT: IsElementPresent
+
+# r ^= l[j]
+function f1 name="exclusiveOr" parameters=[{type=Array<number, proven>}, {type=int[0, 1000]}] results=[{type=i32}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2, v2)
+  b1(v3: int[0, 1000], v4: i32):
+    LoopHint
+    v6 = Less v3, v1
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = ElemGet v0, v7
+    v9 = BitXor v4, v8
+    v10 = Integer integer=1
+    v11 = Add v7, v10
+    Jump -> next b1(v11, v9)
+  b3():
+    Return v4
+}
+# PLAN-LABEL: function f1
+# PLAN-NEXT: stretch 0: test IsPristine v0 builtinClass=Array aspects=[Storage] on b0.0; test HasArrayStorage v0 arrayStorage=Double on b0.0; test IsInBounds v0, {{*}} before v8; uses v8; cloned
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f1 name="exclusiveOr"
+# READ-LABEL: function f1 name="exclusiveOr"
+# READ: : number = GetArrayElement v0, v7, {{*}} arrayStorage=Double level=Expected [keyIsIntegral, isInBounds, readsHoleAsNaN]
+# ONCE-LABEL: function f1 name="exclusiveOr"
+# ONCE-NOT: = HasArrayStorage
+# ONCE: = IsPristine v0
+# ONCE-NOT: = IsPristine
+# ONCE: = HasArrayStorage v0
+# ONCE-NOT: = IsPristine
+# ONCE-NOT: = HasArrayStorage
+# NONE-LABEL: function f1 name="exclusiveOr"
+# NONE-NOT: IsElementPresent
+
+# The type proves the kind and the prototypes, and ResolveAccesses has rewritten the read: a turn has the test of the bounds and nothing stands in front of the loop
+function f2 name="provenArray" parameters=[{type=Array<number, proven, Double, pristine[Storage]>}, {type=int[0, 1000]}] results=[{type=number}] {
+    v2 = Integer integer=0
+    v3 = Double number=0.5
+    Jump -> next b1(v2, v3)
+  b1(v4: int[0, 1000], v5: number):
+    LoopHint
+    v7 = Less v4, v1
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = GetArrayElement v0, v8 arrayStorage=Double level=Proven [keyIsIntegral]
+    v10 = Add v5, v9
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    Jump -> next b1(v12, v10)
+  b3():
+    Return v5
+}
+# PLAN-LABEL: function f2
+# PLAN-NEXT: stretch 0: test IsInBounds v0, {{*}} before v9; uses v9; cloned
+# PLAN-NOT: stretch
+# READ-LABEL: function f2 name="provenArray"
+# READ: : number = GetArrayElement v0, v8, {{*}} arrayStorage=Double level=Proven [keyIsIntegral, isInBounds, readsHoleAsNaN]
+# ONCE-LABEL: function f2 name="provenArray"
+# NONE-LABEL: function f2 name="provenArray"
+# NONE-NOT: IsElementPresent
+# NONE-NOT: IsPristine
+# NONE-NOT: HasArrayStorage
+
+# text + l[j], with text: string, would hold the text "undefined"
+function f3 name="concatenated" parameters=[{type=Array<number, proven>}, {type=int[0, 1000]}, {type=string}] results=[{type=string}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3, v2)
+  b1(v4: int[0, 1000], v5: string):
+    LoopHint
+    v7 = Less v4, v1
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = ElemGet v0, v8
+    v10 = Add v5, v9
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    Jump -> next b1(v12, v10)
+  b3():
+    Return v5
+}
+# PLAN-LABEL: function f3
+# PLAN-NEXT: stretch 0: test HasArrayStorage v0 arrayStorage=Double on b0.0; test IsElementPresent v0, {{*}} arrayStorage=Double before v9; uses v9; cloned
+# PLAN-NOT: stretch
+# READ-LABEL: function f3 name="concatenated"
+# READ: : number = GetArrayElement v0, v8, {{*}} arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+# NONE-LABEL: function f3 name="concatenated"
+# NONE-NOT: readsHoleAsNaN
+# NONE-NOT: IsInBounds
+# NONE-NOT: IsPristine
+
+# out.push(l[j])
+function f4 name="pushed" parameters=[{type=Array<number, proven>}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = NewArray contents=number
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4: int[0, 1000]):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = ElemGet v0, v7
+    v9 = CallBuiltin v2, v8 overload=ArrayPrototypePush/0
+    v10 = Integer integer=1
+    v11 = Add v7, v10
+    Jump -> next b1(v11)
+  b3():
+    Return v2
+}
+# PLAN-LABEL: function f4
+# PLAN: test IsElementPresent v0, {{*}} arrayStorage=Double before v8
+# READ-LABEL: function f4 name="pushed"
+# READ: : number = GetArrayElement v0, v7, {{*}} arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+# NONE-LABEL: function f4 name="pushed"
+# NONE-NOT: readsHoleAsNaN
+# NONE-NOT: IsInBounds
+
+# return l[j]
+function f5 name="returned" parameters=[{type=Array<number, proven>}, {type=int[0, 1000]}, {type=boolean}] results=[{type=anything}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4: int[0, 1000]):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(| 0), notTaken b5()
+  b2(v7):
+    v8 = ElemGet v0, v7
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    Return v8
+  b4():
+    v9 = Integer integer=1
+    v10 = Add v7, v9
+    Jump -> next b1(v10)
+  b5():
+    v11 = Undefined
+    Return v11
+}
+# PLAN-LABEL: function f5
+# PLAN-NEXT: stretch 0: test HasArrayStorage v0 arrayStorage=Double on b0.0; test IsElementPresent v0, {{*}} arrayStorage=Double before v8; uses v8; cloned
+# PLAN-NOT: stretch
+# READ-LABEL: function f5 name="returned"
+# READ: : number = GetArrayElement v0, v7, {{*}} arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+# NONE-LABEL: function f5 name="returned"
+# NONE-NOT: readsHoleAsNaN
+# NONE-NOT: IsInBounds
+# NONE-NOT: IsPristine
+
+# What the array holds is only expected, so the read by key may give anything and a check stands between it and the sum: a check tells undefined from NaN
+function f6 name="contentsOnlyExpected" parameters=[{type=Array<number>}, {type=int[0, 1000]}] results=[{type=number}] {
+    v2 = Integer integer=0
+    v3 = Double number=0.5
+    Jump -> next b1(v2, v3)
+  b1(v4: int[0, 1000], v5: number):
+    LoopHint
+    v7 = Less v4, v1
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = ElemGet v0, v8
+    v10 = Check v9 castType=number
+    v11 = Add v5, v10
+    v12 = Integer integer=1
+    v13 = Add v8, v12
+    Jump -> next b1(v13, v11)
+  b3():
+    Return v5
+}
+# PLAN-LABEL: function f6
+# PLAN-NEXT: stretch 0: test HasArrayStorage v0 arrayStorage=Double on b0.0; test IsElementPresent v0, {{*}} arrayStorage=Double before v9; uses v9; cloned
+# PLAN-NOT: stretch
+# READ-LABEL: function f6 name="contentsOnlyExpected"
+# READ: : number = GetArrayElement v0, v8, {{*}} arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+# NONE-LABEL: function f6 name="contentsOnlyExpected"
+# NONE-NOT: readsHoleAsNaN
+# NONE-NOT: IsInBounds
+# NONE-NOT: IsPristine
+
+# The test of the prototypes pays only in front of a loop
+function f7 name="outsideLoops" parameters=[{type=Array<number, proven>}, {type=int[0, 1000]}, {type=number}] results=[{type=number}] {
+    v3 = ElemGet v0, v1
+    v4 = Add v2, v3
+    Return v4
+}
+# PLAN-LABEL: function f7
+# PLAN-NEXT: stretch 0: test HasArrayStorage v0 arrayStorage=Double before v3; test IsElementPresent v0, v1 arrayStorage=Double before v3; uses v3; cloned
+# PLAN-NOT: stretch
+# READ-LABEL: function f7 name="outsideLoops"
+# READ: v3: number = GetArrayElement v0, v1, {{*}} arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+# NONE-LABEL: function f7 name="outsideLoops"
+# NONE-NOT: readsHoleAsNaN
+# NONE-NOT: IsInBounds
+# NONE-NOT: IsPristine
+
+function f8 name="arrayChangesInLoop" parameters=[{type=Array<number, proven>}, {type=Array<number, proven>}, {type=int[0, 1000]}] results=[{type=number}] {
+    v3 = Integer integer=0
+    v4 = Double number=0.5
+    Jump -> next b1(v3, v4, v0)
+  b1(v5: int[0, 1000], v6: number, v7: Array<number, proven>):
+    LoopHint
+    v9 = Less v5, v2
+    Branch v9 -> taken b2(| 0), notTaken b3()
+  b2(v10):
+    v11 = ElemGet v7, v10
+    v12 = Add v6, v11
+    v13 = Integer integer=1
+    v14 = Add v10, v13
+    Jump -> next b1(v14, v12, v1)
+  b3():
+    Return v6
+}
+# PLAN-LABEL: function f8
+# PLAN-NEXT: stretch 0: test HasArrayStorage v7 arrayStorage=Double before v11; test IsElementPresent v7, {{*}} arrayStorage=Double before v11; uses v11; cloned
+# PLAN-NOT: stretch
+# READ-LABEL: function f8 name="arrayChangesInLoop"
+# READ: : number = GetArrayElement v7, v10, {{*}} arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+# NONE-LABEL: function f8 name="arrayChangesInLoop"
+# NONE-NOT: readsHoleAsNaN
+# NONE-NOT: IsInBounds
+# NONE-NOT: IsPristine
+
+# The hole of Int32 storage is no number
+function f9 name="integers" parameters=[{type=Array<i32, proven>}, {type=int[0, 1000]}] results=[{type=number}] {
+    v2 = Integer integer=0
+    v3 = Double number=0.5
+    Jump -> next b1(v2, v3)
+  b1(v4: int[0, 1000], v5: number):
+    LoopHint
+    v7 = Less v4, v1
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = ElemGet v0, v8
+    v10 = Add v5, v9
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    Jump -> next b1(v12, v10)
+  b3():
+    Return v5
+}
+# PLAN-LABEL: function f9
+# PLAN-NEXT: stretch 0: test HasArrayStorage v0 arrayStorage=Int32 on b0.0; test IsElementPresent v0, {{*}} arrayStorage=Int32 before v9; uses v9; cloned
+# PLAN-NOT: stretch
+# READ-LABEL: function f9 name="integers"
+# READ: : i32 = GetArrayElement v0, v8, {{*}} arrayStorage=Int32 level=Expected [keyIsIntegral, isPresent]
+# NONE-LABEL: function f9 name="integers"
+# NONE-NOT: readsHoleAsNaN
+# NONE-NOT: IsInBounds
+# NONE-NOT: IsPristine

@@ -1,0 +1,84 @@
+# Accesses of one name through one receiver set are one request for a location, whose weight is the sum over all functions. Reads and stores are two rows of the placed table
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: plan-slots accesses
+# RUN(PLACED): place accesses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="PlainA" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L1 name="PlainB" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+layout L2 name="CycleA" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L3 name="CycleB" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+variable g0 name="plain" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="cycle" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2, v2 layout=L0 fields=[0, 1]
+    v4 = FinishObject v3
+    PutModuleVariable v4 variable=g0
+    v6 = NewObject -, v2, v2 layout=L1 fields=[0, 1]
+    v7 = FinishObject v6
+    PutModuleVariable v7 variable=g0
+    v9 = NewObject -, v2 layout=L2 fields=[0]
+    v10 = FinishObject v9
+    PutModuleVariable v10 variable=g1
+    v12 = NewObject -, v2 layout=L3 fields=[0]
+    v13 = FinishObject v12
+    PutModuleVariable v13 variable=g1
+    v15 = CallDirect function=f1
+    v16 = CallDirect function=f2
+    v17 = CallDirect function=f3
+    v18 = CallDirect function=f4
+    v19 = CallDirect v2 function=f5
+    Return
+}
+function f1 name="readPlain" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f2 name="readPlainAgain" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f3 name="readOutsideCycle" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f4 name="readInCycle" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = PropGet v0 key="x"
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f5 name="readAndStore" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v1 key="y"
+    PropSet v1, v0 key="y"
+    Return v2
+}
+# A site outside every loop of a function that runs once weighs 256. The heaviest request comes first.
+# CHECK: "x" {L2 L3} read weight={{*}} sites=2
+# CHECK-NEXT: one location Double @16
+# CHECK-NEXT: "x" {L0 L1} read weight=512 sites=2
+# CHECK-NEXT: one location Double @
+# CHECK-NEXT: "y" {L0 L1} read+store weight=512 sites=2
+# CHECK-NEXT: one location Double @
+# CHECK-NOT: sites=
+
+# PLACED: access 0 "x" [L0, L1] read EveryMember Double @
+# PLACED-NEXT: access 1 "x" [L2, L3] read EveryMember Double @16
+# PLACED-NEXT: access 2 "y" [L0, L1] read EveryMember Double @[[y]]
+# PLACED-NEXT: access 3 "y" [L0, L1] store EveryMember Double @[[y]]
+# PLACED-NOT: access

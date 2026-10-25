@@ -1,0 +1,46 @@
+# `i + 2 <= n; i += 2`: the test compares another sum of the counter and its step than the one that goes around. A sum with another number is no test of the counter
+# FORM: Prepared
+# RUN: induction
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="sumOfCounterAndStep" parameters=[{type=int[0, 1000]}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Integer integer=2
+    v5 = Add v2, v4
+    v6 = LessEq v5, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Integer integer=2
+    v8 = Add v2, v7
+    Jump -> next b1(v8)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v2 start v1 step +2 Increasing stepped [v8] tests [b1 v2 LessEq v0 Invariant AfterStep entry {{*}} exits OnlyAtTest]
+# CHECK-NEXT: loop b1 counter: v2
+
+function f1 name="sumWithAnotherNumber" parameters=[{type=int[0, 1000]}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Integer integer=3
+    v5 = Add v2, v4
+    v6 = LessEq v5, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Integer integer=2
+    v8 = Add v2, v7
+    Jump -> next b1(v8)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: loop b1:
+# CHECK-NEXT: v2 start v1 step +2 Increasing stepped [v8] tests []

@@ -1,0 +1,57 @@
+# A walk that links what an import() names is long where it goes round a large cycle of modules, here m2 to m65. The build records what such a walk finds to do, for a root in front of the cycle (m1)
+# and for one on it (m2). There is no plan for m68, which only a module of the cycle names: its code runs when the cycle is linked; none for m69, which reaches no large cycle; none for a module
+# that other modules request and no import() names. The last root record ends the steps.
+# LIBRARY: own
+# RUN: tables
+# RUN(ROWS): tables modules
+
+variable g0 name="x" module=m66 declared={type=anything} initialization=Undefined
+variable g1 name="y" module=m67 declared={type=anything} initialization=Undefined
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+module m1 path="/root.ts" displayPath="root.ts" requests=[{target=m2 completes=true}]
+module m2 path="/ring2.ts" displayPath="ring2.ts" requests=[{target=m66 completes=true}, {target=m3 completes=true}]
+module m3 path="/ring3.ts" displayPath="ring3.ts" requests=[{target=m4 completes=true}]
+module m4 path="/ring4.ts" displayPath="ring4.ts" requests=[{target=m5 completes=true}]
+module m5 path="/ring5.ts" displayPath="ring5.ts" body=f1 requests=[{target=m6 completes=true}]
+module m6 path="/ring6.ts" displayPath="ring6.ts" requests=[{target=m7 completes=true}]
+module m7 path="/ring7.ts" displayPath="ring7.ts" requests=[{target=m8 completes=true}]
+module m8 path="/ring8.ts" displayPath="ring8.ts" requests=[{target=m9 completes=true}]
+module m9 path="/ring9.ts" displayPath="ring9.ts" requests=[{target=m10 completes=true}]
+module m10 path="/ring10.ts" displayPath="ring10.ts" requests=[{target=m67 completes=true}, {target=m11 completes=true}]
+# REPEAT: i = 11..65; a = 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 2
+module m%(i) path="/ring%(i).ts" displayPath="ring%(i).ts" requests=[{target=m%(a) completes=true}]
+# END REPEAT
+module m66 path="/x.cjs" displayPath="x.cjs" kind=CommonJs flags=[IsLibrary] exportRule=CommonJs requireResult=ModuleExports syntheticExports=[{name="x" variable=g0 isKnownMember=true}]
+module m67 path="/y.cjs" displayPath="y.cjs" kind=CommonJs flags=[IsLibrary] exportRule=CommonJs requireResult=ModuleExports syntheticExports=[{name="y" variable=g1 isKnownMember=true}]
+module m68 path="/late.ts" displayPath="late.ts" requests=[{target=m3 completes=true}]
+module m69 path="/small.ts" displayPath="small.ts" requests=[{target=m66 completes=true}]
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    v1 = ImportModule module=m2 referrer=m0
+    v2 = ImportModule module=m69 referrer=m0
+    Return
+}
+function f1 name="ring5" module=m5 kind=Module results=[{type=anything}] {
+    v0 = ImportModule module=m68 referrer=m5
+    Return
+}
+function f2 name="x" module=m66 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    Return
+}
+function f3 name="y" module=m67 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    Return
+}
+
+# CHECK: entryPointLinkPlan 0 0
+# CHECK-NEXT: linkPlanRoots 3 36
+# CHECK-NEXT: linkPlanStepsOfRoots 4 16
+
+# ROWS: linkPlanRoot module=m1 firstStep=0 memberOfCycle=m2
+# ROWS-NEXT: linkPlanRoot module=m2 firstStep=2 memberOfCycle=m2
+# ROWS-NEXT: endOfLinkPlanRoots firstStep=4
+# ROWS-NEXT: linkPlanStepOfRoot module=m66
+# ROWS-NEXT: linkPlanStepOfRoot module=m67
+# ROWS-NEXT: linkPlanStepOfRoot module=m66
+# ROWS-NEXT: linkPlanStepOfRoot module=m67

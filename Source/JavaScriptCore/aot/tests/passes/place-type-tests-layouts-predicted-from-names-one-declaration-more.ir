@@ -1,0 +1,74 @@
+# A name with one declaration more than the limit predicts as many declarations as a name at the limit: only the objects of the layout that is left out take the access by name, and the run says that it left one out
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# LOSS: MaxDeclarationsPredictedFromNames x2 f1 v1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Circle" constructor=f8 fields=[{key="area" declared={type=number} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}, {key="span" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L1 kind=Instance name="Square" constructor=f9 fields=[{key="area" declared={type=number} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}, {key="span" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L2 kind=Instance name="Ring" constructor=f10 fields=[{key="area" declared={type=number} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}, {key="span" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L3 kind=Instance name="Wedge" constructor=f11 fields=[{key="area" declared={type=number} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L4 kind=Instance name="Blob" constructor=f12 fields=[{key="weight" declared={type=number} flags=[IsRequired]}, {key="blobSkin" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L5 kind=Instance name="Beam" constructor=f4 fields=[{key="span" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L6 kind=Instance name="LongBeam" base=L5 constructor=f5 flags=[HasHeritage] flow={baseState=Layout base=L5}
+layout L7 kind=Instance name="ShortBeam" base=L5 constructor=f6 flags=[HasHeritage] flow={baseState=Layout base=L5}
+
+function f0 name="atTheLimit" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="area"
+    Return v1
+# CHECK-NEXT: b0(v0: anything ~ L0|L1|L2|L3):
+# CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2|L3
+# CHECK: = GetSlot {{*}} key="area" receivers=[L0, L1, L2, L3] level=Expected
+# CHECK: = PropGet v0 key="area"
+}
+
+function f1 name="oneMore" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="weight"
+    Return v1
+# CHECK-NEXT: b0(v0: anything ~ L0|L1|L2|L3):
+# CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2|L3
+# CHECK: = GetSlot {{*}} key="weight" receivers=[L0, L1, L2, L3] level=Expected
+# CHECK: = PropGet v0 key="weight"
+}
+
+function f2 name="classAndWhatIsBelowItTakeOnePlace" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="span"
+    Return v1
+# CHECK-NEXT: b0(v0: anything ~ L0|L1|L2|L5|L6|L7):
+# CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2|L5|L6|L7
+# CHECK: = GetSlot {{*}} key="span" receivers=[L0, L1, L2, L5, L6, L7] level=Expected
+}
+
+function f3 name="nameOnOnePathLeavesNothingOut" parameters=[{type=object flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ object, v1: boolean):
+    v2 = PropGet v0 key="weight"
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PropGet v0 key="blobSkin"
+    Return v3
+  b2():
+    Return v2
+# CHECK-NEXT: b0(v0: anything ~ L4, v1: boolean):
+# CHECK: = TypeTest v0 testedType=L4
+}
+
+function f4 name="Beam" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
+function f5 name="LongBeam" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L6
+function f6 name="ShortBeam" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L7
+
+function f7 name="storeLeavesOutTheSameLayout" parameters=[{type=object flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ object, v1: number):
+    PropSet v0, v1 key="weight"
+    Return v1
+# CHECK-NEXT: b0(v0: anything ~ L0|L1|L2|L3, v1: number):
+# CHECK-NEXT: = TypeTest v0 testedType=L0|L1|L2|L3
+}
+
+function f8 name="Circle" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f9 name="Square" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f10 name="Ring" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f11 name="Wedge" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
+function f12 name="Blob" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4

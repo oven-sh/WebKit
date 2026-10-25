@@ -26,7 +26,7 @@
 #include "config.h"
 #include "FFIContext.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 #include "JSCJSValueInlines.h"
 #include "JSFFICallback.h"
@@ -158,4 +158,4 @@ std::span<char> StringArena::allocate(size_t bytes)
 
 } } // namespace JSC::FFI
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

@@ -1,0 +1,234 @@
+# A planned capacity is a prediction: what counts in a loop are the paths that are as likely as the loop, not the generic arms and copies that type tests leave beside them
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+# STATISTIC: ArrayCapacitiesPlanned = 5
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="pushWithUnlikelyGenericArm" parameters=[{type=int[0, 1000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+    v3 = NewArray contents=anything
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(| 0), notTaken b6()
+  b2(v8):
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v9 = CallBuiltin v3, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b5()
+  b4() frequency=Unlikely:
+    v10 = PropGet v3 key="push"
+    v11 = Call v10, v3, v1
+    Jump -> next b5()
+  b5():
+    v12 = Integer integer=1
+    v13 = Add v8, v12
+    Jump -> next b1(v13)
+  b6():
+    Return v3
+}
+# CHECK-LABEL: function f0
+# CHECK: [[sum0]]: {{*}} = Add {{*}}v0
+# CHECK-NEXT: = NewArray {{*}}capacity=[[sum0]]
+
+function f1 name="pushOnUnlikelyArm" parameters=[{type=int[0, 1000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+    v3 = NewArray contents=anything
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(| 0), notTaken b5()
+  b2(v8):
+    Branch v2 -> taken b3(), notTaken b4()
+  b3() frequency=Unlikely:
+    v9 = CallBuiltin v3, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b4()
+  b4():
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b5():
+    Return v3
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: capacity=
+
+function f2 name="conditionalPushInUnlikelyLoop" parameters=[{type=int[0, 1000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+    v3 = NewArray contents=anything
+    v4 = Integer integer=0
+    Branch v2 -> taken b1(v4), notTaken b6()
+  b1(v5) frequency=Unlikely:
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(| 0), notTaken b5()
+  b2(v8) frequency=Unlikely:
+    Branch v2 -> taken b3(), notTaken b4()
+  b3() frequency=Unlikely:
+    v9 = CallBuiltin v3, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b4()
+  b4() frequency=Unlikely:
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b5() frequency=Unlikely:
+    Return v3
+  b6():
+    Return v3
+}
+# CHECK-LABEL: function f2
+# CHECK-NOT: capacity=
+
+function f3 name="lengthGetterWithUnknownCodeOnUnlikelyArm" parameters=[{type=Array<anything>}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+    v3 = NewArray contents=anything
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = CallBuiltin v0 overload=ArrayPrototypeLength/0 builtinCallForm=Whole
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(| 0), notTaken b6()
+  b2(v9):
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b5(v1)
+  b4() frequency=Unlikely:
+    v10 = Call v1
+    Jump -> next b5(v10)
+  b5(v11):
+    v12 = CallBuiltin v3, v11 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v13 = Integer integer=1
+    v14 = Add v9, v13
+    Jump -> next b1(v14)
+  b6():
+    Return v3
+}
+# CHECK-LABEL: function f3
+# CHECK: [[length3]]: {{*}} = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CHECK: [[sum3]]: {{*}} = Add {{*}}, [[length3]]
+# CHECK-NEXT: = NewArray contents=anything capacity=[[sum3]]
+
+function f4 name="loopGoesOnInUnlikelyCopy" parameters=[{type=int[0, 1000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+    v3 = NewArray contents=anything
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(| 0), notTaken b6()
+  b2(v8):
+    Branch v2 -> taken b3(), notTaken b4(v8)
+  b3():
+    v9 = CallBuiltin v3, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b4(v12) frequency=Unlikely:
+    v13 = CallBuiltin v3, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v14 = Integer integer=1
+    v15 = Add v12, v14
+    LoopHint
+    v17 = Less v15, v0
+    Branch v17 -> taken b5(| 0), notTaken b6()
+  b5(v18) frequency=Unlikely:
+    Jump -> next b4(v18)
+  b6():
+    Return v3
+}
+# CHECK-LABEL: function f4
+# CHECK: [[sum4]]: {{*}} = Add {{*}}v0
+# CHECK-NEXT: = NewArray {{*}}capacity=[[sum4]]
+
+function f5 name="loopGoesOnInLikelyCopy" parameters=[{type=int[0, 1000]}, {type=anything}, {type=boolean}] results=[{type=Array<anything>}] {
+    v3 = NewArray contents=anything
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(| 0), notTaken b6()
+  b2(v8):
+    Branch v2 -> taken b3(), notTaken b4(v8)
+  b3():
+    v9 = CallBuiltin v3, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b4(v12):
+    v13 = CallBuiltin v3, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v14 = Integer integer=1
+    v15 = Add v12, v14
+    LoopHint
+    v17 = Less v15, v0
+    Branch v17 -> taken b5(| 0), notTaken b6()
+  b5(v18):
+    Jump -> next b4(v18)
+  b6():
+    Return v3
+}
+# CHECK-LABEL: function f5
+# CHECK-NOT: capacity=
+
+function f6 name="unlikelyBlockLeadsIntoLoopOfAnotherLiteral" parameters=[{type=int[0, 1000]}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v3 = Integer integer=0
+    Branch v2 -> taken b1(v3), notTaken b8(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b14()
+  b2(v7):
+    v8 = NewArray contents=anything
+    v9 = Integer integer=0
+    Jump -> next b3(v9)
+  b3(v10):
+    LoopHint
+    v12 = Less v10, v0
+    Branch v12 -> taken b4(| 0), notTaken b6()
+  b4(v13):
+    Branch v2 -> taken b5(), notTaken b7(v7, v8, v13)
+  b5():
+    v14 = CallBuiltin v8, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v15 = Integer integer=1
+    v16 = Add v13, v15
+    Jump -> next b3(v16)
+  b6():
+    v17 = Integer integer=1
+    v18 = Add v7, v17
+    Jump -> next b1(v18)
+  b7(v19, v20, v21) frequency=Unlikely:
+    Jump -> next b10(v19, v20, v21)
+  b8(v22):
+    LoopHint
+    v24 = Less v22, v0
+    Branch v24 -> taken b9(| 0), notTaken b14()
+  b9(v25):
+    v26 = NewArray contents=anything
+    v27 = Integer integer=0
+    Jump -> next b10(v25, v26, v27)
+  b10(v28, v29, v30):
+    Jump -> next b11(v30)
+  b11(v31):
+    LoopHint
+    v33 = Less v31, v0
+    Branch v33 -> taken b12(| 0), notTaken b13()
+  b12(v34):
+    v35 = CallBuiltin v29, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v36 = Integer integer=1
+    v37 = Add v34, v36
+    Jump -> next b11(v37)
+  b13():
+    v38 = Integer integer=1
+    v39 = Add v28, v38
+    Jump -> next b8(v39)
+  b14():
+    v40 = Undefined
+    Return v40
+}
+# CHECK-LABEL: function f6
+# CHECK: b2(
+# CHECK: [[sum6]]: {{*}} = Add {{*}}v0
+# CHECK-NEXT: = NewArray {{*}}capacity=[[sum6]]
+# CHECK: b9(
+# CHECK: [[otherSum6]]: {{*}} = Add {{*}}v0
+# CHECK-NEXT: = NewArray {{*}}capacity=[[otherSum6]]

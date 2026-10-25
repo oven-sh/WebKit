@@ -44,6 +44,8 @@
 #include "VMManager.h"
 #include <wtf/TZoneMallocInlines.h>
 
+#include "AOTEnvironment.h"
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
@@ -499,15 +501,30 @@ private:
     unsigned& m_indentation;
 };
 
+static std::optional<uint32_t> compiledEnvironmentShape(JSCell* cell)
+{
+#if ENABLE(AOT)
+    if (cell->type() == CompiledEnvironmentType)
+        return uncheckedDowncast<AOT::Environment>(cell)->layout().shape;
+#else
+    UNUSED_PARAM(cell);
+#endif
+    return std::nullopt;
+}
+
+static bool hasButterfly(JSCell* cell)
+{
+    return hasButterflyField(cell->type());
+}
+
 void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
 {
     StructureID structureID = cell->structureID();
     Structure* structure = cell->structure();
-    IndexingType indexingTypeAndMisc = cell->indexingTypeAndMisc();
+    std::optional<uint32_t> environmentShape = compiledEnvironmentShape(cell);
     IndexingType indexingType = structure->indexingType();
     IndexingType indexingMode = structure->indexingMode();
     JSType type = cell->type();
-    TypeInfo::InlineTypeFlags inlineTypeFlags = cell->inlineTypeFlags();
     CellState cellState = cell->cellState();
     size_t cellSize = cell->cellSize();
     size_t slotCount = cellSize / sizeof(EncodedJSValue);
@@ -536,14 +553,22 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
     {
         IndentationScope scope(indentation);
         INDENT out.println("structureID ", format("%d 0x%" PRIx32, structureID, structureID), " structure ", RawPointer(structure));
-        INDENT out.println("indexingTypeAndMisc ", format("%d 0x%" PRIx8, indexingTypeAndMisc, indexingTypeAndMisc), " ", IndexingTypeDump(indexingMode));
+        if (environmentShape)
+            INDENT out.println("shape ", format("%" PRIu32 " 0x%" PRIx32, *environmentShape, *environmentShape));
+        else {
+            IndexingType indexingTypeAndMisc = cell->indexingTypeAndMisc();
+            INDENT out.println("indexingTypeAndMisc ", format("%d 0x%" PRIx8, indexingTypeAndMisc, indexingTypeAndMisc), " ", IndexingTypeDump(indexingMode));
+        }
         INDENT out.println("type ", format("%d 0x%" PRIx8, type, type));
-        INDENT out.println("flags ", format("%d 0x%" PRIx8, inlineTypeFlags, inlineTypeFlags));
+        if (!environmentShape) {
+            TypeInfo::InlineTypeFlags inlineTypeFlags = cell->inlineTypeFlags();
+            INDENT out.println("flags ", format("%d 0x%" PRIx8, inlineTypeFlags, inlineTypeFlags));
+        }
         INDENT out.println("cellState ", format("%d", cellState));
     }
 
     unsigned slotIndex = 1;
-    if (cell->isObject()) {
+    if (hasButterfly(cell)) {
         JSObject* obj = static_cast<JSObject*>(const_cast<JSCell*>(cell));
         Butterfly* butterfly = obj->butterfly();
         size_t butterflySize = obj->butterflyTotalSize();

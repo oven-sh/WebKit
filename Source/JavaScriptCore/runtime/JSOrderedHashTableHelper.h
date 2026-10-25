@@ -29,6 +29,9 @@
 #include <JavaScriptCore/HashMapHelper.h>
 #include <JavaScriptCore/JSCellButterfly.h>
 #include <JavaScriptCore/JSObject.h>
+#if ENABLE(AOT)
+#include <JavaScriptCore/AOTCompactStorage.h>
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -646,6 +649,71 @@ public:
     ALWAYS_INLINE static JSValue getIterationEntry(Storage& storage) { return toJSValue(iterationEntry(storage)); }
     ALWAYS_INLINE static JSValue getIterationEntryKey(Storage& storage) { return getKey(storage, iterationEntry(storage)); }
     ALWAYS_INLINE static JSValue getIterationEntryValue(Storage& storage) { return getValue(storage, iterationEntry(storage)); }
+
+    ALWAYS_INLINE static bool isCompact(JSCell& storage) { return storage.type() != JSCellButterflyType; }
+    ALWAYS_INLINE static Storage& ordinary(JSCell& storage)
+    {
+        ASSERT(!isCompact(storage));
+        return *uncheckedDowncast<Storage>(&storage);
+    }
+
+    struct AnyTransitionResult {
+        JSCell* storage { nullptr };
+        Entry entry { 0 };
+        JSValue key;
+        JSValue value;
+    };
+    ALWAYS_INLINE static AnyTransitionResult transitAndNext(VM& vm, JSCell& storage, Entry from)
+    {
+#if ENABLE(AOT)
+        if (isCompact(storage)) {
+            auto next = AOT::CompactStorage::transitAndNext(vm, &storage, from);
+            ASSERT(!next.storage || isCompact(*next.storage));
+            return { next.storage, next.entry, next.key, next.value };
+        }
+#endif
+        auto result = transitAndNext(vm, ordinary(storage), from);
+        return { result.storage, result.entry, result.key, result.value };
+    }
+    ALWAYS_INLINE static JSCell* nextAndUpdateIterationEntry(VM& vm, JSCell& storage, Entry entry)
+    {
+#if ENABLE(AOT)
+        if (isCompact(storage)) {
+            auto next = AOT::CompactStorage::transitAndNext(vm, &storage, entry);
+            if (!next.storage)
+                return vm.orderedHashTableSentinel();
+            ASSERT(isCompact(*next.storage));
+            AOT::CompactStorage::setIterationEntry(next.storage, next.entry);
+            return next.storage;
+        }
+#endif
+        return nextAndUpdateIterationEntry(vm, ordinary(storage), entry);
+    }
+    ALWAYS_INLINE static TableSize iterationEntry(JSCell& storage)
+    {
+#if ENABLE(AOT)
+        if (isCompact(storage))
+            return AOT::CompactStorage::iterationEntry(&storage);
+#endif
+        return iterationEntry(ordinary(storage));
+    }
+    ALWAYS_INLINE static JSValue getIterationEntry(JSCell& storage) { return toJSValue(iterationEntry(storage)); }
+    ALWAYS_INLINE static JSValue getIterationEntryKey(JSCell& storage)
+    {
+#if ENABLE(AOT)
+        if (isCompact(storage))
+            return AOT::CompactStorage::keyAt(&storage, AOT::CompactStorage::iterationEntry(&storage));
+#endif
+        return getIterationEntryKey(ordinary(storage));
+    }
+    ALWAYS_INLINE static JSValue getIterationEntryValue(JSCell& storage)
+    {
+#if ENABLE(AOT)
+        if (isCompact(storage))
+            return AOT::CompactStorage::valueAt(&storage, AOT::CompactStorage::iterationEntry(&storage));
+#endif
+        return getIterationEntryValue(ordinary(storage));
+    }
 };
 
 } // namespace JSC

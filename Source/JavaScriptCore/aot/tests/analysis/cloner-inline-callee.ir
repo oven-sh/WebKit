@@ -1,0 +1,89 @@
+# A callee with a loop, a handler and a tail call cloned into a caller: its blocks without a handler get the handler of the call
+# FORM: Prepared
+# RUN: inline function=f0 value=v2
+# RUN(COVERED): inline function=f2 value=v2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="caller" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f1
+    v3 = TypeTest v2 testedType=object
+    Return v2
+}
+function f1 name="callee" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    Jump -> next b1(v1)
+  b1(v2) handler=b4():
+    v3 = Call v0, -, v2
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = TypeTest v3 testedType=object
+    v6 = Add v2, v1
+    Branch v5 -> taken b3(), notTaken b1(v6)
+  b3():
+    v7 = CallDirect v6 function=f3
+    ReturnCall v7 casts=[{declared={type=anything} resolution=Upcast}]
+  b4() role=CatchHandler:
+    v8 = CatchValue
+    Return v8
+}
+function f2 name="coveredCaller" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number) handler=b1():
+    v2 = CallDirect v0, v1 function=f1
+    Return v2
+  b1() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+function f3 name="tailCallee" parameters=[{type=number}] results=[{type=number}] {
+    Return v0
+}
+# CHECK: check: CanClone
+# CHECK-NEXT: function f0
+# CHECK-NEXT: b0(v0: anything, v1: number):
+# CHECK-NEXT: Jump -> next [[E]]()
+# CHECK-NEXT: [[C]](v2: anything):
+# CHECK-NEXT: v3: boolean = TypeTest v2 testedType=object
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[E]]():
+# CHECK-NEXT: Jump -> next [[H]](v1)
+# CHECK-NEXT: [[H]]([[I]]: number) handler=[[X]]():
+# CHECK-NEXT: [[K]]: anything = Call v0, -, [[I]]
+# CHECK-NEXT: Jump -> next [[B]]()
+# CHECK-NEXT: [[B]]():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[T]]: boolean = TypeTest [[K]] testedType=object
+# CHECK-NEXT: [[N]]: number = Add [[I]], v1
+# CHECK-NEXT: Branch [[T]] -> taken [[R]](), notTaken [[H]]([[N]])
+# CHECK-NEXT: [[R]]():
+# CHECK-NEXT: [[L]]: number = CallDirect [[N]] function=f3 [isDemotedTailCall]
+# CHECK-NEXT: Jump -> next [[C]]([[L]])
+# CHECK-NEXT: [[X]]() role=CatchHandler:
+# CHECK-NEXT: [[Y]]: anything = CatchValue
+# CHECK-NEXT: Jump -> next [[C]]([[Y]])
+# CHECK-NEXT: }
+# COVERED: check: CanClone
+# COVERED-NEXT: function f2
+# COVERED-NEXT: b0(v0: anything, v1: number) handler=b1():
+# COVERED-NEXT: Jump -> next [[E]]()
+# COVERED-NEXT: b1() role=CatchHandler:
+# COVERED-NEXT: v3: anything = CatchValue
+# COVERED-NEXT: Return v3
+# COVERED-NEXT: [[C]](v2: anything) handler=b1():
+# COVERED-NEXT: Return v2
+# COVERED-NEXT: [[E]]() handler=b1():
+# COVERED-NEXT: Jump -> next [[H]](v1)
+# COVERED-NEXT: [[H]]([[I]]: number) handler=[[X]]():
+# COVERED-NEXT: [[K]]: anything = Call v0, -, [[I]]
+# COVERED-NEXT: Jump -> next [[B]]()
+# COVERED-NEXT: [[B]]() handler=b1():
+# COVERED-NEXT: LoopHint
+# COVERED-NEXT: [[T]]: boolean = TypeTest [[K]] testedType=object
+# COVERED-NEXT: [[N]]: number = Add [[I]], v1
+# COVERED-NEXT: Branch [[T]] -> taken [[R]](), notTaken [[H]]([[N]])
+# COVERED-NEXT: [[R]]() handler=b1():
+# COVERED-NEXT: [[L]]: number = CallDirect [[N]] function=f3 [isDemotedTailCall]
+# COVERED-NEXT: Jump -> next [[C]]([[L]])
+# COVERED-NEXT: [[X]]() role=CatchHandler handler=b1():
+# COVERED-NEXT: [[Y]]: anything = CatchValue
+# COVERED-NEXT: Jump -> next [[C]]([[Y]])
+# COVERED-NEXT: }

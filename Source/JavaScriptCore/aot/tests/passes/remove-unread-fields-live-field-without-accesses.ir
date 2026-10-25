@@ -1,0 +1,23 @@
+# A field without accesses by flow alone that an operation still names keeps its slot: its store count becomes unknown
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="InData" fields=[{key="n" declared={type=number} flags=[IsRequired]}, {key="note" declared={type=number} flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+layout L1 kind=Environment name="seenByEval" fields=[{key="x" declared={type=anything}}, {key="note" declared={type=anything} flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+data d0 root=Object{layout=L0 members=[{key="n" value=Number{value=1}}]}
+evalscope e0 bindings=[{name="note" layout=L1 field=1 operand=0}]
+# CHECK: layout L0 name="InData"{{*}}{key="note"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+# CHECK: layout L1 kind=Environment name="seenByEval"{{*}}{key="note"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+
+function f0 name="buildsFromData" results=[{type=anything}] {
+    v0 = Data data=d0
+    Return v0
+}
+function f1 name="evaluatesText" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = Undefined
+    v3 = DirectEval v0, v2, -, v1 evalScope=e0
+    Return v3
+}

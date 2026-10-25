@@ -1,0 +1,33 @@
+# takesText("spelledByNoAccess"); takesKey("side"); circle.side
+# The universe has a member for every property key of the program and none for any other text. A text matters to the analysis only as a key: what names no property is a string like any other
+# RUN: valueflow-why values=f1:v1 values=f2:v1
+# CHECK: values=f1:v1
+# CHECK: operand 0 {{*}} 1 members: primitive
+# CHECK: values=f2:v1
+# CHECK: operand 0 {{*}} 1 members: key
+# RUN(APPLY): valueflow-apply
+# APPLY: function f1 name="takesText" {{*}}parameters=[{type=string}]
+# APPLY: function f2 name="takesKey" {{*}}parameters=[{type="side"}]
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Circle"
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = String string="spelledByNoAccess"
+    v1 = NewClosure function=f1
+    v2 = Call v1, -, v0
+    v3 = String string="side"
+    v4 = NewClosure function=f2
+    v5 = Call v4, -, v3
+    v6 = NewObject layout=L0 fields=[]
+    v7 = PropGet v6 key="side"
+    Return
+}
+function f1 name="takesText" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="length"
+    Return
+}
+function f2 name="takesKey" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="length"
+    Return
+}

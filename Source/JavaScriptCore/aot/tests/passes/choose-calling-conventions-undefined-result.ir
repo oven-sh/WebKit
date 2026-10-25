@@ -1,0 +1,47 @@
+# A function whose result is undefined returns no value: it keeps every tail call, and a caller that returns a value jumps to it only if it is boxed
+# FORM: Prepared
+# RUN: pass ChooseCallingConventions
+# STATISTIC: ResultsBoxedForTailCalls = 2
+# STATISTIC: ReturnCallsDemoted = 1
+# CHECK: f0 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
+# CHECK-NEXT: f1 Direct ({{*}}:Double) -> ({{*}}:JSValue) boxed-result
+# CHECK: f3 Direct ({{*}}:Double) -> (none:JSValue)
+# CHECK-NEXT: f4 Direct ({{*}}:Double) -> (none:JSValue)
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="logs" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = CallDirect v0 function=f1
+    ReturnCall v1 requirement=Allowed
+}
+function f1 name="alsoLogs" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = CallDirect v0 function=f0
+    ReturnCall v1 requirement=Allowed
+}
+# CHECK-LABEL: function f2 name="logs"
+# CHECK: ReturnCall v4 requirement=Allowed
+function f2 name="logs" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0 arguments=Registers} {
+    v3 = AssumeType v2 castType=number
+    v4 = CallDirect v3 function=f0
+    ReturnCall v4 requirement=Allowed
+}
+# CHECK-LABEL: function f3 name="neverJumpedTo"
+# CHECK: ReturnCall v1 requirement=Allowed
+function f3 name="neverJumpedTo" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = CallDirect v0 function=f0
+    ReturnCall v1 requirement=Allowed
+}
+function f4 name="calledByHost" parameters=[{type=number}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+# CHECK-LABEL: function f5 name="calledByHost"
+# CHECK: v4: undefined = CallDirect v3 function=f4
+# CHECK-NEXT: Return v4
+function f5 name="calledByHost" role=GenericEntrypoint flags=[HasThis] captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
+    v3 = AssumeType v2 castType=number
+    v4 = CallDirect v3 function=f4
+    ReturnCall v4 requirement=Allowed
+}

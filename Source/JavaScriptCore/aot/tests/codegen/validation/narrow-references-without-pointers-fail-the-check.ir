@@ -1,0 +1,8 @@
+# Without the pointers beside narrow references the check of references fails the build
+# FORM: AsRead
+# RUN: compile NarrowReferenceGuards NarrowReferencesAcrossSafepoints
+# OPTIONS: references=narrow check=validate-back-end,validate-reference-guards testing=DropReferenceGuards,NoLayoutIsMadeSeldom
+# OPTIONS: disable=pass:InlineCalls,pass:HoistTestsIntoPredecessors,pass:ThreadJumps,pass:SinkAllocations,pass:AllocateInFrames,pass:RemoveUnreadFields
+# DIAGNOSTIC: NarrowReferenceWithoutPointer
+# CHECK: statistic NarrowReferenceGuards 0
+# PROGRAM-OF: narrow-reference-has-pointer-over-call.ir

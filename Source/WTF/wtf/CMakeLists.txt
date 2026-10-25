@@ -75,6 +75,7 @@ set(WTF_PUBLIC_HEADERS
     CryptographicUtilities.h
     CryptographicallyRandomNumber.h
     CurrentThread.h
+    CycleForest.h
     DataLog.h
     DataMutex.h
     DataRef.h
@@ -111,6 +112,7 @@ set(WTF_PUBLIC_HEADERS
     ForbidHeapAllocation.h
     FormattedLogging.h
     Forward.h
+    FrequencyEstimator.h
     Function.h
     FunctionDispatcher.h
     FunctionPtr.h

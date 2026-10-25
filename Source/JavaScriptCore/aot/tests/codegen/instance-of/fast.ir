@@ -1,0 +1,94 @@
+# instanceof against a class of the program, a built-in class and a parameter passes the back-end checks in fast code
+# RUN: compile
+# OPTIONS: heat=everything-is-hot check=validate-back-end
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="A" constructor=f1
+layout L1 kind=Instance name="B" base=L0 constructor=f2 flags=[HasHeritage]
+variable g0 name="A" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="B" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    PutModuleVariable v2 variable=g0
+    v4 = ResolveHeritage v2
+    v5 = NewClosure function=f2
+    v6 = NewClass v5, v2, v4 layout=L1
+    v7 = FinishClass v6 layout=L1
+    PutModuleVariable v7 variable=g1
+    v9 = NewClosure function=f3
+    v10 = NewClosure function=f4
+    v11 = NewClosure function=f5
+    v12 = NewClosure function=f6
+    v13 = NewClosure function=f7
+    v14 = NewClosure function=f8
+    v15 = NewClosure function=f9
+    v16 = NewClosure function=f10
+    v17 = Builtin builtin=GlobalThis
+    v18 = PropGet v17 key="register" [isFreeName]
+    v19 = Call v18, -, v9, v10, v11, v12, v13, v14, v15, v16
+    Return v19
+}
+function f1 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="B" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f3 name="againstDerivedClass" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g1
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+function f4 name="derivedAgainstBase" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    v1 = Construct v0
+    v2 = GetModuleVariable variable=g0
+    v3 = InstanceOf v1, v2
+    Return v3
+}
+function f5 name="baseAgainstDerived" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = Construct v0
+    v2 = GetModuleVariable variable=g1
+    v3 = InstanceOf v1, v2
+    Return v3
+}
+function f6 name="createsDerived" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    v1 = Construct v0
+    Return v1
+}
+function f7 name="againstMap" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Map
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+function f8 name="againstMapThenSet" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Map
+    v2 = InstanceOf v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2():
+    v3 = Builtin builtin=Set
+    v4 = InstanceOf v0, v3
+    Return v4
+}
+function f9 name="againstParameter" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = InstanceOf v0, v1
+    Return v2
+}
+function f10 name="againstArray" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Array
+    v2 = InstanceOf v0, v1
+    Return v2
+}

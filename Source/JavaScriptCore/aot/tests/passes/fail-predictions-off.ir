@@ -1,0 +1,17 @@
+# Without the switch no pass emits the operation
+# FORM: Prepared
+# RUN: pass AddGenericVersion PlaceTypeTests VerifyProgram
+# CHECK-NOT: ShouldFailPrediction
+
+module m0 path="main.js" displayPath="main.js" flags=[IsLibrary]
+function f0 name="checked" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = Call v0
+    v3 = Check v2 castType=number
+    v4 = Add v3, v1
+    Return v4
+}
+function f1 name="expected" parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=number|bigint}] {
+  b0(v0: anything ~ number, v1: anything ~ number):
+    v2 = Mul v0, v1
+    Return v2
+}

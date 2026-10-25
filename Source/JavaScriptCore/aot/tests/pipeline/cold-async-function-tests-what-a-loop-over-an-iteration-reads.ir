@@ -1,0 +1,56 @@
+# An async function none of whose code is expected to run often has one round. What stands in a loop with an iteration waits for the expansion, which comes later in that round: it is tested behind the round, as what stands in any other loop is tested in it
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsCold disable=pass:InlineCalls
+# RUN: pipeline ExpandLongArrayLiterals
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Scale" module=m0 fields=[{key="k" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Integer integer=1
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = Call v1, -, v2, v3, v5
+    Return
+}
+
+function f1 name="readsInLoopWithoutIteration" flags=[IsAsync] parameters=[{type=boolean}, {type=L0 flags=[IsExpected]}] results=[{type=Promise}] {
+  b0(v0: boolean, v1: anything ~ L0):
+    v2 = Undefined
+    Jump -> next b1(v2)
+  b1(v3: anything):
+    LoopHint
+    Branch v0 -> taken b3(), notTaken b2()
+  b2():
+    v5 = PropGet v1 key="k"
+    Jump -> next b1(v5)
+  b3():
+    v6 = Await v3
+    Return v6
+}
+
+function f2 name="readsInLoopOverIteration" flags=[IsAsync] parameters=[{type=Array<number> flags=[IsExpected]}, {type=L0 flags=[IsExpected]}] results=[{type=Promise}] {
+  b0(v0: anything ~ Array<number>, v1: anything ~ L0):
+    v2 = Undefined
+    v3 = IteratorOpen v0
+    Jump -> next b1(v2)
+  b1(v4: anything):
+    LoopHint
+    v6 = IteratorResume v3
+    v7 = ResultAt v6
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v8 = PropGet v1 key="k"
+    Jump -> next b1(v8)
+  b3():
+    v9 = Await v4
+    Return v9
+}
+# CHECK-LABEL: name="readsInLoopWithoutIteration" module=m0 role=CoroutineBody
+# CHECK: = GetSlot {{*}} key="k"
+# CHECK-LABEL: name="readsInLoopOverIteration" module=m0 role=CoroutineBody
+# CHECK: = GetSlot {{*}} key="k"

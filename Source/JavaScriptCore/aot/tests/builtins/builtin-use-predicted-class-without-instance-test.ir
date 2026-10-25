@@ -1,0 +1,56 @@
+# A receiver that is only expected to be of a built-in class is tested for the class. No test finds the instances of a class without an instance test, so a member of such a receiver stays a generic read or call, without a test that never passes
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass ResolveBuiltins PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="methodOfExpectedDate" parameters=[{type=Date flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ Date):
+    v1 = PropGet v0 key="getTime"
+    v2 = Call v1, v0 calleeKey="getTime"
+    Return v2
+# CHECK: = TypeTest v0 testedType=Date
+# CHECK: = CallBuiltin [[date]] overload=DatePrototypeGetTime/0
+# CHECK: ([[date]]: Date):
+# CHECK-NEXT: = IsPristine [[date]] builtinClass=Date aspects=[Names]
+}
+
+function f1 name="methodOfExpectedIterator" parameters=[{type=ArrayIterator flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ ArrayIterator):
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0 calleeKey="next"
+    Return v2
+# CHECK-NEXT: b0(v0: anything ~ ArrayIterator):
+# CHECK-NEXT: v1: anything = PropGet v0 key="next"
+# CHECK-NEXT: v2: anything = Call v1, v0 calleeKey="next"
+# CHECK-NEXT: Return v2
+}
+
+function f2 name="readOfExpectedError" parameters=[{type=TypeError flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ TypeError):
+    v1 = PropGet v0 key="name"
+    Return v1
+# CHECK-NEXT: b0(v0: anything ~ TypeError):
+# CHECK-NEXT: v1: anything = PropGet v0 key="name"
+# CHECK-NEXT: Return v1
+}
+
+function f3 name="ownPropertyOfExpectedArguments" parameters=[{type=Arguments flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ Arguments):
+    v1 = PropGet v0 key="length"
+    Return v1
+# CHECK-NOT: TypeTest
+# CHECK: v1: anything = PropGet v0 key="length"
+# CHECK-NOT: TypeTest
+}
+
+function f4 name="methodOfExpectedFunction" parameters=[{type=function flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ function, v1: anything):
+    v2 = PropGet v0 key="call"
+    v3 = Call v2, v0, v1 calleeKey="call"
+    Return v3
+# Every function passes the test for a function, which names no class
+# CHECK-NOT: testedType=Function
+# CHECK-NOT: testedType=object
+# CHECK: Return
+}

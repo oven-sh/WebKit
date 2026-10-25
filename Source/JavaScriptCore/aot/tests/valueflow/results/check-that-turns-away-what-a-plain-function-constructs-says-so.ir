@@ -1,0 +1,47 @@
+# interface Rule { limit: number }   function Made(this: any) {}   const rules: any[] = [new (Made as any)(), { limit: 1 }, unknown()]
+# function readsMade(rule: Rule) { rule.limit }   readsMade(new (Made as any)()); readsMade({ limit: 1 }); readsMade(unknown())
+# function readsLiteral(rule: Rule) { rule.limit }   readsLiteral({ limit: 1 }); readsLiteral(unknown())
+# What a plain function without a layout constructs is an ordinary object for life: the program calls it a Rule through a cast, and every such object fails the test for the layout.
+# Where one arrives the check says that it may fail, whatever else arrives beside it. Beside it: a check at which only a literal of the type and the unknown object arrive says nothing.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f2 name="readsMade"
+# CHECK: = Check v0 castType=undefined|null|L0 cause=MayFail
+# CHECK-LABEL: function f3 name="readsLiteral"
+# CHECK: = Check v0 castType=undefined|null|L0
+# CHECK-NOT: cause=MayFail
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Rule" fields=[{key="limit" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Construct v0
+    v2 = Integer integer=1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="unknown" [isFreeName]
+    v6 = Call v5
+    v7 = NewClosure function=f2
+    v8 = Call v7, -, v1
+    v9 = Call v7, -, v3
+    v10 = Call v7, -, v6
+    v11 = NewClosure function=f3
+    v12 = Call v11, -, v3
+    v13 = Call v11, -, v6
+    Return
+}
+function f1 name="Made" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f2 name="readsMade" module=m0 parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=undefined|null|L0
+    v2 = PropGet v1 key="limit"
+    Return v2
+}
+function f3 name="readsLiteral" module=m0 parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=undefined|null|L0
+    v2 = PropGet v1 key="limit"
+    Return v2
+}

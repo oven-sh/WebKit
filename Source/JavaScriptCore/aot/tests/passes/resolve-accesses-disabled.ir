@@ -1,0 +1,26 @@
+# With the pass disabled a proven access stays by name and an integral key stays unmarked
+# FORM: Prepared
+# OPTIONS: disable=pass:ResolveAccesses
+# RUN: pass ResolveAccesses
+# STATISTIC: ResolveAccessesChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="proven" parameters=[{type=L0}, {type=number}, {type=object}, {type=int[0, 9]}, {type=Uint8Array}] results=[{type=anything}] {
+    v5 = PropGet v0 key="x"
+    PropSet v0, v1 key="x"
+    v7 = PropHas v0 key="missing"
+    v8 = ElemGet v2, v3
+    v9 = ElemGet v4, v3
+    Return v5
+# CHECK-NEXT: b0(
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: PropSet v0, v1 key="x"
+# CHECK-NEXT: = PropHas v0 key="missing"
+# CHECK-NEXT: = ElemGet v2, v3
+# CHECK-NOT: keyIsIntegral
+# CHECK: = ElemGet v4, v3
+# CHECK-NOT: keyIsIntegral
+# CHECK: Return v5
+}

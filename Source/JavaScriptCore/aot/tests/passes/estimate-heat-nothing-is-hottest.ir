@@ -1,0 +1,13 @@
+# A heat override empties the list of hottest functions
+# FORM: Prepared
+# OPTIONS: heat=nothing-is-hottest
+# RUN: pass EstimateHeat
+
+# CHECK: f0 Warm 8 10
+# CHECK-NEXT: f1 Hot 91 104
+# CHECK-NEXT: f2 Warm 0 14.3
+# CHECK-NEXT: hottest:
+# CHECK-NOT: f
+# CHECK: thresholds:
+# CHECK-NEXT: outcome: Unchanged
+# PROGRAM-OF: estimate-heat-everything-is-cold.ir

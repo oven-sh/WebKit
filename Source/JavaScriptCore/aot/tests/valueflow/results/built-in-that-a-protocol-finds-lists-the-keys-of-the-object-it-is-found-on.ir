@@ -1,0 +1,26 @@
+# point = { x: 1 }; point.x; odd = { y: 2, then: Array.prototype.join }; await odd
+# The await finds `then` on the odd object and calls it with that object as `this`: Array.prototype.join goes over what its receiver holds, so the keys of the odd object count as listed.
+# The call has the operands of the protocol and no others: nobody lists the keys of the point.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Point" {{*}}keys=NeverEnumerated
+# CHECK: layout L1 name="Odd"
+# CHECK-NOT: keys=NeverEnumerated
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Odd" fields=[{key="y" declared={type=anything} flags=[IsRequired]}, {key="then" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="run" module=m0 flags=[IsAsync] results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = PropGet v1 key="x"
+    v3 = Builtin builtin=ArrayPrototypeJoin
+    v4 = NewObject -, v0, v3 layout=L1 fields=[0, 1]
+    v5 = Await v4
+    Return
+}

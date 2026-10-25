@@ -1,0 +1,49 @@
+# A function written inside a built-in function is shown in stack traces as code of a built-in, like the built-in function itself. Only the functions that implement a built-in, and their forms, are listed with one
+# LIBRARY: own
+# RUN: tables function-traces
+# RUN(SIZES): tables
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=4 function=f2
+runtimefunction id=8 function=f1
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b3():
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything holes=[]
+    v2 = PropGet v1 key="at"
+    v3 = Integer integer=0
+    v4 = Call v2, v1, v3 calleeKey="at"
+    Jump -> next b2()
+  b2():
+    Return
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    Return
+}
+function f1 name="at" role=Library flags=[HasThis] enclosingRuntimeFunction=8 parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = NewClosure function=f3
+    v3 = Call v2, -
+    Return v3
+}
+function f2 name="apply" role=Library flags=[HasThis] enclosingRuntimeFunction=4 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Call v0, v1
+    Return v3
+}
+function f3 name="inner" role=Library enclosingRuntimeFunction=8 results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}
+
+# CHECK: trace f0 role=Source source=f0 {{*}}builtinKind=None
+# CHECK: trace f1 role=Library source=f1 implements=ArrayPrototypeAt {{*}}builtinKind=JSBuiltin
+# CHECK: trace f2 role=Library source=f2 implements=FunctionPrototypeApply
+# CHECK: trace f3 role=Library source=f3 implements=- {{*}}builtinKind=JSBuiltin
+# CHECK: role=GenericEntrypoint source=f1 implements=ArrayPrototypeAt
+# SIZES: functionRecordNumbers 6 6
+# SIZES-NEXT: functionRecords
+# SIZES-NEXT: functionRecordsByFunction 0 0
+# SIZES-NEXT: functionSources 2 6
+# SIZES-NEXT: implementedBuiltins 3 24

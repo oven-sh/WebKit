@@ -1,0 +1,40 @@
+# Array.isArray is a test of the type of its operand, except where the operand may be a Proxy or an object that nobody knows
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="listOrText" parameters=[{type=string|Array}] results=[{type=boolean}] {
+    v1 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    Return v1
+# CHECK-NOT: CallBuiltin
+# CHECK: = TypeTest v0 testedType=Array
+}
+
+function f1 name="otherClass" parameters=[{type=undefined|Map|Array}] results=[{type=boolean}] {
+    v1 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    Return v1
+# CHECK-NOT: CallBuiltin
+# CHECK: = TypeTest v0 testedType=Array
+}
+
+function f2 name="anyObject" parameters=[{type=object}] results=[{type=boolean}] {
+    v1 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    Return v1
+# CHECK-NOT: TypeTest
+# CHECK: = CallBuiltin -, v0 overload=ArrayIsArray/0
+}
+
+function f3 name="anything" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    Return v1
+# CHECK-NOT: TypeTest
+# CHECK: = CallBuiltin -, v0 overload=ArrayIsArray/0
+}
+
+function f4 name="proxy" parameters=[{type=Proxy|Array}] results=[{type=boolean}] {
+    v1 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    Return v1
+# CHECK-NOT: TypeTest
+# CHECK: = CallBuiltin -, v0 overload=ArrayIsArray/0
+}

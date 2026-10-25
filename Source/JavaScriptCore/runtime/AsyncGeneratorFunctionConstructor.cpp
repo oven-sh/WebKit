@@ -53,7 +53,7 @@ JSC_DEFINE_HOST_FUNCTION(constructAsyncGeneratorFunctionConstructor, (JSGlobalOb
 }
 
 AsyncGeneratorFunctionConstructor::AsyncGeneratorFunctionConstructor(VM& vm, Structure* structure)
-    : InternalFunction(vm, structure, callAsyncGeneratorFunctionConstructor, constructAsyncGeneratorFunctionConstructor)
+    : InternalFunction(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callAsyncGeneratorFunctionConstructor), JSC_REGISTERED_HOST_FUNCTION(constructAsyncGeneratorFunctionConstructor))
 {
 }
 

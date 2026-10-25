@@ -1,0 +1,20 @@
+# An environment or an opaque value is inside its own type, with or without absent, and inside no type of JavaScript values
+# RUN: subset
+# CHECK: t0 <= t0: yes overlaps: yes
+# CHECK: t0 <= t1: no overlaps: no
+# CHECK: t0 <= t2: no overlaps: no
+# CHECK: t0 <= t3: no overlaps: no
+# CHECK: t0 <= t4: yes overlaps: yes
+# CHECK: t0 <= t7: no overlaps: no
+# CHECK: t4 <= t0: no overlaps: yes
+# CHECK: t5 <= t3: no overlaps: no
+# CHECK: t5 <= t5: yes overlaps: yes
+# CHECK: t5 <= t6: no overlaps: no
+# CHECK: t8 <= t4: yes overlaps: yes
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment
+layout L1 kind=Environment
+layout L2 name="A"
+function f0 name="types" parameters=[{type=env L0}, {type=env L1}, {type=object}, {type=anything}, {type=absent|env L0}, {type=cursor}, {type=iteratorstate}, {type=L2}, {type=absent}] results=[{type=undefined}]

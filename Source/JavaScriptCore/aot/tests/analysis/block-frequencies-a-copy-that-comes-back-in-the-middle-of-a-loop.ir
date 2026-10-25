@@ -1,0 +1,57 @@
+# Tests in front of a loop fail into a rare copy, and the copy comes back in the middle of the body: the loop is a cycle with two entries.
+# Where the order of the blocks reaches the join through the copy first, the likely way into the join comes from a block behind it. The join, and the rest of the turn behind it, are as likely as the loop,
+# whichever side of the first branch comes first in the order of the blocks.
+# FORM: Prepared
+# RUN: frequencies
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="rareSideIsTheFirstSuccessor" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b5(), notTaken b1()
+  b1():
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b6()
+  b2():
+    Jump -> next b3()
+  b3():
+    Jump -> next b4()
+  b4():
+    Jump -> next b1()
+  b5() frequency=Rare:
+    Jump -> next b3()
+  b6():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: b0 frequency: Normal count:
+# CHECK-NEXT: b1 frequency: Normal count:
+# CHECK-NEXT: b2 frequency: Normal count:
+# CHECK-NEXT: b3 frequency: Normal count:
+# CHECK-NEXT: b4 frequency: Normal count:
+# CHECK-NEXT: b5 frequency: Rare count:
+# CHECK-NEXT: b6 frequency: Normal count:
+# CHECK-NOT: frequency
+function f1 name="rareSideIsTheSecondSuccessor" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b5()
+  b1():
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b6()
+  b2():
+    Jump -> next b3()
+  b3():
+    Jump -> next b4()
+  b4():
+    Jump -> next b1()
+  b5() frequency=Rare:
+    Jump -> next b3()
+  b6():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: b0 frequency: Normal count:
+# CHECK-NEXT: b1 frequency: Normal count:
+# CHECK-NEXT: b2 frequency: Normal count:
+# CHECK-NEXT: b3 frequency: Normal count:
+# CHECK-NEXT: b4 frequency: Normal count:
+# CHECK-NEXT: b5 frequency: Rare count:
+# CHECK-NEXT: b6 frequency: Normal count:
+# CHECK-NOT: frequency

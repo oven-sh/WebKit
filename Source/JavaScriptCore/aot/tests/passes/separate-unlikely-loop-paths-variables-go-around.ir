@@ -1,0 +1,510 @@
+# A variable of an enclosing function or of a module that every turn of a loop reads goes around the loop as a value. Where nothing in the loop can look at it or throw, its stores wait for the edges that leave.
+# A loop that paths have to leave for it is entered through its copy: the first turn runs as it was written, and the variables are read and tested on the way from the end of a turn into the loop
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 3
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="index" declared={type=anything}
+layout L0 kind=Environment name="scope" fields=[{key="position" declared={type=anything}}, {key="end" declared={type=anything}}, {key="other" declared={type=anything}}]
+
+# No path has to leave: the tests that a turn begins with stand ahead of the loop, and leave for the same places. A failing test may lead back here: the hint is copied with them
+function f0 name="nothingElseWrites" parameters=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    v3 = TypeTest v2 testedType=number
+    Branch v3 -> taken b2(| 0), notTaken b6()
+  b2(v4):
+    v5 = GetEnvironmentField v0 layout=L0 field=1
+    v6 = TypeTest v5 testedType=number
+    Branch v6 -> taken b3(| 0), notTaken b6()
+  b3(v7):
+    v8 = Less v4, v7
+    Branch v8 -> taken b4(), notTaken b5()
+  b4():
+    v9 = Increment v4
+    PutEnvironmentField v0, v9 layout=L0 field=0
+    Jump -> next b1()
+  b5():
+    v11 = GetEnvironmentField v0 layout=L0 field=0
+    Return v11
+  b6() frequency=Unlikely:
+    v12 = Undefined
+    Return v12
+# CHECK: b0(v0: env L0):
+# CHECK-NEXT: [[end0]]: anything = GetEnvironmentField v0 layout=L0 field=1
+# CHECK-NEXT: [[position0]]: anything = GetEnvironmentField v0 layout=L0
+# CHECK-NEXT: Jump -> next [[tests0]]([[end0]], [[position0]])
+# CHECK-NEXT: b1([[limit0]]: number, [[carried0]]: number):
+# CHECK-NOT: GetEnvironmentField
+# CHECK: Branch v8 -> taken b4(), notTaken [[leaves0]]()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v9: number = Increment v4
+# CHECK-NOT: PutEnvironmentField
+# CHECK: Jump -> next b1([[limit0]], v9)
+# CHECK-NEXT: b5():
+# CHECK-NEXT: = GetEnvironmentField v0 layout=L0
+# CHECK: [[tests0]]([[enteringEnd0]]: anything, [[entering0]]: anything):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = TypeTest [[entering0]] testedType=number
+# CHECK-NEXT: (| 0), notTaken b6()
+# CHECK-NEXT: ([[number0]]: number):
+# CHECK-NEXT: = TypeTest [[enteringEnd0]] testedType=number
+# CHECK-NEXT: (| 0), notTaken b6()
+# CHECK-NEXT: ([[numberEnd0]]: number):
+# CHECK-NEXT: Jump -> next b1([[numberEnd0]], [[number0]])
+# CHECK-NEXT: [[leaves0]]():
+# CHECK-NEXT: PutEnvironmentField v0, [[carried0]] layout=L0
+# CHECK-NEXT: Jump -> next b5()
+}
+
+# An unlikely path that runs other code leaves for the copy. The variable is read on the way back, and tested for an integer there and where the loop makes it
+function f1 name="unlikelyPathRunsOtherCode" parameters=[{type=env L0}, {type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything, v2: string):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = GetEnvironmentField v0 layout=L0 field=0
+    v5 = TypeTest v4 testedType=number
+    Branch v5 -> taken b2(| 0), notTaken b8()
+  b2(v6):
+    v7 = GetStringLength v2
+    v8 = Less v6, v7
+    Branch v8 -> taken b3(), notTaken b7()
+  b3():
+    v9 = TypeTest v6 testedType=i32
+    Branch v9 -> taken b4(| 0), notTaken b5()
+  b4(v10):
+    v11 = BitOr v10, v10
+    Jump -> next b6()
+  b5() frequency=Unlikely:
+    v12 = Call v1, -
+    Jump -> next b6()
+  b6():
+    v13 = Increment v6
+    PutEnvironmentField v0, v13 layout=L0 field=0
+    Jump -> next b1()
+  b7():
+    Return v6
+  b8() frequency=Unlikely:
+    v15 = Undefined
+    Return v15
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next [[header1]]()
+# CHECK-NEXT: b1({{*}}: i32):
+# CHECK-NOT: GetEnvironmentField
+# CHECK: Branch v9 -> taken b4(| 0), notTaken [[toCall1]]()
+# CHECK: [[next1]]: int[-2147483647, 2147483648] = Increment v6
+# CHECK-NOT: PutEnvironmentField
+# CHECK: b7(
+# CHECK: = Increment
+# CHECK-NEXT: PutEnvironmentField v0, {{*}} layout=L0
+# CHECK-NEXT: Jump -> next [[wayBack1]]()
+# CHECK-NEXT: [[call1]]({{*}}) frequency=Unlikely:
+# CHECK-NEXT: = Call v1
+# CHECK: [[header1]]():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = GetEnvironmentField v0 layout=L0
+# CHECK: [[entry1]]():
+# CHECK-NEXT: [[entering1]]: anything = GetEnvironmentField v0 layout=L0
+# CHECK: [[wayBack1]]():
+# CHECK-NEXT: Jump -> next [[entry1]]()
+# CHECK: = TypeTest [[next1]] testedType=i32
+# CHECK: : 2147483648):
+# CHECK-NEXT: Jump -> next [[header1]]()
+# CHECK: = TypeTest [[entering1]] testedType=i32
+# CHECK: : anything):
+# CHECK-NEXT: Jump -> next [[header1]]()
+# CHECK: : 2147483648):
+# CHECK-NEXT: PutEnvironmentField v0, {{*}} layout=L0
+# CHECK: [[toCall1]]() frequency=Unlikely:
+# CHECK-NEXT: PutEnvironmentField v0, {{*}} layout=L0
+# CHECK-NEXT: Jump -> next [[call1]](
+}
+
+# A likely path that runs other code leaves as well: the loop turns without it
+function f2 name="likelyPathRunsOtherCode" parameters=[{type=env L0}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything, v2: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = GetEnvironmentField v0 layout=L0 field=0
+    v5 = TypeTest v4 testedType=number
+    Branch v5 -> taken b2(| 0), notTaken b7()
+  b2(v6):
+    v7 = Integer integer=100
+    v8 = Less v6, v7
+    Branch v8 -> taken b3(), notTaken b6()
+  b3():
+    Branch v2 -> taken b5(), notTaken b4()
+  b4():
+    v9 = Call v1, -
+    Jump -> next b5()
+  b5():
+    v10 = Increment v6
+    PutEnvironmentField v0, v10 layout=L0 field=0
+    Jump -> next b1()
+  b6():
+    Return v6
+  b7() frequency=Unlikely:
+    v12 = Undefined
+    Return v12
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next [[header2]]()
+# CHECK-NEXT: b1({{*}}: number):
+# CHECK-NOT: GetEnvironmentField
+# CHECK: Branch v2 -> taken b5(), notTaken [[toCall2]]()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: Unreachable
+# CHECK: v10: number = Increment v6
+# CHECK-NOT: PutEnvironmentField
+# CHECK: b6(
+# CHECK: = Call v1
+# CHECK: [[header2]]():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = GetEnvironmentField v0 layout=L0
+# CHECK: [[entering2]]: anything = GetEnvironmentField v0 layout=L0
+# CHECK: = TypeTest [[entering2]] testedType=number
+# CHECK: [[toCall2]]():
+# CHECK-NEXT: PutEnvironmentField v0, {{*}} layout=L0
+}
+
+# Every turn runs other code: nothing is left to turn without it
+function f3 name="everyTurnRunsOtherCode" parameters=[{type=env L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = GetEnvironmentField v0 layout=L0 field=0
+    v4 = TypeTest v3 testedType=number
+    Branch v4 -> taken b2(| 0), notTaken b5()
+  b2(v5):
+    v6 = Integer integer=100
+    v7 = Less v5, v6
+    Branch v7 -> taken b3(), notTaken b4()
+  b3():
+    v8 = Call v1, -
+    Jump -> next b1()
+  b4():
+    Return v5
+  b5() frequency=Unlikely:
+    v9 = Undefined
+    Return v9
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = GetEnvironmentField v0 layout=L0
+# CHECK: b5() frequency=Unlikely:
+# CHECK-NEXT: Undefined
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+}
+
+# A read ahead of the loop stands for the read of the first turn. A variable that only some turns read is read where it was
+function f4 name="readOnOnePath" parameters=[{type=env L0}, {type=boolean}, {type=number}] results=[{type=anything}] {
+  b0(v0: env L0, v1: boolean, v2: number):
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v2
+    Branch v6 -> taken b2(), notTaken b5()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    v7 = GetEnvironmentField v0 layout=L0 field=2
+    PutEnvironmentField v0, v7 layout=L0 field=1
+    Jump -> next b4()
+  b4():
+    v9 = Increment v4
+    Jump -> next b1(v9)
+  b5():
+    Return v4
+# CHECK: b0(
+# CHECK-NEXT: Integer
+# CHECK-NEXT: Jump -> next b1(v3)
+# CHECK: b3():
+# CHECK-NEXT: = GetEnvironmentField v0 layout=L0 field=2
+}
+
+# Two environments of one layout may be one object
+function f5 name="storeThroughAnotherEnvironment" parameters=[{type=env L0}, {type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0, v1: env L0):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = GetEnvironmentField v0 layout=L0 field=0
+    v4 = TypeTest v3 testedType=number
+    Branch v4 -> taken b2(| 0), notTaken b5()
+  b2(v5):
+    v6 = Integer integer=100
+    v7 = Less v5, v6
+    Branch v7 -> taken b3(), notTaken b4()
+  b3():
+    v8 = Increment v5
+    PutEnvironmentField v1, v8 layout=L0 field=0
+    Jump -> next b1()
+  b4():
+    Return v5
+  b5() frequency=Unlikely:
+    v10 = Undefined
+    Return v10
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = GetEnvironmentField v0 layout=L0
+}
+
+function f6 name="variableOfModule" parameters=[{type=number}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = GetModuleVariable variable=g0
+    v3 = TypeTest v2 testedType=number
+    Branch v3 -> taken b2(| 0), notTaken b5()
+  b2(v4):
+    v5 = Less v4, v0
+    Branch v5 -> taken b3(), notTaken b4()
+  b3():
+    v6 = Increment v4
+    PutModuleVariable v6 variable=g0
+    Jump -> next b1()
+  b4():
+    Return v4
+  b5() frequency=Unlikely:
+    v8 = Undefined
+    Return v8
+# CHECK: b0(
+# CHECK-NEXT: [[first6]]: anything = GetModuleVariable variable=g0
+# CHECK-NEXT: Jump -> next [[tests6]]([[first6]])
+# CHECK-NEXT: b1({{*}}: number):
+# CHECK-NOT: GetModuleVariable
+# CHECK: Branch v5 -> taken b3(), notTaken [[leaves6]]()
+# CHECK-NOT: PutModuleVariable
+# CHECK: Jump -> next b1(v6)
+# CHECK: [[tests6]]([[entering6]]: anything):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = TypeTest [[entering6]] testedType=number
+# CHECK-NEXT: (| 0), notTaken b5()
+# CHECK: [[leaves6]]():
+# CHECK-NEXT: PutModuleVariable {{*}} variable=g0
+# CHECK-NEXT: Jump -> next b4()
+}
+
+# The path that would leave is entered with a guard, and the copy would be entered there from two tests: two guards do not join
+function f7 name="guardOnTheEdgeThatWouldLeave" parameters=[{type=env L0}, {type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything, v2: Array):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = GetEnvironmentField v0 layout=L0 field=0
+    v5 = TypeTest v4 testedType=i32
+    Branch v5 -> taken b2(| 0), notTaken b7()
+  b2(v6):
+    v7 = IsPristine v2 builtinClass=Array aspects=[Storage, Names]
+    Branch v7 -> taken b3(| 0), notTaken b5()
+  b3(v8: guard):
+    v9 = HasArrayStorage v2 arrayStorage=Contiguous
+    Branch v9 -> taken b4(| 0), notTaken b5()
+  b4(v10: guard):
+    v11 = AllGuards v8, v10
+    v12 = GetArrayElement v2, v6, v11 arrayStorage=Contiguous level=Expected [keyIsIntegral]
+    v13 = Call v1, -, v12
+    Jump -> next b5()
+  b5():
+    v14 = Integer integer=100
+    v15 = Less v6, v14
+    Branch v15 -> taken b6(), notTaken b7()
+  b6():
+    v16 = Increment v6
+    PutEnvironmentField v0, v16 layout=L0 field=0
+    Jump -> next b1()
+  b7():
+    v18 = Undefined
+    Return v18
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = GetEnvironmentField v0 layout=L0
+# CHECK: b4(v10: guard):
+# CHECK-NEXT: = AllGuards v8, v10
+# CHECK-NEXT: = GetArrayElement v2, v6, v11
+# CHECK: b7():
+# CHECK-NEXT: Undefined
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+}
+
+# The loop inside is where the time goes: the loop around it would turn for nothing without it
+function f8 name="loopInsideRunsOtherCode" parameters=[{type=env L0}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything, v2: number):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = GetEnvironmentField v0 layout=L0 field=0
+    v5 = TypeTest v4 testedType=number
+    Branch v5 -> taken b2(| 0), notTaken b7()
+  b2(v6):
+    v7 = Less v6, v2
+    Branch v7 -> taken b3(), notTaken b7()
+  b3():
+    v8 = Integer integer=0
+    Jump -> next b4(v8)
+  b4(v9):
+    LoopHint
+    v11 = Less v9, v2
+    Branch v11 -> taken b5(), notTaken b6()
+  b5():
+    v12 = Call v1, -
+    v13 = Increment v9
+    Jump -> next b4(v13)
+  b6():
+    v14 = Increment v6
+    PutEnvironmentField v0, v14 layout=L0 field=0
+    Jump -> next b1()
+  b7():
+    v16 = Undefined
+    Return v16
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = GetEnvironmentField v0 layout=L0
+# CHECK: b5():
+# CHECK-NEXT: = Call v1
+# CHECK: b7():
+# CHECK-NEXT: Undefined
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+}
+
+# Undefined and null are turned away where the text enters the loop, and the copy throws in its turn. With nothing left that throws by the language's rules, the store waits.
+# The text is read behind a test that may end the loop: the first turn, in the copy, has read it when it is read on the way into the loop
+function f9 name="textMayBeUndefined" parameters=[{type=env L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = GetEnvironmentField v0 layout=L0 field=0
+    v4 = TypeTest v3 testedType=i32
+    Branch v4 -> taken b2(| 0), notTaken b8()
+  b2(v5):
+    v6 = GetEnvironmentField v0 layout=L0 field=2
+    v7 = TypeTest v6 testedType=undefined|null|string
+    Branch v7 -> taken b3(| 0), notTaken b7()
+  b3(v8):
+    v9 = RequireObjectCoercible v8 name="charCodeAt"
+    v10 = GetStringLength v9
+    v11 = Integer integer=0
+    v12 = LessEq v11, v5
+    Branch v12 -> taken b4(| 1), notTaken b8()
+  b4(v13):
+    v14 = Less v13, v10
+    Branch v14 -> taken b5(| 0), notTaken b8()
+  b5(v15):
+    v16 = GetStringCodeUnit v9, v15
+    v17 = Integer integer=32
+    v18 = StrictEq v16, v17
+    Branch v18 -> taken b6(), notTaken b8()
+  b6():
+    v19 = Increment v5
+    PutEnvironmentField v0, v19 layout=L0 field=0
+    Jump -> next b1()
+  b7() frequency=Unlikely:
+    v21 = Call v1, -
+    Jump -> next b6()
+  b8():
+    v22 = Undefined
+    Return v22
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next [[header9]]()
+# CHECK-NEXT: [[header9]]():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = GetEnvironmentField v0 layout=L0
+# CHECK: = RequireObjectCoercible
+# CHECK: = Increment
+# CHECK-NEXT: PutEnvironmentField v0, {{*}} layout=L0
+# CHECK: [[text9]]: anything = GetEnvironmentField v0 layout=L0 field=2
+# CHECK-NEXT: [[position9]]: anything = GetEnvironmentField v0 layout=L0
+# CHECK: = TypeTest [[text9]] testedType=string
+# CHECK: = TypeTest [[position9]] testedType=i32
+# CHECK: ({{*}}: string, {{*}}: i32):
+# CHECK: LoopHint
+# CHECK-NOT: RequireObjectCoercible
+# CHECK-NOT: PutEnvironmentField
+# CHECK: = GetStringCodeUnit
+# CHECK: = Increment
+# CHECK-NOT: PutEnvironmentField
+# CHECK: : 2147483648):
+# CHECK-NEXT: PutEnvironmentField v0, {{*}} layout=L0
+# CHECK: Jump -> next [[header9]]()
+}
+
+# Reading a character throws for lack of memory alone, while it resolves a rope: by the language it never throws. A store waits across it, also where a turn may store ahead of the first read
+function f10 name="storeAheadOfTheRead" parameters=[{type=env L0}, {type=string}] results=[{type=anything}] {
+  b0(v0: env L0, v1: string):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = GetEnvironmentField v0 layout=L0 field=0
+    v4 = TypeTest v3 testedType=int[0, 100]
+    Branch v4 -> taken b2(| 0), notTaken b5()
+  b2(v5):
+    v6 = Increment v5
+    PutEnvironmentField v0, v6 layout=L0 field=0
+    v8 = GetStringLength v1
+    v9 = Less v5, v8
+    Branch v9 -> taken b3(| 0), notTaken b5()
+  b3(v10):
+    v11 = GetStringCodeUnit v1, v10
+    v12 = Integer integer=32
+    v13 = StrictEq v11, v12
+    Branch v13 -> taken b4(), notTaken b5()
+  b4():
+    Jump -> next b1()
+  b5():
+    v14 = Undefined
+    Return v14
+# CHECK: LoopHint
+# CHECK: = Increment
+# CHECK-NOT: PutEnvironmentField
+# CHECK: = GetStringCodeUnit v1,
+# CHECK-NOT: PutEnvironmentField
+# CHECK: Jump -> next b1(
+# CHECK: PutEnvironmentField v0, {{*}} layout=L0
+}
+
+# The loop ends at its first test as a rule. What is read behind that test is not read ahead of the loop
+function f11 name="endsAtItsFirstTest" parameters=[{type=env L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = GetEnvironmentField v0 layout=L0 field=0
+    v4 = StrictEq v3, v1
+    Branch v4 -> taken b2(), notTaken b4()
+  b2():
+    v5 = GetEnvironmentField v0 layout=L0 field=1
+    v6 = TypeTest v5 testedType=number
+    Branch v6 -> taken b3(| 0), notTaken b4()
+  b3(v7):
+    v8 = Increment v7
+    PutEnvironmentField v0, v8 layout=L0 field=1
+    PutEnvironmentField v0, v8 layout=L0 field=0
+    Jump -> next b1()
+  b4():
+    v11 = Undefined
+    Return v11
+# CHECK: b0(
+# CHECK-NOT: field=1
+# CHECK: LoopHint
+# CHECK: = StrictEq
+# CHECK: = GetEnvironmentField v0 layout=L0 field=1
+}

@@ -69,7 +69,7 @@ static JSC_DECLARE_HOST_FUNCTION(callTemporalDuration);
 static JSC_DECLARE_HOST_FUNCTION(constructTemporalDuration);
 
 TemporalDurationConstructor::TemporalDurationConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callTemporalDuration, constructTemporalDuration)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callTemporalDuration), JSC_REGISTERED_HOST_FUNCTION(constructTemporalDuration))
 {
 }
 

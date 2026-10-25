@@ -1,0 +1,29 @@
+# function Item() { this.next = null; this.size = 1 }    first.next = external; first.size = "large"
+# `null` in the constructor is all that the front end knows of `next`, and a value that nobody knows arrives there, so the type stays a guess. Nothing tests a store against an expected type:
+# the slot takes every value, and no store moves the property out of it. Every construction fills the field, and nothing deletes or redefines it: it is always filled.
+# That nothing outside the type is stored is not said of it: the type says `null`, and whoever took that for proven would type the read `null`.
+# Beside it: the slot of `size` holds numbers alone, so the string takes the property out of its slot
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Item" {{*}}{key="next" declared={type=null flags=[IsExpected]} flags=[IsRequired] flow={location={writers=AllKnown {{*}}initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="size" {{*}}initialization=SetAtCreation} occupancy=FilledWithValueAtBirth stability=[IsNeverDeleted, IsNeverRedefined]}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Item" constructor=f1 fields=[{key="next" declared={type=null flags=[IsExpected]} flags=[IsRequired]}, {key="size" declared={type=number} flags=[IsRequired]}] flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Construct v0, -
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="external" [isFreeName]
+    PropSet v1, v3 key="next" mode=Strict
+    v5 = String string="large"
+    PropSet v1, v5 key="size" mode=Strict
+    v7 = PropGet v1 key="next"
+    v8 = PropGet v1 key="size"
+    Return
+}
+function f1 name="Item" flags=[HasThis] results=[{type=anything}] constructedClass=L0 {
+    v1 = Null
+    PropSet v0, v1 key="next" mode=Strict
+    v3 = Integer integer=1
+    PropSet v0, v3 key="size" mode=Strict
+    Return
+}

@@ -1,0 +1,34 @@
+# async function first() { return one }  back = somethingNoTableLists(first);  if (back is a Promise) (await back)()
+# Code that nobody compiles calls the function, does what it likes to the promise that it gets, a `then` of its own for one, and hands it to the program. A test for a promise lets it pass.
+# It is none of the promises that the program got from calls of its own: the unknown object still stands for it behind the test, and the await gives something nobody knows.
+# RUN: valueflow-solve calls
+# CHECK: f1 v3 -> unknown
+# CHECK: f1 v7 -> unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="somethingThatNoTableLists" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = TypeTest v3 testedType=Promise
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    v6 = Await v5
+    v7 = Call v6
+    Return
+  b2(v8):
+    Return
+}
+function f2 name="first" flags=[IsAsync] results=[{type=anything}] {
+    v0 = NewClosure function=f3
+    Return v0
+}
+function f3 name="one" results=[{type=anything}] {
+    Return
+}

@@ -80,6 +80,7 @@ public:
     static_assert(sizeof(TransitionEntry) == 8);
 
     static constexpr unsigned nameEntrySize = 256;
+    static constexpr unsigned maxNameTextLength = 32;
 
     // A Structure's property addition transition, with the source text that names it: the quoted
     // key and the colon after it, as JSON.stringify writes them. The next object of the same shape can
@@ -89,6 +90,8 @@ public:
         WriteBarrierStructureID to;
         PropertyOffset offset;
         uint8_t textLength;
+        // A source that is no Latin-1 text has one byte for each of its characters, and the same byte for many of them. An ASCII byte stands for itself in every source.
+        bool textIsASCII;
         uint16_t toNameIndex;
     };
     static_assert(sizeof(NameEntry) == 16);
@@ -101,6 +104,7 @@ public:
     struct StringEntry {
         JSString* string { nullptr };
         unsigned textLength { 0 };
+        bool textIsASCII { false };
     };
 
     class ParsingScope {
@@ -153,7 +157,7 @@ public:
     // of the source.
     ALWAYS_INLINE const StringEntry* findString(std::span<const Latin1Character> source) const LIFETIME_BOUND;
     // Records the first textLength characters of source, a string token without escapes, as the text of string.
-    ALWAYS_INLINE void addString(std::span<const Latin1Character> source, unsigned textLength, JSString*);
+    ALWAYS_INLINE void addString(std::span<const Latin1Character> source, unsigned textLength, JSString*, bool textIsASCII = false);
 
     ALWAYS_INLINE void clearStrings()
     {
@@ -188,7 +192,6 @@ private:
     static constexpr unsigned prefixedNameWays = 2;
     static constexpr unsigned stringWays = 2;
 
-    static constexpr unsigned maxNameTextLength = 32;
     static constexpr unsigned maxNameLength = maxNameTextLength - 3;
     using NameText = std::array<Latin1Character, maxNameTextLength>;
     using NameSource = std::span<const Latin1Character, maxNameTextLength>;
@@ -245,7 +248,7 @@ private:
     // Laid out like NameTable. A text is only meaningful while its entry has a string.
     struct StringTable {
         ALWAYS_INLINE const StringEntry* match(unsigned index, std::span<const Latin1Character> source) const LIFETIME_BOUND;
-        ALWAYS_INLINE void insert(unsigned set, JSString*, std::span<const Latin1Character> source, unsigned textLength);
+        ALWAYS_INLINE void insert(unsigned set, JSString*, std::span<const Latin1Character> source, unsigned textLength, bool textIsASCII);
 
         std::array<StringEntry, stringEntrySize> m_entries { };
         std::array<NameText, stringEntrySize> m_texts { };

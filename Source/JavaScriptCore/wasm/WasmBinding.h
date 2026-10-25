@@ -25,13 +25,14 @@
 
 #pragma once
 
-#if ENABLE(WEBASSEMBLY) && ENABLE(JIT)
+#if ENABLE(WEBASSEMBLY) && ENABLE(CODE_GENERATION)
 
 #include "JITCompilation.h"
 #include "WasmFormat.h"
 
 namespace JSC {
 
+class CCallHelpers;
 class CallLinkInfo;
 
 namespace Wasm {
@@ -41,7 +42,8 @@ enum class BindingFailure {
 };
 
 std::expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToWasm(const Wasm::ModuleInformation&, unsigned importIndex);
+void emitWasmToWasm(CCallHelpers&, const Wasm::ModuleInformation&, unsigned importIndex);
 
 } } // namespace JSC::Wasm
 
-#endif // ENABLE(WEBASSEMBLY) && ENABLE(JIT)
+#endif // ENABLE(WEBASSEMBLY) && ENABLE(CODE_GENERATION)

@@ -60,6 +60,18 @@ void AbstractHeap::changeParent(AbstractHeap* parent)
     }
 }
 
+void AbstractHeap::removeChildrenFrom(size_t first)
+{
+    for (size_t i = first; i < m_children.size(); ++i) {
+        AbstractHeap* child = m_children[i];
+        RELEASE_ASSERT(child->m_children.isEmpty());
+        child->m_parent = nullptr;
+        child->m_heapName = nullptr;
+        child->m_range = B3::HeapRange();
+    }
+    m_children.shrink(first);
+}
+
 void AbstractHeap::compute(unsigned begin)
 {
     // This recursively computes the ranges of the tree. This solves the following constraints
@@ -82,10 +94,36 @@ void AbstractHeap::compute(unsigned begin)
     unsigned current = begin;
     for (AbstractHeap* child : m_children) {
         child->compute(current);
-        current = child->range().end();
+        current = child->m_range.end();
     }
 
     m_range = B3::HeapRange(begin, current);
+}
+
+unsigned AbstractHeap::numberOfLeaves() const
+{
+    if (m_children.isEmpty())
+        return 1;
+    unsigned count = 0;
+    for (const AbstractHeap* child : m_children)
+        count += child->numberOfLeaves();
+    return count;
+}
+
+bool AbstractHeap::isWithin(const AbstractHeap& other) const
+{
+    for (const AbstractHeap* heap = this; heap; heap = heap->m_parent) {
+        if (heap == &other)
+            return true;
+    }
+    return false;
+}
+
+void AbstractHeap::markAsStayingAcrossProcedures()
+{
+    m_staysAcrossProcedures = true;
+    for (AbstractHeap* child : m_children)
+        child->markAsStayingAcrossProcedures();
 }
 
 void AbstractHeap::shallowDump(PrintStream& out) const
@@ -139,6 +177,22 @@ IndexedAbstractHeap::IndexedAbstractHeap(AbstractHeap* parent, const char* heapN
 }
 
 IndexedAbstractHeap::~IndexedAbstractHeap() = default;
+
+void IndexedAbstractHeap::retainCurrentHeaps()
+{
+    RELEASE_ASSERT(m_largeIndices.isEmpty());
+    m_retainedHeapCount = m_heapForAnyIndex.numberOfChildren();
+    RELEASE_ASSERT(m_largeIndexNames.size() == m_retainedHeapCount);
+}
+
+void IndexedAbstractHeap::removeTemporaryHeaps()
+{
+    if (m_heapForAnyIndex.numberOfChildren() == m_retainedHeapCount)
+        return;
+    m_heapForAnyIndex.removeChildrenFrom(m_retainedHeapCount);
+    m_largeIndices.clear();
+    m_largeIndexNames.shrink(m_retainedHeapCount);
+}
 
 const AbstractHeap& IndexedAbstractHeap::atSlow(ptrdiff_t index)
 {
@@ -212,7 +266,7 @@ void IndexedAbstractHeap::initialize(AbstractHeap& field, ptrdiff_t signedIndex)
             accumulator >>= 4;
         }
 
-        field.initialize(&m_heapForAnyIndex, characters.data(), m_offset + signedIndex * m_elementSize);
+        field.initialize(&m_heapForAnyIndex, characters.data(), m_offset + signedIndex * m_elementSize, m_heapForAnyIndex.mutability());
         return;
     }
 

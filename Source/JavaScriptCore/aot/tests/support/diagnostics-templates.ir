@@ -1,0 +1,12 @@
+# every kind of both lists has a message whose placeholders are all filled, and only an error of the user's or an internal error fails the build
+# RUN: diagnostics templates
+# CHECK: empty sink has errors: no
+# CHECK-NOT: bad template
+# CHECK: templates: {{*}} user kinds, {{*}} internal kinds, 0 bad
+# CHECK-NEXT: hasErrors agrees with severity: ok
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="main" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}

@@ -1,0 +1,45 @@
+# In a program as read a layout in a type stands for its family: itself and every layout declared under it. A position has the family as its type, whether it is checked or expected,
+# and a family lists its layouts alone, also where a layout in it has members without a layout: no test finds such a member, and every value of a checked position has passed a test
+# RUN: round-trip
+# CHECK: layout L0 name="I"
+# CHECK-NEXT: layout L1 kind=Instance name="C" supertypes=[L0]
+# CHECK-NEXT: layout L2 kind=Instance name="D" base=L1 flags=[HasHeritage]
+# CHECK-NEXT: layout L3 name="J"
+# CHECK-NEXT: layout L4 kind=Environment
+# CHECK-NEXT: layout L5 name="K" supertypes=[L3] flags=[HasMembersWithoutLayout]
+# CHECK-NEXT: variable g0 module=m0 declared={type=L0|L1|L2 flags=[IsExpected]}
+# CHECK-NEXT: variable g1 module=m0 declared={type=L0|L1|L2}
+# CHECK-NEXT: variable g2 module=m0 declared={type=null|L1|L2}
+# CHECK-NEXT: variable g3 module=m0 declared={type=L2|L3|L5}
+# CHECK-NEXT: variable g4 module=m0 declared={type=L5}
+# CHECK-NEXT: variable g5 module=m0 declared={type=Array<L1|L2>}
+# CHECK-NEXT: module m0 path="main.js" displayPath="main.js"
+# CHECK-NEXT: function f0 name="f" module=m0 captures=[{type=env L4}] thisType={type=anything} parameters=[{type=L1|L2}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: env L4, v1: L1|L2):
+# CHECK-NEXT: v2 = Check v1 castType=L1|L2
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# CHECK-NEXT: entry module=m0
+# CHECK-NEXT: round trip: same
+# RUN(V): verify
+# V: valid
+
+layout L0 name="I"
+layout L1 kind=Instance name="C" supertypes=[L0]
+layout L2 kind=Instance name="D" base=L1 flags=[HasHeritage]
+layout L3 name="J"
+layout L4 kind=Environment
+layout L5 name="K" supertypes=[L3] flags=[HasMembersWithoutLayout]
+variable g0 module=m0 declared={type=L0 flags=[IsExpected]}
+variable g1 module=m0 declared={type=L0}
+variable g2 module=m0 declared={type=null|L1}
+variable g3 module=m0 declared={type=L2|L3}
+variable g4 module=m0 declared={type=L5}
+variable g5 module=m0 declared={type=Array<L1>}
+module m0 path="main.js" displayPath="main.js"
+function f0 name="f" module=m0 captures=[{type=env L4}] thisType={type=anything} parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: env L4, v1: L1):
+    v2 = Check v1 castType=L1
+    Return v2
+}
+entry module=m0

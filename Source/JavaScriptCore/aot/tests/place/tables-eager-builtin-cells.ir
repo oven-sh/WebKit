@@ -1,0 +1,30 @@
+# The cell of a built-in that the program replaces is filled at start-up: Date.now is assigned, and the call tests its callee against the original. Date.parse and Date are only read, so start-up locks them and their cells wait for their first use
+# OPTIONS: heat=EverythingIsHot
+# RUN: tables constants
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="replacement" [isFreeName]
+    v2 = PropGet v0 key="report" [isFreeName]
+    v3 = PropGet v0 key="Date" [isFreeName]
+    PropSet v3, v1 key="now"
+    v5 = PropGet v3 key="now"
+    v6 = Integer integer=1
+    v7 = Integer integer=2
+    v8 = Call v5, v3, v6, v7 calleeKey="now"
+    v9 = PropGet v3 key="parse"
+    v10 = Call v2, -, v8, v9, v3
+    Return
+}
+
+# CHECK: builtinCell [[date]] cell=Date
+# CHECK: builtinCell [[now]] cell=DateNow
+# CHECK: builtinCell [[parse]] cell=DateParse
+# CHECK-NOT: eagerBuiltinCell
+# CHECK: eagerBuiltinCell [[now]] cell=DateNow
+# CHECK-NOT: eagerBuiltinCell
+# CHECK: constantBuiltinMember member=Date
+# CHECK-NOT: constantBuiltinMember member=DateNow
+# CHECK: constantBuiltinMember member=DateParse

@@ -43,6 +43,13 @@ public:
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
 
+    template<typename Visitor>
+    ALWAYS_INLINE static void visitFields(JSPromiseReaction* thisObject, Visitor& visitor)
+    {
+        visitor.append(thisObject->m_promise);
+        visitor.appendUnbarriered(thisObject->m_next.pointer());
+    }
+
     JSValue promise() const { return m_promise.get(); }
     JSPromiseReaction* next() const LIFETIME_BOUND { return m_next.pointer(); }
     InternalMicrotask internalMicrotask() const { return static_cast<InternalMicrotask>(m_next.type()); }
@@ -74,6 +81,12 @@ public:
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
+
+    template<typename Visitor>
+    ALWAYS_INLINE static void visitFields(JSSlimPromiseReaction* thisObject, Visitor& visitor)
+    {
+        visitor.append(thisObject->m_handlerOrContext);
+    }
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -119,6 +132,14 @@ public:
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
+
+    template<typename Visitor>
+    ALWAYS_INLINE static void visitFields(JSFullPromiseReaction* thisObject, Visitor& visitor)
+    {
+        visitor.append(thisObject->m_onFulfilled);
+        visitor.append(thisObject->m_onRejected);
+        visitor.append(thisObject->m_context);
+    }
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)

@@ -1,0 +1,23 @@
+# type M = { tag: "alpha_text" | "beta_text" }; function make(): M { return { tag: "alpha_text" } }  make()
+# No property of the program is called alpha_text or beta_text. The text that the literal stores is still a member of the type of the field.
+# `other` is stored a text that its type does not list.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="M" fields=[{key="other" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="tag" {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="M" fields=[{key="other" declared={type=undefined|null|"alpha_text"|"beta_text" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="tag" declared={type=undefined|null|"alpha_text"|"beta_text" flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0, -
+    Return v1
+}
+function f1 name="make" module=m0 results=[{type=anything}] {
+  b0():
+    v0 = String string="gamma_text"
+    v1 = String string="alpha_text"
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    Return v3
+}

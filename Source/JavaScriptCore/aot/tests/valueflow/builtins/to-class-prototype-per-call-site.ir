@@ -1,0 +1,100 @@
+# $toClass(First, "First", Base); $toClass(Second, "Second"); First.prototype.run = one; Second.prototype.run = two; Base.prototype.rest = three
+# restOfSecond = new Second().rest; first = new First(); first.run(); first.rest()
+# RUN: valueflow-solve calls
+# CHECK: f0 v23 -> f4
+# CHECK-NEXT: f0 v25 -> f6
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f4
+# UNREACHED: unreached f5
+# UNREACHED-NOT: unreached f6
+# RUN(APPLY): valueflow-apply
+# APPLY: variable g0 name="restOfSecond" {{*}}declared={type=undefined}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Instance name="First" constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Second" constructor=f2 flags=[IsConstructorFunction]
+layout L2 kind=Instance name="Base" constructor=f3 flags=[IsConstructorFunction]
+layout L3 name="Descriptor" fields=[{key="value" declared={type=anything}}, {key="writable" declared={type=anything}}, {key="configurable" declared={type=anything}}]
+variable g0 name="restOfSecond" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=PrivateGlobalsToClass
+    v4 = String string="First"
+    v5 = Call v3, -, v0, v4, v2
+    v6 = String string="Second"
+    v7 = Call v3, -, v1, v6
+    v8 = PropGet v0 key="prototype"
+    v9 = NewClosure function=f4
+    PropSet v8, v9 key="run" mode=Strict
+    v11 = PropGet v1 key="prototype"
+    v12 = NewClosure function=f5
+    PropSet v11, v12 key="run" mode=Strict
+    v14 = PropGet v2 key="prototype"
+    v15 = NewClosure function=f6
+    PropSet v14, v15 key="rest" mode=Strict
+    v17 = Construct v1
+    v18 = PropGet v17 key="rest"
+    PutModuleVariable v18 variable=g0
+    v20 = Construct v0
+    v21 = Undefined
+    v22 = PropGet v20 key="run"
+    v23 = Call v22, v20 calleeKey="run"
+    v24 = PropGet v20 key="rest"
+    v25 = Call v24, v20 calleeKey="rest"
+    Return
+}
+function f1 name="First" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="Second" flags=[HasThis] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f3 name="Base" flags=[HasThis] thisType={type=L2 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f4 name="one" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f5 name="two" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f6 name="three" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f7 name="toClass" module=m1 kind=Method role=Model length=3 enclosingRuntimeFunction=131084 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectCreate
+    v5 = ToBoolean v2
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = PropGet v2 key="prototype"
+    Jump -> next b3(v6, v2)
+  b2():
+    v7 = Builtin builtin=ObjectPrototype
+    v8 = Builtin builtin=FunctionPrototype
+    Jump -> next b3(v7, v8)
+  b3(v9: anything, v10: anything):
+    v11 = Call v4, v3, v9 calleeName="create"
+    v12 = Builtin builtin=ObjectDefineProperty
+    v13 = String string="constructor"
+    v14 = Boolean boolean=true
+    v15 = NewObject -, v0, v14, v14 layout=L3 fields=[0, 1, 2]
+    v16 = Call v12, v3, v11, v13, v15 calleeName="defineProperty"
+    v17 = Builtin builtin=ObjectSetPrototypeOf
+    v18 = Call v17, v3, v0, v10 calleeName="setPrototypeOf"
+    v19 = String string="prototype"
+    v20 = NewObject -, v11, v14, v14 layout=L3 fields=[0, 1, 2]
+    v21 = Call v12, v3, v0, v19, v20 calleeName="defineProperty"
+    v22 = String string="name"
+    v23 = NewObject -, v1 layout=L3 fields=[0]
+    v24 = Call v12, v3, v0, v22, v23 calleeName="defineProperty"
+    Return
+}
+runtimefunction id=131084 function=f7

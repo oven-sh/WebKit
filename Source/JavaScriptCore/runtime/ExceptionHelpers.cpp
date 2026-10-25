@@ -405,6 +405,181 @@ JSObject* createReinstallPrivateMethodError(JSGlobalObject* globalObject)
     return createTypeError(globalObject, "Cannot install same private methods on object more than once"_s, defaultSourceAppender, TypeNothing);
 }
 
+JSObject* createSuperNotCalledError(JSGlobalObject* globalObject)
+{
+    return createReferenceError(globalObject, SuperNotCalledError);
+}
+
+JSObject* createSuperCalledTwiceError(JSGlobalObject* globalObject)
+{
+    return createReferenceError(globalObject, SuperCalledTwiceError);
+}
+
+JSObject* createDeleteSuperPropertyError(JSGlobalObject* globalObject)
+{
+    return createReferenceError(globalObject, DeleteSuperPropertyError);
+}
+
+JSObject* createDestructureNullishError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, DestructureNullishError);
+}
+
+JSObject* createStaticFieldNamedPrototypeError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, StaticFieldNamedPrototypeError);
+}
+
+JSObject* createIteratorResultNotObjectError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, IteratorResultNotObjectError);
+}
+
+JSObject* createYieldStarIteratorWithoutThrowError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, YieldStarIteratorWithoutThrowError);
+}
+
+JSObject* createStaticPrivateBrandError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, StaticPrivateBrandError);
+}
+
+JSObject* createStaticPrivateBrandOfNonObjectError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, StaticPrivateBrandOfNonObjectError);
+}
+
+JSObject* createUndefinedPrivateGetterError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, UndefinedPrivateGetterError);
+}
+
+JSObject* createUndefinedPrivateSetterError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, UndefinedPrivateSetterError);
+}
+
+JSObject* createInstanceofRightHandSideNotObjectError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, InstanceofRightHandSideNotObjectError);
+}
+
+JSObject* createSuperclassNotConstructorError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, SuperclassNotConstructorError);
+}
+
+JSObject* createGetterNotFunctionError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, GetterNotFunctionError);
+}
+
+JSObject* createSetterNotFunctionError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, SetterNotFunctionError);
+}
+
+JSObject* createDefinePropertyOnNonObjectError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, DefinePropertyOnNonObjectError);
+}
+
+JSObject* createReplaceAllNonGlobalRegExpError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, ReplaceAllNonGlobalRegExpError);
+}
+
+JSObject* createGeneratorIsExecutingError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, "Generator is executing"_s);
+}
+
+JSObject* createNotAGeneratorError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, "|this| should be a generator"_s);
+}
+
+JSObject* createSpreadOfNullishError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, "Spread syntax requires ...iterable not be null or undefined"_s);
+}
+
+JSObject* createSpreadResultNotObjectError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, "Iterator result interface is not an object"_s);
+}
+
+JSObject* createSpreadIteratorNotFunctionError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, "Spread syntax requires ...iterable[Symbol.iterator] to be a function"_s);
+}
+
+JSObject* createModuleGraphTooDeepError(JSGlobalObject* globalObject)
+{
+    return createRangeError(globalObject, ModuleGraphTooDeepError);
+}
+
+JSObject* createDeferredModuleNotReadyError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, DeferredModuleNotReadyError);
+}
+
+String destructureNullishErrorMessage(const Identifier& propertyName)
+{
+    String message = tryMakeString("Cannot destructure property '"_s, propertyName.string(), "' from null or undefined value"_s);
+    return message.isNull() ? String(DestructureNullishError) : message;
+}
+
+JSObject* createDestructureNullishError(JSGlobalObject* globalObject, const Identifier& propertyName)
+{
+    return createTypeError(globalObject, destructureNullishErrorMessage(propertyName));
+}
+
+String derivedConstructorResultErrorMessage(const String& className)
+{
+    if (className.isEmpty())
+        return DerivedConstructorResultError;
+    String message = tryMakeString("Cannot return a non-object type in the constructor of a derived class "_s, className, "."_s);
+    return message.isNull() ? String(DerivedConstructorResultError) : message;
+}
+
+JSObject* createDerivedConstructorResultError(JSGlobalObject* globalObject, const String& className)
+{
+    return createTypeError(globalObject, derivedConstructorResultErrorMessage(className));
+}
+
+String constructorCalledWithoutNewErrorMessage(ConstructorKind kind, const String& constructorName)
+{
+    ASSERT(kind != ConstructorKind::None);
+    bool isClass = kind != ConstructorKind::Naked;
+    ASCIILiteral withoutName = isClass ? ClassConstructorCalledWithoutNewError : ConstructorCalledWithoutNewError;
+    if (constructorName.isEmpty())
+        return withoutName;
+    String message = tryMakeString(isClass ? "Cannot call a class constructor "_s : "Cannot call a constructor "_s, constructorName, " without |new|"_s);
+    return message.isNull() ? String(withoutName) : message;
+}
+
+JSObject* createConstructorCalledWithoutNewError(JSGlobalObject* globalObject, ConstructorKind kind, const String& constructorName)
+{
+    return createTypeError(globalObject, constructorCalledWithoutNewErrorMessage(kind, constructorName));
+}
+
+JSObject* createExportNotFoundError(JSGlobalObject* globalObject, const String& exportName, const String& moduleKey)
+{
+    return createSyntaxError(globalObject, makeString("Export named '"_s, exportName, "' not found in module '"_s, moduleKey, "'."_s));
+}
+
+JSObject* createAmbiguousExportError(JSGlobalObject* globalObject, const String& exportName, const String& moduleKey)
+{
+    return createSyntaxError(globalObject, makeString("Export named '"_s, exportName, "' cannot be resolved due to ambiguous multiple bindings in module '"_s, moduleKey, "'."_s));
+}
+
+JSObject* createMissingDefaultExportError(JSGlobalObject* globalObject, const String& moduleKey)
+{
+    return createSyntaxError(globalObject, makeString("Missing 'default' export in module '"_s, moduleKey, "'."_s));
+}
+
 Exception* throwOutOfMemoryError(JSGlobalObject* globalObject, ThrowScope& scope)
 {
     return throwException(globalObject, scope, createOutOfMemoryError(globalObject));
@@ -425,6 +600,9 @@ Exception* throwStackOverflowError(JSGlobalObject* globalObject, ThrowScope& sco
 #if USE(BUN_JSC_ADDITIONS)
 Exception* throwNonStaticCodeError(JSGlobalObject* globalObject, ThrowScope& scope)
 {
+    const String& message = globalObject->evalDisabledErrorMessage();
+    if (!message.isEmpty())
+        return throwException(globalObject, scope, createEvalError(globalObject, message));
     return throwException(globalObject, scope, createEvalError(globalObject, "Code generation from strings disallowed for this context"_s));
 }
 #endif

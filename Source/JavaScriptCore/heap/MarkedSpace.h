@@ -84,7 +84,7 @@ public:
         return version;
     }
     
-    static size_t sizeClassToIndex(size_t size)
+    static constexpr size_t sizeClassToIndex(size_t size)
     {
         return (size + sizeStep - 1) / sizeStep;
     }
@@ -105,6 +105,7 @@ public:
     void freeMemory();
 
     static size_t optimalSizeFor(size_t);
+    JS_EXPORT_PRIVATE static Vector<size_t> sizeClassesFor(double progression);
     
     void prepareForAllocation();
 

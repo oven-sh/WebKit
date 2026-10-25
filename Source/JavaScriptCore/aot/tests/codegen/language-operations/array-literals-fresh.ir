@@ -1,0 +1,306 @@
+# An array literal without a profile has code for each number and type of elements, with and without holes, in the three code shapes
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code
+# CHECK-COUNT-9: : size=
+# CHECK-NOT: no code
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="literalsOfInt32" parameters=[{type=i32}, {type=boolean}] results=[{type=undefined}] {
+    v2 = NewArray contents=i32
+    v3 = NewArray v0 contents=i32
+    v4 = NewArray v0, v0, v0, v0 contents=i32
+    v5 = NewArray v0, v0, v0, v0, v0 contents=i32
+    v6 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=i32
+    v7 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=i32
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v9 = NewArray contents=i32
+    v10 = NewArray v0 contents=i32
+    v11 = NewArray v0, v0, v0, v0 contents=i32
+    v12 = NewArray v0, v0, v0, v0, v0 contents=i32
+    v13 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=i32
+    v14 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=i32
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v15 = NewArray contents=i32
+    v16 = NewArray v0 contents=i32
+    v17 = NewArray v0, v0, v0, v0 contents=i32
+    v18 = NewArray v0, v0, v0, v0, v0 contents=i32
+    v19 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=i32
+    v20 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=i32
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f0 b0 Balanced
+# S: f0 b1 Fast
+# S: f0 b3 Compact
+function f1 name="literalsOfNumbers" parameters=[{type=number}, {type=boolean}] results=[{type=undefined}] {
+    v2 = NewArray contents=number
+    v3 = NewArray v0 contents=number
+    v4 = NewArray v0, v0, v0, v0 contents=number
+    v5 = NewArray v0, v0, v0, v0, v0 contents=number
+    v6 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=number
+    v7 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=number
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v9 = NewArray contents=number
+    v10 = NewArray v0 contents=number
+    v11 = NewArray v0, v0, v0, v0 contents=number
+    v12 = NewArray v0, v0, v0, v0, v0 contents=number
+    v13 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=number
+    v14 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=number
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v15 = NewArray contents=number
+    v16 = NewArray v0 contents=number
+    v17 = NewArray v0, v0, v0, v0 contents=number
+    v18 = NewArray v0, v0, v0, v0, v0 contents=number
+    v19 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=number
+    v20 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=number
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f1 b0 Balanced
+# S: f1 b1 Fast
+# S: f1 b3 Compact
+function f2 name="literalsOfOptionalNumbers" parameters=[{type=undefined|number}, {type=boolean}] results=[{type=undefined}] {
+    v2 = NewArray contents=undefined|number
+    v3 = NewArray v0 contents=undefined|number
+    v4 = NewArray v0, v0, v0, v0 contents=undefined|number
+    v5 = NewArray v0, v0, v0, v0, v0 contents=undefined|number
+    v6 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=undefined|number
+    v7 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=undefined|number
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v9 = NewArray contents=undefined|number
+    v10 = NewArray v0 contents=undefined|number
+    v11 = NewArray v0, v0, v0, v0 contents=undefined|number
+    v12 = NewArray v0, v0, v0, v0, v0 contents=undefined|number
+    v13 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=undefined|number
+    v14 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=undefined|number
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v15 = NewArray contents=undefined|number
+    v16 = NewArray v0 contents=undefined|number
+    v17 = NewArray v0, v0, v0, v0 contents=undefined|number
+    v18 = NewArray v0, v0, v0, v0, v0 contents=undefined|number
+    v19 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=undefined|number
+    v20 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=undefined|number
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f2 b0 Balanced
+# S: f2 b1 Fast
+# S: f2 b3 Compact
+function f3 name="literalsOfAnything" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v2 = NewArray contents=anything
+    v3 = NewArray v0 contents=anything
+    v4 = NewArray v0, v0, v0, v0 contents=anything
+    v5 = NewArray v0, v0, v0, v0, v0 contents=anything
+    v6 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything
+    v7 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v9 = NewArray contents=anything
+    v10 = NewArray v0 contents=anything
+    v11 = NewArray v0, v0, v0, v0 contents=anything
+    v12 = NewArray v0, v0, v0, v0, v0 contents=anything
+    v13 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything
+    v14 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v15 = NewArray contents=anything
+    v16 = NewArray v0 contents=anything
+    v17 = NewArray v0, v0, v0, v0 contents=anything
+    v18 = NewArray v0, v0, v0, v0, v0 contents=anything
+    v19 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything
+    v20 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f3 b0 Balanced
+# S: f3 b1 Fast
+# S: f3 b3 Compact
+function f4 name="literalsWithHolesOfInt32" parameters=[{type=i32}, {type=boolean}] results=[{type=undefined}] {
+    v2 = NewArray contents=i32 holes=[0]
+    v3 = NewArray v0 contents=i32 holes=[0]
+    v4 = NewArray v0 contents=i32 holes=[1]
+    v5 = NewArray v0, v0 contents=i32 holes=[1]
+    v6 = NewArray v0, v0, v0, v0 contents=i32 holes=[0, 2, 5]
+    v7 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=i32 holes=[16]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v9 = NewArray contents=i32 holes=[0]
+    v10 = NewArray v0 contents=i32 holes=[0]
+    v11 = NewArray v0 contents=i32 holes=[1]
+    v12 = NewArray v0, v0 contents=i32 holes=[1]
+    v13 = NewArray v0, v0, v0, v0 contents=i32 holes=[0, 2, 5]
+    v14 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=i32 holes=[16]
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v15 = NewArray contents=i32 holes=[0]
+    v16 = NewArray v0 contents=i32 holes=[0]
+    v17 = NewArray v0 contents=i32 holes=[1]
+    v18 = NewArray v0, v0 contents=i32 holes=[1]
+    v19 = NewArray v0, v0, v0, v0 contents=i32 holes=[0, 2, 5]
+    v20 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=i32 holes=[16]
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f4 b0 Balanced
+# S: f4 b1 Fast
+# S: f4 b3 Compact
+function f5 name="literalsWithHolesOfNumbers" parameters=[{type=number}, {type=boolean}] results=[{type=undefined}] {
+    v2 = NewArray contents=number holes=[0]
+    v3 = NewArray v0 contents=number holes=[0]
+    v4 = NewArray v0 contents=number holes=[1]
+    v5 = NewArray v0, v0 contents=number holes=[1]
+    v6 = NewArray v0, v0, v0, v0 contents=number holes=[0, 2, 5]
+    v7 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=number holes=[16]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v9 = NewArray contents=number holes=[0]
+    v10 = NewArray v0 contents=number holes=[0]
+    v11 = NewArray v0 contents=number holes=[1]
+    v12 = NewArray v0, v0 contents=number holes=[1]
+    v13 = NewArray v0, v0, v0, v0 contents=number holes=[0, 2, 5]
+    v14 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=number holes=[16]
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v15 = NewArray contents=number holes=[0]
+    v16 = NewArray v0 contents=number holes=[0]
+    v17 = NewArray v0 contents=number holes=[1]
+    v18 = NewArray v0, v0 contents=number holes=[1]
+    v19 = NewArray v0, v0, v0, v0 contents=number holes=[0, 2, 5]
+    v20 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=number holes=[16]
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f5 b0 Balanced
+# S: f5 b1 Fast
+# S: f5 b3 Compact
+function f6 name="literalsWithHolesOfOptionalNumbers" parameters=[{type=undefined|number}, {type=boolean}] results=[{type=undefined}] {
+    v2 = NewArray contents=undefined|number holes=[0]
+    v3 = NewArray v0 contents=undefined|number holes=[0]
+    v4 = NewArray v0 contents=undefined|number holes=[1]
+    v5 = NewArray v0, v0 contents=undefined|number holes=[1]
+    v6 = NewArray v0, v0, v0, v0 contents=undefined|number holes=[0, 2, 5]
+    v7 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=undefined|number holes=[16]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v9 = NewArray contents=undefined|number holes=[0]
+    v10 = NewArray v0 contents=undefined|number holes=[0]
+    v11 = NewArray v0 contents=undefined|number holes=[1]
+    v12 = NewArray v0, v0 contents=undefined|number holes=[1]
+    v13 = NewArray v0, v0, v0, v0 contents=undefined|number holes=[0, 2, 5]
+    v14 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=undefined|number holes=[16]
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v15 = NewArray contents=undefined|number holes=[0]
+    v16 = NewArray v0 contents=undefined|number holes=[0]
+    v17 = NewArray v0 contents=undefined|number holes=[1]
+    v18 = NewArray v0, v0 contents=undefined|number holes=[1]
+    v19 = NewArray v0, v0, v0, v0 contents=undefined|number holes=[0, 2, 5]
+    v20 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=undefined|number holes=[16]
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f6 b0 Balanced
+# S: f6 b1 Fast
+# S: f6 b3 Compact
+function f7 name="literalsWithHolesOfAnything" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v2 = NewArray contents=anything holes=[0]
+    v3 = NewArray v0 contents=anything holes=[0]
+    v4 = NewArray v0 contents=anything holes=[1]
+    v5 = NewArray v0, v0 contents=anything holes=[1]
+    v6 = NewArray v0, v0, v0, v0 contents=anything holes=[0, 2, 5]
+    v7 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything holes=[16]
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v9 = NewArray contents=anything holes=[0]
+    v10 = NewArray v0 contents=anything holes=[0]
+    v11 = NewArray v0 contents=anything holes=[1]
+    v12 = NewArray v0, v0 contents=anything holes=[1]
+    v13 = NewArray v0, v0, v0, v0 contents=anything holes=[0, 2, 5]
+    v14 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything holes=[16]
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v15 = NewArray contents=anything holes=[0]
+    v16 = NewArray v0 contents=anything holes=[0]
+    v17 = NewArray v0 contents=anything holes=[1]
+    v18 = NewArray v0, v0 contents=anything holes=[1]
+    v19 = NewArray v0, v0, v0, v0 contents=anything holes=[0, 2, 5]
+    v20 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything holes=[16]
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f7 b0 Balanced
+# S: f7 b1 Fast
+# S: f7 b3 Compact
+function f8 name="literalsOfMixedElements" parameters=[{type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v6 = NewArray v0, v1 contents=number
+    v7 = NewArray v1, v2 contents=undefined|number
+    v8 = NewArray v0, v2 contents=undefined|number
+    v9 = NewArray v0, v3 contents=anything
+    v10 = NewArray v0, v1, v2, v3, v4 contents=anything
+    v11 = NewArray v3 contents=string
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v13 = NewArray v0, v1 contents=number
+    v14 = NewArray v1, v2 contents=undefined|number
+    v15 = NewArray v0, v2 contents=undefined|number
+    v16 = NewArray v0, v3 contents=anything
+    v17 = NewArray v0, v1, v2, v3, v4 contents=anything
+    v18 = NewArray v3 contents=string
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v19 = NewArray v0, v1 contents=number
+    v20 = NewArray v1, v2 contents=undefined|number
+    v21 = NewArray v0, v2 contents=undefined|number
+    v22 = NewArray v0, v3 contents=anything
+    v23 = NewArray v0, v1, v2, v3, v4 contents=anything
+    v24 = NewArray v3 contents=string
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f8 b0 Balanced
+# S: f8 b1 Fast
+# S: f8 b3 Compact

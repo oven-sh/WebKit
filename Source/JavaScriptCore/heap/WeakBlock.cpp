@@ -114,6 +114,20 @@ void WeakBlock::lastChanceToFinalize()
     }
 }
 
+#if ASAN_ENABLED
+void WeakBlock::unpoisonCellsAwaitingFinalizers()
+{
+    for (size_t i = 0, found = 0; found < m_deadCount && i < weakImplCount(); ++i) {
+        WeakImpl* weakImpl = &weakImpls()[i];
+        if (weakImpl->state() != WeakImpl::Dead)
+            continue;
+        ++found;
+        if (JSCell* cell = weakImpl->jsValue().asCell(); !cell->isPreciseAllocation())
+            __asan_unpoison_memory_region(cell, cell->cellSize());
+    }
+}
+#endif
+
 void WeakBlock::sweep()
 {
     for (size_t i = 0; m_deadCount && i < weakImplCount(); ++i) {

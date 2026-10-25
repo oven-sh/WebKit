@@ -1,0 +1,91 @@
+# Numbers are keys and values of a constant Set or Map like strings, and a number is another key than its text
+# FORM: Prepared
+# RUN: pass EmbedConstantCollections
+# STATISTIC: ConstantCollectionsEmbedded = 5
+# CHECK: table 0 keys: [Number(1) Number(2) Number(-3)]
+# CHECK-NEXT: table 1 keys: [Number(1.5) Number(-2.25) Number(NaN) Number(Infinity) Number(-Infinity)]
+# CHECK-NEXT: table 2 keys: [Number(4294967296) Number(9007199254740991) Number(-9007199254740991)]
+# CHECK-NEXT: table 3 keys: [Number(1) String("1") BigInt("1")]
+# CHECK-NEXT: table 4 keys: [Number(404) Number(0.5)]
+# CHECK-NEXT: table 4 values: [String("Not Found") Number(2)]
+# CHECK-NEXT: outcome: Changed
+# RUN(AGAIN): pass EmbedConstantCollections EmbedConstantCollections
+# AGAIN: outcome: Changed
+# AGAIN: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="integers" results=[{type=Set<number>}] {
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = Integer integer=-3
+    v3 = NewArray v0, v1, v2 contents=number
+    v4 = CallBuiltin -, v3 overload=Set/2 builtinCallForm=Whole
+    Return v4
+# CHECK-NOT: NewArray
+# CHECK: [[set0]]: Set<int[-3, 2]> = NewSetFromData data=d0
+# CHECK-NEXT: Return [[set0]]
+}
+
+function f1 name="numbersThatAreNoIntegers" results=[{type=Set<number>}] {
+    v0 = Double number=1.5
+    v1 = Double number=-2.25
+    v2 = Double number=NaN
+    v3 = Double number=Infinity
+    v4 = Double number=-Infinity
+    v5 = NewArray v0, v1, v2, v3, v4 contents=number
+    v6 = CallBuiltin -, v5 overload=Set/2 builtinCallForm=Whole
+    Return v6
+# CHECK-NOT: NewArray
+# CHECK: = NewSetFromData data=d1
+}
+
+function f2 name="integersOutsideInt32" results=[{type=Set<number>}] {
+    v0 = Integer integer=4294967296
+    v1 = Integer integer=9007199254740991
+    v2 = Integer integer=-9007199254740991
+    v3 = NewArray v0, v1, v2 contents=number
+    v4 = CallBuiltin -, v3 overload=Set/2 builtinCallForm=Whole
+    Return v4
+# CHECK-NOT: NewArray
+# CHECK: = NewSetFromData data=d2
+}
+
+function f3 name="numberTextAndBigInt" results=[{type=Set<anything>}] {
+    v0 = Integer integer=1
+    v1 = String string="1"
+    v2 = BigInt digits="1"
+    v3 = NewArray v0, v1, v2 contents=anything
+    v4 = CallBuiltin -, v3 overload=Set/2 builtinCallForm=Whole
+    Return v4
+# CHECK-NOT: NewArray
+# CHECK: = NewSetFromData data=d3
+}
+
+function f4 name="mapFromNumbers" results=[{type=Map<number, anything>}] {
+    v0 = Integer integer=404
+    v1 = String string="Not Found"
+    v2 = NewArray v0, v1 contents=anything
+    v3 = Double number=0.5
+    v4 = Integer integer=2
+    v5 = NewArray v3, v4 contents=number
+    v6 = NewArray v2, v5 contents=Array<anything>
+    v7 = CallBuiltin -, v6 overload=Map/2 builtinCallForm=Whole
+    Return v7
+# CHECK-NOT: NewArray
+# CHECK: [[map4]]: Map<404|fractional, 2|string> = NewMapFromData data=d4
+# CHECK-NEXT: Return [[map4]]
+}
+
+function f5 name="computedNumber" parameters=[{type=number}] results=[{type=Set<number>}] {
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    v3 = NewArray v1, v2 contents=number
+    v4 = CallBuiltin -, v3 overload=Set/2 builtinCallForm=Whole
+    Return v4
+# CHECK-NOT: FromData
+# CHECK: [[list5]]:{{*}}= NewArray v1, v2 contents=number
+# CHECK-NEXT: = CallBuiltin -, [[list5]] overload=Set/2
+# CHECK: data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=-3}]}
+# CHECK: data d4 root=Array{contents=Array elements=[Array{contents=anything elements=[Number{value=404}, String{value="Not Found"}]}, Array{contents=number elements=[Number{value=0.5}, Number{value=2}]}]}
+# CHECK-NOT: data d5
+}

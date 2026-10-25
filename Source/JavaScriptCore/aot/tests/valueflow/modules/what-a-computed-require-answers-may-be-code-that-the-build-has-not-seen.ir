@@ -1,0 +1,19 @@
+# require(name)(operand); require("./inner.cjs")   other.cjs, the second entry point, has module.exports = run; inner.cjs has module.exports = callsItsOperand
+# A require() under a name nobody knows may find a file on disk that the build has not seen. The run time loads it and interprets it, so what the load answers is a value nobody knows:
+# the call has a callee nobody knows, the operand escapes and is called. Such code has a loader of its own and finds the entry points by name. It does not find a file that is in the image
+# because another file names it by a constant, so a function that such a file keeps to itself and that nothing of the program calls stays unreached
+# An engine that runs only the code of the image answers as under exclude=CodeOutsideImage: call-of-what-a-computed-require-answers-has-no-unknown-callee.ir
+# RUN: valueflow-solve calls
+# REQUIRES: code-outside-image
+# CHECK: f0 v4 ->{{*}} unknown
+# RUN(UNREACHED): valueflow-solve unreached
+# REQUIRES(UNREACHED): code-outside-image
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED: unreached f5
+# RUN(UNSEEN): valueflow-solve unseen
+# REQUIRES(UNSEEN): code-outside-image
+# UNSEEN: unseen LoadsCodeByName f0:v2
+# UNSEEN-NEXT: unseen-code yes
+# UNSEEN-NEXT: modules-by-name yes
+# PROGRAM-OF: call-of-what-a-computed-require-answers-has-no-unknown-callee.ir

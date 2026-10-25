@@ -1,0 +1,40 @@
+# The layout of the receiver is proven, and nothing is known of the state of the object, as behind a spread in a literal. The field takes any value, and its slot in the cell holds any value as it is.
+# A definition is told the record of the field and goes to the stub that asks nothing of the value. A store goes by name, at a site: where it finds the slot empty it may find a setter above, and the site remembers that.
+# FORM: AsRead
+# OPTIONS: heat=OnlyLoopsAreHot disable=pass:InlineCalls
+# RUN: generate-code calls
+# CHECK-LABEL: f2: size=
+# CHECK: stub PutByIdAtSite.Strict x1
+# CHECK: stub PutKnownField.Define.n1 x1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Record name="Entry" module=m0 fields=[{key="done" declared={type=boolean} flags=[IsRequired]}, {key="label" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="held" module=m0 declared={type=undefined|L0} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f2
+    v3 = PropGet v0 key="publish" [isFreeName]
+    v4 = Call v3, -, v1, v2
+    Return
+}
+function f1 name="fresh" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Boolean
+    v2 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    PutModuleVariable v3 variable=g0
+    Return v3
+}
+function f2 name="store" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v3 = GetModuleVariable variable=g0
+    v4 = Check v3 castType=L0
+    PropSet v4, v1 key="label" mode=Strict
+    PropDefine v4, v1 key="label"
+    Return v1
+  b2():
+    Return v0
+}

@@ -1,0 +1,6 @@
+# Bytes have no escape but \x and two hexadecimal digits
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+webassemblymodule module=m0 bytes="\u{41}"

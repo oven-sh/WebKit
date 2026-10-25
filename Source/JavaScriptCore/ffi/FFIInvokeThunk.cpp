@@ -26,11 +26,12 @@
 #include "config.h"
 #include "FFIInvokeThunk.h"
 
-#if USE(BUN_JSC_ADDITIONS) && ENABLE(JIT)
+#if ENABLE(FFI) && ENABLE(CODE_GENERATION)
 
 #include "CCallHelpers.h"
 #include "FFICallingConvention.h"
 #include "FFISignature.h"
+#include "FFIStubEmitters.h"
 #include "FFIType.h"
 #include "FPRInfo.h"
 #include "GPRInfo.h"
@@ -253,6 +254,81 @@ MacroAssemblerCodeRef<JITThunkPtrTag> generateInvokeThunk(const Signature& signa
     return code;
 }
 
+#if FFI_STUBS_SUPPORTED
+
+void emitInvokeStub(CCallHelpers& jit)
+{
+    constexpr NativeCC cc = hostNativeCC();
+
+    auto [argumentsReg, targetReg] = scratchGPRsForInvoke(cc);
+    ASSERT(argumentsReg != shuffleGPR && targetReg != shuffleGPR);
+
+    std::span<const GPRReg> integerArgumentRegs = integerArgumentRegisters(cc);
+    std::span<const FPRReg> floatArgumentRegs = floatArgumentRegisters(cc);
+
+    GPRReg remaining = shuffleGPR;
+    GPRReg source = integerArgumentRegs[0];
+    GPRReg destination = integerArgumentRegs[1];
+    GPRReg word = integerArgumentRegs[2];
+
+    jit.emitFunctionPrologue();
+#if CPU(X86_64)
+    ASSERT(argumentsReg == X86Registers::ebx);
+    jit.pushToSave(X86Registers::ebx);
+    jit.subPtr(CCallHelpers::TrustedImm32(8), MacroAssembler::stackPointerRegister);
+#elif CPU(ARM64)
+    ASSERT(argumentsReg == ARM64Registers::x19);
+    jit.pushPair(ARM64Registers::x19, ARM64Registers::x20);
+#endif
+
+    jit.move(GPRInfo::argumentGPR1, argumentsReg);
+    jit.move(GPRInfo::argumentGPR0, targetReg);
+
+    jit.load32(CCallHelpers::Address(argumentsReg, InvokeArguments::offsetOfStackBytes()), remaining);
+    jit.move(MacroAssembler::stackPointerRegister, destination);
+    jit.subPtr(remaining, destination);
+    jit.move(destination, MacroAssembler::stackPointerRegister);
+    jit.addPtr(CCallHelpers::TrustedImm32(InvokeArguments::offsetOfStack()), argumentsReg, source);
+
+    auto done = jit.branchTest32(CCallHelpers::Zero, remaining);
+    auto loop = jit.label();
+    for (int32_t offset : { 0, 8 }) {
+        jit.load64(CCallHelpers::Address(source, offset), word);
+        jit.store64(word, CCallHelpers::Address(destination, offset));
+    }
+    jit.addPtr(CCallHelpers::TrustedImm32(16), source);
+    jit.addPtr(CCallHelpers::TrustedImm32(16), destination);
+    jit.branchSub32(CCallHelpers::NonZero, CCallHelpers::TrustedImm32(16), remaining).linkTo(loop, &jit);
+    done.link(&jit);
+
+    for (unsigned i = 0; i < floatArgumentRegs.size(); ++i)
+        jit.loadDouble(CCallHelpers::Address(argumentsReg, InvokeArguments::offsetOfFPR(i)), floatArgumentRegs[i]);
+    for (unsigned i = 0; i < integerArgumentRegs.size(); ++i)
+        jit.load64(CCallHelpers::Address(argumentsReg, InvokeArguments::offsetOfGPR(i)), integerArgumentRegs[i]);
+
+#if CPU(X86_64)
+    if (cc == NativeCC::SysV64)
+        jit.load32(CCallHelpers::Address(argumentsReg, InvokeArguments::offsetOfNumberOfFPRsUsed()), X86Registers::eax);
+#endif
+
+    jit.call(targetReg, CFunctionPtrTag);
+
+    jit.store64(GPRInfo::returnValueGPR, CCallHelpers::Address(argumentsReg, InvokeArguments::offsetOfReturnGPR()));
+    jit.storeDouble(FPRInfo::returnValueFPR, CCallHelpers::Address(argumentsReg, InvokeArguments::offsetOfReturnFPR()));
+
+    jit.addPtr(CCallHelpers::TrustedImm32(-16), GPRInfo::callFrameRegister, MacroAssembler::stackPointerRegister);
+#if CPU(X86_64)
+    jit.addPtr(CCallHelpers::TrustedImm32(8), MacroAssembler::stackPointerRegister);
+    jit.popToRestore(X86Registers::ebx);
+#elif CPU(ARM64)
+    jit.popPair(ARM64Registers::x19, ARM64Registers::x20);
+#endif
+    jit.emitFunctionEpilogue();
+    jit.ret();
+}
+
+#endif // FFI_STUBS_SUPPORTED
+
 #else // ENABLE(JIT_CAGE) || !(CPU(X86_64) || CPU(ARM64))
 
 MacroAssemblerCodeRef<JITThunkPtrTag> generateInvokeThunk(const Signature&)
@@ -264,4 +340,61 @@ MacroAssemblerCodeRef<JITThunkPtrTag> generateInvokeThunk(const Signature&)
 
 } } // namespace JSC::FFI
 
-#endif // USE(BUN_JSC_ADDITIONS) && ENABLE(JIT)
+#endif // USE(BUN_JSC_ADDITIONS) && ENABLE(CODE_GENERATION)
+
+#if USE(BUN_JSC_ADDITIONS)
+
+#include "FFICallingConvention.h"
+#include "FFISignature.h"
+#include "FFIStubs.h"
+#include "FFIType.h"
+
+namespace JSC { namespace FFI {
+
+void invokeThroughStub(InvokeStubFunction stub, const Signature& signature, void* target, uint64_t* slots)
+{
+    const CallLayout& layout = signature.callLayout();
+    RELEASE_ASSERT(layout.stackBytes <= InvokeArguments::maxStackBytes && !(layout.stackBytes % 16));
+
+    InvokeArguments arguments;
+    zeroBytes(arguments.gprs);
+    zeroBytes(arguments.fprs);
+    arguments.stackBytes = layout.stackBytes;
+    arguments.numberOfFPRsUsed = 0;
+    memset(arguments.stack, 0, layout.stackBytes);
+
+    for (unsigned i = 0; i < layout.arguments.size(); ++i) {
+        const ArgLocation& location = layout.arguments[i];
+        switch (location.kind) {
+        case ArgLocation::Kind::GPR:
+            arguments.gprs[location.regIndex] = slots[i];
+            break;
+        case ArgLocation::Kind::FPR:
+            arguments.fprs[location.regIndex] = slots[i];
+            ++arguments.numberOfFPRsUsed;
+            break;
+        case ArgLocation::Kind::Stack:
+            memcpy(arguments.stack + location.stackOffset, &slots[i], layout.packing == StackPacking::Natural ? nativeSizeInBytes(location.type) : 8);
+            break;
+        }
+    }
+
+    stub(target, &arguments);
+
+    uint64_t& returnSlot = slots[signature.argumentCount()];
+    switch (layout.returnClass) {
+    case ArgClass::Void:
+        break;
+    case ArgClass::Float:
+    case ArgClass::Double:
+        returnSlot = normalizeSlot(signature.returnType(), arguments.returnFPR);
+        break;
+    case ArgClass::Int:
+        returnSlot = normalizeSlot(signature.returnType(), arguments.returnGPR);
+        break;
+    }
+}
+
+} } // namespace JSC::FFI
+
+#endif // ENABLE(FFI)

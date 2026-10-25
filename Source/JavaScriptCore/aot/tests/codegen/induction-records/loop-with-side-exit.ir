@@ -1,0 +1,35 @@
+# A loop that also leaves through a second test is still counted for the back end: every trip passes the comparison with the bound
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: generate-code
+# STATISTIC: KnownInductionsUsed >= 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = BitOr v2, v2
+    v4 = CallDirect v3, v3 function=f1
+    Return v4
+}
+function f1 name="leavesEarly" parameters=[{type=i32}, {type=i32}] results=[{type=anything}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v3, v0
+    Branch v6 -> taken b2(), notTaken b4()
+  b2():
+    v7 = BitXor v4, v3
+    v8 = StrictEq v7, v1
+    Branch v8 -> taken b5(), notTaken b3()
+  b3():
+    v9 = Increment v3
+    Jump -> next b1(v9, v7)
+  b4():
+    Return v4
+  b5():
+    Return v3
+}

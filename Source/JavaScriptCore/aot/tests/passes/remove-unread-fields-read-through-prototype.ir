@@ -1,0 +1,31 @@
+# A method that is only called through an object that inherits it stays stored while the read by name is in the program
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 2
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[method]]:{{*}}= NewClosure function=f1
+# CHECK: = NewObject -, [[method]] layout=L1 fields=[0]
+# CHECK: = PropGet {{*}}key="m"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Heir" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Parent" fields=[{key="m" declared={type=anything} flags=[IsRequired]}, {key="unused" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewClosure function=f1
+    v4 = NewObject -, v3, v2 layout=L1 fields=[0, 1]
+    v5 = NewObject -, v2 layout=L0 fields=[0]
+    v6 = Builtin builtin=ObjectSetPrototypeOf
+    v7 = Call v6, -, v5, v4
+    v8 = PropGet v5 key="m"
+    v9 = Call v8, v5
+    v10 = Call v1, -, v9
+    Return
+}
+function f1 name="m" results=[{type=anything}] {
+    v0 = Integer integer=7
+    Return v0
+}

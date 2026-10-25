@@ -1,0 +1,93 @@
+# A slot that holds only cells, null, undefined and absent takes 32 bits, and 64 where it may point into a frame
+# TODO: memory: a closure stored into an environment that lies in the frame is not itself put in the frame
+# FORM: AsRead
+# OPTIONS: references=narrow only-passes=ComputeEffectSummaries,AllocateInFrames
+# RUN: plan-slots layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Leaf" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
+layout L1 name="HoldsObjects" fields=[{key="exact" declared={type=L0} flags=[IsRequired]}, {key="nullable" declared={type=null|L0} flags=[IsRequired]}, {key="optional" declared={type=L0}}, {key="anyObject" declared={type=object} flags=[IsRequired]}]
+layout L2 name="HoldsOtherCells" fields=[{key="text" declared={type=string} flags=[IsRequired]}, {key="label" declared={type=null|string} flags=[IsRequired]}, {key="big" declared={type=bigint} flags=[IsRequired]}, {key="callback" declared={type=function} flags=[IsRequired]}]
+layout L3 name="HoldsOtherValues" fields=[{key="numberOrLeaf" declared={type=number|L0} flags=[IsRequired]}, {key="unknown" declared={type=anything} flags=[IsRequired]}]
+layout L4 kind=Environment name="onHeap" fields=[{key="heapClosure" declared={type=function}}, {key="heapText" declared={type=string}}]
+layout L5 kind=Environment name="inFrame" fields=[{key="frameClosure" declared={type=function}}, {key="frameText" declared={type=string}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = Null
+    v6 = ToObject v1
+    v7 = NewObject -, v4, v5, v4, v6 layout=L1 fields=[0, 1, 2, 3]
+    v8 = FinishObject v7
+    v9 = NewObject -, v4, v4, v6 layout=L1 fields=[0, 1, 3]
+    v10 = FinishObject v9
+    v11 = ToString v1
+    v12 = BigInt digits="1"
+    v13 = NewClosure function=f3
+    v14 = NewObject -, v11, v5, v12, v13 layout=L2 fields=[0, 1, 2, 3]
+    v15 = FinishObject v14
+    v16 = NewObject -, v11, v11, v12, v13 layout=L2 fields=[0, 1, 2, 3]
+    v17 = FinishObject v16
+    v18 = NewObject -, v2, v1 layout=L3 fields=[0, 1]
+    v19 = FinishObject v18
+    v20 = NewObject -, v4, v1 layout=L3 fields=[0, 1]
+    v21 = FinishObject v20
+    v22 = CallDirect v11 function=f1
+    v23 = CallDirect v11 function=f2
+    Return
+}
+# The cells of L1 and L2 are full, so no slot is widened into free bytes.
+# CHECK: L1 CompiledObject size=32
+# CHECK-NEXT: "exact" Cell32 @
+# CHECK-NEXT: "nullable" OptionalCell32 @
+# CHECK-NEXT: "optional" OptionalCell32 @
+# CHECK-NEXT: "anyObject" Cell32 @
+# CHECK: L2 CompiledObject size=32
+# CHECK-NEXT: "text" Cell32 @
+# CHECK-NEXT: "label" OptionalCell32 @
+# CHECK-NEXT: "big" Cell32 @
+# CHECK-NEXT: "callback" Cell32 @
+# CHECK: "numberOrLeaf" JSValue @
+# CHECK-NEXT: "unknown" JSValue @
+# CHECK: L4 Environment size=16
+# CHECK-NEXT: "heapClosure" Cell32 @
+# CHECK-NEXT: "heapText" Cell32 @
+# CHECK: L5 Environment size=32
+# CHECK-NEXT: "frameClosure" Cell @
+# CHECK-NEXT: "frameText" Cell32 @
+function f1 name="closureLeavesTheFrame" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = NewClosure function=f3
+    v2 = NewObject -, v1, v0 layout=L4 fields=[0, 1]
+    v3 = NewClosure v2 function=f4
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = Call v5, -, v3
+    Return
+}
+function f2 name="closureStaysInTheFrame" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = NewClosure function=f3
+    v2 = NewObject -, v1, v0 layout=L5 fields=[0, 1]
+    v3 = CallDirect v2 function=f5
+    Return v3
+}
+function f3 name="callback" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f4 name="callsHeapClosure" kind=Arrow captures=[{type=env L4}] results=[{type=anything}] {
+  b0(v0: env L4):
+    v1 = GetEnvironmentField v0 layout=L4 field=0
+    v2 = Call v1
+    v3 = GetEnvironmentField v0 layout=L4 field=1
+    Return v3
+}
+function f5 name="callsFrameClosure" kind=Arrow captures=[{type=env L5}] results=[{type=anything}] {
+  b0(v0: env L5):
+    v1 = GetEnvironmentField v0 layout=L5 field=0
+    v2 = Call v1
+    v3 = GetEnvironmentField v0 layout=L5 field=1
+    Return v3
+}

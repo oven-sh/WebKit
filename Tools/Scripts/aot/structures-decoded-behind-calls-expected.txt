@@ -1,0 +1,26 @@
+# Functions in which a StructureID crosses a call that may collect and is decoded behind it, and why that is harmless there.
+operationAOTSetGlobalBinding                 # the Structure before is only compared with the one behind; what is decoded is the one that the global object has
+operationAOTSetGlobalBindingSloppy           # the same
+operationAOTSetGlobalObjectBinding           # the same
+operationAOTSetGlobalObjectBindingSloppy     # the same
+operationAOTSetFreeName                      # the same
+operationAOTSetFreeNameSloppy                # the same
+JSC::AOT::destructureIterable                # the result of next() is alive and keeps its Structure
+JSC::AOT::StructureTable::allocateAsCompiledCodeDoes    # the records of allocation sites are roots
+JSC::AOT::Object::tryCreateCopyOfFields      # collections are deferred, and the source is alive and keeps its Structure
+JSC::AOT::Object::tryCreateCopyOfFieldsAndExtraProperties    # the same
+operationAOTPrivateDefine                    # JSObject::putDirectInternal(): the object keeps the Structure before until the one behind is set
+JSC::AOT::PropertyCaches::didFinishCollection    # runs at the end of a collection
+JSC::AOT::Modules::makeTableOfCapturedFields # the realm holds the Structure of objects without a prototype
+llint_slow_path_get_by_val                   # the base is alive and keeps its Structure
+JSC::AOT::Modules::createTableOfExports      # the realm's own Structure, which the global object visits
+JSC::AOT::createAccessorPair                 # the same
+operationAOTDirectEval                       # the same: createAccessorPair() inlined
+JSC::AOT::tryAssignCollectedProperties       # the same
+ZN3JSC3AOT12_GLOBAL__N_115ClassDefinition3runENS_7JSValueES3_    # ClassDefinition::finish(): the class object and the prototype are alive and keep their Structures
+operationAOTResolvePromiseOrReturnResult     # the realm's own Structure of promises, which the global object visits
+operationAOTPromiseCatch                     # the same
+JSC::AOT::SavedFrame::ensurePromise          # the same
+JSC::AOT::createMatchValue                   # the realm's own Structure of the arrays that a match makes, which the global object visits
+JSC::AOT::tryDefineAbsentProperty            # JSObject::tryPutDirectByExistingTransition(): a register holds the pointer to the new Structure across the calls, and what is decoded is its low half, which the object has by then
+JSC::AOT::PropertyWalk::collectKeysInOrder   # the typed object is alive and holds the object of extra properties, which keeps its Structure
