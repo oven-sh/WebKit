@@ -192,6 +192,8 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     ASSERT_WITH_MESSAGE(cellSize == m_directory->cellSize(), "non-preciseOnly allocations should match allocator's the size class");
     MarkedBlock::Handle* block = m_directory->tryAllocateBlock(heap);
     if (!block) [[unlikely]] {
+        if (MarkedBlockCage::isRequired() && heap.cage().allocationsAreInfallible())
+            failureMode = AllocationFailureMode::Assert;
         if (heap.tryCollectForExhaustedCage(deferralContext)) {
             if (m_currentBlock)
                 return allocate(heap, cellSize, deferralContext, failureMode);

@@ -611,6 +611,42 @@ static void testTwoRecursiveArmsRepeatRecursion()
     AOT_TEST_CHECK(!canRepeatRecursion(one.program(), one.ref(0)));
 }
 
+// Level n is a union of two objects that no tag tells apart, and each holds level n - 1 under one name. Node 3 * n is the union of level n.
+static String textOfUnionsBelowUnions(uint32_t levels, bool isTagged)
+{
+    StringBuilder text;
+    text.append("module m0 path=\"main.js\" displayPath=\"main.js\"\nexpectedresult x0 type=anything validation=["_s);
+    uint32_t number = 3 * levels;
+    for (uint32_t level = 0; level < levels; ++level) {
+        uint32_t below = level ? 3 * (level - 1) : number;
+        text.append(level ? ", "_s : ""_s, "{shape=Union{arms=["_s, 3 * level + 1, ", "_s, 3 * level + 2, "]} type=anything}"_s);
+        for (uint32_t arm = 0; arm < 2; ++arm)
+            text.append(", {shape=Object{members=[{key=\"left\" node="_s, below, "}, {key=\"v\" node="_s, number + (isTagged ? 2 : 0) + arm, "}]} type=anything}"_s);
+    }
+    text.append(", {shape=Primitive{primitive=Number} type=anything}, {shape=Primitive{} type=anything}"_s);
+    text.append(", {shape=StringLiteral{value=\"a\"} type=anything}, {shape=StringLiteral{value=\"b\"} type=anything}]\n"_s);
+    return text.toString();
+}
+
+static void testUnionsBelowUnionsMultiply()
+{
+    auto repeats = [](ParsedProgram& parsed, uint32_t level) {
+        return canRepeatRecursion(parsed.program(), ResultNodeRef::forValidation(ExpectedResultID(0u), 3 * level));
+    };
+    // Level n looks at the number of level 0 twice as often as level n - 1 does: 2, 4, 8 ..
+    ParsedProgram untagged(textOfUnionsBelowUnions(40, false));
+    for (uint32_t level = 0; level < 40; ++level)
+        AOT_TEST_CHECK(repeats(untagged, level) == (level >= 6));
+
+    ParsedProgram tagged(textOfUnionsBelowUnions(40, true));
+    for (uint32_t level = 0; level < 40; ++level)
+        AOT_TEST_CHECK(!repeats(tagged, level));
+
+    // Where the type is too deep to count, the union is taken for one that multiplies.
+    ParsedProgram deep(textOfUnionsBelowUnions(400, true));
+    AOT_TEST_CHECK(!repeats(deep, 20) && repeats(deep, 399));
+}
+
 static void testArmsOutsideUnionCycleRepeatNothing()
 {
     Graph graph({
@@ -989,6 +1025,7 @@ std::span<const NativeTest> resultNodeTests()
         { "result-nodes/node-with-default-accepts-undefined"_s, testNodeWithDefaultAcceptsUndefined },
         { "result-nodes/default-is-found-through-unions"_s, testDefaultIsFoundThroughUnions },
         { "result-nodes/two-recursive-arms-repeat-recursion"_s, testTwoRecursiveArmsRepeatRecursion },
+        { "result-nodes/unions-below-unions-multiply"_s, testUnionsBelowUnionsMultiply },
         { "result-nodes/arms-outside-union-cycle-repeat-nothing"_s, testArmsOutsideUnionCycleRepeatNothing },
         { "result-nodes/one-tagged-arm-is-tried"_s, testOneTaggedArmIsTried },
         { "result-nodes/recursive-arms-of-different-classes-repeat-nothing"_s, testRecursiveArmsOfDifferentClassesRepeatNothing },

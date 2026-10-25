@@ -12,6 +12,7 @@
 #include "AOTVector.h"
 #include "CagedAlignedMemoryAllocator.h"
 #include "Completion.h"
+#include "DeferGCInlines.h"
 #include "FastMallocAlignedMemoryAllocator.h"
 #include "HeapInlines.h"
 #include "HeapIterationScope.h"
@@ -534,6 +535,36 @@ static void checkReserveIsKeptOnceHalfFull()
         cage.free(block);
 }
 
+// In the scope, a fallible allocation in a full cage uses the reserve instead of returning null.
+static void checkInfallibleScopeUsesReserve()
+{
+    TestVM test;
+    VM& vm = test.vm();
+    MarkedBlockCage& cage = test.cage();
+    VMTraps& traps = vm.traps();
+    constexpr unsigned shortLength = 1;
+    constexpr unsigned longLength = 4 * KB / sizeof(JSBigInt::Digit);
+    {
+        DeferGCForAWhile deferGC(vm);
+        while (JSBigInt::tryCreateWithLength(vm, shortLength)) { }
+        size_t whole = cage.reserveSize();
+        AOT_TEST_CHECK(whole && !JSBigInt::tryCreateWithLength(vm, longLength));
+        AOT_TEST_CHECK(cage.reserveSize() == whole && !traps.needsOutOfMemoryError() && !cage.allocationsAreInfallible());
+        {
+            MarkedBlockCage::InfallibleAllocationScope scope(cage);
+            AOT_TEST_CHECK(cage.allocationsAreInfallible());
+            for (unsigned length : { shortLength, longLength }) {
+                JSBigInt* bigInt = JSBigInt::tryCreateWithLength(vm, length);
+                AOT_TEST_CHECK(bigInt && cage.contains(bigInt) && !bigInt->isPreciseAllocation());
+            }
+        }
+        AOT_TEST_CHECK(!cage.allocationsAreInfallible() && cage.reserveSize() < whole && traps.needsOutOfMemoryError() && cage.owesCollection());
+        AOT_TEST_CHECK(!cage.tryTakeBackOutOfMemoryError(vm) && traps.needsOutOfMemoryError());
+    }
+    AOT_TEST_CHECK(cage.tryTakeBackOutOfMemoryError(vm));
+    AOT_TEST_CHECK(!traps.needsOutOfMemoryError() && !cage.owesCollection() && cage.reserveSize());
+}
+
 // An error that waits for the next function entry holds the limit that entries test, not the polls of loops, and an ordinary stop that comes and goes leaves it waiting.
 static void checkErrorWaitsAtFunctionEntriesAlone()
 {
@@ -845,6 +876,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/second-heap-gets-its-own-base"_s, withCage<checkSecondHeapGetsItsOwnBase> },
         { "heap-cage/cage/range-is-reused"_s, withCage<checkRangeIsReused> },
         { "heap-cage/cage/reserve-is-kept-once-half-full"_s, withCage<checkReserveIsKeptOnceHalfFull> },
+        { "heap-cage/cage/infallible-scope-uses-reserve"_s, withCage<checkInfallibleScopeUsesReserve> },
         { "heap-cage/cage/error-waits-at-function-entries-alone"_s, withCage<checkErrorWaitsAtFunctionEntriesAlone> },
         { "heap-cage/cage/error-is-owed-once-collections-buy-next-to-nothing"_s, withCage<checkErrorIsOwedOnceCollectionsBuyNextToNothing> },
         { "heap-cage/cage/error-owed-by-barren-collections-is-offered-to-a-poll-once"_s, withCage<checkErrorOwedByBarrenCollectionsIsOfferedToPollOnce> },

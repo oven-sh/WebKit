@@ -12,6 +12,7 @@
 #include <limits>
 #include <wtf/Assertions.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
@@ -83,6 +84,20 @@ public:
     JS_EXPORT_PRIVATE void* takeLowestAddressOfDeadStack(VM&);
     size_t reserveSize() const;
 
+    // Makes fallible allocations use the reserve. For callers that can neither collect nor throw.
+    class InfallibleAllocationScope {
+        WTF_MAKE_NONCOPYABLE(InfallibleAllocationScope);
+    public:
+        explicit InfallibleAllocationScope(MarkedBlockCage& cage)
+            : m_scope(cage.m_allocationsAreInfallible, true)
+        {
+        }
+
+    private:
+        SetForScope<bool> m_scope;
+    };
+    bool allocationsAreInfallible() const { return m_allocationsAreInfallible; }
+
     enum class ExhaustedHeap : bool { Cells, Structures };
     // Called on the thread of the VM, on the slow path of an allocation, each time there is no room for the request and a full collection is tried next.
     // Without it a heap that stays almost full of live objects runs a full collection for every few objects the program allocates, and the program barely moves.
@@ -119,6 +134,7 @@ private:
     bool m_owesCollection { false };
     bool m_errorWaitsForPoll { false };
     bool m_hasCollectedAtPoll { false };
+    bool m_allocationsAreInfallible { false };
     void* m_stackPointerAtError { nullptr };
     size_t m_numberOfChunksReleased { 0 };
     ExhaustedHeap m_exhaustedHeap { ExhaustedHeap::Cells };

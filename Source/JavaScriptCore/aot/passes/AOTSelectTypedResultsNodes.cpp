@@ -16,11 +16,13 @@
 #include "AOTSelectTypedResultsTargets.h"
 #include "AOTSelectTypedResultsTypeNodes.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTUseLists.h"
 #include "AOTValidationRules.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
 #include <functional>
+#include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -567,8 +569,65 @@ static bool triesSeveralRecursiveArms(const Program& program, std::span<const Re
     return false;
 }
 
+AOT_THRESHOLD(unsigned, maxLooksAtOnePart, 64);
+AOT_THRESHOLD(unsigned, maxDepthOfCountedLooks, 128);
+
+using LooksByNode = HashMap<uint64_t, unsigned, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+
+static Vector<ResultNodeRef, 4> armsOfClass(const Program& program, std::span<const ResultNodeRef> arms, JSONValueClass valueClass)
+{
+    Vector<ResultNodeRef, 4> candidates;
+    for (ResultNodeRef arm : arms) {
+        if (valueClassesOf(program, arm).contains(valueClass))
+            candidates.append(arm);
+    }
+    return candidates;
+}
+
+// How often one part of a value is looked at below a node, at most: each arm of a union that is tried looks anew at all that it holds, so unions below unions multiply.
+// Counting ends above the threshold. A node that is met again below itself counts once.
+static unsigned countLooksAtOnePart(const Program& program, ResultNodeRef ref, LooksByNode& known, unsigned depth)
+{
+    if (depth > maxDepthOfCountedLooks)
+        return maxLooksAtOnePart + 1;
+    uint64_t key = static_cast<uint64_t>(ref.id) << 32 | ref.part;
+    if (auto added = known.add(key, 1); !added.isNewEntry)
+        return added.iterator->value;
+
+    auto looksBelow = [&](ResultNodeRef child) {
+        return countLooksAtOnePart(program, child, known, depth + 1);
+    };
+    ResultNode node = describeNode(program, ref);
+    unsigned looks = 1;
+    if (node.shape != ResultShape::Union) {
+        node.forEachChild([&](ResultNodeRef child) {
+            looks = std::max(looks, looksBelow(child));
+        });
+    } else {
+        for (JSONValueClass valueClass : { JSONValueClass::Array, JSONValueClass::Object }) {
+            Vector<ResultNodeRef, 4> candidates = armsOfClass(program, node.children.span(), valueClass);
+            std::optional<TaggedArms> tagged = findTaggedArms(program, candidates.span());
+            unsigned looksOfClass = 0;
+            if (tagged) {
+                for (ResultNodeRef arm : tagged->tagged)
+                    looksOfClass = std::max(looksOfClass, looksBelow(arm));
+            }
+            for (ResultNodeRef arm : tagged ? tagged->untagged.span() : candidates.span())
+                looksOfClass += looksBelow(arm);
+            looks = std::max(looks, looksOfClass);
+        }
+    }
+    looks = std::min(looks, maxLooksAtOnePart + 1);
+    known.set(key, looks);
+    return looks;
+}
+
 static bool hasRepeatedRecursion(const Program& program, ResultNodeRef unionRef, const ResultNode& unionNode)
 {
+    LooksByNode known;
+    if (countLooksAtOnePart(program, unionRef, known, 0) > maxLooksAtOnePart)
+        return true;
+
     std::span<const ResultNodeRef> arms = unionNode.children.span();
     Vector<OptionSet<JSONValueClass>, 4> classesOfArm(arms.size(), [&](size_t index) {
         return valueClassesOf(program, arms[index]);

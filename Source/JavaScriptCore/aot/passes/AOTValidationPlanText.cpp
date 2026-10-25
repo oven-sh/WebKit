@@ -268,7 +268,7 @@ Vector<uint8_t> writeValidationPlan(const Program& program, ExpectedResultID exp
                 appendNumbers(",\"arms\":"_s, node.children);
             if (std::optional<TaggedArms> arms = findTaggedArms(program, node.children.span()))
                 appendDiscriminant(*arms);
-            if (isOnCycle.get(number))
+            if (isOnCycle.get(number) || canRepeatRecursion(program, ResultNodeRef::forValidation(expectedResult, parts[number])))
                 writer.append(",\"remembers\":true"_s);
             break;
         case ValidationShape::Kind::Unknown:

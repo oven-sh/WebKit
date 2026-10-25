@@ -303,17 +303,12 @@ public:
 
     bool tryRunAsBefore(const AssignmentSource&);
     bool tryRunListingOnce(const AssignmentSource&);
+    // Stores into a slot that was empty or cannot be.
+    size_t numberOfStoresThatReplacedNothing() const { return m_numberOfStoresThatReplacedNothing; }
 
 private:
-    struct ReplacedBits {
-        void* slot;
-        uint64_t bits;
-        unsigned width;
-    };
-    using ReplacedSlots = Vector<ReplacedBits, 24>;
-
-    bool tryStoreEveryField(AssignmentPlan&, const AssignmentSource&, ReplacedSlots&);
-    bool tryStoreEveryProperty(const AssignmentSource&);
+    enum class Counting : bool { No, Yes };
+    template<Counting> bool tryStoreEveryProperty(const AssignmentSource&);
     bool acceptsObject(AssignmentPlan::FieldStore&, JSObject*);
     bool isAccepted(AssignmentPlan::FieldStore&, JSValue);
 
@@ -323,6 +318,7 @@ private:
     AssignmentPlan& m_plan;
     JSObject* m_extra;
     bool m_didStoreCell { false };
+    size_t m_numberOfStoresThatReplacedNothing { 0 };
 };
 
 }
@@ -453,36 +449,36 @@ static ALWAYS_INLINE void* slotIn(const Object& object, Extension* extensionOrNu
     return extensionOrNull ? extensionOrNull->slotOrNull(field.slot.offset) : nullptr;
 }
 
-// False where a value is missing or does not go to its slot. The caller puts back what the stores in front of it have replaced.
-ALWAYS_INLINE bool FieldStoreRun::tryStoreEveryField(AssignmentPlan& plan, const AssignmentSource& source, ReplacedSlots& replaced)
+// Every field's value is read and put into the form of its slot before anything of the target changes. False where a value is missing or does not go to its slot.
+template<FieldStoreRun::Counting counting>
+ALWAYS_INLINE bool FieldStoreRun::tryStoreEveryProperty(const AssignmentSource& source)
 {
     // Extra properties that the run creates are seen by nobody before they are complete.
     if (m_extra) {
-        for (auto& store : plan.extraPropertyStores) {
+        for (auto& store : m_plan.extraPropertyStores) {
             if (!source.read(store))
                 return false;
         }
     }
-    Extension* targetExtension = nullptr;
-    if (plan.granuleBitsFilled) {
-        m_target.ensureExtensionGranules(m_vm, plan.granuleBitsFilled);
-        targetExtension = m_target.extension();
+    constexpr size_t numberOfFieldsOnTheStack = 64;
+    std::array<uint64_t, numberOfFieldsOnTheStack> bitsOnTheStack;
+    Vector<uint64_t> bitsOfWideRun;
+    uint64_t* bitsOfRun = bitsOnTheStack.data();
+    if (m_plan.fieldStores.size() > numberOfFieldsOnTheStack) [[unlikely]] {
+        bitsOfWideRun.grow(m_plan.fieldStores.size());
+        bitsOfRun = bitsOfWideRun.mutableSpan().data();
     }
-    Extension* sourceExtension = plan.readsOutOfLineFields ? source.compiledObject->extension() : nullptr;
-    bool didStoreAll = true;
-    for (AssignmentPlan::FieldStore& store : plan.fieldStores) {
-        void* to = slotIn(m_target, targetExtension, *store.to);
-        didStoreAll = !!to;
-        if (!didStoreAll)
-            break;
-        replaced.append({ to, loadSlotBits(store.width, to), store.width });
+    uint64_t* bits = bitsOfRun;
+    Extension* sourceExtension = m_plan.readsOutOfLineFields ? source.compiledObject->extension() : nullptr;
+    for (AssignmentPlan::FieldStore& store : m_plan.fieldStores) {
         if (store.copiesBitsUntested) {
             const void* from = slotIn(*source.compiledObject, sourceExtension, *store.from);
-            uint64_t bits = from ? loadSlotBits(store.width, from) : store.absentBits;
-            didStoreAll = from && !(store.hasAbsent && bits == store.absentBits);
-            if (!didStoreAll)
-                break;
-            storeSlotBits(store.width, to, bits);
+            if (!from)
+                return false;
+            *bits = loadSlotBits(store.width, from);
+            if (store.hasAbsent && *bits == store.absentBits)
+                return false;
+            ++bits;
             m_didStoreCell |= store.holdsCell;
             continue;
         }
@@ -492,31 +488,33 @@ ALWAYS_INLINE bool FieldStoreRun::tryStoreEveryField(AssignmentPlan& plan, const
             std::optional<AcceptedValue> accepted = m_state.objects->layouts.accept(*store.to, value);
             value = accepted ? accepted->value() : JSValue();
         }
-        didStoreAll = value && tryWriteSlot(*m_state.strings, store.to->slot.representation(), to, value);
-        if (!didStoreAll)
-            break;
+        *bits = 0;
+        if (!value || !tryWriteSlot(*m_state.strings, store.to->slot.representation(), bits++, value))
+            return false;
         m_didStoreCell |= store.holdsCell && value.isCell();
     }
-    return didStoreAll;
-}
-
-ALWAYS_INLINE bool FieldStoreRun::tryStoreEveryProperty(const AssignmentSource& source)
-{
-    ReplacedSlots replaced;
-    bool didStoreAll = tryStoreEveryField(m_plan, source, replaced);
-    if (didStoreAll && !m_plan.extraPropertyStores.isEmpty())
-        didStoreAll = storeExtraProperties(m_vm, m_target, m_plan, m_extra, source);
-    if (!didStoreAll) [[unlikely]] {
-        for (const ReplacedBits& one : replaced)
-            storeSlotBits(one.width, one.slot, one.bits);
+    if (!m_plan.extraPropertyStores.isEmpty() && !storeExtraProperties(m_vm, m_target, m_plan, m_extra, source))
+        return false;
+    Extension* targetExtension = nullptr;
+    if (m_plan.granuleBitsFilled) {
+        m_target.ensureExtensionGranules(m_vm, m_plan.granuleBitsFilled);
+        targetExtension = m_target.extension();
     }
-    return didStoreAll;
+    bits = bitsOfRun;
+    for (const AssignmentPlan::FieldStore& store : m_plan.fieldStores) {
+        void* to = slotIn(m_target, targetExtension, *store.to);
+        RELEASE_ASSERT(to);
+        if constexpr (counting == Counting::Yes)
+            m_numberOfStoresThatReplacedNothing += !store.hasAbsent || loadSlotBits(store.width, to) == store.absentBits;
+        storeSlotBits(store.width, to, *bits++);
+    }
+    return true;
 }
 
 bool FieldStoreRun::tryRunAsBefore(const AssignmentSource& source)
 {
     ASSERT(m_plan.orderWordBeforeRun == m_target.orderWord());
-    if (!tryStoreEveryProperty(source)) [[unlikely]]
+    if (!tryStoreEveryProperty<Counting::No>(source)) [[unlikely]]
         return false;
     m_target.at<uint32_t>(offsetOfOrderWord) = m_plan.orderWordAfterRun;
     if (m_didStoreCell)
@@ -565,12 +563,56 @@ bool FieldStoreRun::tryRunListingOnce(const AssignmentSource& source)
         positioned.appendEntriesCountingTo(*numberOfExtraKeysBefore + numberOfExtraKeysAdded, keys);
         keys.append(key);
     }
-    if (!tryStoreEveryProperty(source))
+    if (!tryStoreEveryProperty<Counting::Yes>(source))
         return false;
     if (keys.size() != numberOfKeysBefore)
         m_target.setKeyOrder(m_vm, m_state, keys.span());
     if (m_didStoreCell)
         m_vm.writeBarrier(&m_target);
+    return true;
+}
+
+// A target that has the order word of an earlier one, and whose slots are as empty as that one's were, ends with the order word that the earlier one ended with.
+static bool tryFillEmptySlotsAsBefore(VM& vm, Object& target, State& state, const AssignmentPlan& plan, const Object& source)
+{
+    ASSERT(plan.storesOnlyFieldsThatFit && plan.orderWordBeforeFillingAll == target.orderWord());
+    Extension* targetExtension = nullptr;
+    if (plan.granuleBitsFilled) {
+        target.ensureExtensionGranules(vm, plan.granuleBitsFilled);
+        targetExtension = target.extension();
+    }
+    Extension* sourceExtension = plan.readsOutOfLineFields ? source.extension() : nullptr;
+    std::span<const AssignmentPlan::FieldStore> stores = plan.fieldStores.span();
+    size_t numberStored = 0;
+    for (const AssignmentPlan::FieldStore& store : stores) {
+        void* to = slotIn(target, targetExtension, *store.to);
+        if (store.hasAbsent && loadSlotBits(store.width, to) != store.absentBits)
+            break;
+        if (store.copiesBits) {
+            const void* from = slotIn(source, sourceExtension, *store.from);
+            if (!from)
+                break;
+            uint64_t bits = loadSlotBits(store.width, from);
+            if (store.hasAbsent && bits == store.absentBits)
+                break;
+            storeSlotBits(store.width, to, bits);
+        } else {
+            JSValue value = source.readInline(*store.from);
+            if (!value || !tryWriteSlot(*state.strings, store.to->slot.representation(), to, value))
+                break;
+        }
+        ++numberStored;
+    }
+    if (numberStored != stores.size()) [[unlikely]] {
+        for (const AssignmentPlan::FieldStore& store : stores.first(numberStored)) {
+            if (store.hasAbsent)
+                target.clear(*store.to);
+        }
+        return false;
+    }
+    target.at<uint32_t>(offsetOfOrderWord) = plan.orderWordAfterFillingAll;
+    if (plan.mayStoreCells)
+        vm.writeBarrier(&target);
     return true;
 }
 
@@ -924,7 +966,13 @@ static NEVER_INLINE RepeatedCopy tryRepeatAssignmentByRecentPlan(VM& vm, State& 
     AssignmentPlan* plan = state.objects->caches->assignmentPlans.recentPlan(to.structureID(), from.structureID(), from.orderWord(), excludedRunNumberPlusOne);
     if (!plan || &to == &from)
         return RepeatedCopy::IsNotDone;
-    return tryRunPlanAsBefore(vm, state, to, *plan, { const_cast<Object*>(&from), &from, from.extraProperties(), from.orderWord(), { }, true, from.extension(), state.strings.get() }, excludedRunNumberPlusOne);
+    if (!plan->fillsEmptySlotsOf(to, from, excludedRunNumberPlusOne))
+        return tryRunPlanAsBefore(vm, state, to, *plan, { const_cast<Object*>(&from), &from, from.extraProperties(), from.orderWord(), { }, true, from.extension(), state.strings.get() }, excludedRunNumberPlusOne);
+    DeferGC deferGC(vm);
+    if (!tryFillEmptySlotsAsBefore(vm, to, state, *plan, from))
+        return RepeatedCopy::IsNotDone;
+    didChangeOwnProperties(vm, to, VM::StructureChainIntegrityEvent::Add, nullptr);
+    return RepeatedCopy::AsThePlanDidBefore;
 }
 
 // Each half is a function of its own, so that the copy by a map saves no registers for the plan's.
@@ -1158,6 +1206,11 @@ static void assignByPlan(VM& vm, Object& target, State& state, AssignmentPlan& p
 {
     AssignmentPlanCache& plans = state.objects->caches->assignmentPlans;
     uint32_t orderWordBefore = target.orderWord();
+    if (plan.orderWordBeforeFillingAll == orderWordBefore && tryFillEmptySlotsAsBefore(vm, target, state, plan, *source.compiledObject)) {
+        plans.didRunAsBefore(plan);
+        didChangeOwnProperties(vm, target, VM::StructureChainIntegrityEvent::Add, nullptr);
+        return;
+    }
     FieldStoreRun run(vm, target, state, plan, extra);
     if (plan.orderWordBeforeRun == orderWordBefore) {
         if (run.tryRunAsBefore(source)) [[likely]] {
@@ -1176,7 +1229,10 @@ static void assignByPlan(VM& vm, Object& target, State& state, AssignmentPlan& p
         plan.numberOfRunsInVain = everyValueKeptItsSlot ? 0 : static_cast<uint8_t>(std::min(numberOfRunsInVain, maxNumberOfRunsInVain) + 1);
         return;
     }
-    if (!target.hasOutOfLineKeyOrder()) {
+    if (plan.storesOnlyFieldsThatFit && !plan.fieldStores.isEmpty() && run.numberOfStoresThatReplacedNothing() == plan.fieldStores.size() && !target.hasOutOfLineKeyOrder()) {
+        plan.orderWordBeforeFillingAll = orderWordBefore;
+        plan.orderWordAfterFillingAll = target.orderWord();
+    } else if (!target.hasOutOfLineKeyOrder()) {
         plan.orderWordBeforeRun = orderWordBefore;
         plan.orderWordAfterRun = target.orderWord();
     }

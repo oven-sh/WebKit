@@ -960,6 +960,30 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceString, JSCell*, (Instance* in
     OPERATION_RETURN(scope, (stringReplaceStringString<StringReplaceSubstitutions::Yes, StringReplaceUseTable::No, BoyerMooreHorspoolTable<uint8_t>>(globalObject, string, stringView, searchView, replacement, replacementText, nullptr)));
 }
 
+template<typename CharacterType>
+static JSString* replaceRanges(JSGlobalObject* globalObject, VM& vm, StringView subject, std::span<const unsigned> matchStarts, unsigned matchLength, StringView replacement, unsigned resultLength)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    std::span<CharacterType> buffer;
+    auto impl = StringImpl::tryCreateUninitialized(resultLength, buffer);
+    if (!impl) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    auto append = [&](StringView piece) ALWAYS_INLINE_LAMBDA {
+        piece.getCharacters(buffer.first(piece.length()));
+        skip(buffer, piece.length());
+    };
+    unsigned endOfLastMatch = 0;
+    for (unsigned start : matchStarts) {
+        append(subject.substring(endOfLastMatch, start - endOfLastMatch));
+        append(replacement);
+        endOfLastMatch = start + matchLength;
+    }
+    append(subject.substring(endOfLastMatch));
+    RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
+}
+
 // A text that is sought as it stands and a replacement that stands for itself: the two literals of most calls.
 static JSString* tryReplaceAllWithPlainText(JSGlobalObject* globalObject, VM& vm, JSString* string, JSString* search, JSString* replacement)
 {
@@ -989,30 +1013,15 @@ static JSString* tryReplaceAllWithPlainText(JSGlobalObject* globalObject, VM& vm
     } while (found != notFound);
 
     size_t resultLength = subject->length() - matchStarts.size() * matchLength + matchStarts.size() * static_cast<size_t>(replacementText.length());
+    if (resultLength > JSString::MaxLength) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
     if (!resultLength)
         return jsEmptyString(vm);
-    auto create = [&]<typename CharacterType>(std::span<CharacterType> buffer) -> JSString* {
-        auto impl = resultLength <= JSString::MaxLength ? StringImpl::tryCreateUninitialized(resultLength, buffer) : nullptr;
-        if (!impl) [[unlikely]] {
-            throwOutOfMemoryError(globalObject, scope);
-            return nullptr;
-        }
-        auto append = [&](StringView piece) ALWAYS_INLINE_LAMBDA {
-            piece.getCharacters(buffer.first(piece.length()));
-            skip(buffer, piece.length());
-        };
-        unsigned endOfLastMatch = 0;
-        for (unsigned start : matchStarts) {
-            append(subject->substring(endOfLastMatch, start - endOfLastMatch));
-            append(replacementText);
-            endOfLastMatch = start + matchLength;
-        }
-        append(subject->substring(endOfLastMatch));
-        return jsString(vm, impl.releaseNonNull());
-    };
     if (subject->is8Bit() && replacementText.is8Bit())
-        return create(std::span<Latin1Character> { });
-    return create(std::span<char16_t> { });
+        RELEASE_AND_RETURN(scope, replaceRanges<Latin1Character>(globalObject, vm, subject, matchStarts.span(), matchLength, replacementText, static_cast<unsigned>(resultLength)));
+    RELEASE_AND_RETURN(scope, replaceRanges<char16_t>(globalObject, vm, subject, matchStarts.span(), matchLength, replacementText, static_cast<unsigned>(resultLength)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceAllString, JSCell*, (Instance* instance, JSCell* stringCell, JSCell* searchCell, JSCell* replacementCell))

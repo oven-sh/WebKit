@@ -557,13 +557,15 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
             .acceptedKinds = kindsAlwaysAccepted(layouts.typeOf(*field)),
             .sourceAlwaysFits = sharesTypes && property.field && alwaysFits(layouts, *property.field, *field),
             .isDirect = !(field->isOutOfLine() && traits.absentBits && traits.width != extensionGranuleSize),
+            .copiesBits = property.field && property.field->slot.representation() == field->slot.representation(),
             .holdsCell = traits.holdsCell,
             .hasAbsent = traits.hasAbsent,
             .width = traits.width,
             .absentBits = traits.absentBits,
         });
         AssignmentPlan::FieldStore& store = fieldStores.last();
-        store.copiesBitsUntested = store.sourceAlwaysFits && property.field->slot.representation() == field->slot.representation() && store.isDirect && !(field->flags & fieldMayExistWithoutStorage) && field->slot.representation() != SlotRepresentation::DeferredClosure;
+        store.copiesBitsUntested = store.sourceAlwaysFits && store.copiesBits && store.isDirect && !(field->flags & fieldMayExistWithoutStorage) && field->slot.representation() != SlotRepresentation::DeferredClosure;
+        plan.mayStoreCells |= traits.holdsCell;
         plan.readsOutOfLineFields |= property.field && property.field->isOutOfLine();
         if (field->isOutOfLine())
             plan.granuleBitsFilled |= granuleBitOf(field->slot.offset);
@@ -591,6 +593,9 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
         m_state.objects->classes.didShadowMember(*layout, name);
     }
     plan.addsExtraProperties = !addedNames.isEmpty();
+    plan.storesOnlyFieldsThatFit = !creatableFieldNames.isEmpty() && extraPropertyStores.isEmpty() && !extraProperties && std::ranges::all_of(fieldStores, [](const AssignmentPlan::FieldStore& store) {
+        return store.sourceAlwaysFits && store.isDirect && store.from->slot.representation() != SlotRepresentation::DeferredClosure;
+    });
     plan.fieldStores = WTF::move(fieldStores);
     plan.extraPropertyStores = WTF::move(extraPropertyStores);
     plan.storesInSourceOrder = WTF::move(storesInSourceOrder);

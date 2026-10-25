@@ -332,6 +332,7 @@ JSValue ProgramStrings::bigIntConstant(JSGlobalObject* globalObject, uint32_t nu
         return cell;
     VM& vm = globalObject->vm();
     DeferTerminationForAWhile deferTermination(vm);
+    MarkedBlockCage::InfallibleAllocationScope infallibleAllocation(vm.heap.cage());
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue result = JSBigInt::parseInt(globalObject, m_image.text().view(StringID(constants[number])), JSBigInt::ErrorParseMode::ThrowExceptions);
     RELEASE_ASSERT(result);

@@ -129,7 +129,7 @@ JSC_DEFINE_CUSTOM_GETTER(deferredReportGetter, (JSGlobalObject* realm, EncodedJS
     JSValue report = error->getDirect(vm, hiddenName(deferredReportPrivateName));
     MarkedArgumentBuffer arguments;
     arguments.append(error->getDirect(vm, hiddenName(reportedValuePrivateName)));
-    JSValue messageAndIssues = call(realm, report, arguments, "The report of a refused value is a function"_s);
+    JSValue messageAndIssues = call(realm, report, arguments, "Expected report to be a function"_s);
     RETURN_IF_EXCEPTION(scope, { });
     // Nothing was called for one who only inquires.
     if (!messageAndIssues.isObject())
@@ -174,7 +174,10 @@ JSC_DEFINE_HOST_FUNCTION(matchesPattern, (JSGlobalObject* realm, CallFrame* call
 {
     VM& vm = realm->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    String source = asString(callFrame->argument(0))->value(realm);
+    JSValue pattern = callFrame->argument(0);
+    if (!pattern.isString()) [[unlikely]]
+        return throwVMTypeError(realm, scope, "Expected pattern to be a string"_s);
+    String source = asString(pattern)->value(realm);
     RETURN_IF_EXCEPTION(scope, { });
     RegExp* regExp = RegExp::create(vm, source, { });
     if (!regExp->isValid()) [[unlikely]]

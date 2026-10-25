@@ -138,6 +138,8 @@ void* CompleteSubspace::tryAllocateInLargerCell(JSC::Heap& heap, BlockDirectory&
 void* CompleteSubspace::allocateSlow(VM& vm, size_t size, GCDeferralContext* deferralContext, AllocationFailureMode failureMode)
 {
     void* result = tryAllocateSlow(vm, size, deferralContext);
+    if (!result && MarkedBlockCage::isRequired() && vm.heap.cage().allocationsAreInfallible()) [[unlikely]]
+        failureMode = AllocationFailureMode::Assert;
     if (!result && failureMode == AllocationFailureMode::Assert && vm.heap.tryUseReserveOfExhaustedCage(alignedMemoryAllocator())) [[unlikely]]
         result = tryAllocateSlow(vm, size, deferralContext);
     if (!result) [[unlikely]] {

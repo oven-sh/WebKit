@@ -96,6 +96,7 @@ struct AssignmentPlan {
         OptionSet<ValueKind> acceptedKinds;
         bool sourceAlwaysFits { false };
         bool isDirect { false };
+        bool copiesBits { false };
         bool copiesBitsUntested { false };
         bool holdsCell { false };
         bool hasAbsent { false };
@@ -119,6 +120,12 @@ struct AssignmentPlan {
         return target == targetID && extraPropertiesBefore == extraPropertiesID && source == from.object->structureID()
             && sourcePropertyStorage == from.propertyStorageStructureID() && sourceOrderWord == from.orderWord
             && (!servesDefinitionsOnly || from.defines) && leavesOut(from.excludedNames);
+    }
+
+    bool fillsEmptySlotsOf(const Object& targetObject, const Object& sourceObject, uint32_t excludedRunNumberPlusOne) const
+    {
+        return orderWordBeforeFillingAll == targetObject.orderWord() && target == targetObject.structureID() && source == sourceObject.structureID() && sourceOrderWord == sourceObject.orderWord()
+            && (excludedList ? excludedList->runNumberPlusOne() : 0) == excludedRunNumberPlusOne && excludedNames.isEmpty();
     }
 
     bool runsAsBeforeOn(const Object& targetObject, const AssignmentSource& from, uint32_t excludedRunNumberPlusOne) const
@@ -155,9 +162,14 @@ struct AssignmentPlan {
     Vector<uint16_t> storesInSourceOrder;
     bool servesDefinitionsOnly { false };
     bool addsExtraProperties { false };
+    // Every property comes from a field whose values always fit the field that takes them, and none becomes an extra property.
+    bool storesOnlyFieldsThatFit { false };
+    bool mayStoreCells { false };
     bool readsOutOfLineFields { false };
     // In a row: runs in which a value has left its slot.
     uint8_t numberOfRunsInVain { 0 };
+    std::optional<uint32_t> orderWordBeforeFillingAll { };
+    uint32_t orderWordAfterFillingAll { 0 };
     std::optional<uint32_t> orderWordBeforeRun { };
     uint32_t orderWordAfterRun { 0 };
     uint64_t granuleBitsFilled { 0 };

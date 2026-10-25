@@ -134,11 +134,26 @@ unsigned estimatedDirectCallBytes(unsigned numberOfOperands)
     return CodeSize::directCall + CodeSize::perOperand * numberOfOperands;
 }
 
+// The back end folds arithmetic on constants, such as `A | B` of two enum members.
+static bool isConstantExpression(const Function& function, const Value& value, unsigned remainingDepth = 6)
+{
+    static constexpr OpcodeSet foldableOpcodes { Opcode::BitOr, Opcode::BitAnd, Opcode::BitXor, Opcode::Add, Opcode::Sub, Opcode::Mul };
+    if (value.opcode == Opcode::Integer || value.opcode == Opcode::Double)
+        return true;
+    if (!remainingDepth)
+        return false;
+    if (value.opcode == Opcode::Upcast)
+        return isConstantExpression(function, function.at(value.valueOperand()), remainingDepth - 1);
+    if (!foldableOpcodes.contains(value.opcode))
+        return false;
+    return isConstantExpression(function, function.at(value.leftOperand()), remainingDepth - 1) && isConstantExpression(function, function.at(value.rightOperand()), remainingDepth - 1);
+}
+
 unsigned estimatedCodeBytes(const Program& program, const Function& function, const Value& value)
 {
     Opcode opcode = value.opcode;
 
-    if (opcodesWithoutCode.contains(opcode))
+    if (opcodesWithoutCode.contains(opcode) || isConstantExpression(function, value))
         return 0;
     if (isRematerializable(value))
         return CodeSize::cellConstant;
@@ -209,6 +224,88 @@ unsigned estimatedCodeBytes(const Program& program, const Function& function, co
     for (ValueID id : block.values)
         bytes = saturatingSum<unsigned>(bytes, estimatedCodeBytes(program, function, function.at(id)));
     return bytes;
+}
+
+namespace {
+
+struct IntegerComparison {
+    ValueID subject;
+    int64_t constant { 0 };
+};
+
+} // anonymous namespace
+
+static std::optional<IntegerComparison> findIntegerComparison(FunctionAnalyses& analyses, const Block& block)
+{
+    const Program& program = analyses.program();
+    const Function& function = analyses.function();
+    if (block.terminator.kind != TerminatorKind::Branch)
+        return std::nullopt;
+    ValueID condition = definitionThroughUpcasts(function, block.terminator.conditionOperand());
+    const Value& comparison = function.at(condition);
+    if (comparison.opcode != Opcode::StrictEq || !block.values.contains(condition))
+        return std::nullopt;
+    for (unsigned index = 0; index < 2; ++index) {
+        std::optional<int64_t> constant = integerConstantThroughCasts(program, function, comparison.operand(index));
+        ValueID subject = comparison.operand(1 - index);
+        if (constant && program.typeOf(function, subject).isInteger() && !integerConstantThroughCasts(program, function, subject))
+            return IntegerComparison { analyses.identityOf(subject), *constant };
+    }
+    return std::nullopt;
+}
+
+static unsigned estimateSwitchBytes(Vector<std::pair<int64_t, BlockID>, 8>& cases)
+{
+    std::ranges::sort(cases, { }, [](const auto& entry) { return entry.first; });
+    unsigned bytes = CodeSize::branch;
+    for (size_t begin = 0; begin < cases.size();) {
+        size_t end = begin;
+        Vector<BlockID, SwitchWindow::maxPlaces + 1> places;
+        for (; end < cases.size() && cases[end].first - cases[begin].first < SwitchWindow::numberOfValues; ++end) {
+            if (places.size() <= SwitchWindow::maxPlaces && !places.contains(cases[end].second))
+                places.append(cases[end].second);
+        }
+        unsigned bytesPerCase = CodeSize::perCase * static_cast<unsigned>(end - begin);
+        bytes += places.size() <= SwitchWindow::maxPlaces ? std::min(CodeSize::perPlaceInWindow * static_cast<unsigned>(places.size()), bytesPerCase) : bytesPerCase;
+        begin = end;
+    }
+    return bytes;
+}
+
+// The back end compiles `kind === A || kind === B || ..` like a switch: a range check and a bit test.
+static void estimateComparisonChainsAsSwitches(FunctionAnalyses& analyses, Vector<uint32_t>& blockBytes)
+{
+    constexpr unsigned linkBytes = CodeSize::simpleOperation + CodeSize::branch;
+    constexpr unsigned minLinks = 3;
+    const Function& function = analyses.function();
+    const CFG& cfg = analyses.cfg();
+    BitVector isLink(function.blocks.size());
+    auto linkAt = [&](BlockID id) {
+        return blockBytes[id.index()] >= linkBytes ? findIntegerComparison(analyses, function.at(id)) : std::nullopt;
+    };
+    for (BlockID head : cfg.reversePostOrder()) {
+        std::optional<IntegerComparison> first = isLink.get(head.index()) ? std::nullopt : linkAt(head);
+        if (!first)
+            continue;
+        isLink.set(head.index());
+        Vector<std::pair<int64_t, BlockID>, 8> cases { { first->constant, function.at(head).terminator.taken().block } };
+        Vector<BlockID, 8> links { head };
+        for (BlockID next = function.at(head).terminator.notTaken().block; cfg.singleIncomingEdge(next) && !isLink.get(next.index()); next = function.at(next).terminator.notTaken().block) {
+            std::optional<IntegerComparison> link = linkAt(next);
+            if (!link || link->subject != first->subject)
+                break;
+            isLink.set(next.index());
+            cases.append({ link->constant, function.at(next).terminator.taken().block });
+            links.append(next);
+        }
+        unsigned unfoldedBytes = linkBytes * static_cast<unsigned>(links.size());
+        unsigned chainBytes = links.size() < minLinks ? unfoldedBytes : estimateSwitchBytes(cases);
+        if (chainBytes >= unfoldedBytes)
+            continue;
+        for (BlockID link : links)
+            blockBytes[link.index()] -= linkBytes;
+        blockBytes[head.index()] += chainBytes;
+    }
 }
 
 ValueID findCopyIntoCopy(const Function& function, const Block& block, ValueID copyObject)
@@ -828,8 +925,10 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
         if (isSlowPath(function, function.at(id)))
             continue;
         blockBytes[id.index()] = estimatedCodeBytes(program, function, function.at(id));
-        summary.codeBytes = saturatingSum<uint32_t>(summary.codeBytes, blockBytes[id.index()]);
     }
+    estimateComparisonChainsAsSwitches(analyses, blockBytes);
+    for (uint32_t bytes : blockBytes)
+        summary.codeBytes = saturatingSum<uint32_t>(summary.codeBytes, bytes);
     summary.hasCycle = cfg.hasCycle();
     summary.isWrapper = isWrapperCreatedByEngine(function);
     // A loop of the library runs once for each element, however seldom the function is entered: a caller asks what it does with a function that it is handed.
