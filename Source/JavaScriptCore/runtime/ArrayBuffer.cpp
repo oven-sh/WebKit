@@ -545,8 +545,7 @@ std::expected<int64_t, GrowFailReason> ArrayBuffer::grow(VM& vm, size_t newByteL
     auto shared = m_contents.m_shared;
     if (!shared) [[unlikely]]
         return makeUnexpected(GrowFailReason::GrowSharedUnavailable);
-    const bool requirePageMultiple = isWasmMemory();
-    auto result = shared->grow(vm, newByteLength, requirePageMultiple);
+    auto result = shared->grow(vm, newByteLength);
     if (result && result.value() > 0)
         vm.heap.reportExtraMemoryAllocated(static_cast<JSCell*>(nullptr), result.value());
     return result;
@@ -657,7 +656,7 @@ RefPtr<ArrayBuffer> ArrayBuffer::tryCreateShared(VM& vm, size_t numElements, uns
 
 ArrayBuffer::~ArrayBuffer() { }
 
-std::expected<int64_t, GrowFailReason> SharedArrayBufferContents::grow(VM& vm, size_t newByteLength, bool requirePageMultiple)
+std::expected<int64_t, GrowFailReason> SharedArrayBufferContents::grow(VM& vm, size_t newByteLength)
 {
     if (!m_hasMaxByteLength)
         return makeUnexpected(GrowFailReason::GrowSharedUnavailable);
@@ -671,7 +670,7 @@ std::expected<int64_t, GrowFailReason> SharedArrayBufferContents::grow(VM& vm, s
         std::expected<int64_t, GrowFailReason> result;
         {
             Locker locker { m_memoryHandle->lock() };
-            result = tryGrow(locker, newByteLength, requirePageMultiple, collection);
+            result = tryGrow(locker, newByteLength, collection);
         }
         switch (collection) {
         case BufferMemoryResult::Kind::Success:
@@ -688,7 +687,7 @@ std::expected<int64_t, GrowFailReason> SharedArrayBufferContents::grow(VM& vm, s
     }
 }
 
-std::expected<int64_t, GrowFailReason> SharedArrayBufferContents::tryGrow(const AbstractLocker& locker, size_t newByteLength, bool requirePageMultiple, BufferMemoryResult::Kind& collection)
+std::expected<int64_t, GrowFailReason> SharedArrayBufferContents::tryGrow(const AbstractLocker& locker, size_t newByteLength, BufferMemoryResult::Kind& collection)
 {
     // Keep in mind that newByteLength may not be page-size-aligned. If the buffer is a Wasm memory, that is an error.
     size_t sizeInBytes = m_sizeInBytes.load(std::memory_order_seq_cst);
@@ -697,14 +696,9 @@ std::expected<int64_t, GrowFailReason> SharedArrayBufferContents::tryGrow(const 
 
     int64_t deltaByteLength = newByteLength - sizeInBytes;
 
-#if ENABLE(WEBASSEMBLY)
-    if (Options::useWasmMemoryToBufferAPIs()) {
-        if (requirePageMultiple && deltaByteLength % PageCount::pageSize)
-            return makeUnexpected(GrowFailReason::InvalidGrowSize);
-    }
-#else
-    UNUSED_PARAM(requirePageMultiple);
-#endif
+    // The contents decide this, not the caller: a structured clone of a Wasm memory's buffer grows the same memory.
+    if ((deltaByteLength % PageCount::pageSize) && m_mode == Mode::WebAssembly)
+        return makeUnexpected(GrowFailReason::InvalidGrowSize);
 
     if (!deltaByteLength)
         return 0;

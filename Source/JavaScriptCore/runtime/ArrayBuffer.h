@@ -86,14 +86,14 @@ public:
 
     Mode mode() const { return m_mode; }
 
-    std::expected<int64_t, GrowFailReason> grow(VM&, size_t newByteLength, bool requirePageMultiple);
+    std::expected<int64_t, GrowFailReason> grow(VM&, size_t newByteLength);
 
     // One attempt, which cannot collect because it takes no VM. Reports what the caller owes the heap
     // once it has released the memory handle's lock: asking for a collection of either kind can run
     // finalizers on the calling thread, so neither may be asked for while that lock is held. On
     // SyncTryToReclaimMemory the caller must recompute the whole attempt, since the size it was working
     // from can move while unlocked.
-    std::expected<int64_t, GrowFailReason> tryGrow(const AbstractLocker&, size_t newByteLength, bool requirePageMultiple, BufferMemoryResult::Kind&);
+    std::expected<int64_t, GrowFailReason> tryGrow(const AbstractLocker&, size_t newByteLength, BufferMemoryResult::Kind&);
 
     void updateSize(size_t sizeInBytes, std::memory_order order = std::memory_order_seq_cst)
     {
