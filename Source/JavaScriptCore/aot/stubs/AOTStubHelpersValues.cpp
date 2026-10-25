@@ -239,8 +239,9 @@ void loadPristineArrayKind(StubAssembler& jit, GPRReg array, GPRReg kind, unsign
     static_assert(JSCell::typeInfoFlagsOffset() == JSCell::indexingTypeAndMiscOffset() + 2);
     constexpr uint32_t pristineBit = IsPristine << 16;
     RELEASE_ASSERT(mask <= 0xff);
+    uint32_t bits = mask == IndexingShapeAndWritabilityMask ? 0xff & ~IsArray : mask;
     jit.load32(Address(array, JSCell::indexingTypeAndMiscOffset()), kind);
-    jit.and32(TrustedImm32(mask | pristineBit), kind);
+    jit.and32(TrustedImm32(bits | pristineBit), kind);
     jit.xor32(TrustedImm32(pristineBit), kind);
 }
 

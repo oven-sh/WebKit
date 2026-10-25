@@ -219,6 +219,7 @@ static JSArray* tryCreateList(JSGlobalObject* globalObject, OwnPropertyList list
 
 static JSArray* tryListOwnProperties(JSGlobalObject* globalObject, const Object& compiled, OwnPropertyList list)
 {
+    constexpr uint16_t flagsBarringListing = fieldIsNotEnumerable | fieldIsAccessor;
     VM& vm = globalObject->vm();
     bool listsKeys = list != OwnPropertyList::Values;
     if (!compiled.hasExtraProperties()) {
@@ -226,7 +227,10 @@ static JSArray* tryListOwnProperties(JSGlobalObject* globalObject, const Object&
         if (!fields)
             return nullptr;
         auto valueAt = [&](unsigned index) -> JSValue {
-            return compiled.readListedField((*fields)[index]);
+            const FieldAsProperty& property = (*fields)[index];
+            if (property.field->flags & flagsBarringListing)
+                return { };
+            return compiled.readListedField(property);
         };
         return tryCreateList(globalObject, list, static_cast<unsigned>(fields->size()), listsKeys ? compiled.keys(vm) : nullptr, valueAt);
     }
@@ -237,7 +241,10 @@ static JSArray* tryListOwnProperties(JSGlobalObject* globalObject, const Object&
         return nullptr;
     JSObject* extraProperties = compiled.extraProperties();
     auto valueAt = [&](unsigned index) -> JSValue {
-        return compiled.readPropertyListEntry(properties->at(index), extraProperties);
+        const PropertyListEntry& property = properties->at(index);
+        if (property.field && property.field->flags & flagsBarringListing)
+            return { };
+        return compiled.readPropertyListEntry(property, extraProperties);
     };
     return tryCreateList(globalObject, list, static_cast<unsigned>(properties->size()), listsKeys ? compiled.keysWithExtraProperties(vm) : nullptr, valueAt);
 }

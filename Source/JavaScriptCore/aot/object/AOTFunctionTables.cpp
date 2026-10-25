@@ -37,6 +37,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace AOT {
 
 static_assert(FunctionTables::numberOfExecutables == ClosureWords::numberOfExecutables);
+static_assert(FunctionTables::numberOfExecutables - 1 <= ResumeClosureRequest::maxExecutable);
 
 namespace {
 
