@@ -424,6 +424,15 @@ static void testProfileReviewIntervalGrowsWhileNothingChanges()
     review(realms, profile, ArrayWithDouble, 3, 2 * window);
     AOT_TEST_CHECK(profile.interval() == longest && profile.capacity() == 3);
 
+    for (uint32_t expected = longest / 2; expected >= shortest; expected /= 2) {
+        reviewArrayAllocationProfile(profile, nullptr);
+        AOT_TEST_CHECK(profile.interval() == expected && profile.capacity() == 3);
+    }
+    reviewArrayAllocationProfile(profile, nullptr);
+    AOT_TEST_CHECK(profile.interval() == shortest);
+    review(realms, profile, ArrayWithDouble, 3, ArrayAllocationProfile::maxIntervalDoublings * window);
+    AOT_TEST_CHECK(profile.interval() == longest);
+
     review(realms, profile, ArrayWithDouble, 4);
     AOT_TEST_CHECK(profile.interval() == shortest && profile.capacity() == 3);
     review(realms, profile, ArrayWithDouble, 3, 2 * window);

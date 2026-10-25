@@ -508,6 +508,13 @@ bool StoresByLayout::spellsKey(ValueSetMaker& maker, const Writer& writer, Value
         ValueFlowObjectID key = m_inputs.sets().onlyMember(maker.intersect(keys, ValueSets::complement(maker.of(std::array { ValueFlowUniverse::primitive(PrimitiveSet::Undefined), ValueFlowUniverse::primitive(PrimitiveSet::Absent) }))));
         return key && m_inputs.universe().kindOf(key) == ValueFlowObjectKind::Key && m_inputs.universe().keyOf(key).index() == name.payload;
     }
+    if (statement.opcode == Opcode::Call) {
+        if (!callsDefineProperty(maker, statement))
+            return false;
+        ValueSetID keys = std::as_const(m_heap).valueOf(maker, m_inputs.bodies().operandsOf(statement)[OperandIndex::Call::arguments + 1]);
+        ValueFlowObjectID key = ValueSets::isComplement(keys) ? ValueFlowObjectID() : m_inputs.sets().onlyMember(keys);
+        return key && m_inputs.universe().kindOf(key) == ValueFlowObjectKind::Key && m_inputs.universe().keyOf(key).index() == name.payload;
+    }
     if (!Value::opcodesWithKey.contains(statement.opcode))
         return false;
     PropertyKeyID key = m_inputs.program.at(statement.function).at(statement.site).key();
@@ -723,6 +730,49 @@ std::optional<ValueSetID> StoresByLayout::descriptorsWrittenOutIn(ValueSetMaker&
     return descriptors;
 }
 
+bool StoresByLayout::callsDefineProperty(ValueSetMaker& maker, const ValueFlowStatement& statement) const
+{
+    std::span<const ValueFlowOperand> operands = m_inputs.bodies().operandsOf(statement);
+    if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::Call || operands.size() != OperandIndex::Call::arguments + 3)
+        return false;
+    ValueSetID callees = std::as_const(m_heap).valueOf(maker, operands[OperandIndex::Call::callee]);
+    ValueFlowObjectID callee = ValueSets::isComplement(callees) ? ValueFlowObjectID() : m_inputs.sets().onlyMember(callees);
+    return callee && (callee == m_inputs.universe().objectOf(Builtins::ObjectDefineProperty) || callee == m_inputs.universe().objectOf(Builtins::ReflectDefineProperty));
+}
+
+// An attribute that no descriptor has is false.
+std::optional<bool> StoresByLayout::attributeIn(ValueSetMaker& maker, ValueSetID descriptors, BuiltinName member) const
+{
+    const ValueSets& sets = m_inputs.sets();
+    ValueSetID written = std::as_const(m_heap).writtenUnder(maker, descriptors, ValueFlowName::property(m_inputs.program.keyOf(member)));
+    if (sets.isEmpty(written))
+        return false;
+    ValueFlowObjectID only = sets.onlyMember(written);
+    if (only == ValueFlowUniverse::primitive(PrimitiveSet::True))
+        return true;
+    if (only == ValueFlowUniverse::primitive(PrimitiveSet::False))
+        return false;
+    return std::nullopt;
+}
+
+uint8_t StoresByLayout::formsOfValueDefinedBy(ValueSetMaker& maker, const Writer& writer, ValueFlowName name) const
+{
+    if (name.kind != ValueFlowNameKind::Property)
+        return 0;
+    const ValueFlowStatement& statement = writer.statement;
+    if (!callsDefineProperty(maker, statement))
+        return DataForms::plain;
+    std::optional<ValueSetID> descriptors = descriptorsWrittenOutIn(maker, statement);
+    if (!descriptors)
+        return DataForms::unknown;
+    std::optional<bool> isWritable = attributeIn(maker, *descriptors, BuiltinNames::writable);
+    std::optional<bool> isEnumerable = attributeIn(maker, *descriptors, BuiltinNames::enumerable);
+    std::optional<bool> isConfigurable = attributeIn(maker, *descriptors, BuiltinNames::configurable);
+    if (!isWritable || !isEnumerable || !isConfigurable)
+        return DataForms::unknown;
+    return DataForms::of(*isWritable, *isEnumerable, *isConfigurable);
+}
+
 uint8_t StoresByLayout::formsOfAccessorDefinedBy(ValueSetMaker& maker, const Writer& writer, ValueFlowName name) const
 {
     if (ValueFlowNameShape shape = shapeOf(name.kind); !shape.isAccessor() || shape.reach == ValueFlowNameReach::EveryKey)
@@ -735,20 +785,8 @@ uint8_t StoresByLayout::formsOfAccessorDefinedBy(ValueSetMaker& maker, const Wri
     std::optional<ValueSetID> descriptors = descriptorsWrittenOutIn(maker, statement);
     if (!descriptors)
         return AccessorForms::unknown;
-    const ValueSets& sets = m_inputs.sets();
-    auto attribute = [&](BuiltinName member) -> std::optional<bool> {
-        ValueSetID written = std::as_const(m_heap).writtenUnder(maker, *descriptors, ValueFlowName::property(m_inputs.program.keyOf(member)));
-        if (sets.isEmpty(written))
-            return false;
-        ValueFlowObjectID only = sets.onlyMember(written);
-        if (only == ValueFlowUniverse::primitive(PrimitiveSet::True))
-            return true;
-        if (only == ValueFlowUniverse::primitive(PrimitiveSet::False))
-            return false;
-        return std::nullopt;
-    };
-    std::optional<bool> isEnumerable = attribute(BuiltinNames::enumerable);
-    std::optional<bool> isConfigurable = attribute(BuiltinNames::configurable);
+    std::optional<bool> isEnumerable = attributeIn(maker, *descriptors, BuiltinNames::enumerable);
+    std::optional<bool> isConfigurable = attributeIn(maker, *descriptors, BuiltinNames::configurable);
     if (!isEnumerable || !isConfigurable)
         return AccessorForms::unknown;
     return AccessorForms::of(*isEnumerable, *isConfigurable);
@@ -779,6 +817,7 @@ auto StoresByLayout::describeWrite(ValueSetMaker& maker, StoreUnderName& store, 
             .isIntoThisOfConstructor = spellsItsKey && storesIntoThisOfConstructor(m_inputs.program, writer),
             .definesValue = definesValue(maker, writer, name),
             .accessorForms = formsOfAccessorDefinedBy(maker, writer, name),
+            .dataForms = formsOfValueDefinedBy(maker, writer, name),
             .familyDeclaredForReceiver = spellsItsKey ? familyDeclaredForReceiverOf(writer) : UINT32_MAX,
             .numbers = std::nullopt,
         };
@@ -808,6 +847,7 @@ auto StoresByLayout::describeWrite(ValueSetMaker& maker, StoreUnderName& store, 
         .definesValue = store.definesValue,
         .leavesOutComputedKey = name.kind == ValueFlowNameKind::CopiedFrom && isOperation && statement.opcode == Opcode::CopyDataProperties && !m_inputs.program.at(statement.function).at(statement.site).excludedOperands().empty(),
         .accessorForms = store.accessorForms,
+        .dataForms = store.dataForms,
         .value = value,
         .numbers = numbers,
     };
@@ -829,6 +869,7 @@ auto StoresByLayout::collectWrites(ValueSetMakers& makers) const -> ParallelArra
         merged.definesValue |= write.definesValue;
         merged.leavesOutComputedKey |= write.leavesOutComputedKey;
         merged.accessorForms |= write.accessorForms;
+        merged.dataForms |= write.dataForms;
         merged.numbers.unite(write.numbers);
     };
     struct GroupsOfWorker {
@@ -909,6 +950,8 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, LayoutID layout, const
         return;
     note(maker, stores, name, writes.value, !writes.isStoredAfterCreation, writes.isNamedByOperation);
     stores.getsCopyWithoutComputedKey |= writes.leavesOutComputedKey;
+    if (name.kind == ValueFlowNameKind::Property)
+        stores.underKey.add(name.payload, StoredUnderKey { }).iterator->value.dataForms |= writes.dataForms;
     noteNumbers(stores, name, writes.createsData ? numbersInData(layout, name) : writes.numbers);
     if (writes.isStoredByConstructor && name.kind == ValueFlowNameKind::Property)
         stores.underKey.add(name.payload, StoredUnderKey { }).iterator->value.isStoredByConstructor = true;
@@ -1395,6 +1438,15 @@ bool StoresByLayout::mayGetAccessorUnder(LayoutID layout, PropertyKeyID key) con
         mayGetOne |= found != stores.underKey.end() && found->value.mayBeAccessor;
     });
     return mayGetOne;
+}
+
+uint8_t StoresByLayout::dataFormsDefinedUnder(LayoutID layout, PropertyKeyID key) const
+{
+    const StoresIntoObjects& stores = m_storesOfLayout[layout.index()];
+    if (stores.getsNameNobodyLists())
+        return DataForms::unknown;
+    auto found = stores.underKey.find(key.index());
+    return found == stores.underKey.end() ? 0 : found->value.dataForms;
 }
 
 FlowAccessorField StoresByLayout::accessorDefinedUnder(ValueSetMaker& maker, LayoutID layout, PropertyKeyID key) const

@@ -2149,6 +2149,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
 #if ENABLE(AOT)
+    case InternalMicrotask::CompiledModuleBodyResume:
     case InternalMicrotask::CompiledAsyncFunctionResume: {
 #if USE(BUN_JSC_ADDITIONS)
         AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);

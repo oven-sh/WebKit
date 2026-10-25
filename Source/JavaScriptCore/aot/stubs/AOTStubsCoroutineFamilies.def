@@ -9,7 +9,7 @@ v(PromiseThen, CalledByCode, (OnFulfilled, OnRejected), FormAxis, 0, 0, AllISAs,
 v(ReturnAsyncResult, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ReturnAsyncResult)
 
 // AOTStubsCoroutineSuspension.cpp
-v(AwaitBySavingFrame, CalledByCode, (Value, ResultOfCallWithoutPromise, ValueAfterTurn), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, AwaitBySavingFrame)
+v(AwaitBySavingFrame, CalledByCode, (Value, ResultOfCallWithoutPromise, ValueAfterTurn, ValueInModuleBody), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, AwaitBySavingFrame)
 v(AwaitWithSavedFrame, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, AwaitBySavingFrame)
 v(SuspendGenerator, CalledByCode, (Yield, AsyncAwait, AsyncYield, AsyncYieldAfterAwait), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, SuspendGenerator)
 

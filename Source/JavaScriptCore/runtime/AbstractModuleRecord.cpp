@@ -1779,6 +1779,7 @@ bool AbstractModuleRecord::importPromiseGatesAsyncDependency(JSPromise* importPr
 #if ENABLE(AOT)
         case InternalMicrotask::CompiledAsyncFunctionResume:
         case InternalMicrotask::CompiledAsyncFunctionResumeAfterTurn:
+        case InternalMicrotask::CompiledModuleBodyResume:
 #endif
         case InternalMicrotask::AsyncModuleExecutionResume:
         case InternalMicrotask::AsyncGeneratorDriverResume:

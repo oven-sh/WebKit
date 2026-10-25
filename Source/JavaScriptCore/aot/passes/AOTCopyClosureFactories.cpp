@@ -101,6 +101,68 @@ static bool returnsClosureItCreates(const Function& function)
     });
 }
 
+static std::optional<unsigned> positionalParameterAt(const Function& function, ValueID id)
+{
+    std::span<const ValueID> parameters = function.at(entryBlock).parameters.span();
+    unsigned first = function.firstParameterIndex();
+    for (unsigned index = 0; index < function.numberOfPositionalParameters() && first + index < parameters.size(); ++index) {
+        if (parameters[first + index] == id)
+            return index;
+    }
+    return std::nullopt;
+}
+
+// `object[name] = function () { .. }`   `object.__defineGetter__(name, function () { .. })`   `Object.defineProperty(object, name, { get() { .. } })`
+// The functor is handed each positional parameter that names a closure the function creates.
+static void forEachParameterThatNamesCreatedClosure(const Function& function, NOESCAPE const Invocable<void(unsigned)> auto& functor)
+{
+    BitVector literalsThatHoldClosures;
+    auto isCreatedClosure = [&](ValueID id) {
+        return function.at(definitionBehindDeadZoneChecks(function, id)).opcode == Opcode::NewClosure;
+    };
+    auto holdsCreatedClosure = [&](ValueID id) {
+        id = definitionBehindDeadZoneChecks(function, id);
+        if (function.at(id).opcode == Opcode::FinishObject)
+            id = definitionBehindDeadZoneChecks(function, function.at(id).operand(0));
+        return function.at(id).opcode == Opcode::NewClosure || literalsThatHoldClosures.get(id.index());
+    };
+    forEachValueOf(function, [&](ProgramPoint, ValueID, const Value& value) {
+        switch (value.opcode) {
+        case Opcode::PropDefine:
+            if (isCreatedClosure(value.valueOperand()))
+                literalsThatHoldClosures.set(definitionBehindDeadZoneChecks(function, value.operand(OperandIndex::PropDefine::object)).index());
+            return;
+        case Opcode::ElemSet:
+            if (!isCreatedClosure(value.valueOperand()))
+                return;
+            if (std::optional<unsigned> parameter = positionalParameterAt(function, definitionBehindDeadZoneChecks(function, value.operand(OperandIndex::ElemSet::property))))
+                functor(*parameter);
+            return;
+        case Opcode::Call:
+            if (!std::ranges::any_of(value.variadicOperands(), holdsCreatedClosure))
+                return;
+            for (ValueID argument : value.variadicOperands()) {
+                if (std::optional<unsigned> parameter = positionalParameterAt(function, definitionBehindDeadZoneChecks(function, argument)))
+                    functor(*parameter);
+            }
+            return;
+        default:
+            return;
+        }
+    });
+}
+
+// With a copy of its own, the call defines members whose names the compiler can read.
+static bool handsWrittenNameToDefineClosureUnder(const Function& caller, const Value& call, const Function& callee)
+{
+    bool result = false;
+    std::span<const ValueID> arguments = call.variadicOperands();
+    forEachParameterThatNamesCreatedClosure(callee, [&](unsigned parameter) {
+        result |= parameter < arguments.size() && caller.at(definitionBehindDeadZoneChecks(caller, arguments[parameter])).opcode == Opcode::String;
+    });
+    return result;
+}
+
 namespace {
 
 enum class ReasonToCopy : uint8_t { IsClosureFactory, MakesWhatObjectCreateIsHanded };
@@ -246,15 +308,16 @@ struct Copier {
     }
 
     // A class, a function that constructs objects of a layout, the array of a tagged template and the scope of an eval stand at one place of the program.
-    bool definesWhatStandsAtOnePlace(FunctionID id)
+    // The closure of the copy that is called is held by nothing but the call, so no type speaks of it.
+    bool definesWhatStandsAtOnePlace(FunctionID id, bool isHeldByCallAlone = true)
     {
         const Function& function = program.at(id);
-        if (function.constructedClass || isNamedByClosedType(id))
+        if (function.constructedClass || (!isHeldByCallAlone && isNamedByClosedType(id)))
             return true;
         bool result = false;
         forEachValueOf(function, [&](ProgramPoint, ValueID, const Value& value) {
             if (value.opcode == Opcode::NewClosure)
-                result |= definesWhatStandsAtOnePlace(value.function());
+                result |= definesWhatStandsAtOnePlace(value.function(), false);
             else
                 result |= value.opcode == Opcode::NewClass || value.opcode == Opcode::NewClassToken || value.opcode == Opcode::NewTemplateObject || value.opcode == Opcode::DirectEval;
         });
@@ -397,8 +460,11 @@ struct Copier {
                 return;
             // What a copy calls to make the objects that it hands on is copied with it: `const members = makeMembers(options)`.
             bool makesWhatObjectCreateIsHanded = function.captures.isEmpty() && (depth || makers.get(callee.index()) || resultsHandedToObjectCreate.get(id.index()));
-            bool isClosureFactory = !makesWhatObjectCreateIsHanded && returnsClosureItCreates(function);
+            bool definesClosureUnderWrittenName = !makesWhatObjectCreateIsHanded && handsWrittenNameToDefineClosureUnder(caller, value, function);
+            bool isClosureFactory = definesClosureUnderWrittenName || (!makesWhatObjectCreateIsHanded && returnsClosureItCreates(function));
             if (!makesWhatObjectCreateIsHanded && !isClosureFactory)
+                return;
+            if (!definesClosureUnderWrittenName && isNamedByClosedType(callee))
                 return;
             Size size = sizeOf(callee);
             if (size.numberOfValuesWithClosures > (isClosureFactory ? maxValuesInCopiedFactory : maxValuesInCopiedMaker) || size.definesWhatStandsAtOnePlace || analyses.isInCycle(point.block))

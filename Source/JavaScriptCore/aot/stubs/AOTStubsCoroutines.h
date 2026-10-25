@@ -16,7 +16,7 @@
 namespace JSC { namespace AOT {
 
 enum class PromiseHandler : uint8_t { OnFulfilled, OnRejected };
-enum class AwaitedOperand : uint8_t { Value, ResultOfCallWithoutPromise, ValueAfterTurn };
+enum class AwaitedOperand : uint8_t { Value, ResultOfCallWithoutPromise, ValueAfterTurn, ValueInModuleBody };
 enum class GeneratorSuspension : uint8_t { Yield, AsyncAwait, AsyncYield, AsyncYieldAfterAwait };
 // A step of a loop or of `yield*`, or an awaited call of `next`: that goes on under the async context of the await, a step under the one that is active where the step is finished.
 enum class StepConsumer : uint8_t { AsyncFunction, AsyncGenerator, AsyncFunctionAwaitingCall, AsyncGeneratorAwaitingCall };
@@ -43,14 +43,14 @@ constexpr StubKey stepAsyncIteratorInEngine() { return StubKey(StubFamily::StepA
 constexpr StubKey newGenerator(NewGeneratorKind kind) { return StubKey(StubFamily::NewGenerator).withForm(static_cast<uint8_t>(kind)); }
 
 static_assert(static_cast<unsigned>(PromiseHandler::OnRejected) + 1 == descriptorOf(StubFamily::PromiseThen).numberOfForms && exists(promiseThen(PromiseHandler::OnRejected)));
-static_assert(static_cast<unsigned>(AwaitedOperand::ValueAfterTurn) + 1 == descriptorOf(StubFamily::AwaitBySavingFrame).numberOfForms);
+static_assert(static_cast<unsigned>(AwaitedOperand::ValueInModuleBody) + 1 == descriptorOf(StubFamily::AwaitBySavingFrame).numberOfForms);
 static_assert(static_cast<unsigned>(GeneratorSuspension::AsyncYieldAfterAwait) + 1 == descriptorOf(StubFamily::SuspendGenerator).numberOfForms);
 static_assert(numberOfEnumerators<GeneratorStepCheck> == descriptorOf(StubFamily::StepGenerator).numberOfForms);
 static_assert(!static_cast<unsigned>(GeneratorStepCheck::IsUnmodifiedGenerator) && static_cast<unsigned>(GeneratorStepCheck::IsGenerator) == 1 && static_cast<unsigned>(GeneratorStepCheck::IsUnmodified) == 2 && static_cast<unsigned>(GeneratorStepCheck::None) == 3);
 static_assert(static_cast<unsigned>(StepConsumer::AsyncGeneratorAwaitingCall) + 1 == descriptorOf(StubFamily::StepAsyncGenerator).numberOfForms);
 static_assert(static_cast<unsigned>(NewGeneratorKind::Async) + 1 == descriptorOf(StubFamily::NewGenerator).numberOfForms);
 static_assert(exists(newPromise()) && exists(returnAsyncResult()) && exists(awaitCallBySavingFrame()) && exists(suspendGenerator(GeneratorSuspension::AsyncYieldAfterAwait)));
-static_assert(exists(awaitBySavingFrame(AwaitedOperand::ValueAfterTurn)));
+static_assert(exists(awaitBySavingFrame(AwaitedOperand::ValueAfterTurn)) && exists(awaitBySavingFrame(AwaitedOperand::ValueInModuleBody)));
 static_assert(exists(stepGenerator(GeneratorStepCheck::None)) && exists(enterSavedFrame()) && exists(restoreSavedFrameToStack()));
 static_assert(exists(stepAsyncGenerator(StepConsumer::AsyncFunctionAwaitingCall)) && exists(stepAsyncGenerator(StepConsumer::AsyncGeneratorAwaitingCall)));
 static_assert(exists(stepAsyncGenerator(StepConsumer::AsyncFunction)) && exists(stepAsyncGenerator(StepConsumer::AsyncGenerator)) && exists(runAsyncGeneratorStep()) && exists(stepAsyncIteratorInEngine()));

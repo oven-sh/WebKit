@@ -294,8 +294,9 @@ struct StoredUnderKey {
     bool isStoredAfterCreation { false };
     bool mayBeAccessor { false };
     uint8_t accessorForms { 0 };
-    bool isGivenValueByOperation { false };
-    bool isGivenValueByDefinition { false };
+    uint8_t dataForms { 0 };
+    bool isGivenValueByOperation : 1 { false };
+    bool isGivenValueByDefinition : 1 { false };
     bool isNamedByOperation { false };
     bool isStoredByConstructor { false };
     bool mayBeOtherThanIntegers { false };
@@ -388,6 +389,29 @@ struct AccessorForms {
     }
 };
 
+// One bit for each combination of attributes that a data property is created with.
+struct DataForms {
+    static constexpr uint8_t of(bool isWritable, bool isEnumerable, bool isConfigurable) { return 1 << ((isWritable ? 0 : 4) + (isEnumerable ? 0 : 2) + (isConfigurable ? 0 : 1)); }
+    static constexpr uint8_t plain = 1;
+    static constexpr uint8_t unknown = UINT8_MAX;
+
+    // A name that is created in several forms gets a plain field: an object that defines it otherwise keeps it outside the slot.
+    static OptionSet<FieldForm> onlyFormIn(uint8_t forms)
+    {
+        OptionSet<FieldForm> form;
+        if (!forms || !hasOneBitSet(forms))
+            return form;
+        unsigned index = getLSBSet(forms);
+        if (index & 4)
+            form.add(FieldForm::IsReadOnly);
+        if (index & 2)
+            form.add(FieldForm::IsNotEnumerable);
+        if (index & 1)
+            form.add(FieldForm::IsNotConfigurable);
+        return form;
+    }
+};
+
 struct StoresIntoObjects {
     StoresUnderKeys underKey;
     ValueSetID underUnknownKey { ValueSets::nothing };
@@ -437,6 +461,7 @@ public:
     bool mayGetAccessorUnder(LayoutID, PropertyKeyID) const;
     FlowAccessorField accessorDefinedUnder(LayoutID layout, PropertyKeyID key) const { return accessorDefinedUnder(m_heap.maker(), layout, key); }
     FlowAccessorField accessorDefinedUnder(ValueSetMaker&, LayoutID, PropertyKeyID) const;
+    uint8_t dataFormsDefinedUnder(LayoutID, PropertyKeyID) const;
     Vector<PropertyKeyID> keysOfAccessorsDefinedIn(ValueSetMaker&, LayoutID) const;
     bool getsAccessorsUnderKeysNobodyKnows(LayoutID) const;
     void setReceiversOfReads(ListsOfSetsByNumber&&);
@@ -486,6 +511,7 @@ private:
         bool definesValue;
         bool leavesOutComputedKey;
         uint8_t accessorForms;
+        uint8_t dataForms;
         ValueSetID value;
         ValueFlowNumbers numbers;
 
@@ -507,6 +533,7 @@ private:
         bool isIntoThisOfConstructor { false };
         bool definesValue { false };
         uint8_t accessorForms { 0 };
+        uint8_t dataForms { 0 };
         uint32_t familyDeclaredForReceiver { UINT32_MAX };
         std::optional<ValueFlowNumbers> numbers;
     };
@@ -536,6 +563,9 @@ private:
     uint32_t familyDeclaredForReceiverOf(const Writer&) const;
     std::optional<ValueSetID> descriptorsWrittenOutIn(ValueSetMaker&, const ValueFlowStatement&) const;
     uint8_t formsOfAccessorDefinedBy(ValueSetMaker&, const Writer&, ValueFlowName) const;
+    bool callsDefineProperty(ValueSetMaker&, const ValueFlowStatement&) const;
+    std::optional<bool> attributeIn(ValueSetMaker&, ValueSetID descriptors, BuiltinName) const;
+    uint8_t formsOfValueDefinedBy(ValueSetMaker&, const Writer&, ValueFlowName) const;
     bool definesValue(ValueSetMaker&, const Writer&, ValueFlowName) const;
     WritesThroughSet describeWrite(ValueSetMaker&, StoreUnderName&, const Writer&, const ValueFlowNodeKey&, ValueSetID value) const;
     ParallelArray<WritesThroughSet> collectWrites(ValueSetMakers&) const;

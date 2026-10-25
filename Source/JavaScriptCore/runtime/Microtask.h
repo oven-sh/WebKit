@@ -70,6 +70,7 @@ enum class InternalMicrotask : uint8_t {
     AsyncModuleExecutionResume,
     AsyncModuleExecutionDone,
 #if ENABLE(AOT)
+    CompiledModuleBodyResume,
     CompiledModuleImport,
     CompiledModuleImportSettled,
 #endif

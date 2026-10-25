@@ -605,7 +605,21 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResolvePromiseOrReturnResult, EncodedJSValu
     OPERATION_RETURN(scope, JSValue::encode(created));
 }
 
-enum class AwaitedKind : uint8_t { Value, ValueAfterTurn, ResultOfCall };
+enum class AwaitedKind : uint8_t { Value, ValueAfterTurn, ValueInModuleBody, ResultOfCall };
+
+static constexpr InternalMicrotask resumingTaskOf(AwaitedKind kind)
+{
+    switch (kind) {
+    case AwaitedKind::Value:
+    case AwaitedKind::ResultOfCall:
+        return InternalMicrotask::CompiledAsyncFunctionResume;
+    case AwaitedKind::ValueAfterTurn:
+        return InternalMicrotask::CompiledAsyncFunctionResumeAfterTurn;
+    case AwaitedKind::ValueInModuleBody:
+        return InternalMicrotask::CompiledModuleBodyResume;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
 
 template<AwaitedKind kind>
 static ALWAYS_INLINE JSCell* suspendUntilSettled(Instance* instance, VM& vm, ThrowScope& scope, EncodedJSValue awaited, SavedFrame* saved)
@@ -613,7 +627,7 @@ static ALWAYS_INLINE JSCell* suspendUntilSettled(Instance* instance, VM& vm, Thr
     if constexpr (kind == AwaitedKind::ResultOfCall)
         resumeWhenCallSettles(*instance, JSValue::decode(awaited), saved);
     else {
-        resumeWhenSettled(instance->globalObject, vm, JSValue::decode(awaited), saved, kind == AwaitedKind::Value ? InternalMicrotask::CompiledAsyncFunctionResume : InternalMicrotask::CompiledAsyncFunctionResumeAfterTurn);
+        resumeWhenSettled(instance->globalObject, vm, JSValue::decode(awaited), saved, resumingTaskOf(kind));
         if (scope.exception()) [[unlikely]]
             saved->willBeRestoredToStack();
     }
@@ -637,6 +651,7 @@ static ALWAYS_INLINE JSCell* suspendUntilSettled(Instance* instance, VM& vm, Thr
 
 AOT_DEFINE_AWAIT_OPERATIONS(operationAOTSaveFrameAndAwait, operationAOTAwaitWithSavedFrame, AwaitedKind::Value)
 AOT_DEFINE_AWAIT_OPERATIONS(operationAOTSaveFrameAndAwaitAfterTurn, operationAOTAwaitWithSavedFrameAfterTurn, AwaitedKind::ValueAfterTurn)
+AOT_DEFINE_AWAIT_OPERATIONS(operationAOTSaveFrameAndAwaitInModuleBody, operationAOTAwaitWithSavedFrameInModuleBody, AwaitedKind::ValueInModuleBody)
 AOT_DEFINE_AWAIT_OPERATIONS(operationAOTSaveFrameAndAwaitCall, operationAOTAwaitCallWithSavedFrame, AwaitedKind::ResultOfCall)
 #undef AOT_DEFINE_AWAIT_OPERATIONS
 

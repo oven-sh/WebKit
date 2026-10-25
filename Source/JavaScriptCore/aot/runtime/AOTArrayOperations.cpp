@@ -520,8 +520,12 @@ static void startWindow(ArrayAllocationProfile& profile)
 // Every array of the site is born with the room, and only the ones that outgrow it pay for that.
 void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* lastArrayOrNull)
 {
-    if (!lastArrayOrNull)
+    if (!lastArrayOrNull) {
+        // A collection came between the birth of the array and this review. Fewer of them fall into a shorter interval.
+        if (profile.intervalDoublings)
+            --profile.intervalDoublings;
         return;
+    }
     IndexingType shape = lastArrayOrNull->indexingType() & IndexingShapeMask;
     if (shape != Int32Shape && shape != DoubleShape && shape != ContiguousShape)
         return;

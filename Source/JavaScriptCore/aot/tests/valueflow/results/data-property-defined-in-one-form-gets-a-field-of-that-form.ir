@@ -1,0 +1,35 @@
+# const hidden = { size: 1 }; Object.defineProperty(hidden, "secret", { value: 2, enumerable: false })   hidden.secret
+# const mixed = { size: 1 }; Object.defineProperty(mixed, "secret", { value: 2, enumerable: false }); other.secret = 3, where other is a second object of mixed's layout
+# Every definition of "secret" in the first layout makes it read-only, not enumerable and not configurable, so the appended field has that form and the value lies in its slot.
+# The second layout also gets the name by a plain store: its field is plain, and an object that defines the name otherwise keeps it outside the slot.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Hidden" fields=[{key="size" {{*}}, {key="secret" declared={{*}} flags=[IsAddedLate{{*}}] form=[IsReadOnly, IsNotEnumerable, IsNotConfigurable] flow=
+# CHECK: layout L1 name="Mixed" fields=[{key="size" {{*}}, {key="secret" declared={{*}} flags=[IsAddedLate{{*}}] flow=
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Hidden" fields=[{key="size" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Mixed" fields=[{key="size" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Integer integer=2
+    v3 = Boolean boolean=false
+    v4 = NewObject -, v2, v3 layout=L2 fields=[0, 1]
+    v5 = Builtin builtin=ObjectDefineProperty
+    v6 = String string="secret"
+    v7 = Call v5, -, v1, v6, v4
+    v8 = NewObject -, v0 layout=L1 fields=[0]
+    v9 = NewObject -, v2, v3 layout=L2 fields=[0, 1]
+    v10 = Call v5, -, v8, v6, v9
+    v11 = NewObject -, v0 layout=L1 fields=[0]
+    v12 = Integer integer=3
+    PropSet v11, v12 key="secret" mode=Strict
+    v14 = PropGet v1 key="secret"
+    v15 = PropGet v8 key="secret"
+    v16 = PropGet v11 key="secret"
+    v17 = Add v14, v15
+    v18 = Add v17, v16
+    Return v18
+}

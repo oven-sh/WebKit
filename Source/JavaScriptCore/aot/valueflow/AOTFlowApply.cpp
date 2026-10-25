@@ -306,6 +306,7 @@ static void appendFlowFields(const Program& program, TypeArena& arena, std::span
             applyPosition(field.declared, appended.position);
         field.flags = { FieldFlags::IsAddedLate };
         field.flow = appended.flow;
+        field.form = appended.dataForm;
         if (appended.accessor.isAccessor())
             becomeAccessor(arena, field, appended.accessor);
         else if (!mustKeepTypes)

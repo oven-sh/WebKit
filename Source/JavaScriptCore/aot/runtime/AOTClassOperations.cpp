@@ -112,6 +112,11 @@ static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES getConstructPrototy
         ClassTable& classes = instance->state->objects->classes;
         JSObject* prototype = classes.prototypeForInstancesOf(vm, closure);
         classes.rememberPlaceOfPrototypeProperty(vm, closure, prototype);
+        // The first construction defines the class of a constructor function, which arms the guards that its stores are compiled under.
+        if (const LayoutData* classLayout = classes.classConstructedBy(closure->function()); classLayout && !ClassTable::isDefinedByClass(*classLayout)) {
+            DeferGCForAWhile deferGC(vm);
+            classes.classPrototypeOfInstances(vm, *classLayout);
+        }
         OPERATION_RETURN(scope, prototype);
     }
     JSValue prototype = target->get(globalObject, vm.propertyNames->prototype);

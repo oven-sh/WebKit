@@ -823,9 +823,11 @@ struct FieldResults {
                 bool isStoredBeforeObjectsLeak = true;
                 bool inheritsNothing = build.isEnabled(FlowResultKind::OwnNames, index);
                 bool isFirst = true;
+                uint8_t dataForms = 0;
                 forEachLayoutBelow(LayoutID(index), [&](LayoutID below) {
                     if (!hasObjects(below))
                         return;
+                    dataForms |= stores.dataFormsDefinedUnder(below, key);
                     ValueSetID above;
                     inheritsNothing = inheritsNothing && inheritsNothingUnder(maker, below, above, key);
                     possible.add(stores.getsCopiedProperties(below) ? allObjectMutations : possibleMutationsOf(below));
@@ -836,6 +838,8 @@ struct FieldResults {
                 noteWhatNeverHappens(field.flow, index, possible, !sets.isEmpty(stored), isStoredBeforeObjectsLeak);
                 if (inheritsNothing)
                     field.flow.prototypeName = PrototypeNameState::AbsentOnPrototypes;
+                if (!field.accessor.isAccessor())
+                    field.dataForm = DataForms::onlyFormIn(dataForms);
                 application.layouts[index].appendedFields.append(WTF::move(field));
                 contents.storedInAppendedFields[index].append(stored);
             }

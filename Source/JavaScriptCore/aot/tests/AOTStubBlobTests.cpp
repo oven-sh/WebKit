@@ -468,7 +468,7 @@ static void testMissingKeys()
     }
 
     AOT_TEST_CHECK(!exists(StubKey(StubFamily::StepGenerator).withForm(4)));
-    AOT_TEST_CHECK(!exists(StubKey(StubFamily::AwaitBySavingFrame).withForm(3)));
+    AOT_TEST_CHECK(!exists(StubKey(StubFamily::AwaitBySavingFrame).withForm(4)));
     AOT_TEST_CHECK(!exists(StubKey(StubFamily::StepAsyncGenerator).withForm(4)));
     AOT_TEST_CHECK(!exists(StubKey(StubFamily::NewGenerator).withForm(2)));
     AOT_TEST_CHECK(!exists(callHostFunctionWithoutBoxedCall(BoxedCallEntry::maxArgumentCount).withCount(BoxedCallEntry::maxArgumentCount + 1)));
@@ -630,6 +630,7 @@ static void checkCoroutineOperations(const StubCatalog& catalog)
     AOT_TEST_CHECK(operationsCalled == entrySetOf({ Entry::operationAOTNewPromise, Entry::operationAOTSaveFrameAndAwait, Entry::operationAOTSaveFrameAndAwaitCall, Entry::operationAOTAwaitWithSavedFrame, Entry::operationAOTAwaitCallWithSavedFrame, Entry::operationAOTResolvePromiseOrReturnResult }));
 
     AOT_TEST_CHECK(operationsCalledBy(catalog, awaitBySavingFrame(AwaitedOperand::ValueAfterTurn)) == entrySetOf({ Entry::operationAOTSaveFrameAndAwaitAfterTurn, Entry::operationAOTAwaitWithSavedFrameAfterTurn }));
+    AOT_TEST_CHECK(operationsCalledBy(catalog, awaitBySavingFrame(AwaitedOperand::ValueInModuleBody)) == entrySetOf({ Entry::operationAOTSaveFrameAndAwaitInModuleBody, Entry::operationAOTAwaitWithSavedFrameInModuleBody }));
     for (StepConsumer consumer : stepConsumers)
         AOT_TEST_CHECK(operationsCalledBy(catalog, stepAsyncGenerator(consumer)).isEmpty());
     AOT_TEST_CHECK(operationsCalledBy(catalog, runAsyncGeneratorStep()) == entrySetOf({ Entry::operationAOTAsyncIteratorStep, Entry::operationAOTFinishAsyncIteratorStep }));

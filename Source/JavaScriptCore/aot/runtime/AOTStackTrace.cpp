@@ -717,9 +717,11 @@ void appendSuspendedAsyncFunction(VM& vm, JSCell*, WTF::Vector<StackFrame>& resu
 JSCell* appendDirectAsyncCallers(VM& vm, JSCell*, WTF::Vector<StackFrame>& results, JSCell* coroutine, size_t maxStackSize)
 {
     constexpr uint16_t mask = JSPromise::stateMask | JSPromise::inlineReactionKindMask | JSPromise::inlineReactionMicrotaskMask;
-    constexpr uint16_t isAwaitedByCompiledCode = static_cast<uint16_t>(JSPromise::Status::Pending)
-        | static_cast<uint16_t>(JSPromise::InlineReactionKind::InternalMicrotask) << JSPromise::inlineReactionKindShift
-        | static_cast<uint16_t>(InternalMicrotask::CompiledAsyncFunctionResume) << JSPromise::inlineReactionMicrotaskShift;
+    constexpr auto isAwaitedWith = [](InternalMicrotask task) {
+        return static_cast<uint16_t>(static_cast<uint16_t>(JSPromise::Status::Pending)
+            | static_cast<uint16_t>(JSPromise::InlineReactionKind::InternalMicrotask) << JSPromise::inlineReactionKindShift
+            | static_cast<uint16_t>(task) << JSPromise::inlineReactionMicrotaskShift);
+    };
     SuspendedAsyncFunction current = findSuspendedAsyncFunction(coroutine);
     if (!current.coroutine)
         return coroutine;
@@ -729,7 +731,8 @@ JSCell* appendDirectAsyncCallers(VM& vm, JSCell*, WTF::Vector<StackFrame>& resul
             if (!current.promise)
                 return nullptr;
             uint16_t flags = current.promise->flags();
-            if ((flags & mask) != isAwaitedByCompiledCode || results.size() >= maxStackSize) {
+            bool isAwaitedByCompiledCode = (flags & mask) == isAwaitedWith(InternalMicrotask::CompiledAsyncFunctionResume) || (flags & mask) == isAwaitedWith(InternalMicrotask::CompiledModuleBodyResume);
+            if (!isAwaitedByCompiledCode || results.size() >= maxStackSize) {
                 bool hasNoAwaiters = (flags & JSPromise::stateMask) != static_cast<uint16_t>(JSPromise::Status::Pending) || (!(flags & JSPromise::inlineReactionKindMask) && !current.promise->payloadCell());
                 return hasNoAwaiters ? nullptr : current.coroutine;
             }

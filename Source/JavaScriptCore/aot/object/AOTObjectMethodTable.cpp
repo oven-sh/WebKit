@@ -454,7 +454,7 @@ void Object::setIntegrity(JSGlobalObject* globalObject, Integrity integrity)
         bits |= orderWordIsSealed;
     if (integrity == Integrity::Frozen)
         bits |= orderWordIsFrozen;
-    if ((orderWord() & bits) == bits)
+    if ((orderWord() & bits) == bits && testIntegrity(vm, integrity))
         return;
     validateMutation(vm, *this, ObjectMutation::ChangeIntegrity);
     bool interceptedIndexedAccesses = interceptsIndexedAccesses(*this);
@@ -474,17 +474,21 @@ bool Object::testIntegrity(VM& vm, Integrity integrity) const
     if (integrity == Integrity::NotExtensible)
         return true;
     bool testsFrozen = integrity == Integrity::Frozen;
-    if (testsFrozen ? isFrozen() : isSealed())
+    auto fieldsHaveIntegrity = [&] {
+        for (const FieldData& field : layout().fields()) {
+            if (field.isPrivate() || !read(field))
+                continue;
+            unsigned attributes = attributesOf(field);
+            if (!(attributes & PropertyAttribute::DontDelete))
+                return false;
+            if (testsFrozen && !field.isAccessor() && !(attributes & PropertyAttribute::ReadOnly))
+                return false;
+        }
         return true;
-    for (const FieldData& field : layout().fields()) {
-        if (field.isPrivate() || !read(field))
-            continue;
-        unsigned attributes = attributesOf(field);
-        if (!(attributes & PropertyAttribute::DontDelete))
-            return false;
-        if (testsFrozen && !field.isAccessor() && !(attributes & PropertyAttribute::ReadOnly))
-            return false;
-    }
+    };
+    // The bits speak for the fields alone: native code may define an extra property on an object that is closed.
+    if (!(testsFrozen ? isFrozen() : isSealed()) && !fieldsHaveIntegrity())
+        return false;
     JSObject* extra = extraProperties();
     if (!extra)
         return true;
@@ -688,6 +692,9 @@ static bool ordinarySet(JSGlobalObject* globalObject, Object* object, PropertyNa
             if (isIntercepted)
                 return isStored;
         }
+        // The words of JSObject::putByIndex().
+        if (index && object->isNotExtensible())
+            return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
         ownDescriptor = PropertyDescriptor(jsUndefined(), static_cast<unsigned>(PropertyAttribute::None));
     }
     bool isWritableAboveReceiver = slot.thisValue() != JSValue(object) && ownDescriptor.isDataDescriptor() && ownDescriptor.writable();

@@ -147,8 +147,8 @@ runtime RejectPromise : void (JSCell* promise, EncodedJSValue reason) ; reads(al
 runtime RejectWithException : JSCell* (uint64_t frame) ; unknownCode
 runtime NewGenerator : JSCell* (EncodedJSValue closure, uint32_t isAsync) ; reads(all) writes(AllocatorState, RuntimeState) collects
 runtime TakeGeneratorPrototype : void (JSCell* generator, EncodedJSValue closure) ; reads(all) writes(PrototypeLinks, ShapeWords, AllocatorState, RuntimeState) collects
-runtime SaveFrameAndAwait, SaveFrameAndAwaitCall, SaveFrameAndAwaitAfterTurn : JSCell* (EncodedJSValue awaited, uint64_t* frame, const uint64_t* bottom, void* resumeAddress, const uint64_t* suspensionWords) ; unknownCode suspends
-runtime AwaitWithSavedFrame, AwaitCallWithSavedFrame, AwaitWithSavedFrameAfterTurn : JSCell* (EncodedJSValue awaited, JSCell* savedFrame) ; unknownCode suspends
+runtime SaveFrameAndAwait, SaveFrameAndAwaitCall, SaveFrameAndAwaitAfterTurn, SaveFrameAndAwaitInModuleBody : JSCell* (EncodedJSValue awaited, uint64_t* frame, const uint64_t* bottom, void* resumeAddress, const uint64_t* suspensionWords) ; unknownCode suspends
+runtime AwaitWithSavedFrame, AwaitCallWithSavedFrame, AwaitWithSavedFrameAfterTurn, AwaitWithSavedFrameInModuleBody : JSCell* (EncodedJSValue awaited, JSCell* savedFrame) ; unknownCode suspends
 runtime SaveFrameAndYield : JSCell* (JSCell* generator, uint64_t* frame, const uint64_t* bottom, void* resumeAddress, const uint64_t* suspensionWords) ; unknownCode suspends
 runtime AsyncIteratorStep : EncodedJSValue (JSCell* iterator, EncodedJSValue sent) ; unknownCode
 runtime FinishAsyncIteratorStep : EncodedJSValue (JSCell* generator, EncodedJSValue returned, uint32_t consumerMayContinue) ; unknownCode

@@ -506,6 +506,7 @@ StubSignature signatureOfAwaitBySavingFrame(StubKey key)
     switch (static_cast<AwaitedOperand>(key.form())) {
     case AwaitedOperand::Value:
     case AwaitedOperand::ValueAfterTurn:
+    case AwaitedOperand::ValueInModuleBody:
         return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::T9) });
     case AwaitedOperand::ResultOfCallWithoutPromise:
         return StubSignature::withGPRResult({ gprOf(StubRegister::R0), gprOf(StubRegister::T9) });
@@ -530,6 +531,8 @@ static AwaitOperations operationsOf(AwaitedOperand form)
         return { Entry::operationAOTSaveFrameAndAwaitCall, Entry::operationAOTAwaitCallWithSavedFrame };
     case AwaitedOperand::ValueAfterTurn:
         return { Entry::operationAOTSaveFrameAndAwaitAfterTurn, Entry::operationAOTAwaitWithSavedFrameAfterTurn };
+    case AwaitedOperand::ValueInModuleBody:
+        return { Entry::operationAOTSaveFrameAndAwaitInModuleBody, Entry::operationAOTAwaitWithSavedFrameInModuleBody };
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -547,6 +550,7 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
 {
     const auto form = static_cast<AwaitedOperand>(jit.key().form());
     const bool awaitsCallWithoutPromise = form == AwaitedOperand::ResultOfCallWithoutPromise;
+    const bool queuesJobInOperation = form == AwaitedOperand::ValueAfterTurn || form == AwaitedOperand::ValueInModuleBody;
     const AwaitOperations operations = operationsOf(form);
     const GPRReg result = jit.result();
     const GPRReg awaited = awaitsCallWithoutPromise ? jit.allocateScratch(StubRegister::A1) : jit.operand(0);
@@ -563,7 +567,8 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
     JumpList isOtherObject;
     if (awaitsCallWithoutPromise)
         jit.move(result, awaited);
-    emitBranchUnlessFrameMayContinue(jit, registers, mustSuspend);
+    if (form != AwaitedOperand::ValueInModuleBody)
+        emitBranchUnlessFrameMayContinue(jit, registers, mustSuspend);
     switch (form) {
     case AwaitedOperand::Value:
         jit.move(awaited, result);
@@ -579,6 +584,10 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
         emitBranchIfMayBeThenable(jit, awaited, word, other, mustSuspend);
         jit.move(awaited, result);
         jit.returnToCaller();
+        break;
+    case AwaitedOperand::ValueInModuleBody:
+        // A require() of the module runs the job itself, so the engine decides which queue takes it.
+        mustSuspend.append(jit.jump());
         break;
     }
 
@@ -610,7 +619,7 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
     emitSaveFrame(jit, { awaited, savedFrame, count, word, other, second }, siteWord, 0);
 
     JumpList needsOperation;
-    if (form != AwaitedOperand::ValueAfterTurn) {
+    if (!queuesJobInOperation) {
         JumpList isResumedByJob;
         JumpList isResumedByOthers;
         JumpList isOtherObjectInSavedFrame;
