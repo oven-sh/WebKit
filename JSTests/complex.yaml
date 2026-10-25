@@ -121,7 +121,7 @@
 - path: complex/date-parse-with-narrow-no-break-space.js
   cmd: runComplexTest [], [], "TZ=America/Los_Angeles"
 
-- path: complex/stack-bounds-large-environment.js
+- path: complex/bun-stack-bounds-large-environment.js
   cmd: |
       # Bun: the fork's own test. Run as a command, glibc's loader points AT_EXECFN to argv[0], which is below the environment.
       loader = { "x86_64" => "/lib64/ld-linux-x86-64.so.2", "arm64" => "/lib/ld-linux-aarch64.so.1" }[$architecture]

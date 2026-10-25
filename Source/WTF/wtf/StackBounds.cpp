@@ -159,11 +159,14 @@ static void* endOfMainThreadStack()
     if (!path || environment < currentStackPointer() || path < environment || static_cast<size_t>(path - environment) > 8 * MB)
         return nullptr;
     // glibc's ld.so, run as a command, and PRoot point AT_EXECFN to argv[0], the lowest of the program's strings. The last of the environment is then the closest to the end.
+    // execve() packs the strings. One that does not start where the previous one ends is from setenv() or putenv() and can lie anywhere.
     auto* lastString = path;
+    auto* previous = path;
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     for (char** variable = environ; *variable; ++variable) {
-        if (*variable > lastString && static_cast<size_t>(*variable - environment) <= 8 * MB)
+        if (*variable > lastString && *variable == previous + strlen(previous) + 1)
             lastString = *variable;
+        previous = *variable;
     }
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     uintptr_t pageSize = static_cast<uintptr_t>(sysconf(_SC_PAGESIZE));
