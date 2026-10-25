@@ -44,8 +44,6 @@ struct FlowAppendedField {
     FlowPositionUpdate position;
     FieldFlow flow;
     FlowAccessorField accessor;
-    // The attributes that every definition of a data property gives it.
-    OptionSet<FieldForm> dataForm;
 };
 
 struct FlowLayoutUpdate {
