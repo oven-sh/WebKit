@@ -207,7 +207,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (data(root).kind == ModuleKind::CommonJs)
-        RELEASE_AND_RETURN(scope, evaluateCommonJS(root));
+        RELEASE_AND_RETURN(scope, evaluateCommonJSForLoader(root));
 
     if (!data(root).hasExportTable()) {
         ModuleRecord* record = recordIfExists(root);
@@ -583,6 +583,73 @@ void Modules::evaluateModuleInRecord(ModuleID module)
         evaluateWithOwnStack(module);
 }
 
+// `bun run` runs an imported CommonJS file while it loads the graph of the importer. No ES module of that graph has begun by then, so a require() in the file that leads back to one evaluates it there and then.
+bool Modules::evaluateImportedCommonJSFiles(ModuleID root)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // The body of a module that evaluates itself calls the files before it begins.
+    if (data(root).kind != ModuleKind::SourceText || data(root).evaluatesItself() || (status(root) != ModuleStatus::Unlinked && status(root) != ModuleStatus::Linked))
+        return false;
+
+    bool didRunFile = false;
+    // The files stand in front of everything else that the root requests.
+    for (const ModuleRequestData& request : m_table.imports(root)) {
+        ModuleID imported = request.targetModule();
+        if (request.isDeferred || (data(imported).kind != ModuleKind::CommonJs && !m_table.fileBehindFace(imported)))
+            break;
+        ModuleStatus statusAtStart = status(imported);
+        if (statusAtStart != ModuleStatus::Unlinked && statusAtStart != ModuleStatus::Linked && statusAtStart != ModuleStatus::Failed)
+            continue;
+        didRunFile |= statusAtStart != ModuleStatus::Failed;
+        evaluateModuleInRecord(imported);
+        Exception* exception = scope.exception();
+        if (!exception) [[likely]]
+            continue;
+        // A graph that the file required has imported the file back and bound what it had exported by then. The loader has the file from then on, and nobody waits for its end.
+        if (statusAtStart == ModuleStatus::Failed || vm.isTerminationException(exception) || !wasImportedWhileItRan(m_table.fileBehindFace(imported).value_or(imported)))
+            return didRunFile;
+        TRY_CLEAR_EXCEPTION(scope, didRunFile);
+        if (status(imported) != ModuleStatus::Failed)
+            continue;
+        recordIfExists(imported)->setEvaluationError(vm, JSValue());
+        setStatus(imported, ModuleStatus::Evaluated);
+    }
+    return didRunFile;
+}
+
+// Of a file whose body has just thrown. The file ran in front of every ES module that imports it, so one that has begun was loaded by the file itself.
+bool Modules::wasImportedWhileItRan(ModuleID file) const
+{
+    for (unsigned index = 0; index < m_table.size(); ++index) {
+        ModuleID importer(index);
+        if (data(importer).kind != ModuleKind::SourceText || status(importer) <= ModuleStatus::Linked)
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(importer)) {
+            if (request.targetModule() == file || m_table.fileBehindFace(request.targetModule()) == file)
+                return true;
+        }
+    }
+    return false;
+}
+
+// For an entry point, as for an imported file: see evaluateImportedCommonJSFiles().
+void Modules::evaluateCommonJSForLoader(ModuleID file)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    evaluateCommonJS(file);
+    Exception* exception = scope.exception();
+    if (!exception || vm.isTerminationException(exception) || !wasImportedWhileItRan(file)) [[likely]]
+        return;
+    TRY_CLEAR_EXCEPTION(scope, void());
+    if (status(file) != ModuleStatus::Failed)
+        return;
+    recordIfExists(file)->setEvaluationError(vm, JSValue());
+    setStatus(file, ModuleStatus::Evaluated);
+}
+
 void Modules::evaluateWithOwnStack(ModuleID root)
 {
     VM& vm = *m_instance.vm;
@@ -611,6 +678,8 @@ JSPromise* Modules::evaluate(ModuleID root, std::optional<int64_t> referrerAsync
     const ModuleData& moduleData = data(root);
     ASSERT(status(root) != ModuleStatus::Evaluating);
 
+    evaluateImportedCommonJSFiles(root);
+    RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     if (status(root) == ModuleStatus::Failed)
         throwEvaluationError(root);
     else if (linkWalk)
@@ -618,7 +687,7 @@ JSPromise* Modules::evaluate(ModuleID root, std::optional<int64_t> referrerAsync
     else
         link(root);
     if (!scope.exception() && moduleData.kind == ModuleKind::CommonJs)
-        evaluateCommonJS(root);
+        evaluateCommonJSForLoader(root);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
 
     if (moduleData.hasExportTable() && (recordIfExists(root) || (moduleData.needsEvaluation() && !(moduleData.isSimple() && moduleData.isSynchronous()) && !moduleData.evaluatesItself())))
@@ -759,6 +828,12 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     }
     if (isPassedOverByEvaluationInProgress(module))
         return;
+
+    evaluateImportedCommonJSFiles(module);
+    RETURN_IF_EXCEPTION(scope, void());
+    // One of the files may have required the module.
+    if (status(module) != statusAtStart)
+        RELEASE_AND_RETURN(scope, evaluateSynchronously(module, reason));
 
     JSPromise* promise = nullptr;
     if (statusAtStart == ModuleStatus::Unlinked && moduleData.reachesUncompiledCode()) {

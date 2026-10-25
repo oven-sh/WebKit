@@ -77,6 +77,9 @@ enum class BuiltinLookupFailure : uint8_t {
     IsPerModule,
 };
 
+// No program can name a member of such a group.
+bool groupsFunctionsOfCompiledCode(BuiltinID);
+
 JS_EXPORT_PRIVATE std::expected<JSCell*, BuiltinLookupFailure> findInRealm(JSGlobalObject*, BuiltinCellKey);
 std::expected<JSCell*, BuiltinLookupFailure> makeMemberOfStaticTable(JSGlobalObject*, BuiltinCellKey, JSObject* holder);
 JS_EXPORT_PRIVATE std::expected<JSCell*, BuiltinLookupFailure> findInHolder(JSGlobalObject*, BuiltinCellKey, JSObject* holder);

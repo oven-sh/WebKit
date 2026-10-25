@@ -596,10 +596,11 @@ Boxed BuiltinCallEmitter::callDirectFunction(const ValueContext& value, uint32_t
     DirectOperands operands = directOperandsOf(value, BuiltinBindings::directFunctionAt(number));
     const BuiltinOverload& overload = m_builtins.at(value->overload());
     // An error that the function makes lists the function in its stack, so the function needs a frame of its own.
-    bool makesErrors = !generator().validates() && value->receiverOperand() && overload.throws() && !overload.onlyPropagatesErrors() && operands.words.size() <= directCalleeArgumentIndex && BuiltinCellKey::object(overload.builtin).hasCell(m_builtins);
+    bool hasFunctionObject = BuiltinCellKey::object(overload.builtin).hasCell(m_builtins) && !groupsFunctionsOfCompiledCode(m_builtins.at(overload.builtin).holder);
+    bool makesErrors = !generator().validates() && overload.throws() && !overload.onlyPropagatesErrors() && RuntimeCallEmitter::leavesRegistersForHostFrame(operands.words.span()) && hasFunctionObject;
     std::optional<RuntimeCallEmitter::HostFrameOfDirectCall> hostFrame;
     if (operands.takesFrame || makesErrors)
-        hostFrame = RuntimeCallEmitter::HostFrameOfDirectCall { boxedOperand(value, value->receiverOperand()).value(), calleeOf(value, overload).value() };
+        hostFrame = RuntimeCallEmitter::HostFrameOfDirectCall { (value->receiverOperand() ? boxedOperand(value, value->receiverOperand()) : undefined()).value(), calleeOf(value, overload).value() };
     return Boxed(emitter<RuntimeCallEmitter>().callDirectFunction(value, number, operands.words.span(), operands.keptAlive.span(), hostFrame));
 }
 

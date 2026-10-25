@@ -33,6 +33,8 @@ public:
     }
 
     bool endsItsTailCalls(FunctionID function) const { return function.index() < m_endsItsTailCalls.size() && m_endsItsTailCalls.quickGet(function.index()); }
+    // A call by value enters the function through one of its entrypoints, which has tail calls of its own.
+    bool endsItsTailCallsWhenCalledByValue(FunctionID function) const { return function.index() < m_endsItsTailCallsWhenCalledByValue.size() && m_endsItsTailCallsWhenCalledByValue.quickGet(function.index()); }
 
     bool isOlderThan(FunctionID function) const { return function.index() >= m_numberOfFunctions; }
 
@@ -43,6 +45,7 @@ private:
 
     Vector<uint32_t> m_words;
     BitVector m_endsItsTailCalls;
+    BitVector m_endsItsTailCallsWhenCalledByValue;
     uint32_t m_numberOfFunctions { std::numeric_limits<uint32_t>::max() };
 };
 

@@ -74,7 +74,7 @@ std::optional<BuiltinCellKey> BuiltinCellKey::decode(uint32_t bits, const Builti
     return std::nullopt;
 }
 
-static bool groupsFunctionsOfCompiledCode(BuiltinID id)
+bool groupsFunctionsOfCompiledCode(BuiltinID id)
 {
     return id == Builtins::CompilerHelpers || id == Builtins::JSONText || id == Builtins::PrivateGlobals;
 }

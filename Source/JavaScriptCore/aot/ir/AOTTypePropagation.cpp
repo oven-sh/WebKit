@@ -595,15 +595,19 @@ TypeID TypePropagation::joinIntoParameter(const TypingContext& context, ValueID 
         return known;
 
     TypeArena& types = context.types;
+    bool wasRestarted = parameter.index() < m_isRemembered.size() && isRemembered(parameter);
+    TypeID before = wasRestarted ? m_statesBeforeRestart[parameter.index()].type : context.function.at(parameter).type;
+    // An answer that a limit decided belongs to this parameter alone.
     bool didWiden = false;
+    bool didKeepListsOfTypeBefore = false;
     TypeID joined = types.sharedAnswer(SharedAnswers::AboutProgram, TypeArena::sharedKeyOf(SharedTypeMemo::Relation::Join, current, incoming), [&] {
-        WideningContext widening { context.program, types, m_inputs.build, m_inputs.analyses.subject(parameter), &didWiden };
+        WideningContext widening { context.program, types, m_inputs.build, m_inputs.analyses.subject(parameter), &didWiden, before ? &types.at(before) : nullptr, &didKeepListsOfTypeBefore };
         TypeID computed = types.intern(types.at(current).unionWideningWith(types.at(incoming), widening));
-        if (didWiden)
+        if (didWiden || didKeepListsOfTypeBefore)
             types.markCurrentAnswersUnshareable();
         return computed;
     });
-    if (!didWiden)
+    if (!didWiden && !didKeepListsOfTypeBefore)
         context.memo->joins.add(key, joined);
     return joined;
 }

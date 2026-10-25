@@ -875,7 +875,8 @@ void FramePlanner::checkReturnCalls()
             if (!answer) {
                 CalleeList callees = calleesOfCall(m_program, call);
                 answer = m_flow && callees.isComplete && callees.builtins.isEmpty() && std::ranges::all_of(callees.functions, [&](FunctionID callee) {
-                    return m_flow->frameArrayParameters().endsItsTailCalls(callee);
+                    const FrameArrayParameters& table = m_flow->frameArrayParameters();
+                    return call.opcode == Opcode::CallDirect ? table.endsItsTailCalls(callee) : table.endsItsTailCallsWhenCalledByValue(callee);
                 });
             }
             return *answer;

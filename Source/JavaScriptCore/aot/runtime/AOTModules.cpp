@@ -682,6 +682,14 @@ void Modules::continueImport(JSPromise* importPromise, ModuleID module, std::opt
         return;
     }
 
+    if (m_importThatWaitsForQueuedJobs == importPromise) {
+        if (!vm.defaultMicrotaskQueue().isEmpty()) {
+            queueImportJob(m_instance.globalObject, importPromise, module, referrerAsyncOrder);
+            return;
+        }
+        m_importThatWaitsForQueuedJobs = nullptr;
+    }
+
     std::unique_ptr<ModuleLinkWalk> linkWalk = std::exchange(m_linkWalkOfQueuedImport, nullptr);
     if (!linkWalk || linkWalk->root() != module)
         linkWalk = makeUnique<ModuleLinkWalk>(*this, module);
@@ -690,7 +698,15 @@ void Modules::continueImport(JSPromise* importPromise, ModuleID module, std::opt
         importPromise->rejectWithCaughtException(vm, scope);
         return;
     }
-    if (didRunModule) {
+    // The loader links and evaluates a graph in a later job than the ones that load it, and the jobs that a file of the graph has queued run in between.
+    bool didRunFile = !didRunModule && evaluateImportedCommonJSFiles(module);
+    if (scope.exception()) [[unlikely]] {
+        importPromise->rejectWithCaughtException(vm, scope);
+        return;
+    }
+    if (didRunFile)
+        m_importThatWaitsForQueuedJobs = importPromise;
+    if (didRunModule || didRunFile) {
         m_linkWalkOfQueuedImport = WTF::move(linkWalk);
         queueImportJob(m_instance.globalObject, importPromise, module, referrerAsyncOrder);
         return;
@@ -1157,7 +1173,13 @@ static Modules* modulesForEvaluation(JSGlobalObject* realm, ModuleID module)
 AbstractModuleRecord* moduleRecord(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesForEvaluation(realm, module);
-    return modules ? modules->exposeRecord(module) : nullptr;
+    if (!modules)
+        return nullptr;
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
+    // The loader asks for a module when it loads it.
+    modules->evaluateImportedCommonJSFiles(module);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_AND_RETURN(scope, modules->exposeRecord(module));
 }
 
 bool isCompiledModuleRecord(AbstractModuleRecord* record)

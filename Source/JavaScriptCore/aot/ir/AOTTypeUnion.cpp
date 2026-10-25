@@ -132,9 +132,21 @@ static bool liesInsideDeclaredFamily(const WideningContext& context, const Type&
 
 static bool widenGrownLists(Type& type, const Type& first, const Type& second, const WideningContext& context)
 {
+    std::optional<bool> liesInsideTypeBefore;
     auto exceeds = [&](LimitID limit, const Invocable<size_t(const Type&)> auto& sizeIn) {
         size_t size = sizeIn(type);
-        return size > std::max(sizeIn(first), sizeIn(second)) && context.build.exceeds(limit, size, context.subject);
+        if (size <= std::max(sizeIn(first), sizeIn(second)) || size <= context.build.limit(limit))
+            return false;
+        if (context.typeBefore && size <= sizeIn(*context.typeBefore)) {
+            if (!liesInsideTypeBefore)
+                liesInsideTypeBefore = type.isSubsetOf(*context.typeBefore, context.program);
+            if (*liesInsideTypeBefore) {
+                if (context.didKeepListsOfTypeBefore)
+                    *context.didKeepListsOfTypeBefore = true;
+                return false;
+            }
+        }
+        return context.build.exceeds(limit, size, context.subject);
     };
     auto sizeOf = [](auto Type::* list) {
         return [list](const Type& listed) -> size_t {

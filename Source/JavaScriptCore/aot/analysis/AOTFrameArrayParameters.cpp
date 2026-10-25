@@ -36,6 +36,11 @@ struct ScannedParameters {
     Vector<HandedOnArray> handedOn;
 };
 
+struct FunctionsThatEndTheirTailCalls {
+    BitVector calledDirectly;
+    BitVector calledByValue;
+};
+
 } // anonymous namespace
 
 static bool mayBeHandedArrays(const Function& function)
@@ -220,11 +225,16 @@ static void collectQuestions(const Program& program, BuildContext& build, const 
     }
 }
 
-static BitVector findFunctionsThatEndTheirTailCalls(const Program& program, const ParallelLoops& loops)
+static FunctionsThatEndTheirTailCalls findFunctionsThatEndTheirTailCalls(const Program& program, const ParallelLoops& loops)
 {
     struct TailCalls {
         FunctionID caller;
         Vector<FunctionID, 2> callees;
+        Vector<FunctionID, 2> calleesByValue;
+    };
+    struct Entrypoint {
+        FunctionID function;
+        FunctionID target;
     };
     unsigned numberOfFunctions = program.functions.size();
     Vector<uint8_t> neverEnds(FillWith { }, numberOfFunctions, 0);
@@ -233,14 +243,21 @@ static BitVector findFunctionsThatEndTheirTailCalls(const Program& program, cons
         TailCalls calls { FunctionID(index), { } };
         neverEnds[index] = !hasBody(program, FunctionID(index));
         forEachBlockEndingWith(program, FunctionID(index), { TerminatorKind::ReturnCall }, [&](BlockID block) {
-            CalleeList callees = calleesOfCall(program, function.at(function.at(block).terminator.callOperand()));
+            const Value& call = function.at(function.at(block).terminator.callOperand());
+            CalleeList callees = calleesOfCall(program, call);
             if (!callees.isComplete || !callees.builtins.isEmpty())
                 neverEnds[index] = true;
-            calls.callees.appendRange(callees.functions.begin(), callees.functions.end());
+            auto& list = call.opcode == Opcode::CallDirect ? calls.callees : calls.calleesByValue;
+            list.appendRange(callees.functions.begin(), callees.functions.end());
         });
-        if (!neverEnds[index] && !calls.callees.isEmpty())
+        if (!neverEnds[index] && (!calls.callees.isEmpty() || !calls.calleesByValue.isEmpty()))
             found.append(WTF::move(calls));
     });
+    Vector<Entrypoint> entrypoints;
+    for (unsigned index = 0; index < numberOfFunctions; ++index) {
+        if (const auto* record = program.functions[index].creator.tryAs<CreatorRecord::Entrypoint>())
+            entrypoints.append({ FunctionID(index), record->target });
+    }
 
     BitVector ends(numberOfFunctions);
     for (unsigned index = 0; index < numberOfFunctions; ++index) {
@@ -249,13 +266,21 @@ static BitVector findFunctionsThatEndTheirTailCalls(const Program& program, cons
     }
     for (const TailCalls& calls : tailCalls)
         ends.quickClear(calls.caller.index());
+    BitVector endsByValue;
     for (bool changed = true; changed;) {
         changed = false;
+        endsByValue = ends;
+        for (const Entrypoint& entrypoint : entrypoints) {
+            if (!ends.quickGet(entrypoint.function.index()))
+                endsByValue.quickClear(entrypoint.target.index());
+        }
         for (const TailCalls& calls : tailCalls) {
             if (ends.quickGet(calls.caller.index()))
                 continue;
             bool everyCalleeEnds = std::ranges::all_of(calls.callees, [&](FunctionID callee) {
                 return ends.quickGet(callee.index());
+            }) && std::ranges::all_of(calls.calleesByValue, [&](FunctionID callee) {
+                return endsByValue.quickGet(callee.index());
             });
             if (everyCalleeEnds) {
                 ends.quickSet(calls.caller.index());
@@ -263,7 +288,7 @@ static BitVector findFunctionsThatEndTheirTailCalls(const Program& program, cons
             }
         }
     }
-    return ends;
+    return { WTF::move(ends), WTF::move(endsByValue) };
 }
 
 FrameArrayParameters computeFrameArrayParameters(const Program& program, BuildContext& build)
@@ -272,7 +297,9 @@ FrameArrayParameters computeFrameArrayParameters(const Program& program, BuildCo
     unsigned numberOfFunctions = program.functions.size();
     FrameArrayParameters table;
     table.m_numberOfFunctions = numberOfFunctions;
-    table.m_endsItsTailCalls = findFunctionsThatEndTheirTailCalls(program, loops);
+    FunctionsThatEndTheirTailCalls ending = findFunctionsThatEndTheirTailCalls(program, loops);
+    table.m_endsItsTailCalls = WTF::move(ending.calledDirectly);
+    table.m_endsItsTailCallsWhenCalledByValue = WTF::move(ending.calledByValue);
     if (!build.limit(LimitID::MaxFrameArrayLength))
         return table;
 

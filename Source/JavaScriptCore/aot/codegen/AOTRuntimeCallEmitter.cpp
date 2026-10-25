@@ -518,6 +518,19 @@ StubCallResult RuntimeCallEmitter::callDirectFunctionReturningFields(const Opera
     return emitCall(&context, request);
 }
 
+// A double takes a register of its own kind.
+static size_t countGPRArguments(std::span<const LValue> arguments)
+{
+    return std::ranges::count_if(arguments, [](LValue argument) {
+        return argument->type() != B3::Double;
+    });
+}
+
+bool RuntimeCallEmitter::leavesRegistersForHostFrame(std::span<const LValue> arguments)
+{
+    return countGPRArguments(arguments) <= directCalleeArgumentIndex;
+}
+
 LValue RuntimeCallEmitter::callDirectFunction(const OperationContext& context, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive, std::optional<HostFrameOfDirectCall> hostFrame)
 {
     Effects effects = context.effects().onAnyEdge();
@@ -525,11 +538,12 @@ LValue RuntimeCallEmitter::callDirectFunction(const OperationContext& context, u
 
     Vector<LValue, 8> argumentsWithHostFrame;
     if (hostFrame && !isLeaf) {
-        RELEASE_ASSERT(arguments.size() <= directCalleeArgumentIndex);
+        RELEASE_ASSERT(leavesRegistersForHostFrame(arguments));
+        size_t numberOfGPRs = countGPRArguments(arguments);
         argumentsWithHostFrame.append(arguments);
-        while (argumentsWithHostFrame.size() < directThisArgumentIndex)
+        for (; numberOfGPRs < directThisArgumentIndex; ++numberOfGPRs)
             argumentsWithHostFrame.append(m_out.constIntPtr(0));
-        if (argumentsWithHostFrame.size() == directThisArgumentIndex)
+        if (numberOfGPRs == directThisArgumentIndex)
             argumentsWithHostFrame.append(hostFrame->thisValue);
         argumentsWithHostFrame.append(hostFrame->callee);
         arguments = argumentsWithHostFrame.span();

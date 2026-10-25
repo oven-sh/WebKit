@@ -54,6 +54,7 @@ public:
         LValue thisValue { nullptr };
         LValue callee { nullptr };
     };
+    static bool leavesRegistersForHostFrame(std::span<const LValue> arguments);
     LValue callDirectFunction(const OperationContext&, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive, std::optional<HostFrameOfDirectCall> = std::nullopt);
     // The function takes no realm, so it neither throws, allocates nor calls back, whatever the operation does around the call.
     StubCallResult callDirectFunctionReturningFields(const OperationContext&, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive);

@@ -61,12 +61,17 @@ struct RegExpLiteralInType {
     friend constexpr auto operator<=>(const RegExpLiteralInType&, const RegExpLiteralInType&) = default;
 };
 
+struct Type;
+
 struct WideningContext {
     const Program& program;
     TypeArena& types;
     BuildContext& build;
     Subject subject;
     bool* didWiden { nullptr };
+    // The type that the value had until now. A union inside it keeps each list that is no longer than that type's: the program holds one as long already.
+    const Type* typeBefore { nullptr };
+    bool* didKeepListsOfTypeBefore { nullptr };
 };
 
 struct Type {

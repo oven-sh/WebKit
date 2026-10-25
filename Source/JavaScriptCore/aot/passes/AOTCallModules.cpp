@@ -206,7 +206,7 @@ static bool isFaceOfCommonJSFile(const Program& program, const Module& module)
 }
 
 // The modules that have the property themselves or import, directly or not, a module that has it.
-static BitVector findModulesThatReach(const EvaluationPlan& plan, const StronglyConnectedComponents& components, bool (*hasProperty)(const Program&, const Module&))
+static BitVector findModulesThatReach(const EvaluationPlan& plan, const StronglyConnectedComponents& components, const Invocable<bool(const Program&, const Module&)> auto& hasProperty)
 {
     const Vector<uint32_t>& componentOf = components.componentOf;
 
@@ -226,6 +226,36 @@ static BitVector findModulesThatReach(const EvaluationPlan& plan, const Strongly
             reachingModules.quickSet(index);
     }
     return reachingModules;
+}
+
+// The CommonJS files, and their faces.
+static BitVector findFilesThatRequireModuleThatAwaits(const EvaluationPlan& plan, const StronglyConnectedComponents& components, const ParallelLoops& loops)
+{
+    const Program& program = plan.program;
+    BitVector files(program.modules.size());
+    bool someModuleAwaits = std::ranges::any_of(program.modules, [](const Module& module) {
+        return module.flags.contains(ModuleFlags::HasTopLevelAwait);
+    });
+    if (!someModuleAwaits)
+        return files;
+    BitVector awaits = findModulesThatReach(plan, components, [](const Program&, const Module& module) {
+        return module.flags.contains(ModuleFlags::HasTopLevelAwait);
+    });
+    Vector<uint32_t> referrers = collectInParallel<uint32_t>(loops, program.functions.size(), [&](unsigned index, Vector<uint32_t>& found) {
+        if (!mayListValueWith(program, FunctionID(index), OpcodeSet { Opcode::RequireModule }))
+            return;
+        for (const Value& value : program.functions[index].values) {
+            if (value.opcode == Opcode::RequireModule && awaits.quickGet(value.module().index()) && value.referrer())
+                found.append(value.referrer().index());
+        }
+    });
+    for (uint32_t referrer : referrers)
+        files.quickSet(referrer);
+    for (size_t index = 0; index < program.modules.size(); ++index) {
+        if (isFaceOfCommonJSFile(program, program.modules[index]) && files.quickGet(program.modules[index].requests[0].target.index()))
+            files.quickSet(index);
+    }
+    return files;
 }
 
 // Whoever fetches a namespace object evaluates nothing.
@@ -695,6 +725,16 @@ void callModules(ProgramEditor& editor, const FlowResults& flow, BuildContext& b
     });
     // A `require` of a module that needs the loader asks the loader where it stands. The module that holds it waits for nothing.
     BitVector needsLoader = findModulesThatReach(plan, components, needsLoaderItself);
+    // A `require` of a module that awaits throws. What becomes of the importers of a file that throws is the loader's to say.
+    if (BitVector requiresModuleThatAwaits = findFilesThatRequireModuleThatAwaits(plan, components, loops); !requiresModuleThatAwaits.isEmpty()) {
+        needsLoader = findModulesThatReach(plan, components, [&](const Program& program, const Module& module) {
+            return needsLoaderItself(program, module) || requiresModuleThatAwaits.quickGet(&module - program.modules.span().data());
+        });
+        for (size_t index = 0; index < modules.size(); ++index) {
+            if (modules[index].kind == ModuleKind::CommonJs)
+                needsLoader.quickClear(index);
+        }
+    }
     BitVector leadsToCode = findModulesThatReach(plan, components, runsCode);
     BitVector needsLink = findModulesThatReach(plan, components, hasLinkWorkItself);
 

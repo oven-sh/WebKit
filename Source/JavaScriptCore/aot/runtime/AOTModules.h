@@ -137,6 +137,10 @@ public:
     // The modules that compiled code begins to evaluate below the body fail with it.
     JSValue callBodyOfModuleEnteredByLoader(ModuleID module) { return callBodyUnderOwnMark(module, false); }
     void evaluateModuleInRecord(ModuleID);
+    // Says whether a file ran.
+    bool evaluateImportedCommonJSFiles(ModuleID root);
+    bool wasImportedWhileItRan(ModuleID file) const;
+    void evaluateCommonJSForLoader(ModuleID file);
     JSValue execute(ModuleID);
 
     JSValue require(ModuleID);
@@ -284,6 +288,8 @@ private:
     UncheckedKeyHashMap<ModuleID, std::unique_ptr<LoadedModule>> m_loaded;
     RememberedSlotSet m_storedReferences;
     std::unique_ptr<ModuleLinkWalk> m_linkWalkOfQueuedImport;
+    // Compared, never followed: its job holds the promise.
+    JSPromise* m_importThatWaitsForQueuedJobs { nullptr };
     const EvaluationInProgress* m_innermostEvaluation { nullptr };
     Structure* m_namespaceStructure { nullptr };
     Identifier m_moduleExportsName;
