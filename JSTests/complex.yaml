@@ -123,9 +123,9 @@
 
 - path: complex/stack-bounds-large-environment.js
   cmd: |
-      # Run as a command, glibc's loader points AT_EXECFN to argv[0], which is below the environment.
-      loader = ["/lib64/ld-linux-x86-64.so.2", "/lib/ld-linux-aarch64.so.1"].find { |path| File.exist?(path) }
-      if ($hostOS == "linux" && loader)
+      # Bun: the fork's own test. Run as a command, glibc's loader points AT_EXECFN to argv[0], which is below the environment.
+      loader = { "x86_64" => "/lib64/ld-linux-x86-64.so.2", "arm64" => "/lib/ld-linux-aarch64.so.1" }[$architecture]
+      if ($hostOS == "linux" && loader && File.exist?(loader))
           # The kernel caps one string at 128 KB.
           environment = (0...7).map { |i| "STACK_BOUNDS_PADDING_#{i}=" + "x" * 100000 }
           underStackLimit = ["sh", "-c", "ulimit -S -s 8192; exec \"$0\" \"$@\""]
