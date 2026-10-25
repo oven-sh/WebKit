@@ -21,7 +21,7 @@ namespace JSC { namespace AOT { namespace Typed {
 template<typename... Records>
 static constexpr bool areWordMultiples = (!(sizeof(Records) % sizeof(uint32_t)) && ...);
 
-static_assert(areWordMultiples<NewClassRequest, CloneAsRequest, TemplateObjectRequest, TemplateObjectRequest::Part, DirectEvalRequest, EvalBindingData, DataRequest, CollectionDataRequest>);
+static_assert(areWordMultiples<NewClassRequest, TemplateObjectRequest, TemplateObjectRequest::Part, DirectEvalRequest, EvalBindingData, DataRequest, CollectionDataRequest>);
 static_assert(!(offsetOfFirstRequest % sizeof(uint32_t)));
 
 uint32_t sizeInBytesOf(const Program& program, const RequestRecord& request)
@@ -29,9 +29,6 @@ uint32_t sizeInBytesOf(const Program& program, const RequestRecord& request)
     size_t size = WTF::switchOn(request,
         [](const NewClassRecord&) -> size_t {
             return sizeof(NewClassRequest);
-        },
-        [](const CloneAsRecord& record) -> size_t {
-            return sizeof(CloneAsRequest) + sizeof(uint32_t) * record.fields.size();
         },
         [](const TemplateObjectRecord& record) -> size_t {
             return sizeof(TemplateObjectRequest) + sizeof(TemplateObjectRequest::Part) * record.parts.size();
@@ -97,7 +94,6 @@ void collectStringConstantsOf(const Program& program, const RequestRecord& reque
 {
     WTF::switchOn(request,
         [](const NewClassRecord&) { },
-        [](const CloneAsRecord&) { },
         [&](const TemplateObjectRecord& record) {
             for (const TemplateString& part : record.parts) {
                 stringConstants.set(part.raw.index());
@@ -145,18 +141,6 @@ void collectStringConstantsOf(const Program&, const DataNode& root, BitVector& s
 static void encodeRequest(TableEncoder&, const NewClassRecord& record, std::span<uint8_t>& bytes)
 {
     consumeAndReinterpretCastTo<NewClassRequest>(bytes).classIndex = record.classLayout.index();
-}
-
-static void encodeRequest(TableEncoder& encoder, const CloneAsRecord& record, std::span<uint8_t>& bytes)
-{
-    auto& request = consumeAndReinterpretCastTo<CloneAsRequest>(bytes);
-    request.shape = record.shape;
-    request.count = static_cast<uint32_t>(record.fields.size());
-    for (FieldIndex field : record.fields) {
-        std::optional<uint16_t> index = encoder.slots.slot(record.layout, field).indexInLayoutRecord;
-        RELEASE_ASSERT(index);
-        consumeAndReinterpretCastTo<uint32_t>(bytes) = *index;
-    }
 }
 
 static void encodeRequest(TableEncoder& encoder, const TemplateObjectRecord& record, std::span<uint8_t>& bytes)

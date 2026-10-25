@@ -668,9 +668,15 @@ void applyFlowResults(Program& program, FlowResults& results, BuildContext& buil
 {
     RELEASE_ASSERT(program.form() == IRForm::AsRead);
     if (!results.hasResults()) {
+        // The host keeps every feature that it was not asked to remove.
+        BitVector removedBuiltins(program.builtins().builtinCount());
+        for (uint32_t index = 0; index < program.builtins().builtinCount(); ++index)
+            removedBuiltins.quickSet(index, isGuardedByRemovedFeature(program.builtins(), BuiltinID(index), build.options().removedFeatures));
+        program.setBuiltinsThatMayBeTrimmed(WTF::move(removedBuiltins));
         applyUnknownResults(program, build);
         return;
     }
+    program.setBuiltinsThatMayBeTrimmed(BitVector(results.builtinsThatMayBeTrimmed()));
     const FlowApplication* application = FlowApplyAccess::applicationOf(results);
     RELEASE_ASSERT(application);
     RELEASE_ASSERT(application->functionCountAsRead == program.functions.size());

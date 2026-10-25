@@ -196,13 +196,6 @@ struct NewClassRequest {
 };
 static_assert(sizeof(NewClassRequest) == 4 && isImageRecord<NewClassRequest>);
 
-struct CloneAsRequest {
-    uint32_t shape;
-    uint32_t count;
-    uint32_t fields[];
-};
-static_assert(sizeof(CloneAsRequest) == 8);
-
 struct TemplateObjectRequest {
     struct Part {
         uint32_t cookedPlusOne;

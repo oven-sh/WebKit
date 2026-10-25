@@ -16,17 +16,15 @@ function f1 name="serializerOfAnything" module=m0 role=Serializer parameters=[{t
 }
 function f2 name="parser" module=m0 role=Parser parameters=[{type=cursor}] results=[{type=int[0, 2]}] creator=Parser{type=string form=ParsedText} {
     v1 = Undefined
-    v2 = String string="key"
-    v3 = JSONObjectBegin layout=L0
-    v4 = JSONAddExtraMember v1, v2, v2, v3 layout=L0
-    v5 = Integer integer=0
-    Return v5
-}
-function f3 name="sameRowsWithoutTheRole" module=m0 results=[{type=int[0, 2]}] {
-    v0 = Undefined
-    v1 = String string="key"
     v2 = JSONObjectBegin layout=L0
-    v3 = JSONAddExtraMember v0, v1, v1, v2 layout=L0
+    v3 = JSONParseExtraMembers v0, v1, v2 layout=L0
+    v4 = Integer integer=0
+    Return v4
+}
+function f3 name="sameRowsWithoutTheRole" module=m0 parameters=[{type=cursor}] results=[{type=int[0, 2]}] capabilities=[HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+    v1 = Undefined
+    v2 = JSONObjectBegin layout=L0
+    v3 = JSONParseExtraMembers v0, v1, v2 layout=L0
     v4 = Integer integer=0
     Return v4
 }
@@ -34,7 +32,7 @@ function f4 name="caller" module=m0 parameters=[{type=object}, {type=stringbuild
     v3 = CallDirect v0, v1 function=f0
     v4 = CallDirect v0, v1 function=f1
     v5 = CallDirect v2 function=f2
-    v6 = CallDirect function=f3
+    v6 = CallDirect v2 function=f3
     Return
 }
 

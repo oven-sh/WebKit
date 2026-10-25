@@ -75,9 +75,6 @@ public:
     // The granule of the slot and those of the stores to the same object that the store leads to: an object that gets one late field tends to get them all.
     uint64_t granuleBitsOfStoresBehind(const ValueContext& store, const FieldAccess&);
 
-    // The address of what the read has read, for whoever wants the address: it follows from the address of the object that was read from.
-    std::optional<CellPointer> innerObjectReadBy(const OperationContext& conversion, ValueID read);
-
 private:
     bool flowNamesConstructorOrdersOf(LayoutSetID receivers) const;
     std::optional<RememberedKeyOrderStep> testRememberedKeyOrderStep(const ValueContext&, CellPointer);
@@ -102,9 +99,6 @@ private:
     Operand loadSlot(CellPointer, const FieldAccess&);
     Operand loadFilledSlot(const ValueContext&, CellPointer, const FieldAccess&);
     Operand loadSlotOrUndefined(const ValueContext&, CellPointer, const FieldAccess&);
-    CellPointer innerObjectOf(const OperationContext&, CellPointer, const FieldAccess&);
-    bool isTestedByAccess(ValueID object) const;
-    bool isOnlyBaseOfAccesses(ValueID);
     Operand readIfMemberHasField(const ValueContext&, CellPointer, const FieldAccess&, NOESCAPE const Invocable<Operand()> auto& read);
     Operand inResultRepresentation(const ValueContext&, Operand loaded);
     Operand undefinedResult(const ValueContext&);

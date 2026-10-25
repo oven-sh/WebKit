@@ -26,7 +26,7 @@ function f1 name="badShapeGuardWiderThanReceivers" parameters=[{type=object}] re
     Return
 }
 function f2 name="badGuardOfOtherProof" parameters=[{type=object}] results=[{type=anything}] {
-    v1 = IsPlainDataObject v0
+    v1 = IsNotFrozen v0
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
     v3 = GetSlotOrUndefined v0, v2 key="x" receivers=[L0] level=Proven

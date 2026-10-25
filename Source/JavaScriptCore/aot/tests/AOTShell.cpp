@@ -29,6 +29,7 @@
 #include "ScriptArguments.h"
 #include "Symbol.h"
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <optional>
 #include <stdio.h>
@@ -38,6 +39,7 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/Threading.h>
 #include <wtf/WTFProcess.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -63,12 +65,15 @@ static JSC_DECLARE_HOST_FUNCTION(functionRequire);
 static JSC_DECLARE_HOST_FUNCTION(functionSetRequireCacheEntry);
 static JSC_DECLARE_HOST_FUNCTION(functionOverrideRequire);
 static JSC_DECLARE_HOST_FUNCTION(functionStoreInSlotWithoutTest);
+static JSC_DECLARE_HOST_FUNCTION(functionLockCell);
+static JSC_DECLARE_HOST_FUNCTION(functionUnlockCell);
+static JSC_DECLARE_HOST_FUNCTION(functionCallWhileAnotherThreadLocksCell);
 static JSC_DECLARE_CUSTOM_GETTER(getExportsOfModuleObject);
 static JSC_DECLARE_CUSTOM_SETTER(setExportsOfModuleObject);
 static JSC_DECLARE_CUSTOM_GETTER(getParentOfModuleObject);
 static JSC_DECLARE_CUSTOM_GETTER(getChildrenOfModuleObject);
 
-static constexpr std::array<ASCIILiteral, 7> functionNames {
+static constexpr std::array<ASCIILiteral, 10> functionNames {
     "runCompiledEntryPoint"_s,
     "setRequireCacheEntry"_s,
     "overrideRequire"_s,
@@ -76,6 +81,9 @@ static constexpr std::array<ASCIILiteral, 7> functionNames {
     "aotRuntimeCounters"_s,
     "aotBuiltinEntries"_s,
     "storeInSlotWithoutTest"_s,
+    "lockCell"_s,
+    "unlockCell"_s,
+    "callWhileAnotherThreadLocksCell"_s,
 };
 
 struct MappedImage {
@@ -250,6 +258,49 @@ JSC_DEFINE_HOST_FUNCTION(functionStoreInSlotWithoutTest, (JSGlobalObject* global
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionLockCell, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!callFrame->argument(0).isCell())
+        return throwVMError(globalObject, scope, "Expected a cell"_s);
+    callFrame->argument(0).asCell()->cellLock().lock();
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionUnlockCell, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!callFrame->argument(0).isCell() || !callFrame->argument(0).asCell()->cellLock().isLocked())
+        return throwVMError(globalObject, scope, "Expected a locked cell"_s);
+    callFrame->argument(0).asCell()->cellLock().unlock();
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionCallWhileAnotherThreadLocksCell, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!callFrame->argument(0).isCell())
+        return throwVMError(globalObject, scope, "Expected a cell"_s);
+    JSCell* cell = callFrame->argument(0).asCell();
+    std::atomic<bool> isDone { false };
+    Ref<Thread> thread = Thread::create("Cell locker"_s, [&] {
+        constexpr unsigned turnsPerState = 64;
+        while (!isDone.load(std::memory_order_relaxed)) {
+            {
+                Locker locker { cell->cellLock() };
+                for (unsigned turn = 0; turn < turnsPerState && !isDone.load(std::memory_order_relaxed); ++turn) { }
+            }
+            for (unsigned turn = 0; turn < turnsPerState && !isDone.load(std::memory_order_relaxed); ++turn) { }
+        }
+    });
+    JSValue result = call(globalObject, callFrame->argument(1), jsUndefined(), ArgList { }, "Expected a function"_s);
+    isDone.store(true);
+    thread->waitForCompletion();
+    ensureStillAliveHere(cell);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(result);
+}
+
 // An image locks `console`, so no script can give the shell one that prints.
 class ConsoleOfShell final : public ConsoleClient {
     WTF_MAKE_TZONE_ALLOCATED(ConsoleOfShell);
@@ -312,6 +363,9 @@ void addShellFunctions(VM& vm, JSGlobalObject* globalObject)
         { functionAOTRuntimeCounters, 0 },
         { functionAOTBuiltinEntries, 0 },
         { functionStoreInSlotWithoutTest, 3 },
+        { functionLockCell, 1 },
+        { functionUnlockCell, 1 },
+        { functionCallWhileAnotherThreadLocksCell, 2 },
     };
     static_assert(std::size(functions) == functionNames.size());
 
@@ -410,9 +464,6 @@ static JSValue requireSpecifier(JSGlobalObject* globalObject, JSObject*, JSValue
     if (specifier.isString()) {
         if (std::optional<ModuleID> module = findModule(text))
             RELEASE_AND_RETURN(scope, requireModule(globalObject, *module));
-        // The exports of "bun" are the members of the global `Bun`, which the script that runs the image provides.
-        if (text == "bun"_s)
-            RELEASE_AND_RETURN(scope, globalObject->get(globalObject, Identifier::fromString(vm, "Bun"_s)));
     }
     throwException(globalObject, scope, createError(globalObject, makeString("Cannot find module '"_s, text, '\'')));
     return { };
@@ -514,10 +565,11 @@ static JSObject* captureSyntheticExports(JSGlobalObject* globalObject, Synthetic
     switch (rule) {
     case SyntheticExportRule::CommonJs:
     case SyntheticExportRule::CommonJsIgnoringAnnotation:
-    // Only "bun" gets here.
-    case SyntheticExportRule::RuntimeModule:
         scope.release();
         captureCommonJSExports(globalObject, rule, value, names, values);
+        return nullptr;
+    case SyntheticExportRule::RuntimeModule:
+        throwTypeError(globalObject, scope, "the shell has no runtime modules"_s);
         return nullptr;
     case SyntheticExportRule::None:
         break;

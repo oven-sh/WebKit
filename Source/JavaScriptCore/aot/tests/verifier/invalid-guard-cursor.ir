@@ -15,7 +15,7 @@ function f0 name="badGuardOnOtherCursor" role=Parser parameters=[{type=cursor}] 
     Return v0
 }
 function f1 name="badAdvanceUnderGuardOfSource" role=Parser parameters=[{type=cursor}, {type=anything}] results=[{type=cursor}] creator=Parser{type=anything} {
-    v2 = IsPlainDataObject v1
+    v2 = JSONSourceOpen v1
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):
     v4 = JSONAdvance v0, v3 string="true"
@@ -23,8 +23,8 @@ function f1 name="badAdvanceUnderGuardOfSource" role=Parser parameters=[{type=cu
   b2():
     Return v0
 }
-function f2 name="badStartUnderGuardOfOtherTest" parameters=[{type=anything}] results=[{type=undefined}] {
-    v1 = IsPlainDataObject v0
+function f2 name="badStartUnderGuardOfOtherTest" parameters=[{type=object}] results=[{type=undefined}] {
+    v1 = IsNotFrozen v0
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
     v3 = JSONSourceStart v2

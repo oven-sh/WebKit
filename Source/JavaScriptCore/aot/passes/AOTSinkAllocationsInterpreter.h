@@ -251,7 +251,7 @@ inline constexpr OpcodeSet interpretedListUses {
 
 inline constexpr OpcodeSet interpretedAllocations {
     Opcode::Data, Opcode::NewClosure, Opcode::NewObject, Opcode::NewArray, Opcode::NewRegExp, Opcode::CreateUnmappedArguments,
-    Opcode::CreateMappedArguments, Opcode::NewPromise, Opcode::CreateRest, Opcode::NewGenerator, Opcode::CloneAs,
+    Opcode::CreateMappedArguments, Opcode::NewPromise, Opcode::CreateRest, Opcode::NewGenerator,
     Opcode::Substring, Opcode::SubstringOrUndefined, Opcode::CallBuiltin,
 };
 

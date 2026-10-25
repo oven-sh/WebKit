@@ -684,6 +684,87 @@ static Vector<FlowBoundFunctionUse> findBoundFunctionsOnlyCalled(const ValueFlow
     return uses;
 }
 
+// Finds the calls of bind whose receiver was seen to be a closure of one function, and the calls that their results reach as the callee.
+static Vector<FlowBoundFunctionAtSite> findBoundFunctionsAtSites(const ValueFlowResultInputs& inputs, const FlowAccessSiteNumbering& accessSites)
+{
+    const Program& program = inputs.program;
+    const ValueFlowUniverse& universe = inputs.universe();
+    BuiltinID bindFunction = program.builtins().canonicalID(Builtins::FunctionPrototypeBind);
+    if (!inputs.solver().usesOf(bindFunction).contains(BuiltinUse::Called))
+        return { };
+
+    struct MadeByBind {
+        ValueFlowObjectID object;
+        FlowBoundFunctionAtSite made;
+    };
+    auto forEachCallIn = [&](unsigned index, NOESCAPE const Invocable<void(const ValueFlowStatement&)> auto& functor) {
+        if (!inputs.isReached(FunctionID(index)) || !inputs.build.isEnabled(FlowResultKind::CalleeSets, index))
+            return;
+        for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
+            if (statement.kind == ValueFlowStatementKind::Operation && statement.opcode == Opcode::Call)
+                functor(statement);
+        }
+    };
+    ValueFlowObjectID bind = universe.objectOf(bindFunction);
+    Vector<MadeByBind> made = collectInParallel<MadeByBind>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<MadeByBind>& found) {
+        forEachCallIn(index, [&](const ValueFlowStatement& statement) {
+            std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
+            if (!mayHold(inputs, operands[0], bind))
+                return;
+            BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
+            ValueSetMaker& maker = borrowedMaker.get();
+            ValueSetID targets = inputs.valueOf(maker, operands[1]);
+            ValueFlowObjectID result = universe.siteObject(statement);
+            if (!result || ValueSets::isComplement(targets))
+                return;
+            FunctionID onlyTarget;
+            bool hasSeveral = false;
+            inputs.sets().forEachMember(maker.intersect(targets, universe.closures()), [&](ValueFlowObjectID target) {
+                FunctionID function = universe.closureFunction(target);
+                hasSeveral |= onlyTarget && onlyTarget != function;
+                onlyTarget = function;
+            });
+            if (!onlyTarget || hasSeveral)
+                return;
+            uint32_t numberOfBoundArguments = operands.size() > 3 ? operands.size() - 3 : 0;
+            found.append({ result, { accessSites.siteOfValue(FunctionID(index), statement.site), FlowBoundFunctionUseAtSite::Made, onlyTarget, numberOfBoundArguments } });
+        });
+    });
+    if (made.isEmpty())
+        return { };
+
+    AOT::sort(made, { }, &MadeByBind::object);
+    Vector<ValueFlowObjectID> objects(made.size(), [&](size_t index) {
+        return made[index].object;
+    });
+    ValueSetID everyObject = BorrowedValueSetMaker(inputs.makerPool()).get().of(objects.span());
+    Vector<FlowBoundFunctionAtSite> result = collectInParallel<FlowBoundFunctionAtSite>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<FlowBoundFunctionAtSite>& found) {
+        forEachCallIn(index, [&](const ValueFlowStatement& statement) {
+            const ValueFlowOperand& operand = inputs.bodies().operandsOf(statement)[0];
+            if (!operand.node || !inputs.sets().meet(inputs.solver().valueOf(operand.node), everyObject))
+                return;
+            BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
+            ValueSetMaker& maker = borrowedMaker.get();
+            ValueSetID callees = inputs.valueOf(maker, operand);
+            // A call that may get anything would otherwise expect the program's one bound function.
+            if (ValueSets::isComplement(callees))
+                return;
+            AccessSiteID site = accessSites.siteOfValue(FunctionID(index), statement.site);
+            inputs.sets().forEachMember(maker.intersect(callees, everyObject), [&](ValueFlowObjectID callee) {
+                const MadeByBind* entry = std::ranges::lower_bound(made, callee, { }, &MadeByBind::object);
+                found.append({ site, FlowBoundFunctionUseAtSite::Called, entry->made.target, entry->made.numberOfBoundArguments });
+            });
+        });
+    });
+    for (const MadeByBind& entry : made)
+        result.append(entry.made);
+    AOT::sort(result, { }, [](const FlowBoundFunctionAtSite& bound) {
+        return std::tuple(bound.site, bound.use, bound.target, bound.numberOfBoundArguments);
+    });
+    result.shrink(std::ranges::unique(result).begin() - result.begin());
+    return result;
+}
+
 static Vector<Witness> findWitnessesOfEscapes(const ValueFlowResultInputs& inputs, ValueSetMaker& maker)
 {
     const ValueFlowSolver& solver = inputs.solver();
@@ -772,6 +853,7 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
     ValueSetID callablesLookedInto = findCallablesLookedInto(inputs, maker);
     times.didFinish("functions: callables looked into"_s);
     tables.functions.boundFunctionUses = findBoundFunctionsOnlyCalled(inputs, callablesLookedInto);
+    tables.sites.boundFunctionsAtSites = findBoundFunctionsAtSites(inputs, application.accessSites);
 
     BitVector isNamedByTable(numberOfFunctions);
     for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {

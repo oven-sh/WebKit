@@ -1,28 +1,17 @@
-# The parser of an object node tries the members in declared order, then in any order in a loop, and allocates the layout in the closing block
+# The parser of an object tries the members in declared order, then in any order in a loop, and allocates the layout in the closing block
 # FORM: Prepared optimizing
-# RUN: derived-functions ValidatingParser:x0.0 ValidatingParser:x1.0 ValidatingParser:x2.0 ValidatingParser:x3.0 ValidatingParser:x4.0 ValidatingParser:x5.0 ValidatingParser:x6.0 ValidatingParser:x7.0 ValidatingParser:x8.0 ValidatingParser:x9.0 ValidatingParser:x10.0
-# STATISTIC: ParsersCreated = 12
-# STATISTIC: ValidatorsCreated = 3
+# RUN: derived-functions Parser:g0 Parser:g1 Parser:g2
+# STATISTIC: ParsersCreated = 3
 
 module m0 path="main.js" displayPath="main.js"
-expectedresult x0 type=L0 layouts=[L0] validation=[{shape=Object{layout=L0 members=[{key="id" node=1 field=0}, {key="name" node=2 field=1}]} type=L0}, {shape=Primitive{primitive=Number} type=number}, {shape=Primitive{} type=string}]
-expectedresult x1 type=L1 layouts=[L1] validation=[{shape=Object{layout=L1 members=[{key="id" node=1 field=0 isOptional=true}]} type=L1}, {shape=Primitive{primitive=Number} type=number}]
-expectedresult x2 type=L2 layouts=[L2] validation=[{shape=Object{layout=L2 members=[{key="id" node=1 field=0}]} type=L2}, {shape=Primitive{primitive=Number} type=number rules=[DefaultNumber{value=7}]}]
-expectedresult x3 type=L2 layouts=[L2] validation=[{shape=Object{layout=L2 members=[{key="id" node=1 field=0}]} type=L2}, {shape=Primitive{primitive=Number} type=number rules=[DefaultString{value="x"}]}]
-expectedresult x4 type=L3 layouts=[L3] validation=[{shape=Object{layout=L3 members=[{key="id" node=1 field=0}]} type=L3}, {shape=Union{arms=[2, 3]} type=number|string}, {shape=Primitive{primitive=Number} type=number}, {shape=Primitive{} type=string rules=[DefaultString{value="x"}]}]
-expectedresult x5 type=L2 layouts=[L2] validation=[{shape=Object{layout=L2 members=[{key="id" node=1 field=0}]} type=L2}, {shape=Primitive{primitive=Number} type=number rules=[Minimum{bound=1}, DefaultNumber{value=7}]}]
-expectedresult x6 type=L4 layouts=[L4] validation=[{shape=Object{layout=L4 members=[{key="caf\u{e9}" node=1 field=0}]} type=L4}, {shape=Primitive{primitive=Number} type=number}]
-expectedresult x7 type=L2 layouts=[L2] validation=[{shape=Object{layout=L2 members=[{key="id" node=1 field=0}] undeclared=Rejected} type=L2}, {shape=Primitive{primitive=Number} type=number}]
-expectedresult x8 type=L2 layouts=[L2] validation=[{shape=Object{layout=L2 members=[{key="id" node=1 field=0}] undeclared=Validated undeclaredValue=2} type=L2}, {shape=Primitive{primitive=Number} type=number}, {shape=Primitive{} type=string}]
-expectedresult x9 type=object validation=[{shape=Object{members=[{key="id" node=1}]} type=object}, {shape=Primitive{primitive=Number} type=number}]
-expectedresult x10 type=L2 layouts=[L2] validation=[{shape=Object{layout=L2 members=[{key="id" node=1 field=0}, {key="200" node=1}]} type=L2}, {shape=Primitive{primitive=Number} type=number}]
 layout L0 name="User" fields=[{key="id" declared={type=number}}, {key="name" declared={type=string}}]
 layout L1 name="OptionalId" fields=[{key="id" declared={type=undefined|number}}]
-layout L2 name="Id" fields=[{key="id" declared={type=number}}]
-layout L3 name="NumberOrString" fields=[{key="id" declared={type=number|string}}]
-layout L4 name="KeyWithAccent" fields=[{key="caf\u{e9}" declared={type=number}}]
+layout L2 name="KeyWithAccent" fields=[{key="caf\u{e9}" declared={type=number}}]
+variable g0 name="user" declared={type=L0} initialization=Undefined
+variable g1 name="optionalId" declared={type=L1} initialization=Undefined
+variable g2 name="keyWithAccent" declared={type=L2} initialization=Undefined
 
-# CHECK-LABEL: form=ParsedText expectedResult=x0}
+# CHECK-LABEL: creator=Parser{type=L0 layout=L0 form=ParsedText}
 # CHECK-NEXT: b0(v0: cursor):
 # CHECK-NEXT: [[hasStack]]: boolean = JSONHasStackSpace
 # CHECK: [[rejected0]]() frequency=Rare:
@@ -85,7 +74,7 @@ layout L4 name="KeyWithAccent" fields=[{key="caf\u{e9}" declared={type=number}}]
 # CHECK-NEXT: [[parsedResults]]:{{*}}= Results [[one]], [[object]], [[next]]
 # CHECK-NEXT: Return [[parsedResults]]
 
-# CHECK-LABEL: form=ParsedText expectedResult=x1}
+# CHECK-LABEL: creator=Parser{type=L1 layout=L1 form=ParsedText}
 # CHECK: LoopHint
 # CHECK: ([[optionalId]]: undefined|number, [[seenOptionalId]]: boolean, [[cursor1]]: cursor, [[order1]]: keyorder, [[extra1]]: anything):
 # CHECK-NEXT: = JSONSkipByte [[cursor1]]
@@ -95,57 +84,7 @@ layout L4 name="KeyWithAccent" fields=[{key="caf\u{e9}" declared={type=number}}]
 # CHECK-NEXT: PutSlot [[object1]], [[object1]], [[optionalId]] key="id" receivers=[L1] level=Expected
 # CHECK: = JSONObjectFinish [[order1]], [[object1]], [[extra1]] layout=L1
 
-# CHECK-LABEL: form=ParsedText expectedResult=x2}
-# CHECK: LoopHint
-# CHECK: ([[id2]]: undefined|number, [[seen2]]: boolean, {{*}}: cursor, [[order2]]: keyorder, {{*}}: anything):
-# CHECK-NEXT: Branch [[seen2]] -> taken [[given2]](), notTaken [[missing2]]()
-# CHECK: [[given2]]():
-# CHECK-NEXT: Jump -> next [[filled2]]([[id2]], [[order2]])
-# CHECK-NEXT: [[missing2]]():
-# CHECK-NEXT: [[default2]]: 7 = Integer integer=7
-# CHECK-NEXT: [[orderWithDefault2]]: keyorder = JSONObjectKey [[order2]] layout=L2
-# CHECK-NEXT: Jump -> next [[filled2]]([[default2]], [[orderWithDefault2]])
-# CHECK-NEXT: [[filled2]]({{*}}: undefined|number, [[finalOrder2]]: keyorder):
-# CHECK: = JSONObjectFinish [[finalOrder2]],
-
-# CHECK-LABEL: form=ParsedText expectedResult=x3}
-# CHECK: [[rejected3]]() frequency=Rare:
-# CHECK-NEXT: : 2 = Integer integer=2
-# CHECK: LoopHint
-# CHECK: ({{*}}: undefined|number, [[seen3]]: boolean, {{*}}: cursor, [[order3]]: keyorder, {{*}}: anything):
-# CHECK-NEXT: Branch [[seen3]] -> taken {{*}}, notTaken [[missing3]]()
-# CHECK: [[missing3]]() frequency=Rare:
-# CHECK-NEXT: Jump -> next [[rejected3]]()
-# CHECK: = JSONObjectFinish [[order3]],
-
-# CHECK-LABEL: form=ParsedText expectedResult=x4}
-# CHECK: : 2 = Integer integer=2
-# CHECK: [[unknown4]]() frequency=Rare:
-# CHECK-NEXT: : 0 = Integer
-# CHECK: LoopHint
-# CHECK: ({{*}}: undefined|number|string, [[seen4]]: boolean, {{*}}: cursor, [[order4]]: keyorder, {{*}}: anything):
-# CHECK-NEXT: Branch [[seen4]] -> taken {{*}}, notTaken [[missing4]]()
-# CHECK: [[missing4]]() frequency=Rare:
-# CHECK-NEXT: Jump -> next [[unknown4]]()
-# CHECK: = JSONObjectFinish [[order4]],
-
-# CHECK-LABEL: form=ParsedText expectedResult=x5}
-# CHECK: [[rejected5]]() frequency=Rare:
-# CHECK-NEXT: : 2 = Integer integer=2
-# CHECK: LoopHint
-# CHECK: ({{*}}: undefined|number, [[seen5]]: boolean, {{*}}: cursor, [[order5]]: keyorder, {{*}}: anything):
-# CHECK-NEXT: Branch [[seen5]] -> taken {{*}}, notTaken [[missing5]]()
-# CHECK: [[missing5]]():
-# CHECK-NEXT: [[default5]]: 7 = Integer integer=7
-# CHECK-NEXT: [[bound5]]: 1 =
-# CHECK-NEXT: [[holds5]]: boolean = GreaterEq [[default5]], [[bound5]]
-# CHECK-NEXT: Branch [[holds5]] -> taken [[holdsBlock5]](), notTaken [[fails5]]()
-# CHECK: [[holdsBlock5]]():
-# CHECK-NEXT: = JSONObjectKey [[order5]] layout=L2
-# CHECK: [[fails5]]() frequency=Rare:
-# CHECK-NEXT: Jump -> next [[rejected5]]()
-
-# CHECK-LABEL: form=ParsedText expectedResult=x6}
+# CHECK-LABEL: creator=Parser{type=L2 layout=L2 form=ParsedText}
 # CHECK-NOT: JSONStartsWith
 # CHECK: LoopHint
 # CHECK-NOT: JSONStartsWith
@@ -158,53 +97,3 @@ layout L4 name="KeyWithAccent" fields=[{key="caf\u{e9}" declared={type=number}}]
 # CHECK-NOT: JSONStartsWith
 # CHECK: = JSONParseExtraMembers [[key6]],
 # CHECK-NOT: JSONStartsWith
-
-# CHECK-LABEL: form=ParsedText expectedResult=x7}
-# CHECK: [[rejected7]]() frequency=Rare:
-# CHECK-NEXT: : 2 = Integer integer=2
-# CHECK-NOT: JSONParseExtraMembers
-# CHECK-NOT: JSONAddExtraMember
-# CHECK: [[idInLoop7]]: boolean = JSONStartsWith {{*}} string="\"id\"" @
-# CHECK-NEXT: Branch [[idInLoop7]] -> taken {{*}}, notTaken [[notId7]]()
-# CHECK-NEXT: [[undeclared7]]():
-# CHECK-NEXT: Jump -> next [[rejected7]]()
-# CHECK: [[notId7]]():
-# CHECK-NEXT: Jump -> next [[undeclared7]]()
-# CHECK-NOT: JSONParseExtraMembers
-# CHECK-NOT: JSONAddExtraMember
-
-# CHECK-LABEL: form=ParsedText expectedResult=x8}
-# CHECK: [[rejected8]]() frequency=Rare:
-# CHECK-NEXT: : 2 = Integer integer=2
-# CHECK: [[unknown8]]() frequency=Rare:
-# CHECK-NEXT: : 0 = Integer
-# CHECK: ({{*}}: undefined|number, {{*}}: boolean, [[key8]]: cursor, [[order8]]: keyorder, [[extra8]]: anything):
-# CHECK-NEXT: LoopHint
-# CHECK-NOT: JSONParseExtraMembers
-# CHECK: [[parsedKey8]]:{{*}}= JSONParseKey [[key8]]
-# CHECK: [[keyText8]]: string = ResultAt [[parsedKey8]] index=1
-# CHECK: [[keyRepeats8]]: boolean = JSONKeyRepeats [[key8]], [[value8]]
-# CHECK-NEXT: Branch [[keyRepeats8]] -> taken [[unknown8]](), notTaken [[rejected8]]()
-# CHECK: [[string8]]:{{*}}= JSONParseString [[value8]]
-# CHECK: [[text8]]: string = ResultAt [[string8]] index=1
-# CHECK: = JSONAddExtraMember [[extra8]], [[keyText8]], [[text8]], [[order8]] layout=L2
-# CHECK-NOT: JSONParseExtraMembers
-
-# CHECK-LABEL: form=ParsedText expectedResult=x9}
-# CHECK-NOT: NewObject
-# CHECK: [[generic9]]:{{*}}= JSONParseValue v0
-# CHECK: [[value9]]: anything = ResultAt [[generic9]] index=1
-# CHECK-NEXT: [[next9]]: cursor = ResultAt [[generic9]] index=2
-# CHECK-NEXT: [[validated9]]:{{*}}= CallDirect [[value9]] function=[[validatorWithoutLayout]]
-# CHECK: [[copy9]]:{{*}}= ResultAt [[validated9]] index=1
-# CHECK: = Results {{*}}, [[copy9]], [[next9]]
-# CHECK-NOT: NewObject
-
-# CHECK-LABEL: form=ParsedText expectedResult=x10}
-# CHECK-NOT: NewObject
-# CHECK: [[generic10]]:{{*}}= JSONParseValue v0
-# CHECK: [[value10]]: anything = ResultAt [[generic10]] index=1
-# CHECK: = CallDirect [[value10]] function=[[validatorWithIndexKey]]
-# CHECK-NOT: NewObject
-# CHECK: function [[validatorWithoutLayout]] {{*}}role=Validator {{*}}expectedResult=x9}
-# CHECK: function [[validatorWithIndexKey]] {{*}}role=Validator {{*}}expectedResult=x10}

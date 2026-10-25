@@ -615,6 +615,28 @@ BuiltinID entryNamedByOperations(const Program& program, const Function& functio
     return entry;
 }
 
+// A field that is declared without a value is defined as undefined. Nobody sees that value as long as super() calls the constructors that the classes name.
+static void observeDefinitionsBehindOtherConstructor(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ClimbingSet callees)
+{
+    const Program& program = context.program();
+    LayoutID classLayout = program.at(statement.function).constructedClass;
+    if (!classLayout)
+        return;
+    auto definitions = context.nodes().unobservedDefinitionsBehindSuperOf(classLayout);
+    if (definitions.empty())
+        return;
+    LayoutID parent = predictedHeritageOf(program.at(classLayout));
+    FunctionID named = parent ? program.at(parent).constructor : FunctionID();
+    bool callsOtherConstructor = false;
+    context.forEachMember(callees, [&](ValueFlowObjectID callee) {
+        callsOtherConstructor |= context.universe().closureFunction(callee) != named;
+    });
+    if (!callsOtherConstructor)
+        return;
+    for (const auto& entry : definitions)
+        context.add(entry.value, context.universe().undefinedValue());
+}
+
 void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -657,6 +679,8 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
     }
 
     bool isSuperConstruct = statement.opcode == Opcode::SuperConstruct || statement.opcode == Opcode::SuperConstructList;
+    if (isSuperConstruct)
+        observeDefinitionsBehindOtherConstructor(statement, context, callees);
     if (isSuperConstruct && context.contains(callees, ValueFlowUniverse::unknownObject())) {
         ClimbingSet made = only(context, universe.siteObject(statement));
         context.connect(context.lookup(context.valueOf(context.operandsOf(statement)[1]), prototypeProperty(context)), context.written(made, prototypeLinkName));

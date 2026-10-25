@@ -223,7 +223,6 @@ static TypeID typeOfKind(TypeArena& types, OperandKind kind)
     case OperandKind::KeyOrder:
     case OperandKind::FlatString:
     case OperandKind::CodeAddress:
-    case OperandKind::SourcePlan:
     case OperandKind::BuilderCursor:
         return { };
     }
@@ -1256,8 +1255,7 @@ static std::optional<Position> storedPosition(const Program& program, FunctionID
         return Position { Position::Kind::Variable, operation.variable().index(), 0 };
     case Opcode::PutEnvironmentField:
         return Position { Position::Kind::Field, operation.layout().index(), operation.field() };
-    case Opcode::NewObject:
-    case Opcode::CloneAs: {
+    case Opcode::NewObject: {
         FieldReference field = declarationOf(program, { operation.layout(), operation.fields()[variadicIndex()] });
         bool staysInAllocation = fieldAt(program, field).flow.stability.contains(FieldStability::IsNeverStoredWithOtherType);
         if (!program.at(operation.layout()).isEnvironment() && !staysInAllocation && canStoreInitialValueBehindAllocation(program, operation, variadicIndex()))
@@ -1583,7 +1581,7 @@ struct PositionsProvenByTypes {
 
     void scanStoresIntoVariables(Body& body, const Function& function, const Value& store) const
     {
-        bool isAllocation = store.opcode == Opcode::NewObject || store.opcode == Opcode::CloneAs;
+        bool isAllocation = store.opcode == Opcode::NewObject;
         if (isAllocation && !program.at(store.layout()).isEnvironment())
             return;
         store.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
@@ -1796,7 +1794,6 @@ struct PositionsProvenByTypes {
                 case Opcode::PutModuleVariable:
                 case Opcode::PutEnvironmentField:
                 case Opcode::NewObject:
-                case Opcode::CloneAs:
                     scanStoresIntoVariables(body, function, value);
                     break;
                 default:
@@ -2037,7 +2034,7 @@ static bool isTypedWithoutOperands(const Function& function, const Value& value)
 {
     if (value.opcode == Opcode::ResultAt)
         return function.at(value.resultsOperand()).opcode == Opcode::CallDirect;
-    return value.opcode == Opcode::CallDirect || value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewObject || value.opcode == Opcode::CloneAs;
+    return value.opcode == Opcode::CallDirect || value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewObject;
 }
 
 static void letEverythingThrough(Value& cast, TypeID anyValue)
@@ -2218,7 +2215,7 @@ static void appendFieldsGivenObjectsThatChecksTurnAway(const Program& program, c
     for (BlockID block : cfg.reversePostOrder()) {
         for (ValueID id : function.at(block).values) {
             const Value& store = function.at(id);
-            if (store.opcode == Opcode::NewObject || store.opcode == Opcode::CloneAs) {
+            if (store.opcode == Opcode::NewObject) {
                 std::span<const ValueID> initialValues = store.variadicOperands();
                 if (program.at(store.layout()).isEnvironment() || store.fields().size() != initialValues.size())
                     continue;

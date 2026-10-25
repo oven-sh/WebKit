@@ -1,4 +1,4 @@
-# A method bound to this in a constructor makes a closure of a bound function over the object, and that function calls the method directly. The method captures nothing and its closures stay as they were created, so the bound function does not hold the closure of the method. A call of what the field holds tests for no closure of the method: the callee is none. Where the prototype may hold another function under the name, a guard of the member stands in front, and behind its failing side bind stays a call
+# A method bound to this in a constructor makes a closure of a bound function over the object, and that function calls the method directly. The method captures nothing and its closures stay as they were created, so the bound function does not hold the closure of the method. A call of what the field holds tests for no closure of the method: the callee is none. It tests for a closure of the bound function, which flow saw arrive there, and enters that function directly. Where the prototype may hold another function under the name, a guard of the member stands in front, and behind its failing side bind stays a call
 # FORM: AsRead
 # RUN: pipeline ChooseCallingConventions
 # OPTIONS: check=VerifyEachPass only-passes=InsertObjectCoercibleChecks,ResolveCalls,PlaceTypeTests,ChooseCallingConventions heat=EverythingIsHot
@@ -29,6 +29,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v17 = PropGet v16 key="bound"
     v18 = Call v17
     Return
+# CHECK-NOT: IsClosureOf {{*}} function=f2
+# CHECK: [[callee]]: function = PropGet {{*}} key="bound"
+# CHECK-NEXT: = IsClosureOf [[callee]] function=[[boundRun]]
+# CHECK: = CallDirect {{*}} function=[[boundRun]]
 # CHECK-NOT: IsClosureOf
 }
 function f1 name="Worker" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {

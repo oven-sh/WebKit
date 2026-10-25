@@ -170,49 +170,6 @@ Operand SlotAccessEmitter::loadFilledSlot(const ValueContext& value, CellPointer
     return emitter<SlotEmitter>().loadSlot(cell, access.slot, MemoryLocation::objectField(access.key, access.receivers), extensionWordOf(access), typeOf(value.id()));
 }
 
-CellPointer SlotAccessEmitter::innerObjectOf(const OperationContext& value, CellPointer cell, const FieldAccess& access)
-{
-    CellPointer inner(offsetBy(asPointer(cell), *access.offsetOfInnerObject).value());
-    if (generator().validates()) {
-        Operand held = emitter<ConversionEmitter>().inRepresentation(value, loadSlot(cell, access), m_program.at(access.contents), Representation::JSValue);
-        LBasicBlock failure = newBlock();
-        LBasicBlock continuation = newBlock();
-        m_out.branch(notEqual(held.as<Boxed>(), boxCell(inner)).value(), rareEdge(failure), normalEdge(continuation));
-        m_out.appendTo(failure);
-        callVoidOperation(value, RuntimeOperation::ReportValidationFailure, { held.as<Boxed>(), word32(static_cast<int32_t>(ValidationFailureKind::ReadsDiffer)), word32(m_id.index()), word32(value.valueID().index()) }, { .isOnRarePath = true });
-        m_out.unreachable();
-        m_out.appendTo(continuation);
-    }
-    return inner;
-}
-
-std::optional<CellPointer> SlotAccessEmitter::innerObjectReadBy(const OperationContext& conversion, ValueID id)
-{
-    const Value& read = m_function.at(id);
-    if (read.opcode != Opcode::GetSlot && read.opcode != Opcode::GetSlotOrUndefined)
-        return std::nullopt;
-    const FieldAccess& access = m_placement.fieldAccess(read.fieldAccess());
-    if (!access.offsetOfInnerObject)
-        return std::nullopt;
-    return innerObjectOf(conversion, in<CellPointer>(read.objectOperand()), access);
-}
-
-bool SlotAccessEmitter::isTestedByAccess(ValueID object) const
-{
-    const Value* definition = &m_function.at(object);
-    while (definition->opcode == Opcode::Unbox || definition->opcode == Opcode::Decode)
-        definition = &m_function.at(definition->valueOperand());
-    return definition->opcode == Opcode::RequireObjectCoercible && typeOf(definition->valueOperand()).mayBeUndefinedOrNull();
-}
-
-bool SlotAccessEmitter::isOnlyBaseOfAccesses(ValueID id)
-{
-    return std::ranges::all_of(analyses().useLists().usesOf(id), [&](const Use& use) {
-        constexpr uint32_t indexOfObject = 0;
-        return use.kind == Use::Kind::Operand && accessClassOf(m_function.at(use.user).opcode) == AccessClass::Slot && use.operandIndex == indexOfObject;
-    });
-}
-
 Operand SlotAccessEmitter::loadSlotOrUndefined(const ValueContext& value, CellPointer cell, const FieldAccess& access)
 {
     SlotEmitter& slots = emitter<SlotEmitter>();
@@ -258,9 +215,6 @@ Operand SlotAccessEmitter::readSlot(const ValueContext& value, CellPointer cell,
         return { };
     if (access.slot.representation == SlotRepresentation::DeferredClosure)
         return failRead(value, InternalErrorKind::SlotAccessNotPlaced);
-    // A reference in the form of the slot is had by a load, as ever. The load also serves as the test of an object that may be null: so it stays where the address would need an instruction of its own.
-    if (access.offsetOfInnerObject && value.representation() == Representation::Cell && (isOnlyBaseOfAccesses(value.id()) || !isTestedByAccess(value->objectOperand())))
-        return innerObjectOf(value, cell, access);
 
     // A result that is never undefined comes from a slot that is never absent.
     bool mayBeAbsent = absentIsUndefined && typeOf(value.id()).primitives & Primitive::Undefined;

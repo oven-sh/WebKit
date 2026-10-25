@@ -33,8 +33,6 @@ static constexpr ProofSet proofsOfNewLayoutInstance { Proof::Shape, Proof::OwnIn
 static constexpr ProofSet proofsOfNewArray { Proof::Pristine, Proof::ArrayStorage };
 static constexpr ProofSet proofsOfNewBuiltinInstance { Proof::Pristine };
 
-static constexpr OpcodeSet allocationsWithUnprovenLayout { Opcode::CloneAs };
-
 static constexpr ProofSet proofsThatOutlastWrites { Proof::Shape, Proof::OwnInstance, Proof::SourceOpen };
 
 static constexpr ProofSet proofsDecidedByFlow { Proof::SlotFilled, Proof::NoExtraProperties, Proof::NoFieldOutsideSlot, Proof::BirthFieldsFilled, Proof::NotFrozen, Proof::OwnInstance, Proof::KeyOrder, Proof::MemberUnchanged, Proof::PrototypeLinkUnchanged, Proof::EvaluatedOnce };
@@ -219,7 +217,6 @@ Vector<MemoryLocation, 2> locationsBehindAllocationProof(Proof proof)
     case Proof::EvaluatedOnce:
     case Proof::UnmodifiedGenerator:
     case Proof::EnumeratorCurrent:
-    case Proof::PlainData:
     case Proof::SourceOpen:
     case Proof::TextMatches:
         return { };
@@ -273,7 +270,7 @@ static bool fillsEveryFieldOfBirth(const Program& program, const Function& funct
 
 ProofSet proofsOfAllocation(const Program& program, const Function& function, const Value& allocation)
 {
-    if (allocationsWithUnprovenLayout.contains(allocation.opcode) || !allocatesOwnLayout(program, allocation))
+    if (!allocatesOwnLayout(program, allocation))
         return { };
     if (allocation.opcode == Opcode::NewTemplateObject)
         return { };
@@ -403,7 +400,6 @@ bool allocationProves(const Program& program, const Function& function, const Va
     case Proof::KeyOrder:
     case Proof::UnmodifiedGenerator:
     case Proof::EnumeratorCurrent:
-    case Proof::PlainData:
     case Proof::SourceOpen:
     case Proof::TextMatches:
         return false;

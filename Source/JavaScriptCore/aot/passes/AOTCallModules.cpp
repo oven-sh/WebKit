@@ -581,7 +581,7 @@ static bool isMarkOfRequireSpelled(const Program& program, const ParallelLoops& 
         return false;
     return !findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {
         constexpr OpcodeSet opcodesThatSpellKeys {
-            Opcode::PropGet, Opcode::PropSet, Opcode::PropDefine, Opcode::PropHas, Opcode::PropHasOwn, Opcode::PropDelete, Opcode::GetOwnProperty, Opcode::GetOwnDataProperty, Opcode::KeyConstant, Opcode::NarrowByField,
+            Opcode::PropGet, Opcode::PropSet, Opcode::PropDefine, Opcode::PropHas, Opcode::PropHasOwn, Opcode::PropDelete, Opcode::GetOwnProperty, Opcode::KeyConstant, Opcode::NarrowByField,
         };
         if (listsAllValues(program, FunctionID(index))) {
             bool isSpelled = false;

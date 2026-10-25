@@ -336,7 +336,7 @@ namespace {
 
 // Reads one function. A window is the run of operations behind the point where an object comes into being for the function, which is an allocation or, in a function that gets the object as its receiver, the start, up to the first operation that may show the object to other code.
 struct WindowScanner {
-    static constexpr OpcodeSet scannedOpcodes = operationsGivingFields | OpcodeSet { Opcode::CloneAs };
+    static constexpr OpcodeSet scannedOpcodes = operationsGivingFields;
 
     void scan(Vector<uint32_t>& allocationsOfLayouts, ScannedFunction& found)
     {
@@ -350,7 +350,7 @@ struct WindowScanner {
             if (!m_layouts.allocatedOnlyByOperations.quickGet(value.layout().index()))
                 return;
             WTF::atomicExchangeAdd(&allocationsOfLayouts[value.layout().index()], 1u, std::memory_order_relaxed);
-            if (mayAllocateOtherLayout(m_program, value) || !isEnabled || value.opcode != Opcode::NewObject)
+            if (mayAllocateOtherLayout(m_program, value) || !isEnabled)
                 return;
             ClosureFieldFreshObject object = describeObject(block, index);
             bool isInitializedWithClosure = object.initializers.containsIf([](const FieldInitializer& initializer) {
@@ -874,7 +874,7 @@ struct DeferralAnalysis {
         }
         if (value.opcode == Opcode::HasKeyOrder)
             return kindIf(layoutsWithEnvironmentCandidates.quickGet(value.layout().index()), KeyOrderTest);
-        if (value.opcode == Opcode::NewObject || value.opcode == Opcode::CloneAs)
+        if (value.opcode == Opcode::NewObject)
             return kindIf(layoutsWithCandidates.quickGet(value.layout().index()), Allocation);
         bool isTestInFrontOfReads = value.opcode == Opcode::IsSlotFilled && !value.accessSite();
         if (!Value::opcodesWithKey.contains(value.opcode) || isTestInFrontOfReads || value.opcode == Opcode::GetDeferredClosureSlot || value.opcode == Opcode::GetDeferredClosureSlotOrUndefined)
@@ -895,7 +895,7 @@ struct DeferralAnalysis {
         using FoundAccess = std::pair<ValueReference, AccessKind>;
         Vector<FoundAccess> foundAccesses = collectInParallel<FoundAccess>(build.parallelLoops(), program.functions.size(), functionsBySize.span(), [&](unsigned index, Vector<FoundAccess>& found) {
             // classifyAccess() answers for no other operation.
-            constexpr OpcodeSet classifiedOpcodes = Value::opcodesWithFunction | Value::opcodesWithKey | OpcodeSet { Opcode::HasKeyOrder, Opcode::NewObject, Opcode::CloneAs };
+            constexpr OpcodeSet classifiedOpcodes = Value::opcodesWithFunction | Value::opcodesWithKey | OpcodeSet { Opcode::HasKeyOrder, Opcode::NewObject };
             // It answers for no operation all of whose names are refused here. Whoever adds a case to it that goes by something else widens this.
             auto mayBeClassified = [&](NameKind kind, uint32_t name) {
                 switch (kind) {

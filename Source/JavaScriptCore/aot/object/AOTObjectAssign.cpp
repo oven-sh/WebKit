@@ -136,9 +136,6 @@ Object* Object::tryCreateCopyOfFields(VM& vm, const Object& source)
     const LayoutData& layout = source.layout();
     if (layout.kind() != LayoutKind::Record || layout.keysAreNeverEnumerated || source.hasOutOfLineKeyOrder() || structure.mayBePrototype())
         return nullptr;
-    // The words of the source refer to the objects that lie in the cell of the source, and the copy has a cell without room for any.
-    if (layout.holdsInnerObjectsInPlace || layout.mayBeInnerObject)
-        return nullptr;
     if (source.hasFlagsInOrderWord() || !structure.flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype)) [[unlikely]]
         return tryCreateCopyOfFieldsAndExtraProperties(vm, source);
     DeferGC deferGC(vm);

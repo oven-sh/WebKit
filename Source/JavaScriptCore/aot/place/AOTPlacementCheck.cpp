@@ -45,7 +45,7 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(Value::opcodesWithAllocation == OpcodeSet { Opcode::NewClosure, Opcode::NewObject, Opcode::MaterializeEnvironment });
 static_assert(Value::opcodesWithGuardBit == OpcodeSet { Opcode::AreMembersUnchanged });
 static_assert(Value::opcodesWithStaticsOffset == OpcodeSet { Opcode::NewArray, Opcode::NewRegExp, Opcode::SharedRegExpLiteral, Opcode::NewTemplateObject });
-static_assert(Value::opcodesWithRequest == OpcodeSet { Opcode::TryPutByIds, Opcode::NewClass, Opcode::CloneAs, Opcode::FindSourcePlan, Opcode::NewTemplateObject, Opcode::DirectEval, Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData, Opcode::CopyDataProperties, Opcode::CopyObject });
+static_assert(Value::opcodesWithRequest == OpcodeSet { Opcode::TryPutByIds, Opcode::NewClass, Opcode::NewTemplateObject, Opcode::DirectEval, Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData, Opcode::CopyDataProperties, Opcode::CopyObject });
 
 namespace {
 
@@ -958,7 +958,7 @@ static void checkAllocation(const PlacementCheckContext& context, AllocationID i
     if (!expect(!range.isEmpty(), PlacementRule::AllocationOfUnplacedLayout))
         return;
     bool isClosure = allocation.layout == context.placement.closureLayout();
-    bool isSized = isClosure ? allocation.size >= Closure::allocationSize(allocation.numberOfCaptures) && allocation.initialFields.isEmpty() : allocation.size == (allocation.holdsInnerObjects ? planned.sizeWithInnerObjects : planned.size);
+    bool isSized = isClosure ? allocation.size >= Closure::allocationSize(allocation.numberOfCaptures) && allocation.initialFields.isEmpty() : allocation.size == planned.size;
     expect(isSized && !(allocation.size % 16), PlacementRule::AllocationSize);
     Vector<FieldIndex, 16> storedFields;
     for (FieldIndex field : allocation.initialFields) {
@@ -1437,7 +1437,6 @@ struct SiteCheck : PlacementCheckContext {
         case Opcode::NewObject:
             return allocation.layout == value.layout()
                 && std::ranges::equal(allocation.initialFields, value.fields())
-                && allocation.holdsInnerObjects == takesCellWithInnerObjects(placement.slots(), value)
                 && allocation.shape == shapes.shapeOf(value.layout(), value.allocationClass());
         case Opcode::MaterializeEnvironment:
             return allocation.layout == value.layout() && allocation.initialFields.isEmpty();
@@ -1457,17 +1456,6 @@ struct SiteCheck : PlacementCheckContext {
             expect((form == ClosureForm::Singleton) == namesClosureOfTable(program, closure), PlacementRule::ClosureFormNotProven, id);
     }
 
-    bool isCloneAsRequestOf(const CloneAsRecord& record, const Value& value) const
-    {
-        LayoutID layout = value.layout();
-        ShapeRange range = shapes.shapesOf(layout);
-        if (record.layout != layout || record.shape < range.first || record.shape >= range.end())
-            return false;
-        return std::ranges::equal(record.fields, value.fields()) && std::ranges::all_of(record.fields, [&](FieldIndex field) {
-            return slots.slot(layout, field).indexInLayoutRecord.has_value();
-        });
-    }
-
     bool isDataRequestOf(const DataRecord& record, const Value& value) const
     {
         if (record.data != value.data() || (record.sharedStorageOffset || record.node) != (value.encoding() == DataEncoding::CopyOnWriteArray))
@@ -1482,7 +1470,6 @@ struct SiteCheck : PlacementCheckContext {
         Opcode opcode = value.opcode;
         return WTF::switchOn(request,
             [&](const NewClassRecord& record) { return opcode == Opcode::NewClass && record.classLayout == value.layout(); },
-            [&](const CloneAsRecord& record) { return (opcode == Opcode::CloneAs || opcode == Opcode::FindSourcePlan) && isCloneAsRequestOf(record, value); },
             [&](const TemplateObjectRecord& record) { return opcode == Opcode::NewTemplateObject && std::ranges::equal(record.parts, value.templateStrings()); },
             [&](const DirectEvalRecord& record) { return opcode == Opcode::DirectEval && record.scope == value.evalScope() && record.module == program.sourceFunctionOf(function, value).module; },
             [&](const DataRecord& record) { return opcode == Opcode::Data && isDataRequestOf(record, value); },
@@ -1713,7 +1700,6 @@ static void checkSites(const PlacementCheckContext& context)
     forEachIndexInParallel(context.loops, records.size(), [&](unsigned index) {
         DataID data = WTF::switchOn(records[index],
             [](const NewClassRecord&) { return DataID(); },
-            [](const CloneAsRecord&) { return DataID(); },
             [](const TemplateObjectRecord&) { return DataID(); },
             [](const DirectEvalRecord&) { return DataID(); },
             [](const DataRecord& record) { return record.data; },

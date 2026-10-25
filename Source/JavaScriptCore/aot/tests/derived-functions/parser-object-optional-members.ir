@@ -1,15 +1,14 @@
 # A field exists when its slot is not absent, so the allocation of a parsed object lists no member that the text may leave out: such a member is stored behind the allocation where it was seen, and JSONObjectFinish lists the keys of the text
 # FORM: Prepared optimizing
-# RUN: derived-functions ValidatingParser:x0.0 ValidatingParser:x1.0
+# RUN: derived-functions Parser:g0 Parser:g1
 
 module m0 path="main.js" displayPath="main.js"
-expectedresult x0 type=L0 layouts=[L0] validation=[{shape=Object{layout=L0 members=[{key="id" node=1 field=0}, {key="name" node=2 field=1 isOptional=true}, {key="size" node=3 field=2}, {key="flag" node=4 field=3 isOptional=true}]} type=L0}, {shape=Primitive{primitive=Number} type=number}, {shape=Primitive{} type=string}, {shape=Primitive{primitive=Number} type=number rules=[DefaultNumber{value=7}]}, {shape=Primitive{primitive=Boolean} type=boolean}]
-expectedresult x1 type=L1 layouts=[L1] validation=[{shape=Object{layout=L1 members=[{key="id" node=1 field=0}, {key="never" node=2 field=1 isOptional=true}]} type=L1}, {shape=Primitive{primitive=Number} type=number}, {shape=Never type=never}]
 layout L0 name="Record" fields=[{key="id" declared={type=number}}, {key="name" declared={type=undefined|string}}, {key="size" declared={type=number}}, {key="flag" declared={type=undefined|boolean}}]
 layout L1 name="WithNever" fields=[{key="id" declared={type=number}}, {key="never" declared={type=undefined}}]
+variable g0 name="record" declared={type=L0} initialization=Undefined
+variable g1 name="withNever" declared={type=L1} initialization=Undefined
 
-# A member with a default always has a value, so it is listed like a required one.
-# CHECK-LABEL: form=ParsedText expectedResult=x0}
+# CHECK-LABEL: creator=Parser{type=L0 layout=L0 form=ParsedText}
 # CHECK: [[object]]:{{*}}= NewObject -, {{*}}, {{*}} layout=L0 fields=[0, 2]
 # CHECK-NEXT: Branch {{*}} -> taken [[storesName]](), notTaken
 # CHECK: [[storesName]]():
@@ -20,7 +19,7 @@ layout L1 name="WithNever" fields=[{key="id" declared={type=number}}, {key="neve
 # CHECK: = JSONObjectFinish {{*}}, [[object]], {{*}} layout=L0
 
 # The parse gives up at a member whose field takes no value, so nothing stores it.
-# CHECK-LABEL: form=ParsedText expectedResult=x1}
+# CHECK-LABEL: creator=Parser{type=L1 layout=L1 form=ParsedText}
 # CHECK: = NewObject -, {{*}} layout=L1 fields=[0]
 # CHECK-NOT: PutSlot
 # CHECK: = JSONObjectFinish

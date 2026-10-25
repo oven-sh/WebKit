@@ -137,6 +137,8 @@ OperatorForm chooseComparisonForm(const OperatorSite& site, Opcode opcode, const
 
 static OperatorForm chooseToNumberForm(const Type& type)
 {
+    if (type.isBoolean())
+        return OperatorForm::Booleans;
     if (type.isInteger())
         return OperatorForm::Integers;
     if (isNullableNumber(type))

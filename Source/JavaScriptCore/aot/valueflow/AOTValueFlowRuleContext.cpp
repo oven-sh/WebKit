@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFlowResults.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlowBodies.h"
 #include "AOTValueFlowBuiltinTables.h"
@@ -490,10 +491,10 @@ RefusedCode ValueFlowRuleContext::refusedCode() const { return m_solver.m_input.
 
 bool ValueFlowRuleContext::isGuardedByRemovedFeature(BuiltinID builtin) const
 {
-    return std::ranges::any_of(program().builtins().featureUsesOf(builtin), [&](const BuiltinFeatureUse& use) {
-        auto feature = static_cast<uint16_t>(use.feature);
-        return use.isGuard && m_solver.m_input.removedFeatures[feature / 64] >> feature % 64 & 1;
-    });
+    const FeatureBits& removedFeatures = m_solver.m_input.removedFeatures;
+    if (std::ranges::none_of(removedFeatures, [](uint64_t word) { return !!word; }))
+        return false;
+    return Typed::isGuardedByRemovedFeature(program().builtins(), builtin, removedFeatures);
 }
 
 ValueFlowNodeID ValueFlowRuleContext::holdingNothing() { return m_holdingNothing = nodeFor(ValueFlowNodeKey::constant(ValueSets::nothing)); }

@@ -54,7 +54,7 @@ function f2 name="execTested" parameters=[{type=RegExp}, {type=string}] results=
     Return v1
 # CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=RegExpPrototypeExec/0 builtinCallForm=Prefix prefixLength=2
 # CHECK-NEXT: [[flag2]]: boolean = ResultAt v2
-# CHECK: [[shift2]]: number = ToNumber [[flag2]]
+# CHECK: [[shift2]]: int[0, 1] = ToNumber [[flag2]]
 # CHECK-NEXT: [[tag2]]: i32 = LShift {{*}}, [[shift2]]
 # CHECK: [[start2]]:{{*}}= ResultAt v2 index=6
 # CHECK-NEXT: [[end2]]:{{*}}= ResultAt v2 index=7

@@ -245,6 +245,9 @@ static std::optional<Type> integerResultOf(Opcode opcode, OperandTypes operands)
 
 static std::optional<Type> numberResultOf(Opcode opcode, OperandTypes operands)
 {
+    // false is 0 and true is 1.
+    if ((opcode == Opcode::ToNumber || opcode == Opcode::ToNumeric) && operands[0]->isBoolean())
+        return Type::integer({ operands[0]->primitives & Primitive::False ? 0 : 1, operands[0]->primitives & Primitive::True ? 1 : 0 });
     bool areAllIntegers = std::ranges::all_of(operands, [](const Type* type) {
         return type->isInteger();
     });

@@ -28,7 +28,7 @@ inline constexpr Typed::FunctionID readerFixtureStreamFunction { 7u };
 inline constexpr Typed::FunctionID readerFixtureHandlerFunction { 8u };
 
 inline constexpr ASCIILiteral readerFixtureText = R"IR(typesite w0 module=m0 position=3 kind=Assertion text="T"
-expectedresult x0 type=L0|L2|L3 layouts=[L0] site=w0 validation=[{shape=Object{layout=L0 members=[{key="x" node=1 field=0}]} type=L0|L2|L3}, {shape=Primitive{primitive=Number} type=number rules=[Minimum{bound=1}]}, {shape=Primitive{} type=string rules=[Template{head="a" parts=[{placeholder=Number text="b"}]}]}]
+expectedresult x0 type=L0|L2|L3 layouts=[L0]
 layout L0 name="I" module=m0 fields=[{key="x" declared={type=i32 site=w0 flags=[IsExpected]} flags=[IsRequired]}]
 layout L1 kind=Environment fields=[{key="c" declared={type=anything}}]
 layout L2 kind=Instance name="C" module=m0 constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired] originLayout=L0 originField=0}, {key=#"p"@L2 declared={type=anything} flags=[IsPrivate]}] staticFields=[{key="s" variable=g2}] supertypes=[L0]

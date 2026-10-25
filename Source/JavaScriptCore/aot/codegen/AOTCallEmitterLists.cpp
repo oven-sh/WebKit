@@ -24,8 +24,6 @@ Boxed CallEmitter::callWithList(const OperationContext& context, Boxed callee, B
 
 void CallEmitter::generateCallList(const ValueContext& value)
 {
-    if (isCallThatRequiredPassRemoves(m_program, value.value()))
-        fail(value, InternalErrorKind::RequiredPassLeftOperation);
     Boxed callee = in<Boxed>(value->calleeOperand());
     emitter<AccessEmitter>().recordArrival(value, callee);
     Boxed thisValue = thisOrUndefined(value->thisValueOperand());

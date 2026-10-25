@@ -459,8 +459,6 @@ std::optional<SlotOutsideType> findSlotOutsideType(VM& vm, const Object& object)
 {
     State& state = object.state();
     const LayoutData& layout = object.layout();
-    // The cell of both objects is made for the inner one. Until the outer one is made too, code that does not validate has written only those of its slots that hold cells.
-    bool mayBeUnwritten = layout.hasInnerObjects && !vm.aotState().image->header().options.validates;
     for (const FieldData& field : layout.fields()) {
         // A brand is a class token, and what the slot of an accessor holds is not the value of the property. No type describes either.
         if (field.isBrand() || field.isAccessor())
@@ -471,8 +469,6 @@ std::optional<SlotOutsideType> findSlotOutsideType(VM& vm, const Object& object)
 
         SlotRepresentation representation = field.slot.representation();
         SlotTraits traits = traitsOf(representation);
-        if (mayBeUnwritten && !traits.holdsCell)
-            continue;
         uint64_t bits = readSlotBits(representation, slot);
         // A slot that cannot say "absent" holds zero until its first store.
         if (bits == (traits.hasAbsent ? traits.absentBits : 0))

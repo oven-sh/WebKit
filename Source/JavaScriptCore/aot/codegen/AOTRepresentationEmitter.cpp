@@ -11,7 +11,6 @@
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTFunctionAnalyses.h"
-#include "AOTSlotAccessEmitter.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -34,11 +33,6 @@ Operand RepresentationEmitter::convert(const OperationContext& context, Opcode c
         const NaturalLoop* loop = loops.innerMostLoopOf(context.block());
         return loop && !loops.belongsTo(analyses().useLists().blockOf(sourceID), *loop) ? ComputesBothSides : Branches;
     };
-
-    if ((conversion == Opcode::Unbox || conversion == Opcode::Decode) && to == Cell && sourceID) {
-        if (std::optional<CellPointer> inner = emitter<SlotAccessEmitter>().innerObjectReadBy(context, sourceID))
-            return *inner;
-    }
 
     switch (conversion) {
     case Opcode::Box:

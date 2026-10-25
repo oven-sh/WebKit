@@ -821,7 +821,6 @@ void encodeDataTable(TableEncoder& encoder)
                     recordsWithNodes.quickSet(request.data.index());
             },
             [](const NewClassRecord&) { },
-            [](const CloneAsRecord&) { },
             [](const TemplateObjectRecord&) { },
             [](const DirectEvalRecord&) { });
     }
@@ -952,21 +951,7 @@ static uint32_t appendReferences(TableEncoder& encoder, LayoutID id)
             offsets[traits.isNarrowReference ? Narrow : traits.valueKind == SlotValueKind::Cell ? WideCells : WideValues].append(slot.offset);
     }
 
-    // In front of the counts, read backwards from there: how many inner objects, their offsets, how many allocations make such objects, their numbers.
     Vector<uint32_t> references;
-    if (!planned.innerObjects.isEmpty()) {
-        for (const PlacedInnerObject& inner : planned.innerObjects) {
-            if (!inner.layout)
-                continue;
-            for (AllocationID allocation : encoder.placement.allocations().ofLayout(inner.layout))
-                references.append(allocation.index());
-        }
-        references.append(references.size());
-        for (const PlacedInnerObject& inner : planned.innerObjects)
-            references.append(inner.offset);
-        references.append(planned.innerObjects.size());
-    }
-    uint32_t wordsInFront = references.size();
     for (unsigned list = 0; list < numberOfInlineReferenceCounts; ++list)
         references.append(offsets[list].size());
     for (unsigned list = 0; list < numberOfInlineReferenceCounts; ++list) {
@@ -985,7 +970,7 @@ static uint32_t appendReferences(TableEncoder& encoder, LayoutID id)
         for (uint64_t set : { sets.wide, sets.narrowInFirstHalf, sets.narrowInSecondHalf })
             references.appendList({ static_cast<uint32_t>(set), static_cast<uint32_t>(set >> 32) });
     }
-    return references.size() > numberOfInlineReferenceCounts ? encoder.writer.append(references) + wordsInFront * sizeof(uint32_t) : 0;
+    return references.size() > numberOfInlineReferenceCounts ? encoder.writer.append(references) : 0;
 }
 
 static int32_t distanceFromRecord(uint32_t recordOffset, uint32_t targetOffset)
@@ -1215,9 +1200,6 @@ static uint32_t appendObjectLayout(TableEncoder& encoder, LayoutID id, uint32_t 
     data.kindBits = static_cast<uint32_t>(layout.kind);
     data.isDerived = layout.isDerived();
     data.impossibleMutationsRaw = shape.impossibleMutations.toRaw();
-    data.hasInnerObjects = !planned.innerObjects.isEmpty();
-    data.holdsInnerObjectsInPlace = std::ranges::any_of(planned.innerObjects, &PlacedInnerObject::isAlwaysInPlace);
-    data.mayBeInnerObject = planned.mayBeInnerObject;
     data.keysAreNeverEnumerated = shape.keysAreNeverEnumerated;
     data.isUntyped = isUntyped(program, layout);
     data.hasUntypedBase = layout.has(LayoutFlags::HasHeritage) && layout.flow.baseState != BaseState::Layout;
@@ -1434,44 +1416,6 @@ static void encodeClassPrototypeNames(TableEncoder& encoder)
     setSortedTable(encoder, ProgramTableIndex::classPrototypeNames, names);
 }
 
-static bool appendMembersForValidators(TableEncoder& encoder, Vector<ParsedRecordFieldData>& rows)
-{
-    Vector<Vector<uint32_t, 8>> validatedObjects;
-    for (const ExpectedResult& expected : encoder.program.expectedResults) {
-        for (const ValidationNode& node : expected.validation) {
-            if (node.shape.kind() == ValidationShape::Kind::AnyObject || node.shape.kind() == ValidationShape::Kind::Dictionary)
-                return false;
-            if (node.shape.kind() != ValidationShape::Kind::Object)
-                continue;
-            Vector<uint32_t, 8> names;
-            bool canBeMet = true;
-            for (const ValidationMember& member : node.shape.as<ValidationShape::Object>().members) {
-                if (member.isOptional)
-                    continue;
-                std::optional<uint32_t> name = encoder.identifiers.numberOf(member.key);
-                if (!name) {
-                    canBeMet = false;
-                    break;
-                }
-                names.appendIfNotContains(*name);
-            }
-            if (!canBeMet)
-                continue;
-            if (names.isEmpty() || names.size() > ParsedRecordFieldData::maxRequiredMembers)
-                return false;
-            AOT::sort(names);
-            validatedObjects.appendIfNotContains(WTF::move(names));
-        }
-    }
-    if (validatedObjects.size() > ParsedRecordFieldData::maxValidatedObjects)
-        return false;
-    for (uint32_t index = 0; index < validatedObjects.size(); ++index) {
-        for (uint32_t name : validatedObjects[index])
-            rows.append({ name, ParsedRecordFieldData::memberForValidator(index, validatedObjects[index].size()) });
-    }
-    return true;
-}
-
 static void encodeParsedRecordFields(TableEncoder& encoder)
 {
     const Program& program = encoder.program;
@@ -1499,8 +1443,6 @@ static void encodeParsedRecordFields(TableEncoder& encoder)
             rows.append({ *name, shape });
         }
     }
-    if (!rows.isEmpty() && !appendMembersForValidators(encoder, rows))
-        rows.clear();
     setSortedTable(encoder, ProgramTableIndex::parsedRecordFields, rows);
 }
 
@@ -1994,8 +1936,6 @@ static bool showsSourceText(FunctionRole role)
     case FunctionRole::OutlinedBody:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
-    case FunctionRole::ValidatingParser:
-    case FunctionRole::Validator:
     case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         return false;

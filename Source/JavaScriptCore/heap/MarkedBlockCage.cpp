@@ -288,7 +288,7 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryError(VM& vm)
     if (!m_owesCollection || vm.heap.isDeferred())
         return false;
     m_owesCollection = false;
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    vm.heap.collectForExhaustedCage();
     if (!vm.traps().needsOutOfMemoryError() || !tryKeepReleasedReserveAgain())
         return false;
     vm.traps().setNeedsOutOfMemoryError(false);
@@ -303,7 +303,7 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryErrorAtPoll(VM& vm)
     m_owesCollection = false;
     m_hasCollectedAtPoll = true;
     clearDeadStack(vm);
-    vm.heap.collectNow(Sync, CollectionScope::Full);
+    vm.heap.collectForExhaustedCage();
     if (!vm.traps().needsOutOfMemoryError())
         return false;
     if (m_hasReleasedReserve) {

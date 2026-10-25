@@ -168,7 +168,7 @@ double Heat::leastHeatOfFastCode(const Program& program, FunctionID id, double f
     if (!m_thresholds)
         return frequencyConstants.iterationsPerLoop;
     // How often a function is entered is a product along paths of calls, and a call by value spreads over all that it may reach. A loop of its own is in the text.
-    if (frequencyInFunction >= HeatModel::minWeightOfCallInLoop)
+    if (frequencyInFunction >= HeatModel::minWeightOfCallInLoop && !isOfVeryLargeProgram())
         return m_thresholds->leastHeatOfFastCodeInLoops / frequencyConstants.iterationsPerLoop;
     return m_entries.of(program, id).isCalledInLoop ? m_thresholds->leastHeatOfFastCodeInLoops : frequencyConstants.iterationsPerLoop;
 }

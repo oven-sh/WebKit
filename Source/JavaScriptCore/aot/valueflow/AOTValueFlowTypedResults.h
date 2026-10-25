@@ -14,7 +14,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 struct ValueFlowTypedResult {
     TypeID type;
-    bool isValidated { false };
     Vector<LayoutID, 4> layouts;
     Vector<TypeID, 4> typesWithArrays;
     Vector<LayoutID, 4> layoutsAmongPlainData;
@@ -28,7 +27,6 @@ struct ValueFlowTypedResult {
     uint32_t numberOfObjects() const { return ordinalOfPlainArray() + 1 - firstOrdinal; }
 };
 
-ValueFlowTypedResult typedResultOf(const Program&, ExpectedResultID, uint64_t mostObjects);
 void appendSitesOfTypedResults(const Program&, const ValueFlowBuiltinTables&, const Function&, const CFG&, Vector<ValueFlowSite>&);
 void allocateTypedResult(const BuiltinOverload&, const ValueFlowStatement& call, const ValueFlowBuiltinCall&, ValueFlowObjectID promise, ValueSetID plainData, ValueFlowRuleContext&);
 

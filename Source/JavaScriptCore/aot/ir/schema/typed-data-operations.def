@@ -21,24 +21,14 @@ operation JSONParseInteger (cursor: Cursor/inspects) -> results(natural(boolean)
 operation JSONParseValue (cursor: Cursor/inspects) -> results(natural(boolean), unknown, natural(Cursor)) ; Allocates reads(ParserState) ; runtime = JSONParseValue
 operation JSONFindMember (string: String, cursor: Cursor/inspects) -> results(natural(JSONMemberSearch), natural(Cursor)) ; reads(ParserState) ; runtime = JSONFindMember
 operation JSONMemberRepeats (string: String, valueStart: Cursor/inspects) -> natural(boolean) ; reads(ParserState) ; runtime = JSONMemberRepeats
-operation JSONKeyRepeats (keyStart: Cursor/inspects, valueStart: Cursor/inspects) -> natural(boolean) ; reads(ParserState) ; runtime = JSONKeyRepeats
 operation JSONKeyHasEscapes (cursor: Cursor/inspects) -> natural(boolean) ; reads(ParserState)
 operation JSONHasStackSpace () -> natural(boolean) ; reads(RuntimeState)
 operation JSONObjectBegin (layout: Layout) -> natural(KeyOrder) ; none
 operation JSONObjectKey (order: KeyOrder/inspects, layout: Layout, field: Field) -> natural(KeyOrder) ; reads(RuntimeState) ; runtime = JSONObjectKey
 operation JSONObjectFinish (order: KeyOrder/inspects, object: Layout/inspects, extra: Any/retains(object), layout: Layout) -> natural(JSONOutcome) ; Allocates reads(OrderWords, ObjectFields) writes(OrderWords, NamedProperties, RuntimeState) ; runtime = JSONObjectFinish
 operation JSONParseExtraMembers (layout: Layout, cursor: Cursor/inspects, extra: Any/returns, order: KeyOrder/inspects) -> results(natural(JSONOutcome), unknown, natural(Cursor), natural(KeyOrder)) ; Allocates reads(ParserState, NamedProperties, Elements, StringStorage) writes(NamedProperties, Elements, ArrayStorage, StringStorage, RuntimeState) ; runtime = JSONParseExtraMembers
-operation JSONAddExtraMember (layout: Layout, extra: Any/returns, memberName: String/inspects, value: Any/retains(result), order: KeyOrder/inspects) -> results(unknown, natural(KeyOrder)) ; Allocates reads(NamedProperties, Elements, StringStorage) writes(NamedProperties, Elements, ArrayStorage, StringStorage, RuntimeState) ; runtime = JSONAddExtraMember
 
-family Validation Prepared..Placed
-operation IsPlainDataObject (value: Any/inspects) -> natural(boolean) ; reads(ShapeWords, NamedProperties, PrototypeLinks) ; proves = PlainData ; branches = May ; runtime = IsPlainDataObject
-operation GetOwnDataProperty (object: Object/inspects, guard: Guard/inspects, key: PropertyKey) -> unknown ; Allocates UsesRuntime reads(NamedProperties[key], ObjectFields[key]) ; relies = PlainData ; guarded = object ; runtime = GetOwnDataProperty
-operation CloneAs (source: Object/inspects, guard: Guard/inspects, layout: Layout, fields: List<Field>, values...: Declared/retains(result), allocationSite?: AllocationSite, from Placed request?: Request) -> allocation(layout) ; Allocates ReadsObjectGraph ; relies = PlainData ; guarded = source ; runtime = CloneObjectAs ; interpreted = Allocation
-operation FindSourcePlan (source: Object/inspects, layout: Layout, fields: List<Field>, allocationSite?: AllocationSite, from Placed request?: Request) -> results(natural(boolean), natural(SourcePlan), natural(KeyOrder), natural(object)) ; Allocates UsesRuntime reads(ShapeWords, OrderWords, ObjectFields, NamedProperties, PrototypeLinks) ; runtime = FindSourcePlan
-operation GetPlannedProperty (source: Object/inspects, plan: SourcePlan/inspects, memberIndex: UInt32) -> results(unknown, natural(boolean)) ; reads(NamedProperties, RuntimeState)
-operation GetPreparedPlans () -> unknown ; CreatesConstant ; runtime = GetPreparedPlans
-operation IsThrownValueIgnored () -> natural(boolean) ; UsesRuntime throws ; branches = May ; runtime = IsThrownValueIgnored
-operation MatchesUnrecorded (regExp: Object/inspects, string: String/inspects) -> natural(boolean) ; CreatesString ; branches = May ; runtime = MatchesUnrecorded
+family ExpectedRows Prepared..Placed
 operation ExpectRows (target: Any/inspects, layout: Layout) -> none ; Allocates writes(NamedProperties) ; runtime = ExpectRows
 
 family JSONWrite Prepared..Placed ; base = builder

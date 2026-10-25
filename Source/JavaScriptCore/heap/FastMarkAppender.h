@@ -13,9 +13,6 @@
 #include "SlotVisitorInlines.h"
 #include "StructureInlines.h"
 #include "WriteBarrier.h"
-#if ENABLE(AOT)
-#include "AOTHeapHooks.h"
-#endif
 #include <bit>
 #include <type_traits>
 #include <utility>
@@ -55,10 +52,6 @@ public:
 
     void setCurrentCell(const JSCell*);
     void appendStructure(Structure*);
-    // For a cell that lies in the cell that is being visited: that one is marked, so the marks of the block are those of this cycle. True if nobody has marked the inner cell before: then the caller visits it, here and now.
-    bool markInnerCellOfVisitedCell(JSCell*);
-    // For a cell that is marked and that nobody has visited or will.
-    void appendMarkedCell(JSCell*);
     ALWAYS_INLINE MarkStackArray::Cursor& cursor() LIFETIME_BOUND { return m_cursor; }
 
 private:
@@ -185,25 +178,14 @@ ALWAYS_INLINE void FastMarkAppender::pushNewlyMarkedCell(JSCell* cell, MarkedBlo
 {
     ASSERT(!cell->isZapped());
     cell->setCellState(CellState::PossiblyGrey);
-    HeapCell* outer = block.outerCellIfInnerCell(cell);
-    if (!outer) [[likely]] {
-        block.noteMarked();
-        count(block.vm().heap, block.cellSizeInHeader(), 0);
-    }
+    block.noteMarked();
+    count(block.vm().heap, block.cellSizeInHeader(), 0);
     if (m_cursor.next == m_cursor.end) [[unlikely]] {
         m_cursor.store();
         appendToFullSegment(m_visitor.m_collectorStack, cell);
         m_cursor.load();
     } else
         *m_cursor.next++ = cell;
-    // Whoever holds an inner cell holds the cell that it lies in. No field says so.
-    if (outer) [[unlikely]] {
-        if (block.marks().get(block.atomNumber(outer)))
-            return;
-        m_cursor.store();
-        appendOutOfLine(m_visitor, static_cast<JSCell*>(outer));
-        m_cursor.load();
-    }
 }
 
 #if CPU(X86_64)
@@ -226,7 +208,7 @@ inline NEVER_INLINE void FastMarkAppender::markAndPushCellWithoutMark(JSCell* ce
     uint64_t mask = static_cast<uint64_t>(1) << (atom % 64);
     if (word->exchangeOr(mask, std::memory_order_relaxed) & mask) [[unlikely]]
         return;
-    if (block.hasInnerCells() || m_cursor.next == m_cursor.end || &block.vm().heap != m_visitor.m_bytesMarkedHeap) [[unlikely]]
+    if (m_cursor.next == m_cursor.end || &block.vm().heap != m_visitor.m_bytesMarkedHeap) [[unlikely]]
         return pushNewlyMarkedCellOutOfLine(cell);
     ASSERT(!cell->isZapped());
     cell->setCellState(CellState::PossiblyGrey);
@@ -308,33 +290,6 @@ ALWAYS_INLINE void FastMarkAppender::appendStructure(Structure* structure)
     stamp = m_markingStamp;
 }
 
-ALWAYS_INLINE bool FastMarkAppender::markInnerCellOfVisitedCell(JSCell* cell)
-{
-    using Word = uint64_t;
-    uintptr_t atom = std::bit_cast<uintptr_t>(cell) / MarkedBlock::atomSize;
-    auto* word = std::bit_cast<Atomic<Word>*>(cell->markedBlock().marks().storage().data() + atom / 64 % (MarkedBlock::atomsPerBlock / 64));
-    Word mask = static_cast<Word>(1) << (atom % 64);
-    if (word->loadRelaxed() & mask)
-        return false;
-    if (word->exchangeOr(mask, std::memory_order_relaxed) & mask) [[unlikely]]
-        return false;
-    cell->setCellState(CellState::PossiblyBlack);
-    if (!m_mutatorsAreStopped)
-        WTF::storeLoadFence();
-    return true;
-}
-
-ALWAYS_INLINE void FastMarkAppender::appendMarkedCell(JSCell* cell)
-{
-    cell->setCellState(CellState::PossiblyGrey);
-    if (m_cursor.next == m_cursor.end) [[unlikely]] {
-        m_cursor.store();
-        appendToFullSegment(m_visitor.m_collectorStack, cell);
-        m_cursor.load();
-    } else
-        *m_cursor.next++ = cell;
-}
-
 ALWAYS_INLINE void FastMarkAppender::markAuxiliary(const void* base)
 {
     HeapCell* cell = std::bit_cast<HeapCell*>(base);
@@ -343,14 +298,8 @@ ALWAYS_INLINE void FastMarkAppender::markAuxiliary(const void* base)
         return;
     }
     MarkedBlock& block = cell->markedBlock();
-    // Storage that lies in the cell of its owner lives and is counted with that cell.
-    if (block.hasInnerCells()) [[unlikely]]
-        return;
     Dependency dependency = block.aboutToMark(m_markingVersion, cell);
     if (block.testAndSetMarked(cell, dependency))
-        return;
-    // Storage that lies in the cell of its owner is counted with that cell.
-    if (block.isInnerCell(cell)) [[unlikely]]
         return;
     block.noteMarked();
     size_t size = block.cellSizeInHeader();

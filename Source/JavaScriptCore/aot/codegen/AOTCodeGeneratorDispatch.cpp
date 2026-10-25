@@ -26,6 +26,7 @@
 #include "AOTEvalEmitter.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTExpandedIterationEmitter.h"
+#include "AOTExpectedRowsEmitter.h"
 #include "AOTForInEmitter.h"
 #include "AOTFusedAccessEmitter.h"
 #include "AOTGuardEmitter.h"
@@ -53,7 +54,6 @@
 #include "AOTStringBuilderPartEmitter.h"
 #include "AOTStringEmitter.h"
 #include "AOTStringRangeReadEmitter.h"
-#include "AOTValidationEmitter.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 

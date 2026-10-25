@@ -373,13 +373,6 @@ static void throwErrorWithMessage(Instance* instance, JSGlobalObject* globalObje
     instance->runtime.exceptions.thrownValue = JSValue::encode(error);
 }
 
-// It throws nothing. It is declared to throw so that it stays under the handlers of its place, and has a site that names them.
-JSC_DEFINE_JIT_OPERATION(operationAOTIsThrownValueIgnored, size_t, (Instance* instance))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTIsThrownValueIgnored);
-    OPERATION_RETURN(scope, !needsExceptionForEveryThrow(*instance) && nearestHandlerIgnoresValue(vm, *instance, callFrame));
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, const uint64_t* registers, const uint32_t* site, uint32_t source))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowAtSite);

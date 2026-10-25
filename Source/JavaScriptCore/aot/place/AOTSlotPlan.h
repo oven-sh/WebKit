@@ -85,17 +85,6 @@ struct ReservedBytes {
     friend auto operator<=>(const ReservedBytes&, const ReservedBytes&) = default;
 };
 
-// An object that lies in the cell of another, behind the fields of that one, with a header of its own.
-struct PlacedInnerObject {
-    FieldIndex field { 0 };
-    // None for an array: its cell, and behind that its first storage.
-    LayoutID layout;
-    uint32_t arrayCapacity { 0 };
-    uint32_t offset { 0 };
-    // Every object of the outer layout has it, and the field holds nothing else: a read of the field is an addition.
-    bool isAlwaysInPlace { false };
-};
-
 struct PlannedLayout {
     bool hasSlots() const { return storage == LayoutStorage::CompiledObject || storage == LayoutStorage::Environment; }
     unsigned numberOfFields() const { return slots.isEmpty() ? 0 : slots.size() - numberOfHiddenWords; }
@@ -104,27 +93,16 @@ struct PlannedLayout {
     bool hasExtension() const { return !slots.isEmpty() && slots[extensionWordIndex()].hasStorage(); }
     bool hasExtraPropertiesWord() const { return !slots.isEmpty() && slots[extraPropertiesWordIndex()].hasStorage(); }
     JS_EXPORT_PRIVATE bool keepsZero(uint32_t offset, uint32_t width) const;
-    const PlacedInnerObject* innerObjectIn(FieldIndex field) const
-    {
-        for (const PlacedInnerObject& inner : innerObjects) {
-            if (inner.field == field)
-                return &inner;
-        }
-        return nullptr;
-    }
 
     LayoutStorage storage { LayoutStorage::None };
     bool holdsWideReferences { false };
     bool keysAreNeverEnumerated { false };
-    bool mayBeInnerObject { false };
     uint16_t numberOfRecordFields { 0 };
     uint32_t size { 0 };
-    uint32_t sizeWithInnerObjects { 0 };
     uint32_t extensionSize { 0 };
     std::optional<uint32_t> isEscapedOffset;
     Vector<PlacedSlot> slots;
     Vector<ReservedBytes> bytesKeptZero;
-    Vector<PlacedInnerObject> innerObjects;
 };
 
 struct SlotGroup {
@@ -247,12 +225,6 @@ private:
     SlotAgreement m_agreementOfNoReceivers;
     std::unique_ptr<SlotAgreementMemo> m_agreements;
 };
-
-// The pass that pairs allocations runs before the plan, which may find that the two objects do not fit one cell.
-inline bool takesCellWithInnerObjects(const SlotPlan& plan, const Value& newObject)
-{
-    return newObject.takesCellOfInnerObject() && !plan.layout(newObject.layout()).innerObjects.isEmpty();
-}
 
 JS_EXPORT_PRIVATE BitVector findVariablesDescribedToRunTime(const Program&, const FlowResults&);
 

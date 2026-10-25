@@ -129,6 +129,14 @@ void FlowResults::dump(PrintStream& out, const Program& program) const
         printer.field("closureUse"_s, use.closureUse);
         printer.endLine();
     }
+    for (const FlowBoundFunctionAtSite& bound : sites.boundFunctionsAtSites) {
+        beginLine(bound.use == FlowBoundFunctionUseAtSite::Made ? "bound-function-made-at"_s : "bound-function-called-at"_s);
+        printWithLetter(accessSiteLetter, bound.site);
+        out.print(" "_s);
+        printer.print(bound.target);
+        out.print(" "_s, bound.numberOfBoundArguments);
+        printer.endLine();
+    }
 
     for (uint32_t index = 0; index < wholeProgram.modules.size(); ++index) {
         if (wholeProgram.modules[index] == ModuleFlow { })

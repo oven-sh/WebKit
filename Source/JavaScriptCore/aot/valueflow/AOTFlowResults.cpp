@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCompileOptions.h"
 #include "AOTEffectSummaries.h"
 #include "AOTFlowUnseenCode.h"
 #include "AOTProvisionalFunctions.h"
@@ -24,6 +25,7 @@ static_assert(SourceLocation { } == noSourceLocation, "A default-constructed rec
 
 static auto sortKeyOf(const FlowIndirectCall& call) { return std::tuple(call.caller, call.site, call.callee, call.kind); }
 static auto sortKeyOf(const FlowBoundFunctionUse& use) { return std::tuple(use.target, use.numberOfBoundArguments); }
+static auto sortKeyOf(const FlowBoundFunctionAtSite& bound) { return std::tuple(bound.site, bound.use, bound.target, bound.numberOfBoundArguments); }
 static auto sortKeyOf(const FlowSinkOperand& operand) { return std::tuple(operand.call, operand.operandIndex); }
 static auto sortKeyOf(const FlowTypedResultCall& record) { return record.call; }
 static auto sortKeyOf(const FlowDataNode& node) { return std::tuple(node.rootSite, node.ordinal); }
@@ -58,6 +60,7 @@ static void checkTableOrder(const FlowResultTables& tables)
     RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.callsOfBoundFunctions, tables.sites.accessSites));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.sinkOperands));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.typedResultCalls));
+    RELEASE_ASSERT(isStrictlyAscending(tables.sites.boundFunctionsAtSites));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.dataNodes));
 
     RELEASE_ASSERT(isStrictlyAscending(tables.builtins.locations));
@@ -174,6 +177,14 @@ const FlowSiteLoss& FlowResults::lossOf(AccessSiteID id) const { return recordAt
 bool FlowResults::mayCallBoundFunction(AccessSiteID call) const { return recordAt(m_tables.sites.callsOfBoundFunctions, call, false); }
 AllocationSiteID FlowResults::typedResultSite(LayoutID layout) const { return recordAt(m_tables.sites.typedResultSites, layout, AllocationSiteID()); }
 const BuiltinLocationFlow* FlowResults::findBuiltinLocation(BuiltinID holder, PropertyKeyID key) const { return findRecord(m_tables.builtins.locations, std::tuple(holder, key)); }
+
+std::span<const FlowBoundFunctionAtSite> FlowResults::boundFunctionsSeenAt(AccessSiteID site, FlowBoundFunctionUseAtSite use) const
+{
+    auto [first, end] = std::ranges::equal_range(m_tables.sites.boundFunctionsAtSites, std::pair(site, use), { }, [](const FlowBoundFunctionAtSite& bound) {
+        return std::pair(bound.site, bound.use);
+    });
+    return std::span(first, end);
+}
 
 bool FlowResults::runsAtMostOnce(const Program& program, FunctionID id) const
 {
@@ -355,6 +366,49 @@ OptionSet<BuiltinUse> FlowResults::usesOf(BuiltinID builtin) const
         return OptionSet<BuiltinUse>::all();
     const BuiltinUseRecord* record = builtin ? findRecord(m_tables.builtins.uses, builtin.index()) : nullptr;
     return record ? OptionSet<BuiltinUse>::fromRaw(static_cast<uint32_t>(record->uses)) : OptionSet<BuiltinUse>();
+}
+
+// Removing this feature puts a function that throws in place of the built-in's native code. A member of the host without a guard of its own has that of the nearest holder.
+std::optional<RemovableFeature> guardOf(const BuiltinTable& builtins, BuiltinID builtin)
+{
+    for (BuiltinID guarded = builtin; guarded; guarded = builtins.at(guarded).holder) {
+        for (const BuiltinFeatureUse& line : builtins.featureUsesOf(builtins.canonicalID(guarded))) {
+            if (line.isGuard)
+                return line.feature;
+        }
+        if (builtins.at(guarded).origin != BuiltinOrigin::Host)
+            break;
+    }
+    return std::nullopt;
+}
+
+static bool contains(const FeatureBits& features, uint32_t feature)
+{
+    return features[feature / 64] >> feature % 64 & 1;
+}
+
+bool isGuardedByRemovedFeature(const BuiltinTable& builtins, BuiltinID builtin, const FeatureBits& removedFeatures)
+{
+    std::optional<RemovableFeature> guard = guardOf(builtins, builtin);
+    return guard && contains(removedFeatures, static_cast<uint32_t>(*guard));
+}
+
+BitVector findBuiltinsThatMayBeTrimmed(const BuiltinTable& builtins, std::span<const FeatureUseRecord> featureUses, const AOT::CompileOptions& options)
+{
+    FeatureBits keptFeatures { };
+    for (const FeatureUseRecord& use : featureUses) {
+        if (use.kind == FeatureUseKind::Named || !contains(options.featuresKeptOnlyWhenNamed, use.feature))
+            keptFeatures[use.feature / 64] |= 1ull << use.feature % 64;
+    }
+    for (size_t word = 0; word < keptFeatures.size(); ++word)
+        keptFeatures[word] &= ~options.removedFeatures[word];
+
+    BitVector mayBeTrimmed(builtins.builtinCount());
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        std::optional<RemovableFeature> guard = guardOf(builtins, BuiltinID(index));
+        mayBeTrimmed.quickSet(index, guard && !contains(keptFeatures, static_cast<uint32_t>(*guard)));
+    }
+    return mayBeTrimmed;
 }
 
 OperandSummary publishedParameterSummary(const FlowResults& flow, FunctionID function, uint32_t entryParameter) { return flow.parameterSummary(function, entryParameter); }

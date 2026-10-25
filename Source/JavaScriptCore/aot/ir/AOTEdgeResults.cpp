@@ -407,7 +407,6 @@ Type narrowTypeByTest(const TypingContext& context, const Type& source, const Va
     case Proof::KeyOrder:
     case Proof::UnmodifiedGenerator:
     case Proof::EnumeratorCurrent:
-    case Proof::PlainData:
     case Proof::SourceOpen:
     case Proof::TextMatches:
         break;

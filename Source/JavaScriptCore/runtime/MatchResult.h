@@ -50,18 +50,6 @@ struct MatchResult {
         return MatchResult();
     }
 
-    // No match was found, and none was ruled out: the search ended without an answer, at Yarr::matchLimit or for want of memory. It is false like failed().
-    static constexpr size_t endOfSearchGivenUp = 1;
-    ALWAYS_INLINE static MatchResult gaveUp()
-    {
-        return MatchResult(WTF::notFound, endOfSearchGivenUp);
-    }
-
-    ALWAYS_INLINE bool hasGivenUp() const
-    {
-        return start == WTF::notFound && end == endOfSearchGivenUp;
-    }
-
     ALWAYS_INLINE explicit operator bool() const
     {
         return start != WTF::notFound;

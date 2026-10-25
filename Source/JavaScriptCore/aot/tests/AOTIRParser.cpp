@@ -126,8 +126,6 @@ static bool canBeRoleOfFunctionAsRead(FunctionRole role)
     case FunctionRole::OutlinedBody:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
-    case FunctionRole::ValidatingParser:
-    case FunctionRole::Validator:
     case FunctionRole::ChainStep:
         return static_cast<unsigned>(role) < numberOfWireEnumerators<FunctionRole>;
     }
@@ -474,10 +472,6 @@ void TextParser::parseItem(const TextItem& item)
     case ProgramList::Types:
     case ProgramList::ClassParts:
     case ProgramList::DeclaredTypes:
-    case ProgramList::TemplateParts:
-    case ProgramList::ValidationRules:
-    case ProgramList::ValidationMembers:
-    case ProgramList::ValidationNodes:
     case ProgramList::Fields:
     case ProgramList::StaticFields:
     case ProgramList::ModuleRequests:

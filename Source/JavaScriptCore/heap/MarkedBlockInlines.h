@@ -122,9 +122,6 @@ ALWAYS_INLINE bool MarkedBlock::Handle::isLive(HeapVersion markingVersion, HeapV
     if (m_directory->isAllocated(this))
         return true;
 
-    if (this->block().hasInnerCells()) [[unlikely]]
-        cell = this->block().outerCellOf(cell);
-
     // We need to do this while holding the lock because marks might be stale. In that case, newly
     // allocated will not yet be valid. Consider this interleaving.
     //
@@ -434,8 +431,6 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
         live = header.m_marks;
     else
         live = header.m_newlyAllocated;
-    if (block.hasInnerCells()) [[unlikely]]
-        block.clearBitsOfInnerCells(live);
 
     // We only want to discard the newlyAllocated bits if we're creating a FreeList,
     // otherwise we would lose information on what's currently alive.
@@ -715,11 +710,8 @@ inline IterationStatus MarkedBlock::Handle::forEachMarkedCell(NOESCAPE const Fun
     if (areMarksStale)
         return IterationStatus::Continue;
     IterationStatus result = IterationStatus::Continue;
-    bool hasInnerCells = block.hasInnerCells();
     block.header().m_marks.forEachSetBit([&](size_t i) ALWAYS_INLINE_LAMBDA {
         HeapCell* cell = reinterpret_cast_ptr<HeapCell*>(&m_block->atoms()[i]);
-        if (hasInnerCells && block.isInnerCell(cell)) [[unlikely]]
-            return IterationStatus::Continue;
         result = functor(i, cell, kind);
         return result;
     });

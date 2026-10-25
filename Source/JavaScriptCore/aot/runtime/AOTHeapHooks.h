@@ -35,14 +35,8 @@ void didChangeBarrierThreshold(VM&, unsigned threshold, bool mutatorShouldBeFenc
 void willAnalyzeHeap(VM&);
 String nameOfCompiledCallee(JSCell*);
 [[noreturn]] void crashOnCellVisitMismatch(VM&, const JSCell*);
-// The inner cell of a live outer cell that the address lies in, storage behind the inner cell included. Null in front of the first one, and for room that nothing has filled yet.
-JSCell* innerCellAround(JSCell* outerCell, const void* address);
 // Where the cells of a live Structure keep their 32-bit references, from the start of the cell. Nothing for a Structure of other cells than compiled objects.
 std::span<const uint32_t> offsetsOfNarrowReferences(const Structure*);
-// For a thread that marks, behind the visit of an outer cell: the inner cells in it that have a header and no mark are looked at again when the marking ends.
-void noteInnerCellsWithoutMark(JSCell* outerCell);
-// With the mutators stopped, before anything is swept. An inner cell that was noted and is still without a mark is referred to by nothing: it loses its header, so that no later scan of a stack takes it for a cell.
-void didFinishMarking(VM&);
 // For a validating image, while the mutators are stopped. Allocates nothing and runs no code, so a thread that marks may call it.
 void validateSlotsOf(VM&, const JSCell* compiledObject);
 

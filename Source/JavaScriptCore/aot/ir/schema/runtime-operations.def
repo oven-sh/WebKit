@@ -51,13 +51,6 @@ runtime NewFromData, NewSetFromData, NewMapFromData : JSCell* (uint32_t request)
 runtime CopyDataProperties : void (JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys) ; unknownCode
 runtime CopyObject : JSCell* (EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys) ; unknownCode
 runtime TryCopyTwoObjects : JSCell* (EncodedJSValue first, EncodedJSValue second) ; reads(all) writes(ObjectFields, AllocatorState, RuntimeState) collects
-runtime CloneObjectAs : JSCell* (EncodedJSValue source, uint32_t request, const EncodedJSValue* values) ; RuntimeAllocates
-runtime IsPlainDataObject : size_t (EncodedJSValue value) ; reads(all)
-runtime GetOwnDataProperty : EncodedJSValue (JSCell* object, uint32_t key) ; RuntimeCreatesConstant
-runtime FindSourcePlan : UGPRPair (JSCell* source, uint32_t request) ; RuntimeAllocates
-runtime GetPreparedPlans : EncodedJSValue () ; RuntimeCreatesConstant
-runtime IsThrownValueIgnored : size_t () ; reads(all) writes(RuntimeState) throws
-runtime MatchesUnrecorded : size_t (JSCell* regExp, JSCell* string) ; RuntimeCreatesString
 runtime ExpectRows : void (EncodedJSValue target, uint32_t shape) ; reads(all) writes(NamedProperties, AllocatorState, RuntimeState) collects
 runtime TryPutProperties : size_t (SiteCache cache, EncodedJSValue object, uint32_t request, const EncodedJSValue* values, uint32_t isDefinition) ; reads(all) writes(ShapeWords, MemberGuards, OrderWords, NamedProperties, ObjectFields, AllocatorState, RuntimeState) collects
 runtime MaterializeEnvironment : JSCell* (uint32_t allocation, const EncodedJSValue* source) ; RuntimeAllocates

@@ -445,6 +445,8 @@ static BuiltinOverloadID findOverload(const BuiltinTable& table, BuiltinID membe
 static BuiltinUsePlan planHostValueRead(const BuiltinUseInputs& inputs, const MemberSite& site)
 {
     const Program& program = inputs.program;
+    if (program.mayBeTrimmed(site.answer.member))
+        return { };
     BuiltinUsePlan plan;
     plan.call.overload = findOverload(program.builtins(), site.answer.member, BuiltinCallMode::Get);
     if (!plan.call.overload)

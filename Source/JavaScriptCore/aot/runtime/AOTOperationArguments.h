@@ -65,13 +65,6 @@ inline void fill(MarkedArgumentBuffer& buffer, uint32_t count, const EncodedJSVa
         buffer.append(JSValue::decode(values[i]));
 }
 
-ALWAYS_INLINE std::optional<uint32_t> indexNamedBy(uint32_t name, const Identifier& identifier)
-{
-    if (Image::current()->text().identifier(name).nameClass() != NameClass::Index) [[likely]]
-        return std::nullopt;
-    return parseIndex(identifier);
-}
-
 } } // namespace JSC::AOT
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

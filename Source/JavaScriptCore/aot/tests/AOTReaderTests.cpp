@@ -57,7 +57,7 @@ void testListCounts()
     ReaderFixture fixture;
     const std::pair<List, uint32_t> counts[] = {
         { List::ClassParts, 2 }, { List::TypeSites, 1 }, { List::DeclaredTypes, 15 }, { List::ExpectedResults, 1 },
-        { List::TemplateParts, 1 }, { List::ValidationRules, 2 }, { List::ValidationMembers, 1 }, { List::ValidationNodes, 3 }, { List::Layouts, 4 },
+        { List::Layouts, 4 },
         { List::Fields, 4 }, { List::StaticFields, 1 }, { List::Variables, 4 }, { List::Modules, 2 }, { List::ModuleRequests, 1 },
         { List::ModuleExports, 2 }, { List::SyntheticExports, 2 }, { List::RequiredNames, 1 }, { List::ColumnAdjustments, 1 },
         { List::ModuleFailures, 1 }, { List::EvalScopes, 1 }, { List::EvalBindings, 1 },
@@ -78,7 +78,6 @@ void testListCounts()
     AOT_TEST_CHECK(program->evalScopes.size() == 1 && program->data.size() == 1 && program->entries.size() == 1);
     AOT_TEST_CHECK(program->runtimeFunctions.size() == 2 && program->webAssemblyModules.size() == 1);
     AOT_TEST_CHECK(program->strings.size() >= fixture.countOf(List::Strings));
-    AOT_TEST_CHECK(program->expectedResults[0].validation.size() == 3 && program->expectedResults[0].validation[2].rules.size() == 1);
 }
 
 void testEveryChangedWord()

@@ -153,6 +153,8 @@ struct CompileOptions {
     std::array<uint8_t, 16> executableIdentity { };
     // A bit for each RemovableFeature that the executable is built without, whether or not the program uses it.
     std::array<uint64_t, 8> removedFeatures { };
+    // A bit for each RemovableFeature that the executable is built without unless a use of it is FeatureUseKind::Named.
+    std::array<uint64_t, 8> featuresKeptOnlyWhenNamed { };
     double sizeClassProgression { 0 };
     unsigned threadCount { 1 };
     CompileAction action { CompileAction::Compile };

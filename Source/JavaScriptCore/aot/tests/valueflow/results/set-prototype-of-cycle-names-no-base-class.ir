@@ -1,0 +1,33 @@
+# function First() {}; function Second() {}; if (a) Object.setPrototypeOf(First.prototype, Second.prototype); else Object.setPrototypeOf(Second.prototype, First.prototype)
+# Each link alone is legal, and the two never both hold. A walk up the expected bases of a layout has to end, so the link that closes the cycle names no base
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="First"
+# CHECK-NOT: prototypeBase
+# CHECK: layout L1 kind=Instance name="Second" {{*}}prototypeBase=L0
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="First" constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Second" constructor=f2 flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = PropGet v0 key="prototype"
+    v3 = PropGet v1 key="prototype"
+    v4 = Builtin builtin=ObjectSetPrototypeOf
+    v5 = Call v4, -, v2, v3
+    v6 = Call v4, -, v3, v2
+    v7 = Construct v0
+    v8 = Construct v1
+    Return
+}
+function f1 name="First" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}
+function f2 name="Second" flags=[HasThis] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    Return
+}

@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTAllocationCounts.h"
-#include "AOTAllocationEmitter.h"
 #include "AOTArrayStorageForms.h"
 #include "AOTBarrierEmitter.h"
 #include "AOTCellFormat.h"
@@ -154,77 +153,12 @@ CellPointer CellAllocationEmitter::allocateObject(InlineAllocation kind, LBasicB
     return result;
 }
 
-CellAllocationEmitter::AllocationSiteAddress CellAllocationEmitter::allocationSiteAddress(AllocationID id)
+Pointer CellAllocationEmitter::allocationSiteRecord(AllocationID id)
 {
     static_assert(std::is_same_v<decltype(ObjectWords::distancesToAllocationSites), int32_t*>);
     Pointer distances = loadImmutablePointer(AOT_INSTANCE_OFFSET(objects.distancesToAllocationSites));
     Word32 distance(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), distances.value(), static_cast<ptrdiff_t>(id.index()) * sizeof(int32_t))));
-    return { distances, signExtended(distance) };
-}
-
-Pointer CellAllocationEmitter::allocationSiteRecord(AllocationID id)
-{
-    AllocationSiteAddress site = allocationSiteAddress(id);
-    return offsetBy(Pointer(m_out.add(site.distances.value(), site.distance.value())), -static_cast<ptrdiff_t>(sizeof(AllocationSiteRecord)));
-}
-
-// The header, the order word and the shape word lie in the record as they lie in the cell.
-void CellAllocationEmitter::copyHeaderAndWords(AllocationID id, CellPointer cell)
-{
-    static_assert(AllocationSiteRecord::offsetOfOrderAndShapeWords() == AllocationSiteRecord::offsetOfHeader() + static_cast<ptrdiff_t>(sizeof(uint64_t)));
-    static_assert(offsetOfOrderWord == sizeof(JSCell) && offsetOfShapeWord == offsetOfOrderWord + sizeof(uint32_t) && sizeof(JSCell) == sizeof(uint64_t));
-    AllocationSiteAddress site = allocationSiteAddress(id);
-    const B3::AbstractHeap& recordHeap = m_heaps.entire(AbstractHeap::AllocatorState);
-    std::array<const B3::AbstractHeap*, 3> written { &m_heaps.JSCell_header, &m_heaps.AOTObject_orderWord, &m_heaps.entire(AbstractHeap::ShapeWords) };
-    B3::PatchpointValue* copy = m_out.patchpoint(B3::Void);
-    copy->effects = B3::Effects::none();
-    m_heaps.decoratePatchpointRead(&recordHeap, copy);
-    m_heaps.decoratePatchpointWrite(written, copy);
-    copy->appendSomeRegister(site.distances.value());
-    copy->appendSomeRegister(site.distance.value());
-    copy->appendSomeRegister(cell.value());
-    copy->setRunsWithoutFrame(true);
-    if (isX86_64())
-        copy->numFPScratchRegisters = 1;
-    else
-        copy->numGPScratchRegisters = 2;
-    copy->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-        constexpr int32_t offsetOfRecord = -static_cast<int32_t>(sizeof(AllocationSiteRecord)) + static_cast<int32_t>(AllocationSiteRecord::offsetOfHeader());
-        GPRReg distances = params[0].gpr();
-        GPRReg distance = params[1].gpr();
-        GPRReg cell = params[2].gpr();
-#if CPU(X86_64)
-        FPRReg chunk = params.fpScratch(0);
-        if (jit.supportsAVX()) {
-            jit.m_assembler.vmovups_mr(offsetOfRecord, distances, distance, CCallHelpers::TimesOne, chunk);
-            jit.m_assembler.vmovups_rm(chunk, 0, cell);
-        } else {
-            jit.m_assembler.movups_mr(offsetOfRecord, distances, distance, CCallHelpers::TimesOne, chunk);
-            jit.m_assembler.movups_rm(chunk, 0, cell);
-        }
-#else
-        GPRReg first = params.gpScratch(0);
-        GPRReg second = params.gpScratch(1);
-        jit.addPtr(distances, distance, first);
-        jit.loadPair64(first, CCallHelpers::TrustedImm32(offsetOfRecord), first, second);
-        jit.storePair64(first, second, cell, CCallHelpers::TrustedImm32(0));
-#endif
-    });
-}
-
-void CellAllocationEmitter::ensureRecordIsFilled(const OperationContext& context, AllocationID id)
-{
-    LBasicBlock isEmpty = newBlock();
-    LBasicBlock continuation = newBlock();
-    Integer header(m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), allocationSiteRecord(id).value(), AllocationSiteRecord::offsetOfHeader())));
-    m_out.branch(isNotZero(header).value(), normalEdge(continuation), rareEdge(isEmpty));
-
-    // The operation fills the record and allocates no cell.
-    m_out.appendTo(isEmpty);
-    callOperation<Integer>(context, RuntimeOperation::GetHeaderOfAllocation, { word32(static_cast<int32_t>(id.index())) }, { .isOnRarePath = true });
-    m_out.jump(continuation);
-
-    m_out.appendTo(continuation);
+    return offsetBy(Pointer(m_out.add(distances.value(), signExtended(distance).value())), -static_cast<ptrdiff_t>(sizeof(AllocationSiteRecord)));
 }
 
 AOT_THRESHOLD(size_t, maxBytesZeroedInLine, 256);
@@ -281,18 +215,7 @@ void CellAllocationEmitter::zeroBody(CellPointer cell, AllocationID id)
     });
 }
 
-CellPointer CellAllocationEmitter::allocate(const OperationContext& context, AllocationID id, WholeCell, ZeroedBy zeroedBy)
-{
-    return allocateWithoutPlace(context, id, zeroedBy);
-}
-
-CellPointer CellAllocationEmitter::allocateCellOfBothObjects(const OperationContext& context, const PlaceInCell& place)
-{
-    RELEASE_ASSERT(place.kind() == PlaceInCell::Kind::BehindOuterObject);
-    return allocateWithoutPlace(context, place.outerAllocation(), ZeroedBy::Nobody);
-}
-
-CellPointer CellAllocationEmitter::allocateWithoutPlace(const OperationContext& context, AllocationID id, ZeroedBy zeroedBy)
+CellPointer CellAllocationEmitter::allocate(const OperationContext& context, AllocationID id, ZeroedBy zeroedBy)
 {
     const PlacedAllocation& allocation = m_placement.allocation(id);
     bool hasOrderAndShapeWords = isObjectLayout(m_program.at(allocation.layout).kind);
@@ -307,12 +230,12 @@ CellPointer CellAllocationEmitter::allocateWithoutPlace(const OperationContext& 
     return cell;
 }
 
-CellPointer CellAllocationEmitter::allocateZeroedByNumber(const OperationContext& context, Word32 numberOfAllocation, WholeCell)
+CellPointer CellAllocationEmitter::allocateZeroedByNumber(const OperationContext& context, Word32 numberOfAllocation)
 {
     return CellPointer(callStub(context, allocateCell(CellInitialization::HeaderAndWordsAndZeros), { zeroExtended(numberOfAllocation).value() }).first);
 }
 
-CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& context, AllocationID id, WholeCell, CellPointer source, unsigned fieldBytes)
+CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& context, AllocationID id, CellPointer source, unsigned fieldBytes)
 {
     RELEASE_ASSERT(fieldBytes && !(fieldBytes % copyChunkBytes));
     LValue allocation = m_out.constInt64(id.index());

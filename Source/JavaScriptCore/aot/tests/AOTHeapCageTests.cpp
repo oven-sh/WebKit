@@ -22,7 +22,6 @@
 #include "JSBigInt.h"
 #include "JSCInlines.h"
 #include "JSLock.h"
-#include "JSMapInlines.h"
 #include "MarkStack.h"
 #include "MarkedBlock.h"
 #include "MarkedBlockCage.h"
@@ -574,16 +573,6 @@ static void fillSmallSizeClasses(VM& vm)
     }
 }
 
-static void checkPreparedPlansAreCreatedInFullCage()
-{
-    TestVM test;
-    JSGlobalObject* realm = test.createRealm();
-    DeferGCForAWhile deferGC(test.vm());
-    fillSmallSizeClasses(test.vm());
-    JSMap* plans = createPreparedPlans(realm);
-    AOT_TEST_CHECK(plans && plans->size() == 2);
-}
-
 static void checkConstantsAreCompiledInFullCage()
 {
     TestVM test;
@@ -907,7 +896,6 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/range-is-reused"_s, withCage<checkRangeIsReused> },
         { "heap-cage/cage/reserve-is-kept-once-half-full"_s, withCage<checkReserveIsKeptOnceHalfFull> },
         { "heap-cage/cage/infallible-scope-uses-reserve"_s, withCage<checkInfallibleScopeUsesReserve> },
-        { "heap-cage/cage/prepared-plans-are-created-in-full-cage"_s, withCage<checkPreparedPlansAreCreatedInFullCage> },
         { "heap-cage/cage/constants-are-compiled-in-full-cage"_s, withCage<checkConstantsAreCompiledInFullCage> },
         { "heap-cage/cage/error-waits-at-function-entries-alone"_s, withCage<checkErrorWaitsAtFunctionEntriesAlone> },
         { "heap-cage/cage/error-is-owed-once-collections-buy-next-to-nothing"_s, withCage<checkErrorIsOwedOnceCollectionsBuyNextToNothing> },

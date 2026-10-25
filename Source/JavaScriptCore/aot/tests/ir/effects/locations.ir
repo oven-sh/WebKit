@@ -5,7 +5,7 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
 layout L1 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
-layout L2 name="Widget" fields=[{key="run" declared={type=f7} flow={location={deferral=CapturesNothing deferredFunction=f7} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 name="Widget" fields=[{key="run" declared={type=f6} flow={location={deferral=CapturesNothing deferredFunction=f6} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 variable g0 name="first" declared={type=anything} initialization=Undefined
 variable g1 name="second" declared={type=anything} initialization=Undefined
 function f0 name="variables" parameters=[{type=anything}] results=[{type=anything}] {
@@ -62,30 +62,19 @@ function f4 name="slotRowsWithMoreEffects" parameters=[{type=L1}, {type=number},
 # CHECK-NEXT: v4 GetDeferredClosureSlot: not exact
 # CHECK-NEXT: v5 PutSlotOrAdd: not exact
 # CHECK-NEXT: v6 PropGet: not exact
-function f5 name="twoLocations" parameters=[{type=object}] results=[{type=undefined}] {
-    v1 = IsPlainDataObject v0
-    Branch v1 -> taken b1(| 0), notTaken b2()
-  b1(v2):
-    v3 = GetOwnDataProperty v0, v2 key="x"
-    Return
-  b2():
-    Return
-}
-# CHECK-LABEL: function f5
-# CHECK: v3 GetOwnDataProperty: not exact
-function f6 name="contents" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=Arguments}, {type=number}] results=[{type=undefined}] {
+function f5 name="contents" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=Arguments}, {type=number}] results=[{type=undefined}] {
     v3 = GetArrayLength v0
     v4 = GetMappedArgument v1 index=0
     SetMappedArgument v1, v2 index=0
     AppendElement v0, v2
     Return
 }
-# CHECK-LABEL: function f6
+# CHECK-LABEL: function f5
 # CHECK-NEXT: v3 GetArrayLength: not exact
 # CHECK-NEXT: v4 GetMappedArgument: not exact
 # CHECK-NEXT: v5 SetMappedArgument: not exact
 # CHECK-NEXT: v6 AppendElement: not exact
 # CHECK-NEXT: overlap Elements[Array] Elements[Arguments]: None
-function f7 name="callback" kind=Arrow results=[{type=undefined}] {
+function f6 name="callback" kind=Arrow results=[{type=undefined}] {
     Return
 }

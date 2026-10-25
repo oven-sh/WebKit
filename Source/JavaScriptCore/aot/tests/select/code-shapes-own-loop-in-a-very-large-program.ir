@@ -1,0 +1,34 @@
+# A function that runs once has a loop with a branch in it. In a very large program the code behind the branch is too cold for the long inline forms: StringAndValue is a form of fast code only.
+# code-shapes-own-loop.ir is the same program at its real size.
+# FORM: AsRead
+# RUN: pipeline Select
+# OPTIONS: only-passes=BuildCallGraph,EstimateHeat,ComputeEffectSummaries limit=MaxWarmCodeValues:1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToString v1
+    v3 = CallDirect v1, v2 function=f1
+    Return
+}
+
+function f1 name="hasOneLoop" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+    v2 = ToBoolean v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = StrictEq v1, v0
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    v5 = StrictEq v0, v1
+    Jump -> next b3()
+  b3():
+    Branch v4 -> taken b1(), notTaken b4()
+  b4():
+    Return v4
+# CHECK: StrictEq v1, v0 form=StringAndValue
+# CHECK: StrictEq v0, v1 form=Generic
+}

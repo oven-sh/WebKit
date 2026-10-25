@@ -13,7 +13,7 @@ namespace JSC { namespace AOT {
 
 static constexpr ASCIILiteral recordsWithOptionalMembers = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-expectedresult x0 type=L1 layouts=[L0, L1] validation=[{shape=Object{layout=L1 members=[{key="always" node=1 field=0}, {key="count" node=1 field=1 isOptional=true}, {key="name" node=2 field=2 isOptional=true}, {key="flag" node=3 field=3 isOptional=true}, {key="list" node=5 field=5 isOptional=true}, {key="orNull" node=6 field=6 isOptional=true}]} type=L1}, {shape=Primitive{primitive=Number} type=number}, {shape=Primitive{} type=string}, {shape=Primitive{primitive=Boolean} type=boolean}, {shape=Object{layout=L0 members=[{key="id" node=1 field=0}, {key="note" node=2 field=1 isOptional=true}]} type=L0}, {shape=Array{element=1} type=Array<number>}, {shape=Union{arms=[7, 2]} type=null|string}, {shape=Null type=null}]
+expectedresult x0 type=L1 layouts=[L0, L1]
 layout L0 name="Inner" fields=[{key="id" declared={type=number}}, {key="note" declared={type=undefined|string}}]
 layout L1 name="Kinds" fields=[{key="always" declared={type=number}}, {key="count" declared={type=undefined|number}}, {key="name" declared={type=undefined|string}}, {key="flag" declared={type=undefined|boolean}}, {key="inner" declared={type=undefined|L0}}, {key="list" declared={type=undefined|Array<number>}}, {key="orNull" declared={type=undefined|null|string}}]
 function f0 name="main" kind=Module results=[{type=anything}] {

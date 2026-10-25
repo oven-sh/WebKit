@@ -204,7 +204,7 @@ void ElementAccessEmitter::storeInsideLength(const ValueContext& value, const Ar
     Integer index = indexInsideLength(value->positionOperand());
     if (generator().validatesOrChecksProofs()) {
         RuntimeValidationEmitter& validation = emitter<RuntimeValidationEmitter>();
-        validation.checkPrecondition(value, hasWritableShape(indexingMode(array, IndexingShapeAndWritabilityMask), form));
+        validation.checkPrecondition(value, hasWritableShapeIgnoringLock(indexingMode(array, IndexingShapeAndWritabilityMask), form));
         validation.checkPrecondition(value, below(index, publicLength(elements)));
     }
     ValueID stored = value->valueOperand();

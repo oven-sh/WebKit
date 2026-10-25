@@ -45,7 +45,6 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(resultNodeDeclineTests) \
     v(resultNodeTests) \
     v(typeArenaTests) \
-    v(validationPlanTextTests) \
     v(valueFlowCoreTests)
 
 #define FOR_EACH_AOT_IMAGE_NATIVE_TEST_PROVIDER(v) \
@@ -222,7 +221,6 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(thisAllocationProgramTests) \
     v(thisAllocationTests) \
     v(typedResultProgramTests) \
-    v(validatedValueTests) \
     v(waiterOrderProgramTests)
 
 #define AOT_DECLARE_NATIVE_TEST_PROVIDER(name) std::span<const NativeTest> name();

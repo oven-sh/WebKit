@@ -370,10 +370,10 @@ NEVER_INLINE JSString* replaceUsingRegExpSearch(VM& vm, JSGlobalObject* globalOb
         if (callData.type == CallData::Type::None && !replacementString.length())
             RELEASE_AND_RETURN(scope, removeAllUsingRegExpSearch(vm, globalObject, string, source, regExp));
 
-        if (callData.type == CallData::Type::JS && !hasNamedCaptures && sourceLen >= Options::thresholdForStringReplaceCache()) {
+        if (CachedCall::supports(callData) && !hasNamedCaptures && sourceLen >= Options::thresholdForStringReplaceCache()) {
             auto resolved = string->value(globalObject);
             RETURN_IF_EXCEPTION(scope, nullptr);
-            RELEASE_AND_RETURN(scope, replaceAllWithCacheUsingRegExpSearch(vm, globalObject, string, resolved, regExp, uncheckedDowncast<JSFunction>(replaceValue)));
+            RELEASE_AND_RETURN(scope, replaceAllWithCacheUsingRegExpSearch(vm, globalObject, string, resolved, regExp, asObject(replaceValue), callData));
         }
     }
 

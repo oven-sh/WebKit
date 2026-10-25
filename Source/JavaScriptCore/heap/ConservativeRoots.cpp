@@ -210,16 +210,8 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
 
     // We could point into the middle of an object.
     char* alignedPointer = static_cast<char*>(candidate->handle().cellAlign(pointer));
-    if (tryPointer(alignedPointer)) {
-#if ENABLE(AOT)
-        // The cell is alive by now. What an inner cell refers to is alive only if the inner cell is marked itself.
-        if (candidate->hasInnerCells()) [[unlikely]] {
-            if (JSCell* inner = AOT::HeapHooks::innerCellAround(std::bit_cast<JSCell*>(alignedPointer), pointer))
-                markFoundGCPointer(inner, cellKind);
-        }
-#endif
+    if (tryPointer(alignedPointer))
         return;
-    }
 
     // Also, a butterfly could point at the end of an object plus sizeof(IndexingHeader). In that
     // case, this is pointing to the object to the right of the one we should be marking. As with the
@@ -256,7 +248,7 @@ void ConservativeRoots::genericAddSpanOfCompiledProcess(void* begin, void* end, 
         endOfPreciseAllocations = std::bit_cast<char*>(last->cell()) + last->cellSize() + sizeof(IndexingHeader);
     }
     const MarkedBlockCage::Indices narrow = m_narrowReferences;
-    // An index names the start of a cell or of an inner cell. genericAddPointer also accepts interior pointers, so both branches check for an exact match first.
+    // An index names the start of a cell. genericAddPointer also accepts interior pointers, so both branches check for an exact match first.
     auto addNarrowReferenceAmong = [&](const MarkedBlockCage::Indices& indices, uint32_t word) ALWAYS_INLINE_LAMBDA {
         if (word - indices.first >= indices.count)
             return;
@@ -276,12 +268,7 @@ void ConservativeRoots::genericAddSpanOfCompiledProcess(void* begin, void* end, 
         MarkedBlock* candidate = MarkedBlock::blockFor(pointer);
         if (jsGCFilter.ruleOut(std::bit_cast<uintptr_t>(candidate)) || !m_heap.objectSpace().blocks().set().contains(candidate))
             return;
-        void* cell = pointer;
-#if ENABLE(AOT)
-        if (candidate->hasInnerCells() && MarkedBlock::isAtomAligned(pointer)) [[unlikely]]
-            cell = candidate->outerCellOf(pointer);
-#endif
-        if (candidate->handle().isLiveCell(markingVersion, newlyAllocatedVersion, true, cell))
+        if (candidate->handle().isLiveCell(markingVersion, newlyAllocatedVersion, true, pointer))
             genericAddPointer<false>(pointer, markingVersion, newlyAllocatedVersion, jsGCFilter, boxedWasmCalleeFilter, markHook);
     };
     auto addNarrowReference = [&](uint32_t word) ALWAYS_INLINE_LAMBDA {

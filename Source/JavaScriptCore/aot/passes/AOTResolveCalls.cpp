@@ -106,6 +106,36 @@ static CalleeCandidates calleeCandidatesOf(const Program& program, const Functio
     return result;
 }
 
+// Also expects the bound function where flow saw the result of one kind of bind reach the call.
+// It stops expecting the bind's target and every function that an earlier test has ruled out: `this.m = this.m.bind(this)` hides the method behind the result.
+static CalleeCandidates calleeCandidatesOf(FunctionPassContext& context, const Value& operation, ValueID callee, BlockID block)
+{
+    const Program& program = context.program;
+    const FlowResults& flow = context.inputs.flow;
+    CalleeCandidates result = calleeCandidatesOf(program, context.function, operation, callee);
+    if (operation.opcode != Opcode::Call || !operation.accessSite() || !flow.hasResults())
+        return result;
+    if (result.isProven() || !admitsUnlistedFunctions(program, program.typeOf(context.function, result.value)))
+        return result;
+    std::span<const FlowBoundFunctionAtSite> seen = flow.boundFunctionsSeenAt(operation.accessSite(), FlowBoundFunctionUseAtSite::Called);
+    if (seen.size() != 1 || !canCreateBoundFunction(program, seen[0].target))
+        return result;
+    FunctionID bound = context.derivedFunction(derivedFunctionKey(FunctionRole::BoundFunction, seen[0].target, seen[0].numberOfBoundArguments));
+
+    context.planAsksAboutPlace = true;
+    FunctionList ruledOut;
+    ruledOut.add(seen[0].target);
+    for (FunctionID member : result.expected) {
+        if (context.analyses.findEarlierTest(makeTypeTest(result.value, context.types.intern(Type::forFunction(member))), block) == EarlierTest::Failed)
+            ruledOut.add(member);
+    }
+    result.expected.subtract(ruledOut);
+    result.expected.add(bound);
+    result.proof = CalleeProof::Test;
+    result.hasOtherCallees = true;
+    return result;
+}
+
 static ValueID findClosureCreation(const Function& function, ValueID closure, FunctionID closureFunction)
 {
     ValueID definition = sameObjectThroughCasts(function, closure);
@@ -1182,12 +1212,10 @@ struct CallResolver {
     // False only where plan() finds nothing and has nothing to report. It asks what the planners of the operation ask first, of the operation and of the types of its operands alone.
     bool mayHavePlan(const Value& value) const
     {
-        if (awaitsValidation(program, value))
-            return false;
         if (value.opcode == Opcode::CallBuiltin) {
             const BuiltinOverload& overload = program.builtins().at(value.overload());
             if (value.builtinCallForm() == BuiltinCallForm::AnyReceiver)
-                return program.at(value.type).isAnything() && forwardsCallOfAnyReceiver(overload);
+                return overload.builtin == Builtins::FunctionPrototypeBind || (program.at(value.type).isAnything() && forwardsCallOfAnyReceiver(overload));
             return value.builtinCallForm() == BuiltinCallForm::Whole && (program.at(value.type).isAnything() || overload.builtin == Builtins::FunctionPrototypeBind);
         }
         if (value.opcode != Opcode::PropGet && value.opcode != Opcode::PropSet)
@@ -1256,6 +1284,14 @@ struct CallResolver {
             addAccess(value);
         else if (value.opcode == Opcode::Call) {
             content.add(value.callees());
+            if (value.accessSite() && flow.hasResults()) {
+                std::span<const FlowBoundFunctionAtSite> seen = flow.boundFunctionsSeenAt(value.accessSite(), FlowBoundFunctionUseAtSite::Called);
+                content.add(static_cast<uint32_t>(seen.size()));
+                for (const FlowBoundFunctionAtSite& bound : seen) {
+                    content.add(bound.target.index());
+                    content.add(bound.numberOfBoundArguments);
+                }
+            }
             unsigned numberOfLinks = 0;
             for (ValueID link : CastChain(function, value.calleeOperand())) {
                 if (++numberOfLinks > maxLinks)
@@ -1342,8 +1378,6 @@ struct CallResolver {
             return planned == callSiteOpcodes;
         }());
         RELEASE_ASSERT(callSiteOpcodes.contains(site.opcode));
-        if (awaitsValidation(program, function.at(site.position.value)))
-            return declined;
         if (resolvesOnlyThroughTable)
             return planTableCall(site);
 
@@ -1892,7 +1926,10 @@ struct CallResolver {
         split.hasRest = !typeOf(candidates.value).isSubsetOf(covered, program);
         // A function without a body is one that nothing enters.
         bool leavesOutListedCallee = std::ranges::any_of(candidates.listed(), [&](FunctionID listed) { return program.at(listed).hasBody() && !covered.functions.contains(listed); });
-        split.restFrequency = leavesOutListedCallee ? frequency : rarerOf(frequency, BlockFrequency::Unlikely);
+        // What bind returned is no closure of a function that the type lists.
+        const Value& operation = function.at(site.position.value);
+        bool restWasSeen = operation.opcode == Opcode::Call && operation.accessSite() && flow.hasResults() && !flow.boundFunctionsSeenAt(operation.accessSite(), FlowBoundFunctionUseAtSite::Called).empty();
+        split.restFrequency = leavesOutListedCallee || restWasSeen ? frequency : rarerOf(frequency, BlockFrequency::Unlikely);
         return split;
     }
 
@@ -1908,7 +1945,7 @@ struct CallResolver {
     {
         RELEASE_ASSERT(site.opcode == Opcode::Call);
         const Value& call = function.at(site.position.value);
-        CalleeCandidates candidates = calleeCandidatesOf(program, function, call, call.calleeOperand());
+        CalleeCandidates candidates = calleeCandidatesOf(context, call, call.calleeOperand(), site.position.block);
         auto members = chooseDispatchedCallees(site, candidates, mayBeCalledDirectly);
         if (!members)
             return std::unexpected(members.error());
@@ -2220,10 +2257,10 @@ struct CallResolver {
         const Value& value = function.at(site.position.value);
         const BuiltinOverload& overload = program.builtins().at(value.overload());
         bool forwardsAnyReceiver = value.builtinCallForm() == BuiltinCallForm::AnyReceiver && forwardsCallOfAnyReceiver(overload);
+        if (!forwardsAnyReceiver && overload.builtin == Builtins::FunctionPrototypeBind && (value.builtinCallForm() == BuiltinCallForm::Whole || value.builtinCallForm() == BuiltinCallForm::AnyReceiver))
+            return planBind(site, overload);
         if (!forwardsAnyReceiver && value.builtinCallForm() != BuiltinCallForm::Whole)
             return declined;
-        if (!forwardsAnyReceiver && overload.builtin == Builtins::FunctionPrototypeBind)
-            return planBind(site, overload);
 
         if (!typeOf(site.position.value).isAnything())
             return declined;
@@ -2277,17 +2314,35 @@ struct CallResolver {
         return true;
     }
 
+    FunctionID findExpectedBindTarget(const CallSite& site, const CalleeCandidates& candidates, unsigned numberOfBound)
+    {
+        AccessSiteID accessSite = function.at(site.position.value).accessSite();
+        if (!accessSite || !flow.hasResults())
+            return { };
+        std::span<const FlowBoundFunctionAtSite> seen = flow.boundFunctionsSeenAt(accessSite, FlowBoundFunctionUseAtSite::Made);
+        if (seen.size() != 1 || seen[0].numberOfBoundArguments != numberOfBound)
+            return { };
+        TypeID closures = context.types.intern(Type::forFunction(seen[0].target));
+        if (!typeOf(candidates.value).overlaps(program.at(closures), program))
+            return { };
+        context.planAsksAboutPlace = true;
+        if (hasFailedEarlier(makeTypeTest(candidates.value, closures), site))
+            return { };
+        return seen[0].target;
+    }
+
     Plan planBind(const CallSite& site, const BuiltinOverload& overload)
     {
         BuiltinCall bind = builtinCallOf(program, function.at(site.position.value));
         if (!bind.receiver)
             return declined;
         CalleeCandidates candidates = calleeCandidates(program, function, bind.receiver);
-        if (!candidates.isProven() || candidates.proven.size() != 1 || candidates.hasOtherCallees || candidates.mayBeNullish)
-            return std::unexpected(candidates.expected.isEmpty() ? CallDeclineReason::UnknownCallee : CallDeclineReason::NeedsTest);
-
-        FunctionID targetID = candidates.proven[0];
         unsigned numberOfBound = bind.arguments.empty() ? 0 : static_cast<unsigned>(bind.arguments.size() - 1);
+        // Where the target is not proven, the bind tests for the one function that flow saw, and the engine binds anything else.
+        bool testsTarget = !candidates.isProven() || candidates.proven.size() != 1 || candidates.hasOtherCallees || candidates.mayBeNullish;
+        FunctionID targetID = testsTarget ? findExpectedBindTarget(site, candidates, numberOfBound) : candidates.proven[0];
+        if (!targetID)
+            return std::unexpected(candidates.expected.isEmpty() ? CallDeclineReason::UnknownCallee : CallDeclineReason::NeedsTest);
         if (!canBind(bind, targetID, numberOfBound, site.position.value))
             return std::unexpected(CallDeclineReason::CalleeNotCallable);
 
@@ -2315,29 +2370,40 @@ struct CallResolver {
         if (record.numberOfCapturedArguments > numberOfBound || numberOfCaptures != program.at(boundFunction).captures.size())
             return declined;
 
-        return [this, &site, record, boundFunction, capturesThis, testsThatClosureIsAsCreated, closure = candidates.value, arm = directCallArm(targetID, { }, candidates.value)] {
+        return [this, &site, record, boundFunction, capturesThis, testsThatClosureIsAsCreated, testsTarget, targetID, receiver = candidates.value, arm = directCallArm(targetID, { }, candidates.value)] {
+            auto appendBoundClosure = [&](ValueID closure) {
+                if (testsThatClosureIsAsCreated) {
+                    IRBuilder::BranchBlocks branch = builder.emitBranch(expansion.append(makePristineTest(closure, BuiltinClasses::Function, PristineAspects::Names)), expansion.frequency(), BlockFrequency::Unlikely);
+                    builder.moveToEndOf(branch.notTaken);
+                    expansion.finishArm(expansion.appendOriginal());
+                    builder.moveToEndOf(branch.taken);
+                }
+                std::span<const ValueID> arguments = expansion.original().argumentsOperands();
+
+                appendCalleeValidation(builder, closure);
+                Vector<ValueID, 8> captures = capturesOf(arm, closure, { });
+                if (capturesThis)
+                    captures.append(arguments.empty() ? builder.appendUndefined() : arguments[0]);
+                for (uint32_t index = 0; index < record.numberOfCapturedArguments; ++index)
+                    captures.append(arguments[index + 1]);
+                if (record.capturesTargetClosure)
+                    captures.append(closure);
+
+                Value creation = IRBuilder::make(Opcode::NewClosure);
+                creation.setFunction(boundFunction);
+                creation.setCapturesOperands(captures.span());
+                expansion.finishArm(expansion.append(WTF::move(creation)));
+            };
+
             expansion.begin(site.position);
-            if (testsThatClosureIsAsCreated) {
-                IRBuilder::BranchBlocks branch = builder.emitBranch(expansion.append(makePristineTest(closure, BuiltinClasses::Function, PristineAspects::Names)), expansion.frequency(), BlockFrequency::Unlikely);
-                builder.moveToEndOf(branch.notTaken);
-                expansion.finishArm(expansion.appendOriginal());
-                builder.moveToEndOf(branch.taken);
-            }
-            std::span<const ValueID> arguments = expansion.original().argumentsOperands();
-
-            appendCalleeValidation(builder, closure);
-            Vector<ValueID, 8> captures = capturesOf(arm, closure, { });
-            if (capturesThis)
-                captures.append(arguments.empty() ? builder.appendUndefined() : arguments[0]);
-            for (uint32_t index = 0; index < record.numberOfCapturedArguments; ++index)
-                captures.append(arguments[index + 1]);
-            if (record.capturesTargetClosure)
-                captures.append(closure);
-
-            Value creation = IRBuilder::make(Opcode::NewClosure);
-            creation.setFunction(boundFunction);
-            creation.setCapturesOperands(captures.span());
-            expansion.finishArm(expansion.append(WTF::move(creation)));
+            if (testsTarget) {
+                ValueSplit split;
+                split.value = receiver;
+                split.arms.append(SplitArm { context.types.intern(Type::forFunction(targetID)), expansion.frequency() });
+                split.restFrequency = rarerOf(expansion.frequency(), BlockFrequency::Unlikely);
+                emitSplit(expansion, split, [&](uint32_t, ValueID narrowed) { appendBoundClosure(narrowed); }, [&](ValueID) { expansion.finishArm(expansion.appendOriginal()); });
+            } else
+                appendBoundClosure(receiver);
             expansion.end();
         };
     }
@@ -3087,7 +3153,7 @@ static void reportCalleeTest(TestSiteReporter& reporter)
     const Value& call = reporter.useValue();
     ValueID callee = call.opcode == Opcode::SuperConstruct ? call.parentOperand() : call.calleeOperand();
 
-    CalleeCandidates candidates = calleeCandidatesOf(program, reporter.function(), call, callee);
+    CalleeCandidates candidates = calleeCandidatesOf(reporter.context(), call, callee, reporter.point().block);
     if (!candidates.hasOneExpectedCallee())
         return;
     FunctionID member = candidates.expected[0];
@@ -3150,7 +3216,7 @@ void reportCallTests(TestSiteReporter& reporter)
         ValueSite site { reporter.point().block, reporter.point().index, reporter.use() };
         switch (value.opcode) {
         case Opcode::Call:
-            if (!awaitsValidation(reporter.program(), value) && !reportMemberCallTests(reporter, site))
+            if (!reportMemberCallTests(reporter, site))
                 reportCalleeTest(reporter);
             break;
         case Opcode::Construct:

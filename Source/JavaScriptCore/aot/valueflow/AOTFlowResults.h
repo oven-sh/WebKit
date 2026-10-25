@@ -16,6 +16,7 @@
 #include "AOTKnownValue.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <optional>
 #include <span>
@@ -24,7 +25,11 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 
-namespace JSC { namespace AOT { namespace Typed {
+namespace JSC { namespace AOT {
+
+struct CompileOptions;
+
+namespace Typed {
 
 enum class ProgramInstances : uint8_t { Unknown, AtMostOne };
 
@@ -47,6 +52,18 @@ struct FlowBoundFunctionUse {
     ClosureUse closureUse { ClosureUse::Unknown };
 
     friend bool operator==(const FlowBoundFunctionUse&, const FlowBoundFunctionUse&) = default;
+};
+
+// Made: the site calls bind on a closure of the target. Called: the site calls what such a bind returned. Other values may reach the site too.
+enum class FlowBoundFunctionUseAtSite : uint8_t { Made, Called };
+
+struct FlowBoundFunctionAtSite {
+    AccessSiteID site;
+    FlowBoundFunctionUseAtSite use { FlowBoundFunctionUseAtSite::Made };
+    FunctionID target;
+    uint32_t numberOfBoundArguments { 0 };
+
+    friend bool operator==(const FlowBoundFunctionAtSite&, const FlowBoundFunctionAtSite&) = default;
 };
 
 struct FlowSiteLoss {
@@ -134,6 +151,8 @@ struct FlowSiteTables {
     Vector<AccessSite> accessSites;
     Vector<FlowSiteLoss> accessSiteLosses;
     Vector<bool> callsOfBoundFunctions;
+    // Sorted by site, use, target and number of bound arguments.
+    Vector<FlowBoundFunctionAtSite> boundFunctionsAtSites;
     Vector<AllocationSite> allocationSites;
     Vector<AllocationClass> allocationClasses;
     BitVector sitesOfObjectsThatNeverChange;
@@ -149,12 +168,20 @@ struct FlowBuiltinTables {
     BitVector intactHolders;
     Vector<BuiltinUseRecord> uses;
     Vector<FeatureUseRecord> featureUses;
+    BitVector builtinsThatMayBeTrimmed;
     Vector<FlowLocaleUse> localeUses;
     LegacyRegExpStatics legacyRegExpStatics { LegacyRegExpStatics::Unknown };
     bool areFilled { false };
 };
 
 bool builtinHolderNeverGains(const FlowBuiltinTables&, BuiltinID holder, PropertyKeyID);
+
+using FeatureBits = std::array<uint64_t, 8>;
+
+std::optional<RemovableFeature> guardOf(const BuiltinTable&, BuiltinID);
+bool isGuardedByRemovedFeature(const BuiltinTable&, BuiltinID, const FeatureBits& removedFeatures);
+// The host keeps a feature by the same records and options.
+BitVector findBuiltinsThatMayBeTrimmed(const BuiltinTable&, std::span<const FeatureUseRecord>, const AOT::CompileOptions&);
 
 struct FlowProgramTables {
     Vector<ModuleFlow> modules;
@@ -256,6 +283,8 @@ public:
     const FlowSiteLoss& lossOf(AccessSiteID) const LIFETIME_BOUND;
     bool seesOnlyFinishedObjects(AccessSiteID) const;
     bool mayCallBoundFunction(AccessSiteID) const;
+    // A prediction: the caller must test the value at run time.
+    std::span<const FlowBoundFunctionAtSite> boundFunctionsSeenAt(AccessSiteID, FlowBoundFunctionUseAtSite) const LIFETIME_BOUND;
     const SinkCandidates& sinkCandidates(AccessSiteID call, uint32_t operandIndex) const LIFETIME_BOUND;
     TypeID typedResultType(AccessSiteID call) const;
     std::span<const LayoutID> typedResultLayouts(AccessSiteID call) const LIFETIME_BOUND;
@@ -272,6 +301,7 @@ public:
     std::span<const FeatureUseRecord> featureUses() const LIFETIME_BOUND { return m_tables.builtins.featureUses.span(); }
     std::span<const FlowLocaleUse> localeUses() const LIFETIME_BOUND { return m_tables.builtins.localeUses.span(); }
     OptionSet<BuiltinUse> usesOf(BuiltinID) const;
+    const BitVector& builtinsThatMayBeTrimmed() const LIFETIME_BOUND { return m_tables.builtins.builtinsThatMayBeTrimmed; }
     ProgramInstances programInstances() const { return m_tables.wholeProgram.instances; }
     std::span<const PropertyKeyID> keysStoredThroughUnknownReceivers() const LIFETIME_BOUND { return m_tables.wholeProgram.keysStoredThroughUnknownReceivers.span(); }
     std::span<const PropertyKeyID> keysDefinedOnObjectsWithoutKnownLayout() const LIFETIME_BOUND { return m_tables.wholeProgram.keysDefinedOnObjectsWithoutKnownLayout.span(); }

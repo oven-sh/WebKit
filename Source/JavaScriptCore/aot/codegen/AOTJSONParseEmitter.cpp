@@ -264,12 +264,6 @@ void JSONParseEmitter::generateJSONMemberRepeats(const ValueContext& value)
     defineTest(value, isNotZero(mayRepeat));
 }
 
-void JSONParseEmitter::generateJSONKeyRepeats(const ValueContext& value)
-{
-    Integer mayRepeat = callOperation<Integer>(value, RuntimeOperation::JSONKeyRepeats, { in<Pointer>(value->keyStartOperand()), in<Pointer>(value->valueStartOperand()) });
-    defineTest(value, isNotZero(mayRepeat));
-}
-
 void JSONParseEmitter::generateJSONKeyHasEscapes(const ValueContext& value)
 {
     Pointer cursor = cursorOf(value);

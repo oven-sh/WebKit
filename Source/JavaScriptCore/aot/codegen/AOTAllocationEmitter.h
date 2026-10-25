@@ -25,9 +25,6 @@ class AllocationEmitter final : public OperationEmitter {
 public:
     explicit AllocationEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
-    PlaceInCell placeInCellOf(const ValueContext&);
-    PlaceInCell placeInCellOf(const Value&) const;
-
     void generateNewObject(const ValueContext&);
     void generateNewDictionary(const ValueContext&);
     void generateFinishObject(const ValueContext&);
@@ -49,20 +46,7 @@ public:
     // For a switch on an integer. Answers with the blocks that it has generated. The code that follows is reached with every value that leads to none of them.
     Vector<BlockID, 16> allocateByTable(const TerminatorContext&, LValue subject);
 
-    // For an operation that makes a cell of another class, an array say, in the cell of the object that will list it.
-    struct RoomForInnerCell {
-        CellPointer outer;
-        CellPointer inner;
-        uint32_t arrayCapacity { 0 };
-        LayoutID outerLayout;
-        uint32_t field { 0 };
-    };
-    std::optional<RoomForInnerCell> allocateRoomForInnerCell(const ValueContext&);
-    void didFillInnerCell(const RoomForInnerCell&);
-
 private:
-    enum class EmptySlots : uint8_t { All, HoldingCells, HoldingNoCells };
-
     struct InitialField {
         const PlacedSlot* slot { nullptr };
         uint32_t field { 0 };
@@ -96,18 +80,14 @@ private:
     };
 
     InitialFields collectInitialFields(LayoutID, std::span<const uint32_t> fields, std::span<const ValueID> values);
-    CellPointer allocateCell(const ValueContext&, AllocationID, const PlannedLayout&, AllocationStorage, WholeCell, ZeroedBy);
+    CellPointer allocateCell(const ValueContext&, AllocationID, const PlannedLayout&, AllocationStorage, ZeroedBy);
     CellPointer allocateFrameCell(const ValueContext&, AllocationID, const PlannedLayout&);
     ZeroedBy whoZeroesBodyOfFreshCell(const ValueContext&, AllocationID, const BitVector& isInitialField, AllocationStorage);
-    template<typename Visitor> void forEachEmptySlot(LayoutID, const BitVector& isInitialField, EmptySlots, const Visitor&);
-    CellPointer allocateBehindOuterObject(const ValueContext&, AllocationID, const PlaceInCell&);
-    CellPointer cellAroundInnerObject(const ValueContext&, const PlaceInCell&);
-    TypedPointer addressOfReferenceToInnerObject(CellPointer outer, LayoutID outerLayout, uint32_t field);
-    void storeReferenceTo(CellPointer inner, CellPointer outer, LayoutID outerLayout, uint32_t field);
-    CellPointer takeReleasedCellOrAllocate(const ValueContext&, AllocationID, WholeCell, uint32_t freeCellOffset);
-    void initializeHiddenFields(CellPointer, LayoutID, AllocationStorage, ZeroedBy = ZeroedBy::Nobody);
+    template<typename Visitor> void forEachEmptySlot(LayoutID, const BitVector& isInitialField, const Visitor&);
+    CellPointer takeReleasedCellOrAllocate(const ValueContext&, AllocationID, uint32_t freeCellOffset);
+    void initializeHiddenFields(CellPointer, LayoutID, AllocationStorage, ZeroedBy);
     void storeInitialFields(CellPointer, LayoutID, const InitialFields&);
-    void storeEmptySlots(CellPointer, LayoutID, const BitVector& isInitialField, EmptySlots = EmptySlots::All, ZeroedBy = ZeroedBy::Nobody);
+    void storeEmptySlots(CellPointer, LayoutID, const BitVector& isInitialField, ZeroedBy);
     void barrierIfCellWasStored(const ValueContext&, CellPointer, const InitialFields&);
     void storeFieldsInExtension(const ValueContext&, CellPointer, LayoutID, const InitialFields&, OwnerBarrier);
     void storePrototype(const ValueContext&, CellPointer, ValueID prototype, std::optional<Word32> numberOfAllocation = std::nullopt);
@@ -115,42 +95,10 @@ private:
     ValueID findOnlyAllocationIn(BlockID from, const Target&);
     std::optional<AllocationsByCase> findAllocationsByCase(const TerminatorContext&);
     void generateNewObjectChosenByTable(const ValueContext&, const AllocationChosenByTable&);
-    struct CopyThatFills {
-        ValueID copy;
-        WholeCell cell;
-    };
-    std::optional<CopyThatFills> findCopyThatFills(const ValueContext&);
+    ValueID findCopyThatFills(const ValueContext&);
     CellPointer createArguments(const ValueContext&, RuntimeOperation, std::optional<CellPointer> callee);
 
     AllocationChosenByTable m_allocationChosenByTable;
-    BitVector m_liesBehindOuterObject;
-};
-
-class PlaceInCell {
-public:
-    enum class Kind : uint8_t { OwnCell, BehindOuterObject, AroundInnerObject, Inconsistent };
-
-    Kind kind() const { return m_kind; }
-    uint32_t offsetOfInnerObject() const { return m_offsetOfInnerObject; }
-    uint32_t arrayCapacity() const { return m_arrayCapacity; }
-    uint32_t field() const { return m_field; }
-    LayoutID outerLayout() const { return m_outerLayout; }
-    AllocationID outerAllocation() const { return m_outerAllocation; }
-    ValueID innerObject() const { return m_innerObject; }
-
-    std::optional<WholeCell> ownCell() const { return m_kind == Kind::OwnCell ? std::optional<WholeCell>(WholeCell()) : std::nullopt; }
-
-private:
-    friend PlaceInCell AllocationEmitter::placeInCellOf(const Value&) const;
-    PlaceInCell() = default;
-
-    Kind m_kind { Kind::OwnCell };
-    uint32_t m_offsetOfInnerObject { 0 };
-    uint32_t m_arrayCapacity { 0 };
-    uint32_t m_field { 0 };
-    LayoutID m_outerLayout;
-    AllocationID m_outerAllocation;
-    ValueID m_innerObject;
 };
 
 } } } // namespace JSC::AOT::Typed

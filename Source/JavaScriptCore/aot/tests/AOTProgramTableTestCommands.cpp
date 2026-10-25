@@ -414,8 +414,6 @@ static void printLayoutRecord(const TablesContext& context, const LayoutData& la
         .flag("hasFieldThatKeepsStateOfBirth"_s, layout.hasFieldThatKeepsStateOfBirth);
     printFieldRecords(context, "  field"_s, layout, layout.fields());
     printReferences(context, referenceTableOf(layout));
-    if (layout.mayShareCell())
-        RecordLine(context, "  cell"_s).numbers("innerObjects"_s, layout.offsetsOfInnerObjects()).flag("mayBeInnerObject"_s, layout.mayBeInnerObject);
     for (uint32_t order = 0; order < layout.numberOfOrders; ++order)
         RecordLine(context, "  order"_s, order).numbers("fields"_s, context.tables.keyOrder(layout, order).entries());
     if (layout.hasExtensionData || layout.hasExtraPropertiesSlot)
@@ -424,12 +422,8 @@ static void printLayoutRecord(const TablesContext& context, const LayoutData& la
 
 static void printParsedRecordFields(const TablesContext& context)
 {
-    for (const ParsedRecordFieldData& row : context.tables.parsedRecordFields()) {
-        if (row.isForValidator())
-            RecordLine(context, "memberForValidator"_s).identifier("name"_s, row.name).field("of"_s, row.numberOfRequiredMembers());
-        else
-            RecordLine(context, "parsedRecordField"_s).identifier("name"_s, row.name).field("shape"_s, row.shape);
-    }
+    for (const ParsedRecordFieldData& row : context.tables.parsedRecordFields())
+        RecordLine(context, "parsedRecordField"_s).identifier("name"_s, row.name).field("shape"_s, row.shape);
 }
 
 static void printEnvironmentRecord(const TablesContext& context, const EnvironmentData& environment)
@@ -860,10 +854,6 @@ static void printRequest(const TablesContext& context, const RequestRecord& reco
     WTF::switchOn(record,
         [&](const NewClassRecord&) {
             RecordLine(context, "request"_s, offset).word("NewClass"_s).field("class"_s, LayoutID(requestAt<NewClassRequest>(context, offset).classIndex));
-        },
-        [&](const CloneAsRecord&) {
-            const auto& request = requestAt<CloneAsRequest>(context, offset);
-            RecordLine(context, "request"_s, offset).word("CloneAs"_s).field("shape"_s, request.shape).numbers("fields"_s, unsafeMakeSpan(request.fields, request.count));
         },
         [&](const TemplateObjectRecord&) {
             printTemplateObjectRequest(context, offset);

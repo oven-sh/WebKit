@@ -810,22 +810,6 @@ static const uint8_t* findMemberValue(const JSONWords& words, const uint8_t* cur
     return member.value;
 }
 
-static const uint8_t* findMemberKey(const JSONWords& words, const uint8_t* cursor, const String& name)
-{
-    for (;;) {
-        const uint8_t* key = skipJSONWhitespaceCharacters(cursor);
-        ComparedJSONMember member = compareJSONMemberKey(words, key, equalsText(name));
-        if (member.comparison == JSONKeyComparison::Equal)
-            return key;
-        AOT_TEST_CHECK(member.comparison == JSONKeyComparison::Different);
-        const uint8_t* afterValue = skipJSONValue(member.value);
-        AOT_TEST_CHECK(afterValue);
-        const uint8_t* comma = skipJSONWhitespaceCharacters(afterValue);
-        AOT_TEST_CHECK(*comma == ',');
-        cursor = comma + 1;
-    }
-}
-
 static bool memberRepeats(const JSONWords& words, const uint8_t* cursor, const String& name)
 {
     const uint8_t* afterValue = skipJSONValue(findMemberValue(words, cursor, name));
@@ -847,26 +831,6 @@ static void testMemberRepeats()
     AOT_TEST_CHECK(memberRepeats(fixture.words(), fixture.open(deepTail, TextEncoding::Latin1) + 1, "b"_s));
 }
 
-static void testKeyRepeats()
-{
-    DetachedInstance fixture;
-    for (std::span<const MemberCase> cases : { std::span<const MemberCase> { unrepeated }, std::span<const MemberCase> { repeatedOrUnreadable } }) {
-        checkMembersInEveryEncoding(fixture, cases, [](const JSONWords& words, const uint8_t* cursor, const String& name) {
-            bool keyRepeats = jsonKeyRepeats(words, findMemberKey(words, cursor, name), findMemberValue(words, cursor, name));
-            AOT_TEST_CHECK(keyRepeats == memberRepeats(words, cursor, name));
-        });
-    }
-
-    static constexpr uint8_t plainKey[] = { '{', '"', 0xc3, 0x28, '"', ':', '1', '}' };
-    static constexpr uint8_t escapedKey[] = { '{', '"', '\\', 'n', 0xc3, 0x28, '"', ':', '1', '}' };
-    static constexpr uint8_t malformedKey[] = { '{', '"', '\\', 'x', '"', ':', '1', '}' };
-    for (std::span<const uint8_t> bytes : { std::span<const uint8_t> { plainKey }, std::span<const uint8_t> { escapedKey }, std::span<const uint8_t> { malformedKey } }) {
-        const uint8_t* brace = openBytes(fixture, bytes);
-        AOT_TEST_CHECK(jsonKeyRepeats(fixture.words(), brace + 1, brace + bytes.size() - 2));
-        fixture.runtime().abandon();
-    }
-}
-
 static void testUndecodableMemberKeys()
 {
     DetachedInstance fixture;
@@ -880,7 +844,6 @@ static void testUndecodableMemberKeys()
         AOT_TEST_CHECK(afterUndecodableKey.search == JSONMemberSearch::Unknown);
         AOT_TEST_CHECK(!afterUndecodableKey.value);
         AOT_TEST_CHECK(jsonMemberRepeats(fixture.words(), brace + 6, equalsText("b"_s)));
-        AOT_TEST_CHECK(jsonKeyRepeats(fixture.words(), brace + 1, brace + 5));
         fixture.runtime().abandon();
     }
 }
@@ -899,20 +862,10 @@ static bool answerFor(DetachedInstance& fixture, const String& text, const Opera
 static void testRepeatOperations()
 {
     DetachedInstance fixture;
-    auto keyRepeats = [](Instance* instance, const uint8_t* brace) {
-        return operationAOTJSONKeyRepeats(instance, brace + 1, brace + 5);
-    };
     auto memberRepeats = [](Instance* instance, const uint8_t* brace) {
         return operationAOTJSONMemberRepeats(instance, brace + 5, 0);
     };
     String deepValue = makeString("{\"b\":"_s, nestedArrays(maxSkippedJSONDepth + 1), '}');
-
-    AOT_TEST_CHECK(!answerFor(fixture, "{\"b\":1}"_s, keyRepeats));
-    AOT_TEST_CHECK(!answerFor(fixture, "{\"b\":1,\"a\":2}"_s, keyRepeats));
-    AOT_TEST_CHECK(answerFor(fixture, "{\"b\":1,\"b\":2}"_s, keyRepeats));
-    AOT_TEST_CHECK(answerFor(fixture, "{\"b\":1,\"a\":2,\"\\u0062\":3}"_s, keyRepeats));
-    AOT_TEST_CHECK(answerFor(fixture, "{\"b\":1,\"a\":2"_s, keyRepeats));
-    AOT_TEST_CHECK(answerFor(fixture, deepValue, keyRepeats));
 
     AOT_TEST_CHECK(!answerFor(fixture, "{\"b\":1}"_s, memberRepeats));
     AOT_TEST_CHECK(!answerFor(fixture, "{\"b\":[1,{\"b\":2}] }"_s, memberRepeats));
@@ -961,7 +914,6 @@ std::span<const NativeTest> jsonScannerTests()
         { "json-scanner/operations-without-frame"_s, testOperationsWithoutFrame },
         { "json-scanner/find-member"_s, testFindMember },
         { "json-scanner/member-repeats"_s, testMemberRepeats },
-        { "json-scanner/key-repeats"_s, testKeyRepeats },
         { "json-scanner/undecodable-member-keys"_s, testUndecodableMemberKeys },
         { "json-scanner/repeat-operations"_s, testRepeatOperations },
         { "json-scanner/hooks-decline-without-instance"_s, testHooksDeclineWithoutInstance },

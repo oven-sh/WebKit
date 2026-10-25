@@ -27,8 +27,6 @@ set(JavaScriptCoreAOTCompiledForSize_UNIFIED_SOURCE_BUNDLE_PREFIX "CompiledForSi
 # All that a build without AoT (-DENABLE_AOT=0 among the compiler's flags) compiles of the two lists: what the rest of JavaScriptCore calls either way.
 set(JavaScriptCore_AOT_SOURCES_WITHOUT_AOT
     aot/runtime/AOTRemovableFeature.cpp
-    aot/validator/AOTGeneratedFunction.cpp
-    aot/validator/AOTValidatorBytecode.cpp
 )
 
 list(APPEND JavaScriptCore_SOURCES
@@ -61,7 +59,6 @@ list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
     "${JAVASCRIPTCORE_DIR}/aot/support"
     "${JAVASCRIPTCORE_DIR}/aot/tests"
     "${JAVASCRIPTCORE_DIR}/aot/tests/unit"
-    "${JAVASCRIPTCORE_DIR}/aot/validator"
     "${JAVASCRIPTCORE_DIR}/aot/valueflow"
 )
 
@@ -175,7 +172,6 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/support/AOTLosses.h
     aot/support/AOTStatistics.h
     aot/support/AOTThreshold.h
-    aot/validator/AOTValidatorBytecode.h
     aot/valueflow/AOTFlowReport.h
 )
 
@@ -434,7 +430,6 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTTypeTestCommands.cpp
     aot/tests/AOTTypedResultProgramTests.cpp
     aot/tests/AOTUnwindingTests.cpp
-    aot/tests/AOTValidatedValueTests.cpp
     aot/tests/AOTValidationTestCommands.cpp
     aot/tests/AOTValueFlowBodiesTestCommands.cpp
     aot/tests/AOTValueFlowFamiliesTestCommands.cpp
@@ -459,7 +454,6 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/unit/PristineStructureTests.cpp
     aot/tests/unit/ResultNodeDeclineTests.cpp
     aot/tests/unit/ResultNodeTests.cpp
-    aot/tests/unit/ValidationPlanTextTests.cpp
     aot/tests/valueflow/AOTValueFlowCoreTests.cpp
 )
 

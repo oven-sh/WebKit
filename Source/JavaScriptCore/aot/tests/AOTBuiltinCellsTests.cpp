@@ -109,7 +109,7 @@ static void checkKeys(LoadedProgram& program)
     AOT_TEST_CHECK(BuiltinCellKey::getter(Builtins::ArrayBufferPrototypeByteLength).hasCell(table) && !BuiltinCellKey::setter(Builtins::ArrayBufferPrototypeByteLength).hasCell(table));
     AOT_TEST_CHECK(!BuiltinCellKey::getter(Builtins::ArrayPrototypeLength).hasCell(table));
     AOT_TEST_CHECK(!BuiltinCellKey::object(Builtins::ModuleObjectExports).hasCell(table) && !BuiltinCellKey::object(Builtins::ImportMeta).hasCell(table));
-    AOT_TEST_CHECK(!BuiltinCellKey::object(Builtins::CompilerHelpers).hasCell(table) && BuiltinCellKey::object(Builtins::CompilerHelpersHoldsRule).hasCell(table));
+    AOT_TEST_CHECK(!BuiltinCellKey::object(Builtins::CompilerHelpers).hasCell(table) && BuiltinCellKey::object(Builtins::CompilerHelpersTraverseArray).hasCell(table));
     AOT_TEST_CHECK(!BuiltinCellKey::object(Builtins::JSONText).hasCell(table) && BuiltinCellKey::object(hostBuiltin("JSONTextResponseJson"_s)).hasCell(table));
 }
 

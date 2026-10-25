@@ -24,7 +24,6 @@ AOT_THRESHOLD(unsigned, maxCapacityRounds, 4);
 static constexpr EnumeratorBitSet<OperationFamily, numberOfEnumerators<OperationFamily>> familiesWithTypedDataRules {
     OperationFamily::JSONParse,
     OperationFamily::JSONWrite,
-    OperationFamily::Validation,
     OperationFamily::StringBuilder,
 };
 static constexpr OpcodeSet cursorInvalidatingOpcodes { Opcode::JSONSourceClose, Opcode::JSONSourceAbandon, Opcode::JSONSourceOpen };
@@ -379,8 +378,7 @@ struct TypedDataVerifier {
             const Value& row = value.opcode == Opcode::ResultAt ? function.at(value.resultsOperand()) : value;
             if (row.opcode == Opcode::CallDirect)
                 return true;
-            bool answersKeyOrder = familyOf(row.opcode) == OperationFamily::JSONParse || row.opcode == Opcode::FindSourcePlan;
-            if (!answersKeyOrder || !Value::opcodesWithLayout.contains(row.opcode) || row.layout() != layout)
+            if (familyOf(row.opcode) != OperationFamily::JSONParse || !Value::opcodesWithLayout.contains(row.opcode) || row.layout() != layout)
                 return false;
             if (OperandPosition::order(row.opcode))
                 worklist.append(row.orderOperand());

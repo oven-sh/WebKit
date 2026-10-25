@@ -43,7 +43,6 @@ static bool countsEntryParameters(CreatorRecord::Kind kind)
     case CreatorRecord::Kind::Version:
     case CreatorRecord::Kind::Serializer:
     case CreatorRecord::Kind::Parser:
-    case CreatorRecord::Kind::Validator:
     case CreatorRecord::Kind::ChainStep:
         return false;
     }

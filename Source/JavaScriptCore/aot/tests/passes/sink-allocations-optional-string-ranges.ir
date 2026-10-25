@@ -25,7 +25,7 @@ function f1 name="testedAndMeasured" parameters=[{type=string}, {type=int[-1, 10
 # CHECK-NOT: Substring
 # CHECK: [[zero1]]: 0 = Integer
 # CHECK-NEXT: [[isPresent1]]: boolean = GreaterEq v1, [[zero1]]
-# CHECK: [[shift1]]: number = ToNumber [[isPresent1]]
+# CHECK: [[shift1]]: int[0, 1] = ToNumber [[isPresent1]]
 # CHECK-NEXT: [[tag1]]: i32 = LShift {{*}}, [[shift1]]
 # CHECK-NOT: TypeTest
 # CHECK: [[masked1]]:{{*}}= BitAnd [[tag1]],

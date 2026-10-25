@@ -31,14 +31,9 @@ std::optional<TailCallRequirement> tailCallRequirementOf(const Function& functio
     return terminator.requirement();
 }
 
-static bool endsInThisFrame(const Program& program, const Value& call, const BuiltinUsePlan& plan)
+static bool endsInThisFrame(const Program& program, const BuiltinUsePlan& plan)
 {
-    if (plan.call.overload && program.builtins().at(plan.call.overload).hasTypedResult())
-        return true;
-    if (call.opcode != Opcode::Call)
-        return false;
-    ExpectedResultID expected = call.expectedResult();
-    return expected && !program.at(expected).validation.isEmpty();
+    return plan.call.overload && program.builtins().at(plan.call.overload).hasTypedResult();
 }
 
 static bool returnsToItsCaller(const Program& program, const BuiltinUsePlan& plan)
@@ -168,7 +163,7 @@ Vector<BuiltinSite> BuiltinResolver::collectSites()
         RELEASE_ASSERT(!isKnownToBeRefused || !plan.isProven());
         if (content && !isKnownToBeRefused && !plan.isProven() && !asksAboutPlace && m_context.types.unshareableEventCount() == unshareableEventCountBefore)
             cache->refusedContents.add(*content);
-        if (tailCall == TailCallRequirement::Required && !endsInThisFrame(m_context.program, value, plan) && !returnsToItsCaller(m_context.program, plan) && !staysTailCall(plan, tailCall))
+        if (tailCall == TailCallRequirement::Required && !endsInThisFrame(m_context.program, plan) && !returnsToItsCaller(m_context.program, plan) && !staysTailCall(plan, tailCall))
             continue;
 
         bool needsDemotionBeforeTests = plan && tailCall;
@@ -184,7 +179,7 @@ void BuiltinResolver::demoteTailCalls(std::span<const BuiltinSite> sites)
 {
     for (const BuiltinSite& site : sites) {
         std::optional<TailCallRequirement> tailCall = tailCallRequirementOf(m_function, site.point.block, site.id);
-        if (!tailCall || (staysTailCall(site.plan, tailCall) && !endsInThisFrame(m_context.program, m_function.at(site.id), site.plan)))
+        if (!tailCall || (staysTailCall(site.plan, tailCall) && !endsInThisFrame(m_context.program, site.plan)))
             continue;
         demoteTailCall(m_context, m_builder, site.point.block);
         ++m_counts.demotedTailCalls;

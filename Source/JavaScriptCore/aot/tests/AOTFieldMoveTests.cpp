@@ -398,65 +398,6 @@ static void checkAbsentSourceIsNeverMoved(LoadedProgram& program)
     AOT_TEST_CHECK(numberOfSources >= 10);
 }
 
-// By tryCloneAs, whose builder finds the fields by name in the tables of the image: so the layout is the image's own, with the representations that the compiler gave its fields.
-static void checkPropertyOfOrdinaryObjectToEveryRepresentation(LoadedProgram& program)
-{
-    Fixture fixture(program);
-    VM& vm = fixture.vm();
-    const ProgramTables& tables = program.state().tables;
-    const LayoutData& layout = typedLayout(program);
-    Object* holder = nullptr;
-    for (uint32_t number = 0; !holder && number < tables.allocations().size(); ++number) {
-        if (tables.allocations()[number].shape == layout.shape)
-            holder = uncheckedDowncast<Object>(program.state().objects->structures.allocate(vm, number));
-    }
-    AOT_TEST_CHECK(holder);
-
-    MarkedArgumentBuffer usualValues;
-    for (const FieldData& field : layout.fields()) {
-        JSValue usual;
-        for (unsigned index = 0; !usual && index < fixture.samples().size(); ++index) {
-            if (acceptInSlot(*holder, field, fixture.samples().at(index)))
-                usual = fixture.samples().at(index);
-        }
-        AOT_TEST_CHECK(usual);
-        usualValues.append(usual);
-    }
-
-    Vector<EncodedJSValue> nothingReplaced(FillWith { }, layout.numberOfFields, JSValue::encode(JSValue()));
-    uint32_t representations = 0;
-    unsigned numberOfClones = 0;
-    unsigned numberOfRefusals = 0;
-    for (const FieldData& to : layout.fields()) {
-        PropertyName name(fixture.layouts().nameOf(vm, to));
-        representations |= 1u << static_cast<unsigned>(to.slot.representation());
-        for (bool isInline : { true, false }) {
-            for (unsigned index = 0; index < fixture.samples().size(); ++index) {
-                JSValue value = fixture.samples().at(index);
-                JSObject* source = constructEmptyObject(program.realm());
-                if (isInline)
-                    source->putDirect(vm, name, value);
-                for (const FieldData& other : layout.fields()) {
-                    if (&other != &to)
-                        source->putDirect(vm, PropertyName(fixture.layouts().nameOf(vm, other)), usualValues.at(layout.indexOf(other)));
-                }
-                if (!isInline)
-                    source->putDirect(vm, name, value);
-                AOT_TEST_CHECK(isInlineOffset(source->structure()->get(vm, name)) == isInline);
-
-                bool fits = !!acceptInSlot(*holder, to, value);
-                Object* clone = tryCloneAs(vm, source, layout, nothingReplaced.span());
-                AOT_TEST_CHECK(!!clone == fits);
-                if (clone)
-                    AOT_TEST_CHECK(&clone->layout() == &layout && fixture.isSame(clone->read(to), value));
-                AOT_TEST_CHECK(fixture.isSame(source->getDirect(vm, name), value));
-                ++(fits ? numberOfClones : numberOfRefusals);
-            }
-        }
-    }
-    AOT_TEST_CHECK(std::popcount(representations) >= 6 && numberOfClones > layout.numberOfFields && numberOfRefusals > layout.numberOfFields);
-}
-
 static void checkNothingIsStoredWhenOneMoveFails(LoadedProgram& program)
 {
     Fixture fixture(program);
@@ -554,7 +495,6 @@ static FieldMovePlanCache& planCacheOf(LoadedProgram& program)
 static FieldMovePlanKey keyWithWords(uint64_t sourceWords, Structure* sourceStructure = nullptr)
 {
     FieldMovePlanKey key;
-    key.purpose = FieldMovePlanPurpose::CopyAsOrdinaryObject;
     key.sourceWords = sourceWords;
     key.targetWords = 1;
     key.sourceStructure = sourceStructure;
@@ -570,7 +510,7 @@ static void checkPlanCacheNeverRefuses(LoadedProgram& program)
 
     for (unsigned index = 0; index < numberOfKeys; ++index) {
         auto plan = makeUnique<FieldMovePlan>();
-        plan->clonedMembers.append({ static_cast<PropertyOffset>(index), 0 });
+        plan->moves.append({ .from = index });
         const FieldMovePlan* added = &cache.add(program.vm(), keyWithWords(index), WTF::move(plan));
         AOT_TEST_CHECK(cache.find(keyWithWords(index)) == added && !added->isUsable());
     }
@@ -578,19 +518,15 @@ static void checkPlanCacheNeverRefuses(LoadedProgram& program)
     unsigned numberFound = 0;
     for (unsigned index = 0; index < numberOfKeys; ++index) {
         if (const FieldMovePlan* plan = cache.find(keyWithWords(index))) {
-            AOT_TEST_CHECK(plan->clonedMembers[0].from == static_cast<PropertyOffset>(index));
+            AOT_TEST_CHECK(plan->moves[0].from == index);
             ++numberFound;
         }
     }
     AOT_TEST_CHECK(numberFound && numberFound <= capacity && cache.find(keyWithWords(numberOfKeys - 1)) && !cache.find(keyWithWords(numberOfKeys)));
 
-    FieldMovePlanKey otherPurpose = keyWithWords(numberOfKeys - 1);
-    otherPurpose.purpose = FieldMovePlanPurpose::CloneAs;
-    FieldMovePlanKey otherFields = keyWithWords(numberOfKeys - 1);
-    otherFields.replacedFields.set(70);
     FieldMovePlanKey otherTarget = keyWithWords(numberOfKeys - 1);
     otherTarget.targetWords = 2;
-    AOT_TEST_CHECK(!cache.find(otherPurpose) && !cache.find(otherFields) && !cache.find(otherTarget));
+    AOT_TEST_CHECK(!cache.find(otherTarget));
 }
 
 static constexpr unsigned numberOfShortLivedStructures = 16;
@@ -681,7 +617,6 @@ std::span<const NativeTest> fieldMoveTests()
     static constexpr NativeTest tests[] = {
         { "field-moves/every-pair-of-representations"_s, runNativeTestWithNarrowReferences<checkEveryPairOfRepresentations> },
         { "field-moves/absent-source-is-never-moved"_s, runNativeTestWithNarrowReferences<checkAbsentSourceIsNeverMoved> },
-        { "field-moves/property-of-ordinary-object-to-every-representation"_s, runNativeTestWithNarrowReferences<checkPropertyOfOrdinaryObjectToEveryRepresentation> },
         { "field-moves/nothing-is-stored-when-one-move-fails"_s, runNativeTestWithNarrowReferences<checkNothingIsStoredWhenOneMoveFails> },
         { "field-moves/every-representation-to-a-property-of-a-new-object"_s, runNativeTestWithNarrowReferences<checkEveryRepresentationToPropertyOfNewObject> },
         { "field-moves/answers-about-types-hold-for-every-value"_s, runNativeTestWithNarrowReferences<checkAnswersAboutTypesHoldForEveryValue> },

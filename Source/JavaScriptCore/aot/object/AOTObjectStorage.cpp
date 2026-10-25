@@ -229,11 +229,6 @@ void Object::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     JSCell::visitChildren(cell, visitor);
     visitFields(uncheckedDowncast<Object>(cell), visitor);
-    // As the visit in AOTHeapCellVisits.h does. Only the collector's own visitor sets marks.
-    if constexpr (std::same_as<Visitor, SlotVisitor>) {
-        if (uncheckedDowncast<Object>(cell)->layout().hasInnerObjects && !cell->isPreciseAllocation() && cell->markedBlock().hasInnerCells()) [[unlikely]]
-            HeapHooks::noteInnerCellsWithoutMark(cell);
-    }
     // A type test reads the cell that a slot points to, which races with a running mutator.
     VM& vm = cell->vm();
     if (validatesRuntime(vm) && visitor.mutatorsAreStopped()) [[unlikely]]
@@ -244,10 +239,7 @@ DEFINE_VISIT_CHILDREN(Object);
 
 size_t Object::estimatedSize(JSCell* cell, VM&)
 {
-    const LayoutData& layout = uncheckedDowncast<Object>(cell)->layout();
-    if (!layout.mayShareCell() || cell->isPreciseAllocation() || !cell->markedBlock().hasInnerCells()) [[likely]]
-        return cell->cellSize();
-    return cell->markedBlock().isInnerCell(cell) || layout.hasInnerObjects ? layout.size : cell->cellSize();
+    return cell->cellSize();
 }
 
 void Object::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

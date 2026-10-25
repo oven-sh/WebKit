@@ -169,14 +169,6 @@ void printRequestRecord(IRPrinter& printer, const RequestRecord& request)
             out.print("NewClass "_s);
             printer.print(record.classLayout);
         },
-        [&](const CloneAsRecord& record) {
-            out.print("CloneAs "_s);
-            printer.print(record.layout);
-            out.print(" shape="_s, record.shape, " fields="_s);
-            printList(out, record.fields, [&](FieldIndex field) {
-                out.print(field);
-            });
-        },
         [&](const TemplateObjectRecord& record) {
             out.print("TemplateObject "_s);
             printList(out, record.parts, [&](const TemplateString& part) {
@@ -354,8 +346,6 @@ private:
             m_out.print(" shape="_s, allocation.shape, " fields="_s);
             printFields(allocation.initialFields.span());
             m_out.print(" order="_s, orderOf(allocation.orderWord), " count="_s, countOf(allocation.orderWord), " size="_s, allocation.size);
-            if (allocation.holdsInnerObjects)
-                m_out.print(" holdsInnerObjects"_s);
             if (allocation.numberOfCaptures)
                 m_out.print(" captures="_s, allocation.numberOfCaptures);
             if (allocation.constructedBy) {

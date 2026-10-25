@@ -291,19 +291,11 @@ bool prependRequirement(TypeArena& types, BuiltinUsePlan& plan, UseRequirement r
     return isPossible;
 }
 
-static RuntimeFunctionID libraryFunctionOf(const Program& program, const BuiltinOverload& overload, ExpectedResultID expected)
-{
-    bool validatesResult = expected && !program.at(expected).validation.isEmpty();
-    if (overload.result.typedResultForm == TypedResultForm::ValidatedValue && !validatesResult)
-        return overload.slowPathFunction();
-    return overload.libraryFunction();
-}
-
-static FunctionID findLibraryFunction(const Program& program, const BuiltinOverload& overload, ExpectedResultID expected)
+static FunctionID findLibraryFunction(const Program& program, const BuiltinOverload& overload)
 {
     if (forwardsCall(overload))
         return { };
-    const RuntimeFunctionEntry* entry = findRuntimeFunction(program, libraryFunctionOf(program, overload, expected));
+    const RuntimeFunctionEntry* entry = findRuntimeFunction(program, overload.libraryFunction());
     if (!entry || !entry->function)
         return { };
     if (overload.mode == BuiltinCallMode::Construct && canConstructWithoutClosure(program, entry->function))
@@ -337,6 +329,8 @@ BuiltinUsePlan planKnownBuiltinCall(const BuiltinUseInputs& inputs, const KnownB
     const BuiltinTable& table = inputs.program.builtins();
     if (isCalledOnlyDirectly(table, known.callee) && !hasDirectFunction(table, known.callee))
         return { };
+    if (inputs.program.mayBeTrimmed(known.callee))
+        return { };
     CallQueryStorage storage(inputs, known.callee, known.mode, known.operands, known.nullishReceiver);
 
     BuiltinUsePlan plan;
@@ -357,7 +351,7 @@ BuiltinUsePlan planKnownBuiltinCall(const BuiltinUseInputs& inputs, const KnownB
 
     bool isCallAsItStands = known.overloadOfWholeCall == plan.call.overload
         && !insertsOperations(plan.call)
-        && !findLibraryFunction(inputs.program, table.at(plan.call.overload), known.stamps.expectedResult);
+        && !findLibraryFunction(inputs.program, table.at(plan.call.overload));
     if (isCallAsItStands)
         return { };
 
@@ -387,7 +381,7 @@ BuiltinUsePlan planKnownBuiltinCall(const BuiltinUseInputs& inputs, const KnownB
 
     plan.kind = BuiltinUseKind::Call;
     plan.form = BuiltinCallForm::Whole;
-    if (FunctionID libraryFunction = findLibraryFunction(inputs.program, table.at(plan.call.overload), known.stamps.expectedResult)) {
+    if (FunctionID libraryFunction = findLibraryFunction(inputs.program, table.at(plan.call.overload))) {
         plan.kind = BuiltinUseKind::LibraryCall;
         plan.libraryFunction = libraryFunction;
     }

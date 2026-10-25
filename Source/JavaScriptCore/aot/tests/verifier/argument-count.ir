@@ -1,24 +1,24 @@
 # the variadic operands of an operation are as many as the parameters of the callee, the listed fields or the captures
 # FORM: Prepared
 # RUN: verify
-# DIAGNOSTIC: ArgumentCountMismatch 6
+# DIAGNOSTIC: ArgumentCountMismatch 5
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=anything}}]
 function f0 name="badCallDirect" parameters=[{type=number}] results=[{type=undefined}] {
-    v1 = CallDirect v0 function=f10
+    v1 = CallDirect v0 function=f8
     Return
 }
 function f1 name="goodCallDirect" parameters=[{type=number}] results=[{type=undefined}] {
-    v1 = CallDirect v0, v0 function=f10
+    v1 = CallDirect v0, v0 function=f8
     Return
 }
 function f2 name="badReturnedCallDirect" parameters=[{type=number}] results=[{type=undefined}] {
-    v1 = CallDirect v0, v0, v0 function=f10
+    v1 = CallDirect v0, v0, v0 function=f8
     ReturnCall v1
 }
 function f3 name="goodReturnedCallDirect" parameters=[{type=number}] results=[{type=undefined}] {
-    v1 = CallDirect v0, v0 function=f10
+    v1 = CallDirect v0, v0 function=f8
     ReturnCall v1
 }
 function f4 name="badNewObject" parameters=[{type=number}] results=[{type=undefined}] {
@@ -29,43 +29,25 @@ function f5 name="goodNewObject" parameters=[{type=number}] results=[{type=undef
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     Return
 }
-function f6 name="badCloneAs" parameters=[{type=object}, {type=number}] results=[{type=undefined}] {
-    v2 = IsPlainDataObject v0
-    Branch v2 -> taken b1(| 0), notTaken b2()
-  b1(v3):
-    v4 = CloneAs v0, v3, v1 layout=L0 fields=[0, 1]
-    Return
-  b2():
+function f6 name="badNewClosure" results=[{type=undefined}] {
+    v0 = NewClosure function=f9
     Return
 }
-function f7 name="goodCloneAs" parameters=[{type=object}, {type=number}] results=[{type=undefined}] {
-    v2 = IsPlainDataObject v0
-    Branch v2 -> taken b1(| 0), notTaken b2()
-  b1(v3):
-    v4 = CloneAs v0, v3, v1, v1 layout=L0 fields=[0, 1]
-    Return
-  b2():
+function f7 name="goodNewClosure" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = NewClosure v0 function=f9
     Return
 }
-function f8 name="badNewClosure" results=[{type=undefined}] {
-    v0 = NewClosure function=f11
+function f8 name="callee" parameters=[{type=number}, {type=number}] results=[{type=undefined}] {
     Return
 }
-function f9 name="goodNewClosure" parameters=[{type=number}] results=[{type=undefined}] {
-    v1 = NewClosure v0 function=f11
-    Return
-}
-function f10 name="callee" parameters=[{type=number}, {type=number}] results=[{type=undefined}] {
-    Return
-}
-function f11 name="closure" captures=[{type=number}] results=[{type=undefined}]
-function f12 name="ramp" role=CoroutineRamp parameters=[{type=number}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f12 body=f13 entryWithoutPromise=f13 promiseType=Promise promiseParameter=1}
-function f13 name="badAwaitedCall" role=CoroutineBody parameters=[{type=number}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f12 body=f13 entryWithoutPromise=f13 promiseType=Promise promiseParameter=1} {
-    v2 = AwaitCallBySavingFrame v1, v0, v1 function=f13
+function f9 name="closure" captures=[{type=number}] results=[{type=undefined}]
+function f10 name="ramp" role=CoroutineRamp parameters=[{type=number}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f10 body=f11 entryWithoutPromise=f11 promiseType=Promise promiseParameter=1}
+function f11 name="badAwaitedCall" role=CoroutineBody parameters=[{type=number}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f10 body=f11 entryWithoutPromise=f11 promiseType=Promise promiseParameter=1} {
+    v2 = AwaitCallBySavingFrame v1, v0, v1 function=f11
     Return v2
 }
-function f14 name="ramp" role=CoroutineRamp parameters=[{type=number}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f14 body=f15 entryWithoutPromise=f15 promiseType=Promise promiseParameter=1}
-function f15 name="goodAwaitedCall" role=CoroutineBody parameters=[{type=number}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f14 body=f15 entryWithoutPromise=f15 promiseType=Promise promiseParameter=1} {
-    v2 = AwaitCallBySavingFrame v1, v0 function=f15
+function f12 name="ramp" role=CoroutineRamp parameters=[{type=number}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f12 body=f13 entryWithoutPromise=f13 promiseType=Promise promiseParameter=1}
+function f13 name="goodAwaitedCall" role=CoroutineBody parameters=[{type=number}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f12 body=f13 entryWithoutPromise=f13 promiseType=Promise promiseParameter=1} {
+    v2 = AwaitCallBySavingFrame v1, v0 function=f13
     Return v2
 }

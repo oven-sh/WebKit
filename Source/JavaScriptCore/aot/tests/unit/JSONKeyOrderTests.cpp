@@ -89,7 +89,6 @@ public:
     Object* createObjectWithEveryField();
     bool hasEveryField(Object*);
     JSONOutcome finish(Object*, JSValue extra, JSONKeyOrder);
-    void addExtraMember(const String& name, JSValue, uint64_t* extraAndOrder);
     const uint8_t* parseExtraMembers(const uint8_t* quote, uint64_t* extraAndOrder);
     const uint8_t* parseMember(Object*, const uint8_t* quote, uint64_t* extraAndOrder);
     String stringifyAfterParsing(const String& text);
@@ -186,13 +185,6 @@ JSONOutcome Row::finish(Object* object, JSValue extra, JSONKeyOrder order)
 {
     OperationCallScope scope(vm());
     return static_cast<JSONOutcome>(operationAOTJSONObjectFinish(&instance(), object, JSValue::encode(extra), order.word()));
-}
-
-void Row::addExtraMember(const String& name, JSValue value, uint64_t* extraAndOrder)
-{
-    JSString* nameCell = jsString(vm(), name);
-    OperationCallScope scope(vm());
-    operationAOTJSONAddExtraMember(&instance(), layout().shape, nameCell, JSValue::encode(value), extraAndOrder);
 }
 
 const uint8_t* Row::parseExtraMembers(const uint8_t* quote, uint64_t* extraAndOrder)
@@ -345,37 +337,6 @@ static void testExtraMembers(LoadedProgram& program)
     checkText(everyFieldAndExtraMembers.toString());
 }
 
-static void testAddExtraMember(LoadedProgram& program)
-{
-    Row row(program);
-    Object* object = row.createObject();
-    uint64_t extraAndOrder[2] = { static_cast<uint64_t>(JSValue::encode(jsUndefined())), JSONKeyOrder().word() };
-    auto addField = [&](unsigned declaredIndex, int32_t value) {
-        uint16_t field = row.fields()[declaredIndex];
-        AOT_TEST_CHECK(object->store(row.vm(), row.layout().fields()[field], AcceptedValue::provenAtBuildTime(jsNumber(value))));
-        extraAndOrder[1] = row.advance(JSONKeyOrder::fromWord(extraAndOrder[1]), field).word();
-    };
-    addField(1, 10);
-    row.addExtraMember("x"_s, jsNumber(11), extraAndOrder);
-    AOT_TEST_CHECK(JSValue::decode(extraAndOrder[0]).isObject());
-    row.addExtraMember("7"_s, jsNumber(12), extraAndOrder);
-    addField(0, 13);
-    row.addExtraMember("__proto__"_s, jsNull(), extraAndOrder);
-    row.addExtraMember("x"_s, jsNumber(14), extraAndOrder);
-    AOT_TEST_CHECK(row.finish(object, JSValue::decode(extraAndOrder[0]), JSONKeyOrder::fromWord(extraAndOrder[1])) == JSONOutcome::Parsed);
-    JSValue expected = JSONParse(row.realm(), "{\"k1\":10,\"x\":11,\"7\":12,\"k0\":13,\"__proto__\":null,\"x\":14}"_s);
-    AOT_TEST_CHECK(JSONStringify(row.realm(), object, 0u) == JSONStringify(row.realm(), expected, 0u));
-
-    uint64_t declaredName[2] = { static_cast<uint64_t>(JSValue::encode(jsUndefined())), JSONKeyOrder().word() };
-    row.addExtraMember("k2"_s, jsNumber(1), declaredName);
-    AOT_TEST_CHECK(JSONKeyOrder::fromWord(declaredName[1]).kind() == JSONKeyOrder::Kind::Unknown);
-
-    uint64_t unknownOrder[2] = { static_cast<uint64_t>(JSValue::encode(jsUndefined())), JSONKeyOrder::unknown().word() };
-    row.addExtraMember("x"_s, jsNumber(1), unknownOrder);
-    AOT_TEST_CHECK(JSValue::decode(unknownOrder[0]).isUndefined() && unknownOrder[1] == JSONKeyOrder::unknown().word());
-    AOT_TEST_CHECK(!row.vm().exceptionForInspection());
-}
-
 static void testDeclaredNameAmongExtraMembers(LoadedProgram& program)
 {
     Row row(program);
@@ -479,7 +440,6 @@ std::span<const NativeTest> jsonKeyOrderTests()
         { "json-parser/key-orders/other-orders"_s, withRowProgram<testOtherOrders> },
         { "json-parser/key-orders/unknown-order"_s, withRowProgram<testUnknownOrder> },
         { "json-parser/key-orders/extra-members"_s, withRowProgram<testExtraMembers> },
-        { "json-parser/key-orders/add-extra-member"_s, withRowProgram<testAddExtraMember> },
         { "json-parser/key-orders/declared-name-among-extra-members"_s, withRowProgram<testDeclaredNameAmongExtraMembers> },
         { "json-parser/key-orders/full-order-table"_s, withRowProgram<testFullOrderTable> },
         { "json-parser/key-orders/keys-never-enumerated"_s, withRowProgram<testKeysNeverEnumerated> },

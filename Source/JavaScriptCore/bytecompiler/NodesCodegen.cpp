@@ -31,7 +31,6 @@
 #include "AbstractModuleRecord.h"
 #include "BuiltinNames.h"
 #include "BytecodeGenerator.h"
-#include "AOTGeneratedFunction.h"
 #include "BytecodeGeneratorBaseInlines.h"
 #include "IndexingTypeInlines.h"
 #include "JSArrayIterator.h"
@@ -5477,9 +5476,6 @@ void EvalNode::emitBytecode(BytecodeGenerator& generator, RegisterID*)
 
 void FunctionNode::emitBytecode(BytecodeGenerator& generator, RegisterID*)
 {
-    if (generator.isBuiltinFunction() && emitGeneratedFunctionBody(generator, source().provider()))
-        return;
-
     if (generator.shouldEmitTypeProfilerHooks()) {
         // If the parameter list is non simple one, it is handled in bindValue's code.
         if (m_parameters->isSimpleParameterList()) {

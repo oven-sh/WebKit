@@ -288,6 +288,7 @@ void generateAppendElements(StubAssembler& jit)
     targetHoldsDoubles.link(&jit);
     loadKindOfSource();
     Jump convertsInt32 = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(Int32Shape));
+    Jump convertsValues = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(ContiguousShape));
     slowPath.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(DoubleShape)));
     forEachElement([&] {
         jit.loadDouble(read, number);
@@ -301,6 +302,22 @@ void generateAppendElements(StubAssembler& jit)
         jit.load64(read, element);
         hasHole.append(jit.branchTest64(CCallHelpers::Zero, element));
         jit.convertInt32ToDouble(element, number);
+        jit.storeDouble(number, written);
+    });
+    setLengthAndReturn();
+
+    // The source may store its numbers as boxed values. A hole is not a number, and NaN would read as a hole in the target.
+    convertsValues.link(&jit);
+    forEachElement([&] {
+        jit.load64(read, element);
+        Jump isInt32 = jit.branchIfInt32(element);
+        hasHole.append(jit.branchIfNotNumber(element));
+        unboxDouble(jit, element, kind, number);
+        hasHole.append(jit.branchIfNaN(number));
+        Jump isDouble = jit.jump();
+        isInt32.link(&jit);
+        jit.convertInt32ToDouble(element, number);
+        isDouble.link(&jit);
         jit.storeDouble(number, written);
     });
     setLengthAndReturn();

@@ -50,7 +50,7 @@ struct FieldEvidence {
 
 } // anonymous namespace
 
-static constexpr OpcodeSet opcodesThatListInitialValues { Opcode::NewObject, Opcode::CloneAs };
+static constexpr OpcodeSet opcodesThatListInitialValues { Opcode::NewObject };
 
 TypeID slotTypeOf(const Program& program, const Field& field)
 {

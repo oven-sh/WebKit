@@ -858,6 +858,73 @@ static void noteClassesOfCreatedObjects(const ValueFlowResultInputs& inputs, Val
     }
 }
 
+// `Object.setPrototypeOf(Derived.prototype, Base.prototype)`, where Base is a parameter of a factory, so no type names a base.
+// Returns, by layout of a constructor function, the one other class whose prototype object the program links above its prototype object.
+static Vector<LayoutID> collectBasesLinkedByProgram(const ValueFlowResultInputs& inputs, const ValueFlowHeapIndex& heapIndex)
+{
+    const Program& program = inputs.program;
+    const ValueFlowUniverse& universe = inputs.universe();
+    Vector<LayoutID> bases(program.layouts.size());
+    const ValueFlowHeapIndex::NodesWrittenUnderName* written = heapIndex.findNodesWrittenUnder(prototypeLinkName);
+    if (!written)
+        return bases;
+    auto classOfPrototypeObject = [&](ValueFlowObjectID object) {
+        return universe.kindOf(object) == ValueFlowObjectKind::Prototype ? universe.classLayoutOf(object) : LayoutID();
+    };
+    BitVector hasSeveral(program.layouts.size());
+    for (const ValueFlowHeapIndex::WrittenNode& node : written->nodes) {
+        if (ValueSets::isComplement(node.objects) || ValueSets::isComplement(node.value))
+            continue;
+        inputs.sets().forEachMember(node.objects, [&](ValueFlowObjectID holder) {
+            LayoutID derived = classOfPrototypeObject(holder);
+            if (!derived || !program.at(derived).has(LayoutFlags::IsConstructorFunction))
+                return;
+            inputs.sets().forEachMember(node.value, [&](ValueFlowObjectID linked) {
+                LayoutID base = classOfPrototypeObject(linked);
+                // A factory that is handed its own result links two functions of the same text.
+                if (!base || base == derived)
+                    return;
+                if (bases[derived.index()] && bases[derived.index()] != base)
+                    hasSeveral.quickSet(derived.index());
+                bases[derived.index()] = base;
+            });
+        });
+    }
+    for (size_t index : hasSeveral)
+        bases[index] = LayoutID();
+    return bases;
+}
+
+// Every walk up the expected bases must end, so a linked base that closes a cycle is dropped.
+static void dropLinkedBasesInCycles(const Program& program, std::span<const LayoutID> basesLinkedByProgram, FlowApplication& application)
+{
+    // The same rule as expectedBaseOf(), on the results that are not applied yet.
+    auto expectedBase = [&](LayoutID id) -> LayoutID {
+        const LayoutFlow& flow = application.layouts[id.index()].flow;
+        switch (flow.baseState) {
+        case BaseState::Layout:
+            return flow.base;
+        case BaseState::Unknown:
+            return program.at(id).base;
+        case BaseState::None:
+            return application.layouts[id.index()].classFlow.prototypeBase;
+        case BaseState::BuiltinClass:
+            return { };
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        LayoutID linked = basesLinkedByProgram[index];
+        if (!linked || program.layouts[index].base || application.layouts[index].classFlow.prototypeBase != linked)
+            continue;
+        LayoutID current = linked;
+        for (size_t steps = 0; current && steps <= program.layouts.size(); ++steps)
+            current = expectedBase(current);
+        if (current)
+            application.layouts[index].classFlow.prototypeBase = LayoutID();
+    }
+}
+
 void computeClassResults(const ValueFlowResultInputs& inputs, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
@@ -882,6 +949,7 @@ void computeClassResults(const ValueFlowResultInputs& inputs, FlowResultTables& 
     WritesToPrototypeObjects writes = collectWritesToPrototypeObjects(inputs, *inputs.heapIndex, classesOfStoredPrototypeObjects);
     times.didFinish("classes: writes to prototype objects"_s);
     noteClassesOfCreatedObjects(inputs, maker, handedToObjectCreate, classesOfStoredPrototypeObjects, writes, application);
+    Vector<LayoutID> basesLinkedByProgram = collectBasesLinkedByProgram(inputs, *inputs.heapIndex);
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         const Layout& layout = program.layouts[index];
         ClassFlow& flow = application.layouts[index].classFlow;
@@ -892,13 +960,14 @@ void computeClassResults(const ValueFlowResultInputs& inputs, FlowResultTables& 
                 flow = computeClassFlow(inputs, LayoutID(index), WTF::move(classes[index]), closuresTakenOutOfMembers, writes);
             continue;
         }
-        flow.prototypeBase = layout.base;
+        flow.prototypeBase = layout.base ? layout.base : basesLinkedByProgram[index];
         if (classes[index].isFollowed && classes[index].isCreatedAtMostOnce() && inputs.build.isEnabled(FlowResultKind::ClassEvaluations, index)) {
             flow.evaluations = ExecutionCount::AtMostOnce;
             bool listsEveryName = listAssignedMembers(inputs, maker, writes.of(LayoutID(index)), flow);
             noteWhatConstructorFunctionKeeps(inputs, LayoutID(index), writes, listsEveryName, flow);
         }
     }
+    dropLinkedBasesInCycles(program, basesLinkedByProgram.span(), application);
 }
 
 } } } // namespace JSC::AOT::Typed

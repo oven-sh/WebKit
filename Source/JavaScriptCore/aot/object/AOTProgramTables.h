@@ -75,15 +75,6 @@ static_assert(sizeof(AddedNameData) == 8 && isImageRecord<AddedNameData>);
 
 // Sorted.
 struct ParsedRecordFieldData {
-    static constexpr uint32_t isMemberForValidator = 1u << 31;
-    static constexpr unsigned requiredMembersShift = 20;
-    static constexpr uint32_t maxRequiredMembers = (isMemberForValidator >> requiredMembersShift) - 1;
-    static constexpr uint32_t maxValidatedObjects = 1u << requiredMembersShift;
-
-    static constexpr uint32_t memberForValidator(uint32_t validatedObject, uint32_t numberOfRequiredMembers) { return isMemberForValidator | numberOfRequiredMembers << requiredMembersShift | validatedObject; }
-    bool isForValidator() const { return shape & isMemberForValidator; }
-    uint32_t numberOfRequiredMembers() const { return (shape & ~isMemberForValidator) >> requiredMembersShift; }
-
     uint32_t name;
     uint32_t shape;
 

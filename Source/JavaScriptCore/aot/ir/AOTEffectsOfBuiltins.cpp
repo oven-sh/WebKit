@@ -99,6 +99,10 @@ static void describeSlowPathOf(const Program& program, const BuiltinOverload& ov
 
 static OperandCode describeCodeOf(const Program& program, const BuiltinOverload& overload, EffectDescription& description)
 {
+    if (program.mayBeTrimmed(overload.builtin)) {
+        description.addOwn(heapCapabilityEffects);
+        description.addThrow();
+    }
     if (overload.isUndeclared()) {
         description.addUnknownCode();
         return OperandCode::IsDescribed;
@@ -326,27 +330,10 @@ static Effects dependencyReadsOf(const Program& program, Proof proof)
     return effects;
 }
 
-static bool createsValidatedResult(const Program& program, BuiltinOverloadID overload, ExpectedResultID expectedResult)
-{
-    if (!expectedResult)
-        return false;
-    switch (program.builtins().at(overload).result.typedResultForm) {
-    case TypedResultForm::ParsedText:
-    case TypedResultForm::ParsedBody:
-    case TypedResultForm::Rows:
-        return true;
-    case TypedResultForm::None:
-    case TypedResultForm::ValidatedValue:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 void describeTypedResult(const Program& program, BuiltinOverloadID overload, ExpectedResultID expectedResult, EffectDescription& description)
 {
-    if (!createsValidatedResult(program, overload, expectedResult))
+    if (!expectedResult || program.builtins().at(overload).result.typedResultForm == TypedResultForm::None)
         return;
-    describeOverload(program, program.builtins().overloadIDsOf(Builtins::CompilerHelpersValidateByPlan).at(0), program.at(TypeTable::anything), description);
     for (Opcode row : { Opcode::JSONSourceOpen, Opcode::JSONSourceClose, Opcode::JSONSourceAbandon })
         description.addOwn(declaredBoundOf(row));
 }

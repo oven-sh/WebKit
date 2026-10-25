@@ -2748,7 +2748,6 @@ Value makeObjectTest(Proof proof, ValueID object, const SlotStamp& stamp)
     case Proof::KeyOrder:
     case Proof::UnmodifiedGenerator:
     case Proof::EnumeratorCurrent:
-    case Proof::PlainData:
     case Proof::SourceOpen:
     case Proof::TextMatches:
         break;

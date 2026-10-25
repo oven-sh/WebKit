@@ -17,7 +17,7 @@ function f0 name="descriptorReadByFields" parameters=[{type=object}, {type=strin
     Return v1
 # CHECK: v2:{{*}}= CallBuiltin -, v0, v1 overload=ObjectGetOwnPropertyDescriptor/0 builtinCallForm=Fields
 # CHECK-NEXT: [[flag0]]: boolean = ResultAt v2
-# CHECK: [[shift0]]: number = ToNumber [[flag0]]
+# CHECK: [[shift0]]: int[0, 1] = ToNumber [[flag0]]
 # CHECK-NEXT: [[tag0]]: i32 = LShift {{*}}, [[shift0]]
 # CHECK: = ResultAt v2 index=
 # CHECK: = BitAnd [[tag0]],

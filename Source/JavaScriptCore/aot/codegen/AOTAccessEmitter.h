@@ -55,7 +55,7 @@ public:
     Word32 findPrototypeTransition(CellPointer object, Boxed prototype, LBasicBlock isUnknown);
     void storeStructureAfterPrototypeTransition(CellPointer object, Word32 structureID);
     static PutMode putModeOf(ECMAMode mode) { return forMode(mode, PutMode::Strict, PutMode::Sloppy); }
-    std::optional<CellPointer> tryAllocateCopyOfFields(const ValueContext& allocation, ValueID copy, WholeCell, const ScopedLambda<CellPointer()>& allocateEmpty);
+    std::optional<CellPointer> tryAllocateCopyOfFields(const ValueContext& allocation, ValueID copy, const ScopedLambda<CellPointer()>& allocateEmpty);
 
 private:
     template<typename T> static T forMode(ECMAMode mode, T whenStrict, T whenSloppy)

@@ -88,7 +88,6 @@ static std::optional<uint32_t> expectedNumberOfVariadicOperands(const Program& p
     case Opcode::NewClosure:
         return user.isMadeOnDemand() ? 0 : static_cast<uint32_t>(program.at(user.function()).captures.size());
     case Opcode::NewObject:
-    case Opcode::CloneAs:
         return static_cast<uint32_t>(user.fields().size());
     case Opcode::CallDirect:
     case Opcode::CallTable:
@@ -288,7 +287,6 @@ void FunctionVerifier::verifyOperandKind(BlockID block, ValueID user, uint32_t, 
         case OperandKind::KeyOrder:
         case OperandKind::FlatString:
         case OperandKind::CodeAddress:
-        case OperandKind::SourcePlan:
         case OperandKind::BuilderCursor:
             return type.isOpaque(*opaqueKindOf(kind));
         }

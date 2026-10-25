@@ -1,25 +1,24 @@
-# An object node with more members than the limit is read as a plain value and validated, and a node at the limit still allocates its layout
+# An object with more members than the limit is read as a plain value, and one at the limit still allocates its layout
 # FORM: Prepared optimizing
 # OPTIONS: limit=MaxParsedObjectMembers:1
-# RUN: derived-functions ValidatingParser:x0.0 ValidatingParser:x1.0
+# RUN: derived-functions Parser:g0 Parser:g1
 # LOSS: MaxParsedObjectMembers x1 L0
 
 module m0 path="main.js" displayPath="main.js"
-expectedresult x0 type=L0 layouts=[L0] validation=[{shape=Object{layout=L0 members=[{key="id" node=1 field=0}, {key="name" node=2 field=1}]} type=L0}, {shape=Primitive{primitive=Number} type=number}, {shape=Primitive{} type=string}]
-expectedresult x1 type=L1 layouts=[L1] validation=[{shape=Object{layout=L1 members=[{key="id" node=1 field=0}]} type=L1}, {shape=Primitive{primitive=Number} type=number}]
 layout L0 name="TwoMembers" fields=[{key="id" declared={type=number}}, {key="name" declared={type=string}}]
 layout L1 name="OneMember" fields=[{key="id" declared={type=number}}]
+variable g0 name="two" declared={type=L0} initialization=Undefined
+variable g1 name="one" declared={type=L1} initialization=Undefined
 
-# CHECK-LABEL: form=ParsedText expectedResult=x0}
+# CHECK-LABEL: creator=Parser{type=L0 layout=L0 form=ParsedText}
 # CHECK-NOT: NewObject
 # CHECK-NOT: JSONObjectBegin
 # CHECK: [[generic]]:{{*}}= JSONParseValue v0
 # CHECK: [[value]]: anything = ResultAt [[generic]] index=1
-# CHECK: = CallDirect [[value]] function=[[validator]]
+# CHECK: = TypeTest [[value]] testedType=L0
 # CHECK-NOT: NewObject
 # CHECK-NOT: JSONObjectBegin
 
-# CHECK-LABEL: form=ParsedText expectedResult=x1}
+# CHECK-LABEL: creator=Parser{type=L1 layout=L1 form=ParsedText}
 # CHECK: = JSONObjectBegin layout=L1
 # CHECK: = NewObject -, {{*}} layout=L1 fields=[0]
-# CHECK: function [[validator]] {{*}}role=Validator {{*}}expectedResult=x0}

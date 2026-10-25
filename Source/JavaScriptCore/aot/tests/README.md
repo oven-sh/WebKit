@@ -374,7 +374,7 @@ A command is registered by the owner of the code it runs, in `aot/**/AOT*TestCom
 - `pass-context` prints what a function pass can ask its context: heat and "runs at most once" per block, the subject of a value.
 - `derived-functions <Role>:<target> ..` asks the table of derived functions for keys and prints, under `OPTIONS: report=Declines` the
   `decline` lines of the builders, and the program after the commit. A target is
-  `f<n>` or `f<n>:<parameter>`, `L<n>`, `g<n>` (the declared type of variable n) or `x<n>.<k>` (validation node k of expected result n).
+  `f<n>` or `f<n>:<parameter>`, `L<n>` or `g<n>` (the declared type of variable n).
 
 `crash` crashes. Only `AOTChildProcessTests.cpp` runs it, to check that a crash fails one test.
 
@@ -491,7 +491,7 @@ testaot compile main.bin --output=main.image validate
 jsc --aotImagePath=main.image -e "runCompiledEntryPoint(1)"
 ```
 
-The shell has eight functions for compiled code:
+The shell has eleven functions for compiled code:
 
 - `runCompiledEntryPoint(id)` takes an id that `testaot compile` printed, runs that entry point and returns its promise. A
   rejection prints `Exception: ..` and exits with 3.
@@ -503,6 +503,10 @@ The shell has eight functions for compiled code:
 - `storeInSlotWithoutTest(object, name, value)` writes the value into the slot of that field of a compiled object and tests no type: the
   writer that nobody listed, for the tests in `validation/`. It throws where the object has no such slot or the form of the slot cannot
   hold the value.
+- `lockCell(cell)` and `unlockCell(cell)` take and release the lock of a cell, as a marking thread does around its visit of an array
+  whose elements do not start where its storage starts. The bits of the lock lie in the byte that names the kind of storage.
+- `callWhileAnotherThreadLocksCell(cell, function)` calls the function, and until it returns another thread takes and releases
+  that lock again and again. It returns what the function returns.
 
 The shell has no host: a program that calls a built-in of Bun's compiles, and the call throws when it runs.
 

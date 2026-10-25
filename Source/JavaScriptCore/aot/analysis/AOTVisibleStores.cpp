@@ -1039,8 +1039,7 @@ public:
         case Opcode::PutEnvironmentField:
             connect(sourceOf(value.operand(OperandIndex::PutEnvironmentField::value)), m_graph.nodeOf(FieldReference { value.layout(), value.field() }));
             return { };
-        case Opcode::NewObject:
-        case Opcode::CloneAs: {
+        case Opcode::NewObject: {
             std::span<const ValueID> initialValues = value.variadicOperands();
             for (unsigned index = 0; index < initialValues.size(); ++index) {
                 FieldReference field { value.layout(), value.fields()[index] };

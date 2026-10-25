@@ -3,15 +3,11 @@ import * as b from "bun-builtins-table";
 export default b.declarations(
   b.hostRoles(
     "%CompilerHelpers%",
-    "%CompilerHelpers%.copyOwnProperties",
-    "%CompilerHelpers%.countCodePoints",
     "%CompilerHelpers%.definePropertiesFrom",
     "%CompilerHelpers%.describeUnlessOrdinary",
     "%CompilerHelpers%.encodeIntoRangeOfBytes",
     "%CompilerHelpers%.findInPlainQuery",
     "%CompilerHelpers%.findPlainQueryValue",
-    "%CompilerHelpers%.holdsRule",
-    "%CompilerHelpers%.interpretNode",
     "%CompilerHelpers%.ownEntriesFlat",
     "%CompilerHelpers%.plainQueryEntries",
     "%CompilerHelpers%.plainQueryKeys",
@@ -24,7 +20,6 @@ export default b.declarations(
     "%CompilerHelpers%.startOfRangeOfBytes",
     "%CompilerHelpers%.stringifyProperties",
     "%CompilerHelpers%.traverseArray",
-    "%CompilerHelpers%.validateByPlan",
     "%CompilerHelpers%.viewOrRangeOfBytes",
   ),
   b.hostRoles(

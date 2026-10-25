@@ -1,8 +1,7 @@
-# Expected result lines with every field, every shape of a validation node and every rule
+# Expected result lines with every field
 # RUN: round-trip
-# CHECK: typesite w0 module=m0 position=11 kind=CallResult text="T"
-# CHECK-NEXT: expectedresult x0 type=anything
-# CHECK-NEXT: expectedresult x1 type=object layouts=[L0, L1] site=w0 validation=[{shape=Object{layout=L0 members=[{key="x" node=1 field=1 isOptional=true}, {key="y"}] undeclared=Validated undeclaredValue=2} type=object rules=[Message{text="bad"}] text="T"}, {shape=Primitive{primitive=Number} type=number rules=[Integer, Minimum{bound=1}, Maximum{bound=9}, ExclusiveMinimum{bound=0.5}, ExclusiveMaximum{bound=9.5}, MultipleOf{divisor=2}, DefaultNumber{value=3}]}, {shape=Primitive{} type=string rules=[MinimumLength{length=1}, MaximumLength{length=8}, Pattern{source="^a"}, Format{format=Uuid}, Template{head="id-" parts=[{placeholder=Number text="-"}, {text="!"}]}, DefaultString{value="d"}]}, {shape=BooleanLiteral{value=true} type=true rules=[DefaultBoolean{value=true}]}, {shape=NumberLiteral{value=4} type=4}, {shape=StringLiteral{value="s"} type="s"}, {shape=Array{element=1} type=Array<number>}, {shape=Tuple{elements=[1, 2]} type=Array}, {shape=Dictionary{value=1} type=object}, {shape=Union{arms=[10, 11]} type=undefined|null rules=[DefaultNull]}, {shape=Undefined type=undefined}, {shape=Null type=null}, {shape=Never type=never}, {shape=AnyObject type=object}, {type=anything}, {shape=Object{undeclared=Rejected} type=object}]
+# CHECK: expectedresult x0 type=anything
+# CHECK-NEXT: expectedresult x1 type=object layouts=[L0, L1]
 # CHECK-NEXT: layout L0 fields=[{key="y" declared={type=anything}}, {key="x" declared={type=number}}]
 # CHECK-NEXT: layout L1
 # CHECK-NEXT: module m0 path="/a.ts" displayPath="a.ts" body=f0
@@ -18,9 +17,8 @@
 # RUN(V): verify
 # V: valid
 
-typesite w0 module=m0 position=11 kind=CallResult text="T"
 expectedresult x0 type=anything
-expectedresult x1 type=object layouts=[L0, L1] site=w0 validation=[{shape=Object{layout=L0 members=[{key="x" node=1 field=1 isOptional=true}, {key="y"}] undeclared=Validated undeclaredValue=2} type=object rules=[Message{text="bad"}] text="T"}, {shape=Primitive{primitive=Number} type=number rules=[Integer, Minimum{bound=1}, Maximum{bound=9}, ExclusiveMinimum{bound=0.5}, ExclusiveMaximum{bound=9.5}, MultipleOf{divisor=2}, DefaultNumber{value=3}]}, {shape=Primitive{} type=string rules=[MinimumLength{length=1}, MaximumLength{length=8}, Pattern{source="^a"}, Format{format=Uuid}, Template{head="id-" parts=[{placeholder=Number text="-"}, {text="!"}]}, DefaultString{value="d"}]}, {shape=BooleanLiteral{value=true} type=true rules=[DefaultBoolean{value=true}]}, {shape=NumberLiteral{value=4} type=4}, {shape=StringLiteral{value="s"} type="s"}, {shape=Array{element=1} type=Array<number>}, {shape=Tuple{elements=[1, 2]} type=Array}, {shape=Dictionary{value=1} type=object}, {shape=Union{arms=[10, 11]} type=undefined|null rules=[DefaultNull]}, {shape=Undefined type=undefined}, {shape=Null type=null}, {shape=Never type=never}, {shape=AnyObject type=object}, {type=anything}, {shape=Object{undeclared=Rejected} type=object}]
+expectedresult x1 type=object layouts=[L0, L1]
 layout L0 fields=[{key="y" declared={type=anything}}, {key="x" declared={type=number}}]
 layout L1
 module m0 path="/a.ts" displayPath="a.ts" body=f0

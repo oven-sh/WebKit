@@ -15,7 +15,6 @@
 #include "AOTSortedSet.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
-#include "AOTValidationNodes.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <optional>
@@ -635,80 +634,10 @@ static bool isValidEvalBinding(const Program& program, const EvalBinding& bindin
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool isValidObjectShape(const Program& program, const ValidationShape::Object& object, size_t numberOfNodes)
-{
-    if (object.layout && !hasObjectKind(program, object.layout))
-        return false;
-    if (object.undeclaredValue.has_value() != (object.undeclared == UndeclaredMembers::Validated))
-        return false;
-    if (object.undeclaredValue && *object.undeclaredValue >= numberOfNodes)
-        return false;
-    size_t numberOfFields = object.layout ? program.at(object.layout).fields.size() : 0;
-    return std::ranges::all_of(object.members, [&](const ValidationMember& member) {
-        return member.key && member.node < numberOfNodes && (!member.field || *member.field < numberOfFields);
-    });
-}
-
-static bool isValidValidationRule(const ValidationRule& rule, size_t numberOfNodes)
-{
-    bool namesOnlyNodesOfList = true;
-    forEachNodeOf(rule, [&](uint32_t node) {
-        namesOnlyNodesOfList &= node < numberOfNodes;
-    });
-    if (!namesOnlyNodesOfList)
-        return false;
-    if (const auto* members = rule.tryAs<ValidationRule::PatternMembers>())
-        return members->sources.size() == members->nodes.size();
-    return true;
-}
-
-static bool isValidTupleShape(const ValidationShape::Tuple& tuple, size_t numberOfNodes)
-{
-    auto isNode = [&](uint32_t index) { return index < numberOfNodes; };
-    return tuple.required <= tuple.elements.size() && std::ranges::all_of(tuple.elements, isNode) && (!tuple.rest || isNode(*tuple.rest));
-}
-
-static bool isValidValidationNode(const Program& program, const ValidationNode& node, size_t numberOfNodes)
-{
-    bool hasValidRules = std::ranges::all_of(node.rules, [&](const ValidationRule& rule) {
-        return isValidValidationRule(rule, numberOfNodes);
-    });
-    if (!hasValidRules)
-        return false;
-
-    auto isNode = [&](uint32_t index) { return index < numberOfNodes; };
-    switch (node.shape.kind()) {
-    case ValidationShape::Kind::Unknown:
-    case ValidationShape::Kind::Never:
-    case ValidationShape::Kind::Undefined:
-    case ValidationShape::Kind::Null:
-    case ValidationShape::Kind::AnyObject:
-    case ValidationShape::Kind::Primitive:
-    case ValidationShape::Kind::BooleanLiteral:
-    case ValidationShape::Kind::NumberLiteral:
-    case ValidationShape::Kind::StringLiteral:
-        return true;
-    case ValidationShape::Kind::Array:
-        return isNode(node.shape.as<ValidationShape::Array>().element);
-    case ValidationShape::Kind::Tuple:
-        return isValidTupleShape(node.shape.as<ValidationShape::Tuple>(), numberOfNodes);
-    case ValidationShape::Kind::Dictionary:
-        return isNode(node.shape.as<ValidationShape::Dictionary>().value);
-    case ValidationShape::Kind::Object:
-        return isValidObjectShape(program, node.shape.as<ValidationShape::Object>(), numberOfNodes);
-    case ValidationShape::Kind::Union:
-        return std::ranges::all_of(node.shape.as<ValidationShape::Union>().arms, isNode);
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static bool isValidExpectedResult(const Program& program, const ExpectedResult& expected)
 {
-    bool hasObjectLayouts = std::ranges::all_of(expected.layouts, [&](LayoutID layout) {
+    return std::ranges::all_of(expected.layouts, [&](LayoutID layout) {
         return hasObjectKind(program, layout);
-    });
-    return hasObjectLayouts && std::ranges::all_of(expected.validation, [&](const ValidationNode& node) {
-        return isValidValidationNode(program, node, expected.validation.size());
     });
 }
 

@@ -34,6 +34,7 @@ aot/codegen/AOTElementAccessEmitterTypedArrays.cpp
 aot/codegen/AOTElementEmitterLiterals.cpp
 aot/codegen/AOTEvalEmitter.cpp
 aot/codegen/AOTExpandedIterationEmitter.cpp
+aot/codegen/AOTExpectedRowsEmitter.cpp
 aot/codegen/AOTForInEmitter.cpp
 aot/codegen/AOTFrameAddressValidation.cpp
 aot/codegen/AOTHintEmitter.cpp
@@ -57,7 +58,6 @@ aot/codegen/AOTStackSlotPoisoning.cpp
 aot/codegen/AOTStringBuilderCursor.cpp
 aot/codegen/AOTStringBuilderPartEmitter.cpp
 aot/codegen/AOTStringBuiltinEmitter.cpp
-aot/codegen/AOTValidationEmitter.cpp
 aot/ir/AOTCheckInt32Promises.cpp
 aot/ir/AOTInt32Proof.cpp
 aot/ir/AOTProgramVerifier.cpp
@@ -88,9 +88,6 @@ aot/passes/AOTJSONSerializer.cpp
 aot/passes/AOTJSONVerification.cpp
 aot/passes/AOTSelectTypedResultsNodes.cpp
 aot/passes/AOTSinkAllocationsArguments.cpp
-aot/passes/AOTValidationPlanText.cpp
-aot/passes/AOTValidationRules.cpp
-aot/passes/AOTValidatorBuilder.cpp
 aot/pipeline/AOTInterningPhases.cpp
 aot/place/AOTCellSizeClasses.cpp
 aot/place/AOTEnvironmentPacking.cpp

@@ -18,14 +18,12 @@
 #include "AOTObjectBuiltinEmitter.h"
 #include "AOTPlacement.h"
 #include "AOTResultRules.h"
-#include "AOTRuntimeValidationEmitter.h"
 #include "AOTSlotAccessEmitter.h"
 #include "AOTSlotEmitter.h"
 #include "AOTSort.h"
 #include "AOTStaticsEmitter.h"
 #include "AOTStubsAllocation.h"
 #include "AOTUseLists.h"
-#include "AOTValueIdentity.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "CCallHelpers.h"
@@ -111,21 +109,18 @@ CellPointer AllocationEmitter::allocateFrameCell(const ValueContext& value, Allo
     return cell;
 }
 
-std::optional<AllocationEmitter::CopyThatFills> AllocationEmitter::findCopyThatFills(const ValueContext& value)
+ValueID AllocationEmitter::findCopyThatFills(const ValueContext& value)
 {
     if (value.shape() != CodeShape::Fast || value->storage() != AllocationStorage::Heap || value->prototypeOperand() || !value->fields().empty() || generator().validates())
-        return std::nullopt;
+        return { };
     const BlockValues& values = m_function.at(value.block()).values;
     size_t index = values.find(value.id());
     if (index == notFound || index + 1 == values.size())
-        return std::nullopt;
+        return { };
     const Value& next = m_function.at(values[index + 1]);
     if (next.opcode != Opcode::TryCopyFields || next.objectOperand() != value.id())
-        return std::nullopt;
-    std::optional<WholeCell> cell = placeInCellOf(value).ownCell();
-    if (!cell)
-        return std::nullopt;
-    return CopyThatFills { values[index + 1], *cell };
+        return { };
+    return values[index + 1];
 }
 
 void AllocationEmitter::generateNewObject(const ValueContext& value)
@@ -142,11 +137,11 @@ void AllocationEmitter::generateNewObject(const ValueContext& value)
     }
 
     AllocationStorage storage = value->storage();
-    if (std::optional<CopyThatFills> filling = findCopyThatFills(value)) {
+    if (ValueID copy = findCopyThatFills(value)) {
         auto allocateEmpty = [&] {
             return allocateWithFields(value, allocation, value->fields(), value->valuesOperands(), storage);
         };
-        if (std::optional<CellPointer> cell = emitter<AccessEmitter>().tryAllocateCopyOfFields(value, filling->copy, filling->cell, ScopedLambda<CellPointer()>(allocateEmpty))) {
+        if (std::optional<CellPointer> cell = emitter<AccessEmitter>().tryAllocateCopyOfFields(value, copy, ScopedLambda<CellPointer()>(allocateEmpty))) {
             define(value, *cell);
             return;
         }
@@ -216,7 +211,7 @@ AllocationEmitter::InitialFields AllocationEmitter::collectInitialFields(LayoutI
     return initialFields;
 }
 
-CellPointer AllocationEmitter::takeReleasedCellOrAllocate(const ValueContext& value, AllocationID id, WholeCell wholeCell, uint32_t freeCellOffset)
+CellPointer AllocationEmitter::takeReleasedCellOrAllocate(const ValueContext& value, AllocationID id, uint32_t freeCellOffset)
 {
     // Every collection clears the word.
     TypedPointer freeCell = emitter<StaticsEmitter>().inStatics(m_heaps.collectorState, freeCellOffset);
@@ -225,7 +220,7 @@ CellPointer AllocationEmitter::takeReleasedCellOrAllocate(const ValueContext& va
         m_out.store64(m_out.constInt64(0), freeCell);
         return CellPointer(released.value());
     }, [&] {
-        return emitter<CellAllocationEmitter>().allocate(value, id, wholeCell);
+        return emitter<CellAllocationEmitter>().allocate(value, id);
     });
 }
 
@@ -245,22 +240,22 @@ ZeroedBy AllocationEmitter::whoZeroesBodyOfFreshCell(const ValueContext& value, 
     unsigned storesOfZero = plan.layout(layout).isEscapedOffset.has_value() + static_cast<unsigned>(m_placement.layout(layout).bytesKeptZero.size());
     for (const PlacedSlot* hiddenWord : { &plan.extensionWord(layout), &plan.extraPropertiesWord(layout) })
         storesOfZero += hiddenWord->hasStorage() && isZeroWhileEmpty(hiddenWord->representation);
-    forEachEmptySlot(layout, isInitialField, EmptySlots::All, [&](FieldIndex, const PlacedSlot& slot) {
+    forEachEmptySlot(layout, isInitialField, [&](FieldIndex, const PlacedSlot& slot) {
         storesOfZero += isZeroWhileEmpty(slot.representation);
     });
     return emitter<CellAllocationEmitter>().whoZeroesBody(value, id, storesOfZero);
 }
 
-CellPointer AllocationEmitter::allocateCell(const ValueContext& value, AllocationID id, const PlannedLayout& layout, AllocationStorage storage, WholeCell wholeCell, ZeroedBy zeroedBy)
+CellPointer AllocationEmitter::allocateCell(const ValueContext& value, AllocationID id, const PlannedLayout& layout, AllocationStorage storage, ZeroedBy zeroedBy)
 {
     RELEASE_ASSERT(zeroedBy == ZeroedBy::Nobody || storage == AllocationStorage::Heap);
     switch (storage) {
     case AllocationStorage::Heap:
         if (std::optional<uint32_t> freeCellOffset = m_placement.freeCellOffset(m_placement.allocation(id).layout)) {
             RELEASE_ASSERT(zeroedBy == ZeroedBy::Nobody);
-            return takeReleasedCellOrAllocate(value, id, wholeCell, *freeCellOffset);
+            return takeReleasedCellOrAllocate(value, id, *freeCellOffset);
         }
-        return emitter<CellAllocationEmitter>().allocate(value, id, wholeCell, zeroedBy);
+        return emitter<CellAllocationEmitter>().allocate(value, id, zeroedBy);
     case AllocationStorage::Frame:
     case AllocationStorage::FrameUntilMaterialized:
         return allocateFrameCell(value, id, layout);
@@ -303,150 +298,8 @@ void AllocationEmitter::storeInitialFields(CellPointer cell, LayoutID layout, co
     }
 }
 
-// Both operations ask the same questions of the same records, so they agree.
-PlaceInCell AllocationEmitter::placeInCellOf(const Value& value) const
-{
-    PlaceInCell place;
-    bool isArray = value.opcode == Opcode::NewArray;
-    if ((value.opcode != Opcode::NewObject && !isArray) || value.storage() != AllocationStorage::Heap)
-        return place;
-    bool takesCell = !isArray && value.takesCellOfInnerObject();
-    LayoutID outerLayout = takesCell ? value.layout() : value.outerLayout();
-    if (!outerLayout)
-        return place;
-    for (const InnerObject& inner : m_program.at(outerLayout).innerObjects) {
-        const PlacedInnerObject* placed = m_placement.layout(outerLayout).innerObjectIn(inner.field);
-        AllocationID outerAllocation = m_placement.allocations().find(outerLayout, m_placement.shapes().shapeOf(outerLayout, inner.outerAllocationClass), inner.outerFields.span(), true);
-        if (!placed || !outerAllocation)
-            continue;
-        if (!takesCell && (isArray ? !!inner.layout : inner.layout != value.layout()))
-            continue;
-        place.m_offsetOfInnerObject = placed->offset;
-        place.m_field = inner.field;
-        place.m_outerLayout = outerLayout;
-        place.m_outerAllocation = outerAllocation;
-        if (!takesCell) {
-            place.m_kind = PlaceInCell::Kind::BehindOuterObject;
-            place.m_arrayCapacity = inner.arrayCapacity;
-            return place;
-        }
-        std::span<const uint32_t> fields = value.fields();
-        auto position = std::ranges::find(fields, inner.field);
-        if (position == fields.end() || outerAllocation != value.allocation()) {
-            place.m_kind = PlaceInCell::Kind::Inconsistent;
-            return place;
-        }
-        place.m_kind = PlaceInCell::Kind::AroundInnerObject;
-        place.m_innerObject = value.valuesOperands()[position - fields.begin()];
-        return place;
-    }
-    return place;
-}
-
-PlaceInCell AllocationEmitter::placeInCellOf(const ValueContext& value)
-{
-    PlaceInCell place = placeInCellOf(value.value());
-    if (place.kind() == PlaceInCell::Kind::Inconsistent)
-        fail(value, InternalErrorKind::PlacedPayloadMissing);
-    return place;
-}
-
-// From here on the collector may meet the outer object, which has its header and no reference yet. Nobody else does before its own operation has run.
-CellPointer AllocationEmitter::allocateBehindOuterObject(const ValueContext& value, AllocationID id, const PlaceInCell& place)
-{
-    if (m_placement.allocation(id).constructedBy)
-        emitter<CellAllocationEmitter>().ensureRecordIsFilled(value, id);
-    CellPointer outer = emitter<CellAllocationEmitter>().allocateCellOfBothObjects(value, place);
-    CellPointer inner(offsetBy(asPointer(outer), place.offsetOfInnerObject()).value());
-    CodeGenerator::InitializationScope scope(generator());
-    initializeHiddenFields(outer, place.outerLayout(), AllocationStorage::Heap);
-    BitVector holdsInnerObject(m_placement.layout(place.outerLayout()).numberOfFields());
-    holdsInnerObject.set(place.field());
-    // The check of the heap in a validating build reads every slot of whatever the collector meets.
-    storeEmptySlots(outer, place.outerLayout(), holdsInnerObject, generator().validates() ? EmptySlots::All : EmptySlots::HoldingCells);
-    storeReferenceTo(inner, outer, place.outerLayout(), place.field());
-    emitter<CellAllocationEmitter>().copyHeaderAndWords(id, inner);
-    m_liesBehindOuterObject.set(value.id().index());
-    return inner;
-}
-
-std::optional<AllocationEmitter::RoomForInnerCell> AllocationEmitter::allocateRoomForInnerCell(const ValueContext& value)
-{
-    PlaceInCell place = placeInCellOf(value);
-    if (place.kind() != PlaceInCell::Kind::BehindOuterObject)
-        return std::nullopt;
-    CellPointer outer = emitter<CellAllocationEmitter>().allocateCellOfBothObjects(value, place);
-    CellPointer inner(offsetBy(asPointer(outer), place.offsetOfInnerObject()).value());
-    CodeGenerator::InitializationScope scope(generator());
-    initializeHiddenFields(outer, place.outerLayout(), AllocationStorage::Heap);
-    storeEmptySlots(outer, place.outerLayout(), BitVector(), generator().validates() ? EmptySlots::All : EmptySlots::HoldingCells);
-    m_out.store64(m_out.constInt64(0), m_out.address(m_heaps.JSCell_header, inner.value(), 0));
-    m_liesBehindOuterObject.set(value.id().index());
-    return RoomForInnerCell { outer, inner, place.arrayCapacity(), place.outerLayout(), place.field() };
-}
-
-void AllocationEmitter::didFillInnerCell(const RoomForInnerCell& room)
-{
-    CodeGenerator::InitializationScope scope(generator());
-    storeReferenceTo(room.inner, room.outer, room.outerLayout, room.field);
-}
-
-TypedPointer AllocationEmitter::addressOfReferenceToInnerObject(CellPointer outer, LayoutID outerLayout, uint32_t field)
-{
-    return emitter<SlotEmitter>().addressOf(outer, m_placement.slot(outerLayout, field), locationOfField(m_program, outerLayout, field));
-}
-
-void AllocationEmitter::storeReferenceTo(CellPointer inner, CellPointer outer, LayoutID outerLayout, uint32_t field)
-{
-    TypedPointer address = addressOfReferenceToInnerObject(outer, outerLayout, field);
-    if (traitsOf(m_placement.slot(outerLayout, field).representation).isNarrowReference)
-        m_out.store32(compress(inner).value(), address);
-    else
-        m_out.store64(inner.value(), address);
-}
-
-CellPointer AllocationEmitter::cellAroundInnerObject(const ValueContext& value, const PlaceInCell& place)
-{
-    ValueID made = sameObjectThroughCasts(m_function, place.innerObject());
-    Opcode makerOfInnerObject = m_function.at(made).opcode;
-    if ((makerOfInnerObject == Opcode::NewObject || makerOfInnerObject == Opcode::NewArray) && !m_liesBehindOuterObject.get(made.index()))
-        fail(value, InternalErrorKind::PlacedPayloadMissing);
-
-    auto innerObject = [&] {
-        switch (representationOf(place.innerObject())) {
-        case Representation::Cell:
-            return in<CellPointer>(place.innerObject());
-        case Representation::Cell32:
-            return decode(in<NarrowReference>(place.innerObject()));
-        case Representation::JSValue:
-            return unboxCell(in<Boxed>(place.innerObject()));
-        case Representation::Unchosen:
-        case Representation::Void:
-        case Representation::Boolean:
-        case Representation::Int32:
-        case Representation::Int64:
-        case Representation::Double:
-        case Representation::OptionalInt64:
-        case Representation::OptionalDouble:
-        case Representation::LiteralString:
-        case Representation::RawWord:
-            break;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    };
-    CellPointer inner = innerObject();
-    CellPointer outer(offsetBy(asPointer(inner), -static_cast<ptrdiff_t>(place.offsetOfInnerObject())).value());
-    if (generator().validatesOrChecksProofs()) {
-        TypedPointer address = addressOfReferenceToInnerObject(outer, place.outerLayout(), place.field());
-        bool isNarrow = traitsOf(m_placement.slot(place.outerLayout(), place.field()).representation).isNarrowReference;
-        Condition holdsInnerObject = isNarrow ? equal(Word32(m_out.load32(address)), Word32(compress(inner).value())) : equal(Integer(m_out.load64(address)), Integer(inner.value()));
-        emitter<RuntimeValidationEmitter>().checkPrecondition(value, holdsInnerObject);
-    }
-    return outer;
-}
-
 template<typename Visitor>
-void AllocationEmitter::forEachEmptySlot(LayoutID layout, const BitVector& isInitialField, EmptySlots which, const Visitor& visitor)
+void AllocationEmitter::forEachEmptySlot(LayoutID layout, const BitVector& isInitialField, const Visitor& visitor)
 {
     const PlannedLayout& planned = m_placement.layout(layout);
     bool isCoroutineFrame = m_program.at(layout).kind == LayoutKind::CoroutineFrame;
@@ -454,11 +307,9 @@ void AllocationEmitter::forEachEmptySlot(LayoutID layout, const BitVector& isIni
         const PlacedSlot& slot = planned.slots[field];
         if (slot.storage != SlotStorage::Inline || isInitialField.get(field))
             continue;
-        SlotTraits traits = traitsOf(slot.representation);
-        bool isWrittenBeforeRead = isCoroutineFrame && !traits.holdsCell;
-        if (isWrittenBeforeRead || (which != EmptySlots::All && traits.holdsCell != (which == EmptySlots::HoldingCells)))
-            continue;
-        visitor(field, slot);
+        bool isWrittenBeforeRead = isCoroutineFrame && !traitsOf(slot.representation).holdsCell;
+        if (!isWrittenBeforeRead)
+            visitor(field, slot);
     }
 }
 
@@ -470,7 +321,7 @@ Vector<AllocationEmitter::WordOfEmptyObject, 8> AllocationEmitter::wordsOfEmptyO
         if (hiddenWord->hasStorage() && !isZeroWhileEmpty(hiddenWord->representation))
             words.append({ hiddenWord->offset, hiddenWord->representation });
     }
-    forEachEmptySlot(layout, BitVector(), EmptySlots::All, [&](FieldIndex, const PlacedSlot& slot) {
+    forEachEmptySlot(layout, BitVector(), [&](FieldIndex, const PlacedSlot& slot) {
         if (!isZeroWhileEmpty(slot.representation))
             words.append({ slot.offset, slot.representation });
     });
@@ -478,12 +329,12 @@ Vector<AllocationEmitter::WordOfEmptyObject, 8> AllocationEmitter::wordsOfEmptyO
     return words;
 }
 
-void AllocationEmitter::storeEmptySlots(CellPointer cell, LayoutID layout, const BitVector& isInitialField, EmptySlots which, ZeroedBy zeroedBy)
+void AllocationEmitter::storeEmptySlots(CellPointer cell, LayoutID layout, const BitVector& isInitialField, ZeroedBy zeroedBy)
 {
     SlotEmitter& slots = emitter<SlotEmitter>();
     const PlannedLayout& planned = m_placement.layout(layout);
     const Layout& declared = m_program.at(layout);
-    forEachEmptySlot(layout, isInitialField, which, [&](FieldIndex field, const PlacedSlot& slot) {
+    forEachEmptySlot(layout, isInitialField, [&](FieldIndex field, const PlacedSlot& slot) {
         if (zeroedBy != ZeroedBy::Nobody && isZeroWhileEmpty(slot.representation))
             return;
         TypedPointer address = slots.addressOf(cell, slot, locationOfField(m_program, layout, field));
@@ -494,7 +345,7 @@ void AllocationEmitter::storeEmptySlots(CellPointer cell, LayoutID layout, const
             storeZero(m_out, address, traits.width);
     });
 
-    if (which == EmptySlots::HoldingCells || zeroedBy != ZeroedBy::Nobody)
+    if (zeroedBy != ZeroedBy::Nobody)
         return;
     const B3::AbstractHeap& anyFieldHeap = m_heaps.entire(declared.isEnvironment() ? AbstractHeap::EnvironmentFields : AbstractHeap::ObjectFields);
     for (ReservedBytes bytes : planned.bytesKeptZero)
@@ -590,50 +441,25 @@ CellPointer AllocationEmitter::allocateWithFields(const ValueContext& value, All
     if (!layout.hasSlots())
         return failWithoutCell(InternalErrorKind::SlotAccessNotPlaced);
 
-    PlaceInCell place = placeInCellOf(value);
     InitialFields initialFields = collectInitialFields(layoutID, fields, values);
     BitVector isInitialField(layout.numberOfFields());
     for (const InitialField& field : initialFields) {
         bool defersClosure = field.slot->representation == SlotRepresentation::DeferredClosure;
         Representation wanted = defersClosure ? Representation::Cell32 : Typed::representationOf(field.slot->representation);
         bool hasNoValue = defersClosure && isDeferredClosure(m_function, field.value);
-        if (place.kind() == PlaceInCell::Kind::AroundInnerObject && field.field == place.field() && typeOf(field.value).isObject())
-            wanted = Representation::Cell;
         if (!hasNoValue && representationOf(field.value) != wanted)
             return failWithoutCell(InternalErrorKind::WrongRepresentation);
         if (!field.slot->isOutOfLine())
             isInitialField.set(field.field);
     }
 
-    if (place.kind() == PlaceInCell::Kind::AroundInnerObject) {
-        CellPointer cell = cellAroundInnerObject(value, place);
-        // The operation of the inner object has stored the reference to it.
-        initialFields.removeAllMatching([&](const InitialField& field) {
-            return field.field == place.field();
-        });
-        {
-            CodeGenerator::InitializationScope scope(generator());
-            storeInitialFields(cell, layoutID, initialFields);
-            storeEmptySlots(cell, layoutID, isInitialField, EmptySlots::HoldingNoCells);
-        }
-        // The cell is as old as the inner object, so the collector may have marked it.
-        if (!value->cellCannotBeMarked())
-            barrierIfCellWasStored(value, cell, initialFields);
-        emitter<BarrierEmitter>().fenceAfterInitialization();
-        storeFieldsInExtension(value, cell, layoutID, initialFields, value->cellCannotBeMarked() ? OwnerBarrier::Omitted : OwnerBarrier::Emitted);
-        return cell;
-    }
-
-    std::optional<WholeCell> ownCell = place.ownCell();
-    if (!ownCell && place.kind() != PlaceInCell::Kind::BehindOuterObject)
-        return emitter<ConstantEmitter>().zeroOf(Representation::Cell).as<CellPointer>();
-    ZeroedBy zeroedBy = ownCell ? whoZeroesBodyOfFreshCell(value, id, isInitialField, storage) : ZeroedBy::Nobody;
-    CellPointer cell = ownCell ? allocateCell(value, id, layout, storage, *ownCell, zeroedBy) : allocateBehindOuterObject(value, id, place);
+    ZeroedBy zeroedBy = whoZeroesBodyOfFreshCell(value, id, isInitialField, storage);
+    CellPointer cell = allocateCell(value, id, layout, storage, zeroedBy);
     {
         CodeGenerator::InitializationScope scope(generator());
         initializeHiddenFields(cell, layoutID, storage, zeroedBy);
         storeInitialFields(cell, layoutID, initialFields);
-        storeEmptySlots(cell, layoutID, isInitialField, EmptySlots::All, zeroedBy);
+        storeEmptySlots(cell, layoutID, isInitialField, zeroedBy);
     }
     if (storage == AllocationStorage::Heap) {
         if (m_placement.freeCellOffset(layoutID))

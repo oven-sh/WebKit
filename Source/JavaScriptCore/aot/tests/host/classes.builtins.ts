@@ -97,29 +97,12 @@ export default b.declarations(
   b.namespace("Bun.FFI", {}),
   b.namespace("%JSONText%", {}),
   b.namespace("%bun:bundle%", {
-    validate: {
-      args: { value: b.any },
-      returns: b.any,
-      capability: "js",
+    feature: {
+      args: { flag: b.string },
+      returns: b.bool,
+      capability: "none",
       throws: true,
-      runsOnlyOperandCode: true,
-      uses: {
-        value: [
-          b.returned,
-          b.runsTransitively(
-            "OwnKeys",
-            "OwnValues",
-            "Iterate",
-            "PrototypeChain",
-            "ToPrimitive",
-            b.named("length"),
-            b.calls("startsWith", "endsWith", "indexOf", "slice"),
-          ),
-          b.reachableValuesStoredIn(b.result),
-        ],
-      },
-      typedResultForm: { form: "ValidatedValue", source: "value" },
-      implementation: b.compiled("prelude/validation", "validate"),
+      implementation: b.generic,
     },
   }),
   b.namespace("%NativeFunctions%", {}),

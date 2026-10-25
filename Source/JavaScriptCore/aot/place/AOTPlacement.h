@@ -71,7 +71,6 @@ struct FieldAccess {
     LayoutSetID membersWithField;
     ShapeTest membersWithFieldTest;
     TypeID contents;
-    std::optional<uint32_t> offsetOfInnerObject;
 };
 
 struct PlacedAllocation {
@@ -79,7 +78,6 @@ struct PlacedAllocation {
     uint32_t shape { 0 };
     FunctionID constructedBy;
     Vector<FieldIndex> initialFields;
-    bool holdsInnerObjects { false };
     uint16_t numberOfCaptures { 0 };
     uint32_t size { 0 };
     uint32_t orderWord { 0 };
@@ -93,7 +91,7 @@ struct AllocationTable {
         uint32_t first = firstOfLayout[layout.index()];
         return byLayout.subspan(first, firstOfLayout[layout.index() + 1] - first);
     }
-    JS_EXPORT_PRIVATE AllocationID find(LayoutID, uint32_t shape, std::span<const FieldIndex> initialFields, bool holdsInnerObjects = false) const;
+    JS_EXPORT_PRIVATE AllocationID find(LayoutID, uint32_t shape, std::span<const FieldIndex> initialFields) const;
 
     Vector<PlacedAllocation> allocations;
     Vector<AllocationID> closureAllocations;

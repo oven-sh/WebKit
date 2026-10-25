@@ -793,11 +793,6 @@ Layout& ProgramEditor::atForHiddenFields(LayoutID id)
     return layout;
 }
 
-void ProgramEditor::setInnerObjects(LayoutID id, Vector<InnerObject>&& innerObjects)
-{
-    m_program.at(id).innerObjects = WTF::move(innerObjects);
-}
-
 Variable& ProgramEditor::at(VariableID id)
 {
     WTF::atomicStore(&m_isChangedVariable[id.index()], static_cast<uint8_t>(1), std::memory_order_relaxed);

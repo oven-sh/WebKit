@@ -214,6 +214,8 @@ public:
     void run()
     {
         m_context.use(m_builtin, modeAndUseOf(m_call.kind).second);
+        if (m_context.isGuardedByRemovedFeature(m_builtin))
+            throwValue(unknownObjectSet(m_context, ValueFlowUnknownSource::ThrownByRunTime));
 
         std::optional<BuiltinDispatchTarget> root = m_builtins.dispatchOf(m_builtin, modeAndUseOf(m_call.kind).first);
         if (!root) {
@@ -2411,7 +2413,8 @@ void applyBuiltinFoundThroughUnknownObject(BuiltinID builtin, const ValueFlowSta
 
 bool raisesEventWhenCalled(const BuiltinTable& builtins, BuiltinID builtin)
 {
-    return eventOfCalling(builtins, builtins.canonicalID(builtin), { }).has_value();
+    builtin = builtins.canonicalID(builtin);
+    return eventOfCalling(builtins, builtin, { }).has_value() || std::ranges::contains(builtins.loadersOfMachineCode(), builtin, &BuiltinLoaderOfMachineCode::callee);
 }
 
 bool bindsNoArgument(const Program& program, const ValueFlowUniverse& universe, ValueFlowObjectID boundFunction)

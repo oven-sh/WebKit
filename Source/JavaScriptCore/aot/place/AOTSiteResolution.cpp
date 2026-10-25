@@ -37,7 +37,7 @@ static_assert(Value::opcodesWithAllocation == OpcodeSet { Opcode::NewClosure, Op
 static_assert(Value::opcodesWithStaticsOffset == OpcodeSet { Opcode::NewArray, Opcode::NewRegExp, Opcode::SharedRegExpLiteral, Opcode::NewTemplateObject });
 static_assert(Value::opcodesWithGuardBit == OpcodeSet { Opcode::AreMembersUnchanged });
 static_assert(Value::opcodesWithRequest == OpcodeSet {
-    Opcode::TryPutByIds, Opcode::NewClass, Opcode::CloneAs, Opcode::FindSourcePlan, Opcode::NewTemplateObject, Opcode::DirectEval, Opcode::Data, Opcode::NewSetFromData,
+    Opcode::TryPutByIds, Opcode::NewClass, Opcode::NewTemplateObject, Opcode::DirectEval, Opcode::Data, Opcode::NewSetFromData,
     Opcode::NewMapFromData, Opcode::CopyDataProperties, Opcode::CopyObject
 });
 
@@ -161,7 +161,7 @@ struct WordResolver {
         LayoutID layout = value.layout();
         const ShapeTable& shapes = steps.placement.shapes();
         AllocationID allocation = value.opcode == Opcode::NewObject
-            ? steps.placement.allocations().find(layout, shapes.shapeOf(layout, value.allocationClass()), value.fields(), takesCellWithInnerObjects(context.slots(), value))
+            ? steps.placement.allocations().find(layout, shapes.shapeOf(layout, value.allocationClass()), value.fields())
             : steps.placement.allocations().find(layout, shapes.generalShapeOf(layout), { });
         if (!allocation)
             fail(layout, valueID);
@@ -211,9 +211,6 @@ struct WordResolver {
         switch (value.opcode) {
         case Opcode::NewClass:
             return RequestRecord { NewClassRecord { value.layout() } };
-        case Opcode::CloneAs:
-        case Opcode::FindSourcePlan:
-            return cloneAsRecordOf(valueID, value);
         case Opcode::NewTemplateObject: {
             auto strings = value.templateStrings();
             return RequestRecord { TemplateObjectRecord { Vector<TemplateString>(strings.size(), [&](size_t index) {
@@ -239,23 +236,6 @@ struct WordResolver {
         default:
             RELEASE_ASSERT_NOT_REACHED();
         }
-    }
-
-    std::optional<RequestRecord> cloneAsRecordOf(ValueID valueID, const Value& value) const
-    {
-        LayoutID layout = value.layout();
-        auto fields = value.fields();
-        AllocationSiteID site = value.allocationSite();
-        AllocationClassID allocationClass = site ? context.inputs.flow.at(site).allocationClass : AllocationClassID();
-        uint32_t shape = steps.placement.shapes().shapeOf(layout, allocationClass);
-        bool everyFieldHasRecord = std::ranges::all_of(fields, [&](FieldIndex field) {
-            return steps.placement.slot(layout, field).indexInLayoutRecord.has_value();
-        });
-        if (!shape || !everyFieldHasRecord) {
-            fail(layout, valueID);
-            return std::nullopt;
-        }
-        return RequestRecord { CloneAsRecord { layout, shape, Vector<FieldIndex>(fields) } };
     }
 
     RequestRecord dataRecordOf(const Value& value) const

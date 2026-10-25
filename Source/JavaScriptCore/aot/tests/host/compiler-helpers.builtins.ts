@@ -58,18 +58,6 @@ const keyList = [b.runsTransitively("OwnValues", "PrototypeChain", "ToPrimitive"
 // The compiler writes a number here. Anything else would be compared with one.
 const comparedWithNumbers = keyList;
 const serialized = [b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToJSON", "ToPrimitive")];
-const textMethods = b.calls("startsWith", "endsWith", "indexOf", "slice");
-const readToAnyDepth = b.runsTransitively(
-  "OwnKeys",
-  "OwnValues",
-  "Iterate",
-  "PrototypeChain",
-  "ToPrimitive",
-  b.named("length"),
-  textMethods,
-);
-const validated = [b.returned, b.reachableValuesStoredIn(b.result), readToAnyDepth];
-const copied = (...protocols: readonly b.ProtocolSpec[]) => [b.runs(...protocols), b.contentsStoredIn(b.result)];
 
 // These files reach built-ins through intrinsics and locked members, which a program cannot replace.
 const usesOnlyFixedBuiltins = true;
@@ -395,23 +383,6 @@ export default b.declarations(
         operand: [b.retained, b.returned],
       },
     }),
-    ...helpersIn(
-      "prelude/validation",
-      b.any,
-      {
-        validateByPlan: { value: validated, plan: b.inspected, isRefused: b.inspected, prepared: b.inspected },
-        interpretNode: { value: validated, plan: b.inspected, prepared: b.inspected },
-        copyOwnProperties: { value: copied("OwnKeys", "OwnValues") },
-      },
-      usesOnlyFixedBuiltins,
-    ),
-    ...helpersIn("prelude/validation", b.int(0, 2 ** 31 - 1), { countCodePoints: { text: b.inspected } }, usesOnlyFixedBuiltins),
-    ...helpersIn(
-      "prelude/validation",
-      b.bool,
-      { holdsRule: { value: [readToAnyDepth], rule: b.inspected, prepared: b.inspected } },
-      usesOnlyFixedBuiltins,
-    ),
     ...helpersIn(
       "prelude/json",
       b.string,

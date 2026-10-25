@@ -41,8 +41,6 @@ ValueID AllocationEmitter::findOnlyAllocationIn(BlockID from, const Target& targ
     const Value& value = m_function.at(id);
     if (value.opcode != Opcode::NewObject || !value.allocation() || value.storage() != AllocationStorage::Heap || !value.fields().empty())
         return { };
-    if (!placeInCellOf(value).ownCell())
-        return { };
     const Target& next = block.terminator.targets[0];
     if (next.arguments.size() != 1 || next.arguments[0] != id)
         return { };
@@ -210,9 +208,7 @@ void AllocationEmitter::generateNewObjectChosenByTable(const ValueContext& value
 {
     Word32 row(chosen.row);
     Word32 number = bitAnd(row, word32(noAllocation));
-    std::optional<WholeCell> ownCell = placeInCellOf(value).ownCell();
-    RELEASE_ASSERT(ownCell);
-    CellPointer cell = emitter<CellAllocationEmitter>().allocateZeroedByNumber(value, number, *ownCell);
+    CellPointer cell = emitter<CellAllocationEmitter>().allocateZeroedByNumber(value, number);
     {
         CodeGenerator::InitializationScope scope(generator());
         // Each layout has heaps of its own for its fields.

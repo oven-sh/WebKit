@@ -46,6 +46,7 @@ static_assert(std::is_same_v<decltype(WireOptions::sizeClassProgression), declty
 static_assert(std::is_same_v<decltype(Wire::BisectionSwitches::disabledPasses), PassSet>);
 static_assert(std::is_same_v<decltype(WireOptions::executableIdentity), decltype(CompileOptions::executableIdentity)>);
 static_assert(std::is_same_v<decltype(WireOptions::removedFeatures), decltype(CompileOptions::removedFeatures)>);
+static_assert(std::is_same_v<decltype(Wire::TargetOptions::featuresKeptOnlyWhenNamed), decltype(CompileOptions::featuresKeptOnlyWhenNamed)>);
 
 static_assert(numberOfPasses <= bitsPerWordOfSwitches * std::tuple_size_v<PassSet>);
 static_assert(numberOfEnumerators<FlowResultKind> <= bitsPerWordOfSwitches);
@@ -320,6 +321,7 @@ public:
         options.output = m_wire.output;
         options.executableIdentity = m_wire.executableIdentity;
         options.removedFeatures = m_wire.removedFeatures;
+        options.featuresKeptOnlyWhenNamed = m_wire.target.featuresKeptOnlyWhenNamed;
         options.logging = readLoggingOptions();
         return options;
     }

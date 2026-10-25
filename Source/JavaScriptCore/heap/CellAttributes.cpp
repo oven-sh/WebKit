@@ -32,7 +32,7 @@ namespace JSC {
 
 void CellAttributes::dump(PrintStream& out) const
 {
-    out.print("{", destruction, ", ", cellKind, hasInnerCells ? ", has inner cells" : "", "}");
+    out.print("{", destruction, ", ", cellKind, "}");
 }
 
 } // namespace JSC

@@ -53,6 +53,9 @@ public:
     void setForm(IRForm form) { m_form = form; }
     bool hasGuardedReads() const { return m_hasGuardedReads; }
     void setHasGuardedReads() { m_hasGuardedReads = true; }
+    // The executable may hold a function that allocates an error and throws it in place of this built-in's native code.
+    bool mayBeTrimmed(BuiltinID builtin) const { return builtin && m_builtinsThatMayBeTrimmed.get(builtin.index()); }
+    void setBuiltinsThatMayBeTrimmed(BitVector&& builtins) { m_builtinsThatMayBeTrimmed = WTF::move(builtins); }
     bool isBeingReplaced(FunctionID id) const { return m_functionsBeingReplaced && m_functionsBeingReplaced->get(id.index()); }
     const BuiltinTable& builtins() const { return m_builtins; }
     std::span<const uint8_t> buffer() const { return m_bytes.borrowed; }
@@ -205,6 +208,7 @@ private:
     const BuiltinTable& m_builtins;
     IRForm m_form { IRForm::AsRead };
     bool m_hasGuardedReads { false };
+    BitVector m_builtinsThatMayBeTrimmed;
     const BitVector* m_functionsBeingReplaced { nullptr };
     const ProvisionalFunctions* m_provisionalFunctions { nullptr };
     Bytes m_bytes;
@@ -269,7 +273,6 @@ public:
     Layout& at(LayoutID);
     Field& at(FieldReference);
     Layout& atForHiddenFields(LayoutID);
-    void setInnerObjects(LayoutID, Vector<InnerObject>&&);
 
     Variable& at(VariableID);
     VariableID addVariable(Variable&&);

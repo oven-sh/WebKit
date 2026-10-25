@@ -50,9 +50,8 @@ constexpr bool isSameWord(Representation from, Representation to)
 
 constexpr OpcodeSet sumsOfNumbers { Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement };
 
-// An allocation runs one where it takes the cell of an inner object.
 inline constexpr OpcodeSet operationsThatMayRunBarrier = [] {
-    OpcodeSet opcodes { Opcode::NewObject };
+    OpcodeSet opcodes;
     for (Opcode opcode : allMembersOf<Opcode>) {
         if (runsOwnerBarrierOf(opcode))
             opcodes.add(opcode);

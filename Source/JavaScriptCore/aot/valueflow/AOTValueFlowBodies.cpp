@@ -161,7 +161,6 @@ bool carriesProgramValues(OpaqueKind kind)
     case OpaqueKind::Guard:
     case OpaqueKind::FlatString:
     case OpaqueKind::CodeAddress:
-    case OpaqueKind::SourcePlan:
     case OpaqueKind::BuilderCursor:
         return false;
     }
@@ -1756,12 +1755,19 @@ private:
         return m_unobservedDefinitions && isDefinedValue && m_unobservedDefinitions->contains(m_id, operation);
     }
 
+    OperandForm valueOfUnobservedDefinitions()
+    {
+        if (m_body.valueOfUnobservedDefinitions == Body::none)
+            m_body.valueOfUnobservedDefinitions = addNode(ValueFlowBodyNodeKind::Merge, ValueID()).owner;
+        return { NodeName::ofBody(m_body.valueOfUnobservedDefinitions), 0, 0 };
+    }
+
     void emitStatement(const PendingStatement& pending)
     {
         const Value& value = m_function.at(pending.site);
         Body::Statement statement { value.opcode, pending.site, static_cast<uint32_t>(m_body.operands.size()), pending.operandCount, { }, { } };
         for (uint32_t index = 0; index < pending.operandCount; ++index)
-            m_body.operands.append(isNeverObserved(pending.site, index) ? OperandForm { } : operandFormOf(value, index, m_statementOperands[pending.firstOperand + index]));
+            m_body.operands.append(isNeverObserved(pending.site, index) ? valueOfUnobservedDefinitions() : operandFormOf(value, index, m_statementOperands[pending.firstOperand + index]));
         if (at(pending.site).role == Role::Result && at(pending.site).isLive)
             statement.result = at(pending.site).name;
         if (mayThrowValue(value.opcode))

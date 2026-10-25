@@ -18,7 +18,9 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr ASCIILiteral declaredArmsText = R"IR(module m0 path="main.js" displayPath="main.js"
-expectedresult x0 type=L0|L1 layouts=[L0, L1] validation=[{shape=Union{arms=[2, 1]} type=L0|L1}, {shape=Object{layout=L0 members=[{key="a" node=3 field=0}]} type=L0}, {shape=Object{layout=L1 members=[{key="b" node=3 field=0}]} type=L1}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x0 type=L0|L1 layouts=[L0, L1]
+expectedresult x1 type=L1
+expectedresult x2 type=number
 layout L0 name="First" module=m0 position=40 fields=[{key="a" declared={type=number}}]
 layout L1 name="Second" module=m0 position=70 fields=[{key="b" declared={type=number}}]
 )IR"_s;
@@ -38,7 +40,7 @@ public:
     Program& program() { return *m_program; }
     BuildContext& build() { return m_build; }
     NodeDecisionInputs decisionInputs() { return { *m_program, m_flow, m_build }; }
-    ResultNodeRef ref(uint32_t node) { return ResultNodeRef::forValidation(ExpectedResultID(0u), node); }
+    ResultNodeRef ref(uint32_t expectedResult) { return { m_program->at(ExpectedResultID(expectedResult)).type }; }
 
 private:
     static Wire::CompileOptions optionsWith(std::initializer_list<ASCIILiteral> optionWords)
@@ -66,8 +68,8 @@ static void testFirstLayoutIsTheLowestAmongTheAlternatives()
 {
     DeclaredArms arms;
     AOT_TEST_CHECK(firstLayoutOf(arms.program(), arms.ref(0)) == LayoutID(0u));
-    AOT_TEST_CHECK(firstLayoutOf(arms.program(), arms.ref(2)) == LayoutID(1u));
-    AOT_TEST_CHECK(!firstLayoutOf(arms.program(), arms.ref(3)));
+    AOT_TEST_CHECK(firstLayoutOf(arms.program(), arms.ref(1)) == LayoutID(1u));
+    AOT_TEST_CHECK(!firstLayoutOf(arms.program(), arms.ref(2)));
 }
 
 static Vector<Wire::DeclineRecord> addDeclines(DeclaredArms& arms)
@@ -75,10 +77,9 @@ static Vector<Wire::DeclineRecord> addDeclines(DeclaredArms& arms)
     NodeDecisionInputs inputs = arms.decisionInputs();
     addInterpretedNodeDecline(inputs, LayoutID(1u), InterpretedCause::RepeatedRecursion);
     addInterpretedNodeDecline(inputs, LayoutID(1u), InterpretedCause::RepeatedRecursion);
-    addInterpretedNodeDecline(inputs, LayoutID(1u), InterpretedCause::MemberKeyIsNotText);
+    addInterpretedNodeDecline(inputs, LayoutID(1u), InterpretedCause::LayoutIsNotModeled);
     addInterpretedNodeDecline(inputs, LayoutID(0u), InterpretedCause::FieldTypeIsNotTestable);
     addInterpretedNodeDecline(inputs, LayoutID(), InterpretedCause::RepeatedRecursion);
-    addInterpretedNodeDecline(inputs, LayoutID(0u), InterpretedCause::TooManyNodes);
     return arms.build().takeDeclines(&arms.program());
 }
 
@@ -89,7 +90,7 @@ static void testDeclinePointsAtTheDeclaration()
     AOT_TEST_CHECK(declines.size() == 4);
     AOT_TEST_CHECK(isDeclineAt(declines[0], InterpretedCause::FieldTypeIsNotTestable, { 0, 40 }));
     AOT_TEST_CHECK(isDeclineAt(declines[1], InterpretedCause::RepeatedRecursion, { 0, 70 }));
-    AOT_TEST_CHECK(isDeclineAt(declines[2], InterpretedCause::MemberKeyIsNotText, { 0, 70 }));
+    AOT_TEST_CHECK(isDeclineAt(declines[2], InterpretedCause::LayoutIsNotModeled, { 0, 70 }));
     AOT_TEST_CHECK(isDeclineAt(declines[3], InterpretedCause::RepeatedRecursion, noSourceLocation));
 }
 

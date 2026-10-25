@@ -120,16 +120,7 @@ static void dumpLayout(IRPrinter& printer, LayoutID id, const PlannedLayout& lay
     printFlag(out, layout.holdsWideReferences, "wide"_s);
     printFlag(out, layout.keysAreNeverEnumerated, "unordered"_s);
     printOptional(out, " escaped@"_s, layout.isEscapedOffset);
-    printFlag(out, layout.mayBeInnerObject, "inner"_s);
     out.print("\n"_s);
-    for (const PlacedInnerObject& inner : layout.innerObjects) {
-        out.print("  inner object of field "_s, inner.field, " "_s);
-        if (inner.layout)
-            printer.print(inner.layout);
-        else
-            out.print("array of capacity "_s, inner.arrayCapacity);
-        out.print(" @"_s, inner.offset, inner.isAlwaysInPlace ? " always"_s : ""_s, "\n"_s);
-    }
 
     const Vector<Field>& fields = printer.program().at(id).fields;
     for (FieldIndex index = 0; index < layout.numberOfFields(); ++index) {

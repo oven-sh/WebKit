@@ -174,8 +174,6 @@ static bool isEnteredOnlyByCalls(FunctionRole role)
     case FunctionRole::OutlinedBody:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
-    case FunctionRole::ValidatingParser:
-    case FunctionRole::Validator:
     case FunctionRole::ChainStep:
         return true;
     }
@@ -531,7 +529,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
             };
 
             if (LayoutID layout = Value::opcodesWithLayout.contains(opcode) ? value.layout() : LayoutID()) {
-                if (opcode == Opcode::CloneAs || (resultRuleOf(opcode) == ResultRule::Allocation && opcode != Opcode::NewObject))
+                if (resultRuleOf(opcode) == ResultRule::Allocation && opcode != Opcode::NewObject)
                     markFieldsLive(layout);
                 auto addNamedField = [&](uint32_t field) {
                     if (auto candidate = candidateOf(layout, field))

@@ -175,14 +175,6 @@ void FunctionVerifier::verifyClosureOperation(BlockID block, ValueID id, const V
     }
 }
 
-void FunctionVerifier::verifyCallByValue(BlockID block, ValueID id, const Value& value)
-{
-    if (m_form == IRForm::AsRead || isOptimizing())
-        return;
-    if (isCallThatRequiredPassRemoves(m_program, value))
-        fail(InternalErrorKind::RequiredPassLeftOperation, block, id);
-}
-
 static bool asksOnlyForRowsOf(const Program& program, const Type& receiver, LayoutSetID rows)
 {
     ReceiverCandidates candidates = candidatesOf(program, receiver, nullptr, { });
@@ -367,6 +359,8 @@ void FunctionVerifier::verifyBuiltinOperation(BlockID block, ValueID id, const V
     }
     if (!overloadTakesOperands(typing(), value))
         fail(InternalErrorKind::InvalidBuiltinCall, block, id);
+    if (m_program.mayBeTrimmed(m_program.builtins().at(value.overload()).builtin))
+        fail(InternalErrorKind::CallsTrimmedBuiltin, block, id);
 }
 
 void FunctionVerifier::verifyDirectEval(BlockID block, ValueID id, const Value& value)

@@ -82,46 +82,16 @@ JSONValueParser::LearnedNames& JSONRuntime::learnedNames()
     return *m_learnedNames;
 }
 
-static bool hasEveryMemberForSomeValidator(VM& vm, State& state, std::span<UniquedStringImpl* const> names)
-{
-    struct MembersFound {
-        uint32_t validatedObject;
-        uint32_t count;
-    };
-    Vector<MembersFound, 8> found;
-    for (UniquedStringImpl* name : names) {
-        std::optional<uint32_t> number = vm.aotState().identifiers->numberOf(name);
-        if (!number)
-            continue;
-        for (const ParsedRecordFieldData& row : std::ranges::equal_range(state.tables.parsedRecordFields(), *number, { }, &ParsedRecordFieldData::name)) {
-            if (!row.isForValidator())
-                continue;
-            size_t index = found.findIf([&](const MembersFound& entry) {
-                return entry.validatedObject == row.shape;
-            });
-            if (index == notFound) {
-                index = found.size();
-                found.append({ row.shape, 0 });
-            }
-            if (++found[index].count == row.numberOfRequiredMembers())
-                return true;
-        }
-    }
-    return false;
-}
-
 std::unique_ptr<ObjectBuilderPlan> JSONRuntime::createRecordPlan(VM& vm, std::span<UniquedStringImpl* const> names)
 {
     State& state = *m_instance.state;
     RuntimeLayoutTable& layouts = state.objects->layouts;
     std::optional<uint32_t> lastName = vm.aotState().identifiers->numberOf(names.back());
-    if (!lastName || hasEveryMemberForSomeValidator(vm, state, names))
+    if (!lastName)
         return nullptr;
 
     std::unique_ptr<ObjectBuilderPlan> best;
     for (const ParsedRecordFieldData& row : std::ranges::equal_range(state.tables.parsedRecordFields(), *lastName, { }, &ParsedRecordFieldData::name)) {
-        if (row.isForValidator())
-            continue;
         const LayoutData& layout = layouts.layoutForShape(row.shape);
         if (layout.numberOfFields < names.size() || (best && best->layout().numberOfFields <= layout.numberOfFields) || !ObjectBuilder::canBuildWithoutCompilerKnowledge(layout))
             continue;
@@ -1159,11 +1129,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONMemberRepeats, size_t, (Instan
     });
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONKeyRepeats, size_t, (Instance* instance, const uint8_t* keyStart, const uint8_t* valueStart))
-{
-    return jsonKeyRepeats(instance->json, keyStart, valueStart);
-}
-
 struct ExtraMembers {
     Instance& instance;
     const LayoutData& layout;
@@ -1299,18 +1264,6 @@ static JSONKeyOrder positionAddedKeys(const ExtraMembers& members, JSONKeyOrder 
     return advance(members.instance, members.layout, order, *members.unpositionedEntry);
 }
 
-static RefPtr<UniquedStringImpl> tryAtomize(Instance& instance, JSString* string)
-{
-    VM& vm = *instance.vm;
-    auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    Identifier identifier = string->toIdentifier(instance.globalObject);
-    if (catchScope.exception()) [[unlikely]] {
-        catchScope.clearException();
-        return nullptr;
-    }
-    return identifier.impl();
-}
-
 static void cacheTransitionName(JSONCache& cache, Structure* before, Structure* after)
 {
     if (before->isDictionary() || after->isDictionary() || !after->isCacheableTransitionFrom(before))
@@ -1432,20 +1385,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONObjectFinish, size_t, (Instanc
     if (!isFinished)
         count(*instance, RuntimeCounterID::TypedParsesFellBackPerValue);
     return static_cast<size_t>(isFinished ? Typed::JSONOutcome::Parsed : Typed::JSONOutcome::Unknown);
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONAddExtraMember, void, (Instance* instance, uint32_t shape, JSCell* name, EncodedJSValue value, uint64_t* extraAndOrder))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTJSONAddExtraMember);
-    DeferTerminationForAWhile deferTermination(vm);
-    JSONKeyOrder order = JSONKeyOrder::fromWord(extraAndOrder[1]);
-    if (order.kind() == JSONKeyOrder::Kind::Unknown)
-        return;
-    const LayoutData& layout = layoutOf(*instance, shape);
-    ExtraMembers members { *instance, layout, ensureExtraProperties(*instance, extraAndOrder[0]) };
-    RefPtr<UniquedStringImpl> uid = members.properties ? tryAtomize(*instance, cellArgument<JSString>(name, Entry::operationAOTJSONAddExtraMember)) : nullptr;
-    bool isAdded = uid && !instance->state->objects->layouts.field(vm, layout, uid.get()) && addExtraProperty(vm, members, uid.get(), JSValue::decode(value));
-    extraAndOrder[1] = (isAdded ? positionAddedKeys(members, order) : JSONKeyOrder::unknown()).word();
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTJSONParseExtraMembers, const uint8_t*, (Instance* instance, uint32_t shape, const uint8_t* cursor, uint64_t* extraAndOrder))

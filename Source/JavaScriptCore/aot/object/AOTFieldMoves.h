@@ -70,13 +70,8 @@ struct FieldMovePlan {
         uint32_t to { 0 };
         bool isNarrowReferenceInCell { false };
     };
-    struct ClonedMember {
-        PropertyOffset from;
-        // The number of fields of the layout for a name that is no field.
-        uint16_t field;
-    };
 
-    bool isUsable() const { return structure || builder; }
+    bool isUsable() const { return !!structure; }
     bool movesNothing() const { return moves.isEmpty() && boxedWordMoves.isEmpty(); }
 
     void appendField(const FieldData& from, PropertyOffset to);
@@ -87,34 +82,24 @@ struct FieldMovePlan {
     bool sourceHasDeferredClosures { false };
     Vector<Move, 8> moves;
     Vector<BoxedWordMove, 8> boxedWordMoves;
-    // Or an object of a layout, out of an ordinary object.
-    std::unique_ptr<ObjectBuilderPlan> builder;
-    Vector<ClonedMember> clonedMembers;
 };
 
 // Nothing else has seen the target, whose properties are still empty, so it may be left half filled where a move does not apply.
 bool applyMovesToNewObject(VM&, const FieldMovePlan&, JSFinalObject* target, JSObject* source);
 
-Object* tryCloneAs(VM&, JSObject* source, const LayoutData&, std::span<const EncodedJSValue> replacedFields);
 // The keys that a copy leaves out, as a run of identifier numbers in the image. The number of the run stands for the list.
 struct ExcludedRun {
     uint32_t numberPlusOne { 0 };
     std::span<const uint32_t> identifiers;
 };
 JSFinalObject* tryCopyAsOrdinaryObject(VM&, JSGlobalObject*, JSObject* source, ExcludedRun);
-bool isPlainDataObject(JSValue);
-
-// The collector, which may run in a thread of its own, forgets an entry. The thread whose table of names holds the names of its plan releases it, when the place is taken again.
-enum class FieldMovePlanPurpose : uint8_t { CloneAs, CopyAsOrdinaryObject, Forgotten };
-static constexpr unsigned numberOfFieldMovePlanPurposes = 2;
-static_assert(static_cast<unsigned>(FieldMovePlanPurpose::CopyAsOrdinaryObject) + 1 == numberOfFieldMovePlanPurposes && static_cast<unsigned>(FieldMovePlanPurpose::Forgotten) == numberOfFieldMovePlanPurposes);
 
 struct FieldMovePlanKey {
-    FieldMovePlanPurpose purpose { FieldMovePlanPurpose::CloneAs };
+    // The collector, which may run in a thread of its own, forgets an entry. The thread whose table of names holds the names of its plan releases it, when the place is taken again.
+    bool isForgotten { false };
     uint64_t sourceWords { 0 };
     uint64_t targetWords { 0 };
     Structure* sourceStructure { nullptr };
-    BitVector replacedFields;
 
     friend bool operator==(const FieldMovePlanKey&, const FieldMovePlanKey&) = default;
 };
@@ -149,7 +134,7 @@ private:
     Set& setFor(const FieldMovePlanKey&);
 
     std::unique_ptr<Sets> m_sets;
-    std::array<const Entry*, numberOfFieldMovePlanPurposes> m_lastFound { };
+    const Entry* m_lastFound { nullptr };
     RememberedSlotSet m_writes;
 };
 

@@ -502,6 +502,18 @@ FunctionID ValueFlowProgramNodes::functionOf(ValueFlowNodeID node) const
     return FunctionID(static_cast<uint32_t>(next - m_firstNodeOfFunction.begin()) - 1);
 }
 
+ValueFlowNodeID ValueFlowProgramNodes::valueOfUnobservedDefinitions(FunctionID initializer) const
+{
+    auto found = std::ranges::lower_bound(m_unobservedDefinitionsByInitializer, initializer, { }, &UnobservedDefinitions::initializer);
+    return found != m_unobservedDefinitionsByInitializer.end() && found->initializer == initializer ? found->value : ValueFlowNodeID();
+}
+
+std::span<const ValueFlowProgramNodes::UnobservedDefinitions> ValueFlowProgramNodes::unobservedDefinitionsBehindSuperOf(LayoutID classCallingSuper) const
+{
+    auto found = std::ranges::equal_range(m_unobservedDefinitionsByClass, classCallingSuper, { }, &UnobservedDefinitions::classCallingSuper);
+    return std::span(found.begin(), found.end());
+}
+
 class ValueFlowLinker {
     WTF_MAKE_NONCOPYABLE(ValueFlowLinker);
 public:
@@ -858,6 +870,21 @@ private:
         nodes.m_firstNodeOfFunction[m_bodies.size()] = next;
         nodes.m_numberOfNodes = next;
         nodes.m_resultSummaries.grow(m_bodies.size());
+
+        for (const UnobservedFieldDefinition& definition : m_result.m_unobservedDefinitions.all()) {
+            uint32_t value = m_bodies[definition.initializer.index()].valueOfUnobservedDefinitions;
+            bool isListed = !nodes.m_unobservedDefinitionsByInitializer.isEmpty() && nodes.m_unobservedDefinitionsByInitializer.last().initializer == definition.initializer;
+            if (value == Body::none || isListed)
+                continue;
+            ValueFlowNodeID node(nodes.m_firstNodeOfFunction[definition.initializer.index()] + value);
+            nodes.m_unobservedDefinitionsByInitializer.append({ definition.classLayout, definition.initializer, node });
+            LayoutID current = definition.classLayout;
+            for (size_t steps = 0; current && m_program.at(current).has(LayoutFlags::HasHeritage) && steps < m_program.layouts.size(); ++steps) {
+                nodes.m_unobservedDefinitionsByClass.append({ current, definition.initializer, node });
+                current = predictedHeritageOf(m_program.at(current));
+            }
+        }
+        AOT::stableSort(nodes.m_unobservedDefinitionsByClass, { }, &ValueFlowProgramNodes::UnobservedDefinitions::classCallingSuper);
     }
 
     void fileAllocationsOfBaseClassesUnderClassesBelow(ValueSetMaker& maker, Vector<Vector<ValueFlowObjectID>>& ofLayout)

@@ -172,8 +172,9 @@ bool isLegalOperatorForm(Opcode opcode, OperatorForm form)
     case OperatorForm::NumberAndValue:
         return operatorsOnNumberAndValue.contains(opcode);
     case OperatorForm::Bits:
-    case OperatorForm::Booleans:
         return operatorsOnBits.contains(opcode);
+    case OperatorForm::Booleans:
+        return operatorsOnBits.contains(opcode) || numberConversionOperators.contains(opcode);
     case OperatorForm::BigInts:
         return operatorsOnBigInts.contains(opcode);
     case OperatorForm::Strings:

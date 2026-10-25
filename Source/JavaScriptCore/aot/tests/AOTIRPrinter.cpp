@@ -232,10 +232,6 @@ static void printLinesOf(IRPrinter& printer, ProgramList list)
     case ProgramList::Types:
     case ProgramList::ClassParts:
     case ProgramList::DeclaredTypes:
-    case ProgramList::TemplateParts:
-    case ProgramList::ValidationRules:
-    case ProgramList::ValidationMembers:
-    case ProgramList::ValidationNodes:
     case ProgramList::Fields:
     case ProgramList::StaticFields:
     case ProgramList::ModuleRequests:

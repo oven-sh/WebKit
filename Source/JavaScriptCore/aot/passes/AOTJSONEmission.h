@@ -119,15 +119,10 @@ public:
     ValueID emitRequireStoredType(ValueID, TypeID fieldType, BlockID notTaken);
     bool passesOnlyUndefinedIntoStoredType(const Type& value, TypeID fieldType);
 
-    // What the type of a field proves about built-in classes and holds for a value because of what created the value.
-    enum class ProofsByOrigin : uint8_t {
-        None,
-        AboutArrays,
-        AboutEveryClass,
-    };
-    TypeID fieldTypeToTest(TypeID fieldType, ProofsByOrigin);
+    // Without what the type of a field proves about built-in classes: that holds for a parsed value because of what created the value.
+    TypeID fieldTypeToTest(TypeID fieldType);
     // The result goes straight into the field: an assumption is checked against the position it feeds.
-    ValueID emitRequireFieldType(ValueID, TypeID fieldType, ProofsByOrigin, BlockID notTaken);
+    ValueID emitRequireFieldType(ValueID, TypeID fieldType, BlockID notTaken);
     void emitJumpUnless(ValueID condition, BlockID otherwise);
     void emitJumpIf(ValueID condition, BlockID target);
 

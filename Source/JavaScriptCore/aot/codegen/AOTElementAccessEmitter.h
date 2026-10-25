@@ -55,6 +55,8 @@ public:
     void generateGetStringLength(const ValueContext&);
     void generateGetStringCodeUnit(const ValueContext&);
 
+    static constexpr IndexingType cellLockBits = IndexingTypeLockIsHeld | IndexingTypeLockHasParked;
+
     Condition isPristineArray(CellPointer, OptionSet<PristineAspects>);
     Condition isPristineInstance(CellPointer, OptionSet<PristineAspects>);
     Condition hasArrayStorage(CellPointer array, ArrayStorage, bool isWritable = false);
@@ -63,6 +65,8 @@ public:
     // Storage of int32 and contiguous storage both hold boxed values, with 0 for a hole.
     Condition holdsBoxedElements(Word32 maskedMode);
     Condition hasWritableShape(Word32 modeWithWritability, const ArrayStorageForm& form) { return equal(modeWithWritability, word32(form.indexingType)); }
+    // The answer of hasWritableShape() while no thread holds the lock of the cell.
+    Condition hasWritableShapeIgnoringLock(Word32 modeWithWritability, const ArrayStorageForm& form) { return hasWritableShape(bitAnd(modeWithWritability, word32(0xff & ~cellLockBits)), form); }
 
     ArrayElements elementsOf(CellPointer array) { return { array, loadField<Pointer>(array, m_heaps.JSObject_butterfly) }; }
     Integer publicLength(const ArrayElements& elements) { return zeroExtended(loadField<Word32>(elements.butterfly, m_heaps.Butterfly_publicLength)); }

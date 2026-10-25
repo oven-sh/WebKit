@@ -23,7 +23,7 @@ enum Proof (lasts: ProofLifetime, readsOnlySubject: Bool) {
     Shape(Stretch, true) SlotFilled(Stretch, true) NoExtraProperties(Stretch, true) NoFieldOutsideSlot(Stretch, true) BirthFieldsFilled(Stretch, true) NotFrozen(Stretch, true) OwnInstance(Stretch, true)
     Pristine(Stretch, true) ArrayStorage(Stretch, true) InBounds(Stretch, true) NotThenable(Stretch, false) MemberUnchanged(Stretch, false)
     PrototypeLinkUnchanged(Stretch, true) EvaluatedOnce(Stretch, false) KeyOrder(Stretch, true)
-    UnmodifiedGenerator(Stretch, false) EnumeratorCurrent(Stretch, false) PlainData(Stretch, false)
+    UnmodifiedGenerator(Stretch, false) EnumeratorCurrent(Stretch, false)
     SourceOpen(Stretch, false) TextMatches(Stretch, false)
 }
 
@@ -93,7 +93,7 @@ effects ReadsObjectGraph = reads(ObjectFields, ShapeWords, OrderWords, NamedProp
 opaque IteratorState Enumerator Exception ClassToken
 opaque StringBuilder engine
 opaque Cursor KeyOrder engine directCallsOnly
-opaque Guard FlatString CodeAddress SourcePlan engine functionLocal
+opaque Guard FlatString CodeAddress engine functionLocal
 opaque BuilderCursor engine functionLocal interior
 
 external Builtin : id = BuiltinID, crate::builtins::id::BuiltinId ; namedInText

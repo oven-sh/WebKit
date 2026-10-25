@@ -131,11 +131,9 @@ runtime JSONParseString, JSONParseKey, JSONParseValue : UGPRPair (const uint8_t*
 runtime JSONParseNumber, JSONParseInteger : UGPRPair (const uint8_t* cursor) ; reads(all)
 runtime JSONFindMember : UGPRPair (const uint8_t* cursor, uint32_t name) ; reads(all)
 runtime JSONMemberRepeats : size_t (const uint8_t* valueStart, uint32_t name) ; reads(all)
-runtime JSONKeyRepeats : size_t (const uint8_t* keyStart, const uint8_t* valueStart) ; reads(all)
 runtime JSONObjectKey : uint64_t (uint64_t order, uint32_t shape, uint32_t field) ; reads(all) writes(RuntimeState)
 runtime JSONObjectFinish : size_t (JSCell* object, EncodedJSValue extra, uint64_t order) ; reads(all) writes(OrderWords, NamedProperties, AllocatorState, RuntimeState) collects
 runtime JSONParseExtraMembers : const uint8_t* (uint32_t shape, const uint8_t* cursor, uint64_t* extraAndOrder) ; reads(all) writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) collects
-runtime JSONAddExtraMember : void (uint32_t shape, JSCell* name, EncodedJSValue value, uint64_t* extraAndOrder) ; reads(all) writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) collects
 
 runtime JSONAppendString : uint8_t* (JSCell* builder, uint8_t* cursor, JSCell* string) ; reads(all) writes(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) throws collects
 runtime JSONAppendInteger : uint8_t* (uint8_t* cursor, int64_t integer) ; writes(StringBuilderContents) ; leaf

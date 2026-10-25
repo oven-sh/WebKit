@@ -346,6 +346,14 @@ void RuntimeValidationEmitter::generateValidateSameValue(const ValueContext& val
     const Value& keptOperation = m_function.at(kept);
     if (keptOperation.opcode == Opcode::IsPristine && m_builtins.at(keptOperation.builtinClass()).typedArrayType != NotTypedArray)
         return;
+    // The test for storage that a store may write says no while another thread holds the lock of the cell. Code relies on its yes alone.
+    if (keptOperation.opcode == Opcode::HasArrayStorage && keptOperation.isWritable() && hasArrayStorageForm(keptOperation.arrayStorage()) && get(replacement).is<Condition>()) {
+        ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
+        CellPointer array = in<CellPointer>(keptOperation.arrayOperand());
+        Condition hasForm = elements.hasWritableShapeIgnoringLock(elements.indexingMode(array, IndexingShapeAndWritabilityMask), arrayStorageFormOf(keptOperation.arrayStorage()));
+        failUnless(logicalOr(logicalNot(in<Condition>(replacement)), hasForm), ValidationFailureKind::GuardNoLongerHolds, array, value.id());
+        return;
+    }
 
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     Boxed keptValue = conversions.box(value, get(kept), typeOf(kept));

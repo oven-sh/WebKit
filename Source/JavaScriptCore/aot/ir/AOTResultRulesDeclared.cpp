@@ -511,7 +511,6 @@ TypeID requiredTypeOfOperand(const TypingContext& context, const Value& user, ui
     case Opcode::NewClosure:
         return requiredTypeOfCapture(positions, user.function(), variadicIndex());
     case Opcode::NewObject:
-    case Opcode::CloneAs:
         return requiredTypeOfInitializedField(positions, user, variadicIndex());
     case Opcode::CallDirect:
     case Opcode::CallTable:
@@ -553,7 +552,6 @@ RequiredTypeHolder holderOfRequiredTypes(const Program& program, const Value& us
     case Opcode::CreateIteratorResult:
         return RequiredTypeHolder::PositionThatFlowFollows;
     case Opcode::NewObject:
-    case Opcode::CloneAs:
         return program.at(user.layout()).isEnvironment() ? RequiredTypeHolder::PositionThatFlowFollows : RequiredTypeHolder::InitializedSlot;
     default:
         return RequiredTypeHolder::StoredSlot;

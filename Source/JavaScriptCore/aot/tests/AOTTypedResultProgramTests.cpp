@@ -125,82 +125,10 @@ static void testRecordsWithArrayMembers()
     checkOutputOfProgramInShell(recordsWithArrayMembers, outputOfRecordsWithArrayMembers, { "disable=flow-results"_s }, showsValuesAsJSON);
 }
 
-static constexpr ASCIILiteral validatedRecordsWithArrayMembers = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
-entry module=m0
-expectedresult x0 type=L1 layouts=[L0, L1] validation=[{shape=Object{layout=L1 members=[{key="items" node=1 field=0}, {key="total" node=3 field=1}]} type=L1}, {shape=Array{element=2} type=Array<L0>}, {shape=Object{layout=L0 members=[{key="id" node=3 field=0}]} type=L0}, {shape=Primitive{primitive=Number} type=number}]
-layout L0 name="Row" fields=[{key="id" declared={type=number}}]
-layout L1 name="Page" fields=[{key="items" declared={type=Array<L0>}}, {key="total" declared={type=number}}]
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=GlobalThis
-    v1 = PropGet v0 key="show" [isFreeName]
-    v2 = PropGet v0 key="make" [isFreeName]
-    v3 = Call v2
-    v4 = CallDirect v3 function=f1
-    v5 = CallDirect v4 function=f3
-    v6 = PropGet v4 key="items"
-    v7 = PropGet v3 key="items"
-    v8 = StrictEq v6, v7
-    v9 = Call v1, -, v8
-    v10 = String string="{\"items\":[{\"id\":7},{\"id\":8},{\"id\":9}],\"total\":3}"
-    v11 = CallDirect v10 function=f2
-    v12 = CallDirect v11 function=f3
-    v13 = String string="{ \"total\" : 0 , \"items\" : [ ] }"
-    v14 = CallDirect v13 function=f2
-    v15 = CallDirect v14 function=f3
-    Return
-}
-function f1 name="validates" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Builtin builtin=BunBundleValidate
-    v2 = Call v1, -, v0 expectedResult=x0
-    Return v2
-}
-function f2 name="parses" parameters=[{type=string}] results=[{type=anything}] {
-    v1 = Builtin builtin=JSONParse
-    v2 = Call v1, -, v0 expectedResult=x0
-    Return v2
-}
-function f3 name="describe" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Builtin builtin=GlobalThis
-    v2 = PropGet v1 key="show" [isFreeName]
-    v3 = PropGet v0 key="items"
-    v4 = PropGet v3 key="length"
-    v5 = Call v2, -, v4
-    v6 = Integer integer=1
-    v7 = ElemGet v3, v6
-    v8 = Call v2, -, v7
-    v9 = Call v2, -, v0
-    Return
-}
-)IR"_s;
-
-static constexpr ASCIILiteral outputOfValidatedRecordsWithArrayMembers = R"(2
-{"id":2}
-{"items":[{"id":1},{"id":2}],"total":2}
-false
-3
-{"id":8}
-{"items":[{"id":7},{"id":8},{"id":9}],"total":3}
-0
-undefined
-{"total":0,"items":[]}
-)"_s;
-
-static constexpr ASCIILiteral showsValuesAndMakesPage = "globalThis.show = value => print(JSON.stringify(value)); globalThis.make = () => ({ items: [{ id: 1 }, { id: 2 }], total: 2 });"_s;
-
-static void testValidatedRecordsWithArrayMembers()
-{
-    checkOutputOfProgramInShell(validatedRecordsWithArrayMembers, outputOfValidatedRecordsWithArrayMembers, { }, showsValuesAndMakesPage);
-    checkOutputOfProgramInShell(validatedRecordsWithArrayMembers, outputOfValidatedRecordsWithArrayMembers, { "validate"_s }, showsValuesAndMakesPage);
-    checkOutputOfProgramInShell(validatedRecordsWithArrayMembers, outputOfValidatedRecordsWithArrayMembers, { "references=narrow"_s, "validate"_s }, showsValuesAndMakesPage);
-    checkOutputOfProgramInShell(validatedRecordsWithArrayMembers, outputOfValidatedRecordsWithArrayMembers, { "disable=pass:InlineCalls"_s, "validate"_s }, showsValuesAndMakesPage);
-    checkOutputOfProgramInShell(validatedRecordsWithArrayMembers, outputOfValidatedRecordsWithArrayMembers, { "disable=flow-results"_s }, showsValuesAndMakesPage);
-}
-
 std::span<const NativeTest> typedResultProgramTests()
 {
     static constexpr NativeTest tests[] = {
         { "typed-result-programs/records-with-array-members"_s, testRecordsWithArrayMembers },
-        { "typed-result-programs/validated-records-with-array-members"_s, testValidatedRecordsWithArrayMembers },
     };
     return tests;
 }

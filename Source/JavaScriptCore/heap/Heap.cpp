@@ -324,7 +324,6 @@ Heap::Heap(VM& vm, HeapType heapType)
     , auxiliaryHeapCellType(CellAttributes(DoesNotNeedDestruction, HeapCell::Auxiliary))
     , immutableButterflyHeapCellType(CellAttributes(DoesNotNeedDestruction, HeapCell::JSCellWithIndexingHeader))
     , cellHeapCellType(CellAttributes(DoesNotNeedDestruction, HeapCell::JSCell))
-    , outerCellHeapCellType(CellAttributes(DoesNotNeedDestruction, HeapCell::JSCell, true))
     , destructibleCellHeapCellType(CellAttributes(NeedsDestruction, HeapCell::JSCell))
     , apiGlobalObjectHeapCellType(IsoHeapCellType::Args<JSAPIGlobalObject>())
     , callbackConstructorHeapCellType(IsoHeapCellType::Args<JSCallbackConstructor>())
@@ -974,10 +973,6 @@ void Heap::endMarking()
 
     updateOldGenerationCellBytes(m_bytesMarkedThisCycle.exchange(0, std::memory_order_relaxed));
 
-#if ENABLE(AOT)
-    if (vm().hasCompiledCode())
-        AOT::HeapHooks::didFinishMarking(vm());
-#endif
     m_objectSpace.endMarking();
     setMutatorShouldBeFenced(Options::forceFencedBarrier());
 #if USE(BUN_JSC_ADDITIONS)
@@ -2913,8 +2908,17 @@ bool Heap::tryCollectForExhaustedCage(GCDeferralContext* deferralContext)
             m_didDeferGCWork = true;
         return false;
     }
-    collectNow(Sync, CollectionScope::Full);
+    collectForExhaustedCage();
     return true;
+}
+
+void Heap::collectForExhaustedCage()
+{
+    collectNow(Sync, CollectionScope::Full);
+#if ASAN_ENABLED
+    // Under ASan a block keeps the cells that a collection found dead until the next collection.
+    collectNow(Sync, CollectionScope::Full);
+#endif
 }
 
 bool Heap::tryUseReserveOfExhaustedCage(AlignedMemoryAllocator* exhaustedAllocator)

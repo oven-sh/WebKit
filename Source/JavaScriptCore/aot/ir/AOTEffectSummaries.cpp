@@ -440,7 +440,6 @@ bool describeByRole(const Program& program, const Function& function, EffectDesc
         return true;
     }
     case FunctionRole::Parser:
-    case FunctionRole::ValidatingParser:
         describeOverload(program, table.overloadIDsOf(Builtins::JSONParse).at(0), program.at(TypeTable::string), description);
         for (Opcode row : { Opcode::JSONHasStackSpace, Opcode::JSONParseValue })
             description.addOwn(declaredBoundOf(row));
@@ -474,7 +473,6 @@ bool describeByRole(const Program& program, const Function& function, EffectDesc
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
     case FunctionRole::OutlinedBody:
-    case FunctionRole::Validator:
     case FunctionRole::StubBody:
         return false;
     }

@@ -53,12 +53,6 @@ using OwnerNumbers = IndexMap<ValueID, std::optional<uint32_t>>;
 
 static_assert((storesThatMayAdd | Value::opcodesWithFieldAccess | Value::opcodesWithPlacedKeys) == (Value::opcodesWithFieldAccess | Value::opcodesWithPlacedKeys));
 
-// It stores into a cell that is as old as the inner object.
-bool takesCell(const Value& value)
-{
-    return value.opcode == Opcode::NewObject && value.takesCellOfInnerObject();
-}
-
 bool reachesSafepoint(const EffectsOnEdges& effects)
 {
     return effects.normal.mayCollect || effects.normal.mayRunOtherCode() || effects.handler.mayCollect || effects.handler.mayRunOtherCode();
@@ -201,42 +195,33 @@ private:
     void collectStore(BlockID block, uint32_t index, ValueID id)
     {
         const Value& value = m_function.at(id);
-        ValueID owner;
-        bool alwaysRunsBarrier = false;
-        if (takesCell(value)) {
-            std::span<const uint32_t> fields = value.fields();
-            for (size_t position = 0; !owner && position < fields.size(); ++position) {
-                if (m_placement.layout(value.layout()).innerObjectIn(fields[position]))
-                    owner = value.valuesOperands()[position];
-            }
-        } else if (runsOwnerBarrierOf(value.opcode)) {
-            std::optional<uint8_t> retainingOperand;
-            bool hasOneOwner = true;
-            bool storesCells = false;
-            bool storesLiteralStringWord = false;
-            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-                if (retainedInOf(value.opcode, operandIndex) != RetainedIn::Operand)
-                    return;
-                std::optional<uint8_t> ownerIndex = retainingOperandOf(value.opcode, operandIndex);
-                hasOneOwner &= !retainingOperand || retainingOperand == ownerIndex;
-                retainingOperand = ownerIndex;
-                storesCells |= m_pass.program.typeOf(m_function, operand).hasCells();
-                storesLiteralStringWord |= formTakenBy(value, operandIndex) == Representation::LiteralString;
-            });
-
-            // A store that makes room for its value stores the Extension in the owner, whatever the value is.
-            bool storesInOwner = storesCells || (storesThatMayAdd.contains(value.opcode) && storesInSomeSlotThat(value, &PlacedSlot::isOutOfLine));
-            if (storesInOwner && hasOneOwner && retainingOperand) {
-                owner = value.operand(*retainingOperand);
-                alwaysRunsBarrier = storesCells && !storesLiteralStringWord && !storesInSomeSlotThat(value, [](const PlacedSlot& slot) {
-                    return slot.representation == SlotRepresentation::DeferredClosure;
-                });
-            }
-        } else
+        if (!runsOwnerBarrierOf(value.opcode))
             return;
 
+        std::optional<uint8_t> retainingOperand;
+        bool hasOneOwner = true;
+        bool storesCells = false;
+        bool storesLiteralStringWord = false;
+        value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            if (retainedInOf(value.opcode, operandIndex) != RetainedIn::Operand)
+                return;
+            std::optional<uint8_t> ownerIndex = retainingOperandOf(value.opcode, operandIndex);
+            hasOneOwner &= !retainingOperand || retainingOperand == ownerIndex;
+            retainingOperand = ownerIndex;
+            storesCells |= m_pass.program.typeOf(m_function, operand).hasCells();
+            storesLiteralStringWord |= formTakenBy(value, operandIndex) == Representation::LiteralString;
+        });
+
+        // A store that makes room for its value stores the Extension in the owner, whatever the value is.
+        bool storesInOwner = storesCells || (storesThatMayAdd.contains(value.opcode) && storesInSomeSlotThat(value, &PlacedSlot::isOutOfLine));
+        ValueID owner;
+        if (storesInOwner && hasOneOwner && retainingOperand)
+            owner = value.operand(*retainingOperand);
         if (!owner)
             return setFlags(id, BarrierDecision::Emit);
+        bool alwaysRunsBarrier = storesCells && !storesLiteralStringWord && !storesInSomeSlotThat(value, [](const PlacedSlot& slot) {
+            return slot.representation == SlotRepresentation::DeferredClosure;
+        });
         m_stores.append(BarrierStore { .block = block, .index = index, .value = id, .owner = m_analyses.sameObjectThroughCasts(owner), .alwaysRunsBarrier = alwaysRunsBarrier });
     }
 
@@ -257,13 +242,6 @@ private:
         const Value& value = m_function.at(id);
         bool ownerCannotBeMarked = decision == BarrierDecision::OwnerCannotBeMarked;
         bool laterBarrierCovers = decision == BarrierDecision::LaterBarrierCovers;
-        if (takesCell(value)) {
-            if (value.cellCannotBeMarked() != ownerCannotBeMarked) {
-                m_function.edit(id, ValueEdit::Definition).setCellCannotBeMarked(ownerCannotBeMarked);
-                m_outcome = PassOutcome::Changed;
-            }
-            return;
-        }
         if (value.ownerCannotBeMarked() == ownerCannotBeMarked && value.laterBarrierCovers() == laterBarrierCovers)
             return;
         Value& store = m_function.edit(id, ValueEdit::Definition);
@@ -281,7 +259,7 @@ private:
             return OwnerKind::Unknown;
         if (value.opcode != Opcode::NewObject || value.storage() != AllocationStorage::Heap)
             return OwnerKind::HeapAllocation;
-        bool allocatesUnmarkedCell = m_placement.layout(value.layout()).hasSlots() && !m_placement.freeCellOffset(value.layout()) && !value.prototypeOperand() && !value.takesCellOfInnerObject();
+        bool allocatesUnmarkedCell = m_placement.layout(value.layout()).hasSlots() && !m_placement.freeCellOffset(value.layout()) && !value.prototypeOperand();
         return allocatesUnmarkedCell ? OwnerKind::HeapAllocation : OwnerKind::Unknown;
     }
 
@@ -323,9 +301,7 @@ private:
         const BarrierOwner& owner = m_owners[store.ownerNumber];
         if (owner.kind != OwnerKind::HeapAllocation || !youngBeforeStore.get(store.ownerNumber))
             return false;
-        // An operation that takes a cell allocates none before it has filled the cell.
-        bool reachesSafepointBeforeStore = !takesCell(m_function.at(store.value)) && reachesSafepoint(m_analyses.effectsOf(store.value));
-        if (reachesSafepointBeforeStore)
+        if (reachesSafepoint(m_analyses.effectsOf(store.value)))
             return false;
         const EscapeAnalysis& escape = m_analyses.escape();
         std::optional<ObjectID> object = escape.objectDefinedBy(owner.value);
@@ -440,8 +416,7 @@ PassOutcome removeRedundantBarriers(FunctionPassContext& pass)
 {
     bool hasStoreOperation = std::ranges::any_of(pass.function.blocks, [&](const Block& block) {
         return std::ranges::any_of(block.values, [&](ValueID id) {
-            const Value& value = pass.function.at(id);
-            return runsOwnerBarrierOf(value.opcode) || takesCell(value);
+            return runsOwnerBarrierOf(pass.function.at(id).opcode);
         });
     });
     if (!hasStoreOperation)

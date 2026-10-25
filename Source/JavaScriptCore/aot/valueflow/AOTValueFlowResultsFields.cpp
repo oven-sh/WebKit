@@ -675,8 +675,15 @@ struct FieldResults {
             return keys;
         ValueSetID objects = layoutsOfObjects.objectsWith(id);
         ValueSetID above = maker.intersect(chainBuiltByProgram(objects), ValueSets::complement(objects));
+        auto isStoredAbove = [&](ValueFlowName name) {
+            bool isStored = false;
+            heap.forEachNodeWrittenUnder(name, [&](ValueSetID writtenThrough, ValueSetID value) {
+                isStored |= !sets.isEmpty(value) && sets.meet(writtenThrough, above);
+            });
+            return isStored;
+        };
         auto liesAbove = [&](PropertyKeyID key) {
-            if (!sets.isEmpty(heap.writtenUnder(maker, above, ValueFlowName::property(key))) || !sets.isEmpty(heap.writtenUnder(maker, above, ValueFlowName::getter(key))))
+            if (isStoredAbove(ValueFlowName::property(key)) || isStoredAbove(ValueFlowName::getter(key)))
                 return true;
             bool isMemberOfBuiltin = false;
             if (BuiltinName name = program.builtinNameOf(key)) {

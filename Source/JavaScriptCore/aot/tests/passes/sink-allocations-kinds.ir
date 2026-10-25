@@ -117,21 +117,13 @@ function f9 name="storageIsChosen" parameters=[{type=anything}] results=[{type=u
 # CHECK-NEXT: v2: NotACandidate
 # CHECK-NEXT: v3: NotACandidate
 
-function f10 name="effectsWhereItStands" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
-    v2 = Data data=d0
-    v3 = IsPlainDataObject v0
-    Branch v3 -> taken b1(| 0), notTaken b2()
-  b1(v4):
-    v5 = CloneAs v0, v4, v1 layout=L0 fields=[0]
-    Return
-  b2():
+function f10 name="effectsWhereItStands" results=[{type=undefined}] {
+    v0 = Data data=d0
     Return
 }
 # CHECK-LABEL: function f10
-# CHECK-NEXT: v2: HasEffectsAtAllocation
-# CHECK-NEXT: v5: HasEffectsAtAllocation
-# CHECK-NEXT: v2: NotACandidate
-# CHECK-NEXT: v5: NotACandidate
+# CHECK-NEXT: v0: HasEffectsAtAllocation
+# CHECK-NEXT: v0: NotACandidate
 
 function f11 name="builtinResultsWithoutParts" parameters=[{type=object}] results=[{type=undefined}] {
     v1 = CallBuiltin -, v0 overload=ObjectFreeze/0

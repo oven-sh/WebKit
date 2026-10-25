@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTCompileOptions.h"
 #include "AOTCompiledCallee.h"
 #include "AOTEmptyPages.h"
 #include "AOTHeapCacheRegistry.h"
@@ -19,7 +18,6 @@
 #include "AOTState.h"
 #include "AOTVMState.h"
 #include "AbstractSlotVisitorInlines.h"
-#include "CellVisitValidator.h"
 #include "Collector.h"
 #include "FastMarkAppender.h"
 #include "HeapInlines.h"
@@ -148,17 +146,6 @@ String nameOfCompiledCallee(JSCell* cell)
     return CompiledCallee::isCompiledCallee(cell) ? CompiledCallee::name(asObject(cell)) : String();
 }
 
-JSCell* innerCellAround(JSCell* outerCell, const void* address)
-{
-    size_t distance = static_cast<const uint8_t*>(address) - reinterpret_cast<const uint8_t*>(outerCell);
-    JSCell* inner = nullptr;
-    for (uint32_t offset : uncheckedDowncast<Object>(outerCell)->layout().offsetsOfInnerObjects()) {
-        if (offset <= distance)
-            inner = reinterpret_cast<JSCell*>(reinterpret_cast<uint8_t*>(outerCell) + offset);
-    }
-    return inner && inner->structureID() ? inner : nullptr;
-}
-
 std::span<const uint32_t> offsetsOfNarrowReferences(const Structure* structure)
 {
     if (!structure->isCompiledStructure() || !uncheckedDowncast<CompiledStructure>(structure)->describesObject())
@@ -169,35 +156,9 @@ std::span<const uint32_t> offsetsOfNarrowReferences(const Structure* structure)
     return table.subspan(numberOfInlineReferenceCounts + table[0] + table[1], table[2]);
 }
 
-void noteInnerCellsWithoutMark(JSCell* outerCell)
-{
-    VM& vm = outerCell->vm();
-    VMState& state = vm.aotState();
-    for (uint32_t offset : uncheckedDowncast<Object>(outerCell)->layout().offsetsOfInnerObjects()) {
-        JSCell* inner = reinterpret_cast<JSCell*>(reinterpret_cast<uint8_t*>(outerCell) + offset);
-        if (!inner->structureID() || vm.heap.isMarked(inner))
-            continue;
-        Locker locker { state.innerCellsWithoutMark.lock };
-        state.innerCellsWithoutMark.cells.append(inner);
-    }
-}
-
 void willWorkOnThisThread(VM& vm)
 {
     Image::setCurrentOfThread(vm.aotState().image);
-}
-
-void didFinishMarking(VM& vm)
-{
-    if (vm.heap.validatesCellVisits()) [[unlikely]]
-        CellVisitValidator::validateMarksOfInnerCells(vm.heap);
-    VMState& state = vm.aotState();
-    Locker locker { state.innerCellsWithoutMark.lock };
-    for (JSCell* inner : state.innerCellsWithoutMark.cells) {
-        if (!vm.heap.isMarked(inner))
-            *reinterpret_cast<uint64_t*>(inner) = 0;
-    }
-    state.innerCellsWithoutMark.cells.clear();
 }
 
 void crashOnCellVisitMismatch(VM& vm, const JSCell* cell)

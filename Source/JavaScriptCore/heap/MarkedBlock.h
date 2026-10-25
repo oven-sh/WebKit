@@ -306,7 +306,6 @@ public:
         // will fail otherwise.
         VM* const m_vm;
         uint32_t m_cellSize { 0 };
-        bool m_hasInnerCells { false };
 
         CountingLock m_lock;
     
@@ -445,16 +444,6 @@ public:
         
     size_t cellSize();
     size_t cellSizeInHeader();
-
-    // In a block whose cells have inner cells, a cell may hold further cells behind its own fields, each at the start of an atom. An inner cell has a header, a mark bit, which is the bit
-    // of its atom, and a cell state of its own, so marking and barriers treat it as they treat any cell. It is neither allocated nor swept nor counted by itself: it is alive for as long
-    // as the cell that holds it, the outer cell, and whoever visits one of the two appends the other.
-    bool hasInnerCells() const { return header().m_hasInnerCells; }
-    bool isInnerCell(const void*) const;
-    HeapCell* outerCellOf(const void*) const;
-    // Null for a cell that lies in no other.
-    HeapCell* outerCellIfInnerCell(const void*) const;
-    void clearBitsOfInnerCells(WTF::BitSet<atomsPerBlock>&) const;
     CellAttributes attributes() const;
 
     bool hasAnyMarked() const;
@@ -624,37 +613,6 @@ inline size_t MarkedBlock::cellSize()
 inline size_t MarkedBlock::cellSizeInHeader()
 {
     return header().m_cellSize;
-}
-
-// The last cell of a block ends where the block ends.
-inline bool MarkedBlock::isInnerCell(const void* p) const
-{
-    if (!hasInnerCells()) [[likely]]
-        return false;
-    uint32_t bytesToEnd = static_cast<uint32_t>(blockSize - (std::bit_cast<uintptr_t>(p) & ~blockMask));
-    return bytesToEnd % header().m_cellSize;
-}
-
-inline HeapCell* MarkedBlock::outerCellIfInnerCell(const void* p) const
-{
-    if (!hasInnerCells()) [[likely]]
-        return nullptr;
-    uint32_t cellSize = header().m_cellSize;
-    uint32_t bytesToEnd = static_cast<uint32_t>(blockSize - (std::bit_cast<uintptr_t>(p) & ~blockMask));
-    uint32_t bytesToEndOfCell = bytesToEnd % cellSize;
-    if (!bytesToEndOfCell)
-        return nullptr;
-    return std::bit_cast<HeapCell*>(std::bit_cast<uintptr_t>(p) - (cellSize - bytesToEndOfCell));
-}
-
-inline HeapCell* MarkedBlock::outerCellOf(const void* p) const
-{
-    uint32_t cellSize = header().m_cellSize;
-    uint32_t bytesToEnd = static_cast<uint32_t>(blockSize - (std::bit_cast<uintptr_t>(p) & ~blockMask));
-    uint32_t bytesToEndOfCell = bytesToEnd % cellSize;
-    if (!bytesToEndOfCell)
-        return std::bit_cast<HeapCell*>(p);
-    return std::bit_cast<HeapCell*>(std::bit_cast<uintptr_t>(p) - (cellSize - bytesToEndOfCell));
 }
 
 inline CellAttributes MarkedBlock::Handle::attributes() const

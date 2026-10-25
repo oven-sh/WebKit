@@ -229,14 +229,14 @@ private:
             m_sites->shapeTests.append(ShapeTestUse { tested, knownSetOf(subject), weight, 1 });
     }
 
-    void appendAllocation(LayoutID layout, bool keysAreNeverEnumerated, std::span<const FieldIndex> initialFields, bool holdsInnerObjects = false)
+    void appendAllocation(LayoutID layout, bool keysAreNeverEnumerated, std::span<const FieldIndex> initialFields)
     {
         if (!m_sites->allocations.isEmpty()) {
             const AllocationUse& last = m_sites->allocations.last();
-            if (last.layout == layout && last.keysAreNeverEnumerated == keysAreNeverEnumerated && last.holdsInnerObjects == holdsInnerObjects && std::ranges::equal(last.initialFields, initialFields))
+            if (last.layout == layout && last.keysAreNeverEnumerated == keysAreNeverEnumerated && std::ranges::equal(last.initialFields, initialFields))
                 return;
         }
-        m_sites->allocations.append(AllocationUse { layout, keysAreNeverEnumerated, holdsInnerObjects, Vector<FieldIndex>(initialFields) });
+        m_sites->allocations.append(AllocationUse { layout, keysAreNeverEnumerated, Vector<FieldIndex>(initialFields) });
     }
 
     void appendFieldCreations(LayoutSetID receivers, std::span<const PropertyKeyID> keys)
@@ -441,7 +441,7 @@ private:
             break;
         case Opcode::NewObject:
             if (m_context.receivesShape(value.layout()))
-                appendAllocation(value.layout(), isUnordered(value), value.fields(), takesCellWithInnerObjects(m_context.slots(), value));
+                appendAllocation(value.layout(), isUnordered(value), value.fields());
             break;
         case Opcode::Data:
             if (value.encoding() == DataEncoding::CopyOnWriteArray) {

@@ -190,18 +190,12 @@ static_assert(sizeof(ExtensionLayoutData) == 16 && isImageRecord<ExtensionLayout
 struct LayoutData {
     static constexpr uint32_t noBase = UINT32_MAX;
 
-    static constexpr unsigned impossibleMutationBits = 10;
+    static constexpr unsigned impossibleMutationBits = 13;
 
     uint32_t kindBits : 4;
-    // Compiled code finds an inner object of an object of the layout by the address of the object, without a look at the field. So every object of the layout is made by compiled code.
-    uint32_t holdsInnerObjectsInPlace : 1;
     // A layout that the compiler derived from its base: the base plus the names that some of its objects get. Its objects are instances of the class of the base.
     uint32_t isDerived : 1;
     uint32_t impossibleMutationsRaw : impossibleMutationBits;
-    // Behind its own fields the cell of an object may hold further objects, the inner objects, each with a header of its own.
-    uint32_t hasInnerObjects : 1;
-    // Some object of the layout may lie in the cell of another.
-    uint32_t mayBeInnerObject : 1;
     uint32_t evaluationBits : 2;
     uint32_t keysAreNeverEnumerated : 1;
     uint32_t hasFieldsWithSymbolKeys : 1;
@@ -264,23 +258,6 @@ struct LayoutData {
         return slotOfExtraProperties();
     }
     bool hasExtension() const { return hasExtensionData; }
-    bool mayShareCell() const { return hasInnerObjects || mayBeInnerObject; }
-    // Ascending.
-    std::span<const uint32_t> offsetsOfInnerObjects() const
-    {
-        if (!hasInnerObjects)
-            return { };
-        const uint32_t* counts = reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(this) + referencesOffset);
-        return { counts - 1 - counts[-1], counts[-1] };
-    }
-    // Every allocation that makes an object of the layout of an inner object.
-    std::span<const uint32_t> allocationsOfInnerObjects() const
-    {
-        if (!hasInnerObjects)
-            return { };
-        const uint32_t* end = offsetsOfInnerObjects().data() - 1;
-        return { end - *end, *end };
-    }
     uint32_t extensionSize() const { return hasExtensionData ? extensionData().extensionSize : 0; }
     uint64_t granulesFilledByConstructor() const { return hasExtensionData ? static_cast<uint64_t>(extensionData().granulesFilledByConstructorHigh) << 32 | extensionData().granulesFilledByConstructorLow : 0; }
 

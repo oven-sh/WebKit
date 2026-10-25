@@ -109,8 +109,6 @@ ClosureForm closureFormOf(const Program& program, const FlowResults& flow, Funct
     case FunctionRole::OutlinedBody:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
-    case FunctionRole::ValidatingParser:
-    case FunctionRole::Validator:
     case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         return ClosureForm::Full;
@@ -320,8 +318,6 @@ static bool hasClosureWord(FunctionRole role)
     case FunctionRole::OutlinedBody:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
-    case FunctionRole::ValidatingParser:
-    case FunctionRole::Validator:
     case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         return false;
@@ -417,8 +413,6 @@ static TraceVisibility visibilityOf(const Function& function)
     case FunctionRole::OutlinedBody:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
-    case FunctionRole::ValidatingParser:
-    case FunctionRole::Validator:
     case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         return TraceVisibility::Hidden;

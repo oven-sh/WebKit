@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAllocationEmitter.h"
 #include "AOTBarrierEmitter.h"
 #include "AOTCellAllocationEmitter.h"
 #include "AOTChooseCallingConventions.h"
@@ -160,14 +159,10 @@ CellPointer ConstantEmitter::newFullClosure(const ValueContext& value, const New
     bool isOnHeap = false;
     CellPointer cell;
     switch (request.storage) {
-    case AllocationStorage::Heap: {
-        std::optional<WholeCell> ownCell = emitter<AllocationEmitter>().placeInCellOf(value).ownCell();
-        if (!ownCell)
-            return failWithoutCell(value, InternalErrorKind::PlacedPayloadMissing);
-        cell = cellAllocation.allocate(value, request.allocation, *ownCell);
+    case AllocationStorage::Heap:
+        cell = cellAllocation.allocate(value, request.allocation);
         isOnHeap = true;
         break;
-    }
     case AllocationStorage::Frame:
         cell = cellAllocation.allocateInFrame(Closure::allocationSize(request.captures.size()));
         break;

@@ -294,25 +294,12 @@ ALWAYS_INLINE void SlotVisitor::appendToMarkStack(ContainerType& container, JSCe
 #endif
     ASSERT(!cell->isZapped());
 
-    bool isCountedWithOuterCell = false;
-    if constexpr (std::is_same_v<ContainerType, MarkedBlock>)
-        isCountedWithOuterCell = container.isInnerCell(cell);
-    if (!isCountedWithOuterCell) [[likely]] {
-        container.noteMarked();
-
-        m_visitCount++;
-        noteBytesMarked(container.vm().heap, container.cellSize());
-    }
+    container.noteMarked();
+    
+    m_visitCount++;
+    noteBytesMarked(container.vm().heap, container.cellSize());
 
     m_collectorStack.append(cell);
-
-    // Whoever holds an inner cell holds the cell that it lies in. No field says so.
-    if constexpr (std::is_same_v<ContainerType, MarkedBlock>) {
-#if ENABLE(AOT)
-        if (isCountedWithOuterCell) [[unlikely]]
-            appendHiddenSlow(static_cast<JSCell*>(container.outerCellOf(cell)), Dependency());
-#endif
-    }
 }
 
 void SlotVisitor::markAuxiliary(const void* base)
@@ -320,11 +307,7 @@ void SlotVisitor::markAuxiliary(const void* base)
     HeapCell* cell = std::bit_cast<HeapCell*>(base);
     
     ASSERT(m_collector.hasHeap(*cell->heap()));
-
-    // Storage that lies in the cell of its owner lives and is counted with that cell.
-    if (!cell->isPreciseAllocation() && cell->markedBlock().hasInnerCells()) [[unlikely]]
-        return;
-
+    
     if (Heap::testAndSetMarked(m_markingVersion, cell))
         return;
     
@@ -340,11 +323,7 @@ void SlotVisitor::noteLiveAuxiliaryCell(HeapCell* cell)
     // Full collection: if the cell is live somehow.
     
     CellContainer container = cell->cellContainer();
-
-    // Storage that lies in the cell of its owner is counted with that cell.
-    if (container.isMarkedBlock() && container.markedBlock().isInnerCell(cell)) [[unlikely]]
-        return;
-
+    
     container.assertValidCell(cell->vm(), cell);
     container.noteMarked();
     

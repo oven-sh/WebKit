@@ -84,11 +84,11 @@ std::optional<uint32_t> Placement::requireEdge(ModuleID referrer, ModuleID targe
     return findPosition(m_constants.requireEdges, RequireEdge { referrer, target }, std::identity { });
 }
 
-AllocationID AllocationTable::find(LayoutID layout, uint32_t shape, std::span<const FieldIndex> initialFields, bool holdsInnerObjects) const
+AllocationID AllocationTable::find(LayoutID layout, uint32_t shape, std::span<const FieldIndex> initialFields) const
 {
     for (AllocationID id : ofLayout(layout)) {
         const PlacedAllocation& allocation = allocations[id.index()];
-        if (allocation.shape == shape && allocation.holdsInnerObjects == holdsInnerObjects && equalSpans(allocation.initialFields.span(), initialFields))
+        if (allocation.shape == shape && equalSpans(allocation.initialFields.span(), initialFields))
             return id;
     }
     return { };
@@ -294,7 +294,6 @@ static FieldAccess createFieldAccess(const PlacementContext& context, TypeArena&
 
     TypeID contents;
     bool isAlwaysFilled = true;
-    bool everyInnerObjectIsInPlace = !row.isStore && row.coverage == FieldAccess::Coverage::EveryMember;
     for (LayoutID member : group.members) {
         FieldReference field = fieldOf(program, member, access.key);
         const PlacedSlot& slot = context.slots().slot(field);
@@ -314,11 +313,6 @@ static FieldAccess createFieldAccess(const PlacementContext& context, TypeArena&
         else
             contents = row.isStore ? arena.intersectionOf(contents, type) : arena.unionOf(contents, type);
         isAlwaysFilled &= flowOf(program, field).occupancy == Occupancy::AlwaysFilled;
-        if (everyInnerObjectIsInPlace) {
-            const PlacedInnerObject* inner = context.slots().layout(member).innerObjectIn(field.field);
-            everyInnerObjectIsInPlace = inner && inner->isAlwaysInPlace && (!row.offsetOfInnerObject || *row.offsetOfInnerObject == inner->offset);
-            row.offsetOfInnerObject = everyInnerObjectIsInPlace ? std::optional(inner->offset) : std::nullopt;
-        }
     }
 
     // A load from an Extension that is missing or too short answers absent, whatever flow proved about the field.
@@ -350,7 +344,6 @@ static AllocationTable numberAllocations(const PlacementContext& context, const 
             .layout = use.layout,
             .constructedBy = layout.kind == LayoutKind::Instance ? layout.constructor : FunctionID(),
             .initialFields = use.initialFields,
-            .holdsInnerObjects = use.holdsInnerObjects,
         });
     }
     groupByIndex(program.layouts.size(), table.firstOfLayout, table.byLayout, [&](const auto& visit) {
@@ -379,8 +372,7 @@ static void finishAllocations(const PlacementContext& context, const ShapeTable&
         auto& allocation = allocations[row];
         ShapeRange range = shapes.shapesOf(uses[i].layout);
         allocation.shape = range.first + (uses[i].keysAreNeverEnumerated && range.count == 2 ? 1 : 0);
-        const PlannedLayout& planned = context.slots().layout(allocation.layout);
-        allocation.size = allocation.holdsInnerObjects ? planned.sizeWithInnerObjects : planned.size;
+        allocation.size = context.slots().layout(allocation.layout).size;
         bool keysAreNeverEnumerated = shapes.isAssigned(allocation.shape) && shapes.shape(allocation.shape).keysAreNeverEnumerated;
         allocation.orderWord = keysAreNeverEnumerated ? unorderedOrderWord : orderWords.ofAllocation[row];
     }

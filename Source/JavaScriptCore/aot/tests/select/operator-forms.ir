@@ -31,5 +31,5 @@ function f0 name="operators" parameters=[{type=i32}, {type=number}, {type=string
 # COMPACT: v10 StrictEq Generic : boolean ; {{*}} ; calls=1
 # COMPACT-NEXT: v11 StrictEq Generic : boolean ; none ; calls=1
 # LEGAL: Add: Generic calls=1, Integers calls=0, CheckedIntegers calls=0, Numbers calls=0, NumberAndValue calls=1, BigInts calls=1, Strings calls=1
-# LEGAL: ToNumber: Generic calls=1, Integers calls=0, Numbers calls=0, NullableNumber calls=0
+# LEGAL: ToNumber: Generic calls=1, Integers calls=0, Numbers calls=0, Booleans calls=0, NullableNumber calls=0
 # LEGAL: StrictEq: Generic calls=1, Integers calls=0, Numbers calls=0, NumberAndValue calls=1, Bits calls=0, Booleans calls=0

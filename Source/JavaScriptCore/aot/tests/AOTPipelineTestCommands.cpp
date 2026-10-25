@@ -351,20 +351,6 @@ static std::optional<uint32_t> parseNumber(StringView digits)
     return parseInteger<uint32_t>(digits, 10, WTF::ParseIntegerWhitespacePolicy::Disallow);
 }
 
-static std::optional<DerivedFunctionKey> parseValidationNodeKey(const Program& program, FunctionRole role, StringView target)
-{
-    size_t dot = target.find('.');
-    if (dot == notFound)
-        return std::nullopt;
-    std::optional<uint32_t> expectedResult = parseNumber(target.substring(1, dot - 1));
-    std::optional<uint32_t> node = parseNumber(target.substring(dot + 1));
-    if (!expectedResult || !node || *expectedResult >= program.expectedResults.size())
-        return std::nullopt;
-    if (*node >= program.at(ExpectedResultID(*expectedResult)).validation.size())
-        return std::nullopt;
-    return derivedFunctionKey(role, ExpectedResultID(*expectedResult), *node);
-}
-
 static std::optional<DerivedFunctionTarget> targetNamedBy(char letter)
 {
     switch (letter) {
@@ -374,8 +360,6 @@ static std::optional<DerivedFunctionTarget> targetNamedBy(char letter)
         return DerivedFunctionTarget::Layout;
     case 'g':
         return DerivedFunctionTarget::Type;
-    case 'x':
-        return DerivedFunctionTarget::ValidationNode;
     default:
         return std::nullopt;
     }
@@ -387,8 +371,6 @@ static std::optional<DerivedFunctionKey> parseDerivedFunctionKey(const Program& 
     if (target.isEmpty() || targetNamedBy(target[0]) != description.target)
         return std::nullopt;
     switch (target[0]) {
-    case 'x':
-        return parseValidationNodeKey(program, role, target);
     case 'f': {
         size_t colon = target.find(':');
         std::optional<uint32_t> function = parseNumber(target.substring(1, colon == notFound ? target.length() - 1 : colon - 1));

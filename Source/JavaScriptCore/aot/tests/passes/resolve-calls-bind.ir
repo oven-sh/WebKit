@@ -1,9 +1,9 @@
 # bind on a closure of one proven function makes a closure of a bound function, which captures what the target captures, this, the bound arguments and, where the target has captures of its own, the closure
-# In `function-is-not-known` the function that is bound is the `this` of a callee nobody knows, which may store into it. So that function is handed its own closure, and none of the targets
+# In `function-is-not-known` the function that is bound is the `this` of a callee nobody knows, which may store into it. So that function is handed its own closure, and none of the targets. Its type says only `function`, but flow saw closures of one function arrive: the bind tests for one of those, and the engine binds anything else.
 # FORM: AsRead
 # RUN: pipeline ChooseCallingConventions
 # OPTIONS: check=VerifyEachPass only-passes=ResolveCalls,PlaceTypeTests,ChooseCallingConventions heat=EverythingIsHot
-# STATISTIC: BoundFunctions = 7
+# STATISTIC: BoundFunctions = 8
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -204,8 +204,11 @@ function f21 name="function-is-not-known" kind=Arrow parameters=[{type=function}
     v3 = Call v2, v0, v1 calleeKey="bind"
     Return v3
 # CHECK-NEXT: b0(v0: function, v1: anything):
-# CHECK-NOT: NewClosure
-# CHECK: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
+# CHECK: = TypeTest v0 testedType=f21
+# CHECK: ([[itself]]: f21):
+# CHECK-NEXT: = NewClosure [[itself]] function=
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = CallBuiltin v0, v1 overload=FunctionPrototypeBind/0
 # CHECK-NOT: NewClosure
 }
 function f22 name="bound-function-is-called-here" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {

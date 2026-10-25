@@ -37,14 +37,12 @@ public:
     void generateJSONParseValue(const ValueContext& value) { defineParsedByOperation(value, RuntimeOperation::JSONParseValue, Representation::JSValue); }
     void generateJSONFindMember(const ValueContext&);
     void generateJSONMemberRepeats(const ValueContext&);
-    void generateJSONKeyRepeats(const ValueContext&);
     void generateJSONKeyHasEscapes(const ValueContext&);
     void generateJSONHasStackSpace(const ValueContext&);
     void generateJSONObjectBegin(const ValueContext&);
     void generateJSONObjectKey(const ValueContext& value) { define(value, advanceKeyOrder(value, in<Pointer>(value->orderOperand()))); }
     void generateJSONObjectFinish(const ValueContext&);
     void generateJSONParseExtraMembers(const ValueContext&);
-    void generateJSONAddExtraMember(const ValueContext&);
 
 private:
     struct ExtraMemberState {

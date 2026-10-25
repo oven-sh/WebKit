@@ -14,7 +14,7 @@
 #include "AOTKnownValue.h"
 #include "AOTMethodDispatch.h"
 #include "AOTPropertyAccessReceivers.h"
-#include "AOTValidatorBuilder.h"
+#include "AOTSelectTypedResultsNodes.h"
 #include <algorithm>
 #include <optional>
 
@@ -37,10 +37,7 @@ static std::optional<DerivedSignature> signatureOfProvisionalCallee(Emission& em
     case FunctionRole::Serializer:
         return signatureOfSerializer(emission.inputs());
     case FunctionRole::Parser:
-    case FunctionRole::ValidatingParser:
         return signatureOfParser(emission.inputs(), describeNode(emission.program(), nodeOfKey(key)));
-    case FunctionRole::Validator:
-        return ValidatorBuilder::signatureOf(emission, describeNode(emission.program(), nodeOfKey(key)));
     case FunctionRole::Source:
     case FunctionRole::Library:
     case FunctionRole::Model:
@@ -222,19 +219,6 @@ bool Emission::passesOnlyUndefinedIntoStoredType(const Type& value, TypeID field
     return testableStoredTypeOf({ program(), &m_inputs.flow }, value, program().at(fieldType), m_inputs.types).hasOnlyPrimitives(Primitive::Undefined);
 }
 
-static Type withoutProofsAboutArrays(const Type& type)
-{
-    Type result = type;
-    for (ClassPart& part : result.classes) {
-        if (part.builtinClass != BuiltinClasses::Array)
-            continue;
-        part.contentsAreProven = false;
-        part.provenPristine = { };
-        part.arrayStorage = ArrayStorage::Other;
-    }
-    return result;
-}
-
 // An array may hold any plain data, so contents that are proven narrower are not taken on trust.
 static bool provenContentsAdmitPlainData(const Program& program, const Type& fieldType, TypeArena& types)
 {
@@ -248,17 +232,17 @@ static bool provenContentsAdmitPlainData(const Program& program, const Type& fie
     });
 }
 
-TypeID Emission::fieldTypeToTest(TypeID fieldType, ProofsByOrigin proofs)
+TypeID Emission::fieldTypeToTest(TypeID fieldType)
 {
     const Type& type = program().at(fieldType);
-    if (proofs == ProofsByOrigin::None || !provenContentsAdmitPlainData(program(), type, m_inputs.types))
+    if (!provenContentsAdmitPlainData(program(), type, m_inputs.types))
         return fieldType;
-    return m_inputs.types.intern(proofs == ProofsByOrigin::AboutArrays ? withoutProofsAboutArrays(type) : type.withoutClassProofs());
+    return m_inputs.types.intern(type.withoutClassProofs());
 }
 
-ValueID Emission::emitRequireFieldType(ValueID value, TypeID fieldType, ProofsByOrigin proofs, BlockID notTaken)
+ValueID Emission::emitRequireFieldType(ValueID value, TypeID fieldType, BlockID notTaken)
 {
-    TypeID testedType = fieldTypeToTest(fieldType, proofs);
+    TypeID testedType = fieldTypeToTest(fieldType);
     ValueID tested = emitRequireStoredType(value, testedType, notTaken);
     if (testedType == fieldType || typeOf(tested).isSubsetOf(program().at(fieldType), program()))
         return tested;

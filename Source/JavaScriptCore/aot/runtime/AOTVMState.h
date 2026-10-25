@@ -54,11 +54,6 @@ public:
         Vector<void*, 1> pages WTF_GUARDED_BY_LOCK(lock);
     };
 
-    struct InnerCellsWithoutMark {
-        Lock lock;
-        Vector<JSCell*> cells WTF_GUARDED_BY_LOCK(lock);
-    };
-
     const Image* image { nullptr };
     bool hasCompiledCode { false };
     bool validatesRuntime { false };
@@ -79,7 +74,6 @@ public:
     Vector<Instance*, 1> instances;
     Vector<Instance*> instancesToDestroy;
     LoopPollPages loopPollPages;
-    InnerCellsWithoutMark innerCellsWithoutMark;
 };
 
 static_assert(sizeof(std::unique_ptr<RuntimeTable>) == sizeof(void*));

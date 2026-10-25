@@ -160,7 +160,6 @@ private:
     void verifyMethodIndexes();
     void verifyClosureOperation(BlockID, ValueID, const Value&);
     void verifyDirectCall(BlockID, ValueID, const Value&);
-    void verifyCallByValue(BlockID, ValueID, const Value&);
     void verifyArgumentsOperation(BlockID, ValueID, const Value&);
     void verifyClassOperation(BlockID, ValueID, const Value&);
     void verifyPrivateAccess(BlockID, ValueID, const Value&);

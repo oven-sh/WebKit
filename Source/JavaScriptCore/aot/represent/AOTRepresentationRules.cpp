@@ -159,7 +159,6 @@ static Representation wantedByKind(const RepresentationInputs& inputs, OperandKi
     case OperandKind::KeyOrder:
     case OperandKind::FlatString:
     case OperandKind::CodeAddress:
-    case OperandKind::SourcePlan:
     case OperandKind::BuilderCursor:
         return representationOf(*opaqueKindOf(kind));
     }
@@ -329,8 +328,10 @@ static Representation resultOfOperator(const RepresentationInputs& inputs, const
     case OperatorForm::NullableStrings:
     case OperatorForm::NullableStringAndPrimitive:
         return Representation::JSValue;
-    case OperatorForm::Bits:
     case OperatorForm::Booleans:
+        // Tests returned above. What is left converts false to 0 and true to 1.
+        return Representation::Int32;
+    case OperatorForm::Bits:
     case OperatorForm::StringAndValue:
     case OperatorForm::Int32AndValue:
     case OperatorForm::String:
@@ -491,10 +492,7 @@ static Representation wantedByDeclaredPosition(const RepresentationInputs& input
     case Opcode::PutSlots:
         return storeRepresentationOf(inputs, slotOf(inputs, user.placedKeys()[variadicIndex()].fieldAccess), operand);
     case Opcode::NewObject:
-        if (user.takesCellOfInnerObject() && placement.layout(user.layout()).innerObjectIn(user.fields()[variadicIndex()]) && inputs.typeOf(operand).isObject())
-            return Representation::Cell;
         return storeRepresentationOf(inputs, placement.slot(user.layout(), user.fields()[variadicIndex()]), operand);
-    case Opcode::CloneAs:
     case Opcode::PrivateDefine:
         return Representation::JSValue;
     case Opcode::PutEnvironmentField:

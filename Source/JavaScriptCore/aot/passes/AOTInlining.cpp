@@ -366,7 +366,6 @@ bool isWrapperCreatedByEngine(const Function& function)
     case CreatorRecord::Kind::ResultWorker:
     case CreatorRecord::Kind::Serializer:
     case CreatorRecord::Kind::Parser:
-    case CreatorRecord::Kind::Validator:
     case CreatorRecord::Kind::ChainStep:
     case CreatorRecord::Kind::StubBody:
     case CreatorRecord::Kind::TableLookup:

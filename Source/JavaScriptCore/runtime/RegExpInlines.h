@@ -396,12 +396,9 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
     nonReturnedOvector.grow(offsetVectorSize());
     offsetVector = nonReturnedOvector.mutableSpan().data();
 #if ENABLE(AOT)
-    if (m_state == ImageCode) [[unlikely]] {
-        bool hasGivenUp = false;
-        result = matchWithImageCode(nullOrGlobalObject, vm, s, startOffset, offsetVector, &hasGivenUp);
-        if (hasGivenUp) [[unlikely]]
-            return MatchResult::gaveUp();
-    } else
+    if (m_state == ImageCode) [[unlikely]]
+        result = matchWithImageCode(nullOrGlobalObject, vm, s, startOffset, offsetVector);
+    else
 #endif
     {
 #if ENABLE(AOT)
@@ -409,10 +406,7 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
             countInterpretedMatch(vm);
 #endif
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
-        unsigned givenUpBefore = m_regExpBytecode->searchesGivenUp();
         result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
-        if (result < 0 && m_regExpBytecode->searchesGivenUp() != givenUpBefore) [[unlikely]]
-            return MatchResult::gaveUp();
     }
 #if REGEXP_FUNC_TEST_DATA_GEN
     RegExpFunctionalTestCollector::get()->outputOneTest(this, s, startOffset, offsetVector, result);

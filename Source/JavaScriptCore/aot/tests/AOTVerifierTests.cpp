@@ -112,9 +112,6 @@ void expectSuccessAfterTyping(FunctionChange change, IRForm form, const Verifier
     VerifierTest test;
     Typed::Function copy = test.program->at(f7);
     change(copy);
-    // SelectTypedResults leaves no call that still names a result to validate.
-    if (form != IRForm::AsRead && !inputs.isOptimizing)
-        copy.edit(v4).setExpectedResult({ });
     typeFunctionAsRead(*test.program, f7, copy, test.build());
     bool isValid = verifyFunction(*test.program, f7, copy, form, test.build(), inputs);
     test.expectNoError();
@@ -423,7 +420,6 @@ void testOptimizingAcceptsBothForms()
     expectSuccessAfterTyping(addOperationsOfBothForms, IRForm::AsRead, whileOptimizing);
     expectSuccessAfterTyping(addOperationsOfBothForms, IRForm::Prepared, whileOptimizing);
     expectSuccessAfterTyping(addPreparedOperation, IRForm::Prepared);
-    expectFailure(Kind::RequiredPassLeftOperation, [](Typed::Function&) { }, IRForm::Prepared);
 
     expectFailure(Kind::OpcodeNotInForm, addPlacedOperation, IRForm::AsRead, whileOptimizing);
     expectFailure(Kind::OpcodeNotInForm, addPlacedOperation, IRForm::Prepared, whileOptimizing);

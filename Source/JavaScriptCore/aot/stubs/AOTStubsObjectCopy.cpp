@@ -203,8 +203,6 @@ void generateCopyObjectFrontEnd(StubAssembler& jit)
 
     LayoutData testedBits { };
     testedBits.kindBits = (1 << 4) - 1;
-    testedBits.holdsInnerObjectsInPlace = true;
-    testedBits.mayBeInnerObject = true;
     testedBits.keysAreNeverEnumerated = true;
     testedBits.hasExtensionData = true;
     LayoutData expectedBits { };

@@ -25,7 +25,7 @@ static_assert(offsetOfShapeWord == offsetOfOrderWord + sizeof(uint32_t));
 static_assert(JSONKeyOrder::isListedBit == 1ull << 32, "A numbered order leaves the upper half of its word to the shape word");
 static_assert(sizeof(KeyOrderTransition::orderAndShapeWordsBefore) == sizeof(uint64_t) && sizeof(KeyOrderTransition::key) == sizeof(uint32_t) && sizeof(KeyOrderTransition::orderAndCountAfter) == sizeof(uint32_t));
 static_assert(sizeof(ObjectWords::keyOrderTransitionMask) == sizeof(uint32_t));
-static_assert(argumentBufferAccessOf(RuntimeOperation::JSONParseExtraMembers) == ArgumentBufferAccess::ReadsAndWrites && argumentBufferAccessOf(RuntimeOperation::JSONAddExtraMember) == ArgumentBufferAccess::ReadsAndWrites, "updateInBuffer loads what the operation stored in the buffer");
+static_assert(argumentBufferAccessOf(RuntimeOperation::JSONParseExtraMembers) == ArgumentBufferAccess::ReadsAndWrites, "updateInBuffer loads what the operation stored in the buffer");
 
 static constexpr int32_t parsedOutcome = static_cast<int32_t>(JSONOutcome::Parsed);
 static constexpr int32_t unknownOutcome = static_cast<int32_t>(JSONOutcome::Unknown);
@@ -198,20 +198,6 @@ void JSONParseEmitter::generateJSONParseExtraMembers(const ValueContext& value)
     Condition isParsed(m_out.notNull(next.value()));
     Word32 outcome = select(isParsed, word32(parsedOutcome), word32(unknownOutcome));
     defineResults(value, { outcome, state.extra, cursorOrSourceEnd(isParsed, next.value()), state.order });
-}
-
-void JSONParseEmitter::generateJSONAddExtraMember(const ValueContext& value)
-{
-    uint32_t shape = shapeOfParsedObject(value);
-    if (!shape)
-        return;
-    ExtraMemberState state { in<Boxed>(value->extraOperand()), in<Pointer>(value->orderOperand()) };
-    CellPointer name = in<CellPointer>(value->memberNameOperand());
-    Boxed member = in<Boxed>(value->valueOperand());
-    state = updateInBuffer(state, [&](Pointer buffer) {
-        callVoidOperation(value, RuntimeOperation::JSONAddExtraMember, { word32(static_cast<int32_t>(shape)), name, member, buffer });
-    });
-    defineResults(value, { state.extra, state.order });
 }
 
 } } } // namespace JSC::AOT::Typed

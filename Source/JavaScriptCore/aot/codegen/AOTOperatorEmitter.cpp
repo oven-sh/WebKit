@@ -295,11 +295,12 @@ Operand OperatorEmitter::convertedToNumber(const ValueContext& value, const Func
         return emitter<ConversionEmitter>().purified(asNumericOperand(operand));
     case OperatorForm::NullableNumber:
         return asNumberLikeOperand(operand);
+    case OperatorForm::Booleans:
+        return asWord32(in<Condition>(operand));
     case OperatorForm::Unselected:
     case OperatorForm::CheckedIntegers:
     case OperatorForm::NumberAndValue:
     case OperatorForm::Bits:
-    case OperatorForm::Booleans:
     case OperatorForm::BigInts:
     case OperatorForm::Strings:
     case OperatorForm::StringAndValue:

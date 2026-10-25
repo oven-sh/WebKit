@@ -492,26 +492,22 @@ bool RegExp::takeCodeFromImage(VM& vm)
     return true;
 }
 
-int RegExp::matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset, int* offsetVector, bool* hasGivenUp)
+int RegExp::matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset, int* offsetVector)
 {
     ASSERT(m_state == ImageCode);
     if (startOffset > s.length())
         return -1;
 
-    MatchResult found;
+    int result;
     {
         Yarr::MatchingContextHolder regExpContext(vm, this, Yarr::MatchFrom::VMThread);
         if (s.is8Bit())
-            found = m_regExpJITCode->execute(s.span8(), startOffset, offsetVector, &regExpContext);
+            result = m_regExpJITCode->execute(s.span8(), startOffset, offsetVector, &regExpContext).start;
         else
-            found = m_regExpJITCode->execute(s.span16(), startOffset, offsetVector, &regExpContext);
+            result = m_regExpJITCode->execute(s.span16(), startOffset, offsetVector, &regExpContext).start;
     }
-    int result = found.start;
-    if (result != static_cast<int>(Yarr::JSRegExpResult::JITCodeFailure)) {
-        if (hasGivenUp)
-            *hasGivenUp = found.hasGivenUp();
+    if (result != static_cast<int>(Yarr::JSRegExpResult::JITCodeFailure))
         return result;
-    }
 
     byteCodeCompileIfNecessary(&vm);
     if (m_state == ParseError) {
@@ -525,11 +521,7 @@ int RegExp::matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM& vm, Strin
     }
     countInterpretedMatch(vm);
     Yarr::MatchingContextHolder regExpContext(vm, this, Yarr::MatchFrom::VMThread);
-    unsigned givenUpBefore = m_regExpBytecode->searchesGivenUp();
-    result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
-    if (hasGivenUp)
-        *hasGivenUp = result < 0 && m_regExpBytecode->searchesGivenUp() != givenUpBefore;
-    return result;
+    return Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
 }
 
 void RegExp::countInterpretedMatch(VM& vm)
@@ -737,14 +729,6 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
 MatchResult RegExp::match(JSGlobalObject* globalObject, StringView s, unsigned startOffset)
 {
     return matchInline(globalObject, globalObject->vm(), s, startOffset);
-}
-
-RegExp::SearchAnswer RegExp::searchFromStart(JSGlobalObject* globalObject, StringView s)
-{
-    MatchResult result = match(globalObject, s, 0);
-    if (result)
-        return SearchAnswer::Matches;
-    return result.hasGivenUp() ? SearchAnswer::GaveUp : SearchAnswer::DoesNotMatch;
 }
 
 bool RegExp::matchConcurrently(VM& vm, StringView s, unsigned startOffset, MatchResult& result)

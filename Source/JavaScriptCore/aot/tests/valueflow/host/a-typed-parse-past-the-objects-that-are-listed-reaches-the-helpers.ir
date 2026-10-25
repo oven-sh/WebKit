@@ -1,9 +1,0 @@
-# JSON.parse<Row>(text) where Row reaches more objects than a typed result lists. The validation stays: SelectTypedResults hands the answer of the call to validateByPlan in the library
-# (runtimefunction 131117), so the call counts as a call of the helper, as one with a typed result does. What comes out of the call is whatever the helper makes: nobody knows it
-# LIBRARY: own
-# OPTIONS: limit=MaxObjectsOfTypedResult:1
-# RUN: valueflow-solve unreached
-# CHECK-NOT: unreached f1
-# RUN(WHY): valueflow-why reached=f1
-# WHY: f1 <- UsedBuiltins
-# PROGRAM-OF: typed-parse-reaches-the-helpers-of-what-replaces-it.ir

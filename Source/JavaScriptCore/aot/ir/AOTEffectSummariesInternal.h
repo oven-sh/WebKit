@@ -233,7 +233,7 @@ struct ExitReachability {
 };
 
 bool describeByRole(const Program&, const Function&, EffectDescription&);
-constexpr bool isSummarizedByRole(FunctionRole role) { return role == FunctionRole::Serializer || role == FunctionRole::Parser || role == FunctionRole::ValidatingParser; }
+constexpr bool isSummarizedByRole(FunctionRole role) { return role == FunctionRole::Serializer || role == FunctionRole::Parser; }
 
 uint64_t parametersWhoseContentsAreCalled(const Program&, FunctionID, const BorrowedParameters&);
 

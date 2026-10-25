@@ -232,8 +232,6 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
     case OperationFamily::Call:
         if (opcode == Opcode::CallDirect || opcode == Opcode::CallTable)
             verifyDirectCall(block, id, value);
-        else if (opcode == Opcode::Call || opcode == Opcode::CallList || opcode == Opcode::Construct)
-            verifyCallByValue(block, id, value);
         return;
     case OperationFamily::PrivateAccess:
         verifyPrivateAccess(block, id, value);
@@ -304,7 +302,7 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
     case OperationFamily::Iteration: case OperationFamily::ForIn: case OperationFamily::EngineIntrinsic:
     case OperationFamily::PromiseIntrinsic: case OperationFamily::CollectionIntrinsic:
     case OperationFamily::GuardValue: case OperationFamily::OwnAccess: case OperationFamily::ExpandedIteration: case OperationFamily::JSONParse:
-    case OperationFamily::Validation: case OperationFamily::RuntimeValidation: case OperationFamily::JSONWrite: case OperationFamily::StringRangeRead: case OperationFamily::Representation:
+    case OperationFamily::ExpectedRows: case OperationFamily::RuntimeValidation: case OperationFamily::JSONWrite: case OperationFamily::StringRangeRead: case OperationFamily::Representation:
     case OperationFamily::KeyPartsLookup:
         return;
     }

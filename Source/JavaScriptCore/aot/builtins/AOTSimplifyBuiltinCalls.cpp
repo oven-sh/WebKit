@@ -506,6 +506,9 @@ static std::optional<Value> simplifyPrimitiveCall(FunctionPassContext& context, 
     const Type& operand = context.program.typeOf(context.function, arguments[0]);
     if (returnsOperandUnchanged(overload->builtin, operand))
         return makeIdentityCast(context.function, arguments[0]);
+    // Number(value) and ToNumber differ only for a BigInt.
+    if (overload->builtin == Builtins::Number && !operand.isNever() && operand.isNumberLike())
+        return IRBuilder::make(Opcode::ToNumber, { arguments[0] });
     if (overload->builtin == Builtins::ArrayIsArray && !operand.anyObject && !operand.findClassPart(BuiltinClasses::Proxy) && !mayBeMadeByBuiltinConstructor(context.program, operand)) {
         return makeTypeTest(arguments[0], context.types.intern(typeOfArraysAmong(context, operand)));
     }

@@ -189,18 +189,8 @@ static bool passesOneArray(const Program& program, const Function& function, con
     return part && part->builtinClass == BuiltinClasses::Array;
 }
 
-bool awaitsValidation(const Program& program, const Value& call)
-{
-    if (!Value::opcodesWithExpectedResult.contains(call.opcode))
-        return false;
-    ExpectedResultID expected = call.expectedResult();
-    return expected && !program.at(expected).validation.isEmpty();
-}
-
 bool isCallThatRequiredPassRemoves(const Program& program, const Value& call)
 {
-    if (awaitsValidation(program, call))
-        return true;
     if (call.opcode != Opcode::CallBuiltin)
         return false;
 

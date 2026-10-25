@@ -269,7 +269,6 @@ static DescribedObject describeAllocation(FunctionAnalyses& analyses, const Valu
     case Opcode::NewPromise:
     case Opcode::Data:
     case Opcode::NewGenerator:
-    case Opcode::CloneAs:
         description.kind = VirtualObjectKind::Opaque;
         return supported(description);
     default:

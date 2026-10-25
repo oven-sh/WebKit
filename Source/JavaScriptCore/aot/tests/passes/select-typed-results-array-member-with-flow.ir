@@ -1,16 +1,15 @@
-# The type flow gives a field that holds arrays has proofs no test can give: a parser, validating or not, and a validator test the class of the array they created and assume the rest
+# The type flow gives a field that holds arrays has proofs no test can give: a parser tests the class of the array it created and assumes the rest
 # The results are handed to a built-in that looks at its operand and neither keeps nor writes it: a callee nobody knows may store into the arrays, and then nothing is proven of them
 # FORM: AsRead
 # OPTIONS: report=Declines only-passes=ResolveBuiltins,SelectTypedResults
 # RUN: pipeline SelectTypedResults
-# STATISTIC: TypedResultsSelected = 3
+# STATISTIC: TypedResultsSelected = 2
 # STATISTIC: ParsersCreated = 6
-# STATISTIC: ValidatorsCreated = 3
 # CHECK-NOT: decline
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-expectedresult x0 type=L3 layouts=[L2, L3] validation=[{shape=Object{layout=L3 members=[{key="items" node=1 field=0}]} type=L3}, {shape=Array{element=2} type=Array<L2>}, {shape=Object{layout=L2 members=[{key="id" node=3 field=0}]} type=L2}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x0 type=L3 layouts=[L2, L3]
 layout L0 name="Row" module=m0 position=10 fields=[{key="id" declared={type=number}}]
 layout L1 name="Page" module=m0 position=20 fields=[{key="items" declared={type=Array<L0>}}, {key="total" declared={type=number}}]
 layout L2 name="CheckedRow" module=m0 position=30 fields=[{key="id" declared={type=number}}]
@@ -25,9 +24,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v5 = Call v3, -, v4
     v6 = CallDirect v2 function=f2
     v7 = Call v3, -, v6
-    v8 = PropGet v0 key="input" [isFreeName]
-    v9 = CallDirect v8 function=f3
-    v10 = Call v3, -, v9
     Return
 }
 
@@ -39,18 +35,14 @@ function f1 name="converted" parameters=[{type=string}] results=[{type=anything}
 # CHECK: = CallDirect {{*}} function=[[parserOfPage]]
 }
 
-function f2 name="validated" parameters=[{type=string}] results=[{type=anything}] {
+function f2 name="withExpectedResult" parameters=[{type=string}] results=[{type=anything}] {
     v1 = Builtin builtin=JSONParse
     v2 = Call v1, -, v0 expectedResult=x0
     Return v2
 # CHECK: = CallDirect {{*}} function=[[parserOfCheckedPage]]
-}
-
-function f3 name="validatedValue" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Builtin builtin=BunBundleValidate
-    v2 = Call v1, -, v0 expectedResult=x0
-    Return v2
-# CHECK: = CallDirect v0 function=[[validatorOfCheckedPage]]
+# CHECK: function [[parserOfCheckedPage]] {{*}}role=Parser
+# CHECK: [[assumedChecked]]: {{*}}pristine[Storage, Names]> = AssumeType {{*}} castType=Array<
+# CHECK: = NewObject -, [[assumedChecked]] layout=L3 fields=[0]
 # CHECK: function [[parserOfRows]] {{*}}role=Parser {{*}}type=undefined|Array<L0>}
 # CHECK: function [[parserOfPage]] {{*}}role=Parser
 # CHECK: ({{*}}: undefined|Array<L0>, {{*}}: boolean, {{*}}: undefined|number, {{*}}):
@@ -62,12 +54,4 @@ function f3 name="validatedValue" parameters=[{type=anything}] results=[{type=an
 # CHECK: [[whenArray]]([[array]]: Array<L0>):
 # CHECK-NEXT: [[assumed]]: {{*}}pristine[Storage, Names]> = AssumeType [[array]] castType=Array<
 # CHECK: = NewObject -, [[assumed]], {{*}} layout=L1 fields=[0, 1]
-# CHECK: function [[parserOfCheckedPage]] {{*}}role=ValidatingParser
-# CHECK: [[assumedChecked]]: {{*}}pristine[Storage, Names]> = AssumeType {{*}} castType=Array<
-# CHECK: = NewObject -, [[assumedChecked]] layout=L3 fields=[0]
-# CHECK: function [[validatorOfCheckedPage]] {{*}}role=Validator
-# CHECK: [[assumedCopy]]: {{*}}pristine[Storage, Names]> = AssumeType {{*}} castType=Array<
-# CHECK: = NewObject -, [[assumedCopy]] layout=L3 fields=[0]
-# CHECK: [[assumedCopyAgain]]: {{*}}pristine[Storage, Names]> = AssumeType {{*}} castType=Array<
-# CHECK: = CloneAs {{*}}, [[assumedCopyAgain]] layout=L3 fields=[0]
 }

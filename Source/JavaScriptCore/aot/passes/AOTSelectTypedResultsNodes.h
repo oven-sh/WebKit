@@ -9,7 +9,6 @@
 
 #include "AOTDerivedFunctions.h"
 #include "AOTIR.h"
-#include "AOTValidationNodes.h"
 #include "AOTVector.h"
 #include <optional>
 #include <span>
@@ -25,47 +24,23 @@ namespace Typed {
 
 class FlowResults;
 
-enum class ResultNodeSource : uint8_t { Type, Validation };
-
+// Part 0 is the whole type. Part n is its n-th alternative.
 struct ResultNodeRef {
-    static ResultNodeRef forType(TypeID type, uint32_t part = 0) { return { ResultNodeSource::Type, type.index(), part }; }
-    static ResultNodeRef forValidation(ExpectedResultID expectedResult, uint32_t node) { return { ResultNodeSource::Validation, expectedResult.index(), node }; }
-
-    bool isValidated() const { return source == ResultNodeSource::Validation; }
-    TypeID type() const
-    {
-        RELEASE_ASSERT(!isValidated());
-        return TypeID(id);
-    }
-    ExpectedResultID expectedResult() const
-    {
-        RELEASE_ASSERT(isValidated());
-        return ExpectedResultID(id);
-    }
-
     friend bool operator==(const ResultNodeRef&, const ResultNodeRef&) = default;
 
-    ResultNodeSource source { ResultNodeSource::Type };
-    uint32_t id { 0 };
+    TypeID type;
     uint32_t part { 0 };
 };
 
 enum class ResultShape : uint8_t {
     Unknown,
-    Never,
-    Undefined,
     Null,
-    AnyObject,
     String,
     Number,
     Boolean,
-    BigInt,
     BooleanLiteral,
-    NumberLiteral,
     StringLiteral,
     Array,
-    Tuple,
-    Dictionary,
     Object,
     Union,
 };
@@ -73,40 +48,31 @@ enum class ResultShape : uint8_t {
 using ResultShapeSet = EnumeratorBitSet<ResultShape, static_cast<unsigned>(ResultShape::Union) + 1>;
 
 struct ResultLiteral {
-    enum class Kind : uint8_t { Null, Boolean, Number, String };
+    enum class Kind : uint8_t { Null, Boolean, String };
 
     friend bool operator==(const ResultLiteral&, const ResultLiteral&) = default;
 
     Kind kind { Kind::Null };
     bool boolean { false };
-    double number { 0 };
     StringID string;
 };
 
 struct ResultMember {
     PropertyKeyID key;
     ResultNodeRef node;
-    std::optional<uint32_t> field;
+    uint32_t field { 0 };
     bool isOptional { false };
-    bool mustBeOwn { false };
 };
 
 struct ResultNode {
     bool isContainer() const { return shape >= ResultShape::Array; }
-    bool hasFixedLength() const { return !restElement && requiredElements == children.size(); }
 
     void forEachChild(NOESCAPE const Invocable<void(ResultNodeRef)> auto& visit) const
     {
         for (ResultNodeRef child : children)
             visit(child);
-        if (restElement)
-            visit(*restElement);
         for (const ResultMember& member : members)
             visit(member.node);
-        if (undeclaredValue)
-            visit(*undeclaredValue);
-        for (ResultNodeRef tested : nodesOfRules)
-            visit(tested);
     }
 
     ResultShape shape { ResultShape::Unknown };
@@ -114,21 +80,12 @@ struct ResultNode {
     ResultLiteral literal;
     LayoutID layout;
     Vector<ResultMember, 8> members;
-    UndeclaredMembers undeclared { UndeclaredMembers::Allowed };
-    std::optional<ResultNodeRef> undeclaredValue;
     Vector<ResultNodeRef, 4> children;
-    uint32_t requiredElements { 0 };
-    std::optional<ResultNodeRef> restElement;
-    std::span<const ValidationRule> rules;
-    Vector<ResultNodeRef, 2> nodesOfRules;
-    std::optional<ResultLiteral> defaultValue;
-    StringID message;
-    StringID text;
 };
 
 ResultNode describeNode(const Program&, ResultNodeRef);
 
-Value makeArrayOf(const Program&, const ResultNode& arrayOrTuple, std::span<const ValueID> elements);
+Value makeArrayOf(const Program&, const ResultNode& array);
 
 // Visits the node, and the arms of every union among what it visits.
 void forEachAlternative(const Program& program, ResultNodeRef root, NOESCAPE const Invocable<void(const ResultNode&)> auto& functor)
@@ -142,37 +99,24 @@ void forEachAlternative(const Program& program, ResultNodeRef root, NOESCAPE con
         if (node.shape != ResultShape::Union)
             continue;
         for (ResultNodeRef arm : node.children) {
-            RELEASE_ASSERT(arm.source == root.source && arm.id == root.id);
+            RELEASE_ASSERT(arm.type == root.type);
             if (visitedParts.add(arm.part))
                 worklist.append(arm);
         }
     }
 }
 
-enum class RuntimeClass : uint8_t {
-    Undefined = 1 << 0,
-    Null = 1 << 1,
-    Boolean = 1 << 2,
-    Number = 1 << 3,
-    String = 1 << 4,
-    BigInt = 1 << 5,
-    Array = 1 << 6,
-    Object = 1 << 7,
-};
-
-// What JSON text can spell. Each has the bit of the runtime class of its name.
+// What JSON text can spell.
 enum class JSONValueClass : uint8_t {
-    Null = 1 << 1,
-    Boolean = 1 << 2,
-    Number = 1 << 3,
-    String = 1 << 4,
-    Array = 1 << 6,
-    Object = 1 << 7,
+    Null = 1 << 0,
+    Boolean = 1 << 1,
+    Number = 1 << 2,
+    String = 1 << 3,
+    Array = 1 << 4,
+    Object = 1 << 5,
 };
 
-OptionSet<RuntimeClass> runtimeClassesOf(const Program&, ResultNodeRef);
 OptionSet<JSONValueClass> valueClassesOf(const Program&, ResultNodeRef);
-bool appliesDefault(const Program&, ResultNodeRef);
 
 struct ResultDiscriminant {
     PropertyKeyID key;
@@ -185,7 +129,6 @@ struct TaggedArms {
     Vector<ResultNodeRef, 4> untagged;
 };
 
-std::optional<ResultDiscriminant> findDiscriminant(const Program&, std::span<const ResultNodeRef> objectArms);
 std::optional<TaggedArms> findTaggedArms(const Program&, std::span<const ResultNodeRef> arms);
 
 enum class NodeCode : uint8_t { Interpreted, Compiled };
@@ -195,28 +138,19 @@ struct NodeDecision {
     InterpretedCause cause { InterpretedCause::None };
 };
 
-enum class NodeUse : uint8_t { ParsedFromText, CopiedFromValue };
-
 struct NodeDecisionInputs {
     const Program& program;
     const FlowResults& flow;
     BuildContext& build;
 };
 
-NodeDecision decideNodeCode(const NodeDecisionInputs&, ResultNodeRef, NodeUse);
-// No alternative of the node hands on an array of the caller, of the generic parser or of the interpreter.
-bool createsEveryArrayItself(const NodeDecisionInputs&, ResultNodeRef, NodeUse);
+NodeDecision decideNodeCode(const NodeDecisionInputs&, ResultNodeRef);
 LayoutID firstLayoutOf(const Program&, ResultNodeRef);
 void addInterpretedNodeDecline(const NodeDecisionInputs&, LayoutID declaration, InterpretedCause);
 bool allocatesLayout(const NodeDecisionInputs&, LayoutID);
 inline bool allocatesLayout(const NodeDecisionInputs& inputs, const ResultNode& node) { return allocatesLayout(inputs, node.layout); }
-bool canRepeatRecursion(const Program&, ResultNodeRef unionNode);
-BitVector nodesReachableFrom(const Program&, ExpectedResultID, uint32_t node);
-
-ExpectedResultID canonicalValidationOf(const Program&, ExpectedResultID);
 
 DerivedFunctionKey parserKeyOf(ResultNodeRef);
-DerivedFunctionKey validatorKeyOf(ResultNodeRef);
 ResultNodeRef nodeOfKey(const DerivedFunctionKey&);
 
 } } } // namespace JSC::AOT::Typed

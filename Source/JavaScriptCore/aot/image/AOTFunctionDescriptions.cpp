@@ -34,8 +34,6 @@ static FunctionID subjectOf(const Program& program, FunctionID id)
     case FunctionRole::OutlinedBody:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
-    case FunctionRole::ValidatingParser:
-    case FunctionRole::Validator:
     case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
     case FunctionRole::TableLookup:
@@ -119,8 +117,6 @@ static String roleWord(const Program& program, FunctionID id)
     case FunctionRole::CoroutineBody:
     case FunctionRole::AsyncWorker:
     case FunctionRole::Parser:
-    case FunctionRole::ValidatingParser:
-    case FunctionRole::Validator:
     case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         return lowerCaseWordsOf(nameOf(function.role));

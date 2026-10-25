@@ -18,7 +18,6 @@
 #include "AOTSort.h"
 #include "AOTThreshold.h"
 #include "AOTUseLists.h"
-#include "AOTValidationRules.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
 #include <functional>
@@ -165,7 +164,7 @@ static ResultNode describeAlternative(const Program& program, TypeID type, const
 
     ResultNode node { .shape = alternative.shape, .type = type, .literal = alternative.literal, .layout = alternative.layout };
     if (node.shape == ResultShape::Array)
-        node.children.append(ResultNodeRef::forType(alternative.contents));
+        node.children.append(ResultNodeRef { alternative.contents });
     if (node.shape != ResultShape::Object)
         return node;
 
@@ -177,7 +176,7 @@ static ResultNode describeAlternative(const Program& program, TypeID type, const
         TypeID expectation = withoutProofsAboutClasses(program, expectationOf(field.declared));
         node.members.append(ResultMember {
             .key = field.key,
-            .node = ResultNodeRef::forType(expectation ? expectation : TypeTable::anything),
+            .node = ResultNodeRef { expectation ? expectation : TypeTable::anything },
             .field = index,
             .isOptional = !field.declared.type || program.at(field.declared.type).primitives & Primitive::Undefined,
         });
@@ -185,8 +184,9 @@ static ResultNode describeAlternative(const Program& program, TypeID type, const
     return node;
 }
 
-static ResultNode describeTypeNode(const Program& program, TypeID type, uint32_t part)
+ResultNode describeNode(const Program& program, ResultNodeRef ref)
 {
+    auto [type, part] = ref;
     Vector<TypeAlternative, 4> alternatives = alternativesOf(program, type);
     if (part) {
         RELEASE_ASSERT(part <= alternatives.size());
@@ -201,279 +201,51 @@ static ResultNode describeTypeNode(const Program& program, TypeID type, uint32_t
 
     node.shape = ResultShape::Union;
     for (uint32_t index = 0; index < alternatives.size(); ++index)
-        node.children.append(ResultNodeRef::forType(type, index + 1));
+        node.children.append(ResultNodeRef { type, index + 1 });
     return node;
 }
 
-// The nodes of a validation.
-
-static std::optional<ResultLiteral> defaultOf(const ValidationRule& rule)
-{
-    switch (rule.kind()) {
-    case ValidationRule::Kind::Integer:
-    case ValidationRule::Kind::Minimum:
-    case ValidationRule::Kind::Maximum:
-    case ValidationRule::Kind::ExclusiveMinimum:
-    case ValidationRule::Kind::ExclusiveMaximum:
-    case ValidationRule::Kind::MultipleOf:
-    case ValidationRule::Kind::MinimumLength:
-    case ValidationRule::Kind::MaximumLength:
-    case ValidationRule::Kind::Pattern:
-    case ValidationRule::Kind::Format:
-    case ValidationRule::Kind::Template:
-    case ValidationRule::Kind::Message:
-    case ValidationRule::Kind::UniqueItems:
-    case ValidationRule::Kind::Contains:
-    case ValidationRule::Kind::Not:
-    case ValidationRule::Kind::If:
-    case ValidationRule::Kind::ExactlyOne:
-    case ValidationRule::Kind::Every:
-    case ValidationRule::Kind::PatternMembers:
-    case ValidationRule::Kind::MemberNames:
-    case ValidationRule::Kind::MinimumMembers:
-    case ValidationRule::Kind::MaximumMembers:
-    case ValidationRule::Kind::DependentMembers:
-    case ValidationRule::Kind::DependentNode:
-        return std::nullopt;
-    case ValidationRule::Kind::DefaultNull:
-        return ResultLiteral { .kind = ResultLiteral::Kind::Null };
-    case ValidationRule::Kind::DefaultBoolean:
-        return ResultLiteral { .kind = ResultLiteral::Kind::Boolean, .boolean = rule.as<ValidationRule::DefaultBoolean>().value };
-    case ValidationRule::Kind::DefaultNumber:
-        return ResultLiteral { .kind = ResultLiteral::Kind::Number, .number = rule.as<ValidationRule::DefaultNumber>().value };
-    case ValidationRule::Kind::DefaultString:
-        return ResultLiteral { .kind = ResultLiteral::Kind::String, .string = rule.as<ValidationRule::DefaultString>().value };
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static bool hasDefault(const ValidationNode& node)
-{
-    return node.rules.containsIf([](const ValidationRule& rule) {
-        return defaultOf(rule).has_value();
-    });
-}
-
-static bool acceptsUndefined(const Vector<ValidationNode>& nodes, uint32_t root)
-{
-    if (hasDefault(nodes[root]))
-        return false;
-
-    BitVector visited;
-    Vector<uint32_t, 8> alternatives { root };
-    while (!alternatives.isEmpty()) {
-        const ValidationShape& shape = nodes[alternatives.takeLast()].shape;
-        if (shape.is<ValidationShape::Unknown>() || shape.is<ValidationShape::Undefined>())
-            return true;
-        const auto* unionOfArms = shape.tryAs<ValidationShape::Union>();
-        if (!unionOfArms)
-            continue;
-        for (uint32_t arm : unionOfArms->arms) {
-            if (arm != root && visited.add(arm) && !hasDefault(nodes[arm]))
-                alternatives.append(arm);
-        }
-    }
-    return false;
-}
-
-static ResultShape shapeOf(ValidatedPrimitive primitive)
-{
-    switch (primitive) {
-    case ValidatedPrimitive::String:
-        return ResultShape::String;
-    case ValidatedPrimitive::Number:
-        return ResultShape::Number;
-    case ValidatedPrimitive::Boolean:
-        return ResultShape::Boolean;
-    case ValidatedPrimitive::BigInt:
-        return ResultShape::BigInt;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static ResultNode describeValidationNode(const Program& program, ExpectedResultID expectedResult, uint32_t part)
-{
-    using Shape = ValidationShape;
-    const Vector<ValidationNode>& nodes = program.at(expectedResult).validation;
-    const ValidationNode& source = nodes[part];
-    ResultNode node { .type = source.type, .rules = source.rules.span(), .text = source.text };
-    auto refTo = [&](uint32_t child) {
-        return ResultNodeRef::forValidation(expectedResult, child);
-    };
-    for (const ValidationRule& rule : node.rules) {
-        if (!node.defaultValue)
-            node.defaultValue = defaultOf(rule);
-        if (const auto* message = rule.tryAs<ValidationRule::Message>(); message && !node.message)
-            node.message = message->text;
-        forEachNodeOf(rule, [&](uint32_t tested) {
-            node.nodesOfRules.append(refTo(tested));
-        });
-    }
-
-    auto literal = [&](ResultShape shape, ResultLiteral value) {
-        node.literal = value;
-        return shape;
-    };
-    auto container = [&](ResultShape shape, std::span<const uint32_t> children) {
-        node.children.appendContainerWithMapping(children, refTo);
-        return shape;
-    };
-    node.shape = WTF::switchOn(source.shape.cases,
-        [](const Shape::Unknown&) { return ResultShape::Unknown; },
-        [](const Shape::Never&) { return ResultShape::Never; },
-        [](const Shape::Undefined&) { return ResultShape::Undefined; },
-        [](const Shape::Null&) { return ResultShape::Null; },
-        [](const Shape::AnyObject&) { return ResultShape::AnyObject; },
-        [](const Shape::Primitive& shape) { return shapeOf(shape.primitive); },
-        [&](const Shape::BooleanLiteral& shape) { return literal(ResultShape::BooleanLiteral, { .kind = ResultLiteral::Kind::Boolean, .boolean = shape.value }); },
-        [&](const Shape::NumberLiteral& shape) { return literal(ResultShape::NumberLiteral, { .kind = ResultLiteral::Kind::Number, .number = shape.value }); },
-        [&](const Shape::StringLiteral& shape) { return literal(ResultShape::StringLiteral, { .kind = ResultLiteral::Kind::String, .string = shape.value }); },
-        [&](const Shape::Array& shape) { return container(ResultShape::Array, singleElementSpan(shape.element)); },
-        [&](const Shape::Tuple& shape) {
-            node.requiredElements = shape.required;
-            if (shape.rest)
-                node.restElement = refTo(*shape.rest);
-            return container(ResultShape::Tuple, shape.elements.span());
-        },
-        [&](const Shape::Dictionary& shape) { return container(ResultShape::Dictionary, singleElementSpan(shape.value)); },
-        [&](const Shape::Union& shape) { return container(ResultShape::Union, shape.arms.span()); },
-        [&](const Shape::Object& shape) {
-            node.layout = shape.layout;
-            node.undeclared = shape.undeclared;
-            if (shape.undeclaredValue)
-                node.undeclaredValue = refTo(*shape.undeclaredValue);
-            node.members.appendContainerWithMapping(shape.members, [&](const ValidationMember& member) {
-                return ResultMember { member.key, refTo(member.node), member.field, member.isOptional, !member.isOptional && acceptsUndefined(nodes, member.node) };
-            });
-            return ResultShape::Object;
-        });
-    return node;
-}
-
-ResultNode describeNode(const Program& program, ResultNodeRef ref)
-{
-    return ref.isValidated() ? describeValidationNode(program, ref.expectedResult(), ref.part) : describeTypeNode(program, ref.type(), ref.part);
-}
-
-BitVector nodesReachableFrom(const Program& program, ExpectedResultID expectedResult, uint32_t node)
-{
-    const Vector<ValidationNode>& nodes = program.at(expectedResult).validation;
-    BitVector reachable(nodes.size());
-    reachable.set(node);
-    Vector<uint32_t, 16> worklist { node };
-    auto visit = [&](uint32_t child) {
-        if (reachable.add(child))
-            worklist.append(child);
-    };
-    while (!worklist.isEmpty()) {
-        const ValidationNode& reached = nodes[worklist.takeLast()];
-        for (const ValidationRule& rule : reached.rules)
-            forEachNodeOf(rule, visit);
-        const ValidationShape& shape = reached.shape;
-        switch (shape.kind()) {
-        case ValidationShape::Kind::Unknown:
-        case ValidationShape::Kind::Never:
-        case ValidationShape::Kind::Undefined:
-        case ValidationShape::Kind::Null:
-        case ValidationShape::Kind::AnyObject:
-        case ValidationShape::Kind::Primitive:
-        case ValidationShape::Kind::BooleanLiteral:
-        case ValidationShape::Kind::NumberLiteral:
-        case ValidationShape::Kind::StringLiteral:
-            continue;
-        case ValidationShape::Kind::Array:
-            visit(shape.as<ValidationShape::Array>().element);
-            continue;
-        case ValidationShape::Kind::Dictionary:
-            visit(shape.as<ValidationShape::Dictionary>().value);
-            continue;
-        case ValidationShape::Kind::Tuple: {
-            const auto& tuple = shape.as<ValidationShape::Tuple>();
-            std::ranges::for_each(tuple.elements, visit);
-            if (tuple.rest)
-                visit(*tuple.rest);
-            continue;
-        }
-        case ValidationShape::Kind::Union:
-            std::ranges::for_each(shape.as<ValidationShape::Union>().arms, visit);
-            continue;
-        case ValidationShape::Kind::Object: {
-            const auto& object = shape.as<ValidationShape::Object>();
-            std::ranges::for_each(object.members, visit, &ValidationMember::node);
-            if (object.undeclaredValue)
-                visit(*object.undeclaredValue);
-            continue;
-        }
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    return reachable;
-}
-
-ExpectedResultID canonicalValidationOf(const Program& program, ExpectedResultID expectedResult)
-{
-    const Vector<ValidationNode>& validation = program.at(expectedResult).validation;
-    for (uint32_t index = 0; index < expectedResult.index(); ++index) {
-        if (program.expectedResults[index].validation == validation)
-            return ExpectedResultID(index);
-    }
-    return expectedResult;
-}
-
-// What holds for a node of either kind.
-
-Value makeArrayOf(const Program& program, const ResultNode& node, std::span<const ValueID> elements)
+Value makeArrayOf(const Program& program, const ResultNode& node)
 {
     const ClassPart* part = program.at(node.type).findClassPart(BuiltinClasses::Array);
     Value array = IRBuilder::make(Opcode::NewArray);
     array.setContents(part ? part->contentsAt(program.builtins(), ContentsSlot::Element) : TypeTable::anything);
-    array.setElementsOperands(elements);
+    array.setElementsOperands(std::span<const ValueID> { });
     return array;
 }
 
-static OptionSet<RuntimeClass> classesAcceptedBy(ResultShape shape)
+static OptionSet<JSONValueClass> classesAcceptedBy(ResultShape shape)
 {
-    static constexpr std::pair<RuntimeClass, ResultShapeSet> shapesThatAccept[] {
-        { RuntimeClass::Undefined, { ResultShape::Unknown, ResultShape::Undefined } },
-        { RuntimeClass::Null, { ResultShape::Unknown, ResultShape::Null } },
-        { RuntimeClass::Boolean, { ResultShape::Unknown, ResultShape::Boolean, ResultShape::BooleanLiteral } },
-        { RuntimeClass::Number, { ResultShape::Unknown, ResultShape::Number, ResultShape::NumberLiteral } },
-        { RuntimeClass::String, { ResultShape::Unknown, ResultShape::String, ResultShape::StringLiteral } },
-        { RuntimeClass::BigInt, { ResultShape::Unknown, ResultShape::BigInt } },
-        { RuntimeClass::Array, { ResultShape::Unknown, ResultShape::AnyObject, ResultShape::Array, ResultShape::Tuple } },
-        { RuntimeClass::Object, { ResultShape::Unknown, ResultShape::AnyObject, ResultShape::Dictionary, ResultShape::Object } },
-    };
-    OptionSet<RuntimeClass> classes;
-    for (const auto& [runtimeClass, shapes] : shapesThatAccept) {
-        if (shapes.contains(shape))
-            classes.add(runtimeClass);
+    switch (shape) {
+    case ResultShape::Unknown:
+        return { JSONValueClass::Null, JSONValueClass::Boolean, JSONValueClass::Number, JSONValueClass::String, JSONValueClass::Array, JSONValueClass::Object };
+    case ResultShape::Null:
+        return JSONValueClass::Null;
+    case ResultShape::Boolean:
+    case ResultShape::BooleanLiteral:
+        return JSONValueClass::Boolean;
+    case ResultShape::Number:
+        return JSONValueClass::Number;
+    case ResultShape::String:
+    case ResultShape::StringLiteral:
+        return JSONValueClass::String;
+    case ResultShape::Array:
+        return JSONValueClass::Array;
+    case ResultShape::Object:
+        return JSONValueClass::Object;
+    case ResultShape::Union:
+        return { };
     }
-    return classes;
-}
-
-OptionSet<RuntimeClass> runtimeClassesOf(const Program& program, ResultNodeRef ref)
-{
-    OptionSet<RuntimeClass> classes;
-    forEachAlternative(program, ref, [&](const ResultNode& node) {
-        classes.add(classesAcceptedBy(node.shape));
-        if (node.defaultValue)
-            classes.add(RuntimeClass::Undefined);
-    });
-    return classes;
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 OptionSet<JSONValueClass> valueClassesOf(const Program& program, ResultNodeRef ref)
 {
-    return OptionSet<JSONValueClass>::fromRaw((runtimeClassesOf(program, ref) - OptionSet<RuntimeClass> { RuntimeClass::Undefined, RuntimeClass::BigInt }).toRaw());
-}
-
-bool appliesDefault(const Program& program, ResultNodeRef ref)
-{
-    bool hasDefault = false;
+    OptionSet<JSONValueClass> classes;
     forEachAlternative(program, ref, [&](const ResultNode& node) {
-        hasDefault |= node.defaultValue.has_value();
+        classes.add(classesAcceptedBy(node.shape));
     });
-    return hasDefault;
+    return classes;
 }
 
 LayoutID firstLayoutOf(const Program& program, ResultNodeRef ref)
@@ -488,19 +260,16 @@ LayoutID firstLayoutOf(const Program& program, ResultNodeRef ref)
 
 static std::optional<ResultLiteral> findTag(const Program& program, const ResultNode& arm, PropertyKeyID key)
 {
-    static constexpr ResultShapeSet literalShapes { ResultShape::Null, ResultShape::BooleanLiteral, ResultShape::NumberLiteral, ResultShape::StringLiteral };
+    static constexpr ResultShapeSet literalShapes { ResultShape::Null, ResultShape::BooleanLiteral, ResultShape::StringLiteral };
     if (arm.shape != ResultShape::Object)
         return std::nullopt;
     const ResultMember* member = std::ranges::find(arm.members, key, &ResultMember::key);
-    // Every field of a layout may be missing, and a result that is not validated stays plain data where no arm is chosen. A validator has to try the arm of a missing tag.
-    if (member == arm.members.end() || (member->isOptional && member->node.isValidated()))
+    // Every field of a layout may be missing, and the result stays plain data where no arm is chosen.
+    if (member == arm.members.end())
         return std::nullopt;
 
     ResultNode tag = describeNode(program, member->node);
-    bool isTested = std::ranges::any_of(tag.rules, [](const ValidationRule& rule) {
-        return subjectOf(rule) != RuleSubject::Nothing;
-    });
-    if (!literalShapes.contains(tag.shape) || tag.defaultValue || isTested)
+    if (!literalShapes.contains(tag.shape))
         return std::nullopt;
     return tag.literal;
 }
@@ -550,31 +319,19 @@ std::optional<TaggedArms> findTaggedArms(const Program& program, std::span<const
     return firstPartition;
 }
 
-std::optional<ResultDiscriminant> findDiscriminant(const Program& program, std::span<const ResultNodeRef> objectArms)
-{
-    std::optional<TaggedArms> arms = findTaggedArms(program, objectArms);
-    if (!arms || !arms->untagged.isEmpty())
-        return std::nullopt;
-    return WTF::move(arms->discriminant);
-}
-
 // Which nodes are compiled.
 
 static bool canReach(const Program& program, ResultNodeRef start, ResultNodeRef target)
 {
-    ASSERT(start.source == target.source);
-    if (start.isValidated())
-        return nodesReachableFrom(program, start.expectedResult(), start.part).get(target.part);
-
     HashSet<std::pair<TypeID, uint32_t>> visited;
-    visited.add({ start.type(), start.part });
+    visited.add({ start.type, start.part });
     Vector<ResultNodeRef, 16> worklist { start };
     bool isReached = false;
     while (!isReached && !worklist.isEmpty()) {
         describeNode(program, worklist.takeLast()).forEachChild([&](ResultNodeRef child) {
             if (child == target)
                 isReached = true;
-            else if (visited.add({ child.type(), child.part }).isNewEntry)
+            else if (visited.add({ child.type, child.part }).isNewEntry)
                 worklist.append(child);
         });
     }
@@ -617,7 +374,7 @@ static unsigned countLooksAtOnePart(const Program& program, ResultNodeRef ref, L
 {
     if (depth > maxDepthOfCountedLooks)
         return maxLooksAtOnePart + 1;
-    uint64_t key = static_cast<uint64_t>(ref.id) << 32 | ref.part;
+    uint64_t key = static_cast<uint64_t>(ref.type.index()) << 32 | ref.part;
     if (auto added = known.add(key, 1); !added.isNewEntry)
         return added.iterator->value;
 
@@ -672,13 +429,6 @@ static bool hasRepeatedRecursion(const Program& program, ResultNodeRef unionRef,
     return false;
 }
 
-bool canRepeatRecursion(const Program& program, ResultNodeRef unionNode)
-{
-    ResultNode node = describeNode(program, unionNode);
-    RELEASE_ASSERT(node.shape == ResultShape::Union);
-    return hasRepeatedRecursion(program, unionNode, node);
-}
-
 bool allocatesLayout(const NodeDecisionInputs& inputs, LayoutID layout)
 {
     if (!layout || inputs.program.at(layout).flow.allocation == AllocationState::NeverAllocated)
@@ -686,120 +436,20 @@ bool allocatesLayout(const NodeDecisionInputs& inputs, LayoutID layout)
     return !inputs.flow.hasResults() || !!inputs.flow.typedResultSite(layout);
 }
 
-static bool liesOnCycle(const Program& program, ResultNodeRef ref, const ResultNode& node)
+NodeDecision decideNodeCode(const NodeDecisionInputs& inputs, ResultNodeRef ref)
 {
-    bool isReachedAgain = false;
-    node.forEachChild([&](ResultNodeRef child) {
-        isReachedAgain |= child == ref || canReach(program, child, ref);
-    });
-    return isReachedAgain;
-}
-
-static bool handsOnTheValueItself(const Program& program, ResultNodeRef ref)
-{
-    bool handsOn = false;
-    forEachAlternative(program, ref, [&](const ResultNode& alternative) {
-        handsOn |= alternative.shape == ResultShape::Unknown || alternative.shape == ResultShape::AnyObject;
-    });
-    return handsOn;
-}
-
-static bool itemsMayBeObjects(const Program& program, const ResultNode& array)
-{
-    bool mayBeObjects = false;
-    array.forEachChild([&](ResultNodeRef item) {
-        forEachAlternative(program, item, [&](const ResultNode& alternative) {
-            bool isObject = alternative.isContainer() && alternative.shape != ResultShape::Union;
-            mayBeObjects |= isObject || alternative.shape == ResultShape::Unknown || alternative.shape == ResultShape::AnyObject;
-        });
-    });
-    return mayBeObjects;
-}
-
-// The parser tests the default of a missing member by the rules of its node alone, without a plan.
-static bool hasDefaultTestedByNodes(const Program& program, const ResultNode& object)
-{
-    return std::ranges::any_of(object.members, [&](const ResultMember& member) {
-        ResultNode node = describeNode(program, member.node);
-        return node.defaultValue && std::ranges::any_of(node.rules, namesNodes);
-    });
-}
-
-// Every node and rule that has no code yet is named here and nowhere else: what this function lets through, the builders emit.
-static InterpretedCause causeWithoutCode(const Program& program, ResultNodeRef ref, const ResultNode& node, NodeUse use)
-{
-    if (std::ranges::any_of(node.rules, namesNodes))
-        return InterpretedCause::RuleNamesNodes;
-    // The helper judges what it reads of the value, so what is handed on has to be a copy.
-    if (hasRuleOnGivenValue(node) && handsOnTheValueItself(program, ref))
-        return InterpretedCause::RuleReadsGivenValue;
-    // The helper reads all that lies below the array. Called at each level of a value, it would read the deepest level once for every level above.
-    bool hasUniqueItems = std::ranges::any_of(node.rules, [](const ValidationRule& rule) {
-        return rule.is<ValidationRule::UniqueItems>();
-    });
-    if (hasUniqueItems && liesOnCycle(program, ref, node))
-        return InterpretedCause::UniqueItemsAreRecursive;
-    // The helper compares all that lies below the array, also what no node describes. Only a plan hands on the very copies that were compared.
-    if (hasUniqueItems && use == NodeUse::CopiedFromValue && itemsMayBeObjects(program, node))
-        return InterpretedCause::RuleReadsGivenValue;
-    // What a parser builds has defaults filled in and members left out. These rules are about the text's own value.
-    if (use == NodeUse::ParsedFromText && node.isContainer() && hasRuleOnGivenValue(node))
-        return InterpretedCause::RuleReadsGivenValue;
-    if (use == NodeUse::ParsedFromText && node.shape == ResultShape::Object && hasDefaultTestedByNodes(program, node))
-        return InterpretedCause::RuleNamesNodes;
-    if (node.shape == ResultShape::Tuple && !node.hasFixedLength())
-        return InterpretedCause::TupleLengthVaries;
-    return InterpretedCause::None;
-}
-
-NodeDecision decideNodeCode(const NodeDecisionInputs& inputs, ResultNodeRef ref, NodeUse use)
-{
-    RELEASE_ASSERT(use == NodeUse::ParsedFromText || ref.isValidated());
-    if (ref.isValidated() && ref.part >= inputs.build.limit(LimitID::MaxParserPlanNodes))
-        return { NodeCode::Interpreted, InterpretedCause::TooManyNodes };
-
     ResultNode node = describeNode(inputs.program, ref);
-    if (InterpretedCause cause = causeWithoutCode(inputs.program, ref, node, use); cause != InterpretedCause::None)
-        return { NodeCode::Interpreted, cause };
     if (node.shape == ResultShape::Union && hasRepeatedRecursion(inputs.program, ref, node))
         return { NodeCode::Interpreted, InterpretedCause::RepeatedRecursion };
-    if (node.shape == ResultShape::Object) {
-        bool hasOnlyTextKeys = std::ranges::all_of(node.members, [&](const ResultMember& member) {
-            return inputs.program.at(member.key).kind == PropertyKeyKind::Text;
-        });
-        if (!hasOnlyTextKeys)
-            return { NodeCode::Interpreted, InterpretedCause::MemberKeyIsNotText };
-        if (!ref.isValidated() && !allocatesLayout(inputs, node))
-            return { NodeCode::Interpreted, InterpretedCause::LayoutIsNotModeled };
-    }
+    if (node.shape == ResultShape::Object && !allocatesLayout(inputs, node))
+        return { NodeCode::Interpreted, InterpretedCause::LayoutIsNotModeled };
     return { NodeCode::Compiled, InterpretedCause::None };
-}
-
-static bool createsEveryArrayItself(const NodeDecisionInputs& inputs, ResultNodeRef ref, NodeUse use, BitVector& visitedParts)
-{
-    if (decideNodeCode(inputs, ref, use).code == NodeCode::Interpreted)
-        return false;
-
-    ResultNode node = describeNode(inputs.program, ref);
-    if (node.shape != ResultShape::Union)
-        return node.shape != ResultShape::Unknown && node.shape != ResultShape::AnyObject;
-    return std::ranges::all_of(node.children, [&](ResultNodeRef arm) {
-        return !visitedParts.add(arm.part) || createsEveryArrayItself(inputs, arm, use, visitedParts);
-    });
-}
-
-bool createsEveryArrayItself(const NodeDecisionInputs& inputs, ResultNodeRef ref, NodeUse use)
-{
-    BitVector visitedParts;
-    visitedParts.set(ref.part);
-    return createsEveryArrayItself(inputs, ref, use, visitedParts);
 }
 
 void addInterpretedNodeDecline(const NodeDecisionInputs& inputs, LayoutID declaration, InterpretedCause cause)
 {
     RELEASE_ASSERT(cause != InterpretedCause::None);
-    bool isReportedAsLimit = cause == InterpretedCause::TooManyNodes;
-    if (isReportedAsLimit || !inputs.build.options().collectsDeclines())
+    if (!inputs.build.options().collectsDeclines())
         return;
 
     Subject subject { .layout = declaration };
@@ -815,23 +465,14 @@ void addInterpretedNodeDecline(const NodeDecisionInputs& inputs, LayoutID declar
 
 DerivedFunctionKey parserKeyOf(ResultNodeRef ref)
 {
-    if (ref.isValidated())
-        return derivedFunctionKey(FunctionRole::ValidatingParser, ref.expectedResult(), ref.part);
     RELEASE_ASSERT(!ref.part);
-    return derivedFunctionKey(FunctionRole::Parser, ref.type());
-}
-
-DerivedFunctionKey validatorKeyOf(ResultNodeRef ref)
-{
-    return derivedFunctionKey(FunctionRole::Validator, ref.expectedResult(), ref.part);
+    return derivedFunctionKey(FunctionRole::Parser, ref.type);
 }
 
 ResultNodeRef nodeOfKey(const DerivedFunctionKey& key)
 {
-    if (key.role == FunctionRole::Parser)
-        return ResultNodeRef::forType(TypeID(key.parameter));
-    RELEASE_ASSERT(key.role == FunctionRole::ValidatingParser || key.role == FunctionRole::Validator);
-    return ResultNodeRef::forValidation(ExpectedResultID(key.parameter), key.node);
+    RELEASE_ASSERT(key.role == FunctionRole::Parser);
+    return ResultNodeRef { TypeID(key.parameter) };
 }
 
 // The type that the users of a call ask of its result.
@@ -877,7 +518,7 @@ static Vector<TypeID, 4> collectRequestedTypes(const Program& program, const Fun
 
     // Flow asks about calls that are not resolved to a built-in yet, and those record no form.
     TypedResultForm form = typedResultFormOf(program, function.at(call));
-    Vector<FollowedValue, 4> worklist { { call, form != TypedResultForm::ParsedText && form != TypedResultForm::ValidatedValue } };
+    Vector<FollowedValue, 4> worklist { { call, form != TypedResultForm::ParsedText } };
     BitVector visited;
     visited.set(call.index());
 

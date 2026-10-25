@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
+#include "AOTBuiltinCalls.h"
 #include "AOTCFG.h"
 #include "AOTCheckCause.h"
 #include "AOTFlowReportInternal.h"
@@ -284,11 +286,57 @@ static AllocationKind allocationKindOf(const Program& program, const FlowResults
     return site.builtinClass ? allocationKindOf(site.builtinClass) : AllocationKind::Other;
 }
 
+static Vector<BuiltinID> findBuiltinsCalledDirectly(const Program& program, const ParallelLoops& loops)
+{
+    const BuiltinTable& builtins = program.builtins();
+    Vector<BuiltinID> called = collectInParallel<BuiltinID>(loops, program.functions.size(), [&](unsigned index, Vector<BuiltinID>& found) {
+        FunctionID id(index);
+        size_t firstOfFunction = found.size();
+        auto note = [&](BuiltinOverloadID overload) {
+            BuiltinID builtin = builtins.canonicalID(builtins.at(overload).builtin);
+            if (!std::ranges::contains(found.subspan(firstOfFunction), builtin))
+                found.append(builtin);
+        };
+        forEachListedValue(program, id, builtinCallOpcodes, [&](BlockID, uint32_t, ValueID, const Value& value) {
+            note(value.overload());
+        });
+        if (!mayEndBlockWith(program, id, { TerminatorKind::TryCallInline }))
+            return;
+        for (const Block& block : program.at(id).blocks) {
+            if (block.terminator.kind == TerminatorKind::TryCallInline)
+                note(block.terminator.overload());
+        }
+    });
+    AOT::sort(called);
+    removeRepeatedElements(called);
+    return called;
+}
+
+// A direct call has no way out but the ones its overload declares, so the code behind it has to be in the executable.
+static void countDirectCallsAsUses(const Program& program, std::span<const BuiltinID> called, FlowReport& report, BuildContext& build)
+{
+    const BuiltinTable& builtins = program.builtins();
+    for (BuiltinID builtin : called) {
+        if (!program.mayBeTrimmed(builtin))
+            continue;
+        if (isGuardedByRemovedFeature(builtins, builtin, build.options().removedFeatures)) {
+            build.diagnostics().add(InternalError { .kind = InternalErrorKind::CallsTrimmedBuiltin, .detail = builtins.textOf(builtin) });
+            continue;
+        }
+        report.featuresUsed.append(Wire::FeatureUseRecord { static_cast<uint32_t>(*guardOf(builtins, builtin)), builtin.index(), noWitness });
+        for (const BuiltinFeatureUse& line : builtins.featureUsesOf(builtin)) {
+            if (!line.condition && !line.isGuard)
+                report.featuresUsed.append(Wire::FeatureUseRecord { static_cast<uint32_t>(line.feature), builtin.index(), noWitness });
+        }
+    }
+}
+
 FlowReportBodyRecords collectFlowReportBodyRecords(const Program& program, BuildContext& build)
 {
     FlowReportBodyRecords records;
     runTasksInParallel(build.parallelLoops(), {
         [&] { records.typeTests = collectTypeTestRecords(program, build.parallelLoops()); },
+        [&] { records.builtinsCalledDirectly = findBuiltinsCalledDirectly(program, build.parallelLoops()); },
         [&] {
             if (program.form() == IRForm::AsRead)
                 records.remainingChecks = collectRemainingChecks(program, build);
@@ -306,6 +354,7 @@ FlowReport buildFlowReport(const Program& program, const FlowResults& flow, cons
     report.unseenCode.append(flow.loadsOfMachineCode());
     report.builtinsUsed = Vector<Wire::BuiltinUseRecord>(flow.builtinUses());
     report.featuresUsed = Vector<Wire::FeatureUseRecord>(flow.featureUses());
+    countDirectCallsAsUses(program, bodyRecords.builtinsCalledDirectly.span(), report, build);
     appendLocaleUses(program, flow, report);
     if (build.options().collectsAllocationRemarks()) {
         report.allocationSites = WTF::map(flow.allocationSites(), [&](const AllocationSite& site) {

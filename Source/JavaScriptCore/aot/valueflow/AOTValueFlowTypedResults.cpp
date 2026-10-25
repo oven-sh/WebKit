@@ -20,7 +20,6 @@
 #include "AOTStringArena.h"
 #include "AOTTypeArena.h"
 #include "AOTUseLists.h"
-#include "AOTValidationNodes.h"
 #include "AOTValueFlowPositions.h"
 #include "AOTValueFlowResultsInternal.h"
 #include "AOTValueFlowRules.h"
@@ -41,40 +40,7 @@ TypeID typedElementTypeOf(const Program& program, const ClassPart& array)
     return array.contentsAt(program.builtins(), ContentsSlot::Element);
 }
 
-bool placesLayoutsWhereTypesNameThem(const ExpectedResult& expected)
-{
-    return std::ranges::all_of(expected.validation, [](const ValidationNode& node) {
-        // No type leads to a node that only a rule names.
-        if (std::ranges::any_of(node.rules, namesNodes))
-            return false;
-
-        switch (node.shape.kind()) {
-        case ValidationShape::Kind::Tuple:
-        case ValidationShape::Kind::Dictionary:
-            return false;
-        case ValidationShape::Kind::Object: {
-            const auto& object = node.shape.as<ValidationShape::Object>();
-            return object.layout && !object.undeclaredValue && std::ranges::all_of(object.members, [](const ValidationMember& member) {
-                return member.field.has_value();
-            });
-        }
-        case ValidationShape::Kind::Unknown:
-        case ValidationShape::Kind::Never:
-        case ValidationShape::Kind::Undefined:
-        case ValidationShape::Kind::Null:
-        case ValidationShape::Kind::AnyObject:
-        case ValidationShape::Kind::Primitive:
-        case ValidationShape::Kind::BooleanLiteral:
-        case ValidationShape::Kind::NumberLiteral:
-        case ValidationShape::Kind::StringLiteral:
-        case ValidationShape::Kind::Array:
-        case ValidationShape::Kind::Union:
-            return true;
-        }
-    });
-}
-
-void followTypes(const Program& program, ValueFlowTypedResult& result, bool layoutsStandOnlyWhereTypesNameThem)
+void followTypes(const Program& program, ValueFlowTypedResult& result)
 {
     HashSet<TypeID> visitedTypes;
     BitVector isNamed(result.layouts.size());
@@ -107,7 +73,7 @@ void followTypes(const Program& program, ValueFlowTypedResult& result, bool layo
     AOT::sort(result.typesWithArrays);
 
     for (size_t index = 0; index < result.layouts.size(); ++index) {
-        if (!layoutsStandOnlyWhereTypesNameThem || !isNamed.get(index))
+        if (!isNamed.get(index))
             result.layoutsAmongPlainData.append(result.layouts[index]);
     }
 }
@@ -119,21 +85,20 @@ bool answersPromise(const BuiltinTable& builtins, const BuiltinOverload& overloa
     });
 }
 
-} // anonymous namespace
-
 ValueFlowTypedResult typedResultOf(const Program& program, ExpectedResultID id, uint64_t mostObjects)
 {
     const ExpectedResult& expected = program.at(id);
     ValueFlowTypedResult result;
     result.type = expected.type;
-    result.isValidated = !expected.validation.isEmpty();
     result.layouts.appendRange(expected.layouts.begin(), expected.layouts.end());
     AOT::sort(result.layouts);
     result.layouts.shrink(std::ranges::unique(result.layouts).begin() - result.layouts.begin());
     if (result.type && result.numberOfObjects() <= mostObjects)
-        followTypes(program, result, placesLayoutsWhereTypesNameThem(expected));
+        followTypes(program, result);
     return result;
 }
+
+} // anonymous namespace
 
 static ValueFlowTypedResult findTypedResult(const Program& program, const ValueFlowBuiltinTables& tables, const Function& function, const UseLists& uses, ValueID call)
 {
@@ -150,7 +115,7 @@ static ValueFlowTypedResult findTypedResult(const Program& program, const ValueF
         result.type = target.type;
         result.layouts = WTF::move(target.layouts);
         if (result.type && result.numberOfObjects() <= mostObjects)
-            followTypes(program, result, true);
+            followTypes(program, result);
     }
     if (!result.type || result.numberOfObjects() > mostObjects)
         return { };
@@ -168,18 +133,12 @@ static bool mayCallFunctionWithTypedResult(const Program& program, const ValueFl
     return callee.opcode == Opcode::Builtin && tables.hasTypedResult(callee.builtin());
 }
 
-static bool isValidated(const Program& program, const Value& call)
-{
-    ExpectedResultID expected = call.expectedResult();
-    return expected && !program.at(expected).validation.isEmpty();
-}
-
 void appendSitesOfTypedResults(const Program& program, const ValueFlowBuiltinTables& tables, const Function& function, const CFG& cfg, Vector<ValueFlowSite>& sites)
 {
     BitVector candidates;
     for (uint32_t index = 0; index < function.values.size(); ++index) {
         const Value& value = function.values[index];
-        if (value.opcode == Opcode::Call && (isValidated(program, value) || mayCallFunctionWithTypedResult(program, tables, function, value)))
+        if (value.opcode == Opcode::Call && mayCallFunctionWithTypedResult(program, tables, function, value))
             candidates.set(index);
     }
     if (candidates.isEmpty())
@@ -207,29 +166,9 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
     const ValueFlowUniverse& universe = context.universe();
     const Function& function = program.at(call.function);
     ExpectedResultID expected = function.at(call.site).expectedResult();
-    bool isValidated = expected && !program.at(expected).validation.isEmpty();
-    bool hasObjects = !!universe.siteObject(call, ValueFlowTypedResult::firstOrdinal);
     TypedResultForm form = overload.result.typedResultForm;
-    bool parses = form == TypedResultForm::ParsedText || form == TypedResultForm::ParsedBody || form == TypedResultForm::Rows;
-    if (!isValidated && !(hasObjects && parses))
+    if (form == TypedResultForm::None || !universe.siteObject(call, ValueFlowTypedResult::firstOrdinal))
         return;
-
-    for (BuiltinID helper : { Builtins::CompilerHelpersValidateByPlan, Builtins::CompilerHelpersInterpretNode, Builtins::CompilerHelpersHoldsRule, Builtins::CompilerHelpersCountCodePoints, Builtins::CompilerHelpersCopyOwnProperties })
-        context.use(helper, BuiltinUse::Called);
-
-    auto letArgumentsEscape = [&] {
-        for (const ValueFlowOperand& argument : description.arguments)
-            context.connect(argument, ValueFlowProgramNodes::escaped());
-        context.connect(description.laterArguments, ValueFlowProgramNodes::escaped());
-        context.connect(description.otherArguments, ValueFlowProgramNodes::escaped());
-    };
-
-    if (!hasObjects) {
-        if (description.result)
-            context.add(description.result, unknownValue(context, ValueFlowUnknownSource::DataFromOutside));
-        letArgumentsEscape();
-        return;
-    }
 
     ValueFlowNodeID target = description.result;
     if (!expected && form != TypedResultForm::ParsedText && answersPromise(program.builtins(), overload)) {
@@ -241,8 +180,6 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
     CFG cfg(function);
     ValueFlowTypedResult result = findTypedResult(program, universe.builtinTables(), function, UseLists(function, cfg), call.site);
     RELEASE_ASSERT(result);
-    if (!parses)
-        plainDataOfCall = { };
 
     auto objectAt = [&](uint32_t ordinal) {
         ValueFlowObjectID object = universe.siteObject(call, ordinal);
@@ -331,9 +268,6 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
     }
     if (target)
         context.add(target, valueOf(result.type));
-
-    if (isValidated && !parses)
-        letArgumentsEscape();
 }
 
 void computeTypedResultResults(const ValueFlowResultInputs& inputs, FlowResultTables& tables)

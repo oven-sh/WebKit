@@ -45,23 +45,19 @@
 # CHECK-NEXT: v7:{{*}}= PropGetPair v0 key="x" secondKey="y" siteCache=23
 # CHECK-NEXT: v8:{{*}}= CallMethod v0 key="m" siteCache=24
 # CHECK-NEXT: v9:{{*}}= IsSlotFilled v1 key="x" receivers=[L0] level=Proven fieldAccess=25
-# CHECK-NEXT: Branch v9 -> taken b1(| 0), notTaken b5()
+# CHECK-NEXT: Branch v9 -> taken b1(| 0), notTaken b4()
 # CHECK-NEXT: b1(v10:{{*}}):
 # CHECK-NEXT: v11:{{*}}= GetSlot v1, v10 key="x" receivers=[L0] level=Proven fieldAccess=26
 # CHECK-NEXT: v12:{{*}}= IsNotFrozen v1
-# CHECK-NEXT: Branch v12 -> taken b2(| 0), notTaken b5()
+# CHECK-NEXT: Branch v12 -> taken b2(| 0), notTaken b4()
 # CHECK-NEXT: b2(v13:{{*}}):
 # CHECK-NEXT: PutSlot v1, v13, v0 key="x" receivers=[L0] level=Proven fieldAccess=27
 # CHECK-NEXT: PutSlotOrAdd v1, v13, v0 key="x" receivers=[L0] level=Proven fieldAccess=28
-# CHECK-NEXT: v16:{{*}}= IsPlainDataObject v3
-# CHECK-NEXT: Branch v16 -> taken b3(| 0), notTaken b5()
-# CHECK-NEXT: b3(v17:{{*}}):
-# CHECK-NEXT: v18:{{*}}= CloneAs v3, v17, v0, v2 layout=L0 fields=[0, 1] request=29
-# CHECK-NEXT: v19:{{*}}= PropGetAndTest v0 key="x" siteCache=30
-# CHECK-NEXT: TestAndBranch v19 -> taken b4(), notTaken b5()
+# CHECK-NEXT: v16:{{*}}= PropGetAndTest v0 key="x" siteCache=29
+# CHECK-NEXT: TestAndBranch v16 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Return v11
 # CHECK-NEXT: b4():
-# CHECK-NEXT: Return v18
-# CHECK-NEXT: b5():
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
 # CHECK-NEXT: function f3 name="conversions" module=m0 thisType={type=anything} parameters=[{type=number}, {type=int}, {type=i32}, {type=string}] results=[{type=anything}]
@@ -120,23 +116,19 @@ function f2 name="accesses" module=m0 thisType={type=anything} parameters=[{type
     v7 = PropGetPair v0 key="x" secondKey="y" siteCache=23
     v8 = CallMethod v0 key="m" siteCache=24
     v9 = IsSlotFilled v1 key="x" receivers=[L0] level=Proven fieldAccess=25
-    Branch v9 -> taken b1(| 0), notTaken b5()
+    Branch v9 -> taken b1(| 0), notTaken b4()
   b1(v10):
     v11 = GetSlot v1, v10 key="x" receivers=[L0] level=Proven fieldAccess=26
     v12 = IsNotFrozen v1
-    Branch v12 -> taken b2(| 0), notTaken b5()
+    Branch v12 -> taken b2(| 0), notTaken b4()
   b2(v13):
     PutSlot v1, v13, v0 key="x" receivers=[L0] level=Proven fieldAccess=27
     PutSlotOrAdd v1, v13, v0 key="x" receivers=[L0] level=Proven fieldAccess=28
-    v16 = IsPlainDataObject v3
-    Branch v16 -> taken b3(| 0), notTaken b5()
-  b3(v17):
-    v18 = CloneAs v3, v17, v0, v2 layout=L0 fields=[0, 1] request=29
-    v19 = PropGetAndTest v0 key="x" siteCache=30
-    TestAndBranch v19 -> taken b4(), notTaken b5()
+    v16 = PropGetAndTest v0 key="x" siteCache=29
+    TestAndBranch v16 -> taken b3(), notTaken b4()
+  b3():
+    Return v11
   b4():
-    Return v18
-  b5():
     Return
 }
 function f3 name="conversions" module=m0 thisType={type=anything} parameters=[{type=number}, {type=int}, {type=i32}, {type=string}] results=[{type=anything}] {

@@ -18,14 +18,6 @@ namespace JSC { namespace AOT { namespace Typed {
 // Who writes zero into every byte of a fresh cell behind its header, or behind its words.
 enum class ZeroedBy : uint8_t { Nobody, Stub, CodeInLine };
 
-class PlaceInCell;
-
-class WholeCell {
-private:
-    friend class PlaceInCell;
-    WholeCell() = default;
-};
-
 class CellAllocationEmitter final : public OperationEmitter {
 public:
     explicit CellAllocationEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
@@ -41,15 +33,11 @@ public:
     CellPointer allocateObject(InlineAllocation, LBasicBlock slowPath);
     Pointer allocationSiteRecord(AllocationID);
     // By the stub, in code of every shape: in line it is 130 bytes a site, eleven by the stub, and no faster where the code around it has to be fetched.
-    CellPointer allocate(const OperationContext&, AllocationID, WholeCell, ZeroedBy = ZeroedBy::Nobody);
-    CellPointer allocateCellOfBothObjects(const OperationContext&, const PlaceInCell&);
-    CellPointer allocateZeroedByNumber(const OperationContext&, Word32 numberOfAllocation, WholeCell);
+    CellPointer allocate(const OperationContext&, AllocationID, ZeroedBy = ZeroedBy::Nobody);
+    CellPointer allocateZeroedByNumber(const OperationContext&, Word32 numberOfAllocation);
     // Sixteen bytes of zero take one store. Somebody writes them where that takes no more instructions than the stores of zero that the caller then leaves out.
     ZeroedBy whoZeroesBody(const OperationContext&, AllocationID, unsigned storesOfZero) const;
-    // For a cell that lies in the cell of another allocation, behind that allocation: whoever fills the record of that one has filled this one, unless a class constructs the cell: then the code asks in front of the allocation.
-    void copyHeaderAndWords(AllocationID, CellPointer);
-    void ensureRecordIsFilled(const OperationContext&, AllocationID);
-    CellPointer allocateObjectCopy(const OperationContext&, AllocationID, WholeCell, CellPointer source, unsigned fieldBytes);
+    CellPointer allocateObjectCopy(const OperationContext&, AllocationID, CellPointer source, unsigned fieldBytes);
     CellPointer allocateInFrame(size_t size);
 
     // The elements below the length are the caller's to store before anything can collect.
@@ -60,16 +48,8 @@ public:
     CellPointer newArrayInFrameFromBuffer(const OperationContext&, Word32 count, Pointer buffer, unsigned capacity);
 
 private:
-    CellPointer allocateWithoutPlace(const OperationContext&, AllocationID, ZeroedBy);
-    // The record lies at distances + distance - sizeof(AllocationSiteRecord). Kept apart, the two fold into the address of every access.
-    struct AllocationSiteAddress {
-        Pointer distances;
-        Integer distance;
-    };
-
     std::pair<CellPointer, Pointer> allocateArrayInFrame(Word32 length, unsigned capacity, LBasicBlock isOnHeap);
     void copyFromBuffer(Word32 count, Pointer buffer, Pointer butterfly, LBasicBlock copyLoop, LBasicBlock copyElement, LBasicBlock copied);
-    AllocationSiteAddress allocationSiteAddress(AllocationID);
     void zeroBody(CellPointer, AllocationID);
 };
 

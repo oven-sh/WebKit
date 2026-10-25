@@ -1338,6 +1338,9 @@ static void replaceUnobservedDefinitions(const ValueFlowResultInputs& inputs, co
         const UnobservedFieldDefinition& definition = definitions[index];
         if (!inputs.isReached(definition.initializer) || std::ranges::all_of(fieldsDefined[index], holdsUndefined))
             continue;
+        ValueFlowNodeID defined = inputs.bodies().nodes().valueOfUnobservedDefinitions(definition.initializer);
+        if (defined && !inputs.sets().isEmpty(inputs.solver().valueOf(defined)))
+            continue;
         ScratchTypeArena scratch(types);
         Type common = types.at(typeOf(fieldsDefined[index].first()));
         for (FieldReference reference : fieldsDefined[index].span().subspan(1))

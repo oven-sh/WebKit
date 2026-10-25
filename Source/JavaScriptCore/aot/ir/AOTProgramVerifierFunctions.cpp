@@ -214,7 +214,6 @@ bool ProgramVerifier::isValidCreatorRecord(FunctionID id, const Function& functi
         [&](const CreatorRecord::EntryChecks& record) { return record.body && record.fallback; },
         [&](const CreatorRecord::Serializer& record) { return isNullOrObjectLayout(m_program, record.layout); },
         [&](const CreatorRecord::Parser& record) { return record.type && isNullOrObjectLayout(m_program, record.layout); },
-        [&](const CreatorRecord::Validator& record) { return record.type && isNullOrObjectLayout(m_program, record.layout); },
         [](const CreatorRecord::ChainStep&) { return true; },
         [&](const CreatorRecord::StubBody& record) {
             const BuiltinTable& builtins = m_program.builtins();

@@ -85,15 +85,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRegExpTest, size_t, (Instance* instance, JS
     OPERATION_RETURN(scope, testRegExp(globalObject, vm, cellArgument<RegExpObject>(regExp, Entry::operationAOTRegExpTest), cellArgument<JSString>(string, Entry::operationAOTRegExpTest)));
 }
 
-// What test answers for a RegExp without the flags g and y. RegExp.$1 and its like stay what the last match of the program made them.
-JSC_DEFINE_JIT_OPERATION(operationAOTMatchesUnrecorded, size_t, (Instance* instance, JSCell* regExp, JSCell* string))
-{
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTMatchesUnrecorded);
-    auto input = cellArgument<JSString>(string, Entry::operationAOTMatchesUnrecorded)->view(globalObject);
-    OPERATION_RETURN_IF_EXCEPTION(scope, false);
-    OPERATION_RETURN(scope, !!cellArgument<RegExpObject>(regExp, Entry::operationAOTMatchesUnrecorded)->regExp()->matchInline<Yarr::MatchFrom::VMThread>(globalObject, vm, input, 0));
-}
-
 static bool findMatch(JSGlobalObject* globalObject, VM& vm, RegExpObject* object, JSString* string)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);

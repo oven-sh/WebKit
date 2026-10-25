@@ -246,9 +246,7 @@ FieldMovePlanCache::~FieldMovePlanCache() = default;
 
 static unsigned hashOfFieldMovePlanKey(const FieldMovePlanKey& key)
 {
-    uint64_t words = key.sourceWords * 0x9e3779b97f4a7c15ull ^ std::rotl(key.targetWords * 0xc2b2ae3d27d4eb4full, 31) ^ std::bit_cast<uintptr_t>(key.sourceStructure) ^ static_cast<uint64_t>(key.purpose) << 56;
-    if (!key.replacedFields.isEmpty())
-        words ^= key.replacedFields.hash();
+    uint64_t words = key.sourceWords * 0x9e3779b97f4a7c15ull ^ std::rotl(key.targetWords * 0xc2b2ae3d27d4eb4full, 31) ^ std::bit_cast<uintptr_t>(key.sourceStructure);
     return static_cast<unsigned>(words >> 32 ^ words);
 }
 
@@ -260,15 +258,14 @@ FieldMovePlanCache::Set& FieldMovePlanCache::setFor(const FieldMovePlanKey& key)
 
 const FieldMovePlan* FieldMovePlanCache::find(const FieldMovePlanKey& key)
 {
-    ASSERT(key.purpose != FieldMovePlanPurpose::Forgotten);
-    const Entry*& lastFound = m_lastFound[static_cast<size_t>(key.purpose)];
-    if (lastFound && lastFound->key == key)
-        return lastFound->plan.get();
+    ASSERT(!key.isForgotten);
+    if (m_lastFound && m_lastFound->key == key)
+        return m_lastFound->plan.get();
     if (!m_sets)
         return nullptr;
     for (auto& way : setFor(key).ways) {
         if (way && way->key == key) {
-            lastFound = way.get();
+            m_lastFound = way.get();
             return way->plan.get();
         }
     }
@@ -280,10 +277,10 @@ const FieldMovePlan& FieldMovePlanCache::add(VM& vm, FieldMovePlanKey&& key, std
     ASSERT(plan);
     if (!m_sets)
         m_sets = makeUniqueWithoutFastMallocCheck<Sets>();
-    m_lastFound.fill(nullptr);
+    m_lastFound = nullptr;
     Set& set = setFor(key);
     auto way = std::ranges::find_if(set.ways, [](auto& candidate) {
-        return !candidate || candidate->key.purpose == FieldMovePlanPurpose::Forgotten;
+        return !candidate || candidate->key.isForgotten;
     });
     if (way == set.ways.end())
         way = set.ways.begin() + set.nextVictim++ % waysPerSet;
@@ -300,12 +297,12 @@ size_t FieldMovePlanCache::removeDeadEntries(VM& vm, CollectionScope scope)
         return structureOrNull && !vm.heap.isMarked(structureOrNull);
     };
     m_writes.forEachRegionToSweep(scope, [&](size_t, size_t) {
-        m_lastFound.fill(nullptr);
+        m_lastFound = nullptr;
         for (Set& set : *m_sets) {
             for (auto& way : set.ways) {
                 if (!way || (!isDead(way->key.sourceStructure) && !isDead(way->plan->structure)))
                     continue;
-                way->key.purpose = FieldMovePlanPurpose::Forgotten;
+                way->key.isForgotten = true;
                 way->key.sourceStructure = nullptr;
                 way->plan->structure = nullptr;
                 ++removed;
@@ -315,75 +312,6 @@ size_t FieldMovePlanCache::removeDeadEntries(VM& vm, CollectionScope scope)
     return removed;
 }
 
-static std::unique_ptr<FieldMovePlan> createCloneAsPlan(VM& vm, State& state, Structure* structure, const LayoutData& layout, const BitVector& replaced)
-{
-    auto plan = makeUnique<FieldMovePlan>();
-    RuntimeLayoutTable& layouts = state.objects->layouts;
-    Vector<UniquedStringImpl*, 16> names;
-    BitVector present;
-    structure->forEachProperty(vm, [&](const auto& entry) {
-        const FieldData* field = layouts.field(vm, layout, entry.key());
-        uint16_t index = field ? layout.indexOf(*field) : layout.numberOfFields;
-        present.set(index);
-        names.append(entry.key());
-        plan->clonedMembers.append({ entry.offset(), index });
-        return true;
-    });
-    for (size_t index : replaced) {
-        if (present.get(index))
-            continue;
-        names.append(layouts.nameOf(vm, layout.fields()[index]));
-        plan->clonedMembers.append({ invalidOffset, static_cast<uint16_t>(index) });
-    }
-    plan->builder = ObjectBuilder::tryCreatePlan(state, layout, names.span());
-    return plan;
-}
-
-Object* tryCloneAs(VM& vm, JSObject* source, const LayoutData& layout, std::span<const EncodedJSValue> replacedFields)
-{
-    RELEASE_ASSERT(replacedFields.size() == layout.numberOfFields);
-    if (!isPlainDataObject(source))
-        return nullptr;
-    Structure* structure = source->structure();
-    Instance* instance = Instance::of(structure->realm());
-    if (!instance)
-        return nullptr;
-    State& state = *instance->state;
-    RuntimeLayoutTable& layouts = state.objects->layouts;
-    if (!layouts.hasLayoutForShape(layout.shape) || &layouts.layoutForShape(layout.shape) != &layout)
-        return nullptr;
-
-    FieldMovePlanKey key { FieldMovePlanPurpose::CloneAs };
-    key.targetWords = static_cast<uint64_t>(shapeWordOf(layout.shape)) << 32;
-    key.sourceStructure = structure;
-    for (uint32_t i = 0; i < layout.numberOfFields; ++i) {
-        if (JSValue::decode(replacedFields[i]))
-            key.replacedFields.set(i);
-    }
-    DeferGC deferGC(vm);
-    FieldMovePlanCache& plans = state.objects->caches->movePlans;
-    const FieldMovePlan* plan = plans.find(key);
-    if (!plan) {
-        auto created = createCloneAsPlan(vm, state, structure, layout, key.replacedFields);
-        plan = &plans.add(vm, WTF::move(key), WTF::move(created));
-    }
-    if (!plan->builder)
-        return nullptr;
-    ObjectBuilder builder(vm, *plan->builder);
-    unsigned index = 0;
-    for (auto [from, field] : plan->clonedMembers) {
-        JSValue replacement = field < layout.numberOfFields ? JSValue::decode(replacedFields[field]) : JSValue();
-        if (!builder.tryStore(index++, replacement ? replacement : source->getDirect(from)))
-            return nullptr;
-    }
-    JSObject* created = builder.finish();
-    if (!created)
-        return nullptr;
-    Object* object = uncheckedDowncast<Object>(created);
-    object->tryFinishBirth();
-    return object;
-}
-
 JSFinalObject* tryCopyAsOrdinaryObject(VM& vm, JSGlobalObject* realm, JSObject* source, ExcludedRun excluded)
 {
     Instance* instance = Instance::of(realm);
@@ -391,8 +319,7 @@ JSFinalObject* tryCopyAsOrdinaryObject(VM& vm, JSGlobalObject* realm, JSObject* 
         return nullptr;
     State& state = *instance->state;
     Object* compiled = compiledObjectOrNull(source);
-    FieldMovePlanKey key { FieldMovePlanPurpose::CopyAsOrdinaryObject };
-    key.targetWords = excluded.numberPlusOne;
+    FieldMovePlanKey key { .targetWords = excluded.numberPlusOne };
     if (compiled) {
         if (compiled->hasExtraProperties() || compiled->hasOutOfLineKeyOrder() || compiled->layout().keysAreNeverEnumerated)
             return nullptr;
@@ -414,24 +341,6 @@ JSFinalObject* tryCopyAsOrdinaryObject(VM& vm, JSGlobalObject* realm, JSObject* 
         compiled->materializeDeferredClosures(vm);
     JSFinalObject* copy = JSFinalObject::create(vm, plan->structure);
     return applyMovesToNewObject(vm, *plan, copy, source) ? copy : nullptr;
-}
-
-bool isPlainDataObject(JSValue value)
-{
-    if (!value.isCell() || value.asCell()->type() != FinalObjectType)
-        return false;
-    Structure* structure = value.asCell()->structure();
-    return !structure->hasPolyProto()
-        && structure->storedPrototype() == structure->realm()->objectPrototype()
-        && !hasIndexedProperties(structure->indexingType())
-        && !structure->isDictionary()
-        && structure->isStructureExtensible()
-        && !structure->hasAnyKindOfGetterSetterProperties()
-        && !structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto()
-        && !structure->hasNonEnumerableProperties()
-        && !structure->hasNonConfigurableProperties()
-        && !structure->hasUnderscoreProtoPropertyExcludingOriginalProto()
-        && structure->isQuickPropertyAccessAllowedForEnumeration();
 }
 
 } } // namespace JSC::AOT

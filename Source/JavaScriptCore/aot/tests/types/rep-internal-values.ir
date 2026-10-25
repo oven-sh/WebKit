@@ -22,7 +22,6 @@
 # CHECK-NEXT: guard: Void legal [Void]
 # CHECK-NEXT: flatstring: Cell legal [Cell, Cell32, JSValue]
 # CHECK-NEXT: codeaddress: RawWord legal [RawWord]
-# CHECK-NEXT: sourceplan: RawWord legal [RawWord]
 # CHECK-NEXT: buildercursor: RawWord legal [RawWord]
 # CHECK-NEXT: laws hold
 

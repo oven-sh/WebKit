@@ -153,8 +153,6 @@ EntryConvention entryConventionOf(const Function& callee)
     case FunctionRole::OutlinedBody:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
-    case FunctionRole::ValidatingParser:
-    case FunctionRole::Validator:
     case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         return EntryConvention::Direct;
@@ -866,8 +864,6 @@ static bool isEnteredBehindStackCheck(const Function& function, EntrySet entrySe
     case FunctionRole::OutlinedBody:
     case FunctionRole::Serializer:
     case FunctionRole::Parser:
-    case FunctionRole::ValidatingParser:
-    case FunctionRole::Validator:
     case FunctionRole::ChainStep:
     case FunctionRole::StubBody:
         return entrySet == EntrySet::DirectCallers && !function.creator.is<CreatorRecord::Entrypoint>();

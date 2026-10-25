@@ -415,7 +415,7 @@ void MarkedBlock::resetStaleMarks(HeapVersion markingVersion, HeapCell* cell)
             // stopAllocating() rebuilt m_newlyAllocated during this collection by setting
             // every cell not on the free list. Survivors are never on a free list, so
             // m_newlyAllocated already holds them.
-            ASSERT(hasInnerCells() || header().m_newlyAllocated.subsumes(header().m_marks));
+            ASSERT(header().m_newlyAllocated.subsumes(header().m_marks));
             header().m_marks.clearAll();
         } else {
             // m_newlyAllocated is stale, so stopAllocating() has not run on the block
@@ -499,21 +499,7 @@ void MarkedBlock::Handle::didConsumeFreeList()
 
 size_t MarkedBlock::markCount()
 {
-    if (areMarksStale())
-        return 0;
-    if (!hasInnerCells()) [[likely]]
-        return header().m_marks.count();
-    WTF::BitSet<atomsPerBlock> marks = header().m_marks;
-    clearBitsOfInnerCells(marks);
-    return marks.count();
-}
-
-void MarkedBlock::clearBitsOfInnerCells(WTF::BitSet<atomsPerBlock>& bits) const
-{
-    ASSERT(hasInnerCells());
-    WTF::BitSet<atomsPerBlock> outerCells;
-    outerCells.setEachNthBit(handle().m_atomsPerCell, handle().m_startAtom, endAtom);
-    bits.filter(outerCells);
+    return areMarksStale() ? 0 : header().m_marks.count();
 }
 
 void MarkedBlock::clearHasAnyMarked()
@@ -550,7 +536,6 @@ void MarkedBlock::Handle::didAddToDirectory(BlockDirectory* directory, unsigned 
     size_t cellSize = directory->cellSize();
     m_atomsPerCell = (cellSize + atomSize - 1) / atomSize;
     blockHeader().m_cellSize = static_cast<uint32_t>(m_atomsPerCell * atomSize);
-    blockHeader().m_hasInnerCells = directory->attributes().hasInnerCells;
 
     // Discount the payload atoms at the front so that m_startAtom can start on an atom such that
     // m_atomsPerCell increments from m_startAtom will get us exactly to endAtom when we have filled

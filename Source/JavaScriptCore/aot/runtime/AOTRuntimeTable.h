@@ -22,7 +22,6 @@
 namespace JSC {
 
 class JSGlobalObject;
-class JSMap;
 class Structure;
 
 namespace AOT {
@@ -223,9 +222,6 @@ private:
     Identifier m_nameOfApplyTrap;
     bool m_countsCalls { false };
 };
-
-// What the library that validates by a plan keeps of each plan, and the two functions of the engine that it calls. One for each global object.
-JS_EXPORT_PRIVATE JSMap* createPreparedPlans(JSGlobalObject*);
 
 } } // namespace JSC::AOT
 

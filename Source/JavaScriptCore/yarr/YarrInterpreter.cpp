@@ -2327,7 +2327,6 @@ public:
         DisjunctionContext* context = allocDisjunctionContext(pattern->m_body.get());
         if (!context) [[unlikely]] {
             m_result = JSRegExpResult::ErrorNoMemory;
-            pattern->noteSearchGivenUp();
             return offsetNoMatch;
         }
 
@@ -2338,8 +2337,7 @@ public:
         if (result == JSRegExpResult::Match) {
             output[0] = context->matchBegin;
             output[1] = context->matchEnd;
-        } else if (result != JSRegExpResult::NoMatch) [[unlikely]]
-            pattern->noteSearchGivenUp();
+        }
 
         freeDisjunctionContext(context);
 
@@ -3494,35 +3492,35 @@ static bool hasGivenUp(JSRegExpResult flatResult)
     return flatResult == JSRegExpResult::ErrorNoMemory || flatResult == JSRegExpResult::ErrorHitLimit || flatResult == JSRegExpResult::JITCodeFailure;
 }
 
-static JSRegExpResult searchBehindFlatProgram(BytecodePattern* bytecode, const FlatProgram& program, StringView input, unsigned start, unsigned* output, JSRegExpResult flatResult)
+static NEVER_INLINE unsigned interpretBehindFlatProgram(BytecodePattern* bytecode, const FlatProgram& program, StringView input, unsigned start, unsigned* output, JSRegExpResult flatResult)
 {
     if (flatResult == JSRegExpResult::JITCodeFailure) {
         flatResult = matchFlatProgramBehindSurrogate(program, input, start, output);
         if (!hasGivenUp(flatResult))
-            return flatResult;
+            return flatResult == JSRegExpResult::Match ? output[0] : offsetNoMatch;
     }
     if (flatResult == JSRegExpResult::ErrorHitLimit) {
         unsigned remainingTurns { 0 };
         if (auto result = matchCountingTurns(bytecode, input, start, output, remainingTurns))
-            return *result;
+            return *result == JSRegExpResult::Match ? output[0] : offsetNoMatch;
         if (program.jitCountsTurns) {
             // It has handed over early: see FlatMatchPolicy.
             flatResult = matchFlatProgramWithSurrogates(program, input, start, output, FlatMatchPolicy::RunsToMatchLimit);
             if (!hasGivenUp(flatResult))
-                return flatResult;
+                return flatResult == JSRegExpResult::Match ? output[0] : offsetNoMatch;
         }
     }
     if (!bytecode->m_body) {
         if (!bytecode->m_bytecodeBehindFlatProgram) {
             if (bytecode->m_source.isNull())
-                return JSRegExpResult::ErrorInternal;
+                return offsetNoMatch;
             ErrorCode errorCode { ErrorCode::NoError };
             YarrPattern pattern(bytecode->m_source, bytecode->m_flags, errorCode);
             if (hasError(errorCode))
-                return JSRegExpResult::ErrorInternal;
+                return offsetNoMatch;
             bytecode->m_bytecodeBehindFlatProgram = ByteCompiler(pattern).compile(bytecode->m_allocator, bytecode->m_lock, errorCode);
             if (!bytecode->m_bytecodeBehindFlatProgram)
-                return JSRegExpResult::ErrorInternal;
+                return offsetNoMatch;
             bytecode->m_bytecodeBehindFlatProgram->m_countsWhatJITCounts = true;
             bytecode->m_bytecodeBehindFlatProgram->m_requiredTexts = bytecode->m_requiredTexts;
         }
@@ -3530,18 +3528,7 @@ static JSRegExpResult searchBehindFlatProgram(BytecodePattern* bytecode, const F
     }
     JSRegExpResult result { JSRegExpResult::NoMatch };
     unsigned remainingTurns { 0 };
-    interpretBytecode(bytecode, input, start, output, result, remainingTurns);
-    return result;
-}
-
-static NEVER_INLINE unsigned interpretBehindFlatProgram(BytecodePattern* bytecode, const FlatProgram& program, StringView input, unsigned start, unsigned* output, JSRegExpResult flatResult)
-{
-    JSRegExpResult result = searchBehindFlatProgram(bytecode, program, input, start, output, flatResult);
-    if (result == JSRegExpResult::Match)
-        return output[0];
-    if (result != JSRegExpResult::NoMatch)
-        bytecode->noteSearchGivenUp();
-    return offsetNoMatch;
+    return interpretBytecode(bytecode, input, start, output, result, remainingTurns);
 }
 
 static NEVER_INLINE unsigned interpretFlatProgram(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)

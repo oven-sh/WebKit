@@ -28,15 +28,6 @@ struct NewClassRecord {
     friend void add(Hasher& hasher, const NewClassRecord& record) { add(hasher, record.classLayout); }
 };
 
-struct CloneAsRecord {
-    LayoutID layout;
-    uint32_t shape { 0 };
-    Vector<FieldIndex> fields;
-
-    friend bool operator==(const CloneAsRecord&, const CloneAsRecord&) = default;
-    friend void add(Hasher& hasher, const CloneAsRecord& record) { add(hasher, record.layout, record.shape, record.fields); }
-};
-
 struct TemplateObjectRecord {
     Vector<TemplateString> parts;
 
@@ -73,7 +64,7 @@ struct CollectionDataRecord {
     friend void add(Hasher& hasher, const CollectionDataRecord& record) { add(hasher, record.data, record.hasValues); }
 };
 
-using RequestRecord = Variant<NewClassRecord, CloneAsRecord, TemplateObjectRecord, DirectEvalRecord, DataRecord, CollectionDataRecord>;
+using RequestRecord = Variant<NewClassRecord, TemplateObjectRecord, DirectEvalRecord, DataRecord, CollectionDataRecord>;
 
 JS_EXPORT_PRIVATE uint32_t sizeInBytesOf(const Program&, const RequestRecord&);
 

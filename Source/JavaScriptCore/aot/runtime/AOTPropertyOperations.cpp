@@ -285,22 +285,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTScopeHasBinding, size_t, (Instance* instanc
     OPERATION_RETURN(scope, !blocked.toBoolean(globalObject));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetOwnDataProperty, EncodedJSValue, (Instance* instance, JSCell* cell, uint32_t key))
-{
-    constexpr Entry entry = Entry::operationAOTGetOwnDataProperty;
-    AOT_OPERATION_BEGIN(instance, entry);
-    DeferGCForAWhile deferGC(vm);
-    JSObject* object = cellArgument<JSObject>(cell, entry);
-    const Identifier& name = identifierAt(instance, key);
-    unsigned attributes = 0;
-    JSValue value;
-    if (std::optional<uint32_t> index = indexNamedBy(key, name))
-        value = object->tryGetIndexQuickly(*index);
-    else
-        value = isCompiledObject(object) ? Object::tryGetOwnDataProperty(vm, object, name) : object->getDirect(vm, name, attributes);
-    OPERATION_RETURN(scope, JSValue::encode(value && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) ? value : jsUndefined()));
-}
-
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewDictionary, JSCell*, (Instance* instance, uint32_t inlineCapacity))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewDictionary);

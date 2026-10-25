@@ -18,10 +18,6 @@
 #include "AOTSlotPlanSteps.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
-#include "IndexingHeader.h"
-#include "JSArray.h"
-#include "MarkedBlock.h"
-#include "MarkedSpace.h"
 #include <algorithm>
 #include <array>
 #include <iterator>
@@ -193,47 +189,6 @@ static Vector<PlannedLayout> createPlannedLayouts(const SlotPlanContext& context
     return layouts;
 }
 
-static bool fitInOneCell(const SlotPlanContext& context, uint32_t sizeOfOuter, uint32_t sizeOfInner)
-{
-    size_t together = context.sizeClasses.cellSizeFor(sizeOfOuter + sizeOfInner);
-    return together <= MarkedSpace::largeCutoff && together <= context.sizeClasses.cellSizeFor(sizeOfOuter) + context.sizeClasses.cellSizeFor(sizeOfInner);
-}
-
-static uint32_t sizeOfInnerArray(uint32_t capacity)
-{
-    return roundUpToMultipleOf<MarkedBlock::atomSize>(sizeof(JSArray) + sizeof(IndexingHeader) + capacity * sizeof(EncodedJSValue));
-}
-
-static void placeInnerObjects(const SlotPlanContext& context, Vector<PlannedLayout>& layouts)
-{
-    uint64_t numberOfOuterLayouts = 0;
-    for (uint32_t index = 0; index < layouts.size(); ++index) {
-        PlannedLayout& outer = layouts[index];
-        for (const InnerObject& inner : context.program.layouts[index].innerObjects) {
-            if (outer.storage != LayoutStorage::CompiledObject || outer.mayBeInnerObject)
-                continue;
-            if (inner.layout && (layouts[inner.layout.index()].storage != LayoutStorage::CompiledObject || !context.program.at(inner.layout).innerObjects.isEmpty()))
-                continue;
-            uint32_t size = inner.layout ? layouts[inner.layout.index()].size : sizeOfInnerArray(inner.arrayCapacity);
-            const PlacedSlot& slot = outer.slots[inner.field];
-            SlotValueKind valueKind = traitsOf(slot.representation).valueKind;
-            if (slot.storage != SlotStorage::Inline || (valueKind != SlotValueKind::Cell && valueKind != SlotValueKind::Boxed))
-                continue;
-            static_assert(MarkedBlock::atomSize == 16);
-            ASSERT(!(outer.size % MarkedBlock::atomSize) && !(size % MarkedBlock::atomSize));
-            uint32_t offset = outer.innerObjects.isEmpty() ? outer.size : outer.sizeWithInnerObjects;
-            if (!fitInOneCell(context, offset, size))
-                continue;
-            outer.innerObjects.append({ inner.field, inner.layout, inner.arrayCapacity, offset, inner.isAlwaysInPlace });
-            outer.sizeWithInnerObjects = offset + size;
-            if (inner.layout)
-                layouts[inner.layout.index()].mayBeInnerObject = true;
-        }
-        numberOfOuterLayouts += !outer.innerObjects.isEmpty();
-    }
-    context.build.statistics().count(StatisticID::LayoutsWithInnerObjects, numberOfOuterLayouts);
-}
-
 static Vector<PlannedLayout> planLayouts(const SlotPlanContext& context, const SlotUses& uses, PhaseTimes& times)
 {
     auto finishStep = [&](ASCIILiteral name) {
@@ -265,7 +220,6 @@ static Vector<PlannedLayout> planLayouts(const SlotPlanContext& context, const S
         return { };
 
     Vector<PlannedLayout> layouts = createPlannedLayouts(context, WTF::move(packed));
-    placeInnerObjects(context, layouts);
     times.didFinish("createPlannedLayouts"_s);
     return layouts;
 }

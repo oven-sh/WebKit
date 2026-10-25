@@ -11,10 +11,9 @@
 #include "AOTExpandOwnKeysOrders.h"
 #include "AOTFlowResults.h"
 #include "AOTRemoveUnreadFields.h"
+#include "AOTSelectTypedResultsNodes.h"
 #include "AOTSort.h"
-#include "AOTValidatorBuilder.h"
 #include <algorithm>
-#include <cmath>
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -39,52 +38,6 @@ static TypeID valueTypeOf(const EmissionInputs& inputs, const ResultNode& node)
     return inputs.types.intern(testableTypeOf(inputs.program, node).withPrimitives(Primitive::Undefined));
 }
 
-static Type typeOfLiteral(const ResultLiteral& literal)
-{
-    switch (literal.kind) {
-    case ResultLiteral::Kind::Null:
-        return Type::fromPrimitives(Primitive::Null);
-    case ResultLiteral::Kind::Boolean:
-        return Type::fromPrimitives(literal.boolean ? Primitive::True : Primitive::False);
-    case ResultLiteral::Kind::Number:
-        return Type::number(literal.number);
-    case ResultLiteral::Kind::String:
-        return Type::stringLiteral(literal.string);
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static bool hasShapeOf(const ResultNode& node, const ResultLiteral& literal)
-{
-    switch (node.shape) {
-    case ResultShape::Unknown:
-        return true;
-    case ResultShape::Null:
-        return literal.kind == ResultLiteral::Kind::Null;
-    case ResultShape::String:
-        return literal.kind == ResultLiteral::Kind::String;
-    case ResultShape::Number:
-        return literal.kind == ResultLiteral::Kind::Number && std::isfinite(literal.number);
-    case ResultShape::Boolean:
-        return literal.kind == ResultLiteral::Kind::Boolean;
-    case ResultShape::BooleanLiteral:
-    case ResultShape::NumberLiteral:
-    case ResultShape::StringLiteral:
-        return node.literal == literal;
-    case ResultShape::Never:
-    case ResultShape::Undefined:
-    case ResultShape::AnyObject:
-    case ResultShape::BigInt:
-    case ResultShape::Array:
-    case ResultShape::Tuple:
-    case ResultShape::Dictionary:
-    case ResultShape::Object:
-    case ResultShape::Union:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 namespace {
 
 struct JSONParserBuilder final : Emission {
@@ -105,7 +58,7 @@ struct JSONParserBuilder final : Emission {
         ParsedValue merged;
     };
 
-    enum class MissingMember : uint8_t { Absent, Rejected, Default, Unknown };
+    enum class MissingMember : uint8_t { Absent, Rejected, Unknown };
 
     struct MemberParse {
         const ResultMember* member { nullptr };
@@ -252,15 +205,15 @@ struct JSONParserBuilder final : Emission {
     ParsedValue emitNode(ResultNodeRef ref, ValueID cursor, const ParseExits& exits)
     {
         ResultNode node = describeNode(program(), ref);
-        NodeDecision decision = decideNodeCode(decisionInputs(), ref, NodeUse::ParsedFromText);
+        NodeDecision decision = decideNodeCode(decisionInputs(), ref);
         switch (decision.code) {
         case NodeCode::Interpreted:
             addInterpretedNodeDecline(decisionInputs(), firstLayoutOf(program(), ref), decision.cause);
-            return emitGenericValueFor(ref, node, cursor, exits);
+            return emitGenericValueFor(node, cursor, exits);
         case NodeCode::Compiled:
             break;
         }
-        bool hasOwnFunction = node.isContainer() && (ref.isValidated() || !ref.part);
+        bool hasOwnFunction = node.isContainer() && !ref.part;
         if (!hasOwnFunction)
             return emitNodeBody(ref, cursor, exits);
 
@@ -275,17 +228,16 @@ struct JSONParserBuilder final : Emission {
     ParsedValue emitNodeOrGenericValue(ResultNodeRef ref, ValueID cursor, const ParseExits& exits)
     {
         ResultNode node = describeNode(program(), ref);
-        bool fastPathOfValidationCanMiss = node.shape == ResultShape::Number || node.shape == ResultShape::NumberLiteral || node.isContainer();
-        bool canMiss = ref.isValidated() ? fastPathOfValidationCanMiss : node.shape != ResultShape::Unknown;
-        if (!canMiss || decideNodeCode(decisionInputs(), ref, NodeUse::ParsedFromText).code == NodeCode::Interpreted)
+        bool canMiss = node.shape != ResultShape::Unknown;
+        if (!canMiss || decideNodeCode(decisionInputs(), ref).code == NodeCode::Interpreted)
             return emitNode(ref, cursor, exits);
 
         BlockID again = builder().addBlock(BlockFrequency::Rare);
         ValueMerge merge = createMerge(valueTypeOf(inputs(), node));
-        jumpTo(merge, emitNode(ref, cursor, { ref.isValidated() ? exits.rejected : again, again }));
+        jumpTo(merge, emitNode(ref, cursor, { again, again }));
 
         builder().moveToEndOf(again);
-        jumpTo(merge, emitGenericValueFor(ref, node, cursor, exits));
+        jumpTo(merge, emitGenericValueFor(node, cursor, exits));
         return continueAt(merge);
     }
 
@@ -294,19 +246,6 @@ struct JSONParserBuilder final : Emission {
         ResultNode node = describeNode(program(), ref);
         ParsedValue parsed;
         switch (node.shape) {
-        case ResultShape::Never:
-        case ResultShape::Undefined:
-        case ResultShape::BigInt:
-            return emitArmsInOrder({ }, cursor, exits);
-        case ResultShape::AnyObject: {
-            BlockID isOpened = builder().addBlock();
-            BlockID isNotBrace = builder().addBlock();
-            emitBranchOnByte(cursor, '{', isOpened, isNotBrace);
-            builder().moveToEndOf(isNotBrace);
-            emitBranchOnByte(cursor, '[', isOpened, exits.rejected);
-            builder().moveToEndOf(isOpened);
-            [[fallthrough]];
-        }
         case ResultShape::Unknown:
             parsed = emitParse(Opcode::JSONParseValue, cursor, exits.unknown);
             break;
@@ -330,43 +269,26 @@ struct JSONParserBuilder final : Emission {
             break;
         case ResultShape::Null:
         case ResultShape::BooleanLiteral:
-        case ResultShape::NumberLiteral:
         case ResultShape::StringLiteral:
             parsed = emitLiteral(node.literal, cursor, exits);
-            break;
-        case ResultShape::Tuple:
-            parsed = emitTuple(node, cursor, exits);
             break;
         case ResultShape::Array:
             parsed = emitArray(node, cursor, exits);
             break;
-        case ResultShape::Dictionary:
-            emitRequireByte(cursor, '{', exits.rejected);
-            parsed = emitGenericValueFor(ref, node, cursor, exits);
-            break;
         case ResultShape::Object:
-            parsed = emitObject(ref, node, cursor, exits);
+            parsed = emitObject(node, cursor, exits);
             break;
         case ResultShape::Union:
             parsed = emitUnion(node, cursor, exits);
             break;
         }
-        // The other containers test their rules themselves, or leave them to the validator.
-        if (!node.isContainer() || node.shape == ResultShape::Tuple) {
-            RELEASE_ASSERT(!node.isContainer() || !hasRuleOnGivenValue(node));
-            m_rules.emitRules(node, parsed.value, parsed.value, exits.rejected);
-        }
         return { emitTypeTest(parsed.value, valueTypeOf(inputs(), node), exits.unknown), parsed.next };
     }
 
-    ParsedValue emitGenericValueFor(ResultNodeRef ref, const ResultNode& node, ValueID cursor, const ParseExits& exits)
+    ParsedValue emitGenericValueFor(const ResultNode& node, ValueID cursor, const ParseExits& exits)
     {
         ParsedValue generic = emitParse(Opcode::JSONParseValue, cursor, exits.unknown);
-        if (!ref.isValidated())
-            return { emitTypeTest(generic.value, inputs().types.intern(testableTypeOf(program(), node)), exits.unknown), generic.next };
-
-        ValueID value = ValidatorBuilder(builder(), inputs()).emitNode(ref, generic.value, { exits.rejected, exits.unknown });
-        return { emitTypeTest(value, valueTypeOf(inputs(), node), exits.unknown), generic.next };
+        return { emitTypeTest(generic.value, inputs().types.intern(testableTypeOf(program(), node)), exits.unknown), generic.next };
     }
 
     ParsedValue emitParseNumber(Opcode opcode, ValueID cursor, const ParseExits& exits)
@@ -391,8 +313,7 @@ struct JSONParserBuilder final : Emission {
     ParsedValue emitNumber(const ResultNode& node, ValueID cursor, const ParseExits& exits)
     {
         Type numbers = program().at(node.type).withoutObjects().withoutPrimitives(static_cast<uint16_t>(Primitive::Defined & ~Primitive::Number));
-        bool isInteger = hasIntegerRule(node) || numbers.isInteger();
-        ParsedValue parsed = emitParseNumber(isInteger ? Opcode::JSONParseInteger : Opcode::JSONParseNumber, cursor, exits);
+        ParsedValue parsed = emitParseNumber(numbers.isInteger() ? Opcode::JSONParseInteger : Opcode::JSONParseNumber, cursor, exits);
         return { emitTypeTest(parsed.value, inputs().types.intern(numbers), exits.unknown), parsed.next };
     }
 
@@ -404,23 +325,13 @@ struct JSONParserBuilder final : Emission {
 
     ParsedValue emitLiteral(const ResultLiteral& literal, ValueID cursor, const ParseExits& exits)
     {
-        ValueID constant = m_rules.appendLiteral(literal);
         switch (literal.kind) {
         case ResultLiteral::Kind::Null:
+            return { appendNull(), emitExpectWord(wordOf(literal), cursor, exits.rejected) };
         case ResultLiteral::Kind::Boolean:
-            return { constant, emitExpectWord(wordOf(literal), cursor, exits.rejected) };
-        case ResultLiteral::Kind::Number: {
-            ParsedValue parsed = emitParseNumber(Opcode::JSONParseNumber, cursor, exits);
-            ValueID isEqual = builder().append(Opcode::StrictEq, { parsed.value, constant });
-            IRBuilder::ProvenBranch branch = builder().emitBranchWithProof(isEqual, 0, BlockFrequency::Normal, BlockFrequency::Rare);
-
-            builder().moveToEndOf(branch.notTaken);
-            builder().emitJump(exits.rejected);
-
-            builder().moveToEndOf(branch.taken);
-            return { branch.provenOnTaken, parsed.next };
-        }
+            return { builder().appendBoolean(literal.boolean), emitExpectWord(wordOf(literal), cursor, exits.rejected) };
         case ResultLiteral::Kind::String: {
+            ValueID constant = appendString(literal.string);
             BlockID merge = builder().addBlock();
             ValueID next = builder().addParameter(merge, cursorType());
             if (StringID quoted = quotedIfPlain(literal.string)) {
@@ -445,7 +356,7 @@ struct JSONParserBuilder final : Emission {
         RELEASE_ASSERT(node.children.size() == 1);
         emitRequireByte(cursor, '[', exits.rejected);
         ValueID afterBracket = appendSkipPunctuator(cursor);
-        ValueID array = builder().append(makeArrayOf(program(), node, { }));
+        ValueID array = builder().append(makeArrayOf(program(), node));
         BlockID header = builder().addBlock();
         BlockID done = builder().addBlock();
         ValueID cursorAtHeader = builder().addParameter(header, cursorType());
@@ -470,40 +381,7 @@ struct JSONParserBuilder final : Emission {
         builder().emitJump(done, { afterElement });
 
         builder().moveToEndOf(done);
-        ValueID next = builder().append(Opcode::JSONSkipByte, { cursorAtDone });
-        RELEASE_ASSERT(!hasRuleOnGivenValue(node));
-        m_rules.emitRules(node, array, array, exits.rejected);
-        return { array, next };
-    }
-
-    ParsedValue emitTuple(const ResultNode& node, ValueID cursor, const ParseExits& exits)
-    {
-        RELEASE_ASSERT(node.hasFixedLength());
-        emitRequireByte(cursor, '[', exits.rejected);
-        ValueID position = appendSkipPunctuator(cursor);
-
-        Vector<ValueID, 4> elements;
-        for (ResultNodeRef child : node.children) {
-            if (!elements.isEmpty()) {
-                emitRequireByte(position, ',', exits.rejected);
-                position = appendSkipPunctuator(position);
-            }
-            ParsedValue element = emitNodeOrGenericValue(child, position, exits);
-            elements.append(element.value);
-            position = appendSkipWhitespace(element.next);
-        }
-
-        emitRequireByte(position, ']', exits.rejected);
-        ValueID next = builder().append(Opcode::JSONSkipByte, { position });
-        return { builder().append(makeArrayOf(program(), node, elements.span())), next };
-    }
-
-    // Flow fills the fields of a typed result with the arrays its parsers create, and those of an unvalidated result with the plain data of the generic parser too.
-    ProofsByOrigin proofsByOriginOf(const ResultMember& member)
-    {
-        if (!member.node.isValidated())
-            return ProofsByOrigin::AboutEveryClass;
-        return createsEveryArrayItself(decisionInputs(), member.node, NodeUse::ParsedFromText) ? ProofsByOrigin::AboutArrays : ProofsByOrigin::None;
+        return { array, builder().append(Opcode::JSONSkipByte, { cursorAtDone }) };
     }
 
     // The slot of a field of a function type holds fewer functions than the type admits.
@@ -514,26 +392,16 @@ struct JSONParserBuilder final : Emission {
         return field.declared.type;
     }
 
-    TypeID testedFieldTypeOf(const MemberParse& member) { return fieldTypeToTest(typeStoredInSlotOf(*member.field), proofsByOriginOf(*member.member)); }
+    TypeID testedFieldTypeOf(const MemberParse& member) { return fieldTypeToTest(typeStoredInSlotOf(*member.field)); }
     bool canFillField(const MemberParse& member) { return !passesOnlyUndefinedIntoStoredType(program().at(member.valueType), testedFieldTypeOf(member)); }
-    ValueID emitRequireTypeOfMember(ValueID value, const MemberParse& member, BlockID otherwise) { return emitRequireFieldType(value, typeStoredInSlotOf(*member.field), proofsByOriginOf(*member.member), otherwise); }
-    ValueID appendObjectKey(ValueID order, LayoutID layout, const MemberParse& member) { return builder().append(make<&Value::setLayout, &Value::setField>(Opcode::JSONObjectKey, { order }, layout, *member.member->field)); }
+    ValueID emitRequireTypeOfMember(ValueID value, const MemberParse& member, BlockID otherwise) { return emitRequireFieldType(value, typeStoredInSlotOf(*member.field), otherwise); }
+    ValueID appendObjectKey(ValueID order, LayoutID layout, const MemberParse& member) { return builder().append(make<&Value::setLayout, &Value::setField>(Opcode::JSONObjectKey, { order }, layout, member.member->field)); }
 
-    ParsedValue emitObject(ResultNodeRef ref, const ResultNode& node, ValueID cursor, const ParseExits& exits)
+    ParsedValue emitObject(const ResultNode& node, ValueID cursor, const ParseExits& exits)
     {
         emitRequireByte(cursor, '{', exits.rejected);
-        bool isModeled = allocatesLayout(decisionInputs(), node);
-        bool hasNamedFields = std::ranges::all_of(node.members, [&](const ResultMember& member) {
-            return member.field && program().at(member.key).kind == PropertyKeyKind::Text && !program().isIndexLike(member.key);
-        });
-        if (node.layout && !isModeled)
-            addInterpretedNodeDecline(decisionInputs(), node.layout, InterpretedCause::LayoutIsNotModeled);
-        else if (isModeled && !hasNamedFields)
-            addInterpretedNodeDecline(decisionInputs(), node.layout, InterpretedCause::MemberIsNotNamedField);
-        bool canAllocateLayout = isModeled && hasNamedFields
-            && !inputs().build.exceeds(LimitID::MaxParsedObjectMembers, node.members.size(), Subject { .layout = node.layout });
-        if (!canAllocateLayout)
-            return emitGenericValueFor(ref, node, cursor, exits);
+        if (inputs().build.exceeds(LimitID::MaxParsedObjectMembers, node.members.size(), Subject { .layout = node.layout }))
+            return emitGenericValueFor(node, cursor, exits);
 
         ValueID firstKey = appendSkipPunctuator(cursor);
         ObjectParse parse { node, resolveMembers(node), builder().addBlock(), builder().addBlock(), exits };
@@ -566,17 +434,13 @@ struct JSONParserBuilder final : Emission {
         members.reserveInitialCapacity(node.members.size());
         for (const ResultMember& member : node.members) {
             ResultNode memberNode = describeNode(program(), member.node);
-            MemberParse parse { .member = &member, .field = &fieldOf(program(), node, member), .name = program().at(member.key).text };
+            MemberParse parse { .member = &member, .field = &program().at(node.layout).fields[member.field], .name = program().at(member.key).text };
             parse.quotedKey = quotedIfPlain(parse.name);
             if (parse.quotedKey)
                 parse.quotedKeyAndColon = quotedIfPlain(parse.name, true);
             parse.valueType = valueTypeOf(inputs(), memberNode);
-            parse.missing = classifyMissingMember(member, memberNode);
-
-            const Type& fieldType = program().at(parse.field->declared.type);
-            if (parse.missing == MissingMember::Absent && !(fieldType.primitives & Primitive::Undefined))
-                parse.missing = MissingMember::Unknown;
-            if (parse.missing == MissingMember::Default && !typeOfLiteral(*memberNode.defaultValue).isSubsetOf(fieldType, program()))
+            parse.missing = member.isOptional ? MissingMember::Absent : MissingMember::Rejected;
+            if (parse.missing == MissingMember::Absent && !(program().at(parse.field->declared.type).primitives & Primitive::Undefined))
                 parse.missing = MissingMember::Unknown;
             members.append(parse);
         }
@@ -588,22 +452,9 @@ struct JSONParserBuilder final : Emission {
         bool isCreatedByProgram = !expected.orders.isEmpty() && !expected.orders.first().isEmpty();
         std::span<const uint32_t> order = isCreatedByProgram ? expected.orders.first().span() : program().at(node.layout).declaredOrder.span();
         AOT::stableSort(members, { }, [&](const MemberParse& parse) {
-            return parse.member->field ? static_cast<size_t>(std::ranges::find(order, *parse.member->field) - order.begin()) : order.size();
+            return static_cast<size_t>(std::ranges::find(order, parse.member->field) - order.begin());
         });
         return members;
-    }
-
-    MissingMember classifyMissingMember(const ResultMember& member, const ResultNode& memberNode) const
-    {
-        if (!memberNode.defaultValue) {
-            // An arm of a union may have a default, which a validator applies to a missing member whether or not the member is optional.
-            if (appliesDefault(program(), member.node))
-                return MissingMember::Unknown;
-            return member.isOptional ? MissingMember::Absent : MissingMember::Rejected;
-        }
-        if (memberNode.shape == ResultShape::Union)
-            return MissingMember::Unknown;
-        return hasShapeOf(memberNode, *memberNode.defaultValue) ? MissingMember::Default : MissingMember::Rejected;
     }
 
     // A block without parameters goes on with the state of the one way that leads to it.
@@ -616,7 +467,7 @@ struct JSONParserBuilder final : Emission {
     {
         for (size_t index = 0; index < parse.members.size(); ++index) {
             const MemberParse& member = parse.members[index];
-            bool mayBeMissing = member.missing == MissingMember::Absent || member.missing == MissingMember::Default;
+            bool mayBeMissing = member.missing == MissingMember::Absent;
             bool isExpectedInOrder = member.quotedKey && canFillField(member);
             if (!isExpectedInOrder) {
                 if (mayBeMissing)
@@ -696,21 +547,10 @@ struct JSONParserBuilder final : Emission {
             }
         }
 
-        switch (parse.node.undeclared) {
-        case UndeclaredMembers::Allowed:
-            if (exits.undeclaredMember)
-                builder().emitJump(exits.undeclaredMember);
-            else
-                emitExtraMembers(parse, state);
-            return;
-        case UndeclaredMembers::Rejected:
-            builder().emitJump(exits.rejected);
-            return;
-        case UndeclaredMembers::Validated:
-            emitValidatedExtraMember(parse, state);
-            return;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
+        if (exits.undeclaredMember)
+            builder().emitJump(exits.undeclaredMember);
+        else
+            emitExtraMembers(parse, state);
     }
 
     ParsedValue emitObjectClosing(const ObjectParse& parse)
@@ -729,7 +569,7 @@ struct JSONParserBuilder final : Emission {
             const MemberParse& member = parse.members[index];
             if (member.missing == MissingMember::Absent)
                 continue;
-            fields.append(*member.member->field);
+            fields.append(member.member->field);
             values.append(emitRequireTypeOfMember(state.value(index), member, parse.exits.unknown));
         }
 
@@ -749,8 +589,6 @@ struct JSONParserBuilder final : Emission {
         emitBranchOnOutcome(outcome, finished, parse.exits.unknown, parse.exits.unknown);
 
         builder().moveToEndOf(finished);
-        RELEASE_ASSERT(!hasRuleOnGivenValue(parse.node));
-        m_rules.emitRules(parse.node, object, object, parse.exits.rejected);
         return { object, next };
     }
 
@@ -758,7 +596,7 @@ struct JSONParserBuilder final : Emission {
     void emitStoreOfMemberIfSeen(const ObjectParse& parse, const MemberParse& member, ValueID seen, ValueID parsed, ValueID object)
     {
         // The parse gives up at a member whose field takes no value, and a field that nothing reads has no slot.
-        if (!canFillField(member) || isRemovedField(program(), { parse.node.layout, *member.member->field }))
+        if (!canFillField(member) || isRemovedField(program(), { parse.node.layout, member.member->field }))
             return;
         IRBuilder::BranchBlocks branch = builder().emitBranch(seen);
         BlockID next = builder().addBlock();
@@ -841,28 +679,8 @@ struct JSONParserBuilder final : Emission {
         case MissingMember::Unknown:
             emitJumpUnless(state.seen(index), parse.exits.unknown);
             return;
-        case MissingMember::Default:
-            break;
         }
-
-        ResultNode memberNode = describeNode(program(), member.member->node);
-        IRBuilder::BranchBlocks branch = builder().emitBranch(state.seen(index));
-        BlockID filled = builder().addBlock();
-
-        builder().moveToEndOf(branch.notTaken);
-        ValueID defaultValue = m_rules.appendLiteral(*memberNode.defaultValue);
-        m_rules.emitRules(memberNode, defaultValue, defaultValue, parse.exits.rejected);
-        ValueID orderWithDefault = appendObjectKey(state.order(), parse.node.layout, member);
-        ValueID value = builder().addParameter(filled, inputs().types.unionOf(member.valueType, function().at(defaultValue).type));
-        ValueID order = builder().addParameter(filled, keyOrderType());
-        builder().emitJump(filled, { defaultValue, orderWithDefault });
-
-        builder().moveToEndOf(branch.taken);
-        builder().emitJump(filled, { state.value(index), state.order() });
-
-        builder().moveToEndOf(filled);
-        state.value(index) = value;
-        state.order() = order;
+        RELEASE_ASSERT_NOT_REACHED();
     }
 
     void emitExtraMembers(const ObjectParse& parse, ObjectState& state)
@@ -876,20 +694,6 @@ struct JSONParserBuilder final : Emission {
         ValueID next = appendResultAt(results, 2);
         state.order() = appendResultAt(results, 3);
         emitMemberSeparator(parse, next, state, parse.anyOrder);
-    }
-
-    void emitValidatedExtraMember(const ObjectParse& parse, ObjectState& state)
-    {
-        RELEASE_ASSERT(parse.node.undeclaredValue);
-        ValueID keyStart = state.cursor();
-        ParsedValue key = emitParse(Opcode::JSONParseKey, keyStart, parse.exits.unknown);
-        ValueID valueStart = emitExpectColon(key.next, parse.exits.rejected);
-        ParsedValue parsed = emitValueOfMember(*parse.node.undeclaredValue, valueStart, parse.exits, IRBuilder::make(Opcode::JSONKeyRepeats, { keyStart, valueStart }));
-
-        ValueID results = builder().append(make<&Value::setLayout>(Opcode::JSONAddExtraMember, { state.extra(), key.value, parsed.value, state.order() }, parse.node.layout));
-        state.extra() = appendResultAt(results, 0);
-        state.order() = appendResultAt(results, 1);
-        emitMemberSeparator(parse, parsed.next, state, parse.anyOrder);
     }
 
     Vector<ClassGroup, 6> groupArmsByClass(std::span<const ResultNodeRef> arms)
@@ -915,13 +719,12 @@ struct JSONParserBuilder final : Emission {
         return groups;
     }
 
-    std::optional<Vector<StringID, 8>> unconstrainedStringLiteralsOf(std::span<const ResultNodeRef> arms)
+    std::optional<Vector<StringID, 8>> stringLiteralsOf(std::span<const ResultNodeRef> arms)
     {
         Vector<StringID, 8> literals;
         for (ResultNodeRef arm : arms) {
             ResultNode node = describeNode(program(), arm);
-            bool isTested = std::ranges::any_of(node.rules, [](const ValidationRule& rule) { return subjectOf(rule) != RuleSubject::Nothing; });
-            if (node.shape != ResultShape::StringLiteral || isTested)
+            if (node.shape != ResultShape::StringLiteral)
                 return std::nullopt;
             literals.appendIfNotContains(node.literal.string);
         }
@@ -957,12 +760,8 @@ struct JSONParserBuilder final : Emission {
         Vector<ClassGroup, 6> groups = groupArmsByClass(node.children.span());
         if (groups.isEmpty())
             return emitArmsInOrder({ }, cursor, exits);
-        if (groups.size() == 1 && groups[0].arms.size() == 1) {
-            ParsedValue parsed = emitNode(groups[0].arms[0], cursor, exits);
-            RELEASE_ASSERT(!hasRuleOnGivenValue(node));
-            m_rules.emitRules(node, parsed.value, parsed.value, exits.rejected);
-            return parsed;
-        }
+        if (groups.size() == 1 && groups[0].arms.size() == 1)
+            return emitNode(groups[0].arms[0], cursor, exits);
 
         ValueMerge merge = createMergeOf(node.children.span());
         Vector<std::pair<int64_t, Target>> cases;
@@ -979,7 +778,7 @@ struct JSONParserBuilder final : Emission {
             builder().moveToEndOf(group.block);
             std::optional<Vector<StringID, 8>> literals;
             if (group.arms.size() > 1)
-                literals = unconstrainedStringLiteralsOf(group.arms.span());
+                literals = stringLiteralsOf(group.arms.span());
             if (literals)
                 emitStringLiteralArms(literals->span(), merge, cursor, exits);
             else if (group.classes.contains(JSONValueClass::Object))
@@ -988,10 +787,7 @@ struct JSONParserBuilder final : Emission {
                 jumpTo(merge, emitArmsInOrder(group.arms.span(), cursor, exits));
         }
 
-        ParsedValue merged = continueAt(merge);
-        RELEASE_ASSERT(!hasRuleOnGivenValue(node));
-        m_rules.emitRules(node, merged.value, merged.value, exits.rejected);
-        return merged;
+        return continueAt(merge);
     }
 
     ParsedValue emitArmsInOrder(std::span<const ResultNodeRef> arms, ValueID cursor, const ParseExits& exits)
@@ -1008,8 +804,7 @@ struct JSONParserBuilder final : Emission {
         for (const ResultNodeRef& arm : arms) {
             bool isLast = &arm == &arms.back();
             BlockID rejected = isLast ? exits.rejected : builder().addBlock();
-            // What a validator makes of a member that it does not declare is its own rule.
-            jumpTo(merge, emitNode(arm, cursor, { rejected, exits.unknown, arm.isValidated() ? BlockID() : rejected }));
+            jumpTo(merge, emitNode(arm, cursor, { rejected, exits.unknown, rejected }));
             if (!isLast)
                 builder().moveToEndOf(rejected);
         }
@@ -1019,7 +814,7 @@ struct JSONParserBuilder final : Emission {
     ParsedValue emitObjectArms(std::span<const ResultNodeRef> arms, ValueID cursor, const ParseExits& exits)
     {
         std::optional<TaggedArms> split = findTaggedArms(program(), arms);
-        if (!split || program().at(split->discriminant.key).kind != PropertyKeyKind::Text)
+        if (!split)
             return emitArmsInOrder(arms, cursor, exits);
         if (split->untagged.isEmpty())
             return emitArmsByDiscriminant(split->discriminant, split->tagged.span(), cursor, exits);
@@ -1057,23 +852,6 @@ struct JSONParserBuilder final : Emission {
             if (StringID quoted = tags[index].kind == Kind::String ? quotedIfPlain(tags[index].string) : StringID())
                 emitJumpIfStartsWith(quoted, tagValue, armBlocks[index]);
         }
-        if (std::ranges::contains(tags, Kind::Number, &ResultLiteral::kind)) {
-            ResultNode numberNode;
-            numberNode.shape = ResultShape::Number;
-            numberNode.type = TypeTable::number;
-            BlockID isNotNumber = builder().addBlock();
-            ValueID number = emitNumber(numberNode, tagValue, { isNotNumber, exits.unknown }).value;
-            for (size_t index = 0; index < tags.size(); ++index) {
-                if (tags[index].kind != Kind::Number)
-                    continue;
-                ValueID isEqual = builder().append(Opcode::StrictEq, { number, m_rules.appendLiteral(tags[index]) });
-                BlockID nextTest = builder().addBlock();
-                builder().emitBranch(isEqual, Target { armBlocks[index], { }, { } }, Target { nextTest, { }, { } });
-                builder().moveToEndOf(nextTest);
-            }
-            builder().emitJump(noTagMatches);
-            builder().moveToEndOf(isNotNumber);
-        }
         for (size_t index = 0; index < tags.size(); ++index) {
             if (tags[index].kind == Kind::Null || tags[index].kind == Kind::Boolean)
                 emitJumpIfStartsWith(inputs().strings.intern(wordOf(tags[index])), tagValue, armBlocks[index]);
@@ -1101,8 +879,6 @@ struct JSONParserBuilder final : Emission {
         emitRejectionUnless(makeMemberRepeats(name, tagValue), exits);
         return continueAt(merge);
     }
-
-    ValidationRuleEmitter m_rules { *this };
 };
 
 } // anonymous namespace
@@ -1118,10 +894,6 @@ Function buildParser(const DerivedFunctionKey& key, DerivedFunctionInputs& deriv
     ResultNodeRef ref = nodeOfKey(key);
     ResultNode node = describeNode(inputs.program, ref);
     CreatorRecord::Parser creator { .type = node.type, .layout = node.layout, .form = TypedResultForm::ParsedText };
-    if (ref.isValidated()) {
-        creator.expectedResult = ref.expectedResult();
-        creator.node = ref.part;
-    }
     DerivedFunctionHead head = createDerivedFunction(inputs, key.role, creator, signatureOfParser(inputs, node));
 
     IRBuilder builder(inputs.analysisContext(), head.function, inputs.types);
@@ -1136,7 +908,7 @@ Function buildParser(const DerivedFunctionKey& key, DerivedFunctionInputs& deriv
         parser.emitJumpUnless(builder.append(Opcode::JSONHasStackSpace, { }), unknown);
     }
     JSONParserBuilder::ParsedValue parsed = [&] {
-        switch (decideNodeCode(parser.decisionInputs(), ref, NodeUse::ParsedFromText).code) {
+        switch (decideNodeCode(parser.decisionInputs(), ref).code) {
         case NodeCode::Interpreted:
             return parser.emitNode(ref, cursor, { rejected, unknown });
         case NodeCode::Compiled:
@@ -1152,11 +924,6 @@ Function buildParser(const DerivedFunctionKey& key, DerivedFunctionInputs& deriv
     builder.moveToEndOf(unknown);
     parser.emitReturnOf({ parser.appendOutcome(JSONOutcome::Unknown), builder.appendUndefined(), cursor });
     return WTF::move(head.function);
-}
-
-Function buildValidatingParser(const DerivedFunctionKey& key, DerivedFunctionInputs& derived)
-{
-    return buildParser(key, derived);
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -188,7 +188,7 @@ export const rangeRules = [
 ] as const;
 export type RangeRule = (typeof rangeRules)[number];
 
-export const typedResultForms = ["None", "ParsedText", "ParsedBody", "Rows", "ValidatedValue"] as const;
+export const typedResultForms = ["None", "ParsedText", "ParsedBody", "Rows"] as const;
 export type TypedResultForm = (typeof typedResultForms)[number];
 
 export const iterationKinds = ["Keys", "Values", "Entries"] as const;

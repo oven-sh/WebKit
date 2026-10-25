@@ -32,7 +32,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet environmentFieldOpcodes { Opcode::GetEnvironmentField, Opcode::PutEnvironmentField };
 static constexpr OpcodeSet storesByName { Opcode::PropSet, Opcode::PropDefine };
-static constexpr OpcodeSet allocationOpcodes { Opcode::NewObject, Opcode::CloneAs, Opcode::MaterializeEnvironment };
+static constexpr OpcodeSet allocationOpcodes { Opcode::NewObject, Opcode::MaterializeEnvironment };
 
 namespace {
 

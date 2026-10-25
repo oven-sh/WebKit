@@ -320,6 +320,15 @@ public:
     ValueFlowNodeID hub(ValueFlowBehaviorID behavior) const { return ValueFlowNodeID(m_thrownOfFunction.last() + 1 + numberOfValueFlowHostNodes + behavior.index()); }
     ValueFlowBehaviorID behaviorOf(ValueFlowNodeID hub) const { return ValueFlowBehaviorID(hub.index() - m_thrownOfFunction.last() - 1 - numberOfValueFlowHostNodes); }
 
+    // What the unobserved definitions of an initializer define. It holds nothing until super() may call a constructor that the class does not name.
+    struct UnobservedDefinitions {
+        LayoutID classCallingSuper;
+        FunctionID initializer;
+        ValueFlowNodeID value;
+    };
+    ValueFlowNodeID valueOfUnobservedDefinitions(FunctionID initializer) const;
+    std::span<const UnobservedDefinitions> unobservedDefinitionsBehindSuperOf(LayoutID classCallingSuper) const LIFETIME_BOUND;
+
     struct PassedParameter {
         unsigned entryParameter { 0 };
         ValueSetID mask;
@@ -350,6 +359,8 @@ private:
     Vector<uint32_t> m_firstResultOfFunction;
     Vector<uint32_t> m_thrownOfFunction;
     Vector<ResultSummary> m_resultSummaries;
+    Vector<UnobservedDefinitions> m_unobservedDefinitionsByClass;
+    Vector<UnobservedDefinitions> m_unobservedDefinitionsByInitializer;
 };
 
 struct ValueFlowNodeName {
@@ -464,6 +475,7 @@ struct ValueFlowBody {
     uint32_t numberOfResults { 0 };
     bool hasYieldedAndSent { false };
     uint32_t ownResult { none };
+    uint32_t valueOfUnobservedDefinitions { none };
     Vector<PassedParameter> passedParameters;
     bool answersOnlyWhatItConstructs { false };
     Vector<Node> nodes;

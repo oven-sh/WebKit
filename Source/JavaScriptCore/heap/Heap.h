@@ -229,7 +229,6 @@ class Heap;
 #if ENABLE(AOT)
 #define FOR_EACH_JSC_AOT_DYNAMIC_NON_ISO_SUBSPACE(v) \
     v(aotClosureSpace, cellHeapCellType, AOT::Closure, CompleteSubspace) \
-    v(aotOuterCellSpace, outerCellHeapCellType, AOT::Object, CompleteSubspace) \
     v(cagedAuxiliarySpace, auxiliaryHeapCellType, HeapCell, CompleteSubspace)
 #else
 #define FOR_EACH_JSC_AOT_DYNAMIC_NON_ISO_SUBSPACE(v)
@@ -395,6 +394,7 @@ public:
     JS_EXPORT_PRIVATE MarkedBlockCage& cage();
     JS_EXPORT_PRIVATE AlignedMemoryAllocator* cellAllocator();
     bool tryCollectForExhaustedCage(GCDeferralContext*);
+    void collectForExhaustedCage();
     bool tryUseReserveOfExhaustedCage(AlignedMemoryAllocator*);
 
     bool validatesCellVisits() const { return m_validatesCellVisits; }
@@ -1100,7 +1100,6 @@ public:
     HeapCellType auxiliaryHeapCellType;
     HeapCellType immutableButterflyHeapCellType;
     HeapCellType cellHeapCellType;
-    HeapCellType outerCellHeapCellType;
     HeapCellType destructibleCellHeapCellType;
     IsoHeapCellType apiGlobalObjectHeapCellType;
     IsoHeapCellType callbackConstructorHeapCellType;

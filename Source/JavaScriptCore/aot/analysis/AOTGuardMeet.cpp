@@ -165,7 +165,6 @@ static bool allocationImplies(const Program& program, const Value& allocation, c
     case Proof::EvaluatedOnce:
     case Proof::UnmodifiedGenerator:
     case Proof::EnumeratorCurrent:
-    case Proof::PlainData:
     case Proof::SourceOpen:
     case Proof::TextMatches:
         return false;

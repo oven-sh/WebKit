@@ -72,7 +72,6 @@ ObjectModel::~ObjectModel() = default;
 
 ObjectModelCaches::ObjectModelCaches(State& state)
     : movePlans(state)
-    , sourcePlans(state)
     , assignmentPlans(state)
     , propertyLists(state)
     , classStructures(state)
@@ -1090,17 +1089,6 @@ AllocationSiteRecord& StructureTable::ensureRecord(uint32_t number)
     return *record;
 }
 
-// An allocation that asks for more than its layout takes makes the inner objects with the outer one.
-static bool holdsInnerObjects(const ProgramTables& tables, const AllocationData& allocation)
-{
-    return allocation.shape < tables.firstEnvironmentShape && allocation.size() > tables.layoutForShape(allocation.shape).size;
-}
-
-static CompleteSubspace& spaceFor(VM& vm, const AllocationData& allocation, const LayoutData& layout)
-{
-    return allocation.size() > layout.size ? *vm.heap.aotOuterCellSpace<SubspaceAccess::OnMainThread>() : vm.cellSpace();
-}
-
 static uint64_t objectHeaderFor(Structure* structure, const AllocationData& allocation)
 {
     static_assert(JSCell::typeInfoFlagsOffset() == 6);
@@ -1127,14 +1115,7 @@ AllocationSiteRecord& StructureTable::fillAllocationSite(VM& vm, uint32_t number
     }
     if (!structure)
         structure = this->structure(vm, allocation.shape);
-    if (holdsInnerObjects(m_tables, allocation)) {
-        // The record of what a class constructs waits for the class: to fill it may make the class object.
-        for (uint32_t inner : m_tables.layoutForShape(allocation.shape).allocationsOfInnerObjects()) {
-            if (!m_tables.allocations()[inner].isConstructed)
-                fillAllocationSite(vm, inner);
-        }
-    }
-    CompleteSubspace& space = kind == AllocatedCellKind::Object ? spaceFor(vm, allocation, m_tables.layoutForShape(allocation.shape)) : *vm.heap.aotClosureSpace<SubspaceAccess::OnMainThread>();
+    CompleteSubspace& space = kind == AllocatedCellKind::Object ? vm.cellSpace() : *vm.heap.aotClosureSpace<SubspaceAccess::OnMainThread>();
     // No size class holds a cell beyond MarkedSpace::largeCutoff, so no allocator does. Compiled code finds no room and leaves every such cell to the operation.
     void* allocator = space.allocatorFor(allocation.size(), AllocatorForMode::EnsureAllocator).localAllocator();
     record = AllocationSiteRecord {
@@ -1230,67 +1211,12 @@ JSCell* StructureTable::allocateAsCompiledCodeDoes(VM& vm, uint32_t number)
         return allocate(vm, number);
     const AllocationSiteRecord record = filledRecord(vm, number);
     Structure* structure = structureOf(record);
-    auto* words = static_cast<uint64_t*>(spaceFor(vm, allocation, m_tables.layoutForShape(allocation.shape)).allocate(vm, allocation.size(), nullptr, AllocationFailureMode::Assert));
+    auto* words = static_cast<uint64_t*>(vm.cellSpace().allocate(vm, allocation.size(), nullptr, AllocationFailureMode::Assert));
     words[0] = record.header;
     words[1] = record.orderAndShapeWords;
     zeroSpan(std::span { reinterpret_cast<uint8_t*>(words + 2), allocation.size() - 2 * sizeof(uint64_t) });
     ensureStillAliveHere(structure);
     return reinterpret_cast<JSCell*>(words);
-}
-
-SourcePlans::SourcePlans(State& state)
-{
-    state.caches->add(CacheKind::WeakByKey, "source plans"_s, *this);
-}
-
-SourcePlans::~SourcePlans() = default;
-
-SourcePlans::Words SourcePlans::createUnusable(uint32_t numberOfMembers)
-{
-    size_t size = SourcePlan::numberOfWords(numberOfMembers);
-    Words words = makeUniqueArray<uint32_t>(size);
-    std::fill_n(words.get(), size, static_cast<uint32_t>(SourcePlan::absent));
-    words[SourcePlan::isUsableWord] = 0;
-    words[SourcePlan::orderWord] = unorderedOrderWord;
-    return words;
-}
-
-const uint32_t* SourcePlans::findInTable(Structure* structure, uint32_t request)
-{
-    auto found = m_plans.find({ structure, request });
-    if (found == m_plans.end())
-        return nullptr;
-    m_lastStructure = structure;
-    m_lastRequest = request;
-    m_lastPlan = found->value.get();
-    return m_lastPlan;
-}
-
-const uint32_t* SourcePlans::planThatNeverApplies(uint32_t numberOfMembers)
-{
-    if (m_plansThatNeverApply.isEmpty() || numberOfMembers > m_membersOfPlanThatNeverApplies) {
-        m_membersOfPlanThatNeverApplies = std::max(numberOfMembers, 2 * m_membersOfPlanThatNeverApplies);
-        m_plansThatNeverApply.append(createUnusable(m_membersOfPlanThatNeverApplies));
-    }
-    return m_plansThatNeverApply.last().get();
-}
-
-const uint32_t* SourcePlans::add(Structure* structure, uint32_t request, uint32_t numberOfMembers, Words&& plan)
-{
-    if (m_plans.size() >= maxNumberOfPlans)
-        return planThatNeverApplies(numberOfMembers);
-    return m_plans.add({ structure, request }, WTF::move(plan)).iterator->value.get();
-}
-
-size_t SourcePlans::removeDeadEntries(VM& vm, CollectionScope)
-{
-    m_lastStructure = nullptr;
-    m_lastPlan = nullptr;
-    size_t sizeBefore = m_plans.size();
-    m_plans.removeIf([&](auto& entry) {
-        return !vm.heap.isMarked(entry.key.first);
-    });
-    return sizeBefore - m_plans.size();
 }
 
 CompiledStructure::CompiledStructure(VM& vm, const TypeInfo& typeInfo, const ClassInfo* classInfo, const ObjectParameters& parameters)

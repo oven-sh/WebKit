@@ -35,10 +35,9 @@ namespace JSC {
 struct CellAttributes {
     CellAttributes() { }
     
-    CellAttributes(DestructionMode destruction, HeapCell::Kind cellKind, bool hasInnerCells = false)
+    CellAttributes(DestructionMode destruction, HeapCell::Kind cellKind)
         : destruction(destruction)
         , cellKind(cellKind)
-        , hasInnerCells(hasInnerCells)
     {
     }
     
@@ -46,8 +45,6 @@ struct CellAttributes {
     
     DestructionMode destruction { DoesNotNeedDestruction };
     HeapCell::Kind cellKind { HeapCell::JSCell };
-    // A cell may hold further cells behind its own fields. See MarkedBlock::isInnerCell().
-    bool hasInnerCells { false };
 };
 
 } // namespace JSC

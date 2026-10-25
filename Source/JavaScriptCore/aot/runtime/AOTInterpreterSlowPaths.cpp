@@ -543,8 +543,6 @@ std::unique_ptr<ObjectLiteralPlan> ObjectLiteralPlans::createPlanForRecord(Insta
 
     std::unique_ptr<ObjectBuilderPlan> best;
     for (const ParsedRecordFieldData& row : std::ranges::equal_range(state.tables.parsedRecordFields(), *lastName, { }, &ParsedRecordFieldData::name)) {
-        if (row.isForValidator())
-            continue;
         const LayoutData& layout = layouts.layoutForShape(row.shape);
         if (layout.numberOfFields < names.size() || (best && best->layout().numberOfFields <= layout.numberOfFields) || !ObjectBuilder::canBuildWithoutCompilerKnowledge(layout))
             continue;

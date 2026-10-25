@@ -438,18 +438,6 @@ bool jsonMemberRepeats(const JSONWords& words, const uint8_t* cursor, NOESCAPE c
     return true;
 }
 
-inline bool jsonKeyRepeats(const JSONWords& words, const uint8_t* key, const uint8_t* value)
-{
-    bool mayRepeat = true;
-    compareJSONMemberKey(words, key, [&](StringView name) {
-        mayRepeat = jsonMemberRepeats(words, skipJSONValue(value), [&](StringView text) {
-            return text == name;
-        });
-        return true;
-    });
-    return mayRepeat;
-}
-
 } } // namespace JSC::AOT
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

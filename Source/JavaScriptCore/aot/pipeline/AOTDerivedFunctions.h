@@ -39,11 +39,9 @@
     v(BoundFunction, buildBoundFunction, Function, BoundFunctions) \
     v(ResultWorker, buildResultWorker, Function, FreshResultsSplit) \
     v(ChainStep, buildChainStep, Function, None) \
-    v(OutlinedBody, buildOutlinedIteration, ValidationNode, None) \
+    v(OutlinedBody, buildOutlinedIteration, Selector, None) \
     v(Serializer, buildSerializer, Layout, SerializersCreated) \
-    v(Parser, buildParser, Type, ParsersCreated) \
-    v(ValidatingParser, buildValidatingParser, ValidationNode, ParsersCreated) \
-    v(Validator, buildValidator, ValidationNode, ValidatorsCreated)
+    v(Parser, buildParser, Type, ParsersCreated)
 
 namespace JSC { namespace AOT {
 
@@ -58,7 +56,7 @@ class StringArena;
 class TypeArena;
 struct InliningSummary;
 
-enum class DerivedFunctionTarget : uint8_t { Function, FunctionAndCallee, Layout, Type, ValidationNode, Selector, FunctionAndSelector };
+enum class DerivedFunctionTarget : uint8_t { Function, FunctionAndCallee, Layout, Type, Selector, FunctionAndSelector };
 enum class DerivedFunctionCreation : uint8_t { OnRequest, ByProgramPass };
 
 struct DerivedFunctionInputs {
@@ -99,11 +97,6 @@ constexpr DerivedFunctionKey derivedFunctionKey(FunctionRole role, LayoutID targ
 constexpr DerivedFunctionKey derivedFunctionKey(FunctionRole role, TypeID target)
 {
     return { .role = role, .target = FunctionID(), .parameter = target.index() };
-}
-
-constexpr DerivedFunctionKey derivedFunctionKey(FunctionRole role, ExpectedResultID target, uint32_t node)
-{
-    return { .role = role, .target = FunctionID(), .parameter = target.index(), .node = node };
 }
 
 struct DerivedFunctionCommit {

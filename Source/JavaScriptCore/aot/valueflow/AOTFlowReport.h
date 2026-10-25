@@ -99,6 +99,7 @@ void reportFunctionsThatEndInFirstBlock(const Program&, Vector<InternalError>&&,
 struct FlowReportBodyRecords {
     Vector<Wire::TypeTestRecord> typeTests;
     Vector<Wire::RemainingCheckRecord> remainingChecks;
+    Vector<BuiltinID> builtinsCalledDirectly;
 };
 FlowReportBodyRecords collectFlowReportBodyRecords(const Program&, BuildContext&);
 FlowReport buildFlowReport(const Program&, const FlowResults&, const GradedSites&, std::span<const Wire::RemainingCheckRecord> checksLeftByFlow, FlowReportBodyRecords&&, BuildContext&);

@@ -135,6 +135,7 @@ Condition ElementAccessEmitter::hasArrayStorage(CellPointer array, ArrayStorage 
 }
 
 // The byte of an array with storage of its own of a plain kind has the bits of the kind and no other, so hasWritableShape() compares all of it. A lock bit that another thread holds for a moment sends the access the slow way.
+// So only the yes of that test is a fact. A checking build, which has no slow way, asks hasWritableShapeIgnoringLock().
 Word32 ElementAccessEmitter::indexingMode(CellPointer array, IndexingType mask)
 {
     Word32 byte = loadByte(array, m_heaps.JSCell_indexingTypeAndMisc);

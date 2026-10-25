@@ -37,6 +37,7 @@
 #include "AOTEvalEmitter.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTExpandedIterationEmitter.h"
+#include "AOTExpectedRowsEmitter.h"
 #include "AOTForInEmitter.h"
 #include "AOTFrameMapEmitter.h"
 #include "AOTFunctionBuiltinEmitter.h"
@@ -81,7 +82,6 @@
 #include "AOTThrowEmitter.h"
 #include "AOTTruthinessEmitter.h"
 #include "AOTTypeTestEmitter.h"
-#include "AOTValidationEmitter.h"
 #include <wtf/FastMalloc.h>
 
 namespace JSC { namespace AOT { namespace Typed {

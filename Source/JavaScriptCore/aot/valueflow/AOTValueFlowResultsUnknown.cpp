@@ -127,6 +127,7 @@ FlowResultTables createUnknownResultTables(const Program& program, BuildContext&
     tables.builtins.featureUses = features.map([](uint32_t feature) {
         return FeatureUseRecord { .feature = feature };
     });
+    tables.builtins.builtinsThatMayBeTrimmed = findBuiltinsThatMayBeTrimmed(builtins, tables.builtins.featureUses.span(), build.options());
     tables.builtins.localeUses.append(FlowLocaleUse { });
     tables.wholeProgram.modules = Vector<ModuleFlow>(program.modules.size());
     tables.wholeProgram.unseenCode.append(UnseenCodeRecord { .cause = UnseenCodeCause::OptionAdmitsCode });

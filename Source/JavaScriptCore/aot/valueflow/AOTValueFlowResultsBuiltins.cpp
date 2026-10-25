@@ -1042,6 +1042,7 @@ Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultIn
     times.didFinish("built-ins: uses"_s);
     tables.builtins.legacyRegExpStatics = findReadsOfLegacyRegExpStatics(inputs, holders);
     tables.builtins.featureUses = collectFeatureUses(inputs, holders, builtinsWhoseCodeRuns);
+    tables.builtins.builtinsThatMayBeTrimmed = findBuiltinsThatMayBeTrimmed(inputs.program.builtins(), tables.builtins.featureUses.span(), inputs.build.options());
     tables.builtins.localeUses = collectLocaleUses(inputs, heap, builtinsWhoseCodeRuns, tables.wholeProgram.unseenCode.span());
     times.didFinish("built-ins: statics, features, locales"_s);
     if (hasFlag(inputs.build.options().reports, ReportSet::Flow)) {

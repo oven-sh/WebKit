@@ -82,6 +82,29 @@ static bool tryAppendArray(JSGlobalObject* globalObject, VM& vm, JSArray* target
     return target->appendMemcpy(globalObject, vm, target->length(), source);
 }
 
+// A hole reads as undefined when no prototype of the source holds an indexed element.
+static NEVER_INLINE bool tryAppendArrayWithHoles(JSGlobalObject* globalObject, VM& vm, JSArray* target, JSArray* source)
+{
+    IndexingType type = source->indexingType();
+    unsigned length = source->length();
+    if (!hasInt32(type) && !hasDouble(type) && !hasContiguous(type))
+        return false;
+    if (source->structure()->holesMustForwardToPrototype(source) || !copiesIntoDenseStorage(vm.arrayStoragePolicy(), static_cast<uint64_t>(target->length()) + length))
+        return false;
+    // The source keeps these values alive.
+    Vector<EncodedJSValue, 16> values(length, [&](size_t i) {
+        if (hasDouble(type)) {
+            double number = source->butterfly()->contiguousDouble().data()[i];
+            return JSValue::encode(std::isnan(number) ? jsUndefined() : JSValue(JSValue::EncodeAsDouble, number));
+        }
+        JSValue value = source->butterfly()->contiguous().data()[i].get();
+        return JSValue::encode(value ? value : jsUndefined());
+    });
+    if (!target->tryMakeWritableContiguous(vm).data())
+        return false;
+    return target->appendMemcpy(globalObject, vm, target->length(), ArrayWithContiguous, values.span());
+}
+
 static bool tryAppendFrameArray(JSGlobalObject* globalObject, VM& vm, JSArray* target, JSArray* frameArray)
 {
     Butterfly* elements = frameArray->butterfly();
@@ -111,6 +134,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAppendElements, void, (Instance* instance, 
         OPERATION_RETURN(scope);
     }
     if (isFrameArray(source) ? tryAppendFrameArray(globalObject, vm, target, source) : tryAppendArray(globalObject, vm, target, source))
+        OPERATION_RETURN(scope);
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+    if (!isFrameArray(source) && tryAppendArrayWithHoles(globalObject, vm, target, source))
         OPERATION_RETURN(scope);
     OPERATION_RETURN_IF_EXCEPTION(scope);
     unsigned length = source->length();

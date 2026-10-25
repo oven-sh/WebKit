@@ -798,8 +798,7 @@ static void recordFitsRoleForEveryRole()
         { CreatorRecord::ParameterWrapper { }, { FunctionRole::ParameterWrapper } },
         { CreatorRecord::EntryChecks { }, { FunctionRole::EntryChecks } },
         { CreatorRecord::Serializer { }, { FunctionRole::Serializer } },
-        { CreatorRecord::Parser { }, { FunctionRole::Parser, FunctionRole::ValidatingParser } },
-        { CreatorRecord::Validator { }, { FunctionRole::Validator } },
+        { CreatorRecord::Parser { }, { FunctionRole::Parser } },
         { CreatorRecord::ChainStep { }, { FunctionRole::ChainStep } },
         { CreatorRecord::StubBody { }, { FunctionRole::StubBody } },
     };

@@ -1,12 +1,10 @@
 # The parser of an IR type allocates the head layouts the type names, absorbs a member or element of another kind as a plain value, and gives up only where the field or the array cannot hold it:
 # an object of the generic parser has no layout, so it is no element of an array of a layout
 # FORM: Prepared
-# RUN: derived-functions Parser:g0 Parser:g1 Parser:g2 Parser:g3 ValidatingParser:x0.0
-# STATISTIC: ParsersCreated = 7
-# STATISTIC: ValidatorsCreated = 0
+# RUN: derived-functions Parser:g0 Parser:g1 Parser:g2 Parser:g3
+# STATISTIC: ParsersCreated = 6
 
 module m0 path="main.js" displayPath="main.js"
-expectedresult x0 type=L3 layouts=[L3] validation=[{shape=Object{layout=L3 members=[{key="items" node=1 field=0}, {key="n" node=2 field=1}]} type=L3}, {type=anything}, {shape=Primitive{primitive=Number} type=number}]
 layout L0 name="User" fields=[{key="id" declared={type=number}}, {key="name" declared={type=undefined|string}}]
 layout L1 name="UserLiteral" fields=[{key="id" declared={type=number}}, {key="name" declared={type=undefined|string}}] supertypes=[L0]
 layout L2 name="Int32Field" fields=[{key="count" declared={type=i32}}]
@@ -16,24 +14,6 @@ variable g1 name="t1" declared={type=Array<L0>} initialization=Undefined
 variable g2 name="t2" declared={type=L2} initialization=Undefined
 variable g3 name="t3" declared={type=L3} initialization=Undefined
 
-# CHECK: function {{*}}role=Parser {{*}}results=[{type=int[0, 2]}, {type=undefined|L3}, {type=cursor}]
-# CHECK: : 2 = Integer integer=2
-# CHECK: [[unknown4]]() frequency=Rare:
-# CHECK-NEXT: : 0 = Integer
-# CHECK-NOT: TypeTest {{*}}proven
-# CHECK-NOT: TypeTest {{*}}pristine
-# CHECK: = JSONStartsWith {{*}} string="\"items\":" [isLikely]
-# CHECK-NOT: TypeTest {{*}}proven
-# CHECK-NOT: TypeTest {{*}}pristine
-# CHECK: = CallDirect {{*}} function=[[parserOfNumbers]]
-# CHECK-NOT: TypeTest {{*}}proven
-# CHECK-NOT: TypeTest {{*}}pristine
-# CHECK: [[isArray4]]: boolean = TypeTest [[items4]] testedType=Array<number> @
-# CHECK-NEXT: Branch [[isArray4]] -> taken [[array4]](| 0), notTaken
-# CHECK-NOT: TypeTest {{*}}proven
-# CHECK-NOT: TypeTest {{*}}pristine
-# CHECK: [[assumed4]]:{{*}}= AssumeType {{*}} castType=Array<number, pristine[Storage, Names]>
-# CHECK: = NewObject -, [[assumed4]], {{*}} layout=L3 fields=[0, 1]
 # CHECK: function [[parserOfNumbers]] {{*}}role=Parser {{*}}results=[{type=int[0, 2]}, {type=undefined|Array<number>}, {type=cursor}]
 
 # CHECK: function {{*}}role=Parser length=1 {{*}}parameters=[{type=cursor}] results=[{type=int[0, 2]}, {type=undefined|null|L0|L1}, {type=cursor}]
@@ -108,22 +88,21 @@ variable g3 name="t3" declared={type=L3} initialization=Undefined
 # CHECK-NEXT: Jump -> next [[unknown3]]()
 # CHECK-NOT: JSONParseNumber
 
-# CHECK: function {{*}}role=ValidatingParser {{*}}expectedResult=x0}
+# CHECK: function {{*}}role=Parser {{*}}results=[{type=int[0, 2]}, {type=undefined|L3}, {type=cursor}]
 # CHECK: : 2 = Integer integer=2
-# CHECK: [[unknown5]]() frequency=Rare:
+# CHECK: [[unknown4]]() frequency=Rare:
 # CHECK-NEXT: : 0 = Integer
-# CHECK-NOT: string="\"items\":"
-# CHECK-NOT: AssumeType
 # CHECK-NOT: TypeTest {{*}}proven
-# CHECK: ({{*}}, [[seenItems5]]: boolean, {{*}}: undefined|number, {{*}}: boolean, [[key5]]: cursor, {{*}}: keyorder, {{*}}: anything):
-# CHECK-NEXT: LoopHint
-# CHECK-NOT: string="\"items\":"
-# CHECK-NOT: AssumeType
+# CHECK-NOT: TypeTest {{*}}pristine
+# CHECK: = JSONStartsWith {{*}} string="\"items\":" [isLikely]
 # CHECK-NOT: TypeTest {{*}}proven
-# CHECK: = JSONStartsWith [[key5]] string="\"items\"" @
-# CHECK: Branch [[seenItems5]] -> taken {{*}}, notTaken [[items5]]()
-# CHECK: [[items5]]():
-# CHECK-NEXT: Jump -> next [[unknown5]]()
-# CHECK-NOT: string="\"items\":"
-# CHECK-NOT: AssumeType
+# CHECK-NOT: TypeTest {{*}}pristine
+# CHECK: = CallDirect {{*}} function=[[parserOfNumbers]]
 # CHECK-NOT: TypeTest {{*}}proven
+# CHECK-NOT: TypeTest {{*}}pristine
+# CHECK: [[isArray4]]: boolean = TypeTest [[items4]] testedType=Array<number> @
+# CHECK-NEXT: Branch [[isArray4]] -> taken [[array4]](| 0), notTaken
+# CHECK-NOT: TypeTest {{*}}proven
+# CHECK-NOT: TypeTest {{*}}pristine
+# CHECK: [[assumed4]]:{{*}}= AssumeType {{*}} castType=Array<number, pristine[Storage, Names]>
+# CHECK: = NewObject -, [[assumed4]], {{*}} layout=L3 fields=[0, 1]

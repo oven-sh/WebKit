@@ -190,31 +190,6 @@ void addExpectedResultDamages(const ReaderFixture& fixture, RecordDamages& damag
     damages.id("ExpectedResult.type"_s, expectedResult(offsetof(Wire::ExpectedResult, type)), List::Types);
     damages.span("ExpectedResult.layouts"_s, expectedResult(offsetof(Wire::ExpectedResult, layouts)));
     damages.id("layout of an expected result"_s, wordOffset(fixture, fixture.spanAt(expectedResult(offsetof(Wire::ExpectedResult, layouts))).start), numberOfLayoutIDs(fixture));
-    damages.optionalID("ExpectedResult.site"_s, expectedResult(offsetof(Wire::ExpectedResult, site)), List::TypeSites);
-    damages.span("ExpectedResult.validation"_s, expectedResult(offsetof(Wire::ExpectedResult, validation)));
-
-    auto objectNode = offsetsOf<Wire::ValidationNode>(fixture, List::ValidationNodes, 0);
-    size_t objectWords = objectNode(offsetof(Wire::ValidationNode, shape.words));
-    damages.variant("ValidationShape.kind"_s, objectNode(offsetof(Wire::ValidationNode, shape.kind)));
-    damages.optionalID("ValidationShape.Object.layout"_s, objectWords, numberOfLayoutIDs(fixture));
-    damages.span("ValidationShape.Object.members"_s, objectWords + wordSize);
-    damages.enumerator<UndeclaredMembers>("ValidationShape.Object.undeclared"_s, objectWords + 3 * wordSize);
-    damages.id("ValidationNode.type"_s, objectNode(offsetof(Wire::ValidationNode, type)), List::Types);
-    damages.span("ValidationNode.rules"_s, objectNode(offsetof(Wire::ValidationNode, rules)));
-    damages.optionalID("ValidationNode.text"_s, objectNode(offsetof(Wire::ValidationNode, text)), List::Strings);
-    damages.enumerator<ValidatedPrimitive>("ValidationShape.Primitive.primitive"_s, fixture.offsetOf<Wire::ValidationNode>(List::ValidationNodes, 1, offsetof(Wire::ValidationNode, shape.words)));
-
-    auto member = offsetsOf<Wire::ValidationMember>(fixture, List::ValidationMembers, 0);
-    damages.id("ValidationMember.key"_s, member(offsetof(Wire::ValidationMember, key)), List::PropertyKeys);
-    damages.boolean("ValidationMember.isOptional"_s, member(offsetof(Wire::ValidationMember, isOptional)));
-
-    auto templateRule = offsetsOf<Wire::ValidationRule>(fixture, List::ValidationRules, 1);
-    damages.variant("ValidationRule.kind"_s, templateRule(offsetof(Wire::ValidationRule, kind)));
-    damages.id("ValidationRule.Template.head"_s, templateRule(offsetof(Wire::ValidationRule, words)), List::Strings);
-    damages.span("ValidationRule.Template.parts"_s, templateRule(offsetof(Wire::ValidationRule, words)) + wordSize);
-    auto templatePart = offsetsOf<Wire::TemplatePart>(fixture, List::TemplateParts, 0);
-    damages.enumerator<TemplatePlaceholder>("TemplatePart.placeholder"_s, templatePart(offsetof(Wire::TemplatePart, placeholder)));
-    damages.id("TemplatePart.text"_s, templatePart(offsetof(Wire::TemplatePart, text)), List::Strings);
 }
 
 void addDataDamages(const ReaderFixture& fixture, RecordDamages& damages)

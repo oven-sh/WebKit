@@ -59,7 +59,6 @@ static bool isValidKey(const DerivedFunctionKey& key, DerivedFunctionTarget targ
         return !key.target && !key.node;
     case DerivedFunctionTarget::Type:
         return !key.target && !key.node && !TypeTable::isProvisional(TypeID(key.parameter));
-    case DerivedFunctionTarget::ValidationNode:
     case DerivedFunctionTarget::Selector:
         return !key.target;
     case DerivedFunctionTarget::FunctionAndSelector:

@@ -32,7 +32,6 @@ static constexpr OpcodeSet rowsWithDeclaredOperands {
     Opcode::PutSlot,
     Opcode::PutSlotOrAdd,
     Opcode::AwaitCallBySavingFrame,
-    Opcode::CloneAs,
     Opcode::PutSlots,
 };
 

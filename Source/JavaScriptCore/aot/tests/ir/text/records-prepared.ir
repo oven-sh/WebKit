@@ -1,8 +1,7 @@
 # What only the engine writes in a record: every role with its creator record and derivation, kinds of layouts, flags of fields, a registered symbol as a key
 # FORM: Prepared
 # RUN: round-trip
-# CHECK: expectedresult x0 type=L1 layouts=[L1] validation=[{shape=Object{layout=L1} type=L1}, {shape=Primitive{primitive=Number} type=number}]
-# CHECK-NEXT: layout L0 kind=Instance name="B" module=m0 fields=[{key="x" declared={type=number}}] ownFieldCount=1
+# CHECK: layout L0 kind=Instance name="B" module=m0 fields=[{key="x" declared={type=number}}] ownFieldCount=1
 # CHECK-NEXT: layout L1 kind=Instance name="D" module=m0 base=L0 fields=[{key="y" declared={type=number}}, {key="x" declared={type=number} flags=[IsInherited] originLayout=L0 originField=0}, {key="z" declared={type=anything} flags=[IsAddedLate]}, {key=Symbol.for("s") declared={type=anything} flags=[IsAddedLate]}] flags=[HasHeritage] ownFieldCount=1 flow={baseState=Layout base=L0}
 # CHECK-NEXT: layout L2 kind=Closure fields=[{declared={type=anything}}] ownFieldCount=1
 # CHECK-NEXT: layout L3 kind=CoroutineFrame fields=[{declared={type=anything}}, {declared={type=number}}] ownFieldCount=2
@@ -28,16 +27,13 @@
 # CHECK-NEXT: function f18 name="secondOutlinedBody" module=m0 role=OutlinedBody thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f0}
 # CHECK-NEXT: function f19 name="serializer" module=m0 role=Serializer thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Serializer{}
 # CHECK-NEXT: function f20 name="layoutSerializer" module=m0 role=Serializer thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Serializer{layout=L1}
-# CHECK-NEXT: function f21 name="parser" module=m0 role=Parser thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Parser{type=L1 layout=L1 form=ParsedText expectedResult=x0 node=1}
+# CHECK-NEXT: function f21 name="parser" module=m0 role=Parser thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Parser{type=L1 layout=L1 form=ParsedText}
 # CHECK-NEXT: function f22 name="bodyParser" module=m0 role=Parser thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Parser{type=string form=ParsedBody}
-# CHECK-NEXT: function f23 name="rowParser" module=m0 role=ValidatingParser thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Parser{type=string form=Rows}
-# CHECK-NEXT: function f24 name="valueParser" module=m0 role=ValidatingParser thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Parser{type=string form=ValidatedValue}
-# CHECK-NEXT: function f25 name="validator" module=m0 role=Validator thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Validator{type=L1 layout=L1 expectedResult=x0 node=1}
-# CHECK-NEXT: function f26 name="chainStep" module=m0 role=ChainStep thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=ChainStep
-# CHECK-NEXT: function f27 name="stubBody" module=m0 role=StubBody thisType={type=anything} results=[{type=anything}] creator=StubBody{builtin=MathMax}
+# CHECK-NEXT: function f23 name="rowParser" module=m0 role=Parser thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Parser{type=string form=Rows}
+# CHECK-NEXT: function f24 name="chainStep" module=m0 role=ChainStep thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=ChainStep
+# CHECK-NEXT: function f25 name="stubBody" module=m0 role=StubBody thisType={type=anything} results=[{type=anything}] creator=StubBody{builtin=MathMax}
 # CHECK-NEXT: round trip: same
 
-expectedresult x0 type=L1 layouts=[L1] validation=[{shape=Object{layout=L1} type=L1}, {shape=Primitive{primitive=Number} type=number}]
 layout L0 kind=Instance name="B" module=m0 fields=[{key="x" declared={type=number}}] ownFieldCount=1
 layout L1 kind=Instance name="D" module=m0 base=L0 fields=[{key="y" declared={type=number}}, {key="x" declared={type=number} flags=[IsInherited] originLayout=L0 originField=0}, {key="z" declared={type=anything} flags=[IsAddedLate]}, {key=Symbol.for("s") declared={type=anything} flags=[IsAddedLate]}] flags=[HasHeritage] ownFieldCount=1 flow={baseState=Layout base=L0}
 layout L2 kind=Closure fields=[{declared={type=anything}}] ownFieldCount=1
@@ -64,10 +60,8 @@ function f17 name="outlinedBody" module=m0 role=OutlinedBody thisType={type=anyt
 function f18 name="secondOutlinedBody" module=m0 role=OutlinedBody thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f0}
 function f19 name="serializer" module=m0 role=Serializer thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Serializer{}
 function f20 name="layoutSerializer" module=m0 role=Serializer thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Serializer{layout=L1}
-function f21 name="parser" module=m0 role=Parser thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Parser{type=L1 layout=L1 form=ParsedText expectedResult=x0 node=1}
+function f21 name="parser" module=m0 role=Parser thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Parser{type=L1 layout=L1 form=ParsedText}
 function f22 name="bodyParser" module=m0 role=Parser thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Parser{type=string form=ParsedBody}
-function f23 name="rowParser" module=m0 role=ValidatingParser thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Parser{type=string form=Rows}
-function f24 name="valueParser" module=m0 role=ValidatingParser thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Parser{type=string form=ValidatedValue}
-function f25 name="validator" module=m0 role=Validator thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Validator{type=L1 layout=L1 expectedResult=x0 node=1}
-function f26 name="chainStep" module=m0 role=ChainStep thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=ChainStep
-function f27 name="stubBody" module=m0 role=StubBody thisType={type=anything} results=[{type=anything}] creator=StubBody{builtin=MathMax}
+function f23 name="rowParser" module=m0 role=Parser thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Parser{type=string form=Rows}
+function f24 name="chainStep" module=m0 role=ChainStep thisType={type=anything} results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] creator=ChainStep
+function f25 name="stubBody" module=m0 role=StubBody thisType={type=anything} results=[{type=anything}] creator=StubBody{builtin=MathMax}

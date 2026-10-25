@@ -82,7 +82,6 @@ struct ShapeTestUse {
 struct AllocationUse {
     LayoutID layout;
     bool keysAreNeverEnumerated { false };
-    bool holdsInnerObjects { false };
     Vector<FieldIndex> initialFields;
 
     friend bool operator==(const AllocationUse&, const AllocationUse&) = default;
@@ -92,8 +91,6 @@ struct AllocationUse {
             return a.layout < b.layout;
         if (a.keysAreNeverEnumerated != b.keysAreNeverEnumerated)
             return b.keysAreNeverEnumerated;
-        if (a.holdsInnerObjects != b.holdsInnerObjects)
-            return b.holdsInnerObjects;
         return std::ranges::lexicographical_compare(a.initialFields, b.initialFields);
     }
 };

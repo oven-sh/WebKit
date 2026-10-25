@@ -40,7 +40,7 @@
     v(SavedFrameEmitter) \
     v(StringBuilderEmitter) \
     v(JSONParseEmitter) \
-    v(ValidationEmitter) \
+    v(ExpectedRowsEmitter) \
     v(JSONWriteEmitter) \
     v(FusedAccessEmitter) \
     v(SlotRunEmitter) \

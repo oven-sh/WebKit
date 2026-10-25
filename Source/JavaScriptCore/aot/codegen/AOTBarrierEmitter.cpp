@@ -80,6 +80,8 @@ BarrierEmitter::BarrierDecision BarrierEmitter::decide(const ValueContext& store
 {
     if (!mayStoreCell)
         return BarrierDecision::StoresNoCell;
+    if (m_options.recorded.isSabotaged(Sabotage::StoresNeedNoBarrier))
+        return BarrierDecision::OwnerCannotBeMarked;
     if (!runsOwnerBarrierOf(store.opcode()))
         return BarrierDecision::Emit;
     // Such a cell may have no header, so no code may read its cell state.

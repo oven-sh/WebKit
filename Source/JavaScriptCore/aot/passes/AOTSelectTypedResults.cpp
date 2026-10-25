@@ -15,16 +15,13 @@
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTJSONEmission.h"
-#include "AOTRegExpSummary.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
 #include "AOTSelectTypedResultsNodes.h"
 #include "AOTSelectTypedResultsTargets.h"
 #include "AOTStringArena.h"
 #include "AOTThreshold.h"
-#include "AOTValidationPlanText.h"
 #include "AOTValueFlowTypedResults.h"
-#include "YarrFlags.h"
 #include <algorithm>
 #include <ranges>
 
@@ -47,8 +44,6 @@ struct TypedResultSite {
     TypedResultForm form { TypedResultForm::None };
     ResultNodeRef root;
     LayoutID rowLayout;
-    // validateByPlan does the whole validation, and makes ordinary objects.
-    bool isValidatedByPlanAlone { false };
 };
 
 struct TypedResultChoice {
@@ -59,11 +54,6 @@ struct TypedResultChoice {
 } // anonymous namespace
 
 // Which calls are expanded.
-
-static bool isValidated(const Program& program, ExpectedResultID expected)
-{
-    return expected && !program.at(expected).validation.isEmpty();
-}
 
 static TypedResultForm matchedFormOf(const Program& program, const Value& call)
 {
@@ -88,7 +78,7 @@ static std::optional<Value> tryMakeBuiltinCall(const TypingContext& typing, Buil
 
 static bool isCompiledContainer(const NodeDecisionInputs& inputs, ResultNodeRef ref, const ResultNode& node)
 {
-    return node.isContainer() && decideNodeCode(inputs, ref, NodeUse::ParsedFromText).code == NodeCode::Compiled;
+    return node.isContainer() && decideNodeCode(inputs, ref).code == NodeCode::Compiled;
 }
 
 static bool hasTypedPart(const NodeDecisionInputs& inputs, ResultNodeRef root)
@@ -264,61 +254,6 @@ static TypedResultChoice chooseRows(FunctionPassContext& context, TypedResultSit
     return { .site = site };
 }
 
-// No search can be made with such a pattern, whether code or a plan tests the rule: the build ends with an error that quotes it.
-static void reportInvalidPatterns(FunctionPassContext& context, ValueID call, ExpectedResultID expected)
-{
-    Vector<char16_t> bufferForNonASCII;
-    auto check = [&](StringID source, bool isUnicode) {
-        OptionSet<Yarr::Flags> flags;
-        if (isUnicode)
-            flags.add(Yarr::Flags::Unicode);
-        if (context.build.regExpSummaries().summaryOf(source, flags, context.program.strings.viewOf(source, bufferForNonASCII)).isValid())
-            return;
-        context.build.diagnostics().add(UserDiagnostic {
-            .kind = isUnicode ? UserDiagnosticKind::InvalidUnicodeValidationPattern : UserDiagnosticKind::InvalidValidationPattern,
-            .text = source,
-            .location = context.function.locationOf(call),
-        });
-    };
-    for (const ValidationNode& node : context.program.at(expected).validation) {
-        for (const ValidationRule& rule : node.rules) {
-            if (const auto* pattern = rule.tryAs<ValidationRule::Pattern>())
-                check(pattern->source, pattern->isUnicode);
-            if (const auto* members = rule.tryAs<ValidationRule::PatternMembers>()) {
-                for (StringID source : members->sources)
-                    check(source, true);
-            }
-        }
-    }
-}
-
-static TypedResultChoice chooseValidatedResult(FunctionPassContext& context, TypedResultSite site, ExpectedResultID expected)
-{
-    const Program& program = context.program;
-    reportInvalidPatterns(context, site.call, expected);
-    site.root = ResultNodeRef::forValidation(canonicalValidationOf(program, expected), 0);
-
-    // Flow allocated nothing at the call, so no object with a layout comes out of it, not even one with a layout that flow allocated at another call.
-    const FlowResults& flow = context.inputs.flow;
-    if (flow.hasResults() && !flow.typedResultType(context.function.at(site.call).accessSite())) {
-        site.isValidatedByPlanAlone = true;
-        context.exceeds(LimitID::MaxObjectsOfTypedResult, typedResultOf(program, expected, context.limit(LimitID::MaxObjectsOfTypedResult)).numberOfObjects(), site.call);
-        if (site.form == TypedResultForm::ParsedText)
-            site.form = TypedResultForm::None;
-    }
-
-    if (site.form == TypedResultForm::ParsedText || site.form == TypedResultForm::ValidatedValue) {
-        site.source = typedResultSourceOf(program, context.function.at(site.call));
-        if (!site.source)
-            site.form = TypedResultForm::None;
-    }
-    if (site.form == TypedResultForm::ParsedText && isSourceOpenAcross(context, site.block, site.index))
-        site.form = TypedResultForm::None;
-
-    context.exceeds(LimitID::MaxParserPlanNodes, program.at(expected).validation.size(), site.call);
-    return { .site = site, .declineReason = site.isValidatedByPlanAlone ? TypedResultDeclineReason::TargetIsNotModeledByFlow : TypedResultDeclineReason::None };
-}
-
 // Flow filled the objects it allocated at the call from the field types as read. Its own predictions have replaced those since, and they can name a layout that flow never put there.
 static bool reachesOnlyModeledLayouts(const NodeDecisionInputs& inputs, AccessSiteID call, TypeID type)
 {
@@ -332,7 +267,7 @@ static bool reachesOnlyModeledLayouts(const NodeDecisionInputs& inputs, AccessSi
     return reachesOnlyModeled;
 }
 
-static TypedResultChoice chooseUnvalidatedResult(FunctionPassContext& context, TypedResultSite site, ExpectedResultID expected)
+static TypedResultChoice chooseResult(FunctionPassContext& context, TypedResultSite site, ExpectedResultID expected)
 {
     const Program& program = context.program;
     const FlowResults& flow = context.inputs.flow;
@@ -364,7 +299,7 @@ static TypedResultChoice chooseUnvalidatedResult(FunctionPassContext& context, T
     if (!type)
         return { .declineReason = TypedResultDeclineReason::NoTarget };
 
-    site.root = ResultNodeRef::forType(type);
+    site.root = ResultNodeRef { type };
     if (!hasTypedPart({ program, flow, context.build }, site.root))
         return { .declineReason = TypedResultDeclineReason::TargetHasNoTypedPart };
     if (context.exceeds(LimitID::MaxParserPlanNodes, smallestPlanSize, site.call))
@@ -372,7 +307,6 @@ static TypedResultChoice chooseUnvalidatedResult(FunctionPassContext& context, T
 
     switch (site.form) {
     case TypedResultForm::None:
-    case TypedResultForm::ValidatedValue:
         return { };
     case TypedResultForm::ParsedText:
         site.source = typedResultSourceOf(program, call);
@@ -440,15 +374,11 @@ struct TypedResultExpander final : Emission {
         case TypedResultForm::ParsedText:
             return expandParsedText(site);
         case TypedResultForm::ParsedBody:
-            return site.root.isValidated() ? expandValidatedCall(site) : expandParsedBody(site);
+            return expandParsedBody(site);
         case TypedResultForm::Rows:
-            return site.root.isValidated() ? expandValidatedCall(site) : expandRows(site);
-        case TypedResultForm::ValidatedValue: {
-            IRBuilder::Expansion expansion = builder().beginExpansion({ site.block, site.index });
-            return endExpansion(expansion, emitValidationOf(site, site.source));
-        }
+            return expandRows(site);
         case TypedResultForm::None:
-            return expandValidatedCall(site);
+            break;
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -466,7 +396,7 @@ struct TypedResultExpander final : Emission {
         return builder().append(WTF::move(call));
     }
 
-    ValueID emitParseOf(const TypedResultSite& site, ValueID textOrBytes, BlockID generic, BlockID rejected)
+    ValueID emitParseOf(const TypedResultSite& site, ValueID textOrBytes, BlockID generic)
     {
         builder().emitFailureOfPredictions(Target { generic, { }, { } });
         ValueID source = emitProvenBranch(builder().append(Opcode::JSONSourceOpen, { textOrBytes }), generic);
@@ -479,18 +409,11 @@ struct TypedResultExpander final : Emission {
 
         BlockID parsed = builder().addBlock();
         BlockID abandon = builder().addBlock(BlockFrequency::Rare);
-        BlockID abandonRejected = rejected == generic ? abandon : builder().addBlock(BlockFrequency::Rare);
-        emitBranchOnOutcome(outcome, parsed, abandonRejected, abandon);
+        emitBranchOnOutcome(outcome, parsed, abandon, abandon);
 
         builder().moveToEndOf(abandon);
         builder().append(Opcode::JSONSourceAbandon, { source });
         builder().emitJump(generic);
-
-        if (abandonRejected != abandon) {
-            builder().moveToEndOf(abandonRejected);
-            builder().append(Opcode::JSONSourceAbandon, { source });
-            builder().emitJump(rejected);
-        }
 
         builder().moveToEndOf(parsed);
         emitJumpUnless(builder().append(Opcode::JSONSourceClose, { source, next }), generic);
@@ -501,27 +424,9 @@ struct TypedResultExpander final : Emission {
     {
         IRBuilder::Expansion expansion = builder().beginExpansion({ site.block, site.index });
         BlockID generic = builder().addBlock(BlockFrequency::Rare);
-        if (!site.root.isValidated()) {
-            endExpansion(expansion, emitParseOf(site, site.source, generic, generic));
-            builder().moveToEndOf(generic);
-            endExpansion(expansion, appendOriginalCall());
-            return;
-        }
-
-        // The text is parsed again in both cases: what follows the value that was refused may be no JSON.
-        BlockID rejected = builder().addBlock(BlockFrequency::Rare);
-        BlockID again = builder().addBlock(BlockFrequency::Rare);
-        endExpansion(expansion, emitParseOf(site, site.source, generic, rejected));
-
+        endExpansion(expansion, emitParseOf(site, site.source, generic));
         builder().moveToEndOf(generic);
-        builder().emitJump(again, { builder().appendBoolean(false) });
-        builder().moveToEndOf(rejected);
-        emitThrowUnlessErrorIsLookedAt();
-        builder().emitJump(again, { builder().appendBoolean(true) });
-
-        ValueID isRefused = builder().addParameter(again, TypeTable::boolean);
-        builder().moveToEndOf(again);
-        endExpansion(expansion, emitGeneralValidation(site, appendOriginalCall(), isRefused));
+        endExpansion(expansion, appendOriginalCall());
     }
 
     // Each jump into the block of the await says whether it brings the promise of bytes().
@@ -569,7 +474,7 @@ struct TypedResultExpander final : Emission {
             endExpansion(expansion, bytes);
             builder().moveToEndOf(blocks.taken);
         }
-        endExpansion(expansion, emitParseOf(site, bytes, generic, generic));
+        endExpansion(expansion, emitParseOf(site, bytes, generic));
 
         builder().moveToEndOf(generic);
         std::optional<Value> parseCall = tryMakeBuiltinCall(typing, Builtins::JSONParse, builder().append(Opcode::JSONDecodeBytes, { bytes }));
@@ -589,91 +494,6 @@ struct TypedResultExpander final : Emission {
         builder().applyInsertions();
     }
 
-    void expandValidatedCall(const TypedResultSite& site)
-    {
-        const Terminator& terminator = function().at(site.block).terminator;
-        if (terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == site.call) {
-            builder().demoteReturnCall(site.block);
-            originalCall = function().at(site.call);
-        }
-
-        IRBuilder::Expansion expansion = builder().beginExpansion({ site.block, site.index });
-        ValueID answer = appendOriginalCall();
-        // A reviver has run inside the call, and the answer may hold what it returned: objects that the program has. A copy of one is another object, so the answer is validated and handed on as it is.
-        if (originalCall.opcode == Opcode::CallBuiltin && !program().builtins().at(originalCall.overload()).flow.callbacks.empty()) {
-            emitGeneralValidation(site, answer);
-            endExpansion(expansion, answer);
-            return;
-        }
-        endExpansion(expansion, emitValidationOf(site, answer));
-    }
-
-    ValueID emitValidationOf(const TypedResultSite& site, ValueID value)
-    {
-        if (site.isValidatedByPlanAlone)
-            return emitGeneralValidation(site, value);
-
-        NodeDecisionInputs decisionInputs { inputs().program, inputs().flow, inputs().build };
-        ExpectedResultID expectedResult = site.root.expectedResult();
-        for (size_t index : nodesReachableFrom(program(), expectedResult, site.root.part)) {
-            ResultNodeRef node = ResultNodeRef::forValidation(expectedResult, static_cast<uint32_t>(index));
-            NodeDecision decision = decideNodeCode(decisionInputs, node, NodeUse::CopiedFromValue);
-            if (decision.code != NodeCode::Interpreted)
-                continue;
-            addInterpretedNodeDecline(decisionInputs, firstLayoutOf(program(), node), decision.cause);
-            return emitGeneralValidation(site, value);
-        }
-
-        ValueID results = appendCallOf(inputs().functions.ensure(validatorKeyOf(site.root)), { value });
-        ValueID outcome = appendResultAt(results, 0);
-        ValueID copy = appendResultAt(results, 1);
-
-        BlockID accepted = builder().addBlock();
-        BlockID rejected = builder().addBlock(BlockFrequency::Rare);
-        BlockID unknown = builder().addBlock(BlockFrequency::Rare);
-        BlockID general = builder().addBlock(BlockFrequency::Rare);
-        BlockID merge = builder().addBlock();
-        emitBranchOnOutcome(outcome, accepted, rejected, unknown);
-
-        builder().moveToEndOf(accepted);
-        builder().emitJump(merge, { copy });
-
-        builder().moveToEndOf(rejected);
-        emitThrowUnlessErrorIsLookedAt();
-        builder().emitJump(general, { builder().appendBoolean(true) });
-        builder().moveToEndOf(unknown);
-        builder().emitJump(general, { builder().appendBoolean(false) });
-
-        // The helper builds ordinary objects, which are in no family: the Check behind the call tells them from the copies that have a layout.
-        ValueID isRefused = builder().addParameter(general, TypeTable::boolean);
-        builder().moveToEndOf(general);
-        ValueID generalCopy = emitGeneralValidation(site, value, isRefused);
-        builder().emitJump(merge, { generalCopy });
-
-        ValueID validated = builder().addParameter(merge, inputs().types.unionOf(function().at(copy).type, function().at(generalCopy).type));
-        builder().moveToEndOf(merge);
-        return validated;
-    }
-
-    // Compiled code has refused the value. A handler that never looks at what it catches is told no more than that: no error is made, the text is not parsed again, and nothing is found out about the value.
-    void emitThrowUnlessErrorIsLookedAt()
-    {
-        IRBuilder::BranchBlocks blocks = builder().emitBranch(builder().append(Opcode::IsThrownValueIgnored, { }));
-        builder().moveToEndOf(blocks.taken);
-        Value error = IRBuilder::make(Opcode::ThrowNewError);
-        error.setErrorKind(ErrorKind::TypeError);
-        error.setMessage(inputs().strings.intern(StringView(emptyString())));
-        builder().append(WTF::move(error));
-        builder().emitUnreachable();
-        builder().moveToEndOf(blocks.notTaken);
-    }
-
-    ValueID emitGeneralValidation(const TypedResultSite& site, ValueID value, ValueID isRefused = { })
-    {
-        StringID plan = validationPlanText(program(), inputs().strings, site.root.expectedResult(), site.root.part);
-        return appendHelperCall(Builtins::CompilerHelpersValidateByPlan, { value, appendString(plan), isRefused ? isRefused : builder().appendBoolean(false), builder().append(Opcode::GetPreparedPlans, { }) });
-    }
-
     FunctionPassContext& pass;
     Value originalCall;
 };
@@ -691,14 +511,13 @@ PassOutcome selectTypedResults(FunctionPassContext& context)
     const Program& program = context.program;
     Vector<TypedResultSite, 2> sites;
     context.forEachSiteIn(SiteList::TypedResultCalls, [&](const ValueSite& position) {
-        // ResolveBuiltins has seen a Call and does not know its callee. Whatever is called, the result is validated.
         const Value& call = context.function.at(position.value);
         TypedResultSite site { .block = position.block, .index = position.index, .call = position.value, .form = matchedFormOf(program, call) };
         ExpectedResultID expected = typedResultCallOpcodes.contains(call.opcode) ? call.expectedResult() : ExpectedResultID();
-        if (site.form == TypedResultForm::None && !isValidated(program, expected))
+        if (site.form == TypedResultForm::None)
             return;
 
-        TypedResultChoice choice = isValidated(program, expected) ? chooseValidatedResult(context, site, expected) : chooseUnvalidatedResult(context, site, expected);
+        TypedResultChoice choice = chooseResult(context, site, expected);
         // The next round finds a site that is left out here.
         bool waitsForNextRound = choice.site && sites.containsIf([&](const TypedResultSite& earlier) {
             return splitsBlockOf(earlier, *choice.site) || splitsBlockOf(*choice.site, earlier);

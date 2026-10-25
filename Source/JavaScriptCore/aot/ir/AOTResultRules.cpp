@@ -446,8 +446,6 @@ Type ResultRules::sameAs(const Value& value, uint32_t operandIndex)
 
 Type ResultRules::allocation(const Value& value, LayoutID layout)
 {
-    if (value.opcode == Opcode::CloneAs && context.level == TypeLevel::Proven)
-        return Type::object();
     if (!mayAllocateOtherLayout(context.program, value))
         return typeOfAllocatedLayout(context, layout);
     if (context.level == TypeLevel::Proven)
@@ -870,7 +868,7 @@ struct ResultRulesWithoutType {
 
     TypeID allocation(const Value& value, LayoutID layout)
     {
-        if (value.opcode == Opcode::CloneAs || mayAllocateOtherLayout(context.program, value))
+        if (mayAllocateOtherLayout(context.program, value))
             return { };
         return rememberedResult(Key::Layout, SharedAnswers::AboutProgram, value, [&](auto& hasher) {
             hasher.add(layout.index());
@@ -1025,7 +1023,7 @@ static constexpr OpcodeSet opcodesTypedAlikeAtBothLevels = []() consteval {
     return opcodes;
 }();
 
-static constexpr OpcodeSet opcodesWhoseRuleReadsTheLevel { Opcode::Builtin, Opcode::ModuleBuiltin, Opcode::Convert, Opcode::NewObject, Opcode::CloneAs, Opcode::NarrowByField };
+static constexpr OpcodeSet opcodesWhoseRuleReadsTheLevel { Opcode::Builtin, Opcode::ModuleBuiltin, Opcode::Convert, Opcode::NewObject, Opcode::NarrowByField };
 
 static void addKeyOfResult(auto& hasher, const TypingContext& context, const Value& value)
 {

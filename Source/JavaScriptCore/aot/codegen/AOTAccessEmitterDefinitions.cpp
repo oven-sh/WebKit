@@ -242,7 +242,7 @@ void AccessEmitter::generateCopyObject(const ValueContext& value)
 }
 
 // Only an object of the layout's ordered shape keeps its key order in its order word. That word then says that the source has nothing but fields, no integrity level, and a key order that the word alone names. What lies in an Extension is copied by the run time.
-std::optional<CellPointer> AccessEmitter::tryAllocateCopyOfFields(const ValueContext& allocation, ValueID copy, WholeCell wholeCell, const ScopedLambda<CellPointer()>& allocateEmpty)
+std::optional<CellPointer> AccessEmitter::tryAllocateCopyOfFields(const ValueContext& allocation, ValueID copy, const ScopedLambda<CellPointer()>& allocateEmpty)
 {
     LayoutID layout = m_function.at(copy).layout();
     const PlannedLayout& planned = m_placement.layout(layout);
@@ -252,7 +252,7 @@ std::optional<CellPointer> AccessEmitter::tryAllocateCopyOfFields(const ValueCon
         return std::nullopt;
     if (m_placement.allocation(allocation->allocation()).layout != layout || m_placement.freeCellOffset(layout) || m_placement.slots().extensionWord(layout).hasStorage())
         return std::nullopt;
-    if (!planned.innerObjects.isEmpty() || planned.size <= offsetOfFirstField)
+    if (planned.size <= offsetOfFirstField)
         return std::nullopt;
     for (uint32_t field = 0; field < m_program.at(layout).fields.size(); ++field) {
         const PlacedSlot& slot = m_placement.slot(layout, field);
@@ -275,7 +275,7 @@ std::optional<CellPointer> AccessEmitter::tryAllocateCopyOfFields(const ValueCon
 
     m_out.appendTo(copies);
     unsigned fieldBytes = WTF::roundUpToMultipleOf<copyChunkBytes>(planned.size) - offsetOfFirstField;
-    ValueFromBlock copiedCell = m_out.anchor(emitter<CellAllocationEmitter>().allocateObjectCopy(allocation, allocation->allocation(), wholeCell, source, fieldBytes).value());
+    ValueFromBlock copiedCell = m_out.anchor(emitter<CellAllocationEmitter>().allocateObjectCopy(allocation, allocation->allocation(), source, fieldBytes).value());
     ValueFromBlock didCopy = m_out.anchor(m_out.constInt32(1));
     m_out.jump(continuation);
 
@@ -306,7 +306,7 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
     }
 
     // The words that are no fields are zero in a source that is copied.
-    bool mayCopyCell = !planned.innerObjects.isEmpty() || std::ranges::any_of(planned.slots.span().first(planned.numberOfFields()), [](const PlacedSlot& slot) {
+    bool mayCopyCell = std::ranges::any_of(planned.slots.span().first(planned.numberOfFields()), [](const PlacedSlot& slot) {
         return slot.hasStorage() && traitsOf(slot.representation).holdsCell;
     });
 

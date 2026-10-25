@@ -132,7 +132,7 @@ static bool canBeExtraProperty(VM& vm, const LayoutData& layout, UniquedStringIm
 
 bool ObjectBuilder::canBuildWithoutCompilerKnowledge(const LayoutData& layout)
 {
-    if (layout.keysAreNeverEnumerated || layout.isDerived || layout.holdsInnerObjectsInPlace || !layout.impossibleMutations().isEmpty())
+    if (layout.keysAreNeverEnumerated || layout.isDerived || !layout.impossibleMutations().isEmpty())
         return false;
     return std::ranges::none_of(layout.fields(), [](const FieldData& field) {
         return field.flags & (fieldIsStoredOnce | fieldIsNeverStoredWithOtherType | fieldIsNeverDeleted | fieldIsNeverRedefined);
