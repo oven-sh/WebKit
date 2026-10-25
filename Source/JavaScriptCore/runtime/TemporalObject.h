@@ -208,4 +208,18 @@ enum class TemporalType : uint8_t {
 
 JS_EXPORT_PRIVATE TemporalType temporalType(JSValue);
 
+// ToTemporal*(item) with undefined options, for callers that only read the result's slots: an item of the class is
+// used as is.
+template<typename TemporalClass>
+TemporalClass* toTemporalObjectForReading(JSGlobalObject* globalObject, JSValue item)
+{
+    if (auto* object = dynamicDowncast<TemporalClass>(item))
+        return object;
+    return TemporalClass::from(globalObject, item, jsUndefined());
+}
+
+// Sorts values as Array.prototype.sort(function) would when function is a Temporal compare and every value has its
+// class; else std::nullopt.
+std::optional<std::span<EncodedJSValue>> sortWithTemporalCompareFunction(VM&, TaggedNativeFunction, std::span<EncodedJSValue> values, std::span<EncodedJSValue> workingSet);
+
 } // namespace JSC
