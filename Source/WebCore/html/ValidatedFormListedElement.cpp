@@ -284,7 +284,7 @@ void ValidatedFormListedElement::updateValidity()
             }
         }
 
-        if (CheckedPtr cache = protect(element)->document().existingAXObjectCache())
+        if (CheckedPtr cache = protect(element.document())->existingAXObjectCache())
             cache->onValidityChange(element);
     }
 
@@ -511,7 +511,7 @@ FormControlState ValidatedFormListedElement::saveFormControlState() const
 
 void ValidatedFormListedElement::restoreFormControlStateIfNecessary()
 {
-    asHTMLElement().document().formController().restoreControlStateFor(*this);
+    protect(asHTMLElement().document())->formController().restoreControlStateFor(*this);
 }
 
 bool ValidatedFormListedElement::matchesValidPseudoClass() const
@@ -539,12 +539,18 @@ void ValidatedFormListedElement::setInteractedWithSinceLastFormSubmitEvent(bool 
     if (m_wasInteractedWithSinceLastFormSubmitEvent == interactedWith)
         return;
 
-    Style::PseudoClassChangeInvalidation styleInvalidation(asHTMLElement(), {
+    Style::PseudoClassChangeInvalidation styleInvalidation(protect(asHTMLElement()), {
         { CSSSelector::PseudoClass::UserValid, interactedWith && matchesValidPseudoClass() },
         { CSSSelector::PseudoClass::UserInvalid, interactedWith && matchesInvalidPseudoClass() },
     });
 
     m_wasInteractedWithSinceLastFormSubmitEvent = interactedWith;
+
+    if (willValidate() && valueMissing() && !customError()) {
+        Ref element = asHTMLElement();
+        if (CheckedPtr cache = protect(element->document())->existingAXObjectCache())
+            cache->onValidityChange(element);
+    }
 }
 
 } // namespace WebCore

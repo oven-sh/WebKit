@@ -29,6 +29,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3Arena.h"
 #include "B3FrequentedBlock.h"
 #include "B3Opcode.h"
 #include "B3Origin.h"
@@ -48,9 +49,23 @@ template<typename> class GenericBlockInsertionSet;
 
 class BasicBlock {
     WTF_MAKE_NONCOPYABLE(BasicBlock);
-    WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED(BasicBlock);
 public:
-    typedef Vector<Value*> ValueList;
+    static constexpr bool mayLiveInArena = true;
+    void* operator new(size_t size, Arena* arena) { return arena ? arena->allocate(size, alignof(BasicBlock)) : SequesteredArenaMalloc::malloc(size); }
+    void operator delete(void* memory, Arena* arena)
+    {
+        if (!arena)
+            SequesteredArenaMalloc::free(memory);
+    }
+    void operator delete(BasicBlock* block, std::destroying_delete_t)
+    {
+        bool isInArena = block->m_isInArena;
+        block->~BasicBlock();
+        if (!isInArena)
+            SequesteredArenaMalloc::free(block);
+    }
+
+    typedef Vector<Value*, 8> ValueList;
     typedef Vector<BasicBlock*, 2> PredecessorList;
     typedef Vector<FrequentedBlock, 2> SuccessorList;
 
@@ -106,7 +121,7 @@ public:
     const SuccessorList& successors() const LIFETIME_BOUND { return m_successors; }
     SuccessorList& successors() LIFETIME_BOUND { return m_successors; }
     
-    void clearSuccessors();
+    void clearSuccessors() { m_successors.clear(); }
     JS_EXPORT_PRIVATE void appendSuccessor(FrequentedBlock);
     JS_EXPORT_PRIVATE void setSuccessors(FrequentedBlock);
     JS_EXPORT_PRIVATE void setSuccessors(FrequentedBlock, FrequentedBlock);
@@ -122,7 +137,7 @@ public:
         return SuccessorCollection<const BasicBlock, const SuccessorList>(successors());
     }
 
-    bool NODELETE replaceSuccessor(BasicBlock* from, BasicBlock* to);
+    bool LEGACY_NODELETE replaceSuccessor(BasicBlock* from, BasicBlock* to);
     
     // This is only valid for Jump and Branch.
     const FrequentedBlock& taken() const;
@@ -142,7 +157,7 @@ public:
     bool containsPredecessor(BasicBlock* block) { return m_predecessors.contains(block); }
 
     bool addPredecessor(BasicBlock*);
-    bool NODELETE removePredecessor(BasicBlock*);
+    bool LEGACY_NODELETE removePredecessor(BasicBlock*);
     bool replacePredecessor(BasicBlock* from, BasicBlock* to);
 
     // Update predecessors starting with the successors of this block.
@@ -154,19 +169,6 @@ public:
     void dump(PrintStream&) const;
     void deepDump(const Procedure&, PrintStream&) const;
 
-    // These are deprecated method for compatibility with the old ControlValue class. Don't use them
-    // in new code.
-    // FIXME: https://bugs.webkit.org/show_bug.cgi?id=159440
-    
-    // Use this for Oops.
-    JS_EXPORT_PRIVATE Value* appendNewControlValue(Procedure&, Opcode, Origin);
-    // Use this for Return.
-    JS_EXPORT_PRIVATE Value* appendNewControlValue(Procedure&, Opcode, Origin, Value*);
-    // Use this for Jump.
-    JS_EXPORT_PRIVATE Value* appendNewControlValue(Procedure&, Opcode, Origin, const FrequentedBlock&);
-    // Use this for Branch.
-    JS_EXPORT_PRIVATE Value* appendNewControlValue(Procedure&, Opcode, Origin, Value*, const FrequentedBlock&, const FrequentedBlock&);
-    
 private:
     friend class BlockInsertionSet;
     friend class InsertionSet;
@@ -177,6 +179,7 @@ private:
     BasicBlock(unsigned index, double frequency);
 
     unsigned m_index;
+    bool m_isInArena { false };
     ValueList m_values;
     PredecessorList m_predecessors;
     SuccessorList m_successors;

@@ -57,7 +57,7 @@ public:
     bool equals(const CSSSubstitutionValue&) const;
     String customCSSText(const CSS::SerializationContext&) const;
 
-    const CSSParserContext& NODELETE context() const;
+    const CSSParserContext& LEGACY_NODELETE context() const;
 
     const CSSVariableData& data() const { return m_data.get(); }
 
@@ -92,7 +92,7 @@ private:
         // For -internal-auto-base() case: cache key is the base appearance state.
         std::optional<bool> isBaseAppearance;
         RefPtr<CSSValue> value;
-        CSSPropertyID propertyID { CSSPropertyInvalid };
+        CSSPropertyID propertyID { CSSPropertyID::Invalid };
     };
     mutable Cache m_cache;
 };

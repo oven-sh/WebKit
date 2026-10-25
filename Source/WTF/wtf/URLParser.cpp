@@ -747,7 +747,7 @@ ALWAYS_INLINE void URLParser::advance(CodePointIterator<CharacterType>& iterator
 }
 
 template<typename CharacterType>
-bool URLParser::takesTwoAdvancesUntilEnd(CodePointIterator<CharacterType> iterator)
+bool LEGACY_NODELETE URLParser::takesTwoAdvancesUntilEnd(CodePointIterator<CharacterType> iterator)
 {
     if (iterator.atEnd())
         return false;
@@ -1239,7 +1239,7 @@ void URLParser::copyURLPartsUntil(const URL& base, URLPart part, const CodePoint
 {
     syntaxViolation(iterator);
 
-    m_asciiBuffer.clear();
+    m_asciiBuffer.shrink(0);
     copyASCIIStringUntil(base.m_string, urlLengthUntilPart(base, part));
     switch (part) {
     case URLPart::QueryEnd:
@@ -1459,7 +1459,7 @@ void URLParser::failure()
 }
 
 template<typename CharacterType>
-bool URLParser::checkLocalhostCodePoint(CodePointIterator<CharacterType>& iterator, char32_t codePoint)
+bool LEGACY_NODELETE URLParser::checkLocalhostCodePoint(CodePointIterator<CharacterType>& iterator, char32_t codePoint)
 {
     if (iterator.atEnd() || toASCIILower(*iterator) != codePoint)
         return false;
@@ -1468,7 +1468,7 @@ bool URLParser::checkLocalhostCodePoint(CodePointIterator<CharacterType>& iterat
 }
 
 template<typename CharacterType>
-bool URLParser::isAtLocalhost(CodePointIterator<CharacterType> iterator)
+bool LEGACY_NODELETE URLParser::isAtLocalhost(CodePointIterator<CharacterType> iterator)
 {
     if (!checkLocalhostCodePoint(iterator, 'l'))
         return false;
@@ -1840,7 +1840,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                     appendToASCIIBuffer(toASCIILower(*c));
                     advance(c);
                     if (c.atEnd()) {
-                        m_asciiBuffer.clear();
+                        m_asciiBuffer.shrink(0);
                         state = State::NoScheme;
                         c = iteratorAt(beginAfterControlAndSpace);
                         break;
@@ -1927,14 +1927,14 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                 }
                 break;
             } else {
-                m_asciiBuffer.clear();
+                m_asciiBuffer.shrink(0);
                 state = State::NoScheme;
                 c = iteratorAt(beginAfterControlAndSpace);
                 break;
             }
             advance(c);
             if (c.atEnd()) {
-                m_asciiBuffer.clear();
+                m_asciiBuffer.shrink(0);
                 state = State::NoScheme;
                 c = iteratorAt(beginAfterControlAndSpace);
             }
@@ -2990,7 +2990,7 @@ void URLParser::serializeIPv4(IPv4Address address)
     appendNumberToASCIIBuffer<uint8_t>(address);
 }
     
-static size_t NODELETE zeroSequenceLength(const std::array<uint16_t, 8>& address, size_t begin)
+static size_t LEGACY_NODELETE zeroSequenceLength(const std::array<uint16_t, 8>& address, size_t begin)
 {
     size_t end = begin;
     for (; end < 8; end++) {
@@ -3000,7 +3000,7 @@ static size_t NODELETE zeroSequenceLength(const std::array<uint16_t, 8>& address
     return end - begin;
 }
 
-static std::optional<size_t> NODELETE findLongestZeroSequence(const std::array<uint16_t, 8>& address)
+static std::optional<size_t> LEGACY_NODELETE findLongestZeroSequence(const std::array<uint16_t, 8>& address)
 {
     std::optional<size_t> longest;
     size_t longestLength = 0;
@@ -3193,7 +3193,7 @@ std::expected<URLParser::IPv4Address, URLParser::IPv4ParsingError> URLParser::pa
 }
 
 template<typename CharacterType>
-std::optional<uint32_t> URLParser::parseIPv4PieceInsideIPv6(std::span<const CharacterType>& remaining)
+std::optional<uint32_t> LEGACY_NODELETE URLParser::parseIPv4PieceInsideIPv6(std::span<const CharacterType>& remaining)
 {
     auto* p = remaining.data();
     auto* end = p + remaining.size();
@@ -3225,7 +3225,7 @@ std::optional<uint32_t> URLParser::parseIPv4PieceInsideIPv6(std::span<const Char
 }
 
 template<typename CharacterType>
-std::optional<URLParser::IPv4Address> URLParser::parseIPv4AddressInsideIPv6(std::span<const CharacterType> remaining)
+std::optional<URLParser::IPv4Address> LEGACY_NODELETE URLParser::parseIPv4AddressInsideIPv6(std::span<const CharacterType> remaining)
 {
     IPv4Address address = 0;
     for (size_t i = 0; i < 4; ++i) {
@@ -3357,7 +3357,7 @@ std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator
 
 // FIXME: This function should take span<const char8_t>, since it requires UTF-8.
 template<typename SyntaxViolationHandler>
-URLParser::Latin1Buffer URLParser::percentDecodeImpl(std::span<const Latin1Character> input, SyntaxViolationHandler&& syntaxViolationHandler)
+URLParser::Latin1Buffer URLParser::percentDecodeImpl(std::span<const Latin1Character> input, NOESCAPE const SyntaxViolationHandler& syntaxViolationHandler)
 {
     Latin1Buffer output;
     output.grow(input.size());

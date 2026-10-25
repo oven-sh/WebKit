@@ -10,6 +10,9 @@
 #ifndef __ULDNAMES_H__
 #define __ULDNAMES_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 /**
  * \file
  * \brief C API: Provides display names of Locale ids and their components.

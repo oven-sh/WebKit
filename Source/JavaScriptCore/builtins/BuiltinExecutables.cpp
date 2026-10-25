@@ -27,13 +27,17 @@
 #include "config.h"
 #include "BuiltinExecutables.h"
 
+#include "AOTRemovableFeature.h"
 #include "BuiltinNames.h"
 #include "JSCJSValueInlines.h"
+#include "JSFunction.h"
 #include "Parser.h"
 #include "SourceCharacters.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
+
+#include "AOTBuiltinModules.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -41,9 +45,17 @@ namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BuiltinExecutables);
 
+static ALWAYS_INLINE const char* builtinSourceText()
+{
+    if (isFeatureRemoved(RemovableFeature::BuiltinSourceText)) [[unlikely]]
+        return nullptr;
+    recordRemovableEntryPoint<RemovableFeature::BuiltinSourceText, RemovedFeatureStub::ReturnDefault, &s_JSCCombinedCode>();
+    return s_JSCCombinedCode;
+}
+
 BuiltinExecutables::BuiltinExecutables(VM& vm)
     : m_vm(vm)
-    , m_combinedSourceProvider(BuiltinsSourceProvider::create(StringImpl::createWithoutCopying({ s_JSCCombinedCode, s_JSCCombinedCodeLength }), s_JSCBuiltinSourceStarts))
+    , m_combinedSourceProvider(BuiltinsSourceProvider::create(StringImpl::createWithoutCopying({ builtinSourceText(), s_JSCCombinedCodeLength }), s_JSCBuiltinSourceStarts, 0))
 {
 }
 
@@ -55,11 +67,19 @@ SourceCode BuiltinExecutables::defaultConstructorSourceCode(ConstructorKind cons
         break;
     case ConstructorKind::Base: {
         static NeverDestroyed<const String> baseConstructorCode(MAKE_STATIC_STRING_IMPL("(function () { })"));
+#if USE(BUN_JSC_ADDITIONS)
+        return makeSource(baseConstructorCode, { }, SourceTaintedOrigin::Untainted, String(), TextPosition(), SourceProviderSourceType::Program, SourceProvenance::Static);
+#else
         return makeSource(baseConstructorCode, { }, SourceTaintedOrigin::Untainted);
+#endif
     }
     case ConstructorKind::Extends: {
         static NeverDestroyed<const String> derivedConstructorCode(MAKE_STATIC_STRING_IMPL("(function (...args) { super(...args); })"));
+#if USE(BUN_JSC_ADDITIONS)
+        return makeSource(derivedConstructorCode, { }, SourceTaintedOrigin::Untainted, String(), TextPosition(), SourceProviderSourceType::Program, SourceProvenance::Static);
+#else
         return makeSource(derivedConstructorCode, { }, SourceTaintedOrigin::Untainted);
+#endif
     }
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -284,7 +304,8 @@ void BuiltinExecutables::clear()
 #define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overrideName, length) \
 SourceCode BuiltinExecutables::name##Source() \
 {\
-    return SourceCode { m_combinedSourceProvider.copyRef(), static_cast<int>(s_##name - s_JSCCombinedCode), static_cast<int>((s_##name - s_JSCCombinedCode) + length) };\
+    int start = s_JSCBuiltinSourceStarts[static_cast<unsigned>(BuiltinCodeIndex::name)];\
+    return SourceCode { m_combinedSourceProvider.copyRef(), start, start + length };\
 }\
 \
 UnlinkedFunctionExecutable* BuiltinExecutables::name##Executable() \
@@ -300,6 +321,42 @@ UnlinkedFunctionExecutable* BuiltinExecutables::name##Executable() \
 }
 JSC_FOREACH_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
 #undef DEFINE_BUILTIN_EXECUTABLES
+
+bool BuiltinExecutables::hasCompiledFunction(BuiltinCodeIndex index)
+{
+#if ENABLE(AOT)
+    return m_vm.hasCompiledCode() && AOT::hasBuiltinFunction(m_vm, static_cast<uint32_t>(index));
+#else
+    UNUSED_PARAM(index);
+    return false;
+#endif
+}
+
+UnlinkedFunctionExecutable* BuiltinExecutables::executableFor(BuiltinCodeIndex index)
+{
+    switch (index) {
+#define EXECUTABLE_FOR(name, functionName, overriddenName, length) \
+    case BuiltinCodeIndex::name: \
+        return name##Executable();
+    JSC_FOREACH_BUILTIN_CODE(EXECUTABLE_FOR)
+#undef EXECUTABLE_FOR
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+FunctionExecutable* BuiltinExecutables::linkFromText(BuiltinCodeIndex index, Intrinsic intrinsic)
+{
+    int start = s_JSCBuiltinSourceStarts[static_cast<unsigned>(index)];
+    int length = s_JSCBuiltinSourceMetadata[static_cast<unsigned>(index)].sourceLength;
+    return executableFor(index)->link(m_vm, nullptr, SourceCode { m_combinedSourceProvider.copyRef(), start, start + length }, std::nullopt, intrinsic);
+}
+
+BuiltinCode BuiltinExecutables::codeFor(BuiltinCodeIndex index, Intrinsic intrinsic)
+{
+    if (hasCompiledFunction(index))
+        return { nullptr, static_cast<uint32_t>(index) };
+    return { linkFromText(index, intrinsic), 0 };
+}
 
 }
 

@@ -29,6 +29,7 @@
 #include "APIData.h"
 #include "SessionState.h"
 #include <mutex>
+#include <wtf/Borrow.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/MallocSpan.h>
 #include <wtf/StdLibExtras.h>
@@ -144,7 +145,7 @@ public:
     HistoryEntryDataEncoder& operator<<(const Vector<uint8_t>& value)
     {
         *this << static_cast<uint64_t>(value.size());
-        encodeFixedLengthData(value.span(), 1);
+        encodeFixedLengthData(borrow(value)->span(), 1);
 
         return *this;
     }
@@ -152,7 +153,7 @@ public:
     HistoryEntryDataEncoder& operator<<(const Vector<char>& value)
     {
         *this << static_cast<uint64_t>(value.size());
-        encodeFixedLengthData(byteCast<uint8_t>(value.span()), 1);
+        encodeFixedLengthData(byteCast<uint8_t>(borrow(value)->span()), 1);
 
         return *this;
     }
@@ -201,7 +202,7 @@ public:
         return *this << static_cast<uint32_t>(value);
     }
 
-    MallocSpan<uint8_t, HistoryEntryDataEncoderMalloc> NODELETE finishEncoding(size_t& size)
+    MallocSpan<uint8_t, HistoryEntryDataEncoderMalloc> LEGACY_NODELETE finishEncoding(size_t& size)
     {
         size = m_bufferSize;
         return WTF::move(m_buffer);
@@ -256,10 +257,10 @@ private:
         m_buffer.realloc(newCapacity.value());
     }
 
-    size_t NODELETE capacity() const { return m_buffer.span().size(); }
+    size_t LEGACY_NODELETE capacity() const { return m_buffer.span().size(); }
 
-    std::span<uint8_t> NODELETE mutableBuffer() { return m_buffer.mutableSpan(); }
-    std::span<const uint8_t> NODELETE buffer() const { return m_buffer.span(); }
+    std::span<uint8_t> LEGACY_NODELETE mutableBuffer() { return m_buffer.mutableSpan(); }
+    std::span<const uint8_t> LEGACY_NODELETE buffer() const { return m_buffer.span(); }
 
     size_t m_bufferSize { 0 };
     MallocSpan<uint8_t, HistoryEntryDataEncoderMalloc> m_buffer;
@@ -304,7 +305,7 @@ static void encodeFormData(HistoryEntryDataEncoder& encoder, const HTTPBody& for
     encoder << Vector<uint8_t>();
 
     encoder << static_cast<uint64_t>(formData.elements.size());
-    for (const auto& element : formData.elements)
+    for (const auto& element : borrow(formData.elements))
         encodeFormDataElement(encoder, element);
 
     // Used to be hasGeneratedFiles.
@@ -318,7 +319,7 @@ static void encodeFrameStateNode(HistoryEntryDataEncoder& encoder, const FrameSt
 {
     encoder << static_cast<uint64_t>(frameState.children.size());
 
-    for (auto& childFrameState : frameState.children) {
+    for (auto& childFrameState : borrow(frameState.children)) {
         encoder << childFrameState->originalURLString;
         encoder << childFrameState->urlString;
 
@@ -418,7 +419,7 @@ static RetainPtr<CFDictionaryRef> createDictionary(std::initializer_list<std::pa
         values.append(keyValuePair.second);
     }
 
-    return adoptCF(CFDictionaryCreate(kCFAllocatorDefault, keys.mutableSpan().data(), values.mutableSpan().data(), keyValuePairs.size(), &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
+    return adoptCF(CFDictionaryCreate(kCFAllocatorDefault, borrow(keys)->mutableSpan().data(), borrow(values)->mutableSpan().data(), keyValuePairs.size(), &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
 }
 
 static RetainPtr<CFDictionaryRef> encodeSessionHistory(const BackForwardListState& backForwardListState)
@@ -433,7 +434,7 @@ static RetainPtr<CFDictionaryRef> encodeSessionHistory(const BackForwardListStat
     auto entries = adoptCF(CFArrayCreateMutable(kCFAllocatorDefault, backForwardListState.items.size(), &kCFTypeArrayCallBacks));
     size_t totalDataSize = 0;
 
-    for (auto& item : backForwardListState.items) {
+    for (auto& item : borrow(backForwardListState.items)) {
         auto& frameState = item.frameState;
         auto url = frameState->urlString.createCFString();
         auto title = frameState->title.createCFString();
@@ -728,14 +729,14 @@ public:
         return *this;
     }
 
-    bool NODELETE isValid() const { return m_isValid; }
-    void NODELETE markInvalid()
+    bool LEGACY_NODELETE isValid() const { return m_isValid; }
+    void LEGACY_NODELETE markInvalid()
     {
         m_buffer = { };
         m_isValid = false;
     }
 
-    bool NODELETE finishDecoding() { return m_isValid && m_buffer.empty(); }
+    bool LEGACY_NODELETE finishDecoding() { return m_isValid && m_buffer.empty(); }
 
 private:
     template<typename Type>
@@ -756,7 +757,7 @@ private:
         memcpySpan(data, consumeSpan(m_buffer, data.size()));
     }
 
-    bool NODELETE alignBufferPosition(unsigned alignment, size_t size)
+    bool LEGACY_NODELETE alignBufferPosition(unsigned alignment, size_t size)
     {
         const uint8_t* alignedPosition = alignedBuffer(alignment);
         if (!alignedBufferIsLargeEnoughToContain(alignedPosition, size)) {
@@ -769,7 +770,7 @@ private:
         return true;
     }
 
-    const uint8_t* NODELETE alignedBuffer(unsigned alignment) const
+    const uint8_t* LEGACY_NODELETE alignedBuffer(unsigned alignment) const
     {
         ASSERT(alignment && !(alignment & (alignment - 1)));
 
@@ -778,7 +779,7 @@ private:
     }
 
     template<typename T>
-    bool NODELETE bufferIsLargeEnoughToContain(size_t numElements) const
+    bool LEGACY_NODELETE bufferIsLargeEnoughToContain(size_t numElements) const
     {
         static_assert(std::is_arithmetic<T>::value, "Type T must have a fixed, known encoded size!");
 
@@ -788,12 +789,12 @@ private:
         return bufferIsLargeEnoughToContain(alignof(T), numElements * sizeof(T));
     }
 
-    bool NODELETE bufferIsLargeEnoughToContain(unsigned alignment, size_t size) const
+    bool LEGACY_NODELETE bufferIsLargeEnoughToContain(unsigned alignment, size_t size) const
     {
         return alignedBufferIsLargeEnoughToContain(alignedBuffer(alignment), size);
     }
 
-    inline bool NODELETE alignedBufferIsLargeEnoughToContain(const uint8_t* alignedPosition, size_t size) const
+    inline bool LEGACY_NODELETE alignedBufferIsLargeEnoughToContain(const uint8_t* alignedPosition, size_t size) const
     {
         auto* bufferEnd = std::to_address(m_buffer.end());
         return bufferEnd >= alignedPosition && static_cast<size_t>(bufferEnd - alignedPosition) >= size;

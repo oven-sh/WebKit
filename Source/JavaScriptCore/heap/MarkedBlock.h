@@ -130,12 +130,12 @@ public:
         void* cellAlign(void*);
             
         bool isEmpty();
-        void setIsDestructible(bool);
+        void noteNeedsDestruction();
 
         void lastChanceToFinalize();
 
         BlockDirectory* directory() const;
-        Subspace* NODELETE subspace() const;
+        Subspace* LEGACY_NODELETE subspace() const;
         AlignedMemoryAllocator* alignedMemoryAllocator() const;
         JSC::Heap* heap() const;
         inline MarkedSpace* space() const;
@@ -153,13 +153,22 @@ public:
         // and the block is freshly created, then we'll make the mistake of running destructors in
         // the block. If it's not set and the block has nothing marked, then we'll make the
         // mistake of making a pop freelist rather than a bump freelist.
+        // Takes bitvectorLock().mutate() itself, so callers must not hold it.
         void sweep(FreeList*);
+
+#if ASAN_ENABLED
+        void poisonDeadCells();
+        void poisonDeadCellsIfUnswept();
+        void unpoisonCells();
+        // Every other cell is never allocated and stays poisoned.
+        static bool hasRedZoneCells();
+        bool isRedZoneCell(const void*);
+        void poisonRedZoneCells();
+#endif
         
         // This is to be called by Subspace.
         template<typename DestroyFunc>
-        void finishSweepKnowingHeapCellType(FreeList*, const DestroyFunc&);
-        
-        void unsweepWithNoNewlyAllocated();
+        void finishSweepKnowingHeapCellType(FreeList*, NOESCAPE const DestroyFunc&);
         
         inline void shrink();
         // Return interior OS pages that hold no live cell to the OS (after a sweep-only sweep); re-commit them
@@ -199,12 +208,12 @@ public:
         bool isLive(const HeapCell*);
         bool isLiveCell(const void*);
 
-        template <typename Functor> IterationStatus forEachCell(const Functor&);
-        template <typename Functor> inline IterationStatus forEachLiveCell(const Functor&);
-        template <typename Functor> inline IterationStatus forEachDeadCell(const Functor&);
-        template <typename Functor> inline IterationStatus forEachMarkedCell(const Functor&);
+        template <typename Functor> IterationStatus forEachCell(NOESCAPE const Functor&);
+        template <typename Functor> inline IterationStatus forEachLiveCell(NOESCAPE const Functor&);
+        template <typename Functor> inline IterationStatus forEachDeadCell(NOESCAPE const Functor&);
+        template <typename Functor> inline IterationStatus forEachMarkedCell(NOESCAPE const Functor&);
             
-        JS_EXPORT_PRIVATE bool NODELETE areMarksStale();
+        JS_EXPORT_PRIVATE bool LEGACY_NODELETE areMarksStale();
         bool areMarksStaleForSweep();
         
         void assertMarksNotStale();
@@ -215,8 +224,8 @@ public:
         
         void removeFromDirectory();
         
-        void NODELETE didAddToDirectory(BlockDirectory*, unsigned index);
-        void NODELETE didRemoveFromDirectory();
+        void LEGACY_NODELETE didAddToDirectory(BlockDirectory*, unsigned index);
+        void LEGACY_NODELETE didRemoveFromDirectory();
         
         void* start() const LIFETIME_BOUND { return &m_block->atoms()[m_startAtom]; }
         void* end() const LIFETIME_BOUND { return &m_block->atoms()[endAtom]; }
@@ -245,7 +254,11 @@ public:
         void unpoisonDecommittedPages();
 
         template<bool, EmptyMode, SweepMode, SweepDestructionMode, ScribbleMode, NewlyAllocatedMode, MarksMode, typename DestroyFunc>
-        void specializedSweep(FreeList*, EmptyMode, SweepMode, SweepDestructionMode, ScribbleMode, NewlyAllocatedMode, MarksMode, const DestroyFunc&);
+        void specializedSweep(FreeList*, EmptyMode, SweepMode, SweepDestructionMode, ScribbleMode, NewlyAllocatedMode, MarksMode, NOESCAPE const DestroyFunc&);
+
+        void rebuildNewlyAllocatedByWord(const FreeList&);
+        template<typename Func> void forEachFreeIntervalByWord(const WTF::BitSet<atomsPerBlock>& live, NOESCAPE const Func&);
+        JS_EXPORT_PRIVATE void validateFreeIntervals(const WTF::BitSet<atomsPerBlock>& live, std::span<const std::pair<unsigned, unsigned>>);
         
         unsigned m_atomsPerCell { std::numeric_limits<unsigned>::max() };
         unsigned m_startAtom { std::numeric_limits<unsigned>::max() }; // Exact location of the first allocatable atom.
@@ -263,6 +276,7 @@ public:
 
         // WeakSet is rarely accessed so keep it after the other members.
         WeakSet m_weakSet;
+        void* m_verifierMemo { nullptr };
     };
 
 private:    
@@ -291,7 +305,7 @@ public:
         // m_vm must remain a pointer (instead of a reference) because JSCLLIntOffsetsExtractor
         // will fail otherwise.
         VM* const m_vm;
-        Subspace* m_subspace;
+        uint32_t m_cellSize { 0 };
 
         CountingLock m_lock;
     
@@ -322,12 +336,49 @@ public:
         //     m_biasedMarkCount != m_markCountBias
         MarkCountBiasType m_markCountBias;
 
+        // A block's live cells, those that survived the last collection or were allocated
+        // after it (what isLive() means by "live"), are recorded in two bit sets. Each
+        // bit set is current while its version matches the heap's, and stale otherwise.
+        // Marking, sweeping and isLive() read them. A full block needs neither: its
+        // directory's allocated bit says every cell is live, isLive() checks that bit
+        // first, and a full block is not swept.
+        //
+        // "Survivors" means the cells marked as of the last collection's End.
+        //
+        // m_marks:
+        // - Current: every cell marked since the most recent Full collection's Begin,
+        //   when the marking version last advanced. Between collections, that is the
+        //   survivors; during an Eden collection, the survivors plus what it has marked
+        //   so far; during a Full collection, only what that collection has marked so far.
+        // - Stale but still the survivors: only during a Full collection, whose Begin
+        //   makes every block's marks stale while the survivors are still live. Marks one
+        //   version behind keep recording survivors until resetStaleMarks() moves them
+        //   into m_newlyAllocated (see staleMarksStillRecordSurvivors()). An Eden collection
+        //   never needs this, since it does not advance the marking version.
+        // - Otherwise: meaningless.
+        //
+        // m_newlyAllocated, usable while current and the block is not free-listed, holds
+        // the live cells the marks might not: those allocated since the last collection,
+        // and, once resetStaleMarks() has reset a Full collection's stale marks, the
+        // survivors.
+        // - While the block is free-listed, it is out of date, since allocation does not
+        //   update it; the cells not on the free list are the live ones.
+        // - stopAllocating() sets it to every cell not on the free list: the survivors
+        //   plus the cells allocated since the last collection.
+        // - resetStaleMarks(), in a Full collection, leaves it holding the same: either
+        //   stopAllocating() already rebuilt it, or nothing has been allocated since and
+        //   it becomes the survivors from the old marks.
+        // - At every collection's End it stops being current, and until the block is
+        //   allocated from again the marks alone say which cells are live.
+        //
+        // nullVersion means a bit set is not current: the block is new, or its bits were
+        // reset when the heap's version counter wrapped.
         HeapVersion m_markingVersion;
         HeapVersion m_newlyAllocatedVersion;
 
         WTF::BitSet<atomsPerBlock> m_marks;
         WTF::BitSet<atomsPerBlock> m_newlyAllocated;
-        void* m_verifierMemo { nullptr };
+        Subspace* m_subspace;
     };
     
 private:
@@ -353,7 +404,8 @@ public:
     static_assert(endAtom * atomSize == blockSize);
     static_assert(endAtom - firstPayloadRegionAtom == numberOfPayloadAtoms);
 
-    static MarkedBlock::Handle* tryCreate(Heap&, AlignedMemoryAllocator*);
+    enum class IsFirstInDirectory : bool { No, Yes };
+    static MarkedBlock::Handle* tryCreate(Heap&, AlignedMemoryAllocator*, IsFirstInDirectory);
         
     Handle& handle();
     const Handle& handle() const;
@@ -388,9 +440,10 @@ public:
     inline bool isNewlyAllocatedStale() const;
     
     inline bool hasAnyNewlyAllocated();
-    void resetAllocated();
+    void resetNewlyAllocatedForVersionWrap();
         
     size_t cellSize();
+    size_t cellSizeInHeader();
     CellAttributes attributes() const;
 
     bool hasAnyMarked() const;
@@ -414,7 +467,7 @@ public:
     void assertMarksNotStale() { }
 #endif
         
-    void resetMarks();
+    void resetMarksForVersionWrap();
     
     bool isMarkedRaw(const void* p);
     HeapVersion markingVersion() const { return header().m_markingVersion; }
@@ -438,18 +491,18 @@ private:
     ~MarkedBlock();
     Atom* atoms();
         
-    JS_EXPORT_PRIVATE void aboutToMarkSlow(HeapVersion markingVersion, HeapCell*);
-    void NODELETE clearHasAnyMarked();
+    JS_EXPORT_PRIVATE void resetStaleMarks(HeapVersion markingVersion, HeapCell*);
+    void LEGACY_NODELETE clearHasAnyMarked();
     
     JS_EXPORT_PRIVATE void noteMarkedSlow();
     
-    inline bool marksConveyLivenessDuringMarking(HeapVersion markingVersion);
-    inline bool marksConveyLivenessDuringMarking(HeapVersion myMarkingVersion, HeapVersion markingVersion);
+    inline bool staleMarksStillRecordSurvivors(HeapVersion markingVersion);
+    inline bool staleMarksStillRecordSurvivors(HeapVersion myMarkingVersion, HeapVersion markingVersion);
 
     // FIXME: rdar://139998916
     NO_RETURN_DUE_TO_CRASH NEVER_INLINE void analyzeInvalidHandleAndCrash(AbstractLocker&, HeapCell*);
     NO_RETURN_DUE_TO_CRASH NEVER_INLINE static void dumpInfoAndCrashForInvalidHandleV2(HeapCell*, uint64_t cellFirst8Bytes, uint64_t zeroCounts, uint64_t bitfield, uint64_t subspaceHash, VM* blockVM, VM* actualVM);
-    inline void NODELETE setupTestForDumpInfoAndCrash();
+    inline void LEGACY_NODELETE setupTestForDumpInfoAndCrash();
 };
 
 inline MarkedBlock::Header& MarkedBlock::header()
@@ -557,6 +610,11 @@ inline size_t MarkedBlock::cellSize()
     return handle().cellSize();
 }
 
+inline size_t MarkedBlock::cellSizeInHeader()
+{
+    return header().m_cellSize;
+}
+
 inline CellAttributes MarkedBlock::Handle::attributes() const
 {
     return m_attributes;
@@ -607,7 +665,7 @@ inline Dependency MarkedBlock::aboutToMark(HeapVersion markingVersion, HeapCell*
     HeapVersion version;
     Dependency dependency = Dependency::loadAndFence(&header().m_markingVersion, version);
     if (version != markingVersion) [[unlikely]]
-        aboutToMarkSlow(markingVersion, cell);
+        resetStaleMarks(markingVersion, cell);
     return dependency;
 }
 
@@ -682,7 +740,7 @@ inline bool MarkedBlock::isAtom(const void* p)
 }
 
 template <typename Functor>
-inline IterationStatus MarkedBlock::Handle::forEachCell(const Functor& functor)
+inline IterationStatus MarkedBlock::Handle::forEachCell(NOESCAPE const Functor& functor)
 {
     HeapCell::Kind kind = m_attributes.cellKind;
     for (size_t i = m_startAtom; i < endAtom; i += m_atomsPerCell) {
@@ -700,13 +758,13 @@ inline bool MarkedBlock::hasAnyMarked() const
 
 inline void MarkedBlock::setVerifierMemo(void* p)
 {
-    header().m_verifierMemo = p;
+    handle().m_verifierMemo = p;
 }
 
 template<typename T>
 T MarkedBlock::verifierMemo() const
 {
-    return std::bit_cast<T>(header().m_verifierMemo);
+    return std::bit_cast<T>(header().m_handle.m_verifierMemo);
 }
 
 } // namespace JSC

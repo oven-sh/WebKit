@@ -40,7 +40,7 @@ public:
         RefPtr<ViewTransition> viewTransition;
     };
 
-    static Ref<PageSwapEvent> create(const AtomString& type, Init&&, IsTrusted = IsTrusted::No);
+    static Ref<PageSwapEvent> LEGACY_NODELETE create(const AtomString& type, Init&&, IsTrusted = IsTrusted::No);
     ~PageSwapEvent();
 
     const RefPtr<NavigationActivation>& activation() const { return m_activation; }
@@ -49,8 +49,8 @@ public:
 private:
     PageSwapEvent(const AtomString& type, Init&&, IsTrusted);
 
-    RefPtr<NavigationActivation> m_activation;
-    RefPtr<ViewTransition> m_viewTransition;
+    const RefPtr<NavigationActivation> m_activation;
+    const RefPtr<ViewTransition> m_viewTransition;
 };
 
 } // namespace WebCore

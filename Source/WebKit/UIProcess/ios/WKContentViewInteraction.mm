@@ -57,6 +57,7 @@
 #import "UIKitSPI.h"
 #import "UIKitUtilities.h"
 #import "WKActionSheetAssistant.h"
+#import "WKClickHighlightView.h"
 #import "WKContextMenuElementInfoInternal.h"
 #import "WKContextMenuElementInfoPrivate.h"
 #import "WKDatePickerViewController.h"
@@ -79,7 +80,6 @@
 #import "WKScrollView.h"
 #import "WKSelectMenuListViewController.h"
 #import "WKSyntheticFlagsChangedWebEvent.h"
-#import "WKTapHighlightView.h"
 #import "WKTextInputListViewController.h"
 #import "WKTextInteractionWrapper.h"
 #import "WKTextPlaceholder.h"
@@ -104,6 +104,7 @@
 #import "WebPageMessages.h"
 #import "WebPageProxy.h"
 #import "WebPageProxyMessages.h"
+#import "WebProcessPool.h"
 #import "WebProcessProxy.h"
 #import "_WKActivatedElementInfoInternal.h"
 #import "_WKDragActionsInternal.h"
@@ -123,6 +124,7 @@
 #import <WebCore/CompositionHighlight.h>
 #import <WebCore/DOMPasteAccess.h>
 #import <WebCore/DataDetection.h>
+#import <WebCore/DevicePostureType.h>
 #import <WebCore/FloatQuad.h>
 #import <WebCore/FloatRect.h>
 #import <WebCore/FontAttributeChanges.h>
@@ -535,7 +537,6 @@ enum class NotifyInputDelegate : bool { No, Yes };
 
 constexpr float highlightDelay = 0.12;
 constexpr float tapAndHoldDelay = 0.75;
-constexpr CGFloat minimumTapHighlightRadius = 2.0;
 constexpr double fasterTapSignificantZoomThreshold = 0.8;
 
 @interface WKTextRange : UITextRange {
@@ -1405,6 +1406,10 @@ static WKDragSessionContext *ensureLocalDragSessionContext(id <UIDragSession> se
     [self setUpMouseGestureRecognizer];
 #endif
 
+#if HAVE(UI_HINGE_INTERACTION)
+    [self setUpHingeInteraction];
+#endif
+
 #if HAVE(LOOKUP_GESTURE_RECOGNIZER)
     _lookupGestureRecognizer = adoptNS([[_UILookupGestureRecognizer alloc] initWithTarget:self action:@selector(_lookupGestureRecognized:)]);
     [_lookupGestureRecognizer setDelegate:self];
@@ -1518,10 +1523,12 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     [protect(_actionSheetAssistant) setDelegate:self];
     _smartMagnificationController = WebKit::SmartMagnificationController::create(self);
     _touchEventsCanPreventNativeGestures = YES;
-    _isExpectingFastSingleTapCommit = NO;
+    if (!_clickHighlightController)
+        _clickHighlightController = adoptNS([[WKClickHighlightController alloc] initWithDelegate:self]);
     _potentialTapInProgress = NO;
     _isDoubleTapPending = NO;
     _showDebugTapHighlightsForFastClicking = [[NSUserDefaults standardUserDefaults] boolForKey:@"WebKitShowFastClickDebugTapHighlights"];
+    [_clickHighlightController setUsesDebugAppearance:_showDebugTapHighlightsForFastClicking];
     _needsDeferredEndScrollingSelectionUpdate = NO;
     _isChangingFocus = NO;
     _isBlurringFocusedElement = NO;
@@ -1569,11 +1576,10 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     _smartMagnificationController = nil;
     _didAccessoryTabInitiateFocus = NO;
     _isChangingFocusUsingAccessoryTab = NO;
-    _isExpectingFastSingleTapCommit = NO;
     _needsDeferredEndScrollingSelectionUpdate = NO;
     [_formInputSession invalidate];
     _formInputSession = nil;
-    [_tapHighlightView removeFromSuperview];
+    [_clickHighlightController cleanUp];
     _isWaitingOnPositionInformation = NO;
 
     _focusRequiresStrongPasswordAssistance = NO;
@@ -1614,6 +1620,10 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     if (_gestureRecognizerConsistencyEnforcer)
         _gestureRecognizerConsistencyEnforcer->reset();
+
+#if HAVE(UI_HINGE_INTERACTION)
+    [self removeInteraction:_hingeInteraction.get()];
+#endif
 
 #if HAVE(UIKIT_WITH_MOUSE_SUPPORT)
     [self removeInteraction:_mouseInteraction.get()];
@@ -1895,7 +1905,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         [UIView _addCompletion:^(BOOL){ [_interactionViewsContainerView setHidden:NO]; }];
     }
 
-    [self _updateTapHighlight];
+    [_clickHighlightController updateHighlight];
 
     if (page->editorState().selectionType == WebCore::SelectionType::None && _lastSelectionDrawingInfo.type == WebCore::SelectionType::None)
         return;
@@ -2463,43 +2473,6 @@ typedef NS_ENUM(NSInteger, EndEditingReason) {
     }
 }
 
-static WebCore::FloatQuad inflateQuad(const WebCore::FloatQuad& quad, float inflateSize)
-{
-    // We sort the output points like this (as expected by the highlight view):
-    //  p2------p3
-    //  |       |
-    //  p1------p4
-
-    // 1) Sort the points horizontally.
-    std::array points { quad.p1(), quad.p4(), quad.p2(), quad.p3() };
-    if (points[0].x() > points[1].x())
-        std::swap(points[0], points[1]);
-    if (points[2].x() > points[3].x())
-        std::swap(points[2], points[3]);
-
-    if (points[0].x() > points[2].x())
-        std::swap(points[0], points[2]);
-    if (points[1].x() > points[3].x())
-        std::swap(points[1], points[3]);
-
-    if (points[1].x() > points[2].x())
-        std::swap(points[1], points[2]);
-
-    // 2) Swap them vertically to have the output points [p2, p1, p3, p4].
-    if (points[1].y() < points[0].y())
-        std::swap(points[0], points[1]);
-    if (points[3].y() < points[2].y())
-        std::swap(points[2], points[3]);
-
-    // 3) Adjust the positions.
-    points[0].move(-inflateSize, -inflateSize);
-    points[1].move(-inflateSize, inflateSize);
-    points[2].move(inflateSize, -inflateSize);
-    points[3].move(inflateSize, inflateSize);
-
-    return WebCore::FloatQuad(points[1], points[0], points[2], points[3]);
-}
-
 #if ENABLE(TOUCH_EVENTS)
 - (void)_touchEvent:(const WebKit::WebTouchEvent&)touchEvent preventsNativeGestures:(BOOL)preventsNativeGesture
 {
@@ -2595,73 +2568,41 @@ static void appendRecognizerIfNonNull(RetainPtr<NSMutableArray>& array, const Re
         || gesture == _touchEndDeferringGestureRecognizerForDelayedResettableGestures;
 }
 
-static inline WebCore::FloatSize tapHighlightBorderRadius(WebCore::FloatSize borderRadii, CGFloat borderRadiusScale)
-{
-    auto inflatedSize = borderRadii * borderRadiusScale;
-    inflatedSize.expand(minimumTapHighlightRadius, minimumTapHighlightRadius);
-    return inflatedSize;
-}
-
-- (void)_updateTapHighlight
-{
-    if (![_tapHighlightView superview])
-        return;
-
-    [_tapHighlightView setColor:cocoaColor(_tapHighlightInformation.color).get()];
-
-    auto& highlightedQuads = _tapHighlightInformation.quads;
-    bool allRectilinear = true;
-    for (auto& quad : highlightedQuads) {
-        if (!quad.isRectilinear()) {
-            allRectilinear = false;
-            break;
-        }
-    }
-
-    auto selfScale = self.layer.transform.m11;
-    if (allRectilinear) {
-        float deviceScaleFactor = protect(_page)->deviceScaleFactor();
-        auto rects = createNSArray(highlightedQuads, [&] (auto& quad) {
-            auto boundingBox = quad.boundingBox();
-            boundingBox.scale(selfScale);
-            boundingBox.inflate(minimumTapHighlightRadius);
-            return [NSValue valueWithCGRect:encloseRectToDevicePixels(boundingBox, deviceScaleFactor)];
-        });
-        [_tapHighlightView setFrames:highlightedQuads.map([&](auto& quad) {
-            auto boundingBox = quad.boundingBox();
-            boundingBox.scale(selfScale);
-            boundingBox.inflate(minimumTapHighlightRadius);
-            return boundingBox;
-        })];
-    } else {
-        auto quads = adoptNS([[NSMutableArray alloc] initWithCapacity:highlightedQuads.size() * 4]);
-        for (auto quad : highlightedQuads) {
-            quad.scale(selfScale);
-            auto extendedQuad = inflateQuad(quad, minimumTapHighlightRadius);
-            [quads addObject:[NSValue valueWithCGPoint:extendedQuad.p1()]];
-            [quads addObject:[NSValue valueWithCGPoint:extendedQuad.p2()]];
-            [quads addObject:[NSValue valueWithCGPoint:extendedQuad.p3()]];
-            [quads addObject:[NSValue valueWithCGPoint:extendedQuad.p4()]];
-        }
-
-        auto inflatedHighlightQuads = highlightedQuads.map([&](auto quad) {
-            quad.scale(selfScale);
-            return inflateQuad(quad, minimumTapHighlightRadius);
-        });
-        [_tapHighlightView setQuads:WTF::move(inflatedHighlightQuads) boundaryRect:protect(_page)->exposedContentRect()];
-    }
-
-    [_tapHighlightView setCornerRadii:WebCore::CornerRadii {
-        tapHighlightBorderRadius(_tapHighlightInformation.topLeftRadius, selfScale),
-        tapHighlightBorderRadius(_tapHighlightInformation.topRightRadius, selfScale),
-        tapHighlightBorderRadius(_tapHighlightInformation.bottomLeftRadius, selfScale),
-        tapHighlightBorderRadius(_tapHighlightInformation.bottomRightRadius, selfScale)
-    }];
-}
-
 - (CGRect)tapHighlightViewRect
 {
-    return [_tapHighlightView frame];
+    return [_clickHighlightController highlightViewFrame];
+}
+
+#pragma mark - WKClickHighlightControllerDelegate
+
+- (void)clickHighlightController:(WKClickHighlightController *)controller installHighlightView:(WKClickHighlightView *)highlightView
+{
+    [_interactionViewsContainerView addSubview:highlightView];
+}
+
+- (CGFloat)clickHighlightControllerContentScale:(WKClickHighlightController *)controller
+{
+    return self.layer.transform.m11;
+}
+
+- (CGFloat)clickHighlightControllerCornerRadiusScale:(WKClickHighlightController *)controller
+{
+    return self.layer.transform.m11;
+}
+
+- (WebCore::FloatRect)clickHighlightControllerUnobscuredRect:(WKClickHighlightController *)controller
+{
+    return protect(_page)->unobscuredContentRect();
+}
+
+- (WebCore::FloatRect)clickHighlightControllerBoundaryRect:(WKClickHighlightController *)controller
+{
+    return protect(_page)->exposedContentRect();
+}
+
+- (BOOL)clickHighlightControllerIsPotentialClickInProgress:(WKClickHighlightController *)controller
+{
+    return _potentialTapInProgress;
 }
 
 - (UIGestureRecognizer *)imageAnalysisGestureRecognizer
@@ -2673,74 +2614,13 @@ static inline WebCore::FloatSize tapHighlightBorderRadius(WebCore::FloatSize bor
 #endif
 }
 
-- (void)_showTapHighlight
+- (void)_didGetTapHighlightForRequest:(WebKit::TapIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads cornerRadii:(WebCore::CornerRadii&&)cornerRadii nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling
 {
-    auto shouldPaintTapHighlight = [&](const WebCore::FloatRect& rect) {
-#if PLATFORM(MACCATALYST)
-        UNUSED_PARAM(rect);
-        return NO;
-#else
-        if (_tapHighlightInformation.nodeHasBuiltInClickHandling)
-            return true;
-
-        static const float highlightPaintThreshold = 0.3; // 30%
-        float highlightArea = 0;
-        for (auto highlightQuad : _tapHighlightInformation.quads) {
-            auto boundingBox = highlightQuad.boundingBox();
-            highlightArea += boundingBox.area(); 
-            if (boundingBox.width() > (rect.width() * highlightPaintThreshold) || boundingBox.height() > (rect.height() * highlightPaintThreshold))
-                return false;
-        }
-        return highlightArea < rect.area() * highlightPaintThreshold;
-#endif
-    };
-
-    if (!shouldPaintTapHighlight(protect(_page)->unobscuredContentRect()) && !_showDebugTapHighlightsForFastClicking)
-        return;
-
-    if (!_tapHighlightView) {
-        _tapHighlightView = adoptNS([[WKTapHighlightView alloc] initWithFrame:CGRectZero]);
-        [_tapHighlightView setUserInteractionEnabled:NO];
-        [_tapHighlightView setOpaque:NO];
-        [_tapHighlightView setMinimumCornerRadius:minimumTapHighlightRadius];
-    }
-    [_tapHighlightView setAlpha:1];
-    [_interactionViewsContainerView addSubview:_tapHighlightView.get()];
-    [self _updateTapHighlight];
-}
-
-- (void)_didGetTapHighlightForRequest:(WebKit::TapIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads topLeftRadius:(const WebCore::IntSize&)topLeftRadius topRightRadius:(const WebCore::IntSize&)topRightRadius bottomLeftRadius:(const WebCore::IntSize&)bottomLeftRadius bottomRightRadius:(const WebCore::IntSize&)bottomRightRadius nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling
-{
-    if (!_isTapHighlightIDValid || _latestTapID != requestID)
-        return;
-
     if (self._hasFocusedElement && _positionInformation.elementContext && _positionInformation.elementContext->isSameElement(_focusedElementInformation.elementContext))
         return;
 
-    _isTapHighlightIDValid = NO;
-
-    _tapHighlightInformation.quads = highlightedQuads;
-    _tapHighlightInformation.topLeftRadius = topLeftRadius;
-    _tapHighlightInformation.topRightRadius = topRightRadius;
-    _tapHighlightInformation.bottomLeftRadius = bottomLeftRadius;
-    _tapHighlightInformation.bottomRightRadius = bottomRightRadius;
-    _tapHighlightInformation.nodeHasBuiltInClickHandling = nodeHasBuiltInClickHandling;
-    if (_showDebugTapHighlightsForFastClicking)
-        _tapHighlightInformation.color = [self _tapHighlightColorForFastClick:![_doubleTapGestureRecognizer isEnabled]];
-    else
-        _tapHighlightInformation.color = color;
-
-    if (_potentialTapInProgress) {
-        _hasTapHighlightForPotentialTap = YES;
-        return;
-    }
-
-    [self _showTapHighlight];
-    if (_isExpectingFastSingleTapCommit) {
-        [self _finishInteraction];
-        if (!_potentialTapInProgress)
-            _isExpectingFastSingleTapCommit = NO;
-    }
+    auto highlightColor = _showDebugTapHighlightsForFastClicking ? [self _tapHighlightColorForFastClick:![_doubleTapGestureRecognizer isEnabled]] : color;
+    [_clickHighlightController didReceiveHighlightForRequest:requestID color:highlightColor quads:highlightedQuads cornerRadii:WTF::move(cornerRadii) nodeHasBuiltInClickHandling:nodeHasBuiltInClickHandling];
 }
 
 - (BOOL)_mayDisableDoubleTapGesturesDuringSingleTap
@@ -2963,6 +2843,14 @@ static inline WebCore::FloatSize tapHighlightBorderRadius(WebCore::FloatSize bor
 #endif
 }
 
+- (BOOL)_allowScalingToRevealFocusedElement
+{
+    if (!PAL::currentUserInterfaceIdiomIsSmallScreen())
+        return NO;
+
+    return self.traitCollection.horizontalSizeClass != UIUserInterfaceSizeClassRegular || self.traitCollection.verticalSizeClass != UIUserInterfaceSizeClassRegular;
+}
+
 - (void)_zoomToRevealFocusedElement
 {
     _revealFocusedElementDeferrer = nullptr;
@@ -2980,7 +2868,7 @@ static inline WebCore::FloatSize tapHighlightBorderRadius(WebCore::FloatSize bor
         fontSize:_focusedElementInformation.nodeFontSize
         minimumScale:_focusedElementInformation.minimumScaleFactor
         maximumScale:_focusedElementInformation.maximumScaleFactorIgnoringAlwaysScalable
-        allowScaling:_focusedElementInformation.allowsUserScalingIgnoringAlwaysScalable && PAL::currentUserInterfaceIdiomIsSmallScreen()
+        allowScaling:_focusedElementInformation.allowsUserScalingIgnoringAlwaysScalable && self._allowScalingToRevealFocusedElement
         forceScroll:[self requiresAccessoryView]];
 }
 
@@ -3441,6 +3329,9 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if (!editorState.visualData)
         return NO;
 
+    if (!editorState.visualData->shouldAllowTouchMoveToChangeSelectionQuirk)
+        return NO;
+
     static constexpr float handleHitTestPadding = 44;
     auto inflatedContainsPoint = [&](WebCore::IntRect caretRect) -> bool {
         if (caretRect.isEmpty())
@@ -3667,32 +3558,12 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (void)_cancelInteraction
 {
-    _isTapHighlightIDValid = NO;
-    [_tapHighlightView removeFromSuperview];
+    [_clickHighlightController cancel];
 }
 
 - (void)_finishInteraction
 {
-    _isTapHighlightIDValid = NO;
-    [self _fadeTapHighlightViewIfNeeded];
-}
-
-- (void)_fadeTapHighlightViewIfNeeded
-{
-    if (![_tapHighlightView superview] || _isTapHighlightFading)
-        return;
-
-    _isTapHighlightFading = YES;
-    CGFloat tapHighlightFadeDuration = _showDebugTapHighlightsForFastClicking ? 0.25 : 0.1;
-    [UIView animateWithDuration:tapHighlightFadeDuration
-        animations:^{
-            [_tapHighlightView setAlpha:0];
-        }
-        completion:^(BOOL finished) {
-            if (finished)
-                [_tapHighlightView removeFromSuperview];
-            _isTapHighlightFading = NO;
-        }];
+    [_clickHighlightController finish];
 }
 
 - (BOOL)canShowNonEmptySelectionView
@@ -3887,12 +3758,14 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     _lastInteractionLocation = startPoint;
 
     switch ([gestureRecognizer state]) {
-    case UIGestureRecognizerStateBegan:
+    case UIGestureRecognizerStateBegan: {
         _longPressCanClick = YES;
         cancelPotentialTapIfNecessary(self);
-        protect(_page)->tapHighlightAtPosition(startPoint, [self nextTapIdentifier]);
-        _isTapHighlightIDValid = YES;
+        auto requestID = [self nextTapIdentifier];
+        protect(_page)->tapHighlightAtPosition(startPoint, requestID);
+        [_clickHighlightController beginRequest:requestID expectsFastCommit:NO];
         break;
+    }
     case UIGestureRecognizerStateEnded:
         if (_longPressCanClick && _positionInformation.isElement) {
             [self _attemptSyntheticClickAtLocation:startPoint modifierFlags:gestureRecognizer.modifierFlags];
@@ -3918,9 +3791,9 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (void)_twoFingerSingleTapGestureRecognized:(UITapGestureRecognizer *)gestureRecognizer
 {
-    _isTapHighlightIDValid = YES;
-    _isExpectingFastSingleTapCommit = YES;
-    protect(_page)->handleTwoFingerTapAtPoint(WebCore::roundedIntPoint([gestureRecognizer locationInView:self]), WebKit::webEventModifierFlags(gestureRecognizer.modifierFlags | UIKeyModifierCommand), [self nextTapIdentifier]);
+    auto requestID = [self nextTapIdentifier];
+    [_clickHighlightController beginRequest:requestID expectsFastCommit:YES];
+    protect(_page)->handleTwoFingerTapAtPoint(WebCore::roundedIntPoint([gestureRecognizer locationInView:self]), WebKit::webEventModifierFlags(gestureRecognizer.modifierFlags | UIKeyModifierCommand), requestID);
 }
 
 - (void)_longPressRecognized:(UILongPressGestureRecognizer *)gestureRecognizer
@@ -3977,10 +3850,10 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if (shouldRequestMagnificationInformation)
         RELEASE_LOG(ViewGestures, "Single tap identified. Request details on potential zoom. (%p, pageProxyID=%llu)", self, _page->identifier().toUInt64());
 
-    protect(_page)->potentialTapAtPosition(std::nullopt, position, shouldRequestMagnificationInformation, [self nextTapIdentifier], WebKit::WebEventInputSource::UserDriven);
+    auto requestID = [self nextTapIdentifier];
+    protect(_page)->potentialTapAtPosition(std::nullopt, position, shouldRequestMagnificationInformation, requestID, WebKit::WebEventInputSource::UserDriven);
     _potentialTapInProgress = YES;
-    _isTapHighlightIDValid = YES;
-    _isExpectingFastSingleTapCommit = !_doubleTapGestureRecognizer.get().enabled;
+    [_clickHighlightController beginRequest:requestID expectsFastCommit:![_doubleTapGestureRecognizer isEnabled]];
 }
 
 static void cancelPotentialTapIfNecessary(WKContentView* contentView)
@@ -4002,8 +3875,7 @@ static void cancelPotentialTapIfNecessary(WKContentView* contentView)
             protect(_page)->touchWithIdentifierWasRemoved(pointerId);
     }
 
-    if (!_isTapHighlightIDValid)
-        [self _fadeTapHighlightViewIfNeeded];
+    [_clickHighlightController fadeUnlessAwaitingHighlight];
 }
 
 - (void)_keyboardDismissalGestureRecognized:(UITapGestureRecognizer *)gestureRecognizer
@@ -4117,10 +3989,7 @@ static void cancelPotentialTapIfNecessary(WKContentView* contentView)
 
     [self _endPotentialTapAndEnableDoubleTapGesturesIfNecessary];
 
-    if (_hasTapHighlightForPotentialTap) {
-        [self _showTapHighlight];
-        _hasTapHighlightForPotentialTap = NO;
-    }
+    [_clickHighlightController showPendingHighlightForCommittedClick];
 
     if ([_inputPeripheral singleTapShouldEndEditing])
         [_inputPeripheral endEditing];
@@ -4133,10 +4002,9 @@ static void cancelPotentialTapIfNecessary(WKContentView* contentView)
         _commitPotentialTapPointerId = pointerId;
     }
     RELEASE_ASSERT(_layerTreeTransactionIdAtLastInteractionStart);
-    protect(_page)->commitPotentialTap(std::nullopt, WebKit::webEventModifierFlags(gestureRecognizer.modifierFlags), *_layerTreeTransactionIdAtLastInteractionStart, pointerId);
+    protect(_page)->commitPotentialTap(std::nullopt, WebKit::webEventModifierFlags(gestureRecognizer.modifierFlags), *_layerTreeTransactionIdAtLastInteractionStart, pointerId, WebKit::CompletesDoubleClick::No);
 
-    if (!_isExpectingFastSingleTapCommit)
-        [self _finishInteraction];
+    [_clickHighlightController finishUnlessExpectingFastCommit];
 
 #if ENABLE(IMAGE_ANALYSIS)
     if (![_imageAnalysisInteraction interactableItemExistsAtPoint:_lastInteractionLocation])
@@ -5516,6 +5384,10 @@ static inline WebCore::TextGranularity toWKTextGranularity(UITextGranularity gra
 static inline WebCore::SelectionDirection toWKSelectionDirection(UITextDirection direction)
 {
     switch (direction) {
+    case UITextStorageDirectionForward:
+        return WebCore::SelectionDirection::Forward;
+    case UITextStorageDirectionBackward:
+        return WebCore::SelectionDirection::Backward;
     case UITextLayoutDirectionDown:
     case UITextLayoutDirectionRight:
         return WebCore::SelectionDirection::Right;
@@ -5523,7 +5395,7 @@ static inline WebCore::SelectionDirection toWKSelectionDirection(UITextDirection
     case UITextLayoutDirectionLeft:
         return WebCore::SelectionDirection::Left;
     default:
-        // UITextDirection is not an enum, but we only want to accept values from UITextLayoutDirection.
+        // UITextDirection is not an enum, but we only want to accept values from UITextStorageDirection and UITextLayoutDirection.
         ASSERT_NOT_REACHED();
         return WebCore::SelectionDirection::Right;
     }
@@ -5631,7 +5503,7 @@ static void selectionChangedWithTouch(WKTextInteractionWrapper *interaction, con
 
     _autocorrectionContextNeedsUpdate = YES;
     _usingGestureForSelection = YES;
-    protect(_page)->selectWithTwoTouches(WebCore::IntPoint(from), WebCore::IntPoint(to), toGestureType(gestureType), toGestureRecognizerState(gestureState), [self, strongSelf = retainPtr(self)](const WebCore::IntPoint& point, WebKit::GestureType gestureType, WebKit::GestureRecognizerState gestureState, OptionSet<WebKit::SelectionFlags> flags) {
+    protect(_page)->selectWithTwoTouches(std::nullopt, WebCore::IntPoint(from), WebCore::IntPoint(to), toGestureType(gestureType), toGestureRecognizerState(gestureState), [self, strongSelf = retainPtr(self)](const WebCore::IntPoint& point, WebKit::GestureType gestureType, WebKit::GestureRecognizerState gestureState, OptionSet<WebKit::SelectionFlags> flags) {
         selectionChangedWithGesture(_textInteractionWrapper.get(), point, gestureType, gestureState, flags);
         if (toUIGestureRecognizerState(gestureState) == UIGestureRecognizerStateEnded || toUIGestureRecognizerState(gestureState) == UIGestureRecognizerStateCancelled)
             _usingGestureForSelection = NO;
@@ -5901,7 +5773,7 @@ static void logTextInteraction(const char* methodName, UIGestureRecognizer *loup
     _autocorrectionContextNeedsUpdate = YES;
     _usingGestureForSelection = YES;
 
-    protect(_page)->selectPositionAtPoint(WebCore::IntPoint(point), stayingWithinFocusedElement, [view = retainPtr(self), completionHandler = makeBlockPtr(completionHandler)]() {
+    protect(_page)->selectPositionAtPoint(std::nullopt, WebCore::IntPoint(point), stayingWithinFocusedElement, [view = retainPtr(self), completionHandler = makeBlockPtr(completionHandler)]() {
         completionHandler();
         view->_usingGestureForSelection = NO;
     });
@@ -5913,7 +5785,7 @@ static void logTextInteraction(const char* methodName, UIGestureRecognizer *loup
 
     _autocorrectionContextNeedsUpdate = YES;
     _usingGestureForSelection = YES;
-    protect(_page)->selectPositionAtBoundaryWithDirection(WebCore::IntPoint(point), toWKTextGranularity(granularity), toWKSelectionDirection(direction), self._hasFocusedElement, [view = retainPtr(self), completionHandler = makeBlockPtr(completionHandler)]() {
+    protect(_page)->selectPositionAtBoundaryWithDirection(std::nullopt, WebCore::IntPoint(point), toWKTextGranularity(granularity), toWKSelectionDirection(direction), self._hasFocusedElement, [view = retainPtr(self), completionHandler = makeBlockPtr(completionHandler)] {
         completionHandler();
         view->_usingGestureForSelection = NO;
     });
@@ -5941,7 +5813,7 @@ static void logTextInteraction(const char* methodName, UIGestureRecognizer *loup
     _usingMouseDragForSelection = [_mouseInteraction mouseTouchGestureRecognizer]._wk_hasRecognizedOrEnded;
 #endif
     ++_suppressNonEditableSingleTapTextInteractionCount;
-    protect(_page)->selectTextWithGranularityAtPoint(std::nullopt, WebCore::IntPoint(point), toWKTextGranularity(granularity), self._hasFocusedElement, [view = retainPtr(self), selectionHandler = makeBlockPtr(completionHandler)] {
+    protect(_page)->selectTextWithGranularityAtPoint(std::nullopt, WebCore::IntPoint(point), toWKTextGranularity(granularity), self._hasFocusedElement, [view = retainPtr(self), selectionHandler = makeBlockPtr(completionHandler)](bool) {
         selectionHandler();
         view->_usingGestureForSelection = NO;
         --view->_suppressNonEditableSingleTapTextInteractionCount;
@@ -6220,9 +6092,7 @@ static void logTextInteraction(const char* methodName, UIGestureRecognizer *loup
         return completionHandler(WebKit::RequestAutocorrectionContextResult::Empty);
 
     _pendingAutocorrectionContextHandler = WTF::move(completionHandler);
-    protect(_page)->requestAutocorrectionContext();
-
-    if (protect(_page->legacyMainFrameProcess().connection())->waitForAndDispatchImmediately<Messages::WebPageProxy::HandleAutocorrectionContext>(_page->webPageIDInMainFrameProcess(), 1_s, IPC::WaitForOption::DispatchIncomingSyncMessagesWhileWaiting) != IPC::Error::NoError)
+    if (!page->requestAutocorrectionContextAndWaitForReply(1_s))
         RELEASE_LOG(TextInput, "Timed out while waiting for autocorrection context.");
 
     if (_autocorrectionContextNeedsUpdate)
@@ -6349,7 +6219,7 @@ static void logTextInteraction(const char* methodName, UIGestureRecognizer *loup
     }
 
     if (_showDebugTapHighlightsForFastClicking && !enabled)
-        _tapHighlightInformation.color = [self _tapHighlightColorForFastClick:YES];
+        [_clickHighlightController setHighlightColor:[self _tapHighlightColorForFastClick:YES]];
 
     _doubleTapGesturesAreDisabledTemporarilyForFastTap = !enabled;
     [self _updateDoubleTapGestureRecognizerEnablement];
@@ -7382,7 +7252,7 @@ static UITextAutocapitalizationType toUITextAutocapitalize(WebCore::Autocapitali
 
 - (void)_updateTextInputTraits:(id<UITextInputTraits>)traits
 {
-    traits.secureTextEntry = _focusedElementInformation.elementType == WebKit::InputType::Password || [_formInputSession forceSecureTextEntry];
+    traits.secureTextEntry = _focusedElementInformation.elementType == WebKit::InputType::Password || _focusedElementInformation.hasEverBeenPasswordField || [_formInputSession forceSecureTextEntry];
 
     switch (_focusedElementInformation.enterKeyHint) {
     case WebCore::EnterKeyHint::Enter:
@@ -8420,7 +8290,7 @@ static RetainPtr<NSObject <WKFormPeripheral>> createInputPeripheralWithView(WebK
     switch (type) {
     case WebKit::InputType::Select:
         // Don't create native iOS picker for appearance: base selects
-        if (view.focusedElementInformation.usesBaseAppearancePicker)
+        if (view.focusedElementInformation.optionsAreRenderedWithBaseAppearance)
             return nil;
 
         return adoptNS([[WKFormSelectControl alloc] initWithView:view]);
@@ -9858,16 +9728,17 @@ static bool canUseQuickboardControllerFor(UITextContentType type)
 #endif
 }
 
-- (void)_showRunOpenPanel:(API::OpenPanelParameters*)parameters frameInfo:(const WebKit::FrameInfoData&)frameInfo resultListener:(WebKit::WebOpenPanelResultListenerProxy*)listener
+- (BOOL)_showRunOpenPanel:(API::OpenPanelParameters*)parameters frameInfo:(const WebKit::FrameInfoData&)frameInfo resultListener:(WebKit::WebOpenPanelResultListenerProxy*)listener
 {
-    ASSERT(!_fileUploadPanel);
+    // The panel still showing may belong to a frame whose process has exited.
     if (_fileUploadPanel)
-        return;
+        return NO;
 
     _frameInfoForFileUploadPanel = frameInfo;
     _fileUploadPanel = adoptNS([[WKFileUploadPanel alloc] initWithView:self]);
     [_fileUploadPanel setDelegate:self];
     [_fileUploadPanel presentWithParameters:parameters resultListener:listener];
+    return YES;
 }
 
 - (void)fileUploadPanelDidDismiss:(WKFileUploadPanel *)fileUploadPanel
@@ -10799,7 +10670,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     [self cleanUpDragSourceSessionState];
 }
 
-- (void)_startDrag:(RetainPtr<CGImageRef>)image item:(const WebCore::DragItem&)item nodeID:(std::optional<WebCore::NodeIdentifier>)nodeID
+- (void)_startDrag:(RetainPtr<CGImageRef>)image item:(const WebCore::DragItem&)item nodeID:(std::optional<WebCore::NodeIdentifier>)nodeID frameID:(std::optional<WebCore::FrameIdentifier>)frameID
 {
     ASSERT(item.sourceAction);
 
@@ -10808,7 +10679,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if (item.modelLayerID && _page) {
         if (RefPtr portalPresentationManager = _page->portalPresentationManagerProxy()) {
             if (RetainPtr viewForDragPreview = portalPresentationManager->startDragForModel(*item.modelLayerID)) {
-                _dragDropInteractionState.stageDragItem(item, viewForDragPreview);
+                _dragDropInteractionState.stageDragItem(item, viewForDragPreview, frameID);
                 return;
             }
         }
@@ -10819,7 +10690,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         [self _prepareToDragPromisedAttachment:item.promisedAttachmentInfo];
 
     auto dragImage = adoptNS([[UIImage alloc] initWithCGImage:image.get() scale:protect(_page)->deviceScaleFactor() orientation:UIImageOrientationUp]);
-    _dragDropInteractionState.stageDragItem(item, dragImage.get());
+    _dragDropInteractionState.stageDragItem(item, dragImage.get(), frameID);
 }
 
 - (void)_didHandleAdditionalDragItemsRequest:(BOOL)added
@@ -10844,7 +10715,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     completion(dragItemsToAdd);
 
     if (dragItemsToAdd.count)
-        protect(_page)->didStartDrag();
+        protect(_page)->didStartDrag(stagedDragSource.frameID);
 }
 
 - (void)_didHandleDragStartRequest:(BOOL)started
@@ -10917,12 +10788,16 @@ static std::optional<WebCore::DragOperation> coreDragOperationForUIDropOperation
     if (!session.allowsMoveOperation)
         dragOperationMask.remove(WebCore::DragOperation::Move);
 
+    OptionSet<WebCore::DragApplicationFlags> flags;
+    if (session.localDragSession && session.localDragSession == _dragDropInteractionState.dragSession())
+        flags.add(WebCore::DragApplicationFlags::IsSource);
+
     return {
         session,
         WebCore::roundedIntPoint(client),
         WebCore::roundedIntPoint(global),
         dragOperationMask,
-        { },
+        flags,
         WebKit::coreDragDestinationActionMask(dragDestinationAction),
         _page->webPageIDInMainFrameProcess()
     };
@@ -11399,7 +11274,7 @@ static Vector<WebCore::IntSize> sizesOfPlaceholderElementsToInsertWhenDroppingIt
     auto *registrationLists = [[WebItemProviderPasteboard sharedInstance] takeRegistrationLists];
     NSArray *dragItems = [self _itemsForBeginningOrAddingToSessionWithRegistrationLists:registrationLists stagedDragSource:stagedDragSource];
     if (![dragItems count])
-        protect(_page)->dragCancelled();
+        protect(_page)->dragCancelled(stagedDragSource.frameID);
     else
         [self _cancelLongPressGestureRecognizer];
 
@@ -11459,7 +11334,7 @@ static Vector<WebCore::IntSize> sizesOfPlaceholderElementsToInsertWhenDroppingIt
 
     [protect(_actionSheetAssistant) cleanupSheet];
     _dragDropInteractionState.dragSessionWillBegin();
-    protect(_page)->didStartDrag();
+    protect(_page)->didStartDrag(_dragDropInteractionState.initialDragSourceFrameID());
 }
 
 - (void)dragInteraction:(UIDragInteraction *)interaction session:(id<UIDragSession>)session didEndWithOperation:(UIDropOperation)operation
@@ -11498,12 +11373,13 @@ static Vector<WebCore::IntSize> sizesOfPlaceholderElementsToInsertWhenDroppingIt
     for (auto& previewView : previewViews)
         [previewView setAlpha:0];
 
-    [animator addCompletion:[protectedSelf = retainPtr(self), previewViews = WTF::move(previewViews), page = _page] (UIViewAnimatingPosition finalPosition) mutable {
+    auto frameID = _dragDropInteractionState.dragSourceFrameIDForItem(item);
+    [animator addCompletion:[protectedSelf = retainPtr(self), previewViews = WTF::move(previewViews), page = _page, frameID] (UIViewAnimatingPosition finalPosition) mutable {
         RELEASE_LOG(DragAndDrop, "Drag interaction willAnimateCancelWithAnimator (animation completion block fired)");
         for (auto& previewView : previewViews)
             [previewView setAlpha:1];
 
-        page->dragCancelled();
+        page->dragCancelled(frameID);
 
         page->callAfterNextPresentationUpdate([previewViews = WTF::move(previewViews), protectedSelf = WTF::move(protectedSelf)] {
             for (auto& previewView : previewViews)
@@ -11836,7 +11712,7 @@ static RetainPtr<UIImage> uiImageForImage(WebCore::Image* image)
     if (!image)
         return nil;
 
-    auto nativeImage = image->nativeImage();
+    auto nativeImage = image->nativeImage(WebCore::ConcreteObjectSize::fixed(image->size()));
     if (!nativeImage)
         return nil;
 
@@ -12389,7 +12265,7 @@ static WebKit::DocumentEditingContextRequest toWebRequest(id request)
 - (void)setContinuousSpellCheckingEnabled:(BOOL)enabled
 {
     if (WebKit::TextChecker::setContinuousSpellCheckingEnabled(enabled))
-        protect(_page->legacyMainFrameProcess())->updateTextCheckerState();
+        WebKit::WebProcessPool::notifyProcessPoolsTextCheckerStateChanged();
 }
 
 - (void)setGrammarCheckingEnabled:(BOOL)enabled
@@ -12398,8 +12274,31 @@ static WebKit::DocumentEditingContextRequest toWebRequest(id request)
         return;
 
     WebKit::TextChecker::setGrammarCheckingEnabled(enabled);
-    protect(_page->legacyMainFrameProcess())->updateTextCheckerState();
+    WebKit::WebProcessPool::notifyProcessPoolsTextCheckerStateChanged();
 }
+
+#if HAVE(UI_HINGE_INTERACTION)
+
+- (void)setUpHingeInteraction
+{
+    if (_hingeInteraction)
+        [self removeInteraction:_hingeInteraction.get()];
+
+    _hingeInteraction = adoptNS([[UIHingeInteraction alloc] initWithUpdateHandler:makeBlockPtr([weakSelf = WeakObjCPtr<WKContentView>(self)](UIHingeInteraction *interaction, UIHingeInteractionUpdate *update) mutable {
+        RetainPtr strongSelf = weakSelf.get();
+        if (!strongSelf)
+            return;
+
+        if (RefPtr page = strongSelf->_page) {
+            bool isFolded = update.hinge.status == UIHingeStatusPartiallyOpen;
+            page->setDevicePostureType(isFolded ? WebCore::DevicePostureType::Folded : WebCore::DevicePostureType::Continuous);
+        }
+    }).get()]);
+
+    [self addInteraction:_hingeInteraction.get()];
+}
+
+#endif
 
 #if HAVE(UIKIT_WITH_MOUSE_SUPPORT)
 
@@ -12412,9 +12311,7 @@ static WebKit::DocumentEditingContextRequest toWebRequest(id request)
 
         if (!linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::SendsNativeMouseEvents)
             && WTF::IOSApplication::isEssentialSkeleton()) { // <rdar://problem/62694519>
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-            os_log_error(OS_LOG_DEFAULT, "WARNING: This application has been observed to ignore mouse events in web content; touch events will be sent until it is built against the iOS 13.4 SDK, but after that, the web content must respect mouse or pointer events in addition to touch events in order to behave correctly when a trackpad or mouse is used.");
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+            SAFE_OS_LOG_ERROR(OS_LOG_DEFAULT, "WARNING: This application has been observed to ignore mouse events in web content; touch events will be sent until it is built against the iOS 13.4 SDK, but after that, the web content must respect mouse or pointer events in addition to touch events in order to behave correctly when a trackpad or mouse is used.");
             return NO;
         }
 
@@ -12499,17 +12396,20 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 - (void)captionStyleMenuSetPreviewProfileID:(NSString *)profileID frameInfo:(const WebKit::FrameInfoData&)frameInfo identifier:(WebCore::HTMLMediaElementIdentifier)identifier
 {
-    protect(_page)->setCaptionDisplaySettingsPreviewProfileID(frameInfo, profileID);
+    RefPtr page = _page;
+    page->setCaptionDisplaySettingsPreviewProfileID(page->processContainingFrame(frameInfo.frameID), profileID);
 }
 
 - (void)captionStyleMenuWillOpenWithFrameInfo:(const WebKit::FrameInfoData&)frameInfo identifier:(WebCore::HTMLMediaElementIdentifier)identifier
 {
-    protect(_page)->showCaptionDisplaySettingsPreview(frameInfo, identifier);
+    RefPtr page = _page;
+    page->showCaptionDisplaySettingsPreview(page->processContainingFrame(frameInfo.frameID), identifier);
 }
 
 - (void)captionStyleMenuDidCloseWithFrameInfo:(const WebKit::FrameInfoData&)frameInfo identifier:(WebCore::HTMLMediaElementIdentifier)identifier
 {
-    protect(_page)->hideCaptionDisplaySettingsPreview(frameInfo, identifier);
+    RefPtr page = _page;
+    page->hideCaptionDisplaySettingsPreview(page->processContainingFrame(frameInfo.frameID), identifier);
 }
 #endif // ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS) && USE(UICONTEXTMENU)
 
@@ -14795,6 +14695,12 @@ static inline WKTextAnimationType toWKTextAnimationType(WebCore::TextAnimationTy
         if (SEL action = [protectedSelf _actionForLongPress])
             [protectedSelf performSelector:action];
     } forRequest:WebKit::InteractionInformationRequest(WebCore::roundedIntPoint(location))];
+}
+
+- (void)_simulateDoubleClickAtLocation:(CGPoint)location
+{
+    _layerTreeTransactionIdAtLastInteractionStart = protect(downcast<WebKit::RemoteLayerTreeDrawingAreaProxy>(*_page->drawingArea()))->lastCommittedMainFrameLayerTreeTransactionID();
+    protect(_page)->handleDoubleTapForDoubleClickAtPoint(WebCore::IntPoint(location), { }, *_layerTreeTransactionIdAtLastInteractionStart, WebKit::WebEventInputSource::UserDriven, WebKit::WebMouseEventSyntheticClickType::OneFingerTap);
 }
 
 - (void)selectFormAccessoryPickerRow:(NSInteger)rowIndex

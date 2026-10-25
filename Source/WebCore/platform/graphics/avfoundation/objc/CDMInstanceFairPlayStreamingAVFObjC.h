@@ -88,7 +88,7 @@ class CDMInstanceFairPlayStreamingAVFObjC final : public CDMInstance, public AVC
 public:
     USING_CAN_MAKE_WEAKPTR(CanMakeWeakPtr<CDMInstanceFairPlayStreamingAVFObjC>);
 
-    static Ref<CDMInstanceFairPlayStreamingAVFObjC> create(const CDMPrivateFairPlayStreaming&);
+    static Ref<CDMInstanceFairPlayStreamingAVFObjC> LEGACY_NODELETE create(const CDMPrivateFairPlayStreaming&);
     virtual ~CDMInstanceFairPlayStreamingAVFObjC() = default;
 
     // AVContentKeySessionDelegateClient.
@@ -96,7 +96,7 @@ public:
     void deref() const final { CDMInstance::deref(); }
 
     static bool supportsPersistableState();
-    static bool NODELETE supportsPersistentKeys();
+    static bool LEGACY_NODELETE supportsPersistentKeys();
     static bool supportsMediaCapability(const CDMMediaCapability&);
     static bool mimeTypeIsPlayable(const String&);
 
@@ -162,8 +162,8 @@ private:
     void handleUnexpectedRequests(Vector<RetainPtr<AVContentKeyRequest>>&&);
 
     WeakPtr<CDMInstanceClient> m_client;
-    RetainPtr<AVContentKeySession> m_session;
-    RetainPtr<WebCoreFPSContentKeySessionDelegate> m_delegate;
+    const RetainPtr<AVContentKeySession> m_session;
+    const RetainPtr<WebCoreFPSContentKeySessionDelegate> m_delegate;
     RefPtr<SharedBuffer> m_serverCertificate;
     bool m_persistentStateAllowed { true };
     RetainPtr<NSURL> m_storageURL;
@@ -185,7 +185,7 @@ class CDMInstanceSessionFairPlayStreamingAVFObjC final
 public:
     USING_CAN_MAKE_WEAKPTR(AVContentKeySessionDelegateClient);
 
-    static Ref<CDMInstanceSessionFairPlayStreamingAVFObjC> create(Ref<CDMInstanceFairPlayStreamingAVFObjC>&&);
+    static Ref<CDMInstanceSessionFairPlayStreamingAVFObjC> LEGACY_NODELETE create(Ref<CDMInstanceFairPlayStreamingAVFObjC>&&);
     virtual ~CDMInstanceSessionFairPlayStreamingAVFObjC();
 
     // ContentKeyGroupDataSource, AVContentKeySessionDelegateClient.
@@ -247,7 +247,7 @@ private:
     void updateKeyStatuses();
     void nextRequest();
 
-    AVContentKeyRequest* NODELETE lastKeyRequest() const;
+    AVContentKeyRequest* LEGACY_NODELETE lastKeyRequest() const;
     Vector<RetainPtr<AVContentKey>> contentKeys() const;
     Vector<RetainPtr<AVContentKeyRequest>> contentKeyRequests() const;
 
@@ -275,7 +275,7 @@ private:
 
     const Ref<CDMInstanceFairPlayStreamingAVFObjC> m_instance;
     const RetainPtr<WebAVContentKeyGrouping> m_group;
-    RetainPtr<AVContentKeySession> m_session;
+    const RetainPtr<AVContentKeySession> m_session;
     std::optional<Request> m_currentRequest;
     const RetainPtr<WebCoreFPSContentKeySessionDelegate> m_delegate;
     Vector<RetainPtr<NSData>> m_expiredSessions;

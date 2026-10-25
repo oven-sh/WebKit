@@ -23,6 +23,7 @@
 #include "APINavigationAction.h"
 #include "APINavigationClient.h"
 #include "FrameInfoData.h"
+#include "WebFrameProxy.h"
 #include "WebKitBackForwardListPrivate.h"
 #include "WebKitDownloadPrivate.h"
 #include "WebKitNavigationPolicyDecisionPrivate.h"
@@ -31,6 +32,7 @@
 #include "WebKitURIResponsePrivate.h"
 #include "WebKitWebContextPrivate.h"
 #include "WebKitWebViewPrivate.h"
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/CString.h>
 
@@ -61,15 +63,16 @@ private:
 
     void didFailProvisionalNavigationWithError(WebPageProxy&, FrameInfoData&& frameInfo, API::Navigation*, const URL&, const ResourceError& resourceError, API::Object* /* userData */) override
     {
-        if (!frameInfo.isMainFrame)
+        RefPtr frame = WebFrameProxy::webFrame(frameInfo.frameID);
+        if (!frame || !frame->isMainFrame())
             return;
-        GUniquePtr<GError> error(g_error_new_literal(g_quark_from_string(resourceError.domain().utf8().legacyCStringPointer()),
+        GUniquePtr<GError> error(g_error_new_literal(gQuarkFromString(resourceError.domain().utf8()),
             toWebKitError(resourceError.errorCode()), resourceError.localizedDescription().utf8().legacyCStringPointer()));
         if (resourceError.tlsErrors()) {
-            webkitWebViewLoadFailedWithTLSErrors(m_webView, resourceError.failingURL().string().utf8().legacyCStringPointer(), error.get(),
+            webkitWebViewLoadFailedWithTLSErrors(m_webView, resourceError.failingURL().string(), error.get(),
                 static_cast<GTlsCertificateFlags>(resourceError.tlsErrors()), resourceError.certificate());
         } else
-            webkitWebViewLoadFailed(m_webView, WEBKIT_LOAD_STARTED, resourceError.failingURL().string().utf8().legacyCStringPointer(), error.get());
+            webkitWebViewLoadFailed(m_webView, WEBKIT_LOAD_STARTED, resourceError.failingURL().string(), error.get());
     }
 
     void didCommitNavigation(WebPageProxy&, API::Navigation*, API::Object* /* userData */) override
@@ -84,11 +87,12 @@ private:
 
     void didFailNavigationWithError(WebPageProxy&, const FrameInfoData& frameInfo, API::Navigation*, const URL&, const ResourceError& resourceError, API::Object* /* userData */) override
     {
-        if (!frameInfo.isMainFrame)
+        RefPtr frame = WebFrameProxy::webFrame(frameInfo.frameID);
+        if (!frame || !frame->isMainFrame())
             return;
-        GUniquePtr<GError> error(g_error_new_literal(g_quark_from_string(resourceError.domain().utf8().legacyCStringPointer()),
+        GUniquePtr<GError> error(g_error_new_literal(gQuarkFromString(resourceError.domain().utf8()),
             toWebKitError(resourceError.errorCode()), resourceError.localizedDescription().utf8().legacyCStringPointer()));
-        webkitWebViewLoadFailed(m_webView, WEBKIT_LOAD_COMMITTED, resourceError.failingURL().string().utf8().legacyCStringPointer(), error.get());
+        webkitWebViewLoadFailed(m_webView, WEBKIT_LOAD_COMMITTED, resourceError.failingURL().string(), error.get());
     }
 
     bool didChangeBackForwardList(WebPageProxy&, WebBackForwardListItem* addedItem, const Vector<Ref<WebBackForwardListItem>>& removedItems) override

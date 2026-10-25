@@ -26,6 +26,8 @@
 #include "WebKitColorPrivate.h"
 #include "WebKitScriptDialogPrivate.h"
 #include "WebKitWebViewPrivate.h"
+#include <WebCore/CSSValueKeywords.h>
+#include <WebCore/PlatformRenderTheme.h>
 
 #if ENABLE(WPE_PLATFORM)
 #include <wpe/wpe-platform.h>
@@ -97,142 +99,36 @@ WebKitWebView* webkit_web_view_new(WebKitWebViewBackend* backend)
         nullptr));
 }
 
-#if !ENABLE(2022_GLIB_API)
-/**
- * webkit_web_view_new_with_context:
- * @backend: (transfer full) (not nullable): wrapped WPE view backend which
- *    will determine the behavior of the new [class@WebView].
- * @context: the web context the new [class@WebView] will use.
- *
- * Creates a new web view with a given context.
- *
- * The new web view will use the given [class@WebContext] and will not have
- * an associated [class@UserContentManager].
- *
- * See also [ctor@WebView.new_with_user_content_manager] and
- * [ctor@WebView.new_with_settings].
- *
- * Returns: The newly created web view.
- */
-WebKitWebView* webkit_web_view_new_with_context(WebKitWebViewBackend* backend, WebKitWebContext* context)
-{
-    g_return_val_if_fail(backend, nullptr);
-    g_return_val_if_fail(WEBKIT_IS_WEB_CONTEXT(context), nullptr);
-
-    return WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
-        "backend", backend,
-#if !ENABLE(2022_GLIB_API)
-        "is-ephemeral", webkit_web_context_is_ephemeral(context),
-#endif
-        "web-context", context,
-        nullptr));
-}
-#endif
-
-#if !ENABLE(2022_GLIB_API)
-/**
- * webkit_web_view_new_with_related_view: (constructor)
- * @backend: (transfer full) (not nullable): wrapped WPE view backend which
- *    will determine the behavior of the new [class@WebView].
- * @web_view: the related web view.
- *
- * Creates a new web view sharing the same configuration and web process as another.
- *
- * A related view should always be set when creating a [class@WebView] in a handler
- * for the [signal@WebView::create] signal.
- *
- * The new view will also have the same [class@UserContentManager] and
- * [class@Settings] as the related @web_view.
- *
- * Returns: (transfer full): The newly created web view.
- *
- * Since: 2.4
- */
-WebKitWebView* webkit_web_view_new_with_related_view(WebKitWebViewBackend* backend, WebKitWebView* webView)
-{
-    g_return_val_if_fail(backend, nullptr);
-    g_return_val_if_fail(WEBKIT_IS_WEB_VIEW(webView), nullptr);
-
-    return WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
-        "backend", backend,
-        "user-content-manager", webkit_web_view_get_user_content_manager(webView),
-        "settings", webkit_web_view_get_settings(webView),
-        "related-view", webView,
-        nullptr));
-}
-
-/**
- * webkit_web_view_new_with_settings:
- * @backend: (transfer full) (not nullable): wrapped WPE view backend which
- *    will determine the behavior of the new [class@WebView].
- * @settings: settings for the new view.
- *
- * Creates a new web view with the given settings.
- *
- * See also [ctor@WebView.new_with_context] and
- * [ctor@WebView.new_with_user_content_manager].
- *
- * Returns: (transfer full): The newly created web view.
- *
- * Since: 2.6
- */
-WebKitWebView* webkit_web_view_new_with_settings(WebKitWebViewBackend* backend, WebKitSettings* settings)
-{
-    g_return_val_if_fail(backend, nullptr);
-    g_return_val_if_fail(WEBKIT_IS_SETTINGS(settings), nullptr);
-
-    return WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
-        "backend", backend,
-        "settings", settings,
-        nullptr));
-}
-
-/**
- * webkit_web_view_new_with_user_content_manager:
- * @backend: (transfer full) (not nullable): wrapped WPE view backend which
- *    will determine the behavior of the new [class@WebView].
- * @user_content_manager: the user content manager for the new view.
- *
- * Creates a new web view with the given user content manager.
- *
- * The content loaded in the new [class@WebView] may be affected by the
- * configuration of the given [class@UserContentManager].
- *
- * Returns: (transfer full): The newly created web view.
- *
- * Since: 2.6
- */
-WebKitWebView* webkit_web_view_new_with_user_content_manager(WebKitWebViewBackend* backend, WebKitUserContentManager* userContentManager)
-{
-    g_return_val_if_fail(backend, nullptr);
-    g_return_val_if_fail(WEBKIT_IS_USER_CONTENT_MANAGER(userContentManager), nullptr);
-
-    return WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW,
-        "backend", backend,
-        "user-content-manager", userContentManager,
-        nullptr));
-}
-#endif
 #endif // USE(LIBWPE)
 
 /**
  * webkit_web_view_set_background_color:
  * @web_view: a #WebKitWebView
- * @color: a #WebKitColor
+ * @color: (nullable): a #WebKitColor, or %NULL to reset to the default system appearance color
  *
  * Sets the color that will be used to draw the @web_view background before
  * the actual contents are rendered. Note that if the web page loaded in @web_view
  * specifies a background color, it will take precedence over the @color.
- * By default the @web_view background color is opaque white.
+ * By default the @web_view background color is based on the system appearance.
+ *
+ * Since 2.56, %NULL can be passed to reset the background color to the default system appearance color.
  *
  * Since: 2.24
  */
 void webkit_web_view_set_background_color(WebKitWebView* webView, WebKitColor* backgroundColor)
 {
     g_return_if_fail(WEBKIT_IS_WEB_VIEW(webView));
-    g_return_if_fail(backgroundColor);
 
     auto& page = webkitWebViewGetPage(webView);
+    if (!backgroundColor) {
+        page.setBackgroundColor(std::nullopt);
+#if ENABLE(WPE_PLATFORM)
+        if (auto* view = static_cast<WebKit::PageClientImpl&>(*page.pageClient()).wpeView())
+            wpe_view_set_opaque_rectangles(view, nullptr, 0);
+#endif
+        return;
+    }
+
     auto color = webkitColorToWebCoreColor(backgroundColor);
     page.setBackgroundColor(color);
 #if ENABLE(WPE_PLATFORM)
@@ -252,7 +148,8 @@ void webkit_web_view_set_background_color(WebKitWebView* webView, WebKitColor* b
  * @color: (out): a #WebKitColor to fill in with the background color
  *
  * Gets the color that is used to draw the @web_view background before the
- * actual contents are rendered. For more information see also
+ * actual contents are rendered. By default the @web_view background color
+ * is based on the system appearance. For more information see also
  * webkit_web_view_set_background_color().
  *
  * Since: 2.24
@@ -260,10 +157,67 @@ void webkit_web_view_set_background_color(WebKitWebView* webView, WebKitColor* b
 void webkit_web_view_get_background_color(WebKitWebView* webView, WebKitColor* color)
 {
     g_return_if_fail(WEBKIT_IS_WEB_VIEW(webView));
-    auto& page = webkitWebViewGetPage(webView);
+    g_return_if_fail(color);
 
-    auto& webCoreColor = page.backgroundColor();
-    webkitColorFillFromWebCoreColor(webCoreColor.value_or(WebCore::Color::white), color);
+    auto& page = webkitWebViewGetPage(webView);
+    if (auto webCoreColor = page.backgroundColor()) {
+        webkitColorFillFromWebCoreColor(*webCoreColor, color);
+        return;
+    }
+
+    OptionSet<WebCore::StyleColorOptions> styleColorOptions;
+    if (page.useDarkAppearance())
+        styleColorOptions.add(WebCore::StyleColorOptions::UseDarkAppearance);
+    webkitColorFillFromWebCoreColor(WebCore::RenderTheme::singleton().systemColor(WebCore::CSSValueID::Canvas, styleColorOptions), color);
+}
+
+guint createContextMenuSignal(WebKitWebViewClass* webViewClass)
+{
+    /**
+     * WebKitWebView::context-menu:
+     * @web_view: the #WebKitWebView on which the signal is emitted
+     * @context_menu: the proposed #WebKitContextMenu
+     * @hit_test_result: a #WebKitHitTestResult
+     *
+     * Emitted when a context menu is about to be displayed to give the application
+     * a chance to customize the proposed menu, prevent the menu from being displayed,
+     * or build its own context menu.
+     *
+     * - To customize the proposed menu you can use webkit_context_menu_prepend(),
+     *  webkit_context_menu_append() or webkit_context_menu_insert() to add new
+     *  #WebKitContextMenuItem objects to @context_menu, webkit_context_menu_move_item()
+     *  to reorder existing items, or webkit_context_menu_remove() to remove an
+     *  existing item. The signal handler should return %FALSE, and the menu represented
+     *  by @context_menu will be shown.
+     * - To prevent the menu from being displayed you can just connect to this signal
+     *  and return %TRUE so that the proposed menu will not be shown.
+     * - To build your own menu, you can remove all items from the proposed menu with
+     *  webkit_context_menu_remove_all(), add your own items and return %FALSE so
+     *  that the menu will be shown. You can also ignore the proposed #WebKitContextMenu,
+     *  build your own menu and return %TRUE to prevent the proposed menu from being shown.
+     * - If you just want the default menu to be shown always, simply don't connect to this
+     *  signal because showing the proposed context menu is the default behavior.
+     *
+     * If the signal handler returns %FALSE the context menu represented by @context_menu
+     * will be shown, if it returns %TRUE the context menu will not be shown.
+     *
+     * The proposed #WebKitContextMenu passed in @context_menu argument is only valid
+     * during the signal emission.
+     *
+     * Returns: %TRUE to stop other handlers from being invoked for the event.
+     *    %FALSE to propagate the event further.
+     */
+    return g_signal_new(
+        "context-menu",
+        G_TYPE_FROM_CLASS(webViewClass),
+        G_SIGNAL_RUN_LAST,
+        G_STRUCT_OFFSET(WebKitWebViewClass, context_menu),
+        g_signal_accumulator_true_handled, nullptr,
+        g_cclosure_marshal_generic,
+        G_TYPE_BOOLEAN,
+        2,
+        WEBKIT_TYPE_CONTEXT_MENU,
+        WEBKIT_TYPE_HIT_TEST_RESULT);
 }
 
 guint createRunColorChooserSignal(WebKitWebViewClass* webViewClass)

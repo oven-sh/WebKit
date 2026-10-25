@@ -1,0 +1,290 @@
+# Where nothing of another type is ever stored, each layout says what its slot holds, so behind a test of a value that was read from a slot the object has none of the layouts whose slot holds nothing that passes. A test of the object for a layout is decided where that leaves one answer
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Round" fields=[{key="kind" declared={type=1} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="r" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+layout L1 name="Wide" fields=[{key="kind" declared={type=2} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="w" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+layout L2 name="High" fields=[{key="kind" declared={type=3} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="h" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+layout L3 name="Oval" fields=[{key="kind" declared={type=4} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="r" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+layout L4 name="Anything" fields=[{key="kind" declared={type=int[1, 4]} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="r" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+layout L5 name="Value" fields=[{key="tag" declared={type="value"} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="ok" declared={type=true} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="value" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+layout L6 name="Failure" fields=[{key="tag" declared={type="failure"} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="ok" declared={type=false} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="error" declared={type=string} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+layout L7 name="Circle" fields=[{key="kind" declared={type=int[1, 2]} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="r" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+layout L8 name="Square" fields=[{key="kind" declared={type=int[1, 2]} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="w" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+
+function f0 name="casesOfSwitch" parameters=[{type=L0|L1|L2}] results=[{type=anything}] {
+    v1 = GetSlot v0 key="kind" receivers=[L0, L1, L2] level=Proven
+    Switch v1 cases=[1, 2] -> case b1(), case b4(), otherwise b7()
+  b1():
+    v2 = TypeTest v0 testedType=L0
+    Branch v2 -> taken b2(| 0), notTaken b3()
+  b2(v3):
+    v4 = GetSlot v3 key="r" receivers=[L0] level=Proven
+    Return v4
+  b3():
+    v5 = Undefined
+    Return v5
+  b4():
+    v6 = TypeTest v0 testedType=L0
+    Branch v6 -> taken b5(| 0), notTaken b6()
+  b5(v7):
+    v8 = GetSlot v7 key="r" receivers=[L0] level=Proven
+    Return v8
+  b6():
+    v9 = Null
+    Return v9
+  b7():
+    v10 = TypeTest v0 testedType=L2
+    Branch v10 -> taken b8(| 0), notTaken b9()
+  b8(v11):
+    v12 = GetSlot v11 key="h" receivers=[L2] level=Proven
+    Return v12
+  b9():
+    v13 = Undefined
+    Return v13
+# CHECK: Switch v1 cases=[1, 2]
+# CHECK-NOT: Branch
+# CHECK: [[round0]]: L0 = AssumeType v0 castType=L0
+# CHECK-NEXT: [[radius0]]: number = GetSlot [[round0]] key="r"
+# CHECK-NEXT: Return [[radius0]]
+# CHECK-NOT: Branch
+# CHECK-NOT: = Undefined
+# CHECK-NOT: key="r"
+# CHECK: [[nothing0]]: null = Null
+# CHECK-NEXT: Return [[nothing0]]
+# CHECK-NOT: Branch
+# CHECK-NOT: = Undefined
+# CHECK: [[high0]]: L2 = AssumeType v0 castType=L2
+# CHECK-NEXT: [[height0]]: number = GetSlot [[high0]] key="h"
+# CHECK-NEXT: Return [[height0]]
+# CHECK-NOT: Branch
+# CHECK-NOT: = Undefined
+}
+
+function f1 name="casesThatLeadToOneBlock" parameters=[{type=L0|L1|L3}] results=[{type=anything}] {
+    v1 = GetSlot v0 key="kind" receivers=[L0, L1, L3] level=Proven
+    Switch v1 cases=[1, 4] -> case b1(), case b1(), otherwise b5()
+  b1():
+    v2 = TypeTest v0 testedType=L0|L3
+    Branch v2 -> taken b2(| 0), notTaken b5()
+  b2(v3):
+    v4 = TypeTest v3 testedType=L0
+    Branch v4 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v5):
+    v6 = GetSlot v5 key="r" receivers=[L0] level=Proven
+    Return v6
+  b4(v7):
+    v8 = GetSlot v7 key="r" receivers=[L3] level=Proven
+    Return v8
+  b5():
+    v9 = Undefined
+    Return v9
+# CHECK: Switch v1 cases=[1, 4]
+# CHECK-NOT: Branch
+# CHECK: [[either1]]: L0|L3 = AssumeType v0 castType=L0|L3
+# CHECK-NEXT: [[isRound1]]: boolean = TypeTest [[either1]] testedType=L0
+# CHECK-NEXT: Branch [[isRound1]] -> taken
+}
+
+function f2 name="comparisonWithString" parameters=[{type=L5|L6}] results=[{type=anything}] {
+    v1 = GetSlot v0 key="tag" receivers=[L5, L6] level=Proven
+    v2 = String string="value"
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(), notTaken b4()
+  b1():
+    v4 = TypeTest v0 testedType=L5
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = GetSlot v5 key="value" receivers=[L5] level=Proven
+    Return v6
+  b3():
+    v7 = Undefined
+    Return v7
+  b4():
+    v8 = TypeTest v0 testedType=L5
+    Branch v8 -> taken b5(), notTaken b6(| 0)
+  b5():
+    v9 = Undefined
+    Return v9
+  b6(v10):
+    v11 = GetSlot v10 key="error" receivers=[L6] level=Proven
+    Return v11
+# CHECK: Branch v3 -> taken
+# CHECK-NOT: Branch
+# CHECK-NOT: = Undefined
+# CHECK: [[value2]]: L5 = AssumeType v0 castType=L5
+# CHECK-NEXT: = GetSlot [[value2]] key="value"
+# CHECK-NOT: Branch
+# CHECK-NOT: = Undefined
+# CHECK: [[failure2]]: L6 = AssumeType v0 castType=L6
+# CHECK-NEXT: = GetSlot [[failure2]] key="error"
+# CHECK-NOT: Branch
+# CHECK-NOT: = Undefined
+}
+
+function f3 name="branchOnTheValueItself" parameters=[{type=L5|L6}] results=[{type=anything}] {
+    v1 = GetSlot v0 key="ok" receivers=[L5, L6] level=Proven
+    Branch v1 -> taken b1(), notTaken b4()
+  b1():
+    v2 = TypeTest v0 testedType=L5
+    Branch v2 -> taken b2(| 0), notTaken b3()
+  b2(v3):
+    v4 = GetSlot v3 key="value" receivers=[L5] level=Proven
+    Return v4
+  b3():
+    v5 = Undefined
+    Return v5
+  b4():
+    v6 = TypeTest v0 testedType=L6
+    Branch v6 -> taken b5(| 0), notTaken b6()
+  b5(v7):
+    v8 = GetSlot v7 key="error" receivers=[L6] level=Proven
+    Return v8
+  b6():
+    v9 = Undefined
+    Return v9
+# CHECK: Branch v1 -> taken
+# CHECK-NOT: Branch
+# CHECK-NOT: = Undefined
+# CHECK: [[value3]]: L5 = AssumeType v0 castType=L5
+# CHECK-NEXT: = GetSlot [[value3]] key="value"
+# CHECK-NOT: Branch
+# CHECK-NOT: = Undefined
+# CHECK: [[failure3]]: L6 = AssumeType v0 castType=L6
+# CHECK-NEXT: = GetSlot [[failure3]] key="error"
+# CHECK-NOT: Branch
+# CHECK-NOT: = Undefined
+}
+
+function f4 name="castOfTheObjectAndCallInBetween" parameters=[{type=L5|L6}, {type=function}] results=[{type=anything}] {
+    v2 = GetSlot v0 key="tag" receivers=[L5, L6] level=Proven
+    SwitchString v2 strings=["failure"] -> case b1(), otherwise b4()
+  b1():
+    v3 = Call v1, -, v0
+    v4 ~ L6 = Upcast v0 castType=L5|L6
+    v5 = TypeTest v4 testedType=L6
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = GetSlot v6 key="error" receivers=[L6] level=Proven
+    Return v7
+  b3():
+    v8 = Undefined
+    Return v8
+  b4():
+    v9 = TypeTest v0 testedType=L6
+    Branch v9 -> taken b5(), notTaken b6(| 0)
+  b5():
+    v10 = Undefined
+    Return v10
+  b6(v11):
+    v12 = GetSlot v11 key="value" receivers=[L5] level=Proven
+    Return v12
+# CHECK: SwitchString v2
+# CHECK-NOT: Branch
+# CHECK-NOT: = Undefined
+# CHECK: [[failure4]]: L6 = AssumeType v4 castType=L6
+# CHECK-NEXT: = GetSlot [[failure4]] key="error"
+# CHECK-NOT: Branch
+# CHECK-NOT: = Undefined
+# CHECK: [[value4]]: L5 = AssumeType v0 castType=L5
+# CHECK-NEXT: = GetSlot [[value4]] key="value"
+# CHECK-NOT: Branch
+# CHECK-NOT: = Undefined
+}
+
+function f5 name="slotThatMayHoldTheCase" parameters=[{type=L1|L4}] results=[{type=anything}] {
+    v1 = GetSlot v0 key="kind" receivers=[L1, L4] level=Proven
+    Switch v1 cases=[2] -> case b1(), otherwise b4()
+  b1():
+    v2 = TypeTest v0 testedType=L1
+    Branch v2 -> taken b2(| 0), notTaken b3()
+  b2(v3):
+    v4 = GetSlot v3 key="w" receivers=[L1] level=Proven
+    Return v4
+  b3():
+    v5 = Undefined
+    Return v5
+  b4():
+    v6 = Null
+    Return v6
+# CHECK: Branch v2 -> taken b2(| 0), notTaken b3()
+}
+
+function f6 name="slotOfAnotherObject" parameters=[{type=L0|L1}, {type=L0|L1}] results=[{type=anything}] {
+    v2 = GetSlot v1 key="kind" receivers=[L0, L1] level=Proven
+    Switch v2 cases=[1] -> case b1(), otherwise b4()
+  b1():
+    v3 = TypeTest v0 testedType=L0
+    Branch v3 -> taken b2(| 0), notTaken b3()
+  b2(v4):
+    v5 = GetSlot v4 key="r" receivers=[L0] level=Proven
+    Return v5
+  b3():
+    v6 = Undefined
+    Return v6
+  b4():
+    v7 = Null
+    Return v7
+# CHECK: Branch v3 -> taken b2(| 0), notTaken b3()
+}
+
+function f7 name="behindTheJoinOfTwoCases" parameters=[{type=L0|L1}, {type=function}] results=[{type=anything}] {
+    v2 = GetSlot v0 key="kind" receivers=[L0, L1] level=Proven
+    Switch v2 cases=[1] -> case b1(), otherwise b2()
+  b1():
+    v3 = Call v1
+    Jump -> next b3()
+  b2():
+    v4 = Call v1, -, v1
+    Jump -> next b3()
+  b3():
+    v5 = TypeTest v0 testedType=L0
+    Branch v5 -> taken b4(| 0), notTaken b5()
+  b4(v6):
+    v7 = GetSlot v6 key="r" receivers=[L0] level=Proven
+    Return v7
+  b5():
+    v8 = Undefined
+    Return v8
+# CHECK: Branch v5 -> taken b4(| 0), notTaken b5()
+}
+
+function f8 name="objectOfAnotherTurn" parameters=[{type=L0|L1}, {type=function}] results=[{type=anything}] {
+    Jump -> next b1(v0)
+  b1(v2: L0|L1):
+    LoopHint
+    v4 = GetSlot v2 key="kind" receivers=[L0, L1] level=Proven
+    Switch v4 cases=[1] -> case b2(), otherwise b5()
+  b2():
+    v5 = Call v1, -, v2
+    v6 = AssumeType v5 castType=L0|L1
+    v7 = TypeTest v6 testedType=L0
+    Branch v7 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v8):
+    Jump -> next b1(v8)
+  b4(v9):
+    Return v9
+  b5():
+    Return v2
+# CHECK: Branch v7 -> taken
+}
+
+function f9 name="slotWithOneTypeInEveryLayout" parameters=[{type=L7|L8}] results=[{type=anything}] {
+    v1 = GetSlot v0 key="kind" receivers=[L7, L8] level=Proven
+    Switch v1 cases=[1] -> case b1(), otherwise b4()
+  b1():
+    v2 = TypeTest v0 testedType=L7
+    Branch v2 -> taken b2(| 0), notTaken b3()
+  b2(v3):
+    v4 = GetSlot v3 key="r" receivers=[L7] level=Proven
+    Return v4
+  b3():
+    v5 = Undefined
+    Return v5
+  b4():
+    v6 = Null
+    Return v6
+# CHECK: Branch v2 -> taken b2(| 0), notTaken b3()
+}

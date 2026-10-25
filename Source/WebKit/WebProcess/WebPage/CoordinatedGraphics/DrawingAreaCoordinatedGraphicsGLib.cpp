@@ -114,7 +114,7 @@ void DrawingAreaCoordinatedGraphics::updatePreferences(const WebPreferencesStore
 {
     Ref page = *m_webPage->corePage();
     Settings& settings = page->settings();
-#if PLATFORM(GTK)
+#if PLATFORM(GTK) || ENABLE(WPE_PLATFORM)
     if (settings.hardwareAccelerationEnabled()) {
         WebProcess::singleton().initializePlatformDisplayIfNeeded();
         WebProcess::singleton().initializeVulkanIfNeeded();
@@ -384,12 +384,12 @@ void DrawingAreaCoordinatedGraphics::resetDamageHistoryForTesting()
     m_renderer->resetDamageHistoryForTesting();
 }
 
-void DrawingAreaCoordinatedGraphics::foreachRegionInDamageHistoryForTesting(Function<void(const Region&)>&& callback) const
+void DrawingAreaCoordinatedGraphics::foreachRegionInDamageHistoryForTesting(NOESCAPE const Function<void(const Region&)>& callback) const
 {
     if (!m_renderer)
         return;
 
-    m_renderer->foreachRegionInDamageHistoryForTesting(WTF::move(callback));
+    m_renderer->foreachRegionInDamageHistoryForTesting(callback);
 }
 #endif
 

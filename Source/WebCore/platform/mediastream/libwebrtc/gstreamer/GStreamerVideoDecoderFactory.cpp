@@ -244,6 +244,10 @@ public:
         }
 
         auto pulledBuffer = gst_sample_get_buffer(pulledSample.get());
+        if (!GST_BUFFER_DURATION(pulledBuffer)) {
+            GST_TRACE_OBJECT(pipeline(), "Ignoring buffer without duration: %" GST_PTR_FORMAT, pulledBuffer);
+            return WEBRTC_VIDEO_CODEC_OK;
+        }
         uint32_t rtpTimestamp = inputImage.RtpTimestamp();
         if (!m_requireParse) {
             if (auto meta = gst_buffer_get_reference_timestamp_meta(pulledBuffer, m_rtpTimestampCaps.get()))
@@ -355,7 +359,7 @@ public:
             return std::unique_ptr<webrtc::VideoDecoder>(new webrtc::LibvpxVp8Decoder(environment));
         }
 
-        auto factoryName = CStringView::unsafeFromUTF8(GST_OBJECT_NAME(GST_OBJECT(factory.get())));
+        auto factoryName = UTF8CStringView::unsafeFromUTF8(GST_OBJECT_NAME(GST_OBJECT(factory.get())));
         if (equal(factoryName.span(), "vp8dec"_s) || equal(factoryName.span(), "vp8alphadecodebin"_s)) {
             GST_INFO("Our best GStreamer VP8 decoder is vp8dec, better use the one from LibWebRTC");
             return std::unique_ptr<webrtc::VideoDecoder>(new webrtc::LibvpxVp8Decoder(environment));

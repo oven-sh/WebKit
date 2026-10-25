@@ -1,0 +1,20 @@
+# handler = { has: Reflect.has }; "a" in new Proxy({}, handler)
+# The handler of a proxy is in unknown hands like the proxy, and no statement spells out the call of a trap. The program has read Reflect.has as itself and handed it over:
+# a built-in that has escaped in that way is not merely held, whoever has it calls it.
+# RUN: valueflow-solve used
+# CHECK: run ReflectHas
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Handler" fields=[{key="has" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Target" fields=[]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Reflect
+    v1 = PropGet v0 key="has"
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewObject layout=L1 fields=[]
+    v4 = Builtin builtin=Proxy
+    v5 = Construct v4, -, v3, v2
+    v6 = PropHas v5 key="a"
+    Return
+}

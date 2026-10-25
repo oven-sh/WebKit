@@ -75,9 +75,9 @@ class PluginView final : public WebCore::PluginViewBase {
 public:
     static RefPtr<PluginView> create(WebCore::HTMLPlugInElement&, const URL&, const String& contentType, bool shouldUseManualLoader);
 
-    WebCore::LocalFrame* NODELETE frame() const;
+    WebCore::LocalFrame* LEGACY_NODELETE frame() const;
 
-    bool NODELETE isBeingDestroyed() const;
+    bool LEGACY_NODELETE isBeingDestroyed() const;
 
     void manualLoadDidReceiveResponse(const WebCore::ResourceResponse&);
     void manualLoadDidReceiveData(const WebCore::SharedBuffer&);
@@ -102,6 +102,7 @@ public:
     void didEndMagnificationGesture();
     void setPageScaleFactor(double, std::optional<WebCore::IntPoint> origin);
     void mainFramePageScaleFactorDidChange();
+    void pageScaleFactorDidChange();
     double pageScaleFactor() const;
     void pluginScaleFactorDidChange();
 #if ENABLE(TWO_PHASE_CLICKS)
@@ -123,7 +124,7 @@ public:
 
     void obscuredContentInsetsDidChange();
 
-    void NODELETE webPageDestroyed();
+    void LEGACY_NODELETE webPageDestroyed();
 
     bool handleEditingCommand(const String& commandName, const String& argument);
     bool isEditingCommandEnabled(const String& commandName);
@@ -151,7 +152,7 @@ public:
 
     WebCore::FloatRect rectForSelectionInRootView(PDFSelection *) const;
     
-    bool NODELETE isUsingUISideCompositing() const;
+    bool LEGACY_NODELETE isUsingUISideCompositing() const;
 
     void invalidateRect(const WebCore::IntRect&) final;
 
@@ -163,7 +164,7 @@ public:
 
     void didSameDocumentNavigationForFrame(WebFrame&);
 
-    PDFPluginIdentifier NODELETE pdfPluginIdentifier() const;
+    PDFPluginIdentifier LEGACY_NODELETE pdfPluginIdentifier() const;
 
     void setPDFDisplayMode(PDFPluginDisplayMode);
 
@@ -207,7 +208,7 @@ private:
 
     void updateDocumentForPluginSizingBehavior();
 
-    WebCore::RenderEmbeddedObject* NODELETE renderer() const;
+    WebCore::RenderEmbeddedObject* LEGACY_NODELETE renderer() const;
 
     // WebCore::PluginViewBase
     WebCore::PluginLayerHostingStrategy layerHostingStrategy() const final;

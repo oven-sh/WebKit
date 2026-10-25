@@ -102,14 +102,21 @@ NetworkControlUpdate ScreamNetworkController::OnNetworkRouteChange(
   RTC_LOG(LS_INFO) << " OnNetworkRouteChange, resetting ScreamV2.";
   min_target_rate_ = msg.constraints.min_data_rate.value_or(min_target_rate_);
   max_target_rate_ = msg.constraints.max_data_rate.value_or(max_target_rate_);
-  if (!msg.restart_bwe && scream_.has_value()) {
-    starting_rate_ = std::min(scream_->target_rate(), max_target_rate_);
-  } else {
-    starting_rate_ = msg.constraints.starting_rate.value_or(starting_rate_);
+  starting_rate_ = msg.constraints.starting_rate.value_or(starting_rate_);
+  if (scream_.has_value()) {
+    if (!msg.restart_bwe) {
+      starting_rate_ = scream_->target_rate();
+    } else if (params_.safe_reset_on_route_change) {
+      starting_rate_ = std::min(scream_->target_rate(), starting_rate_);
+    }
   }
+  starting_rate_ =
+      std::clamp(starting_rate_, min_target_rate_, max_target_rate_);
 
   scream_.emplace(env_);
   first_update_created_ = false;
+  encoder_paused_due_to_congestion_ = false;
+  reported_target_rate_ = DataRate::Zero();
   UpdateScreamTargetBitrateConstraints();
   if (network_available_ &&
       streams_config_.max_total_allocated_bitrate > DataRate::Zero()) {
@@ -168,6 +175,9 @@ NetworkControlUpdate ScreamNetworkController::OnStreamsConfig(
       streams_config_.max_total_allocated_bitrate > DataRate::Zero()) {
     return CreateFirstUpdate(msg.at_time);
   }
+  if (first_update_created_) {
+    return CreateUpdate(msg.at_time);
+  }
   return NetworkControlUpdate();
 }
 
@@ -202,15 +212,18 @@ NetworkControlUpdate ScreamNetworkController::OnTransportPacketsFeedback(
   return CreateUpdate(msg.feedback_time);
 }
 
-double ScreamNetworkController::CalculateCwndReduceRatio() const {
-  if (data_in_flight_ > scream_->max_data_in_flight()) {
-    return 1.0;
-  }
+DataRate ScreamNetworkController::GetPacingRate() const {
+  DataRate min_pacing_rate =
+      streams_config_.min_total_allocated_bitrate.value_or(DataRate::Zero()) *
+      params_.pacing_factor.Get();
+  return std::max(scream_->pacing_rate(), min_pacing_rate);
+}
 
+double ScreamNetworkController::CalculateCwndReduceRatio() const {
   double cwnd_reduce_ratio = 0.0;
-  if (scream_->pacing_rate() > DataRate::Zero() &&
-      !pacer_queue_size_.IsZero()) {
-    TimeDelta pacing_delay = pacer_queue_size_ / scream_->pacing_rate();
+  DataRate pacing_rate = GetPacingRate();
+  if (pacing_rate > DataRate::Zero() && !pacer_queue_size_.IsZero()) {
+    TimeDelta pacing_delay = pacer_queue_size_ / pacing_rate;
     TimeDelta min_delay = params_.min_pacing_delay_for_pushback.Get();
     TimeDelta max_delay = params_.max_pacing_delay_for_pushback.Get();
     if (max_delay > min_delay) {
@@ -226,15 +239,33 @@ NetworkControlUpdate ScreamNetworkController::CreateUpdate(Timestamp now) {
   bool is_bandwidth_limited = !scream_->is_application_limited();
   double cwnd_reduce_ratio = CalculateCwndReduceRatio();
 
-  if (scream_->target_rate() != reported_target_rate_ ||
+  DataRate pacing_rate = GetPacingRate();
+  TimeDelta pacing_delay = (pacing_rate > DataRate::Zero())
+                               ? (pacer_queue_size_ / pacing_rate)
+                               : TimeDelta::Zero();
+  bool is_congested = data_in_flight_ > scream_->max_data_in_flight();
+
+  if (is_congested &&
+      pacing_delay > params_.max_pacing_delay_for_pushback.Get()) {
+    encoder_paused_due_to_congestion_ = true;
+  } else if (!is_congested &&
+             pacing_delay < params_.min_pacing_delay_for_pushback.Get()) {
+    encoder_paused_due_to_congestion_ = false;
+  }
+
+  DataRate target_rate = encoder_paused_due_to_congestion_
+                             ? DataRate::Zero()
+                             : scream_->target_rate();
+
+  if (target_rate != reported_target_rate_ ||
       is_bandwidth_limited != reported_is_bandwidth_limited_ ||
       std::abs(cwnd_reduce_ratio - reported_cwnd_reduce_ratio_) > 0.1) {
-    reported_target_rate_ = scream_->target_rate();
+    reported_target_rate_ = target_rate;
     reported_is_bandwidth_limited_ = is_bandwidth_limited;
     reported_cwnd_reduce_ratio_ = cwnd_reduce_ratio;
     TargetTransferRate target_rate_msg;
     target_rate_msg.at_time = now;
-    target_rate_msg.target_rate = scream_->target_rate();
+    target_rate_msg.target_rate = target_rate;
     target_rate_msg.cwnd_reduce_ratio = cwnd_reduce_ratio;
     target_rate_msg.network_estimate.at_time = now;
     target_rate_msg.network_estimate.round_trip_time = scream_->rtt();
@@ -294,7 +325,7 @@ std::optional<PacerConfig> ScreamNetworkController::MaybeCreatePacerConfig(
         target_rate < max_padding_rate ? target_rate : DataRate::Zero();
   }
 
-  DataRate pacing_rate = scream_->pacing_rate();
+  DataRate pacing_rate = GetPacingRate();
   if (padding_rate != reported_padding_rate_ ||
       pacing_rate != reported_pacing_rate_ ||
       current_pacing_window_ != pacing_window) {

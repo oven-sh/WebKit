@@ -1,0 +1,55 @@
+# A name that a built-in has too says nothing about whether the object has a layout, but among the layouts it tells as much as any other name.
+# Where instances of built-in classes have only a method under the name, whoever reads it and does not call it has a field in mind
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Token" constructor=f4 fields=[{key="tag" declared={type=number} flags=[IsRequired]}, {key="text" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+layout L1 kind=Instance name="Shape" constructor=f5 fields=[{key="sides" declared={type=number} flags=[IsRequired]}, {key="tag" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L2 kind=Instance name="Message" constructor=f6 fields=[{key="body" declared={type=anything} flags=[IsRequired]}, {key="sender" declared={type=anything} flags=[IsRequired]}, {key="tag" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L3 kind=Instance name="Label" constructor=f7 fields=[{key="color" declared={type=number} flags=[IsRequired]}, {key="tag" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L4 kind=Instance name="TreeNode" constructor=f8 fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="return" declared={type=anything} flags=[IsRequired]}, {key="tag" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+layout L5 kind=Instance name="Sized" constructor=f9 fields=[{key="size" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+
+function f0 name="besideNameOfItsOwn" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="flags"
+    v2 = PropGet v0 key="tag"
+    Return v2
+# CHECK-NEXT: b0(v0: anything ~ L4):
+# CHECK-NEXT: = TypeTest v0 testedType=L4
+# CHECK: = GetSlot {{*}} key="flags" receivers=[L4] level=Expected
+# CHECK: = GetSlot {{*}} key="tag" receivers=[L4] level=Expected
+}
+
+function f1 name="methodOfBuiltinsReadAndNotCalled" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="return"
+    Return v1
+# CHECK-NEXT: b0(v0: anything ~ L4):
+# CHECK-NEXT: = TypeTest v0 testedType=L4
+# CHECK: = GetSlot {{*}} key="return" receivers=[L4] level=Expected
+}
+
+function f2 name="methodOfBuiltinsCalled" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="return"
+    v2 = Call v1, v0 calleeKey="return"
+    Return v2
+# CHECK-NOT: testedType=L4
+}
+
+function f3 name="dataOfBuiltinsAlone" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ object):
+    v1 = PropGet v0 key="size"
+    Return v1
+# CHECK-NEXT: b0(v0: anything ~ object):
+# CHECK-NEXT: = PropGet v0 key="size"
+}
+
+function f4 name="Token" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f5 name="Shape" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f6 name="Message" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f7 name="Label" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
+function f8 name="TreeNode" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
+function f9 name="Sized" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5

@@ -28,6 +28,8 @@
 #include "ConcurrentJSLock.h"
 #include "YarrErrorCode.h"
 #include "YarrFlags.h"
+#include "YarrFlatProgram.h"
+#include "YarrRequiredText.h"
 #include "YarrPattern.h"
 #include <wtf/TZoneMalloc.h>
 
@@ -476,6 +478,8 @@ public:
     Vector<ByteTerm> terms;
     unsigned m_numSubpatterns;
     unsigned m_frameSize;
+    // Of a repeated group: jitCountsTurnsOf().
+    bool m_jitCountsTurns { false };
 };
 
 struct BytecodePattern {
@@ -509,7 +513,34 @@ public:
         m_endAnchoredFixedSize = pattern.m_endAnchoredFixedSize;
     }
 
-    size_t estimatedSizeInBytes() const { return m_body->estimatedSizeInBytes(); }
+    BytecodePattern(std::unique_ptr<FlatProgram> flatProgram, const YarrPattern& pattern, BumpPointerAllocator* allocator, ConcurrentJSLock* lock, const String& source)
+        : m_flags(pattern.m_flags)
+        , m_allocator(allocator)
+        , m_lock(lock)
+        , m_numDuplicateNamedCaptureGroups(pattern.m_numDuplicateNamedCaptureGroups)
+        , m_endAnchoredFixedSize(pattern.m_endAnchoredFixedSize)
+        , m_offsetVectorBaseForNamedCaptures(pattern.offsetVectorBaseForNamedCaptures())
+        , m_offsetsSize(pattern.offsetsSize())
+        , newlineCharacterClass(nullptr)
+        , wordcharCharacterClass(nullptr)
+        , ignoreCaseWordcharCharacterClass(nullptr)
+        , m_flatProgram(WTF::move(flatProgram))
+        , m_source(source)
+    {
+        ASSERT(m_flatProgram);
+    }
+
+    size_t estimatedSizeInBytes() const
+    {
+        size_t size = m_body ? m_body->estimatedSizeInBytes() : 0;
+        if (m_flatProgram)
+            size += m_flatProgram->estimatedSizeInBytes();
+        if (m_bytecodeBehindFlatProgram)
+            size += m_bytecodeBehindFlatProgram->estimatedSizeInBytes();
+        if (m_flatProgramThatCountsTurns)
+            size += m_flatProgramThatCountsTurns->estimatedSizeInBytes();
+        return size;
+    }
 
     bool hasDuplicateNamedCaptureGroups() const { return !!m_numDuplicateNamedCaptureGroups; }
     bool hasEndAnchoredFixedSize() const { return m_endAnchoredFixedSize != YarrPattern::endAnchoredFixedSizeNotSet; }
@@ -535,9 +566,9 @@ public:
     bool multiline() const { return m_flags.contains(Flags::Multiline); }
     bool hasIndices() const { return m_flags.contains(Flags::HasIndices); }
     bool sticky() const { return m_flags.contains(Flags::Sticky); }
-    bool NODELETE unicode() const { return m_flags.contains(Flags::Unicode); }
-    bool NODELETE unicodeSets() const { return m_flags.contains(Flags::UnicodeSets); }
-    bool NODELETE eitherUnicode() const { return unicode() || unicodeSets(); }
+    bool LEGACY_NODELETE unicode() const { return m_flags.contains(Flags::Unicode); }
+    bool LEGACY_NODELETE unicodeSets() const { return m_flags.contains(Flags::UnicodeSets); }
+    bool LEGACY_NODELETE eitherUnicode() const { return unicode() || unicodeSets(); }
     bool dotAll() const { return m_flags.contains(Flags::DotAll); }
 
     std::unique_ptr<ByteDisjunction> m_body;
@@ -557,12 +588,26 @@ public:
     CharacterClass* wordcharCharacterClass;
     CharacterClass* ignoreCaseWordcharCharacterClass;
 
+    static constexpr ptrdiff_t offsetOfFlatProgram() { return OBJECT_OFFSETOF(BytecodePattern, m_flatProgram); }
+
+    std::unique_ptr<FlatProgram> m_flatProgram;
+    std::optional<FlatProgramDecline> m_flatProgramDecline;
+    RequiredTexts m_requiredTexts;
+    // A pattern that has only a flat program gets its bytecode out of its text on the day the flat program runs out of frames.
+    String m_source;
+    std::unique_ptr<BytecodePattern> m_bytecodeBehindFlatProgram;
+    // Made out of the text on the day the flat program gives up at matchLimit.
+    std::unique_ptr<FlatProgram> m_flatProgramThatCountsTurns;
+    bool m_hasAskedForFlatProgramThatCountsTurns { false };
+    // Where no JIT stands in front of the bytecode: a match is given up where the JIT gives it up, not earlier. See Interpreter::countsTowardMatchLimit().
+    bool m_countsWhatJITCounts { false };
+
 private:
     Vector<std::unique_ptr<ByteDisjunction>> m_allParenthesesInfo;
     Vector<std::unique_ptr<CharacterClass>> m_userCharacterClasses;
 };
 
-JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern&, BumpPointerAllocator*, ErrorCode&, ConcurrentJSLock* = nullptr);
+JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern&, BumpPointerAllocator*, ErrorCode&, ConcurrentJSLock* = nullptr, const String& source = { });
 JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigned start, unsigned* output);
 
 } } // namespace JSC::Yarr

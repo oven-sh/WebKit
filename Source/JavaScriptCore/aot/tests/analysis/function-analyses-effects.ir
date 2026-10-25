@@ -1,0 +1,87 @@
+# The effects of a direct call come from the summary of its callee, one answer for the edge after a return and one for the edge after a throw, and without summaries the call is unknown code
+# FORM: AsRead
+# RUN: analyses effects flow
+# RUN(NOFLOW): analyses effects
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="count" module=m0 declared={type=number} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="flag" [isFreeName]
+    v2 = ToBoolean v1
+    v3 = Integer integer=3
+    v4 = CallDirect v2 function=f2
+    v5 = CallDirect v2 function=f3
+    v6 = CallDirect v2, v3 function=f4
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: effects:
+# CHECK: v4 effects: throws collects terminates | on throw: reads(all) writes({{*}}) throws collects callsUnknownCode terminates
+# CHECK-NEXT: v5 effects: reads(all) writes({{*}}callsUnknownCode
+# NOFLOW-LABEL: function f0
+# NOFLOW-NEXT: effects:
+# NOFLOW: v4 effects: unknownCode
+# NOFLOW-NEXT: v5 effects: unknownCode
+# NOFLOW-NEXT: v6 effects: unknownCode
+function f1 name="logsBeforeThrow" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="log" [isFreeName]
+    v3 = Call v2, -, v0
+    Throw v0
+}
+function f2 name="outsideTry" parameters=[{type=boolean}] results=[{type=undefined}] {
+    v1 = CallDirect v0 function=f1
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: effects:
+# CHECK: v1 effects: throws collects terminates | on throw: reads(all) writes({{*}}) throws collects callsUnknownCode terminates
+# NOFLOW-LABEL: function f2
+# NOFLOW-NEXT: effects:
+# NOFLOW: v1 effects: unknownCode
+function f3 name="insideTry" parameters=[{type=boolean}] results=[{type=undefined}] {
+  b0(v0: boolean) handler=b1():
+    v1 = CallDirect v0 function=f1
+    Return
+  b1() role=CatchHandler:
+    v2 = CatchValue
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: effects:
+# CHECK: v1 effects: throws collects terminates | on throw: reads(all) writes({{*}}) throws collects callsUnknownCode terminates
+# NOFLOW-LABEL: function f3
+# NOFLOW-NEXT: effects:
+# NOFLOW: v1 effects: unknownCode
+function f4 name="callsInLoop" parameters=[{type=boolean}, {type=number}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = CallDirect v1 function=f5
+    v4 = CallDirect v3 function=f6
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: effects:
+# CHECK: v3 effects: none
+# CHECK-NEXT: v4 effects: writes(ModuleVariables/1)
+# NOFLOW-LABEL: function f4
+# NOFLOW-NEXT: effects:
+# NOFLOW: v3 effects: unknownCode
+# NOFLOW-NEXT: v4 effects: unknownCode
+function f5 name="pure" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Mul v0, v0
+    Return v1
+}
+function f6 name="writesVariable" parameters=[{type=number}] results=[{type=undefined}] {
+    PutModuleVariable v0 variable=g0
+    Return
+}

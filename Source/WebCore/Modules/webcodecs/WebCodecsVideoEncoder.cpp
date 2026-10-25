@@ -37,6 +37,7 @@
 #include "Logging.h"
 #include "Settings.h"
 #include "ScriptExecutionContextInlines.h"
+#include "VP9Utilities.h"
 #include "WebCodecsControlMessage.h"
 #include "WebCodecsEncodedVideoChunk.h"
 #include "WebCodecsEncodedVideoChunkMetadata.h"
@@ -74,16 +75,36 @@ WebCodecsVideoEncoder::WebCodecsVideoEncoder(ScriptExecutionContext& context, In
 
 WebCodecsVideoEncoder::~WebCodecsVideoEncoder() = default;
 
+static bool isSupportedVP9EncoderCodec(const String& codec, const SettingsValues& settings)
+{
+#if !ENABLE(WEB_RTC)
+    UNUSED_PARAM(settings);
+#endif
+    auto parameters = parseVPCodecParametersIgnoringColorFields(codec);
+    if (!parameters)
+        return false;
+
+    bool is420 = parameters->chromaSubsampling <= VPConfigurationChromaSubsampling::Subsampling_420_Colocated;
+    switch (parameters->profile) {
+    case 0:
+        return parameters->bitDepth == 8 && is420;
+#if ENABLE(WEB_RTC)
+    case 2:
+        return settings.webRTCVP9Profile2CodecEnabled && parameters->bitDepth == 10 && is420;
+#endif
+    default:
+        return false;
+    }
+}
+
 static bool isSupportedEncoderCodec(const WebCodecsVideoEncoderConfig& config, const SettingsValues& settings)
 {
     constexpr size_t maxFrameDimension = 32767;
     if (config.width > maxFrameDimension || config.height > maxFrameDimension)
         return false;
 
-    return config.codec.startsWith("vp8"_s) || config.codec.startsWith("vp09.00"_s) || config.codec.startsWith("avc1."_s)
-#if ENABLE(WEB_RTC)
-        || (config.codec.startsWith("vp09.02"_s) && settings.webRTCVP9Profile2CodecEnabled)
-#endif
+    return config.codec.startsWith("vp8"_s) || config.codec.startsWith("avc1."_s)
+        || (config.codec.startsWith("vp09."_s) && isSupportedVP9EncoderCodec(config.codec, settings))
         || (config.codec.startsWith("hev1."_s) && settings.webCodecsHEVCEnabled)
         || (config.codec.startsWith("hvc1."_s) && settings.webCodecsHEVCEnabled)
         || (config.codec.startsWith("av01.0"_s) && settings.webCodecsAV1Enabled);
@@ -120,7 +141,7 @@ static ExceptionOr<VideoEncoder::Config> createVideoEncoderConfig(const WebCodec
     if (config.codec.startsWith("avc1."_s) && (!!(config.width % 2) || !!(config.height % 2)))
         return Exception { ExceptionCode::TypeError, "H264 only supports even sized frames"_s };
 
-    bool useAnnexB = config.avc && config.avc->format == AvcBitstreamFormat::Annexb;
+    bool useAnnexB = (config.avc && config.avc->format == AvcBitstreamFormat::AnnexB) || (config.hevc && config.hevc->format == HevcBitstreamFormat::AnnexB);
     return VideoEncoder::Config { config.width, config.height, useAnnexB, config.bitrate.value_or(0), config.framerate.value_or(0), config.latencyMode == LatencyMode::Realtime, scalabilityMode };
 }
 

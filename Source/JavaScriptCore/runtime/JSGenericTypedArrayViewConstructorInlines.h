@@ -43,6 +43,10 @@
 #include <wtf/Assertions.h>
 #include <wtf/text/ASCIILiteral.h>
 
+#if ENABLE(AOT)
+#include "AOTPropertyWalk.h"
+#endif
+
 namespace JSC {
 
 template<typename ViewClass>
@@ -260,18 +264,22 @@ inline JSObject* constructGenericTypedArrayViewWithArguments(JSGlobalObject* glo
                 && (iteratorFunc != object->realm()->arrayProtoValuesFunction()
                     || lengthSlot.isAccessor() || lengthSlot.isCustom() || lengthSlot.isTaintedByOpaqueObject()
                     || hasAnyArrayStorage(object->indexingType())
+#if ENABLE(AOT)
+                    || (AOT::PropertyWalk::isCompiledObject(object) && AOT::PropertyWalk::wouldHaveArrayStorage(object))
+#endif
                     || !object->realm()->arrayIteratorProtocolWatchpointSet().isStillValid())) {
                     RELEASE_AND_RETURN(scope, constructGenericTypedArrayViewFromIterator<ViewClass>(globalObject, structure, object, iteratorFunc));
             }
 
-            if (lengthSlot.isUnset())
-                length = 0;
-            else {
-                JSValue value = lengthSlot.getValue(globalObject, vm.propertyNames->length);
-                RETURN_IF_EXCEPTION(scope, nullptr);
-                length = value.toLength(globalObject);
-                RETURN_IF_EXCEPTION(scope, nullptr);
-            }
+            JSObject* lengthBase = lengthSlot.slotBase();
+            JSValue lengthValue = jsUndefined();
+            if (lengthSlot.isTaintedByOpaqueObject() && lengthBase && lengthBase->type() == ProxyObjectType)
+                lengthValue = object->get(globalObject, vm.propertyNames->length);
+            else if (!lengthSlot.isUnset())
+                lengthValue = lengthSlot.getValue(globalObject, vm.propertyNames->length);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            length = lengthValue.toLength(globalObject);
+            RETURN_IF_EXCEPTION(scope, nullptr);
         }
 
         ViewClass* result = ViewClass::createUninitialized(globalObject, structure, length);

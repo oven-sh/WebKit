@@ -311,6 +311,8 @@ class RobustResourceInitTestES3 : public RobustResourceInitTest
     void testFloatRenderbufferInit(GLenum internalFormat, GLenum type);
 };
 
+using RobustResourceInitWithInvalidationTest = RobustResourceInitTestES3;
+
 class RobustResourceInitTestES31 : public RobustResourceInitTest
 {};
 
@@ -1070,6 +1072,276 @@ TEST_P(RobustResourceInitTestES3, ClearThenInvalidateThenReadBack)
     }
 }
 
+// Tests that invalidating an FBO attachment preceded by a draw and clearColor(0,0,0,0)
+// correctly re-initializes the attachment when read back under robust resource initialization.
+TEST_P(RobustResourceInitWithInvalidationTest, InvalidateAfterDrawAndClearZero)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+    ASSERT_NE(0u, program);
+
+    for (int iteration = 0; iteration < 2; ++iteration)
+    {
+        GLTexture tex;
+        GLRenderbuffer rb;
+        GLFramebuffer fbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+        constexpr GLColor kPrimeColor(0xBB, 0xBB, 0xBB, 0xBB);
+
+        if (iteration == 0)
+        {
+            glBindTexture(GL_TEXTURE_2D, tex);
+            std::vector<GLColor> initData(kWidth * kHeight, kPrimeColor);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kWidth, kHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                         initData.data());
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+        }
+        else
+        {
+            glBindRenderbuffer(GL_RENDERBUFFER, rb);
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, kWidth, kHeight);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rb);
+            glClearColor(kPrimeColor.R / 255.0f, kPrimeColor.G / 255.0f, kPrimeColor.B / 255.0f,
+                         kPrimeColor.A / 255.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glFinish();
+        }
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+        // Render to the attachment.
+        drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f);
+
+        // Clear the attachment to transparent black.
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        // Invalidate the attachment.
+        std::array<GLenum, 1> attachments = {GL_COLOR_ATTACHMENT0};
+        glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, attachments.data());
+
+        // Read back the attachment. With robust resource initialization enabled, this must
+        // return transparent black and never the uninitialized/primed non-zero data.
+        GLColor pixel(100, 100, 100, 100);
+        glReadPixels(kWidth / 2, kHeight / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, &pixel);
+
+        EXPECT_EQ(GLColor::transparentBlack, pixel)
+            << "Iteration " << iteration << " leaked primed data: " << pixel;
+        EXPECT_GL_NO_ERROR();
+    }
+}
+
+// Tests that invalidating attachments preceded by a draw and clear
+// correctly re-initializes depth when blitted under robust resource initialization.
+TEST_P(RobustResourceInitWithInvalidationTest, InvalidateAfterDrawAndClearZeroDepth)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    ANGLE_GL_PROGRAM(red, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+    ANGLE_GL_PROGRAM(green, essl1_shaders::vs::Simple(), essl1_shaders::fs::Green());
+    ASSERT_NE(0u, red);
+    ASSERT_NE(0u, green);
+
+    for (int iteration = 0; iteration < 2; ++iteration)
+    {
+        // Prepare destination framebuffer to receive the blitted depth.
+        GLTexture dstColorTex;
+        glBindTexture(GL_TEXTURE_2D, dstColorTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kWidth, kHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     nullptr);
+
+        GLRenderbuffer dstDepthRb;
+        glBindRenderbuffer(GL_RENDERBUFFER, dstDepthRb);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, kWidth, kHeight);
+
+        GLFramebuffer dstFbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, dstFbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dstColorTex, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, dstDepthRb);
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+        // Clear destination to initial state (red color, 0.0f depth).
+        glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+        glClearDepthf(0.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        GLTexture srcColorTex;
+        glBindTexture(GL_TEXTURE_2D, srcColorTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kWidth, kHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     nullptr);
+
+        GLTexture srcDepthTex;
+        GLRenderbuffer srcDepthRb;
+        GLFramebuffer srcFbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, srcFbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, srcColorTex, 0);
+
+        if (iteration == 0)
+        {
+            glBindTexture(GL_TEXTURE_2D, srcDepthTex);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, kWidth, kHeight, 0,
+                         GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, srcDepthTex,
+                                   0);
+        }
+        else
+        {
+            glBindRenderbuffer(GL_RENDERBUFFER, srcDepthRb);
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, kWidth, kHeight);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER,
+                                      srcDepthRb);
+        }
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+        // Prime depth with non-default value (0.8f).
+        glClearDepthf(0.8f);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        glFinish();
+
+        // Render to the attachments.
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        drawQuad(red, essl1_shaders::PositionAttrib(), 0.0f);
+
+        // Clear color and depth to their default values.
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClearDepthf(1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // Invalidate attachments.
+        std::array<GLenum, 2> attachments = {GL_COLOR_ATTACHMENT0, GL_DEPTH_ATTACHMENT};
+        glInvalidateFramebuffer(GL_FRAMEBUFFER, 2, attachments.data());
+
+        // Blit depth from srcFbo to dstFbo.
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, srcFbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, dstFbo);
+        glBlitFramebuffer(0, 0, kWidth, kHeight, 0, 0, kWidth, kHeight, GL_DEPTH_BUFFER_BIT,
+                          GL_NEAREST);
+
+        // Verify dstFbo depth is 1.0f: drawing at depth 0.9f with GL_LESS should pass and produce
+        // green.
+        glBindFramebuffer(GL_FRAMEBUFFER, dstFbo);
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        drawQuad(green, essl1_shaders::PositionAttrib(), 0.8f);
+
+        EXPECT_PIXEL_COLOR_EQ(kWidth / 2, kHeight / 2, GLColor::green)
+            << "Iteration " << iteration << " failed depth re-initialization verification";
+        EXPECT_GL_NO_ERROR();
+    }
+}
+
+// Tests that invalidating attachments preceded by a draw and clear
+// correctly re-initializes stencil when blitted under robust resource initialization.
+TEST_P(RobustResourceInitWithInvalidationTest, InvalidateAfterDrawAndClearZeroStencil)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    ANGLE_GL_PROGRAM(red, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+    ANGLE_GL_PROGRAM(green, essl1_shaders::vs::Simple(), essl1_shaders::fs::Green());
+    ASSERT_NE(0u, red);
+    ASSERT_NE(0u, green);
+
+    for (int iteration = 0; iteration < 2; ++iteration)
+    {
+        // Prepare destination framebuffer to receive the blitted stencil.
+        GLTexture dstColorTex;
+        glBindTexture(GL_TEXTURE_2D, dstColorTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kWidth, kHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     nullptr);
+
+        GLRenderbuffer dstStencilRb;
+        glBindRenderbuffer(GL_RENDERBUFFER, dstStencilRb);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_STENCIL_INDEX8, kWidth, kHeight);
+
+        GLFramebuffer dstFbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, dstFbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dstColorTex, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER,
+                                  dstStencilRb);
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+        // Clear destination to initial state (red color, stencil 0x55).
+        glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+        glClearStencil(0x55);
+        glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+
+        GLTexture srcColorTex;
+        glBindTexture(GL_TEXTURE_2D, srcColorTex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kWidth, kHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     nullptr);
+
+        GLTexture srcStencilTex;
+        GLRenderbuffer srcStencilRb;
+        GLFramebuffer srcFbo;
+        glBindFramebuffer(GL_FRAMEBUFFER, srcFbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, srcColorTex, 0);
+
+        if (iteration == 0)
+        {
+            if (!IsGLExtensionEnabled("GL_OES_texture_stencil8"))
+            {
+                continue;
+            }
+            glBindTexture(GL_TEXTURE_2D, srcStencilTex);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_STENCIL_INDEX8, kWidth, kHeight, 0, GL_STENCIL_INDEX,
+                         GL_UNSIGNED_BYTE, nullptr);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_TEXTURE_2D,
+                                   srcStencilTex, 0);
+        }
+        else
+        {
+            glBindRenderbuffer(GL_RENDERBUFFER, srcStencilRb);
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_STENCIL_INDEX8, kWidth, kHeight);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER,
+                                      srcStencilRb);
+        }
+        ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+        // Prime stencil with non-default value (0x2).
+        glClearStencil(0x2);
+        glClear(GL_STENCIL_BUFFER_BIT);
+        glFinish();
+
+        // Render to the attachments with stencil test.
+        glEnable(GL_STENCIL_TEST);
+        glStencilFunc(GL_ALWAYS, 0x3, 0xFF);
+        glStencilOp(GL_REPLACE, GL_REPLACE, GL_REPLACE);
+        drawQuad(red, essl1_shaders::PositionAttrib(), 0.5f);
+        glDisable(GL_STENCIL_TEST);
+
+        // Clear color and stencil to their default values.
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClearStencil(0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+
+        // Invalidate attachments.
+        std::array<GLenum, 2> attachments = {GL_COLOR_ATTACHMENT0, GL_STENCIL_ATTACHMENT};
+        glInvalidateFramebuffer(GL_FRAMEBUFFER, 2, attachments.data());
+
+        // Blit stencil from srcFbo to dstFbo.
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, srcFbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, dstFbo);
+        glBlitFramebuffer(0, 0, kWidth, kHeight, 0, 0, kWidth, kHeight, GL_STENCIL_BUFFER_BIT,
+                          GL_NEAREST);
+
+        // Verify dstFbo stencil is 0: drawing with GL_EQUAL 0 should pass and produce green.
+        glBindFramebuffer(GL_FRAMEBUFFER, dstFbo);
+        glEnable(GL_STENCIL_TEST);
+        glStencilFunc(GL_EQUAL, 0, 0xFF);
+        glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+        drawQuad(green, essl1_shaders::PositionAttrib(), 0.5f);
+        glDisable(GL_STENCIL_TEST);
+
+        EXPECT_PIXEL_COLOR_EQ(kWidth / 2, kHeight / 2, GLColor::green)
+            << "Iteration " << iteration << " failed stencil re-initialization verification";
+        EXPECT_GL_NO_ERROR();
+    }
+}
+
 // Calling invalidate after draw should either read back the result of the draw call (invalidate
 // didn't happen) or the init depth/stencil values.
 TEST_P(RobustResourceInitTestES3, DrawThenInvalidateThenReadBackDepthStencil)
@@ -1737,6 +2009,112 @@ TEST_P(RobustResourceInitTestES3, PartiallyInitializedTextureWithNonZeroBase)
 
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 1);
     EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::transparentBlack);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that stencil swizzle cache entries generated for undefined mips do not survive robust
+// initialization when subsequent mips are defined and sampled.
+TEST_P(RobustResourceInitTestES3, StencilTexturingUndefinedMipCachedThenInitialized)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_ANGLE_stencil_texturing") &&
+                       !(getClientMajorVersion() == 3 && getClientMinorVersion() >= 1) &&
+                       getClientMajorVersion() <= 3);
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, 256, 256, 0, GL_DEPTH_STENCIL,
+                 GL_UNSIGNED_INT_24_8, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_DEPTH_STENCIL_TEXTURE_MODE_ANGLE, GL_STENCIL_INDEX);
+
+    constexpr char kStencilVS[] = R"(#version 300 es
+in vec4 aPosition;
+void main() {
+    gl_Position = aPosition;
+})";
+    constexpr char kStencilFS[] = R"(#version 300 es
+precision highp float;
+precision highp usampler2D;
+uniform usampler2D uTex;
+out vec4 outColor;
+void main() {
+    uint val = texelFetch(uTex, ivec2(0, 0), 0).r;
+    outColor = vec4(float(val) / 255.0, 0.0, 0.0, 1.0);
+})";
+    ANGLE_GL_PROGRAM(stencilProg, kStencilVS, kStencilFS);
+    glUseProgram(stencilProg);
+
+    // Sample mip 0. This populates swizzle cache for active levels.
+    drawQuad(stencilProg, "aPosition", 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::black);
+
+    // Define mip 1.
+    glTexImage2D(GL_TEXTURE_2D, 1, GL_DEPTH24_STENCIL8, 128, 128, 0, GL_DEPTH_STENCIL,
+                 GL_UNSIGNED_INT_24_8, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 1);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+
+    constexpr char kStencilMip1FS[] = R"(#version 300 es
+precision highp float;
+precision highp usampler2D;
+uniform usampler2D uTex;
+out vec4 outColor;
+void main() {
+    uint val = texelFetch(uTex, ivec2(0, 0), 1).r;
+    outColor = vec4(float(val) / 255.0, 0.0, 0.0, 1.0);
+})";
+    ANGLE_GL_PROGRAM(stencilMip1Prog, kStencilVS, kStencilMip1FS);
+    glUseProgram(stencilMip1Prog);
+
+    // Sample mip 1. Robust initialization runs and must clear stencil,
+    // and swizzle cache must reflect the initialized content.
+    drawQuad(stencilMip1Prog, "aPosition", 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::black);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that RGBA swizzle cache entries generated for undefined mips do not survive robust
+// initialization when subsequent mips are defined and sampled.
+TEST_P(RobustResourceInitTestES3, RGBASwizzleUndefinedMipCachedThenInitialized)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 256, 256, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_GREEN);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, GL_BLUE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_RED);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_ONE);
+
+    ANGLE_GL_PROGRAM(prog, essl3_shaders::vs::Texture2DLod(), essl3_shaders::fs::Texture2DLod());
+    glUseProgram(prog);
+    GLint lodLoc = glGetUniformLocation(prog, essl3_shaders::LodUniform());
+    ASSERT_NE(-1, lodLoc);
+
+    // Sample mip 0.
+    glUniform1f(lodLoc, 0.0f);
+    drawQuad(prog, essl3_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor(0, 0, 0, 255));
+
+    // Define mip 1.
+    glTexImage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 128, 128, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 1);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+
+    // Sample mip 1. Robust initialization runs and must clear RGBA8,
+    // and swizzle cache must reflect the initialized content.
+    glUniform1f(lodLoc, 1.0f);
+    drawQuad(prog, essl3_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor(0, 0, 0, 255));
     ASSERT_GL_NO_ERROR();
 }
 
@@ -3205,6 +3583,77 @@ TEST_P(RobustResourceInitTestES3, Texture2DArrayPartiallyCleared)
     ASSERT_GL_NO_ERROR();
 }
 
+// Test that robust init is done correctly for cube maps if a face is cleared with glClear.
+TEST_P(RobustResourceInitTest, CubeMapFaceCleared)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    constexpr int kSize         = 16;
+    constexpr GLenum kClearFace = GL_TEXTURE_CUBE_MAP_POSITIVE_Y;
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_CUBE_MAP, texture);
+    for (GLenum face : kCubeFaces)
+    {
+        glTexImage2D(face, 0, GL_RGBA, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    }
+
+    // Clear one face, expect the other faces to read back as transparent black.
+    GLFramebuffer framebuffer;
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, kClearFace, texture, 0);
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glClearColor(0, 1, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    for (GLenum face : kCubeFaces)
+    {
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, face, texture, 0);
+        EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+        EXPECT_PIXEL_RECT_EQ(0, 0, kSize, kSize,
+                             face == kClearFace ? GLColor::green : GLColor::transparentBlack);
+    }
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that a full clear of a renderbuffer doesn't mark the other, uncleared renderbuffer
+// attachments as initialized.
+TEST_P(RobustResourceInitTest, RenderbufferColorClearWithDepthInit)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    constexpr int kSize = 16;
+
+    GLRenderbuffer colorRenderbuffer;
+    glBindRenderbuffer(GL_RENDERBUFFER, colorRenderbuffer);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA4, kSize, kSize);
+
+    GLRenderbuffer depthRenderbuffer;
+    glBindRenderbuffer(GL_RENDERBUFFER, depthRenderbuffer);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, kSize, kSize);
+
+    GLFramebuffer framebuffer;
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER,
+                              colorRenderbuffer);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER,
+                              depthRenderbuffer);
+    EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+    glClearColor(0, 1, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    EXPECT_PIXEL_RECT_EQ(0, 0, kSize, kSize, GLColor::green);
+
+    // Depth must have been initialized to 1.0, so a draw at depth 0.5 passes the depth test.
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    ANGLE_GL_PROGRAM(drawRed, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+    drawQuad(drawRed, essl1_shaders::PositionAttrib(), 0.0f);
+    EXPECT_PIXEL_RECT_EQ(0, 0, kSize, kSize, GLColor::red);
+    ASSERT_GL_NO_ERROR();
+}
+
 // Test that redefining a 2D array texture doesn't bypass robust resource initialization.
 TEST_P(RobustResourceInitTestES3, Texture2DArrayRedefine)
 {
@@ -4595,6 +5044,489 @@ void main()
     }
 }
 
+// Test that source of glCopyTextureCHROMIUM and glCopySubTextureCHROMIUM is initialized if the
+// source level is outside the [BASE, MAX] range but the texture is immutable.
+TEST_P(RobustResourceInitTestES3, ImmutableSourceLevelOutsideBaseMaxRange)
+{
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_CHROMIUM_copy_texture"));
+
+    GLTexture src;
+    glBindTexture(GL_TEXTURE_2D, src);
+    glTexStorage2D(GL_TEXTURE_2D, 5, GL_RGBA8, 64, 64);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 2);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 3);
+
+    // Copy from level 1 of source texture, which is below base level.
+    GLTexture dst1;
+    glBindTexture(GL_TEXTURE_2D, dst1);
+    glCopyTextureCHROMIUM(src, 1, GL_TEXTURE_2D, dst1, 0, GL_RGBA, GL_UNSIGNED_BYTE, GL_FALSE,
+                          GL_FALSE, GL_FALSE);
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst1, 0);
+    EXPECT_PIXEL_RECT_EQ(0, 0, 32, 32, GLColor::transparentBlack);
+
+    // Copy from level 4 of source texture, which is above max level.
+    GLTexture dst2;
+    glBindTexture(GL_TEXTURE_2D, dst2);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 4, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glCopySubTextureCHROMIUM(src, 4, GL_TEXTURE_2D, dst2, 0, 0, 0, 0, 0, 4, 4, GL_FALSE, GL_FALSE,
+                             GL_FALSE);
+
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst2, 0);
+    EXPECT_PIXEL_RECT_EQ(0, 0, 4, 4, GLColor::transparentBlack);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that invalidating a slice of 3D texture leads to correct robust-init.  Verification is done
+// by sampling.
+TEST_P(RobustResourceInitTestES3, InvalidateSliceOf3DSample)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    constexpr uint32_t kWidth  = 17;
+    constexpr uint32_t kHeight = 23;
+    constexpr uint32_t kDepth  = 5;
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_3D, texture);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, kWidth, kHeight, kDepth, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    // Initialize slices 1 and 3
+    const std::vector<GLColor> kSlice1Data(kWidth * kHeight, GLColor::green);
+    const std::vector<GLColor> kSlice3Data(kWidth * kHeight, GLColor::blue);
+
+    glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 1, kWidth, kHeight, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                    kSlice1Data.data());
+    glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 3, kWidth, kHeight, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                    kSlice3Data.data());
+
+    // Attach the framebuffer to layer 1 and invalidate it.
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0, 1);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    ASSERT_GL_NO_ERROR();
+
+    const GLenum kDiscard = GL_COLOR_ATTACHMENT0;
+    glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, &kDiscard);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // Verify all slices; they should all be black except slice 3 that is still blue.
+    constexpr char kVS[] = R"(#version 300 es
+out vec2 texcoord;
+in vec4 position;
+
+void main()
+{
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+    texcoord = (position.xy * 0.5) + 0.5;
+})";
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+uniform highp sampler3D tex3D;
+uniform float slice;
+in vec2 texcoord;
+out vec4 fragColor;
+void main()
+{
+    fragColor = texture(tex3D, vec3(texcoord, slice));
+})";
+    ANGLE_GL_PROGRAM(program, kVS, kFS);
+    glUseProgram(program);
+    const GLint sliceLoc = glGetUniformLocation(program, "slice");
+
+    for (uint32_t slice = 0; slice < kDepth; ++slice)
+    {
+        glUniform1f(sliceLoc, slice * (1.0 / kDepth) + (0.5 / kDepth));
+        drawQuad(program, "position", 0.5f);
+        EXPECT_PIXEL_COLOR_EQ(0, 0, slice == 3 ? kSlice3Data[0] : GLColor::transparentBlack)
+            << slice;
+        ASSERT_GL_NO_ERROR();
+    }
+}
+
+// Test that invalidating a slice of 3D texture leads to correct robust-init.  Verification is done
+// using FBO readback.
+TEST_P(RobustResourceInitTestES3, InvalidateSliceOf3DReadback)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    constexpr uint32_t kWidth  = 17;
+    constexpr uint32_t kHeight = 23;
+    constexpr uint32_t kDepth  = 5;
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_3D, texture);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, kWidth, kHeight, kDepth, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    // Initialize slices 1 and 3
+    const std::vector<GLColor> kSlice1Data(kWidth * kHeight, GLColor::green);
+    const std::vector<GLColor> kSlice3Data(kWidth * kHeight, GLColor::blue);
+
+    glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 1, kWidth, kHeight, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                    kSlice1Data.data());
+    glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 3, kWidth, kHeight, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                    kSlice3Data.data());
+
+    // Attach the framebuffer to layer 1 and invalidate it.
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0, 1);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    ASSERT_GL_NO_ERROR();
+
+    const GLenum kDiscard = GL_COLOR_ATTACHMENT0;
+    glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, &kDiscard);
+
+    for (uint32_t slice = 0; slice < kDepth; ++slice)
+    {
+        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0, slice);
+        EXPECT_PIXEL_COLOR_EQ(0, 0, slice == 3 ? kSlice3Data[0] : GLColor::transparentBlack)
+            << slice;
+        ASSERT_GL_NO_ERROR();
+    }
+}
+
+// Test that invalidating a slice of 3D texture leads to correct robust-init.  Verification is done
+// using blend and readback.
+TEST_P(RobustResourceInitTestES3, InvalidateSliceOf3DBlendReadback)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    constexpr uint32_t kWidth  = 17;
+    constexpr uint32_t kHeight = 23;
+    constexpr uint32_t kDepth  = 5;
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_3D, texture);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, kWidth, kHeight, kDepth, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    // Initialize slices 1 and 3
+    const std::vector<GLColor> kSlice1Data(kWidth * kHeight, GLColor::green);
+    const std::vector<GLColor> kSlice3Data(kWidth * kHeight, GLColor::blue);
+
+    glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 1, kWidth, kHeight, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                    kSlice1Data.data());
+    glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 3, kWidth, kHeight, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                    kSlice3Data.data());
+
+    // Attach the framebuffer to layer 1 and invalidate it.
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0, 1);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    ASSERT_GL_NO_ERROR();
+
+    const GLenum kDiscard = GL_COLOR_ATTACHMENT0;
+    glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, &kDiscard);
+
+    // Verify by blending into the slices.  This exercises the robust clear potentially being
+    // applied to a render pass load op.
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE);
+
+    ANGLE_GL_PROGRAM(drawRed, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+
+    for (uint32_t slice = 0; slice < kDepth; ++slice)
+    {
+        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0, slice);
+        drawQuad(drawRed, essl1_shaders::PositionAttrib(), 0.5);
+        EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, slice == 3 ? GLColor::magenta : GLColor::red);
+        ASSERT_GL_NO_ERROR();
+    }
+}
+
+// Test that invalidating a layer of 2D array texture leads to correct robust-init.  Verification is
+// done using blend and readback.
+TEST_P(RobustResourceInitTestES3, InvalidateLayerOf2DArrayBlendReadback)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    constexpr uint32_t kWidth      = 17;
+    constexpr uint32_t kHeight     = 23;
+    constexpr uint32_t kLayerCount = 5;
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D_ARRAY, texture);
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, kWidth, kHeight, kLayerCount, 0, GL_RGBA,
+                 GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    // Initialize layers 1 and 3
+    const std::vector<GLColor> kLayer1Data(kWidth * kHeight, GLColor::green);
+    const std::vector<GLColor> kLayer3Data(kWidth * kHeight, GLColor::blue);
+
+    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 1, kWidth, kHeight, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                    kLayer1Data.data());
+    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, 3, kWidth, kHeight, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                    kLayer3Data.data());
+
+    // Attach the framebuffer to layer 1 and invalidate it.
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0, 1);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    ASSERT_GL_NO_ERROR();
+
+    const GLenum kDiscard = GL_COLOR_ATTACHMENT0;
+    glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, &kDiscard);
+
+    // Verify by blending into the layers.  This exercises the robust clear potentially being
+    // applied to a render pass load op.
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE);
+
+    ANGLE_GL_PROGRAM(drawRed, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+
+    for (uint32_t layer = 0; layer < kLayerCount; ++layer)
+    {
+        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0, layer);
+        drawQuad(drawRed, essl1_shaders::PositionAttrib(), 0.5);
+        EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, layer == 3 ? GLColor::magenta : GLColor::red);
+        ASSERT_GL_NO_ERROR();
+    }
+}
+
+// Test that rendering to a new 3D texture at a non-zero slice correctly clears the texture.
+// Verification is done by sampling.
+TEST_P(RobustResourceInitTestES3, DrawToSliceOf3DSample)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    constexpr uint32_t kWidth  = 17;
+    constexpr uint32_t kHeight = 23;
+    constexpr uint32_t kDepth  = 5;
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_3D, texture);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, kWidth, kHeight, kDepth, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    // Partial draw to slice 1
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0, 1);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    ASSERT_GL_NO_ERROR();
+
+    ANGLE_GL_PROGRAM(drawRed, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(0, 0, 1, 1);
+    drawQuad(drawRed, essl1_shaders::PositionAttrib(), 0.5);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // Verify all slices; they should all be black except 1 pixel in slice 1 that is red.
+    constexpr char kVS[] = R"(#version 300 es
+out vec2 texcoord;
+in vec4 position;
+
+void main()
+{
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+    texcoord = (position.xy * 0.5) + 0.5;
+})";
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+uniform highp sampler3D tex3D;
+uniform float slice;
+in vec2 texcoord;
+out vec4 fragColor;
+void main()
+{
+    fragColor = texture(tex3D, vec3(texcoord, slice));
+})";
+    ANGLE_GL_PROGRAM(program, kVS, kFS);
+    glUseProgram(program);
+    const GLint sliceLoc = glGetUniformLocation(program, "slice");
+
+    for (uint32_t slice = 0; slice < kDepth; ++slice)
+    {
+        glUniform1f(sliceLoc, slice * (1.0 / kDepth) + (0.5 / kDepth));
+        drawQuad(program, "position", 0.5f);
+        if (slice == 1)
+        {
+            EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+            EXPECT_PIXEL_RECT_EQ(1, 0, kWidth - 1, kHeight, GLColor::transparentBlack);
+        }
+        else
+        {
+            EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::transparentBlack);
+        }
+        ASSERT_GL_NO_ERROR();
+    }
+}
+
+// Test that rendering to a new 3D texture at a non-zero slice correctly clears the texture.
+// Verification is done using readback.
+TEST_P(RobustResourceInitTestES3, DrawToSliceOf3DReadback)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    constexpr uint32_t kWidth  = 17;
+    constexpr uint32_t kHeight = 23;
+    constexpr uint32_t kDepth  = 5;
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_3D, texture);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, kWidth, kHeight, kDepth, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    // Partial draw to slice 1
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0, 1);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    ASSERT_GL_NO_ERROR();
+
+    ANGLE_GL_PROGRAM(drawRed, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(0, 0, 1, 1);
+    drawQuad(drawRed, essl1_shaders::PositionAttrib(), 0.5);
+
+    for (uint32_t slice = 0; slice < kDepth; ++slice)
+    {
+        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0, slice);
+        if (slice == 1)
+        {
+            EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+            EXPECT_PIXEL_RECT_EQ(1, 0, kWidth - 1, kHeight, GLColor::transparentBlack);
+        }
+        else
+        {
+            EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::transparentBlack);
+        }
+        ASSERT_GL_NO_ERROR();
+    }
+}
+
+// Test that rendering to a new 3D texture at a non-zero slice correctly clears the texture.
+// Verification is done using blend and readback.
+TEST_P(RobustResourceInitTestES3, DrawToSliceOf3DBlendReadback)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    constexpr uint32_t kWidth  = 17;
+    constexpr uint32_t kHeight = 23;
+    constexpr uint32_t kDepth  = 5;
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_3D, texture);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, kWidth, kHeight, kDepth, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    // Partial draw to slice 1
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0, 1);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    ASSERT_GL_NO_ERROR();
+
+    ANGLE_GL_PROGRAM(drawRed, essl1_shaders::vs::Simple(), essl1_shaders::fs::Red());
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(0, 0, 1, 1);
+    drawQuad(drawRed, essl1_shaders::PositionAttrib(), 0.5);
+
+    // Verify by blending into the slices.  This exercises the robust clear potentially being
+    // applied to a render pass load op.
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE);
+    glDisable(GL_SCISSOR_TEST);
+
+    ANGLE_GL_PROGRAM(drawGreen, essl1_shaders::vs::Simple(), essl1_shaders::fs::Green());
+
+    for (uint32_t slice = 0; slice < kDepth; ++slice)
+    {
+        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0, slice);
+        drawQuad(drawGreen, essl1_shaders::PositionAttrib(), 0.5);
+        if (slice == 1)
+        {
+            EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::yellow);
+            EXPECT_PIXEL_RECT_EQ(1, 0, kWidth - 1, kHeight, GLColor::green);
+        }
+        else
+        {
+            EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::green);
+        }
+        ASSERT_GL_NO_ERROR();
+    }
+}
+
+// Test that clearing a 3D slice and then invalidating _another_ attachment correctly clears the 3D
+// texture.  Verification is done using readback.
+TEST_P(RobustResourceInitTestES3, ClearSliceOf3DInvalidateAnotherAttachmentReadback)
+{
+    ANGLE_SKIP_TEST_IF(!hasGLExtension());
+
+    constexpr uint32_t kWidth  = 17;
+    constexpr uint32_t kHeight = 23;
+    constexpr uint32_t kDepth  = 5;
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_3D, texture);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, kWidth, kHeight, kDepth, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    // Clear slice 1
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0, 1);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    ASSERT_GL_NO_ERROR();
+
+    glClearColor(1, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    // Attach a second attachment and invalidate it.
+    GLTexture toInvalidate;
+    glBindTexture(GL_TEXTURE_2D, toInvalidate);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kWidth, kHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, toInvalidate, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    ASSERT_GL_NO_ERROR();
+
+    const GLenum kDiscard = GL_COLOR_ATTACHMENT1;
+    glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, &kDiscard);
+
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    for (uint32_t slice = 0; slice < kDepth; ++slice)
+    {
+        glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, texture, 0, slice);
+        if (slice == 1)
+        {
+            EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::red);
+        }
+        else
+        {
+            EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::transparentBlack);
+        }
+    }
+
+    glReadBuffer(GL_COLOR_ATTACHMENT1);
+    EXPECT_PIXEL_RECT_EQ(0, 0, kWidth, kHeight, GLColor::transparentBlack);
+    ASSERT_GL_NO_ERROR();
+}
+
 ANGLE_INSTANTIATE_TEST_ES2_AND_ES3_AND(
     RobustResourceInitTest,
     ES3_METAL().enable(Feature::EmulateDontCareLoadWithRandomClear),
@@ -4607,6 +5539,11 @@ ANGLE_INSTANTIATE_TEST_ES3_AND(RobustResourceInitTestES3,
                                ES3_METAL().enable(Feature::EmulateDontCareLoadWithRandomClear),
                                ES3_METAL().enable(Feature::AllocateNonZeroTextures),
                                ES3_VULKAN().enable(Feature::AllocateNonZeroMemory));
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(RobustResourceInitWithInvalidationTest);
+ANGLE_INSTANTIATE_TEST_ES3_AND(RobustResourceInitWithInvalidationTest,
+                               ES3_OPENGL().enable(Feature::DoubleClearForRobustInit),
+                               ES3_OPENGLES().enable(Feature::DoubleClearForRobustInit));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(RobustResourceInitTestES31);
 ANGLE_INSTANTIATE_TEST_ES31_AND(RobustResourceInitTestES31,

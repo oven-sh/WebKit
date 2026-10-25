@@ -49,6 +49,7 @@
 #import <wtf/WTFProcess.h>
 #import <wtf/spi/darwin/XPCSPI.h>
 #import <wtf/text/MakeString.h>
+#import <wtf/text/UTF8CStringView.h>
 
 #if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebPushDaemonMainAdditions.mm>)
 #import <WebKitAdditions/WebPushDaemonMainAdditions.mm>
@@ -165,9 +166,7 @@ int WebPushDaemonMain(int argc, char** argv)
         if (!_set_user_dir_suffix("com.apple.webkit.webpushd")) {
             auto error = errno;
             auto errorMessage = strerror(error);
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-            os_log_error(OS_LOG_DEFAULT, "Failed to set temp dir: %{public}s (%d)", errorMessage, error);
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+            SAFE_OS_LOG_ERROR(OS_LOG_DEFAULT, "Failed to set temp dir: %{public}s (%d)", UTF8CStringView::unsafeFromUTF8(errorMessage), error);
             exit(1);
         }
         (void)NSTemporaryDirectory();

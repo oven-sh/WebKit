@@ -146,28 +146,41 @@ static constexpr std::array strictFontSizeTable {
 // factors for each keyword value.
 static constexpr std::array fontSizeFactors { 0.60f, 0.75f, 0.89f, 1.0f, 1.2f, 1.5f, 2.0f, 3.0f };
 
-float fontSizeForKeyword(unsigned keywordID, bool shouldUseFixedDefaultSize, const SettingsValues& settings, bool inQuirksMode)
+static float fontSizeForKeyword(CSSValueID keyword, int mediumSize, const SettingsValues& settings, bool inQuirksMode)
 {
-    int mediumSize = shouldUseFixedDefaultSize ? settings.defaultFixedFontSize : settings.defaultFontSize;
+    ASSERT(keyword >= CSSValueID::XxSmall && keyword <= CSSValueID::XxxLarge);
+    unsigned keywordIndex = std::to_underlying(keyword) - std::to_underlying(CSSValueID::XxSmall);
+
     if (mediumSize >= fontSizeTableMin && mediumSize <= fontSizeTableMax) {
         // Look up the entry in the table.
         int row = mediumSize - fontSizeTableMin;
-        int col = (keywordID - CSSValueXxSmall);
-        return inQuirksMode ? quirksFontSizeTable[row][col] : strictFontSizeTable[row][col];
+        return inQuirksMode ? quirksFontSizeTable[row][keywordIndex] : strictFontSizeTable[row][keywordIndex];
     }
 
     // Value is outside the range of the table. Apply the scale factor instead.
     float minLogicalSize = std::max<float>(settings.minimumLogicalFontSize, 1);
-    return std::max(fontSizeFactors[keywordID - CSSValueXxSmall] * mediumSize, minLogicalSize);
+    return std::max(fontSizeFactors[keywordIndex] * mediumSize, minLogicalSize);
 }
 
-float fontSizeForKeyword(unsigned keywordID, bool shouldUseFixedDefaultSize, const Document& document)
+float fontSizeForKeyword(CSSValueID keyword, bool shouldUseFixedDefaultSize, const SettingsValues& settings, bool inQuirksMode)
 {
-    return fontSizeForKeyword(keywordID, shouldUseFixedDefaultSize, document.settingsValues(), document.inQuirksMode());
+    int mediumSize = shouldUseFixedDefaultSize ? settings.defaultFixedFontSize : settings.defaultFontSize;
+    return fontSizeForKeyword(keyword, mediumSize, settings, inQuirksMode);
+}
+
+static int scaledMediumFontSize(bool shouldUseFixedDefaultSize, const Document& document)
+{
+    int mediumSize = shouldUseFixedDefaultSize ? document.settings().defaultFixedFontSize() : document.settings().defaultFontSize();
+    return std::round(mediumSize * document.textScaleFactor());
+}
+
+float fontSizeForKeyword(CSSValueID keyword, bool shouldUseFixedDefaultSize, const Document& document)
+{
+    return fontSizeForKeyword(keyword, scaledMediumFontSize(shouldUseFixedDefaultSize, document), document.settingsValues(), document.inQuirksMode());
 }
 
 template<typename T, std::size_t Extent>
-static int NODELETE findNearestLegacyFontSize(int pixelFontSize, std::span<const T, Extent> table, int multiplier)
+static int LEGACY_NODELETE findNearestLegacyFontSize(int pixelFontSize, std::span<const T, Extent> table, int multiplier)
 {
     // Ignore table[0] because xx-small does not correspond to any legacy font size.
     for (size_t i = 1; i < table.size() - 1; ++i) {
@@ -180,7 +193,7 @@ static int NODELETE findNearestLegacyFontSize(int pixelFontSize, std::span<const
 int legacyFontSizeForPixelSize(int pixelFontSize, bool shouldUseFixedDefaultSize, const Document& document)
 {
     bool quirksMode = document.inQuirksMode();
-    int mediumSize = shouldUseFixedDefaultSize ? document.settings().defaultFixedFontSize() : document.settings().defaultFontSize();
+    int mediumSize = scaledMediumFontSize(shouldUseFixedDefaultSize, document);
     if (mediumSize >= fontSizeTableMin && mediumSize <= fontSizeTableMax) {
         int row = mediumSize - fontSizeTableMin;
         return findNearestLegacyFontSize(pixelFontSize, std::span { quirksMode ? quirksFontSizeTable[row] : strictFontSizeTable[row] }, 1);
@@ -189,7 +202,7 @@ int legacyFontSizeForPixelSize(int pixelFontSize, bool shouldUseFixedDefaultSize
     return findNearestLegacyFontSize(pixelFontSize, std::span { fontSizeFactors }, mediumSize);
 }
 
-static float NODELETE adjustedFontSize(float size, float sizeAdjust, float metricValue)
+static float LEGACY_NODELETE adjustedFontSize(float size, float sizeAdjust, float metricValue)
 {
     ASSERT(sizeAdjust > 0);
     if (!size)

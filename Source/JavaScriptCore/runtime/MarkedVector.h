@@ -345,7 +345,7 @@ public:
 
     [[nodiscard]] T& at(size_t i) LIFETIME_BOUND
     {
-        if (i >= size()) { [[unlikely]]
+        if (i >= size()) [[unlikely]] {
             OverflowHandler::overflowed();
             if constexpr (!std::is_same_v<OverflowHandler, CrashOnOverflow>) {
                 T* oobStorage = std::bit_cast<T*>(&m_storageForOutOfBoundsAccess);
@@ -357,7 +357,7 @@ public:
     }
     [[nodiscard]] const T& at(size_t i) const LIFETIME_BOUND
     {
-        if (i >= size()) { [[unlikely]]
+        if (i >= size()) [[unlikely]] {
             const_cast<MarkedVector*>(this)->OverflowHandler::overflowed();
             if constexpr (!std::is_same_v<OverflowHandler, CrashOnOverflow>) {
                 T* oobStorage = std::bit_cast<T*>(&m_storageForOutOfBoundsAccess);
@@ -442,7 +442,7 @@ public:
     }
 
     template<typename Functor>
-    void fill(VM& vm, size_t count, const Functor& func)
+    void fill(VM& vm, size_t count, NOESCAPE const Functor& func)
     {
         ASSERT(!m_size);
         ensureCapacity(count);
@@ -467,7 +467,7 @@ public:
         func(buffer);
     }
 
-    void fillWith(VM& vm, MarkedVectorHelper::Iterable auto const& iterable, auto&& mapValue)
+    void fillWith(VM& vm, MarkedVectorHelper::Iterable auto const& iterable, NOESCAPE const auto& mapValue)
     {
         ensureCapacity(iterable.size());
         if constexpr (!WTF::shouldCrashOnOverflow(OverflowHandler::policy)) {

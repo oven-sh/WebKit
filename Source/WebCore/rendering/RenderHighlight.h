@@ -68,7 +68,7 @@ private:
 class RenderRangeIterator {
 public:
     RenderRangeIterator(RenderObject* start);
-    RenderObject* NODELETE current() const;
+    RenderObject* LEGACY_NODELETE current() const;
     RenderObject* next();
 
 private:
@@ -86,7 +86,7 @@ public:
         : m_isSelection(true)
     { }
 
-    void NODELETE setRenderRange(const RenderRange&);
+    void LEGACY_NODELETE setRenderRange(const RenderRange&);
     bool setRenderRange(const HighlightRange&); // Returns true if successful.
     const RenderRange& get() const LIFETIME_BOUND { return m_renderRange; }
 
@@ -97,6 +97,9 @@ public:
     unsigned endOffset() const { return m_renderRange.endOffset(); }
 
     RenderObject::HighlightState highlightStateForRenderer(const RenderObject&);
+    // Calls the function with every renderer highlightStateForRenderer() can return a state other than None for. It does
+    // not skip renderers that can't be selection leaves, and it can visit a renderer more than once.
+    void forEachRendererInRange(NOESCAPE const Function<void(RenderObject&)>&) const;
     RenderObject::HighlightState highlightStateForTextBox(const RenderText&, const TextBoxSelectableRange&);
     std::pair<unsigned, unsigned> rangeForTextBox(const RenderText&, const TextBoxSelectableRange&);
 

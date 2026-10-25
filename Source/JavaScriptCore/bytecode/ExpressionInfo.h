@@ -40,6 +40,8 @@ namespace JSC {
 
 class SourceProvider;
 
+class ConcurrentJSLocker;
+
 // See comment at the top of ExpressionInfo.cpp on how ExpressionInfo works.
 
 class ExpressionInfo {
@@ -60,7 +62,7 @@ public:
     };
 
     struct Entry {
-        void NODELETE reset()
+        void LEGACY_NODELETE reset()
         {
             instPC = 0;
             divot = 0;
@@ -75,8 +77,8 @@ public:
     };
 
     struct EncodedInfo {
-        bool NODELETE isAbsInstPC() const;
-        bool NODELETE isExtension() const;
+        bool LEGACY_NODELETE isAbsInstPC() const;
+        bool LEGACY_NODELETE isExtension() const;
         unsigned value;
     };
 
@@ -112,17 +114,17 @@ public:
             SortOrder order { SortOrder::Multi };
         };
 
-        static EncodedInfo NODELETE encodeAbsInstPC(InstPC absInstPC);
-        static EncodedInfo NODELETE encodeExtension(unsigned offset);
-        static constexpr EncodedInfo NODELETE encodeExtensionEnd();
-        static EncodedInfo NODELETE encodeSingle(FieldID, unsigned);
-        static EncodedInfo NODELETE encodeDuo(FieldID, unsigned value1, FieldID, unsigned value2);
-        static EncodedInfo NODELETE encodeMultiHeader(unsigned numWides, Wide*);
-        static EncodedInfo NODELETE encodeBasic(const Diff&);
+        static EncodedInfo LEGACY_NODELETE encodeAbsInstPC(InstPC absInstPC);
+        static EncodedInfo LEGACY_NODELETE encodeExtension(unsigned offset);
+        static constexpr EncodedInfo LEGACY_NODELETE encodeExtensionEnd();
+        static EncodedInfo LEGACY_NODELETE encodeSingle(FieldID, unsigned);
+        static EncodedInfo LEGACY_NODELETE encodeDuo(FieldID, unsigned value1, FieldID, unsigned value2);
+        static EncodedInfo LEGACY_NODELETE encodeMultiHeader(unsigned numWides, Wide*);
+        static EncodedInfo LEGACY_NODELETE encodeBasic(const Diff&);
 
         void adjustInstPC(unsigned infoIndex, unsigned instPCDelta);
 
-        template<unsigned bitCount> bool NODELETE fits(Wide);
+        template<unsigned bitCount> bool LEGACY_NODELETE fits(Wide);
         template<typename T, unsigned bitCount> bool fits(T);
 
         Entry m_entry;
@@ -139,9 +141,9 @@ public:
         Decoder(const ExpressionInfo&);
         Decoder(Vector<ExpressionInfo::EncodedInfo>&);
 
-        IterationStatus NODELETE decode(std::optional<InstPC> targetInstPC = std::nullopt);
+        IterationStatus LEGACY_NODELETE decode(std::optional<InstPC> targetInstPC = std::nullopt);
 
-        void NODELETE recacheInfo(Vector<ExpressionInfo::EncodedInfo>&);
+        void LEGACY_NODELETE recacheInfo(Vector<ExpressionInfo::EncodedInfo>&);
         EncodedInfo* currentInfo() const { return m_currentInfo; }
 
         // This is meant to be used to jump to the start of a chapter, where the encoder
@@ -184,10 +186,14 @@ public:
 
     ~ExpressionInfo() = default;
 
-    Entry NODELETE entryForInstPC(InstPC);
+    // The caller holds the owning UnlinkedCodeBlock's lock, because compiler threads also look up
+    // entries (useSourceCodeDump) and lookups fill a cache.
+    Entry entryForInstPC(const ConcurrentJSLocker&, InstPC);
+    // Decodes without touching the cache: takes no lock and does not allocate (UnlinkedCodeBlock::expressionInfoIfDecoded).
+    Entry LEGACY_NODELETE decodeEntryForInstPC(InstPC);
 
     // The zero-based line and column of the instruction's divot in the text of its source, where this code starts at
-    // sourceOffset. entryForInstPC() decodes from the start of the chapter on every call, and stack traces ask for the
+    // sourceOffset. Decoding an entry starts from the start of its chapter, and stack traces ask for the
     // same instructions again, so this keeps each answer. Sources share unlinked code when the CodeCache finds their text
     // equal (a precompiled program is for the source it was compiled from), and everyone who asks it for global code
     // gives it all of a source. So the text and sourceOffset, and with them the answer, are the same for every source
@@ -196,8 +202,8 @@ public:
     LineColumn lineColumnInTextForInstPC(InstPC, SourceProvider&, unsigned sourceOffset);
 
     bool isEmpty() const { return !m_numberOfEncodedInfo; };
-    size_t NODELETE byteSize() const; // owned by this object
-    size_t NODELETE byteSizeForGCPacing() const; // what a generated (non-borrowed) one this size would own
+    size_t LEGACY_NODELETE byteSize() const; // owned by this object
+    size_t LEGACY_NODELETE byteSizeForGCPacing() const; // what a generated (non-borrowed) one this size would own
 
     template<unsigned bitCount>
     static void print(PrintStream&, FieldID, unsigned value);
@@ -207,10 +213,10 @@ private:
     ExpressionInfo(unsigned numberOfChapters, unsigned numberOfEncodedInfo, unsigned numberOfEncodedInfoExtensions);
     ExpressionInfo(Vector<Chapter>&&, Vector<EncodedInfo>&&, unsigned numberOfEncodedInfoExtensions);
 
-    template<typename T, unsigned bitCount> static T NODELETE cast(unsigned);
+    template<typename T, unsigned bitCount> static T LEGACY_NODELETE cast(unsigned);
 
-    static bool NODELETE isSpecial(unsigned);
-    static bool NODELETE isWideOrSpecial(unsigned);
+    static bool LEGACY_NODELETE isSpecial(unsigned);
+    static bool LEGACY_NODELETE isWideOrSpecial(unsigned);
 
     static size_t payloadSizeInBytes(size_t numChapters, size_t numberOfEncodedInfo, size_t numberOfEncodedInfoExtensions)
     {
@@ -223,7 +229,7 @@ private:
         return sizeof(ExpressionInfo) + payloadSizeInBytes(numChapters, numberOfEncodedInfo, numberOfEncodedInfoExtensions);
     }
 
-    EncodedInfo* NODELETE findChapterEncodedInfoJustBelow(InstPC) const;
+    EncodedInfo* LEGACY_NODELETE findChapterEncodedInfoJustBelow(InstPC) const;
 
     Chapter* chapters() const
     {
@@ -325,6 +331,8 @@ private:
     static constexpr unsigned numberOfWordsBetweenChapters = 10000;
 
     using LineColumnMap = UncheckedKeyHashMap<InstPC, LineColumn, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>>;
+
+    UncheckedKeyHashMap<InstPC, Entry, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>> m_cachedEntries;
 
     LineColumnMap m_cachedLineColumns;
     unsigned m_numberOfChapters;

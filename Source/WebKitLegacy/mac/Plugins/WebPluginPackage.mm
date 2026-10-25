@@ -31,13 +31,14 @@
 #import <WebKitLegacy/WebKitLogging.h>
 #import <WebKitLegacy/WebKitNSStringExtras.h>
 #import <WebKitLegacy/WebPluginViewFactory.h>
+#import <WebKitLegacy/WebPluginViewFactoryPrivate.h>
 
-NSString *WebPlugInBaseURLKey =                 @"WebPlugInBaseURLKey";
-NSString *WebPlugInAttributesKey =              @"WebPlugInAttributesKey";
+NSString * const WebPlugInBaseURLKey =                 @"WebPlugInBaseURLKey";
+NSString * const WebPlugInAttributesKey =              @"WebPlugInAttributesKey";
 NSString *WebPlugInContainerKey =               @"WebPlugInContainerKey";
-NSString *WebPlugInModeKey =                    @"WebPlugInModeKey";
-NSString *WebPlugInShouldLoadMainResourceKey =  @"WebPlugInShouldLoadMainResourceKey";
-NSString *WebPlugInContainingElementKey =       @"WebPlugInContainingElementKey";
+NSString * const WebPlugInModeKey =                    @"WebPlugInModeKey";
+NSString * const WebPlugInShouldLoadMainResourceKey =  @"WebPlugInShouldLoadMainResourceKey";
+NSString * const WebPlugInContainingElementKey =       @"WebPlugInContainingElementKey";
 
 @implementation WebPluginPackage
 
@@ -46,7 +47,7 @@ NSString *WebPlugInContainingElementKey =       @"WebPlugInContainingElementKey"
     if (!(self = [super initWithPath:pluginPath]))
         return nil;
 
-    nsBundle = [[NSBundle alloc] initWithPath:path.createNSString().get()];
+    nsBundle = adoptNS([[NSBundle alloc] initWithPath:path.createNSString().get()]);
 
     if (!nsBundle) {
         [self release];
@@ -63,7 +64,7 @@ NSString *WebPlugInContainingElementKey =       @"WebPlugInContainingElementKey"
     }
     
 #if !PLATFORM(IOS_FAMILY)
-    NSFileHandle *executableFile = [NSFileHandle fileHandleForReadingAtPath:[nsBundle executablePath]];
+    RetainPtr executableFile = [NSFileHandle fileHandleForReadingAtPath:[protect(nsBundle) executablePath]];
     NSData *data = [executableFile readDataOfLength:512];
     [executableFile closeFile];
     if (![self isNativeLibraryData:data]) {
@@ -80,16 +81,9 @@ NSString *WebPlugInContainingElementKey =       @"WebPlugInContainingElementKey"
     return self;
 }
 
-- (void)dealloc
-{
-    [nsBundle release];
-
-    [super dealloc];
-}
-
 - (Class)viewFactory
 {
-    return [nsBundle principalClass];
+    return [protect(nsBundle) principalClass];
 }
 
 - (BOOL)load
@@ -99,8 +93,9 @@ NSString *WebPlugInContainingElementKey =       @"WebPlugInContainingElementKey"
 #endif
     
     // Load the bundle
-    if (![nsBundle isLoaded]) {
-        if (![nsBundle load])
+    RetainPtr bundle = nsBundle;
+    if (![bundle isLoaded]) {
+        if (![bundle load])
             return NO;
     }
     

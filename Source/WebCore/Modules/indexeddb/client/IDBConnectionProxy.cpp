@@ -544,7 +544,7 @@ void IDBConnectionProxy::handleMainThreadTasks()
 
 void IDBConnectionProxy::getAllDatabaseNamesAndVersions(ScriptExecutionContext& context, Function<void(std::optional<Vector<IDBDatabaseNameAndVersion>>&&)>&& callback)
 {
-    ClientOrigin origin { context.topOrigin().data(), context.securityOrigin()->data() };
+    auto origin = context.storageClientOrigin();
 
     RefPtr<IDBDatabaseNameAndVersionRequest> request;
     {
@@ -604,11 +604,11 @@ void IDBConnectionProxy::forgetTransaction(IDBTransaction& transaction)
 }
 
 template<typename KeyType, typename ValueType, typename FunctionType>
-void removeItemsMatchingCurrentThread(HashMap<KeyType, ValueType>& map, FunctionType&& cleanupFunction)
+void removeItemsMatchingCurrentThread(HashMap<KeyType, ValueType>& map, NOESCAPE const FunctionType& cleanupFunction)
 {
     // FIXME: Revisit when introducing WebThread aware thread comparison.
     // https://bugs.webkit.org/show_bug.cgi?id=204345
-    map.removeIf([currentThread = RefPtr { &Thread::currentSingleton() }, cleanupFunction = WTF::move(cleanupFunction)](auto& entry) {
+    map.removeIf([currentThread = RefPtr { &Thread::currentSingleton() }, &cleanupFunction](auto& entry) {
         if (&entry.value->originThread() == currentThread.get()) {
             cleanupFunction(entry.value);
             return true;

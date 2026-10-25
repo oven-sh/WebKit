@@ -1,0 +1,24 @@
+# made = {}; Object.defineProperty(made, "mark", { value: true }); made.kept = 1; made.kept; made.mark
+# The definition names its key, and only followed code gets hold of the object. So the one field may have got another form, and the field beside it never has: every store to it names it.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Made" fields=[{key="mark" {{*}}stability=[IsNeverDeleted, IsNeverStoredWithOtherType]}}, {key="kept" {{*}}storeNaming=EveryStoreNamesLocation{{*}}stability=[IsNeverDeleted, IsNeverRedefined
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Made" fields=[{key="mark" declared={type=anything} form=[IsReadOnly, IsNotEnumerable, IsNotConfigurable]}, {key="kept" declared={type=anything}}]
+layout L1 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectDefineProperty
+    v4 = String string="mark"
+    v5 = Boolean boolean=true
+    v6 = NewObject -, v5 layout=L1 fields=[0]
+    v7 = Call v3, v2, v1, v4, v6
+    v8 = Integer integer=1
+    PropSet v1, v8 key="kept" mode=Sloppy
+    v10 = PropGet v1 key="kept"
+    v11 = PropGet v1 key="mark"
+    Return
+}

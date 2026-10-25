@@ -52,13 +52,13 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MessagePort);
 
 static Lock allMessagePortsLock;
-static HashMap<MessagePortIdentifier, ThreadSafeWeakPtr<MessagePort>>& NODELETE allMessagePorts() WTF_REQUIRES_LOCK(allMessagePortsLock)
+static HashMap<MessagePortIdentifier, ThreadSafeWeakPtr<MessagePort>>& LEGACY_NODELETE allMessagePorts() WTF_REQUIRES_LOCK(allMessagePortsLock)
 {
     static NeverDestroyed<HashMap<MessagePortIdentifier, ThreadSafeWeakPtr<MessagePort>>> map;
     return map;
 }
 
-static HashMap<MessagePortIdentifier, ScriptExecutionContextIdentifier>& NODELETE portToContextIdentifier() WTF_REQUIRES_LOCK(allMessagePortsLock)
+static HashMap<MessagePortIdentifier, ScriptExecutionContextIdentifier>& LEGACY_NODELETE portToContextIdentifier() WTF_REQUIRES_LOCK(allMessagePortsLock)
 {
     static NeverDestroyed<HashMap<MessagePortIdentifier, ScriptExecutionContextIdentifier>> map;
     return map;
@@ -389,7 +389,7 @@ void MessagePort::drainOneLocalMessage()
         return;
 
     ASSERT(context->isContextThread());
-    if (RefPtr workerGlobalScope = dynamicDowncast<WorkerGlobalScope>(*context)) {
+    if (auto* workerGlobalScope = dynamicDowncast<WorkerGlobalScope>(*context)) {
         if (workerGlobalScope->isClosing())
             return;
     }
@@ -487,13 +487,13 @@ Ref<MessagePort> MessagePort::entangle(ScriptExecutionContext& context, Transfer
     return port;
 }
 
-// FIXME: avoid SUPRESS_NODELETE with lazyInitialize() - ThreadSafeWeakPtr still unsupported
+// FIXME: avoid SUPPRESS_NODELETE with lazyInitialize() - ThreadSafeWeakPtr still unsupported
 SUPPRESS_NODELETE void MessagePort::entangleLocally(MessagePort& port1, MessagePort& port2)
 {
     ASSERT(port1.scriptExecutionContext() == port2.scriptExecutionContext());
     ASSERT(port2.identifier() == port1.m_remoteIdentifier);
     ASSERT(port1.identifier() == port2.m_remoteIdentifier);
-    // Assertions ensure the assignment doesn't violate NODELETE.
+    // Assertions ensure the assignment doesn't violate LEGACY_NODELETE.
     ASSERT(!port1.m_localPartner.get());
     ASSERT(!port2.m_localPartner.get());
     port1.m_localPartner = port2;

@@ -1,0 +1,93 @@
+# Which numbers arrive at a parameter, at a capture, at a field of an environment and at a result is asked of the proven types of what the calls pass, what the closures are made with, what is stored and what is returned.
+# `make` is called with an int32 and with that int32 plus one, so its parameter is an integer of 33 bits, and so is the capture of the closure that it makes. What the closure answers ends in `| 0`: an int32,
+# and so is what a call of it by value gives.
+# A function that also gets a fraction keeps the fraction. A function that code nobody has seen may call says nothing about its parameter, and its capture is followed all the same.
+# Where a check fails, the generic version of the function goes on with what the check has turned away. `checked` adds one to what its check lets through: an integer there, and 1.5 in the generic version,
+# so its result stays a number. `clamped` ends in `| 0`, which makes an int32 of anything.
+# The range of an expected number is a guess: `guessed` expects an int32 and gets integers of 33 bits from callers that are all known, so its parameter is proven to hold those, and its check stays
+# OPTIONS: disable=pass:CopyClosureFactories
+# RUN: valueflow-apply
+# CHECK: function f1 name="make" {{*}}parameters=[{type=int[-2147483648, 2147483648]}] results=[{type=f2}]
+# CHECK: function f2 name="add" {{*}}captures=[{type=int[-2147483648, 2147483648]}] {{*}}parameters=[{type=i32}] results=[{type=i32}]
+# CHECK: function f3 name="half" {{*}}parameters=[{type=i32|fractional}] results=[{type=i32|fractional}]
+# CHECK: function f4 name="escaped" {{*}}captures=[{type=i32}] {{*}}parameters=[{type=anything}]
+# CHECK: function f5 name="checked" {{*}}parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number}]
+# CHECK: function f6 name="clamped" {{*}}parameters=[{type=i32 flags=[IsExpected]}] results=[{type=i32}]
+# CHECK: function f7 name="guessed" {{*}}parameters=[{type=int[-2147483647, 2147483648]}] results=[{type=int[-2147483647, 2147483648]}]
+# CHECK-NEXT: b0(v0: int[-2147483647, 2147483648] {{*}}):
+# CHECK-NEXT: : int[-2147483647, 2147483647] = Check v0 castType=i32
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    v5 = Integer integer=1
+    v6 = Add v4, v5
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v4
+    v9 = Call v7, -, v6
+    v10 = Call v8, -, v4
+    v11 = Call v9, -, v10
+    v12 = NewClosure function=f3
+    v13 = Call v12, -, v4
+    v14 = Double number=0.5
+    v15 = Call v12, -, v14
+    v16 = NewClosure v4 function=f4
+    v17 = Builtin builtin=GlobalThis
+    v18 = PropGet v17 key="input" [isFreeName]
+    v19 = Call v18, -, v16
+    v20 = NewClosure function=f5
+    v21 = Call v20, -, v2
+    v22 = NewClosure function=f6
+    v23 = Call v22, -, v2
+    v24 = NewClosure function=f7
+    v25 = Call v24, -, v6
+    v26 = NewArray v11, v13, v15, v21, v23, v25 contents=anything holes=[]
+    Return v26
+}
+function f1 name="make" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0):
+    v1 = NewClosure v0 function=f2
+    Return v1
+}
+function f2 name="add" captures=[{type=number}] parameters=[{type=number}] results=[{type=number}] {
+  b0(v0, v1):
+    v2 = Add v1, v0
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    Return v4
+}
+function f3 name="half" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0):
+    Return v0
+}
+function f4 name="escaped" captures=[{type=number}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0, v1):
+    v2 = NewArray v0, v1 contents=anything holes=[]
+    Return v2
+}
+function f5 name="checked" parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number}] {
+  b0(v0):
+    v1 = Check v0 castType=i32
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    Return v3
+}
+function f6 name="clamped" parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number}] {
+  b0(v0):
+    v1 = Check v0 castType=i32
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    v4 = Integer integer=0
+    v5 = BitOr v3, v4
+    Return v5
+}
+function f7 name="guessed" parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number}] {
+  b0(v0):
+    v1 = Check v0 castType=i32
+    Return v1
+}

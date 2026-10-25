@@ -42,7 +42,7 @@ CSSToLengthConversionData::CSSToLengthConversionData(const CSSToLengthConversion
 CSSToLengthConversionData::CSSToLengthConversionData(CSSToLengthConversionData&&) = default;
 
 // FIXME: Only rely on the RenderView for style resolution if we have an active LocalFrameView.
-static RenderView* NODELETE renderViewForDocument(const Document& document)
+static RenderView* LEGACY_NODELETE renderViewForDocument(const Document& document)
 {
     if (document.view()) [[likely]]
         return document.renderView();
@@ -50,9 +50,9 @@ static RenderView* NODELETE renderViewForDocument(const Document& document)
 }
 
 CSSToLengthConversionData::CSSToLengthConversionData(const Style::ComputedStyle& style, Style::BuilderState& builderState)
-    : m_style(style)
+    : m_style(&style)
     , m_rootStyle(builderState.rootElementStyle())
-    , m_parentStyle(&builderState.parentStyle())
+    , m_parentStyle(builderState.parentStyleIfExists())
     , m_renderView(renderViewForDocument(builderState.document()))
     , m_elementForContainerUnitResolution(builderState.element())
     , m_styleBuilderState(&builderState)
@@ -60,7 +60,7 @@ CSSToLengthConversionData::CSSToLengthConversionData(const Style::ComputedStyle&
 }
 
 CSSToLengthConversionData::CSSToLengthConversionData(const Style::ComputedStyle& style, const Style::ComputedStyle* rootStyle, const Style::ComputedStyle* parentStyle, const RenderView* renderView, const Element* elementForContainerUnitResolution)
-    : m_style(style)
+    : m_style(&style)
     , m_rootStyle(rootStyle)
     , m_parentStyle(parentStyle)
     , m_renderView(renderView)

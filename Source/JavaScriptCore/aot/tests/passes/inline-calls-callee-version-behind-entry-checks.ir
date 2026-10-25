@@ -1,0 +1,64 @@
+# function apply(x: number, f: (x: number) => number) { .. f(x) .. }   function caller(x: any) { return apply(x, y => y + y) }
+# The tests at the head of a typed function (role EntryChecks) only pass their arguments on. A caller that has not proven every argument calls the tests, and what it knows of the function behind them is lost there:
+# that the typed body calls the one function that the caller passes. Such a caller takes the tests in: its call then names the typed body, which gets a copy for that function as any callee does.
+# A caller that passes a function nobody knows decides as it does about any function behind tests
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: CalleeVersions = 1
+
+module m0 path="main.ts" displayPath="main.ts"
+function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}
+function f1 name="apply" role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}, {type=function}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f2 fallback=f3} {
+  b0(v0: anything, v1: function):
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: number):
+    v4 = CallDirect v3, v1 function=f2
+    ReturnCall v4 requirement=Allowed
+  b2() frequency=Unlikely:
+    v5 = CallDirect v0, v1 function=f3
+    ReturnCall v5 requirement=Allowed
+}
+function f2 name="apply" flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number}, {type=function}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} {
+    v2 = Call v1, -, v0
+# REPEAT: i = 2..41
+    v%(i+1) = Add v%(i), v0
+# END REPEAT
+    Return v42
+}
+function f3 name="apply" role=GenericVersion flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}, {type=function}] results=[{type=anything}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} creator=Version{provenVersion=f2} {
+  b0(v0: anything, v1: function) frequency=Unlikely:
+    v2 = Call v1, -, v0
+# REPEAT: i = 2..41
+    v%(i+1) = Add v%(i), v0
+# END REPEAT
+    Return v42
+}
+
+function f4 name="passesKnownFunction" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f0
+    v2 = CallDirect v0, v1 function=f1
+    Return v2
+}
+# CHECK-LABEL: function f4 name="passesKnownFunction"
+# CHECK-NOT: function=f1
+# CHECK: = TypeTest {{*}} testedType=number
+# CHECK-NOT: function=f2
+# CHECK: = CallDirect {{*}} function=[[forDouble]]
+# CHECK: = CallDirect {{*}} function=f3
+
+function f5 name="passesUnknownFunction" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f1
+    Return v2
+}
+# CHECK-LABEL: function f5 name="passesUnknownFunction"
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v0, v1 function=f1
+
+# CHECK: function [[forDouble]] name="apply" {{*}}role=CalleeVersion {{*}}parameters=[{type=number}, {type=f0}] {{*}}derivation={source=f2{{*}}creator=Version{provenVersion=f2}
+# CHECK-NEXT: b0(v0: number, v1: f0):
+# CHECK-NOT: role=CalleeVersion

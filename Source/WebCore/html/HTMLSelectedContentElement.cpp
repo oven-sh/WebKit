@@ -26,7 +26,10 @@
 #include "config.h"
 #include "HTMLSelectedContentElement.h"
 
+#include "Document.h"
 #include "ElementAncestorIteratorInlines.h"
+#include "ElementChildIteratorInlines.h"
+#include "EventLoop.h"
 #include "HTMLElement.h"
 #include "HTMLNames.h"
 #include "HTMLOptionElement.h"
@@ -59,6 +62,8 @@ auto HTMLSelectedContentElement::insertionSteps(InsertionType insertionType, Con
     ASSERT(document().settings().htmlEnhancedSelectEnabled());
     ASSERT(!document().settings().mutationEventsEnabled());
 
+    recalculateDisabledness();
+
     if (insertionType.connectedToDocument)
         return NeedsPostConnectionSteps::Yes;
     return NeedsPostConnectionSteps::No;
@@ -66,12 +71,96 @@ auto HTMLSelectedContentElement::insertionSteps(InsertionType insertionType, Con
 
 void HTMLSelectedContentElement::postConnectionSteps()
 {
+    if (RefPtr select = m_owningSelect; select && select->hasPendingSelectedContentUpdate())
+        return;
+
+    updateFromSelect();
+}
+
+void HTMLSelectedContentElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
+{
+    HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
+
+    recalculateDisabledness();
+}
+
+void HTMLSelectedContentElement::movingSteps(MovingType movingType, ContainerNode& oldParent)
+{
+    HTMLElement::movingSteps(movingType, oldParent);
+
+    RefPtr oldSelect = m_owningSelect;
+    bool wasDisabled = m_isDisabled;
+    RefPtr select = recalculateDisabledness();
+    if (m_isDisabled || !select || !select->updatesSelectedContent())
+        return;
+
+    if (!wasDisabled && select == oldSelect)
+        return;
+
+    if (m_hasPendingUpdate)
+        return;
+
+    m_hasPendingUpdate = true;
+    Ref document = this->document();
+    protect(document->eventLoop())->queueMicrotask(document->vm(), [weakThis = WeakPtr<HTMLSelectedContentElement, WeakPtrImplWithEventTargetData> { *this }] {
+        if (RefPtr selectedContent = weakThis; selectedContent && selectedContent->m_hasPendingUpdate)
+            selectedContent->updateFromSelect();
+    });
+}
+
+// https://html.spec.whatwg.org/#update-a-selectedcontent
+void HTMLSelectedContentElement::updateFromSelect()
+{
+    m_hasPendingUpdate = false;
+
+    RefPtr select = m_owningSelect;
+    if (m_isDisabled || !select || !select->updatesSelectedContent())
+        return;
+
+    select->updateSelectedContent(*this);
+}
+
+void HTMLSelectedContentElement::updateFromOption(HTMLOptionElement* option)
+{
+    m_hasPendingUpdate = false;
+
+    if (option)
+        option->cloneIntoSelectedContent(*this);
+    else
+        removeChildren();
+}
+
+void HTMLSelectedContentElement::updateFromOptions(const Vector<Ref<HTMLOptionElement>>& options)
+{
+    ASSERT(document().settings().htmlEnhancedSelectMultipleSelectedContentEnabled());
+
+    m_hasPendingUpdate = false;
+
+    NodeVector clones;
+    for (auto& option : options)
+        clones.append(option->cloneForSelectedContent());
+    replaceChildrenWithoutValidityCheck(WTF::move(clones));
+}
+
+void HTMLSelectedContentElement::updateClonedOptionSelectedStates()
+{
+    ASSERT(document().settings().htmlEnhancedSelectMultipleSelectedContentEnabled());
+
+    for (Ref clone : childrenOfType<HTMLOptionElement>(*this)) {
+        if (RefPtr option = clone->selectedContentSource())
+            clone->setSelectedState(option->selected());
+    }
+}
+
+// https://html.spec.whatwg.org/#recalculate-a-selectedcontent-element's-disabledness
+RefPtr<HTMLSelectElement> HTMLSelectedContentElement::recalculateDisabledness()
+{
     RefPtr<HTMLSelectElement> nearestAncestorSelect;
     m_isDisabled = false;
     for (Ref ancestor : ancestorsOfType<HTMLElement>(*this)) {
-        if (auto* select = dynamicDowncast<HTMLSelectElement>(ancestor.get())) {
+        if (RefPtr select = dynamicDowncast<HTMLSelectElement>(ancestor)) {
             if (!nearestAncestorSelect) {
-                nearestAncestorSelect = select;
+                nearestAncestorSelect = WTF::move(select);
                 continue;
             }
             m_isDisabled = true;
@@ -82,26 +171,16 @@ void HTMLSelectedContentElement::postConnectionSteps()
             break;
         }
     }
-    if (m_isDisabled || !nearestAncestorSelect || nearestAncestorSelect->multiple())
-        return;
 
     if (m_owningSelect != nearestAncestorSelect) {
         if (auto* oldSelect = m_owningSelect.get())
             oldSelect->unregisterSelectedContentElement();
         m_owningSelect = nearestAncestorSelect;
-        nearestAncestorSelect->registerSelectedContentElement();
+        if (nearestAncestorSelect)
+            nearestAncestorSelect->registerSelectedContentElement();
     }
-    nearestAncestorSelect->updateSelectedContent();
-}
 
-void HTMLSelectedContentElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
-{
-    HTMLElement::removingSteps(removalType, oldParentOfRemovedTree);
-
-    if (RefPtr select = m_owningSelect; select && !isInclusiveDescendantOf(*select)) {
-        select->unregisterSelectedContentElement();
-        m_owningSelect = nullptr;
-    }
+    return nearestAncestorSelect;
 }
 
 } // namespace WebCore

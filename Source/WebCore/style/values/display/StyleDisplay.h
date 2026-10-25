@@ -350,7 +350,7 @@ constexpr bool Display::doesGenerateBox() const
 template<> struct CSSValueConversion<Display> { auto operator()(BuilderState&, const CSSValue&) -> Display; };
 
 template<> struct ValueRepresentation<DisplayType> {
-    template<typename... F> constexpr decltype(auto) operator()(DisplayType value, F&&... f)
+    template<typename... F> constexpr decltype(auto) operator()(DisplayType value, NOESCAPE F&&... f)
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
         switch (value) {
@@ -430,7 +430,7 @@ template<> struct ValueRepresentation<DisplayType> {
 
 template<> struct Blending<Display> {
     constexpr auto canBlend(Display, Display) -> bool { return false; }
-    Display NODELETE blend(Display, Display, const BlendingContext&);
+    Display LEGACY_NODELETE blend(Display, Display, const BlendingContext&);
 };
 
 } // namespace Style

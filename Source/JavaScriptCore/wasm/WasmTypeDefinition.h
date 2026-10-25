@@ -58,7 +58,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+class CCallHelpers;
 class LLIntOffsetsExtractor;
+class RegisterAtOffsetList;
 
 namespace Wasm {
 
@@ -585,14 +587,14 @@ public:
     // the rewrite path (RTT::rewriteInternalRefs) and the cycle-break path
     // (RTT::clearReferencedRTTs).
     template<typename Callback>
-    void visitChildrenRTT(Callback&& cb)
+    void visitChildrenRTT(NOESCAPE const Callback& cb)
     {
         for (TypeSlot& slot : m_signature)
             cb(slot);
     }
 
     template<typename Callback>
-    void forEachPayloadRTTRef(Callback&& cb) const
+    void forEachPayloadRTTRef(NOESCAPE const Callback& cb) const
     {
         for (const TypeSlot& slot : m_signature) {
             if (slot.rttAnchor)
@@ -645,7 +647,7 @@ public:
     // built from the entry's FieldType + rttAnchor; mutations are written
     // back into the entry on return.
     template<typename Callback>
-    void visitChildrenRTT(Callback&& cb)
+    void visitChildrenRTT(NOESCAPE const Callback& cb)
     {
         for (StructFieldEntry& entry : m_fields) {
             if (!entry.type.type.is<Type>())
@@ -658,7 +660,7 @@ public:
     }
 
     template<typename Callback>
-    void forEachPayloadRTTRef(Callback&& cb) const
+    void forEachPayloadRTTRef(NOESCAPE const Callback& cb) const
     {
         for (const StructFieldEntry& entry : m_fields) {
             if (entry.rttAnchor)
@@ -698,7 +700,7 @@ public:
     // Iterate the (single) ref-bearing element, if any. PackedType element
     // types are skipped. Same view-pattern as RTTStructPayload::visitChildrenRTT.
     template<typename Callback>
-    void visitChildrenRTT(Callback&& cb)
+    void visitChildrenRTT(NOESCAPE const Callback& cb)
     {
         if (!m_elementType.type.is<Type>())
             return;
@@ -709,7 +711,7 @@ public:
     }
 
     template<typename Callback>
-    void forEachPayloadRTTRef(Callback&& cb) const
+    void forEachPayloadRTTRef(NOESCAPE const Callback& cb) const
     {
         if (m_elementTypeAnchor)
             cb(m_elementTypeAnchor.get());
@@ -726,6 +728,7 @@ private:
 class alignas(16) RTT final : public ThreadSafeRefCounted<RTT>, private TrailingArray<RTT, RefPtr<const RTT>> {
     WTF_DEPRECATED_MAKE_FAST_COMPACT_ALLOCATED(RTT);
     WTF_MAKE_NONMOVABLE(RTT);
+    using Malloc = FastCompactMalloc;
     using TrailingArrayType = TrailingArray<RTT, RefPtr<const RTT>>;
     friend TrailingArrayType;
     friend class JSC::LLIntOffsetsExtractor;
@@ -852,18 +855,25 @@ public:
         return static_cast<uint64_t>(ptr | (maskedFieldIndex & 0b1111) | (static_cast<uint64_t>(maskedFieldIndex >> 4) << 48));
     }
 
-    bool NODELETE isSubRTT(const RTT& other) const;
-    bool NODELETE isStrictSubRTT(const RTT& other) const;
+    bool LEGACY_NODELETE isSubRTT(const RTT& other) const;
+    bool LEGACY_NODELETE isStrictSubRTT(const RTT& other) const;
     bool isFinalType() const { return m_isFinalType; }
 
     // Print this RTT for debugging.
     String toString() const;
     void dump(WTF::PrintStream& out) const;
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
     // For function-kind RTTs: returns the JS->Wasm IC entrypoint for this signature.
     // The IC cache + lock live on the RTT itself.
     CodePtr<JSEntryPtrTag> jsToWasmICEntrypoint() const;
+    struct ICEntrypointImagePointers {
+        uint32_t callee;
+        uint32_t genericEntrypoint;
+    };
+    bool mayHaveICEntrypointInImage() const;
+    RegisterAtOffsetList icEntrypointSavedRegisters() const;
+    bool emitJSToWasmICEntrypoint(CCallHelpers&, const RegisterAtOffsetList& registersToSpill, void* boxedCallee, std::optional<ICEntrypointImagePointers>) const;
 #endif
 
     // Function-kind only. Lazy-installed via a CAS in ThreadSafeLazyUniquePtr;
@@ -884,34 +894,34 @@ public:
     // rewriteInternalRefs (sets each slot's anchor inline as it rewrites)
     // and clearReferencedRTTs (nulls each anchor).
     template<typename Callback>
-    void visitChildrenRTT(Callback&& cb)
+    void visitChildrenRTT(NOESCAPE const Callback& cb)
     {
         switch (m_kind) {
         case RTTKind::Function:
-            std::get<RTTFunctionPayload>(m_payload).visitChildrenRTT(std::forward<Callback>(cb));
+            std::get<RTTFunctionPayload>(m_payload).visitChildrenRTT(cb);
             return;
         case RTTKind::Struct:
-            std::get<RTTStructPayload>(m_payload).visitChildrenRTT(std::forward<Callback>(cb));
+            std::get<RTTStructPayload>(m_payload).visitChildrenRTT(cb);
             return;
         case RTTKind::Array:
-            std::get<RTTArrayPayload>(m_payload).visitChildrenRTT(std::forward<Callback>(cb));
+            std::get<RTTArrayPayload>(m_payload).visitChildrenRTT(cb);
             return;
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
 
     template<typename Callback>
-    void forEachPayloadRTTRef(Callback&& cb) const
+    void forEachPayloadRTTRef(NOESCAPE const Callback& cb) const
     {
         switch (m_kind) {
         case RTTKind::Function:
-            std::get<RTTFunctionPayload>(m_payload).forEachPayloadRTTRef(std::forward<Callback>(cb));
+            std::get<RTTFunctionPayload>(m_payload).forEachPayloadRTTRef(cb);
             return;
         case RTTKind::Struct:
-            std::get<RTTStructPayload>(m_payload).forEachPayloadRTTRef(std::forward<Callback>(cb));
+            std::get<RTTStructPayload>(m_payload).forEachPayloadRTTRef(cb);
             return;
         case RTTKind::Array:
-            std::get<RTTArrayPayload>(m_payload).forEachPayloadRTTRef(std::forward<Callback>(cb));
+            std::get<RTTArrayPayload>(m_payload).forEachPayloadRTTRef(cb);
             return;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -1022,7 +1032,7 @@ private:
     mutable RefPtr<const RTTGroup> m_group { nullptr };
     mutable uint32_t m_canonicalIndexInGroup { 0 };
     mutable uint32_t m_virtualRefCount { 0 };
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
     // Cache for the JS->Wasm IC entrypoint. Function-kind only; null for
     // struct/array. Lazy-initialized under m_jitCodeLock; once set, the IC
     // pointer is read without locking via the storeStoreFence in the writer.
@@ -1221,9 +1231,9 @@ private:
     // TypeSectionState::createCanonicalRTT's rebuild-with-substitution path
     // where the intermediate Vector was purely scaffolding.
     template<typename FieldProvider>
-    static Ref<const RTT> typeDefinitionForStructFromProvider(StructFieldCount, FieldProvider&&);
+    static Ref<const RTT> typeDefinitionForStructFromProvider(StructFieldCount, NOESCAPE const FieldProvider&);
     template<typename ReturnProvider, typename ArgProvider>
-    static Ref<const RTT> typeDefinitionForFunctionFromProviders(FunctionArgCount retCount, ReturnProvider&&, FunctionArgCount argCount, ArgProvider&&);
+    static Ref<const RTT> typeDefinitionForFunctionFromProviders(FunctionArgCount retCount, NOESCAPE const ReturnProvider&, FunctionArgCount, NOESCAPE const ArgProvider&);
 
     // Isorecursive RTT canonicalization at recursion-group granularity.
     // Given a freshly-parsed recursion group identified by recursionGroup

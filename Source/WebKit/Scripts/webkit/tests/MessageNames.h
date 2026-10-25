@@ -184,6 +184,8 @@ enum class MessageName : uint16_t {
     TestWithSwift_TestAsyncMessage,
     TestWithSwift_TestAsyncMessageReply,
     TestWithSwift_TestMessageWithAliasedParameter,
+    TestWithSwift_TestMessageWithEmptyReply,
+    TestWithSwift_TestMessageWithEmptyReplyReply,
     TestWithSwift_TestThrowingMessageWithoutReply,
     TestWithValidator_AlwaysEnabled,
     TestWithValidator_EnabledIfPassValidation,

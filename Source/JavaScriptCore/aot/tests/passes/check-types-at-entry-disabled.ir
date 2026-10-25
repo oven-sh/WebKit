@@ -1,0 +1,31 @@
+# No list of passes leaves this one out: a typed parameter is a fact in the body only because the entrance tests it. Without the test an executable answers wrongly or dies.
+# A test that only wants a typed parameter gives it no site.
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: pass CheckTypesAtEntry TypeValues VerifyProgram
+# STATISTIC: FunctionsWithTypesCheckedAtEntry = 1
+# STATISTIC: TypesCheckedAtEntry = 1
+# CHECK: outcome: Changed
+# CHECK: function f1 name="double"
+# CHECK: Check v0 castType=undefined|null|number
+# CHECK: function f2 name="withoutSite"
+# CHECK: b0(v0: undefined|null|number):
+# CHECK-NEXT: : number = Add v0, v0
+# CHECK-NOT: Check
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    Return
+}
+function f1 name="double" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=undefined|null|number site=w0}] results=[{type=anything}] {
+    v1 = Add v0, v0
+    Return v1
+}
+function f2 name="withoutSite" module=m0 position=50 flags=[IsChecked] length=1 parameters=[{type=undefined|null|number}] results=[{type=anything}] {
+    v1 = Add v0, v0
+    Return v1
+}

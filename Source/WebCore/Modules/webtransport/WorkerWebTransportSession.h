@@ -35,12 +35,12 @@ class WebTransport;
 
 class WorkerWebTransportSession : public WebTransportSession, public WebTransportSessionClient {
 public:
-    WEBCORE_EXPORT static Ref<WorkerWebTransportSession> create(ScriptExecutionContextIdentifier, WebTransportSessionClient&);
+    WEBCORE_EXPORT static Ref<WorkerWebTransportSession> LEGACY_NODELETE create(ScriptExecutionContextIdentifier, WebTransportSessionClient&);
     ~WorkerWebTransportSession();
 
     WTF_ABSTRACT_THREAD_SAFE_REF_COUNTED_AND_CAN_MAKE_WEAK_PTR_IMPL;
 
-    WEBCORE_EXPORT void attachSession(Ref<WebTransportSession>&&);
+    WEBCORE_EXPORT void LEGACY_NODELETE attachSession(Ref<WebTransportSession>&&);
 
 private:
     WorkerWebTransportSession(ScriptExecutionContextIdentifier, WebTransportSessionClient&);
@@ -76,7 +76,7 @@ private:
 
     const ScriptExecutionContextIdentifier m_contextID;
     ThreadSafeWeakPtr<WebTransportSessionClient> m_client;
-    RefPtr<WebTransportSession> m_session;
+    const RefPtr<WebTransportSession> m_session;
 };
 
 }

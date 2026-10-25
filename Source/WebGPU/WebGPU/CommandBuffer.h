@@ -26,26 +26,28 @@
 #pragma once
 
 #import <Metal/Metal.h>
+#import <WebGPU/WebGPUCpp.h>
 #import <atomic>
 #import <wtf/FastMalloc.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCountedAndCanMakeWeakPtr.h>
+#import <wtf/RetainPtr.h>
 #import <wtf/SwiftBridging.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/ThreadSafeWeakPtr.h>
+#import <wtf/Vector.h>
 #import <wtf/WeakPtr.h>
 #import <wtf/threads/BinarySemaphore.h>
 
 struct WGPUCommandBufferImpl {
 };
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class CommandEncoder;
 class Device;
 
 // https://gpuweb.github.io/gpuweb/#gpucommandbuffer
-class CommandBuffer : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<CommandBuffer>, public WGPUCommandBufferImpl {
+class CommandBuffer final : public WebGPU::CommandBuffer, public WGPUCommandBufferImpl {
     WTF_MAKE_TZONE_ALLOCATED(CommandBuffer);
 public:
     static Ref<CommandBuffer> create(id<MTLCommandBuffer> commandBuffer, Device& device, id<MTLSharedEvent> sharedEvent, uint64_t sharedEventSignalValue, Vector<Function<bool(CommandBuffer&, CommandEncoder&)>>&& onCommitHandlers, CommandEncoder& commandEncoder)
@@ -59,11 +61,17 @@ public:
 
     ~CommandBuffer();
 
-    void setLabel(String&&);
+    void setLabel(String&&) final;
 
-    bool isValid() const { return m_commandBuffer; }
+    bool isValid() const final { return m_commandBuffer; }
 
     id<MTLCommandBuffer> commandBuffer() const { return m_commandBuffer; }
+
+    // A single MTLCommandBuffer can only hold so many MTLRenderCommandEncoders before IOGPU runs out
+    // of memory for it, so CommandEncoder rolls over to a fresh MTLCommandBuffer and hands the filled
+    // ones here. The queue commits them, in order, immediately before commandBuffer().
+    void setPriorCommandBuffers(Vector<RetainPtr<id<MTLCommandBuffer>>>&&);
+    Vector<RetainPtr<id<MTLCommandBuffer>>> takePriorCommandBuffers();
 
     Device& device() const { return m_device; }
     void makeInvalid(NSString*);
@@ -71,7 +79,7 @@ public:
     void setBufferMapCount(int bufferMapCount) { m_bufferMapCount = bufferMapCount; }
     int bufferMapCount() const { return m_bufferMapCount; }
 
-    NSString* NODELETE lastError() const;
+    NSString* LEGACY_NODELETE lastError() const;
     bool waitForCompletion();
     bool preCommitHandler();
     void postCommitHandler();
@@ -83,9 +91,11 @@ private:
     CommandBuffer(id<MTLCommandBuffer>, Device&, id<MTLSharedEvent>, uint64_t sharedEventSignalValue, Vector<Function<bool(CommandBuffer&, CommandEncoder&)>>&&, CommandEncoder&);
     CommandBuffer(Device&);
     void retainTimestampsForOneUpdateLoop();
+    void releasePriorCommandBuffers();
 
     id<MTLCommandBuffer> m_commandBuffer { nil };
     id<MTLCommandBuffer> m_cachedCommandBuffer { nil };
+    Vector<RetainPtr<id<MTLCommandBuffer>>> m_priorCommandBuffers;
     int m_bufferMapCount { 0 };
 
     const Ref<Device> m_device;
@@ -98,16 +108,18 @@ private:
     BinarySemaphore m_commandBufferComplete;
     RefPtr<CommandEncoder> m_commandEncoder;
     std::atomic<double> m_gpuExecutionDurationSeconds { 0 };
-} SWIFT_SHARED_REFERENCE(refCommandBuffer, derefCommandBuffer) SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT;
+} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refCommandBuffer, derefCommandBuffer);
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
-inline void refCommandBuffer(WebGPU::CommandBuffer* obj)
+#if !ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
+inline void refCommandBuffer(WebGPU::Metal::CommandBuffer* obj)
 {
     obj->ref();
 }
 
-inline void derefCommandBuffer(WebGPU::CommandBuffer* obj)
+inline void derefCommandBuffer(WebGPU::Metal::CommandBuffer* obj)
 {
     obj->deref();
 }
+#endif

@@ -1,0 +1,52 @@
+# Closures that a constructor stores behind its allocation are deferred from the text of the program alone. The slots defer, the closures have no code, and the build passes validation
+# TODO: closures-in-fields: in a validating build only the literal's field makes its closure on demand; the two fields that a constructor stores do not
+# FORM: AsRead
+# RUN: compile
+# RUN(PLACED): pipeline CheckPlacement
+# OPTIONS: validate check=validate-back-end references=narrow heat=EverythingIsHot
+# STATISTIC: FieldsDeferringClosures = 3
+# STATISTIC: DeferredClosureSlots = 3
+# CHECK: image not empty
+# PLACED: NewClosure function=f3 {{*}}closureForm=Deferred [isMadeOnDemand]
+# PLACED: NewClosure function=f2 {{*}}closureForm=Deferred [isMadeOnDemand]
+# PLACED: = GetDeferredClosureSlot
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Widget" constructor=f1 fields=[{key="count" declared={type=anything} flags=[IsRequired]}, {key="handler" declared={type=anything} flags=[IsRequired]}, {key="plain" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Literal" fields=[{key="run" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="register" [isFreeName]
+    v6 = Call v5, -, v3
+    v7 = PropGet v3 key="handler"
+    v8 = Call v5, -, v7
+    v9 = NewClosure function=f3
+    v10 = NewObject -, v9 layout=L1 fields=[0]
+    v11 = FinishObject v10
+    v12 = Call v5, -, v11
+    Return v12
+}
+function f1 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Integer integer=0
+    PropDefine v2, v3 key="count"
+    v5 = NewClosure v2 function=f2
+    PropDefine v2, v5 key="handler"
+    v7 = NewClosure function=f3
+    PropDefine v2, v7 key="plain"
+    Return v2
+}
+function f2 name="handler" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+function f3 name="plain" kind=Arrow results=[{type=anything}] {
+    Return
+}

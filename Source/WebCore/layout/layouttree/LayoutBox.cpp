@@ -31,10 +31,9 @@
 #include "LayoutContainingBlockChainIterator.h"
 #include "LayoutElementBox.h"
 #include "LayoutInitialContainingBlock.h"
-#include "LayoutPhase.h"
 #include "LayoutShape.h"
 #include "LayoutState.h"
-#include "RenderObject.h"
+#include "RenderElementInlines.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -91,8 +90,6 @@ void Box::updateStyle(Style::ComputedStyle&& newStyle, std::unique_ptr<Style::Co
 
 bool Box::establishesFormattingContext() const
 {
-    // We need the final tree structure to tell whether a box establishes a certain formatting context. 
-    ASSERT(!Phase::isInTreeBuilding());
     return establishesInlineFormattingContext()
         || establishesBlockFormattingContext()
         || establishesTableFormattingContext()
@@ -236,7 +233,7 @@ bool Box::isInlineTableBox() const
     return m_style.display() == Style::DisplayType::InlineTable;
 }
 
-static bool NODELETE isInsideTable(const Box& box)
+static bool LEGACY_NODELETE isInsideTable(const Box& box)
 {
     auto& parent = box.parent();
     return parent.isTableBox() || parent.isTableWrapperBox() || parent.style().display().isInternalTableBox();
@@ -524,42 +521,6 @@ bool Box::isPaddingApplicable() const
         && !isTableColumn();
 }
 
-void Box::setRowSpan(size_t rowSpan)
-{
-    ensureRareData().tableCellSpan.row = rowSpan;
-}
-
-void Box::setColumnSpan(size_t columnSpan)
-{
-    ensureRareData().tableCellSpan.column = columnSpan;
-}
-
-size_t Box::rowSpan() const
-{
-    if (!hasRareData())
-        return 1;
-    return rareData().tableCellSpan.row;
-}
-
-size_t Box::columnSpan() const
-{
-    if (!hasRareData())
-        return 1;
-    return rareData().tableCellSpan.column;
-}
-
-void Box::setColumnWidth(LayoutUnit columnWidth)
-{
-    ensureRareData().columnWidth = columnWidth;
-}
-
-std::optional<LayoutUnit> Box::columnWidth() const
-{
-    if (!hasRareData())
-        return { };
-    return rareData().columnWidth;
-}
-
 const LayoutShape* Box::shape() const
 {
     if (!hasRareData())
@@ -590,7 +551,8 @@ Box::RareDataMap& Box::rareDataMap()
     return map;
 }
 
-const Box::BoxRareData& Box::rareData() const
+// The analyzer cannot verify that HashMap::get() does not destroy anything; a lookup never does.
+SUPPRESS_NODELETE const Box::BoxRareData& Box::rareData() const
 {
     ASSERT(hasRareData());
     return *rareDataMap().get(this);
@@ -614,6 +576,56 @@ void Box::removeRareData()
     setHasRareData(false);
 }
 
-}
+const ElementBox& containingBlock(const Box& layoutBox)
+{
+    // If we ever end up here with the ICB, we must be doing something not-so-great.
+    RELEASE_ASSERT(!is<InitialContainingBlock>(layoutBox));
+    // The containing block in which the root element lives is a rectangle called the initial containing block.
+    // For other elements, if the element's position is 'relative' or 'static', the containing block is formed by the
+    // content edge of the nearest block container ancestor box or which establishes a formatting context.
+    // If the element has 'position: fixed', the containing block is established by the viewport
+    // If the element has 'position: absolute', the containing block is established by the nearest ancestor with a
+    // 'position' of 'absolute', 'relative' or 'fixed'.
+    if (!layoutBox.isPositioned() || layoutBox.isInFlowPositioned()) {
+        SUPPRESS_UNCHECKED_LOCAL auto* ancestor = &layoutBox.parent();
+        for (; !is<InitialContainingBlock>(*ancestor); ancestor = &ancestor->parent()) {
+            if (ancestor->isContainingBlockForInFlow())
+                return *ancestor;
+        }
+        return *ancestor;
+    }
+
+    if (layoutBox.isFixedPositioned()) {
+        SUPPRESS_UNCHECKED_LOCAL auto* ancestor = &layoutBox.parent();
+        for (; !is<InitialContainingBlock>(*ancestor); ancestor = &ancestor->parent()) {
+            if (ancestor->isContainingBlockForFixedPosition())
+                return *ancestor;
+        }
+        return *ancestor;
+    }
+
+    if (layoutBox.isOutOfFlowPositioned()) {
+        SUPPRESS_UNCHECKED_LOCAL auto* ancestor = &layoutBox.parent();
+        for (; !is<InitialContainingBlock>(*ancestor); ancestor = &ancestor->parent()) {
+            if (ancestor->isContainingBlockForOutOfFlowPosition())
+                return *ancestor;
+        }
+        return *ancestor;
+    }
+
+    ASSERT_NOT_REACHED();
+    return layoutBox.parent();
 }
 
+UsedStyle Box::usedStyle() const
+{
+    return rendererForIntegration()->usedStyle();
+}
+
+UsedStyle Box::firstLineUsedStyle() const
+{
+    return rendererForIntegration()->firstLineUsedStyle();
+}
+
+}
+}

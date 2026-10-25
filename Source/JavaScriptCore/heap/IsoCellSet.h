@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2023, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,6 +29,7 @@
 #include <wtf/BitSet.h>
 #include <wtf/ConcurrentVector.h>
 #include <wtf/FastBitVector.h>
+#include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Nonmovable.h>
 #include <wtf/SentinelLinkedList.h>
@@ -60,13 +61,13 @@ public:
     // This will have to do a combined search over whatever Subspace::forEachMarkedCell uses and
     // our m_blocksWithBits.
     template<typename Func>
-    void forEachMarkedCell(const Func&);
+    void forEachMarkedCell(NOESCAPE const Func&);
 
     template<typename Visitor, typename Func>
     Ref<SharedTask<void(Visitor&)>> forEachMarkedCellInParallel(const Func&);
     
     template<typename Func>
-    void forEachLiveCell(const Func&);
+    void forEachLiveCell(NOESCAPE const Func&);
     
 private:
     friend class IsoSubspace;
@@ -76,18 +77,21 @@ private:
     void didResizeBits(unsigned newSize);
     void didRemoveBlock(unsigned blockIndex);
     void sweepToFreeList(MarkedBlock::Handle*);
-    void clearLowerTierPreciseCell(unsigned);
+    void clearLowerTierPreciseCell(unsigned index) { m_lowerTierPreciseBits.concurrentTestAndClear(index); }
     
     WTF::BitSet<MarkedBlock::maxNumberOfLowerTierPreciseCells> m_lowerTierPreciseBits;
 
     IsoSubspace& m_subspace;
-    
+
     // Idea: sweeping to free-list clears bits for those cells that were free-listed. The first time
     // we add a cell in a block, that block gets a free-list. Unless we do something that obviously
     // clears all bits for a block, we keep it set in blocksWithBits.
     
     FastBitVector m_blocksWithBits;
     ConcurrentVector<std::unique_ptr<WTF::BitSet<MarkedBlock::atomsPerBlock>>> m_bits;
+    // Lock order: BlockDirectory's m_bitvectorLock before this. Never take m_bitvectorLock while holding this.
+    // FIXME: This doesn't work if multiple mutators run at the same time on the same block.
+    Lock m_lock;
 };
 
 } // namespace JSC

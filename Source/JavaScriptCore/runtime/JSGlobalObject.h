@@ -29,7 +29,7 @@
 #include <JavaScriptCore/Microtask.h>
 #include <JavaScriptCore/RegExpGlobalData.h>
 #include <JavaScriptCore/RuntimeFlags.h>
-#include <JavaScriptCore/SourceTaintedOrigin.h>
+#include <JavaScriptCore/SourceTaintedness.h>
 #include <JavaScriptCore/StructureCache.h>
 #include <JavaScriptCore/Watchpoint.h>
 #include <JavaScriptCore/WeakGCMap.h>
@@ -40,19 +40,6 @@
 #include <wtf/FixedVector.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/WeakPtr.h>
-
-#if USE(APPLE_INTERNAL_SDK)
-// FIXME: Properly support using WKA in modules.
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wnon-modular-include-in-module"
-#include <WebKitAdditions/JSGlobalObjectAdditions.h>
-#pragma clang diagnostic pop
-#else
-#define JS_GLOBAL_OBJECT_ADDITIONS_1
-#define JS_GLOBAL_OBJECT_ADDITIONS_2
-#define JS_GLOBAL_OBJECT_ADDITIONS_3
-#define JS_GLOBAL_OBJECT_ADDITIONS_4
-#endif
 
 struct OpaqueJSClass;
 struct OpaqueJSClassContextData;
@@ -236,20 +223,35 @@ FOR_EACH_WEBASSEMBLY_CONSTRUCTOR_TYPE(DECLARE_SIMPLE_BUILTIN_TYPE)
 
 #undef DECLARE_SIMPLE_BUILTIN_TYPE
 
+#if ENABLE(AOT)
+namespace AOT {
+struct Instance;
+}
+#endif
+
 class JSGlobalObject : public JSSegmentedVariableObject {
 private:
     // m_vm must be a pointer (instead of a reference) because the JSCLLIntOffsetsExtractor
     // cannot handle it being a reference.
     VM* const m_vm;
+#if ENABLE(AOT)
+    AOT::Instance* m_aotInstance { nullptr };
+    JS_EXPORT_PRIVATE void didChangeMicrotaskQueueing();
+#endif
     Debugger* m_debugger { nullptr };
     QueuedTaskResult m_microtaskRunnability { QueuedTaskResult::Executed };
     bool m_associatedContextIsFullyActive { true };
     bool m_canFastQueueMicrotask { true };
+    bool m_typedArraysInterceptIndexedStores { false };
     Ref<MicrotaskQueue> m_microtaskQueue;
 
     ALWAYS_INLINE void updateCanFastQueueMicrotask()
     {
         m_canFastQueueMicrotask = m_associatedContextIsFullyActive && !m_debugger;
+#if ENABLE(AOT)
+        if (m_vm->hasCompiledCode())
+            didChangeMicrotaskQueueing();
+#endif
     }
 
 // Our hashtable code-generator tries to access these properties, so we make them public.
@@ -264,8 +266,6 @@ public:
     WriteBarrier<JSCallee> m_globalCallee;
     WriteBarrier<JSCallee> m_zombieFrameCallee;
     WriteBarrier<JSCallee> m_evalCallee;
-
-    JS_GLOBAL_OBJECT_ADDITIONS_1;
 
     LazyClassStructure m_evalErrorStructure;
     LazyClassStructure m_rangeErrorStructure;
@@ -313,6 +313,10 @@ public:
     WriteBarrier<IntlCollator> m_cachedLocaleCompareCollator;
     String m_cachedLocaleCompareCollatorLocale;
     uint64_t m_cachedLocaleCompareCollatorLanguagesEpoch { 0 };
+
+    WriteBarrier<IntlNumberFormat> m_cachedToLocaleStringNumberFormat;
+    String m_cachedToLocaleStringNumberFormatLocale;
+    uint64_t m_cachedToLocaleStringNumberFormatLanguagesEpoch { 0 };
 
     LazyClassStructure m_durationStructure;
     LazyClassStructure m_instantStructure;
@@ -395,6 +399,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrierStructureID m_internalFieldTupleStructure;
+#endif
+#if ENABLE(FFI)
     LazyProperty<JSGlobalObject, Structure> m_ffiFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_ffiCallbackStructure;
 #endif
@@ -527,6 +533,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<InternalFieldTuple> m_asyncContextData;
+#endif
+#if ENABLE(FFI)
     std::unique_ptr<FFI::FFIContext> m_ffiContext;
 #endif
 
@@ -622,9 +630,9 @@ public:
     void installObjectPropertyChangeAdaptiveWatchpoint(const ObjectPropertyCondition&, InlineWatchpointSet&);
     void installChainedWatchpoint(InlineWatchpointSet& from, InlineWatchpointSet& to);
 
-    inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& NODELETE typedArrayConstructorSpeciesAbsenceWatchpoint(TypedArrayType);
-    inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& NODELETE typedArrayPrototypeSymbolIteratorAbsenceWatchpoint(TypedArrayType);
-    inline std::unique_ptr<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>>& NODELETE typedArrayPrototypeConstructorWatchpoint(TypedArrayType);
+    inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& LEGACY_NODELETE typedArrayConstructorSpeciesAbsenceWatchpoint(TypedArrayType);
+    inline std::unique_ptr<ObjectAdaptiveStructureWatchpoint>& LEGACY_NODELETE typedArrayPrototypeSymbolIteratorAbsenceWatchpoint(TypedArrayType);
+    inline std::unique_ptr<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>>& LEGACY_NODELETE typedArrayPrototypeConstructorWatchpoint(TypedArrayType);
 
     void addWeakTicket(DeferredWorkTimer::Ticket&);
     void clearWeakTickets();
@@ -689,7 +697,7 @@ public:
     bool isSetPrototypeAddFastAndNonObservable();
     bool isArgumentsPrototypeIteratorProtocolFastAndNonObservable();
 
-#if ENABLE(DFG_JIT)
+#if ENABLE(DFG_JIT) || ENABLE(AOT)
     using ReferencedGlobalPropertyWatchpointSets = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Ref<WatchpointSet>, IdentifierRepHash>;
     ReferencedGlobalPropertyWatchpointSets m_referencedGlobalPropertyWatchpointSets;
     ConcurrentJSLock m_referencedGlobalPropertyWatchpointSetsLock;
@@ -792,7 +800,7 @@ public:
 #endif
 
     bool hasDebugger() const { return m_debugger; }
-    bool NODELETE hasInteractiveDebugger() const;
+    bool LEGACY_NODELETE hasInteractiveDebugger() const;
     const RuntimeFlags& runtimeFlags() const LIFETIME_BOUND { return m_runtimeFlags; }
 
 #if ENABLE(DFG_JIT)
@@ -835,7 +843,7 @@ public:
 
     JSScope* globalScopeExtension() LIFETIME_BOUND { return m_globalScopeExtension.get(); }
     void setGlobalScopeExtension(JSScope*);
-    void NODELETE clearGlobalScopeExtension();
+    void LEGACY_NODELETE clearGlobalScopeExtension();
 
     JSCallee* globalCallee() LIFETIME_BOUND { return m_globalCallee.get(); }
     JSCallee* evalCallee() LIFETIME_BOUND { return m_evalCallee.get(); }
@@ -861,6 +869,7 @@ public:
     IntlDateTimeFormat* defaultDateFormat() const LIFETIME_BOUND { return m_defaultDateFormat.get(this); }
     IntlDateTimeFormat* defaultTimeFormat() const LIFETIME_BOUND { return m_defaultTimeFormat.get(this); }
     IntlNumberFormat* defaultNumberFormat() const LIFETIME_BOUND { return m_defaultNumberFormat.get(this); }
+    IntlNumberFormat* cachedToLocaleStringNumberFormat(JSString* locale);
 
     NullGetterFunction* nullGetterFunction() const LIFETIME_BOUND { return m_nullGetterFunction.get(); }
     NullSetterFunction* nullSetterFunction() const LIFETIME_BOUND { return m_nullSetterFunction.get(); }
@@ -979,6 +988,9 @@ public:
     Structure* arrayStructureForIndexingTypeDuringAllocation(JSGlobalObject* globalObject, IndexingType indexingType, JSValue newTarget) const;
     inline Structure* arrayStructureForProfileDuringAllocation(JSGlobalObject*, ArrayAllocationProfile*, JSValue newTarget) const;
         
+    // What JSObject::makePropertiesImmutable() turns an original array structure into: the same (no) properties, the same prototype.
+    inline bool isOriginalArrayStructureWithImmutableProperties(Structure*); // Defined in JSGlobalObjectInlines.h
+
     bool isOriginalArrayStructure(Structure* structure)
     {
         return originalArrayStructureForIndexingType(structure->indexingMode() | IsArray) == structure;
@@ -1133,6 +1145,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     Structure* internalFieldTupleStructure() const { return m_internalFieldTupleStructure.get(); }
+#endif
+#if ENABLE(FFI)
     Structure* ffiFunctionStructure() const { return m_ffiFunctionStructure.get(this); }
     Structure* ffiCallbackStructure() const { return m_ffiCallbackStructure.get(this); }
     JS_EXPORT_PRIVATE FFI::FFIContext& ffiContext();
@@ -1141,18 +1155,26 @@ public:
     JS_EXPORT_PRIVATE void setInspectable(bool);
     JS_EXPORT_PRIVATE bool inspectable() const;
 
-    void NODELETE setIsITML();
+    void LEGACY_NODELETE setIsITML();
 
     RegExpGlobalData& regExpGlobalData() LIFETIME_BOUND { return m_regExpGlobalData; }
     static constexpr ptrdiff_t regExpGlobalDataOffset() { return OBJECT_OFFSETOF(JSGlobalObject, m_regExpGlobalData); }
 
     static constexpr ptrdiff_t offsetOfGlobalThis() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalThis); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(JSGlobalObject, m_vm); }
+#if ENABLE(AOT)
+    // Compiled code runs some jobs without queueing them. True where a job would go straight into the queue and the queue would run it.
+    bool canFastQueueMicrotask() const { return m_canFastQueueMicrotask && m_microtaskRunnability == QueuedTaskResult::Executed; }
+    AOT::Instance* aotInstance() const { return m_aotInstance; }
+    void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }
+    static constexpr ptrdiff_t offsetOfAOTInstance() { return OBJECT_OFFSETOF(JSGlobalObject, m_aotInstance); }
+#endif
     static constexpr ptrdiff_t offsetOfGlobalLexicalEnvironment() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalEnvironment); }
     static constexpr ptrdiff_t offsetOfGlobalLexicalBindingEpoch() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalBindingEpoch); }
     static constexpr ptrdiff_t offsetOfCanDoASCIIUCADUCETLocaleCompare() { return OBJECT_OFFSETOF(JSGlobalObject, m_canDoASCIIUCADUCETLocaleCompare); }
     static constexpr ptrdiff_t offsetOfVarInjectionWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varInjectionWatchpointSet); }
     static constexpr ptrdiff_t offsetOfArrayIteratorProtocolWatchpointSet() { return OBJECT_OFFSETOF(JSGlobalObject, m_arrayIteratorProtocolWatchpointSet); }
+    static constexpr ptrdiff_t offsetOfStringIteratorProtocolWatchpointSet() { return OBJECT_OFFSETOF(JSGlobalObject, m_stringIteratorProtocolWatchpointSet); }
     static constexpr ptrdiff_t offsetOfVarReadOnlyWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varReadOnlyWatchpointSet); }
     static constexpr ptrdiff_t offsetOfFunctionProtoHasInstanceSymbolFunction() { return OBJECT_OFFSETOF(JSGlobalObject, m_functionProtoHasInstanceSymbolFunction); }
     static constexpr ptrdiff_t offsetOfPerformProxyObjectHasFunction() { return OBJECT_OFFSETOF(JSGlobalObject, m_performProxyObjectHasFunction); }
@@ -1170,7 +1192,7 @@ public:
 
 #if ENABLE(REMOTE_INSPECTOR)
     // FIXME: <http://webkit.org/b/246237> Local inspection should be controlled by `inspectable` API.
-    Inspector::JSGlobalObjectInspectorController& NODELETE inspectorController() const;
+    Inspector::JSGlobalObjectInspectorController& LEGACY_NODELETE inspectorController() const;
     JSGlobalObjectDebuggable& inspectorDebuggable() { return *m_inspectorDebuggable; }
 #endif
 
@@ -1179,8 +1201,8 @@ public:
     static constexpr ptrdiff_t globalLexicalBindingEpochOffset() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalBindingEpoch); }
     unsigned* addressOfGlobalLexicalBindingEpoch() LIFETIME_BOUND { return &m_globalLexicalBindingEpoch; }
 
-    JS_EXPORT_PRIVATE void NODELETE setConsoleClient(WeakPtr<ConsoleClient>&&);
-    JS_EXPORT_PRIVATE CheckedPtr<ConsoleClient> NODELETE consoleClient() const;
+    JS_EXPORT_PRIVATE void LEGACY_NODELETE setConsoleClient(WeakPtr<ConsoleClient>&&);
+    JS_EXPORT_PRIVATE CheckedPtr<ConsoleClient> LEGACY_NODELETE consoleClient() const;
 
     void setName(const String&);
     const String& name() const LIFETIME_BOUND { return m_name; }
@@ -1193,7 +1215,7 @@ public:
     inline void setUnhandledRejectionCallback(VM&, JSObject*);
     JSObject* unhandledRejectionCallback() const LIFETIME_BOUND { return m_unhandledRejectionCallback.get(); }
 
-    static void NODELETE reportUncaughtExceptionAtEventLoop(JSGlobalObject*, Exception*);
+    static void LEGACY_NODELETE reportUncaughtExceptionAtEventLoop(JSGlobalObject*, Exception*);
     static JSObject* currentScriptExecutionOwner(JSGlobalObject* global) { return global; }
     static ScriptExecutionStatus scriptExecutionStatus(JSGlobalObject*, JSObject*) { return ScriptExecutionStatus::Running; }
     static void reportViolationForUnsafeEval(JSGlobalObject*, const String&) { }
@@ -1206,6 +1228,7 @@ public:
     inline Structure* arrayBufferStructureConcurrently(ArrayBufferSharingMode) const;
     template<ArrayBufferSharingMode sharingMode> Structure* arrayBufferStructureWithSharingMode() const { return arrayBufferStructure(sharingMode); }
     inline JSObject* arrayBufferConstructor(ArrayBufferSharingMode) const;
+    JS_EXPORT_PRIVATE void exposeSharedArrayBuffer();
     inline GetterSetter* arrayBufferSpeciesGetterSetter(ArrayBufferSharingMode) const;
 
 #define DEFINE_ACCESSORS_FOR_SIMPLE_TYPE(capitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) \
@@ -1258,8 +1281,10 @@ public:
     {
         return m_havingABadTimeWatchpointSet->hasBeenInvalidated();
     }
+    bool typedArraysInterceptIndexedStores() const { return m_typedArraysInterceptIndexedStores; }
         
     void haveABadTime(VM&);
+    void haveABadTime(VM&, JSObject* interceptor);
 
     void notifyArrayBufferDetaching();
 
@@ -1339,7 +1364,7 @@ public:
     WriteBarrier<JSObject>* addressOfGlobalThis() LIFETIME_BOUND { return &m_globalThis; }
     OptionSet<CodeGenerationMode> defaultCodeGenerationMode() const;
 
-    FunctionExecutable* tryGetCachedFunctionExecutableForFunctionConstructor(const Identifier& name, StringView program, const SourceOrigin&, SourceTaintedOrigin, const String& sourceURL, const TextPosition& startPosition, LexicallyScopedFeatures, FunctionConstructionMode);
+    FunctionExecutable* tryGetCachedFunctionExecutableForFunctionConstructor(const Identifier& name, StringView program, const SourceOrigin&, SourceTaintedness, const String& sourceURL, const TextPosition& startPosition, LexicallyScopedFeatures, FunctionConstructionMode);
     void cachedFunctionExecutableForFunctionConstructor(FunctionExecutable*);
 
     static inline Structure* createStructure(VM&, JSValue prototype);
@@ -1382,7 +1407,14 @@ public:
     ImportMap& importMap() { return m_importMap.get(); }
 
     QueuedTaskResult microtaskRunnability() const { return m_microtaskRunnability; }
-    void setMicrotaskRunnability(QueuedTaskResult runnability) { m_microtaskRunnability = runnability; }
+    void setMicrotaskRunnability(QueuedTaskResult runnability)
+    {
+        m_microtaskRunnability = runnability;
+#if ENABLE(AOT)
+        if (m_vm->hasCompiledCode())
+            didChangeMicrotaskQueueing();
+#endif
+    }
 
     void setAssociatedContextIsFullyActive(bool value)
     {
@@ -1406,7 +1438,7 @@ protected:
 private:
     friend class LLIntOffsetsExtractor;
 
-    static const GlobalObjectMethodTable* NODELETE baseGlobalObjectMethodTable();
+    static const GlobalObjectMethodTable* LEGACY_NODELETE baseGlobalObjectMethodTable();
 
     void notifyArrayBufferDetachingSlow();
     void fireWatchpointAndMakeAllArrayStructuresSlowPut(VM&);

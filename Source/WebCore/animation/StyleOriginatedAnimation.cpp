@@ -45,7 +45,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(StyleOriginatedAnimation);
 
 StyleOriginatedAnimation::StyleOriginatedAnimation(const Styleable& styleable)
-    : WebAnimation(styleable.element.document())
+    : WebAnimation(protect(styleable.element.document()))
     , m_owningElement(styleable.element)
     , m_owningPseudoElementIdentifier(styleable.pseudoElementIdentifier)
 {
@@ -60,13 +60,13 @@ const std::optional<const Styleable> StyleOriginatedAnimation::owningElement() c
     return std::nullopt;
 }
 
-void StyleOriginatedAnimation::tick()
+void StyleOriginatedAnimation::tick(WebAnimation::ShouldDispatchProgressEvent shouldDispatchProgressEvent)
 {
     LOG_WITH_STREAM(Animations, stream << "StyleOriginatedAnimation::tick for element " << m_owningElement);
 
     bool wasRelevant = isRelevant();
     
-    WebAnimation::tick();
+    WebAnimation::tick(shouldDispatchProgressEvent);
     invalidateDOMEvents();
 
     // If a style-originated animation transitions from a non-idle state to an idle state, it means it was

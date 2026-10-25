@@ -64,9 +64,11 @@ JSC_DECLARE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void*
 
 #if ENABLE(WEBASSEMBLY_OMGJIT)
 void loadValuesIntoBuffer(Probe::Context&, const StackMap&, Wasm::Context::ScratchBufferEntry*);
+#endif
+#if ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmTriggerTierUpNow, void, (CallFrame*, JSWebAssemblyInstance*));
 #endif
-#if ENABLE(WEBASSEMBLY_OMGJIT) || ENABLE(WEBASSEMBLY_BBQJIT)
+#if ENABLE(WEBASSEMBLY_BBQJIT)
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmTriggerOSREntryNow, void, (Probe::Context&));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmLoopOSREnterBBQJIT, void, (Probe::Context&));
 #endif
@@ -138,7 +140,6 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmArrayFill4B, void, (void* payloa
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmArrayFill8B, void, (void* payload, uint64_t value, size_t elementCount));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmArrayFill16B, void, (void* payload, uint64_t lane0, uint64_t lane1, size_t elementCount));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmArrayFillRefs, void, (uint64_t* payload, uint64_t value, size_t elementCount));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmArrayCopyRefs, void, (uint64_t* dst, const uint64_t* src, size_t byteCount));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmArrayInitElem, UCPUStrictInt32, (JSWebAssemblyInstance*, EncodedJSValue, uint32_t, uint32_t, uint32_t, uint32_t));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmArrayInitData, UCPUStrictInt32, (JSWebAssemblyInstance*, EncodedJSValue, uint32_t, uint32_t, uint32_t, uint32_t));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationWasmAnyConvertExtern, EncodedJSValue, (EncodedJSValue));

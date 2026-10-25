@@ -1002,7 +1002,7 @@ msgstr "動画タイムスクラバーサム"
 
 #: ../../LocalizedStrings.cpp:1165
 msgid "seek movie back 30 seconds"
-msgstr "30 秒戻って動画をシークする"
+msgstr "動画を 30 秒戻す"
 
 #: ../../LocalizedStrings.cpp:1167
 msgid "resume real time streaming"
@@ -1668,7 +1668,7 @@ msgstr "プラグインを有効にする"
 
 #: ../../../../WebKit/UIProcess/API/glib/WebKitSettings.cpp:797
 msgid "Enable embedded plugin objects."
-msgstr "埋め込みのプラグインオブジェクトを有効します。"
+msgstr "埋め込みのプラグインオブジェクトを有効にします。"
 
 #: ../../../../WebKit/UIProcess/API/glib/WebKitSettings.cpp:811
 msgid "Enable Java"
@@ -1723,7 +1723,7 @@ msgstr "Serif フォントファミリー"
 #: ../../../../WebKit/UIProcess/API/glib/WebKitSettings.cpp:885
 msgid "The font family used as the default for content using serif font."
 msgstr ""
-"serif フォント使用するコンテンツのデフォルトとして使用するフォントファミリー"
+"serif フォントを使用するコンテンツのデフォルトとして使用するフォントファミリー"
 "です。"
 
 #: ../../../../WebKit/UIProcess/API/glib/WebKitSettings.cpp:897
@@ -1743,7 +1743,7 @@ msgstr "Cursive フォントファミリー"
 #: ../../../../WebKit/UIProcess/API/glib/WebKitSettings.cpp:911
 msgid "The font family used as the default for content using cursive font."
 msgstr ""
-"cursive フォントを使用するコンテンツのデフォルトして使用するフォントファミ"
+"cursive フォントを使用するコンテンツのデフォルトとして使用するフォントファミ"
 "リーです。"
 
 #: ../../../../WebKit/UIProcess/API/glib/WebKitSettings.cpp:923
@@ -1842,11 +1842,11 @@ msgstr "サイズ変更可能なテキスト領域を有効にするかどうか
 
 #: ../../../../WebKit/UIProcess/API/glib/WebKitSettings.cpp:1067
 msgid "Enable tabs to links"
-msgstr "リンクへのタブを有効にする"
+msgstr "Tab キーによるリンク間の移動を有効にする"
 
 #: ../../../../WebKit/UIProcess/API/glib/WebKitSettings.cpp:1068
 msgid "Whether to enable tabs to links"
-msgstr "リンクへのタブを有効にするかどうかです"
+msgstr "Tab キーによるリンク間の移動を有効にするかどうかです"
 
 #: ../../../../WebKit/UIProcess/API/glib/WebKitSettings.cpp:1083
 msgid "Enable DNS prefetching"
@@ -1944,7 +1944,7 @@ msgstr "合成インジケーターの描画"
 
 #: ../../../../WebKit/UIProcess/API/glib/WebKitSettings.cpp:1261
 msgid "Whether to draw compositing borders and repaint counters"
-msgstr "合成境界線を引いてカウンターを描画し直すかどうかです"
+msgstr "合成境界線と再描画カウンターを描画するかどうかです"
 
 #: ../../../../WebKit/UIProcess/API/glib/WebKitSettings.cpp:1281
 msgid "Enable Site Specific Quirks"
@@ -1952,7 +1952,7 @@ msgstr "サイト固有の Quirks を有効にする"
 
 #: ../../../../WebKit/UIProcess/API/glib/WebKitSettings.cpp:1282
 msgid "Enables the site-specific compatibility workarounds"
-msgstr "サイト固有の互換性のある回避方法を有効にします"
+msgstr "サイト固有の互換性回避策を有効にします"
 
 #: ../../../../WebKit/UIProcess/API/glib/WebKitSettings.cpp:1302
 msgid "Enable page cache"

@@ -34,7 +34,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(PathImpl);
 
 using PathImplObserversMap = HashMap<const PathImpl*, WeakHashSet<RenderingResourceObserver>>;
 static DataMutex<PathImplObserversMap>* gLockedPathImplObserversMap;
-static DataMutex<PathImplObserversMap>& NODELETE lockedPathImplObserversMapSingleton()
+static DataMutex<PathImplObserversMap>& LEGACY_NODELETE lockedPathImplObserversMapSingleton()
 {
     if (!gLockedPathImplObserversMap)
         gLockedPathImplObserversMap = new DataMutex<PathImplObserversMap>;
@@ -122,7 +122,7 @@ Vector<PathSegment, 10> PathImpl::beziersForRoundedRect(const FloatRoundedRect& 
     return segments;
 }
 
-void PathImpl::applySegments(const PathSegmentApplier& applier) const
+void PathImpl::applySegments(NOESCAPE const PathSegmentApplier& applier) const
 {
     applyElements([&](const PathElement& pathElement) {
         switch (pathElement.type) {

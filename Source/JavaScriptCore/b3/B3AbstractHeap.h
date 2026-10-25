@@ -48,7 +48,7 @@ public:
     {
     }
 
-    AbstractHeap(AbstractHeap* parent, const char* heapName, ptrdiff_t offset = 0, Mutability = Mutability::Mutable);
+    JS_EXPORT_PRIVATE AbstractHeap(AbstractHeap* parent, const char* heapName, ptrdiff_t offset = 0, Mutability = Mutability::Mutable);
 
     bool isInitialized() const { return !!m_heapName; }
 
@@ -60,7 +60,9 @@ public:
         m_mutability = mutability;
     }
 
-    void changeParent(AbstractHeap* parent);
+    JS_EXPORT_PRIVATE void changeParent(AbstractHeap* parent);
+    size_t numberOfChildren() const { return m_children.size(); }
+    void removeChildrenFrom(size_t first);
 
     AbstractHeap* parent() const
     {
@@ -68,7 +70,7 @@ public:
         return m_parent;
     }
 
-    const Vector<AbstractHeap*>& children() const;
+    const Vector<AbstractHeap*>& children() const LIFETIME_BOUND { return m_children; }
 
     const char* heapName() const
     {
@@ -80,11 +82,13 @@ public:
     {
         // This will not have a valid value until after all lowering is done. Do associate an
         // AbstractHeap with a Value*, use AbstractHeapRepository::decorateXXX().
-        if (!m_range)
+        if (!m_range || m_staysAcrossProcedures)
             badRangeError();
 
         return m_range;
     }
+
+    bool hasRange() const { return !!m_range; }
 
     Mutability mutability() const
     {
@@ -100,12 +104,16 @@ public:
     }
 
     void compute(unsigned begin = 0);
+    unsigned numberOfLeaves() const;
+    bool isWithin(const AbstractHeap&) const;
+    bool staysAcrossProcedures() const { return m_staysAcrossProcedures; }
+    void markAsStayingAcrossProcedures();
 
     // Print information about just this heap.
     void shallowDump(PrintStream&) const;
 
     // Print information about this heap and its ancestors. This is the default.
-    void dump(PrintStream&) const;
+    JS_EXPORT_PRIVATE void dump(PrintStream&) const;
 
     // Print information about this heap and its descendants. This is a multi-line dump.
     void deepDump(PrintStream&, unsigned indent = 0) const;
@@ -113,22 +121,24 @@ public:
 private:
     friend class AbstractHeapRepository;
 
-    NO_RETURN_DUE_TO_CRASH void badRangeError() const;
+    JS_EXPORT_PRIVATE NO_RETURN_DUE_TO_CRASH void badRangeError() const;
 
     AbstractHeap* m_parent { nullptr };
     Vector<AbstractHeap*> m_children;
     intptr_t m_offset { 0 };
     Mutability m_mutability { Mutability::Mutable };
     HeapRange m_range;
+    bool m_staysAcrossProcedures { false };
     const char* m_heapName { nullptr };
 };
 
 class IndexedAbstractHeap {
 public:
-    IndexedAbstractHeap(AbstractHeap* parent, const char* heapName, ptrdiff_t offset, size_t elementSize);
-    ~IndexedAbstractHeap();
+    JS_EXPORT_PRIVATE IndexedAbstractHeap(AbstractHeap* parent, const char* heapName, ptrdiff_t offset, size_t elementSize);
+    JS_EXPORT_PRIVATE ~IndexedAbstractHeap();
 
     AbstractHeap& atAnyIndex() LIFETIME_BOUND { return m_heapForAnyIndex; }
+    const AbstractHeap& atAnyIndex() const LIFETIME_BOUND { return m_heapForAnyIndex; }
 
     const AbstractHeap& at(ptrdiff_t index)
     {
@@ -144,6 +154,11 @@ public:
     ptrdiff_t offset() const { return m_offset; }
     size_t elementSize() const { return m_elementSize; }
 
+    JS_EXPORT_PRIVATE void retainCurrentHeaps();
+    JS_EXPORT_PRIVATE void removeTemporaryHeaps();
+    bool hasTemporaryHeaps() const { return m_heapForAnyIndex.numberOfChildren() != m_retainedHeapCount; }
+    size_t numberOfRetainedHeaps() const { return m_retainedHeapCount; }
+
 private:
     const AbstractHeap& returnInitialized(AbstractHeap& field, ptrdiff_t index)
     {
@@ -152,8 +167,8 @@ private:
         return field;
     }
 
-    const AbstractHeap& atSlow(ptrdiff_t index);
-    void initialize(AbstractHeap& field, ptrdiff_t index);
+    JS_EXPORT_PRIVATE const AbstractHeap& atSlow(ptrdiff_t index);
+    JS_EXPORT_PRIVATE void initialize(AbstractHeap& field, ptrdiff_t index);
 
     AbstractHeap m_heapForAnyIndex;
     size_t m_heapNameLength;
@@ -169,6 +184,7 @@ private:
 
     MapType m_largeIndices;
     Vector<ASCIICString, 16> m_largeIndexNames;
+    size_t m_retainedHeapCount { 0 };
 };
 
 // A numbered abstract heap is like an indexed abstract heap, except that you
@@ -182,8 +198,13 @@ public:
     ~NumberedAbstractHeap();
 
     AbstractHeap& atAnyNumber() LIFETIME_BOUND { return m_indexedHeap.atAnyIndex(); }
+    const AbstractHeap& atAnyNumber() const LIFETIME_BOUND { return m_indexedHeap.atAnyIndex(); }
 
     const AbstractHeap& at(ptrdiff_t number) LIFETIME_BOUND { return m_indexedHeap.at(number); }
+    void retainCurrentHeaps() { m_indexedHeap.retainCurrentHeaps(); }
+    void removeTemporaryHeaps() { m_indexedHeap.removeTemporaryHeaps(); }
+    bool hasTemporaryHeaps() const { return m_indexedHeap.hasTemporaryHeaps(); }
+    size_t numberOfRetainedHeaps() const { return m_indexedHeap.numberOfRetainedHeaps(); }
     const AbstractHeap& operator[](ptrdiff_t number) { return at(number); }
 
     void dump(PrintStream&);
@@ -199,7 +220,11 @@ public:
     AbsoluteAbstractHeap(AbstractHeap* parent, const char* heapName);
     ~AbsoluteAbstractHeap();
 
-    const AbstractHeap& atAnyAddress() LIFETIME_BOUND { return m_indexedHeap.atAnyIndex(); }
+    AbstractHeap& atAnyAddress() LIFETIME_BOUND { return m_indexedHeap.atAnyIndex(); }
+    void retainCurrentHeaps() { m_indexedHeap.retainCurrentHeaps(); }
+    void removeTemporaryHeaps() { m_indexedHeap.removeTemporaryHeaps(); }
+    bool hasTemporaryHeaps() const { return m_indexedHeap.hasTemporaryHeaps(); }
+    size_t numberOfRetainedHeaps() const { return m_indexedHeap.numberOfRetainedHeaps(); }
 
     const AbstractHeap& at(const void* address)
     {

@@ -31,10 +31,10 @@
     DispatchedTo=UI
 ]
 messages -> WebExtensionContext {
-#if PLATFORM(COCOA)
     // Runtime Error Reporting
     [Validator=isLoaded] DidEncounterScriptError(String message, String sourceURL, uint32_t lineNumber, uint32_t columnNumber, WebKit::WebExtensionContentWorldType worldType)
 
+#if PLATFORM(COCOA)
     // Action APIs
     [Validator=isActionMessageAllowed] ActionGetTitle(std::optional<WebKit::WebExtensionWindowIdentifier> windowIdentifier, std::optional<WebKit::WebExtensionTabIdentifier> tabIdentifier) -> (std::expected<String, WebKit::WebExtensionError> result)
     [Validator=isActionMessageAllowed] ActionSetTitle(std::optional<WebKit::WebExtensionWindowIdentifier> windowIdentifier, std::optional<WebKit::WebExtensionTabIdentifier> tabIdentifier, String title) -> (std::expected<void, WebKit::WebExtensionError> result)
@@ -53,7 +53,7 @@ messages -> WebExtensionContext {
     [Validator=isAlarmsMessageAllowed] AlarmsGet(String name) -> (struct std::optional<WebKit::WebExtensionAlarmParameters> alarmInfo)
     [Validator=isAlarmsMessageAllowed] AlarmsClear(String name) -> (bool success)
     [Validator=isAlarmsMessageAllowed] AlarmsGetAll() -> (Vector<WebKit::WebExtensionAlarmParameters> alarms)
-    [Validator=isAlarmsMessageAllowed] AlarmsClearAll() -> (bool success)
+    [Validator=isAlarmsMessageAllowed] AlarmsClearAll() -> ()
 
 #if PLATFORM(COCOA)
 #if ENABLE(WK_WEB_EXTENSIONS_BOOKMARKS)
@@ -114,7 +114,11 @@ messages -> WebExtensionContext {
 
 #if ENABLE(WK_WEB_EXTENSIONS_NOTIFICATIONS)
     // Notifications APIs
-    [Validator=isNotificationsMessageAllowed] NotificationsCreate(struct WebKit::WebExtensionNotificationParameters parameters) -> ()
+    [Validator=isNotificationsMessageAllowed] NotificationsCreate(struct WebKit::WebExtensionNotificationParameters parameters) -> (std::expected<void, WebKit::WebExtensionError> result)
+    [Validator=isNotificationsMessageAllowed] NotificationsUpdate(String identifier, struct WebKit::WebExtensionNotificationParameters parameters) -> (std::expected<bool, WebKit::WebExtensionError> result)
+    [Validator=isNotificationsMessageAllowed] NotificationsClear(String identifier) -> (std::expected<bool, WebKit::WebExtensionError> result)
+    [Validator=isNotificationsMessageAllowed] NotificationsGetAll() -> (Vector<String> identifiers)
+    [Validator=isNotificationsMessageAllowed] NotificationsGetPermissionLevel() -> (std::expected<String, WebKit::WebExtensionError> result)
 #endif
 
 #if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)

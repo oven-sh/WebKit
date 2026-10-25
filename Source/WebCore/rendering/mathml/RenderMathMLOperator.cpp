@@ -38,6 +38,7 @@
 #include "RenderBlockFlow.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
+#include "RenderElementInlines.h"
 #include "RenderText.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include <cmath>
@@ -66,7 +67,7 @@ RenderMathMLOperator::~RenderMathMLOperator() = default;
 
 MathMLOperatorElement& RenderMathMLOperator::element() const
 {
-    return static_cast<MathMLOperatorElement&>(nodeForNonAnonymous());
+    return downcast<MathMLOperatorElement>(nodeForNonAnonymous());
 }
 
 char32_t RenderMathMLOperator::singleCharCodePoint() const
@@ -97,16 +98,18 @@ bool RenderMathMLOperator::isLargeOperatorInDisplayStyle() const
 LayoutUnit RenderMathMLOperator::leadingSpace() const
 {
     // FIXME: Negative leading spaces must be implemented (https://webkit.org/b/124830).
-    LayoutUnit leadingSpace = toUserUnits(protect(element())->defaultLeadingSpace(), style(), 0);
-    leadingSpace = toUserUnits(protect(element())->leadingSpace(), style(), leadingSpace);
+    CheckedRef style = this->style();
+    LayoutUnit leadingSpace = toUserUnits(protect(element())->defaultLeadingSpace(), style, 0);
+    leadingSpace = toUserUnits(protect(element())->leadingSpace(), style, leadingSpace);
     return std::max<LayoutUnit>(0, leadingSpace);
 }
 
 LayoutUnit RenderMathMLOperator::trailingSpace() const
 {
     // FIXME: Negative trailing spaces must be implemented (https://webkit.org/b/124830).
-    LayoutUnit trailingSpace = toUserUnits(protect(element())->defaultTrailingSpace(), style(), 0);
-    trailingSpace = toUserUnits(protect(element())->trailingSpace(), style(), trailingSpace);
+    CheckedRef style = this->style();
+    LayoutUnit trailingSpace = toUserUnits(protect(element())->defaultTrailingSpace(), style, 0);
+    trailingSpace = toUserUnits(protect(element())->trailingSpace(), style, trailingSpace);
     return std::max<LayoutUnit>(0, trailingSpace);
 }
 
@@ -116,7 +119,7 @@ LayoutUnit RenderMathMLOperator::minSize() const
     // percentage values are relative to the unstretched size ("height of g").
     // If the unstretched size is unavailable (e.g. base glyph not found),
     // percentages and the default resolve to 0 (no constraint).
-    return toUserUnits(protect(element())->minSize(), style(), m_mathOperator.unstretchedSize());
+    return toUserUnits(protect(element())->minSize(), protect(style()), m_mathOperator.unstretchedSize());
 }
 
 LayoutUnit RenderMathMLOperator::maxSize() const
@@ -127,7 +130,7 @@ LayoutUnit RenderMathMLOperator::maxSize() const
     if (length.type == MathMLElement::LengthType::ParsingFailed)
         return intMaxForLayoutUnit;
 
-    return toUserUnits(length, style(), m_mathOperator.unstretchedSize());
+    return toUserUnits(length, protect(style()), m_mathOperator.unstretchedSize());
 }
 
 bool RenderMathMLOperator::isVertical() const
@@ -171,7 +174,7 @@ void RenderMathMLOperator::stretchTo(LayoutUnit heightAboveBaseline, LayoutUnit 
     m_stretchHeightAboveBaseline *= aspect;
     m_stretchDepthBelowBaseline *= aspect;
 
-    m_mathOperator.stretchTo(style(), m_stretchHeightAboveBaseline + m_stretchDepthBelowBaseline);
+    m_mathOperator.stretchTo(protect(style()), m_stretchHeightAboveBaseline + m_stretchDepthBelowBaseline);
 
     setLogicalHeight(m_mathOperator.ascent() + m_mathOperator.descent() + borderAndPaddingLogicalHeight());
 }
@@ -186,7 +189,7 @@ void RenderMathMLOperator::stretchTo(LayoutUnit width)
         return;
 
     m_stretchWidth = width;
-    m_mathOperator.stretchTo(style(), width);
+    m_mathOperator.stretchTo(protect(style()), width);
 
     setLogicalWidth(leadingSpace() + width + trailingSpace() + borderAndPaddingLogicalWidth());
     setLogicalHeight(m_mathOperator.ascent() + m_mathOperator.descent() + borderAndPaddingLogicalHeight());
@@ -215,7 +218,7 @@ void RenderMathMLOperator::computeIntrinsicLogicalWidthContributions()
         preferredWidth = m_maxContentLogicalWidthContribution;
         if (isInvisibleOperator()) {
             // In some fonts, glyphs for invisible operators have nonzero width. Consequently, we subtract that width here to avoid wide gaps.
-            GlyphData data = style().fontCascade().glyphDataForCharacter(singleCharCodePoint(), false);
+            GlyphData data = protect(style().fontCascade())->glyphDataForCharacter(singleCharCodePoint(), false);
             float glyphWidth = data.font ? protect(data.font)->widthForGlyph(data.glyph) : 0;
             preferredWidth -= std::min(LayoutUnit(glyphWidth), preferredWidth);
         }
@@ -281,7 +284,7 @@ void RenderMathMLOperator::updateMathOperator()
     else
         type = MathOperator::Type::NormalOperator;
 
-    m_mathOperator.setOperator(style(), singleCharCodePoint(), type);
+    m_mathOperator.setOperator(protect(style()), singleCharCodePoint(), type);
 }
 
 void RenderMathMLOperator::updateTokenContent()
@@ -309,7 +312,7 @@ bool RenderMathMLOperator::useMathOperator() const
 void RenderMathMLOperator::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
 {
     RenderMathMLBlock::styleDidChange(diff, oldStyle);
-    m_mathOperator.reset(style());
+    m_mathOperator.reset(protect(style()));
     resetStretchSize();
 
     // MathML displaystyle can affect isLargeOperatorInDisplayStyle()
@@ -355,7 +358,7 @@ void RenderMathMLOperator::paint(PaintInfo& info, const LayoutPoint& paintOffset
     auto operatorTopLeft = paintOffset + location();
     operatorTopLeft.move((writingMode().isBidiLTR() ? leadingSpace() : trailingSpace()) + borderLeft() + paddingLeft(), borderAndPaddingBefore());
 
-    m_mathOperator.paint(style(), info, operatorTopLeft, protect(document())->deviceScaleFactor());
+    m_mathOperator.paint(usedStyle(), info, operatorTopLeft, protect(document())->deviceScaleFactor());
 }
 
 void RenderMathMLOperator::paintChildren(PaintInfo& paintInfo, const LayoutPoint& paintOffset, PaintInfo& paintInfoForChild, bool usePrintRect)

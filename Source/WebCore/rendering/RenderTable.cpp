@@ -93,7 +93,7 @@ RenderTable::RenderTable(Type type, Document& document, Style::ComputedStyle&& s
 
 RenderTable::~RenderTable() = default;
 
-RenderTableSection* NODELETE RenderTable::topSection() const
+RenderTableSection* LEGACY_NODELETE RenderTable::topSection() const
 {
     ASSERT(!needsSectionRecalc());
     if (m_head)
@@ -282,9 +282,8 @@ void RenderTable::updateLogicalWidth()
         setLogicalWidth(convertStyleLogicalWidthToComputedWidth(styleLogicalWidth, containerWidthInInlineDirection));
     else {
         // Subtract out any fixed margins from our available width for auto width tables.
-        auto zoom = style().usedZoomForLength();
-        auto marginStart = Style::evaluateMinimum<LayoutUnit>(style().marginStart(), availableLogicalWidth, zoom);
-        auto marginEnd = Style::evaluateMinimum<LayoutUnit>(style().marginEnd(), availableLogicalWidth, zoom);
+        auto marginStart = usedStyle().marginStart(availableLogicalWidth).value_or(0_lu);
+        auto marginEnd = usedStyle().marginEnd(availableLogicalWidth).value_or(0_lu);
         auto marginTotal = marginStart + marginEnd;
 
         // Subtract out our margins to get the available content width.
@@ -336,9 +335,8 @@ void RenderTable::updateLogicalWidth()
         setMarginStart(marginValues.start);
         setMarginEnd(marginValues.end);
     } else {
-        auto zoom = style().usedZoomForLength();
-        setMarginStart(Style::evaluateMinimum<LayoutUnit>(style().marginStart(), availableLogicalWidth, zoom));
-        setMarginEnd(Style::evaluateMinimum<LayoutUnit>(style().marginEnd(), availableLogicalWidth, zoom));
+        setMarginStart(usedStyle().marginStart(availableLogicalWidth).value_or(0_lu));
+        setMarginEnd(usedStyle().marginEnd(availableLogicalWidth).value_or(0_lu));
     }
 }
 
@@ -536,9 +534,6 @@ void RenderTable::layout()
         return;
 
     recalcSectionsIfNeeded();
-    // FIXME: We should do this recalc lazily in borderStart/borderEnd so that we don't have to make sure
-    // to call this before we call borderStart/borderEnd to avoid getting a stale value.
-    recalcBordersInRowDirection();
     bool sectionMoved = false;
     LayoutUnit movedSectionLogicalTop;
     unsigned sectionCount = 0;
@@ -863,7 +858,7 @@ void RenderTable::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 void RenderTable::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
     PaintPhase paintPhase = paintInfo.phase;
-    if ((paintPhase == PaintPhase::BlockBackground || paintPhase == PaintPhase::ChildBlockBackground) && hasVisibleBoxDecorations() && style().usedVisibility() == Visibility::Visible)
+    if ((paintPhase == PaintPhase::BlockBackground || paintPhase == PaintPhase::ChildBlockBackground) && hasVisibleBoxDecorations() && usedStyle().visibility() == UsedVisibility::Visible)
         paintBoxDecorations(paintInfo, paintOffset);
 
     if (paintPhase == PaintPhase::Mask) {
@@ -874,7 +869,15 @@ void RenderTable::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOffs
     if (paintPhase == PaintPhase::Accessibility)
         paintInfo.accessibilityRegionContext()->takeBounds(*this, paintOffset);
 
-    // We're done.  We don't bother painting any children.
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    if (paintPhase == PaintPhase::AXCustomColorCollectBackgrounds) {
+        LayoutRect rect(paintOffset, borderBoxSize());
+        adjustBorderBoxRectForPainting(rect);
+        paintInfo.axCustomColorBackdropContext()->recordBackdrop(*this, FloatRect { rect }, paintInfo.paintBehavior);
+    }
+#endif
+
+    // We're done. We don't bother painting any children.
     if (paintPhase == PaintPhase::BlockBackground)
         return;
     
@@ -893,7 +896,7 @@ void RenderTable::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOffs
         }
     }
     
-    if (collapseBorders() && paintPhase == PaintPhase::ChildBlockBackground && style().usedVisibility() == Visibility::Visible) {
+    if (collapseBorders() && paintPhase == PaintPhase::ChildBlockBackground && usedStyle().visibility() == UsedVisibility::Visible) {
         paintCollapsedBorderPasses(info, [&](PaintInfo& borderPaintInfo) {
             for (RenderTableSection* section = bottomSection(); section; section = sectionAbove(section)) {
                 LayoutPoint childPoint = flipForWritingModeForChild(*section, paintOffset);
@@ -903,7 +906,7 @@ void RenderTable::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOffs
     }
 
     // Paint outline.
-    if ((paintPhase == PaintPhase::Outline || paintPhase == PaintPhase::SelfOutline) && hasOutline() && style().usedVisibility() == Visibility::Visible)
+    if ((paintPhase == PaintPhase::Outline || paintPhase == PaintPhase::SelfOutline) && hasOutline() && usedStyle().visibility() == UsedVisibility::Visible)
         paintOutline(paintInfo, LayoutRect(paintOffset, borderBoxSize()));
 }
 
@@ -966,7 +969,7 @@ void RenderTable::paintBoxDecorations(PaintInfo& paintInfo, const LayoutPoint& p
 
     auto bleedAvoidance = determineBleedAvoidance(paintInfo.context());
     if (!BackgroundPainter::boxShadowShouldBeAppliedToBackground(*this, rect.location(), bleedAvoidance, { }))
-        backgroundPainter.paintBoxShadow(rect, style(), Style::ShadowStyle::Normal);
+        backgroundPainter.paintBoxShadow(rect, usedStyle(), Style::ShadowStyle::Normal);
 
     GraphicsContextStateSaver stateSaver(paintInfo.context(), false);
     if (bleedAvoidance == BleedAvoidance::UseTransparencyLayer) {
@@ -974,16 +977,16 @@ void RenderTable::paintBoxDecorations(PaintInfo& paintInfo, const LayoutPoint& p
         // into a transparency layer, and then clip that in one go (which requires setting up the clip before
         // beginning the layer).
         stateSaver.save();
-        auto borderShape = BorderShape::shapeForBorderRect(style(), rect);
+        auto borderShape = BorderShape::shapeForBorderRect(usedStyle(), rect);
         borderShape.clipToOuterShape(paintInfo.context(), style().deviceScaleFactor());
         paintInfo.context().beginTransparencyLayer(1);
     }
 
     backgroundPainter.paintBackground(rect, bleedAvoidance);
-    backgroundPainter.paintBoxShadow(rect, style(), Style::ShadowStyle::Inset);
+    backgroundPainter.paintBoxShadow(rect, usedStyle(), Style::ShadowStyle::Inset);
 
     if (style().border().hasVisibleBorderDecoration() && !collapseBorders())
-        BorderPainter { *this, paintInfo }.paintBorder(rect, style());
+        BorderPainter { *this, paintInfo }.paintBorder(rect, usedStyle());
 
     if (bleedAvoidance == BleedAvoidance::UseTransparencyLayer)
         paintInfo.context().endTransparencyLayer();
@@ -991,7 +994,7 @@ void RenderTable::paintBoxDecorations(PaintInfo& paintInfo, const LayoutPoint& p
 
 void RenderTable::paintMask(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
-    if (style().usedVisibility() != Visibility::Visible || paintInfo.phase != PaintPhase::Mask)
+    if (usedStyle().visibility() != UsedVisibility::Visible || paintInfo.phase != PaintPhase::Mask)
         return;
 
     LayoutRect rect(paintOffset, borderBoxSize());
@@ -1003,12 +1006,8 @@ void RenderTable::paintMask(PaintInfo& paintInfo, const LayoutPoint& paintOffset
 std::pair<LayoutUnit, LayoutUnit> RenderTable::computeIntrinsicLogicalWidths(TableIntrinsics intrinsics) const
 {
     recalcSectionsIfNeeded();
-    // FIXME: Do the recalc in borderStart/borderEnd and make those const_cast this call.
-    // Then m_borderStart/m_borderEnd will be transparent a cache and it removes the possibility
-    // of reading out stale values.
     // FIXME: Restructure the table layout code so that we can make this method const.
     // FIXME: We should include captions widths here like we do in computeIntrinsicLogicalWidthContributions.
-    const_cast<RenderTable*>(this)->recalcBordersInRowDirection();
     return const_cast<RenderTable*>(this)->m_tableLayout->computeIntrinsicLogicalWidths(intrinsics);
 }
 
@@ -1033,6 +1032,15 @@ void RenderTable::computeIntrinsicLogicalWidthContributions()
     m_maxContentLogicalWidthContribution += bordersPaddingAndSpacing;
 
     m_tableLayout->applyContentLogicalWidthQuirks(m_minContentLogicalWidthContribution, m_maxContentLogicalWidthContribution);
+
+    if (auto& styleLogicalWidth = style().logicalWidth(); styleLogicalWidth.isCalcSize() && (styleLogicalWidth.isMinContent() || styleLogicalWidth.isMaxContent())) {
+        // A calc-size() contributes the result of its calculation, not the size of its basis.
+        // Cell spacing is part of the table's used width under the basis keyword, so `size` keeps it.
+        auto keywordLogicalWidth = styleLogicalWidth.isMaxContent() ? m_maxContentLogicalWidthContribution : m_minContentLogicalWidthContribution;
+        auto borderAndPadding = borderAndPaddingLogicalWidth();
+        m_minContentLogicalWidthContribution = resolveCalcSizeLogicalWidth(styleLogicalWidth.calcSize(), std::max(0_lu, keywordLogicalWidth - borderAndPadding), 0_lu) + borderAndPadding;
+        m_maxContentLogicalWidthContribution = m_minContentLogicalWidthContribution;
+    }
 
     for (auto& caption : m_captions) {
         LayoutUnit captionMinWidth = caption->minContentLogicalWidthContribution();
@@ -1145,8 +1153,10 @@ LayoutUnit RenderTable::borderSpacingInRowDirection() const
 RenderTableCol* RenderTable::firstColumn() const
 {
     for (auto& child : childrenOfType<RenderObject>(*this)) {
-        if (auto* column = dynamicDowncast<RenderTableCol>(child))
-            return const_cast<RenderTableCol*>(column);
+        if (auto* column = dynamicDowncast<RenderTableCol>(child)) {
+            // FIXME: Remove suppression once rdar://189998365 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<RenderTableCol*>(column);
+        }
     }
     return nullptr;
 }
@@ -1344,11 +1354,12 @@ void RenderTable::recalcSections() const
     m_needsSectionRecalc = false;
 }
 
-LayoutUnit RenderTable::calcBorderStart() const
+LayoutUnit RenderTable::borderStart() const
 {
     if (!collapseBorders())
         return RenderBlock::borderStart();
 
+    recalcSectionsIfNeeded();
     // Determined by the first cell of the first row. See the CSS 2.1 spec, section 17.6.2.
     if (!numEffCols())
         return 0;
@@ -1399,11 +1410,12 @@ LayoutUnit RenderTable::calcBorderStart() const
     return CollapsedBorderValue::adjustedCollapsedBorderWidth(borderWidth, deviceScaleFactor, writingMode().isInlineFlipped());
 }
 
-LayoutUnit RenderTable::calcBorderEnd() const
+LayoutUnit RenderTable::borderEnd() const
 {
     if (!collapseBorders())
         return RenderBlock::borderEnd();
 
+    recalcSectionsIfNeeded();
     // Determined by the last cell of the first row. See the CSS 2.1 spec, section 17.6.2.
     if (!numEffCols())
         return 0;
@@ -1457,13 +1469,6 @@ LayoutUnit RenderTable::calcBorderEnd() const
         }
     }
     return CollapsedBorderValue::adjustedCollapsedBorderWidth(borderWidth, deviceScaleFactor, !writingMode().isInlineFlipped());
-}
-
-void RenderTable::recalcBordersInRowDirection()
-{
-    // FIXME: We need to compute the collapsed before / after borders in the same fashion.
-    m_borderStart = calcBorderStart();
-    m_borderEnd = calcBorderEnd();
 }
 
 LayoutUnit RenderTable::borderBefore() const

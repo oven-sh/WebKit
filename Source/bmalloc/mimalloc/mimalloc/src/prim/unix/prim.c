@@ -959,9 +959,7 @@ void _mi_prim_thread_init_auto_done(void) {
 }
 
 void _mi_prim_thread_done_auto_done(void) {
-  if (_mi_heap_default_key != (pthread_key_t)(-1)) {  // do not leak the key, see issue #809
-    pthread_key_delete(_mi_heap_default_key);
-  }
+  // Bun: the key is kept. A thread that starts while the process exits still stores into it, and a deleted key is given out again.
 }
 
 void _mi_prim_thread_associate_default_theap(mi_theap_t* theap) {

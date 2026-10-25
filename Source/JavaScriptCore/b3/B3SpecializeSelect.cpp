@@ -57,6 +57,9 @@ public:
 
     bool run()
     {
+        bool mayFindWork = m_proc.hasEverAdded(Select) && m_proc.hasEverAdded(Check);
+        if (!mayFindWork && !shouldValidateIR(m_proc))
+            return false;
         for (BasicBlock* block : m_proc) {
             m_block = block;
             processCurrentBlock();
@@ -64,6 +67,7 @@ public:
 
         // specialize() always inserts blocks, so this is true exactly when one fired.
         bool changed = m_blockInsertionSet.execute();
+        RELEASE_ASSERT(mayFindWork || !changed);
         if (changed) {
             m_proc.resetReachability();
             m_proc.invalidateCFG();
@@ -158,7 +162,14 @@ private:
             return nullptr;
 
         for (unsigned i = selectIndex; i <= m_index; ++i) {
-            if (m_block->at(i)->kind().isCloningForbidden())
+            Value* value = m_block->at(i);
+            if (value->kind().isCloningForbidden())
+                return nullptr;
+
+            // A Phi reads a slot written by its Upsilons, not its children, so remapping children
+            // cannot rewire a clone of it: the clone would read a slot nothing writes. Cloning an
+            // Upsilon is fine, since each arm then writes the original Phi.
+            if (value->opcode() == Phi)
                 return nullptr;
         }
 
@@ -225,6 +236,7 @@ private:
 
         auto cloneValue = [&] (Value* value) {
             ASSERT(value != source);
+            ASSERT(value->opcode() != Phi);
 
             for (unsigned i = 0; i < numCases; ++i) {
                 Value* clone = m_proc.clone(value);

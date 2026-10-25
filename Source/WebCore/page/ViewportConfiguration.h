@@ -72,10 +72,10 @@ public:
     WEBCORE_EXPORT ViewportConfiguration();
 
     const Parameters& defaultConfiguration() const LIFETIME_BOUND { return m_defaultConfiguration; }
-    WEBCORE_EXPORT void setDefaultConfiguration(const Parameters&);
+    WEBCORE_EXPORT void LEGACY_NODELETE setDefaultConfiguration(const Parameters&);
 
     const IntSize& contentsSize() const LIFETIME_BOUND { return m_contentSize; }
-    WEBCORE_EXPORT bool setContentsSize(const IntSize&);
+    WEBCORE_EXPORT bool LEGACY_NODELETE setContentsSize(const IntSize&);
 
     const FloatSize& viewLayoutSize() const LIFETIME_BOUND { return m_viewLayoutSize; }
 
@@ -148,17 +148,17 @@ public:
     bool avoidsUnsafeArea() const { return m_configuration.avoidsUnsafeArea; }
 
     // Matches a width=device-width, initial-scale=1 viewport.
-    WEBCORE_EXPORT Parameters NODELETE nativeWebpageParameters();
-    static Parameters NODELETE nativeWebpageParametersWithoutShrinkToFit();
-    static Parameters NODELETE nativeWebpageParametersWithShrinkToFit();
+    WEBCORE_EXPORT Parameters LEGACY_NODELETE nativeWebpageParameters();
+    static Parameters LEGACY_NODELETE nativeWebpageParametersWithoutShrinkToFit();
+    static Parameters LEGACY_NODELETE nativeWebpageParametersWithShrinkToFit();
 #if ENABLE(PDF_PLUGIN)
     WEBCORE_EXPORT static Parameters pluginDocumentParameters();
 #endif
-    WEBCORE_EXPORT static Parameters NODELETE webpageParameters();
-    WEBCORE_EXPORT static Parameters NODELETE textDocumentParameters();
-    WEBCORE_EXPORT static Parameters NODELETE imageDocumentParameters();
-    WEBCORE_EXPORT static Parameters NODELETE xhtmlMobileParameters();
-    WEBCORE_EXPORT static Parameters NODELETE testingParameters();
+    WEBCORE_EXPORT static Parameters LEGACY_NODELETE webpageParameters();
+    WEBCORE_EXPORT static Parameters LEGACY_NODELETE textDocumentParameters();
+    WEBCORE_EXPORT static Parameters LEGACY_NODELETE imageDocumentParameters();
+    WEBCORE_EXPORT static Parameters LEGACY_NODELETE xhtmlMobileParameters();
+    WEBCORE_EXPORT static Parameters LEGACY_NODELETE testingParameters();
 
     String description() const;
 #if !LOG_DISABLED
@@ -166,17 +166,17 @@ public:
 #endif
 
 private:
-    void updateConfiguration();
-    double NODELETE viewportArgumentsLength(double length) const;
+    void LEGACY_NODELETE updateConfiguration();
+    double LEGACY_NODELETE viewportArgumentsLength(double length) const;
     double initialScaleFromSize(double width, double height, bool shouldIgnoreScalingConstraints) const;
 
-    bool NODELETE shouldOverrideDeviceWidthAndShrinkToFit() const;
-    bool NODELETE shouldIgnoreScalingConstraintsRegardlessOfContentSize() const;
+    bool LEGACY_NODELETE shouldOverrideDeviceWidthAndShrinkToFit() const;
+    bool LEGACY_NODELETE shouldIgnoreScalingConstraintsRegardlessOfContentSize() const;
     bool shouldIgnoreScalingConstraints() const;
     bool shouldIgnoreVerticalScalingConstraints() const;
     bool shouldIgnoreHorizontalScalingConstraints() const;
-    void NODELETE updateDefaultConfiguration();
-    bool NODELETE canOverrideConfigurationParameters() const;
+    void LEGACY_NODELETE updateDefaultConfiguration();
+    bool LEGACY_NODELETE canOverrideConfigurationParameters() const;
 
     constexpr bool layoutSizeIsExplicitlyScaled() const
     {

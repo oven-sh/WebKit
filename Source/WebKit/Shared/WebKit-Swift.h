@@ -50,12 +50,14 @@
 // relevant headers must be included here. rdar://165068038
 #include "APIArray.h"
 #include "IPCTesterReceiverMessages.h"
+#include "StreamServerConnection.h"
 #include "WebBackForwardListItem.h"
 #include "WebBackForwardListMessages.h"
 #include "WebBackForwardListSwiftUtilities.h"
 #include "WebPageProxy.h"
 
 #ifdef __OBJC__
+#include "WKHistoryDelegatePrivate.h"
 #include "WKSeparatedImageView.h"
 #include "WKUIDelegatePrivate.h"
 #if PLATFORM(MAC) && HAVE(NSREFRESHCONTROLLER)

@@ -104,10 +104,7 @@ static void initializeDMABufAvailability()
 {
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
-        if (!gst_check_version(1, 20, 0))
-            return;
-
-        auto value = CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_DMABUF_SINK_DISABLED"));
+        auto value = UTF8CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_DMABUF_SINK_DISABLED"));
         s_isDMABufDisabled = !value.isEmpty() && (equalLettersIgnoringASCIICase(value.span(), "true"_s) || equalLettersIgnoringASCIICase(value.span(), "1"_s));
         if (!s_isDMABufDisabled && !DRMDeviceManager::singleton().mainGBMDevice(DRMDeviceManager::NodeType::Render))
             s_isDMABufDisabled = true;
@@ -246,8 +243,7 @@ static GstStateChangeReturn webKitGLVideoSinkChangeState(GstElement* element, Gs
     case GST_STATE_CHANGE_NULL_TO_READY:
     case GST_STATE_CHANGE_READY_TO_READY:
     case GST_STATE_CHANGE_READY_TO_PAUSED: {
-        static ASCIILiteral gstGlDisplayContextyType = ASCIILiteral::fromLiteralUnsafe(GST_GL_DISPLAY_CONTEXT_TYPE);
-        if (!setGstElementGLContext(element, gstGlDisplayContextyType))
+        if (!setGstElementGLContext(element, GST_GL_DISPLAY_CONTEXT_TYPE))
             return GST_STATE_CHANGE_FAILURE;
         if (!setGstElementGLContext(element, "gst.gl.app_context"_s))
             return GST_STATE_CHANGE_FAILURE;

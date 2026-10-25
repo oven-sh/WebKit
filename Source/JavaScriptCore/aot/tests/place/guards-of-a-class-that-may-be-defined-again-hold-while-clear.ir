@@ -1,0 +1,45 @@
+# function define() { return class Widget { first() {} } }   unknown code has `define` and may call it any number of times.
+# The guards of Widget describe its first evaluation. Until then there is no object to speak of, and a second evaluation breaks them all, so they hold from the start like those of a class that is
+# defined once: nothing is looked at when the class is defined.
+# FORM: AsRead
+# RUN: place guards
+# RUN(TABLES): tables layouts
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Widget" module=m0 constructor=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = NewClosure function=f4
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f1 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="define" results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f3
+    DefineMethod v1, v2 layout=L0 key="first"
+    v4 = FinishClass v1 layout=L0
+    Return v4
+}
+function f3 name="first" kind=Method flags=[HasThis] results=[{type=anything}] {
+    Return
+}
+function f4 name="use" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=L0
+    v2 = PropGet v1 key="first"
+    v3 = Call v2, v1 calleeKey="first"
+    Return v3
+}
+
+# CHECK: L0 Prototype Member "first" {{*}} holdsWhileClear
+# CHECK: set [0 1] {{*}} holdsWhileClear
+# TABLES: class index=L0 {{*}}evaluation=PredictedOnce {{*}} guardsHoldWhileClear

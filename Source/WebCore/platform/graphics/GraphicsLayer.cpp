@@ -124,7 +124,7 @@ String animatedPropertyIDAsString(AnimatedProperty property)
 }
 
 using RepaintMap = HashMap<const GraphicsLayer*, Vector<FloatRect>>;
-static RepaintMap& NODELETE repaintRectMap()
+static RepaintMap& LEGACY_NODELETE repaintRectMap()
 {
     static NeverDestroyed<RepaintMap> map;
     return map;
@@ -166,7 +166,7 @@ public:
     static EmptyGraphicsLayerClient& singleton();
 };
 
-EmptyGraphicsLayerClient& NODELETE EmptyGraphicsLayerClient::singleton()
+EmptyGraphicsLayerClient& LEGACY_NODELETE EmptyGraphicsLayerClient::singleton()
 {
     static NeverDestroyed<EmptyGraphicsLayerClient> client;
     return client;
@@ -357,7 +357,7 @@ bool GraphicsLayer::replaceChild(GraphicsLayer* oldChild, Ref<GraphicsLayer>&& n
 {
     ASSERT(!newChild->parent());
     
-    GraphicsLayer* rawNewChild = newChild.ptr();
+    Ref newChildLayer = newChild;
 
     bool found = false;
     for (unsigned i = 0; i < m_children.size(); i++) {
@@ -370,8 +370,8 @@ bool GraphicsLayer::replaceChild(GraphicsLayer* oldChild, Ref<GraphicsLayer>&& n
     if (found) {
         oldChild->setParent(nullptr);
 
-        rawNewChild->removeFromParent();
-        rawNewChild->setParent(this);
+        newChildLayer->removeFromParent();
+        newChildLayer->setParent(this);
         return true;
     }
     return false;
@@ -387,7 +387,7 @@ void GraphicsLayer::removeAllChildren()
     for (auto& child : m_children)
         child->setParent(nullptr);
 
-    m_children.clear();
+    m_children.shrink(0);
 }
 
 void GraphicsLayer::removeFromParentInternal()
@@ -456,7 +456,7 @@ void GraphicsLayer::setTransform(const TransformationMatrix& matrix)
     if (m_transform)
         *m_transform = matrix;
     else
-        m_transform = makeUnique<TransformationMatrix>(matrix);
+        lazyInitialize(m_transform, makeUnique<TransformationMatrix>(matrix));
 }
 
 const TransformationMatrix& GraphicsLayer::childrenTransform() const
@@ -469,7 +469,7 @@ void GraphicsLayer::setChildrenTransform(const TransformationMatrix& matrix)
     if (m_childrenTransform)
         *m_childrenTransform = matrix;
     else
-        m_childrenTransform = makeUnique<TransformationMatrix>(matrix);
+        lazyInitialize(m_childrenTransform, makeUnique<TransformationMatrix>(matrix));
 }
 
 bool GraphicsLayer::setFilters(const FilterOperations& filters)
@@ -799,7 +799,7 @@ void GraphicsLayer::setZPosition(float position)
     m_zPosition = position;
 }
 
-static inline const FilterOperations& NODELETE filterOperationsAt(const GraphicsLayerKeyframeValueList& valueList, size_t index)
+static inline const FilterOperations& LEGACY_NODELETE filterOperationsAt(const GraphicsLayerKeyframeValueList& valueList, size_t index)
 {
     return downcast<GraphicsLayerFilterAnimationValue>(valueList.at(index)).value();
 }
@@ -903,7 +903,8 @@ void GraphicsLayer::dumpLayer(TextStream& ts, OptionSet<LayerTreeAsTextOptions> 
     ts << indent << '(' << "GraphicsLayer"_s;
 
     if (options & LayerTreeAsTextOptions::Debug) {
-        ts << ' ' << static_cast<void*>(const_cast<GraphicsLayer*>(this));
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST ts << ' ' << static_cast<void*>(const_cast<GraphicsLayer*>(this));
         ts << " \"" << m_name << '"';
     }
 

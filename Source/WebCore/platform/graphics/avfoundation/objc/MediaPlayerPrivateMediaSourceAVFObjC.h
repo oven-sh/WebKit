@@ -101,7 +101,7 @@ public:
     void setReadyState(MediaPlayer::ReadyState);
     void setNetworkState(MediaPlayer::NetworkState);
 
-    void NODELETE setLoadingProgresssed(bool);
+    void LEGACY_NODELETE setLoadingProgresssed(bool);
     void setHasAvailableVideoFrame(bool);
     bool hasAvailableVideoFrame() const override;
     void durationChanged();
@@ -128,7 +128,7 @@ public:
 
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
     void setCDMSession(LegacyCDMSession*) override;
-    RefPtr<CDMSessionAVContentKeySession> cdmSession() const;
+    RefPtr<CDMSessionAVContentKeySession> LEGACY_NODELETE cdmSession() const;
     void keyAdded() final;
 #endif
 
@@ -173,7 +173,7 @@ public:
     const Logger& mediaPlayerLogger() { return logger(); }
 #endif
 
-    bool NODELETE supportsLimitedMatroska() const;
+    bool LEGACY_NODELETE supportsLimitedMatroska() const;
 
 private:
     // MediaPlayerPrivateInterface
@@ -185,7 +185,7 @@ private:
     void cancelLoad() override;
 
     void prepareToPlay() override;
-    PlatformLayer* platformLayer() const override;
+    PlatformLayer* platformLayer() override;
 
     bool supportsPictureInPicture() const override { return true; }
     bool supportsFullscreen() const override { return true; }
@@ -211,14 +211,14 @@ private:
     void setPageIsVisible(bool) final;
     void setViewportVisibility(ViewportVisibility) final;
     void updateRendererVisibility();
-    bool shouldTeardownOnVisibilityChange() const;
+    bool LEGACY_NODELETE shouldTeardownOnVisibilityChange() const;
 
     MediaTime duration() const override;
     MediaTime startTime() const override;
     MediaTime initialTime() const override;
 
     Ref<MediaTimePromise> seekToTarget(const SeekTarget&) final;
-    bool seeking() const;
+    bool LEGACY_NODELETE seeking() const;
     void setRateDouble(double) override;
     double rate() const override;
     double effectiveRate() const override;
@@ -248,7 +248,7 @@ private:
 
     void setPresentationSize(const IntSize&) final;
 
-    Ref<AudioVideoRenderer> NODELETE audioVideoRenderer() const;
+    Ref<AudioVideoRenderer> LEGACY_NODELETE audioVideoRenderer() const;
 
 
     // NOTE: Because the only way for MSE to recieve data is through an ArrayBuffer provided by

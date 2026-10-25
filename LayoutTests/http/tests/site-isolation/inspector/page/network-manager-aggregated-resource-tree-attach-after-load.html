@@ -67,6 +67,7 @@ function test() {
 
             let subresources = subresourcesOf(child);
             InspectorTest.expectThat(subresources.some((resource) => resource.url.endsWith(stylePath)), "Cross-origin child's stylesheet subresource should be in the frame model.");
+            InspectorTest.expectThat(subresources.every((resource) => resource.loaderIdentifier === child.loaderIdentifier), "Cross-origin child's subresources should have the child's loaderIdentifier.");
 
             // The merge fills in the existing frame rather than adding a second one, and adds each missing
             // resource once.

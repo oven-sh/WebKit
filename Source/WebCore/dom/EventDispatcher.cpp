@@ -26,6 +26,7 @@
 #include "config.h"
 #include "EventDispatcher.h"
 
+#include "AXObjectCache.h"
 #include "CompositionEvent.h"
 #include "DocumentView.h"
 #include "EventContext.h"
@@ -76,14 +77,17 @@ static void callDefaultEventHandlersInBubblingOrder(Event& event, const EventPat
 
     size_t size = path.size();
     for (size_t i = 1; i < size; ++i) {
-        Ref currentNode { *path.contextAt(i).node() };
+        auto& eventContext = path.contextAt(i);
+        if (eventContext.isWindowContext())
+            continue;
+        Ref currentNode { *eventContext.node() };
         currentNode->defaultEventHandler(event);
         if (event.defaultPrevented() || event.defaultHandled())
             return;
     }
 }
 
-static bool NODELETE isInShadowTree(EventTarget* target)
+static bool LEGACY_NODELETE isInShadowTree(EventTarget* target)
 {
     auto* node = dynamicDowncast<Node>(target);
     return node && node->isInShadowTree();
@@ -127,7 +131,7 @@ static bool shouldSuppressEventDispatchInDOM(Node& node, Event& event)
     if (!event.isTrusted())
         return false;
 
-    RefPtr localMainFrame = protect(node.document())->localMainFrame();
+    RefPtr localMainFrame = node.document().localMainFrame();
     if (!localMainFrame)
         return false;
 
@@ -259,6 +263,11 @@ void EventDispatcher::dispatchEvent(Node& node, Event& event)
     if (inputForLegacyPreActivationBehavior
         && (!event.isTrusted() || !inputForLegacyPreActivationBehavior->isDisabledFormControl())) {
         inputForLegacyPreActivationBehavior->willDispatchEvent(event, clickHandlingState);
+    }
+
+    if (event.isTrusted() && (typeInfo.type() == EventType::click || typeInfo.type() == EventType::keydown)) {
+        if (CheckedPtr cache = document->existingAXObjectCache())
+            cache->onTrustedUserInputWillDispatch(node, event);
     }
 
     if (!event.propagationStopped() && !eventPath.isEmpty() && !shouldSuppressEventDispatchInDOM(node, event) && listenerCounts.hasAny()) {

@@ -125,7 +125,7 @@ void DOMCache::doMatch(RequestInfo&& info, CacheQueryOptions&& options, MatchCal
 
         RefPtr<FetchResponse> response;
         if (!result.returnValue().isEmpty())
-            response = createResponse(*scriptExecutionContext(), result.returnValue()[0], requestStart);
+            response = createResponse(*protect(scriptExecutionContext()), result.returnValue()[0], requestStart);
 
         callback(WTF::move(response));
     });
@@ -134,7 +134,7 @@ void DOMCache::doMatch(RequestInfo&& info, CacheQueryOptions&& options, MatchCal
 Vector<Ref<FetchResponse>> DOMCache::cloneResponses(const Vector<DOMCacheEngine::Record>& records, MonotonicTime requestStart)
 {
     return WTF::map(records, [this, requestStart] (const auto& record) {
-        return createResponse(*scriptExecutionContext(), record, requestStart);
+        return createResponse(*protect(scriptExecutionContext()), record, requestStart);
     });
 }
 
@@ -230,7 +230,7 @@ public:
         record.responseBody = WTF::move(data);
     }
 
-    bool NODELETE isDone() const { return !m_callback; }
+    bool LEGACY_NODELETE isDone() const { return !m_callback; }
 
     void error(Exception&& exception)
     {
@@ -324,10 +324,9 @@ void DOMCache::addAll(Vector<RequestInfo>&& infos, DOMPromiseDeferred<void>&& pr
                 return;
             }
 
-            auto protectedResponse = result.releaseReturnValue();
-            auto& response = protectedResponse.get();
+            Ref response = result.releaseReturnValue();
 
-            if (!response.ok()) {
+            if (!response->ok()) {
                 taskHandler->error(Exception { ExceptionCode::TypeError, "Response is not OK"_s });
                 return;
             }
@@ -337,7 +336,7 @@ void DOMCache::addAll(Vector<RequestInfo>&& infos, DOMPromiseDeferred<void>&& pr
                 return;
             }
 
-            if (response.status() == 206) {
+            if (response->status() == 206) {
                 taskHandler->error(Exception { ExceptionCode::TypeError, "Response is a 206 partial"_s });
                 return;
             }
@@ -348,7 +347,7 @@ void DOMCache::addAll(Vector<RequestInfo>&& infos, DOMPromiseDeferred<void>&& pr
             }
             size_t recordPosition = taskHandler->addRecord(toConnectionRecord(request.get(), response, nullptr));
 
-            response.consumeBodyReceivedByChunk([taskHandler = WTF::move(taskHandler), recordPosition, data = SharedBufferBuilder(), response = WTF::move(protectedResponse)] (auto&& result) mutable {
+            response->consumeBodyReceivedByChunk([taskHandler = WTF::move(taskHandler), recordPosition, data = SharedBufferBuilder(), response = response.copyRef()] (auto&& result) mutable {
                 if (taskHandler->isDone())
                     return;
 
@@ -428,8 +427,8 @@ void DOMCache::put(RequestInfo&& info, Ref<FetchResponse>&& response, DOMPromise
     }
 
     if (response->isBodyReceivedByChunk()) {
-        auto& responseRef = response.get();
-        responseRef.consumeBodyReceivedByChunk([promise = WTF::move(promise), request = WTF::move(request), response = WTF::move(response), data = SharedBufferBuilder(), pendingActivity = makePendingActivity(*this)](auto&& result) mutable {
+        Ref responseRef = response;
+        responseRef->consumeBodyReceivedByChunk([promise = WTF::move(promise), request = WTF::move(request), response = WTF::move(response), data = SharedBufferBuilder(), pendingActivity = makePendingActivity(*this)](auto&& result) mutable {
 
             if (result.hasException()) {
                 pendingActivity->object().putWithResponseData(WTF::move(promise), WTF::move(request), WTF::move(response), result.releaseException().isolatedCopy());
@@ -507,7 +506,7 @@ void DOMCache::keys(std::optional<RequestInfo>&& info, CacheQueryOptions&& optio
 
             auto records = result.releaseReturnValue();
             promise.resolve(WTF::map(records, [&](auto& record) {
-                return createRequest(*cache.scriptExecutionContext(), record);
+                return createRequest(*protect(cache.scriptExecutionContext()), record);
             }));
         });
     });
@@ -521,7 +520,7 @@ void DOMCache::queryCache(ResourceRequest&& request, const CacheQueryOptions& op
         return;
     }
 
-    RetrieveRecordsOptions retrieveOptions { WTF::move(request), context->crossOriginEmbedderPolicy(), *context->securityOrigin(), options.ignoreSearch, options.ignoreMethod, options.ignoreVary, shouldRetrieveResponses == ShouldRetrieveResponses::Yes };
+    RetrieveRecordsOptions retrieveOptions { WTF::move(request), context->crossOriginEmbedderPolicy(), context->documentIsolationPolicy().value, *context->securityOrigin(), options.ignoreSearch, options.ignoreMethod, options.ignoreVary, shouldRetrieveResponses == ShouldRetrieveResponses::Yes };
 
     context->enqueueTaskWhenSettled(m_connection->retrieveRecords(m_identifier, WTF::move(retrieveOptions)), TaskSource::DOMManipulation, [pendingActivity = makePendingActivity(*this), callback = WTF::move(callback)] (auto&& result) mutable {
         RefPtr scriptExecutionContext = pendingActivity->object().scriptExecutionContext();

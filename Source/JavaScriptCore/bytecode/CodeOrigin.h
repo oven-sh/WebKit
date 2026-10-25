@@ -147,22 +147,22 @@ public:
 
     // The inline depth is the depth of the inline stack, so 1 = not inlined,
     // 2 = inlined one deep, etc.
-    unsigned NODELETE inlineDepth() const;
+    unsigned LEGACY_NODELETE inlineDepth() const;
     
     // If the code origin corresponds to inlined code, gives you the heap object that
     // would have owned the code if it had not been inlined. Otherwise returns 0.
-    CodeBlock* NODELETE codeOriginOwner() const;
+    CodeBlock* LEGACY_NODELETE codeOriginOwner() const;
     
-    int NODELETE stackOffset() const;
+    int LEGACY_NODELETE stackOffset() const;
     
     unsigned hash() const;
     bool operator==(const CodeOrigin&) const;
 
     // This checks if the two code origins correspond to the same stack trace snippets,
     // but ignore whether the InlineCallFrame's are identical.
-    bool NODELETE isApproximatelyEqualTo(const CodeOrigin& other, InlineCallFrame* terminal = nullptr) const;
+    bool isApproximatelyEqualTo(const CodeOrigin& other, InlineCallFrame* terminal = nullptr) const;
     
-    unsigned NODELETE approximateHash(InlineCallFrame* terminal = nullptr) const;
+    unsigned approximateHash(InlineCallFrame* terminal = nullptr) const;
 
     template <typename Function>
     void walkUpInlineStack(NOESCAPE const Function&) const;

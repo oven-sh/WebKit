@@ -1,0 +1,25 @@
+# A plain function that reads new.target has two generic entrypoints. Its closure names the one for calls, and the table gives the one for constructions. A function that does not read it has no row
+# RUN: tables
+# RUN(ROWS): tables functions
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="publish" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return
+}
+function f1 name="readsNewTarget" flags=[HasThis, HasNewTarget] results=[{type=anything}] {
+    Return v1
+}
+function f2 name="plain" flags=[HasThis] results=[{type=anything}] {
+    Return v0
+}
+
+# CHECK: magic ok
+# CHECK: constructEntrypoints 1 8
+# ROWS: constructEntrypoint function=[[call]] entrypoint=[[construct]]
+# ROWS-NOT: constructEntrypoint

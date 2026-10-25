@@ -1,0 +1,8 @@
+# The program and the limit of check-only-passes-over-the-limits-of-later-stages.ir without the word: the numbering of the shapes refuses it
+# OPTIONS: only-passes=AnalyzeFlow limit=KeyOrdersPerLayout:1
+# RUN: compile
+# DIAGNOSTIC: LimitExceeded 1
+# LOSS: KeyOrdersPerLayout L0
+# CHECK: diagnostic LimitExceeded
+# CHECK: image empty
+# PROGRAM-OF: ../place/stop-after-error.ir

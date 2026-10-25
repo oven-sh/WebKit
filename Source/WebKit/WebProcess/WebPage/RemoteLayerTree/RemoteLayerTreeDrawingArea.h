@@ -40,6 +40,7 @@
 
 namespace WebCore {
 class PlatformCALayer;
+class RunLoopObserver;
 class ThreadSafeImageBufferFlusher;
 class TiledBacking;
 }
@@ -143,6 +144,7 @@ private:
     void adoptLayersFromDrawingArea(DrawingArea&) final;
 
     void scheduleRenderingUpdateTimerFired();
+    void postRenderingUpdateRunLoopCallback();
 
     class BackingStoreFlusher : public ThreadSafeRefCounted<BackingStoreFlusher> {
     public:
@@ -179,16 +181,18 @@ private:
     std::optional<WebCore::FloatRect> m_viewExposedRect;
 
     WebCore::Timer m_updateRenderingTimer;
+    const std::unique_ptr<WebCore::RunLoopObserver> m_postRenderingUpdateRunLoopObserver;
     Markable<MonotonicTime> m_updateStartTime;
     bool m_isRenderingSuspended { false };
     bool m_hasDeferredRenderingUpdate { false };
+    bool m_shouldStartRenderingUpdateBeforeDueTimers { false };
     bool m_inUpdateRendering { false };
 
     bool m_waitingForBackingStoreSwap { false };
     bool m_deferredRenderingUpdateWhileWaitingForBackingStoreSwap { false };
 
     const Ref<WorkQueue> m_commitQueue;
-    RefPtr<BackingStoreFlusher> m_backingStoreFlusher;
+    const RefPtr<BackingStoreFlusher> m_backingStoreFlusher;
 
     TransactionID m_currentTransactionID { TransactionID::generateMonotonic() };
     Vector<IPC::AsyncReplyID> m_pendingCallbackIDs;

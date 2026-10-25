@@ -1,0 +1,248 @@
+# Every part of a type prints as the text spells it, and parts in another order or spelling print in the one order and spelling
+# FORM: Prepared
+# RUN: round-trip
+# CHECK: layout L0
+# CHECK-NEXT: layout L1
+# CHECK-NEXT: layout L2 kind=Environment
+# CHECK-NEXT: variable g0 module=m0 declared={type=undefined}
+# CHECK-NEXT: variable g1 module=m0 declared={type=never}
+# CHECK-NEXT: variable g2 module=m0 declared={type=anything}
+# CHECK-NEXT: variable g3 module=m0 declared={type=null}
+# CHECK-NEXT: variable g4 module=m0 declared={type=undefined|null}
+# CHECK-NEXT: variable g5 module=m0 declared={type=boolean}
+# CHECK-NEXT: variable g6 module=m0 declared={type=true}
+# CHECK-NEXT: variable g7 module=m0 declared={type=false}
+# CHECK-NEXT: variable g8 module=m0 declared={type=number}
+# CHECK-NEXT: variable g9 module=m0 declared={type=int}
+# CHECK-NEXT: variable g10 module=m0 declared={type=i32}
+# CHECK-NEXT: variable g11 module=m0 declared={type=7}
+# CHECK-NEXT: variable g12 module=m0 declared={type=-7}
+# CHECK-NEXT: variable g13 module=m0 declared={type=int[-5, 10]}
+# CHECK-NEXT: variable g14 module=m0 declared={type=int[0, 4611686018427387903]}
+# CHECK-NEXT: variable g15 module=m0 declared={type=double}
+# CHECK-NEXT: variable g16 module=m0 declared={type=whole}
+# CHECK-NEXT: variable g17 module=m0 declared={type=fractional}
+# CHECK-NEXT: variable g18 module=m0 declared={type=i32|double}
+# CHECK-NEXT: variable g19 module=m0 declared={type=int[0, 9]|whole}
+# CHECK-NEXT: variable g20 module=m0 declared={type=7|fractional}
+# CHECK-NEXT: variable g21 module=m0 declared={type=string}
+# CHECK-NEXT: variable g22 module=m0 declared={type=symbol}
+# CHECK-NEXT: variable g23 module=m0 declared={type=bigint}
+# CHECK-NEXT: variable g24 module=m0 declared={type=object}
+# CHECK-NEXT: variable g25 module=m0 declared={type=function}
+# CHECK-NEXT: variable g26 module=m0 declared={type=absent}
+# CHECK-NEXT: variable g27 module=m0 declared={type=undefined|absent}
+# CHECK-NEXT: variable g28 module=m0 declared={type=anything|absent}
+# CHECK-NEXT: variable g29 module=m0 declared={type="a"|"b"}
+# CHECK-NEXT: variable g30 module=m0 declared={type=undefined|"a"}
+# CHECK-NEXT: variable g31 module=m0 declared={type=number|"a\"\u{e9}"}
+# CHECK-NEXT: variable g32 module=m0 declared={type=@@iterator}
+# CHECK-NEXT: variable g33 module=m0 declared={type=@@asyncDispose|@@toPrimitive}
+# CHECK-NEXT: variable g34 module=m0 declared={type=symbol@m0:120}
+# CHECK-NEXT: variable g35 module=m0 declared={type=symbol("d")@m0:7}
+# CHECK-NEXT: variable g36 module=m0 declared={type=Symbol.for("x")}
+# CHECK-NEXT: variable g37 module=m0 declared={type=L0}
+# CHECK-NEXT: variable g38 module=m0 declared={type=L0|L1}
+# CHECK-NEXT: variable g39 module=m0 declared={type=null|L0|L1}
+# CHECK-NEXT: variable g40 module=m0 declared={type=L(IteratorResult)}
+# CHECK-NEXT: variable g41 module=m0 declared={type=L(m0)}
+# CHECK-NEXT: variable g42 module=m0 declared={type=L0|L(IteratorResult)|L(m0)}
+# CHECK-NEXT: variable g43 module=m0 declared={type=env L2}
+# CHECK-NEXT: variable g44 module=m0 declared={type=f0}
+# CHECK-NEXT: variable g45 module=m0 declared={type=f0|f1}
+# CHECK-NEXT: variable g46 module=m0 declared={type=builtin(ArrayPrototypePush)}
+# CHECK-NEXT: variable g47 module=m0 declared={type=builtin(Math)|builtin(MathMax)}
+# CHECK-NEXT: variable g48 module=m0 declared={type=function|L0}
+# CHECK-NEXT: variable g49 module=m0 declared={type=null|function}
+# CHECK-NEXT: variable g50 module=m0 declared={type=Array}
+# CHECK-NEXT: variable g51 module=m0 declared={type=Array<number>}
+# CHECK-NEXT: variable g52 module=m0 declared={type=Array<number, proven>}
+# CHECK-NEXT: variable g53 module=m0 declared={type=Array<anything, proven>}
+# CHECK-NEXT: variable g54 module=m0 declared={type=Array<number, Int32>}
+# CHECK-NEXT: variable g55 module=m0 declared={type=Array<number, proven, Double>}
+# CHECK-NEXT: variable g56 module=m0 declared={type=Array<number, proven, Contiguous, pristine[Storage, Names]>}
+# CHECK-NEXT: variable g57 module=m0 declared={type=Array<anything, pristine[Names]>}
+# CHECK-NEXT: variable g58 module=m0 declared={type=Map<string, Array<L0>>}
+# CHECK-NEXT: variable g59 module=m0 declared={type=Set<"a"|"b">}
+# CHECK-NEXT: variable g60 module=m0 declared={type=Promise}
+# CHECK-NEXT: variable g61 module=m0 declared={type=Promise<undefined>}
+# CHECK-NEXT: variable g62 module=m0 declared={type=Array<string>|Promise<undefined>}
+# CHECK-NEXT: variable g63 module=m0 declared={type=Arguments}
+# CHECK-NEXT: variable g64 module=m0 declared={type=Generator}
+# CHECK-NEXT: variable g65 module=m0 declared={type=AsyncGenerator}
+# CHECK-NEXT: variable g66 module=m0 declared={type=RegExp}
+# CHECK-NEXT: variable g67 module=m0 declared={type=RegExp<"ab+c"[Global], "x"[]>}
+# CHECK-NEXT: variable g68 module=m0 declared={type=iteratorstate}
+# CHECK-NEXT: variable g69 module=m0 declared={type=enumerator}
+# CHECK-NEXT: variable g70 module=m0 declared={type=exception}
+# CHECK-NEXT: variable g71 module=m0 declared={type=classtoken}
+# CHECK-NEXT: variable g72 module=m0 declared={type=stringbuilder}
+# CHECK-NEXT: variable g73 module=m0 declared={type=cursor}
+# CHECK-NEXT: variable g74 module=m0 declared={type=keyorder}
+# CHECK-NEXT: variable g75 module=m0 declared={type=absent|classtoken}
+# CHECK-NEXT: variable g76 module=m0 declared={type=undefined|null|true|int[-5, 9]|whole|symbol|bigint|function|absent|"a"|"b"|L0|L1|builtin(Math)|Array<number>|Map<string, L0>}
+# CHECK-NEXT: variable g77 module=m0 declared={type=Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<number>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>}
+# CHECK-NEXT: variable g78 module=m0 declared={type=7}
+# CHECK-NEXT: variable g79 module=m0 declared={type=i32}
+# CHECK-NEXT: variable g80 module=m0 declared={type=int}
+# CHECK-NEXT: variable g81 module=m0 declared={type=number}
+# CHECK-NEXT: variable g82 module=m0 declared={type=double}
+# CHECK-NEXT: variable g83 module=m0 declared={type=int[1, 3]}
+# CHECK-NEXT: variable g84 module=m0 declared={type=boolean}
+# CHECK-NEXT: variable g85 module=m0 declared={type=undefined|null}
+# CHECK-NEXT: variable g86 module=m0 declared={type=anything}
+# CHECK-NEXT: variable g87 module=m0 declared={type="c"|"z"}
+# CHECK-NEXT: variable g88 module=m0 declared={type="a"}
+# CHECK-NEXT: variable g89 module=m0 declared={type=number|"a"}
+# CHECK-NEXT: variable g90 module=m0 declared={type=string}
+# CHECK-NEXT: variable g91 module=m0 declared={type=symbol}
+# CHECK-NEXT: variable g92 module=m0 declared={type=null|L0|L1}
+# CHECK-NEXT: variable g93 module=m0 declared={type=L0|L(m0)}
+# CHECK-NEXT: variable g94 module=m0 declared={type=object}
+# CHECK-NEXT: variable g95 module=m0 declared={type=object}
+# CHECK-NEXT: variable g96 module=m0 declared={type=function|f0}
+# CHECK-NEXT: variable g97 module=m0 declared={type=Array}
+# CHECK-NEXT: variable g98 module=m0 declared={type=Map}
+# CHECK-NEXT: variable g99 module=m0 declared={type=Array<string>|Promise<undefined>}
+# CHECK-NEXT: variable g100 module=m0 declared={type=absent|classtoken}
+# CHECK-NEXT: variable g101 module=m0 declared={type="\u{e9}"}
+# CHECK-NEXT: variable g102 module=m0 declared={type=L0|nolayout}
+# CHECK-NEXT: variable g103 module=m0 declared={type=null|L0|L1|nolayout}
+# CHECK-NEXT: variable g104 module=m0 declared={type=nolayout}
+# CHECK-NEXT: variable g105 module=m0 declared={type=L0|L(m0)|nolayout}
+# CHECK-NEXT: variable g106 module=m0 declared={type=L0|L1|nolayout}
+# CHECK-NEXT: variable g107 module=m0 declared={type=object}
+# CHECK-NEXT: module m0 path="main.js" displayPath="main.js"
+# CHECK-NEXT: function f0 name="f" module=m0 thisType={type=anything} results=[{type=undefined}]
+# CHECK-NEXT: function f1 name="g" module=m0 thisType={type=anything} results=[{type=undefined}]
+# CHECK-NEXT: function f2 name="local" module=m0 thisType={type=anything} results=[{type=undefined}]
+# CHECK-NEXT:   b0():
+# CHECK-NEXT:     v0: guard = Unspecified valueType=guard
+# CHECK-NEXT:     v1: flatstring = Unspecified valueType=flatstring
+# CHECK-NEXT:     v2: codeaddress = Unspecified valueType=codeaddress
+# CHECK-NEXT:     v3: buildercursor = Unspecified valueType=buildercursor
+# CHECK-NEXT:     Return
+# CHECK-NEXT: }
+# CHECK-NEXT: round trip: same
+
+variable g0 module=m0 declared={type=undefined}
+variable g1 module=m0 declared={type=never}
+variable g2 module=m0 declared={type=anything}
+variable g3 module=m0 declared={type=null}
+variable g4 module=m0 declared={type=undefined|null}
+variable g5 module=m0 declared={type=boolean}
+variable g6 module=m0 declared={type=true}
+variable g7 module=m0 declared={type=false}
+variable g8 module=m0 declared={type=number}
+variable g9 module=m0 declared={type=int}
+variable g10 module=m0 declared={type=i32}
+variable g11 module=m0 declared={type=7}
+variable g12 module=m0 declared={type=-7}
+variable g13 module=m0 declared={type=int[-5, 10]}
+variable g14 module=m0 declared={type=int[0, 4611686018427387903]}
+variable g15 module=m0 declared={type=double}
+variable g16 module=m0 declared={type=whole}
+variable g17 module=m0 declared={type=fractional}
+variable g18 module=m0 declared={type=i32|double}
+variable g19 module=m0 declared={type=int[0, 9]|whole}
+variable g20 module=m0 declared={type=7|fractional}
+variable g21 module=m0 declared={type=string}
+variable g22 module=m0 declared={type=symbol}
+variable g23 module=m0 declared={type=bigint}
+variable g24 module=m0 declared={type=object}
+variable g25 module=m0 declared={type=function}
+variable g26 module=m0 declared={type=absent}
+variable g27 module=m0 declared={type=undefined|absent}
+variable g28 module=m0 declared={type=anything|absent}
+variable g29 module=m0 declared={type="a"|"b"}
+variable g30 module=m0 declared={type=undefined|"a"}
+variable g31 module=m0 declared={type=number|"a\"\u{e9}"}
+variable g32 module=m0 declared={type=@@iterator}
+variable g33 module=m0 declared={type=@@asyncDispose|@@toPrimitive}
+variable g34 module=m0 declared={type=symbol@m0:120}
+variable g35 module=m0 declared={type=symbol("d")@m0:7}
+variable g36 module=m0 declared={type=Symbol.for("x")}
+variable g37 module=m0 declared={type=L0}
+variable g38 module=m0 declared={type=L0|L1}
+variable g39 module=m0 declared={type=null|L0|L1}
+variable g40 module=m0 declared={type=L(IteratorResult)}
+variable g41 module=m0 declared={type=L(m0)}
+variable g42 module=m0 declared={type=L0|L(IteratorResult)|L(m0)}
+variable g43 module=m0 declared={type=env L2}
+variable g44 module=m0 declared={type=f0}
+variable g45 module=m0 declared={type=f0|f1}
+variable g46 module=m0 declared={type=builtin(ArrayPrototypePush)}
+variable g47 module=m0 declared={type=builtin(Math)|builtin(MathMax)}
+variable g48 module=m0 declared={type=function|L0}
+variable g49 module=m0 declared={type=null|function}
+variable g50 module=m0 declared={type=Array}
+variable g51 module=m0 declared={type=Array<number>}
+variable g52 module=m0 declared={type=Array<number, proven>}
+variable g53 module=m0 declared={type=Array<anything, proven>}
+variable g54 module=m0 declared={type=Array<number, Int32>}
+variable g55 module=m0 declared={type=Array<number, proven, Double>}
+variable g56 module=m0 declared={type=Array<number, proven, Contiguous, pristine[Storage, Names]>}
+variable g57 module=m0 declared={type=Array<anything, pristine[Names]>}
+variable g58 module=m0 declared={type=Map<string, Array<L0>>}
+variable g59 module=m0 declared={type=Set<"a"|"b">}
+variable g60 module=m0 declared={type=Promise}
+variable g61 module=m0 declared={type=Promise<undefined>}
+variable g62 module=m0 declared={type=Array<string>|Promise<undefined>}
+variable g63 module=m0 declared={type=Arguments}
+variable g64 module=m0 declared={type=Generator}
+variable g65 module=m0 declared={type=AsyncGenerator}
+variable g66 module=m0 declared={type=RegExp}
+variable g67 module=m0 declared={type=RegExp<"ab+c"[Global], "x"[]>}
+variable g68 module=m0 declared={type=iteratorstate}
+variable g69 module=m0 declared={type=enumerator}
+variable g70 module=m0 declared={type=exception}
+variable g71 module=m0 declared={type=classtoken}
+variable g72 module=m0 declared={type=stringbuilder}
+variable g73 module=m0 declared={type=cursor}
+variable g74 module=m0 declared={type=keyorder}
+variable g75 module=m0 declared={type=absent|classtoken}
+variable g76 module=m0 declared={type=undefined|null|true|int[-5, 9]|whole|symbol|bigint|absent|"a"|"b"|L0|L1|builtin(Math)|function|Array<number>|Map<string, L0>}
+variable g77 module=m0 declared={type=Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<Array<number>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>}
+variable g78 module=m0 declared={type=int[7, 7]}
+variable g79 module=m0 declared={type=int[-2147483648, 2147483647]}
+variable g80 module=m0 declared={type=int[-4611686018427387903, 4611686018427387903]}
+variable g81 module=m0 declared={type=int|double}
+variable g82 module=m0 declared={type=whole|fractional}
+variable g83 module=m0 declared={type=1|3}
+variable g84 module=m0 declared={type=false|true}
+variable g85 module=m0 declared={type=null|undefined}
+variable g86 module=m0 declared={type=anything|null}
+variable g87 module=m0 declared={type="z"|"c"}
+variable g88 module=m0 declared={type="a"|"a"}
+variable g89 module=m0 declared={type="a"|number}
+variable g90 module=m0 declared={type=string|"a"}
+variable g91 module=m0 declared={type=symbol|@@iterator}
+variable g92 module=m0 declared={type=L1|L0|null}
+variable g93 module=m0 declared={type=L(m0)|L0}
+variable g94 module=m0 declared={type=object|L0}
+variable g95 module=m0 declared={type=object|function}
+variable g96 module=m0 declared={type=f0|function}
+variable g97 module=m0 declared={type=Array<anything>}
+variable g98 module=m0 declared={type=Map<anything, anything>}
+variable g99 module=m0 declared={type=Promise<undefined>|Array<string>}
+variable g100 module=m0 declared={type=classtoken|absent}
+variable g101 module=m0 declared={type="\xc3\xa9"}
+variable g102 module=m0 declared={type=L0|nolayout}
+variable g103 module=m0 declared={type=null|L0|L1|nolayout}
+variable g104 module=m0 declared={type=nolayout}
+variable g105 module=m0 declared={type=L0|L(m0)|nolayout}
+variable g106 module=m0 declared={type=nolayout|L1|L0}
+variable g107 module=m0 declared={type=object|nolayout}
+layout L0
+layout L1
+layout L2 kind=Environment
+module m0 path="main.js" displayPath="main.js"
+function f0 name="f" module=m0 thisType={type=anything} results=[{type=undefined}]
+function f1 name="g" module=m0 thisType={type=anything} results=[{type=undefined}]
+function f2 name="local" module=m0 thisType={type=anything} results=[{type=undefined}] {
+    v0 = Unspecified valueType=guard
+    v1 = Unspecified valueType=flatstring
+    v2 = Unspecified valueType=codeaddress
+    v3 = Unspecified valueType=buildercursor
+    Return
+}

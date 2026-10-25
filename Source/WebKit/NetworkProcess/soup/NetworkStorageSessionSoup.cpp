@@ -45,7 +45,9 @@
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Vector.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GUniquePtr.h>
+#include <wtf/text/UTF8CStringView.h>
 
 #if USE(LIBSECRET)
 #include <glib/gi18n-lib.h>
@@ -326,9 +328,10 @@ void NetworkStorageSession::saveCredentialToPersistentStorage(const ProtectionSp
     if (!attributes)
         return;
 
-    g_hash_table_insert(attributes.get(), g_strdup("user"), g_strdup(credential.user().utf8().legacyCStringPointer()));
+    g_hash_table_insert(attributes.get(), g_strdup("user"), gStrdup(credential.user().utf8()));
     auto utf8Password = credential.password().utf8();
-    GRefPtr<SecretValue> newSecretValue = adoptGRef(secret_value_new(utf8Password.legacyCStringPointer(), utf8Password.length(), "text/plain"));
+    auto passwordCharacters = byteCast<char>(utf8Password.span());
+    GRefPtr newSecretValue = adoptGRef(secret_value_new(passwordCharacters.data(), passwordCharacters.size(), "text/plain"));
     secret_service_store(nullptr, SECRET_SCHEMA_COMPAT_NETWORK, attributes.get(), SECRET_COLLECTION_DEFAULT, _("WebKitGTK password"),
         newSecretValue.get(), nullptr, nullptr, nullptr);
 #else
@@ -558,7 +561,7 @@ void NetworkStorageSession::deleteCookie(const URL&, const URL& url, const Strin
     bool wasDeleted = false;
     for (GSList* iter = cookies.get(); iter; iter = g_slist_next(iter)) {
         SoupCookie* cookie = static_cast<SoupCookie*>(iter->data);
-        if (!wasDeleted && cookieName == soup_cookie_get_name(cookie)) {
+        if (!wasDeleted && cookieName == UTF8CStringView::unsafeFromUTF8(soup_cookie_get_name(cookie))) {
             soup_cookie_jar_delete_cookie(jar, cookie);
             wasDeleted = true;
         }
@@ -596,7 +599,7 @@ void NetworkStorageSession::deleteAllCookiesModifiedSince(WallTime timestamp, Co
     }
 }
 
-void NetworkStorageSession::deleteCookiesForHostnames(std::span<const String> hostnames, IncludeHttpOnlyCookies includeHttpOnlyCookies, ScriptWrittenCookiesOnly, CompletionHandler<void()>&& completionHandler)
+void NetworkStorageSession::deleteCookiesForHostnames(std::span<const String> hostnames, IncludeHttpOnlyCookies includeHttpOnlyCookies, ScriptWrittenCookiesOnly, ExemptAllowlistedCookies, CompletionHandler<void()>&& completionHandler)
 {
     SoupCookieJar* cookieJar = cookieStorage();
     for (const auto& hostname : hostnames) {

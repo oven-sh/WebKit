@@ -139,6 +139,7 @@
 #include <WebCore/TextIterator.h>
 #include <WebCore/TextResourceDecoder.h>
 #include <WebCore/WebKitJSHandle.h>
+#include <wtf/Borrow.h>
 #include <wtf/CoroutineUtilities.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -298,71 +299,64 @@ Awaitable<std::optional<FrameInfoData>> WebFrame::getFrameInfo()
 
 FrameInfoData WebFrame::info() const
 {
-    RefPtr parent = parentFrame();
     RefPtr coreFrame = this->coreFrame();
     RefPtr coreLocalFrame = this->coreLocalFrame();
     RefPtr document = coreLocalFrame ? coreLocalFrame->document() : nullptr;
-    RefPtr page = m_page.get();
     RefPtr loadingFrame = m_provisionalFrame ? m_provisionalFrame : coreLocalFrame;
 
     WebFrameMetrics metrics;
-    FrameType frameType = FrameType::Local;
-    if (coreFrame) {
-        if (RefPtr coreView = coreFrame->virtualView()) {
-            IsScrollable isScrollable = hasHorizontalScrollbar() || hasVerticalScrollbar() ? IsScrollable::Yes : IsScrollable::No;
-            IntSize contentSize { coreView->contentsWidth(), coreView->contentsHeight() };
-            auto visibleContentSize = coreView->visibleContentRectIncludingScrollbars().size();
-            auto visibleContentSizeExcludingScrollbars = coreView->visibleContentRect().size();
-            metrics = { isScrollable, contentSize, visibleContentSize, visibleContentSizeExcludingScrollbars };
-        }
-        if (coreFrame->frameType() == WebCore::Frame::FrameType::Remote)
-            frameType = FrameType::Remote;
+    if (RefPtr coreView = coreFrame ? coreFrame->virtualView() : nullptr) {
+        IsScrollable isScrollable = hasHorizontalScrollbar() || hasVerticalScrollbar() ? IsScrollable::Yes : IsScrollable::No;
+        IntSize contentSize { coreView->contentsWidth(), coreView->contentsHeight() };
+        auto visibleContentSize = coreView->visibleContentRectIncludingScrollbars().size();
+        auto visibleContentSizeExcludingScrollbars = coreView->visibleContentRect().size();
+        metrics = { isScrollable, contentSize, visibleContentSize, visibleContentSizeExcludingScrollbars };
     }
 
     return {
-        isMainFrame(),
-        frameType,
         // FIXME: This should use the full request.
         ResourceRequest(url()),
         coreFrame ? SecurityOriginData::fromFrame(*coreFrame) : SecurityOriginData { },
-        coreFrame ? coreFrame->topOrigin().data() : SecurityOriginData { },
         coreFrame ? coreFrame->tree().specifiedName().string() : String(),
         frameID(),
-        page ? std::optional { page->webPageProxyIdentifier() } : std::nullopt,
-        parent ? std::optional { parent->frameID() } : std::nullopt,
         document ? std::optional { document->identifier() } : std::nullopt,
-        getCurrentProcessID(),
         isFocused(),
         loadingFrame && loadingFrame->loader().errorOccurredInLoading(),
         WTF::move(metrics)
     };
 }
 
-FrameTreeNodeData WebFrame::frameTreeData() const
+std::optional<FrameTreeNodeData> WebFrame::frameTreeData() const
 {
-    FrameTreeNodeData data {
-        info(),
-        { },
-        { }
-    };
-
     if (!m_coreFrame) {
         ASSERT_NOT_REACHED();
-        return data;
+        return std::nullopt;
     }
 
-    data.children.reserveInitialCapacity(m_coreFrame->tree().childCount());
-
+    Vector<FrameTreeNodeData> children;
+    children.reserveInitialCapacity(m_coreFrame->tree().childCount());
     for (RefPtr child = m_coreFrame->tree().firstChild(); child; child = child->tree().nextSibling()) {
         RefPtr childWebFrame = WebFrame::fromCoreFrame(*child);
         if (!childWebFrame) {
             ASSERT_NOT_REACHED();
             continue;
         }
-        data.children.append(childWebFrame->frameTreeData());
+        auto data = childWebFrame->frameTreeData();
+        if (!data) {
+            ASSERT_NOT_REACHED();
+            continue;
+        }
+        children.append(WTF::move(*data));
     }
 
-    return data;
+    RefPtr page = m_coreFrame->page();
+
+    return FrameTreeNodeData {
+        info(),
+        WTF::move(children),
+        page ? page->mainFrameURL() : URL(),
+        getCurrentProcessID()
+    };
 }
 
 void WebFrame::invalidate()
@@ -514,7 +508,7 @@ void WebFrame::createProvisionalFrame(ProvisionalFrameCreationParameters&& param
     auto clientCreator = [this, protectedThis = Ref { *this }] (auto& localFrame, auto& frameLoader) mutable {
         return makeUniqueRefWithoutRefCountedCheck<WebLocalFrameLoaderClient>(localFrame, frameLoader, WTF::move(protectedThis), makeInvalidator());
     };
-    auto localFrame = parent ? LocalFrame::createProvisionalSubframe(*corePage, WTF::move(clientCreator), m_frameID, parameters.effectiveSandboxFlags, parameters.effectiveReferrerPolicy, parameters.scrollingMode, *parent, Ref { remoteFrame->frameTreeSyncData() }) : LocalFrame::createMainFrame(*corePage, WTF::move(clientCreator), m_frameID, parameters.effectiveSandboxFlags, parameters.effectiveReferrerPolicy, nullptr, Ref { remoteFrame->frameTreeSyncData() });
+    auto localFrame = parent ? LocalFrame::createProvisionalSubframe(*corePage, WTF::move(clientCreator), m_frameID, parameters.effectiveSandboxFlags, parameters.effectiveReferrerPolicy, parameters.scrollingMode, *parent, Ref { remoteFrame->frameTreeSyncData() }, parameters.pageZoomFactor, parameters.textZoomFactor) : LocalFrame::createMainFrame(*corePage, WTF::move(clientCreator), m_frameID, parameters.effectiveSandboxFlags, parameters.effectiveReferrerPolicy, nullptr, Ref { remoteFrame->frameTreeSyncData() }, parameters.pageZoomFactor, parameters.textZoomFactor);
     ASSERT(!m_provisionalFrame);
     m_provisionalFrame = localFrame.ptr();
     m_frameIDBeforeProvisionalNavigation = parameters.frameIDBeforeProvisionalNavigation;
@@ -552,6 +546,24 @@ void WebFrame::destroyProvisionalFrame()
         frame->setView(nullptr);
         m_frameIDBeforeProvisionalNavigation = std::nullopt;
     }
+}
+
+// The navigation's response moved to another process. Unlike loadDidCommitInAnotherProcess(), this runs before it commits
+// there, so the frame keeps its document and only drops the provisional load, without reporting it as failed.
+void WebFrame::stopLoadingDueToProcessSwap(WebCore::NavigationIdentifier navigationID)
+{
+    RefPtr localFrame = coreLocalFrame() ? coreLocalFrame() : m_provisionalFrame.get();
+    RefPtr documentLoader = localFrame ? localFrame->loader().provisionalDocumentLoader() : nullptr;
+    if (documentLoader && documentLoader->navigationID() == navigationID)
+        documentLoader->cancelMainResourceLoad({ }, LoadWillContinueInAnotherProcess::Yes);
+}
+
+void WebFrame::updateSandboxFlags(SandboxFlags sandboxFlags)
+{
+    if (RefPtr localFrame = coreLocalFrame())
+        localFrame->updateSandboxFlags(sandboxFlags, Frame::NotifyUIProcess::No);
+    if (RefPtr provisionalFrame = m_provisionalFrame)
+        provisionalFrame->updateSandboxFlags(sandboxFlags, Frame::NotifyUIProcess::No);
 }
 
 void WebFrame::commitProvisionalFrame()
@@ -630,13 +642,21 @@ void WebFrame::removeFromTree()
     if (RefPtr client = localFrameLoaderClient())
         client->removeStorageAccess();
 
+    if (RefPtr localFrame = dynamicDowncast<LocalFrame>(*coreFrame))
+        localFrame->loader().closeURL();
+
     // Instrumentation is added in createSubframe()/createProvisionalFrame() and normally removed in
-    // detachedFromParent2(). This removal path (a remote parent removing the frame ->
+    // detachedFromParent2(). This removal path (a remote ancestor removing the frame ->
     // frameWasRemovedInAnotherProcess -> removeFromTree) skips detachedFromParent2(), so tear the
     // instrumentation (incl. the paint-rect overlay) down here too; removeInstrumentationForFrame() is
     // idempotent, so the two removal paths never double-free.
     if (RefPtr backend = webPage->inspector(WebPage::LazyCreationPolicy::UseExistingOnly))
         backend->removeInstrumentationForFrame(frameID());
+
+    if (is<RemoteFrame>(*coreFrame))
+        coreFrame->disconnectOwnerElement();
+
+    destroyProvisionalFrame();
 
     if (RefPtr parent = coreFrame->tree().parent())
         parent->tree().removeChild(*coreFrame);
@@ -728,14 +748,20 @@ void WebFrame::didReceivePolicyDecision(PolicyListenerIdentifier listenerID, Pol
     // any other, and m_policyDocumentLoader is its own. A new window skips it too, since its navigation state
     // belongs to the window being opened rather than to this frame.
     if (policyDecision.policyAction != PolicyAction::Download && policyCheck.kind != PolicyCheckKind::NewWindow) {
-        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(m_coreFrame.get())) {
+        if (RefPtr localFrame = m_provisionalFrame ? m_provisionalFrame.get() : coreLocalFrame()) {
             auto& loader = localFrame->loader();
             if (RefPtr policyDocumentLoader = loader.policyDocumentLoader()) {
                 if (policyDecision.navigationID)
                     policyDocumentLoader->setNavigationID(*policyDecision.navigationID);
-                policyDocumentLoader->setIsOriginKeyedFromUIProcess(policyDecision.isOriginKeyed);
-            } else if (RefPtr provisionalDocumentLoader = loader.provisionalDocumentLoader())
-                provisionalDocumentLoader->setIsOriginKeyedFromUIProcess(policyDecision.isOriginKeyed);
+                policyDocumentLoader->setAgentClusterAssignment(policyDecision.agentClusterAssignment);
+                if (forNavigationAction)
+                    policyDocumentLoader->setUnpartitionedStorageSite(WTF::move(policyDecision.unpartitionedStorageSite));
+            } else if (RefPtr provisionalDocumentLoader = loader.provisionalDocumentLoader(); provisionalDocumentLoader && (!forNavigationAction || (policyDecision.navigationID && policyDecision.navigationID == provisionalDocumentLoader->navigationID()))) {
+                // A navigation action decision without a policy document loader, such as for a fragment navigation, belongs to another navigation than the provisional one, unless it is for a redirect.
+                provisionalDocumentLoader->setAgentClusterAssignment(policyDecision.agentClusterAssignment);
+                if (forNavigationAction)
+                    provisionalDocumentLoader->setUnpartitionedStorageSite(WTF::move(policyDecision.unpartitionedStorageSite));
+            }
         }
     }
 
@@ -1395,7 +1421,7 @@ void WebFrame::updateLocalFrameRect(WebCore::LocalFrame& localFrame, WebCore::In
         frameView->setExposedContentRect(FloatRect { { }, frameView->size() });
 #endif
 
-    if (!rectChanged)
+    if (oldRect.size() == newRect.size())
         return;
 
     if (RefPtr drawingArea = m_page ? m_page->drawingArea() : nullptr) {
@@ -1529,7 +1555,7 @@ std::optional<OptionSet<WebCore::AdvancedPrivacyProtections>> WebFrame::originat
 }
 
 #if ENABLE(CONTEXT_MENU_EVENT)
-static bool NODELETE isContextClick(const PlatformMouseEvent& event)
+static bool LEGACY_NODELETE isContextClick(const PlatformMouseEvent& event)
 {
 #if USE(APPKIT)
     return WebEventFactory::shouldBeHandledAsContextClick(event);
@@ -1676,7 +1702,7 @@ String WebFrame::frameTextForTesting(bool includeSubframes)
             continue;
         auto frameName = makeAtomString("\n--------\nFrame: '"_s, childWebFrame->name(), "'\n--------\n"_s);
         if (is<RemoteFrame>(*child))
-            builder.append(frameName, m_page->sendSync(Messages::WebPageProxy::FrameTextForTesting(child->frameID())).takeReplyOr("Sending WebPageProxy::FrameTextForTesting failed"_s));
+            builder.append(frameName, m_page->sendSync(Messages::WebPageProxy::FrameTextForTesting(child->frameID())).takeReplyOr("Sending WebPageProxy::FrameTextForTesting failed\n"_s));
         else if (!childWebFrame->innerText().isNull())
             builder.append(frameName, childWebFrame->frameTextForTesting(includeSubframes));
     }
@@ -1872,7 +1898,7 @@ void WebFrame::takeSnapshotOfNode(JSHandleIdentifier identifier, CompletionHandl
 CheckedRef<FrameInspectorTarget> WebFrame::ensureInspectorTarget()
 {
     if (!m_inspectorTarget)
-        m_inspectorTarget = makeUnique<FrameInspectorTarget>(*this);
+        lazyInitialize(m_inspectorTarget, makeUnique<FrameInspectorTarget>(*this));
     return *m_inspectorTarget;
 }
 
@@ -1901,7 +1927,7 @@ static Vector<TextExtraction::Item> itemsForPDFTextAndLinks(String&& text, Vecto
 
     Vector<TextExtraction::Item> items;
     unsigned cursor = 0;
-    for (auto& link : links) {
+    for (auto& link : borrow(links)) {
         auto linkLocation = static_cast<unsigned>(link.rangeInText.location);
         auto linkLength = static_cast<unsigned>(link.rangeInText.length);
         if (linkLocation < cursor)
@@ -2083,7 +2109,7 @@ void WebFrame::requestContentFrameIdentifierForNode(NodeIdentifier nodeIdentifie
 
 void WebFrame::findFirstConnectedNode(Vector<NodeIdentifier>&& candidates, CompletionHandler<void(std::optional<NodeIdentifier>)>&& completion)
 {
-    for (auto& candidate : candidates) {
+    for (auto& candidate : borrow(candidates)) {
         RefPtr node = Node::fromIdentifier(candidate);
         if (node && node->isConnected())
             return completion(candidate);

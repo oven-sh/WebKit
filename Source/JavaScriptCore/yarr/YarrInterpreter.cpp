@@ -27,6 +27,7 @@
 #include "config.h"
 #include "YarrInterpreter.h"
 
+#include "AOTRemovableFeature.h"
 #include "ConcurrentJSLock.h"
 #include "Options.h"
 #include "SuperSampler.h"
@@ -89,14 +90,14 @@ public:
         ParenthesesDisjunctionContext* lastContext;
     };
 
-    static inline void NODELETE appendParenthesesDisjunctionContext(BackTrackInfoParentheses* backTrack, ParenthesesDisjunctionContext* context)
+    static inline void LEGACY_NODELETE appendParenthesesDisjunctionContext(BackTrackInfoParentheses* backTrack, ParenthesesDisjunctionContext* context)
     {
         context->next = backTrack->lastContext;
         backTrack->lastContext = context;
         ++backTrack->matchAmount;
     }
 
-    static inline void NODELETE popParenthesesDisjunctionContext(BackTrackInfoParentheses* backTrack)
+    static inline void LEGACY_NODELETE popParenthesesDisjunctionContext(BackTrackInfoParentheses* backTrack)
     {
         RELEASE_ASSERT(backTrack->matchAmount);
         RELEASE_ASSERT(backTrack->lastContext);
@@ -108,7 +109,7 @@ public:
     {
         DisjunctionContext() = default;
 
-        void* NODELETE operator new(size_t, void* where)
+        void* LEGACY_NODELETE operator new(size_t, void* where)
         {
             return where;
         }
@@ -142,7 +143,7 @@ public:
         return new (allocatorPool->alloc(size)) DisjunctionContext();
     }
 
-    void NODELETE freeDisjunctionContext(DisjunctionContext* context)
+    void LEGACY_NODELETE freeDisjunctionContext(DisjunctionContext* context)
     {
 #if ASSERT_ENABLED
         ASSERT(context->m_magicNumber == DisjunctionContext::magicNumber);
@@ -178,7 +179,7 @@ public:
             new (getDisjunctionContext()) DisjunctionContext();
         }
 
-        void* NODELETE operator new(size_t, void* where)
+        void* LEGACY_NODELETE operator new(size_t, void* where)
         {
             return where;
         }
@@ -200,7 +201,7 @@ public:
             return std::bit_cast<DisjunctionContext*>(std::bit_cast<uintptr_t>(this) + allocationSize(m_numBackupIds));
         }
 
-        unsigned NODELETE backupOffsetForDuplicateNamedGroup(unsigned duplicateNamedGroup)
+        unsigned LEGACY_NODELETE backupOffsetForDuplicateNamedGroup(unsigned duplicateNamedGroup)
         {
             unsigned offset = (m_numNestedSubpatterns << 1) + duplicateNamedGroup;
             ASSERT(offset < m_numBackupIds);
@@ -280,18 +281,20 @@ public:
         {
         }
 
-        void NODELETE next()
+        std::span<const CharType> span() const { return { input, length }; }
+
+        void LEGACY_NODELETE next()
         {
             ++pos;
         }
 
-        void NODELETE rewind(unsigned amount)
+        void LEGACY_NODELETE rewind(unsigned amount)
         {
             ASSERT(pos >= amount);
             pos -= amount;
         }
 
-        char32_t NODELETE read()
+        char32_t LEGACY_NODELETE read()
         {
             ASSERT(pos < length);
             if (pos < length)
@@ -299,7 +302,7 @@ public:
             return errorCodePoint;
         }
 
-        char32_t NODELETE readChecked(unsigned negativePositionOffest)
+        char32_t LEGACY_NODELETE readChecked(unsigned negativePositionOffest)
         {
             RELEASE_ASSERT(pos >= negativePositionOffest);
             unsigned p = pos - negativePositionOffest;
@@ -315,7 +318,7 @@ public:
             return result;
         }
 
-        char32_t NODELETE readCheckedDontAdvance(unsigned negativePositionOffest)
+        char32_t LEGACY_NODELETE readCheckedDontAdvance(unsigned negativePositionOffest)
         {
             RELEASE_ASSERT(pos >= negativePositionOffest);
             unsigned p = pos - negativePositionOffest;
@@ -330,7 +333,7 @@ public:
 
         // readForCharacterDump() is only for use by the DUMP_CURR_CHAR macro.
         // We don't want any side effects like the next() in readChecked() above.
-        char32_t NODELETE readForCharacterDump(unsigned negativePositionOffest)
+        char32_t LEGACY_NODELETE readForCharacterDump(unsigned negativePositionOffest)
         {
             RELEASE_ASSERT(pos >= negativePositionOffest);
             unsigned p = pos - negativePositionOffest;
@@ -344,7 +347,7 @@ public:
             return result;
         }
         
-        char32_t NODELETE tryReadBackward(unsigned negativePositionOffest)
+        char32_t LEGACY_NODELETE tryReadBackward(unsigned negativePositionOffest)
         {
             if (pos < negativePositionOffest)
                 return errorCodePoint;
@@ -358,7 +361,7 @@ public:
             return result;
         }
 
-        char32_t NODELETE readSurrogatePairChecked(unsigned negativePositionOffset)
+        char32_t LEGACY_NODELETE readSurrogatePairChecked(unsigned negativePositionOffset)
         {
             RELEASE_ASSERT(pos >= negativePositionOffset);
             unsigned p = pos - negativePositionOffset;
@@ -372,7 +375,7 @@ public:
             return errorCodePoint;
         }
 
-        char32_t NODELETE reread(unsigned from)
+        char32_t LEGACY_NODELETE reread(unsigned from)
         {
             ASSERT(from < length);
             auto result = input[from];
@@ -393,12 +396,12 @@ public:
             return errorCodePoint;
         }
 
-        unsigned NODELETE getPos()
+        unsigned LEGACY_NODELETE getPos()
         {
             return pos;
         }
 
-        void NODELETE setPos(unsigned p)
+        void LEGACY_NODELETE setPos(unsigned p)
         {
             pos = p;
         }
@@ -408,17 +411,17 @@ public:
             return pos == 0;
         }
 
-        bool NODELETE atEnd()
+        bool LEGACY_NODELETE atEnd()
         {
             return pos == length;
         }
 
-        unsigned NODELETE end()
+        unsigned LEGACY_NODELETE end()
         {
             return length;
         }
 
-        bool NODELETE checkInput(unsigned count)
+        bool LEGACY_NODELETE checkInput(unsigned count)
         {
             if (((pos + count) <= length) && ((pos + count) >= pos)) {
                 pos += count;
@@ -427,13 +430,13 @@ public:
             return false;
         }
 
-        void NODELETE uncheckInput(unsigned count)
+        void LEGACY_NODELETE uncheckInput(unsigned count)
         {
             RELEASE_ASSERT(pos >= count);
             pos -= count;
         }
 
-        bool NODELETE tryUncheckInput(unsigned count)
+        bool LEGACY_NODELETE tryUncheckInput(unsigned count)
         {
             if (count > pos)
                 return false;
@@ -441,23 +444,23 @@ public:
             return true;
         }
 
-        bool NODELETE atStart(unsigned negativePositionOffset)
+        bool LEGACY_NODELETE atStart(unsigned negativePositionOffset)
         {
             return pos == negativePositionOffset;
         }
 
-        bool NODELETE atEnd(unsigned negativePositionOffest)
+        bool LEGACY_NODELETE atEnd(unsigned negativePositionOffest)
         {
             RELEASE_ASSERT(pos >= negativePositionOffest);
             return (pos - negativePositionOffest) == length;
         }
 
-        bool NODELETE isAvailableInput(unsigned offset)
+        bool LEGACY_NODELETE isAvailableInput(unsigned offset)
         {
             return (((pos + offset) <= length) && ((pos + offset) >= pos));
         }
 
-        bool NODELETE isValidNegativeInputOffset(unsigned offset)
+        bool LEGACY_NODELETE isValidNegativeInputOffset(unsigned offset)
         {
             return (pos >= offset) && ((pos - offset) < length);
         }
@@ -590,7 +593,7 @@ public:
         return false;
     }
 
-    bool NODELETE checkCharacter(ByteTerm& term, unsigned negativeInputOffset)
+    bool LEGACY_NODELETE checkCharacter(ByteTerm& term, unsigned negativeInputOffset)
     {
         ASSERT(term.isCharacterType());
         if (term.matchDirection() == Forward)
@@ -599,13 +602,13 @@ public:
         return term.atom.patternCharacter == static_cast<char32_t>(input.tryReadBackward(negativeInputOffset));
     }
 
-    bool NODELETE checkSurrogatePair(ByteTerm& term, unsigned negativeInputOffset)
+    bool LEGACY_NODELETE checkSurrogatePair(ByteTerm& term, unsigned negativeInputOffset)
     {
         ASSERT(term.isCharacterType());
         return term.atom.patternCharacter == static_cast<char32_t>(input.readSurrogatePairChecked(negativeInputOffset));
     }
 
-    bool NODELETE checkCasedCharacter(ByteTerm& term, unsigned negativeInputOffset)
+    bool LEGACY_NODELETE checkCasedCharacter(ByteTerm& term, unsigned negativeInputOffset)
     {
         ASSERT(term.isCasedCharacterType());
         char32_t ch = term.matchDirection() == Forward ? input.readChecked(negativeInputOffset) : input.tryReadBackward(negativeInputOffset);
@@ -640,7 +643,7 @@ public:
         return testCharacterClass(characterClass, static_cast<char32_t>(readCharacter));
     }
 
-    bool NODELETE tryConsumeBackReference(int matchBegin, int matchEnd, ByteTerm& term)
+    bool LEGACY_NODELETE tryConsumeBackReference(int matchBegin, int matchEnd, ByteTerm& term)
     {
         unsigned matchSize = (unsigned)(matchEnd - matchBegin);
 
@@ -726,7 +729,7 @@ public:
         return term.invert() ? !wordBoundary : wordBoundary;
     }
 
-    bool NODELETE backtrackPatternCharacter(ByteTerm& term, DisjunctionContext* context)
+    bool LEGACY_NODELETE backtrackPatternCharacter(ByteTerm& term, DisjunctionContext* context)
     {
         BackTrackInfoPatternCharacter* backTrack = reinterpret_cast<BackTrackInfoPatternCharacter*>(context->frame + term.frameLocation);
 
@@ -776,7 +779,7 @@ public:
         return false;
     }
 
-    bool NODELETE backtrackPatternCasedCharacter(ByteTerm& term, DisjunctionContext* context)
+    bool LEGACY_NODELETE backtrackPatternCasedCharacter(ByteTerm& term, DisjunctionContext* context)
     {
         BackTrackInfoPatternCharacter* backTrack = reinterpret_cast<BackTrackInfoPatternCharacter*>(context->frame + term.frameLocation);
 
@@ -1072,7 +1075,7 @@ public:
         return false;
     }
 
-    bool NODELETE backtrackBackReference(ByteTerm& term, DisjunctionContext* context)
+    bool LEGACY_NODELETE backtrackBackReference(ByteTerm& term, DisjunctionContext* context)
     {
         ASSERT(term.type == ByteTerm::Type::BackReference);
         BackTrackInfoBackReference* backTrack = reinterpret_cast<BackTrackInfoBackReference*>(context->frame + term.frameLocation);
@@ -1167,7 +1170,7 @@ public:
         return JSRegExpResult::NoMatch;
     }
 
-    bool NODELETE matchParenthesesOnceBegin(ByteTerm& term, DisjunctionContext* context)
+    bool LEGACY_NODELETE matchParenthesesOnceBegin(ByteTerm& term, DisjunctionContext* context)
     {
         ASSERT(term.type == ByteTerm::Type::ParenthesesSubpatternOnceBegin);
         ASSERT(term.atom.quantityMaxCount == 1);
@@ -1198,7 +1201,7 @@ public:
         return true;
     }
 
-    bool NODELETE matchParenthesesOnceEnd(ByteTerm& term, DisjunctionContext* context)
+    bool LEGACY_NODELETE matchParenthesesOnceEnd(ByteTerm& term, DisjunctionContext* context)
     {
         ASSERT(term.type == ByteTerm::Type::ParenthesesSubpatternOnceEnd);
         ASSERT(term.atom.quantityMaxCount == 1);
@@ -1294,7 +1297,7 @@ public:
         return false;
     }
 
-    bool NODELETE matchParenthesesTerminalBegin(ByteTerm& term, DisjunctionContext* context)
+    bool LEGACY_NODELETE matchParenthesesTerminalBegin(ByteTerm& term, DisjunctionContext* context)
     {
         ASSERT(term.type == ByteTerm::Type::ParenthesesSubpatternTerminalBegin);
         ASSERT(term.atom.quantityType == QuantifierType::Greedy);
@@ -1308,7 +1311,7 @@ public:
         return true;
     }
 
-    bool NODELETE matchParenthesesTerminalEnd(ByteTerm& term, DisjunctionContext* context)
+    bool LEGACY_NODELETE matchParenthesesTerminalEnd(ByteTerm& term, DisjunctionContext* context)
     {
         ASSERT(term.type == ByteTerm::Type::ParenthesesSubpatternTerminalEnd);
         ASSERT(!term.atom.quantityMinCount || term.atom.quantityMinCount == 1);
@@ -1333,7 +1336,7 @@ public:
         return true;
     }
 
-    bool NODELETE backtrackParenthesesTerminalBegin(ByteTerm& term, DisjunctionContext* context)
+    bool LEGACY_NODELETE backtrackParenthesesTerminalBegin(ByteTerm& term, DisjunctionContext* context)
     {
         ASSERT(term.type == ByteTerm::Type::ParenthesesSubpatternTerminalBegin);
         ASSERT(term.atom.quantityType == QuantifierType::Greedy);
@@ -1354,7 +1357,7 @@ public:
         return true;
     }
 
-    bool NODELETE backtrackParenthesesTerminalEnd(ByteTerm&, DisjunctionContext*)
+    bool LEGACY_NODELETE backtrackParenthesesTerminalEnd(ByteTerm&, DisjunctionContext*)
     {
         // 'Terminal' parentheses are at the end of the regex, and as such a match past end
         // should always be returned as a successful match - we should never backtrack to here.
@@ -1362,7 +1365,7 @@ public:
         return false;
     }
 
-    bool NODELETE matchParentheticalAssertionBegin(ByteTerm& term, DisjunctionContext* context)
+    bool LEGACY_NODELETE matchParentheticalAssertionBegin(ByteTerm& term, DisjunctionContext* context)
     {
         ASSERT(term.type == ByteTerm::Type::ParentheticalAssertionBegin);
         ASSERT(term.atom.quantityMaxCount == 1);
@@ -1374,7 +1377,7 @@ public:
         return true;
     }
 
-    bool NODELETE matchParentheticalAssertionEnd(ByteTerm& term, DisjunctionContext* context)
+    bool LEGACY_NODELETE matchParentheticalAssertionEnd(ByteTerm& term, DisjunctionContext* context)
     {
         ASSERT(term.type == ByteTerm::Type::ParentheticalAssertionEnd);
         ASSERT(term.atom.quantityMaxCount == 1);
@@ -1398,7 +1401,7 @@ public:
         return true;
     }
 
-    bool NODELETE backtrackParentheticalAssertionBegin(ByteTerm& term, DisjunctionContext* context)
+    bool LEGACY_NODELETE backtrackParentheticalAssertionBegin(ByteTerm& term, DisjunctionContext* context)
     {
         ASSERT(term.type == ByteTerm::Type::ParentheticalAssertionBegin);
         ASSERT(term.atom.quantityMaxCount == 1);
@@ -1417,7 +1420,7 @@ public:
         return false;
     }
 
-    bool NODELETE backtrackParentheticalAssertionEnd(ByteTerm& term, DisjunctionContext* context)
+    bool LEGACY_NODELETE backtrackParentheticalAssertionEnd(ByteTerm& term, DisjunctionContext* context)
     {
         ASSERT(term.type == ByteTerm::Type::ParentheticalAssertionEnd);
         ASSERT(term.atom.quantityMaxCount == 1);
@@ -1823,7 +1826,7 @@ public:
         if (!isSafeToRecurse()) [[unlikely]]
             return JSRegExpResult::ErrorNoMemory;
 
-        if (!--remainingMatchCount) {
+        if (countsTowardMatchLimit(disjunction, btrack) && !--remainingMatchCount) {
             dataLogLnIf(verbose, "      Reached match limit - Returning ErrorHitLimit");
             return JSRegExpResult::ErrorHitLimit;
         }
@@ -2159,6 +2162,10 @@ public:
             }
 
             input.next();
+            if (!moveToStartWithRequiredTexts()) {
+                DUMP_EXTRA("- Return NoMatch\n");
+                return JSRegExpResult::NoMatch;
+            }
 
             context->matchBegin = input.getPos();
 
@@ -2303,6 +2310,9 @@ public:
         if (pattern->hasEndAnchoredFixedSize() && input.end() >= pattern->m_endAnchoredFixedSize)
             input.setPos(std::max(input.getPos(), input.end() - pattern->m_endAnchoredFixedSize));
 
+        if (!moveToStartWithRequiredTexts())
+            return offsetNoMatch;
+
         ConcurrentJSLocker locker(pattern->m_lock);
 
         for (unsigned i = 0; i < pattern->m_body->m_numSubpatterns + 1; ++i)
@@ -2315,12 +2325,15 @@ public:
         RELEASE_ASSERT(allocatorPool);
 
         DisjunctionContext* context = allocDisjunctionContext(pattern->m_body.get());
-        if (!context) [[unlikely]]
+        if (!context) [[unlikely]] {
+            m_result = JSRegExpResult::ErrorNoMemory;
             return offsetNoMatch;
+        }
 
         dataLogLnIf(verbose, "  Interpret input: ", input, "\n  Matching");
 
         JSRegExpResult result = matchDisjunction(pattern->m_body.get(), context, /* btrack= */ false);
+        m_result = result;
         if (result == JSRegExpResult::Match) {
             output[0] = context->matchBegin;
             output[1] = context->matchEnd;
@@ -2338,7 +2351,10 @@ public:
         return output[0];
     }
 
-    Interpreter(BytecodePattern* pattern, unsigned* output, std::span<const CharType> input, unsigned start)
+    JSRegExpResult result() const { return m_result; }
+    unsigned remainingTurns() const { return remainingMatchCount; }
+
+    Interpreter(BytecodePattern* pattern, unsigned* output, std::span<const CharType> input, unsigned start, bool triesEveryPlace = false)
         : pattern(pattern)
         , compileMode(pattern->compileMode())
         , output(output)
@@ -2346,16 +2362,37 @@ public:
         , startOffset(start)
         , noNewlineBefore(start)
         , remainingMatchCount(matchLimit)
+        , m_usesRequiredTexts(!triesEveryPlace && !pattern->m_requiredTexts.isEmpty())
     {
     }
 
 private:
-    inline bool NODELETE isLegacyCompilation() const { return compileMode == CompileMode::Legacy; }
-    inline bool NODELETE isUnicodeCompilation() const { return compileMode == CompileMode::Unicode; }
-    inline bool NODELETE isUnicodeSetsCompilation() const { return compileMode == CompileMode::UnicodeSets; }
-    inline bool NODELETE isEitherUnicodeCompilation() const { return isUnicodeCompilation() || isUnicodeSetsCompilation(); }
+    inline bool LEGACY_NODELETE isLegacyCompilation() const { return compileMode == CompileMode::Legacy; }
+    inline bool LEGACY_NODELETE isUnicodeCompilation() const { return compileMode == CompileMode::Unicode; }
+    inline bool LEGACY_NODELETE isUnicodeSetsCompilation() const { return compileMode == CompileMode::UnicodeSets; }
+    inline bool LEGACY_NODELETE isEitherUnicodeCompilation() const { return isUnicodeCompilation() || isUnicodeSetsCompilation(); }
 
     inline bool isSafeToRecurse() { return m_stackCheck.isSafeToRecurse(); }
+
+    // False: no match can begin here or farther on.
+    ALWAYS_INLINE bool moveToStartWithRequiredTexts()
+    {
+        if (!m_usesRequiredTexts) [[likely]]
+            return true;
+        unsigned start = nextStartWithRequiredTexts(pattern->m_requiredTexts, input.span(), input.getPos(), m_requiredTextPlaces);
+        if (start > input.end())
+            return false;
+        input.setPos(start);
+        return true;
+    }
+
+    // The JIT takes one off matchLimit for each turn that a repeated group begins (YarrGenerator::allocateParenContext()), and nothing for going back into a turn.
+    inline bool countsTowardMatchLimit(const ByteDisjunction* disjunction, bool btrack) const
+    {
+        if (!pattern->m_countsWhatJITCounts) [[likely]]
+            return true;
+        return !btrack && disjunction->m_jitCountsTurns;
+    }
 
     BytecodePattern* pattern;
     CompileMode compileMode;
@@ -2367,6 +2404,9 @@ private:
     static constexpr unsigned bolUnsatisfiable = std::numeric_limits<unsigned>::max();
     unsigned noNewlineBefore; // see matchDotStarEnclosure
     unsigned remainingMatchCount;
+    JSRegExpResult m_result { JSRegExpResult::NoMatch };
+    RequiredTextPlaces m_requiredTextPlaces { };
+    bool m_usesRequiredTexts;
 };
 
 class ByteCompiler {
@@ -2571,7 +2611,7 @@ public:
         m_bodyDisjunction->terms.append(ByteTerm::DotStarEnclosure(bolAnchored, eolAnchored, m_currentFlags));
     }
 
-    unsigned NODELETE popParenthesesStack()
+    unsigned LEGACY_NODELETE popParenthesesStack()
     {
         ASSERT(m_parenthesesStack.size());
         unsigned beginTerm = m_parenthesesStack.last().beginTerm;
@@ -2922,6 +2962,7 @@ public:
                         if (auto error = emitDisjunction(term.parentheses.disjunction, currentCountAlreadyChecked, inputOffset, matchDirection))
                             return error;
                         atomParenthesesSubpatternEnd(term.parentheses.lastSubpatternId, delegateEndInputOffset, term.frameLocation, term.quantityMinCount, term.quantityMaxCount, term.quantityType, term.parentheses.disjunction->m_callFrameSize);
+                        m_allParenthesesInfo.last()->m_jitCountsTurns = jitCountsTurnsOf(term);
                     }
                     break;
                 }
@@ -3312,14 +3353,232 @@ void ByteTermDumper::dumpDisjunction(ByteDisjunction* disjunction, unsigned nest
     m_lineIndent = savedLineIndent;
 }
 
-std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, ConcurrentJSLock* lock)
+NEVER_INLINE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, ConcurrentJSLock* lock, const String& source)
 {
-    return ByteCompiler(pattern).compile(allocator, lock, errorCode);
+    JSC_REMOVABLE_DEFINITION(RegExp, byteCompile);
+    if (pattern.m_analysis != PatternAnalysis::Performed)
+        return ByteCompiler(pattern).compile(allocator, lock, errorCode);
+
+    RequiredTexts requiredTexts = findRequiredTexts(pattern);
+    // This has to come first: the bytecode compiler takes m_userCharacterClasses out of the pattern.
+    auto flatProgram = compileFlatProgram(pattern);
+    if (!flatProgram) {
+        dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Runs in the bytecode interpreter: ", description(flatProgram.error()));
+        auto bytecode = ByteCompiler(pattern).compile(allocator, lock, errorCode);
+        if (bytecode) {
+            bytecode->m_flatProgramDecline = flatProgram.error();
+            bytecode->m_countsWhatJITCounts = true;
+            bytecode->m_requiredTexts = WTF::move(requiredTexts);
+        }
+        return bytecode;
+    }
+    if (!requiredTexts.isEmpty()) {
+        bool hasSelectiveStartScan = (*flatProgram)->hasSelectiveStartScan();
+        requiredTexts.removeAllMatching([&](const RequiredText& required) {
+            return !required.isAllThatMatchesAtEndHold && (hasSelectiveStartScan || (*flatProgram)->startScanCovers(required));
+        });
+    }
+    if (!requiredTexts.isEmpty())
+        (*flatProgram)->setRequiredTexts(requiredTexts);
+
+    dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Runs on a flat program");
+    if (Options::validateRegExpFlatProgram()) [[unlikely]] {
+        ErrorCode ignoredErrorCode { ErrorCode::NoError };
+        if (auto bytecode = ByteCompiler(pattern).compile(allocator, lock, ignoredErrorCode)) {
+            bytecode->m_flatProgram = WTF::move(*flatProgram);
+            bytecode->m_countsWhatJITCounts = true;
+            bytecode->m_source = source;
+            bytecode->m_requiredTexts = WTF::move(requiredTexts);
+            return bytecode;
+        }
+    }
+    auto bytecode = makeUnique<BytecodePattern>(WTF::move(*flatProgram), pattern, allocator, lock, source);
+    bytecode->m_requiredTexts = WTF::move(requiredTexts);
+    return bytecode;
 }
 
-unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
+static unsigned interpretBytecode(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output, JSRegExpResult& result, unsigned& remainingTurns, bool triesEveryPlace = false)
 {
+    if (input.is8Bit()) {
+        Interpreter<Latin1Character> interpreter(bytecode, output, input.span8(), start, triesEveryPlace);
+        unsigned matchStart = interpreter.interpret();
+        result = interpreter.result();
+        remainingTurns = interpreter.remainingTurns();
+        return matchStart;
+    }
+    Interpreter<char16_t> interpreter(bytecode, output, input.span16(), start, triesEveryPlace);
+    unsigned matchStart = interpreter.interpret();
+    result = interpreter.result();
+    remainingTurns = interpreter.remainingTurns();
+    return matchStart;
+}
+
+// Not for where time matters: there the second match is made in interpretBehindFlatProgram().
+static JSRegExpResult matchFlatProgramWithSurrogates(const FlatProgram& program, StringView input, unsigned start, unsigned* output, FlatMatchPolicy policy = FlatMatchPolicy::HandsOverEarly)
+{
+    unsigned remainingTurns = program.remainingTurns;
+    JSRegExpResult result = matchFlatProgram(program, input, start, output, policy);
+    if (result != JSRegExpResult::JITCodeFailure)
+        return result;
+    program.remainingTurns = remainingTurns;
+    return matchFlatProgramBehindSurrogate(program, input, start, output, policy);
+}
+
+// Answers nothing where the pattern has no such program, or the program has given up before the turns ran out.
+static std::optional<JSRegExpResult> matchCountingTurns(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output, unsigned& remainingTurns)
+{
+    ConcurrentJSLocker locker(bytecode->m_lock);
+    if (!bytecode->m_hasAskedForFlatProgramThatCountsTurns) {
+        bytecode->m_hasAskedForFlatProgramThatCountsTurns = true;
+        if (bytecode->m_source.isNull())
+            return std::nullopt;
+        // The analysis puts alternatives in another order. This has to make the search of the bytecode that stands behind it: see interpretBehindFlatProgram().
+        auto analysis = bytecode->m_body ? PatternAnalysis::Performed : PatternAnalysis::Skipped;
+        ErrorCode errorCode { ErrorCode::NoError };
+        YarrPattern pattern(bytecode->m_source, bytecode->m_flags, errorCode, ExecutionMode::IncludeSubpatterns, analysis);
+        if (hasError(errorCode))
+            return std::nullopt;
+        if (auto program = compileFlatProgram(pattern, FlatProgramForm::CountsTurns)) {
+            (*program)->setRequiredTexts(bytecode->m_requiredTexts);
+            bytecode->m_flatProgramThatCountsTurns = WTF::move(*program);
+        }
+    }
+    FlatProgram* program = bytecode->m_flatProgramThatCountsTurns.get();
+    if (!program)
+        return std::nullopt;
+    program->remainingTurns = matchLimit;
+    JSRegExpResult result = matchFlatProgramWithSurrogates(*program, input, start, output);
+    remainingTurns = program->remainingTurns;
+    if (result == JSRegExpResult::ErrorNoMemory || result == JSRegExpResult::JITCodeFailure || (result == JSRegExpResult::ErrorHitLimit && remainingTurns))
+        return std::nullopt;
+    return result;
+}
+
+static void validateFlatProgram(BytecodePattern* bytecode, const FlatProgram& program, StringView input, unsigned start, JSRegExpResult flatResult, const unsigned* output)
+{
+    JSRegExpResult bytecodeResult { JSRegExpResult::NoMatch };
+    unsigned bytecodeRemainingTurns { 0 };
+    Vector<unsigned, 32> bytecodeOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
+    interpretBytecode(bytecode, input, start, bytecodeOutput.mutableSpan().data(), bytecodeResult, bytecodeRemainingTurns);
+    validateFlatProgramResult(program, input, start, { flatResult, output }, { bytecodeResult, bytecodeOutput.span().data() });
+    if (flatResult == JSRegExpResult::JITCodeFailure) {
+        Vector<unsigned, 32> secondOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
+        JSRegExpResult secondResult = matchFlatProgramBehindSurrogate(program, input, start, secondOutput.mutableSpan().data());
+        validateFlatProgramResult(program, input, start, { secondResult, secondOutput.span().data() }, { bytecodeResult, bytecodeOutput.span().data() });
+    }
+
+    Vector<unsigned, 32> memoOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
+    JSRegExpResult memoResult = matchFlatProgramWithSurrogates(program, input, start, memoOutput.mutableSpan().data(), FlatMatchPolicy::RemembersFromStart);
+    validateFlatProgramResult(program, input, start, { memoResult, memoOutput.span().data() }, { bytecodeResult, bytecodeOutput.span().data() });
+
+    unsigned remainingTurns { 0 };
+    Vector<unsigned, 32> countingOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
+    auto countingResult = matchCountingTurns(bytecode, input, start, countingOutput.mutableSpan().data(), remainingTurns);
+    if (!countingResult || bytecodeResult == JSRegExpResult::ErrorNoMemory)
+        return;
+    validateFlatProgramResult(program, input, start, { *countingResult, countingOutput.span().data() }, { bytecodeResult, bytecodeOutput.span().data() });
+    if (remainingTurns != bytecodeRemainingTurns) {
+        dataLogLn("validateRegExpFlatProgram: turns differ at start ", start, ": flat program ", matchLimit - remainingTurns, " interpreter ", matchLimit - bytecodeRemainingTurns);
+        dataLogLn("  pattern: ", bytecode->m_source);
+        dataLogLn("  subject: ", input);
+        CRASH();
+    }
+}
+
+// A flat program keeps a frame for each turn of a repeated group, and gives up where they pass Options::maxRegExpStackSize(). It counts every frame that it resumes, and gives up at
+// matchLimit, which the JIT reaches later or never. Neither is an answer: the match is made again in a form that gives it up only where the JIT does.
+static bool hasGivenUp(JSRegExpResult flatResult)
+{
+    return flatResult == JSRegExpResult::ErrorNoMemory || flatResult == JSRegExpResult::ErrorHitLimit || flatResult == JSRegExpResult::JITCodeFailure;
+}
+
+static NEVER_INLINE unsigned interpretBehindFlatProgram(BytecodePattern* bytecode, const FlatProgram& program, StringView input, unsigned start, unsigned* output, JSRegExpResult flatResult)
+{
+    if (flatResult == JSRegExpResult::JITCodeFailure) {
+        flatResult = matchFlatProgramBehindSurrogate(program, input, start, output);
+        if (!hasGivenUp(flatResult))
+            return flatResult == JSRegExpResult::Match ? output[0] : offsetNoMatch;
+    }
+    if (flatResult == JSRegExpResult::ErrorHitLimit) {
+        unsigned remainingTurns { 0 };
+        if (auto result = matchCountingTurns(bytecode, input, start, output, remainingTurns))
+            return *result == JSRegExpResult::Match ? output[0] : offsetNoMatch;
+        if (program.jitCountsTurns) {
+            // It has handed over early: see FlatMatchPolicy.
+            flatResult = matchFlatProgramWithSurrogates(program, input, start, output, FlatMatchPolicy::RunsToMatchLimit);
+            if (!hasGivenUp(flatResult))
+                return flatResult == JSRegExpResult::Match ? output[0] : offsetNoMatch;
+        }
+    }
+    if (!bytecode->m_body) {
+        if (!bytecode->m_bytecodeBehindFlatProgram) {
+            if (bytecode->m_source.isNull())
+                return offsetNoMatch;
+            ErrorCode errorCode { ErrorCode::NoError };
+            YarrPattern pattern(bytecode->m_source, bytecode->m_flags, errorCode);
+            if (hasError(errorCode))
+                return offsetNoMatch;
+            bytecode->m_bytecodeBehindFlatProgram = ByteCompiler(pattern).compile(bytecode->m_allocator, bytecode->m_lock, errorCode);
+            if (!bytecode->m_bytecodeBehindFlatProgram)
+                return offsetNoMatch;
+            bytecode->m_bytecodeBehindFlatProgram->m_countsWhatJITCounts = true;
+            bytecode->m_bytecodeBehindFlatProgram->m_requiredTexts = bytecode->m_requiredTexts;
+        }
+        bytecode = bytecode->m_bytecodeBehindFlatProgram.get();
+    }
+    JSRegExpResult result { JSRegExpResult::NoMatch };
+    unsigned remainingTurns { 0 };
+    return interpretBytecode(bytecode, input, start, output, result, remainingTurns);
+}
+
+static NEVER_INLINE unsigned interpretFlatProgram(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
+{
+    JSRegExpResult flatResult = matchFlatProgram(*bytecode->m_flatProgram, input, start, output);
+    if (bytecode->m_body) [[unlikely]]
+        validateFlatProgram(bytecode, *bytecode->m_flatProgram, input, start, flatResult, output);
+    if (flatResult == JSRegExpResult::Match)
+        return output[0];
+    if (hasGivenUp(flatResult)) [[unlikely]]
+        return interpretBehindFlatProgram(bytecode, *bytecode->m_flatProgram, input, start, output, flatResult);
+    return offsetNoMatch;
+}
+
+// The bytecode's answer without the attempts that the texts rule out, and with them.
+static void validateRequiredTexts(BytecodePattern* bytecode, StringView input, unsigned start)
+{
+    if (!bytecode->m_body || bytecode->m_requiredTexts.isEmpty())
+        return;
+    auto answer = [&](Vector<unsigned, 32>& output, bool triesEveryPlace) {
+        JSRegExpResult result { JSRegExpResult::NoMatch };
+        unsigned remainingTurns { 0 };
+        interpretBytecode(bytecode, input, start, output.mutableSpan().data(), result, remainingTurns, triesEveryPlace);
+        return result;
+    };
+    Vector<unsigned, 32> output(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
+    JSRegExpResult result = answer(output, false);
+    Vector<unsigned, 32> outputOfEveryAttempt(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
+    JSRegExpResult resultOfEveryAttempt = answer(outputOfEveryAttempt, true);
+    if (resultOfEveryAttempt != JSRegExpResult::Match && resultOfEveryAttempt != JSRegExpResult::NoMatch)
+        return;
+    bool isSame = result == resultOfEveryAttempt;
+    for (unsigned i = 0; isSame && result == JSRegExpResult::Match && i <= bytecode->m_body->m_numSubpatterns; ++i)
+        isSame = output[i << 1] == outputOfEveryAttempt[i << 1] && (output[i << 1] == offsetNoMatch || output[(i << 1) + 1] == outputOfEveryAttempt[(i << 1) + 1]);
+    if (isSame)
+        return;
+    dataLogLn("validateRegExpFlatProgram: the text that every match holds changes the answer at start ", start, ": ", static_cast<int>(result), " at ", static_cast<int>(output[0]), ", without it ", static_cast<int>(resultOfEveryAttempt), " at ", static_cast<int>(outputOfEveryAttempt[0]));
+    dataLogLn("  pattern: ", bytecode->m_source);
+    dataLogLn("  subject: ", input);
+    CRASH();
+}
+
+NEVER_INLINE unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
+{
+    JSC_REMOVABLE_DEFINITION(RegExp, interpret);
     SuperSamplerScope superSamplerScope(false);
+    if (Options::validateRegExpFlatProgram()) [[unlikely]]
+        validateRequiredTexts(bytecode, input, start);
+    if (bytecode->m_flatProgram) [[unlikely]]
+        return interpretFlatProgram(bytecode, input, start, output);
     if (input.is8Bit())
         return Interpreter<Latin1Character>(bytecode, output, input.span8(), start).interpret();
     return Interpreter<char16_t>(bytecode, output, input.span16(), start).interpret();

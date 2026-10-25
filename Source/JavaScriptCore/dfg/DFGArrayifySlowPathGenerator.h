@@ -60,7 +60,7 @@ public:
             case Array::Int32:
             case Array::Double:
             case Array::Contiguous:
-                m_badPropertyJump = jit->speculationCheck(Uncountable, JSValueSource(), nullptr);
+                m_badPropertyJump = jit->speculationCheck(SparseIndex, JSValueSource(), nullptr);
                 break;
             default:
                 break;
@@ -80,11 +80,18 @@ private:
             switch (m_arrayMode.type()) {
             case Array::Int32:
             case Array::Double:
-            case Array::Contiguous:
-                m_badPropertyJump.fill(jit, jit->branch32(
-                    MacroAssembler::AboveOrEqual, m_propertyGPR,
-                    MacroAssembler::TrustedImm32(MIN_SPARSE_ARRAY_INDEX)));
+            case Array::Contiguous: {
+                // An index inside the vector is not sparse, however large it is.
+                MacroAssembler::JumpList sparseIndex;
+                auto smallIndex = jit->branch32(MacroAssembler::Below, m_propertyGPR, MacroAssembler::TrustedImm32(MIN_SPARSE_ARRAY_INDEX));
+                jit->load8(MacroAssembler::Address(m_baseGPR, JSCell::indexingTypeAndMiscOffset()), m_tempGPR);
+                sparseIndex.append(jit->branchTest32(MacroAssembler::Zero, m_tempGPR, MacroAssembler::TrustedImm32(IndexingShapeMask)));
+                jit->loadPtr(MacroAssembler::Address(m_baseGPR, JSObject::butterflyOffset()), m_tempGPR);
+                sparseIndex.append(jit->branch32(MacroAssembler::AboveOrEqual, m_propertyGPR, MacroAssembler::Address(m_tempGPR, Butterfly::offsetOfVectorLength())));
+                smallIndex.link(jit);
+                m_badPropertyJump.fill(jit, sparseIndex);
                 break;
+            }
             default:
                 break;
             }

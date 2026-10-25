@@ -375,7 +375,7 @@ void main() {
 
     std::string result =
         std::string("'") + longName +
-        std::string("' : identifiers beginning with `_` must be < 1022 characters");
+        std::string("' : identifiers beginning with `_` must be <= 1022 characters");
 
     validateError(GL_FRAGMENT_SHADER, shader.c_str(), result.c_str());
 }
@@ -392,7 +392,7 @@ void main() {
 
     std::string result =
         std::string("'") + longName +
-        std::string("' : identifiers beginning with `_` must be < 1022 characters");
+        std::string("' : identifiers beginning with `_` must be <= 1022 characters");
 
     validateError(GL_FRAGMENT_SHADER, shader.c_str(), result.c_str());
 }
@@ -407,11 +407,7 @@ void main() {
   float )" + longName + R"( = 1.0;
 })";
 
-    std::string result =
-        std::string("'") + longName +
-        std::string("' : identifiers beginning with `_` must be < 1022 characters");
-
-    validateError(GL_FRAGMENT_SHADER, shader.c_str(), result.c_str());
+    validateSuccess(GL_FRAGMENT_SHADER, shader.c_str());
 }
 // https://crbug.com/499176133
 TEST_P(GLSLValidationTest, LongIdentifierAtLimit_1021)
@@ -2962,7 +2958,7 @@ precision highp float;
 // Declare a struct that's within the 65536-byte limit
 struct S
 {
-    float a[16384];
+    float a[16383];
 };
 out vec4 color;
 void main() {
@@ -3138,6 +3134,38 @@ TEST_P(WebGL2GLSLValidationTest, InlineLargeConstant)
                   "'' : Size of declared variable exceeds implementation-defined limit");
 }
 
+// Test using a large constant that is declared inline. Construction of such a large object, even if
+// it may be constant folded is not allowed.
+TEST_P(WebGL2GLSLValidationTest, InlineLargeConstant2)
+{
+    // Make a constant that's exactly 2GB.
+    std::ostringstream vs;
+    vs << R"(#version 300 es
+struct S { float a[16384]; };
+struct S2 { S s[32768]; };
+in vec4 position;
+out float v;
+void main() {
+  const float A[16384] = float[16384])";
+    for (uint32_t i = 0; i < 16384; ++i)
+    {
+        vs << (i == 0 ? "(" : ",") << "123.0";
+    }
+    vs << R"();
+  const S s = S(A);
+  v = S2(S[32768])";
+    for (uint32_t i = 0; i < 32768; ++i)
+    {
+        vs << (i == 0 ? "(" : ",") << "s";
+    }
+    vs << R"()).s[0].a[0];
+  gl_Position = position;
+})";
+
+    validateError(GL_VERTEX_SHADER, vs.str().c_str(),
+                  "'' : Size of declared variable exceeds implementation-defined limit");
+}
+
 // Validate that too-large structures cannot be instantiated as temporaries.
 TEST_P(WebGL2GLSLValidationTest, LargeStructConstructorOnly)
 {
@@ -3186,6 +3214,35 @@ TEST_P(WebGL2GLSLValidationTest, LargeStructConstructorOnly)
     fs << "}\n";
 
     validateError(GL_FRAGMENT_SHADER, fs.str().c_str(),
+                  "'' : Size of declared private variable exceeds implementation-defined limit");
+}
+
+// Validate that implicitly sized array constructor with excessive size cannot bypass variable
+// size checks.
+TEST_P(WebGL2GLSLValidationTest, ImplicitlySizedArrayConstructorExcessiveSize)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+out vec4 color;
+uniform int elementIndex;
+struct S { mat4 m[512]; };
+void main() {
+    S a;
+    S b;
+    float x = S[](
+        a, b, a, b, a, b, a, b, a, b, a, b, a, b, a, b,
+        a, b, a, b, a, b, a, b, a, b, a, b, a, b, a, b,
+        a, b, a, b, a, b, a, b, a, b, a, b, a, b, a, b,
+        a, b, a, b, a, b, a, b, a, b, a, b, a, b, a, b,
+        a, b, a, b, a, b, a, b, a, b, a, b, a, b, a, b,
+        a, b, a, b, a, b, a, b, a, b, a, b, a, b, a, b,
+        a, b, a, b, a, b, a, b, a, b, a, b, a, b, a, b,
+        a, b, a, b, a, b, a, b, a, b, a, b, a, b, a, b
+    )[elementIndex].m[0][0][0];
+    color = vec4(x);
+})";
+
+    validateError(GL_FRAGMENT_SHADER, kFS,
                   "'' : Size of declared private variable exceeds implementation-defined limit");
 }
 
@@ -7895,7 +7952,7 @@ class GLSLValidationTextureRectangleTest : public GLSLValidationTest
 // Check that if the extension is not supported, trying to use the features without having an
 // extension directive fails.
 //
-// If the extension is supported, check that new types and builtins are usable even with the
+// If the extension is supported, check that new types and builtins are usable even without the
 // #extension directive
 // Issue #15 of ARB_texture_rectangle explains that the extension was specified before the
 // #extension mechanism was in place so it doesn't require explicit enabling.
@@ -10192,14 +10249,14 @@ class GLSLValidationTest_ES3_LimitOutputVaryings : public GLSLValidationTest_ES3
 {};
 
 // Regression test for crbug.com/529991907.
-// Verify that compiling a shader with up to 1024 output varying components
-// succeeds, and exceeding 1024 components is rejected at compile time.
+// Verify that compiling a shader with up to 256 output varying components
+// succeeds, and exceeding 256 components is rejected at compile time.
 TEST_P(GLSLValidationTest_ES3_LimitOutputVaryings, TooManyDeclaredVertexOutputComponents)
 {
     ANGLE_SKIP_TEST_IF(
         !getEGLWindow()->isFeatureEnabled(Feature::LimitOutputVaryingsTo256AtCompileTime));
 
-    constexpr int kMaxVectors = 1024 / 4;
+    constexpr int kMaxVectors = 256 / 4;
 
     std::stringstream vsValid;
     vsValid << "#version 300 es\n";

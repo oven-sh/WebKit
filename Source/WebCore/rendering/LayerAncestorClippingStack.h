@@ -40,6 +40,7 @@ class TextStream;
 
 namespace WebCore {
 
+class RenderLayerCompositor;
 class ScrollingCoordinator;
 
 struct CompositedClipData {
@@ -66,21 +67,21 @@ public:
     LayerAncestorClippingStack(Vector<CompositedClipData>&&);
     ~LayerAncestorClippingStack() = default;
 
-    bool NODELETE hasAnyScrollingLayers() const;
+    bool LEGACY_NODELETE hasAnyScrollingLayers() const;
     
-    bool NODELETE equalToClipData(const Vector<CompositedClipData>&) const;
-    bool updateWithClipData(ScrollingCoordinator*, Vector<CompositedClipData>&&);
+    bool LEGACY_NODELETE equalToClipData(const Vector<CompositedClipData>&) const;
+    bool updateWithClipData(RenderLayerCompositor&, Vector<CompositedClipData>&&);
     
     Vector<CompositedClipData> compositedClipData() const;
 
-    void clear(ScrollingCoordinator*);
-    void detachFromScrollingCoordinator(ScrollingCoordinator&);
+    void clear(RenderLayerCompositor&);
+    void detachFromScrollingCoordinator(RenderLayerCompositor&);
 
     void updateScrollingNodeLayers(ScrollingCoordinator&);
 
-    GraphicsLayer* NODELETE firstLayer() const;
-    GraphicsLayer* NODELETE lastLayer() const;
-    std::optional<ScrollingNodeID> lastOverflowScrollProxyNodeID() const;
+    GraphicsLayer* LEGACY_NODELETE firstLayer() const;
+    GraphicsLayer* LEGACY_NODELETE lastLayer() const;
+    std::optional<ScrollingNodeID> LEGACY_NODELETE lastOverflowScrollProxyNodeID() const;
 
     struct ClippingStackEntry {
         CompositedClipData clipData;

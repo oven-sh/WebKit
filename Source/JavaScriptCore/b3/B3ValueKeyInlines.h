@@ -115,6 +115,7 @@ inline ValueKey::ValueKey(Kind kind, Type type, SIMDInfo simdInfo, Value* a, Val
     u.indices[2] = immediate;
 }
 
+#if ENABLE(WEBASSEMBLY)
 inline ValueKey::ValueKey(Kind kind, Type type, Value* child, Value* optionalChild2, unsigned packedFlags, const Wasm::RTT* rtt)
     : m_kind(kind)
     , m_type(type)
@@ -131,6 +132,7 @@ inline ValueKey::ValueKey(Kind kind, Type type, Value* child, Value* optionalChi
         u.indices[3] = packedFlags << 16;
     }
 }
+#endif // ENABLE(WEBASSEMBLY)
 
 inline ValueKey::ValueKey(Kind kind, Type type, Value* child, Value* optionalChild2, unsigned packedFlags, int32_t targetHeapType)
     : m_kind(kind)

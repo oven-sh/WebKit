@@ -1,0 +1,73 @@
+# What the turns that are left will append is what an array still needs only where no turn takes elements away. A loop that empties the array now and then, or pops what it
+# has pushed, would reserve room for all its turns each time the vector is full. A store to another array's length does not count
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+# STATISTIC: ArrayGrowthsPlanned = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="emptiedNowAndThen" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int[0, 1000000]}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(| 0), notTaken b5()
+  b2(v8):
+    v9 = CallBuiltin v0, v2 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    v10 = CallBuiltin v0, v4 overload=ArrayPrototypeLength/1 builtinCallForm=Whole
+    Jump -> next b4()
+  b4():
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    Jump -> next b1(v12)
+  b5():
+    Return
+}
+# CHECK-LABEL: function f0 name="emptiedNowAndThen"
+# CHECK-NOT: HasSpareArrayCapacity
+# CHECK-NOT: ReserveArrayCapacity
+
+function f1 name="poppedAgain" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int[0, 1000000]}, {type=anything}] results=[{type=undefined}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallBuiltin v0, v2 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v9 = CallBuiltin v0 overload=ArrayPrototypePop/0 builtinCallForm=Whole
+    v10 = Integer integer=1
+    v11 = Add v7, v10
+    Jump -> next b1(v11)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f1 name="poppedAgain"
+# CHECK-NOT: HasSpareArrayCapacity
+# CHECK-NOT: ReserveArrayCapacity
+
+function f2 name="anotherArrayIsEmptied" parameters=[{type=int[0, 1000000]}, {type=anything}] results=[{type=anything}] {
+    v2 = NewArray contents=anything
+    v3 = NewArray contents=anything
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v0
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v10 = CallBuiltin v3, v4 overload=ArrayPrototypeLength/1 builtinCallForm=Whole
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    Jump -> next b1(v12)
+  b3():
+    v13 = NewArray v2, v3 contents=anything
+    Return v13
+}
+# CHECK-LABEL: function f2 name="anotherArrayIsEmptied"
+# CHECK: = HasSpareArrayCapacity v2
+# CHECK: ReserveArrayCapacity v2,

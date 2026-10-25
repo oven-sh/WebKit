@@ -1,0 +1,11 @@
+# A function word out of range prints one error line and nothing else
+# FORM: Prepared
+# RUN: result-types f0 f9
+# CHECK-NOT: function f0
+# CHECK: error: bad argument f9
+# CHECK-NOT: function f0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="b" results=[{type=undefined}] {
+    Return
+}

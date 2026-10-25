@@ -43,7 +43,6 @@
 #include "JSPaintWorkletGlobalScope.h"
 #include "JSQuotaExceededError.h"
 #include "JSServiceWorkerGlobalScope.h"
-#include "JSShadowRealmGlobalScope.h"
 #include "JSSharedWorkerGlobalScope.h"
 #include "JSWebTransportError.h"
 #include "JSWindowProxy.h"
@@ -63,7 +62,6 @@
 #include "runtime_object.h"
 #include <mutex>
 #include <wtf/MainThread.h>
-#include <wtf/NeverDestroyed.h>
 
 #if PLATFORM(COCOA)
 #include "objc_runtime.h"
@@ -94,7 +92,6 @@ JSHeapData::JSHeapData(Heap& heap)
     , m_heapCellTypeForJSDedicatedWorkerGlobalScope(JSC::IsoHeapCellType::Args<JSDedicatedWorkerGlobalScope>())
     , m_heapCellTypeForJSWorkerGlobalScope(JSC::IsoHeapCellType::Args<JSWorkerGlobalScope>())
     , m_heapCellTypeForJSSharedWorkerGlobalScope(JSC::IsoHeapCellType::Args<JSSharedWorkerGlobalScope>())
-    , m_heapCellTypeForJSShadowRealmGlobalScope(JSC::IsoHeapCellType::Args<JSShadowRealmGlobalScope>())
     , m_heapCellTypeForJSServiceWorkerGlobalScope(JSC::IsoHeapCellType::Args<JSServiceWorkerGlobalScope>())
     , m_heapCellTypeForJSWorkletGlobalScope(JSC::IsoHeapCellType::Args<JSWorkletGlobalScope>())
     , m_heapCellTypeForJSPaintWorkletGlobalScope(JSC::IsoHeapCellType::Args<JSPaintWorkletGlobalScope>())
@@ -140,15 +137,6 @@ void JSHeapData::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope collecti
     }
 }
 
-JSHeapData* JSHeapData::ensureHeapData(Heap& heap)
-{
-    if (!Options::useGlobalGC())
-        return new JSHeapData(heap);
-
-    static NeverDestroyed<UniqueRef<JSHeapData>> singleton = makeUniqueRef<JSHeapData>(heap);
-    return singleton.get().ptr();
-}
-
 #define CLIENT_ISO_SUBSPACE_INIT(subspace) subspace(m_heapData->subspace)
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
@@ -156,7 +144,7 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
 JSVMClientData::JSVMClientData(VM& vm)
     : m_builtinFunctions(vm)
     , m_builtinNames(vm)
-    , m_heapData(JSHeapData::ensureHeapData(vm.heap))
+    , m_heapData(makeUniqueRef<JSHeapData>(vm.heap))
     , CLIENT_ISO_SUBSPACE_INIT(m_domBuiltinConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
@@ -235,9 +223,9 @@ void JSVMClientData::initNormalWorld(VM* vm, WorkerThreadType type)
     vm->m_typedArrayController = adoptRef(new WebCoreTypedArrayController(type == WorkerThreadType::DedicatedWorker || type == WorkerThreadType::Worklet));
 }
 
-String unmaskedSourceURLFromException(const JSC::Exception& exception, JSC::VM& vm)
+String unmaskedSourceURLFromException(JSC::Exception& exception, JSC::VM& vm)
 {
-    for (auto& frame : exception.stack()) {
+    for (auto& frame : exception.stackForReporting(vm)) {
         String url = frame.sourceURL(vm, JSC::AllowURLOverride::No);
         if (!url.isEmpty() && url != "[native code]"_s)
             return url;

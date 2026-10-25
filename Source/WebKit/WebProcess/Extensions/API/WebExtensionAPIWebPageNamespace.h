@@ -43,7 +43,7 @@ class WebExtensionAPIWebPageNamespace : public WebExtensionAPIObject, public JSW
 public:
     bool isPropertyAllowed(const ASCIILiteral& propertyName, WebPage*);
 #if PLATFORM(COCOA)
-    WebExtensionAPIWebPageRuntime& runtime() const;
+    WebExtensionAPIWebPageRuntime& runtime();
 #endif
     WebExtensionAPITest& test();
 
@@ -51,7 +51,7 @@ private:
 #if PLATFORM(COCOA)
     mutable RefPtr<WebExtensionAPIWebPageRuntime> m_runtime;
 #endif
-    RefPtr<WebExtensionAPITest> m_test;
+    const RefPtr<WebExtensionAPITest> m_test;
 };
 
 } // namespace WebKit

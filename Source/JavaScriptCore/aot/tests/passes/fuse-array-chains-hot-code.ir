@@ -1,0 +1,13 @@
+# The chain of fuse-array-chains-cold-code.ir in hot code is one traversal
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass FuseArrayChains
+# STATISTIC: ArrayChainsFused = 1
+# CHECK: outcome: Changed
+
+# CHECK-LABEL: function f5 name="chain"
+# CHECK-NOT: function=f1
+# CHECK-NOT: function=f2
+# CHECK: = CallDirect {{*}} function=[[step]]
+# CHECK: function [[step]] name="traverseArray"{{*}}role=ChainStep
+# PROGRAM-OF: fuse-array-chains-disabled.ir

@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <type_traits>
@@ -53,7 +54,7 @@ template <class K, class V>
 using Map = linked_hash_map<K, V, StatefulTestingHash, StatefulTestingEqual,
                             Alloc<std::pair<const K, V>>>;
 
-static_assert(!std::is_standard_layout<NonStandardLayout>(), "");
+static_assert(!std::is_standard_layout<NonStandardLayout>());
 
 using MapTypes =
     ::testing::Types<Map<int, int>, Map<std::string, int>,

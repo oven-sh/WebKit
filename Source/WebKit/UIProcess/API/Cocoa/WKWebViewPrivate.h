@@ -102,6 +102,18 @@ typedef NS_ENUM(NSUInteger, _WKDragInteractionPolicy) {
     _WKDragInteractionPolicyAlwaysDisable
 } WK_API_AVAILABLE(ios(11.0));
 
+typedef NS_ENUM(NSInteger, _WKEffectivePageAppearance) {
+    _WKEffectivePageAppearanceUnknown,
+    _WKEffectivePageAppearanceLight,
+    _WKEffectivePageAppearanceDark,
+} WK_API_AVAILABLE(ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
+
+typedef NS_ENUM(NSInteger, _WKContentInversion) {
+    _WKContentInversionSystem,
+    _WKContentInversionInverted,
+    _WKContentInversionNotInverted,
+} WK_API_AVAILABLE(ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
+
 #else
 #import <WebKit/WKBase.h>
 #endif
@@ -241,7 +253,6 @@ for this property.
 
 - (void)_frames:(void (^)(_WKFrameTreeNode *))completionHandler WK_API_AVAILABLE(macos(11.0), ios(14.0));
 - (void)_frameTrees:(void (^)(NSSet<_WKFrameTreeNode *> *))completionHandler WK_API_AVAILABLE(macos(14.0), ios(17.0));
-- (void)_frameTreesInBackForwardCacheAtIndex:(NSInteger)relativeIndex completionHandler:(void (^)(NSSet<_WKFrameTreeNode *> *))completionHandler WK_API_AVAILABLE(macos(27.0), ios(27.0));
 - (void)_frameInfoFromHandle:(_WKFrameHandle *)handle completionHandler:(void (^)(WKFrameInfo *))completionHandler WK_API_AVAILABLE(macos(15.4), ios(18.4));
 
 // FIXME: Remove these once nobody is using them.
@@ -456,7 +467,6 @@ for this property.
 
 - (void)_nowPlayingMediaTitleAndArtist:(void (^)(NSString *, NSString *))completionHandler;
 
-- (void)_convertPoint:(CGPoint)point fromFrame:(WKFrameInfo *)frame toMainFrameCoordinates:(void (^)(CGPoint, NSError *error))completionHandler WK_API_AVAILABLE(macos(26.0), ios(26.0), visionos(26.0));
 - (void)_convertRect:(CGRect)rect fromFrame:(WKFrameInfo *)frame toMainFrameCoordinates:(void (^)(CGRect, NSError *error))completionHandler WK_API_AVAILABLE(macos(26.0), ios(26.0), visionos(26.0));
 
 @property (nonatomic, setter=_setStatusBarIsVisible:) BOOL _statusBarIsVisible WK_API_AVAILABLE(macos(26.4), ios(26.4), visionos(26.4));
@@ -652,6 +662,9 @@ typedef NS_OPTIONS(NSUInteger, _WKWebViewDataType) {
 
 @property (nonatomic, setter=_setShouldSuppressTopColorExtensionView:) BOOL _shouldSuppressTopColorExtensionView WK_API_AVAILABLE(macos(26.0), ios(26.0));
 
+// Only _WKRectEdgeLeft and _WKRectEdgeRight are supported; other edges are ignored. Defaults to _WKRectEdgeLeft | _WKRectEdgeRight.
+@property (nonatomic, setter=_setSystemBackgroundColorExtensionEnabledEdges:) _WKRectEdge _systemBackgroundColorExtensionEnabledEdges WK_API_AVAILABLE(macos(27.0), ios(27.0), visionos(27.0));
+
 @property (nonatomic, setter=_setShouldSuppressFormValidationBubble:) BOOL _shouldSuppressFormValidationBubble WK_API_AVAILABLE(ios(27.0), visionos(27.0));
 
 #if TARGET_OS_OSX
@@ -825,6 +838,17 @@ typedef NS_OPTIONS(NSUInteger, _WKWebViewDataType) {
 
 - (void)_accessibilityRetrieveSpeakSelectionContent WK_API_AVAILABLE(ios(11.0));
 - (void)_accessibilityDidGetSpeakSelectionContent:(NSString *)content WK_API_AVAILABLE(ios(11.0));
+
+// Whether the page as currently displayed is light or dark, including any color transformations WebKit
+// applies to it. Without more specific information, based on whether white or black text has the higher
+// WCAG 2 contrast ratio against the page's background color, and Unknown when the page doesn't paint an
+// opaque background color, including when the web view is transparent or its background doesn't extend
+// beyond the page. Key-value observable.
+@property (nonatomic, readonly) _WKEffectivePageAppearance _effectivePageAppearance WK_API_AVAILABLE(ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
+
+// Tells the page whether the client is color-inverting its content, which determines whether the inverted-colors media
+// feature matches. System, the default, defers to UIAccessibilityIsInvertColorsEnabled().
+@property (nonatomic, setter=_setContentInversionForAccessibility:) _WKContentInversion _contentInversionForAccessibility WK_API_AVAILABLE(ios(WK_IOS_TBA), visionos(WK_XROS_TBA));
 
 - (UIView *)_fullScreenPlaceholderView WK_API_AVAILABLE(ios(12.0));
 

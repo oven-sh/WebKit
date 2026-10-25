@@ -75,7 +75,7 @@ static bool indicatorWantsContentCrossfade(const WebCore::TextIndicator& indicat
     return false;
 }
 
-static bool NODELETE indicatorWantsFadeIn(const WebCore::TextIndicator& indicator)
+static bool LEGACY_NODELETE indicatorWantsFadeIn(const WebCore::TextIndicator& indicator)
 {
     switch (indicator.presentationTransition()) {
     case WebCore::TextIndicatorPresentationTransition::FadeIn:
@@ -106,8 +106,8 @@ static bool NODELETE indicatorWantsFadeIn(const WebCore::TextIndicator& indicato
     if (RefPtr contentImage = _textIndicator->contentImage()) {
         contentsImageLogicalSize = contentImage->size();
         contentsImageLogicalSize.scale(1 / _textIndicator->contentImageScaleFactor());
-        if (indicatorWantsContentCrossfade(*_textIndicator) && protect(_textIndicator)->contentImageWithHighlight())
-            contentsImage = protect(_textIndicator)->contentImageWithHighlight()->nativeImage();
+        if (RefPtr contentImageWithHighlight = _textIndicator->contentImageWithHighlight(); contentImageWithHighlight && indicatorWantsContentCrossfade(*protect(_textIndicator)))
+            contentsImage = contentImageWithHighlight->nativeImage();
         else
             contentsImage = contentImage->nativeImage();
     }
@@ -135,6 +135,7 @@ static bool NODELETE indicatorWantsFadeIn(const WebCore::TextIndicator& indicato
         WebCore::AffineTransform transform;
         transform.translate(-pathBoundingRect.location());
         translatedPath.addPath(path, transform);
+        RetainPtr translatedPlatformPath = translatedPath.platformPath();
 
         WebCore::FloatRect offsetTextRect = pathBoundingRect;
         offsetTextRect.move(offset.x, offset.y);
@@ -157,7 +158,7 @@ static bool NODELETE indicatorWantsFadeIn(const WebCore::TextIndicator& indicato
         [dropShadowLayer setShadowColor:dropShadowColor.get()];
         [dropShadowLayer setShadowRadius:WebCore::dropShadowBlurRadius];
         [dropShadowLayer setShadowOffset:CGSizeMake(dropShadowOffsetX, dropShadowOffsetY)];
-        [dropShadowLayer setShadowPath:translatedPath.platformPath()];
+        [dropShadowLayer setShadowPath:translatedPlatformPath];
         [dropShadowLayer setShadowOpacity:1];
         [dropShadowLayer setFrame:yellowHighlightRect];
         [bounceLayer addSublayer:dropShadowLayer.get()];
@@ -168,7 +169,7 @@ static bool NODELETE indicatorWantsFadeIn(const WebCore::TextIndicator& indicato
         [rimShadowLayer setFrame:yellowHighlightRect];
         [rimShadowLayer setShadowColor:rimShadowColor.get()];
         [rimShadowLayer setShadowRadius:WebCore::rimShadowBlurRadius];
-        [rimShadowLayer setShadowPath:translatedPath.platformPath()];
+        [rimShadowLayer setShadowPath:translatedPlatformPath];
         [rimShadowLayer setShadowOffset:CGSizeZero];
         [rimShadowLayer setShadowOpacity:1];
         [rimShadowLayer setFrame:yellowHighlightRect];
@@ -186,7 +187,7 @@ static bool NODELETE indicatorWantsFadeIn(const WebCore::TextIndicator& indicato
 
         RetainPtr<CAShapeLayer> maskLayer = adoptNS([[CAShapeLayer alloc] init]);
         [maskLayer setDelegate:[WebActionDisablingCALayerDelegate shared]];
-        [maskLayer setPath:translatedPath.platformPath()];
+        [maskLayer setPath:translatedPlatformPath];
         [textLayer setMask:maskLayer.get()];
 
         WebCore::FloatRect imageRect = pathBoundingRect;
@@ -304,7 +305,8 @@ static RetainPtr<CABasicAnimation> createFadeInAnimation(CFTimeInterval duration
     }
 
     [CATransaction begin];
-    for (CALayer *bounceLayer in _bounceLayers.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL CALayer *bounceLayer in _bounceLayers.get()) {
         if (textIndicator->wantsManualAnimation())
             bounceLayer.speed = 0;
 
@@ -346,7 +348,8 @@ static RetainPtr<CABasicAnimation> createFadeInAnimation(CFTimeInterval duration
     if (progress == 1) {
         _hasCompletedAnimation = true;
 
-        for (CALayer *bounceLayer in _bounceLayers.get()) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL CALayer *bounceLayer in _bounceLayers.get()) {
             // Continue the animation from wherever it had manually progressed to.
             CFTimeInterval beginTime = bounceLayer.timeOffset;
             bounceLayer.speed = 1;
@@ -355,7 +358,8 @@ static RetainPtr<CABasicAnimation> createFadeInAnimation(CFTimeInterval duration
         }
     } else {
         CFTimeInterval animationDuration = [self _animationDuration];
-        for (CALayer *bounceLayer in _bounceLayers.get())
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL CALayer *bounceLayer in _bounceLayers.get())
             bounceLayer.timeOffset = progress * animationDuration;
     }
 }

@@ -26,6 +26,7 @@
 #pragma once
 
 #include "AbstractSlotVisitor.h"
+#include "CellVisitKind.h"
 #include "HandleTypes.h"
 #include <wtf/Forward.h>
 #include <wtf/IterationStatus.h>
@@ -34,6 +35,9 @@
 
 namespace JSC {
 
+class CellVisitValidator;
+class Collector;
+class FastMarkAppender;
 class GCThreadSharedData;
 class HeapCell;
 class HeapAnalyzer;
@@ -42,7 +46,20 @@ class MarkingConstraintSolver;
 
 typedef uint32_t HeapVersion;
 
-class SlotVisitor final : public AbstractSlotVisitor {
+// Visitors should not share cachelines: each marking thread writes its own visitor for every
+// cell it visits. 128 satisfies 64-byte lines too.
+static constexpr size_t slotVisitorAlignment = 128;
+
+class SlotVisitor;
+
+struct DeferredRootRegion {
+    void (*visit)(SlotVisitor&, void* owner, size_t beginOffset, size_t endOffset);
+    void* owner;
+    size_t beginOffset;
+    size_t endOffset;
+};
+
+class alignas(slotVisitorAlignment) SlotVisitor final : public AbstractSlotVisitor {
     WTF_MAKE_NONCOPYABLE(SlotVisitor);
     WTF_MAKE_TZONE_ALLOCATED(SlotVisitor);
 
@@ -50,6 +67,8 @@ class SlotVisitor final : public AbstractSlotVisitor {
 
     friend class SetCurrentCellScope;
     friend class Heap;
+    friend class CellVisitValidator;
+    friend class FastMarkAppender;
 
 public:
     class ReferrerContext {
@@ -86,7 +105,7 @@ public:
 #endif
     };
 
-    SlotVisitor(Heap&, ASCIICString codeName);
+    SlotVisitor(Collector&, ASCIICString codeName);
     ~SlotVisitor();
 
     void append(const ConservativeRoots&) final;
@@ -125,11 +144,13 @@ public:
     bool isMarked(MarkedBlock&, HeapCell*) const final;
     bool isMarked(PreciseAllocation&, HeapCell*) const final;
 
-    void NODELETE didStartMarking();
-    void NODELETE reset();
+    void LEGACY_NODELETE didStartMarking(CollectionScope, HeapVersion markingVersion, bool isAnalyzingHeap, bool validatesCellVisits);
+    void LEGACY_NODELETE reset();
     void clearMarkStacks();
 
-    size_t bytesVisited() const { return m_bytesVisited; }
+    size_t bytesMarked() const { return m_flushedBytesMarked + m_bytesMarkedInHeap; }
+    void flushBytesMarked();
+    JS_EXPORT_PRIVATE void flushExtraMemoryVisited();
 
     void donate();
     void drain(MonotonicTime timeout = MonotonicTime::infinity());
@@ -161,19 +182,16 @@ public:
 
     HeapVersion markingVersion() const { return m_markingVersion; }
 
-    bool mutatorIsStopped() const final { return m_mutatorIsStopped; }
+    bool mutatorsAreStopped() const final { return m_mutatorsAreStopped; }
+
+    // While set, visits assume the mutators of the heaps being collected are stopped. Change it only between drains.
+    void setMutatorsAreStopped(bool areStopped)
+    {
+        ASSERT(!m_isInParallelMode); // Verify this visitor is not draining.
+        m_mutatorsAreStopped = areStopped;
+    }
     
-    Lock& rightToRun() LIFETIME_BOUND WTF_RETURNS_LOCK(m_rightToRun) { return m_rightToRun; }
-    
-    void NODELETE updateMutatorIsStopped(const AbstractLocker&);
-    void updateMutatorIsStopped();
-    
-    bool NODELETE hasAcknowledgedThatTheMutatorIsResumed() const;
-    bool NODELETE mutatorIsStoppedIsUpToDate() const;
-    
-    void NODELETE optimizeForStoppedMutator();
-    
-    void didRace(const VisitRaceKey&) final;
+    JS_EXPORT_PRIVATE void didRace(const VisitRaceKey&) final;
     inline void didRace(JSCell* cell, const char* reason); // Defined in SlotVisitorInlines.h
     
     void visitAsConstraint(const JSCell*) final;
@@ -181,6 +199,9 @@ public:
     bool didReachTermination();
     
     void donateAll();
+
+    bool defersRootRegions() const;
+    void deferRootRegion(const DeferredRootRegion&);
 
     NO_RETURN_DUE_TO_CRASH void addParallelConstraintTask(RefPtr<SharedTask<void(AbstractSlotVisitor&)>>) final;
     JS_EXPORT_PRIVATE void addParallelConstraintTask(RefPtr<SharedTask<void(SlotVisitor&)>>) final;
@@ -206,42 +227,63 @@ private:
     void noteLiveAuxiliaryCell(HeapCell*);
     
     void visitChildren(const JSCell*);
+    template<bool mutatorsAreStopped> void visitChildren(FastMarkAppender&, const JSCell*);
+    void visitChildrenOutOfLoop(const JSCell*, CellVisitKind);
+    void visitChildrenThroughMethodTable(const JSCell*);
+
+    template<bool drainsCollectorStack, bool mutatorsAreStopped, typename Budget> void drainStackWithAppender(MarkStackArray&, unsigned countdown, Budget&);
+    template<typename Budget> void drainStack(MarkStackArray&, unsigned countdown, Budget&);
 
     void propagateExternalMemoryVisitedIfNecessary();
+    void noteBytesMarked(JSC::Heap&, size_t);
     
     void donateKnownParallel();
     void donateKnownParallel(MarkStackArray& from, MarkStackArray& to);
 
     void donateAll(const AbstractLocker&);
 
-    bool NODELETE hasWork(const AbstractLocker&);
+    bool LEGACY_NODELETE hasWork(const AbstractLocker&);
     bool didReachTermination(const AbstractLocker&);
 
     template<typename Func>
-    IterationStatus forEachMarkStack(const Func&);
+    IterationStatus forEachMarkStack(NOESCAPE const Func&);
 
-    MarkStackArray& NODELETE correspondingGlobalStack(MarkStackArray&);
+    MarkStackArray& LEGACY_NODELETE correspondingGlobalStack(MarkStackArray&);
 
     HeapVersion m_markingVersion;
 
-    size_t m_bytesVisited { 0 };
-    size_t m_nonCellVisitCount { 0 }; // Used for incremental draining, ignored otherwise.
-    CheckedSize m_extraMemorySize { 0 };
+    // Bytes of m_bytesMarkedHeap's cells this visitor marked and has not yet added to that heap's count. Marking a
+    // cell of another heap flushes it, which is rare since a heap's cells mostly reference their own heap's cells.
+    size_t m_bytesMarkedInHeap { 0 };
+    SUPPRESS_FORWARD_DECL_MEMBER JSC::Heap* m_bytesMarkedHeap { nullptr }; // Heap is not refcounted.
+    size_t m_flushedBytesMarked { 0 }; // What this visitor has added to the heaps' counts, for bytesMarked().
 
-    HeapAnalyzer* m_heapAnalyzer { nullptr };
+    size_t m_nonCellVisitCount { 0 }; // Used for incremental draining, ignored otherwise.
+
+    // Bytes of extra memory reported by cells of m_extraMemoryHeap and not yet added to that heap's count.
+    CheckedSize m_extraMemoryInHeap { 0 };
+    SUPPRESS_FORWARD_DECL_MEMBER JSC::Heap* m_extraMemoryHeap { nullptr }; // Heap is not refcounted.
+
     JSCell* m_currentCell { nullptr };
     bool m_isFirstVisit { false };
-    bool m_mutatorIsStopped { false };
-    bool m_canOptimizeForStoppedMutator { false };
+    bool m_mutatorsAreStopped { false };
     bool m_isInParallelMode { false };
-    Lock m_rightToRun;
-    
-    // Put padding here to mitigate false sharing between multiple SlotVisitors.
-    char padding[64];
+
+    bool m_validatesCellVisits { false };
+
 #if ASSERT_ENABLED
     bool m_isCheckingForDefaultMarkViolation { false };
 #endif
 };
+
+ALWAYS_INLINE void SlotVisitor::noteBytesMarked(JSC::Heap& heap, size_t bytes)
+{
+    if (&heap != m_bytesMarkedHeap) [[unlikely]] {
+        flushBytesMarked();
+        m_bytesMarkedHeap = &heap;
+    }
+    m_bytesMarkedInHeap += bytes;
+}
 
 class ParallelModeEnabler {
 public:

@@ -89,7 +89,7 @@ float LocalizedDateCache::estimatedMaximumWidthForDateType(DateComponentsType ty
         if (m_maxWidthMap.contains(key))
             return m_maxWidthMap.get(key);
     } else {
-        m_font = FontCascade(font);
+        m_font = font;
         m_maxWidthMap.clear();
     }
 
@@ -185,7 +185,7 @@ float LocalizedDateCache::estimateMaximumWidth(DateComponentsType type, const Me
     auto shouldCalculateWidthForDayOfMonth = (type == DateComponentsType::Date || type == DateComponentsType::DateTimeLocal);
 
     // Get the formatter we would use, copy it because we will force its time zone to be UTC.
-    RetainPtr dateFormatter = adoptNS([formatterForDateType(type) copy]);
+    RetainPtr<NSDateFormatter> dateFormatter = adoptNS([formatterForDateType(type) copy]);
     [dateFormatter setTimeZone:[NSTimeZone timeZoneForSecondsFromGMT:0]];
 
     RetainPtr gregorian = adoptNS([[NSCalendar alloc] initWithCalendarIdentifier:NSCalendarIdentifierGregorian]);

@@ -73,6 +73,7 @@ struct ImageBufferCreationContext {
 #if HAVE(IOSURFACE)
     RefPtr<IOSurfacePool> surfacePool;
     PlatformDisplayID displayID { 0 };
+    bool useIOSurfaceWebKitBehavior { false };
 #endif
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
     DynamicContentScalingResourceCache dynamicContentScalingResourceCache;
@@ -131,14 +132,14 @@ public:
     WEBCORE_EXPORT static IntSize calculateBackendSize(FloatSize logicalSize, float resolutionScale);
 
     // Supported get, putPixelBuffer formats.
-    WEBCORE_EXPORT static bool NODELETE supportedPixelBufferFormats(PixelFormat);
+    WEBCORE_EXPORT static bool LEGACY_NODELETE supportedPixelBufferFormats(PixelFormat);
 
     // These functions are used when clamping the ImageBuffer which is created for filter, masker or clipper.
     static bool sizeNeedsClamping(const FloatSize&);
     static bool sizeNeedsClamping(const FloatSize&, FloatSize& scale);
-    static FloatSize NODELETE clampedSize(const FloatSize&);
-    static FloatSize clampedSize(const FloatSize&, FloatSize& scale);
-    static FloatRect NODELETE clampedRect(const FloatRect&);
+    static FloatSize LEGACY_NODELETE clampedSize(const FloatSize&);
+    static FloatSize LEGACY_NODELETE clampedSize(const FloatSize&, FloatSize& scale);
+    static FloatRect LEGACY_NODELETE clampedRect(const FloatRect&);
 
     WEBCORE_EXPORT RefPtr<ImageBuffer> clone() const;
 
@@ -149,7 +150,7 @@ public:
 
     WEBCORE_EXPORT virtual void submitDrawingCommands();
 
-    void prepareForDisplay();
+    WEBCORE_EXPORT virtual void prepareForDisplay();
 
     WEBCORE_EXPORT IntSize backendSize() const;
 
@@ -185,7 +186,7 @@ public:
     RefPtr<NativeImage> filteredNativeImage(Filter&, Function<void(GraphicsContext&)> drawCallback);
 
 #if HAVE(IOSURFACE)
-    IOSurface* surface();
+    WEBCORE_EXPORT IOSurface* surface();
 #endif
 
 #if USE(CAIRO)
@@ -200,7 +201,8 @@ public:
     WEBCORE_EXPORT virtual std::optional<DynamicContentScalingDisplayList> dynamicContentScalingDisplayList();
 #endif
 
-    RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate();
+    WEBCORE_EXPORT virtual RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate();
+    WEBCORE_EXPORT virtual void releaseLayerContentsDisplayDelegate();
 
     // Returns NativeImage of the current drawing results. Results in an immutable copy of the current back buffer.
     // Caller is responsible for ensuring that the passed reference is the only reference to the ImageBuffer.
@@ -232,7 +234,7 @@ public:
     WEBCORE_EXPORT virtual std::unique_ptr<ThreadSafeImageBufferFlusher> createFlusher();
 
     // This value increments when the ImageBuffer gets a new backend, which can happen if, for example, the GPU Process exits.
-    WEBCORE_EXPORT unsigned NODELETE backendGeneration() const;
+    WEBCORE_EXPORT unsigned LEGACY_NODELETE backendGeneration() const;
 
     WEBCORE_EXPORT virtual String debugDescription() const;
 

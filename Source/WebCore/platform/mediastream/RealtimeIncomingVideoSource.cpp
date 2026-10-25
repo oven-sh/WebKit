@@ -37,7 +37,7 @@
 
 namespace WebCore {
 
-static RealtimeMediaSourceSupportedConstraints NODELETE supportedRealtimeIncomingVideoSourceSettingConstraints()
+static RealtimeMediaSourceSupportedConstraints LEGACY_NODELETE supportedRealtimeIncomingVideoSourceSettingConstraints()
 {
     RealtimeMediaSourceSupportedConstraints constraints;
     constraints.setSupportsWidth(true);
@@ -56,7 +56,8 @@ RealtimeIncomingVideoSource::RealtimeIncomingVideoSource(Ref<webrtc::VideoTrackI
 
     m_videoTrack->RegisterObserver(this);
 
-    m_frameRateMonitor = makeUnique<FrameRateMonitor>([this](auto info) {
+    // m_frameRateMonitor is owned by this object and only invokes the callback synchronously so capturing this is safe.
+    SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE lazyInitialize(m_frameRateMonitor, makeUnique<FrameRateMonitor>([this](auto info) {
 #if RELEASE_LOG_DISABLED
         UNUSED_PARAM(this);
         UNUSED_PARAM(info);
@@ -68,7 +69,7 @@ RealtimeIncomingVideoSource::RealtimeIncomingVideoSource(Ref<webrtc::VideoTrackI
         auto lastFrameTime = info.lastFrameTime.secondsSinceEpoch().value();
         ALWAYS_LOG_IF(loggerPtr(), LOGIDENTIFIER, "frame at ", frameTime, " previous frame was at ", lastFrameTime, ", observed frame rate is ", info.observedFrameRate, ", delay since last frame is ", (frameTime - lastFrameTime) * 1000, " ms, frame count is ", info.frameCount);
 #endif
-    });
+    }));
 }
 
 RealtimeIncomingVideoSource::~RealtimeIncomingVideoSource()

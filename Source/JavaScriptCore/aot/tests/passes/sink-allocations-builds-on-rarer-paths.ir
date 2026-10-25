@@ -1,0 +1,195 @@
+# The limit on copies counts the builds that run as often as the allocation, not the builds on rarer paths
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# LOSS: MaxMaterializations x2 f1
+# STATISTIC: AllocationsSunk = 4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="total" declared={type=number}}]
+
+function f0 name="neededOnRareArms" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+    v3 = NewClosure v2 function=f5
+    v4 = TypeTest v1 testedType=function
+    Branch v4 -> taken b1(), notTaken b4()
+  b1():
+    v5 = TypeTest v0 testedType=Array
+    Branch v5 -> taken b2(), notTaken b5()
+  b2():
+    v6 = TypeTest v0 testedType=object
+    Branch v6 -> taken b3(), notTaken b6()
+  b3():
+    Return v2
+  b4() frequency=Rare:
+    v7 = Call v1, v0, v3
+    Return v7
+  b5() frequency=Rare:
+    v8 = Call v1, v0, v3
+    Return v8
+  b6() frequency=Rare:
+    v9 = Call v1, v0, v3
+    Return v9
+}
+# CHECK-LABEL: function f0 name="neededOnRareArms"
+# CHECK: b0(
+# CHECK-NEXT: = TypeTest v1 testedType=function
+# CHECK: b3():
+# CHECK-NEXT: Return v2
+# CHECK: b4() frequency=Rare:
+# CHECK-NEXT: [[first]]:{{*}}= NewClosure v2 function=f5
+# CHECK-NEXT: = Call v1, v0, [[first]]
+# CHECK: b5() frequency=Rare:
+# CHECK-NEXT: [[second]]:{{*}}= NewClosure v2 function=f5
+# CHECK-NEXT: = Call v1, v0, [[second]]
+# CHECK: b6() frequency=Rare:
+# CHECK-NEXT: [[third]]:{{*}}= NewClosure v2 function=f5
+# CHECK-NEXT: = Call v1, v0, [[third]]
+
+function f1 name="neededOnFrequentArms" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+    v3 = NewClosure v2 function=f5
+    v4 = TypeTest v1 testedType=function
+    Branch v4 -> taken b1(), notTaken b4()
+  b1():
+    v5 = TypeTest v0 testedType=Array
+    Branch v5 -> taken b2(), notTaken b5()
+  b2():
+    v6 = TypeTest v0 testedType=object
+    Branch v6 -> taken b3(), notTaken b6()
+  b3():
+    Return v2
+  b4():
+    v7 = Call v1, v0, v3
+    Return v7
+  b5():
+    v8 = Call v1, v0, v3
+    Return v8
+  b6():
+    v9 = Call v1, v0, v3
+    Return v9
+}
+# CHECK-LABEL: function f1 name="neededOnFrequentArms"
+# CHECK: b0(
+# CHECK-NEXT: v3:{{*}}= NewClosure v2 function=f5
+# CHECK: b4():
+# CHECK-NEXT: = Call v1, v0, v3
+
+function f2 name="neededOnUnlikelyArms" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+    v3 = NewClosure v2 function=f5
+    v4 = TypeTest v1 testedType=function
+    Branch v4 -> taken b1(), notTaken b4()
+  b1():
+    v5 = TypeTest v0 testedType=Array
+    Branch v5 -> taken b2(), notTaken b5()
+  b2():
+    v6 = TypeTest v0 testedType=object
+    Branch v6 -> taken b3(), notTaken b6()
+  b3():
+    Return v2
+  b4() frequency=Unlikely:
+    v7 = Call v1, v0, v3
+    Return v7
+  b5() frequency=Unlikely:
+    v8 = Call v1, v0, v3
+    Return v8
+  b6() frequency=Unlikely:
+    v9 = Call v1, v0, v3
+    Return v9
+}
+# CHECK-LABEL: function f2 name="neededOnUnlikelyArms"
+# CHECK: b0(
+# CHECK-NEXT: = TypeTest v1 testedType=function
+# CHECK: b4() frequency=Unlikely:
+# CHECK-NEXT: [[fourth]]:{{*}}= NewClosure v2 function=f5
+# CHECK-NEXT: = Call v1, v0, [[fourth]]
+# CHECK: b5() frequency=Unlikely:
+# CHECK-NEXT: [[fifth]]:{{*}}= NewClosure v2 function=f5
+# CHECK-NEXT: = Call v1, v0, [[fifth]]
+# CHECK: b6() frequency=Unlikely:
+# CHECK-NEXT: [[sixth]]:{{*}}= NewClosure v2 function=f5
+# CHECK-NEXT: = Call v1, v0, [[sixth]]
+
+function f3 name="allocatedInRareCode" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+    v3 = TypeTest v1 testedType=function
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2() frequency=Rare:
+    v4 = NewClosure v2 function=f5
+    Switch v2 cases=[0, 1, 2] -> case b3(), case b4(), case b5(), otherwise b6()
+  b3():
+    v5 = Call v1, v0, v4
+    Return v5
+  b4():
+    v6 = Call v1, v0, v4
+    Return v6
+  b5():
+    v7 = Call v1, v0, v4
+    Return v7
+  b6():
+    Return v2
+}
+# CHECK-LABEL: function f3 name="allocatedInRareCode"
+# CHECK: b2() frequency=Rare:
+# CHECK-NEXT: v4:{{*}}= NewClosure v2 function=f5
+# CHECK: b3():
+# CHECK-NEXT: = Call v1, v0, v4
+
+function f4 name="variableOfCallbackInLoop" parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    v5 = NewObject -, v3 layout=L0 fields=[0]
+    v6 = NewClosure v5 function=f6
+    v7 = TypeTest v1 testedType=function
+    Branch v7 -> taken b1(), notTaken b6()
+  b1():
+    v8 = TypeTest v0 testedType=Array
+    Branch v8 -> taken b2(), notTaken b7()
+  b2():
+    v9 = TypeTest v0 testedType=object
+    Branch v9 -> taken b3(v3), notTaken b8()
+  b3(v10):
+    LoopHint
+    v12 = Less v10, v2
+    Branch v12 -> taken b4(), notTaken b5()
+  b4():
+    v13 = GetEnvironmentField v5 layout=L0 field=0
+    v14 = Add v13, v10
+    PutEnvironmentField v5, v14 layout=L0 field=0
+    v16 = Add v10, v4
+    Jump -> next b3(v16)
+  b5():
+# REPEAT: i = 6..8
+    v%(i*2+5) = GetEnvironmentField v5 layout=L0 field=0
+    Return v%(i*2+5)
+  b%(i)() frequency=Rare:
+    v%(i*2+6) = Call v1, v0, v6
+# END REPEAT
+    v23 = GetEnvironmentField v5 layout=L0 field=0
+    Return v23
+}
+# CHECK-LABEL: function f4 name="variableOfCallbackInLoop"
+# CHECK: b0(
+# CHECK-NOT: NewObject
+# CHECK-NOT: NewClosure
+# CHECK-NOT: EnvironmentField
+# CHECK: [[sum]]: number = Add {{*}}, v10
+# CHECK-NOT: EnvironmentField
+# CHECK: Jump -> next b3({{*}}, [[sum]])
+# CHECK-NOT: NewObject
+# CHECK-NOT: NewClosure
+# CHECK-NOT: EnvironmentField
+# CHECK: b6() frequency=Rare:
+# CHECK-NEXT: [[scope]]:{{*}}= NewObject -, v3 layout=L0 fields=[0]
+# CHECK-NEXT: [[callback]]:{{*}}= NewClosure [[scope]] function=f6
+# CHECK-NEXT: = Call v1, v0, [[callback]]
+# CHECK-NEXT: = GetEnvironmentField [[scope]] layout=L0
+
+function f5 name="callback" kind=Arrow captures=[{type=number}] parameters=[{type=anything}] results=[{type=anything}] {
+    Return v1
+}
+function f6 name="adds" kind=Arrow captures=[{type=env L0}] parameters=[{type=number}] results=[{type=undefined}] {
+  b0(v0: env L0, v1: number):
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    v3 = Add v2, v1
+    PutEnvironmentField v0, v3 layout=L0 field=0
+    Return
+}

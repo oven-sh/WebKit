@@ -1,0 +1,64 @@
+# What a tail call deletes from a stack trace stays deleted after a copy: the frame of a marked site is a tail call's, and a tail call of the copied body is marked
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 5
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="oneOperation" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Mul v0, v0 @3
+    Return v1 @4
+}
+function f1 name="tailCaller" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1 @5
+    ReturnCall v2
+}
+function f2 name="caller" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1 @6
+    Return v2
+}
+
+function f3 name="markedSite" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f0 [isDemotedTailCall] @9
+    Return v1
+# CHECK: inlineFrames=[{}, {callee=f0 callPosition=9 isTailCall=true module=m0}] {
+# CHECK-NOT: CallDirect
+# CHECK: = Mul v0, v0 @3:1
+}
+
+function f4 name="ordinarySite" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f0 @9
+    Return v1
+# CHECK: inlineFrames=[{}, {callee=f0 callPosition=9 module=m0}] {
+# CHECK-NOT: CallDirect
+}
+
+function f5 name="tailCallOfCopiedBody" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f1 @10
+    v3 = Add v2, v2 @11
+    Return v3
+# CHECK: inlineFrames=[{}, {callee=f1 callPosition=10 module=m0}] {
+# CHECK-NOT: ReturnCall
+# CHECK: anything = Call v0, -, v1 [isDemotedTailCall] @5:1
+# CHECK-NOT: ReturnCall
+}
+
+function f6 name="ordinaryCallOfCopiedBody" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f2 @10
+    v3 = Add v2, v2 @11
+    Return v3
+# CHECK-NOT: isDemotedTailCall
+# CHECK: anything = Call v0, -, v1 @6:1
+# CHECK-NOT: isDemotedTailCall
+}
+
+function f7 name="tailCallOfBodyCopiedToTailSite" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f1 @10
+    ReturnCall v2
+# CHECK: inlineFrames=[{}, {callee=f1 callPosition=10 isTailCall=true module=m0}] {
+# CHECK-NOT: isDemotedTailCall
+# CHECK: [[tail7]]: anything = Call v0, -, v1 @5:1
+# CHECK-NEXT: ReturnCall [[tail7]]
+}

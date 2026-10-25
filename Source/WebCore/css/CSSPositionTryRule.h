@@ -37,7 +37,7 @@ class CSSPositionTryDescriptors;
 
 class StyleRulePositionTry final : public StyleRuleBase {
 public:
-    static Ref<StyleRulePositionTry> NODELETE create(AtomString&& name, Ref<StyleProperties>&&);
+    static Ref<StyleRulePositionTry> LEGACY_NODELETE create(AtomString&& name, Ref<StyleProperties>&&);
 
     Ref<StyleRulePositionTry> copy() const { return adoptRef(*new StyleRulePositionTry(*this)); }
 
@@ -56,7 +56,7 @@ private:
 
 class CSSPositionTryRule final : public CSSRule {
 public:
-    static Ref<CSSPositionTryRule> create(StyleRulePositionTry&, CSSStyleSheet*);
+    static Ref<CSSPositionTryRule> LEGACY_NODELETE create(StyleRulePositionTry&, CSSStyleSheet*);
     virtual ~CSSPositionTryRule();
 
     StyleRuleType styleRuleType() const { return StyleRuleType::PositionTry; }
@@ -73,7 +73,7 @@ private:
     CSSPositionTryRule(StyleRulePositionTry&, CSSStyleSheet*);
 
     Ref<StyleRulePositionTry> m_positionTryRule;
-    RefPtr<CSSPositionTryDescriptors> m_propertiesCSSOMWrapper;
+    const RefPtr<CSSPositionTryDescriptors> m_propertiesCSSOMWrapper;
 };
 
 } // namespace WebCore

@@ -128,6 +128,7 @@ class BaseChannel : public ChannelInterface,
                             SdpType type) override;
 
   void Enable(bool enable) override;
+  void EnableSframe() override;
 
   const std::vector<StreamParams>& local_streams() const override {
     return local_streams_;
@@ -290,8 +291,6 @@ class BaseChannel : public ChannelInterface,
   scoped_refptr<PendingTaskSafetyFlag> alive_;
 
   // The functions are deleted after they have been called.
-  absl::AnyInvocable<void(const RtpPacketReceived&) &&>
-      on_first_packet_received_ RTC_GUARDED_BY(network_thread());
   absl::AnyInvocable<void() &&> on_first_packet_sent_
       RTC_GUARDED_BY(network_thread());
 

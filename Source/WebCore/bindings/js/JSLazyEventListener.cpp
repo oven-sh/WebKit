@@ -48,7 +48,7 @@ using namespace JSC;
 struct JSLazyEventListener::CreationArguments {
     const QualifiedName& attributeName;
     const AtomString& attributeValue;
-    Document& document;
+    Ref<Document> document;
     WeakPtr<ContainerNode, WeakPtrImplWithEventTargetData> node;
     JSObject* wrapper;
     bool shouldUseSVGEventName;
@@ -61,7 +61,7 @@ static const String& functionParameters(bool shouldUseSVGEventName)
     return shouldUseSVGEventName ? evtString : eventString;
 }
 
-static TextPosition NODELETE convertZeroToOne(const TextPosition& position)
+static TextPosition LEGACY_NODELETE convertZeroToOne(const TextPosition& position)
 {
     // A JSLazyEventListener can be created with a line number of zero when it is created with
     // a setAttribute call from JavaScript, so make the line number 1 in that case.
@@ -78,7 +78,7 @@ JSLazyEventListener::JSLazyEventListener(CreationArguments&& arguments, const UR
     , m_sourceURL(sourceURL)
     , m_sourcePosition(convertZeroToOne(sourcePosition))
     , m_originalNode(WTF::move(arguments.node))
-    , m_sourceTaintedOrigin(JSC::computeNewSourceTaintedOriginFromStack(protect(arguments.document)->vm(), protect(arguments.document)->vm().topCallFrame))
+    , m_sourceTaintedOrigin(JSC::computeNewSourceTaintednessFromStack(protect(arguments.document)->vm(), protect(arguments.document)->vm().topCallFrame))
 {
 }
 
@@ -193,11 +193,12 @@ RefPtr<JSLazyEventListener> JSLazyEventListener::create(CreationArguments&& argu
     // FIXME: We should be able to provide source information for frameless documents too (e.g. for importing nodes from XMLHttpRequest.responseXML).
     TextPosition position;
     URL sourceURL;
-    if (RefPtr frame = arguments.document.frame()) {
-        if (!frame->script().canExecuteScripts(ReasonForCallingCanExecuteScripts::AboutToCreateEventListener))
+    if (RefPtr frame = arguments.document->frame()) {
+        CheckedRef script = frame->script();
+        if (!script->canExecuteScripts(ReasonForCallingCanExecuteScripts::AboutToCreateEventListener))
             return nullptr;
-        position = frame->script().eventHandlerPosition();
-        sourceURL = arguments.document.url();
+        position = script->eventHandlerPosition();
+        sourceURL = arguments.document->url();
     }
 
     JSLockHolder locker(protect(arguments.document)->vm());

@@ -67,6 +67,10 @@
 #include "VisibleRectContext.h"
 #include <numbers>
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/AXCustomColorSVGClassifier.h>
+#endif
+
 namespace WebCore {
 
 LayoutRect SVGRenderSupport::clippedOverflowRectForRepaint(const RenderElement& renderer, const RenderLayerModelObject* repaintContainer, const VisibleRectContext& context)
@@ -88,10 +92,8 @@ std::optional<FloatRect> SVGRenderSupport::computeFloatVisibleRectInContainer(co
     if (!is<SVGElement>(parent.element()))
         return FloatRect();
 
-    CheckedRef style = renderer.style();
-
     FloatRect adjustedRect = rect;
-    adjustedRect.inflate(style->usedOutlineSize(style->usedZoomForLength(), style->deviceScaleFactor()));
+    adjustedRect.inflate(renderer.usedStyle().outlineSize());
 
     // Translate to coords in our parent renderer, and then call computeFloatVisibleRectInContainer() on our parent.
     adjustedRect = renderer.localToParentTransform().mapRect(adjustedRect);
@@ -266,7 +268,7 @@ static inline void invalidateResourcesOfChildren(RenderElement& renderer)
         invalidateResourcesOfChildren(child);
 }
 
-static inline bool NODELETE layoutSizeOfNearestViewportChanged(const RenderElement& renderer)
+static inline bool LEGACY_NODELETE layoutSizeOfNearestViewportChanged(const RenderElement& renderer)
 {
     for (auto* start = &renderer; start; start = start->parent()) {
         if (auto* svgRoot = dynamicDowncast<LegacyRenderSVGRoot>(*start))
@@ -448,7 +450,7 @@ inline FloatRect clipPathReferenceBox(const RenderElement& renderer, CSSBoxType 
         break;
     case CSSBoxType::ViewBox:
         if (renderer.element()) {
-            auto viewportSize = SVGLengthContext(downcast<SVGElement>(renderer.element())).viewportSize();
+            auto viewportSize = SVGLengthContext(downcast<SVGElement>(protect(renderer.element()))).viewportSize();
             if (viewportSize) {
                 referenceBox.setSize(*viewportSize);
                 isBoxRelativeToRendererGeometry = false;
@@ -580,13 +582,17 @@ void SVGRenderSupport::applyStrokeStyleToContext(GraphicsContext& context, const
 
 void SVGRenderSupport::styleChanged(RenderElement& renderer, const Style::ComputedStyle* oldStyle)
 {
-    if (renderer.element() && renderer.element()->isSVGElement() && (!oldStyle || (renderer.style().blendMode() != BlendMode::Normal) != (oldStyle->blendMode() != BlendMode::Normal)))
+    if (renderer.element() && renderer.element()->isSVGElement() && (!oldStyle || (protect(renderer.style())->usedBlendMode() != BlendMode::Normal) != (oldStyle->usedBlendMode() != BlendMode::Normal)))
         SVGRenderSupport::updateMaskedAncestorShouldIsolateBlending(renderer);
 
     bool hadNonScalingStroke = oldStyle && oldStyle->vectorEffect() == VectorEffect::NonScalingStroke;
     bool hasNonScalingStroke = renderer.style().vectorEffect() == VectorEffect::NonScalingStroke;
     if (hadNonScalingStroke != hasNonScalingStroke)
         updateAncestorNonScalingStrokeCounts(renderer, hasNonScalingStroke ? 1 : -1);
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    AXCustomColorSVGClassifier::styleDidChange(renderer, oldStyle);
+#endif
 }
 
 void SVGRenderSupport::updateAncestorNonScalingStrokeCounts(RenderElement& renderer, int delta)
@@ -625,7 +631,7 @@ bool SVGRenderSupport::isolatesBlending(const Style::ComputedStyle& style)
 {
     return style.hasPositionedMask()
         || !style.filter().isNone()
-        || style.blendMode() != BlendMode::Normal
+        || style.usedBlendMode() != BlendMode::Normal
         || !style.opacity().isOpaque();
 }
 
@@ -639,19 +645,19 @@ void SVGRenderSupport::updateMaskedAncestorShouldIsolateBlending(const RenderEle
         if (!style || !isolatesBlending(*style))
             continue;
         if (style->hasPositionedMask())
-            ancestor->setShouldIsolateBlending(renderer.style().blendMode() != BlendMode::Normal);
+            ancestor->setShouldIsolateBlending(protect(renderer.style())->usedBlendMode() != BlendMode::Normal);
         return;
     }
 }
 
-FloatRect SVGRenderSupport::calculateApproximateStrokeBoundingBox(const RenderElement& renderer)
+FloatRect SVGRenderSupport::calculateApproximateStrokeBoundingBox(const RenderElement& renderer, StrokeBoundingBoxPurpose purpose)
 {
     auto calculateApproximateScalingStrokeBoundingBox = [&]<typename Renderer>(const Renderer& renderer, FloatRect fillBoundingBox) -> FloatRect {
         // Implementation of
-        // https://drafts.fxtf.org/css-masking/#compute-stroke-bounding-box
+        // https://drafts.csswg.org/css-masking-1/#compute-stroke-bounding-box
         // except that we ignore whether the stroke is none.
 
-        ASSERT(!renderer.style().stroke().isNone());
+        ASSERT(purpose == StrokeBoundingBoxPurpose::HitTesting || !renderer.style().stroke().isNone());
 
         auto strokeBoundingBox = fillBoundingBox;
         const float strokeWidth = renderer.strokeWidth();
@@ -697,7 +703,7 @@ FloatRect SVGRenderSupport::calculateApproximateStrokeBoundingBox(const RenderEl
 
     auto calculateApproximateNonScalingStrokeBoundingBox = [&](const auto& renderer, FloatRect fillBoundingBox) -> FloatRect {
         ASSERT(renderer.hasPath());
-        ASSERT(!renderer.style().stroke().isNone());
+        ASSERT(purpose == StrokeBoundingBoxPurpose::HitTesting || !renderer.style().stroke().isNone());
         ASSERT(renderer.hasNonScalingStroke());
 
         auto strokeBoundingBox = fillBoundingBox;
@@ -713,18 +719,25 @@ FloatRect SVGRenderSupport::calculateApproximateStrokeBoundingBox(const RenderEl
     };
 
     auto calculate = [&](const auto& renderer) {
-        if (renderer.style().stroke().isNone())
+        if (renderer.style().stroke().isNone() && purpose == StrokeBoundingBoxPurpose::Painting)
             return renderer.objectBoundingBox();
         if (renderer.hasNonScalingStroke())
             return calculateApproximateNonScalingStrokeBoundingBox(renderer, renderer.objectBoundingBox());
         return calculateApproximateScalingStrokeBoundingBox(renderer, renderer.objectBoundingBox());
     };
 
-    if (CheckedPtr shape = dynamicDowncast<LegacyRenderSVGShape>(renderer))
-        return shape->adjustStrokeBoundingBoxForMarkersAndZeroLengthLinecaps(RepaintRectCalculation::Fast, calculate(*shape));
+    if (CheckedPtr shape = dynamicDowncast<LegacyRenderSVGShape>(renderer)) {
+        auto strokeBoundingBox = calculate(*shape);
+        if (purpose == StrokeBoundingBoxPurpose::HitTesting)
+            return strokeBoundingBox;
+        return shape->adjustStrokeBoundingBoxForMarkersAndZeroLengthLinecaps(RepaintRectCalculation::Fast, strokeBoundingBox);
+    }
 
     const auto& shape = downcast<RenderSVGShape>(renderer);
-    return shape.adjustStrokeBoundingBoxForZeroLengthLinecaps(RepaintRectCalculation::Fast, calculate(shape));
+    auto strokeBoundingBox = calculate(shape);
+    if (purpose == StrokeBoundingBoxPurpose::HitTesting)
+        return strokeBoundingBox;
+    return shape.adjustStrokeBoundingBoxForZeroLengthLinecaps(RepaintRectCalculation::Fast, strokeBoundingBox);
 }
 
 }

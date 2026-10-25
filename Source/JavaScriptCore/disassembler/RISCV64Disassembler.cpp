@@ -38,111 +38,103 @@ namespace RISCV64Disassembler {
 
 template<size_t BufferSize>
 struct StringBufferBase {
-    char* data() { return buffer.data(); }
-    size_t size() { return sizeof(char) * buffer.size(); }
+    std::span<char> span() { return buffer; }
 
-    CString createString()
+    ASCIICString createString()
     {
         buffer[BufferSize - 1] = '\0';
-        return { buffer.data() };
+        return ASCIICString { buffer.data() };
     }
 
     std::array<char, BufferSize> buffer;
 };
 
 using StringBuffer = StringBufferBase<256>;
-using SmallStringBuffer = StringBufferBase<32>;
 
-template<typename RegisterType> const char* registerName(uint8_t) = delete;
+template<typename RegisterType> ASCIILiteral registerName(uint8_t) = delete;
 
 template<>
-const char* registerName<RISCV64Instructions::RegistersBase::GType>(uint8_t value)
+ASCIILiteral registerName<RISCV64Instructions::RegistersBase::GType>(uint8_t value)
 {
-    static const std::array<const char*, 32> s_gpRegNames {
-        "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7",
-        "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
-        "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23",
-        "x24", "x25", "x26", "x27", "x28", "x29", "x30", "x31",
+    static constexpr std::array<ASCIILiteral, 32> s_gpRegNames {
+        "x0"_s, "x1"_s, "x2"_s, "x3"_s, "x4"_s, "x5"_s, "x6"_s, "x7"_s,
+        "x8"_s, "x9"_s, "x10"_s, "x11"_s, "x12"_s, "x13"_s, "x14"_s, "x15"_s,
+        "x16"_s, "x17"_s, "x18"_s, "x19"_s, "x20"_s, "x21"_s, "x22"_s, "x23"_s,
+        "x24"_s, "x25"_s, "x26"_s, "x27"_s, "x28"_s, "x29"_s, "x30"_s, "x31"_s,
     };
 
     if (value < 32)
         return s_gpRegNames[value];
-    return "<unknown>";
+    return "<unknown>"_s;
 }
 
 template<>
-const char* registerName<RISCV64Instructions::RegistersBase::FType>(uint8_t value)
+ASCIILiteral registerName<RISCV64Instructions::RegistersBase::FType>(uint8_t value)
 {
-    static const std::array<const char*, 32> s_fpRegNames {
-        "f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7",
-        "f8", "f9", "f10", "f11", "f12", "f13", "f14", "f15",
-        "f16", "f17", "f18", "f19", "f20", "f21", "f22", "f23",
-        "f24", "f25", "f26", "f27", "f28", "f29", "f30", "f31",
+    static constexpr std::array<ASCIILiteral, 32> s_fpRegNames {
+        "f0"_s, "f1"_s, "f2"_s, "f3"_s, "f4"_s, "f5"_s, "f6"_s, "f7"_s,
+        "f8"_s, "f9"_s, "f10"_s, "f11"_s, "f12"_s, "f13"_s, "f14"_s, "f15"_s,
+        "f16"_s, "f17"_s, "f18"_s, "f19"_s, "f20"_s, "f21"_s, "f22"_s, "f23"_s,
+        "f24"_s, "f25"_s, "f26"_s, "f27"_s, "f28"_s, "f29"_s, "f30"_s, "f31"_s,
     };
 
     if (value < 32)
         return s_fpRegNames[value];
-    return "<unknown>";
+    return "<unknown>"_s;
 }
 
-const char* roundingMode(uint8_t value)
+ASCIILiteral roundingMode(uint8_t value)
 {
     using RISCV64Instructions::FPRoundingMode;
 
     switch (value) {
     case unsigned(FPRoundingMode::RNE):
-        return "rne";
+        return "rne"_s;
     case unsigned(FPRoundingMode::RTZ):
-        return "rtz";
+        return "rtz"_s;
     case unsigned(FPRoundingMode::RDN):
-        return "rdn";
+        return "rdn"_s;
     case unsigned(FPRoundingMode::RUP):
-        return "rup";
+        return "rup"_s;
     case unsigned(FPRoundingMode::RMM):
-        return "rmm";
+        return "rmm"_s;
     case unsigned(FPRoundingMode::DYN):
-        return "dyn";
+        return "dyn"_s;
     default:
         break;
     }
 
-    return "<unknown>";
+    return "<unknown>"_s;
 }
 
-SmallStringBuffer memoryOperationFlags(uint8_t value)
+ASCIILiteral memoryOperationFlags(uint8_t value)
 {
-    using RISCV64Instructions::MemoryOperation;
-
-    SmallStringBuffer buffer;
-    if (!!value) {
-        snprintf(buffer.data(), buffer.size(), "%s%s%s%s",
-            (value & unsigned(MemoryOperation::I)) ? "i" : "",
-            (value & unsigned(MemoryOperation::O)) ? "o" : "",
-            (value & unsigned(MemoryOperation::R)) ? "r" : "",
-            (value & unsigned(MemoryOperation::W)) ? "w" : "");
-    } else
-        snprintf(buffer.data(), buffer.size(), "<none>");
-    return buffer;
+    // Indexed by the I, O, R and W bits of MemoryOperation.
+    static constexpr std::array s_flags {
+        "<none>"_s, "w"_s, "r"_s, "rw"_s, "o"_s, "ow"_s, "or"_s, "orw"_s,
+        "i"_s, "iw"_s, "ir"_s, "irw"_s, "io"_s, "iow"_s, "ior"_s, "iorw"_s,
+    };
+    return s_flags[value];
 }
 
-const char* aqrlFlags(uint8_t value)
+ASCIILiteral aqrlFlags(uint8_t value)
 {
     using RISCV64Instructions::MemoryAccess;
 
     switch (value) {
     case 0:
-        return "";
+        return ""_s;
     case unsigned(MemoryAccess::Acquire):
-        return ".aq";
+        return ".aq"_s;
     case unsigned(MemoryAccess::Release):
-        return ".rl";
+        return ".rl"_s;
     case unsigned(MemoryAccess::AcquireRelease):
-        return ".aqrl";
+        return ".aqrl"_s;
     default:
         break;
     }
 
-    return "<unknown>";
+    return "<unknown>"_s;
 }
 
 // A simple type that handles a parameter pack of instruction types, along with a contains<T>() helper that serves as a
@@ -159,7 +151,7 @@ struct InstructionList {
 
 // To enable showing sensible disassembly, different instructions have to be formatted differently. Each such formatting
 // class specifies the list of instructions it can format, but generally instructions under a given formatter fall into
-// the same class of instructions. The disassemble() static function returns a CString holding the formatted data.
+// the same class of instructions. The disassemble() static function returns an ASCIICString holding the formatted data.
 
 struct RTypeDefaultFormatting {
     using List = InstructionList<
@@ -182,12 +174,12 @@ struct RTypeDefaultFormatting {
         RISCV64Instructions::MULW, RISCV64Instructions::DIVW, RISCV64Instructions::DIVUW, RISCV64Instructions::REMW, RISCV64Instructions::REMUW>;
 
     template<typename T>
-    static CString disassemble(RISCV64Instructions::InstructionValue insn)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue insn)
     {
         static_assert(List::contains<T>());
 
         StringBuffer buffer;
-        snprintf(buffer.data(), buffer.size(), "%s %s, %s, %s",
+        SAFE_SPRINTF(buffer.span(), "%s %s, %s, %s",
             T::name, registerName<typename T::Registers::RD>(T::rd(insn)),
             registerName<typename T::Registers::RS1>(T::rs1(insn)), registerName<typename T::Registers::RS2>(T::rs2(insn)));
         return buffer.createString();
@@ -201,12 +193,12 @@ struct RTypeR2Formatting {
         RISCV64Instructions::FCLASS_S, RISCV64Instructions::FCLASS_D>;
 
     template<typename T>
-    static CString disassemble(RISCV64Instructions::InstructionValue insn)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue insn)
     {
         static_assert(List::contains<T>());
 
         StringBuffer buffer;
-        snprintf(buffer.data(), buffer.size(), "%s %s, %s",
+        SAFE_SPRINTF(buffer.span(), "%s %s, %s",
             T::name,
             registerName<typename T::Registers::RD>(T::rd(insn)), registerName<typename T::Registers::RS1>(T::rs1(insn)));
         return buffer.createString();
@@ -225,17 +217,17 @@ struct RTypeWithRoundingModeDefaultFormatting {
         RISCV64Instructions::FDIV_D>;
 
     template<typename T>
-    static CString disassemble(RISCV64Instructions::InstructionValue insn)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue insn)
     {
         static_assert(List::contains<T>());
         uint8_t rm = T::rm(insn);
 
         StringBuffer buffer;
-        snprintf(buffer.data(), buffer.size(), "%s %s, %s, %s%s%s",
+        SAFE_SPRINTF(buffer.span(), "%s %s, %s, %s%s%s",
             T::name, registerName<typename T::Registers::RD>(T::rd(insn)),
             registerName<typename T::Registers::RS1>(T::rs1(insn)), registerName<typename T::Registers::RS2>(T::rs2(insn)),
-            (rm == unsigned(RISCV64Instructions::FPRoundingMode::DYN)) ? "" : ", rm:",
-            (rm == unsigned(RISCV64Instructions::FPRoundingMode::DYN)) ? "" : roundingMode(rm));
+            (rm == unsigned(RISCV64Instructions::FPRoundingMode::DYN)) ? ""_s : ", rm:"_s,
+            (rm == unsigned(RISCV64Instructions::FPRoundingMode::DYN)) ? ""_s : roundingMode(rm));
         return buffer.createString();
     }
 };
@@ -245,17 +237,17 @@ struct RTypeWithRoundingModeFSQRTFormatting {
         RISCV64Instructions::FSQRT_S, RISCV64Instructions::FSQRT_D>;
 
     template<typename T>
-    static CString disassemble(RISCV64Instructions::InstructionValue insn)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue insn)
     {
         static_assert(List::contains<T>());
         uint8_t rm = T::rm(insn);
 
         StringBuffer buffer;
-        snprintf(buffer.data(), buffer.size(), "%s %s, %s%s%s",
+        SAFE_SPRINTF(buffer.span(), "%s %s, %s%s%s",
             T::name, registerName<typename T::Registers::RD>(T::rd(insn)),
             registerName<typename T::Registers::RS1>(T::rs1(insn)),
-            (rm == unsigned(RISCV64Instructions::FPRoundingMode::DYN)) ? "" : ", rm:",
-            (rm == unsigned(RISCV64Instructions::FPRoundingMode::DYN)) ? "" : roundingMode(rm));
+            (rm == unsigned(RISCV64Instructions::FPRoundingMode::DYN)) ? ""_s : ", rm:"_s,
+            (rm == unsigned(RISCV64Instructions::FPRoundingMode::DYN)) ? ""_s : roundingMode(rm));
         return buffer.createString();
     }
 };
@@ -273,16 +265,16 @@ struct RTypeWithRoundingModeFCVTFormatting {
         RISCV64Instructions::FCVT_S_D, RISCV64Instructions::FCVT_D_S>;
 
     template<typename T>
-    static CString disassemble(RISCV64Instructions::InstructionValue insn)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue insn)
     {
         static_assert(List::contains<T>());
         uint8_t rm = T::rm(insn);
 
         StringBuffer buffer;
-        snprintf(buffer.data(), buffer.size(), "%s %s, %s%s%s",
+        SAFE_SPRINTF(buffer.span(), "%s %s, %s%s%s",
             T::name, registerName<typename T::Registers::RD>(T::rd(insn)), registerName<typename T::Registers::RS1>(T::rs1(insn)),
-            (rm == unsigned(RISCV64Instructions::FPRoundingMode::DYN)) ? "" : ", rm:",
-            (rm == unsigned(RISCV64Instructions::FPRoundingMode::DYN)) ? "" : roundingMode(rm));
+            (rm == unsigned(RISCV64Instructions::FPRoundingMode::DYN)) ? ""_s : ", rm:"_s,
+            (rm == unsigned(RISCV64Instructions::FPRoundingMode::DYN)) ? ""_s : roundingMode(rm));
         return buffer.createString();
     }
 };
@@ -301,12 +293,12 @@ struct RTypeWithAqRlDefaultFormatting {
         RISCV64Instructions::AMOMAXU_W, RISCV64Instructions::AMOMAXU_D>;
 
     template<typename T>
-    static CString disassemble(RISCV64Instructions::InstructionValue insn)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue insn)
     {
         static_assert(List::contains<T>());
 
         StringBuffer buffer;
-        snprintf(buffer.data(), buffer.size(), "%s%s %s, %s, %s",
+        SAFE_SPRINTF(buffer.span(), "%s%s %s, %s, %s",
             T::name, aqrlFlags(T::aqrl(insn)), registerName<typename T::Registers::RD>(T::rd(insn)),
             registerName<typename T::Registers::RS1>(T::rs1(insn)), registerName<typename T::Registers::RS2>(T::rs2(insn)));
         return buffer.createString();
@@ -318,12 +310,12 @@ struct RTypeWithAqRlLRFormatting {
         RISCV64Instructions::LR_W, RISCV64Instructions::LR_D>;
 
     template<typename T>
-    static CString disassemble(RISCV64Instructions::InstructionValue insn)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue insn)
     {
         static_assert(List::contains<T>());
 
         StringBuffer buffer;
-        snprintf(buffer.data(), buffer.size(), "%s%s %s, %s",
+        SAFE_SPRINTF(buffer.span(), "%s%s %s, %s",
             T::name, aqrlFlags(T::aqrl(insn)),
             registerName<typename T::Registers::RD>(T::rd(insn)), registerName<typename T::Registers::RS1>(T::rs1(insn)));
         return buffer.createString();
@@ -338,17 +330,17 @@ struct R4TypeWithRoundingModeDefaultFormatting {
         RISCV64Instructions::FNMADD_S, RISCV64Instructions::FNMADD_D>;
 
     template<typename T>
-    static CString disassemble(RISCV64Instructions::InstructionValue insn)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue insn)
     {
         static_assert(List::contains<T>());
         uint8_t rm = T::rm(insn);
 
         StringBuffer buffer;
-        snprintf(buffer.data(), buffer.size(), "%s %s, %s, %s, %s%s%s",
+        SAFE_SPRINTF(buffer.span(), "%s %s, %s, %s, %s%s%s",
             T::name, registerName<typename T::Registers::RD>(T::rd(insn)), registerName<typename T::Registers::RS1>(T::rs1(insn)),
             registerName<typename T::Registers::RS2>(T::rs2(insn)), registerName<typename T::Registers::RS3>(T::rs3(insn)),
-            (rm == unsigned(RISCV64Instructions::FPRoundingMode::DYN)) ? "" : ", rm:",
-            (rm == unsigned(RISCV64Instructions::FPRoundingMode::DYN)) ? "" : roundingMode(rm));
+            (rm == unsigned(RISCV64Instructions::FPRoundingMode::DYN)) ? ""_s : ", rm:"_s,
+            (rm == unsigned(RISCV64Instructions::FPRoundingMode::DYN)) ? ""_s : roundingMode(rm));
         return buffer.createString();
     }
 };
@@ -361,12 +353,12 @@ struct ITypeDefaultFormatting {
         RISCV64Instructions::ADDIW, RISCV64Instructions::SLLIW, RISCV64Instructions::SRLIW, RISCV64Instructions::SRAIW>;
 
     template<typename T>
-    static CString disassemble(RISCV64Instructions::InstructionValue insn)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue insn)
     {
         static_assert(List::contains<T>());
 
         StringBuffer buffer;
-        snprintf(buffer.data(), buffer.size(), "%s %s, %s, %d",
+        SAFE_SPRINTF(buffer.span(), "%s %s, %s, %d",
             T::name, registerName<typename T::Registers::RD>(T::rd(insn)),
             registerName<typename T::Registers::RS1>(T::rs1(insn)), RISCV64Instructions::IImmediate::value(insn));
         return buffer.createString();
@@ -383,12 +375,12 @@ struct ITypeImmediateAsOffsetFormatting {
         RISCV64Instructions::FLW, RISCV64Instructions::FLD>;
 
     template<typename T>
-    static CString disassemble(RISCV64Instructions::InstructionValue insn)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue insn)
     {
         static_assert(List::contains<T>());
 
         StringBuffer buffer;
-        snprintf(buffer.data(), buffer.size(), "%s %s, %d(%s)",
+        SAFE_SPRINTF(buffer.span(), "%s %s, %d(%s)",
             T::name, registerName<typename T::Registers::RD>(T::rd(insn)),
             RISCV64Instructions::IImmediate::value(insn), registerName<typename T::Registers::RS1>(T::rs1(insn)));
         return buffer.createString();
@@ -401,12 +393,12 @@ struct STypeDefaultFormatting {
         RISCV64Instructions::FSW, RISCV64Instructions::FSD>;
 
     template<typename T>
-    static CString disassemble(RISCV64Instructions::InstructionValue insn)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue insn)
     {
         static_assert(List::contains<T>());
 
         StringBuffer buffer;
-        snprintf(buffer.data(), buffer.size(), "%s %s, %d(%s)",
+        SAFE_SPRINTF(buffer.span(), "%s %s, %d(%s)",
             T::name, registerName<typename T::Registers::RS2>(T::rs2(insn)),
             RISCV64Instructions::SImmediate::value(insn), registerName<typename T::Registers::RS1>(T::rs1(insn)));
         return buffer.createString();
@@ -423,12 +415,12 @@ struct BTypeDefaultFormatting {
         RISCV64Instructions::BGEU>;
 
     template<typename T>
-    static CString disassemble(RISCV64Instructions::InstructionValue insn)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue insn)
     {
         static_assert(List::contains<T>());
 
         StringBuffer buffer;
-        snprintf(buffer.data(), buffer.size(), "%s %s, %s, %d",
+        SAFE_SPRINTF(buffer.span(), "%s %s, %s, %d",
             T::name, registerName<typename T::Registers::RS1>(T::rs1(insn)), registerName<typename T::Registers::RS2>(T::rs2(insn)),
             RISCV64Instructions::BImmediate::value(insn));
         return buffer.createString();
@@ -440,12 +432,12 @@ struct UTypeDefaultFormatting {
         RISCV64Instructions::LUI, RISCV64Instructions::AUIPC>;
 
     template<typename T>
-    static CString disassemble(RISCV64Instructions::InstructionValue insn)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue insn)
     {
         static_assert(List::contains<T>());
 
         StringBuffer buffer;
-        snprintf(buffer.data(), buffer.size(), "%s %s, %u",
+        SAFE_SPRINTF(buffer.span(), "%s %s, %u",
             T::name, registerName<typename T::Registers::RD>(T::rd(insn)), RISCV64Instructions::UImmediate::value(insn));
         return buffer.createString();
     }
@@ -455,12 +447,12 @@ struct JTypeDefaultFormatting {
     using List = InstructionList<RISCV64Instructions::JAL>;
 
     template<typename T>
-    static CString disassemble(RISCV64Instructions::InstructionValue insn)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue insn)
     {
         static_assert(List::contains<T>());
 
         StringBuffer buffer;
-        snprintf(buffer.data(), buffer.size(), "%s %d(%s)",
+        SAFE_SPRINTF(buffer.span(), "%s %d(%s)",
             T::name, RISCV64Instructions::JImmediate::value(insn), registerName<typename T::Registers::RD>(T::rd(insn)));
         return buffer.createString();
     }
@@ -470,7 +462,7 @@ struct FenceInstructionFormatting {
     using List = InstructionList<RISCV64Instructions::FENCE>;
 
     template<typename T>
-    static CString disassemble(RISCV64Instructions::InstructionValue insn)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue insn)
     {
         static_assert(List::contains<T>());
 
@@ -479,8 +471,8 @@ struct FenceInstructionFormatting {
         auto successorFlags = memoryOperationFlags((immValue >> 0) & ((1 << 4) - 1));
 
         StringBuffer buffer;
-        snprintf(buffer.data(), buffer.size(), "%s %s,%s",
-            T::name, predecessorFlags.data(), successorFlags.data());
+        SAFE_SPRINTF(buffer.span(), "%s %s,%s",
+            T::name, predecessorFlags, successorFlags);
         return buffer.createString();
     }
 };
@@ -489,11 +481,11 @@ struct FenceIInstructionFormatting {
     using List = InstructionList<RISCV64Instructions::FENCE_I>;
 
     template<typename T>
-    static CString disassemble(RISCV64Instructions::InstructionValue)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue)
     {
         static_assert(List::contains<T>());
 
-        return { T::name };
+        return ASCIICString { T::name };
     }
 };
 
@@ -502,11 +494,11 @@ struct EnvironmentInstructionFormatting {
         RISCV64Instructions::ECALL, RISCV64Instructions::EBREAK>;
 
     template<typename T>
-    static CString disassemble(RISCV64Instructions::InstructionValue)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue)
     {
         static_assert(List::contains<T>());
 
-        return { T::name };
+        return ASCIICString { T::name };
     }
 };
 
@@ -547,7 +539,7 @@ struct DisassemblyFormatting {
         FenceIInstructionFormatting,
         EnvironmentInstructionFormatting>::Type;
 
-    static CString disassemble(RISCV64Instructions::InstructionValue insn)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue insn)
     {
         static_assert(Type::List::template contains<T>());
         return Type::template disassemble<T>(insn);
@@ -556,7 +548,7 @@ struct DisassemblyFormatting {
 
 template<typename InsnType, typename... OtherInsnTypes>
 struct Disassembler {
-    static CString disassemble(RISCV64Instructions::InstructionValue insn)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue insn)
     {
         if (InsnType::matches(insn))
             return DisassemblyFormatting<InsnType>::disassemble(insn);
@@ -566,7 +558,7 @@ struct Disassembler {
 
 template<typename InsnType>
 struct Disassembler<InsnType> {
-    static CString disassemble(RISCV64Instructions::InstructionValue insn)
+    static ASCIICString disassemble(RISCV64Instructions::InstructionValue insn)
     {
         if (InsnType::matches(insn))
             return DisassemblyFormatting<InsnType>::disassemble(insn);
@@ -574,7 +566,7 @@ struct Disassembler<InsnType> {
     }
 };
 
-CString disassembleOpcode(uint32_t *pc)
+ASCIICString disassembleOpcode(uint32_t *pc)
 {
     using namespace RISCV64Instructions;
     using DisassemblerType = Disassembler<
@@ -628,7 +620,7 @@ CString disassembleOpcode(uint32_t *pc)
     auto disassembly = DisassemblerType::disassemble(InstructionValue { *pc });
     if (!disassembly.isNull())
         return disassembly;
-    return CString { "<unrecognized opcode>" };
+    return "<unrecognized opcode>"_s;
 }
 
 } // namespace RISCV64Disassembler

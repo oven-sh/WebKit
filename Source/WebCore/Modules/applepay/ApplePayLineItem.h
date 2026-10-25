@@ -36,9 +36,12 @@
 namespace WebCore {
 
 struct ApplePayLineItem final {
-    enum class Type : bool {
+    enum class Type : uint8_t {
         Pending,
         Final,
+#if ENABLE(APPLE_PAY_ESTIMATED_LINE_ITEM)
+        Estimated,
+#endif
     };
 
     Type type { Type::Final };

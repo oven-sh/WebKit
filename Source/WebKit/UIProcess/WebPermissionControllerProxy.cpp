@@ -26,6 +26,8 @@
 #include "config.h"
 #include "WebPermissionControllerProxy.h"
 
+#include "ValidationProcedures.h"
+
 #include "MessageSenderInlines.h"
 #include "WebPageProxy.h"
 #include "WebPermissionControllerProxyMessages.h"
@@ -44,20 +46,10 @@
 #define MESSAGE_CHECK_COMPLETION(assertion, completion) MESSAGE_CHECK_COMPLETION_BASE(assertion, m_process->connection(), completion)
 
 #define EXTRACT_WITH_MESSAGE_CHECK(name, untrusted, ...) \
-    auto name##Validated = WTF::move(untrusted).validate(__VA_ARGS__); \
-    MESSAGE_CHECK(IPC::valueMayBeLegitimate(name##Validated)); \
-    if (!name##Validated) \
-        return; \
-    auto name = WTF::move(*name##Validated)
+    EXTRACT_WITH_MESSAGE_CHECK_BASE(m_process->connection(), name, untrusted, (void)0, __VA_ARGS__)
 
 #define EXTRACT_WITH_MESSAGE_CHECK_COMPLETION(name, untrusted, completion, ...) \
-    auto name##Validated = WTF::move(untrusted).validate(__VA_ARGS__); \
-    MESSAGE_CHECK_COMPLETION(IPC::valueMayBeLegitimate(name##Validated), completion); \
-    if (!name##Validated) { \
-        { completion; } \
-        return; \
-    } \
-    auto name = WTF::move(*name##Validated)
+    EXTRACT_WITH_MESSAGE_CHECK_BASE(m_process->connection(), name, untrusted, completion, __VA_ARGS__)
 
 namespace WebKit {
 
@@ -84,10 +76,9 @@ void WebPermissionControllerProxy::deref() const
     m_process->deref();
 }
 
-void WebPermissionControllerProxy::query(IPC::Untrusted<WebCore::ClientOrigin>&& untrustedOrigin, const WebCore::PermissionDescriptor& descriptor, std::optional<WebPageProxyIdentifier> identifier, WebCore::PermissionQuerySource source, CompletionHandler<void(std::optional<WebCore::PermissionState>)>&& completionHandler)
+void WebPermissionControllerProxy::query(IPC::Untrusted<WebCore::ClientOrigin>&& untrustedClientOrigin, const WebCore::PermissionDescriptor& descriptor, std::optional<WebPageProxyIdentifier> identifier, WebCore::PermissionQuerySource source, CompletionHandler<void(std::optional<WebCore::PermissionState>)>&& completionHandler)
 {
-    auto clientOrigin = WTF::move(untrustedOrigin).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NeedsReview);
-
+    EXTRACT_WITH_MESSAGE_CHECK_COMPLETION(clientOrigin, untrustedClientOrigin, completionHandler(std::nullopt), ProcessCommittedClientOrigin { m_process.get() });
     MESSAGE_CHECK_COMPLETION(identifier || (source == WebCore::PermissionQuerySource::SharedWorker || source == WebCore::PermissionQuerySource::ServiceWorker), completionHandler(std::nullopt));
 
     RefPtr webPageProxy = identifier ? RefPtr { m_process->webPage(identifier.value()) } : mostReasonableWebPageProxy(clientOrigin.topOrigin, source);
@@ -104,31 +95,32 @@ RefPtr<WebPageProxy> WebPermissionControllerProxy::mostReasonableWebPageProxy(co
     ASSERT(source == WebCore::PermissionQuerySource::SharedWorker || source == WebCore::PermissionQuerySource::ServiceWorker);
     
     RefPtr<WebPageProxy> webPageProxy;
-    auto findWebPageProxy = [&topOrigin, &webPageProxy] (auto* processes) {
-        if (!processes)
-            return; 
-
-        for (auto& process : *processes) {
-            for (Ref potentialWebPageProxy : getPtr(process)->pages()) {
-                if (WebCore::SecurityOriginData::fromURLWithoutStrictOpaqueness(URL { potentialWebPageProxy->currentURL() }) != topOrigin)
-                    continue;
-                // The most reasonable webPageProxy is the newest one (the one with the greatest identifier).
-                if (webPageProxy && webPageProxy->identifier() > potentialWebPageProxy->identifier())
-                    continue;
-                webPageProxy = WTF::move(potentialWebPageProxy);
-            }
+    auto findWebPageProxy = [&topOrigin, &webPageProxy](WebProcessProxy& process) {
+        for (Ref potentialWebPageProxy : process.pages()) {
+            if (WebCore::SecurityOriginData::fromURLWithoutStrictOpaqueness(URL { potentialWebPageProxy->currentURL() }) != topOrigin)
+                continue;
+            // The most reasonable webPageProxy is the newest one (the one with the greatest identifier).
+            if (webPageProxy && webPageProxy->identifier() > potentialWebPageProxy->identifier())
+                continue;
+            webPageProxy = WTF::move(potentialWebPageProxy);
         }
     };
 
-    Vector<Ref<WebProcessProxy>> currentProcess { m_process.get() };
-    findWebPageProxy(&currentProcess);
+    findWebPageProxy(m_process.get());
+
+    auto findWebPageProxyInProcesses = [&findWebPageProxy](const WeakHashSet<WebProcessProxy>* processes) {
+        if (!processes)
+            return;
+        for (Ref process : *processes)
+            findWebPageProxy(process);
+    };
 
     switch (source) {
     case WebCore::PermissionQuerySource::ServiceWorker:
-        findWebPageProxy(m_process->serviceWorkerClientProcesses());
+        findWebPageProxyInProcesses(m_process->serviceWorkerClientProcesses());
         break;
     case WebCore::PermissionQuerySource::SharedWorker:
-        findWebPageProxy(m_process->sharedWorkerClientProcesses());
+        findWebPageProxyInProcesses(m_process->sharedWorkerClientProcesses());
         break;
     default:
         RELEASE_ASSERT_NOT_REACHED();

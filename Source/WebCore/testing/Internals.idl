@@ -101,11 +101,6 @@ enum TreeType {
     "ComposedTreeIncludingPseudoElements"
 };
 
-[Conditional=WEBGL] enum SimulatedWebGLContextEvent {
-    "GPUStatusFailure",
-    "Timeout"
-};
-
 enum AudioSessionCategory {
     "None",
     "AmbientSound",
@@ -134,12 +129,6 @@ enum AutoplayPolicy {
     "Allow",
     "AllowWithoutSound",
     "Deny"
-};
-
-[Conditional=WEBGL] enum RequestedGPU {
-    "default",
-    "low-power",
-    "high-performance"
 };
 
 [
@@ -222,6 +211,14 @@ enum AutoplayPolicy {
     float left = 0;
     float bottom = 0;
     float right = 0;
+};
+
+[
+    ExportMacro=WEBCORE_TESTSUPPORT_EXPORT,
+    Conditional=MODEL_PROCESS,
+    ImplementedAs=ModelSceneGraphAsTextOptions,
+] dictionary ModelSceneGraphAsTextOptions {
+    boolean includeAssetEntities = false;
 };
 
 enum HEVCParameterCodec {
@@ -452,6 +449,20 @@ enum AV1ConfigurationRange {
 [
     ExportMacro=WEBCORE_TESTSUPPORT_EXPORT,
     JSGenerateToJSObject,
+] dictionary InlineLayoutInfo {
+    // Increases with every inline layout of any block container. Compare it before and after a change to see if this block laid out its inline content.
+    unsigned long long sequenceNumber = 0;
+    DOMString range = "";
+    // The layout reused the line built while computing the maximum intrinsic width.
+    boolean isFromMaximumIntrinsicWidthLine = false;
+    unsigned long laidOutLineCount = 0;
+    // Lines kept from the previous layout.
+    unsigned long reusedLineCount = 0;
+};
+
+[
+    ExportMacro=WEBCORE_TESTSUPPORT_EXPORT,
+    JSGenerateToJSObject,
 ] dictionary PDFAnnotationRect {
     float x = 0;
     float y = 0;
@@ -561,6 +572,7 @@ enum ContentsFormat {
     float usedOutlineOffset(Element element);
 
     DOMString computedAppleColorFilter(Element element);
+    DOMString usedBackgroundColor(Element element);
 
     Node ensureUserAgentShadowRoot(Element host);
     Node? shadowRoot(Element host);
@@ -616,6 +628,7 @@ enum ContentsFormat {
 
     DOMRect boundingBox(Element element);
     DOMRect boundingBoxInRootViewCoordinates(Element element);
+    DOMRect boundingBoxInMainFrameViewCoordinates(Element element);
 
     unsigned long inspectorGridOverlayCount();
     unsigned long inspectorFlexOverlayCount();
@@ -652,6 +665,8 @@ enum ContentsFormat {
 
     DOMString documentBackgroundColor();
 
+    DOMString textScaleMetaMode();
+
     DOMString paintedCaretColor();
 
     boolean displayP3Available();
@@ -663,6 +678,7 @@ enum ContentsFormat {
 
     boolean wasLastChangeUserEdit(Element textField);
     boolean elementShouldAutoComplete(HTMLInputElement inputElement);
+    undefined setValueForUser(HTMLInputElement inputElement, DOMString value);
     undefined setAutofilled(HTMLInputElement inputElement, boolean enabled);
     undefined setAutofilledAndViewable(HTMLInputElement inputElement, boolean enabled);
     undefined setAutofilledAndObscured(HTMLInputElement inputElement, boolean enabled);
@@ -793,6 +809,7 @@ enum ContentsFormat {
     unsigned long remoteImagesCountForTesting();
     undefined setAsyncDecodingEnabledForTesting(HTMLImageElement element, boolean enabled);
     undefined setForceUpdateImageDataEnabledForTesting(HTMLImageElement element, boolean enabled);
+    undefined simulateImageDataReplacedForTesting(HTMLImageElement element);
     undefined setHasHDRContentForTesting(HTMLImageElement element);
 
     [Conditional=WEB_CODECS] boolean hasPendingActivity(WebCodecsVideoDecoder decoder);
@@ -829,6 +846,8 @@ enum ContentsFormat {
     const unsigned short LAYER_TREE_INCLUDES_DEVICE_SCALE = 2048;
     const unsigned short LAYER_TREE_INCLUDES_ROOT_LAYERS = 4096;
     DOMString layerTreeAsText(Document document, optional unsigned short flags = 0);
+
+    DOMString viewTransitionOldCaptureState(Document document, [AtomString] DOMString name);
 
     unsigned long long layerIDForElement(Element element);
     unsigned long long horizontalScrollbarLayerID(optional Node? node = null);
@@ -993,6 +1012,10 @@ enum ContentsFormat {
     undefined startTrackingLayoutUpdates();
     unsigned long layoutUpdateCount();
 
+    // Inline layouts record their info only while enabled. Reset between tests.
+    undefined setInlineLayoutInfoCollectionEnabled(boolean enabled);
+    InlineLayoutInfo lastInlineLayoutInfo(Element element);
+
     undefined startTrackingRenderLayerPositionUpdates();
     unsigned long renderLayerPositionUpdateCount();
 
@@ -1001,6 +1024,9 @@ enum ContentsFormat {
 
     undefined startTrackingRenderingUpdates();
     unsigned long renderingUpdateCount();
+
+    unsigned long sentFrameViewportInfoCount();
+    unsigned long sentFrameGeometryCount();
 
     double? timeToNextRenderingUpdate();
 
@@ -1030,6 +1056,8 @@ enum ContentsFormat {
 
     undefined forceAXObjectCacheUpdate();
     undefined setAccessibilityAnnouncementTranslationTimeout(unrestricted double seconds);
+    undefined setAccessibilityFormErrorSettleDelay(unrestricted double seconds);
+    boolean isWatchingForAccessibilityFormErrors();
     unsigned long liveRegionSnapshotBuildCount();
     undefined resetLiveRegionSnapshotBuildCount();
     undefined setShouldMockParentSearchResultsForTesting(boolean enabled);
@@ -1143,6 +1171,7 @@ enum ContentsFormat {
     [Conditional=VIDEO] undefined suspendAllMediaBuffering();
     [Conditional=VIDEO] undefined suspendAllMediaPlayback();
     [Conditional=VIDEO] undefined resumeAllMediaPlayback();
+    [Conditional=VIDEO] undefined setMediaElementGracePeriodForResumingPlaybackInBackground(HTMLMediaElement element, double gracePeriodInSeconds);
 
     [Conditional=WIRELESS_PLAYBACK_TARGET] undefined setMockMediaPlaybackTargetPickerEnabled(boolean enabled);
     [Conditional=WIRELESS_PLAYBACK_TARGET] undefined setMockMediaPlaybackTargetPickerState(DOMString deviceName, DOMString deviceState);
@@ -1190,6 +1219,8 @@ enum ContentsFormat {
     DOMString createTemporaryFile(DOMString name, DOMString contents);
 
     DOMString documentIPAddressSpace();
+    undefined setDocumentIPAddressSpace(DOMString addressSpace);
+    undefined setLoadSourceOriginOverride(DOMString origin);
 
     undefined queueMicroTask(long testNumber);
     boolean testPreloaderSettingViewport();
@@ -1221,6 +1252,7 @@ enum ContentsFormat {
 
     DOMString resourceLoadStatisticsForURL(DOMURL url);
     undefined setTrackingPreventionEnabled(boolean enable);
+    boolean isPrevalentDomainScriptOnStack();
 
     undefined setCanShowModalDialogOverride(boolean allow);
 
@@ -1263,6 +1295,10 @@ enum ContentsFormat {
     [Conditional=WEBGL] undefined simulateEventForWebGLContext(SimulatedWebGLContextEvent event, WebGL2RenderingContext context);
     [Conditional=WEBGL] RequestedGPU requestedGPU(WebGLRenderingContext context);
     [Conditional=WEBGL] RequestedGPU requestedGPU(WebGL2RenderingContext context);
+    [Conditional=WEBGL] sequence<long> webglMaxDrawingBufferSize(WebGLRenderingContext context);
+    [Conditional=WEBGL] sequence<long> webglMaxDrawingBufferSize(WebGL2RenderingContext context);
+    [Conditional=WEBGL] sequence<long> webglDefaultFramebufferAllocatedSize(WebGLRenderingContext context);
+    [Conditional=WEBGL] sequence<long> webglDefaultFramebufferAllocatedSize(WebGL2RenderingContext context);
 
     undefined setPageVisibility(boolean isVisible);
     undefined setPageIsFocused(boolean isFocused);
@@ -1380,8 +1416,6 @@ enum ContentsFormat {
 
     DOMString windowLocationHost(DOMWindow window);
 
-    undefined markContextAsInsecure();
-
     undefined setMaxCanvasArea(unsigned long size);
 
     readonly attribute boolean hasMediaSessionManager;
@@ -1461,6 +1495,7 @@ enum ContentsFormat {
     boolean hasSandboxMachLookupAccessToGlobalName(DOMString process, DOMString service);
     boolean hasSandboxMachLookupAccessToXPCServiceName(DOMString process, DOMString service);
     boolean hasSandboxIOKitOpenAccessToClass(DOMString process, DOMString ioKitClass);
+    boolean isIOKitAvailable();
     boolean hasSandboxUnixSyscallAccess(DOMString process, unsigned long syscall);
 
 #if defined(ENABLE_LOGD_BLOCKING_IN_WEBCONTENT) && ENABLE_LOGD_BLOCKING_IN_WEBCONTENT
@@ -1485,6 +1520,8 @@ enum ContentsFormat {
     long readPreferenceInteger(DOMString domain, DOMString key);
     DOMString encodedPreferenceValue(DOMString domain, DOMString key);
 
+    undefined setPresentationIntentHTMLInterchangeEnabled(boolean enabled);
+
     boolean supportsPictureInPicture();
 
     boolean isRemoteUIAppForAccessibility();
@@ -1505,6 +1542,9 @@ enum ContentsFormat {
     [Conditional=ENCRYPTED_MEDIA] unsigned long mediaKeySessionInternalInstanceSessionObjectRefCount(MediaKeySession session);
 
     undefined setContentSizeCategory(ContentSizeCategory category);
+
+    [Conditional=TELEPHONE_NUMBER_DETECTION] unsigned long telephoneNumberRangesChangedCount();
+    [Conditional=SERVICE_CONTROLS] undefined setHasRelevantSelectionServicesForTesting(boolean hasServices);
 
     [Conditional=ATTACHMENT_ELEMENT, Conditional=SERVICE_CONTROLS] boolean hasImageControls(HTMLImageElement element);
     [Conditional=ATTACHMENT_ELEMENT] DOMString attachmentElementShadowUserAgentStyleSheet();
@@ -1573,6 +1613,8 @@ enum ContentsFormat {
     Promise<ImageBufferResourceLimits> getImageBufferResourceLimits();
 
     undefined setTopDocumentURLForQuirks(DOMString urlString);
+    undefined setSubframeURLForQuirks(DOMString urlString);
+    undefined setTopDocumentHostForQuirks(DOMString host);
     sequence<DOMString> activeQuirks();
 
     [CallWith=CurrentGlobalObject] ReadableStream readableStreamFromMessagePort(MessagePort port);
@@ -1582,11 +1624,15 @@ enum ContentsFormat {
     [Conditional=MODEL_ELEMENT] DOMString modelElementState(HTMLModelElement element);
     [Conditional=MODEL_ELEMENT] boolean isModelElementIntersectingViewport(HTMLModelElement element);
 
+    [Conditional=MODEL_PROCESS] Promise<DOMString> modelSceneGraphAsText(Element element, optional ModelSceneGraphAsTextOptions options = {});
+
     [Conditional=SPATIAL_PORTAL] unsigned long numberOfHostedModelsInSpatialPortal(Element element);
     [Conditional=SPATIAL_PORTAL] boolean establishesSpatialPortal(Element element);
     [Conditional=SPATIAL_PORTAL] Element? spatialPortalAnchorForModel(HTMLModelElement model);
     [Conditional=SPATIAL_PORTAL] sequence<unrestricted double>? spatialPortalResolvedTransform(Element element);
     [Conditional=SPATIAL_PORTAL] DOMString effectiveEnvironmentMap(Element element);
+
+    [Conditional=CONNECTED_VOLUMETRIC_SCENE] DOMString volumetricScenePresentationMode(Element element);
 
     undefined copyImageAtLocation(long x, long y);
 

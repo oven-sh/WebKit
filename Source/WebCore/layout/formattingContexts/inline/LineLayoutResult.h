@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include <WebCore/InlineLine.h>
+#include <WebCore/InlineLineRun.h>
 #include <WebCore/InlineLineTypes.h>
 #include <WebCore/LayoutUnits.h>
 #include <WebCore/PlacedFloats.h>
@@ -38,7 +38,7 @@ struct LineLayoutResult {
     using SuspendedFloatList = Vector<const Box*>;
 
     InlineItemRange inlineItemRange;
-    Line::RunList runs;
+    LineRunList runs;
 
     struct FloatContent {
         PlacedFloatList placedFloats;
@@ -96,7 +96,7 @@ struct LineLayoutResult {
     enum class InflowContentType : uint8_t { Inline, Block };
     std::optional<InflowContentType> inflowContentType() const
     {
-        if (contentfulInlineContentEnding.has_value())
+        if (contentfulInlineContentEnding.has_value() || blockEllipsis)
             return InflowContentType::Inline;
         if (!runs.isEmpty() && runs.last().isBlock())
             return InflowContentType::Block;
@@ -105,6 +105,7 @@ struct LineLayoutResult {
     bool hasContentfulInFlowContent() const { return inflowContentType().has_value(); }
     bool hasContentfulInlineContent() const { return inflowContentType() == InflowContentType::Inline; }
     bool isBlockContent() const { return inflowContentType() == InflowContentType::Block; }
+    bool hasBlockEllipsisContentOnly() const { return blockEllipsis && !contentfulInlineContentEnding; }
 
     bool endsWithHyphen() const { return contentfulInlineContentEnding && *contentfulInlineContentEnding == InlineContentEnding::Hyphen; }
     bool endsWithLineBreak() const { return contentfulInlineContentEnding && *contentfulInlineContentEnding == InlineContentEnding::LineBreak; }
@@ -113,6 +114,8 @@ struct LineLayoutResult {
     InlineLayoutUnit trimmedTrailingWhitespaceWidth { 0.f }; // only used for line-break: after-white-space currently
     InlineLayoutUnit firstLineStartTrim { 0.f }; // This is how much text-box-trim: start adjusts the first line box. We only need it to adjust the initial letter float position (which will not be needed once we drop the float behavior)
     std::optional<InlineLayoutUnit> hintForNextLineTopToAvoidIntrusiveFloat { }; // This is only used for cases when intrusive floats prevent any content placement at current vertical position.
+    std::optional<BlockOverflowEllipsis> blockEllipsis { };
+    bool isLastLineWithoutBlockEllipsis { false };
 };
 
 }

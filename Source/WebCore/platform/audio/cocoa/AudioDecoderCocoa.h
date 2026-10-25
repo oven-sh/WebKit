@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(WEB_CODECS) && USE(AVFOUNDATION)
+#if USE(AVFOUNDATION)
 
 #include "AudioDecoder.h"
 #include <WebCore/AudioStreamDescription.h>
@@ -54,7 +54,7 @@ public:
 
 private:
     explicit AudioDecoderCocoa(OutputCallback&&);
-    Ref<DecodePromise> decode(EncodedData&&) final;
+    Ref<DecodePromise> decode(AudioEncodedData&&) final;
     Ref<GenericPromise> flush() final;
     void reset() final;
     void close() final;
@@ -64,4 +64,4 @@ private:
 
 }
 
-#endif // ENABLE(WEB_CODECS) && USE(AVFOUNDATION)
+#endif // USE(AVFOUNDATION)

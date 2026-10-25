@@ -73,18 +73,25 @@ function(WEBKIT_ADD_SWIFT_PREWARM _consumer _swift_source)
     set_source_files_properties(${_swift_source} OBJECT_DEPENDS
         "${CMAKE_CURRENT_BINARY_DIR}/${_consumer}.platform-swift-args.resp")
 
-    # ninja prioritizes tasks with a large number of downstream edges, which is
-    # only an optimal ordering if tasks take the same amount of time to
-    # execute. Swift tasks are large and slow (because ninja is scheduling the
-    # swift driver, not individual compilations). To trick it into scheduling
-    # prewarm to run early enough to benefit performance, add a chain of
-    # meaningless dependent tasks to increase the critical path weight.
-    #
-    # See ninja-build/ninja#2177 for details of the critical path scheduler.
-    set(_dispatch_edges 9)
-    set(_dispatch_dep "$<TARGET_OBJECTS:${_prewarm}>")
+    WEBKIT_RAISE_SWIFT_NINJA_PRIORITY(${_prewarm})
+    add_dependencies(${_consumer} ${_prewarm})
+endfunction()
+
+# WEBKIT_RAISE_SWIFT_NINJA_PRIORITY(<target> [<edges>])
+#
+# ninja schedules by longest downstream path rather than duration, so slow Swift
+# compiles wait behind cheap C++ ones (ninja-build/ninja#2177). Hang a chain of
+# <edges> stamps (default 30, longer than any C++ compile's path) off <target>'s
+# Swift objects to raise them. Everything they depend on is raised too, so use a
+# short chain for targets that wait for the framework links.
+function(WEBKIT_RAISE_SWIFT_NINJA_PRIORITY _target)
+    set(_dispatch_edges 30)
+    if (ARGC GREATER 1)
+        set(_dispatch_edges ${ARGV1})
+    endif ()
+    set(_dispatch_dep "$<FILTER:$<TARGET_OBJECTS:${_target}>,INCLUDE,\\.swift\\.o>")
     foreach (_i RANGE 1 ${_dispatch_edges})
-        set(_stamp "${CMAKE_CURRENT_BINARY_DIR}/${_prewarm}-dispatch-${_i}.stamp")
+        set(_stamp "${CMAKE_CURRENT_BINARY_DIR}/${_target}-dispatch-${_i}.stamp")
         add_custom_command(
             OUTPUT "${_stamp}"
             COMMAND ${CMAKE_COMMAND} -E touch "${_stamp}"
@@ -93,9 +100,5 @@ function(WEBKIT_ADD_SWIFT_PREWARM _consumer _swift_source)
         )
         set(_dispatch_dep "${_stamp}")
     endforeach ()
-    add_custom_target(${_prewarm}_Dispatch DEPENDS "${_dispatch_dep}")
-
-    # Transitively an ordering dependency on ${_prewarm} itself, through the
-    # stamp chain above.
-    add_dependencies(${_consumer} ${_prewarm}_Dispatch)
+    add_custom_target(${_target}_Dispatch ALL DEPENDS "${_dispatch_dep}")
 endfunction()

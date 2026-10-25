@@ -1,0 +1,39 @@
+# A push with as many operands as the limit allows is expanded inline
+# RUN: compile
+# RUN(SELECTED): pipeline Select
+# OPTIONS: limit=MaxInlinePushOperands:2
+# CHECK-NOT: loss MaxInlinePushOperands
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="publish" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return v4
+}
+function f1 name="pushesOne" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    Return v3
+}
+# Only its entrypoint enters each function, so the body is there
+# SELECTED-LABEL: name="pushesOne" module=m0 role=GenericEntrypoint
+# SELECTED: [[array]]: Array<number> = AssumeType v2 castType=Array<number>
+# SELECTED: [[number]]: number = AssumeType v3 castType=number
+# SELECTED: = CallInline [[array]], [[number]] inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+function f2 name="pushesTwo" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1, v1 calleeKey="push"
+    Return v3
+}
+# SELECTED-LABEL: name="pushesTwo" module=m0 role=GenericEntrypoint
+# SELECTED: [[receiver]]: Array<number> = AssumeType v2 castType=Array<number>
+# SELECTED: [[pushed]]: number = AssumeType v3 castType=number
+# SELECTED: TryCallInline [[receiver]], [[pushed]], [[pushed]] inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 {{*}}-> done [[done]](), miss [[miss]]()
+# SELECTED: [[miss]]() frequency=Rare:
+# SELECTED-NEXT: = CallBuiltin [[receiver]], [[pushed]], [[pushed]] overload=ArrayPrototypePush/0

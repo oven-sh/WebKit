@@ -125,6 +125,15 @@ void WeakMapImpl<WeakMapBucket>::reconcileWeakReferencesAtGCEnd(VM& vm, Collecti
 
     if (shouldShrink())
         rehash(RehashMode::RemoveBatching);
+
+    // The visit reported the buffer as it was before the dead keys went, or did not come by because the table is old.
+    if (m_buffer == emptyBuffer())
+        return;
+    uint32_t capacity = hasOutOfLineBuffer() ? m_capacity : 0;
+    if (capacity != m_capacityCountedByHeap) {
+        heap()->didChangeVisitedExtraMemory(static_cast<size_t>(m_capacityCountedByHeap) * sizeof(WeakMapBucket), static_cast<size_t>(capacity) * sizeof(WeakMapBucket));
+        m_capacityCountedByHeap = capacity;
+    }
 }
 
 template<typename WeakMapBucket>
@@ -167,7 +176,9 @@ void WeakMapImpl<WeakMapBucket>::rehash(RehashMode mode)
 
     // rehash() only runs once a real buffer has been allocated, so the shared empty buffer is never freed here.
     ASSERT(oldBuffer != emptyBuffer());
-    WeakMapBufferType::destroy(oldBuffer);
+    ASSERT(oldBuffer != m_buffer);
+    if (oldBuffer != inlineBuffer())
+        WeakMapBufferType::destroy(oldBuffer);
 }
 
 template<typename WeakMapBucket>

@@ -82,6 +82,8 @@ enum Opcode : uint8_t {
     // where it happens to be right now.
     FramePointer,
 
+    Relocatable,
+
     // Polymorphic math, usable with any value type.
     Add,
     Sub,
@@ -108,6 +110,7 @@ enum Opcode : uint8_t {
     RotR, // Rotate Right.
     RotL, // Rotate Left.
     Clz, // Count leading zeros.
+    PopCount, // Count the bits that are set.
 
     // Floating point math.
     Abs,
@@ -290,8 +293,9 @@ enum Opcode : uint8_t {
     // We do WasmAddress(ZExt32(ptr), ...) so that we can avoid generating extraneous moves in Air.
     WasmAddress,
 
-    // This is used for Wasm bulk memory operation `memory.copy`
-    MemoryCopy,
+    // This is used for Wasm bulk memory operation `memory.copy`. The ranges may overlap and the
+    // result is as if the source were copied to a temporary first, as with memmove.
+    MemoryMove,
 
     // This is used for Wasm bulk memory operation `memory.fill`
     MemoryFill,
@@ -506,7 +510,12 @@ inline bool isCheckMath(Opcode opcode)
     }
 }
 
-std::optional<Opcode> NODELETE invertedCompare(Opcode, Type);
+std::optional<Opcode> LEGACY_NODELETE invertedCompare(Opcode, Type);
+
+std::optional<Opcode> invertedRelation(Opcode);
+Opcode flippedRelation(Opcode);
+inline bool isLessRelation(Opcode relation) { return relation == LessThan || relation == LessEqual || relation == Below || relation == BelowEqual; }
+inline bool isUnsignedRelation(Opcode relation) { return relation == Below || relation == BelowEqual || relation == Above || relation == AboveEqual; }
 
 inline Opcode constPtrOpcode()
 {
@@ -658,7 +667,7 @@ inline Opcode signExtendOpcode(Width width)
     }
 }
 
-JS_EXPORT_PRIVATE Opcode NODELETE storeOpcode(Bank bank, Width width);
+JS_EXPORT_PRIVATE Opcode LEGACY_NODELETE storeOpcode(Bank bank, Width width);
 
 } } // namespace JSC::B3
 #endif // ENABLE(B3_JIT)

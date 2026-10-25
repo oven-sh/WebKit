@@ -28,14 +28,9 @@
 
 #import <Foundation/NSObject.h>
 
-@class WebNotificationPrivate;
 @class WebSecurityOrigin;
 
 @interface WebNotification : NSObject
-{
-@private
-    WebNotificationPrivate *_private;
-}
 
 - (NSString *)title;
 - (NSString *)body;

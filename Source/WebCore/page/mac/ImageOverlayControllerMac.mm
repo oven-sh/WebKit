@@ -83,7 +83,7 @@ void ImageOverlayController::updateDataDetectorHighlights(const HTMLElement& ove
     if (dataDetectorResultElementsWithHighlights == dataDetectorResultElements)
         return;
 
-    RefPtr mainFrameView = m_page->mainFrame().virtualView();
+    RefPtr mainFrameView = protect(m_page->mainFrame())->virtualView();
     if (!mainFrameView)
         return;
 
@@ -93,7 +93,7 @@ void ImageOverlayController::updateDataDetectorHighlights(const HTMLElement& ove
 
     m_activeDataDetectorHighlight = nullptr;
     m_dataDetectorContainersAndHighlights = WTF::map(dataDetectorResultElements, [&](auto& element) {
-        CGRect elementBounds = element->renderer()->absoluteBoundingBoxRect();
+        CGRect elementBounds = protect(element->renderer())->absoluteBoundingBoxRect();
         elementBounds.origin = mainFrameView->windowToContents(frameView->contentsToWindow(roundedIntPoint(elementBounds.origin)));
 
         // FIXME: We should teach DataDetectorHighlight to render quads instead of always falling back to axis-aligned bounding rects.
@@ -104,7 +104,7 @@ void ImageOverlayController::updateDataDetectorHighlights(const HTMLElement& ove
 
 bool ImageOverlayController::platformHandleMouseEvent(const PlatformMouseEvent& event)
 {
-    RefPtr mainFrameView = m_page->mainFrame().virtualView();
+    RefPtr mainFrameView = protect(m_page->mainFrame())->virtualView();
     if (!mainFrameView)
         return false;
 
@@ -118,7 +118,7 @@ bool ImageOverlayController::platformHandleMouseEvent(const PlatformMouseEvent& 
             continue;
 
         Boolean isOverButton = NO;
-        if (!PAL::softLink_DataDetectors_DDHighlightPointIsOnHighlight(highlight->highlight(), mousePositionInContents, &isOverButton))
+        if (!PAL::softLink_DataDetectors_DDHighlightPointIsOnHighlight(protect(highlight->highlight()), mousePositionInContents, &isOverButton))
             continue;
 
         mouseIsOverActiveDataDetectorHighlightButton = isOverButton;
@@ -131,19 +131,19 @@ bool ImageOverlayController::platformHandleMouseEvent(const PlatformMouseEvent& 
         if (previousActiveHighlight)
             previousActiveHighlight->fadeOut();
 
-        if (m_activeDataDetectorHighlight) {
-            m_overlay->layer().addChild(m_activeDataDetectorHighlight->layer());
-            m_activeDataDetectorHighlight->fadeIn();
+        if (RefPtr activeDataDetectorHighlight = m_activeDataDetectorHighlight) {
+            protect(protect(m_overlay)->layer())->addChild(activeDataDetectorHighlight->layer());
+            activeDataDetectorHighlight->fadeIn();
         }
     }
 
     if (event.type() == PlatformEvent::Type::MousePressed && mouseIsOverActiveDataDetectorHighlightButton)
-        return handleDataDetectorAction(*activeDataDetectorElement, flooredIntPoint(mousePositionInContents));
+        return handleDataDetectorAction(*activeDataDetectorElement, flooredIntPoint(event.position()));
 
     return false;
 }
 
-bool ImageOverlayController::handleDataDetectorAction(const HTMLElement& element, const IntPoint& locationInContents)
+bool ImageOverlayController::handleDataDetectorAction(const HTMLElement& element, const IntPoint& locationInWindow)
 {
     RefPtr frame = element.document().frame();
     if (!frame)
@@ -171,7 +171,7 @@ bool ImageOverlayController::handleDataDetectorAction(const HTMLElement& element
     if (!renderer)
         return false;
 
-    m_page->chrome().client().handleClickForDataDetectionResult({ WTF::move(dataDetectionResult), frameView->contentsToWindow(renderer->absoluteBoundingBoxRect()) }, frameView->contentsToWindow(locationInContents));
+    m_page->chrome().client().handleClickForDataDetectionResult({ WTF::move(dataDetectionResult), frameView->contentsToMainFrameView(renderer->absoluteBoundingBoxRect()) }, frameView->contentsToMainFrameView(frameView->windowToContents(locationInWindow)));
     return true;
 }
 
@@ -191,7 +191,7 @@ void ImageOverlayController::textRecognitionResultsChanged(HTMLElement& element)
     uninstallPageOverlayIfNeeded();
 }
 
-bool NODELETE ImageOverlayController::hasActiveDataDetectorHighlightForTesting() const
+bool LEGACY_NODELETE ImageOverlayController::hasActiveDataDetectorHighlightForTesting() const
 {
     return !!m_activeDataDetectorHighlight;
 }

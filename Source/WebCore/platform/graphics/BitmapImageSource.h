@@ -42,7 +42,7 @@ class BitmapImageSource final : public ImageSource, public CanMakeCheckedPtr<Bit
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BitmapImageSource);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(BitmapImageSource);
 public:
-    static Ref<BitmapImageSource> create(BitmapImage&, AlphaOption, GammaAndColorProfileOption);
+    static Ref<BitmapImageSource> LEGACY_NODELETE create(BitmapImage&, AlphaOption, GammaAndColorProfileOption);
 
     virtual ~BitmapImageSource();
 
@@ -79,7 +79,7 @@ public:
     RefPtr<NativeImage> primaryNativeImageIfExists() { return frameAtIndex(primaryFrameIndex()).nativeImage(std::nullopt); }
     RefPtr<NativeImage> primaryNativeImage() final { return nativeImageAtIndex(primaryFrameIndex()); }
 
-    void drawNativeImage(GraphicsContext&, NativeImage&, const FloatRect& destinationRect, const FloatRect& sourceRect, ImagePaintingOptions) final;
+    void drawNativeImage(GraphicsContext&, NativeImage&, const FloatRect& destinationRect, const FloatRect& sourceRect, ImageDrawingOptions) final;
 
     // Image Metadata
     unsigned frameCount() const final { return m_descriptor.frameCount(); }
@@ -124,10 +124,10 @@ private:
     bool hasEverAnimated() const final;
 
     // Decoding
-    DecodingDestination preferredDecodingDestination(GraphicsContext&, ImagePaintingOptions) const final;
-    std::optional<DecodingDestination> compatibleDecodingDestinationWithOptionsAtIndex(unsigned index, SubsamplingLevel, const DecodingOptions&) const;
+    DecodingDestination preferredDecodingDestination(GraphicsContext&, ImageDrawingOptions) const final;
+    std::optional<DecodingDestination> LEGACY_NODELETE compatibleDecodingDestinationWithOptionsAtIndex(unsigned index, SubsamplingLevel, const DecodingOptions&) const;
     bool isLargeForDecoding() const final;
-    bool NODELETE isDecodingWorkQueueIdle() const;
+    bool LEGACY_NODELETE isDecodingWorkQueueIdle() const;
     void stopDecodingWorkQueue() final;
     void decode(Function<void(DecodingStatus)>&& decodeCallback) final;
     void callDecodeCallbacks(DecodingStatus);
@@ -139,7 +139,7 @@ private:
     void cacheMetadataAtIndex(unsigned index, SubsamplingLevel, const DecodingOptions&);
     void cacheNativeImageAtIndex(unsigned index, SubsamplingLevel, const DecodingOptions&, Ref<NativeImage>&&);
 
-    const ImageFrame& frameAtIndex(unsigned index) const;
+    const ImageFrame& LEGACY_NODELETE frameAtIndex(unsigned index) const;
     const ImageFrame& frameAtIndexCacheIfNeeded(unsigned index, const std::optional<SubsamplingLevel>& = std::nullopt);
     const ImageFrame& currentImageFrame(const std::optional<SubsamplingLevel>& subsamplingLevel = std::nullopt) final { return frameAtIndexCacheIfNeeded(currentFrameIndex(), subsamplingLevel); }
 
@@ -154,6 +154,8 @@ private:
 
     RefPtr<NativeImage> nativeImageAtIndex(unsigned index) final;
     RefPtr<NativeImage> preTransformedNativeImageAtIndex(unsigned index, ImageOrientation);
+
+    RefPtr<NativeImage> primaryNativeImageForUnpremultipliedPixels() final;
 
     RefPtr<NativeImage> currentNativeImage() final { return nativeImageAtIndex(currentFrameIndex()); }
     RefPtr<NativeImage> currentPreTransformedNativeImage(ImageOrientation orientation) final { return preTransformedNativeImageAtIndex(currentFrameIndex(), orientation); }

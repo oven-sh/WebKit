@@ -110,7 +110,8 @@ SOFT_LINK(UIKitMacHelper, UINSSharedRevealController, id<UINSRevealController>, 
 {
     UNUSED_PARAM(item);
     
-    for (NSValue *rectVal in context.itemRectsInView) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSValue *rectVal in context.itemRectsInView) {
         NSRect rect = rectVal.rectValue;
 
         // Get current font attributes from the attributed string above, and add paragraph style attribute in order to center text.
@@ -311,11 +312,14 @@ std::optional<SimpleRange> DictionaryLookup::rangeAtHitTestResult(const HitTestR
     if (position.isNull())
         position = firstPositionInOrBeforeNode(node.get());
 
-    RefPtr focusedOrMainFrame = frame->page()->focusController().focusedOrMainFrame();
-    if (!focusedOrMainFrame)
-        return std::nullopt;
 
-    auto selection = focusedOrMainFrame->selection().selection();
+    // The frame with focus might be in another process.
+    // If so, fall back to the frame that was hit tested.
+    RefPtr selectionFrame = frame->page()->focusController().focusedOrMainFrame();
+    if (!selectionFrame)
+        selectionFrame = frame;
+
+    auto selection = selectionFrame->selection().selection();
     NSRange selectionRange;
     NSUInteger hitIndex;
     std::optional<SimpleRange> fullCharacterRange;

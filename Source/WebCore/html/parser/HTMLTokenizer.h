@@ -59,7 +59,7 @@ public:
     //
     // This approximation is also the algorithm called for when parsing an HTML fragment.
     // https://html.spec.whatwg.org/multipage/syntax.html#parsing-html-fragments
-    void NODELETE updateStateFor(const AtomString& tagName);
+    void LEGACY_NODELETE updateStateFor(const AtomString& tagName);
 
     void setForceNullCharacterReplacement(bool);
 
@@ -119,6 +119,11 @@ private:
         CharacterReferenceInAttributeValueState,
         AfterAttributeValueQuotedState,
         SelfClosingStartTagState,
+        ProcessingInstructionOpenState,
+        ProcessingInstructionTargetState,
+        AfterProcessingInstructionTargetState,
+        ProcessingInstructionDataState,
+        ProcessingInstructionQuestionMarkState,
         BogusCommentState,
         ContinueBogusCommentState, // Not in the HTML spec, used internally to track whether we started the bogus comment token.
         MarkupDeclarationOpenState,
@@ -153,7 +158,7 @@ private:
     bool processToken(SegmentedString&);
     bool processEntity(SegmentedString&);
 
-    void NODELETE parseError();
+    void LEGACY_NODELETE parseError();
 
     void bufferASCIICharacter(char16_t);
     void bufferCharacter(char16_t);
@@ -161,8 +166,11 @@ private:
     void bufferCharacters(ASCIILiteral literal) { bufferCharacters(literal.span8()); }
 
     bool emitAndResumeInDataState(SegmentedString&);
+    bool emitProcessingInstruction(SegmentedString&);
+    void rewindToBogusCommentForProcessingInstructionTarget();
     bool emitAndReconsumeInDataState();
     bool emitEndOfFile(SegmentedString&);
+    bool emitReplacedNullCharacter(SegmentedString&, State);
 
     // Return true if we wil emit a character token before dealing with the buffered end tag.
     void flushBufferedEndTag();
@@ -170,18 +178,18 @@ private:
     bool commitToCompleteEndTag(SegmentedString&);
 
     void appendToTemporaryBuffer(char16_t);
-    bool NODELETE temporaryBufferIs(ASCIILiteral);
+    bool LEGACY_NODELETE temporaryBufferIs(ASCIILiteral);
 
     // Sometimes we speculatively consume input characters and we don't know whether they represent
     // end tags or RCDATA, etc. These functions help manage these state.
-    bool NODELETE inEndTagBufferingState() const;
+    bool LEGACY_NODELETE inEndTagBufferingState() const;
     void appendToPossibleEndTag(char16_t);
     void saveEndTagNameIfNeeded();
-    bool NODELETE isAppropriateEndTag() const;
+    bool LEGACY_NODELETE isAppropriateEndTag() const;
 
-    bool NODELETE haveBufferedCharacterToken() const;
+    bool LEGACY_NODELETE haveBufferedCharacterToken() const;
 
-    bool NODELETE shouldSkipNullCharacters(State) const;
+    bool LEGACY_NODELETE shouldSkipNullCharacters(State) const;
 
     State m_state { DataState };
     bool m_forceNullCharacterReplacement { false };

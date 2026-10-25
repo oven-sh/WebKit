@@ -51,6 +51,8 @@
 #include <WebCore/TimingAllowOrigin.h>
 #include <pal/text/TextEncoding.h>
 #include <wtf/MainThread.h>
+#include <wtf/glib/GLibExtras.h>
+#include <wtf/glib/GMallocString.h>
 #include <wtf/glib/RunLoopSourcePriority.h>
 #include <wtf/text/MakeString.h>
 
@@ -60,7 +62,7 @@ using namespace WebCore;
 static const size_t gDefaultReadBufferSize = 8192;
 
 NetworkDataTaskSoup::NetworkDataTaskSoup(NetworkSession& session, NetworkDataTaskClient& client, const NetworkLoadParameters& parameters)
-    : NetworkDataTask(session, client, parameters.request, parameters.storedCredentialsPolicy, parameters.shouldClearReferrerOnHTTPSToHTTPRedirect, parameters.isMainFrameNavigation, parameters.isInitiatedByDedicatedWorker)
+    : NetworkDataTask(session, client, parameters.request, parameters.storedCredentialsPolicy, parameters.shouldClearReferrerOnHTTPSToHTTPRedirect, parameters.isMainFrameNavigation, parameters.isInitiatedByWorker)
     , m_frameID(parameters.webFrameID)
     , m_webPageProxyID(parameters.webPageProxyID)
     , m_shouldContentSniff(parameters.contentSniffingPolicy)
@@ -154,7 +156,7 @@ void NetworkDataTaskSoup::createRequest(ResourceRequest&& request, WasBlockingCo
 {
     m_currentRequest = WTF::move(request);
     if (m_currentRequest.url().protocolIsFile()) {
-        m_file = adoptGRef(g_file_new_for_path(m_currentRequest.url().fileSystemPath().utf8().legacyCStringPointer()));
+        m_file = gFileNewForPath(m_currentRequest.url().fileSystemPath().utf8());
         return;
     }
 
@@ -184,7 +186,7 @@ void NetworkDataTaskSoup::createRequest(ResourceRequest&& request, WasBlockingCo
     // the dictionary itself only if the server answers with dcb or dcz.
     if (m_compressionDictionary && m_compressionDictionary->match) {
         auto& match = *m_compressionDictionary->match;
-        GRefPtr<GBytes> hash = adoptGRef(g_bytes_new(match.hash.data(), match.hash.size()));
+        GRefPtr hash = gBytesNew(std::span { match.hash });
         soup_message_set_compression_dictionary_hash(m_soupMessage.get(), hash.get());
         auto dictionaryID = match.id.utf8();
         soup_message_set_compression_dictionary_id(m_soupMessage.get(), match.id.isEmpty() ? nullptr : dictionaryID.legacyCStringPointer());
@@ -423,12 +425,7 @@ enum class ShouldStartHTTPRedirection {
 
 static ShouldStartHTTPRedirection shouldStartHTTPRedirection(const WebCore::ResourceResponse& response)
 {
-    auto status = response.httpStatusCode();
-    if (!SOUP_STATUS_IS_REDIRECTION(status))
-        return ShouldStartHTTPRedirection::No;
-
-    // Some 3xx status codes aren't actually redirects.
-    if (status == 300 || status == 304 || status == 305 || status == 306)
+    if (!response.isRedirection())
         return ShouldStartHTTPRedirection::No;
 
     auto location = response.httpHeaderField(HTTPHeaderName::Location);
@@ -557,7 +554,7 @@ void NetworkDataTaskSoup::didSniffContentCallback(SoupMessage* soupMessage, cons
 
     ASSERT(task->m_soupMessage.get() == soupMessage);
     if (!parameters) {
-        task->didSniffContent(UTF8CString { byteCast<char8_t>(contentType) });
+        task->didSniffContent(UTF8CString::unsafeFromUTF8(contentType));
         return;
     }
 
@@ -571,7 +568,7 @@ void NetworkDataTaskSoup::didSniffContentCallback(SoupMessage* soupMessage, cons
         soup_header_g_string_append_param(sniffedType, static_cast<const char*>(key), static_cast<const char*>(value));
         WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     }
-    task->didSniffContent(UTF8CString { byteCast<char8_t>(sniffedType->str) });
+    task->didSniffContent(UTF8CString::unsafeFromUTF8(sniffedType->str));
     g_string_free(sniffedType, TRUE);
 }
 
@@ -906,34 +903,21 @@ void NetworkDataTaskSoup::continueHTTPRedirection()
         // be recomputed for the new URL. https://fetch.spec.whatwg.org/#http-network-compression-dictionary-fetch
         if (m_compressionDictionary) {
             m_compressionDictionary->match = std::nullopt;
-            if (m_session && request.url().protocolIsInHTTPFamily() && shouldTreatAsPotentiallyTrustworthy(request.url())
-                && !shouldBlockCookies(request, wasBlockingCookies)) {
+            if (m_session && request.url().protocolIs("https"_s) && !shouldBlockCookies(request, wasBlockingCookies)) {
                 if (RefPtr cache = m_session->cache()) {
-                    cache->retrieveCompressionDictionaryBestMatch(WTF::move(request), m_compressionDictionary->destination, [this, protectedThis = protect(*this), wasBlockingCookies](ResourceRequest&& request, std::optional<NetworkCache::Cache::CompressionDictionaryMatch>&& match) mutable {
-                        // clearRequest() above left the state Completed; only a cancel means we must stop.
-                        if (m_state == State::Canceling)
-                            return;
-                        if (match)
-                            m_compressionDictionary->match = CompressionDictionaryParameters::Match { match->key, match->hash, match->id };
-                        continueCreateRequestForRedirection(WTF::move(request), wasBlockingCookies);
-                    });
-                    return;
+                    if (auto match = cache->bestCompressionDictionaryMatch(request, m_compressionDictionary->destination))
+                        m_compressionDictionary->match = CompressionDictionaryParameters::Match { match->key, match->hash, match->id };
                 }
             }
         }
 #endif
 
-        continueCreateRequestForRedirection(WTF::move(request), wasBlockingCookies);
+        createRequest(WTF::move(request), wasBlockingCookies);
+        if (m_soupMessage && m_state != State::Suspended) {
+            m_state = State::Suspended;
+            resume();
+        }
     });
-}
-
-void NetworkDataTaskSoup::continueCreateRequestForRedirection(ResourceRequest&& request, WasBlockingCookies wasBlockingCookies)
-{
-    createRequest(WTF::move(request), wasBlockingCookies);
-    if (m_soupMessage && m_state != State::Suspended) {
-        m_state = State::Suspended;
-        resume();
-    }
 }
 
 void NetworkDataTaskSoup::readCallback(GInputStream* inputStream, GAsyncResult* result, NetworkDataTaskSoup* task)
@@ -1184,8 +1168,8 @@ void NetworkDataTaskSoup::didGetHeaders()
         additionalMetrics.connectionIdentifier = String::number(soup_message_get_connection_id(m_soupMessage.get()));
         auto* address = soup_message_get_remote_address(m_soupMessage.get());
         if (G_IS_INET_SOCKET_ADDRESS(address)) {
-            GUniquePtr<char> ipAddress(g_inet_address_to_string(g_inet_socket_address_get_address(G_INET_SOCKET_ADDRESS(address))));
-            additionalMetrics.remoteAddress = makeString(unsafeSpan(ipAddress.get()), ':', g_inet_socket_address_get_port(G_INET_SOCKET_ADDRESS(address)));
+            auto ipAddress = GMallocString::unsafeAdoptFromUTF8(g_inet_address_to_string(g_inet_socket_address_get_address(G_INET_SOCKET_ADDRESS(address))));
+            additionalMetrics.remoteAddress = makeString(ipAddress.span(), ':', g_inet_socket_address_get_port(G_INET_SOCKET_ADDRESS(address)));
         }
         additionalMetrics.tlsProtocol = tlsProtocolVersionToString(soup_message_get_tls_protocol_version(m_soupMessage.get()));
         additionalMetrics.tlsCipher = String::fromUTF8(soup_message_get_tls_ciphersuite_name(m_soupMessage.get()));
@@ -1280,7 +1264,7 @@ void NetworkDataTaskSoup::download()
     }
 
     auto downloadDestinationPath = m_pendingDownloadLocation.utf8();
-    m_downloadDestinationFile = adoptGRef(g_file_new_for_path(downloadDestinationPath.legacyCStringPointer()));
+    m_downloadDestinationFile = gFileNewForPath(downloadDestinationPath);
     GRefPtr<GFileOutputStream> outputStream;
     GUniqueOutPtr<GError> error;
     if (m_allowOverwriteDownload)
@@ -1292,8 +1276,8 @@ void NetworkDataTaskSoup::download()
         return;
     }
 
-    GUniquePtr<char> intermediatePath(g_strdup_printf("%s.wkdownload", downloadDestinationPath.legacyCStringPointer()));
-    m_downloadIntermediateFile = adoptGRef(g_file_new_for_path(intermediatePath.get()));
+    auto intermediatePath = makeString(m_pendingDownloadLocation, ".wkdownload"_s).utf8();
+    m_downloadIntermediateFile = gFileNewForPath(intermediatePath);
     outputStream = adoptGRef(g_file_replace(m_downloadIntermediateFile.get(), nullptr, TRUE, G_FILE_CREATE_NONE, nullptr, &error.outPtr()));
     if (!outputStream) {
         didFailDownload(downloadDestinationError(m_response, String::fromUTF8(error->message)));

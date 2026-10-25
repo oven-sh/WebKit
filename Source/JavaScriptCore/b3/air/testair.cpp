@@ -26,10 +26,16 @@
 #include "config.h"
 
 #include "AirCode.h"
+#include "AirFixSpillsAfterTerminals.h"
+#include "AirFoldTrapsIntoAccesses.h"
 #include "AirGenerate.h"
+#include "AirInstInlines.h"
 #include "AirSpecial.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "B3BasicBlockInlines.h"
+#include "B3Const64Value.h"
+#include "B3ConstDoubleValue.h"
+#include "B3MemoryValue.h"
 #include "B3PatchpointSpecial.h"
 #include "B3PatchpointValue.h"
 #include "B3Procedure.h"
@@ -38,24 +44,66 @@
 #include "InitializeThreading.h"
 #include "JITCompilation.h"
 #include "LinkBuffer.h"
+#include "MachineContext.h"
 #include "Options.h"
 #include "ProbeContext.h"
 #include "PureNaN.h"
+#include "AirAllocateRegistersByGreedy.h"
+#include "AirAllocateStackByGraphColoring.h"
+#include "AirArgInlines.h"
+#include "AirBitMatrixLiveness.h"
+#include "AirBlockEntryClobberSpecial.h"
+#include "AirCustom.h"
+#include "AirDuplicateReturns.h"
+#include "AirEmitShuffle.h"
+#include "AirFormTraits.h"
+#include "AirForwardRegisterCopies.h"
+#include "AirFrameEmission.h"
+#include "AirFrameStates.h"
+#include "AirGenerationContext.h"
+#include "AirHoistCommonMoves.h"
+#include "AirInstObserver.h"
+#include "AirLimits.h"
+#include "AirLiveness.h"
+#include "AirMergeIdenticalBlocks.h"
+#include "AirOpcodeUtils.h"
+#include "AirOptimizeBlockOrder.h"
+#include "AirPadInterference.h"
+#include "AirPlanFrame.h"
+#include "AirRegLiveness.h"
+#include "AirReportUsedRegisters.h"
+#include "AirResequenceMovesBeforePatches.h"
+#include "AirReuseConditionFlags.h"
+#include "AirShrinkWrapFrame.h"
+#include "AirSplitLiveRangesAroundFrame.h"
+#include "AirStackAllocation.h"
+#include "AirStackColoring.h"
+#include "AirTmpInlines.h"
+#include "AirValidate.h"
+#include "B3CompilationReport.h"
+#include "B3Limits.h"
+#include "B3Policy.h"
+#include <csetjmp>
+#include <csignal>
 #include <regex>
 #include <string>
 #include <wtf/DataLog.h>
+#include <wtf/HashSet.h>
+#include <wtf/InterferenceGraph.h>
 #include <wtf/Lock.h>
 #include <wtf/NumberOfCores.h>
 #include <wtf/SetForScope.h>
 #include <wtf/StdMap.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/Threading.h>
 #include <wtf/WTFProcess.h>
+#include <wtf/WeakRandom.h>
 #include <wtf/text/StringCommon.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 // We don't have a NO_RETURN_DUE_TO_EXIT, nor should we. That's ridiculous.
-static bool NODELETE hiddenTruthBecauseNoReturnIsStupid() { return true; }
+static bool LEGACY_NODELETE hiddenTruthBecauseNoReturnIsStupid() { return true; }
 
 static void usage()
 {
@@ -1397,7 +1445,7 @@ void testShuffleShiftMemoryAllRegs64()
     CHECK(memory[1] == 35000000000000ll);
 }
 
-int64_t NODELETE combineHiLo(int64_t high, int64_t low)
+int64_t LEGACY_NODELETE combineHiLo(int64_t high, int64_t low)
 {
     union {
         int64_t value;
@@ -2200,13 +2248,13 @@ void testLea32()
     CHECK(r == a + b);
 }
 
-inline Vector<String> matchAll(const CString& source, std::regex regex)
+inline Vector<String> matchAll(const UTF8CString& source, std::regex regex)
 {
     Vector<String> matches;
     std::smatch match;
-    for (std::string str = source.data(); std::regex_search(str, match, regex); str = match.suffix()) {
+    for (std::string str = source.toStdString(); std::regex_search(str, match, regex); str = match.suffix()) {
         ASSERT(match.size() == 1);
-        matches.append(String::fromLatin1(match[0].str().c_str()));
+        matches.append(String::fromUTF8(match[0].str().c_str()));
     }
     return matches;
 }
@@ -2230,6 +2278,9 @@ void testElideSimpleMove()
         root->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
 
         auto compilation = compile(proc);
+#if !ENABLE(DISASSEMBLER)
+        continue;
+#endif
         auto disassembly = compilation->disassembly();
         std::regex findRRMove(isARM64() ? "mov\\s+x\\d+, x\\d+\\n" : "mov %\\w+, %\\w+\\n");
         auto result = matchAll(disassembly, findRRMove);
@@ -2679,6 +2730,8 @@ void testEarlyAndLateUseOfSameTmp()
         CHECK(actualResult == expectedResult);
     }
 }
+
+#include "testair_bun.h"
 
 void testEarlyClobberInterference()
 {
@@ -3300,6 +3353,32 @@ void testSplitAroundLoopCriticalEdge()
     CHECK(invoke<int64_t>(*compilation, static_cast<int64_t>(0)) == (criticalEntry ? 10 : 2152));
 }
 
+void testFixSpillsAfterTerminalWithSameSuccessorTwice()
+{
+    B3::Procedure proc;
+    Code& code = proc.code();
+
+    BasicBlock* root = code.addBlock();
+    BasicBlock* done = code.addBlock();
+
+    Tmp result = Tmp(GPRInfo::returnValueGPR);
+    root->append(Move, nullptr, Tmp(GPRInfo::argumentGPR0), result);
+    root->append(BranchTest64, nullptr, Arg::resCond(MacroAssembler::NonZero), result, result);
+    root->append(Add64, nullptr, Arg::imm(1), result);
+    root->setSuccessors(done, done);
+    done->append(Ret64, nullptr, result);
+
+    code.resetReachability();
+    fixSpillsAfterTerminals(code);
+    CHECK(root->size() == 2);
+    CHECK(done->size() == 1);
+    for (BasicBlock* successor : root->successorBlocks()) {
+        CHECK(successor->size() == 2);
+        CHECK(successor->successorBlock(0) == done);
+    }
+    CHECK(compileAndRun<int64_t>(proc, static_cast<int64_t>(41)) == 42);
+}
+
 #define PREFIX "O", Options::defaultB3OptLevel(), ": "
 
 #define RUN(test) do {                                 \
@@ -3442,6 +3521,7 @@ void run(const char* filter)
 
     RUN(testEarlyAndLateUseOfSameTmp());
     RUN(testEarlyClobberInterference());
+    RUN_BUN_TESTS();
 
 #if CPU(ARM64)
     RUN(testStorePair());
@@ -3484,6 +3564,7 @@ void run(const char* filter)
         RUN(testSplitAroundLoopNoInLoopUses());
         RUN((testSplitAroundLoopCriticalEdge<true>()));
         RUN((testSplitAroundLoopCriticalEdge<false>()));
+        RUN(testFixSpillsAfterTerminalWithSameSuccessorTwice());
 
         if (!tasks.isEmpty()) {
             anyTestsScheduled = true;
@@ -3525,6 +3606,8 @@ int main(int argc, char** argv)
     
     JSC::initialize([] {
         JSC::Options::useJITCage() = false;
+        JSC::Options::airValidateGreedRegAlloc() = true;
+        JSC::Options::validateGraphAtEachPhase() = true;
     });
 
     for (unsigned i = 0; i <= 2; ++i) {

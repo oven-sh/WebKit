@@ -53,23 +53,26 @@ TextCheckerEnchant::TextCheckerEnchant()
 void TextCheckerEnchant::ignoreWord(const String& word)
 {
     auto utf8Word = word.utf8();
+    auto characters = byteCast<char>(utf8Word.span());
     for (auto& dictionary : m_enchantDictionaries)
-        enchant_dict_add_to_session(dictionary.get(), utf8Word.legacyCStringPointer(), utf8Word.length());
+        enchant_dict_add_to_session(dictionary.get(), characters.data(), characters.size());
 }
 
 void TextCheckerEnchant::learnWord(const String& word)
 {
     auto utf8Word = word.utf8();
+    auto characters = byteCast<char>(utf8Word.span());
     for (auto& dictionary : m_enchantDictionaries)
-        enchant_dict_add(dictionary.get(), utf8Word.legacyCStringPointer(), utf8Word.length());
+        enchant_dict_add(dictionary.get(), characters.data(), characters.size());
 }
 
 void TextCheckerEnchant::checkSpellingOfWord(const String& word, int start, int end, int& misspellingLocation, int& misspellingLength)
 {
     auto string = word.substring(start, end - start).utf8();
+    auto characters = byteCast<char>(string.span());
 
     for (auto& dictionary : m_enchantDictionaries) {
-        if (!enchant_dict_check(dictionary.get(), string.legacyCStringPointer(), string.length())) {
+        if (!enchant_dict_check(dictionary.get(), characters.data(), characters.size())) {
             // Stop checking, this word is ok in at least one dict.
             misspellingLocation = -1;
             misspellingLength = 0;
@@ -115,10 +118,11 @@ Vector<String> TextCheckerEnchant::getGuessesForWord(const String& word)
 
     Vector<String> guesses;
     auto utf8Word = word.utf8();
+    auto characters = byteCast<char>(utf8Word.span());
     for (auto& dictionary : m_enchantDictionaries) {
         size_t numberOfSuggestions;
 
-        char** suggestions = enchant_dict_suggest(dictionary.get(), utf8Word.legacyCStringPointer(), utf8Word.length(), &numberOfSuggestions);
+        char** suggestions = enchant_dict_suggest(dictionary.get(), characters.data(), characters.size(), &numberOfSuggestions);
         if (numberOfSuggestions <= 0)
             continue;
 
@@ -153,14 +157,16 @@ void TextCheckerEnchant::updateSpellCheckingLanguages(const Vector<String>& lang
                 spellDictionaries.append(dict);
         } else {
             // No dictionaries selected, we get the first one from the list.
-            CString dictLanguage;
+            // Per the enchant documentation (http://rrthomas.github.io/enchant/): All inputs and outputs are in UTF-8 encoding. Language tags use
+            // the familiar ISO standards, and take the form of "xx_YY" (language_LOCALE), where the locale ("_YY") portion is optional, but encouraged.
+            UTF8CString dictLanguage;
             enchant_broker_list_dicts(m_broker, [](const char* const languageTag, const char* const, const char* const, const char* const, void* data) {
-                auto* dictLanguage = static_cast<CString*>(data);
+                auto* dictLanguage = static_cast<UTF8CString*>(data);
                 if (dictLanguage->isNull())
-                    *dictLanguage = languageTag;
+                    *dictLanguage = UTF8CString::unsafeFromUTF8(languageTag);
             }, &dictLanguage);
             if (!dictLanguage.isNull()) {
-                if (auto* dict = enchant_broker_request_dict(m_broker, dictLanguage.data()))
+                if (auto* dict = enchant_broker_request_dict(m_broker, dictLanguage.legacyCStringPointer()))
                     spellDictionaries.append(dict);
             }
         }

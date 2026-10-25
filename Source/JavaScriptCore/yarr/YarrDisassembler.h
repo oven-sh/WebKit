@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include "MacroAssembler.h"
 #include <wtf/TZoneMalloc.h>
@@ -114,4 +114,4 @@ private:
 
 }} // namespace Yarr namespace JSC
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)

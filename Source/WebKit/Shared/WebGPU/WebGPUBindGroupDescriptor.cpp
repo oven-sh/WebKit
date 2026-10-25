@@ -30,17 +30,13 @@
 
 #include "WebGPUConvertFromBackingContext.h"
 #include "WebGPUConvertToBackingContext.h"
-#include <WebCore/WebGPUBindGroupDescriptor.h>
-#include <WebCore/WebGPUBindGroupLayout.h>
+#include <WebCore/WebGPUCppAPI.h>
+#include <wtf/Borrow.h>
 
 namespace WebKit::WebGPU {
 
-std::optional<BindGroupDescriptor> ConvertToBackingContext::convertToBacking(const WebCore::WebGPU::BindGroupDescriptor& bindGroupDescriptor)
+std::optional<BindGroupDescriptor> ConvertToBackingContext::convertToBacking(const ::WebGPU::BindGroupDescriptor& bindGroupDescriptor)
 {
-    auto base = convertToBacking(static_cast<const WebCore::WebGPU::ObjectDescriptorBase&>(bindGroupDescriptor));
-    if (!base)
-        return std::nullopt;
-
     auto identifier = convertToBacking(protect(bindGroupDescriptor.layout).get());
 
     Vector<BindGroupEntry> entries;
@@ -52,29 +48,25 @@ std::optional<BindGroupDescriptor> ConvertToBackingContext::convertToBacking(con
         entries.append(WTF::move(*convertedEntry));
     }
 
-    return { { WTF::move(*base), identifier, WTF::move(entries) } };
+    return { { { bindGroupDescriptor.label }, identifier, WTF::move(entries) } };
 }
 
-std::optional<WebCore::WebGPU::BindGroupDescriptor> ConvertFromBackingContext::convertFromBacking(const BindGroupDescriptor& bindGroupDescriptor)
+// The descriptor borrows the entries from entries.
+std::optional<::WebGPU::BindGroupDescriptor> ConvertFromBackingContext::convertFromBacking(const BindGroupDescriptor& bindGroupDescriptor, Vector<::WebGPU::BindGroupEntry>& entries)
 {
-    auto base = convertFromBacking(static_cast<const ObjectDescriptorBase&>(bindGroupDescriptor));
-    if (!base)
-        return std::nullopt;
-
-    WeakPtr bindGroupLayout = convertBindGroupLayoutFromBacking(bindGroupDescriptor.bindGroupLayout);
+    RefPtr bindGroupLayout = convertBindGroupLayoutFromBacking(bindGroupDescriptor.bindGroupLayout);
     if (!bindGroupLayout)
         return std::nullopt;
 
-    Vector<WebCore::WebGPU::BindGroupEntry> entries;
     entries.reserveInitialCapacity(bindGroupDescriptor.entries.size());
-    for (const auto& backingEntry : bindGroupDescriptor.entries) {
+    for (const auto& backingEntry : borrow(bindGroupDescriptor.entries)) {
         auto entry = convertFromBacking(backingEntry);
         if (!entry)
             return std::nullopt;
         entries.append(WTF::move(*entry));
     }
 
-    return { { WTF::move(*base), *bindGroupLayout, WTF::move(entries) } };
+    return ::WebGPU::BindGroupDescriptor { .label = bindGroupDescriptor.label, .layout = bindGroupLayout.releaseNonNull(), .entries = entries.span() };
 }
 
 } // namespace WebKit

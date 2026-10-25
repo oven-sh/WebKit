@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010, 2014 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -72,7 +72,7 @@ static String convertAttributeNameToPropertyName(const String& name)
     return stringBuilder.toString();
 }
 
-static bool NODELETE isValidPropertyName(const String& name)
+static bool LEGACY_NODELETE isValidPropertyName(const String& name)
 {
     unsigned length = name.length();
     for (unsigned i = 0; i < length; ++i) {
@@ -136,9 +136,11 @@ bool DatasetDOMStringMap::isSupportedPropertyName(const String& propertyName) co
     if (attributes.size() == 1) {
         // Avoid creating AtomString when there is only one attribute.
         auto& attribute = attributes[0];
-        if (convertAttributeNameToPropertyName(attribute.localName()) == propertyName)
+        if (isValidAttributeName(attribute.localName()) && convertAttributeNameToPropertyName(attribute.localName()) == propertyName)
             return true;
     } else {
+        if (!isValidPropertyName(propertyName))
+            return false;
         auto attributeName = convertPropertyNameToAttributeName(propertyName);
         for (auto& attribute : attributes) {
             if (attribute.localName() == attributeName)
@@ -174,9 +176,11 @@ const AtomString* DatasetDOMStringMap::item(const String& propertyName) const
         if (attributes.size() == 1) {
             // Avoid creating AtomString when there is only one attribute.
             auto& attribute = attributes[0];
-            if (convertAttributeNameToPropertyName(attribute.localName()) == propertyName)
+            if (isValidAttributeName(attribute.localName()) && convertAttributeNameToPropertyName(attribute.localName()) == propertyName)
                 return &attribute.value();
         } else {
+            if (!isValidPropertyName(propertyName))
+                return nullptr;
             AtomString attributeName = convertPropertyNameToAttributeName(propertyName);
             for (auto& attribute : attributes) {
                 if (attribute.localName() == attributeName)

@@ -1,0 +1,21 @@
+# With the rule of the earlier id disabled, the next rule that matches claims the value
+# FORM: Prepared
+# OPTIONS: heat=only-loops-are-hot disable=rule:PropertyChain
+# RUN: pass Select
+# STATISTIC: PropertyReadAndTestGroups = 1
+# STATISTIC: PropertyChainGroups = 0
+# STATISTIC: PropertyPairGroups = 1
+
+# CHECK-LABEL: function f0 name="readReadTest"
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: [[x]]: anything = PropGet v0 key="x"
+# CHECK-NEXT: [[test]]: boolean = PropGetAndTest [[x]] key="y"
+# CHECK-NEXT: TestAndBranch [[test]] -> taken b1(), notTaken b2()
+# CHECK-LABEL: function f1 name="readReadThenRead"
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: [[x]]: anything = PropGet v0 key="x"
+# CHECK-NEXT: [[pair]]{{*}}= PropGetPair [[x]], v0 key="y" secondKey="z"
+# CHECK-NEXT: [[z]]: anything = ResultAt [[pair]] index=1
+# CHECK-NEXT: [[y]]: anything = ResultAt [[pair]]
+# CHECK-NEXT: = StrictEq [[y]], [[z]]
+# PROGRAM-OF: rule-order.ir

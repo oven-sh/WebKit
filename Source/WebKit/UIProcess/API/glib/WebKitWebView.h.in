@@ -27,6 +27,7 @@
 #define WebKitWebView_h
 
 #include <@API_INCLUDE_PREFIX@/WebKitAuthenticationRequest.h>
+#include <@API_INCLUDE_PREFIX@/WebKitApplicationManifest.h>
 #include <@API_INCLUDE_PREFIX@/WebKitBackForwardList.h>
 #include <@API_INCLUDE_PREFIX@/WebKitColorChooserRequest.h>
 #include <@API_INCLUDE_PREFIX@/WebKitContextMenu.h>
@@ -339,12 +340,8 @@ struct _WebKitWebViewClass {
 
     gboolean   (* context_menu)                (WebKitWebView               *web_view,
                                                 WebKitContextMenu           *context_menu,
-#if !ENABLE(2022_GLIB_API)
-#if PLATFORM(GTK)
+#if PLATFORM(GTK) && !ENABLE(2022_GLIB_API)
                                                 GdkEvent                    *event,
-#elif PLATFORM(WPE)
-                                                void                        *event,
-#endif
 #endif
                                                 WebKitHitTestResult         *hit_test_result);
 
@@ -391,14 +388,6 @@ struct _WebKitWebViewClass {
 #if PLATFORM(WPE)
     gboolean   (* run_color_chooser)           (WebKitWebView               *web_view,
                                                 WebKitColorChooserRequest   *request);
-#endif
-
-#if PLATFORM(WPE) && !ENABLE(2022_GLIB_API)
-    /*< private >*/
-    void (*_webkit_reserved0) (void);
-    void (*_webkit_reserved1) (void);
-    void (*_webkit_reserved2) (void);
-    void (*_webkit_reserved3) (void);
 #endif
 
 #if ENABLE(2022_GLIB_API)
@@ -463,24 +452,6 @@ webkit_web_view_new_with_user_content_manager        (WebKitUserContentManager  
 #if USE(LIBWPE)
 WEBKIT_API WebKitWebView *
 webkit_web_view_new                                  (WebKitWebViewBackend      *backend);
-
-#if !ENABLE(2022_GLIB_API)
-WEBKIT_API WebKitWebView *
-webkit_web_view_new_with_related_view                (WebKitWebViewBackend      *backend,
-                                                      WebKitWebView             *web_view);
-
-WEBKIT_API WebKitWebView *
-webkit_web_view_new_with_context                     (WebKitWebViewBackend      *backend,
-                                                      WebKitWebContext          *context);
-
-WEBKIT_API WebKitWebView *
-webkit_web_view_new_with_settings                    (WebKitWebViewBackend      *backend,
-                                                      WebKitSettings            *settings);
-
-WEBKIT_API WebKitWebView *
-webkit_web_view_new_with_user_content_manager        (WebKitWebViewBackend      *backend,
-                                                      WebKitUserContentManager  *user_content_manager);
-#endif
 
 WEBKIT_API WebKitWebViewBackend *
 webkit_web_view_get_backend                          (WebKitWebView             *web_view);
@@ -560,6 +531,9 @@ webkit_web_view_is_loading                           (WebKitWebView             
 WEBKIT_API gboolean
 webkit_web_view_is_playing_audio                     (WebKitWebView             *web_view);
 
+WEBKIT_API gboolean
+webkit_web_view_has_protected_media                  (WebKitWebView             *web_view);
+
 WEBKIT_API void
 webkit_web_view_set_is_muted                         (WebKitWebView             *web_view,
                                                       gboolean                   muted);
@@ -616,6 +590,17 @@ webkit_web_view_get_favicon                          (WebKitWebView             
 #if ENABLE(2022_GLIB_API)
 WEBKIT_API WebKitImageList *
 webkit_web_view_get_page_icons                       (WebKitWebView             *web_view);
+
+WEBKIT_API void
+webkit_web_view_get_application_manifest             (WebKitWebView             *web_view,
+                                                      GCancellable              *cancellable,
+                                                      GAsyncReadyCallback        callback,
+                                                      gpointer                   user_data);
+
+WEBKIT_API WebKitApplicationManifest *
+webkit_web_view_get_application_manifest_finish      (WebKitWebView             *web_view,
+                                                      GAsyncResult              *result,
+                                                      GError                   **error);
 #endif
 
 WEBKIT_API const gchar *

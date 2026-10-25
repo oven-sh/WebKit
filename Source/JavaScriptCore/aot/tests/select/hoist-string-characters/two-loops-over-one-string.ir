@@ -1,0 +1,128 @@
+# A string that was flattened stays flat. Two loops in a row read the characters of one string: it is flattened on the entry of the first loop, whose header dominates the second, and the reads of both loops take that flat string. So do the reads and the length behind a loop
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: HoistStringCharactersGroups = 9
+
+module m0 path="main.js" displayPath="main.js"
+
+# CHECK-LABEL: function f0 name="two-loops"
+# CHECK-NOT: LoopHint
+# CHECK: [[flat0]]: flatstring = FlattenString v0
+# CHECK-NOT: FlattenString
+# CHECK: LoopHint
+# CHECK-NOT: FlattenString
+# CHECK: v9: number = StringRangeCodeUnitOrNaN [[flat0]], -, -, v5
+# CHECK-NOT: FlattenString
+# CHECK: LoopHint
+# CHECK-NOT: FlattenString
+# CHECK: v15: number = StringRangeCodeUnitOrNaN [[flat0]], -, -, v11
+# CHECK-NOT: FlattenString
+function f0 name="two-loops" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+    v2 = Undefined
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    Jump -> next b1(v3, v2)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = CallBuiltin v0, v5 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v10 = Add v5, v4
+    Jump -> next b1(v10, v9)
+  b3():
+    Jump -> next b4(v3, v6)
+  b4(v11, v12):
+    LoopHint
+    v14 = Less v11, v1
+    Branch v14 -> taken b5(), notTaken b6()
+  b5():
+    v15 = CallBuiltin v0, v11 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v16 = Add v11, v4
+    Jump -> next b4(v16, v15)
+  b6():
+    Return v12
+}
+
+# The two reads behind the loop would share a flat string of their own
+# CHECK-LABEL: function f1 name="two-reads-behind-the-loop"
+# CHECK-NOT: LoopHint
+# CHECK: [[flat1]]: flatstring = FlattenString v0
+# CHECK-NOT: FlattenString
+# CHECK: v9: number = StringRangeCodeUnitOrNaN [[flat1]], -, -, v5
+# CHECK-NOT: FlattenString
+# CHECK: v11: number = StringRangeCodeUnitOrNaN [[flat1]], -, -, v1
+# CHECK-NEXT: v12: number = StringRangeCodeUnitOrNaN [[flat1]], -, -, v5
+# CHECK-NOT: FlattenString
+function f1 name="two-reads-behind-the-loop" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+    v2 = Undefined
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    Jump -> next b1(v3, v2)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = CallBuiltin v0, v5 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v10 = Add v5, v4
+    Jump -> next b1(v10, v9)
+  b3():
+    v11 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v12 = CallBuiltin v0, v5 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v13 = Add v11, v12
+    Return v13
+}
+
+# One read alone flattens nothing, and takes what is there
+# CHECK-LABEL: function f2 name="one-read-behind-the-loop"
+# CHECK-NOT: LoopHint
+# CHECK: [[flat2]]: flatstring = FlattenString v0
+# CHECK-NOT: FlattenString
+# CHECK: v9: number = StringRangeCodeUnitOrNaN [[flat2]], -, -, v5
+# CHECK-NOT: FlattenString
+# CHECK: v11: number = StringRangeCodeUnitOrNaN [[flat2]], -, -, v1
+# CHECK-NOT: FlattenString
+function f2 name="one-read-behind-the-loop" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+    v2 = Undefined
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    Jump -> next b1(v3, v2)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = CallBuiltin v0, v5 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v10 = Add v5, v4
+    Jump -> next b1(v10, v9)
+  b3():
+    v11 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    Return v11
+}
+
+# CHECK-LABEL: function f3 name="length-behind-the-loop"
+# CHECK-NOT: LoopHint
+# CHECK: [[flat3]]: flatstring = FlattenString v0
+# CHECK-NOT: FlattenString
+# CHECK: v9: number = StringRangeCodeUnitOrNaN [[flat3]], -, -, v5
+# CHECK-NOT: FlattenString
+# CHECK: v11: int[0, 2147483647] = GetStringLength [[flat3]]
+# CHECK-NOT: FlattenString
+function f3 name="length-behind-the-loop" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+    v2 = Undefined
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    Jump -> next b1(v3, v2)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = CallBuiltin v0, v5 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v10 = Add v5, v4
+    Jump -> next b1(v10, v9)
+  b3():
+    v11 = GetStringLength v0
+    Return v11
+}

@@ -29,7 +29,10 @@ extern crate core;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::ffi::c_void;
+use core::{
+    debug_assert,
+    ffi::c_void, //
+};
 
 #[macro_use]
 mod macros;
@@ -129,6 +132,89 @@ impl<const N: usize> FfiMutSlice for [u8; N] {
         } else {
             self.as_mut_ptr()
         }
+    }
+}
+
+#[doc(hidden)]
+/// The reverse of [`FfiSlice`], to re-interpret a FFI pointer back into a Rust slice.
+pub trait FromFfiSlice: Sized {
+    /// Converts an FFI pointer and length to a Rust slice. This is similar to
+    /// [core::slice::from_raw_parts] but handles a mismatch between C and Rust empty slice
+    /// conventions.
+    /// In C, empty slices may use a `NULL` pointer in C.
+    /// In Rust, they may not.
+    ///
+    /// **NOTE** This trait is set up only for BoringSSL internal use.
+    ///
+    /// # Safety
+    ///
+    /// The caller must meet the following safety pre-conditions:
+    /// - The `ptr` and `len` are from a slice returned from BoringSSL via FFI.
+    /// - The memory referenced by the returned slice must not be mutated or deallocated for the
+    ///   duration of lifetime `'a`, including by BoringSSL.
+    ///
+    /// The first condition implies the following properties:
+    ///
+    /// - `ptr` is correctly aligned for Self.
+    /// - The total bytes of the slice, in other words `size_of<Self>() * len`, is below [isize::MAX].
+    /// - If `ptr.is_null()` then `len == 0`.
+    /// - There are `len` objects of type Self at ptr.
+    /// - The entire memory range for these objects is contained in a single allocation.
+    /// - The entire memory range is not mutated within the `'a` lifetime through aliased accesses.
+    /// - Each element of the slice has a valid bit pattern as a value of `Self`.
+    unsafe fn from_ffi_ptr<'a>(ptr: *const Self, len: usize) -> &'a [Self];
+}
+
+impl<T> FromFfiSlice for T {
+    #[inline]
+    unsafe fn from_ffi_ptr<'a>(ptr: *const T, len: usize) -> &'a [T] {
+        debug_assert!(ptr.is_aligned());
+        #[cfg(debug_assertions)]
+        if let Some(len) = len.checked_mul(core::mem::size_of::<T>()) {
+            debug_assert!(len < isize::MAX.unsigned_abs());
+        } else {
+            unreachable!("length overflow");
+        };
+
+        if len == 0 {
+            &[]
+        } else {
+            debug_assert!(!ptr.is_null());
+            unsafe {
+                // Safety:
+                // - pre-condition has asserted that the pointer outlives the returned slice.
+                // - pre-condition has asserted that the memory range does not overlap with any
+                //   other allocations.
+                // - pre-condition has asserted that the bit pattern behind the pointer is valid for
+                //   the type `T`.
+                core::slice::from_raw_parts(ptr, len)
+            }
+        }
+    }
+}
+
+/// Sanitize the data pointer and length and reconstitute the mutable slice.
+///
+/// This method will **zeroize** the content.
+///
+/// This method returns an empty slice if the length is 0.
+///
+/// # Safety
+///
+/// Caller must ensure that
+/// - `ptr` outlives `'a`.
+/// - access to `out` is exclusive and strictly not aliased.
+/// - if `ptr` is NULL, `capacity == 0`.
+#[inline]
+pub unsafe fn zeroize_mut_byteslice<'a>(ptr: *mut u8, capacity: usize) -> &'a mut [u8] {
+    if capacity == 0 {
+        return &mut [];
+    }
+    debug_assert!(capacity < isize::MAX.unsigned_abs() && !ptr.is_null());
+    unsafe {
+        // Safety: `out` is 1-aligned and `0` is a valid pattern for `u8`.
+        core::ptr::write_bytes(ptr, 0, capacity);
+        core::slice::from_raw_parts_mut(ptr, capacity)
     }
 }
 

@@ -86,7 +86,7 @@ Lock WebSocket::s_allActiveWebSocketsLock;
 
 const size_t maxReasonSizeInBytes = 123;
 
-static inline bool NODELETE isValidProtocolCharacter(char16_t character)
+static inline bool LEGACY_NODELETE isValidProtocolCharacter(char16_t character)
 {
     // Hybi-10 says "(Subprotocol string must consist of) characters in the range U+0021 to U+007E not including
     // separator characters as defined in [RFC2616]."
@@ -99,7 +99,7 @@ static inline bool NODELETE isValidProtocolCharacter(char16_t character)
         && character != '{' && character != '}';
 }
 
-static bool NODELETE isValidProtocolString(StringView protocol)
+static bool LEGACY_NODELETE isValidProtocolString(StringView protocol)
 {
     if (protocol.isEmpty())
         return false;
@@ -138,7 +138,7 @@ static String joinStrings(const Vector<String>& strings, ASCIILiteral separator)
 // bufferedAmount is only ever added to while the socket is closing or closed, so it accumulates without
 // anything draining it. No single payload comes close to overflowing, but repeated sends do, and the
 // attribute has no value to report past its own range, so it stops there.
-static uint64_t NODELETE saturateAdd(uint64_t a, uint64_t b)
+static uint64_t LEGACY_NODELETE saturateAdd(uint64_t a, uint64_t b)
 {
     if (std::numeric_limits<uint64_t>::max() - a < b)
         return std::numeric_limits<uint64_t>::max();
@@ -147,7 +147,7 @@ static uint64_t NODELETE saturateAdd(uint64_t a, uint64_t b)
 
 // Every channel implementation stages a binary payload into a Vector or a SharedBuffer before it
 // reaches the network, so a payload longer than one of those can hold can never be framed at all.
-static bool isFramablePayloadSize(size_t payloadSize)
+static bool LEGACY_NODELETE isFramablePayloadSize(size_t payloadSize)
 {
     return WTF::isValidCapacityForVector<uint8_t>(payloadSize);
 }
@@ -355,7 +355,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     };
     if (is<Document>(context))
         reportRegistrableDomain(context.get());
-    else if (CheckedPtr workerLoaderProxy = downcast<WorkerGlobalScope>(context)->thread()->workerLoaderProxy())
+    else if (CheckedPtr workerLoaderProxy = downcast<WorkerGlobalScope>(context).thread()->workerLoaderProxy())
         workerLoaderProxy->postTaskToLoader(WTF::move(reportRegistrableDomain));
 
     if (!m_origin)
@@ -567,8 +567,9 @@ void WebSocket::didConnect()
         }
         ASSERT(socket.scriptExecutionContext());
         socket.m_state = OPEN;
-        socket.m_subprotocol = socket.m_channel->subprotocol();
-        socket.m_extensions = socket.m_channel->extensions();
+        RefPtr channel = socket.m_channel;
+        socket.m_subprotocol = channel->subprotocol();
+        socket.m_extensions = channel->extensions();
         socket.dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
     });
 }
@@ -581,7 +582,8 @@ void WebSocket::didReceiveMessage(String&& message)
             return;
 
         if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
-            if (auto* inspector = socket.m_channel->channelInspector()) {
+            RefPtr channel = socket.m_channel;
+            if (auto* inspector = channel->channelInspector()) {
                 auto utf8Message = message.utf8();
                 inspector->didReceiveWebSocketFrame(WebSocketChannelInspector::createFrame(byteCast<uint8_t>(utf8Message.span()), WebSocketFrame::OpCode::OpCodeText));
             }
@@ -599,7 +601,8 @@ void WebSocket::didReceiveBinaryData(Vector<uint8_t>&& binaryData)
             return;
 
         if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
-            if (auto* inspector = socket.m_channel->channelInspector())
+            RefPtr channel = socket.m_channel;
+            if (auto* inspector = channel->channelInspector())
                 inspector->didReceiveWebSocketFrame(WebSocketChannelInspector::createFrame(binaryData.span(), WebSocketFrame::OpCode::OpCodeBinary));
         }
 
@@ -625,7 +628,8 @@ void WebSocket::didReceiveMessageError(String&& reason)
         ASSERT(socket.scriptExecutionContext());
 
         if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
-            if (auto* inspector = socket.m_channel->channelInspector())
+            RefPtr channel = socket.m_channel;
+            if (auto* inspector = channel->channelInspector())
                 inspector->didReceiveWebSocketFrameError(reason);
         }
 
@@ -660,7 +664,8 @@ void WebSocket::didClose(uint64_t unhandledBufferedAmount, ClosingHandshakeCompl
             return;
 
         if (InspectorInstrumentation::hasFrontends()) [[unlikely]] {
-            if (auto* inspector = socket.m_channel->channelInspector()) {
+            RefPtr channel = socket.m_channel;
+            if (auto* inspector = channel->channelInspector()) {
                 WebSocketFrame closingFrame(WebSocketFrame::OpCodeClose, true, false, false);
                 inspector->didReceiveWebSocketFrame(closingFrame);
                 inspector->didCloseWebSocket();
@@ -674,8 +679,8 @@ void WebSocket::didClose(uint64_t unhandledBufferedAmount, ClosingHandshakeCompl
 
         socket.dispatchEvent(CloseEvent::create(wasClean, code, reason));
 
-        if (socket.m_channel) {
-            socket.m_channel->disconnect();
+        if (RefPtr channel = socket.m_channel) {
+            channel->disconnect();
             socket.m_channel = nullptr;
         }
         socket.m_pendingActivity = nullptr;

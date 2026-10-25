@@ -1,0 +1,55 @@
+# Behind a Check `x === k`, taken, lets the type of k by wherever each value of it is strictly equal only to itself: one value, or any primitives but numbers. Not taken, only one value is kept out.
+# RUN: valueflow-body f0 f1
+# CHECK: body f0: nodes=6 sites=0 edges=4 edgesOnceReached=0 seeds=1 statements=0
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 result
+# CHECK-NEXT: n2 thrown
+# CHECK-NEXT: n3 filter v1 : string
+# CHECK-NEXT: n4 merge
+# CHECK-NEXT: n5 filter & undefined|null|"a"
+# CHECK-NEXT: edge n0 -> n3
+# CHECK-NEXT: edge n3 -> n1
+# CHECK-NEXT: edge n3 -> n5
+# CHECK-NEXT: edge n5 -> n1
+# CHECK-NEXT: reached: seed n2 <- unknown
+# CHECK-NEXT: returns n0 & undefined|null|"a" as it came, the rest in n4
+# CHECK-NEXT: returns n0 : string as it came, the rest in n4
+# CHECK-NEXT: observed v1: n0
+# CHECK-NEXT: body f1: nodes=5 sites=0 edges=2 edgesOnceReached=0 seeds=1 statements=0
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 result
+# CHECK-NEXT: n2 thrown
+# CHECK-NEXT: n3 filter v1 : string
+# CHECK-NEXT: n4 merge
+# CHECK-NEXT: edge n0 -> n3
+# CHECK-NEXT: edge n3 -> n1
+# CHECK-NEXT: reached: seed n2 <- unknown
+# CHECK-NEXT: returns n0 : string as it came, the rest in n4
+# CHECK-NEXT: observed v1: n0
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+variable g0 name="text" module=m0 declared={type=undefined|null|absent|"a"} flags=[IsImmutable]
+variable g1 name="mixed" module=m0 declared={type=undefined|absent|"a"|number} flags=[IsImmutable]
+function f0 name="equalToNullishOrOneText" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 castType=string
+    v2 = GetModuleVariable variable=g0
+    v3 = CheckInitialized v2 name="text"
+    v4 = StrictEq v1, v3
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    Return v5
+  b2(v6):
+    Return v6
+}
+function f1 name="equalToATextOrANumber" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 castType=string
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="mixed"
+    v4 = StrictEq v1, v3
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    Return v5
+  b2(v6):
+    Return v6
+}

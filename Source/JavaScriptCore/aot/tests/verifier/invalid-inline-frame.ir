@@ -1,0 +1,27 @@
+# an inline frame must exist, name its callee and the callee's module, and come after its parent
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidInlineFrame 5
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badValueFrame" results=[{type=undefined}] inlineFrames=[{}, {callee=f6 module=m0}] {
+    v0 = Undefined @3:2
+    Return
+}
+function f1 name="badTerminatorFrame" results=[{type=undefined}] inlineFrames=[{}, {callee=f6 module=m0}] {
+    Return @3:2
+}
+function f2 name="badParent" results=[{type=undefined}] inlineFrames=[{}, {callee=f6 parent=1 module=m0}] {
+    Return
+}
+function f3 name="badModule" results=[{type=undefined}] inlineFrames=[{}, {callee=f6}] {
+    Return
+}
+function f4 name="badNoCallee" results=[{type=undefined}] inlineFrames=[{}, {module=m0}] {
+    Return
+}
+function f5 name="good" results=[{type=undefined}] inlineFrames=[{}, {callee=f6 module=m0}, {callee=f6 parent=1 module=m0}] {
+    v0 = Undefined @3:2
+    Return @3:2
+}
+function f6 name="callee" results=[{type=undefined}]

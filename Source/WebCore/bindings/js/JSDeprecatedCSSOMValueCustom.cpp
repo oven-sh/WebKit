@@ -56,7 +56,7 @@ JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<D
     if (value->isValueList())
         return createWrapper<DeprecatedCSSOMValueList>(globalObject, WTF::move(value));
     // Expose CSS-wide keywords as plain CSSValues to keep the existing behavior.
-    if (auto* primitiveValue = dynamicDowncast<DeprecatedCSSOMPrimitiveValue>(value.get()); primitiveValue && !primitiveValue->isCSSWideKeyword())
+    if (RefPtr primitiveValue = dynamicDowncast<DeprecatedCSSOMPrimitiveValue>(value); primitiveValue && !primitiveValue->isCSSWideKeyword())
         return createWrapper<DeprecatedCSSOMPrimitiveValue>(globalObject, WTF::move(value));
     return createWrapper<DeprecatedCSSOMValue>(globalObject, WTF::move(value));
 }

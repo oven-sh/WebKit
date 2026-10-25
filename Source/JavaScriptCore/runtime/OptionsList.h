@@ -95,10 +95,13 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, diskCachePayloadIsPersistentForTesting, false, Normal, "jsc shell: keep files mapped from diskCachePath for the life of the process and mark them persistent, so what is decoded from them borrows from and defers into the mapping as it does with an embedded payload."_s) \
     v(Bool, usePrelinkedModuleInfo, true, Normal, "If true, module records the embedder creates from a pre-resolved module graph (PrelinkedModuleGraph) keep their entries in the graph: requested modules are wired by index, import/export resolution, GetImportedModule, InitializeEnvironment and GetModuleNamespace read the graph's tables, and the by-name entry maps are only built on demand. If false such records copy their entries out of the graph and behave like ModuleAnalyzer's."_s) \
     v(Bool, validatePrelinkedModuleInfo, false, Normal, "Cross-check every pre-resolved import/export binding of a PrelinkedModuleGraph against the specification's ResolveExport and crash on a mismatch."_s)
+#define FOR_EACH_JSC_STATIC_CODE_OPTION(v) \
+    v(Bool, disallowNonStaticCode, false, Normal, "Only code whose SourceProvider was made with SourceProvenance::Static runs: anything else throws an EvalError."_s)
 #else
 #define FOR_EACH_JSC_FFI_OPTION(v)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v)
 #define FOR_EACH_JSC_BYTECODE_CACHE_DECODER_OPTION(v)
+#define FOR_EACH_JSC_STATIC_CODE_OPTION(v)
 #endif
 
 #define FOR_EACH_JSC_OPTION(v)                                          \
@@ -112,6 +115,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useBaselineJIT, true, Normal, "allows the baseline JIT to be used if true"_s) \
     v(Bool, useDFGJIT, jitEnabledByDefault(), Normal, "allows the DFG JIT to be used if true"_s) \
     v(Bool, useRegExpJIT, jitEnabledByDefault(), Normal, "allows the RegExp JIT to be used if true"_s) \
+    v(Bool, validateRegExpFlatProgram, false, Normal, "runs both the flat program and the bytecode interpreter and crashes if they differ"_s) \
     v(Bool, useDOMJIT, jitEnabledByDefault(), Normal, "allows the DOMJIT to be used if true"_s) \
     v(Bool, useRegExpLookbehindJIT, true, Normal, "allows patterns containing lookbehind assertions to use the RegExp JIT"_s) \
     v(Bool, useRegExpAlternationFactoring, true, Normal, "factors shared prefixes out of wide alternations and folds wide top-level alternations into a group"_s) \
@@ -125,6 +129,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, showPrivateScriptsInStackTraces, false, Normal, "Show private scripts in stack traces."_s) \
     v(Bool, evalMode, false, Normal, "Set to true for less aggressive function call completion value discarding."_s) \
     FOR_EACH_JSC_FFI_OPTION(v) \
+    FOR_EACH_JSC_STATIC_CODE_OPTION(v) \
     \
     v(Unsigned, maxPerThreadStackUsage, 5 * MB, Normal, "Max allowed stack usage by the VM"_s) \
     v(Unsigned, softReservedZoneSize, 128 * KB, Normal, "A buffer greater than reservedZoneSize that reserves space for stringifying exceptions."_s) \
@@ -132,13 +137,33 @@ bool hasCapacityToUseLargeGigacage();
     \
     v(Bool, crashOnDisallowedVMEntry, ASSERT_ENABLED, Normal, "Forces a crash if we attempt to enter the VM when disallowed"_s) \
     v(Bool, crashIfCantAllocateJITMemory, false, Normal, nullptr) \
+    v(Bool, crashIfInterpreterIsUsed, false, Normal, "Crash, printing the name of the code, when bytecode is about to run in the interpreter."_s) \
     v(Unsigned, structureHeapSizeInKB, 0, Normal, "Override for Structure Heap size (in KBs) if non-zero"_s) \
     v(Unsigned, jitMemoryReservationSize, 0, Normal, "Set this number to change the executable allocation size in ExecutableAllocatorFixedVMPool. (In bytes.)"_s) \
     v(Size, jitMemoryReservationAddress, 0, Restricted, "If non-zero, we will attempt to allocate JIT memory at the address provided and crash if we cannot.") \
+    v(Size, maximumCachedAssemblerDataCapacity, 4 * MB, Normal, "When useCachedAssemblerDataCapacityLimit is true, a thread does not keep an AssemblerData buffer larger than this cached for reuse. (In bytes.)"_s) \
     \
     v(Bool, forceCodeBlockLiveness, false, Normal, nullptr) \
     v(Bool, forceICFailure, false, Normal, nullptr) \
     v(Bool, forceUnlinkedDFG, false, Normal, nullptr) \
+    \
+    v(Bool, keepDenseArraysDense, false, Normal, "For testing. Arrays get the storage they get in a VM that runs ahead-of-time compiled code: a dense array stays Int32, Double or Contiguous."_s) \
+    v(Bool, useAOT, false, Normal, "Run ahead-of-time compiled code from the image the embedder registers. Turns the JIT off."_s) \
+    v(OptionString, aotImagePath, nullptr, Normal, "jsc shell and testaot only. Path of an image written by testaot compile. Implies useAOT."_s) \
+    v(Unsigned, markedBlockCageSizeInMB, 32 * 1024, Normal, "With useAOT: the address space reserved for the cells of each heap, a power of two, at most 32768. 0: none is reserved, and blocks come from fastMalloc as without useAOT."_s) \
+    v(Bool, useNarrowReferenceScan, true, Normal, "With useAOT: the collector's scan of stacks and registers also takes each 32-bit half of a word for a reference to a cell. Tests turn it off to show that compiled code keeps a pointer next to each such reference."_s) \
+    v(Bool, useAOTPerfMap, false, Normal, "Linux. When running: the code of the image is copied to anonymous memory and /tmp/perf-<pid>.map names each function in it, so that perf, which reads such a map for anonymous memory alone, shows compiled functions by name."_s) \
+    v(OptionString, aotCountsPath, nullptr, Normal, "The counts of the AoT run time are written to this path at exit. %p stands for the process ID."_s) \
+    v(Bool, validateAOTRuntime, false, Normal, "Run the validators of the AoT run time on any image and crash on a mismatch. An image compiled with validation runs them without this option."_s) \
+    v(Bool, logAOTPhaseTimes, false, Normal, "Log the wall time of each AOT compiler phase and the CPU time of the process during it."_s) \
+    v(Bool, verifyAOTProgram, true, Normal, "When compiling: verify the program as read, its placement, its representations and the program handed to the back end. No byte of the output depends on it. Bun turns it off outside its own tests."_s) \
+    v(OptionString, dumpAOTIR, nullptr, Normal, "When compiling: print the IR of aotFunctionToDump, or of every function, at these points: AsRead, Prepared, Selected, Placed, or the name of a pass to print after. Comma-separated."_s) \
+    v(Bool, dumpAOTB3Graph, false, Normal, "Dump the B3 procedure the AOT compiler generates."_s) \
+    v(Bool, dumpAOTDisassembly, false, Normal, "Dump the machine code the AOT compiler generates."_s) \
+    v(OptionString, aotFunctionToDump, nullptr, Normal, "If set, dumpAOTIR, dumpAOTB3Graph and dumpAOTDisassembly only cover the functions of this name."_s) \
+    v(OptionString, aotMapFilePath, nullptr, Normal, "When compiling: write a map of the image (the location and key of each function, and the identifier of each inline cache slot) to this file, for symbolicating profiles."_s) \
+    v(Bool, useRegExpImageMode, false, Normal, "jsc and testRegExp. Yarr compiles every pattern as for an image, and that code runs. For running the regexp corpus against image mode."_s) \
+    v(Bool, dropLastFastVisitReferenceForTesting, false, Normal, "For testing. With verifyGC, or an image compiled with validation: the last cell that each inline visit of the collector marked counts as missed, so the check of inline visits crashes."_s) \
     \
     v(Unsigned, repatchCountForCoolDown, 8, Normal, nullptr) \
     v(Unsigned, initialCoolDownCount, 20, Normal, nullptr) \
@@ -146,7 +171,6 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, initialRepatchBufferingCountdown, 6, Normal, nullptr) \
     \
     v(Bool, dumpGeneratedBytecodes, false, Normal, nullptr) \
-    v(Bool, useUnboxedFastArrayIteration, true, Normal, "for-of and array destructuring over an Array keep the index in the frame instead of allocating an Array Iterator object"_s) \
     v(Bool, useSharedRegExpLiteralObjects, true, Normal, "reuse one RegExpObject per literal site when the object provably cannot be observed"_s) \
     v(Bool, useBytecodeOptimizer, false, Normal, "run the whole-function bytecode optimizer on all generated bytecode (bytecode-cache image generation runs it when the embedder passes OptimizeBytecode::Yes)") \
     v(Bool, useBytecodeOptimizerCopyPropagation, true, Normal, "bytecode optimizer: copy propagation / destination coalescing") \
@@ -255,9 +279,9 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useConcurrentGC, true, Normal, nullptr) \
     v(Bool, collectContinuously, false, Normal, nullptr) \
     v(Double, collectContinuouslyPeriodMS, 1, Normal, nullptr) \
+    v(Unsigned, initialHeapVersion, 0, Restricted, "If nonzero, the version each heap's marking, newly allocated and Eden versions start at. A value near the maximum makes them wrap within a few collections."_s) \
     v(Bool, forceFencedBarrier, false, Normal, nullptr) \
     v(Bool, verboseVisitRace, false, Normal, nullptr) \
-    v(Bool, optimizeParallelSlotVisitorsForStoppedMutator, false, Normal, nullptr) \
     v(Bool, verboseHeapSnapshotLogging, true, Normal, nullptr) \
     v(Unsigned, largeHeapSize, 32 * 1024 * 1024, Normal, nullptr) \
     v(Unsigned, mediumHeapSize, 4 * 1024 * 1024, Normal, nullptr) \
@@ -475,6 +499,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Double, minHeapUtilization, 0.8, Normal, nullptr) \
     v(Double, minMarkedBlockUtilization, 0.9, Normal, nullptr) \
     v(Unsigned, slowPathAllocsBetweenGCs, 0, Normal, "force a GC on every Nth slow path alloc, where N is specified by this option"_s) \
+    v(Bool, useEdenCollectionsAtSlowPathAllocs, false, Normal, "the GCs that slowPathAllocsBetweenGCs forces are eden collections, which depend on write barriers"_s) \
     /* WARNING: this option is important for compatibility be *VERY* careful when lowering it. See: rdar://145585141 and https://bugs.webkit.org/show_bug.cgi?id=289330 */ \
     /* Cap on the bytecode RegExp interpreter's backtracking-context pool (allocated a page at a time, only while a match runs, and released after it). Each quantified-group iteration takes a context sized by the pattern's call frame, which grew with the ParenthesesOnce/BackReference slots and the alternation folding; 192MB keeps the reach interpreter-only patterns had at 128MB (prism/highlight.js tokenizers over ~600KB inputs). */ \
     v(Unsigned, maxRegExpStackSize, 192 * MB, Normal, nullptr) \
@@ -597,7 +622,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useB3HoistLoopInvariantValues, true, Normal, nullptr) \
     v(Bool, useB3CanonicalizePrePostIncrements, false, Normal, nullptr) \
     v(Bool, useB3EliminateWasmGCAllocations, true, Normal, "eliminate non-escaping wasm-GC struct allocations in B3"_s) \
-    v(Bool, useB3ReduceStrengthFixpoint, false, Normal, "iterate B3 reduceStrength to a fixpoint instead of a single pass (for debugging)"_s) \
+    v(Unsigned, maxB3WasmGCEpochSnapshotEntries, 1024 * 1024, Normal, "blocks times version counters above which B3 reduceStrength gives all wasm-GC struct fields one shared counter rather than one each"_s) \
     v(Bool, useB3SpecializeSelect, true, Normal, "turn Selects consumed by a nearby Check into control flow in B3"_s) \
     v(Bool, useAirOptimizePairedLoadStore, true, Normal, nullptr) \
     \
@@ -663,6 +688,7 @@ bool hasCapacityToUseLargeGigacage();
     v(OptionRange, wasmFunctionIndexRangeToCompile, nullptr, Normal, "wasm function index range to allow compilation on, e.g. 1:100"_s) \
     v(Bool, useEagerWasmModuleHashing, false, Normal, "Unnamed Wasm modules are identified in backtraces through their hash, if available."_s) \
     v(Bool, useArrayAllocationProfiling, true, Normal, "If true, we will use our normal array allocation profiling. If false, the allocation profile will always claim to be undecided."_s) \
+    v(Bool, useCopyOnWriteArraysForImmutableProperties, true, Normal, "If true, JSObject::makePropertiesImmutable() makes a JSArray whose Int32, Double or Contiguous elements have no holes a copy-on-write array. If false, it enters dictionary indexing mode, as every other object with elements does."_s) \
     v(Bool, forcePolyProto, false, Normal, "If true, create_this will always create an object with a poly proto structure."_s) \
     v(Bool, forceMiniVMMode, false, Normal, "If true, it will force mini VM mode on."_s) \
     v(Bool, useTracePoints, false, Normal, nullptr) \
@@ -750,8 +776,10 @@ bool hasCapacityToUseLargeGigacage();
     FOR_EACH_JSC_WEB_PREFERENCE_OPTION(v) \
     /* Restricted so some app doesn't set this environment variable and start using it. */ \
     v(Bool, disallowMixedWasmExceptions, true, Restricted, "Disallow using both legacy and modern (try_table) wasm exception specs in the same module."_s) \
-    /* Not sourced from UnifiedWebPreferences.yaml: force-enabled via the cross-origin-isolation path and consumed in WebCore. */ \
+    /* Not sourced from UnifiedWebPreferences.yaml: exposes SharedArrayBuffer to every global object. */ \
     v(Bool, useSharedArrayBuffer, false, Normal, nullptr) \
+    /* Not sourced from UnifiedWebPreferences.yaml: lets an embedder expose SharedArrayBuffer to some global objects, see JSGlobalObject::exposeSharedArrayBuffer(). */ \
+    v(Bool, allowSharedArrayBuffer, true, Normal, nullptr) \
     /* Not sourced from UnifiedWebPreferences.yaml: shares its semantics with the WebCore-bound TrustedTypes feature. */ \
     v(Bool, useTrustedTypes, true, Normal, "Enable trusted types eval protection feature."_s) \
 
@@ -824,7 +852,7 @@ public:
     OptionRange(std::nullptr_t) { }
 
     bool init(const char*);
-    bool NODELETE isInRange(unsigned) const;
+    bool LEGACY_NODELETE isInRange(unsigned) const;
     const char* rangeString() const { return (m_state > InitError) ? m_rangeString : s_nullRangeStr; }
 
     void dump(PrintStream& out) const;

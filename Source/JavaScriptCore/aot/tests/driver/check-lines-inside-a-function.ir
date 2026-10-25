@@ -1,0 +1,20 @@
+# check lines inside the braces of a function see the output of that function alone, each prefix by itself
+# RUN: print
+# RUN(ABSENT): print
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sum" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = Add v0, v1
+    Return v2
+# CHECK-NEXT: b0(v0: number, v1: number):
+# CHECK-NEXT: Add
+# ABSENT-NOT: Negate
+# CHECK-NOT: Negate
+}
+function f1 name="sum2" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Negate v0
+    Return v1
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: Negate
+# ABSENT-NOT: Add
+}

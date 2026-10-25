@@ -698,6 +698,7 @@ struct WebCore::ApplicationManifest {
 struct WebCore::RetrieveRecordsOptions {
     WebCore::ResourceRequest request;
     WebCore::CrossOriginEmbedderPolicy crossOriginEmbedderPolicy;
+    WebCore::DocumentIsolationPolicyValue documentIsolationPolicy;
     Ref<WebCore::SecurityOrigin> sourceOrigin;
     bool ignoreSearch;
     bool ignoreMethod;
@@ -1002,7 +1003,7 @@ enum class WebCore::ContentSniffingPolicy : bool;
 enum class WebCore::ContentEncodingSniffingPolicy : bool;
 enum class WebCore::ClientCredentialPolicy : bool;
 enum class WebCore::ShouldRelaxThirdPartyCookieBlocking : bool;
-enum class WebCore::IsInitiatedByDedicatedWorker : bool;
+enum class WebCore::IsInitiatedByWorker : bool;
 
 enum class WebCore::PreflightPolicy : uint8_t {
     Consider,
@@ -1160,6 +1161,7 @@ header: <WebCore/ResourceRequest.h>
     [BitField] bool m_isPrivateTokenUsageByThirdPartyAllowed;
     [BitField] bool m_wasSchemeOptimisticallyUpgraded;
     WebCore::IPAddressSpace m_targetAddressSpace;
+    WebCore::ThirdPartyCookieBlockingDecision m_latchedThirdPartyCookieBlockingDecision;
 };
 
 #if USE(SOUP)
@@ -1349,6 +1351,7 @@ using WebCore::ScrollPosition = WebCore::IntPoint;
     WebCore::FloatRect exposedContentRectInChildView();
 #endif
     bool ownerHasRenderer();
+    bool ownerIsFullyClipped();
     WebCore::TransformationMatrix childFrameOwnerToRootContentTransform();
     WebCore::TransformationMatrix absoluteToChildFrameOwnerLocalTransform();
     float frameScaleFactor();
@@ -1366,6 +1369,13 @@ header: <WebCore/FrameGeometrySyncData.h>
 [CustomHeader] struct WebCore::FrameViewportInfo {
     WebCore::LayoutRect layoutViewportRect;
     WebCore::ScrollPosition scrollPosition;
+};
+
+header: <WebCore/FrameGeometrySyncData.h>
+[CustomHeader] struct WebCore::FrameGeometryUpdate {
+    WebCore::FrameIdentifier frameID;
+    std::optional<WebCore::FrameGeometrySyncData> geometry;
+    std::optional<WebCore::FrameViewportInfo> viewportInfo;
 };
 
 header: <WebCore/VP9Utilities.h>
@@ -1494,7 +1504,7 @@ class WebCore::ContentType {
 
 struct WebCore::DateTimeChooserParameters {
     AtomString type;
-    WebCore::IntRect anchorRectInRootView;
+    WebCore::IntRect anchorRectInMainFrameView;
     AtomString locale;
     String currentValue;
     Vector<String> suggestionValues;
@@ -1622,6 +1632,12 @@ struct WebCore::DataListSuggestionInformation {
 struct WebCore::ClientOrigin {
     [Validator='!topOrigin->isNull()'] WebCore::SecurityOriginData topOrigin;
     [Validator='!clientOrigin->isNull()'] WebCore::SecurityOriginData clientOrigin;
+};
+
+header: <WebCore/Page.h>
+[CustomHeader] struct WebCore::FindSelectionInFrame {
+    WebCore::FrameIdentifier frame;
+    int32_t indexInFrame;
 };
 
 enum class WebCore::AlphaPremultiplication : uint8_t {
@@ -1800,6 +1816,7 @@ struct WebCore::TextManipulationItem {
     Markable<WebCore::TextManipulationItemIdentifier> identifier;
     Vector<WebCore::TextManipulationToken> tokens;
     std::optional<WebCore::ViewportProximityInfo> viewportProximityInfo;
+    std::optional<WebCore::FloatRect> mainFrameBoundingRect;
 }
 
 header: <WebCore/TextManipulationToken.h>
@@ -2817,6 +2834,16 @@ struct WebCore::CrossOriginEmbedderPolicy {
     String reportOnlyReportingEndpoint;
 };
 
+header: <WebCore/DocumentIsolationPolicy.h>
+enum class WebCore::DocumentIsolationPolicyValue : bool
+
+struct WebCore::DocumentIsolationPolicy {
+    WebCore::DocumentIsolationPolicyValue value;
+    WebCore::DocumentIsolationPolicyValue reportOnlyValue;
+    String reportingEndpoint;
+    String reportOnlyReportingEndpoint;
+};
+
 struct WebCore::SameSiteInfo {
     bool isSameSite;
     bool isTopSite;
@@ -2912,6 +2939,7 @@ header: <WebCore/ScrollingStateNode.h>
 #    OverflowScrollingNode - Duplicate value
     KeyboardScrollData
     OverlayScrollbarsEnabled
+    InsetForLeftScrollbarSpace
     ChildNodes
 #    LayerHostingContextIdentifier - Duplicate value
 };
@@ -3239,13 +3267,6 @@ class WebCore::SpeechRecognitionUpdate {
     Variant<std::monostate, WebCore::SpeechRecognitionError, Vector<WebCore::SpeechRecognitionResultData>> m_content;
 };
 
-#if USE(SYSTEM_PREVIEW)
-[RefCounted, AdditionalEncoder=StreamConnectionEncoder] class WebCore::ARKitBadgeSystemImage {
-    std::optional<WebCore::RenderingResourceIdentifier> imageIdentifier();
-    WebCore::FloatSize m_imageSize;
-};
-#endif
-
 [AdditionalEncoder=StreamConnectionEncoder] enum class WebCore::CompositeOperator : uint8_t {
     Clear,
     Copy,
@@ -3308,7 +3329,7 @@ class WebCore::SpeechRecognitionUpdate {
 };
 
 header: <WebCore/ImageBufferParameters.h>
-[CustomHeader] struct WebCore::ImageBufferParameters {
+[CustomHeader, AdditionalEncoder=StreamConnectionEncoder] struct WebCore::ImageBufferParameters {
     WebCore::FloatSize logicalSize;
     float resolutionScale;
     WebCore::ColorSpace colorSpace
@@ -3316,8 +3337,10 @@ header: <WebCore/ImageBufferParameters.h>
     WebCore::RenderingPurpose purpose;
 };
 
+using WebCore::ImageBufferTransferIdentifier = WTF::UUID;
+
 header: <WebCore/ImageBuffer.h>
-[CustomHeader] struct WebCore::ImageBufferTransferHandle {
+[CustomHeader, AdditionalEncoder=StreamConnectionEncoder] struct WebCore::ImageBufferTransferHandle {
     WebCore::ImageBufferTransferIdentifier identifier;
     WebCore::ImageBufferParameters parameters;
     WebCore::RenderingMode renderingMode;
@@ -3505,13 +3528,24 @@ header: <WebCore/ImageTypes.h>
     float headroom;
 };
 
-[AdditionalEncoder=StreamConnectionEncoder] struct WebCore::ImagePaintingOptions {
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+[AdditionalEncoder=StreamConnectionEncoder] enum class WebCore::InvertContent : uint8_t {
+    FromResource,
+    No,
+    Yes
+};
+#endif
+
+[AdditionalEncoder=StreamConnectionEncoder] struct WebCore::ImageDrawingOptions {
     WebCore::CompositeOperator compositeOperator();
     WebCore::BlendMode blendMode();
     WebCore::DecodingMode decodingMode();
     WebCore::ImageOrientation::Orientation orientation().orientation();
     WebCore::InterpolationQuality interpolationQuality();
     WebCore::DrawsHDRContent drawsHDRContent();
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    WebCore::InvertContent invertContent();
+#endif
     WebCore::Headroom headroom();
     WebCore::PlatformDynamicRangeLimit dynamicRangeLimit();
 };
@@ -3562,12 +3596,17 @@ struct WebCore::NavigationRequester {
     bool hasHadUserInteraction;
     bool parentOriginIsSameAsTopOrigin;
     std::optional<WebCore::ProcessIdentifier> processIdentifier;
+    bool isSecureContext;
+    bool localNetworkAllowedByPermissionsPolicy;
+    bool loopbackNetworkAllowedByPermissionsPolicy;
+    std::optional<WebCore::AgentClusterIdentifier> agentClusterIdentifier;
 };
 
 struct WebCore::PolicyContainer {
     WebCore::ContentSecurityPolicyResponseHeaders contentSecurityPolicyResponseHeaders;
     WebCore::CrossOriginEmbedderPolicy crossOriginEmbedderPolicy;
     WebCore::CrossOriginOpenerPolicy crossOriginOpenerPolicy;
+    WebCore::DocumentIsolationPolicy documentIsolationPolicy;
     WebCore::ReferrerPolicy referrerPolicy;
     WebCore::IPAddressSpace ipAddressSpace;
 };
@@ -3615,6 +3654,15 @@ enum class WebCore::ThirdPartyCookieBlockingMode : uint8_t {
 #endif
     AllOnSitesWithoutUserInteraction,
     OnlyAccordingToPerDomainPolicy
+};
+
+header: <WebCore/ThirdPartyCookieBlockingMode.h>
+enum class WebCore::ThirdPartyCookieBlockingDecision : uint8_t {
+    None,
+    All,
+#if ENABLE(OPT_IN_PARTITIONED_COOKIES)
+    AllExceptPartitioned
+#endif
 };
 
 header: <WebCore/TrackingPreventionTypes.h>
@@ -4052,6 +4100,7 @@ header: <WebCore/FrameLoaderTypes.h>
 enum class WebCore::NavigationResponseProcessSwapReason : uint8_t {
     COOP,
     EnhancedSecurity,
+    DocumentIsolationPolicy,
 };
 
 enum class WebCore::ShouldOpenExternalURLsPolicy : uint8_t {
@@ -4170,7 +4219,7 @@ struct WebCore::LinkIcon {
 };
 
 struct WebCore::CSSValueKey {
-    unsigned cssValueID;
+    WebCore::CSSValueID cssValueID;
     bool useDarkAppearance;
     bool useElevatedUserInterfaceLevel;
 };
@@ -5016,6 +5065,8 @@ header: <WebCore/TextExtractionTypes.h>
     bool includeTextInAutoFilledControls;
     bool includeOffscreenPasswordFields;
     bool includeTagName;
+    bool includeSameOriginSubframes;
+    bool includeClippedContent;
 #if ENABLE(DATA_DETECTION)
     OptionSet<WebCore::DataDetectorType> dataDetectorTypes;
 #endif
@@ -5135,6 +5186,15 @@ header: <WebCore/TextExtractionTypes.h>
 };
 
 header: <WebCore/TextExtractionTypes.h>
+[CustomHeader] enum class WebCore::TextExtraction::MediaType : bool;
+
+header: <WebCore/TextExtractionTypes.h>
+[CustomHeader] struct WebCore::TextExtraction::MediaItemData {
+    WebCore::TextExtraction::MediaType type;
+    bool hasControls;
+};
+
+header: <WebCore/TextExtractionTypes.h>
 [CustomHeader, OptionSet] enum class WebCore::TextExtraction::EventListenerCategory : uint8_t {
     Click,
     Hover,
@@ -5145,7 +5205,7 @@ header: <WebCore/TextExtractionTypes.h>
 
 header: <WebCore/TextExtractionTypes.h>
 [CustomHeader] struct WebCore::TextExtraction::Item {
-    Variant<WebCore::TextExtraction::ContainerType, WebCore::TextExtraction::TextItemData, WebCore::TextExtraction::ScrollableItemData, WebCore::TextExtraction::ImageItemData, WebCore::TextExtraction::SelectData, WebCore::TextExtraction::ContentEditableData, WebCore::TextExtraction::TextFormControlData, WebCore::TextExtraction::FormData, WebCore::TextExtraction::LinkItemData, WebCore::TextExtraction::IFrameData> data;
+    Variant<WebCore::TextExtraction::ContainerType, WebCore::TextExtraction::TextItemData, WebCore::TextExtraction::ScrollableItemData, WebCore::TextExtraction::ImageItemData, WebCore::TextExtraction::SelectData, WebCore::TextExtraction::ContentEditableData, WebCore::TextExtraction::TextFormControlData, WebCore::TextExtraction::FormData, WebCore::TextExtraction::LinkItemData, WebCore::TextExtraction::IFrameData, WebCore::TextExtraction::MediaItemData> data;
     WebCore::FloatRect rectInRootView;
     Vector<WebCore::TextExtraction::Item> children;
     String nodeName;
@@ -5244,8 +5304,8 @@ header: <WebCore/WritingToolsTypes.h>
 };
 #endif
 
-header: <WebCore/WebGPUTextureFormat.h>
-enum class WebCore::WebGPU::TextureFormat : uint8_t {
+header: <WebGPU/WebGPUCpp.h>
+enum class ::WebGPU::TextureFormat : uint8_t {
     R8unorm,
     R8snorm,
     R8uint,
@@ -5349,17 +5409,21 @@ enum class WebCore::WebGPU::TextureFormat : uint8_t {
     Astc12x12UnormSRGB,
 };
 
-header: <WebCore/WebGPUTextureAspect.h>
-enum class WebCore::WebGPU::TextureAspect : uint8_t {
+header: <WebGPU/WebGPUCpp.h>
+enum class ::WebGPU::TextureAspect : uint8_t {
     All,
     StencilOnly,
     DepthOnly,
 };
 
-enum class WebCore::WebGPU::PowerPreference : bool
+header: <WebGPU/WebGPUCpp.h>
+enum class ::WebGPU::PowerPreference : bool
+
+header: <WebCore/WebGPUCppAPI.h>
+using ::WebGPU::PowerPreference = ::WebGPU::PowerPreference
 
 header: <WebCore/WebGPUPredefinedColorSpace.h>
-using WebCore::WebGPU::PredefinedColorSpace = WebCore::PredefinedColorSpace
+using WebCore::PredefinedColorSpace = WebCore::PredefinedColorSpace
 
 [RefCounted] class WebCore::Model {
     Ref<WebCore::SharedBuffer> data()
@@ -5689,10 +5753,10 @@ struct WebCore::MediaUsageInfo {
 }
 
 header: <WebCore/NowPlayingInfo.h>
-[CustomHeader] struct WebCore::NowPlayingInfoArtwork {
+[CustomHeader, CreateUsing=fromIPCData] struct WebCore::NowPlayingInfoArtwork {
     String src;
     String mimeType;
-    RefPtr<WebCore::Image> image;
+    RefPtr<WebCore::ShareableBitmap> shareableBitmap();
 }
 
 header: <WebCore/NowPlayingInfo.h>
@@ -6021,9 +6085,6 @@ enum class WebCore::InspectorBackendClientDeveloperPreference : uint8_t {
 #if ENABLE(APPLE_PAY)
     WebCore::ApplePayLogoSystemImage
 #endif
-#if USE(SYSTEM_PREVIEW)
-    WebCore::ARKitBadgeSystemImage
-#endif
 #if USE(APPKIT)
     WebCore::AppKitControlSystemImage
 #endif
@@ -6048,6 +6109,9 @@ struct WebCore::SerializedScriptValueInternals {
     uint64_t exposedMessagePortCount;
     std::optional<WebCore::NonSerializedDataToken> nonSerializedDataToken;
     Vector<std::optional<WebCore::DetachedImageBitmap>> detachedImageBitmaps;
+#if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
+    [Validator='std::ranges::all_of(*detachedOffscreenCanvases, [](auto& canvas) { return !!canvas; })'] Vector<std::unique_ptr<WebCore::DetachedOffscreenCanvas>> detachedOffscreenCanvases;
+#endif
     [NotSerialized] Vector<WebCore::FileSystemHandleKeepAlive> fileSystemHandleKeepAlives;
 #if ENABLE(WEB_CODECS)
     [NotSerialized] Vector<WebCore::WebCodecsVideoFrameData> serializedVideoFrames;
@@ -6066,7 +6130,6 @@ struct WebCore::SerializedScriptValueInternals {
 #endif
     [NotSerialized] std::unique_ptr<Vector<JSC::ArrayBufferContents>> sharedBufferContentsArray;
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
-    [NotSerialized] Vector<std::unique_ptr<WebCore::DetachedOffscreenCanvas>> detachedOffscreenCanvases;
     [NotSerialized] Vector<Ref<WebCore::OffscreenCanvas>> inMemoryOffscreenCanvases;
 #endif
     [NotSerialized] Vector<Ref<WebCore::MessagePort>> inMemoryMessagePorts;
@@ -6077,6 +6140,21 @@ struct WebCore::SerializedScriptValueInternals {
     [NotSerialized] Vector<WebCore::URLKeepingBlobAlive> blobHandles;
     [NotSerialized] uint64_t memoryCost;
 };
+
+#if ENABLE(OFFSCREEN_CANVAS)
+using WebCore::PlaceholderRenderingContextIdentifier = WTF::UUID;
+# Both are ProcessQualified<WTF::UUID>, whose coder is declared as ScriptExecutionContextIdentifier.
+using WebCore::RemotePlaceholderRenderingContextIdentifier = WebCore::ScriptExecutionContextIdentifier;
+#endif
+
+#if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
+header: <WebCore/OffscreenCanvas.h>
+[CustomHeader] class WebCore::DetachedOffscreenCanvas {
+    WebCore::IntSize size();
+    bool originClean();
+    std::optional<WebCore::RemotePlaceholderRenderingContextIdentifier> placeholderIdentifier();
+};
+#endif
 
 header: <WebCore/ImageBitmap.h>
 [CustomHeader] class WebCore::DetachedImageBitmap {
@@ -6196,8 +6274,8 @@ header: <WebCore/AppleVisualEffect.h>
 #endif
 
 [CustomHeader, Nested] struct WebCore::Cursor::CustomCursorIPCData {
-    Ref<WebCore::Image> image;
-    [Validator='Ref { *image }->rect().contains(*hotSpot)'] WebCore::IntPoint hotSpot;
+    Ref<WebCore::ShareableBitmap> image;
+    [Validator='WebCore::IntRect({ }, (*image)->size()).contains(*hotSpot)'] WebCore::IntPoint hotSpot;
 #if ENABLE(MOUSE_CURSOR_SCALE)
     float scaleFactor;
 #endif
@@ -6889,6 +6967,7 @@ struct WebCore::OwnerPermissionsPolicyData {
     StorageAccess,
     LocalNetwork,
     LoopbackNetwork,
+    CrossOriginIsolated,
     Invalid
 };
 
@@ -7048,6 +7127,37 @@ enum class WebCore::PlatformVideoFieldDetail : uint8_t {
     SpatialFirstLineLate
 };
 
+header: <WebCore/AudioSampleFormat.h>
+enum class WebCore::AudioSampleFormat : int {
+    U8,
+    S16,
+    S32,
+    F32,
+    U8Planar,
+    S16Planar,
+    S32Planar,
+    F32Planar
+};
+
+header: <WebCore/VideoPixelFormat.h>
+enum class WebCore::VideoPixelFormat : int {
+    I420,
+    I420P10,
+    I420P12,
+    I420A,
+    I422,
+    I422P10,
+    I422P12,
+    I444,
+    I444P10,
+    I444P12,
+    NV12,
+    RGBA,
+    RGBX,
+    BGRA,
+    BGRX
+};
+
 using WebCore::TrackInfoAtomData = std::pair<WebCore::FourCC, Ref<WebCore::SharedBuffer>>;
 
 header: <WebCore/TrackInfo.h>
@@ -7069,6 +7179,7 @@ header: <WebCore/TrackInfo.h>
     uint8_t bitDepth;
 
     RefPtr<WebCore::SharedBuffer> cookieData;
+    std::optional<WebCore::AudioSampleFormat> sampleFormat;
 };
 using WebCore::AudioInfoData = std::pair<WebCore::TrackInfoData, WebCore::AudioSpecificInfoData>;
 
@@ -7086,6 +7197,8 @@ header: <WebCore/TrackInfo.h>
     std::optional<WebCore::PlatformVideoFieldCount> fieldCount;
     std::optional<WebCore::PlatformVideoFieldDetail> fieldDetail;
     Vector<std::pair<WebCore::FourCC, Ref<WebCore::SharedBuffer>>> extensionAtoms;
+    std::optional<uint8_t> reorderQueueMaxSize;
+    std::optional<WebCore::VideoPixelFormat> pixelFormat;
 
 #if PLATFORM(VISION)
     std::optional<WebCore::ImmersiveVideoMetadata> immersiveVideoMetadata;
@@ -7145,6 +7258,11 @@ header: <WebCore/DocumentClasses.h>
 #if ENABLE(MODEL_PROCESS)
 header: <WebCore/StageModeOperations.h>
 enum class WebCore::StageModeOperation : bool;
+
+header: <WebCore/ModelPlayer.h>
+[CustomHeader] struct WebCore::ModelSceneGraphAsTextOptions {
+    bool includeAssetEntities;
+};
 #endif
 
 #if ENABLE(SPATIAL_PORTAL)
@@ -7186,9 +7304,13 @@ enum class WebCore::ShouldGoToHistoryItem : uint8_t {
     ItemUnknown
 };
 
+enum class WebCore::IsSecureContext : bool;
+
 struct WebCore::DocumentSecurityPolicy {
     WebCore::CrossOriginEmbedderPolicy crossOriginEmbedderPolicy;
     WebCore::CrossOriginOpenerPolicy crossOriginOpenerPolicy;
+    WebCore::IsSecureContext isSecureContext;
+    std::optional<WebCore::AgentClusterIdentifier> agentClusterIdentifier;
 };
 
 header: <WebCore/ProcessSwapDisposition.h>
@@ -7219,27 +7341,27 @@ struct WebCore::FocusEventData {
     bool altKey;
 }
 
-header: <WebCore/AXObjectCache.h>
+header: <WebCore/AXAnnouncementTypes.h>
 [CustomHeader] enum class WebCore::NotifyPriority : uint8_t {
     Normal,
     High
 };
 
-header: <WebCore/AXObjectCache.h>
+header: <WebCore/AXAnnouncementTypes.h>
 [CustomHeader] enum class WebCore::InterruptBehavior : uint8_t {
     None,
     All,
     Pending
 };
 
-header: <WebCore/AXObjectCache.h>
+header: <WebCore/AXAnnouncementTypes.h>
 [CustomHeader] enum class WebCore::LiveRegionStatus : uint8_t {
     Off,
     Polite,
     Assertive
 };
 
-header: <WebCore/AXObjectCache.h>
+header: <WebCore/AXObjectTypes.h>
 [CustomHeader] enum class WebCore::AccessibilityMode : uint8_t {
     Off,
     MainThread,
@@ -7248,7 +7370,7 @@ header: <WebCore/AXObjectCache.h>
     OffWasAXThread
 };
 
-header: <WebCore/AXObjectCache.h>
+header: <WebCore/AXObjectTypes.h>
 [CustomHeader] struct WebCore::AXDebugInfo {
     WebCore::AccessibilityMode accessibilityMode;
     String liveTree;
@@ -7258,7 +7380,7 @@ header: <WebCore/AXObjectCache.h>
     uint64_t webProcessLocalTokenHash;
 };
 
-header: <WebCore/AXObjectCache.h>
+header: <WebCore/AXAnnouncementTypes.h>
 [CustomHeader] struct WebCore::AriaNotifyData {
     String message;
     WebCore::NotifyPriority priority;
@@ -7267,14 +7389,15 @@ header: <WebCore/AXObjectCache.h>
 };
 
 #if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
-header: <WebCore/AXObjectCache.h>
+header: <WebCore/AXObjectTypes.h>
 [CustomHeader] struct WebCore::InheritedFrameState {
     bool isAXHidden;
     bool isInert;
     bool isRenderHidden;
+    String hostingFrameName;
 };
 
-header: <WebCore/AXObjectCache.h>
+header: <WebCore/AXObjectTypes.h>
 [CustomHeader] struct WebCore::AXFrameGeometry {
     WebCore::IntPoint screenPosition;
     WebCore::AffineTransform screenTransform;
@@ -7282,14 +7405,14 @@ header: <WebCore/AXObjectCache.h>
 #endif
 
 #if PLATFORM(COCOA)
-header: <WebCore/AXObjectCache.h>
+header: <WebCore/AXAnnouncementTypes.h>
 [CustomHeader] struct WebCore::LiveRegionAnnouncementData {
     WebCore::AttributedString message;
     WebCore::LiveRegionStatus status;
 };
 #endif
 
-header: <WebCore/AXObjectCache.h>
+header: <WebCore/AccessibilityRemoteToken.h>
 [CustomHeader] struct WebCore::AccessibilityRemoteToken {
 #if PLATFORM(MAC)
     Vector<uint8_t> bytes;
@@ -7298,6 +7421,86 @@ header: <WebCore/AXObjectCache.h>
     ProcessID pid;
 #endif
 }
+
+#if PLATFORM(MAC)
+header: <WebCore/AXTextStateChangeIntent.h>
+enum class WebCore::AXTextStateChangeType : uint8_t {
+    Unknown,
+    Edit,
+    SelectionMove,
+    SelectionExtend,
+    SelectionBoundary
+};
+
+header: <WebCore/AXTextStateChangeIntent.h>
+enum class WebCore::AXTextSelectionDirection : uint8_t {
+    Unknown,
+    Beginning,
+    End,
+    Previous,
+    Next,
+    Discontiguous
+};
+
+header: <WebCore/AXTextStateChangeIntent.h>
+enum class WebCore::AXTextSelectionGranularity : uint8_t {
+    Unknown,
+    Character,
+    Word,
+    Line,
+    Sentence,
+    Paragraph,
+    Page,
+    Document,
+    All
+};
+
+header: <WebCore/TextAffinity.h>
+enum class WebCore::Affinity : bool
+
+header: <WebCore/AXTextMarker.h>
+enum class WebCore::TextMarkerOrigin : uint16_t {
+    Unknown,
+    PreviousLineStart,
+    NextLineEnd,
+    NextWordStart,
+    NextWordEnd,
+    PreviousWordStart,
+    PreviousWordEnd,
+    PreviousSentenceStart,
+    NextSentenceEnd,
+    PreviousParagraphStart,
+    NextParagraphEnd,
+    Position,
+    StartTextMarkerForBounds,
+    EndTextMarkerForBounds
+};
+
+header: <WebCore/AXObjectTypes.h>
+[CustomHeader] struct WebCore::AXRemoteFrameTextMarker {
+    unsigned treeID;
+    unsigned objectID;
+    unsigned offset;
+    uint8_t anchorType;
+    unsigned characterStart;
+    unsigned characterOffset;
+    bool isRedacted;
+    WebCore::Affinity affinity;
+    WebCore::TextMarkerOrigin origin;
+};
+
+header: <WebCore/AXObjectTypes.h>
+[CustomHeader] struct WebCore::AXRemoteFrameSelectedTextChange {
+    WebCore::AXTextStateChangeType type;
+    WebCore::AXTextSelectionDirection direction;
+    WebCore::AXTextSelectionGranularity granularity;
+    bool focusChange;
+    bool isSynchronizing;
+    std::optional<WebCore::AXRemoteFrameTextMarker> selectionStart;
+    std::optional<WebCore::AXRemoteFrameTextMarker> selectionEnd;
+    std::optional<WebCore::AccessibilityRemoteToken> textChangeElement;
+};
+#endif
 
 header: <WebCore/AXCoreObject.h>
 enum class WebCore::AccessibilitySearchDirection : uint8_t {
@@ -7318,6 +7521,7 @@ enum class WebCore::AccessibilitySearchKey : uint8_t {
     DifferentType,
     FontChange,
     FontColorChange,
+    FormFieldWithError,
     Frame,
     Graphic,
     HeadingLevel1,
@@ -7438,6 +7642,12 @@ struct WebCore::FocusOptions {
 
 enum class WebKit::CommitTiming : bool;
 
+header: <WebCore/DevicePostureType.h>
+enum class WebCore::DevicePostureType : uint8_t {
+    Continuous,
+    Folded,
+};
+
 header: <WebCore/ResolvedCaptionDisplaySettingsOptions.h>
 [CustomHeader] enum class WebCore::ResolvedCaptionDisplaySettingsOptionsXPositionArea : uint8_t {
     Center,
@@ -7487,11 +7697,57 @@ enum class WebCore::DOMPasteAccessPolicy : uint8_t {
 
 header: <WebCore/UserGestureIndicator.h>
 [CustomHeader] struct WebCore::UserGestureTokenData {
+    Markable<WTF::UUID> authorizationToken;
+    MonotonicTime startTime;
     WebCore::IsProcessingUserGesture isProcessingUserGesture;
     WebCore::UserGestureType userGestureType;
-    std::optional<WTF::UUID> authorizationToken;
     WebCore::CanRequestDOMPaste canRequestDOMPaste;
-    MonotonicTime startTime;
     WebCore::DOMPasteAccessPolicy domPasteAccessPolicy;
     WebCore::GestureScope scope;
+    bool removesTransientActivation;
+};
+
+header: <WebCore/ViewportSegments.h>
+[CustomHeader] struct WebCore::ViewportSegments {
+    unsigned columns;
+    unsigned rows;
+    Vector<WebCore::FloatRect> segmentRects;
+};
+
+webkit_platform_headers: <WebCore/QuirkMatchPattern.h> <WebCore/QuirksData.h> <WebCore/RuntimeQuirkTable.h>
+
+[WebKitPlatform] enum class WebCore::URLEnvironment : uint8_t {
+    SmallScreen,
+    TubularApp,
+    LensApp,
+    SafariWebApp,
+};
+
+[CustomHeader, WebKitPlatform] class WebCore::QuirkMatchPattern {
+    [Validator='WebCore::QuirkMatchPattern::parse(*string)'] String string()
+};
+
+[CustomHeader, WebKitPlatform] struct WebCore::RuntimeQuirkBehavior {
+    [Validator='*id != WebCore::QuirkBehaviorID::NumberOfIDs'] WebCore::QuirkBehaviorID id;
+    String script;
+    String userAgent;
+    String chromeCompatibilityVersion;
+    Vector<String> cookieNames;
+    String elementSelector;
+    String documentSelector;
+    Vector<WebCore::QuirkMatchPattern> secondaryURL;
+};
+
+[CustomHeader, WebKitPlatform] struct WebCore::RuntimeQuirk {
+    Vector<WebCore::QuirkMatchPattern> matches;
+    Vector<WebCore::QuirkMatchPattern> embeddedMatches;
+    Vector<WebCore::QuirkMatchPattern> excludeMatches;
+    String queryContains;
+    String fragmentContains;
+    std::optional<WebCore::URLEnvironment> environment;
+    Vector<WebCore::RuntimeQuirkBehavior> behaviors;
+};
+
+[CustomHeader, WebKitPlatform] struct WebCore::RuntimeQuirkTable {
+    Vector<WebCore::RuntimeQuirk> quirks;
 };

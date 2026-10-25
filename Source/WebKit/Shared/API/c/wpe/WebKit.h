@@ -82,7 +82,7 @@
 #include <WebKit/WKFrame.h>
 #include <WebKit/WKFrameInfoRef.h>
 #include <WebKit/WKFramePolicyListener.h>
-#include <WebKit/WKHitTestResult.h>
+#include <WebKit/WKHitTestResultRef.h>
 #include <WebKit/WKNavigationActionRef.h>
 #include <WebKit/WKNavigationDataRef.h>
 #include <WebKit/WKNavigationRef.h>

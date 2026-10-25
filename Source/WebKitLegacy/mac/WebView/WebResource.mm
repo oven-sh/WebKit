@@ -47,6 +47,7 @@
 #import <wtf/RefPtr.h>
 #import <wtf/RunLoop.h>
 #import <wtf/RuntimeApplicationChecks.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 
 static NSString * const WebResourceDataKey =              @"WebResourceData";
@@ -94,14 +95,16 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
 
 @end
 
-@implementation WebResource
+@implementation WebResource {
+    RetainPtr<WebResourcePrivate> _private;
+}
 
 - (instancetype)init
 {
     self = [super init];
     if (!self)
         return nil;
-    _private = [[WebResourcePrivate alloc] init];
+    _private = adoptNS([[WebResourcePrivate alloc] init]);
     return self;
 }
 
@@ -155,7 +158,7 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
         return nil;
     }
 
-    _private = [[WebResourcePrivate alloc] initWithCoreResource:coreResource.releaseNonNull()];
+    _private = adoptNS([[WebResourcePrivate alloc] initWithCoreResource:coreResource.releaseNonNull()]);
     return self;
 }
 
@@ -184,12 +187,6 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
     [encoder encodeObject:textEncoding.get() forKey:WebResourceTextEncodingNameKey];
     [encoder encodeObject:frameName.get() forKey:WebResourceFrameNameKey];
     [encoder encodeObject:response.get() forKey:WebResourceResponseKey];
-}
-
-- (void)dealloc
-{
-    [_private release];
-    [super dealloc];
 }
 
 - (id)copyWithZone:(NSZone *)zone
@@ -257,7 +254,7 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
     if (!self)
         return nil;
 
-    _private = [[WebResourcePrivate alloc] initWithCoreResource:WTF::move(coreResource)];
+    _private = adoptNS([[WebResourcePrivate alloc] initWithCoreResource:WTF::move(coreResource)]);
     return self;
 }
 
@@ -300,13 +297,13 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
         return nil;
     }
 
-    auto coreResource = WebCore::ArchiveResource::create(WebCore::SharedBuffer::create(copyData ? adoptNS([data copy]).get() : data), URL, MIMEType, textEncodingName, frameName, response);
+    auto coreResource = WebCore::ArchiveResource::create(WebCore::SharedBuffer::create(copyData ? checked_objc_cast<NSData>(adoptNS([data copy]).get()) : data), URL, MIMEType, textEncodingName, frameName, response);
     if (!coreResource) {
         [self release];
         return nil;
     }
 
-    _private = [[WebResourcePrivate alloc] initWithCoreResource:coreResource.releaseNonNull()];
+    _private = adoptNS([[WebResourcePrivate alloc] initWithCoreResource:coreResource.releaseNonNull()]);
     return self;
 }
 

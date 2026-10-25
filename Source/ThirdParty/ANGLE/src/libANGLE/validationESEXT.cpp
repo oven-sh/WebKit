@@ -4192,4 +4192,16 @@ bool ValidateTexStorageAttribs3DEXT(const Context *context,
     return true;
 }
 
+bool ValidateTrimMemoryANGLE(const Context *context,
+                             angle::EntryPoint entryPoint,
+                             MemoryTrimLevel trimLevel)
+{
+    if (ANGLE_UNLIKELY(trimLevel == MemoryTrimLevel::InvalidEnum))
+    {
+        ANGLE_VALIDATION_ERROR(GL_INVALID_ENUM, kEnumInvalid);
+        return false;
+    }
+    return true;
+}
+
 }  // namespace gl

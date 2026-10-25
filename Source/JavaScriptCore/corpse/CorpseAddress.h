@@ -25,13 +25,16 @@
 
 #pragma once
 
-#if (OS(MACOS) || USE(APPLE_INTERNAL_SDK)) && !PLATFORM(MACCATALYST) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+#if ENABLE(LIB_JSC_TOOLS)
 
 #include <bit>
 #include <compare>
 #include <cstddef>
+#include <limits>
 #include <mach/mach.h>
 #include <stdint.h>
+#include <wtf/HashFunctions.h>
+#include <wtf/HashTraits.h>
 
 #if CPU(ARM64E)
 #include <ptrauth.h>
@@ -49,6 +52,7 @@ public:
         : m_value(value)
     {
     }
+
     explicit Address(const void* pointer)
         : m_value(reinterpret_cast<mach_vm_address_t>(pointer))
     {
@@ -90,6 +94,8 @@ public:
 
     uint64_t operator-(Address other) const { return m_value - other.m_value; }
 
+    static constexpr Address deletedValue() { return Address(std::numeric_limits<mach_vm_address_t>::max()); }
+
 private:
     mach_vm_address_t m_value { 0 };
 };
@@ -97,4 +103,22 @@ private:
 } // namespace Corpse
 } // namespace JSC
 
-#endif // (OS(MACOS) || USE(APPLE_INTERNAL_SDK)) && !PLATFORM(MACCATALYST) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+namespace WTF {
+
+template<> struct DefaultHash<JSC::Corpse::Address> {
+    using Address = JSC::Corpse::Address;
+    static unsigned hash(Address address) { return intHash(address.toMachVMAddress()); }
+    static bool equal(Address a, Address b) { return a == b; }
+    static constexpr bool safeToCompareToEmptyOrDeleted = true;
+};
+
+template<> struct HashTraits<JSC::Corpse::Address> : GenericHashTraits<JSC::Corpse::Address> {
+    using Address = JSC::Corpse::Address;
+    static constexpr bool emptyValueIsZero = true;
+    static void constructDeletedValue(Address& slot) { slot = Address::deletedValue(); }
+    static bool isDeletedValue(Address value) { return value == Address::deletedValue(); }
+};
+
+} // namespace WTF
+
+#endif // ENABLE(LIB_JSC_TOOLS)

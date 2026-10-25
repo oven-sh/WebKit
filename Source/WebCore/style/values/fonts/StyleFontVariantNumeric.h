@@ -57,7 +57,7 @@ struct FontVariantNumeric {
             && m_platform.slashedZero == FontVariantNumericSlashedZero::Normal;
     }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -125,7 +125,7 @@ private:
 
 // MARK: - Conversion
 
-template<> struct CSSValueConversion<FontVariantNumeric> { FontVariantNumeric NODELETE operator()(BuilderState&, const CSSValue&); };
+template<> struct CSSValueConversion<FontVariantNumeric> { FontVariantNumeric LEGACY_NODELETE operator()(BuilderState&, const CSSValue&); };
 
 } // namespace Style
 } // namespace WebCore

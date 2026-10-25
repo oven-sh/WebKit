@@ -72,6 +72,7 @@ class FragmentedSharedBuffer;
 class GraphicsContext;
 class Element;
 class HTMLPlugInElement;
+class LocalFrameView;
 class NetscapePlugInStreamLoaderClient;
 class ResourceResponse;
 class Scrollbar;
@@ -262,6 +263,16 @@ public:
             return inverseTransform->mapPoint(value);
     }
 
+    // The view that convertFromPluginToRootView() maps into: the top of the plugin's widget tree,
+    // where Widget::convertToRootView() stops.
+    RefPtr<WebCore::LocalFrameView> rootView() const;
+
+    // Under site isolation, the root view above is this process's local root, not the main frame.
+    // Anything sent to the UI process in root view coordinates should be converted with these first.
+    // FIXME: boundsOnScreen(), the accessibility screen conversions and autoscroll need this too.
+    WebCore::FloatPoint convertFromRootViewToMainFrameView(WebCore::FloatPoint) const;
+    WebCore::FloatRect convertFromRootViewToMainFrameView(WebCore::FloatRect) const;
+
     WebCore::IntRect boundsOnScreen() const;
 
     bool showContextMenuAtPoint(const WebCore::IntPoint&);
@@ -382,7 +393,7 @@ private:
     bool documentFinishedLoading() const { return m_documentFinishedLoading; }
     void ensureDataBufferLength(uint64_t) WTF_REQUIRES_LOCK(m_streamedDataLock);
 
-    bool NODELETE haveStreamedDataForRange(uint64_t offset, size_t count) const WTF_REQUIRES_LOCK(m_streamedDataLock);
+    bool LEGACY_NODELETE haveStreamedDataForRange(uint64_t offset, size_t count) const WTF_REQUIRES_LOCK(m_streamedDataLock);
     // This just checks whether the CFData is large enough; it doesn't know if we filled this range with data.
 
     void insertRangeRequestData(uint64_t offset, const Vector<uint8_t>&);
@@ -403,7 +414,7 @@ protected:
     explicit PDFPluginBase(WebCore::HTMLPlugInElement&);
 
     WebPage* webPage() const;
-    WebCore::Page* NODELETE page() const;
+    WebCore::Page* LEGACY_NODELETE page() const;
 
     virtual void teardown();
 
@@ -473,8 +484,8 @@ protected:
     virtual void incrementalLoadingDidFinish() { }
 
 #if ENABLE(PDF_HUD)
-    WebCore::IntRect frameForHUDInRootViewCoordinates() const;
-    bool NODELETE hudEnabled() const;
+    WebCore::IntRect frameForHUDInMainFrameViewCoordinates() const;
+    bool LEGACY_NODELETE hudEnabled() const;
     bool shouldShowHUD() const;
     void updateHUDVisibility();
 #endif
@@ -487,16 +498,16 @@ protected:
 
     String annotationStyle() const;
 
-    static NSString *NODELETE htmlPasteboardType();
-    static NSString *NODELETE rtfPasteboardType();
-    static NSString *NODELETE stringPasteboardType();
-    static NSString *NODELETE urlPasteboardType();
+    static NSString *LEGACY_NODELETE htmlPasteboardType();
+    static NSString *LEGACY_NODELETE rtfPasteboardType();
+    static NSString *LEGACY_NODELETE stringPasteboardType();
+    static NSString *LEGACY_NODELETE urlPasteboardType();
 
 #if PLATFORM(MAC)
     void writeStringToFindPasteboard(const String&) const;
 #endif
 
-    std::optional<WebCore::PageIdentifier> NODELETE pageIdentifier() const;
+    std::optional<WebCore::PageIdentifier> LEGACY_NODELETE pageIdentifier() const;
 
     virtual WebCore::Color pluginBackgroundColor() const;
     void updateFullFramePluginBackgroundColor();

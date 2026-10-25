@@ -1,0 +1,200 @@
+# Promise.all of an array literal whose elements are direct calls of async functions: each call enters the body without a promise, and a bit of the operation says that the element is what such a call returned
+# FORM: Prepared
+# RUN: pass ResolveAwaitedCalls
+# STATISTIC: AwaitedCallsResolved = 0
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="state" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="first" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f16 entryWithoutPromise=f16 promiseType=Promise promiseParameter=1}
+function f1 name="second" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f17 entryWithoutPromise=f17 promiseType=Promise promiseParameter=0}
+function f2 name="neverAwaits" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f18 promiseType=Promise worker=f18}
+function f3 name="plainCallee" results=[{type=Promise}]
+
+# The caller need not be a coroutine. In place of a promise each body takes undefined, as it does from a caller that awaits the call
+function f4 name="twoCalls" parameters=[{type=anything}] results=[{type=Promise}] {
+    v1 = CallDirect v0 function=f0 @10
+    v2 = CallDirect function=f1 @11
+    v3 = PromiseAllOfElements v1, v2 contents=anything @12
+    Return v3
+}
+# CHECK-LABEL: function f4 name="twoCalls"
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: [[noPromise4]]: undefined = Undefined
+# CHECK-NEXT: v1: anything = CallDirect v0, [[noPromise4]] function=f16 @10
+# CHECK-NEXT: [[neither4]]: undefined = Undefined
+# CHECK-NEXT: v2: anything = CallDirect [[neither4]] function=f17 @11
+# CHECK-NEXT: v3: Promise{{*}} = PromiseAllOfElements v1, v2 contents=anything directCalls=3 @12
+# CHECK-NEXT: Return v3
+
+# An element that is no call has no bit, and a pure value may stand between the calls
+function f5 name="valueBetweenCalls" parameters=[{type=anything}] results=[{type=Promise}] {
+    v1 = CallDirect v0 function=f0 @20
+    v2 = Integer integer=1
+    v3 = CallDirect function=f1 @21
+    v4 = PromiseAllOfElements v1, v2, v3 contents=anything
+    Return v4
+}
+# CHECK-LABEL: function f5 name="valueBetweenCalls"
+# CHECK: v1: anything = CallDirect v0, {{*}} function=f16 @20
+# CHECK-NEXT: = Integer integer=1
+# CHECK: v3: anything = CallDirect {{*}} function=f17 @21
+# CHECK-NEXT: = PromiseAllOfElements v1, v2, v3 contents=anything directCalls=5
+
+# What the call returns is no promise any more, so a cast that said so goes away
+function f6 name="throughCasts" parameters=[{type=anything}] results=[{type=Promise}] {
+    v1 = CallDirect v0 function=f0 @30
+    v2 = Upcast v1 castType=undefined|Promise
+    v3 = PromiseAllOfElements v2 contents=anything
+    Return v3
+}
+# CHECK-LABEL: function f6 name="throughCasts"
+# CHECK-NOT: Upcast
+# CHECK: v1: anything = CallDirect v0, {{*}} function=f16 @30
+# CHECK-NEXT: = PromiseAllOfElements v1 contents=anything directCalls=1
+# CHECK-NOT: Upcast
+
+# Until the operation has it, what a call without a promise returned is held by nobody else, so nothing may run but the calls for the other elements. The call in front of the store keeps its promise, and the call behind it does not
+function f7 name="effectBetweenCalls" parameters=[{type=anything}] results=[{type=Promise}] {
+    v1 = CallDirect v0 function=f0 @40
+    PutModuleVariable v0 variable=g0
+    v3 = CallDirect function=f1 @41
+    v4 = PromiseAllOfElements v1, v3 contents=anything
+    Return v4
+}
+# CHECK-LABEL: function f7 name="effectBetweenCalls"
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: v1: Promise = CallDirect v0 function=f0 @40
+# CHECK-NEXT: PutModuleVariable v0 variable=g0
+# CHECK-NEXT: [[noPromise7]]: undefined = Undefined
+# CHECK-NEXT: v3: anything = CallDirect [[noPromise7]] function=f17 @41
+# CHECK-NEXT: = PromiseAllOfElements v1, v3 contents=anything directCalls=2
+
+function f8 name="plainCalleeFirst" results=[{type=Promise}] {
+    v0 = CallDirect function=f3 @50
+    v1 = CallDirect function=f1 @51
+    v2 = PromiseAllOfElements v0, v1 contents=anything
+    Return v2
+}
+# CHECK-LABEL: function f8 name="plainCalleeFirst"
+# CHECK: b0():
+# CHECK-NEXT: v0: Promise = CallDirect function=f3 @50
+# CHECK-NEXT: [[noPromise8]]: undefined = Undefined
+# CHECK-NEXT: v1: anything = CallDirect [[noPromise8]] function=f17 @51
+# CHECK-NEXT: = PromiseAllOfElements v0, v1 contents=anything directCalls=2
+
+# The plain function runs behind the call of the async function
+function f9 name="plainCalleeLast" results=[{type=Promise}] {
+    v0 = CallDirect function=f1 @60
+    v1 = CallDirect function=f3 @61
+    v2 = PromiseAllOfElements v0, v1 contents=anything
+    Return v2
+}
+# CHECK-LABEL: function f9 name="plainCalleeLast"
+# CHECK: b0():
+# CHECK-NEXT: v0: Promise = CallDirect function=f1 @60
+# CHECK-NEXT: v1: Promise = CallDirect function=f3 @61
+# CHECK-NEXT: = PromiseAllOfElements v0, v1 contents=anything
+# CHECK-NOT: directCalls
+
+function f10 name="sameCallTwice" parameters=[{type=anything}] results=[{type=Promise}] {
+    v1 = CallDirect v0 function=f0 @70
+    v2 = PromiseAllOfElements v1, v1 contents=anything
+    Return v2
+}
+# CHECK-LABEL: function f10 name="sameCallTwice"
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: v1: Promise = CallDirect v0 function=f0 @70
+# CHECK-NEXT: = PromiseAllOfElements v1, v1 contents=anything
+# CHECK-NOT: directCalls
+
+function f11 name="callInAnotherBlock" parameters=[{type=anything}] results=[{type=Promise}] {
+    v1 = CallDirect v0 function=f0 @80
+    Jump -> next b1()
+  b1():
+    v2 = PromiseAllOfElements v1 contents=anything
+    Return v2
+}
+# CHECK-LABEL: function f11 name="callInAnotherBlock"
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: v1: Promise = CallDirect v0 function=f0 @80
+# CHECK: = PromiseAllOfElements v1 contents=anything
+# CHECK-NOT: directCalls
+
+# A function that never suspends has no body to enter: its ramp makes a promise that is already settled
+function f12 name="workerIsLeftAlone" results=[{type=Promise}] {
+    v0 = CallDirect function=f2 @90
+    v1 = CallDirect function=f1 @91
+    v2 = PromiseAllOfElements v0, v1 contents=anything
+    Return v2
+}
+# CHECK-LABEL: function f12 name="workerIsLeftAlone"
+# CHECK: b0():
+# CHECK-NEXT: v0: Promise = CallDirect function=f2 @90
+# CHECK-NEXT: [[noPromise12]]: undefined = Undefined
+# CHECK-NEXT: v1: anything = CallDirect [[noPromise12]] function=f17 @91
+# CHECK-NEXT: = PromiseAllOfElements v0, v1 contents=anything directCalls=2
+
+# The operation has a bit for each of the first 32 elements
+function f13 name="thirtyTwoCallsAndAValue" parameters=[{type=anything}] results=[{type=Promise}] {
+# REPEAT: i = 1..32
+    v%(i) = CallDirect function=f1
+# END REPEAT
+    v33 = PromiseAllOfElements v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v0 contents=anything
+    Return v33
+}
+# CHECK-LABEL: function f13 name="thirtyTwoCallsAndAValue"
+# CHECK-NOT: : Promise = CallDirect
+# CHECK-COUNT-32: : anything = CallDirect {{*}} function=f17
+# CHECK-NEXT: = PromiseAllOfElements v1, v2, {{*}}, v32, v0 contents=anything directCalls=4294967295
+
+# The call for the element without a bit keeps its promise, and it runs behind all the others
+function f14 name="thirtyThreeCalls" results=[{type=Promise}] {
+# REPEAT: i = 0..32
+    v%(i) = CallDirect function=f1
+# END REPEAT
+    v33 = PromiseAllOfElements v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32 contents=anything
+    Return v33
+}
+# CHECK-LABEL: function f14 name="thirtyThreeCalls"
+# CHECK-NOT: Undefined
+# CHECK-COUNT-33: : Promise = CallDirect function=f1
+# CHECK-NEXT: = PromiseAllOfElements v0, v1,
+# CHECK-NOT: directCalls
+
+function f15 name="awaitsAll" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f15 body=f19 entryWithoutPromise=f19 promiseType=Promise promiseParameter=1}
+function f16 name="first" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f16 entryWithoutPromise=f16 promiseType=Promise promiseParameter=1} {
+    v2 = AwaitBySavingFrame v0, v1
+    v3 = ReturnAsyncResult v1, v2
+    Return v3
+}
+function f17 name="second" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f1} creator=Coroutine{kind=AsyncFunction ramp=f1 body=f17 entryWithoutPromise=f17 promiseType=Promise promiseParameter=0} {
+    v1 = Undefined
+    v2 = AwaitBySavingFrame v1, v0
+    v3 = ReturnAsyncResult v0, v2
+    Return v3
+}
+function f18 name="neverAwaits" role=AsyncWorker results=[{type=undefined}] derivation={source=f2} creator=Coroutine{kind=AsyncFunction ramp=f2 body=f18 promiseType=Promise worker=f18} {
+    v0 = Undefined
+    Return v0
+}
+
+# The elements are not awaited by this frame: they take undefined, not the driver of the caller, and the await of the operation stays an await of a promise
+function f19 name="awaitsAll" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f15} creator=Coroutine{kind=AsyncFunction ramp=f15 body=f19 entryWithoutPromise=f19 promiseType=Promise promiseParameter=1} {
+    v2 = CallDirect v0 function=f0 @100
+    v3 = CallDirect function=f1 @101
+    v4 = PromiseAllOfElements v2, v3 contents=anything @102
+    v5 = AwaitBySavingFrame v4, v1 @103
+    v6 = ReturnAsyncResult v1, v5
+    Return v6
+}
+# CHECK-LABEL: function f19 name="awaitsAll"
+# CHECK-NOT: AwaitCallBySavingFrame
+# CHECK: b0(v0: anything, v1: undefined|Promise):
+# CHECK-NEXT: [[noPromise19]]: undefined = Undefined
+# CHECK-NEXT: v2: anything = CallDirect v0, [[noPromise19]] function=f16 @100
+# CHECK-NEXT: [[neither19]]: undefined = Undefined
+# CHECK-NEXT: v3: anything = CallDirect [[neither19]] function=f17 @101
+# CHECK-NEXT: v4: Promise{{*}} = PromiseAllOfElements v2, v3 contents=anything directCalls=3 @102
+# CHECK-NEXT: v5: anything = AwaitBySavingFrame v4, v1 @103
+# CHECK-NOT: AwaitCallBySavingFrame

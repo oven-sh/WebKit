@@ -59,7 +59,6 @@
 #include <WebCore/StyleTextUnderlineOffset.h>
 #include <WebCore/StyleTextUnderlinePosition.h>
 #include <WebCore/StyleTouchAction.h>
-#include <WebCore/StyleWebKitBorderSpacing.h>
 #include <WebCore/StyleWebKitLineBoxContain.h>
 #include <WebCore/StyleWebKitLineGrid.h>
 #include <WebCore/StyleWebKitOverflowScrolling.h>
@@ -122,6 +121,8 @@ public:
     Color visitedLinkTextEmphasisColor;
     CaretColor caretColor;
     CaretColor visitedLinkCaretColor;
+    std::optional<WebCore::Color> overrideColor;
+    std::optional<WebCore::Color> overrideVisitedLinkColor;
 
     AccentColor accentColor;
 
@@ -146,9 +147,6 @@ public:
 
     ListStyleType listStyleType;
     BlockEllipsis blockEllipsis;
-
-    WebkitBorderSpacing borderHorizontalSpacing;
-    WebkitBorderSpacing borderVerticalSpacing;
 
     TextIndent textIndent;
 
@@ -231,6 +229,7 @@ public:
     PREFERRED_TYPE(bool) unsigned autoRevealsWhenFound : 1;
     PREFERRED_TYPE(bool) unsigned insideDefaultButton : 1;
     PREFERRED_TYPE(bool) unsigned insideSubmitButton : 1;
+    PREFERRED_TYPE(bool) unsigned inBaseAppearanceSubtree : 1;
 #if ENABLE(SMART_IMAGE_RESIZER)
     PREFERRED_TYPE(bool) unsigned isAffectedBySmartImageResizer : 1;
 #endif

@@ -134,7 +134,7 @@ void XMLDocumentParser::append(RefPtr<StringImpl>&& inputSource)
 void XMLDocumentParser::handleError(XMLErrors::Type type, const char* m, TextPosition position)
 {
     if (!m_xmlErrors)
-        m_xmlErrors = makeUnique<XMLErrors>(*protect(document()));
+        lazyInitialize(m_xmlErrors, makeUnique<XMLErrors>(*protect(document())));
     m_xmlErrors->handleError(type, m, position);
     if (type != XMLErrors::Type::Warning)
         m_sawError = true;
@@ -212,7 +212,7 @@ void XMLDocumentParser::end()
         // Appending to the leaf text node may have fired mutation events, which can run arbitrary scripts.
         if (isDetached())
             return;
-        document()->styleScope().didChangeStyleSheetEnvironment();
+        protect(document()->styleScope())->didChangeStyleSheetEnvironment();
     }
 
     if (isParsing())

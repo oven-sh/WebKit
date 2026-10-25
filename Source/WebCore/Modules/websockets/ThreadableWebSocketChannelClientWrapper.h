@@ -47,14 +47,14 @@ class WebSocketChannelClient;
 
 class ThreadableWebSocketChannelClientWrapper : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<ThreadableWebSocketChannelClientWrapper> {
 public:
-    static Ref<ThreadableWebSocketChannelClientWrapper> create(ScriptExecutionContext&, WebSocketChannelClient&);
+    static Ref<ThreadableWebSocketChannelClientWrapper> LEGACY_NODELETE create(ScriptExecutionContext&, WebSocketChannelClient&);
 
-    WorkerThreadableWebSocketChannel::Peer* NODELETE peer() const;
+    WorkerThreadableWebSocketChannel::Peer* LEGACY_NODELETE peer() const;
     void didCreateWebSocketChannel(Ref<WorkerThreadableWebSocketChannel::Peer>&&);
     void clearPeer();
 
-    bool NODELETE failedWebSocketChannelCreation() const;
-    void NODELETE setFailedWebSocketChannelCreation();
+    bool LEGACY_NODELETE failedWebSocketChannelCreation() const;
+    void LEGACY_NODELETE setFailedWebSocketChannelCreation();
 
     // Subprotocol and extensions will be available when didConnect() callback is invoked.
     String subprotocol() const;
@@ -62,7 +62,7 @@ public:
     String extensions() const;
     void setExtensions(const String&);
 
-    void clearClient();
+    void LEGACY_NODELETE clearClient();
 
     void didConnect();
     void didReceiveMessage(String&& message);
@@ -73,7 +73,7 @@ public:
     void didReceiveMessageError(String&& reason);
     void didUpgradeURL();
 
-    void NODELETE suspend();
+    void LEGACY_NODELETE suspend();
     void resume();
 
 private:

@@ -1,0 +1,31 @@
+# Two functions capture one value. Nothing calls the first, so its capture stays as it was declared, only expected; flow has proven the capture of the second.
+# One variable takes the place of both captures, and it is only expected. The second function reads it as what it is, anything, and says what is proven by a cast:
+# the read has the type that its rule gives, and what uses it keeps its types
+# FORM: AsRead
+# RUN: pipeline PromoteEnvironmentsToVariables
+# OPTIONS: only-passes=PromoteEnvironmentsToVariables check=VerifyEachPass
+# CHECK: variable g1 module=m0 declared={type=number flags=[IsExpected]}
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = NewClosure v1 function=f1
+    PutModuleVariable v2 variable=g0
+    v4 = NewClosure v1 function=f2
+    v5 = Call v4
+    Return
+}
+function f1 name="neverCalled" kind=Arrow captures=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0):
+    Return v0
+}
+function f2 name="called" kind=Arrow captures=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0):
+    v1 = Add v0, v0
+    Return v1
+# CHECK: [[read]]: anything ~ number = GetModuleVariable variable=g1
+# CHECK-NEXT: [[proven]]: number = AssumeType [[read]] castType=number
+}

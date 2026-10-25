@@ -78,7 +78,7 @@ public:
     void reshape(int width, int height) final;
     bool supportsExtension(WebCore::GCGLExtension) final;
     bool enableExtension(WebCore::GCGLExtension) final;
-    std::optional<size_t> NODELETE estimatedMemoryCost() final;
+    std::optional<size_t> LEGACY_NODELETE estimatedMemoryCost() final;
 
     GCGLint maxCombinedTextureImageUnits() final { return m_maxCombinedTextureImageUnits; }
     GCGLint maxVertexAttribs() final { return m_maxVertexAttribs; }
@@ -86,6 +86,7 @@ public:
     GCGLint maxCubeMapTextureSize() final { return m_maxCubeMapTextureSize; }
     GCGLint maxRenderbufferSize() final { return m_maxRenderbufferSize; }
     std::array<GCGLint, 2> maxViewportDims() final { return m_maxViewportDims; }
+    std::array<GCGLint, 2> maxDrawingBufferSize() final { return m_maxDrawingBufferSize; }
     GCGLint maxSamples() final { return m_maxSamples; }
     GCGLint maxTransformFeedbackSeparateAttribs() final { return m_maxTransformFeedbackSeparateAttribs; }
     GCGLint maxUniformBufferBindings() final { return m_maxUniformBufferBindings; }
@@ -388,7 +389,7 @@ public:
 #endif
     // End of list used by generate-gpup-webgl script.
 
-    static bool NODELETE handleMessageToRemovedDestination(IPC::Connection&, IPC::Decoder&);
+    static bool LEGACY_NODELETE handleMessageToRemovedDestination(IPC::Connection&, IPC::Decoder&);
 
 protected:
     explicit RemoteGraphicsContextGLProxy(const WebCore::GraphicsContextGLAttributes&, RemoteRenderingBackendProxy&);
@@ -419,11 +420,11 @@ private:
     void addDebugMessage(GCGLenum, GCGLenum, GCGLenum, std::span<const char8_t>);
     void memoryCostChanged(std::optional<uint64_t>);
 
-    void NODELETE initialize(const RemoteGraphicsContextGLInitializationState&);
+    void LEGACY_NODELETE initialize(const RemoteGraphicsContextGLInitializationState&);
     void waitUntilInitialized();
     void disconnectGpuProcessIfNeeded();
     void abandonGpuProcess();
-    uint32_t NODELETE createObjectName();
+    uint32_t LEGACY_NODELETE createObjectName();
 
     WeakPtr<GPUProcessConnection> m_gpuProcessConnection; // Only main thread use.
     RefPtr<IPC::StreamClientConnection> m_streamConnection;
@@ -432,7 +433,7 @@ private:
     SharedVideoFrameWriter m_sharedVideoFrameWriter;
 #endif
 #if ENABLE(VIDEO)
-    RefPtr<RemoteVideoFrameObjectHeapProxy> m_videoFrameObjectHeapProxy;
+    const RefPtr<RemoteVideoFrameObjectHeapProxy> m_videoFrameObjectHeapProxy;
 #endif
     GCGLint m_maxCombinedTextureImageUnits { 0 };
     GCGLint m_maxVertexAttribs { 0 };
@@ -440,6 +441,7 @@ private:
     GCGLint m_maxCubeMapTextureSize { 0 };
     GCGLint m_maxRenderbufferSize { 0 };
     std::array<GCGLint, 2> m_maxViewportDims { 0, 0 };
+    std::array<GCGLint, 2> m_maxDrawingBufferSize { 0, 0 };
     GCGLint m_maxSamples { 0 };
     GCGLint m_maxTransformFeedbackSeparateAttribs { 0 };
     GCGLint m_maxUniformBufferBindings { 0 };
@@ -450,7 +452,7 @@ private:
     uint32_t m_nextObjectName { 0 };
     WebCore::ColorSpace m_drawingBufferColorSpace { WebCore::ColorSpace::SRGB() };
     WeakPtr<RemoteRenderingBackendProxy> m_renderingBackend;
-    RefPtr<RemoteSharedResourceCacheProxy> m_sharedResourceCache;
+    const RefPtr<RemoteSharedResourceCacheProxy> m_sharedResourceCache;
 };
 
 // The GCGL types map to following WebKit IPC types. The list is used by generate-gpup-webgl script.

@@ -42,13 +42,22 @@
 #include <charconv>
 #include <wtf/MathExtras.h>
 #include <wtf/UnalignedAccess.h>
-#include <wtf/dragonbox/dragonbox_to_chars.h>
+#include <wtf/dtoa.h>
 #include <wtf/text/EscapedFormsForJSON.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/ParsingUtilities.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringBuilderJSON.h>
 #include <wtf/text/StringCommon.h>
+
+#if ENABLE(AOT)
+#include "AOTJSONHooks.h"
+#include "AOTJSONTextWriter.h"
+#include "AOTPropertyWalkInlines.h"
+#include "AOTRuntimeCounters.h"
+#include "DateInstance.h"
+#include "DateTimeWriter.h"
+#endif
 
 // Turn this on to log information about fastStringify usage, with a focus on why it failed.
 #define FAST_STRINGIFY_LOG_USAGE 0
@@ -60,7 +69,7 @@ namespace JSC {
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSONObject);
 
 static JSC_DECLARE_HOST_FUNCTION(jsonProtoFuncParse);
-static JSC_DECLARE_HOST_FUNCTION(jsonProtoFuncStringify);
+JSC_DECLARE_HOST_FUNCTION(jsonProtoFuncStringify);
 static JSC_DECLARE_HOST_FUNCTION(jsonProtoFuncIsRawJSON);
 static JSC_DECLARE_HOST_FUNCTION(jsonProtoFuncRawJSON);
 
@@ -105,6 +114,9 @@ class Stringifier {
     WTF_FORBID_HEAP_ALLOCATION;
 public:
     static String stringify(JSGlobalObject&, JSValue, JSValue replacer, JSValue space);
+#if ENABLE(AOT)
+    static String stringifyProperty(JSGlobalObject&, JSValue, const PropertyNameForFunctionCall&);
+#endif
 
 private:
     class Holder {
@@ -113,9 +125,9 @@ private:
         Holder(JSGlobalObject*, JSObject*, Structure*);
         Holder(RootHolderTag, JSObject*);
 
-        JSObject* NODELETE object() const { return m_object; }
-        bool NODELETE isArray() const { return m_isArray; }
-        bool NODELETE hasFastObjectProperties() const { return m_hasFastObjectProperties; }
+        JSObject* LEGACY_NODELETE object() const { return m_object; }
+        bool LEGACY_NODELETE isArray() const { return m_isArray; }
+        bool LEGACY_NODELETE hasFastObjectProperties() const { return m_hasFastObjectProperties; }
 
         bool appendNextProperty(Stringifier&, StringBuilder&);
 
@@ -129,6 +141,10 @@ private:
         unsigned m_size { 0 };
         RefPtr<PropertyNameArray> m_propertyNames;
         Vector<std::tuple<PropertyName, unsigned>, 8> m_propertiesAndOffsets;
+#if ENABLE(AOT)
+        // The own properties of a compiled object when the walk began, where they were its fields. The list lives as long as the program.
+        std::span<const AOT::FieldAsProperty> m_listedFields;
+#endif
     };
 
     friend class Holder;
@@ -144,7 +160,7 @@ private:
     void indent();
     void unindent();
     void startNewLine(StringBuilder&) const;
-    bool NODELETE isCallableReplacer() const { return m_replacerCallData.type != CallData::Type::None; }
+    bool LEGACY_NODELETE isCallableReplacer() const { return m_replacerCallData.type != CallData::Type::None; }
 
     JSGlobalObject* const m_globalObject;
     JSValue m_replacer;
@@ -307,6 +323,29 @@ String Stringifier::stringify(JSGlobalObject& globalObject, JSValue value, JSVal
     RELEASE_AND_RETURN(scope, result.toString());
 }
 
+#if ENABLE(AOT)
+String Stringifier::stringifyProperty(JSGlobalObject& globalObject, JSValue value, const PropertyNameForFunctionCall& propertyName)
+{
+    VM& vm = globalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Stringifier stringifier(&globalObject, jsUndefined(), jsUndefined());
+    RETURN_IF_EXCEPTION(scope, { });
+
+    StringBuilder result(OverflowPolicy::RecordOverflow);
+    Holder root(Holder::RootHolder, nullptr);
+    auto stringifyResult = stringifier.appendStringifiedValue(result, value, root, propertyName);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (result.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(&globalObject, scope);
+        return { };
+    }
+    if (stringifyResult != StringifySucceeded) [[unlikely]]
+        RELEASE_AND_RETURN(scope, { });
+    RELEASE_AND_RETURN(scope, result.toString());
+}
+#endif
+
 ALWAYS_INLINE JSValue Stringifier::toJSON(JSValue baseValue, const PropertyNameForFunctionCall& propertyName)
 {
     VM& vm = m_globalObject->vm();
@@ -413,6 +452,10 @@ Stringifier::StringifyResult Stringifier::appendStringifiedValue(StringBuilder& 
             double number = value.asNumber();
             if (!std::isfinite(number))
                 builder.append("null"_s);
+#if USE(BUN_JSC_ADDITIONS)
+            else if (auto int32Value = tryConvertToStrictInt32(number))
+                builder.append(*int32Value);
+#endif
             else
                 builder.append(number);
         }
@@ -474,7 +517,7 @@ Stringifier::StringifyResult Stringifier::appendStringifiedValue(StringBuilder& 
     return StringifySucceeded;
 }
 
-inline bool NODELETE Stringifier::willIndent() const
+inline bool LEGACY_NODELETE Stringifier::willIndent() const
 {
     return !m_gap.isEmpty();
 }
@@ -489,7 +532,7 @@ inline void Stringifier::indent()
     m_indent = StringView { m_repeatedGap }.left(newSize);
 }
 
-inline void NODELETE Stringifier::unindent()
+inline void LEGACY_NODELETE Stringifier::unindent()
 {
     ASSERT(m_indent.length() >= m_gap.length());
     m_indent = StringView { m_repeatedGap }.left(m_indent.length() - m_gap.length());
@@ -500,6 +543,23 @@ inline void Stringifier::startNewLine(StringBuilder& builder) const
     if (willIndent())
         builder.append('\n', m_indent);
 }
+
+#if ENABLE(AOT)
+// The fields of a compiled object that has no other own property, where each has its key at hand as JSON writes it.
+static std::optional<std::span<const AOT::FieldAsProperty>> listedFieldsWithJSONKeys(JSObject* object)
+{
+    if (object->type() != CompiledObjectType)
+        return std::nullopt;
+    auto fields = AOT::PropertyWalk::fieldsInKeyOrder(object);
+    if (!fields || fields->empty())
+        return std::nullopt;
+    for (auto& field : *fields) {
+        if (field.jsonKey.empty())
+            return std::nullopt;
+    }
+    return fields;
+}
+#endif
 
 inline Stringifier::Holder::Holder(JSGlobalObject* globalObject, JSObject* object, Structure* structure)
     : m_object(object)
@@ -551,6 +611,11 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
                     return true;
                 });
                 m_size = m_propertiesAndOffsets.size();
+#if ENABLE(AOT)
+            } else if (auto fields = listedFieldsWithJSONKeys(m_object)) {
+                m_listedFields = *fields;
+                m_size = m_listedFields.size();
+#endif
             } else {
                 PropertyNameArrayBuilder objectPropertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
                 m_object->methodTable()->getOwnPropertyNames(m_object, globalObject, objectPropertyNames, DontEnumPropertiesMode::Exclude);
@@ -600,6 +665,22 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
     } else {
         PropertyName propertyName;
         JSValue value;
+#if ENABLE(AOT)
+        std::span<const Latin1Character> keyAsWritten;
+        if (!m_listedFields.empty()) {
+            const AOT::FieldAsProperty& field = m_listedFields[index];
+            propertyName = field.name;
+            keyAsWritten = field.jsonKey.subspan(1);
+            // Code that ran for a member in front may have changed the object.
+            auto fieldsNow = AOT::PropertyWalk::fieldsInKeyOrder(m_object);
+            if (fieldsNow && fieldsNow->data() == m_listedFields.data()) [[likely]]
+                value = AOT::PropertyWalk::readListedField(m_object, field);
+            if (!value) [[unlikely]] {
+                value = m_object->get(globalObject, propertyName);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+        } else
+#endif
         if (m_hasFastObjectProperties) {
             propertyName = std::get<0>(m_propertiesAndOffsets[index]);
             if (m_object->structureID() == m_structure->id()) {
@@ -641,8 +722,15 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
         stringifier.startNewLine(builder);
 
         // Append the property name, colon, and space.
-        builder.appendQuotedJSONString(*propertyName.uid());
-        builder.append(':');
+#if ENABLE(AOT)
+        if (!keyAsWritten.empty())
+            builder.append(keyAsWritten);
+        else
+#endif
+        {
+            builder.appendQuotedJSONString(*propertyName.uid());
+            builder.append(':');
+        }
         if (stringifier.willIndent())
             builder.append(' ');
 
@@ -697,22 +785,62 @@ enum class FailureReason : uint8_t {
     Unknown,
 };
 
+// A program that makes one result is likely to make another much like it. lengthOfBigResult and isWide are of the last result that outgrew the static buffer, isWideInStaticBuffer of the last made with 16-bit characters.
+struct StringifyHints {
+    uint32_t lengthOfBigResult;
+    bool isWide;
+    bool isWideInStaticBuffer;
+};
+thread_local static StringifyHints stringifyHints;
+#if ENABLE(AOT)
+thread_local static ASCIILiteral reasonOfLastFailure;
+#endif
+
 template<typename CharType, BufferMode bufferMode>
 class FastStringifier {
 public:
     // Returns null string if the fast case fails.
     static String stringify(JSGlobalObject&, JSValue, JSValue replacer, JSValue space, std::optional<FailureReason>&);
+#if ENABLE(AOT)
+    // False if the fast case fails, and with an exception.
+    static bool tryAppendTo(AOT::StringBuilderStorage&, JSGlobalObject&, JSValue, std::optional<FailureReason>&);
+#endif
 
     static constexpr unsigned staticBufferSize = bufferMode == BufferMode::StaticBuffer ? 8192 : 8;
     static constexpr unsigned dynamicBufferInlineCapacity = bufferMode == BufferMode::StaticBuffer ? 0 : 1024;
 
     static constexpr bool useShortCopyTier = bufferMode == BufferMode::DynamicBuffer;
 
+    // A string that is at least so long is gone through once, escaping as it goes, so much at a time. (A shorter one is copied in the hope that there is nothing to escape.)
+    static constexpr unsigned lengthOfLongString = 64;
+    static constexpr unsigned pieceOfLongString = bufferMode == BufferMode::StaticBuffer ? 256 : 4096;
+    static constexpr unsigned lengthOfBigResult = 128 * 1024;
+
 private:
     explicit FastStringifier(JSGlobalObject&);
     template<HasGap hasGap> void append(JSValue);
     void appendInt32(int32_t);
     template<HasGap hasGap> void appendInt32Array(JSArray&);
+#if ENABLE(AOT)
+    void appendDate(DateInstance&);
+    bool datesHaveBuiltinToJSON(JSObject& datePrototype);
+    template<HasGap hasGap> void appendCompiledObject(JSObject&);
+    bool mayCompiledObjectHaveToJSON(JSObject&);
+    bool mayHaveOwnOrInheritedToJSON(JSObject&);
+    // Where the next character goes, and where the buffer ends. While one is in use m_length is out of date.
+    struct Cursor {
+        CharType* next { nullptr };
+        CharType* limit { nullptr };
+    };
+    Cursor cursorAtEnd() { return { buffer() + m_length, buffer() + m_capacity }; }
+    void publishLength(const Cursor& cursor) { m_length = cursor.next - buffer(); }
+    bool reserve(Cursor&, size_t);
+    static std::optional<unsigned> reservationFor(std::span<const AOT::FieldAsProperty>);
+    template<HasGap hasGap> bool writeListedFields(Cursor&, JSObject&, std::span<const AOT::FieldAsProperty>, unsigned reservation);
+    template<HasGap hasGap> void appendListedFields(JSObject&, std::span<const AOT::FieldAsProperty>);
+    void appendElementsInCompiledProgram(JSArray&);
+    bool isCompiledStructureKnown(const JSObject& object) const { return m_hasCompiledStructureWithoutToJSON && object.structureID().bits() == m_compiledStructureWithoutToJSON; }
+#endif
     String result();
 
     static constexpr unsigned maxInt32StringLength = ("-2147483648"_s).length();
@@ -723,8 +851,10 @@ private:
     bool setGap(JSValue space);
     unsigned newLineAndIndentSize() const;
     void appendNewLineAndIndentUnchecked();
+    template<typename StringCharType> bool appendContentOfLongString(std::span<const StringCharType>);
+    void recordWideString();
     template<typename T> void recordFailure(FailureReason, T&& reason);
-    template<typename T> void NODELETE recordFailure(T&& reason)
+    template<typename T> void LEGACY_NODELETE recordFailure(T&& reason)
     {
         recordFailure(FailureReason::Unknown, std::forward<T>(reason));
     }
@@ -754,9 +884,18 @@ private:
     std::array<Latin1Character, maxGapLength> m_gap;
     bool m_checkedObjectPrototype { false };
     bool m_checkedArrayPrototype { false };
+    bool m_hasSeenWideString { false };
+#if ENABLE(AOT)
+    // These two take the place of padding: the members behind them are where they are without compiled code.
+    bool m_hasCompiledStructureWithoutToJSON { false };
+    TriState m_datesHaveBuiltinToJSON { TriState::Indeterminate };
+#endif
     std::optional<FailureReason> m_failureReason;
     Vector<CharType, dynamicBufferInlineCapacity, CrashOnOverflow, 16, WTF::StringImplMalloc> m_dynamicBuffer;
     uint8_t* m_stackLimit { nullptr };
+#if ENABLE(AOT)
+    uint32_t m_compiledStructureWithoutToJSON; // The bits of a StructureID. Written before m_hasCompiledStructureWithoutToJSON is set.
+#endif
 
     CharType m_buffer[staticBufferSize];
 };
@@ -932,8 +1071,23 @@ inline String FastStringifier<CharType, bufferMode>::result()
     logOutcome("success"_s);
 #endif
     if constexpr (bufferMode == BufferMode::DynamicBuffer) {
+        stringifyHints.isWide = sizeof(CharType) == 2 && m_hasSeenWideString;
+        stringifyHints.isWideInStaticBuffer = stringifyHints.isWide;
+        if (m_dynamicBuffer.size() > lengthOfBigResult)
+            stringifyHints.lengthOfBigResult = m_length;
+        if constexpr (sizeof(CharType) == 2) {
+            if (!m_hasSeenWideString)
+                return String::make8Bit(std::span { static_cast<const FastStringifier*>(this)->buffer(), m_length });
+        }
         m_dynamicBuffer.shrink(m_length);
+        if (m_dynamicBuffer.capacity() / 2 > m_length)
+            m_dynamicBuffer.shrinkToFit();
         return StringImpl::adopt(WTF::move(m_dynamicBuffer));
+    }
+    if constexpr (sizeof(CharType) == 2) {
+        stringifyHints.isWideInStaticBuffer = m_hasSeenWideString;
+        if (!m_hasSeenWideString)
+            return String::make8Bit(std::span { static_cast<const FastStringifier*>(this)->buffer(), m_length });
     }
     return std::span { static_cast<const FastStringifier*>(this)->buffer(), m_length };
 }
@@ -941,6 +1095,12 @@ inline String FastStringifier<CharType, bufferMode>::result()
 template<typename CharType, BufferMode bufferMode>
 template<typename T> inline void FastStringifier<CharType, bufferMode>::recordFailure(FailureReason failureReason, T&& reason)
 {
+#if ENABLE(AOT)
+    if constexpr (std::same_as<std::remove_cvref_t<T>, ASCIILiteral>) {
+        if (!haveFailure())
+            reasonOfLastFailure = reason;
+    }
+#endif
     if (!haveFailure())
         logOutcome(std::forward<T>(reason));
     m_failureReason = failureReason;
@@ -950,6 +1110,15 @@ template<typename CharType, BufferMode bufferMode>
 inline void FastStringifier<CharType, bufferMode>::recordBufferFull()
 {
     recordFailure(FailureReason::BufferFull, "buffer full"_s);
+}
+
+template<typename CharType, BufferMode bufferMode>
+inline void FastStringifier<CharType, bufferMode>::recordWideString()
+{
+    if constexpr (bufferMode == BufferMode::DynamicBuffer)
+        recordFailure(FailureReason::Found16BitLate, "16-bit string, "_s);
+    else
+        recordFailure(m_length < (m_capacity / 2) ? FailureReason::Found16BitEarly : FailureReason::Found16BitLate, "16-bit string, "_s);
 }
 
 template<typename CharType, BufferMode bufferMode>
@@ -978,6 +1147,19 @@ bool FastStringifier<CharType, bufferMode>::hasRemainingCapacitySlow(unsigned si
         return true;
     } else {
         size_t newSize = std::max<size_t>(m_dynamicBuffer.size() * 2, m_dynamicBuffer.size() + size);
+        if (newSize > lengthOfBigResult) {
+            size_t lengthOfLast = stringifyHints.lengthOfBigResult;
+            size_t sizeForResultLikeLast = lengthOfLast + lengthOfLast / 8 + pieceOfLongString * 6;
+            if (sizeForResultLikeLast > newSize) {
+                if (StringImpl::isValidLength<CharType>(sizeForResultLikeLast) && m_dynamicBuffer.tryGrow(sizeForResultLikeLast)) [[likely]] {
+                    m_capacity = m_dynamicBuffer.size();
+                    ASSERT(m_capacity - m_length >= size);
+                    return true;
+                }
+                // This result may be far smaller than the last, and what it needs may still be there.
+                stringifyHints.lengthOfBigResult = 0;
+            }
+        }
         if (!StringImpl::isValidLength<CharType>(newSize)) [[unlikely]]
             return false;
 
@@ -988,6 +1170,31 @@ bool FastStringifier<CharType, bufferMode>::hasRemainingCapacitySlow(unsigned si
         ASSERT(m_capacity - m_length >= size);
         return true;
     }
+}
+
+template<typename CharType, BufferMode bufferMode>
+template<typename StringCharType>
+bool FastStringifier<CharType, bufferMode>::appendContentOfLongString(std::span<const StringCharType> rest)
+{
+    while (!rest.empty()) {
+        auto piece = rest.first(std::min<size_t>(rest.size(), pieceOfLongString));
+        if constexpr (sizeof(StringCharType) == 2) {
+            if (piece.size() < rest.size() && U16_IS_LEAD(piece.back()))
+                piece = piece.first(piece.size() - 1);
+        }
+        if (!hasRemainingCapacity(piece.size() * 6 + 1)) [[unlikely]] {
+            recordBufferFull();
+            return false;
+        }
+        auto output = bufferSpan().subspan(m_length);
+        if (!WTF::appendEscapedJSONStringContent(output, piece)) [[unlikely]] {
+            recordWideString();
+            return false;
+        }
+        m_length = output.data() - buffer();
+        rest = rest.subspan(piece.size());
+    }
+    return true;
 }
 
 #if !FAST_STRINGIFY_LOG_USAGE
@@ -1138,10 +1345,14 @@ template<typename CharType, BufferMode bufferMode>
 ALWAYS_INLINE void FastStringifier<CharType, bufferMode>::appendInt32(int32_t number)
 {
     if constexpr (sizeof(CharType) == 1) {
+#if ENABLE(AOT)
+        m_length = AOT::appendJSONInteger(buffer() + m_length, number) - buffer();
+#else
         char* cursor = std::bit_cast<char*>(buffer()) + m_length;
         auto result = std::to_chars(cursor, cursor + maxInt32StringLength, number);
         ASSERT(result.ec != std::errc::value_too_large);
         m_length += result.ptr - cursor;
+#endif
     } else {
         std::array<char, maxInt32StringLength> temporary;
         auto result = std::to_chars(temporary.data(), temporary.data() + maxInt32StringLength, number);
@@ -1244,17 +1455,21 @@ static ALWAYS_INLINE bool stringCopySameType(std::span<const CharType> span, Cha
             auto* cursorEnd = cursor + span.size();
             uint64_t accumulated = 0;
 #if JSON_STRING_COPY_HAS_SIMD
-            static_assert(stride <= 2 * narrowStride);
+            static_assert(stride == 2 * narrowStride);
             ASSERT(span.size() < 2 * narrowStride);
-            accumulated = eightByteRangeNeedsJSONEscape(copyEightBytesAndLoad(ptr, cursor));
-            accumulated |= eightByteRangeNeedsJSONEscape(copyEightBytesAndLoad(end - narrowStride, cursorEnd - narrowStride));
+            // The first and the last eight bytes in one vector. They overlap, which does no harm.
+            auto input = simde_vcombine_u8(simde_vld1_u8(std::bit_cast<const uint8_t*>(ptr)), simde_vld1_u8(std::bit_cast<const uint8_t*>(end - narrowStride)));
+            simde_vst1_u8(std::bit_cast<uint8_t*>(cursor), simde_vget_low_u8(input));
+            simde_vst1_u8(std::bit_cast<uint8_t*>(cursorEnd - narrowStride), simde_vget_high_u8(input));
+            UNUSED_VARIABLE(accumulated);
+            return SIMD::isNonZero(SIMD::bitOr(SIMD::equal(input, SIMD::splat<uint8_t>('"')), SIMD::equal(input, SIMD::splat<uint8_t>('\\')), SIMD::lessThan(input, SIMD::splat<uint8_t>(' '))));
 #else
             for (; ptr + narrowStride <= end; ptr += narrowStride, cursor += narrowStride)
                 accumulated |= eightByteRangeNeedsJSONEscape(copyEightBytesAndLoad(ptr, cursor));
             if (ptr < end)
                 accumulated |= eightByteRangeNeedsJSONEscape(copyEightBytesAndLoad(end - narrowStride, cursorEnd - narrowStride));
-#endif
             return accumulated;
+#endif
         }
         if constexpr (useShortCopyTier) {
             if (span.size() >= 4) {
@@ -1382,17 +1597,22 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             append('n', 'u', 'l', 'l');
             return;
         }
-        if (!hasRemainingCapacity(WTF::dragonbox::max_string_length<WTF::dragonbox::ieee754_binary64>())) [[unlikely]] {
+        if (!hasRemainingCapacity(numberToShortestStringBufferSize)) [[unlikely]] {
             recordBufferFull();
             return;
         }
-        if constexpr (sizeof(CharType) == 1) {
-            auto cursor = WTF::dragonbox::detail::to_chars_n<WTF::dragonbox::Mode::ToShortest>(number, byteCast<char>(bufferSpan().subspan(m_length)));
-            m_length = cursor.data() - reinterpret_cast<char*>(buffer());
-        } else {
-            std::array<char, WTF::dragonbox::max_string_length<WTF::dragonbox::ieee754_binary64>()> temporary;
-            auto cursor = WTF::dragonbox::detail::to_chars_n<WTF::dragonbox::Mode::ToShortest>(number, std::span { temporary });
-            size_t length = cursor.data() - temporary.data();
+#if USE(BUN_JSC_ADDITIONS)
+        static_assert(maxInt32StringLength <= numberToShortestStringBufferSize);
+        if (auto int32Value = tryConvertToStrictInt32(number)) {
+            appendInt32(*int32Value);
+            return;
+        }
+#endif
+        if constexpr (sizeof(CharType) == 1)
+            m_length += WTF::numberToShortestString(number, byteCast<char>(bufferSpan().subspan(m_length)).template first<numberToShortestStringBufferSize>());
+        else {
+            std::array<char, numberToShortestStringBufferSize> temporary;
+            size_t length = WTF::numberToShortestString(number, temporary);
             WTF::copyElements(spanReinterpretCast<uint16_t>(bufferSpan().subspan(m_length)), byteCast<uint8_t>(std::span { temporary }).first(length));
             m_length += length;
         }
@@ -1407,7 +1627,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
 
     switch (cell.type()) {
     case StringType: {
-        auto string = asString(&cell)->tryGetValue();
+        auto string = asString(&cell)->tryGetView();
         if (string.data.isNull()) [[unlikely]] {
             recordFailure("String::tryGetValue"_s);
             return;
@@ -1418,6 +1638,14 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             return;
         }
         buffer()[m_length] = '"';
+        if (!string.data.is8Bit())
+            m_hasSeenWideString = true;
+        if (stringLength >= lengthOfLongString) {
+            ++m_length;
+            if (string.data.is8Bit() ? appendContentOfLongString(string.data.span8()) : appendContentOfLongString(string.data.span16())) [[likely]]
+                buffer()[m_length++] = '"';
+            return;
+        }
 
         if constexpr (std::same_as<CharType, Latin1Character>) {
             if (string.data.is8Bit()) [[likely]] {
@@ -1468,10 +1696,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
                 // It's possible the UTF-16 string is actually Latin-1. We try to avoid that but bailing out here is _way_ more expensive if it does sometimes happen.
                 bool success = WTF::appendEscapedJSONStringContent(output, string.data.span16());
                 if (!success) [[unlikely]] {
-                    if constexpr (bufferMode == BufferMode::DynamicBuffer)
-                        recordFailure(FailureReason::Unknown, "16-bit string, "_s);
-                    else
-                        recordFailure(m_length < (m_capacity / 2) ? FailureReason::Found16BitEarly : FailureReason::Found16BitLate, "16-bit string, "_s);
+                    recordWideString();
                     return;
                 }
             }
@@ -1621,7 +1846,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             if constexpr (std::same_as<CharType, Latin1Character>) {
                 // Inlining String case here since it is too common.
                 if (value.isCell() && value.asCell()->type() == StringType) [[likely]] {
-                    auto valueString = asString(value.asCell())->tryGetValue();
+                    auto valueString = asString(value.asCell())->tryGetView();
                     if (!valueString.data.isNull() && valueString.data.is8Bit()) [[likely]] {
                         unsigned valueLength = valueString.data.length();
                         if (!hasRemainingCapacity(1 + valueLength + 1)) [[unlikely]] {
@@ -1732,6 +1957,18 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
                 recordFailure("!lengthBeyondVector"_s);
                 return;
             }
+#if ENABLE(AOT)
+            if constexpr (hasGap == HasGap::No) {
+                JSValue first = length ? butterfly->contiguous().at(&array, 0).get() : JSValue();
+                if (first && first.isCell() && first.asCell()->type() == CompiledObjectType) [[unlikely]] {
+                    appendElementsInCompiledProgram(array);
+                    if (haveFailure()) [[unlikely]]
+                        return;
+                    closeArray();
+                    return;
+                }
+            }
+#endif
             auto data = butterfly->contiguous();
             const unsigned newLineAndIndent = hasGap == HasGap::Yes ? newLineAndIndentSize() : 0;
             for (unsigned i = 0; i < length; ++i) {
@@ -1750,7 +1987,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
                     recordFailure("!canGetIndexQuickly"_s);
                     return;
                 }
-                append<hasGap>(element);
+                append<hasGap>(element.isUndefined() ? jsNull() : element);
                 if (haveFailure()) [[unlikely]]
                     return;
             }
@@ -1773,7 +2010,8 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
                 recordFailure("!canGetIndexQuickly"_s);
                 return;
             }
-            append<hasGap>(array.getIndexQuickly(i));
+            JSValue element = array.getIndexQuickly(i);
+            append<hasGap>(element.isUndefined() ? jsNull() : element);
             if (haveFailure()) [[unlikely]]
                 return;
         }
@@ -1786,9 +2024,677 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
         return;
 
     default:
+#if ENABLE(AOT)
+        // Not cases of their own: the switch keeps the form it has without them, and a process without compiled code asks only where it has failed.
+        if (cell.type() == CompiledObjectType) [[unlikely]] {
+            appendCompiledObject<hasGap>(*asObject(&cell));
+            return;
+        }
+        if (cell.type() == JSDateType && m_vm.hasCompiledCode()) [[unlikely]] {
+            appendDate(*uncheckedDowncast<DateInstance>(&cell));
+            return;
+        }
+#endif
         recordFailure("object type"_s);
     }
 }
+
+#if ENABLE(AOT)
+template<typename CharType, BufferMode bufferMode>
+NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendDate(DateInstance& date)
+{
+    Structure* structure = date.structure();
+    if (structure->realm() != &m_globalObject || structure != m_globalObject.dateStructure() || !datesHaveBuiltinToJSON(*asObject(structure->storedPrototype()))) [[unlikely]] {
+        recordFailure("date that may have its own toJSON"_s);
+        return;
+    }
+    if (!hasRemainingCapacity(1 + maxISODateTimeLength + 1)) [[unlikely]] {
+        recordBufferFull();
+        return;
+    }
+    double time = date.internalNumber();
+    if (!std::isfinite(time)) {
+        append('n', 'u', 'l', 'l');
+        return;
+    }
+    auto* cursor = buffer() + m_length;
+    *cursor++ = '"';
+    cursor = writeISODateTime(cursor, time);
+    *cursor++ = '"';
+    m_length = cursor - buffer();
+}
+
+template<typename CharType, BufferMode bufferMode>
+bool FastStringifier<CharType, bufferMode>::datesHaveBuiltinToJSON(JSObject& datePrototype)
+{
+    if (m_datesHaveBuiltinToJSON != TriState::Indeterminate)
+        return m_datesHaveBuiltinToJSON == TriState::True;
+    bool result = true;
+    auto& names = *m_vm.propertyNames;
+    for (auto* name : { names.toJSON.impl(), names.toISOString.impl(), names.valueOf.impl(), names.toPrimitiveSymbol.impl() })
+        result &= datePrototype.structure()->isImmutablePropertyForReader(name);
+    m_datesHaveBuiltinToJSON = triState(result);
+    return result;
+}
+
+template<typename CharType, BufferMode bufferMode>
+template<HasGap hasGap>
+NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendCompiledObject(JSObject& object)
+{
+    // All of this is asked of the Structure. The one that is remembered has answered.
+    if (!isCompiledStructureKnown(object)) {
+        if (object.isCallable()) [[unlikely]] {
+            recordFailure("callable object"_s);
+            return;
+        }
+        auto& structure = *object.structure();
+        if (structure.hasPolyProto()) [[unlikely]] {
+            recordFailure("hasPolyProto"_s);
+            return;
+        }
+        if (structure.hasNonReifiedStaticProperties()) [[unlikely]] {
+            recordFailure("object has non-reified static properties"_s);
+            return;
+        }
+        if (mayCompiledObjectHaveToJSON(object)) [[unlikely]] {
+            recordFailure("compiled object may have toJSON"_s);
+            return;
+        }
+    }
+    if (auto fields = AOT::PropertyWalk::fieldsInKeyOrder(&object)) [[likely]] {
+        appendListedFields<hasGap>(object, *fields);
+        return;
+    }
+    if (!hasRemainingCapacity()) [[unlikely]] {
+        recordBufferFull();
+        return;
+    }
+    buffer()[m_length++] = '{';
+    if constexpr (hasGap == HasGap::Yes)
+        ++m_depth;
+    const unsigned newLineAndIndent = hasGap == HasGap::Yes ? newLineAndIndentSize() : 0;
+    auto appendProperty = [&](UniquedStringImpl& name, JSValue value) ALWAYS_INLINE_LAMBDA -> bool {
+        if (name.isSymbol()) [[unlikely]] {
+            recordFailure("symbol"_s);
+            return false;
+        }
+
+        if (!name.is8Bit()) [[unlikely]] {
+            recordFailure("16-bit property name"_s);
+            return false;
+        }
+        auto span = name.span8();
+
+        if (value.isUndefined())
+            return true;
+
+        bool needComma = buffer()[m_length - 1] != '{';
+        if (!hasRemainingCapacity(needComma + newLineAndIndent + 1 + span.size() + 2 + (hasGap == HasGap::Yes))) [[unlikely]] {
+            recordBufferFull();
+            return false;
+        }
+
+        {
+            CharType* out = buffer();
+            unsigned length = m_length;
+
+            if (needComma)
+                out[length++] = ',';
+
+            if constexpr (hasGap == HasGap::Yes) {
+                m_length = length;
+                appendNewLineAndIndentUnchecked();
+                out = buffer();
+                length = m_length;
+            }
+
+            out[length] = '"';
+
+            if constexpr (std::same_as<CharType, char16_t>) {
+                if (stringCopyUpconvert(span, out + length + 1)) [[unlikely]] {
+                    m_length = length;
+                    recordFailure("property name character needs escaping"_s);
+                    return false;
+                }
+            } else {
+                if (stringCopySameType<CharType, useShortCopyTier>(span, out + length + 1)) [[unlikely]] {
+                    m_length = length;
+                    recordFailure("property name character needs escaping"_s);
+                    return false;
+                }
+            }
+
+            out[length + 1 + span.size()] = '"';
+            out[length + 1 + span.size() + 1] = ':';
+            length += 1 + span.size() + 2;
+            if constexpr (hasGap == HasGap::Yes)
+                out[length++] = ' ';
+
+            m_length = length;
+        }
+
+        if constexpr (std::same_as<CharType, Latin1Character>) {
+            if (value.isCell() && value.asCell()->type() == StringType) [[likely]] {
+                auto valueString = asString(value.asCell())->tryGetView();
+                if (!valueString.data.isNull() && valueString.data.is8Bit()) [[likely]] {
+                    unsigned valueLength = valueString.data.length();
+                    if (!hasRemainingCapacity(1 + valueLength + 1)) [[unlikely]] {
+                        recordBufferFull();
+                        return false;
+                    }
+                    buffer()[m_length] = '"';
+                    if (!stringCopySameType<CharType, useShortCopyTier>(valueString.data.span8(), buffer() + m_length + 1)) [[likely]] {
+                        buffer()[m_length + 1 + valueLength] = '"';
+                        m_length += 1 + valueLength + 1;
+                        return true;
+                    }
+                }
+            }
+        }
+
+        if (value.isInt32()) {
+            if (!hasRemainingCapacity(maxInt32StringLength)) [[unlikely]] {
+                recordBufferFull();
+                return false;
+            }
+            appendInt32(value.asInt32());
+            return true;
+        }
+
+        append<hasGap>(value);
+        return !haveFailure();
+    };
+    auto result = AOT::PropertyWalk::forEachOwnProperty(m_vm, &object, AOT::PropertyWalk::Filter::EnumerableStrings, [&](const AOT::PropertyWalk::OwnProperty& property) {
+        return appendProperty(*property.name, property.value) ? IterationStatus::Continue : IterationStatus::Done;
+    });
+    if (result == AOT::PropertyWalk::Result::NeedsGenericPath)
+        recordFailure("compiled object has an accessor or an index"_s);
+    if (haveFailure()) [[unlikely]]
+        return;
+    if constexpr (hasGap == HasGap::Yes)
+        --m_depth;
+    bool needNewLine = hasGap == HasGap::Yes && buffer()[m_length - 1] != '{';
+    if (!hasRemainingCapacity(needNewLine ? 1 + newLineAndIndentSize() : 1)) [[unlikely]] {
+        recordBufferFull();
+        return;
+    }
+    if (needNewLine)
+        appendNewLineAndIndentUnchecked();
+    buffer()[m_length++] = '}';
+}
+
+template<typename CharType, BufferMode bufferMode>
+bool FastStringifier<CharType, bufferMode>::mayCompiledObjectHaveToJSON(JSObject& object)
+{
+    Structure* structure = object.structure();
+    JSValue cached = structure->cachedSpecialProperty(CachedSpecialPropertyKey::ToJSON);
+    if (!cached) {
+        // For a compiled Structure this caches a miss that the Structure and its chain prove, and nothing else.
+        PropertySlot unsetSlot { &object, PropertySlot::InternalMethodType::Get };
+        structure->cacheSpecialProperty(&m_globalObject, m_vm, jsUndefined(), CachedSpecialPropertyKey::ToJSON, unsetSlot);
+        cached = structure->cachedSpecialProperty(CachedSpecialPropertyKey::ToJSON);
+    }
+    if (cached && cached.isUndefined()) {
+        m_compiledStructureWithoutToJSON = object.structureID().bits();
+        m_hasCompiledStructureWithoutToJSON = true;
+        return false;
+    }
+    return mayHaveOwnOrInheritedToJSON(object);
+}
+
+template<typename CharType, BufferMode bufferMode>
+bool FastStringifier<CharType, bufferMode>::mayHaveOwnOrInheritedToJSON(JSObject& object)
+{
+    if (AOT::PropertyWalk::hasOwnProperty(&object, m_vm.propertyNames->toJSON.impl()) != AOT::PropertyWalk::Presence::Absent)
+        return true;
+    JSValue prototype = object.structure()->storedPrototype();
+    return prototype.isObject() && mayHaveToJSON(*asObject(prototype));
+}
+
+struct FieldsWrittenBySlot {
+    Latin1Character* next;
+    const AOT::FieldAsProperty* firstFieldNotWritten;
+};
+
+// Writes the members of a compiled object that is not in a frame, up to the first one that takes more than its slot, its key and the room that is reserved.
+static ALWAYS_INLINE FieldsWrittenBySlot writeFieldsBySlotInline(Latin1Character* next, const Latin1Character* limit, const JSObject& object, const AOT::FieldAsProperty* field, const AOT::FieldAsProperty* end, size_t reservation)
+{
+    constexpr size_t blockSize = AOT::FieldAsProperty::jsonKeyBlockSize;
+    for (; field != end; ++field) {
+        const Latin1Character* key = field->jsonKey.data();
+        const size_t keySize = field->jsonKey.size();
+        // The key is written at once and counts only if a value follows it. Where there is none this copies what lies behind the keys of the list.
+        memcpy(next, key, blockSize);
+        if (keySize > blockSize) [[unlikely]] {
+            for (size_t offset = blockSize; offset < keySize; offset += blockSize)
+                memcpy(next + offset, key + offset, blockSize);
+        }
+        Latin1Character* afterKey = next + keySize;
+        const uint8_t* slot = std::bit_cast<const uint8_t*>(&object) + field->offsetForJSON;
+        JSCell* cell;
+        switch (field->representationForJSON) {
+        case AOT::SlotRepresentation::Int32:
+            next = AOT::appendJSONInteger(afterKey, WTF::unalignedLoad<int32_t>(slot));
+            continue;
+        case AOT::SlotRepresentation::OptionalInt32: {
+            int32_t word = WTF::unalignedLoad<int32_t>(slot);
+            if (word < AOT::minInlineInt32) [[unlikely]]
+                return { next, field };
+            next = AOT::appendJSONInteger(afterKey, word);
+            continue;
+        }
+        case AOT::SlotRepresentation::Double:
+            next = AOT::appendJSONNumber(afterKey, WTF::unalignedLoad<double>(slot));
+            continue;
+        case AOT::SlotRepresentation::OptionalDouble: {
+            // A few other NaNs go with the three words that are no numbers.
+            uint64_t bits = WTF::unalignedLoad<uint64_t>(slot);
+            if ((bits >> 48) - (AOT::undefinedDouble >> 48) <= (AOT::absentDouble - AOT::undefinedDouble) >> 48) [[unlikely]]
+                return { next, field };
+            next = AOT::appendJSONNumber(afterKey, std::bit_cast<double>(bits));
+            continue;
+        }
+        case AOT::SlotRepresentation::Int64:
+        case AOT::SlotRepresentation::OptionalInt64: {
+            uint64_t integer = WTF::unalignedLoad<uint64_t>(slot);
+            if (integer >= 100000000) [[unlikely]]
+                return { next, field };
+            next = AOT::appendJSONInteger(afterKey, static_cast<int64_t>(integer));
+            continue;
+        }
+        case AOT::SlotRepresentation::Boolean:
+            next = AOT::appendJSONBoolean(afterKey, *slot);
+            continue;
+        case AOT::SlotRepresentation::OptionalBoolean: {
+            static_assert(JSValue::ValueTrue == (JSValue::ValueFalse | 1));
+            uint8_t word = *slot;
+            if ((word | 1) != JSValue::ValueTrue) [[unlikely]]
+                return { next, field };
+            next = AOT::appendJSONBoolean(afterKey, word & 1);
+            continue;
+        }
+        case AOT::SlotRepresentation::Cell32:
+        case AOT::SlotRepresentation::OptionalCell32: {
+            uint32_t word = WTF::unalignedLoad<uint32_t>(slot);
+            if (word <= AOT::undefinedCell32) {
+                if (word == AOT::nullCell32)
+                    next = AOT::appendJSONLiteral(afterKey, "null"_s);
+                else if (word != AOT::undefinedCell32 && word != AOT::absentCell32) [[unlikely]]
+                    return { next, field };
+                continue;
+            }
+            cell = AOT::PropertyWalk::cellInNarrowSlot(&object, word);
+            break;
+        }
+        case AOT::SlotRepresentation::Cell:
+        case AOT::SlotRepresentation::JSValue: {
+            JSValue held = JSValue::decode(WTF::unalignedLoad<EncodedJSValue>(slot));
+            if (held.isInt32()) {
+                next = AOT::appendJSONInteger(afterKey, held.asInt32());
+                continue;
+            }
+            if (!held || held.isUndefined())
+                continue;
+            if (!held.isCell()) {
+                if (held.isDouble())
+                    next = AOT::appendJSONNumber(afterKey, held.asDouble());
+                else if (held.isBoolean())
+                    next = AOT::appendJSONBoolean(afterKey, held.isTrue());
+                else if (held.isNull())
+                    next = AOT::appendJSONLiteral(afterKey, "null"_s);
+                else
+                    return { next, field };
+                continue;
+            }
+            cell = held.asCell();
+            break;
+        }
+        case AOT::SlotRepresentation::Uint8:
+        case AOT::SlotRepresentation::Int8:
+        case AOT::SlotRepresentation::Uint16:
+        case AOT::SlotRepresentation::Int16:
+        case AOT::SlotRepresentation::Uint32:
+        case AOT::SlotRepresentation::Float:
+        case AOT::SlotRepresentation::LiteralString:
+        case AOT::SlotRepresentation::LiteralString32:
+        case AOT::SlotRepresentation::DeferredClosure:
+            return { next, field };
+        }
+
+        if (cell->type() != StringType)
+            break;
+        const StringImpl* string = asString(cell)->tryGetValueImpl();
+        if (!string || !string->is8Bit()) [[unlikely]]
+            break;
+        const size_t length = string->length();
+        if (static_cast<size_t>(limit - afterKey) < 1 + length + 1 + reservation) [[unlikely]]
+            break;
+        *afterKey = '"';
+        if (stringCopySameType<Latin1Character, true>(string->span8(), afterKey + 1)) [[unlikely]]
+            break;
+        afterKey[1 + length] = '"';
+        next = afterKey + 1 + length + 1;
+    }
+    return { next, field };
+}
+
+static NEVER_INLINE FieldsWrittenBySlot writeFieldsBySlot(Latin1Character* next, const Latin1Character* limit, const JSObject& object, const AOT::FieldAsProperty* field, const AOT::FieldAsProperty* end, size_t reservation)
+{
+    return writeFieldsBySlotInline(next, limit, object, field, end, reservation);
+}
+
+struct ElementsWrittenBySlot {
+    Latin1Character* next;
+    unsigned firstElementNotWritten;
+    bool stoppedAtField;
+};
+
+// Writes the elements behind the first one, each with a comma in front, while they have the fields and the order of keys of the known object. Of the element at which it stops nothing is written.
+static NEVER_INLINE ElementsWrittenBySlot writeElementsBySlot(Latin1Character* next, const Latin1Character* limit, const WriteBarrier<Unknown>* elements, unsigned index, unsigned length, const JSObject& known, std::span<const AOT::FieldAsProperty> fields, size_t reservation)
+{
+    const AOT::FieldAsProperty* end = fields.data() + fields.size();
+    for (; index < length; ++index) {
+        JSValue element = elements[index].get();
+        if (!element || !element.isCell()) [[unlikely]]
+            break;
+        // Looked at as an object only once it has the Structure of one.
+        const JSObject& object = *static_cast<const JSObject*>(element.asCell());
+        if (object.structureID() != known.structureID() || !AOT::PropertyWalk::haveSameFieldsInKeyOrder(&known, &object) || AOT::PropertyWalk::isInFrame(&object)) [[unlikely]]
+            break;
+        if (static_cast<size_t>(limit - next) < 1 + reservation) [[unlikely]]
+            break;
+        *next = ',';
+        // Every key starts with a comma. The first one lands where the brace belongs.
+        Latin1Character* brace = next + 1;
+        FieldsWrittenBySlot written = writeFieldsBySlotInline(brace, limit, object, fields.data(), end, reservation);
+        if (written.firstFieldNotWritten != end) [[unlikely]]
+            return { next, index, true };
+        next = written.next;
+        next += next == brace;
+        *brace = '{';
+        *next++ = '}';
+    }
+    return { next, index, false };
+}
+
+// Room for so many characters behind the cursor.
+template<typename CharType, BufferMode bufferMode>
+ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::reserve(Cursor& cursor, size_t size)
+{
+    if (static_cast<size_t>(cursor.limit - cursor.next) >= size) [[likely]]
+        return true;
+    publishLength(cursor);
+    if (size > std::numeric_limits<unsigned>::max() || !hasRemainingCapacity(size)) [[unlikely]] {
+        recordBufferFull();
+        return false;
+    }
+    cursor = cursorAtEnd();
+    return true;
+}
+
+// Room for a comma, the braces and every key, number, boolean and null of an object with these fields: only a string and a nested value ask for more.
+template<typename CharType, BufferMode bufferMode>
+ALWAYS_INLINE std::optional<unsigned> FastStringifier<CharType, bufferMode>::reservationFor(std::span<const AOT::FieldAsProperty> fields)
+{
+    constexpr size_t maxShortValueLength = std::max<size_t>(AOT::maxJSONNumberLength, maxInt32StringLength);
+    constexpr size_t maxReservation = 1 << 30;
+    size_t size = 3 + AOT::jsonKeysSize(fields) + fields.size() * maxShortValueLength + AOT::FieldAsProperty::jsonKeyBlockSize;
+    if (size > maxReservation) [[unlikely]]
+        return std::nullopt;
+    return size;
+}
+
+// Writes a compiled object whose own properties are these fields. False with a failure.
+template<typename CharType, BufferMode bufferMode>
+template<HasGap hasGap>
+ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFields(Cursor& cursor, JSObject& object, std::span<const AOT::FieldAsProperty> fields, unsigned reservation)
+{
+    constexpr bool writesLatin1 = std::same_as<CharType, Latin1Character>;
+    constexpr size_t blockSize = AOT::FieldAsProperty::jsonKeyBlockSize;
+
+    auto appendNewLineAndIndent = [&]() ALWAYS_INLINE_LAMBDA {
+        *cursor.next++ = '\n';
+        for (unsigned level = 0; level < m_depth; ++level) {
+            // All of the gap's array is copied, and the next copy starts where the gap ends.
+            for (unsigned i = 0; i < maxGapLength; ++i)
+                cursor.next[i] = m_gap[i];
+            cursor.next += m_gapLength;
+        }
+    };
+    if constexpr (hasGap == HasGap::Yes) {
+        // In front of each member a new line and its indent, behind its colon a space; a new line in front of the closing brace.
+        ++m_depth;
+        size_t size = reservation + (fields.size() + 1) * static_cast<size_t>(newLineAndIndentSize() + 1) + maxGapLength;
+        if (size > std::numeric_limits<unsigned>::max()) [[unlikely]] {
+            recordBufferFull();
+            return false;
+        }
+        reservation = size;
+    }
+
+    if (!reserve(cursor, reservation)) [[unlikely]]
+        return false;
+    // Every key starts with a comma. The first one lands where the brace belongs, which is written at the end.
+    const size_t positionOfBrace = cursor.next - buffer();
+    const bool readsSlots = writesLatin1 && hasGap == HasGap::No && !AOT::PropertyWalk::isInFrame(&object);
+
+    for (const AOT::FieldAsProperty* current = fields.data(), *end = current + fields.size(); ; ++current) {
+        if constexpr (writesLatin1 && hasGap == HasGap::No) {
+            if (readsSlots) [[likely]] {
+                FieldsWrittenBySlot written = writeFieldsBySlot(cursor.next, cursor.limit, object, current, end, reservation);
+                cursor.next = written.next;
+                current = written.firstFieldNotWritten;
+            }
+        }
+        if (current == end)
+            break;
+        auto& field = *current;
+        auto key = field.jsonKey;
+        if (key.empty()) [[unlikely]] {
+            recordFailure("16-bit property name"_s);
+            return false;
+        }
+        // A position, not a pointer: making room for a string may move the buffer.
+        const size_t positionOfMember = cursor.next - buffer();
+        auto appendKey = [&]() ALWAYS_INLINE_LAMBDA {
+            if constexpr (hasGap == HasGap::Yes) {
+                // The new line stands between the comma and the quote.
+                *cursor.next++ = ',';
+                appendNewLineAndIndent();
+                key = key.subspan(1);
+            }
+            if constexpr (writesLatin1) {
+                memcpy(cursor.next, key.data(), blockSize);
+                if (key.size() > blockSize) [[unlikely]] {
+                    for (size_t offset = blockSize; offset < key.size(); offset += blockSize)
+                        memcpy(cursor.next + offset, key.data() + offset, blockSize);
+                }
+            } else {
+                static_assert(narrowStride <= blockSize);
+                for (size_t offset = 0; offset < key.size(); offset += narrowStride)
+                    upconvertEightBytesAndLoad(key.data() + offset, cursor.next + offset);
+            }
+            cursor.next += key.size();
+            if constexpr (hasGap == HasGap::Yes)
+                *cursor.next++ = ' ';
+        };
+
+        JSValue value;
+        if constexpr (writesLatin1) {
+            AOT::PropertyWalk::readListedFieldUnboxed(&object, field, [&](auto unboxed) ALWAYS_INLINE_LAMBDA {
+                using Unboxed = decltype(unboxed);
+                if constexpr (std::same_as<Unboxed, JSValue>)
+                    value = unboxed;
+                else {
+                    appendKey();
+                    if constexpr (std::same_as<Unboxed, int32_t>)
+                        cursor.next = AOT::appendJSONInteger(cursor.next, unboxed);
+                    else if constexpr (std::same_as<Unboxed, double>)
+                        cursor.next = AOT::appendJSONNumber(cursor.next, unboxed);
+                    else {
+                        static_assert(std::same_as<Unboxed, bool>);
+                        cursor.next = unboxed ? AOT::appendJSONLiteral(cursor.next, "true"_s) : AOT::appendJSONLiteral(cursor.next, "false"_s);
+                    }
+                }
+            });
+        } else
+            value = AOT::PropertyWalk::readListedField(&object, field);
+        if (!value || value.isUndefined())
+            continue;
+
+        if (value.isCell()) {
+            JSCell& cell = *value.asCell();
+            JSType type = cell.type();
+            if (type == StringType) {
+                if constexpr (writesLatin1) {
+                    // A rope is left to the general case.
+                    const StringImpl* string = asString(&cell)->tryGetValueImpl();
+                    if (string && string->is8Bit()) [[likely]] {
+                        appendKey();
+                        size_t length = string->length();
+                        if (!reserve(cursor, 1 + length + 1 + reservation)) [[unlikely]]
+                            return false;
+                        *cursor.next = '"';
+                        if (!stringCopySameType<CharType, true>(string->span8(), cursor.next + 1)) [[likely]] {
+                            cursor.next[1 + length] = '"';
+                            cursor.next += 1 + length + 1;
+                            continue;
+                        }
+                        cursor.next = buffer() + positionOfMember;
+                        key = field.jsonKey;
+                    }
+                }
+            } else if (type == SymbolType)
+                continue;
+            else if (isFunctionType(type)) {
+                if (mayHaveOwnOrInheritedToJSON(*asObject(&cell))) [[unlikely]] {
+                    recordFailure("function may have toJSON"_s);
+                    return false;
+                }
+                continue;
+            }
+        } else if constexpr (writesLatin1) {
+            appendKey();
+            if (value.isInt32())
+                cursor.next = AOT::appendJSONInteger(cursor.next, value.asInt32());
+            else if (value.isTrue())
+                cursor.next = AOT::appendJSONLiteral(cursor.next, "true"_s);
+            else if (value.isFalse())
+                cursor.next = AOT::appendJSONLiteral(cursor.next, "false"_s);
+            else if (value.isNull())
+                cursor.next = AOT::appendJSONLiteral(cursor.next, "null"_s);
+            else {
+                ASSERT(value.isDouble());
+                cursor.next = AOT::appendJSONNumber(cursor.next, value.asDouble());
+            }
+            continue;
+        }
+
+        appendKey();
+        publishLength(cursor);
+        append<hasGap>(value);
+        if (haveFailure()) [[unlikely]]
+            return false;
+        cursor = cursorAtEnd();
+        if (!reserve(cursor, reservation)) [[unlikely]]
+            return false;
+    }
+
+    CharType* brace = buffer() + positionOfBrace;
+    if constexpr (hasGap == HasGap::Yes) {
+        --m_depth;
+        if (cursor.next != brace)
+            appendNewLineAndIndent();
+    }
+    cursor.next += cursor.next == brace;
+    *brace = '{';
+    *cursor.next++ = '}';
+    return true;
+}
+
+template<typename CharType, BufferMode bufferMode>
+template<HasGap hasGap>
+NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendListedFields(JSObject& object, std::span<const AOT::FieldAsProperty> fields)
+{
+    std::optional<unsigned> reservation = reservationFor(fields);
+    if (!reservation) [[unlikely]] {
+        recordFailure("long property names"_s);
+        return;
+    }
+    Cursor cursor = cursorAtEnd();
+    if (writeListedFields<hasGap>(cursor, object, fields, *reservation)) [[likely]]
+        publishLength(cursor);
+}
+
+// The elements of an array are mostly objects with one Structure and one order of keys: what is known of one element holds for the next.
+template<typename CharType, BufferMode bufferMode>
+NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendElementsInCompiledProgram(JSArray& array)
+{
+    auto* butterfly = array.butterfly();
+    unsigned length = butterfly->publicLength();
+    auto data = butterfly->contiguous();
+    if constexpr (bufferMode == BufferMode::DynamicBuffer) {
+        if (std::bit_cast<uint8_t*>(currentStackPointer()) < m_stackLimit) [[unlikely]] {
+            recordFailure(FailureReason::StackOverflow, "stack overflow"_s);
+            return;
+        }
+    }
+
+    const JSObject* known = nullptr;
+    std::span<const AOT::FieldAsProperty> fields;
+    unsigned reservation = 0;
+    Cursor cursor = cursorAtEnd();
+    bool writesElementsBySlot = std::same_as<CharType, Latin1Character>;
+    for (unsigned i = 0; i < length; ++i) {
+        if constexpr (std::same_as<CharType, Latin1Character>) {
+            if (known && writesElementsBySlot) {
+                ElementsWrittenBySlot written = writeElementsBySlot(cursor.next, cursor.limit, data.data(), i, length, *known, fields, reservation);
+                cursor.next = written.next;
+                i = written.firstElementNotWritten;
+                writesElementsBySlot = !written.stoppedAtField;
+                if (i == length)
+                    break;
+            }
+        }
+        JSValue element = data.at(&array, i).get();
+        if (!element) [[unlikely]] {
+            recordFailure("!canGetIndexQuickly"_s);
+            return;
+        }
+        if (known && element.isCell() && element.asCell()->type() == CompiledObjectType && AOT::PropertyWalk::haveSameFieldsInKeyOrder(known, asObject(element.asCell()))) [[likely]] {
+            // The reservation of the element in front has room for the comma.
+            *cursor.next++ = ',';
+            if (!writeListedFields<HasGap::No>(cursor, *asObject(element.asCell()), fields, reservation)) [[unlikely]]
+                return;
+            continue;
+        }
+
+        if (!reserve(cursor, 1)) [[unlikely]]
+            return;
+        if (i)
+            *cursor.next++ = ',';
+        publishLength(cursor);
+        append<HasGap::No>(element.isUndefined() ? jsNull() : element);
+        if (haveFailure()) [[unlikely]]
+            return;
+        cursor = cursorAtEnd();
+        if (!reserve(cursor, 1)) [[unlikely]]
+            return;
+
+        known = nullptr;
+        if (element.isCell() && element.asCell()->type() == CompiledObjectType && isCompiledStructureKnown(*asObject(element.asCell()))) {
+            if (auto listed = AOT::PropertyWalk::fieldsInKeyOrder(asObject(element.asCell()))) {
+                if (auto size = reservationFor(*listed)) {
+                    known = asObject(element.asCell());
+                    fields = *listed;
+                    reservation = *size;
+                }
+            }
+        }
+    }
+    publishLength(cursor);
+}
+#endif
 
 template<typename CharType, BufferMode bufferMode>
 template<HasGap hasGap>
@@ -1825,12 +2731,18 @@ inline String FastStringifier<CharType, bufferMode>::stringify(JSGlobalObject& g
 {
     if (replacer.isObject()) {
         logOutcome("replacer"_s);
+#if ENABLE(AOT)
+        reasonOfLastFailure = "replacer"_s;
+#endif
         return { };
     }
     FastStringifier stringifier(globalObject);
     if (!space.isUndefined()) {
         if (!stringifier.setGap(space)) [[unlikely]] {
             logOutcome("space"_s);
+#if ENABLE(AOT)
+            reasonOfLastFailure = "space"_s;
+#endif
             return { };
         }
     }
@@ -1842,31 +2754,70 @@ inline String FastStringifier<CharType, bufferMode>::stringify(JSGlobalObject& g
     return stringifier.result();
 }
 
+#if ENABLE(AOT)
+template<typename CharType, BufferMode bufferMode>
+inline bool FastStringifier<CharType, bufferMode>::tryAppendTo(AOT::StringBuilderStorage& builder, JSGlobalObject& globalObject, JSValue value, std::optional<FailureReason>& failureReason)
+{
+    FastStringifier stringifier(globalObject);
+    stringifier.template append<HasGap::No>(value);
+    failureReason = stringifier.m_failureReason;
+    if (stringifier.haveFailure())
+        return false;
+    std::span<const CharType> text { static_cast<const FastStringifier&>(stringifier).buffer(), stringifier.m_length };
+    return builder.append(&globalObject, text) == AOT::StringBuilderStorage::AppendResult::Appended;
+}
+#endif
+
+// A fast case that fails has run no code, so the next one starts over. Null if all of them fail.
+static String stringifyAfterFirstFastCaseFailed(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space, std::optional<FailureReason> failureReason)
+{
+    if (failureReason == FailureReason::Found16BitEarly) {
+        failureReason = std::nullopt;
+        if (String result = FastStringifier<char16_t, BufferMode::StaticBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
+            return result;
+
+        if (failureReason == FailureReason::BufferFull) {
+            failureReason = std::nullopt;
+            if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
+                return result;
+        }
+    } else if (failureReason == FailureReason::BufferFull) {
+        failureReason = std::nullopt;
+        // Wrongly guessing 16-bit costs a conversion to 8-bit at the end. Wrongly guessing 8-bit costs all of the work done before the first 16-bit character.
+        if (stringifyHints.isWide) {
+            if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
+                return result;
+        } else if (String result = FastStringifier<Latin1Character, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
+            return result;
+    }
+    // However much work is thrown away, retrying with 16-bit characters is still much faster than the generic path.
+    if (failureReason == FailureReason::Found16BitLate)
+        return FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason);
+    return { };
+}
+
 static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space)
 {
+    // Nothing is written for undefined, and without an object among the other arguments no code runs that could tell.
+    if (value.isUndefined() && !replacer.isObject() && !space.isObject())
+        return { };
     VM& vm = globalObject.vm();
     uint8_t* stackLimit = std::bit_cast<uint8_t*>(vm.softStackLimit());
     if (std::bit_cast<uint8_t*>(currentStackPointer()) >= stackLimit) [[likely]] {
         std::optional<FailureReason> failureReason;
-        failureReason = std::nullopt;
-        if (String result = FastStringifier<Latin1Character, BufferMode::StaticBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
+        if (stringifyHints.isWideInStaticBuffer)
+            failureReason = FailureReason::Found16BitEarly;
+        else if (String result = FastStringifier<Latin1Character, BufferMode::StaticBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
             return result;
-        if (failureReason == FailureReason::Found16BitEarly) {
-            failureReason = std::nullopt;
-            if (String result = FastStringifier<char16_t, BufferMode::StaticBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
-                return result;
-
-            if (failureReason == FailureReason::BufferFull) {
-                failureReason = std::nullopt;
-                if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
-                    return result;
-            }
-        } else if (failureReason == FailureReason::BufferFull) {
-            failureReason = std::nullopt;
-            if (String result = FastStringifier<Latin1Character, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason); !result.isNull())
-                return result;
-        }
+        if (String result = stringifyAfterFirstFastCaseFailed(globalObject, value, replacer, space, failureReason); !result.isNull())
+            return result;
     }
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode()) [[unlikely]] {
+        AOT::count(vm, AOT::RuntimeCounterID::JSONStringifySlowPaths);
+        AOT::countReasonForSlowStringify(vm, std::bit_cast<uint8_t*>(currentStackPointer()) >= stackLimit ? reasonOfLastFailure : "little stack left"_s);
+    }
+#endif
     String result = Stringifier::stringify(globalObject, value, replacer, space);
 #if FAST_STRINGIFY_LOG_USAGE
     if (!result.isNull())
@@ -1874,6 +2825,44 @@ static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value
 #endif
     return result;
 }
+
+#if ENABLE(AOT)
+static String stringifyProperty(JSGlobalObject& globalObject, JSValue value, JSValue property)
+{
+    VM& vm = globalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (property.isNumber())
+        RELEASE_AND_RETURN(scope, Stringifier::stringifyProperty(globalObject, value, PropertyNameForFunctionCall(static_cast<unsigned>(property.asNumber()))));
+    Identifier name = asString(property)->toIdentifier(&globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, Stringifier::stringifyProperty(globalObject, value, PropertyNameForFunctionCall(name.impl())));
+}
+
+bool AOT::appendJSONTextOfProperty(JSGlobalObject* globalObject, StringBuilderStorage& builder, JSValue value, JSValue property)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    std::optional<FailureReason> failureReason;
+    if (std::bit_cast<uint8_t*>(currentStackPointer()) >= std::bit_cast<uint8_t*>(vm.softStackLimit())) [[likely]] {
+        bool isAppended = FastStringifier<Latin1Character, BufferMode::StaticBuffer>::tryAppendTo(builder, *globalObject, value, failureReason);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isAppended)
+            return true;
+    }
+
+    // Only the general serializer calls toJSON, which is told the key.
+    String text = stringifyAfterFirstFastCaseFailed(*globalObject, value, jsUndefined(), jsUndefined(), failureReason);
+    if (text.isNull())
+        text = stringifyProperty(*globalObject, value, property);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (text.isNull())
+        return false;
+    auto result = text.is8Bit() ? builder.append(globalObject, text.span8()) : builder.append(globalObject, text.span16());
+    RELEASE_AND_RETURN(scope, result == StringBuilderStorage::AppendResult::Appended);
+}
+#endif
 
 // ------------------------------ JSONObject --------------------------------
 
@@ -2118,7 +3107,8 @@ NEVER_INLINE JSValue Walker::walk(JSValue unfiltered)
                 else {
                     unsigned attributes;
                     PropertyOffset offset = object->getDirectOffset(vm, prop, attributes);
-                    if (offset != invalidOffset && attributes == static_cast<unsigned>(PropertyAttribute::None)) [[likely]] {
+                    // The reviver was handed this holder and may have made its properties immutable: only the checked path may write then.
+                    if (offset != invalidOffset && attributes == static_cast<unsigned>(PropertyAttribute::None) && !object->structure()->mayHaveImmutableProperties()) [[likely]] {
                         object->putDirectOffset(vm, offset, filteredValue);
                         object->structure()->didReplaceProperty(offset);
                     } else {
@@ -2194,6 +3184,15 @@ static NEVER_INLINE JSValue jsonParseSlow(JSGlobalObject* globalObject, JSString
     return walker.walk(unfiltered);
 }
 
+#if ENABLE(AOT)
+static ALWAYS_INLINE JSValue tryParseWithCompiledParser(JSGlobalObject* globalObject, StringView text)
+{
+    if (!globalObject->aotInstance()) [[likely]]
+        return { };
+    return AOT::tryParseJSON(globalObject, text);
+}
+#endif
+
 // ECMA-262 v5 15.12.2
 JSC_DEFINE_HOST_FUNCTION(jsonProtoFuncParse, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -2210,6 +3209,11 @@ JSC_DEFINE_HOST_FUNCTION(jsonProtoFuncParse, (JSGlobalObject* globalObject, Call
         if (callData.type != CallData::Type::None)
             RELEASE_AND_RETURN(scope, JSValue::encode(jsonParseSlow(globalObject, string, view, WTF::move(callData), asObject(function))));
     }
+
+#if ENABLE(AOT)
+    if (JSValue parsed = tryParseWithCompiledParser(globalObject, view))
+        return JSValue::encode(parsed);
+#endif
 
     if (view->is8Bit()) {
         LiteralParser<Latin1Character, JSONReviverMode::Disabled> jsonParser(globalObject, view->span8(), StrictJSON);
@@ -2244,6 +3248,11 @@ JSValue JSONParse(JSGlobalObject* globalObject, StringView json)
     if (json.isNull())
         return JSValue();
 
+#if ENABLE(AOT)
+    if (JSValue parsed = tryParseWithCompiledParser(globalObject, json))
+        return parsed;
+#endif
+
     if (json.is8Bit()) {
         LiteralParser<Latin1Character, JSONReviverMode::Disabled> jsonParser(globalObject, json.span8(), StrictJSON);
         return jsonParser.tryLiteralParse();
@@ -2269,13 +3278,22 @@ StreamingJSONParseResult streamingJSONParse(JSGlobalObject* globalObject, String
 }
 #endif // USE(BUN_JSC_ADDITIONS)
 
-JSValue JSONParseWithException(JSGlobalObject* globalObject, StringView json)
+JSValue JSONParseWithException(JSGlobalObject* globalObject, StringView json, CompiledJSONParser compiledParser)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (json.isNull())
         return JSValue();
+
+#if ENABLE(AOT)
+    if (globalObject->aotInstance() && compiledParser == CompiledJSONParser::Try) [[unlikely]] {
+        if (JSValue parsed = AOT::tryParseJSON(globalObject, json))
+            return parsed;
+    }
+#else
+    UNUSED_PARAM(compiledParser);
+#endif
 
     if (json.is8Bit()) {
         LiteralParser<Latin1Character, JSONReviverMode::Disabled> jsonParser(globalObject, json.span8(), StrictJSON);

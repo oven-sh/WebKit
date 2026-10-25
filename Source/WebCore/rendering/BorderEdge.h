@@ -36,6 +36,8 @@
 
 namespace WebCore {
 
+class UsedStyle;
+
 namespace Style {
 class ComputedStyle;
 }
@@ -56,8 +58,8 @@ public:
     inline bool presentButInvisible() const { return widthForPainting() && !hasVisibleColorAndStyle(); }
     inline float widthForPainting() const { return m_isPresent ? m_flooredToDevicePixelWidth : 0; }
     void getDoubleBorderStripeWidths(LayoutUnit& outerWidth, LayoutUnit& innerWidth) const;
-    bool NODELETE obscuresBackgroundEdge(float scale) const;
-    bool NODELETE obscuresBackground() const;
+    bool LEGACY_NODELETE obscuresBackgroundEdge(float scale) const;
+    bool LEGACY_NODELETE obscuresBackground() const;
 
 private:
     inline float borderWidthInDevicePixel(int logicalPixels) const { return LayoutUnit(logicalPixels / m_devicePixelRatio).toFloat(); }
@@ -74,8 +76,8 @@ private:
 using BorderEdges = RectEdges<BorderEdge>;
 
 // inflation is only added to edges with non-zero widths.
-BorderEdges borderEdges(const Style::ComputedStyle&, float deviceScaleFactor, RectEdges<bool> closedEdges = { true }, LayoutSize inflation = { }, bool setColorsToBlack = false);
-BorderEdges borderEdgesForOutline(const Style::ComputedStyle&, BorderStyle, float deviceScaleFactor);
+BorderEdges borderEdges(const UsedStyle&, float deviceScaleFactor, RectEdges<bool> closedEdges = { true }, LayoutSize inflation = { }, bool setColorsToBlack = false);
+BorderEdges borderEdgesForOutline(const UsedStyle&, const Color&, BorderStyle, float deviceScaleFactor);
 
 inline bool edgesShareColor(const BorderEdge& firstEdge, const BorderEdge& secondEdge) { return equalIgnoringSemanticColor(firstEdge.color(), secondEdge.color()); }
 

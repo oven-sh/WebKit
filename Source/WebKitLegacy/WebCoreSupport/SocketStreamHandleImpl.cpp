@@ -64,7 +64,7 @@ void SocketStreamHandleImpl::platformSend(std::span<const uint8_t> data, Functio
     return completionHandler(true);
 }
 
-static std::span<const uint8_t> NODELETE removeTerminationCharacters(std::span<const uint8_t> data)
+static std::span<const uint8_t> LEGACY_NODELETE removeTerminationCharacters(std::span<const uint8_t> data)
 {
 #ifndef NDEBUG
     ASSERT(data.size() > 2);
@@ -100,7 +100,7 @@ void SocketStreamHandleImpl::platformSendHandshake(std::span<const uint8_t> data
     bool secureCookiesAccessed = false;
 
     if (headerFieldProxy) {
-        auto cookieDataFromNetworkSession = cookieDataForHandshake(m_storageSessionProvider ? protect(m_storageSessionProvider)->storageSession() : nullptr, *headerFieldProxy);
+        auto cookieDataFromNetworkSession = cookieDataForHandshake(m_storageSessionProvider ? protect(m_storageSessionProvider->storageSession()) : nullptr, *headerFieldProxy);
         if (!cookieDataFromNetworkSession) {
             completionHandler(false, false);
             return;

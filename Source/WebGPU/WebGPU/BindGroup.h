@@ -25,13 +25,14 @@
 
 #pragma once
 
+#import "BindGroupLayout.h"
 #import "BindableResource.h"
 #import "ShaderStage.h"
+#import <WebGPU/WebGPUCpp.h>
 #import <wtf/EnumeratedArray.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/HashTraits.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCountedAndCanMakeWeakPtr.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/Vector.h>
 #import <wtf/WeakPtr.h>
@@ -39,7 +40,7 @@
 struct WGPUBindGroupImpl {
 };
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class BindGroupLayout;
 class Device;
@@ -53,14 +54,14 @@ struct ExternalTextureIndices {
 };
 
 // https://gpuweb.github.io/gpuweb/#gpubindgroup
-class BindGroup : public RefCountedAndCanMakeWeakPtr<BindGroup>, public WGPUBindGroupImpl {
+class BindGroup final : public WebGPU::BindGroup, public WGPUBindGroupImpl {
     WTF_MAKE_TZONE_ALLOCATED(BindGroup);
 public:
     template <typename T>
     using ShaderStageArray = EnumeratedArray<ShaderStage, T, ShaderStage::Compute>;
     using SamplersContainer = HashMap<Ref<Sampler>, ShaderStageArray<std::optional<uint32_t>>>;
     struct BufferAndType {
-        WGPUBufferBindingType type;
+        BindGroupLayout::BufferBindingType type;
         uint64_t bindingSize;
         uint64_t bufferSize;
         uint32_t bindingIndex;
@@ -80,9 +81,9 @@ public:
 
     ~BindGroup();
 
-    void setLabel(String&&);
+    void setLabel(String&&) final;
 
-    bool NODELETE isValid() const;
+    bool LEGACY_NODELETE isValid() const final;
 
     id<MTLBuffer> vertexArgumentBuffer() const { return m_vertexArgumentBuffer; }
     id<MTLBuffer> fragmentArgumentBuffer() const { return m_fragmentArgumentBuffer; }
@@ -91,21 +92,22 @@ public:
     const Vector<BindableResources>& resources() const LIFETIME_BOUND { return m_resources; }
 
     Device& device() const { return m_device; }
-    static bool NODELETE allowedUsage(const OptionSet<BindGroupEntryUsage>&);
+    static bool LEGACY_NODELETE allowedUsage(const OptionSet<BindGroupEntryUsage>&);
     static NSString* usageName(const OptionSet<BindGroupEntryUsage>&);
-    static uint64_t NODELETE makeEntryMapKey(uint32_t baseMipLevel, uint32_t baseArrayLayer, WGPUTextureAspect);
+    static uint64_t LEGACY_NODELETE makeEntryMapKey(uint32_t baseMipLevel, uint32_t baseArrayLayer, WebGPU::TextureAspect);
 
     const BindGroupLayout* bindGroupLayout() const { return m_bindGroupLayout.get(); }
 
-    const BufferAndType* NODELETE dynamicBuffer(uint32_t) const;
-    uint32_t NODELETE dynamicOffset(uint32_t bindingIndex, const Vector<uint32_t>*) const;
+    const BufferAndType* LEGACY_NODELETE dynamicBuffer(uint32_t) const;
+    uint32_t LEGACY_NODELETE dynamicOffset(uint32_t bindingIndex, const Vector<uint32_t>*) const;
     bool rebindSamplersIfNeeded() const;
-    bool updateExternalTextures(ExternalTexture&);
+    bool updateExternalTextures(WebGPU::ExternalTexture&) final;
+    void releaseDestroyedResources();
     bool makeSubmitInvalid(ShaderStage, const BindGroupLayout*) const;
     const SamplersContainer& samplers() const LIFETIME_BOUND { return m_samplers; }
     uint32_t uniqueId() const { return m_uniqueIdentifier; }
     void validatedSuccessfully(uint32_t groupIndex, uint64_t pipelineIndex, uint32_t maxOffset) const;
-    bool NODELETE previouslyValidatedBindGroup(uint32_t groupIndex, uint64_t pipelineIndex, uint32_t maxOffset) const;
+    bool LEGACY_NODELETE previouslyValidatedBindGroup(uint32_t groupIndex, uint64_t pipelineIndex, uint32_t maxOffset) const;
     bool hasSamplers() const { return m_samplers.size(); }
 
 private:
@@ -127,4 +129,4 @@ private:
     uint32_t m_uniqueIdentifier { 0 };
 };
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal

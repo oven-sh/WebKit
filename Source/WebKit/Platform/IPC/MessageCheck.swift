@@ -73,6 +73,12 @@ func mayThrowInvalidMessage<T>(_ result: T) throws(InvalidMessage) -> T {
     result
 }
 
+@inline(__always)
+@discardableResult
+nonisolated(nonsending) func mayThrowInvalidMessage<T>(_ result: T) async throws(InvalidMessage) -> T {
+    result
+}
+
 // Returns false if the message was invalid, so that generated dispatch can send a default reply.
 @discardableResult
 func dispatchMessage(
@@ -89,6 +95,10 @@ func dispatchMessage(
 }
 
 func markMessageInvalid(_ error: InvalidMessage, on connection: IPC.Connection) {
+    connection.markCurrentlyDispatchedMessageAsInvalid(WTF.String(error.reason.description))
+}
+
+func markMessageInvalid(_ error: InvalidMessage, on connection: IPC.StreamServerConnection) {
     connection.markCurrentlyDispatchedMessageAsInvalid(WTF.String(error.reason.description))
 }
 

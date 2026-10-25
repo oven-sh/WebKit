@@ -93,7 +93,7 @@ RefPtr<CSSValue> consumeRotate3dFunction(CSSParserTokenRange& range, CSS::Proper
     };
 
     auto functionId = range.peek().functionId();
-    if (functionId != CSSValueRotate3d)
+    if (functionId != CSSValueID::Rotate3d)
         return { };
 
     auto rangeCopy = range;
@@ -135,7 +135,7 @@ RefPtr<CSSValue> consumeTranslateFunction(CSSParserTokenRange& range, CSS::Prope
     };
 
     auto functionId = range.peek().functionId();
-    if (functionId != CSSValueTranslate)
+    if (functionId != CSSValueID::Translate)
         return { };
 
     auto rangeCopy = range;
@@ -183,7 +183,7 @@ RefPtr<CSSValue> consumeTranslate3dFunction(CSSParserTokenRange& range, CSS::Pro
     };
 
     auto functionId = range.peek().functionId();
-    if (functionId != CSSValueTranslate3d)
+    if (functionId != CSSValueID::Translate3d)
         return { };
 
     auto rangeCopy = range;
@@ -204,7 +204,7 @@ RefPtr<CSSValue> consumeTranslate(CSSParserTokenRange& range, CSS::PropertyParse
     // https://drafts.csswg.org/css-transforms-2/#propdef-translate
     // none | <length-percentage> [ <length-percentage> <length>? ]?
 
-    if (range.peek().id() == CSSValueNone)
+    if (range.peek().id() == CSSValueID::None)
         return consumeIdent(range);
 
     // https://drafts.csswg.org/css-transforms-2/#propdef-translate
@@ -259,7 +259,7 @@ RefPtr<CSSValue> consumeRotate(CSSParserTokenRange& range, CSS::PropertyParserSt
     // https://drafts.csswg.org/css-transforms-2/#propdef-rotate
     // none | <angle> | [ x | y | z | <number>{3} ] && <angle>
 
-    if (range.peek().id() == CSSValueNone)
+    if (range.peek().id() == CSSValueID::None)
         return consumeIdent(range);
 
     // https://www.w3.org/TR/css-transforms-2/#propdef-rotate
@@ -300,7 +300,7 @@ RefPtr<CSSValue> consumeRotate(CSSParserTokenRange& range, CSS::PropertyParserSt
         }
 
         // Finally, attempt to parse one of the axis identifiers.
-        auto parsedIdent = consumeIdent<CSSValueX, CSSValueY, CSSValueZ>(range);
+        auto parsedIdent = consumeIdent<CSSValueID::X, CSSValueID::Y, CSSValueID::Z>(range);
         // If we failed to find one of those identifiers or one was already specified, or we'd previously
         // encountered numbers to specify a rotation axis, then this value is invalid.
         if (!parsedIdent || axisIdentifier || !list.isEmpty())
@@ -321,6 +321,10 @@ RefPtr<CSSValue> consumeRotate(CSSParserTokenRange& range, CSS::PropertyParserSt
         return value && !*value;
     };
 
+    auto knownToBeNegative = [](std::optional<bool> value) -> bool {
+        return value && *value;
+    };
+
     if (list.size() == 3) {
         // The first valid case is if we have 3 items in the list, meaning we parsed three consecutive number values
         // to specify the rotation axis. In that case, we must not also have encountered an axis identifier.
@@ -328,16 +332,30 @@ RefPtr<CSSValue> consumeRotate(CSSParserTokenRange& range, CSS::PropertyParserSt
 
         // Now we must check the values since if we have a vector in the x, y or z axis alone we must serialize to the
         // matching identifier.
-        auto xIsZero = downcast<CSSPrimitiveValue>(list[0].get()).isZero();
-        auto yIsZero = downcast<CSSPrimitiveValue>(list[1].get()).isZero();
-        auto zIsZero = downcast<CSSPrimitiveValue>(list[2].get()).isZero();
+        Ref x = downcast<CSSPrimitiveValue>(list[0].get());
+        Ref y = downcast<CSSPrimitiveValue>(list[1].get());
+        Ref z = downcast<CSSPrimitiveValue>(list[2].get());
+        auto xIsZero = x->isZero();
+        auto yIsZero = y->isZero();
+        auto zIsZero = z->isZero();
+
+        // If the axis points in the reverse direction of a named axis, it still serializes to the matching keyword
+        // (or is omitted, for z), but the angle is negated so that the same rotation is represented.
+        // https://drafts.csswg.org/css-transforms-2/#individual-transform-serialization
+        auto angleAlong = [&](const CSSPrimitiveValue& axis) -> Ref<CSSPrimitiveValue> {
+            if (knownToBeNegative(axis.isNegative())) {
+                if (auto raw = angle->raw())
+                    return CSSPrimitiveValue::create(-raw->value, raw->unit);
+            }
+            return angle.releaseNonNull();
+        };
 
         if (knownToBeNotZero(xIsZero) && knownToBeZero(yIsZero) && knownToBeZero(zIsZero))
-            return CSSValueList::createSpaceSeparated(CSSKeywordValue::create(CSSValueX), angle.releaseNonNull());
+            return CSSValueList::createSpaceSeparated(CSSKeywordValue::create(CSSValueID::X), angleAlong(x));
         if (knownToBeZero(xIsZero) && knownToBeNotZero(yIsZero) && knownToBeZero(zIsZero))
-            return CSSValueList::createSpaceSeparated(CSSKeywordValue::create(CSSValueY), angle.releaseNonNull());
+            return CSSValueList::createSpaceSeparated(CSSKeywordValue::create(CSSValueID::Y), angleAlong(y));
         if (knownToBeZero(xIsZero) && knownToBeZero(yIsZero) && knownToBeNotZero(zIsZero))
-            return CSSValueList::createSpaceSeparated(angle.releaseNonNull());
+            return CSSValueList::createSpaceSeparated(angleAlong(z));
 
         list.append(angle.releaseNonNull());
         return CSSValueList::createSpaceSeparated(WTF::move(list));
@@ -346,7 +364,7 @@ RefPtr<CSSValue> consumeRotate(CSSParserTokenRange& range, CSS::PropertyParserSt
     if (list.isEmpty()) {
         // The second valid case is if we have no item in the list, meaning we have either an optional rotation axis
         // using an identifier. In that case, we must add the axis identifier is specified and then add the angle.
-        if (axisIdentifier && axisIdentifier->valueID() != CSSValueZ)
+        if (axisIdentifier && axisIdentifier->valueID() != CSSValueID::Z)
             return CSSValueList::createSpaceSeparated(axisIdentifier.releaseNonNull(), angle.releaseNonNull());
         return CSSValueList::createSpaceSeparated(angle.releaseNonNull());
     }
@@ -359,7 +377,7 @@ RefPtr<CSSValue> consumeScale(CSSParserTokenRange& range, CSS::PropertyParserSta
     // https://drafts.csswg.org/css-transforms-2/#propdef-scale
     // none | [ <number> | <percentage> ]{1,3}
 
-    if (range.peek().id() == CSSValueNone)
+    if (range.peek().id() == CSSValueID::None)
         return consumeIdent(range);
 
     // https://www.w3.org/TR/css-transforms-2/#propdef-scale
@@ -450,10 +468,10 @@ RefPtr<CSSValue> consumePortalTransform(CSSParserTokenRange& range, CSS::Propert
     // <'portal-transform'> = none | auto | auto? <transform-list> | <transform-list> auto <transform-list>?
     // https://webkit.github.io/explainers/css-spatial/Overview.html#stage-transform
 
-    if (range.peek().id() == CSSValueNone)
+    if (range.peek().id() == CSSValueID::None)
         return consumeIdent(range);
 
-    RefPtr leadingAuto = consumeIdent<CSSValueAuto>(range);
+    RefPtr leadingAuto = consumeIdent<CSSValueID::Auto>(range);
     RefPtr firstList = CSSPropertyParsing::consumeTransformList(range, state);
 
     if (leadingAuto) {
@@ -470,7 +488,7 @@ RefPtr<CSSValue> consumePortalTransform(CSSParserTokenRange& range, CSS::Propert
     if (!firstList)
         return nullptr;
 
-    RefPtr trailingAuto = consumeIdent<CSSValueAuto>(range);
+    RefPtr trailingAuto = consumeIdent<CSSValueID::Auto>(range);
     if (!trailingAuto)
         return firstList; // `<transform-list>`
 

@@ -49,7 +49,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGDocumentExtensions);
 
-static bool NODELETE animationsPausedForDocument(Document& document)
+static bool LEGACY_NODELETE animationsPausedForDocument(Document& document)
 {
     return !document.page() || !document.page()->isVisible() || !document.page()->imageAnimationEnabled();
 }
@@ -112,8 +112,8 @@ void SVGDocumentExtensions::unpauseAnimations()
 bool SVGDocumentExtensions::hasActiveSMILAnimations() const
 {
     for (Ref container : m_timeContainers) {
-        auto& timeContainer = container->timeContainer();
-        if (timeContainer.isActive() && timeContainer.hasAnimations())
+        Ref timeContainer = container->timeContainer();
+        if (timeContainer->isActive() && timeContainer->hasAnimations())
             return true;
     }
     return false;

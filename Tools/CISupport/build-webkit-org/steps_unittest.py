@@ -456,6 +456,47 @@ class TestCompileWebKit(BuildStepMixinAdditions, unittest.TestCase):
         self.expect_outcome(result=SUCCESS, state_string='compiled')
         return self.run_step()
 
+    def test_success_cmake_mac(self):
+        self.setup_step(CompileWebKit())
+        self.setProperty('platform', 'mac')
+        self.setProperty('fullPlatform', 'mac-sequoia')
+        self.setProperty('configuration', 'debug')
+        self.setProperty('architecture', 'x86_64 arm64')
+        self.setProperty('additionalArguments', ['--cmake'])
+        self.setProperty('builddir', 'BuildDir')
+        self.expectRemoteCommands(
+            ExpectShell(
+                workdir='wkdir',
+                timeout=3600,
+                log_environ=True,
+                env={'PATH': '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/CMake.app/Contents/bin/:BuildDir'},
+                command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'perl Tools/Scripts/build-webkit --no-fatal-warnings --debug --cmake --architecture "x86_64 arm64" 2>&1 | perl Tools/Scripts/filter-build-webkit -logfile build-log.txt'],
+            ).exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='compiled')
+        return self.run_step()
+
+    def test_success_cmake_mac_build_only(self):
+        self.setup_step(CompileWebKit())
+        self.setProperty('platform', 'mac')
+        self.setProperty('fullPlatform', 'mac-sequoia')
+        self.setProperty('configuration', 'release')
+        self.setProperty('buildOnly', True)
+        self.setProperty('deployment_target', '15.0')
+        self.setProperty('additionalArguments', ['--cmake'])
+        self.setProperty('builddir', 'BuildDir')
+        self.expectRemoteCommands(
+            ExpectShell(
+                workdir='wkdir',
+                timeout=3600,
+                log_environ=True,
+                env={'PATH': '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/CMake.app/Contents/bin/:BuildDir'},
+                command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'perl Tools/Scripts/build-webkit --no-fatal-warnings --release --cmake --dsym --cmakeargs="-DCMAKE_C_FLAGS=-gline-tables-only -DCMAKE_CXX_FLAGS=-gline-tables-only -DCMAKE_OBJC_FLAGS=-gline-tables-only -DCMAKE_OBJCXX_FLAGS=-gline-tables-only -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0" 2>&1 | perl Tools/Scripts/filter-build-webkit -logfile build-log.txt'],
+            ).exit(0),
+        )
+        self.expect_outcome(result=SUCCESS, state_string='compiled')
+        return self.run_step()
+
     def test_bigsur_timeout(self):
         self.setup_step(CompileWebKit())
         self.setProperty('fullPlatform', 'mac-sonoma')
@@ -2837,6 +2878,11 @@ class TestBuildSwift(BuildStepMixinAdditions, unittest.TestCase):
             ExpectShell(workdir=SWIFT_DIR,
                         log_environ=False,
                         timeout=1200,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'rm -rf webkit/{SWIFT_DIR}/swift-nightly-install webkit/{SWIFT_DIR}/swift-nightly-symroot'])
+            .exit(0),
+            ExpectShell(workdir=SWIFT_DIR,
+                        log_environ=False,
+                        timeout=1200,
                         command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -rf "$(getconf DARWIN_USER_CACHE_DIR)org.llvm.clang"'])
             .exit(0),
             ExpectShell(workdir=SWIFT_DIR,
@@ -2873,6 +2919,11 @@ class TestBuildSwift(BuildStepMixinAdditions, unittest.TestCase):
             ExpectShell(workdir=SWIFT_DIR,
                         log_environ=False,
                         timeout=1200,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'rm -rf webkit/{SWIFT_DIR}/swift-nightly-install webkit/{SWIFT_DIR}/swift-nightly-symroot'])
+            .exit(0),
+            ExpectShell(workdir=SWIFT_DIR,
+                        log_environ=False,
+                        timeout=1200,
                         command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -rf "$(getconf DARWIN_USER_CACHE_DIR)org.llvm.clang"'])
             .exit(0),
             ExpectShell(workdir=SWIFT_DIR,
@@ -2902,6 +2953,11 @@ class TestBuildSwift(BuildStepMixinAdditions, unittest.TestCase):
             ExpectShell(workdir=SWIFT_DIR,
                         log_environ=False,
                         timeout=1200,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'rm -rf webkit/{SWIFT_DIR}/swift-nightly-install webkit/{SWIFT_DIR}/swift-nightly-symroot'])
+            .exit(0),
+            ExpectShell(workdir=SWIFT_DIR,
+                        log_environ=False,
+                        timeout=1200,
                         command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -rf "$(getconf DARWIN_USER_CACHE_DIR)org.llvm.clang"'])
             .exit(0),
             ExpectShell(workdir=SWIFT_DIR,
@@ -2926,6 +2982,11 @@ class TestBuildSwift(BuildStepMixinAdditions, unittest.TestCase):
                         log_environ=False,
                         timeout=1200,
                         command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', 'rm -rf ../build'])
+            .exit(0),
+            ExpectShell(workdir=SWIFT_DIR,
+                        log_environ=False,
+                        timeout=1200,
+                        command=['/bin/bash', '--posix', '-o', 'pipefail', '-c', f'rm -rf webkit/{SWIFT_DIR}/swift-nightly-install webkit/{SWIFT_DIR}/swift-nightly-symroot'])
             .exit(0),
             ExpectShell(workdir=SWIFT_DIR,
                         log_environ=False,

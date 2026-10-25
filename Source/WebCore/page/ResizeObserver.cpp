@@ -63,8 +63,8 @@ ResizeObserver::ResizeObserver(Document& document, JSOrNativeResizeObserverCallb
 ResizeObserver::~ResizeObserver()
 {
     disconnect();
-    if (m_document)
-        m_document->removeResizeObserver(*this);
+    if (RefPtr document = m_document)
+        document->removeResizeObserver(*this);
 }
 
 void ResizeObserver::observeInternal(Element& target, const ResizeObserverBoxOptions boxOptions)
@@ -175,7 +175,7 @@ void ResizeObserver::deliverObservations()
             return nullptr;
         return ResizeObserverEntry::create(target.releaseNonNull(), observation->computeContentRect(), observation->borderBoxSize(), observation->contentBoxSize());
     });
-    m_activeObservations.clear();
+    m_activeObservations.shrink(0);
 
     // Use GCReachableRef here to make sure the targets and their JS wrappers are kept alive while we deliver.
     // It is important since m_activeObservationTargets / m_targetsWaitingForFirstObservation will get cleared and
@@ -185,15 +185,15 @@ void ResizeObserver::deliverObservations()
     {
         Locker locker { m_observationTargetsLock };
         activeObservationTargets = WTF::compactMap(m_activeObservationTargets, [](auto& weakTarget) -> std::optional<GCReachableRef<Element>> {
-            if (weakTarget)
-                return GCReachableRef<Element> { *weakTarget };
+            if (RefPtr target = weakTarget)
+                return GCReachableRef<Element> { *target };
             ASSERT_NOT_REACHED(); // Targets are supposed to be kept alive via JSResizeObserver::visitAdditionalChildrenInGCThread().
             return std::nullopt;
         });
         m_activeObservationTargets = { };
         targetsWaitingForFirstObservation = WTF::compactMap(m_targetsWaitingForFirstObservation, [](auto& weakTarget) -> std::optional<GCReachableRef<Element>> {
-            if (weakTarget)
-                return GCReachableRef<Element> { *weakTarget };
+            if (RefPtr target = weakTarget)
+                return GCReachableRef<Element> { *target };
             ASSERT_NOT_REACHED(); // Targets are supposed to be kept alive via JSResizeObserver::visitAdditionalChildrenInGCThread().
             return std::nullopt;
         });

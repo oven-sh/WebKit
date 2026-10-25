@@ -187,6 +187,21 @@ void linkPolymorphicCall(VM& vm, JSCell* owner, CallFrame* callFrame, CallLinkIn
 
     // Figure out what our cases are.
     for (CallVariant variant : list) {
+#if ENABLE(AOT)
+        if (JSCell* callee = variant.rawCalleeCell(); vm.hasCompiledCode() && isCompiledCalleeType(callee->type())) [[unlikely]] {
+            CallData callData = JSC::getCallData(callee);
+            if (isClosureCall || callData.type != CallData::Type::Compiled) {
+                callLinkInfo.setVirtualCall(vm);
+                return;
+            }
+            CallSlot slot;
+            slot.m_index = callSlots.size();
+            slot.m_target = CodePtr<JSEntryPtrTag>::fromTaggedPtr(const_cast<void*>(callData.compiled.entrypoint));
+            slot.m_calleeOrExecutable = callee;
+            callSlots.append(WTF::move(slot));
+            continue;
+        }
+#endif
         CodeBlock* codeBlock = nullptr;
         if (variant.executable() && !variant.executable()->isHostFunction()) {
             ExecutableBase* executable = variant.executable();
@@ -279,7 +294,7 @@ void linkPolymorphicCall(VM& vm, JSCell* owner, CallFrame* callFrame, CallLinkIn
 
 #if ENABLE(JIT)
 
-static ECMAMode NODELETE ecmaModeFor(PutByKind putByKind)
+static ECMAMode LEGACY_NODELETE ecmaModeFor(PutByKind putByKind)
 {
     switch (putByKind) {
     case PutByKind::ByIdSloppy:
@@ -359,7 +374,7 @@ static InlineCacheAction actionForCell(VM& vm, JSCell* cell)
     return AttemptToCache;
 }
 
-static bool NODELETE forceICFailure(JSGlobalObject*)
+static bool LEGACY_NODELETE forceICFailure(JSGlobalObject*)
 {
     return Options::forceICFailure();
 }
@@ -426,7 +441,7 @@ static std::optional<NonStringPrimitiveKeyInfo> nonStringPrimitiveKeyInfoForUID(
     return std::nullopt;
 }
 
-inline CodePtr<CFunctionPtrTag> NODELETE appropriateGetByOptimizeFunction(GetByKind kind)
+inline CodePtr<CFunctionPtrTag> LEGACY_NODELETE appropriateGetByOptimizeFunction(GetByKind kind)
 {
     switch (kind) {
     case GetByKind::ById:
@@ -447,7 +462,7 @@ inline CodePtr<CFunctionPtrTag> NODELETE appropriateGetByOptimizeFunction(GetByK
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-inline CodePtr<CFunctionPtrTag> NODELETE appropriateGetByGaveUpFunction(GetByKind kind)
+inline CodePtr<CFunctionPtrTag> LEGACY_NODELETE appropriateGetByGaveUpFunction(GetByKind kind)
 {
     switch (kind) {
     case GetByKind::ById:
@@ -844,7 +859,7 @@ static InlineCacheAction tryCacheArrayGetByVal(JSGlobalObject* globalObject, Cod
                 accessType = typedArray->isResizableOrGrowableShared() ? AccessCase::IndexedResizableTypedArrayUint32Load : AccessCase::IndexedTypedArrayUint32Load;
                 break;
             case Float16ArrayType:
-                if (!CCallHelpers::supportsFloat16())
+                if (!CCallHelpers::supportsFloat16(CPUFeatureSet::host()))
                     return GiveUpOnCache;
                 accessType = typedArray->isResizableOrGrowableShared() ? AccessCase::IndexedResizableTypedArrayFloat16Load : AccessCase::IndexedTypedArrayFloat16Load;
                 break;
@@ -953,7 +968,7 @@ void repatchArrayGetByVal(JSGlobalObject* globalObject, CodeBlock* codeBlock, JS
     }
 }
 
-static CodePtr<CFunctionPtrTag> NODELETE appropriatePutByGaveUpFunction(PutByKind putByKind)
+static CodePtr<CFunctionPtrTag> LEGACY_NODELETE appropriatePutByGaveUpFunction(PutByKind putByKind)
 {
     switch (putByKind) {
     case PutByKind::ByIdStrict:
@@ -994,7 +1009,7 @@ void repatchPutBySlowPathCall(CodeBlock* codeBlock, PropertyInlineCache& propert
     repatchSlowPathCall(codeBlock, propertyCache, appropriatePutByGaveUpFunction(kind));
 }
 
-static CodePtr<CFunctionPtrTag> NODELETE appropriatePutByOptimizeFunction(PutByKind putByKind)
+static CodePtr<CFunctionPtrTag> LEGACY_NODELETE appropriatePutByOptimizeFunction(PutByKind putByKind)
 {
     switch (putByKind) {
     case PutByKind::ByIdStrict:
@@ -1032,6 +1047,8 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
     VM& vm = globalObject->vm();
     AccessGenerationResult result;
     Identifier ident = Identifier::fromUid(vm, propertyName.uid());
+    if (oldStructure->mayHaveImmutableProperties() || (baseValue.isCell() && baseValue.asCell()->structure()->mayHaveImmutableProperties()))
+        return GiveUpOnCache;
     {
         GCSafeConcurrentJSLocker locker(codeBlock->m_lock, globalObject->vm());
 
@@ -1372,6 +1389,9 @@ static InlineCacheAction tryCacheArrayPutByVal(JSGlobalObject* globalObject, Cod
     if (!baseValue.isCell() || forceICFailure(globalObject))
         return GiveUpOnCache;
 
+    if (baseValue.asCell()->structure()->hasImmutableIndexedProperties())
+        return GiveUpOnCache;
+
     if (!index.isInt32())
         return RetryCacheLater;
 
@@ -1419,7 +1439,7 @@ static InlineCacheAction tryCacheArrayPutByVal(JSGlobalObject* globalObject, Cod
                 accessType = typedArray->isResizableOrGrowableShared() ? AccessCase::IndexedResizableTypedArrayUint32Store : AccessCase::IndexedTypedArrayUint32Store;
                 break;
             case Float16ArrayType:
-                if (!CCallHelpers::supportsFloat16())
+                if (!CCallHelpers::supportsFloat16(CPUFeatureSet::host()))
                     return GiveUpOnCache;
                 accessType = typedArray->isResizableOrGrowableShared() ? AccessCase::IndexedResizableTypedArrayFloat16Store : AccessCase::IndexedTypedArrayFloat16Store;
                 break;
@@ -1595,7 +1615,7 @@ void repatchDeleteBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, DeleteP
     }
 }
 
-inline CodePtr<CFunctionPtrTag> NODELETE appropriateInByOptimizeFunction(InByKind kind)
+inline CodePtr<CFunctionPtrTag> LEGACY_NODELETE appropriateInByOptimizeFunction(InByKind kind)
 {
     switch (kind) {
     case InByKind::ById:
@@ -1608,7 +1628,7 @@ inline CodePtr<CFunctionPtrTag> NODELETE appropriateInByOptimizeFunction(InByKin
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-inline CodePtr<CFunctionPtrTag> NODELETE appropriateInByGaveUpFunction(InByKind kind)
+inline CodePtr<CFunctionPtrTag> LEGACY_NODELETE appropriateInByGaveUpFunction(InByKind kind)
 {
     switch (kind) {
     case InByKind::ById:
@@ -2020,7 +2040,7 @@ static InlineCacheAction tryCacheArrayInByVal(JSGlobalObject* globalObject, Code
                 accessType = typedArray->isResizableOrGrowableShared() ? AccessCase::IndexedResizableTypedArrayUint32In : AccessCase::IndexedTypedArrayUint32In;
                 break;
             case Float16ArrayType:
-                if (!CCallHelpers::supportsFloat16())
+                if (!CCallHelpers::supportsFloat16(CPUFeatureSet::host()))
                     return GiveUpOnCache;
                 accessType = typedArray->isResizableOrGrowableShared() ? AccessCase::IndexedResizableTypedArrayFloat16In : AccessCase::IndexedTypedArrayFloat16In;
                 break;

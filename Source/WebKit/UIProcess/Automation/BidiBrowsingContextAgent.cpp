@@ -84,7 +84,7 @@ static std::optional<Ref<Inspector::Protocol::BidiScript::RemoteValue>> extractN
     // Extract the handle from session-node property
     RefPtr<JSON::Value> sessionNodeValue;
     String nodeHandle;
-    for (auto& key : nodeObject->keys()) {
+    for (auto& key : borrow(nodeObject->keys())) {
         if (key.startsWith("session-node-"_s)) {
             if (nodeObject->getValue(key, sessionNodeValue) && sessionNodeValue) {
                 nodeHandle = sessionNodeValue->asString();
@@ -293,7 +293,7 @@ void BidiBrowsingContextAgent::close(const BrowsingContext& browsingContext, std
 
 static constexpr Inspector::Protocol::Automation::BrowsingContextPresentation defaultBrowsingContextPresentation = Inspector::Protocol::Automation::BrowsingContextPresentation::Tab;
 
-static Inspector::Protocol::Automation::BrowsingContextPresentation NODELETE browsingContextPresentationFromCreateType(Inspector::Protocol::BidiBrowsingContext::CreateType createType)
+static Inspector::Protocol::Automation::BrowsingContextPresentation LEGACY_NODELETE browsingContextPresentationFromCreateType(Inspector::Protocol::BidiBrowsingContext::CreateType createType)
 {
     switch (createType) {
     case Inspector::Protocol::BidiBrowsingContext::CreateType::Tab:
@@ -364,8 +364,9 @@ Ref<Inspector::Protocol::BidiBrowsingContext::Info> BidiBrowsingContextAgent::ge
     // https://w3c.github.io/webdriver-bidi/#original-opener
 
     if (includeParentID == IncludeParentID::Yes) {
-        if (tree.info.parentFrameID)
-            info->setParent(getBrowsingContextID(tree.info.parentFrameID.value()));
+        RefPtr frame = WebFrameProxy::webFrame(tree.info.frameID);
+        if (RefPtr parent = frame ? frame->parentFrame() : nullptr)
+            info->setParent(getBrowsingContextID(parent->frameID()));
         else
             info->setParentIsNull();
     }
@@ -377,7 +378,7 @@ Ref<Inspector::Protocol::BidiBrowsingContext::Info> BidiBrowsingContextAgent::ge
 
     auto childrenInfo = JSON::ArrayOf<Inspector::Protocol::BidiBrowsingContext::Info>::create();
     auto newDepth = maxDepth ? std::optional<uint64_t>(*maxDepth - 1) : std::nullopt;
-    for (auto& child : tree.children)
+    for (auto& child : borrow(tree.children))
         childrenInfo->addItem(getNavigableInfo(child, newDepth, IncludeParentID::No));
 
     info->setChildren(WTF::move(childrenInfo));
@@ -394,14 +395,12 @@ void BidiBrowsingContextAgent::getNextTree(Vector<Ref<WebPageProxy>>&& pagesToPr
     }
 
     Ref webPageProxy = pagesToProcess.takeLast();
-    webPageProxy->getAllFrameTrees([weakThis = WeakPtr { *this }, pagesToProcess = WTF::move(pagesToProcess), resultsObject = WTF::move(resultsObject), callback = WTF::move(callback), maxDepth, protectedPage = Ref { webPageProxy }](Vector<WebKit::FrameTreeNodeData>&& trees) mutable {
+    webPageProxy->getAllFrames([weakThis = WeakPtr { *this }, pagesToProcess = WTF::move(pagesToProcess), resultsObject = WTF::move(resultsObject), callback = WTF::move(callback), maxDepth, protectedPage = Ref { webPageProxy }](std::optional<WebKit::FrameTreeNodeData>&& tree) mutable {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
-        for (auto& tree : trees) {
-            auto infoTree = protectedThis->getNavigableInfo(tree, maxDepth, IncludeParentID::Yes);
-            resultsObject->addItem(WTF::move(infoTree));
-        }
+        if (tree)
+            resultsObject->addItem(protectedThis->getNavigableInfo(*tree, maxDepth, IncludeParentID::Yes));
         protectedThis->getNextTree(WTF::move(pagesToProcess), WTF::move(resultsObject), maxDepth, WTF::move(callback));
     });
 }
@@ -588,7 +587,7 @@ void BidiBrowsingContextAgent::locateNodes(const BrowsingContext& browsingContex
 static constexpr Seconds defaultPageLoadTimeout = 300_s;
 static constexpr ReadinessState defaultReadinessState = ReadinessState::Interactive;
 
-static PageLoadStrategy NODELETE pageLoadStrategyFromReadinessState(ReadinessState state)
+static PageLoadStrategy LEGACY_NODELETE pageLoadStrategyFromReadinessState(ReadinessState state)
 {
     switch (state) {
     case ReadinessState::None:

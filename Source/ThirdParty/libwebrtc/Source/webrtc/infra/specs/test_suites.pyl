@@ -22,15 +22,14 @@
       # keep-sorted start block=yes
       'AppRTCMobile_test_apk': {},
       'android_instrumentation_test_apk': {},
+      'audio_coding_unittests': {},
       'audio_decoder_unittests': {},
       'audio_engine_tests': {},
+      'audio_processing_unittests': {},
       'call_tests': {},
       'common_audio_unittests': {},
       'common_video_unittests': {},
       'dcsctp_unittests': {},
-      'modules_tests': {
-        'mixins': ['shards-2'],
-      },
       'modules_unittests': {
         'mixins': ['shards-6'],
       },
@@ -45,6 +44,7 @@
       'rtc_unittests': {
         'mixins': ['shards-6'],
       },
+      'rtp_rtcp_unittests': {},
       'slow_peer_connection_unittests': {},
       'svc_tests': {
         'mixins': ['shards-8'],
@@ -53,6 +53,7 @@
       'test_support_unittests': {},
       'tools_unittests': {},
       'video_adaptation_tests': {},
+      'video_coding_unittests': {},
       'video_tests': {
         'mixins': ['shards-4'],
       },
@@ -74,17 +75,16 @@
     },
     'desktop_tests': {
       # keep-sorted start block=yes
+      'audio_coding_unittests': {},
       'audio_decoder_unittests': {},
       'audio_engine_tests': {},
+      'audio_processing_unittests': {},
       'call_tests': {},
       'common_audio_unittests': {},
       'common_video_unittests': {},
       'dcsctp_unittests': {},
       'desktop_capture_modules_tests': {},
       'desktop_capture_unittests': {},
-      'modules_tests': {
-        'mixins': ['shards-2'],
-      },
       'modules_unittests': {
         'mixins': ['shards-6'],
       },
@@ -99,6 +99,7 @@
       'rtc_unittests': {
         'mixins': ['shards-6'],
       },
+      'rtp_rtcp_unittests': {},
       'rust_tests': {},
       'slow_peer_connection_unittests': {},
       'svc_tests': {
@@ -110,6 +111,7 @@
       },
       'tools_unittests': {},
       'video_adaptation_tests': {},
+      'video_coding_unittests': {},
       'video_tests': {},
       'video_timing_tests': {},
       'voip_unittests': {},
@@ -173,15 +175,14 @@
       'apprtcmobile_tests': {
         'mixins': ['xcodebuild_sim_runner']
       },
+      'audio_coding_unittests': {},
       'audio_decoder_unittests': {},
       'audio_engine_tests': {},
+      'audio_processing_unittests': {},
       'call_tests': {},
       'common_audio_unittests': {},
       'common_video_unittests': {},
       'dcsctp_unittests': {},
-      'modules_tests': {
-        'mixins': ['shards-2'],
-      },
       'modules_unittests': {
         'mixins': ['shards-6'],
       },
@@ -190,6 +191,7 @@
       'rtc_p2p_unittests': {},
       'rtc_pc_unittests': {},
       'rtc_stats_unittests': {},
+      'rtp_rtcp_unittests': {},
       # TODO: b/402029695 - Re-enable these tests.
       # 'rtc_unittests': {
       #   'mixins': ['shards-6'],
@@ -207,6 +209,7 @@
       'test_support_unittests': {},
       'tools_unittests': {},
       'video_adaptation_tests': {},
+      'video_coding_unittests': {},
       'video_tests': {
         'mixins': ['shards-4'],
       },

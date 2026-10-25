@@ -51,7 +51,7 @@ public:
     ~JITWorklist();
 
     static JITWorklist& ensureGlobalWorklist();
-    static JITWorklist* NODELETE existingGlobalWorklistOrNull();
+    static JITWorklist* LEGACY_NODELETE existingGlobalWorklistOrNull();
 
     CompilationResult enqueue(Ref<JITPlan>);
     size_t queueLength() const;
@@ -73,12 +73,12 @@ public:
 
     void removeDeadPlans(VM&);
 
-    unsigned NODELETE setMaximumNumberOfConcurrentDFGCompilations(unsigned);
-    unsigned NODELETE setMaximumNumberOfConcurrentFTLCompilations(unsigned);
+    unsigned LEGACY_NODELETE setMaximumNumberOfConcurrentDFGCompilations(unsigned);
+    unsigned LEGACY_NODELETE setMaximumNumberOfConcurrentFTLCompilations(unsigned);
 
     // Only called on the main thread after suspending all threads.
     template<typename Visitor>
-    void visitWeakReferences(Visitor&);
+    void visitWeakReferences(VM&, Visitor&);
 
     template<typename Visitor>
     void iterateCodeBlocksForGC(Visitor&, VM&, NOESCAPE const Function<void(CodeBlock*)>&);
@@ -94,12 +94,12 @@ private:
     unsigned planLoad(JITPlan&);
 
     size_t queueLength(const AbstractLocker&) const;
-    size_t NODELETE totalOngoingCompilations(const AbstractLocker&) const;
+    size_t LEGACY_NODELETE totalOngoingCompilations(const AbstractLocker&) const;
 
     void waitUntilAllPlansForVMAreReady(VM&);
 
     template<typename MatchFunction>
-    void removeMatchingPlansForVM(VM&, const MatchFunction&);
+    void removeMatchingPlansForVM(VM&, NOESCAPE const MatchFunction&);
 
     State removeAllReadyPlansForVM(VM&, Vector<Ref<JITPlan>, 8>&, JITCompilationKey);
 

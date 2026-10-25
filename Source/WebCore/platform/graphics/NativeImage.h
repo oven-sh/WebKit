@@ -56,7 +56,7 @@ class IntSize;
 class NativeImageBackend;
 class PixelBuffer;
 struct ImageOrientation;
-struct ImagePaintingOptions;
+struct ImageDrawingOptions;
 
 class NativeImage : public ThreadSafeRefCounted<NativeImage>, public CanMakeThreadSafeCheckedPtr<NativeImage> {
     WTF_MAKE_TZONE_ALLOCATED(NativeImage);
@@ -82,12 +82,15 @@ public:
     WEBCORE_EXPORT virtual ~NativeImage();
 
     WEBCORE_EXPORT virtual PlatformImagePtr platformImage() const;
-    WEBCORE_EXPORT const std::optional<GainMap>& gainMap() const;
+    WEBCORE_EXPORT const std::optional<GainMap>& LEGACY_NODELETE gainMap() const;
     WEBCORE_EXPORT virtual IntSize size() const;
     WEBCORE_EXPORT virtual bool hasAlpha() const;
     WEBCORE_EXPORT size_t sizeInBytes() const;
     std::optional<Color> singlePixelSolidColor() const;
     WEBCORE_EXPORT virtual ColorSpace colorSpace() const;
+    // The pixels are held elsewhere and cannot be read in this process: platformImage() is null, and
+    // only a compositor can display the image.
+    virtual bool isDisplayOnly() const { return false; }
 
     // Tightly packed unpremultiplied pixels at the depth they were decoded at.
     struct UnpremultipliedPixels {
@@ -102,6 +105,10 @@ public:
     Headroom headroom() const { return m_headroom; }
 
     RefPtr<NativeImage> rotatedImage(ImageOrientation);
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE) && USE(CG)
+    ImagePaintTimeTransformation paintTimeTransformation() const;
+#endif
 
     void clearSubimages();
 
@@ -141,6 +148,9 @@ protected:
     mutable Headroom m_baseImageHeadroom { Headroom::None };
     mutable Headroom m_headroom { Headroom::None };
     mutable WeakHashSet<RenderingResourceObserver> m_observers;
+#if ENABLE(AX_CUSTOM_COLOR_MODE) && USE(CG)
+    mutable std::optional<ImagePaintTimeTransformation> m_paintTimeTransformation WTF_GUARDED_BY_LOCK(m_lock);
+#endif
     RenderingResourceIdentifier m_renderingResourceIdentifier { RenderingResourceIdentifier::generate() };
 #if USE(SKIA)
     GrDirectContext* m_grContext { nullptr };

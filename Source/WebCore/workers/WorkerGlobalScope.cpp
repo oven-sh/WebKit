@@ -39,6 +39,8 @@
 #include "CryptoKeyData.h"
 #include "DOMTimer.h"
 #include "Document.h"
+#include "EventLoop.h"
+#include "EventNames.h"
 #include "FontCustomPlatformData.h"
 #include "FontFaceSet.h"
 #include "FrameConsoleClient.h"
@@ -57,6 +59,7 @@
 #include "ScriptSourceCode.h"
 #include "SecurityOrigin.h"
 #include "SecurityOriginPolicy.h"
+#include "SecurityPolicyViolationEvent.h"
 #include "ServiceWorker.h"
 #include "ServiceWorkerClientData.h"
 #include "ServiceWorkerGlobalScope.h"
@@ -95,7 +98,7 @@ namespace WebCore {
 using namespace Inspector;
 
 static Lock allWorkerGlobalScopeIdentifiersLock;
-static HashSet<ScriptExecutionContextIdentifier>& NODELETE allWorkerGlobalScopeIdentifiers() WTF_REQUIRES_LOCK(allWorkerGlobalScopeIdentifiersLock)
+static HashSet<ScriptExecutionContextIdentifier>& LEGACY_NODELETE allWorkerGlobalScopeIdentifiers() WTF_REQUIRES_LOCK(allWorkerGlobalScopeIdentifiersLock)
 {
     static NeverDestroyed<HashSet<ScriptExecutionContextIdentifier>> identifiers;
     ASSERT(allWorkerGlobalScopeIdentifiersLock.isLocked());
@@ -118,6 +121,8 @@ WorkerGlobalScope::WorkerGlobalScope(WorkerThreadType type, const WorkerParamete
     , m_userAgent(params.userAgent)
     , m_isOnline(params.isOnline)
     , m_shouldBypassMainWorldContentSecurityPolicy(params.shouldBypassMainWorldContentSecurityPolicy)
+    , m_isSecureContext(params.isSecureContext == IsSecureContext::Yes)
+    , m_hasUnpartitionedStorageAccess(params.hasUnpartitionedStorageAccess)
     , m_topOrigin(WTF::move(topOrigin))
     , m_connectionProxy(connectionProxy)
     , m_socketProvider(socketProvider)
@@ -129,6 +134,7 @@ WorkerGlobalScope::WorkerGlobalScope(WorkerThreadType type, const WorkerParamete
     , m_credentials(params.credentials)
     , m_agentClusterID(params.agentClusterID)
     , m_networkLoadPolicy(params.networkLoadPolicy)
+    , m_canBeCrossOriginIsolated(params.canBeCrossOriginIsolated)
 {
     {
         Locker locker { allWorkerGlobalScopeIdentifiersLock };
@@ -144,6 +150,7 @@ WorkerGlobalScope::WorkerGlobalScope(WorkerThreadType type, const WorkerParamete
     setSecurityOriginPolicy(SecurityOriginPolicy::create(WTF::move(origin)));
     setContentSecurityPolicy(makeUnique<ContentSecurityPolicy>(URL { m_url }, *this));
     setCrossOriginEmbedderPolicy(params.crossOriginEmbedderPolicy);
+    setDocumentIsolationPolicy(params.documentIsolationPolicy);
 }
 
 WorkerGlobalScope::~WorkerGlobalScope()
@@ -158,7 +165,7 @@ WorkerGlobalScope::~WorkerGlobalScope()
     m_performance = nullptr;
     m_crypto = nullptr;
 
-    // Notify proxy that we are going away. This can free the WorkerThread object, so do not access it after this.
+    // Notify proxy that we are going away. This can free the WorkerThread object and the proxy, so do not access them after this.
     if (auto* workerReportingProxy = thread()->workerReportingProxy())
         workerReportingProxy->workerGlobalScopeDestroyed();
 }
@@ -203,7 +210,7 @@ bool WorkerGlobalScope::isSecureContext() const
     if (!settingsValues().secureContextChecksEnabled)
         return true;
 
-    return m_topOrigin->isPotentiallyTrustworthy();
+    return m_isSecureContext;
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#parse-a-url
@@ -343,7 +350,7 @@ void WorkerGlobalScope::close()
         ASSERT_WITH_SECURITY_IMPLICATION(is<WorkerGlobalScope>(context));
         WorkerGlobalScope& workerGlobalScope = downcast<WorkerGlobalScope>(context);
         // Notify parent that this context is closed. Parent is responsible for calling WorkerThread::stop().
-        if (auto* workerReportingProxy = workerGlobalScope.thread()->workerReportingProxy())
+        if (CheckedPtr workerReportingProxy = workerGlobalScope.thread()->workerReportingProxy())
             workerReportingProxy->workerGlobalScopeClosed();
     } });
 }
@@ -464,16 +471,16 @@ ExceptionOr<void> WorkerGlobalScope::importScripts(const FixedVector<Variant<Ref
             NakedPtr<JSC::Exception> exception;
             ScriptSourceCode sourceCode(scriptLoader->script(), URL(scriptLoader->responseURL()), scriptLoader->isRedirected() ? URL(scriptLoader->url()) : URL());
             sourceProvider = downcast<ScriptBufferSourceProvider>(sourceCode.provider());
-            script()->evaluate(sourceCode, exception);
+            protect(script())->evaluate(sourceCode, exception);
             if (exception) {
                 if (mutedErrors)
                     return Exception { ExceptionCode::NetworkError, "Network response is CORS-cross-origin"_s };
-                script()->setException(exception);
+                protect(script())->setException(exception);
                 return { };
             }
         }
-        if (sourceProvider)
-            addImportedScriptSourceProvider(url, *sourceProvider);
+        if (RefPtr provider = sourceProvider)
+            addImportedScriptSourceProvider(url, *provider);
     }
 
     return { };
@@ -486,7 +493,7 @@ EventTarget* WorkerGlobalScope::errorEventTarget()
 
 void WorkerGlobalScope::logExceptionToConsole(const String& errorMessage, const String& sourceURL, int lineNumber, int columnNumber, RefPtr<ScriptCallStack>&&)
 {
-    if (auto* workerReportingProxy = thread()->workerReportingProxy())
+    if (CheckedPtr workerReportingProxy = thread()->workerReportingProxy())
         workerReportingProxy->postExceptionToWorkerObject(errorMessage, lineNumber, columnNumber, sourceURL);
 }
 
@@ -534,7 +541,7 @@ void WorkerGlobalScope::addMessage(MessageSource source, MessageLevel level, con
 std::optional<Vector<uint8_t>> WorkerGlobalScope::serializeAndWrapCryptoKey(CryptoKeyData&& keyData)
 {
     Ref protectedThis { *this };
-    auto* workerLoaderProxy = thread()->workerLoaderProxy();
+    CheckedPtr workerLoaderProxy = thread()->workerLoaderProxy();
     if (!workerLoaderProxy)
         return std::nullopt;
 
@@ -554,7 +561,7 @@ std::optional<Vector<uint8_t>> WorkerGlobalScope::serializeAndWrapCryptoKey(Cryp
 std::optional<Vector<uint8_t>> WorkerGlobalScope::unwrapCryptoKey(const Vector<uint8_t>& wrappedKey)
 {
     Ref protectedThis { *this };
-    auto* workerLoaderProxy = thread()->workerLoaderProxy();
+    CheckedPtr workerLoaderProxy = thread()->workerLoaderProxy();
     if (!workerLoaderProxy)
         return std::nullopt;
 
@@ -726,7 +733,7 @@ void WorkerGlobalScope::addImportedScriptSourceProvider(const URL& url, ScriptBu
 
 void WorkerGlobalScope::reportErrorToWorkerObject(const String& errorMessage)
 {
-    if (auto* workerReportingProxy = thread()->workerReportingProxy())
+    if (CheckedPtr workerReportingProxy = thread()->workerReportingProxy())
         workerReportingProxy->reportErrorToWorkerObject(errorMessage);
 }
 
@@ -745,6 +752,8 @@ void WorkerGlobalScope::clearDecodedScriptData()
 
 bool WorkerGlobalScope::crossOriginIsolated() const
 {
+    if (documentIsolationPolicy().value != DocumentIsolationPolicyValue::None)
+        return m_canBeCrossOriginIsolated == CanBeCrossOriginIsolated::Yes;
     return crossOriginEmbedderPolicy().value == CrossOriginEmbedderPolicyValue::RequireCORP;
 }
 
@@ -773,7 +782,14 @@ void WorkerGlobalScope::updateServiceWorkerClientData()
 
     ASSERT(type() == WebCore::WorkerGlobalScope::Type::DedicatedWorker || type() == WebCore::WorkerGlobalScope::Type::SharedWorker);
     auto controllingServiceWorkerRegistrationIdentifier = activeServiceWorker() ? std::make_optional<ServiceWorkerRegistrationIdentifier>(activeServiceWorker()->registrationIdentifier()) : std::nullopt;
-    swClientConnection().registerServiceWorkerClient(clientOrigin(), ServiceWorkerClientData::from(*this), controllingServiceWorkerRegistrationIdentifier, String { m_userAgent });
+    swClientConnection().registerServiceWorkerClient(storageClientOrigin(), ServiceWorkerClientData::from(*this), controllingServiceWorkerRegistrationIdentifier, String { m_userAgent });
+}
+
+void WorkerGlobalScope::enqueueSecurityPolicyViolationEvent(SecurityPolicyViolationEventInit&& eventInit)
+{
+    protect(eventLoop())->queueTask(TaskSource::DOMManipulation, [protectedThis = Ref { *this }, event = SecurityPolicyViolationEvent::create(eventNames().securitypolicyviolationEvent, WTF::move(eventInit), Event::IsTrusted::Yes)] {
+        protectedThis->dispatchEvent(event);
+    });
 }
 
 void WorkerGlobalScope::notifyReportObservers(Ref<Report>&& reports)

@@ -59,7 +59,7 @@ public:
         return UUID { generateWeakRandomUUIDVersion4() };
     }
 
-    WTF_EXPORT_PRIVATE static UUID NODELETE createVersion5(const SHA1::Digest&);
+    WTF_EXPORT_PRIVATE static UUID LEGACY_NODELETE createVersion5(const SHA1::Digest&);
     WTF_EXPORT_PRIVATE static UUID createVersion5(UUID, std::span<const uint8_t>);
 
 #ifdef __OBJC__
@@ -207,9 +207,9 @@ public:
     }
 
     template<typename Func>
-    auto handle(Func&& func) const -> decltype(auto)
+    auto handle(NOESCAPE const Func& func) const -> decltype(auto)
     {
-        return handleWithAdapters(std::forward<Func>(func),
+        return handleWithAdapters(func,
             hex(m_bits.high >> 32, 8, Lowercase),
             '-',
             hex((m_bits.high >> 16) & 0xffff, 4, Lowercase),

@@ -58,6 +58,7 @@
 #include "Page.h"
 #include "PathUtilities.h"
 #include "ReferencedSVGResources.h"
+#include "RenderAncestorIterator.h"
 #include "RenderBlock.h"
 #include "RenderBlockFlowInlines.h"
 #include "RenderBoxModelObjectInlines.h"
@@ -72,8 +73,8 @@
 #include "RenderFragmentedFlow.h"
 #include "RenderGeometryMap.h"
 #include "RenderGrid.h"
+#include "RenderHTMLCanvas.h"
 #include "RenderImage.h"
-#include "RenderInline.h"
 #include "RenderIterator.h"
 #include "RenderLayer.h"
 #include "RenderLayerCompositor.h"
@@ -97,7 +98,6 @@
 #include "RenderView.h"
 #include "ResolvedStyle.h"
 #include "SVGElementTypeHelpers.h"
-#include "SVGImage.h"
 #include "SVGLengthContext.h"
 #include "SVGRenderSupport.h"
 #include "SVGSVGElement.h"
@@ -141,6 +141,11 @@ float opacity(const RenderElement& renderer)
 
 static_assert(sizeof(RenderElement) == sizeof(SameSizeAsRenderElement), "RenderElement should stay small");
 
+static Visibility LEGACY_NODELETE visibilityIncludingForceHidden(const Style::ComputedStyle& style)
+{
+    return style.isForceHidden() ? Visibility::Hidden : style.visibility();
+}
+
 inline RenderElement::RenderElement(Type type, ContainerNode& elementOrDocument, Style::ComputedStyle&& style, OptionSet<TypeFlag> flags, TypeSpecificFlags typeSpecificFlags)
     : RenderObject(type, elementOrDocument, flags, typeSpecificFlags)
     , m_firstChild(nullptr)
@@ -176,7 +181,7 @@ const Layout::ElementBox* RenderElement::layoutBox() const
     return downcast<Layout::ElementBox>(RenderObject::layoutBox());
 }
 
-static RefPtr<Style::Image> minimallySupportedContentDataImage(const Style::Content& content)
+static RefPtr<Style::Image> LEGACY_NODELETE minimallySupportedContentDataImage(const Style::Content& content)
 {
     // Minimal support for content properties replacing an entire element.
     // Works only if we have exactly one piece of content and it's a URL.
@@ -216,7 +221,7 @@ RenderPtr<RenderElement> RenderElement::createFor(Element& element, Style::Compu
     case Style::DisplayType::InlineFlow:
         if (rendererTypeOverride.contains(ConstructBlockLevelRendererFor::Inline))
             return createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, element, WTF::move(style));
-        return createRenderer<RenderInline>(RenderObject::Type::Inline, element, WTF::move(style));
+        return createRenderer<RenderBoxModelObject>(RenderObject::Type::Inline, element, WTF::move(style));
     case Style::DisplayType::BlockFlow:
     case Style::DisplayType::BlockFlowRoot:
     case Style::DisplayType::InlineFlowRoot:
@@ -239,11 +244,11 @@ RenderPtr<RenderElement> RenderElement::createFor(Element& element, Style::Compu
             return createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, element, WTF::move(style));
         return createRenderer<RenderDeprecatedFlexibleBox>(element, WTF::move(style));
     case Style::DisplayType::RubyBase:
-        return createRenderer<RenderInline>(RenderObject::Type::Inline, element, WTF::move(style));
+        return createRenderer<RenderBoxModelObject>(RenderObject::Type::Inline, element, WTF::move(style));
     case Style::DisplayType::RubyText:
         return createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, element, WTF::move(style));
     case Style::DisplayType::InlineRuby:
-        return createRenderer<RenderInline>(RenderObject::Type::Inline, element, WTF::move(style));
+        return createRenderer<RenderBoxModelObject>(RenderObject::Type::Inline, element, WTF::move(style));
     case Style::DisplayType::BlockRuby:
         return createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, element, WTF::move(style));
 
@@ -515,7 +520,7 @@ bool RenderElement::repaintBeforeStyleChange(Style::Difference diff, const Style
             return RequiredRepaint::RendererOnly;
 
         auto deviceScaleFactor = newStyle.deviceScaleFactor();
-        if (newStyle.usedOutlineSize(newStyle.usedZoomForLength(), deviceScaleFactor) < oldStyle.usedOutlineSize(oldStyle.usedZoomForLength(), deviceScaleFactor))
+        if (Style::effectiveOutlineSize(newStyle, newStyle.usedZoomForLength(), deviceScaleFactor) < Style::effectiveOutlineSize(oldStyle, oldStyle.usedZoomForLength(), deviceScaleFactor))
             return RequiredRepaint::RendererOnly;
 
         if (auto* modelObject = dynamicDowncast<RenderLayerModelObject>(*this)) {
@@ -533,17 +538,17 @@ bool RenderElement::repaintBeforeStyleChange(Style::Difference diff, const Style
                 return RequiredRepaint::RendererOnly;
             }
 
-            auto willBecomeHiddenSkippedContent =  newStyle.usedContentVisibility() == ContentVisibility::Hidden && oldStyle.usedContentVisibility() != ContentVisibility::Hidden && oldStyle.usedVisibility() == Visibility::Visible;
+            auto willBecomeHiddenSkippedContent =  newStyle.usedContentVisibility() == ContentVisibility::Hidden && oldStyle.usedContentVisibility() != ContentVisibility::Hidden && visibilityIncludingForceHidden(oldStyle) == Visibility::Visible;
             if (willBecomeHiddenSkippedContent) {
                 ASSERT(diff == Style::DifferenceResult::Layout);
                 return RequiredRepaint::RendererOnly;
             }
         }
 
-        if (diff > Style::DifferenceResult::RepaintLayer && oldStyle.usedVisibility() != newStyle.usedVisibility()) {
+        if (diff > Style::DifferenceResult::RepaintLayer && visibilityIncludingForceHidden(oldStyle) != visibilityIncludingForceHidden(newStyle)) {
             if (auto* enclosingLayer = this->enclosingLayer()) {
-                bool rendererWillBeHidden = newStyle.usedVisibility() != Visibility::Visible;
-                if (rendererWillBeHidden && enclosingLayer->hasVisibleContent() && (this == &enclosingLayer->renderer() || enclosingLayer->renderer().style().usedVisibility() != Visibility::Visible))
+                bool rendererWillBeHidden = visibilityIncludingForceHidden(newStyle) != Visibility::Visible;
+                if (rendererWillBeHidden && enclosingLayer->hasVisibleContent() && (this == &enclosingLayer->renderer() || enclosingLayer->renderer().usedStyle().visibility() != UsedVisibility::Visible))
                     return RequiredRepaint::RendererOnly;
             }
         }
@@ -565,7 +570,7 @@ bool RenderElement::repaintBeforeStyleChange(Style::Difference diff, const Style
 
     if (shouldRepaintBeforeStyleChange == RequiredRepaint::RendererOnly) {
         if (isOutOfFlowPositioned() && downcast<RenderLayerModelObject>(*this).layer()->isSelfPaintingLayer()) {
-            if (oldStyle.usedVisibility() == Visibility::Hidden) {
+            if (visibilityIncludingForceHidden(oldStyle) == Visibility::Hidden) {
                 // Repaint on hidden renderer is a no-op.
                 return false;
             }
@@ -689,6 +694,7 @@ void RenderElement::didAttachChild(RenderObject& child, RenderObject*)
 
 RenderObject* RenderElement::attachRendererInternal(RenderPtr<RenderObject> child, RenderObject* beforeChild)
 {
+    document().incRenderTreeVersion();
     child->setParent(this);
 
     if (m_firstChild == beforeChild)
@@ -715,6 +721,7 @@ RenderObject* RenderElement::attachRendererInternal(RenderPtr<RenderObject> chil
 
 RenderPtr<RenderObject> RenderElement::detachRendererInternal(RenderObject& renderer)
 {
+    document().incRenderTreeVersion();
     CheckedPtr parent = renderer.parent();
     ASSERT(parent);
     CheckedPtr nextSibling = renderer.nextSibling();
@@ -742,7 +749,15 @@ void RenderElement::setMayHaveLayerInSubtreeIncludingAncestors()
         renderer->m_mayHaveLayerInSubtree = true;
 }
 
-static RenderLayer* findNextLayer(const RenderElement& currRenderer, const RenderLayer& parentLayer, const RenderObject* siblingToTraverseFrom, bool checkParent = true)
+void RenderElement::setMayHaveNonScalingStrokeInSubtreeIncludingAncestors()
+{
+    m_mayHaveNonScalingStrokeInSubtree = true;
+
+    for (auto* renderer = parent(); renderer && !renderer->isRenderSVGRoot() && !renderer->m_mayHaveNonScalingStrokeInSubtree; renderer = renderer->parent())
+        renderer->m_mayHaveNonScalingStrokeInSubtree = true;
+}
+
+static RenderLayer* LEGACY_NODELETE findNextLayer(const RenderElement& currRenderer, const RenderLayer& parentLayer, const RenderObject* siblingToTraverseFrom, bool checkParent = true)
 {
     // Step 1: If our layer is a child of the desired parent, then return our layer.
     SUPPRESS_UNCOUNTED_LOCAL auto* ourLayer = currRenderer.hasLayer() ? downcast<RenderLayerModelObject>(currRenderer).layer() : nullptr;
@@ -890,7 +905,7 @@ bool RenderElement::layerCreationAllowedForSubtree() const
             return false;
         parentRenderer = parentRenderer->parent();
     }
-    
+
     return true;
 }
 
@@ -901,7 +916,8 @@ void RenderElement::propagateStyleToAnonymousChildren(StylePropagationType propa
         if (!elementChild->isAnonymous() || elementChild->style().pseudoElementType() || elementChild->isViewTransitionContainingBlock())
             continue;
 
-        bool isBlockOrRuby = is<RenderBlock>(elementChild.get()) || elementChild->style().display() == Style::DisplayType::InlineRuby;
+        auto display = elementChild->style().display();
+        bool isBlockOrRuby = is<RenderBlock>(elementChild.get()) || display == Style::DisplayType::InlineRuby || display == Style::DisplayType::RubyBase;
         if (propagationType == StylePropagationType::BlockAndRubyChildren && !isBlockOrRuby)
             continue;
 
@@ -910,7 +926,6 @@ void RenderElement::propagateStyleToAnonymousChildren(StylePropagationType propa
             continue;
 
         auto newStyle = [&] {
-            auto display = elementChild->style().display();
             if (display == Style::DisplayType::RubyBase || display == Style::DisplayType::InlineRuby)
                 return createAnonymousStyleForRuby(style(), display);
             return Style::ComputedStyle::createAnonymousStyleWithDisplay(style(), display);
@@ -966,7 +981,7 @@ void RenderElement::styleWillChange(Style::Difference diff, const Style::Compute
         }
         // If our z-index changes value or our visibility changes,
         // we need to dirty our stacking context's z-order list.
-        bool visibilityChanged = m_style.usedVisibility() != newStyle.usedVisibility()
+        bool visibilityChanged = visibilityIncludingForceHidden(m_style) != visibilityIncludingForceHidden(newStyle)
             || m_style.usedZIndex() != newStyle.usedZIndex();
 
         if (visibilityChanged)
@@ -981,7 +996,7 @@ void RenderElement::styleWillChange(Style::Difference diff, const Style::Compute
         }
 
         // Keep layer hierarchy visibility bits up to date if visibility or skipped content state changes.
-        if (m_style.usedVisibility() != newStyle.usedVisibility()) {
+        if (visibilityIncludingForceHidden(m_style) != visibilityIncludingForceHidden(newStyle)) {
             if (auto* layer = enclosingLayer())
                 layer->dirtyVisibleContentStatusIncludingAncestors();
         }
@@ -1176,11 +1191,10 @@ void RenderElement::styleDidChange(Style::Difference diff, const Style::Computed
 #endif
 
     bool hadOutlineAuto = oldStyle && oldStyle->outlineStyle() == OutlineStyle::Auto;
-    bool hasOutlineAuto = outlineStyleForRepaint().outlineStyle() == OutlineStyle::Auto;
+    bool hasOutlineAuto = style().outlineStyle() == OutlineStyle::Auto;
     if (hasOutlineAuto != hadOutlineAuto) {
         updateOutlineAutoAncestor(hasOutlineAuto);
-        auto deviceScaleFactor = style().deviceScaleFactor();
-        issueRepaintForOutlineAuto(hasOutlineAuto ? outlineStyleForRepaint().usedOutlineSize(outlineStyleForRepaint().usedZoomForLength(), deviceScaleFactor) : oldStyle->usedOutlineSize(oldStyle->usedZoomForLength(), deviceScaleFactor));
+        issueRepaintForOutlineAuto(hasOutlineAuto ? usedStyle().outlineSize() : Style::effectiveOutlineSize(*oldStyle, oldStyle->usedZoomForLength(), style().deviceScaleFactor()));
     }
 
     auto isLayoutDiff = [](Style::Difference diff) {
@@ -1250,6 +1264,9 @@ void RenderElement::insertedIntoTree()
     if (m_mayHaveLayerInSubtree)
         setMayHaveLayerInSubtreeIncludingAncestors();
 
+    if (m_mayHaveNonScalingStrokeInSubtree)
+        setMayHaveNonScalingStrokeInSubtreeIncludingAncestors();
+
     // Keep our layer hierarchy updated. Optimize for the common case where we don't have any children
     // and don't have a layer attached to ourselves.
     if (firstChild() || hasLayer()) {
@@ -1259,7 +1276,7 @@ void RenderElement::insertedIntoTree()
 
     // If |this| is visible but this object was not, tell the layer it has some visible content
     // that needs to be drawn and layer visibility optimization can't be used
-    if (parent()->style().usedVisibility() != Visibility::Visible && style().usedVisibility() == Visibility::Visible && !hasSelfPaintingLayer()) {
+    if (parent()->usedStyle().visibility() != UsedVisibility::Visible && usedStyle().visibility() == UsedVisibility::Visible && !hasSelfPaintingLayer()) {
         if (CheckedPtr parentLayer = layerParent())
             parentLayer->dirtyVisibleContentStatus();
     }
@@ -1280,7 +1297,7 @@ void RenderElement::willBeRemovedFromTree()
     }
 
     // If we remove a visible child from an invisible parent, we don't know the layer visibility any more.
-    if (parent()->style().usedVisibility() != Visibility::Visible && style().usedVisibility() == Visibility::Visible && !hasSelfPaintingLayer()) {
+    if (parent()->usedStyle().visibility() != UsedVisibility::Visible && usedStyle().visibility() == UsedVisibility::Visible && !hasSelfPaintingLayer()) {
         // FIXME: should get parent layer. Necessary?
         if (CheckedPtr enclosingLayer = parent()->enclosingLayer())
             enclosingLayer->dirtyVisibleContentStatus();
@@ -1508,7 +1525,7 @@ template<typename FillLayers> static bool mustRepaintFillLayers(const RenderElem
 
     // Make sure we have a valid image.
     RefPtr image = layer.image().tryStyleImage();
-    if (!image || !image->canRender(&renderer, renderer.style().usedZoom()))
+    if (!image || !image->canRender(&renderer))
         return false;
 
     if (!layer.positionX().isKnownZero() || !layer.positionY().isKnownZero())
@@ -1555,8 +1572,8 @@ bool RenderElement::repaintAfterLayoutIfNeeded(SingleThreadWeakPtr<const RenderL
             // If the border radius changed, repaints at style change time will take care of that.
             // This code is attempting to detect whether border-radius constraining based on box size
             // affects the radii, using the outlineBoundsRect as a proxy for the border box.
-            auto oldShapeApproximation = BorderShape::shapeForBorderRect(style(), oldOutlineBounds);
-            auto newShapeApproximation = BorderShape::shapeForBorderRect(style(), newOutlineBounds);
+            auto oldShapeApproximation = BorderShape::shapeForBorderRect(usedStyle(), oldOutlineBounds);
+            auto newShapeApproximation = BorderShape::shapeForBorderRect(usedStyle(), newOutlineBounds);
             if (oldShapeApproximation.radii() != newShapeApproximation.radii())
                 return true;
         }
@@ -1653,11 +1670,7 @@ bool RenderElement::repaintAfterLayoutIfNeeded(SingleThreadWeakPtr<const RenderL
     // It's not really correct to do math here with oldOutlineBoundsRect/newOutlineBoundsRect and local shadow/radius values, since
     // oldOutlineBoundsRect/newOutlineBoundsRect are in the coordinate space of the repaint container, and have been mapped through ancestor transforms.
 
-    auto deviceScaleFactor = style().deviceScaleFactor();
-
-    CheckedRef outlineStyle = outlineStyleForRepaint();
-    auto outlineZoom = outlineStyle->usedZoomForLength();
-    auto outlineWidth = LayoutUnit { outlineStyle->usedOutlineSize(outlineZoom, deviceScaleFactor) };
+    auto outlineWidth = LayoutUnit { usedStyle().outlineSize() };
 
     CheckedRef style = this->style();
     auto zoom = style->usedZoomForLength();
@@ -1681,7 +1694,7 @@ bool RenderElement::repaintAfterLayoutIfNeeded(SingleThreadWeakPtr<const RenderL
                 });
             };
             auto outlineRightInsetExtent = [&] -> LayoutUnit {
-                auto offset = Style::evaluate<LayoutUnit>(outlineStyle->usedOutlineOffset(), outlineZoom, deviceScaleFactor);
+                auto offset = usedStyle().outlineOffset();
                 return offset < 0 ? -offset : 0_lu;
             };
             auto boxShadowRightInsetExtent = [&] {
@@ -1725,7 +1738,7 @@ bool RenderElement::repaintAfterLayoutIfNeeded(SingleThreadWeakPtr<const RenderL
                 });
             };
             auto outlineBottomInsetExtent = [&] -> LayoutUnit {
-                auto offset = Style::evaluate<LayoutUnit>(outlineStyle->usedOutlineOffset(), outlineZoom, deviceScaleFactor);
+                auto offset = usedStyle().outlineOffset();
                 return offset < 0 ? -offset : 0_lu;
             };
             auto boxShadowBottomInsetExtent = [&]() -> LayoutUnit {
@@ -1760,7 +1773,7 @@ bool RenderElement::borderImageIsLoadedAndCanBeRendered() const
     ASSERT(style().border().hasBorder());
 
     RefPtr borderImage = style().borderImageSource().tryStyleImage();
-    return borderImage && borderImage->canRender(this, style().usedZoom()) && borderImage->isLoaded(this);
+    return borderImage && borderImage->canRender(this) && borderImage->isLoaded(this);
 }
 
 bool RenderElement::mayCauseRepaintInsideViewport(const IntRect* optionalViewportRect) const
@@ -1786,7 +1799,7 @@ bool RenderElement::isVisibleIgnoringGeometry() const
 {
     if (document().activeDOMObjectsAreSuspended())
         return false;
-    if (style().usedVisibility() != Visibility::Visible)
+    if (usedStyle().visibility() != UsedVisibility::Visible)
         return false;
     if (protect(view())->frameView().isOffscreen())
         return false;
@@ -1815,7 +1828,7 @@ bool RenderElement::isInsideEntirelyHiddenLayer() const
 {
     if (isSVGLayerAwareRenderer() && document().settings().layerBasedSVGEngineEnabled() && enclosingLayer()->enclosingHiddenOrResourceContainerForSVG())
         return true;
-    return style().usedVisibility() != Visibility::Visible && !enclosingLayer()->hasVisibleContent();
+    return usedStyle().visibility() != UsedVisibility::Visible && !enclosingLayer()->hasVisibleContent();
 }
 
 void RenderElement::registerForVisibleInViewportCallback()
@@ -1949,12 +1962,8 @@ bool RenderElement::repaintForPausedImageAnimationsIfNeeded(const IntRect& visib
 
     repaint();
 
-    if (RefPtr image = cachedImage.image()) {
-        if (auto* svgImage = dynamicDowncast<SVGImage>(*image))
-            svgImage->scheduleStartAnimation();
-        else
-            image->startAnimation();
-    }
+    if (RefPtr image = cachedImage.image())
+        image->startAnimation();
 
     // For directly-composited animated GIFs it does not suffice to call repaint() to resume animation. We need to mark the image as changed.
     if (CheckedPtr modelObject = dynamicDowncast<RenderBoxModelObject>(*this))
@@ -1976,8 +1985,10 @@ const Style::ComputedStyle* RenderElement::lazyPseudoElementStyle(const Style::P
         return cachedStyle;
 
     std::unique_ptr<Style::ComputedStyle> result = resolvePseudoElementStyle(pseudoElementIdentifier, parentStyle);
-    if (result)
-        return const_cast<Style::ComputedStyle&>(m_style).addPseudoElementStyle(WTF::move(result));
+    if (result) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Style::ComputedStyle&>(m_style).addPseudoElementStyle(WTF::move(result));
+    }
     return nullptr;
 }
 
@@ -2058,9 +2069,11 @@ Color RenderElement::selectionColor() const
         return color;
     }
 
+    auto styleColorOptions = this->styleColorOptions(StyleColorOptionsPurpose::Rendering);
+
     if (frame().selection().isFocusedAndActive())
-        return theme().activeSelectionForegroundColor(styleColorOptions());
-    return theme().inactiveSelectionForegroundColor(styleColorOptions());
+        return theme().activeSelectionForegroundColor(styleColorOptions);
+    return theme().inactiveSelectionForegroundColor(styleColorOptions);
 }
 
 const Style::ComputedStyle* RenderElement::selectionPseudoStyle() const
@@ -2070,12 +2083,12 @@ const Style::ComputedStyle* RenderElement::selectionPseudoStyle() const
 
 Color RenderElement::selectionForegroundColor() const
 {
-    return selectionColor<PropertyNameConstant<CSSPropertyWebkitTextFillColor>>();
+    return selectionColor<PropertyNameConstant<CSSPropertyID::WebkitTextFillColor>>();
 }
 
 Color RenderElement::selectionEmphasisMarkColor() const
 {
-    return selectionColor<PropertyNameConstant<CSSPropertyTextEmphasisColor>>();
+    return selectionColor<PropertyNameConstant<CSSPropertyID::TextEmphasisColor>>();
 }
 
 Color RenderElement::selectionBackgroundColor() const
@@ -2083,8 +2096,10 @@ Color RenderElement::selectionBackgroundColor() const
     if (style().usedUserSelect() == UserSelect::None)
         return Color();
 
+    auto styleColorOptions = this->styleColorOptions(StyleColorOptionsPurpose::Rendering);
+
     if (frame().selection().shouldShowBlockCursor() && frame().selection().isCaret())
-        return theme().transformSelectionBackgroundColor(style().visitedDependentColorApplyingColorFilter(), styleColorOptions());
+        return theme().transformSelectionBackgroundColor(style().visitedDependentColorApplyingColorFilter(), styleColorOptions);
 
     auto pseudoStyleCandidate = this;
     if (pseudoStyleCandidate->isAnonymous())
@@ -2092,13 +2107,13 @@ Color RenderElement::selectionBackgroundColor() const
 
     if (pseudoStyleCandidate) {
         CheckedPtr pseudoStyle = pseudoStyleCandidate->selectionPseudoStyle();
-        if (pseudoStyle && pseudoStyle->visitedDependentBackgroundColorApplyingColorFilter().isValid())
-            return theme().transformSelectionBackgroundColor(pseudoStyle->visitedDependentBackgroundColorApplyingColorFilter(), styleColorOptions());
+        if (pseudoStyle && pseudoStyle->visitedDependentUsedBackgroundColorApplyingColorFilter().isValid())
+            return theme().transformSelectionBackgroundColor(pseudoStyle->visitedDependentUsedBackgroundColorApplyingColorFilter(), styleColorOptions);
     }
 
     if (frame().selection().isFocusedAndActive())
-        return theme().activeSelectionBackgroundColor(styleColorOptions());
-    return theme().inactiveSelectionBackgroundColor(styleColorOptions());
+        return theme().activeSelectionBackgroundColor(styleColorOptions);
+    return theme().inactiveSelectionBackgroundColor(styleColorOptions);
 }
 
 const Style::ComputedStyle* RenderElement::spellingErrorPseudoStyle() const
@@ -2303,7 +2318,7 @@ void RenderElement::updateOutlineAutoAncestor(bool hasOutlineAuto)
         if (hasOutlineAuto == child->hasOutlineAutoAncestor())
             continue;
         child->setHasOutlineAutoAncestor(hasOutlineAuto);
-        bool childHasOutlineAuto = child->outlineStyleForRepaint().outlineStyle() == OutlineStyle::Auto;
+        bool childHasOutlineAuto = child->style().outlineStyle() == OutlineStyle::Auto;
         if (childHasOutlineAuto)
             continue;
         if (auto* element = dynamicDowncast<RenderElement>(child.get()))
@@ -2914,6 +2929,13 @@ void RenderElement::layoutIfNeeded()
     layout();
     if (Style::AnchorPositionEvaluator::isAnchorPositioned(style()))
         Style::AnchorPositionEvaluator::captureScrollSnapshots(downcast<RenderBox>(*this));
+}
+
+RenderHTMLCanvas* RenderElement::drawableCanvas() const
+{
+    auto* canvasRenderer = ancestorsOfType<RenderHTMLCanvas>(*this).first();
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return canvasRenderer && canvasRenderer->hasDrawableContent() ? const_cast<RenderHTMLCanvas*>(canvasRenderer) : nullptr;
 }
 
 }

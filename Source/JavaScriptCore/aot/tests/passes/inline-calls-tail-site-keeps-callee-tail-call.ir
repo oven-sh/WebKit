@@ -1,0 +1,88 @@
+# A tail call of the callee, copied to a site that is a tail call, stays a tail call with the requirement it had in the callee
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 5
+# STATISTIC: ReturnCallsDemoted = 0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="withoutBody" parameters=[{type=number}] results=[{type=number}]
+
+function f1 name="mustTailCall" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Mul v0, v0
+    v2 = CallDirect v1 function=f0
+    ReturnCall v2 @30
+}
+
+function f2 name="mayTailCall" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Mul v0, v0
+    v2 = CallDirect v1 function=f0
+    ReturnCall v2 requirement=Allowed @30
+}
+
+function f3 name="returnsOrTailCalls" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = CallDirect v0 function=f0
+    ReturnCall v2 @30
+  b2():
+    v3 = Mul v0, v0
+    Return v3
+}
+
+function f4 name="requiredSiteOfRequired" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f1
+    ReturnCall v1
+}
+# CHECK-LABEL: name="requiredSiteOfRequired"
+# CHECK: inlineFrames=[{}, {callee=f1 {{*}}isTailCall=true
+# CHECK-NOT: function=f1
+# CHECK: [[call4]]: number = CallDirect {{*}} function=f0
+# CHECK-NEXT: ReturnCall [[call4]] @30:1
+
+function f5 name="allowedSiteOfRequired" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f1
+    ReturnCall v1 requirement=Allowed
+}
+# CHECK-LABEL: name="allowedSiteOfRequired"
+# CHECK: inlineFrames=[{}, {callee=f1 {{*}}isTailCall=true
+# CHECK-NOT: function=f1
+# CHECK: [[call5]]: number = CallDirect {{*}} function=f0
+# CHECK-NEXT: ReturnCall [[call5]] @30:1
+
+function f6 name="requiredSiteOfAllowed" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f2
+    ReturnCall v1
+}
+# CHECK-LABEL: name="requiredSiteOfAllowed"
+# CHECK: inlineFrames=[{}, {callee=f2 {{*}}isTailCall=true
+# CHECK-NOT: function=f2
+# CHECK: [[call6]]: number = CallDirect {{*}} function=f0
+# CHECK-NEXT: ReturnCall [[call6]] requirement=Allowed @30:1
+
+function f7 name="calleeAlsoReturns" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    v2 = CallDirect v0, v1 function=f3
+    ReturnCall v2
+}
+# CHECK-LABEL: name="calleeAlsoReturns"
+# CHECK: inlineFrames=[{}, {callee=f3 {{*}}isTailCall=true
+# CHECK-NOT: function=f3
+# CHECK: [[after7]](v2: number):
+# CHECK-NEXT: Return v2
+# CHECK: [[call7]]: number = CallDirect v0 function=f0
+# CHECK-NEXT: ReturnCall [[call7]] @30:1
+# CHECK: [[product7]]: number = Mul v0, v0
+# CHECK-NEXT: Jump -> next [[after7]]([[product7]])
+
+function f8 name="siteIsNotTailCall" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f1
+    Return v1
+}
+# CHECK-LABEL: name="siteIsNotTailCall"
+# CHECK-NOT: isTailCall
+# CHECK-NOT: ReturnCall
+# CHECK: [[after8]](v1: number):
+# CHECK-NEXT: Return v1
+# CHECK-NOT: ReturnCall
+# CHECK: [[call8]]: number = CallDirect {{*}} function=f0
+# CHECK-NEXT: Jump -> next [[after8]]([[call8]])

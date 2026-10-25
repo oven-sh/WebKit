@@ -130,7 +130,7 @@ static constexpr unsigned sortPriorityBase = __COUNTER__;
 static constexpr unsigned errorSortPriority = std::numeric_limits<unsigned>::max() - 1;
 static constexpr unsigned otherSortPriority = std::numeric_limits<unsigned>::max();
 
-static unsigned NODELETE sortPriority(CSSUnitType unit)
+static unsigned LEGACY_NODELETE sortPriority(CSSUnitType unit)
 {
     // Sort order: number, percentage, dimension (by unit, ordered ASCII case-insensitively), other.
 
@@ -258,7 +258,7 @@ static Vector<ChildRepresentation, 16> generateSortedChildrenMap(const Children&
 // MARK: Math Function
 // https://drafts.csswg.org/css-values-4/#serialize-a-math-function
 
-static double clampValue(double value, CSS::Range range)
+static double LEGACY_NODELETE clampValue(double value, CSS::Range range)
 {
     value = std::isnan(value) ? 0 : value;
     return std::clamp(value, range.min, range.max);
@@ -359,22 +359,22 @@ void serializeMathFunctionPrefix(StringBuilder& builder, const IndirectNode<Inve
 
 void serializeMathFunctionPrefix(StringBuilder& builder, const IndirectNode<RoundNearest>&, SerializationState&)
 {
-    builder.append(nameLiteralForSerialization(CSSValueRound), '(', nameLiteralForSerialization(RoundNearest::id), ", "_s);
+    builder.append(nameLiteralForSerialization(CSSValueID::Round), '(', nameLiteralForSerialization(RoundNearest::id), ", "_s);
 }
 
 void serializeMathFunctionPrefix(StringBuilder& builder, const IndirectNode<RoundUp>&, SerializationState&)
 {
-    builder.append(nameLiteralForSerialization(CSSValueRound), '(', nameLiteralForSerialization(RoundUp::id), ", "_s);
+    builder.append(nameLiteralForSerialization(CSSValueID::Round), '(', nameLiteralForSerialization(RoundUp::id), ", "_s);
 }
 
 void serializeMathFunctionPrefix(StringBuilder& builder, const IndirectNode<RoundDown>&, SerializationState&)
 {
-    builder.append(nameLiteralForSerialization(CSSValueRound), '(', nameLiteralForSerialization(RoundDown::id), ", "_s);
+    builder.append(nameLiteralForSerialization(CSSValueID::Round), '(', nameLiteralForSerialization(RoundDown::id), ", "_s);
 }
 
 void serializeMathFunctionPrefix(StringBuilder& builder, const IndirectNode<RoundToZero>&, SerializationState&)
 {
-    builder.append(nameLiteralForSerialization(CSSValueRound), '(', nameLiteralForSerialization(RoundToZero::id), ", "_s);
+    builder.append(nameLiteralForSerialization(CSSValueID::Round), '(', nameLiteralForSerialization(RoundToZero::id), ", "_s);
 }
 
 void serializeMathFunctionPrefix(StringBuilder& builder, const IndirectNode<ProgressNoClamp>&, SerializationState&)
@@ -416,16 +416,16 @@ void serializeMathFunctionArguments(StringBuilder& builder, const IndirectNode<R
             }
             if (key.elementScoped) {
                 separate();
-                builder.append(nameLiteralForSerialization(CSSValueElementScoped));
+                builder.append(nameLiteralForSerialization(CSSValueID::ElementScoped));
             }
             if (key.propertyScoped) {
                 separate();
                 WTF::switchOn(*key.propertyScoped,
                     [&](const Random::Key::PropertyScoped&) {
-                        builder.append(nameLiteralForSerialization(CSSValuePropertyScoped));
+                        builder.append(nameLiteralForSerialization(CSSValueID::PropertyScoped));
                     },
                     [&](const Random::Key::PropertyIndexScoped&) {
-                        builder.append(nameLiteralForSerialization(CSSValuePropertyIndexScoped));
+                        builder.append(nameLiteralForSerialization(CSSValueID::PropertyIndexScoped));
                     }
                 );
             }
@@ -434,7 +434,7 @@ void serializeMathFunctionArguments(StringBuilder& builder, const IndirectNode<R
             builder.append(", "_s);
         },
         [&](const Random::SharingFixed& fixed) {
-            builder.append(nameLiteralForSerialization(CSSValueFixed), ' ');
+            builder.append(nameLiteralForSerialization(CSSValueID::Fixed), ' ');
             CSS::serializationForCSS(builder, state.serializationContext, fixed.value);
             builder.append(", "_s);
         }

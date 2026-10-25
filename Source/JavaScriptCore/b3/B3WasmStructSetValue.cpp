@@ -26,7 +26,7 @@
 #include "config.h"
 #include "B3WasmStructSetValue.h"
 
-#if ENABLE(B3_JIT)
+#if ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)
 
 #include "B3ValueInlines.h"
 
@@ -34,8 +34,8 @@ namespace JSC::B3 {
 
 WasmStructSetValue::~WasmStructSetValue() = default;
 
-WasmStructSetValue::WasmStructSetValue(Kind kind, Origin origin, Value* structPtr, Value* value, Ref<const Wasm::RTT> rtt, Wasm::StructFieldCount fieldIndex, uint64_t fieldHeapKey)
-    : WasmStructFieldValue(CheckedOpcode, kind, Void, Two, origin, WTF::move(rtt), fieldIndex, fieldHeapKey, Mutability::Mutable, structPtr, value)
+WasmStructSetValue::WasmStructSetValue(Kind kind, Origin origin, Value* structPtr, Value* value, Ref<const Wasm::RTT> rtt, Wasm::StructFieldCount fieldIndex, uint64_t fieldHeapKey, Mutability mutability)
+    : WasmStructFieldValue(CheckedOpcode, kind, Void, Two, origin, WTF::move(rtt), fieldIndex, fieldHeapKey, mutability, structPtr, value)
 {
 }
 
@@ -46,4 +46,4 @@ void WasmStructSetValue::dumpMeta(CommaPrinter& comma, PrintStream& out) const
 
 } // namespace JSC::B3
 
-#endif // ENABLE(B3_JIT)
+#endif // ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)

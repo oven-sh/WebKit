@@ -65,6 +65,7 @@ AudioSampleBufferConverter::AudioSampleBufferConverter(Function<void()>&& output
     , m_destinationFormat(options.description ? *options.description : AudioStreamBasicDescription { })
     , m_currentNativePresentationTimeStamp(PAL::kCMTimeInvalid)
     , m_currentOutputPresentationTimeStamp(PAL::kCMTimeInvalid)
+    , m_nextInputPresentationTimeStamp(PAL::kCMTimeInvalid)
     , m_remainingPrimeDuration(PAL::kCMTimeInvalid)
     , m_outputCodecType(options.format)
     , m_options(options)
@@ -91,14 +92,16 @@ void AudioSampleBufferConverter::converterOutputBufferCallback(void* object, CMB
 
 bool AudioSampleBufferConverter::initialize()
 {
-    CMBufferQueueRef inputBufferQueue;
+    // This is an out-parameter which is immediately adopted below.
+    SUPPRESS_UNRETAINED_LOCAL CMBufferQueueRef inputBufferQueue;
     if (auto error = PAL::CMBufferQueueCreate(kCFAllocatorDefault, 0, PAL::CMBufferQueueGetCallbacksForUnsortedSampleBuffers(), &inputBufferQueue)) {
         RELEASE_LOG_ERROR(MediaStream, "AudioSampleBufferConverter CMBufferQueueCreate for m_inputBufferQueue failed with %d", static_cast<int>(error));
         return false;
     }
     lazyInitialize(m_inputBufferQueue, adoptCF(inputBufferQueue));
 
-    CMBufferQueueRef outputBufferQueue;
+    // This is an out-parameter which is immediately adopted below.
+    SUPPRESS_UNRETAINED_LOCAL CMBufferQueueRef outputBufferQueue;
     if (auto error = PAL::CMBufferQueueCreate(kCFAllocatorDefault, 0, PAL::CMBufferQueueGetCallbacksForUnsortedSampleBuffers(), &outputBufferQueue)) {
         RELEASE_LOG_ERROR(MediaStream, "AudioSampleBufferConverter CMBufferQueueCreate for m_outputBufferQueue failed with %d", static_cast<int>(error));
         return false;
@@ -121,6 +124,7 @@ Ref<GenericPromise> AudioSampleBufferConverter::drain()
         protectedThis->m_isDraining = true;
         protectedThis->processSampleBuffers();
         protectedThis->m_isDraining = false;
+        protectedThis->m_nextInputPresentationTimeStamp = PAL::kCMTimeInvalid;
 
         if (!protectedThis->m_converter)
             return GenericPromise::createAndReject();
@@ -141,6 +145,7 @@ Ref<GenericPromise> AudioSampleBufferConverter::flushInternal(bool isFinished)
         m_isDraining = isFinished;
         processSampleBuffers();
         m_isDraining = false;
+        m_nextInputPresentationTimeStamp = PAL::kCMTimeInvalid;
 
         if (!m_converter)
             return GenericPromise::createAndReject();
@@ -335,7 +340,7 @@ OSStatus AudioSampleBufferConverter::initAudioConverterForSourceFormatDescriptio
     return noErr;
 }
 
-void AudioSampleBufferConverter::attachPrimingTrimsIfNeeded(CMSampleBufferRef buffer)
+CMTime AudioSampleBufferConverter::attachPrimingTrimsIfNeeded(CMSampleBufferRef buffer)
 {
     assertIsCurrent(queue());
 
@@ -349,7 +354,9 @@ void AudioSampleBufferConverter::attachPrimingTrimsIfNeeded(CMSampleBufferRef bu
         auto trimAtStartDict = adoptCF(CMTimeCopyAsDictionary(trimDuration, kCFAllocatorDefault));
         CMSetAttachment(buffer, kCMSampleBufferAttachmentKey_TrimDurationAtStart, trimAtStartDict.get(), kCMAttachmentMode_ShouldPropagate);
         m_remainingPrimeDuration = CMTimeSubtract(m_remainingPrimeDuration, trimDuration);
+        return trimDuration;
     }
+    return kCMTimeZero;
 }
 
 RetainPtr<NSNumber> AudioSampleBufferConverter::gradualDecoderRefreshCount()
@@ -402,7 +409,8 @@ std::expected<RetainPtr<CMSampleBufferRef>, OSStatus> AudioSampleBufferConverter
             }
         }
 
-        CMFormatDescriptionRef destinationFormatDescription;
+        // This is an out-parameter which is immediately adopted below.
+        SUPPRESS_UNRETAINED_LOCAL CMFormatDescriptionRef destinationFormatDescription;
         if (auto error = PAL::CMAudioFormatDescriptionCreate(kCFAllocatorDefault, &m_destinationFormat, 0, nullptr, cookieSize, cookie.span().data(), nullptr, &destinationFormatDescription)) {
             RELEASE_LOG_ERROR(MediaStream, "AudioSampleBufferConverter CMAudioFormatDescriptionCreate failed with %d", static_cast<int>(error));
             return makeUnexpected(error);
@@ -411,7 +419,8 @@ std::expected<RetainPtr<CMSampleBufferRef>, OSStatus> AudioSampleBufferConverter
         m_gdrCountNum = gradualDecoderRefreshCount();
     }
 
-    CMSampleBufferRef rawSampleBuffer;
+    // This is an out-parameter which is immediately adopted below.
+    SUPPRESS_UNRETAINED_LOCAL CMSampleBufferRef rawSampleBuffer;
     if (auto error = PAL::CMAudioSampleBufferCreateWithPacketDescriptions(kCFAllocatorDefault, nullptr, false, nullptr, nullptr, m_destinationFormatDescription.get(), numSamples, m_currentNativePresentationTimeStamp, isPCM() ? nullptr : m_destinationPacketDescriptions.span().data(), &rawSampleBuffer)) {
         RELEASE_LOG_ERROR(MediaStream, "AudioSampleBufferConverter CMAudioSampleBufferCreateWithPacketDescriptions failed with %d", static_cast<int>(error));
         return makeUnexpected(error);
@@ -444,7 +453,7 @@ OSStatus AudioSampleBufferConverter::provideSourceDataNumOutputPackets(UInt32* n
     *numOutputPacketsPtr = 0;
 
     while (!PAL::CMBufferQueueIsEmpty(m_inputBufferQueue.get())) {
-        RetainPtr sampleBuffer = adoptCF((CMSampleBufferRef)(const_cast<void*>(PAL::CMBufferQueueDequeueAndRetain(m_inputBufferQueue.get()))));
+        SUPPRESS_RETAINPTR_CTOR_ADOPT RetainPtr sampleBuffer = adoptCF((CMSampleBufferRef)(const_cast<void*>(PAL::CMBufferQueueDequeueAndRetain(m_inputBufferQueue.get()))));
         size_t listSize = 0;
         if (auto result = PAL::CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(sampleBuffer.get(), &listSize, nullptr, 0, kCFAllocatorSystemDefault, kCFAllocatorSystemDefault, kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment, nullptr))
             return result;
@@ -459,7 +468,7 @@ OSStatus AudioSampleBufferConverter::provideSourceDataNumOutputPackets(UInt32* n
             return kAudioConverterErr_BadPropertySizeError;
 
         if (!m_options.generateTimestamp)
-            setTimeFromSample(sampleBuffer.get());
+            setTimeFromSampleIfDiscontinuous(sampleBuffer.get());
 
         auto audioBufferListSpan = span(*audioBufferList);
         bool skipBlock = false;
@@ -505,6 +514,27 @@ void AudioSampleBufferConverter::setTimeFromSample(CMSampleBufferRef sample)
 
     m_currentNativePresentationTimeStamp = PAL::CMSampleBufferGetPresentationTimeStamp(sample);
     m_currentOutputPresentationTimeStamp = PAL::CMSampleBufferGetOutputPresentationTimeStamp(sample);
+}
+
+// A decoder with a delay outputs frames after the packet that produced them, so the output timestamps only follow the input across a discontinuity.
+void AudioSampleBufferConverter::setTimeFromSampleIfDiscontinuous(CMSampleBufferRef sample)
+{
+    assertIsCurrent(queue());
+    using namespace PAL; // For CMTIME_COMPARE_INLINE
+
+    auto presentationTimeStamp = CMSampleBufferGetPresentationTimeStamp(sample);
+    auto timeScale = static_cast<int32_t>(m_sourceFormat.mSampleRate);
+    bool isContiguous = false;
+    if (CMTIME_IS_VALID(m_nextInputPresentationTimeStamp) && timeScale > 0) {
+        auto difference = CMTimeSubtract(presentationTimeStamp, m_nextInputPresentationTimeStamp);
+        isContiguous = CMTIME_COMPARE_INLINE(difference, <, CMTimeMake(1, timeScale)) && CMTIME_COMPARE_INLINE(difference, >, CMTimeMake(-1, timeScale));
+    }
+    if (!isContiguous)
+        setTimeFromSample(sample);
+    auto duration = CMSampleBufferGetDuration(sample);
+    if ((!CMTIME_IS_VALID(duration) || CMTIME_COMPARE_INLINE(duration, <=, kCMTimeZero)) && m_sourceFormat.mFramesPerPacket && timeScale > 0)
+        duration = CMTimeMake(CMSampleBufferGetNumSamples(sample) * m_sourceFormat.mFramesPerPacket, timeScale);
+    m_nextInputPresentationTimeStamp = CMTimeAdd(presentationTimeStamp, duration);
 }
 
 void AudioSampleBufferConverter::processSampleBuffers()
@@ -588,8 +618,9 @@ void AudioSampleBufferConverter::processSampleBuffers()
         RetainPtr buffer = WTF::move(*sampleOrError);
 
         // FIXME: "Test encoding Opus with additional parameters: Opus with frameDuration" will fail otherwise, it is more correct to set the priming trims at all time.
+        // The priming delays the audible start by its duration.
         if (!isPCM() && m_options.generateTimestamp)
-            attachPrimingTrimsIfNeeded(buffer.get());
+            m_currentOutputPresentationTimeStamp = PAL::CMTimeAdd(m_currentOutputPresentationTimeStamp, attachPrimingTrimsIfNeeded(buffer.get()));
 
         if (auto error = CMSampleBufferSetOutputPresentationTimeStamp(buffer.get(), m_currentOutputPresentationTimeStamp))
             RELEASE_LOG_ERROR(MediaStream, "AudioSampleBufferConverter CMSampleBufferSetOutputPresentationTimeStamp failed with %d", static_cast<int>(error)); // not a fatal error. Is this even possible?
@@ -644,7 +675,7 @@ CMSampleBufferRef AudioSampleBufferConverter::getOutputSampleBuffer() const
 
 RetainPtr<CMSampleBufferRef> AudioSampleBufferConverter::takeOutputSampleBuffer()
 {
-    return adoptCF((CMSampleBufferRef)(const_cast<void*>(PAL::CMBufferQueueDequeueAndRetain(m_outputBufferQueue.get()))));
+    SUPPRESS_RETAINPTR_CTOR_ADOPT return adoptCF((CMSampleBufferRef)(const_cast<void*>(PAL::CMBufferQueueDequeueAndRetain(m_outputBufferQueue.get()))));
 }
 
 unsigned AudioSampleBufferConverter::bitRate() const

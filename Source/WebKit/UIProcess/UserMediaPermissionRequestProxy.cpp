@@ -56,6 +56,11 @@ UserMediaPermissionRequestProxy::UserMediaPermissionRequestProxy(UserMediaPermis
 
 UserMediaPermissionRequestProxy::~UserMediaPermissionRequestProxy()
 {
+#if ENABLE(MEDIA_STREAM)
+    if (RefPtr manager = m_manager)
+        manager->delegateDecisionEnded(*this);
+#endif
+
     if (m_decisionCompletionHandler)
         m_decisionCompletionHandler(false);
 }
@@ -130,7 +135,12 @@ void UserMediaPermissionRequestProxy::deny(UserMediaAccessDenialReason reason)
 
 void UserMediaPermissionRequestProxy::invalidate()
 {
-    m_manager = nullptr;
+    RefPtr manager = std::exchange(m_manager, nullptr);
+#if ENABLE(MEDIA_STREAM)
+    if (manager)
+        manager->delegateDecisionEnded(*this);
+#endif
+
     if (m_decisionCompletionHandler)
         m_decisionCompletionHandler(false);
 }
@@ -200,7 +210,7 @@ void UserMediaPermissionRequestProxy::promptForGetUserMedia()
     RefPtr manager = m_manager.get();
     ASSERT(manager);
     if (!manager || !manager->page()) {
-        deny(UserMediaAccessDenialReason::PermissionDenied);
+        deny(UserMediaAccessDenialReason::OtherFailure);
         return;
     }
 
@@ -208,12 +218,19 @@ void UserMediaPermissionRequestProxy::promptForGetUserMedia()
     if (requiresAudioCapture())
         reason = requiresVideoCapture() ? MediaPermissionReason::CameraAndMicrophone : MediaPermissionReason::Microphone;
 
-    alertForPermission(*protect(manager->page()), reason, topLevelDocumentSecurityOrigin().data(), [this, protectedThis = Ref { *this }](bool granted) {
-        if (!granted)
-            deny(UserMediaAccessDenialReason::PermissionDenied);
+    CompletionHandler<void(MediaPermissionPromptResult&&)> completionHandler = [this, protectedThis = Ref { *this }](MediaPermissionPromptResult&& result) {
+        if (!result.granted)
+            deny(result.wasAnswered ? UserMediaAccessDenialReason::PermissionDenied : UserMediaAccessDenialReason::OtherFailure);
         else
             allow();
-    });
+    };
+
+    Ref page = *manager->page();
+    PermissionPromptRequest request { .reason = reason, .origin = topLevelDocumentSecurityOrigin().data() };
+    if (page->mediaPermissionPromptHandlerForTesting())
+        alertForPermissionForTesting(page, WTF::move(request), WTF::move(completionHandler));
+    else
+        alertForPermission(page, WTF::move(request), WTF::move(completionHandler));
 #endif
 }
 

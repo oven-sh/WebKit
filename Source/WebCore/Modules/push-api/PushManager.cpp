@@ -77,7 +77,7 @@ void PushManager::subscribe(ScriptExecutionContext& context, std::optional<PushS
 {
     RELEASE_ASSERT(context.isSecureContext());
 
-    context.eventLoop().queueTask(TaskSource::Networking, [this, protectedThis = Ref { *this }, context = protect(context), options = WTF::move(options), promise = WTF::move(promise)]() mutable {
+    protect(context.eventLoop())->queueTask(TaskSource::Networking, [this, protectedThis = Ref { *this }, context = protect(context), options = WTF::move(options), promise = WTF::move(promise)]() mutable {
         if (!options || !options->userVisibleOnly) {
             promise.reject(Exception { ExceptionCode::NotAllowedError, "Subscribing for push requires userVisibleOnly to be true"_s });
             return;
@@ -138,21 +138,21 @@ void PushManager::subscribe(ScriptExecutionContext& context, std::optional<PushS
             RELEASE_ASSERT(client);
             RELEASE_ASSERT(context->isDocument());
 
-            auto& document = downcast<Document>(context.get());
-            if (!document.isSameOriginAsTopDocument()) {
+            Ref document = downcast<Document>(context);
+            if (!document->isSameOriginAsTopDocument()) {
                 promise.reject(Exception { ExceptionCode::NotAllowedError, "Cannot request permission from cross-origin iframe"_s });
                 return;
             }
 
-            RefPtr window = document.frame() ? document.frame()->window() : nullptr;
-            if (!window || (!window->consumeTransientActivation() && !document.quirks().shouldAllowNotificationPermissionWithoutUserGesture())) {
+            RefPtr window = document->frame() ? document->frame()->window() : nullptr;
+            if (!window || (!window->consumeTransientActivation() && !document->quirks().shouldAllowNotificationPermissionWithoutUserGesture())) {
 #if !RELEASE_LOG_DISABLED
                 Seconds lastActivationDuration = window ? MonotonicTime::now() - window->lastActivationTimestamp() : Seconds::infinity();
                 RELEASE_LOG_ERROR(Push, "Failing PushManager.subscribe call due to failed transient activation check; last activated %.2f sec ago", lastActivationDuration.value());
 #endif
 
                 auto errorMessage = "Push notification prompting can only be done from a user gesture."_s;
-                document.addConsoleMessage(MessageSource::Security, MessageLevel::Error, errorMessage);
+                document->addConsoleMessage(MessageSource::Security, MessageLevel::Error, errorMessage);
                 promise.reject(Exception { ExceptionCode::NotAllowedError, errorMessage });
                 return;
             }
@@ -175,14 +175,14 @@ void PushManager::subscribe(ScriptExecutionContext& context, std::optional<PushS
 
 void PushManager::getSubscription(ScriptExecutionContext& context, DOMPromiseDeferred<IDLNullable<IDLInterface<PushSubscription>>>&& promise)
 {
-    context.eventLoop().queueTask(TaskSource::Networking, [protectedThis = protect(*this), promise = WTF::move(promise)] mutable {
+    protect(context.eventLoop())->queueTask(TaskSource::Networking, [protectedThis = protect(*this), promise = WTF::move(promise)] mutable {
         protect(protectedThis->m_pushSubscriptionOwner)->getPushSubscription(WTF::move(promise));
     });
 }
 
 void PushManager::permissionState(ScriptExecutionContext& context, std::optional<PushSubscriptionOptionsInit>&&, DOMPromiseDeferred<IDLEnumeration<PushPermissionState>>&& promise)
 {
-    context.eventLoop().queueTask(TaskSource::Networking, [context = protect(context), promise = WTF::move(promise)] mutable {
+    protect(context.eventLoop())->queueTask(TaskSource::Networking, [context = protect(context), promise = WTF::move(promise)] mutable {
         auto client = context->notificationClient();
         auto permission = client ? client->checkPermission(context.ptr()) : NotificationPermission::Denied;
 

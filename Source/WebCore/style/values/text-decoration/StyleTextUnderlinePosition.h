@@ -73,7 +73,7 @@ struct TextUnderlinePosition {
         return Side::NoPreference;
     }
 
-    template<typename... F> constexpr decltype(auto) switchOn(F&&... f) const
+    template<typename... F> constexpr decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -90,7 +90,7 @@ private:
 
 // MARK: - Conversion
 
-template<> struct CSSValueConversion<TextUnderlinePosition> { auto operator()(BuilderState&, const CSSValue&) -> TextUnderlinePosition; };
+template<> struct CSSValueConversion<TextUnderlinePosition> { TextUnderlinePosition operator()(BuilderState&, const CSSValue&); };
 
 } // namespace Style
 } // namespace WebCore

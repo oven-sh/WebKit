@@ -40,8 +40,8 @@ class CursorImage final : public MultiImage {
 public:
     using HotSpot = SpaceSeparatedPoint<Number<>>;
 
-    static Ref<CursorImage> create(const Ref<Image>&, std::optional<HotSpot>, const URL&);
-    static Ref<CursorImage> create(Ref<Image>&&, std::optional<HotSpot>, URL&&);
+    static Ref<CursorImage> LEGACY_NODELETE create(const Ref<Image>&, std::optional<HotSpot>, const URL&);
+    static Ref<CursorImage> LEGACY_NODELETE create(Ref<Image>&&, std::optional<HotSpot>, URL&&);
     virtual ~CursorImage();
 
     bool operator==(const Image&) const final;
@@ -50,13 +50,13 @@ public:
 
     bool usesDataProtocol() const final;
 
-    std::optional<HotSpot> hotSpot() const { return m_hotSpot; }
+    std::optional<HotSpot> specifiedHotSpot() const { return m_hotSpot; }
 
 private:
     explicit CursorImage(const Ref<Image>&, std::optional<HotSpot>, const URL&);
     explicit CursorImage(Ref<Image>&&, std::optional<HotSpot>, URL&&);
 
-    void setContainerContextForRenderer(const RenderElement& renderer, const FloatSize& containerSize, float containerZoom, const WTF::URL& = WTF::URL()) final;
+    ImageDrawingExtras drawingExtrasForRenderer(const RenderElement&) const final;
     Ref<CSSValue> computedStyleValue(const Style::ComputedStyle&) const final;
     Ref<DeprecatedCSSOMValue> computedStyleDeprecatedCSSOMValue(CSSValuePool&, const Style::ComputedStyle&, CSSStyleDeclaration&) const final;
     ImageWithScale selectBestFitImage(const Document&) final;

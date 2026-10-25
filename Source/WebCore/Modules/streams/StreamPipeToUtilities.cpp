@@ -81,7 +81,7 @@ public:
     ~StreamPipeToState();
 
     // ContextDestructionObserver.
-    void NODELETE ref() const final { RefCounted::ref(); }
+    void LEGACY_NODELETE ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
     void doWrite(JSC::JSValue);
@@ -91,7 +91,7 @@ public:
 
     class AllPromise : public RefCounted<AllPromise> {
     public:
-        static Ref<AllPromise> create(Ref<DeferredPromise>&& promise) { return adoptRef(*new AllPromise(WTF::move(promise))); }
+        static Ref<AllPromise> LEGACY_NODELETE create(Ref<DeferredPromise>&& promise) { return adoptRef(*new AllPromise(WTF::move(promise))); }
         void resolve()
         {
             ASSERT(m_waitCount);
@@ -166,7 +166,7 @@ private:
 
 class PipeToDefaultReadRequest : public ReadableStreamReadRequest, public CanMakeWeakPtr<PipeToDefaultReadRequest> {
 public:
-    static Ref<PipeToDefaultReadRequest> create(Ref<StreamPipeToState>&& state) { return adoptRef(*new PipeToDefaultReadRequest(WTF::move(state))); }
+    static Ref<PipeToDefaultReadRequest> LEGACY_NODELETE create(Ref<StreamPipeToState>&& state) { return adoptRef(*new PipeToDefaultReadRequest(WTF::move(state))); }
 
     void whenSettled(Function<void()>&& callback)
     {
@@ -637,7 +637,7 @@ RefPtr<DOMPromise> StreamPipeToState::waitForPendingReadAndWrite(Action&& action
                     return;
                 }
 
-                m_pendingWritePromise->whenSettled([waitForAction = WTF::move(waitForAction), deferred = WTF::move(deferred)]() mutable {
+                protect(m_pendingWritePromise)->whenSettled([waitForAction = WTF::move(waitForAction), deferred = WTF::move(deferred)]() mutable {
                     waitForAction(WTF::move(deferred));
                 });
             };

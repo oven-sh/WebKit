@@ -28,15 +28,9 @@
 
 #import <Foundation/Foundation.h>
 
-struct WebSecurityOriginPrivate;
-
 @protocol WebQuotaManager;
 
-@interface WebSecurityOrigin : NSObject {
-@private
-    struct WebSecurityOriginPrivate *_private;
-    id<WebQuotaManager> _databaseQuotaManager;
-}
+@interface WebSecurityOrigin : NSObject
 
 + (id)webSecurityOriginFromDatabaseIdentifier:(NSString *)databaseIdentifier;
 

@@ -3738,6 +3738,12 @@ void GL_APIENTRY glGetTranslatedShaderSourceANGLE(GLuint shader,
     return GL_GetTranslatedShaderSourceANGLE(shader, bufSize, length, source);
 }
 
+// GL_ANGLE_trim_memory
+void GL_APIENTRY glTrimMemoryANGLE(GLenum trimLevel)
+{
+    return GL_TrimMemoryANGLE(trimLevel);
+}
+
 // GL_ANGLE_variable_rasterization_rate_metal
 void GL_APIENTRY glBindMetalRasterizationRateMapANGLE(GLuint framebuffer,
                                                       GLMTLRasterizationRateMapANGLE map)

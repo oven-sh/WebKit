@@ -1,0 +1,104 @@
+# A member of a set whose field has no slot keeps the bytes of the others' slot zero if they are free in its cell, so that a read through the set needs no test of the shape
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow
+# RUN: plan-slots padding accesses
+# RUN(PLACED): place accesses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="FreeA" fields=[{key="free" declared={type=anything} flags=[IsRequired]}, {key="freeShared" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="FreeB" fields=[{key="free" declared={type=anything} flags=[IsRequired]}, {key="freeShared" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="FreeC" fields=[{key="freeShared" declared={type=anything} flags=[IsRequired]}, {key="free" declared={type=anything}}]
+layout L3 name="TakenA" fields=[{key="taken" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="TakenB" fields=[{key="taken" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="TakenC" fields=[{key="own" declared={type=anything} flags=[IsRequired]}, {key="alsoOwn" declared={type=anything} flags=[IsRequired]}, {key="taken" declared={type=anything}}]
+layout L6 name="PastEndA" fields=[{key="pastEnd" declared={type=anything} flags=[IsRequired]}]
+layout L7 name="PastEndB" fields=[{key="pastEnd" declared={type=anything} flags=[IsRequired]}]
+layout L8 name="PastEndC" fields=[{key="pastEnd" declared={type=anything}}]
+layout L9 name="NumberA" fields=[{key="optionalNumber" declared={type=number}}, {key="numberShared" declared={type=anything} flags=[IsRequired]}]
+layout L10 name="NumberB" fields=[{key="optionalNumber" declared={type=number}}, {key="numberShared" declared={type=anything} flags=[IsRequired]}]
+layout L11 name="NumberC" fields=[{key="numberShared" declared={type=anything} flags=[IsRequired]}, {key="optionalNumber" declared={type=number}}]
+layout L12 name="RareA" fields=[{key="rare" declared={type=anything} flags=[IsRequired]}, {key="rareShared" declared={type=anything} flags=[IsRequired]}]
+layout L13 name="RareB" fields=[{key="rareShared" declared={type=anything} flags=[IsRequired]}, {key="rare" declared={type=anything}}]
+layout L14 name="RareC" fields=[{key="rareShared" declared={type=anything} flags=[IsRequired]}, {key="rare" declared={type=anything}}]
+variable g0 name="free" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="taken" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="pastEnd" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="number" module=m0 declared={type=anything} initialization=Undefined
+variable g4 name="rare" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
+    PutModuleVariable v3 variable=g0
+    v5 = NewObject -, v1, v1 layout=L1 fields=[0, 1]
+    PutModuleVariable v5 variable=g0
+    v7 = NewObject -, v1 layout=L2 fields=[0]
+    PutModuleVariable v7 variable=g0
+    v9 = NewObject -, v1 layout=L3 fields=[0]
+    PutModuleVariable v9 variable=g1
+    v11 = NewObject -, v1 layout=L4 fields=[0]
+    PutModuleVariable v11 variable=g1
+    v13 = NewObject -, v1, v1 layout=L5 fields=[0, 1]
+    PutModuleVariable v13 variable=g1
+    v15 = NewObject -, v1 layout=L6 fields=[0]
+    PutModuleVariable v15 variable=g2
+    v17 = NewObject -, v1 layout=L7 fields=[0]
+    PutModuleVariable v17 variable=g2
+    v19 = NewObject layout=L8
+    PutModuleVariable v19 variable=g2
+    v21 = NewObject -, v2, v1 layout=L9 fields=[0, 1]
+    PutModuleVariable v21 variable=g3
+    v23 = NewObject -, v1 layout=L9 fields=[1]
+    PutModuleVariable v23 variable=g3
+    v25 = NewObject -, v2, v1 layout=L10 fields=[0, 1]
+    PutModuleVariable v25 variable=g3
+    v27 = NewObject -, v1 layout=L10 fields=[1]
+    PutModuleVariable v27 variable=g3
+    v29 = NewObject -, v1 layout=L11 fields=[0]
+    PutModuleVariable v29 variable=g3
+    v31 = NewObject -, v1, v1 layout=L12 fields=[0, 1]
+    PutModuleVariable v31 variable=g4
+    v33 = NewObject -, v1 layout=L13 fields=[0]
+    PutModuleVariable v33 variable=g4
+    v35 = NewObject -, v1 layout=L14 fields=[0]
+    PutModuleVariable v35 variable=g4
+    v37 = CallDirect function=f1
+    Return
+}
+function f1 name="read" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="free"
+    v2 = PropGet v0 key="freeShared"
+    v3 = GetModuleVariable variable=g1
+    v4 = PropGet v3 key="taken"
+    v5 = GetModuleVariable variable=g2
+    v6 = PropGet v5 key="pastEnd"
+    v7 = GetModuleVariable variable=g3
+    v8 = PropGet v7 key="optionalNumber"
+    v9 = PropGet v7 key="numberShared"
+    v10 = GetModuleVariable variable=g4
+    v11 = PropGet v10 key="rare"
+    v12 = PropGet v10 key="rareShared"
+    Return
+}
+
+# "free" is at 16 in L0 and L1, which puts "freeShared" at 24 in all three, so bytes 16 to 24 are free in L2. No cell grows.
+# In L5 fields of its own have every byte. The cell of L8 ends at 16. An empty OptionalDouble is not zero. Two members would keep bytes zero for the one that has "rare".
+# CHECK: L2 zero [@16+8]
+# REPEAT: i = 3..14
+# CHECK-NEXT: L%(i) zero []
+# END REPEAT
+# CHECK: "free" {L0 L1 L2} read
+# CHECK-NEXT: one location JSValue @16
+# CHECK-NEXT: without slot {L2} zero
+# CHECK-NOT: zero
+
+# A load through the set may find the slot empty although L0 and L1 always fill it.
+# PLACED: "free" [L0, L1, L2] read EveryMemberHasSlot JSValue @16 withField=[L0, L1] test=always contents=anything|absent
+# PLACED-NOT: EveryMemberHasSlot
+# PLACED: "taken" [L3, L4, L5] read SomeMembers JSValue @16 withField=[L3, L4]
+# PLACED: "pastEnd" [L6, L7, L8] read SomeMembers JSValue @16 withField=[L6, L7]
+# PLACED: "optionalNumber" [L9, L10, L11] read SomeMembers OptionalDouble @{{*}} withField=[L9, L10]
+# PLACED: "rare" [L12, L13, L14] read SomeMembers JSValue @{{*}} withField=[L12]

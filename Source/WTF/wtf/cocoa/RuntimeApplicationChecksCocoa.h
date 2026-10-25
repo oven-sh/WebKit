@@ -151,6 +151,9 @@ enum class SDKAlignedBehavior {
     NoMediaLayerTeardownOnPageVisibilityChangeQuirk,
     NetworkProcessInheritsNetworkAccessFromUIProcess,
     UserSelectSupersedesWebkitUserSelect,
+    DeprecatedSystemColorsUseCSSColor4Mappings,
+    CheckPageLocationDuringHardPocketEligibilityCheck,
+    HideScrollPocketSeparatorAtTopOfPage,
 
     NumberOfBehaviors
 };
@@ -158,15 +161,15 @@ enum class SDKAlignedBehavior {
 using SDKAlignedBehaviors = WTF::BitSet<static_cast<size_t>(SDKAlignedBehavior::NumberOfBehaviors), uint32_t>;
 
 WTF_EXPORT_PRIVATE const SDKAlignedBehaviors& sdkAlignedBehaviors();
-WTF_EXPORT_PRIVATE void NODELETE setSDKAlignedBehaviors(SDKAlignedBehaviors);
+WTF_EXPORT_PRIVATE void LEGACY_NODELETE setSDKAlignedBehaviors(SDKAlignedBehaviors);
 
 WTF_EXPORT_PRIVATE void enableAllSDKAlignedBehaviors();
-WTF_EXPORT_PRIVATE void NODELETE disableAllSDKAlignedBehaviors();
+WTF_EXPORT_PRIVATE void LEGACY_NODELETE disableAllSDKAlignedBehaviors();
 
 WTF_EXPORT_PRIVATE bool linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior);
 
-WTF_EXPORT_PRIVATE bool NODELETE processIsExtension();
-WTF_EXPORT_PRIVATE void NODELETE setProcessIsExtension(bool);
+WTF_EXPORT_PRIVATE bool LEGACY_NODELETE processIsExtension();
+WTF_EXPORT_PRIVATE void LEGACY_NODELETE setProcessIsExtension(bool);
 
 WTF_EXPORT_PRIVATE void setApplicationBundleIdentifier(const String&);
 WTF_EXPORT_PRIVATE void setApplicationBundleIdentifierOverride(const String&);
@@ -200,6 +203,7 @@ WTF_EXPORT_PRIVATE bool isMiniBrowser();
 WTF_EXPORT_PRIVATE bool isQuickenEssentials();
 WTF_EXPORT_PRIVATE bool isSafari();
 WTF_EXPORT_PRIVATE bool isSafariTechnologyPreview();
+WTF_EXPORT_PRIVATE bool isSafariWebApp();
 WTF_EXPORT_PRIVATE bool isVersions();
 WTF_EXPORT_PRIVATE bool isHRBlock();
 WTF_EXPORT_PRIVATE bool isTurboTax();

@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(B3_JIT)
+#if ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)
 
 #include "B3WasmArrayElementValue.h"
 
@@ -51,12 +51,12 @@ private:
     friend class Procedure;
     friend class Value;
 
-    static Opcode opcodeFromConstructor(Kind, Origin, Value*, Value*, Value*, Ref<const Wasm::RTT>) { return WasmArraySet; }
-    JS_EXPORT_PRIVATE WasmArraySetValue(Kind, Origin, Value* arrayPtr, Value* index, Value*, Ref<const Wasm::RTT>);
+    static Opcode opcodeFromConstructor(Kind, Origin, Value*, Value*, Value*, Ref<const Wasm::RTT>, Mutability) { return WasmArraySet; }
+    JS_EXPORT_PRIVATE WasmArraySetValue(Kind, Origin, Value* arrayPtr, Value* index, Value*, Ref<const Wasm::RTT>, Mutability);
 };
 
 } // namespace JSC::B3
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-#endif // ENABLE(B3_JIT)
+#endif // ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)

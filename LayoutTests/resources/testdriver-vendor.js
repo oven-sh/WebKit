@@ -24,6 +24,40 @@ function pause(duration) {
 }
 
 /**
+ * Compute the offset to add to an action's coordinates for the action's origin.
+ *
+ * For an element origin that is the center of the element's bounding box, in root-view
+ * coordinates: events are dispatched from the top window, so an origin inside a subframe must be
+ * shifted out of that frame's coordinate space. The shift ignores CSS transforms on an ancestor
+ * <iframe> (webkit.org/b/318752). Any other origin ("viewport") contributes no offset.
+ *
+ * @param {Element | String | undefined} origin
+ * @returns {{ x: Number, y: Number }}
+ */
+function originOffset(origin)
+{
+    const originWindow = origin?.ownerDocument?.defaultView;
+    if (!originWindow || !(origin instanceof originWindow.Element))
+        return { x: 0, y: 0 };
+
+    const bounds = origin.getBoundingClientRect();
+    logDebug(`${origin.id} [${bounds.left}, ${bounds.top}, ${bounds.width}, ${bounds.height}]`);
+
+    const offset = {
+        x: bounds.left + (bounds.width / 2.0),
+        y: bounds.top + (bounds.height / 2.0),
+    };
+
+    if (originWindow !== originWindow.top && originWindow.internals) {
+        const rootViewBounds = originWindow.internals.boundingBoxInMainFrameViewCoordinates(origin);
+        offset.x += rootViewBounds.left - bounds.left;
+        offset.y += rootViewBounds.top - bounds.top;
+    }
+
+    return offset;
+}
+
+/**
  *
  * @param {object[]} actions
  * @param {"pointerMove" | "pointerDown" | "pointerUp" | "pause"} pointerType
@@ -38,14 +72,7 @@ async function dispatchMouseActions(actions, pointerType)
     for (let action of actions) {
         switch (action.type) {
         case "pointerMove":
-            const origin = { x: 0, y: 0 };
-            const actionWindow = action.origin?.ownerDocument?.defaultView;
-            if (actionWindow && action.origin instanceof actionWindow.Element) {
-                const bounds = action.origin.getBoundingClientRect();
-                logDebug(`${action.origin.id} [${bounds.left}, ${bounds.top}, ${bounds.width}, ${bounds.height}]`);
-                origin.x = bounds.left + (bounds.width / 2.0);
-                origin.y = bounds.top + (bounds.height / 2.0);
-            }
+            const origin = originOffset(action.origin);
             logDebug(`eventSender.mouseMoveTo(${action.x + origin.x}, ${action.y + origin.y})`);
             await eventSender.asyncMouseMoveTo(action.x + origin.x, action.y + origin.y, pointerType);
             break;
@@ -104,12 +131,9 @@ async function dispatchTouchActions(actions, options = { insertPauseAfterPointer
         switch (action.type) {
         case "pointerMove":
             touch.phase = "moved";
-            const actionWindow = action.origin?.ownerDocument?.defaultView;
-            if (actionWindow && action.origin instanceof actionWindow.Element) {
-                const bounds = action.origin.getBoundingClientRect();
-                touch.x += bounds.left + (bounds.width / 2.0);
-                touch.y += bounds.top + (bounds.height / 2.0);
-            }
+            const offset = originOffset(action.origin);
+            touch.x += offset.x;
+            touch.y += offset.y;
             break;
         case "pointerDown":
             pointerDown = true;
@@ -240,13 +264,9 @@ async function dispatchWheelActions(actions)
             if (duration === undefined)
                 duration = computeTickDuration(actions, "wheel");
  
-            const originWindow = origin?.ownerDocument?.defaultView;
-            if (originWindow && origin instanceof originWindow.Element) {
-                const bounds = origin.getBoundingClientRect();
-                logDebug(() => `${origin.id} [${bounds.left}, ${bounds.top}, ${bounds.width}, ${bounds.height}]`);
-                x += bounds.left + (bounds.width / 2.0);
-                y += bounds.top + (bounds.height / 2.0);
-            }
+            const offset = originOffset(origin);
+            x += offset.x;
+            y += offset.y;
 
             const eventInterval = 1000. / 60.; // Matches the hardcoded interval in sendEventStream()
             const eventCount = Math.ceil(duration / eventInterval);
@@ -428,13 +448,19 @@ window.test_driver_internal.click = async function (element, coords)
     const targetWindow = element.ownerDocument.defaultView || window;
     const targetEventSender = targetWindow.eventSender || eventSender;
 
-    // coords are frame-local; when the element is in a subframe, shift them to root-view
-    // coordinates since the click is hit-tested from the top window. A top-level element needs no
+    // coords are frame-local; when the element is in a subframe, shift them to main-frame-view
+    // coordinates (which, unlike root-view coordinates, cross process boundaries under site
+    // isolation) since the click is hit-tested from the top window. A top-level element needs no
     // shift. The shift ignores CSS transforms on an ancestor <iframe> (webkit.org/b/318752).
     let point = coords;
     const elementWindow = element.ownerDocument.defaultView;
     if (elementWindow && elementWindow !== elementWindow.top) {
-        const rootView = targetWindow.internals.boundingBoxInRootViewCoordinates(element);
+        // Under site isolation, the offsets of ancestor frames in other processes come from frame
+        // geometry each process broadcasts during its rendering update. runUIScript waits for a
+        // presentation update in every web process, so that geometry is current before we use it.
+        if (testRunner?.isWebKit2 && testRunner?.runUIScript)
+            await new Promise((resolve) => testRunner.runUIScript(`uiController.uiScriptComplete()`, resolve));
+        const rootView = targetWindow.internals.boundingBoxInMainFrameViewCoordinates(element);
         const frameLocal = element.getBoundingClientRect();
         point = {
             x: coords.x + rootView.left - frameLocal.left,
@@ -614,6 +640,12 @@ window.test_driver_internal.set_permission = async function(permission_params)
         break;
     case "screen-wake-lock":
         testRunner.setScreenWakeLockPermission(permission_params.state == "granted");
+        break;
+    case "local-network":
+        await testRunner.setLocalNetworkAccessPermission(permission_params.state === "granted", false);
+        break;
+    case "loopback-network":
+        await testRunner.setLocalNetworkAccessPermission(permission_params.state === "granted", true);
         break;
     case "storage-access":
         await testRunner.setStorageAccessPermission(permission_params.state === "granted", location.href);

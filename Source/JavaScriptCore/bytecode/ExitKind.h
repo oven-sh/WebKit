@@ -35,6 +35,7 @@ enum ExitKind : uint8_t {
     BadConstantValue, // We exited because we made an incorrect assumption about what value we would see. Usually used for function checks.
     BadIdent, // We exited because we made an incorrect assumption about what identifier we would see. Usually used for cached Id check in get_by_val.
     BadExecutable, // We exited because we made an incorrect assumption about what executable we would see.
+    BadRealm, // We exited because we made an incorrect assumption about what realm a callee came from.
     BadCache, // We exited because an inline cache was wrong.
     BadConstantCache, // We exited because a cache on a weak constant (usually a prototype) was wrong.
     BadIndexingType, // We exited because an indexing type was wrong.
@@ -60,10 +61,10 @@ enum ExitKind : uint8_t {
     ExceptionCheck, // We exited because a direct exception check showed that we threw an exception from a C call.
     WillThrowOutOfMemoryError, // We exited because we would like to throw OutOfMemory error.
     GenericUnwind, // We exited because we arrived at this OSR exit from genericUnwind.
-    BigInt32Overflow, // We exited because of an BigInt32 overflow.
     UnexpectedResizableArrayBufferView, // We exited because we made an incorrect assumption about what type of ArrayBufferView we would see.
+    SparseIndex, // We exited because we encountered a sparse index in a place we didn't want to see it.
 };
 
-bool NODELETE exitKindMayJettison(ExitKind);
+bool LEGACY_NODELETE exitKindMayJettison(ExitKind);
 
 } // namespace JSC

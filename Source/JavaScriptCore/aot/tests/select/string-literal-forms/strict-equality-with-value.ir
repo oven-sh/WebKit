@@ -1,0 +1,98 @@
+# `value === "text"` on a value that may be something else than a string compares with the characters in the image: no cell is fetched for the text
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: StringLiteralFormsGroups = 5
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="anyValue" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = String string="constructor"
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: v1: boolean = ValueEqualsLiteral v0 literal="constructor"
+# CHECK-NEXT: Return v1
+}
+
+function f1 name="literalOnLeft" parameters=[{type=undefined|string}] results=[{type=boolean}] {
+    v1 = String string="GET"
+    v2 = StrictEq v1, v0
+    Return v2
+# CHECK: v1: boolean = ValueEqualsLiteral v0 literal="GET"
+}
+
+function f2 name="onlyBranchedOn" parameters=[{type=undefined|null|string}] results=[{type=undefined}] {
+    v1 = String string="GET"
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+# CHECK: v1: boolean = ValueEqualsLiteral v0 literal="GET"
+# CHECK-NEXT: TestAndBranch v1 -> taken b1(), notTaken b2()
+}
+
+# No number is strictly equal to a text, whatever the text converts to
+function f3 name="decimalText" parameters=[{type=number|string}] results=[{type=boolean}] {
+    v1 = String string="1"
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK: v1: boolean = ValueEqualsLiteral v0 literal="1"
+}
+
+function f4 name="provenString" parameters=[{type=string}] results=[{type=boolean}] {
+    v1 = String string="GET"
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK-NOT: ValueEqualsLiteral
+# CHECK: v1: boolean = StringEqualsLiteral v0 literal="GET"
+}
+
+function f5 name="textIsNotConstant" parameters=[{type=anything}, {type=string}] results=[{type=boolean}] {
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK-NOT: EqualsLiteral
+# CHECK: v2: boolean = StrictEq v0, v1
+}
+
+# The two words are compared without decoding either
+function f6 name="oneOfTwoLiterals" parameters=[{type=undefined|"GET"|"PUT"}] results=[{type=boolean}] {
+    v1 = String string="GET"
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK-NOT: EqualsLiteral
+# CHECK: boolean = StrictEq v0, v1
+}
+
+# The branch passes on what the comparison proves, and the row proves nothing
+function f7 name="branchWithProof" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="GET"
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    Return v3
+  b2():
+    Return v0
+# CHECK-NOT: EqualsLiteral
+# CHECK: v2: boolean = StrictEq v0, v1
+}
+
+# StrictEq reads no string where one operand is never a string, so the row, which reads string storage, would do more than the operator
+function f8 name="neverString" parameters=[{type=undefined|object}] results=[{type=boolean}] {
+    v1 = String string="GET"
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK-NOT: EqualsLiteral
+# CHECK: = StrictEq v0,
+}
+
+function f9 name="neverStringBranchedOn" parameters=[{type=null|boolean|symbol}] results=[{type=undefined}] {
+    v1 = String string="GET"
+    v2 = StrictEq v1, v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+# CHECK-NOT: EqualsLiteral
+}

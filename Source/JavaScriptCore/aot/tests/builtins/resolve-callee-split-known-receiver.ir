@@ -1,0 +1,74 @@
+# What is expected of the receiver says which function it is, not what `apply` is: the call is split on the identity of the method, and the call that is passed on keeps the expectation about its callee
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Stack" fields=[{key="depth" declared={type=number}}]
+
+function f0 name="target" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f1 name="expectedFunction" flags=[HasThis] thisType={type=anything} parameters=[{type=f0 flags=[IsExpected]}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything ~ f0, v2: Array):
+    v3 = PropGet v1 key="apply"
+    v4 = Call v3, v1, v0, v2 calleeKey="apply"
+    Return v4
+# CHECK: [[isApply1]]: boolean = TypeTest v3 testedType=builtin(FunctionPrototypeApply)
+# CHECK-NEXT: Branch [[isApply1]] -> taken [[arm1]](| 0), notTaken [[rest1]](| 0)
+# CHECK: [[arm1]]({{*}}: builtin(FunctionPrototypeApply)):
+# CHECK-NOT: TypeTest
+# CHECK: = CallBuiltin v1, v0, v2 overload=FunctionPrototypeApply/0
+# CHECK: [[rest1]]([[other1]]: anything) frequency=Unlikely:
+# CHECK-NEXT: = Call [[other1]], v1, v0, v2 calleeKey="apply"
+}
+
+function f2 name="expectedFunctionInRequiredTailCall" flags=[HasThis] thisType={type=anything} parameters=[{type=f0 flags=[IsExpected]}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything ~ f0, v2: Array):
+    v3 = PropGet v1 key="apply"
+    v4 = Call v3, v1, v0, v2 calleeKey="apply"
+    ReturnCall v4
+# CHECK: = TypeTest v3 testedType=builtin(FunctionPrototypeApply)
+# CHECK-NOT: TypeTest
+# CHECK: [[forwarded2]]: anything = CallList v1, v0, v2
+# CHECK-NEXT: ReturnCall [[forwarded2]]
+}
+
+function f3 name="provenFunctionIsLeftToTheTests" flags=[HasThis] thisType={type=anything} parameters=[{type=function}, {type=Array}] results=[{type=anything}] {
+    v3 = PropGet v1 key="apply"
+    v4 = Call v3, v1, v0, v2 calleeKey="apply"
+    Return v4
+# CHECK-NEXT: b0(v0: anything, v1: function, v2: Array):
+# CHECK-NEXT: v3: anything = PropGet v1 key="apply"
+# CHECK-NEXT: v4: anything = Call v3, v1, v0, v2 calleeKey="apply"
+# CHECK-NEXT: Return v4
+}
+
+function f4 name="methodOfExpectedLayout" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    Return v3
+# CHECK-NEXT: b0(v0: anything ~ L0, v1: anything):
+# CHECK-NEXT: v2:{{*}}= PropGet v0 key="push"
+# CHECK-NEXT: v3: anything = Call v2, v0, v1 calleeKey="push"
+# CHECK-NEXT: Return v3
+}
+
+function f5 name="methodOfExpectedArray" parameters=[{type=Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ Array, v1: anything):
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    Return v3
+# CHECK-NOT: TypeTest v2
+# CHECK: v3: anything = Call v2, v0, v1 calleeKey="push"
+}
+
+function f6 name="provenFunctionInRequiredTailCall" flags=[HasThis] thisType={type=anything} parameters=[{type=function}, {type=Array}] results=[{type=anything}] {
+    v3 = PropGet v1 key="apply"
+    v4 = Call v3, v1, v0, v2 calleeKey="apply"
+    ReturnCall v4
+# CHECK: = TypeTest v3 testedType=builtin(FunctionPrototypeApply)
+# CHECK: [[forwarded6]]: anything = CallList v1, v0, v2
+# CHECK-NEXT: ReturnCall [[forwarded6]]
+}

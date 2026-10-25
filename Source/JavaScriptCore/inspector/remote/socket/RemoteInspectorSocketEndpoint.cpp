@@ -28,6 +28,7 @@
 
 #if ENABLE(REMOTE_INSPECTOR)
 
+#include "AOTRemovableFeature.h"
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
@@ -40,8 +41,9 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteInspectorSocketEndpoint);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteInspectorSocketEndpoint::BaseConnection);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteInspectorSocketEndpoint::ClientConnection);
 
-RemoteInspectorSocketEndpoint& RemoteInspectorSocketEndpoint::singleton()
+NEVER_INLINE RemoteInspectorSocketEndpoint& RemoteInspectorSocketEndpoint::singleton()
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &RemoteInspectorSocketEndpoint::singleton);
     static LazyNeverDestroyed<RemoteInspectorSocketEndpoint> shared;
     static std::once_flag onceKey;
     std::call_once(onceKey, [&] {
@@ -86,14 +88,14 @@ void RemoteInspectorSocketEndpoint::wakeupWorkerThread()
         Socket::write(m_wakeupSendSocket, "1", 1);
 }
 
-std::optional<ConnectionID> RemoteInspectorSocketEndpoint::connectInet(const char* serverAddress, uint16_t serverPort, Client& client)
+std::optional<ConnectionID> RemoteInspectorSocketEndpoint::connectInet(UTF8CStringView serverAddress, uint16_t serverPort, Client& client)
 {
     if (auto socket = Socket::connect(serverAddress, serverPort))
         return createClient(*socket, client);
     return std::nullopt;
 }
 
-std::optional<ConnectionID> RemoteInspectorSocketEndpoint::listenInet(const char* address, uint16_t port, Listener& listener)
+std::optional<ConnectionID> RemoteInspectorSocketEndpoint::listenInet(UTF8CStringView address, uint16_t port, Listener& listener)
 {
     Locker locker { m_connectionsLock };
     auto id = generateConnectionID();

@@ -1,0 +1,20 @@
+# With the pass off a literal that is only read stays an allocation
+# FORM: Prepared
+# OPTIONS: disable=pass:SinkAllocations
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 0
+# STATISTIC: AllocationsSunk = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="onlyRead" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = PropGet v2 key="x" receivers=[L0]
+    Return v3
+# CHECK: b0(
+# CHECK-NEXT: v2:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: v3:{{*}}= PropGet v2 key="x"
+# CHECK-NEXT: Return v3
+}

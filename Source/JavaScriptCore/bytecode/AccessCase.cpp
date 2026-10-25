@@ -28,6 +28,7 @@
 
 #if ENABLE(JIT)
 
+#include "AOTRemovableFeature.h"
 #include "CCallHelpers.h"
 #include "CacheableIdentifierInlines.h"
 #include "CallLinkInfo.h"
@@ -246,7 +247,7 @@ RefPtr<AccessCase> AccessCase::createTransition(
             return nullptr;
 
         // If we are (re)allocating inline, jsc needs two extra scratchGPRs
-        if (!oldStructure->couldHaveIndexingHeader() && GPRInfo::numberOfRegisters < (requiredRegisters + 2))
+        if (oldStructure->canAllocatePropertyStorageInJIT() && GPRInfo::numberOfRegisters < (requiredRegisters + 2))
             return nullptr;
     }
 
@@ -806,7 +807,7 @@ bool AccessCase::requiresInt32PropertyCheck() const
 }
 
 template<typename Functor>
-void AccessCase::forEachDependentCell(VM&, const Functor& functor) const
+void AccessCase::forEachDependentCell(VM&, NOESCAPE const Functor& functor) const
 {
     m_conditionSet.forEachDependentCell(functor);
     if (m_structureID)
@@ -991,7 +992,7 @@ bool AccessCase::doesCalls(VM&) const
     case IndexedNullKeyTransition:
     case IndexedTrueKeyTransition:
     case IndexedFalseKeyTransition:
-        doesCalls = newStructure()->outOfLineCapacity() != structure()->outOfLineCapacity() && structure()->couldHaveIndexingHeader();
+        doesCalls = newStructure()->outOfLineCapacity() != structure()->outOfLineCapacity() && !structure()->canAllocatePropertyStorageInJIT();
         break;
     case Getter:
     case Setter:
@@ -1454,7 +1455,7 @@ void AccessCase::visitAggregateImpl(Visitor& visitor) const
 DEFINE_VISIT_AGGREGATE_WITH_MODIFIER(AccessCase, const);
 
 template<typename Func>
-inline void AccessCase::runWithDowncast(const Func& func)
+inline void AccessCase::runWithDowncast(NOESCAPE const Func& func)
 {
     switch (m_type) {
     case LoadMegamorphic:
@@ -1824,8 +1825,9 @@ bool AccessCase::canBeShared(const AccessCase& lhs, const AccessCase& rhs)
     return true;
 }
 
-void AccessCase::operator delete(AccessCase* accessCase, std::destroying_delete_t)
+NEVER_INLINE void AccessCase::operator delete(AccessCase* accessCase, std::destroying_delete_t)
 {
+    JSC_REMOVABLE_DEFINITION(JIT, static_cast<void (*)(AccessCase*, std::destroying_delete_t)>(&AccessCase::operator delete));
     accessCase->runWithDowncast([](auto* accessCase) {
         std::destroy_at(accessCase);
         std::decay_t<decltype(*accessCase)>::freeAfterDestruction(accessCase);

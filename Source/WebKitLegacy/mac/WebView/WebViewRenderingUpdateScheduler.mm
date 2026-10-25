@@ -50,7 +50,7 @@ WebViewRenderingUpdateScheduler::WebViewRenderingUpdateScheduler(WebView* webVie
     ASSERT(isMainThread());
     ASSERT_ARG(webView, webView);
 
-    m_renderingUpdateRunLoopObserver = makeUnique<WebCore::RunLoopObserver>(WebCore::RunLoopObserver::WellKnownOrder::RenderingUpdate, [weakThis = WeakPtr { this }] {
+    lazyInitialize(m_renderingUpdateRunLoopObserver, makeUnique<WebCore::RunLoopObserver>(WebCore::RunLoopObserver::WellKnownOrder::RenderingUpdate, [weakThis = WeakPtr { this }] {
 #if PLATFORM(IOS_FAMILY)
         // Normally the layer flush callback happens before the web lock auto-unlock observer runs.
         // However if the flush is rescheduled from the callback it may get pushed past it, to the next cycle.
@@ -60,9 +60,9 @@ WebViewRenderingUpdateScheduler::WebViewRenderingUpdateScheduler(WebView* webVie
         if (!checkedThis)
             return;
         checkedThis->renderingUpdateRunLoopObserverCallback();
-    });
+    }));
 
-    m_postRenderingUpdateRunLoopObserver = makeUnique<WebCore::RunLoopObserver>(WebCore::RunLoopObserver::WellKnownOrder::PostRenderingUpdate, [weakThis = WeakPtr { this }] {
+    lazyInitialize(m_postRenderingUpdateRunLoopObserver, makeUnique<WebCore::RunLoopObserver>(WebCore::RunLoopObserver::WellKnownOrder::PostRenderingUpdate, [weakThis = WeakPtr { this }] {
 #if PLATFORM(IOS_FAMILY)
         WebThreadLock();
 #endif
@@ -70,7 +70,7 @@ WebViewRenderingUpdateScheduler::WebViewRenderingUpdateScheduler(WebView* webVie
         if (!checkedThis)
             return;
         checkedThis->postRenderingUpdateCallback();
-    });
+    }));
 }
 
 WebViewRenderingUpdateScheduler::~WebViewRenderingUpdateScheduler() = default;
@@ -134,7 +134,7 @@ void WebViewRenderingUpdateScheduler::renderingUpdateRunLoopObserverCallback()
 void WebViewRenderingUpdateScheduler::postRenderingUpdateCallback()
 {
     @autoreleasepool {
-        [m_webView _didCompleteRenderingFrame];
+        [protect(m_webView) _didCompleteRenderingFrame];
         m_postRenderingUpdateRunLoopObserver->invalidate();
     }
 }
@@ -178,11 +178,12 @@ void WebViewRenderingUpdateScheduler::postRenderingUpdateCallback()
 void WebViewRenderingUpdateScheduler::updateRendering()
 {
     @autoreleasepool {
+        RetainPtr webView = m_webView;
 #if PLATFORM(MAC)
-        NSWindow *window = [m_webView window];
+        NSWindow *window = [webView window];
 #endif // PLATFORM(MAC)
 
-        [m_webView _updateRendering];
+        [webView _updateRendering];
 
 #if PLATFORM(MAC)
         // AppKit may have disabled screen updates, thinking an upcoming window flush will re-enable them.

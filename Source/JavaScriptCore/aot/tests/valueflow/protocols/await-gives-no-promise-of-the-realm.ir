@@ -1,0 +1,48 @@
+# (await load()).then(); async function outer() { changed = loadOther(); changed.then = 1; changed.mark = two; return changed }  (await outer()).mark()
+# A promise of the realm is a thenable, so awaiting it never gives the promise itself: nothing of Promise.prototype is found on what the await gives.
+# A promise with something else under `then` is no thenable any more: the promise that is resolved with it holds it.
+# RUN: valueflow-solve calls
+# CHECK-NOT: PromisePrototypeThen
+# CHECK: f1 v9 -> f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Loaded" fields=[{key="v" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    v2 = Await v1
+    v3 = PropGet v2 key="then"
+    v4 = Call v3, v2
+    v5 = NewClosure function=f3
+    v6 = Call v5
+    v7 = Await v6
+    v8 = PropGet v7 key="mark"
+    v9 = Call v8, v7
+    Return
+}
+function f2 name="load" flags=[IsAsync] results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f3 name="outer" flags=[IsAsync] results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    v1 = Call v0
+    v2 = Integer integer=1
+    PropSet v1, v2 key="then" mode=Strict
+    v4 = NewClosure function=f5
+    PropSet v1, v4 key="mark" mode=Strict
+    Return v1
+}
+function f4 name="loadOther" flags=[IsAsync] results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}
+function f5 name="two" results=[{type=anything}] {
+    Return
+}

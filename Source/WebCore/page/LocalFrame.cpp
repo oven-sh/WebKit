@@ -98,6 +98,7 @@
 #include "PaymentSession.h"
 #include "ProcessWarming.h"
 #include "RemoteFrame.h"
+#include "RenderElementInlines.h"
 #include "RenderLayerCompositor.h"
 #include "RenderObjectInlines.h"
 #include "RenderTableCell.h"
@@ -144,10 +145,6 @@
 #include "DataDetectionResultsStorage.h"
 #endif
 
-#if ENABLE(CONTENT_EXTENSIONS) && USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/LocalFrameAdditions.h>)
-#include <WebKitAdditions/LocalFrameAdditions.h>
-#endif
-
 #define FRAME_RELEASE_LOG(channel, fmt, ...) RELEASE_LOG(channel, "%p - Frame::" fmt, this, ##__VA_ARGS__)
 #define FRAME_RELEASE_LOG_ERROR(channel, fmt, ...) RELEASE_LOG_ERROR(channel, "%p - Frame::" fmt, this, ##__VA_ARGS__)
 
@@ -165,23 +162,7 @@ struct OverrideScreenSize {
     FloatSize size;
 };
 
-static inline float NODELETE parentPageZoomFactor(LocalFrame* frame)
-{
-    SUPPRESS_UNCOUNTED_LOCAL auto* parent = dynamicDowncast<LocalFrame>(frame->tree().parent());
-    if (!parent)
-        return 1;
-    return parent->pageZoomFactor();
-}
-
-static inline float NODELETE parentTextZoomFactor(LocalFrame* frame)
-{
-    SUPPRESS_UNCOUNTED_LOCAL auto* parent = dynamicDowncast<LocalFrame>(frame->tree().parent());
-    if (!parent)
-        return 1;
-    return parent->textZoomFactor();
-}
-
-static const LocalFrame& NODELETE rootFrame(const LocalFrame& frame, Frame* parent)
+static const LocalFrame& LEGACY_NODELETE rootFrame(const LocalFrame& frame, Frame* parent)
 {
     SUPPRESS_UNCOUNTED_LOCAL auto* localParent = dynamicDowncast<LocalFrame>(parent);
     if (localParent)
@@ -190,7 +171,7 @@ static const LocalFrame& NODELETE rootFrame(const LocalFrame& frame, Frame* pare
     return frame;
 }
 
-LocalFrame::LocalFrame(Page& page, ClientCreator&& clientCreator, FrameIdentifier identifier, SandboxFlags sandboxFlags, ReferrerPolicy referrerPolicy, std::optional<ScrollbarMode> scrollingMode, HTMLFrameOwnerElement* ownerElement, Frame* parent, Frame* opener, Ref<FrameTreeSyncData>&& frameTreeSyncData, AddToFrameTree addToFrameTree)
+LocalFrame::LocalFrame(Page& page, ClientCreator&& clientCreator, FrameIdentifier identifier, SandboxFlags sandboxFlags, ReferrerPolicy referrerPolicy, std::optional<ScrollbarMode> scrollingMode, HTMLFrameOwnerElement* ownerElement, Frame* parent, Frame* opener, Ref<FrameTreeSyncData>&& frameTreeSyncData, float pageZoomFactor, float textZoomFactor, AddToFrameTree addToFrameTree)
     : Frame(page, identifier, FrameType::Local, ownerElement, parent, opener, WTF::move(frameTreeSyncData), addToFrameTree)
     , m_loader(makeUniqueRefWithoutRefCountedCheck<FrameLoader>(*this, WTF::move(clientCreator)))
     , m_script(makeUniqueRef<ScriptController>(*this))
@@ -199,8 +180,8 @@ LocalFrame::LocalFrame(Page& page, ClientCreator&& clientCreator, FrameIdentifie
     , m_rangedSelectionBase(makeUniqueRef<VisibleSelection>())
     , m_rangedSelectionInitialExtent(makeUniqueRef<VisibleSelection>())
 #endif
-    , m_pageZoomFactor(parentPageZoomFactor(this))
-    , m_textZoomFactor(parentTextZoomFactor(this))
+    , m_pageZoomFactor(pageZoomFactor)
+    , m_textZoomFactor(textZoomFactor)
     , m_rootFrame(WebCore::rootFrame(*this, parent))
     , m_sandboxFlags(sandboxFlags)
     , m_parentFrameOrOpenerReferrerPolicy(referrerPolicy)
@@ -232,19 +213,20 @@ void LocalFrame::init()
     loader().init();
 }
 
-Ref<LocalFrame> LocalFrame::createMainFrame(Page& page, ClientCreator&& clientCreator, FrameIdentifier identifier, SandboxFlags effectiveSandboxFlags, ReferrerPolicy effectiveReferrerPolicy, Frame* opener, Ref<FrameTreeSyncData>&& frameTreeSyncData)
+Ref<LocalFrame> LocalFrame::createMainFrame(Page& page, ClientCreator&& clientCreator, FrameIdentifier identifier, SandboxFlags effectiveSandboxFlags, ReferrerPolicy effectiveReferrerPolicy, Frame* opener, Ref<FrameTreeSyncData>&& frameTreeSyncData, float pageZoomFactor, float textZoomFactor)
 {
-    return adoptRef(*new LocalFrame(page, WTF::move(clientCreator), identifier, effectiveSandboxFlags, effectiveReferrerPolicy, ScrollbarMode::Auto, nullptr, nullptr, opener, WTF::move(frameTreeSyncData)));
+    return adoptRef(*new LocalFrame(page, WTF::move(clientCreator), identifier, effectiveSandboxFlags, effectiveReferrerPolicy, ScrollbarMode::Auto, nullptr, nullptr, opener, WTF::move(frameTreeSyncData), pageZoomFactor, textZoomFactor));
 }
 
 Ref<LocalFrame> LocalFrame::createSubframe(Page& page, ClientCreator&& clientCreator, FrameIdentifier identifier, SandboxFlags effectiveSandboxFlags, ReferrerPolicy effectiveReferrerPolicy, HTMLFrameOwnerElement& ownerElement, Ref<FrameTreeSyncData>&& frameTreeSyncData)
 {
-    return adoptRef(*new LocalFrame(page, WTF::move(clientCreator), identifier, effectiveSandboxFlags, effectiveReferrerPolicy, std::nullopt, &ownerElement, ownerElement.document().frame(), nullptr, WTF::move(frameTreeSyncData)));
+    RefPtr parent { ownerElement.document().frame() };
+    return adoptRef(*new LocalFrame(page, WTF::move(clientCreator), identifier, effectiveSandboxFlags, effectiveReferrerPolicy, std::nullopt, &ownerElement, parent.get(), nullptr, WTF::move(frameTreeSyncData), parent ? parent->pageZoomFactor() : 1, parent ? parent->textZoomFactor() : 1));
 }
 
-Ref<LocalFrame> LocalFrame::createProvisionalSubframe(Page& page, ClientCreator&& clientCreator, FrameIdentifier identifier, SandboxFlags effectiveSandboxFlags, ReferrerPolicy effectiveReferrerPolicy, ScrollbarMode scrollingMode, Frame& parent, Ref<FrameTreeSyncData>&& frameTreeSyncData)
+Ref<LocalFrame> LocalFrame::createProvisionalSubframe(Page& page, ClientCreator&& clientCreator, FrameIdentifier identifier, SandboxFlags effectiveSandboxFlags, ReferrerPolicy effectiveReferrerPolicy, ScrollbarMode scrollingMode, Frame& parent, Ref<FrameTreeSyncData>&& frameTreeSyncData, float pageZoomFactor, float textZoomFactor)
 {
-    return adoptRef(*new LocalFrame(page, WTF::move(clientCreator), identifier, effectiveSandboxFlags, effectiveReferrerPolicy, scrollingMode, nullptr, &parent, nullptr, WTF::move(frameTreeSyncData), AddToFrameTree::No));
+    return adoptRef(*new LocalFrame(page, WTF::move(clientCreator), identifier, effectiveSandboxFlags, effectiveReferrerPolicy, scrollingMode, nullptr, &parent, nullptr, WTF::move(frameTreeSyncData), pageZoomFactor, textZoomFactor, AddToFrameTree::No));
 }
 
 LocalFrame::~LocalFrame()
@@ -286,6 +268,18 @@ RefPtr<const LocalFrame> LocalFrame::localMainFrame() const
 RefPtr<LocalFrame> LocalFrame::localMainFrame()
 {
     return dynamicDowncast<LocalFrame>(mainFrame());
+}
+
+JSC::Debugger* LocalFrame::debugger() const
+{
+    // FrameInspectorController holds the frame's own debugger, which only exists under site
+    // isolation and only once something is debugging this frame.
+    if (auto* frameDebugger = m_inspectorController->attachedDebugger())
+        return frameDebugger;
+
+    if (auto* page = this->page())
+        return page->debugger();
+    return nullptr;
 }
 
 void LocalFrame::addDestructionObserver(FrameDestructionObserver& observer)
@@ -415,30 +409,32 @@ void LocalFrame::invalidateContentEventRegionsIfNeeded(InvalidateContentEventReg
     if (!page() || !m_doc || !m_doc->renderView())
         return;
 
+    Ref document = *m_doc;
+
     bool needsUpdateForTouchEventHandlers = false;
     bool needsUpdateForWheelEventHandlers = false;
     bool needsUpdateForTouchActionElements = false;
     bool needsUpdateForEditableElements = false;
     bool needsUpdateForInteractionRegions = false;
 #if ENABLE(WHEEL_EVENT_REGIONS)
-    needsUpdateForWheelEventHandlers = protect(m_doc)->hasWheelEventHandlers() || reason == InvalidateContentEventRegionsReason::EventHandlerChange;
+    needsUpdateForWheelEventHandlers = document->hasWheelEventHandlers() || reason == InvalidateContentEventRegionsReason::EventHandlerChange;
 #else
     UNUSED_PARAM(reason);
 #endif
 #if ENABLE(TOUCH_EVENT_REGIONS)
-    if (m_doc->shouldUseTouchEventRegions())
-        needsUpdateForTouchEventHandlers = m_doc->hasTouchEventHandlers() || reason == InvalidateContentEventRegionsReason::EventHandlerChange;
+    if (document->shouldUseTouchEventRegions())
+        needsUpdateForTouchEventHandlers = document->hasTouchEventHandlers() || reason == InvalidateContentEventRegionsReason::EventHandlerChange;
 #else
     UNUSED_PARAM(reason);
 #endif
 
 #if ENABLE(TOUCH_ACTION_REGIONS)
     // Document::mayHaveElementsWithNonAutoTouchAction never changes from true to false currently.
-    needsUpdateForTouchActionElements = m_doc->mayHaveElementsWithNonAutoTouchAction();
+    needsUpdateForTouchActionElements = document->mayHaveElementsWithNonAutoTouchAction();
 #endif
 #if ENABLE(EDITABLE_REGION)
     // Document::mayHaveEditableElements never changes from true to false currently.
-    needsUpdateForEditableElements = m_doc->mayHaveEditableElements() && protect(page())->shouldBuildEditableRegion();
+    needsUpdateForEditableElements = document->mayHaveEditableElements() && protect(page())->shouldBuildEditableRegion();
 #endif
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
     needsUpdateForInteractionRegions = page()->shouldBuildInteractionRegions();
@@ -447,7 +443,7 @@ void LocalFrame::invalidateContentEventRegionsIfNeeded(InvalidateContentEventReg
     if (!needsUpdateForTouchActionElements && !needsUpdateForEditableElements && !needsUpdateForWheelEventHandlers && !needsUpdateForInteractionRegions && !needsUpdateForTouchEventHandlers)
         return;
 
-    if (!m_doc->renderView()->compositor().viewNeedsToInvalidateEventRegionOfEnclosingCompositingLayerForRepaint())
+    if (!protect(protect(document->renderView())->compositor())->viewNeedsToInvalidateEventRegionOfEnclosingCompositingLayerForRepaint())
         return;
 
     if (RefPtr ownerElement = this->ownerElement())
@@ -503,7 +499,7 @@ String LocalFrame::searchForLabelsAboveCell(const JSC::Yarr::RegularExpression& 
         // search within the above cell we found for a match
         size_t lengthSearched = 0;
         for (RefPtr textNode = TextNodeTraversal::firstWithin(*aboveCell); textNode; textNode = TextNodeTraversal::next(*textNode, aboveCell.get())) {
-            if (!textNode->renderer() || textNode->renderer()->style().usedVisibility() != Visibility::Visible)
+            if (!textNode->renderer() || textNode->renderer()->usedStyle().visibility() != UsedVisibility::Visible)
                 continue;
             // For each text chunk, run the regexp
             String nodeString = textNode->data();
@@ -563,7 +559,7 @@ String LocalFrame::searchForLabelsBeforeElement(const Vector<String>& labels, El
                 return result;
             }
             searchedCellAbove = true;
-        } else if (CheckedPtr renderText = dynamicDowncast<RenderText>(n->renderer()); renderText && renderText->style().usedVisibility() == Visibility::Visible) {
+        } else if (CheckedPtr renderText = dynamicDowncast<RenderText>(n->renderer()); renderText && renderText->usedStyle().visibility() == UsedVisibility::Visible) {
             // For each text chunk, run the regexp
             String nodeString = n->nodeValue();
             // add 100 for slop, to make it more likely that we'll search whole nodes
@@ -860,12 +856,12 @@ void LocalFrame::injectUserScriptImmediately(DOMWrapperWorld& world, const UserS
     page->setHasInjectedUserScript();
     loader->client().willInjectUserScript(world);
 
-    WTFBeginSignpost(this, UserScript, "injectUserScript: %" PRIVATE_LOG_STRING " (%u bytes, top frame only %d, doc start %d)", script.debugDescription().ascii().data(), script.source().length(), script.injectedFrames() == UserContentInjectedFrames::InjectInTopFrameOnly, script.injectionTime() == UserScriptInjectionTime::DocumentStart);
+    WTFBeginSignpost(this, UserScript, "injectUserScript: %" PRIVATE_LOG_STRING " (%u bytes, top frame only %d, doc start %d)", script.debugDescription().utf8(), script.source().length(), script.injectedFrames() == UserContentInjectedFrames::InjectInTopFrameOnly, script.injectionTime() == UserScriptInjectionTime::DocumentStart);
     protect(this->script())->evaluateInWorldIgnoringException(ScriptSourceCode(script.source(), JSC::SourceTaintedOrigin::Untainted, URL(script.url())), world);
     WTFEndSignpost(this, UserScript);
 }
 
-RenderView* NODELETE LocalFrame::contentRenderer() const
+RenderView* LEGACY_NODELETE LocalFrame::contentRenderer() const
 {
     return document() ? document()->renderView() : nullptr;
 }
@@ -1194,7 +1190,7 @@ void LocalFrame::deviceOrPageScaleFactorChanged()
     }
 
     if (CheckedPtr root = contentRenderer())
-        root->compositor().deviceOrPageScaleFactorChanged();
+        protect(root->compositor())->deviceOrPageScaleFactorChanged();
 }
 
 void LocalFrame::dropChildren()
@@ -1357,7 +1353,7 @@ void LocalFrame::dispatchLoadEventToParent()
 DataDetectionResultsStorage& LocalFrame::dataDetectionResults()
 {
     if (!m_dataDetectionResults)
-        m_dataDetectionResults = makeUnique<DataDetectionResultsStorage>();
+        lazyInitialize(m_dataDetectionResults, makeUnique<DataDetectionResultsStorage>());
     return *m_dataDetectionResults;
 }
 
@@ -1368,7 +1364,7 @@ void LocalFrame::frameWasDisconnectedFromOwner() const
     if (!m_doc)
         return;
 
-    for (auto& jsWindowProxy : windowProxy().jsWindowProxiesAsVector()) {
+    for (auto& jsWindowProxy : protect(windowProxy())->jsWindowProxiesAsVector()) {
         if (auto* jsDOMWindow = dynamicDowncast<JSDOMWindowBase>(jsWindowProxy->window()))
             jsDOMWindow->setAssociatedContextIsFullyActive(false);
     }
@@ -1383,7 +1379,7 @@ void LocalFrame::frameWasDisconnectedFromOwner() const
 void LocalFrame::storageAccessExceptionReceivedForDomain(const RegistrableDomain& domain)
 {
     if (!m_storageAccessExceptionDomains)
-        m_storageAccessExceptionDomains = makeUnique<HashSet<RegistrableDomain>>();
+        lazyInitialize(m_storageAccessExceptionDomains, makeUnique<HashSet<RegistrableDomain>>());
     m_storageAccessExceptionDomains->add(domain);
 }
 
@@ -1510,13 +1506,103 @@ void LocalFrame::reportMixedContentViolation(bool blocked, const URL& target) co
 
 static String generateResourceMonitorErrorHTML(OptionSet<ColorScheme> colorScheme)
 {
-#if PLATFORM(COCOA) && HAVE(CUSTOM_IFRAME_UNLOADING_HTML)
-#if HAVE(CUSTOM_IFRAME_UNLOADING_HTML_WITH_COLOR_SCHEME)
-    return generateResourceMonitorErrorHTMLForCocoa(colorScheme);
-#else
-    UNUSED_PARAM(colorScheme);
-    return generateResourceMonitorErrorHTMLForCocoa();
-#endif
+#if ENABLE(HEAVY_AD_UNLOADING)
+    constexpr auto shieldIconSvg = R"(
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 94.63 100" style="overflow: visible">
+            <rect x="0" y="-15" width="94.63" height="120" fill-opacity="0" />
+            <g>
+                <path
+                d="M46.387 84.785C46.924 84.785 47.9 84.59 48.975 84.004C70.898 71.992 78.662 66.523 78.662 52.07L78.662 22.676C78.662 18.672 76.758 17.451 73.731 16.133C69.775 14.424 53.613 8.711 49.658 7.344C48.633 7.002 47.51 6.758 46.387 6.758C45.264 6.758 44.092 7.1 43.115 7.344C39.16 8.32 22.998 14.473 19.043 16.133C16.016 17.402 14.111 18.672 14.111 22.676L14.111 52.07C14.111 66.523 21.875 71.943 43.799 84.004C44.873 84.59 45.85 84.785 46.387 84.785ZM46.387 76.777C45.801 76.777 45.215 76.631 43.897 75.898C26.27 65.352 21.045 62.227 21.045 50.361L21.045 23.994C21.045 23.115 21.24 22.725 22.022 22.383C28.272 19.941 38.818 16.572 45.068 14.082C45.557 13.887 45.996 13.838 46.387 13.838C46.777 13.838 47.217 13.887 47.705 14.082C53.906 16.572 64.307 20.234 70.703 22.383C71.533 22.676 71.68 23.115 71.68 23.994L71.68 50.361C71.68 62.227 66.455 65.352 48.828 75.898C47.559 76.631 46.973 76.777 46.387 76.777Z"
+                fill="#7d7d7d"
+                fill-opacity="1"
+                />
+                <path
+                d="M33.545 60.371C34.473 60.371 35.352 60.029 35.986 59.346L46.387 48.897L56.836 59.346C57.422 59.981 58.301 60.371 59.277 60.371C61.231 60.371 62.744 58.809 62.744 56.856C62.744 55.879 62.402 55.049 61.719 54.414L51.318 44.014L61.768 33.516C62.5 32.783 62.793 32.051 62.793 31.123C62.793 29.17 61.231 27.607 59.326 27.607C58.447 27.607 57.666 27.949 56.982 28.682L46.387 39.18L35.889 28.731C35.254 28.047 34.473 27.705 33.545 27.705C31.592 27.705 30.029 29.219 30.029 31.172C30.029 32.1 30.42 32.93 31.104 33.565L41.504 44.014L31.104 54.463C30.42 55.049 30.029 55.928 30.029 56.856C30.029 58.809 31.592 60.371 33.545 60.371Z"
+                fill="#7d7d7d"
+                fill-opacity="1"
+                />
+            </g>
+        </svg>
+    )"_s;
+
+    constexpr auto lightAndDarkColorScheme = ":root { color-scheme: only dark }"_s;
+    constexpr auto darkOnlyColorScheme = ":root { color-scheme: only dark }"_s;
+    constexpr auto empty = ""_s;
+
+    bool needDarkStyle = colorScheme.contains(ColorScheme::Dark);
+    bool needLightStyle = !needDarkStyle || colorScheme.contains(ColorScheme::Light);
+    bool conditionalStyle = needDarkStyle && needLightStyle;
+
+    const auto& colorSchemeStyle = conditionalStyle ? lightAndDarkColorScheme : needDarkStyle ? darkOnlyColorScheme : empty;
+    const auto& darkStyleOpen = conditionalStyle ? "@media (prefers-color-scheme: dark) { "_s : empty;
+    const auto& darkStyleClose = conditionalStyle ? "} "_s : empty;
+
+    const auto darkStyle = R"(
+        a {
+            color: #EBEBF599;
+            background-color: #1C1C1EFF;
+            border: 0.5px solid #3A3A3CFF;
+        }
+        p { color: white }
+    )"_s;
+
+    const auto helpMessage = WEB_UI_STRING("Ad hidden for using significant resources", "Heavy Ad Unloaded frame: description html");
+
+    return makeString(R"(
+        <meta charset="utf8" />
+        <style>
+            * { box-sizing: border-box; }
+            )"_s,
+            colorSchemeStyle,
+            R"(
+            html,body { height: 100vh; margin: 0; padding: 0; }
+            a, div {
+                width: 100%;
+                height: 100%;
+                padding: 2px;
+
+                font-family: system-ui;
+                font-size: 0.8rem;
+                text-align: center;
+
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                cursor: default;
+
+                color: #3C3C4399 /* -apple-system-secondary-label */;
+                background-color: #F2F2F7FF /* systemGray6 rgb(242, 242, 247) */;
+                border: 0.5px solid #D1D1D6FF /* systemGray4 rgb(198, 198, 203) */;
+            }
+            svg {
+                width: 20px;
+                height: 20px;
+                vertical-align: middle;
+            }
+            p { display: none; color: black }
+            )"_s,
+            darkStyleOpen,
+            (needDarkStyle ? darkStyle : empty),
+            darkStyleClose,
+            R"(
+            @media (width < 60px)          { .L, .M { display: none; } }
+            @media (60px <= width < 160px) { .L, .S { display: none; } }
+            @media (width >= 160px)        { .S, .M { display: none; } }
+        </style>
+        <div class="L"><span>)"_s,
+            shieldIconSvg,
+            helpMessage,
+        R"(<span></div>
+        <a class="M" title=")"_s, helpMessage, R"("><span>)"_s,
+            shieldIconSvg,
+            R"(<br />)"_s,
+            WEB_UI_STRING("Ad hidden", "Heavy Ad Unloaded frame: short description html"),
+        R"(</span></a>
+        <a class="S"title=")"_s, helpMessage, R"(">)"_s,
+            shieldIconSvg,
+        R"(</a>)"_s,
+        "<p></p>"_s // This empty <p> tag is required for LayoutTest
+    );
 #else
     constexpr auto lightAndDarkColorScheme = ":root { color-scheme: light dark } "_s;
     constexpr auto darkOnlyColorScheme = ":root { color-scheme: only dark } "_s;
@@ -1561,7 +1647,7 @@ void LocalFrame::applyResourceMonitorErrorToIFrameElement(HTMLIFrameElement& ifr
 
 #if ENABLE(DARK_MODE_CSS)
     if (CheckedPtr style = iframeElement.existingComputedStyle())
-        colorScheme = iframeElement.document().resolvedColorScheme(style);
+        colorScheme = protect(iframeElement.document())->resolvedColorScheme(style);
 #endif
 
     iframeElement.setSrcdoc(generateResourceMonitorErrorHTML(colorScheme), SubstituteData::SessionHistoryVisibility::Hidden);
@@ -1577,7 +1663,7 @@ void LocalFrame::showResourceMonitoringError()
     URL mainFrameURL;
     if (RefPtr page = this->page()) {
         mainFrameURL = page->mainFrameURL();
-        page->diagnosticLoggingClient().logDiagnosticMessageWithValueDictionary(DiagnosticLoggingKeys::iframeResourceMonitoringKey(), "IFrame ResourceMonitoring Unloaded"_s, valueDictionaryForResult(true), ShouldSample::No);
+        protect(page->diagnosticLoggingClient())->logDiagnosticMessageWithValueDictionary(DiagnosticLoggingKeys::iframeResourceMonitoringKey(), "IFrame ResourceMonitoring Unloaded"_s, valueDictionaryForResult(true), ShouldSample::No);
     }
 
     FRAME_RELEASE_LOG(ResourceMonitoring, "Detected excessive network usage in frame at %" SENSITIVE_LOG_STRING " and main frame at %" SENSITIVE_LOG_STRING ": unloading", url.isValid() ? url.string().utf8() : "invalid"_s, mainFrameURL.isValid() ? mainFrameURL.string().utf8() : "invalid"_s);
@@ -1608,7 +1694,7 @@ void LocalFrame::reportResourceMonitoringWarning()
         url = document->url();
     if (RefPtr page = this->page()) {
         mainFrameURL = page->mainFrameURL();
-        page->diagnosticLoggingClient().logDiagnosticMessageWithValueDictionary(DiagnosticLoggingKeys::iframeResourceMonitoringKey(), "IFrame ResourceMonitoring Throttled"_s, valueDictionaryForResult(false), ShouldSample::No);
+        protect(page->diagnosticLoggingClient())->logDiagnosticMessageWithValueDictionary(DiagnosticLoggingKeys::iframeResourceMonitoringKey(), "IFrame ResourceMonitoring Throttled"_s, valueDictionaryForResult(false), ShouldSample::No);
     }
 
     FRAME_RELEASE_LOG(ResourceMonitoring, "Detected excessive network usage in frame at %" SENSITIVE_LOG_STRING " and main frame at %" SENSITIVE_LOG_STRING ": not unloading due to global limits", url.isValid() ? url.string().utf8() : "invalid"_s, mainFrameURL.isValid() ? mainFrameURL.string().utf8() : "invalid"_s);
@@ -1654,7 +1740,7 @@ void LocalFrame::applyMemoryMonitorErrorToIFrameElement(HTMLIFrameElement& ifram
 
 #if ENABLE(DARK_MODE_CSS)
     if (CheckedPtr style = iframeElement.existingComputedStyle())
-        colorScheme = iframeElement.document().resolvedColorScheme(style);
+        colorScheme = protect(iframeElement.document())->resolvedColorScheme(style);
 #endif
 
     iframeElement.setSrcdoc(generateFrameMemoryMonitorErrorHTML(colorScheme), SubstituteData::SessionHistoryVisibility::Hidden);
@@ -1706,7 +1792,13 @@ std::optional<DocumentSecurityPolicy> LocalFrame::frameDocumentSecurityPolicy() 
     if (!document)
         return std::nullopt;
 
-    return DocumentSecurityPolicy { document->crossOriginEmbedderPolicy(), document->crossOriginOpenerPolicy() };
+    return DocumentSecurityPolicy { document->crossOriginEmbedderPolicy(), document->crossOriginOpenerPolicy(), document->isSecureContext() ? IsSecureContext::Yes : IsSecureContext::No, document->agentClusterIdentifier() };
+}
+
+std::optional<AgentClusterIdentifier> LocalFrame::frameAgentClusterIdentifier() const
+{
+    RefPtr document = this->document();
+    return document ? document->agentClusterIdentifier() : std::nullopt;
 }
 
 String LocalFrame::frameURLProtocol() const
@@ -1761,9 +1853,9 @@ static inline NodeQualifier ancestorRespondingToClickEventsNodeQualifier(Securit
                 if (nodeBounds) {
                     // This is a check to see whether this node is an area element. The only way this can happen is if this is the first check.
                     if (node == hitTestResult.innerNode() && node != hitTestResult.innerNonSharedNode() && is<HTMLAreaElement>(*node))
-                        *nodeBounds = snappedIntRect(downcast<HTMLAreaElement>(*node).computeRect(hitTestResult.innerNonSharedNode()->renderer()));
-                    else if (node && node->renderer())
-                        *nodeBounds = node->renderer()->absoluteBoundingBoxRect(true);
+                        *nodeBounds = snappedIntRect(downcast<HTMLAreaElement>(*node).computeRect(protect(hitTestResult.innerNonSharedNode()->renderer())));
+                    else if (CheckedPtr renderer = node ? node->renderer() : nullptr)
+                        *nodeBounds = renderer->absoluteBoundingBoxRect(true);
                 }
 
                 return node;
@@ -1957,8 +2049,8 @@ RefPtr<Node> LocalFrame::nodeRespondingToDoubleClickEvent(const FloatPoint& view
             if (!node->allowsDoubleTapGesture())
                 continue;
 #endif
-            if (nodeBounds && node->renderer())
-                *nodeBounds = node->renderer()->absoluteBoundingBoxRect(true);
+            if (CheckedPtr renderer = nodeBounds ? node->renderer() : nullptr)
+                *nodeBounds = renderer->absoluteBoundingBoxRect(true);
             return node;
         }
         return nullptr;

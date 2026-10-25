@@ -26,15 +26,12 @@
 @_spi(Testing) public import WebKit
 public import WebKit_Private.WKWebProcessPlugIn
 private import WebKit_Private.WKProcessPoolPrivate
+private import WebKit_Private.WKWebsiteDataStorePrivate
+private import WebKit_Private._WKWebsiteDataStoreConfiguration
+private import TestWebKitAPILibrary.InjectedBundle.cocoa.WebProcessPlugIn.WebProcessPlugInWithInternals
 
 extension WebPage.Configuration {
     /// Creates a new `WebPage.Configuration` initialized using a custom web process test plug-in class.
-    ///
-    /// For example, to create a configuration to allow a WebPage to access the `Internals` plug-in:
-    ///
-    /// ```
-    ///  let configuration = WebPage.Configuration(testPlugInClass: WebProcessPlugInWithInternals.self)
-    /// ```
     ///
     /// - Parameters:
     ///   - testPlugInClass: The type of the plug-in class to use.
@@ -53,6 +50,33 @@ extension WebPage.Configuration {
         processPool._setObject(NSStringFromClass(testPlugInClass) as NSString, forBundleParameter: "TestPlugInPrincipalClassName")
 
         self.processPool = processPool
+    }
+
+    /// Creates a new `WebPage.Configuration` whose web process installs the `internals` object on every frame.
+    ///
+    /// - Parameter:
+    ///   - configureJSCForTesting: If `true`, relaxes JSC's security hardening so that tests can freely modify JSC options, config,
+    ///   and behavior that would otherwise be more secured.
+    /// - Returns: A correctly-configured WebPage.Configuration.
+    public static func withInternals(configureJSCForTesting: Bool = true) -> WebPage.Configuration {
+        .init(testPlugInClass: WebProcessPlugInWithInternals.self, configureJSCForTesting: configureJSCForTesting)
+    }
+}
+
+extension WebPage.Configuration {
+    /// Creates a configuration whose website data store sends HTTPS loads through a server's proxy.
+    ///
+    /// See ``WebKit/WKWebViewConfiguration/init(httpsProxyFor:)`` for how the server handles those loads. Use the
+    /// configuration with a navigation decider that trusts the server's certificate, such as
+    /// ``NavigationDeciderAllowingAnyTLSCertificate``.
+    ///
+    /// - Parameter server: The configuration of the server.
+    public init(httpsProxyFor server: HTTPServer.Configuration) {
+        self.init()
+
+        let storeConfiguration = _WKWebsiteDataStoreConfiguration(nonPersistentConfiguration: ())
+        storeConfiguration.httpsProxy = server.httpsProxy
+        websiteDataStore = WKWebsiteDataStore._store(with: storeConfiguration)
     }
 }
 

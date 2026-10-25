@@ -106,7 +106,8 @@ void NetworkStorageSession::hasCookies(const RegistrableDomain& domain, Completi
 
     bool hasCookieForDomain = false;
 
-    for (NSHTTPCookie *nsCookie in [nsCookieStorage() cookies]) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *nsCookie in [nsCookieStorage() cookies]) {
         if (RegistrableDomain::uncheckedCreateFromHost(nsCookie.domain) == domain) {
             hasCookieForDomain = true;
             break;
@@ -120,6 +121,12 @@ void NetworkStorageSession::hasCookies(const RegistrableDomain& domain, Completi
     completionHandler(hasCookieForDomain);
 }
 
+static bool isAllowlistedCookieName(const String& name)
+{
+    // To be implemented.
+    return false;
+}
+
 void NetworkStorageSession::setAllCookiesToSameSiteStrict(const RegistrableDomain& domain, CompletionHandler<void()>&& completionHandler)
 {
     ASSERT(hasProcessPrivilege(ProcessPrivilege::CanAccessRawCookies));
@@ -127,7 +134,8 @@ void NetworkStorageSession::setAllCookiesToSameSiteStrict(const RegistrableDomai
     RetainPtr<NSMutableArray<NSHTTPCookie *>> oldCookiesToDelete = adoptNS([[NSMutableArray alloc] init]);
     RetainPtr<NSMutableArray<NSHTTPCookie *>> newCookiesToAdd = adoptNS([[NSMutableArray alloc] init]);
 
-    for (NSHTTPCookie *nsCookie in [nsCookieStorage() cookies]) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *nsCookie in [nsCookieStorage() cookies]) {
         if (RegistrableDomain::uncheckedCreateFromHost(nsCookie.domain) == domain && nsCookie.sameSitePolicy != NSHTTPCookieSameSiteStrict) {
             [oldCookiesToDelete addObject:nsCookie];
             RetainPtr<NSMutableDictionary<NSHTTPCookiePropertyKey, id>> mutableProperties = adoptNS([[nsCookie properties] mutableCopy]);
@@ -139,14 +147,16 @@ void NetworkStorageSession::setAllCookiesToSameSiteStrict(const RegistrableDomai
 
     auto aggregator = CallbackAggregator::create([completionHandler = WTF::move(completionHandler), newCookiesToAdd = WTF::move(newCookiesToAdd), cookieStorage = RetainPtr { nsCookieStorage() }] () mutable {
         BEGIN_BLOCK_OBJC_EXCEPTIONS
-        for (NSHTTPCookie *newCookie in newCookiesToAdd.get())
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *newCookie in newCookiesToAdd.get())
             [cookieStorage setCookie:newCookie];
         END_BLOCK_OBJC_EXCEPTIONS
         completionHandler();
     });
 
     BEGIN_BLOCK_OBJC_EXCEPTIONS
-    for (NSHTTPCookie *oldCookie in oldCookiesToDelete.get())
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *oldCookie in oldCookiesToDelete.get())
         deleteHTTPCookie(cookieStorage().get(), oldCookie, [aggregator] { });
     END_BLOCK_OBJC_EXCEPTIONS
 }
@@ -281,7 +291,8 @@ void NetworkStorageSession::getHostnamesWithCookies(HashSet<String>& hostnames)
 
     RetainPtr<NSArray> cookies = httpCookies(cookieStorage().get());
 
-    for (NSHTTPCookie* cookie in cookies.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie* cookie in cookies.get()) {
         RetainPtr<NSString> domain = [cookie domain];
         if (!domain) {
             ASSERT_NOT_REACHED();
@@ -311,7 +322,8 @@ void NetworkStorageSession::deleteCookiesMatching(NOESCAPE const Function<bool(N
     if (!cookies)
         return;
 
-    for (NSHTTPCookie *cookie in cookies.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *cookie in cookies.get()) {
         @autoreleasepool {
             if (matches(cookie))
                 deleteHTTPCookie(cookieStorage.get(), cookie, [aggregator] { });
@@ -336,7 +348,7 @@ void NetworkStorageSession::deleteCookies(const ClientOrigin& origin, Completion
     }, WTF::move(completionHandler));
 }
 
-void NetworkStorageSession::deleteCookiesForHostnames(std::span<const String> hostnames, IncludeHttpOnlyCookies includeHttpOnlyCookies, ScriptWrittenCookiesOnly scriptWrittenCookiesOnly, CompletionHandler<void()>&& completionHandler)
+void NetworkStorageSession::deleteCookiesForHostnames(std::span<const String> hostnames, IncludeHttpOnlyCookies includeHttpOnlyCookies, ScriptWrittenCookiesOnly scriptWrittenCookiesOnly, ExemptAllowlistedCookies exemptAllowlistedCookies, CompletionHandler<void()>&& completionHandler)
 {
     HashSet<String> hostnamesSet;
     for (auto& hostname : hostnames)
@@ -345,6 +357,10 @@ void NetworkStorageSession::deleteCookiesForHostnames(std::span<const String> ho
     deleteCookiesMatching([&](NSHTTPCookie* cookie) {
         if (!cookie.domain || (includeHttpOnlyCookies == IncludeHttpOnlyCookies::No && cookie.isHTTPOnly))
             return false;
+        if (exemptAllowlistedCookies == ExemptAllowlistedCookies::Yes && m_exemptAllowlistedCookiesFromITP) {
+            if (isAllowlistedCookieName(cookie.name))
+                return false;
+        }
 #if ENABLE(JS_COOKIE_CHECKING)
         bool setInJS = [retainPtr([cookie properties]) valueForKey:@"SetInJavaScript"];
         if (scriptWrittenCookiesOnly == ScriptWrittenCookiesOnly::Yes && !setInJS)
@@ -399,7 +415,8 @@ Vector<Cookie> NetworkStorageSession::domCookiesForHost(const URL& firstParty)
             wasCompletionHandlerCalled = true;
 
             RetainPtr registrableDomain = RegistrableDomain { firstParty }.string().createNSString();
-            for (NSHTTPCookie *nsCookie in cookies) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *nsCookie in cookies) {
                 if (![nsCookie.domain hasSuffix:registrableDomain.get()])
                     continue;
                 if (![host hasSuffix:nsCookie.domain])
@@ -515,7 +532,7 @@ bool NetworkStorageSession::startListeningForCookieChangeNotifications(CookieCha
     observers.add(observer);
 
     if (!m_subscribedDomainsForCookieChanges)
-        m_subscribedDomainsForCookieChanges = adoptNS([[NSMutableSet alloc] init]);
+        lazyInitialize(m_subscribedDomainsForCookieChanges, adoptNS([[NSMutableSet alloc] init]));
     else if ([m_subscribedDomainsForCookieChanges containsObject:host.createNSString().get()])
         return true;
 

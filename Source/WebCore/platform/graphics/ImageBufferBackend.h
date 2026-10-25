@@ -32,7 +32,7 @@
 #include <WebCore/GraphicsTypesGL.h>
 #include <WebCore/ImageBufferAllocator.h>
 #include <WebCore/ImageBufferParameters.h>
-#include <WebCore/ImagePaintingOptions.h>
+#include <WebCore/ImageDrawingOptions.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/PixelBufferFormat.h>
 #include <WebCore/PlatformLayer.h>
@@ -108,12 +108,12 @@ public:
     WEBCORE_EXPORT virtual ~ImageBufferBackend();
 
     WEBCORE_EXPORT static IntSize calculateSafeBackendSize(const ImageBufferParameters&);
-    WEBCORE_EXPORT static size_t NODELETE calculateMemoryCost(const IntSize& backendSize, unsigned bytesPerRow);
+    WEBCORE_EXPORT static size_t LEGACY_NODELETE calculateMemoryCost(const IntSize& backendSize, unsigned bytesPerRow);
     WEBCORE_EXPORT static AffineTransform calculateBaseTransform(const ImageBufferParameters&);
 
     virtual RenderingMode renderingMode() const { return RenderingMode::Unaccelerated; }
     virtual size_t memoryCost() const { return calculateMemoryCost(m_backendSize, bytesPerRow()); }
-    WEBCORE_EXPORT AffineTransform baseTransform() const;
+    WEBCORE_EXPORT AffineTransform LEGACY_NODELETE baseTransform() const;
 
     virtual GraphicsContext& context() = 0;
     virtual void flushContext() { }
@@ -163,7 +163,8 @@ public:
 
     virtual bool isNullImageBufferBackend() const { return false; }
 
-    virtual RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate() const { return nullptr; }
+    virtual RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate() { return nullptr; }
+    virtual void releaseLayerContentsDisplayDelegate() { }
 
     virtual void prepareForDisplay() { }
 
@@ -182,7 +183,7 @@ protected:
     RenderingPurpose purpose() const { return m_purpose; }
 
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
-    void NODELETE convertToLuminanceMaskFloat16();
+    void LEGACY_NODELETE convertToLuminanceMaskFloat16();
 #endif
     void convertToLuminanceMaskUint8();
 
@@ -196,6 +197,7 @@ protected:
     const RenderingPurpose m_purpose;
 };
 
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, SetNonVolatileResult);
 WEBCORE_EXPORT TextStream& operator<<(TextStream&, VolatilityState);
 WEBCORE_EXPORT TextStream& operator<<(TextStream&, const ImageBufferBackend&);
 

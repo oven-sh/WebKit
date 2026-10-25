@@ -31,6 +31,7 @@
 
 #include "ExecutableAllocator.h"
 #include "JITCompilationEffort.h"
+#include "Options.h"
 #include "SecureARM64EHashPinsInlines.h"
 #include <stdint.h>
 #include <string.h>
@@ -185,6 +186,11 @@ namespace JSC {
 
         ~AssemblerDataImpl()
         {
+            if (Options::useCachedAssemblerDataCapacityLimit() && m_capacity > Options::maximumCachedAssemblerDataCapacity()) {
+                clear();
+                return;
+            }
+
             // A one-off huge compile would otherwise pin its scratch buffer to this thread forever.
             unsigned cacheLimit = Options::maximumCachedAssemblerBufferSize();
             if (!cacheLimit || m_capacity <= cacheLimit) {
@@ -466,6 +472,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #if !CPU(ARM64) // If we were to define this on arm64e, we'd need a way to update the hash as we write directly into the buffer.
         void* data() const LIFETIME_BOUND { return m_storage.buffer(); }
 #endif
+        const void* readOnlyData() const LIFETIME_BOUND { return m_storage.buffer(); }
 
 #if ENABLE(JIT_SIGN_ASSEMBLER_BUFFER)
         ARM64EHash<ShouldSign::Yes>& arm64eHash() LIFETIME_BOUND { return m_hash; }

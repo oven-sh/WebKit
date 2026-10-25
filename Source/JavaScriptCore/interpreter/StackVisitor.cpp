@@ -26,6 +26,8 @@
 #include "config.h"
 #include "StackVisitor.h"
 
+#include "AOTCompiledCaller.h"
+#include "AOTCompiledFrame.h"
 #include "ClonedArguments.h"
 #include "DebuggerPrimitives.h"
 #include "ExecutableBaseInlines.h"
@@ -36,6 +38,7 @@
 #include "WasmCallee.h"
 #include "WasmIndexOrName.h"
 #include "WebAssemblyFunction.h"
+#include <memory>
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
@@ -65,6 +68,210 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
     while (m_frame.callFrame() && m_frame.callFrame() != startFrame)
         gotoNextFrame();
 }
+
+#if ENABLE(AOT)
+StackVisitor::WithCompiledFrames::WithCompiledFrames(CallFrame* startFrame, VM& vm, bool skipFirstFrame, CompiledFrameVisit compiledFrameVisit)
+    : m_vm(vm)
+    , m_compiledFrameVisit(compiledFrameVisit)
+{
+    bool startsAtTop = startFrame == vm.topCallFrame;
+    CallFrame* topFrame = nullptr;
+    if (startFrame) {
+        ASSERT(!vm.topCallFrame || static_cast<void*>(vm.topCallFrame) != vm.topEntryFrame);
+
+        m_frame.m_entryFrame = vm.topEntryFrame;
+        topFrame = vm.topCallFrame;
+        if (topFrame) {
+            m_previousReturnPC = vm.maybeReturnPC;
+            m_nextFrameIsPublished = true;
+            if (tryEnterCompiledFrames(topFrame)) {
+                startInCompiledFrames(startFrame, skipFirstFrame);
+                return;
+            }
+            if (skipFirstFrame || topFrame->isZombieFrame()) {
+                m_previousReturnPC = topFrame->rawReturnPC();
+                m_previousCalleeFrame = topFrame;
+                topFrame = topFrame->callerFrame(m_frame.m_entryFrame);
+                m_topEntryFrameIsEmpty = (m_frame.m_entryFrame != vm.topEntryFrame);
+                m_nextFrameIsPublished = m_topEntryFrameIsEmpty;
+                if (startFrame == vm.topCallFrame)
+                    startFrame = topFrame;
+            }
+        }
+    }
+    readFrame(topFrame);
+    if (startsAtTop)
+        return;
+
+    while (m_frame.callFrame() && m_frame.callFrame() != startFrame)
+        gotoNextFrame();
+}
+
+StackVisitor::WithCompiledFrames::WithCompiledFrames(VM& vm, const AOT::CompiledFrameExit& exit, CompiledFrameVisit compiledFrameVisit)
+    : m_vm(vm)
+    , m_shownFrameFilter(true)
+    , m_compiledFrameVisit(compiledFrameVisit)
+{
+    m_frame.m_entryFrame = exit.entryFrame;
+    m_previousReturnPC = exit.returnPC;
+    m_previousCalleeFrame = exit.calleeFrame;
+    m_nextFrameIsPublished = exit.crossedEntryFrame;
+    readFrame(exit.callFrame);
+}
+
+StackVisitor::WithCompiledFrames::~WithCompiledFrames()
+{
+    if (m_frame.m_compiledFrames)
+        std::destroy_at(m_frame.m_compiledFrames);
+}
+
+void StackVisitor::WithCompiledFrames::startInCompiledFrames(CallFrame* startFrame, bool skipFirstFrame)
+{
+    bool startsAtTop = startFrame == m_vm.topCallFrame;
+    if (!showFirstCompiledFrame())
+        readFrame(leaveCompiledFrames());
+    if (skipFirstFrame && m_frame.callFrame()) {
+        gotoNextFrame();
+        m_frame.m_index = 0;
+    }
+    m_topEntryFrameIsEmpty = m_frame.m_entryFrame != m_vm.topEntryFrame;
+    if (startsAtTop)
+        return;
+    while (m_frame.callFrame() && m_frame.callFrame() != startFrame)
+        gotoNextFrame();
+}
+
+bool StackVisitor::WithCompiledFrames::tryEnterCompiledFrames(CallFrame* callFrame)
+{
+    using OperationState = AOT::CompiledFrameIterator::OperationState;
+    CallFrame* callee = m_frame.m_callFrame;
+    if (callee == callFrame)
+        return false;
+    bool isPublished = callee ? m_frame.m_callerIsEntryFrame : m_nextFrameIsPublished;
+    void* returnPC = callee ? callee->rawReturnPC() : m_previousReturnPC;
+    CallFrame* calleeFrame = callee ? callee : m_previousCalleeFrame;
+    OperationState operationState = OperationState::MayNotHaveCalled;
+    if (isPublished) {
+        if (!AOT::isOperationFrameRecord(m_vm, callFrame))
+            return false;
+        if (callFrame != m_vm.topCallFrame)
+            operationState = OperationState::HasCalled;
+        auto* record = std::bit_cast<CallerFrameAndPC*>(callFrame);
+        calleeFrame = callFrame;
+        callFrame = record->callerFrame;
+        returnPC = record->returnPC;
+    }
+    auto frames = AOT::CompiledFrameIterator::tryCreate(m_vm, callFrame, removeCodePtrTag(returnPC), m_frame.m_entryFrame, operationState, calleeFrame ? AOT::stackPointerOfCaller(calleeFrame) : nullptr);
+    RELEASE_ASSERT(frames || !isPublished);
+    if (!frames)
+        return false;
+    static_assert(sizeof(AOT::CompiledFrameIterator) <= compiledFrameIteratorCapacity && alignof(AOT::CompiledFrameIterator) <= alignof(void*));
+    ASSERT(!m_frame.m_compiledFrames);
+    m_frame.m_compiledFrames = new (NotNull, m_compiledFramesStorage) AOT::CompiledFrameIterator(WTF::move(*frames));
+    setCompiledFrame(callFrame, nullptr);
+    return true;
+}
+
+bool StackVisitor::WithCompiledFrames::showFirstCompiledFrame()
+{
+    return m_compiledFrameVisit == CompiledFrameVisit::EachRunOnce || showNextCompiledFrame();
+}
+
+bool StackVisitor::WithCompiledFrames::showNextCompiledFrame()
+{
+    auto& frames = *m_frame.m_compiledFrames;
+    for (; !frames.isAtEnd(); frames.advance()) {
+        auto& frame = frames.frame();
+        if (m_shownFrameFilter.shows(frame.visibility, frame.isTailDeleted)) {
+            setCompiledFrame(frame.callFrame, frame.returnAddress);
+            return true;
+        }
+    }
+    return false;
+}
+
+void StackVisitor::WithCompiledFrames::setCompiledFrame(CallFrame* callFrame, const void* returnAddress)
+{
+    m_frame.m_callFrame = callFrame;
+    m_frame.m_returnPC = m_previousReturnPC = const_cast<void*>(returnAddress);
+    m_frame.m_argumentCountIncludingThis = 0;
+    m_frame.m_isWasmFrame = false;
+    m_frame.m_callee = CalleeBits();
+    m_frame.m_codeBlock = nullptr;
+    m_frame.m_bytecodeIndex = BytecodeIndex();
+#if ENABLE(DFG_JIT)
+    m_frame.m_inlineDFGCallFrame = nullptr;
+#endif
+    m_frame.m_wasmDistanceFromDeepestInlineFrame = 0;
+    m_frame.m_callerFrame = callFrame;
+    m_frame.m_callerEntryFrame = m_frame.m_entryFrame;
+    m_frame.m_callerIsEntryFrame = false;
+}
+
+CallFrame* StackVisitor::WithCompiledFrames::leaveCompiledFrames()
+{
+    auto exit = m_frame.m_compiledFrames->exit();
+    std::destroy_at(std::exchange(m_frame.m_compiledFrames, nullptr));
+    m_frame.m_callFrame = nullptr;
+    m_frame.m_entryFrame = exit.entryFrame;
+    m_previousReturnPC = exit.returnPC;
+    m_previousCalleeFrame = exit.calleeFrame;
+    m_nextFrameIsPublished = exit.crossedEntryFrame;
+    return exit.callFrame;
+}
+
+void StackVisitor::WithCompiledFrames::gotoNextCompiledFrame()
+{
+    auto& frames = *m_frame.m_compiledFrames;
+    if (m_compiledFrameVisit == CompiledFrameVisit::EachRunOnce) {
+        while (!frames.isAtEnd())
+            frames.advanceToCallerMachineFrame();
+    } else {
+        frames.advance();
+        if (showNextCompiledFrame())
+            return;
+    }
+    readFrame(leaveCompiledFrames());
+}
+
+void StackVisitor::WithCompiledFrames::gotoNextFrame()
+{
+    m_frame.m_index++;
+    if (m_frame.m_compiledFrames) {
+        gotoNextCompiledFrame();
+        return;
+    }
+    m_shownFrameFilter = AOT::ShownFrameFilter(true);
+#if ENABLE(DFG_JIT)
+    if (m_frame.isInlinedDFGFrame()) {
+        InlineCallFrame* inlineCallFrame = m_frame.inlineCallFrame();
+        CodeOrigin* callerCodeOrigin = inlineCallFrame->getCallerSkippingTailCalls();
+        if (!callerCodeOrigin) {
+            while (inlineCallFrame) {
+                readInlinedFrame(m_frame.callFrame(), &inlineCallFrame->directCaller);
+                inlineCallFrame = m_frame.inlineCallFrame();
+            }
+            m_frame.m_entryFrame = m_frame.m_callerEntryFrame;
+            readFrame(m_frame.callerFrame());
+        } else
+            readInlinedFrame(m_frame.callFrame(), callerCodeOrigin);
+        return;
+    }
+#endif
+    m_frame.m_entryFrame = m_frame.m_callerEntryFrame;
+    readFrame(m_frame.callerFrame());
+}
+
+void StackVisitor::WithCompiledFrames::readFrame(CallFrame* callFrame)
+{
+    while (callFrame && tryEnterCompiledFrames(callFrame)) {
+        if (showFirstCompiledFrame())
+            return;
+        callFrame = leaveCompiledFrames();
+    }
+    StackVisitor::readFrame(callFrame);
+}
+#endif // ENABLE(AOT)
 
 void StackVisitor::gotoNextFrame()
 {
@@ -223,6 +430,8 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
             return;
 
         const auto& omgCallee = uncheckedDowncast<const Wasm::OptimizingJITCallee>(wasmCallee);
+        if (!omgCallee.hasCallSiteIndexMap())
+            return;
         bool isInlined = false;
 
         // Because PC is just after the call instruction, to query to the origin for the call instruction, we decrease it by 1.
@@ -273,7 +482,7 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
 }
 
 #if ENABLE(DFG_JIT)
-static int NODELETE inlinedFrameOffset(CodeOrigin* codeOrigin)
+static int LEGACY_NODELETE inlinedFrameOffset(CodeOrigin* codeOrigin)
 {
     InlineCallFrame* inlineCallFrame = codeOrigin->inlineCallFrame();
     int frameOffset = inlineCallFrame ? inlineCallFrame->stackOffset : 0;
@@ -317,6 +526,43 @@ void StackVisitor::readInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOrigin
 }
 #endif // ENABLE(DFG_JIT)
 
+#if ENABLE(AOT)
+const AOT::CompiledFrame& StackVisitor::Frame::compiledFrame() const
+{
+    return m_compiledFrames->frame();
+}
+
+bool StackVisitor::Frame::isConstructCall() const
+{
+    return m_compiledFrames->isConstructCall();
+}
+#endif
+
+JSGlobalObject* StackVisitor::Frame::lexicalGlobalObject(VM& vm) const
+{
+#if ENABLE(AOT)
+    if (isCompiledFrame())
+        return compiledFrame().globalObject();
+#endif
+    return m_callFrame->lexicalGlobalObject(vm);
+}
+
+static StackVisitor::Frame::CodeType codeTypeOf(JSC::CodeType codeType)
+{
+    switch (codeType) {
+    case EvalCode:
+        return StackVisitor::Frame::CodeType::Eval;
+    case ModuleCode:
+        return StackVisitor::Frame::CodeType::Module;
+    case FunctionCode:
+        return StackVisitor::Frame::CodeType::Function;
+    case GlobalCode:
+        return StackVisitor::Frame::CodeType::Global;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return StackVisitor::Frame::CodeType::Global;
+}
+
 StackVisitor::Frame::CodeType StackVisitor::Frame::codeType() const
 {
     if (isNativeCalleeFrame()) {
@@ -330,21 +576,15 @@ StackVisitor::Frame::CodeType StackVisitor::Frame::codeType() const
         return CodeType::Native;
     }
 
+#if ENABLE(AOT)
+    if (isCompiledFrame())
+        return codeTypeOf(AOT::FunctionDescription(compiledFrame().function).codeType());
+#endif
+
     if (!codeBlock())
         return CodeType::Native;
 
-    switch (codeBlock()->codeType()) {
-    case EvalCode:
-        return CodeType::Eval;
-    case ModuleCode:
-        return CodeType::Module;
-    case FunctionCode:
-        return CodeType::Function;
-    case GlobalCode:
-        return CodeType::Global;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-    return CodeType::Global;
+    return codeTypeOf(codeBlock()->codeType());
 }
 
 #if ENABLE(ASSEMBLER)
@@ -401,7 +641,13 @@ String StackVisitor::Frame::functionName() const
             traceLine = getCalculatedDisplayName(callFrame()->deprecatedVM(), uncheckedDowncast<JSObject>(callee)).impl();
         break;
     }
-    case CodeType::Function: 
+    case CodeType::Function:
+#if ENABLE(AOT)
+        if (isCompiledFrame()) {
+            traceLine = AOT::FunctionDescription(compiledFrame().function).nameInFrames(compiledFrame().globalObject()->vm());
+            break;
+        }
+#endif
         traceLine = getCalculatedDisplayName(callFrame()->deprecatedVM(), uncheckedDowncast<JSObject>(this->callee().asCell())).impl();
         break;
     case CodeType::Global:
@@ -420,6 +666,12 @@ String StackVisitor::Frame::sourceURL() const
     case CodeType::Module:
     case CodeType::Function:
     case CodeType::Global: {
+#if ENABLE(AOT)
+        if (isCompiledFrame()) {
+            traceLine = compiledFrame().sourceURL();
+            break;
+        }
+#endif
         String sourceURL = codeBlock()->ownerExecutable()->sourceURL();
         if (!sourceURL.isEmpty())
             traceLine = sourceURL.impl();
@@ -444,6 +696,10 @@ String StackVisitor::Frame::preRedirectURL() const
     case CodeType::Module:
     case CodeType::Function:
     case CodeType::Global: {
+#if ENABLE(AOT)
+        if (isCompiledFrame())
+            break;
+#endif
         String preRedirectURL = codeBlock()->ownerExecutable()->preRedirectURL();
         if (!preRedirectURL.isEmpty())
             traceLine = preRedirectURL.impl();
@@ -480,6 +736,7 @@ SourceID StackVisitor::Frame::sourceID()
 ClonedArguments* StackVisitor::Frame::createArguments(VM& vm)
 {
     ASSERT(m_callFrame);
+    ASSERT(!isCompiledFrame());
     CallFrame* physicalFrame = m_callFrame;
     // FIXME: Revisit JSGlobalObject.
     // https://bugs.webkit.org/show_bug.cgi?id=203204
@@ -502,11 +759,15 @@ ClonedArguments* StackVisitor::Frame::createArguments(VM& vm)
 
 bool StackVisitor::Frame::hasLineAndColumnInfo() const
 {
-    return !!codeBlock();
+    return !!codeBlock() || isCompiledFrame();
 }
 
 LineColumn StackVisitor::Frame::computeLineAndColumn() const
 {
+#if ENABLE(AOT)
+    if (isCompiledFrame())
+        return compiledFrame().lineColumn();
+#endif
     CodeBlock* codeBlock = this->codeBlock();
     if (!codeBlock)
         return { };
@@ -526,6 +787,17 @@ void StackVisitor::Frame::setToEnd()
     m_inlineDFGCallFrame = nullptr;
 #endif
     m_isWasmFrame = false;
+}
+
+bool StackVisitor::Frame::isFrameOf(JSCell* function) const
+{
+    if (callee().isNativeCallee())
+        return false;
+#if ENABLE(AOT)
+    if (isCompiledFrame())
+        return compiledFrame().isActivationOf(function);
+#endif
+    return callee().asCell() == function;
 }
 
 bool StackVisitor::Frame::isImplementationVisibilityPrivate() const
@@ -590,6 +862,15 @@ void StackVisitor::Frame::dump(PrintStream& out, Indenter indent, WTF::Function<
         out.print(indent, "frame 0x0\n");
         return;
     }
+
+#if ENABLE(AOT)
+    if (isCompiledFrame()) {
+        out.print(indent);
+        prefix(out);
+        out.print("frame ", RawPointer(this->callFrame()), " { name: ", functionName(), " sourceURL: ", sourceURL(), " ", compiledFrame().callSite.bits(), " }\n");
+        return;
+    }
+#endif
 
     CodeBlock* codeBlock = this->codeBlock();
     out.print(indent);

@@ -115,10 +115,10 @@ static void invalidateLineLayout(RenderObject& renderer, IsRemoval isRemoval)
     if (isRemoval == IsRemoval::Yes && !renderer.everHadLayout()
         && !isWithinNeverLaidOutRenderMarqueeSubtree(renderer)) {
         // Certain mutations can make renderer to be removed before running layout. In such cases we don't have to try to
-        // run invalidation only remove it from layout tree.
+        // run invalidation only remove it from layout tree, unless the line layout asks for full invalidation.
         // One exception is for RenderMarquee, which may have run preferred width computation without performing layout.
-        if (auto* inlineLayout = container->inlineLayout())
-            inlineLayout->removedFromTree(*renderer.parent(), renderer);
+        if (auto* inlineLayout = container->inlineLayout(); inlineLayout && !inlineLayout->removedFromTree(*renderer.parent(), renderer))
+            container->invalidateLineLayout(RenderBlockFlow::InvalidationReason::InsertionOrRemoval);
         return;
     }
 
@@ -133,7 +133,7 @@ static void invalidateLineLayout(RenderObject& renderer, IsRemoval isRemoval)
         container->invalidateLineLayout(RenderBlockFlow::InvalidationReason::InsertionOrRemoval);
 }
 
-static void getInlineRun(RenderObject* start, RenderObject* boundary, RenderObject*& inlineRunStart, RenderObject*& inlineRunEnd)
+static void LEGACY_NODELETE getInlineRun(RenderObject* start, RenderObject* boundary, RenderObject*& inlineRunStart, RenderObject*& inlineRunEnd)
 {
     // Beginning at |start| we find the largest contiguous run of inlines that
     // we can. We denote the run with start and end points, |inlineRunStart|
@@ -421,8 +421,8 @@ void RenderTreeBuilder::attachInternal(RenderElement& parent, RenderPtr<RenderOb
         return;
     }
 
-    if (auto* inlineParent = dynamicDowncast<RenderInline>(parent)) {
-        inlineBuilder().attach(*inlineParent, WTF::move(child), beforeChild);
+    if (parent.isInlineBox()) {
+        inlineBuilder().attach(downcast<RenderBoxModelObject>(parent), WTF::move(child), beforeChild);
         return;
     }
 
@@ -557,9 +557,8 @@ void RenderTreeBuilder::attachToRenderElementInternal(RenderElement& parent, Ren
     if (SUPPRESS_UNCOUNTED_ARG CheckedPtr cache = parent.document().axObjectCache())
         cache->childrenChanged(parent, newChild);
 
-    if (parent.hasOutlineAutoAncestor() || parent.outlineStyleForRepaint().outlineStyle() == OutlineStyle::Auto)
-        if (!is<RenderMultiColumnSet>(newChild->previousSibling())) 
-            newChild->setHasOutlineAutoAncestor();
+    if ((parent.hasOutlineAutoAncestor() || parent.style().outlineStyle() == OutlineStyle::Auto) && !is<RenderMultiColumnSet>(newChild->previousSibling()))
+        newChild->setHasOutlineAutoAncestor();
 }
 
 void RenderTreeBuilder::move(RenderBoxModelObject& from, RenderBoxModelObject& to, RenderObject& child, RenderObject* beforeChild, NormalizeAfterInsertion normalizeAfterInsertion)
@@ -723,7 +722,7 @@ void RenderTreeBuilder::normalizeTreeAfterStyleChange(RenderElement& renderer, S
     if (is<RenderBlock>(parent))
         noLongerAffectsParent = (!wasFloating && isFloating) || (!wasOutOfFlowPositioned && isOutOfFlowPositioned);
 
-    if (isAnyOf<RenderBlockFlow, RenderInline>(parent)) {
+    if (is<RenderBlockFlow>(parent) || parent.isInlineBox()) {
         startsAffectingParent = (wasFloating || wasOutOfFlowPositioned) && !isFloating && !isOutOfFlowPositioned;
         ASSERT(!startsAffectingParent || !noLongerAffectsParent);
     }
@@ -1047,11 +1046,6 @@ static void resetRendererStateOnDetach(RenderElement& parent, RenderObject& chil
 
     if (willBeDestroyed == RenderTreeBuilder::WillBeDestroyed::No)
         child.setNeedsLayoutAndInvalidateContentLogicalWidths();
-
-    // If we have a line box wrapper, delete it.
-    if (CheckedPtr textRenderer = dynamicDowncast<RenderSVGInlineText>(child))
-        textRenderer->removeAndDestroyLegacyTextBoxes();
-
 }
 
 RenderPtr<RenderObject> RenderTreeBuilder::detachFromRenderElement(RenderElement& parent, RenderObject& child, WillBeDestroyed willBeDestroyed)
@@ -1118,7 +1112,7 @@ void RenderTreeBuilder::reportVisuallyNonEmptyContent(const RenderElement& paren
     if (auto* textRenderer = dynamicDowncast<RenderText>(child)) {
         auto& style = parent.style();
         // FIXME: Find out how to increment the visually non empty character count when the font becomes available.
-        if (style.usedVisibility() == Visibility::Visible && !style.fontCascade().isLoadingCustomFonts())
+        if (parent.usedStyle().visibility() == UsedVisibility::Visible && !style.fontCascade().isLoadingCustomFonts())
             m_view.frameView().incrementVisuallyNonEmptyCharacterCount(textRenderer->text());
         return;
     }

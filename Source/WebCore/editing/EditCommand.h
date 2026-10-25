@@ -41,7 +41,7 @@ class Document;
 class Element;
 
 ASCIILiteral inputTypeNameForEditingAction(EditAction);
-bool NODELETE isInputMethodComposingForEditingAction(EditAction);
+bool LEGACY_NODELETE isInputMethodComposingForEditingAction(EditAction);
 
 using NodeSet = HashSet<Ref<Node>>;
 
@@ -75,7 +75,7 @@ protected:
     void setStartingSelection(const VisibleSelection&);
     WEBCORE_EXPORT void setEndingSelection(const VisibleSelection&);
 
-    bool isEditingTextAreaOrTextInput() const;
+    bool LEGACY_NODELETE isEditingTextAreaOrTextInput() const;
 
     void postTextStateChangeNotification(AXTextEditType, const String&);
     void postTextStateChangeNotification(AXTextEditType, const String&, const VisiblePosition&);

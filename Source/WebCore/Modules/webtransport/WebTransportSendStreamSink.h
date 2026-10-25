@@ -46,7 +46,7 @@ public:
 
     WebTransportStreamIdentifier identifier() const { return m_identifier; }
     void setStream(WritableStream& stream) { m_stream = stream; }
-    RefPtr<WritableStream> NODELETE stream() const;
+    RefPtr<WritableStream> LEGACY_NODELETE stream() const;
     void sendError(JSDOMGlobalObject&, JSC::JSValue error);
 
 private:
@@ -64,7 +64,7 @@ private:
     const WebTransportStreamIdentifier m_identifier;
     WeakPtr<WritableStream> m_stream;
     std::unique_ptr<DOMPromiseDeferred<void>> m_closeDeferred;
-    RefPtr<AbortSignal> m_abortSignal;
+    const RefPtr<AbortSignal> m_abortSignal;
     std::optional<uint32_t> m_abortAlgorithmIdentifier;
     bool m_isClosed { false };
     bool m_isCancelled { false };

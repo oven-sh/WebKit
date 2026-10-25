@@ -31,17 +31,11 @@
 #import "PresentationContextIOSurface.h"
 #import <wtf/TZoneMallocInlines.h>
 
-namespace WebGPU {
-
-Ref<PresentationContext> Device::createSwapChain(PresentationContext& presentationContext, const WGPUSwapChainDescriptor& descriptor)
-{
-    presentationContext.configure(*this, descriptor);
-    return presentationContext;
-}
+namespace WebGPU::Metal {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(PresentationContext);
 
-Ref<PresentationContext> PresentationContext::create(const WGPUSurfaceDescriptor& descriptor, const Instance& instance)
+Ref<PresentationContext> PresentationContext::create(const WebGPU::PresentationContextDescriptor& descriptor, const Instance& instance)
 {
     return PresentationContextIOSurface::create(descriptor, instance);
 }
@@ -50,12 +44,12 @@ PresentationContext::PresentationContext() = default;
 
 PresentationContext::~PresentationContext() = default;
 
-WGPUTextureFormat PresentationContext::getPreferredFormat(const Adapter&)
+WebGPU::TextureFormat PresentationContext::getPreferredFormat(const Adapter&)
 {
-    return WGPUTextureFormat_BGRA8Unorm;
+    return WebGPU::TextureFormat::Bgra8unorm;
 }
 
-void PresentationContext::configure(Device&, const WGPUSwapChainDescriptor&)
+void PresentationContext::configure(const WebGPU::CanvasConfiguration&)
 {
 }
 
@@ -67,9 +61,14 @@ void PresentationContext::present(uint32_t)
 {
 }
 
-Texture* PresentationContext::getCurrentTexture(uint32_t)
+Texture* PresentationContext::currentTexture(uint32_t)
 {
     return nullptr;
+}
+
+RefPtr<WebGPU::Texture> PresentationContext::getCurrentTexture(uint32_t frameIndex)
+{
+    return currentTexture(frameIndex);
 }
 
 TextureView* PresentationContext::getCurrentTextureView()
@@ -77,56 +76,16 @@ TextureView* PresentationContext::getCurrentTextureView()
     return nullptr;
 }
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
 #pragma mark WGPU Stubs
 
-void NODELETE wgpuSurfaceAddRef(WGPUSurface surface)
+void LEGACY_NODELETE wgpuSurfaceAddRef(WGPUSurface surface)
 {
-    WebGPU::fromAPI(surface).ref();
+    WebGPU::Metal::fromAPI(surface).ref();
 }
 
 void wgpuSurfaceRelease(WGPUSurface surface)
 {
-    WebGPU::fromAPI(surface).deref();
-}
-
-void NODELETE wgpuSwapChainAddRef(WGPUSwapChain swapChain)
-{
-    WebGPU::fromAPI(swapChain).ref();
-}
-
-void wgpuSwapChainRelease(WGPUSwapChain swapChain)
-{
-    WebGPU::fromAPI(swapChain).deref();
-}
-
-WGPUTextureFormat wgpuSurfaceGetPreferredFormat(WGPUSurface surface, WGPUAdapter adapter)
-{
-    return WebGPU::fromAPI(surface).getPreferredFormat(WebGPU::fromAPI(adapter));
-}
-
-double wgpuSurfaceGetLastFrameGPUCostSeconds(WGPUSurface surface)
-{
-    return protect(WebGPU::fromAPI(surface))->lastFrameGPUCost().seconds();
-}
-
-WGPUTexture wgpuSwapChainGetCurrentTexture(WGPUSwapChain swapChain, uint32_t index)
-{
-    return protect(WebGPU::fromAPI(swapChain))->getCurrentTexture(index);
-}
-
-WGPUTextureView wgpuSwapChainGetCurrentTextureView(WGPUSwapChain swapChain)
-{
-    return protect(WebGPU::fromAPI(swapChain))->getCurrentTextureView();
-}
-
-void wgpuSwapChainPresent(WGPUSwapChain swapChain, uint32_t index)
-{
-    protect(WebGPU::fromAPI(swapChain))->present(index);
-}
-
-RetainPtr<CGImageRef> wgpuSwapChainGetTextureAsNativeImage(WGPUSwapChain swapChain, uint32_t bufferIndex, bool& isIOSurfaceSupportedFormat)
-{
-    return protect(WebGPU::fromAPI(swapChain))->getTextureAsNativeImage(bufferIndex, isIOSurfaceSupportedFormat);
+    WebGPU::Metal::fromAPI(surface).deref();
 }

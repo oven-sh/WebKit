@@ -1,0 +1,21 @@
+# main.cjs: const load = require; load === %ModuleRequire% ? <the file> : load("./child.cjs")
+# The front end binds a call of what may be `require` behind a comparison with the `require` of the file, of which there is one. In the other arm the callee is not that function, so the call there
+# loads nothing under a name nobody knows.
+# RUN: valueflow-solve unseen
+# CHECK-NOT: unseen LoadsModuleByName
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v1 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Return
+  b2(v4):
+    v5 = String string="./child.cjs"
+    v6 = Call v4, -, v5
+    Return
+}

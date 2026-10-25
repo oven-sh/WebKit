@@ -71,7 +71,7 @@ bool ContainerQueryEvaluator::evaluate(const CQ::ContainerQuery& containerQuery)
     return false;
 }
 
-static const Style::ComputedStyle* styleForContainer(const Element& container, CQ::ContainerRequirements requirements, const ContainerQueryEvaluationState* evaluationState)
+static const Style::ComputedStyle* LEGACY_NODELETE styleForContainer(const Element& container, CQ::ContainerRequirements requirements, const ContainerQueryEvaluationState* evaluationState)
 {
     // Queries that don't need a size container (style and scroll-state queries) resolve
     // against the container's style, which may not be committed to the render tree yet.
@@ -125,7 +125,8 @@ auto ContainerQueryEvaluator::featureEvaluationContextForCondition(const CQ::Con
 
     // Give the condition an element context, which is what the functions that resolve against the
     // query container need.
-    m_builderState = BuilderState::create(const_cast<ComputedStyle&>(*containerStyle), BuilderContext {
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST m_builderState = BuilderState::create(const_cast<ComputedStyle&>(*containerStyle), BuilderContext {
         .document = document.get(),
         .parentStyle = containerParentStyle.get(),
         .rootElementStyle = rootStyle.get(),

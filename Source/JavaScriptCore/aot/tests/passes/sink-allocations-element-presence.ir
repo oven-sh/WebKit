@@ -1,0 +1,201 @@
+# Whether an element is present is known of a virtual array: what its literal lists and what was stored since is there, a hole and a position past the end are not
+# FORM: Prepared optimizing
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 7
+# STATISTIC: AllocationsSunk = 0
+
+module m0 path="main.js" displayPath="main.js"
+
+# The tests of a callee as inlining leaves them on the literal of its caller.
+function f0 name="firstElement" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewArray v0, v1 contents=anything
+    v3 = Integer integer=0
+    v4 = HasArrayStorage v2 arrayStorage=Contiguous
+    Branch v4 -> taken b1(| 0), notTaken b3()
+  b1(v5):
+    v6 = IsElementPresent v2, v3, v5 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = AllGuards v5, v7
+    v9 = GetArrayElement v2, v3, v8 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+    Return v9
+  b3():
+    v10 = Call v0, -, v2
+    Return v10
+# CHECK-NOT: NewArray
+# CHECK-NOT: HasArrayStorage
+# CHECK-NOT: IsElementPresent
+# CHECK-NOT: = Call
+# CHECK: v9:{{*}}= Upcast v0
+# CHECK-NEXT: Return v9
+# CHECK-NOT: = Call
+}
+
+function f1 name="secondElement" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewArray v0, v1 contents=anything
+    v3 = AllGuards v2
+    v4 = Integer integer=1
+    v5 = IsElementPresent v2, v4, v3 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    v7 = AllGuards v3, v6
+    v8 = GetArrayElement v2, v4, v7 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+    Return v8
+  b2():
+    v9 = Call v0, -, v2
+    Return v9
+# CHECK-NOT: NewArray
+# CHECK-NOT: IsElementPresent
+# CHECK-NOT: = Call
+# CHECK: v8:{{*}}= Upcast v1
+# CHECK-NEXT: Return v8
+# CHECK-NOT: = Call
+}
+
+function f2 name="pastTheEnd" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewArray v0, v1 contents=anything
+    v3 = AllGuards v2
+    v4 = Integer integer=2
+    v5 = IsElementPresent v2, v4, v3 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    v7 = AllGuards v3, v6
+    v8 = GetArrayElement v2, v4, v7 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+    Return v8
+  b2():
+    v9 = ElemGet v2, v4
+    Return v9
+# CHECK-NOT: NewArray
+# CHECK-NOT: IsElementPresent
+# CHECK-NOT: GetArrayElement
+# CHECK: [[none2]]: undefined = Undefined
+# CHECK-NEXT: v9:{{*}}= Upcast [[none2]]
+# CHECK-NEXT: Return v9
+# CHECK-NOT: GetArrayElement
+}
+
+function f3 name="hole" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewArray v0, v1 contents=anything holes=[1]
+    v3 = AllGuards v2
+    v4 = Integer integer=1
+    v5 = IsElementPresent v2, v4, v3 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    v7 = AllGuards v3, v6
+    v8 = GetArrayElement v2, v4, v7 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+    Return v8
+  b2():
+    v9 = ElemGet v2, v4
+    Return v9
+# CHECK-NOT: NewArray
+# CHECK-NOT: IsElementPresent
+# CHECK-NOT: GetArrayElement
+# CHECK: [[none3]]: undefined = Undefined
+# CHECK-NEXT: v9:{{*}}= Upcast [[none3]]
+# CHECK-NEXT: Return v9
+# CHECK-NOT: GetArrayElement
+}
+
+function f4 name="elementBehindHole" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewArray v0, v1 contents=anything holes=[1]
+    v3 = AllGuards v2
+    v4 = Integer integer=2
+    v5 = IsElementPresent v2, v4, v3 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    v7 = AllGuards v3, v6
+    v8 = GetArrayElement v2, v4, v7 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+    Return v8
+  b2():
+    v9 = Call v0, -, v2
+    Return v9
+# CHECK-NOT: NewArray
+# CHECK-NOT: IsElementPresent
+# CHECK-NOT: = Call
+# CHECK: v8:{{*}}= Upcast v1
+# CHECK-NEXT: Return v8
+# CHECK-NOT: = Call
+}
+
+# The test looks for no property by name, so the prototypes have no say.
+function f5 name="positionIsNoIndex" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewArray v0, v1 contents=anything
+    v3 = AllGuards v2
+    v4 = Integer integer=-1
+    v5 = IsElementPresent v2, v4, v3 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    v7 = AllGuards v3, v6
+    v8 = GetArrayElement v2, v4, v7 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+    Return v8
+  b2():
+    Return v1
+# CHECK-NOT: NewArray
+# CHECK-NOT: IsElementPresent
+# CHECK-NOT: GetArrayElement
+# CHECK: Return v1
+# CHECK-NOT: GetArrayElement
+}
+
+# The answer is that of the array as it is at the test.
+function f6 name="holeIsFilledBeforeTheTest" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewArray v0 contents=anything holes=[1]
+    v3 = Integer integer=1
+    ElemSet v2, v3, v1 mode=Strict
+    v5 = HasArrayStorage v2 arrayStorage=Contiguous
+    Branch v5 -> taken b1(| 0), notTaken b3()
+  b1(v6):
+    v7 = IsElementPresent v2, v3, v6 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = AllGuards v6, v8
+    v10 = GetArrayElement v2, v3, v9 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+    Return v10
+  b3():
+    Return v0
+# CHECK-NOT: NewArray
+# CHECK-NOT: ElemSet
+# CHECK-NOT: IsElementPresent
+# CHECK: v10:{{*}}= Upcast v1
+# CHECK-NEXT: Return v10
+}
+
+function f7 name="positionIsNotKnown" parameters=[{type=anything}, {type=anything}, {type=i32}] results=[{type=anything}] {
+    v3 = NewArray v0, v1 contents=anything
+    v4 = AllGuards v3
+    v5 = IsElementPresent v3, v2, v4 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    v7 = AllGuards v4, v6
+    v8 = GetArrayElement v3, v2, v7 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+    Return v8
+  b2():
+    Return v0
+# CHECK: v3:{{*}}= NewArray v0, v1 contents=anything
+# CHECK: v5: boolean = IsElementPresent v3, v2, v4 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2()
+# CHECK-NOT: Switch
+# CHECK: v8:{{*}}= GetArrayElement v3, v2, v7 arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+# CHECK-NOT: Switch
+}
+
+# The users of the read were chosen for a NaN. Its type is still the one from before its position was tested, and undefined would fit it.
+function f8 name="holeTakenForNaN" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = NewArray v0, v1 contents=number holes=[1]
+    v3 = AssumeType v2 castType=Array<number, proven, Double, pristine[Storage]>
+    v4 = Integer integer=1
+    v5 = IsInBounds v3, v4
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    v7: undefined|number = GetArrayElement v3, v4, v6 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds, readsHoleAsNaN]
+    v8 = Sub v7, v0
+    Return v8
+  b2():
+    Return v0
+# CHECK-NOT: Undefined
+# CHECK: v2:{{*}}= NewArray v0, v1 contents=number holes=[1]
+# CHECK-NOT: Undefined
+# CHECK: v7:{{*}}= GetArrayElement v3, v4, v6 arrayStorage=Double level=Expected [keyIsIntegral, isInBounds, readsHoleAsNaN]
+# CHECK-NEXT: v8:{{*}}= Sub v7, v0
+# CHECK-NOT: Undefined
+}

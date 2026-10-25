@@ -110,15 +110,15 @@ Vector<MarkedText> MarkedText::collectForHighlights(const RenderText& renderer, 
 {
     Vector<MarkedText> markedTexts;
     RenderHighlight renderHighlight;
-    auto& parentRenderer = *renderer.parent();
     if (auto highlightRegistry = renderer.document().highlightRegistryIfExists()) {
         for (auto& highlightName : highlightRegistry->highlightNames()) {
-            CheckedPtr renderStyle = parentRenderer.lazyPseudoElementStyle({ PseudoElementType::Highlight, highlightName });
+            CheckedPtr renderStyle = renderer.lazyPseudoElementStyle({ PseudoElementType::Highlight, highlightName });
             if (!renderStyle)
                 continue;
             if (renderStyle->textDecorationLineInEffect().isNone() && phase == PaintPhase::Decoration)
                 continue;
-            for (auto& highlightRange : highlightRegistry->map().get(highlightName)->highlightRanges()) {
+            RefPtr highlight = highlightRegistry->map().get(highlightName);
+            for (auto& highlightRange : highlight->highlightRangesFor(renderer)) {
                 if (!renderHighlight.setRenderRange(highlightRange))
                     continue;
                 if (auto* staticRange = dynamicDowncast<StaticRange>(highlightRange->range()); staticRange
@@ -139,7 +139,7 @@ Vector<MarkedText> MarkedText::collectForHighlights(const RenderText& renderer, 
                 auto [highlightStart, highlightEnd] = renderHighlight.rangeForTextBox(renderer, selectableRange);
 
                 if (highlightStart < highlightEnd) {
-                    int currentPriority = highlightRegistry->map().get(highlightName)->priority();
+                    int currentPriority = highlight->priority();
                     // If we can just append it to the end, do that instead.
                     if (markedTexts.isEmpty() || markedTexts.last().priority <= currentPriority)
                         markedTexts.append({ highlightStart, highlightEnd, MarkedText::Type::Highlight, nullptr, highlightName, currentPriority });
@@ -160,7 +160,7 @@ Vector<MarkedText> MarkedText::collectForHighlights(const RenderText& renderer, 
 
     auto appendMarkedTextHighlights = [&](const HighlightRegistry& registry, MarkedText::Type markedTextType) {
         for (Ref highlight : registry.map().values()) {
-            for (Ref highlightRange : highlight->highlightRanges()) {
+            for (Ref highlightRange : highlight->highlightRangesFor(renderer)) {
                 if (!renderHighlight.setRenderRange(highlightRange))
                     continue;
 

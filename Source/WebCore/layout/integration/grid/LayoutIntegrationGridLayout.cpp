@@ -30,7 +30,6 @@
 #include "GridFormattingContext.h"
 #include "GridItemRect.h"
 #include "GridLayoutConstraints.h"
-#include "GridLayoutUtils.h"
 #include "LayoutIntegrationBoxGeometryUpdater.h"
 #include "LayoutIntegrationBoxTreeUpdater.h"
 #include "RenderGrid.h"
@@ -60,18 +59,28 @@ GridLayout::~GridLayout()
 
 void GridLayout::updateFormattingContextGeometries()
 {
-    auto boxGeometryUpdater = BoxGeometryUpdater { layoutState(), gridBox() };
+    auto boxGeometryUpdater = BoxGeometryUpdater { protect(layoutState()), gridBox() };
     CheckedPtr gridBoxContainingBlock = CheckedRef { gridBoxRenderer() }->containingBlock();
 
     boxGeometryUpdater.setFormattingContextRootGeometry(gridBoxContainingBlock->contentBoxLogicalWidth());
     boxGeometryUpdater.setFormattingContextContentGeometry(CheckedRef { layoutState() }->geometryForBox(gridBox()).contentBoxWidth(), { });
 }
 
-static std::optional<LayoutUnit> minimumSizeConstraint(const Style::MinimumSize& computedMinimumSize, const Style::ZoomFactor& gridContainerZoom)
+static std::optional<LayoutUnit> minimumSizeConstraint(const Style::MinimumSize& computedMinimumSize, std::optional<LayoutUnit> percentageResolutionSize, BoxSizing boxSizing, LayoutUnit borderAndPadding, const Style::ZoomFactor& gridContainerZoom)
 {
-    return WTF::switchOn(computedMinimumSize,
+    auto minimumSize = WTF::switchOn(computedMinimumSize,
         [&gridContainerZoom](const Style::MinimumSize::Fixed& fixedValue) -> std::optional<LayoutUnit> {
             return Style::evaluate<LayoutUnit>(fixedValue, gridContainerZoom);
+        },
+        [&percentageResolutionSize](const Style::MinimumSize::Percentage& percentageValue) -> std::optional<LayoutUnit> {
+            if (!percentageResolutionSize)
+                return { };
+            return Style::evaluate<LayoutUnit>(percentageValue, *percentageResolutionSize);
+        },
+        [&percentageResolutionSize, &gridContainerZoom](const Style::MinimumSize::Calc& calcValue) -> std::optional<LayoutUnit> {
+            if (!percentageResolutionSize)
+                return { };
+            return Style::evaluate<LayoutUnit>(calcValue, *percentageResolutionSize, gridContainerZoom);
         },
         [](const CSS::Keyword::Auto&) -> std::optional<LayoutUnit> {
             return 0_lu;
@@ -81,13 +90,28 @@ static std::optional<LayoutUnit> minimumSizeConstraint(const Style::MinimumSize&
             return { };
         }
     );
+    return minimumSize.transform([&](LayoutUnit size) {
+        if (boxSizing == BoxSizing::BorderBox)
+            size -= borderAndPadding;
+        return std::max({ }, size);
+    });
 }
 
-static std::optional<LayoutUnit> maximumSizeConstraint(const Style::MaximumSize& computedMaximumSize, const Style::ZoomFactor& gridContainerZoom)
+static std::optional<LayoutUnit> maximumSizeConstraint(const Style::MaximumSize& computedMaximumSize, std::optional<LayoutUnit> percentageResolutionSize, BoxSizing boxSizing, LayoutUnit borderAndPadding, const Style::ZoomFactor& gridContainerZoom)
 {
-    return WTF::switchOn(computedMaximumSize,
+    auto maximumSize = WTF::switchOn(computedMaximumSize,
         [&gridContainerZoom](const Style::MaximumSize::Fixed& fixedValue) -> std::optional<LayoutUnit> {
             return Style::evaluate<LayoutUnit>(fixedValue, gridContainerZoom);
+        },
+        [&percentageResolutionSize](const Style::MaximumSize::Percentage& percentageValue) -> std::optional<LayoutUnit> {
+            if (!percentageResolutionSize)
+                return { };
+            return Style::evaluate<LayoutUnit>(percentageValue, *percentageResolutionSize);
+        },
+        [&percentageResolutionSize, &gridContainerZoom](const Style::MaximumSize::Calc& calcValue) -> std::optional<LayoutUnit> {
+            if (!percentageResolutionSize)
+                return { };
+            return Style::evaluate<LayoutUnit>(calcValue, *percentageResolutionSize, gridContainerZoom);
         },
         [](const CSS::Keyword::None&) -> std::optional<LayoutUnit> {
             return { };
@@ -97,6 +121,11 @@ static std::optional<LayoutUnit> maximumSizeConstraint(const Style::MaximumSize&
             return { };
         }
     );
+    return maximumSize.transform([&](LayoutUnit size) {
+        if (boxSizing == BoxSizing::BorderBox)
+            size -= borderAndPadding;
+        return std::max({ }, size);
+    });
 }
 
 static inline Layout::GridLayoutConstraints constraintsForGridContent(const Layout::ElementBox& gridContainer)
@@ -112,39 +141,22 @@ static inline Layout::GridLayoutConstraints constraintsForGridContent(const Layo
 
     CheckedRef gridContainerStyle = gridContainerRenderer->style();
     auto gridContainerZoom = gridContainerStyle->usedZoomForLength();
+    auto boxSizing = gridContainerStyle->boxSizing();
 
-    auto inlineAxisMinMaxSizes = [&]() -> std::pair<std::optional<LayoutUnit>, std::optional<LayoutUnit>> {
-        return {
-            minimumSizeConstraint(gridContainerStyle->minWidth(), gridContainerZoom),
-            maximumSizeConstraint(gridContainerStyle->maxWidth(), gridContainerZoom)
-        };
-    }();
-
-    auto blockAxisMinMaxSizes = [&]() -> std::pair<std::optional<LayoutUnit>, std::optional<LayoutUnit>> {
-        return {
-            minimumSizeConstraint(gridContainerStyle->minHeight(), gridContainerZoom),
-            maximumSizeConstraint(gridContainerStyle->maxHeight(), gridContainerZoom)
-        };
-    }();
-
-    auto inlineAxisConstraint = Layout::AxisConstraint::definite(
-        availableInlineSpace,
-        inlineAxisMinMaxSizes.first,
-        inlineAxisMinMaxSizes.second
-    );
+    auto containingBlockWidth = gridContainerRenderer->containingBlockLogicalWidthForContent();
+    auto borderAndPaddingWidth = gridContainerRenderer->borderAndPaddingLogicalWidth();
+    auto inlineAxisConstraint = Layout::AxisConstraint::definite(availableInlineSpace,
+        minimumSizeConstraint(gridContainerStyle->minWidth(), containingBlockWidth, boxSizing, borderAndPaddingWidth, gridContainerZoom),
+        maximumSizeConstraint(gridContainerStyle->maxWidth(), containingBlockWidth, boxSizing, borderAndPaddingWidth, gridContainerZoom));
 
     auto blockAxisConstraint = [&]() -> Layout::AxisConstraint {
-        if (availableBlockSpace.has_value()) {
-            return Layout::AxisConstraint::definite(
-                *availableBlockSpace,
-                blockAxisMinMaxSizes.first,
-                blockAxisMinMaxSizes.second
-            );
-        }
-        return Layout::AxisConstraint::maxContent(
-            blockAxisMinMaxSizes.first,
-            blockAxisMinMaxSizes.second
-        );
+        auto containingBlockHeight = protect(gridContainerRenderer->containingBlock())->availableLogicalHeightForPercentageComputation();
+        auto borderAndPaddingHeight = gridContainerRenderer->borderAndPaddingLogicalHeight();
+        auto minHeight = minimumSizeConstraint(gridContainerStyle->minHeight(), containingBlockHeight, boxSizing, borderAndPaddingHeight, gridContainerZoom);
+        auto maxHeight = maximumSizeConstraint(gridContainerStyle->maxHeight(), containingBlockHeight, boxSizing, borderAndPaddingHeight, gridContainerZoom);
+        if (availableBlockSpace)
+            return Layout::AxisConstraint::definite(*availableBlockSpace, minHeight, maxHeight);
+        return Layout::AxisConstraint::maxContent(minHeight, maxHeight);
     }();
 
     return { inlineAxisConstraint, blockAxisConstraint };
@@ -187,7 +199,7 @@ void GridLayout::updateGridItemRenderers(const GridItemBorderBoxRects& previousG
     ASSERT(gridItemIndex == previousGridItemRects.size());
 }
 
-void GridLayout::updateFormattingContextRootRenderer(const Layout::GridLayoutConstraints& layoutConstraints, const Layout::UsedTrackSizes& usedTrackSizes, const Layout::GridItemRects& gridItemRects)
+void GridLayout::updateFormattingContextRootRenderer(LayoutUnit usedBlockContentSize, const Layout::GridItemRects& gridItemRects, size_t autoRepeatColumnsCount, size_t autoRepeatRowsCount, size_t leadingImplicitColumnsCount, size_t leadingImplicitRowsCount)
 {
     CheckedRef renderGrid = gridBoxRenderer();
     auto& currentGrid = renderGrid->currentGrid();
@@ -204,15 +216,14 @@ void GridLayout::updateFormattingContextRootRenderer(const Layout::GridLayoutCon
     }
     currentGrid.setNeedsItemsPlacement(false);
 
+    // Out-of-flow boxes are placed by RenderGrid, which resolves their grid lines against the explicit
+    // grid it computes from style plus these auto-repeated track counts, offset by the explicit grid start.
+    currentGrid.setAutoRepeatTracks(autoRepeatRowsCount, autoRepeatColumnsCount);
+    currentGrid.setExplicitGridStart(leadingImplicitRowsCount, leadingImplicitColumnsCount);
+
     OrderIteratorPopulator orderIteratorPopulator(currentGrid.orderIterator());
 
-    if (layoutConstraints.blockAxis.scenario() != Layout::AxisConstraint::FreeSpaceScenario::Definite) {
-        auto& rowSizes = usedTrackSizes.rowSizes;
-        auto usedRowGutter = Layout::GridFormattingContext::usedGapValue(renderGrid->style().rowGap(), renderGrid->style());
-        auto blockContentSize = std::reduce(rowSizes.begin(), rowSizes.end()) + Layout::GridLayoutUtils::totalGuttersSize(rowSizes.size(), usedRowGutter);
-        renderGrid->setBorderBoxHeight(blockContentSize + renderGrid->borderAndPaddingLogicalHeight());
-    } else
-        renderGrid->setBorderBoxHeight(layoutConstraints.blockAxis.availableSpace() + renderGrid->borderAndPaddingLogicalHeight());
+    renderGrid->setBorderBoxHeight(usedBlockContentSize + renderGrid->borderAndPaddingLogicalHeight());
 
     for (CheckedRef layoutBox : formattingContextBoxes(gridBox()))
         orderIteratorPopulator.collectChild(CheckedRef { downcast<RenderBox>(*layoutBox->rendererForIntegration()) });
@@ -229,8 +240,25 @@ void GridLayout::invalidateFormattingContextRootRenderer(RenderGrid& renderGrid)
 
 std::pair<LayoutUnit, LayoutUnit> GridLayout::computeIntrinsicWidths()
 {
-    auto gridFormattingContext = Layout::GridFormattingContext { gridBox(), layoutState() };
-    auto intrinsicWidths = gridFormattingContext.computeIntrinsicWidths();
+    CheckedRef gridContainerRenderer = gridBoxRenderer();
+    CheckedRef gridContainerStyle = gridContainerRenderer->style();
+    auto gridContainerZoom = gridContainerStyle->usedZoomForLength();
+    auto boxSizing = gridContainerStyle->boxSizing();
+
+    auto containingBlockWidth = gridContainerRenderer->containingBlockLogicalWidthForContent();
+    auto borderAndPaddingWidth = gridContainerRenderer->borderAndPaddingLogicalWidth();
+    auto inlineAxisAutoRepeatConstraint = Layout::AutoRepeatConstraint { { },
+        minimumSizeConstraint(gridContainerStyle->minWidth(), containingBlockWidth, boxSizing, borderAndPaddingWidth, gridContainerZoom),
+        maximumSizeConstraint(gridContainerStyle->maxWidth(), containingBlockWidth, boxSizing, borderAndPaddingWidth, gridContainerZoom) };
+
+    auto containingBlockHeight = protect(gridContainerRenderer->containingBlock())->availableLogicalHeightForPercentageComputation();
+    auto borderAndPaddingHeight = gridContainerRenderer->borderAndPaddingLogicalHeight();
+    auto blockAxisAutoRepeatConstraint = Layout::AutoRepeatConstraint { gridContainerRenderer->availableLogicalHeightForContentBox(),
+        minimumSizeConstraint(gridContainerStyle->minHeight(), containingBlockHeight, boxSizing, borderAndPaddingHeight, gridContainerZoom),
+        maximumSizeConstraint(gridContainerStyle->maxHeight(), containingBlockHeight, boxSizing, borderAndPaddingHeight, gridContainerZoom) };
+
+    auto gridFormattingContext = Layout::GridFormattingContext { gridBox(), protect(layoutState()) };
+    auto intrinsicWidths = gridFormattingContext.computeIntrinsicWidths(inlineAxisAutoRepeatConstraint, blockAxisAutoRepeatConstraint);
     return { intrinsicWidths.minimum, intrinsicWidths.maximum };
 }
 
@@ -240,9 +268,11 @@ void GridLayout::layout()
 
     auto previousGridItemRects = gridItemBorderBoxRects();
 
-    auto [ usedTrackSizes, gridItemRects ] = Layout::GridFormattingContext { gridBox(), layoutState() }.layout(gridLayoutConstraints);
+    auto [ usedTrackSizes, gridItemRects, usedBlockContentSize,
+        autoRepeatColumnsCount, autoRepeatRowsCount,
+        leadingImplicitColumnsCount, leadingImplicitRowsCount ] = Layout::GridFormattingContext { gridBox(), protect(layoutState()) }.layout(gridLayoutConstraints);
     updateGridItemRenderers(previousGridItemRects);
-    updateFormattingContextRootRenderer(gridLayoutConstraints, usedTrackSizes, gridItemRects);
+    updateFormattingContextRootRenderer(usedBlockContentSize, gridItemRects, autoRepeatColumnsCount, autoRepeatRowsCount, leadingImplicitColumnsCount, leadingImplicitRowsCount);
     layoutOutOfFlowBoxes(usedTrackSizes);
 
     CheckedRef renderGrid = gridBoxRenderer();

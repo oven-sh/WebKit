@@ -26,13 +26,39 @@
 #include <WebCore/StyleComputedStyle+GettersInlines.h>
 #include <WebCore/StyleOpacity.h>
 #include <WebCore/StyleShapeOutside.h>
+#include <WebCore/UsedStyle.h>
 
 namespace WebCore {
 
+inline UsedStyle RenderObject::usedStyle() const
+{
+    if (isRenderText())
+        return m_parent->usedStyle();
+    return downcast<RenderElement>(*this).usedStyle();
+}
+
+inline UsedStyle RenderObject::firstLineUsedStyle() const
+{
+    if (isRenderText())
+        return m_parent->firstLineUsedStyle();
+    return downcast<RenderElement>(*this).firstLineUsedStyle();
+}
+
+inline UsedStyle RenderElement::usedStyle() const { return UsedStyle { *this }; }
+inline UsedStyle RenderElement::firstLineUsedStyle() const { return UsedStyle { *this, firstLineStyle() }; }
 inline Overflow RenderElement::effectiveOverflowBlockDirection() const { return writingMode().isHorizontal() ? effectiveOverflowY() : effectiveOverflowX(); }
 inline Overflow RenderElement::effectiveOverflowInlineDirection() const { return writingMode().isHorizontal() ? effectiveOverflowX() : effectiveOverflowY(); }
 inline Element* RenderElement::element() const { return downcast<Element>(RenderObject::node()); }
 inline Element* RenderElement::nonPseudoElement() const { return downcast<Element>(RenderObject::nonPseudoNode()); }
+
+inline std::optional<FloatSize> RenderElement::usedZoomedImageSize() const
+{
+    auto size = usedImageSize();
+    if (!size)
+        return std::nullopt;
+    size->scale(style().usedZoom());
+    return size;
+}
 
 inline bool RenderElement::isFixedPositioned() const
 {

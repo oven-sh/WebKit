@@ -40,17 +40,17 @@ namespace JSC {
 const ClassInfo MapPrototype::s_info = { "Map"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(MapPrototype) };
 
 static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncClear);
-static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncDelete);
-static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncGet);
-static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncHas);
-static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncSet);
+JSC_DECLARE_HOST_FUNCTION(mapProtoFuncDelete);
+JSC_DECLARE_HOST_FUNCTION(mapProtoFuncGet);
+JSC_DECLARE_HOST_FUNCTION(mapProtoFuncHas);
+JSC_DECLARE_HOST_FUNCTION(mapProtoFuncSet);
 static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncGetOrInsert);
 static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncGetOrInsertComputed);
 static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncValues);
 static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncKeys);
 JSC_DECLARE_HOST_FUNCTION(mapProtoFuncEntries);
 
-static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncSize);
+JSC_DECLARE_HOST_FUNCTION(mapProtoFuncSize);
     
 void MapPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {

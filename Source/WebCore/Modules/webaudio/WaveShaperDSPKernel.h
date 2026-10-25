@@ -51,28 +51,28 @@ public:
     void lazyInitializeOversampling();
 
     // Apply the shaping curve.
-    WEBCORE_EXPORT static void processCurveWithData(std::span<const float> source, std::span<float> destination, std::span<const float> curveData);
+    WEBCORE_EXPORT static void LEGACY_NODELETE processCurveWithData(std::span<const float> source, std::span<float> destination, std::span<const float> curveData);
 
 private:
     bool isWaveShaperDSPKernel() const final { return true; }
 
-    void processCurve(std::span<const float> source, std::span<float> destination);
+    void LEGACY_NODELETE processCurve(std::span<const float> source, std::span<float> destination);
     // Use up-sampling, process at the higher sample-rate, then down-sample.
     void processCurve2x(std::span<const float> source, std::span<float> destination);
     void processCurve4x(std::span<const float> source, std::span<float> destination);
 
-    bool NODELETE requiresTailProcessing() const final;
+    bool LEGACY_NODELETE requiresTailProcessing() const final;
 
     WaveShaperProcessor* waveShaperProcessor() { return downcast<WaveShaperProcessor>(processor()); }
     const WaveShaperProcessor* waveShaperProcessor() const { return downcast<WaveShaperProcessor>(processor()); }
 
     // Oversampling.
-    std::unique_ptr<AudioFloatArray> m_tempBuffer;
-    std::unique_ptr<AudioFloatArray> m_tempBuffer2;
-    std::unique_ptr<UpSampler> m_upSampler;
-    std::unique_ptr<DownSampler> m_downSampler;
-    std::unique_ptr<UpSampler> m_upSampler2;
-    std::unique_ptr<DownSampler> m_downSampler2;
+    const std::unique_ptr<AudioFloatArray> m_tempBuffer;
+    const std::unique_ptr<AudioFloatArray> m_tempBuffer2;
+    const std::unique_ptr<UpSampler> m_upSampler;
+    const std::unique_ptr<DownSampler> m_downSampler;
+    const std::unique_ptr<UpSampler> m_upSampler2;
+    const std::unique_ptr<DownSampler> m_downSampler2;
 };
 
 } // namespace WebCore

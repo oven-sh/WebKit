@@ -144,6 +144,31 @@ void FunctionIPIntMetadataGenerator::addAtomicMemoryAccess(uint8_t memoryIndex, 
     appendMetadata(md);
 }
 
+auto FunctionIPIntMetadataGenerator::hotLocals() const -> HotLocals
+{
+    HotLocals result;
+    result.fill(noHotLocal);
+
+    for (uint32_t index = 0; index < m_localScores.size(); ++index) {
+        int32_t count = m_localScores[index];
+        if (count < minimumHotLocalScore)
+            continue;
+
+        // An existing entry with an equal score has a lower index, and >= keeps it ahead, so ties
+        // resolve towards the lower index.
+        for (unsigned slot = 0; slot < result.size(); ++slot) {
+            if (result[slot] != noHotLocal && m_localScores[result[slot]] >= count)
+                continue;
+            for (unsigned shift = result.size() - 1; shift > slot; --shift)
+                result[shift] = result[shift - 1];
+            result[slot] = index;
+            break;
+        }
+    }
+
+    return result;
+}
+
 
 } }
 

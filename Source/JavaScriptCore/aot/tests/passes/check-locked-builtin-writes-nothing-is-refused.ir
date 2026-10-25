@@ -1,0 +1,28 @@
+# Object.defineProperty on an object of the program, Reflect.set of a new name on a built-in object that takes new names, a store under the key that the language makes of undefined into either, and Reflect.get from a locked built-in: the run time refuses none of them, and the build says nothing
+# RUN: pipeline CheckLockedBuiltinWrites
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Plain" fields=[{key="x" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L1 fields=[]
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = String string="y"
+    v4 = Builtin builtin=ObjectDefineProperty
+    v5 = Builtin builtin=Object
+    v6 = Call v4, v5, v0, v3, v2 @10
+    v7 = Builtin builtin=Reflect
+    v8 = Builtin builtin=ReflectSet
+    v9 = Builtin builtin=Console
+    v10 = String string="zz"
+    v11 = Call v8, v7, v9, v10, v1 @20
+    v12 = Undefined
+    ElemSet v0, v12, v1 mode=Strict @30
+    ElemSet v9, v12, v1 mode=Strict @40
+    v15 = Builtin builtin=ObjectPrototype
+    v16 = Builtin builtin=ReflectGet
+    v17 = Call v16, v7, v15, v3 @50
+    Return
+}

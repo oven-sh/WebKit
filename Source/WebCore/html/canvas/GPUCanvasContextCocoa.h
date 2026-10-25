@@ -46,6 +46,9 @@ namespace WebCore {
 
 class Document;
 class GPUDisplayBufferDisplayDelegate;
+#if HAVE(SUPPORT_HDR_DISPLAY)
+class GPUOffMainThreadScreenHeadroom;
+#endif
 
 class GPUCanvasContextCocoa final : public GPUCanvasContext {
     WTF_MAKE_TZONE_ALLOCATED(GPUCanvasContextCocoa);
@@ -76,6 +79,9 @@ public:
     GPUDevice* device() const override { return m_configuration ? m_configuration->device.ptr() : nullptr; }
     ExceptionOr<Ref<GPUTexture>> getCurrentTexture() override;
     RefPtr<ImageBuffer> transferToImageBuffer() override;
+#if ENABLE(OFFSCREEN_CANVAS)
+    bool commitToPlaceholder(PlaceholderRenderingContextSource&) override;
+#endif
 
 #if HAVE(SUPPORT_HDR_DISPLAY) && ENABLE(PIXEL_FORMAT_RGBA16F)
     void setDynamicRangeLimit(PlatformDynamicRangeLimit) override;
@@ -99,7 +105,6 @@ private:
     void updateFramePacing();
     Page* page() const;
 #if HAVE(SUPPORT_HDR_DISPLAY)
-    float computeContentsHeadroom();
     void updateContentsHeadroom();
     void updateScreenHeadroom(float, bool suppressEDR);
     void updateScreenHeadroomFromScreenPropertiesIfNeeded();
@@ -133,7 +138,8 @@ private:
     GPUIntegerCoordinate m_height { 0 };
 #if HAVE(SUPPORT_HDR_DISPLAY)
     using ScreenPropertiesChangedObserver = Observer<void(PlatformDisplayID)>;
-    RefPtr<ScreenPropertiesChangedObserver> m_screenPropertiesChangedObserver;
+    const RefPtr<ScreenPropertiesChangedObserver> m_screenPropertiesChangedObserver;
+    RefPtr<GPUOffMainThreadScreenHeadroom> m_offMainThreadScreenHeadroom;
     PlatformDynamicRangeLimit m_dynamicRangeLimit { PlatformDynamicRangeLimit::initialValue() };
     float m_currentEDRHeadroom { 1 };
     float m_screenEDRHeadroom { 0.f };

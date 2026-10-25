@@ -69,6 +69,9 @@ std::optional<SpsParser::SpsState> SpsParser::ParseSpsUpToVui(
   reader.ConsumeBits(16);
   // seq_parameter_set_id: ue(v)
   sps.id = reader.ReadExponentialGolomb();
+  if (!reader.Ok() || sps.id > H264::kMaxSpsId) {
+    return std::nullopt;
+  }
   sps.separate_colour_plane_flag = 0;
   // See if profile_idc has chroma format information.
   if (profile_idc == 100 || profile_idc == 110 || profile_idc == 122 ||
@@ -77,6 +80,9 @@ std::optional<SpsParser::SpsState> SpsParser::ParseSpsUpToVui(
       profile_idc == 138 || profile_idc == 139 || profile_idc == 134) {
     // chroma_format_idc: ue(v)
     sps.chroma_format_idc = reader.ReadExponentialGolomb();
+    if (!reader.Ok() || sps.chroma_format_idc > 3) {
+      return std::nullopt;
+    }
     if (sps.chroma_format_idc == 3) {
       // separate_colour_plane_flag: u(1)
       sps.separate_colour_plane_flag = reader.ReadBit();
@@ -131,6 +137,9 @@ std::optional<SpsParser::SpsState> SpsParser::ParseSpsUpToVui(
 
   // pic_order_cnt_type: ue(v)
   sps.pic_order_cnt_type = reader.ReadExponentialGolomb();
+  if (!reader.Ok() || sps.pic_order_cnt_type > 2) {
+    return std::nullopt;
+  }
   if (sps.pic_order_cnt_type == 0) {
     // log2_max_pic_order_cnt_lsb_minus4: ue(v)
     uint32_t log2_max_pic_order_cnt_lsb_minus4 = reader.ReadExponentialGolomb();
@@ -167,11 +176,12 @@ std::optional<SpsParser::SpsState> SpsParser::ParseSpsUpToVui(
   // to signify resolutions that aren't multiples of 16.
   //
   // pic_width_in_mbs_minus1: ue(v)
+  uint32_t pic_width_in_mbs_minus1 = reader.ReadExponentialGolomb();
 #if WEBRTC_WEBKIT_BUILD
-  sps.pic_width_in_mbs_minus1 = reader.ReadExponentialGolomb();
+  sps.pic_width_in_mbs_minus1 = pic_width_in_mbs_minus1;
   sps.width = 16 * (sps.pic_width_in_mbs_minus1 + 1);
 #else
-  sps.width = 16 * (reader.ReadExponentialGolomb() + 1);
+  sps.width = 16 * (pic_width_in_mbs_minus1 + 1);
 #endif
   // pic_height_in_map_units_minus1: ue(v)
   uint32_t pic_height_in_map_units_minus1 = reader.ReadExponentialGolomb();
@@ -184,8 +194,6 @@ std::optional<SpsParser::SpsState> SpsParser::ParseSpsUpToVui(
     // mb_adaptive_frame_field_flag: u(1)
     reader.ConsumeBits(1);
   }
-  sps.height =
-      16 * (2 - sps.frame_mbs_only_flag) * (pic_height_in_map_units_minus1 + 1);
   // direct_8x8_inference_flag: u(1)
   reader.ConsumeBits(1);
   //
@@ -211,26 +219,48 @@ std::optional<SpsParser::SpsState> SpsParser::ParseSpsUpToVui(
     return std::nullopt;
   }
 
-  // Figure out the crop units in pixels. That's based on the chroma format's
-  // sampling, which is indicated by chroma_format_idc.
-  if (sps.separate_colour_plane_flag || sps.chroma_format_idc == 0) {
-    frame_crop_bottom_offset *= (2 - sps.frame_mbs_only_flag);
-    frame_crop_top_offset *= (2 - sps.frame_mbs_only_flag);
-  } else if (!sps.separate_colour_plane_flag && sps.chroma_format_idc > 0) {
-    // Width multipliers for formats 1 (4:2:0) and 2 (4:2:2).
-    if (sps.chroma_format_idc == 1 || sps.chroma_format_idc == 2) {
-      frame_crop_left_offset *= 2;
-      frame_crop_right_offset *= 2;
-    }
-    // Height multipliers for format 1 (4:2:0).
+  // Calculate uncropped width and height avoiding 32-bit overflow.
+  int64_t uncropped_width =
+      16 * (static_cast<int64_t>(pic_width_in_mbs_minus1) + 1);
+  int64_t uncropped_height =
+      16 * (2 - sps.frame_mbs_only_flag) *
+      (static_cast<int64_t>(pic_height_in_map_units_minus1) + 1);
+
+  if (!H264::IsValidResolution(uncropped_width, uncropped_height)) {
+    return std::nullopt;
+  }
+
+  // Figure out the crop units in pixels (H.264 Section 7.4.2.1.1).
+  uint32_t sub_width_c = 1;
+  uint32_t sub_height_c = 1;
+  if (!sps.separate_colour_plane_flag && sps.chroma_format_idc > 0) {
     if (sps.chroma_format_idc == 1) {
-      frame_crop_top_offset *= 2;
-      frame_crop_bottom_offset *= 2;
+      // 4:2:0
+      sub_width_c = 2;
+      sub_height_c = 2;
+    } else if (sps.chroma_format_idc == 2) {
+      // 4:2:2
+      sub_width_c = 2;
+      sub_height_c = 1;
     }
   }
-  // Subtract the crop for each dimension.
-  sps.width -= (frame_crop_left_offset + frame_crop_right_offset);
-  sps.height -= (frame_crop_top_offset + frame_crop_bottom_offset);
+  uint32_t crop_unit_x = sub_width_c;
+  uint32_t crop_unit_y = sub_height_c * (2 - sps.frame_mbs_only_flag);
+
+  int64_t total_crop_x =
+      static_cast<int64_t>(crop_unit_x) *
+      (static_cast<int64_t>(frame_crop_left_offset) + frame_crop_right_offset);
+  int64_t total_crop_y =
+      static_cast<int64_t>(crop_unit_y) *
+      (static_cast<int64_t>(frame_crop_top_offset) + frame_crop_bottom_offset);
+
+  // The cropped dimensions must be strictly positive (non-zero).
+  if (total_crop_x >= uncropped_width || total_crop_y >= uncropped_height) {
+    return std::nullopt;
+  }
+
+  sps.width = static_cast<uint32_t>(uncropped_width - total_crop_x);
+  sps.height = static_cast<uint32_t>(uncropped_height - total_crop_y);
 
   return sps;
 }

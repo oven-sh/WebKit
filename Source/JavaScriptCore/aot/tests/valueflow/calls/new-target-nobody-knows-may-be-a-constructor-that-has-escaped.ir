@@ -1,0 +1,41 @@
+# function Base(a) { this.a = a }  class Derived extends Base { constructor(a) { super(a); this.b = 2 } }
+# Reflect.construct(Derived, [], new Proxy(Derived, {}))  Reflect.construct(Derived, [], Derived).b
+# The proxy hands Derived to the engine, which may construct it, so nobody knows what new.target is there. It may be any constructor that has left the program's hands, and Derived has.
+# Base makes an instance of the class that is new.target: both constructors store into a Derived, and it leaves with the result.
+# RUN: valueflow-why falsifiers=L1
+# CHECK: family L1 objects 2 escaped 1 lost 0
+# CHECK: L1	store	a
+# CHECK: L1	store	b
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 kind=Instance name="Derived" base=L0 constructor=f2 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = ResolveHeritage v0
+    v2 = NewClosure function=f2
+    v3 = NewClass v2, v0, v1 layout=L1
+    v4 = FinishClass v3 layout=L1
+    v5 = Builtin builtin=Proxy
+    v6 = NewDictionary
+    v7 = Construct v5, -, v4, v6
+    v8 = Builtin builtin=ReflectConstruct
+    v9 = NewArray
+    v10 = Call v8, -, v4, v9, v7
+    v11 = Call v8, -, v4, v9, v4
+    v12 = PropGet v11 key="b"
+    Return v12
+}
+function f1 name="Base" flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+    PropSet v0, v1 key="a"
+    v3 = Undefined
+    Return v3
+}
+function f2 name="Derived" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L1
+    v5 = Integer integer=2
+    PropSet v4, v5 key="b"
+    Return v4
+}

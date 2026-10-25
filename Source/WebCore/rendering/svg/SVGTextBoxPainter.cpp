@@ -31,11 +31,10 @@
 #include "GraphicsContextStateSaver.h"
 #include "LegacyRenderSVGResourceSolidColor.h"
 #include "OutlinePainter.h"
-#include "RenderInline.h"
+#include "RenderElementInlines.h"
 #include "RenderObjectDocument.h"
 #include "RenderSVGInlineText.h"
 #include "RenderSVGText.h"
-#include "SVGInlineTextBox.h"
 #include "SVGPaintServerHandlingInlines.h"
 #include "SVGResourcesCache.h"
 #include "SVGTextFragment.h"
@@ -47,22 +46,10 @@
 
 namespace WebCore {
 
-LegacySVGTextBoxPainter::LegacySVGTextBoxPainter(const SVGInlineTextBox& textBox, PaintInfo& paintInfo, const LayoutPoint& paintOffset)
-    : SVGTextBoxPainter(InlineIterator::BoxLegacyPath { &textBox }, paintInfo, paintOffset)
-{
-}
-
-
-ModernSVGTextBoxPainter::ModernSVGTextBoxPainter(const LayoutIntegration::InlineContent& inlineContent, size_t boxIndex, PaintInfo& paintInfo, const LayoutPoint& paintOffset)
-    : SVGTextBoxPainter(InlineIterator::BoxModernPath { inlineContent, boxIndex }, paintInfo, paintOffset)
-{
-}
-
-
-template<typename TextBoxPath>
-SVGTextBoxPainter<TextBoxPath>::SVGTextBoxPainter(TextBoxPath&& textBox, PaintInfo& paintInfo, const LayoutPoint& paintOffset)
-    : m_textBox(WTF::move(textBox))
-    , m_renderer(downcast<RenderSVGInlineText>(m_textBox.renderer()))
+SVGTextBoxPainter::SVGTextBoxPainter(const LayoutIntegration::InlineContent& inlineContent, size_t boxIndex, PaintInfo& paintInfo, const LayoutPoint& paintOffset)
+    : m_textBox(inlineContent, boxIndex)
+    , m_renderer(m_textBox.renderer())
+    , m_parentRenderer(textBoxIterator()->parentInlineBox()->renderer())
     , m_paintInfo(paintInfo)
     , m_selectableRange(m_textBox.selectableRange())
     , m_paintOffset(paintOffset)
@@ -70,17 +57,9 @@ SVGTextBoxPainter<TextBoxPath>::SVGTextBoxPainter(TextBoxPath&& textBox, PaintIn
 {
 }
 
-template<typename TextBoxPath>
-InlineIterator::SVGTextBoxIterator SVGTextBoxPainter<TextBoxPath>::textBoxIterator() const
+InlineIterator::SVGTextBoxIterator SVGTextBoxPainter::textBoxIterator() const
 {
     return { m_textBox };
-}
-
-
-template<typename TextBoxPath>
-const RenderBoxModelObject& SVGTextBoxPainter<TextBoxPath>::parentRenderer() const
-{
-    return textBoxIterator()->parentInlineBox()->renderer();
 }
 
 FloatRect selectionRectForTextFragment(const RenderSVGInlineText& renderer, TextDirection direction, const SVGTextFragment& fragment, unsigned startPosition, unsigned endPosition, const Style::ComputedStyle& style)
@@ -109,18 +88,17 @@ FloatRect selectionRectForTextFragment(const RenderSVGInlineText& renderer, Text
     return snappedSelectionRect;
 }
 
-static inline bool NODELETE textShouldBePainted(const RenderSVGInlineText& textRenderer)
+static inline bool LEGACY_NODELETE textShouldBePainted(const RenderSVGInlineText& textRenderer)
 {
     return textRenderer.scaledFont().size() >= 0.5;
 }
 
-template<typename TextBoxPath>
-void SVGTextBoxPainter<TextBoxPath>::paintSelectionBackground()
+void SVGTextBoxPainter::paintSelectionBackground()
 {
     ASSERT(m_paintInfo.shouldPaintWithinRoot(renderer()));
     ASSERT(m_paintInfo.phase == PaintPhase::Foreground || m_paintInfo.phase == PaintPhase::Selection);
 
-    if (renderer().style().usedVisibility() != Visibility::Visible)
+    if (renderer().usedStyle().visibility() != UsedVisibility::Visible)
         return;
 
     auto& parentRenderer = this->parentRenderer();
@@ -167,16 +145,15 @@ void SVGTextBoxPainter<TextBoxPath>::paintSelectionBackground()
     ASSERT(!m_legacyPaintingResource);
 }
 
-template<typename TextBoxPath>
-void SVGTextBoxPainter<TextBoxPath>::paint()
+void SVGTextBoxPainter::paint()
 {
     ASSERT(m_paintInfo.shouldPaintWithinRoot(renderer()));
     ASSERT(m_paintInfo.phase == PaintPhase::Foreground || m_paintInfo.phase == PaintPhase::Selection);
 
-    if (renderer().style().usedVisibility() != Visibility::Visible)
+    if (renderer().usedStyle().visibility() != UsedVisibility::Visible)
         return;
 
-    // Note: We're explicitly not supporting composition & custom underlines and custom highlighters - unlike LegacyInlineTextBox.
+    // Note: We're explicitly not supporting composition & custom underlines and custom highlighters - unlike TextBoxPainter.
     // If we ever need that for SVG, it's very easy to refactor and reuse the code.
 
     auto& parentRenderer = this->parentRenderer();
@@ -257,16 +234,15 @@ void SVGTextBoxPainter<TextBoxPath>::paint()
     }
 
     // Finally, paint the outline if any.
-    if (renderer().style().hasOutline()) {
-        if (CheckedPtr renderInline = dynamicDowncast<RenderInline>(parentRenderer))
-            OutlinePainter { m_paintInfo }.paintOutline(*renderInline, m_paintOffset);
+    if (style.hasOutline()) {
+        if (parentRenderer.isInlineBox())
+            OutlinePainter { m_paintInfo }.paintOutline(parentRenderer, m_paintOffset);
     }
 
     ASSERT(!m_legacyPaintingResource);
 }
 
-template<typename TextBoxPath>
-bool SVGTextBoxPainter<TextBoxPath>::acquirePaintingResource(SVGPaintServerHandling& paintServerHandling, float scalingFactor, const RenderBoxModelObject& renderer, const Style::ComputedStyle& style)
+bool SVGTextBoxPainter::acquirePaintingResource(SVGPaintServerHandling& paintServerHandling, float scalingFactor, const RenderBoxModelObject& renderer, const Style::ComputedStyle& style)
 {
     ASSERT(scalingFactor);
     ASSERT(!paintingResourceMode().isEmpty());
@@ -309,8 +285,7 @@ bool SVGTextBoxPainter<TextBoxPath>::acquirePaintingResource(SVGPaintServerHandl
     return true;
 }
 
-template<typename TextBoxPath>
-void SVGTextBoxPainter<TextBoxPath>::releasePaintingResource(SVGPaintServerHandling& paintServerHandling)
+void SVGTextBoxPainter::releasePaintingResource(SVGPaintServerHandling& paintServerHandling)
 {
     auto& context = paintServerHandling.context();
 
@@ -320,8 +295,7 @@ void SVGTextBoxPainter<TextBoxPath>::releasePaintingResource(SVGPaintServerHandl
     context.restore();
 }
 
-template<typename TextBoxPath>
-bool SVGTextBoxPainter<TextBoxPath>::acquireLegacyPaintingResource(GraphicsContext*& context, float scalingFactor, RenderBoxModelObject& renderer, const Style::ComputedStyle& style)
+bool SVGTextBoxPainter::acquireLegacyPaintingResource(GraphicsContext*& context, float scalingFactor, RenderBoxModelObject& renderer, const Style::ComputedStyle& style)
 {
     ASSERT(scalingFactor);
     ASSERT(paintingResourceMode().containsAny({ RenderSVGResourceMode::ApplyToFill, RenderSVGResourceMode::ApplyToStroke }));
@@ -372,8 +346,7 @@ bool SVGTextBoxPainter<TextBoxPath>::acquireLegacyPaintingResource(GraphicsConte
     return true;
 }
 
-template<typename TextBoxPath>
-void SVGTextBoxPainter<TextBoxPath>::releaseLegacyPaintingResource(GraphicsContext*& context, const Path* path)
+void SVGTextBoxPainter::releaseLegacyPaintingResource(GraphicsContext*& context, const Path* path)
 {
     ASSERT(m_legacyPaintingResource);
 
@@ -399,7 +372,7 @@ bool mapStartEndPositionsIntoFragmentCoordinates(unsigned textBoxStart, const SV
     return true;
 }
 
-static inline float NODELETE positionOffsetForDecoration(Style::TextDecorationLine decoration, const FontMetrics& fontMetrics, float thickness)
+static inline float LEGACY_NODELETE positionOffsetForDecoration(Style::TextDecorationLine decoration, const FontMetrics& fontMetrics, float thickness)
 {
     // FIXME: For SVG Fonts we need to use the attributes defined in the <font-face> if specified.
     // Compatible with Batik/Opera.
@@ -415,15 +388,14 @@ static inline float NODELETE positionOffsetForDecoration(Style::TextDecorationLi
     return 0.0f;
 }
 
-static inline float NODELETE thicknessForDecoration(Style::TextDecorationLine, const FontCascade& font)
+static inline float LEGACY_NODELETE thicknessForDecoration(Style::TextDecorationLine, const FontCascade& font)
 {
     // FIXME: For SVG Fonts we need to use the attributes defined in the <font-face> if specified.
     // Compatible with Batik/Opera
     return font.size() / 20.0f;
 }
 
-template<typename TextBoxPath>
-void SVGTextBoxPainter<TextBoxPath>::paintDecoration(Style::TextDecorationLine decoration, const SVGTextFragment& fragment)
+void SVGTextBoxPainter::paintDecoration(Style::TextDecorationLine decoration, const SVGTextFragment& fragment)
 {
     if (renderer().style().textDecorationLineInEffect().isNone())
         return;
@@ -451,7 +423,7 @@ void SVGTextBoxPainter<TextBoxPath>::paintDecoration(Style::TextDecorationLine d
 
     const Style::ComputedStyle& decorationStyle = decorationRenderer->style();
 
-    if (decorationStyle.usedVisibility() == Visibility::Hidden)
+    if (decorationRenderer->usedStyle().visibility() == UsedVisibility::Hidden)
         return;
 
     for (auto type : renderer().style().paintOrder()) {
@@ -476,8 +448,7 @@ void SVGTextBoxPainter<TextBoxPath>::paintDecoration(Style::TextDecorationLine d
     }
 }
 
-template<typename TextBoxPath>
-void SVGTextBoxPainter<TextBoxPath>::paintDecorationWithStyle(Style::TextDecorationLine decoration, const SVGTextFragment& fragment, const RenderBoxModelObject& decorationRenderer)
+void SVGTextBoxPainter::paintDecorationWithStyle(Style::TextDecorationLine decoration, const SVGTextFragment& fragment, const RenderBoxModelObject& decorationRenderer)
 {
     ASSERT(!m_legacyPaintingResource);
     ASSERT(!paintingResourceMode().isEmpty());
@@ -530,8 +501,7 @@ void SVGTextBoxPainter<TextBoxPath>::paintDecorationWithStyle(Style::TextDecorat
         releaseLegacyPaintingResource(usedContext, &path);
 }
 
-template<typename TextBoxPath>
-void SVGTextBoxPainter<TextBoxPath>::paintTextWithShadows(const Style::ComputedStyle& style, TextRun& textRun, const SVGTextFragment& fragment, unsigned startPosition, unsigned endPosition)
+void SVGTextBoxPainter::paintTextWithShadows(const Style::ComputedStyle& style, TextRun& textRun, const SVGTextFragment& fragment, unsigned startPosition, unsigned endPosition)
 {
     auto& context = m_paintInfo.context();
 
@@ -638,8 +608,7 @@ void SVGTextBoxPainter<TextBoxPath>::paintTextWithShadows(const Style::ComputedS
     }
 }
 
-template<typename TextBoxPath>
-void SVGTextBoxPainter<TextBoxPath>::paintText(const Style::ComputedStyle& style, const Style::ComputedStyle& selectionStyle, const SVGTextFragment& fragment, bool hasSelection, bool paintSelectedTextOnly)
+void SVGTextBoxPainter::paintText(const Style::ComputedStyle& style, const Style::ComputedStyle& selectionStyle, const SVGTextFragment& fragment, bool hasSelection, bool paintSelectedTextOnly)
 {
     unsigned startPosition = 0;
     unsigned endPosition = 0;
@@ -684,13 +653,9 @@ TextRun constructTextRun(StringView text, TextDirection direction, const Style::
     return run;
 }
 
-template<typename TextBoxPath>
-std::pair<unsigned, unsigned> SVGTextBoxPainter<TextBoxPath>::selectionStartEnd() const
+std::pair<unsigned, unsigned> SVGTextBoxPainter::selectionStartEnd() const
 {
     return m_renderer.view().selection().rangeForTextBox(m_renderer, m_selectableRange);
 }
-
-template class SVGTextBoxPainter<InlineIterator::BoxModernPath>;
-template class SVGTextBoxPainter<InlineIterator::BoxLegacyPath>;
 
 }

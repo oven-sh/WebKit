@@ -1,0 +1,143 @@
+# Every SortedSet operation: interleaved operands, an empty operand on either side, equal operands, and the set as its own operand (self).
+# A comma before or after the expected list would be an extra element.
+
+# RUN(LIST): sorted-set list 3,1,2,3,1
+# RUN(LIST): sorted-set list 1,2,3
+# LIST-NOT: ,
+# LIST: 1,2,3
+# LIST-NOT: ,
+# RUN(EMPTY): sorted-set list -
+# RUN(LARGEST): sorted-set list 4294967295,0
+# LARGEST: 0,4294967295
+
+# RUN(YES): sorted-set contains 1,3,5 1
+# RUN(YES): sorted-set contains 1,3,5 3
+# RUN(YES): sorted-set contains 1,3,5 5
+# RUN(NO): sorted-set contains 1,3,5 0
+# RUN(NO): sorted-set contains 1,3,5 4
+# RUN(NO): sorted-set contains 1,3,5 6
+# RUN(NO): sorted-set contains - 1
+
+# RUN(YES): sorted-set subset 1,3 1,2,3
+# RUN(YES): sorted-set subset 1,2,3 1,2,3
+# RUN(YES): sorted-set subset - 1,2,3
+# RUN(YES): sorted-set subset - -
+# RUN(YES): sorted-set subset 1,2,3 self
+# RUN(NO): sorted-set subset 1,2,3 1,3
+# RUN(NO): sorted-set subset 1,4 1,2,3
+# RUN(NO): sorted-set subset 0,1 1,2,3
+# RUN(NO): sorted-set subset 1 -
+
+# RUN(YES): sorted-set overlaps 1,3,5 2,4,5
+# RUN(YES): sorted-set overlaps 2,4,5 1,3,5
+# RUN(YES): sorted-set overlaps 1,2 1,2
+# RUN(YES): sorted-set overlaps 1,2 self
+# RUN(NO): sorted-set overlaps 1,3,5 2,4,6
+# RUN(NO): sorted-set overlaps 1,2 3,4
+# RUN(NO): sorted-set overlaps - 1
+# RUN(NO): sorted-set overlaps 1 -
+# RUN(NO): sorted-set overlaps - -
+# RUN(NO): sorted-set overlaps - self
+
+# RUN(ADDED): sorted-set add 2,3 1
+# RUN(ADDED): sorted-set add 1,3 2
+# RUN(ADDED): sorted-set add 1,2 3
+# ADDED-NOT: ,
+# ADDED: 1,2,3 changed
+# RUN(ADDEDFIRST): sorted-set add - 7
+# ADDEDFIRST: 7 changed
+# RUN(PRESENT): sorted-set add 1,2 1
+# RUN(PRESENT): sorted-set add 1,2 2
+# PRESENT-NOT: ,
+# PRESENT: 1,2 unchanged
+
+# RUN(REMOVED): sorted-set remove 0,1,3 0
+# RUN(REMOVED): sorted-set remove 1,2,3 2
+# RUN(REMOVED): sorted-set remove 1,3,4 4
+# REMOVED-NOT: ,
+# REMOVED: 1,3 changed
+# RUN(REMOVEDLAST): sorted-set remove 7 7
+# REMOVEDLAST: - changed
+# RUN(MISSING): sorted-set remove 1,3 0
+# RUN(MISSING): sorted-set remove 1,3 2
+# RUN(MISSING): sorted-set remove 1,3 4
+# MISSING-NOT: ,
+# MISSING: 1,3 unchanged
+# RUN(STILLEMPTY): sorted-set remove - 1
+
+# RUN(UNITED): sorted-set unite 1,3 2,4
+# RUN(UNITED): sorted-set unite 2,4 1,3
+# RUN(UNITED): sorted-set unite 1,2 3,4
+# RUN(UNITED): sorted-set unite 3,4 1,2
+# RUN(UNITED): sorted-set unite 1,2,3 2,3,4
+# RUN(UNITED): sorted-set unite 2 1,2,3,4
+# RUN(UNITED): sorted-set unite - 1,2,3,4
+# UNITED-NOT: ,
+# UNITED: 1,2,3,4 changed
+# RUN(COVERED): sorted-set unite 1,2,3,4 2,3
+# RUN(COVERED): sorted-set unite 1,2,3,4 1,4
+# RUN(COVERED): sorted-set unite 1,2,3,4 1,2,3,4
+# RUN(COVERED): sorted-set unite 1,2,3,4 -
+# RUN(COVERED): sorted-set unite 1,2,3,4 self
+# COVERED-NOT: ,
+# COVERED: 1,2,3,4 unchanged
+# RUN(STILLEMPTY): sorted-set unite - -
+# RUN(STILLEMPTY): sorted-set unite - self
+# STILLEMPTY: - unchanged
+
+# RUN(COMMON): sorted-set intersect 1,2,3,5 2,3,4
+# RUN(COMMON): sorted-set intersect 2,3,4 1,2,3,5
+# RUN(COMMON): sorted-set intersect 2,3 1,2,3,4
+# RUN(COMMON): sorted-set intersect 1,2,3,4 2,3
+# RUN(COMMON): sorted-set intersect 2,3 2,3
+# RUN(COMMON): sorted-set intersect 2,3 self
+# COMMON-NOT: ,
+# COMMON: 2,3
+# COMMON-NOT: ,
+# RUN(EMPTY): sorted-set intersect 1,3 2,4
+# RUN(EMPTY): sorted-set intersect - 1,2
+# RUN(EMPTY): sorted-set intersect 1,2 -
+# RUN(EMPTY): sorted-set intersect - -
+# RUN(EMPTY): sorted-set intersect - self
+
+# RUN(DIFFERENCE): sorted-set subtract 1,2,3,5 2,3,4
+# RUN(DIFFERENCE): sorted-set subtract 0,1,5,6 0,6
+# RUN(DIFFERENCE): sorted-set subtract 1,5 0,2,6
+# RUN(DIFFERENCE): sorted-set subtract 1,5 -
+# DIFFERENCE-NOT: ,
+# DIFFERENCE: 1,5
+# DIFFERENCE-NOT: ,
+# RUN(EMPTY): sorted-set subtract 1,2 1,2
+# RUN(EMPTY): sorted-set subtract 1,2 0,1,2,3
+# RUN(EMPTY): sorted-set subtract - 1,2
+# RUN(EMPTY): sorted-set subtract - -
+# RUN(EMPTY): sorted-set subtract 1,2 self
+# RUN(EMPTY): sorted-set subtract - self
+
+# RUN(OPERATION): sorted-set reverse 1,2
+# OPERATION: error: bad argument reverse
+# RUN(ENTRY): sorted-set list 1,x
+# ENTRY: error: bad argument 1,x
+# RUN(GAP): sorted-set list 1,,2
+# GAP: error: bad argument 1,,2
+# RUN(SIGN): sorted-set list +1
+# SIGN: error: bad argument +1
+# RUN(TOOLARGE): sorted-set list 4294967296
+# TOOLARGE: error: bad argument 4294967296
+# RUN(OPERAND): sorted-set unite 1,2 3,
+# OPERAND: error: bad argument 3,
+# RUN(NOTANUMBER): sorted-set add 1,2 3,4
+# NOTANUMBER: error: bad argument 3,4
+# RUN(NOTANELEMENT): sorted-set contains 1,2 self
+# NOTANELEMENT: error: bad argument self
+# RUN(EXTRA): sorted-set list 1,2 3
+# EXTRA: error: bad argument 3
+# RUN(TOOFEW): sorted-set add 1,2
+# RUN(TOOFEW): sorted-set list
+# RUN(TOOFEW): sorted-set
+# TOOFEW: error: missing argument
+
+# YES: yes
+# NO: no
+# EMPTY-NOT: argument
+# EMPTY: -

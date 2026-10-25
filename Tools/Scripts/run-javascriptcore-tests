@@ -100,6 +100,7 @@ use constant {
 my $runTestMasm = RUN_IF_NO_TESTS_SPECIFIED;
 my $runTestAir = RUN_IF_NO_TESTS_SPECIFIED;
 my $runTestB3 = RUN_IF_NO_TESTS_SPECIFIED;
+my $runTestAOT = RUN_IF_NO_TESTS_SPECIFIED;
 my $runTestDFG = RUN_IF_NO_TESTS_SPECIFIED;
 my $runTestAPI = RUN_IF_NO_TESTS_SPECIFIED;
 my $runTestWasmDebugger = RUN_IF_NO_TESTS_SPECIFIED;
@@ -118,6 +119,7 @@ my $runCLoopMode = 0;
 my $runQuickMode = 0;
 my $noSlowTests = 0; # Bun
 my $asanBuild = 0; # Bun
+my $withoutAOT = 0; # Bun
 
 my $forceCollectContinuously = 0;
 my $envVars = "";
@@ -177,6 +179,17 @@ if ($ENV{RUN_JAVASCRIPTCORE_TESTS_TESTB3}) {
     } else {
         print "Don't recognize value for RUN_JAVASCRIPTCORE_TESTS_TESTB3 environment variable: '"
             . $ENV{RUN_JAVASCRIPTCORE_TESTS_TESTB3} . "'. Should be set to 'true' or 'false'.\n";
+    }
+}
+
+if ($ENV{RUN_JAVASCRIPTCORE_TESTS_TESTAOT}) {
+    if ($ENV{RUN_JAVASCRIPTCORE_TESTS_TESTAOT} eq "true") {
+        $runTestAOT = ENV_VAR_SAYS_DO_RUN;
+    } elsif ($ENV{RUN_JAVASCRIPTCORE_TESTS_TESTAOT} eq "false") {
+        $runTestAOT = ENV_VAR_SAYS_DONT_RUN;
+    } else {
+        print "Don't recognize value for RUN_JAVASCRIPTCORE_TESTS_TESTAOT environment variable: '"
+            . $ENV{RUN_JAVASCRIPTCORE_TESTS_TESTAOT} . "'. Should be set to 'true' or 'false'.\n";
     }
 }
 
@@ -269,6 +282,7 @@ my $buildJSCDefault = $buildJSC ? "will check" : "will not check";
 my $testmasmDefault = defaultStringForTestState($runTestMasm);
 my $testairDefault = defaultStringForTestState($runTestAir);
 my $testb3Default = defaultStringForTestState($runTestB3);
+my $testaotDefault = defaultStringForTestState($runTestAOT);
 my $testDFGDefault = defaultStringForTestState($runTestDFG);
 my $testapiDefault = defaultStringForTestState($runTestAPI);
 my $testWasmDebuggerDefault = defaultStringForTestState($runTestWasmDebugger);
@@ -295,6 +309,7 @@ Usage: $programName [options] [options to pass to build system]
   --[no-]testmasm               Only run (or don't run) testmasm (default: $testmasmDefault)
   --[no-]testair                Only run (or don't run) testair (default: $testairDefault)
   --[no-]testb3                 Only run (or don't run) testb3 (default: $testb3Default)
+  --[no-]testaot                Only run (or don't run) testaot (default: $testaotDefault)
   --[no-]testdfg                Only run (or don't run) testdfg (default: $testDFGDefault)
   --[no-]testapi                Only run (or don't run) testapi (default: $testapiDefault)
   --[no-]testwasmdebugger       Only run (or don't run) testwasmdebugger (default: $testWasmDebuggerDefault)
@@ -308,6 +323,7 @@ Usage: $programName [options] [options to pass to build system]
                                 Note, this will not change the behavior of tests that specify their own modes.
   --no-slow                     Bun: skip the tests marked //\@ slow! (run-jsc-stress-tests --no-slow).
   --asan                        Bun: the build under test has AddressSanitizer; skip the tests marked //\@ skip if \$asan.
+  --without-aot                 Bun: the build under test has ENABLE_AOT=0; no testaot, and skip the tests marked //\@ skip if !\$aot.
 
   --[no-]fail-fast              Stop this script when a test family reports an error or failure (default: $failFastDefault)
   --[no-]force-collectContinuously Enable the collectContinuously mode even if it was disabled on this platform.
@@ -365,6 +381,7 @@ Environment Variables:
   - set RUN_JAVASCRIPTCORE_TESTS_TESTMASM to "true" or "false" (no quotes) to determine if we run testmasm by default.
   - set RUN_JAVASCRIPTCORE_TESTS_TESTAIR to "true" or "false" (no quotes) to determine if we run testair by default.
   - set RUN_JAVASCRIPTCORE_TESTS_TESTB3 to "true" or "false" (no quotes) to determine if we run testb3 by default.
+  - set RUN_JAVASCRIPTCORE_TESTS_TESTAOT to "true" or "false" (no quotes) to determine if we run testaot by default.
   - set RUN_JAVASCRIPTCORE_TESTS_TESTDFG to "true" or "false" (no quotes) to determine if we run testdfg by default.
   - set RUN_JAVASCRIPTCORE_TESTS_TESTAPI to "true" or "false" (no quotes) to determine if we run testapi by default.
   - set RUN_JAVASCRIPTCORE_TESTS_TESTWASMDEBUGGER to "true" or "false" (no quotes) to determine if we run testwasmdebugger by default.
@@ -387,6 +404,7 @@ GetOptions(
     'testmasm!' => \$runTestMasm,
     'testair!' => \$runTestAir,
     'testb3!' => \$runTestB3,
+    'testaot!' => \$runTestAOT,
     'testdfg!' => \$runTestDFG,
     'testapi!' => \$runTestAPI,
     'testwasmdebugger!' => \$runTestWasmDebugger,
@@ -399,6 +417,7 @@ GetOptions(
     'quick!' => \$runQuickMode,
     'no-slow' => \$noSlowTests,
     'asan' => \$asanBuild,
+    'without-aot' => \$withoutAOT,
     'fail-fast!' => \$failFast,
     'force-collectContinuously!' => \$forceCollectContinuously,
     'copy!' => \$copyJSC,
@@ -448,10 +467,15 @@ if ($asanBuild) {
     asanIsEnabled();
 }
 
+if ($withoutAOT) {
+    $runTestAOT = DONT_RUN;
+}
+
 my $specificTestsSpecified = 0;
 if ($runTestMasm == DO_RUN
    || $runTestAir == DO_RUN
    || $runTestB3 == DO_RUN
+   || $runTestAOT == DO_RUN
    || $runTestDFG == DO_RUN
    || $runTestAPI == DO_RUN
    || $runTestWasmDebugger == DO_RUN
@@ -579,6 +603,7 @@ sub computeFullConfiguration()
 $runTestMasm = enableTestOrNot($runTestMasm);
 $runTestAir = enableTestOrNot($runTestAir);
 $runTestB3 = enableTestOrNot($runTestB3);
+$runTestAOT = enableTestOrNot($runTestAOT);
 $runTestDFG = enableTestOrNot($runTestDFG);
 $runTestAPI = enableTestOrNot($runTestAPI);
 $runTestWasmDebugger = enableTestOrNot($runTestWasmDebugger);
@@ -716,12 +741,13 @@ sub testPath {
 }
 
 sub runTest {
-    my ($testName, $jsonTestStatusName, $extraEnvVars) = @_;
+    my ($testName, $jsonTestStatusName, $extraEnvVars, $extraArgs) = @_;
 
     chdirWebKit();
     chdir($productDir) or die "Failed to switch directory to '$productDir'\n";
     my $testExecutable = testPath($productDir, $testName);
     my @command = ($testExecutable);
+    push @command, split(/\s+/, $extraArgs) if defined $extraArgs && $extraArgs ne "";
     if (defined($artifact_exec_wrapper)) {
         # This needs to go first, as one use case is to override the
         # ELF interpreter.
@@ -761,6 +787,11 @@ sub runTest {
         }
         $testResult = close(TEST) ? 0 : $?;
         print "$testOutput" if ($verbose or $testResult);
+        # Bun: CI reads how many tests testaot left out from its line of counts, also when all of them pass.
+        if (!$verbose && !$testResult && $testName eq "testaot") {
+            my @counts = grep { /^\d+ passed, \d+ failed/ } split(/\n/, $testOutput);
+            print "$counts[-1]\n" if @counts;
+        }
     }
     $reportData{$testName} = $testResult ? {actual => "FAIL"} : {actual => "PASS"};
 
@@ -849,10 +880,16 @@ setupEnvironment();
 if ($runTestMasm) { runTest("testmasm", "allMasmTestsPassed") }
 if ($runTestAir) { runTest("testair", "allAirTestsPassed") }
 if ($runTestB3) { runTest("testb3", "allB3TestsPassed") }
+if ($runTestAOT) {
+    my $jscSourceDir = File::Spec->catdir(sourceDir(), "Source", "JavaScriptCore");
+    runTest("testaot", "allAOTTestsPassed", "", "all " . File::Spec->catdir($jscSourceDir, "aot", "tests"));
+}
 if ($runTestDFG) { runTest("testdfg", "allDFGTestsPassed") }
 if ($runTestAPI) {
     runTest("testapi", "allApiTestsPassed");
     runTest("testapi", "allApiTestsPassedWithSystemMalloc", "Malloc=1");
+    # The global Collector cannot yet collect several heaps at once, so run only the test that never collects.
+    runTest("testapi", "allApiTestsPassedWithGlobalGC", "JSC_useGlobalGC=1", "heapMembershipChanges");
 }
 if ($runTestWasmDebugger) { runTest("testwasmdebugger", "allWasmDebuggerTestsPassed") }
 if ($runTestLibJSCTools) { runTest("testLibJSCTools", "allLibJSCToolsTestsPassed") }
@@ -905,6 +942,7 @@ sub runJSCStressTests
             "LayoutTests/jsc-layout-tests.yaml",
             "JSTests/typeProfiler.yaml",
             "JSTests/controlFlowProfiler.yaml",
+            "JSTests/heapProfiler.yaml",
             "JSTests/es6.yaml",
             "JSTests/modules.yaml",
             "JSTests/complex.yaml",
@@ -989,6 +1027,10 @@ sub runJSCStressTests
 
     if ($asanBuild) {
         push(@jscStressDriverCmd, "--asan");
+    }
+
+    if ($withoutAOT) {
+        push(@jscStressDriverCmd, "--without-aot");
     }
 
     if (!$runJITStressTests) {

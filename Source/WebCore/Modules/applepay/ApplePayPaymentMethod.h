@@ -39,6 +39,7 @@ struct ApplePayPaymentMethod {
 
     String displayName;
     String network;
+    String issuingRegionCode;
     std::optional<Type> type;
     std::optional<ApplePayPaymentPass> paymentPass;
     std::optional<ApplePayPaymentContact> billingContact;

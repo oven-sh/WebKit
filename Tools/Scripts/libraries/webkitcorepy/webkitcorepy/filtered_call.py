@@ -20,8 +20,14 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from __future__ import annotations
 
-def filtered_call(function, *args, **kwargs):
+from typing import Any, Callable, TypeVar
+
+R = TypeVar('R')
+
+
+def filtered_call(function: Callable[..., R], *args: Any, **kwargs: Any) -> R:
     import inspect
 
     signature_args = inspect.signature(function).parameters.keys()

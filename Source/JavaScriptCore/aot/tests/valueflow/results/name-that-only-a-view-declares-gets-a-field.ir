@@ -1,0 +1,54 @@
+# class Made { flags = 1 }   interface Links { resolved?: string; count?: number }   interface MoreLinks extends Links { mapped?: string }
+# function fill(links: Links) { links.resolved = "r" }   function fillMore(links: MoreLinks) { links.mapped = "m" }   function fillAny(links: Links) { (links as any).other = "o" }
+# publish(new Made() as Links, fill, fillMore, fillAny): unknown code has the object and calls the functions.
+# A declared type is a view: the link says that nothing allocates Links and MoreLinks, so they are members of no family, not even of their own: both families hold Made alone.
+# The names that the program declares for the objects of Made are those of the views all the same: a name that a view has through which the program may see the objects gets a field in Made,
+# with the type that the view declares. A name that no view has gets no room: it is an extra property.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Made" fields=[{key="flags"
+# CHECK-NOT: key="other"
+# CHECK: {key="resolved" declared={type=undefined|null|string} flags=[IsAddedLate
+# CHECK-NOT: key="other"
+# CHECK: {key="mapped" declared={type=undefined|null|string} flags=[IsAddedLate
+# CHECK-NOT: key="other"
+# CHECK: layout L1 name="Links"
+# CHECK-NOT: IsAddedLate
+# CHECK: function f0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Made" fields=[{key="flags" declared={type=number}}] supertypes=[L1, L2]
+layout L1 name="Links" fields=[{key="count" declared={type=undefined|null|number}}, {key="resolved" declared={type=undefined|null|string}}] flags=[IsNeverAllocated]
+layout L2 name="MoreLinks" fields=[{key="count" declared={type=undefined|null|number}}, {key="mapped" declared={type=undefined|null|string}}, {key="resolved" declared={type=undefined|null|string}}] supertypes=[L1] flags=[IsNeverAllocated]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="publish" [isFreeName]
+    v7 = Call v6, -, v1, v2, v3, v4
+    Return
+}
+function f1 name="fill" parameters=[{type=L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=L1
+    v2 = String string="r"
+    PropSet v1, v2 key="resolved" mode=Strict
+    Return
+}
+function f2 name="fillMore" parameters=[{type=L2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=L2
+    v2 = String string="m"
+    PropSet v1, v2 key="mapped" mode=Strict
+    Return
+}
+function f3 name="fillAny" parameters=[{type=L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 castType=L1
+    v2 = String string="o"
+    PropSet v1, v2 key="other" mode=Strict
+    Return
+}

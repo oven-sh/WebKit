@@ -83,8 +83,8 @@ struct PrimitiveData {
     bool hasQuirk() const { return m_hasQuirk; }
 
     float value() const { ASSERT(!usesHandle()); return m_floatValue; }
-    Calculation::Value& calculationValue() const;
-    CalcSizeValue& NODELETE calcSizeValue() const;
+    Calculation::Value& LEGACY_NODELETE calculationValue() const;
+    CalcSizeValue& LEGACY_NODELETE calcSizeValue() const;
 
     bool isKnownZero(PrimitiveDataEvaluationKind) const;
     bool isKnownPositive(PrimitiveDataEvaluationKind) const;
@@ -112,7 +112,7 @@ private:
     void initialize(const PrimitiveData&);
     void initialize(PrimitiveData&&);
 
-    WEBCORE_EXPORT void NODELETE ref() const;
+    WEBCORE_EXPORT void LEGACY_NODELETE ref() const;
     WEBCORE_EXPORT void deref() const;
 
     union {

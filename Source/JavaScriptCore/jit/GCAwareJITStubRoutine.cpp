@@ -26,6 +26,7 @@
 #include "config.h"
 #include "GCAwareJITStubRoutine.h"
 
+#include "AOTRemovableFeature.h"
 #include "AccessCase.h"
 #include "CacheableIdentifierInlines.h"
 #include "CodeBlock.h"
@@ -49,7 +50,7 @@ GCAwareJITStubRoutine::GCAwareJITStubRoutine(Type type, const MacroAssemblerCode
 
 void GCAwareJITStubRoutine::makeGCAware(VM& vm)
 {
-    vm.heap.m_jitStubRoutines->add(this);
+    vm.heap.addGCAwareJITStubRoutine(this);
     m_isGCAware = true;
 }
 
@@ -142,8 +143,9 @@ void PolymorphicAccessJITStubRoutine::invalidate()
     }
 }
 
-unsigned PolymorphicAccessJITStubRoutine::computeHash(std::span<const Ref<AccessCase>> cases)
+NEVER_INLINE unsigned PolymorphicAccessJITStubRoutine::computeHash(std::span<const Ref<AccessCase>> cases)
 {
+    JSC_REMOVABLE_DEFINITION(JIT, &PolymorphicAccessJITStubRoutine::computeHash);
     if (cases.size() == 1)
         return cases.front()->hash();
 

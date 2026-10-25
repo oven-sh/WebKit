@@ -26,13 +26,16 @@
 #include "config.h"
 #include "StructureAlignedMemoryAllocator.h"
 
+#include "AddressSpaceBudget.h"
 #include "JSCConfig.h"
 #include "MarkedBlock.h"
 #include "Options.h"
+#include "ReservedRangeHeap.h"
 #include "StructureID.h"
 #include <bmalloc/bmalloc.h>
 #include <wtf/BitVector.h>
 #include <wtf/RAMSize.h>
+#include <wtf/Vector.h>
 
 #if OS(DARWIN)
 #include <wtf/cocoa/Entitlements.h>
@@ -91,7 +94,7 @@ void* StructureAlignedMemoryAllocator::tryReallocateMemory(void*, size_t)
 #if USE(LIBPAS)
 
 static const bmalloc_type structureHeapType { BMALLOC_TYPE_INITIALIZER(MarkedBlock::blockSize, MarkedBlock::blockSize, "Structure Heap") };
-static pas_primitive_heap_ref structureHeap { BMALLOC_AUXILIARY_HEAP_REF_INITIALIZER(&structureHeapType, pas_bmalloc_heap_ref_kind_compact) };
+static pas_primitive_heap_ref structureHeap { BMALLOC_AUXILIARY_HEAP_REF_INITIALIZER(&structureHeapType) };
 
 #elif USE(MIMALLOC)
 
@@ -110,11 +113,23 @@ public:
         RELEASE_ASSERT(hasOneBitSet(preferredStructureHeapSize));
 
         uintptr_t mappedHeapSize = preferredStructureHeapSize;
+        if (Options::runsCompiledImage() && !Options::structureHeapSizeInKB())
+            mappedHeapSize = structureHeapSizeWithinBudget(mappedHeapSize);
+#if OS(LINUX) && defined(BUN_HARDENED)
+        bool drawsWindow = true;
+#else
+        bool drawsWindow = Options::runsCompiledImage();
+#endif
         for (unsigned i = 0; i < 8; ++i) {
             // We need to align the address range to mappedHeapSize to ensure that the range does not span
             // across 4GB granules. Otherwise, the top 32 bits of the address may not be constant for all
             // addresses in the range. The top 32 bits being constant is an invariant that we rely on in
             // order to encode StructureIDs.
+            if (drawsWindow) {
+                g_jscConfig.startOfStructureHeap = std::bit_cast<uintptr_t>(ReservedRangeHeap::tryReserveRandomWindow(mappedHeapSize, mappedHeapSize, OSAllocator::StructureAllocatorPages, true));
+                if (g_jscConfig.startOfStructureHeap)
+                    break;
+            }
             g_jscConfig.startOfStructureHeap = reinterpret_cast<uintptr_t>(OSAllocator::tryReserveUncommittedAligned(mappedHeapSize, mappedHeapSize, OSAllocator::StructureAllocatorPages));
             if (g_jscConfig.startOfStructureHeap)
                 break;
@@ -129,6 +144,10 @@ public:
 
         // Don't use the first page because zero is used as the empty StructureID and the first allocation will conflict.
         m_useSystemHeap = !bmalloc::api::isEnabled();
+#if USE(MIMALLOC)
+        if (Options::runsCompiledImage() && mappedHeapSize < smallestStructureHeapSizeForMimalloc)
+            m_useSystemHeap = true;
+#endif
 #if USE(LIBPAS)
         if (!m_useSystemHeap) [[likely]] {
 #if PLATFORM(PLAYSTATION)
@@ -169,9 +188,66 @@ public:
 
     void* tryMallocStructureBlock()
     {
+        void* block = tryMallocStructureBlockWithoutReserve();
+        if (block && Options::runsCompiledImage())
+            keepReserve();
+        return block;
+    }
+
+    bool releaseReserve()
+    {
+        Vector<void*, reserveBlockCount> reserve;
+        {
+            Locker locker(m_reserveLock);
+            reserve = std::exchange(m_reserve, { });
+            m_hasReleasedReserve = true;
+        }
+        for (void* block : reserve)
+            freeStructureBlock(block);
+        return !reserve.isEmpty();
+    }
+
+    void didThrowOutOfMemoryError()
+    {
+        Locker locker(m_reserveLock);
+        m_hasReleasedReserve = false;
+    }
+
+    void keepReserve()
+    {
+        if (m_blockCount.load(std::memory_order_relaxed) * MarkedBlock::blockSize <= g_jscConfig.sizeOfStructureHeap / reserveThresholdDivisor)
+            return;
+        {
+            Locker locker(m_reserveLock);
+            if (m_hasReleasedReserve || m_reserve.size() == reserveBlockCount)
+                return;
+        }
+        void* block = tryMallocStructureBlockWithoutReserve();
+        if (!block)
+            return;
+        {
+            Locker locker(m_reserveLock);
+            if (!m_hasReleasedReserve && m_reserve.size() < reserveBlockCount) {
+                m_reserve.append(block);
+                return;
+            }
+        }
+        freeStructureBlock(block);
+    }
+
+    void* tryMallocStructureBlockWithoutReserve()
+    {
+        void* block = tryMallocStructureBlockImpl();
+        if (block)
+            m_blockCount.fetch_add(1, std::memory_order_relaxed);
+        return block;
+    }
+
+    void* tryMallocStructureBlockImpl()
+    {
         if (!m_useSystemHeap) [[likely]] {
 #if USE(LIBPAS)
-            void* result = bmalloc_try_allocate_auxiliary_with_alignment_inline(&structureHeap, MarkedBlock::blockSize, MarkedBlock::blockSize, pas_always_compact_allocation_mode);
+            void* result = bmalloc_try_allocate_auxiliary_with_alignment_inline(&structureHeap, MarkedBlock::blockSize, MarkedBlock::blockSize);
 
 #if PLATFORM(PLAYSTATION)
             // libpas isn't calling pas_page_malloc commit, so we've got to commit the region ourselves
@@ -205,6 +281,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     void freeStructureBlock(void* blockPtr)
     {
+        m_blockCount.fetch_sub(1, std::memory_order_relaxed);
         if (!m_useSystemHeap) [[likely]] {
 #if USE(LIBPAS)
             bmalloc_deallocate_inline(blockPtr);
@@ -254,9 +331,15 @@ private:
     // The actual preferred size will be the next power-of-two below this value
     // This value results in a 512MiB reservation on 3GiB devices, 1GiB on 4GiB
     static constexpr size_t maximumPercentageOfPhysicalMemoryToReserveWhenVAConstrained = 20;
+    static constexpr size_t reserveBlockCount = 16;
+    static constexpr size_t reserveThresholdDivisor = 4;
     Lock m_lock;
     bool m_useSystemHeap { true };
     BitVector m_usedBlocks;
+    std::atomic<size_t> m_blockCount { 0 };
+    Lock m_reserveLock;
+    Vector<void*, reserveBlockCount> m_reserve WTF_GUARDED_BY_LOCK(m_reserveLock);
+    bool m_hasReleasedReserve WTF_GUARDED_BY_LOCK(m_reserveLock) { false };
 };
 
 static LazyNeverDestroyed<StructureMemoryManager> s_structureMemoryManager;
@@ -271,6 +354,16 @@ void* StructureAlignedMemoryAllocator::tryAllocateAlignedMemory(size_t alignment
 void StructureAlignedMemoryAllocator::freeAlignedMemory(void* block)
 {
     s_structureMemoryManager->freeStructureBlock(block);
+}
+
+bool StructureAlignedMemoryAllocator::releaseReserve()
+{
+    return s_structureMemoryManager->releaseReserve();
+}
+
+void StructureAlignedMemoryAllocator::didThrowOutOfMemoryError()
+{
+    s_structureMemoryManager->didThrowOutOfMemoryError();
 }
 
 void StructureAlignedMemoryAllocator::initializeStructureAddressSpace()
@@ -324,6 +417,15 @@ size_t StructureMemoryManager::computePreferredStructureHeapReservationSize()
 }
 
 #else // not CPU(ADDRESS64)
+
+bool StructureAlignedMemoryAllocator::releaseReserve()
+{
+    return false;
+}
+
+void StructureAlignedMemoryAllocator::didThrowOutOfMemoryError()
+{
+}
 
 void StructureAlignedMemoryAllocator::initializeStructureAddressSpace()
 {

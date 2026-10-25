@@ -68,8 +68,11 @@ WI.SourceCodeLocation = class SourceCodeLocation extends WI.Object
             return false;
 
         function resolveSourceCode(sourceCode) {
-            if (sourceCode instanceof WI.Script)
-                return sourceCode.resource;
+            if (sourceCode instanceof WI.Script) {
+                let resource = sourceCode.resource;
+                if (resource)
+                    return resource;
+            }
             return sourceCode;
         }
         let thisSourceCode = resolveSourceCode(this.sourceCode);
@@ -312,7 +315,21 @@ WI.SourceCodeLocation = class SourceCodeLocation extends WI.Object
 
         let sourceMapPosition = this._sourceCode.createSourceMapPosition(this._lineNumber, this._columnNumber);
         for (let sourceMap of this._sourceCode.sourceMaps) {
-            let originalPosition = sourceMap.findOriginalPosition(sourceMapPosition.lineNumber, sourceMapPosition.columnNumber);
+            let lineNumber = sourceMapPosition.lineNumber;
+            let columnNumber = sourceMapPosition.columnNumber;
+
+            // Keep in sync with `WI.SourceMapResource.prototype.createSourceCodeLocation`.
+            let originalSourceCode = sourceMap.originalSourceCode;
+            if (originalSourceCode instanceof WI.Script && originalSourceCode.range) {
+                if (!originalSourceCode.range.contains(lineNumber, columnNumber))
+                    continue;
+
+                lineNumber -= originalSourceCode.range.startLine;
+                if (!lineNumber)
+                    columnNumber -= originalSourceCode.range.startColumn;
+            }
+
+            let originalPosition = sourceMap.findOriginalPosition(lineNumber, columnNumber);
             if (originalPosition) {
                 [this._mappedResource, this._mappedLineNumber, this._mappedColumnNumber] = originalPosition;
                 break;

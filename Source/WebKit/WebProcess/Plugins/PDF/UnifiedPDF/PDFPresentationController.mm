@@ -198,7 +198,7 @@ void PDFPresentationController::setNeedsRepaintForPageCoverage(RepaintRequiremen
         repaintRequirements.add(RepaintRequirement::PDFContent);
     }
 
-    auto layerCoverages = layerCoveragesForRepaintPageCoverage(repaintRequirements, coverage);
+    const Vector layerCoverages = layerCoveragesForRepaintPageCoverage(repaintRequirements, coverage);
     for (auto& layerCoverage : layerCoverages)
         Ref { layerCoverage.layer }->setNeedsDisplayInRect(layerCoverage.bounds);
 
@@ -269,8 +269,9 @@ auto PDFPresentationController::pdfPositionForCurrentView(AnchorPoint anchorPoin
 
     auto pageIndex = *maybePageIndex;
     auto pageBounds = documentLayout.layoutBoundsForPageAtIndex(pageIndex);
-    auto topLeftInDocumentSpace = checkedPlugin->convertDown(UnifiedPDFPlugin::CoordinateSpace::Plugin, UnifiedPDFPlugin::CoordinateSpace::PDFDocumentLayout, FloatPoint::zero());
-    auto pagePoint = documentLayout.documentToPDFPage(FloatPoint { pageBounds.center().x(), topLeftInDocumentSpace.y() }, pageIndex);
+    auto topLeftInDocumentSpace = anchorPointInDocumentSpace(AnchorPoint::TopLeft);
+    auto anchorX = checkedPlugin->shouldSizeToFitContent() ? topLeftInDocumentSpace.x() : pageBounds.center().x();
+    auto pagePoint = documentLayout.documentToPDFPage(FloatPoint { anchorX, topLeftInDocumentSpace.y() }, pageIndex);
 
     LOG_WITH_STREAM(PDF, stream << "PDFPresentationController::pdfPositionForCurrentView - point " << pagePoint << " in page " << pageIndex << " with anchor point " << std::to_underlying(anchorPoint));
 

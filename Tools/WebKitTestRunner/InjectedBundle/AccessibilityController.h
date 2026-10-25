@@ -28,8 +28,11 @@
 #include "JSWrappable.h"
 #include <JavaScriptCore/JSObjectRef.h>
 #include <JavaScriptCore/JSRetainPtr.h>
+#include <JavaScriptCore/JSStringRefPtr.h>
+#include <WebKit/WKRetainPtr.h>
 #include <wtf/Condition.h>
 #include <wtf/FastMalloc.h>
+#include <wtf/HashMap.h>
 #include <wtf/Platform.h>
 #if PLATFORM(COCOA)
 #include <wtf/RetainPtr.h>
@@ -67,7 +70,7 @@ public:
     void setClientAccessibilityMode(bool);
     bool clientAccessibilityModeEnabled() const { return m_enableClientAccessibilityMode; }
 
-    JSRetainPtr<JSStringRef> platformName();
+    RefPtr<OpaqueJSString> platformName();
 
     // Controller Methods - platform-independent implementations.
     Ref<AccessibilityUIElement> rootElement(JSContextRef);
@@ -84,6 +87,15 @@ public:
 
     bool addNotificationListener(JSContextRef, JSValueRef functionCallback);
     bool removeNotificationListener();
+#if PLATFORM(MAC)
+    // Called when the UI process forwards a notification it observed in client accessibility mode.
+    void clientNotificationReceived(uint64_t elementToken, JSStringRef notificationName, WKTypeRef userInfo);
+
+    // Sends a client accessibility request to the UI process and returns its reply. Synchronous to the
+    // caller, but the main run loop keeps running meanwhile (see TestController::handleAXAsyncRequest).
+    WKRetainPtr<WKTypeRef> sendClientAccessibilityRequest(const char* name, WKTypeRef body);
+    void clientAccessibilityReplyReceived(uint64_t requestID, WKTypeRef result);
+#endif
     void injectAccessibilityPreference(JSStringRef domain, JSStringRef key, JSStringRef value);
 
     void printToStderr(JSStringRef) const;
@@ -106,6 +118,17 @@ private:
     AccessibilityController();
     void platformInitialize();
     void platformInitializeClientAccessibility();
+
+#if PLATFORM(MAC)
+    bool addClientNotificationListener(JSContextRef, JSValueRef functionCallback);
+    bool removeClientNotificationListener();
+
+    JSRetainPtr<JSGlobalContextRef> m_clientNotificationContext;
+    JSValueRef m_clientNotificationCallback { nullptr };
+
+    uint64_t m_nextClientAccessibilityRequestID { 1 };
+    HashMap<uint64_t, WKRetainPtr<WKTypeRef>> m_clientAccessibilityReplies;
+#endif
 
 #if PLATFORM(COCOA)
     RetainPtr<id> m_globalNotificationHandler;

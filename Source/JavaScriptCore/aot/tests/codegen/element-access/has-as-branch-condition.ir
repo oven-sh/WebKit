@@ -1,0 +1,361 @@
+# The test for an array element that a TestAndBranch owns has code for each storage kind and for an unknown one, at an index and at any number, in the three code shapes
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code
+# CHECK-COUNT-16: : size=
+# CHECK-NOT: no code
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="inInt32StorageAtIndex" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=int[0, 4294967294]}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayElement v0, v1 arrayStorage=Int32
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 arrayStorage=Int32
+    TestAndBranch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 arrayStorage=Int32
+    TestAndBranch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f0 b0 Balanced
+# S: f0 b2 Fast
+# S: f0 b4 Compact
+function f1 name="inInt32StorageAtInteger" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=int}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayElement v0, v1 arrayStorage=Int32
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 arrayStorage=Int32
+    TestAndBranch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 arrayStorage=Int32
+    TestAndBranch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f1 b0 Balanced
+# S: f1 b2 Fast
+# S: f1 b4 Compact
+function f2 name="inInt32StorageAtNumber" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayElement v0, v1 arrayStorage=Int32
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 arrayStorage=Int32
+    TestAndBranch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 arrayStorage=Int32
+    TestAndBranch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f2 b0 Balanced
+# S: f2 b2 Fast
+# S: f2 b4 Compact
+function f3 name="inInt32StorageAtWholeNumber" parameters=[{type=Array<anything, proven, Int32, pristine[Storage]>}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayElement v0, v1 arrayStorage=Int32 [keyIsIntegral]
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 arrayStorage=Int32 [keyIsIntegral]
+    TestAndBranch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 arrayStorage=Int32 [keyIsIntegral]
+    TestAndBranch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f3 b0 Balanced
+# S: f3 b2 Fast
+# S: f3 b4 Compact
+function f4 name="inDoubleStorageAtIndex" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=int[0, 4294967294]}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayElement v0, v1 arrayStorage=Double
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 arrayStorage=Double
+    TestAndBranch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 arrayStorage=Double
+    TestAndBranch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f4 b0 Balanced
+# S: f4 b2 Fast
+# S: f4 b4 Compact
+function f5 name="inDoubleStorageAtInteger" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=int}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayElement v0, v1 arrayStorage=Double
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 arrayStorage=Double
+    TestAndBranch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 arrayStorage=Double
+    TestAndBranch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f5 b0 Balanced
+# S: f5 b2 Fast
+# S: f5 b4 Compact
+function f6 name="inDoubleStorageAtNumber" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayElement v0, v1 arrayStorage=Double
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 arrayStorage=Double
+    TestAndBranch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 arrayStorage=Double
+    TestAndBranch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f6 b0 Balanced
+# S: f6 b2 Fast
+# S: f6 b4 Compact
+function f7 name="inDoubleStorageAtWholeNumber" parameters=[{type=Array<anything, proven, Double, pristine[Storage]>}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayElement v0, v1 arrayStorage=Double [keyIsIntegral]
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 arrayStorage=Double [keyIsIntegral]
+    TestAndBranch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 arrayStorage=Double [keyIsIntegral]
+    TestAndBranch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f7 b0 Balanced
+# S: f7 b2 Fast
+# S: f7 b4 Compact
+function f8 name="inContiguousStorageAtIndex" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=int[0, 4294967294]}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayElement v0, v1 arrayStorage=Contiguous
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 arrayStorage=Contiguous
+    TestAndBranch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 arrayStorage=Contiguous
+    TestAndBranch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f8 b0 Balanced
+# S: f8 b2 Fast
+# S: f8 b4 Compact
+function f9 name="inContiguousStorageAtInteger" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=int}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayElement v0, v1 arrayStorage=Contiguous
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 arrayStorage=Contiguous
+    TestAndBranch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 arrayStorage=Contiguous
+    TestAndBranch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f9 b0 Balanced
+# S: f9 b2 Fast
+# S: f9 b4 Compact
+function f10 name="inContiguousStorageAtNumber" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayElement v0, v1 arrayStorage=Contiguous
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 arrayStorage=Contiguous
+    TestAndBranch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 arrayStorage=Contiguous
+    TestAndBranch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f10 b0 Balanced
+# S: f10 b2 Fast
+# S: f10 b4 Compact
+function f11 name="inContiguousStorageAtWholeNumber" parameters=[{type=Array<anything, proven, Contiguous, pristine[Storage]>}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayElement v0, v1 arrayStorage=Contiguous [keyIsIntegral]
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 arrayStorage=Contiguous [keyIsIntegral]
+    TestAndBranch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 arrayStorage=Contiguous [keyIsIntegral]
+    TestAndBranch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f11 b0 Balanced
+# S: f11 b2 Fast
+# S: f11 b4 Compact
+function f12 name="inOtherStorageAtIndex" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int[0, 4294967294]}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayElement v0, v1
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1
+    TestAndBranch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1
+    TestAndBranch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f12 b0 Balanced
+# S: f12 b2 Fast
+# S: f12 b4 Compact
+function f13 name="inOtherStorageAtInteger" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayElement v0, v1
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1
+    TestAndBranch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1
+    TestAndBranch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f13 b0 Balanced
+# S: f13 b2 Fast
+# S: f13 b4 Compact
+function f14 name="inOtherStorageAtNumber" parameters=[{type=Array<anything, pristine[Storage]>}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayElement v0, v1
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1
+    TestAndBranch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1
+    TestAndBranch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f14 b0 Balanced
+# S: f14 b2 Fast
+# S: f14 b4 Compact
+function f15 name="inOtherStorageAtWholeNumber" parameters=[{type=Array<anything, pristine[Storage]>}, {type=whole}, {type=boolean}] results=[{type=undefined}] {
+    v3 = HasArrayElement v0, v1 [keyIsIntegral]
+    TestAndBranch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = HasArrayElement v0, v1 [keyIsIntegral]
+    TestAndBranch v5 -> taken b2(), notTaken b3()
+  b3():
+    Branch v2 -> taken b4(), notTaken b6()
+  b4() frequency=Rare:
+    v6 = HasArrayElement v0, v1 [keyIsIntegral]
+    TestAndBranch v6 -> taken b5(), notTaken b6()
+  b5() frequency=Rare:
+    Jump -> next b6()
+  b6():
+    Return
+}
+# S: f15 b0 Balanced
+# S: f15 b2 Fast
+# S: f15 b4 Compact

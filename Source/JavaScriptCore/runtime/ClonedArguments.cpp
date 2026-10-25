@@ -101,7 +101,7 @@ ClonedArguments* ClonedArguments::createEmpty(VM& vm, JSGlobalObject* nullOrGlob
         ClonedArguments(vm, structure, butterfly);
     result->finishCreation(vm);
 
-    result->m_callee.set(vm, result, callee);
+    result->m_callee.setMayBeNull(vm, result, callee);
     result->putDirectOffset(vm, clonedArgumentsLengthPropertyOffset, jsNumber(length));
     return result;
 }
@@ -288,12 +288,16 @@ void ClonedArguments::materializeSpecials(JSGlobalObject* globalObject)
     FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(m_callee->executable());
     bool isStrictMode = executable->isInStrictContext();
     
-    if (isStrictMode || executable->usesNonSimpleParameterList())
-        putDirectAccessor(globalObject, vm.propertyNames->callee, this->realm()->throwTypeErrorArgumentsCalleeGetterSetter(), PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | PropertyAttribute::Accessor);
-    else
-        putDirect(vm, vm.propertyNames->callee, JSValue(m_callee.get()));
+    {
+        // An arguments object has these from the start, so one with immutable properties still gets them. No JavaScript runs here.
+        AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+        if (isStrictMode || executable->usesNonSimpleParameterList())
+            putDirectAccessor(globalObject, vm.propertyNames->callee, this->realm()->throwTypeErrorArgumentsCalleeGetterSetter(), PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | PropertyAttribute::Accessor);
+        else
+            putDirect(vm, vm.propertyNames->callee, JSValue(m_callee.get()));
 
-    putDirect(vm, vm.propertyNames->iteratorSymbol, this->realm()->arrayProtoValuesFunction(), static_cast<unsigned>(PropertyAttribute::DontEnum));
+        putDirect(vm, vm.propertyNames->iteratorSymbol, this->realm()->arrayProtoValuesFunction(), static_cast<unsigned>(PropertyAttribute::DontEnum));
+    }
     
     m_callee.clear();
 }

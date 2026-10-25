@@ -78,9 +78,9 @@ egl::Error CreateRendererD3D(egl::Display *display, RendererD3D **outRenderer)
         UNIMPLEMENTED();
     }
 
-    for (size_t i = 0; i < rendererCreationFunctions.size(); i++)
+    for (CreateRendererD3DFunction rendererCreationFunction : rendererCreationFunctions)
     {
-        RendererD3D *renderer = rendererCreationFunctions[i](display);
+        RendererD3D *renderer = rendererCreationFunction(display);
         egl::Error result     = renderer->initialize();
 
 #if defined(ANGLE_ENABLE_D3D11)
@@ -222,8 +222,16 @@ bool DisplayD3D::testDeviceLost()
     return mRenderer->testDeviceLost();
 }
 
-egl::Error DisplayD3D::restoreLostDevice(const egl::Display *display)
+egl::Error DisplayD3D::restoreLostDevice(const egl::ThreadSafeDisplay *threadSafeDisplay)
 {
+    // Restoring a lost device is not, and has never been, an inherently thread safe operation on
+    // the D3D backend: it tears down and recreates every swap chain owned by the display. The
+    // egl::ThreadSafeDisplay parameter therefore does not imply that this may be called
+    // concurrently; it only reflects that egl::Display is now reached through that base class.
+    // This is safe in our actual usage, because Chromium ensures thread-safety in its usage of the
+    // relevant APIs.
+    const egl::Display *display = static_cast<const egl::Display *>(threadSafeDisplay);
+
     // Release surface resources to make the Reset() succeed
     mState.surfaceMap.forEach([](egl::Surface *surface) {
         ASSERT(!surface->getBoundTexture());

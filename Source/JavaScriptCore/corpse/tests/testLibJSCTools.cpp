@@ -27,11 +27,12 @@
 
 #include <wtf/DataLog.h>
 
-#if (OS(MACOS) || USE(APPLE_INTERNAL_SDK)) && !PLATFORM(MACCATALYST) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+#if ENABLE(LIB_JSC_TOOLS)
 
 #include "CorpseAddressTest.h"
 #include "CorpseByteParserTest.h"
 #include "CorpseExportsTrieTest.h"
+#include "CorpseMemoryTest.h"
 #include "CorpseProcessTest.h"
 #include "CorpseRegionTest.h"
 #include "CorpseSnapshotTest.h"
@@ -124,6 +125,7 @@ int main(int argc, char** argv)
         JSCToolsTest::testProcess();
         JSCToolsTest::testSnapshot();
         JSCToolsTest::testRegion();
+        JSCToolsTest::testMemory();
         JSCToolsTest::testThreads();
         JSCToolsTest::testSymbol();
     }
@@ -157,4 +159,4 @@ int main(int, char**)
     return 0;
 }
 
-#endif // (OS(MACOS) || USE(APPLE_INTERNAL_SDK)) && !PLATFORM(MACCATALYST) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+#endif // ENABLE(LIB_JSC_TOOLS)

@@ -26,7 +26,7 @@
 #include "config.h"
 #include "CorpseError.h"
 
-#if (OS(MACOS) || USE(APPLE_INTERNAL_SDK)) && !PLATFORM(MACCATALYST) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+#if ENABLE(LIB_JSC_TOOLS)
 
 #include "CorpseClient.h"
 
@@ -40,7 +40,7 @@ namespace Corpse {
 
 void Error::report(const char* format, ...)
 {
-    fprintf(stderr, "%s: ", Client::name().characters());
+    SAFE_FPRINTF(stderr, "%s: ", Client::name());
 
     va_list args;
     va_start(args, format);
@@ -55,4 +55,4 @@ void Error::report(const char* format, ...)
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-#endif // (OS(MACOS) || USE(APPLE_INTERNAL_SDK)) && !PLATFORM(MACCATALYST) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+#endif // ENABLE(LIB_JSC_TOOLS)

@@ -37,6 +37,7 @@ mathml [ Skip ]
 media [ Skip ]
 memory [ Skip ]
 mhtml [ Skip ]
+model-element/volumetric [ Skip ]
 overflow [ Skip ]
 pageoverlay [ Skip ]
 perf [ Skip ]
@@ -87,11 +88,13 @@ http/tests/security/model-element [ Pass ]
 http/wpt/model-element [ Pass ]
 http/tests/security/model-element/model-element-crossorigin-allowed-with-all-access-header.html [ Slow ]
 model-element [ Pass ]
+fast/quirks/model-element-fallback-content-quirk.html [ Pass ]
 model-element/immersive [ Pass ]
 model-element/model-element-animations-loop.html [ Slow ]
 model-element/model-element-lazy-loading-unloading.html [ Slow ]
 model-element/model-element-suspend-before-ready.html [ Slow ]
 ipc/cocoa [ Pass ]
+http/tests/ipc/cocoa [ Pass ]
 ipc/dynamic-content-scaling-display-list-during-prepare-for-display.html [ Pass ]
 
 imported/w3c/web-platform-tests/webxr [ Pass ]
@@ -231,3 +234,6 @@ webkit.org/b/305613 overlay-region/clipping.html [ Pass Failure ]
 
 ### END OF Flaky tests
 ###################################################################################################
+
+webkit.org/b/293973 [ Debug ] http/tests/ipc/cocoa/gpu-load-error-empty-user-info-crssh.html [ Skip ]
+[ Debug ] ipc/cocoa/media-containment-bypass-create-player.html [ Crash ]

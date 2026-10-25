@@ -41,6 +41,7 @@
 #include "Logging.h"
 #include "Microtasks.h"
 #include "ResourceLoadObserver.h"
+#include "RunJavaScriptParameters.h"
 #include "SecurityOrigin.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Microtask.h>
@@ -54,7 +55,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(UserGestureIndicator);
 
-static UserGestureToken* NODELETE currentToken(JSC::VM& vm)
+static UserGestureToken* LEGACY_NODELETE currentToken(JSC::VM& vm)
 {
     ASSERT(isMainThread());
     SUPPRESS_MEMORY_UNSAFE_CAST return static_cast<UserGestureToken*>(vm.crossTaskToken());
@@ -66,8 +67,8 @@ static void setCurrentToken(JSC::VM& vm, RefPtr<UserGestureToken>&& token)
     vm.setCrossTaskToken(WTF::move(token));
 }
 
-UserGestureToken::UserGestureToken(IsProcessingUserGesture isProcessingUserGesture, UserGestureType gestureType, Document* document, std::optional<WTF::UUID> authorizationToken, CanRequestDOMPaste canRequestDOMPaste, MonotonicTime startTime, DOMPasteAccessPolicy domPasteAccessPolicy, GestureScope gestureScope)
-    : m_data { isProcessingUserGesture, gestureType, authorizationToken, canRequestDOMPaste, startTime, domPasteAccessPolicy, gestureScope }
+UserGestureToken::UserGestureToken(IsProcessingUserGesture isProcessingUserGesture, UserGestureType gestureType, Document* document, std::optional<WTF::UUID> authorizationToken, CanRequestDOMPaste canRequestDOMPaste, MonotonicTime startTime, DOMPasteAccessPolicy domPasteAccessPolicy, GestureScope gestureScope, RemoveTransientActivation removeTransientActivation)
+    : m_data { authorizationToken, startTime, isProcessingUserGesture, gestureType, canRequestDOMPaste, domPasteAccessPolicy, gestureScope, removeTransientActivation == RemoveTransientActivation::Yes }
 {
     if (!document || !processingUserGesture())
         return;
@@ -80,10 +81,7 @@ UserGestureToken::UserGestureToken(IsProcessingUserGesture isProcessingUserGestu
     if (!documentFrame)
         return;
 
-    for (RefPtr ancestorFrame = documentFrame->tree().parent(); ancestorFrame; ancestorFrame = ancestorFrame->tree().parent()) {
-        RefPtr localAncestor = dynamicDowncast<LocalFrame>(ancestorFrame);
-        if (!localAncestor)
-            continue;
+    for (Ref localAncestor : ancestorFrames<LocalFrame>(*documentFrame)) {
         if (RefPtr ancestorDocument = localAncestor->document())
             m_documentsImpactedByUserGesture.add(*ancestorDocument);
     }
@@ -94,8 +92,10 @@ UserGestureToken::UserGestureToken(IsProcessingUserGesture isProcessingUserGestu
         if (!localFrame)
             continue;
         RefPtr frameDocument = localFrame->document();
+        if (!frameDocument)
+            continue;
         Ref frameOrigin = frameDocument->securityOrigin();
-        if (frameDocument && documentOrigin->isSameOriginDomain(frameOrigin.get()))
+        if (documentOrigin->isSameOriginDomain(frameOrigin))
             m_documentsImpactedByUserGesture.add(*frameDocument);
     }
 }
@@ -104,11 +104,27 @@ UserGestureToken::~UserGestureToken()
 {
     for (auto& observer : m_destructionObservers)
         observer(*this);
+
+    for (Ref window : m_windowsWithForcedActivation)
+        window->revokeForcedActivation(identifier());
+
+    if (RefPtr frame = m_frameWithForcedActivationInOtherProcesses.get())
+        frame->loader().client().didRevokeForcedUserActivation(identifier());
 }
 
-Ref<UserGestureToken> UserGestureToken::create(IsProcessingUserGesture isProcessingUserGesture, UserGestureType gestureType, Document* document, std::optional<WTF::UUID> authorizationToken, CanRequestDOMPaste canRequestDOMPaste, MonotonicTime startTime, DOMPasteAccessPolicy domPasteAccessPolicy, GestureScope gestureScope)
+Ref<UserGestureToken> UserGestureToken::create(IsProcessingUserGesture isProcessingUserGesture, UserGestureType gestureType, Document* document, std::optional<WTF::UUID> authorizationToken, CanRequestDOMPaste canRequestDOMPaste, MonotonicTime startTime, DOMPasteAccessPolicy domPasteAccessPolicy, GestureScope gestureScope, RemoveTransientActivation removeTransientActivation)
 {
-    return adoptRef(*new UserGestureToken(isProcessingUserGesture, gestureType, document, authorizationToken, canRequestDOMPaste, startTime, domPasteAccessPolicy, gestureScope));
+    return adoptRef(*new UserGestureToken(isProcessingUserGesture, gestureType, document, authorizationToken, canRequestDOMPaste, startTime, domPasteAccessPolicy, gestureScope, removeTransientActivation));
+}
+
+void UserGestureToken::didGrantForcedActivation(LocalDOMWindow& window)
+{
+    m_windowsWithForcedActivation.add(window);
+}
+
+void UserGestureToken::didGrantForcedActivationInOtherProcesses(LocalFrame& frame)
+{
+    m_frameWithForcedActivationInOtherProcesses = frame;
 }
 
 static Seconds maxIntervalForUserGestureForwardingForFetch { 10 };
@@ -125,11 +141,6 @@ void UserGestureToken::setMaximumIntervalForUserGestureForwardingForFetchForTest
 bool UserGestureToken::isValidForDocument(const Document& document) const
 {
     return m_documentsImpactedByUserGesture.contains(document);
-}
-
-void UserGestureToken::forEachImpactedDocument(Function<void(Document&)>&& function)
-{
-    m_documentsImpactedByUserGesture.forEach(function);
 }
 
 class UserGestureInitiatedMicrotaskDispatcher final : public WebCoreMicrotaskDispatcher {
@@ -155,7 +166,7 @@ public:
         return runnability;
     }
 
-    static Ref<UserGestureInitiatedMicrotaskDispatcher> create(EventLoopTaskGroup& group, Ref<UserGestureToken>&& userGestureToken)
+    static Ref<UserGestureInitiatedMicrotaskDispatcher> LEGACY_NODELETE create(EventLoopTaskGroup& group, Ref<UserGestureToken>&& userGestureToken)
     {
         return adoptRef(*new UserGestureInitiatedMicrotaskDispatcher(group, WTF::move(userGestureToken)));
     }
@@ -174,15 +185,30 @@ RefPtr<JSC::MicrotaskDispatcher> UserGestureToken::createMicrotaskDispatcher(JSC
         return nullptr;
     if (!context->settingsValues().userGesturePromisePropagationEnabled)
         return nullptr;
-    return UserGestureInitiatedMicrotaskDispatcher::create(protect(context->eventLoop()), Ref { *this });
+    return UserGestureInitiatedMicrotaskDispatcher::create(context->eventLoop(), Ref { *this });
 }
 
 UserGestureIndicator::UserGestureIndicator(const UserGestureTokenData& data, Document* document)
-    : UserGestureIndicator(data.isProcessingUserGesture, document, data.userGestureType, ProcessInteractionStyle::Immediate, data.authorizationToken, data.canRequestDOMPaste, data.startTime, data.domPasteAccessPolicy, data.scope)
+    : UserGestureIndicator(data.isProcessingUserGesture, document, data.userGestureType, ProcessInteractionStyle::Immediate, data.authorizationToken, data.canRequestDOMPaste, data.startTime, data.domPasteAccessPolicy, data.scope, data.removesTransientActivation ? RemoveTransientActivation::Yes : RemoveTransientActivation::No)
 {
 }
 
 UserGestureIndicator::UserGestureIndicator(std::optional<IsProcessingUserGesture> isProcessingUserGesture, Document* document, UserGestureType gestureType, ProcessInteractionStyle processInteractionStyle, std::optional<WTF::UUID> authorizationToken, CanRequestDOMPaste canRequestDOMPaste, MonotonicTime startTime, DOMPasteAccessPolicy domPasteAccessPolicy, GestureScope gestureScope)
+    : UserGestureIndicator(isProcessingUserGesture, document, gestureType, processInteractionStyle, authorizationToken, canRequestDOMPaste, startTime, domPasteAccessPolicy, gestureScope, RemoveTransientActivation::No)
+{
+}
+
+UserGestureIndicator::UserGestureIndicator(std::optional<IsProcessingUserGesture> isProcessingUserGesture, Document* document, UserGestureType gestureType, ProcessInteractionStyle processInteractionStyle, RemoveTransientActivation removeTransientActivation)
+    : UserGestureIndicator(isProcessingUserGesture, document, gestureType, processInteractionStyle, std::nullopt, CanRequestDOMPaste::Yes, MonotonicTime::now(), DOMPasteAccessPolicy::NotRequestedYet, GestureScope::All, removeTransientActivation)
+{
+}
+
+UserGestureIndicator::UserGestureIndicator(IsProcessingUserGesture isProcessingUserGesture, Document* document, UserGestureType gestureType, ProcessInteractionStyle processInteractionStyle, std::optional<WTF::UUID> authorizationToken, ActivationNotification activationNotification)
+    : UserGestureIndicator(isProcessingUserGesture, document, gestureType, processInteractionStyle, authorizationToken, CanRequestDOMPaste::Yes, MonotonicTime::now(), DOMPasteAccessPolicy::NotRequestedYet, GestureScope::All, RemoveTransientActivation::No, activationNotification)
+{
+}
+
+UserGestureIndicator::UserGestureIndicator(std::optional<IsProcessingUserGesture> isProcessingUserGesture, Document* document, UserGestureType gestureType, ProcessInteractionStyle processInteractionStyle, std::optional<WTF::UUID> authorizationToken, CanRequestDOMPaste canRequestDOMPaste, MonotonicTime startTime, DOMPasteAccessPolicy domPasteAccessPolicy, GestureScope gestureScope, RemoveTransientActivation removeTransientActivation, ActivationNotification activationNotification)
 {
     ASSERT(isMainThread());
 
@@ -190,7 +216,7 @@ UserGestureIndicator::UserGestureIndicator(std::optional<IsProcessingUserGesture
     m_previousToken = currentToken(vm);
 
     if (isProcessingUserGesture)
-        setCurrentToken(vm, UserGestureToken::create(isProcessingUserGesture.value(), gestureType, document, authorizationToken, canRequestDOMPaste, startTime, domPasteAccessPolicy, gestureScope));
+        setCurrentToken(vm, UserGestureToken::create(isProcessingUserGesture.value(), gestureType, document, authorizationToken, canRequestDOMPaste, startTime, domPasteAccessPolicy, gestureScope, removeTransientActivation));
 
     if (isProcessingUserGesture && document && currentToken(vm)->processingUserGesture()) {
         document->updateLastHandledUserGestureTimestamp(currentToken(vm)->startTime());
@@ -206,8 +232,8 @@ UserGestureIndicator::UserGestureIndicator(std::optional<IsProcessingUserGesture
         }
         if (RefPtr frame = document->frame(); frame && !frame->hasHadUserInteraction()) {
             bool hasRemoteAncestor = false;
-            for (RefPtr<Frame> ancestor = frame; ancestor; ancestor = ancestor->tree().parent()) {
-                if (RefPtr localAncestor = dynamicDowncast<LocalFrame>(ancestor)) {
+            for (Ref ancestor : inclusiveAncestorFrames(*frame)) {
+                if (RefPtr localAncestor = dynamicDowncast<LocalFrame>(ancestor.get())) {
                     localAncestor->setHasHadUserInteraction();
                     if (RefPtr ancestorDocument = localAncestor->document())
                         ancestorDocument->updateLastHandledUserGestureTimestamp(currentToken(vm)->startTime());
@@ -219,13 +245,24 @@ UserGestureIndicator::UserGestureIndicator(std::optional<IsProcessingUserGesture
                 frame->loader().client().didHandleFirstUserGesture(currentToken(vm)->startTime());
         }
 
-        // https://html.spec.whatwg.org/multipage/interaction.html#user-activation-processing-model
-        // When a user interaction causes firing of an activation triggering input event in a Document...
-        // NOTE: Only activate the relevent DOMWindow when the gestureType is an ActivationTriggering one
-        RefPtr window = document->window();
-        if (window && gestureType == UserGestureType::ActivationTriggering)
-            window->notifyActivated(currentToken(vm)->startTime());
+        if (activationNotification == ActivationNotification::Immediate)
+            notifyActivation(*document);
     }
+}
+
+// https://html.spec.whatwg.org/multipage/interaction.html#user-activation-processing-model
+// When a user interaction causes firing of an activation triggering input event in a Document...
+void UserGestureIndicator::notifyActivation(Document& document)
+{
+    ASSERT(isMainThread());
+
+    // NOTE: Only activate the relevent DOMWindow when the gestureType is an ActivationTriggering one
+    RefPtr token = currentToken(commonVM());
+    if (!token || !token->processingUserGesture() || token->gestureType() != UserGestureType::ActivationTriggering)
+        return;
+
+    if (RefPtr window = document.window())
+        window->notifyActivated(*token);
 }
 
 UserGestureIndicator::UserGestureIndicator(RefPtr<UserGestureToken> token, UserGestureToken::GestureScope scope, UserGestureToken::ShouldPropagateToMicroTask shouldPropagateToMicroTask)

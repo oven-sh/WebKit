@@ -24,6 +24,7 @@
 
 #include "ConservativeRoots.h"
 #include "MachineContext.h"
+#include "Options.h"
 #include <wtf/BitVector.h>
 #include <wtf/PageBlock.h>
 #include <wtf/StdLibExtras.h>
@@ -41,18 +42,18 @@ MachineThreads::MachineThreads()
 }
 
 SUPPRESS_ASAN
-void MachineThreads::gatherFromCurrentThread(ConservativeRoots& conservativeRoots, JITStubRoutineSet& jitStubRoutines, CodeBlockSet& codeBlocks, CurrentThreadState& currentThreadState)
+void MachineThreads::gatherFromConductor(ConservativeRoots& conservativeRoots, JITStubRoutineSet& jitStubRoutines, CodeBlockSet& codeBlocks, CurrentThreadState& conductingMutatorState)
 {
-    if (currentThreadState.registerState) {
-        void* registersBegin = currentThreadState.registerState;
-        void* registersEnd = reinterpret_cast<void*>(roundUpToMultipleOf<sizeof(void*)>(reinterpret_cast<uintptr_t>(currentThreadState.registerState + 1)));
+    if (conductingMutatorState.registerState) {
+        void* registersBegin = conductingMutatorState.registerState;
+        void* registersEnd = reinterpret_cast<void*>(roundUpToMultipleOf<sizeof(void*)>(reinterpret_cast<uintptr_t>(conductingMutatorState.registerState + 1)));
         conservativeRoots.add(registersBegin, registersEnd, jitStubRoutines, codeBlocks);
     }
 
-    conservativeRoots.add(currentThreadState.stackTop, currentThreadState.stackOrigin, jitStubRoutines, codeBlocks);
+    conservativeRoots.add(conductingMutatorState.stackTop, conductingMutatorState.stackOrigin, jitStubRoutines, codeBlocks);
 }
 
-static inline int NODELETE osRedZoneAdjustment()
+static inline int LEGACY_NODELETE osRedZoneAdjustment()
 {
     int redZoneAdjustment = 0;
 #if CPU(X86_64)
@@ -73,7 +74,7 @@ static inline int NODELETE osRedZoneAdjustment()
     return redZoneAdjustment;
 }
 
-static std::pair<void*, size_t> NODELETE captureStack(Thread& thread, void* stackTop)
+static std::pair<void*, size_t> LEGACY_NODELETE captureStack(Thread& thread, void* stackTop)
 {
     char* begin = reinterpret_cast_ptr<char*>(thread.stack().origin());
     char* end = std::bit_cast<char*>(WTF::roundUpToMultipleOf<sizeof(void*)>(reinterpret_cast<uintptr_t>(stackTop)));
@@ -90,7 +91,7 @@ static std::pair<void*, size_t> NODELETE captureStack(Thread& thread, void* stac
 }
 
 SUPPRESS_ASAN
-static void NODELETE copyMemory(void* dst, const void* src, size_t size)
+static void LEGACY_NODELETE copyMemory(void* dst, const void* src, size_t size)
 {
     size_t dstAsSize = reinterpret_cast<size_t>(dst);
     size_t srcAsSize = reinterpret_cast<size_t>(src);
@@ -101,6 +102,16 @@ static void NODELETE copyMemory(void* dst, const void* src, size_t size)
     CPURegister* dstPtr = reinterpret_cast<CPURegister*>(dst);
     const CPURegister* srcPtr = reinterpret_cast<const CPURegister*>(src);
     size /= sizeof(CPURegister);
+#if JSC_CONSERVATIVE_SCAN_SKIPS_POISONED_WORDS
+    if (Options::runsCompiledImage()) {
+        // ConservativeRoots::genericAddSpanOfCompiledProcess scans the copy, and the addressable half of a poisoned word may hold a narrow reference.
+        while (size--) {
+            *dstPtr++ = isPoisonedForConservativeScan(srcPtr) ? addressableHalvesForConservativeScan(srcPtr) : *srcPtr;
+            ++srcPtr;
+        }
+        return;
+    }
+#endif
     // The copy is scanned in place of the stack, and only the stack knows which of its words are poisoned.
     while (size--) {
         *dstPtr++ = isPoisonedForConservativeScan(srcPtr) ? 0 : *srcPtr;
@@ -145,7 +156,7 @@ void MachineThreads::tryCopyOtherThreadStack(const ThreadSuspendLocker& locker, 
     *size += stack.second;
 }
 
-bool MachineThreads::tryCopyOtherThreadStacks(const AbstractLocker& locker, void* buffer, size_t capacity, size_t* size, Thread& currentThreadForGC)
+bool MachineThreads::tryCopyOtherThreadStacks(const AbstractLocker& locker, void* buffer, size_t capacity, size_t* size, Thread& conductorThread)
 {
     // Prevent two VMs from suspending each other's threads at the same time,
     // which can cause deadlock: <rdar://problem/20300842>.
@@ -164,7 +175,7 @@ bool MachineThreads::tryCopyOtherThreadStacks(const AbstractLocker& locker, void
             unsigned index = 0;
             for (const Ref<Thread>& thread : threads) {
                 if (thread.ptr() != &currentThread
-                    && thread.ptr() != &currentThreadForGC) {
+                    && thread.ptr() != &conductorThread) {
                     auto result = thread->suspend(threadSuspendLocker);
                     if (result)
                         isSuspended.set(index);
@@ -213,16 +224,16 @@ static void growBuffer(size_t size, void** buffer, size_t* capacity)
     *buffer = fastMalloc(*capacity);
 }
 
-void MachineThreads::gatherConservativeRoots(ConservativeRoots& conservativeRoots, JITStubRoutineSet& jitStubRoutines, CodeBlockSet& codeBlocks, CurrentThreadState* currentThreadState, Thread* currentThread)
+void MachineThreads::gatherConservativeRoots(ConservativeRoots& conservativeRoots, JITStubRoutineSet& jitStubRoutines, CodeBlockSet& codeBlocks, CurrentThreadState* conductingMutatorState, Thread* conductorThread)
 {
-    if (currentThreadState)
-        gatherFromCurrentThread(conservativeRoots, jitStubRoutines, codeBlocks, *currentThreadState);
+    if (conductingMutatorState)
+        gatherFromConductor(conservativeRoots, jitStubRoutines, codeBlocks, *conductingMutatorState);
 
     size_t size;
     size_t capacity = 0;
     void* buffer = nullptr;
     Locker locker { m_threadGroup->getLock() };
-    while (!tryCopyOtherThreadStacks(locker, buffer, capacity, &size, *currentThread))
+    while (!tryCopyOtherThreadStacks(locker, buffer, capacity, &size, *conductorThread))
         growBuffer(size, &buffer, &capacity);
 
     if (!buffer)
@@ -232,7 +243,7 @@ void MachineThreads::gatherConservativeRoots(ConservativeRoots& conservativeRoot
     fastFree(buffer);
 }
 
-NEVER_INLINE int callWithCurrentThreadState(const ScopedLambda<void(CurrentThreadState&)>& lambda)
+NEVER_INLINE int callWithCurrentThreadState(NOESCAPE const ScopedLambda<void(CurrentThreadState&)>& lambda)
 {
     DECLARE_AND_COMPUTE_CURRENT_THREAD_STATE(state);
     lambda(state);

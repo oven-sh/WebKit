@@ -74,9 +74,9 @@ RetainPtr<id> makeNSArrayElement(const URL& vectorElement)
 
 std::optional<URL> makeVectorElement(const URL*, id arrayElement)
 {
-    if (![arrayElement isKindOfClass:NSURL.class])
-        return std::nullopt;
-    return { { arrayElement } };
+    if (auto *url = dynamic_objc_cast<NSURL>(arrayElement))
+        return { { url } };
+    return std::nullopt;
 }
 
 }

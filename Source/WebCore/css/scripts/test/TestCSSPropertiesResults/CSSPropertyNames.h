@@ -10,157 +10,157 @@ namespace WebCore {
 
 class Settings;
 
-enum CSSPropertyID : uint16_t {
-    CSSPropertyInvalid = 0,
-    CSSPropertyCustom = 1,
-    CSSPropertyTestTopPriority = 2,
-    CSSPropertyTestHighPriority = 3,
-    CSSPropertyTestMediumPriority = 4,
-    CSSPropertyBackgroundCoordinatedValueListPropertyTestDiscrete = 5,
-    CSSPropertyBackgroundCoordinatedValueListPropertyTestTwo = 6,
-    CSSPropertyFirstTestDescriptorForFirstDescriptor = 7,
-    CSSPropertyFirstTestDescriptorForSecondDescriptor = 8,
-    CSSPropertyTestAnimationWrapper = 9,
-    CSSPropertyTestAnimationWrapperAccelerationAlways = 10,
-    CSSPropertyTestAnimationWrapperAccelerationThreadedOnly = 11,
-    CSSPropertyTestBoundedRepetitionWithCommas = 12,
-    CSSPropertyTestBoundedRepetitionWithCommasFixed = 13,
-    CSSPropertyTestBoundedRepetitionWithCommasNoSingleItemOpt = 14,
-    CSSPropertyTestBoundedRepetitionWithCommasSingleItemOpt = 15,
-    CSSPropertyTestBoundedRepetitionWithSpaces = 16,
-    CSSPropertyTestBoundedRepetitionWithSpacesFixed = 17,
-    CSSPropertyTestBoundedRepetitionWithSpacesNoSingleItemOpt = 18,
-    CSSPropertyTestBoundedRepetitionWithSpacesSingleItemOpt = 19,
-    CSSPropertyTestBoundedRepetitionWithSpacesWithType = 20,
-    CSSPropertyTestBoundedRepetitionWithSpacesWithTypeNoSingleItemOpt = 21,
-    CSSPropertyTestBoundedRepetitionWithSpacesWithTypeWithDefaultPrevious = 22,
-    CSSPropertyTestBoundedRepetitionWithSpacesWithTypeWithDefaultPreviousTwo = 23,
-    CSSPropertyTestColor = 24,
-    CSSPropertyTestColorAllowsTypesAbsolute = 25,
-    CSSPropertyTestColorPropertyWithVisitedLinkSupport = 26,
-    CSSPropertyTestCustomExtractor = 27,
-    CSSPropertyTestFunctionBoundedParameters = 28,
-    CSSPropertyTestFunctionFixedParameters = 29,
-    CSSPropertyTestFunctionNoParameters = 30,
-    CSSPropertyTestFunctionParametersMatchAllAnyOrder = 31,
-    CSSPropertyTestFunctionParametersMatchAllAnyOrderWithOptional = 32,
-    CSSPropertyTestFunctionParametersMatchAllOrdered = 33,
-    CSSPropertyTestFunctionParametersMatchAllOrderedWithOptional = 34,
-    CSSPropertyTestFunctionParametersMatchOneOrMoreAnyOrder = 35,
-    CSSPropertyTestFunctionSingleParameter = 36,
-    CSSPropertyTestFunctionSingleParameterMatchOne = 37,
-    CSSPropertyTestFunctionSingleParameterOptional = 38,
-    CSSPropertyTestFunctionUnboundedParametersNoMin = 39,
-    CSSPropertyTestFunctionUnboundedParametersWithMinimum = 40,
-    CSSPropertyTestImage = 41,
-    CSSPropertyTestImageNoImageSet = 42,
-    CSSPropertyTestKeyword = 43,
-    CSSPropertyTestKeywordWithAliasedTo = 44,
-    CSSPropertyTestMatchAllAnyOrder = 45,
-    CSSPropertyTestMatchAllAnyOrderWithCustomType = 46,
-    CSSPropertyTestMatchAllAnyOrderWithOptional = 47,
-    CSSPropertyTestMatchAllAnyOrderWithOptionalAndCustomType = 48,
-    CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomType = 49,
-    CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomTypeNoSingleItemOpt = 50,
-    CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomType = 51,
-    CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomTypeNoSingleItemOpt = 52,
-    CSSPropertyTestMatchAllAnyOrderWithOptionalAndPreserveOrderAndCustomType = 53,
-    CSSPropertyTestMatchAllAnyOrderWithOptionalNoSingleItemOpt = 54,
-    CSSPropertyTestMatchAllAnyOrderWithOptionalSingleItemOpt = 55,
-    CSSPropertyTestMatchAllAnyOrderWithOptionalWithPreserveOrder = 56,
-    CSSPropertyTestMatchAllAnyOrderWithOptionalWithPreserveOrderNoSingleItemOpt = 57,
-    CSSPropertyTestMatchAllAnyOrderWithPreserveOrder = 58,
-    CSSPropertyTestMatchAllAnyOrderWithPreserveOrderAndCustomType = 59,
-    CSSPropertyTestMatchAllAnyOrderWithPreserveOrderNoSingleItemOpt = 60,
-    CSSPropertyTestMatchAllOrdered = 61,
-    CSSPropertyTestMatchAllOrderedWithCustomType = 62,
-    CSSPropertyTestMatchAllOrderedWithOptional = 63,
-    CSSPropertyTestMatchAllOrderedWithOptionalAndCustomType = 64,
-    CSSPropertyTestMatchAllOrderedWithOptionalAndCustomTypeAndNoSingleItemOpt = 65,
-    CSSPropertyTestMatchAllOrderedWithOptionalAndMultipleRequired = 66,
-    CSSPropertyTestMatchAllOrderedWithOptionalAndMultipleRequiredAndCustomType = 67,
-    CSSPropertyTestMatchAllOrderedWithOptionalNoSingleItemOpt = 68,
-    CSSPropertyTestMatchAllOrderedWithOptionalSingleItemOpt = 69,
-    CSSPropertyTestMatchOne = 70,
-    CSSPropertyTestMatchOneOrMoreAnyOrder = 71,
-    CSSPropertyTestMatchOneOrMoreAnyOrderNoSingleItemOpt = 72,
-    CSSPropertyTestMatchOneOrMoreAnyOrderWithCustomType = 73,
-    CSSPropertyTestMatchOneOrMoreAnyOrderWithCustomTypeNoSingleItemOpt = 74,
-    CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrder = 75,
-    CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomType = 76,
-    CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomTypeNoSingleItemOpt = 77,
-    CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrderNoSingleItemOpt = 78,
-    CSSPropertyTestMatchOneWithGroupWithSettingsFlag = 79,
-    CSSPropertyTestMatchOneWithKeywordWithSettingsFlag = 80,
-    CSSPropertyTestMatchOneWithMultipleKeywords = 81,
-    CSSPropertyTestMatchOneWithReferenceWithSettingsFlag = 82,
-    CSSPropertyTestMatchOneWithSettingsFlag = 83,
-    CSSPropertyTestNumericValueRange = 84,
-    CSSPropertyTestProperty = 85,
-    CSSPropertyTestRenderStyleGetterNodeleteFalse = 86,
-    CSSPropertyTestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin = 87,
-    CSSPropertyTestRenderStyleHasExplicitlySetPolicyAllBorderRadius = 88,
-    CSSPropertyTestRenderStyleHasExplicitlySetPolicyValueOnly = 89,
-    CSSPropertyTestRenderStyleStorageOneLevelEnum = 90,
-    CSSPropertyTestRenderStyleStorageOneLevelRaw = 91,
-    CSSPropertyTestRenderStyleStorageOneLevelReference = 92,
-    CSSPropertyTestRenderStyleStorageOneLevelValue = 93,
-    CSSPropertyTestRenderStyleStorageTwoLevelEnum = 94,
-    CSSPropertyTestRenderStyleStorageTwoLevelRaw = 95,
-    CSSPropertyTestRenderStyleStorageTwoLevelReference = 96,
-    CSSPropertyTestRenderStyleStorageTwoLevelValue = 97,
-    CSSPropertyTestSettingsOne = 98,
-    CSSPropertyTestUnboundedRepetitionWithCommasWithMin = 99,
-    CSSPropertyTestUnboundedRepetitionWithCommasWithMinNoSingleItemOpt = 100,
-    CSSPropertyTestUnboundedRepetitionWithCommasWithMinSingleItemOpt = 101,
-    CSSPropertyTestUnboundedRepetitionWithSpacesNoMin = 102,
-    CSSPropertyTestUnboundedRepetitionWithSpacesNoMinNoSingleItemOpt = 103,
-    CSSPropertyTestUnboundedRepetitionWithSpacesWithMin = 104,
-    CSSPropertyTestUnboundedRepetitionWithSpacesWithMinNoSingleItemOpt = 105,
-    CSSPropertyTestUnboundedRepetitionWithSpacesWithMinSingleItemOpt = 106,
-    CSSPropertyTestUrlWithModifiers = 107,
-    CSSPropertyTestUrlWithNoModifiers = 108,
-    CSSPropertyTestUsingSharedRule = 109,
-    CSSPropertyTestUsingSharedRuleExported = 110,
-    CSSPropertyTestUsingSharedRuleWithOverrideFunction = 111,
-    CSSPropertyTestSinkPriority = 112,
-    CSSPropertyTestLogicalPropertyGroupPhysicalHorizontal = 113,
-    CSSPropertyTestLogicalPropertyGroupPhysicalVertical = 114,
-    CSSPropertyTestLogicalPropertyGroupLogicalBlock = 115,
-    CSSPropertyTestLogicalPropertyGroupLogicalInline = 116,
-    CSSPropertyAll = 117,
-    CSSPropertyFont = 118,
-    CSSPropertyTestShorthandOne = 119,
-    CSSPropertyTestShorthandTwo = 120,
+enum class CSSPropertyID : uint16_t {
+    Invalid = 0,
+    Custom = 1,
+    TestTopPriority = 2,
+    TestHighPriority = 3,
+    TestMediumPriority = 4,
+    BackgroundCoordinatedValueListPropertyTestDiscrete = 5,
+    BackgroundCoordinatedValueListPropertyTestTwo = 6,
+    FirstTestDescriptorForFirstDescriptor = 7,
+    FirstTestDescriptorForSecondDescriptor = 8,
+    TestAnimationWrapper = 9,
+    TestAnimationWrapperAccelerationAlways = 10,
+    TestAnimationWrapperAccelerationThreadedOnly = 11,
+    TestBoundedRepetitionWithCommas = 12,
+    TestBoundedRepetitionWithCommasFixed = 13,
+    TestBoundedRepetitionWithCommasNoSingleItemOpt = 14,
+    TestBoundedRepetitionWithCommasSingleItemOpt = 15,
+    TestBoundedRepetitionWithSpaces = 16,
+    TestBoundedRepetitionWithSpacesFixed = 17,
+    TestBoundedRepetitionWithSpacesNoSingleItemOpt = 18,
+    TestBoundedRepetitionWithSpacesSingleItemOpt = 19,
+    TestBoundedRepetitionWithSpacesWithType = 20,
+    TestBoundedRepetitionWithSpacesWithTypeNoSingleItemOpt = 21,
+    TestBoundedRepetitionWithSpacesWithTypeWithDefaultPrevious = 22,
+    TestBoundedRepetitionWithSpacesWithTypeWithDefaultPreviousTwo = 23,
+    TestColor = 24,
+    TestColorAllowsTypesAbsolute = 25,
+    TestColorPropertyWithVisitedLinkSupport = 26,
+    TestCustomExtractor = 27,
+    TestFunctionBoundedParameters = 28,
+    TestFunctionFixedParameters = 29,
+    TestFunctionNoParameters = 30,
+    TestFunctionParametersMatchAllAnyOrder = 31,
+    TestFunctionParametersMatchAllAnyOrderWithOptional = 32,
+    TestFunctionParametersMatchAllOrdered = 33,
+    TestFunctionParametersMatchAllOrderedWithOptional = 34,
+    TestFunctionParametersMatchOneOrMoreAnyOrder = 35,
+    TestFunctionSingleParameter = 36,
+    TestFunctionSingleParameterMatchOne = 37,
+    TestFunctionSingleParameterOptional = 38,
+    TestFunctionUnboundedParametersNoMin = 39,
+    TestFunctionUnboundedParametersWithMinimum = 40,
+    TestImage = 41,
+    TestImageNoImageSet = 42,
+    TestKeyword = 43,
+    TestKeywordWithAliasedTo = 44,
+    TestMatchAllAnyOrder = 45,
+    TestMatchAllAnyOrderWithCustomType = 46,
+    TestMatchAllAnyOrderWithOptional = 47,
+    TestMatchAllAnyOrderWithOptionalAndCustomType = 48,
+    TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomType = 49,
+    TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomTypeNoSingleItemOpt = 50,
+    TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomType = 51,
+    TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomTypeNoSingleItemOpt = 52,
+    TestMatchAllAnyOrderWithOptionalAndPreserveOrderAndCustomType = 53,
+    TestMatchAllAnyOrderWithOptionalNoSingleItemOpt = 54,
+    TestMatchAllAnyOrderWithOptionalSingleItemOpt = 55,
+    TestMatchAllAnyOrderWithOptionalWithPreserveOrder = 56,
+    TestMatchAllAnyOrderWithOptionalWithPreserveOrderNoSingleItemOpt = 57,
+    TestMatchAllAnyOrderWithPreserveOrder = 58,
+    TestMatchAllAnyOrderWithPreserveOrderAndCustomType = 59,
+    TestMatchAllAnyOrderWithPreserveOrderNoSingleItemOpt = 60,
+    TestMatchAllOrdered = 61,
+    TestMatchAllOrderedWithCustomType = 62,
+    TestMatchAllOrderedWithOptional = 63,
+    TestMatchAllOrderedWithOptionalAndCustomType = 64,
+    TestMatchAllOrderedWithOptionalAndCustomTypeAndNoSingleItemOpt = 65,
+    TestMatchAllOrderedWithOptionalAndMultipleRequired = 66,
+    TestMatchAllOrderedWithOptionalAndMultipleRequiredAndCustomType = 67,
+    TestMatchAllOrderedWithOptionalNoSingleItemOpt = 68,
+    TestMatchAllOrderedWithOptionalSingleItemOpt = 69,
+    TestMatchOne = 70,
+    TestMatchOneOrMoreAnyOrder = 71,
+    TestMatchOneOrMoreAnyOrderNoSingleItemOpt = 72,
+    TestMatchOneOrMoreAnyOrderWithCustomType = 73,
+    TestMatchOneOrMoreAnyOrderWithCustomTypeNoSingleItemOpt = 74,
+    TestMatchOneOrMoreAnyOrderWithPreserveOrder = 75,
+    TestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomType = 76,
+    TestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomTypeNoSingleItemOpt = 77,
+    TestMatchOneOrMoreAnyOrderWithPreserveOrderNoSingleItemOpt = 78,
+    TestMatchOneWithGroupWithSettingsFlag = 79,
+    TestMatchOneWithKeywordWithSettingsFlag = 80,
+    TestMatchOneWithMultipleKeywords = 81,
+    TestMatchOneWithReferenceWithSettingsFlag = 82,
+    TestMatchOneWithSettingsFlag = 83,
+    TestNumericValueRange = 84,
+    TestProperty = 85,
+    TestRenderStyleGetterNodeleteFalse = 86,
+    TestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin = 87,
+    TestRenderStyleHasExplicitlySetPolicyAllBorderRadius = 88,
+    TestRenderStyleHasExplicitlySetPolicyValueOnly = 89,
+    TestRenderStyleStorageOneLevelEnum = 90,
+    TestRenderStyleStorageOneLevelRaw = 91,
+    TestRenderStyleStorageOneLevelReference = 92,
+    TestRenderStyleStorageOneLevelValue = 93,
+    TestRenderStyleStorageTwoLevelEnum = 94,
+    TestRenderStyleStorageTwoLevelRaw = 95,
+    TestRenderStyleStorageTwoLevelReference = 96,
+    TestRenderStyleStorageTwoLevelValue = 97,
+    TestSettingsOne = 98,
+    TestUnboundedRepetitionWithCommasWithMin = 99,
+    TestUnboundedRepetitionWithCommasWithMinNoSingleItemOpt = 100,
+    TestUnboundedRepetitionWithCommasWithMinSingleItemOpt = 101,
+    TestUnboundedRepetitionWithSpacesNoMin = 102,
+    TestUnboundedRepetitionWithSpacesNoMinNoSingleItemOpt = 103,
+    TestUnboundedRepetitionWithSpacesWithMin = 104,
+    TestUnboundedRepetitionWithSpacesWithMinNoSingleItemOpt = 105,
+    TestUnboundedRepetitionWithSpacesWithMinSingleItemOpt = 106,
+    TestUrlWithModifiers = 107,
+    TestUrlWithNoModifiers = 108,
+    TestUsingSharedRule = 109,
+    TestUsingSharedRuleExported = 110,
+    TestUsingSharedRuleWithOverrideFunction = 111,
+    TestSinkPriority = 112,
+    TestLogicalPropertyGroupPhysicalHorizontal = 113,
+    TestLogicalPropertyGroupPhysicalVertical = 114,
+    TestLogicalPropertyGroupLogicalBlock = 115,
+    TestLogicalPropertyGroupLogicalInline = 116,
+    All = 117,
+    Font = 118,
+    TestShorthandOne = 119,
+    TestShorthandTwo = 120,
 };
 
 // Enum value of the first "real" CSS property, which excludes
-// CSSPropertyInvalid and CSSPropertyCustom.
+// CSSPropertyID::Invalid and CSSPropertyID::Custom.
 constexpr uint16_t firstCSSProperty = 2;
 // Total number of enum values in the CSSPropertyID enum. If making an array
 // that can be indexed into using the enum value, use this as the size.
 constexpr uint16_t cssPropertyIDEnumValueCount = 121;
 // Number of "real" CSS properties. This differs from cssPropertyIDEnumValueCount,
-// as this doesn't consider CSSPropertyInvalid and CSSPropertyCustom.
+// as this doesn't consider CSSPropertyID::Invalid and CSSPropertyID::Custom.
 constexpr uint16_t numCSSProperties = 119;
 constexpr unsigned maxCSSPropertyNameLength = 114;
-constexpr auto firstTopPriorityProperty = CSSPropertyID::CSSPropertyTestTopPriority;
-constexpr auto lastTopPriorityProperty = CSSPropertyID::CSSPropertyTestTopPriority;
-constexpr auto firstHighPriorityProperty = CSSPropertyID::CSSPropertyTestHighPriority;
-constexpr auto lastHighPriorityProperty = CSSPropertyID::CSSPropertyTestHighPriority;
-constexpr auto firstMediumPriorityProperty = CSSPropertyID::CSSPropertyTestMediumPriority;
-constexpr auto lastMediumPriorityProperty = CSSPropertyID::CSSPropertyTestMediumPriority;
-constexpr auto firstLowPriorityProperty = CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestDiscrete;
-constexpr auto lastLowPriorityProperty = CSSPropertyID::CSSPropertyTestSinkPriority;
-constexpr auto firstLogicalGroupPhysicalProperty = CSSPropertyID::CSSPropertyTestLogicalPropertyGroupPhysicalHorizontal;
-constexpr auto lastLogicalGroupPhysicalProperty = CSSPropertyID::CSSPropertyTestLogicalPropertyGroupPhysicalVertical;
-constexpr auto firstLogicalGroupLogicalProperty = CSSPropertyID::CSSPropertyTestLogicalPropertyGroupLogicalBlock;
-constexpr auto lastLogicalGroupLogicalProperty = CSSPropertyID::CSSPropertyTestLogicalPropertyGroupLogicalInline;
+constexpr auto firstTopPriorityProperty = CSSPropertyID::TestTopPriority;
+constexpr auto lastTopPriorityProperty = CSSPropertyID::TestTopPriority;
+constexpr auto firstHighPriorityProperty = CSSPropertyID::TestHighPriority;
+constexpr auto lastHighPriorityProperty = CSSPropertyID::TestHighPriority;
+constexpr auto firstMediumPriorityProperty = CSSPropertyID::TestMediumPriority;
+constexpr auto lastMediumPriorityProperty = CSSPropertyID::TestMediumPriority;
+constexpr auto firstLowPriorityProperty = CSSPropertyID::BackgroundCoordinatedValueListPropertyTestDiscrete;
+constexpr auto lastLowPriorityProperty = CSSPropertyID::TestSinkPriority;
+constexpr auto firstLogicalGroupPhysicalProperty = CSSPropertyID::TestLogicalPropertyGroupPhysicalHorizontal;
+constexpr auto lastLogicalGroupPhysicalProperty = CSSPropertyID::TestLogicalPropertyGroupPhysicalVertical;
+constexpr auto firstLogicalGroupLogicalProperty = CSSPropertyID::TestLogicalPropertyGroupLogicalBlock;
+constexpr auto lastLogicalGroupLogicalProperty = CSSPropertyID::TestLogicalPropertyGroupLogicalInline;
 constexpr auto firstLogicalGroupProperty = firstLogicalGroupPhysicalProperty;
 constexpr auto lastLogicalGroupProperty = lastLogicalGroupLogicalProperty;
-constexpr auto firstShorthandProperty = CSSPropertyID::CSSPropertyAll;
-constexpr auto lastShorthandProperty = CSSPropertyID::CSSPropertyTestShorthandTwo;
-constexpr uint16_t numCSSPropertyLonghands = firstShorthandProperty - firstCSSProperty;
+constexpr auto firstShorthandProperty = CSSPropertyID::All;
+constexpr auto lastShorthandProperty = CSSPropertyID::TestShorthandTwo;
+constexpr uint16_t numCSSPropertyLonghands = std::to_underlying(firstShorthandProperty) - firstCSSProperty;
 
 extern const std::array<CSSPropertyID, 23> computedPropertyIDs;
 
@@ -207,7 +207,7 @@ template<CSSPropertyID first, CSSPropertyID last> struct CSSPropertiesRange {
     };
     static constexpr Iterator begin() { return { }; }
     static constexpr std::nullptr_t end() { return nullptr; }
-    static constexpr uint16_t size() { return last - first + 1; }
+    static constexpr uint16_t size() { return std::to_underlying(last) - std::to_underlying(first) + 1; }
 };
 using AllCSSPropertiesRange = CSSPropertiesRange<static_cast<CSSPropertyID>(firstCSSProperty), lastShorthandProperty>;
 using AllLonghandCSSPropertiesRange = CSSPropertiesRange<static_cast<CSSPropertyID>(firstCSSProperty), lastLogicalGroupProperty>;
@@ -249,7 +249,11 @@ WTF::TextStream& operator<<(WTF::TextStream&, CSSPropertyID);
 
 namespace WTF {
 
-template<> struct DefaultHash<WebCore::CSSPropertyID> : IntHash<unsigned> { };
+template<> struct DefaultHash<WebCore::CSSPropertyID> {
+    static unsigned hash(WebCore::CSSPropertyID key) { return IntHash<unsigned>::hash(std::to_underlying(key)); }
+    static bool equal(WebCore::CSSPropertyID a, WebCore::CSSPropertyID b) { return a == b; }
+    static constexpr bool safeToCompareToEmptyOrDeleted = true;
+};
 
 template<> struct HashTraits<WebCore::CSSPropertyID> : GenericHashTraits<WebCore::CSSPropertyID> {
     static const bool emptyValueIsZero = true;

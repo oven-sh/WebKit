@@ -1,0 +1,22 @@
+# numbers = Object.entries({ a: 1 }); flags = Object.entries({ a: true }); return numbers[0][1]
+# Each call makes an array and pairs of its own: what the second operand holds is in no pair of the first call.
+# RUN: valueflow-apply
+# CHECK: function f0 name="main" {{*}}results=[{type=undefined|int|string}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Words" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Boolean boolean=true
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectEntries
+    v6 = Call v5, v4, v1
+    v7 = Call v5, v4, v3
+    v8 = Integer integer=0
+    v9 = ElemGet v6, v8
+    v10 = ElemGet v9, v0
+    Return v10
+}

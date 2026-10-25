@@ -89,10 +89,12 @@ void RemoteGraphicsContextGLProxyWC::prepareForDisplay()
         markContextLost();
         return;
     }
+    // The display buffer is ready even when no new content buffer identifier is returned:
+    // the GPU process only hands out an identifier until the compositor consumes it.
+    m_hasPreparedForDisplay = true;
     auto& [contentBuffer] = sendResult.reply();
     if (!contentBuffer)
         return;
-    m_hasPreparedForDisplay = true;
     static_cast<WCPlatformLayerGCGL*>(m_layerContentsDisplayDelegate->platformLayer())->addContentBufferIdentifier(*contentBuffer);
 }
 

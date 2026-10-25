@@ -1,0 +1,82 @@
+# Immediate dominators, dominator tree children and nearest common dominators of a diamond inside a loop
+# FORM: Prepared
+# RUN: analyses control-flow dominators natural-loops cycles common-dominators
+# RUN(LOOP): analyses reachability reachable-from=b2
+# RUN(REACH): analyses reachability reachable-from=b2 barrier=b5
+# RUN(BARRIER): analyses reachability reachable-from=b4 barrier=b5
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="diamondInLoop" parameters=[{type=boolean}, {type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b6()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    LoopHint
+    Branch v1 -> taken b3(), notTaken b5()
+  b4():
+    Jump -> next b5()
+  b5():
+    Jump -> next b1()
+  b6():
+    Return
+}
+# CHECK: function f0
+# CHECK-NEXT: control-flow:
+# CHECK-NEXT: reverse postorder: [b0 b1 b2 b3 b4 b5 b6]
+# CHECK-NEXT: unreachable: []
+# CHECK: b1 predecessors: [b0 b5]
+# CHECK-NEXT: b1 incoming edges: [b0.0 b5.0]
+# CHECK-NEXT: b1 single incoming edge: none
+# CHECK: b3 incoming edges: [b2.0 b3.0]
+# CHECK: b5 incoming edges: [b3.1 b4.0]
+# CHECK: dominators:
+# CHECK-NEXT: b0 idom: none
+# CHECK-NEXT: b0 children: [b1]
+# CHECK-NEXT: b1 idom: b0
+# CHECK-NEXT: b1 children: [b2 b6]
+# CHECK-NEXT: b2 idom: b1
+# CHECK-NEXT: b2 children: [b3 b4 b5]
+# CHECK-NEXT: b3 idom: b2
+# CHECK-NEXT: b3 children: []
+# CHECK-NEXT: b4 idom: b2
+# CHECK-NEXT: b4 children: []
+# CHECK-NEXT: b5 idom: b2
+# CHECK-NEXT: b5 children: []
+# CHECK-NEXT: b6 idom: b1
+# CHECK-NEXT: b6 children: []
+# CHECK-NEXT: natural-loops:
+# CHECK-NEXT: loop headers: [b1 b3]
+# CHECK-NEXT: b1 loop blocks: [b1 b2 b3 b4 b5]
+# CHECK-NEXT: b1 outer loop header: none
+# CHECK-NEXT: b3 loop blocks: [b3]
+# CHECK-NEXT: b3 outer loop header: b1
+# CHECK-NEXT: cycles:
+# CHECK-NEXT: b0 in cycle: no
+# CHECK-NEXT: b0 depth: 0
+# CHECK-NEXT: b0 outermost cycle: none
+# REPEAT: i = 1..5; a = 1 1 2 1 1
+# CHECK-NEXT: b%(i) in cycle: yes
+# CHECK-NEXT: b%(i) depth: %(a)
+# CHECK-NEXT: b%(i) outermost cycle: b1
+# END REPEAT
+# CHECK-NEXT: b6 in cycle: no
+# CHECK-NEXT: b6 depth: 0
+# CHECK-NEXT: b6 outermost cycle: none
+# CHECK-NEXT: common-dominators:
+# CHECK: b0 b6 nearest common dominator: b0
+# CHECK: b2 b5 nearest common dominator: b2
+# CHECK: b3 b4 nearest common dominator: b2
+# CHECK: b3 b6 nearest common dominator: b1
+# CHECK: b5 b6 nearest common dominator: b1
+# LOOP: function f0
+# LOOP-NEXT: reachability:
+# LOOP-NEXT: b2 reaches: [b1 b2 b3 b4 b5 b6]
+# REACH: function f0
+# REACH-NEXT: reachability:
+# REACH-NEXT: b2 reaches: [b2 b3 b4]
+# BARRIER: function f0
+# BARRIER-NEXT: reachability:
+# BARRIER-NEXT: b4 reaches: [b4]

@@ -1,0 +1,137 @@
+# A constant key that is an array index or a canonical numeric string stays the key of an element access
+# FORM: Prepared
+# RUN: pass FoldConstants
+# STATISTIC: FoldConstantsChanges = 2
+# CHECK: outcome: Changed
+# RUN(AGAIN): pass FoldConstants FoldConstants
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="arrayIndices" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="0"
+    v2 = String string="7"
+    v3 = String string="42"
+    v4 = String string="4294967294"
+    v5 = ElemGet v0, v1
+    v6 = ElemGet v0, v2
+    v7 = ElemGet v0, v3
+    v8 = ElemGet v0, v4
+    Return v5
+}
+# CHECK-LABEL: function f0 name="arrayIndices"
+# CHECK-NOT: PropGet
+# CHECK: v5:{{*}}= ElemGet v0, v1
+# CHECK-NEXT: v6:{{*}}= ElemGet v0, v2
+# CHECK-NEXT: v7:{{*}}= ElemGet v0, v3
+# CHECK-NEXT: v8:{{*}}= ElemGet v0, v4
+# CHECK-NEXT: Return v5
+
+function f1 name="canonicalNumericStrings" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="4294967295"
+    v2 = String string="-1"
+    v3 = String string="1.5"
+    v4 = String string="-0"
+    v5 = String string="NaN"
+    v6 = String string="Infinity"
+    v7 = String string="-Infinity"
+    v8 = String string="1e+21"
+    v9 = ElemGet v0, v1
+    v10 = ElemGet v0, v2
+    v11 = ElemGet v0, v3
+    v12 = ElemGet v0, v4
+    v13 = ElemGet v0, v5
+    v14 = ElemGet v0, v6
+    v15 = ElemGet v0, v7
+    v16 = ElemGet v0, v8
+    Return v9
+}
+# CHECK-LABEL: function f1 name="canonicalNumericStrings"
+# CHECK-NOT: PropGet
+# CHECK: v9:{{*}}= ElemGet v0, v1
+# CHECK-NEXT: v10:{{*}}= ElemGet v0, v2
+# CHECK-NEXT: v11:{{*}}= ElemGet v0, v3
+# CHECK-NEXT: v12:{{*}}= ElemGet v0, v4
+# CHECK-NEXT: v13:{{*}}= ElemGet v0, v5
+# CHECK-NEXT: v14:{{*}}= ElemGet v0, v6
+# CHECK-NEXT: v15:{{*}}= ElemGet v0, v7
+# CHECK-NEXT: v16:{{*}}= ElemGet v0, v8
+# CHECK-NEXT: Return v9
+
+function f2 name="everyAccess" parameters=[{type=object}, {type=object}, {type=anything}] results=[{type=anything}] {
+    v3 = String string="0"
+    v4 = ElemGet v0, v3
+    ElemSet v0, v3, v2
+    v6 = ElemHas v0, v3
+    v7 = ElemDelete v0, v3
+    ElemDefine v0, v3, v2
+    v9 = SuperGet v0, v1, v3
+    SuperSet v0, v1, v2, v3
+    Return v4
+}
+# CHECK-LABEL: function f2 name="everyAccess"
+# CHECK-NOT: key=
+# CHECK: v4:{{*}}= ElemGet v0, v3
+# CHECK-NEXT: ElemSet v0, v3, v2
+# CHECK-NEXT: v6:{{*}}= ElemHas v0, v3
+# CHECK-NEXT: v7:{{*}}= ElemDelete v0, v3
+# CHECK-NEXT: ElemDefine v0, v3, v2
+# CHECK-NEXT: v9:{{*}}= SuperGet v0, v1, v3
+# CHECK-NEXT: SuperSet v0, v1, v2, v3
+# CHECK-NEXT: Return v4
+
+function f3 name="indexComputedFromParts" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="1"
+    v2 = String string="0"
+    v3 = Add v1, v2
+    v4 = ElemGet v0, v3
+    Return v4
+}
+# CHECK-LABEL: function f3 name="indexComputedFromParts"
+# CHECK-NOT: PropGet
+# CHECK: v3: "10" = String string="10"
+# CHECK-NEXT: v4:{{*}}= ElemGet v0, v3
+
+function f4 name="numbers" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    v2 = Double number=1.5
+    v3 = ElemGet v0, v1
+    v4 = ElemGet v0, v2
+    Return v3
+}
+# CHECK-LABEL: function f4 name="numbers"
+# CHECK-NOT: PropGet
+# CHECK: v3:{{*}}= ElemGet v0, v1
+# CHECK-NEXT: v4:{{*}}= ElemGet v0, v2
+
+function f5 name="textNoNumberIsPrintedAs" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="01"
+    v2 = String string="1.0"
+    v3 = String string="+1"
+    v4 = String string="1e3"
+    v5 = String string=" 1"
+    v6 = String string="0x10"
+    v7 = String string=".5"
+    v8 = String string="1e21"
+    v9 = String string="infinity"
+    v10 = String string="-NaN"
+    v11 = String string=""
+# REPEAT: i = 1..11
+    v%(i+11) = ElemGet v0, v%(i)
+# END REPEAT
+    Return v12
+}
+# CHECK-LABEL: function f5 name="textNoNumberIsPrintedAs"
+# CHECK-NOT: ElemGet
+# CHECK: v12:{{*}}= PropGet v0 key="01"
+# CHECK-NEXT: v13:{{*}}= PropGet v0 key="1.0"
+# CHECK-NEXT: v14:{{*}}= PropGet v0 key="+1"
+# CHECK-NEXT: v15:{{*}}= PropGet v0 key="1e3"
+# CHECK-NEXT: v16:{{*}}= PropGet v0 key=" 1"
+# CHECK-NEXT: v17:{{*}}= PropGet v0 key="0x10"
+# CHECK-NEXT: v18:{{*}}= PropGet v0 key=".5"
+# CHECK-NEXT: v19:{{*}}= PropGet v0 key="1e21"
+# CHECK-NEXT: v20:{{*}}= PropGet v0 key="infinity"
+# CHECK-NEXT: v21:{{*}}= PropGet v0 key="-NaN"
+# CHECK-NEXT: v22:{{*}}= PropGet v0 key=""
+# CHECK-NEXT: Return v12

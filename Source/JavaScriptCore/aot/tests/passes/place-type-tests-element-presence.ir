@@ -1,0 +1,199 @@
+# Where nothing asks whether an element is there, its read tests that it is, and an absent element leaves typed code. The read behind the test has no arm for an absent element: it has the type that the kind of storage gives its elements, without undefined, so the check of the element folds, and it needs nothing of the prototypes. The kind is tested once for all reads of a stretch, the element once for each. A read whose result is asked for absence keeps the arm, the test of the prototypes and undefined in its type
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# RUN(PLAN): test-placement
+# RUN(NONE): pass PlaceTypeTests
+# RUN(SIMPLE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions SimplifyControlFlow SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks
+# STATISTIC: ElementPresenceTestsPlaced = 9
+
+module m0 path="main.js" displayPath="main.js"
+
+# k = s[k], four times, with s: number[] and k: number
+function f0 name="chainOfReads" parameters=[{type=Array<number>}, {type=number}] results=[{type=number}] {
+    v2 = ElemGet v0, v1
+    v3 = Check v2 castType=number
+    v4 = ElemGet v0, v3
+    v5 = Check v4 castType=number
+    v6 = ElemGet v0, v5
+    v7 = Check v6 castType=number
+    v8 = ElemGet v0, v7
+    v9 = Check v8 castType=number
+    Return v9
+}
+# PLAN-LABEL: function f0
+# PLAN-NEXT: stretch 0: test HasArrayStorage v0 arrayStorage=Double before v2; test IsElementPresent v0, v1 arrayStorage=Double before v2; test IsElementPresent v0, {{*}} arrayStorage=Double before v4; test IsElementPresent v0, {{*}} arrayStorage=Double before v6; test IsElementPresent v0, {{*}} arrayStorage=Double before v8; uses v2 v4 v6 v8; cloned
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f0 name="chainOfReads"
+# CHECK-COUNT-4: : number = GetArrayElement v0, {{*}} arrayStorage=Double level=Expected [isPresent]
+# CHECK-NOT: = GetArrayElement
+# CHECK-COUNT-4: = ElemGet v0,
+# CHECK-NOT: = ElemGet
+# NONE-LABEL: function f0 name="chainOfReads"
+# NONE-NOT: IsPristine
+# NONE-NOT: IsInBounds
+# NONE-NOT: TypeTest
+# The four checks that are left stand in the generic copy.
+# SIMPLE-LABEL: function f0 name="chainOfReads"
+# SIMPLE-COUNT-4: = Check
+# SIMPLE-NOT: = Check
+
+# The same where the checks have become tests that leave for the generic version
+function f1 name="chainBehindTestsOfTheElements" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    v3 = TypeTest v2 testedType=number
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = ElemGet v0, v4
+    v6 = TypeTest v5 testedType=number
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    Return v7
+  b3() frequency=Rare:
+    v8 = Undefined
+    Return v8
+}
+# PLAN-LABEL: function f1
+# PLAN-NEXT: stretch 0: test HasArrayStorage v0 arrayStorage=Double before v2; test IsElementPresent v0, v1 arrayStorage=Double before v2; test IsElementPresent v0, {{*}} arrayStorage=Double before v5; uses v2 v5; cloned
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f1 name="chainBehindTestsOfTheElements"
+# CHECK-COUNT-2: : number = GetArrayElement v0, {{*}} arrayStorage=Double level=Expected [isPresent]
+# CHECK-NOT: = GetArrayElement
+# NONE-LABEL: function f1 name="chainBehindTestsOfTheElements"
+# NONE-NOT: IsPristine
+# NONE-NOT: IsInBounds
+# The two tests that are left stand in the generic copy.
+# SIMPLE-LABEL: function f1 name="chainBehindTestsOfTheElements"
+# SIMPLE-COUNT-2: testedType=number
+# SIMPLE-NOT: testedType=number
+
+# ResolveAccesses has rewritten the read of an array of which everything is proven. Whether the position holds an element is still open
+function f2 name="provenArray" parameters=[{type=Array<number, proven, Double, pristine[Storage, Names]>}, {type=number}] results=[{type=anything}] {
+    v2 = GetArrayElement v0, v1 arrayStorage=Double level=Proven
+    Return v2
+}
+# PLAN-LABEL: function f2
+# PLAN-NEXT: stretch 0: test IsElementPresent v0, v1 arrayStorage=Double before v2; uses v2; cloned
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f2 name="provenArray"
+# CHECK: [[isPresent2]]: boolean = IsElementPresent v0, v1 arrayStorage=Double
+# CHECK-NEXT: Branch [[isPresent2]] -> taken [[presentBlock2]](| 0), notTaken
+# CHECK: [[presentBlock2]]([[present2]]: guard):
+# CHECK: v2: number = GetArrayElement v0, v1, [[present2]] arrayStorage=Double level=Proven [isPresent]
+# CHECK-NEXT: Return v2
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: [[generic2]]: undefined|number = GetArrayElement v0, v1 arrayStorage=Double level=Proven
+# CHECK-NEXT: Return [[generic2]]
+# NONE-LABEL: function f2 name="provenArray"
+# NONE-NOT: HasArrayStorage
+# NONE-NOT: IsPristine
+# SIMPLE-LABEL: function f2 name="provenArray"
+
+# A position inside the length of an array without holes holds an element
+function f3 name="provenArrayWithoutHoles" parameters=[{type=Array<number, proven, Double, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = GetArrayElement v0, v1 arrayStorage=Double level=Proven [keyIsIntegral]
+    Return v2
+}
+# PLAN-LABEL: function f3
+# PLAN-NEXT: stretch 0: test IsInBounds v0, v1 before v2; uses v2; cloned
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f3 name="provenArrayWithoutHoles"
+# CHECK: = IsInBounds v0, v1
+# CHECK: v2: number = GetArrayElement v0, v1, {{*}} arrayStorage=Double level=Proven [keyIsIntegral, isInBounds]
+# NONE-LABEL: function f3 name="provenArrayWithoutHoles"
+# NONE-NOT: IsElementPresent
+# NONE-NOT: readsHoleAsNaN
+
+function f4 name="expectedArray" parameters=[{type=Array<number> flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ Array<number>, v1: number):
+    v2 = ElemGet v0, v1
+    Return v2
+}
+# PLAN-LABEL: function f4
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=Array{{*}} before v2; test HasArrayStorage v0 arrayStorage=Double before v2; test IsElementPresent v0, v1 arrayStorage=Double before v2; uses v2; cloned
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f4 name="expectedArray"
+# CHECK: v2: number = GetArrayElement [[array4]], v1, {{*}} arrayStorage=Double level=Expected [isPresent]
+# CHECK: = HasArrayStorage [[array4]] arrayStorage=Double
+# CHECK: = IsElementPresent [[array4]], v1, {{*}} arrayStorage=Double
+# NONE-LABEL: function f4 name="expectedArray"
+# NONE-NOT: IsPristine
+
+# s[k] === undefined
+function f5 name="comparedWithUndefined" parameters=[{type=Array<number>}, {type=int[0, 1000]}] results=[{type=boolean}] {
+    v2 = ElemGet v0, v1
+    v3 = Undefined
+    v4 = StrictEq v2, v3
+    Return v4
+}
+# PLAN-LABEL: function f5
+# PLAN-NOT: IsElementPresent
+# PLAN: test IsPristine v0 builtinClass=Array aspects=[Storage] before v2; test HasArrayStorage v0 arrayStorage=Double before v2;
+# PLAN-NOT: IsElementPresent
+# CHECK-LABEL: function f5 name="comparedWithUndefined"
+# CHECK: = IsPristine v0 builtinClass=Array aspects=[Storage]
+# CHECK: v2: undefined|number = GetArrayElement v0, v1, {{*}} arrayStorage=Double level=Expected [keyIsIntegral]
+# NONE-LABEL: function f5 name="comparedWithUndefined"
+# NONE-NOT: IsElementPresent
+# NONE-NOT: isPresent
+
+# s[k] ?? 0
+function f6 name="replacedWhereAbsent" parameters=[{type=Array<number>}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    v3 = TypeTest v2 testedType=undefined|null
+    Branch v3 -> taken b1(), notTaken b2(| 0)
+  b1():
+    v4 = Integer integer=0
+    Return v4
+  b2(v5):
+    Return v5
+}
+# PLAN-LABEL: function f6
+# PLAN-NOT: IsElementPresent
+# PLAN: test IsPristine v0 builtinClass=Array aspects=[Storage] before v2; test HasArrayStorage v0 arrayStorage=Double before v2;
+# PLAN-NOT: IsElementPresent
+# CHECK-LABEL: function f6 name="replacedWhereAbsent"
+# CHECK: = IsPristine v0 builtinClass=Array aspects=[Storage]
+# CHECK: v2: undefined|number = GetArrayElement v0, v1, {{*}} arrayStorage=Double level=Expected [keyIsIntegral]
+# NONE-LABEL: function f6 name="replacedWhereAbsent"
+# NONE-NOT: IsElementPresent
+# NONE-NOT: isPresent
+
+# if (s[k])
+function f7 name="branchedOn" parameters=[{type=Array<number>}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Integer integer=1
+    Return v4
+  b2():
+    v5 = Integer integer=2
+    Return v5
+}
+# PLAN-LABEL: function f7
+# PLAN-NOT: IsElementPresent
+# PLAN: test IsPristine v0 builtinClass=Array aspects=[Storage] before v2; test HasArrayStorage v0 arrayStorage=Double before v2;
+# PLAN-NOT: IsElementPresent
+# CHECK-LABEL: function f7 name="branchedOn"
+# CHECK: = IsPristine v0 builtinClass=Array aspects=[Storage]
+# CHECK: : undefined|number = GetArrayElement v0, v1, {{*}} arrayStorage=Double level=Expected [keyIsIntegral]
+# NONE-LABEL: function f7 name="branchedOn"
+# NONE-NOT: IsElementPresent
+# NONE-NOT: isPresent
+
+# typeof s[k]
+function f8 name="askedForItsType" parameters=[{type=Array<number>}, {type=int[0, 1000]}] results=[{type=string}] {
+    v2 = ElemGet v0, v1
+    v3 = TypeOf v2
+    Return v3
+}
+# PLAN-LABEL: function f8
+# PLAN-NOT: IsElementPresent
+# PLAN: test IsPristine v0 builtinClass=Array aspects=[Storage] before v2; test HasArrayStorage v0 arrayStorage=Double before v2;
+# PLAN-NOT: IsElementPresent
+# CHECK-LABEL: function f8 name="askedForItsType"
+# CHECK: = IsPristine v0 builtinClass=Array aspects=[Storage]
+# CHECK: v2: undefined|number = GetArrayElement v0, v1, {{*}} arrayStorage=Double level=Expected [keyIsIntegral]
+# NONE-LABEL: function f8 name="askedForItsType"
+# NONE-NOT: IsElementPresent
+# NONE-NOT: isPresent

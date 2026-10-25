@@ -33,11 +33,12 @@
 #include "GPUDeviceLostInfo.h"
 #include "GPUError.h"
 #include "GPUErrorFilter.h"
-#include "GPURenderPipeline.h"
 #include "GPUQueue.h"
+#include "GPURenderPipeline.h"
 #include "JSDOMPromiseDeferredForward.h"
 #include "ScriptExecutionContext.h"
 #include "WebGPUDevice.h"
+#include <WebCore/WebGPUCppAPI.h>
 #include <optional>
 #include <wtf/CurrentThread.h>
 #include <wtf/HashSet.h>
@@ -88,17 +89,13 @@ class WebXRSession;
 class XRGPUBinding;
 template<typename T> struct UniquelyAnnotatedDescriptor;
 
-namespace WebGPU {
-class XRBinding;
-}
-
 class GPUDevice : public RefCounted<GPUDevice>, public ActiveDOMObject, public EventTarget {
     WTF_MAKE_TZONE_ALLOCATED(GPUDevice);
 public:
-    static Ref<GPUDevice> create(ScriptExecutionContext*, Ref<WebGPU::Device>&&, String&& queueLabel, GPUAdapterInfo&);
+    static Ref<GPUDevice> create(ScriptExecutionContext*, Ref<::WebGPU::Device>&&, Ref<WebGPUIntegration>&&, String&& label, String&& queueLabel, GPUAdapterInfo&);
 
-    static HashSet<GPUDevice*>& NODELETE instances() WTF_REQUIRES_LOCK(instancesLock());
-    static Lock& NODELETE instancesLock() WTF_RETURNS_LOCK(s_instancesLock);
+    static HashSet<GPUDevice*>& LEGACY_NODELETE instances() WTF_REQUIRES_LOCK(instancesLock());
+    static Lock& LEGACY_NODELETE instancesLock() WTF_RETURNS_LOCK(s_instancesLock);
 
     virtual ~GPUDevice();
 
@@ -108,20 +105,19 @@ public:
     // ContextDestructionObserver.
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
-    void contextDestroyed() final;
     USING_CAN_MAKE_WEAKPTR(EventTarget);
 
-    String NODELETE label() const;
+    String LEGACY_NODELETE label() const;
     void setLabel(String&&);
 
-    Ref<GPUSupportedFeatures> NODELETE features() const;
-    Ref<GPUSupportedLimits> NODELETE limits() const;
+    Ref<GPUSupportedFeatures> LEGACY_NODELETE features() const;
+    Ref<GPUSupportedLimits> LEGACY_NODELETE limits() const;
 
-    Ref<GPUQueue> NODELETE queue() const;
+    Ref<GPUQueue> LEGACY_NODELETE queue() const;
 
     void destroy(ScriptExecutionContext&);
 
-    RefPtr<WebGPU::XRBinding> createXRBinding(const WebXRSession&);
+    RefPtr<::WebGPU::XRBinding> createXRBinding(const WebXRSession&);
     ExceptionOr<Ref<GPUBuffer>> createBuffer(GPUBufferDescriptor&&);
     ExceptionOr<Ref<GPUTexture>> createTexture(GPUTextureDescriptor&&);
     std::optional<String> errorValidatingSupportedFormat(GPUTextureFormat) const;
@@ -156,14 +152,21 @@ public:
     using LostPromise = DOMPromiseProxy<IDLInterface<GPUDeviceLostInfo>>;
     LostPromise& lost() LIFETIME_BOUND;
 
-    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
+    ScriptExecutionContext* LEGACY_NODELETE scriptExecutionContext() const final;
 
-    WebGPU::Device& backing() { return m_backing; }
-    const WebGPU::Device& backing() const { return m_backing; }
+    ::WebGPU::Device& backing() { return m_backing; }
+    const ::WebGPU::Device& backing() const { return m_backing; }
+    // Stand-ins for the objects that cannot be created, or are no longer valid, made invalid on
+    // purpose. The empty bind group layout stands in for a missing pipeline layout slot.
+    Ref<::WebGPU::CommandEncoder> invalidCommandEncoder() const { return *m_invalidCommandEncoder; }
+    Ref<::WebGPU::CommandBuffer> invalidCommandBuffer() const { return *m_invalidCommandBuffer; }
+    Ref<::WebGPU::RenderPassEncoder> invalidRenderPassEncoder() const { return *m_invalidRenderPassEncoder; }
+    Ref<::WebGPU::ComputePassEncoder> invalidComputePassEncoder() const { return *m_invalidComputePassEncoder; }
+    Ref<::WebGPU::BindGroupLayout> emptyBindGroupLayout() const { return *m_emptyBindGroupLayout; }
     void removeBufferToUnmap(GPUBuffer&);
     void addBufferToUnmap(GPUBuffer&);
-    Ref<GPUAdapterInfo> NODELETE adapterInfo() const;
-    size_t NODELETE memoryCost() const;
+    Ref<GPUAdapterInfo> LEGACY_NODELETE adapterInfo() const;
+    size_t LEGACY_NODELETE memoryCost() const;
 
 #if ENABLE(VIDEO)
     WeakPtr<GPUExternalTexture> takeExternalTextureForVideoElement(const HTMLVideoElement&);
@@ -176,7 +179,7 @@ private:
     friend class GPUBuffer;
     friend class GPUTexture;
 
-    GPUDevice(ScriptExecutionContext*, Ref<WebGPU::Device>&&, String&& queueLabel, GPUAdapterInfo&);
+    GPUDevice(ScriptExecutionContext*, Ref<::WebGPU::Device>&&, Ref<WebGPUIntegration>&&, String&& label, String&& queueLabel, GPUAdapterInfo&);
 
     void didChangeBufferMemoryCost(GPUBuffer&);
     void didChangeTextureMemoryCost(GPUTexture&);
@@ -187,6 +190,10 @@ private:
     // FIXME: We probably need to override more methods to make this work properly.
     RefPtr<GPUPipelineLayout> createAutoPipelineLayout();
 
+    // ActiveDOMObject.
+    bool virtualHasPendingActivity() const final;
+    void stop() final;
+
     // EventTarget.
     enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::GPUDevice; }
     void refEventTarget() final { ref(); }
@@ -195,9 +202,17 @@ private:
     static Lock s_instancesLock;
 
     const UniqueRef<LostPromise> m_lostPromise;
-    const Ref<WebGPU::Device> m_backing;
+    // The root, which has the commands that take WebCore sources.
+    const Ref<WebGPUIntegration> m_gpu;
+    const Ref<::WebGPU::Device> m_backing;
     const Ref<GPUQueue> m_queue;
-    RefPtr<GPUPipelineLayout> m_autoPipelineLayout;
+    const RefPtr<GPUPipelineLayout> m_autoPipelineLayout;
+    String m_label;
+    RefPtr<::WebGPU::CommandEncoder> m_invalidCommandEncoder;
+    RefPtr<::WebGPU::CommandBuffer> m_invalidCommandBuffer;
+    RefPtr<::WebGPU::RenderPassEncoder> m_invalidRenderPassEncoder;
+    RefPtr<::WebGPU::ComputePassEncoder> m_invalidComputePassEncoder;
+    RefPtr<::WebGPU::BindGroupLayout> m_emptyBindGroupLayout;
     WeakHashSet<GPUBuffer> m_buffersToUnmap;
     WeakHashSet<GPUBuffer> m_buffers;
     WeakHashSet<GPUTexture> m_textures;

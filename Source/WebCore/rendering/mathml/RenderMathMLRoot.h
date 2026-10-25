@@ -49,12 +49,12 @@ public:
     void resetRadicalOperator() { m_radicalOperator.reset(protect(style())); }
 
 private:
-    bool isValid() const;
-    RenderBox& getBase() const;
-    RenderBox& getIndex() const;
+    bool LEGACY_NODELETE isValid() const;
+    RenderBox& LEGACY_NODELETE getBase() const;
+    RenderBox& LEGACY_NODELETE getIndex() const;
     ASCIILiteral renderName() const final { return "RenderMathMLRoot"_s; }
-    MathMLRootElement& NODELETE element() const;
-    RootType NODELETE rootType() const;
+    MathMLRootElement& LEGACY_NODELETE element() const;
+    RootType LEGACY_NODELETE rootType() const;
 
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) final;
 

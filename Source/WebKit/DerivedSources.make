@@ -182,7 +182,7 @@ MESSAGE_RECEIVERS = \
 	UIProcess/VisitedLinkStore \
 	UIProcess/ios/WebDeviceOrientationUpdateProviderProxy \
 	UIProcess/ios/SmartMagnificationController \
-	UIProcess/mac/SecItemShimProxy \
+	UIProcess/Cocoa/SecItemShimProxy \
 	UIProcess/WebGeolocationManagerProxy \
 	UIProcess/WebLockRegistryProxy \
 	UIProcess/WebPermissionControllerProxy \
@@ -564,6 +564,7 @@ WEBDRIVER_BIDI_PROTOCOL_INPUT_FILES = \
     $(WebKit2)/UIProcess/Automation/protocol/BidiBrowser.json \
     $(WebKit2)/UIProcess/Automation/protocol/BidiBrowsingContext.json \
     $(WebKit2)/UIProcess/Automation/protocol/BidiDigitalCredentials.json \
+    $(WebKit2)/UIProcess/Automation/protocol/BidiInput.json \
     $(WebKit2)/UIProcess/Automation/protocol/BidiLog.json \
     $(WebKit2)/UIProcess/Automation/protocol/BidiPermissions.json \
     $(WebKit2)/UIProcess/Automation/protocol/BidiScript.json \
@@ -741,7 +742,6 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/Cocoa/CoreIPCPKShippingMethod.serialization.in \
 	Shared/Cocoa/CoreIPCPlist.serialization.in \
 	Shared/Cocoa/CoreIPCPresentationIntent.serialization.in \
-	Shared/Cocoa/CoreIPCSecureCoding.serialization.in \
 	Shared/Cocoa/CoreIPCString.serialization.in \
 	Shared/Cocoa/CoreIPCStringSet.serialization.in \
 	Shared/Cocoa/CoreIPCURL.serialization.in \
@@ -754,9 +754,12 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/Cocoa/InteractionInformationRequest.serialization.in \
 	Shared/Cocoa/RemoteObjectInvocation.serialization.in \
 	Shared/Cocoa/RevealItem.serialization.in \
+	Shared/Cocoa/SecItemRequestData.serialization.in \
+	Shared/Cocoa/SecItemResponseData.serialization.in \
 	Shared/Cocoa/SharedCARingBuffer.serialization.in \
 	Shared/Cocoa/WebCoreArgumentCodersCocoa.serialization.in \
 	Shared/CallbackID.serialization.in \
+	Shared/ContentInversion.serialization.in \
 	Shared/ContentWorldData.serialization.in \
 	Shared/ContextMenuContextData.serialization.in \
 	Shared/CoordinateSystem.serialization.in \
@@ -820,6 +823,7 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/ModelProcessConnectionParameters.serialization.in \
 	Shared/MonotonicObjectIdentifier.serialization.in \
 	Shared/NavigationActionData.serialization.in \
+	Shared/NavigationResponseProcessSwap.serialization.in \
 	Shared/NetworkProcessConnectionParameters.serialization.in \
 	Shared/NodeHitTestResult.serialization.in \
 	Shared/PDFAccessibilityDisplayModeState.serialization.in \
@@ -861,6 +865,7 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/WebCompiledContentRuleListData.serialization.in \
 	Shared/ViewWindowCoordinates.serialization.in \
 	Shared/VisibleContentRectUpdateInfo.serialization.in \
+	Shared/VolumetricSceneContentContext.serialization.in \
 	Shared/WTFArgumentCoders.serialization.in \
 	Shared/WebBackForwardListCounts.serialization.in \
 	Shared/WebContextMenuItemData.serialization.in \
@@ -913,8 +918,6 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/cf/CoreIPCSecTrust.serialization.in \
 	Shared/graphics/RemoteImageBufferSetConfiguration.serialization.in \
 	Shared/mac/PDFContextMenuItem.serialization.in \
-	Shared/mac/SecItemRequestData.serialization.in \
-	Shared/mac/SecItemResponseData.serialization.in \
 	Shared/mac/WebHitTestResultPlatformData.serialization.in \
 	Shared/WebsiteDataStoreParameters.serialization.in \
 	Shared/WebsiteData/TimeBasedEvictionMode.serialization.in \
@@ -1017,7 +1020,9 @@ SERIALIZATION_DESCRIPTION_FILES = \
 #
 
 WEBCORE_SERIALIZATION_DESCRIPTION_FILES = \
+	CSSValueKeywords.serialization.in \
 	HTTPHeaderNames.serialization.in \
+	QuirkBehaviorID.serialization.in \
 	ActivityState.serialization.in \
 	DocumentSyncData.serialization.in \
 	DragActions.serialization.in \
@@ -1165,4 +1170,13 @@ $(WEBKIT_ADDITIONS_SWIFT_FILES): %.swift : %.swift.in
 	cp -f $< $@
 
 all : $(WEBKIT_ADDITIONS_SWIFT_FILES)
+
+# WebKitAdditions may predate DigitalCredentialsExtras.swift.in. Its call sites are behind
+# HAVE(DIGITAL_CREDENTIALS_OPENID4VP), which the same WebKitAdditions defines, so an empty file stands in.
+DIGITAL_CREDENTIALS_EXTRAS = $(call find-webkitadditions-file,DigitalCredentialsExtras.swift.in)
+
+DigitalCredentialsExtras.swift : $(DIGITAL_CREDENTIALS_EXTRAS)
+	$(if $(DIGITAL_CREDENTIALS_EXTRAS),cp -f $< $@,: > $@)
+
+all : DigitalCredentialsExtras.swift
 endif

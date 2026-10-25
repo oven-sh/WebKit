@@ -1,0 +1,65 @@
+# every cycle contains a LoopHint, also an inner cycle and a cycle through a handler edge
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: CycleWithoutLoopMark 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badSelfLoop" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f1 name="goodSelfLoop" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f2 name="badInnerCycle" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2():
+    Branch v0 -> taken b2(), notTaken b3()
+  b3():
+    Branch v0 -> taken b1(), notTaken b4()
+  b4():
+    Return
+}
+function f3 name="goodInnerCycle" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2():
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b3()
+  b3():
+    Branch v0 -> taken b1(), notTaken b4()
+  b4():
+    Return
+}
+function f4 name="badCycleThroughHandlerEdge" parameters=[{type=anything}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1() handler=b2():
+    v1 = Call v0
+    Return
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Jump -> next b1()
+}
+function f5 name="goodCycleThroughHandlerEdge" parameters=[{type=anything}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1() handler=b2():
+    LoopHint
+    v2 = Call v0
+    Return
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Jump -> next b1()
+}

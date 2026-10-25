@@ -9,6 +9,9 @@
 #ifndef __TZFMT_H
 #define __TZFMT_H
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 /**
  * \file
  * \brief C++ API: TimeZoneFormat

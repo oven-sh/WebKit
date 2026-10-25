@@ -10,6 +10,9 @@
 #ifndef REGION_H
 #define REGION_H
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 /**
  * \file 
  * \brief C++ API: Region classes (territory containment)

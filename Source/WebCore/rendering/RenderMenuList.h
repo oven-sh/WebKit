@@ -37,7 +37,7 @@ public:
     RenderMenuList(HTMLSelectElement&, Style::ComputedStyle&&);
     virtual ~RenderMenuList();
 
-    HTMLSelectElement& NODELETE selectElement() const;
+    HTMLSelectElement& LEGACY_NODELETE selectElement() const;
 
     // CheckedPtr interface.
     uint32_t checkedPtrCount() const { return RenderFlexibleBox::checkedPtrCount(); }
@@ -85,6 +85,7 @@ private:
 
     bool m_needsOptionsWidthUpdate;
     int m_optionsWidth;
+    int m_widthWithoutOptions { 0 };
 };
 
 } // namespace WebCore

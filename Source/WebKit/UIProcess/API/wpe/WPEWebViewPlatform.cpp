@@ -642,20 +642,21 @@ void ViewPlatform::setCursor(const WebCore::Cursor& cursor)
         return;
     }
 
-    auto nativeImage = cursor.image()->currentNativeImage();
+    RefPtr nativeImage = cursor.image();
     if (!nativeImage)
         return;
 
     SkPixmap pixmap;
     auto platformImage = nativeImage->platformImage();
-    ASSERT(platformImage->peekPixels(&pixmap));
+    if (!platformImage->peekPixels(&pixmap))
+        return;
 
     platformImage->ref();
     GRefPtr<GBytes> bytes = adoptGRef(g_bytes_new_with_free_func(pixmap.addr(), pixmap.computeByteSize(), [](gpointer data) {
         static_cast<SkImage*>(data)->unref();
     }, platformImage.get()));
 
-    WebCore::IntPoint hotspot = WebCore::determineHotSpot(cursor.image().get(), cursor.hotSpot());
+    WebCore::IntPoint hotspot = cursor.hotSpot();
     wpe_view_set_cursor_from_bytes(m_wpeView.get(), bytes.get(), pixmap.width(), pixmap.height(), pixmap.rowBytes(), hotspot.x(), hotspot.y());
 }
 

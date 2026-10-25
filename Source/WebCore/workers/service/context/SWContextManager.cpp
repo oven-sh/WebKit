@@ -35,6 +35,11 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/WTFProcess.h>
 
+#if ASAN_ENABLED && PLATFORM(COCOA)
+#include <wtf/darwin/WebKitReasonCode.h>
+#include <wtf/spi/darwin/ReasonSPI.h>
+#endif
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SWContextManager::ServiceWorkerTerminationRequest);
@@ -64,7 +69,7 @@ void SWContextManager::registerServiceWorkerThreadForInstall(Ref<ServiceWorkerTh
 
     auto serviceWorkerIdentifier = serviceWorkerThreadProxy->identifier();
     auto jobDataIdentifier = serviceWorkerThreadProxy->thread().jobDataIdentifier();
-    auto* threadProxy = serviceWorkerThreadProxy.ptr();
+    Ref threadProxy = serviceWorkerThreadProxy;
 
     {
         Locker locker { m_workerMapLock };
@@ -267,8 +272,14 @@ void SWContextManager::serviceWorkerFailedToTerminate(ServiceWorkerIdentifier se
 {
     UNUSED_PARAM(serviceWorkerIdentifier);
     RELEASE_LOG_ERROR(ServiceWorker, "Failed to terminate service worker with identifier %s, killing the service worker process", serviceWorkerIdentifier.loggingString().utf8());
+#if ASAN_ENABLED && PLATFORM(COCOA)
+    // Abort with a reason instead of exiting so the crash report names this termination path
+    // and captures the backtrace of the worker thread that failed to stop.
+    abort_with_reason(OS_REASON_WEBKIT, std::to_underlying(WebKitReasonCode::ServiceWorkerFailedToTerminate), "SWContextManager::serviceWorkerFailedToTerminate", 0);
+#else
     ASSERT_NOT_REACHED();
     terminateProcess(EXIT_FAILURE);
+#endif
 }
 
 SWContextManager::ServiceWorkerTerminationRequest::ServiceWorkerTerminationRequest(SWContextManager& manager, ServiceWorkerIdentifier serviceWorkerIdentifier, Seconds timeout)
@@ -310,7 +321,7 @@ void SWContextManager::updateRegistrationState(ServiceWorkerRegistrationIdentifi
 {
     forEachServiceWorker([identifier, state, &serviceWorkerData] {
         return [identifier, state, serviceWorkerData = crossThreadCopy(serviceWorkerData)] (auto& context) mutable {
-            if (auto* container = context.serviceWorkerContainer())
+            if (RefPtr container = context.serviceWorkerContainer())
                 container->updateRegistrationState(identifier, state, WTF::move(serviceWorkerData));
         };
     });
@@ -320,7 +331,7 @@ void SWContextManager::updateWorkerState(ServiceWorkerIdentifier identifier, Ser
 {
     forEachServiceWorker([identifier, state] {
         return [identifier, state] (auto& context) {
-            if (auto* container = context.serviceWorkerContainer())
+            if (RefPtr container = context.serviceWorkerContainer())
                 container->updateWorkerState(identifier, state);
         };
     });
@@ -330,7 +341,7 @@ void SWContextManager::fireUpdateFoundEvent(ServiceWorkerRegistrationIdentifier 
 {
     forEachServiceWorker([identifier] {
         return [identifier] (auto& context) {
-            if (auto* container = context.serviceWorkerContainer())
+            if (RefPtr container = context.serviceWorkerContainer())
                 container->queueTaskToFireUpdateFoundEvent(identifier);
         };
     });
@@ -340,7 +351,7 @@ void SWContextManager::setRegistrationLastUpdateTime(ServiceWorkerRegistrationId
 {
     forEachServiceWorker([identifier, lastUpdateTime] {
         return [identifier, lastUpdateTime] (auto& context) {
-            if (auto* container = context.serviceWorkerContainer()) {
+            if (RefPtr container = context.serviceWorkerContainer()) {
                 if (auto* registration = container->registration(identifier))
                     registration->setLastUpdateTime(lastUpdateTime);
             }
@@ -352,7 +363,7 @@ void SWContextManager::setRegistrationUpdateViaCache(ServiceWorkerRegistrationId
 {
     forEachServiceWorker([identifier, updateViaCache] {
         return [identifier, updateViaCache] (auto& context) {
-            if (auto* container = context.serviceWorkerContainer()) {
+            if (RefPtr container = context.serviceWorkerContainer()) {
                 if (auto* registration = container->registration(identifier))
                     registration->setUpdateViaCache(updateViaCache);
             }

@@ -27,6 +27,10 @@
 #include "config.h"
 #include "AsyncFromSyncIteratorPrototype.h"
 
+#if ENABLE(AOT)
+#include "AOTAsyncResumption.h"
+#include "JSMicrotask.h"
+#endif
 #include "AsyncContextSwapScope.h"
 
 #include "IteratorOperations.h"
@@ -75,6 +79,12 @@ static void awaitAndContinue(JSGlobalObject* globalObject, VM& vm, JSAsyncFromSy
 {
     InternalMicrotask task = done ? InternalMicrotask::AsyncFromSyncIteratorDone : InternalMicrotask::AsyncFromSyncIteratorContinue;
     iterator->setTarget(vm, target, closeSyncIteratorOnRejection);
+#if ENABLE(AOT)
+    if (JSValue awaited = vm.hasCompiledCode() ? AOT::tryAwaitForStepInProgress(globalObject, target, value) : JSValue()) {
+        asyncFromSyncIteratorContinueOrDone(iterator->realm(), vm, iterator, awaited, JSPromise::Status::Fulfilled, done, nullptr);
+        return;
+    }
+#endif
     JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, value, task, iterator);
 }
 
@@ -164,6 +174,7 @@ JSValue asyncFromSyncIteratorNext(JSGlobalObject* globalObject, JSAsyncFromSyncI
     if (scope.exception()) [[unlikely]]
         RELEASE_AND_RETURN(scope, promise->rejectWithCaughtException(vm, scope));
 
+    scope.release();
     awaitAndContinue(globalObject, vm, iterator, promise, /* closeSyncIteratorOnRejection */ true, value, done);
     return promise;
 }
@@ -203,6 +214,7 @@ JSC_DEFINE_HOST_FUNCTION(asyncFromSyncIteratorPrototypeFuncReturn, (JSGlobalObje
     if (scope.exception()) [[unlikely]]
         RELEASE_AND_RETURN(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
 
+    scope.release();
     awaitAndContinue(globalObject, vm, iterator, promise, /* closeSyncIteratorOnRejection */ false, value, done);
     return JSValue::encode(promise);
 }
@@ -253,6 +265,7 @@ JSC_DEFINE_HOST_FUNCTION(asyncFromSyncIteratorPrototypeFuncThrow, (JSGlobalObjec
     if (scope.exception()) [[unlikely]]
         RELEASE_AND_RETURN(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
 
+    scope.release();
     awaitAndContinue(globalObject, vm, iterator, promise, /* closeSyncIteratorOnRejection */ true, value, done);
     return JSValue::encode(promise);
 }

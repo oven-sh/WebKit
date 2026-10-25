@@ -37,6 +37,7 @@
 #include "LegacyRenderSVGResource.h"
 #include "LegacyRenderSVGTransformableContainer.h"
 #include "NodeName.h"
+#include "RenderElementInlines.h"
 #include "RenderSVGTransformableContainer.h"
 #include "SVGDocumentExtensions.h"
 #include "SVGElementTypeHelpers.h"
@@ -59,7 +60,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGUseElement);
 
 inline SVGUseElement::SVGUseElement(const QualifiedName& tagName, Document& document)
-    : SVGGraphicsElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGGraphicsElement(tagName, document, PropertyRegistry::singleton())
     , SVGURIReference(this)
 {
     ASSERT(hasCustomStyleResolveCallbacks());
@@ -160,13 +161,13 @@ FloatRect SVGUseElement::getBBox(StyleUpdateStrategy styleUpdateStrategy)
         return { };
 
     if (document().settings().layerBasedSVGEngineEnabled()) {
-        auto* transformableContainer = dynamicDowncast<RenderSVGTransformableContainer>(renderer());
+        CheckedPtr transformableContainer = dynamicDowncast<RenderSVGTransformableContainer>(renderer());
         ASSERT(transformableContainer);
         bbox.move(transformableContainer->additionalContainerTranslation());
         return bbox;
     }
 
-    auto* transformableContainer = dynamicDowncast<LegacyRenderSVGTransformableContainer>(renderer());
+    CheckedPtr transformableContainer = dynamicDowncast<LegacyRenderSVGTransformableContainer>(renderer());
     ASSERT(transformableContainer && transformableContainer->isObjectBoundingBoxValid());
     bbox.move(transformableContainer->additionalTranslation());
     return bbox;
@@ -220,7 +221,7 @@ void SVGUseElement::svgAttributeChanged(const QualifiedName& attrName)
     SVGGraphicsElement::svgAttributeChanged(attrName);
 }
 
-static inline bool NODELETE isDisallowedElement(const SVGElement& element)
+static inline bool LEGACY_NODELETE isDisallowedElement(const SVGElement& element)
 {
     using namespace ElementNames;
 
@@ -257,7 +258,7 @@ static inline bool NODELETE isDisallowedElement(const SVGElement& element)
     return true;
 }
 
-static inline bool NODELETE isDisallowedElement(const Element& element)
+static inline bool LEGACY_NODELETE isDisallowedElement(const Element& element)
 {
     auto* svgElement = dynamicDowncast<SVGElement>(element);
     return !svgElement || isDisallowedElement(*svgElement);
@@ -332,7 +333,7 @@ RenderPtr<RenderElement> SVGUseElement::createElementRenderer(Style::ComputedSty
     return createRenderer<LegacyRenderSVGTransformableContainer>(*this, WTF::move(style));
 }
 
-static bool NODELETE isDirectReference(const SVGElement& element)
+static bool LEGACY_NODELETE isDirectReference(const SVGElement& element)
 {
     using namespace SVGNames;
     return element.hasTagName(circleTag)
@@ -355,8 +356,8 @@ RefPtr<SVGGraphicsElement> SVGUseElement::visibleTargetGraphicsElement() const
     if (!renderer)
         return nullptr;
 
-    auto& style = renderer->style();
-    if (style.display() == Style::DisplayType::None || style.usedVisibility() != Visibility::Visible)
+    CheckedRef style = renderer->style();
+    if (style->display() == Style::DisplayType::None || renderer->usedStyle().visibility() != UsedVisibility::Visible)
         return nullptr;
 
     // Spec: "If a <use> element is a child of a clipPath element, it must directly

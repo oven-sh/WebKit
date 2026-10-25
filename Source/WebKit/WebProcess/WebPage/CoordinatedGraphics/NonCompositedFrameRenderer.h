@@ -71,7 +71,7 @@ private:
 #endif
 #if ENABLE(DAMAGE_TRACKING)
     void resetDamageHistoryForTesting() override;
-    void foreachRegionInDamageHistoryForTesting(Function<void(const WebCore::Region&)>&&) const override;
+    void foreachRegionInDamageHistoryForTesting(NOESCAPE const Function<void(const WebCore::Region&)>&) const override;
 #endif
 #if PLATFORM(GTK)
     void adjustTransientZoom(double, WebCore::FloatPoint, WebCore::FloatPoint) override;
@@ -81,7 +81,7 @@ private:
     void releaseMemory(WTF::Critical) override;
 
     const WeakRef<WebPage> m_webPage;
-    Ref<AcceleratedSurface> m_surface;
+    const Ref<AcceleratedSurface> m_surface;
     std::unique_ptr<WebCore::GLContext> m_context;
     bool m_pendingNotifyFrame { false };
     bool m_isWaitingForFrameComplete { false };

@@ -63,6 +63,10 @@
     shouldBeEqualToString("poly1.getAttribute('points').formatPointsAttribute()", "0 0 100 0 100 100 0 100");
 
     debug("");
+    debug("point is still item 0, so it was updated in place");
+    shouldBeEqualToString("dumpPoint(point)", "x=0 y=0");
+
+    debug("");
     debug("Test uncommon arguments for getItem()");
     shouldThrow("poly1.points.getItem(30)");
     shouldBe("poly1.points.getItem('aString')", "poly1.points.getItem(0)");
@@ -195,6 +199,11 @@
     shouldThrow("poly1.points.appendItem('aString')");
     shouldThrow("poly1.points.appendItem(poly1)");
     shouldThrow("poly1.points.appendItem(null)");
+
+    debug("");
+    debug("Set point back to x=200 y=100");
+    shouldBe("point.x = 200", "200");
+    shouldBe("point.y = 100", "100");
 
     shouldBeEqualToString("dumpPoint(poly1.points.appendItem(point))", "x=200 y=100");
     shouldBe("poly1.points.numberOfItems", "2");

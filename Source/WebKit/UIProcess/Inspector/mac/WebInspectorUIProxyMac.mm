@@ -55,6 +55,7 @@
 #import <WebCore/LocalizedStrings.h>
 #import <pal/spi/cf/CFUtilitiesSPI.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/CompletionHandler.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
@@ -426,7 +427,7 @@ void WebInspectorUIProxy::showSavePanel(NSWindow *frontendWindow, NSURL *platfor
 
         if ([controller base64Encoded]) {
             String contentString = [controller content];
-            auto decodedData = base64Decode(contentString, { Base64DecodeOption::ValidatePadding });
+            const auto decodedData = base64Decode(contentString, { Base64DecodeOption::ValidatePadding });
             if (!decodedData)
                 return;
             RetainPtr dataContent = toNSData(decodedData->span());
@@ -693,7 +694,7 @@ void WebInspectorUIProxy::platformRevealFileExternally(const String& path)
 void WebInspectorUIProxy::platformSave(Vector<InspectorFrontendClient::SaveData>&& saveDatas, bool forceSaveAs)
 {
     RetainPtr<NSString> urlCommonPrefix;
-    for (auto& item : saveDatas) {
+    for (auto& item : borrow(saveDatas)) {
         if (!urlCommonPrefix)
             urlCommonPrefix = item.url.createNSString();
         else
@@ -716,7 +717,7 @@ void WebInspectorUIProxy::platformSave(Vector<InspectorFrontendClient::SaveData>
 
 void WebInspectorUIProxy::platformLoad(const String& path, CompletionHandler<void(const String&)>&& completionHandler)
 {
-    if (auto contents = FileSystem::readEntireFile(path))
+    if (const auto contents = FileSystem::readEntireFile(path))
         completionHandler(String::fromUTF8ReplacingInvalidSequences(byteCast<Latin1Character>(contents->span())));
     else
         completionHandler(nullString());
@@ -966,8 +967,8 @@ DebuggableInfoData WebInspectorUIProxy::infoForLocalDebuggable()
     DebuggableInfoData result;
     result.debuggableType = Inspector::DebuggableType::WebPage;
     result.targetPlatformName = "macOS"_s;
-    result.targetBuildVersion = plist.get()[static_cast<NSString *>(_kCFSystemVersionBuildVersionKey)];
-    result.targetProductVersion = plist.get()[static_cast<NSString *>(_kCFSystemVersionProductUserVisibleVersionKey)];
+    result.targetBuildVersion = checked_objc_cast<NSString>(plist.get()[static_cast<NSString *>(_kCFSystemVersionBuildVersionKey)]);
+    result.targetProductVersion = checked_objc_cast<NSString>(plist.get()[static_cast<NSString *>(_kCFSystemVersionProductUserVisibleVersionKey)]);
     result.targetIsSimulator = false;
 
     return result;
@@ -975,7 +976,7 @@ DebuggableInfoData WebInspectorUIProxy::infoForLocalDebuggable()
 
 void WebInspectorUIProxy::applyForcedAppearance()
 {
-    NSAppearance *platformAppearance;
+    RetainPtr<NSAppearance> platformAppearance;
     switch (m_frontendAppearance) {
     case InspectorFrontendClient::Appearance::System:
         platformAppearance = nil;
@@ -991,9 +992,9 @@ void WebInspectorUIProxy::applyForcedAppearance()
     }
 
     if (RetainPtr window = m_inspectorWindow.get())
-        window.get().appearance = platformAppearance;
+        window.get().appearance = platformAppearance.get();
 
-    [m_inspectorViewController webView].appearance = platformAppearance;
+    [m_inspectorViewController webView].appearance = platformAppearance.get();
 }
 
 } // namespace WebKit

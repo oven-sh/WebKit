@@ -28,6 +28,7 @@
 
 #pragma once
 
+#include <WebCore/AspectRatioFit.h>
 #include <WebCore/DoubleSize.h>
 #include <WebCore/IntPoint.h>
 #include <wtf/JSONValues.h>
@@ -59,7 +60,7 @@ public:
     constexpr FloatSize(float width, float height) : m_width(width), m_height(height) { }
     constexpr FloatSize(const IntSize& size) : m_width(size.width()), m_height(size.height()) { }
 
-    static FloatSize NODELETE narrowPrecision(double width, double height);
+    static FloatSize LEGACY_NODELETE narrowPrecision(double width, double height);
 
     constexpr float width() const { return m_width; }
     constexpr float height() const { return m_height; }
@@ -72,10 +73,21 @@ public:
 
     constexpr bool isEmpty() const { return m_width <= 0 || m_height <= 0; }
     constexpr bool isZero() const;
-    bool NODELETE isExpressibleAsIntSize() const;
+    bool LEGACY_NODELETE isExpressibleAsIntSize() const;
 
     constexpr float aspectRatio() const { return m_width / m_height; }
     constexpr double aspectRatioDouble() const { return m_width / static_cast<double>(m_height); }
+
+    constexpr FloatSize fitToAspectRatio(const FloatSize& aspectRatio, AspectRatioFit fit) const
+    {
+        float heightScale = height() / aspectRatio.height();
+        float widthScale = width() / aspectRatio.width();
+
+        if ((widthScale > heightScale) != (fit == AspectRatioFit::Grow))
+            return { height() * aspectRatio.width() / aspectRatio.height(), height() };
+
+        return { width(), width() * aspectRatio.height() / aspectRatio.width() };
+    }
 
     void expand(float width, float height)
     {
@@ -105,7 +117,7 @@ public:
         return { m_width * scaleX, m_height * scaleY };
     }
 
-    WEBCORE_EXPORT FloatSize constrainedBetween(const FloatSize& min, const FloatSize& max) const;
+    WEBCORE_EXPORT FloatSize LEGACY_NODELETE constrainedBetween(const FloatSize& min, const FloatSize& max) const;
 
     constexpr FloatSize expandedTo(const FloatSize& other) const
     {
@@ -173,7 +185,7 @@ public:
 
 #if USE(CG)
     WEBCORE_EXPORT explicit FloatSize(const CGSize&); // don't do this implicitly since it's lossy
-    WEBCORE_EXPORT operator CGSize() const;
+    WEBCORE_EXPORT operator CGSize LEGACY_NODELETE () const;
 #endif
 
     static constexpr FloatSize nanSize();

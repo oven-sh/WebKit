@@ -145,6 +145,7 @@ endif ()
 
 set(WebKitGTK_HEADER_TEMPLATES
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitApplicationInfo.h.in
+    ${WEBKIT_DIR}/UIProcess/API/glib/WebKitApplicationManifest.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitAuthenticationRequest.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitAutocleanups.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitAutomationSession.h.in
@@ -168,6 +169,7 @@ set(WebKitGTK_HEADER_TEMPLATES
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitFileChooserRequest.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitFindController.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitFormSubmissionRequest.h.in
+    ${WEBKIT_DIR}/UIProcess/API/glib/WebKitFrameInfo.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitGeolocationManager.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitGeolocationPermissionRequest.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitHitTestResult.h.in
@@ -413,6 +415,7 @@ GENERATE_GLIB_API_HEADERS(WebKit WebKitGTK_HEADER_TEMPLATES
     "-DWTF_PLATFORM_WPE=0"
     "-DUSE_GTK4=$<BOOL:${USE_GTK4}>"
     "-DENABLE_2022_GLIB_API=$<BOOL:${ENABLE_2022_GLIB_API}>"
+    "-DENABLE_FUTURE_GLIB_API=$<BOOL:${ENABLE_FUTURE_GLIB_API}>"
     "-DUSE_GI_FINISH_FUNC_ANNOTATION=${USE_GI_FINISH_FUNC_ANNOTATION}"
 )
 unset(USE_GI_FINISH_FUNC_ANNOTATION)
@@ -424,6 +427,7 @@ GENERATE_GLIB_API_HEADERS(WebKit WebKitWebProcessExtension_HEADER_TEMPLATES
     "-DWTF_PLATFORM_WPE=0"
     "-DUSE_GTK4=$<BOOL:${USE_GTK4}>"
     "-DENABLE_2022_GLIB_API=$<BOOL:${ENABLE_2022_GLIB_API}>"
+    "-DENABLE_FUTURE_GLIB_API=$<BOOL:${ENABLE_FUTURE_GLIB_API}>"
 )
 
 if (NOT USE_GTK4)
@@ -483,6 +487,7 @@ list(APPEND WebKitResources "        <file alias='css/gtk-theme.css'>gtk-theme.c
   "        <file alias='images/panIcon'>panIcon.png</file>\n"
   "        <file alias='images/textAreaResizeCorner@2x'>textAreaResizeCorner@2x.png</file>\n"
   "        <file alias='images/textAreaResizeCorner'>textAreaResizeCorner.png</file>\n"
+  "        <file alias='quirks/QuirkTable.json'>QuirkTable.json</file>\n"
 )
 
 if (ENABLE_WEB_AUDIO)
@@ -504,6 +509,7 @@ GLIB_COMPILE_RESOURCES(
     OUTPUT        ${WebKitGTK_DERIVED_SOURCES_DIR}/WebKitResourcesGResourceBundle.c
     SOURCE_XML    ${WebKitGTK_DERIVED_SOURCES_DIR}/WebKitResourcesGResourceBundle.xml
     RESOURCE_DIRS ${CMAKE_SOURCE_DIR}/Source/WebCore/Resources
+                  ${CMAKE_SOURCE_DIR}/Source/WebCore/page
                   ${CMAKE_SOURCE_DIR}/Source/WebCore/platform/audio/resources
                   ${CMAKE_SOURCE_DIR}/Source/WebKit/Resources/gtk
 )

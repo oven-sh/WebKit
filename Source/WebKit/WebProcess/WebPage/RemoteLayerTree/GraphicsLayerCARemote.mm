@@ -26,6 +26,7 @@
 #include "config.h"
 #include "GraphicsLayerCARemote.h"
 
+#include "DisplayOnlyImageProxy.h"
 #include "ImageBufferBackendHandleSharing.h"
 #include "PlatformCAAnimationRemote.h"
 #include "PlatformCALayerRemote.h"
@@ -145,31 +146,40 @@ public:
         , m_drawingArea(identifier)
     { }
 
-    bool tryCopyToLayer(ImageBuffer& buffer, bool opaque) final
+    bool tryCopyToLayer(ImageBuffer& buffer, bool opaque, PlaceholderFrameIdentifier frame) final
     {
         auto clone = buffer.clone();
         if (!clone)
             return false;
 
-        clone->flushDrawingContext();
-
-        auto* sharing = dynamicDowncast<ImageBufferBackendHandleSharing>(clone->toBackendSharing());
-        if (!sharing)
+        auto backendHandle = storeContents(*clone, opaque, frame);
+        if (!backendHandle)
             return false;
 
-        auto backendHandle = sharing->createBackendHandle(SharedMemory::Protection::ReadOnly);
-        if (!backendHandle)
+        RemoteLayerBackingStoreProperties properties(WTF::move(*backendHandle), frame, opaque);
+        m_connection->send(Messages::RemoteLayerTreeDrawingAreaProxy::AsyncSetLayerContents(*m_layerID, WTF::move(properties)), m_drawingArea.toUInt64());
+        return true;
+    }
+
+    bool setContentsForNextDisplay(ImageBuffer& buffer, bool opaque, PlaceholderFrameIdentifier frame) final
+    {
+        return !!storeContents(buffer, opaque, frame);
+    }
+
+    bool tryDisplaySurface(const MachSendRight& surface, ContentsFormat contentsFormat, bool opaque, PlaceholderFrameIdentifier frame) final
+    {
+        if (!m_layerID || !surface)
             return false;
 
         {
             Locker locker { m_surfaceLock };
-            m_surfaceBackendHandle = ImageBufferBackendHandle { *backendHandle };
-            m_surfaceIdentifier = clone->renderingResourceIdentifier();
-            m_contentsFormat = convertToContentsFormat(clone->pixelFormat());
+            m_surfaceBackendHandle = ImageBufferBackendHandle { MachSendRight { surface } };
+            m_frame = frame;
+            m_contentsFormat = contentsFormat;
             m_opaque = opaque;
         }
 
-        RemoteLayerBackingStoreProperties properties(WTF::move(*backendHandle), clone->renderingResourceIdentifier(), opaque);
+        RemoteLayerBackingStoreProperties properties(ImageBufferBackendHandle { MachSendRight { surface } }, frame, opaque);
         m_connection->send(Messages::RemoteLayerTreeDrawingAreaProxy::AsyncSetLayerContents(*m_layerID, WTF::move(properties)), m_drawingArea.toUInt64());
         return true;
     }
@@ -180,24 +190,50 @@ public:
         if (m_surfaceBackendHandle) {
             downcast<PlatformCALayerRemote>(layer).setOpaque(m_opaque);
             downcast<PlatformCALayerRemote>(layer).setContentsFormat(m_contentsFormat);
-            downcast<PlatformCALayerRemote>(layer).setRemoteDelegatedContents({ ImageBufferBackendHandle { *m_surfaceBackendHandle }, { }, std::optional<RenderingResourceIdentifier>(m_surfaceIdentifier) });
+            downcast<PlatformCALayerRemote>(layer).setRemoteDelegatedContents({ ImageBufferBackendHandle { *m_surfaceBackendHandle }, { }, m_frame });
         }
     }
 
-    void NODELETE setDestinationLayerID(WebCore::PlatformLayerIdentifier layerID)
+    void LEGACY_NODELETE setDestinationLayerID(WebCore::PlatformLayerIdentifier layerID)
     {
         m_layerID = layerID;
+    }
+
+    std::optional<WebCore::PlatformLayerIdentifier> destinationLayerID() const final
+    {
+        return m_layerID.asOptional();
     }
 
     bool isGraphicsLayerCARemoteAsyncContentsDisplayDelegate() const final { return true; }
 
 private:
+    // Keeps the contents for display() to hand to the next rendering update.
+    std::optional<ImageBufferBackendHandle> storeContents(ImageBuffer& buffer, bool opaque, PlaceholderFrameIdentifier frame)
+    {
+        buffer.flushDrawingContext();
+
+        auto* sharing = dynamicDowncast<ImageBufferBackendHandleSharing>(buffer.toBackendSharing());
+        if (!sharing)
+            return std::nullopt;
+
+        auto backendHandle = sharing->createBackendHandle(SharedMemory::Protection::ReadOnly);
+        if (!backendHandle)
+            return std::nullopt;
+
+        Locker locker { m_surfaceLock };
+        m_surfaceBackendHandle = ImageBufferBackendHandle { *backendHandle };
+        m_frame = frame;
+        m_contentsFormat = convertToContentsFormat(buffer.pixelFormat());
+        m_opaque = opaque;
+        return backendHandle;
+    }
+
     const Ref<IPC::Connection> m_connection;
     DrawingAreaIdentifier m_drawingArea;
     Markable<WebCore::PlatformLayerIdentifier> m_layerID;
     Lock m_surfaceLock;
     std::optional<ImageBufferBackendHandle> m_surfaceBackendHandle WTF_GUARDED_BY_LOCK(m_surfaceLock);
-    Markable<WebCore::RenderingResourceIdentifier> m_surfaceIdentifier WTF_GUARDED_BY_LOCK(m_surfaceLock);
+    std::optional<PlaceholderFrameIdentifier> m_frame WTF_GUARDED_BY_LOCK(m_surfaceLock);
     ContentsFormat m_contentsFormat WTF_GUARDED_BY_LOCK(m_surfaceLock) { ContentsFormat::RGBA8 };
     bool m_opaque WTF_GUARDED_BY_LOCK(m_surfaceLock) { false };
 };
@@ -252,7 +288,7 @@ private:
     {
     }
 
-    std::unique_ptr<ThreadSafeImageBufferFlusher> m_flusher;
+    const std::unique_ptr<ThreadSafeImageBufferFlusher> m_flusher;
 };
 
 void GraphicsLayerCARemote::setLayerContentsToImageBuffer(PlatformCALayer& layer, ImageBuffer* image)
@@ -279,6 +315,17 @@ void GraphicsLayerCARemote::setLayerContentsToImageBuffer(PlatformCALayer& layer
     layer.setTonemappingEnabled(true);
 #endif
     downcast<PlatformCALayerRemote>(layer).setRemoteDelegatedContents({ ImageBufferBackendHandle { *backendHandle }, fence, std::nullopt });
+}
+
+void GraphicsLayerCARemote::setLayerContentsToNativeImage(PlatformCALayer& layer, NativeImage& image)
+{
+#if ENABLE(GPU_PROCESS) && HAVE(IOSURFACE)
+    if (RefPtr proxy = dynamicDowncast<DisplayOnlyImageProxy>(image)) {
+        downcast<PlatformCALayerRemote>(layer).setDisplayOnlyImage(proxy->identifier());
+        return;
+    }
+#endif
+    layer.setContents(image.platformImage().get());
 }
 
 GraphicsLayer::LayerMode GraphicsLayerCARemote::layerMode() const

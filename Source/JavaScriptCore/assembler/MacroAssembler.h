@@ -518,7 +518,15 @@ public:
 
     void oops()
     {
-        abortWithReason(B3Oops);
+        switch (policy().oops) {
+        case OopsForm::AbortWithReason:
+            abortWithReason(B3Oops);
+            return;
+        case OopsForm::Breakpoint:
+            breakpoint();
+            return;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
     }
 
     // B3 has additional pseudo-opcodes for returning, when it wants to signal that the return
@@ -532,7 +540,7 @@ public:
     static constexpr unsigned BlindingModulus = 64;
     bool shouldConsiderBlinding()
     {
-        return !(random() & (BlindingModulus - 1));
+        return blindsConstants() && !(random() & (BlindingModulus - 1));
     }
 
     void move(Address src, Address dest, RegisterID scratch)
@@ -1595,7 +1603,7 @@ public:
     
     struct RotatedImmPtr {
         RotatedImmPtr(uintptr_t v1, uint8_t v2)
-            : value(v1)
+            : value(reinterpret_cast<const void*>(v1))
             , rotation(v2)
         {
         }
@@ -1755,7 +1763,7 @@ public:
         if (shouldBlind(imm) && haveScratchRegisterForBlinding()) {
             RegisterID scratchRegister = scratchRegisterForBlinding();
             loadRotationBlindedConstant(rotationBlindConstant(imm), scratchRegister);
-            and64(scratchRegister, dest);
+            and64(scratchRegister, src, dest);
         } else
             and64(imm.asTrustedImm64(), src, dest);
     }
@@ -1775,7 +1783,7 @@ public:
         if (shouldBlind(imm) && haveScratchRegisterForBlinding()) {
             RegisterID scratchRegister = scratchRegisterForBlinding();
             loadRotationBlindedConstant(rotationBlindConstant(imm), scratchRegister);
-            xor64(scratchRegister, dest);
+            xor64(scratchRegister, src, dest);
         } else
             xor64(imm.asTrustedImm64(), src, dest);
     }
@@ -1795,7 +1803,7 @@ public:
         if (shouldBlind(imm) && haveScratchRegisterForBlinding()) {
             RegisterID scratchRegister = scratchRegisterForBlinding();
             loadRotationBlindedConstant(rotationBlindConstant(imm), scratchRegister);
-            or64(scratchRegister, dest);
+            or64(scratchRegister, src, dest);
         } else
             or64(imm.asTrustedImm64(), src, dest);
     }
@@ -2416,7 +2424,7 @@ public:
     }
 
     // Returned branch should be taken on ASSERT pass.
-    void jitAssert(const WTF::ScopedLambda<Jump(void)>&);
+    void jitAssert(NOESCAPE const WTF::ScopedLambda<Jump(void)>&);
 
     // This function emits code to preserve the CPUState (e.g. registers),
     // call a user supplied probe function, and restore the CPUState before

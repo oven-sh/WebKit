@@ -26,6 +26,7 @@
 #pragma once
 #include <unicode/umachine.h>
 #include <wtf/Forward.h>
+#include <wtf/Hasher.h>
 #include <wtf/text/CharacterProperties.h>
 #include <wtf/text/TextStream.h>
 
@@ -84,12 +85,17 @@ public:
 
     bool isAuto() const { return m_trim == TrimType::Auto; }
     bool isSpaceAll() const { return m_trim == TrimType::SpaceAll; }
-    bool NODELETE shouldTrimSpacing(const TextSpacing::CharactersData&) const;
+    bool LEGACY_NODELETE shouldTrimSpacing(const TextSpacing::CharactersData&) const;
     friend bool operator==(const TextSpacingTrim&, const TextSpacingTrim&) = default;
     constexpr TrimType type() const { return m_trim; }
 private:
     TrimType m_trim { TrimType::SpaceAll };
 };
+
+inline void add(Hasher& hasher, const TextSpacingTrim& value)
+{
+    add(hasher, value.type());
+}
 
 inline WTF::TextStream& operator<<(WTF::TextStream& ts, const TextSpacingTrim& value)
 {
@@ -135,7 +141,7 @@ public:
 
     bool shouldApplySpacing(TextSpacing::CharacterClass firstCharacterClass, TextSpacing::CharacterClass secondCharacterClass) const;
     bool shouldApplySpacing(char32_t firstCharacter, char32_t secondCharacter) const;
-    static float NODELETE textAutospaceSize(const Font&);
+    static float LEGACY_NODELETE textAutospaceSize(const Font&);
 
 private:
     Options m_options { };

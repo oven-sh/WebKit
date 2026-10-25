@@ -50,7 +50,7 @@ RefPtr<PathOperation> CSSValueConversion<RefPtr<PathOperation>>::operator()(Buil
 {
     if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
         switch (keywordValue->valueID()) {
-        case CSSValueNone:
+        case CSSValueID::None:
             return nullptr;
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();
@@ -148,7 +148,7 @@ void Serialize<BasicShapePath>::operator()(StringBuilder& builder, const CSS::Se
 
 #if ENABLE(THREADED_ANIMATIONS)
 
-static std::optional<AcceleratedEffectCoordBox> toAcceleratedEffectCoordBox(CSSBoxType boxType)
+static std::optional<AcceleratedEffectCoordBox> LEGACY_NODELETE toAcceleratedEffectCoordBox(CSSBoxType boxType)
 {
     switch (boxType) {
     case CSSBoxType::BoxMissing:

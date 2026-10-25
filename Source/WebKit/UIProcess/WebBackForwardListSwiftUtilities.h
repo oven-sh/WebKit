@@ -25,10 +25,12 @@
 
 #pragma once
 
+#include "BrowsingContextGroup.h"
 #include "Logging.h"
 #include "WebBackForwardListFrameItem.h"
 #include "WebBackForwardListItem.h"
 #include "WebBackForwardListMessages.h"
+#include "WebFrameProxy.h"
 #include "WebProcessProxy.h"
 #include <cstdint>
 #include <wtf/Function.h>
@@ -64,6 +66,12 @@ inline void setOptionalUInt32Value(std::optional<uint32_t>& optional, uint32_t v
     optional = value;
 }
 
+// WebFrameProxy::webFrame() takes a std::optional, which Swift cannot construct.
+inline WebKit::WebFrameProxy* webFrameForFrameID(WebCore::FrameIdentifier frameID)
+{
+    return WebKit::WebFrameProxy::webFrame(frameID);
+}
+
 using WebBackForwardListItemFilter = WTF::RefCountable<WTF::Function<bool (WebKit::WebBackForwardListItem&)>>;
 
 // Workaround for rdar://168057355
@@ -79,5 +87,10 @@ void appendToBackForwardStateItems(Vector<WebKit::BackForwardListItemState>& ite
 Ref<WebKit::WebBackForwardListItem> createItemFromState(const WebKit::BackForwardListItemState&, WebKit::WebPageProxyIdentifier pageIdentifier);
 Vector<Ref<WebKit::WebBackForwardListItem>> createItemsFromState(const WebKit::BackForwardListState&, WebKit::WebPageProxyIdentifier pageIdentifier);
 WebKit::WebBackForwardListItem* itemAtIndexInBackForwardListItemVector(const Vector<Ref<WebKit::WebBackForwardListItem>>& items, size_t index);
+size_t frameStateChildCount(const WebKit::FrameState&);
+WebKit::FrameState* frameStateChildAtIndex(const WebKit::FrameState&, size_t index);
+
+// WebCore::Page is not visible to Swift.
+unsigned maxFrameStateDepthForMessageCheck();
 
 #endif // ENABLE(BACK_FORWARD_LIST_SWIFT)

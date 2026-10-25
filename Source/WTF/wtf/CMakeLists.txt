@@ -75,6 +75,7 @@ set(WTF_PUBLIC_HEADERS
     CryptographicUtilities.h
     CryptographicallyRandomNumber.h
     CurrentThread.h
+    CycleForest.h
     DataLog.h
     DataMutex.h
     DataRef.h
@@ -111,6 +112,7 @@ set(WTF_PUBLIC_HEADERS
     ForbidHeapAllocation.h
     FormattedLogging.h
     Forward.h
+    FrequencyEstimator.h
     Function.h
     FunctionDispatcher.h
     FunctionPtr.h
@@ -159,6 +161,7 @@ set(WTF_PUBLIC_HEADERS
     LEBEncoder.h
     LLVMProfilingUtils.h
     Language.h
+    LayeredHashMap.h
     LazyRef.h
     LazyUniqueRef.h
     LikelyDenseUnsignedIntegerSet.h
@@ -199,6 +202,7 @@ set(WTF_PUBLIC_HEADERS
     MetaAllocator.h
     MetaAllocatorHandle.h
     MmapSpan.h
+    MonotonicObjectIdentifier.h
     MonotonicTime.h
     module.modulemap
     NakedPtr.h
@@ -357,7 +361,6 @@ set(WTF_PUBLIC_HEADERS
     StructDump.h
     SuspendableWorkQueue.h
     SwiftBridging.h
-    SwiftCXXThunk.h
     SynchronizedFixedQueue.h
     SystemFree.h
     SystemMalloc.h
@@ -412,6 +415,7 @@ set(WTF_PUBLIC_HEADERS
     VariantListOperations.h
     Vector.h
     VectorTraits.h
+    VersionedField.h
     WTFConfig.h
     WTFProcess.h
     WTFSemaphore.h
@@ -435,20 +439,6 @@ set(WTF_PUBLIC_HEADERS
     ZippedRange.h
     dtoa.h
 
-    dragonbox/dragonbox.h
-    dragonbox/dragonbox_to_chars.h
-    dragonbox/ieee754_format.h
-
-    dragonbox/detail/bits.h
-    dragonbox/detail/cache_holder.h
-    dragonbox/detail/decimal_fp.h
-    dragonbox/detail/div.h
-    dragonbox/detail/log.h
-    dragonbox/detail/policy.h
-    dragonbox/detail/policy_holder.h
-    dragonbox/detail/util.h
-    dragonbox/detail/wuint.h
-
     dtoa/bignum-dtoa.h
     dtoa/bignum.h
     dtoa/cached-powers.h
@@ -466,6 +456,8 @@ set(WTF_PUBLIC_HEADERS
     persistence/PersistentDecoder.h
     persistence/PersistentEncoder.h
 
+    posix/POSIXExtras.h
+
     simde/simde.h
     simde/arm/neon.h
     simde/arm/sve.h
@@ -482,7 +474,6 @@ set(WTF_PUBLIC_HEADERS
     text/AtomStringTable.h
     text/Base64.h
     text/CString.h
-    text/CStringView.h
     text/CharacterProperties.h
     text/CodePointIterator.h
     text/ConversionMode.h
@@ -519,6 +510,7 @@ set(WTF_PUBLIC_HEADERS
     text/TextBreakIteratorInternalICU.h
     text/TextPosition.h
     text/TextStream.h
+    text/UTF8CStringView.h
     text/UTF8ConversionError.h
     text/UniquedStringImpl.h
     text/WTFString.h
@@ -664,9 +656,8 @@ set(WTF_SOURCES
     WordLock.cpp
     WorkQueue.cpp
     WorkerPool.cpp
+    Zmij.cpp
     dtoa.cpp
-
-    dragonbox/dragonbox_to_chars.cpp
 
     dtoa/bignum-dtoa.cc
     dtoa/bignum.cc
@@ -687,7 +678,6 @@ set(WTF_SOURCES
     text/AtomStringTable.cpp
     text/Base64.cpp
     text/CString.cpp
-    text/CStringView.cpp
     text/ExternalStringImpl.cpp
     text/LineEnding.cpp
     text/StringBuffer.cpp
@@ -700,6 +690,7 @@ set(WTF_SOURCES
     text/SymbolRegistry.cpp
     text/TextBreakIterator.cpp
     text/TextStream.cpp
+    text/UTF8CStringView.cpp
     text/UniquedStringImpl.cpp
     text/WTFString.cpp
 
@@ -752,6 +743,7 @@ elseif (APPLE)
         cocoa/TypeCastsCocoa.h
         cocoa/VectorCocoa.h
 
+        darwin/DarwinExtras.h
         darwin/DispatchExtras.h
         darwin/DispatchOSObject.h
         darwin/LibraryPathDiagnostics.h
@@ -759,6 +751,7 @@ elseif (APPLE)
         darwin/OSLogPrintStream.h
         darwin/TypeCastsOSObject.h
         darwin/WeakLinking.h
+        darwin/WebKitReasonCode.h
         darwin/XPCExtras.h
         darwin/XPCObjectPtr.h
 

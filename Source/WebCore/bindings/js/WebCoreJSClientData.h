@@ -52,8 +52,6 @@ class JSHeapData {
 public:
     JSHeapData(JSC::Heap&);
 
-    static JSHeapData* ensureHeapData(JSC::Heap&);
-
     Lock& lock() LIFETIME_BOUND { return m_lock; }
     ExtendedDOMIsoSubspaces& subspaces() LIFETIME_BOUND { return m_subspaces; }
 
@@ -67,7 +65,7 @@ public:
     void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope);
 
     template<typename Func>
-    void forEachOutputConstraintSpace(const Func& func)
+    void forEachOutputConstraintSpace(NOESCAPE const Func& func)
     {
         for (auto* space : m_outputConstraintSpaces)
             func(*space);
@@ -88,7 +86,6 @@ public:
     JSC::IsoHeapCellType m_heapCellTypeForJSDedicatedWorkerGlobalScope;
     JSC::IsoHeapCellType m_heapCellTypeForJSWorkerGlobalScope;
     JSC::IsoHeapCellType m_heapCellTypeForJSSharedWorkerGlobalScope;
-    JSC::IsoHeapCellType m_heapCellTypeForJSShadowRealmGlobalScope;
     JSC::IsoHeapCellType m_heapCellTypeForJSServiceWorkerGlobalScope;
     JSC::IsoHeapCellType m_heapCellTypeForJSWorkletGlobalScope;
     JSC::IsoHeapCellType m_heapCellTypeForJSPaintWorkletGlobalScope;
@@ -168,7 +165,7 @@ public:
 
     virtual String overrideSourceURL(const JSC::StackFrame&, const String& originalSourceURL) const;
 
-    JSHeapData& heapData() { return *m_heapData; }
+    JSHeapData& heapData() { return m_heapData.get(); }
 
     WebCoreBuiltinNames& builtinNames() LIFETIME_BOUND { return m_builtinNames; }
     JSBuiltinFunctions& builtinFunctions() LIFETIME_BOUND { return m_builtinFunctions; }
@@ -207,7 +204,8 @@ private:
     JSBuiltinFunctions m_builtinFunctions;
     WebCoreBuiltinNames m_builtinNames;
 
-    JSHeapData* m_heapData;
+    // Declared before the client subspaces, which point into its subspaces, so that it outlives them.
+    const UniqueRef<JSHeapData> m_heapData;
     JSC::GCClient::IsoSubspace m_domBuiltinConstructorSpace;
     JSC::GCClient::IsoSubspace m_domConstructorSpace;
     JSC::GCClient::IsoSubspace m_domNamespaceObjectSpace;
@@ -231,7 +229,7 @@ private:
 
 // Returns the first non-native source URL from the exception's stack frames without applying
 // URL masking, unlike StackFrame::sourceURL(VM&) which goes through overrideSourceURL.
-String unmaskedSourceURLFromException(const JSC::Exception&, JSC::VM&);
+String unmaskedSourceURLFromException(JSC::Exception&, JSC::VM&);
 
 } // namespace WebCore
 

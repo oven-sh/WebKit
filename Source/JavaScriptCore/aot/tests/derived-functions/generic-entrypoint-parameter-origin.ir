@@ -1,0 +1,18 @@
+# A generic entrypoint is shown as its target: all it does has the position of the target, not that of a type in the source, and there is no inline frame
+# FORM: Prepared
+# RUN: derived-functions GenericEntrypoint:f0
+# STATISTIC: GenericEntrypoints = 1
+
+module m0 path="main.ts" displayPath="main.ts"
+typesite w0 module=m0 position=17 kind=Parameter
+typesite w1 module=m0 position=9 kind=This
+function f0 name="double" position=1 flags=[HasThis] thisType={type=number site=w1} parameters=[{type=number site=w0}] results=[{type=anything}] {
+    Return
+}
+# CHECK: name="double" module=m0 position=1 role=GenericEntrypoint
+# CHECK-NOT: inlineFrames=
+# CHECK: b0([[closure]]: f0, [[receiver]]: anything, [[argument]]: anything):
+# CHECK-NEXT: [[assumedReceiver]]: number = AssumeType [[receiver]] castType=number @1
+# CHECK-NEXT: [[assumedArgument]]: number = AssumeType [[argument]] castType=number @1
+# CHECK-NEXT: [[result]]: anything = CallDirect [[assumedReceiver]], [[assumedArgument]] function=f0 @1
+# CHECK-NEXT: ReturnCall [[result]] requirement=Allowed @1

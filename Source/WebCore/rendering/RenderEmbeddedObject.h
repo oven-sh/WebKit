@@ -78,6 +78,8 @@ private:
 
     ASCIILiteral renderName() const final { return "RenderEmbeddedObject"_s; }
 
+    NaturalDimensions zoomedNaturalDimensions() const final;
+
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) final;
 
     bool scroll(ScrollDirection, ScrollGranularity, unsigned stepCount = 1, Element** stopElement = nullptr, RenderBox* startBox = nullptr, const IntPoint& wheelEventAbsolutePoint = IntPoint()) final;

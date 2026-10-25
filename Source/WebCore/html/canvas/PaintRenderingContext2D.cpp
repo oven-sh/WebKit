@@ -72,8 +72,8 @@ CustomPaintCanvas& PaintRenderingContext2D::canvas() const
 GraphicsContext* PaintRenderingContext2D::drawingContext() const
 {
     if (!m_recordingContext)
-        m_recordingContext.emplace(FloatRect { { }, canvasBase().size() });
-    return &*m_recordingContext;
+        m_recordingContext = DisplayList::RecorderImpl::create(FloatRect { { }, canvasBase().size() });
+    return m_recordingContext.get();
 }
 
 AffineTransform PaintRenderingContext2D::baseTransform() const
@@ -87,9 +87,10 @@ AffineTransform PaintRenderingContext2D::baseTransform() const
 
 void PaintRenderingContext2D::replayDisplayList(GraphicsContext& target) const
 {
-    if (!m_recordingContext)
+    RefPtr recordingContext = m_recordingContext;
+    if (!recordingContext)
         return;
-    target.drawDisplayList(m_recordingContext->takeDisplayList());
+    target.drawDisplayList(recordingContext->takeDisplayList());
 }
 
 void PaintRenderingContext2D::didUpdateCanvasSizeProperties(bool sizeChanged)
@@ -97,7 +98,7 @@ void PaintRenderingContext2D::didUpdateCanvasSizeProperties(bool sizeChanged)
     size_t restoreCount = stateStack().size() - 1;
     for (size_t i = 0; i < restoreCount; ++i)
         restore();
-    m_recordingContext.reset();
+    m_recordingContext = nullptr;
     CanvasRenderingContext2DBase::didUpdateCanvasSizeProperties(sizeChanged);
 }
 

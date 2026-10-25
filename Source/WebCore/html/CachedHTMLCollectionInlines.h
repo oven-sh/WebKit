@@ -37,19 +37,21 @@ template <typename HTMLCollectionClass>
 CachedHTMLCollection<HTMLCollectionClass>::~CachedHTMLCollection()
 {
     if (m_indexCache.hasValidCache())
-        document().unregisterCollection(*this);
+        protect(document())->unregisterCollection(*this);
 }
 
 template <typename HTMLCollectionClass>
 unsigned CachedHTMLCollection<HTMLCollectionClass>::length() const
 {
-    return m_indexCache.nodeCount(collection());
+    // CRTP: HTMLCollectionClass always derives from CachedHTMLCollection<HTMLCollectionClass>.
+    return m_indexCache.nodeCount(uncheckedDowncast<HTMLCollectionClass>(*this));
 }
 
 template <typename HTMLCollectionClass>
 Element* CachedHTMLCollection<HTMLCollectionClass>::item(unsigned offset) const
 {
-    return m_indexCache.nodeAt(collection(), offset);
+    // CRTP: HTMLCollectionClass always derives from CachedHTMLCollection<HTMLCollectionClass>.
+    return m_indexCache.nodeAt(uncheckedDowncast<HTMLCollectionClass>(*this), offset);
 }
 
 template <typename HTMLCollectionClass>
@@ -128,7 +130,8 @@ Element* CachedHTMLCollection<HTMLCollectionClass>::namedItem(const AtomString& 
         } else
             return nullptr;
 
-        if (candidate && collection().elementMatches(*candidate)) {
+        // CRTP: HTMLCollectionClass always derives from CachedHTMLCollection<HTMLCollectionClass>.
+        if (candidate && uncheckedDowncast<HTMLCollectionClass>(*this).elementMatches(protect(*candidate))) {
             if (traversalType == CollectionTraversalType::ChildrenOnly ? candidate->parentNode() == root.ptr() : candidate->isDescendantOf(root))
                 return candidate.get();
         }
@@ -140,25 +143,29 @@ Element* CachedHTMLCollection<HTMLCollectionClass>::namedItem(const AtomString& 
 template <typename HTMLCollectionClass>
 auto CachedHTMLCollection<HTMLCollectionClass>::collectionBegin() const -> Iterator
 {
-    return Traversal::begin(collection(), rootNode());
+    // CRTP: HTMLCollectionClass always derives from CachedHTMLCollection<HTMLCollectionClass>.
+    return Traversal::begin(uncheckedDowncast<HTMLCollectionClass>(*this), protect(rootNode()));
 }
 
 template <typename HTMLCollectionClass>
 auto CachedHTMLCollection<HTMLCollectionClass>::collectionLast() const -> Iterator
 {
-    return Traversal::last(collection(), rootNode());
+    // CRTP: HTMLCollectionClass always derives from CachedHTMLCollection<HTMLCollectionClass>.
+    return Traversal::last(uncheckedDowncast<HTMLCollectionClass>(*this), protect(rootNode()));
 }
 
 template <typename HTMLCollectionClass>
 void CachedHTMLCollection<HTMLCollectionClass>::collectionTraverseForward(Iterator& current, unsigned count, unsigned& traversedCount) const
 {
-    Traversal::traverseForward(collection(), current, count, traversedCount);
+    // CRTP: HTMLCollectionClass always derives from CachedHTMLCollection<HTMLCollectionClass>.
+    Traversal::traverseForward(uncheckedDowncast<HTMLCollectionClass>(*this), current, count, traversedCount);
 }
 
 template <typename HTMLCollectionClass>
 void CachedHTMLCollection<HTMLCollectionClass>::collectionTraverseBackward(Iterator& current, unsigned count) const
 {
-    Traversal::traverseBackward(collection(), current, count);
+    // CRTP: HTMLCollectionClass always derives from CachedHTMLCollection<HTMLCollectionClass>.
+    Traversal::traverseBackward(uncheckedDowncast<HTMLCollectionClass>(*this), current, count);
 }
 
 template <typename HTMLCollectionClass>

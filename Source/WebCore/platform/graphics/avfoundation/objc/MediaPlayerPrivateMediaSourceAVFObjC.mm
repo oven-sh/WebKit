@@ -143,7 +143,7 @@ MediaPlayerPrivateMediaSourceAVFObjC::~MediaPlayerPrivateMediaSourceAVFObjC()
     cancelPendingSeek();
     m_seekTimer.stop();
     dispatchToRendererQueue([](auto& renderer) {
-        renderer.pause();
+        renderer.shutdown();
     });
 }
 
@@ -348,7 +348,7 @@ void MediaPlayerPrivateMediaSourceAVFObjC::prepareToPlay()
 {
 }
 
-PlatformLayer* MediaPlayerPrivateMediaSourceAVFObjC::platformLayer() const
+PlatformLayer* MediaPlayerPrivateMediaSourceAVFObjC::platformLayer()
 {
     return m_renderer->platformVideoLayer();
 }

@@ -38,8 +38,8 @@ class MutableStyleProperties;
 class StyleProperties;
 class StylePropertyMap;
 
-enum CSSPropertyID : uint16_t;
-enum CSSValueID : uint16_t;
+enum class CSSPropertyID : uint16_t;
+enum class CSSValueID : uint16_t;
 enum class CSSUnitType : uint8_t;
 
 class StyledElement : public Element {
@@ -63,7 +63,8 @@ public:
     bool removeInlineStyleCustomProperty(const AtomString&);
     void removeAllInlineStyleProperties();
 
-    void synchronizeStyleAttributeInternal() const { const_cast<StyledElement*>(this)->synchronizeStyleAttributeInternalImpl(); }
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    void synchronizeStyleAttributeInternal() const { SUPPRESS_MEMORY_UNSAFE_CAST const_cast<StyledElement*>(this)->synchronizeStyleAttributeInternalImpl(); }
     
     WEBCORE_EXPORT CSSStyleProperties& cssomStyle();
     StylePropertyMap& ensureAttributeStyleMap();
@@ -100,6 +101,7 @@ private:
     void styleAttributeChanged(const AtomString& newStyleString, AttributeModificationReason);
     void synchronizeStyleAttributeInternalImpl();
     void synchronizeStyleAttributeForSelectorInvalidation();
+    bool isStyleAttributeAllowedByContentSecurityPolicy(const AtomString& styleString, OrdinalNumber startLineNumber);
 
     void inlineStyleChanged();
     CSSStyleProperties* inlineStyleCSSOMWrapper();

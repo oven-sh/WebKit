@@ -102,7 +102,7 @@ ExceptionOr<Ref<IDBOpenDBRequest>> IDBFactory::openInternal(ScriptExecutionConte
 
     ASSERT(context.securityOrigin());
     bool isTransient = (context.canAccessResource(ScriptExecutionContext::ResourceType::IndexedDB) == ScriptExecutionContext::HasResourceAccess::DefaultForThirdParty);
-    IDBDatabaseIdentifier databaseIdentifier(name, SecurityOriginData { context.securityOrigin()->data() }, SecurityOriginData { context.topOrigin().data() }, isTransient);
+    IDBDatabaseIdentifier databaseIdentifier(name, SecurityOriginData { context.securityOrigin()->data() }, SecurityOriginData { context.storageTopOrigin().data() }, isTransient);
     if (!databaseIdentifier.isValid())
         return Exception { ExceptionCode::TypeError, "IDBFactory.open() called with an invalid security origin"_s };
 
@@ -125,7 +125,7 @@ ExceptionOr<Ref<IDBOpenDBRequest>> IDBFactory::deleteDatabase(ScriptExecutionCon
 
     ASSERT(context.securityOrigin());
     bool isTransient = (context.canAccessResource(ScriptExecutionContext::ResourceType::IndexedDB) == ScriptExecutionContext::HasResourceAccess::DefaultForThirdParty);
-    IDBDatabaseIdentifier databaseIdentifier(name, SecurityOriginData { context.securityOrigin()->data() }, SecurityOriginData { context.topOrigin().data() }, isTransient);
+    IDBDatabaseIdentifier databaseIdentifier(name, SecurityOriginData { context.securityOrigin()->data() }, SecurityOriginData { context.storageTopOrigin().data() }, isTransient);
     if (!databaseIdentifier.isValid())
         return Exception { ExceptionCode::TypeError, "IDBFactory.deleteDatabase() called with an invalid security origin"_s };
 

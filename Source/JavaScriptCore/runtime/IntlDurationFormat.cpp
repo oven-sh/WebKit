@@ -33,6 +33,7 @@
 #include "IteratorOperations.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
 // While UListFormatter APIs are draft in ICU 67, they are stable in ICU 68 with the same function signatures.
@@ -185,7 +186,7 @@ static constexpr StyleListKind styleLists[numberOfTemporalUnits] = {
     StyleListKind::LongShortNarrowNumeric,
 };
 
-static PropertyName NODELETE displayName(VM& vm, TemporalUnit unit)
+static PropertyName LEGACY_NODELETE displayName(VM& vm, TemporalUnit unit)
 {
     switch (unit) {
 #define JSC_TEMPORAL_UNIT_PLURAL_PROPERTY_NAME(name, capitalizedName) case TemporalUnit::capitalizedName: return vm.propertyNames->name##sDisplay;
@@ -350,7 +351,7 @@ enum class DurationSignType : uint8_t {
 };
 
 // https://tc39.es/proposal-intl-duration-format/#sec-durationsign
-static DurationSignType NODELETE getDurationSign(ISO8601::Duration duration)
+static DurationSignType LEGACY_NODELETE getDurationSign(ISO8601::Duration duration)
 {
     for (size_t i = 0; i < numberOfTemporalUnits; ++i) {
         auto value = duration[i];
@@ -369,11 +370,11 @@ static String int128ToString(Int128 value)
     if (isNegative)
         value = -value;
 
-    while (value) {
+    do {
         Int128 digit = value % 10;
         resultString.append(static_cast<char>('0' + digit));
         value /= 10;
-    }
+    } while (value);
 
     if (isNegative)
         resultString.append('-');
@@ -387,36 +388,13 @@ static String buildDecimalFormat(TemporalUnit unit, Int128 ns)
 {
     ASSERT(unit == TemporalUnit::Second || unit == TemporalUnit::Millisecond || unit == TemporalUnit::Microsecond);
 
-    int flactionalDigits = 0;
-    Int128 exponent = 0;
-    if (unit == TemporalUnit::Second) {
-        flactionalDigits = 9;
-        exponent = Int128(1000000000);
-    } else if (unit == TemporalUnit::Millisecond) {
-        flactionalDigits = 6;
-        exponent = Int128(1000000);
-    } else {
-        ASSERT(unit == TemporalUnit::Microsecond);
-        flactionalDigits = 3;
-        exponent = Int128(1000);
-    }
+    ASCIILiteral exponent = "E-3"_s;
+    if (unit == TemporalUnit::Second)
+        exponent = "E-9"_s;
+    else if (unit == TemporalUnit::Millisecond)
+        exponent = "E-6"_s;
 
-    Int128 integerPart = ns / exponent;
-    ASSERT(ns % exponent >= std::numeric_limits<int64_t>::min() && ns % exponent <= std::numeric_limits<int64_t>::max());
-    int64_t fractionalPart = std::abs(static_cast<int64_t>(ns % exponent));
-
-    StringBuilder builder;
-
-    builder.append(int128ToString(integerPart));
-    builder.append("."_s);
-
-    String fractionalString = String::number(fractionalPart);
-    int zeroLength = flactionalDigits - fractionalString.length();
-    for (int i = 0; i < zeroLength; ++i)
-        builder.append("0"_s);
-    builder.append(fractionalString);
-
-    return builder.toString();
+    return makeString(int128ToString(ns), exponent);
 }
 
 static Vector<Element> collectElements(JSGlobalObject* globalObject, const IntlDurationFormat* durationFormat, ISO8601::Duration duration)
@@ -503,7 +481,8 @@ static Vector<Element> collectElements(JSGlobalObject* globalObject, const IntlD
 
         // 3.l. If value is not 0 or display is not "auto", then
         value = purifyNaN(value);
-        if (value || unitData.display() != IntlDurationFormat::Display::Auto || style == IntlDurationFormat::UnitStyle::TwoDigit || style ==  IntlDurationFormat::UnitStyle::Numeric) {
+        bool isZero = totalNanosecondsValue ? !totalNanosecondsValue.value() : !value;
+        if (!isZero || unitData.display() != IntlDurationFormat::Display::Auto || style == IntlDurationFormat::UnitStyle::TwoDigit || style ==  IntlDurationFormat::UnitStyle::Numeric) {
             auto formatToString = [&](UFormattedNumber* formattedNumber) -> String {
                 auto scope = DECLARE_THROW_SCOPE(vm);
 

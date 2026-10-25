@@ -48,7 +48,7 @@ WorkerOrWorkletGlobalScope::WorkerOrWorkletGlobalScope(WorkerThreadType type, PA
     : ScriptExecutionContext(Type::WorkerOrWorkletGlobalScope, contextIdentifier)
     , m_contextThreadUID(Thread::currentSingleton().uid())
     , m_script(makeUnique<WorkerOrWorkletScriptController>(type, WTF::move(vm), this))
-    , m_moduleLoader(makeUniqueRef<ScriptModuleLoader>(this, ScriptModuleLoader::OwnerType::WorkerOrWorklet))
+    , m_moduleLoader(makeUniqueRef<ScriptModuleLoader>(*this, ScriptModuleLoader::OwnerType::WorkerOrWorklet))
     , m_thread(thread)
     , m_inspectorController(makeUniqueRef<WorkerInspectorController>(*this))
     , m_sessionID(sessionID)
@@ -99,17 +99,17 @@ JSC::VM* WorkerOrWorkletGlobalScope::vmIfExists() const
 
 void WorkerOrWorkletGlobalScope::disableEval(const String& errorMessage)
 {
-    m_script->disableEval(errorMessage);
+    protect(m_script)->disableEval(errorMessage);
 }
 
 void WorkerOrWorkletGlobalScope::disableWebAssembly(const String& errorMessage)
 {
-    m_script->disableWebAssembly(errorMessage);
+    protect(m_script)->disableWebAssembly(errorMessage);
 }
 
 void WorkerOrWorkletGlobalScope::setTrustedTypesEnforcement(JSC::TrustedTypesEnforcement enforcement)
 {
-    m_script->setTrustedTypesEnforcement(enforcement);
+    protect(m_script)->setTrustedTypesEnforcement(enforcement);
 }
 
 bool WorkerOrWorkletGlobalScope::isJSExecutionForbidden() const

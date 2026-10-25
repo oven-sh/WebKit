@@ -66,15 +66,15 @@ public:
 
     class ConnectionStateTracker : public ThreadSafeRefCounted<ConnectionStateTracker> {
     public:
-        static Ref<ConnectionStateTracker> NODELETE create() { return adoptRef(*new ConnectionStateTracker()); }
-        void NODELETE markAsStopped() { m_isStopped = true; }
-        bool NODELETE isStopped() const { return m_isStopped; }
-        bool NODELETE shouldLogMissingECN() const { return !m_didLogMissingECN; }
-        void NODELETE didLogMissingECN() { m_didLogMissingECN = true; }
+        static Ref<ConnectionStateTracker> LEGACY_NODELETE create() { return adoptRef(*new ConnectionStateTracker()); }
+        void LEGACY_NODELETE markAsStopped() { m_isStopped = true; }
+        bool LEGACY_NODELETE isStopped() const { return m_isStopped; }
+        bool LEGACY_NODELETE shouldLogMissingECN() const { return !m_didLogMissingECN; }
+        void LEGACY_NODELETE didLogMissingECN() { m_didLogMissingECN = true; }
 
-        bool NODELETE hasPendingSend() const { return m_pendingSendCount; }
-        void NODELETE incrementPendingSendCount() { ++m_pendingSendCount; }
-        void NODELETE decrementPendingSendCount()
+        bool LEGACY_NODELETE hasPendingSend() const { return m_pendingSendCount; }
+        void LEGACY_NODELETE incrementPendingSendCount() { ++m_pendingSendCount; }
+        void LEGACY_NODELETE decrementPendingSendCount()
         {
             ASSERT(m_pendingSendCount);
             --m_pendingSendCount;
@@ -105,7 +105,7 @@ private:
     bool m_shouldBypassRelay { false };
     bool m_enableServiceClass { false };
 
-    CString m_sourceApplicationBundleIdentifier;
+    UTF8CString m_sourceApplicationBundleIdentifier;
     std::optional<audit_token_t> m_sourceApplicationAuditToken;
     String m_attributedBundleIdentifier;
 
@@ -232,7 +232,9 @@ NetworkRTCUDPSocketCocoaConnections::NetworkRTCUDPSocketCocoaConnections(WebCore
     , m_isKnownTracker(isKnownTracker(domain))
     , m_shouldBypassRelay(flags.isRelayDisabled)
     , m_enableServiceClass(flags.enableServiceClass)
-    , m_sourceApplicationBundleIdentifier(rtcProvider.applicationBundleIdentifier())
+    // This object is destroyed on whichever thread drops the last reference, so it needs a
+    // CStringBuffer of its own: the provider's is not thread-safe to share.
+    , m_sourceApplicationBundleIdentifier(rtcProvider.applicationBundleIdentifier().isolatedCopy())
     , m_sourceApplicationAuditToken(rtcProvider.sourceApplicationAuditToken())
     , m_attributedBundleIdentifier(WTF::move(attributedBundleIdentifier))
 {
@@ -316,7 +318,7 @@ void NetworkRTCUDPSocketCocoaConnections::configureParameters(nw_parameters_t pa
     if (version != nw_ip_version_any)
         nw_ip_options_set_version(options.get(), version);
 
-    setNWParametersApplicationIdentifiers(parameters, m_sourceApplicationBundleIdentifier.data(), m_sourceApplicationAuditToken, m_attributedBundleIdentifier);
+    setNWParametersApplicationIdentifiers(parameters, m_sourceApplicationBundleIdentifier, m_sourceApplicationAuditToken, m_attributedBundleIdentifier);
     setNWParametersTrackerOptions(parameters, m_shouldBypassRelay, m_isFirstParty, m_isKnownTracker);
 
     nw_parameters_set_reuse_local_address(parameters, true);
@@ -363,8 +365,8 @@ void NetworkRTCUDPSocketCocoaConnections::setOption(int option, int value)
 
 static inline void processUDPData(RetainPtr<nw_connection_t>&& nwConnection, Ref<NetworkRTCUDPSocketCocoaConnections::ConnectionStateTracker> connectionStateTracker, int errorCode, Function<void(std::span<const uint8_t>, WebRTCNetwork::EcnMarking)>&& processData)
 {
-    auto nwConnectionReference = nwConnection.get();
-    nw_connection_receive(nwConnectionReference, 1, std::numeric_limits<uint32_t>::max(), makeBlockPtr([nwConnection = WTF::move(nwConnection), processData = WTF::move(processData), errorCode, connectionStateTracker = WTF::move(connectionStateTracker)](dispatch_data_t content, nw_content_context_t context, bool, nw_error_t error) mutable {
+    RetainPtr nwConnectionReference = nwConnection;
+    nw_connection_receive(nwConnectionReference.get(), 1, std::numeric_limits<uint32_t>::max(), makeBlockPtr([nwConnection = WTF::move(nwConnection), processData = WTF::move(processData), errorCode, connectionStateTracker = WTF::move(connectionStateTracker)](dispatch_data_t content, nw_content_context_t context, bool, nw_error_t error) mutable {
         if (content) {
             dispatch_data_apply_span(content, [&](std::span<const uint8_t> data) {
                 processData(data, getECN(context, connectionStateTracker.get()));

@@ -41,9 +41,9 @@ struct ClipEdge : ValueOrKeyword<Length<>, Keyword::Auto> {
 
 // <rect()> = rect( <clip-edge> , <clip-edge> , <clip-edge> , <clip-edge> )
 struct ClipRect {
-    FunctionNotation<CSSValueRect, CommaSeparatedRectEdges<ClipEdge>> value;
+    FunctionNotation<CSSValueID::Rect, CommaSeparatedRectEdges<ClipEdge>> value;
 
-    ClipRect(FunctionNotation<CSSValueRect, CommaSeparatedRectEdges<ClipEdge>> value)
+    ClipRect(FunctionNotation<CSSValueID::Rect, CommaSeparatedRectEdges<ClipEdge>> value)
         : value { WTF::move(value) }
     {
     }
@@ -86,7 +86,7 @@ struct Clip {
     bool isAuto() const { return !value; }
     bool isRect() const { return !isAuto(); }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 

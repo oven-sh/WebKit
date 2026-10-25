@@ -50,21 +50,21 @@ public:
     void remove(WebPageProxyIdentifier, id keys, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
     void clear(WebPageProxyIdentifier, Ref<WebExtensionCallbackHandler>&&);
 
-    double NODELETE quotaBytes();
+    double LEGACY_NODELETE quotaBytes();
 
     // Only exposed to trusted contexts.
     void setAccessLevel(WebPageProxyIdentifier, NSDictionary *, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
 
     // Exposed only by storage.sync.
-    double NODELETE quotaBytesPerItem();
-    double NODELETE maxItems();
-    double NODELETE maxWriteOperationsPerHour();
-    double NODELETE maxWriteOperationsPerMinute();
+    double LEGACY_NODELETE quotaBytesPerItem();
+    double LEGACY_NODELETE maxItems();
+    double LEGACY_NODELETE maxWriteOperationsPerHour();
+    double LEGACY_NODELETE maxWriteOperationsPerMinute();
 
     WebExtensionAPIEvent& onChanged();
 
 private:
-    explicit WebExtensionAPIStorageArea(const WebExtensionAPIObject& parentObject, WebExtensionDataType type)
+    explicit WebExtensionAPIStorageArea(WebExtensionAPIObject& parentObject, WebExtensionDataType type)
         : WebExtensionAPIObject(parentObject)
         , m_type(type)
     {
@@ -72,7 +72,7 @@ private:
     }
 
     WebExtensionDataType m_type { WebExtensionDataType::Local };
-    RefPtr<WebExtensionAPIEvent> m_onChanged;
+    const RefPtr<WebExtensionAPIEvent> m_onChanged;
 #endif
 };
 

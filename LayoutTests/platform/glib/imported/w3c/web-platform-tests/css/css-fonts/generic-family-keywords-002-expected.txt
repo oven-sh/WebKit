@@ -2,7 +2,7 @@
 00000
 
 FAIL font-family: -webkit-serif treated as <font-family>, not <generic-name> assert_equals: expected 50 but got 25
-FAIL font-family: -webkit-sans-serif treated as <font-family>, not <generic-name> assert_equals: expected 50 but got 30
+PASS font-family: -webkit-sans-serif treated as <font-family>, not <generic-name>
 FAIL font-family: -webkit-cursive treated as <font-family>, not <generic-name> assert_equals: expected 50 but got 25
 FAIL font-family: -webkit-fantasy treated as <font-family>, not <generic-name> assert_equals: expected 50 but got 25
 FAIL font-family: -webkit-monospace treated as <font-family>, not <generic-name> assert_equals: expected 50 but got 30

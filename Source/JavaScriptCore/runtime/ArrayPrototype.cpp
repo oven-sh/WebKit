@@ -57,21 +57,20 @@ static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncJoin);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncKeys);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncEntries);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncPop);
-static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncPush);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncReverse);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncShift);
-static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSlice);
+JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSlice);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSort);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSplice);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncUnShift);
-static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncIndexOf);
+JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncIndexOf);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncLastIndexOf);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncConcat);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncFill);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncToReversed);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncToSorted);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncWith);
-static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncIncludes);
+JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncIncludes);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncCopyWithin);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncToSpliced);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncFlat);
@@ -239,7 +238,7 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
     return fastArrayJoin(globalObject, thisObject, separator, length, sawHoles, genericCase);
 }
 
-inline bool NODELETE canUseDefaultArrayJoinForToString(JSObject* thisObject)
+inline bool LEGACY_NODELETE canUseDefaultArrayJoinForToString(JSObject* thisObject)
 {
     JSGlobalObject* globalObject = thisObject->realmMayBeNull();
     if (!globalObject)
@@ -253,7 +252,7 @@ inline bool NODELETE canUseDefaultArrayJoinForToString(JSObject* thisObject)
     // This is the fast case. Many arrays will be an original array.
     // We are doing very simple check here. If we do more complicated checks like looking into getDirect "join" of thisObject,
     // it would be possible that just looking into "join" function will show the same performance.
-    return globalObject->isOriginalArrayStructure(structure);
+    return globalObject->isOriginalArrayStructure(structure) || globalObject->isOriginalArrayStructureWithImmutableProperties(structure);
 }
 
 JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncToString, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -623,7 +622,12 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncReverse, (JSGlobalObject* globalObject, C
     uint64_t length = toLength(globalObject, thisObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-    thisObject->ensureWritable(vm);
+    if (!thisObject->tryMakeWritable(vm)) [[unlikely]] {
+        // What the generic path below does for such an array: nothing if there is nothing to exchange, else the first Set fails.
+        if (length > 1)
+            return throwVMTypeError(globalObject, scope, ReadonlyPropertyWriteError);
+        return JSValue::encode(thisObject);
+    }
 
     switch (thisObject->indexingType()) {
     case ALL_CONTIGUOUS_INDEXING_TYPES:
@@ -1002,8 +1006,8 @@ static ALWAYS_INLINE std::span<EncodedJSValue> sortStableSort(JSGlobalObject* gl
     auto callData = JSC::getCallDataInline(comparator);
     ASSERT(callData.type != CallData::Type::None);
 
-    if (callData.type == CallData::Type::JS) [[likely]] {
-        CachedCall cachedCall(globalObject, uncheckedDowncast<JSFunction>(comparator), 2);
+    if (CachedCall::supports(callData)) [[likely]] {
+        CachedCall cachedCall = CachedCall::create(globalObject, comparator, callData, 2);
         RETURN_IF_EXCEPTION(scope, compacted);
         RELEASE_AND_RETURN(scope, (arrayStableSort<MergeStrategy::Galloping>(vm, compacted, workingSet, [&](auto left, auto right) ALWAYS_INLINE_LAMBDA {
             auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1242,6 +1246,14 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncSplice, (JSGlobalObject* globalObject, Ca
         RETURN_IF_EXCEPTION(scope, { });
     }
 
+    if (isJSArray(thisObj)) {
+        ArgList items = itemCount ? ArgList(callFrame, 2) : ArgList();
+        bool spliced = asArray(thisObj)->fastSplice(globalObject, length, actualStart, actualDeleteCount, std::span<const EncodedJSValue> { items.data(), items.size() });
+        RETURN_IF_EXCEPTION(scope, { });
+        if (spliced)
+            return JSValue::encode(result);
+    }
+
     if (itemCount < actualDeleteCount) {
         shift<JSArray::ShiftCountForSplice>(globalObject, thisObj, actualStart, actualDeleteCount, itemCount, length);
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -1343,6 +1355,26 @@ ALWAYS_INLINE JSValue fastIndexOf(JSGlobalObject* globalObject, VM& vm, JSArray*
                 auto* result = std::bit_cast<const WriteBarrier<Unknown>*>(WTF::find64(std::bit_cast<const uint64_t*>(data + index), JSValue::encode(searchElement), length - index));
                 if (result)
                     return jsNumber(result - data);
+                return jsNumber(-1);
+            }
+
+            if (searchElement.isString()) {
+                JSString* searchString = asString(searchElement);
+                unsigned searchLength = searchString->length();
+                for (; index < length; ++index) {
+                    JSValue value = data[index].get();
+                    if (!value || !value.isString())
+                        continue;
+                    JSString* string = asString(value);
+                    if (string == searchString)
+                        return jsNumber(index);
+                    if (string->length() != searchLength)
+                        continue;
+                    bool isEqual = string->equalInline(globalObject, searchString);
+                    RETURN_IF_EXCEPTION(scope, { });
+                    if (isEqual)
+                        return jsNumber(index);
+                }
                 return jsNumber(-1);
             }
 
@@ -1605,7 +1637,7 @@ JSArray* tryConcatAppendArrayFastWithWatchpoints(JSGlobalObject* globalObject, V
 
     CheckedUint32 checkedResultSize = firstArraySize;
     checkedResultSize += secondArraySize;
-    if (checkedResultSize.hasOverflowed() || checkedResultSize.value() >= MIN_SPARSE_ARRAY_INDEX) [[unlikely]]
+    if (checkedResultSize.hasOverflowed() || (checkedResultSize.value() >= MIN_SPARSE_ARRAY_INDEX && !copiesIntoDenseStorage(vm.arrayStoragePolicy(), checkedResultSize.value()))) [[unlikely]]
         return nullptr;
 
     unsigned resultSize = checkedResultSize;
@@ -1668,7 +1700,7 @@ JSArray* tryConcatOneArgFast(JSGlobalObject* globalObject, VM& vm, JSArray* firs
     ASSERT(!globalObject->isHavingABadTime());
 
     if (!argumentValue.isObject()) {
-        if (firstArray->length() >= MIN_SPARSE_ARRAY_INDEX) [[unlikely]]
+        if (firstArray->length() >= MIN_SPARSE_ARRAY_INDEX && !copiesIntoDenseStorage(vm.arrayStoragePolicy(), firstArray->length())) [[unlikely]]
             return nullptr;
         RELEASE_AND_RETURN(scope, tryConcatAppendOneNonArray(globalObject, vm, firstArray, argumentValue));
     }
@@ -1678,7 +1710,7 @@ JSArray* tryConcatOneArgFast(JSGlobalObject* globalObject, VM& vm, JSArray* firs
         return nullptr;
 
     if (!isJSArray(argumentObject)) {
-        if (firstArray->length() >= MIN_SPARSE_ARRAY_INDEX) [[unlikely]]
+        if (firstArray->length() >= MIN_SPARSE_ARRAY_INDEX && !copiesIntoDenseStorage(vm.arrayStoragePolicy(), firstArray->length())) [[unlikely]]
             return nullptr;
         RELEASE_AND_RETURN(scope, tryConcatAppendOneNonArray(globalObject, vm, firstArray, argumentValue));
     }
@@ -1731,7 +1763,7 @@ static JSArray* tryConcatMultipleArraysFast(JSGlobalObject* globalObject, VM& vm
         checkedResultSize += 1;
     }
 
-    if (checkedResultSize.hasOverflowed() || checkedResultSize.value() >= MIN_SPARSE_ARRAY_INDEX) [[unlikely]]
+    if (checkedResultSize.hasOverflowed() || (checkedResultSize.value() >= MIN_SPARSE_ARRAY_INDEX && !copiesIntoDenseStorage(vm.arrayStoragePolicy(), checkedResultSize.value()))) [[unlikely]]
         return nullptr;
 
     unsigned resultSize = checkedResultSize;

@@ -56,7 +56,6 @@ set(TestWTF_SOURCES
     Tests/WTF/BoxPtr.cpp
     Tests/WTF/BumpPointerAllocator.cpp
     Tests/WTF/CString.cpp
-    Tests/WTF/CStringView.cpp
     Tests/WTF/CharacterProperties.cpp
     Tests/WTF/CheckedArithmeticOperations.cpp
     Tests/WTF/CheckedPtr.cpp
@@ -74,7 +73,8 @@ set(TestWTF_SOURCES
     Tests/WTF/DataMutex.cpp
     Tests/WTF/DateMath.cpp
     Tests/WTF/Deque.cpp
-    Tests/WTF/DragonBoxTest.cpp
+    Tests/WTF/Dominators.cpp
+    Tests/WTF/DominatorsTests.cpp
     Tests/WTF/EmbeddedFixedVector.cpp
     Tests/WTF/EnumSet.cpp
     Tests/WTF/EnumTraits.cpp
@@ -100,11 +100,13 @@ set(TestWTF_SOURCES
     Tests/WTF/JSONValue.cpp
     Tests/WTF/LEBDecoder.cpp
     Tests/WTF/LEBEncoder.cpp
+    Tests/WTF/LayeredHashMap.cpp
     Tests/WTF/LazyRef.cpp
     Tests/WTF/LazyUniqueRef.cpp
     Tests/WTF/LifecycleLogger.cpp
     Tests/WTF/LineEnding.cpp
     Tests/WTF/ListHashSet.cpp
+    Tests/WTF/Liveness.cpp
     Tests/WTF/Lock.cpp
     Tests/WTF/Logger.cpp
     Tests/WTF/Markable.cpp
@@ -129,6 +131,7 @@ set(TestWTF_SOURCES
     Tests/WTF/PreciseSum.cpp
     Tests/WTF/PriorityQueue.cpp
     Tests/WTF/RapidHash.cpp
+    Tests/WTF/ReadWriteLock.cpp
     Tests/WTF/RedBlackTree.cpp
     Tests/WTF/Ref.cpp
     Tests/WTF/RefCountedFixedVector.cpp
@@ -141,6 +144,7 @@ set(TestWTF_SOURCES
     Tests/WTF/RunLoop.cpp
     Tests/WTF/SHA1.cpp
     Tests/WTF/SIMDHelpers.cpp
+    Tests/WTF/SSACalculator.cpp
     Tests/WTF/SafeStrerror.cpp
     Tests/WTF/SaturatingArithmeticOperations.cpp
     Tests/WTF/Scope.cpp
@@ -155,6 +159,7 @@ set(TestWTF_SOURCES
     Tests/WTF/SparseBitVector.cpp
     Tests/WTF/StackTraceTest.cpp
     Tests/WTF/StdLibExtrasTests.cpp
+    Tests/WTF/Stopwatch.cpp
     Tests/WTF/StringBuilder.cpp
     Tests/WTF/StringCommon.cpp
     Tests/WTF/StringConcatenate.cpp
@@ -177,6 +182,7 @@ set(TestWTF_SOURCES
     Tests/WTF/TruncateFloat.cpp
     Tests/WTF/URL.cpp
     Tests/WTF/URLParser.cpp
+    Tests/WTF/UTF8CStringView.cpp
     Tests/WTF/UTF8Conversion.cpp
     Tests/WTF/UUID.cpp
     Tests/WTF/UniqueArray.cpp
@@ -185,10 +191,12 @@ set(TestWTF_SOURCES
     Tests/WTF/VariantList.cpp
     Tests/WTF/Vector.cpp
     Tests/WTF/VectorBorrow.cpp
+    Tests/WTF/VersionedField.cpp
     Tests/WTF/WTFString.cpp
     Tests/WTF/WeakPtr.cpp
     Tests/WTF/WorkQueue.cpp
     Tests/WTF/WorkerPool.cpp
+    Tests/WTF/ZmijTest.cpp
 )
 
 # These tests check conversions that copy elision would otherwise remove.
@@ -211,7 +219,31 @@ set(TestWTF_FRAMEWORKS
     bmalloc
 )
 
+# Same as jsc: the static archives leave mi_* unresolved under USE_EXTERNAL_MIMALLOC.
+if (USE_EXTERNAL_MIMALLOC)
+    list(APPEND TestWTF_SOURCES ${JAVASCRIPTCORE_DIR}/shell/ExternalMimallocShims.cpp)
+    list(APPEND TestWTF_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
+endif ()
+
+# Same as jsc: the ICU data of the release lanes has a zstd frame per item (Source/JavaScriptCore/shell/CMakeLists.txt).
+if (BUN_ICU_ZSTD_SOURCE_DIR)
+    file(GLOB TestWTF_ZSTD_DECODER_SOURCES
+        ${BUN_ICU_ZSTD_SOURCE_DIR}/common/*.c
+        ${BUN_ICU_ZSTD_SOURCE_DIR}/decompress/*.c
+    )
+    set_source_files_properties(${TestWTF_ZSTD_DECODER_SOURCES} PROPERTIES COMPILE_DEFINITIONS "ZSTD_DISABLE_ASM=1;ZSTD_LEGACY_SUPPORT=0;DEBUGLEVEL=0")
+    list(APPEND TestWTF_SOURCES Helpers/CompressedICUData.cpp)
+    list(APPEND TestWTF_C_SOURCES ${TestWTF_ZSTD_DECODER_SOURCES})
+    list(APPEND TestWTF_PRIVATE_INCLUDE_DIRECTORIES ${BUN_ICU_ZSTD_SOURCE_DIR})
+endif ()
+
 WEBKIT_EXECUTABLE_DECLARE(TestWTF)
+
+# It prints with std::cout. From libstdc++ 13 on the library constructs the streams, before that each unit that includes
+# <iostream> did. CI runs the tests on a machine whose libstdc++ may be older than the one that this is compiled against.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND COMPILER_IS_GCC_OR_CLANG)
+    target_link_options(TestWTF PRIVATE -static-libstdc++)
+endif ()
 
 # TestJavaScriptCore definitions
 if (ENABLE_JAVASCRIPTCORE)
@@ -268,6 +300,7 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/CSSParser.cpp
         Tests/WebCore/CSSParserFastPaths.cpp
         Tests/WebCore/CSSTokenizerTests.cpp
+        Tests/WebCore/CSSValueAggregates.cpp
         Tests/WebCore/CachedMatchFinder.cpp
         Tests/WebCore/ColorTests.cpp
         Tests/WebCore/ComplexTextController.cpp
@@ -281,7 +314,9 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/DFACombiner.cpp
         Tests/WebCore/DFAMinimizer.cpp
         Tests/WebCore/Decimal.cpp
+        Tests/WebCore/DigitalCredentialsRequestDataBuilder.cpp
         Tests/WebCore/DisplayListRecorderTests.cpp
+        Tests/WebCore/DisplayRefreshMonitorManager.cpp
         Tests/WebCore/DocumentOrder.cpp
         Tests/WebCore/FidoHidMessageTest.cpp
         Tests/WebCore/FileMonitor.cpp
@@ -318,11 +353,13 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/MIMESniffer.cpp
         Tests/WebCore/MIMETypeRegistry.cpp
         Tests/WebCore/MediaConstraintsTests.cpp
+        Tests/WebCore/MediaQueryListCapacity.cpp
         Tests/WebCore/MediaReorderQueue.cpp
         Tests/WebCore/MixedContentChecker.cpp
         Tests/WebCore/MonospaceFontTests.cpp
         Tests/WebCore/NativeImageTests.cpp
         Tests/WebCore/NowPlayingInfoTests.cpp
+        Tests/WebCore/ObjectSizeNegotiationTests.cpp
         Tests/WebCore/PODIntervalTree.cpp
         Tests/WebCore/ParsedContentRange.cpp
         Tests/WebCore/ParsedContentType.cpp
@@ -334,12 +371,12 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/PublicSuffix.cpp
         Tests/WebCore/PushDatabase.cpp
         Tests/WebCore/PushMessageCrypto.cpp
+        Tests/WebCore/QuirkMatchPattern.cpp
         Tests/WebCore/Quirks.cpp
         Tests/WebCore/RegionTests.cpp
         Tests/WebCore/RegistrableDomain.cpp
         Tests/WebCore/RenderStyleChange.cpp
         Tests/WebCore/STUNMessageParsingTest.cpp
-        Tests/WebCore/SVGImageCasts.cpp
         Tests/WebCore/SampleMap.cpp
         Tests/WebCore/SecurityOrigin.cpp
         Tests/WebCore/SerializedScriptValue.cpp
@@ -355,10 +392,10 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/TestPlatformStrategies.cpp
         Tests/WebCore/TextCodec.cpp
         Tests/WebCore/TextIterator.cpp
+        Tests/WebCore/TextMeasurementCache.cpp
         Tests/WebCore/TimeRanges.cpp
         Tests/WebCore/TransformationMatrix.cpp
         Tests/WebCore/U2fCommandConstructorTest.cpp
-        Tests/WebCore/URLMatch.cpp
         Tests/WebCore/URLParserTextEncoding.cpp
         Tests/WebCore/URLPatternTests.cpp
         Tests/WebCore/WebCodecsBufferTransfer.cpp
@@ -653,11 +690,19 @@ if (ENABLE_WEBKIT)
             WebKit::gtest
         )
 
-        set(TestIPC_FRAMEWORKS
-            WebKit
-        )
+        if (APPLE)
+            list(APPEND TestIPC_SOURCES
+                ${WEBKIT_DIR}/Shared/WebFoundTextRange.cpp
 
-        if (NOT APPLE)
+                $<TARGET_OBJECTS:WebKitPlatform>
+                $<TARGET_OBJECTS:WebKitPlatformARC>
+            )
+
+            list(APPEND TestIPC_LIBRARIES
+                WebKit::JavaScriptCore
+                WebKit::WebCore
+            )
+        else ()
             # TestIPC compiles the IPC implementation directly rather than linking WebKit.
             list(APPEND TestIPC_SOURCES
                 generic/main.cpp
@@ -720,6 +765,9 @@ if (ENABLE_WEBKIT)
                 ${GLIB_LIBRARIES}
             )
 
+            set(TestIPC_FRAMEWORKS
+                WebKit
+            )
         endif ()
 
         WEBKIT_EXECUTABLE_DECLARE(TestIPC)

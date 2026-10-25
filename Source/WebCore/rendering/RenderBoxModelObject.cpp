@@ -40,11 +40,10 @@
 #include "HTMLNames.h"
 #include "ImageBuffer.h"
 #include "ImageQualityController.h"
+#include "ImageSizingContext.h"
 #include "InlineIteratorBoxInlines.h"
 #include "InlineIteratorInlineBox.h"
 #include "LayoutIntegrationLineLayout.h"
-#include "LegacyInlineFlowBox.h"
-#include "LegacyRootInlineBox.h"
 #include "LocalFrame.h"
 #include "LocalFrameView.h"
 #include "Path.h"
@@ -57,7 +56,6 @@
 #include "RenderElementStyleInlines.h"
 #include "RenderFlexibleBox.h"
 #include "RenderFragmentContainer.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderLayerBacking.h"
 #include "RenderLayerCompositor.h"
@@ -67,7 +65,6 @@
 #include "RenderMultiColumnFlow.h"
 #include "RenderObjectInlines.h"
 #include "RenderReplaced.h"
-#include "RenderSVGInline.h"
 #include "RenderTable.h"
 #include "RenderText.h"
 #include "RenderTextFragment.h"
@@ -82,6 +79,7 @@
 #include "Styleable.h"
 #include "TextBoxPainter.h"
 #include "TransformState.h"
+#include "UsedStyleReferenceSize.h"
 #include <wtf/NeverDestroyed.h>
 #if ASSERT_ENABLED
 #include <wtf/SetForScope.h>
@@ -120,25 +118,26 @@ LayoutUnit paddingTop(const RenderBoxModelObject& renderer)
 
 using FirstLetterRemainingTextMap = SingleThreadWeakHashMap<const RenderBoxModelObject, SingleThreadWeakPtr<RenderTextFragment>>;
 
-static FirstLetterRemainingTextMap& NODELETE firstLetterRemainingTextMap()
+static FirstLetterRemainingTextMap& LEGACY_NODELETE firstLetterRemainingTextMap()
 {
     static NeverDestroyed<FirstLetterRemainingTextMap> map;
     return map;
 }
 
-static RenderObject* firstContentfulChild(const RenderBoxModelObject& renderer)
+static RenderObject* LEGACY_NODELETE firstContentfulChild(const RenderBoxModelObject& renderer)
 {
     for (auto& current : childrenOfType<RenderObject>(renderer)) {
         if (current.isFloatingOrOutOfFlowPositioned())
             continue;
         if (auto* text = dynamicDowncast<RenderText>(current); text && text->containsOnlyCollapsibleWhitespace())
             continue;
-        if (auto* renderInline = dynamicDowncast<RenderInline>(current)) {
-            if (auto* nested = firstContentfulChild(*renderInline))
+        if (current.isInlineBox()) {
+            if (auto* nested = firstContentfulChild(downcast<RenderBoxModelObject>(current)))
                 return nested;
             continue;
         }
-        return const_cast<RenderObject*>(&current);
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<RenderObject*>(&current);
     }
     return { };
 }
@@ -168,6 +167,14 @@ void RenderBoxModelObject::styleWillChange(Style::Difference diff, const Style::
     RenderLayerModelObject::styleWillChange(diff, newStyle);
 }
 
+void RenderBoxModelObject::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
+{
+    RenderLayerModelObject::styleDidChange(diff, oldStyle);
+
+    if (isInlineBox())
+        propagateStyleToAnonymousChildren(StylePropagationType::BlockAndRubyChildren);
+}
+
 void RenderBoxModelObject::setSelectionState(HighlightState state)
 {
     if (state == HighlightState::Inside && selectionState() != HighlightState::None)
@@ -179,7 +186,7 @@ void RenderBoxModelObject::setSelectionState(HighlightState state)
     else
         RenderLayerModelObject::setSelectionState(state);
 
-    // FIXME: We should consider whether it is OK propagating to ancestor RenderInlines.
+    // FIXME: We should consider whether it is OK propagating to ancestor inline boxes.
     // This is a workaround for http://webkit.org/b/32123
     // The containing block can be null in case of an orphaned tree.
     RenderBlock* containingBlock = this->containingBlock();
@@ -191,17 +198,45 @@ RenderBoxModelObject::RenderBoxModelObject(Type type, Element& element, Style::C
     : RenderLayerModelObject(type, element, WTF::move(style), baseTypeFlags | TypeFlag::IsBoxModelObject, typeSpecificFlags)
 {
     ASSERT(isRenderBoxModelObject());
+    setChildrenInline(isInlineBox());
 }
 
 RenderBoxModelObject::RenderBoxModelObject(Type type, Document& document, Style::ComputedStyle&& style, OptionSet<TypeFlag> baseTypeFlags, TypeSpecificFlags typeSpecificFlags)
     : RenderLayerModelObject(type, document, WTF::move(style), baseTypeFlags | TypeFlag::IsBoxModelObject, typeSpecificFlags)
 {
     ASSERT(isRenderBoxModelObject());
+    setChildrenInline(isInlineBox());
+}
+
+RenderBoxModelObject::RenderBoxModelObject(Type type, Element& element, Style::ComputedStyle&& style)
+    : RenderBoxModelObject(type, element, WTF::move(style), TypeFlag::IsInlineBox, { })
+{
+}
+
+RenderBoxModelObject::RenderBoxModelObject(Type type, Document& document, Style::ComputedStyle&& style)
+    : RenderBoxModelObject(type, document, WTF::move(style), TypeFlag::IsInlineBox, { })
+{
 }
 
 RenderBoxModelObject::~RenderBoxModelObject()
 {
     // Do not add any code here. Add it to willBeDestroyed() instead.
+}
+
+ASCIILiteral RenderBoxModelObject::renderName() const
+{
+    if (isInlineBox()) {
+        // FIXME: Inline boxes still report the RenderInline name to keep render tree dump based test results unchanged.
+        if (isRelativelyPositioned())
+            return "RenderInline (relative positioned)"_s;
+        if (isStickilyPositioned())
+            return "RenderInline (sticky positioned)"_s;
+        if (isPseudoElement() || isAnonymous())
+            return "RenderInline (generated)"_s;
+        return "RenderInline"_s;
+    }
+    ASSERT_NOT_REACHED();
+    return { };
 }
 
 void RenderBoxModelObject::willBeDestroyed()
@@ -220,6 +255,26 @@ bool RenderBoxModelObject::hasVisibleBoxDecorationStyle() const
         || !style().boxShadow().isNone();
 }
 
+RectEdges<LayoutUnit> RenderBoxModelObject::borderWidths() const { return usedStyle().borderWidths(); }
+
+LayoutUnit RenderBoxModelObject::borderTop() const { return usedStyle().borderTopWidth(); }
+LayoutUnit RenderBoxModelObject::borderBottom() const { return usedStyle().borderBottomWidth(); }
+LayoutUnit RenderBoxModelObject::borderLeft() const { return usedStyle().borderLeftWidth(); }
+LayoutUnit RenderBoxModelObject::borderRight() const { return usedStyle().borderRightWidth(); }
+LayoutUnit RenderBoxModelObject::borderBefore() const { return usedStyle().borderWidthBefore(); }
+LayoutUnit RenderBoxModelObject::borderAfter() const { return usedStyle().borderWidthAfter(); }
+LayoutUnit RenderBoxModelObject::borderStart() const { return usedStyle().borderWidthStart(); }
+LayoutUnit RenderBoxModelObject::borderEnd() const { return usedStyle().borderWidthEnd(); }
+
+LayoutUnit RenderBoxModelObject::computedCSSPaddingTop() const { return usedStyle().paddingTop(ReferenceSize::ContainingBlockLogicalWidth); }
+LayoutUnit RenderBoxModelObject::computedCSSPaddingBottom() const { return usedStyle().paddingBottom(ReferenceSize::ContainingBlockLogicalWidth); }
+LayoutUnit RenderBoxModelObject::computedCSSPaddingLeft() const { return usedStyle().paddingLeft(ReferenceSize::ContainingBlockLogicalWidth); }
+LayoutUnit RenderBoxModelObject::computedCSSPaddingRight() const { return usedStyle().paddingRight(ReferenceSize::ContainingBlockLogicalWidth); }
+LayoutUnit RenderBoxModelObject::computedCSSPaddingBefore() const { return usedStyle().paddingBefore(ReferenceSize::ContainingBlockLogicalWidth); }
+LayoutUnit RenderBoxModelObject::computedCSSPaddingAfter() const { return usedStyle().paddingAfter(ReferenceSize::ContainingBlockLogicalWidth); }
+LayoutUnit RenderBoxModelObject::computedCSSPaddingStart() const { return usedStyle().paddingStart(ReferenceSize::ContainingBlockLogicalWidth); }
+LayoutUnit RenderBoxModelObject::computedCSSPaddingEnd() const { return usedStyle().paddingEnd(ReferenceSize::ContainingBlockLogicalWidth); }
+
 void RenderBoxModelObject::updateFromStyle()
 {
     RenderLayerModelObject::updateFromStyle();
@@ -236,7 +291,7 @@ void RenderBoxModelObject::updateFromStyle()
         view().frameView().setHasFlippedBlockRenderers(true);
 }
 
-static inline bool NODELETE isOutOfFlowPositionedWithImplicitHeight(const RenderBoxModelObject& child)
+static inline bool LEGACY_NODELETE isOutOfFlowPositionedWithImplicitHeight(const RenderBoxModelObject& child)
 {
     return child.isOutOfFlowPositioned() && !child.style().logicalTop().isAuto() && !child.style().logicalBottom().isAuto();
 }
@@ -556,10 +611,12 @@ void RenderBoxModelObject::computeStickyPositionConstraints(StickyPositionViewpo
         containingBlock = containingBlock->containingBlock();
     ASSERT(containingBlock);
 
-    auto [enclosingClippingBox, enclosingClippingLayer] = enclosingClippingBoxForStickyPosition();
+    auto enclosingClipping = enclosingClippingBoxForStickyPosition();
+    CheckedRef enclosingClippingBox = enclosingClipping.first;
+    CheckedPtr enclosingClippingLayer = enclosingClipping.second;
 
     LayoutRect containerContentRect;
-    if (!enclosingClippingLayer || (containingBlock != &enclosingClippingBox)) {
+    if (!enclosingClippingLayer || (containingBlock != enclosingClippingBox.ptr())) {
         // In this case either the scrolling element is the view or there is another containing block in
         // the hierarchy between this stickily positioned item and its scrolling ancestor. In both cases,
         // we use the content box rectangle of the containing block, which is what should constrain the
@@ -574,15 +631,13 @@ void RenderBoxModelObject::computeStickyPositionConstraints(StickyPositionViewpo
 
     LayoutUnit maxWidth = containingBlock->contentBoxLogicalWidth();
 
-    const auto& zoomFactor = style().usedZoomForLength();
-
     // Sticky positioned element ignore any override logical width on the containing block (as they don't call
     // containingBlockLogicalWidthForContent). It's unclear whether this is totally fine.
     LayoutBoxExtent minMargin(
-        Style::evaluateMinimum<LayoutUnit>(style().marginTop(), maxWidth, zoomFactor),
-        Style::evaluateMinimum<LayoutUnit>(style().marginRight(), maxWidth, zoomFactor),
-        Style::evaluateMinimum<LayoutUnit>(style().marginBottom(), maxWidth, zoomFactor),
-        Style::evaluateMinimum<LayoutUnit>(style().marginLeft(), maxWidth, zoomFactor)
+        usedStyle().marginTop(maxWidth).value_or(0_lu),
+        usedStyle().marginRight(maxWidth).value_or(0_lu),
+        usedStyle().marginBottom(maxWidth).value_or(0_lu),
+        usedStyle().marginLeft(maxWidth).value_or(0_lu)
     );
 
     // Compute the container-relative area within which the sticky element is allowed to move.
@@ -590,12 +645,13 @@ void RenderBoxModelObject::computeStickyPositionConstraints(StickyPositionViewpo
 
     // Finally compute container rect relative to the scrolling ancestor. We pass an empty
     // mode here, because sticky positioning should ignore transforms.
-    FloatRect containerRectRelativeToScrollingAncestor = containingBlock->localToContainerQuad(FloatRect(containerContentRect), &enclosingClippingBox, { } /* ignore transforms */).boundingBox();
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST FloatRect containerRectRelativeToScrollingAncestor = containingBlock->localToContainerQuad(FloatRect(containerContentRect), enclosingClippingBox.ptr(), { } /* ignore transforms */).boundingBox();
     if (enclosingClippingLayer) {
         FloatPoint containerLocationRelativeToScrollingAncestor = containerRectRelativeToScrollingAncestor.location() -
-            FloatSize(enclosingClippingBox.borderLeft() + enclosingClippingBox.paddingLeft(),
-            enclosingClippingBox.borderTop() + enclosingClippingBox.paddingTop());
-        if (&enclosingClippingBox != containingBlock) {
+            FloatSize(enclosingClippingBox->borderLeft() + enclosingClippingBox->paddingLeft(),
+            enclosingClippingBox->borderTop() + enclosingClippingBox->paddingTop());
+        if (enclosingClippingBox.ptr() != containingBlock) {
             if (auto* scrollableArea = enclosingClippingLayer->scrollableArea())
                 containerLocationRelativeToScrollingAncestor += scrollableArea->scrollOffset();
         }
@@ -604,7 +660,7 @@ void RenderBoxModelObject::computeStickyPositionConstraints(StickyPositionViewpo
     constraints.setContainingBlockRect(containerRectRelativeToScrollingAncestor);
 
     // Now compute the sticky box rect, also relative to the scrolling ancestor.
-    LayoutRect stickyBoxRect = frameRectForStickyPositioning();
+    auto stickyBoxRect = borderBoxRectInContainer();
 
     // Ideally, it would be possible to call this->localToContainerQuad to determine the frame
     // rectangle in the coordinate system of the scrolling ancestor, but localToContainerQuad
@@ -618,13 +674,14 @@ void RenderBoxModelObject::computeStickyPositionConstraints(StickyPositionViewpo
     // involving inlines, tables, and transformations.
     if (auto* parentBox = dynamicDowncast<RenderBox>(*parent()))
         parentBox->flipForWritingMode(stickyBoxRect);
-    auto stickyBoxRelativeToScrollingAncestor = parent()->localToContainerQuad(FloatRect(stickyBoxRect), &enclosingClippingBox, { } /* ignore transforms */).boundingBox();
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST auto stickyBoxRelativeToScrollingAncestor = parent()->localToContainerQuad(FloatRect(stickyBoxRect), enclosingClippingBox.ptr(), { } /* ignore transforms */).boundingBox();
 
     if (enclosingClippingLayer) {
-        stickyBoxRelativeToScrollingAncestor.move(-FloatSize(enclosingClippingBox.borderLeft() + enclosingClippingBox.paddingLeft(),
-            enclosingClippingBox.borderTop() + enclosingClippingBox.paddingTop()));
+        stickyBoxRelativeToScrollingAncestor.move(-FloatSize(enclosingClippingBox->borderLeft() + enclosingClippingBox->paddingLeft(),
+            enclosingClippingBox->borderTop() + enclosingClippingBox->paddingTop()));
 
-        if (&enclosingClippingBox != parent()) {
+        if (enclosingClippingBox.ptr() != parent()) {
             if (auto* scrollableArea = enclosingClippingLayer->scrollableArea())
                 stickyBoxRelativeToScrollingAncestor.moveBy(scrollableArea->scrollOffset());
         }
@@ -684,7 +741,8 @@ FloatRect RenderBoxModelObject::constrainingRectForStickyPosition() const
         clipRect.contract(LayoutSize(enclosingClippingBox.paddingLeft() + enclosingClippingBox.paddingRight(),
             enclosingClippingBox.paddingTop() + enclosingClippingBox.paddingBottom()));
 
-        FloatRect constrainingRect = enclosingClippingBox.localToContainerQuad(FloatRect(clipRect), &view()).boundingBox();
+        // FIXME: Remove suppression once rdar://189998444 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST FloatRect constrainingRect = enclosingClippingBox.localToContainerQuad(FloatRect(clipRect), &view()).boundingBox();
 
         auto* scrollableArea = enclosingClippingLayer->scrollableArea();
         FloatPoint scrollOffset;
@@ -733,11 +791,6 @@ LayoutUnit RenderBoxModelObject::offsetTop() const
     return adjustedPositionRelativeToOffsetParent(firstFragmentBorderBoxRect().location()).y();
 }
 
-InterpolationQuality RenderBoxModelObject::chooseInterpolationQuality(GraphicsContext& context, Image& image, const void* layer, const LayoutSize& size) const
-{
-    return view().imageQualityController().chooseInterpolationQuality(context, const_cast<RenderBoxModelObject*>(this), image, layer, size);
-}
-
 void RenderBoxModelObject::paintMaskForTextFillBox(GraphicsContext& context, const FloatRect& paintRect, const InlineIterator::InlineBoxIterator& inlineBox, const LayoutRect& scrolledPaintRect)
 {
     // Now add the text to the clip. We do this by painting using a special paint phase that signals to
@@ -746,10 +799,10 @@ void RenderBoxModelObject::paintMaskForTextFillBox(GraphicsContext& context, con
     if (inlineBox) {
         auto paintOffset = scrolledPaintRect.location() - toLayoutSize(LayoutPoint(inlineBox->visualRectIgnoringBlockDirection().location()));
 
-        for (auto box = inlineBox->firstLeafBox(), end = inlineBox->endLeafBox(); box != end; box.traverseLineRightwardOnLine()) {
-            if (!box->isText())
+        for (auto& box : inlineBox->leafDescendants()) {
+            if (!box.isText())
                 continue;
-            TextBoxPainter { box->modernPath().inlineContent(), box->modernPath().box(), box->modernPath().box().style(), maskInfo, paintOffset }.paint();
+            TextBoxPainter { box.inlineContent(), box.displayBox(), box.displayBox().style(), maskInfo, paintOffset }.paint();
         }
         return;
     }
@@ -759,92 +812,41 @@ void RenderBoxModelObject::paintMaskForTextFillBox(GraphicsContext& context, con
     paint(maskInfo, scrolledPaintRect.location() - localOffset);
 }
 
-static inline LayoutUnit NODELETE resolveWidthForRatio(LayoutUnit height, const LayoutSize& intrinsicRatio)
+LayoutSize RenderBoxModelObject::calculateImageIntrinsicDimensions(const Style::Image& image, const ImageSizingContext& sizing, ScaleByUsedZoom scaleByUsedZoom) const
 {
-    return height * intrinsicRatio.width() / intrinsicRatio.height();
-}
+    auto reported = image.naturalDimensions(*this, sizing);
 
-static inline LayoutUnit NODELETE resolveHeightForRatio(LayoutUnit width, const LayoutSize& intrinsicRatio)
-{
-    return width * intrinsicRatio.height() / intrinsicRatio.width();
-}
-
-static inline LayoutSize NODELETE resolveAgainstIntrinsicWidthOrHeightAndRatio(const LayoutSize& size, const LayoutSize& intrinsicRatio, LayoutUnit useWidth, LayoutUnit useHeight)
-{
-    if (intrinsicRatio.isEmpty()) {
-        if (useWidth)
-            return LayoutSize(useWidth, size.height());
-        return LayoutSize(size.width(), useHeight);
-    }
-
-    if (useWidth)
-        return LayoutSize(useWidth, resolveHeightForRatio(useWidth, intrinsicRatio));
-    return LayoutSize(resolveWidthForRatio(useHeight, intrinsicRatio), useHeight);
-}
-
-static inline LayoutSize NODELETE resolveAgainstIntrinsicRatio(const LayoutSize& size, const LayoutSize& intrinsicRatio)
-{
-    // Two possible solutions: (size.width(), solutionHeight) or (solutionWidth, size.height())
-    // "... must be assumed to be the largest dimensions..." = easiest answer: the rect with the largest surface area.
-
-    LayoutUnit solutionWidth = resolveWidthForRatio(size.height(), intrinsicRatio);
-    LayoutUnit solutionHeight = resolveHeightForRatio(size.width(), intrinsicRatio);
-    if (solutionWidth <= size.width()) {
-        if (solutionHeight <= size.height()) {
-            // If both solutions fit, choose the one covering the larger area.
-            LayoutUnit areaOne = solutionWidth * size.height();
-            LayoutUnit areaTwo = size.width() * solutionHeight;
-            if (areaOne < areaTwo)
-                return LayoutSize(size.width(), solutionHeight);
-            return LayoutSize(solutionWidth, size.height());
-        }
-
-        // Only the first solution fits.
-        return LayoutSize(solutionWidth, size.height());
-    }
-
-    // Only the second solution fits, assert that.
-    ASSERT(solutionHeight <= size.height());
-    return LayoutSize(size.width(), solutionHeight);
-}
-
-LayoutSize RenderBoxModelObject::calculateImageIntrinsicDimensions(Style::Image* image, const LayoutSize& positioningAreaSize, ScaleByUsedZoom scaleByUsedZoom) const
-{
-    // A generated image without a fixed size, will always return the container size as intrinsic size.
-    if (!image->imageHasNaturalDimensions())
-        return LayoutSize(positioningAreaSize.width(), positioningAreaSize.height());
-
-    float intrinsicWidth = 0;
-    float intrinsicHeight = 0;
-    FloatSize intrinsicRatio;
-    image->computeIntrinsicDimensions(this, intrinsicWidth, intrinsicHeight, intrinsicRatio);
-
-    LayoutSize resolvedSize(intrinsicWidth, intrinsicHeight);
+    LayoutSize resolvedSize(reported.width.value_or(0), reported.height.value_or(0));
     LayoutSize minimumSize(resolvedSize.width() > 0 ? 1 : 0, resolvedSize.height() > 0 ? 1 : 0);
-
     if (scaleByUsedZoom == ScaleByUsedZoom::Yes)
         resolvedSize.scale(style().usedZoom());
     resolvedSize.clampToMinimumSize(minimumSize);
 
-    if (!resolvedSize.isEmpty())
-        return resolvedSize;
+    NaturalDimensions naturalDimensions;
+    if (resolvedSize.width() > 0)
+        naturalDimensions.width = resolvedSize.width().toFloat();
+    if (resolvedSize.height() > 0)
+        naturalDimensions.height = resolvedSize.height().toFloat();
+    naturalDimensions.aspectRatio = reported.aspectRatio;
 
-    // If the image has one of either an intrinsic width or an intrinsic height:
-    // * and an intrinsic aspect ratio, then the missing dimension is calculated from the given dimension and the ratio.
-    // * and no intrinsic aspect ratio, then the missing dimension is assumed to be the size of the rectangle that
-    //   establishes the coordinate system for the 'background-position' property.
-    if (resolvedSize.width() > 0 || resolvedSize.height() > 0)
-        return resolveAgainstIntrinsicWidthOrHeightAndRatio(positioningAreaSize, LayoutSize(intrinsicRatio), resolvedSize.width(), resolvedSize.height());
+    auto concreteObjectSize = sizing.resolve(naturalDimensions).size();
 
-    // If the image has no intrinsic dimensions and has an intrinsic ratio the dimensions must be assumed to be the
-    // largest dimensions at that ratio such that neither dimension exceeds the dimensions of the rectangle that
-    // establishes the coordinate system for the 'background-position' property.
-    if (!intrinsicRatio.isEmpty())
-        return resolveAgainstIntrinsicRatio(positioningAreaSize, LayoutSize(intrinsicRatio));
+    return { LayoutUnit::fromFloatRound(concreteObjectSize.width()), LayoutUnit::fromFloatRound(concreteObjectSize.height()) };
+}
 
-    // If the image has no intrinsic ratio either, then the dimensions must be assumed to be the rectangle that
-    // establishes the coordinate system for the 'background-position' property.
-    return positioningAreaSize;
+void RenderBoxModelObject::imageChanged(WrappedImagePtr image, const IntRect*)
+{
+    if (!parent())
+        return;
+
+    bool isNonEmpty;
+    RefPtr styleImage = Style::findLayerUsedImage(style().backgroundLayers(), image, isNonEmpty);
+    if (styleImage && isNonEmpty) {
+        if (auto styleable = Styleable::fromRenderer(*this))
+            protect(document())->didLoadImage(protect(styleable->element).get(), protect(styleImage->cachedImage()));
+    }
+    // FIXME: We can do better.
+    repaint();
 }
 
 bool RenderBoxModelObject::fixedBackgroundPaintsInLocalCoordinates() const
@@ -864,7 +866,7 @@ bool RenderBoxModelObject::fixedBackgroundPaintsInLocalCoordinates() const
 
 bool RenderBoxModelObject::borderObscuresBackgroundEdge(const FloatSize& contextScale) const
 {
-    auto edges = borderEdges(style(), protect(document())->deviceScaleFactor());
+    auto edges = borderEdges(usedStyle(), protect(document())->deviceScaleFactor());
 
     for (auto side : allBoxSides) {
         auto& currEdge = edges.at(side);
@@ -886,7 +888,7 @@ bool RenderBoxModelObject::borderObscuresBackground() const
     if (!style().borderImageSource().isNone())
         return false;
 
-    auto edges = borderEdges(style(), protect(document())->deviceScaleFactor());
+    auto edges = borderEdges(usedStyle(), protect(document())->deviceScaleFactor());
 
     for (auto side : allBoxSides) {
         if (!edges.at(side).obscuresBackground())
@@ -966,13 +968,13 @@ bool RenderBoxModelObject::hasRunningAcceleratedAnimations() const
 void RenderBoxModelObject::applyTransform(TransformationMatrix&, const Style::ComputedStyle&, const FloatRect&, OptionSet<Style::TransformResolverOption>) const
 {
     // applyTransform() is only used through RenderLayer*, which only invokes this for RenderBox derived renderers, thus not for
-    // RenderInline/RenderLineBreak - the other two renderers that inherit from RenderBoxModelObject.
+    // inline boxes or RenderLineBreak.
     ASSERT_NOT_REACHED();
 }
 
 bool RenderBoxModelObject::requiresLayer() const
 {
-    return isPositioned() || createsGroup() || requiresRenderingConsolidationForViewTransition() || hasRunningAcceleratedAnimations();
+    return isPositioned() || createsGroup() || requiresRenderingConsolidationForViewTransition() || hasRunningAcceleratedAnimations() || style().willChange().canCreateStackingContext();
 }
 
 void RenderBoxModelObject::removeOutOfFlowBoxesIfNeededOnStyleChange(const Style::ComputedStyle& oldStyle, const Style::ComputedStyle& newStyle)
@@ -1042,87 +1044,72 @@ auto RenderBoxModelObject::computeVisibleRectsUsingPaintOffset(const RepaintRect
 
 LayoutUnit RenderBoxModelObject::marginTop() const
 {
-    return computedCSSMarginTop();
+    return usedStyle().marginTop(ReferenceSize::ContainingBlockLogicalWidth).value_or(0_lu);
 }
 
 LayoutUnit RenderBoxModelObject::marginBottom() const
 {
-    return computedCSSMarginBottom();
+    return usedStyle().marginBottom(ReferenceSize::ContainingBlockLogicalWidth).value_or(0_lu);
 }
 
 LayoutUnit RenderBoxModelObject::marginLeft() const
 {
-    return computedCSSMarginLeft();
+    return usedStyle().marginLeft(ReferenceSize::ContainingBlockLogicalWidth).value_or(0_lu);
 }
 
 LayoutUnit RenderBoxModelObject::marginRight() const
 {
-    return computedCSSMarginRight();
+    return usedStyle().marginRight(ReferenceSize::ContainingBlockLogicalWidth).value_or(0_lu);
 }
 
 LayoutUnit RenderBoxModelObject::marginBefore(const WritingMode writingMode) const
 {
-    return computedCSSMarginBefore(writingMode);
+    return usedStyle().marginBefore(writingMode, ReferenceSize::ContainingBlockLogicalWidth).value_or(0_lu);
 }
 
 LayoutUnit RenderBoxModelObject::marginAfter(const WritingMode writingMode) const
 {
-    return computedCSSMarginAfter(writingMode);
+    return usedStyle().marginAfter(writingMode, ReferenceSize::ContainingBlockLogicalWidth).value_or(0_lu);
 }
 
 LayoutUnit RenderBoxModelObject::marginStart(const WritingMode writingMode) const
 {
-    return computedCSSMarginStart(writingMode);
+    return usedStyle().marginStart(writingMode, ReferenceSize::ContainingBlockLogicalWidth).value_or(0_lu);
 }
 
 LayoutUnit RenderBoxModelObject::marginEnd(const WritingMode writingMode) const
 {
-    return computedCSSMarginEnd(writingMode);
+    return usedStyle().marginEnd(writingMode, ReferenceSize::ContainingBlockLogicalWidth).value_or(0_lu);
 }
 
 LayoutRect RenderBoxModelObject::firstFragmentBorderBoxRect() const
 {
     if (auto* lineLayout = LayoutIntegration::LineLayout::containing(*this))
         return lineLayout->firstInlineBoxRect(*this);
-    if (auto* inlineBox = firstLegacyInlineBoxFor(*this))
-        return { flooredLayoutPoint(inlineBox->locationIncludingFlipping()), LayoutSize { inlineBox->size() } };
     return { };
 }
 
 LayoutUnit RenderBoxModelObject::paddingBoxLogicalWidth() const
 {
+    if (!LayoutIntegration::LineLayout::containing(*this))
+        return { };
+
+    auto firstInlineBox = InlineIterator::lineLeftmostInlineBoxFor(*this);
+    if (!firstInlineBox)
+        return { };
+
+    auto lastInlineBox = firstInlineBox;
+    while (auto next = std::ranges::next(lastInlineBox))
+        lastInlineBox = next;
+
     auto firstInlineBoxPaddingBoxLeft = LayoutUnit { };
     auto lastInlineBoxPaddingBoxRight = LayoutUnit { };
-
-    if (LayoutIntegration::LineLayout::containing(*this)) {
-        if (auto inlineBox = InlineIterator::lineLeftmostInlineBoxFor(*this)) {
-            if (writingMode().isBidiLTR()) {
-                firstInlineBoxPaddingBoxLeft = inlineBox->logicalLeftIgnoringInlineDirection() + borderStart();
-                for (; inlineBox->nextInlineBoxLineRightward(); inlineBox.traverseInlineBoxLineRightward()) { }
-                ASSERT(inlineBox);
-                lastInlineBoxPaddingBoxRight = inlineBox->logicalRightIgnoringInlineDirection() - borderEnd();
-            } else {
-                lastInlineBoxPaddingBoxRight = inlineBox->logicalRightIgnoringInlineDirection() - borderStart();
-                for (; inlineBox->nextInlineBoxLineRightward(); inlineBox.traverseInlineBoxLineRightward()) { }
-                ASSERT(inlineBox);
-                firstInlineBoxPaddingBoxLeft = inlineBox->logicalLeftIgnoringInlineDirection() + borderEnd();
-            }
-            return std::max(0_lu, lastInlineBoxPaddingBoxRight - firstInlineBoxPaddingBoxLeft);
-        }
-        return { };
-    }
-
-    auto* firstInlineBox = firstLegacyInlineBoxFor(*this);
-    auto* lastInlineBox = lastLegacyInlineBoxFor(*this);
-    if (!firstInlineBox || !lastInlineBox)
-        return { };
-
     if (writingMode().isBidiLTR()) {
-        firstInlineBoxPaddingBoxLeft = firstInlineBox->logicalLeft();
-        lastInlineBoxPaddingBoxRight = lastInlineBox->logicalRight();
+        firstInlineBoxPaddingBoxLeft = firstInlineBox->logicalLeftIgnoringInlineDirection() + borderStart();
+        lastInlineBoxPaddingBoxRight = lastInlineBox->logicalRightIgnoringInlineDirection() - borderEnd();
     } else {
-        lastInlineBoxPaddingBoxRight = firstInlineBox->logicalRight();
-        firstInlineBoxPaddingBoxLeft = lastInlineBox->logicalLeft();
+        lastInlineBoxPaddingBoxRight = firstInlineBox->logicalRightIgnoringInlineDirection() - borderStart();
+        firstInlineBoxPaddingBoxLeft = lastInlineBox->logicalLeftIgnoringInlineDirection() + borderEnd();
     }
     return std::max(0_lu, lastInlineBoxPaddingBoxRight - firstInlineBoxPaddingBoxLeft);
 }
@@ -1237,40 +1224,13 @@ LayoutRect RenderBoxModelObject::borderBoxRectInContainer() const
                 // FIXME: Always build the bounding box like this. LineLayouyt::enclosingBorderBoxRectFor does not include
                 // any post-layout box adjustments.
                 FloatRect result;
-                for (auto box = InlineIterator::lineLeftmostInlineBoxFor(*this); box; box.traverseInlineBoxLineRightward())
-                    result.unite(box->visualRectIgnoringBlockDirection());
+                for (auto& box : InlineIterator::inlineBoxesFor(*this))
+                    result.unite(box.visualRectIgnoringBlockDirection());
                 return enclosingIntRect(result);
             }
             return enclosingIntRect(layout->enclosingBorderBoxRectFor(*this));
         }
-
-        auto* firstInlineBox = firstLegacyInlineBoxFor(*this);
-        auto* lastInlineBox = lastLegacyInlineBoxFor(*this);
-
-        // See <rdar://problem/5289721>, for an unknown reason the linked list here is sometimes inconsistent, first is non-zero and last is zero. We have been
-        // unable to reproduce this at all (and consequently unable to figure ot why this is happening). The assert will hopefully catch the problem in debug
-        // builds and help us someday figure out why. We also put in a redundant check of lastLineBox() to avoid the crash for now.
-        ASSERT(!firstInlineBox == !lastInlineBox); // Either both are null or both exist.
-        if (!firstInlineBox || !lastInlineBox)
-            return { };
-
-        // Return the width of the minimal left side and the maximal right side.
-        float logicalLeftSide = 0;
-        float logicalRightSide = 0;
-        for (auto* curr = firstInlineBox; curr; curr = curr->nextLineBox()) {
-            if (curr == firstInlineBox || curr->logicalLeft() < logicalLeftSide)
-                logicalLeftSide = curr->logicalLeft();
-            if (curr == firstInlineBox || curr->logicalRight() > logicalRightSide)
-                logicalRightSide = curr->logicalRight();
-        }
-
-        bool isHorizontal = writingMode().isHorizontal();
-
-        float x = isHorizontal ? logicalLeftSide : firstInlineBox->x();
-        float y = isHorizontal ? firstInlineBox->y() : logicalLeftSide;
-        float width = isHorizontal ? logicalRightSide - logicalLeftSide : lastInlineBox->logicalBottom() - x;
-        float height = isHorizontal ? lastInlineBox->logicalBottom() - y : logicalRightSide - logicalLeftSide;
-        return enclosingIntRect(FloatRect { x, y, width, height });
+        return { };
     };
 
     return boundingBoxOfFragments();
@@ -1294,11 +1254,11 @@ auto RenderBoxModelObject::localRectsForRepaint(RepaintOutlineBounds) const -> R
     ASSERT_UNUSED(insideSelfPaintingInlineBox, !view().frameView().layoutContext().isPaintOffsetCacheEnabled() || style().pseudoElementType() == PseudoElementType::FirstLetter || insideSelfPaintingInlineBox());
 #endif
 
-    if (!firstLegacyInlineBoxFor(*this) && !LayoutIntegration::LineLayout::containing(*this))
+    if (!LayoutIntegration::LineLayout::containing(*this))
         return { };
 
     auto repaintRect = visualOverflowRect();
-    repaintRect.inflate(LayoutUnit { style().usedOutlineSize(style().usedZoomForLength(), style().deviceScaleFactor()) });
+    repaintRect.inflate(LayoutUnit { usedStyle().outlineSize() });
     return { repaintRect };
 }
 
@@ -1324,31 +1284,7 @@ LayoutRect RenderBoxModelObject::visualOverflowRect() const
         }
         return layout->inkOverflowBoundingBoxRectFor(*this);
     }
-
-    auto* firstInlineBox = firstLegacyInlineBoxFor(*this);
-    auto* lastInlineBox = lastLegacyInlineBoxFor(*this);
-    if (!firstInlineBox || !lastInlineBox)
-        return { };
-
-    // Return the width of the minimal left side and the maximal right side.
-    LayoutUnit logicalLeftSide = LayoutUnit::max();
-    LayoutUnit logicalRightSide = LayoutUnit::min();
-    for (auto* curr = firstInlineBox; curr; curr = curr->nextLineBox()) {
-        logicalLeftSide = std::min(logicalLeftSide, curr->logicalLeftVisualOverflow());
-        logicalRightSide = std::max(logicalRightSide, curr->logicalRightVisualOverflow());
-    }
-
-    const LegacyRootInlineBox& firstRootBox = firstInlineBox->root();
-    const LegacyRootInlineBox& lastRootBox = lastInlineBox->root();
-
-    LayoutUnit logicalTop = firstInlineBox->logicalTopVisualOverflow(firstRootBox.lineTop());
-    LayoutUnit logicalWidth = logicalRightSide - logicalLeftSide;
-    LayoutUnit logicalHeight = lastInlineBox->logicalBottomVisualOverflow(lastRootBox.lineBottom()) - logicalTop;
-
-    LayoutRect rect(logicalLeftSide, logicalTop, logicalWidth, logicalHeight);
-    if (!writingMode().isHorizontal())
-        rect = rect.transposedRect();
-    return rect;
+    return { };
 }
 
 Vector<FloatRect> RenderBoxModelObject::localBorderBoxRects() const
@@ -1359,13 +1295,7 @@ Vector<FloatRect> RenderBoxModelObject::localBorderBoxRects() const
             return { FloatRect { } };
         return inlineBoxRects;
     }
-
-    Vector<FloatRect> rects;
-    for (auto* box = firstLegacyInlineBoxFor(*this); box; box = box->nextLineBox())
-        rects.append(FloatRect { box->topLeft(), box->size() });
-    if (rects.isEmpty())
-        rects.append({ });
-    return rects;
+    return { FloatRect { } };
 }
 
 void RenderBoxModelObject::boundingRects(Vector<LayoutRect>& rects, const LayoutPoint& accumulatedOffset) const

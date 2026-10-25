@@ -55,7 +55,7 @@ public:
 
     UTF8CString name() const;
 
-    virtual void forEachArg(Inst&, const ScopedLambda<Inst::EachArgCallback>&) = 0;
+    virtual void forEachArg(Inst&, NOESCAPE const ScopedLambda<Inst::EachArgCallback>&) = 0;
     virtual bool isValid(Inst&) = 0;
     virtual bool admitsStack(Inst&, unsigned argIndex) = 0;
     virtual bool admitsExtendedOffsetAddr(Inst&, unsigned argIndex) = 0;
@@ -93,6 +93,10 @@ public:
     
     // By default, this returns false.
     virtual bool isTerminal(Inst&);
+
+    virtual bool hasFixedForms(Inst&);
+    virtual bool needsFrame(Inst&);
+    virtual bool clobbersAtBlockEntry(Inst&);
 
     // By default, this returns true.
     virtual bool hasNonArgEffects(Inst&);

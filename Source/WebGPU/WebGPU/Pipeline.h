@@ -28,7 +28,7 @@
 #import <wtf/Function.h>
 #import <wtf/Scope.h>
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class BindGroup;
 class Device;
@@ -47,7 +47,7 @@ struct PreparedLibrary {
     HashMap<String, WGSL::ConstantValue> wgslConstantValues;
 };
 
-std::optional<PreparedLibrary> prepareLibrary(const ShaderModule&, PipelineLayout*, const String& entryPointName, NSString *label, std::span<const WGPUConstantEntry> constants, BufferBindingSizesForPipeline&, NSError **);
+std::optional<PreparedLibrary> prepareLibrary(const ShaderModule&, PipelineLayout*, const String& entryPointName, NSString *label, std::span<const WebGPU::ConstantEntry> constants, BufferBindingSizesForPipeline&, NSError **);
 
 struct LibraryCompileRequest {
     id<MTLLibrary> cachedLibrary { nil };
@@ -76,4 +76,4 @@ bool dumpMetalReproCaseRenderPSO(String&& vertexShaderSource, String&& vertexFun
 void clearMetalPSORepro();
 #endif
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal

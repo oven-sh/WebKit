@@ -1326,7 +1326,10 @@ impl<'options> Generator<'options> {
     // For global structs, an id of 0 is always used to make sure names match across shader
     // interfaces.
     fn struct_id_to_append(name: &Name, specialization: StructSpecialization, id: u32) -> u32 {
-        if name.name.is_empty() || specialization == StructSpecialization::InterfaceBlock {
+        if name.source == NameSource::Internal
+            || name.name.is_empty()
+            || specialization == StructSpecialization::InterfaceBlock
+        {
             SYMBOL_NAME_NO_ID
         } else if name.source == NameSource::Temporary {
             id
@@ -3370,8 +3373,12 @@ impl ast::Target for Generator<'_> {
     }
     fn branch_loop_if(&mut self, block: &mut *mut TIntermBlock, condition: TypedId) {
         // The condition block of a loop ends in `if (!condition) break;`
-        // SAFETY: Pointers are obtained from C++ and passed back to it.
-        unsafe { ffi::branch_loop_if(*block, &self.get_expression(condition)) };
+        //
+        // No-op if the condition is `true`
+        if !matches!(condition.id, Id::Constant(CONSTANT_ID_TRUE)) {
+            // SAFETY: Pointers are obtained from C++ and passed back to it.
+            unsafe { ffi::branch_loop_if(*block, &self.get_expression(condition)) };
+        }
     }
     fn branch_switch(
         &mut self,

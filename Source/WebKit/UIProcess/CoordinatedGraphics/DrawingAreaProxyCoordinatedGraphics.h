@@ -77,7 +77,7 @@ private:
 
 #if PLATFORM(GTK)
     void adjustTransientZoom(double scale, WebCore::FloatPoint originInLayerForPageScale, WebCore::FloatPoint originInVisibleRect) override;
-    void commitTransientZoom(double scale, WebCore::FloatPoint originInLayerForPageScale) override;
+    void commitTransientZoom(double scale, WebCore::FloatPoint originInLayerForPageScale, std::optional<WebCore::FloatPoint> targetScrollPosition) override;
 #endif
 
     // IPC message handlers
@@ -138,7 +138,7 @@ private:
     std::unique_ptr<BackingStore> m_backingStore;
     RunLoop::Timer m_discardBackingStoreTimer;
 #endif
-    std::unique_ptr<DrawingMonitor> m_drawingMonitor;
+    const std::unique_ptr<DrawingMonitor> m_drawingMonitor;
 };
 
 } // namespace WebKit

@@ -1,0 +1,5 @@
+# The token of a class evaluation, the definition of the brand and of a private field, and reads, stores and tests of the field pass the back-end checks in compact code
+# RUN: compile
+# OPTIONS: heat=everything-is-cold validate check=validate-back-end only-passes=EstimateHeat
+# CHECK: image not empty
+# PROGRAM-OF: private-names-fast.ir

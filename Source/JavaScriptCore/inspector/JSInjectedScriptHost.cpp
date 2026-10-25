@@ -328,7 +328,7 @@ JSValue JSInjectedScriptHost::getOwnPrivatePropertySymbols(JSGlobalObject* globa
     RETURN_IF_EXCEPTION(scope, JSValue());
 
     JSObject* object = dynamicDowncast<JSObject>(value);
-    if (!object) [[unlikely]]
+    if (!object || object->structure()->isCompiledStructure()) [[unlikely]]
         return result;
 
     unsigned index = 0;
@@ -1092,7 +1092,7 @@ public:
         });
     }
 
-    UncheckedKeyHashSet<JSCell*>& NODELETE holders() { return m_holders; }
+    UncheckedKeyHashSet<JSCell*>& LEGACY_NODELETE holders() { return m_holders; }
 
     void analyzeEdge(JSCell* from, JSCell* to, RootMarkReason reason) final
     {

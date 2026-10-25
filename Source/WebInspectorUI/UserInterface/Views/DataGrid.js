@@ -59,7 +59,7 @@ WI.DataGrid = class DataGrid extends WI.View
 
         this._cachedScrollTop = NaN;
         this._cachedScrollableOffsetHeight = NaN;
-        this._previousRevealedRowCount = NaN;
+        this._revealedRows = null;
         this._topDataTableMarginHeight = NaN;
         this._bottomDataTableMarginHeight = NaN;
 
@@ -1090,7 +1090,7 @@ WI.DataGrid = class DataGrid extends WI.View
 
     _noteRowsChanged()
     {
-        this._previousRevealedRowCount = NaN;
+        this._revealedRows = null;
 
         this.needsLayout();
     }
@@ -1162,23 +1162,20 @@ WI.DataGrid = class DataGrid extends WI.View
             let belowTopThreshold = !currentTopMargin || this._cachedScrollTop > currentTopMargin + updateOffsetThreshold;
             let aboveBottomThreshold = !currentBottomMargin || this._cachedScrollTop + this._cachedScrollableOffsetHeight < currentTableBottom - updateOffsetThreshold;
 
-            if (belowTopThreshold && aboveBottomThreshold && !heightChanged && !isNaN(this._previousRevealedRowCount))
+            if (belowTopThreshold && aboveBottomThreshold && !heightChanged && this._revealedRows)
                 return;
         }
 
-        let revealedRows = this._rows.filter((row) => row.revealed && !row.hidden);
-
-        this._previousRevealedRowCount = revealedRows.length;
+        this._revealedRows ||= this._rows.filter((row) => row.revealed && !row.hidden);
 
         if (focusedDataGridNode) {
-            let focusedIndex = revealedRows.indexOf(focusedDataGridNode);
-            let firstVisibleRowIndex = this._cachedScrollTop / rowHeight;
-            if (focusedIndex < firstVisibleRowIndex || focusedIndex > firstVisibleRowIndex + visibleRowCount)
-                this._scrollContainerElement.scrollTop = this._cachedScrollTop = (focusedIndex * rowHeight) - (this._cachedScrollableOffsetHeight / 2) + (rowHeight / 2);
+            let focusedRowTop = this._revealedRows.indexOf(focusedDataGridNode) * rowHeight;
+            if (focusedRowTop < this._cachedScrollTop || focusedRowTop + rowHeight > this._cachedScrollTop + this._cachedScrollableOffsetHeight)
+                this._scrollContainerElement.scrollTop = this._cachedScrollTop = focusedRowTop - (this._cachedScrollableOffsetHeight / 2) + (rowHeight / 2);
         }
 
         let topHiddenRowCount = Math.max(0, Math.floor((this._cachedScrollTop - overflowPadding) / rowHeight));
-        let bottomHiddenRowCount = Math.max(0, this._previousRevealedRowCount - topHiddenRowCount - visibleRowCount);
+        let bottomHiddenRowCount = Math.max(0, this._revealedRows.length - topHiddenRowCount - visibleRowCount);
 
         let marginTop = topHiddenRowCount * rowHeight;
         let marginBottom = bottomHiddenRowCount * rowHeight;
@@ -1200,7 +1197,7 @@ WI.DataGrid = class DataGrid extends WI.View
 
         let dataTableBodyElementFragment = document.createDocumentFragment();
         for (let i = topHiddenRowCount; i < topHiddenRowCount + visibleRowCount; ++i) {
-            let rowDataGridNode = revealedRows[i];
+            let rowDataGridNode = this._revealedRows[i];
             if (!rowDataGridNode)
                 continue;
             dataTableBodyElementFragment.appendChild(rowDataGridNode.element);
@@ -1379,6 +1376,8 @@ WI.DataGrid = class DataGrid extends WI.View
             return reverseFactor * comparator(aNode, bNode);
         }
 
+        if (this._sortNodesRequestId)
+            window.cancelAnimationFrame(this._sortNodesRequestId);
         this._sortNodesRequestId = undefined;
         this._sortNodesComparator = null;
 

@@ -43,24 +43,24 @@ class MediaSourceHandle
     : public RefCounted<MediaSourceHandle> {
     WTF_MAKE_TZONE_ALLOCATED(MediaSourceHandle);
 public:
-    static Ref<MediaSourceHandle> NODELETE create(Ref<MediaSourceHandle>&&);
-    Ref<MediaSourceHandle> detach();
+    static Ref<MediaSourceHandle> LEGACY_NODELETE create(Ref<MediaSourceHandle>&&);
+    Ref<MediaSourceHandle> LEGACY_NODELETE detach();
 
     virtual ~MediaSourceHandle();
 
     bool isDetached() const { return m_detached; }
-    bool NODELETE canDetach() const;
+    bool LEGACY_NODELETE canDetach() const;
     bool detachable() const { return m_detachable; }
 
-    void NODELETE setHasEverBeenAssignedAsSrcObject();
-    bool NODELETE hasEverBeenAssignedAsSrcObject() const;
-    bool NODELETE isManaged() const;
+    void LEGACY_NODELETE setHasEverBeenAssignedAsSrcObject();
+    bool LEGACY_NODELETE hasEverBeenAssignedAsSrcObject() const;
+    bool LEGACY_NODELETE isManaged() const;
 
     using TaskType = Function<void(MediaSource&)>;
     void ensureOnDispatcher(TaskType&&, bool forceRun = false) const;
 
-    RefPtr<MediaSourcePrivateClient> mediaSourcePrivateClient() const;
-    RefPtr<MediaSourcePrivate> mediaSourcePrivate() const;
+    RefPtr<MediaSourcePrivateClient> LEGACY_NODELETE mediaSourcePrivateClient() const;
+    RefPtr<MediaSourcePrivate> LEGACY_NODELETE mediaSourcePrivate() const;
 
 private:
     class SharedPrivate;
@@ -68,10 +68,10 @@ private:
 
     using DispatcherType = Function<void(TaskType, bool)>;
 
-    static Ref<MediaSourceHandle> create(MediaSource&, DispatcherType&&, bool);
+    static Ref<MediaSourceHandle> LEGACY_NODELETE create(MediaSource&, DispatcherType&&, bool);
     MediaSourceHandle(MediaSource&, DispatcherType&&, bool);
     explicit MediaSourceHandle(MediaSourceHandle&);
-    void mediaSourceDidOpen(MediaSourcePrivate&);
+    void LEGACY_NODELETE mediaSourceDidOpen(MediaSourcePrivate&);
     void setDetached(bool value) { m_detached = value; }
 
     const bool m_detachable;

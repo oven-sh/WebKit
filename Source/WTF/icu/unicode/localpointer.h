@@ -19,6 +19,9 @@
 #ifndef __LOCALPOINTER_H__
 #define __LOCALPOINTER_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 /**
  * \file
  * \brief C++ API: "Smart pointers" for use with and in ICU4C C++ code.

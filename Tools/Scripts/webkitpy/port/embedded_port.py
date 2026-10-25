@@ -26,6 +26,8 @@ import traceback
 
 from abc import abstractmethod
 
+from webkitcorepy import Version
+
 from webkitpy.common.system.executive import ScriptError
 from webkitpy.common.version_name_map import VersionNameMap, PUBLIC_TABLE, INTERNAL_TABLE
 from webkitpy.layout_tests.models.test_configuration import TestConfiguration
@@ -127,10 +129,14 @@ class EmbeddedPort(DarwinPort):
 
     def _device_type_with_version(self, device_type=None):
         device_type = device_type if device_type else self.DEVICE_TYPE
+        version = self.device_version()
+        # The SDK and the simulator runtime often differ in their patch version.
+        if version and self.is_simulator() and not self.get_option('version'):
+            version = Version(version.major, version.minor)
         return DeviceType(
             hardware_family=device_type.hardware_family,
             hardware_type=device_type.hardware_type,
-            software_version=self.device_version(),
+            software_version=version,
             software_variant=device_type.software_variant,
         )
 
@@ -283,7 +289,7 @@ class EmbeddedPort(DarwinPort):
                     exception_list.append([Exception(u'Exception while tearing down {}'.format(device)), trace])
 
         if len(exception_list) == 1:
-            raise
+            raise exception_list[0][0]
         if len(exception_list) > 1:
             print('\n')
             for exception in exception_list:

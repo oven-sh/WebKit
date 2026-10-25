@@ -38,8 +38,8 @@ class CSSVariableData;
 class CSSSubstitutionValue;
 struct CSSParserContext;
 struct CSSRegisteredCustomProperty;
-enum CSSPropertyID : uint16_t;
-enum CSSValueID : uint16_t;
+enum class CSSPropertyID : uint16_t;
+enum class CSSValueID : uint16_t;
 
 class MutableStyleProperties;
 
@@ -108,7 +108,7 @@ private:
 
     RefPtr<const CustomProperty> propertyValueForVariableName(const AtomString&, CSSValueID);
     RefPtr<CSSVariableData> trySimpleSubstitution(const CSSSubstitutionValue&);
-    bool isBaseAppearance();
+    bool LEGACY_NODELETE isBaseAppearance();
     bool isInURLContext() const { return m_urlContextDepth; }
     void updateURLContext(const CSSParserToken&);
     void propagateAttrTaint(IsAttrTainted, std::span<const CSSParserToken>);

@@ -145,7 +145,7 @@ AXTextMarker::operator VisiblePosition() const
 {
     AX_ASSERT(isMainThread());
 
-    WeakPtr cache = AXTreeStore<AXObjectCache>::axObjectCacheForID(treeID());
+    CheckedPtr cache = AXTreeStore<AXObjectCache>::axObjectCacheForID(treeID());
     if (!cache)
         return { };
 
@@ -159,7 +159,7 @@ AXTextMarker::operator CharacterOffset() const
     if (isRedacted() || isNull())
         return { };
 
-    WeakPtr cache = AXTreeStore<AXObjectCache>::axObjectCacheForID(m_data.axTreeID());
+    CheckedPtr cache = AXTreeStore<AXObjectCache>::axObjectCacheForID(m_data.axTreeID());
     if (!cache)
         return { };
 
@@ -227,7 +227,7 @@ RefPtr<AXCoreObject> AXTextMarker::object() const
         return tree ? tree->objectForID(objectID()) : nullptr;
     }
 #endif
-    auto tree = std::get<WeakPtr<AXObjectCache>>(axTreeForID(treeID()));
+    CheckedPtr tree = std::get<WeakPtr<AXObjectCache>>(axTreeForID(treeID()));
     return tree ? tree->objectForID(*objectID()) : nullptr;
 }
 
@@ -732,7 +732,8 @@ void AXTextMarker::clampOffsetToLengthIfNeeded(unsigned length) const
     if (offset() <= length)
         return;
 
-    const_cast<AXTextMarker*>(this)->m_data.offset = length;
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<AXTextMarker*>(this)->m_data.offset = length;
 }
 
 AXTextRunLineID AXTextMarker::lineID() const
@@ -1107,7 +1108,7 @@ static bool runEndsWithNewline(const AXIsolatedObject& object)
 // the number of characters emitted immediately before that object's text. Return false from `visit`
 // to stop.
 template<typename Visitor>
-static void forEachRunObjectForward(const AXTextMarker& start, std::optional<AXID> stopAtID, Visitor&& visit)
+static void forEachRunObjectForward(const AXTextMarker& start, std::optional<AXID> stopAtID, NOESCAPE const Visitor& visit)
 {
     RefPtr current = start.isolatedObject();
     const auto* runs = current ? current->textRuns() : nullptr;
@@ -2070,7 +2071,7 @@ EmittedAuxiliaryText auxiliaryTextForObject(AXIsolatedObject& object, TraversalP
 // You may optionally pass a lambda that runs each time an object is visited in the traversal, either because we reached it in
 // pre-order or because we processed its children (if present) and are moving beyond it. This can help mirror
 // TextIterator::handleNonTextNode and TextIterator::exitNode in the contexts where that's necessary.
-AXIsolatedObject* findObjectWithRuns(AXIsolatedObject& start, AXDirection direction, std::optional<AXID> stopAtID, const std::function<void(AXIsolatedObject&, TraversalPoint)>& visitObject, EnterUserAgentShadowContent enterUserAgentShadowContent)
+AXIsolatedObject* findObjectWithRuns(AXIsolatedObject& start, AXDirection direction, std::optional<AXID> stopAtID, NOESCAPE const std::function<void(AXIsolatedObject&, TraversalPoint)>& visitObject, EnterUserAgentShadowContent enterUserAgentShadowContent)
 {
     auto shouldStop = [&stopAtID] (auto& object) {
         return stopAtID && *stopAtID == object.objectID();

@@ -160,9 +160,10 @@ static void fallbackFontsForRunWithIterator(SingleThreadWeakHashSet<const Font>&
                 // "Unsupported Default_ignorable characters must be ignored for text rendering."
                 auto isIgnored = isDefaultIgnorableCodePoint(character);
 
-                if (isNonSpacingMark || glyphData.font->widthForGlyph(glyphData.glyph)) {
+                Ref font = *glyphData.font;
+                if (isNonSpacingMark || font->widthForGlyph(glyphData.glyph)) {
                     if (!isIgnored)
-                        fallbackFonts.add(*glyphData.font);
+                        fallbackFonts.add(font);
                 }
             }
         };
@@ -181,11 +182,11 @@ TextUtil::FallbackFontList TextUtil::fallbackFontsForText(StringView textContent
 
         if (textRun.is8Bit()) {
             Latin1TextIterator textIterator { textRun.span8(), 0, textRun.length() };
-            fallbackFontsForRunWithIterator(fallbackFonts, style.fontCascade(), textRun, textIterator);
+            fallbackFontsForRunWithIterator(fallbackFonts, protect(style.fontCascade()), textRun, textIterator);
             return;
         }
         SurrogatePairAwareTextIterator textIterator { textRun.span16(), 0, textRun.length() };
-        fallbackFontsForRunWithIterator(fallbackFonts, style.fontCascade(), textRun, textIterator);
+        fallbackFontsForRunWithIterator(fallbackFonts, protect(style.fontCascade()), textRun, textIterator);
     };
 
     if (includeHyphen == IncludeHyphen::Yes)
@@ -535,7 +536,7 @@ TextBreakIterator::ContentAnalysis TextUtil::contentAnalysis(WordBreak wordBreak
 // `Bidi_Class` of `ch` isn't `R`, `AL`, nor Bidi controls.
 // https://util.unicode.org/UnicodeJsps/list-unicodeset.jsp?a=%5B%5B%3Abc%3DR%3A%5D%5B%3Abc%3DAL%3A%5D%5D&g=bc
 // https://util.unicode.org/UnicodeJsps/list-unicodeset.jsp?a=[:Bidi_C:]
-static ALWAYS_INLINE bool NODELETE mayBeBidiRTL(char32_t ch)
+static ALWAYS_INLINE bool LEGACY_NODELETE mayBeBidiRTL(char32_t ch)
 {
     if (ch < 0x0590)
         return false;
@@ -675,7 +676,7 @@ InlineLayoutUnit TextUtil::hyphenWidth(const Style::ComputedStyle& style)
     return std::max(0.f, protect(style.fontCascade())->width(StringView { style.hyphenString() }));
 }
 
-static bool NODELETE isASCIIHangableQuote(char32_t character)
+static bool LEGACY_NODELETE isASCIIHangableQuote(char32_t character)
 {
     return character == quotationMark || character == apostrophe;
 }
@@ -728,6 +729,15 @@ float TextUtil::hangablePunctuationEndWidth(const InlineTextItem& inlineTextItem
     ASSERT(inlineTextItem.length());
     auto trailingPosition = inlineTextItem.end() - 1;
     return width(inlineTextItem, protect(style.fontCascade()), trailingPosition, trailingPosition + 1, { });
+}
+
+float TextUtil::hangablePunctuationEndWidth(const String& text, const Style::ComputedStyle& style)
+{
+    if (text.isEmpty() || !style.hangingPunctuation().contains(Style::HangingPunctuationValue::Last))
+        return { };
+    if (!isHangableClosePunctuation(text[text.length() - 1]))
+        return { };
+    return protect(style.fontCascade())->width(text.right(1));
 }
 
 bool TextUtil::hasHangableStopOrCommaEnd(const InlineTextItem& inlineTextItem, const Style::ComputedStyle& style)

@@ -30,6 +30,8 @@
 #include "config.h"
 #include "CodeBlock.h"
 
+#include "AOTInterpreterSlowPaths.h"
+#include "AOTRemovableFeature.h"
 #include "ModuleProgramExecutable.h"
 #include "Printer.h"
 #include "ProgramExecutable.h"
@@ -48,7 +50,6 @@
 #include "DFGCommon.h"
 #include "DFGJITCode.h"
 #include "EvalCodeBlock.h"
-#include "FullCodeOrigin.h"
 #include "FunctionCodeBlock.h"
 #include "FunctionExecutableDump.h"
 #include "GetPutInfo.h"
@@ -83,7 +84,6 @@
 #include "ReduceWhitespace.h"
 #include "SlotVisitorInlines.h"
 #include "SourceProvider.h"
-#include "StackVisitor.h"
 #include "SymbolTableInlines.h"
 #include "TypeLocationCache.h"
 #include "TypeProfiler.h"
@@ -204,8 +204,6 @@ void CodeBlock::dumpAssumingJITType(PrintStream& out, JITType jitType) const
     if (codeType() == FunctionCode)
         out.print(specializationKind());
     out.print(", ", instructionsSize());
-    if (this->jitType() == JITType::BaselineJIT && m_shouldAlwaysBeInlined)
-        out.print(" (ShouldAlwaysBeInlined)");
     if (ownerExecutable()->neverInline())
         out.print(" (NeverInline)");
     if (ownerExecutable()->neverOptimize())
@@ -260,8 +258,9 @@ void CodeBlock::dumpBytecode()
     dumpBytecode(WTF::dataFile());
 }
 
-void CodeBlock::dumpBytecode(PrintStream& out)
+NEVER_INLINE void CodeBlock::dumpBytecode(PrintStream& out)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, static_cast<void (CodeBlock::*)(PrintStream&)>(&CodeBlock::dumpBytecode));
     ICStatusMap statusMap;
     getICStatusMap(statusMap);
     BytecodeGraph graph(this, this->instructions());
@@ -304,7 +303,6 @@ private:
 CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock& other)
     : JSCell(vm, structure)
     , m_globalObject(other.m_globalObject)
-    , m_shouldAlwaysBeInlined(true)
 #if ENABLE(JIT)
     , m_capabilityLevelState(DFG::CapabilityLevelNotSet)
 #endif
@@ -343,7 +341,7 @@ CodeBlock::CodeBlock(VM& vm, Structure* structure, CopyParsedBlockTag, CodeBlock
     constexpr bool allocateArgumentValueProfiles = false;
     setNumParameters(other.numParameters(), allocateArgumentValueProfiles);
 
-    ASSERT(m_couldBeTainted == (taintednessToTriState(source().provider()->sourceTaintedOrigin()) != TriState::False));
+    ASSERT(m_couldBeTainted == source().provider()->couldBeTainted());
 #if USE(BUN_JSC_ADDITIONS)
     m_previousCounter = m_unlinkedCode->llintExecuteCounter().count();
 #endif
@@ -365,7 +363,6 @@ void CodeBlock::finishCreation(VM& vm, CopyParsedBlockTag, CodeBlock& other)
 CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope)
     : JSCell(vm, structure)
     , m_globalObject(scope->realm(), WriteBarrierEarlyInit)
-    , m_shouldAlwaysBeInlined(true)
 #if ENABLE(JIT)
     , m_capabilityLevelState(DFG::CapabilityLevelNotSet)
 #endif
@@ -424,8 +421,11 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    if (m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes() || m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes())
-        vm.functionHasExecutedCache()->removeUnexecutedRange(ownerExecutable->sourceID(), ownerExecutable->typeProfilingStartOffset(), ownerExecutable->typeProfilingEndOffset());
+    if (m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes() || m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes()) {
+        auto* function = dynamicDowncast<FunctionExecutable>(ownerExecutable);
+        if (!function || function->unlinkedExecutable()->hasFunctionRangeInParentSource())
+            vm.functionHasExecutedCache()->removeUnexecutedRange(ownerExecutable->sourceID(), ownerExecutable->typeProfilingStartOffset(), ownerExecutable->typeProfilingEndOffset(), m_unlinkedCode->parseMode());
+    }
 
     ScriptExecutable* topLevelExecutable = ownerExecutable->topLevelExecutable();
     // We wait to initialize template objects until the end of finishCreation beecause it can
@@ -457,15 +457,15 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     for (size_t count = linkFunctionsEagerly ? m_functionDecls.size() : 0, i = 0; i < count; ++i) {
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionDecl(i);
         if (shouldUpdateFunctionHasExecutedCache)
-            vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
+            vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd(), unlinkedExecutable->parseMode());
         FunctionExecutable* executable = moduleProgramExecutable ? moduleProgramExecutable->functionDeclaration(vm, i) : unlinkedExecutable->link(vm, topLevelExecutable, ownerExecutable->source(), std::nullopt, NoIntrinsic, ownerExecutable->isInsideOrdinaryFunction());
         m_functionDecls[i].set(vm, this, executable);
     }
 
     for (size_t count = linkFunctionsEagerly ? m_functionExprs.size() : 0, i = 0; i < count; ++i) {
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionExpr(i);
-        if (shouldUpdateFunctionHasExecutedCache)
-            vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
+        if (shouldUpdateFunctionHasExecutedCache && unlinkedExecutable->hasFunctionRangeInParentSource())
+            vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd(), unlinkedExecutable->parseMode());
         m_functionExprs[i].set(vm, this, linkFunctionExpr(i, unlinkedExecutable));
     }
 
@@ -477,7 +477,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             for (size_t i = 0; i < count; i++) {
                 const UnlinkedHandlerInfo& unlinkedHandler = unlinkedCodeBlock->exceptionHandler(i);
                 HandlerInfo& handler = m_rareData->m_exceptionHandlers[i];
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
                 auto& instruction = *instructions().at(unlinkedHandler.target).ptr();
                 handler.initialize(unlinkedHandler, CodeLocationLabel<ExceptionHandlerPtrTag>(LLInt::handleCatch(instruction.width()).code()));
 #else
@@ -489,6 +489,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     auto link_objectAllocationProfile = [&](const auto& /*instruction*/, auto bytecode, auto& metadata) {
         metadata.m_objectAllocationProfile.initializeProfile(vm, m_globalObject.get(), this, m_globalObject->objectPrototype(), bytecode.m_inlineCapacity);
+#if ENABLE(AOT)
+        if (Options::runsCompiledImage())
+            AOT::Interpreter::didLinkNewObject(metadata.m_objectAllocationProfile);
+#endif
     };
 
     auto link_arrayAllocationProfile = [&](const auto& /*instruction*/, auto bytecode, auto& metadata) {
@@ -559,8 +563,8 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         static_assert(OpcodeIDWidthBySize<JSOpcodeTraits, OpcodeSize::Wide32>::opcodeIDSize == 1);
         // op_iterator_close_check stands in front of every IteratorClose sequence of a for-of or an array pattern and costs next to nothing
         // in any tier. It is not counted: tier-up thresholds and inlining budgets scale with this number, and making every such function
-        // look 6 bigger than it did shifts what gets compiled when, for no reason. Counted, JetStream2's Babylon runs 4.2% more
-        // instructions (5946 M -> 6196 M with compiler threads off, 6 runs each, spread 1%: one more large FTL compilation); not counted, 5940 M.
+        // look bigger than it did shifts what gets compiled when, for no reason. Counted, JetStream2's Babylon ran 4.2% more instructions
+        // with the fork's version of this opcode (one more large FTL compilation).
         if (opcodeID != op_iterator_close_check)
             bytecodeCost += opcodeLengths[opcodeID] + 1;
         switch (opcodeID) {
@@ -602,6 +606,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         LINK(OpCreateGenerator)
 
         LINK(OpJneqPtr)
+        LINK(OpIteratorCloseCheck)
 
         LINK(OpCatch)
         LINK(OpProfileControlFlow)
@@ -869,6 +874,11 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 #undef LINK_FIELD
 #undef LINK
 
+#if ENABLE(AOT)
+    if (Options::runsCompiledImage())
+        AOT::Interpreter::fuseReadsOfClosureVariables(*this);
+#endif
+
     if (m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes())
         insertBasicBlockBoundariesForControlFlowProfiler();
 
@@ -996,8 +1006,9 @@ void CodeBlock::setBaselineJITData(std::unique_ptr<BaselineJITData>&& jitData)
     checker().set(CrashChecker::PropertyInlineCacheCount, checker().hash(this, baselineJITData->propertyInlineCaches().size()));
 }
 
-void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
+NEVER_INLINE void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
 {
+    JSC_REMOVABLE_DEFINITION(JIT, &CodeBlock::setupWithUnlinkedBaselineCode);
     prepareLazyStateForConcurrentCompilation(); // shared baseline code can be installed on a block that only ever ran in the LLInt
     setJITCode(jitCode.copyRef());
 
@@ -1046,21 +1057,14 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
         optimizeAfterWarmUp();
     }
 
-    switch (codeType()) {
-    case GlobalCode:
-    case ModuleCode:
-    case EvalCode:
-        m_shouldAlwaysBeInlined = false;
-        break;
-    case FunctionCode:
-        // We could have already set it to false because we detected an uninlineable call.
-        // Don't override that observation.
-        m_shouldAlwaysBeInlined &= canInline(capabilityLevel()) && DFG::mightInlineFunction(JITType::FTLJIT, this);
-        break;
-    }
-
     if (jitCode->m_isShareable && !unlinkedCodeBlock()->m_unlinkedBaselineCode && Options::useBaselineJITCodeSharing())
         unlinkedCodeBlock()->m_unlinkedBaselineCode = WTF::move(jitCode);
+}
+
+template<typename JITData>
+static NEVER_INLINE void destroyJITData(JITData* jitData)
+{
+    delete jitData;
 }
 #endif // ENABLE(JIT)
 
@@ -1178,13 +1182,13 @@ CodeBlock::~CodeBlock()
 #if ENABLE(DFG_JIT)
         if (auto* jitData = dfgJITData()) {
             m_jitData = nullptr;
-            delete jitData;
+            callRemovable<RemovableFeature::JIT, RemovedFeatureStub::Abort, destroyJITData<DFG::JITData>>(jitData);
         }
 #endif
     } else {
         if (auto* jitData = baselineJITData()) {
             m_jitData = nullptr;
-            delete jitData;
+            callRemovable<RemovableFeature::JIT, RemovedFeatureStub::Abort, destroyJITData<BaselineJITData>>(jitData);
         }
     }
 #endif // ENABLE(JIT)
@@ -1431,6 +1435,7 @@ inline void CodeBlock::forEachPropertyInlineCache(Func func)
 #if ENABLE(JIT)
     if (JSC::JITCode::isOptimizingJIT(jitType())) {
 #if ENABLE(DFG_JIT)
+        JSC_BEGIN_REMOVABLE_ENTRY_POINT(JIT, Abort, void)
         for (auto* propertyCache : jitCode()->dfgCommon()->m_handlerPropertyInlineCaches) {
             if (func(*propertyCache) == IterationStatus::Done)
                 return;
@@ -1445,13 +1450,16 @@ inline void CodeBlock::forEachPropertyInlineCache(Func func)
                     return;
             }
         }
+        JSC_END_REMOVABLE_ENTRY_POINT
 #endif
     } else {
         if (auto* jitData = baselineJITData()) {
+            JSC_BEGIN_REMOVABLE_ENTRY_POINT(JIT, Abort, void)
             for (auto& propertyCache : jitData->propertyInlineCaches()) {
                 if (func(propertyCache) == IterationStatus::Done)
                     return;
             }
+            JSC_END_REMOVABLE_ENTRY_POINT
         }
     }
 #endif // ENABLE(JIT)
@@ -1861,8 +1869,9 @@ void CodeBlock::determineLiveness(const ConcurrentJSLocker&, Visitor& visitor)
 template void CodeBlock::determineLiveness(const ConcurrentJSLocker&, AbstractSlotVisitor&);
 template void CodeBlock::determineLiveness(const ConcurrentJSLocker&, SlotVisitor&);
 
-void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
+NEVER_INLINE void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, &CodeBlock::reconcileLLIntInlineCachesAtGCEnd);
     VM& vm = *m_vm;
 
     if (m_metadata) {
@@ -2927,46 +2936,6 @@ JSGlobalObject* CodeBlock::globalObjectFor(CodeOrigin codeOrigin)
     return inlineCallFrame->baselineCodeBlock->globalObject();
 }
 
-class RecursionCheckFunctor {
-public:
-    RecursionCheckFunctor(CallFrame* startCallFrame, CodeBlock* codeBlock, unsigned depthToCheck)
-        : m_startCallFrame(startCallFrame)
-        , m_codeBlock(codeBlock)
-        , m_depthToCheck(depthToCheck)
-        , m_foundStartCallFrame(false)
-        , m_didRecurse(false)
-    { }
-
-    IterationStatus NODELETE operator()(StackVisitor& visitor) const
-    {
-        CallFrame* currentCallFrame = visitor->callFrame();
-
-        if (currentCallFrame == m_startCallFrame)
-            m_foundStartCallFrame = true;
-
-        if (m_foundStartCallFrame) {
-            if (visitor->codeBlock() == m_codeBlock) {
-                m_didRecurse = true;
-                return IterationStatus::Done;
-            }
-
-            if (!m_depthToCheck--)
-                return IterationStatus::Done;
-        }
-
-        return IterationStatus::Continue;
-    }
-
-    bool NODELETE didRecurse() const { return m_didRecurse; }
-
-private:
-    CallFrame* const m_startCallFrame;
-    CodeBlock* const m_codeBlock;
-    mutable unsigned m_depthToCheck;
-    mutable bool m_foundStartCallFrame;
-    mutable bool m_didRecurse;
-};
-
 void CodeBlock::noticeIncomingCall(JSCell* caller)
 {
     RELEASE_ASSERT(!m_isJettisoned);
@@ -2974,70 +2943,6 @@ void CodeBlock::noticeIncomingCall(JSCell* caller)
     CodeBlock* callerCodeBlock = dynamicDowncast<CodeBlock>(caller);
     
     dataLogLnIf(Options::verboseCallLink(), "Noticing call link from ", pointerDump(callerCodeBlock), " to ", *this);
-    
-#if ENABLE(DFG_JIT)
-    if (!m_shouldAlwaysBeInlined)
-        return;
-    
-    if (!callerCodeBlock) {
-        m_shouldAlwaysBeInlined = false;
-        dataLogLnIf(Options::verboseCallLink(), "    Clearing SABI because caller is native.");
-        return;
-    }
-
-    if (!hasBaselineJITProfiling())
-        return;
-
-    if (!DFG::mightInlineFunction(JITType::FTLJIT, this))
-        return;
-
-    if (!canInline(capabilityLevelState()))
-        return;
-    
-    if (!DFG::isSmallEnoughToInlineCodeInto(callerCodeBlock)) {
-        m_shouldAlwaysBeInlined = false;
-        dataLogLnIf(Options::verboseCallLink(), "    Clearing SABI because caller is too large.");
-        return;
-    }
-
-    if (callerCodeBlock->jitType() == JITType::InterpreterThunk) {
-        // If the caller is still in the interpreter, then we can't expect inlining to
-        // happen anytime soon. Assume it's profitable to optimize it separately. This
-        // ensures that a function is SABI only if it is called no more frequently than
-        // any of its callers.
-        m_shouldAlwaysBeInlined = false;
-        dataLogLnIf(Options::verboseCallLink(), "    Clearing SABI because caller is in LLInt.");
-        return;
-    }
-    
-    if (JSC::JITCode::isOptimizingJIT(callerCodeBlock->jitType())) {
-        m_shouldAlwaysBeInlined = false;
-        dataLogLnIf(Options::verboseCallLink(), "    Clearing SABI bcause caller was already optimized.");
-        return;
-    }
-    
-    if (callerCodeBlock->codeType() != FunctionCode) {
-        // If the caller is either eval or global code, assume that that won't be
-        // optimized anytime soon. For eval code this is particularly true since we
-        // delay eval optimization by a *lot*.
-        m_shouldAlwaysBeInlined = false;
-        dataLogLnIf(Options::verboseCallLink(), "    Clearing SABI because caller is not a function.");
-        return;
-    }
-
-    // Recursive calls won't be inlined.
-    if (callerCodeBlock->capabilityLevelState() == DFG::CapabilityLevelNotSet) {
-        dataLog("In call from ", FullCodeOrigin(callerCodeBlock, CodeOrigin { }), " to ", *this, ": caller's DFG capability level is not set.\n");
-        CRASH();
-    }
-    
-    if (canCompile(callerCodeBlock->capabilityLevelState()))
-        return;
-    
-    dataLogLnIf(Options::verboseCallLink(), "    Clearing SABI because the caller is not a DFG candidate.");
-    
-    m_shouldAlwaysBeInlined = false;
-#endif
 }
 
 unsigned CodeBlock::reoptimizationRetryCounter() const
@@ -3177,7 +3082,7 @@ double CodeBlock::optimizationThresholdScalingFactor() const
     return result;
 }
 
-static int32_t NODELETE clipThreshold(double threshold)
+static int32_t LEGACY_NODELETE clipThreshold(double threshold)
 {
     if (threshold < 1.0)
         return 1;
@@ -3651,15 +3556,17 @@ void CodeBlock::updateAllArrayAllocationProfilePredictions()
 // Folds each profile's sampled value into a pointer-free SpeculatedType and clears the sample.
 // The samples are untraced JSValues and StructureIDs, so this only runs while they are still
 // readable, which means any time from marking up to the sweep that would free them.
-void CodeBlock::updateAllPredictions(ValueProfileSamples samples)
+NEVER_INLINE void CodeBlock::updateAllPredictions(ValueProfileSamples samples)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, &CodeBlock::updateAllPredictions);
     updatePredictionsConcurrently(samples);
     // This reads Butterfly from JSObject to obtain vectorLength, which can be safe only from the main thread.
     updateAllArrayAllocationProfilePredictions();
 }
 
-void CodeBlock::updatePredictionsConcurrently(ValueProfileSamples samples)
+NEVER_INLINE void CodeBlock::updatePredictionsConcurrently(ValueProfileSamples samples)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, &CodeBlock::updatePredictionsConcurrently);
     updateAllNonLazyValueProfilePredictions(samples);
     updateAllLazyValueProfilePredictions();
     updateAllArrayProfilePredictions();
@@ -3760,7 +3667,7 @@ void CodeBlock::tallyFrequentExitSites()
     case JITType::FTLJIT: {
         auto* jitCode = m_jitCode->ftl();
         for (auto& stub : jitCode->m_osrExitStubs)
-            jitCode->m_osrExit[stub.exitIndex].considerAddingAsFrequentExitSite(profiledBlock);
+            jitCode->osrExit(stub.exitIndex).considerAddingAsFrequentExitSite(profiledBlock);
         break;
     }
 #endif
@@ -4116,71 +4023,70 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
     if (!unlinkedCodeBlock()->hasOpProfileControlFlowBytecodeOffsets())
         return;
     const FixedVector<JSInstructionStream::Offset>& bytecodeOffsets = unlinkedCodeBlock()->opProfileControlFlowBytecodeOffsets();
-    for (size_t i = 0, offsetsLength = bytecodeOffsets.size(); i < offsetsLength; i++) {
-        // Because op_profile_control_flow is emitted at the beginning of every basic block, finding
-        // the next op_profile_control_flow will give us the text range of a single basic block.
-        size_t startIdx = bytecodeOffsets[i];
-        auto instruction = instructions().at(startIdx);
-        RELEASE_ASSERT(instruction->opcodeID() == op_profile_control_flow);
-        auto bytecode = instruction->as<OpProfileControlFlow>();
-        auto& metadata = bytecode.metadata(this);
-        int basicBlockStartOffset = bytecode.m_textOffset;
-        int basicBlockEndOffset;
-        if (i + 1 < offsetsLength) {
-            size_t endIdx = bytecodeOffsets[i + 1];
-            auto endInstruction = instructions().at(endIdx);
-            RELEASE_ASSERT(endInstruction->opcodeID() == op_profile_control_flow);
-            basicBlockEndOffset = endInstruction->as<OpProfileControlFlow>().m_textOffset - 1;
-        } else {
-            basicBlockEndOffset = sourceOffset() + ownerExecutable()->source().length() - 1; // Offset before the closing brace.
-            basicBlockStartOffset = std::min(basicBlockStartOffset, basicBlockEndOffset); // Some start offsets may be at the closing brace, ensure it is the offset before.
-        }
 
-        // The following check allows for the same textual JavaScript basic block to have its bytecode emitted more
-        // than once and still play nice with the control flow profiler. When basicBlockStartOffset is larger than 
-        // basicBlockEndOffset, it indicates that the bytecode generator has emitted code for the same AST node 
-        // more than once (for example: ForInNode, Finally blocks in TryNode, etc). Though these are different 
-        // basic blocks at the bytecode level, they are generated from the same textual basic block in the JavaScript 
-        // program. The condition: 
-        // (basicBlockEndOffset < basicBlockStartOffset) 
-        // is encountered when op_profile_control_flow lies across the boundary of these duplicated bytecode basic 
-        // blocks and the textual offset goes from the end of the duplicated block back to the beginning. These 
-        // ranges are dummy ranges and are ignored. The duplicated bytecode basic blocks point to the same 
-        // internal data structure, so if any of them execute, it will record the same textual basic block in the 
-        // JavaScript program as executing.
-        // At the bytecode level, this situation looks like:
-        // j: op_profile_control_flow (from j->k, we have basicBlockEndOffset < basicBlockStartOffset)
-        // ...
-        // k: op_profile_control_flow (we want to skip over the j->k block and start fresh at offset k as the start of a new basic block k->m).
-        // ...
-        // m: op_profile_control_flow
-        if (basicBlockEndOffset < basicBlockStartOffset) {
-            RELEASE_ASSERT(i + 1 < offsetsLength); // We should never encounter dummy blocks at the end of a CodeBlock.
-            metadata.m_basicBlockLocation = vm().controlFlowProfiler()->dummyBasicBlock();
-            continue;
-        }
+    size_t offsetsLength = bytecodeOffsets.size();
+    auto bytecodeAt = [&](size_t i) {
+        auto instruction = instructions().at(bytecodeOffsets[i]);
+        RELEASE_ASSERT(instruction->opcodeID() == op_profile_control_flow);
+        return instruction->as<OpProfileControlFlow>();
+    };
+
+    // Basic blocks nest as the source does: the one of the code block has all of it, and each of the others is a gap in those it is in.
+    Vector<BasicBlockLocation::Gap> basicBlocks(offsetsLength, [&](size_t i) {
+        auto bytecode = bytecodeAt(i);
+        int basicBlockStartOffset = bytecode.m_textOffset;
+        int basicBlockEndOffset = bytecode.m_textEndOffset ? bytecode.m_textEndOffset - 1 : sourceOffset() + ownerExecutable()->source().length() - 1;
+        // A program with no token starts after its end.
+        return BasicBlockLocation::Gap { std::min(basicBlockStartOffset, basicBlockEndOffset), basicBlockEndOffset };
+    });
+
+    struct Range {
+        int startOffset;
+        int endOffset;
+        bool isFunction;
+    };
+    Vector<Range> ranges(offsetsLength, [&](size_t i) {
+        return Range { basicBlocks[i].first, basicBlocks[i].second, false };
+    });
+
+    // In the original source text of a JavaScript program, function literals form new basic blocks boundaries,
+    // but they aren't represented inside the CodeBlock's instruction stream.
+    auto appendFunction = [&](const WriteBarrier<FunctionExecutable>& functionExecutable) {
+        const UnlinkedFunctionExecutable* executable = functionExecutable->unlinkedExecutable();
+        if (executable->hasFunctionRangeInParentSource())
+            ranges.append(Range { static_cast<int>(executable->unlinkedFunctionStart()), static_cast<int>(executable->unlinkedFunctionEnd()), true });
+    };
+    for (const WriteBarrier<FunctionExecutable>& executable : m_functionDecls)
+        appendFunction(executable);
+    for (const WriteBarrier<FunctionExecutable>& executable : m_functionExprs)
+        appendFunction(executable);
+
+    // Of two that start together, the one that the other is in is first.
+    std::ranges::sort(ranges, [](const Range& a, const Range& b) {
+        return a.startOffset != b.startOffset ? a.startOffset < b.startOffset : a.endOffset > b.endOffset;
+    });
+
+    for (size_t i = 0; i < offsetsLength; i++) {
+        auto bytecode = bytecodeAt(i);
+        auto [basicBlockStartOffset, basicBlockEndOffset] = basicBlocks[i];
 
         BasicBlockLocation* basicBlockLocation = vm().controlFlowProfiler()->getBasicBlockLocation(ownerExecutable()->sourceID(), basicBlockStartOffset, basicBlockEndOffset);
 
-        // Find all functions that are enclosed within the range: [basicBlockStartOffset, basicBlockEndOffset]
-        // and insert these functions' start/end offsets as gaps in the current BasicBlockLocation.
-        // This is necessary because in the original source text of a JavaScript program, 
-        // function literals form new basic blocks boundaries, but they aren't represented 
-        // inside the CodeBlock's instruction stream.
-        auto insertFunctionGaps = [basicBlockLocation, basicBlockStartOffset, basicBlockEndOffset] (const WriteBarrier<FunctionExecutable>& functionExecutable) {
-            const UnlinkedFunctionExecutable* executable = functionExecutable->unlinkedExecutable();
-            int functionStart = executable->unlinkedFunctionStart();
-            int functionEnd = executable->unlinkedFunctionEnd();
-            if (functionStart >= basicBlockStartOffset && functionEnd <= basicBlockEndOffset)
-                basicBlockLocation->insertGap(functionStart, functionEnd);
-        };
+        Vector<BasicBlockLocation::Gap> gaps;
+        auto inner = std::ranges::lower_bound(ranges, basicBlockStartOffset, { }, &Range::startOffset);
+        while (inner != ranges.end() && inner->startOffset <= basicBlockEndOffset) {
+            if (!inner->isFunction && inner->startOffset == basicBlockStartOffset && inner->endOffset == basicBlockEndOffset) {
+                ++inner;
+                continue;
+            }
+            gaps.append({ inner->startOffset, inner->endOffset });
+            // What is in a gap is not another one: with each `else if` in the one before it, there would be a gap for each two of them.
+            inner = std::ranges::upper_bound(inner, ranges.end(), inner->endOffset, { }, &Range::startOffset);
+        }
+        basicBlockLocation->insertGaps(gaps);
+        basicBlockLocation->setIsInLoopHeader(bytecode.m_isInLoopHeader);
 
-        for (const WriteBarrier<FunctionExecutable>& executable : m_functionDecls)
-            insertFunctionGaps(executable);
-        for (const WriteBarrier<FunctionExecutable>& executable : m_functionExprs)
-            insertFunctionGaps(executable);
-
-        metadata.m_basicBlockLocation = basicBlockLocation;
+        bytecode.metadata(this).m_basicBlockLocation = basicBlockLocation;
     }
 }
 
@@ -4229,6 +4135,17 @@ std::optional<BytecodeIndex> CodeBlock::bytecodeIndexFromCallSiteIndex(CallSiteI
     return bytecodeIndex;
 }
 
+bool CodeBlock::checkIfJITThresholdReached()
+{
+#if ENABLE(JIT)
+    if (JITWorklist* worklist = JITWorklist::existingGlobalWorklistOrNull()) {
+        if (worklist->compilationState(*m_vm, JITCompilationKey(m_unlinkedCode.get(), JITCompilationMode::Baseline)) == JITWorklist::Compiled)
+            return true;
+    }
+#endif
+    return m_unlinkedCode->llintExecuteCounter().checkIfThresholdCrossedAndSet(this, jitType() == JITType::BaselineJIT ? 1 : vm().startupJITDeferralScale());
+}
+
 void CodeBlock::jitSoon()
 {
     m_unlinkedCode->llintExecuteCounter().setNewThreshold(unlinkedCodeBlock()->thresholdForJIT(Options::thresholdForJITSoon()), this);
@@ -4246,12 +4163,34 @@ CodePtr<JSEntryPtrTag> CodeBlock::addressForCallConcurrently(const ConcurrentJSL
     return m_jitCode->addressForCall(arityCheck);
 }
 
+#if ENABLE(FTL_JIT)
+static unsigned approximateBytecodeCostForFTLNodes(unsigned numberOfCompiledDFGNodes)
+{
+    return numberOfCompiledDFGNodes * Options::ratioFTLNodesToBytecodeCost();
+}
+#endif
+
 unsigned CodeBlock::bytecodeCost() const
 {
 #if ENABLE(FTL_JIT)
     if (jitType() == JITType::FTLJIT) {
         if (auto* jitCode = static_cast<FTL::JITCode*>(m_jitCode.get()))
-            return std::min(static_cast<unsigned>(jitCode->numberOfCompiledDFGNodes() * Options::ratioFTLNodesToBytecodeCost()), m_bytecodeCost);
+            return std::min(approximateBytecodeCostForFTLNodes(jitCode->numberOfCompiledDFGNodes()), m_bytecodeCost);
+    }
+#endif
+    return m_bytecodeCost;
+}
+
+unsigned CodeBlock::bytecodeCostForFTLInlining() const
+{
+#if ENABLE(FTL_JIT)
+    if (jitType() == JITType::FTLJIT)
+        return bytecodeCost();
+
+    const CodeBlock* baseline = m_alternative ? m_alternative.get() : this;
+    if (baseline->jitType() == JITType::BaselineJIT) {
+        if (unsigned numberOfCompiledFTLNodes = static_cast<BaselineJITCode*>(baseline->m_jitCode.get())->numberOfCompiledFTLNodes())
+            return std::min(approximateBytecodeCostForFTLNodes(numberOfCompiledFTLNodes), m_bytecodeCost);
     }
 #endif
     return m_bytecodeCost;

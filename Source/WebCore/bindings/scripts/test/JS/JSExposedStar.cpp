@@ -186,6 +186,12 @@ JSValue JSExposedStar::getConstructor(VM& vm, const JSGlobalObject* globalObject
     return getDOMConstructor<JSExposedStarDOMConstructor, DOMConstructorID::ExposedStar>(vm, *uncheckedDowncast<JSDOMGlobalObject>(globalObject));
 }
 
+bool JSExposedStar::isExposedInGlobalObject(JSDOMGlobalObject& globalObject)
+{
+    UNUSED_PARAM(globalObject);
+    return true;
+}
+
 JSC_DEFINE_CUSTOM_GETTER(jsExposedStarConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -208,7 +214,7 @@ static inline JSC::EncodedJSValue jsExposedStarPrototypeFunction_operationForAll
 
 JSC_DEFINE_HOST_FUNCTION(jsExposedStarPrototypeFunction_operationForAllContexts, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSExposedStar>::call<jsExposedStarPrototypeFunction_operationForAllContextsBody>(*lexicalGlobalObject, *callFrame, "operationForAllContexts");
+    return IDLOperation<JSExposedStar>::call<jsExposedStarPrototypeFunction_operationForAllContextsBody>(*lexicalGlobalObject, *callFrame, "operationForAllContexts"_s);
 }
 
 static inline JSC::EncodedJSValue jsExposedStarPrototypeFunction_operationJustForWindowContextsBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSExposedStar>::ClassParameter castedThis)
@@ -223,7 +229,7 @@ static inline JSC::EncodedJSValue jsExposedStarPrototypeFunction_operationJustFo
 
 JSC_DEFINE_HOST_FUNCTION(jsExposedStarPrototypeFunction_operationJustForWindowContexts, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSExposedStar>::call<jsExposedStarPrototypeFunction_operationJustForWindowContextsBody>(*lexicalGlobalObject, *callFrame, "operationJustForWindowContexts");
+    return IDLOperation<JSExposedStar>::call<jsExposedStarPrototypeFunction_operationJustForWindowContextsBody>(*lexicalGlobalObject, *callFrame, "operationJustForWindowContexts"_s);
 }
 
 static inline JSC::EncodedJSValue jsExposedStarPrototypeFunction_operationJustForWorkerContextsBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSExposedStar>::ClassParameter castedThis)
@@ -238,7 +244,7 @@ static inline JSC::EncodedJSValue jsExposedStarPrototypeFunction_operationJustFo
 
 JSC_DEFINE_HOST_FUNCTION(jsExposedStarPrototypeFunction_operationJustForWorkerContexts, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSExposedStar>::call<jsExposedStarPrototypeFunction_operationJustForWorkerContextsBody>(*lexicalGlobalObject, *callFrame, "operationJustForWorkerContexts");
+    return IDLOperation<JSExposedStar>::call<jsExposedStarPrototypeFunction_operationJustForWorkerContextsBody>(*lexicalGlobalObject, *callFrame, "operationJustForWorkerContexts"_s);
 }
 
 JSC::GCClient::IsoSubspace* JSExposedStar::subspaceForImpl(JSC::VM& vm)

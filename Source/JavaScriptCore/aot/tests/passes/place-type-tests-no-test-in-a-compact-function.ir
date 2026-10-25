@@ -1,0 +1,115 @@
+# A compact function gets no test at all, so there is no fast path in it and no copy behind a failed test: every operation whose outcome is not proven stands once, in its general form,
+# and what is expected of a value stays with the value. A cold function that two functions call may run, and keeps the test in front of its accesses. So does a function with a heavy loop. The small loop of a compact function has no test either:
+# the function goes through the short schedule of generic versions, in which no test is placed
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls limit=MaxWarmCodeValues:1
+# In a very large program the tests of a cold function are placed behind the rounds: the pipeline is stopped behind that step
+# RUN: pipeline RemoveDeadCountedLoops
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f5
+    v6 = NewObject -, v0 layout=L0 fields=[0]
+    v7 = Call v1, -, v2, v3, v4, v5, v6
+    Return
+}
+
+function f1 name="nothingLeadsHere" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+# REPEAT: i = 3..72
+    v%(i) = Call v2, -, v0
+# END REPEAT
+    v73 = PropGet v0 key="x"
+    PropSet v0, v73 key="x"
+    v75 = CallDirect v0 function=f4
+    Return v73
+}
+# CHECK-LABEL: function f1 name="nothingLeadsHere"
+# CHECK: b0(v0: anything ~ L0):
+# CHECK-NOT: TypeTest
+# CHECK: = PropGet v0 key="x"
+# CHECK-NOT: TypeTest
+# CHECK: PropSet v0, {{*}} key="x"
+# CHECK-NOT: PropGet
+# CHECK-NOT: PropSet
+
+function f2 name="neitherHere" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+# REPEAT: i = 3..72
+    v%(i) = Call v2, -, v0
+# END REPEAT
+    v73 = CallDirect v0 function=f4
+    Return v73
+}
+# CHECK-LABEL: function f2 name="neitherHere"
+
+function f3 name="hasLoop" parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = PropGet v0 key="x"
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+# REPEAT: i = 6..75
+    v%(i) = Call v5, -, v0
+# END REPEAT
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f3 name="hasLoop"
+# CHECK: = TypeTest v0 testedType=L0
+
+function f4 name="calledByTwo" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+# REPEAT: i = 3..72
+    v%(i) = Call v2, -, v0
+# END REPEAT
+    v73 = PropGet v0 key="x"
+    PropSet v0, v73 key="x"
+    Return v73
+}
+# CHECK-LABEL: function f4 name="calledByTwo"
+# CHECK: = TypeTest v0 testedType=L0
+
+function f5 name="mostOfItStandsOutsideItsLoop" parameters=[{type=L0 flags=[IsExpected]}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: boolean):
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+# REPEAT: i = 4..19
+    v%(i) = Call v3, -, v0
+# END REPEAT
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="sink" [isFreeName]
+# REPEAT: i = 22..91
+    v%(i) = Call v21, -, v0
+# END REPEAT
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v93 = PropGet v0 key="x"
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return v93
+}
+# CHECK-LABEL: function f5 name="mostOfItStandsOutsideItsLoop"
+# CHECK-NOT: TypeTest

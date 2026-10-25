@@ -50,9 +50,13 @@ typedef struct HBITMAP__* HBITMAP;
 typedef const struct OpaqueJSContext* JSContextRef;
 typedef const struct OpaqueJSValue* JSValueRef;
 
-namespace JSC { namespace Yarr {
+namespace JSC {
+class Debugger;
+
+namespace Yarr {
 class RegularExpression;
-} }
+}
+} // namespace JSC
 
 namespace WTF {
 class TextStream;
@@ -134,9 +138,9 @@ using NodeQualifier = Function<RefPtr<Node> (const HitTestResult&, Node* termina
 class LocalFrame final : public Frame {
 public:
     using ClientCreator = CompletionHandler<UniqueRef<LocalFrameLoaderClient>(LocalFrame&, FrameLoader&)>;
-    WEBCORE_EXPORT static Ref<LocalFrame> createMainFrame(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, Frame* opener, Ref<FrameTreeSyncData>&&);
+    WEBCORE_EXPORT static Ref<LocalFrame> createMainFrame(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, Frame* opener, Ref<FrameTreeSyncData>&&, float pageZoomFactor = 1, float textZoomFactor = 1);
     WEBCORE_EXPORT static Ref<LocalFrame> createSubframe(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, HTMLFrameOwnerElement&, Ref<FrameTreeSyncData>&&);
-    WEBCORE_EXPORT static Ref<LocalFrame> createProvisionalSubframe(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, ScrollbarMode, Frame& parent, Ref<FrameTreeSyncData>&&);
+    WEBCORE_EXPORT static Ref<LocalFrame> createProvisionalSubframe(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, ScrollbarMode, Frame& parent, Ref<FrameTreeSyncData>&&, float pageZoomFactor, float textZoomFactor);
 
     WEBCORE_EXPORT void init();
 #if PLATFORM(IOS_FAMILY)
@@ -148,7 +152,7 @@ public:
 
     WEBCORE_EXPORT ~LocalFrame();
 
-    WEBCORE_EXPORT LocalDOMWindow* NODELETE window() const;
+    WEBCORE_EXPORT LocalDOMWindow* LEGACY_NODELETE window() const;
 
     void addDestructionObserver(FrameDestructionObserver&);
     void removeDestructionObserver(FrameDestructionObserver&);
@@ -157,8 +161,8 @@ public:
 
     inline Document* document() const; // Defined in LocalFrameInlines.h
     inline LocalFrameView* view() const; // Defined in DocumentView.h
-    WEBCORE_EXPORT RefPtr<const LocalFrame> NODELETE localMainFrame() const;
-    WEBCORE_EXPORT RefPtr<LocalFrame> NODELETE localMainFrame();
+    WEBCORE_EXPORT RefPtr<const LocalFrame> LEGACY_NODELETE localMainFrame() const;
+    WEBCORE_EXPORT RefPtr<LocalFrame> LEGACY_NODELETE localMainFrame();
 
     inline Editor& editor() LIFETIME_BOUND; // Defined in LocalFrameInlines.h
     inline const Editor& editor() const LIFETIME_BOUND; // Defined in LocalFrameInlines.h
@@ -174,13 +178,13 @@ public:
     ScriptController& script() { return m_script; }
     const ScriptController& script() const { return m_script; }
     void resetScript();
-    FrameView* NODELETE virtualView() const final;
+    FrameView* LEGACY_NODELETE virtualView() const final;
 
     bool isRootFrame() const final { return m_rootFrame.get() == this; }
     const LocalFrame& rootFrame() const { return *m_rootFrame; }
     LocalFrame& rootFrame() { return *m_rootFrame; }
 
-    WEBCORE_EXPORT RenderView* NODELETE contentRenderer() const; // Root of the render tree for the document contained in this frame.
+    WEBCORE_EXPORT RenderView* LEGACY_NODELETE contentRenderer() const; // Root of the render tree for the document contained in this frame.
 
     bool documentIsBeingReplaced() const { return m_documentIsBeingReplaced; }
 
@@ -198,16 +202,16 @@ public:
 
     WEBCORE_EXPORT void injectUserScripts(UserScriptInjectionTime);
     WEBCORE_EXPORT void injectUserScriptImmediately(DOMWrapperWorld&, const UserScript&);
-    UserContentProvider* NODELETE userContentProvider();
-    const UserContentProvider* userContentProvider() const;
-    WEBCORE_EXPORT bool NODELETE hasUserContentProvider(const UserContentProvider&);
+    UserContentProvider* LEGACY_NODELETE userContentProvider();
+    const UserContentProvider* LEGACY_NODELETE userContentProvider() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE hasUserContentProvider(const UserContentProvider&);
 
     WEBCORE_EXPORT String trackedRepaintRectsAsText() const;
 
-    WEBCORE_EXPORT static LocalFrame* NODELETE frameForWidget(const Widget&);
+    WEBCORE_EXPORT static LocalFrame* LEGACY_NODELETE frameForWidget(const Widget&);
 
     WEBCORE_EXPORT void setPrinting(bool printing, FloatSize pageSize, FloatSize originalPageSize, float maximumShrinkRatio, AdjustViewSize, NotifyUIProcess = NotifyUIProcess::Yes) final;
-    bool NODELETE shouldUsePrintingLayout() const;
+    bool LEGACY_NODELETE shouldUsePrintingLayout() const;
     WEBCORE_EXPORT FloatSize resizePageRectsKeepingRatio(const FloatSize& originalSize, const FloatSize& expectedSize);
 
     void setDocument(RefPtr<Document>&&);
@@ -325,7 +329,7 @@ public:
     WEBCORE_EXPORT FloatSize screenSize() const;
     void setOverrideScreenSize(FloatSize&&);
 
-    void NODELETE selfOnlyRef();
+    void LEGACY_NODELETE selfOnlyRef();
     void selfOnlyDeref();
 
     void documentURLOrOriginDidChange();
@@ -343,11 +347,11 @@ public:
     AutoplayPolicy autoplayPolicy() const final;
     ColorSchemePreference colorSchemePreference() const final;
 
-    WEBCORE_EXPORT SandboxFlags NODELETE effectiveSandboxFlags() const;
+    WEBCORE_EXPORT SandboxFlags LEGACY_NODELETE effectiveSandboxFlags() const;
     SandboxFlags sandboxFlagsFromSandboxAttributeNotCSP() { return m_sandboxFlags; }
     WEBCORE_EXPORT void updateSandboxFlags(SandboxFlags, NotifyUIProcess) final;
 
-    WEBCORE_EXPORT ReferrerPolicy NODELETE effectiveReferrerPolicy() const;
+    WEBCORE_EXPORT ReferrerPolicy LEGACY_NODELETE effectiveReferrerPolicy() const;
     WEBCORE_EXPORT void updateReferrerPolicy(ReferrerPolicy) final;
 
     ScrollbarMode scrollingMode() const { return m_scrollingMode; }
@@ -370,13 +374,16 @@ public:
     FrameConsoleClient& console() { return m_consoleClient.get(); }
     const FrameConsoleClient& console() const { return m_consoleClient.get(); }
 
+    // The debugger to attach to this frame's global objects.
+    JSC::Debugger* LEGACY_NODELETE debugger() const LIFETIME_BOUND;
+
 protected:
     void frameWasDisconnectedFromOwner() const final;
 
 private:
     friend class NavigationDisabler;
 
-    LocalFrame(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, std::optional<ScrollbarMode>, HTMLFrameOwnerElement*, Frame* parent, Frame* opener, Ref<FrameTreeSyncData>&&, AddToFrameTree = AddToFrameTree::Yes);
+    LocalFrame(Page&, ClientCreator&&, FrameIdentifier, SandboxFlags, ReferrerPolicy, std::optional<ScrollbarMode>, HTMLFrameOwnerElement*, Frame* parent, Frame* opener, Ref<FrameTreeSyncData>&&, float pageZoomFactor, float textZoomFactor, AddToFrameTree = AddToFrameTree::Yes);
 
     void dropChildren();
 
@@ -387,12 +394,13 @@ private:
     void didFinishLoadInAnotherProcess() final;
     SecurityOrigin* frameDocumentSecurityOrigin() const final;
     std::optional<DocumentSecurityPolicy> frameDocumentSecurityPolicy() const final;
+    std::optional<AgentClusterIdentifier> frameAgentClusterIdentifier() const final;
     String frameURLProtocol() const final;
 
     void disconnectView() final;
-    DOMWindow* NODELETE virtualWindow() const final;
+    DOMWindow* LEGACY_NODELETE virtualWindow() const final;
     void reinitializeDocumentSecurityContext() final;
-    FrameLoaderClient& NODELETE loaderClient() LIFETIME_BOUND final;
+    FrameLoaderClient& LEGACY_NODELETE loaderClient() LIFETIME_BOUND final;
     URL urlForConsoleLog() const final;
 
     WeakHashSet<FrameDestructionObserver> m_destructionObservers;
@@ -405,7 +413,7 @@ private:
     UniqueRef<ScriptController> m_script;
 
 #if ENABLE(DATA_DETECTION)
-    std::unique_ptr<DataDetectionResultsStorage> m_dataDetectionResults;
+    const std::unique_ptr<DataDetectionResultsStorage> m_dataDetectionResults;
 #endif
 #if PLATFORM(IOS_FAMILY)
     void setTimersPausedInternal(bool);
@@ -432,7 +440,7 @@ private:
     SandboxFlags m_sandboxFlags;
     ReferrerPolicy m_parentFrameOrOpenerReferrerPolicy;
     const UniqueRef<EventHandler> m_eventHandler;
-    std::unique_ptr<HashSet<RegistrableDomain>> m_storageAccessExceptionDomains;
+    const std::unique_ptr<HashSet<RegistrableDomain>> m_storageAccessExceptionDomains;
 
     const UniqueRef<FrameInspectorController> m_inspectorController;
     const UniqueRef<FrameConsoleClient> m_consoleClient;

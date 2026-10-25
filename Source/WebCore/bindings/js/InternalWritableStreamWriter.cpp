@@ -272,7 +272,7 @@ void InternalWritableStreamWriter::onClosedPromiseRejection(Function<void(JSDOMG
     domPromise->whenSettledWithResult([callback = WTF::move(callback)](auto* globalObject, bool isFulfilled, auto result) mutable {
         if (isFulfilled || !globalObject)
             return;
-        auto* scriptExecutionContext = globalObject->scriptExecutionContext();
+        RefPtr scriptExecutionContext = globalObject->scriptExecutionContext();
         if (!scriptExecutionContext || scriptExecutionContext->activeDOMObjectsAreStopped())
             return;
         callback(*globalObject, result);
@@ -303,7 +303,7 @@ void InternalWritableStreamWriter::onClosedPromiseResolution(Function<void()>&& 
     domPromise->whenSettledWithResult([callback = WTF::move(callback)](auto* globalObject, bool isFulfilled, auto) mutable {
         if (!isFulfilled || !globalObject)
             return;
-        auto* scriptExecutionContext = globalObject->scriptExecutionContext();
+        RefPtr scriptExecutionContext = globalObject->scriptExecutionContext();
         if (!scriptExecutionContext || scriptExecutionContext->activeDOMObjectsAreStopped())
             return;
         callback();
@@ -361,7 +361,7 @@ void InternalWritableStreamWriter::whenReady(Function<void (bool)>&& callback)
     domPromise->whenSettledWithResult([callback = WTF::move(callback)](auto* globalObject, bool isFulfilled, auto) mutable {
         if (!globalObject)
             return;
-        auto* scriptExecutionContext = globalObject->scriptExecutionContext();
+        RefPtr scriptExecutionContext = globalObject->scriptExecutionContext();
         if (!scriptExecutionContext || scriptExecutionContext->activeDOMObjectsAreStopped())
             return;
         callback(isFulfilled);

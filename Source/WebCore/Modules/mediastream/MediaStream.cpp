@@ -128,8 +128,9 @@ MediaStream::~MediaStream()
     m_isActive = false;
     m_private->removeObserver(*this);
     if (WeakPtr document = this->document()) {
+        // Don't ref the document here since it may have already started destruction.
         if (m_isWaitingUntilMediaCanStart)
-            document->removeMediaCanStartListener(*this);
+            SUPPRESS_UNCOUNTED_ARG document->removeMediaCanStartListener(*this);
     }
 }
 
@@ -277,7 +278,7 @@ RefPtr<MediaStreamTrack> MediaStream::internalTakeTrack(const String& trackId)
     if (position == notFound)
         return nullptr;
 
-    RefPtr track = m_tracks[position].get();
+    Ref track = m_tracks[position];
     m_tracks.removeAt(position);
 
     return track;

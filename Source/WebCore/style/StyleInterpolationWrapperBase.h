@@ -36,7 +36,7 @@
 namespace WebCore {
 
 enum class CompositeOperation : uint8_t;
-enum CSSPropertyID : uint16_t;
+enum class CSSPropertyID : uint16_t;
 
 namespace Style {
 

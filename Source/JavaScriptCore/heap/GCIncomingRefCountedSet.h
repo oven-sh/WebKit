@@ -42,7 +42,7 @@ public:
     void lastChanceToFinalize();
 
     // Returns true if the native object is new to this set.
-    bool addReference(JSCell*, T*);
+    ALWAYS_INLINE bool addReference(JSCell*, T*);
     
     void sweep(VM&, CollectionScope);
     
@@ -50,11 +50,12 @@ public:
     
 private:
     Vector<T*> m_vector;
+    Vector<T*> m_markedObjectsWithNewIncomingReferences;
+    size_t m_oldCount { 0 };
     size_t m_bytes;
-    // m_bytes and m_vector.size() as the last sweep left them. The objects added since then are the ones past that
-    // size, and they are the only ones that an eden collection can find dead.
+    // m_bytes as the last sweep left it. The objects added since then are the ones from m_oldCount on, and they are
+    // the only ones that an eden collection can find dead.
     size_t m_bytesAfterLastSweep { 0 };
-    size_t m_sizeAfterLastSweep { 0 };
 };
 
 } // namespace JSC

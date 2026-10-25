@@ -1,0 +1,54 @@
+# The call weights of passes/allocate-in-frames-closures-lent-callee-of-loop.ir: StringAndValue is a form of fast code only
+# FORM: AsRead
+# RUN: pipeline Select
+# OPTIONS: only-passes=BuildCallGraph,EstimateHeat,ComputeEffectSummaries
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToBoolean v1
+    v3 = ToString v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = CallDirect v1, v3 function=f1
+    Branch v2 -> taken b2(), notTaken b4()
+  b2():
+    v6 = CallDirect v1, v3 function=f2
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v7 = CallDirect v1, v3 function=f3
+    Jump -> next b4()
+  b4():
+    Branch v2 -> taken b1(), notTaken b5()
+  b5():
+    v8 = CallDirect v1, v3 function=f4
+    Return
+}
+
+function f1 name="calledEveryIteration" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+    v2 = StrictEq v1, v0
+    Return v2
+# CHECK: form=StringAndValue
+}
+
+function f2 name="calledBehindOneBranch" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+    v2 = StrictEq v1, v0
+    Return v2
+# CHECK: form=StringAndValue
+}
+
+function f3 name="calledBehindTwoBranches" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+    v2 = StrictEq v1, v0
+    Return v2
+# CHECK: form=Generic
+}
+
+function f4 name="calledOutsideLoop" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+    v2 = StrictEq v1, v0
+    Return v2
+# CHECK: form=Generic
+}

@@ -56,6 +56,10 @@ class WebPageProxy;
 using KeyboardInteraction = Inspector::Protocol::Automation::KeyboardInteractionType;
 using VirtualKey = Inspector::Protocol::Automation::VirtualKey;
 using VirtualKeyMap = HashMap<VirtualKey, VirtualKey, WTF::IntHash<VirtualKey>, WTF::StrongEnumHashTraits<VirtualKey>>;
+
+// https://w3c.github.io/webdriver/#dfn-normalised-key-value
+VirtualKey LEGACY_NODELETE normalizedVirtualKey(VirtualKey);
+
 #if ENABLE(WEBDRIVER_KEYBOARD_GRAPHEME_CLUSTERS)
 // A CharKey must only ever represent a single unicode codepoint or a single grapheme cluster.
 using CharKey = String;
@@ -63,10 +67,15 @@ using CharKeySet = ListHashSet<String>;
 #else
 using CharKey = char32_t;
 using CharKeySet = ListHashSet<uint32_t>;
+
+std::optional<CharKey> pressedCharKey(const String&);
 #endif
 using MouseButton = Inspector::Protocol::Automation::MouseButton;
 using MouseInteraction = Inspector::Protocol::Automation::MouseInteraction;
 using MouseMoveOrigin = Inspector::Protocol::Automation::MouseMoveOrigin;
+#if ENABLE(WEBDRIVER_KEYBOARD_INTERACTIONS)
+using KeyboardInteractionSpec = std::pair<KeyboardInteraction, Variant<VirtualKey, CharKey>>;
+#endif
 
 enum class SimulatedInputSourceType {
     Null, // Used to induce a minimum duration.
@@ -120,13 +129,18 @@ struct SimulatedInputKeyFrame {
 public:
     using StateEntry = std::pair<SimulatedInputSource&, SimulatedInputSourceState>;
 
-    explicit SimulatedInputKeyFrame(Vector<StateEntry>&&);
+    // The keyframe that resets every input source (§17.6 Release Actions) may change several keys at
+    // once; a keyframe from a tick changes at most one per input source.
+    enum class IsResetKeyFrame : bool { No, Yes };
+
+    explicit SimulatedInputKeyFrame(Vector<StateEntry>&&, IsResetKeyFrame = IsResetKeyFrame::No);
     Seconds maximumDuration() const;
 
     static SimulatedInputKeyFrame keyFrameFromStateOfInputSources(const HashMap<String, Ref<SimulatedInputSource>>&);
     static SimulatedInputKeyFrame keyFrameToResetInputSources(const HashMap<String, Ref<SimulatedInputSource>>&);
 
     Vector<StateEntry> states;
+    IsResetKeyFrame isResetKeyFrame { IsResetKeyFrame::No };
 };
 
 class SimulatedInputDispatcher : public RefCountedAndCanMakeWeakPtr<SimulatedInputDispatcher> {
@@ -161,16 +175,19 @@ public:
     void run(std::optional<WebCore::FrameIdentifier>, Vector<SimulatedInputKeyFrame>&& keyFrames, const HashMap<String, Ref<SimulatedInputSource>>& inputSources, AutomationCompletionHandler&&);
     void cancel();
 
-    bool NODELETE isActive() const;
+    bool LEGACY_NODELETE isActive() const;
 
 private:
     SimulatedInputDispatcher(WebPageProxy&, SimulatedInputDispatcher::Client&);
 
     void transitionToNextKeyFrame();
-    void transitionBetweenKeyFrames(const SimulatedInputKeyFrame&, const SimulatedInputKeyFrame&, AutomationCompletionHandler&&);
+    void transitionBetweenKeyFrames(AutomationCompletionHandler&&);
 
     void transitionToNextInputSourceState();
     void transitionInputSourceToState(SimulatedInputSource&, SimulatedInputSourceState& newState, AutomationCompletionHandler&&);
+#if ENABLE(WEBDRIVER_KEYBOARD_INTERACTIONS)
+    void dispatchKeyboardInteractions(Vector<KeyboardInteractionSpec>&&, size_t nextIndex, AutomationCompletionHandler&&);
+#endif
     void finishDispatching(std::optional<AutomationCommandError>);
 
     void keyFrameTransitionDurationTimerFired();

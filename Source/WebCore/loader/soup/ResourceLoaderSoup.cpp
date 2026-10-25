@@ -36,6 +36,8 @@
 #include <gio/gio.h>
 #include <optional>
 #include <wtf/SortedArrayMap.h>
+#include <wtf/glib/GLibExtras.h>
+#include <wtf/glib/GMallocString.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/RunLoopSourcePriority.h>
@@ -97,8 +99,8 @@ void ResourceLoader::loadGResource()
         GUniquePtr<char> fileName(g_path_get_basename(url.path().utf8().legacyCStringPointer()));
         auto contentTypeString = contentTypeLookUpForKnownResource(fileName.get());
         if (!contentTypeString) {
-            GUniquePtr<char> contentType(g_content_type_guess(fileName.get(), data, dataSize, nullptr));
-            contentTypeString = String::fromLatin1(contentType.get());
+            auto contentType = GMallocString::unsafeAdoptFromUTF8(g_content_type_guess(fileName.get(), data, dataSize, nullptr));
+            contentTypeString = String::fromUTF8(contentType.span());
         }
         ResourceResponse response { WTF::move(url), extractMIMETypeFromMediaType(*contentTypeString), static_cast<long long>(dataSize), extractCharsetFromMediaType(*contentTypeString).toString() };
         response.setHTTPStatusCode(200);
@@ -109,7 +111,7 @@ void ResourceLoader::loadGResource()
     }, protectedThis.leakRef()));
 
     g_task_set_priority(task.get(), RunLoopSourcePriority::AsyncIONetwork);
-    g_task_set_task_data(task.get(), g_strdup(m_request.url().string().utf8().legacyCStringPointer()), g_free);
+    g_task_set_task_data(task.get(), gStrdup(m_request.url().string().utf8()), g_free);
     g_task_run_in_thread(task.get(), [](GTask* task, gpointer, gpointer taskData, GCancellable*) {
         URL url({ }, String::fromUTF8(static_cast<const char*>(taskData)));
         GError* error = nullptr;

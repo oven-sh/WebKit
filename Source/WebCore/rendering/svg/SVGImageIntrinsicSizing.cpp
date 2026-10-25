@@ -22,9 +22,13 @@
 
 #include "CachedImage.h"
 #include "Image.h"
+#include "RenderElement.h"
 #include "SVGImageElement.h"
+#include "SVGImageElementSizing.h"
 #include "SVGLengthContext.h"
+#include "SVGPreserveAspectRatioValue.h"
 #include "StyleComputedStyle+GettersInlines.h"
+#include "StyleImage.h"
 
 namespace WebCore {
 
@@ -36,51 +40,21 @@ SVGImageIntrinsicSizing resolveSVGImageIntrinsicSizing(CachedImage& cachedImage,
 
     // Raster (non-SVG) sources: the intrinsic size *is* the ratio.
     if (!image || !image->isSVGImage()) {
-        FloatSize size = cachedImage.imageSizeForRenderer(nullptr, usedZoom);
+        auto naturalDimensions = cachedImage.naturalDimensions();
+        auto size = naturalDimensions.width && naturalDimensions.height ? FloatSize { *naturalDimensions.width, *naturalDimensions.height } : FloatSize { };
+        size.scale(usedZoom);
         return { size, size, size.isEmpty() ? HasRatio::No : HasRatio::Yes };
     }
 
-    float intrinsicWidth = 0;
-    float intrinsicHeight = 0;
-    FloatSize ratio;
-    cachedImage.computeIntrinsicDimensions(intrinsicWidth, intrinsicHeight, ratio);
+    auto naturalDimensions = image->naturalDimensions();
 
-    // Both intrinsic dimensions known: the ratio is their ratio, per spec (overriding any
-    // viewBox-derived ratio).
-    if (intrinsicWidth > 0 && intrinsicHeight > 0)
-        return { { intrinsicWidth, intrinsicHeight }, { intrinsicWidth, intrinsicHeight }, HasRatio::Yes };
+    auto concreteObjectSize = SVGImageElementSizing { }.resolve(naturalDimensions);
 
-    auto hasRatio = ratio.isEmpty() ? HasRatio::No : HasRatio::Yes;
-    auto heightFromWidth = [&](float width) {
-        return width * ratio.height() / ratio.width();
+    return {
+        concreteObjectSize.size(),
+        naturalDimensions.aspectRatio.value_or(FloatSize { }),
+        naturalDimensions.aspectRatio ? HasRatio::Yes : HasRatio::No
     };
-    auto widthFromHeight = [&](float height) {
-        return height * ratio.width() / ratio.height();
-    };
-    constexpr auto fallback = defaultObjectSizeForSVGImage;
-
-    // Only width known: derive height from the ratio, or fall back.
-    if (intrinsicWidth > 0) {
-        float computedHeight = hasRatio == HasRatio::Yes ? heightFromWidth(intrinsicWidth) : fallback.height();
-        return { { intrinsicWidth, computedHeight }, ratio, hasRatio };
-    }
-
-    // Only height known: derive width from the ratio, or fall back.
-    if (intrinsicHeight > 0) {
-        float computedWidth = hasRatio == HasRatio::Yes ? widthFromHeight(intrinsicHeight) : fallback.width();
-        return { { computedWidth, intrinsicHeight }, ratio, hasRatio };
-    }
-
-    // Only the ratio is known: 'contain' it within the default object size.
-    if (hasRatio == HasRatio::Yes) {
-        float widthAtFallbackHeight = widthFromHeight(fallback.height());
-        if (widthAtFallbackHeight <= fallback.width())
-            return { { widthAtFallbackHeight, fallback.height() }, ratio, HasRatio::Yes };
-        return { { fallback.width(), heightFromWidth(fallback.width()) }, ratio, HasRatio::Yes };
-    }
-
-    // Nothing known: pure fallback.
-    return { fallback, ratio, HasRatio::No };
 }
 
 FloatRect calculateSVGImageObjectBoundingBox(const SVGImageElement& imageElement, const Style::ComputedStyle& style, CachedImage* cachedImage)
@@ -113,6 +87,45 @@ FloatRect calculateSVGImageObjectBoundingBox(const SVGImageElement& imageElement
         concreteHeight = sizing.size.height();
 
     return { imageElement.x().value(lengthContext), imageElement.y().value(lengthContext), concreteWidth, concreteHeight };
+}
+
+static NaturalDimensions calculateSVGImageNaturalDimensions(const Style::Image& styleImage, const RenderElement& renderer)
+{
+    if (styleImage.errorOccurred()) {
+        if (RefPtr cachedImage = styleImage.cachedImage()) {
+            if (RefPtr image = cachedImage->image())
+                return image->naturalDimensions(renderer.imageOrientation());
+        }
+    }
+    return styleImage.naturalDimensions(renderer, SVGImageElementSizing { });
+}
+
+SVGImagePlacement calculateSVGImagePlacement(const Style::Image& styleImage, const RenderElement& renderer, const SVGPreserveAspectRatioValue& preserveAspectRatio, const FloatRect& positioningRectangle)
+{
+    // "The dimensions of the positioning rectangle ... define the specified size for the embedded object. A concrete
+    // object size and final position must be determined for the object using the Default Sizing Algorithm"
+    // https://svgwg.org/svg2-draft/embedded.html#Placement
+    // FIXME: Apply 'object-fit' and 'object-position'.
+    auto concreteObjectSize = styleImage.negotiate(renderer, SVGImageElementSizing { { positioningRectangle.width(), positioningRectangle.height() } });
+    FloatRect objectRect { positioningRectangle.location(), concreteObjectSize.size() };
+
+    // "The 'preserveAspectRatio' attribute determines how the referenced image is scaled and positioned to fit into
+    // the concrete object size."
+    // https://svgwg.org/svg2-draft/embedded.html#ImageElement
+    auto imageRenderingRectangle = [&] -> FloatRect {
+        auto naturalDimensions = calculateSVGImageNaturalDimensions(styleImage, renderer);
+        auto naturalAspectRatio = naturalDimensions.width && naturalDimensions.height ? std::optional<FloatSize> { { *naturalDimensions.width, *naturalDimensions.height } } : naturalDimensions.aspectRatio;
+        if (!naturalAspectRatio || naturalAspectRatio->isEmpty() || objectRect.isEmpty())
+            return objectRect;
+
+        auto transform = preserveAspectRatio.getCTM(0, 0, naturalAspectRatio->width(), naturalAspectRatio->height(), objectRect.width(), objectRect.height());
+        auto rectangle = transform.mapRect(FloatRect { { }, *naturalAspectRatio });
+        rectangle.moveBy(objectRect.location());
+        return rectangle;
+    }();
+
+    auto destination = intersection(imageRenderingRectangle, positioningRectangle);
+    return { imageRenderingRectangle, destination, { destination.location() - toFloatSize(imageRenderingRectangle.location()), destination.size() } };
 }
 
 } // namespace WebCore

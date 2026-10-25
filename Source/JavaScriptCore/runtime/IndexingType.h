@@ -215,9 +215,16 @@ inline unsigned arrayIndexFromIndexingType(IndexingType indexingType)
 inline IndexingType indexingTypeForValue(JSValue); // Defined in IndexingTypeInlines.h
 
 // Return an indexing type that can handle all of the elements of both indexing types.
-IndexingType leastUpperBoundOfIndexingTypes(IndexingType, IndexingType);
+inline IndexingType leastUpperBoundOfIndexingTypes(IndexingType a, IndexingType b)
+{
+    // It doesn't make sense to LUB something that is an array with something that isn't.
+    ASSERT((a & IsArray) == (b & IsArray));
 
-IndexingType leastUpperBoundOfIndexingTypeAndValue(IndexingType, JSValue);
+    // Boy, this sure is easy right now.
+    return std::max(a, b);
+}
+
+inline IndexingType leastUpperBoundOfIndexingTypeAndValue(IndexingType, JSValue); // Defined in IndexingTypeInlines.h
 
 JS_EXPORT_PRIVATE void dumpIndexingType(PrintStream&, IndexingType);
 MAKE_PRINT_ADAPTOR(IndexingTypeDump, IndexingType, dumpIndexingType);

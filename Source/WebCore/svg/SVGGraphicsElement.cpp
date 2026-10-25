@@ -62,7 +62,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGGraphicsElement);
 
 // FIXME: This doesn't match SVGElement::viewportElement() as it has an extra check for
 // foreign object.
-static bool NODELETE isViewportElement(const SVGElement* element)
+static bool LEGACY_NODELETE isViewportElement(const SVGElement* element)
 {
     if (!element)
         return false;
@@ -135,8 +135,8 @@ AffineTransform SVGGraphicsElement::computeCTM(SVGElement* element, CTMScope mod
     return ctm;
 }
 
-SVGGraphicsElement::SVGGraphicsElement(const QualifiedName& tagName, Document& document, UniqueRef<SVGPropertyRegistry>&& propertyRegistry, OptionSet<TypeFlag> typeFlags)
-    : SVGElement(tagName, document, WTF::move(propertyRegistry), typeFlags)
+SVGGraphicsElement::SVGGraphicsElement(const QualifiedName& tagName, Document& document, const SVGPropertyRegistry& propertyRegistry, OptionSet<TypeFlag> typeFlags)
+    : SVGElement(tagName, document, propertyRegistry, typeFlags)
     , SVGTests(this)
     , m_shouldIsolateBlending(false)
     , m_transform(SVGAnimatedTransformList::create(this))
@@ -211,7 +211,7 @@ AffineTransform SVGGraphicsElement::animatedLocalTransform() const
 AffineTransform* SVGGraphicsElement::ensureSupplementalTransform()
 {
     if (!m_supplementalTransform)
-        m_supplementalTransform = makeUnique<AffineTransform>();
+        lazyInitialize(m_supplementalTransform, makeUnique<AffineTransform>());
     return m_supplementalTransform.get();
 }
 

@@ -1,0 +1,87 @@
+# A function with a rest parameter that is called through a value: its generic entry makes the rest array from the arguments in its frame. Where the function only reads the array, it lies in the frame of the entry, which then has to outlive the call
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# OPTIONS: check=VerifyEachPass
+# OPTIONS: only-passes=ComputeEffectSummaries,ChooseCallingConventions,AllocateInFrames
+# STATISTIC: RestArraysInFrames = 3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = NewClosure function=f7
+    v9 = Call v1, -, v2, v3, v4, v5, v6, v7, v8
+    Return
+}
+
+function f1 name="readsRest" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+    v2 = CallList v0, -, v1
+    Return v2
+}
+function f2 name="keepsRest" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+    PutModuleVariable v1 variable=g0
+    Return v0
+}
+function f3 name="returnsRest" flags=[HasRestParameter] parameters=[{type=Array}] results=[{type=anything}] {
+    Return v0
+}
+function f4 name="makesArgumentsObject" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = Call v1, -, v3
+    Return v4
+}
+# A program may go round through such a call for ever, and no frame may stay behind.
+function f5 name="endsInCallOfUnknownCode" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+    v2 = CallList v0, -, v1
+    ReturnCall v2
+}
+function f6 name="endsInCallOfReader" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f1
+    ReturnCall v2
+}
+function f7 name="endsInCallOfItself" flags=[HasRestParameter] parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Null
+    v4 = CallDirect v3, v1 function=f7
+    ReturnCall v4
+  b2():
+    Return v0
+}
+
+# CHECK-LABEL: name="readsRest" module=m0 role=GenericEntrypoint
+# CHECK: [[rest]]: Array = CreateRest firstArgument=1 storage=Frame
+# CHECK: CallDirect {{*}}, [[rest]] function=f1 [isDemotedTailCall]
+# CHECK-NOT: ReturnCall
+# CHECK: Return
+# CHECK-LABEL: name="keepsRest" module=m0 role=GenericEntrypoint
+# CHECK-NOT: storage=Frame
+# CHECK: ReturnCall {{*}} requirement=Allowed
+# CHECK-LABEL: name="returnsRest" module=m0 role=GenericEntrypoint
+# CHECK-NOT: storage=Frame
+# CHECK: ReturnCall {{*}} requirement=Allowed
+# CHECK-LABEL: name="makesArgumentsObject" module=m0 role=GenericEntrypoint
+# CHECK: CreateRest firstArgument=1 storage=Frame
+# CHECK-NOT: ReturnCall
+# CHECK: Return
+# CHECK-LABEL: name="endsInCallOfUnknownCode" module=m0 role=GenericEntrypoint
+# CHECK-NOT: storage=Frame
+# CHECK: ReturnCall {{*}} requirement=Allowed
+# CHECK-LABEL: name="endsInCallOfReader" module=m0 role=GenericEntrypoint
+# CHECK: CreateRest firstArgument=1 storage=Frame
+# CHECK-NOT: ReturnCall
+# CHECK: Return
+# CHECK-LABEL: name="endsInCallOfItself" module=m0 role=GenericEntrypoint
+# CHECK-NOT: storage=Frame
+# CHECK: ReturnCall {{*}} requirement=Allowed

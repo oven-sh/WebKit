@@ -698,11 +698,24 @@ void WebInspectorBackend::ensurePageInstrumentationForFrame(LocalFrame& frame)
     auto proxy = makeUnique<PageAgentProxy>(webContext, *page);
     std::ignore = proxy->enable();
 
-    // Seed the just-created proxy with the current toggle: a frame can commit after
-    // setShowPaintRects(true) was fanned out, and would otherwise default to off.
+    // Seed the just-created proxy with the current toggle and script: a frame can commit after
+    // they were fanned out, and would otherwise default to off.
     proxy->setShowPaintRects(m_showPaintRects);
+    proxy->setBootstrapScript(m_bootstrapScript);
 
     m_framePageAgentProxies.add(frameID, WTF::move(proxy));
+}
+
+void WebInspectorBackend::suspendForDebugger(WebCore::DebuggerPauseSessionIdentifier sessionID)
+{
+    if (RefPtr corePage = m_page ? m_page->corePage() : nullptr)
+        corePage->inspectorController().suspendForDebuggerSession(sessionID);
+}
+
+void WebInspectorBackend::resumeFromDebugger(WebCore::DebuggerPauseSessionIdentifier sessionID)
+{
+    if (RefPtr corePage = m_page ? m_page->corePage() : nullptr)
+        corePage->inspectorController().resumeFromDebuggerSession(sessionID);
 }
 
 void WebInspectorBackend::enablePageInstrumentation()
@@ -739,6 +752,7 @@ void WebInspectorBackend::disablePageInstrumentation()
     // Reset so a later re-enable seeds fresh proxies as off; the UIProcess ProxyingPageAgent also
     // resets on disable().
     m_showPaintRects = false;
+    m_bootstrapScript = { };
 }
 
 void WebInspectorBackend::setShowPaintRects(bool show)
@@ -748,6 +762,13 @@ void WebInspectorBackend::setShowPaintRects(bool show)
     m_showPaintRects = show;
     for (auto& proxy : m_framePageAgentProxies.values())
         proxy->setShowPaintRects(show);
+}
+
+void WebInspectorBackend::setBootstrapScript(const String& source)
+{
+    m_bootstrapScript = source;
+    for (auto& proxy : m_framePageAgentProxies.values())
+        proxy->setBootstrapScript(source);
 }
 
 void WebInspectorBackend::getFrameResourceData(Vector<WebCore::FrameIdentifier>&& frameIDs, CompletionHandler<void(Vector<std::pair<WebCore::FrameIdentifier, Inspector::FrameResourceData>>&&)>&& completionHandler)

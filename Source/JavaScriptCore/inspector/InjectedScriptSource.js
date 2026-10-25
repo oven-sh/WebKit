@@ -378,12 +378,12 @@ let InjectedScript = class InjectedScript extends PrototypelessObjectBase
         return result;
     }
 
-    wrapObject(object, groupName, canAccessInspectedGlobalObject, generatePreview)
+    wrapObject(object, groupName, canAccessInspectedGlobalObject, generatePreview, descriptionHint)
     {
         if (!canAccessInspectedGlobalObject)
             return this._fallbackWrapper(object);
 
-        return RemoteObject.create(object, groupName, false, generatePreview);
+        return RemoteObject.create(object, groupName, false, generatePreview, @undefined, descriptionHint);
     }
 
     wrapJSONString(jsonString, groupName, generatePreview)
@@ -725,6 +725,18 @@ let InjectedScript = class InjectedScript extends PrototypelessObjectBase
         if (subtype === "proxy" || subtype === "weakref")
             return;
 
+        // Native getters on function and prototype objects may require an instance receiver or be restricted.
+        // Keep those properties as accessors so only an explicit request invokes them.
+        let shouldInvokeNativeGetters = nativeGettersAsValues && typeof object !== "function";
+        if (shouldInvokeNativeGetters) {
+            let constructorDescriptor = @Object.@getOwnPropertyDescriptor(object, "constructor");
+            if (typeof constructorDescriptor?.value === "function") {
+                let prototypeDescriptor = @Object.@getOwnPropertyDescriptor(constructorDescriptor.value, "prototype");
+                if (prototypeDescriptor?.value === object)
+                    shouldInvokeNativeGetters = false;
+            }
+        }
+
         let nameProcessed = new @Set;
 
         // Handled below when `includeProto`.
@@ -756,6 +768,9 @@ let InjectedScript = class InjectedScript extends PrototypelessObjectBase
                     fakeDescriptor.value.@then(@undefined, function(){});
                 return fakeDescriptor;
             } catch (e) {
+                if (possibleNativeBindingGetter)
+                    return null;
+
                 let errorDescriptor = @createObjectWithoutPrototype(
                     "name", name,
                     "value", e,
@@ -805,13 +820,13 @@ let InjectedScript = class InjectedScript extends PrototypelessObjectBase
                 return processDescriptor(fakeDescriptor, isOwnProperty);
             }
 
-            if (nativeGettersAsValues) {
-                if (@String(descriptor.get).@endsWith("[native code] }") || (!descriptor.get && @Object.@hasOwn(descriptor, "get") && !descriptor.set && @Object.@hasOwn(descriptor, "set"))) {
-                    // Developers may create such a descriptor, so we should be resilient:
-                    // let x = {}; Object.defineProperty(x, "p", {get:undefined}); Object.getOwnPropertyDescriptor(x, "p")
-                    let fakeDescriptor = createFakeValueDescriptor(name, symbol, descriptor, isOwnProperty, true);
+            let possibleNativeBindingGetter = nativeGettersAsValues && (@String(descriptor.get).@endsWith("[native code] }") || (!descriptor.get && @Object.@hasOwn(descriptor, "get") && !descriptor.set && @Object.@hasOwn(descriptor, "set")));
+            if (possibleNativeBindingGetter && shouldInvokeNativeGetters) {
+                // Developers may create such a descriptor, so we should be resilient:
+                // let x = {}; Object.defineProperty(x, "p", {get:undefined}); Object.getOwnPropertyDescriptor(x, "p")
+                let fakeDescriptor = createFakeValueDescriptor(name, symbol, descriptor, isOwnProperty, true);
+                if (fakeDescriptor)
                     return processDescriptor(fakeDescriptor, isOwnProperty, true);
-                }
             }
 
             descriptor.name = name;
@@ -821,7 +836,7 @@ let InjectedScript = class InjectedScript extends PrototypelessObjectBase
                 descriptor.symbol = symbol;
             if (isPrivate)
                 descriptor.isPrivate = true;
-            return processDescriptor(descriptor, isOwnProperty);
+            return processDescriptor(descriptor, isOwnProperty, possibleNativeBindingGetter);
         }
 
         let isArrayLike = false;
@@ -1032,7 +1047,7 @@ var injectedScript = new InjectedScript;
 
 let RemoteObject = class RemoteObject extends PrototypelessObjectBase
 {
-    constructor(object, objectGroupName, forceValueType, generatePreview, columnNames)
+    constructor(object, objectGroupName, forceValueType, generatePreview, columnNames, descriptionHint)
     {
         super();
 
@@ -1065,7 +1080,7 @@ let RemoteObject = class RemoteObject extends PrototypelessObjectBase
             this.subtype = subtype;
 
         this.className = InjectedScriptHost.internalConstructorName(object);
-        this.description = RemoteObject.describe(object);
+        this.description = RemoteObject.describe(object, descriptionHint);
 
         if (subtype === "array")
             this.size = typeof object.length === "number" ? object.length : 0;
@@ -1094,10 +1109,10 @@ let RemoteObject = class RemoteObject extends PrototypelessObjectBase
 
     // Static
 
-    static create(object, objectGroupName, forceValueType, generatePreview, columnNames)
+    static create(object, objectGroupName, forceValueType, generatePreview, columnNames, descriptionHint)
     {
         try {
-            return new RemoteObject(object, objectGroupName, forceValueType, generatePreview, columnNames);
+            return new RemoteObject(object, objectGroupName, forceValueType, generatePreview, columnNames, descriptionHint);
         } catch (e) {
             let description;
             try {
@@ -1144,7 +1159,7 @@ let RemoteObject = class RemoteObject extends PrototypelessObjectBase
         return null;
     }
 
-    static describe(value)
+    static describe(value, hint)
     {
         if (isPrimitiveValue(value))
             return null;
@@ -1158,13 +1173,13 @@ let RemoteObject = class RemoteObject extends PrototypelessObjectBase
         let subtype = RemoteObject.subtype(value);
 
         if (subtype === "regexp")
-            return toString(value);
+            return hint ?? toString(value);
 
         if (subtype === "date")
-            return toString(value);
+            return hint ?? toString(value);
 
         if (subtype === "error")
-            return toString(value);
+            return hint ?? toString(value);
 
         if (subtype === "proxy")
             return "Proxy";
@@ -1184,11 +1199,11 @@ let RemoteObject = class RemoteObject extends PrototypelessObjectBase
 
         // NodeList in JSC is a function, check for array prior to this.
         if (typeof value === "function")
-            return value.toString();
+            return hint ?? value.toString();
 
         // If Object, try for a better name from the constructor.
         if (className === "Object") {
-            let constructorName = value.constructor && value.constructor.name;
+            let constructorName = value?.constructor?.name;
             if (constructorName)
                 return constructorName;
         }

@@ -1,0 +1,35 @@
+# A virtual object has at most as many fields in use as the limit
+# FORM: Prepared
+# OPTIONS: limit=MaxVirtualObjectFields:2
+# RUN: pass SinkAllocations
+# LOSS: MaxVirtualObjectFields f0 v3
+# STATISTIC: AllocationsRemoved = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Triple" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}]
+
+function f0 name="threeFieldsInUse" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    PropDefine v3, v2 key="c" receivers=[L0]
+    v5 = NewObject -, v1, v2 layout=L0 fields=[0, 1]
+    v6 = PropGet v3 key="a" receivers=[L0]
+    v7 = PropGet v5 key="b" receivers=[L0]
+    v8 = Add v6, v7
+    Return v8
+# CHECK: b0(
+# CHECK-NEXT: v3:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
+# CHECK-NEXT: PropDefine v3, v2 key="c"
+# CHECK-NOT: NewObject
+# CHECK: v6:{{*}}= PropGet v3 key="a"
+# CHECK-NEXT: v7: anything = Upcast v2 castType=anything
+}
+
+function f1 name="twoFieldsInUseOfThree" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    PropDefine v2, v1 key="c" receivers=[L0]
+    v4 = PropGet v2 key="c" receivers=[L0]
+    Return v4
+# CHECK: b0(
+# CHECK-NEXT: v4: anything = Upcast v1 castType=anything
+# CHECK-NEXT: Return v4
+}

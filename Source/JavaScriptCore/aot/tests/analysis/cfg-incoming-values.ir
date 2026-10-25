@@ -1,0 +1,131 @@
+# What fills a parameter on an edge: an argument, the narrowed operand of a test, or a guard
+# FORM: Prepared
+# RUN: analyses incoming-values
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number}}]
+layout L1 name="Size" fields=[{key="width" declared={type=number}}]
+function f0 name="arguments" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1, v2)
+  b2():
+    Jump -> next b3(v2, v1)
+  b3(v3, v4):
+    Return v3
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: incoming-values:
+# CHECK-NEXT: v3 from b1.0: v1
+# CHECK-NEXT: v3 from b2.0: v2
+# CHECK-NEXT: v4 from b1.0: v2
+# CHECK-NEXT: v4 from b2.0: v1
+# CHECK-NOT: from
+function f1 name="bothEdgesOfTypeTest" parameters=[{type=number|string}] results=[{type=number|string}] {
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3):
+    Return v3
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: incoming-values:
+# CHECK-NEXT: v2 from b0.0: narrowed v0 by v1
+# CHECK-NEXT: v3 from b0.1: narrowed v0 by v1
+# CHECK-NOT: from
+function f2 name="secondOperandOfComparison" parameters=[{type=string}, {type=number|string}] results=[{type=number|string}] {
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 1), notTaken b2()
+  b1(v3):
+    Return v3
+  b2():
+    Return v1
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: incoming-values:
+# CHECK-NEXT: v3 from b0.0: narrowed v1 by v2
+# CHECK-NOT: from
+function f3 name="guardOfShapeTest" parameters=[{type=object}] results=[{type=undefined}] {
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: incoming-values:
+# CHECK-NEXT: v2 from b0.0: guard by v1
+# CHECK-NOT: from
+function f4 name="casesOfSwitchOnShape" parameters=[{type=object}] results=[{type=undefined}] {
+    SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(| 0), otherwise b3()
+  b1(v1):
+    Return
+  b2(v2):
+    Return
+  b3():
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: incoming-values:
+# CHECK-NEXT: v1 from b0.0: guard by b0.case0
+# CHECK-NEXT: v2 from b0.1: guard by b0.case1
+# CHECK-NOT: from
+function f5 name="mixOnOneBlock" parameters=[{type=anything}] results=[{type=string}] {
+    Jump -> next b1()
+  b1():
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b3(v0 | 0), notTaken b2()
+  b2():
+    v2 = String string="none"
+    Jump -> next b3(v0, v2)
+  b3(v3, v4):
+    Return v4
+}
+# CHECK-LABEL: function f5
+# CHECK-NEXT: incoming-values:
+# CHECK-NEXT: v3 from b1.0: v0
+# CHECK-NEXT: v3 from b2.0: v0
+# CHECK-NEXT: v4 from b1.0: narrowed v0 by v1
+# CHECK-NEXT: v4 from b2.0: v2
+# CHECK-NOT: from
+function f6 name="guardAsResultAndAsArgument" parameters=[{type=object}, {type=boolean}] results=[{type=undefined}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b4(| 0), notTaken b5()
+  b2():
+    v3 = ShapeTest v0 layouts=[L0]
+    Branch v3 -> taken b3(| 0), notTaken b5()
+  b3(v4):
+    Jump -> next b4(v4)
+  b4(v5):
+    Return
+  b5():
+    Return
+}
+# CHECK-LABEL: function f6
+# CHECK-NEXT: incoming-values:
+# CHECK-NEXT: v4 from b2.0: guard by v3
+# CHECK-NEXT: v5 from b1.0: guard by v2
+# CHECK-NEXT: v5 from b3.0: v4
+# CHECK-NOT: from
+function f7 name="handlerArgument" parameters=[{type=anything}, {type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: number) handler=b3(v1):
+    v3 = Call v0
+    Jump -> next b1()
+  b1() handler=b3(v2):
+    v4 = Call v0
+    Jump -> next b2()
+  b2():
+    Return v4
+  b3(v5) role=CatchHandler:
+    v6 = CatchValue
+    Return v5
+}
+# CHECK-LABEL: function f7
+# CHECK-NEXT: incoming-values:
+# CHECK-NEXT: v5 from b0.handler: v1
+# CHECK-NEXT: v5 from b1.handler: v2
+# CHECK-NOT: from

@@ -203,8 +203,9 @@ op :super_construct_varargs,
 
 # Semantically, this is iterator = symbolIterator.@call(iterable); next = iterator.next;
 # where symbolIterator the result of iterable[Symbol.iterator] (which is done in a different bytecode).
-# For builtin iterators, however, this has special behavior where next becomes the empty value, which
-# indicates that we are in a known iteration mode to op_iterator_next.
+# For builtin iterators, however, this has special behavior where next becomes a sentinel, which
+# indicates that we are in a known iteration mode to op_iterator_next. In IterationMode::FastArray
+# and IterationMode::FastString iterator becomes the sentinel instead, and next is the index into iterable.
 op :iterator_open,
     args: {
         iterator: VirtualRegister,
@@ -458,6 +459,8 @@ op :profile_type,
 op :profile_control_flow,
     args: {
         textOffset: int,
+        textEndOffset: int,
+        isInLoopHeader: bool,
     },
     metadata: {
         basicBlockLocation: BasicBlockLocation.*,
@@ -812,6 +815,17 @@ op :jneq_ptr,
     },
     metadata: {
         hasJumped: bool,
+    }
+
+op :iterator_close_check,
+    args: {
+        iterator: VirtualRegister,
+        next: VirtualRegister,
+        iterable: VirtualRegister,
+        targetLabel: BoundLabel,
+    },
+    metadata: {
+        seenModes: uint8_t,
     }
 
 # Opcodes without metadata are last
@@ -1361,7 +1375,6 @@ op_group :UnaryOp,
         :is_undefined_or_null,
         :is_boolean,
         :is_number,
-        :is_big_int,
         :is_object,
         :is_callable,
         :is_constructor,
@@ -1407,18 +1420,6 @@ op :typeof,
     args: {
         dst: VirtualRegister,
         value: VirtualRegister,
-    }
-
-# Precedes the IteratorClose sequence of an iterator made by op_iterator_open. When op_iterator_open found an Array it may
-# not have made an iterator object: iterator is then a marker cell, next the index and iterable the Array. Jumps to targetLabel,
-# over the IteratorClose sequence, when iterator is that marker and IteratorClose cannot be observed (nothing to do); otherwise
-# falls through, after replacing a marker by the Array Iterator object it stands for.
-op :iterator_close_check,
-    args: {
-        iterator: VirtualRegister,
-        next: VirtualRegister,
-        iterable: VirtualRegister,
-        targetLabel: BoundLabel,
     }
 
 op :is_cell_with_type,
@@ -1475,27 +1476,27 @@ op :llint_function_for_construct_prologue
 op :llint_function_for_call_arity_check
 op :llint_function_for_construct_arity_check
 op :llint_generic_return_point
-op :llint_throw_from_slow_path_trampoline
-op :llint_throw_during_call_trampoline
-op :llint_native_call_trampoline
-op :llint_native_construct_trampoline
-op :llint_internal_function_call_trampoline
-op :llint_internal_function_construct_trampoline
-op :llint_default_call_trampoline
-op :llint_unlinked_call_trampoline
-op :llint_virtual_call_trampoline
-op :llint_virtual_construct_trampoline
-op :llint_virtual_tail_call_trampoline
-op :llint_polymorphic_normal_call_trampoline
-op :llint_polymorphic_closure_call_trampoline
+op :llint_throw_from_slow_path_trampoline, extras: { asm_section: :trampoline }
+op :llint_throw_during_call_trampoline, extras: { asm_section: :trampoline }
+op :llint_native_call_trampoline, extras: { asm_section: :trampoline }
+op :llint_native_construct_trampoline, extras: { asm_section: :trampoline }
+op :llint_internal_function_call_trampoline, extras: { asm_section: :trampoline }
+op :llint_internal_function_construct_trampoline, extras: { asm_section: :trampoline }
+op :llint_default_call_trampoline, extras: { asm_section: :trampoline }
+op :llint_unlinked_call_trampoline, extras: { asm_section: :trampoline }
+op :llint_virtual_call_trampoline, extras: { asm_section: :trampoline }
+op :llint_virtual_construct_trampoline, extras: { asm_section: :trampoline }
+op :llint_virtual_tail_call_trampoline, extras: { asm_section: :trampoline }
+op :llint_polymorphic_normal_call_trampoline, extras: { asm_section: :trampoline }
+op :llint_polymorphic_closure_call_trampoline, extras: { asm_section: :trampoline }
 op :checkpoint_osr_exit_from_inlined_call_trampoline
 op :checkpoint_osr_exit_trampoline
 op :normal_osr_exit_trampoline
 op :array_sort_comparator_return_trampoline
 op :fuzzer_return_early_from_loop_hint
 op :loop_osr_entry_gate
-op :llint_get_host_call_return_value
-op :llint_handle_uncaught_exception
+op :llint_get_host_call_return_value, extras: { asm_section: :trampoline }
+op :llint_handle_uncaught_exception, extras: { asm_section: :trampoline }
 op :op_call_return_location
 op :op_call_ignore_result_return_location
 op :op_construct_return_location
@@ -1521,17 +1522,17 @@ op :op_iterator_open_return_location
 op :op_iterator_next_return_location
 op :op_async_iterator_next_return_location
 op :op_call_direct_eval_slow_return_location
-op :js_to_wasm_wrapper_entry
-op :wasm_to_wasm_ipint_wrapper_entry
-op :wasm_to_js_wrapper_entry
-op :ipint_trampoline
-op :ipint_entry
-op :ipint_catch_entry
-op :ipint_catch_all_entry
-op :ipint_table_catch_entry
-op :ipint_table_catch_ref_entry
-op :ipint_table_catch_all_entry
-op :ipint_table_catch_allref_entry
+op :js_to_wasm_wrapper_entry, extras: { asm_section: :webAssembly }
+op :wasm_to_wasm_ipint_wrapper_entry, extras: { asm_section: :webAssembly }
+op :wasm_to_js_wrapper_entry, extras: { asm_section: :webAssembly }
+op :ipint_trampoline, extras: { asm_section: :webAssembly }
+op :ipint_entry, extras: { asm_section: :webAssembly }
+op :ipint_catch_entry, extras: { asm_section: :webAssembly }
+op :ipint_catch_all_entry, extras: { asm_section: :webAssembly }
+op :ipint_table_catch_entry, extras: { asm_section: :webAssembly }
+op :ipint_table_catch_ref_entry, extras: { asm_section: :webAssembly }
+op :ipint_table_catch_all_entry, extras: { asm_section: :webAssembly }
+op :ipint_table_catch_allref_entry, extras: { asm_section: :webAssembly }
 
 op :js_trampoline_op_call
 op :js_trampoline_op_call_ignore_result
@@ -1549,11 +1550,11 @@ op :js_trampoline_llint_function_for_call_arity_check_untag
 op :js_trampoline_llint_function_for_call_arity_check_tag
 op :js_trampoline_llint_function_for_construct_arity_check_untag
 op :js_trampoline_llint_function_for_construct_arity_check_tag
-op :wasm_trampoline_wasm_ipint_call
-op :wasm_trampoline_wasm_ipint_tail_call
-op :wasm_throw_from_slow_path_trampoline
-op :wasm_throw_from_fault_handler_trampoline_reg_instance
-op :wasm_ipint_call_return_location
+op :wasm_trampoline_wasm_ipint_call, extras: { asm_section: :webAssembly }
+op :wasm_trampoline_wasm_ipint_tail_call, extras: { asm_section: :webAssembly }
+op :wasm_throw_from_slow_path_trampoline, extras: { asm_section: :webAssembly }
+op :wasm_throw_from_fault_handler_trampoline_reg_instance, extras: { asm_section: :webAssembly }
+op :wasm_ipint_call_return_location, extras: { asm_section: :webAssembly }
 
 end_section :NativeHelpers
 

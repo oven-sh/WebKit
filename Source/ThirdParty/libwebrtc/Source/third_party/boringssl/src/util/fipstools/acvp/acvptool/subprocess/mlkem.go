@@ -59,6 +59,7 @@ type mlkemEncapDecapTestGroup struct {
 	TestType     string                `json:"testType"`
 	ParameterSet string                `json:"parameterSet"`
 	Function     string                `json:"function"`
+	KeyFormat    string                `json:"keyFormat"`
 	Tests        []mlkemEncapDecapTest `json:"tests"`
 }
 
@@ -66,6 +67,8 @@ type mlkemEncapDecapTest struct {
 	ID uint64 `json:"tcId"`
 	EK string `json:"ek,omitempty"`
 	DK string `json:"dk,omitempty"`
+	D  string `json:"d,omitempty"`
+	Z  string `json:"z,omitempty"`
 	M  string `json:"m,omitempty"`
 	C  string `json:"c,omitempty"`
 }
@@ -213,12 +216,33 @@ func (m *mlkem) processEncapDecap(vectorSet []byte, t Transactable) (any, error)
 
 		case "decapsulation":
 			cmdName := group.ParameterSet + "/decap"
+			if group.KeyFormat == "seed" {
+				cmdName = group.ParameterSet + "/decap/seed"
+			}
 
 			for _, test := range group.Tests {
-				dk, err := decodeNonEmptyHex(test.DK)
-				if err != nil {
-					return nil, fmt.Errorf("failed to decode dk in test case %d/%d: %s",
-						group.ID, test.ID, err)
+				var key []byte
+				if group.KeyFormat == "seed" {
+					d, err := decodeNonEmptyHex(test.D)
+					if err != nil {
+						return nil, fmt.Errorf("failed to decode d in test case %d/%d: %s",
+							group.ID, test.ID, err)
+					}
+					z, err := decodeNonEmptyHex(test.Z)
+					if err != nil {
+						return nil, fmt.Errorf("failed to decode z in test case %d/%d: %s",
+							group.ID, test.ID, err)
+					}
+					key = make([]byte, 0, len(d)+len(z))
+					key = append(key, d...)
+					key = append(key, z...)
+				} else {
+					var err error
+					key, err = decodeNonEmptyHex(test.DK)
+					if err != nil {
+						return nil, fmt.Errorf("failed to decode dk in test case %d/%d: %s",
+							group.ID, test.ID, err)
+					}
 				}
 
 				c, err := decodeNonEmptyHex(test.C)
@@ -227,7 +251,7 @@ func (m *mlkem) processEncapDecap(vectorSet []byte, t Transactable) (any, error)
 						group.ID, test.ID, err)
 				}
 
-				result, err := t.Transact(cmdName, 1, dk, c)
+				result, err := t.Transact(cmdName, 1, key, c)
 				if err != nil {
 					return nil, fmt.Errorf("decapsulation failed for test case %d/%d: %s",
 						group.ID, test.ID, err)

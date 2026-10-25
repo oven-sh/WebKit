@@ -46,9 +46,7 @@ class RenderGrid;
 
 class Grid final {
 public:
-    explicit Grid(RenderGrid&);
-
-    unsigned NODELETE numTracks(Style::GridTrackSizingDirection) const;
+    unsigned LEGACY_NODELETE numTracks(Style::GridTrackSizingDirection) const;
 
     void ensureGridSize(unsigned maximumRowSize, unsigned maximumColumnSize);
     GridArea insert(RenderBox&, const GridArea&);
@@ -57,31 +55,31 @@ public:
     // this method will return false for a grid container with only out of flow children.
     bool hasGridItems() const { return !m_gridItemArea.isEmpty(); }
 
-    GridArea gridItemArea(const RenderBox& item) const;
+    GridArea LEGACY_NODELETE gridItemArea(const RenderBox& item) const;
     void setGridItemArea(const RenderBox& item, GridArea);
 
-    GridSpan gridItemSpan(const RenderBox&, Style::GridTrackSizingDirection) const;
+    GridSpan LEGACY_NODELETE gridItemSpan(const RenderBox&, Style::GridTrackSizingDirection) const;
 
-    const GridCell& NODELETE cell(unsigned row, unsigned column) const LIFETIME_BOUND;
+    const GridCell& LEGACY_NODELETE cell(unsigned row, unsigned column) const LIFETIME_BOUND;
 
-    unsigned NODELETE explicitGridStart(Style::GridTrackSizingDirection) const;
-    void NODELETE setExplicitGridStart(unsigned rowStart, unsigned columnStart);
+    unsigned LEGACY_NODELETE explicitGridStart(Style::GridTrackSizingDirection) const;
+    void LEGACY_NODELETE setExplicitGridStart(unsigned rowStart, unsigned columnStart);
 
-    unsigned NODELETE autoRepeatTracks(Style::GridTrackSizingDirection) const;
-    void NODELETE setAutoRepeatTracks(unsigned autoRepeatRows, unsigned autoRepeatColumns);
+    unsigned LEGACY_NODELETE autoRepeatTracks(Style::GridTrackSizingDirection) const;
+    void LEGACY_NODELETE setAutoRepeatTracks(unsigned autoRepeatRows, unsigned autoRepeatColumns);
 
-    void NODELETE setClampingForSubgrid(unsigned maxRows, unsigned maxColumns);
+    void LEGACY_NODELETE setClampingForSubgrid(unsigned maxRows, unsigned maxColumns);
 
-    void clampAreaToSubgridIfNeeded(GridArea&);
+    void LEGACY_NODELETE clampAreaToSubgridIfNeeded(GridArea&);
 
     void setAutoRepeatEmptyColumns(std::unique_ptr<OrderedTrackIndexSet>);
     void setAutoRepeatEmptyRows(std::unique_ptr<OrderedTrackIndexSet>);
 
     unsigned autoRepeatEmptyTracksCount(Style::GridTrackSizingDirection) const;
-    bool NODELETE hasAutoRepeatEmptyTracks(Style::GridTrackSizingDirection) const;
-    bool NODELETE isEmptyAutoRepeatTrack(Style::GridTrackSizingDirection, unsigned) const;
+    bool LEGACY_NODELETE hasAutoRepeatEmptyTracks(Style::GridTrackSizingDirection) const;
+    bool LEGACY_NODELETE isEmptyAutoRepeatTrack(Style::GridTrackSizingDirection, unsigned) const;
 
-    OrderedTrackIndexSet* NODELETE autoRepeatEmptyTracks(Style::GridTrackSizingDirection) const LIFETIME_BOUND;
+    OrderedTrackIndexSet* LEGACY_NODELETE autoRepeatEmptyTracks(Style::GridTrackSizingDirection) const LIFETIME_BOUND;
 
     OrderIterator& orderIterator() LIFETIME_BOUND { return m_orderIterator; }
     const OrderIterator& orderIterator() const LIFETIME_BOUND { return m_orderIterator; }
@@ -123,11 +121,11 @@ public:
     // GridIterator(m_grid, ForColumns, 1) will walk over the rows of the 2nd column.
     GridIterator(const Grid&, Style::GridTrackSizingDirection, unsigned fixedTrackIndex, unsigned varyingTrackIndex = 0);
 
-    static GridIterator NODELETE createForSubgrid(const RenderGrid& subgrid, const GridIterator& outer, GridSpan subgridSpanInOuter);
+    static GridIterator LEGACY_NODELETE createForSubgrid(const RenderGrid& subgrid, const GridIterator& outer, GridSpan subgridSpanInOuter);
 
-    RenderBox* NODELETE nextGridItem();
-    bool isEmptyAreaEnough(unsigned rowSpan, unsigned columnSpan) const;
-    std::optional<GridArea> nextEmptyGridArea(unsigned fixedTrackSpan, unsigned varyingTrackSpan);
+    RenderBox* LEGACY_NODELETE nextGridItem();
+    bool LEGACY_NODELETE isEmptyAreaEnough(unsigned rowSpan, unsigned columnSpan) const;
+    std::optional<GridArea> LEGACY_NODELETE nextEmptyGridArea(unsigned fixedTrackSpan, unsigned varyingTrackSpan);
 
     Style::GridTrackSizingDirection direction() const
     {

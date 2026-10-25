@@ -95,7 +95,7 @@ inline ComposedTreeIterator<ContextInlineCapacity>::ComposedTreeIterator()
 template <size_t ContextInlineCapacity>
 inline ComposedTreeIterator<ContextInlineCapacity>& ComposedTreeIterator<ContextInlineCapacity>::traverseNext()
 {
-    if (RefPtr shadowRoot = context().iterator->shadowRoot()) {
+    if (RefPtr<ShadowRoot> shadowRoot = context().iterator->shadowRoot()) {
         traverseShadowRoot(*shadowRoot);
         return *this;
     }
@@ -179,7 +179,11 @@ public:
             : ComposedTreeIterator<ContextInlineCapacity>(root, current)
         { }
 
-        Iterator& operator++() { return static_cast<Iterator&>(ComposedTreeIterator<ContextInlineCapacity>::traverseNextSibling()); }
+        Iterator& operator++()
+        {
+            ComposedTreeIterator<ContextInlineCapacity>::traverseNextSibling();
+            return *this;
+        }
         Iterator& operator--() { return static_cast<Iterator&>(ComposedTreeIterator<ContextInlineCapacity>::traversePreviousSibling()); }
     };
 
@@ -257,11 +261,20 @@ inline Node* nextSiblingInComposedTreeIgnoringUserAgentShadow(Node& node)
     return node.nextSibling();
 }
 
+inline ContainerNode* LEGACY_NODELETE parentInComposedTreeIgnoringUserAgentShadow(Node& node)
+{
+    if (auto* slot = node.assignedSlot()) {
+        if (auto* shadowRoot = slot->containingShadowRoot(); shadowRoot && shadowRoot->mode() != ShadowRootMode::UserAgent)
+            return slot;
+    }
+    return node.parentOrShadowHostNode();
+}
+
 inline Node* nextSkippingChildrenInComposedTreeIgnoringUserAgentShadow(Node& node)
 {
     if (auto* sibling = nextSiblingInComposedTreeIgnoringUserAgentShadow(node))
         return sibling;
-    for (RefPtr ancestor = node.parentInComposedTree(); ancestor; ancestor = ancestor->parentInComposedTree()) {
+    for (RefPtr ancestor = parentInComposedTreeIgnoringUserAgentShadow(node); ancestor; ancestor = parentInComposedTreeIgnoringUserAgentShadow(*ancestor)) {
         if (auto* sibling = nextSiblingInComposedTreeIgnoringUserAgentShadow(*ancestor))
             return sibling;
     }
@@ -308,13 +321,13 @@ inline ComposedTreeIterator<ContextInlineCapacity>::ComposedTreeIterator(Contain
 
     if (auto* slot = dynamicDowncast<HTMLSlotElement>(root)) {
         if (auto* assignedNodes = slot->assignedNodes()) {
-            initializeContextStack(root, *assignedNodes->at(0));
+            initializeContextStack(root, *protect(assignedNodes->at(0)));
             return;
         }
     }
     if (RefPtr shadowRoot = root.shadowRoot()) {
         ElementAndTextDescendantIterator firstChild(*shadowRoot, ElementAndTextDescendantIterator::FirstChild);
-        initializeContextStack(root, firstChild ? *firstChild : root);
+        initializeContextStack(root, firstChild ? protect(*firstChild).get() : root);
         return;
     }
 
@@ -433,7 +446,7 @@ inline void ComposedTreeIterator<ContextInlineCapacity>::traverseNextLeavingCont
 {
     while (context().iterator == context().end && m_contextStack.size() > 1) {
         m_contextStack.removeLast();
-        if (RefPtr slot = dynamicDowncast<HTMLSlotElement>(current()); slot && advanceInSlot(1, *slot))
+        if (RefPtr<HTMLSlotElement> slot = dynamicDowncast<HTMLSlotElement>(current()); slot && advanceInSlot(1, *slot))
             return;
         if (context().iterator == context().end)
             return;
@@ -467,7 +480,8 @@ inline void ComposedTreeIterator<ContextInlineCapacity>::traverseSiblingInSlot(i
 
     m_contextStack.removeLast();
 
-    if (!advanceInSlot(direction, downcast<HTMLSlotElement>(current())))
+    Ref<HTMLSlotElement> slot = downcast<HTMLSlotElement>(current());
+    if (!advanceInSlot(direction, slot))
         *this = { };
 }
 

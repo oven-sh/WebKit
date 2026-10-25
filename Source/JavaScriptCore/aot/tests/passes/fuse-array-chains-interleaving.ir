@@ -1,0 +1,626 @@
+# A chain is fused only if nobody can tell that its callbacks run element by element, and the decline names the obstacle
+# FORM: Prepared
+# OPTIONS: report=Declines heat=OnlyLoopsAreHot
+# RUN: pass FuseArrayChains
+# RUN(DECLINES): pass FuseArrayChains
+# STATISTIC: ArrayChainsFused = 14
+# CHECK: outcome: Changed
+# DECLINES: outcome: Changed
+# DECLINES: decline ArrayChainNotFused f17 v7 None [0] reason=SourceIsNotPristine
+# DECLINES: decline ArrayChainNotFused f19 v7 None [0] reason=CallbackIsNotAFunction
+# DECLINES: decline ArrayChainNotFused f20 v7 None [0] reason=CalleeIsUnknown
+# DECLINES: decline ArrayChainNotFused f22 v7 None [0] reason=CallbackSeesIntermediateArray
+# DECLINES: decline ArrayChainNotFused f25 v7 None [0] reason=CallbackSeesIntermediateArray
+# DECLINES: decline ArrayChainNotFused f26 v7 None [0] reason=CallbacksInterfere
+# DECLINES: decline ArrayChainNotFused f28 v7 None [0] reason=CallbacksInterfere
+# DECLINES: decline ArrayChainNotFused f30 v7 None [0] reason=SkippedCallIsObservable
+# DECLINES: decline ArrayChainNotFused f31 v7 None [0] reason=SkippedCallIsObservable
+# DECLINES: decline ArrayChainNotFused f33 v7 None [0] reason=CallbackWritesSource
+# DECLINES: decline ArrayChainNotFused f35 v11 None [0] reason=CallbackWritesSource
+# DECLINES: decline ArrayChainNotFused f37 v9 None [0] reason=ValueBetweenLinksInterferes
+# DECLINES: decline ArrayChainNotFused f38 v10 None [0] reason=ValueBetweenLinksInterferes
+# DECLINES: decline ArrayChainNotFused f43 v6 None [0] reason=CallbackWritesSource
+# DECLINES: decline ArrayChainNotFused f46 v11 None [0] reason=CallbackWritesSource
+# DECLINES-NOT: decline
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Row" fields=[{key="id" declared={type=number}}]
+variable g0 name="stored" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="callback" module=m0 declared={type=anything} initialization=Undefined
+runtimefunction id=33 function=f1
+runtimefunction id=35 function=f2
+runtimefunction id=44 function=f3
+runtimefunction id=65 function=f4
+runtimefunction id=131090 function=f0
+function f0 name="traverseArray" role=Library enclosingRuntimeFunction=131090 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v6 = Undefined
+    Return v6
+}
+function f1 name="filter" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=33 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, -, v4, v3, v0
+    Return v5
+}
+function f2 name="find" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=35 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, -, v4, v3, v0
+    Return v5
+}
+function f3 name="forEach" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=44 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, -, v4, v3, v0
+    Return v5
+}
+function f4 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, -, v4, v3, v0
+    Return v5
+}
+
+function f5 name="isPositive" kind=Arrow parameters=[{type=number}] results=[{type=boolean}] {
+    v1 = Integer integer=0
+    v2 = Less v1, v0
+    Return v2
+}
+
+function f6 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}
+
+function f7 name="readsArray" kind=Arrow parameters=[{type=number}, {type=number}, {type=anything}] results=[{type=anything}] {
+    Return v2
+}
+
+function f8 name="ignoresArray" kind=Arrow parameters=[{type=number}, {type=number}, {type=anything}] results=[{type=number}] {
+    v3 = Add v0, v1
+    Return v3
+}
+
+function f9 name="usesArguments" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: int[0, 4294967295], v1: number, v2: Array<anything>):
+    Return v1
+}
+
+function f10 name="writesVariable" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+    PutModuleVariable v0 variable=g0
+    Return v0
+}
+
+function f11 name="readsVariable" kind=Arrow parameters=[{type=number}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    Return v1
+}
+
+function f12 name="mayThrow" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = RequireObjectCoercible v0
+    Return v1
+}
+
+function f13 name="pushes" kind=Arrow captures=[{type=Array<anything>}] parameters=[{type=number}] results=[{type=number}] {
+    AppendElement v0, v1
+    Return v1
+}
+
+function f14 name="callsCapture" kind=Arrow captures=[{type=function}] parameters=[{type=number}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+}
+
+function f15 name="sloppyDouble" flags=[IsSloppy] parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}
+
+function f16 name="row" kind=Arrow parameters=[{type=number}] results=[{type=L0}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+
+function f17 name="sourceNotPristine" parameters=[{type=Array<number>}] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = NewClosure function=f6
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f4
+    v8 = AssumeType v7 castType=Array<number>
+    Return v8
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
+# CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f4
+}
+
+function f18 name="sourcePristine" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = NewClosure function=f6
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f4
+    v8 = AssumeType v7 castType=Array<number>
+    Return v8
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+# CHECK: [[zero18]]: 0 = Integer
+# CHECK-NEXT: [[none18]]: undefined = Undefined
+# CHECK-NEXT: [[fused18]]: anything = CallDirect v0, [[zero18]], [[none18]], v1, [[none18]], v5, [[none18]] function=[[mapMapToArray]]
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+}
+
+function f19 name="callbackMayBeUndefined" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=undefined|function}] results=[{type=anything}] {
+    v2 = NewClosure function=f6
+    v3 = NewArray contents=anything
+    v4 = CallDirect v0, v2, v3 function=f4
+    v5 = AssumeType v4 castType=Array<number>
+    v6 = NewArray contents=anything
+    v7 = CallDirect v5, v1, v6 function=f4
+    v8 = AssumeType v7 castType=Array<number>
+    Return v8
+# CHECK: v4: anything = CallDirect v0, v2, {{*}} function=f4
+# CHECK: v7: anything = CallDirect v5, v1, {{*}} function=f4
+}
+
+function f20 name="unknownSecondCallee" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=function}] results=[{type=anything}] {
+    v2 = NewClosure function=f6
+    v3 = NewArray contents=anything
+    v4 = CallDirect v0, v2, v3 function=f4
+    v5 = AssumeType v4 castType=Array<number>
+    v6 = NewArray contents=anything
+    v7 = CallDirect v5, v1, v6 function=f4
+    v8 = AssumeType v7 castType=Array<number>
+    Return v8
+# CHECK: v4: anything = CallDirect v0, v2, {{*}} function=f4
+# CHECK: v7: anything = CallDirect v5, v1, {{*}} function=f4
+}
+
+function f21 name="unknownFirstCallee" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=function}] results=[{type=anything}] {
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = NewClosure function=f44
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f4
+    v8 = AssumeType v7 castType=Array<number>
+    Return v8
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+# CHECK: [[zero21]]: 0 = Integer
+# CHECK-NEXT: [[none21]]: undefined = Undefined
+# CHECK-NEXT: [[fused21]]: anything = CallDirect v0, [[zero21]], [[none21]], v1, [[none21]], v5, [[none21]] function=[[mapMapToArray]]
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+}
+
+function f22 name="secondCallbackReadsArray" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = NewClosure function=f7
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f4
+    v8 = AssumeType v7 castType=Array<number>
+    Return v8
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
+# CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f4
+}
+
+function f23 name="secondCallbackDeclaresButIgnoresArray" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = NewClosure function=f8
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f4
+    v8 = AssumeType v7 castType=Array<number>
+    Return v8
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+# CHECK: [[zero23]]: 0 = Integer
+# CHECK-NEXT: [[none23]]: undefined = Undefined
+# CHECK-NEXT: [[fused23]]: anything = CallDirect v0, [[zero23]], [[none23]], v1, [[none23]], v5, [[none23]] function=[[mapMapToArray]]
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+}
+
+function f24 name="firstCallbackReadsArray" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f7
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<anything>
+    v5 = NewClosure function=f6
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f4
+    v8 = AssumeType v7 castType=Array<number>
+    Return v8
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+# CHECK: [[zero24]]: 0 = Integer
+# CHECK-NEXT: [[none24]]: undefined = Undefined
+# CHECK-NEXT: [[fused24]]: anything = CallDirect v0, [[zero24]], [[none24]], v1, [[none24]], v5, [[none24]] function=[[mapMapToArray]]
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+}
+
+function f25 name="secondCallbackUsesArguments" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = NewClosure function=f9
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f4
+    v8 = AssumeType v7 castType=Array<number>
+    Return v8
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
+# CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f4
+}
+
+function f26 name="firstWritesWhatSecondReads" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f10
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = NewClosure function=f11
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f4
+    v8 = AssumeType v7 castType=Array<number>
+    Return v8
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
+# CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f4
+}
+
+function f27 name="bothOnlyRead" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f11
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<anything>
+    v5 = NewClosure function=f11
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f4
+    v8 = AssumeType v7 castType=Array<number>
+    Return v8
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+# CHECK: [[zero27]]: 0 = Integer
+# CHECK-NEXT: [[none27]]: undefined = Undefined
+# CHECK-NEXT: [[fused27]]: anything = CallDirect v0, [[zero27]], [[none27]], v1, [[none27]], v5, [[none27]] function=[[mapMapToArray]]
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+}
+
+function f28 name="bothMayThrow" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f12
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = NewClosure function=f12
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f4
+    v8 = AssumeType v7 castType=Array<number>
+    Return v8
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
+# CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f4
+}
+
+function f29 name="firstMayThrowSecondPure" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f12
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = AssumeType v4 castType=Array<number, proven>
+    v6 = NewClosure function=f6
+    v7 = NewArray contents=anything
+    v8 = CallDirect v5, v6, v7 function=f4
+    v9 = AssumeType v8 castType=Array<number>
+    Return v9
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v5, v6, v7 function=
+# CHECK: [[zero29]]: 0 = Integer
+# CHECK-NEXT: [[none29]]: undefined = Undefined
+# CHECK-NEXT: [[fused29]]: anything = CallDirect v0, [[zero29]], [[none29]], v1, [[none29]], v6, [[none29]] function=[[mapMapToArray]]
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v5, v6, v7 function=
+}
+
+function f30 name="secondMayThrowFirstWrites" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f10
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = NewClosure function=f12
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f4
+    v8 = AssumeType v7 castType=Array<number>
+    Return v8
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
+# CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f4
+}
+
+function f31 name="findAfterMapThatLogs" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f10
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = NewClosure function=f5
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f2
+    Return v7
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
+# CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f2
+}
+
+function f32 name="findAfterPureMap" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = NewClosure function=f5
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f2
+    Return v7
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+# CHECK: [[zero32]]: 0 = Integer
+# CHECK-NEXT: [[none32]]: undefined = Undefined
+# CHECK-NEXT: [[fused32]]: anything = CallDirect v0, [[zero32]], [[none32]], v1, [[none32]], v5, [[none32]] function=[[mapToFind]]
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+}
+
+function f33 name="secondPushesToSource" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = NewClosure v0 function=f13
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f4
+    v8 = AssumeType v7 castType=Array<number>
+    Return v8
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
+# CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f4
+}
+
+function f34 name="secondPushesToLocalArray" parameters=[{type=number}, {type=Array<anything>}] results=[{type=anything}] {
+    v2 = NewArray v0, v0 contents=number
+    v3 = CallBuiltin v2 overload=ArrayPrototypeSlice/0
+    v4 = AssumeType v3 castType=Array<number, proven>
+    v5 = NewClosure function=f6
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f4
+    v8 = AssumeType v7 castType=Array<number>
+    v9 = AssumeType v8 castType=Array<number, proven>
+    v10 = NewClosure v1 function=f13
+    v11 = NewArray contents=anything
+    v12 = CallDirect v9, v10, v11 function=f3
+    Return v12
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+# CHECK-NOT: = CallDirect v9, v10, v11 function=
+# CHECK-NOT: CallBuiltin
+# CHECK: [[zero34]]: 0 = Integer
+# CHECK-NEXT: [[none34]]: undefined = Undefined
+# CHECK-NEXT: [[fused34]]: anything = CallDirect v2, [[zero34]], [[none34]], v5, [[none34]], v10, [[none34]] function=[[mapToForEach]]
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+# CHECK-NOT: = CallDirect v9, v10, v11 function=
+# CHECK-NOT: CallBuiltin
+}
+
+function f35 name="copyOfParameterWalkedByUnknownCode" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=function}] results=[{type=anything}] {
+    v2 = CallBuiltin v0 overload=ArrayPrototypeSlice/0
+    v3 = AssumeType v2 castType=Array<number, proven>
+    v4 = NewClosure function=f6
+    v5 = NewArray contents=anything
+    v6 = CallDirect v3, v4, v5 function=f4
+    v7 = AssumeType v6 castType=Array<number>
+    v8 = AssumeType v7 castType=Array<number, proven>
+    v9 = NewClosure v1 function=f14
+    v10 = NewArray contents=anything
+    v11 = CallDirect v8, v9, v10 function=f3
+    Return v11
+# CHECK: v2: {{*}} = CallBuiltin v0 overload=ArrayPrototypeSlice/0
+# CHECK: v6: anything = CallDirect v3, v4, {{*}} function=f4
+# CHECK: v11: anything = CallDirect v8, v9, {{*}} function=f3
+}
+
+function f36 name="copyOfLocalArrayWalkedByUnknownCode" parameters=[{type=number}, {type=function}] results=[{type=anything}] {
+    v2 = NewArray v0, v0 contents=number
+    v3 = CallBuiltin v2 overload=ArrayPrototypeSlice/0
+    v4 = AssumeType v3 castType=Array<number, proven>
+    v5 = NewClosure function=f6
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f4
+    v8 = AssumeType v7 castType=Array<number>
+    v9 = AssumeType v8 castType=Array<number, proven>
+    v10 = NewClosure v1 function=f14
+    v11 = NewArray contents=anything
+    v12 = CallDirect v9, v10, v11 function=f3
+    Return v12
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+# CHECK-NOT: = CallDirect v9, v10, v11 function=
+# CHECK-NOT: CallBuiltin
+# CHECK: [[zero36]]: 0 = Integer
+# CHECK-NEXT: [[none36]]: undefined = Undefined
+# CHECK-NEXT: [[fused36]]: anything = CallDirect v2, [[zero36]], [[none36]], v5, [[none36]], v10, [[none36]] function=[[mapToForEach]]
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+# CHECK-NOT: = CallDirect v9, v10, v11 function=
+# CHECK-NOT: CallBuiltin
+}
+
+function f37 name="callBetweenLinks" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure function=f6
+    v3 = NewArray contents=anything
+    v4 = CallDirect v0, v2, v3 function=f4
+    v5 = AssumeType v4 castType=Array<number>
+    v6 = Call v1
+    v7 = NewClosure function=f6
+    v8 = NewArray contents=anything
+    v9 = CallDirect v5, v7, v8 function=f4
+    v10 = AssumeType v9 castType=Array<number>
+    Return v10
+# CHECK: v4: anything = CallDirect v0, v2, {{*}} function=f4
+# CHECK: v9: anything = CallDirect v5, v7, {{*}} function=f4
+}
+
+function f38 name="variableReadBetweenLinks" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f10
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = AssumeType v4 castType=Array<number, proven>
+    v6 = GetModuleVariable variable=g0
+    PutModuleVariable v6 variable=g1
+    v8 = NewClosure function=f6
+    v9 = NewArray contents=anything
+    v10 = CallDirect v5, v8, v9 function=f4
+    v11 = AssumeType v10 castType=Array<number>
+    Return v11
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
+# CHECK: v10: anything = CallDirect v5, v8, {{*}} function=f4
+}
+
+function f39 name="closureCreatedBetweenLinks" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = NewClosure function=f5
+    v6 = NewClosure function=f6
+    v7 = NewArray contents=anything
+    v8 = CallDirect v4, v6, v7 function=f4
+    v9 = AssumeType v8 castType=Array<number>
+    Return v9
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v6, v7 function=
+# CHECK: [[zero39]]: 0 = Integer
+# CHECK-NEXT: [[none39]]: undefined = Undefined
+# CHECK-NEXT: [[fused39]]: anything = CallDirect v0, [[zero39]], [[none39]], v1, [[none39]], v6, [[none39]] function=[[mapMapToArray]]
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v6, v7 function=
+}
+
+function f40 name="capturedVariableRead" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = GetModuleVariable variable=g1
+    v6 = AssumeType v5 castType=f6
+    v7 = NewArray contents=anything
+    v8 = CallDirect v4, v6, v7 function=f4
+    v9 = AssumeType v8 castType=Array<number>
+    Return v9
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v6, v7 function=
+# CHECK: [[zero40]]: 0 = Integer
+# CHECK-NEXT: [[none40]]: undefined = Undefined
+# CHECK-NEXT: [[fused40]]: anything = CallDirect v0, [[zero40]], [[none40]], v1, [[none40]], v6, [[none40]] function=[[mapMapToArray]]
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v6, v7 function=
+}
+
+function f41 name="sloppyFunction" flags=[IsSloppy] parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f15
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = NewClosure function=f15
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f4
+    v8 = AssumeType v7 castType=Array<number>
+    Return v8
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+# CHECK: [[zero41]]: 0 = Integer
+# CHECK-NEXT: [[none41]]: undefined = Undefined
+# CHECK-NEXT: [[fused41]]: anything = CallDirect v0, [[zero41]], [[none41]], v1, [[none41]], v5, [[none41]] function=[[mapMapToArray]]
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+}
+
+function f42 name="oneCallbackWithEffects" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=function}] results=[{type=anything}] {
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<anything>
+    v5 = AssumeType v4 castType=Array<anything, proven, pristine[Storage, Names]>
+    v6 = GetArrayLength v5
+    Return v6
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: GetArrayLength
+# CHECK: [[zero42]]: 0 = Integer
+# CHECK-NEXT: [[none42]]: undefined = Undefined
+# CHECK-NEXT: [[fused42]]: anything = CallDirect v0, [[zero42]], [[none42]], v1, [[none42]] function=[[mapToLength]]
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: GetArrayLength
+}
+
+function f43 name="joinOfObjects" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f16
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<object>
+    v5 = AssumeType v4 castType=Array<object, proven>
+    v6 = CallBuiltin v5 overload=ArrayPrototypeJoin/0
+    Return v6
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
+# CHECK: v6: string = CallBuiltin v5 overload=ArrayPrototypeJoin/0
+}
+
+function f44 name="same" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+# What an unknown function returns may be no number. The second callback tests its argument in its own body, and that test throws nothing.
+function f45 name="unknownFirstCalleeSecondTakesNumbers" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=function}] results=[{type=anything}] {
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f4
+    v4 = AssumeType v3 castType=Array<number>
+    v5 = NewClosure function=f6
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f4
+    v8 = AssumeType v7 castType=Array<number>
+    Return v8
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+# CHECK: [[zero45]]: 0 = Integer
+# CHECK-NEXT: [[none45]]: undefined = Undefined
+# CHECK-NEXT: [[fused45]]: anything = CallDirect v0, [[zero45]], [[none45]], v1, [[none45]], v5, [[none45]] function=[[mapMapToArray]]
+# CHECK-NOT: = CallDirect v0, v1, v2 function=
+# CHECK-NOT: = CallDirect v4, v5, v6 function=
+}
+
+function f46 name="copyOfLocalArrayThatSecondCallbackHoldsAndPushesTo" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewArray v0, v0 contents=number
+    v2 = CallBuiltin v1 overload=ArrayPrototypeSlice/0
+    v3 = AssumeType v2 castType=Array<number, proven>
+    v4 = NewClosure function=f6
+    v5 = NewArray contents=anything
+    v6 = CallDirect v3, v4, v5 function=f4
+    v7 = AssumeType v6 castType=Array<number>
+    v8 = AssumeType v7 castType=Array<number, proven>
+    v9 = NewClosure v1 function=f13
+    v10 = NewArray contents=anything
+    v11 = CallDirect v8, v9, v10 function=f3
+    Return v11
+# CHECK: v2: {{*}} = CallBuiltin v1 overload=ArrayPrototypeSlice/0
+# CHECK: v6: anything = CallDirect v3, v4, {{*}} function=f4
+# CHECK: v11: anything = CallDirect v8, v9, {{*}} function=f3
+}
+
+# CHECK: function [[mapToLength]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=17}
+# CHECK: function [[mapToForEach]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=18}
+# CHECK: function [[mapToFind]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=22}
+# CHECK: function [[mapMapToArray]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=80}
+# CHECK-NOT: role=ChainStep

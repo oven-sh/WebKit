@@ -86,9 +86,6 @@ public:
         : loader(WTF::move(loader))
         , representationFinishedLoading(NO)
         , includedInWebKitStatistics(NO)
-#if PLATFORM(IOS_FAMILY)
-        , _dataSourceDelegate(nil)
-#endif
     {
     }
     ~WebDataSourcePrivate()
@@ -106,16 +103,13 @@ public:
     RetainPtr<id<WebDocumentRepresentation> > representation;
     BOOL representationFinishedLoading;
     BOOL includedInWebKitStatistics;
-#if PLATFORM(IOS_FAMILY)
-    NSObject<WebDataSourcePrivateDelegate> *_dataSourceDelegate;
-#endif
 #if USE(QUICK_LOOK)
     RetainPtr<NSDictionary> _quickLookContent;
     RefPtr<WebCore::LegacyPreviewLoaderClient> _quickLookPreviewLoaderClient;
 #endif
 };
 
-static inline WebDataSourcePrivate* NODELETE toPrivate(void* privateAttribute)
+static inline WebDataSourcePrivate* LEGACY_NODELETE toPrivate(void* privateAttribute)
 {
     return reinterpret_cast<WebDataSourcePrivate*>(privateAttribute);
 }
@@ -145,7 +139,8 @@ void addTypesFromClass(NSMutableDictionary *allTypes, Class objCClass, NSArray *
 
 + (Class)_representationClassForMIMEType:(NSString *)MIMEType allowingPlugins:(BOOL)allowPlugins
 {
-    Class repClass;
+    // Out-parameter; classes are never deallocated.
+    SUPPRESS_UNRETAINED_LOCAL Class repClass;
     return [WebView _viewClass:nil andRepresentationClass:&repClass forMIMEType:MIMEType allowingPlugins:allowPlugins] ? repClass : nil;
 }
 @end
@@ -166,7 +161,8 @@ void addTypesFromClass(NSMutableDictionary *allTypes, Class objCClass, NSArray *
 - (void)_addSubframeArchives:(NSArray *)subframeArchives
 {
     // FIXME: This SPI is poor, poor design. Can we come up with another solution for those who need it?
-    for (WebArchive *archive in subframeArchives)
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL WebArchive *archive in subframeArchives)
         protect(toPrivate(_private)->loader)->addAllArchiveResources(protect(*[archive _coreLegacyWebArchive]));
 }
 

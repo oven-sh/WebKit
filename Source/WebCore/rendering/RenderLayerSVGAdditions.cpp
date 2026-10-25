@@ -45,6 +45,7 @@
 #include "RenderSVGResourceClipper.h"
 #include "RenderSVGResourceContainer.h"
 #include "RenderSVGRoot.h"
+#include "RenderSVGShape.h"
 #include "RenderSVGText.h"
 #include "RenderSVGViewportContainer.h"
 #include "SVGFilterElement.h"
@@ -68,7 +69,7 @@ WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(RenderLayer::SVGData);
 class SVGNonLayerClippingAndMaskingScope {
     WTF_MAKE_NONCOPYABLE(SVGNonLayerClippingAndMaskingScope);
 public:
-    SVGNonLayerClippingAndMaskingScope(GraphicsContext& context, RenderElement& child, std::optional<LayoutSize> offsetFromRoot, const RenderLayer::LayerPaintingInfo& paintingInfo, OptionSet<PaintBehavior> paintBehavior, RenderObject* subtreePaintRoot, RenderLayer& hostLayer, bool isCollectingEventRegion)
+    SVGNonLayerClippingAndMaskingScope(GraphicsContext& context, RenderElement& child, std::optional<LayoutSize> offsetFromRoot, const RenderLayer::LayerPaintingInfo& paintingInfo, OptionSet<PaintBehavior> paintBehavior, RenderObject* subtreePaintRoot, RenderLayer& hostLayer, bool isCollectingEventRegion, StateSavedByCaller stateSavedByCaller = StateSavedByCaller::No)
         : m_context(context)
         , m_paintingInfo(paintingInfo)
         , m_paintBehavior(paintBehavior)
@@ -83,7 +84,7 @@ public:
         m_offsetFromRoot = *offsetFromRoot;
 
         if (child.hasClipPath())
-            m_clipScope.emplace(context, paintingInfo.regionContext, *svgChild, *offsetFromRoot, LayoutSize(), LayoutRect(), isCollectingEventRegion, ClipPathPaintScope::CoordinateMode::NonLayerPaint);
+            m_clipScope.emplace(context, paintingInfo.regionContext, *svgChild, *offsetFromRoot, LayoutSize(), LayoutRect(), isCollectingEventRegion, ClipPathPaintScope::CoordinateMode::NonLayerPaint, stateSavedByCaller);
 
         // The mask, and a clip that can't be a path, composite over the foreground, so they need a
         // painting context. While only the event region is collected there is nothing to composite.
@@ -123,6 +124,8 @@ public:
 
         m_maskLayer.reset();
     }
+
+    bool LEGACY_NODELETE paintsIntoMaskLayer() const { return !!m_maskLayer; }
 
 private:
     void paintPhase(RenderLayerModelObject& renderer, PaintPhase phase, const LayoutPoint& paintOffset)
@@ -265,7 +268,21 @@ void RenderLayer::paintForegroundChildrenForSVG(GraphicsContext& context, const 
         return;
     }
 
+    // FIXME: A composited document element RenderSVGRoot still blends the root background.
+    bool blendContents = blendModeAppliesToSVGRootContentsOnly() && paintsWithTransparency(localPaintingInfo.paintBehavior);
+    if (blendContents) {
+        context.save();
+        context.setCompositeOperation(context.compositeOperation(), blendMode());
+        context.beginTransparencyLayer(1);
+        context.setCompositeOperation(context.compositeOperation(), BlendMode::Normal);
+    }
+
     paintChildrenInDOMOrderForSVG(context, localPaintingInfo, paintFlags, layerFragments, paintBehavior, subtreePaintRoot, svgPaintOrderItemRange, svgFilterChildLayerCorrection);
+
+    if (blendContents) {
+        context.endTransparencyLayer();
+        context.restore();
+    }
 }
 
 RenderLayer::HitLayer RenderLayer::hitTestChildrenForSVG(RenderLayer* rootLayer, const HitTestRequest& request, HitTestResult& result, const LayoutRect& hitTestRect, const HitTestLocation& hitTestLocation, const HitTestingTransformState* transformState, double* zOffsetForDescendants)
@@ -279,6 +296,12 @@ RenderLayer::HitLayer RenderLayer::hitTestChildrenForSVG(RenderLayer* rootLayer,
             return { };
     }
 
+    // Ignore points outside a nested <svg> viewport. hitTestLayer() would only clip them after the children were tested.
+    if (auto* viewportContainer = dynamicDowncast<RenderSVGViewportContainer>(renderer())) {
+        if (SVGRenderSupport::isOverflowHidden(*viewportContainer) && !hitTestLocation.intersects(viewportContainer->overflowClipRect({ })))
+            return { };
+    }
+
     return hitTestChildrenInDOMOrderForSVG(rootLayer, request, result, hitTestRect, hitTestLocation, transformState, zOffsetForDescendants);
 }
 
@@ -287,8 +310,28 @@ bool RenderLayer::shouldSkipRepaintAfterLayoutForSVG() const
     ASSERT(m_svgData);
     ASSERT(renderer().document().settings().layerBasedSVGEngineEnabled());
 
-    // The SVG containers themselves never trigger repaints, only their contents are allowed to.
-    return is<RenderSVGContainer>(renderer()) && !shouldPaintWithFilters();
+    // SVG containers leave repaints to their contents, unless they changed themselves.
+    if (!is<RenderSVGContainer>(renderer()) || shouldPaintWithFilters())
+        return false;
+    return m_repaintStatus != RepaintStatus::NeedsFullRepaint || is<RenderSVGHiddenContainer>(renderer());
+}
+
+std::optional<TransformationMatrix> RenderLayer::containerTransformForRepaintForSVG() const
+{
+    // Hidden containers never paint, so their transform needs no repaint.
+    CheckedPtr container = dynamicDowncast<RenderSVGContainer>(renderer());
+    if (!container || is<RenderSVGHiddenContainer>(*container))
+        return std::nullopt;
+    return container->transformToParentUserSpace();
+}
+
+void RenderLayer::setNeedsFullRepaintIfSVGContainerTransformChanged(const RenderLayerModelObject* repaintContainer)
+{
+    // The children of a container cannot repaint the area under its old transform.
+    if (!m_svgData || !m_svgData->containerTransformForRepaintRects || repaintContainer == &renderer())
+        return;
+    if (m_svgData->containerTransformForRepaintRects != containerTransformForRepaintForSVG())
+        m_repaintStatus = RepaintStatus::NeedsFullRepaint;
 }
 
 bool RenderLayer::isCompositedSVGPaintOrderChild() const
@@ -751,7 +794,7 @@ std::optional<RenderLayer::SVGRendererTransform> RenderLayer::computeRendererTra
 
     // For the outermost viewport container (anonymous child of RenderSVGRoot), apply the
     // content-box origin offset (border+padding).
-    if (auto* viewportContainer = dynamicDowncast<RenderSVGViewportContainer>(rendererRef.get()); viewportContainer && viewportContainer->isAnonymous()) {
+    if (CheckedPtr viewportContainer = dynamicDowncast<RenderSVGViewportContainer>(rendererRef.get()); viewportContainer && viewportContainer->isAnonymous()) {
         if (CheckedPtr svgRoot = dynamicDowncast<RenderSVGRoot>(viewportContainer->parent())) {
             auto contentBoxLocation = svgRoot->contentBoxLocation();
             if (!contentBoxLocation.isZero())
@@ -800,7 +843,10 @@ void RenderLayer::paintRendererByApplyingTransformForSVG(GraphicsContext& contex
     if (!nominalPreTranslation.isZero())
         scopeTransform.translateRight(-nominalPreTranslation.width().toFloat(), -nominalPreTranslation.height().toFloat());
 
-    TransformPaintScope scope(context, paintingInfo, scopeTransform, deviceScaleFactor, adjustedSubpixelOffset);
+    bool paintsShapeWithSharedState = is<RenderSVGShape>(rendererToPaint.get()) && !rendererToPaint->hasSelfPaintingLayer() && !rendererToPaint->hasOutline() && !rendererToPaint->hasMask();
+    auto stateSavedByCaller = paintsShapeWithSharedState ? StateSavedByCaller::Yes : StateSavedByCaller::No;
+    GraphicsContextStateSaver sharedStateSaver(context, paintsShapeWithSharedState);
+    TransformPaintScope scope(context, paintingInfo, scopeTransform, deviceScaleFactor, adjustedSubpixelOffset, nullptr, stateSavedByCaller);
 
     auto adjustedPaintFlags = paintFlags;
     adjustedPaintFlags.remove(PaintLayerFlag::PaintingOverflowContents);
@@ -814,10 +860,11 @@ void RenderLayer::paintRendererByApplyingTransformForSVG(GraphicsContext& contex
     } else {
         // Non-layer renderer painted directly within the transform scope.
         auto& transformedPaintingInfo = scope.transformedPaintingInfo();
-        auto paintInScope = [&](PaintPhase phase, const LayoutPoint& offset) {
+        auto paintInScope = [&](PaintPhase phase, const LayoutPoint& offset, StateSavedByCaller rendererStateSavedByCaller = StateSavedByCaller::No) {
             PaintInfo paintInfo(context, transformedPaintingInfo.paintDirtyRect, phase, paintBehavior, subtreePaintRoot,
                 nullptr, nullptr, &transformedPaintingInfo.rootLayer->renderer(), this,
                 transformedPaintingInfo.requireSecurityOriginAccessForWidgets);
+            paintInfo.stateSavedByCaller = rendererStateSavedByCaller;
             rendererToPaint->paint(paintInfo, offset);
         };
 
@@ -833,20 +880,21 @@ void RenderLayer::paintRendererByApplyingTransformForSVG(GraphicsContext& contex
 
         bool isCollectingEventRegion = adjustedPaintFlags.contains(PaintLayerFlag::CollectingEventRegion);
         {
-            SVGNonLayerClippingAndMaskingScope clippingAndMaskingScope(context, rendererToPaint.get(), toLayoutSize(selfPaintOffset), transformedPaintingInfo, paintBehavior, subtreePaintRoot, *this, isCollectingEventRegion);
+            SVGNonLayerClippingAndMaskingScope clippingAndMaskingScope(context, rendererToPaint.get(), toLayoutSize(selfPaintOffset), transformedPaintingInfo, paintBehavior, subtreePaintRoot, *this, isCollectingEventRegion, stateSavedByCaller);
             if (rendererToPaint->isRenderSVGContainer()) {
                 // Children recurse from the container's nominal origin (selfPaintOffset plus current) and
                 // add their own currentSVGLayoutLocation. The anonymous outermost viewport starts at (0, 0).
                 LayoutPoint recursionBase;
-                if (auto* viewportContainer = dynamicDowncast<RenderSVGViewportContainer>(rendererToPaint.get()); viewportContainer && viewportContainer->isAnonymous()) {
+                if (CheckedPtr viewportContainer = dynamicDowncast<RenderSVGViewportContainer>(rendererToPaint.get()); viewportContainer && viewportContainer->isAnonymous()) {
                     // Outermost viewport container: coordinate system starts at (0, 0).
-                } else if (auto* svgModel = dynamicDowncast<RenderSVGModelObject>(rendererToPaint.get()))
+                } else if (CheckedPtr svgModel = dynamicDowncast<RenderSVGModelObject>(rendererToPaint.get()))
                     recursionBase = svgModel->nominalSVGLayoutLocation();
                 paintSubtreeWithinTransformScopeForSVG(context, rendererToPaint.get(), recursionBase, transformedPaintingInfo, adjustedPaintFlags, paintBehavior, subtreePaintRoot);
                 if (rendererToPaint->hasOutline())
                     paintInScope(PaintPhase::SelfOutline, selfPaintOffset);
             } else {
-                paintInScope(PaintPhase::Foreground, selfPaintOffset);
+                bool foregroundIsLastPaint = !clippingAndMaskingScope.paintsIntoMaskLayer();
+                paintInScope(PaintPhase::Foreground, selfPaintOffset, paintsShapeWithSharedState && foregroundIsLastPaint ? StateSavedByCaller::Yes : StateSavedByCaller::No);
                 if (rendererToPaint->hasOutline())
                     paintInScope(PaintPhase::Outline, selfPaintOffset);
             }
@@ -864,7 +912,8 @@ void RenderLayer::paintSubtreeWithinTransformScopeForSVG(GraphicsContext& contex
         if (!viewportContainer->hasSelfPaintingLayer() && SVGRenderSupport::isOverflowHidden(*viewportContainer)) {
             clipSaver.save();
             auto clipOffset = viewportContainer->isTransformed() ? LayoutPoint() : paintOffset;
-            context.clip(FloatRect(static_cast<const RenderSVGModelObject&>(*viewportContainer).overflowClipRect(clipOffset)));
+            // FIXME: Remove suppression once rdar://189998444 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST context.clip(FloatRect(viewportContainer->overflowClipRect(clipOffset)));
         }
     }
 
@@ -953,8 +1002,16 @@ RenderLayer::HitLayer RenderLayer::hitTestChildrenInDOMOrderForSVG(RenderLayer* 
     if (allChildren.isEmpty())
         return { };
 
-    CheckedPtr svgModelObject = dynamicDowncast<RenderSVGModelObject>(renderer());
-    LayoutSize svgOffset = svgModelObject ? toLayoutSize(svgModelObject->nominalSVGLayoutLocation()) : LayoutSize();
+    LayoutSize svgOffset;
+    LayoutSize userSpaceShift;
+    if (CheckedPtr svgModelObject = dynamicDowncast<RenderSVGModelObject>(renderer())) {
+        svgOffset = toLayoutSize(svgModelObject->nominalSVGLayoutLocation());
+        userSpaceShift = svgOffset - offsetFromAncestor(rootLayer);
+    }
+
+    HitTestLocation userSpaceLocation(hitTestLocation, userSpaceShift);
+    auto userSpaceRect = hitTestRect;
+    userSpaceRect.move(userSpaceShift);
 
     for (int i = allChildren.size() - 1; i >= 0; --i) {
         auto& childToPaint = allChildren[i];
@@ -975,7 +1032,7 @@ RenderLayer::HitLayer RenderLayer::hitTestChildrenInDOMOrderForSVG(RenderLayer* 
         CheckedRef childRenderer = *childRendererPtr;
 
         if (childRenderer->isTransformed()) {
-            auto hitLayer = hitTestRendererByInversingTransformForSVG(childRenderer.get(), childToPaint.accumulatedAncestorOffset, request, result, hitTestRect, hitTestLocation);
+            auto hitLayer = hitTestRendererByInversingTransformForSVG(childRenderer.get(), childToPaint.accumulatedAncestorOffset, request, result, userSpaceRect, userSpaceLocation);
             if (hitLayer.layer)
                 return hitLayer;
             continue;
@@ -984,7 +1041,7 @@ RenderLayer::HitLayer RenderLayer::hitTestChildrenInDOMOrderForSVG(RenderLayer* 
         LayoutPoint accumulatedOffset(svgOffset);
         accumulatedOffset += childToPaint.accumulatedAncestorOffset;
 
-        if (childRenderer->nodeAtPoint(request, result, hitTestLocation, accumulatedOffset, HitTestAction::Foreground))
+        if (childRenderer->nodeAtPoint(request, result, userSpaceLocation, accumulatedOffset, HitTestAction::Foreground))
             return { this, 0 };
     }
 
@@ -1004,7 +1061,8 @@ RenderLayer::HitLayer RenderLayer::hitTestRendererByInversingTransformForSVG(Ren
         return { };
 
     auto localPoint = inverse->mapPoint(hitTestLocation.point());
-    auto localRect = enclosingLayoutRect(inverse->mapRect(FloatRect(hitTestRect)));
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST auto localRect = enclosingLayoutRect(inverse->mapRect(FloatRect(hitTestRect)));
 
     HitTestLocation localLocation { LayoutPoint { localPoint } };
 

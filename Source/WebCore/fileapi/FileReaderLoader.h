@@ -40,6 +40,7 @@
 #include <wtf/RefCounted.h>
 #include <wtf/URL.h>
 #include <wtf/WeakPtr.h>
+#include <wtf/text/StringBuilder.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
@@ -63,12 +64,13 @@ public:
         ReadAsBinaryString,
         ReadAsBlob,
         ReadAsText,
+        ReadAsUTF8Text,
         ReadAsDataURL,
         ReadAsBinaryChunks
     };
 
     // If client is given, do the loading asynchronously. Otherwise, load synchronously.
-    WEBCORE_EXPORT static Ref<FileReaderLoader> create(ReadType, FileReaderLoaderClient*);
+    WEBCORE_EXPORT static Ref<FileReaderLoader> LEGACY_NODELETE create(ReadType, FileReaderLoaderClient*);
     WEBCORE_EXPORT ~FileReaderLoader();
 
     WEBCORE_EXPORT void start(ScriptExecutionContext*, Blob&);
@@ -94,7 +96,7 @@ public:
 
     const URL& url() LIFETIME_BOUND { return m_urlForReading; }
 
-    bool NODELETE isCompleted() const;
+    bool LEGACY_NODELETE isCompleted() const;
 
 private:
     // If client is given, do the loading asynchronously. Otherwise, load synchronously.
@@ -107,8 +109,8 @@ private:
     void convertToDataURL();
     bool processResponse(const ResourceResponse&);
 
-    static ExceptionCode NODELETE httpStatusCodeToErrorCode(int);
-    static ExceptionCode NODELETE toErrorCode(BlobResourceHandle::Error);
+    static ExceptionCode LEGACY_NODELETE httpStatusCodeToErrorCode(int);
+    static ExceptionCode LEGACY_NODELETE toErrorCode(BlobResourceHandle::Error);
 
     ReadType m_readType;
     WeakPtr<FileReaderLoaderClient> m_client;
@@ -124,7 +126,10 @@ private:
     String m_stringResult;
 
     // The decoder used to decode the text data.
-    RefPtr<TextResourceDecoder> m_decoder;
+    const RefPtr<TextResourceDecoder> m_decoder;
+
+    // ReadAsUTF8Text decodes the data as it arrives instead of buffering it.
+    StringBuilder m_utf8Text { OverflowPolicy::RecordOverflow };
 
     bool m_variableLength;
     unsigned m_bytesLoaded;

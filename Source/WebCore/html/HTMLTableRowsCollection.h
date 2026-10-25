@@ -55,11 +55,11 @@ public:
 
     HTMLTableElement& tableElement() const { return downcast<HTMLTableElement>(ownerNode()); }
 
-    static HTMLTableRowElement* NODELETE rowAfter(HTMLTableElement&, HTMLTableRowElement*);
-    static HTMLTableRowElement* NODELETE lastRow(HTMLTableElement&);
+    static HTMLTableRowElement* LEGACY_NODELETE rowAfter(HTMLTableElement&, HTMLTableRowElement*);
+    static HTMLTableRowElement* LEGACY_NODELETE lastRow(HTMLTableElement&);
 
     // For CachedHTMLCollection.
-    Element* customElementAfter(Element*) const;
+    Element* LEGACY_NODELETE customElementAfter(Element*) const;
 
 private:
     explicit HTMLTableRowsCollection(HTMLTableElement&);

@@ -76,7 +76,7 @@ void SVGTextLayoutAttributesBuilder::rebuildMetricsForSubtree(RenderSVGText& tex
     m_metricsBuilder.measureTextRenderer(text, nullptr);
 }
 
-static inline void NODELETE processRenderSVGInlineText(const RenderSVGInlineText& text, unsigned& atCharacter, bool& lastCharacterWasSpace)
+static inline void LEGACY_NODELETE processRenderSVGInlineText(const RenderSVGInlineText& text, unsigned& atCharacter, bool& lastCharacterWasSpace)
 {
     auto& string = text.text();
     auto length = string.length();
@@ -187,28 +187,28 @@ void SVGTextLayoutAttributesBuilder::fillCharacterDataMap(const TextPosition& po
 
     SVGLengthContext lengthContext(element.get());
     for (unsigned i = 0; i < position.length; ++i) {
-        const SVGLengthList* xListPtr = i < xListSize ? xList.ptr() : nullptr;
-        const SVGLengthList* yListPtr = i < yListSize ? yList.ptr() : nullptr;
-        const SVGLengthList* dxListPtr = i < dxListSize ? dxList.ptr() : nullptr;
-        const SVGLengthList* dyListPtr = i < dyListSize ? dyList.ptr() : nullptr;
-        const SVGNumberList* rotateListPtr = rotateListSize ? rotateList.ptr() : nullptr;
-        if (!xListPtr && !yListPtr && !dxListPtr && !dyListPtr && !rotateListPtr)
+        bool hasX = i < xListSize;
+        bool hasY = i < yListSize;
+        bool hasDX = i < dxListSize;
+        bool hasDY = i < dyListSize;
+        bool hasRotate = !!rotateListSize;
+        if (!hasX && !hasY && !hasDX && !hasDY && !hasRotate)
             break;
 
         auto& data = m_characterDataMap.ensure((position.start + i + 1), [] {
             return SVGCharacterData();
         }).iterator->value;
 
-        if (xListPtr)
+        if (hasX)
             data.x = xList->items()[i]->value().value(lengthContext);
-        if (yListPtr)
+        if (hasY)
             data.y = yList->items()[i]->value().value(lengthContext);
-        if (dxListPtr)
+        if (hasDX)
             data.dx = dxList->items()[i]->value().value(lengthContext);
-        if (dyListPtr)
+        if (hasDY)
             data.dy = dyList->items()[i]->value().value(lengthContext);
 
-        if (rotateListPtr) {
+        if (hasRotate) {
             unsigned rotateIndex = std::min(i, rotateListSize - 1);
             data.rotate = rotateList->items()[rotateIndex]->value();
         }

@@ -39,6 +39,11 @@
 
 @end
 
+@interface WebDeviceOrientation () {
+    RetainPtr<WebDeviceOrientationInternal> m_internal;
+}
+@end
+
 @implementation WebDeviceOrientation (Internal)
 
 - (id)initWithCoreDeviceOrientation:(RefPtr<WebCore::DeviceOrientationData>&&)coreDeviceOrientation
@@ -46,7 +51,7 @@
     self = [super init];
     if (!self)
         return nil;
-    m_internal = [[WebDeviceOrientationInternal alloc] initWithCoreDeviceOrientation:WTF::move(coreDeviceOrientation)];
+    m_internal = adoptNS([[WebDeviceOrientationInternal alloc] initWithCoreDeviceOrientation:WTF::move(coreDeviceOrientation)]);
     return self;
 }
 
@@ -59,7 +64,7 @@ WebCore::DeviceOrientationData* core(WebDeviceOrientation* orientation)
     return orientation ? orientation->m_internal->m_orientation.get() : 0;
 }
 
-static std::optional<double> NODELETE convert(bool canProvide, double value)
+static std::optional<double> LEGACY_NODELETE convert(bool canProvide, double value)
 {
     if (!canProvide)
         return std::nullopt;
@@ -74,17 +79,11 @@ static std::optional<double> NODELETE convert(bool canProvide, double value)
 #if PLATFORM(IOS_FAMILY)
     // We don't use this API, but make sure that it compiles with the new
     // compass parameters.
-    m_internal = [[WebDeviceOrientationInternal alloc] initWithCoreDeviceOrientation:WebCore::DeviceOrientationData::create(convert(canProvideAlpha, alpha), convert(canProvideBeta, beta), convert(canProvideGamma, gamma), std::nullopt, std::nullopt)];
+    m_internal = adoptNS([[WebDeviceOrientationInternal alloc] initWithCoreDeviceOrientation:WebCore::DeviceOrientationData::create(convert(canProvideAlpha, alpha), convert(canProvideBeta, beta), convert(canProvideGamma, gamma), std::nullopt, std::nullopt)]);
 #else
-    m_internal = [[WebDeviceOrientationInternal alloc] initWithCoreDeviceOrientation:WebCore::DeviceOrientationData::create(convert(canProvideAlpha, alpha), convert(canProvideBeta, beta), convert(canProvideGamma, gamma), std::nullopt)];
+    m_internal = adoptNS([[WebDeviceOrientationInternal alloc] initWithCoreDeviceOrientation:WebCore::DeviceOrientationData::create(convert(canProvideAlpha, alpha), convert(canProvideBeta, beta), convert(canProvideGamma, gamma), std::nullopt)]);
 #endif
     return self;
-}
-
-- (void)dealloc
-{
-    [m_internal release];
-    [super dealloc];
 }
 
 @end

@@ -210,37 +210,6 @@ void JIT::emit_op_is_number(const JSInstruction* currentInstruction)
     emitPutVirtualRegister(dst, regT0);
 }
 
-#if USE(BIGINT32)
-void JIT::emit_op_is_big_int(const JSInstruction* currentInstruction)
-{
-    auto bytecode = currentInstruction->as<OpIsBigInt>();
-    VirtualRegister dst = bytecode.m_dst;
-    VirtualRegister value = bytecode.m_operand;
-
-    emitGetVirtualRegister(value, regT0);
-    Jump isCell = branchIfCell(regT0);
-
-    move(TrustedImm64(JSValue::BigInt32Mask), regT1);
-    and64(regT1, regT0);
-    compare64(Equal, regT0, TrustedImm32(JSValue::BigInt32Tag), regT0);
-    boxBoolean(regT0, regT0);
-    Jump done = jump();
-
-    isCell.link(this);
-    compare8(Equal, Address(regT0, JSCell::typeInfoTypeOffset()), TrustedImm32(HeapBigIntType), regT0);
-    boxBoolean(regT0, regT0);
-
-    done.link(this);
-    emitPutVirtualRegister(dst, regT0);
-}
-#else // if !USE(BIGINT32)
-[[noreturn]] void JIT::emit_op_is_big_int(const JSInstruction*)
-{
-    // If we only have HeapBigInts, then we emit isCellWithType instead of isBigInt.
-    RELEASE_ASSERT_NOT_REACHED();
-}
-#endif
-
 void JIT::emit_op_is_cell_with_type(const JSInstruction* currentInstruction)
 {
     auto bytecode = currentInstruction->as<OpIsCellWithType>();
@@ -763,47 +732,6 @@ void JIT::compileOpStrictEq(const JSInstruction* currentInstruction)
         return;
     }
 
-#if USE(BIGINT32)
-    /* At a high level we do (assuming 'type' to be StrictEq):
-    If (left is Double || right is Double)
-        goto slowPath;
-    result = (left == right);
-    if (result)
-        goto done;
-    if (left is Cell || right is Cell)
-        goto slowPath;
-    done:
-    return result;
-    */
-
-    // This fragment implements (left is Double || right is Double), with a single branch instead of the 4 that would be naively required if we used branchIfInt32/branchIfNumber
-    // The trick is that if a JSValue is an Int32, then adding 1<<49 to it will make it overflow, leaving all high bits at 0
-    // If it is not a number at all, then 1<<49 will be its only high bit set
-    // Leaving only doubles above or equal 1<<50.
-    move(regT0, regT2);
-    move(regT1, regT3);
-    move(TrustedImm64(JSValue::LowestOfHighBits), regT5);
-    add64(regT5, regT2);
-    add64(regT5, regT3);
-    lshift64(TrustedImm32(1), regT5);
-    or64(regT2, regT3);
-    addSlowCase(branch64(AboveOrEqual, regT3, regT5));
-
-    compare64(Equal, regT0, regT1, regT5);
-    Jump done = branchTest64(NonZero, regT5);
-
-    move(regT0, regT2);
-    // Jump slow if at least one is a cell (to cover strings and BigInts).
-    and64(regT1, regT2);
-    // FIXME: we could do something more precise: unless there is a BigInt32, we only need to do the slow path if both are strings
-    addSlowCase(branchIfCell(regT2));
-
-    done.link(this);
-    if constexpr (std::same_as<Op, OpNstricteq>)
-        xor64(TrustedImm64(1), regT5);
-    boxBoolean(regT5, regT5);
-    emitPutVirtualRegister(dst, regT5);
-#else // if !USE(BIGINT32)
     // Cells are slow only when they actually need value-based equality (Strings, HeapBigInts).
     // For other cell pairs we can answer with a pointer compare directly.
     or64(regT1, regT0, regT2);
@@ -834,7 +762,6 @@ void JIT::compileOpStrictEq(const JSInstruction* currentInstruction)
     boxBoolean(regT0, regT0);
 
     emitPutVirtualRegister(dst, regT0);
-#endif
 }
 
 void JIT::emit_op_stricteq(const JSInstruction* currentInstruction)
@@ -943,45 +870,6 @@ void JIT::compileOpStrictEqJump(const JSInstruction* currentInstruction)
         return;
     }
 
-#if USE(BIGINT32)
-    /* At a high level we do (assuming 'type' to be StrictEq):
-    If (left is Double || right is Double)
-       goto slowPath;
-    if (left == right)
-       goto taken;
-    if (left is Cell || right is Cell)
-       goto slowPath;
-    goto notTaken;
-    */
-
-    // This fragment implements (left is Double || right is Double), with a single branch instead of the 4 that would be naively required if we used branchIfInt32/branchIfNumber
-    // The trick is that if a JSValue is an Int32, then adding 1<<49 to it will make it overflow, leaving all high bits at 0
-    // If it is not a number at all, then 1<<49 will be its only high bit set
-    // Leaving only doubles above or equal 1<<50.
-    move(regT0, regT2);
-    move(regT1, regT3);
-    move(TrustedImm64(JSValue::LowestOfHighBits), regT5);
-    add64(regT5, regT2);
-    add64(regT5, regT3);
-    lshift64(TrustedImm32(1), regT5);
-    or64(regT2, regT3);
-    addSlowCase(branch64(AboveOrEqual, regT3, regT5));
-
-    Jump areEqual = branch64(Equal, regT0, regT1);
-    if constexpr (std::same_as<Op, OpJstricteq>)
-        addJump(areEqual, target);
-
-    move(regT0, regT2);
-    // Jump slow if at least one is a cell (to cover strings and BigInts).
-    and64(regT1, regT2);
-    // FIXME: we could do something more precise: unless there is a BigInt32, we only need to do the slow path if both are strings
-    addSlowCase(branchIfCell(regT2));
-
-    if constexpr (std::same_as<Op, OpJnstricteq>) {
-        addJump(jump(), target);
-        areEqual.link(this);
-    }
-#else // if !USE(BIGINT32)
     JumpList taken;
     JumpList notTaken;
 
@@ -1027,7 +915,6 @@ void JIT::compileOpStrictEqJump(const JSInstruction* currentInstruction)
 
     notTaken.link(this);
     addJump(taken, target);
-#endif
 }
 
 void JIT::emit_op_jstricteq(const JSInstruction* currentInstruction)
@@ -1592,9 +1479,14 @@ void JIT::emit_op_to_this(const JSInstruction* currentInstruction)
 
     emitJumpSlowCaseIfNotJSCell(regT0, srcDst);
 
-    addSlowCase(branchIfNotType(regT0, FinalObjectType));
     load32FromMetadata(bytecode, OpToThis::Metadata::offsetOfCachedStructureID(), regT2);
-    addSlowCase(branch32(NotEqual, Address(regT0, JSCell::structureIDOffset()), regT2));
+    Jump done = branch32(Equal, Address(regT0, JSCell::structureIDOffset()), regT2);
+    load32FromMetadata(bytecode, OpToThis::Metadata::offsetOfToThisStatus(), regT2);
+    addSlowCase(branch32(NotEqual, regT2, TrustedImm32(ToThisConflicted)));
+    addSlowCase(branchIfNotObject(regT0));
+    addSlowCase(branchIfType(regT0, JSTypeRange { JSType(FirstScopeType), JSType(LastScopeType) }));
+    emitValueProfilingSite(bytecode, regT0);
+    done.link(this);
 }
 
 void JIT::emit_op_create_this(const JSInstruction* currentInstruction)
@@ -1626,6 +1518,12 @@ void JIT::emit_op_create_this(const JSInstruction* currentInstruction)
     emitAllocateJSObject(resultReg, JITAllocator::variable(), allocatorReg, structureReg, butterfly, scratchReg, slowCases, SlowAllocationResult::UndefinedBehavior);
     load8(Address(structureReg, Structure::inlineCapacityOffset()), scratchReg);
     emitInitializeInlineStorage(resultReg, scratchReg);
+    Jump hasMonoProto = branchTest64(NonZero, Address(structureReg, Structure::prototypeOffset()));
+    emitGetVirtualRegister(callee, scratchReg);
+    loadPtr(Address(scratchReg, JSFunction::offsetOfExecutableOrRareData()), scratchReg);
+    loadPtr(Address(scratchReg, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfPrototype() - JSFunction::rareDataTag), scratchReg);
+    store64(scratchReg, Address(resultReg, offsetRelativeToBase(knownPolyProtoOffset)));
+    hasMonoProto.link(this);
     mutatorFence(*m_vm);
     addSlowCase(slowCases);
     emitPutVirtualRegister(bytecode.m_dst, resultReg);

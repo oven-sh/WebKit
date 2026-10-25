@@ -34,6 +34,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/css-module/resources/record-fetch.py
 /LayoutTests/imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/css-module/resources/redirect-target.css
 /LayoutTests/imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/css-module/resources/referrer-checker.py
+/LayoutTests/imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/css-module/resources/should-not-be-loaded.js
 /LayoutTests/imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/css-module/resources/utf-8.css
 /LayoutTests/imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/css-module/resources/windows-1250.css
 /LayoutTests/imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/css-module/resources/worker-dynamic-import.sub.js

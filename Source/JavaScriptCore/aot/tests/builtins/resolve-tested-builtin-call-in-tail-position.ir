@@ -1,0 +1,48 @@
+# A call in tail position whose callee is a known native built-in is demoted, so that its operands can be tested like those of any other call
+# FORM: Prepared
+# RUN: pass ResolveBuiltins PlaceTypeTests ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="receiverNeedsPristineTest" parameters=[{type=Array}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array, v1: number):
+    v2 = Builtin builtin=ArrayPrototypeIndexOf
+    v3 = Call v2, v0, v1
+    ReturnCall v3
+}
+# CHECK-LABEL: function f0 name="receiverNeedsPristineTest"
+# CHECK-NOT: ReturnCall
+# CHECK: IsPristine v0 builtinClass=Array aspects=[Storage]
+# CHECK: = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/0 [{{*}}isDemotedTailCall
+# CHECK-NOT: ReturnCall
+
+function f1 name="argumentNeedsTypeTest" parameters=[{type=string}, {type=undefined|null|string}] results=[{type=anything}] {
+  b0(v0: string, v1: undefined|null|string):
+    v2 = Builtin builtin=StringPrototypeSplit
+    v3 = Call v2, v0, v1
+    ReturnCall v3
+}
+# CHECK-LABEL: function f1 name="argumentNeedsTypeTest"
+# CHECK-NOT: ReturnCall
+# CHECK: TypeTest v1 testedType=string
+# CHECK: ([[separator1]]: string):
+# CHECK: = CallBuiltin v0, [[separator1]] overload=StringPrototypeSplit/0 [isDemotedTailCall]
+# CHECK-NOT: ReturnCall
+
+function f2 name="unknownCallee" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number):
+    v2 = PropGet v0 key="indexOf"
+    v3 = Call v2, v0, v1 calleeKey="indexOf"
+    ReturnCall v3
+}
+# CHECK-LABEL: function f2 name="unknownCallee"
+# CHECK: ReturnCall
+
+function f3 name="forwardedCall" parameters=[{type=undefined|null|function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: undefined|null|function, v1: anything):
+    v2 = Builtin builtin=FunctionPrototypeCall
+    v3 = Call v2, v0, v1
+    ReturnCall v3
+}
+# CHECK-LABEL: function f3 name="forwardedCall"
+# CHECK: ReturnCall

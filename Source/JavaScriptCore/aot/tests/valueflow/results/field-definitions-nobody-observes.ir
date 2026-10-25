@@ -1,0 +1,211 @@
+# A class field without an initializer is defined as undefined, and the constructor stores to it. Where every path stores before anybody else can look at the object, nobody sees that undefined:
+# it is no part of what the field holds, and the definition stores a value that the field holds anyway (0, null) or stays as it is (a reference).
+# Not where the constructor reads the field first, hands `this` on, stores on one path only, reads `this` back out of a field, or where other code runs between super(..) and the store,
+# or between the definition and the store of an object that somebody held before its initializer ran
+# FORM: AsRead
+# RUN: valueflow-apply
+
+# CHECK: layout L0 kind=Instance name="Filled" {{*}}{key="count" declared={type=i32}{{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="link" declared={type=null{{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="next" declared={type=undefined|L0{{*}}occupancy=AlwaysFilled
+# CHECK: layout L1 kind=Instance name="ReadsFirst" {{*}}{key="count" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}}
+# CHECK: layout L2 kind=Instance name="HandsThisOn" {{*}}{key="count" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}}
+# CHECK: layout L3 kind=Instance name="StoresOnOnePath" {{*}}{key="count" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}}
+# CHECK: layout L4 kind=Instance name="ReadsItselfBack" {{*}}{key="count" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}}
+# CHECK: layout L5 kind=Instance name="Below" {{*}}{key="early" {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="late" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}}
+# CHECK: layout L6 kind=Instance name="HeldBeforeInitializer" {{*}}{key="count" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Filled" constructor=f1 fields=[{key="count" declared={type=number} flags=[IsRequired]}, {key="link" declared={type=undefined|null|L0} flags=[IsRequired]}, {key="next" declared={type=undefined|null|L0} flags=[IsRequired]}]
+layout L1 kind=Instance name="ReadsFirst" constructor=f3 fields=[{key="count" declared={type=number} flags=[IsRequired]}]
+layout L2 kind=Instance name="HandsThisOn" constructor=f5 fields=[{key="count" declared={type=number} flags=[IsRequired]}]
+layout L3 kind=Instance name="StoresOnOnePath" constructor=f7 fields=[{key="count" declared={type=number} flags=[IsRequired]}]
+layout L4 kind=Instance name="ReadsItselfBack" constructor=f9 fields=[{key="self" declared={type=undefined|null|L4} flags=[IsRequired]}, {key="count" declared={type=number} flags=[IsRequired]}]
+layout L5 kind=Instance name="Below" base=L0 constructor=f11 fields=[{key="early" declared={type=number} flags=[IsRequired]}, {key="late" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+layout L6 kind=Instance name="HeldBeforeInitializer" constructor=f15 fields=[{key="count" declared={type=number} flags=[IsRequired]}]
+variable g0 name="seen" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=7
+# REPEAT: i = 0..4
+    v%(i*4+1) = NewClosure function=f%(i*2+1)
+    v%(i*4+2) = NewClass v%(i*4+1) layout=L%(i)
+    v%(i*4+3) = FinishClass v%(i*4+2) layout=L%(i)
+    v%(i*4+4) = Construct v%(i*4+3), -, v0
+# END REPEAT
+    v21 = NewClosure function=f11
+    v22 = ResolveHeritage v3
+    v23 = NewClass v21, v3, v22 layout=L5
+    v24 = FinishClass v23 layout=L5
+    v25 = Construct v24, -, v0
+    v26 = CallDirect v4 function=f14
+    v27 = NewClosure function=f15
+    v28 = NewClass v27 layout=L6
+    v29 = FinishClass v28 layout=L6
+    v30 = Construct v29, -, v0
+    Return
+}
+function f1 name="Filled" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f2
+    v6 = CallDirect v1 function=f13
+    v7 = Integer integer=0
+    v8 = BitOr v1, v7
+    PropSet v4, v8 key="count" mode=Strict
+    v10 = Null
+    PropSet v4, v10 key="link" mode=Strict
+    PropSet v4, v4 key="next" mode=Strict
+    Return v4
+}
+# CHECK-LABEL: function f2
+# CHECK: [[zero]]: 0 = Integer
+# CHECK: PropDefine {{*}}, [[zero]] key="count"
+# CHECK: [[null]]: null = Null
+# CHECK: PropDefine {{*}}, [[null]] key="link"
+# CHECK: PropDefine {{*}}, v1 key="next"
+function f2 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Undefined
+    PropDefine v0, v1 key="count"
+    PropDefine v0, v1 key="link"
+    PropDefine v0, v1 key="next"
+    Return v1
+}
+function f3 name="ReadsFirst" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f4
+    v6 = PropGet v4 key="count"
+    PutModuleVariable v6 variable=g0
+    v8 = Integer integer=0
+    v9 = BitOr v1, v8
+    PropSet v4, v9 key="count" mode=Strict
+    Return v4
+}
+# CHECK-LABEL: function f4
+# CHECK: PropDefine {{*}}, v1 key="count"
+function f4 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Undefined
+    PropDefine v0, v1 key="count"
+    Return v1
+}
+function f5 name="HandsThisOn" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    v4 = Convert v3 declared={type=L2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f6
+    v6 = CallDirect v4 function=f13
+    v7 = Integer integer=0
+    v8 = BitOr v1, v7
+    PropSet v4, v8 key="count" mode=Strict
+    Return v4
+}
+# CHECK-LABEL: function f6
+# CHECK: PropDefine {{*}}, v1 key="count"
+function f6 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L2 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Undefined
+    PropDefine v0, v1 key="count"
+    Return v1
+}
+function f7 name="StoresOnOnePath" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
+    v2 = GetConstructPrototype v0 layout=L3
+    v3 = NewObject v2 layout=L3
+    v4 = Convert v3 declared={type=L3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f8
+    v6 = ToBoolean v1
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = Integer integer=0
+    v8 = BitOr v1, v7
+    PropSet v4, v8 key="count" mode=Strict
+    Jump -> next b2()
+  b2():
+    Return v4
+}
+# CHECK-LABEL: function f8
+# CHECK: PropDefine {{*}}, v1 key="count"
+function f8 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L3 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Undefined
+    PropDefine v0, v1 key="count"
+    Return v1
+}
+function f9 name="ReadsItselfBack" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
+    v2 = GetConstructPrototype v0 layout=L4
+    v3 = NewObject v2 layout=L4
+    v4 = Convert v3 declared={type=L4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f10
+    PropSet v4, v4 key="self" mode=Strict
+    v7 = PropGet v4 key="self"
+    v8 = PropGet v7 key="count"
+    PutModuleVariable v8 variable=g0
+    v10 = Integer integer=0
+    v11 = BitOr v1, v10
+    PropSet v4, v11 key="count" mode=Strict
+    Return v4
+}
+# CHECK-LABEL: function f10
+# CHECK: PropDefine {{*}}, v1 key="count"
+function f10 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L4 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Undefined
+    PropDefine v0, v1 key="self"
+    PropDefine v0, v1 key="count"
+    Return v1
+}
+function f11 name="Below" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L5
+    v5 = Convert v4 declared={type=L5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = CallDirect v5 function=f12
+    v7 = Integer integer=1
+    PropSet v5, v7 key="early" mode=Strict
+    v9 = CallDirect v2 function=f13
+    v10 = Integer integer=2
+    PropSet v5, v10 key="late" mode=Strict
+    Return v5
+}
+# CHECK-LABEL: function f12
+# CHECK: [[filler]]: {{*}} = Integer
+# CHECK: PropDefine {{*}}, [[filler]] key="early"
+# CHECK: PropDefine {{*}}, v1 key="late"
+function f12 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L5 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Undefined
+    PropDefine v0, v1 key="early"
+    PropDefine v0, v1 key="late"
+    Return v1
+}
+function f13 name="note" parameters=[{type=anything}] results=[{type=anything}] {
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-LABEL: function f14 name="readNext"
+# CHECK: [[read]]: {{*}} = PropGet {{*}} key="next"
+# CHECK: : L0|L5 = AssumeType [[read]] castType=L0|L5
+function f14 name="readNext" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="next"
+    v2 = PropGet v1 key="count"
+    Return v2
+}
+function f15 name="HeldBeforeInitializer" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
+    v2 = GetConstructPrototype v0 layout=L6
+    v3 = NewObject v2 layout=L6
+    v4 = Convert v3 declared={type=L6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v4 variable=g0
+    v6 = CallDirect v4 function=f16
+    v7 = CallDirect function=f17
+    v8 = Integer integer=0
+    v9 = BitOr v1, v8
+    PropSet v4, v9 key="count" mode=Strict
+    Return v4
+}
+# CHECK-LABEL: function f16
+# CHECK: PropDefine {{*}}, v1 key="count"
+function f16 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L6 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Undefined
+    PropDefine v0, v1 key="count"
+    Return v1
+}
+function f17 name="looksAtWhatWasSeen" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="count"
+    Return v1
+}

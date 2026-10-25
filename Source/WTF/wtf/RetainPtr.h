@@ -75,7 +75,7 @@ template<typename T> [[nodiscard]] constexpr RetainPtr<RetainPtrType<T>> adoptNS
  * @note RetainPtr is compatible with ARC (Automatic Reference Counting) and will automatically use the
  * appropriate retain/release semantics based on the compilation mode.
  */
-template<typename T> class SWIFT_ESCAPABLE RetainPtr {
+template<typename T> class SWIFT_SELF_CONTAINED RetainPtr {
 public:
     using ValueType = std::remove_pointer_t<T>;
     using PtrType = ValueType*;
@@ -420,7 +420,7 @@ inline CFHashCode safeCFHash(CFTypeRef a)
 }
 
 template<typename T, typename U>
-SUPPRESS_NODELETE ALWAYS_INLINE void NODELETE lazyInitialize(const RetainPtr<T>& ptr, RetainPtr<U>&& obj)
+SUPPRESS_NODELETE ALWAYS_INLINE void LEGACY_NODELETE lazyInitialize(const RetainPtr<T>& ptr, RetainPtr<U>&& obj)
 {
     RELEASE_ASSERT(!ptr);
     const_cast<RetainPtr<T>&>(ptr) = std::move(obj);

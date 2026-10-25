@@ -116,6 +116,162 @@ TEST(DragAndDropTests, DragImageLocationForLinkInSubframe)
 #endif
 }
 
+#if PLATFORM(MAC)
+
+// 200x100 with four vertical 50px stripes: red, blue, green, yellow.
+static NSString *const stripedImageURL = @"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAABkCAIAAABM5OhcAAABRElEQVR42u3SMQ0AAAzDsPInvdHIYSkAcni3BUtOXXQq2cACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACCyywwAILLLDAAgsssMACqw3rAVsaTAhYVBpUAAAAAElFTkSuQmCC";
+
+enum class DragImageColor : uint8_t { Transparent, Red, Blue, Green, Yellow, Other };
+
+static RetainPtr<NSBitmapImageRep> dragImageBitmapForImage(NSString *source, NSString *style)
+{
+    RetainPtr simulator = adoptNS([[DragAndDropSimulator alloc] initWithWebViewFrame:CGRectMake(0, 0, 400, 400)]);
+    [[simulator webView] synchronouslyLoadHTMLString:[NSString stringWithFormat:@"<body style='margin: 0'><img style='display: block; %@' src='%@'></body>", style, source]];
+    [simulator runFrom:CGPointMake(150, 250) to:CGPointMake(350, 50)];
+
+    NSImage *dragImage = [simulator draggingInfo].draggedImage;
+    if (!dragImage)
+        return nil;
+    return adoptNS([[NSBitmapImageRep alloc] initWithCGImage:[dragImage CGImageForProposedRect:nil context:nil hints:nil]]);
+}
+
+static RetainPtr<NSBitmapImageRep> dragImageBitmapForStripedImageWithStyle(NSString *style)
+{
+    return dragImageBitmapForImage(stripedImageURL, [NSString stringWithFormat:@"width: 300px; height: 300px; %@", style]);
+}
+
+static DragImageColor dragImageColorAt(NSBitmapImageRep *bitmap, CGFloat x, CGFloat y)
+{
+    NSColor *color = [[bitmap colorAtX:x * bitmap.pixelsWide y:y * bitmap.pixelsHigh] colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    if (color.alphaComponent < 0.1)
+        return DragImageColor::Transparent;
+
+    bool red = color.redComponent > 0.5;
+    bool green = color.greenComponent > 0.5;
+    bool blue = color.blueComponent > 0.5;
+    if (red && green && !blue)
+        return DragImageColor::Yellow;
+    if (red && !green && !blue)
+        return DragImageColor::Red;
+    if (!red && green && !blue)
+        return DragImageColor::Green;
+    if (!red && !green && blue)
+        return DragImageColor::Blue;
+    return DragImageColor::Other;
+}
+
+TEST(DragAndDropTests, DragImageForObjectFitFill)
+{
+    RetainPtr bitmap = dragImageBitmapForStripedImageWithStyle(@"");
+    ASSERT_TRUE(bitmap);
+    EXPECT_EQ(bitmap.get().pixelsWide, bitmap.get().pixelsHigh);
+    EXPECT_EQ(DragImageColor::Red, dragImageColorAt(bitmap.get(), 0.1, 0.1));
+    EXPECT_EQ(DragImageColor::Yellow, dragImageColorAt(bitmap.get(), 0.9, 0.9));
+}
+
+TEST(DragAndDropTests, DragImageForObjectFitContain)
+{
+    RetainPtr bitmap = dragImageBitmapForStripedImageWithStyle(@"object-fit: contain");
+    ASSERT_TRUE(bitmap);
+    EXPECT_EQ(bitmap.get().pixelsWide, bitmap.get().pixelsHigh);
+    EXPECT_EQ(DragImageColor::Transparent, dragImageColorAt(bitmap.get(), 0.5, 0.1));
+    EXPECT_EQ(DragImageColor::Red, dragImageColorAt(bitmap.get(), 0.1, 0.5));
+    EXPECT_EQ(DragImageColor::Yellow, dragImageColorAt(bitmap.get(), 0.9, 0.5));
+    EXPECT_EQ(DragImageColor::Transparent, dragImageColorAt(bitmap.get(), 0.5, 0.9));
+}
+
+TEST(DragAndDropTests, DragImageForObjectFitCover)
+{
+    RetainPtr bitmap = dragImageBitmapForStripedImageWithStyle(@"object-fit: cover");
+    ASSERT_TRUE(bitmap);
+    EXPECT_EQ(bitmap.get().pixelsWide, bitmap.get().pixelsHigh);
+    EXPECT_EQ(DragImageColor::Blue, dragImageColorAt(bitmap.get(), 0.1, 0.1));
+    EXPECT_EQ(DragImageColor::Green, dragImageColorAt(bitmap.get(), 0.9, 0.9));
+}
+
+TEST(DragAndDropTests, DragImageForObjectFitNone)
+{
+    RetainPtr bitmap = dragImageBitmapForStripedImageWithStyle(@"object-fit: none");
+    ASSERT_TRUE(bitmap);
+    EXPECT_EQ(bitmap.get().pixelsWide, bitmap.get().pixelsHigh);
+    EXPECT_EQ(DragImageColor::Transparent, dragImageColorAt(bitmap.get(), 0.1, 0.5));
+    EXPECT_EQ(DragImageColor::Red, dragImageColorAt(bitmap.get(), 0.2, 0.5));
+    EXPECT_EQ(DragImageColor::Yellow, dragImageColorAt(bitmap.get(), 0.8, 0.5));
+    EXPECT_EQ(DragImageColor::Transparent, dragImageColorAt(bitmap.get(), 0.5, 0.1));
+}
+
+TEST(DragAndDropTests, DragImageForObjectPosition)
+{
+    RetainPtr bitmap = dragImageBitmapForStripedImageWithStyle(@"object-fit: contain; object-position: right bottom");
+    ASSERT_TRUE(bitmap);
+    EXPECT_EQ(bitmap.get().pixelsWide, bitmap.get().pixelsHigh);
+    EXPECT_EQ(DragImageColor::Transparent, dragImageColorAt(bitmap.get(), 0.5, 0.25));
+    EXPECT_EQ(DragImageColor::Red, dragImageColorAt(bitmap.get(), 0.1, 0.75));
+    EXPECT_EQ(DragImageColor::Yellow, dragImageColorAt(bitmap.get(), 0.9, 0.75));
+}
+
+// The same four stripes as stripedImageURL but drawn as SVG image.
+static NSString *stripedSVGImageURL(NSString *rootAttributes)
+{
+    NSString *svg = [NSString stringWithFormat:@"<svg xmlns='http://www.w3.org/2000/svg' %@><rect width='50' height='100' fill='#f00'/><rect x='50' width='50' height='100' fill='#00f'/><rect x='100' width='50' height='100' fill='#0f0'/><rect x='150' width='50' height='100' fill='#ff0'/></svg>", rootAttributes];
+    return [@"data:image/svg+xml;base64," stringByAppendingString:[[svg dataUsingEncoding:NSUTF8StringEncoding] base64EncodedStringWithOptions:0]];
+}
+
+TEST(DragAndDropTests, DragImageForSVGImageWithNaturalSize)
+{
+    RetainPtr bitmap = dragImageBitmapForImage(stripedSVGImageURL(@"width='200' height='100'"), @"width: 300px; height: 300px; object-fit: contain");
+    ASSERT_TRUE(bitmap);
+    EXPECT_EQ(bitmap.get().pixelsWide, bitmap.get().pixelsHigh);
+    EXPECT_EQ(DragImageColor::Transparent, dragImageColorAt(bitmap.get(), 0.5, 0.1));
+    EXPECT_EQ(DragImageColor::Red, dragImageColorAt(bitmap.get(), 0.1, 0.5));
+    EXPECT_EQ(DragImageColor::Yellow, dragImageColorAt(bitmap.get(), 0.9, 0.5));
+    EXPECT_EQ(DragImageColor::Transparent, dragImageColorAt(bitmap.get(), 0.5, 0.9));
+}
+
+TEST(DragAndDropTests, DragImageForSVGImageWithOnlyViewBox)
+{
+    RetainPtr bitmap = dragImageBitmapForImage(stripedSVGImageURL(@"viewBox='0 0 200 100'"), @"width: 300px; height: 300px");
+    ASSERT_TRUE(bitmap);
+    EXPECT_EQ(bitmap.get().pixelsWide, bitmap.get().pixelsHigh);
+    EXPECT_EQ(DragImageColor::Transparent, dragImageColorAt(bitmap.get(), 0.5, 0.1));
+    EXPECT_EQ(DragImageColor::Red, dragImageColorAt(bitmap.get(), 0.1, 0.5));
+    EXPECT_EQ(DragImageColor::Yellow, dragImageColorAt(bitmap.get(), 0.9, 0.5));
+    EXPECT_EQ(DragImageColor::Transparent, dragImageColorAt(bitmap.get(), 0.5, 0.9));
+}
+
+TEST(DragAndDropTests, DragImageForSVGImageWithoutNaturalSize)
+{
+    RetainPtr bitmap = dragImageBitmapForImage(stripedSVGImageURL(@""), @"width: 300px; height: 300px");
+    ASSERT_TRUE(bitmap);
+    EXPECT_EQ(bitmap.get().pixelsWide, bitmap.get().pixelsHigh);
+    EXPECT_EQ(DragImageColor::Red, dragImageColorAt(bitmap.get(), 0.1, 0.1));
+    EXPECT_EQ(DragImageColor::Yellow, dragImageColorAt(bitmap.get(), 0.6, 0.1));
+    EXPECT_EQ(DragImageColor::Transparent, dragImageColorAt(bitmap.get(), 0.9, 0.1));
+    EXPECT_EQ(DragImageColor::Transparent, dragImageColorAt(bitmap.get(), 0.1, 0.5));
+}
+
+TEST(DragAndDropTests, DragImageForObjectViewBox)
+{
+    RetainPtr bitmap = dragImageBitmapForStripedImageWithStyle(@"object-view-box: inset(0 50% 0 0)");
+    ASSERT_TRUE(bitmap);
+    EXPECT_EQ(bitmap.get().pixelsWide, bitmap.get().pixelsHigh);
+    EXPECT_EQ(DragImageColor::Red, dragImageColorAt(bitmap.get(), 0.1, 0.5));
+    EXPECT_EQ(DragImageColor::Blue, dragImageColorAt(bitmap.get(), 0.9, 0.5));
+}
+
+TEST(DragAndDropTests, DragImageForImageOrientation)
+{
+    RetainPtr bitmap = dragImageBitmapForImage(@"exif-orientation-8-llo.jpg", @"width: 160px; height: 320px");
+    ASSERT_TRUE(bitmap);
+    EXPECT_EQ(2 * bitmap.get().pixelsWide, bitmap.get().pixelsHigh);
+    EXPECT_EQ(DragImageColor::Yellow, dragImageColorAt(bitmap.get(), 0.1, 0.1));
+    EXPECT_EQ(DragImageColor::Red, dragImageColorAt(bitmap.get(), 0.9, 0.1));
+    EXPECT_EQ(DragImageColor::Blue, dragImageColorAt(bitmap.get(), 0.9, 0.9));
+    EXPECT_EQ(DragImageColor::Green, dragImageColorAt(bitmap.get(), 0.1, 0.9));
+}
+
+#endif // PLATFORM(MAC)
+
 TEST(DragAndDropTests, ExposeMultipleURLsInDataTransfer)
 {
     RetainPtr simulator = adoptNS([[DragAndDropSimulator alloc] initWithWebViewFrame:CGRectMake(0, 0, 320, 500)]);

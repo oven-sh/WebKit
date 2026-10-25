@@ -1,0 +1,42 @@
+# A function that calls what it is given is copied again inside its own copy where another call in the text names another function to call: a traversal in the callback of the same traversal. The same call in the text, and a call that names no function, close a cycle
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=EverythingIsHot
+# RUN: pass InlineCalls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="each" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v1, -, v0 @3
+    Return v2
+}
+function f1 name="doubles" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}
+function f2 name="callback" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewClosure function=f1
+    v2 = CallDirect v0, v1 function=f0 @20
+    Return v2
+}
+
+function f3 name="anotherCallInTheCallback" parameters=[{type=number}] results=[{type=anything}] inlineFrames=[{}, {callee=f0 callPosition=10 module=m0}, {callee=f2 callPosition=3 parent=1 module=m0}] {
+    v1 = NewClosure function=f1
+    v2 = CallDirect v0, v1 function=f0 @20:2
+    Return v2
+# CHECK: {callee=f2 callPosition=3 parent=1 module=m0}, {callee=f0 callPosition=20 parent=2 module=m0}] {
+# CHECK-NOT: function=f0
+}
+
+function f4 name="sameCallInTheText" parameters=[{type=number}] results=[{type=anything}] inlineFrames=[{}, {callee=f2 callPosition=10 module=m0}, {callee=f0 callPosition=20 parent=1 module=m0}, {callee=f2 callPosition=3 parent=2 module=m0}] {
+    v1 = NewClosure function=f1
+    v2 = CallDirect v0, v1 function=f0 @20:3
+    Return v2
+# CHECK: = CallDirect v0, v1 function=[[copy]] [isNeverInlined] @20:3
+}
+
+function f5 name="namesNoFunction" parameters=[{type=number}, {type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f0 callPosition=10 module=m0}, {callee=f2 callPosition=3 parent=1 module=m0}] {
+    v2 = CallDirect v0, v1 function=f0 @20:2
+    Return v2
+# CHECK: = CallDirect v0, v1 function=f0 [isNeverInlined] @20:2
+# The call that is not copied into its caller names one function to call, so it goes to a copy of `each` for that function.
+# CHECK: function [[copy]] name="each" {{*}}role=CalleeVersion {{*}}parameters=[{type=number}, {type=f1}]
+}

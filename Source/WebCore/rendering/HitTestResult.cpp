@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2014 Google Inc. All rights reserved.
  * Copyright (C) 2012 Nokia Corporation and/or its subsidiary(-ies)
  *
@@ -43,6 +43,7 @@
 #include "HTMLTextAreaElement.h"
 #include "HTMLVideoElement.h"
 #include "ImageOverlay.h"
+#include "InlineIteratorLineBox.h"
 #include "LocalFrame.h"
 #include "LocalFrameInlines.h"
 #include "OriginAccessPatterns.h"
@@ -50,7 +51,6 @@
 #include "Range.h"
 #include "RenderBlockFlow.h"
 #include "RenderImage.h"
-#include "RenderInline.h"
 #include "RenderObjectStyle.h"
 #include "SVGAElement.h"
 #include "SVGElementTypeHelpers.h"
@@ -131,6 +131,8 @@ HitTestResult::HitTestResult(const HitTestResult& other)
     }
 }
 
+HitTestResult::HitTestResult(HitTestResult&&) = default;
+
 HitTestResult::~HitTestResult() = default;
 
 HitTestResult& HitTestResult::operator=(const HitTestResult& other)
@@ -149,12 +151,15 @@ HitTestResult& HitTestResult::operator=(const HitTestResult& other)
     if (other.m_listBasedTestResult) {
         m_listBasedTestResult = makeUnique<NodeSet>();
         appendToNodeSet(*other.m_listBasedTestResult, *m_listBasedTestResult);
-    }
+    } else
+        m_listBasedTestResult = nullptr;
 
     return *this;
 }
 
-static Node* NODELETE moveOutOfUserAgentShadowTree(Node& node)
+HitTestResult& HitTestResult::operator=(HitTestResult&&) = default;
+
+static Node* LEGACY_NODELETE moveOutOfUserAgentShadowTree(Node& node)
 {
     if (node.isInShadowTree()) {
         if (ShadowRoot* root = node.containingShadowRoot()) {
@@ -378,11 +383,9 @@ String HitTestResult::innerTextIfTruncated(TextDirection& dir) const
 
         if (auto* block = dynamicDowncast<RenderBlockFlow>(element->renderer())) {
             if (block->style().textOverflow().isEllipsis()) {
-                for (auto lineBox = InlineIterator::firstLineBoxFor(*block); lineBox; lineBox.traverseNext()) {
-                    if (lineBox->hasEllipsis()) {
-                        dir = block->writingMode().computedTextDirection();
-                        return element->innerText();
-                    }
+                if (std::ranges::any_of(InlineIterator::lineBoxesFor(*block), &InlineIterator::LineBox::hasEllipsis)) {
+                    dir = block->writingMode().computedTextDirection();
+                    return element->innerText();
                 }
             }
             break;
@@ -438,7 +441,7 @@ Image* HitTestResult::image() const
 
     if (auto* image = dynamicDowncast<RenderImage>(imageNode->renderer())) {
         if (image->cachedImage() && !image->cachedImage()->errorOccurred())
-            return protect(image->cachedImage())->imageForRenderer(image);
+            return protect(image->cachedImage())->image();
     }
 
     return nullptr;

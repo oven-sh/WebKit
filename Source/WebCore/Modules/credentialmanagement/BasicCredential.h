@@ -40,6 +40,9 @@ class BasicCredential : public RefCounted<BasicCredential> {
 public:
     enum class Type {
         DigitalCredential,
+#if ENABLE(PHONE_NUMBER_POSSESSION)
+        PhoneNumberPossession,
+#endif
         PublicKey,
     };
 

@@ -56,7 +56,7 @@ class WebExtensionAPIRuntime : public WebExtensionAPIObject, public WebExtension
     WEB_EXTENSION_DECLARE_JS_WRAPPER_CLASS(WebExtensionAPIRuntime, runtime, runtime);
 
 public:
-    WebExtensionAPIRuntime& runtime() const final { return const_cast<WebExtensionAPIRuntime&>(*this); }
+    WebExtensionAPIRuntime& runtime() final { return *this; }
 
     bool isPropertyAllowed(const ASCIILiteral& propertyName, WebPage*);
 
@@ -73,9 +73,9 @@ public:
     void openOptionsPage(Ref<WebExtensionCallbackHandler>&&);
     void reload();
 
-    String NODELETE runtimeIdentifier();
+    String LEGACY_NODELETE runtimeIdentifier();
 
-    JSValueRef NODELETE lastError();
+    JSValueRef LEGACY_NODELETE lastError();
 
     void sendMessage(WebPageProxyIdentifier, WebFrame&, const String& extensionID, const String& messageJSON, RefPtr<JSON::Value> options, Ref<WebExtensionCallbackHandler>&&, String& outExceptionString);
     RefPtr<WebExtensionAPIPort> connect(WebPageProxyIdentifier, WebFrame&, JSContextRef, const String& extensionID, RefPtr<JSON::Value> options, String& outExceptionString);
@@ -95,19 +95,19 @@ private:
 
     static bool parseConnectOptions(RefPtr<JSON::Value>, std::optional<String>& name, const String& sourceKey, String& outExceptionString);
 
-    RefPtr<WebExtensionAPIEvent> m_onConnect;
-    RefPtr<WebExtensionAPIEvent> m_onInstalled;
-    RefPtr<WebExtensionAPIEvent> m_onMessage;
-    RefPtr<WebExtensionAPIEvent> m_onStartup;
-    RefPtr<WebExtensionAPIEvent> m_onConnectExternal;
-    RefPtr<WebExtensionAPIEvent> m_onMessageExternal;
+    const RefPtr<WebExtensionAPIEvent> m_onConnect;
+    const RefPtr<WebExtensionAPIEvent> m_onInstalled;
+    const RefPtr<WebExtensionAPIEvent> m_onMessage;
+    const RefPtr<WebExtensionAPIEvent> m_onStartup;
+    const RefPtr<WebExtensionAPIEvent> m_onConnectExternal;
+    const RefPtr<WebExtensionAPIEvent> m_onMessageExternal;
 };
 
 class WebExtensionAPIWebPageRuntime : public WebExtensionAPIObject, public WebExtensionAPIRuntimeBase {
     WEB_EXTENSION_DECLARE_JS_WRAPPER_CLASS(WebExtensionAPIWebPageRuntime, webPageRuntime, webPageRuntime);
 
 public:
-    WebExtensionAPIWebPageRuntime& runtime() const final { return const_cast<WebExtensionAPIWebPageRuntime&>(*this); }
+    WebExtensionAPIWebPageRuntime& runtime() final { return *this; }
 
     void sendMessage(WebPage&, WebFrame&, const String& extensionID, const String& messageJSON, RefPtr<JSON::Value> options, Ref<WebExtensionCallbackHandler>&&, String& outExceptionString);
     RefPtr<WebExtensionAPIPort> connect(WebPage&, WebFrame&, JSContextRef, const String& extensionID, RefPtr<JSON::Value> options, String& outExceptionString);

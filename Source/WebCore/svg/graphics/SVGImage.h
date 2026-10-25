@@ -37,71 +37,61 @@ class Element;
 class ImageBuffer;
 class LocalFrameView;
 class Page;
+class RenderObject;
 class RenderReplaced;
 class SVGSVGElement;
 class SVGImageChromeClient;
-class SVGImageForContainer;
 class Settings;
 
 class SVGImage final : public Image {
 public:
-    struct ContainerContext {
-        FloatSize containerSize { };
-        float containerZoom { 1 };
-        URL initialFragmentURL { };
-        Style::LinkParameters linkParameters { CSS::Keyword::None { } };
-    };
-
     static Ref<SVGImage> create(ImageObserver* observer) { return adoptRef(*new SVGImage(observer)); }
     WEBCORE_EXPORT static void tryCreateFromData(std::span<const uint8_t>, CompletionHandler<void(RefPtr<SVGImage>&&)>&&);
     WEBCORE_EXPORT static bool isDataDecodable(const Settings&, std::span<const uint8_t>);
 
     RenderReplaced* embeddedSVGRoot() const;
-    LocalFrameView* NODELETE frameView() const;
+    LocalFrameView* LEGACY_NODELETE frameView() const;
 
-    bool NODELETE isSVGImage() const final { return true; }
+    bool LEGACY_NODELETE isSVGImage() const final { return true; }
 
     void subresourcesAreFinished(Document*, CompletionHandler<void()>&&) final;
 
     FloatSize size(ImageOrientation = ImageOrientation::Orientation::FromImage) const final { return m_intrinsicSize; }
 
+    bool hasSomethingToDraw() const final;
+
     bool renderingTaintsOrigin() const final;
 
-    bool hasIntrinsicWidth() const final;
-    bool hasIntrinsicHeight() const final;
-    bool hasRelativeWidth() const final;
-    bool hasRelativeHeight() const final;
-
-    // Start the animation from the beginning.
     void startAnimation() final;
-    // Resume the animation from where it was last stopped.
-    void resumeAnimation();
     void stopAnimation() final;
     void resetAnimation() final;
     bool isAnimating() const final;
 
-    void scheduleStartAnimation();
-
     Page* internalPage() { return m_page.get(); }
     WEBCORE_EXPORT RefPtr<SVGSVGElement> rootElement() const;
 
-    FloatSize resolvedIntrinsicSize(float density = 1.0f) const;
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    // Used by draws with InvertContent::FromResource. The internal page's settings are only changed by
+    // applyDocumentState(), so they stay in sync with m_appliedDocumentState.
+    void setFallbackInvertContent(bool invertContent) { m_fallbackInvertContent = invertContent; }
+#endif
 
-    RefPtr<NativeImage> nativeImage(const FloatSize&, const ColorSpace& = ColorSpace::SRGB());
+    RefPtr<NativeImage> nativeImage(const FloatSize&, const ColorSpace& = ColorSpace::SRGB(), const ImageDrawingExtras* = nullptr, ImageDrawingOptions = { });
 
 private:
     friend class SVGImageChromeClient;
-    friend class SVGImageForContainer;
 
+    WEBCORE_EXPORT explicit SVGImage(ImageObserver*);
     virtual ~SVGImage();
 
     String filenameExtension() const final;
 
-    void setContainerSize(const FloatSize&) final;
+    void setContainerSize(const FloatSize&);
     IntSize containerSize() const;
-    bool usesContainerSize() const final { return true; }
-    void computeIntrinsicDimensions(float& intrinsicWidth, float& intrinsicHeight, FloatSize& intrinsicRatio) final;
-    bool hasNaturalAspectRatio() const final;
+
+    NaturalDimensions unorientedNaturalDimensions() const final;
+
+    bool usesConcreteObjectSizeAsViewport() const final { return true; }
 
     void reportApproximateMemoryCost() const;
     EncodedDataStatus dataChanged(bool allDataReceived) final;
@@ -113,21 +103,39 @@ private:
     bool currentFrameIsComplete() const final { return !!m_page; }
 
     bool hasHDRContent() const final;
-    RefPtr<NativeImage> nativeImage(const ColorSpace& = ColorSpace::SRGB()) final;
+
+    RefPtr<NativeImage> nativeImage(ConcreteObjectSize, const ColorSpace& = ColorSpace::SRGB(), const ImageDrawingExtras* = nullptr) final;
+    RefPtr<NativeImage> currentNativeImage(ConcreteObjectSize, const ImageDrawingExtras* = nullptr) final;
+    RefPtr<NativeImage> currentPreTransformedNativeImage(ConcreteObjectSize, ImageOrientation = ImageOrientation::Orientation::FromImage, const ImageDrawingExtras* = nullptr) final;
 
     void startAnimationTimerFired();
 
-    WEBCORE_EXPORT explicit SVGImage(ImageObserver*);
-    ImageDrawResult draw(GraphicsContext&, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions = { }) final;
-    ImageDrawResult drawForContainer(GraphicsContext&, const ContainerContext&, const FloatRect& dstRect, const FloatRect& srcRect, ImagePaintingOptions = { });
-    void drawPatternForContainer(GraphicsContext&, const ContainerContext&, const FloatRect& srcRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, const FloatRect& dstRect, ImagePaintingOptions = { });
+    ImageDrawResult draw(GraphicsContext&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions = { }, const ImageDrawingExtras* = nullptr) final;
+    void drawPattern(GraphicsContext&, ConcreteObjectSize, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions = { }, const ImageDrawingExtras* = nullptr) final;
 
-    void applyLinkParameters(const Style::LinkParameters&);
+    // FIXME: This should also hold the variable state dataChanged() sets on the Page and its Settings.
+    struct DocumentState {
+        IntSize containerSize;
+        URL fragmentURL;
+        Style::LinkParameters linkParameters;
+        IgnoreRootPreserveAspectRatio ignoreRootPreserveAspectRatio { IgnoreRootPreserveAspectRatio::No };
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        bool invertContent { false };
+#endif
+
+        bool operator==(const DocumentState&) const = default;
+    };
+
+    DocumentState documentStateForDraw(ConcreteObjectSize, ImageDrawingOptions, const ImageDrawingExtras*) const;
+    void applyDocumentState(Document&, LocalFrameView&, const DocumentState&);
 
     RefPtr<Page> m_page;
     FloatSize m_intrinsicSize;
 
-    Style::LinkParameters m_appliedLinkParameters;
+    DocumentState m_appliedDocumentState;
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    bool m_fallbackInvertContent { false };
+#endif
 
     Timer m_startAnimationTimer;
 };

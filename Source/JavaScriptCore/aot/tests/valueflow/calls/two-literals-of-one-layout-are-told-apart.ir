@@ -1,0 +1,36 @@
+# first = { m() { this.x } }; second = { m() { this.x } }; function run(o) { o.m() }  run(first); run(second)
+# The two objects have one layout, and each has a function of its own under `m`. The receivers of a call are told apart object by object, so each function sees its own object alone.
+# RUN: valueflow-why values=f3:v2 values=f1:v1 values=f2:v1
+# CHECK: values=f3:v2
+# CHECK: operand 1 {{*}} 2 members: [[first]]@f0 [[second]]@f0
+# CHECK: values=f1:v1
+# CHECK: operand 0 {{*}} 1 members: [[first]]@f0
+# CHECK: values=f2:v1
+# CHECK: operand 0 {{*}} 1 members: [[second]]@f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Handler" fields=[{key="m" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f2
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = NewClosure function=f3
+    v5 = Call v4, -, v1
+    v6 = Call v4, -, v3
+    Return
+}
+function f1 name="m" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return
+}
+function f2 name="m" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return
+}
+function f3 name="run" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="m"
+    v2 = Call v1, v0 calleeKey="m"
+    Return
+}

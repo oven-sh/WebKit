@@ -21,13 +21,21 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
-class CallByNeed(object):
-    def __init__(self, callback, type=None):
-        self._callback = callback
-        self._value = None
+from __future__ import annotations
+
+import builtins
+from typing import Any, Callable, Generic, TypeVar, cast
+
+T = TypeVar('T')
+
+
+class CallByNeed(Generic[T]):
+    def __init__(self, callback: Callable[[], T], type: builtins.type[Any] | None = None) -> None:
+        self._callback: Callable[[], T] | None = callback
+        self._value: T | None = None
         self.type = type
 
-    def __getattribute__(self, name):
+    def __getattribute__(self, name: str) -> Any:
         if name in dir(type(self)) or name in {'_callback', '_value'}:
             return object.__getattribute__(self, name)
         typ = object.__getattribute__(self, 'type')
@@ -36,19 +44,19 @@ class CallByNeed(object):
         raise AttributeError("'{}' object has no attribute '{}'".format(typ.__name__, name))
 
     @property
-    def value(self):
+    def value(self) -> T:
         if self._callback:
             self._value = self._callback()
             self._callback = None
-        return self._value
+        return cast(T, self._value)
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
         if callable(self.value):
             return self.value(*args, **kwargs)
         return self.value
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self.value.__repr__()
 
-    def __str__(self):
+    def __str__(self) -> str:
         return str(self.value)

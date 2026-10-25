@@ -19,7 +19,7 @@
 
 #pragma once
 
-#if ENABLE(WEB_CODECS) && USE(GSTREAMER)
+#if USE(GSTREAMER)
 
 #include "AudioDecoder.h"
 #include "GRefPtrGStreamer.h"
@@ -40,14 +40,14 @@ public:
 private:
     GStreamerAudioDecoder(const String& codecName, const Config&, OutputCallback&&, GRefPtr<GstElement>&&);
 
-    Ref<DecodePromise> decode(EncodedData&&) final;
+    Ref<DecodePromise> decode(AudioEncodedData&&) final;
     Ref<GenericPromise> flush() final;
     void reset() final;
     void close() final;
 
-    Ref<GStreamerInternalAudioDecoder> m_internalDecoder;
+    const Ref<GStreamerInternalAudioDecoder> m_internalDecoder;
 };
 
 }
 
-#endif // ENABLE(WEB_CODECS) && USE(GSTREAMER)
+#endif // USE(GSTREAMER)

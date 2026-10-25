@@ -1,0 +1,55 @@
+# Once one path enters a shared cleanup its selector is that path's constant, and the switch on it can be decided
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RemoveTrivialParameters
+# RUN(DECIDED): pass RemoveTrivialParameters SimplifyControlFlow
+# STATISTIC: RemoveTrivialParametersChanges = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="onePathIsLeft" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    v2 = Undefined
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    v5 = Call v0
+    Switch v3 cases=[0] -> case b2(), otherwise b3()
+  b2():
+    Return v5
+  b3():
+    Throw v4
+# CHECK: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: Switch v1 cases=[0] -> case b2(), otherwise b3()
+# CHECK: b3():
+# CHECK-NEXT: Throw v2
+# DECIDED-NOT: Switch
+# DECIDED: = Call v0
+# DECIDED-NOT: Switch
+# DECIDED: Return v5
+# DECIDED-NOT: Throw
+}
+
+function f1 name="twoPathsAreLeft" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=0
+    v3 = Undefined
+    Jump -> next b3(v2, v3)
+  b2():
+    v4 = Integer integer=1
+    Jump -> next b3(v4, v0)
+  b3(v5, v6):
+    v7 = Call v0
+    Switch v5 cases=[0] -> case b4(), otherwise b5()
+  b4():
+    Return v7
+  b5():
+    Throw v6
+# CHECK: Jump -> next b3(v2, v3)
+# CHECK: Jump -> next b3(v4, v0)
+# CHECK-NEXT: b3(v5: int[0, 1], v6: anything):
+# CHECK: Switch v5 cases=[0] -> case b4(), otherwise b5()
+# DECIDED: Switch v5 cases=[0] -> case b4(), otherwise b5()
+# DECIDED: Throw v6
+}

@@ -117,7 +117,7 @@ ExceptionOr<Ref<IIRFilterNode>> IIRFilterNode::create(ScriptExecutionContext& sc
 IIRFilterNode::IIRFilterNode(BaseAudioContext& context, const Vector<double>& feedforward, const Vector<double>& feedback, bool isFilterStable)
     : AudioBasicProcessorNode(context, NodeTypeIIRFilter)
 {
-    m_processor = makeUnique<IIRProcessor>(context.sampleRate(), 1, feedforward, feedback, isFilterStable);
+    lazyInitialize(m_processor, makeUnique<IIRProcessor>(context.sampleRate(), 1, feedforward, feedback, isFilterStable));
 
     initialize();
 }
@@ -130,7 +130,7 @@ ExceptionOr<void> IIRFilterNode::getFrequencyResponse(Float32Array& frequencyHz,
 
     // Nothing to do if the length is 0.
     if (expectedLength > 0)
-        iirProcessor()->getFrequencyResponse(expectedLength, frequencyHz.typedSpan(), magResponse.typedMutableSpan(), phaseResponse.typedMutableSpan());
+        protect(iirProcessor())->getFrequencyResponse(frequencyHz.typedSpan(), magResponse.typedMutableSpan(), phaseResponse.typedMutableSpan());
 
     return { };
 }

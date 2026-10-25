@@ -33,7 +33,6 @@
 #include "compiler/translator/tree_ops/spirv/EmulateFragColorData.h"
 #include "compiler/translator/tree_ops/spirv/EmulateFramebufferFetch.h"
 #include "compiler/translator/tree_ops/spirv/EmulateYUVBuiltIns.h"
-#include "compiler/translator/tree_ops/spirv/FlagSamplersWithTexelFetch.h"
 #include "compiler/translator/tree_ops/spirv/ReswizzleYUVOps.h"
 #include "compiler/translator/tree_ops/spirv/RewriteInterpolateAtOffset.h"
 #include "compiler/translator/tree_ops/spirv/RewriteR32fImages.h"
@@ -675,18 +674,18 @@ bool TranslatorSPIRV::translateImpl(TIntermBlock *root,
         }
     }
 
-    // If there are any function calls that take array-of-array of opaque uniform parameters, or
-    // other opaque uniforms that need special handling in Vulkan, such as atomic counters,
-    // monomorphize the functions by removing said parameters and replacing them in the function
-    // body with the call arguments.
-    //
-    // This has a few benefits:
-    //
-    // - It dramatically simplifies future transformations w.r.t to samplers in structs, array of
-    //   arrays of opaque types, atomic counters etc.
-    // - Avoids the need for shader*ArrayDynamicIndexing Vulkan features.
     if (!compileOptions.useIR)
     {
+        // If there are any function calls that take array-of-array of opaque uniform parameters, or
+        // other opaque uniforms that need special handling in Vulkan, such as atomic counters,
+        // monomorphize the functions by removing said parameters and replacing them in the function
+        // body with the call arguments.
+        //
+        // This has a few benefits:
+        //
+        // - It dramatically simplifies future transformations w.r.t to samplers in structs, array
+        //   of arrays of opaque types, atomic counters etc.
+        // - Avoids the need for shader*ArrayDynamicIndexing Vulkan features.
         UnsupportedFunctionArgsBitSet args{UnsupportedFunctionArgs::StructContainingSamplers,
                                            UnsupportedFunctionArgs::ArrayOfArrayOfSamplerOrImage,
                                            UnsupportedFunctionArgs::AtomicCounter,
@@ -711,11 +710,21 @@ bool TranslatorSPIRV::translateImpl(TIntermBlock *root,
         {
             return false;
         }
-    }
 
-    if (!FlagSamplersForTexelFetch(this, root, &getSymbolTable(), &mUniforms))
+        if (getShaderType() == GL_COMPUTE_SHADER)
+        {
+            driverUniforms->addComputeDriverUniformsToShader(root, &getSymbolTable());
+        }
+        else
+        {
+            driverUniforms->addGraphicsDriverUniformsToShader(root, &getSymbolTable());
+        }
+    }
+    else
     {
-        return false;
+        // The driver uniforms have been added in IR.  Discover it for the AST transformations that
+        // have not been ported yet.
+        driverUniforms->findDeclarationAddedByIR(root);
     }
 
     gl::ShaderType packedShaderType = gl::FromGLenum<gl::ShaderType>(getShaderType());
@@ -734,25 +743,18 @@ bool TranslatorSPIRV::translateImpl(TIntermBlock *root,
                       vk::spirv::kIdDefaultUniformsBlock);
     }
 
-    if (getShaderType() == GL_COMPUTE_SHADER)
-    {
-        driverUniforms->addComputeDriverUniformsToShader(root, &getSymbolTable());
-    }
-    else
-    {
-        driverUniforms->addGraphicsDriverUniformsToShader(root, &getSymbolTable());
-    }
-
     assignSpirvId(
         driverUniforms->getDriverUniformsVariable()->getType().getInterfaceBlock()->uniqueId(),
         vk::spirv::kIdDriverUniformsBlock);
 
-    if (getShaderType() == GL_VERTEX_SHADER)
+    if (!compileOptions.useIR)
     {
-        if (!ShaderBuiltinsWorkaround(this, root, driverUniforms, &getSymbolTable(),
-                                      compileOptions))
+        if (getShaderType() == GL_VERTEX_SHADER)
         {
-            return false;
+            if (!ShaderBuiltinsWorkaround(this, root, driverUniforms, &getSymbolTable()))
+            {
+                return false;
+            }
         }
     }
 

@@ -406,6 +406,13 @@ NS_ASSUME_NONNULL_BEGIN
 
 typedef void(^PKCanMakePaymentsCompletion)(BOOL isValid, NSError *);
 
+#if HAVE(PASSKIT_ISSUING_REGION_CODE)
+// FIXME: <rdar://188823158> (Remove PKPaymentMethod issuingRegionCode staging code from WebKit)
+@interface PKPaymentMethod (IssuingRegionCode)
+@property (nonatomic, copy, readonly, nullable) NSString *issuingRegionCode;
+@end
+#endif
+
 NS_ASSUME_NONNULL_END
 
 #define PAL_PASSKIT_SPI_GUARD_AGAINST_INDIRECT_INCLUSION

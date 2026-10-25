@@ -28,9 +28,14 @@
 
 #if ENABLE(B3_JIT)
 
+#include "AirArgInlines.h"
 #include "AirCode.h"
+#include "AirFrameStates.h"
 #include "AirInstInlines.h"
+#include "AirLiveness.h"
+#include "AirReuseConditionFlags.h"
 #include "B3Procedure.h"
+#include <wtf/IndexSet.h>
 #include <wtf/StringPrintStream.h>
 
 namespace JSC { namespace B3 { namespace Air {
@@ -39,7 +44,7 @@ namespace {
 
 class Validater {
 public:
-    Validater(Code& code, const char* dumpBefore)
+    Validater(Code& code, UTF8CStringView dumpBefore)
         : m_code(code)
         , m_dumpBefore(dumpBefore)
     {
@@ -83,7 +88,9 @@ public:
                         break;
                     }
                 }
-                VALIDATE(inst.isValidForm(), ("At ", inst, " in ", *block));
+                VALIDATE(inst.isValidForm(m_code.targetFeatures()), ("At ", inst, " in ", *block));
+                if (inst.kind.opcode == Patch)
+                    VALIDATE(inst.hasCurrentForms(), ("At ", inst, " in ", *block));
                 if (instIndex == block->size() - 1)
                     VALIDATE(inst.isTerminal(), ("At ", inst, " in ", *block));
                 else
@@ -96,9 +103,11 @@ public:
                         VALIDATE(&arg <= &inst.args().back(), ("At ", arg, " in ", inst, " in ", *block));
 
                         // FIXME: replace with a check for wasm simd instructions.
+                        // Bun: a pair of 64-bit registers is loaded from 128 bits of memory, with or without SIMD.
                         VALIDATE(Options::useWasmSIMD()
                             || !Arg::isAnyUse(role)
-                            || width <= Width64, ("At ", inst, " in ", *block, " arg ", arg));
+                            || width <= Width64
+                            || inst.kind.opcode == LoadPair64, ("At ", inst, " in ", *block, " arg ", arg));
                     });
                 
                 switch (inst.kind.opcode) {
@@ -124,6 +133,10 @@ public:
                     VALIDATE(inst.args()[2].isImm(), ("At ", inst, " in ", *block));
                     VALIDATE(inst.args()[2].asTrustedImm32().m_value < 32, ("At ", inst, " in ", *block));
                     break;
+                case EnterFrame:
+                case LeaveFrame:
+                    VALIDATE(m_code.policy().frame.emitsFrame, ("At ", inst, " in ", *block));
+                    break;
                 default:
                     break;
                 }
@@ -138,6 +151,20 @@ public:
             for (BasicBlock* predecessor : block->predecessors())
                 predecessors.add(predecessor);
             VALIDATE(block->numPredecessors() == predecessors.size(), ("At ", *block));
+        }
+
+        if (Inst* inst = findUseOfUndefinedFlags(m_code))
+            VALIDATE(false, ("Flags are not defined at ", *inst));
+
+        if (std::optional<Tmp> tmp = findUndefinedTmp(m_code))
+            VALIDATE(false, ("A path from an entrypoint uses ", *tmp, " before any definition"));
+
+        if (Inst* inst = findMisplacedBlockEntryClobber(m_code))
+            VALIDATE(false, ("A clobber at block entry has to be the first instruction of a block that is not an entrypoint: ", *inst));
+
+        if (m_code.policy().frame.emitsFrame && m_code.frameLayout().isPlanned) {
+            std::optional<FrameStateViolation> violation = findFrameStateViolation(m_code);
+            VALIDATE(!violation, ("Frame state violation of kind ", static_cast<unsigned>(violation->kind), " at ", *violation->block, " index ", violation->instIndex));
         }
     }
 
@@ -170,15 +197,130 @@ private:
     }
     
     Code& m_code;
-    const char* m_dumpBefore;
+    UTF8CStringView m_dumpBefore;
 };
+
+bool anyInstUsesFlags(Code& code)
+{
+    for (BasicBlock* block : code) {
+        for (Inst& inst : *block) {
+            if (usesFlags(inst.kind.opcode))
+                return true;
+        }
+    }
+    return false;
+}
+
+bool flagsAfter(bool areDefined, const Inst& inst)
+{
+    Opcode opcode = inst.kind.opcode;
+    return definesFlags(opcode) || setsFlagsToResult(inst) || (areDefined && preservesFlags(opcode));
+}
+
+bool flagsAtTail(bool areDefinedAtHead, BasicBlock* block)
+{
+    bool areDefined = areDefinedAtHead;
+    for (Inst& inst : *block)
+        areDefined = flagsAfter(areDefined, inst);
+    return areDefined;
+}
+
+IndexSet<BasicBlock*> computeDefinedAtHead(Code& code)
+{
+    IndexSet<BasicBlock*> definedAtHead;
+    Vector<BasicBlock*> worklist;
+    for (BasicBlock* block : code) {
+        worklist.append(block);
+        for (BasicBlock* successor : block->successorBlocks())
+            definedAtHead.add(successor);
+    }
+    for (BasicBlock* block : code) {
+        if (code.isEntrypoint(block))
+            definedAtHead.remove(block);
+    }
+
+    while (!worklist.isEmpty()) {
+        BasicBlock* block = worklist.takeLast();
+        if (flagsAtTail(definedAtHead.contains(block), block))
+            continue;
+        for (BasicBlock* successor : block->successorBlocks()) {
+            if (definedAtHead.remove(successor))
+                worklist.append(successor);
+        }
+    }
+    return definedAtHead;
+}
+
+bool anyInstHasNonRegisterTmp(Code& code)
+{
+    for (BasicBlock* block : code) {
+        for (Inst& inst : *block) {
+            bool hasNonRegisterTmp = false;
+            inst.forEachTmpFast([&](Tmp& tmp) {
+                hasNonRegisterTmp |= !tmp.isReg();
+            });
+            if (hasNonRegisterTmp)
+                return true;
+        }
+    }
+    return false;
+}
 
 } // anonymous namespace
 
-void validate(Code& code, const char* dumpBefore)
+void validate(Code& code, UTF8CStringView dumpBefore)
 {
     Validater validater(code, dumpBefore);
     validater.run();
+}
+
+Inst* findUseOfUndefinedFlags(Code& code)
+{
+    if (!anyInstUsesFlags(code))
+        return nullptr;
+
+    IndexSet<BasicBlock*> definedAtHead = computeDefinedAtHead(code);
+    for (BasicBlock* block : code) {
+        bool areDefined = definedAtHead.contains(block);
+        for (Inst& inst : *block) {
+            if (usesFlags(inst.kind.opcode) && !areDefined)
+                return &inst;
+            areDefined = flagsAfter(areDefined, inst);
+        }
+    }
+    return nullptr;
+}
+
+Inst* findMisplacedBlockEntryClobber(Code& code)
+{
+    for (BasicBlock* block : code) {
+        bool isEntrypoint = block == code[0] || code.isEntrypoint(block);
+        for (unsigned instIndex = 0; instIndex < block->size(); ++instIndex) {
+            Inst& inst = block->at(instIndex);
+            if (!inst.clobbersAtBlockEntry())
+                continue;
+            if (instIndex || isEntrypoint)
+                return &inst;
+        }
+    }
+    return nullptr;
+}
+
+std::optional<Tmp> findUndefinedTmp(Code& code)
+{
+    if (!anyInstHasNonRegisterTmp(code))
+        return std::nullopt;
+
+    UnifiedTmpLiveness liveness(code);
+    for (BasicBlock* block : code) {
+        if (!code.isEntrypoint(block))
+            continue;
+        for (Tmp tmp : liveness.liveAtHead(block)) {
+            if (!tmp.isReg())
+                return tmp;
+        }
+    }
+    return std::nullopt;
 }
 
 } } } // namespace JSC::B3::Air

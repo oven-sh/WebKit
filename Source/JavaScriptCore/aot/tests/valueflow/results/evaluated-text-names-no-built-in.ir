@@ -1,0 +1,21 @@
+# new Function(input)(); input.constructor
+# RUN: valueflow-results
+# CHECK: feature 4 WebAssembly Unnamed
+# CHECK: feature 9 IntlCollator Unnamed
+# CHECK: feature 9 StringPrototypeLocaleCompare Unnamed
+# CHECK: feature 11 DatePrototypeToLocaleString Unnamed
+# CHECK: feature 13 IntlSegmenter Unnamed
+# CHECK: feature 16 TemporalDuration Unnamed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=Function
+    v3 = Construct v2, -, v1
+    v4 = Call v3, -
+    v5 = PropGet v1 key="constructor"
+    v6 = Call v5, -
+    Return
+}

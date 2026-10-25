@@ -57,16 +57,13 @@ public:
     inline void collectionTraverseForward(Iterator& current, unsigned count, unsigned& traversedCount) const;
     inline void collectionTraverseBackward(Iterator& current, unsigned count) const;
     inline bool collectionCanTraverseBackward() const;
-    void willValidateIndexCache() const { document().registerCollection(const_cast<CachedHTMLCollection&>(*this)); }
+    void willValidateIndexCache() const { protect(document())->registerCollection(const_cast<CachedHTMLCollection&>(*this)); }
 
     void invalidateCacheForDocument(Document&) override;
     
     inline bool elementMatches(Element&) const;
     
 private:
-    HTMLCollectionClass& collection() { return static_cast<HTMLCollectionClass&>(*this); }
-    const HTMLCollectionClass& collection() const { return static_cast<const HTMLCollectionClass&>(*this); }
-    
     mutable CollectionIndexCache<HTMLCollectionClass, Iterator> m_indexCache;
 };
 

@@ -79,7 +79,7 @@ void WebPage::platformInitialize(const WebPageCreationParameters&)
     // process to connect the two worlds through the accessibility
     // object there specifically placed for that purpose (the socket).
     if (RefPtr page = corePage()) {
-        m_accessibilityRootObject = AccessibilityRootAtspi::create(*page);
+        lazyInitialize(m_accessibilityRootObject, AccessibilityRootAtspi::create(*page));
         m_accessibilityRootObject->registerObject([&](const String& plugID) {
             if (!plugID.isEmpty())
                 send(Messages::WebPageProxy::BindAccessibilityTree(plugID));
@@ -138,22 +138,22 @@ void WebPage::getPlatformEditorState(LocalFrame& frame, EditorState& result) con
 #if PLATFORM(GTK)
     const Editor& editor = frame.editor();
     if (selection.isRange()) {
-        if (editor.selectionHasStyle(CSSPropertyFontWeight, "bold"_s) == TriState::True)
+        if (editor.selectionHasStyle(CSSPropertyID::FontWeight, "bold"_s) == TriState::True)
             postLayoutData.typingAttributes.add(TypingAttribute::Bold);
-        if (editor.selectionHasStyle(CSSPropertyFontStyle, "italic"_s) == TriState::True)
+        if (editor.selectionHasStyle(CSSPropertyID::FontStyle, "italic"_s) == TriState::True)
             postLayoutData.typingAttributes.add(TypingAttribute::Italics);
-        if (editor.selectionHasStyle(CSSPropertyWebkitTextDecorationsInEffect, "underline"_s) == TriState::True)
+        if (editor.selectionHasStyle(CSSPropertyID::WebkitTextDecorationsInEffect, "underline"_s) == TriState::True)
             postLayoutData.typingAttributes.add(TypingAttribute::Underline);
-        if (editor.selectionHasStyle(CSSPropertyWebkitTextDecorationsInEffect, "line-through"_s) == TriState::True)
+        if (editor.selectionHasStyle(CSSPropertyID::WebkitTextDecorationsInEffect, "line-through"_s) == TriState::True)
             postLayoutData.typingAttributes.add(TypingAttribute::StrikeThrough);
     } else if (selection.isCaret()) {
-        if (editor.selectionStartHasStyle(CSSPropertyFontWeight, "bold"_s))
+        if (editor.selectionStartHasStyle(CSSPropertyID::FontWeight, "bold"_s))
             postLayoutData.typingAttributes.add(TypingAttribute::Bold);
-        if (editor.selectionStartHasStyle(CSSPropertyFontStyle, "italic"_s))
+        if (editor.selectionStartHasStyle(CSSPropertyID::FontStyle, "italic"_s))
             postLayoutData.typingAttributes.add(TypingAttribute::Italics);
-        if (editor.selectionStartHasStyle(CSSPropertyWebkitTextDecorationsInEffect, "underline"_s))
+        if (editor.selectionStartHasStyle(CSSPropertyID::WebkitTextDecorationsInEffect, "underline"_s))
             postLayoutData.typingAttributes.add(TypingAttribute::Underline);
-        if (editor.selectionStartHasStyle(CSSPropertyWebkitTextDecorationsInEffect, "line-through"_s))
+        if (editor.selectionStartHasStyle(CSSPropertyID::WebkitTextDecorationsInEffect, "line-through"_s))
             postLayoutData.typingAttributes.add(TypingAttribute::StrikeThrough);
     }
 #endif
@@ -183,10 +183,21 @@ static std::optional<InputMethodState> inputMethodStateForElement(Element* eleme
     if (!element || !element->shouldUseInputMethod())
         return std::nullopt;
 
+    if (auto* textControl = dynamicDowncast<HTMLTextFormControlElement>(*element); textControl && textControl->isReadOnly())
+        return std::nullopt;
+
     InputMethodState state;
     if (is<HTMLInputElement>(*element)) {
         auto& inputElement = downcast<HTMLInputElement>(*element);
         state.setPurposeForInputElement(inputElement);
+        // A missing inputmode attribute keeps the purpose derived from the type. A password
+        // field keeps its purpose too, because the state has no way to say "secret" separately.
+        auto inputMode = inputElement.canonicalInputMode();
+        if (inputMode == InputMode::None || (inputMode != InputMode::Unspecified && !inputElement.isPasswordField()))
+            state.setPurposeOrHintForInputMode(inputMode);
+        // A password revealed by changing the type of the field to text should not be learned either.
+        if (inputElement.hasEverBeenPasswordField())
+            state.hints.add(InputMethodState::Hint::Private);
 #if ENABLE(AUTOCAPITALIZE)
         state.addHintsForAutocapitalizeType(inputElement.autocapitalizeType());
 #endif
@@ -206,6 +217,15 @@ static std::optional<InputMethodState> inputMethodStateForElement(Element* eleme
 
 void WebPage::setInputMethodState(Element* element)
 {
+    // Some pages call blur() and then focus() on the focused element in the same task. Hold the reset
+    // back until the next run loop iteration, like ElementDidBlur on Cocoa, so that the embedder does not
+    // see a focus out and a focus in when the element has the focus again by the end of the task.
+    // See elementDidBlur().
+    // FIXME: With site isolation, the reset can now reach the UI process after the state sent by the
+    // process of a remote frame that got the focus, and the UI process keeps the last state it gets.
+    if (!element && m_recentlyBlurredElement)
+        return;
+
     auto state = inputMethodStateForElement(element);
 
     if (state && !m_userIsInteracting)
@@ -216,6 +236,22 @@ void WebPage::setInputMethodState(Element* element)
 
     m_inputMethodState = state;
     send(Messages::WebPageProxy::SetInputMethodState(state));
+}
+
+void WebPage::focusedElementDidChangeReadOnly(Element& element)
+{
+    if (m_focusedElement != &element)
+        return;
+
+    setInputMethodState(&element);
+}
+
+void WebPage::focusedElementDidChangeType(Element& element)
+{
+    if (m_focusedElement != &element)
+        return;
+
+    setInputMethodState(&element);
 }
 
 String WebPage::platformUserAgent(const URL& url) const

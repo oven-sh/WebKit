@@ -92,7 +92,32 @@ enum class ImageDrawResult {
     DidDraw
 };
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+enum class InvertContent : uint8_t {
+    FromResource,
+    No,
+    Yes
+};
+
+enum class ImagePaintTimeTransformation : uint8_t {
+    Unchanged,
+    SimpleInvert,
+    ColorPreservingInvert
+};
+#endif
+
 enum class ShowDebugBackground : bool {
+    No,
+    Yes
+};
+
+// Treats an SVG root's preserveAspectRatio as none for an <svg:image>.
+enum class IgnoreRootPreserveAspectRatio : bool {
+    No,
+    Yes
+};
+
+enum class DrawLuminanceMask : bool {
     No,
     Yes
 };

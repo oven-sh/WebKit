@@ -45,6 +45,7 @@
 #include <WebCore/RealtimeMediaSourceCenter.h>
 #include <WebCore/VideoFrameCV.h>
 #include <WebCore/WebAudioBufferList.h>
+#include <wtf/Borrow.h>
 #include <wtf/NativePromise.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/UniqueRef.h>
@@ -108,7 +109,7 @@ public:
         }
     }
 
-    bool NODELETE isObservingMedia() const { return m_isObservingMedia; }
+    bool LEGACY_NODELETE isObservingMedia() const { return m_isObservingMedia; }
 
     void whenReady(UserMediaCaptureManagerProxy::CreateSourceCallback&& createCallback)
     {
@@ -122,8 +123,8 @@ public:
         });
     }
 
-    bool NODELETE isUsingSource(const RealtimeMediaSource& source) const { return m_source.ptr() == &source; }
-    RealtimeMediaSource& NODELETE source() { return m_source; }
+    bool LEGACY_NODELETE isUsingSource(const RealtimeMediaSource& source) const { return m_source.ptr() == &source; }
+    RealtimeMediaSource& LEGACY_NODELETE source() { return m_source; }
 
     void audioUnitWillStart() final
     {
@@ -435,13 +436,12 @@ private:
         if (m_resourceOwner)
             frame.setOwnershipIdentity(m_resourceOwner);
 
-        RefPtr videoFrameObjectHeap = m_videoFrameObjectHeap;
-        if (!videoFrameObjectHeap) {
+        if (!m_videoFrameObjectHeap) {
             m_connection->send(Messages::RemoteCaptureSampleManager::VideoFrameAvailableCV(m_id, frame.pixelBuffer(), frame.rotation(), frame.isMirrored(), frame.presentationTime(), metadata), 0);
             return;
         }
 
-        auto properties = videoFrameObjectHeap->add(frame);
+        auto properties = m_videoFrameObjectHeap->add(frame);
         m_connection->send(Messages::RemoteCaptureSampleManager::VideoFrameAvailable(m_id, properties, metadata), 0);
     }
 
@@ -462,14 +462,14 @@ private:
     const Ref<RealtimeMediaSource> m_source;
     std::unique_ptr<ProducerSharedCARingBuffer> m_ringBuffer;
     std::optional<CAAudioStreamDescription> m_description;
-    std::unique_ptr<ImageRotationSessionVT> m_rotationSession;
+    const std::unique_ptr<ImageRotationSessionVT> m_rotationSession;
     std::unique_ptr<IPC::Semaphore> m_captureSemaphore;
     std::optional<ConsumerSharedCARingBufferHandle> m_audioHandle;
     int64_t m_writeOffset { 0 };
     int64_t m_remainingFrameCount { 0 };
     size_t m_frameChunkSize { 0 };
     MediaTime m_startTime;
-    RefPtr<RemoteVideoFrameObjectHeap> m_videoFrameObjectHeap;
+    const RefPtr<RemoteVideoFrameObjectHeap> m_videoFrameObjectHeap;
 #if PLATFORM(IOS_FAMILY)
     Function<void()> m_providePresentingApplicationPIDFunction;
 #endif
@@ -529,7 +529,7 @@ CaptureSourceOrError UserMediaCaptureManagerProxy::createMicrophoneSource(const 
     return source;
 }
 
-static bool NODELETE canCaptureFromMultipleCameras()
+static bool LEGACY_NODELETE canCaptureFromMultipleCameras()
 {
 #if PLATFORM(IOS_FAMILY)
     return false;
@@ -634,7 +634,7 @@ void UserMediaCaptureManagerProxy::createMediaSourceForCaptureDeviceWithConstrai
     }
 
     MESSAGE_CHECK_COMPLETION(constraints->mandatoryConstraints.isValid(), completionHandler({ "Invalid mandatoryConstraints"_s, WebCore::MediaAccessDenialReason::InvalidConstraint }, { }, { }));
-    for (const auto& advancedConstraint : constraints->advancedConstraints)
+    for (const auto& advancedConstraint : borrow(constraints->advancedConstraints))
         MESSAGE_CHECK_COMPLETION(advancedConstraint.isValid(), completionHandler({ "Invalid advancedConstraints"_s, WebCore::MediaAccessDenialReason::InvalidConstraint }, { }, { }));
 
     proxy->applyConstraints(WTF::move(mediaConstraints), [weakProxy = WeakPtr { proxy }, completionHandler = WTF::move(completionHandler), completeSetup = WTF::move(completeSetup)](auto&& error) mutable {
@@ -739,7 +739,7 @@ void UserMediaCaptureManagerProxy::applyConstraints(RealtimeMediaSourceIdentifie
     }
 
     MESSAGE_CHECK(constraints.mandatoryConstraints.isValid());
-    for (const auto& advancedConstraint : constraints.advancedConstraints)
+    for (const auto& advancedConstraint : borrow(constraints.advancedConstraints))
         MESSAGE_CHECK(advancedConstraint.isValid());
 
     proxy->applyConstraints(WTF::move(constraints), [id, proxy, connection = protect(m_connectionProxy->connection())](auto&& result) {

@@ -84,7 +84,7 @@ OffsetRange characterDataOffsetRange(const SimpleRange& range, const Node& node)
         &node == range.end.container.ptr() ? range.end.offset : std::numeric_limits<unsigned>::max() };
 }
 
-static RefPtr<Node> NODELETE firstIntersectingNode(const SimpleRange& range)
+static RefPtr<Node> LEGACY_NODELETE firstIntersectingNode(const SimpleRange& range)
 {
     if (range.start.container->isCharacterDataNode())
         return range.start.container.ptr();
@@ -93,7 +93,7 @@ static RefPtr<Node> NODELETE firstIntersectingNode(const SimpleRange& range)
     return NodeTraversal::nextSkippingChildren(range.start.container);
 }
 
-static RefPtr<Node> NODELETE nodePastLastIntersectingNode(const SimpleRange& range)
+static RefPtr<Node> LEGACY_NODELETE nodePastLastIntersectingNode(const SimpleRange& range)
 {
     if (range.end.container->isCharacterDataNode())
         return NodeTraversal::nextSkippingChildren(range.end.container);
@@ -102,7 +102,7 @@ static RefPtr<Node> NODELETE nodePastLastIntersectingNode(const SimpleRange& ran
     return NodeTraversal::nextSkippingChildren(range.end.container);
 }
 
-static RefPtr<Node> NODELETE firstIntersectingNodeWithDeprecatedZeroOffsetStartQuirk(const SimpleRange& range)
+static RefPtr<Node> LEGACY_NODELETE firstIntersectingNodeWithDeprecatedZeroOffsetStartQuirk(const SimpleRange& range)
 {
     if (range.start.container->isCharacterDataNode())
         return range.start.container.ptr();
@@ -150,7 +150,7 @@ void IntersectingNodeIterator::enforceEndInvariant()
     }
 }
 
-template<TreeType treeType> Node* commonInclusiveAncestor(const SimpleRange& range)
+template<TreeType treeType> Node* LEGACY_NODELETE commonInclusiveAncestor(const SimpleRange& range)
 {
     return commonInclusiveAncestor<treeType>(range.start.container, range.end.container);
 }
@@ -253,7 +253,7 @@ bool intersectsForTesting(TreeType type, const SimpleRange& a, const SimpleRange
     case ComposedTree:
         return intersects<ComposedTree>(a, b);
     case ComposedTreeIncludingPseudoElements:
-        return contains<ComposedTreeIncludingPseudoElements>(a, b);
+        return intersects<ComposedTreeIncludingPseudoElements>(a, b);
     }
     ASSERT_NOT_REACHED();
     return false;
@@ -306,14 +306,14 @@ bool contains(TreeType type, const SimpleRange& range, const Node& node)
 
 template<TreeType treeType> bool contains(const Node& outer, const Node& inner)
 {
-    for (RefPtr inclusiveAncestor = &inner; inclusiveAncestor; inclusiveAncestor = parent<treeType>(*inclusiveAncestor)) {
+    for (auto* inclusiveAncestor = &inner; inclusiveAncestor; inclusiveAncestor = parent<treeType>(*inclusiveAncestor)) {
         if (inclusiveAncestor == &outer)
             return true;
     }
     return false;
 }
 
-template<> bool contains<Tree>(const Node& outer, const Node& inner)
+template<> bool LEGACY_NODELETE contains<Tree>(const Node& outer, const Node& inner)
 {
     // We specialize here because we want to take advantage of optimizations in Node::isDescendantOf.
     return outer.contains(inner);
@@ -342,7 +342,7 @@ bool intersectsForTesting(TreeType type, const SimpleRange& range, const Node& n
     case ComposedTree:
         return intersects<ComposedTree>(range, node);
     case ComposedTreeIncludingPseudoElements:
-        return contains<ComposedTreeIncludingPseudoElements>(range, node);
+        return intersects<ComposedTreeIncludingPseudoElements>(range, node);
     }
     ASSERT_NOT_REACHED();
     return false;

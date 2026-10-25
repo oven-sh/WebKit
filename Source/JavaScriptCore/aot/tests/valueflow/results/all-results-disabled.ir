@@ -1,0 +1,36 @@
+# With every flow result switched off the program leaves ApplyFlowResults as it was read: no callee and no receiver is stamped, no type is assumed, the check stays, the function that nothing reaches keeps its body.
+# A program of which nothing is known is open to code that the build has not seen
+# OPTIONS: disable=flow-results
+# RUN: valueflow-apply
+# CHECK: = Call v3, -, v1
+# CHECK-NEXT: = Check v4 castType=undefined|null|L0 site=w0
+# CHECK: string="unreached"
+# RUN(NOTHING): valueflow-apply
+# NOTHING-NOT: AssumeType
+# NOTHING-NOT: receivers=
+# NOTHING-NOT: callees=
+# RUN(RESULTS): valueflow-results
+# RESULTS: unseen-code FlowResultDisabled
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+typesite w0 module=m0 position=40 kind=CallResult
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+variable g0 name="point" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = String string="x"
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v1
+    v5 = Convert v4 declared={type=undefined|null|L0 site=w0}
+    v6 = NewClosure function=f2
+    Return
+}
+function f1 name="identity" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f2 name="unreached" results=[{type=anything}] {
+    v0 = String string="unreached"
+    Return v0
+}

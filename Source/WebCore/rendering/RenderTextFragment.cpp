@@ -24,11 +24,11 @@
 #include "RenderTextFragment.h"
 
 #include "RenderBlock.h"
-#include "RenderInline.h"
 #include "RenderIterator.h"
 #include "RenderObjectInlines.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderTreeBuilder.h"
+#include "RenderView.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "Text.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -145,6 +145,28 @@ void RenderTextFragment::setContentString(const String& text)
 {
     m_contentString = text;
     setText(text);
+}
+
+void RenderTextFragment::styleDidChange(Style::Difference diff, const Style::ComputedStyle* oldStyle)
+{
+    RenderText::styleDidChange(diff, oldStyle);
+    // 'quotes' and the content language pick the quote mark.
+    if (m_quoteType && diff >= Style::DifferenceResult::Layout)
+        view().setHasQuotesNeedingUpdate(true);
+}
+
+void RenderTextFragment::insertedIntoTree()
+{
+    RenderText::insertedIntoTree();
+    if (m_quoteType)
+        view().setHasQuotesNeedingUpdate(true);
+}
+
+void RenderTextFragment::willBeRemovedFromTree()
+{
+    if (m_quoteType)
+        view().setHasQuotesNeedingUpdate(true);
+    RenderText::willBeRemovedFromTree();
 }
 
 } // namespace WebCore

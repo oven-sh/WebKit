@@ -175,7 +175,7 @@ private:
         ~EditingScope();
 
     private:
-        RefPtr<Document> m_document;
+        const RefPtr<Document> m_document;
         bool m_editingWasSuppressed;
     };
 
@@ -185,7 +185,7 @@ private:
     static String plainText(const SimpleRange&);
 
     template<WritingTools::Session::Type Type>
-    StateFromSessionType<Type>::Value* NODELETE currentState();
+    StateFromSessionType<Type>::Value* LEGACY_NODELETE currentState();
 
     template<WritingTools::Session::Type Type>
     const StateFromSessionType<Type>::Value* currentState() const;
@@ -196,6 +196,7 @@ private:
     std::optional<SimpleRange> validatedRangeForSuggestionMarker(const SimpleRange& sessionRange, Node&, const DocumentMarker&, const String& expectedCurrentText) const;
 
     void replaceContentsOfRangeInSession(ProofreadingState&, const SimpleRange&, const String&);
+    void replaceContentsOfRangeInSession(ProofreadingState&, const SimpleRange&, const String&, WritingToolsCompositionCommand&);
     void replaceContentsOfRangeInSession(CompositionState&, const SimpleRange&, const AttributedString&, WritingToolsCompositionCommand::State);
 
     void compositionSessionDidFinishReplacement();
@@ -223,7 +224,7 @@ private:
 
     void commitComposition(CompositionState&, Document&);
 
-    RefPtr<Document> NODELETE document() const;
+    RefPtr<Document> LEGACY_NODELETE document() const;
 
     WeakPtr<Page> m_page;
     std::unique_ptr<State> m_state;

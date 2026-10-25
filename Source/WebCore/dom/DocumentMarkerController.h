@@ -72,7 +72,7 @@ public:
     WEBCORE_EXPORT void addDictationStreamingOpacityMarker(const SimpleRange&, float opacity);
     WEBCORE_EXPORT void removeAllDictationStreamingOpacityMarkers();
 
-    WEBCORE_EXPORT size_t appliedGrammarTextEffectCount() const;
+    WEBCORE_EXPORT size_t LEGACY_NODELETE appliedGrammarTextEffectCount() const;
 
     void copyMarkers(Node& source, OffsetRange, Node& destination);
     bool hasMarkers() const;
@@ -108,7 +108,7 @@ public:
     WEBCORE_EXPORT Vector<FloatRect> renderedRectsForMarkers(DocumentMarkerType);
 
     template<IterationDirection = IterationDirection::Forwards>
-    WEBCORE_EXPORT void forEach(const SimpleRange&, OptionSet<DocumentMarkerType>, Function<bool(Node&, RenderedDocumentMarker&)>&&);
+    WEBCORE_EXPORT void forEach(const SimpleRange&, OptionSet<DocumentMarkerType>, NOESCAPE const Function<bool(Node&, RenderedDocumentMarker&)>&);
 
     WEBCORE_EXPORT static std::tuple<float, float> markerYPositionAndHeightForFont(const FontCascade&);
 
@@ -125,12 +125,12 @@ private:
 
     using MarkerMap = HashMap<Ref<Node>, std::unique_ptr<Vector<RenderedDocumentMarker>>>;
 
-    bool NODELETE possiblyHasMarkers(OptionSet<DocumentMarkerType>) const;
+    bool LEGACY_NODELETE possiblyHasMarkers(OptionSet<DocumentMarkerType>) const;
     OptionSet<DocumentMarkerType> removeMarkersFromList(MarkerMap::iterator, OptionSet<DocumentMarkerType>, NOESCAPE const Function<FilterMarkerResult(const RenderedDocumentMarker&)>& filterFunction = nullptr);
 
-    void forEachOfTypes(OptionSet<DocumentMarkerType>, Function<bool(Node&, RenderedDocumentMarker&)>&&);
+    void forEachOfTypes(OptionSet<DocumentMarkerType>, NOESCAPE const Function<bool(Node&, RenderedDocumentMarker&)>&);
 
-    void applyToCollapsedRangeMarker(const SimpleRange&, OptionSet<DocumentMarkerType>, Function<bool(Node&, RenderedDocumentMarker&)>&&);
+    void applyToCollapsedRangeMarker(const SimpleRange&, OptionSet<DocumentMarkerType>, NOESCAPE const Function<bool(Node&, RenderedDocumentMarker&)>&);
 
     void fadeAnimationTimerFired();
     void writingToolsTextSuggestionAnimationTimerFired();
@@ -151,10 +151,10 @@ private:
 
 
 template<>
-WEBCORE_EXPORT void DocumentMarkerController::forEach<DocumentMarkerController::IterationDirection::Forwards>(const SimpleRange&, OptionSet<DocumentMarkerType>, Function<bool(Node&, RenderedDocumentMarker&)>&&);
+WEBCORE_EXPORT void DocumentMarkerController::forEach<DocumentMarkerController::IterationDirection::Forwards>(const SimpleRange&, OptionSet<DocumentMarkerType>, NOESCAPE const Function<bool(Node&, RenderedDocumentMarker&)>&);
 
 template<>
-WEBCORE_EXPORT void DocumentMarkerController::forEach<DocumentMarkerController::IterationDirection::Backwards>(const SimpleRange&, OptionSet<DocumentMarkerType>, Function<bool(Node&, RenderedDocumentMarker&)>&&);
+WEBCORE_EXPORT void DocumentMarkerController::forEach<DocumentMarkerController::IterationDirection::Backwards>(const SimpleRange&, OptionSet<DocumentMarkerType>, NOESCAPE const Function<bool(Node&, RenderedDocumentMarker&)>&);
 
 WEBCORE_EXPORT void addMarker(const SimpleRange&, DocumentMarkerType, const DocumentMarker::Data& = { });
 void addMarker(Node&, unsigned startOffset, unsigned length, DocumentMarkerType, DocumentMarker::Data&& = { });

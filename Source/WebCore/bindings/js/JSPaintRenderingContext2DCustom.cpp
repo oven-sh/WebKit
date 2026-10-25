@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSPaintRenderingContext2D.h"
 
+#include "CustomPaintCanvas.h"
 #include "WebCoreOpaqueRootInlines.h"
 #include <JavaScriptCore/AbstractSlotVisitorInlines.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
@@ -33,7 +34,7 @@
 namespace WebCore {
 using namespace JSC;
 
-inline WebCoreOpaqueRoot NODELETE root(CustomPaintCanvas* canvas)
+inline WebCoreOpaqueRoot LEGACY_NODELETE root(CustomPaintCanvas* canvas)
 {
     return WebCoreOpaqueRoot { canvas };
 }
@@ -44,13 +45,15 @@ bool JSPaintRenderingContext2DOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC:
         *reason = "Canvas is opaque root"_s;
 
     auto* jsPaintRenderingContext = downcast<JSPaintRenderingContext2D>(handle.slot()->asCell());
-    return containsWebCoreOpaqueRoot(visitor, jsPaintRenderingContext->wrapped().canvas());
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_ARG return containsWebCoreOpaqueRoot(visitor, jsPaintRenderingContext->wrapped().canvas());
 }
 
 template<typename Visitor>
 void JSPaintRenderingContext2D::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    addWebCoreOpaqueRoot(visitor, wrapped().canvas());
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_ARG addWebCoreOpaqueRoot(visitor, wrapped().canvas());
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSPaintRenderingContext2D);

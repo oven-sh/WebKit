@@ -53,18 +53,13 @@
 #endif
 
 namespace WebCore {
+class CoordinatedTileManager;
 class Damage;
 class IntRect;
 class IntSize;
 class GraphicsLayer;
 class GraphicsLayerFactory;
 class NativeImage;
-class SkiaPaintingEngine;
-#if USE(CAIRO)
-namespace Cairo {
-class PaintingEngine;
-}
-#endif
 }
 
 namespace WebKit {
@@ -126,7 +121,7 @@ public:
 #if ENABLE(DAMAGE_TRACKING)
     void notifyFrameDamageForTesting(WebCore::Region&&);
     void resetDamageHistoryForTesting();
-    void foreachRegionInDamageHistoryForTesting(Function<void(const WebCore::Region&)>&&);
+    void foreachRegionInDamageHistoryForTesting(NOESCAPE const Function<void(const WebCore::Region&)>&);
 #endif
 
 private:
@@ -140,11 +135,7 @@ private:
 #endif
 
     // CoordinatedPlatformLayer::Client
-#if USE(CAIRO)
-    WebCore::Cairo::PaintingEngine& NODELETE paintingEngine() override;
-#elif USE(SKIA)
-    WebCore::SkiaPaintingEngine& paintingEngine() const LIFETIME_BOUND override { return *m_skiaPaintingEngine.get(); }
-#endif
+    WebCore::CoordinatedTileManager& tileManager() const LIFETIME_BOUND override { return *m_tileManager; }
     Ref<WebCore::CoordinatedImageBackingStore> imageBackingStore(Ref<WebCore::NativeImage>&&) override;
 
     void attachLayer(WebCore::CoordinatedPlatformLayer&) override;
@@ -187,7 +178,7 @@ private:
 #if ENABLE(SCROLLING_THREAD)
     bool m_compositionRequiredInScrollingThread { false };
 #endif
-    RefPtr<ThreadedCompositor> m_compositor;
+    const RefPtr<ThreadedCompositor> m_compositor;
     struct {
         CompletionHandler<void()> callback;
 #if HAVE(DISPLAY_LINK)
@@ -200,11 +191,7 @@ private:
 #if !HAVE(DISPLAY_LINK)
     WebCore::PlatformDisplayID m_displayID;
 #endif
-#if USE(CAIRO)
-    std::unique_ptr<WebCore::Cairo::PaintingEngine> m_paintingEngine;
-#elif USE(SKIA)
-    std::unique_ptr<WebCore::SkiaPaintingEngine> m_skiaPaintingEngine;
-#endif
+    std::unique_ptr<WebCore::CoordinatedTileManager> m_tileManager;
     HashMap<uint64_t, Ref<WebCore::CoordinatedImageBackingStore>> m_imageBackingStores;
 
     uint32_t m_compositionRequestID { 0 };

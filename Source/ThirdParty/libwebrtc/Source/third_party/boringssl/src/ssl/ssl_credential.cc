@@ -154,7 +154,13 @@ SSLCredential::~SSLCredential() {
 }
 
 UniquePtr<SSLCredential> SSLCredential::Dup() const {
+  // This method is only used on the legacy credential, so it only needs to
+  // support fields that are reachable from the legacy credential's APIs.
   assert(type == SSLCredentialType::kX509);
+  assert(dc == nullptr);
+  assert(dc_algorithm == 0);
+  assert(sid_ctx.empty());
+
   UniquePtr<SSLCredential> ret = MakeUnique<SSLCredential>(type);
   if (ret == nullptr) {
     return nullptr;
@@ -175,10 +181,8 @@ UniquePtr<SSLCredential> SSLCredential::Dup() const {
     }
   }
 
-  ret->dc = UpRef(dc);
   ret->signed_cert_timestamp_list = UpRef(signed_cert_timestamp_list);
   ret->ocsp_response = UpRef(ocsp_response);
-  ret->dc_algorithm = dc_algorithm;
   return ret;
 }
 
@@ -391,6 +395,18 @@ SSL_CREDENTIAL *SSL_CREDENTIAL_new_pre_shared_key(
   BSSL_CHECK(epskx_len == cred->epskx.size());
   cred->epsk_md = md;
   return cred.release();
+}
+
+const uint8_t *SSL_CREDENTIAL_get0_pre_shared_key_id(const SSL_CREDENTIAL *cred,
+                                                     size_t *id_len) {
+  *id_len = 0;
+  auto *cred_impl = FromOpaque(cred);
+  if (cred_impl == nullptr ||
+      cred_impl->type != SSLCredentialType::kPreSharedKey) {
+    return nullptr;
+  }
+  *id_len = cred_impl->epsk_id.size();
+  return cred_impl->epsk_id.data();
 }
 
 SSL_CREDENTIAL *SSL_CREDENTIAL_new_delegated() {
@@ -845,5 +861,16 @@ int SSL_CREDENTIAL_set1_certificate_properties(
   // We do not currently retain `cert_property_list`, but if we define another
   // property with larger fields (e.g. stapled SCTs), it may make sense for
   // those fields to retain `cert_property_list` and alias into it.
+  return 1;
+}
+
+int SSL_CREDENTIAL_set1_session_id_context(SSL_CREDENTIAL *cred,
+                                           const uint8_t *sid_ctx,
+                                           size_t sid_ctx_len) {
+  if (!FromOpaque(cred)->sid_ctx.TryCopyFrom(Span(sid_ctx, sid_ctx_len))) {
+    OPENSSL_PUT_ERROR(SSL, SSL_R_SSL_SESSION_ID_CONTEXT_TOO_LONG);
+    return 0;
+  }
+
   return 1;
 }

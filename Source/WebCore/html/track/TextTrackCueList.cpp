@@ -43,7 +43,7 @@
 
 namespace WebCore {
 
-static inline bool cueSortsBefore(const Ref<TextTrackCue>& a, const Ref<TextTrackCue>& b)
+static inline bool LEGACY_NODELETE cueSortsBefore(const Ref<TextTrackCue>& a, const Ref<TextTrackCue>& b)
 {
     if (a->startMediaTime() < b->startMediaTime())
         return true;
@@ -87,7 +87,7 @@ TextTrackCue* TextTrackCueList::getCueById(const String& id) const
 TextTrackCueList& TextTrackCueList::activeCues()
 {
     if (!m_activeCues)
-        m_activeCues = create();
+        lazyInitialize(m_activeCues, create());
 
     Vector<Ref<TextTrackCue>> activeCuesVector;
     for (auto& cue : m_vector) {

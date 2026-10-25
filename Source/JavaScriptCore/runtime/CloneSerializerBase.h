@@ -25,6 +25,9 @@
 
 #pragma once
 
+#if ENABLE(AOT)
+#include <JavaScriptCore/AOTPropertyWalk.h>
+#endif
 #include <JavaScriptCore/ArrayBufferView.h>
 #include <JavaScriptCore/BigIntObject.h>
 #include <JavaScriptCore/BooleanObject.h>
@@ -313,30 +316,8 @@ protected:
     void dumpBigIntData(JSValue value)
     {
         ASSERT(value.isBigInt());
-#if USE(BIGINT32)
-        if (value.isBigInt32()) {
-            dumpBigInt32Data(value.bigInt32AsInt32());
-            return;
-        }
-#endif
         dumpHeapBigIntData(downcast<JSBigInt>(value));
     }
-
-#if USE(BIGINT32)
-    void dumpBigInt32Data(int32_t integer)
-    {
-        write(integer < 0);
-        if (!integer) {
-            write(static_cast<uint32_t>(0)); // Length-in-uint64_t
-            return;
-        }
-        write(static_cast<uint32_t>(1)); // Length-in-uint64_t
-        int64_t value = static_cast<int64_t>(integer);
-        if (value < 0)
-            value = -value;
-        write(static_cast<uint64_t>(value));
-    }
-#endif
 
     void dumpHeapBigIntData(JSBigInt* bigInt)
     {
@@ -486,7 +467,7 @@ protected:
         if (auto* regExp = dynamicDowncast<RegExpObject>(obj)) {
             write(RegExpTag);
             write(regExp->regExp()->pattern());
-            write(String::fromLatin1(JSC::Yarr::flagsString(regExp->regExp()->flags()).data()));
+            write(String { JSC::Yarr::flagsString(regExp->regExp()->flags()).span() });
             return true;
         }
         if (auto* booleanObject = dynamicDowncast<BooleanObject>(obj)) {
@@ -753,11 +734,18 @@ protected:
                 if (!addToObjectPoolIfNotDupe<ObjectTag>(inObject))
                     break;
                 write(ObjectTag);
+#if ENABLE(AOT)
+                AOT::PropertyWalk::materializeLazyProperties(vm, inObject);
+#endif
                 // At this point, all supported objects other than Object
                 // objects have been handled. If we reach this point and
                 // the input is not an Object object then we should throw
                 // a DataCloneError.
-                if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != ObjectPrototype::info())
+                bool isPlainObject = inObject->classInfo() == JSFinalObject::info() || inObject->classInfo() == ObjectPrototype::info();
+#if ENABLE(AOT)
+                isPlainObject |= AOT::PropertyWalk::isCompiledObject(inObject);
+#endif
+                if (!isPlainObject)
                     return SerializationReturnCode::DataCloneError;
                 inputObjectStack.append(inObject);
                 indexStack.append(0);

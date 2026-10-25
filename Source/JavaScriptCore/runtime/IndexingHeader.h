@@ -114,11 +114,11 @@ public:
         return reinterpret_cast<Butterfly*>(this + 1);
     }
     
-    // These methods are not standalone in the sense that they cannot be
-    // used on a copy of the IndexingHeader.
-    size_t preCapacity(Structure*);
-    size_t indexingPayloadSizeInBytes(Structure*);
-    
+    uint64_t& elementsStartOffset(size_t propertyCapacity)
+    {
+        return *(reinterpret_cast<uint64_t*>(this) - propertyCapacity - 1);
+    }
+
 private:
     friend class LLIntOffsetsExtractor;
 

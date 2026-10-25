@@ -29,7 +29,7 @@
 
 #include "InlineIteratorBoxInlines.h"
 #include "LayoutIntegrationLineLayout.h"
-#include "RenderBlockFlow.h"
+#include "RenderBlockFlowInlines.h"
 #include "RenderObjectDocument.h"
 #include "RenderView.h"
 #include "StyleComputedStyle+GettersInlines.h"
@@ -37,98 +37,71 @@
 namespace WebCore {
 namespace InlineIterator {
 
-LineBoxIterator::LineBoxIterator(LineBox::PathVariant&& pathVariant)
-    : m_lineBox(WTF::move(pathVariant))
-{
-}
-
-LineBoxIterator::LineBoxIterator(const LineBox& lineBox)
-    : m_lineBox(lineBox)
-{
-}
-
-bool LineBoxIterator::atEnd() const
-{
-    return WTF::switchOn(m_lineBox.m_pathVariant, [](auto& path) {
-        return path.atEnd();
-    });
-}
-
-LineBoxIterator& LineBoxIterator::traverseNext()
-{
-    WTF::switchOn(m_lineBox.m_pathVariant, [](auto& path) {
-        return path.traverseNext();
-    });
-    return *this;
-}
-
-LineBoxIterator& LineBoxIterator::traversePrevious()
-{
-    WTF::switchOn(m_lineBox.m_pathVariant, [](auto& path) {
-        return path.traversePrevious();
-    });
-    return *this;
-}
-
-LineBoxIterator::operator bool() const
-{
-    return !atEnd();
-}
-
-bool LineBoxIterator::operator==(const LineBoxIterator& other) const
-{
-    return m_lineBox.m_pathVariant == other.m_lineBox.m_pathVariant;
-}
+static_assert(std::ranges::bidirectional_range<LineBoxRange> && std::ranges::common_range<LineBoxRange> && std::ranges::view<LineBoxRange> && std::ranges::borrowed_range<LineBoxRange>);
 
 LineBoxIterator firstLineBoxFor(const RenderBlockFlow& flow)
 {
     if (CheckedPtr lineLayout = flow.inlineLayout())
         return lineLayout->firstLineBox();
-
-    return { LineBoxIteratorLegacyPath { flow.legacyRootBox() } };
+    return { };
 }
 
 LineBoxIterator lastLineBoxFor(const RenderBlockFlow& flow)
 {
     if (CheckedPtr lineLayout = flow.inlineLayout())
         return lineLayout->lastLineBox();
-
-    return { LineBoxIteratorLegacyPath { flow.legacyRootBox() } };
+    return { };
 }
 
-LineBoxIterator lineBoxFor(const LayoutIntegration::InlineContent& inlineContent, size_t lineIndex)
+LineBox lineBoxFor(const LayoutIntegration::InlineContent& inlineContent, size_t lineIndex)
 {
-    return { LineBoxIteratorModernPath { inlineContent, lineIndex } };
+    return { inlineContent, lineIndex };
 }
 
 LineBoxIterator LineBox::next() const
 {
-    return LineBoxIterator(*this).traverseNext();
+    ASSERT(!atEnd());
+    return LineBox { *m_inlineContent, m_lineIndex + 1 };
 }
 
 LineBoxIterator LineBox::previous() const
 {
-    return LineBoxIterator(*this).traversePrevious();
+    ASSERT(!atEnd());
+    if (!m_lineIndex)
+        return { };
+    return LineBox { *m_inlineContent, m_lineIndex - 1 };
 }
 
 LeafBoxIterator LineBox::lineLeftmostLeafBox() const
 {
-    return WTF::switchOn(m_pathVariant, [](auto& path) -> LeafBoxIterator {
-        return { path.firstLeafBox() };
-    });
+    if (!line().boxCount())
+        return { };
+    auto box = boxFor(*m_inlineContent, line().firstBoxIndex());
+    if (box.isInlineBox())
+        return box.nextLineRightwardOnLine();
+    return box;
 }
 
 LeafBoxIterator LineBox::lineRightmostLeafBox() const
 {
-    return WTF::switchOn(m_pathVariant, [](auto& path) -> LeafBoxIterator {
-        return { path.lastLeafBox() };
-    });
+    auto boxCount = line().boxCount();
+    if (!boxCount)
+        return { };
+    auto box = boxFor(*m_inlineContent, line().firstBoxIndex() + boxCount - 1);
+    if (box.isInlineBox())
+        return box.nextLineLeftwardOnLine();
+    return box;
+}
+
+LeafBoxRange LineBox::leafBoxes() const
+{
+    return { lineLeftmostLeafBox() };
 }
 
 LeafBoxIterator closestBoxForHorizontalPosition(const LineBox& lineBox, float horizontalPosition, bool editableOnly)
 {
     auto isEditable = [&](auto box) {
-        return box && box->renderer().node() && box->renderer().node()->hasEditableStyle();
+        return box && box->renderer().node() && protect(box->renderer().node())->hasEditableStyle();
     };
 
     auto firstBox = lineBox.logicalLeftmostLeafBox();
@@ -165,18 +138,18 @@ LeafBoxIterator closestBoxForHorizontalPosition(const LineBox& lineBox, float ho
 RenderObject::HighlightState LineBox::ellipsisSelectionState() const
 {
     auto lastLeafBox = this->lineRightmostLeafBox();
-    if (!lastLeafBox)
+    if (!lastLeafBox || !lastLeafBox->isText())
         return RenderObject::HighlightState::None;
 
-    auto* text = dynamicDowncast<InlineIterator::TextBox>(*lastLeafBox);
-    if (!text || text->selectionState() == RenderObject::HighlightState::None)
+    auto text = downcast<TextBox>(*lastLeafBox);
+    if (text.selectionState() == RenderObject::HighlightState::None)
         return RenderObject::HighlightState::None;
 
-    auto selectionRange = text->selectableRange();
+    auto selectionRange = text.selectableRange();
     if (!selectionRange.truncation)
         return RenderObject::HighlightState::None;
 
-    auto [selectionStart, selectionEnd] = formattingContextRoot().view().selection().rangeForTextBox(text->renderer(), selectionRange);
+    auto [selectionStart, selectionEnd] = formattingContextRoot().view().selection().rangeForTextBox(protect(text.renderer()), selectionRange);
     return selectionStart <= *selectionRange.truncation && selectionEnd >= *selectionRange.truncation ? RenderObject::HighlightState::Inside : RenderObject::HighlightState::None;
 }
 

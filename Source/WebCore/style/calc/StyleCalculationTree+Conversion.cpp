@@ -55,7 +55,7 @@ struct ToStyleConversionOptions {
     CSSCalc::EvaluationOptions evaluation;
 };
 
-static auto toCSS(const Random::Fixed&, const ToCSSConversionOptions&) -> CSSCalc::Random::Sharing;
+static CSSCalc::Random::Sharing LEGACY_NODELETE toCSS(const Random::Fixed&, const ToCSSConversionOptions&);
 static auto toCSS(const CSS::Keyword::None&, const ToCSSConversionOptions&) -> CSS::Keyword::None;
 static auto toCSS(const CalcMix::Item&, const ToCSSConversionOptions&) -> CSSCalc::CalcMix::Item;
 static auto toCSS(const Vector<CalcMix::Item>&, const ToCSSConversionOptions&) -> Vector<CSSCalc::CalcMix::Item>;
@@ -89,7 +89,7 @@ static auto toStyle(const CSSCalc::IndirectNode<CSSCalc::AnchorSize>&, const ToS
 static auto toStyle(const CSSCalc::IndirectNode<CSSCalc::Deg2Rad>&, const ToStyleConversionOptions&) -> Child;
 template<typename Op> auto toStyle(const CSSCalc::IndirectNode<Op>&, const ToStyleConversionOptions&) -> Child;
 
-static CSSCalc::CanonicalDimension::Dimension NODELETE determineCanonicalDimension(CSS::Category category)
+static CSSCalc::CanonicalDimension::Dimension LEGACY_NODELETE determineCanonicalDimension(CSS::Category category)
 {
     switch (category) {
     case CSS::Category::LengthPercentage:
@@ -121,7 +121,7 @@ CSSCalc::Random::Sharing toCSS(const Random::Fixed& randomFixed, const ToCSSConv
     return CSSCalc::Random::SharingFixed { randomFixed.baseValue };
 }
 
-CSS::Keyword::None NODELETE toCSS(const CSS::Keyword::None& none, const ToCSSConversionOptions&)
+CSS::Keyword::None LEGACY_NODELETE toCSS(const CSS::Keyword::None& none, const ToCSSConversionOptions&)
 {
     return none;
 }
@@ -170,7 +170,7 @@ CSSCalc::Child toCSS(const Percentage& percentage, const ToCSSConversionOptions&
 
 CSSCalc::Child toCSS(const Size&, const ToCSSConversionOptions&)
 {
-    return CSSCalc::makeChild(CSSCalc::Symbol { .id = CSSValueSize, .unit = CSSUnitType::Px });
+    return CSSCalc::makeChild(CSSCalc::Symbol { .id = CSSValueID::Size, .unit = CSSUnitType::Px });
 }
 
 CSSCalc::Child toCSS(const Dimension& root, const ToCSSConversionOptions& options)
@@ -225,7 +225,7 @@ std::optional<Child> toStyle(const std::optional<CSSCalc::Child>& optionalChild,
     return std::nullopt;
 }
 
-CSS::Keyword::None NODELETE toStyle(const CSS::Keyword::None& none, const ToStyleConversionOptions&)
+CSS::Keyword::None LEGACY_NODELETE toStyle(const CSS::Keyword::None& none, const ToStyleConversionOptions&)
 {
     return none;
 }
@@ -299,7 +299,7 @@ Child toStyle(const CSSCalc::Symbol& root, const ToStyleConversionOptions&)
 {
     // `size` is the one symbol the Tree can hold, since it resolves at used value time rather than
     // during conversion.
-    if (root.id == CSSValueSize)
+    if (root.id == CSSValueID::Size)
         return Size { };
 
     ASSERT_NOT_REACHED("Unevaluated symbols are not supported in the Tree");

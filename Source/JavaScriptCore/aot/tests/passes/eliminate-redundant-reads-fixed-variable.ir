@@ -1,0 +1,56 @@
+# A variable that is stored once before every read has the same value on both sides of unknown code
+# FORM: AsRead
+# RUN: pipeline EliminateRedundantReads
+# OPTIONS: only-passes=EliminateRedundantReads
+# STATISTIC: EliminateRedundantReadsChanges = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="limit" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="changing" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="late" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v1 variable=g1
+    v4 = CallDirect v1 function=f1
+    v5 = CallDirect v1 function=f2
+    v6 = CallDirect v1 function=f3
+    PutModuleVariable v4 variable=g1
+    PutModuleVariable v1 variable=g2
+    Return
+}
+
+function f1 name="storedOnce" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v0
+    v3 = GetModuleVariable variable=g0
+    v4 = StrictEq v1, v3
+    Return v4
+# CHECK: [[first]]:{{*}}= GetModuleVariable variable=g0
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: = Upcast [[first]]
+# CHECK-NOT: GetModuleVariable
+}
+
+function f2 name="storedTwice" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g1
+    v2 = Call v0
+    v3 = GetModuleVariable variable=g1
+    v4 = StrictEq v1, v3
+    Return v4
+# CHECK: = Call v0
+# CHECK-NEXT: = GetModuleVariable variable=g1
+}
+
+function f3 name="storedAfterRead" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g2
+    v2 = Call v0
+    v3 = GetModuleVariable variable=g2
+    v4 = StrictEq v1, v3
+    Return v4
+# CHECK: = Call v0
+# CHECK-NEXT: = GetModuleVariable variable=g2
+}

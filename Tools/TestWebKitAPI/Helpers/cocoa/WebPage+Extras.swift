@@ -330,4 +330,28 @@ extension WebPage {
     #endif // WTF_PLATFORM_MAC
 }
 
+/// A navigation decider that trusts any server certificate, such as the one a test server uses.
+@MainActor
+public struct NavigationDeciderAllowingAnyTLSCertificate: WebPage.NavigationDeciding {
+    /// Creates a navigation decider.
+    public init() {
+    }
+
+    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
+    public mutating func decideAuthenticationChallengeDisposition(
+        for challenge: URLAuthenticationChallenge
+    ) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
+        (.useCredential, challenge.protectionSpace.serverTrust.map(URLCredential.init(trust:)))
+    }
+}
+
+extension WebPage {
+    /// Gets the frame tree of the page in each of its web processes.
+    ///
+    /// - Returns: The frame trees.
+    public func frameTreesInProcesses() async -> FrameTreesInProcesses {
+        await backingWebView.frameTreesInProcesses()
+    }
+}
+
 #endif // ENABLE_SWIFTUI

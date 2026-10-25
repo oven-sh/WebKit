@@ -101,10 +101,11 @@ void PrintContext::computePageRects(const FloatRect& printRect, float headerHeig
 
 FloatBoxExtent PrintContext::computedPageMargin(FloatBoxExtent printMargin)
 {
-    if (!frame() || !frame()->document())
+    RefPtr document = frame() ? frame()->document() : nullptr;
+    if (!document)
         return printMargin;
     // FIXME Currently no pseudo class is supported.
-    auto style = protect(frame())->document()->styleScope().resolver().styleForPage(0);
+    auto style = protect(protect(document->styleScope())->resolver())->styleForPage(0);
 
     float pixelToPointScaleFactor = 1.0f / CSS::pixelsPerPt;
 
@@ -309,7 +310,7 @@ void PrintContext::end()
     m_linkedDestinations = nullptr;
 }
 
-static inline RenderBoxModelObject* NODELETE enclosingBoxModelObject(RenderElement* renderer)
+static inline RenderBoxModelObject* LEGACY_NODELETE enclosingBoxModelObject(RenderElement* renderer)
 {
     while (renderer && !is<RenderBoxModelObject>(*renderer))
         renderer = renderer->parent();

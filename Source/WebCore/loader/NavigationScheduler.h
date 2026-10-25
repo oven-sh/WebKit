@@ -58,14 +58,14 @@ public:
     explicit NavigationScheduler(Frame&);
     ~NavigationScheduler();
 
-    void NODELETE ref() const;
+    void LEGACY_NODELETE ref() const;
     void deref() const;
 
-    bool NODELETE redirectScheduledDuringLoad();
+    bool LEGACY_NODELETE redirectScheduledDuringLoad();
     bool locationChangePending();
 
     void scheduleRedirect(Document& initiatingDocument, double delay, const URL&, IsMetaRefresh);
-    void scheduleLocationChange(Document& initiatingDocument, SecurityOrigin&, const URL&, const String& referrer, LockHistory = LockHistory::Yes, LockBackForwardList = LockBackForwardList::Yes, NavigationHistoryBehavior historyHandling = NavigationHistoryBehavior::Auto, CompletionHandler<void(ScheduleLocationChangeResult)>&& = [] (ScheduleLocationChangeResult) { });
+    void scheduleLocationChange(Document& initiatingDocument, SecurityOrigin&, const URL&, const String& referrer, LockHistory = LockHistory::Yes, LockBackForwardList = LockBackForwardList::Yes, NavigationHistoryBehavior historyHandling = NavigationHistoryBehavior::Auto, ReplaceIfNotCompletelyLoaded = ReplaceIfNotCompletelyLoaded::No, CompletionHandler<void(ScheduleLocationChangeResult)>&& = [](ScheduleLocationChangeResult) { });
     void scheduleFormSubmission(Ref<FormSubmission>&&);
     void scheduleRefresh(Document& initiatingDocument);
     void scheduleHistoryNavigation(int steps);
@@ -79,10 +79,10 @@ public:
 
     void adjustPendingHistoryNavigationForNewBackForwardEntry();
 
-    bool NODELETE hasQueuedNavigation() const;
+    bool LEGACY_NODELETE hasQueuedNavigation() const;
 
 private:
-    bool NODELETE shouldScheduleNavigation() const;
+    bool LEGACY_NODELETE shouldScheduleNavigation() const;
     bool shouldScheduleNavigation(const URL&) const;
 
     void scheduleHistoryNavigation(Frame& originatingFrame, int steps);

@@ -1,0 +1,192 @@
+# Whether a group of values may become one operation
+# FORM: Prepared
+# OPTIONS: disable=rule:PropertyReadAndTest
+# RUN(CLAIMED): claim function=f0 group=v1,v2
+# CLAIMED: group 0: Claimed
+# RUN(TWICE): claim function=f0 group=v1,v2 group=v1,v2
+# TWICE: group 0: Claimed
+# TWICE-NEXT: group 1: AlreadyClaimed
+# RUN(REPEATED): claim function=f0 group=v1,v1,v2
+# REPEATED: group 0: AlreadyClaimed
+# RUN(TOGETHER): claim function=f0 together group=v1,v2 group=v2
+# TOGETHER: groups: AlreadyClaimed
+# RUN(DISJOINT): claim function=f0 together group=v1 group=v2
+# DISJOINT: groups: Claimed
+# RUN(ORDER): claim function=f0 group=v2,v1
+# ORDER: group 0: SpansBlocks
+# RUN(PARAMETER): claim function=f0 group=v0,v1
+# PARAMETER: group 0: SpansBlocks
+# RUN(DISABLED): claim function=f0 rule=PropertyReadAndTest group=v1,v2
+# DISABLED: group 0: RuleIsDisabled
+# RUN(OUTSIDE): claim function=f1 group=v1,v2
+# OUTSIDE: group 0: UsedOutsideGroup
+# RUN(MARKED): claim function=f1 group=v1+,v2
+# MARKED: group 0: Claimed
+# RUN(BETWEEN): claim function=f2 group=v1,v3
+# BETWEEN: group 0: UsedOutsideGroup
+# RUN(BETWEENMARKED): claim function=f2 group=v1+,v3
+# BETWEENMARKED: group 0: UsedOutsideGroup
+# RUN(EFFECTS): claim function=f3 group=v1,v3
+# EFFECTS: group 0: CrossesEffects
+# RUN(CONSTANT): claim function=f4 group=v1,v3
+# CONSTANT: group 0: Claimed
+# RUN(STRING): claim function=f11 group=v1,v3
+# STRING: group 0: Claimed
+# RUN(ALLOCATIONS): claim function=f14 group=v1,v4
+# ALLOCATIONS: group 0: Claimed
+# RUN(RUNTIMEERROR): claim function=f15 group=v1,v3
+# RUNTIMEERROR: group 0: CrossesEffects
+# RUN(BLOCKS): claim function=f5 group=v1,v2
+# BLOCKS: group 0: SpansBlocks
+# RUN(FRAMES): claim function=f6 group=v1,v2
+# FRAMES: group 0: SpansInlineFrames
+# RUN(HANDLER): claim function=f7 group=v1,v2
+# HANDLER: group 0: Claimed
+# RUN(HANDLERRESULT): claim function=f8 group=v1+,v2
+# HANDLERRESULT: group 0: Claimed
+# RUN(FRAMEOBJECT): claim function=f9 group=v1,v2
+# FRAMEOBJECT: group 0: BoundToFrame
+# RUN(FRAMEOBJECTSLOWPATH): claim function=f9 group=v1!
+# FRAMEOBJECTSLOWPATH: group 0: BoundToFrame
+# RUN(ALONE): claim function=f9 group=v1
+# ALONE: group 0: Claimed
+# RUN(HEAPOBJECT): claim function=f16 group=v1,v2
+# HEAPOBJECT: group 0: Claimed
+# RUN(SITEBOUND): claim function=f17 group=v0!
+# SITEBOUND: group 0: BoundToFrame
+# RUN(SITEBOUNDINPLACE): claim function=f17 group=v0
+# SITEBOUNDINPLACE: group 0: Claimed
+# RUN(RETURNCALL): claim function=f10 group=v1!
+# RETURNCALL: group 0: UsedOutsideGroup
+# RUN(RETURNCALLINPLACE): claim function=f10 group=v1
+# RETURNCALLINPLACE: group 0: Claimed
+# RUN(RESULTS): claim function=f13 group=v1!
+# RESULTS: group 0: UsedOutsideGroup
+# RUN(RESULTSINPLACE): claim function=f13 group=v1
+# RESULTSINPLACE: group 0: Claimed
+# RUN(MARKEDRESULTS): claim function=f13 group=v1+,v2
+# MARKEDRESULTS: group 0: UsedOutsideGroup
+# RUN(MARKEDSTORE): claim function=f3 group=v2+,v3
+# MARKEDSTORE: group 0: UsedOutsideGroup
+# RUN(BAD): claim function=f99 group=v1
+# BAD: error: bad argument function=f99
+# RUN(NOTFUNCTION): claim group=v1
+# NOTFUNCTION: error: bad argument group=v1
+# RUN(NOFUNCTION): claim
+# NOFUNCTION: error: missing argument
+# RUN(NOGROUP): claim function=f0
+# NOGROUP: error: missing argument
+# RUN(NORULE): claim function=f0 rule=NoSuchRule group=v1
+# NORULE: error: bad argument rule=NoSuchRule
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} prototypeName=AbsentOnPrototypes stability=[IsNeverStoredWithOtherType]}}]
+function f0 name="chain" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="a"
+    v2 = PropGet v1 key="b"
+    Return v2
+}
+function f1 name="usedAfterRoot" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = PropGet v0 key="a"
+    v2 = PropGet v0 key="b"
+    v3 = StrictEq v1, v2
+    Return v3
+}
+function f2 name="usedBeforeRoot" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = PropGet v0 key="a"
+    v2 = ToBoolean v1
+    v3 = PropGet v0 key="b"
+    Return v2
+}
+function f3 name="storeBetween" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="a"
+    PropSet v0, v0 key="c"
+    v3 = PropGet v1 key="b"
+    Return v3
+}
+function f4 name="constantBetween" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="a"
+    v2 = Integer integer=7
+    v3 = PropGet v1 key="b"
+    Return v3
+}
+function f5 name="twoBlocks" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="a"
+    Jump -> next b1()
+  b1():
+    v2 = PropGet v1 key="b"
+    Return v2
+}
+function f6 name="twoInlineFrames" parameters=[{type=anything}] results=[{type=anything}] inlineFrames=[{}, {callee=f0 callPosition=5 module=m0}] {
+    v1 = PropGet v0 key="a" @10:1
+    v2 = PropGet v1 key="b" @20
+    Return v2
+}
+function f7 name="throwingMembersUnderHandler" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b2():
+    v1 = PropGet v0 key="a"
+    v2 = PropGet v1 key="b"
+    Jump -> next b1()
+  b1():
+    Return v2
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+function f8 name="resultUsedAfterRootUnderHandler" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b2():
+    v1 = ToBoolean v0
+    v2 = PropGet v0 key="a"
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+}
+function f9 name="frameObject" parameters=[{type=number}] results=[{type=number}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0] storage=Frame
+    v2 = GetSlot v1, v1 key="x" receivers=[L0] level=Proven
+    Return v2
+}
+function f10 name="callNamedByReturnCall" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    ReturnCall v1
+}
+function f11 name="stringBetween" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="a"
+    v2 = String string="s"
+    v3 = PropGet v1 key="b"
+    Return v3
+}
+function f12 name="pair" parameters=[{type=anything}] results=[{type=anything}, {type=anything}] {
+    v1 = Results v0, v0
+    Return v1
+}
+function f13 name="unreadResults" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f12
+    v2 = PropGet v0 key="a"
+    Return v2
+}
+function f14 name="allocationsBetween" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="a"
+    v2 = NewClosure function=f0
+    v3 = NewRegExp pattern="a" regExpFlags=[]
+    v4 = PropGet v1 key="b"
+    Return v4
+}
+function f15 name="runtimeErrorBetween" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="a"
+    v2 = NewRuntimeError runtimeError=NotDestructurable
+    v3 = PropGet v1 key="b"
+    Return v3
+}
+function f16 name="heapObject" parameters=[{type=number}] results=[{type=number}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = GetSlot v1, v1 key="x" receivers=[L0] level=Proven
+    Return v2
+}
+function f17 name="valueBoundToSite" results=[{type=anything}] {
+    v0 = SharedRegExpLiteral pattern="a" regExpFlags=[]
+    Return v0
+}

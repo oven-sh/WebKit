@@ -111,6 +111,12 @@ void SWServer::close()
     }
     for (auto& runningWorker : runningWorkers)
         runningWorker->terminate();
+
+    auto loadingScriptCallbacks = std::exchange(m_loadingScriptCallbacks, { });
+    for (auto& callbacks : loadingScriptCallbacks.values()) {
+        for (auto& callback : callbacks)
+            callback(false);
+    }
 }
 
 RefPtr<SWServerWorker> SWServer::workerByID(ServiceWorkerIdentifier identifier) const
@@ -305,15 +311,24 @@ void SWServer::loadWorkerScripts(const SWServerWorker& worker, CompletionHandler
         return;
     }
 
+    auto result = m_loadingScriptCallbacks.ensure(worker.identifier(), [] {
+        return Vector<CompletionHandler<void(bool)>>();
+    });
+    result.iterator->value.append(WTF::move(callback));
+    if (!result.isNewEntry)
+        return;
+
     store->retrieveWorkerScripts(worker.identifier(), worker.registrationKey(), worker.scriptURL(), worker.importedScriptURLs(),
-        [weakThis = WeakPtr { *this }, workerIdentifier = worker.identifier(), callback = WTF::move(callback)](auto&& result) mutable {
+        [weakThis = WeakPtr { *this }, workerIdentifier = worker.identifier()](auto&& result) mutable {
             RefPtr protectedThis = weakThis;
             if (!protectedThis)
-                return callback(false);
+                return;
 
+            auto callbacks = protectedThis->m_loadingScriptCallbacks.take(workerIdentifier);
             bool success = !!result;
             auto scope = makeScopeExit([&] {
-                callback(success);
+                for (auto& callback : callbacks)
+                    callback(success);
             });
 
             RefPtr worker = protectedThis->workerByID(workerIdentifier);
@@ -596,7 +611,7 @@ SWServer::SWServer(SWServerDelegate& delegate, UniqueRef<SWOriginStore>&& origin
     RELEASE_LOG_IF(registrationDatabaseDirectory.isEmpty(), ServiceWorker, "No path to store the service worker registrations");
 
     if (RefPtr store = delegate.createRegistrationStore(*this)) {
-        m_registrationStore = store;
+        lazyInitialize(m_registrationStore, Ref { *store });
         // Only import the list of origins that have registrations, not the full registration data.
         // This is lightweight and sufficient for getOriginsWithRegistrations() to work immediately.
         // Full registrations are imported lazily per origin on first use (see importRegistrationsForOrigin).
@@ -1993,7 +2008,7 @@ void SWServer::processPushMessage(std::optional<Vector<uint8_t>>&& data, std::op
                 worker->decrementFunctionalEventCounter();
             });
             terminateWorkerTimer->startOneShot(weakThis && weakThis->m_isProcessTerminationDelayEnabled ? defaultTerminationDelay : defaultFunctionalEventDuration);
-            connectionOrStatus.value()->firePushEvent(serviceWorkerIdentifier, data, WTF::move(notificationPayload), [callback = WTF::move(callback), terminateWorkerTimer = WTF::move(terminateWorkerTimer), worker = WTF::move(worker)](bool succeeded, std::optional<NotificationPayload>&& resultPayload) mutable {
+            protect(connectionOrStatus.value())->firePushEvent(serviceWorkerIdentifier, data, WTF::move(notificationPayload), [callback = WTF::move(callback), terminateWorkerTimer = WTF::move(terminateWorkerTimer), worker = WTF::move(worker)](bool succeeded, std::optional<NotificationPayload>&& resultPayload) mutable {
                 if (!succeeded)
                     RELEASE_LOG(Push, "Push event was not successfully handled");
                 if (terminateWorkerTimer->isActive()) {
@@ -2047,7 +2062,7 @@ void SWServer::processNotificationEvent(NotificationData&& data, NotificationEve
                 worker->decrementFunctionalEventCounter();
             });
             terminateWorkerTimer->startOneShot(weakThis && weakThis->m_isProcessTerminationDelayEnabled ? defaultTerminationDelay : defaultFunctionalEventDuration);
-            connectionOrStatus.value()->fireNotificationEvent(serviceWorkerIdentifier, data, type, [callback = WTF::move(callback), terminateWorkerTimer = WTF::move(terminateWorkerTimer), worker = WTF::move(worker)] (bool succeeded) mutable {
+            protect(connectionOrStatus.value())->fireNotificationEvent(serviceWorkerIdentifier, data, type, [callback = WTF::move(callback), terminateWorkerTimer = WTF::move(terminateWorkerTimer), worker = WTF::move(worker)] (bool succeeded) mutable {
                 RELEASE_LOG_ERROR_IF(!succeeded, ServiceWorker, "Service Worker notification event handler did not succeed");
 
                 // FIXME: if succeeded is false, should we implement a default action like opening a new page?
@@ -2085,7 +2100,7 @@ void SWServer::fireBackgroundFetchEvent(SWServerRegistration& registration, Back
             worker->decrementFunctionalEventCounter();
         });
         terminateWorkerTimer->startOneShot(weakThis && weakThis->m_isProcessTerminationDelayEnabled ? defaultTerminationDelay : defaultFunctionalEventDuration);
-        connectionOrStatus.value()->fireBackgroundFetchEvent(serviceWorkerIdentifier, info, [terminateWorkerTimer = WTF::move(terminateWorkerTimer), worker = WTF::move(worker), callback = WTF::move(callback)](bool succeeded) mutable {
+        protect(connectionOrStatus.value())->fireBackgroundFetchEvent(serviceWorkerIdentifier, info, [terminateWorkerTimer = WTF::move(terminateWorkerTimer), worker = WTF::move(worker), callback = WTF::move(callback)](bool succeeded) mutable {
             RELEASE_LOG_ERROR_IF(!succeeded, ServiceWorker, "Background fetch event was not successfully handled");
             if (terminateWorkerTimer->isActive()) {
                 worker->decrementFunctionalEventCounter();
@@ -2116,7 +2131,7 @@ void SWServer::fireBackgroundFetchClickEvent(SWServerRegistration& registration,
             worker->decrementFunctionalEventCounter();
         });
         terminateWorkerTimer->startOneShot(weakThis && weakThis->m_isProcessTerminationDelayEnabled ? defaultTerminationDelay : defaultFunctionalEventDuration);
-        connectionOrStatus.value()->fireBackgroundFetchClickEvent(serviceWorkerIdentifier, info, [terminateWorkerTimer = WTF::move(terminateWorkerTimer), worker = WTF::move(worker)](bool succeeded) mutable {
+        protect(connectionOrStatus.value())->fireBackgroundFetchClickEvent(serviceWorkerIdentifier, info, [terminateWorkerTimer = WTF::move(terminateWorkerTimer), worker = WTF::move(worker)](bool succeeded) mutable {
             RELEASE_LOG_ERROR_IF(!succeeded, ServiceWorker, "Background fetch clickevent was not successfully handled");
             if (terminateWorkerTimer->isActive()) {
                 worker->decrementFunctionalEventCounter();
@@ -2245,7 +2260,7 @@ void SWServer::Connection::startBackgroundFetch(ServiceWorkerRegistrationIdentif
 BackgroundFetchEngine& SWServer::backgroundFetchEngine()
 {
     if (!m_backgroundFetchEngine)
-        m_backgroundFetchEngine = BackgroundFetchEngine::create(*this);
+        lazyInitialize(m_backgroundFetchEngine, BackgroundFetchEngine::create(*this));
     return *m_backgroundFetchEngine;
 }
 

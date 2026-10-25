@@ -85,7 +85,7 @@ public:
     }
 
 private:
-    static bool NODELETE foldPurifyNaN(Edge& edge)
+    static bool LEGACY_NODELETE foldPurifyNaN(Edge& edge)
     {
         if (edge->op() == PurifyNaN) {
             edge = edge->child1();
@@ -94,7 +94,7 @@ private:
         return false;
     }
 
-    static bool NODELETE foldPurifyNaNOnBinary(Node* node)
+    static bool LEGACY_NODELETE foldPurifyNaNOnBinary(Node* node)
     {
         bool result = false;
         if (node->isBinaryUseKind(DoubleRepUse)) {
@@ -104,11 +104,48 @@ private:
         return result;
     }
 
-    static bool NODELETE foldPurifyNaNOnUnary(Node* node)
+    static bool LEGACY_NODELETE foldPurifyNaNOnUnary(Node* node)
     {
         if (node->child1().useKind() == DoubleRepUse)
             return foldPurifyNaN(node->child1());
         return false;
+    }
+
+    // Only the CPS run, which directly follows BackwardsPropagation, can trust use flags. Later phases,
+    // starting with ConstantFolding, insert arithmetic without them, which would look truncatable.
+    bool hasBytecodeUseFlags() const
+    {
+        return m_graph.m_form != SSA;
+    }
+
+    bool relaxArithMode(Arith::Mode relaxedMode)
+    {
+        ASSERT(relaxedMode == Arith::Unchecked || relaxedMode == Arith::CheckOverflow);
+        Arith::Mode mode = m_node->arithMode();
+        if (mode != Arith::CheckOverflowAndNegativeZero && !(mode == Arith::CheckOverflow && relaxedMode == Arith::Unchecked))
+            return false;
+        m_node->setArithMode(relaxedMode);
+        m_changed = true;
+        return true;
+    }
+
+    void relaxDivOrModArithMode()
+    {
+        if (!hasBytecodeUseFlags())
+            return;
+        bool isInt32Operation = m_node->isBinaryInt32UseKind();
+        bool isInt52Operation = m_node->isBinaryUseKind(Int52RepUse);
+        if (!isInt32Operation && !isInt52Operation)
+            return;
+
+        // Even on integer operands, div and mod can produce fractions, NaN, and -0, so truncation
+        // alone does not make an unchecked result correct.
+        NodeFlags flags = m_node->arithNodeFlags();
+        if ((isInt52Operation || bytecodeCanTruncateInteger(flags)) && bytecodeCanIgnoreNaNAndInfinity(flags) && bytecodeCanIgnoreNegativeZero(flags)) {
+            if (relaxArithMode(Arith::Unchecked))
+                m_node->clearFlags(NodeMustGenerate);
+        } else if (bytecodeCanIgnoreNegativeZero(flags))
+            relaxArithMode(Arith::CheckOverflow);
     }
 
     void handleNode()
@@ -116,7 +153,6 @@ private:
         switch (m_node->op()) {
         case Branch:
         case PurifyNaN:
-        case DoubleAsInt32:
         case ValueToInt32:
         case GlobalIsNaN:
         case NumberIsNaN:
@@ -133,9 +169,40 @@ private:
         case ArithCeil:
         case ArithTrunc:
         case ArithSqrt:
-        case ArithAbs:
-        case ArithNegate:
         case ArithUnary: {
+            if (foldPurifyNaNOnUnary(m_node))
+                m_changed = true;
+            break;
+        }
+
+        case DoubleAsInt32: {
+            if (hasBytecodeUseFlags() && bytecodeCanIgnoreNegativeZero(m_node->arithNodeFlags()))
+                relaxArithMode(Arith::CheckOverflow);
+            if (foldPurifyNaNOnUnary(m_node))
+                m_changed = true;
+            break;
+        }
+
+        case ArithAbs: {
+            if (hasBytecodeUseFlags() && isInt32(m_node->child1().useKind()) && bytecodeCanTruncateInteger(m_node->arithNodeFlags())) {
+                if (relaxArithMode(Arith::Unchecked))
+                    m_node->clearFlags(NodeMustGenerate);
+            }
+            if (foldPurifyNaNOnUnary(m_node))
+                m_changed = true;
+            break;
+        }
+
+        case ArithNegate: {
+            if (hasBytecodeUseFlags()) {
+                NodeFlags flags = m_node->arithNodeFlags();
+                UseKind useKind = m_node->child1().useKind();
+                if (isInt32(useKind) && bytecodeCanTruncateInteger(flags)) {
+                    if (relaxArithMode(Arith::Unchecked))
+                        m_node->clearFlags(NodeMustGenerate);
+                } else if ((isInt32(useKind) || useKind == Int52RepUse) && bytecodeCanIgnoreNegativeZero(flags))
+                    relaxArithMode(Arith::CheckOverflow);
+            }
             if (foldPurifyNaNOnUnary(m_node))
                 m_changed = true;
             break;
@@ -189,10 +256,14 @@ private:
             break;
             
         case ArithAdd:
+            if (hasBytecodeUseFlags() && m_node->isBinaryInt32UseKind() && bytecodeCanTruncateInteger(m_node->arithNodeFlags())) {
+                if (relaxArithMode(Arith::Unchecked))
+                    m_node->clearFlags(NodeMustGenerate);
+            }
             handleCommutativity();
             if (foldPurifyNaNOnBinary(m_node))
                 m_changed = true;
-            
+
             if (m_node->child2()->isInt32Constant() && !m_node->child2()->asInt32()) {
                 convertToIdentityOverChild1();
                 break;
@@ -203,13 +274,23 @@ private:
         case ValueBitOr:
         case ValueBitAnd:
         case ValueBitXor: {
-            // FIXME: we should maybe support the case where one operand is always HeapBigInt and the other is always BigInt32?
-            if (m_node->binaryUseKind() == AnyBigIntUse || m_node->binaryUseKind() == BigInt32Use || m_node->binaryUseKind() == HeapBigIntUse)
+            if (m_node->binaryUseKind() == HeapBigIntUse)
                 handleCommutativity();
             break;
         }
 
         case ArithMul: {
+            if (hasBytecodeUseFlags()) {
+                NodeFlags flags = m_node->arithNodeFlags();
+                bool canTruncate = bytecodeCanTruncateInteger(flags) && m_graph.mulProductIsExact(m_node);
+                if (m_node->isBinaryInt32UseKind() && canTruncate) {
+                    if (relaxArithMode(Arith::Unchecked))
+                        m_node->clearFlags(NodeMustGenerate);
+                } else if ((m_node->isBinaryInt32UseKind() || m_node->isBinaryUseKind(Int52RepUse))
+                    && (bytecodeCanIgnoreNegativeZero(flags) || m_node->child1().node() == m_node->child2().node()))
+                    relaxArithMode(Arith::CheckOverflow);
+            }
+
             handleCommutativity();
             if (foldPurifyNaNOnBinary(m_node))
                 m_changed = true;
@@ -243,6 +324,11 @@ private:
             break;
         }
         case ArithSub: {
+            if (hasBytecodeUseFlags() && m_node->isBinaryInt32UseKind() && bytecodeCanTruncateInteger(m_node->arithNodeFlags())) {
+                if (relaxArithMode(Arith::Unchecked))
+                    m_node->clearFlags(NodeMustGenerate);
+            }
+
             if (foldPurifyNaNOnBinary(m_node))
                 m_changed = true;
 
@@ -283,6 +369,8 @@ private:
             break;
 
         case ArithMod: {
+            relaxDivOrModArithMode();
+
             if (foldPurifyNaNOnBinary(m_node))
                 m_changed = true;
 
@@ -319,6 +407,8 @@ private:
         }
 
         case ArithDiv: {
+            relaxDivOrModArithMode();
+
             if (foldPurifyNaNOnBinary(m_node))
                 m_changed = true;
 
@@ -338,6 +428,28 @@ private:
                     break;
                 }
             }
+            break;
+        }
+
+        case NewTypedArray:
+        case NewTypedArrayBuffer: {
+            if (!(m_node->flags() & NodeMustGenerate))
+                break;
+            if (m_node->child1().useKind() != Int32Use && m_node->child1().useKind() != Int52RepUse)
+                break;
+            if (!m_node->child1()->isAnyIntConstant())
+                break;
+
+            // Only a length that cannot throw a RangeError lets an unused allocation be removed.
+            int64_t length = m_node->child1()->asAnyInt();
+            if (length < 0)
+                break;
+            size_t elementByteSize = m_node->op() == NewTypedArray ? elementSize(m_node->typedArrayType()) : 1;
+            if (static_cast<uint64_t>(length) > MAX_ARRAY_BUFFER_SIZE / elementByteSize)
+                break;
+
+            m_node->clearFlags(NodeMustGenerate);
+            m_changed = true;
             break;
         }
 
@@ -522,7 +634,7 @@ private:
                 break;
             }
 
-            if (m_node->binaryUseKind() == BigInt32Use || m_node->binaryUseKind() == HeapBigIntUse || m_node->binaryUseKind() == AnyBigIntUse)
+            if (m_node->binaryUseKind() == HeapBigIntUse)
                 handleCommutativity();
 
             break;
@@ -542,10 +654,10 @@ private:
                     if (!string2)
                         break;
 
-                    StringBuilder builder;
+                    StringBuilder builder(OverflowPolicy::RecordOverflow);
                     builder.append(string1);
                     builder.append(string2);
-                    if (!builder.hasOverflowed()) {
+                    if (!builder.hasOverflowed()) [[likely]] {
                         LazyJSValue value = LazyJSValue::newString(m_graph, builder.toString());
                         auto* constant = m_insertionSet.insertNode(m_nodeIndex, SpecNone, LazyJSConstant, m_node->origin, OpInfo(m_graph.m_lazyJSValues.add(value)));
                         m_node->child2().setNode(constant);
@@ -567,11 +679,11 @@ private:
             if (!string1)
                 break;
 
-            StringBuilder builder;
+            StringBuilder builder(OverflowPolicy::RecordOverflow);
             builder.append(string0);
             builder.append(string1);
             if (!m_node->child3()) {
-                if (!builder.hasOverflowed()) {
+                if (!builder.hasOverflowed()) [[likely]] {
                     convertToLazyJSValue(m_node, LazyJSValue::newString(m_graph, builder.toString()));
                     m_changed = true;
                 }
@@ -580,7 +692,7 @@ private:
 
             String string2 = m_node->child3()->tryGetString(m_graph);
             if (!string2) {
-                if (!builder.hasOverflowed()) {
+                if (!builder.hasOverflowed()) [[likely]] {
                     LazyJSValue value = LazyJSValue::newString(m_graph, builder.toString());
                     auto* constant = m_insertionSet.insertNode(m_nodeIndex, SpecNone, LazyJSConstant, m_node->origin, OpInfo(m_graph.m_lazyJSValues.add(value)));
                     m_node->child1().setNode(constant);
@@ -592,7 +704,7 @@ private:
             }
 
             builder.append(string2);
-            if (!builder.hasOverflowed()) {
+            if (!builder.hasOverflowed()) [[likely]] {
                 convertToLazyJSValue(m_node, LazyJSValue::newString(m_graph, builder.toString()));
                 m_changed = true;
             }
@@ -1279,7 +1391,7 @@ private:
                 break;
             }
 
-            StringBuilder builder;
+            StringBuilder builder(OverflowPolicy::RecordOverflow);
 
             unsigned lastIndex = 0;
             unsigned startPosition = 0;
@@ -1310,11 +1422,8 @@ private:
                 unsigned replLen = replace.length();
                 if (lastIndex < result.start || replLen) {
                     builder.appendSubstring(string, lastIndex, result.start - lastIndex);
-                    if (replLen) {
-                        StringBuilder replacement;
-                        substituteBackreferences(replacement, replace, string, ovector.span().data(), regExp);
-                        builder.append(replacement);
-                    }
+                    if (replLen)
+                        substituteBackreferences(builder, replace, string, ovector.span().data(), regExp);
                 }
 
                 lastIndex = result.end;
@@ -1330,6 +1439,13 @@ private:
             } while (regExp->global());
             if (!ok)
                 break;
+
+            bool isUnchanged = !lastIndex && builder.isEmpty();
+            if (!isUnchanged) {
+                builder.appendSubstring(string, lastIndex);
+                if (builder.hasOverflowed()) [[unlikely]]
+                    break;
+            }
 
             // We are committed at this point.
             m_changed = true;
@@ -1350,12 +1466,10 @@ private:
                 origin = origin.withInvalidExit();
             }
 
-            if (!lastIndex && builder.isEmpty())
+            if (isUnchanged)
                 m_node->convertToIdentityOn(stringNode);
-            else {
-                builder.appendSubstring(string, lastIndex);
+            else
                 m_node->convertToLazyJSConstant(m_graph, LazyJSValue::newString(m_graph, builder.toString()));
-            }
 
             m_node->origin = origin;
             break;
@@ -2007,7 +2121,7 @@ private:
             }
 #endif
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
             if (FFI::tryConvertCallToCallFFI(m_graph, m_insertionSet, m_nodeIndex, m_node, function)) {
                 m_changed = true;
                 break;

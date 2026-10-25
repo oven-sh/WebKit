@@ -100,7 +100,7 @@ public:
     bool processIncomingMessage(Connection& connectionForLockCheck, UniqueRef<Decoder>&) WTF_REQUIRES_LOCK(connectionForLockCheck.m_incomingMessagesLock);
 
     // Dispatch pending messages that should be dispatched while waiting for a sync reply.
-    void dispatchMessages(Function<void(MessageName, uint64_t)>&& willDispatchMessage = { });
+    void dispatchMessages(NOESCAPE const Function<void(MessageName, uint64_t)>& willDispatchMessage = { });
 
     // Dispatch pending messages that should be dispatched while waiting for a sync reply,
     // up until the message with the provided identifier.
@@ -120,7 +120,7 @@ private:
     {
     }
     static Lock syncMessageStateMapLock;
-    static HashMap<Ref<SerialFunctionDispatcher>, ThreadSafeWeakPtr<SyncMessageState>>& NODELETE syncMessageStateMap() WTF_REQUIRES_LOCK(syncMessageStateMapLock)
+    static HashMap<Ref<SerialFunctionDispatcher>, ThreadSafeWeakPtr<SyncMessageState>>& LEGACY_NODELETE syncMessageStateMap() WTF_REQUIRES_LOCK(syncMessageStateMapLock)
     {
         static NeverDestroyed<HashMap<Ref<SerialFunctionDispatcher>, ThreadSafeWeakPtr<SyncMessageState>>> map;
         return map;
@@ -230,7 +230,7 @@ bool Connection::SyncMessageState::processIncomingMessage(Connection& connection
     return true;
 }
 
-void Connection::SyncMessageState::dispatchMessages(Function<void(MessageName, uint64_t)>&& willDispatchMessage)
+void Connection::SyncMessageState::dispatchMessages(NOESCAPE const Function<void(MessageName, uint64_t)>& willDispatchMessage)
 {
     assertIsCurrent(m_dispatcher.get());
     {
@@ -321,7 +321,7 @@ Ref<Connection> Connection::createClientConnection(Identifier&& identifier, Thre
     return adoptRef(*new Connection(WTF::move(identifier), false, receiveQueueQOS));
 }
 
-static HashMap<IPC::Connection::UniqueID, ThreadSafeWeakPtr<Connection>>& NODELETE connectionMap() WTF_REQUIRES_LOCK(s_connectionMapLock)
+static HashMap<IPC::Connection::UniqueID, ThreadSafeWeakPtr<Connection>>& LEGACY_NODELETE connectionMap() WTF_REQUIRES_LOCK(s_connectionMapLock)
 {
     static NeverDestroyed<HashMap<IPC::Connection::UniqueID, ThreadSafeWeakPtr<Connection>>> map;
     return map;
@@ -604,7 +604,7 @@ Error Connection::sendMessageImpl(UniqueRef<Encoder>&& encoder, OptionSet<SendOp
 #if ENABLE(IPC_TESTING_API)
     if (isMainRunLoop()) {
         bool hasDeadObservers = false;
-        for (WeakPtr observerWeakPtr : borrow(m_messageObservers).get()) {
+        for (WeakPtr observerWeakPtr : borrow(m_messageObservers)) {
             if (RefPtr observer = observerWeakPtr.get())
                 observer->willSendMessage(encoder.get(), sendOptions);
             else
@@ -965,13 +965,12 @@ auto Connection::waitForSyncReply(SyncRequestID syncRequestID, MessageName messa
             // Second, check if there is a sync reply at the top of the stack.
             ASSERT(!m_pendingSyncReplies.isEmpty());
 
-            auto& pendingSyncReply = m_pendingSyncReplies.last();
-            ASSERT_UNUSED(syncRequestID, pendingSyncReply.syncRequestID == syncRequestID);
+            ASSERT_UNUSED(syncRequestID, m_pendingSyncReplies.last().syncRequestID == syncRequestID);
 
             // We found the sync reply.
-            if (pendingSyncReply.replyDecoder) {
-                auto replyDecoder = std::exchange(pendingSyncReply.replyDecoder, nullptr);
-                if (auto identifierOfLastMessageToDispatchBeforeSyncReply = pendingSyncReply.identifierOfLastMessageToDispatchBeforeSyncReply) {
+            if (m_pendingSyncReplies.last().replyDecoder) {
+                auto replyDecoder = std::exchange(m_pendingSyncReplies.last().replyDecoder, nullptr);
+                if (auto identifierOfLastMessageToDispatchBeforeSyncReply = m_pendingSyncReplies.last().identifierOfLastMessageToDispatchBeforeSyncReply) {
                     locker.unlockEarly();
 
                     // Dispatch messages (that return true for shouldDispatchMessageWhenWaitingForSyncReply()) that
@@ -1018,8 +1017,9 @@ void Connection::processIncomingSyncReply(UniqueRef<Decoder> decoder)
 
         // Go through the stack of sync requests that have pending replies and see which one
         // this reply is for.
+        Borrow borrowedPendingSyncReplies = m_pendingSyncReplies;
         for (size_t i = m_pendingSyncReplies.size(); i > 0; --i) {
-            PendingSyncReply& pendingSyncReply = m_pendingSyncReplies[i - 1];
+            PendingSyncReply& pendingSyncReply = borrowedPendingSyncReplies[i - 1];
 
             if (pendingSyncReply.syncRequestID->toUInt64() != decoder->destinationID())
                 continue;
@@ -1119,7 +1119,7 @@ void Connection::processIncomingMessage(UniqueRef<Decoder> message)
         Locker locker { m_incomingSyncMessageCallbackLock };
 
         for (auto& callback : m_incomingSyncMessageCallbacks.values())
-            RefPtr { m_incomingSyncMessageCallbackQueue }->dispatch(WTF::move(callback));
+            m_incomingSyncMessageCallbackQueue->dispatch(WTF::move(callback));
 
         m_incomingSyncMessageCallbacks.clear();
     }
@@ -1167,7 +1167,7 @@ uint64_t Connection::installIncomingSyncMessageCallback(WTF::Function<void ()>&&
     m_nextIncomingSyncMessageCallbackID++;
 
     if (!m_incomingSyncMessageCallbackQueue)
-        m_incomingSyncMessageCallbackQueue = WorkQueue::create("com.apple.WebKit.IPC.IncomingSyncMessageCallbackQueue"_s);
+        lazyInitialize(m_incomingSyncMessageCallbackQueue, WorkQueue::create("com.apple.WebKit.IPC.IncomingSyncMessageCallbackQueue"_s));
 
     m_incomingSyncMessageCallbacks.add(m_nextIncomingSyncMessageCallbackID, WTF::move(callback));
 
@@ -1428,7 +1428,7 @@ void Connection::dispatchMessage(Decoder& decoder)
 #if ENABLE(IPC_TESTING_API)
     if (isMainRunLoop()) {
         bool hasDeadObservers = false;
-        for (WeakPtr observerWeakPtr : borrow(m_messageObservers).get()) {
+        for (WeakPtr observerWeakPtr : borrow(m_messageObservers)) {
             if (RefPtr observer = observerWeakPtr.get())
                 observer->didReceiveMessage(decoder);
             else
@@ -1763,3 +1763,8 @@ void Connection::logFailedMessageCheck(const String& reason, const String& funct
 }
 
 } // namespace IPC
+
+#if ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
+// Workaround for rdar://188816334
+template void WTF::ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<IPC::Connection, WTF::DestructionThread::MainRunLoop>::operator delete(void*);
+#endif

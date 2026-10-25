@@ -33,6 +33,9 @@ PASS dumpPoint(poly1.points.getItem(2)) is "x=100 y=100"
 PASS dumpPoint(poly1.points.getItem(3)) is "x=0 y=100"
 PASS poly1.getAttribute('points').formatPointsAttribute() is "0 0 100 0 100 100 0 100"
 
+point is still item 0, so it was updated in place
+PASS dumpPoint(point) is "x=0 y=0"
+
 Test uncommon arguments for getItem()
 PASS poly1.points.getItem(30) threw exception IndexSizeError: The index is not in the allowed range..
 PASS poly1.points.getItem('aString') is poly1.points.getItem(0)
@@ -147,6 +150,10 @@ PASS poly1.points.appendItem(30) threw exception TypeError: Argument 1 ('newItem
 PASS poly1.points.appendItem('aString') threw exception TypeError: Argument 1 ('newItem') to SVGPointList.appendItem must be an instance of SVGPoint.
 PASS poly1.points.appendItem(poly1) threw exception TypeError: Argument 1 ('newItem') to SVGPointList.appendItem must be an instance of SVGPoint.
 PASS poly1.points.appendItem(null) threw exception TypeError: Argument 1 ('newItem') to SVGPointList.appendItem must be an instance of SVGPoint.
+
+Set point back to x=200 y=100
+PASS point.x = 200 is 200
+PASS point.y = 100 is 100
 PASS dumpPoint(poly1.points.appendItem(point)) is "x=200 y=100"
 PASS poly1.points.numberOfItems is 2
 PASS dumpPoint(poly1.points.getItem(0)) is "x=0 y=100"

@@ -57,7 +57,7 @@ class WorkerNotificationClient;
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
 class WorkerAnimationController;
 
-using CallbackId = int;
+using CallbackId = unsigned;
 #endif
 
 using TransferredMessagePort = std::pair<WebCore::MessagePortIdentifier, WebCore::MessagePortIdentifier>;

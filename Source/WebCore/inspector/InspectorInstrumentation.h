@@ -87,6 +87,7 @@ class DocumentLoader;
 class DocumentThreadableLoader;
 class EventListener;
 class GPUDevice;
+class HTMLFrameOwnerElement;
 class HTTPHeaderMap;
 class InspectorTimelineAgent;
 class InstrumentingAgents;
@@ -150,6 +151,7 @@ public:
     static void didInvalidateStyleAttr(Element&);
     static void documentDetached(Document&);
     static void frameWindowDiscarded(LocalFrame&, LocalDOMWindow*);
+    static void fontDataChanged(Document&);
     static void mediaQueryResultChanged(Document&);
     static void activeStyleSheetsUpdated(Document&);
     static void didPushShadowRoot(Element& host, ShadowRoot&);
@@ -166,8 +168,10 @@ public:
     static void didUnregisterNamedFlowContentElement(Document&, WebKitNamedFlow&, Node& contentElement);
 
     static void mouseDidMoveOverElement(Page&, const HitTestResult&, OptionSet<PlatformEventModifier>);
+    static void mouseDidMoveOverRemoteFrame(LocalFrame&);
+    static void mouseDidLeaveLocalRoot(LocalFrame&);
     static bool handleMousePress(LocalFrame&);
-    static bool handleTouchEvent(LocalFrame&, Node&);
+    static bool handleTouchEvent(Node&);
     static bool forcePseudoState(const Element&, CSSSelector::PseudoClass);
 
     static void willSendXMLHttpRequest(ScriptExecutionContext*, const String& url);
@@ -248,6 +252,7 @@ public:
     static void loadEventFired(LocalFrame*);
     static void frameDetachedFromParent(LocalFrame&);
     static void didCommitLoad(LocalFrame&, DocumentLoader*);
+    static void frameOwnerContentFrameChanged(Document&, HTMLFrameOwnerElement&);
     static void frameDocumentUpdated(LocalFrame&);
     static void loaderDetachedFromFrame(LocalFrame&, DocumentLoader&);
     static void frameStartedLoading(LocalFrame&);
@@ -338,14 +343,17 @@ public:
 #endif
     static void didCreateWebGPUDevice(GPUDevice&);
     static void willDestroyWebGPUDevice(GPUDevice&);
+    static void didChangeWebGPUDeviceLabel(GPUDevice&);
     static void didChangeGPUDeviceClientNodes(GPUDevice&);
     static void didChangeWebGPUMemory(GPUDevice&);
     static void didCreateWebGPUComputePipeline(GPUDevice&, GPUComputePipeline&);
     static void willDestroyWebGPUComputePipeline(GPUComputePipeline&);
+    static void didChangeWebGPUComputePipelineLabel(GPUComputePipeline&);
     static void didCreateWebGPURenderPipeline(GPUDevice&, GPURenderPipeline&);
+    static void didChangeWebGPURenderPipelineLabel(GPURenderPipeline&);
     static void willDestroyWebGPURenderPipeline(GPURenderPipeline&);
     static bool isWebGPURenderPipelineDisabled(GPURenderPipeline&);
-    static RefPtr<WebGPU::RenderPipeline> renderPipelineForWebGPUHighlighting(GPURenderPipeline&, unsigned canvasColorAttachmentMask);
+    static RefPtr<::WebGPU::RenderPipeline> renderPipelineForWebGPUHighlighting(GPURenderPipeline&, unsigned canvasColorAttachmentMask);
 
     static void willApplyKeyframeEffect(const Styleable&, KeyframeEffect&, const ComputedEffectTiming&);
     static void didChangeWebAnimationName(WebAnimation&);
@@ -396,6 +404,7 @@ private:
     static void didInvalidateStyleAttrImpl(InstrumentingAgents&, Element&);
     static void documentDetachedImpl(InstrumentingAgents&, Document&);
     static void frameWindowDiscardedImpl(InstrumentingAgents&, LocalDOMWindow*);
+    static void fontDataChangedImpl(InstrumentingAgents&, Document&);
     static void mediaQueryResultChangedImpl(InstrumentingAgents&, Document&);
     static void activeStyleSheetsUpdatedImpl(InstrumentingAgents&, Document&);
     static void didPushShadowRootImpl(InstrumentingAgents&, Element& host, ShadowRoot&);
@@ -412,8 +421,10 @@ private:
     static void didUnregisterNamedFlowContentElementImpl(InstrumentingAgents&, Document&, WebKitNamedFlow&, Node& contentElement);
 
     static void mouseDidMoveOverElementImpl(InstrumentingAgents&, const HitTestResult&, OptionSet<PlatformEventModifier>);
+    static void mouseDidMoveOverRemoteFrameImpl(InstrumentingAgents&, LocalFrame&);
+    static void mouseDidLeaveLocalRootImpl(LocalFrame&);
     static bool handleMousePressImpl(InstrumentingAgents&);
-    static bool handleTouchEventImpl(InstrumentingAgents&, Node&);
+    static bool handleTouchEventImpl(Node&);
     static bool forcePseudoStateImpl(InstrumentingAgents&, const Element&, CSSSelector::PseudoClass);
 
     static void willSendXMLHttpRequestImpl(InstrumentingAgents&, const String& url);
@@ -479,6 +490,7 @@ private:
     static void loadEventFiredImpl(InstrumentingAgents&, LocalFrame*);
     static void frameDetachedFromParentImpl(InstrumentingAgents&, LocalFrame&);
     static void didCommitLoadImpl(InstrumentingAgents&, LocalFrame&, DocumentLoader*);
+    static void frameOwnerContentFrameChangedImpl(InstrumentingAgents&, HTMLFrameOwnerElement&);
     static void frameDocumentUpdatedImpl(InstrumentingAgents&, LocalFrame&);
     static void loaderDetachedFromFrameImpl(InstrumentingAgents&, DocumentLoader&);
     static void frameStartedLoadingImpl(InstrumentingAgents&, LocalFrame&);
@@ -524,7 +536,7 @@ private:
     static void willFireObserverCallbackImpl(InstrumentingAgents&, const String&);
     static void didFireObserverCallbackImpl(InstrumentingAgents&);
 
-    static void didDispatchDOMStorageEventImpl(InstrumentingAgents&, const String& key, const String& oldValue, const String& newValue, StorageType, const SecurityOrigin&);
+    static void didDispatchDOMStorageEventImpl(InstrumentingAgents&, Page&, const String& key, const String& oldValue, const String& newValue, StorageType, const SecurityOrigin&);
 
     static bool shouldWaitForDebuggerOnStartImpl(InstrumentingAgents&);
     static void workerStartedImpl(InstrumentingAgents&, WorkerInspectorProxy&);
@@ -557,14 +569,17 @@ private:
 #endif
     static void didCreateWebGPUDeviceImpl(InstrumentingAgents&, GPUDevice&);
     static void willDestroyWebGPUDeviceImpl(InstrumentingAgents&, GPUDevice&);
+    static void didChangeWebGPUDeviceLabelImpl(InstrumentingAgents&, GPUDevice&);
     static void didChangeGPUDeviceClientNodesImpl(InstrumentingAgents&, GPUDevice&);
     static void didChangeWebGPUMemoryImpl(InstrumentingAgents&, GPUDevice&);
     static void didCreateWebGPUComputePipelineImpl(InstrumentingAgents&, GPUDevice&, GPUComputePipeline&);
     static void willDestroyWebGPUComputePipelineImpl(InstrumentingAgents&, GPUComputePipeline&);
+    static void didChangeWebGPUComputePipelineLabelImpl(InstrumentingAgents&, GPUComputePipeline&);
     static void didCreateWebGPURenderPipelineImpl(InstrumentingAgents&, GPUDevice&, GPURenderPipeline&);
     static void willDestroyWebGPURenderPipelineImpl(InstrumentingAgents&, GPURenderPipeline&);
+    static void didChangeWebGPURenderPipelineLabelImpl(InstrumentingAgents&, GPURenderPipeline&);
     static bool isWebGPURenderPipelineDisabledImpl(InstrumentingAgents&, GPURenderPipeline&);
-    static RefPtr<WebGPU::RenderPipeline> renderPipelineForWebGPUHighlightingImpl(InstrumentingAgents&, GPURenderPipeline&, unsigned canvasColorAttachmentMask);
+    static RefPtr<::WebGPU::RenderPipeline> renderPipelineForWebGPUHighlightingImpl(InstrumentingAgents&, GPURenderPipeline&, unsigned canvasColorAttachmentMask);
 
     static void willApplyKeyframeEffectImpl(InstrumentingAgents&, const Styleable&, KeyframeEffect&, const ComputedEffectTiming&);
     static void didChangeWebAnimationNameImpl(InstrumentingAgents&, WebAnimation&);
@@ -577,16 +592,16 @@ private:
     static void layerTreeDidChangeImpl(InstrumentingAgents&);
     static void renderLayerDestroyedImpl(InstrumentingAgents&, const RenderLayer&);
 
-    static InstrumentingAgents& NODELETE instrumentingAgents(Page&);
-    static InstrumentingAgents& NODELETE instrumentingAgents(const LocalFrame&);
-    static InstrumentingAgents& NODELETE instrumentingAgents(const LocalFrameView&);
-    static InstrumentingAgents& NODELETE instrumentingAgents(WorkerOrWorkletGlobalScope&);
-    static InstrumentingAgents& NODELETE instrumentingAgents(ServiceWorkerGlobalScope&);
-    static InstrumentingAgents& NODELETE instrumentingAgents(const RenderObject&);
+    static InstrumentingAgents& LEGACY_NODELETE instrumentingAgents(Page&);
+    static InstrumentingAgents& LEGACY_NODELETE instrumentingAgents(const LocalFrame&);
+    static InstrumentingAgents& LEGACY_NODELETE instrumentingAgents(const LocalFrameView&);
+    static InstrumentingAgents& LEGACY_NODELETE instrumentingAgents(WorkerOrWorkletGlobalScope&);
+    static InstrumentingAgents& LEGACY_NODELETE instrumentingAgents(ServiceWorkerGlobalScope&);
+    static InstrumentingAgents& LEGACY_NODELETE instrumentingAgents(const RenderObject&);
 
     static InstrumentingAgents* instrumentingAgents(const LocalFrame*);
     static InstrumentingAgents* instrumentingAgents(ScriptExecutionContext&);
-    static InstrumentingAgents* NODELETE instrumentingAgents(Document&);
+    static InstrumentingAgents* LEGACY_NODELETE instrumentingAgents(Document&);
     static InstrumentingAgents* instrumentingAgents(Document*);
     static InstrumentingAgents* instrumentingAgents(WorkerOrWorkletGlobalScope*);
 };
@@ -721,6 +736,13 @@ inline void InspectorInstrumentation::frameWindowDiscarded(LocalFrame& frame, Lo
     frameWindowDiscardedImpl(protect(instrumentingAgents(frame)), domWindow);
 }
 
+inline void InspectorInstrumentation::fontDataChanged(Document& document)
+{
+    FAST_RETURN_IF_NO_FRONTENDS(void());
+    if (RefPtr agents = instrumentingAgents(document))
+        fontDataChangedImpl(*agents, document);
+}
+
 inline void InspectorInstrumentation::mediaQueryResultChanged(Document& document)
 {
     FAST_RETURN_IF_NO_FRONTENDS(void());
@@ -825,10 +847,22 @@ inline void InspectorInstrumentation::mouseDidMoveOverElement(Page& page, const 
     mouseDidMoveOverElementImpl(protect(instrumentingAgents(page)), result, modifiers);
 }
 
-inline bool InspectorInstrumentation::handleTouchEvent(LocalFrame& frame, Node& node)
+inline void InspectorInstrumentation::mouseDidMoveOverRemoteFrame(LocalFrame& frame)
+{
+    FAST_RETURN_IF_NO_FRONTENDS(void());
+    mouseDidMoveOverRemoteFrameImpl(protect(instrumentingAgents(frame)), frame);
+}
+
+inline void InspectorInstrumentation::mouseDidLeaveLocalRoot(LocalFrame& localRoot)
+{
+    FAST_RETURN_IF_NO_FRONTENDS(void());
+    mouseDidLeaveLocalRootImpl(localRoot);
+}
+
+inline bool InspectorInstrumentation::handleTouchEvent(Node& node)
 {
     FAST_RETURN_IF_NO_FRONTENDS(false);
-    return handleTouchEventImpl(protect(instrumentingAgents(frame)), node);
+    return handleTouchEventImpl(node);
 }
 
 inline bool InspectorInstrumentation::handleMousePress(LocalFrame& frame)
@@ -1294,6 +1328,13 @@ inline void InspectorInstrumentation::didCommitLoad(LocalFrame& frame, DocumentL
     didCommitLoadImpl(protect(instrumentingAgents(frame)), frame, loader);
 }
 
+inline void InspectorInstrumentation::frameOwnerContentFrameChanged(Document& document, HTMLFrameOwnerElement& frameOwner)
+{
+    FAST_RETURN_IF_NO_FRONTENDS(void());
+    if (RefPtr agents = instrumentingAgents(document))
+        frameOwnerContentFrameChangedImpl(*agents, frameOwner);
+}
+
 inline void InspectorInstrumentation::frameDocumentUpdated(LocalFrame& frame)
 {
     FAST_RETURN_IF_NO_FRONTENDS(void());
@@ -1382,7 +1423,7 @@ inline void InspectorInstrumentation::interceptResponse(const LocalFrame& frame,
 inline void InspectorInstrumentation::didDispatchDOMStorageEvent(Page& page, const String& key, const String& oldValue, const String& newValue, StorageType storageType, const SecurityOrigin& securityOrigin)
 {
     FAST_RETURN_IF_NO_FRONTENDS(void());
-    didDispatchDOMStorageEventImpl(protect(instrumentingAgents(page)), key, oldValue, newValue, storageType, securityOrigin);
+    didDispatchDOMStorageEventImpl(protect(instrumentingAgents(page)), page, key, oldValue, newValue, storageType, securityOrigin);
 }
 
 inline bool InspectorInstrumentation::shouldWaitForDebuggerOnStart(ScriptExecutionContext& context)
@@ -1552,6 +1593,13 @@ inline void InspectorInstrumentation::willDestroyWebGPUDevice(GPUDevice& device)
         willDestroyWebGPUDeviceImpl(*agents, device);
 }
 
+inline void InspectorInstrumentation::didChangeWebGPUDeviceLabel(GPUDevice& device)
+{
+    FAST_RETURN_IF_NO_FRONTENDS(void());
+    if (RefPtr agents = instrumentingAgents(protect(device.scriptExecutionContext())))
+        didChangeWebGPUDeviceLabelImpl(*agents, device);
+}
+
 inline void InspectorInstrumentation::didChangeGPUDeviceClientNodes(GPUDevice& device)
 {
     FAST_RETURN_IF_NO_FRONTENDS(void());
@@ -1582,6 +1630,15 @@ inline void InspectorInstrumentation::willDestroyWebGPUComputePipeline(GPUComput
     }
 }
 
+inline void InspectorInstrumentation::didChangeWebGPUComputePipelineLabel(GPUComputePipeline& pipeline)
+{
+    FAST_RETURN_IF_NO_FRONTENDS(void());
+    if (RefPtr device = pipeline.device()) {
+        if (RefPtr agents = instrumentingAgents(protect(device->scriptExecutionContext())))
+            didChangeWebGPUComputePipelineLabelImpl(*agents, pipeline);
+    }
+}
+
 inline void InspectorInstrumentation::didCreateWebGPURenderPipeline(GPUDevice& device, GPURenderPipeline& pipeline)
 {
     FAST_RETURN_IF_NO_FRONTENDS(void());
@@ -1598,6 +1655,15 @@ inline void InspectorInstrumentation::willDestroyWebGPURenderPipeline(GPURenderP
     }
 }
 
+inline void InspectorInstrumentation::didChangeWebGPURenderPipelineLabel(GPURenderPipeline& pipeline)
+{
+    FAST_RETURN_IF_NO_FRONTENDS(void());
+    if (RefPtr device = pipeline.device()) {
+        if (RefPtr agents = instrumentingAgents(protect(device->scriptExecutionContext())))
+            didChangeWebGPURenderPipelineLabelImpl(*agents, pipeline);
+    }
+}
+
 inline bool InspectorInstrumentation::isWebGPURenderPipelineDisabled(GPURenderPipeline& pipeline)
 {
     FAST_RETURN_IF_NO_FRONTENDS(false);
@@ -1608,7 +1674,7 @@ inline bool InspectorInstrumentation::isWebGPURenderPipelineDisabled(GPURenderPi
     return false;
 }
 
-inline RefPtr<WebGPU::RenderPipeline> InspectorInstrumentation::renderPipelineForWebGPUHighlighting(GPURenderPipeline& pipeline, unsigned canvasColorAttachmentMask)
+inline RefPtr<::WebGPU::RenderPipeline> InspectorInstrumentation::renderPipelineForWebGPUHighlighting(GPURenderPipeline& pipeline, unsigned canvasColorAttachmentMask)
 {
     FAST_RETURN_IF_NO_FRONTENDS(nullptr);
     if (RefPtr device = pipeline.device()) {

@@ -98,24 +98,24 @@ static Color adjustColorForPunchedOutBackground(const Color& textColor, const Re
     if (!frameView)
         return textColor;
 
-    auto styleColorOptions = document->styleColorOptions(&lineStyle);
+    auto styleColorOptions = document->styleColorOptions(&lineStyle, StyleColorOptionsPurpose::Rendering);
 
     auto backdropColor = frameView->documentBackgroundColor();
     if (!backdropColor.isOpaque())
-        backdropColor = RenderTheme::singleton().systemColor(CSSValueCanvas, styleColorOptions);
+        backdropColor = RenderTheme::singleton().systemColor(CSSValueID::Canvas, styleColorOptions);
 
     if (!backdropColor.isValid() || textColorIsLegibleAgainstBackgroundColor(textColor, backdropColor))
         return textColor;
 
     for (CheckedPtr ancestor = renderer.parent(); ancestor; ancestor = ancestor->parent()) {
-        auto backgroundColor = protect(ancestor->style())->visitedDependentBackgroundColor();
+        auto backgroundColor = protect(ancestor->style())->visitedDependentUsedBackgroundColor();
         if (!backgroundColor.isVisible())
             continue;
 
         if (!document->backgroundColorIsPunchedOut(backgroundColor, *ancestor))
             return textColor;
 
-        return RenderTheme::singleton().systemColor(CSSValueCanvastext, styleColorOptions);
+        return RenderTheme::singleton().systemColor(CSSValueID::Canvastext, styleColorOptions);
     }
 
     return textColor;
@@ -176,7 +176,8 @@ TextPaintStyle computeTextPaintStyle(const RenderText& renderer, const Style::Co
             forceBackgroundToWhite = false;
 
         if (forceBackgroundToWhite) {
-            if (Style::hasAnyBackgroundClipText(renderer.style().backgroundLayers()))
+            // background-clip: text on the parent paints its background through the text.
+            if (Style::hasAnyBackgroundClipText(renderer.parent()->style().backgroundLayers()))
                 paintStyle.fillColor = Color::black;
         }
     }

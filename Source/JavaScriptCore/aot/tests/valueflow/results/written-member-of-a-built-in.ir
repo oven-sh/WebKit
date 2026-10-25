@@ -1,0 +1,27 @@
+# A member of a built-in object that the program replaces is no constant, and a call through it lists what was stored beside the built-in. A member of a locked object stays a constant whatever the program stores
+# RUN: valueflow-apply
+# CHECK: = Call {{*}} callees=[f1, builtin(DateNow)]
+# RUN(RESULTS): valueflow-results
+# RESULTS: builtin-location Date."now" Unknown
+# RESULTS: builtin-location Date."parse" Constant
+# RESULTS: builtin-location Math."floor" Constant
+# RESULTS: builtin-use DateNow [Read, Called, Written]
+# RESULTS: builtin-use MathFloor [Written]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Date
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="now"
+    v3 = PropGet v0 key="now"
+    v4 = Call v3, v0
+    v5 = PropGet v0 key="parse"
+    v6 = Builtin builtin=Math
+    PropSet v6, v1 key="floor"
+    Return
+}
+function f1 name="now" results=[{type=anything}] {
+    v0 = Integer integer=0
+    Return v0
+}

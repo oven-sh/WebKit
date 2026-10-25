@@ -36,6 +36,7 @@
 #include <array>
 #include <gtk/gtk.h>
 #include <wtf/RefCounted.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
 
@@ -128,10 +129,10 @@ public:
 
     using ReadBufferCompletionHandler = CompletionHandler<void(Ref<WebCore::SharedBuffer>&&)>;
 
-    void readBuffer(const char* format, ReadBufferCompletionHandler&& completionHandler)
+    void readBuffer(UTF8CStringView format, ReadBufferCompletionHandler&& completionHandler)
     {
         m_completionHandler = WTF::move(completionHandler);
-        auto mimeTypes = WTF::toArray<const char*>({ format, nullptr });
+        auto mimeTypes = WTF::toArray<const char*>({ format.utf8(), nullptr });
         gdk_clipboard_read_async(m_clipboard, mimeTypes.data(), G_PRIORITY_DEFAULT, m_cancellable.get(), [](GObject* clipboard, GAsyncResult* result, gpointer userData) {
             auto task = adoptRef(static_cast<ClipboardTask*>(userData));
             GUniqueOutPtr<GError> error;
@@ -241,7 +242,7 @@ void Clipboard::readFilePaths(CompletionHandler<void(Vector<String>&&)>&& comple
     ClipboardTask::create(m_clipboard, readMode)->readFilePaths(WTF::move(completionHandler));
 }
 
-void Clipboard::readBuffer(const char* format, CompletionHandler<void(Ref<WebCore::SharedBuffer>&&)>&& completionHandler, ReadMode readMode)
+void Clipboard::readBuffer(UTF8CStringView format, CompletionHandler<void(Ref<WebCore::SharedBuffer>&&)>&& completionHandler, ReadMode readMode)
 {
     ClipboardTask::create(m_clipboard, readMode)->readBuffer(format, WTF::move(completionHandler));
 }
@@ -257,13 +258,13 @@ void Clipboard::write(WebCore::SelectionData&& selectionData, CompletionHandler<
 
     if (selectionData.hasURIList()) {
         auto uriList = selectionData.uriList().utf8();
-        GRefPtr<GBytes> bytes = adoptGRef(g_bytes_new(uriList.legacyCStringPointer(), uriList.length()));
+        GRefPtr bytes = gBytesNew(uriList.span());
         providers.append(gdk_content_provider_new_for_bytes("text/uri-list", bytes.get()));
     }
 
     if (selectionData.hasMarkup()) {
         auto markup = selectionData.markup().utf8();
-        GRefPtr<GBytes> bytes = adoptGRef(g_bytes_new(markup.legacyCStringPointer(), markup.length()));
+        GRefPtr bytes = gBytesNew(markup.span());
         providers.append(gdk_content_provider_new_for_bytes("text/html", bytes.get()));
     }
 

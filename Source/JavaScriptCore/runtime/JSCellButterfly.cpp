@@ -29,6 +29,7 @@
 #include "ButterflyInlines.h"
 #include "ClonedArguments.h"
 #include "DirectArguments.h"
+#include "JSGenericTypedArrayViewInlines.h"
 #include "JSObjectInlines.h"
 #include "JSSetInlines.h"
 #include "ScopedArguments.h"
@@ -45,13 +46,7 @@ void JSCellButterfly::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     ASSERT_GC_OBJECT_INHERITS(cell, info());
     Base::visitChildren(cell, visitor);
-    if (!hasContiguous(cell->indexingType())) {
-        ASSERT(hasDouble(cell->indexingType()) || hasInt32(cell->indexingType()));
-        return;
-    }
-
-    Butterfly* butterfly = uncheckedDowncast<JSCellButterfly>(cell)->toButterfly();
-    visitor.appendValuesHidden(butterfly->contiguous().data(), butterfly->publicLength());
+    visitFields(uncheckedDowncast<JSCellButterfly>(cell), visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSCellButterfly);
@@ -67,6 +62,17 @@ void JSCellButterfly::copyToArguments(JSGlobalObject*, JSValue* firstElementDest
 }
 
 static_assert(JSCellButterfly::offsetOfData() == sizeof(JSCellButterfly), "m_header needs to be adjacent to Data");
+
+#if USE(BUN_JSC_ADDITIONS)
+constinit uintptr_t JSCellButterfly::s_startOfStorageOutsideHeap = 0;
+constinit size_t JSCellButterfly::s_sizeOfStorageOutsideHeap = 0;
+
+void JSCellButterfly::setStorageOutsideHeap(std::span<const uint8_t> bytes)
+{
+    s_startOfStorageOutsideHeap = std::bit_cast<uintptr_t>(bytes.data());
+    s_sizeOfStorageOutsideHeap = bytes.size();
+}
+#endif
 
 JSCellButterfly* JSCellButterfly::createFromClonedArguments(JSGlobalObject* globalObject, ClonedArguments* arguments)
 {
@@ -239,6 +245,21 @@ JSCellButterfly* JSCellButterfly::createFromString(JSGlobalObject* globalObject,
     return result;
 }
 
+#if ENABLE(AOT)
+static NEVER_INLINE void copyKeysFromCompactStorage(VM& vm, JSCell& storage, JSCellButterfly* result)
+{
+    using Helper = JSSet::Helper;
+    unsigned index = 0;
+    for (Helper::Entry entry = 0;; ++entry) {
+        auto transitionResult = Helper::transitAndNext(vm, storage, entry);
+        if (!transitionResult.storage)
+            break;
+        result->setIndex(vm, index++, transitionResult.key);
+        entry = transitionResult.entry;
+    }
+}
+#endif
+
 JSCellButterfly* JSCellButterfly::createFromSet(JSGlobalObject* globalObject, JSSet* set)
 {
     VM& vm = globalObject->vm();
@@ -258,6 +279,13 @@ JSCellButterfly* JSCellButterfly::createFromSet(JSGlobalObject* globalObject, JS
     if (!set->storage())
         return result;
 
+#if ENABLE(AOT)
+    if (Helper::isCompact(*set->storage())) [[unlikely]] {
+        copyKeysFromCompactStorage(vm, *set->storage(), result);
+        return result;
+    }
+#endif
+
     auto& storage = set->storageRef();
     unsigned index = 0;
     for (Helper::Entry entry = 0;; ++entry) {
@@ -269,6 +297,53 @@ JSCellButterfly* JSCellButterfly::createFromSet(JSGlobalObject* globalObject, JS
     }
 
     return result;
+}
+
+template<typename ViewClass>
+static ALWAYS_INLINE JSCellButterfly* createFromTypedArrayImpl(JSGlobalObject* globalObject, ViewClass* typedArray)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto elements = typedArray->typedSpan();
+    if (elements.size() > IndexingHeader::maximumLength) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+
+    JSCellButterfly* result = JSCellButterfly::tryCreate(vm, vm.cellButterflyStructure(CopyOnWriteArrayWithContiguous), elements.size());
+    if (!result) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+
+    auto contiguous = result->toButterfly()->contiguous();
+    for (size_t i = 0; i < elements.size(); ++i) {
+        JSValue value = ViewClass::Adaptor::toJSValue(globalObject, elements[i]);
+        if constexpr (ViewClass::Adaptor::canConvertToJSQuickly)
+            contiguous.atUnsafe(i).setWithoutWriteBarrier(value);
+        else {
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            result->setIndex(vm, i, value);
+        }
+    }
+
+    ensureStillAliveHere(typedArray);
+    return result;
+}
+
+JSCellButterfly* JSCellButterfly::createFromTypedArray(JSGlobalObject* globalObject, JSArrayBufferView* view)
+{
+    switch (view->type()) {
+#define CASE_TYPED_ARRAY_TYPE(name) \
+    case name##ArrayType: \
+        return createFromTypedArrayImpl(globalObject, uncheckedDowncast<JS##name##Array>(view));
+        FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(CASE_TYPED_ARRAY_TYPE)
+#undef CASE_TYPED_ARRAY_TYPE
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+        return nullptr;
+    }
 }
 
 JSCellButterfly* JSCellButterfly::tryCreateFromArgList(VM& vm, ArgList argList)

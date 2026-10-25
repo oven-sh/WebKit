@@ -119,16 +119,6 @@ inline const Color& ComputedStyleBase::colorForHighlight() const
     return m_inheritedRareData->colorForHighlight;
 }
 
-inline bool ComputedStyleBase::usesCurrentBackgroundColorKeyword() const
-{
-    return m_nonInheritedFlags.usesCurrentBackgroundColorKeyword;
-}
-
-inline const WebCore::Color& ComputedStyleBase::currentBackgroundColor() const
-{
-    return m_inheritedData->currentBackgroundColor;
-}
-
 inline InsideLink ComputedStyleBase::insideLink() const
 {
     return static_cast<InsideLink>(m_inheritedFlags.insideLink);
@@ -182,6 +172,11 @@ inline bool ComputedStyleBase::insideDefaultButton() const
 inline bool ComputedStyleBase::insideSubmitButton() const
 {
     return m_inheritedRareData->insideSubmitButton;
+}
+
+inline bool ComputedStyleBase::inBaseAppearanceSubtree() const
+{
+    return m_inheritedRareData->inBaseAppearanceSubtree;
 }
 
 inline bool ComputedStyleBase::isInSubtreeWithBlendMode() const
@@ -320,6 +315,11 @@ inline bool ComputedStyleBase::hasPseudoStyle(PseudoElementType pseudo) const
     return m_nonInheritedFlags.hasPseudoStyle(pseudo);
 }
 
+inline PseudoElementBoxGeneration ComputedStyleBase::pseudoElementBoxGeneration() const
+{
+    return static_cast<PseudoElementBoxGeneration>(m_nonInheritedFlags.pseudoElementBoxGeneration);
+}
+
 inline bool ComputedStyleBase::hasAnyPublicPseudoStyles() const
 {
     return m_nonInheritedFlags.hasAnyPublicPseudoStyles();
@@ -341,7 +341,7 @@ inline const CustomPropertyData& ComputedStyleBase::nonInheritedCustomProperties
 
 inline bool ComputedStyleBase::useSVGZoomRulesForLength() const
 {
-    return m_nonInheritedData->rareData->useSVGZoomRulesForLength;
+    return m_nonInheritedFlags.useSVGZoomRulesForLength;
 }
 
 inline float ComputedStyleBase::usedZoom() const
@@ -508,6 +508,27 @@ inline const BorderValue& ComputedStyleBase::borderTop() const
 inline const BorderValue& ComputedStyleBase::columnRule() const
 {
     return m_nonInheritedData->miscData->multiCol->columnRule;
+}
+
+inline bool ComputedStyleBase::hasLegacyLineClamp() const
+{
+    return static_cast<OverflowContinue>(m_nonInheritedData->rareData->overflowContinue) == OverflowContinue::WebkitLegacy && !m_nonInheritedData->rareData->maxLines.isAuto();
+}
+
+// MARK: - Used colors
+
+inline WebCore::Color ComputedStyleBase::usedColor() const
+{
+    if (m_inheritedRareData->overrideColor) [[unlikely]]
+        return *m_inheritedRareData->overrideColor;
+    return m_inheritedData->color;
+}
+
+inline WebCore::Color ComputedStyleBase::usedVisitedLinkColor() const
+{
+    if (m_inheritedRareData->overrideVisitedLinkColor) [[unlikely]]
+        return *m_inheritedRareData->overrideVisitedLinkColor;
+    return m_inheritedData->visitedLinkColor;
 }
 
 // MARK: - Properties/descriptors that are not yet generated

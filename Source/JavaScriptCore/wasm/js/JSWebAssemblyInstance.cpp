@@ -47,6 +47,7 @@
 #include "WasmModuleInformation.h"
 #include "WasmTag.h"
 #include "WasmTypeDefinitionInlines.h"
+#include "WebAssemblyBuiltin.h"
 #include "WebAssemblyFunctionBase.h"
 #include "WebAssemblyModuleRecord.h"
 #include "WebAssemblyWrapperFunction.h"
@@ -188,8 +189,9 @@ JSWebAssemblyInstance::~JSWebAssemblyInstance()
         std::destroy_at(&slot);
 }
 
-void JSWebAssemblyInstance::destroy(JSCell* cell)
+NEVER_INLINE void JSWebAssemblyInstance::destroy(JSCell* cell)
 {
+    JSC_REMOVABLE_DEFINITION(WebAssembly, &JSWebAssemblyInstance::destroy);
     static_cast<JSWebAssemblyInstance*>(cell)->JSWebAssemblyInstance::~JSWebAssemblyInstance();
 }
 
@@ -302,6 +304,12 @@ void JSWebAssemblyInstance::finalizeCreation(VM& vm, JSGlobalObject* globalObjec
     }
 }
 
+void JSWebAssemblyInstance::adoptCalleeGroup(const CalleeGroup& calleeGroup)
+{
+    m_imageCodePointers = calleeGroup.imageCodePointers();
+    module().createInterpreterMetadataIfNeeded(calleeGroup);
+}
+
 Identifier JSWebAssemblyInstance::createPrivateModuleKey()
 {
     return Identifier::fromUid(PrivateName(PrivateName::Description, "WebAssemblyInstance"_s));
@@ -363,11 +371,19 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::tryCreate(VM& vm, Structure* insta
             const auto& fieldName = importNames[importIndex].field;
             bool skipRequestedModule = false;
             if (fromModuleLoader) {
-                if (startsWith(import.module.span(), "wasm-js:"_s))
-                    return exception(createJSWebAssemblyLinkError(globalObject, vm, makeString("Import module '"_s, StringView(moduleName.impl()), "' is reserved"_s)));
-                if (isReservedESMName(import.field))
-                    return exception(createJSWebAssemblyLinkError(globalObject, vm, makeString("Import name '"_s, StringView(fieldName.impl()), "' is reserved"_s)));
-                skipRequestedModule = moduleInformation.importedStringConstantsEquals(import.module) || moduleInformation.builtinSetsInclude(import.module);
+                const bool isStringConstantImport = moduleInformation.importedStringConstantsEquals(import.module);
+                bool isBuiltinImport = false;
+                if (!isStringConstantImport && moduleInformation.builtinSetsInclude(import.module)) {
+                    if (const auto* builtinSet = WebAssemblyBuiltinRegistry::singleton().findByQualifiedName(makeString(import.module)))
+                        isBuiltinImport = builtinSet->findBuiltin(makeString(import.field));
+                }
+                if (!isStringConstantImport && !isBuiltinImport) {
+                    if (startsWith(import.module.span(), "wasm-js:"_s))
+                        return exception(createJSWebAssemblyLinkError(globalObject, vm, makeString("Import module '"_s, StringView(moduleName.impl()), "' is reserved"_s)));
+                    if (isReservedESMName(import.field))
+                        return exception(createJSWebAssemblyLinkError(globalObject, vm, makeString("Import name '"_s, StringView(fieldName.impl()), "' is reserved"_s)));
+                }
+                skipRequestedModule = isStringConstantImport || moduleInformation.builtinSetsInclude(import.module);
             }
             auto result = specifiers.add(moduleName.impl());
             if (result.isNewEntry && !skipRequestedModule)
@@ -433,8 +449,9 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::tryCreate(VM& vm, Structure* insta
     return jsInstance;
 }
 
-void JSWebAssemblyInstance::clearJSCallICs(VM& vm)
+NEVER_INLINE void JSWebAssemblyInstance::clearJSCallICs(VM& vm)
 {
+    JSC_REMOVABLE_DEFINITION(WebAssembly, &JSWebAssemblyInstance::clearJSCallICs);
     for (unsigned index = 0; index < numImportFunctions(); ++index) {
         auto* info = importFunctionInfo(index);
         if (auto* callLinkInfo = info->callLinkInfo.get())

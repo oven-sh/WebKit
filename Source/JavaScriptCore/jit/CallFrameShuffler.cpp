@@ -129,9 +129,9 @@ void CallFrameShuffler::dump(PrintStream& out) const
             if (getOld(old)) {
                 auto str = toUTF8CString(old);
                 if (isValidNew(newReg) && isDangerNew(newReg))
-                    out.printf(" X      %18s       X ", str.legacyCStringPointer());
+                    SAFE_PRINTSTREAM_PRINTF(out, " X      %18s       X ", str);
                 else
-                    out.printf(" |      %18s       | ", str.legacyCStringPointer());
+                    SAFE_PRINTSTREAM_PRINTF(out, " |      %18s       | ", str);
             } else if (isValidNew(newReg) && isDangerNew(newReg))
                 out.printf(" X%30s X ", "");
             else
@@ -143,14 +143,13 @@ void CallFrameShuffler::dump(PrintStream& out) const
             auto str = toUTF8CString(newReg);
             if (getNew(newReg)) {
                 if (getNew(newReg)->recovery().isConstant())
-                    out.printf(" %c%8s <-           constant %c ", d, str.legacyCStringPointer(), d);
+                    SAFE_PRINTSTREAM_PRINTF(out, " %c%8s <-           constant %c ", d, str, d);
                 else {
                     auto recoveryStr = toUTF8CString(getNew(newReg)->recovery());
-                    out.printf(" %c%8s <- %18s %c ", d, str.legacyCStringPointer(),
-                        recoveryStr.legacyCStringPointer(), d);
+                    SAFE_PRINTSTREAM_PRINTF(out, " %c%8s <- %18s %c ", d, str, recoveryStr, d);
                 }
             } else if (newReg == VirtualRegister { CallFrameSlot::argumentCountIncludingThis })
-                out.printf(" %c%8s <- %18zu %c ", d, str.legacyCStringPointer(), argCount(), d);
+                SAFE_PRINTSTREAM_PRINTF(out, " %c%8s <- %18zu %c ", d, str, argCount(), d);
             else
                 out.printf(" %c%30s %c ", d, "", d);
         } else
@@ -173,7 +172,7 @@ void CallFrameShuffler::dump(PrintStream& out) const
         out.print("          ");
         if (oldCachedRecovery) {
             auto str = toUTF8CString(reg);
-            out.printf("         %8s                  ", str.legacyCStringPointer());
+            SAFE_PRINTSTREAM_PRINTF(out, "         %8s                  ", str);
         } else
             out.print(emptySpace);
         if (newCachedRecovery)

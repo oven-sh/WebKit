@@ -67,6 +67,10 @@ enum class CaretVisibility : bool { Hidden, Visible };
 - (BOOL)_shouldSimulateKeyboardInputOnTextInsertion;
 @end
 
+@interface WKKeyboardScrollViewAnimator : NSObject
+- (BOOL)beginWithEvent:(id)event scrollView:(id)scrollView;
+@end
+
 @interface InputAssistantItemTestingWebView : TestWKWebView
 + (UIBarButtonItemGroup *)leadingItemsForWebView:(WKWebView *)webView;
 + (UIBarButtonItemGroup *)trailingItemsForWebView:(WKWebView *)webView;
@@ -388,6 +392,33 @@ TEST(KeyboardInputTests, CanHandleKeyEventInCompletionHandler)
     EXPECT_WK_STREQ("a", [webView stringByEvaluatingJavaScript:@"document.querySelector('input').value"]);
 }
 
+TEST(KeyboardInputTests, ReentrantKeyEventDuringInterpretKeyEventDoesNotCrash)
+{
+    RetainPtr inputDelegate = adoptNS([TestInputDelegate new]);
+    RetainPtr webView = webViewWithAutofocusedInput(inputDelegate);
+    __block bool didReenter = false;
+    InstanceMethodSwizzler swizzler {
+        NSClassFromString(@"WKKeyboardScrollViewAnimator"),
+        @selector(beginWithEvent:scrollView:),
+        imp_implementationWithBlock(^BOOL(id, WebEvent *, id) {
+            if (std::exchange(didReenter, true))
+                return NO;
+            for (unsigned i = 0; i < 32; ++i) {
+                RetainPtr extraEvent = adoptNS([[WebEvent alloc] initWithKeyEventType:WebEventKeyDown timeStamp:CFAbsoluteTimeGetCurrent() characters:@"b" charactersIgnoringModifiers:@"b" modifiers:0 isRepeating:NO withFlags:0 withInputManagerHint:nil keyCode:0 isTabKey:NO]);
+                [webView handleKeyEvent:extraEvent completion:^(WebEvent *, BOOL) { }];
+            }
+            return NO;
+        })
+    };
+    RetainPtr keyDown = adoptNS([[WebEvent alloc] initWithKeyEventType:WebEventKeyDown timeStamp:CFAbsoluteTimeGetCurrent() characters:@"a" charactersIgnoringModifiers:@"a" modifiers:0 isRepeating:NO withFlags:0 withInputManagerHint:nil keyCode:0 isTabKey:NO]);
+    __block bool done = false;
+    [webView handleKeyEvent:keyDown completion:^(WebEvent *, BOOL) {
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+    EXPECT_TRUE(didReenter); // Proves _interpretKeyEvent was reached; passes if no ASan use-after-free in the queued event.
+}
+
 TEST(KeyboardInputTests, ResigningFirstResponderCancelsKeyEvents)
 {
     auto [webView, inputDelegate] = webViewAndInputDelegateWithAutofocusedInput();
@@ -572,6 +603,28 @@ TEST(KeyboardInputTests, IsSingleLineDocument)
     // Content editable
     [webView evaluateJavaScriptAndWaitForInputSessionToChange:@"document.getElementById('third').focus()"];
     EXPECT_FALSE([webView effectiveTextInputTraits].isSingleLineDocument);
+}
+
+TEST(KeyboardInputTests, SecureTextEntryAfterChangingInputTypeFromPassword)
+{
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 320, 500)]);
+    RetainPtr inputDelegate = adoptNS([[TestInputDelegate alloc] init]);
+    [inputDelegate setFocusStartsInputSessionPolicyHandler:[](WKWebView *, id<_WKFocusedElementInfo>) -> _WKFocusStartsInputSessionPolicy {
+        return _WKFocusStartsInputSessionPolicyAllow;
+    }];
+    [webView _setInputDelegate:inputDelegate];
+
+    [webView synchronouslyLoadHTMLString:@"<body><input id='first' type='password'><input id='second' type='text'></body>"];
+
+    [webView evaluateJavaScriptAndWaitForInputSessionToChange:@"document.getElementById('first').focus()"];
+    EXPECT_TRUE([webView effectiveTextInputTraits].secureTextEntry);
+
+    [webView evaluateJavaScriptAndWaitForInputSessionToChange:@"document.getElementById('first').blur()"];
+    [webView evaluateJavaScriptAndWaitForInputSessionToChange:@"let first = document.getElementById('first'); first.type = 'text'; first.focus()"];
+    EXPECT_TRUE([webView effectiveTextInputTraits].secureTextEntry);
+
+    [webView evaluateJavaScriptAndWaitForInputSessionToChange:@"document.getElementById('second').focus()"];
+    EXPECT_FALSE([webView effectiveTextInputTraits].secureTextEntry);
 }
 
 TEST(KeyboardInputTests, KeyboardTypeForInput)

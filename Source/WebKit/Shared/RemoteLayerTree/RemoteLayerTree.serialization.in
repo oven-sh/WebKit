@@ -80,6 +80,7 @@ header: "RemoteLayerTreeTransaction.h"
     AppleVisualEffectChanged
 #endif
     ShadowPathChanged
+    DisplayOnlyImageChanged
 };
 
 header: "RemoteLayerBackingStore.h"
@@ -91,7 +92,7 @@ header: "RemoteLayerBackingStore.h"
     [NotSerialized] std::optional<WebKit::BufferAndBackendInfo> m_frontBufferInfo;
     [NotSerialized] std::optional<WebKit::BufferAndBackendInfo> m_backBufferInfo;
     [NotSerialized] std::optional<WebKit::BufferAndBackendInfo> m_secondaryBackBufferInfo;
-    std::optional<WebCore::RenderingResourceIdentifier> m_contentsRenderingResourceIdentifier;
+    std::optional<WebCore::PlaceholderFrameIdentifier> m_contentsFrameIdentifier;
     std::optional<WebCore::IntRect> m_paintedRect;
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
     std::optional<WebCore::DynamicContentScalingDisplayList> m_displayListBufferHandle;
@@ -244,6 +245,7 @@ headers: "LayerProperties.h" "PlatformCALayerRemote.h"
     [OptionalTupleBit=WebKit::LayerChange::AppleVisualEffectChanged] WebCore::AppleVisualEffectData appleVisualEffectData;
 #endif
     [OptionalTupleBit=WebKit::LayerChange::ShadowPathChanged] WebCore::Path shadowPath;
+    [OptionalTupleBit=WebKit::LayerChange::DisplayOnlyImageChanged] Markable<WebKit::RemoteSnapshotIdentifier> displayOnlyImage;
 };
 
 using WebKit::LayerHostingContextID = uint32_t;

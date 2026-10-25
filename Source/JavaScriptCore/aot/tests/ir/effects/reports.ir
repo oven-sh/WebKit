@@ -1,0 +1,19 @@
+# A report whose operand is inside the expected type has no effects, and any other writes the log and has a call site
+# FORM: Prepared
+# RUN: effects
+
+module m0 path="main.ts" displayPath="main.ts"
+function f0 name="report" parameters=[{type=number}, {type=undefined|i32}, {type=anything}, {type=string}, {type=number}] results=[{type=undefined}] {
+    ReportMismatch v0 expectedType=undefined|null|number
+    ReportMismatch v1 expectedType=undefined|null|number
+    ReportMismatch v2 expectedType=undefined|null|number
+    ReportMismatch v3 expectedType=undefined|null|number
+    ReportMismatch v4 expectedType=undefined|null|i32
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v5 ReportMismatch: none
+# CHECK-NEXT: v6 ReportMismatch: none
+# CHECK-NEXT: v7 ReportMismatch: writes(ExternalState) throws
+# CHECK-NEXT: v8 ReportMismatch: writes(ExternalState) throws
+# CHECK-NEXT: v9 ReportMismatch: writes(ExternalState) throws

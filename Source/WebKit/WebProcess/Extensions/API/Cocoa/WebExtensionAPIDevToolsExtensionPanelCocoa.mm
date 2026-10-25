@@ -46,7 +46,7 @@ WebExtensionAPIEvent& WebExtensionAPIDevToolsExtensionPanel::onShown()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/devtools/panels/ExtensionPanel
 
     if (!m_onShown)
-        m_onShown = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::DevToolsExtensionPanelOnShown);
+        lazyInitialize(m_onShown, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::DevToolsExtensionPanelOnShown));
 
     return *m_onShown;
 }
@@ -56,7 +56,7 @@ WebExtensionAPIEvent& WebExtensionAPIDevToolsExtensionPanel::onHidden()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/devtools/panels/ExtensionPanel
 
     if (!m_onHidden)
-        m_onHidden = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::DevToolsExtensionPanelOnHidden);
+        lazyInitialize(m_onHidden, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::DevToolsExtensionPanelOnHidden));
 
     return *m_onHidden;
 }
@@ -70,7 +70,7 @@ void WebExtensionContextProxy::dispatchDevToolsExtensionPanelShownEvent(Inspecto
         return;
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        RefPtr extensionPanel = namespaceObject.devtools().panels().extensionPanel(identifier);
+        RefPtr extensionPanel = protect(protect(namespaceObject.devtools())->panels())->extensionPanel(identifier);
         if (!extensionPanel)
             return;
 
@@ -89,7 +89,7 @@ void WebExtensionContextProxy::dispatchDevToolsExtensionPanelHiddenEvent(Inspect
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/devtools/panels/ExtensionPanel
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        RefPtr extensionPanel = namespaceObject.devtools().panels().extensionPanel(identifier);
+        RefPtr extensionPanel = protect(protect(namespaceObject.devtools())->panels())->extensionPanel(identifier);
         if (!extensionPanel)
             return;
 

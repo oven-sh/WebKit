@@ -66,7 +66,7 @@ private:
     IPC::Connection* messageSenderConnection() const final;
     uint64_t messageSenderDestinationID() const final;
 
-    IPC::Connection& NODELETE connection() const;
+    IPC::Connection& LEGACY_NODELETE connection() const;
 
     WeakRef<WebProcess> m_process;
 
@@ -75,9 +75,9 @@ private:
     HashMap<WebCore::RealtimeMediaSourceIdentifier, Ref<Source>> m_sources;
 
 #if ENABLE(SANDBOX_EXTENSIONS)
-    RefPtr<SandboxExtension> m_machBootstrapExtension;
-    RefPtr<SandboxExtension> m_sandboxExtensionForTCCD;
-    RefPtr<SandboxExtension> m_sandboxExtensionForMicrophone;
+    const RefPtr<SandboxExtension> m_machBootstrapExtension;
+    const RefPtr<SandboxExtension> m_sandboxExtensionForTCCD;
+    const RefPtr<SandboxExtension> m_sandboxExtensionForMicrophone;
 #endif
 };
 

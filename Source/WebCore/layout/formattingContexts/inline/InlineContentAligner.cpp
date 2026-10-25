@@ -27,6 +27,7 @@
 #include "InlineContentAligner.h"
 
 #include "InlineFormattingContext.h"
+#include "InlineLine.h"
 #include "LayoutBoxInlines.h"
 #include "TextUtil.h"
 
@@ -227,7 +228,7 @@ static void computedExpansions(std::span<Line::Run> runs, size_t hangingTrailing
     }
 }
 
-InlineLayoutUnit InlineContentAligner::applyExpansionOnRange(std::span<Line::Run> runs, const ExpansionInfo& expansion, InlineLayoutUnit spaceToDistribute)
+InlineLayoutUnit InlineContentAligner::applyExpansionOnRange(std::span<LineRun> runs, const ExpansionInfo& expansion, InlineLayoutUnit spaceToDistribute)
 {
     ASSERT(spaceToDistribute > 0);
     ASSERT(expansion.opportunityCount);
@@ -248,7 +249,7 @@ InlineLayoutUnit InlineContentAligner::applyExpansionOnRange(std::span<Line::Run
     return accumulatedExpansion;
 }
 
-InlineLayoutUnit InlineContentAligner::applyTextAlignJustify(Line::RunList& runs, InlineLayoutUnit spaceToDistribute, size_t hangingTrailingWhitespaceLength)
+InlineLayoutUnit InlineContentAligner::applyTextAlignJustify(LineRunList& runs, InlineLayoutUnit spaceToDistribute, size_t hangingTrailingWhitespaceLength)
 {
     if (runs.isEmpty()) {
         ASSERT_NOT_REACHED();
@@ -266,7 +267,7 @@ InlineLayoutUnit InlineContentAligner::applyTextAlignJustify(Line::RunList& runs
     return applyExpansionOnRange(runs.mutableSpan(), expansion, spaceToDistribute);
 }
 
-InlineLayoutUnit InlineContentAligner::applyRubyAlign(RubyAlign rubyAlign, std::span<Line::Run> runs, InlineLayoutUnit spaceToDistribute)
+InlineLayoutUnit InlineContentAligner::applyRubyAlign(RubyAlign rubyAlign, std::span<LineRun> runs, InlineLayoutUnit spaceToDistribute)
 {
     if (runs.empty()) {
         ASSERT_NOT_REACHED();

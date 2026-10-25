@@ -1,0 +1,51 @@
+# A parameter that is only passed down two functions and used by none goes from all three
+# FORM: Prepared
+# RUN: pass RemoveUnusedParameters
+# STATISTIC: UnusedParametersRemoved = 3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="top" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = CallDirect v0, v1 function=f1
+    Return v2
+}
+# CHECK-LABEL: function f0 name="top"{{*}}parameters=[{type=number}, {type=number}]
+# CHECK: b0(v0: number, v1: number):
+# CHECK-NEXT: = CallDirect v0 function=f4
+# CHECK-NEXT: ReturnCall
+
+function f1 name="middle" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = CallDirect v0, v1 function=f2
+    Return v2
+}
+# CHECK-LABEL: function f1 name="middle"{{*}}parameters=[{type=number}, {type=number}]
+# CHECK: b0(v0: number, v1: number):
+# CHECK-NEXT: = CallDirect v0 function=f5
+# CHECK-NEXT: ReturnCall
+
+function f2 name="bottom" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = Add v0, v0
+    Return v2
+}
+# CHECK-LABEL: function f2 name="bottom"{{*}}parameters=[{type=number}, {type=number}]
+# CHECK: b0(v0: number, v1: number):
+# CHECK-NEXT: = CallDirect v0 function=f6
+# CHECK-NEXT: ReturnCall
+
+function f3 name="caller" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = Mul v1, v1
+    v3 = CallDirect v0, v2 function=f0
+    Return v3
+# CHECK-NEXT: b0(v0: number, v1: number):
+# CHECK-NEXT: = CallDirect v0 function=f4
+}
+
+# CHECK-LABEL: function f4 name="top"{{*}}parameters=[{type=number}] results=[{type=number}]{{*}}derivation={source=f0 parameterMap=[{original=0}]}
+# CHECK: b0(v0: number):
+# CHECK-NEXT: = CallDirect v0 function=f5
+# CHECK-LABEL: function f5 name="middle"{{*}}parameters=[{type=number}] results=[{type=number}]{{*}}derivation={source=f1 parameterMap=[{original=0}]}
+# CHECK: b0(v0: number):
+# CHECK-NEXT: = CallDirect v0 function=f6
+# CHECK-LABEL: function f6 name="bottom"{{*}}parameters=[{type=number}] results=[{type=number}]{{*}}derivation={source=f2 parameterMap=[{original=0}]}
+# CHECK: b0(v0: number):
+# CHECK-NEXT: = Add v0, v0

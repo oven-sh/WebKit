@@ -92,14 +92,13 @@ public:
     };
 
     enum class PopulateTabs : bool { No, Yes };
-    enum class SkipValidation : bool { No, Yes };
 
     using TabVector = Vector<Ref<WebExtensionTab>>;
 
     WebExtensionWindowParameters parameters(PopulateTabs = PopulateTabs::No) const;
     WebExtensionWindowParameters minimalParameters() const;
 
-    WebExtensionContext* NODELETE extensionContext() const;
+    WebExtensionContext* LEGACY_NODELETE extensionContext() const;
 
     bool operator==(const WebExtensionWindow&) const;
 
@@ -108,8 +107,8 @@ public:
 
     bool extensionHasAccess() const;
 
-    TabVector tabs(SkipValidation = SkipValidation::No) const;
-    RefPtr<WebExtensionTab> activeTab(SkipValidation = SkipValidation::No) const;
+    TabVector tabs() const;
+    RefPtr<WebExtensionTab> activeTab() const;
 
     Type type() const;
 

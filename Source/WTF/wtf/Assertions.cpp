@@ -43,6 +43,7 @@
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringCommon.h>
+#include <wtf/text/UTF8CStringView.h>
 #include <wtf/text/WTFString.h>
 
 #if USE(CF)
@@ -145,14 +146,14 @@ static os_log_t webkitSubsystemForGenericOSLog()
 }
 #endif
 
-static void logToStderr([[maybe_unused]] WTFLogChannel* channel, const char* buffer)
+static void logToStderr([[maybe_unused]] WTFLogChannel* channel, UTF8CStringView buffer)
 {
 #if PLATFORM(COCOA)
-    os_log(channel ? channel->osLogChannel : webkitSubsystemForGenericOSLog(), "%s", buffer);
+    SAFE_OS_LOG(channel ? channel->osLogChannel : webkitSubsystemForGenericOSLog(), "%s", buffer);
 #elif OS(ANDROID)
-    __android_log_write(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, buffer);
+    __android_log_write(ANDROID_LOG_VERBOSE, LOG_CHANNEL_WEBKIT_SUBSYSTEM, buffer.utf8());
 #endif
-    fputs(buffer, stderr);
+    fputs(buffer.utf8(), stderr);
 }
 
 WTF_ATTRIBUTE_NSSTRING(2, 0)
@@ -173,7 +174,7 @@ ALLOW_NONLITERAL_FORMAT_BEGIN
 
         CFStringGetCString(str.get(), buffer.mutableSpan().data(), length, kCFStringEncodingUTF8);
 
-        logToStderr(channel, buffer.span().data());
+        logToStderr(channel, UTF8CStringView::unsafeFromUTF8(buffer.span().data()));
         return;
     }
 
@@ -350,6 +351,10 @@ void WTFReportBacktraceWithPrefixAndPrintStream(PrintStream& out, const char* pr
         out.print("%sno stacktrace available", prefix);
 }
 
+#if ASAN_ENABLED
+extern "C" void __sanitizer_print_stack_trace(void);
+#endif
+
 void WTFReportBacktrace()
 {
     std::array<void*, kDefaultFramesToShow + kDefaultFramesToSkip> samples;
@@ -358,8 +363,13 @@ void WTFReportBacktrace()
     WTFGetBacktrace(samples.data(), &frames);
     if (frames > kDefaultFramesToSkip)
         WTFPrintBacktrace(std::span { samples }.subspan(kDefaultFramesToSkip, frames - kDefaultFramesToSkip));
-    else
+    else {
+#if ASAN_ENABLED
+        __sanitizer_print_stack_trace();
+#else
         CrashLogPrintStream { }.print("no stacktrace available");
+#endif
+    }
 }
 
 void WTFPrintBacktraceWithPrefixAndPrintStream(PrintStream& out, std::span<void* const> stack, const char* prefix)
@@ -558,7 +568,7 @@ ALLOW_NONLITERAL_FORMAT_END
 
     loggingAccumulator().accumulate(loggingString);
 
-    logToStderr(channel, loggingString.utf8().legacyCStringPointer());
+    logToStderr(channel, loggingString.utf8());
 }
 
 void WTFLog(WTFLogChannel* channel, const char* format, ...)
@@ -610,24 +620,26 @@ void WTFLogAlwaysAndCrash(const char* format, ...)
     CRASH();
 }
 
-WTFLogChannel* WTFLogChannelByName(WTFLogChannel* channels[], size_t count, const char* name)
+static void LEGACY_NODELETE setStateOfAllChannels(WTFLogChannel* channels[], size_t channelCount, WTFLogChannelState state)
+{
+    for (size_t i = 0; i < channelCount; ++i)
+        channels[i]->state = state;
+}
+
+} // extern "C"
+
+WTFLogChannel* WTFLogChannelByName(WTFLogChannel* channels[], size_t count, StringView name)
 {
     for (size_t i = 0; i < count; ++i) {
         WTFLogChannel* channel = channels[i];
-        if (equalIgnoringASCIICase(name, channel->name))
+        if (equalIgnoringASCIICase(name, StringView::fromLatin1(channel->name)))
             return channel;
     }
 
     return nullptr;
 }
 
-static void NODELETE setStateOfAllChannels(WTFLogChannel* channels[], size_t channelCount, WTFLogChannelState state)
-{
-    for (size_t i = 0; i < channelCount; ++i)
-        channels[i]->state = state;
-}
-
-void WTFInitializeLogChannelStatesFromString(WTFLogChannel* channels[], size_t count, const char* logLevel)
+void WTFInitializeLogChannelStatesFromString(WTFLogChannel* channels[], size_t count, StringView logLevel)
 {
 #if USE(OS_LOG) && !RELEASE_LOG_DISABLED
     for (size_t i = 0; i < count; ++i) {
@@ -636,7 +648,7 @@ void WTFInitializeLogChannelStatesFromString(WTFLogChannel* channels[], size_t c
     }
 #endif
 
-    for (auto logLevelComponent : StringView::fromLatin1(logLevel).split(',')) {
+    for (auto logLevelComponent : logLevel.split(',')) {
         auto componentInfo = logLevelComponent.split('=');
         auto it = componentInfo.begin();
         if (it == componentInfo.end())
@@ -670,7 +682,7 @@ void WTFInitializeLogChannelStatesFromString(WTFLogChannel* channels[], size_t c
                 SAFE_WTFLOGALWAYS("Unknown logging level: %s", level.utf8());
         }
 
-        if (WTFLogChannel* channel = WTFLogChannelByName(channels, count, component.utf8().legacyCStringPointer())) {
+        if (WTFLogChannel* channel = WTFLogChannelByName(channels, count, component)) {
             channel->state = logChannelState;
             channel->level = logChannelLevel;
         } else
@@ -678,11 +690,10 @@ void WTFInitializeLogChannelStatesFromString(WTFLogChannel* channels[], size_t c
     }
 }
 
-} // extern "C"
-
 #if !ASAN_ENABLED && (OS(DARWIN) || PLATFORM(PLAYSTATION)) && (CPU(X86_64) || CPU(ARM64))
 
-void WTFCrashWithInfoImpl(int, const char*, const char*, UCPURegister reason, UCPURegister misc1, UCPURegister misc2, UCPURegister misc3, UCPURegister misc4, UCPURegister misc5, UCPURegister misc6)
+// The crash instruction is inline assembly, which the static analyzer cannot prove runs no destructors.
+SUPPRESS_NODELETE void WTFCrashWithInfoImpl(int, const char*, const char*, UCPURegister reason, UCPURegister misc1, UCPURegister misc2, UCPURegister misc3, UCPURegister misc4, UCPURegister misc5, UCPURegister misc6)
 {
     register UCPURegister reasonGPR __asm__(CRASH_GPR0) = reason;
     register UCPURegister misc1GPR __asm__(CRASH_GPR1) = misc1;
@@ -695,7 +706,8 @@ void WTFCrashWithInfoImpl(int, const char*, const char*, UCPURegister reason, UC
     __builtin_unreachable();
 }
 
-void WTFCrashWithInfoImpl(int, const char*, const char*, UCPURegister reason, UCPURegister misc1, UCPURegister misc2, UCPURegister misc3, UCPURegister misc4, UCPURegister misc5)
+// The crash instruction is inline assembly, which the static analyzer cannot prove runs no destructors.
+SUPPRESS_NODELETE void WTFCrashWithInfoImpl(int, const char*, const char*, UCPURegister reason, UCPURegister misc1, UCPURegister misc2, UCPURegister misc3, UCPURegister misc4, UCPURegister misc5)
 {
     register UCPURegister reasonGPR __asm__(CRASH_GPR0) = reason;
     register UCPURegister misc1GPR __asm__(CRASH_GPR1) = misc1;

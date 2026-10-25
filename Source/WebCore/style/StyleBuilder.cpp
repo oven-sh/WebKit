@@ -67,27 +67,27 @@ namespace Style {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Builder);
 
-static const CSSPropertyID firstLowPriorityProperty = static_cast<CSSPropertyID>(lastHighPriorityProperty + 1);
+static const CSSPropertyID firstLowPriorityProperty = static_cast<CSSPropertyID>(std::to_underlying(lastHighPriorityProperty) + 1);
 
-inline bool NODELETE isValidVisitedLinkProperty(CSSPropertyID id)
+inline bool LEGACY_NODELETE isValidVisitedLinkProperty(CSSPropertyID id)
 {
     switch (id) {
-    case CSSPropertyBackgroundColor:
-    case CSSPropertyBorderLeftColor:
-    case CSSPropertyBorderRightColor:
-    case CSSPropertyBorderTopColor:
-    case CSSPropertyBorderBottomColor:
-    case CSSPropertyCaretColor:
-    case CSSPropertyColor:
-    case CSSPropertyOutlineColor:
-    case CSSPropertyColumnRuleColor:
-    case CSSPropertyTextDecorationColor:
-    case CSSPropertyTextEmphasisColor:
-    case CSSPropertyWebkitTextFillColor:
-    case CSSPropertyWebkitTextStrokeColor:
-    case CSSPropertyFill:
-    case CSSPropertyStroke:
-    case CSSPropertyStrokeColor:
+    case CSSPropertyID::BackgroundColor:
+    case CSSPropertyID::BorderLeftColor:
+    case CSSPropertyID::BorderRightColor:
+    case CSSPropertyID::BorderTopColor:
+    case CSSPropertyID::BorderBottomColor:
+    case CSSPropertyID::CaretColor:
+    case CSSPropertyID::Color:
+    case CSSPropertyID::OutlineColor:
+    case CSSPropertyID::ColumnRuleColor:
+    case CSSPropertyID::TextDecorationColor:
+    case CSSPropertyID::TextEmphasisColor:
+    case CSSPropertyID::WebkitTextFillColor:
+    case CSSPropertyID::WebkitTextStrokeColor:
+    case CSSPropertyID::Fill:
+    case CSSPropertyID::Stroke:
+    case CSSPropertyID::StrokeColor:
         return true;
     default:
         break;
@@ -96,18 +96,18 @@ inline bool NODELETE isValidVisitedLinkProperty(CSSPropertyID id)
     return false;
 }
 
-static const StyleProperties* NODELETE positionTryFallbackProperties(const BuilderContext& context)
+static const StyleProperties* LEGACY_NODELETE positionTryFallbackProperties(const BuilderContext& context)
 {
     return context.positionTryFallback ? context.positionTryFallback->properties.get() : nullptr;
 }
 
-static bool isInheritedCustomProperty(const CSSRegisteredCustomProperty* registered)
+static bool LEGACY_NODELETE isInheritedCustomProperty(const CSSRegisteredCustomProperty* registered)
 {
     return !registered || registered->inherits;
 }
 
 Builder::Builder(Style::ComputedStyle& style, BuilderContext&& context, const MatchResult& matchResult, PropertyCascade::IncludedProperties&& includedProperties, const HashMap<AnimatableCSSProperty, EnumSet<PropertyCascade::AnimationSource>>* animatedProperties)
-    : m_cascade(matchResult, WTF::move(includedProperties), animatedProperties, positionTryFallbackProperties(context))
+    : m_cascade(matchResult, WTF::move(includedProperties), animatedProperties, protect(positionTryFallbackProperties(context)))
     , m_state(BuilderState::create(style, WTF::move(context)))
 {
 }
@@ -154,7 +154,7 @@ void Builder::applyHighPriorityProperties()
     applyProperties(firstHighPriorityProperty, lastHighPriorityProperty);
     m_state->updateFont();
     // This needs to apply before other properties for the `lh` unit, but after updating the font.
-    applyProperties(CSSPropertyLineHeight, CSSPropertyLineHeight);
+    applyProperties(CSSPropertyID::LineHeight, CSSPropertyID::LineHeight);
 }
 
 void Builder::applyNonHighPriorityProperties()
@@ -181,7 +181,7 @@ void Builder::applyLogicalGroupProperties()
         applyCascadeProperty(m_cascade.logicalGroupProperty(id));
 }
 
-void Builder::applyProperties(int firstProperty, int lastProperty)
+void Builder::applyProperties(CSSPropertyID firstProperty, CSSPropertyID lastProperty)
 {
     if (m_cascade.customProperties().isEmpty()) [[likely]]
         return applyPropertiesImpl<CustomPropertyCycleTracking::Disabled>(firstProperty, lastProperty);
@@ -190,17 +190,17 @@ void Builder::applyProperties(int firstProperty, int lastProperty)
 }
 
 template<Builder::CustomPropertyCycleTracking trackCycles>
-inline void Builder::applyPropertiesImpl(int firstProperty, int lastProperty)
+inline void Builder::applyPropertiesImpl(CSSPropertyID firstProperty, CSSPropertyID lastProperty)
 {
     auto applyProperty = [&](size_t index) ALWAYS_INLINE_LAMBDA {
         CSSPropertyID propertyID = static_cast<CSSPropertyID>(index);
-        ASSERT(propertyID != CSSPropertyCustom);
+        ASSERT(propertyID != CSSPropertyID::Custom);
         auto& property = m_cascade.normalProperty(propertyID);
 
         if constexpr (trackCycles == CustomPropertyCycleTracking::Enabled) {
-            m_state->m_inProgressProperties.set(propertyID);
+            m_state->m_inProgressProperties.set(index);
             applyCascadeProperty(property);
-            m_state->m_inProgressProperties.clear(propertyID);
+            m_state->m_inProgressProperties.clear(index);
             return;
         }
 
@@ -208,12 +208,12 @@ inline void Builder::applyPropertiesImpl(int firstProperty, int lastProperty)
         applyCascadeProperty(property);
     };
 
-    if (m_cascade.propertyIsPresent().size() == static_cast<size_t>(lastProperty + 1)) {
-        m_cascade.propertyIsPresent().forEachSetBit(firstProperty, applyProperty);
+    if (m_cascade.propertyIsPresent().size() == static_cast<size_t>(std::to_underlying(lastProperty) + 1)) {
+        m_cascade.propertyIsPresent().forEachSetBit(std::to_underlying(firstProperty), applyProperty);
         return;
     }
 
-    for (int id = firstProperty; id <= lastProperty; ++id) {
+    for (int id = std::to_underlying(firstProperty); id <= std::to_underlying(lastProperty); ++id) {
         CSSPropertyID propertyID = static_cast<CSSPropertyID>(id);
         if (!m_cascade.hasNormalProperty(propertyID))
             continue;
@@ -335,7 +335,7 @@ inline void Builder::applyCascadeProperty(const PropertyCascade::Property& prope
 
 bool Builder::applyRollbackCascadeProperty(const PropertyCascade& rollbackCascade, CSSPropertyID propertyID, SelectorChecker::LinkMatchMask linkMatchMask)
 {
-    ASSERT(propertyID != CSSPropertyCustom);
+    ASSERT(propertyID != CSSPropertyID::Custom);
 
     auto* rollbackProperty = [&]() -> const PropertyCascade::Property* {
         if (propertyID < firstLogicalGroupProperty) {
@@ -351,7 +351,7 @@ bool Builder::applyRollbackCascadeProperty(const PropertyCascade& rollbackCascad
 
     if (RefPtr value = rollbackProperty->cssValue[linkMatchMask]) {
         BuilderStatePropertyScope levelScope(m_state, rollbackProperty);
-        applyProperty(propertyID, *value, linkMatchMask, rollbackProperty->origin);
+        applyProperty(propertyID, *value, linkMatchMask, rollbackProperty->origins[linkMatchMask]);
     }
     return true;
 }
@@ -378,8 +378,8 @@ bool Builder::applyRollbackCascadeCustomProperty(const PropertyCascade& rollback
 
 void Builder::applyProperty(CSSPropertyID id, CSSValue& value, SelectorChecker::LinkMatchMask linkMatchMask, PropertyCascade::Origin cascadeOrigin)
 {
-    ASSERT_WITH_MESSAGE(!isShorthand(id), "Shorthand property id = %d wasn't expanded at parsing time", id);
-    ASSERT_WITH_MESSAGE(id != CSSPropertyCustom, "Custom property should be handled by applyCustomProperty");
+    ASSERT_WITH_MESSAGE(!isShorthand(id), "Shorthand property id = %d wasn't expanded at parsing time", std::to_underlying(id));
+    ASSERT_WITH_MESSAGE(id != CSSPropertyID::Custom, "Custom property should be handled by applyCustomProperty");
 
     auto& style = m_state->style();
 
@@ -392,17 +392,17 @@ void Builder::applyProperty(CSSPropertyID id, CSSValue& value, SelectorChecker::
 
     auto valueID = WebCore::valueID(valueToApply.get());
     auto valueType = [&] {
-        if (valueID == CSSValueInherit)
+        if (valueID == CSSValueID::Inherit)
             return ApplyValueType::Inherit;
-        if (valueID == CSSValueInitial)
+        if (valueID == CSSValueID::Initial)
             return ApplyValueType::Initial;
         return ApplyValueType::Value;
     }();
 
-    bool isUnset = valueID == CSSValueUnset;
-    bool isRevert = valueID == CSSValueRevert;
-    bool isRevertLayer = valueID == CSSValueRevertLayer;
-    bool isRevertRule = valueID == CSSValueRevertRule;
+    bool isUnset = valueID == CSSValueID::Unset;
+    bool isRevert = valueID == CSSValueID::Revert;
+    bool isRevertLayer = valueID == CSSValueID::RevertLayer;
+    bool isRevertRule = valueID == CSSValueID::RevertRule;
     bool isAnyRevert = isRevert || isRevertLayer || isRevertRule;
 
     if (isAnyRevert) {
@@ -460,7 +460,8 @@ void Builder::applyProperty(CSSPropertyID id, CSSValue& value, SelectorChecker::
 
     if (RefPtr paintImageValue = dynamicDowncast<CSSPaintImageValue>(valueToApply.get())) {
         auto& name = paintImageValue->name().value;
-        if (RefPtr paintWorklet = const_cast<Document&>(m_state->document()).paintWorkletGlobalScopeForName(name)) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST if (RefPtr paintWorklet = const_cast<Document&>(m_state->document()).paintWorkletGlobalScopeForName(name)) {
             Locker locker { paintWorklet->paintDefinitionLock() };
             if (auto* registration = paintWorklet->paintDefinitionMap().get(name)) {
                 for (auto& property : registration->inputProperties)
@@ -469,7 +470,7 @@ void Builder::applyProperty(CSSPropertyID id, CSSValue& value, SelectorChecker::
         }
     }
 
-    if (id == CSSPropertyPageSize && valueType == ApplyValueType::Value) [[unlikely]] {
+    if (id == CSSPropertyID::PageSize && valueType == ApplyValueType::Value) [[unlikely]] {
         applyPageSizeDescriptor(valueToApply.get());
         return;
     }
@@ -640,8 +641,8 @@ Ref<CSSValue> Builder::resolveSubstitutionFunctions(CSSPropertyID propertyID, CS
 
     // https://drafts.csswg.org/css-variables-2/#invalid-variables
     // ...as if the property’s value had been specified as the unset keyword.
-    if (!variableValue || m_state->m_invalidAtComputedValueTimeProperties.get(propertyID))
-        return CSSKeywordValue::create(CSSValueUnset);
+    if (!variableValue || m_state->m_invalidAtComputedValueTimeProperties.get(std::to_underlying(propertyID)))
+        return CSSKeywordValue::create(CSSValueID::Unset);
 
     return *variableValue;
 }
@@ -705,7 +706,7 @@ std::optional<Builder::CustomPropertyOrKeyword> Builder::resolveFunctionResult()
     // resolveFunctionResult is only called while evaluating a custom function.
     ASSERT(m_state->callingContextBuilder());
 
-    if (!m_cascade.hasNormalProperty(CSSPropertyResult))
+    if (!m_cascade.hasNormalProperty(CSSPropertyID::Result))
         return { };
 
     BuilderStatePropertyScope resultScope(m_state, &m_cascade.functionResultProperty());
@@ -791,11 +792,11 @@ std::optional<Builder::CustomPropertyOrKeyword> Builder::computeCustomPropertyVa
 
     auto checkDependencies = [&](auto& propertyDependencies) {
         for (auto property : propertyDependencies) {
-            if (m_state->m_inProgressProperties.get(property)) {
-                m_state->m_invalidAtComputedValueTimeProperties.set(property);
+            if (m_state->m_inProgressProperties.get(std::to_underlying(property))) {
+                m_state->m_invalidAtComputedValueTimeProperties.set(std::to_underlying(property));
                 hasCycles = true;
             }
-            if (property == CSSPropertyFontSize)
+            if (property == CSSPropertyID::FontSize)
                 isFontDependent = true;
         }
     };

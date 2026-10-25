@@ -93,8 +93,8 @@ void MathMLElement::attributeChanged(const QualifiedName& name, const AtomString
         break;
     case AttributeNames::columnspanAttr:
     case AttributeNames::rowspanAttr:
-        if (is<RenderTableCell>(renderer()) && hasTagName(mtdTag))
-            downcast<RenderTableCell>(*renderer()).colSpanOrRowSpanChanged();
+        if (CheckedPtr cell = dynamicDowncast<RenderTableCell>(renderer()); cell && hasTagName(mtdTag))
+            cell->colSpanOrRowSpanChanged();
         break;
     case AttributeNames::tabindexAttr:
         if (auto optionalTabIndex = parseHTMLInteger(newValue))
@@ -182,26 +182,26 @@ void MathMLElement::collectPresentationalHintsForAttribute(const QualifiedName& 
 {
     switch (name.nodeName()) {
     case AttributeNames::mathbackgroundAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyBackgroundColor, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::BackgroundColor, value);
         return;
     case AttributeNames::mathsizeAttr:
         if (document().settings().coreMathMLEnabled()) {
             if (!isDisallowedMathSizeAttribute(value))
-                addPropertyToPresentationalHintStyle(style, CSSPropertyFontSize, value);
+                addPropertyToPresentationalHintStyle(style, CSSPropertyID::FontSize, value);
         } else
-            addPropertyToPresentationalHintStyle(style, CSSPropertyFontSize, convertMathSizeIfNeeded(value));
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::FontSize, convertMathSizeIfNeeded(value));
         return;
     case AttributeNames::mathcolorAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyColor, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::Color, value);
         return;
     case AttributeNames::dirAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyDirection, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::Direction, value);
         return;
     case AttributeNames::displaystyleAttr:
         if (equalLettersIgnoringASCIICase(value, "false"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyMathStyle, CSSValueCompact);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::MathStyle, CSSValueID::Compact);
         else if (equalLettersIgnoringASCIICase(value, "true"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyMathStyle, CSSValueNormal);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::MathStyle, CSSValueID::Normal);
         return;
     // https://w3c.github.io/mathml-core/#dfn-scriptlevel
     case AttributeNames::scriptlevelAttr: {
@@ -231,11 +231,11 @@ void MathMLElement::collectPresentationalHintsForAttribute(const QualifiedName& 
                 builder.append('-');
             builder.append(view);
             builder.append(')');
-            addPropertyToPresentationalHintStyle(style, CSSPropertyMathDepth, builder.toString());
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::MathDepth, builder.toString());
             break;
         }
         case ScriptLevelSyntax::Unsigned:
-            addPropertyToPresentationalHintStyle(style, CSSPropertyMathDepth, value);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::MathDepth, value);
             break;
         };
         return;
@@ -249,7 +249,7 @@ void MathMLElement::collectPresentationalHintsForAttribute(const QualifiedName& 
         // a presentational hint resetting the value of text-transform to none.
         // https://w3c.github.io/mathml-core/#dfn-mathvariant
         if (hasTagName(MathMLNames::miTag) && equalLettersIgnoringASCIICase(value, "normal"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyTextTransform, CSSValueNone);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::TextTransform, CSSValueID::None);
         return;
     }
 
@@ -261,22 +261,22 @@ void MathMLElement::collectPresentationalHintsForAttribute(const QualifiedName& 
     // FIXME: The following are deprecated attributes that should lose if there is a conflict with a non-deprecated attribute.
     switch (name.nodeName()) {
     case AttributeNames::fontsizeAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyFontSize, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::FontSize, value);
         break;
     case AttributeNames::backgroundAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyBackgroundColor, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::BackgroundColor, value);
         break;
     case AttributeNames::colorAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyColor, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::Color, value);
         break;
     case AttributeNames::fontstyleAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyFontStyle, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::FontStyle, value);
         break;
     case AttributeNames::fontweightAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyFontWeight, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::FontWeight, value);
         break;
     case AttributeNames::fontfamilyAttr:
-        addPropertyToPresentationalHintStyle(style, CSSPropertyFontFamily, value);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::FontFamily, value);
         break;
     default:
         ASSERT(!hasPresentationalHintsForAttribute(name));

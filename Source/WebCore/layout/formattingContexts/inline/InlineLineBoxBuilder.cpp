@@ -60,7 +60,7 @@ LineBox LineBoxBuilder::build(size_t lineIndex)
         // For now just include the hanging content in the root inline box as if it was not hanging (this is how legacy line layout works).
         return lineLayoutResult.contentGeometry.logicalWidth;
     };
-    auto lineBox = LineBox { rootBox(), lineLayoutResult.contentGeometry.logicalLeft, contentLogicalWidth(), lineIndex, isFirstFormattedLine(), lineLayoutResult.nonSpanningInlineLevelBoxCount };
+    auto lineBox = LineBox { rootBox(), lineLayoutResult.contentGeometry.logicalLeft, contentLogicalWidth(), lineIndex, isFirstFormattedLine(), lineLayoutResult.hasBlockEllipsisContentOnly(), lineLayoutResult.nonSpanningInlineLevelBoxCount };
     if (lineLayoutResult.isBlockContent())
         constructBlockContent(lineBox);
     else {
@@ -99,7 +99,7 @@ LineBox LineBoxBuilder::buildForRootInlineBoxOnly(size_t lineIndex)
     auto& lineLayoutResult = this->lineLayoutResult();
     ASSERT(lineLayoutResult.hasContentfulInlineContent());
 
-    auto lineBox = LineBox { rootBox(), lineLayoutResult.contentGeometry.logicalLeft, lineLayoutResult.contentGeometry.logicalWidth - lineLayoutResult.hangingContent.logicalWidth, lineIndex, isFirstFormattedLine(), lineLayoutResult.nonSpanningInlineLevelBoxCount };
+    auto lineBox = LineBox { rootBox(), lineLayoutResult.contentGeometry.logicalLeft, lineLayoutResult.contentGeometry.logicalWidth - lineLayoutResult.hangingContent.logicalWidth, lineIndex, isFirstFormattedLine(), lineLayoutResult.hasBlockEllipsisContentOnly(), lineLayoutResult.nonSpanningInlineLevelBoxCount };
     auto& rootInlineBox = lineBox.rootInlineBox();
     setVerticalPropertiesForInlineLevelBox(lineBox, rootInlineBox);
     if (isFirstFormattedLine())
@@ -133,7 +133,7 @@ TextUtil::FallbackFontList LineBoxBuilder::collectFallbackFonts(const InlineLeve
     return fallbackFonts;
 }
 
-static InlineLevelBox::AscentAndDescent NODELETE primaryFontMetricsForInlineBox(const InlineLevelBox& inlineBox, FontBaseline fontBaseline = FontBaseline::Alphabetic)
+static InlineLevelBox::AscentAndDescent LEGACY_NODELETE primaryFontMetricsForInlineBox(const InlineLevelBox& inlineBox, FontBaseline fontBaseline = FontBaseline::Alphabetic)
 {
     ASSERT(inlineBox.isInlineBox());
     auto& fontMetrics = inlineBox.primarymetricsOfPrimaryFont();
@@ -142,7 +142,7 @@ static InlineLevelBox::AscentAndDescent NODELETE primaryFontMetricsForInlineBox(
     return { ascent, descent };
 }
 
-static bool NODELETE isLineFitEdgeLeading(const InlineLevelBox& inlineBox)
+static bool LEGACY_NODELETE isLineFitEdgeLeading(const InlineLevelBox& inlineBox)
 {
     ASSERT(inlineBox.isInlineBox());
     return inlineBox.lineFitEdge().isLeading();
@@ -538,6 +538,11 @@ void LineBoxBuilder::constructInlineLevelBoxes(LineBox& lineBox)
         }
         ASSERT(run.isOutOfFlow());
     }
+
+    if (lineBox.hasBlockEllipsisContentOnly()) {
+        // Such line box is considered to contain a strut regardless of the document's mode (css-overflow-4 block-ellipsis).
+        rootInlineBox.setHasContent();
+    }
 }
 
 void LineBoxBuilder::constructBlockContent(LineBox& lineBox)
@@ -586,7 +591,7 @@ void LineBoxBuilder::adjustInlineBoxHeightsForLineBoxContainIfApplicable(LineBox
         for (auto& inlineLevelBox : lineBox.nonRootInlineLevelBoxes()) {
             if (!inlineLevelBox.isInlineBox())
                 continue;
-            auto& inlineBoxGeometry = formattingContext().geometryForBox(inlineLevelBox.layoutBox());
+            auto& inlineBoxGeometry = formattingContext().geometryForBox(protect(inlineLevelBox.layoutBox()));
             auto ascent = inlineLevelBox.ascent() + inlineBoxGeometry.marginBorderAndPaddingBefore();
             auto descent = inlineLevelBox.descent() + inlineBoxGeometry.marginBorderAndPaddingAfter();
             inlineBoxBoundsMap.set(&inlineLevelBox, TextUtil::EnclosingAscentDescent { ascent, descent });
@@ -624,10 +629,10 @@ void LineBoxBuilder::adjustInlineBoxHeightsForLineBoxContainIfApplicable(LineBox
             if (!run.isText())
                 continue;
 
-            auto& textBox = downcast<InlineTextBox>(run.layoutBox());
+            CheckedRef textBox = downcast<InlineTextBox>(run.layoutBox());
             auto& textContent = run.textContent();
-            auto& style = isFirstFormattedLine() ? textBox.firstLineStyle() : textBox.style();
-            auto enclosingAscentDescentForRun = TextUtil::enclosingGlyphBoundsForText(StringView(textBox.content()).substring(textContent.start, textContent.length), style, textBox.shouldUseSimpleGlyphOverflowCodePath() ? TextUtil::ShouldUseSimpleGlyphOverflowCodePath::Yes : TextUtil::ShouldUseSimpleGlyphOverflowCodePath::No);
+            CheckedRef style = isFirstFormattedLine() ? textBox->firstLineStyle() : textBox->style();
+            auto enclosingAscentDescentForRun = TextUtil::enclosingGlyphBoundsForText(StringView(textBox->content()).substring(textContent.start, textContent.length), style, textBox->shouldUseSimpleGlyphOverflowCodePath() ? TextUtil::ShouldUseSimpleGlyphOverflowCodePath::Yes : TextUtil::ShouldUseSimpleGlyphOverflowCodePath::No);
 
             auto& parentInlineBox = lineBox.parentInlineBox(run);
             auto enclosingAscentDescentForInlineBox = inlineBoxBoundsMap.get(&parentInlineBox);
@@ -650,10 +655,10 @@ void LineBoxBuilder::adjustInlineBoxHeightsForLineBoxContainIfApplicable(LineBox
             if (!run.isText())
                 continue;
 
-            auto& textBox = downcast<InlineTextBox>(run.layoutBox());
+            CheckedRef textBox = downcast<InlineTextBox>(run.layoutBox());
             auto& textContent = run.textContent();
-            auto& style = isFirstFormattedLine() ? textBox.firstLineStyle() : textBox.style();
-            auto ascentAndDescent = TextUtil::enclosingGlyphBoundsForText(StringView(textBox.content()).substring(textContent.start, textContent.length), style, textBox.shouldUseSimpleGlyphOverflowCodePath() ? TextUtil::ShouldUseSimpleGlyphOverflowCodePath::Yes : TextUtil::ShouldUseSimpleGlyphOverflowCodePath::No);
+            CheckedRef style = isFirstFormattedLine() ? textBox->firstLineStyle() : textBox->style();
+            auto ascentAndDescent = TextUtil::enclosingGlyphBoundsForText(StringView(textBox->content()).substring(textContent.start, textContent.length), style, textBox->shouldUseSimpleGlyphOverflowCodePath() ? TextUtil::ShouldUseSimpleGlyphOverflowCodePath::Yes : TextUtil::ShouldUseSimpleGlyphOverflowCodePath::No);
 
             initialLetterDescent = ascentAndDescent.descent;
             if (lineBox.baselineType() != FontBaseline::Alphabetic)
@@ -690,14 +695,14 @@ void LineBoxBuilder::adjustIdeographicBaselineIfApplicable(LineBox& lineBox)
         if (rootInlineBoxStyle.writingMode().isHorizontal())
             return false;
 
-        auto primaryFontRequiresIdeographicBaseline = [&] (auto& style) {
+        auto primaryFontRequiresIdeographicBaseline = [&](const Style::ComputedStyle& style) {
             return style.fontDescription().orientation() == FontOrientation::Vertical || style.fontCascade().primaryFont().hasVerticalGlyphs();
         };
 
         if (m_fallbackFontRequiresIdeographicBaseline || primaryFontRequiresIdeographicBaseline(rootInlineBoxStyle))
             return true;
         for (auto& inlineLevelBox : lineBox.nonRootInlineLevelBoxes()) {
-            if (inlineLevelBox.isInlineBox() && primaryFontRequiresIdeographicBaseline(styleToUse(inlineLevelBox)))
+            if (inlineLevelBox.isInlineBox() && primaryFontRequiresIdeographicBaseline(protect(styleToUse(inlineLevelBox))))
                 return true;
         }
         return false;
@@ -909,7 +914,8 @@ void LineBoxBuilder::adjustMarginStartForListMarker(const ElementBox& listMarker
 {
     if (!nestedListMarkerMarginStart && !rootInlineBoxOffset)
         return;
-    auto& listMarkerGeometry = const_cast<InlineFormattingContext&>(formattingContext()).geometryForBox(listMarkerBox);
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST auto& listMarkerGeometry = const_cast<InlineFormattingContext&>(formattingContext()).geometryForBox(listMarkerBox);
     // Make sure that the line content does not get pulled in to logical left direction due to
     // the large negative margin (i.e. this ensures that logical left of the list content stays at the line start)
     listMarkerGeometry.setHorizontalMargin({ listMarkerGeometry.marginStart() + nestedListMarkerMarginStart - LayoutUnit { rootInlineBoxOffset }, listMarkerGeometry.marginEnd() - nestedListMarkerMarginStart + LayoutUnit { rootInlineBoxOffset } });

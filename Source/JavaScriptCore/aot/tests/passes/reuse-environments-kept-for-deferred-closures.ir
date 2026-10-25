@@ -1,0 +1,43 @@
+# An environment that an object keeps in its hidden field, for the closures it makes on demand, has escaped where the object is allocated. On the path without the object it goes back to the free list
+# FORM: Prepared
+# RUN: pass ReuseEnvironments
+# OPTIONS: disable=pass:AllocateInFrames
+# STATISTIC: EnvironmentsReused = 1
+# CHECK: reused environments: [L0]
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="keptOnOnePath" fields=[{key="x" declared={type=anything}}]
+layout L1 name="Handle" fields=[{key="read" declared={type=f1} flags=[IsRequired] flow={location={initialization=SetAtCreation deferral=CapturesEnvironment deferredFunction=f1} occupancy=AlwaysFilled}}, {declared={type=env L0} flags=[IsRequired, IsHidden] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled}}] flow={closureEnvironmentField=1}
+
+function f0 name="keptOnOnePath" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v4 = NewClosure function=f1 [isMadeOnDemand]
+    v5 = NewObject -, v4, v3 layout=L1 fields=[0, 1]
+    v6 = Call v0, -, v5
+    Jump -> next b3()
+  b3():
+    Branch v1 -> taken b1(), notTaken b4()
+  b4():
+    Return v0
+# CHECK-NOT: MarkEnvironmentEscaped
+# CHECK: Branch v1 -> taken b2(), notTaken [[edgeBlock]]()
+# CHECK: = NewClosure function=f1
+# CHECK-NEXT: MarkEnvironmentEscaped v3
+# CHECK-NEXT: = NewObject {{*}}layout=L1
+# CHECK-NOT: MarkEnvironmentEscaped
+# CHECK: [[edgeBlock]]():
+# CHECK-NEXT: ReleaseEnvironment v3
+# CHECK-NEXT: Jump -> next b3()
+}
+
+function f1 name="read" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+# CHECK-NOT: MarkEnvironmentEscaped
+}

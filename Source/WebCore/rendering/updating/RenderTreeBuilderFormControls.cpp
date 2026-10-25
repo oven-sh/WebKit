@@ -92,14 +92,8 @@ void RenderTreeBuilder::FormControls::updateAfterDescendants(RenderElement& rend
         if (!selectElement)
             return;
 
-        auto containerRenderer = [&] -> CheckedPtr<RenderElement> {
-            if (selectElement->isBaseListBox())
-                return selectElement->renderer();
-            if (RefPtr pickerElement = selectElement->pickerPopoverElement())
-                return pickerElement->renderer();
-            return nullptr;
-        }();
-
+        RefPtr container = selectElement->optionContainer();
+        CheckedPtr containerRenderer = container ? container->renderer() : nullptr;
         if (containerRenderer)
             updatePseudoElement(PseudoElementType::Checkmark, renderer, containerRenderer->style().usedAppearance(), renderer.firstChild());
 
@@ -114,7 +108,7 @@ void RenderTreeBuilder::FormControls::updateAfterDescendants(RenderElement& rend
 
 void RenderTreeBuilder::FormControls::updatePseudoElement(PseudoElementType type, RenderElement& renderer, StyleAppearance usedAppearance, RenderObject* beforeChild)
 {
-    CheckedPtr existingPseudoElement = renderer.pseudoElementRenderer(type).get();
+    WeakPtr existingPseudoElement = renderer.pseudoElementRenderer(type);
 
     if (usedAppearance != StyleAppearance::Base && !existingPseudoElement)
         return;
@@ -144,7 +138,6 @@ void RenderTreeBuilder::FormControls::updatePseudoElement(PseudoElementType type
         if (beforeChild == existingPseudoElement)
             beforeChild = existingPseudoElement->nextSibling();
         m_builder.destroy(*existingPseudoElement);
-        existingPseudoElement = nullptr;
     }
 
     if (!renderer.canHaveChildren())

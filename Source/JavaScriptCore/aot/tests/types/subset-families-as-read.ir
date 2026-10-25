@@ -1,0 +1,32 @@
+# As read, a layout in a type stands for its family: the layout itself and the layouts that name it as a supertype. A family lists its members, so a position that names a layout holds no other object, and only object holds every family
+# FORM: AsRead
+# RUN: subset
+# RUN(PRINT): print
+# CHECK: t0 <= t1: no overlaps: yes
+# CHECK: t0 <= t2: yes overlaps: yes
+# CHECK: t0 <= t3: no overlaps: no
+# CHECK: t0 <= t5: no overlaps: no
+# CHECK: t0 <= t6: yes overlaps: yes
+# CHECK: t0 <= t8: no overlaps: no
+# CHECK: t0 <= t9: no overlaps: no
+# CHECK: t1 <= t0: yes overlaps: yes
+# CHECK: t1 <= t9: no overlaps: no
+# CHECK: t2 <= t0: no overlaps: yes
+# CHECK: t3 <= t0: no overlaps: no
+# CHECK: t4 <= t0: no overlaps: no
+# CHECK: t5 <= t0: no overlaps: no
+# CHECK: t6 <= t0: no overlaps: yes
+# CHECK: t7 <= t0: no overlaps: yes
+# CHECK: t7 <= t6: no overlaps: yes
+# CHECK: t8 <= t0: no overlaps: no
+# CHECK: t9 <= t0: no overlaps: no
+# CHECK: t9 <= t2: yes overlaps: yes
+# CHECK: laws hold
+# PRINT: parameters=[{type=L0|L1}, {type=L1}, {type=object}, {type=function}, {type=f1}, {type=Array<number>}, {type=undefined|L0|L1}, {type=anything}, {type=string}, {type=L2}]
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Shape"
+layout L1 name="Circle" supertypes=[L0]
+layout L2 name="Other"
+function f0 name="types" parameters=[{type=L0}, {type=L1}, {type=object}, {type=function}, {type=f1}, {type=Array<number>}, {type=undefined|L0}, {type=anything}, {type=string}, {type=L2}] results=[{type=undefined}]
+function f1 name="listed" results=[{type=anything}]

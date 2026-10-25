@@ -56,15 +56,15 @@ public:
     const LayoutSize& topRight() const LIFETIME_BOUND { return m_topRight; }
     const LayoutSize& bottomLeft() const LIFETIME_BOUND { return m_bottomLeft; }
     const LayoutSize& bottomRight() const LIFETIME_BOUND { return m_bottomRight; }
-    WEBCORE_EXPORT void NODELETE setRadiiForEdges(const LayoutRoundedRectRadii&, RectEdges<bool> includeEdges);
+    WEBCORE_EXPORT void LEGACY_NODELETE setRadiiForEdges(const LayoutRoundedRectRadii&, RectEdges<bool> includeEdges);
 
-    WEBCORE_EXPORT bool NODELETE isZero() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE isZero() const;
 
-    bool NODELETE areRenderableInRect(const LayoutRect&) const;
-    void makeRenderableInRect(const LayoutRect&);
+    bool LEGACY_NODELETE areRenderableInRect(const LayoutRect&) const;
+    void LEGACY_NODELETE makeRenderableInRect(const LayoutRect&);
 
-    void NODELETE scale(float factor);
-    WEBCORE_EXPORT void expand(LayoutUnit topWidth, LayoutUnit bottomWidth, LayoutUnit leftWidth, LayoutUnit rightWidth);
+    void LEGACY_NODELETE scale(float factor);
+    WEBCORE_EXPORT void LEGACY_NODELETE expand(LayoutUnit topWidth, LayoutUnit bottomWidth, LayoutUnit leftWidth, LayoutUnit rightWidth);
     void expand(LayoutUnit size) { expand(size, size, size, size); }
     void shrink(LayoutUnit topWidth, LayoutUnit bottomWidth, LayoutUnit leftWidth, LayoutUnit rightWidth) { expand(-topWidth, -bottomWidth, -leftWidth, -rightWidth); }
     void shrink(LayoutUnit size) { shrink(size, size, size, size); }
@@ -103,17 +103,17 @@ public:
     void move(const LayoutSize& size) { m_rect.move(size); }
     void moveBy(const LayoutPoint& offset) { m_rect.moveBy(offset); }
     void inflate(LayoutUnit size) { m_rect.inflate(size);  }
-    void inflateWithRadii(LayoutUnit size);
+    void LEGACY_NODELETE inflateWithRadii(LayoutUnit size);
     void expandRadii(LayoutUnit size) { m_radii.expand(size); }
     void shrinkRadii(LayoutUnit size) { m_radii.shrink(size); }
 
-    bool NODELETE isRenderable() const;
-    void adjustRadii();
+    bool LEGACY_NODELETE isRenderable() const;
+    void LEGACY_NODELETE adjustRadii();
 
     // Tests whether the quad intersects any part of this rounded rectangle.
     // This only works for convex quads.
-    bool NODELETE intersectsQuad(const FloatQuad&) const;
-    WEBCORE_EXPORT bool NODELETE contains(const LayoutRect&) const;
+    bool LEGACY_NODELETE intersectsQuad(const FloatQuad&) const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE contains(const LayoutRect&) const;
 
     FloatRoundedRect pixelSnappedRoundedRectForPainting(float deviceScaleFactor) const;
 

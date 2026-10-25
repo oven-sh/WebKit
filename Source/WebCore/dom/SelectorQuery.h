@@ -55,7 +55,7 @@ public:
     Element* queryFirst(ContainerNode& rootNode) const;
 
     bool shouldStoreInDocument() const { return m_matchType == MatchType::TagNameMatch || m_matchType == MatchType::ClassNameMatch; }
-    AtomString NODELETE classNameToMatch() const;
+    AtomString LEGACY_NODELETE classNameToMatch() const;
 
 private:
     struct SelectorData {
@@ -82,7 +82,7 @@ private:
 #endif // ENABLE(CSS_SELECTOR_JIT)
 
     FixedVector<SelectorData> m_selectors;
-    mutable enum MatchType {
+    enum class MatchType : uint8_t {
         CompilableSingle,
         CompilableSingleWithRootFilter,
         CompilableMultipleSelectorMatch,
@@ -96,7 +96,8 @@ private:
         ClassNameMatch,
         AttributeExactMatch,
         MultipleSelectorMatch,
-    } m_matchType;
+    };
+    mutable MatchType m_matchType;
 };
 
 class SelectorQuery {
@@ -121,7 +122,7 @@ private:
 class SelectorQueryCache {
     WTF_MAKE_TZONE_ALLOCATED(SelectorQueryCache);
 public:
-    static SelectorQueryCache& NODELETE singleton();
+    static SelectorQueryCache& LEGACY_NODELETE singleton();
 
     SelectorQuery* add(const String&, const Document&);
     void clear();

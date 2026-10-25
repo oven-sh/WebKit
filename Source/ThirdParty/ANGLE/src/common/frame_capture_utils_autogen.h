@@ -165,6 +165,7 @@ enum class ParamType
     TMemoryObjectID,
     TMemoryObjectIDConstPointer,
     TMemoryObjectIDPointer,
+    TMemoryTrimLevel,
     TObjectType,
     TPackUnpackParameter,
     TPipeInfo,
@@ -285,7 +286,7 @@ enum class ParamType
     TvoidPointerPointer,
 };
 
-constexpr uint32_t kParamTypeCount = 248;
+constexpr uint32_t kParamTypeCount = 249;
 
 union ParamValue
 {
@@ -402,6 +403,7 @@ union ParamValue
     gl::MemoryObjectID MemoryObjectIDVal;
     const gl::MemoryObjectID *MemoryObjectIDConstPointerVal;
     gl::MemoryObjectID *MemoryObjectIDPointerVal;
+    gl::MemoryTrimLevel MemoryTrimLevelVal;
     egl::ObjectType ObjectTypeVal;
     gl::PackUnpackParameter PackUnpackParameterVal;
     gl::PlaneParameter PlaneParameterVal;
@@ -1265,6 +1267,13 @@ inline gl::MemoryObjectID *GetParamVal<ParamType::TMemoryObjectIDPointer, gl::Me
     const ParamValue &value)
 {
     return value.MemoryObjectIDPointerVal;
+}
+
+template <>
+inline gl::MemoryTrimLevel GetParamVal<ParamType::TMemoryTrimLevel, gl::MemoryTrimLevel>(
+    const ParamValue &value)
+{
+    return value.MemoryTrimLevelVal;
 }
 
 template <>
@@ -2468,6 +2477,8 @@ T AccessParamValue(ParamType paramType, const ParamValue &value)
             return GetParamVal<ParamType::TMemoryObjectIDConstPointer, T>(value);
         case ParamType::TMemoryObjectIDPointer:
             return GetParamVal<ParamType::TMemoryObjectIDPointer, T>(value);
+        case ParamType::TMemoryTrimLevel:
+            return GetParamVal<ParamType::TMemoryTrimLevel, T>(value);
         case ParamType::TObjectType:
             return GetParamVal<ParamType::TObjectType, T>(value);
         case ParamType::TPackUnpackParameter:
@@ -3413,6 +3424,13 @@ inline void SetParamVal<ParamType::TMemoryObjectIDPointer>(gl::MemoryObjectID *v
                                                            ParamValue *valueOut)
 {
     valueOut->MemoryObjectIDPointerVal = valueIn;
+}
+
+template <>
+inline void SetParamVal<ParamType::TMemoryTrimLevel>(gl::MemoryTrimLevel valueIn,
+                                                     ParamValue *valueOut)
+{
+    valueOut->MemoryTrimLevelVal = valueIn;
 }
 
 template <>
@@ -4722,6 +4740,9 @@ void InitParamValue(ParamType paramType, T valueIn, ParamValue *valueOut)
             break;
         case ParamType::TMemoryObjectIDPointer:
             SetParamVal<ParamType::TMemoryObjectIDPointer>(valueIn, valueOut);
+            break;
+        case ParamType::TMemoryTrimLevel:
+            SetParamVal<ParamType::TMemoryTrimLevel>(valueIn, valueOut);
             break;
         case ParamType::TObjectType:
             SetParamVal<ParamType::TObjectType>(valueIn, valueOut);

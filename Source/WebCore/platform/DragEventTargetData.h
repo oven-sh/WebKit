@@ -29,8 +29,10 @@
 
 namespace WebCore {
 
+struct RemoteUserInputEventData;
+
 enum class DragEventHandled : bool { No, Yes };
 
-using DragEventTargetData = Variant<DragEventHandled, FrameIdentifier>;
+using DragEventTargetData = Variant<DragEventHandled, RemoteUserInputEventData>;
 
 }

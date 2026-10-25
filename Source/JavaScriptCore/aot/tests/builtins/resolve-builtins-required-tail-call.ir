@@ -1,0 +1,48 @@
+# return JSON.parse(text)    return list.map(f)    return list.every(f, t)    return f.call(t, x)
+# The language makes each of these a tail call. A native built-in returns to whoever called it and goes on in no tail call of its own, so the frame that waits for it bounds no chain of tail calls:
+# the call becomes the call of the built-in, with the mark of the tail call that it replaces. A built-in that is written in JavaScript may end in a tail call itself: its direct call stays a tail call,
+# and the inliner takes it in as it takes in any tail call. What passes the call on, as Function.prototype.call does, stays as it was
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# STATISTIC: ReturnCallsDemoted = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+runtimefunction id=31 function=f0
+function f0 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=31 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+    v3 = Boolean boolean=true
+    Return v3
+}
+function f1 name="parseInTailPosition" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = Builtin builtin=JSONParse
+    v2 = Call v1, -, v0
+    ReturnCall v2
+# CHECK-NOT: ReturnCall
+# CHECK: v2:{{*}}= CallBuiltin -, v0, {{*}} overload=JSONParse/0 [isDemotedTailCall]
+# CHECK-NEXT: Return v2
+}
+
+function f2 name="mapInTailPosition" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}] results=[{type=anything}] {
+    v2 = Builtin builtin=ArrayPrototypeMap
+    v3 = Call v2, v0, v1
+    ReturnCall v3
+# CHECK: v3: Array = CallBuiltin v0, v1 overload=ArrayPrototypeMap/0 [isDemotedTailCall]
+# CHECK-NEXT: Return v3
+}
+
+function f3 name="libraryFunctionInTailPosition" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=anything}] {
+    v3 = PropGet v0 key="every"
+    v4 = Call v3, v0, v1, v2 calleeKey="every"
+    ReturnCall v4
+# CHECK-NOT: isDemotedTailCall
+# CHECK: v4: boolean = CallDirect v0, v1, v2 function=f0
+# CHECK-NEXT: ReturnCall v4
+}
+
+function f4 name="passedOn" parameters=[{type=function}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Builtin builtin=FunctionPrototypeCall
+    v4 = Call v3, v0, v1, v2
+    ReturnCall v4
+# CHECK-NOT: CallBuiltin
+# CHECK: ReturnCall
+}

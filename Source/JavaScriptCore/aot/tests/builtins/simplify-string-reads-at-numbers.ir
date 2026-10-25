@@ -1,0 +1,88 @@
+# charCodeAt at a position that is a number, and may be no integer, is tested for an int32 first. An int32 gets the comparison with the length: the code unit on one path, NaN on an unlikely one. Any other number keeps the call, in unlikely code. A position that may be no number, a number that is never an integer, a call in unlikely code and a receiver that may be no string leave the call as it is
+# FORM: Prepared optimizing
+# RUN: pass SimplifyBuiltinCalls
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="positionIsNumber" parameters=[{type=string}, {type=number}] results=[{type=number}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    Return v2
+# CHECK: [[isInt32Of0]]:{{*}}= TypeTest v1 testedType=i32
+# CHECK-NEXT: Branch [[isInt32Of0]] -> taken [[integer0]](| 0), notTaken [[other0]](| 0)
+# CHECK: [[integer0]]([[int32Of0]]: i32):
+# CHECK: [[unsigned0]]: int[0, 4294967295] = URShift [[int32Of0]],
+# CHECK-NEXT: [[length0]]: int[0, 2147483647] = GetStringLength v0
+# CHECK-NEXT: [[isInside0]]: boolean = Less [[unsigned0]], [[length0]]
+# CHECK-NEXT: Branch [[isInside0]] -> taken [[inside0]](| 0), notTaken [[outside0]](| 0)
+# CHECK: [[other0]]([[rest0]]: number) frequency=Unlikely:
+# CHECK-NEXT: = CallBuiltin v0, [[rest0]] overload=StringPrototypeCharCodeAt/0
+# CHECK: [[inside0]]([[position0]]: int[{{*}}]):
+# CHECK-NEXT: int[0, 65535] = GetStringCodeUnit v0, [[position0]]
+# CHECK: [[outside0]]({{*}}) frequency=Unlikely:
+# CHECK-NEXT: = Double number=NaN
+# CHECK-NOT: CallBuiltin
+}
+
+function f1 name="positionComparedWithLength" parameters=[{type=string}, {type=number}] results=[{type=number}] {
+    v2 = GetStringLength v0
+    v3 = Less v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    Return v4
+  b2():
+    v5 = Integer
+    Return v5
+# CHECK: b1():
+# CHECK-NEXT: [[isInt32Of1]]:{{*}}= TypeTest v1 testedType=i32
+# CHECK-NEXT: Branch [[isInt32Of1]] -> taken [[integer1]](| 0), notTaken [[other1]](| 0)
+# CHECK: [[other1]]([[rest1]]: number) frequency=Unlikely:
+# CHECK-NEXT: = CallBuiltin v0, [[rest1]] overload=StringPrototypeCharCodeAt/0
+# CHECK: = GetStringCodeUnit v0,
+}
+
+function f2 name="positionMayBeMissing" parameters=[{type=string}, {type=undefined|number}] results=[{type=number}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    Return v2
+# CHECK-NOT: TypeTest
+# CHECK: v2: number = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+# CHECK-NOT: GetStringCodeUnit
+}
+
+function f3 name="positionMayBeAnything" parameters=[{type=string}, {type=anything}] results=[{type=number}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0 builtinCallForm=AnyReceiver
+    Return v2
+# CHECK-NOT: TypeTest
+# CHECK: v2: number = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0 builtinCallForm=AnyReceiver
+# CHECK-NOT: GetStringCodeUnit
+}
+
+function f4 name="positionIsNeverAnInteger" parameters=[{type=string}] results=[{type=number}] {
+    v1 = Double number=0.5
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    Return v2
+# CHECK-NOT: TypeTest
+# CHECK: v2: number = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+# CHECK-NOT: GetStringCodeUnit
+}
+
+function f5 name="inUnlikelyCode" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=number}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v3 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    Return v3
+  b2():
+    v4 = Integer
+    Return v4
+# CHECK-NOT: TypeTest
+# CHECK: v3: number = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+# CHECK-NOT: GetStringCodeUnit
+}
+
+function f6 name="receiverMayBeUndefined" parameters=[{type=undefined|string}, {type=number}] results=[{type=number}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0 builtinCallForm=AnyReceiver
+    Return v2
+# CHECK-NOT: TypeTest
+# CHECK: v2: number = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0 builtinCallForm=AnyReceiver
+# CHECK-NOT: GetStringCodeUnit
+}

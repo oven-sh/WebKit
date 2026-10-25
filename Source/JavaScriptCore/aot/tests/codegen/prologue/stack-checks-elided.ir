@@ -1,0 +1,35 @@
+# A function that is entered behind a check has a small frame without one, whether through a closure or by a direct call from such a function; a function that calls itself checks
+# FORM: AsRead
+# RUN: generate-code
+# OPTIONS: check=validate-back-end disable=pass:InlineCalls,pass:OutlineColdOperations,pass:RemoveUnusedParameters
+# STATISTIC: StackChecksCoveredByCallers >= 1
+# CHECK: f1: size={{*}} frame={{*}}@{{*}} prologueChecks=0 enteredWithoutStackCheck provenToFitOnStack
+# CHECK: f2: size={{*}} frame={{*}}@{{*}} prologueChecks=0 enteredWithoutStackCheck provenToFitOnStack
+# CHECK: f3: size={{*}} prologueChecks=1
+# CHECK-NOT: enteredWithoutStackCheck
+# CHECK: f5: size=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f3
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="register" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return v4
+}
+function f1 name="callsCovered" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f2
+    v2 = Add v1, v0
+    Return v2
+}
+function f2 name="covered" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Pow v0, v0
+    Return v1
+}
+function f3 name="callsItself" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f3
+    v2 = Add v1, v0
+    Return v2
+}

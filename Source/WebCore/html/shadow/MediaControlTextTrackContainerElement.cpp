@@ -200,6 +200,10 @@ void MediaControlTextTrackContainerElement::updateDisplay()
         }
     }
 
+#if PLATFORM(IOS_FAMILY)
+    updateDisplayedCaptionsForAccessibility(activeCues);
+#endif
+
     // 11. Return output.
     if (hasChildNodes())
         show();
@@ -224,6 +228,37 @@ void MediaControlTextTrackContainerElement::updateTextTrackRepresentationImageIf
         m_textTrackRepresentation->setHidden(false);
     }
 }
+
+#if PLATFORM(IOS_FAMILY)
+void MediaControlTextTrackContainerElement::updateDisplayedCaptionsForAccessibility(const CueList& renderedCues)
+{
+    RefPtr mediaElement = m_mediaElement.get();
+    if (!mediaElement)
+        return;
+
+    Vector<String> captions;
+    if (mediaElement->closedCaptionsVisible()) {
+        for (auto& interval : renderedCues) {
+            Ref cue = *interval.data();
+            if (cue->track()->isSpoken())
+                continue;
+
+            // Cue text can contain markup, like WebVTT tags, so get the plain text.
+            String text;
+            if (RefPtr vttCue = dynamicDowncast<VTTCue>(cue))
+                text = vttCue->textWithoutMarkup();
+            else if (RefPtr displayTree = cue->getDisplayTree())
+                text = displayTree->textContent();
+
+            text = text.simplifyWhiteSpace(isASCIIWhitespace);
+            if (!text.isEmpty())
+                captions.append(WTF::move(text));
+        }
+    }
+
+    mediaElement->displayedCaptionsDidChange(WTF::move(captions));
+}
+#endif
 
 void MediaControlTextTrackContainerElement::processActiveVTTCue(VTTCue& cue)
 {
@@ -298,7 +333,7 @@ void MediaControlTextTrackContainerElement::updateTextStrokeStyle()
 
     // FIXME: find a way to set this property in the stylesheet like the other user style preferences, see <https://bugs.webkit.org/show_bug.cgi?id=169874>.
     if (protect(protect(page->group())->ensureCaptionPreferences())->captionStrokeWidthForFont(m_fontSize, language, strokeWidth, important))
-        setInlineStyleProperty(CSSPropertyStrokeWidth, strokeWidth, CSSUnitType::Px, important ? IsImportant::Yes : IsImportant::No);
+        setInlineStyleProperty(CSSPropertyID::StrokeWidth, strokeWidth, CSSUnitType::Px, important ? IsImportant::Yes : IsImportant::No);
 }
 
 void MediaControlTextTrackContainerElement::updateTextTrackRepresentationIfNeeded()
@@ -345,19 +380,19 @@ void MediaControlTextTrackContainerElement::clearTextTrackRepresentation()
 void MediaControlTextTrackContainerElement::updateTextTrackStyle()
 {
     if (m_textTrackRepresentation) {
-        setInlineStyleProperty(CSSPropertyPosition, CSSValueAbsolute);
-        setInlineStyleProperty(CSSPropertyWidth, m_videoDisplaySize.size().width(), CSSUnitType::Px);
-        setInlineStyleProperty(CSSPropertyHeight, m_videoDisplaySize.size().height(), CSSUnitType::Px);
-        setInlineStyleProperty(CSSPropertyLeft, 0, CSSUnitType::Px);
-        setInlineStyleProperty(CSSPropertyTop, 0, CSSUnitType::Px);
+        setInlineStyleProperty(CSSPropertyID::Position, CSSValueID::Absolute);
+        setInlineStyleProperty(CSSPropertyID::Width, m_videoDisplaySize.size().width(), CSSUnitType::Px);
+        setInlineStyleProperty(CSSPropertyID::Height, m_videoDisplaySize.size().height(), CSSUnitType::Px);
+        setInlineStyleProperty(CSSPropertyID::Left, 0, CSSUnitType::Px);
+        setInlineStyleProperty(CSSPropertyID::Top, 0, CSSUnitType::Px);
         return;
     }
 
-    removeInlineStyleProperty(CSSPropertyPosition);
-    removeInlineStyleProperty(CSSPropertyWidth);
-    removeInlineStyleProperty(CSSPropertyHeight);
-    removeInlineStyleProperty(CSSPropertyLeft);
-    removeInlineStyleProperty(CSSPropertyTop);
+    removeInlineStyleProperty(CSSPropertyID::Position);
+    removeInlineStyleProperty(CSSPropertyID::Width);
+    removeInlineStyleProperty(CSSPropertyID::Height);
+    removeInlineStyleProperty(CSSPropertyID::Left);
+    removeInlineStyleProperty(CSSPropertyID::Top);
 }
 
 void MediaControlTextTrackContainerElement::requiresTextTrackRepresentationChanged()
@@ -464,8 +499,8 @@ void MediaControlTextTrackContainerElement::updateSizes(ForceUpdate force)
         protect(activeCue.data())->recalculateStyles();
 
     protect(document->eventLoop())->queueTask(TaskSource::MediaElement, [weakThis = WeakPtr { *this }] () {
-        if (weakThis)
-            weakThis->updateDisplay();
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->updateDisplay();
     });
 }
 
@@ -516,12 +551,12 @@ void MediaControlTextTrackContainerElement::textTrackRepresentationBoundsChanged
 
 void MediaControlTextTrackContainerElement::hide()
 {
-    setInlineStyleProperty(CSSPropertyDisplay, CSSValueNone);
+    setInlineStyleProperty(CSSPropertyID::Display, CSSValueID::None);
 }
 
 void MediaControlTextTrackContainerElement::show()
 {
-    removeInlineStyleProperty(CSSPropertyDisplay);
+    removeInlineStyleProperty(CSSPropertyID::Display);
 }
 
 bool MediaControlTextTrackContainerElement::isShowing() const
@@ -530,7 +565,7 @@ bool MediaControlTextTrackContainerElement::isShowing() const
 
     // Following the code from show() and hide() above, we only have
     // to check for the presense of inline display.
-    return (!propertySet || !propertySet->getPropertyCSSValue(CSSPropertyDisplay));
+    return (!propertySet || !propertySet->getPropertyCSSValue(CSSPropertyID::Display));
 }
 
 CueList MediaControlTextTrackContainerElement::currentlyActiveCues() const

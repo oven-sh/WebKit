@@ -33,7 +33,7 @@
 NS_HEADER_AUDIT_BEGIN(nullability, sendability)
 
 @interface WKUSDStageConverter : NSObject
-+ (nullable NSData *)convert:(NSData *)data;
++ (nullable NSData *)convert:(NSData *)data mimeType:(NSString *)mimeType;
 @end
 
 NS_HEADER_AUDIT_END(nullability, sendability)

@@ -74,6 +74,9 @@ private:
     void setEntityTransform(const WebModel::Float4x4&) final;
 #if PLATFORM(COCOA)
     std::optional<WebModel::Float4x4> entityTransform() const final;
+#if ENABLE(SPATIAL_PORTAL)
+    std::optional<WebModel::Float4x4> resolvedPortalTransform() const final;
+#endif
 #endif
     void setFOV(float) final;
     void play(bool) final;
@@ -83,7 +86,7 @@ private:
     void render(uint32_t textureIndex, Function<void(bool)>&&) final;
     void processRemovals(Vector<WebModel::TypedResourceId>&& meshRemovals, Vector<WebModel::TypedResourceId>&& materialRemovals, Vector<WebModel::TypedResourceId>&& textureRemovals, CompletionHandler<void(bool)>&&) final;
 
-    Ref<WebMesh> m_backing;
+    const Ref<WebMesh> m_backing;
 #if PLATFORM(COCOA)
     Vector<UniqueRef<WebCore::IOSurface>> m_renderBuffers;
 #endif

@@ -62,6 +62,7 @@
 #include <utility>
 
 #include "absl/base/attributes.h"
+#include "absl/base/config.h"
 #include "absl/container/internal/btree.h"  // IWYU pragma: export
 #include "absl/container/internal/btree_container.h"  // IWYU pragma: export
 #include "absl/container/internal/common.h"
@@ -94,7 +95,7 @@ using set_params = typename ApplyWithoutDefaultSuffix<
              typename btree_set_defaults<Key>::TargetNodeSize,
              typename btree_set_defaults<Key>::IsMulti>,
     TypeList<Key, Compare, Alloc, std::integral_constant<int, TargetNodeSize>,
-             std::integral_constant<bool, IsMulti>>>::type;
+             std::bool_constant<IsMulti>>>::type;
 
 }  // namespace container_internal
 

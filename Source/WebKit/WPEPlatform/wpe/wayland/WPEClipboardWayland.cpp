@@ -34,6 +34,7 @@
 #include <glib-unix.h>
 #include <wayland-client.h>
 #include <wtf/glib/GRefPtr.h>
+#include <wtf/glib/GSpanExtras.h>
 #include <wtf/glib/GWeakPtr.h>
 #include <wtf/glib/WTFGType.h>
 
@@ -127,7 +128,11 @@ static const struct wl_data_device_listener wlDataDeviceListener = {
         priv->offer = offer;
         wl_data_offer_add_listener(priv->offer, &wlDataOfferListener, data);
 
+#if GLIB_CHECK_VERSION(2, 74, 0)
+        priv->formats = adoptGRef(g_ptr_array_new_null_terminated(3, nullptr, TRUE));
+#else
         priv->formats = adoptGRef(g_ptr_array_new());
+#endif
     },
     // enter
     [](void*, wl_data_device*, uint32_t /*serial*/, wl_surface*, wl_fixed_t /*x*/, wl_fixed_t /*y*/, wl_data_offer*) {
@@ -147,7 +152,11 @@ static const struct wl_data_device_listener wlDataDeviceListener = {
         GRefPtr<GPtrArray> formats;
         if (offer) {
             if (priv->offer == offer) {
+#if !GLIB_CHECK_VERSION(2, 74, 0)
+                // Null-terminate pdata without counting the terminator in len.
                 g_ptr_array_add(priv->formats.get(), nullptr);
+                g_ptr_array_set_size(priv->formats.get(), priv->formats->len - 1);
+#endif
                 formats = std::exchange(priv->formats, nullptr);
             } else {
                 g_clear_pointer(&priv->offer, wl_data_offer_destroy);
@@ -225,8 +234,8 @@ static void wpeClipboardWaylandChanged(WPEClipboard* clipboard, GPtrArray* forma
         wl_data_source_add_listener(priv->source, &wlDataSourceListener, clipboard);
 
         if (formats) {
-            for (unsigned i = 0; formats->pdata[i]; ++i)
-                wl_data_source_offer(priv->source, static_cast<const char*>(formats->pdata[i]));
+            for (const char* format : span<const char*>(formats))
+                wl_data_source_offer(priv->source, format);
         }
 
         auto* seat = wpeDisplayWaylandGetSeat(display);

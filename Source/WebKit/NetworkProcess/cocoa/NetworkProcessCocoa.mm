@@ -44,6 +44,7 @@
 #import <WebCore/SecurityOriginData.h>
 #import <pal/spi/cf/CFNetworkSPI.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/CallbackAggregator.h>
 #import <wtf/FileSystem.h>
 #import <wtf/ProcessPrivilege.h>
@@ -206,7 +207,8 @@ HashSet<String> NetworkProcess::hostNamesWithHSTSCache(PAL::SessionID sessionID)
 {
     HashSet<String> hostNames;
     if (CheckedPtr networkSession = downcast<NetworkSessionCocoa>(this->networkSession(sessionID))) {
-        for (NSString *host in protect(networkSession->hstsStorage()).get().nonPreloadedHosts)
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSString *host in protect(networkSession->hstsStorage()).get().nonPreloadedHosts)
             hostNames.add(host);
     }
     return hostNames;
@@ -215,7 +217,7 @@ HashSet<String> NetworkProcess::hostNamesWithHSTSCache(PAL::SessionID sessionID)
 void NetworkProcess::deleteHSTSCacheForHostNames(PAL::SessionID sessionID, const Vector<String>& hostNames)
 {
     if (CheckedPtr networkSession = downcast<NetworkSessionCocoa>(this->networkSession(sessionID))) {
-        for (auto& hostName : hostNames)
+        for (auto& hostName : borrow(hostNames))
             [protect(networkSession->hstsStorage()).get() resetHSTSForHost:hostName.createNSString().get()];
     }
 }
@@ -294,7 +296,6 @@ void NetworkProcess::setBackupExclusionPeriodForTesting(PAL::SessionID sessionID
 }
 #endif // PLATFORM(IOS_FAMILY)
 
-#if HAVE(NW_PROXY_CONFIG)
 void NetworkProcess::clearProxyConfigData(PAL::SessionID sessionID)
 {
     CheckedPtr session = networkSession(sessionID);
@@ -312,6 +313,5 @@ void NetworkProcess::setProxyConfigData(PAL::SessionID sessionID, Vector<std::pa
 
     session->setProxyConfigData(WTF::move(proxyConfigurations));
 }
-#endif // HAVE(NW_PROXY_CONFIG)
 
 } // namespace WebKit

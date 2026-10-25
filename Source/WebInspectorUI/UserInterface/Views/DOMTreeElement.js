@@ -528,7 +528,11 @@ WI.DOMTreeElement = class DOMTreeElement extends WI.TreeElement
             return;
 
         this._closeTagTreeElement = null;
+
         this._updateChildrenInProgress = true;
+        using resetUpdateChildrenInProgress = new ScopeExit(() => {
+            this._updateChildrenInProgress = false;
+        });
 
         var node = this.representedObject;
         var selectedNode = this.treeOutline.selectedDOMNode();
@@ -548,7 +552,6 @@ WI.DOMTreeElement = class DOMTreeElement extends WI.TreeElement
             if (!hasVisibleChildren) {
                 this.hasChildren = false;
                 this.updateTitle();
-                this._updateChildrenInProgress = false;
                 return;
             }
         }
@@ -611,8 +614,6 @@ WI.DOMTreeElement = class DOMTreeElement extends WI.TreeElement
             if (treeOutlineContainerElement && originalScrollTop <= treeOutlineContainerElement.scrollHeight)
                 treeOutlineContainerElement.scrollTop = originalScrollTop;
         }
-
-        this._updateChildrenInProgress = false;
     }
 
     adjustCollapsedRange()
@@ -1974,12 +1975,10 @@ WI.DOMTreeElement = class DOMTreeElement extends WI.TreeElement
         }
 
         var text = this.title.textContent;
-        var match = searchRegex.exec(text);
         var matchRanges = [];
-        while (match) {
+        WI.SearchUtilities.forEachMatch(searchRegex, text, (match) => {
             matchRanges.push({offset: match.index, length: match[0].length});
-            match = searchRegex.exec(text);
-        }
+        });
 
         // Fall back for XPath, etc. matches.
         if (!matchRanges.length)

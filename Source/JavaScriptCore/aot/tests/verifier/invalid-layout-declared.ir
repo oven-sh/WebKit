@@ -1,0 +1,10 @@
+# the declared position of a field: an int32 promise has an int32 type, and an expected type may be any type
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidLayout 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="badPromise" fields=[{key="x" declared={type=number flags=[IsInt32Promise]}}]
+layout L1 name="badPromiseOfSecondField" fields=[{key="x" declared={type=i32 flags=[IsInt32Promise]}}, {key="y" declared={type=number flags=[IsInt32Promise]}}]
+layout L2 name="goodPromise" fields=[{key="x" declared={type=i32 flags=[IsInt32Promise]}}, {key="y" declared={type=undefined|i32 flags=[IsInt32Promise]}}]
+layout L3 name="goodExpectedType" fields=[{key="x" declared={type=string flags=[IsExpected]}}]

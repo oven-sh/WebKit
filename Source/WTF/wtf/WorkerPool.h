@@ -30,6 +30,7 @@
 #include <wtf/Deque.h>
 #include <wtf/Function.h>
 #include <wtf/NumberOfCores.h>
+#include <wtf/StackAllocation.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
@@ -45,21 +46,21 @@ public:
     WTF_EXPORT_PRIVATE ~WorkerPool();
 
     // If timeout is infinity, it means AutomaticThread will be never automatically destroyed.
-    static Ref<WorkerPool> create(ASCIILiteral name, unsigned numberOfWorkers  = WTF::numberOfProcessorCores(), Seconds timeout = Seconds::infinity())
+    static Ref<WorkerPool> create(ASCIILiteral name, unsigned numberOfWorkers  = WTF::numberOfProcessorCores(), Seconds timeout = Seconds::infinity(), StackAllocationSpecification stackSpecification = { })
     {
         ASSERT(numberOfWorkers >= 1);
-        return adoptRef(*new WorkerPool(name, numberOfWorkers, timeout));
+        return adoptRef(*new WorkerPool(name, numberOfWorkers, timeout, stackSpecification));
     }
 
     ASCIILiteral name() const { return m_name; }
 
-    WTF_EXPORT_PRIVATE unsigned numberOfTasks() const;
+    WTF_EXPORT_PRIVATE unsigned LEGACY_NODELETE numberOfTasks() const;
 
 private:
     class Worker;
     friend class Worker;
 
-    WTF_EXPORT_PRIVATE WorkerPool(ASCIILiteral name, unsigned numberOfWorkers, Seconds timeout);
+    WTF_EXPORT_PRIVATE WorkerPool(ASCIILiteral name, unsigned numberOfWorkers, Seconds timeout, StackAllocationSpecification);
 
     bool shouldSleep(const AbstractLocker&);
 
@@ -71,6 +72,7 @@ private:
     Vector<Ref<Worker>> m_workers;
     Deque<Function<void()>> m_tasks;
     ASCIILiteral m_name;
+    StackAllocationSpecification m_stackSpecification;
 };
 
 }

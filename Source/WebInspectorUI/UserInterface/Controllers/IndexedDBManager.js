@@ -24,8 +24,6 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// FIXME: IndexedDBManager lacks advanced multi-target support. (IndexedDatabase per-target)
-
 WI.IndexedDBManager = class IndexedDBManager extends WI.Object
 {
     constructor()
@@ -80,6 +78,7 @@ WI.IndexedDBManager = class IndexedDBManager extends WI.Object
 
         WI.Frame.addEventListener(WI.Frame.Event.MainResourceDidChange, this._mainResourceDidChange, this);
         WI.Frame.addEventListener(WI.Frame.Event.SecurityOriginDidChange, this._securityOriginDidChange, this);
+        WI.Frame.addEventListener(WI.Frame.Event.PageExecutionContextChanged, this._framePageExecutionContextChanged, this);
     }
 
     disable()
@@ -95,6 +94,7 @@ WI.IndexedDBManager = class IndexedDBManager extends WI.Object
 
         WI.Frame.removeEventListener(WI.Frame.Event.MainResourceDidChange, this._mainResourceDidChange, this);
         WI.Frame.removeEventListener(WI.Frame.Event.SecurityOriginDidChange, this._securityOriginDidChange, this);
+        WI.Frame.removeEventListener(WI.Frame.Event.PageExecutionContextChanged, this._framePageExecutionContextChanged, this);
 
         this._reset();
     }
@@ -106,10 +106,16 @@ WI.IndexedDBManager = class IndexedDBManager extends WI.Object
         console.assert(objectStore);
         console.assert(callback);
 
+        let target = this._targetForSecurityOrigin(objectStore.parentDatabase.securityOrigin);
+        if (!target) {
+            callback([], false);
+            return;
+        }
+
         function processData(error, entryPayloads, moreAvailable)
         {
             if (error) {
-                callback(null, false);
+                callback([], false);
                 return;
             }
 
@@ -117,9 +123,9 @@ WI.IndexedDBManager = class IndexedDBManager extends WI.Object
 
             for (var entryPayload of entryPayloads) {
                 var entry = {};
-                entry.primaryKey = WI.RemoteObject.fromPayload(entryPayload.primaryKey);
-                entry.key = WI.RemoteObject.fromPayload(entryPayload.key);
-                entry.value = WI.RemoteObject.fromPayload(entryPayload.value);
+                entry.primaryKey = WI.RemoteObject.fromPayload(entryPayload.primaryKey, target);
+                entry.key = WI.RemoteObject.fromPayload(entryPayload.key, target);
+                entry.value = WI.RemoteObject.fromPayload(entryPayload.value, target);
                 entries.push(entry);
             }
 
@@ -135,7 +141,6 @@ WI.IndexedDBManager = class IndexedDBManager extends WI.Object
             pageSize: maximumEntryCount || 100
         };
 
-        let target = WI.assumingMainTarget();
         target.IndexedDBAgent.requestData.invoke(requestArguments, processData);
     }
 
@@ -147,8 +152,11 @@ WI.IndexedDBManager = class IndexedDBManager extends WI.Object
         let databaseName = objectStore.parentDatabase.name;
         let objectStoreName = objectStore.name;
 
-        let target = WI.assumingMainTarget();
-        target.IndexedDBAgent.clearObjectStore(securityOrigin, databaseName, objectStoreName);
+        let target = this._targetForSecurityOrigin(securityOrigin);
+        if (!target)
+            return;
+
+        return target.IndexedDBAgent.clearObjectStore(securityOrigin, databaseName, objectStoreName);
     }
 
     // Private
@@ -169,10 +177,6 @@ WI.IndexedDBManager = class IndexedDBManager extends WI.Object
         if (!this._enabled)
             return;
 
-        let target = WI.assumingMainTarget();
-        if (!target.hasDomain("IndexedDB"))
-            return;
-
         var securityOrigin = frame.securityOrigin;
 
         // Don't show storage if we don't have a security origin (about:blank).
@@ -180,6 +184,10 @@ WI.IndexedDBManager = class IndexedDBManager extends WI.Object
             return;
 
         if (this._requestedSecurityOrigins.has(securityOrigin))
+            return;
+
+        let target = this._targetForSecurityOrigin(securityOrigin);
+        if (!target || !target.hasDomain("IndexedDB"))
             return;
 
         this._requestedSecurityOrigins.add(securityOrigin);
@@ -236,6 +244,25 @@ WI.IndexedDBManager = class IndexedDBManager extends WI.Object
         target.IndexedDBAgent.requestDatabaseNames(securityOrigin, processDatabaseNames.bind(this));
     }
 
+    _targetForSecurityOrigin(securityOrigin)
+    {
+        if (!WI.targets.some((target) => target instanceof WI.FrameTarget && target.hasDomain("IndexedDB")))
+            return WI.assumingMainTarget();
+
+        // WI.Frame prefers the main-world context from its own frame target over the page target's, and WebKitLegacy frame targets never attach theirs because they name frames differently from the Page domain.
+        // With no such context yet, wait rather than ask the main target, which cannot reach a frame in another process.
+        for (let frame of WI.networkManager.frames) {
+            if (frame.securityOrigin !== securityOrigin)
+                continue;
+
+            let target = frame.pageExecutionContext?.target;
+            if (target && !target.isProvisional && target.hasDomain("IndexedDB"))
+                return target;
+        }
+
+        return null;
+    }
+
     _mainResourceDidChange(event)
     {
         console.assert(event.target instanceof WI.Frame);
@@ -248,6 +275,11 @@ WI.IndexedDBManager = class IndexedDBManager extends WI.Object
     {
         console.assert(event.target instanceof WI.Frame);
 
+        this._addIndexedDBDatabasesIfNeeded(event.target);
+    }
+
+    _framePageExecutionContextChanged(event)
+    {
         this._addIndexedDBDatabasesIfNeeded(event.target);
     }
 };

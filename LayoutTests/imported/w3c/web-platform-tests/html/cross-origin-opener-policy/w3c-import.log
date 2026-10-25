@@ -71,6 +71,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-opener-policy/navigate-top-to-aboutblank.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-opener-policy/no-https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-opener-policy/no-https.html.headers
+/LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-opener-policy/non-secure-to-secure-context-navigation.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-opener-policy/popup-coop-by-sw.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-opener-policy/popup-meta-http-equiv.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/cross-origin-opener-policy/popup-redirect-cache.https.html

@@ -54,8 +54,8 @@ public:
 
     void initializeB3Code(CodeRef<JSEntryPtrTag>);
     void initializeB3Byproducts(std::unique_ptr<OpaqueByproducts>);
-    void NODELETE initializeAddressForCall(CodePtr<JSEntryPtrTag>);
-    void NODELETE initializeAddressForArityCheck(CodePtr<JSEntryPtrTag>);
+    void LEGACY_NODELETE initializeAddressForCall(CodePtr<JSEntryPtrTag>);
+    void LEGACY_NODELETE initializeAddressForArityCheck(CodePtr<JSEntryPtrTag>);
     
     void validateReferences(const TrackedReferences&) override;
 
@@ -80,14 +80,20 @@ public:
     int osrExitLocalsOffset() const { return m_osrExitLocalsOffset; }
     void setOSRExitLocalsOffset(int offset) { m_osrExitLocalsOffset = offset; }
 
+    OSRExit osrExit(unsigned index) const { return m_osrExits.at(index, *this); }
+    CodeLocationLabel<JSInternalPtrTag> osrExitEntrance(const OSRExit& exit) const
+    {
+        return CodeLocationLabel<JSEntryPtrTag>(m_b3Code.code()).labelAtOffset<JSInternalPtrTag>(exit.m_entranceOffset);
+    }
     unsigned osrExitIndexForReturnPC(void* returnPC) const
     {
         uintptr_t entrance = reinterpret_cast<uintptr_t>(returnPC) - DFG::osrExitEntranceSize;
-        size_t index = m_osrExit.findIf([&](const OSRExit& exit) {
-            return exit.m_entrance.dataLocation<uintptr_t>() == entrance;
-        });
-        RELEASE_ASSERT(index != notFound);
-        return index;
+        return m_osrExits.indexForEntranceOffset(entrance - m_b3Code.code().dataLocation<uintptr_t>(), *this);
+    }
+
+    OSRExitDescriptor& appendOSRExitDescriptor(DataFormat profileDataFormat, MethodOfGettingAValueProfile valueProfile)
+    {
+        return osrExitDescriptors.alloc(osrExitDescriptors.size(), profileDataFormat, valueProfile);
     }
 
     unsigned numberOfCompiledDFGNodes() const { return m_numberOfCompiledDFGNodes; }
@@ -97,12 +103,11 @@ public:
     }
     
     DFG::CommonData common;
-    Vector<OSRExit> m_osrExit;
+    OSRExitStream m_osrExits;
     DFG::OSRExitStubs m_osrExitStubs;
     RegisterAtOffsetList m_calleeSaveRegisters;
     SegmentedVector<OSRExitDescriptor, 8> osrExitDescriptors;
     Vector<EncodedJSValue> osrExitConstants;
-    OSRExitValueReps osrExitValueReps;
     Vector<std::unique_ptr<LazySlowPath>> lazySlowPaths;
     
 private:

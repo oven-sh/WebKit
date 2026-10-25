@@ -27,7 +27,7 @@
 
 #include "DFGMinifiedID.h"
 #include "DataFormat.h"
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 #include "FPRInfo.h"
 #include "GPRInfo.h"
 #include "Reg.h"
@@ -90,7 +90,7 @@ public:
     bool isSet() const { return m_technique != DontKnow; }
     bool operator!() const { return !isSet(); }
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
     static ValueRecovery inRegister(Reg reg, DataFormat dataFormat)
     {
         if (reg.isGPR())
@@ -341,9 +341,9 @@ public:
     
     JSValue recover(CallFrame*) const;
     
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
     template<typename Func>
-    void forEachReg(const Func& func)
+    void forEachReg(NOESCAPE const Func& func)
     {
         switch (m_technique) {
         case InGPR:

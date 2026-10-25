@@ -1,0 +1,25 @@
+# A result that nobody reads, or only a cast that nobody reads, has no node; its statement stays. Every call has two sites for what a built-in callee allocates.
+# RUN: valueflow-body f0
+# CHECK: body f0: nodes=4 sites=4 edges=1 edgesOnceReached=0 seeds=0 statements=3
+# CHECK-NEXT: n0 parameter v0
+# CHECK-NEXT: n1 result
+# CHECK-NEXT: n2 thrown
+# CHECK-NEXT: n3 operation v4
+# CHECK-NEXT: s0 v1 result of a built-in
+# CHECK-NEXT: s1 v1 contents of the result of a built-in
+# CHECK-NEXT: s2 v4 result of a built-in
+# CHECK-NEXT: s3 v4 contents of the result of a built-in
+# CHECK-NEXT: edge n3 -> n1
+# CHECK-NEXT: Call v1 (n0, -) throws n2
+# CHECK-NEXT: PropGet v2 (n0) throws n2
+# CHECK-NEXT: Call v4 (n0, -) -> n3 throws n2
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="deadResults" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    v2 = PropGet v0 key="a"
+    v3 = Convert v2 declared={type=object flags=[IsExpected]}
+    v4 = Call v0
+    Return v4
+}

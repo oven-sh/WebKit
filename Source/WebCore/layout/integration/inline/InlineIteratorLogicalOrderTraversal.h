@@ -61,16 +61,16 @@ LeafBoxIterator firstLeafOnLineInLogicalOrderWithNode(const LineBoxIterator&, Li
 LeafBoxIterator lastLeafOnLineInLogicalOrderWithNode(const LineBoxIterator&, LineLogicalOrderCache&);
 
 template<typename ReverseFunction>
-Vector<LeafBoxIterator> leafBoxesInLogicalOrder(const LineBoxIterator& lineBox, ReverseFunction&& reverseFunction)
+Vector<LeafBoxIterator> leafBoxesInLogicalOrder(const LineBoxIterator& lineBox, NOESCAPE const ReverseFunction& reverseFunction)
 {
     Vector<LeafBoxIterator> boxes;
 
     unsigned char minLevel = 128;
     unsigned char maxLevel = 0;
 
-    for (auto box = lineBox->lineLeftmostLeafBox(); box; box = box.traverseLineRightwardOnLine()) {
-        minLevel = std::min(minLevel, box->bidiLevel());
-        maxLevel = std::max(maxLevel, box->bidiLevel());
+    for (auto& box : lineBox->leafBoxes()) {
+        minLevel = std::min(minLevel, box.bidiLevel());
+        maxLevel = std::max(maxLevel, box.bidiLevel());
         boxes.append(box);
     }
 

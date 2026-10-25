@@ -1,0 +1,121 @@
+# What the await that is merged into a yield rejects with arrives at the yield as a value that is sent in to be thrown. What flow proves of the values that `next`, `throw` and `return` send in
+# stands in front of the switch on the mode: it goes into the arms that do not throw, with its validation, and the arm that throws takes the value as it came.
+# It stays where somebody reads the proven value in front of the switch or where two arms meet, and where no await was merged
+# FORM: Prepared
+# RUN: pass SplitCoroutines
+# STATISTIC: CoroutinesSplit = 4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="proofOfSentValue" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+    InitialYield @10
+    v3 = Await v1 @11
+    v4 = Yield v3 @12
+    v5 = ResultAt v4 index=0
+    ValidateType v5 validatedType=undefined|int
+    v7 = AssumeType v5 castType=undefined|int
+    v8 = ResultAt v4 index=1
+    Switch v8 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v7
+  b2():
+    Return v7
+  b3():
+    Jump -> next b4()
+  b4():
+    Return v7
+}
+function f1 name="readWhereArmsMeet" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+    InitialYield @10
+    v3 = Await v1 @11
+    v4 = Yield v3 @12
+    v5 = ResultAt v4 index=0
+    v6 = AssumeType v5 castType=undefined|int
+    v7 = ResultAt v4 index=1
+    Switch v7 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v6
+  b2():
+    Jump -> next b4()
+  b3():
+    Jump -> next b4()
+  b4():
+    Return v6
+}
+function f2 name="noAwaitInFront" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+    InitialYield @10
+    v3 = Yield v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = AssumeType v4 castType=undefined|int
+    v6 = ResultAt v3 index=1
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v5
+  b2():
+    Return v5
+  b3():
+    Return v5
+}
+function f3 name="castOfProof" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
+    InitialYield @10
+    v3 = Await v1 @11
+    v4 = Yield v3 @12
+    v5 = ResultAt v4 index=0
+    v6 = AssumeType v5 castType=undefined|int
+    v7 = Upcast v6 castType=undefined|number
+    v8 = ResultAt v4 index=1
+    Switch v8 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v7
+  b2():
+    Return v6
+  b3():
+    Return v7
+}
+
+# The initial yield splits the first block, so the arms are printed in front of the yield.
+# CHECK-LABEL: function f4 name="proofOfSentValue"
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: Throw v5
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: ValidateType v5 validatedType=undefined|int
+# CHECK-NEXT: [[returned0]]: undefined|int = AssumeType v5 castType=undefined|int
+# CHECK-NEXT: Return [[returned0]]
+# CHECK-NEXT: b3():
+# CHECK-NEXT: ValidateType v5 validatedType=undefined|int
+# CHECK-NEXT: [[sent0]]: undefined|int = AssumeType v5 castType=undefined|int
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: Return [[sent0]]
+# CHECK: v4{{*}}= AsyncGeneratorYield {{*}}, v1 @12
+# CHECK-NEXT: v5: anything = ResultAt v4
+# CHECK-NEXT: v8{{*}}= ResultAt v4 index=1
+# CHECK-NEXT: Switch v8 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+
+# CHECK-LABEL: function f5 name="readWhereArmsMeet"
+# CHECK: Throw v6
+# CHECK: Return v6
+# CHECK: v4{{*}}= AsyncGeneratorYield {{*}}, v1 @12
+# CHECK-NEXT: v5: anything = ResultAt v4
+# CHECK-NEXT: v6: undefined|int = AssumeType v5 castType=undefined|int
+
+# CHECK-LABEL: function f6 name="noAwaitInFront"
+# CHECK: Throw v5
+# CHECK: v3{{*}}= YieldBySavingFrame {{*}}, v1 @12
+# CHECK-NEXT: v4: anything = ResultAt v3
+# CHECK-NEXT: v5: undefined|int = AssumeType v4 castType=undefined|int
+
+# CHECK-LABEL: function f7 name="castOfProof"
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: Throw v5
+# CHECK-NEXT: b2() frequency=Rare:
+# CHECK-NEXT: [[proof3]]: undefined|int = AssumeType v5 castType=undefined|int
+# CHECK-NEXT: {{*}}= Upcast [[proof3]] castType=undefined|number
+# CHECK-NEXT: Return [[proof3]]
+# CHECK-NEXT: b3():
+# CHECK-NEXT: [[other3]]: undefined|int = AssumeType v5 castType=undefined|int
+# CHECK-NEXT: [[cast3]]{{*}}= Upcast [[other3]] castType=undefined|number
+# CHECK-NEXT: Return [[cast3]]
+# CHECK: v4{{*}}= AsyncGeneratorYield {{*}}, v1 @12
+# CHECK-NEXT: v5: anything = ResultAt v4
+# CHECK-NEXT: v8{{*}}= ResultAt v4 index=1

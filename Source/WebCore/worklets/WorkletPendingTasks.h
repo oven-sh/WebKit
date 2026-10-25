@@ -40,7 +40,7 @@ using PendingTaskPromise = DOMPromiseDeferred<void>;
 // https://drafts.css-houdini.org/worklets/#pending-tasks-struct
 class WorkletPendingTasks : public ThreadSafeRefCounted<WorkletPendingTasks> {
 public:
-    static Ref<WorkletPendingTasks> create(Worklet&, PendingTaskPromise&&, int counter);
+    static Ref<WorkletPendingTasks> LEGACY_NODELETE create(Worklet&, PendingTaskPromise&&, int counter);
     ~WorkletPendingTasks();
 
     void abort(Exception&&);
@@ -50,7 +50,7 @@ private:
     WorkletPendingTasks(Worklet&, PendingTaskPromise&&, int counter);
 
     WeakPtr<Worklet> m_worklet;
-    UniqueRef<PendingTaskPromise> m_promise;
+    const UniqueRef<PendingTaskPromise> m_promise;
     int m_counter;
 };
 

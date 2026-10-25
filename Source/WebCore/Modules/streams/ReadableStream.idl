@@ -52,7 +52,8 @@ typedef (ReadableStreamDefaultReader or ReadableStreamBYOBReader) ReadableStream
     GenerateIsReachable=Impl,
     JSCustomMarkFunction,
     PrivateIdentifier,
-    PublicIdentifier
+    PublicIdentifier,
+    Transferable
 ] interface ReadableStream {
     [CallWith=CurrentGlobalObject] constructor(optional object underlyingSource, optional object options);
     [EnabledBySetting=ReadableStreamFromEnabled, CallWith=CurrentGlobalObject] static ReadableStream from(any asyncIterable);

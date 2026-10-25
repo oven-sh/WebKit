@@ -66,6 +66,14 @@ if ($sourceFile !~ m{/unified-sources/UnifiedSource}) {
 
 my ($extension) = $sourceFile =~ /\.(\w+)$/;
 my $membersFolder = "$outputFile.members";
+
+# The first NoBundle compile of a bundle builds every member separately: 2-4x the CPU of the
+# bundle (each member re-parses what the bundle parsed once) for about the same wall time on
+# an idle machine, and every later edit is then cheap. Only pay that when few bundles are dirty;
+# otherwise compile the bundle as a whole (it can still be split by a later, smaller build).
+if (!-e "$membersFolder/.ninja_log" && ($ENV{WK_UNIFIED_SOURCES_DIRTY_BUNDLES} // 1) > 2) {
+    exec(@ARGV);
+}
 mkdir($membersFolder);
 
 # Expand the bundle into one stub source file per member.
@@ -119,7 +127,8 @@ END_OF_NINJA
 writeFileIfChanged("$membersFolder/build.ninja", $buildNinja);
 
 chomp(my $ninja = `which ninja 2>/dev/null` || `xcrun -f ninja`);
-exec($ninja, '--quiet', '-f', "$membersFolder/build.ninja");
+my @jobs = $ENV{WK_UNIFIED_SOURCES_MEMBER_JOBS} ? ('-j', $ENV{WK_UNIFIED_SOURCES_MEMBER_JOBS}) : ();
+exec($ninja, '--quiet', @jobs, '-f', "$membersFolder/build.ninja");
 die("exec ninja: $!\n");
 
 sub shellQuote {

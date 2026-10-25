@@ -1,0 +1,103 @@
+# The terminator of a covered block dominates what the block dominates, less what the landing block reaches without coming through the block again
+# FORM: Prepared
+# RUN: analyses handler-edges
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="landingBlockLeadsBelowAnotherChild" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b5():
+    v2 = Call v0
+    Jump -> next b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    Return v2
+  b4():
+    Jump -> next b6()
+  b5() role=CatchHandler:
+    v3 = CatchValue
+    Jump -> next b4()
+  b6():
+    Branch v1 -> taken b7(), notTaken b8()
+  b7():
+    Return v0
+  b8():
+    Return v0
+}
+# CHECK-LABEL: function f0
+# CHECK: b1 terminator dominates: [b2 b3]
+# CHECK: b2 terminator dominates: [b3]
+# CHECK: b5 terminator dominates: []
+# CHECK: b4 terminator dominates: [b6 b7 b8]
+# CHECK: b6 terminator dominates: [b7 b8]
+function f1 name="coveredBlockInLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b7()
+  b2() handler=b4():
+    v3 = Call v0
+    Jump -> next b3()
+  b3():
+    Jump -> next b6()
+  b4() role=CatchHandler:
+    v4 = CatchValue
+    Jump -> next b5()
+  b5():
+    Jump -> next b6()
+  b6():
+    Jump -> next b1()
+  b7():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK: b1 terminator dominates: [b2 b3 b4 b5 b6 b7]
+# CHECK: b2 terminator dominates: [b3]
+# CHECK: b4 terminator dominates: [b5]
+# CHECK: b6 terminator dominates: []
+function f2 name="neitherCoveredBlockDominatesTheLandingBlock" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() handler=b5():
+    v2 = Call v0
+    Jump -> next b3()
+  b2() handler=b5():
+    v3 = Call v0
+    Jump -> next b4()
+  b3():
+    Return v2
+  b4():
+    Return v3
+  b5() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+}
+# CHECK-LABEL: function f2
+# CHECK: b0 terminator dominates: [b1 b2 b3 b4 b5]
+# CHECK: b1 terminator dominates: [b3]
+# CHECK: b2 terminator dominates: [b4]
+function f3 name="coveredBlockBehindLandingBlock" parameters=[{type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b3():
+    v1 = Call v0
+    Jump -> next b2()
+  b2():
+    Jump -> next b7()
+  b3() role=CatchHandler:
+    v2 = CatchValue
+    Jump -> next b4()
+  b4() handler=b5():
+    v3 = Call v0
+    Jump -> next b6()
+  b5() role=CatchHandler:
+    v4 = CatchValue
+    Jump -> next b6()
+  b6():
+    Jump -> next b7()
+  b7():
+    Return v0
+}
+# CHECK-LABEL: function f3
+# CHECK: b1 terminator dominates: [b2]
+# CHECK: b3 terminator dominates: [b4 b5 b6]
+# CHECK: b4 terminator dominates: []
+# CHECK: b6 terminator dominates: []

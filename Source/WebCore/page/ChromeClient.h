@@ -26,6 +26,7 @@
 #include <WebCore/CornerRadii.h>
 #include <WebCore/DatabaseDetails.h>
 #include <WebCore/DeviceOrientationOrMotionPermissionState.h>
+#include <WebCore/DevicePostureType.h>
 #include <WebCore/DisabledAdaptations.h>
 #include <WebCore/DocumentStorageAccess.h>
 #include <WebCore/ExceptionData.h>
@@ -39,6 +40,10 @@
 #include <WebCore/InputMode.h>
 #include <WebCore/LayerHostingContextIdentifier.h>
 #include <WebCore/MediaControlsContextMenuItem.h>
+#if ENABLE(OFFSCREEN_CANVAS)
+#include <WebCore/PlaceholderRenderingContextSource.h>
+#endif
+#include <WebCore/PlatformLayerIdentifier.h>
 #include <WebCore/PlaybackTargetClientContextIdentifier.h>
 #include <WebCore/PointerCharacteristics.h>
 #include <WebCore/SyntheticClickResult.h>
@@ -110,6 +115,7 @@ class FrameDamageHistory;
 class FrameSelection;
 class Geolocation;
 class GraphicsLayer;
+class GraphicsContext;
 class GraphicsLayerFactory;
 class HTMLAttachmentElement;
 class HTMLFrameOwnerElement;
@@ -139,6 +145,7 @@ class SecurityOrigin;
 class SecurityOriginData;
 class TextIndicator;
 class ViewportConstraints;
+class WebGPUIntegration;
 class Widget;
 class WorkerClient;
 
@@ -153,6 +160,7 @@ struct GraphicsContextGLAttributes;
 #endif
 
 struct AppHighlight;
+struct AXRemoteFrameSelectedTextChange;
 struct AccessibilityRemoteToken;
 struct AccessibilitySearchCriteriaIPC;
 struct ApplePayAMSUIRequest;
@@ -182,7 +190,6 @@ enum class ActivityStateForCPUSampling : uint8_t;
 enum class AXLoadingEvent : uint8_t;
 enum class AXNotification : uint8_t;
 enum class AXTextChange : uint8_t;
-enum class BroadcastFocusedElement : bool;
 enum class ContentChange : uint8_t;
 enum class DidFilterLinkDecoration : bool { No, Yes };
 enum class IsLoggedIn : uint8_t;
@@ -223,12 +230,6 @@ using SessionID = WTF::UUID;
 enum class TextSuggestionState : uint8_t;
 }
 
-#if HAVE(WEBGPU_IMPLEMENTATION)
-namespace WebGPU {
-class GPU;
-}
-#endif
-
 class ChromeClient {
 public:
     virtual void chromeDestroyed() = 0;
@@ -244,7 +245,7 @@ public:
     virtual bool canTakeFocus(FocusDirection) const = 0;
     virtual void takeFocus(FocusDirection) = 0;
 
-    virtual void focusedElementChanged(Element*, LocalFrame*, FocusOptions, BroadcastFocusedElement) = 0;
+    virtual void focusedElementChanged(Element*, LocalFrame*, FocusOptions) = 0;
     virtual void focusedFrameChanged(Frame*) = 0;
 
     // The Frame pointer provides the ChromeClient with context about which
@@ -304,6 +305,7 @@ public:
     virtual void relayAccessibilityNotification(String&&, RetainPtr<NSData>&&) const = 0;
     virtual void relayAriaNotifyNotification(AriaNotifyData&&) const = 0;
     virtual void relayLiveRegionNotification(LiveRegionAnnouncementData&&) const = 0;
+    virtual void didDisplayCaptions(Vector<String>&&) const { }
 #endif
 
     virtual void translateAccessibilityAnnouncementStrings(const Vector<String>& strings, const String& targetLocaleIdentifier, CompletionHandler<void(Vector<String>&&)>&& completion) { UNUSED_PARAM(strings); UNUSED_PARAM(targetLocaleIdentifier); completion({ }); }
@@ -317,6 +319,13 @@ public:
     virtual void setHasModelElement(bool) { }
 #endif
 
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    virtual void enterVolumetricSceneForElement(Element&, CompletionHandler<void(bool)>&& completion) { completion(false); }
+    virtual void exitVolumetricSceneForElement(Element&) { }
+    // The element reloaded its content, which mints a new hosting context; rebind the existing scene to it.
+    virtual void reconnectVolumetricSceneForElement(Element&) { }
+#endif
+
     virtual PlatformPageClient platformPageClient() const = 0;
 
     virtual void setCursor(const Cursor&) = 0;
@@ -325,10 +334,11 @@ public:
 
     virtual bool shouldUseMouseEventForSelection(const PlatformMouseEvent&) { return true; }
 
-    virtual FloatSize screenSize() const { return const_cast<ChromeClient&>(*this).windowRect().size(); }
-    virtual FloatSize availableScreenSize() const { return const_cast<ChromeClient&>(*this).windowRect().size(); }
-    virtual FloatSize overrideScreenSize() const { return const_cast<ChromeClient&>(*this).windowRect().size(); }
-    virtual FloatSize overrideAvailableScreenSize() const { return const_cast<ChromeClient&>(*this).windowRect().size(); }
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    virtual FloatSize screenSize() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<ChromeClient&>(*this).windowRect().size(); }
+    virtual FloatSize availableScreenSize() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<ChromeClient&>(*this).windowRect().size(); }
+    virtual FloatSize overrideScreenSize() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<ChromeClient&>(*this).windowRect().size(); }
+    virtual FloatSize overrideAvailableScreenSize() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<ChromeClient&>(*this).windowRect().size(); }
 
     virtual void dispatchDisabledAdaptationsDidChange(const OptionSet<DisabledAdaptations>&) const { }
     virtual void dispatchViewportPropertiesDidChange(const ViewportArguments&) const { }
@@ -420,6 +430,8 @@ public:
     virtual IntDegrees deviceOrientation() const = 0;
 #endif
 
+    virtual DevicePostureType devicePostureType() const { return DevicePostureType::Continuous; }
+
     virtual RefPtr<ColorChooser> createColorChooser(ColorChooserClient&, const Color&) = 0;
 
     virtual RefPtr<DataListSuggestionPicker> createDataListSuggestionPicker(DataListSuggestionsClient&) = 0;
@@ -446,7 +458,7 @@ public:
         completionHandler(false);
     }
 
-    WEBCORE_EXPORT virtual ExceptionOr<Vector<ValidatedDigitalCredentialRequest>> validateAndParseDigitalCredentialRequests(const SecurityOrigin&, const Document&, const Vector<UnvalidatedDigitalCredentialRequest>&);
+    WEBCORE_EXPORT virtual ExceptionOr<Vector<std::optional<ValidatedDigitalCredentialRequest>>> validateAndParseDigitalCredentialRequests(const SecurityOrigin&, const Document&, const Vector<UnvalidatedDigitalCredentialRequest>&);
 #endif
 
     // Asynchronous request to load an icon for specified filenames.
@@ -456,6 +468,10 @@ public:
     virtual void elementDidRefocus(Element&, const FocusOptions&) { }
 
     virtual void focusedElementDidChangeInputMode(Element&, InputMode) { }
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    virtual void focusedElementDidChangeReadOnly(Element&) { }
+    virtual void focusedElementDidChangeType(Element&) { }
+#endif
     virtual void focusedSelectElementDidChangeOptions(const HTMLSelectElement&) { }
 
     virtual bool shouldPaintEntireContents() const { return false; }
@@ -469,14 +485,29 @@ public:
     virtual DisplayRefreshMonitorFactory* displayRefreshMonitorFactory() const { return nullptr; }
 
     virtual RefPtr<ImageBuffer> createImageBuffer(const FloatSize&, RenderingMode, RenderingPurpose, float, const ColorSpace&, ImageBufferFormat) const { return nullptr; }
+#if HAVE(IOSURFACE)
+    virtual bool useIOSurfaceWebKitBehavior() const { return false; }
+#endif
     WEBCORE_EXPORT virtual RefPtr<WebCore::ImageBuffer> sinkIntoImageBuffer(std::unique_ptr<WebCore::SerializedImageBuffer>);
     virtual RefPtr<WebCore::ImageBuffer> createImageBufferFromTransferHandle(const ImageBufferTransferHandle&) { return nullptr; }
+
+#if ENABLE(OFFSCREEN_CANVAS)
+    virtual RefPtr<PlaceholderRenderingContextSource> createPlaceholderRenderingContextSource(const RemotePlaceholderRenderingContextIdentifier&) { return nullptr; }
+    // nullopt means frames from another process can no longer be applied to a layer directly.
+    virtual void offscreenCanvasPlaceholderLayerChanged(PlaceholderRenderingContextIdentifier, std::optional<PlatformLayerIdentifier>) { }
+#endif
+
+    // Frames hosted elsewhere that are painted into the context record themselves into the same
+    // rendering. Resolves, once every frame has recorded, to an image whose pixels this process
+    // never sees, which only the compositor can display. Null when this page cannot record outside
+    // this process.
+    WEBCORE_EXPORT virtual RefPtr<NativePromise<Ref<NativeImage>, void>> createDisplayOnlyImage(FrameIdentifier, const FloatSize&, float scale, const ColorSpace&, NOESCAPE const Function<void(GraphicsContext&)>& paint);
 
 #if ENABLE(WEBGL)
     WEBCORE_EXPORT virtual RefPtr<GraphicsContextGL> createGraphicsContextGL(const GraphicsContextGLAttributes&) const;
 #endif
 #if HAVE(WEBGPU_IMPLEMENTATION)
-    virtual RefPtr<WebGPU::GPU> createGPUForWebGPU() const { return nullptr; }
+    virtual RefPtr<WebGPUIntegration> createGPUForWebGPU() const { return nullptr; }
 #endif
     virtual RefPtr<ShapeDetection::BarcodeDetector> createBarcodeDetector(const ShapeDetection::BarcodeDetectorOptions&) const;
     virtual void getBarcodeDetectorSupportedFormats(CompletionHandler<void(Vector<ShapeDetection::BarcodeFormat>&&)>&&) const;
@@ -498,6 +529,7 @@ public:
     // Schedule a rendering update that coordinates with display refresh. Returns true if scheduled. (This is only used by SVGImageChromeClient.)
     virtual bool scheduleRenderingUpdate() { return false; }
     virtual void renderingUpdateFramesPerSecondChanged() { }
+    virtual void syncLocalFrameInfoToRemote() { }
 
     virtual unsigned remoteImagesCountForTesting() const { return 0; }
 
@@ -647,6 +679,8 @@ public:
     // Called by a child frame to continue a search in its parent frame.
     // The parent searches from the child frame's position in its tree.
     WEBCORE_EXPORT virtual void continueAccessibilitySearchFromChildFrame(FrameIdentifier childFrameID, const AccessibilitySearchCriteriaIPC&, CompletionHandler<void(Vector<AccessibilityRemoteToken>&&)>&&);
+    // Called by a cross-site frame's AXObjectCache to have the main frame's process post AXSelectedTextChanged.
+    virtual void relayAccessibilitySelectedTextChangeToMainFrame(FrameIdentifier, AXRemoteFrameSelectedTextChange&&) { }
 #endif
 
     virtual void isPlayingMediaDidChange(MediaProducerMediaStateFlags) { }
@@ -685,7 +719,7 @@ public:
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
     virtual void addPlaybackTargetPickerClient(PlaybackTargetClientContextIdentifier) { }
     virtual void removePlaybackTargetPickerClient(PlaybackTargetClientContextIdentifier) { }
-    virtual void showPlaybackTargetPicker(PlaybackTargetClientContextIdentifier, FrameIdentifier, const IntPoint&, bool /*isVideo*/) { }
+    virtual void showPlaybackTargetPicker(PlaybackTargetClientContextIdentifier, const IntPoint& /*positionInMainFrameView*/, bool /*isVideo*/) { }
     virtual void playbackTargetPickerClientStateDidChange(PlaybackTargetClientContextIdentifier, MediaProducerMediaStateFlags) { }
     virtual void setMockMediaPlaybackTargetPickerEnabled(bool)  { }
     virtual void setMockMediaPlaybackTargetPickerState(const String&, MediaPlaybackTargetMockState) { }

@@ -40,6 +40,7 @@
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderElement.h"
+#include "RenderElementInlines.h"
 #include "RenderIterator.h"
 #include "RenderObjectInlines.h"
 #include "Settings.h"
@@ -67,7 +68,7 @@ RenderMathMLToken::~RenderMathMLToken() = default;
 
 MathMLTokenElement& RenderMathMLToken::element()
 {
-    return static_cast<MathMLTokenElement&>(nodeForNonAnonymous());
+    return downcast<MathMLTokenElement>(nodeForNonAnonymous());
 }
 
 void RenderMathMLToken::updateTokenContent()
@@ -87,7 +88,7 @@ void RenderMathMLToken::computeIntrinsicLogicalWidthContributions()
         updateMathVariantGlyph();
 
     if (m_mathVariantCodePoint) {
-        auto mathVariantGlyph = style().fontCascade().glyphDataForCharacter(m_mathVariantCodePoint.value(), m_mathVariantIsMirrored);
+        auto mathVariantGlyph = protect(style().fontCascade())->glyphDataForCharacter(m_mathVariantCodePoint.value(), m_mathVariantIsMirrored);
         if (mathVariantGlyph.font) {
             m_maxContentLogicalWidthContribution = protect(mathVariantGlyph.font)->widthForGlyph(mathVariantGlyph.glyph);
             m_minContentLogicalWidthContribution = m_maxContentLogicalWidthContribution;
@@ -150,7 +151,7 @@ void RenderMathMLToken::updateFromElement()
 std::optional<LayoutUnit> RenderMathMLToken::firstLineBaseline() const
 {
     if (m_mathVariantCodePoint) {
-        auto mathVariantGlyph = style().fontCascade().glyphDataForCharacter(m_mathVariantCodePoint.value(), m_mathVariantIsMirrored);
+        auto mathVariantGlyph = protect(style().fontCascade())->glyphDataForCharacter(m_mathVariantCodePoint.value(), m_mathVariantIsMirrored);
         if (mathVariantGlyph.font) {
             auto baseline = LayoutUnit(-protect(mathVariantGlyph.font)->boundsForGlyph(mathVariantGlyph.glyph).y());
             return { borderAndPaddingBefore() + baseline };
@@ -172,7 +173,7 @@ void RenderMathMLToken::layoutBlock(RelayoutChildren relayoutChildren, LayoutUni
 
     GlyphData mathVariantGlyph;
     if (m_mathVariantCodePoint)
-        mathVariantGlyph = style().fontCascade().glyphDataForCharacter(m_mathVariantCodePoint.value(), m_mathVariantIsMirrored);
+        mathVariantGlyph = protect(style().fontCascade())->glyphDataForCharacter(m_mathVariantCodePoint.value(), m_mathVariantIsMirrored);
 
     if (!mathVariantGlyph.font) {
         RenderMathMLBlock::layoutBlock(relayoutChildren, pageLogicalHeight);
@@ -197,15 +198,15 @@ void RenderMathMLToken::paint(PaintInfo& info, const LayoutPoint& paintOffset)
     RenderMathMLBlock::paint(info, paintOffset);
 
     // FIXME: Instead of using DrawGlyph, we may consider using the more general TextPainter so that we can apply mathvariant to strings with an arbitrary number of characters and preserve advanced CSS effects (text-shadow, etc).
-    if (info.context().paintingDisabled() || info.phase != PaintPhase::Foreground || style().usedVisibility() != Visibility::Visible || !m_mathVariantCodePoint)
+    if (info.context().paintingDisabled() || info.phase != PaintPhase::Foreground || usedStyle().visibility() != UsedVisibility::Visible || !m_mathVariantCodePoint)
         return;
 
-    auto mathVariantGlyph = style().fontCascade().glyphDataForCharacter(m_mathVariantCodePoint.value(), m_mathVariantIsMirrored);
+    auto mathVariantGlyph = protect(style().fontCascade())->glyphDataForCharacter(m_mathVariantCodePoint.value(), m_mathVariantIsMirrored);
     if (!mathVariantGlyph.font)
         return;
 
     GraphicsContextStateSaver stateSaver(info.context());
-    info.context().setFillColor(style().visitedDependentTextFillColorApplyingColorFilter());
+    info.context().setFillColor(protect(style())->visitedDependentTextFillColorApplyingColorFilter());
 
     auto glyphAscent = -protect(mathVariantGlyph.font)->boundsForGlyph(mathVariantGlyph.glyph).y();
     // FIXME: If we're just drawing a single glyph, why do we need to compute an advance?
@@ -222,7 +223,7 @@ void RenderMathMLToken::paint(PaintInfo& info, const LayoutPoint& paintOffset)
 void RenderMathMLToken::paintChildren(PaintInfo& paintInfo, const LayoutPoint& paintOffset, PaintInfo& paintInfoForChild, bool usePrintRect)
 {
     if (m_mathVariantCodePoint) {
-        auto mathVariantGlyph = style().fontCascade().glyphDataForCharacter(m_mathVariantCodePoint.value(), m_mathVariantIsMirrored);
+        auto mathVariantGlyph = protect(style().fontCascade())->glyphDataForCharacter(m_mathVariantCodePoint.value(), m_mathVariantIsMirrored);
         if (mathVariantGlyph.font)
             return;
     }

@@ -53,6 +53,7 @@
 #import "UIKitSPI.h"
 #import "UIKitUtilities.h"
 #import "UndoOrRedo.h"
+#import "VideoPresentationManagerProxy.h"
 #import "ViewSnapshotStore.h"
 #import "WKContentView.h"
 #import "WKContentViewInteraction.h"
@@ -70,6 +71,7 @@
 #import "WebContextMenuProxy.h"
 #import "WebDataListSuggestionsDropdownIOS.h"
 #import "WebEditCommandProxy.h"
+#import "WebFrameProxy.h"
 #import "WebPageProxy.h"
 #import "WebPreferences.h"
 #import "WebProcessProxy.h"
@@ -192,6 +194,13 @@ bool PageClientImpl::isActiveViewVisible()
 #if ENABLE(WEBXR) && !USE(OPENXR)
     if (page && page->xrSystem() && page->xrSystem()->hasActiveSession())
         return true;
+#endif
+
+#if HAVE(AVEXPERIENCECONTROLLER)
+    if (page && page->preferences().isAVExperienceControllerFullscreenEnabled()) {
+        if (RefPtr videoPresentationManager = page->videoPresentationManager(); videoPresentationManager && videoPresentationManager->hasMode(WebCore::HTMLMediaElementEnums::VideoFullscreenModeStandard))
+            return true;
+    }
 #endif
 
     return false;
@@ -362,9 +371,12 @@ void PageClientImpl::toolTipChanged(const String&, const String& newToolTip)
 
 void PageClientImpl::decidePolicyForGeolocationPermissionRequest(WebFrameProxy& frame, const FrameInfoData& frameInfo, Function<void(bool)>& completionHandler)
 {
+    RefPtr mainFrame = frame.mainFrame();
+    if (!mainFrame)
+        return std::exchange(completionHandler, nullptr)(false);
     if (auto webView = this->webView()) {
         RetainPtr geolocationProvider = [protect(wrapper(webView->_page->configuration().processPool())) _geolocationProvider];
-        [geolocationProvider decidePolicyForGeolocationRequestFromOrigin:FrameInfoData { frameInfo } completionHandler:std::exchange(completionHandler, nullptr) view:webView.get()];
+        [geolocationProvider decidePolicyForGeolocationRequestFromOrigin:FrameInfoData { frameInfo } topOrigin:mainFrame->documentSecurityOriginData() completionHandler:std::exchange(completionHandler, nullptr) view:webView.get()];
     }
 }
 
@@ -861,8 +873,7 @@ bool PageClientImpl::handleRunOpenPanel(const WebPageProxy& page, const WebFrame
     }
 #endif
 
-    [contentView() _showRunOpenPanel:&parameters frameInfo:frameInfo resultListener:&listener];
-    return true;
+    return [contentView() _showRunOpenPanel:&parameters frameInfo:frameInfo resultListener:&listener];
 }
 
 bool PageClientImpl::showShareSheet(ShareDataWithParsedURL&& shareData, WTF::CompletionHandler<void(bool)>&& completionHandler)
@@ -1181,12 +1192,12 @@ void PageClientImpl::didPerformDragOperation(bool handled)
     [contentView() _didPerformDragOperation:handled];
 }
 
-void PageClientImpl::startDrag(const DragItem& item, ShareableBitmap::Handle&& image, const std::optional<NodeIdentifier>& nodeID, const std::optional<FrameIdentifier>&)
+void PageClientImpl::startDrag(const DragItem& item, ShareableBitmap::Handle&& image, const std::optional<NodeIdentifier>& nodeID, const std::optional<FrameIdentifier>& frameID)
 {
     auto bitmap = ShareableBitmap::create(WTF::move(image));
     if (!bitmap)
         return;
-    [contentView() _startDrag:bitmap->createPlatformImage() item:item nodeID:nodeID];
+    [contentView() _startDrag:bitmap->createPlatformImage() item:item nodeID:nodeID frameID:frameID];
 }
 
 void PageClientImpl::willReceiveEditDragSnapshot()
@@ -1273,6 +1284,13 @@ void PageClientImpl::didCleanupFullscreen()
 {
 #if ENABLE(FULLSCREEN_API)
     [[webView() fullScreenWindowController] didCleanupFullscreen];
+#endif
+
+#if HAVE(AVEXPERIENCECONTROLLER)
+    if (RetainPtr webView = this->webView()) {
+        if (RefPtr page = webView->_page; page && page->preferences().isAVExperienceControllerFullscreenEnabled())
+            page->activityStateDidChange(WebCore::ActivityState::IsVisible);
+    }
 #endif
 }
 

@@ -89,7 +89,7 @@ class WebExtensionController : public API::ObjectImpl<API::Object::Type::WebExte
 
 public:
     static Ref<WebExtensionController> create(Ref<WebExtensionControllerConfiguration> configuration) { return adoptRef(*new WebExtensionController(configuration)); }
-    static RefPtr<WebExtensionController> NODELETE get(WebExtensionControllerIdentifier);
+    static RefPtr<WebExtensionController> LEGACY_NODELETE get(WebExtensionControllerIdentifier);
 
     void ref() const final { API::ObjectImpl<API::Object::Type::WebExtensionController>::ref(); }
     void deref() const final { API::ObjectImpl<API::Object::Type::WebExtensionController>::deref(); }
@@ -279,7 +279,7 @@ private:
     const Ref<WebExtensionControllerConfiguration> m_configuration;
 
 #if PLATFORM(COCOA)
-    RetainPtr<_WKWebExtensionControllerHelper> m_webExtensionControllerHelper;
+    const RetainPtr<_WKWebExtensionControllerHelper> m_webExtensionControllerHelper;
 #endif
     WebExtensionContextSet m_extensionContexts;
     WebExtensionContextBaseURLMap m_extensionContextBaseURLMap;

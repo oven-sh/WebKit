@@ -208,13 +208,23 @@ static CrossOriginOpenerPolicyEnforcementResult enforceResponseCrossOriginOpener
     return newCOOPEnforcementResult;
 }
 
+static constexpr auto coopUnsafeNoneToken { "unsafe-none"_s };
+static constexpr auto coopSameOriginToken { "same-origin"_s };
+static constexpr auto coopSameOriginAllowPopupsToken { "same-origin-allow-popups"_s };
+static constexpr auto coopNoopenerAllowPopupsToken { "noopener-allow-popups"_s };
+
+bool isRecognizedCrossOriginOpenerPolicyToken(StringView token)
+{
+    return token == coopSameOriginToken || token == coopSameOriginAllowPopupsToken || token == coopNoopenerAllowPopupsToken || token == coopUnsafeNoneToken;
+}
+
 // https://html.spec.whatwg.org/multipage/origin.html#obtain-coop
 CrossOriginOpenerPolicy obtainCrossOriginOpenerPolicy(const ResourceResponse& response)
 {
     std::optional<CrossOriginEmbedderPolicy> coep;
     auto ensureCOEP = [&coep, &response]() -> CrossOriginEmbedderPolicy& {
         if (!coep)
-            coep = obtainCrossOriginEmbedderPolicy(response, nullptr);
+            coep = obtainCrossOriginEmbedderPolicy(response, IsSecureContext::Yes, nullptr);
         return *coep;
     };
     auto parseCOOP = [&response, &ensureCOEP](HTTPHeaderName headerName, auto& value, auto& reportingEndpoint) {
@@ -226,15 +236,15 @@ CrossOriginOpenerPolicy obtainCrossOriginOpenerPolicy(const ResourceResponse& re
         if (!policyString)
             return;
 
-        if (policyString->string() == "same-origin"_s) {
+        if (policyString->string() == coopSameOriginToken) {
             auto& coep = ensureCOEP();
             if (coep.value == CrossOriginEmbedderPolicyValue::RequireCORP || (headerName == HTTPHeaderName::CrossOriginOpenerPolicyReportOnly && coep.reportOnlyValue == CrossOriginEmbedderPolicyValue::RequireCORP))
                 value = CrossOriginOpenerPolicyValue::SameOriginPlusCOEP;
             else
                 value = CrossOriginOpenerPolicyValue::SameOrigin;
-        } else if (policyString->string() == "same-origin-allow-popups"_s)
+        } else if (policyString->string() == coopSameOriginAllowPopupsToken)
             value = CrossOriginOpenerPolicyValue::SameOriginAllowPopups;
-        else if (policyString->string() == "noopener-allow-popups"_s)
+        else if (policyString->string() == coopNoopenerAllowPopupsToken)
             value = CrossOriginOpenerPolicyValue::NoopenerAllowPopups;
 
         if (auto* reportToString = coopParsingResult->second.getIf<String>("report-to"_s))

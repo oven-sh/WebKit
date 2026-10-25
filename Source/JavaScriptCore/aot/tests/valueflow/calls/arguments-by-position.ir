@@ -1,0 +1,27 @@
+# function second(a, b) { b() }  second(one, two)
+# An argument reaches the parameter of its position and no other.
+# RUN: valueflow-solve calls
+# CHECK: f1 v2 -> f3
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED: unreached f2
+# UNREACHED-NOT: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Call v0, -, v1, v2
+    Return
+}
+function f1 name="second" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v1, -
+    Return
+}
+function f2 name="one" module=m0 results=[{type=anything}] {
+    Return
+}
+function f3 name="two" module=m0 results=[{type=anything}] {
+    Return
+}

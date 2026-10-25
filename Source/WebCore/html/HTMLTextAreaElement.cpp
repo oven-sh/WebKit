@@ -48,6 +48,7 @@
 #include "RenderTextControlMultiLine.h"
 #include "ScriptDisallowedScope.h"
 #include "ShadowRoot.h"
+#include "StyleAppearance.h"
 #include "StyleComputedStyle+SettersInlines.h"
 #include "Text.h"
 #include "TextControlInnerElements.h"
@@ -63,7 +64,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLTextAreaElement);
 
 using namespace HTMLNames;
 
-static inline unsigned NODELETE computeLengthForAPIValue(StringView text)
+static inline unsigned LEGACY_NODELETE computeLengthForAPIValue(StringView text)
 {
     unsigned length = text.length();
     unsigned crlfCount = 0;
@@ -140,13 +141,13 @@ void HTMLTextAreaElement::collectPresentationalHintsForAttribute(const Qualified
 {
     if (name == wrapAttr) {
         if (m_wrap != NoWrap) {
-            addPropertyToPresentationalHintStyle(style, CSSPropertyWhiteSpaceCollapse, CSSValuePreserve);
-            addPropertyToPresentationalHintStyle(style, CSSPropertyTextWrapMode, CSSValueWrap);
-            addPropertyToPresentationalHintStyle(style, CSSPropertyOverflowWrap, CSSValueBreakWord);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::WhiteSpaceCollapse, CSSValueID::Preserve);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::TextWrapMode, CSSValueID::Wrap);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::OverflowWrap, CSSValueID::BreakWord);
         } else {
-            addPropertyToPresentationalHintStyle(style, CSSPropertyWhiteSpaceCollapse, CSSValuePreserve);
-            addPropertyToPresentationalHintStyle(style, CSSPropertyTextWrapMode, CSSValueNowrap);
-            addPropertyToPresentationalHintStyle(style, CSSPropertyOverflowWrap, CSSValueNormal);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::WhiteSpaceCollapse, CSSValueID::Preserve);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::TextWrapMode, CSSValueID::Nowrap);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::OverflowWrap, CSSValueID::Normal);
         }
     } else
         HTMLTextFormControlElement::collectPresentationalHintsForAttribute(name, value, style);
@@ -203,6 +204,11 @@ void HTMLTextAreaElement::attributeChanged(const QualifiedName& name, const Atom
     default:
         break;
     }
+}
+
+bool HTMLTextAreaElement::supportsBaseAppearance(StyleAppearance appearance) const
+{
+    return appearance == StyleAppearance::Base;
 }
 
 RenderPtr<RenderElement> HTMLTextAreaElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
@@ -335,10 +341,12 @@ void HTMLTextAreaElement::updateValue() const
 
     ASSERT(renderer());
     m_value = innerTextValue();
-    const_cast<HTMLTextAreaElement*>(this)->setFormControlValueMatchesRenderer(true);
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<HTMLTextAreaElement*>(this)->setFormControlValueMatchesRenderer(true);
     m_isDirty = true;
     m_wasModifiedByUser = true;
-    const_cast<HTMLTextAreaElement*>(this)->updatePlaceholderVisibility();
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<HTMLTextAreaElement*>(this)->updatePlaceholderVisibility();
 }
 
 ValueOrReference<String> HTMLTextAreaElement::value() const

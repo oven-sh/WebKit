@@ -24,6 +24,7 @@
 #include "CoordinatedAnimatedBackingStoreClient.h"
 #include "CoordinatedPlatformLayer.h"
 #include "CoordinatedTileBuffer.h"
+#include "CoordinatedTileManager.h"
 #include "GraphicsLayerCoordinated.h"
 #include "PlatformDisplay.h"
 #include "ProcessCapabilities.h"
@@ -35,13 +36,7 @@
 #include <wtf/text/StringToIntegerConversion.h>
 
 #if USE(SKIA)
-#include "SkiaPaintingEngine.h"
 #include "SkiaRecordingResult.h"
-#endif
-
-#if USE(CAIRO)
-#include "CairoPaintingContext.h"
-#include "CairoPaintingEngine.h"
 #endif
 
 namespace WebCore {
@@ -143,6 +138,8 @@ OptionSet<CoordinatedBackingStoreProxy::UpdateResult> CoordinatedBackingStorePro
     if (m_pendingTileCreation)
         result.add(UpdateResult::TilesPending);
 
+    auto& tileManager = layer.tileManager();
+
     // Update the dirty tiles.
     IntRect tileDirtyRectUnion;
     unsigned dirtyTilesCount = 0;
@@ -158,11 +155,9 @@ OptionSet<CoordinatedBackingStoreProxy::UpdateResult> CoordinatedBackingStorePro
     if (dirtyTilesCount) {
         WTFBeginSignpost(this, UpdateTiles, "dirty tiles: %u", dirtyTilesCount);
 
-        auto& paintingEngine = layer.client().paintingEngine();
-
 #if USE(SKIA)
         // Record only once the whole layer.
-        auto recording = paintingEngine.record(*layer.owner(), tileDirtyRectUnion, contentsOpaque, contentsScale, dirtyTilesCount);
+        auto recording = tileManager.record(*layer.owner(), tileDirtyRectUnion, contentsOpaque, contentsScale, dirtyTilesCount);
 #endif
 
         unsigned dirtyTileIndex = 0;
@@ -174,13 +169,9 @@ OptionSet<CoordinatedBackingStoreProxy::UpdateResult> CoordinatedBackingStorePro
                 tile.rect.x(), tile.rect.y(), tile.rect.width(), tile.rect.height(), tile.dirtyRect.x(), tile.dirtyRect.y(), tile.dirtyRect.width(), tile.dirtyRect.height());
 
 #if USE(SKIA)
-            auto buffer = paintingEngine.replay(*layer.owner(), recording.copyRef(), tile.rect, tile.dirtyRect);
+            auto buffer = tileManager.scheduleReplay(*layer.owner(), recording, tile.rect, tile.dirtyRect);
 #else
-            FloatRect scaledDirtyRect(tile.dirtyRect);
-            scaledDirtyRect.scale(1 / contentsScale);
-
-            auto buffer = CoordinatedUnacceleratedTileBuffer::create(tile.dirtyRect.size(), contentsOpaque ? CoordinatedTileBuffer::NoFlags : CoordinatedTileBuffer::SupportsAlpha);
-            paintingEngine.paint(*layer.owner(), buffer.get(), tile.dirtyRect, enclosingIntRect(scaledDirtyRect), IntRect { { }, tile.dirtyRect.size() }, contentsScale);
+            auto buffer = tileManager.schedulePaint(*layer.owner(), tile.dirtyRect, contentsOpaque, contentsScale);
 #endif
 
             IntRect updateRect(tile.dirtyRect);
@@ -357,7 +348,7 @@ void CoordinatedBackingStoreProxy::createOrDestroyTiles(const IntRect& unscaledV
             return;
 
         if (distance < shortestDistance) {
-            tilesToCreate.clear();
+            tilePositionsToCreate.clear();
             shortestDistance = distance;
         }
         tilePositionsToCreate.append(position);
@@ -563,7 +554,7 @@ IntPoint CoordinatedBackingStoreProxy::tilePositionForPoint(const IntPoint& poin
     return IntPoint(std::max(x, 0), std::max(y, 0));
 }
 
-void CoordinatedBackingStoreProxy::forEachTilePositionInRect(const IntRect& rect, Function<void(IntPoint&&)>&& callback)
+void CoordinatedBackingStoreProxy::forEachTilePositionInRect(const IntRect& rect, NOESCAPE const Function<void(IntPoint&&)>& callback)
 {
     auto topLeft = tilePositionForPoint(rect.minXMinYCorner());
     auto innerBottomRight = tilePositionForPoint(rect.maxXMaxYCorner() - IntSize(1, 1));

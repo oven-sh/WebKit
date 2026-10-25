@@ -42,6 +42,11 @@ ARG XWIN_SHA256="31e1033f30608ba6b821d17f1461042bd54c23424813c9b4e9ae15b6d32fa4c
 # eventually retired.
 ARG MSVC_CRT_VERSION="14.44.17.14"
 ARG WIN_SDK_VERSION="10.0.26100"
+# The Visual Studio manifests xwin takes them from: what https://aka.ms/vs/17/release/channel redirects to, and the
+# package manifest that one names (xwin caches it as pkg_manifest_*.vsman).
+ARG VS_CHANNEL_MANIFEST_URL="https://download.visualstudio.microsoft.com/download/pr/c95450be-0a45-4779-b142-33f567ccfd6e/f24aa010ba2fd5079d502e47bf40f5932f097df4bd716234dc68175b39649401/VisualStudio.17.Release.chman"
+ARG VS_CHANNEL_MANIFEST_SHA256="4f0f290bb4d58a061a49a2fa893357a8c9e7e2b49fc91873f533ab8f791e4fa0"
+ARG VS_PACKAGE_MANIFEST_SHA256="99dda859c4ae3c446eb25620d1a6237bb135d95d14d55cd1d30a15340bb39d80"
 # The static debug CRT for ARM64 (see where it is unpacked below). This is the payload of the package
 # Microsoft.VC.<MSVC_CRT_VERSION>.CRT.ARM64.Desktop.debug.base in the Visual Studio manifest (url and sha256 are in the
 # manifest xwin caches as pkg_manifest_*.vsman): bump it together with MSVC_CRT_VERSION.
@@ -51,7 +56,7 @@ ARG MSVC_CRT_ARM64_DEBUG_SHA256="317e00c77dc51611fd7bec279b1ef67790bc73df8fe5bbc
 # ───────────────────────────────────────────────────────────────────────────
 # base — LLVM + the xwin-splatted MSVC CRT and Windows SDK
 # ───────────────────────────────────────────────────────────────────────────
-FROM ubuntu:24.04 AS base
+FROM ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac AS base
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG LLVM_VERSION
@@ -60,6 +65,9 @@ ARG XWIN_VERSION
 ARG XWIN_SHA256
 ARG MSVC_CRT_VERSION
 ARG WIN_SDK_VERSION
+ARG VS_CHANNEL_MANIFEST_URL
+ARG VS_CHANNEL_MANIFEST_SHA256
+ARG VS_PACKAGE_MANIFEST_SHA256
 ARG MSVC_CRT_ARM64_DEBUG_URL
 ARG MSVC_CRT_ARM64_DEBUG_SHA256
 
@@ -94,23 +102,30 @@ ENV CXX=clang++-${LLVM_VERSION}
 # per arch) on a rayon pool and each SdkLibs completion creates the same
 # sdk/lib/<version> -> . compatibility symlink behind an `exists()` check, so
 # with --arch x86_64,aarch64 the two can race and one dies on EEXIST. The
-# unpack pass does the downloading/extracting (network- and CPU-bound) on all
-# cores; the splat pass then runs with RAYON_NUM_THREADS=1 so the symlinks are
-# created serially, and is cheap because the cache is already warm.
+# unpack pass does the extracting (CPU-bound) on all cores; the splat pass
+# then runs with RAYON_NUM_THREADS=1 so the symlinks are created serially, and
+# is cheap because the cache is already warm. `download` comes before them:
+# the package manifest is checked before anything is unpacked.
 # --http-retry (default 0) covers the other observed failure here, transient
 # I/O errors reading a .cab from download.visualstudio.microsoft.com.
 ADD --checksum=sha256:${XWIN_SHA256} \
     https://github.com/Jake-Shadle/xwin/releases/download/${XWIN_VERSION}/xwin-${XWIN_VERSION}-x86_64-unknown-linux-musl.tar.gz /xwin.tar.gz
 RUN tar -xzf /xwin.tar.gz -C /usr/local/bin --strip-components=1 xwin-${XWIN_VERSION}-x86_64-unknown-linux-musl/xwin && \
     rm /xwin.tar.gz && xwin --version
-RUN xwin --accept-license --arch x86_64,aarch64 --cache-dir /xwin-cache --http-retry 5 \
+RUN curl -fsSL --retry 5 --retry-all-errors "${VS_CHANNEL_MANIFEST_URL}" -o /vs.chman && \
+    echo "${VS_CHANNEL_MANIFEST_SHA256}  /vs.chman" | sha256sum -c - && \
+    xwin --accept-license --arch x86_64,aarch64 --cache-dir /xwin-cache --http-retry 5 --manifest /vs.chman \
+         --crt-version ${MSVC_CRT_VERSION} --sdk-version ${WIN_SDK_VERSION} \
+      download && \
+    echo "${VS_PACKAGE_MANIFEST_SHA256}  $(echo /xwin-cache/dl/pkg_manifest_*.vsman)" | sha256sum -c - && \
+    xwin --accept-license --arch x86_64,aarch64 --cache-dir /xwin-cache --http-retry 5 --manifest /vs.chman \
          --crt-version ${MSVC_CRT_VERSION} --sdk-version ${WIN_SDK_VERSION} \
       unpack && \
     RAYON_NUM_THREADS=1 \
-    xwin --accept-license --arch x86_64,aarch64 --cache-dir /xwin-cache --http-retry 5 \
+    xwin --accept-license --arch x86_64,aarch64 --cache-dir /xwin-cache --http-retry 5 --manifest /vs.chman \
          --crt-version ${MSVC_CRT_VERSION} --sdk-version ${WIN_SDK_VERSION} \
       splat --preserve-ms-arch-notation --include-debug-libs --output /winsdk && \
-    rm -rf /xwin-cache && \
+    rm -rf /xwin-cache /vs.chman && \
     test -f /winsdk/sdk/include/um/windows.h && \
     test -f /winsdk/crt/lib/x64/libcmt.lib && \
     test -f /winsdk/crt/lib/arm64/libcmt.lib
@@ -202,16 +217,24 @@ RUN for pair in "x86_64 x64" "aarch64 arm64"; do \
 # (>= 23.6 for type stripping), and patch for the udata.cpp hook. zstd's lib/ sources stay, at /zstd/lib: jsc.exe builds
 # the decoder from them to read the repacked data (shell/CMakeLists.txt, BUN_ICU_ZSTD_SOURCE_DIR).
 ARG ZSTD_VERSION=1.5.7
-ARG NODE_VERSION=24.16.0
+ARG ZSTD_SHA256=eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
+ARG NODE_VERSION=24.22.1
+ARG NODE_SHA256=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
 RUN apt-get update && apt-get install -y --no-install-recommends patch && rm -rf /var/lib/apt/lists/* && \
-    curl -fsSL "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" | tar xz -C /tmp && \
+    curl -fsSL --retry 5 --retry-connrefused \
+      "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" -o /tmp/zstd.tar.gz && \
+    echo "${ZSTD_SHA256}  /tmp/zstd.tar.gz" | sha256sum -c - && \
+    tar xzf /tmp/zstd.tar.gz -C /tmp && \
     make -C /tmp/zstd-${ZSTD_VERSION}/programs zstd -j$(nproc) CC=clang-${LLVM_VERSION} && \
     cp /tmp/zstd-${ZSTD_VERSION}/programs/zstd /usr/local/bin/ && \
     mkdir /zstd && cp -r /tmp/zstd-${ZSTD_VERSION}/lib /zstd/lib && test -f /zstd/lib/zstd.h && \
-    rm -rf /tmp/zstd-${ZSTD_VERSION} && \
+    rm -rf /tmp/zstd-${ZSTD_VERSION} /tmp/zstd.tar.gz && \
     zstd --version && \
-    curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/').tar.xz" \
-      | tar -xJ -C /usr/local --strip-components=1 && \
+    curl -fsSL --retry 5 --retry-connrefused \
+      "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -o /tmp/node.tar.xz && \
+    echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - && \
+    tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && \
+    rm /tmp/node.tar.xz && \
     node --version
 
 # Which ICU: icu/source.json, by way of lanes.mjs.
@@ -383,6 +406,7 @@ RUN rm -rf /webkit/WebKitLibraries/windows && ln -s /winsdk /webkit/WebKitLibrar
 # (absolute-0) default, which is exactly the "hook absent" behaviour the
 # standalone shell wants. It only applies to jsc.exe — the packaged static
 # libraries are unchanged.
+#
 RUN --mount=type=tmpfs,target=/webkitbuild \
     export LIB="/winsdk/crt/lib/${WIN_ARCH};/winsdk/sdk/lib/um/${WIN_ARCH};/winsdk/sdk/lib/ucrt/${WIN_ARCH};/winsdk" && \
     export CRT="MultiThreaded"; if [ "${WEBKIT_RELEASE_TYPE}" = "Debug" ]; then CRT="MultiThreadedDebug"; fi && \
@@ -437,11 +461,13 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     "-DCMAKE_CXX_FLAGS_DEBUG=/FS /O0 /Ob0" \
     -G Ninja \
     /webkit && \
-    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI && \
+    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target jsc --target testFFI --target testaot && \
     \
     mkdir -p /output/lib /output/include/JavaScriptCore /output/include/wtf /output/include/bmalloc && \
     cp -rL $WEBKIT_OUT_DIR/lib/* /output/lib/ && \
     cp -rL $WEBKIT_OUT_DIR/bin /output/bin && \
+    # The programs ship without debug info: each .pdb is another copy of the libraries'.
+    rm -f /output/bin/*.pdb && \
     # Sanitizer builds ship the ASAN runtime with the artifact: anything that
     # links these instrumented static libs needs the version-matched import
     # lib and /MT runtime thunk, and anything that runs (bin/jsc.exe, a
@@ -468,7 +494,17 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cp -rfL $WEBKIT_OUT_DIR/JavaScriptCore/PrivateHeaders/JavaScriptCore/* /output/include/JavaScriptCore/ && \
     cp -fL $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/*.h /output/include/JavaScriptCore/ && \
     cp -fL $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/*/*.h /output/include/JavaScriptCore/ && \
-    cp -fL $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/*.json /output/ && \
+    cp -fL $WEBKIT_OUT_DIR/JavaScriptCore/Scripts/CombinedDomains.json /output/ && \
+    mkdir -p /output/Source/JavaScriptCore/aot/ir /output/Source/JavaScriptCore/aot/builtins && \
+    cp -L /webkit/Source/JavaScriptCore/aot/ir/AOTSchema.def /output/Source/JavaScriptCore/aot/ir && \
+    cp -rL /webkit/Source/JavaScriptCore/aot/ir/schema /output/Source/JavaScriptCore/aot/ir && \
+    cp -rL /webkit/Source/JavaScriptCore/aot/ir/generator /output/Source/JavaScriptCore/aot/ir && \
+    cp -rL /webkit/Source/JavaScriptCore/aot/builtins/generator /output/Source/JavaScriptCore/aot/builtins && \
+    cp -r $WEBKIT_OUT_DIR/JavaScriptCore/ReleasedSources/aot/builtins/generated /output/Source/JavaScriptCore/aot/builtins && \
+    mkdir -p /output/Tools/Scripts/aot && \
+    cp /webkit/Tools/Scripts/aot/find-structures-decoded-behind-calls.py /webkit/Tools/Scripts/aot/calls-that-never-collect.txt /webkit/Tools/Scripts/aot/structures-decoded-behind-calls-expected.txt /output/Tools/Scripts/aot && \
+    cp -rL /webkit/Source/JavaScriptCore/aot/tests /output/Source/JavaScriptCore/aot/tests && \
+    find /output/Source/JavaScriptCore/aot/tests -type f ! -name '*.ir' -delete && \
     { cp -rL $WEBKIT_OUT_DIR/WTF/DerivedSources/* /output/include/wtf/ 2>/dev/null || true; } && \
     cp -rL $WEBKIT_OUT_DIR/WTF/Headers/wtf/* /output/include/wtf/ && \
     cp -rL $WEBKIT_OUT_DIR/bmalloc/Headers/bmalloc/* /output/include/bmalloc/ && \

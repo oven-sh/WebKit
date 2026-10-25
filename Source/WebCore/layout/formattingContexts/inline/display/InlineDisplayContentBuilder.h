@@ -73,8 +73,8 @@ private:
     size_t ensureDisplayBoxForContainer(const ElementBox&, DisplayBoxTree&, AncestorStack&, InlineDisplay::Boxes&);
 
     template <typename BoxType, typename LayoutUnitType>
-    void NODELETE setLogicalLeft(BoxType&, LayoutUnitType logicalLeft, WritingMode) const;
-    void setLogicalRight(InlineDisplay::Box&, InlineLayoutUnit logicalRight, WritingMode) const;
+    void LEGACY_NODELETE setLogicalLeft(BoxType&, LayoutUnitType logicalLeft, WritingMode) const;
+    void LEGACY_NODELETE setLogicalRight(InlineDisplay::Box&, InlineLayoutUnit logicalRight, WritingMode) const;
     InlineLayoutPoint movePointHorizontallyForWritingMode(const InlineLayoutPoint& topLeft, InlineLayoutUnit horizontalOffset, WritingMode) const;
     InlineLayoutUnit outsideListMarkerVisualPosition(const ElementBox&) const;
     void setGeometryForBlockLevelOutOfFlowBoxes(const Vector<size_t>& indexList, const Line::RunList&, const Vector<int32_t>& visualOrderList = { });

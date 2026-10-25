@@ -320,8 +320,8 @@ public:
         return !!m_polyProtoAccessChain;
     }
 
-    bool NODELETE requiresIdentifierNameMatch() const;
-    bool NODELETE requiresInt32PropertyCheck() const;
+    bool LEGACY_NODELETE requiresIdentifierNameMatch() const;
+    bool LEGACY_NODELETE requiresInt32PropertyCheck() const;
 
     UniquedStringImpl* uid() const { return m_identifier.uid(); }
     CacheableIdentifier identifier() const { return m_identifier; }
@@ -342,7 +342,7 @@ public:
     void collectDependentCells(VM&, Vector<JSCell*>&) const;
 
     template<typename Func>
-    void runWithDowncast(const Func&);
+    void runWithDowncast(NOESCAPE const Func&);
 
     void operator delete(AccessCase*, std::destroying_delete_t);
 
@@ -374,7 +374,7 @@ protected:
     JSObject* tryGetAlternateBaseImpl() const;
     void dumpImpl(PrintStream&, CommaPrinter&, Indenter&) const { }
 
-    bool NODELETE guardedByStructureCheckSkippingConstantIdentifierCheck() const;
+    bool LEGACY_NODELETE guardedByStructureCheckSkippingConstantIdentifierCheck() const;
 
 private:
     friend class CodeBlock;
@@ -387,7 +387,7 @@ private:
     friend class InstanceOfAccessCase;
 
     template<typename Functor>
-    void forEachDependentCell(VM&, const Functor&) const;
+    void forEachDependentCell(VM&, NOESCAPE const Functor&) const;
 
     DECLARE_VISIT_AGGREGATE_WITH_MODIFIER(const);
     bool isStillLive(VM&) const;

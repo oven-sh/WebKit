@@ -27,13 +27,14 @@
 
 #include <WebCore/DOMException.h>
 #include <WebCore/QuotaExceededErrorOptions.h>
+#include <wtf/Markable.h>
 
 namespace WebCore {
 
 // https://webidl.spec.whatwg.org/#idl-QuotaExceededError
 class QuotaExceededError final : public DOMException {
 public:
-    static Ref<QuotaExceededError> create(const String& message = { }, QuotaExceededErrorOptions&& = { });
+    static Ref<QuotaExceededError> LEGACY_NODELETE create(const String& message = { }, QuotaExceededErrorOptions&& = { });
 
     std::optional<double> quota() const { return m_quota; }
     std::optional<double> requested() const { return m_requested; }
@@ -41,8 +42,8 @@ public:
 private:
     QuotaExceededError(const String& message, QuotaExceededErrorOptions&&);
 
-    const std::optional<double> m_quota;
-    const std::optional<double> m_requested;
+    const Markable<double> m_quota;
+    const Markable<double> m_requested;
 };
 
 } // namespace WebCore

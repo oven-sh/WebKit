@@ -98,8 +98,8 @@ public:
         m_location.move(-box.left(), -box.top());
         m_size.expand(box.left() + box.right(), box.top() + box.bottom());
     }
-    void NODELETE expandToInfiniteY();
-    void NODELETE expandToInfiniteX();
+    void LEGACY_NODELETE expandToInfiniteY();
+    void LEGACY_NODELETE expandToInfiniteX();
     template<typename T, typename U> void expand(T dw, U dh) { m_size.expand(dw, dh); }
     void contract(const LayoutSize& size) { m_size -= size; }
     void contract(const LayoutBoxExtent& box)
@@ -176,8 +176,8 @@ public:
         return maxX > LayoutUnit::nearlyMin() && maxX < LayoutUnit::nearlyMax() && maxY > LayoutUnit::nearlyMin() && maxY < LayoutUnit::nearlyMax();
     }
     
-    bool NODELETE intersects(const LayoutRect&) const;
-    WEBCORE_EXPORT bool NODELETE contains(const LayoutRect&) const;
+    bool LEGACY_NODELETE intersects(const LayoutRect&) const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE contains(const LayoutRect&) const;
     bool containsX(const LayoutRect& other) const { return x() <= other.x() && other.maxX() <= maxX(); }
     bool containsY(const LayoutRect& other) const { return y() <= other.y() && other.maxY() <= maxY(); }
 
@@ -187,14 +187,14 @@ public:
         { return px >= x() && px < maxX() && py >= y() && py < maxY(); }
     bool contains(const LayoutPoint& point) const { return contains(point.x(), point.y()); }
 
-    WEBCORE_EXPORT void intersect(const LayoutRect&);
-    bool edgeInclusiveIntersect(const LayoutRect&);
-    WEBCORE_EXPORT void unite(const LayoutRect&);
-    void uniteEvenIfEmpty(const LayoutRect&);
-    void uniteXEvenIfEmpty(const LayoutRect&);
-    void uniteYEvenIfEmpty(const LayoutRect&);
-    void uniteIfNonZero(const LayoutRect&);
-    bool checkedUnite(const LayoutRect&);
+    WEBCORE_EXPORT void LEGACY_NODELETE intersect(const LayoutRect&);
+    WEBCORE_EXPORT bool LEGACY_NODELETE edgeInclusiveIntersect(const LayoutRect&);
+    WEBCORE_EXPORT void LEGACY_NODELETE unite(const LayoutRect&);
+    void LEGACY_NODELETE uniteEvenIfEmpty(const LayoutRect&);
+    void LEGACY_NODELETE uniteXEvenIfEmpty(const LayoutRect&);
+    void LEGACY_NODELETE uniteYEvenIfEmpty(const LayoutRect&);
+    void LEGACY_NODELETE uniteIfNonZero(const LayoutRect&);
+    bool LEGACY_NODELETE checkedUnite(const LayoutRect&);
 
     void inflateX(LayoutUnit dx)
     {
@@ -211,8 +211,8 @@ public:
     template<typename T> void inflateY(T dy) { inflateY(LayoutUnit(dy)); }
     template<typename T> void inflate(T d) { inflateX(d); inflateY(d); }
 
-    WEBCORE_EXPORT void NODELETE scale(float);
-    void scale(float xScale, float yScale);
+    WEBCORE_EXPORT void LEGACY_NODELETE scale(float);
+    void LEGACY_NODELETE scale(float xScale, float yScale);
 
     LayoutRect transposedRect() const { return LayoutRect(m_location.transposedPoint(), m_size.transposedSize()); }
     bool isInfinite() const;
@@ -254,7 +254,7 @@ inline LayoutRect unionRect(const LayoutRect& a, const LayoutRect& b)
     return c;
 }
 
-LayoutRect unionRect(const Vector<LayoutRect>&);
+LayoutRect LEGACY_NODELETE unionRect(const Vector<LayoutRect>&);
 
 inline bool LayoutRect::isInfinite() const
 {
@@ -284,7 +284,7 @@ inline IntRect snappedIntRect(LayoutPoint location, LayoutSize size)
     return IntRect(roundedIntPoint(location), snappedIntSize(size, location));
 }
 
-WEBCORE_EXPORT IntRect NODELETE enclosingIntRect(const LayoutRect&);
+WEBCORE_EXPORT IntRect LEGACY_NODELETE enclosingIntRect(const LayoutRect&);
 WEBCORE_EXPORT LayoutRect enclosingLayoutRect(const FloatRect&);
 
 // Device pixel snapping functions.

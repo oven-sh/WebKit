@@ -32,8 +32,11 @@
 #include "AirCode.h"
 #include "B3ArgumentRegValue.h"
 #include "B3AtomicValue.h"
+#include "B3CountedLoops.h"
 #include "B3Dominators.h"
+#include "B3IntRange.h"
 #include "B3MemoryValue.h"
+#include "B3NaturalLoops.h"
 #include "B3Procedure.h"
 #include "B3ProcedureInlines.h"
 #include "B3SlotBaseValue.h"
@@ -51,19 +54,29 @@ namespace JSC { namespace B3 {
 
 namespace {
 
+enum class ViolationAction : uint8_t { Crash, Record };
+
 class Validater {
 public:
-    Validater(Procedure& procedure, const char* dumpBefore)
+    Validater(Procedure& procedure, UTF8CStringView dumpBefore, ViolationAction violationAction)
         : m_procedure(procedure)
         , m_dumpBefore(dumpBefore)
+        , m_violationAction(violationAction)
     {
     }
 
-#define VALIDATE(condition, message) do {                               \
+    std::optional<ValidationRule> violatedRule() const { return m_violatedRule; }
+
+#define VALIDATE_RULE(rule, condition, message) do {                    \
+        if (m_violatedRule)                                             \
+            return;                                                     \
         if (condition)                                                  \
             break;                                                      \
-        fail(__FILE__, __LINE__, WTF_PRETTY_FUNCTION, #condition, toUTF8CString message); \
+        fail(rule, __FILE__, __LINE__, WTF_PRETTY_FUNCTION, #condition, toUTF8CString message); \
+        return;                                                         \
     } while (false)
+
+#define VALIDATE(condition, message) VALIDATE_RULE(ValidationRule::Upstream, condition, message)
 
     void run()
     {
@@ -84,6 +97,7 @@ public:
             blocks.add(block);
             for (unsigned i = 0; i < block->size(); ++i) {
                 Value* value = block->at(i);
+                VALIDATE(value, ("At ", *block, ", index ", i));
                 valueInBlock.add(value, 0).iterator->value++;
                 valueOwner.add(value, block);
                 valueIndex.add(value, i);
@@ -111,6 +125,8 @@ public:
                     VALIDATE(valueIndex.get(value) > valueIndex.get(child), ("At ", *value, "->", pointerDump(child)));
                 else
                     VALIDATE(dominators.dominates(valueOwner.get(child), valueOwner.get(value)), ("at ", *value, "->", pointerDump(child)));
+                if (child->effects().terminal)
+                    VALIDATE_RULE(ValidationRule::TerminalResult, firstSuccessorEdgeDominates(dominators, valueOwner.get(child), valueOwner.get(value)), ("At ", *value, "->", pointerDump(child)));
             }
         }
 
@@ -136,6 +152,7 @@ public:
         }
 
         for (Value* value : m_procedure.values()) {
+            VALIDATE_RULE(ValidationRule::OpcodeEverAdded, m_procedure.hasEverAdded(value->opcode()), ("At ", *value));
             for (Value* child : value->children())
                 VALIDATE(child->type() != Void, ("At ", *value, "->", *child));
             switch (value->opcode()) {
@@ -173,7 +190,7 @@ public:
                 VALIDATE(value->type() == Float, ("At ", *value));
                 break;
             case Const128:
-                RELEASE_ASSERT(Options::useWasmSIMD());
+                RELEASE_ASSERT(m_procedure.policy().upstream.allowsSIMD);
                 VALIDATE(!value->kind().hasExtraBits(), ("At ", *value));
                 VALIDATE(!value->numChildren(), ("At ", *value));
                 VALIDATE(value->type() == V128, ("At ", *value));
@@ -198,6 +215,11 @@ public:
                 VALIDATE(!value->kind().hasExtraBits(), ("At ", *value));
                 VALIDATE(!value->numChildren(), ("At ", *value));
                 VALIDATE(value->type() == pointerType(), ("At ", *value));
+                break;
+            case Relocatable:
+                VALIDATE_RULE(ValidationRule::Relocatable, !value->kind().hasExtraBits(), ("At ", *value));
+                VALIDATE_RULE(ValidationRule::Relocatable, !value->numChildren(), ("At ", *value));
+                VALIDATE_RULE(ValidationRule::Relocatable, value->type() == pointerType(), ("At ", *value));
                 break;
             case ArgumentReg:
                 VALIDATE(!value->kind().hasExtraBits(), ("At ", *value));
@@ -295,6 +317,7 @@ public:
                 VALIDATE(value->type() == Int64, ("At ", *value));
                 break;
             case Clz:
+            case PopCount:
                 VALIDATE(!value->kind().hasExtraBits(), ("At ", *value));
                 VALIDATE(value->numChildren() == 1, ("At ", *value));
                 VALIDATE(value->child(0)->type().isInt(), ("At ", *value));
@@ -414,7 +437,7 @@ public:
                 validateFence(value);
                 validateStackAccess(value);
                 break;
-            case MemoryCopy:
+            case MemoryMove:
                 VALIDATE(!value->kind().isChill(), ("At ", *value));
                 VALIDATE(value->numChildren() == 3, ("At ", *value));
                 VALIDATE(value->child(0)->type() == pointerType(), ("At ", *value));
@@ -838,6 +861,7 @@ public:
                     }
                 }
                 validateStackmap(value);
+                validatePatchpointContract(value->as<PatchpointValue>(), valueOwner.get(value));
                 break;
             case Extract: {
                 VALIDATE(value->numChildren() == 1, ("At ", *value));
@@ -988,6 +1012,14 @@ public:
             }
 
             VALIDATE(!(value->effects().writes && value->key()), ("At ", *value));
+            if (std::optional<IntRange> range = m_procedure.knownRange(value)) {
+                VALIDATE_RULE(ValidationRule::KnownRange, mayHaveKnownRange(value->opcode()), ("At ", *value, ": ", *range));
+                VALIDATE_RULE(ValidationRule::KnownRange, value->type().isInt(), ("At ", *value, ": ", *range));
+                VALIDATE_RULE(ValidationRule::KnownRange, range->min() <= range->max() && range->isSubsetOf(IntRange::top(value->type())), ("At ", *value, ": ", *range));
+                VALIDATE_RULE(ValidationRule::KnownRange, isKnownRangePlausible(m_procedure, value), ("At ", *value, ": ", *range));
+            }
+            if (m_procedure.knownDereferenceableBytes(value))
+                VALIDATE_RULE(ValidationRule::KnownDereferenceableBytes, value->type() == pointerType(), ("At ", *value));
             // Conceptually, if you exit sideways, you will almost certainly read Top or (AbstractHeapRepository) root. 
             // Since we can't easily find out what root is here, we settle for checking that you at least read *something*.
             // This is technically overly strict, but in practice violating this is almost certainly a bug.
@@ -1006,6 +1038,7 @@ public:
         }
 
         validatePhisAreDominatedByUpsilons();
+        validateKnownInductions(valueOwner, dominators);
     }
 
 private:
@@ -1089,6 +1122,88 @@ private:
         VALIDATE(memory->offset() >= 0, ("At ", *value));
     }
 
+    static bool firstSuccessorEdgeDominates(const Dominators& dominators, BasicBlock* block, BasicBlock* to)
+    {
+        if (!block->numSuccessors())
+            return false;
+        BasicBlock* successor = block->successorBlock(0);
+        for (unsigned i = 1; i < block->numSuccessors(); ++i) {
+            if (block->successorBlock(i) == successor)
+                return false;
+        }
+        if (dominators.dominates(successor, block))
+            return false;
+        for (BasicBlock* predecessor : successor->predecessors()) {
+            if (predecessor != block && !dominators.dominates(successor, predecessor))
+                return false;
+        }
+        return dominators.dominates(successor, to);
+    }
+
+    void validatePatchpointContract(PatchpointValue* patchpoint, BasicBlock* owner)
+    {
+        const Effects& effects = patchpoint->effects;
+
+        if (patchpoint->isLoopPoll) {
+            VALIDATE_RULE(ValidationRule::LoopPoll, patchpoint->type() == Void, ("At ", *patchpoint));
+            VALIDATE_RULE(ValidationRule::LoopPoll, !patchpoint->numChildren(), ("At ", *patchpoint));
+            VALIDATE_RULE(ValidationRule::LoopPoll, !effects.terminal, ("At ", *patchpoint));
+            VALIDATE_RULE(ValidationRule::LoopPoll, !patchpoint->pureFunction, ("At ", *patchpoint));
+            VALIDATE_RULE(ValidationRule::LoopPoll, effects.reads == HeapRange::top(), ("At ", *patchpoint));
+        }
+
+        if (patchpoint->numberOfSuccessorClobbers()) {
+            VALIDATE_RULE(ValidationRule::SuccessorClobbers, effects.terminal, ("At ", *patchpoint));
+            VALIDATE_RULE(ValidationRule::SuccessorClobbers, patchpoint->numberOfSuccessorClobbers() <= owner->numSuccessors(), ("At ", *patchpoint));
+            VALIDATE_RULE(ValidationRule::SuccessorClobbers, patchpoint->type() == Void || patchpoint->lateClobberedOnSuccessor(0).isEmpty(), ("At ", *patchpoint));
+        }
+
+        if (!patchpoint->pureFunction)
+            return;
+
+        VALIDATE_RULE(ValidationRule::PureFunction, !effects.reads, ("At ", *patchpoint));
+        VALIDATE_RULE(ValidationRule::PureFunction, !effects.exitsSideways, ("At ", *patchpoint));
+        VALIDATE_RULE(ValidationRule::PureFunction, !effects.fence, ("At ", *patchpoint));
+        VALIDATE_RULE(ValidationRule::PureFunction, !effects.terminal, ("At ", *patchpoint));
+        VALIDATE_RULE(ValidationRule::PureFunction, !effects.readsPinned && !effects.writesPinned, ("At ", *patchpoint));
+        VALIDATE_RULE(ValidationRule::PureFunction, !effects.readsLocalState && !effects.writesLocalState, ("At ", *patchpoint));
+    }
+
+    void validateKnownInductions(const UncheckedKeyHashMap<Value*, BasicBlock*>& valueOwner, Dominators& dominators)
+    {
+        if (m_violatedRule || m_procedure.knownInductions().isEmpty())
+            return;
+        m_procedure.knownInductions().forEach([&](const InductionRecord& record) {
+            validateKnownInduction(record, valueOwner);
+        });
+        if (m_violatedRule)
+            return;
+        NaturalLoops loops(m_procedure, dominators);
+        for (Value* value : m_procedure.values()) {
+            if (auto* upsilon = value->as<UpsilonValue>())
+                validateKnownInductionStep(upsilon, valueOwner, loops);
+        }
+    }
+
+    void validateKnownInduction(const InductionRecord& record, const UncheckedKeyHashMap<Value*, BasicBlock*>& valueOwner)
+    {
+        VALIDATE_RULE(ValidationRule::KnownInduction, valueOwner.contains(record.phi) && valueOwner.contains(record.next), ("At ", *record.phi));
+        VALIDATE_RULE(ValidationRule::KnownInduction, !record.test || valueOwner.contains(record.test), ("At ", *record.phi));
+        VALIDATE_RULE(ValidationRule::KnownInduction, record.phi->type().isInt() && record.step, ("At ", *record.phi));
+    }
+
+    void validateKnownInductionStep(UpsilonValue* upsilon, const UncheckedKeyHashMap<Value*, BasicBlock*>& valueOwner, const NaturalLoops& loops)
+    {
+        std::optional<InductionRecord> record = m_procedure.knownInduction(upsilon->phi());
+        if (!record)
+            return;
+        const NaturalLoop* loop = loops.headerOf(valueOwner.get(record->phi));
+        if (!loop || !loops.belongsTo(valueOwner.get(upsilon), *loop))
+            return;
+        auto form = affineFormOf(m_procedure, upsilon->child(0), record->phi, Signedness::Signed);
+        VALIDATE_RULE(ValidationRule::KnownInduction, !form || form->offset == record->step, ("At ", *upsilon, " of ", *record->phi));
+    }
+
     // A simple backwards analysis to check that we cannot reach a Phi without going through a corresponding Upsilon
     // We cannot use the dominator tree, since we are checking that each Phi is dominated by a the set of all of its upsilons, and not by a single node.
     void validatePhisAreDominatedByUpsilons()
@@ -1132,10 +1247,15 @@ private:
         }
     }
 
-    NO_RETURN_DUE_TO_CRASH void fail(
-        const char* filename, int lineNumber, const char* function, const char* condition,
+    void fail(
+        ValidationRule rule, const char* filename, int lineNumber, const char* function, const char* condition,
         UTF8CString message)
     {
+        if (m_violationAction == ViolationAction::Record) {
+            m_violatedRule = rule;
+            return;
+        }
+
         UTF8CString failureMessage;
         {
             StringPrintStream out;
@@ -1160,15 +1280,24 @@ private:
     }
     
     Procedure& m_procedure;
-    const char* m_dumpBefore;
+    UTF8CStringView m_dumpBefore;
+    ViolationAction m_violationAction;
+    std::optional<ValidationRule> m_violatedRule;
 };
 
 } // anonymous namespace
 
-void validate(Procedure& procedure, const char* dumpBefore)
+void validate(Procedure& procedure, UTF8CStringView dumpBefore)
 {
-    Validater validater(procedure, dumpBefore);
+    Validater validater(procedure, dumpBefore, ViolationAction::Crash);
     validater.run();
+}
+
+std::optional<ValidationRule> findViolatedRule(Procedure& procedure)
+{
+    Validater validater(procedure, { }, ViolationAction::Record);
+    validater.run();
+    return validater.violatedRule();
 }
 
 } } // namespace JSC::B3

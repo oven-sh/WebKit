@@ -52,11 +52,9 @@
 #include <JavaScriptCore/JSClassRef.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/JSObject.h>
-#include <JavaScriptCore/JSRetainPtr.h>
 #include <JavaScriptCore/JSStringRefCPP.h>
 #include <JavaScriptCore/JSValueRef.h>
 #include <JavaScriptCore/JavaScript.h>
-#include <JavaScriptCore/OpaqueJSString.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <WebCore/DOMWrapperWorld.h>
 #include <WebCore/JSDOMGlobalObject.h>
@@ -71,6 +69,7 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkColorSpace.h>
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #endif
+#include <wtf/Borrow.h>
 #include <wtf/PageBlock.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/Scope.h>
@@ -245,7 +244,7 @@ private:
     static JSValueRef waitForAsyncReplyAndDispatchImmediately(JSContextRef, JSObjectRef, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception);
 
     WeakPtr<JSIPC> m_jsIPC;
-    RefPtr<IPC::StreamClientConnection> m_streamConnection;
+    const RefPtr<IPC::StreamClientConnection> m_streamConnection;
 
     // Current tests expect that actions and their induced messages are waited on during same
     // run loop invocation (in JS). This means that messages of interest do not ever enter here.
@@ -270,7 +269,7 @@ private:
     private:
         WeakRef<JSIPCStreamClientConnection> m_connection;
     };
-    UniqueRef<MessageReceiver> m_dummyMessageReceiver;
+    const UniqueRef<MessageReceiver> m_dummyMessageReceiver;
 };
 
 class JSIPCStreamServerConnectionHandle : public RefCounted<JSIPCStreamServerConnectionHandle> {
@@ -448,6 +447,7 @@ private:
     static JSValueRef vmPageSize(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
     static JSValueRef visitedLinkStoreID(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
     static JSValueRef webPageProxyID(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
+    static JSValueRef webPageProxyIdentifierForMessageArguments(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
     static JSValueRef sessionID(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
     static JSValueRef pageID(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
     static JSValueRef frameID(JSContextRef, JSObjectRef, JSStringRef, JSValueRef* exception);
@@ -1921,6 +1921,7 @@ const JSStaticValue* JSIPC::staticValues()
         { "pageID", pageID, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { "sessionID", sessionID, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { "webPageProxyID", webPageProxyID, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
+        { "webPageProxyIdentifierForMessageArguments", webPageProxyIdentifierForMessageArguments, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { "messages", messages, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { "serializedTypeInfo", serializedTypeInfo, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
         { "serializedEnumInfo", serializedEnumInfo, 0, kJSPropertyAttributeDontDelete | kJSPropertyAttributeReadOnly },
@@ -2247,7 +2248,7 @@ static bool encodeArrayArgument(IPC::Encoder& encoder, ArrayMode arrayMode, JSCo
         vector.append(VectorEncodeHelper { context, { JSContextGetGlobalContext(context), itemRef }, exception, success });
     }
     if (arrayMode == ArrayMode::Tuple) {
-        for (auto& item : vector)
+        for (auto& item : borrow(vector))
             item.encode(encoder);
     } else
         encoder << vector;
@@ -2827,8 +2828,9 @@ JSValueRef JSIPC::serializedEnumInfo(JSContextRef context, JSObjectRef thisObjec
         // Create valueMap array with both values and names
         JSC::JSObject* valueMapArray = JSC::constructEmptyArray(globalObject, nullptr);
         RETURN_IF_EXCEPTION(scope, JSValueMakeUndefined(context));
-        for (size_t i = 0; i < enumeration.valueMap.size(); i++) {
-            auto& valueInfo = enumeration.valueMap[i];
+        Borrow borrowedValueMap = enumeration.valueMap;
+        for (size_t i = 0; i < borrowedValueMap->size(); i++) {
+            auto& valueInfo = borrowedValueMap[i];
             JSC::JSObject* valueObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
             RETURN_IF_EXCEPTION(scope, JSValueMakeUndefined(context));
 
@@ -2937,6 +2939,15 @@ JSValueRef JSIPC::webPageProxyID(JSContextRef context, JSObjectRef thisObject, J
     });
 }
 
+// Unlike webPageProxyID, which is the destination ID for messages to the WebPageProxy (the WebCore::PageIdentifier),
+// this is the WebPageProxyIdentifier the WebContent process supplies in message arguments, e.g. NetworkResourceLoadParameters::webPageProxyID.
+JSValueRef JSIPC::webPageProxyIdentifierForMessageArguments(JSContextRef context, JSObjectRef thisObject, JSStringRef, JSValueRef* exception)
+{
+    return retrieveID(context, thisObject, exception, [](JSIPC& wrapped) {
+        return wrapped.m_webPage->webPageProxyIdentifier().toUInt64();
+    });
+}
+
 JSValueRef JSIPC::retrieveID(JSContextRef context, JSObjectRef thisObject, JSValueRef* exception, NOESCAPE const WTF::Function<uint64_t(JSIPC&)>& callback)
 {
     auto* globalObject = toJS(context);
@@ -2964,8 +2975,9 @@ static JSC::JSValue createJSArrayForArgumentDescriptions(JSC::JSGlobalObject* gl
     JSC::JSObject* argumentsArray = JSC::constructEmptyArray(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, JSC::jsTDZValue());
 
-    for (unsigned argumentIndex = 0; argumentIndex < argumentDescriptions->size(); ++argumentIndex) {
-        auto& description = argumentDescriptions->at(argumentIndex);
+    Borrow borrowedDescriptions = *argumentDescriptions;
+    for (unsigned argumentIndex = 0; argumentIndex < borrowedDescriptions->size(); ++argumentIndex) {
+        auto& description = borrowedDescriptions->at(argumentIndex);
         JSC::JSObject* jsDescriptions = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
         RETURN_IF_EXCEPTION(scope, JSC::jsTDZValue());
 

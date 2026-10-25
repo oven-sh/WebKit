@@ -1,0 +1,26 @@
+# The copy behind a check that may fail unasked takes a value of which nothing is known
+# FORM: Prepared
+# OPTIONS: heat=NothingIsHottest testing=FailPredictions:2:1
+# RUN: pass AddGenericVersion VerifyProgram
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js" flags=[IsLibrary]
+
+function f0 name="straightLine" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = Call v0
+    v3 = Check v2 castType=number
+    v4 = Add v3, v1
+    Return v4
+# CHECK: v2: anything = Call v0
+# CHECK-NEXT: [[fails]]: boolean = ShouldFailPrediction
+# CHECK-NEXT: Branch [[fails]] -> taken [[failed]](v2), notTaken [[asked]]()
+# CHECK: [[copy]]() frequency=Unlikely:
+# CHECK-NEXT: : number|string|bigint = Add [[unknown]], v1
+# CHECK: [[failed]]([[unknown]]: anything) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[copy]]()
+# CHECK: [[asked]]():
+# CHECK-NEXT: [[test]]: boolean = TypeTest v2 testedType=number
+# CHECK-NEXT: Branch [[test]] -> taken [[passed]](| 0), notTaken [[turnedAway]](| 0)
+# CHECK: [[turnedAway]]([[noNumber]]: undefined|null|boolean|string|symbol|bigint|object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[failed]]([[noNumber]])
+}

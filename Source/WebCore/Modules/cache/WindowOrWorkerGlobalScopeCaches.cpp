@@ -49,7 +49,7 @@ public:
 
 private:
     static ASCIILiteral supplementName() { return "DOMWindowCaches"_s; }
-    bool NODELETE isDOMWindowCaches() const final { return true; }
+    bool LEGACY_NODELETE isDOMWindowCaches() const final { return true; }
 
     mutable RefPtr<DOMCacheStorage> m_caches;
 };
@@ -65,7 +65,7 @@ public:
 
 private:
     static ASCIILiteral supplementName() { return "WorkerGlobalScopeCaches"_s; }
-    bool NODELETE isWorkerGlobalScopeCaches() const final { return true; }
+    bool LEGACY_NODELETE isWorkerGlobalScopeCaches() const final { return true; }
 
     WeakRef<WorkerGlobalScope, WeakPtrImplWithEventTargetData> m_scope;
     mutable RefPtr<DOMCacheStorage> m_caches;
@@ -96,7 +96,7 @@ DOMCacheStorage* DOMWindowCaches::caches() const
     ASSERT(frame());
     ASSERT(frame()->document());
     if (!m_caches && frame()->page())
-        m_caches = DOMCacheStorage::create(*protect(frame()->document()), frame()->page()->cacheStorageProvider().createCacheStorageConnection());
+        m_caches = DOMCacheStorage::create(*protect(frame()->document()), protect(frame()->page()->cacheStorageProvider())->createCacheStorageConnection());
     return m_caches.get();
 }
 

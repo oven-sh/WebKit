@@ -86,14 +86,14 @@ private:
 
     ReducedResolutionSeconds liveCurrentTime() const;
     void cacheCurrentTime(ReducedResolutionSeconds);
-    void NODELETE clearCachedCurrentTime();
+    void LEGACY_NODELETE clearCachedCurrentTime();
     void processPendingAnimations();
     bool isPendingTimelineAttachment(const WebAnimation&) const;
 
     Document& document() const { return m_document; }
 
 #if ENABLE(THREADED_ANIMATIONS)
-    std::unique_ptr<AcceleratedEffectStackUpdater> m_acceleratedEffectStackUpdater;
+    const std::unique_ptr<AcceleratedEffectStackUpdater> m_acceleratedEffectStackUpdater;
 #endif
 
     Timer m_cachedCurrentTimeClearanceTimer;

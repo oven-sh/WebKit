@@ -71,7 +71,7 @@ static const StyleProperties& leftToRightDeclaration()
 IGNORE_GCC_WARNINGS_BEGIN("dangling-reference")
     static auto& declaration = [] () -> const StyleProperties& {
         auto properties = MutableStyleProperties::create();
-        properties->setProperty(CSSPropertyDirection, CSSValueLtr);
+        properties->setProperty(CSSPropertyID::Direction, CSSValueID::Ltr);
         return properties.leakRef();
     }();
 IGNORE_GCC_WARNINGS_END
@@ -83,7 +83,7 @@ static const StyleProperties& rightToLeftDeclaration()
 IGNORE_GCC_WARNINGS_BEGIN("dangling-reference")
     static auto& declaration = [] () -> const StyleProperties& {
         auto properties = MutableStyleProperties::create();
-        properties->setProperty(CSSPropertyDirection, CSSValueRtl);
+        properties->setProperty(CSSPropertyID::Direction, CSSValueID::Rtl);
         return properties.leakRef();
     }();
 IGNORE_GCC_WARNINGS_END
@@ -281,6 +281,8 @@ void ElementRuleCollector::collectMatchingRules(const MatchRequest& matchRequest
     } else {
         // If pseudo-element is not requested then just mark the bits that tell that this element has these.
         m_matchedPseudoElements.add(pseudoElementTypes & allPublicPseudoElementTypes);
+        if ((isHTMLElement ? ruleSet.universalHTMLPseudoElementBoxGeneration() : ruleSet.universalPseudoElementBoxGeneration()) == PseudoElementBoxGeneration::Normal)
+            m_pseudoElementBoxGeneration = PseudoElementBoxGeneration::Normal;
     }
 }
 
@@ -308,8 +310,10 @@ void ElementRuleCollector::sortAndTransferMatchedRules(DeclarationOrigin declara
 
 void ElementRuleCollector::transferMatchedRules(DeclarationOrigin declarationOrigin, std::optional<ScopeOrdinal> fromScope)
 {
-    if (m_mode != SelectorChecker::Mode::CollectingRules)
-        declarationsForOrigin(declarationOrigin).reserveCapacity(m_matchedRules.size());
+    if (m_mode != SelectorChecker::Mode::CollectingRules) {
+        auto& declarations = declarationsForOrigin(declarationOrigin);
+        declarations.reserveCapacity(declarations.size() + (m_matchedRules.size() - m_matchedRuleTransferIndex));
+    }
 
     for (; m_matchedRuleTransferIndex < m_matchedRules.size(); ++m_matchedRuleTransferIndex) {
         auto& matchedRule = m_matchedRules[m_matchedRuleTransferIndex];
@@ -630,6 +634,8 @@ inline bool ElementRuleCollector::ruleMatches(const RuleData& ruleData, unsigned
     }
 
     m_matchedPseudoElements.add(context.publicPseudoElements);
+    if (ruleData.pseudoElementBoxGeneration() == PseudoElementBoxGeneration::Normal && !context.publicPseudoElements.isEmpty())
+        m_pseudoElementBoxGeneration = PseudoElementBoxGeneration::Normal;
     m_styleRelations.appendVector(context.styleRelations);
 
     return selectorMatches;
@@ -647,8 +653,11 @@ void ElementRuleCollector::collectMatchingRulesForListSlow(const RuleSet::RuleDa
         if (m_selectorMatchingState && m_selectorMatchingState->selectorFilter.fastRejectSelector(ruleData.descendantSelectorIdentifierHashes()))
             continue;
 
-        if (matchRequest.ruleSet.hasContainerQueries() && !containerQueriesMatch(ruleData, matchRequest))
+        if (matchRequest.ruleSet.hasContainerQueries() && !containerQueriesMatch(ruleData, matchRequest)) {
+            if (ruleData.pseudoElementBoxGeneration() == PseudoElementBoxGeneration::Normal)
+                m_pseudoElementBoxGeneration = PseudoElementBoxGeneration::Normal;
             continue;
+        }
 
         std::optional<Vector<ScopingRootWithDistance>> scopingRoots;
         if (matchRequest.ruleSet.hasScopeRules()) {
@@ -757,6 +766,8 @@ std::pair<bool, std::optional<Vector<ElementRuleCollector::ScopingRootWithDistan
                         subContext.scopingRootMatchesVisited = false;
                         subContext.isEvaluatingScopingRoot = true;
                         auto match = checker.match(selector, *ancestor, subContext);
+                        m_styleRelations.appendVector(subContext.styleRelations);
+                        subContext.styleRelations.clear();
                         if (match)
                             scopingRoots.append({ ancestor, distance, subContext.scopingRootMatchesVisited });
                     };
@@ -850,13 +861,14 @@ std::pair<bool, std::optional<Vector<ElementRuleCollector::ScopingRootWithDistan
                     addScopingRootWithDistance(implicitParentNode);
                 } else {
                     // Constructed stylesheet without owner node.
-                    // Check if it's adopted by shadow roots and use the shadow host as scoping root.
+                    // Use the shadow host as scoping root for adopting shadow roots, and the document itself for adopting documents.
                     for (const auto& adoptingTreeScope : client->adoptingTreeScopes()) {
                         if (auto* shadowRoot = dynamicDowncast<ShadowRoot>(adoptingTreeScope)) {
                             const auto* shadowHost = shadowRoot->host();
                             if (shadowHost && &shadowHost->document() == &this->element().document())
                                 addScopingRootWithDistance(shadowHost);
-                        }
+                        } else if (&adoptingTreeScope == &this->element().document())
+                            addScopingRootWithDistance(&adoptingTreeScope);
                     }
                 }
             };
@@ -886,7 +898,7 @@ std::pair<bool, std::optional<Vector<ElementRuleCollector::ScopingRootWithDistan
     return { true, WTF::move(scopingRoots) };
 }
 
-static inline bool NODELETE compareRules(MatchedRule r1, MatchedRule r2)
+static inline bool LEGACY_NODELETE compareRules(MatchedRule r1, MatchedRule r2)
 {
     // For normal properties the earlier scope wins. This may be reversed by !important which is handled when resolving cascade.
     if (r1.styleScopeOrdinal != r2.styleScopeOrdinal)

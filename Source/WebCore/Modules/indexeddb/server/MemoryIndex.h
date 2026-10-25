@@ -61,7 +61,7 @@ class MemoryIndex : public RefCounted<MemoryIndex>, public CanMakeThreadSafeChec
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(MemoryIndex);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(MemoryIndex);
 public:
-    static Ref<MemoryIndex> create(const IDBIndexInfo&, MemoryObjectStore&);
+    static Ref<MemoryIndex> LEGACY_NODELETE create(const IDBIndexInfo&, MemoryObjectStore&);
 
     ~MemoryIndex();
 
@@ -85,7 +85,7 @@ public:
     MemoryIndexCursor* maybeOpenCursor(const IDBCursorInfo&, MemoryBackingStoreTransaction&);
     IndexValueStore* valueStore() { return m_records.get(); }
 
-    MemoryObjectStore* NODELETE objectStore();
+    MemoryObjectStore* LEGACY_NODELETE objectStore();
 
     void cursorDidBecomeClean(MemoryIndexCursor&);
     void cursorDidBecomeDirty(MemoryIndexCursor&);
@@ -93,7 +93,7 @@ public:
     void notifyCursorsOfValueChange(const IDBKeyData& indexKey, const IDBKeyData& primaryKey);
     void transactionFinished(MemoryBackingStoreTransaction&);
 
-    void NODELETE writeTransactionStarted(MemoryBackingStoreTransaction&);
+    void LEGACY_NODELETE writeTransactionStarted(MemoryBackingStoreTransaction&);
     void writeTransactionFinished(MemoryBackingStoreTransaction&);
     void transactionAborted(MemoryBackingStoreTransaction&);
 

@@ -1,0 +1,26 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+// AOTStubsCoroutinePromises.cpp
+v(NewPromise, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewPromise)
+v(PromiseThen, CalledByCode, (OnFulfilled, OnRejected), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PromiseThen)
+v(ReturnAsyncResult, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ReturnAsyncResult)
+
+// AOTStubsCoroutineSuspension.cpp
+v(AwaitBySavingFrame, CalledByCode, (Value, ResultOfCallWithoutPromise, ValueAfterTurn, ValueInModuleBody), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, AwaitBySavingFrame)
+v(AwaitWithSavedFrame, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, AwaitBySavingFrame)
+v(SuspendGenerator, CalledByCode, (Yield, AsyncAwait, AsyncYield, AsyncYieldAfterAwait), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, SuspendGenerator)
+
+// AOTStubsCoroutineResumption.cpp
+v(StepGenerator, CalledByCode, (IsUnmodifiedGenerator, IsGenerator, IsUnmodified, None), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StepGenerator)
+v(EnterSavedFrame, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterSavedFrame)
+v(EnterHandlerOfJob, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterSavedFrame)
+v(RestoreSavedFrameToStack, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RestoreSavedFrameToStack)
+
+// AOTStubsCoroutineSteps.cpp
+v(StepAsyncGenerator, CalledByCode, (InAsyncFunction, InAsyncGenerator, AwaitedInAsyncFunction, AwaitedInAsyncGenerator), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StepAsyncGenerator)
+v(RunAsyncGeneratorStep, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RunAsyncGeneratorStep)
+v(StepAsyncIteratorInEngine, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, RunAsyncGeneratorStep)
+v(NewGenerator, CalledByCode, (Sync, Async), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewGenerator)

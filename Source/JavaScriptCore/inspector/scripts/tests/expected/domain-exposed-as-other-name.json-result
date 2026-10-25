@@ -379,8 +379,7 @@ void DatabaseBackendDispatcher::executeSQLAsyncOptionalReturnValues(long protoco
     m_agent->executeSQLAsyncOptionalReturnValues(*in_databaseId, in_query, [backendDispatcher = m_backendDispatcher.copyRef(), protocol_requestId](CommandResultOf<RefPtr<JSON::ArrayOf<String>>, String, std::optional<double>, RefPtr<JSON::Object>, RefPtr<JSON::Value>, std::optional<int>, RefPtr<Protocol::Database::Error>, std::optional<Protocol::Database::PrimaryColors>, RefPtr<Protocol::Database::ColorList>, String> result) {
         if (!result) {
            ASSERT(!result.error().isEmpty());
-           backendDispatcher->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, result.error());
-           backendDispatcher->sendPendingErrors();
+           backendDispatcher->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, result.error());
            return;
         }
         auto [out_opt_columnNames, out_opt_notes, out_opt_timestamp, out_opt_values, out_opt_payload, out_opt_databaseId, out_opt_sqlError, out_opt_screenColor, out_opt_alternateColors, out_opt_printColor] = WTF::move(result.value());
@@ -468,8 +467,7 @@ void DatabaseBackendDispatcher::executeSQLAsync(long protocol_requestId, RefPtr<
     m_agent->executeSQLAsync(*in_databaseId, in_query, [backendDispatcher = m_backendDispatcher.copyRef(), protocol_requestId](CommandResultOf<Ref<JSON::ArrayOf<String>>, String, double, Ref<JSON::Object>, Ref<JSON::Value>, int, Ref<Protocol::Database::Error>, Protocol::Database::PrimaryColors, Ref<Protocol::Database::ColorList>, String> result) {
         if (!result) {
            ASSERT(!result.error().isEmpty());
-           backendDispatcher->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, result.error());
-           backendDispatcher->sendPendingErrors();
+           backendDispatcher->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, result.error());
            return;
         }
         auto [out_columnNames, out_notes, out_timestamp, out_values, out_payload, out_databaseId, out_sqlError, out_screenColor, out_alternateColors, out_printColor] = WTF::move(result.value());
@@ -975,8 +973,7 @@ void ObjCInspectorDatabaseBackendDispatcher::executeSQLSyncOptionalReturnValues(
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^(NSArray/*<NSString>*/ **out_opt_columnNames, NSString **out_opt_notes, double *out_opt_timestamp, RWIProtocolJSONObject **out_opt_values, RWIProtocolJSONObject **out_opt_payload, int *out_opt_databaseId, TestProtocolDatabaseError **out_opt_sqlError, TestProtocolDatabasePrimaryColors *out_opt_screenColor, NSArray/*<NSString>*/ **out_opt_alternateColors, TestProtocolDatabase(anonymous) *out_opt_printColor) {
@@ -1024,8 +1021,7 @@ void ObjCInspectorDatabaseBackendDispatcher::executeSQLAsyncOptionalReturnValues
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^(NSArray/*<NSString>*/ **out_opt_columnNames, NSString **out_opt_notes, double *out_opt_timestamp, RWIProtocolJSONObject **out_opt_values, RWIProtocolJSONObject **out_opt_payload, int *out_opt_databaseId, TestProtocolDatabaseError **out_opt_sqlError, TestProtocolDatabasePrimaryColors *out_opt_screenColor, NSArray/*<NSString>*/ **out_opt_alternateColors, TestProtocolDatabase(anonymous) *out_opt_printColor) {
@@ -1073,8 +1069,7 @@ void ObjCInspectorDatabaseBackendDispatcher::executeSQLSync(long protocol_reques
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^(NSArray/*<NSString>*/ *out_columnNames, NSString *out_notes, double out_timestamp, RWIProtocolJSONObject *out_values, RWIProtocolJSONObject *out_payload, int out_databaseId, TestProtocolDatabaseError *out_sqlError, NSArray/*<NSString>*/ *out_alternateColors, TestProtocolDatabasePrimaryColors out_screenColor, TestProtocolDatabase(anonymous) out_printColor) {
@@ -1112,8 +1107,7 @@ void ObjCInspectorDatabaseBackendDispatcher::executeSQLAsync(long protocol_reque
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
     id successCallback = ^(NSArray/*<NSString>*/ *out_columnNames, NSString *out_notes, double out_timestamp, RWIProtocolJSONObject *out_values, RWIProtocolJSONObject *out_payload, int out_databaseId, TestProtocolDatabaseError *out_sqlError, TestProtocolDatabasePrimaryColors out_screenColor, NSArray/*<NSString>*/ *out_alternateColors, TestProtocolDatabase(anonymous) out_printColor) {

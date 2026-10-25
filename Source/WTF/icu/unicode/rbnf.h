@@ -10,6 +10,9 @@
 #ifndef RBNF_H
 #define RBNF_H
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 #include "unicode/utypes.h"
 
 #if U_SHOW_CPLUSPLUS_API

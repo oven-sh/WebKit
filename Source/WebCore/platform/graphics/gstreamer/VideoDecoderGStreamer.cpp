@@ -71,7 +71,7 @@ public:
         GST_DEBUG("Disposing un-configured video decoder");
     }
 
-    Ref<VideoDecoder::DecodePromise> decode(Ref<SharedBuffer>&&, bool isKeyFrame, int64_t timestamp, std::optional<uint64_t> duration);
+    Ref<VideoDecoder::DecodePromise> decode(VideoEncodedData&&);
     void flush();
     void close() { m_isClosed = true; }
 
@@ -84,13 +84,17 @@ private:
 
     VideoDecoder::OutputCallback m_outputCallback;
 
-    RefPtr<GStreamerElementHarness> m_harness;
+    const RefPtr<GStreamerElementHarness> m_harness;
     FloatSize m_presentationSize;
     int64_t m_timestamp;
     std::optional<uint64_t> m_duration;
     bool m_isClosed { false };
     GRefPtr<GstCaps> m_inputCaps;
     std::optional<VideoFrameGStreamer::Info> m_videoInfo;
+
+    // Each chunk's own timestamp and duration, carried by a meta on its buffer to the frame it decodes to: a decoder
+    // rewrites a PTS it judges out of order, as it does when chunks share a timestamp.
+    const GRefPtr<GstCaps> m_chunkTimestampCaps { adoptGRef(gst_caps_new_empty_simple("timestamp/x-webkit-webcodecs-chunk")) };
 };
 
 void GStreamerVideoDecoder::create(const String& codecName, const Config& config, CreateCallback&& callback, OutputCallback&& outputCallback)
@@ -109,19 +113,19 @@ void GStreamerVideoDecoder::create(const String& codecName, const Config& config
     auto& scanner = GStreamerRegistryScanner::singleton();
     auto lookupResult = scanner.isCodecSupported(GStreamerRegistryScanner::Configuration::Decoding, codecName, usingHardware);
     if (usingHardware && !lookupResult) {
-        GST_DEBUG("No hardware decoder found for codec %s, falling back to software", codecName.utf8().legacyCStringPointer());
+        GST_DEBUG("No hardware decoder found for codec %s, falling back to software", codecName.utf8());
         lookupResult = scanner.isCodecSupported(GStreamerRegistryScanner::Configuration::Decoding, codecName, false);
     }
 
     if (!lookupResult) {
-        GST_WARNING("No decoder found for codec %s", codecName.utf8().legacyCStringPointer());
+        GST_WARNING("No decoder found for codec %s", codecName.utf8());
         callback(makeUnexpected(makeString("No decoder found for codec "_s, codecName)));
         return;
     }
 
     GRefPtr<GstElement> element = gst_element_factory_create(lookupResult.factory.get(), nullptr);
     if (!element) {
-        GST_WARNING("Unable to create decoder for codec %s", codecName.utf8().legacyCStringPointer());
+        GST_WARNING("Unable to create decoder for codec %s", codecName.utf8());
         callback(makeUnexpected(makeString("Unable to create decoder for codec "_s, codecName)));
         return;
     }
@@ -129,7 +133,7 @@ void GStreamerVideoDecoder::create(const String& codecName, const Config& config
     Ref decoder = adoptRef(*new GStreamerVideoDecoder(codecName, config, WTF::move(outputCallback), WTF::move(element)));
     Ref internalDecoder = decoder->m_internalDecoder;
     if (!internalDecoder->isConfigured()) {
-        GST_WARNING("Internal video decoder failed to configure for codec %s", codecName.utf8().legacyCStringPointer());
+        GST_WARNING("Internal video decoder failed to configure for codec %s", codecName.utf8());
         callback(makeUnexpected(makeString("Internal video decoder failed to configure for codec "_s, codecName)));
         return;
     }
@@ -151,10 +155,10 @@ GStreamerVideoDecoder::~GStreamerVideoDecoder()
     close();
 }
 
-Ref<VideoDecoder::DecodePromise> GStreamerVideoDecoder::decode(EncodedFrame&& frame)
+Ref<VideoDecoder::DecodePromise> GStreamerVideoDecoder::decode(VideoEncodedData&& frame)
 {
-    return invokeAsync(gstDecoderWorkQueue(), [data = WTF::move(frame.data), isKeyFrame = frame.isKeyFrame, timestamp = frame.timestamp, duration = frame.duration, decoder = m_internalDecoder]() mutable {
-        return decoder->decode(WTF::move(data), isKeyFrame, timestamp, duration);
+    return invokeAsync(gstDecoderWorkQueue(), [frame = WTF::move(frame).isolatedCopy(), decoder = m_internalDecoder] mutable {
+        return decoder->decode(WTF::move(frame));
     });
 }
 
@@ -183,8 +187,7 @@ GStreamerInternalVideoDecoder::GStreamerInternalVideoDecoder(const String& codec
     configureVideoDecoderForHarnessing(element);
 
 #if USE(GSTREAMER_GL)
-    static ASCIILiteral gstGlDisplayContextType = ASCIILiteral::fromLiteralUnsafe(GST_GL_DISPLAY_CONTEXT_TYPE);
-    if (!setGstElementGLContext(element.get(), gstGlDisplayContextType))
+    if (!setGstElementGLContext(element.get(), GST_GL_DISPLAY_CONTEXT_TYPE))
         return;
     if (!setGstElementGLContext(element.get(), "gst.gl.app_context"_s))
         return;
@@ -198,9 +201,12 @@ GStreamerInternalVideoDecoder::GStreamerInternalVideoDecoder(const String& codec
             gst_caps_set_simple(m_inputCaps.get(), "codec_data", GST_TYPE_BUFFER, codecData.get(), nullptr);
         if (!gst_element_factory_can_sink_all_caps(factory, m_inputCaps.get()))
             parser = "h264parse"_s;
-    } else if (codecName.startsWith("av01"_s))
+    } else if (codecName.startsWith("av01"_s)) {
         m_inputCaps = adoptGRef(gst_caps_new_simple("video/x-av1", "stream-format", G_TYPE_STRING, "obu-stream", "alignment", G_TYPE_STRING, "frame", nullptr));
-    else if (codecName.startsWith("vp8"_s))
+        // vaav1dec requires a profile field and av1dec (libaom) requires TU alignment; av1parse provides both.
+        if (!gst_element_factory_can_sink_all_caps(factory, m_inputCaps.get()))
+            parser = "av1parse"_s;
+    } else if (codecName.startsWith("vp8"_s))
         m_inputCaps = adoptGRef(gst_caps_new_empty_simple("video/x-vp8"));
     else if (codecName.startsWith("vp09"_s)) {
         m_inputCaps = adoptGRef(gst_caps_new_empty_simple("video/x-vp9"));
@@ -253,7 +259,7 @@ GStreamerInternalVideoDecoder::GStreamerInternalVideoDecoder(const String& codec
 #endif // USE(GSTREAMER_GL)
     gst_caps_append(allowedSinkCaps.get(), gst_caps_from_string("video/x-raw"));
 
-    m_harness = GStreamerElementHarness::create(WTF::move(harnessedElement), [weakThis = ThreadSafeWeakPtr { *this }, this](auto& stream, GRefPtr<GstSample>&& outputSample) {
+    lazyInitialize(m_harness, GStreamerElementHarness::create(WTF::move(harnessedElement), [weakThis = ThreadSafeWeakPtr { *this }, this](auto& stream, GRefPtr<GstSample>&& outputSample) {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
@@ -273,6 +279,11 @@ GStreamerInternalVideoDecoder::GStreamerInternalVideoDecoder(const String& codec
         auto timestamp = static_cast<int64_t>(GST_BUFFER_PTS(outputBuffer));
         if (timestamp == -1)
             timestamp = m_timestamp;
+        if (auto* meta = gst_buffer_get_reference_timestamp_meta(outputBuffer, m_chunkTimestampCaps.get())) {
+            timestamp = static_cast<int64_t>(meta->timestamp);
+            if (GST_CLOCK_TIME_IS_VALID(meta->duration))
+                duration = meta->duration;
+        }
 
         if (!m_videoInfo)
             m_videoInfo = VideoFrameGStreamer::infoFromCaps(GRefPtr(gst_sample_get_caps(outputSample.get())));
@@ -283,7 +294,11 @@ GStreamerInternalVideoDecoder::GStreamerInternalVideoDecoder(const String& codec
         options.contentHint = VideoFrameContentHint::WebCodecs;
         auto videoFrame = VideoFrameGStreamer::create(WTF::move(outputSample), options);
         m_outputCallback(VideoDecoder::DecodedFrame { WTF::move(videoFrame), timestamp, duration });
-    }, std::nullopt, WTF::move(allowedSinkCaps));
+    }, std::nullopt, WTF::move(allowedSinkCaps)));
+
+    // A page hands chunks over as they arrive. Told so, a decoder outputs each picture as soon as the stream's
+    // reordering allows, rather than once its decoded picture buffer is full.
+    m_harness->setIsLive(true);
 
     const auto& stream = m_harness->outputStreams().first();
     const auto& pad = stream->targetPad();
@@ -296,21 +311,23 @@ GStreamerInternalVideoDecoder::GStreamerInternalVideoDecoder(const String& codec
     }));
 }
 
-Ref<VideoDecoder::DecodePromise> GStreamerInternalVideoDecoder::decode(Ref<SharedBuffer>&& frameData, bool isKeyFrame, int64_t timestamp, std::optional<uint64_t> duration)
+Ref<VideoDecoder::DecodePromise> GStreamerInternalVideoDecoder::decode(VideoEncodedData&& frame)
 {
-    GST_DEBUG_OBJECT(m_harness->element(), "Decoding%s frame", isKeyFrame ? " key" : "");
-    auto buffer = wrapSharedBuffer(WTF::move(frameData));
+    GST_DEBUG_OBJECT(m_harness->element(), "Decoding%s frame", frame.isKeyFrame ? " key" : "");
+    auto buffer = wrapSharedBuffer(WTF::move(frame.data));
     if (!buffer)
         return VideoDecoder::DecodePromise::createAndReject("Empty frame"_s);
 
-    m_timestamp = timestamp;
-    m_duration = duration;
+    m_timestamp = frame.timestamp;
+    m_duration = frame.duration;
 
-    GST_BUFFER_DTS(buffer.get()) = GST_BUFFER_PTS(buffer.get()) = timestamp;
-    if (duration)
-        GST_BUFFER_DURATION(buffer.get()) = *duration;
+    GST_BUFFER_DTS(buffer.get()) = GST_BUFFER_PTS(buffer.get()) = frame.timestamp;
+    if (frame.duration)
+        GST_BUFFER_DURATION(buffer.get()) = *frame.duration;
+    if (frame.timestamp != -1)
+        gst_buffer_add_reference_timestamp_meta(buffer.get(), m_chunkTimestampCaps.get(), static_cast<GstClockTime>(frame.timestamp), frame.duration.value_or(GST_CLOCK_TIME_NONE));
 
-    if (!isKeyFrame)
+    if (!frame.isKeyFrame)
         GST_BUFFER_FLAG_SET(buffer.get(), GST_BUFFER_FLAG_DELTA_UNIT);
 
     // FIXME: Maybe configure segment here, could be useful for reverse playback.

@@ -44,6 +44,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 class JSArray;
+class JSONCache;
 
 enum ParserMode : uint8_t { StrictJSON, SloppyJSON, JSONP };
 enum class JSONReviverMode : uint8_t { Disabled, Enabled };
@@ -68,6 +69,7 @@ enum TokenType : uint8_t {
     TokNull, TokEnd, TokDot, TokAssign, TokSemi, TokError, TokErrorSpace };
 
 enum class JSONIdentifierHint : uint8_t { MaybeIdentifier, Unknown };
+enum class JSONStringScan : bool { PassesOverNonASCII, StopsAtNonASCII };
 
 struct JSONPPathEntry {
     Identifier m_pathEntryName;
@@ -134,18 +136,15 @@ template<typename CharacterType> struct LiteralParserToken {
 };
 
 template <typename CharType>
-ALWAYS_INLINE void NODELETE setParserTokenString(LiteralParserToken<CharType>&, const CharType* string);
+ALWAYS_INLINE void LEGACY_NODELETE setParserTokenString(LiteralParserToken<CharType>&, const CharType* string);
 
+// CharType is Latin1Character or char16_t for the characters of a string, and char8_t for UTF-8 bytes. Each string in UTF-8
+// bytes is decoded by itself, with U+FFFD in place of an invalid sequence: the bytes are never converted as a whole. That form
+// knows strict JSON alone and makes no error messages.
 template <typename CharType, JSONReviverMode reviverMode>
 class LiteralParser {
 public:
-    LiteralParser(JSGlobalObject* globalObject, std::span<const CharType> characters, ParserMode mode, CodeBlock* nullOrCodeBlock = nullptr)
-        : m_globalObject(globalObject)
-        , m_nullOrCodeBlock(nullOrCodeBlock)
-        , m_lexer(characters, mode)
-        , m_mode(mode)
-    {
-    }
+    LiteralParser(JSGlobalObject*, std::span<const CharType> characters, ParserMode, CodeBlock* nullOrCodeBlock = nullptr);
     
     String getErrorMessage()
     { 
@@ -229,7 +228,27 @@ private:
         
         TokenType next();
         TokenType nextMaybeIdentifier();
-        
+        TokenType nextAfterValue();
+        bool consumeColon();
+        void skipWhitespaceBeforeKey();
+        CharType peek() const { return m_ptr < m_end ? *m_ptr : CharType { }; }
+        TokenType nextString();
+        TokenType nextNumber();
+        bool tryConsumeStringEqualTo(std::span<const Latin1Character>);
+        static constexpr bool isUTF8 = std::is_same_v<CharType, char8_t>;
+        using CachedCharType = std::conditional_t<isUTF8, Latin1Character, CharType>;
+        std::span<const CachedCharType> remaining() const { return { std::bit_cast<const CachedCharType*>(m_ptr), static_cast<size_t>(m_end - m_ptr) }; }
+        void advance(unsigned length)
+        {
+            ASSERT(length <= static_cast<size_t>(m_end - m_ptr));
+            m_ptr += length;
+        }
+        void cacheString(JSONCache&, JSString*, std::span<const CachedCharType> source);
+        // At a quote. Of the texts in UTF-8 bytes only ASCII ones are cached.
+        bool mayHaveCachedString() const { return !isUTF8 || m_end - m_ptr < 2 || isASCII(m_ptr[1]); }
+        String takeStringOfCurrentToken() requires isUTF8;
+        bool failedToAllocate() const { return m_failedToAllocate; }
+
 #if !ASSERT_ENABLED
         using LiteralParserTokenPtr = const LiteralParserToken<CharType>*;
 
@@ -275,8 +294,8 @@ private:
         const CharType* end() const { return m_end; }
         void advanceTo(const CharType* p) { m_ptr = p; }
 #endif
-        inline const CharType* NODELETE currentTokenStart() const;
-        inline const CharType* NODELETE currentTokenEnd() const;
+        inline const CharType* LEGACY_NODELETE currentTokenStart() const;
+        inline const CharType* LEGACY_NODELETE currentTokenEnd() const;
         
     private:
         template<JSONIdentifierHint>
@@ -284,9 +303,17 @@ private:
         ALWAYS_INLINE TokenType lexIdentifier(LiteralParserToken<CharType>&);
         template<JSONIdentifierHint>
         ALWAYS_INLINE TokenType lexString(LiteralParserToken<CharType>&, CharType terminator);
+        template<JSONStringScan = isUTF8 ? JSONStringScan::StopsAtNonASCII : JSONStringScan::PassesOverNonASCII>
+        ALWAYS_INLINE const CharType* findUnsafeStringCharacter(const CharType* start, const CharType* end, CharType terminator) const;
+        ALWAYS_INLINE void appendToBuilder(std::span<const CharType>, bool isASCII);
+        bool tryLexThreeByteCharacters(LiteralParserToken<CharType>&) requires isUTF8;
+        ALWAYS_INLINE std::span<const char16_t> decodeInPlace(std::span<const char8_t>) requires isUTF8;
+        ALWAYS_INLINE TokenType decodeString(LiteralParserToken<CharType>&, std::span<const char8_t>) requires isUTF8;
         TokenType lexStringSlow(LiteralParserToken<CharType>&, const CharType* runStart, CharType terminator);
         ALWAYS_INLINE TokenType lexNumber(LiteralParserToken<CharType>&);
         TokenType lexNumberError(LiteralParserToken<CharType>&);
+
+        ALWAYS_INLINE ParserMode mode() const { return isUTF8 ? StrictJSON : m_mode; }
 
         String m_lexErrorMessage;
         LiteralParserToken<CharType> m_currentToken;
@@ -294,6 +321,11 @@ private:
         const CharType* m_ptr;
         const CharType* m_end;
         StringBuilder m_builder;
+        static constexpr size_t maxLengthDecodedInPlace = 256;
+        struct Nothing { };
+        NO_UNIQUE_ADDRESS std::conditional_t<isUTF8, std::array<char16_t, maxLengthDecodedInPlace>, Nothing> m_decodedCharacters;
+        NO_UNIQUE_ADDRESS std::conditional_t<isUTF8, String, Nothing> m_decodedString;
+        bool m_failedToAllocate { false };
         const CharType* m_start;
 #if USE(BUN_JSC_ADDITIONS)
         const CharType* m_positionAfterLastToken { nullptr };
@@ -310,22 +342,26 @@ private:
     JSValue evalRecursivelyEntry(VM&) requires (reviverMode == JSONReviverMode::Disabled);
     template<ParserMode> JSValue parseRecursively(VM&, uint8_t* stackLimit) requires (reviverMode == JSONReviverMode::Disabled);
     JSValue parse(VM&, ParserState, JSONRanges*);
+    // There is none for UTF-8 bytes: the caller makes a string of them.
+    JSValue parseIteratively(VM&);
 
     JSValue parsePrimitiveValue(VM&);
 
     JSArray* materializeArray(VM&, unsigned stackBase);
 
     static ALWAYS_INLINE bool equalIdentifier(UniquedStringImpl*, typename Lexer::LiteralParserTokenPtr);
-    static ALWAYS_INLINE AtomStringImpl* existingIdentifier(VM&, typename Lexer::LiteralParserTokenPtr);
-    static ALWAYS_INLINE Identifier makeIdentifier(VM&, typename Lexer::LiteralParserTokenPtr);
-    static ALWAYS_INLINE JSString* tryMakeJSString(VM&, typename Lexer::LiteralParserTokenPtr);
+    static ALWAYS_INLINE AtomStringImpl* existingIdentifier(VM&, JSONCache&, typename Lexer::LiteralParserTokenPtr);
+    ALWAYS_INLINE Identifier makeIdentifier(VM&, typename Lexer::LiteralParserTokenPtr);
+    ALWAYS_INLINE JSString* tryMakeJSString(VM&, JSONCache&, typename Lexer::LiteralParserTokenPtr);
 
     void setErrorMessageForToken(TokenType);
 
     JSGlobalObject* const m_globalObject;
     CodeBlock* const m_nullOrCodeBlock;
+    JSONCache& m_jsonCache;
     Lexer m_lexer;
     const ParserMode m_mode;
+    bool m_needsIterativeParser { false };
     String m_parseErrorMessage;
     UncheckedKeyHashSet<JSObject*> m_visitedUnderscoreProto;
     MarkedArgumentBuffer m_objectStack;
@@ -334,6 +370,8 @@ private:
     Vector<Identifier, 16, UnsafeVectorOverflow> m_identifierStack;
     Vector<JSONRanges::Entry, 8> m_rangesStack;
 };
+
+JSValue tryEvalAsJSON(JSGlobalObject*, StringView, CodeBlock*);
 
 } // namespace JSC
 

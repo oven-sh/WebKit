@@ -20,6 +20,7 @@
 #pragma once
 
 #include "JSEventListener.h"
+#include <JavaScriptCore/SourceTaintedness.h>
 #include <wtf/Forward.h>
 #include <wtf/WeakPtr.h>
 
@@ -60,7 +61,7 @@ private:
     URL m_sourceURL;
     TextPosition m_sourcePosition;
     WeakPtr<ContainerNode, WeakPtrImplWithEventTargetData> m_originalNode;
-    JSC::SourceTaintedOrigin m_sourceTaintedOrigin;
+    JSC::SourceTaintedness m_sourceTaintedOrigin;
 };
 
 } // namespace WebCore

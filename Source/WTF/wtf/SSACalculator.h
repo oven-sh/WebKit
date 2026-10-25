@@ -59,6 +59,11 @@ namespace WTF {
 //    processing basic blocks in forward order. If a block has multiple Defs of a variable, this
 //    "just works" because each block will then remember the last Def of each variable.
 //
+//    If you will compute reaching defs yourself in step (4), call newDefBlock() instead. It only
+//    records that the block assigns the variable, which is all computePhis() needs, and creates no
+//    Def. reachingDefAtHead(), reachingDefAtTail(), and nonLocalReachingDef() cannot be used for a
+//    variable registered this way, since they would find only its Phis.
+//
 // 3) Call SSACalculator::computePhis(). This takes a functor that will create the Phi nodes. The
 //    functor returns either the Phi node it created, or nullptr, if it chooses to prune. (As an
 //    aside, it's always sound not to prune, and the safest reason for pruning is liveness.) The
@@ -68,16 +73,18 @@ namespace WTF {
 //    doing Graph::addNode() and return them. It's then best to insert all Phi nodes for a block
 //    in bulk as part of the pass you do below, in step (4).
 //
-// 4) Modify the graph to create the SSA data flow. For each block, this should:
+// 4) Modify the graph to create the SSA data flow. The cheapest way is to visit the blocks with
+//    Dominators::forAllBlocksInDominatorTreePreOrder(), keeping one table of the available value of
+//    each variable. A block's reaching defs at head are its immediate dominator's at tail, so on
+//    entering a block the table is already correct, and on exiting it you undo the block's updates
+//    (for example with an undo log). This is the only option if you used newDefBlock() in step (2).
+//    For each block:
 //
-//    4.0) Compute the set of reaching defs (aka available values) for each variable by calling
-//         SSACalculator::reachingDefAtHead() for each variable. Record this in a local table that
-//         will be incrementally updated as you proceed through the block in forward order in the
-//         next steps:
-//
-//         FIXME: It might be better to compute reaching defs for all live variables in one go, to
-//         avoid doing repeated dom tree traversals.
-//         https://bugs.webkit.org/show_bug.cgi?id=136610
+//    4.0) Have the reaching defs (aka available values) for each variable at the head of the block.
+//         With the walk above you already do. Otherwise, call SSACalculator::reachingDefAtHead() for
+//         each variable, which walks up the dominator tree, and record the results in a local table.
+//         Either way, the table is incrementally updated as you proceed through the block in forward
+//         order in the next steps.
 //
 //    4.1) Insert all of the Phi nodes for the block by using SSACalculator::phisForBlock(), and
 //         record those Phi nodes as being available values.
@@ -91,15 +98,15 @@ namespace WTF {
 //         you run GCSE after your phase. Or, you can replace all uses of the load with the SSA
 //         value yourself (using the Graph::performSubstitution() idiom), but that requires that
 //         your loop over basic blocks proceeds in the appropriate graph order, for example
-//         preorder.
+//         dominator tree preorder.
 //
 //         FIXME: Make it easier to do this, that doesn't involve rerunning GCSE.
 //         https://bugs.webkit.org/show_bug.cgi?id=136639
 //
 //    4.3) Insert Upsilons at the end of the current block for the corresponding Phis in each successor block.
-//         Use the available values table to decide the source value for each Phi's variable. Note that
-//         you could also use SSACalculator::reachingDefAtTail() instead of the available values table,
-//         though your local available values table is likely to be more efficient.
+//         Use the available values table to decide the source value for each Phi's variable. Unless you
+//         used newDefBlock(), you could also use SSACalculator::reachingDefAtTail() instead of the
+//         available values table, though your local available values table is likely to be more efficient.
 //
 // The most obvious use of SSACalculator is for the CPS->SSA conversion itself, but it's meant to
 // also be used for SSA update and for things like the promotion of heap fields to local SSA
@@ -131,7 +138,7 @@ public:
             m_data[blockIndex].m_defs.clear();
             m_data[blockIndex].m_phis.clear();
         }
-        m_dominanceFrontiersComputed = false;
+        m_dominanceFrontierCache = DominanceFrontierCache::Empty;
     }
 
     class Variable {
@@ -167,6 +174,9 @@ public:
 
         Vector<Node, 4> m_blocksWithDefs;
         unsigned m_index { UINT_MAX };
+#if ASSERT_ENABLED
+        bool m_hasDefsWithoutValues { false };
+#endif
     };
 
     class Def {
@@ -215,6 +225,15 @@ public:
         return def;
     }
 
+    void newDefBlock(Variable* variable, Node block)
+    {
+#if ASSERT_ENABLED
+        variable->m_hasDefsWithoutValues = true;
+#endif
+        if (variable->m_blocksWithDefs.isEmpty() || variable->m_blocksWithDefs.last() != block)
+            variable->m_blocksWithDefs.append(block);
+    }
+
     Variable* variable(unsigned index) { return &m_variables[index]; }
 
     // The functor takes a Variable and a Node (basic block) and either inserts a Phi and returns
@@ -224,66 +243,24 @@ public:
     // find it later. Note that it is generally always sound to not prune any Phis (that is, to
     // always have the functor insert a Phi and never return a null Value).
     template<typename Functor>
-    void computePhis(const Functor& functor)
+    void computePhis(NOESCAPE const Functor& functor)
     {
-        ensureDominanceFrontiers();
+        computePhis([](Variable*) { }, functor);
+    }
 
-        CFG& cfg = this->cfg();
+    template<typename BeforeVariable, typename Functor>
+    void computePhis(NOESCAPE const BeforeVariable& beforeVariable, NOESCAPE const Functor& functor)
+    {
+        ensureDominanceFrontiers(DominanceFrontierCache::Unfiltered, [](Node) { return true; });
+        insertPhis(beforeVariable, functor);
+    }
 
-        // Iterated dominance frontier per variable, computed over the shared per-block
-        // dominance-frontier cache. The per-variable "visited" set is tracked with
-        // an epoch stamp so we don't allocate a fresh set for every variable.
-        Vector<Node, 16> worklist;
-        IndexMap<Node, unsigned> visited(cfg.numNodes(), 0);
-        for (Variable& variable : m_variables) {
-            unsigned epoch = variable.index() + 1;
-            worklist.shrink(0);
-            worklist.appendVector(variable.m_blocksWithDefs);
-            while (!worklist.isEmpty()) {
-                Node block = worklist.takeLast();
-                for (Node to : m_dominanceFrontiers[block]) {
-                    if (visited[to] == epoch)
-                        continue;
-                    visited[to] = epoch;
-
-                    Value phi = functor(&variable, to);
-                    if (!phi)
-                        continue;
-
-                    BlockData& data = m_data[to];
-                    Def* phiDef = m_phis.add(Def(&variable, to, phi));
-                    data.m_phis.append(phiDef);
-
-                    // Note that it's possible to have a block that looks like this before SSA
-                    // conversion:
-                    //
-                    // label:
-                    //     print(x);
-                    //     ...
-                    //     x = 42;
-                    //     goto label;
-                    //
-                    // And it may look like this after SSA conversion:
-                    //
-                    // label:
-                    //     x1: Phi()
-                    //     ...
-                    //     Upsilon(42, ^x1)
-                    //     goto label;
-                    //
-                    // In this case, we will want to insert a Phi in this block, and the block
-                    // will already have a Def for the variable. When this happens, we don't want
-                    // the Phi to override the original Def, since the Phi is at the top, the
-                    // original Def in the m_defs table would have been at the bottom, and we want
-                    // m_defs to tell us about defs at tail.
-                    //
-                    // So, we rely on the fact that UncheckedKeyHashMap::add() does nothing if the
-                    // key was already present.
-                    data.m_defs.add(&variable, phiDef);
-                    worklist.append(to);
-                }
-            }
-        }
+    // mayNeedPhi(block) may be false only where functor(variable, block) returns a null Value for every variable.
+    template<typename MayNeedPhi, typename BeforeVariable, typename Functor>
+    void computePhis(NOESCAPE const MayNeedPhi& mayNeedPhi, NOESCAPE const BeforeVariable& beforeVariable, NOESCAPE const Functor& functor)
+    {
+        ensureDominanceFrontiers(DominanceFrontierCache::Filtered, mayNeedPhi);
+        insertPhis(beforeVariable, functor);
     }
 
     const Vector<Def*>& phisForBlock(Node block)
@@ -305,6 +282,8 @@ public:
     // Considers the def within the given block, but only works at the tail of the block.
     Def* reachingDefAtTail(Node startingBlock, Variable* variable)
     {
+        // A variable whose defs came from newDefBlock() has no Def records, so only its Phis would be found.
+        ASSERT(!variable->m_hasDefsWithoutValues);
         auto& dominators = this->dominators();
         for (Node block = startingBlock; block; block = dominators.idom(block)) {
             if (Def* def = m_data[block].m_defs.get(variable)) {
@@ -361,27 +340,93 @@ private:
         Vector<Def*> m_phis;
     };
 
-    void ensureDominanceFrontiers()
+    enum class DominanceFrontierCache : uint8_t { Empty, Unfiltered, Filtered };
+
+    template<typename BeforeVariable, typename Functor>
+    void insertPhis(NOESCAPE const BeforeVariable& beforeVariable, NOESCAPE const Functor& functor)
     {
-        if (m_dominanceFrontiersComputed)
+        CFG& cfg = this->cfg();
+
+        // Iterated dominance frontier per variable, computed over the shared per-block
+        // dominance-frontier cache. The per-variable "visited" set is tracked with
+        // an epoch stamp so we don't allocate a fresh set for every variable.
+        Vector<Node, 16> worklist;
+        IndexMap<Node, unsigned> visited(cfg.numNodes(), 0);
+        for (Variable& variable : m_variables) {
+            unsigned epoch = variable.index() + 1;
+            beforeVariable(&variable);
+            worklist.shrink(0);
+            worklist.appendVector(variable.m_blocksWithDefs);
+            while (!worklist.isEmpty()) {
+                Node block = worklist.takeLast();
+                for (Node to : m_dominanceFrontiers[block]) {
+                    if (visited[to] == epoch)
+                        continue;
+                    visited[to] = epoch;
+
+                    Value phi = functor(&variable, to);
+                    if (!phi)
+                        continue;
+
+                    BlockData& data = m_data[to];
+                    Def* phiDef = m_phis.add(Def(&variable, to, phi));
+                    data.m_phis.append(phiDef);
+
+                    // Note that it's possible to have a block that looks like this before SSA
+                    // conversion:
+                    //
+                    // label:
+                    //     print(x);
+                    //     ...
+                    //     x = 42;
+                    //     goto label;
+                    //
+                    // And it may look like this after SSA conversion:
+                    //
+                    // label:
+                    //     x1: Phi()
+                    //     ...
+                    //     Upsilon(42, ^x1)
+                    //     goto label;
+                    //
+                    // In this case, we will want to insert a Phi in this block, and the block
+                    // will already have a Def for the variable. When this happens, we don't want
+                    // the Phi to override the original Def, since the Phi is at the top, the
+                    // original Def in the m_defs table would have been at the bottom, and we want
+                    // m_defs to tell us about defs at tail.
+                    //
+                    // So, we rely on the fact that UncheckedKeyHashMap::add() does nothing if the
+                    // key was already present.
+                    data.m_defs.add(&variable, phiDef);
+                    worklist.append(to);
+                }
+            }
+        }
+    }
+
+    template<typename MayNeedPhi>
+    void ensureDominanceFrontiers(DominanceFrontierCache kind, NOESCAPE const MayNeedPhi& mayNeedPhi)
+    {
+        ASSERT(kind != DominanceFrontierCache::Empty);
+        if (m_dominanceFrontierCache == DominanceFrontierCache::Unfiltered)
             return;
-        m_dominanceFrontiersComputed = true;
+        m_dominanceFrontierCache = kind;
 
         CFG& cfg = this->cfg();
         auto& dominators = this->dominators();
 
         // "A Simple, Fast Dominance Algorithm", Cooper, Harvey, and Kennedy, 2001.
         // https://www.cs.tufts.edu/~nr/cs257/archive/keith-cooper/dom14.pdf
-        m_dominanceFrontiers = cfg.template newMap<Vector<Node>>();
+        m_dominanceFrontiers = cfg.template newMap<Vector<Node, 2>>();
         for (unsigned blockIndex = 0; blockIndex < cfg.numNodes(); ++blockIndex) {
             Node block = cfg.node(blockIndex);
-            if (!block || cfg.predecessors(block).size() < 2)
+            if (!block || cfg.predecessors(block).size() < 2 || !mayNeedPhi(block))
                 continue;
             Node idomBlock = dominators.idom(block);
             for (Node predecessor : cfg.predecessors(block)) {
                 Node runner = predecessor;
                 while (runner && runner != idomBlock) {
-                    Vector<Node>& frontier = m_dominanceFrontiers[runner];
+                    auto& frontier = m_dominanceFrontiers[runner];
                     if (frontier.isEmpty() || frontier.last() != block)
                         frontier.append(block);
                     runner = dominators.idom(runner);
@@ -394,8 +439,8 @@ private:
     Bag<Def> m_defs;
     Bag<Def> m_phis;
     IndexMap<Node, BlockData> m_data;
-    IndexMap<Node, Vector<Node>> m_dominanceFrontiers;
-    bool m_dominanceFrontiersComputed { false };
+    IndexMap<Node, Vector<Node, 2>> m_dominanceFrontiers;
+    DominanceFrontierCache m_dominanceFrontierCache { DominanceFrontierCache::Empty };
 };
 
 WTF_MAKE_TZONE_ALLOCATED_TEMPLATE_IMPL(template<typename Adapter>, SSACalculator<Adapter>);

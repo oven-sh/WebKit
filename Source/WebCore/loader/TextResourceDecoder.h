@@ -48,7 +48,9 @@ public:
     enum ContentType { PlainText, HTML, XML, CSS, JSON }; // PlainText and JSON only check for BOM.
 
     WEBCORE_EXPORT static Ref<TextResourceDecoder> create(const String& mimeType, const PAL::TextEncoding& defaultEncoding = { }, bool usesEncodingDetector = false);
-    WEBCORE_EXPORT static Ref<TextResourceDecoder> create(ContentType, const PAL::TextEncoding&, bool usesEncodingDetector);
+    WEBCORE_EXPORT static Ref<TextResourceDecoder> LEGACY_NODELETE create(ContentType, const PAL::TextEncoding&, bool usesEncodingDetector);
+    // https://encoding.spec.whatwg.org/#utf-8-decode
+    static Ref<TextResourceDecoder> createUTF8();
     WEBCORE_EXPORT ~TextResourceDecoder();
 
     static String textFromUTF8(std::span<const uint8_t>);
@@ -69,12 +71,11 @@ public:
     void useLenientXMLDecoding() { m_useLenientXMLDecoding = true; }
     bool sawError() const { return m_sawError; }
 
-    void setAlwaysUseUTF8() { ASSERT(m_encoding.name() == "UTF-8"_s); m_alwaysUseUTF8 = true; }
-
     bool usesEncodingDetector() const { return m_usesEncodingDetector; }
 
 private:
     TextResourceDecoder(ContentType, const PAL::TextEncoding&, bool usesEncodingDetector);
+    TextResourceDecoder();
 
     static ContentType determineContentType(const String& mimeType);
     static const PAL::TextEncoding& defaultEncoding(ContentType, const PAL::TextEncoding& defaultEncoding);
@@ -84,7 +85,7 @@ private:
     bool checkForHeadCharset(std::span<const uint8_t>, bool& movedDataToBuffer);
     bool checkForMetaCharset(std::span<const uint8_t>);
     void detectJapaneseEncoding(std::span<const uint8_t>);
-    bool NODELETE shouldAutoDetect() const;
+    bool LEGACY_NODELETE shouldAutoDetect() const;
 
     ContentType m_contentType;
     PAL::TextEncoding m_encoding;

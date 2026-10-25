@@ -86,10 +86,10 @@ public:
     {
     }
 
-    bool isMatch(uint8_t value) const { return m_maskedValue == (value & m_mask); }
+    bool LEGACY_NODELETE isMatch(uint8_t value) const { return m_maskedValue == (value & m_mask); }
 
 private:
-    static constexpr uint8_t byteMaskString(char c, const char (&str)[9])
+    static constexpr uint8_t LEGACY_NODELETE byteMaskString(char c, const char (&str)[9])
     {
         return (str[0] == c) << 7 | (str[1] == c) << 6 | (str[2] == c) << 5 | (str[3] == c) << 4
             | (str[4] == c) << 3 | (str[5] == c) << 2 | (str[6] == c) << 1 | (str[7] == c) << 0;
@@ -256,18 +256,14 @@ void GPUVideoEncoderVTBH264::configureAdditionalProperties()
     setProperty(PAL::kVTCompressionPropertyKey_ProfileLevel, m_profileLevel);
 }
 
-bool GPUVideoEncoderVTBH264::convertAndNotify(RetainPtr<CMSampleBufferRef>&& sampleBuffer, GPUVideoEncoderFrameInfo&& info)
+bool GPUVideoEncoderVTBH264::convertAndNotify(RetainPtr<CMSampleBufferRef>&& sampleBuffer, GPUVideoEncoderFrameInfo&& info, const PlatformVideoColorSpace& colorSpace)
 {
     if (useAnnexB()) {
         auto annexBBuffer = convertAVCCMSampleBufferToAnnexB(sampleBuffer, info.isKeyFrame);
         if (annexBBuffer.isEmpty())
             return false;
 
-        m_bitstreamParser.parseBitstream(annexBBuffer.span());
-        if (auto qp = m_bitstreamParser.lastSliceQP())
-            info.qp = *qp;
-
-        notifyDescriptionIfNeeded(sampleBuffer, CFSTR("avcC"));
+        notifyDescriptionIfNeeded(sampleBuffer, CFSTR("avcC"), colorSpace);
         notifyEncodedFrame(annexBBuffer.span(), info);
         return true;
     }
@@ -276,7 +272,7 @@ bool GPUVideoEncoderVTBH264::convertAndNotify(RetainPtr<CMSampleBufferRef>&& sam
     if (!buffer)
         return false;
 
-    notifyDescriptionIfNeeded(sampleBuffer, CFSTR("avcC"));
+    notifyDescriptionIfNeeded(sampleBuffer, CFSTR("avcC"), colorSpace);
     notifyEncodedFrame(buffer->span(), info);
     return true;
 }

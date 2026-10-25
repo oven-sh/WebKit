@@ -99,26 +99,33 @@ JS_EXPORT_PRIVATE ASCIILiteral getIteratorErrorMessage(IterableValidationResult,
 JS_EXPORT_PRIVATE IterationMode getIterationMode(JSValue iterable);
 JS_EXPORT_PRIVATE IterationMode getIterationMode(VM&, JSGlobalObject*, JSValue iterable, JSValue symbolIterator);
 
-// op_iterator_next for an Array that op_iterator_open made no iterator object for: the Array comes out of the instruction's iterable
-// operand and the index lives in its next operand. Both are checked (see JSArrayIterator::nextValueWithIndexInFrame).
-template<typename Metadata>
-ALWAYS_INLINE bool iteratorNextWithIndexInFrame(JSGlobalObject* globalObject, Metadata& metadata, JSValue iterable, JSValue& indexInFrame, JSValue& value)
+ALWAYS_INLINE bool iteratorNextFastArray(JSGlobalObject* globalObject, JSArray* array, JSValue& indexValue, JSValue& value)
 {
-    bool hasNext = JSArrayIterator::nextValueWithIndexInFrame(globalObject, iterable, indexInFrame, value);
-    metadata.m_iterableProfile.observeStructureID(iterable.asCell()->structureID());
-    metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | IterationMode::FastArray;
-    return hasNext;
+    int64_t index = indexValue.asAnyInt();
+    auto indexToLoad = JSArrayIterator::nextWithAdvance(array, index);
+    indexValue = jsNumber(index);
+    if (!indexToLoad)
+        return false;
+
+    value = array->getIndex(globalObject, *indexToLoad);
+    return true;
 }
 
-// The Array Iterator object that the (iterable, index) pair kept in a frame by op_iterator_open / op_iterator_next stands for.
-JS_EXPORT_PRIVATE JSArrayIterator* materializeUnboxedFastArrayIterator(JSGlobalObject*, JSValue iterable, JSValue index);
+template<typename Storage>
+static ALWAYS_INLINE Storage* orderedHashTableStorage(JSCell* storageCell)
+{
+    if constexpr (std::same_as<Storage, JSCell>)
+        return storageCell;
+    else
+        return uncheckedDowncast<Storage>(storageCell);
+}
 
-
-static ALWAYS_INLINE void forEachInMapStorage(VM& vm, JSGlobalObject* globalObject, JSCell* storageCell, JSMap::Helper::Entry startEntry, IterationKind iterationKind, NOESCAPE const auto& callback, NOESCAPE const auto& callbackExceptionHandler)
+template<typename Storage>
+static ALWAYS_INLINE void forEachInMapStorageOfType(VM& vm, JSGlobalObject* globalObject, JSCell* storageCell, JSMap::Helper::Entry startEntry, IterationKind iterationKind, NOESCAPE const auto& callback, NOESCAPE const auto& callbackExceptionHandler)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* storage = uncheckedDowncast<JSMap::Storage>(storageCell);
+    auto* storage = orderedHashTableStorage<Storage>(storageCell);
     JSMap::Helper::Entry entry = startEntry;
 
     while (true) {
@@ -126,7 +133,7 @@ static ALWAYS_INLINE void forEachInMapStorage(VM& vm, JSGlobalObject* globalObje
         if (storageCell == vm.orderedHashTableSentinel())
             break;
 
-        storage = uncheckedDowncast<JSMap::Storage>(storageCell);
+        storage = orderedHashTableStorage<Storage>(storageCell);
         entry = JSMap::Helper::iterationEntry(*storage) + 1;
 
         JSValue value;
@@ -167,16 +174,28 @@ static ALWAYS_INLINE void forEachInMapStorage(VM& vm, JSGlobalObject* globalObje
     }
 }
 
+static ALWAYS_INLINE void forEachInMapStorage(VM& vm, JSGlobalObject* globalObject, JSCell* storageCell, JSMap::Helper::Entry startEntry, IterationKind iterationKind, NOESCAPE const auto& callback, NOESCAPE const auto& callbackExceptionHandler)
+{
+#if ENABLE(AOT)
+    if (JSMap::Helper::isCompact(*storageCell)) [[unlikely]] {
+        forEachInMapStorageOfType<JSCell>(vm, globalObject, storageCell, startEntry, iterationKind, callback, callbackExceptionHandler);
+        return;
+    }
+#endif
+    forEachInMapStorageOfType<JSMap::Storage>(vm, globalObject, storageCell, startEntry, iterationKind, callback, callbackExceptionHandler);
+}
+
 static ALWAYS_INLINE void forEachInMapStorage(VM& vm, JSGlobalObject* globalObject, JSCell* storageCell, JSMap::Helper::Entry startEntry, IterationKind iterationKind, NOESCAPE const auto& callback)
 {
     forEachInMapStorage(vm, globalObject, storageCell, startEntry, iterationKind, callback, [](JSCell*, JSMap::Helper::Entry) { });
 }
 
-static ALWAYS_INLINE void forEachInSetStorage(VM& vm, JSGlobalObject* globalObject, JSCell* storageCell, JSSet::Helper::Entry startEntry, NOESCAPE const auto& callback, NOESCAPE const auto& callbackExceptionHandler)
+template<typename Storage>
+static ALWAYS_INLINE void forEachInSetStorageOfType(VM& vm, JSGlobalObject* globalObject, JSCell* storageCell, JSSet::Helper::Entry startEntry, NOESCAPE const auto& callback, NOESCAPE const auto& callbackExceptionHandler)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* storage = uncheckedDowncast<JSSet::Storage>(storageCell);
+    auto* storage = orderedHashTableStorage<Storage>(storageCell);
     JSSet::Helper::Entry entry = startEntry;
 
     while (true) {
@@ -184,7 +203,7 @@ static ALWAYS_INLINE void forEachInSetStorage(VM& vm, JSGlobalObject* globalObje
         if (storageCell == vm.orderedHashTableSentinel())
             break;
 
-        storage = uncheckedDowncast<JSSet::Storage>(storageCell);
+        storage = orderedHashTableStorage<Storage>(storageCell);
         entry = JSSet::Helper::iterationEntry(*storage) + 1;
         JSValue entryKey = JSSet::Helper::getIterationEntryKey(*storage);
 
@@ -206,6 +225,17 @@ static ALWAYS_INLINE void forEachInSetStorage(VM& vm, JSGlobalObject* globalObje
             }
         }
     }
+}
+
+static ALWAYS_INLINE void forEachInSetStorage(VM& vm, JSGlobalObject* globalObject, JSCell* storageCell, JSSet::Helper::Entry startEntry, NOESCAPE const auto& callback, NOESCAPE const auto& callbackExceptionHandler)
+{
+#if ENABLE(AOT)
+    if (JSSet::Helper::isCompact(*storageCell)) [[unlikely]] {
+        forEachInSetStorageOfType<JSCell>(vm, globalObject, storageCell, startEntry, callback, callbackExceptionHandler);
+        return;
+    }
+#endif
+    forEachInSetStorageOfType<JSSet::Storage>(vm, globalObject, storageCell, startEntry, callback, callbackExceptionHandler);
 }
 
 static ALWAYS_INLINE void forEachInSetStorage(VM& vm, JSGlobalObject* globalObject, JSCell* storageCell, JSSet::Helper::Entry startEntry, NOESCAPE const auto& callback)
@@ -248,6 +278,11 @@ ALWAYS_INLINE void forEachInIterationRecord(JSGlobalObject* globalObject, Iterat
     CachedCall* cachedCall = nullptr;
     if (callData.type == CallData::Type::JS) [[likely]] {
         cachedCallHolder.emplace(globalObject, uncheckedDowncast<JSFunction>(nextMethod), 0);
+        if (scope.exception()) [[unlikely]]
+            return;
+        cachedCall = &cachedCallHolder.value();
+    } else if (callData.type == CallData::Type::Compiled) {
+        cachedCallHolder.emplace(globalObject, asObject(nextMethod), callData, 0);
         if (scope.exception()) [[unlikely]]
             return;
         cachedCall = &cachedCallHolder.value();
@@ -364,6 +399,11 @@ void forEachInIterable(JSGlobalObject& globalObject, JSObject* iterable, JSValue
     CachedCall* cachedCall = nullptr;
     if (callData.type == CallData::Type::JS) [[likely]] {
         cachedCallHolder.emplace(&globalObject, uncheckedDowncast<JSFunction>(nextMethod), 0);
+        if (scope.exception()) [[unlikely]]
+            return;
+        cachedCall = &cachedCallHolder.value();
+    } else if (callData.type == CallData::Type::Compiled) {
+        cachedCallHolder.emplace(&globalObject, asObject(nextMethod), callData, 0);
         if (scope.exception()) [[unlikely]]
             return;
         cachedCall = &cachedCallHolder.value();

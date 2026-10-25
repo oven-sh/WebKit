@@ -91,7 +91,8 @@
 
     RetainPtr services = adoptNS([[NSMutableArray alloc] initWithCapacity:proposedServices.count]);
     
-    for (NSSharingService *service in proposedServices) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSSharingService *service in proposedServices) {
         if (service.type != NSSharingServiceTypeEditor)
             [services addObject:service];
     }

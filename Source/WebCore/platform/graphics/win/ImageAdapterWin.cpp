@@ -52,11 +52,21 @@ void ImageAdapter::invalidate()
 
 bool ImageAdapter::getHBITMAP(HBITMAP bmp)
 {
-    return getHBITMAPOfSize(bmp, 0);
+    return getHBITMAP(bmp, ConcreteObjectSize::fixed(image().size()));
+}
+
+bool ImageAdapter::getHBITMAP(HBITMAP bmp, ConcreteObjectSize concreteObjectSize, const ImageDrawingExtras* extras)
+{
+    return getHBITMAPOfSize(bmp, nullptr, concreteObjectSize, extras);
+}
+
+bool ImageAdapter::getHBITMAPOfSize(HBITMAP bmp, const IntSize* size)
+{
+    return getHBITMAPOfSize(bmp, size, ConcreteObjectSize::fixed(image().size()));
 }
 
 #if USE(SKIA)
-bool ImageAdapter::getHBITMAPOfSize(HBITMAP, const IntSize*)
+bool ImageAdapter::getHBITMAPOfSize(HBITMAP, const IntSize*, ConcreteObjectSize, const ImageDrawingExtras*)
 {
     return false;
 }

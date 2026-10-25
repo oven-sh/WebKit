@@ -50,6 +50,7 @@
 #include <wtf/TypeCasts.h>
 #include <wtf/TypeTraits.h>
 #include <wtf/Variant.h>
+#include <wtf/text/Latin1Character.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -149,9 +150,9 @@ static constexpr size_t KB = 1024;
 static constexpr size_t MB = 1024 * 1024;
 static constexpr size_t GB = 1024 * 1024 * 1024;
 
-// std::min and std::max are not annotated NODELETE, but they run no destructors, so the suppression is safe.
-template<typename T> constexpr const T& NODELETE min(const T& a, const T& b) { SUPPRESS_NODELETE return std::min(a, b); }
-template<typename T> constexpr const T& NODELETE max(const T& a, const T& b) { SUPPRESS_NODELETE return std::max(a, b); }
+// std::min and std::max are not annotated LEGACY_NODELETE, but they run no destructors, so the suppression is safe.
+template<typename T> SUPPRESS_NODELETE constexpr const T& LEGACY_NODELETE min(const T& a, const T& b) { return std::min(a, b); }
+template<typename T> SUPPRESS_NODELETE constexpr const T& LEGACY_NODELETE max(const T& a, const T& b) { return std::max(a, b); }
 
 inline bool isPointerAligned(void* p)
 {
@@ -237,7 +238,7 @@ enum BinarySearchMode {
 };
 
 template<typename ArrayElementType, typename KeyType, typename ArrayType, typename ExtractKey, BinarySearchMode mode>
-inline ArrayElementType* binarySearchImpl(ArrayType& array, size_t size, KeyType key, const ExtractKey& extractKey = ExtractKey())
+inline ArrayElementType* binarySearchImpl(ArrayType& array, size_t size, KeyType key, NOESCAPE const ExtractKey& extractKey = ExtractKey())
 {
     size_t offset = 0;
     while (size > 1) {
@@ -583,7 +584,7 @@ template<class V, class... F> requires (!HasSwitchOn<V>) ALWAYS_INLINE constexpr
 
 #endif
 
-template<class V, class... F> requires (HasSwitchOn<V>) ALWAYS_INLINE auto switchOn(V&& v, F&&... f) -> decltype(v.switchOn(std::forward<F>(f)...))
+template<class V, class... F> requires (HasSwitchOn<V>) ALWAYS_INLINE auto switchOn(V&& v, NOESCAPE F&&... f) -> decltype(v.switchOn(std::forward<F>(f)...))
 {
     return v.switchOn(std::forward<F>(f)...);
 }
@@ -662,11 +663,11 @@ template<size_t I, typename V> constexpr bool holdsAlternative(const V& v)
     {                                                                                \
         return name.index();                                                         \
     }                                                                                \
-    template<typename... F> decltype(auto) switchOn(F&&... f) const                  \
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const         \
     {                                                                                \
         return WTF::switchOn(name, std::forward<F>(f)...);                           \
     }                                                                                \
-    template<typename... F> decltype(auto) switchOn(F&&... f)                        \
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f)               \
     {                                                                                \
         return WTF::switchOn(name, std::forward<F>(f)...);                           \
     }                                                                                \
@@ -761,7 +762,7 @@ template<typename T> constexpr bool IsStdInPlaceIndexV = IsStdInPlaceIndex<T>::v
 //       },
 //   );
 
-template<class F, class Tuple> ALWAYS_INLINE constexpr decltype(auto) visitTupleElementAtIndex(F&& f, size_t index, Tuple&& tuple)
+template<class F, class Tuple> ALWAYS_INLINE constexpr decltype(auto) visitTupleElementAtIndex(NOESCAPE F&& f, size_t index, Tuple&& tuple)
 {
     return visitAtIndex<0, std::tuple_size_v<std::remove_cvref_t<Tuple>>>(
         index,
@@ -872,18 +873,26 @@ template<typename T>
     using NonRefQualifiedType = std::remove_reference_t<T>;
     static_assert(!std::is_const_v<NonRefQualifiedType>, "T is const qualified.");
 
-    return std::move(std::forward<T>(value));
+    return std::move(value);
+}
+
+// Same as std::addressof(), but the static analyzer knows the result points to the argument.
+// FIXME: Use std::addressof() instead once rdar://190195680 is fixed.
+template<typename T>
+ALWAYS_INLINE constexpr T* CLANG_POINTER_CONVERSION addressOfArgument(T& value)
+{
+    return std::addressof(value);
 }
 
 template<typename T, std::size_t N>
-[[nodiscard]] SUPPRESS_NODELETE constexpr std::array<std::remove_cv_t<T>, N> NODELETE toArray(T (&array)[N])
+[[nodiscard]] SUPPRESS_NODELETE constexpr std::array<std::remove_cv_t<T>, N> LEGACY_NODELETE toArray(T (&array)[N])
     noexcept(std::is_nothrow_constructible_v<T, T&>)
 {
     return std::to_array<T>(array); // NOLINT(runtime/wtf_to_array)
 }
 
 template<typename T, std::size_t N>
-[[nodiscard]] SUPPRESS_NODELETE constexpr std::array<std::remove_cv_t<T>, N> NODELETE toArray(T (&&array)[N])
+[[nodiscard]] SUPPRESS_NODELETE constexpr std::array<std::remove_cv_t<T>, N> LEGACY_NODELETE toArray(T (&&array)[N])
     noexcept(std::is_nothrow_move_constructible_v<T>)
 {
     return std::to_array<T>(WTF::move(array)); // NOLINT(runtime/wtf_to_array)
@@ -1033,7 +1042,7 @@ T& reinterpretCastSpanStartTo(std::span<U, Extent> span)
 enum class IgnoreTypeChecks : bool { No, Yes };
 
 template<IgnoreTypeChecks ignoreTypeChecks = IgnoreTypeChecks::No, typename T, std::size_t TExtent, typename U, std::size_t UExtent>
-bool equalSpans(std::span<T, TExtent> a, std::span<U, UExtent> b)
+SUPPRESS_NODELETE bool LEGACY_NODELETE equalSpans(std::span<T, TExtent> a, std::span<U, UExtent> b)
 {
     static_assert(sizeof(T) == sizeof(U));
     static_assert(ignoreTypeChecks == IgnoreTypeChecks::Yes || std::has_unique_object_representations_v<T>);
@@ -1046,7 +1055,7 @@ bool equalSpans(std::span<T, TExtent> a, std::span<U, UExtent> b)
 }
 
 template<typename T, std::size_t TExtent, typename U, std::size_t UExtent>
-bool spanHasPrefix(std::span<T, TExtent> span, std::span<U, UExtent> prefix)
+SUPPRESS_NODELETE bool LEGACY_NODELETE spanHasPrefix(std::span<T, TExtent> span, std::span<U, UExtent> prefix)
 {
     static_assert(sizeof(T) == sizeof(U));
     static_assert(std::has_unique_object_representations_v<T>);
@@ -1057,7 +1066,7 @@ bool spanHasPrefix(std::span<T, TExtent> span, std::span<U, UExtent> prefix)
 }
 
 template<typename T, std::size_t TExtent, typename U, std::size_t UExtent>
-bool spanHasSuffix(std::span<T, TExtent> span, std::span<U, UExtent> suffix)
+SUPPRESS_NODELETE bool LEGACY_NODELETE spanHasSuffix(std::span<T, TExtent> span, std::span<U, UExtent> suffix)
 {
     static_assert(sizeof(T) == sizeof(U));
     static_assert(std::has_unique_object_representations_v<T>);
@@ -1068,7 +1077,7 @@ bool spanHasSuffix(std::span<T, TExtent> span, std::span<U, UExtent> suffix)
 }
 
 template<typename T, std::size_t TExtent, typename U, std::size_t UExtent>
-std::strong_ordering compareSpans(std::span<T, TExtent> a, std::span<U, UExtent> b)
+SUPPRESS_NODELETE std::strong_ordering LEGACY_NODELETE compareSpans(std::span<T, TExtent> a, std::span<U, UExtent> b)
 {
     static_assert(sizeof(T) == sizeof(U));
     static_assert(std::has_unique_object_representations_v<T>);
@@ -1088,7 +1097,7 @@ template<typename T, typename U>
 concept TriviallyComparableCodeUnits = std::is_same_v<std::remove_const_t<T>, std::remove_const_t<U>> || (!std::is_same_v<std::remove_const_t<T>, char8_t> && !std::is_same_v<std::remove_const_t<U>, char8_t>);
 
 template<typename T>
-concept CanBeConstByteType = sizeof(T) == 1 && ((std::is_integral_v<T> && !std::same_as<T, bool>) || std::same_as<T, std::byte>);
+concept CanBeConstByteType = sizeof(T) == 1 && ((std::is_integral_v<T> && !std::same_as<std::remove_const_t<T>, bool>) || std::same_as<std::remove_const_t<T>, std::byte> || std::same_as<std::remove_const_t<T>, Latin1Character>);
 
 template<typename T, typename U>
 concept TriviallyComparableOneByteCodeUnits = TriviallyComparableCodeUnits<T, U> && CanBeConstByteType<T> && CanBeConstByteType<U>;
@@ -1129,8 +1138,9 @@ bool contains(std::span<T, TExtent> haystack, std::span<U, UExtent> needle)
     return find(haystack, needle) != notFound;
 }
 
+// memcpy() is not annotated LEGACY_NODELETE, but it runs no destructors, so the suppression is safe.
 template<typename T, std::size_t TExtent, typename U, std::size_t UExtent>
-void NODELETE memcpySpan(std::span<T, TExtent> destination, std::span<U, UExtent> source)
+SUPPRESS_NODELETE void LEGACY_NODELETE memcpySpan(std::span<T, TExtent> destination, std::span<U, UExtent> source)
 {
     static_assert(sizeof(T) == sizeof(U));
     static_assert(std::is_trivially_copyable_v<T> || std::is_floating_point_v<T>);
@@ -1139,8 +1149,9 @@ void NODELETE memcpySpan(std::span<T, TExtent> destination, std::span<U, UExtent
     memcpy(destination.data(), source.data(), source.size_bytes()); // NOLINT
 }
 
+// memmove() is not annotated LEGACY_NODELETE, but it runs no destructors, so the suppression is safe.
 template<typename T, std::size_t TExtent, typename U, std::size_t UExtent>
-void memmoveSpan(std::span<T, TExtent> destination, std::span<U, UExtent> source)
+SUPPRESS_NODELETE void LEGACY_NODELETE memmoveSpan(std::span<T, TExtent> destination, std::span<U, UExtent> source)
 {
     static_assert(sizeof(T) == sizeof(U));
     static_assert(std::is_trivially_copyable_v<T> || std::is_floating_point_v<T>);
@@ -1169,8 +1180,9 @@ void zeroBytes(T& object)
     zeroSpan(asMutableByteSpan(object));
 }
 
+// memset(), memset_s() and the compiler barrier are not annotated LEGACY_NODELETE, but they run no destructors, so the suppression is safe.
 template<typename T, std::size_t Extent>
-void NODELETE secureZeroSpan(std::span<T, Extent> destination)
+SUPPRESS_NODELETE void LEGACY_NODELETE secureZeroSpan(std::span<T, Extent> destination)
 {
     static_assert(std::is_trivially_copyable_v<T>);
 #ifdef __STDC_LIB_EXT1__
@@ -1185,7 +1197,7 @@ void NODELETE secureZeroSpan(std::span<T, Extent> destination)
 }
 
 // Like zeroBytes, but guaranteed not to be optimized away by the compiler.
-template<typename T> void NODELETE secureZeroBytes(T& object)
+template<typename T> void LEGACY_NODELETE secureZeroBytes(T& object)
 {
     secureZeroSpan(asMutableByteSpan(object));
 }
@@ -1267,6 +1279,13 @@ bool spansOverlap(std::span<T, TExtent> a, std::span<U, UExtent> b)
     dataLogF(format __VA_OPT__(, SAFE_PRINTF_TYPE(__VA_ARGS__))) \
     WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
+// PrintStream::printf() is a C variadic function, so it cannot convert typed strings itself without losing
+// format checking. This converts them at the call site, keeping the format a literal that the compiler checks.
+#define SAFE_PRINTSTREAM_PRINTF(stream, format, ...) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
+    (stream).printf(format __VA_OPT__(, SAFE_PRINTF_TYPE(__VA_ARGS__))) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
 // WTFLogAlways() and the other WTF_ATTRIBUTE_NSSTRING functions accept %@ as well as the printf
 // conversions, and vprintf_stderr_common() routes a format containing %@ through
 // CFStringCreateWithFormatAndArguments(). An Objective-C object argument therefore has to arrive
@@ -1280,12 +1299,71 @@ template<typename T> concept ObjectiveCObjectPointer = false;
 
 template<ObjectiveCObjectPointer T> inline T CLANG_POINTER_CONVERSION safeNSStringPrintfType(T argument) { return argument; }
 template<typename T> requires (!ObjectiveCObjectPointer<std::decay_t<T>>)
-inline decltype(auto) NODELETE safeNSStringPrintfType(T&& argument) { return safePrintfType(std::forward<T>(argument)); }
+inline decltype(auto) LEGACY_NODELETE safeNSStringPrintfType(T&& argument) { return safePrintfType(std::forward<T>(argument)); }
 
 #define SAFE_NSSTRING_PRINTF_TYPE(...) WTF_FOR_EACH(WTF::safeNSStringPrintfType, __VA_ARGS__)
 
 #define SAFE_WTFLOGALWAYS(format, ...) \
     SUPPRESS_UNCOUNTED_ARG WTFLogAlways(format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__)))
+
+// For call sites that log to a channel they were handed, so cannot use LOG() and LOG_VERBOSE(). The file and
+// function of SAFE_WTFLOG_VERBOSE() are converted with logPrintfType(), so either a typed string or __FILE__ works.
+#define SAFE_WTFLOG(channel, format, ...) \
+    SUPPRESS_UNCOUNTED_ARG WTFLog(channel, format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__)))
+
+#define SAFE_WTFLOG_VERBOSE(file, line, function, channel, format, ...) \
+    SUPPRESS_UNCOUNTED_ARG WTFLogVerbose(WTF::logPrintfType(file), line, WTF::logPrintfType(function), channel, format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__)))
+
+#if OS(DARWIN)
+// For call sites that log to an os_log_t they hold, so cannot use the RELEASE_LOG() family. os_log() accepts %@
+// as well as the printf conversions, so Objective-C object arguments are passed unchanged.
+#define SAFE_OS_LOG(log, format, ...) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
+    os_log(log, format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__))) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+#define SAFE_OS_LOG_INFO(log, format, ...) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
+    os_log_info(log, format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__))) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+#define SAFE_OS_LOG_DEBUG(log, format, ...) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
+    os_log_debug(log, format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__))) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+#define SAFE_OS_LOG_ERROR(log, format, ...) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
+    os_log_error(log, format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__))) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+#define SAFE_OS_LOG_FAULT(log, format, ...) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
+    os_log_fault(log, format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__))) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+#define SAFE_OS_LOG_WITH_TYPE(log, type, format, ...) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
+    os_log_with_type(log, type, format __VA_OPT__(, SAFE_NSSTRING_PRINTF_TYPE(__VA_ARGS__))) \
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+#endif
+
+#if OS(ANDROID)
+#define SAFE_ANDROID_LOG_PRINT(priority, tag, format, ...) \
+    __android_log_print(priority, tag, format __VA_OPT__(, SAFE_PRINTF_TYPE(__VA_ARGS__)))
+#endif
+
+#if ENABLE(JOURNALD_LOG)
+// sd_journal_send() takes a list of "FIELD=format", arguments... groups, so every argument, including the
+// formats, is converted with logPrintfType(), which passes those through. The macros supply the terminating
+// nullptr themselves: the functions are declared with the sentinel attribute, which requires a null pointer
+// constant rather than the result of a conversion.
+#define SAFE_SD_JOURNAL_SEND(format, ...) \
+    sd_journal_send(format WTF_LOG_PRINTF_ARGS(__VA_ARGS__), nullptr)
+
+#define SAFE_SD_JOURNAL_SEND_WITH_LOCATION(file, line, function, format, ...) \
+    sd_journal_send_with_location(WTF::logPrintfType(file), WTF::logPrintfType(line), WTF::logPrintfType(function), format WTF_LOG_PRINTF_ARGS(__VA_ARGS__), nullptr)
+#endif
 
 // logPrintfType() and LOG_PRINTF_TYPE(), the logging counterpart to safePrintfType(), are defined
 // in wtf/Assertions.h too, next to the LOG and RELEASE_LOG macro families that use them.
@@ -1363,7 +1441,7 @@ template<class T> concept TupleLike = !std::is_reference_v<T>
 // This should be something we can remove if P2165 (https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2022/p2165r3.pdf)
 // is adopted and implemented.
 template<class F, class T, size_t ...I>
-constexpr decltype(auto) apply_impl(F&& functor, T&& tupleLike, std::index_sequence<I...>)
+constexpr decltype(auto) apply_impl(NOESCAPE F&& functor, T&& tupleLike, std::index_sequence<I...>)
 {
     using std::get;
     return std::invoke(std::forward<F>(functor), get<I>(std::forward<T>(tupleLike))...);
@@ -1390,21 +1468,21 @@ constexpr decltype(auto) apply(NOESCAPE F&& functor, T&& tupleLike)
 //   This leaves result transposed and equal to:
 //
 //      std::tuple {
-//          std::tuple<int, double, int>        { 1,       0.5,     2         },
-//          std::tuple<string, char, string>    { "hello", 'i',     "goodbye" },
-//          std::tuple<double, float, double>   { 1.5,     0.1f,    3.0       },
+//          std::tuple<int&, double&, int&> { 1, 0.5, 2 },
+//          std::tuple<string&, char&, string&> { "hello", 'i', "goodbye" },
+//          std::tuple<double&, float&, double&> { 1.5, 0.1f, 3.0 },
 //      }
 
 namespace detail {
 
-template<std::size_t I, typename... TupleLikes> using zip_tuple_at_index_t = std::tuple<std::tuple_element_t<I, std::decay_t<TupleLikes>>...>;
+template<std::size_t I, typename... TupleLikes> using zip_tuple_at_index_t = std::tuple<decltype(get<I>(std::declval<TupleLikes>()))...>;
 
 template<std::size_t I, typename... TupleLikes> auto zip_tuple_at_index(TupleLikes&&... tupleLikes)
 {
-    return zip_tuple_at_index_t<I, TupleLikes...> { get<I>(std::forward<TupleLikes>(tupleLikes))... };
+    return std::forward_as_tuple(get<I>(std::forward<TupleLikes>(tupleLikes))...);
 }
 
-template<typename... TupleLikes, std::size_t... I> auto tuple_zip_impl(TupleLikes&& ... tupleLikes, std::index_sequence<I...>)
+template<typename... TupleLikes, std::size_t... I> auto tuple_zip_impl(TupleLikes&&... tupleLikes, std::index_sequence<I...>)
 {
     return std::tuple<zip_tuple_at_index_t<I, TupleLikes...>...> {
         zip_tuple_at_index<I>(std::forward<TupleLikes>(tupleLikes)...)...
@@ -1427,7 +1505,7 @@ template<typename Head, typename... Tail> auto tuple_zip(Head&& head, Tail&& ...
 }
 
 template<typename WordType, std::size_t Extent, typename Func>
-ALWAYS_INLINE constexpr void forEachSetBit(std::span<const WordType, Extent> bits, const Func& func)
+ALWAYS_INLINE constexpr void forEachSetBit(std::span<const WordType, Extent> bits, NOESCAPE const Func& func)
 {
     constexpr size_t wordSize = sizeof(WordType) * CHAR_BIT;
     for (size_t i = 0; i < bits.size(); ++i) {
@@ -1466,7 +1544,7 @@ ALWAYS_INLINE constexpr void forEachSetBit(std::span<const WordType, Extent> bit
 }
 
 template<typename WordType, std::size_t Extent, typename Func>
-ALWAYS_INLINE constexpr void forEachSetBit(std::span<const WordType, Extent> bits, size_t startIndex, const Func& func)
+ALWAYS_INLINE constexpr void forEachSetBit(std::span<const WordType, Extent> bits, size_t startIndex, NOESCAPE const Func& func)
 {
     constexpr size_t wordSize = sizeof(WordType) * CHAR_BIT;
     auto iterate = [&](WordType word, size_t i) ALWAYS_INLINE_LAMBDA {
@@ -1551,7 +1629,7 @@ template<typename Object, typename Allocator = FastMalloc> void destroyWithTrail
 }
 
 template<typename T, typename TDeleter, typename U, typename UDeleter>
-SUPPRESS_NODELETE ALWAYS_INLINE void NODELETE lazyInitialize(const std::unique_ptr<T, TDeleter>& ptr, const std::unique_ptr<U, UDeleter>&& obj)
+SUPPRESS_NODELETE ALWAYS_INLINE void LEGACY_NODELETE lazyInitialize(const std::unique_ptr<T, TDeleter>& ptr, const std::unique_ptr<U, UDeleter>&& obj)
 {
     RELEASE_ASSERT(!ptr);
     const_cast<std::unique_ptr<T, TDeleter>&>(ptr) = std::move(const_cast<std::unique_ptr<U, UDeleter>&&>(obj)); // NOLINT.
@@ -1606,6 +1684,32 @@ static constexpr auto dereferenceView = std::views::transform([](auto&& x) -> de
 }
 
 template<class E> constexpr std::unexpected<std::decay_t<E>> makeUnexpected(E&& v) { return std::unexpected<typename std::decay<E>::type>(std::forward<E>(v)); }
+
+#ifdef __swift__
+template<typename Expected, typename Value>
+    requires(IsExpected<Expected>::value)
+Expected makeExpected(Value value)
+{
+    static_assert(std::is_same_v<Value, typename Expected::value_type>, "makeExpected's argument must be the expected's value_type");
+    return Expected(std::in_place, WTF::move(value));
+}
+
+template<typename Expected>
+    requires(IsExpected<Expected>::value)
+Expected makeExpected()
+{
+    static_assert(std::is_void_v<typename Expected::value_type>, "makeExpected() without an argument needs an expected whose value_type is void");
+    return Expected();
+}
+
+template<typename Expected, typename Error>
+    requires(IsExpected<Expected>::value)
+Expected makeUnexpected(Error error)
+{
+    static_assert(std::is_same_v<Error, typename Expected::error_type>, "makeUnexpected's argument must be the expected's error_type");
+    return Expected(std::unexpect, WTF::move(error));
+}
+#endif // __swift__
 
 } // namespace WTF
 

@@ -35,6 +35,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/Vector.h>
+#include <wtf/WeakObjCPtr.h>
 #include <wtf/WeakPtr.h>
 
 OBJC_CLASS CALayer;
@@ -53,8 +54,8 @@ public:
     LegacyTileCache(WAKWindow *);
     ~LegacyTileCache();
 
-    void ref() const;
-    void deref() const;
+    WEBCORE_EXPORT void ref() const;
+    WEBCORE_EXPORT void deref() const;
 
     CGFloat screenScale() const;
 
@@ -169,12 +170,12 @@ private:
     void drawReplacementImage(LegacyTileLayer *, CGContextRef, CGImageRef);
     void drawWindowContent(LegacyTileLayer *, CGContextRef, CGRect dirtyRect, DrawingFlags);
 
-    WAKWindow *m_window { nullptr };
+    WeakObjCPtr<WAKWindow> m_window;
 
     RetainPtr<CGImageRef> m_contentReplacementImage;
 
     // Ensure there are no async calls on a dead tile cache.
-    RetainPtr<LegacyTileCacheTombstone> m_tombstone;
+    const RetainPtr<LegacyTileCacheTombstone> m_tombstone;
 
     std::optional<FloatRect> m_overrideVisibleRect;
 
@@ -194,8 +195,8 @@ private:
     bool m_tileControllerShouldUseLowScaleTiles { false };
     bool m_didCallWillStartScrollingOrZooming { false };
     
-    std::unique_ptr<LegacyTileGrid> m_zoomedOutTileGrid;
-    std::unique_ptr<LegacyTileGrid> m_zoomedInTileGrid;
+    const std::unique_ptr<LegacyTileGrid> m_zoomedOutTileGrid;
+    const std::unique_ptr<LegacyTileGrid> m_zoomedInTileGrid;
 
     Timer m_tileCreationTimer;
 

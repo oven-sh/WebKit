@@ -27,52 +27,21 @@
 
 #include "BoxExtents.h"
 #include "GraphicsContext.h"
-#include "ImagePaintingOptions.h"
+#include "ImageDrawingOptions.h"
 #include "ImageQualityController.h"
 #include "LayoutRect.h"
+#include "NinePieceGeometry.h"
 #include "RenderStyleConstants.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleImage.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
-#include <wtf/Vector.h>
+#include "UsedStyle.h"
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/AXCustomColorModeController.h>
+#endif
 
 namespace WebCore {
-
-// Used for array indexing, so not an enum class.
-enum ImagePiece {
-    MinPiece = 0,
-    TopLeftPiece = MinPiece,
-    LeftPiece,
-    BottomLeftPiece,
-    TopRightPiece,
-    RightPiece,
-    BottomRightPiece,
-    TopPiece,
-    BottomPiece,
-    MiddlePiece,
-    MaxPiece
-};
-
-static ImagePiece& NODELETE operator++(ImagePiece& piece)
-{
-    piece = static_cast<ImagePiece>(std::to_underlying(piece) + 1);
-    return piece;
-}
-
-static bool NODELETE isCornerPiece(ImagePiece piece)
-{
-    return piece == TopLeftPiece || piece == TopRightPiece || piece == BottomLeftPiece || piece == BottomRightPiece;
-}
-
-static bool NODELETE isHorizontalPiece(ImagePiece piece)
-{
-    return piece == TopPiece || piece == BottomPiece || piece == MiddlePiece;
-}
-
-static bool NODELETE isVerticalPiece(ImagePiece piece)
-{
-    return piece == LeftPiece || piece == RightPiece || piece == MiddlePiece;
-}
 
 template<typename WidthValue>
 static LayoutUnit computeSlice(const WidthValue& length, LayoutUnit width, LayoutUnit slice, LayoutUnit extent, const Style::ZoomFactor& zoom)
@@ -112,7 +81,7 @@ static LayoutBoxExtent computeSlices(const LayoutSize& size, const SliceValues& 
     };
 }
 
-static void scaleSlicesIfNeeded(const LayoutSize& size, LayoutBoxExtent& slices, float deviceScaleFactor)
+static void LEGACY_NODELETE scaleSlicesIfNeeded(const LayoutSize& size, LayoutBoxExtent& slices, float deviceScaleFactor)
 {
     LayoutUnit width  = std::max(LayoutUnit(1 / deviceScaleFactor), slices.left() + slices.right());
     LayoutUnit height = std::max(LayoutUnit(1 / deviceScaleFactor), slices.top() + slices.bottom());
@@ -129,19 +98,21 @@ static void scaleSlicesIfNeeded(const LayoutSize& size, LayoutBoxExtent& slices,
     slices.left()   *= sliceScaleFactor;
 }
 
-static bool NODELETE isEmptyPieceRect(ImagePiece piece, const Vector<FloatRect, MaxPiece>& destinationRects, const Vector<FloatRect, MaxPiece>& sourceRects)
+static bool LEGACY_NODELETE isEmptyPieceRect(ImagePiece piece, const NinePieceRects& destinationRects, const NinePieceRects& sourceRects)
 {
     return destinationRects[piece].isEmpty() || sourceRects[piece].isEmpty();
 }
 
-static Vector<FloatRect, MaxPiece> computeNineRects(const FloatRect& outer, const LayoutBoxExtent& slices, float deviceScaleFactor)
+static NinePieceRects computeNineRects(const FloatRect& outer, const LayoutBoxExtent& slices, float deviceScaleFactor)
 {
+    using enum ImagePiece;
+
     FloatRect inner = outer;
     inner.move(slices.left(), slices.top());
     inner.contract(slices.left() + slices.right(), slices.top() + slices.bottom());
     ASSERT(outer.contains(inner));
 
-    Vector<FloatRect, MaxPiece> rects(MaxPiece);
+    NinePieceRects rects;
 
     auto outerX = LayoutUnit(outer.x());
     auto outerY = LayoutUnit(outer.y());
@@ -152,25 +123,25 @@ static Vector<FloatRect, MaxPiece> computeNineRects(const FloatRect& outer, cons
     auto innerHeight = LayoutUnit(inner.height());
     auto innerWidth = LayoutUnit(inner.width());
 
-    rects[TopLeftPiece]     = snapRectToDevicePixels(outerX,    outerY,     slices.left(),  slices.top(),    deviceScaleFactor);
-    rects[BottomLeftPiece]  = snapRectToDevicePixels(outerX,    innerMaxY,  slices.left(),  slices.bottom(), deviceScaleFactor);
-    rects[LeftPiece]        = snapRectToDevicePixels(outerX,    innerY,     slices.left(),  innerHeight,     deviceScaleFactor);
+    rects[TopLeft]     = snapRectToDevicePixels(outerX,    outerY,     slices.left(),  slices.top(),    deviceScaleFactor);
+    rects[BottomLeft]  = snapRectToDevicePixels(outerX,    innerMaxY,  slices.left(),  slices.bottom(), deviceScaleFactor);
+    rects[Left]        = snapRectToDevicePixels(outerX,    innerY,     slices.left(),  innerHeight,     deviceScaleFactor);
 
-    rects[TopRightPiece]    = snapRectToDevicePixels(innerMaxX, outerY,     slices.right(), slices.top(),    deviceScaleFactor);
-    rects[BottomRightPiece] = snapRectToDevicePixels(innerMaxX, innerMaxY,  slices.right(), slices.bottom(), deviceScaleFactor);
-    rects[RightPiece]       = snapRectToDevicePixels(innerMaxX, innerY,     slices.right(), innerHeight,     deviceScaleFactor);
+    rects[TopRight]    = snapRectToDevicePixels(innerMaxX, outerY,     slices.right(), slices.top(),    deviceScaleFactor);
+    rects[BottomRight] = snapRectToDevicePixels(innerMaxX, innerMaxY,  slices.right(), slices.bottom(), deviceScaleFactor);
+    rects[Right]       = snapRectToDevicePixels(innerMaxX, innerY,     slices.right(), innerHeight,     deviceScaleFactor);
 
-    rects[TopPiece]         = snapRectToDevicePixels(innerX,    outerY,     innerWidth,     slices.top(),    deviceScaleFactor);
-    rects[BottomPiece]      = snapRectToDevicePixels(innerX,    innerMaxY,  innerWidth,     slices.bottom(), deviceScaleFactor);
+    rects[Top]         = snapRectToDevicePixels(innerX,    outerY,     innerWidth,     slices.top(),    deviceScaleFactor);
+    rects[Bottom]      = snapRectToDevicePixels(innerX,    innerMaxY,  innerWidth,     slices.bottom(), deviceScaleFactor);
 
-    rects[MiddlePiece]      = snapRectToDevicePixels(innerX,    innerY,     innerWidth,     innerHeight,     deviceScaleFactor);
+    rects[Middle]      = snapRectToDevicePixels(innerX,    innerY,     innerWidth,     innerHeight,     deviceScaleFactor);
 
     return rects;
 }
 
-static FloatSize NODELETE computeSideTileScale(ImagePiece piece, const Vector<FloatRect, MaxPiece>& destinationRects, const Vector<FloatRect, MaxPiece>& sourceRects)
+static FloatSize LEGACY_NODELETE computeSideTileScale(ImagePiece piece, const NinePieceRects& destinationRects, const NinePieceRects& sourceRects)
 {
-    ASSERT(!isCornerPiece(piece) && piece != MiddlePiece);
+    ASSERT(!isCornerPiece(piece) && piece != ImagePiece::Middle);
     if (isEmptyPieceRect(piece, destinationRects, sourceRects))
         return FloatSize(1, 1);
 
@@ -183,56 +154,62 @@ static FloatSize NODELETE computeSideTileScale(ImagePiece piece, const Vector<Fl
     return FloatSize(scale, scale);
 }
 
-static FloatSize NODELETE computeMiddleTileScale(const Vector<FloatSize, MaxPiece>& scales, const Vector<FloatRect, MaxPiece>& destinationRects, const Vector<FloatRect, MaxPiece>& sourceRects, NinePieceImageRule hRule, NinePieceImageRule vRule)
+static FloatSize LEGACY_NODELETE computeMiddleTileScale(const NinePieceScales& scales, const NinePieceRects& destinationRects, const NinePieceRects& sourceRects, NinePieceImageRule hRule, NinePieceImageRule vRule)
 {
+    using enum ImagePiece;
+
     FloatSize scale(1, 1);
-    if (isEmptyPieceRect(MiddlePiece, destinationRects, sourceRects))
+    if (isEmptyPieceRect(Middle, destinationRects, sourceRects))
         return scale;
 
     // Unlike the side pieces, the middle piece can have "stretch" specified in one axis but not the other.
     // In fact the side pieces don't even use the scale factor unless they have a rule other than "stretch".
     if (hRule == NinePieceImageRule::Stretch)
-        scale.setWidth(destinationRects[MiddlePiece].width() / sourceRects[MiddlePiece].width());
-    else if (!isEmptyPieceRect(TopPiece, destinationRects, sourceRects))
-        scale.setWidth(scales[TopPiece].width());
-    else if (!isEmptyPieceRect(BottomPiece, destinationRects, sourceRects))
-        scale.setWidth(scales[BottomPiece].width());
+        scale.setWidth(destinationRects[Middle].width() / sourceRects[Middle].width());
+    else if (!isEmptyPieceRect(Top, destinationRects, sourceRects))
+        scale.setWidth(scales[Top].width());
+    else if (!isEmptyPieceRect(Bottom, destinationRects, sourceRects))
+        scale.setWidth(scales[Bottom].width());
 
     if (vRule == NinePieceImageRule::Stretch)
-        scale.setHeight(destinationRects[MiddlePiece].height() / sourceRects[MiddlePiece].height());
-    else if (!isEmptyPieceRect(LeftPiece, destinationRects, sourceRects))
-        scale.setHeight(scales[LeftPiece].height());
-    else if (!isEmptyPieceRect(RightPiece, destinationRects, sourceRects))
-        scale.setHeight(scales[RightPiece].height());
+        scale.setHeight(destinationRects[Middle].height() / sourceRects[Middle].height());
+    else if (!isEmptyPieceRect(Left, destinationRects, sourceRects))
+        scale.setHeight(scales[Left].height());
+    else if (!isEmptyPieceRect(Right, destinationRects, sourceRects))
+        scale.setHeight(scales[Right].height());
 
     return scale;
 }
 
-static Vector<FloatSize, MaxPiece> computeTileScales(const Vector<FloatRect, MaxPiece>& destinationRects, const Vector<FloatRect, MaxPiece>& sourceRects, NinePieceImageRule hRule, NinePieceImageRule vRule)
+static NinePieceScales LEGACY_NODELETE computeTileScales(const NinePieceRects& destinationRects, const NinePieceRects& sourceRects, NinePieceImageRule hRule, NinePieceImageRule vRule)
 {
-    Vector<FloatSize, MaxPiece> scales(FillWith { }, MaxPiece, FloatSize(1, 1));
+    using enum ImagePiece;
 
-    scales[TopPiece]    = computeSideTileScale(TopPiece,    destinationRects, sourceRects);
-    scales[RightPiece]  = computeSideTileScale(RightPiece,  destinationRects, sourceRects);
-    scales[BottomPiece] = computeSideTileScale(BottomPiece, destinationRects, sourceRects);
-    scales[LeftPiece]   = computeSideTileScale(LeftPiece,   destinationRects, sourceRects);
+    NinePieceScales scales;
+    scales.fill(FloatSize(1, 1));
 
-    scales[MiddlePiece] = computeMiddleTileScale(scales, destinationRects, sourceRects, hRule, vRule);
+    scales[Top]    = computeSideTileScale(Top,    destinationRects, sourceRects);
+    scales[Right]  = computeSideTileScale(Right,  destinationRects, sourceRects);
+    scales[Bottom] = computeSideTileScale(Bottom, destinationRects, sourceRects);
+    scales[Left]   = computeSideTileScale(Left,   destinationRects, sourceRects);
+
+    scales[Middle] = computeMiddleTileScale(scales, destinationRects, sourceRects, hRule, vRule);
 
     return scales;
 }
 
 template<typename T>
-static void paintNinePieceImage(const T& ninePieceImage, GraphicsContext& graphicsContext, const RenderElement* renderer, const Style::ComputedStyle& style, const LayoutRect& destination, const LayoutSize& source, float deviceScaleFactor, ImagePaintingOptions options)
+static void paintNinePieceImage(const T& ninePieceImage, GraphicsContext& graphicsContext, const RenderElement& renderer, const UsedStyle& usedStyle, const LayoutRect& destination, const LayoutSize& source, float deviceScaleFactor, ImageDrawingOptions options)
 {
     auto styleImage = ninePieceImage.source().tryStyleImage();
     ASSERT(styleImage);
-    ASSERT(styleImage->isLoaded(renderer));
+    ASSERT(styleImage->isLoaded(&renderer));
 
+    auto& style = usedStyle.computedStyle();
     auto zoom = style.usedZoomForLength();
 
     auto sourceSlices      = computeSlices(source, ninePieceImage.slice(), styleImage->imageScaleFactor());
-    auto destinationSlices = computeSlices(destination.size(), ninePieceImage.width(), Style::evaluate<LayoutBoxExtent>(style.usedBorderWidths().to<Style::LineWidthBox>(), zoom, deviceScaleFactor), sourceSlices, zoom);
+    auto destinationSlices = computeSlices(destination.size(), ninePieceImage.width(), usedStyle.borderWidths(), sourceSlices, zoom);
 
     scaleSlicesIfNeeded(destination.size(), destinationSlices, deviceScaleFactor);
 
@@ -241,43 +218,38 @@ static void paintNinePieceImage(const T& ninePieceImage, GraphicsContext& graphi
 
     auto tileScales = computeTileScales(destinationRects, sourceRects, ninePieceImage.repeat().horizontalRule(), ninePieceImage.repeat().verticalRule());
 
-    RefPtr image = styleImage->image(renderer, source, graphicsContext);
-    if (!image)
+    auto geometry = NinePieceGeometry {
+        .destinationRects = WTF::move(destinationRects),
+        .sourceRects = WTF::move(sourceRects),
+        .tileScales = WTF::move(tileScales),
+        .horizontalRule = ninePieceImage.repeat().horizontalRule(),
+        .verticalRule = ninePieceImage.repeat().verticalRule(),
+        .fill = ninePieceImage.slice().fill.has_value(),
+    };
+
+    if (!styleImage->canDrawAtSize(renderer, source))
         return;
 
     InterpolationQualityMaintainer interpolationMaintainer(graphicsContext, ImageQualityController::interpolationQualityFromStyle(style));
 
-    for (ImagePiece piece = MinPiece; piece < MaxPiece; ++piece) {
-        if ((piece == MiddlePiece && !ninePieceImage.slice().fill) || isEmptyPieceRect(piece, destinationRects, sourceRects))
-            continue;
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    options = { options, styleImage->drawsSVGImage() && AXCustomColorModeController::shouldInvertSVGImage(renderer, *styleImage) ? InvertContent::Yes : InvertContent::No };
+#endif
 
-        if (isCornerPiece(piece)) {
-            graphicsContext.drawImage(*image, destinationRects[piece], sourceRects[piece], options);
-            continue;
-        }
-
-        auto hRule = isHorizontalPiece(piece)
-            ? static_cast<Image::TileRule>(ninePieceImage.repeat().horizontalRule())
-            : Image::StretchTile;
-
-        auto vRule = isVerticalPiece(piece)
-            ? static_cast<Image::TileRule>(ninePieceImage.repeat().verticalRule())
-            : Image::StretchTile;
-
-        graphicsContext.drawTiledImage(*image, destinationRects[piece], sourceRects[piece], tileScales[piece], hRule, vRule, options);
-    }
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST styleImage->drawNinePiece(graphicsContext, renderer, ConcreteObjectSize::fixed(FloatSize(source)), geometry, options);
 }
 
 // MARK: - Painter entry point
 
-void NinePieceImagePainter::paint(const Style::BorderImage& ninePieceImage, GraphicsContext& graphicsContext, const RenderElement* renderer, const Style::ComputedStyle& style, const LayoutRect& destination, const LayoutSize& source, float deviceScaleFactor, ImagePaintingOptions options)
+void NinePieceImagePainter::paint(const Style::BorderImage& ninePieceImage, GraphicsContext& graphicsContext, const RenderElement& renderer, const UsedStyle& usedStyle, const LayoutRect& destination, const LayoutSize& source, float deviceScaleFactor, ImageDrawingOptions options)
 {
-    return paintNinePieceImage(ninePieceImage, graphicsContext, renderer, style, destination, source, deviceScaleFactor, options);
+    return paintNinePieceImage(ninePieceImage, graphicsContext, renderer, usedStyle, destination, source, deviceScaleFactor, options);
 }
 
-void NinePieceImagePainter::paint(const Style::MaskBorder& ninePieceImage, GraphicsContext& graphicsContext, const RenderElement* renderer, const Style::ComputedStyle& style, const LayoutRect& destination, const LayoutSize& source, float deviceScaleFactor, ImagePaintingOptions options)
+void NinePieceImagePainter::paint(const Style::MaskBorder& ninePieceImage, GraphicsContext& graphicsContext, const RenderElement& renderer, const UsedStyle& usedStyle, const LayoutRect& destination, const LayoutSize& source, float deviceScaleFactor, ImageDrawingOptions options)
 {
-    return paintNinePieceImage(ninePieceImage, graphicsContext, renderer, style, destination, source, deviceScaleFactor, options);
+    return paintNinePieceImage(ninePieceImage, graphicsContext, renderer, usedStyle, destination, source, deviceScaleFactor, options);
 }
 
 } // namespace WebCore

@@ -1,0 +1,50 @@
+# An operation that hands back its operand or an object that it allocates points to both, and is tracked where the operand is
+# FORM: Prepared
+# RUN: analyses escape
+# RUN(GUARDS): guards points
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="arrayOfThisFunction" parameters=[{type=string}, {type=object}] results=[{type=undefined}] {
+    v2 = Integer integer=2
+    v3 = NewContiguousArray v2
+    v4 = Integer integer=0
+    PutContiguousIndex v3, v4, v0
+    v6 = TruncateNewArray v3, v2
+    v7 = IsPristine v6 builtinClass=Array aspects=[Storage]
+    Branch v7 -> taken b1(| 0), notTaken b2()
+  b1(v8):
+    PropSet v1, v0 key="text"
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK: objects: 3
+# CHECK: o1 definition: v3
+# CHECK: o1 state: DoesNotEscape
+# CHECK: o1 aliases: [v3 v6]
+# CHECK: o2 definition: v6
+# CHECK: o2 state: DoesNotEscape
+# CHECK: o2 aliases: [v6]
+# CHECK: v6 points to: [o1 o2]
+# CHECK: v6 may be untracked: no
+# GUARDS-LABEL: function f0
+# GUARDS: b1:0 available: [{{*}}v8]
+# GUARDS-NEXT: b1:1 available: [{{*}}v8]
+
+function f1 name="arrayFromOutside" parameters=[{type=Array}, {type=object}, {type=string}] results=[{type=undefined}] {
+    v3 = Integer integer=2
+    v4 = TruncateNewArray v0, v3
+    v5 = IsPristine v4 builtinClass=Array aspects=[Storage]
+    Branch v5 -> taken b1(| 0), notTaken b2()
+  b1(v6):
+    PropSet v1, v2 key="text"
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK: v4 points to: [o0 o2]
+# GUARDS-LABEL: function f1
+# GUARDS: b1:0 available: [{{*}}v6]
+# GUARDS-NEXT: b1:1 available: []

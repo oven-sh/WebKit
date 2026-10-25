@@ -234,7 +234,7 @@ static JSValue decode(JSGlobalObject* globalObject, JSValue argument, const WTF:
 static const int SizeOfInfinity = 8;
 
 template <typename CharType>
-static bool NODELETE isInfinity(std::span<const CharType> data)
+static bool LEGACY_NODELETE isInfinity(std::span<const CharType> data)
 {
     return data.size() >= SizeOfInfinity
         && data[0] == 'I'
@@ -249,7 +249,7 @@ static bool NODELETE isInfinity(std::span<const CharType> data)
 
 // See ecma-262 6th 11.8.3
 template <typename CharType>
-static double NODELETE jsBinaryIntegerLiteral(std::span<const CharType>& data)
+static double LEGACY_NODELETE jsBinaryIntegerLiteral(std::span<const CharType>& data)
 {
     // Binary number.
     skip(data, 2);
@@ -270,7 +270,7 @@ static double NODELETE jsBinaryIntegerLiteral(std::span<const CharType>& data)
 
 // See ecma-262 6th 11.8.3
 template <typename CharType>
-static double NODELETE jsOctalIntegerLiteral(std::span<const CharType>& data)
+static double LEGACY_NODELETE jsOctalIntegerLiteral(std::span<const CharType>& data)
 {
     // Octal number.
     skip(data, 2);
@@ -291,7 +291,7 @@ static double NODELETE jsOctalIntegerLiteral(std::span<const CharType>& data)
 
 // See ecma-262 6th 11.8.3
 template <typename CharType>
-static double NODELETE jsHexIntegerLiteral(std::span<const CharType>& data)
+static double LEGACY_NODELETE jsHexIntegerLiteral(std::span<const CharType>& data)
 {
     // Hex number.
     skip(data, 2);
@@ -360,6 +360,11 @@ static double toDouble(std::span<const CharacterType> characters)
     // Empty string.
     if (characters.empty())
         return 0.0;
+
+    // Only these characters can start a StrNumericLiteral once white space is skipped.
+    auto first = characters.front();
+    if (!isASCIIDigit(first) && first != '.' && first != '+' && first != '-' && first != 'I')
+        return PNaN;
 
     double number;
     if (characters.front() == '0' && characters.size() > 2) {
@@ -496,25 +501,18 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEval, (JSGlobalObject* globalObject, CallFram
 
     if (SourceProfiler::g_profilerHook) [[unlikely]] {
         SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-        SourceTaintedOrigin sourceTaintedOrigin = computeNewSourceTaintedOriginFromStack(vm, callFrame);
+        SourceTaintedness sourceTaintedOrigin = computeNewSourceTaintednessFromStack(vm, callFrame);
         auto source = makeSource(programSource, sourceOrigin, sourceTaintedOrigin);
         SourceProfiler::profile(SourceProfiler::Type::Eval, source);
     }
 
-    JSValue parsedValue;
-    if (programSource.is8Bit()) {
-        LiteralParser<Latin1Character, JSONReviverMode::Disabled> preparser(globalObject, programSource.span8(), SloppyJSON, nullptr);
-        parsedValue = preparser.tryEval();
-    } else {
-        LiteralParser<char16_t, JSONReviverMode::Disabled> preparser(globalObject, programSource.span16(), SloppyJSON, nullptr);
-        parsedValue = preparser.tryEval();
-    }
+    JSValue parsedValue = tryEvalAsJSON(globalObject, programSource, nullptr);
     RETURN_IF_EXCEPTION(scope, { });
     if (parsedValue)
         return JSValue::encode(parsedValue);
 
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
-    SourceTaintedOrigin sourceTaintedOrigin = computeNewSourceTaintedOriginFromStack(vm, callFrame);
+    SourceTaintedness sourceTaintedOrigin = computeNewSourceTaintednessFromStack(vm, callFrame);
     LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
     EvalExecutable* eval = IndirectEvalExecutable::tryCreate(globalObject, makeSource(programSource, sourceOrigin, sourceTaintedOrigin), lexicallyScopedFeatures, DerivedContextType::None, false, EvalContextType::None);
     EXCEPTION_ASSERT(!!scope.exception() == !eval);
@@ -526,6 +524,9 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEval, (JSGlobalObject* globalObject, CallFram
 
 JSC_DEFINE_HOST_FUNCTION(globalFuncParseInt, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     JSValue value = callFrame->argument(0);
     JSValue radixValue = callFrame->argument(1);
 
@@ -538,10 +539,13 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncParseInt, (JSGlobalObject* globalObject, Call
         }
     }
 
-    // If ToString throws, we shouldn't call ToInt32.
-    return toStringView(globalObject, value, [&] (StringView view) {
-        return JSValue::encode(jsNumber(parseInt(view, radixValue.toInt32(globalObject))));
-    });
+    JSString* string = value.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    int32_t radix = radixValue.toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(parseIntString(globalObject, string, radix))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(globalFuncParseFloat, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -841,7 +845,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
 #endif
 }
 
-static bool NODELETE canPerformFastPropertyEnumerationForCopyDataProperties(Structure* structure)
+static bool LEGACY_NODELETE canPerformFastPropertyEnumerationForCopyDataProperties(Structure* structure)
 {
     if (!structure->canPerformFastPropertyEnumerationCommon())
         return false;
@@ -862,6 +866,35 @@ static CodeBlock* getCallerCodeBlock(CallFrame* callFrame)
         return nullptr;
     return callerFrame->codeBlock();
 }
+
+#if ENABLE(AOT)
+// False, with nothing copied, where listing the own properties of the compiled object may run code, or one of them is named __proto__.
+static bool tryCopyDataPropertiesOfCompiledObject(VM& vm, JSObject* target, JSObject* source, const Invocable<bool(PropertyName)> auto& isExcluded)
+{
+    Vector<UniquedStringImpl*, 8> properties;
+    MarkedArgumentBuffer values;
+    EnsureStillAliveScope sourceScope(source);
+    auto result = AOT::PropertyWalk::forEachOwnPropertyInline(vm, source, AOT::PropertyWalk::Filter::StringsAndSymbols, [&](const AOT::PropertyWalk::OwnProperty& property) {
+        PropertyName propertyName(property.name);
+        if (propertyName == vm.propertyNames->underscoreProto)
+            return IterationStatus::Done;
+        if (!(property.attributes & PropertyAttribute::DontEnum) && !propertyName.isPrivateName() && !isExcluded(propertyName)) {
+            properties.append(property.name);
+            values.appendWithCrashOnOverflow(property.value);
+        }
+        return IterationStatus::Continue;
+    });
+    if (result != AOT::PropertyWalk::Result::Completed)
+        return false;
+    if (target->inherits<JSFinalObject>() && target->canPerformFastPutInlineExcludingProto() && target->isStructureExtensible()) [[likely]]
+        target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
+    else {
+        for (size_t i = 0; i < properties.size(); ++i)
+            target->putDirect(vm, properties[i], values.at(i));
+    }
+    return true;
+}
+#endif
 
 // https://tc39.es/ecma262/#sec-copydataproperties
 JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -958,6 +991,13 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
         return JSValue::encode(target);
     }
 
+#if ENABLE(AOT)
+    if (sourceStructure->isCompiledStructure() && tryCopyDataPropertiesOfCompiledObject(vm, target, source, isPropertyNameExcluded)) {
+        ensureStillAliveHere(unlinkedCodeBlock);
+        return JSValue::encode(target);
+    }
+#endif
+
     PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     source->methodTable()->getOwnPropertyNames(source, globalObject, propertyNames, DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1044,6 +1084,11 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCloneObject, (JSGlobalObject* globalObject, C
 
         return JSValue::encode(target);
     }
+
+#if ENABLE(AOT)
+    if (sourceStructure->isCompiledStructure() && tryCopyDataPropertiesOfCompiledObject(vm, target, source, [](PropertyName) { return false; }))
+        return JSValue::encode(target);
+#endif
 
     PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     source->methodTable()->getOwnPropertyNames(source, globalObject, propertyNames, DontEnumPropertiesMode::Include);

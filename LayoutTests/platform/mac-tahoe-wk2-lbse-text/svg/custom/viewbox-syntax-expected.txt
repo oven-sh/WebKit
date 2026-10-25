@@ -1,13 +1,13 @@
-CONSOLE MESSAGE: Warning: Problem parsing viewBox="0"
-CONSOLE MESSAGE: Warning: Problem parsing viewBox="0 0"
-CONSOLE MESSAGE: Warning: Problem parsing viewBox="0 0 30"
-CONSOLE MESSAGE: Warning: Problem parsing viewBox="0 0 30 40 50"
-CONSOLE MESSAGE: Warning: Problem parsing viewBox="0 0 30 40,"
-CONSOLE MESSAGE: Warning: Problem parsing viewBox=",0 0 30 40"
-CONSOLE MESSAGE: Error: A negative value for ViewBox width is not allowed
-CONSOLE MESSAGE: Error: A negative value for ViewBox height is not allowed
-CONSOLE MESSAGE: Warning: Problem parsing viewBox="0 0 30, , 40"
-CONSOLE MESSAGE: Warning: Problem parsing viewBox="0 0 30% 40"
+CONSOLE MESSAGE: Warning: Invalid viewBox="0": expected four numbers
+CONSOLE MESSAGE: Warning: Invalid viewBox="0 0": expected four numbers
+CONSOLE MESSAGE: Warning: Invalid viewBox="0 0 30": expected four numbers
+CONSOLE MESSAGE: Warning: Invalid viewBox="0 0 30 40 50": unexpected content after the fourth number
+CONSOLE MESSAGE: Warning: Invalid viewBox="0 0 30 40,": unexpected content after the fourth number
+CONSOLE MESSAGE: Warning: Invalid viewBox=",0 0 30 40": expected four numbers
+CONSOLE MESSAGE: Error: Invalid viewBox="0 0 -30 40": width must not be negative
+CONSOLE MESSAGE: Error: Invalid viewBox="0 0 30 -40": height must not be negative
+CONSOLE MESSAGE: Warning: Invalid viewBox="0 0 30, , 40": expected four numbers
+CONSOLE MESSAGE: Warning: Invalid viewBox="0 0 30% 40": expected four numbers
 layer at (0,0) size 800x600
   RenderView at (0,0) size 800x600
 layer at (0,0) size 800x600

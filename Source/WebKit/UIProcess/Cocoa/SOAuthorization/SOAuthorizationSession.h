@@ -97,7 +97,7 @@ protected:
     WebPageProxy* page() const { return m_page.get(); }
     State state() const { return m_state; }
     ASCIILiteral stateString() const;
-    ASCIILiteral NODELETE initiatingActionString() const;
+    ASCIILiteral LEGACY_NODELETE initiatingActionString() const;
     void setState(State state) { m_state = state; }
     const API::NavigationAction* navigationAction() { return m_navigationAction.get(); }
     Ref<API::NavigationAction> releaseNavigationAction();
@@ -119,7 +119,7 @@ private:
 
     virtual bool shouldInterruptLoadForCSPFrameAncestorsOrXFrameOptions(const WebCore::ResourceResponse&) { return false; }
     State m_state  { State::Idle };
-    RetainPtr<SOAuthorization> m_soAuthorization;
+    const RetainPtr<SOAuthorization> m_soAuthorization;
     RefPtr<API::NavigationAction> m_navigationAction;
     WeakPtr<WebPageProxy> m_page;
     InitiatingAction m_action;
@@ -127,7 +127,6 @@ private:
 
     RetainPtr<SOAuthorizationViewController> m_viewController;
 #if PLATFORM(MAC)
-    RetainPtr<NSViewController> m_presentingViewController;
     RetainPtr<NSWindow> m_sheetWindow;
     RetainPtr<NSObject> m_sheetWindowWillCloseObserver;
     RetainPtr<NSObject> m_presentingWindowDidDeminiaturizeObserver;

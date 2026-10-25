@@ -94,7 +94,7 @@ static bool shouldIgnoreElement(const Element& element)
     return element.hasTagName(HTMLNames::scriptTag) || element.hasTagName(HTMLNames::noscriptTag) || isCharsetSpecifyingNode(element);
 }
 
-static const QualifiedName& NODELETE frameOwnerURLAttributeName(const HTMLFrameOwnerElement& frameOwner)
+static const QualifiedName& LEGACY_NODELETE frameOwnerURLAttributeName(const HTMLFrameOwnerElement& frameOwner)
 {
     // FIXME: We should support all frame owners including applets.
     return is<HTMLObjectElement>(frameOwner) ? HTMLNames::dataAttr : HTMLNames::srcAttr;
@@ -217,7 +217,7 @@ void PageSerializer::serializeFrame(LocalFrame* frame)
         if (RefPtr imageElement = dynamicDowncast<HTMLImageElement>(*element)) {
             auto url = document->encodingParseURL(imageElement->attributeWithoutSynchronization(HTMLNames::srcAttr));
             RefPtr cachedImage = imageElement->cachedImage();
-            addImageToResources(cachedImage, imageElement->renderer(), url);
+            addImageToResources(cachedImage, protect(imageElement->renderer()), url);
         } else if (RefPtr linkElement = dynamicDowncast<HTMLLinkElement>(*element)) {
             if (RefPtr sheet = linkElement->sheet()) {
                 auto url = document->encodingParseURL(linkElement->attributeWithoutSynchronization(HTMLNames::hrefAttr));
@@ -280,7 +280,7 @@ void PageSerializer::addImageToResources(CachedImage* image, RenderElement* imag
     if (!image || image->image() == &Image::nullImage())
         return;
 
-    RefPtr<FragmentedSharedBuffer> data = imageRenderer ? image->imageForRenderer(imageRenderer)->data() : 0;
+    RefPtr<FragmentedSharedBuffer> data = imageRenderer ? image->image()->data() : 0;
     if (!data)
         data = image->image()->data();
 

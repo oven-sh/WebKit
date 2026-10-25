@@ -132,7 +132,7 @@ bool CachedFont::ensureCustomFontData()
         return ensureCustomFontData(nullptr);
     if (RefPtr data = m_data; !data->isContiguous())
         m_data = data->makeContiguous();
-    return ensureCustomFontData(downcast<SharedBuffer>(m_data).get());
+    return ensureCustomFontData(protect(downcast<SharedBuffer>(m_data)).get());
 }
 
 String CachedFont::calculateItemInCollection() const
@@ -166,6 +166,13 @@ bool CachedFont::ensureCustomFontData(SharedBuffer* data)
             }
             break;
         }
+        }
+
+        if (RefPtr fontCustomPlatformData = m_fontCustomPlatformData) {
+            URL sourceURL = response().url();
+            if (sourceURL.isEmpty())
+                sourceURL = url();
+            fontCustomPlatformData->setSourceURL(sourceURL.string());
         }
 
         m_hasCreatedFontDataWrappingResource = m_fontCustomPlatformData && wrapping;

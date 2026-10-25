@@ -39,7 +39,7 @@ namespace Style {
 
 // MARK: - Conversion
 
-template<> struct ToCSS<WebkitBoxReflection::Direction> { auto operator()(const WebkitBoxReflection::Direction&, const Style::ComputedStyle&) -> CSS::WebkitBoxReflection::Direction; };
+template<> struct ToCSS<WebkitBoxReflection::Direction> { CSS::WebkitBoxReflection::Direction LEGACY_NODELETE operator()(const WebkitBoxReflection::Direction&, const Style::ComputedStyle&); };
 template<> struct ToStyle<CSS::WebkitBoxReflection::Direction> { auto operator()(const CSS::WebkitBoxReflection::Direction&, const BuilderState&) -> WebkitBoxReflection::Direction; };
 
 template<> struct ToCSS<WebkitBoxReflection> { auto operator()(const WebkitBoxReflection&, const Style::ComputedStyle&) -> CSS::WebkitBoxReflection; };
@@ -98,15 +98,15 @@ auto CSSValueConversion<WebkitBoxReflect>::operator()(BuilderState& state, const
         return CSS::Keyword::None { };
 
     switch (keywordValue->valueID()) {
-    case CSSValueNone:
+    case CSSValueID::None:
         return CSS::Keyword::None { };
-    case CSSValueAbove:
+    case CSSValueID::Above:
         return WebkitBoxReflection { .direction = ReflectionDirection::Above, .offset = 0_css_px, .mask = MaskBorder { } };
-    case CSSValueBelow:
+    case CSSValueID::Below:
         return WebkitBoxReflection { .direction = ReflectionDirection::Below, .offset = 0_css_px, .mask = MaskBorder { } };
-    case CSSValueLeft:
+    case CSSValueID::Left:
         return WebkitBoxReflection { .direction = ReflectionDirection::Left,  .offset = 0_css_px, .mask = MaskBorder { } };
-    case CSSValueRight:
+    case CSSValueID::Right:
         return WebkitBoxReflection { .direction = ReflectionDirection::Right, .offset = 0_css_px, .mask = MaskBorder { } };
     default:
         state.setCurrentPropertyInvalidAtComputedValueTime();

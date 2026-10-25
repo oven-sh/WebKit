@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <WebCore/NodeIdentifier.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
@@ -45,6 +46,7 @@ struct ResizeMeshDescriptor;
 namespace WebCore {
 class NativeImage;
 class TransformationMatrix;
+struct UsedPortalTransform;
 enum class StageModeOperation : bool;
 }
 
@@ -85,6 +87,9 @@ public:
     virtual void setViewportSize(float, float) { }
     virtual void setStageMode(WebCore::StageModeOperation) { }
     virtual void setRotation(float, float = 0.f, float = 0.f) { }
+#if ENABLE(SPATIAL_PORTAL)
+    virtual void setPortalTransform(const WebCore::UsedPortalTransform&) { }
+#endif
     virtual void play(bool) = 0;
     virtual void setEnvironmentMap(WebModel::UpdateTextureDescriptor&&) = 0;
     virtual void updateContentsHeadroom(float) = 0;
@@ -93,12 +98,17 @@ public:
     virtual void processRemovals(Vector<WebModel::TypedResourceId>&& meshRemovals, Vector<WebModel::TypedResourceId>&& materialRemovals, Vector<WebModel::TypedResourceId>&& textureRemovals, CompletionHandler<void(bool)>&&) = 0;
 #if PLATFORM(COCOA)
     virtual std::optional<WebModel::Float4x4> entityTransform() const = 0;
+#if ENABLE(SPATIAL_PORTAL)
+    virtual std::optional<WebModel::Float4x4> resolvedPortalTransform() const = 0;
+#endif
     virtual Vector<MachSendRight> ioSurfaceHandles() { return { }; }
     virtual void paintCurrentFrameToImageBuffer(WebCore::RenderingResourceIdentifier, uint32_t) { }
     virtual RefPtr<WebCore::NativeImage> getCurrentFrameAsNativeImage(uint32_t) { return nullptr; }
     virtual void updateRenderBuffers(WebModel::ResizeMeshDescriptor&&) { }
     virtual void sizeDidChange(unsigned, unsigned, CompletionHandler<void(Vector<MachSendRight>&&)>&& callback) { callback({ }); }
-    virtual std::pair<simd_float4, simd_float4> getCenterAndExtents() const { return std::make_pair(simd_make_float4(0.f), simd_make_float4(0.f)); }
+    virtual void updateModel(WebCore::NodeIdentifier, Vector<WebModel::UpdateMeshDescriptor>&& descriptors) { update(WTF::move(descriptors)); }
+    virtual std::optional<std::pair<simd_float4, simd_float4>> centerAndExtents(WebCore::NodeIdentifier) const { return std::nullopt; }
+    virtual void removeModel(WebCore::NodeIdentifier) { }
 #endif
 
 protected:
@@ -121,11 +131,11 @@ WebModel::ImageAsset diffuseTexture { \
     .width = 64, \
     .height = 64, \
     .depth = 1, \
-    .textureType = WebCore::WebGPU::TextureViewDimension::Cube, \
-    .pixelFormat = WebCore::WebGPU::TextureFormat::R16float, \
+    .textureType = ::WebGPU::TextureViewDimension::Cube, \
+    .pixelFormat = ::WebGPU::TextureFormat::R16float, \
     .mipmapLevelCount = 1, \
     .arrayLength = 6, \
-    .textureUsage = WebCore::WebGPU::TextureUsage::TextureBinding, \
+    .textureUsage = ::WebGPU::TextureUsage::TextureBinding, \
     .swizzle = { } \
 }; \
 WebModel::ImageAsset specularTexture { \
@@ -133,11 +143,11 @@ WebModel::ImageAsset specularTexture { \
     .width = 256, \
     .height = 256, \
     .depth = 1, \
-    .textureType = WebCore::WebGPU::TextureViewDimension::Cube, \
-    .pixelFormat = WebCore::WebGPU::TextureFormat::R16float, \
+    .textureType = ::WebGPU::TextureViewDimension::Cube, \
+    .pixelFormat = ::WebGPU::TextureFormat::R16float, \
     .mipmapLevelCount = 9, \
     .arrayLength = 6, \
-    .textureUsage = WebCore::WebGPU::TextureUsage::TextureBinding, \
+    .textureUsage = ::WebGPU::TextureUsage::TextureBinding, \
     .swizzle = { } \
 };
 

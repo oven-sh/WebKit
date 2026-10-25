@@ -1353,6 +1353,41 @@ TEST(IPCSerialization, Basic)
     runTestNS({ [NSURLCredential credentialWithUser:@"user" password:@"password" persistence:NSURLCredentialPersistenceSynchronizable] });
 }
 
+TEST(IPCSerialization, NSErrorNetworkResolutionReport)
+{
+    NSDictionary *resolutionReport = @{
+        @"provider" : @"Cloudflare DNS",
+        @"dnsFailureReason" : @"censored",
+        @"extendedDNSErrorExtraText" : @"some extra text",
+        @"interfaces" : @[
+            @{ @"type" : @"wifi", @"name" : @"en0" },
+            @{ @"type" : @"wired", @"name" : @"en1" },
+        ],
+    };
+    NSError *originalError = [NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorCannotFindHost userInfo:@{
+        NSLocalizedDescriptionKey : @"A server with the specified hostname could not be found.",
+        @"networkResolutionReport" : resolutionReport,
+    }];
+
+    WebKit::CoreIPCError ipcError = WebKit::CoreIPCError(originalError);
+    RetainPtr<id> roundTripped = ipcError.toID();
+    NSDictionary *roundTrippedReport = [[roundTripped userInfo] objectForKey:@"networkResolutionReport"];
+    ASSERT_TRUE([roundTrippedReport isKindOfClass:NSDictionary.class]);
+    EXPECT_TRUE([[roundTrippedReport objectForKey:@"dnsFailureReason"] isEqual:@"censored"]);
+    EXPECT_TRUE([[roundTrippedReport objectForKey:@"provider"] isEqual:@"Cloudflare DNS"]);
+    EXPECT_TRUE([[roundTrippedReport objectForKey:@"extendedDNSErrorExtraText"] isEqual:@"some extra text"]);
+
+    NSArray *roundTrippedInterfaces = [roundTrippedReport objectForKey:@"interfaces"];
+    ASSERT_TRUE([roundTrippedInterfaces isKindOfClass:NSArray.class]);
+    ASSERT_EQ([roundTrippedInterfaces count], (NSUInteger)2);
+    EXPECT_TRUE([[[roundTrippedInterfaces objectAtIndex:0] objectForKey:@"type"] isEqual:@"wifi"]);
+    EXPECT_TRUE([[[roundTrippedInterfaces objectAtIndex:0] objectForKey:@"name"] isEqual:@"en0"]);
+    EXPECT_TRUE([[[roundTrippedInterfaces objectAtIndex:1] objectForKey:@"type"] isEqual:@"wired"]);
+    EXPECT_TRUE([[[roundTrippedInterfaces objectAtIndex:1] objectForKey:@"name"] isEqual:@"en1"]);
+
+    runTestNS({ (NSError *)roundTripped.get() });
+}
+
 #if HAVE(WK_SECURE_CODING_SECTRUST)
 String cert1(""
     "MIIHezCCBmOgAwIBAgIQfrZYqgaHdOKdEb5ZVqa0LTANBgkqhkiG9w0BAQsFADBRMQswCQYDVQQGEw"
@@ -1732,7 +1767,7 @@ TEST(IPCSerialization, NSURLRequest)
     runTestNS({ urlRequest });
 }
 
-#if PLATFORM(COCOA) && HAVE(WK_SECURE_CODING_NSURLREQUEST)
+#if PLATFORM(COCOA)
 
 @interface NSURLRequest (WKSecureCoding)
 - (NSDictionary *)_webKitPropertyListData;
@@ -1921,7 +1956,7 @@ TEST(IPCSerialization, NSURLRequestAttribution)
     EXPECT_EQ([reconstructed attribution], NSURLRequestAttributionUser);
 }
 
-#endif // PLATFORM(COCOA) && HAVE(WK_SECURE_CODING_NSURLREQUEST)
+#endif // PLATFORM(COCOA)
 
 #if USE(AVFOUNDATION) && PLATFORM(MAC)
 TEST(IPCSerialization, AVOutputContext)
@@ -2726,6 +2761,7 @@ TEST(IPCSerialization, PKPaymentMethod)
     data1.type = WebKit::PKPaymentMethodType::Credit;
     data1.displayName = @"WebKitPay";
     data1.network = @"WebKitCard";
+    data1.issuingRegionCode = @"GB";
     data1.billingAddress = billingContact.get();
     data1.installmentBindToken = @"TestBindToken123";
     data1.usePeerPaymentBalance = true;
@@ -2738,6 +2774,10 @@ TEST(IPCSerialization, PKPaymentMethod)
     EXPECT_TRUE([reconstructedMethod1.displayName isEqualToString:@"WebKitPay"]);
     EXPECT_TRUE([reconstructedMethod1.network isEqualToString:@"WebKitCard"]);
     EXPECT_EQ(reconstructedMethod1.type, PKPaymentMethodTypeCredit);
+#if HAVE(PASSKIT_ISSUING_REGION_CODE)
+    if ([reconstructedMethod1 respondsToSelector:@selector(issuingRegionCode)])
+        EXPECT_TRUE([reconstructedMethod1.issuingRegionCode isEqualToString:@"GB"]);
+#endif
     runTestNS({ reconstructedMethod1 });
 
     // Test with different types set

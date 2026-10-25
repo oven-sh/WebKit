@@ -42,7 +42,7 @@ namespace Style {
 auto CSSValueConversion<LineHeight>::operator()(BuilderState& state, const CSSValue& value, float multiplier) -> LineHeight
 {
     if (RefPtr keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
-        if (auto valueID = keywordValue->valueID(); valueID == CSSValueNormal || CSSPropertyParserHelpers::isSystemFontShorthand(valueID))
+        if (auto valueID = keywordValue->valueID(); valueID == CSSValueID::Normal || CSSPropertyParserHelpers::isSystemFontShorthand(valueID))
             return CSS::Keyword::Normal { };
 
         state.setCurrentPropertyInvalidAtComputedValueTime();
@@ -80,11 +80,12 @@ auto CSSValueConversion<LineHeight>::operator()(BuilderState& state, const CSSVa
     };
 
     auto handleCalc = [&](const auto& calc) {
-        auto textZoomFactor = ZoomFactor { state.zoomWithTextZoomFactor() };
-        auto percentageBasis = state.style().fontDescription().unzoomedUsedSize();
+        // Length leaves already had text zoom applied when they were resolved, so only the percentage basis needs it.
+        auto textZoomFactor = state.zoomWithTextZoomFactor();
+        auto percentageBasis = state.style().fontDescription().unzoomedUsedSize() * textZoomFactor;
 
         return CSS::clampingToRangeOf<LineHeight::Length>(
-            evaluate<float>(calc, percentageBasis, textZoomFactor) * multiplier
+            evaluate<float>(calc, percentageBasis, ZoomFactor::none()) * multiplier
         );
     };
 

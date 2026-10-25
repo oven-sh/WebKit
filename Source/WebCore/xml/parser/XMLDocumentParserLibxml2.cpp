@@ -257,7 +257,7 @@ public:
         callback->call(parser);
     }
 
-    bool NODELETE isEmpty() const { return m_callbacks.isEmpty(); }
+    bool LEGACY_NODELETE isEmpty() const { return m_callbacks.isEmpty(); }
 
 private:
     struct PendingCallback {
@@ -407,7 +407,7 @@ public:
     {
     }
 
-    int readOutBytes(std::span<char> outputBuffer)
+    int LEGACY_NODELETE readOutBytes(std::span<char> outputBuffer)
     {
         size_t bytesLeft = m_buffer.size() - m_currentOffset;
         size_t lengthToCopy = std::min(outputBuffer.size(), bytesLeft);
@@ -527,7 +527,7 @@ static void* openFunc(const char* uri)
             FetchOptions options;
             options.mode = FetchOptions::Mode::SameOrigin;
             options.credentials = FetchOptions::Credentials::Include;
-            cachedResourceLoader->frame()->loader().loadResourceSynchronously(URL { url }, ClientCredentialPolicy::MayAskClientForCredentials, options, { }, error, response, data);
+            protect(cachedResourceLoader->frame()->loader())->loadResourceSynchronously(URL { url }, ClientCredentialPolicy::MayAskClientForCredentials, options, { }, error, response, data);
 
             if (response.url().isEmpty()) {
                 if (RefPtr frame = document ? document->frame() : nullptr)
@@ -548,7 +548,7 @@ static void* openFunc(const char* uri)
     return new OffsetBuffer(Vector(data->span()));
 }
 
-static int readFunc(void* context, char* buffer, int len)
+static int LEGACY_NODELETE readFunc(void* context, char* buffer, int len)
 {
     // Do 0-byte reads in case of a null descriptor
     if (context == &globalDescriptor)
@@ -558,13 +558,13 @@ static int readFunc(void* context, char* buffer, int len)
     return data->readOutBytes(unsafeMakeSpan(buffer, len));
 }
 
-static int NODELETE writeFunc(void*, const char*, int)
+static int LEGACY_NODELETE writeFunc(void*, const char*, int)
 {
     // Always just do 0-byte writes
     return 0;
 }
 
-static int NODELETE closeFunc(void* context)
+static int closeFunc(void* context)
 {
     if (context != &globalDescriptor) {
         OffsetBuffer* data = static_cast<OffsetBuffer*>(context);
@@ -574,7 +574,7 @@ static int NODELETE closeFunc(void* context)
 }
 
 #if ENABLE(XSLT)
-static void NODELETE errorFunc(void*, const char*, ...)
+static void LEGACY_NODELETE errorFunc(void*, const char*, ...)
 {
     // FIXME: It would be nice to display error messages somewhere.
 }
@@ -620,12 +620,13 @@ Ref<XMLParserContext> XMLParserContext::createStringParser(xmlSAXHandlerPtr hand
 
 
 // Chunk should be encoded in UTF-8
-RefPtr<XMLParserContext> XMLParserContext::createMemoryParser(xmlSAXHandlerPtr handlers, void* userData, const CString& chunk)
+RefPtr<XMLParserContext> XMLParserContext::createMemoryParser(xmlSAXHandlerPtr handlers, void* userData, const UTF8CString& chunk)
 {
     initializeXMLParser();
 
     // appendFragmentSource() checks that the length doesn't overflow an int.
-    xmlParserCtxtPtr parser = xmlCreateMemoryParserCtxt(chunk.data(), chunk.length());
+    auto chunkCharacters = byteCast<char>(chunk.span());
+    xmlParserCtxtPtr parser = xmlCreateMemoryParserCtxt(chunkCharacters.data(), chunkCharacters.size());
 
     if (!parser)
         return nullptr;
@@ -669,7 +670,7 @@ XMLDocumentParser::XMLDocumentParser(Document& document, IsInFrameView isInFrame
 }
 
 XMLDocumentParser::XMLDocumentParser(DocumentFragment& fragment, HashMap<AtomString, AtomString>&& prefixToNamespaceMap, const AtomString& defaultNamespaceURI, OptionSet<ParserContentPolicy> parserContentPolicy)
-    : ScriptableDocumentParser(fragment.document(), parserContentPolicy)
+    : ScriptableDocumentParser(protect(fragment.document()), parserContentPolicy)
     , m_pendingCallbacks(makeUniqueRef<PendingCallbacks>())
     , m_currentNode(&fragment)
     , m_maxEntityExpansionCount(fragment.document().settings().maximumXMLParserEntityExpansionCount())
@@ -1186,7 +1187,7 @@ void XMLDocumentParser::internalSubset(const xmlChar* name, const xmlChar* exter
         document->parserAppendChild(DocumentType::create(*document, toString(name), toString(externalID), toString(systemID)));
 }
 
-static inline XMLDocumentParser* NODELETE getParser(void* closure)
+static inline XMLDocumentParser* LEGACY_NODELETE getParser(void* closure)
 {
     xmlParserCtxtPtr ctxt = static_cast<xmlParserCtxtPtr>(closure);
     return static_cast<XMLDocumentParser*>(ctxt->_private);
@@ -1260,7 +1261,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 // if libxml implementation details were to change
 static std::array<xmlChar, 9> sharedXHTMLEntityResult = { };
 
-static xmlEntityPtr NODELETE sharedXHTMLEntity()
+static xmlEntityPtr LEGACY_NODELETE sharedXHTMLEntity()
 {
     static xmlEntity entity;
     if (!entity.type) {
@@ -1357,6 +1358,15 @@ xmlEntityPtr XMLDocumentParser::getEntity(const xmlChar* name)
 
 void XMLDocumentParser::entityDecl(const xmlChar* name, int type, const xmlChar* publicId, const xmlChar* systemId, xmlChar* content)
 {
+    // External general parsed entities are the only external DTD construct WebKit still loads:
+    // external DTD subsets are never fetched because XML_PARSE_DTDLOAD is not set and
+    // externalSubsetHandler does not call xmlSAX2ExternalSubset, and parameter entities never
+    // resolve because sax.getParameterEntity is null.
+    if (type == XML_EXTERNAL_GENERAL_PARSED_ENTITY) {
+        if (RefPtr document = this->document())
+            document->logXMLExternalEntityDeprecationWarningIfNeeded();
+    }
+
     auto contentString = toString(content);
     if (type == XML_INTERNAL_GENERAL_ENTITY && contentString.contains('&')) {
         m_deferredEntityDeclarations.append({
@@ -1498,14 +1508,14 @@ static void externalSubsetHandler(void* closure, const xmlChar*, const xmlChar* 
         getParser(closure)->setIsXHTMLDocument(true); // controls if we replace entities or not.
 }
 
-static void NODELETE ignorableWhitespaceHandler(void*, const xmlChar*, int)
+static void LEGACY_NODELETE ignorableWhitespaceHandler(void*, const xmlChar*, int)
 {
     // nothing to do, but we need this to work around a crasher
     // http://bugzilla.gnome.org/show_bug.cgi?id=172255
     // http://bugs.webkit.org/show_bug.cgi?id=5792
 }
 
-void XMLDocumentParser::initializeParserContext(const CString& chunk)
+void XMLDocumentParser::initializeParserContext(const UTF8CString& chunk)
 {
     xmlSAXHandler sax;
     zeroBytes(sax);
@@ -1583,7 +1593,7 @@ void XMLDocumentParser::doEnd()
 }
 
 #if ENABLE(XSLT)
-static inline const char* NODELETE nativeEndianUTF16Encoding()
+static inline const char* LEGACY_NODELETE nativeEndianUTF16Encoding()
 {
     const unsigned char BOMHighByte = *reinterpret_cast<const unsigned char*>(&byteOrderMark);
     return BOMHighByte == 0xFF ? "UTF-16LE" : "UTF-16BE";

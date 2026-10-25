@@ -26,6 +26,7 @@
 #pragma once
 
 #include "ImageBuffer.h"
+#include "NativeImage.h"
 #include "RenderReplaced.h"
 
 namespace WebCore {
@@ -38,6 +39,7 @@ public:
     virtual ~RenderViewTransitionCapture();
 
     void setImage(RefPtr<ImageBuffer>);
+    void setDisplayOnlyImage(RefPtr<NativeImage>&&);
     bool setCapturedSize(const LayoutSize&, const LayoutRect& overflowRect, const LayoutPoint& layerToLayoutOffset);
 
     void paintReplaced(PaintInfo&, const LayoutPoint& paintOffset) override;
@@ -57,16 +59,20 @@ public:
     // Inset of the scaled capture from the visualOverflowRect()
     LayoutPoint captureContentInset() const;
 
-    bool canUseExistingLayers() const;
+    bool LEGACY_NODELETE canUseExistingLayers() const;
 
-    bool NODELETE paintsContent() const final;
+    bool LEGACY_NODELETE paintsContent() const final;
 
     bool isRootElementCapture() const { return m_isRootElementCapture; }
 
-    RefPtr<ImageBuffer> image();
+    RefPtr<ImageBuffer> LEGACY_NODELETE image();
+    RefPtr<NativeImage> displayOnlyImage() const;
 
 private:
     ASCIILiteral renderName() const override { return "RenderViewTransitionCapture"_s; }
+
+    NaturalDimensions zoomedNaturalDimensions() const final;
+
     String debugDescription() const override;
 
     void updateFromStyle() override;
@@ -74,6 +80,7 @@ private:
     Node* nodeForHitTest() const override;
 
     RefPtr<ImageBuffer> m_oldImage;
+    RefPtr<NativeImage> m_oldDisplayOnlyImage;
     // The overflow rect that the captured image represents, in RenderLayer coordinates
     // of the captured renderer (see layerToLayoutOffset in ViewTransition.cpp).
     // The intrisic size subset of the image is stored as the intrinsic size of the RenderReplaced.

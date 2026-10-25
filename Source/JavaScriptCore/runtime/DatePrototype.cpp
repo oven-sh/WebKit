@@ -317,7 +317,7 @@ void DatePrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 
     if (Options::useTemporal()) {
         Identifier toTemporalInstantName = Identifier::fromString(vm, "toTemporalInstant"_s);
-        JSFunction* toTemporalInstantFunction = JSFunction::create(vm, globalObject, 0, toTemporalInstantName.string(), dateProtoFuncToTemporalInstant, ImplementationVisibility::Public);
+        JSFunction* toTemporalInstantFunction = JSFunction::create(vm, globalObject, 0, toTemporalInstantName.string(), JSC_REGISTERED_HOST_FUNCTION(dateProtoFuncToTemporalInstant), ImplementationVisibility::Public);
         putDirectWithoutTransition(vm, toTemporalInstantName, toTemporalInstantFunction, static_cast<unsigned>(PropertyAttribute::DontEnum));
     }
     // The constructor will be added later, after DateConstructor has been built.

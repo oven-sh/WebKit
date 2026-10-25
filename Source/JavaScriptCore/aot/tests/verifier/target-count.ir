@@ -1,0 +1,18 @@
+# A terminator without case targets has one target per name
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: TargetCountMismatch 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bad" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1()
+  b1():
+    Return
+}
+function f1 name="good" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}

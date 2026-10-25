@@ -26,7 +26,7 @@
 #include "config.h"
 #include "B3WasmArraySetValue.h"
 
-#if ENABLE(B3_JIT)
+#if ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)
 
 #include "B3ValueInlines.h"
 
@@ -34,8 +34,8 @@ namespace JSC::B3 {
 
 WasmArraySetValue::~WasmArraySetValue() = default;
 
-WasmArraySetValue::WasmArraySetValue(Kind kind, Origin origin, Value* arrayPtr, Value* index, Value* value, Ref<const Wasm::RTT> rtt)
-    : WasmArrayElementValue(CheckedOpcode, kind, Void, Three, origin, WTF::move(rtt), Mutability::Mutable, arrayPtr, index, value)
+WasmArraySetValue::WasmArraySetValue(Kind kind, Origin origin, Value* arrayPtr, Value* index, Value* value, Ref<const Wasm::RTT> rtt, Mutability mutability)
+    : WasmArrayElementValue(CheckedOpcode, kind, Void, Three, origin, WTF::move(rtt), mutability, arrayPtr, index, value)
 {
 }
 
@@ -46,4 +46,4 @@ void WasmArraySetValue::dumpMeta(CommaPrinter& comma, PrintStream& out) const
 
 } // namespace JSC::B3
 
-#endif // ENABLE(B3_JIT)
+#endif // ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)

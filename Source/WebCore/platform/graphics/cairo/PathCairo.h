@@ -68,7 +68,7 @@ public:
     void add(PathContinuousRoundedRect) final;
     void add(PathCloseSubpath) final;
 
-    bool applyElements(const PathElementApplier&) const final;
+    bool applyElements(NOESCAPE const PathElementApplier&) const final;
 
     bool transform(const AffineTransform&) final;
 
@@ -83,7 +83,7 @@ private:
     FloatRect fastBoundingRect() const final;
     FloatRect boundingRect() const final;
 
-    RefPtr<cairo_t> m_platformPath;
+    const RefPtr<cairo_t> m_platformPath;
     RefPtr<PathStream> m_elementsStream;
 };
 

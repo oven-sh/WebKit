@@ -33,7 +33,7 @@
 #include "B3ConstPtrValue.h"
 #include "B3ValueInlines.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(B3_JIT)
 
 namespace JSC { namespace FTL {
 
@@ -55,12 +55,9 @@ void CommonValues::initializeConstants(B3::Procedure& proc, B3::BasicBlock* bloc
     intPtrEight = block->appendNew<ConstPtrValue>(proc, Origin(), 8);
     doubleZero = block->appendNew<ConstDoubleValue>(proc, Origin(), 0.);
     doubleEncodeOffsetAsDouble = block->appendNew<ConstDoubleValue>(proc, Origin(), std::bit_cast<double>(JSValue::DoubleEncodeOffset));
-#if USE(BIGINT32)
-    bigInt32Zero = block->appendNew<Const64Value>(proc, Origin(), JSValue::BigInt32Tag);
-#endif
 }
 
 } } // namespace JSC::FTL
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(B3_JIT)
 

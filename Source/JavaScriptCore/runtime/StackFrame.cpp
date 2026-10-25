@@ -33,6 +33,9 @@
 #include "JSFunctionInlines.h"
 #include <wtf/text/MakeString.h>
 
+#include "AOTFunctionDescription.h"
+#include "AOTStackTrace.h"
+
 namespace JSC {
 
 StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee)
@@ -70,6 +73,84 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, CodeBlock* codeBlock, BytecodeInde
         bytecodeIndex
     })
 {
+}
+
+#if ENABLE(AOT)
+void StackFrame::appendCompiledFrames(const AOT::ReturnAddressTrace& trace, Vector<StackFrame>& results)
+{
+    results.reserveCapacity(results.size() + std::min<uint32_t>(trace.limit, trace.numberOfReturnAddresses));
+    AOT::forEachShownFrame(trace, [&](const AOT::TraceFrame& frame) {
+        results.constructAndAppend(frame);
+    });
+}
+
+std::optional<AOT::SourcePosition> StackFrame::compiledPosition() const
+{
+    return isCompiledFrame() ? AOT::positionOf(compiledFrame()) : std::nullopt;
+}
+
+static String compiledSourceURL(const std::optional<AOT::SourcePosition>& position)
+{
+    return position && position->source ? AOT::sourceURLOf(position->source) : emptyString();
+}
+
+static String compiledFunctionName(VM& vm, const CompiledFrameData& compiledFrame)
+{
+    AOT::FunctionDescription description(compiledFrame.frame.function);
+    if (description.codeType() == ModuleCode)
+        return "module code"_s;
+    if (!compiledFrame.isAsyncFrame)
+        return description.nameInFrames(vm);
+    String name = description.name(vm);
+    if (name.isEmpty() || description.isNamedByOwner())
+        return emptyString();
+    return makeString("async "_s, name);
+}
+#endif
+
+ScriptExecutable* StackFrame::ownerExecutable() const
+{
+    auto* codeBlock = this->codeBlock();
+    return codeBlock ? codeBlock->ownerExecutable() : nullptr;
+}
+
+CodeType StackFrame::codeType() const
+{
+#if ENABLE(AOT)
+    if (isCompiledFrame())
+        return AOT::FunctionDescription(compiledFrame().function).codeType();
+#endif
+    return codeBlock()->codeType();
+}
+
+bool StackFrame::isConstructor() const
+{
+#if ENABLE(AOT)
+    if (isCompiledFrame()) {
+        auto& frame = compiledFrame();
+        AOT::FunctionDescription description(frame.function);
+        return frame.isConstructCall || description.isConstructor() || description.builtinKind() == AOT::StackTraceBuiltinKind::JSBuiltinConstructor;
+    }
+#endif
+    return codeBlock()->isConstructor();
+}
+
+bool StackFrame::representsHostFunction() const
+{
+#if ENABLE(AOT)
+    if (isCompiledFrame())
+        return AOT::FunctionDescription(compiledFrame().function).builtinKind() == AOT::StackTraceBuiltinKind::HostFunction;
+#endif
+    return false;
+}
+
+bool StackFrame::isBuiltinFunction() const
+{
+#if ENABLE(AOT)
+    if (isCompiledFrame())
+        return AOT::FunctionDescription(compiledFrame().function).builtinKind() != AOT::StackTraceBuiltinKind::None;
+#endif
+    return codeBlock()->unlinkedCodeBlock()->isBuiltinFunction();
 }
 
 StackFrame::StackFrame(Wasm::IndexOrName indexOrName)
@@ -116,6 +197,9 @@ void StackFrame::visitAggregate(Visitor& visitor)
                 visitor.append(jsFrame.codeBlock);
         },
         [](const WasmFrameData&) { }
+#if ENABLE(AOT)
+        , [](const CompiledFrameData&) { }
+#endif
     );
 }
 template void StackFrame::visitAggregate(AbstractSlotVisitor&);
@@ -128,6 +212,9 @@ bool StackFrame::isMarked(VM& vm) const
             return (!jsFrame.callee || vm.heap.isMarked(jsFrame.callee.get())) && (!jsFrame.codeBlock || vm.heap.isMarked(jsFrame.codeBlock.get()));
         },
         [](const WasmFrameData&) { return true; }
+#if ENABLE(AOT)
+        , [](const CompiledFrameData&) { return true; }
+#endif
     );
 }
 
@@ -175,6 +262,11 @@ String StackFrame::sourceURL(VM& vm, AllowURLOverride allowOverride) const
                 return makeString("wasm-function["_s, wasmFrame.functionIndex, ']');
             return makeString(moduleName, ":wasm-function["_s, wasmFrame.functionIndex, ']');
         }
+#if ENABLE(AOT)
+        , [this](const CompiledFrameData&) -> String {
+            return compiledSourceURL(compiledPosition());
+        }
+#endif
     );
 }
 
@@ -199,6 +291,11 @@ String StackFrame::sourceURLStripped(VM& vm) const
                 return makeString("wasm-function["_s, wasmFrame.functionIndex, ']');
             return makeString(moduleName, ":wasm-function["_s, wasmFrame.functionIndex, ']');
         }
+#if ENABLE(AOT)
+        , [this](const CompiledFrameData&) -> String {
+            return compiledSourceURL(compiledPosition());
+        }
+#endif
     );
 }
 
@@ -241,6 +338,11 @@ String StackFrame::functionName(VM& vm) const
                 return WTF::toString(wasmFrame.functionIndexOrName.index());
             return WTF::toString(wasmFrame.functionIndexOrName.name()->span());
         }
+#if ENABLE(AOT)
+        , [&vm](const CompiledFrameData& compiledFrame) -> String {
+            return compiledFunctionName(vm, compiledFrame);
+        }
+#endif
     );
 }
 
@@ -257,6 +359,10 @@ LineColumn StackFrame::computeLineAndColumn() const
 
         return lineColumn;
     }
+#if ENABLE(AOT)
+    if (auto position = compiledPosition())
+        return position->lineColumn;
+#endif
     return { };
 }
 
@@ -288,6 +394,8 @@ String StackFrame::toString(VM& vm) const
     String fullSourceURL = this->sourceURLStripped(vm);
     auto sourceURL = truncateLongDataURL(fullSourceURL);
 
+    if (sourceURL.isEmpty() && representsHostFunction())
+        return makeString(functionName, "@[native code]"_s);
     if (sourceURL.isEmpty() || !hasLineAndColumnInfo())
         return makeString(functionName, '@', sourceURL);
 

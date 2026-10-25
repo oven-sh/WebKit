@@ -82,7 +82,7 @@ CoordinatedPlatformLayerBufferNativeImage::CoordinatedPlatformLayerBufferNativeI
     if (!textureID)
         return;
 
-    m_buffer = CoordinatedPlatformLayerBufferRGB::create(*textureID, m_image->size(), m_flags, GLFence::create(display.glDisplay()));
+    lazyInitialize(m_buffer, CoordinatedPlatformLayerBufferRGB::create(*textureID, m_image->size(), m_flags, GLFence::create(display.glDisplay())));
 #endif
 }
 
@@ -94,6 +94,7 @@ CoordinatedPlatformLayerBufferNativeImage::~CoordinatedPlatformLayerBufferNative
     // GPU resources on the wrong thread corrupts Skia's GrResourceCache.
     if (m_image && m_image->platformImage() && m_image->platformImage()->isTextureBacked()) {
         callOnMainThread([image = WTF::move(m_image)]() mutable {
+            PlatformDisplay::makeSkiaGLContextCurrentIfExists();
             image = nullptr;
         });
     }
@@ -134,7 +135,7 @@ bool CoordinatedPlatformLayerBufferNativeImage::tryEnsureBuffer()
     texture->updateContents(pixmap.addr(), IntRect(IntPoint(), m_size), IntPoint(), image->imageInfo().minRowBytes(), PixelFormat::BGRA8);
 #endif
 
-    m_buffer = CoordinatedPlatformLayerBufferRGB::create(WTF::move(texture), m_flags, nullptr);
+    lazyInitialize(m_buffer, CoordinatedPlatformLayerBufferRGB::create(WTF::move(texture), m_flags, nullptr));
     return true;
 }
 

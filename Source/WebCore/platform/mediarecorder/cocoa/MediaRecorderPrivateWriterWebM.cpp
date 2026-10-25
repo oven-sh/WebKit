@@ -42,11 +42,11 @@
 #import <pal/cf/CoreMediaSoftLink.h>
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(mkvmuxer::AudioTrack)
-    static bool NODELETE isType(const mkvmuxer::Track& track) { return track.type() == mkvmuxer::Tracks::kAudio; }
+    static bool LEGACY_NODELETE isType(const mkvmuxer::Track& track) { return track.type() == mkvmuxer::Tracks::kAudio; }
 SPECIALIZE_TYPE_TRAITS_END()
 
 SPECIALIZE_TYPE_TRAITS_BEGIN(mkvmuxer::VideoTrack)
-    static bool NODELETE isType(const mkvmuxer::Track& track) { return track.type() == mkvmuxer::Tracks::kVideo; }
+    static bool LEGACY_NODELETE isType(const mkvmuxer::Track& track) { return track.type() == mkvmuxer::Tracks::kVideo; }
 SPECIALIZE_TYPE_TRAITS_END()
 
 namespace WebCore {
@@ -56,7 +56,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(MediaRecorderPrivateWriterWebM);
 static constexpr auto kH264CodecId = "V_MPEG4/ISO/AVC"_s;
 static constexpr auto kPcmCodecId = "A_PCM/FLOAT/IEEE"_s;
 
-static const char* NODELETE mkvCodeIcForMediaVideoCodecId(FourCC codec)
+static const char* LEGACY_NODELETE mkvCodeIcForMediaVideoCodecId(FourCC codec)
 {
     switch (codec.value) {
     case 'vp08': return mkvmuxer::Tracks::kVp8CodecId;
@@ -183,7 +183,8 @@ MediaRecorderPrivateWriterWebM::Result MediaRecorderPrivateWriterWebM::writeFram
     for (auto& block : sample) {
         ASSERT(block.data);
         Ref buffer = Ref { *block.data }->makeContiguous();
-        success &= m_delegate->addFrame(buffer->span(), sample.trackID(), Seconds { block.presentationTime.toDouble() }.nanosecondsAs<uint64_t>(), block.isSync());
+        auto rawPresentationTime = block.presentationTime - block.trimInterval.first;
+        success &= m_delegate->addFrame(buffer->span(), sample.trackID(), Seconds { rawPresentationTime.toDouble() }.nanosecondsAs<uint64_t>(), block.isSync());
     }
     return success ? Result::Success : Result::Failure;
 }

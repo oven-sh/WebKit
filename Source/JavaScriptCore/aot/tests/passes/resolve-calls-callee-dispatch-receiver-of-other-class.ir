@@ -1,0 +1,33 @@
+# `this.describe()` of a base constructor has the methods of the class and of its subclass as callees. Inlined under `new Widget()` the receiver is known to be a Widget, and the dispatch on the callee
+# still has an arm for the method of Button, whose `this` is proven to be a Button. The conversion of the receiver says that the arm is never reached: the arm ends there, no call follows the value that never completes.
+# A receiver that may have the class of the callee is converted and passed on.
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Widget" constructor=f0 flow={baseState=None}
+layout L1 kind=Instance name="Button" base=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0}
+function f0 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="Button" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f2 name="describeWidget" kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+    Return
+}
+function f3 name="describeButton" kind=Method flags=[HasThis] thisType={type=L1} results=[{type=anything}] {
+    Return
+}
+
+function f4 name="receiver-is-a-widget" parameters=[{type=f2|f3}, {type=L0}] results=[{type=anything}] {
+    v2 = Call v0, v1
+    Return v2
+# CHECK: = CallDirect v1 function=f2
+# CHECK: [[never]]: never = {{*}} v1 castType=L1
+# CHECK-NEXT: Unreachable
+# CHECK-NOT: function=f3
+}
+function f5 name="receiver-is-either" parameters=[{type=f2|f3}, {type=L0|L1}] results=[{type=anything}] {
+    v2 = Call v0, v1
+    Return v2
+# CHECK: = CallDirect {{*}} function=f2
+# CHECK: = CallDirect {{*}} function=f3
+}

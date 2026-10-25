@@ -31,8 +31,8 @@
 #include <wtf/CheckedPtr.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
-#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/RefPtr.h>
+#include <wtf/ThreadSafeWeakPtr.h>
 
 namespace WebCore {
 
@@ -40,7 +40,7 @@ class DisplayAnimationClient;
 class DisplayRefreshMonitorClient;
 class DisplayRefreshMonitorFactory;
 
-class DisplayRefreshMonitor : public ThreadSafeRefCounted<DisplayRefreshMonitor> {
+class DisplayRefreshMonitor : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<DisplayRefreshMonitor> {
     friend class DisplayRefreshMonitorManager;
 public:
     static RefPtr<DisplayRefreshMonitor> create(DisplayRefreshMonitorFactory*, PlatformDisplayID);
@@ -89,11 +89,11 @@ protected:
     WEBCORE_EXPORT void displayDidRefresh(const DisplayUpdate&);
 
 private:
-    bool NODELETE firedAndReachedMaxUnscheduledFireCount() WTF_REQUIRES_LOCK(m_lock);
+    bool LEGACY_NODELETE firedAndReachedMaxUnscheduledFireCount() WTF_REQUIRES_LOCK(m_lock);
 
     virtual void adjustPreferredFramesPerSecond(FramesPerSecond) { }
 
-    std::optional<FramesPerSecond> maximumClientPreferredFramesPerSecond() const;
+    std::optional<FramesPerSecond> LEGACY_NODELETE maximumClientPreferredFramesPerSecond() const;
     void computeMaxPreferredFramesPerSecond();
 
     HashSet<CheckedPtr<DisplayRefreshMonitorClient>> m_clients;

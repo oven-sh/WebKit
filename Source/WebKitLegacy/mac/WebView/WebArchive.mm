@@ -44,7 +44,7 @@
 #import <wtf/cocoa/VectorCocoa.h>
 
 
-NSString *WebArchivePboardType = @"Apple Web Archive pasteboard type";
+NSString * const WebArchivePboardType = @"Apple Web Archive pasteboard type";
 
 static NSString * const WebMainResourceKey = @"WebMainResource";
 static NSString * const WebSubresourcesKey = @"WebSubresources";
@@ -110,7 +110,9 @@ static NSString * const WebSubframeArchivesKey = @"WebSubframeArchives";
 
 @end
 
-@implementation WebArchive
+@implementation WebArchive {
+    RetainPtr<WebArchivePrivate> _private;
+}
 
 - (instancetype)init
 {
@@ -119,7 +121,7 @@ static NSString * const WebSubframeArchivesKey = @"WebSubframeArchives";
     self = [super init];
     if (!self)
         return nil;
-    _private = [[WebArchivePrivate alloc] init];
+    _private = adoptNS([[WebArchivePrivate alloc] init]);
     return self;
 }
 
@@ -143,7 +145,7 @@ static BOOL isArrayOfClass(id object, Class elementClass)
     if (!self)
         return nil;
 
-    _private = [[WebArchivePrivate alloc] init];
+    _private = adoptNS([[WebArchivePrivate alloc] init]);
 
     _private->cachedMainResource = mainResource;
     if (!_private->cachedMainResource) {
@@ -166,14 +168,16 @@ static BOOL isArrayOfClass(id object, Class elementClass)
     }
 
     Vector<Ref<WebCore::ArchiveResource>> coreResources;
-    for (WebResource *subresource in subresources)
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL WebResource *subresource in subresources)
         coreResources.append(protect([subresource _coreResource].get()));
 
     Vector<Ref<WebCore::LegacyWebArchive>> coreArchives;
-    for (WebArchive *subframeArchive in subframeArchives)
-        coreArchives.append(protect(*[subframeArchive->_private coreArchive]));
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL WebArchive *subframeArchive in subframeArchives)
+        coreArchives.append(protect(*[protect(subframeArchive->_private) coreArchive]));
 
-    [_private setCoreArchive:WebCore::LegacyWebArchive::create([mainResource _coreResource].get(), WTF::move(coreResources), WTF::move(coreArchives), std::nullopt)];
+    [protect(_private) setCoreArchive:WebCore::LegacyWebArchive::create([mainResource _coreResource].get(), WTF::move(coreResources), WTF::move(coreArchives), std::nullopt)];
     return self;
 }
 
@@ -189,14 +193,14 @@ static BOOL isArrayOfClass(id object, Class elementClass)
     CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
 #endif
 
-    _private = [[WebArchivePrivate alloc] init];
+    _private = adoptNS([[WebArchivePrivate alloc] init]);
     auto coreArchive = WebCore::LegacyWebArchive::create(WebCore::SharedBuffer::create(data));
     if (!coreArchive) {
         [self release];
         return nil;
     }
         
-    [_private setCoreArchive:coreArchive.releaseNonNull()];
+    [protect(_private) setCoreArchive:coreArchive.releaseNonNull()];
         
 #if !LOG_DISABLED
     CFAbsoluteTime end = CFAbsoluteTimeGetCurrent();
@@ -238,12 +242,6 @@ static BOOL isArrayOfClass(id object, Class elementClass)
     [encoder encodeObject:[self subframeArchives] forKey:WebSubframeArchivesKey];    
 }
 
-- (void)dealloc
-{
-    [_private release];
-    [super dealloc];
-}
-
 - (id)copyWithZone:(NSZone *)zone
 {
     return [self retain];
@@ -256,7 +254,7 @@ static BOOL isArrayOfClass(id object, Class elementClass)
     // Currently from WebKit API perspective, WebArchives are entirely immutable once created
     // If they ever become mutable, we'll need to rethink this. 
     if (!_private->cachedMainResource) {
-        if (RefPtr coreArchive = [_private coreArchive]) {
+        if (RefPtr coreArchive = [protect(_private) coreArchive]) {
             if (RefPtr mainResource = coreArchive->mainResource())
                 _private->cachedMainResource = adoptNS([[WebResource alloc] _initWithCoreResource:*mainResource]);
         }
@@ -273,7 +271,7 @@ static BOOL isArrayOfClass(id object, Class elementClass)
     // Currently from WebKit API perspective, WebArchives are entirely immutable once created
     // If they ever become mutable, we'll need to rethink this.     
     if (!_private->cachedSubresources) {
-        RefPtr coreArchive = [_private coreArchive];
+        RefPtr coreArchive = [protect(_private) coreArchive];
         if (!coreArchive)
             _private->cachedSubresources = adoptNS([[NSArray alloc] init]);
         else {
@@ -298,7 +296,7 @@ static BOOL isArrayOfClass(id object, Class elementClass)
     // Currently from WebKit API perspective, WebArchives are entirely immutable once created
     // If they ever become mutable, we'll need to rethink this.  
     if (!_private->cachedSubframeArchives) {
-        RefPtr coreArchive = [_private coreArchive];
+        RefPtr coreArchive = [protect(_private) coreArchive];
         if (!coreArchive)
             _private->cachedSubframeArchives = adoptNS([[NSArray alloc] init]);
         else {
@@ -320,7 +318,7 @@ static BOOL isArrayOfClass(id object, Class elementClass)
     CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
 #endif
 
-    RetainPtr<CFDataRef> data = protect([_private coreArchive])->rawDataRepresentation();
+    RetainPtr<CFDataRef> data = protect([protect(_private) coreArchive])->rawDataRepresentation();
     
 #if !LOG_DISABLED
     CFAbsoluteTime end = CFAbsoluteTimeGetCurrent();
@@ -343,7 +341,7 @@ static BOOL isArrayOfClass(id object, Class elementClass)
     if (!self)
         return nil;
     
-    _private = [[WebArchivePrivate alloc] initWithCoreArchive:WTF::move(coreLegacyWebArchive)];
+    _private = adoptNS([[WebArchivePrivate alloc] initWithCoreArchive:WTF::move(coreLegacyWebArchive)]);
     if (!_private) {
         [self release];
         return nil;
@@ -356,7 +354,7 @@ static BOOL isArrayOfClass(id object, Class elementClass)
 {
     WebCoreThreadViolationCheckRoundTwo();
 
-    return [_private coreArchive];
+    return [protect(_private) coreArchive];
 }
 
 @end

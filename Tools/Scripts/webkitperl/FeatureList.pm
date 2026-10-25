@@ -114,6 +114,7 @@ my (
     $paymentRequestSupport,
     $pdfJS,
     $pdfkitPluginSupport,
+    $phoneNumberPossessionSupport,
     $pictureInPictureAPISupport,
     $pointerLockSupport,
     $quotaSupport,
@@ -327,6 +328,9 @@ my @features = (
 
     { option => "pdfkit-plugin", desc => "Toggle PDFKit plugin support",
       define => "ENABLE_PDFKIT_PLUGIN", value => \$pdfkitPluginSupport },
+
+    { option => "phone-number-possession", desc => "Toggle Phone Number Possession API support",
+      define => "ENABLE_PHONE_NUMBER_POSSESSION", value => \$phoneNumberPossessionSupport },
 
     { option => "picture-in-picture-api", desc => "Toggle Picture-in-Picture API support",
       define => "ENABLE_PICTURE_IN_PICTURE_API", value => \$pictureInPictureAPISupport },

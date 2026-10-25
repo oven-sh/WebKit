@@ -1,0 +1,28 @@
+# A constructor function that is only constructed stores a field once in each object, like the constructor of a class. One that somebody also calls may run again on an object that exists already
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="OnlyConstructed" {{*}}{key="p"{{*}}location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=SetAtCreation
+# CHECK: layout L1 kind=Instance name="AlsoCalled" {{*}}{key="p"{{*}}location={writers=AllKnown storeNaming=EveryStoreNamesLocation
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="OnlyConstructed" constructor=f1 fields=[{key="p" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Instance name="AlsoCalled" constructor=f2 fields=[{key="p" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Double number=1.5
+    v1 = NewClosure function=f1
+    v2 = Construct v1, -, v0
+    v3 = PropGet v2 key="p"
+    v4 = NewClosure function=f2
+    v5 = Construct v4, -, v0
+    v6 = Call v4, v5, v0
+    v7 = PropGet v5 key="p"
+    Return
+}
+function f1 name="OnlyConstructed" flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+    PropSet v0, v1 key="p" mode=Strict
+    Return
+}
+function f2 name="AlsoCalled" flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L1 {
+    PropSet v0, v1 key="p" mode=Strict
+    Return
+}

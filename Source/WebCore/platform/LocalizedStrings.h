@@ -153,7 +153,7 @@ namespace WebCore {
     WEBCORE_EXPORT String contextMenuItemTagCapitalize();
     WEBCORE_EXPORT String contextMenuItemTagConvertToTraditionalChinese();
     WEBCORE_EXPORT String contextMenuItemTagConvertToSimplifiedChinese();
-    String NODELETE contextMenuItemTagChangeBack(const String& replacedString);
+    String LEGACY_NODELETE contextMenuItemTagChangeBack(const String& replacedString);
 #endif
     String contextMenuItemTagOpenVideoInNewWindow();
     String contextMenuItemTagOpenAudioInNewWindow();
@@ -184,7 +184,7 @@ namespace WebCore {
 #endif
     WEBCORE_EXPORT String contextMenuItemTagInspectElement();
 #if HAVE(TRANSLATION_UI_SERVICES)
-    String contextMenuItemTagTranslate(const String& selectedString);
+    WEBCORE_EXPORT String contextMenuItemTagTranslate(const String& selectedString);
 #endif
 #if ENABLE(WRITING_TOOLS)
     String contextMenuItemTagWritingTools();

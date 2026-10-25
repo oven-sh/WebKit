@@ -49,6 +49,7 @@
                 { "name": "localName", "type": "string", "description": "<code>Node</code>'s localName." },
                 { "name": "nodeValue", "type": "string", "description": "<code>Node</code>'s nodeValue." },
                 { "name": "frameId", "$ref": "Network.FrameId", "optional": true, "description": "Identifier of the containing frame." },
+                { "name": "contentFrameId", "$ref": "Network.FrameId", "optional": true, "description": "Identifier of the frame hosted by a frame owner element, even when that frame is in another process." },
                 { "name": "childNodeCount", "type": "integer", "optional": true, "description": "Child count for <code>Container</code> nodes." },
                 { "name": "children", "type": "array", "optional": true, "items": { "$ref": "Node" }, "description": "Child nodes of this node when requested with children." },
                 { "name": "attributes", "type": "array", "optional": true, "items": { "type": "string" }, "description": "Attributes of the <code>Element</code> node in the form of flat array <code>[name1, value1, name2, value2]</code>." },
@@ -563,6 +564,17 @@
             ]
         },
         {
+            "name": "requestFrameOwner",
+            "description": "Requests that the frame owner element (such as <code>iframe</code>) of a child frame is sent to the caller. The child frame may be hosted by another process. All nodes that form the path from the owner element to the root are also sent to the client as a series of <code>setChildNodes</code> notifications.",
+            "targetTypes": ["frame", "page"],
+            "parameters": [
+                { "name": "frameId", "$ref": "Network.FrameId", "description": "Identifier of a frame whose owner element is in the document tree of this target." }
+            ],
+            "returns": [
+                { "name": "nodeId", "$ref": "NodeId", "description": "Node id for the frame owner element." }
+            ]
+        },
+        {
             "name": "setInspectModeEnabled",
             "description": "Enters the 'inspect' mode. In this mode, elements that user is hovering over are highlighted. Backend then generates 'inspect' command upon element selection.",
             "condition": "defined(WTF_PLATFORM_IOS_FAMILY) && WTF_PLATFORM_IOS_FAMILY",
@@ -587,8 +599,8 @@
         },
         {
             "name": "highlightRect",
-            "description": "Highlights given rectangle. Coordinates are absolute with respect to the main frame viewport.",
-            "targetTypes": ["page"],
+            "description": "Highlights given rectangle. Coordinates are absolute with respect to the target's viewport: the main frame viewport for a page target, or the frame's own viewport for a frame target.",
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "x", "type": "integer", "description": "X coordinate" },
                 { "name": "y", "type": "integer", "description": "Y coordinate" },
@@ -601,8 +613,8 @@
         },
         {
             "name": "highlightQuad",
-            "description": "Highlights given quad. Coordinates are absolute with respect to the main frame viewport.",
-            "targetTypes": ["page"],
+            "description": "Highlights given quad. Coordinates are absolute with respect to the target's viewport: the main frame viewport for a page target, or the frame's own viewport for a frame target.",
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "quad", "$ref": "Quad", "description": "Quad to highlight" },
                 { "name": "color", "$ref": "RGBAColor", "optional": true, "description": "The highlight fill color (default: transparent)." },
@@ -702,7 +714,7 @@
         {
             "name": "showGridOverlay",
             "description": "Shows a grid overlay for a node that begins a 'grid' layout context. The command has no effect if <code>nodeId</code> is invalid or the associated node does not begin a 'grid' layout context. A node can only have one grid overlay at a time; subsequent calls with the same <code>nodeId</code> will override earlier calls.",
-            "targetTypes": ["page"],
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId", "description": "The node for which a grid overlay should be shown." },
                 { "name": "gridOverlayConfig", "$ref": "GridOverlayConfig", "description": "Configuration options for the grid overlay." }
@@ -711,7 +723,7 @@
         {
             "name": "hideGridOverlay",
             "description": "Hides a grid overlay for a node that begins a 'grid' layout context. The command has no effect if <code>nodeId</code> is specified and invalid, or if there is not currently an overlay set for the <code>nodeId</code>.",
-            "targetTypes": ["page"],
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId", "optional": true, "description": "The node for which a grid overlay should be hidden. If a <code>nodeId</code> is not specified, all grid overlays will be hidden." }
             ]
@@ -719,7 +731,7 @@
         {
             "name": "showFlexOverlay",
             "description": "Shows a flex overlay for a node that begins a 'flex' layout context. The command has no effect if <code>nodeId</code> is invalid or the associated node does not begin a 'flex' layout context. A node can only have one flex overlay at a time; subsequent calls with the same <code>nodeId</code> will override earlier calls.",
-            "targetTypes": ["page"],
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId", "description": "The node for which a flex overlay should be shown." },
                 { "name": "flexOverlayConfig", "$ref": "FlexOverlayConfig", "description": "Configuration options for the flex overlay." }
@@ -728,7 +740,7 @@
         {
             "name": "hideFlexOverlay",
             "description": "Hides a flex overlay for a node that begins a 'flex' layout context. The command has no effect if <code>nodeId</code> is specified and invalid, or if there is not currently an overlay set for the <code>nodeId</code>.",
-            "targetTypes": ["page"],
+            "targetTypes": ["frame", "page"],
             "parameters": [
                 { "name": "nodeId", "$ref": "NodeId", "optional": true, "description": "The node for which a flex overlay should be hidden. If a <code>nodeId</code> is not specified, all flex overlays will be hidden." }
             ]

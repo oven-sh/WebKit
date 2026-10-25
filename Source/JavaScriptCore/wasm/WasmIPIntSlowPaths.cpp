@@ -30,6 +30,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "AOTRemovableFeature.h"
 #include "BytecodeStructs.h"
 #include "CallFrame.h"
 #include "FrameTracers.h"
@@ -227,7 +228,7 @@ static inline RefPtr<Wasm::JITCallee> jitCompileAndSetHeuristics(Wasm::IPIntCall
 
     if (compile) {
         if (Wasm::BBQPlan::ensureGlobalBBQAllowlist().containsWasmFunction(functionIndex)) {
-            auto plan = Wasm::BBQPlan::create(instance->vm(), const_cast<Wasm::ModuleInformation&>(moduleInformation), functionIndex, Ref { callee }, Ref { instance->module() }, Ref(*instance->calleeGroup()), Wasm::Plan::dontFinalize());
+            auto plan = callRemovable<RemovableFeature::JIT, RemovedFeatureStub::Abort, &Wasm::BBQPlan::create>(instance->vm(), const_cast<Wasm::ModuleInformation&>(moduleInformation), functionIndex, Ref { callee }, Ref { instance->module() }, Ref(*instance->calleeGroup()), Wasm::Plan::dontFinalize());
             Wasm::ensureWorklist().enqueue(plan.get());
             if (!Options::useConcurrentJIT() || !Options::useWasmIPInt() || needsSIMDReplacement) [[unlikely]]
                 plan->waitForCompletion();
@@ -1024,13 +1025,13 @@ WASM_IPINT_EXTERN_CPP_DECL(trace, CallFrame* callFrame, uint8_t* pc, uint8_t* mc
         IPINT_END();
 
     Wasm::IPIntCallee* callee = IPINT_CALLEE(callFrame);
-    dataLogF("<%p> %p%s / %p: executing +0x%x, %s, pc = %p, mc = %p\n",
+    SAFE_DATALOGF("<%p> %p%s / %p: executing +0x%x, %s, pc = %p, mc = %p\n",
         &Thread::currentSingleton(),
         instance,
-        makeString(callee->indexOrName()).ascii().data(),
+        makeString(callee->indexOrName()).utf8(),
         callFrame,
         static_cast<uint32_t>(pc - callee->bytecode()),
-        opcodeName(pc).characters(),
+        opcodeName(pc),
         pc, mc);
     IPINT_END();
 }

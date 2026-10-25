@@ -36,12 +36,40 @@
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/WriteBarrierInlines.h>
 
+#if ENABLE(AOT)
+#include <JavaScriptCore/AOTCompiledCallee.h>
+#include <JavaScriptCore/AOTPropertyWalk.h>
+#endif
+
 namespace JSC {
+
+inline void JSObject::setStructure(VM& vm, Structure* structure)
+{
+    ASSERT(structure);
+    ASSERT(!butterfly() == !(structure->outOfLineCapacity() || structure->hasIndexingHeader(this)));
+    JSCell::setStructure(vm, structure);
+}
 
 inline void JSObject::didBecomePrototype(VM& vm)
 {
     Structure* oldStructure = structure();
+#if ENABLE(AOT)
+    if (oldStructure->isCompiledStructure()) [[unlikely]] {
+        AOT::PropertyWalk::didBecomePrototype(vm, this);
+        oldStructure = structure();
+    }
+#endif
     if (!oldStructure->mayBePrototype()) [[unlikely]] {
+#if ENABLE(AOT)
+        if (type() == SlimClosureType) {
+            AOT::CompiledCallee::reifyProperties(vm, this);
+            oldStructure = structure();
+        }
+#endif
+        if (oldStructure->hasFrozenElementsInPlace()) [[unlikely]] {
+            moveFrozenElementsToSparseMap(vm);
+            oldStructure = structure();
+        }
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
         setStructure(vm, Structure::becomePrototypeTransition(vm, oldStructure, &deferred));
     }

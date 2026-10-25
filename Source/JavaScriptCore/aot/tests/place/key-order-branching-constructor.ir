@@ -1,0 +1,59 @@
+# A constructor that creates its fields in one of two orders has no order that flow can name, so each of its stores records its key, and a walk over the keys finds the order in the object
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses,ExpandOwnKeys heat=EverythingIsHot
+# RUN: place key-orders program
+# RUN(SLOTS): plan-slots layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Branching" constructor=f2 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+variable g0 name="object" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="values" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = NewClosure function=f2
+    v4 = NewClass v3 layout=L0
+    v5 = FinishClass v4 layout=L0
+    v6 = Construct v5, -, v2
+    PutModuleVariable v6 variable=g0
+    v8 = CallDirect function=f1
+    v9 = CallDirect function=f1
+    PutModuleVariable v9 variable=g1
+    Return
+}
+function f1 name="valuesOfObject" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = Builtin builtin=ObjectValues
+    v2 = Call v1, -, v0
+    Return v2
+}
+function f2 name="Branching" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = ToBoolean v1
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v3, v1 key="y"
+    PropSet v3, v1 key="x"
+    Return v3
+  b2():
+    PropSet v3, v1 key="x"
+    PropSet v3, v1 key="y"
+    Return v3
+}
+# CHECK: allocation {{*}} L0 fields=[] order=0 count=0
+# The arm for an object without keys answers an empty array. No finished object takes it, because the order word of each says which keys it has.
+# CHECK-LABEL: function f1 name="valuesOfObject"
+# CHECK: [[hasNoKeys]]: boolean = HasKeyOrder v0 layout=L0 orderWord=0
+# CHECK-NEXT: TestAndBranch [[hasNoKeys]] -> taken [[empty]](| 0), notTaken
+# CHECK: [[empty]](
+# CHECK-NEXT: = NewArray contents=anything
+# CHECK: = CallInline -, v0 inlineBuiltin=ObjectValues overload=ObjectValues/0
+# CHECK-LABEL: function f2 name="Branching"
+# CHECK: PutSlots [[object]], -, v1, v1 placedKeys=[{key="y" {{*}}mayAdd=true}, {key="x" {{*}}mayAdd=true}]
+# CHECK: PutSlots [[object]], -, v1, v1 placedKeys=[{key="x" {{*}}mayAdd=true}, {key="y" {{*}}mayAdd=true}]
+# SLOTS: L0 CompiledObject
+# SLOTS-NEXT: .0 "x" OptionalDouble @
+# SLOTS-NEXT: .1 "y" OptionalDouble @

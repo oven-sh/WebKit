@@ -76,4 +76,6 @@ struct AnimationEffectTiming {
     ResolvedEffectTiming resolve(const ResolutionData&) const;
 };
 
+TextStream& operator<<(TextStream&, const AnimationEffectTiming&);
+
 } // namespace WebCore

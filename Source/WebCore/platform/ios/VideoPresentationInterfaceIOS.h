@@ -34,7 +34,7 @@
 #include <WebCore/MediaPlayerIdentifier.h>
 #include <WebCore/PlatformImage.h>
 #include <WebCore/PlatformLayer.h>
-#include <WebCore/PlaybackSessionInterfaceIOS.h>
+#include <WebCore/PlaybackSessionInterfaceCocoa.h>
 #include <WebCore/VideoFullscreenCaptions.h>
 #include <WebCore/VideoPresentationLayerProvider.h>
 #include <WebCore/VideoPresentationModel.h>
@@ -94,7 +94,7 @@ public:
     WEBCORE_EXPORT void externalPlaybackChanged(bool enabled, PlaybackSessionModel::ExternalPlaybackTargetType, const String& localizedDeviceName, const String& localizedRouteName) override;
 
     WEBCORE_EXPORT void setVideoPresentationModel(VideoPresentationModel*);
-    PlaybackSessionInterfaceIOS& playbackSessionInterface() const { return m_playbackSessionInterface.get(); }
+    PlaybackSessionInterfaceCocoa& playbackSessionInterface() const { return m_playbackSessionInterface.get(); }
     PlaybackSessionModel* playbackSessionModel() const { return m_playbackSessionInterface->playbackSessionModel(); }
     virtual void setSpatialImmersive(bool) { }
     WEBCORE_EXPORT virtual void setupFullscreen(const FloatRect& initialRect, const FloatSize& videoDimensions, UIView* parentView, HTMLMediaElementEnums::VideoFullscreenMode, bool allowsPictureInPicturePlayback, bool standby, bool blocksReturnToFullscreenFromPictureInPicture);
@@ -173,7 +173,7 @@ public:
     WEBCORE_EXPORT void setMode(HTMLMediaElementEnums::VideoFullscreenMode, VideoPresentationModel::ShouldNotifyMediaElement);
     void clearMode(HTMLMediaElementEnums::VideoFullscreenMode, VideoPresentationModel::ShouldNotifyMediaElement);
     bool hasMode(HTMLMediaElementEnums::VideoFullscreenMode mode) const { return m_currentMode.hasMode(mode); }
-    WEBCORE_EXPORT UIViewController *presentingViewController();
+    WEBCORE_EXPORT RetainPtr<UIViewController> presentingViewController();
     UIViewController *fullscreenViewController() const LIFETIME_BOUND { return m_viewController.get(); }
     WEBCORE_EXPORT virtual bool pictureInPictureWasStartedWhenEnteringBackground() const = 0;
 
@@ -198,7 +198,7 @@ public:
 #endif
 
 protected:
-    WEBCORE_EXPORT VideoPresentationInterfaceIOS(PlaybackSessionInterfaceIOS&);
+    WEBCORE_EXPORT VideoPresentationInterfaceIOS(PlaybackSessionInterfaceCocoa&);
 
     RunLoop::Timer m_watchdogTimer;
     RetainPtr<UIView> m_parentView;
@@ -273,8 +273,8 @@ private:
 
     bool m_finalizeSetupNeedsVideoContentLayer { false };
     bool m_finalizeSetupNeedsReturnVideoContentLayer { false };
-    const Ref<PlaybackSessionInterfaceIOS> m_playbackSessionInterface;
-    RetainPtr<UIView> m_pipPlacard;
+    const Ref<PlaybackSessionInterfaceCocoa> m_playbackSessionInterface;
+    const RetainPtr<UIView> m_pipPlacard;
 
 #if HAVE(SPATIAL_AUDIO_EXPERIENCE)
     bool m_prefersSpatialAudioExperience { false };

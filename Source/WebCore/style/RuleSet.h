@@ -91,8 +91,8 @@ public:
 
     void addRule(const StyleRule&, unsigned selectorIndex, unsigned selectorListIndex);
     void addPageRule(StyleRulePage&);
-    void NODELETE setViewTransitionRule(StyleRuleViewTransition&);
-    RefPtr<StyleRuleViewTransition> NODELETE viewTransitionRule() const;
+    void setViewTransitionRule(StyleRuleViewTransition&);
+    RefPtr<StyleRuleViewTransition> LEGACY_NODELETE viewTransitionRule() const;
 
     void addToRuleSet(const AtomString& key, AtomRuleMap&, const RuleData&);
     void shrinkToFit();
@@ -128,6 +128,9 @@ public:
     EnumSet<PseudoElementType> universalHTMLPseudoElementTypes() const { return m_universalHTMLPseudoElementTypes; }
     // Pseudo element types applying to all elements.
     EnumSet<PseudoElementType> universalPseudoElementTypes() const { return m_universalPseudoElementTypes; }
+    // Whether any universal ::before/::after rule may generate a box.
+    PseudoElementBoxGeneration universalHTMLPseudoElementBoxGeneration() const { return m_universalHTMLPseudoElementBoxGeneration; }
+    PseudoElementBoxGeneration universalPseudoElementBoxGeneration() const { return m_universalPseudoElementBoxGeneration; }
 
     const Vector<StyleRulePage*>& pageRules() const LIFETIME_BOUND { return m_pageRules; }
 
@@ -150,10 +153,10 @@ public:
     bool hasScopeRules() const { return !m_scopeRules.isEmpty(); }
     Vector<Ref<const StyleRuleScope>> scopeRulesFor(const RuleData&) const;
 
-    const RefPtr<const StyleRulePositionTry> NODELETE positionTryRuleForName(const AtomString&) const;
+    const RefPtr<const StyleRulePositionTry> positionTryRuleForName(const AtomString&) const;
 
 #if ENABLE(SPATIAL_PORTAL)
-    RefPtr<const StyleRuleEnvironmentMap> NODELETE environmentMapRuleForName(const AtomString&) const;
+    RefPtr<const StyleRuleEnvironmentMap> LEGACY_NODELETE environmentMapRuleForName(const AtomString&) const;
 #endif
 
     WTF::String selectorsForDebugging() const;
@@ -182,8 +185,8 @@ private:
     };
     CollectedMediaQueryChanges evaluateDynamicMediaQueryRules(const MQ::MediaQueryEvaluator&, size_t startIndex);
 
-    template<typename Function> void traverseRuleDatas(Function&&);
-    template<typename Function> void traverseRuleDatas(Function&&) const;
+    template<typename Function> void traverseRuleDatas(NOESCAPE const Function&);
+    template<typename Function> void traverseRuleDatas(NOESCAPE const Function&) const;
 
     struct CascadeLayer {
         CascadeLayerName resolvedName;
@@ -245,6 +248,8 @@ private:
     RuleDataVector m_universalPseudoElementRules;
     EnumSet<PseudoElementType> m_universalHTMLPseudoElementTypes;
     EnumSet<PseudoElementType> m_universalPseudoElementTypes;
+    PseudoElementBoxGeneration m_universalHTMLPseudoElementBoxGeneration { PseudoElementBoxGeneration::NotForBeforeOrAfter };
+    PseudoElementBoxGeneration m_universalPseudoElementBoxGeneration { PseudoElementBoxGeneration::NotForBeforeOrAfter };
     Vector<StyleRulePage*> m_pageRules;
     RefPtr<StyleRuleViewTransition> m_viewTransitionRule;
     RuleFeatureSet m_features;

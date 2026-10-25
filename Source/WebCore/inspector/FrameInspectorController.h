@@ -52,17 +52,22 @@ class FrontendRouter;
 
 namespace WebCore {
 
+class FrameDebugger;
+class FrameDOMAgent;
+class GraphicsContext;
 class InspectorBackendClient;
 class InspectorController;
 class InspectorFrontendClient;
 class InspectorInstrumentation;
 class InstrumentingAgents;
 class LocalFrame;
+class Node;
 class PageInspectorController;
+class RenderObject;
 class WebInjectedScriptManager;
 struct FrameAgentContext;
 
-class FrameInspectorController final : public Inspector::InspectorEnvironment, public CanMakeCheckedPtr<FrameInspectorController> {
+class FrameInspectorController final : public Inspector::InspectorEnvironment, public InspectorOverlayOwner, public CanMakeCheckedPtr<FrameInspectorController> {
     WTF_MAKE_NONCOPYABLE(FrameInspectorController);
     WTF_MAKE_TZONE_ALLOCATED(FrameInspectorController);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FrameInspectorController);
@@ -70,15 +75,23 @@ public:
     FrameInspectorController(LocalFrame&, PageInspectorController&);
     ~FrameInspectorController() override;
 
-    // AbstractCanMakeCheckedPtr overrides
-    uint32_t checkedPtrCount() const final { return CanMakeCheckedPtr::checkedPtrCount(); }
-    uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
-    void incrementCheckedPtrCount() const final { CanMakeCheckedPtr::incrementCheckedPtrCount(); }
-    void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
-    void setDidBeginCheckedPtrDeletion() final { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeCheckedPtr);
 
-    WEBCORE_EXPORT void NODELETE ref() const;
+    WEBCORE_EXPORT void LEGACY_NODELETE ref() const;
     WEBCORE_EXPORT void deref() const;
+
+    // InspectorOverlayOwner. Anchors on the frame, which owns this controller and so the overlay.
+    void LEGACY_NODELETE overlayOwnerRef() const final { ref(); }
+    void overlayOwnerDeref() const final { deref(); }
+    Page* LEGACY_NODELETE overlayOwnerPage() const final;
+    LocalFrame* LEGACY_NODELETE overlayOwnerFrame() const final;
+    InspectorBackendClient* LEGACY_NODELETE overlayOwnerBackendClient() const final;
+    Vector<size_t> overlayOwnerFlexLineStarts(const RenderObject&) const final;
+
+    WEBCORE_EXPORT void drawHighlight(GraphicsContext&) const;
+
+    // True when this frame's own overlay holds the highlight state, not the page overlay.
+    WEBCORE_EXPORT bool LEGACY_NODELETE hasOverlayContentToDraw() const;
 
     WEBCORE_EXPORT void connectFrontend(Inspector::FrontendChannel&, bool isAutomaticInspection = false, bool immediatelyPause = false);
     WEBCORE_EXPORT void disconnectFrontend(Inspector::FrontendChannel&);
@@ -87,8 +100,16 @@ public:
     WEBCORE_EXPORT void siteIsolationFirstEnabled();
     void inspectedFrameDestroyed();
 
+    // Selects the node in the frontend. A node chosen while no frontend is connected is selected once the
+    // first one connects.
+    WEBCORE_EXPORT void inspect(Node&);
+
     InstrumentingAgents& instrumentingAgents() const { return m_instrumentingAgents.get(); }
     WebInjectedScriptManager& injectedScriptManager() const { return m_injectedScriptManager.get(); }
+
+    // Unlike debugger(), this is null while the frame's debugger exists but nothing is debugging
+    // the frame yet. Callers that hand the debugger to a global object need this narrower answer.
+    JSC::Debugger* LEGACY_NODELETE attachedDebugger() const;
 
     // InspectorEnvironment
     bool developerExtrasEnabled() const override;
@@ -112,13 +133,23 @@ private:
     const Ref<WebInjectedScriptManager> m_injectedScriptManager;
     const Ref<Inspector::FrontendRouter> m_frontendRouter;
     const Ref<Inspector::BackendDispatcher> m_backendDispatcher;
+
+    // This frame's own overlay, distinct from the page overlay owned by PageInspectorController.
+    const UniqueRef<InspectorOverlay> m_overlay;
+
     const Ref<WTF::Stopwatch> m_executionStopwatch;
-    std::unique_ptr<JSC::Debugger> m_debugger;
+    const std::unique_ptr<FrameDebugger> m_debugger;
     Inspector::AgentRegistry m_agents;
 
     bool m_didCreateConsoleAgent { false };
     bool m_didCreateLazyAgents { false };
     WeakPtr<InspectorFrontendClient> m_inspectorFrontendClient;
+
+    // Non-owning; the agent is owned by m_agents. Kept so the overlay can reach the flex line-start cache.
+    CheckedPtr<FrameDOMAgent> m_domAgent;
+
+    // Weak so a node never keeps its document alive; see inspect().
+    WeakPtr<Node, WeakPtrImplWithEventTargetData> m_pendingNodeToInspect;
 };
 
 } // namespace WebCore

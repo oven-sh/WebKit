@@ -1,0 +1,81 @@
+# A shape test by a bit set is one bit test with one exit: a shape out of the reach of the set takes the bit behind the last one, which is clear, so the answer of the range test is not made into a value and and-ed with the bit (10 bytes and 5 instructions more). Immediate bits leave for the failing side as soon as the shape is out of reach. Where every shape that reaches the test is known, the set has a bit for each of them, so none is out of reach: the distance is the index as it is (3 instructions and 14 bytes less). Two or three shapes that lie far apart are no bits: each has a slot of 16 bits, found by a multiplication, and the test compares what the slot holds with the distance, in reach or not (7 bytes less than the bit test)
+# FORM: Selected
+# OPTIONS: check=validate-back-end
+# RUN: generate-code
+# REQUIRES: unsanitized-code
+# CHECK: f2: size=
+# CHECK: f3: size=
+# CHECK: f4: size=
+# CHECK: f5: size=
+# RUN(SHAPES): pass PlanSlots NumberAndEncode
+# SHAPES: set {L5 L7 L9} bits 6..10 0x15
+# SHAPES: set {L0 L69} bitset 1..70
+# SHAPES: set {L0 L35 L69} bitset 1..70
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64 unsanitized-code
+# X64: f2: size=38 frame=none
+# X64: f3: size=48 frame=none
+# X64: f4: size=37 frame=none
+# X64: f5: size=48 frame=none
+
+module m0 path="main.js" displayPath="main.js"
+# REPEAT: i = 0..69
+layout L%(i) name="T%(i)" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+# END REPEAT
+function f0 name="allocate" parameters=[{type=number}] results=[{type=undefined}] {
+# REPEAT: i = 0..69
+    v%(i+1) = NewObject -, v0 layout=L%(i) fields=[0]
+# END REPEAT
+    Return
+}
+function f1 name="neighbors" parameters=[{type=anything}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+# REPEAT: i = 0..68
+    v%(i+2) = ShapeTest v0 layouts=[L%(i), L%(i+1)]
+# END REPEAT
+    TestAndBranch v70 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f2 name="immediateBits" parameters=[{type=anything}] results=[{type=int}] {
+    v1 = ShapeTest v0 layouts=[L5, L7, L9]
+    TestAndBranch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=0
+    Return v3
+}
+function f3 name="hashedSet" parameters=[{type=anything}] results=[{type=int}] {
+    v1 = ShapeTest v0 layouts=[L0, L69]
+    TestAndBranch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=0
+    Return v3
+}
+function f4 name="bitSetOfKnownLayouts" parameters=[{type=L0|L30|L69}] results=[{type=int}] {
+    v1 = ShapeTest v0 layouts=[L0, L69]
+    TestAndBranch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=0
+    Return v3
+}
+function f5 name="bitSetOfThree" parameters=[{type=anything}] results=[{type=int}] {
+    v1 = ShapeTest v0 layouts=[L0, L35, L69]
+    TestAndBranch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=0
+    Return v3
+}

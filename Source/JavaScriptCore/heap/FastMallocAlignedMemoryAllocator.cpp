@@ -62,15 +62,16 @@ static bool warmUpMarkedBlocksIsEnabled()
 // So the supply stays dormant until the process has requested this many blocks. A heap that
 // is ramping passes the threshold within its first milliseconds of allocation, and the helper
 // then fills the supply to its full depth as it would have from the first request.
+static std::atomic<bool> s_isPastWarmUpStartThreshold { false };
+
 static bool isPastWarmUpStartThreshold()
 {
-    static std::atomic<bool> past { false };
     static std::atomic<unsigned> requests { 0 };
-    if (past.load(std::memory_order_relaxed)) [[likely]]
+    if (s_isPastWarmUpStartThreshold.load(std::memory_order_relaxed)) [[likely]]
         return true;
     if (requests.fetch_add(1, std::memory_order_relaxed) + 1 < Options::warmUpMarkedBlockStartAfterBlocks())
         return false;
-    past.store(true, std::memory_order_relaxed);
+    s_isPastWarmUpStartThreshold.store(true, std::memory_order_relaxed);
     return true;
 }
 
@@ -167,6 +168,10 @@ private:
         }
 
         ASCIILiteral name() const final { return "JSCWarmUp"_s; }
+#if ENABLE(AOT)
+        // Whoever finds no block here makes one itself.
+        bool isOptional() const final { return true; }
+#endif
 
     protected:
         void threadDidStart() final
@@ -281,6 +286,11 @@ bool warmUpMarkedBlocksAreEnabledForTesting()
 #endif
 }
 
+void didPassWarmUpStartThresholdInAnotherAllocator()
+{
+    s_isPastWarmUpStartThreshold.store(true, std::memory_order_relaxed);
+}
+
 unsigned warmUpMarkedBlockCountForTesting()
 {
 #if USE(LIBPAS)
@@ -303,6 +313,7 @@ void setWarmUpMarkedBlockAllocationShouldFailForTesting(bool shouldFail)
 
 #else // ENABLE(MALLOC_HEAP_BREAKDOWN)
 
+void didPassWarmUpStartThresholdInAnotherAllocator() { }
 bool warmUpMarkedBlocksAreEnabledForTesting() { return false; }
 unsigned warmUpMarkedBlockCountForTesting() { return 0; }
 void setWarmUpMarkedBlockAllocationShouldFailForTesting(bool) { }

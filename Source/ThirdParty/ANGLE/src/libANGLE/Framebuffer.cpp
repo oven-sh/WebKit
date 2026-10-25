@@ -866,7 +866,7 @@ void Framebuffer::onDestroy(const Context *context)
 {
     if (isDefault())
     {
-        std::ignore = unsetSurfaces(context);
+        unsetSurfaces(context);
     }
 
     for (auto &attachment : mState.mColorAttachments)
@@ -901,9 +901,9 @@ void Framebuffer::onDestroy(const Context *context)
     mImpl->destroy(context);
 }
 
-egl::Error Framebuffer::setSurfaces(const Context *context,
-                                    egl::Surface *surface,
-                                    egl::Surface *readSurface)
+void Framebuffer::setSurfaces(const Context *context,
+                              egl::Surface *surface,
+                              egl::Surface *readSurface)
 {
     // This has to be a default framebuffer.
     ASSERT(isDefault());
@@ -960,10 +960,8 @@ egl::Error Framebuffer::setSurfaces(const Context *context,
     if (surface)
     {
         mCachedStatus = FramebufferStatus::Complete();
-        ANGLE_TRY(surface->getImplementation()->attachToFramebuffer(context, this));
+        surface->getImplementation()->attachToFramebuffer(context, this);
     }
-
-    return egl::NoError();
 }
 
 void Framebuffer::setReadSurface(const Context *context, egl::Surface *readSurface)
@@ -988,7 +986,7 @@ void Framebuffer::setReadSurface(const Context *context, egl::Surface *readSurfa
     }
 }
 
-egl::Error Framebuffer::unsetSurfaces(const Context *context)
+void Framebuffer::unsetSurfaces(const Context *context)
 {
     // This has to be a default framebuffer.
     ASSERT(isDefault());
@@ -1013,7 +1011,7 @@ egl::Error Framebuffer::unsetSurfaces(const Context *context)
             mDirtyBits.set(DIRTY_BIT_STENCIL_ATTACHMENT);
         }
 
-        ANGLE_TRY(surface->getImplementation()->detachFromFramebuffer(context, this));
+        surface->getImplementation()->detachFromFramebuffer(this);
 
         ASSERT(mCachedStatus.value().status == GL_FRAMEBUFFER_COMPLETE);
         mCachedStatus = FramebufferStatus::Incomplete(GL_FRAMEBUFFER_UNDEFINED_OES,
@@ -1029,7 +1027,6 @@ egl::Error Framebuffer::unsetSurfaces(const Context *context)
 
     mState.mDefaultFramebufferReadAttachment.detach(context, mState.mFramebufferSerial);
     mState.mDefaultFramebufferReadAttachmentInitialized = false;
-    return egl::NoError();
 }
 
 angle::Result Framebuffer::setLabel(const Context *context, const std::string &label)
@@ -1062,10 +1059,9 @@ bool Framebuffer::detachResourceById(Context *context, GLenum resourceType, GLui
 {
     bool found = false;
 
-    for (size_t colorIndex = 0; colorIndex < mState.mColorAttachments.size(); ++colorIndex)
+    for (FramebufferAttachment &colorAttachment : mState.mColorAttachments)
     {
-        if (detachMatchingAttachment(context, &mState.mColorAttachments[colorIndex], resourceType,
-                                     resourceId))
+        if (detachMatchingAttachment(context, &colorAttachment, resourceType, resourceId))
         {
             found = true;
         }
@@ -1853,21 +1849,22 @@ angle::Result Framebuffer::partialClearNeedsInit(const Context *context,
         }
     }
 
-    // For layered attachments, consider this a partial clear.  Otherwise the framebuffer clears
-    // some layers but marks the entire mip as initialized.
-    if (depth && mState.mDepthAttachment.hasLayer())
+    // If an attachment is a single layer of a 3D or array texture, consider this a partial clear.
+    // Texture tracks initialization per mip level, so a full clear of one layer would otherwise
+    // mark the other layers initialized too.
+    if (depth && mState.mDepthAttachment.has3DLayer())
     {
         *needsInitOut = true;
         return angle::Result::Continue;
     }
-    if (stencil && mState.mStencilAttachment.hasLayer())
+    if (stencil && mState.mStencilAttachment.has3DLayer())
     {
         *needsInitOut = true;
         return angle::Result::Continue;
     }
     for (size_t colorIndex : color)
     {
-        if (mState.mColorAttachments[colorIndex].hasLayer())
+        if (mState.mColorAttachments[colorIndex].has3DLayer())
         {
             *needsInitOut = true;
             return angle::Result::Continue;
@@ -2437,6 +2434,11 @@ void Framebuffer::updateAttachment(const Context *context,
     mState.mResourceNeedsInit.set(dirtyBit, attachment->initState() == InitState::MayNeedInit);
     onDirtyBinding->bind(resource);
     mAttachmentChangedAfterEnablingFoveation = isFoveationEnabled();
+
+    if (resource == nullptr)
+    {
+        mImpl->onAttachmentDetached(context, dirtyBit);
+    }
 
     invalidateCompletenessCache();
 }

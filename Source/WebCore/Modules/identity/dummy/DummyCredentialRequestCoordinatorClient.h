@@ -42,12 +42,12 @@ public:
     DummyCredentialRequestCoordinatorClient();
     ~DummyCredentialRequestCoordinatorClient() final;
 
-    static Ref<DummyCredentialRequestCoordinatorClient> create();
+    static Ref<DummyCredentialRequestCoordinatorClient> LEGACY_NODELETE create();
 
 private:
     void showDigitalCredentialsChooser(std::optional<FrameIdentifier>, DigitalCredentialsRawRequests&&, const DigitalCredentialsRequestData&, CompletionHandler<void(std::expected<DigitalCredentialsResponseData, ExceptionData>&&)>&&);
     void dismissDigitalCredentialsChooser(CompletionHandler<void(bool)>&&) final;
-    ExceptionOr<Vector<ValidatedDigitalCredentialRequest>> validateAndParseDigitalCredentialRequests(const SecurityOrigin&, const Document&, const Vector<UnvalidatedDigitalCredentialRequest>&) final;
+    ExceptionOr<Vector<std::optional<ValidatedDigitalCredentialRequest>>> validateAndParseDigitalCredentialRequests(const SecurityOrigin&, const Document&, const Vector<UnvalidatedDigitalCredentialRequest>&) final;
 };
 
 } // namespace WebCore

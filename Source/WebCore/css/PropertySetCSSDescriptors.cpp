@@ -87,7 +87,7 @@ String PropertySetCSSDescriptors::cssText() const
 
 ExceptionOr<void> PropertySetCSSDescriptors::setCssText(const String& text)
 {
-    StyleAttributeMutationScope mutationScope { parentElement() };
+    StyleAttributeMutationScope mutationScope { protect(parentElement()) };
     if (!willMutate())
         return { };
 
@@ -101,8 +101,8 @@ ExceptionOr<void> PropertySetCSSDescriptors::setCssText(const String& text)
 CSSPropertyID PropertySetCSSDescriptors::resolvePropertyName(const String& propertyName) const
 {
     auto propertyID = cssPropertyID(propertyName);
-    if (propertyID == CSSPropertySize && ruleType() == StyleRuleType::Page)
-        return CSSPropertyPageSize;
+    if (propertyID == CSSPropertyID::Size && ruleType() == StyleRuleType::Page)
+        return CSSPropertyID::PageSize;
     return propertyID;
 }
 
@@ -148,7 +148,7 @@ bool PropertySetCSSDescriptors::isPropertyImplicit(const String& propertyName)
 
 ExceptionOr<void> PropertySetCSSDescriptors::setProperty(const String& propertyName, const String& value, const String& priority)
 {
-    StyleAttributeMutationScope mutationScope { parentElement() };
+    StyleAttributeMutationScope mutationScope { protect(parentElement()) };
 
     auto propertyID = resolvePropertyName(propertyName);
     if (!isExposed(propertyID))
@@ -176,7 +176,7 @@ ExceptionOr<void> PropertySetCSSDescriptors::setProperty(const String& propertyN
 
 ExceptionOr<String> PropertySetCSSDescriptors::removeProperty(const String& propertyName)
 {
-    StyleAttributeMutationScope mutationScope { parentElement() };
+    StyleAttributeMutationScope mutationScope { protect(parentElement()) };
 
     auto propertyID = resolvePropertyName(propertyName);
     if (!isExposed(propertyID))
@@ -210,7 +210,7 @@ String PropertySetCSSDescriptors::getPropertyValueInternal(CSSPropertyID propert
 
 ExceptionOr<void> PropertySetCSSDescriptors::setPropertyInternal(CSSPropertyID propertyID, const String& value, IsImportant important)
 {
-    StyleAttributeMutationScope mutationScope { parentElement() };
+    StyleAttributeMutationScope mutationScope { protect(parentElement()) };
     if (!willMutate())
         return { };
 
@@ -228,7 +228,7 @@ ExceptionOr<void> PropertySetCSSDescriptors::setPropertyInternal(CSSPropertyID p
 
 bool PropertySetCSSDescriptors::isExposed(CSSPropertyID propertyID) const
 {
-    if (propertyID == CSSPropertyInvalid)
+    if (propertyID == CSSPropertyID::Invalid)
         return false;
 
     auto parserContext = cssParserContext();

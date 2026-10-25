@@ -66,7 +66,7 @@ namespace WebKit {
 // FIXME: Rather than having these free functions scattered about, Apple Pay data types should know
 // how to convert themselves to and from their platform representations.
 
-static PKPaymentAuthorizationStatus NODELETE toPKPaymentAuthorizationStatus(WebCore::ApplePayPaymentAuthorizationResult::Status status)
+static PKPaymentAuthorizationStatus LEGACY_NODELETE toPKPaymentAuthorizationStatus(WebCore::ApplePayPaymentAuthorizationResult::Status status)
 {
     switch (status) {
     case WebCore::ApplePayPaymentAuthorizationResult::Success:
@@ -90,7 +90,7 @@ static PKPaymentAuthorizationStatus NODELETE toPKPaymentAuthorizationStatus(WebC
     }
 }
 
-static PKPaymentErrorCode NODELETE toPKPaymentErrorCode(WebCore::ApplePayErrorCode code)
+static PKPaymentErrorCode LEGACY_NODELETE toPKPaymentErrorCode(WebCore::ApplePayErrorCode code)
 {
     switch (code) {
     case WebCore::ApplePayErrorCode::Unknown:
@@ -168,7 +168,7 @@ static RetainPtr<PKContactField> toPKContactField(WebCore::ApplePayErrorContactF
 
 static NSError *toNSError(const WebCore::ApplePayError& error)
 {
-    auto userInfo = adoptNS([[NSMutableDictionary alloc] init]);
+    RetainPtr userInfo = adoptNS([[NSMutableDictionary alloc] init]);
     [userInfo setObject:error.message().createNSString().get() forKey:NSLocalizedDescriptionKey];
 
 #if HAVE(PASSKIT_DISBURSEMENTS)

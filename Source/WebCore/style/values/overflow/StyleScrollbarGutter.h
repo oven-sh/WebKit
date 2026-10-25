@@ -53,7 +53,7 @@ struct ScrollbarGutter {
     constexpr bool isStable() const { return m_type == Type::Stable; }
     constexpr bool isStableBothEdges() const { return m_type == Type::StableBothEdges; }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -77,7 +77,7 @@ private:
 
 // MARK: - Conversion
 
-template<> struct CSSValueConversion<ScrollbarGutter> { ScrollbarGutter NODELETE operator()(BuilderState&, const CSSValue&); };
+template<> struct CSSValueConversion<ScrollbarGutter> { ScrollbarGutter operator()(BuilderState&, const CSSValue&); };
 
 } // namespace Style
 } // namespace WebCore

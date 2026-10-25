@@ -45,8 +45,11 @@ void conservativelyCollectChangedAnimatableProperties(const Style::ComputedStyle
     if (a.writingMode() != b.writingMode()) {
         changingProperties.m_properties.merge(CSSProperty::physicalProperties);
         if (a.writingMode().isVerticalTypographic() != b.writingMode().isVerticalTypographic())
-            changingProperties.m_properties.set(CSSPropertyTextEmphasisStyle);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TextEmphasisStyle));
     }
+
+    if (a.usedBackgroundColor() != b.usedBackgroundColor())
+        changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::BackgroundColor));
 
     // `insideLink` changes visited / non-visited colors, thus, we need to add all color properties.
     if (a.insideLink() != b.insideLink())
@@ -54,14 +57,14 @@ void conservativelyCollectChangedAnimatableProperties(const Style::ComputedStyle
 
     if (quirks.contains(AnimatablePropertiesCollectionQuirks::ComparareUsedValuesForBorderWidth)) {
         // Don't transition if the used value does not change. This is also affected by `border-*-style`.
-        if (a.usedBorderTopWidth() == b.usedBorderTopWidth())
-            changingProperties.m_properties.clear(CSSPropertyBorderTopWidth);
-        if (a.usedBorderRightWidth() == b.usedBorderRightWidth())
-            changingProperties.m_properties.clear(CSSPropertyBorderRightWidth);
-        if (a.usedBorderBottomWidth() == b.usedBorderBottomWidth())
-            changingProperties.m_properties.clear(CSSPropertyBorderBottomWidth);
-        if (a.usedBorderLeftWidth() == b.usedBorderLeftWidth())
-            changingProperties.m_properties.clear(CSSPropertyBorderLeftWidth);
+        if (Style::effectiveBorderWidths(a).top() == Style::effectiveBorderWidths(b).top())
+            changingProperties.m_properties.clear(std::to_underlying(CSSPropertyID::BorderTopWidth));
+        if (Style::effectiveBorderWidths(a).right() == Style::effectiveBorderWidths(b).right())
+            changingProperties.m_properties.clear(std::to_underlying(CSSPropertyID::BorderRightWidth));
+        if (Style::effectiveBorderWidths(a).bottom() == Style::effectiveBorderWidths(b).bottom())
+            changingProperties.m_properties.clear(std::to_underlying(CSSPropertyID::BorderBottomWidth));
+        if (Style::effectiveBorderWidths(a).left() == Style::effectiveBorderWidths(b).left())
+            changingProperties.m_properties.clear(std::to_underlying(CSSPropertyID::BorderLeftWidth));
     }
 }
 

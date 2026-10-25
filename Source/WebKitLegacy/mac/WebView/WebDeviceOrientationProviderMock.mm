@@ -27,6 +27,7 @@
 
 #import "WebDeviceOrientationInternal.h"
 #import <WebCore/SecurityOriginData.h>
+#import <wtf/NeverDestroyed.h>
 #import <wtf/RetainPtr.h>
 
 
@@ -37,7 +38,7 @@
     self = [super init];
     if (!self)
         return nil;
-    m_core = makeUnique<WebCore::DeviceOrientationClientMock>();
+    lazyInitialize(m_core, makeUnique<WebCore::DeviceOrientationClientMock>());
     return self;
 }
 
@@ -68,12 +69,14 @@
 
 @end
 
-@implementation WebDeviceOrientationProviderMock
+@implementation WebDeviceOrientationProviderMock {
+    RetainPtr<WebDeviceOrientationProviderMockInternal> m_internal;
+}
 
 + (WebDeviceOrientationProviderMock *)shared
 {
-    static WebDeviceOrientationProviderMock *provider = [[WebDeviceOrientationProviderMock alloc] init];
-    return provider;
+    static NeverDestroyed<RetainPtr<WebDeviceOrientationProviderMock>> provider = adoptNS([[WebDeviceOrientationProviderMock alloc] init]);
+    return provider.get();
 }
 
 - (id)init
@@ -81,39 +84,33 @@
     self = [super init];
     if (!self)
         return nil;
-    m_internal = [[WebDeviceOrientationProviderMockInternal alloc] init];
+    m_internal = adoptNS([[WebDeviceOrientationProviderMockInternal alloc] init]);
     return self;
-}
-
-- (void)dealloc
-{
-    [m_internal release];
-    [super dealloc];
 }
 
 - (void)setOrientation:(WebDeviceOrientation*)orientation
 {
-    [m_internal setOrientation:orientation];
+    [protect(m_internal) setOrientation:orientation];
 }
 
 - (void)startUpdating
 {
-    [m_internal startUpdating];
+    [protect(m_internal) startUpdating];
 }
 
 - (void)stopUpdating
 {
-    [m_internal stopUpdating];
+    [protect(m_internal) stopUpdating];
 }
 
 - (WebDeviceOrientation*)lastOrientation
 {
-    return [m_internal lastOrientation];
+    return [protect(m_internal) lastOrientation];
 }
 
 - (void)setController:(WebCore::DeviceOrientationController*)controller
 {
-   [m_internal setController:controller];
+    [protect(m_internal) setController:controller];
 }
 
 @end

@@ -29,6 +29,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "AOTRemovableFeature.h"
 #include "CallLinkInfo.h"
 #include "JSDestructibleObject.h"
 #include "JSWebAssemblyGlobal.h"
@@ -106,6 +107,8 @@ public:
 
     void initializeImports(JSGlobalObject*, JSObject* importObject, Wasm::CreationMode);
     void finalizeCreation(VM&, JSGlobalObject*, Ref<Wasm::CalleeGroup>&&, Wasm::CreationMode);
+    void adoptCalleeGroup(const Wasm::CalleeGroup&);
+    void* const* imageCodePointers() const { return m_imageCodePointers; }
 
     WebAssemblyModuleRecord* moduleRecord() LIFETIME_BOUND { return m_moduleRecord.get(); }
 
@@ -185,12 +188,14 @@ public:
 
     static constexpr ptrdiff_t offsetOfJSModule() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_jsModule); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_vm); }
+    static constexpr ptrdiff_t offsetOfImageCodePointers() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_imageCodePointers); }
     static constexpr ptrdiff_t offsetOfModuleRecord() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_moduleRecord); }
 
     static constexpr ptrdiff_t offsetOfSoftStackLimit() { return OBJECT_OFFSETOF(JSWebAssemblyInstance, m_stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit(); }
 
     Wasm::Module& module() const { return m_module.get(); }
-    SourceTaintedOrigin taintedness() const { return m_sourceProvider->sourceTaintedOrigin(); }
+    SourceProvider* sourceProvider() const { return m_sourceProvider.get(); }
+    SourceTaintedness taintedness() const { return m_sourceProvider->taintedness(); }
     URL sourceURL() const { return m_sourceProvider->sourceOrigin().url(); }
     Wasm::CalleeGroup* calleeGroup() const { return module().calleeGroupFor(memory0Mode()); }
     Wasm::Table* table(unsigned);
@@ -238,8 +243,9 @@ public:
         }
     }
 
-    void updateMatchingCachedMemoriesConcurrently(const SharedArrayBufferContents& grownMemory)
+    NEVER_INLINE void updateMatchingCachedMemoriesConcurrently(const SharedArrayBufferContents& grownMemory)
     {
+        JSC_REMOVABLE_DEFINITION(WebAssembly, &JSWebAssemblyInstance::updateMatchingCachedMemoriesConcurrently);
         if (!m_wasmMemory)
             return;
 
@@ -523,6 +529,7 @@ private:
     BitVector m_passiveDataSegments;
     FixedVector<RefPtr<const Wasm::Tag>> m_tags;
     void* m_faultPC { nullptr };
+    void* const* m_imageCodePointers { nullptr };
     // Used by builtin trampolines to quickly fetch callee bits to store in the call frame.
     // The actual callees are owned by builtins. Populated by WebAssemblyModuleRecord::initializeImports().
     CalleeBits m_builtinCalleeBits[WASM_BUILTIN_COUNT];

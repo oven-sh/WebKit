@@ -137,10 +137,10 @@ public:
             m_rootElementStyle = document.initialContainingBlockStyle();
     }
 
-    const Element* NODELETE element() const { return m_element; }
+    const Element* LEGACY_NODELETE element() const { return m_element; }
 
     void setStyle(std::unique_ptr<Style::ComputedStyle> style) { m_style = WTF::move(style); }
-    Style::ComputedStyle* NODELETE style() const { return m_style.get(); }
+    Style::ComputedStyle* LEGACY_NODELETE style() const { return m_style.get(); }
     std::unique_ptr<Style::ComputedStyle> takeStyle() { return WTF::move(m_style); }
 
     void setParentStyle(std::unique_ptr<Style::ComputedStyle> parentStyle)
@@ -148,11 +148,11 @@ public:
         m_ownedParentStyle = WTF::move(parentStyle);
         m_parentStyle = m_ownedParentStyle.get();
     }
-    const Style::ComputedStyle* NODELETE parentStyle() const { return m_parentStyle; }
-    const Style::ComputedStyle* NODELETE parentHighlightStyle() const { return m_parentHighlightStyle; }
-    const Style::ComputedStyle* NODELETE rootElementStyle() const { return m_rootElementStyle; }
+    const Style::ComputedStyle* LEGACY_NODELETE parentStyle() const { return m_parentStyle; }
+    const Style::ComputedStyle* LEGACY_NODELETE parentHighlightStyle() const { return m_parentHighlightStyle; }
+    const Style::ComputedStyle* LEGACY_NODELETE rootElementStyle() const { return m_rootElementStyle; }
 
-    CheckedPtr<TreeResolutionState> NODELETE treeResolutionState() { return m_treeResolutionState; }
+    CheckedPtr<TreeResolutionState> LEGACY_NODELETE treeResolutionState() { return m_treeResolutionState; }
 
 private:
     const Element* m_element { };
@@ -318,7 +318,7 @@ UnadjustedStyle Resolver::unadjustedStyleForElement(Element& element, const Reso
     if (state.parentStyle())
         matchedPseudoElements.add(state.parentStyle()->highlightPseudoElementTypes());
     if (matchedPseudoElements)
-        style.setHasPseudoStyles(matchedPseudoElements);
+        style.setHasPseudoStyles(matchedPseudoElements, collector.pseudoElementBoxGeneration());
 
     auto elementStyleRelations = commitRelationsToRenderStyle(style, element, collector.styleRelations());
 
@@ -376,12 +376,12 @@ UnadjustedStyle Resolver::unadjustedStyleForCachedMatchResult(Element& element, 
 
 // animation-timing-function and animation-composition in a keyframe describe the composite operation
 // and timing function between this keyframe and the next. interpolate-size is not animatable.
-static bool isAnimatedInKeyframe(CSSPropertyID property)
+static bool LEGACY_NODELETE isAnimatedInKeyframe(CSSPropertyID property)
 {
     switch (property) {
-    case CSSPropertyAnimationTimingFunction:
-    case CSSPropertyAnimationComposition:
-    case CSSPropertyInterpolateSize:
+    case CSSPropertyID::AnimationTimingFunction:
+    case CSSPropertyID::AnimationComposition:
+    case CSSPropertyID::InterpolateSize:
         return false;
     default:
         return true;
@@ -414,7 +414,7 @@ static bool hasRevertValue(const StyleRuleKeyframe& keyframe)
 {
     for (auto propertyReference : keyframe.properties()) {
         RefPtr value = propertyReference.value();
-        if (value && isValueID(*value, CSSValueRevert))
+        if (value && isValueID(*value, CSSValueID::Revert))
             return true;
     }
     return false;
@@ -478,23 +478,26 @@ static std::pair<SingleAnimationRangeName, Percentage<>> deprecatedStyleRuleKeyf
     return { offsetRangeName, offsetPercentage };
 }
 
-Vector<Ref<StyleRuleKeyframe>> Resolver::keyframeRulesForName(const AtomString& animationName, const TimingFunction* defaultTimingFunction) const
+RefPtr<StyleRuleKeyframes> Resolver::keyframesRuleForName(const AtomString& animationName) const
 {
     if (animationName.isEmpty())
-        return { };
+        return nullptr;
 
     m_keyframesRuleMap.checkConsistency();
 
-    // Check author map first then check user-agent map.
-    auto it = m_keyframesRuleMap.find(animationName);
-    if (it == m_keyframesRuleMap.end()) {
-        it = userAgentKeyframes().find(animationName);
-        if (it == userAgentKeyframes().end())
-            return { };
-    }
+    if (RefPtr rule = m_keyframesRuleMap.get(animationName))
+        return rule;
+    return userAgentKeyframes().get(animationName);
+}
+
+Vector<Ref<StyleRuleKeyframe>> Resolver::keyframeRulesForName(const AtomString& animationName, const TimingFunction* defaultTimingFunction) const
+{
+    RefPtr keyframesRule = keyframesRuleForName(animationName);
+    if (!keyframesRule)
+        return { };
 
     auto compositeOperationForKeyframe = [](Ref<StyleRuleKeyframe> keyframe) -> CompositeOperation {
-        if (auto compositeOperationCSSValue = keyframe->properties().getPropertyCSSValue(CSSPropertyAnimationComposition)) {
+        if (auto compositeOperationCSSValue = keyframe->properties().getPropertyCSSValue(CSSPropertyID::AnimationComposition)) {
             if (auto compositeOperation = toCompositeOperation(*compositeOperationCSSValue))
                 return *compositeOperation;
         }
@@ -502,7 +505,7 @@ Vector<Ref<StyleRuleKeyframe>> Resolver::keyframeRulesForName(const AtomString& 
     };
 
     auto timingFunctionForKeyframe = [&](Ref<StyleRuleKeyframe> keyframe) -> Ref<const TimingFunction> {
-        if (RefPtr timingFunctionCSSValue = keyframe->properties().getPropertyCSSValue(CSSPropertyAnimationTimingFunction)) {
+        if (RefPtr timingFunctionCSSValue = keyframe->properties().getPropertyCSSValue(CSSPropertyID::AnimationTimingFunction)) {
             if (RefPtr timingFunction = createTimingFunctionDeprecated(timingFunctionCSSValue.releaseNonNull()))
                 return timingFunction.releaseNonNull();
         }
@@ -522,7 +525,6 @@ Vector<Ref<StyleRuleKeyframe>> Resolver::keyframeRulesForName(const AtomString& 
         return timingFunction;
     };
 
-    Ref keyframesRule = it->value;
     auto* keyframes = &keyframesRule->keyframes();
 
     using KeyframeUniqueKey = std::tuple<SingleAnimationRangeName, double, Ref<const TimingFunction>, CompositeOperation>;
@@ -555,7 +557,7 @@ Vector<Ref<StyleRuleKeyframe>> Resolver::keyframeRulesForName(const AtomString& 
             KeyframeUniqueKey uniqueKey { offsetRangeName, offsetPercentage.value / 100, timingFunction, compositeOperation };
             if (RefPtr existingStyleRuleKeyframe = keyframesMap.get(uniqueKey)) {
                 protect(existingStyleRuleKeyframe->mutableProperties())->mergeAndOverrideOnConflict(originalKeyframe->properties());
-                if (existingStyleRuleKeyframe->keys()[0].rangeName == CSSValueNormal)
+                if (existingStyleRuleKeyframe->keys()[0].rangeName == CSSValueID::Normal)
                     continue;
                 deduplicatedKeyframes.removeFirstMatching([&](const auto& styleRuleKeyframe) {
                     return styleRuleKeyframe.ptr() == existingStyleRuleKeyframe;
@@ -589,9 +591,9 @@ bool Resolver::keyframeStylesForAnimation(Element& element, const Style::Compute
             auto [offsetRangeName, offsetPercentage] = deprecatedStyleRuleKeyframeKeyToStyle(key);
             BlendingKeyframe blendingKeyframe({ offsetRangeName, offsetPercentage }, { nullptr });
             blendingKeyframe.setStyle(styleForKeyframe(element, elementStyle, context, keyframeRule.get(), blendingKeyframe));
-            if (RefPtr timingFunctionCSSValue = keyframeRule->properties().getPropertyCSSValue(CSSPropertyAnimationTimingFunction))
+            if (RefPtr timingFunctionCSSValue = keyframeRule->properties().getPropertyCSSValue(CSSPropertyID::AnimationTimingFunction))
                 blendingKeyframe.setTimingFunction(createTimingFunctionDeprecated(timingFunctionCSSValue.releaseNonNull()));
-            if (RefPtr compositeOperationCSSValue = keyframeRule->properties().getPropertyCSSValue(CSSPropertyAnimationComposition)) {
+            if (RefPtr compositeOperationCSSValue = keyframeRule->properties().getPropertyCSSValue(CSSPropertyID::AnimationComposition)) {
                 if (auto compositeOperation = toCompositeOperation(compositeOperationCSSValue.releaseNonNull()))
                     blendingKeyframe.setCompositeOperation(*compositeOperation);
             }
@@ -625,7 +627,8 @@ static const Style::ComputedStyle* parentHighlightStyleIgnoringPendingUpdate(con
     if (!resolvedStyle)
         return nullptr;
 
-    return const_cast<Style::ComputedStyle&>(*parentStyle).addPseudoElementStyle(WTF::move(resolvedStyle->style));
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Style::ComputedStyle&>(*parentStyle).addPseudoElementStyle(WTF::move(resolvedStyle->style));
 }
 
 std::optional<ResolvedStyle> Resolver::styleForPseudoElement(Element& element, const PseudoElementRequest& pseudoElementRequest, const ResolutionContext& context)
@@ -702,9 +705,9 @@ std::unique_ptr<Style::ComputedStyle> Resolver::defaultStyleForElement(const Ele
 
     FontCascadeDescription fontDescription;
     fontDescription.setOneFamily(WebCore::FontFamily { standardFamily, FontFamilyKind::Generic });
-    fontDescription.setKeywordSizeFromIdentifier(CSSValueMedium);
+    fontDescription.setKeywordSizeFromIdentifier(CSSValueID::Medium);
 
-    auto size = fontSizeForKeyword(CSSValueMedium, false, protect(document()));
+    auto size = fontSizeForKeyword(CSSValueID::Medium, false, protect(document()));
     fontDescription.setComputedSize(size);
     auto usedFontSize = usedFontSizeFromComputedSize(size, fontDescription.isAbsoluteSize(), is<SVGElement>(element), *style, protect(document()));
     fontDescription.setUsedSize(usedFontSize.size, usedFontSize.zoomFactor);
@@ -942,7 +945,7 @@ const CustomFunctionRegistry* Resolver::customFunctionRegistry() const
 CustomFunctionRegistry& Resolver::ensureCustomFunctionRegistry()
 {
     if (!m_customFunctionRegistry)
-        m_customFunctionRegistry = makeUnique<CustomFunctionRegistry>();
+        lazyInitialize(m_customFunctionRegistry, makeUnique<CustomFunctionRegistry>());
     return *m_customFunctionRegistry;
 }
 

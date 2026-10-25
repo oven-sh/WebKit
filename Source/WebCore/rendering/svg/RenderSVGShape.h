@@ -46,7 +46,7 @@ class RenderSVGShape : public RenderSVGModelObject {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGShape);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGShape);
 public:
-    friend FloatRect SVGRenderSupport::calculateApproximateStrokeBoundingBox(const RenderElement&);
+    friend FloatRect SVGRenderSupport::calculateApproximateStrokeBoundingBox(const RenderElement&, StrokeBoundingBoxPurpose);
 
     enum class ShapeType : uint8_t {
         Empty,
@@ -104,13 +104,15 @@ public:
 
     AffineTransform nonScalingStrokeTransform() const;
 
+    void invalidateNonScalingStrokeCaches();
+
 protected:
     void element() const = delete;
 
     Path& ensurePath() LIFETIME_BOUND;
 
     virtual void updateShapeFromElement() = 0;
-    virtual bool NODELETE isEmpty() const;
+    virtual bool LEGACY_NODELETE isEmpty() const;
     virtual bool shapeDependentStrokeContains(const FloatPoint&, PointCoordinateSpace = GlobalCoordinateSpace);
     virtual bool shapeDependentFillContains(const FloatPoint&, const WindRule) const;
     float strokeWidth() const;
@@ -125,11 +127,13 @@ private:
     // Hit-detection separated for the fill and the stroke
     bool fillContains(const FloatPoint&, bool requiresFill = true, const WindRule fillRule = WindRule::NonZero);
     bool strokeContains(const FloatPoint&, bool requiresStroke = true);
+    FloatRect hitTestStrokeBoundingBox() const;
 
     bool canHaveChildren() const final { return false; }
     ASCIILiteral renderName() const override { return "RenderSVGShape"_s; }
 
     void layout() final;
+    void updateFromStyle() final;
     void paint(PaintInfo&, const LayoutPoint&) final;
 
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
@@ -157,6 +161,7 @@ protected:
     FloatRect m_fillBoundingBox;
     mutable Markable<FloatRect> m_strokeBoundingBox;
     mutable Markable<FloatRect> m_approximateStrokeBoundingBox;
+    mutable Markable<FloatRect> m_hitTestStrokeBoundingBox;
 private:
     bool m_needsShapeUpdate { true };
     mutable bool m_fillRequiresClip : 1 { true };

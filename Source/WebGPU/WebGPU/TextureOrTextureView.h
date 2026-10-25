@@ -28,10 +28,11 @@
 #import "Texture.h"
 #import "TextureView.h"
 
+#import "WebGPUCppConversions.h"
 #import <WebGPU/WebGPU.h>
 #import <wtf/Ref.h>
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class TextureOrTextureView {
 public:
@@ -103,12 +104,12 @@ private:
     RefPtr<TextureView> m_view;
 };
 
-static bool isAllowableTextureView(const auto& texture, WGPULoadOp loadOp, WGPUStoreOp storeOp)
+bool isAllowableTextureView(const auto& texture, std::optional<WebGPU::LoadOp> loadOp, std::optional<WebGPU::StoreOp> storeOp)
 {
     // A view can narrow the usages it allows, but it cannot make a memoryless texture behave like a
     // regular one, so the transient rule follows the texture the view is a view of.
-    if (texture.apiParentTexture().usage() & WGPUTextureUsage_Transient) {
-        if (loadOp != WGPULoadOp_Clear || storeOp != WGPUStoreOp_Discard)
+    if (texture.apiParentTexture().usage().contains(WebGPU::TextureUsage::Transient)) {
+        if (loadOp != WebGPU::LoadOp::Clear || storeOp != WebGPU::StoreOp::Discard)
             return false;
     }
 
@@ -117,7 +118,7 @@ static bool isAllowableTextureView(const auto& texture, WGPULoadOp loadOp, WGPUS
 
 // A depth stencil attachment has a load and store op per aspect, and only the aspects present in
 // its format may specify them, so the transient rule has to be applied per present aspect.
-static bool isAllowableDepthStencilTextureView(const auto& texture, bool hasDepthComponent, WGPULoadOp depthLoadOp, WGPUStoreOp depthStoreOp, bool hasStencilComponent, WGPULoadOp stencilLoadOp, WGPUStoreOp stencilStoreOp)
+bool isAllowableDepthStencilTextureView(const auto& texture, bool hasDepthComponent, std::optional<WebGPU::LoadOp> depthLoadOp, std::optional<WebGPU::StoreOp> depthStoreOp, bool hasStencilComponent, std::optional<WebGPU::LoadOp> stencilLoadOp, std::optional<WebGPU::StoreOp> stencilStoreOp)
 {
     if (hasDepthComponent && !isAllowableTextureView(texture, depthLoadOp, depthStoreOp))
         return false;
@@ -125,12 +126,12 @@ static bool isAllowableDepthStencilTextureView(const auto& texture, bool hasDept
     return !hasStencilComponent || isAllowableTextureView(texture, stencilLoadOp, stencilStoreOp);
 }
 
-static bool hasRenderableTextureViewProperties(const auto& texture)
+bool hasRenderableTextureViewProperties(const auto& texture)
 {
-    return (texture.usage() & WGPUTextureUsage_RenderAttachment) && (texture.is2DTexture() || texture.is2DArrayTexture() || texture.is3DTexture()) && texture.mipLevelCount() == 1 && texture.arrayLayerCount() <= 1;
+    return texture.usage().contains(WebGPU::TextureUsage::RenderAttachment) && (texture.is2DTexture() || texture.is2DArrayTexture() || texture.is3DTexture()) && texture.mipLevelCount() == 1 && texture.arrayLayerCount() <= 1;
 }
 
-static bool isRenderableTextureView(const auto& texture, WGPULoadOp loadOp, WGPUStoreOp storeOp)
+bool isRenderableTextureView(const auto& texture, WebGPU::LoadOp loadOp, WebGPU::StoreOp storeOp)
 {
     return isAllowableTextureView(texture, loadOp, storeOp) && hasRenderableTextureViewProperties(texture);
 }
@@ -138,12 +139,81 @@ static bool isRenderableTextureView(const auto& texture, WGPULoadOp loadOp, WGPU
 // The renderable properties of a depth stencil attachment only describe something while the view
 // still has memory behind it, but the per-aspect transient rule applies to a destroyed view just the
 // same. Kept as one entry point taking the view once so Swift does not have to pass it repeatedly.
-static bool isRenderableDepthStencilTextureView(const auto& texture, const Device& device, bool isDestroyed, bool hasDepthComponent, WGPULoadOp depthLoadOp, WGPUStoreOp depthStoreOp, bool hasStencilComponent, WGPULoadOp stencilLoadOp, WGPUStoreOp stencilStoreOp)
+bool isRenderableDepthStencilTextureView(const auto& texture, const Device& device, bool isDestroyed, bool hasDepthComponent, std::optional<WebGPU::LoadOp> depthLoadOp, std::optional<WebGPU::StoreOp> depthStoreOp, bool hasStencilComponent, std::optional<WebGPU::LoadOp> stencilLoadOp, std::optional<WebGPU::StoreOp> stencilStoreOp)
 {
     if (!isDestroyed && (!Texture::isDepthStencilRenderableFormat(texture.format(), device) || !hasRenderableTextureViewProperties(texture)))
         return false;
 
     return isAllowableDepthStencilTextureView(texture, hasDepthComponent, depthLoadOp, depthStoreOp, hasStencilComponent, stencilLoadOp, stencilStoreOp);
+}
+
+// The texture or texture view of a render pass attachment.
+inline TextureOrTextureView textureOrTextureView(const WebGPU::RenderPassAttachmentView& view)
+{
+    return std::visit(WTF::makeVisitor([](const Ref<WebGPU::TextureView>& textureView) {
+        return TextureOrTextureView(downcast<TextureView>(textureView.get()));
+    }, [](const Ref<WebGPU::Texture>& texture) {
+        return TextureOrTextureView(downcast<Texture>(texture.get()));
+    }), view);
+}
+
+// A WebGPU::RenderPassColorAttachment with its views resolved. Swift cannot get the alternatives
+// of the variant members of the C++ API struct, so the C++ and the Swift render pass creation both
+// read this.
+struct ResolvedRenderPassColorAttachment {
+    TextureOrTextureView view;
+    std::optional<TextureOrTextureView> resolveTarget;
+    std::optional<uint32_t> depthSlice;
+    WebGPU::Color clearValue;
+    WebGPU::LoadOp loadOp { WebGPU::LoadOp::Load };
+    WebGPU::StoreOp storeOp { WebGPU::StoreOp::Store };
+};
+
+// A WebGPU::RenderPassDepthStencilAttachment, as ResolvedRenderPassColorAttachment.
+struct ResolvedRenderPassDepthStencilAttachment {
+    TextureOrTextureView view;
+    float depthClearValue { 0 };
+    std::optional<WebGPU::LoadOp> depthLoadOp;
+    std::optional<WebGPU::StoreOp> depthStoreOp;
+    bool depthReadOnly { false };
+    uint32_t stencilClearValue { 0 };
+    std::optional<WebGPU::LoadOp> stencilLoadOp;
+    std::optional<WebGPU::StoreOp> stencilStoreOp;
+    bool stencilReadOnly { false };
+};
+
+// std::nullopt for an empty color attachment slot.
+inline std::optional<ResolvedRenderPassColorAttachment> resolvedColorAttachment(const WebGPU::RenderPassDescriptor& descriptor, size_t index)
+{
+    auto& attachment = descriptor.colorAttachments[index];
+    if (!attachment)
+        return std::nullopt;
+    return ResolvedRenderPassColorAttachment {
+        .view = textureOrTextureView(attachment->view),
+        .resolveTarget = attachment->resolveTarget ? std::optional { textureOrTextureView(*attachment->resolveTarget) } : std::nullopt,
+        .depthSlice = attachment->depthSlice,
+        .clearValue = attachment->clearValue,
+        .loadOp = attachment->loadOp,
+        .storeOp = attachment->storeOp,
+    };
+}
+
+inline std::optional<ResolvedRenderPassDepthStencilAttachment> resolvedDepthStencilAttachment(const WebGPU::RenderPassDescriptor& descriptor)
+{
+    auto& attachment = descriptor.depthStencilAttachment;
+    if (!attachment)
+        return std::nullopt;
+    return ResolvedRenderPassDepthStencilAttachment {
+        .view = textureOrTextureView(attachment->view),
+        .depthClearValue = attachment->depthClearValue,
+        .depthLoadOp = attachment->depthLoadOp,
+        .depthStoreOp = attachment->depthStoreOp,
+        .depthReadOnly = attachment->depthReadOnly,
+        .stencilClearValue = attachment->stencilClearValue,
+        .stencilLoadOp = attachment->stencilLoadOp,
+        .stencilStoreOp = attachment->stencilStoreOp,
+        .stencilReadOnly = attachment->stencilReadOnly,
+    };
 }
 
 }

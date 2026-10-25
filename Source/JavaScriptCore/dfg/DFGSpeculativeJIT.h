@@ -107,7 +107,7 @@ public:
         explicit TrustedImmPtr(T* value)
             : m_value(value)
         {
-            static_assert(!std::is_base_of<JSCell, T>::value, "To use a GC pointer, the graph must be aware of it. Use SpeculativeJIT::JITCompiler::LinkableConstant instead.");
+            static_assert(!std::derived_from<T, JSCell>, "To use a GC pointer, the graph must be aware of it. Use SpeculativeJIT::JITCompiler::LinkableConstant instead.");
         }
 
         explicit TrustedImmPtr(RegisteredStructure structure)
@@ -299,9 +299,6 @@ public:
     FPRReg fillSpeculateDouble(Edge);
     GPRReg fillSpeculateCell(Edge);
     GPRReg fillSpeculateBoolean(Edge);
-#if USE(BIGINT32)
-    GPRReg fillSpeculateBigInt32(Edge);
-#endif
     GeneratedOperandType checkGeneratedTypeForToInt32(Node*);
 
     void addSlowPathGenerator(std::unique_ptr<SlowPathGenerator>);
@@ -318,7 +315,7 @@ public:
 
     void checkArgumentTypes();
 
-    void NODELETE clearGenerationInfo();
+    void LEGACY_NODELETE clearGenerationInfo();
 
     // These methods are used when generating 'unexpected'
     // calls out from JIT code to C++ helper routines -
@@ -653,8 +650,8 @@ public:
 
     void emitCall(Node*);
 
-    void emitAllocateButterfly(GPRReg storageGPR, GPRReg sizeGPR, GPRReg scratch1, GPRReg scratch2, GPRReg scratch3, JumpList& slowCases);
-    void emitInitializeButterfly(GPRReg storageGPR, GPRReg sizeGPR, GPRReg emptyValueGPR, GPRReg scratchGPR);
+    void emitAllocateButterfly(GPRReg storageGPR, GPRReg vectorLengthResultGPR, GPRReg sizeGPR, GPRReg scratch1, GPRReg scratch2, JumpList& slowCases);
+    void emitInitializeButterfly(GPRReg storageGPR, GPRReg vectorLengthGPR, GPRReg emptyValueGPR, GPRReg scratchGPR);
     void compileAllocateNewArrayWithSize(Node*, GPRReg resultGPR, GPRReg sizeGPR, RegisteredStructure, bool shouldConvertLargeSizeToArrayStorage = true);
     void compileAllocateNewArrayWithSize(Node*, GPRReg resultGPR, GPRReg sizeGPR, IndexingType, bool shouldConvertLargeSizeToArrayStorage = true);
     
@@ -1237,9 +1234,6 @@ public:
     bool compilePeepHoleBranch(Node*, RelationalCondition, DoubleCondition, S_JITOperation_GJJ);
     void compilePeepHoleInt32Branch(Node*, Node* branchNode, JITCompiler::RelationalCondition);
     void compilePeepHoleInt52Branch(Node*, Node* branchNode, JITCompiler::RelationalCondition);
-#if USE(BIGINT32)
-    void compilePeepHoleBigInt32Branch(Node*, Node* branchNode, JITCompiler::RelationalCondition);
-#endif
     void compilePeepHoleBooleanBranch(Node*, Node* branchNode, JITCompiler::RelationalCondition);
     void compilePeepHoleDoubleBranch(Node*, Node* branchNode, JITCompiler::DoubleCondition);
     void compilePeepHoleObjectEquality(Node*, Node* branchNode);
@@ -1267,6 +1261,7 @@ public:
     void compileSymbolEquality(Node*);
     void compileHeapBigIntEquality(Node*);
     void compileHeapBigIntCompare(Node*, RelationalCondition);
+    bool tryCompileHeapBigIntCompareWithZero(Node*, RelationalCondition);
     void compilePeepHoleSymbolEquality(Node*, Node* branchNode);
     void compileNeitherDoubleNorHeapBigIntToNotDoubleStrictEquality(Node*, Edge neitherDoubleNorHeapBigInt, Edge notDouble);
     void emitBitwiseJSValueEquality(GPRReg&, GPRReg&, GPRReg& result);
@@ -1334,9 +1329,6 @@ public:
 
     void compileInt32Compare(Node*, RelationalCondition);
     void compileInt52Compare(Node*, RelationalCondition);
-#if USE(BIGINT32)
-    void compileBigInt32Compare(Node*, RelationalCondition);
-#endif
     void compileBooleanCompare(Node*, RelationalCondition);
     void compileDoubleCompare(Node*, DoubleCondition);
     void compileStringCompare(Node*, RelationalCondition);
@@ -1346,6 +1338,7 @@ public:
 
     void compileSameValue(Node*);
     
+    void compileAllocatePropertyStorageWithIndexingHeader(Node*);
     void compileAllocatePropertyStorage(Node*);
     void compileReallocatePropertyStorage(Node*);
     void compileNukeStructureAndSetButterfly(Node*);
@@ -1404,18 +1397,18 @@ public:
     void compilePutByValMegamorphic(Node*);
 
     // We use a ScopedLambda to placate register allocation validation.
-    void compileGetByVal(Node*, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix);
+    void compileGetByVal(Node*, NOESCAPE const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix);
 
     void compileMultiGetByVal(Node*);
     void compileMultiPutByVal(Node*);
 
     void compileGetCharCodeAt(Node*);
-    void compileGetByValOnString(Node*, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix);
+    void compileGetByValOnString(Node*, NOESCAPE const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix);
     void compileStringFromCharCodeOrCodePoint(Node*);
     void compileGetByValMegamorphic(Node*);
 
-    void compileGetByValOnDirectArguments(Node*, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix);
-    void compileGetByValOnScopedArguments(Node*, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix);
+    void compileGetByValOnDirectArguments(Node*, NOESCAPE const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix);
+    void compileGetByValOnScopedArguments(Node*, NOESCAPE const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix);
 
     void compileGetPrivateName(Node*);
     void compileGetPrivateNameById(Node*);
@@ -1432,6 +1425,7 @@ public:
     void compileGetTypedArrayLengthAsInt52(Node*);
 #endif
     void compileDataViewGetByteLength(Node*);
+    void compileTypedArraySet(Node*);
 #if USE(LARGE_TYPED_ARRAYS)
     void compileDataViewGetByteLengthAsInt52(Node*);
 #endif
@@ -1458,7 +1452,7 @@ public:
     void compileBitwiseNot(Node*);
 
     template<typename SnippetGenerator, J_JITOperation_GJJ slowPathFunction>
-    void emitUntypedOrAnyBigIntBitOp(Node*);
+    void emitUntypedBitOp(Node*);
     void compileBitwiseOp(Node*);
     void compileValueBitwiseOp(Node*);
 
@@ -1493,6 +1487,7 @@ public:
     void compileArithF16Round(Node*);
     void compileValueMod(Node*);
     void compileArithMod(Node*);
+    bool compileArithModDoubleByPowerOfTwo(Node*);
     void compileArithPow(Node*);
     void compileValuePow(Node*);
     void compileArithRounding(Node*);
@@ -1509,12 +1504,12 @@ public:
 #if USE(LARGE_TYPED_ARRAYS)
     void compileGetTypedArrayByteOffsetAsInt52(Node*);
 #endif
-    void compileGetByValOnIntTypedArray(Node*, TypedArrayType, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix);
+    void compileGetByValOnIntTypedArray(Node*, TypedArrayType, NOESCAPE const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix);
     void compilePutByValForIntTypedArray(Node*, TypedArrayType);
-    void compileGetByValOnFloatTypedArray(Node*, TypedArrayType, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix);
+    void compileGetByValOnFloatTypedArray(Node*, TypedArrayType, NOESCAPE const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix);
     void compilePutByValForFloatTypedArray(Node*, TypedArrayType);
-    void compileGetByValForObjectWithString(Node*, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix);
-    void compileGetByValForObjectWithSymbol(Node*, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix);
+    void compileGetByValForObjectWithString(Node*, NOESCAPE const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix);
+    void compileGetByValForObjectWithSymbol(Node*, NOESCAPE const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix);
     void compilePutByValForCellWithString(Node*);
     void compilePutByValForCellWithSymbol(Node*);
     void compileGetByValWithThis(Node*);
@@ -1627,7 +1622,7 @@ public:
     void compileThrow(Node*);
     void compileThrowStaticError(Node*);
 
-    void NODELETE compileExtractFromTuple(Node*);
+    void LEGACY_NODELETE compileExtractFromTuple(Node*);
     void compileStringIteratorNext(Node*);
     void compileEnumeratorNextUpdateIndexAndMode(Node*);
     void compileEnumeratorNextUpdatePropertyName(Node*);
@@ -1683,7 +1678,7 @@ public:
     void compileCallNumberConstructor(Node*);
     void compileLogShadowChickenPrologue(Node*);
     void compileLogShadowChickenTail(Node*);
-    void compileHasIndexedProperty(Node*, S_JITOperation_GCZ, const ScopedLambda<std::tuple<GPRReg, GPRReg>()>& prefix, bool = false);
+    void compileHasIndexedProperty(Node*, S_JITOperation_GCZ, NOESCAPE const ScopedLambda<std::tuple<GPRReg, GPRReg>()>& prefix, bool = false);
     void compileExtractCatchLocal(Node*);
     void compileClearCatchLocals(Node*);
     void compileProfileType(Node*);
@@ -1707,6 +1702,10 @@ public:
     void compileGlobalIsFinite(Node*);
     void compileNumberIsFinite(Node*);
     void compileNumberIsSafeInteger(Node*);
+    void emitDoubleIsNaN(FPRReg numberFPR, GPRReg resultGPR);
+    void emitDoubleIsFinite(FPRReg numberFPR, GPRReg resultGPR, FPRReg scratchFPR);
+    void emitDoubleIsSafeInteger(FPRReg numberFPR, GPRReg resultGPR, GPRReg scratchGPR, FPRReg scratchFPR, FPRReg limitFPR);
+    JumpList unboxDoubleForNumberPredicate(Edge, GPRReg argumentGPR, GPRReg resultGPR, FPRReg numberFPR, bool resultForInt32);
     void compileToIntegerOrInfinity(Node*);
     void compileToLength(Node*);
     void compileResolvePromiseFirstResolving(Node*);
@@ -1826,10 +1825,6 @@ public:
     void convertAnyInt(Edge, GPRReg resultGPR, bool canIgnoreNegativeZero);
     void speculateAnyInt(Edge);
     void speculateDoubleRepAnyInt(Edge);
-#if USE(BIGINT32)
-    void speculateBigInt32(Edge);
-    void speculateAnyBigInt(Edge);
-#endif // USE(BIGINT32)
     void speculateNumber(Edge);
     void speculateRealNumber(Edge);
     void speculateDoubleRepReal(Edge);
@@ -2192,7 +2187,7 @@ public:
         return *this;
     }
 
-    void NODELETE adopt(GPRTemporary&);
+    void LEGACY_NODELETE adopt(GPRTemporary&);
 
     ~GPRTemporary()
     {
@@ -2735,56 +2730,6 @@ private:
     Edge m_edge;
     GPRReg m_gprOrInvalid;
 };
-
-#if USE(BIGINT32)
-class SpeculateBigInt32Operand {
-    WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED(SpeculateBigInt32Operand);
-public:
-    explicit SpeculateBigInt32Operand(SpeculativeJIT* jit, Edge edge, OperandSpeculationMode mode = AutomaticOperandSpeculation)
-        : m_jit(jit)
-        , m_edge(edge)
-        , m_gprOrInvalid(InvalidGPRReg)
-    {
-        ASSERT(m_jit);
-        ASSERT_UNUSED(mode, mode == ManualOperandSpeculation || edge.useKind() == BigInt32Use);
-        if (jit->isFilled(node()))
-            gpr();
-    }
-
-    ~SpeculateBigInt32Operand()
-    {
-        ASSERT(m_gprOrInvalid != InvalidGPRReg);
-        m_jit->unlock(m_gprOrInvalid);
-    }
-
-    Edge edge() const
-    {
-        return m_edge;
-    }
-
-    Node* node() const
-    {
-        return edge().node();
-    }
-
-    GPRReg gpr()
-    {
-        if (m_gprOrInvalid == InvalidGPRReg)
-            m_gprOrInvalid = m_jit->fillSpeculateBigInt32(edge());
-        return m_gprOrInvalid;
-    }
-
-    void use()
-    {
-        m_jit->use(node());
-    }
-
-private:
-    SpeculativeJIT* m_jit;
-    Edge m_edge;
-    GPRReg m_gprOrInvalid;
-};
-#endif // USE(BIGINT32)
 
 #define DFG_TYPE_CHECK_WITH_EXIT_KIND(exitKind, source, edge, typesPassedThrough, jumpToFail) do { \
         JSValueSource _dtc_source = (source);                           \

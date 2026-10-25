@@ -505,73 +505,69 @@ static inline uint64_t readXCR0()
 }
 #endif
 
-void MacroAssemblerX86_64::collectCPUFeatures()
+CPUFeatureSet MacroAssemblerX86_64::collectCPUFeatures()
 {
-    static std::once_flag onceKey;
-    std::call_once(onceKey, [] {
-        {
-            CPUID cpuid = getCPUID(0x1);
-            s_sse3CheckState = (cpuid[2] & (1 << 0)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-            s_supplementalSSE3CheckState = (cpuid[2] & (1 << 9)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-            s_sse4_1CheckState = (cpuid[2] & (1 << 19)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-            s_sse4_2CheckState = (cpuid[2] & (1 << 20)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-            s_popcntCheckState = (cpuid[2] & (1 << 23)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-#if OS(DARWIN)
-            s_avxCheckState = CPUIDCheckState::Set;
-#else
-            // Per the Intel SDM, AVX is usable only when:
-            //   1. CPUID.1:ECX.AVX[bit 28] = 1      (CPU supports AVX)
-            //   2. CPUID.1:ECX.OSXSAVE[bit 27] = 1  (OS has enabled XGETBV)
-            //   3. XCR0[2:1] = 11b                  (OS saves XMM + YMM state)
-            // Checking only bit 28 is insufficient: under many hypervisors
-            // (Xen, KVM, Hyper-V, etc.) the AVX feature bit can be passed
-            // through from the host CPU while XSAVE/YMM state is not enabled
-            // in the guest, causing every VEX-encoded instruction to #UD.
-            s_avxCheckState = CPUIDCheckState::Clear;
-            if ((cpuid[2] & (1 << 28)) && (cpuid[2] & (1 << 27))) {
-                constexpr uint64_t ymmStateMask = 0x6; // XCR0.SSE | XCR0.AVX
-                if ((readXCR0() & ymmStateMask) == ymmStateMask)
-                    s_avxCheckState = CPUIDCheckState::Set;
-            }
-#endif
-        }
-#if OS(DARWIN)
-        {
-            uint32_t val = 0;
-            size_t valSize = sizeof(val);
-            int rc = sysctlbyname("hw.optional.bmi1", &val, &valSize, nullptr, 0);
-            s_bmi1CheckState = (rc >= 0 && val) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
+    CPUFeatureSet features;
+    auto add = [&](CPUFeature feature, bool isPresent) {
+        if (isPresent)
+            features = features.with(feature);
+    };
 
-            rc = sysctlbyname("hw.optional.avx2_0", &val, &valSize, nullptr, 0);
-            s_avx2CheckState = (rc >= 0 && val) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-        }
-#else
-        {
-            // CPUID leaf 7 sub-leaf 0: BMI1 = EBX[3], AVX2 = EBX[5].
-            CPUID cpuid = getCPUID(0x7);
-            s_bmi1CheckState = (cpuid[1] & (1 << 3)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-            // AVX2 is VEX-encoded and therefore also requires the OS to have
-            // enabled YMM state; gate it on the AVX result computed above.
-            bool hasAVX2Feature = cpuid[1] & (1 << 5);
-            s_avx2CheckState = (hasAVX2Feature && s_avxCheckState == CPUIDCheckState::Set) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
-        }
+#if !OS(DARWIN)
+    bool hasAVX = false;
 #endif
-        {
-            CPUID cpuid = getCPUID(0x80000001);
-            s_lzcntCheckState = (cpuid[2] & (1 << 5)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
+    {
+        CPUID cpuid = getCPUID(0x1);
+        add(CPUFeature::SSE3, cpuid[2] & (1 << 0));
+        add(CPUFeature::SupplementalSSE3, cpuid[2] & (1 << 9));
+        add(CPUFeature::SSE4_1, cpuid[2] & (1 << 19));
+        add(CPUFeature::SSE4_2, cpuid[2] & (1 << 20));
+        add(CPUFeature::Popcnt, cpuid[2] & (1 << 23));
+#if OS(DARWIN)
+        add(CPUFeature::AVX, true);
+#else
+        // Per the Intel SDM, AVX is usable only when:
+        //   1. CPUID.1:ECX.AVX[bit 28] = 1      (CPU supports AVX)
+        //   2. CPUID.1:ECX.OSXSAVE[bit 27] = 1  (OS has enabled XGETBV)
+        //   3. XCR0[2:1] = 11b                  (OS saves XMM + YMM state)
+        // Checking only bit 28 is insufficient: under many hypervisors
+        // (Xen, KVM, Hyper-V, etc.) the AVX feature bit can be passed
+        // through from the host CPU while XSAVE/YMM state is not enabled
+        // in the guest, causing every VEX-encoded instruction to #UD.
+        if ((cpuid[2] & (1 << 28)) && (cpuid[2] & (1 << 27))) {
+            constexpr uint64_t ymmStateMask = 0x6; // XCR0.SSE | XCR0.AVX
+            hasAVX = (readXCR0() & ymmStateMask) == ymmStateMask;
         }
-    });
+        add(CPUFeature::AVX, hasAVX);
+#endif
+    }
+#if OS(DARWIN)
+    {
+        uint32_t val = 0;
+        size_t valSize = sizeof(val);
+        int rc = sysctlbyname("hw.optional.bmi1", &val, &valSize, nullptr, 0);
+        add(CPUFeature::BMI1, rc >= 0 && val);
+
+        rc = sysctlbyname("hw.optional.avx2_0", &val, &valSize, nullptr, 0);
+        add(CPUFeature::AVX2, rc >= 0 && val);
+    }
+#else
+    {
+        // CPUID leaf 7 sub-leaf 0: BMI1 = EBX[3], AVX2 = EBX[5].
+        CPUID cpuid = getCPUID(0x7);
+        add(CPUFeature::BMI1, cpuid[1] & (1 << 3));
+        // AVX2 is VEX-encoded and therefore also requires the OS to have
+        // enabled YMM state; gate it on the AVX result computed above.
+        bool hasAVX2Feature = cpuid[1] & (1 << 5);
+        add(CPUFeature::AVX2, hasAVX2Feature && hasAVX);
+    }
+#endif
+    {
+        CPUID cpuid = getCPUID(0x80000001);
+        add(CPUFeature::LZCNT, cpuid[2] & (1 << 5));
+    }
+    return features;
 }
-
-MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_sse3CheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_supplementalSSE3CheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_sse4_1CheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_sse4_2CheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_avxCheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_avx2CheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_lzcntCheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_bmi1CheckState = CPUIDCheckState::NotChecked;
-MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_popcntCheckState = CPUIDCheckState::NotChecked;
 
 } // namespace JSC
 

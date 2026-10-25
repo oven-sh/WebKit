@@ -1,7 +1,7 @@
 {
     "domain": "IndexedDB",
     "debuggableTypes": ["web-page"],
-    "targetTypes": ["page"],
+    "targetTypes": ["frame", "page"],
     "types": [
         {
             "id": "DatabaseWithObjectStores",

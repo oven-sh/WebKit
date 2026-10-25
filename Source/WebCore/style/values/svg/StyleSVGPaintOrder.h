@@ -50,7 +50,7 @@ struct SVGPaintOrder {
 
     constexpr bool isNormal() const { return m_type == Type::Normal; }
 
-    template<typename... F> constexpr decltype(auto) switchOn(F&&... f) const
+    template<typename... F> constexpr decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -105,7 +105,7 @@ private:
 
 // MARK: - Conversion
 
-template<> struct CSSValueConversion<SVGPaintOrder> { SVGPaintOrder NODELETE operator()(BuilderState&, const CSSValue&); };
+template<> struct CSSValueConversion<SVGPaintOrder> { SVGPaintOrder LEGACY_NODELETE operator()(BuilderState&, const CSSValue&); };
 
 } // namespace Style
 } // namespace WebCore

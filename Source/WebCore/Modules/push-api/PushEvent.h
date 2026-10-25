@@ -38,7 +38,7 @@ class PushEvent final : public ExtendableEvent {
     WTF_MAKE_TZONE_ALLOCATED(PushEvent);
 public:
     static Ref<PushEvent> create(const AtomString&, PushEventInit&&, IsTrusted = IsTrusted::No);
-    static Ref<PushEvent> create(const AtomString&, ExtendableEventInit&&, std::optional<Vector<uint8_t>>&&, IsTrusted);
+    static Ref<PushEvent> LEGACY_NODELETE create(const AtomString&, ExtendableEventInit&&, std::optional<Vector<uint8_t>>&&, IsTrusted);
     ~PushEvent();
 
     PushMessageData* data() { return m_data.get(); }
@@ -46,8 +46,8 @@ public:
 #if ENABLE(DECLARATIVE_WEB_PUSH) && ENABLE(NOTIFICATIONS)
     static Ref<PushEvent> create(const AtomString&, ExtendableEventInit&&, Ref<Notification>, std::optional<uint64_t> appBadge, IsTrusted);
 
-    Notification* NODELETE notification();
-    std::optional<uint64_t> NODELETE appBadge();
+    Notification* LEGACY_NODELETE notification();
+    std::optional<uint64_t> LEGACY_NODELETE appBadge();
 
     Notification* proposedNotification() const { return m_proposedNotification.get(); }
     std::optional<uint64_t> proposedAppBadge() const { return m_proposedAppBadge; }
@@ -62,12 +62,12 @@ public:
 private:
     PushEvent(const AtomString&, ExtendableEventInit&&, std::optional<Vector<uint8_t>>&&, IsTrusted);
 
-    RefPtr<PushMessageData> m_data;
+    const RefPtr<PushMessageData> m_data;
 
 #if ENABLE(DECLARATIVE_WEB_PUSH) && ENABLE(NOTIFICATIONS)
     PushEvent(const AtomString&, ExtendableEventInit&&, std::optional<Vector<uint8_t>>&&, RefPtr<Notification>, std::optional<uint64_t> appBadge, IsTrusted);
 
-    RefPtr<Notification> m_proposedNotification;
+    const RefPtr<Notification> m_proposedNotification;
     std::optional<uint64_t> m_proposedAppBadge;
 
     RefPtr<Notification> m_updatedNotification;

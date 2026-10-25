@@ -1,0 +1,130 @@
+# A type parameter is a layout that nobody allocates. The instantiations the program performs fill its family: a type argument with a layout lists the parameter among its supertypes.
+# A parameter that gets no such argument has no family: only untyped code calls the generic function, nothing instantiates the class, or all that is passed on to it is another parameter without a family.
+# No object passes a test against a type without members, so the reader reads every type that names such a parameter as anything. Only the marker of a dead zone stays.
+# Beside each: a parameter with an argument is a declared layout like any other, and the reader replaces it by its family
+# FORM: AsRead
+# RUN: print
+# RUN(MEMBERS): members
+# RUN(TYPED): pass TypeValues VerifyProgram
+# TYPED: outcome: Changed
+# TYPED-NEXT: outcome: Unchanged
+
+# function keep<Unfilled>(value: Unfilled): Unfilled { class Unused { value: Unfilled } .. }; function pass<Forwarded>(value: Forwarded) { return keep(value) }; function measure<Bounded extends Shape>(shape: Bounded). Only untyped code calls the three
+# class Box<Filled> { value: Filled }; function wrap<Inner>(value: Inner) { return new Box(value) }; wrap(item)
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+layout L0 name="Shape" fields=[{key="area" declared={type=number}}]
+layout L1 name="Circle" fields=[{key="area" declared={type=number}}] supertypes=[L0]
+layout L2 name="Unfilled" flags=[IsTypeParameter]
+layout L3 name="Forwarded" supertypes=[L2] flags=[IsTypeParameter]
+layout L4 name="Bounded" supertypes=[L0] flags=[IsTypeParameter]
+layout L5 name="Filled" flags=[IsTypeParameter]
+layout L6 name="Inner" supertypes=[L5] flags=[IsTypeParameter]
+layout L7 name="Item" fields=[{key="id" declared={type=number}}] supertypes=[L6]
+layout L8 kind=Instance name="Unused" constructor=f11 fields=[{key="value" declared={type=L2}}]
+layout L9 kind=Instance name="Box" constructor=f12 fields=[{key="value" declared={type=L5}}]
+layout L10 kind=Environment fields=[{declared={type=L2|absent}}, {declared={type=L5|absent}}]
+# A layout is a member of its own family, so a family without an object is one that lists type parameters only
+# MEMBERS: L0: members [L0, L1, L4]
+# MEMBERS-NEXT: L1: members [L1]
+# MEMBERS-NEXT: L2: members [L2, L3]
+# MEMBERS-NEXT: L3: members [L3]
+# MEMBERS-NEXT: L4: members [L4]
+# MEMBERS-NEXT: L5: members [L5, L6, L7]
+# MEMBERS-NEXT: L6: members [L6, L7]
+# MEMBERS-NEXT: L7: members [L7]
+# CHECK: layout L2 name="Unfilled" flags=[IsTypeParameter] {{*}}flow={allocation=NeverAllocated
+# CHECK-NEXT: layout L3 name="Forwarded" supertypes=[L2] flags=[IsTypeParameter] {{*}}flow={allocation=NeverAllocated
+# CHECK-NEXT: layout L4 name="Bounded" supertypes=[L0] flags=[IsTypeParameter] {{*}}flow={allocation=NeverAllocated
+# CHECK-NEXT: layout L5 name="Filled" flags=[IsTypeParameter] {{*}}flow={allocation=NeverAllocated
+# CHECK-NEXT: layout L6 name="Inner" supertypes=[L5] flags=[IsTypeParameter] {{*}}flow={allocation=NeverAllocated
+# CHECK-NEXT: layout L7 name="Item"
+# CHECK-NOT: NeverAllocated
+# CHECK: layout L8 kind=Instance name="Unused" constructor=f11 fields=[{key="value" declared={type=anything}}]
+# CHECK-NEXT: layout L9 kind=Instance name="Box" constructor=f12 fields=[{key="value" declared={type=L5|L6|L7}}]
+# CHECK-NEXT: layout L10 kind=Environment fields=[{declared={type=anything|absent}}, {declared={type=absent|L5|L6|L7}}]
+function f0 name="keep" parameters=[{type=L2}] results=[{type=L2}] {
+    Return v0
+# CHECK: parameters=[{type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything):
+# A parameter is no argument with a layout: the family of Unfilled lists Forwarded and still holds no object
+}
+function f1 name="pass" parameters=[{type=L3}] results=[{type=L2}] {
+    v1 = Convert v0 declared={type=L2}
+    v2 = CallDirect v1 function=f0
+    Return v2
+# CHECK: parameters=[{type=anything}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1 = Convert v0 declared={type=anything}
+# TYPED: b0(v0: anything):
+# TYPED-NEXT: [[kept]]: anything = CallDirect v0 function=f0
+# TYPED-NEXT: Return [[kept]]
+# One such parameter among the parts of a union makes the whole type anything, also beside a layout or a parameter that has a family
+}
+function f2 name="unions" parameters=[{type=undefined|null|L2}, {type=string|L3}, {type=L1|L4}, {type=L2|L5}, {type=Array<L2>}] results=[{type=anything}] {
+    Return v0
+# CHECK: parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=Array}]
+# CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: Array):
+}
+function f3 name="unionsWithFamily" parameters=[{type=undefined|null|L5}, {type=string|L6}, {type=L1|L5}, {type=Array<L5>}] results=[{type=anything}] {
+    Return v0
+# CHECK: parameters=[{type=undefined|null|L5|L6|L7}, {type=string|L6|L7}, {type=L1|L5|L6|L7}, {type=Array<L5|L6|L7>}]
+# CHECK-NEXT: b0(v0: undefined|null|L5|L6|L7, v1: string|L6|L7, v2: L1|L5|L6|L7, v3: Array<L5|L6|L7>):
+# The conversion goes from the parameter to its bound. The bound lists the parameter, and the members of the bound are no members of the parameter
+}
+function f4 name="measure" parameters=[{type=L4}, {type=L0}] results=[{type=anything}] {
+    Return v0
+# CHECK: parameters=[{type=anything}, {type=L0|L1|L4}]
+# CHECK-NEXT: b0(v0: anything, v1: L0|L1|L4):
+}
+function f5 name="requests" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Convert v0 declared={type=L2} illTypedCause=FromLooseType
+    v3 = Convert v1 declared={type=L5} illTypedCause=FromLooseType
+    Return v2
+# CHECK: v2 = Convert v0 declared={type=anything} illTypedCause=FromLooseType
+# CHECK-NEXT: v3 = Convert v1 declared={type=L5|L6|L7} illTypedCause=FromLooseType
+# TYPED: b0(v0: anything, v1: anything):
+# TYPED-NEXT: [[checked]]: L5|L6|L7 = Check v1 castType=L5|L6|L7
+# TYPED-NEXT: Return v0
+}
+function f6 name="forward" parameters=[{type=anything}] results=[{type=L2}] {
+    v1 = Call v0
+    ReturnCall v1 casts=[{declared={type=L2}}]
+# CHECK: ReturnCall v1 casts=[{declared={type=anything}}]
+# TYPED: ReturnCall v1 casts=[{declared={type=anything} resolution=Nothing}]
+}
+function f7 name="captured" captures=[{type=env L10}] results=[{type=anything}] {
+  b0(v0: env L10):
+    v1 = GetEnvironmentField v0 layout=L10
+    v2 = CheckInitialized v1 name="kept"
+    v3 = GetEnvironmentField v0 layout=L10 field=1
+    v4 = CheckInitialized v3 name="boxed"
+    Return v2
+# TYPED: v1: anything|absent = GetEnvironmentField v0 layout=L10
+# TYPED-NEXT: v2: anything = CheckInitialized v1 name="kept"
+# TYPED-NEXT: v3: absent|L5|L6|L7 = GetEnvironmentField v0 layout=L10 field=1
+# TYPED-NEXT: v4: L5|L6|L7 = CheckInitialized v3 name="boxed"
+# A built-in that answers `any` creates the records that its result is converted to. Of this type it creates the argument, never the parameters: see the layouts above
+}
+function f8 name="convertsResult" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    v2 = Convert v1 declared={type=L5} illTypedCause=FromLooseType
+    Return v2
+}
+# The family covers the conversion of an argument to its parameter, so that conversion costs nothing
+function f9 name="wrapsItem" results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L7 fields=[0]
+    v2 = Convert v1 declared={type=L6}
+    v3 = CallDirect v2 function=f10
+    Return v3
+# CHECK: v2 = Convert v1 declared={type=L6|L7}
+# TYPED: v1: L7 = NewObject -, v0 layout=L7 fields=[0]
+# TYPED-NEXT: [[wrapped]]: anything = CallDirect v1 function=f10
+# TYPED-NEXT: Return [[wrapped]]
+}
+function f10 name="wrap" parameters=[{type=L6}] results=[{type=anything}]
+# CHECK-LABEL: function f10 name="wrap"
+# CHECK: parameters=[{type=L6|L7}]
+function f11 name="Unused" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L8 flags=[IsFromCompiler]}]
+function f12 name="Box" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L9 flags=[IsFromCompiler]}]

@@ -1,0 +1,86 @@
+# A block that ends in a switch on the same subject is a head or a link like a comparison
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SwitchNumberGroups = 2
+# STATISTIC: SwitchStringGroups = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="switch-then-comparison" parameters=[{type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v0
+  b2():
+    Return v0
+  b3():
+    v1 = Integer integer=3
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b4(), notTaken b5()
+  b4():
+    Return v0
+  b5():
+    Return v0
+# CHECK: Switch v0 cases=[1, 2, 3] -> case b1(), case b2(), case b3(), otherwise b4()
+# CHECK-NOT: StrictEq
+}
+
+function f1 name="comparison-then-switch" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=3
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    Switch v0 cases=[1, 3, 2] -> case b3(), case b4(), case b3(), otherwise b5()
+  b3():
+    Return v0
+  b4():
+    v3 = PropGet v0 key="second-three"
+    Return v3
+  b5():
+    Return v0
+# CHECK: Switch v0 cases=[3, 1, 2] -> case b1(), case b2(), case b2(), otherwise b3()
+# CHECK-NOT: key="second-three"
+}
+
+function f2 name="string-switch-then-comparison" parameters=[{type=anything}] results=[{type=anything}] {
+    SwitchString v0 strings=["a", "b"] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Return v0
+  b2():
+    Return v0
+  b3():
+    v1 = String string="c"
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b4(), notTaken b5()
+  b4():
+    Return v0
+  b5():
+    Return v0
+# CHECK: SwitchString v0 strings=["a", "b", "c"] -> case b1(), case b2(), case b3(), otherwise b4()
+}
+
+function f3 name="two-switches" parameters=[{type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[1, 2] -> case b1(), case b1(), otherwise b2()
+  b1():
+    Return v0
+  b2():
+    Switch v0 cases=[3, 4] -> case b1(), case b1(), otherwise b3()
+  b3():
+    Return v0
+# CHECK: Switch v0 cases=[1, 2] -> case b1(), case b1(), otherwise b2()
+# CHECK: Switch v0 cases=[3, 4] -> case b1(), case b1(), otherwise b3()
+}
+
+function f4 name="switch-on-another-value" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Switch v1 cases=[1, 2] -> case b1(), case b1(), otherwise b2()
+  b1():
+    Return v0
+  b2():
+    v2 = Integer integer=3
+    v3 = StrictEq v0, v2
+    Branch v3 -> taken b1(), notTaken b3()
+  b3():
+    Return v0
+# CHECK: Switch v1 cases=[1, 2] -> case b1(), case b1(), otherwise b2()
+# CHECK: = StrictEq v0,
+}

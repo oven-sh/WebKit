@@ -30,6 +30,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "AOTRemovableFeature.h"
 #include "ButterflyInlines.h"
 #include "FrameTracers.h"
 #include "GCMemoryOperations.h"
@@ -77,15 +78,17 @@ static constexpr bool verbose = false;
 
 JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildFrame, JSToWasmCallee*, (void* sp, CallFrame* callFrame, WebAssemblyFunction* function))
 {
+    void* returnAddress = OUR_RETURN_ADDRESS;
+    JSC_REMOVABLE_DEFINITION(WebAssembly, operationJSToWasmEntryWrapperBuildFrame);
     dataLogLnIf(WasmOperationsInternal::verbose, "operationJSToWasmEntryWrapperBuildFrame sp: ", RawPointer(sp), " fp: ", RawPointer(callFrame));
 
     auto* globalObject = function->realm();
     VM& vm = globalObject->vm();
 
-    if (function->taintedness() >= SourceTaintedOrigin::IndirectlyTainted)
+    if (function->taintedness().isTainted())
         vm.setMightBeExecutingTaintedCode();
 
-    WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, OUR_RETURN_ADDRESS);
+    WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, returnAddress);
     auto* callee = function->jsToWasmCallee();
     ASSERT(function);
     ASSERT(callee->compilationMode() == CompilationMode::JSToWasmMode);
@@ -149,13 +152,15 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildFrame, JSToWasmCallee
 // Marshalls wasm return values into JS: a single JSValue for one result, or a JSArray for multi-value.
 JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildReturnFrame, EncodedJSValue, (void* sp, CallFrame* callFrame))
 {
+    void* returnAddress = OUR_RETURN_ADDRESS;
+    JSC_REMOVABLE_DEFINITION(WebAssembly, operationJSToWasmEntryWrapperBuildReturnFrame);
     dataLogLnIf(WasmOperationsInternal::verbose, "operationJSToWasmEntryWrapperBuildReturnFrame sp: ", RawPointer(sp), " fp: ", RawPointer(callFrame));
 
     auto* instance = callFrame->wasmInstance();
     ASSERT(instance);
     ASSERT(instance->realm());
     VM& vm = instance->vm();
-    WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, OUR_RETURN_ADDRESS);
+    WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, returnAddress);
 
     uint64_t* registerSpace = reinterpret_cast<uint64_t*>(sp);
     auto* callee = uncheckedDowncast<JSToWasmCallee>(uncheckedDowncast<Wasm::Callee>(callFrame->callee().asNativeCallee()));
@@ -183,7 +188,7 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildReturnFrame, EncodedJ
         if (signature.returnType(0).isI32())
             result = jsNumber(*access.operator()<int32_t>(registerSpace, 0));
         else if (signature.returnType(0).isI64()) {
-            result = JSBigInt::makeHeapBigIntOrBigInt32(instance->realm(), *access.operator()<int64_t>(registerSpace, 0));
+            result = JSBigInt::createFrom(instance->realm(), *access.operator()<int64_t>(registerSpace, 0));
             OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         } else if (signature.returnType(0).isF32())
             result = jsNumber(purifyNaN(*access.operator()<float>(registerSpace, GPRInfo::numberOfArgumentRegisters * sizeof(UCPURegister) + 0)));
@@ -239,7 +244,7 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildReturnFrame, EncodedJ
                 result = jsNumber(*access.operator()<int32_t>(registerSpace, GPRInfo::toArgumentIndex(loc.gpr()) * sizeof(UCPURegister)));
                 break;
             case TypeKind::I64:
-                result = JSBigInt::makeHeapBigIntOrBigInt32(globalObject, *access.operator()<int64_t>(registerSpace, GPRInfo::toArgumentIndex(loc.gpr()) * sizeof(UCPURegister)));
+                result = JSBigInt::createFrom(globalObject, *access.operator()<int64_t>(registerSpace, GPRInfo::toArgumentIndex(loc.gpr()) * sizeof(UCPURegister)));
                 OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
                 break;
             case TypeKind::F32:
@@ -258,7 +263,7 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildReturnFrame, EncodedJ
                 result = jsNumber(*access.operator()<int32_t>(callFrame, calleeSPOffsetFromFP + loc.offsetFromSP()));
                 break;
             case TypeKind::I64:
-                result = JSBigInt::makeHeapBigIntOrBigInt32(globalObject, *access.operator()<int64_t>(callFrame, calleeSPOffsetFromFP + loc.offsetFromSP()));
+                result = JSBigInt::createFrom(globalObject, *access.operator()<int64_t>(callFrame, calleeSPOffsetFromFP + loc.offsetFromSP()));
                 OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
                 break;
             case TypeKind::F32:
@@ -299,6 +304,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationGetWasmCalleeStackSize, UCPUStrictInt
 
 JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalArguments, void, (void* sp, CallFrame* callFrame, void* argumentRegisters, JSWebAssemblyInstance* instance))
 {
+    void* returnAddress = OUR_RETURN_ADDRESS;
+    JSC_REMOVABLE_DEFINITION(WebAssembly, operationWasmToJSExitMarshalArguments);
     auto access = []<typename V>(auto* arr, int i) -> V* {
         return &reinterpret_cast<V*>(arr)[i / static_cast<int>(sizeof(V))];
     };
@@ -313,7 +320,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalArguments, void, (void* sp,
     JSGlobalObject* globalObject = instance->realm();
     ASSERT(globalObject);
     VM& vm = instance->vm();
-    WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, OUR_RETURN_ADDRESS);
+    WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, returnAddress);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -370,11 +377,11 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalArguments, void, (void* sp,
         }
         case TypeKind::I64: {
             if (wasmParam.isStack()) {
-                auto result = JSBigInt::makeHeapBigIntOrBigInt32(globalObject, *access.operator()<int64_t>(callFrame, wasmParam.offsetFromFP()));
+                auto result = JSBigInt::createFrom(globalObject, *access.operator()<int64_t>(callFrame, wasmParam.offsetFromFP()));
                 OPERATION_RETURN_IF_EXCEPTION(scope);
                 *access.operator()<uint64_t>(calleeFrame, dst) = JSValue::encode(result);
             } else {
-                auto result = JSBigInt::makeHeapBigIntOrBigInt32(globalObject, *access.operator()<int64_t>(argumentRegisters, GPRInfo::toArgumentIndex(wasmParam.gpr()) * sizeof(UCPURegister)));
+                auto result = JSBigInt::createFrom(globalObject, *access.operator()<int64_t>(argumentRegisters, GPRInfo::toArgumentIndex(wasmParam.gpr()) * sizeof(UCPURegister)));
                 OPERATION_RETURN_IF_EXCEPTION(scope);
                 *access.operator()<uint64_t>(calleeFrame, dst) = JSValue::encode(result);
             }
@@ -442,6 +449,8 @@ ALWAYS_INLINE void assertCalleeIsReferenced(CallFrame* frame, JSWebAssemblyInsta
 
 JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* sp, CallFrame* callFrame, JSWebAssemblyInstance* instance))
 {
+    void* returnAddress = OUR_RETURN_ADDRESS;
+    JSC_REMOVABLE_DEFINITION(WebAssembly, operationWasmToJSExitMarshalReturnValues);
     auto access = []<typename V>(auto* arr, int i) -> V* {
         return &reinterpret_cast<V*>(arr)[i / static_cast<int>(sizeof(V))];
     };
@@ -449,7 +458,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* 
     void* registerSpace = sp;
 
     assertCalleeIsReferenced(callFrame, instance);
-    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), callFrame, OUR_RETURN_ADDRESS);
+    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), callFrame, returnAddress);
     auto scope = DECLARE_THROW_SCOPE(instance->vm());
 
     auto* importableFunction = *access.operator()<WasmOrJSImportableFunctionCallLinkInfo*>(callFrame, WasmToJSCallableFunctionSlot);
@@ -664,7 +673,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* 
     OPERATION_RETURN(scope);
 }
 
-#if ENABLE(WEBASSEMBLY_OMGJIT)
+#if ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)
 static bool shouldTriggerOMGCompile(TierUpCount& tierUp, OMGCallee* replacement, FunctionCodeIndex functionIndex)
 {
     if (!OMGPlan::ensureGlobalOMGAllowlist().containsWasmFunction(functionIndex)) {
@@ -715,6 +724,9 @@ static void triggerOMGReplacementCompile(TierUpCount& tierUp, JSWebAssemblyInsta
     }
 }
 
+#endif // ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)
+
+#if ENABLE(WEBASSEMBLY_OMGJIT)
 // loadValuesIntoBuffer assumes context saved vector-width FPRs.
 void loadValuesIntoBuffer(Probe::Context& context, const StackMap& values, Wasm::Context::ScratchBufferEntry* buffer)
 {
@@ -794,7 +806,9 @@ void loadValuesIntoBuffer(Probe::Context& context, const StackMap& values, Wasm:
             RELEASE_ASSERT_NOT_REACHED();
     }
 }
+#endif // ENABLE(WEBASSEMBLY_OMGJIT)
 
+#if ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)
 SUPPRESS_ASAN
 static void doOSREntry(JSWebAssemblyInstance* instance, Probe::Context& context, BBQCallee& callee, OMGOSREntryCallee& osrEntryCallee, OSREntryData& osrEntryData)
 {
@@ -889,7 +903,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTriggerTierUpNow, void, (CallFram
 }
 #endif
 
-#if ENABLE(WEBASSEMBLY_OMGJIT)
+#if ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTriggerOSREntryNow, void, (Probe::Context& context))
 {
     OSREntryData& osrEntryData = *context.arg<OSREntryData*>();
@@ -1104,7 +1118,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTriggerOSREntryNow, void, (Probe:
 }
 
 #endif
-#if ENABLE(WEBASSEMBLY_OMGJIT) || ENABLE(WEBASSEMBLY_BBQJIT)
+#if ENABLE(WEBASSEMBLY_BBQJIT)
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmLoopOSREnterBBQJIT, void, (Probe::Context & context))
 {
@@ -1198,13 +1212,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmUnwind, void*, (JSWebAssemblyInst
 {
     ASSERT(instance->type() == WebAssemblyInstanceType);
     CallFrame* callFrame = DECLARE_WASM_CALL_FRAME(instance);
+    void* returnAddress = OUR_RETURN_ADDRESS;
+    JSC_REMOVABLE_DEFINITION(WebAssembly, operationWasmUnwind);
 #if ASSERT_ENABLED
     // JS -> Wasm might throw before it's transitioned to a NativeCallee. It should have restored any callee saves at this point already though.
     if (callFrame->callee().isNativeCallee())
         assertCalleeIsReferenced(callFrame, instance);
 #endif
     VM& vm = instance->vm();
-    WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, OUR_RETURN_ADDRESS);
+    WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, returnAddress);
     genericUnwind(vm, callFrame);
     ASSERT(!!vm.callFrameForCatch);
     ASSERT(!!vm.targetMachinePCForThrow);
@@ -1311,7 +1327,7 @@ JSC_DEFINE_JIT_OPERATION(operationConvertToBigInt, EncodedJSValue, (JSWebAssembl
     JSGlobalObject* globalObject = instance->realm();
     WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, OUR_RETURN_ADDRESS);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    OPERATION_RETURN(scope, JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, value)));
+    OPERATION_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, value)));
 }
 
 // https://webassembly.github.io/multi-value/js-api/index.html#run-a-host-function
@@ -1800,11 +1816,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmArrayFill16B, void, (void* payloa
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmArrayFillRefs, void, (uint64_t* payload, uint64_t value, size_t elementCount))
 {
     gcSafeMemfill(payload, value, elementCount * sizeof(uint64_t));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmArrayCopyRefs, void, (uint64_t* dst, const uint64_t* src, size_t byteCount))
-{
-    gcSafeMemmove(dst, src, byteCount);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmArrayInitElem, UCPUStrictInt32, (JSWebAssemblyInstance* instance, EncodedJSValue dst, uint32_t dstOffset, uint32_t srcElementIndex, uint32_t srcOffset, uint32_t size))

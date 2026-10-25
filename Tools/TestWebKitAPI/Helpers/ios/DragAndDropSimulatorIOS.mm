@@ -190,8 +190,9 @@ InteractionType *findInteractionOfType(UIView *view)
 
 @end
 
-@implementation MockDropSession
-
+@implementation MockDropSession {
+    RetainPtr<id<UIDragSession>> _localDragSession;
+}
 - (instancetype)initWithProviders:(NSArray<NSItemProvider *> *)providers location:(CGPoint)locationInWindow window:(UIWindow *)window allowMove:(BOOL)allowMove
 {
     RetainPtr items = adoptNS([[NSMutableArray alloc] init]);
@@ -228,7 +229,12 @@ InteractionType *findInteractionOfType(UIView *view)
 
 - (id <UIDragSession>)localDragSession
 {
-    return nil;
+    return _localDragSession.get();
+}
+
+- (void)setLocalDragSession:(id<UIDragSession>)localDragSession
+{
+    _localDragSession = localDragSession;
 }
 
 - (BOOL)hasItemsConformingToTypeIdentifier:(NSString *)typeIdentifier
@@ -588,7 +594,7 @@ IGNORE_WARNINGS_END
         _phase = DragAndDropPhaseCancelled;
         [[_dropSession items] enumerateObjectsUsingBlock:^(UIDragItem *item, NSUInteger index, BOOL *) {
             UITargetedDragPreview *defaultPreview = nil;
-            if ([_liftPreviews count] && [[_liftPreviews objectAtIndex:index] isEqual:NSNull.null])
+            if (index < [_liftPreviews count] && [[_liftPreviews objectAtIndex:index] isEqual:NSNull.null])
                 defaultPreview = [_liftPreviews objectAtIndex:index];
 
             UITargetedDragPreview *preview = [[_webView dragInteractionDelegate] dragInteraction:[_webView dragInteraction] previewForCancellingItem:item withDefault:defaultPreview];
@@ -692,6 +698,7 @@ IGNORE_WARNINGS_END
         }
 
         _dropSession = adoptNS([[MockDropSession alloc] initWithProviders:itemProviders location:self._currentLocation window:[_webView window] allowMove:self.shouldAllowMoveOperation]);
+        [_dropSession setLocalDragSession:_dragSession.get()];
         [_dragSession setItems:items];
         _sourceItemProviders = itemProviders;
         if (self.showCustomActionSheetBlock) {

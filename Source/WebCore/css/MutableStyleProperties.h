@@ -25,6 +25,7 @@
 #pragma once
 
 #include <WebCore/StyleProperties.h>
+#include <wtf/CheckedRef.h>
 
 namespace WebCore {
 
@@ -34,15 +35,16 @@ class StyledElement;
 struct CSSParserContext;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MutableStyleProperties);
-class MutableStyleProperties final : public StyleProperties {
+class MutableStyleProperties final : public StyleProperties, public CanMakeCheckedPtr<MutableStyleProperties> {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(MutableStyleProperties, MutableStyleProperties);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(MutableStyleProperties);
 public:
     inline void deref() const;
 
-    static Ref<MutableStyleProperties> create(CSSParserMode);
-    WEBCORE_EXPORT static Ref<MutableStyleProperties> create();
+    static Ref<MutableStyleProperties> LEGACY_NODELETE create(CSSParserMode);
+    WEBCORE_EXPORT static Ref<MutableStyleProperties> LEGACY_NODELETE create();
     static Ref<MutableStyleProperties> create(Vector<CSSProperty>&&);
-    static Ref<MutableStyleProperties> createEmpty();
+    static Ref<MutableStyleProperties> LEGACY_NODELETE createEmpty();
 
     WEBCORE_EXPORT ~MutableStyleProperties();
 
@@ -57,7 +59,7 @@ public:
     static constexpr std::nullptr_t end() { return nullptr; }
     unsigned size() const { return propertyCount(); }
 
-    CSSStyleProperties* NODELETE cssStyleProperties();
+    CSSStyleProperties* LEGACY_NODELETE cssStyleProperties();
 
     bool addParsedProperties(const ParsedPropertyVector&);
     bool addParsedProperty(const CSSProperty&);
@@ -82,8 +84,8 @@ public:
     WEBCORE_EXPORT CSSStyleProperties& ensureCSSStyleProperties();
     CSSStyleProperties& ensureInlineCSSStyleProperties(StyledElement& parentElement);
 
-    int NODELETE findPropertyIndex(CSSPropertyID) const;
-    int NODELETE findCustomPropertyIndex(StringView propertyName) const;
+    int LEGACY_NODELETE findPropertyIndex(CSSPropertyID) const;
+    int LEGACY_NODELETE findCustomPropertyIndex(StringView propertyName) const;
 
     // Methods for querying and altering CSS custom properties.
     bool setCustomProperty(const String& propertyName, const String& value, CSSParserContext, IsImportant = IsImportant::No);
@@ -97,8 +99,8 @@ private:
     bool removeLonghandProperty(CSSPropertyID, String* returnText);
     bool removeShorthandProperty(CSSPropertyID, String* returnText);
     bool removePropertyAtIndex(int index, String* returnText);
-    CSSProperty* NODELETE findCSSPropertyWithID(CSSPropertyID);
-    CSSProperty* NODELETE findCustomCSSPropertyWithName(const String&);
+    CSSProperty* LEGACY_NODELETE findCSSPropertyWithID(CSSPropertyID);
+    CSSProperty* LEGACY_NODELETE findCustomCSSPropertyWithName(const String&);
     bool canUpdateInPlace(const CSSProperty&, CSSProperty* toReplace) const;
 
     friend class StyleProperties;

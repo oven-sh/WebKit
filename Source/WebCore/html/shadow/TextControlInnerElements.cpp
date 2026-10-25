@@ -87,7 +87,7 @@ RenderPtr<RenderElement> TextControlInnerContainer::createElementRenderer(Style:
     return createRenderer<RenderTextControlInnerContainer>(*this, WTF::move(style));
 }
 
-static inline bool NODELETE isStrongPasswordTextField(const Element* element)
+static inline bool LEGACY_NODELETE isStrongPasswordTextField(const Element* element)
 {
     auto* inputElement = dynamicDowncast<HTMLInputElement>(element);
     return inputElement && inputElement->hasAutofillStrongPasswordButton();
@@ -136,7 +136,7 @@ std::optional<Style::UnadjustedStyle> TextControlInnerElement::resolveCustomStyl
 
     // The used value of user-select needs adjusting here because the adjuster won't run
     // on this style later (because it was not produced by the cascade).
-    Style::Adjuster adjuster(document(), *shadowHostStyle, nullptr, nullptr);
+    Style::Adjuster adjuster(protect(document()), *shadowHostStyle, nullptr, nullptr);
     adjuster.adjustUsedUserSelect(*newStyle);
 
     if (isStrongPasswordTextField(shadowHost())) {
@@ -257,7 +257,7 @@ std::optional<Style::UnadjustedStyle> TextControlPlaceholderElement::resolveCust
 
 // MARK: SearchFieldResultsButtonElement
 
-static inline bool NODELETE searchFieldStyleHasExplicitlySpecifiedTextFieldAppearance(const Style::ComputedStyle& style)
+static inline bool LEGACY_NODELETE searchFieldStyleHasExplicitlySpecifiedTextFieldAppearance(const Style::ComputedStyle& style)
 {
     auto appearance = style.appearance();
     return appearance == StyleAppearance::TextField && appearance == style.usedAppearance();
@@ -358,7 +358,7 @@ std::optional<Style::UnadjustedStyle> SearchFieldCancelButtonElement::resolveCus
 {
     auto elementStyle = resolveStyle(resolutionContext);
     Ref inputElement = downcast<HTMLInputElement>(*shadowHost());
-    elementStyle.style->setVisibility(elementStyle.style->usedVisibility() == Visibility::Hidden || inputElement->value()->isEmpty() ? Visibility::Hidden : Visibility::Visible);
+    elementStyle.style->setVisibility(elementStyle.style->visibility() == Visibility::Hidden || elementStyle.style->isForceHidden() || inputElement->value()->isEmpty() ? Visibility::Hidden : Visibility::Visible);
 
     if (shadowHostStyle && searchFieldStyleHasExplicitlySpecifiedTextFieldAppearance(*shadowHostStyle))
         elementStyle.style->setDisplay(Style::DisplayType::None);

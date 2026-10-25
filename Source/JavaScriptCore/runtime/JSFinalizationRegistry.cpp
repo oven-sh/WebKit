@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSFinalizationRegistry.h"
 
+#include "AOTRemovableFeature.h"
 #include "AbstractSlotVisitor.h"
 #include "DeferredWorkTimer.h"
 #include "GlobalObjectMethodTable.h"
@@ -63,8 +64,9 @@ void JSFinalizationRegistry::finishCreation(VM& vm, JSGlobalObject* globalObject
 }
 
 template<typename Visitor>
-void JSFinalizationRegistry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+ALWAYS_INLINE void JSFinalizationRegistry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
+    JSC_REMOVABLE_DEFINITION(WeakReferences, static_cast<void (*)(JSCell*, Visitor&)>(&JSFinalizationRegistry::visitChildren));
     Base::visitChildren(cell, visitor);
 
     auto* thisObject = uncheckedDowncast<JSFinalizationRegistry>(cell);
@@ -87,13 +89,14 @@ void JSFinalizationRegistry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     totalBufferSizesInBytes += thisObject->m_liveRegistrations.capacity() * sizeof(typename decltype(thisObject->m_deadRegistrations)::KeyValuePairType);
     totalBufferSizesInBytes += thisObject->m_noUnregistrationLive.capacity() * sizeof(decltype(thisObject->m_noUnregistrationLive.takeLast()));
     totalBufferSizesInBytes += thisObject->m_noUnregistrationDead.capacity() * sizeof(decltype(thisObject->m_noUnregistrationLive.takeLast()));
-    visitor.vm().heap.reportExtraMemoryVisited(totalBufferSizesInBytes);
+    thisObject->vm().heap.reportExtraMemoryVisited(totalBufferSizesInBytes);
 }
 
 DEFINE_VISIT_CHILDREN(JSFinalizationRegistry);
 
-void JSFinalizationRegistry::destroy(JSCell* table)
+NEVER_INLINE void JSFinalizationRegistry::destroy(JSCell* table)
 {
+    JSC_REMOVABLE_DEFINITION(WeakReferences, &JSFinalizationRegistry::destroy);
     static_cast<JSFinalizationRegistry*>(table)->~JSFinalizationRegistry();
 }
 

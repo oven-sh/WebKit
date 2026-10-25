@@ -32,6 +32,7 @@
 #import "Decoder.h"
 #import "Encoder.h"
 #import <WebCore/ApplePaySetupFeatureWebCore.h>
+#import <wtf/Borrow.h>
 
 #import <pal/cocoa/PassKitSoftLink.h>
 
@@ -40,7 +41,7 @@ namespace WebKit {
 static RetainPtr<NSArray<PKPaymentSetupFeature *>> toPlatformFeatures(Vector<Ref<WebCore::ApplePaySetupFeature>>&& features)
 {
     RetainPtr platformFeatures = adoptNS([[NSMutableArray alloc] initWithCapacity:features.size()]);
-    for (auto& feature : features)
+    for (auto& feature : borrow(features))
         [platformFeatures addObject:RetainPtr { feature->platformFeature() }.get()];
     return platformFeatures;
 }
@@ -48,7 +49,7 @@ static RetainPtr<NSArray<PKPaymentSetupFeature *>> toPlatformFeatures(Vector<Ref
 static RetainPtr<NSArray<PKPaymentSetupFeature *>> toPlatformFeatures(Vector<RetainPtr<PKPaymentSetupFeature>>&& features)
 {
     RetainPtr platformFeatures = adoptNS([[NSMutableArray alloc] initWithCapacity:features.size()]);
-    for (auto& feature : features)
+    for (auto& feature : borrow(features))
         [platformFeatures addObject:feature.get()];
     return platformFeatures;
 }
@@ -72,7 +73,8 @@ PaymentSetupFeatures::operator Vector<Ref<WebCore::ApplePaySetupFeature>>() cons
 {
     Vector<Ref<WebCore::ApplePaySetupFeature>> features;
     features.reserveInitialCapacity([m_platformFeatures count]);
-    for (PKPaymentSetupFeature *platformFeature in m_platformFeatures.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL PKPaymentSetupFeature *platformFeature in m_platformFeatures.get()) {
         if (WebCore::ApplePaySetupFeature::supportsFeature(platformFeature))
             features.append(WebCore::ApplePaySetupFeature::create(platformFeature));
     }
@@ -82,7 +84,8 @@ PaymentSetupFeatures::operator Vector<Ref<WebCore::ApplePaySetupFeature>>() cons
 Vector<RetainPtr<PKPaymentSetupFeature>> PaymentSetupFeatures::serializableFeatures() const
 {
     Vector<RetainPtr<PKPaymentSetupFeature>> result;
-    for (PKPaymentSetupFeature *feature in m_platformFeatures.get())
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL PKPaymentSetupFeature *feature in m_platformFeatures.get())
         result.append(feature);
     return result;
 }

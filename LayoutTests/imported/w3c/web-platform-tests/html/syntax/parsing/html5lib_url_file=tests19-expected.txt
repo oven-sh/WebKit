@@ -48,6 +48,10 @@ PASS <html><frameset></frameset></html><!doctype html>
 PASS <!doctype html><body><frameset>
 PASS <!doctype html><p><frameset><frame>
 PASS <!doctype html><p>a<frameset>
+PASS <!doctype html>�<frameset><frame>: U+FFFD character sets frameset-ok to "not ok"
+PASS <!doctype html>&#xFFFD;<frameset><frame>: U+FFFD from a character reference sets frameset-ok to "not ok"
+PASS <!doctype html>&#0;<frameset><frame>: Null character reference becomes U+FFFD and sets frameset-ok to "not ok"
+PASS <!doctype html><svg>&#xFFFD;</svg><frameset><frame>: U+FFFD in foreign content sets frameset-ok to "not ok"
 PASS <!doctype html><p> <frameset><frame>
 PASS <!doctype html><pre><frameset>
 PASS <!doctype html><listing><frameset>

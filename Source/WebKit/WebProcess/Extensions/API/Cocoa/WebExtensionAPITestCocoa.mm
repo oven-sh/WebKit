@@ -116,6 +116,9 @@ JSValueRef WebExtensionAPITest::assertResolves(JSContextRef context, JSValueRef 
     if (!isThenable(context, promiseRef))
         return JSValueMakeNull(context);
 
+    // The handler runs after this function returns, so it needs its own copy of the message.
+    String messageCopy = message;
+
     auto promiseHandler = ^(JSValue *result, JSValue *error) {
         if (!error) {
             succeed(context, @"Promise resolved without an error");
@@ -124,7 +127,7 @@ JSValueRef WebExtensionAPITest::assertResolves(JSContextRef context, JSValueRef 
         }
 
         JSValue *errorMessageValue = error.isObject && [error hasProperty:@"message"] ? error[@"message"] : error;
-        fail(context, combineMessages(message, makeString("Promise rejected with an error: "_s, debugString(context, errorMessageValue.JSValueRef))));
+        fail(context, combineMessages(messageCopy, makeString("Promise rejected with an error: "_s, debugString(context, errorMessageValue.JSValueRef))));
 
         [resolveCallback callWithArguments:nil];
     };
@@ -147,8 +150,7 @@ JSValueRef WebExtensionAPITest::addTest(JSContextRef context, JSValueRef testFun
     if (!JSValueIsObject(context, testFunctionRef))
         return [JSValue valueWithNewPromiseRejectedWithReason:toErrorString(callingAPIName, nullString(), "Error creating a new test."_s).createNSString().get() inContext:toJSContext(context)].JSValueRef;
 
-    // Static analysis doesn't recognize JSRetainPtr.
-    SUPPRESS_UNCOUNTED_ARG JSValueRef testName = JSObjectGetProperty(context, JSValueToObject(context, testFunctionRef, nullptr), toJSString("name"_s).get(), nullptr);
+    JSValueRef testName = JSObjectGetProperty(context, JSValueToObject(context, testFunctionRef, nullptr), toJSString("name"_s).get(), nullptr);
     if (toString(context, testName).isEmpty())
         return [JSValue valueWithNewPromiseRejectedWithReason:toErrorString(callingAPIName, nullString(), "The supplied test function must be named."_s).createNSString().get() inContext:toJSContext(context)].JSValueRef;
 

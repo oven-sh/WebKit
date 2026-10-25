@@ -37,14 +37,14 @@ enum class IsImplicit : bool { No, Yes };
 
 struct StylePropertyMetadata {
     StylePropertyMetadata(CSSPropertyID propertyID, bool isSetFromShorthand, int indexInShorthandsVector, IsImportant important, IsImplicit implicit)
-        : m_propertyID(propertyID)
+        : m_propertyID(std::to_underlying(propertyID))
         , m_isSetFromShorthand(isSetFromShorthand)
         , m_indexInShorthandsVector(indexInShorthandsVector)
         , m_important(important == IsImportant::Yes)
         , m_implicit(implicit == IsImplicit::Yes)
     {
-        ASSERT(propertyID != CSSPropertyInvalid);
-        ASSERT_WITH_MESSAGE(propertyID < firstShorthandProperty, "unexpected property: %d", propertyID);
+        ASSERT(propertyID != CSSPropertyID::Invalid);
+        ASSERT_WITH_MESSAGE(propertyID < firstShorthandProperty, "unexpected property: %d", std::to_underlying(propertyID));
     }
 
     CSSPropertyID shorthandID() const;
@@ -89,7 +89,7 @@ public:
     static bool areInSameLogicalPropertyGroupWithDifferentMappingLogic(CSSPropertyID, CSSPropertyID);
     static bool isDescriptorOnly(CSSPropertyID);
     static char16_t listValuedPropertySeparator(CSSPropertyID);
-    static bool isListValuedProperty(CSSPropertyID propertyID) { return !!listValuedPropertySeparator(propertyID) || propertyID == CSSPropertyCustom; }
+    static bool isListValuedProperty(CSSPropertyID propertyID) { return !!listValuedPropertySeparator(propertyID) || propertyID == CSSPropertyID::Custom; }
     static bool allowsNumberOrIntegerInput(CSSPropertyID);
 
     static bool animationUsesNonAdditiveOrCumulativeInterpolation(CSSPropertyID);
@@ -141,7 +141,7 @@ public:
 
     // Properties that apply to the highlight pseudo-elements.
     // https://drafts.csswg.org/css-pseudo-4/#highlight-styling
-    static bool NODELETE appliesToHighlightPseudoElements(CSSPropertyID);
+    static bool LEGACY_NODELETE appliesToHighlightPseudoElements(CSSPropertyID);
 
     // Returns the valid keyword values for a property from CSSProperties.json.
     // This is used by the Inspector to provide completions for properties
@@ -155,7 +155,7 @@ public:
     const StylePropertyMetadata& metadata() const LIFETIME_BOUND { return m_metadata; }
     static bool isColorProperty(CSSPropertyID propertyId)
     {
-        return colorProperties.get(propertyId);
+        return colorProperties.get(std::to_underlying(propertyId));
     }
 
     static const WEBCORE_EXPORT WTF::BitSet<cssPropertyIDEnumValueCount> colorProperties;
@@ -165,7 +165,7 @@ public:
     {
         if (!(m_metadata == other.m_metadata))
             return false;
-        return m_value->equals(other.m_value);
+        return protect(m_value)->equals(other.m_value);
     }
 
 private:

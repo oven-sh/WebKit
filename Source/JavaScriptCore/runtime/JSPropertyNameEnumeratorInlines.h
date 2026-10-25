@@ -29,6 +29,10 @@
 #include "StructureCreateInlines.h"
 #include "VMInlines.h"
 
+#if ENABLE(AOT)
+#include "AOTObject.h"
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
@@ -57,6 +61,11 @@ inline JSPropertyNameEnumerator* propertyNameEnumerator(JSGlobalObject* globalOb
         }
     }
 
+#if ENABLE(AOT)
+    if (AOT::Object* compiledObject = AOT::compiledObjectOrNull(base))
+        RELEASE_AND_RETURN(scope, compiledObject->propertyNameEnumerator(globalObject));
+#endif
+
     uint32_t numberStructureProperties = 0;
     PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     getEnumerablePropertyNames(globalObject, base, propertyNames, indexedLength, numberStructureProperties);
@@ -68,10 +77,8 @@ inline JSPropertyNameEnumerator* propertyNameEnumerator(JSGlobalObject* globalOb
     bool successfullyNormalizedChain = normalizePrototypeChain(globalObject, base, sawPolyProto) != InvalidPrototypeChain;
 
     Structure* structureAfterGettingPropertyNames = base->structure();
-    if (!structureAfterGettingPropertyNames->canAccessPropertiesQuicklyForEnumeration()) {
-        indexedLength = 0;
+    if (!structureAfterGettingPropertyNames->canAccessPropertiesQuicklyForEnumeration())
         numberStructureProperties = 0;
-    }
 
     JSPropertyNameEnumerator* enumerator = nullptr;
     if (!indexedLength && !propertyNames.size())

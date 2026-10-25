@@ -56,6 +56,12 @@ class ContextMtl : public ContextImpl, public mtl::Context
     angle::Result flush(const gl::Context *context) override;
     angle::Result finish(const gl::Context *context) override;
 
+    // GL_ANGLE_trim_memory
+    void trimMemory(const gl::Context *context, gl::MemoryTrimLevel trimLevel) override;
+
+    void registerBufferPool(mtl::BufferPool *pool);
+    void unregisterBufferPool(mtl::BufferPool *pool);
+
     // Drawing methods.
     angle::Result drawArrays(const gl::Context *context,
                              gl::PrimitiveMode mode,
@@ -487,12 +493,15 @@ class ContextMtl : public ContextImpl, public mtl::Context
                                                 GLsizei instances,
                                                 GLuint baseInstance);
 
+    // isNoOpOut, when given, is set to false only if a draw call was issued into the current
+    // render command encoder.
     angle::Result drawArraysImpl(const gl::Context *context,
                                  gl::PrimitiveMode mode,
                                  GLint first,
                                  GLsizei count,
                                  GLsizei instanceCount,
-                                 GLuint baseInstance);
+                                 GLuint baseInstance,
+                                 bool *isNoOpOut = nullptr);
 
     angle::Result drawElementsImpl(const gl::Context *context,
                                    gl::PrimitiveMode mode,
@@ -501,7 +510,8 @@ class ContextMtl : public ContextImpl, public mtl::Context
                                    const void *indices,
                                    GLsizei instanceCount,
                                    GLint baseVertex,
-                                   GLuint baseInstance);
+                                   GLuint baseInstance,
+                                   bool *isNoOpOut = nullptr);
     void flushCommandBufferIfNeeded();
     void updateExtendedState(const gl::State &glState,
                              const gl::state::ExtendedDirtyBits extendedDirtyBits);
@@ -633,6 +643,8 @@ class ContextMtl : public ContextImpl, public mtl::Context
     gl::DrawBufferMask mIncompatibleAttachments;
 
     mtl::BufferManager mBufferManager;
+
+    angle::HashSet<mtl::BufferPool *> mBufferPools;
 
     // Lineloop and TriFan index buffer
     mtl::BufferPool mLineLoopIndexBuffer;

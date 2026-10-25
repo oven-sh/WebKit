@@ -51,15 +51,17 @@ void FlexLayout::prepareOutOfFlowBoxForPositionedLayout(RenderBox& outOfFlowBox)
     ASSERT(outOfFlowBox.isOutOfFlowPositioned());
     outOfFlowBox.containingBlock()->addOutOfFlowBox(outOfFlowBox);
     CheckedPtr layer = outOfFlowBox.layer();
-    FlexFormattingUtils utils { flexBox() };
-    LayoutUnit staticInlinePosition = utils.flowAwareBorderStart() + utils.flowAwarePaddingStart();
+    // The static position setStaticPositionForPositionedLayout computes after layout is this content-box corner plus
+    // alignment offsets that need the box's size. Starting from the same corner means a box with no offset is already
+    // at its static position and isn't laid out a second time.
+    LayoutUnit staticInlinePosition = flexBox().startOffsetForContent();
     if (layer->staticInlinePosition() != staticInlinePosition) {
         layer->setStaticInlinePosition(staticInlinePosition);
         if (outOfFlowBox.style().hasStaticInlinePosition(flexBox().writingMode().isHorizontal()))
             outOfFlowBox.setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
     }
 
-    LayoutUnit staticBlockPosition = utils.flowAwareBorderBefore() + utils.flowAwarePaddingBefore();
+    LayoutUnit staticBlockPosition = flexBox().borderAndPaddingBefore();
     if (layer->staticBlockPosition() != staticBlockPosition) {
         layer->setStaticBlockPosition(staticBlockPosition);
         if (outOfFlowBox.style().hasStaticBlockPosition(flexBox().writingMode().isHorizontal()))
@@ -72,19 +74,18 @@ FlexLayoutConstraints FlexLayout::flexLayoutConstraints() const
     FlexFormattingUtils utils { flexBox() };
     return {
         .style = flexBox().style(),
+        .minimumLineCount = FlexFormattingUtils::minimumLineCount(flexBox()),
         .isHorizontalFlow = FlexFormattingUtils::isHorizontalFlow(flexBox()),
         .isColumnFlow = FlexFormattingUtils::isColumnFlow(flexBox()),
         .isMultiline = FlexFormattingUtils::isMultiline(flexBox()),
         .isWrapReverse = FlexFormattingUtils::isWrapReverse(flexBox()),
         .isBalance = FlexFormattingUtils::isBalance(flexBox()),
-        .minimumLineCount = FlexFormattingUtils::minimumLineCount(flexBox()),
         .isColumnOrRowReverse = utils.isColumnOrRowReverse(),
         .isLeftToRightFlow = utils.isLeftToRightFlow(),
         .crossAxisDirection = utils.crossAxisDirection(),
-        .flowAwareBorderInline = { utils.flowAwareBorderStart(), utils.flowAwareBorderEnd() },
-        .flowAwareBorderBlock = { utils.flowAwareBorderBefore(), utils.flowAwareBorderAfter() },
-        .flowAwarePaddingInline = { utils.flowAwarePaddingStart(), utils.flowAwarePaddingEnd() },
-        .flowAwarePaddingBlock = { utils.flowAwarePaddingBefore(), utils.flowAwarePaddingAfter() },
+        .flowAwareBorderAndPaddingStart = utils.flowAwareBorderAndPaddingStart(),
+        .flowAwareBorderAndPaddingEnd = utils.flowAwareBorderAndPaddingEnd(),
+        .flowAwareBorderAndPaddingBefore = utils.flowAwareBorderAndPaddingBefore(),
         .mainAxisAvailableSpace = mainAxisAvailableSpace(),
         .mainAxisSizeForLengthResolution = FlexFormattingUtils::isColumnFlow(flexBox()) ? flexBox().availableLogicalHeight(AvailableLogicalHeightType::ExcludeMarginBorderPadding) : flexBox().contentBoxLogicalWidth(),
         .mainAxisBorderBoxExtent = utils.mainAxisExtent(),
@@ -120,31 +121,21 @@ FlexLayoutItems FlexLayout::buildFlexLayoutItems(RelayoutChildren relayoutChildr
 {
     FlexLayoutItems flexLayoutItems;
     flexLayoutItems.reserveInitialCapacity(m_flexItems.size());
+    auto contentBoxLogicalWidth = flexBox().contentBoxLogicalWidth();
     for (auto& renderer : m_flexItems) {
-        CheckedPtr flexItem = renderer.get();
-        if (!flexItem)
-            continue;
+        // buildFlexItemList has just collected these from the container's children, so none of them is gone.
+        CheckedRef flexItem = *renderer;
 
-        // Before running the flex algorithm, 'auto' has a margin of 0.
-        // Also, if we're not auto sizing, we don't do a layout that computes the start/end margins.
-        auto flexItemMarginValue = [&](auto& margin) {
-            // When resolving the margins, we use the content size for resolving percent and calc (for percents in calc expressions) margins.
-            // Fortunately, percent margins are always computed with respect to the block's width, even for margin-top and margin-bottom.
-            return Style::evaluateMinimum<LayoutUnit>(margin, flexBox().contentBoxLogicalWidth(), flexBox().style().usedZoomForLength());
-        };
-        if (constraints.isHorizontalFlow) {
-            flexItem->setMarginLeft(flexItemMarginValue(flexItem->style().marginLeft()));
-            flexItem->setMarginRight(flexItemMarginValue(flexItem->style().marginRight()));
-        } else {
-            flexItem->setMarginTop(flexItemMarginValue(flexItem->style().marginTop()));
-            flexItem->setMarginBottom(flexItemMarginValue(flexItem->style().marginBottom()));
-        }
+        // Before running the flex algorithm, 'auto' has a margin of 0. Percentages resolve against the container's content box
+        // width, even for margin-top and margin-bottom, and lengths against the item's own zoom.
+        auto usedStyle = flexItem->usedStyle();
+        auto margins = LayoutBoxExtent { usedStyle.marginTop(contentBoxLogicalWidth).value_or(0_lu), usedStyle.marginRight(contentBoxLogicalWidth).value_or(0_lu), usedStyle.marginBottom(contentBoxLogicalWidth).value_or(0_lu), usedStyle.marginLeft(contentBoxLogicalWidth).value_or(0_lu) };
 
         auto everHadLayout = flexItem->everHadLayout();
         if (flexItem->shouldInvalidateContentWidths())
             flexItem->invalidateContentLogicalWidths(MarkingBehavior::MarkOnlyThis);
-        flexBox().updateBlockChildDirtyBitsBeforeLayout(relayoutChildren, *flexItem);
-        flexLayoutItems.append({ *flexItem, constraints.isHorizontalFlow, everHadLayout, relayoutChildren == RelayoutChildren::Yes });
+        flexBox().updateBlockChildDirtyBitsBeforeLayout(relayoutChildren, flexItem.get());
+        flexLayoutItems.append({ flexItem.get(), constraints.isHorizontalFlow, margins, everHadLayout, relayoutChildren == RelayoutChildren::Yes });
     }
     return flexLayoutItems;
 }
@@ -254,6 +245,55 @@ void FlexLayout::layout(RelayoutChildren relayoutChildren)
     m_flexLayoutResult = WebCore::FlexFormattingContext(flexBox(), integrationUtils, constraints, *m_flexLayoutState).layout(flexLayoutItems);
 }
 
+std::pair<LayoutUnit, LayoutUnit> FlexLayout::computeIntrinsicLogicalWidths() const
+{
+    auto scrollbarWidth = flexBox().scrollbarLogicalWidth();
+
+    if (flexBox().shouldApplySizeOrInlineSizeContainment()) {
+        if (auto width = flexBox().explicitIntrinsicInnerLogicalWidth())
+            return { width.value() + scrollbarWidth, width.value() + scrollbarWidth };
+        return { scrollbarWidth, scrollbarWidth };
+    }
+
+    // FIXME: We're ignoring flex-basis here and we shouldn't. We can't start
+    // honoring it though until the flex shorthand stops setting it to 0. See
+    // https://bugs.webkit.org/show_bug.cgi?id=116117 and
+    // https://crbug.com/240765.
+    auto [legendMinWidth, legendMaxWidth] = flexBox().computeIntrinsicLogicalWidthsForFieldsetLegend();
+
+    Vector<FlexFormattingContext::IntrinsicWidthContribution> contributions;
+    for (CheckedPtr flexItem = flexBox().firstChildBox(); flexItem; flexItem = flexItem->nextSiblingBox()) {
+        if (flexItem->isOutOfFlowPositioned() || flexItem->isExcludedFromNormalLayout())
+            continue;
+
+        // Pre-layout orthogonal children in order to get a valid value for the preferred width.
+        if (flexBox().writingMode().isOrthogonal(flexItem->writingMode()))
+            flexItem->layoutIfNeeded();
+
+        LayoutUnit margin = flexBox().marginIntrinsicLogicalWidthForChild(*flexItem);
+
+        auto [minContentInParentInlineAxis, maxContentInParentInlineAxis] = [&] -> std::pair<LayoutUnit, LayoutUnit> {
+            if (flexBox().writingMode().isOrthogonal(flexItem->writingMode())) {
+                auto intrinsicBlockSize = flexItem->computeIntrinsicLogicalHeight();
+                return { intrinsicBlockSize, intrinsicBlockSize };
+            }
+            return flexBox().computeChildIntrinsicLogicalWidths(*flexItem);
+        }();
+
+        contributions.append({ minContentInParentInlineAxis + margin, maxContentInParentInlineAxis + margin });
+    }
+
+    auto [minimumContentSize, maximumContentSize] = FlexFormattingContext::minimumMaximumContentSize(flexBox(), contributions);
+    maximumContentSize = std::max(minimumContentSize, maximumContentSize);
+
+    // Due to negative margins, it is possible that we calculated a negative
+    // intrinsic width. Make sure that we never return a negative width.
+    minimumContentSize = std::max(0_lu, minimumContentSize);
+    maximumContentSize = std::max(0_lu, maximumContentSize);
+
+    return { std::max(minimumContentSize, legendMinWidth) + scrollbarWidth, std::max(maximumContentSize, legendMaxWidth) + scrollbarWidth };
+}
+
 std::optional<LayoutUnit> FlexLayout::firstLineBaseline() const
 {
     if ((flexBox().isWritingModeRoot() && !flexBox().isFlexItem()) || !m_flexLayoutResult || !m_flexLayoutResult->numberOfFlexItemsOnFirstLine || flexBox().shouldApplyLayoutContainment())
@@ -262,28 +302,7 @@ std::optional<LayoutUnit> FlexLayout::firstLineBaseline() const
     CheckedPtr baselineFlexItem = flexItemForFirstBaseline();
     if (!baselineFlexItem)
         return { };
-
-    FlexFormattingUtils utils { flexBox() };
-    auto baseline = std::optional<LayoutUnit> { };
-    if (!FlexFormattingUtils::isColumnFlow(flexBox()) && !FlexFormattingUtils::mainAxisIsFlexItemInlineAxis(*baselineFlexItem))
-        baseline = utils.crossAxisExtentForFlexItem(*baselineFlexItem);
-    else if (FlexFormattingUtils::isColumnFlow(flexBox()) && FlexFormattingUtils::mainAxisIsFlexItemInlineAxis(*baselineFlexItem))
-        baseline = utils.mainAxisExtentForFlexItem(*baselineFlexItem);
-    else if (auto firstLineBaseline = baselineFlexItem->firstLineBaseline())
-        baseline = firstLineBaseline;
-    else {
-        // FIXME: We should pass |direction| into firstLineBoxBaseline and stop bailing out if we're a writing mode root.
-        // This would also fix some cases where the flexbox is orthogonal to its container.
-        auto direction = flexBox().isHorizontalWritingMode() ? LineDirection::Horizontal : LineDirection::Vertical;
-        auto flexboxWritingMode = flexBox().style().writingMode();
-        auto dominantBaseline = BaselineAlignment::dominantBaseline(flexboxWritingMode);
-        baseline = BaselineAlignment::synthesizedBaseline(*baselineFlexItem, dominantBaseline, flexboxWritingMode, direction, BaselineSynthesisEdge::BorderBox);
-    }
-    auto result = baselineFlexItem->logicalTop() + *baseline;
-    // CSS Align §9.1: if a scroll container's baseline is outside its border edge, clamp to the border edge.
-    if (FlexFormattingUtils::isHorizontalFlow(flexBox()) ? flexBox().isScrollContainerY() : flexBox().isScrollContainerX())
-        return std::max(0_lu, std::min(result, flexBox().logicalHeight()));
-    return result;
+    return baselineFromFlexItem(*baselineFlexItem, ItemPosition::Baseline);
 }
 
 std::optional<LayoutUnit> FlexLayout::lastLineBaseline() const
@@ -294,24 +313,29 @@ std::optional<LayoutUnit> FlexLayout::lastLineBaseline() const
     CheckedPtr baselineFlexItem = flexItemForLastBaseline();
     if (!baselineFlexItem)
         return { };
+    return baselineFromFlexItem(*baselineFlexItem, ItemPosition::LastBaseline);
+}
 
+// The container's first or last baseline, from the flex item flexItemForFirstBaseline or flexItemForLastBaseline picked.
+LayoutUnit FlexLayout::baselineFromFlexItem(const RenderBox& baselineFlexItem, ItemPosition baselinePreference) const
+{
     FlexFormattingUtils utils { flexBox() };
     auto baseline = std::optional<LayoutUnit> { };
-    if (!FlexFormattingUtils::isColumnFlow(flexBox()) && !FlexFormattingUtils::mainAxisIsFlexItemInlineAxis(*baselineFlexItem))
-        baseline = utils.crossAxisExtentForFlexItem(*baselineFlexItem);
-    else if (FlexFormattingUtils::isColumnFlow(flexBox()) && FlexFormattingUtils::mainAxisIsFlexItemInlineAxis(*baselineFlexItem))
-        baseline = utils.mainAxisExtentForFlexItem(*baselineFlexItem);
-    else if (auto lastLineBaseline = baselineFlexItem->lastLineBaseline())
-        baseline = lastLineBaseline;
+    if (!FlexFormattingUtils::isColumnFlow(flexBox()) && !FlexFormattingUtils::mainAxisIsFlexItemInlineAxis(baselineFlexItem))
+        baseline = utils.crossAxisExtentForFlexItem(baselineFlexItem);
+    else if (FlexFormattingUtils::isColumnFlow(flexBox()) && FlexFormattingUtils::mainAxisIsFlexItemInlineAxis(baselineFlexItem))
+        baseline = utils.mainAxisExtentForFlexItem(baselineFlexItem);
+    else if (auto flexItemBaseline = baselinePreference == ItemPosition::LastBaseline ? baselineFlexItem.lastLineBaseline() : baselineFlexItem.firstLineBaseline())
+        baseline = flexItemBaseline;
     else {
         // FIXME: We should pass |direction| into firstLineBoxBaseline and stop bailing out if we're a writing mode root.
         // This would also fix some cases where the flexbox is orthogonal to its container.
-        auto direction = flexBox().isHorizontalWritingMode() ? LineDirection::Horizontal : LineDirection::Vertical;
+        auto direction = flexBox().isHorizontalWritingMode() ? BoxAxis::Horizontal : BoxAxis::Vertical;
         auto flexboxWritingMode = flexBox().style().writingMode();
         auto dominantBaseline = BaselineAlignment::dominantBaseline(flexboxWritingMode);
-        baseline = BaselineAlignment::synthesizedBaseline(*baselineFlexItem, dominantBaseline, flexboxWritingMode, direction, BaselineSynthesisEdge::BorderBox);
+        baseline = BaselineAlignment::synthesizedBaseline(baselineFlexItem, dominantBaseline, flexboxWritingMode, direction, BaselineSynthesisEdge::BorderBox);
     }
-    auto result = baselineFlexItem->logicalTop() + *baseline;
+    auto result = baselineFlexItem.logicalTop() + *baseline;
     // CSS Align §9.1: if a scroll container's baseline is outside its border edge, clamp to the border edge.
     if (FlexFormattingUtils::isHorizontalFlow(flexBox()) ? flexBox().isScrollContainerY() : flexBox().isScrollContainerX())
         return std::max(0_lu, std::min(result, flexBox().logicalHeight()));
@@ -320,10 +344,7 @@ std::optional<LayoutUnit> FlexLayout::lastLineBaseline() const
 
 CheckedPtr<const RenderBox> FlexLayout::flexItemForFirstBaseline() const
 {
-    if (!m_flexLayoutResult) {
-        ASSERT_NOT_REACHED();
-        return { };
-    }
+    ASSERT(m_flexLayoutResult);
 
     // The first baseline comes from the visually-first flex line, and within it the item nearest that line's visual
     // start. flex-wrap: wrap-reverse makes the visually-first line the logically-last line; a reversed main axis
@@ -337,10 +358,7 @@ CheckedPtr<const RenderBox> FlexLayout::flexItemForFirstBaseline() const
 
 CheckedPtr<const RenderBox> FlexLayout::flexItemForLastBaseline() const
 {
-    if (!m_flexLayoutResult) {
-        ASSERT_NOT_REACHED();
-        return { };
-    }
+    ASSERT(m_flexLayoutResult);
 
     // The last baseline comes from the visually-last flex line, and within it the item nearest that line's visual
     // end (the opposite end to flexItemForFirstBaseline, hence the negated reverse). wrap-reverse makes the
@@ -490,8 +508,10 @@ bool FlexLayout::hasDefiniteSizeForPercentResolution(const RenderBox& flexItem)
         return FlexFormattingUtils::alignmentForFlexItem(flexItem) == ItemPosition::Stretch;
 
     // Flexbox 9.8 rule 2: definite flex-basis makes post-flexing main size definite.
+    // A percentage (or stretch) flex-basis is definite only when the container's block size is, which is rule 1 below.
     auto* flexLayoutState = m_flexLayoutState ? &*m_flexLayoutState : nullptr;
-    if (FlexIntegrationUtils::flexItemMainSizeIsDefinite(flexItem, FlexFormattingUtils::flexBasisForFlexItem(flexItem), flexLayoutState))
+    auto flexBasis = FlexFormattingUtils::flexBasisForFlexItem(flexItem);
+    if (!flexBasis.isPercentOrCalculated() && !flexBasis.isStretch() && FlexIntegrationUtils::flexItemMainSizeIsDefinite(flexItem, flexBasis, flexLayoutState))
         return true;
 
     // Flexbox 9.8 rule 1: definite container main size makes post-flexing sizes definite.

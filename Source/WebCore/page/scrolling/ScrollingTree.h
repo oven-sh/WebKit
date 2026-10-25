@@ -101,25 +101,25 @@ public:
     WEBCORE_EXPORT OptionSet<WheelEventProcessingSteps> determineWheelEventProcessing(const PlatformWheelEvent&);
     WEBCORE_EXPORT virtual WheelEventHandlingResult handleWheelEvent(const PlatformWheelEvent&, OptionSet<WheelEventProcessingSteps> = { });
 
-    bool isRubberBandInProgressForNode(std::optional<ScrollingNodeID>);
+    bool LEGACY_NODELETE isRubberBandInProgressForNode(std::optional<ScrollingNodeID>);
     WEBCORE_EXPORT virtual void setRubberBandingInProgressForNode(ScrollingNodeID, bool);
 
 #if HAVE(RUBBER_BANDING)
-    void NODELETE setPendingMainFrameRubberbandingState(std::optional<RubberbandingState>&&) WTF_REQUIRES_LOCK(m_treeLock);
-    std::optional<RubberbandingState> NODELETE takePendingMainFrameRubberbandingState() WTF_REQUIRES_LOCK(m_treeLock);
+    void LEGACY_NODELETE setPendingMainFrameRubberbandingState(std::optional<RubberbandingState>&&) WTF_REQUIRES_LOCK(m_treeLock);
+    std::optional<RubberbandingState> LEGACY_NODELETE takePendingMainFrameRubberbandingState() WTF_REQUIRES_LOCK(m_treeLock);
 #endif
 
-    bool isUserScrollInProgressForNode(std::optional<ScrollingNodeID>);
+    bool LEGACY_NODELETE isUserScrollInProgressForNode(std::optional<ScrollingNodeID>);
     void setUserScrollInProgressForNode(ScrollingNodeID, bool);
     WEBCORE_EXPORT virtual void clearNodesWithUserScrollInProgress();
 
-    bool isScrollSnapInProgressForNode(std::optional<ScrollingNodeID>);
+    bool LEGACY_NODELETE isScrollSnapInProgressForNode(std::optional<ScrollingNodeID>);
     void setNodeScrollSnapInProgress(ScrollingNodeID, bool);
 
-    bool isScrollAnimationInProgressForNode(std::optional<ScrollingNodeID>);
+    bool LEGACY_NODELETE isScrollAnimationInProgressForNode(std::optional<ScrollingNodeID>);
     void setScrollAnimationInProgressForNode(std::optional<ScrollingNodeID>, bool);
 
-    WEBCORE_EXPORT bool hasNodeWithActiveScrollAnimations();
+    WEBCORE_EXPORT bool LEGACY_NODELETE hasNodeWithActiveScrollAnimations();
 
     virtual void invalidate() { }
     WEBCORE_EXPORT bool commitTreeState(std::unique_ptr<ScrollingStateTree>&&, std::optional<LayerHostingContextIdentifier> = std::nullopt);
@@ -172,7 +172,7 @@ public:
     virtual void scrollingTreeNodeWillBeRemoved(ScrollingNodeID) { }
 #endif
 
-    WEBCORE_EXPORT TrackingType eventTrackingTypeForPoint(EventTrackingRegions::EventType, IntPoint);
+    WEBCORE_EXPORT TrackingType LEGACY_NODELETE eventTrackingTypeForPoint(EventTrackingRegions::EventType, IntPoint);
 
     WEBCORE_EXPORT WebCore::RectEdges<bool> pinnedStateIncludingAncestorsAtPoint(FloatPoint);
 
@@ -192,23 +192,23 @@ public:
     WEBCORE_EXPORT virtual void currentSnapPointIndicesDidChange(ScrollingNodeID, std::optional<unsigned> horizontal, std::optional<unsigned> vertical) = 0;
 #endif
 
-    void setMainFramePinnedState(RectEdges<bool>);
+    void LEGACY_NODELETE setMainFramePinnedState(RectEdges<bool>);
 
     // Can be called from any thread. Will update what edges allow rubber-banding.
-    WEBCORE_EXPORT void setClientAllowedMainFrameRubberBandableEdges(RectEdges<RubberBandingBehavior>);
-    RubberBandingBehavior clientAllowsMainFrameRubberBandingOnSide(BoxSide);
+    WEBCORE_EXPORT void LEGACY_NODELETE setClientAllowedMainFrameRubberBandableEdges(RectEdges<RubberBandingBehavior>);
+    RubberBandingBehavior LEGACY_NODELETE clientAllowsMainFrameRubberBandingOnSide(BoxSide);
 
     bool isHandlingProgrammaticScroll() const { return m_isHandlingProgrammaticScroll; }
     void setIsHandlingProgrammaticScroll(bool isHandlingProgrammaticScroll) { m_isHandlingProgrammaticScroll = isHandlingProgrammaticScroll; }
 
-    void setScrollPinningBehavior(ScrollPinningBehavior);
-    WEBCORE_EXPORT ScrollPinningBehavior scrollPinningBehavior();
+    void LEGACY_NODELETE setScrollPinningBehavior(ScrollPinningBehavior);
+    WEBCORE_EXPORT ScrollPinningBehavior LEGACY_NODELETE scrollPinningBehavior();
 
-    WEBCORE_EXPORT bool willWheelEventStartSwipeGesture(const PlatformWheelEvent&);
+    WEBCORE_EXPORT bool LEGACY_NODELETE willWheelEventStartSwipeGesture(const PlatformWheelEvent&);
 
     ScrollingTreeFrameScrollingNode* rootNode() const { return m_rootNode.get(); }
-    std::optional<ScrollingNodeID> latchedNodeID() const;
-    WEBCORE_EXPORT void clearLatchedNode();
+    std::optional<ScrollingNodeID> LEGACY_NODELETE latchedNodeID() const;
+    WEBCORE_EXPORT void LEGACY_NODELETE clearLatchedNode();
 
     WEBCORE_EXPORT bool hasFixedOrSticky() const;
     void fixedOrStickyNodeAdded(ScrollingTreeNode&);
@@ -255,18 +255,18 @@ public:
 
     Lock& treeLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_treeLock) { return m_treeLock; }
 
-    WEBCORE_EXPORT void windowScreenDidChange(PlatformDisplayID, std::optional<FramesPerSecond> nominalFramesPerSecond);
-    PlatformDisplayID displayID();
+    WEBCORE_EXPORT void LEGACY_NODELETE windowScreenDidChange(PlatformDisplayID, std::optional<FramesPerSecond> nominalFramesPerSecond);
+    PlatformDisplayID LEGACY_NODELETE displayID();
     WEBCORE_EXPORT virtual void displayDidRefresh(PlatformDisplayID) { }
 
     WEBCORE_EXPORT void willProcessWheelEvent();
 
     WEBCORE_EXPORT Vector<ScrollUpdate> takePendingScrollUpdates();
-    WEBCORE_EXPORT bool hasPendingScrollUpdates();
+    WEBCORE_EXPORT bool LEGACY_NODELETE hasPendingScrollUpdates();
 
     virtual void removePendingScrollAnimationForNode(ScrollingNodeID) { }
 
-    WEBCORE_EXPORT FloatBoxExtent mainFrameObscuredContentInsets() const;
+    WEBCORE_EXPORT FloatBoxExtent LEGACY_NODELETE mainFrameObscuredContentInsets() const;
 
 #if HAVE(NSREFRESHCONTROLLER)
     virtual float topScrollStretchForRefreshController() const { return 0; }
@@ -277,28 +277,33 @@ public:
     virtual void triggerMainFrameRubberBandSnapBack() { }
     virtual void mainFrameRubberBandTargetOffsetDidChange() { }
 
-    WEBCORE_EXPORT FloatPoint mainFrameScrollPosition() const;
+    WEBCORE_EXPORT FloatPoint LEGACY_NODELETE mainFrameScrollPosition() const;
 
-    WEBCORE_EXPORT ScrollbarWidth mainFrameScrollbarWidth() const;
-    WEBCORE_EXPORT std::optional<ScrollbarColor> mainFrameScrollbarColor() const;
+    WEBCORE_EXPORT ScrollbarWidth LEGACY_NODELETE mainFrameScrollbarWidth() const;
+    WEBCORE_EXPORT std::optional<ScrollbarColor> LEGACY_NODELETE mainFrameScrollbarColor() const;
 
-    WEBCORE_EXPORT OverscrollBehavior mainFrameHorizontalOverscrollBehavior() const;
-    WEBCORE_EXPORT OverscrollBehavior mainFrameVerticalOverscrollBehavior() const;
+    WEBCORE_EXPORT OverscrollBehavior LEGACY_NODELETE mainFrameHorizontalOverscrollBehavior() const;
+    WEBCORE_EXPORT OverscrollBehavior LEGACY_NODELETE mainFrameVerticalOverscrollBehavior() const;
     
-    WEBCORE_EXPORT IntPoint mainFrameScrollOrigin() const;
-    WEBCORE_EXPORT int mainFrameHeaderHeight() const;
-    WEBCORE_EXPORT int mainFrameFooterHeight() const;
-    WEBCORE_EXPORT float mainFrameScaleFactor() const;
-    WEBCORE_EXPORT FloatSize totalContentsSize() const;
-    WEBCORE_EXPORT FloatRect layoutViewport() const;
-    
+    WEBCORE_EXPORT IntPoint LEGACY_NODELETE mainFrameScrollOrigin() const;
+    WEBCORE_EXPORT int LEGACY_NODELETE mainFrameHeaderHeight() const;
+    WEBCORE_EXPORT int LEGACY_NODELETE mainFrameFooterHeight() const;
+    WEBCORE_EXPORT float LEGACY_NODELETE mainFrameScaleFactor() const;
+    // Used when the UI process owns the page scale but isn't sending a delegated viewport update.
+    WEBCORE_EXPORT void setMainFrameDelegatedPageScaleFactor(float);
+    WEBCORE_EXPORT FloatSize LEGACY_NODELETE totalContentsSize() const;
+    WEBCORE_EXPORT FloatRect LEGACY_NODELETE layoutViewport() const;
+    // The view size less the space the scrollbars take, in view coordinates, so it doesn't track the zoom.
+    // See ScrollView::sizeForVisibleContent().
+    WEBCORE_EXPORT FloatSize mainFrameSizeForVisibleContent() const;
+
     WEBCORE_EXPORT void viewWillStartLiveResize();
     WEBCORE_EXPORT void viewWillEndLiveResize();
     WEBCORE_EXPORT void viewSizeDidChange();
-    WEBCORE_EXPORT bool overlayScrollbarsEnabled();
+    WEBCORE_EXPORT bool LEGACY_NODELETE overlayScrollbarsEnabled();
 
-    WEBCORE_EXPORT Seconds frameDuration();
-    WEBCORE_EXPORT Seconds maxAllowableRenderingUpdateDurationForSynchronization();
+    WEBCORE_EXPORT Seconds LEGACY_NODELETE frameDuration();
+    WEBCORE_EXPORT Seconds LEGACY_NODELETE maxAllowableRenderingUpdateDurationForSynchronization();
     WEBCORE_EXPORT virtual void scrollingTreeNodeScrollbarVisibilityDidChange(ScrollingNodeID, ScrollbarOrientation, bool) { };
     WEBCORE_EXPORT virtual void scrollingTreeNodeScrollbarMinimumThumbLengthDidChange(WebCore::ScrollingNodeID, ScrollbarOrientation, int) { };
 
@@ -308,17 +313,17 @@ public:
 
     virtual void hostedSubtreeNeedsFullCommit(FrameIdentifier) { }
 
-    WEBCORE_EXPORT std::optional<FrameIdentifier> frameIDForScrollingNodeID(ScrollingNodeID);
+    WEBCORE_EXPORT std::optional<FrameIdentifier> LEGACY_NODELETE frameIDForScrollingNodeID(ScrollingNodeID);
 
 protected:
     WEBCORE_EXPORT WheelEventHandlingResult handleWheelEventWithNode(const PlatformWheelEvent&, OptionSet<WheelEventProcessingSteps>, ScrollingTreeNode*, EventTargeting = EventTargeting::Propagate);
 
-    void setMainFrameScrollPosition(FloatPoint);
+    void LEGACY_NODELETE setMainFrameScrollPosition(FloatPoint);
 
-    WEBCORE_EXPORT void setGestureState(std::optional<WheelScrollGestureState>);
-    WEBCORE_EXPORT std::optional<WheelScrollGestureState> gestureState();
+    WEBCORE_EXPORT void LEGACY_NODELETE setGestureState(std::optional<WheelScrollGestureState>);
+    WEBCORE_EXPORT std::optional<WheelScrollGestureState> LEGACY_NODELETE gestureState();
 
-    std::optional<FramesPerSecond> nominalFramesPerSecond();
+    std::optional<FramesPerSecond> LEGACY_NODELETE nominalFramesPerSecond();
 
     WEBCORE_EXPORT virtual void applyLayerPositionsInternal() WTF_REQUIRES_LOCK(m_treeLock);
     WEBCORE_EXPORT void removeAllNodes() WTF_REQUIRES_LOCK(m_treeLock);
@@ -349,7 +354,7 @@ private:
     void notifyRelatedNodesRecursive(ScrollingTreeNode&);
     void traverseScrollingTreeRecursive(ScrollingTreeNode&, NOESCAPE const VisitorFunction&) WTF_REQUIRES_LOCK(m_treeLock);
     
-    void NODELETE setOverlayScrollbarsEnabled(bool);
+    void LEGACY_NODELETE setOverlayScrollbarsEnabled(bool);
 
     virtual void didCommitTree() { }
 

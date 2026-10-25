@@ -25,6 +25,7 @@
 #include <WebCore/DigitalCredentialsRequestData.h>
 #include <WebCore/DisabledAdaptations.h>
 #include <WebCore/FocusDirection.h>
+#include <WebCore/FrameIdentifier.h>
 #include <WebCore/HostWindow.h>
 #include <WebCore/ImageBufferFormat.h>
 #include <wtf/CompletionHandler.h>
@@ -52,11 +53,6 @@ struct FaceDetectorOptions;
 class TextDetector;
 }
 
-namespace WebGPU {
-class GPU;
-}
-
-enum class BroadcastFocusedElement : bool;
 enum class PlatformEventModifier : uint8_t;
 enum class TextDirection : bool;
 
@@ -73,16 +69,19 @@ class FloatRect;
 class Frame;
 class Element;
 class Geolocation;
+class GraphicsContext;
 class HitTestResult;
 class IntPoint;
 class IntRect;
 class LocalFrame;
+class NativeImage;
 class NavigationAction;
 class Page;
 class PopupMenu;
 class PopupMenuClient;
 class PopupOpeningObserver;
 class SearchPopupMenu;
+class WebGPUIntegration;
 class WorkerClient;
 
 struct AppHighlight;
@@ -133,19 +132,27 @@ public:
     RefPtr<ImageBuffer> createImageBuffer(const FloatSize&, RenderingMode, RenderingPurpose, float resolutionScale, const ColorSpace&, ImageBufferFormat) const override;
     RefPtr<WebCore::ImageBuffer> sinkIntoImageBuffer(std::unique_ptr<WebCore::SerializedImageBuffer>) override;
     RefPtr<WebCore::ImageBuffer> createImageBufferFromTransferHandle(const ImageBufferTransferHandle&) override;
+    WEBCORE_EXPORT RefPtr<NativePromise<Ref<NativeImage>, void>> createDisplayOnlyImage(FrameIdentifier, const FloatSize&, float scale, const ColorSpace&, NOESCAPE const Function<void(GraphicsContext&)>& paint);
+
+#if ENABLE(OFFSCREEN_CANVAS)
+    RefPtr<PlaceholderRenderingContextSource> createPlaceholderRenderingContextSource(const RemotePlaceholderRenderingContextIdentifier&) override;
+#endif
 
 #if ENABLE(WEBGL)
     RefPtr<GraphicsContextGL> createGraphicsContextGL(const GraphicsContextGLAttributes&) const override;
 #endif
 #if HAVE(WEBGPU_IMPLEMENTATION)
-    RefPtr<WebGPU::GPU> createGPUForWebGPU() const override;
+    RefPtr<WebGPUIntegration> createGPUForWebGPU() const override;
 #endif
     RefPtr<ShapeDetection::BarcodeDetector> createBarcodeDetector(const ShapeDetection::BarcodeDetectorOptions&) const;
     void getBarcodeDetectorSupportedFormats(CompletionHandler<void(Vector<ShapeDetection::BarcodeFormat>&&)>&&) const;
     RefPtr<ShapeDetection::FaceDetector> createFaceDetector(const ShapeDetection::FaceDetectorOptions&) const;
     RefPtr<ShapeDetection::TextDetector> createTextDetector() const;
 
-    PlatformDisplayID NODELETE displayID() const override;
+    PlatformDisplayID LEGACY_NODELETE displayID() const override;
+#if HAVE(IOSURFACE)
+    bool useIOSurfaceWebKitBehavior() const override;
+#endif
     void windowScreenDidChange(PlatformDisplayID, std::optional<FramesPerSecond>) override;
 
     FloatSize screenSize() const override;
@@ -170,7 +177,7 @@ public:
     bool canTakeFocus(FocusDirection) const;
     void takeFocus(FocusDirection);
 
-    void focusedElementChanged(Element*, LocalFrame*, FocusOptions, BroadcastFocusedElement);
+    void focusedElementChanged(Element*, LocalFrame*, FocusOptions);
     void focusedFrameChanged(Frame*);
 
     WEBCORE_EXPORT RefPtr<Page> createWindow(LocalFrame&, const String& openedMainFrameName, const WindowFeatures&, const NavigationAction&);

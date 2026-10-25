@@ -136,6 +136,7 @@ public:
 
     WEBCORE_EXPORT bool setFilters(const FilterOperations&) override;
     virtual bool filtersCanBeComposited(const FilterOperations&);
+    WEBCORE_EXPORT void setFilterSamplingOutsets(const IntOutsets&) override;
 
     WEBCORE_EXPORT bool setBackdropFilters(const FilterOperations&) override;
     WEBCORE_EXPORT void setBackdropFiltersRect(const FloatRoundedRect&) override;
@@ -167,7 +168,7 @@ public:
     WEBCORE_EXPORT void pauseAnimation(const String& animationName, double timeOffset) override;
     WEBCORE_EXPORT void removeAnimation(const String& animationName, std::optional<AnimatedProperty>) override;
     WEBCORE_EXPORT void transformRelatedPropertyDidChange() override;
-    WEBCORE_EXPORT void setContentsToImage(Image*) override;
+    WEBCORE_EXPORT void setContentsToNativeImage(NativeImage*) override;
     WEBCORE_EXPORT void setContentsToImageBuffer(ImageBuffer*) override;
 #if PLATFORM(IOS_FAMILY)
     WEBCORE_EXPORT PlatformLayer* contentsLayerForMedia() const override;
@@ -193,13 +194,14 @@ public:
     WEBCORE_EXPORT void setContentsMagnificationFilter(ScalingFilter) override;
 
     bool usesContentsLayer() const override { return m_contentsLayerPurpose != ContentsLayerPurpose::None; }
+    bool hasContentsDisplayDelegate() const override { return !!m_contentsDisplayDelegate; }
     
     WEBCORE_EXPORT void setShowDebugBorder(bool) override;
     WEBCORE_EXPORT void setShowRepaintCounter(bool) override;
 
     WEBCORE_EXPORT void setDebugBackgroundColor(const Color&) override;
     WEBCORE_EXPORT void setDebugBorder(const Color&, float borderWidth) override;
-    WEBCORE_EXPORT void setShowFrameProcessBorders(bool, unsigned frameDepth = 0) override;
+    WEBCORE_EXPORT void setShowFrameProcessBorders(bool, unsigned frameDepth, FrameIdentifier) override;
 
     WEBCORE_EXPORT void setCustomAppearance(CustomAppearance) override;
 
@@ -218,6 +220,7 @@ public:
         bool ancestorHasTransformAnimation { false };
         bool ancestorStartedOrEndedTransformAnimation { false };
         bool ancestorWithTransformAnimationIntersectsCoverageRect { false };
+        bool ancestorIsNonAxisAligned { false };
         bool backdropRootIsOpaque { false };
     };
     bool needsCommit(const CommitState&);
@@ -298,6 +301,7 @@ private:
 #endif
 
     WEBCORE_EXPORT void setAllowsBackingStoreDetaching(bool) override;
+    WEBCORE_EXPORT void setAnimationExtent(std::optional<FloatRect>) override;
     bool allowsBackingStoreDetaching() const override { return m_allowsBackingStoreDetaching; }
 
     WEBCORE_EXPORT String displayListAsText(OptionSet<DisplayList::AsTextFlag>) const override;
@@ -330,11 +334,13 @@ private:
     virtual Ref<PlatformCAAnimation> createPlatformCAAnimation(PlatformCAAnimation::AnimationType, const String& keyPath);
 
     virtual void setLayerContentsToImageBuffer(PlatformCALayer&, ImageBuffer*) { }
+    // Overridden for images whose pixels are not in this process, which have no platform image.
+    virtual void setLayerContentsToNativeImage(PlatformCALayer&, NativeImage&);
 
     PlatformCALayer* primaryLayer() const { return m_structuralLayer.get() ? m_structuralLayer.get() : m_layer.get(); }
-    PlatformCALayer* NODELETE hostLayerForSublayers() const;
-    PlatformCALayer* NODELETE layerForSuperlayer() const;
-    PlatformCALayer* NODELETE animatedLayer(AnimatedProperty) const;
+    PlatformCALayer* LEGACY_NODELETE hostLayerForSublayers() const;
+    PlatformCALayer* LEGACY_NODELETE layerForSuperlayer() const;
+    PlatformCALayer* LEGACY_NODELETE animatedLayer(AnimatedProperty) const;
 
     WEBCORE_EXPORT void setTileCoverage(TileCoverage) override;
 
@@ -342,8 +348,8 @@ private:
     static bool isReplicatedRootClone(const CloneID& cloneID) { return cloneID[0U] & 1; }
 
     using LayerMap = HashMap<CloneID, Ref<PlatformCALayer>>;
-    LayerMap* NODELETE primaryLayerClones() const;
-    LayerMap* NODELETE animatedLayerClones(AnimatedProperty) const;
+    LayerMap* LEGACY_NODELETE primaryLayerClones() const;
+    LayerMap* LEGACY_NODELETE animatedLayerClones(AnimatedProperty) const;
     static void clearClones(LayerMap&);
 
     bool createAnimationFromKeyframes(const GraphicsLayerKeyframeValueList&, const GraphicsLayerAnimation*, const String& animationName, Seconds timeOffset, bool keyframesShouldUseAnimationWideTimingFunction);
@@ -398,7 +404,7 @@ private:
     ASCIILiteral purposeNameForInnerLayer(PlatformCALayer&) const;
 
     void computePixelAlignment(float contentsScale, const FloatPoint& positionRelativeToBase,
-        FloatPoint& position, FloatPoint3D& anchorPoint, FloatSize& alignmentOffset) const;
+        FloatPoint& position, FloatSize&, FloatPoint3D& anchorPoint, FloatSize& alignmentOffset) const;
 
     TransformationMatrix layerTransform(const FloatPoint& position, const TransformationMatrix* customTransform = nullptr) const;
     TransformationMatrix transformByApplyingAnchorPoint(const TransformationMatrix&) const;
@@ -494,7 +500,7 @@ private:
 
     bool hasCloneLayers() const { return !!m_layerClones; }
     void removeCloneLayers();
-    FloatPoint NODELETE positionForCloneRootLayer() const;
+    FloatPoint LEGACY_NODELETE positionForCloneRootLayer() const;
 
     // All these "update" methods will be called inside a BEGIN_BLOCK_OBJC_EXCEPTIONS/END_BLOCK_OBJC_EXCEPTIONS block.
     void updateNames();
@@ -531,6 +537,7 @@ private:
     void updateTiles();
     void updateRootRelativeScale();
     void updateContentsScale(float pageScaleFactor);
+    void updateAntialiasesEdges(CommitState&, float pageScaleFactor);
     void updateCustomAppearance();
 
     void updateOpacityOnLayer();
@@ -569,7 +576,7 @@ private:
 #endif
     };
     bool ensureStructuralLayer(StructuralLayerPurpose);
-    StructuralLayerPurpose structuralLayerPurpose() const;
+    StructuralLayerPurpose LEGACY_NODELETE structuralLayerPurpose() const;
 
     // This represents the animation of a single property. There may be multiple transform animations for
     // a single transition or keyframe animation, so index is used to distinguish these.
@@ -687,9 +694,9 @@ private:
     typedef uint64_t LayerChangeFlags;
     static ASCIILiteral layerChangeAsString(LayerChange);
     static void dumpLayerChangeFlags(TextStream&, LayerChangeFlags);
-    void NODELETE addUncommittedChanges(LayerChangeFlags);
+    void LEGACY_NODELETE addUncommittedChanges(LayerChangeFlags);
     bool hasDescendantsWithUncommittedChanges() const { return m_hasDescendantsWithUncommittedChanges; }
-    void NODELETE setHasDescendantsWithUncommittedChanges(bool);
+    void LEGACY_NODELETE setHasDescendantsWithUncommittedChanges(bool);
     enum ScheduleFlushOrNot { ScheduleFlush, DontScheduleFlush };
     void noteLayerPropertyChanged(LayerChangeFlags, ScheduleFlushOrNot = ScheduleFlush);
     void noteSublayersChanged(ScheduleFlushOrNot = ScheduleFlush);
@@ -707,7 +714,7 @@ private:
     RefPtr<PlatformCALayer> m_layer; // The main layer
     RefPtr<PlatformCALayer> m_structuralLayer; // A layer used for structural reasons, like preserves-3d or replica-flattening. Is the parent of m_layer.
     RefPtr<PlatformCALayer> m_contentsClippingLayer; // A layer used to clip inner content
-    RefPtr<PlatformCALayer> m_shapeMaskLayer; // Used to clip with non-trivial corner radii.
+    const RefPtr<PlatformCALayer> m_shapeMaskLayer; // Used to clip with non-trivial corner radii.
     RefPtr<PlatformCALayer> m_backdropClippingLayer; // Used to clip the backdrop layer with corner radii.
     RefPtr<PlatformCALayer> m_contentsLayer; // A layer used for inner content, like image and video
     RefPtr<PlatformCALayer> m_contentsShapeMaskLayer; // Used to clip the content layer with non-trivial corner radii.
@@ -729,7 +736,7 @@ private:
     std::unique_ptr<LayerClones> m_layerClones;
 
 #ifdef VISIBLE_TILE_WASH
-    RefPtr<PlatformCALayer> m_visibleTileWashLayer;
+    const RefPtr<PlatformCALayer> m_visibleTileWashLayer;
 #endif
     std::unique_ptr<FrameProcessIndicators> m_frameProcessIndicators;
     FloatRect m_visibleRect;

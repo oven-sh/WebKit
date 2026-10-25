@@ -70,12 +70,6 @@
 
 #endif // ENABLE(C_LOOP)
 
-#if USE(BIGINT32)
-#define OFFLINE_ASM_BIGINT32 1
-#else
-#define OFFLINE_ASM_BIGINT32 0
-#endif
-
 #if USE(LARGE_TYPED_ARRAYS)
 #define OFFLINE_ASM_LARGE_TYPED_ARRAYS 1
 #else
@@ -112,6 +106,12 @@
 #define OFFLINE_ASM_JIT_CAGE 1
 #else
 #define OFFLINE_ASM_JIT_CAGE 0
+#endif
+
+#if ENABLE(AOT) && !ENABLE(C_LOOP)
+#define OFFLINE_ASM_AOT 1
+#else
+#define OFFLINE_ASM_AOT 0
 #endif
 
 #if ENABLE(WEBASSEMBLY)

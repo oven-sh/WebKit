@@ -35,6 +35,7 @@
 #include "ScriptFetchParameters.h"
 #include "ScriptFetcher.h"
 #include <wtf/FixedVector.h>
+#include <wtf/Markable.h>
 #include <wtf/OrderedHashMap.h>
 #include <wtf/OrderedHashSet.h>
 #include <wtf/RefPtr.h>
@@ -91,9 +92,9 @@ public:
             Namespace,
         };
 
-        static ExportEntry NODELETE createLocal(const Identifier& exportName, const Identifier& localName);
-        static ExportEntry NODELETE createIndirect(const Identifier& exportName, const Identifier& importName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
-        static ExportEntry NODELETE createNamespace(const Identifier& exportName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
+        static ExportEntry LEGACY_NODELETE createLocal(const Identifier& exportName, const Identifier& localName);
+        static ExportEntry LEGACY_NODELETE createIndirect(const Identifier& exportName, const Identifier& importName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
+        static ExportEntry LEGACY_NODELETE createNamespace(const Identifier& exportName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
 
         Type type;
         ScriptFetchParameters::Type moduleRequestType { ScriptFetchParameters::Type::JavaScript };
@@ -237,14 +238,29 @@ public:
     struct Resolution {
         enum class Type { Resolved, NotFound, Ambiguous, Error };
 
-        static Resolution NODELETE notFound();
-        static Resolution NODELETE error();
-        static Resolution NODELETE ambiguous();
+#if ENABLE(AOT)
+        Resolution() = default;
+        Resolution(Type type, AbstractModuleRecord* moduleRecord, Identifier localName, Markable<unsigned> compiledExportIndex = std::nullopt)
+            : type(type)
+            , compiledExportIndex(compiledExportIndex)
+            , moduleRecord(moduleRecord)
+            , localName(WTF::move(localName))
+        {
+        }
+#endif
 
-        bool isSameBinding(const Resolution& other) const { return moduleRecord == other.moduleRecord && localName == other.localName; }
+        static Resolution LEGACY_NODELETE notFound();
+        static Resolution LEGACY_NODELETE error();
+        static Resolution LEGACY_NODELETE ambiguous();
+
+        JS_EXPORT_PRIVATE bool isSameBinding(const Resolution& other) const;
         bool isEquivalentTo(const Resolution& other) const { return type == other.type && (type != Type::Resolved || isSameBinding(other)); }
 
         Type type;
+#if ENABLE(AOT)
+        // In the padding in front of the pointer.
+        Markable<unsigned> compiledExportIndex;
+#endif
         AbstractModuleRecord* moduleRecord;
         Identifier localName;
     };
@@ -265,9 +281,11 @@ public:
         return getModuleNamespace(globalObject, ModulePhase::Evaluation, shouldPreventExtensions);
     }
 #endif
+    JS_EXPORT_PRIVATE JSObject* moduleNamespaceObject(JSGlobalObject*, ModulePhase = ModulePhase::Evaluation);
 
     void gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, UncheckedKeyHashSet<AbstractModuleRecord*>& seen);
     bool readyForSyncExecution();
+    bool readyForSyncExecution(UncheckedKeyHashSet<AbstractModuleRecord*>& seen);
     void evaluateSync(JSGlobalObject*);
 
     JSPromise* asyncCapability() const;
@@ -287,6 +305,7 @@ public:
     void link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
 #if USE(BUN_JSC_ADDITIONS)
     void generateDeferredSyntheticModules(JSGlobalObject*, UncheckedKeyHashSet<AbstractModuleRecord*>& visited);
+    static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency);
 #endif
     JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*, JSValue sentValue, JSValue resumeMode);
     WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
@@ -348,7 +367,7 @@ protected:
 private:
     struct ResolveQuery;
     static Resolution resolveExportImpl(JSGlobalObject*, const ResolveQuery&);
-    std::optional<Resolution> NODELETE tryGetCachedResolution(UniquedStringImpl* exportName);
+    std::optional<Resolution> LEGACY_NODELETE tryGetCachedResolution(UniquedStringImpl* exportName);
     void cacheResolution(UniquedStringImpl* exportName, const Resolution&);
 #if USE(BUN_JSC_ADDITIONS)
     void ensurePrelinkedEntriesMaterialized() const
@@ -423,5 +442,9 @@ protected:
     FixedVector<Resolution> m_prelinkedImportResolutions;
 #endif
 };
+
+#if ENABLE(AOT)
+static_assert(sizeof(AbstractModuleRecord::Resolution) == 3 * sizeof(void*));
+#endif
 
 } // namespace JSC

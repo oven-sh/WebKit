@@ -544,7 +544,7 @@ ExceptionOr<Ref<XREquirectLayer>> XRWebGLBinding::createEquirectLayer(ScriptExec
             if (!init.space->isReferenceSpace())
                 return Exception { ExceptionCode::TypeError, "The space is not a reference space."_s };
 
-            if (downcast<WebXRReferenceSpace>(init.space)->type() == XRReferenceSpaceType::Viewer)
+            if (downcast<WebXRReferenceSpace>(init.space).type() == XRReferenceSpaceType::Viewer)
                 return Exception { ExceptionCode::TypeError, "Viewer space is not allowed for equirect layers."_s };
 
             auto validateInitResult = validateCompositionLayerInitParameters(init);
@@ -595,7 +595,7 @@ ExceptionOr<Ref<XRCylinderLayer>> XRWebGLBinding::createCylinderLayer(ScriptExec
             if (!init.space->isReferenceSpace())
                 return Exception { ExceptionCode::TypeError, "The space is not a reference space."_s };
 
-            if (downcast<WebXRReferenceSpace>(init.space)->type() == XRReferenceSpaceType::Viewer)
+            if (downcast<WebXRReferenceSpace>(init.space).type() == XRReferenceSpaceType::Viewer)
                 return Exception { ExceptionCode::TypeError, "Viewer space is not allowed for cylinder layers."_s };
 
             auto validateInitResult = validateCompositionLayerInitParameters(init);
@@ -649,7 +649,7 @@ ExceptionOr<Ref<XRCubeLayer>> XRWebGLBinding::createCubeLayer(ScriptExecutionCon
             if (!init.space->isReferenceSpace())
                 return Exception { ExceptionCode::TypeError, "The space is not a reference space."_s };
 
-            if (downcast<WebXRReferenceSpace>(init.space)->type() == XRReferenceSpaceType::Viewer)
+            if (downcast<WebXRReferenceSpace>(init.space).type() == XRReferenceSpaceType::Viewer)
                 return Exception { ExceptionCode::TypeError, "Viewer space is not allowed for cube layers."_s };
 
             if (init.layout == XRLayerLayout::Default || init.layout == XRLayerLayout::StereoLeftRight || init.layout == XRLayerLayout::StereoTopBottom)
@@ -815,7 +815,9 @@ ExceptionOr<Ref<XRWebGLSubImage>> XRWebGLBinding::getViewSubImage(XRProjectionLa
         return Exception { ExceptionCode::InvalidStateError, "Cannot get view subimage."_s };
 
     // FIXME: if getViewSubImage() was called previously with the same binding, layer and view, the UA MAY return the same XRWebGLSubImage object as was returned previously.
-    Ref viewport = WebXRViewport::create(rectForView(layer, textureType, view));
+    auto viewRect = rectForView(layer, textureType, view);
+    layer.setViewport(view.eye() == XREye::Right ? 1 : 0, viewRect);
+    Ref viewport = WebXRViewport::create(viewRect);
     auto subImageResult = XRWebGLSubImage::create(WTF::move(viewport), layer);
     if (subImageResult.hasException())
         return subImageResult.releaseException();

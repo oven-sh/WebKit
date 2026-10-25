@@ -26,79 +26,47 @@
 #pragma once
 
 #include "RenderLayoutState.h"
-#include <WebCore/LocalFrameView.h>
-#include <WebCore/LocalFrameViewInlines.h>
-#include <WebCore/RenderView.h>
-#include <WebCore/StyleMaximumLines.h>
-#include <wtf/CheckedPtr.h>
+#include <wtf/CheckedRef.h>
+#include <wtf/Variant.h>
 
 namespace WebCore {
+
+class RenderBlock;
 
 class LineClampUpdater {
 public:
     LineClampUpdater(const RenderBlock& blockContainer);
     ~LineClampUpdater();
 
+    bool isLineClampRoot() const { return m_isLineClampRoot; }
+    bool LEGACY_NODELETE isAutoLineClampRoot() const;
+    // The clamp point is either after this many lines, or between this block and its next sibling (with no line box right before it).
+    using AutoClampPoint = Variant<size_t, CheckedRef<const RenderBox>>;
+    // The possible auto clamp points in render tree order (none when the content fits).
+    Vector<AutoClampPoint> autoClampPoints() const;
+    void setAutoClampPoint(const AutoClampPoint&);
+    bool fitsAutoClampBlockSizeLimit() const;
+    bool LEGACY_NODELETE hasConstrainedTextWrapContent() const;
+    void setIsStableTextWrap(bool);
+    void setMaximumLines(size_t);
+    void setClampAfterBox(const RenderBox&);
+    void resetLineClamp();
+
+    // Whether content laid out now comes after the clamp point (the line-clamp budget is used up).
+    static bool LEGACY_NODELETE isAfterClampPoint(const RenderObject&);
+    static bool LEGACY_NODELETE isInsideLineClampContainer(const RenderObject&);
+    // Whether the continue value of the block container hides the content after the clamp point.
+    static bool LEGACY_NODELETE shouldDiscardOverflow(const RenderBlock&);
+    // Floats of a line-clamp container are clipped to its block-end content edge (and nowhere else). The clip rect is in the renderer's coordinates.
+    static std::optional<LayoutRect> blockEndClipRect(const RenderBox& floatBox, const RenderElement&);
+    static void setIsForcedHidden(RenderElement&, bool);
+    static void skipLayoutForForcedHidden(RenderBox&);
+
 private:
-    CheckedPtr<const RenderBlock> m_blockContainer;
+    const CheckedRef<const RenderBlock> m_blockContainer;
+    bool m_isLineClampRoot { false };
     std::optional<RenderLayoutState::LineClamp> m_previousLineClamp { };
     std::optional<RenderLayoutState::LegacyLineClamp> m_skippedLegacyLineClampToRestore { };
 };
-
-inline LineClampUpdater::LineClampUpdater(const RenderBlock& blockContainer)
-    : m_blockContainer(blockContainer)
-{
-    auto* layoutState = m_blockContainer->view().frameView().layoutContext().layoutState();
-    if (!layoutState)
-        return;
-
-    m_previousLineClamp = layoutState->lineClamp();
-    if (blockContainer.isFieldset() || (layoutState->legacyLineClamp() && blockContainer.isNonReplacedAtomicInlineLevelBox()) || blockContainer.isFloatingOrOutOfFlowPositioned()) {
-        // Legacy line clamp does not cross into the interior of an atomic inline-level box.
-        layoutState->setLineClamp({ });
-
-        m_skippedLegacyLineClampToRestore = layoutState->legacyLineClamp();
-        layoutState->setLegacyLineClamp({ });
-        return;
-    }
-
-    if (auto maximumLinesForBlockContainer = m_blockContainer->style().maxLines().tryValue()) {
-        // New, top level line clamp.
-        layoutState->setLineClamp(RenderLayoutState::LineClamp { static_cast<size_t>(maximumLinesForBlockContainer->value), m_blockContainer->style().overflowContinue() == OverflowContinue::Discard });
-        return;
-    }
-
-    if (m_previousLineClamp) {
-        // Propagated line clamp.
-        if (blockContainer.establishesIndependentFormattingContext()) {
-            // Contents of descendants that establish independent formatting contexts are skipped over while counting line boxes.
-            layoutState->setLineClamp({ });
-            return;
-        }
-        auto effectiveShouldDiscard = m_previousLineClamp->shouldDiscardOverflow  || m_blockContainer->style().overflowContinue() == OverflowContinue::Discard;
-        layoutState->setLineClamp(RenderLayoutState::LineClamp { m_previousLineClamp->maximumLines, effectiveShouldDiscard });
-        return;
-    }
-}
-
-inline LineClampUpdater::~LineClampUpdater()
-{
-    auto* layoutState = m_blockContainer->view().frameView().layoutContext().layoutState();
-    if (!layoutState)
-        return;
-
-    if (m_skippedLegacyLineClampToRestore)
-        layoutState->setLegacyLineClamp(m_skippedLegacyLineClampToRestore);
-
-    if (!m_previousLineClamp) {
-        layoutState->setLineClamp({ });
-        return;
-    }
-
-    size_t lineCount = 0;
-    if (CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(m_blockContainer.get()); blockFlow && blockFlow->childrenInline())
-        lineCount = blockFlow->lineCount();
-    layoutState->setLineClamp(RenderLayoutState::LineClamp { m_previousLineClamp->maximumLines - std::min(m_previousLineClamp->maximumLines, lineCount), m_previousLineClamp->shouldDiscardOverflow });
-}
 
 }

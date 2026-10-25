@@ -29,6 +29,7 @@
 #include "BidiDigitalCredentialsAgent.h"
 #endif
 #include "Connection.h"
+#include "ContentInversion.h"
 #include "ContextMenuContextData.h"
 #include "EditorState.h"
 #include "EnhancedSecurityTracking.h"
@@ -54,14 +55,18 @@
 #include "WindowKind.h"
 #include <WebCore/BackForwardItemIdentifier.h>
 #include <WebCore/CornerRadii.h>
+#include <WebCore/DevicePostureType.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/IntPointHash.h>
 #include <WebCore/PrivateClickMeasurement.h>
 #include <WebCore/RegistrableDomain.h>
+#include <WebCore/RemoteUserInputEventData.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/SecurityOriginData.h>
+#include <WebCore/ViewportSegments.h>
 #include <pal/HysteresisActivity.h>
+#include <wtf/CallbackAggregator.h>
 #include <wtf/UUID.h>
 
 #if ENABLE(APPLE_PAY)
@@ -130,6 +135,15 @@ struct PrivateClickMeasurementAndMetadata {
     WebCore::PrivateClickMeasurement pcm;
     String sourceDescription;
     String purchaser;
+};
+
+struct PendingBackForwardIframeRestore {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(PendingBackForwardIframeRestore);
+
+    WebCore::ProcessIdentifier mainFrameProcessIdentifier;
+    WebCore::BackForwardFrameItemIdentifier mainFrameItemID;
+    Vector<Ref<WebProcessProxy>> iframeProcesses;
+    Ref<MainRunLoopSuccessCallbackAggregator> aggregator;
 };
 
 #if ENABLE(SPEECH_SYNTHESIS)
@@ -242,6 +256,7 @@ public:
     Vector<Function<void()>> callbackHandlersAfterProcessingPendingWheelEvents;
     Vector<Function<void()>> callbackHandlersAfterProcessingPendingTouchEvents;
 #endif
+    ContentInversion contentInversion { ContentInversion::System };
     WebCore::FloatSize defaultUnobscuredSize;
     EditorState editorState;
     WebCore::IntSize fixedLayoutSize;
@@ -258,11 +273,14 @@ public:
     WebCore::IntSize minimumSizeForAutoLayout;
     WebCore::FloatSize minimumUnobscuredSize;
     Deque<Ref<NativeWebMouseEvent>> mouseEventQueue;
+    std::optional<WebCore::FrameIdentifier> lastFrameHandlingMouseMove;
     Vector<Ref<WebMouseEvent>> coalescedMouseEvents;
+    RunLoop::Timer remoteFrameMouseEventTimeoutTimer;
     WebCore::MediaProducerMutedStateFlags mutedState;
     WebNotificationManagerMessageHandler notificationManagerMessageHandler;
     OptionSet<WebCore::LayoutMilestone> observedLayoutMilestones;
     WebCore::Color pageExtendedBackgroundColor;
+    EffectivePageAppearance effectivePageAppearance { EffectivePageAppearance::Unknown };
     UserObservablePageCounter::Token pageIsUserObservableCount;
     std::optional<MonotonicTime> pageLoadStart;
     PageLoadState pageLoadState;
@@ -297,6 +315,7 @@ public:
     HashMap<WebURLSchemeHandlerIdentifier, Ref<WebURLSchemeHandler>> urlSchemeHandlersByIdentifier;
     std::optional<WebCore::FloatRect> viewExposedRect;
     std::optional<WebCore::FloatSize> viewportSizeForCSSViewportUnits;
+    WebCore::ViewportSegments viewportSegments;
     VisibleWebPageToken visiblePageToken;
     WebCore::IntRect visibleScrollerThumbRect;
     WindowKind windowKind { WindowKind::Unparented };
@@ -309,6 +328,7 @@ public:
     HashMap<WebCore::SleepDisablerIdentifier, std::unique_ptr<WebCore::SleepDisabler>> sleepDisablers;
 
     HashMap<WebCore::BackForwardItemIdentifier, Vector<Ref<WebFrameProxy>>> pendingBackForwardCachedChildren;
+    HashMap<WebCore::NavigationIdentifier, std::unique_ptr<PendingBackForwardIframeRestore>> pendingBackForwardIframeRestores;
 
     // Each cross-origin remote frame's origin within its immediate parent frame, keyed by frame ID.
     // Used to compute each frame's cumulative offset in main-frame coordinates (see
@@ -326,7 +346,7 @@ public:
     struct OutstandingPositionInformationRequest {
         InteractionInformationRequest request;
         IPC::AsyncReplyID replyID;
-        Ref<IPC::Connection> connection;
+        WeakPtr<WebProcessProxy> process;
     };
     std::optional<OutstandingPositionInformationRequest> outstandingPositionInformationRequest;
 
@@ -432,6 +452,7 @@ public:
 
 #if PLATFORM(MAC)
     WebCore::FloatPoint scrollPositionDuringLastEditorStateUpdate;
+    std::optional<WebCore::RemoteUserInputEventData> acceptsFirstMouseRemoteUserInputEventData;
 #endif
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(MODEL_PROCESS)
@@ -461,11 +482,14 @@ public:
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(UNIFIED_PDF)
     PDFPluginDisplayMode pdfDisplayMode { PDFPluginDisplayMode::SinglePageContinuous };
+    PDFPluginDisplayMode initialPDFDisplayMode { PDFPluginDisplayMode::SinglePageContinuous };
 #endif
 
 #if HAVE(NSVIEW_CORNER_CONFIGURATION)
     WebCore::CornerRadii scrollbarAvoidanceCornerRadii;
 #endif
+
+    std::optional<WebCore::DevicePostureType> currentDevicePostureType;
 
     explicit Internals(WebPageProxy&, bool processInheritedFromOpener);
 

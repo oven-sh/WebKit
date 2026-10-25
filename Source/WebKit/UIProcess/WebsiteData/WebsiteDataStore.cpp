@@ -39,7 +39,6 @@
 #include "NetworkProcessConnectionInfo.h"
 #include "NetworkProcessMessages.h"
 #include "PageLoadState.h"
-#include "RestrictedOpenerType.h"
 #include "ShouldGrandfatherStatistics.h"
 #include "StorageAccessStatus.h"
 #include "TimeBasedEvictionMode.h"
@@ -63,6 +62,7 @@
 #include <WebCore/CredentialStorage.h>
 #include <WebCore/DatabaseTracker.h>
 #include <WebCore/HTMLMediaElement.h>
+#include <WebCore/LocalNetworkAccess.h>
 #include <WebCore/NotificationResources.h>
 #include <WebCore/OriginLock.h>
 #include <WebCore/RegistrableDomain.h>
@@ -117,13 +117,13 @@ void WebsiteDataStore::allowWebsiteDataRecordsForAllOrigins()
     allowsWebsiteDataRecordsForAllOrigins = true;
 }
 
-static HashMap<String, PAL::SessionID>& NODELETE activeGeneralStorageDirectories()
+static HashMap<String, PAL::SessionID>& LEGACY_NODELETE activeGeneralStorageDirectories()
 {
     static MainRunLoopNeverDestroyed<HashMap<String, PAL::SessionID>> directoryToSessionMap;
     return directoryToSessionMap;
 }
 
-static HashMap<PAL::SessionID, WeakRef<WebsiteDataStore>>& NODELETE allDataStores()
+static HashMap<PAL::SessionID, WeakRef<WebsiteDataStore>>& LEGACY_NODELETE allDataStores()
 {
     RELEASE_ASSERT(isUIThread());
     static NeverDestroyed<HashMap<PAL::SessionID, WeakRef<WebsiteDataStore>>> map;
@@ -141,7 +141,7 @@ WorkQueue& WebsiteDataStore::websiteDataStoreIOQueueSingleton()
     return queue.get();
 }
 
-void WebsiteDataStore::forEachWebsiteDataStore(NOESCAPE Function<void(WebsiteDataStore&)>&& function)
+void WebsiteDataStore::forEachWebsiteDataStore(NOESCAPE const Function<void(WebsiteDataStore&)>& function)
 {
     for (auto& dataStore : allDataStores().values())
         function(protect(dataStore));
@@ -199,6 +199,8 @@ WebsiteDataStore::~WebsiteDataStore()
     ASSERT(RunLoop::isMain());
     RELEASE_ASSERT(m_sessionID.isValid());
 
+    cancelLocalNetworkAccessPrompts(std::nullopt);
+
     platformDestroy();
 
     ASSERT(allDataStores().get(m_sessionID) == this);
@@ -219,19 +221,19 @@ WebsiteDataStore::~WebsiteDataStore()
 }
 
 // FIXME: Remove this when rdar://95786441 is resolved.
-static RefPtr<WebsiteDataStore>& NODELETE protectedGlobalDefaultDataStore()
+static RefPtr<WebsiteDataStore>& LEGACY_NODELETE protectedGlobalDefaultDataStore()
 {
     static NeverDestroyed<RefPtr<WebsiteDataStore>> globalDefaultDataStore;
     return globalDefaultDataStore.get();
 }
 
-static WeakPtr<WebsiteDataStore>& NODELETE globalDefaultDataStore()
+static WeakPtr<WebsiteDataStore>& LEGACY_NODELETE globalDefaultDataStore()
 {
     static NeverDestroyed<WeakPtr<WebsiteDataStore>> globalDefaultDataStore;
     return globalDefaultDataStore.get();
 }
 
-static IsPersistent NODELETE defaultDataStoreIsPersistent()
+static IsPersistent LEGACY_NODELETE defaultDataStoreIsPersistent()
 {
 #if PLATFORM(GTK) || PLATFORM(WPE)
     // GTK and WPE ports require explicit configuration of a WebsiteDataStore. All default storage
@@ -349,11 +351,6 @@ NetworkProcessProxy& WebsiteDataStore::networkProcess()
     }
 
     return *m_networkProcess;
-}
-
-NetworkProcessProxy& WebsiteDataStore::networkProcess() const
-{
-    return const_cast<WebsiteDataStore&>(*this).networkProcess();
 }
 
 void WebsiteDataStore::registerProcess(WebProcessProxy& process)
@@ -548,7 +545,7 @@ void WebsiteDataStore::handleResolvedDirectoriesAsynchronously(const WebsiteData
             FileSystem::deleteEmptyDirectory(webSQLDirectory);
         }
 
-        for (auto& directory : directoriesToExclude)
+        for (auto& directory : borrow(directoriesToExclude))
             FileSystem::setExcludedFromBackup(directory, true);
     });
 }
@@ -565,7 +562,7 @@ HashSet<WebCore::RegistrableDomain> WebsiteDataStore::platformAdditionalDomainsW
 }
 #endif
 
-static WebsiteDataStore::ProcessAccessType NODELETE computeNetworkProcessAccessTypeForDataFetch(OptionSet<WebsiteDataType> dataTypes, bool isNonPersistentStore)
+static WebsiteDataStore::ProcessAccessType LEGACY_NODELETE computeNetworkProcessAccessTypeForDataFetch(OptionSet<WebsiteDataType> dataTypes, bool isNonPersistentStore)
 {
     for (auto dataType : dataTypes) {
         if (WebsiteData::ownerProcess(dataType) == WebsiteDataProcessType::Network)
@@ -574,7 +571,7 @@ static WebsiteDataStore::ProcessAccessType NODELETE computeNetworkProcessAccessT
     return WebsiteDataStore::ProcessAccessType::None;
 }
 
-static WebsiteDataStore::ProcessAccessType NODELETE computeWebProcessAccessTypeForDataFetch(OptionSet<WebsiteDataType> dataTypes, bool /* isNonPersistentStore */)
+static WebsiteDataStore::ProcessAccessType LEGACY_NODELETE computeWebProcessAccessTypeForDataFetch(OptionSet<WebsiteDataType> dataTypes, bool /* isNonPersistentStore */)
 {
     if (dataTypes.contains(WebsiteDataType::MemoryCache))
         return WebsiteDataStore::ProcessAccessType::OnlyIfLaunched;
@@ -622,7 +619,7 @@ void WebsiteDataStore::fetchDataAndApply(OptionSet<WebsiteDataType> dataTypes, O
             });
         }
 
-        const OptionSet<WebsiteDataFetchOption>& NODELETE fetchOptions() const { return m_fetchOptions; }
+        const OptionSet<WebsiteDataFetchOption>& LEGACY_NODELETE fetchOptions() const { return m_fetchOptions; }
 
         void addWebsiteData(WebsiteData&& websiteData)
         {
@@ -633,7 +630,7 @@ void WebsiteDataStore::fetchDataAndApply(OptionSet<WebsiteDataType> dataTypes, O
                 return;
             }
             ASSERT(RunLoop::isMain());
-            for (auto& entry : websiteData.entries) {
+            for (auto& entry : borrow(websiteData.entries)) {
                 auto displayName = WebsiteDataRecord::displayNameForOrigin(entry.origin);
                 if (!displayName) {
                     if (!allowsWebsiteDataRecordsForAllOrigins && !m_fetchOptions.contains(WebsiteDataFetchOption::IncludeAllOrigins))
@@ -829,8 +826,8 @@ void WebsiteDataStore::fetchDataForRegistrableDomains(OptionSet<WebsiteDataType>
         
         Vector<WebsiteDataRecord> matchingDataRecords;
         HashSet<WebCore::RegistrableDomain> domainsWithMatchingDataRecords;
-        for (auto&& dataRecord : existingDataRecords) {
-            for (auto& domain : domains) {
+        for (auto&& dataRecord : borrow(existingDataRecords)) {
+            for (auto& domain : borrow(domains)) {
                 if (dataRecord.matches(domain)) {
                     matchingDataRecords.append(WTF::move(dataRecord));
                     domainsWithMatchingDataRecords.add(domain.isolatedCopy());
@@ -844,7 +841,7 @@ void WebsiteDataStore::fetchDataForRegistrableDomains(OptionSet<WebsiteDataType>
     });
 }
 
-static WebsiteDataStore::ProcessAccessType NODELETE computeNetworkProcessAccessTypeForDataRemoval(OptionSet<WebsiteDataType> dataTypes, bool isNonPersistentStore)
+static WebsiteDataStore::ProcessAccessType LEGACY_NODELETE computeNetworkProcessAccessTypeForDataRemoval(OptionSet<WebsiteDataType> dataTypes, bool isNonPersistentStore)
 {
     auto processAccessType = WebsiteDataStore::ProcessAccessType::None;
     for (auto dataType : dataTypes) {
@@ -870,7 +867,7 @@ auto WebsiteDataStore::computeWebProcessAccessTypeForDataRemoval(OptionSet<Websi
     return ProcessAccessType::None;
 }
 
-static WebsiteDataStore::ProcessAccessType NODELETE computeWebProcessAccessTypeForDataRemovalWithRecords(OptionSet<WebsiteDataType> dataTypes)
+static WebsiteDataStore::ProcessAccessType LEGACY_NODELETE computeWebProcessAccessTypeForDataRemovalWithRecords(OptionSet<WebsiteDataType> dataTypes)
 {
     // FIXME: We currently don't remove resource load statistics in web process for origin data removal as TestRunner might dead lock.
     if (dataTypes.contains(WebsiteDataType::MemoryCache))
@@ -999,19 +996,21 @@ void WebsiteDataStore::removeData(OptionSet<WebsiteDataType> dataTypes, const Ve
         completionHandler();
     });
 
+    Borrow borrowedDataRecords = dataRecords;
+
     Vector<WebCore::SecurityOriginData> origins;
-    for (const auto& dataRecord : dataRecords) {
+    for (const auto& dataRecord : borrowedDataRecords) {
         for (auto& origin : dataRecord.origins)
             origins.append(origin);
     }
 
     if (dataTypes.contains(WebsiteDataType::DiskCache)) {
         HashSet<WebCore::SecurityOriginData> origins;
-        for (const auto& dataRecord : dataRecords) {
+        for (const auto& dataRecord : borrowedDataRecords) {
             for (const auto& origin : dataRecord.origins)
                 origins.add(crossThreadCopy(origin));
         }
-        
+
 #if ENABLE(VIDEO)
         m_queue->dispatch([origins = WTF::move(origins), mediaCacheDirectory = m_configuration->mediaCacheDirectory().isolatedCopy(), callbackAggregator] {
             WebCore::HTMLMediaElement::clearMediaCacheForOrigins(mediaCacheDirectory, origins);
@@ -1038,7 +1037,7 @@ void WebsiteDataStore::removeData(OptionSet<WebsiteDataType> dataTypes, const Ve
             Vector<String> cookieHostNames;
             Vector<String> HSTSCacheHostNames;
             Vector<WebCore::RegistrableDomain> registrableDomains;
-            for (const auto& dataRecord : dataRecords) {
+            for (const auto& dataRecord : borrowedDataRecords) {
                 for (auto& hostName : dataRecord.cookieHostNames)
                     cookieHostNames.append(hostName);
                 for (auto& hostName : dataRecord.HSTSCacheHostNames)
@@ -1069,7 +1068,7 @@ void WebsiteDataStore::removeData(OptionSet<WebsiteDataType> dataTypes, const Ve
 
     if (dataTypes.contains(WebsiteDataType::MediaKeys) && isPersistent()) {
         HashSet<WebCore::SecurityOriginData> origins;
-        for (const auto& dataRecord : dataRecords) {
+        for (const auto& dataRecord : borrowedDataRecords) {
             for (const auto& origin : dataRecord.origins)
                 origins.add(crossThreadCopy(origin));
         }
@@ -1082,7 +1081,7 @@ void WebsiteDataStore::removeData(OptionSet<WebsiteDataType> dataTypes, const Ve
 #if ENABLE(SCREEN_TIME)
     if (dataTypes.contains(WebsiteDataType::ScreenTime) && isPersistent()) {
         HashSet<URL> websitesToRemove;
-        for (const auto& dataRecord : dataRecords) {
+        for (const auto& dataRecord : borrowedDataRecords) {
             if (dataRecord.types.contains(WebsiteDataType::ScreenTime)) {
                 for (const auto& origin : dataRecord.origins)
                     websitesToRemove.add(origin.toURL());
@@ -1096,9 +1095,9 @@ void WebsiteDataStore::removeData(OptionSet<WebsiteDataType> dataTypes, const Ve
 
     if (dataTypes.contains(WebsiteDataType::IsolatedSiteRecord)) {
         HashSet<WebCore::RegistrableDomain> domainsToRemove;
-        for (auto& origin : origins)
+        for (auto& origin : borrow(origins))
             domainsToRemove.add(WebCore::RegistrableDomain { origin });
-        for (auto& dataRecord : dataRecords) {
+        for (auto& dataRecord : borrowedDataRecords) {
             for (auto& domain : dataRecord.resourceLoadStatisticsRegistrableDomains)
                 domainsToRemove.add(domain);
         }
@@ -1605,7 +1604,7 @@ void WebsiteDataStore::setHighValueFraudTargetDomainsForTesting(Vector<String>&&
 #if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
     HashSet<WebCore::RegistrableDomain> registrableDomains;
     registrableDomains.reserveInitialCapacity(domains.size());
-    for (auto& domain : domains)
+    for (auto& domain : borrow(domains))
         registrableDomains.add(WebCore::RegistrableDomain::fromRawString(WTF::move(domain)));
 
     HighValueFraudTargetDomainsController::singleton().setDomainsForTesting(WTF::move(registrableDomains));
@@ -1696,17 +1695,17 @@ void WebsiteDataStore::deleteCookiesForTesting(const URL& url, bool includeHttpO
     protect(networkProcess())->deleteCookiesForTesting(m_sessionID, WebCore::RegistrableDomain { url }, includeHttpOnlyCookies, WTF::move(completionHandler));
 }
 
-void WebsiteDataStore::hasLocalStorageOrCookies(const URL& url, CompletionHandler<void(bool)>&& completionHandler) const
+void WebsiteDataStore::hasLocalStorageOrCookies(const URL& url, CompletionHandler<void(bool)>&& completionHandler)
 {
     protect(networkProcess())->hasLocalStorageOrCookies(m_sessionID, WebCore::RegistrableDomain { url }, WTF::move(completionHandler));
 }
 
-void WebsiteDataStore::hasLocalStorageForTesting(const URL& url, CompletionHandler<void(bool)>&& completionHandler) const
+void WebsiteDataStore::hasLocalStorageForTesting(const URL& url, CompletionHandler<void(bool)>&& completionHandler)
 {
     protect(networkProcess())->hasLocalStorage(m_sessionID, WebCore::RegistrableDomain { url }, WTF::move(completionHandler));
 }
 
-void WebsiteDataStore::hasIsolatedSessionForTesting(const URL& url, CompletionHandler<void(bool)>&& completionHandler) const
+void WebsiteDataStore::hasIsolatedSessionForTesting(const URL& url, CompletionHandler<void(bool)>&& completionHandler)
 {
     protect(networkProcess())->hasIsolatedSession(m_sessionID, WebCore::RegistrableDomain { url }, WTF::move(completionHandler));
 }
@@ -1753,6 +1752,11 @@ void WebsiteDataStore::setResourceLoadStatisticsShouldEnbleSameSiteStrictEnforce
     auto flag = enabled ? WebCore::SameSiteStrictEnforcementEnabled::Yes : WebCore::SameSiteStrictEnforcementEnabled::No;
 
     protect(networkProcess())->setShouldEnbleSameSiteStrictEnforcementForTesting(m_sessionID, flag, WTF::move(completionHandler));
+}
+
+void WebsiteDataStore::setExemptAllowlistedCookiesFromITP(bool exempt)
+{
+    protect(networkProcess())->setExemptAllowlistedCookiesFromITP(m_sessionID, exempt, [] { });
 }
 
 void WebsiteDataStore::setResourceLoadStatisticsFirstPartyWebsiteDataRemovalModeForTesting(bool enabled, CompletionHandler<void()>&& completionHandler)
@@ -2050,7 +2054,7 @@ void WebsiteDataStore::setResourceLoadStatisticsDebugMode(bool enabled, Completi
     protect(networkProcess())->setResourceLoadStatisticsDebugMode(m_sessionID, enabled, WTF::move(completionHandler));
 }
 
-void WebsiteDataStore::isResourceLoadStatisticsEphemeral(CompletionHandler<void(bool)>&& completionHandler) const
+void WebsiteDataStore::isResourceLoadStatisticsEphemeral(CompletionHandler<void(bool)>&& completionHandler)
 {
     if (!trackingPreventionEnabled() || !m_sessionID.isEphemeral()) {
         completionHandler(false);
@@ -2063,6 +2067,11 @@ void WebsiteDataStore::isResourceLoadStatisticsEphemeral(CompletionHandler<void(
 void WebsiteDataStore::setPrivateClickMeasurementDebugMode(bool enabled)
 {
     protect(networkProcess())->setPrivateClickMeasurementDebugMode(sessionID(), enabled);
+}
+
+void WebsiteDataStore::setPrivateClickMeasurementPrivateRelayEnforcement(bool enabled)
+{
+    protect(networkProcess())->setPrivateClickMeasurementPrivateRelayEnforcement(sessionID(), enabled);
 }
 
 void WebsiteDataStore::storePrivateClickMeasurement(const WebCore::PrivateClickMeasurement& privateClickMeasurement)
@@ -2138,19 +2147,109 @@ void WebsiteDataStore::setUserAgentStringQuirkForTesting(const String& domain, c
     completionHandler();
 }
 
-void WebsiteDataStore::setLocalNetworkAccessPermissionForTesting(const WebCore::ClientOrigin& origin, WebCore::IPAddressSpace addressSpace, WebCore::PermissionState state, CompletionHandler<void()>&& completionHandler)
+void WebsiteDataStore::requestLocalNetworkAccessPermission(WebPageProxyIdentifier pageID, WebCore::ClientOrigin&& origin, WebCore::IPAddressSpace addressSpace, CompletionHandler<void(WebCore::PermissionState)>&& completionHandler)
 {
-    protect(networkProcess())->sendWithAsyncReply(Messages::NetworkProcess::SetLocalNetworkAccessPermissionForTesting(m_sessionID, origin, addressSpace, state), WTF::move(completionHandler));
+    auto key = LocalNetworkAccessPermissionKey { WTF::move(origin), addressSpace };
+    auto iterator = m_localNetworkAccessPermissions.find(key);
+    auto hasRecordedDecision = iterator != m_localNetworkAccessPermissions.end();
+
+    switch (WebCore::localNetworkAccessPermissionRequestOutcome(addressSpace, hasRecordedDecision)) {
+    // FIXME: This leaves a connection whose peer address is unavailable unrecoverable for the user. It
+    // should become unreachable once CFNetwork reports the connection's address space directly
+    // (rdar://183944437).
+    case WebCore::LocalNetworkAccessPermissionRequestOutcome::RefuseAsUndetermined:
+        return completionHandler(WebCore::PermissionState::Denied);
+    case WebCore::LocalNetworkAccessPermissionRequestOutcome::UseRecordedDecision:
+        return completionHandler(iterator->value);
+    case WebCore::LocalNetworkAccessPermissionRequestOutcome::Prompt:
+        break;
+    }
+
+    auto addResult = m_pendingLocalNetworkAccessPrompts.add(key, PendingLocalNetworkAccessPrompt { });
+    addResult.iterator->value.waiters.append({ pageID, WTF::move(completionHandler) });
+    if (addResult.isNewEntry)
+        askPageForLocalNetworkAccess(key);
 }
 
-void WebsiteDataStore::removeLocalNetworkAccessPermissions(const WebCore::SecurityOriginData& topOrigin, CompletionHandler<void()>&& completionHandler)
+void WebsiteDataStore::askPageForLocalNetworkAccess(const LocalNetworkAccessPermissionKey& key)
 {
-    protect(networkProcess())->sendWithAsyncReply(Messages::NetworkProcess::RemoveLocalNetworkAccessPermissions(m_sessionID, topOrigin), WTF::move(completionHandler));
+    auto iterator = m_pendingLocalNetworkAccessPrompts.find(key);
+    if (iterator == m_pendingLocalNetworkAccessPrompts.end())
+        return;
+
+    RefPtr<WebPageProxy> page;
+    for (auto& waiter : borrow(iterator->value.waiters)) {
+        page = WebProcessProxy::webPage(waiter.pageID);
+        if (page && page->canShowLocalNetworkAccessPrompt(key.first))
+            break;
+        page = nullptr;
+    }
+
+    if (!page)
+        return finishLocalNetworkAccessPrompt(key, WebCore::PermissionState::Prompt, RecordLocalNetworkAccessDecision::No);
+
+    page->requestLocalNetworkAccessPermission(key.first, key.second, [weakThis = WeakPtr { *this }, key, identifier = iterator->value.identifier](bool granted) {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
+            return;
+
+        // Without the identifier check, a reply from a superseded round could record a decision after a revocation cleared it.
+        auto pendingIterator = protectedThis->m_pendingLocalNetworkAccessPrompts.find(key);
+        if (pendingIterator == protectedThis->m_pendingLocalNetworkAccessPrompts.end() || pendingIterator->value.identifier != identifier)
+            return;
+
+        protectedThis->finishLocalNetworkAccessPrompt(key, granted ? WebCore::PermissionState::Granted : WebCore::PermissionState::Denied, RecordLocalNetworkAccessDecision::Yes);
+    });
 }
 
-void WebsiteDataStore::clearLocalNetworkAccessPermissionsForTesting(CompletionHandler<void()>&& completionHandler)
+void WebsiteDataStore::finishLocalNetworkAccessPrompt(const LocalNetworkAccessPermissionKey& key, WebCore::PermissionState state, RecordLocalNetworkAccessDecision record)
 {
-    protect(networkProcess())->sendWithAsyncReply(Messages::NetworkProcess::ClearLocalNetworkAccessPermissionsForTesting(m_sessionID), WTF::move(completionHandler));
+    auto pending = m_pendingLocalNetworkAccessPrompts.take(key);
+    if (record == RecordLocalNetworkAccessDecision::Yes)
+        m_localNetworkAccessPermissions.set(key, state);
+    for (auto& waiter : borrow(pending.waiters))
+        waiter.handler(state);
+}
+
+void WebsiteDataStore::queryLocalNetworkAccessPermission(std::optional<WebPageProxyIdentifier> pageID, const WebCore::ClientOrigin& origin, WebCore::IPAddressSpace addressSpace, CompletionHandler<void(std::optional<WebCore::PermissionState>)>&& completionHandler)
+{
+    if (auto iterator = m_localNetworkAccessPermissions.find({ origin, addressSpace }); iterator != m_localNetworkAccessPermissions.end())
+        return completionHandler(iterator->value);
+
+    // The embedder only stores same-origin decisions, as with camera and microphone.
+    RefPtr page = pageID ? WebProcessProxy::webPage(*pageID) : nullptr;
+    if (!page || origin.clientOrigin != origin.topOrigin)
+        return completionHandler(WebCore::PermissionState::Prompt);
+
+    page->queryLocalNetworkAccessPermission(origin.topOrigin, addressSpace, WTF::move(completionHandler));
+}
+
+void WebsiteDataStore::cancelLocalNetworkAccessPrompts(const std::optional<WebCore::SecurityOriginData>& topOrigin)
+{
+    const Vector keys = [&] {
+        Vector<LocalNetworkAccessPermissionKey> keys;
+        for (auto& key : m_pendingLocalNetworkAccessPrompts.keys()) {
+            if (!topOrigin || key.first.topOrigin == *topOrigin)
+                keys.append(key);
+        }
+        return keys;
+    }();
+    for (auto& key : keys)
+        finishLocalNetworkAccessPrompt(key, WebCore::PermissionState::Prompt, RecordLocalNetworkAccessDecision::No);
+}
+
+void WebsiteDataStore::removeLocalNetworkAccessPermissions(const WebCore::SecurityOriginData& topOrigin)
+{
+    m_localNetworkAccessPermissions.removeIf([&topOrigin](auto& entry) {
+        return entry.key.first.topOrigin == topOrigin;
+    });
+    cancelLocalNetworkAccessPrompts(topOrigin);
+}
+
+void WebsiteDataStore::clearLocalNetworkAccessPermissionsForTesting()
+{
+    m_localNetworkAccessPermissions.clear();
+    cancelLocalNetworkAccessPrompts(std::nullopt);
 }
 
 void WebsiteDataStore::setPrivateTokenIPCForTesting(bool enabled)
@@ -2219,7 +2318,7 @@ void WebsiteDataStore::setCacheModelSynchronouslyForTesting(CacheModel cacheMode
 Vector<WebsiteDataStoreParameters> WebsiteDataStore::parametersFromEachWebsiteDataStore()
 {
     return WTF::map(allDataStores(), [](auto& entry) {
-        return entry.value->parameters();
+        return protect(entry.value)->parameters();
     });
 }
 
@@ -2310,6 +2409,7 @@ WebsiteDataStoreParameters WebsiteDataStore::parameters()
     networkSessionParameters.hstsStorageDirectory = WTF::move(hstsStorageDirectory);
     networkSessionParameters.hstsStorageDirectoryExtensionHandle = WTF::move(hstsStorageDirectoryExtensionHandle);
     networkSessionParameters.dataConnectionServiceType = m_configuration->dataConnectionServiceType();
+    networkSessionParameters.ipAddressSpaceOverridesForTesting = m_configuration->ipAddressSpaceOverridesForTesting();
     networkSessionParameters.fastServerTrustEvaluationEnabled = m_configuration->fastServerTrustEvaluationEnabled();
     networkSessionParameters.networkCacheSpeculativeValidationEnabled = m_configuration->networkCacheSpeculativeValidationEnabled();
     networkSessionParameters.shouldUseTestingNetworkSession = m_configuration->testingSessionEnabled();
@@ -2359,7 +2459,7 @@ WebsiteDataStoreParameters WebsiteDataStore::parameters()
 #if ENABLE(DECLARATIVE_WEB_PUSH)
     networkSessionParameters.isDeclarativeWebPushEnabled = m_configuration->isDeclarativeWebPushEnabled();
 #endif
-#if HAVE(NW_PROXY_CONFIG)
+#if PLATFORM(COCOA)
     networkSessionParameters.proxyConfigData = m_proxyConfigData;
 #endif
 #if ENABLE(CONTENT_EXTENSIONS)
@@ -2654,7 +2754,7 @@ void WebsiteDataStore::lastPageLoadNetworkActivityCompletionCodeForTesting(WebCo
 }
 
 #if ENABLE(APP_BOUND_DOMAINS)
-void WebsiteDataStore::hasAppBoundSession(CompletionHandler<void(bool)>&& completionHandler) const
+void WebsiteDataStore::hasAppBoundSession(CompletionHandler<void(bool)>&& completionHandler)
 {
     protect(networkProcess())->hasAppBoundSession(m_sessionID, WTF::move(completionHandler));
 }
@@ -2886,9 +2986,10 @@ bool WebsiteDataStore::hasActivePages()
     });
 }
 
-#if HAVE(NW_PROXY_CONFIG)
+#if PLATFORM(COCOA)
 void WebsiteDataStore::clearProxyConfigData()
 {
+    m_proxyConfigData = std::nullopt;
     protect(networkProcess())->send(Messages::NetworkProcess::ClearProxyConfigData(m_sessionID), 0);
 }
 
@@ -2898,7 +2999,7 @@ void WebsiteDataStore::setProxyConfigData(Vector<std::pair<Vector<uint8_t>, std:
     protect(networkProcess())->send(Messages::NetworkProcess::SetProxyConfigData(m_sessionID, data), 0);
     m_proxyConfigData = WTF::move(data);
 }
-#endif // HAVE(NW_PROXY_CONFIG)
+#endif // PLATFORM(COCOA)
 
 void WebsiteDataStore::setCompletionHandlerForRemovalFromNetworkProcess(CompletionHandler<void(String&&)>&& completionHandler)
 {
@@ -3003,28 +3104,6 @@ void WebsiteDataStore::processPushMessage(WebPushMessage&& pushMessage, Completi
     protect(networkProcess())->processPushMessage(sessionID(), WTF::move(pushMessage), WTF::move(innerHandler));
 }
 
-RestrictedOpenerType WebsiteDataStore::openerTypeForDomain(const WebCore::RegistrableDomain& domain) const
-{
-    if (!m_restrictedOpenerTypesForTesting.isEmpty()) [[unlikely]] {
-        auto it = m_restrictedOpenerTypesForTesting.find(domain);
-        return it == m_restrictedOpenerTypesForTesting.end() ? RestrictedOpenerType::Unrestricted : it->value;
-    }
-
-#if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
-    return RestrictedOpenerDomainsController::singleton().lookup(domain);
-#else
-    return RestrictedOpenerType::Unrestricted;
-#endif
-}
-
-void WebsiteDataStore::setRestrictedOpenerTypeForDomainForTesting(const WebCore::RegistrableDomain& domain, RestrictedOpenerType type)
-{
-    if (domain.isEmpty())
-        return;
-
-    m_restrictedOpenerTypesForTesting.set(domain, type);
-}
-
 void WebsiteDataStore::fetchLocalStorage(CompletionHandler<void(std::optional<HashMap<WebCore::ClientOrigin, HashMap<String, String>>>&&)>&& completionHandler)
 {
     if (RefPtr networkProcess = networkProcessIfExists())
@@ -3041,8 +3120,12 @@ void WebsiteDataStore::restoreLocalStorage(HashMap<WebCore::ClientOrigin, HashMa
 #if ENABLE(WEB_PUSH_NOTIFICATIONS)
 bool WebsiteDataStore::builtInNotificationsEnabled() const
 {
+    RefPtr serviceWorkerPreferences = serviceWorkerOverridePreferences();
+    if (serviceWorkerPreferences && serviceWorkerPreferences->builtInNotificationsEnabled())
+        return true;
+
     if (!m_pages.computeSize())
-        return defaultBuiltInNotificationsEnabled();
+        return DEFAULT_VALUE_FOR_BuiltInNotificationsEnabled;
 
     for (Ref page : m_pages) {
         if (protect(page->preferences())->builtInNotificationsEnabled())
@@ -3074,7 +3157,7 @@ void WebsiteDataStore::clearStorageAccessForTesting(CompletionHandler<void()>&& 
     protect(networkProcess())->sendWithAsyncReply(Messages::NetworkProcess::ClearStorageAccessForTesting(m_sessionID), WTF::move(completionHandler));
 }
 
-void WebsiteDataStore::isStorageSuspendedForTesting(CompletionHandler<void(bool)>&& completionHandler) const
+void WebsiteDataStore::isStorageSuspendedForTesting(CompletionHandler<void(bool)>&& completionHandler)
 {
     protect(networkProcess())->isStorageSuspendedForTesting(m_sessionID, WTF::move(completionHandler));
 }

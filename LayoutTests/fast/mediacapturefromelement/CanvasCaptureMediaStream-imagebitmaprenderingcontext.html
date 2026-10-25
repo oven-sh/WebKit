@@ -35,7 +35,7 @@ var testOffScreenCanvasTransferBitmaps = function(drawFunction, message) {
     assert_equals(image.width, 64);
     assert_equals(image.height, 48);
     ctx.transferFromImageBitmap(offscreen.transferToImageBitmap());
-  }), message;
+  }, message);
 };
 
 testOffScreenCanvasTransferBitmaps(

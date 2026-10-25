@@ -40,10 +40,12 @@
 #import <wtf/Vector.h>
 #import <wtf/WeakPtr.h>
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
+class BindGroup;
 class Buffer;
 class ExternalTexture;
+class RenderBundle;
 class Texture;
 class TextureView;
 
@@ -83,6 +85,11 @@ struct BindableResources {
     MTLResourceUsage usage;
     MTLRenderStages renderStages;
 };
+
+void registerResourceHolder(const Vector<BindableResources>&, const BindGroup&);
+void registerResourceHolder(const Vector<BindableResources>&, const RenderBundle&);
+id<MTLResource> placeholderForDestroyedResource(const BindGroupEntryUsageData::Resource&);
+bool replaceDestroyedResourcesWithPlaceholders(Vector<BindableResources>&);
 
 struct IndexData {
     uint64_t renderCommand { 0 };
@@ -173,4 +180,4 @@ struct TrackedResource {
     }
 };
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal

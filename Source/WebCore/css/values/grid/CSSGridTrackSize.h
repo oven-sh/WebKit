@@ -39,7 +39,7 @@ struct GridMinMaxFunctionParameters {
 
     bool operator==(const GridMinMaxFunctionParameters&) const = default;
 };
-using GridMinMaxFunction = FunctionNotation<CSSValueMinmax, GridMinMaxFunctionParameters>;
+using GridMinMaxFunction = FunctionNotation<CSSValueID::Minmax, GridMinMaxFunctionParameters>;
 
 template<size_t I> const auto& get(const GridMinMaxFunctionParameters& value)
 {
@@ -55,7 +55,7 @@ struct GridFitContentFunctionParameters {
 
     bool operator==(const GridFitContentFunctionParameters&) const = default;
 };
-using GridFitContentFunction = FunctionNotation<CSSValueFitContent, GridFitContentFunctionParameters>;
+using GridFitContentFunction = FunctionNotation<CSSValueID::FitContent, GridFitContentFunctionParameters>;
 DEFINE_TYPE_WRAPPER_GET(GridFitContentFunctionParameters, value);
 
 
@@ -78,7 +78,7 @@ struct GridTrackSize {
         return false;
     }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         return WTF::switchOn(m_value, std::forward<F>(f)...);
     }

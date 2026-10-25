@@ -405,6 +405,9 @@ TextStream& operator<<(TextStream& stream, AccessibilitySearchKey searchKey)
     case AccessibilitySearchKey::VisitedLink:
         stream << "VisitedLink";
         break;
+    case AccessibilitySearchKey::FormFieldWithError:
+        stream << "FormFieldWithError";
+        break;
     };
 
     return stream;
@@ -807,9 +810,6 @@ TextStream& operator<<(WTF::TextStream& stream, AXProperty property)
     case AXProperty::ExplicitAutoCompleteValue:
         stream << "ExplicitAutoCompleteValue";
         break;
-    case AXProperty::ExplicitInvalidStatus:
-        stream << "ExplicitInvalidStatus";
-        break;
     case AXProperty::ExplicitLiveRegionRelevant:
         stream << "ExplicitLiveRegionRelevant";
         break;
@@ -865,6 +865,9 @@ TextStream& operator<<(WTF::TextStream& stream, AXProperty property)
         break;
     case AXProperty::HasExplicitGroupRole:
         stream << "HasExplicitGroupRole";
+        break;
+    case AXProperty::InvalidStatus:
+        stream << "InvalidStatus";
         break;
     case AXProperty::IsARIAHidden:
         stream << "IsARIAHidden";
@@ -1194,6 +1197,9 @@ TextStream& operator<<(WTF::TextStream& stream, AXProperty property)
     case AXProperty::ScreenRelativePosition:
         stream << "ScreenRelativePosition";
         break;
+    case AXProperty::SelectedOptionCheckmark:
+        stream << "SelectedOptionCheckmark";
+        break;
     case AXProperty::SelectedTextRange:
         stream << "SelectedTextRange";
         break;
@@ -1277,9 +1283,6 @@ TextStream& operator<<(WTF::TextStream& stream, AXProperty property)
         break;
     case AXProperty::VerticalScrollBar:
         stream << "VerticalScrollBar";
-        break;
-    case AXProperty::VisibleChildren:
-        stream << "VisibleChildren";
         break;
     case AXProperty::VisibleRows:
         stream << "VisibleRows";
@@ -1414,7 +1417,8 @@ void streamAXCoreObject(TextStream& stream, const AXCoreObject& object, const Op
             if (auto* runs = isolatedObject->textRuns(); runs && runs->size())
                 streamTextRuns(stream, *runs);
         } else if (axObject) {
-            if (auto runs = const_cast<AccessibilityObject*>(axObject)->textRuns(); runs.size())
+            // FIXME: Remove suppression once rdar://189998365 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST if (auto runs = const_cast<AccessibilityObject*>(axObject)->textRuns(); runs.size())
                 streamTextRuns(stream, runs);
         }
     }

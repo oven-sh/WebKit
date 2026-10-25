@@ -48,12 +48,15 @@ const Style::ComputedStyle& IntegrationUtils::firstNonAnonymousAncestorStyle(con
 
 // https://drafts.csswg.org/css-grid-2/#item-margins
 // Percent/Calc padding and sizing resolves against the gridAreaInlineSize, not the block size of the grid container.
-static LayoutUnit inlineWidthForGridItemWithGridArea(const LayoutState& layoutState, const ElementBox& box, LayoutIntegration::LogicalWidthType logicalWidthType, LayoutUnit gridAreaInlineSize)
+static LayoutUnit inlineWidthForGridItemWithGridArea(const LayoutState& layoutState, const ElementBox& box, LayoutIntegration::LogicalWidthType logicalWidthType, std::optional<LayoutUnit> gridAreaInlineSize)
 {
     ASSERT(box.isGridItem());
     CheckedRef renderer = downcast<RenderBox>(*box.rendererForIntegration());
 
-    renderer->setGridAreaContentLogicalWidth(gridAreaInlineSize);
+    // RenderGrid sets the grid item renderer's grid area content logical width during
+    // item placement which is present until we have resolved the actual grid area
+    // inline size.
+    renderer->setGridAreaContentLogicalWidth(gridAreaInlineSize.value_or(0_lu));
     renderer->invalidateContentLogicalWidths(MarkingBehavior::MarkOnlyThis);
 
     auto width = layoutState.logicalWidthWithFormattingContextForBox(box, logicalWidthType);
@@ -74,12 +77,13 @@ void IntegrationUtils::layoutWithFormattingContextForBox(const ElementBox& box, 
     m_globalLayoutState->layoutWithFormattingContextForBox(box, overridingBorderBoxLogicalWidth, overridingBorderBoxLogicalHeight);
 }
 
-std::pair<LayoutUnit, LayoutUnit> IntegrationUtils::borderAndPaddingForGridItem(const ElementBox& box, LayoutUnit gridAreaInlineSize) const
+std::pair<LayoutUnit, LayoutUnit> IntegrationUtils::borderAndPaddingForGridItem(const ElementBox& box, std::optional<LayoutUnit> gridAreaInlineSize) const
 {
     ASSERT(box.isGridItem());
     CheckedRef renderer = downcast<RenderBox>(*box.rendererForIntegration());
 
-    renderer->setGridAreaContentLogicalWidth(gridAreaInlineSize);
+    // The inline grid area is indefinite while sizing columns, so the item's cyclic percentage padding resolves against zero.
+    renderer->setGridAreaContentLogicalWidth(gridAreaInlineSize.value_or(0_lu));
     auto inlineBorderAndPadding = renderer->borderAndPaddingLogicalWidth();
     auto blockBorderAndPadding = renderer->borderAndPaddingLogicalHeight();
     renderer->clearGridAreaContentSize();
@@ -90,7 +94,20 @@ std::pair<LayoutUnit, LayoutUnit> IntegrationUtils::borderAndPaddingForGridItem(
 void IntegrationUtils::layoutGridItem(const ElementBox& box, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight, LayoutUnit gridAreaInlineSize) const
 {
     ASSERT(box.isGridItem());
-    LayoutIntegration::layoutGridItemWithFormattingContext(box, overridingBorderBoxLogicalWidth, overridingBorderBoxLogicalHeight, gridAreaInlineSize, const_cast<LayoutState&>(m_globalLayoutState.get()));
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST LayoutIntegration::layoutGridItemWithFormattingContext(box, overridingBorderBoxLogicalWidth, overridingBorderBoxLogicalHeight, gridAreaInlineSize, const_cast<LayoutState&>(m_globalLayoutState.get()));
+}
+
+std::optional<LayoutUnit> IntegrationUtils::firstLineBaselineForGridItem(const ElementBox& box) const
+{
+    ASSERT(box.isGridItem());
+    return protect(downcast<RenderBox>(*box.rendererForIntegration()))->firstLineBaseline();
+}
+
+std::optional<LayoutUnit> IntegrationUtils::lastLineBaselineForGridItem(const ElementBox& box) const
+{
+    ASSERT(box.isGridItem());
+    return protect(downcast<RenderBox>(*box.rendererForIntegration()))->lastLineBaseline();
 }
 
 LayoutUnit IntegrationUtils::maxContentWidth(const ElementBox& box) const
@@ -106,14 +123,14 @@ LayoutUnit IntegrationUtils::minContentWidth(const ElementBox& box) const
 }
 
 // Max width for grid items is resolved against the gridAreaInlineSize, not the block size of the grid container.
-LayoutUnit IntegrationUtils::maxContentWidthForGridItem(const ElementBox& box, LayoutUnit gridAreaInlineSize) const
+LayoutUnit IntegrationUtils::maxContentWidthForGridItem(const ElementBox& box, std::optional<LayoutUnit> gridAreaInlineSize) const
 {
     ASSERT(box.isGridItem());
     return inlineWidthForGridItemWithGridArea(m_globalLayoutState, box, LayoutIntegration::LogicalWidthType::MaxContent, gridAreaInlineSize);
 }
 
 // Min width for grid items is resolved against the gridAreaInlineSize, not the block size of the grid container.
-LayoutUnit IntegrationUtils::minContentWidthForGridItem(const ElementBox& box, LayoutUnit gridAreaInlineSize) const
+LayoutUnit IntegrationUtils::minContentWidthForGridItem(const ElementBox& box, std::optional<LayoutUnit> gridAreaInlineSize) const
 {
     ASSERT(box.isGridItem());
     return inlineWidthForGridItemWithGridArea(m_globalLayoutState, box, LayoutIntegration::LogicalWidthType::MinContent, gridAreaInlineSize);
@@ -125,7 +142,7 @@ LayoutUnit IntegrationUtils::minContentHeight(const ElementBox& box) const
     return m_globalLayoutState->logicalHeightWithFormattingContextForBox(box, LayoutIntegration::LogicalHeightType::MinContent);
 }
 
-static LayoutUnit blockSizeForGridItem(const LayoutState& layoutState, const ElementBox& box, LayoutUnit inlineAxisConstraint, LayoutIntegration::LogicalHeightType logicalHeightType)
+static LayoutUnit blockSizeForGridItem(const LayoutState& layoutState, const ElementBox& box, LayoutUnit gridAreaInlineSize, LayoutIntegration::LogicalHeightType logicalHeightType)
 {
     ASSERT(box.isGridItem());
     CheckedRef renderer = downcast<RenderBox>(*box.rendererForIntegration());
@@ -135,12 +152,9 @@ static LayoutUnit blockSizeForGridItem(const LayoutState& layoutState, const Ele
     case LayoutIntegration::LogicalHeightType::MaxContent:
     case LayoutIntegration::LogicalHeightType::MinContentContribution:
     case LayoutIntegration::LogicalHeightType::MaxContentContribution: {
-        renderer->setGridAreaContentLogicalWidth(inlineAxisConstraint);
         renderer->setNeedsLayout(MarkingBehavior::MarkOnlyThis);
 
-        layoutState.layoutWithFormattingContextForBox(box, { }, { });
-
-        renderer->clearGridAreaContentSize();
+        LayoutIntegration::layoutGridItemWithFormattingContext(box, { }, { }, gridAreaInlineSize, const_cast<LayoutState&>(layoutState));
 
         return layoutState.geometryForBox(box).borderBoxHeight();
     }
@@ -150,41 +164,41 @@ static LayoutUnit blockSizeForGridItem(const LayoutState& layoutState, const Ele
     return { };
 }
 
-LayoutUnit IntegrationUtils::minContentHeightForGridItem(const ElementBox& box, LayoutUnit inlineAxisConstraint) const
+LayoutUnit IntegrationUtils::minContentHeightForGridItem(const ElementBox& box, LayoutUnit gridAreaInlineSize) const
 {
     ASSERT(box.isGridItem());
-    return blockSizeForGridItem(m_globalLayoutState, box, inlineAxisConstraint, LayoutIntegration::LogicalHeightType::MinContent);
+    return blockSizeForGridItem(m_globalLayoutState, box, gridAreaInlineSize, LayoutIntegration::LogicalHeightType::MinContent);
 }
 
-LayoutUnit IntegrationUtils::maxContentHeightForGridItem(const ElementBox& box, LayoutUnit inlineAxisConstraint) const
+LayoutUnit IntegrationUtils::maxContentHeightForGridItem(const ElementBox& box, LayoutUnit gridAreaInlineSize) const
 {
     ASSERT(box.isGridItem());
-    return blockSizeForGridItem(m_globalLayoutState, box, inlineAxisConstraint, LayoutIntegration::LogicalHeightType::MaxContent);
+    return blockSizeForGridItem(m_globalLayoutState, box, gridAreaInlineSize, LayoutIntegration::LogicalHeightType::MaxContent);
 }
 
-LayoutUnit IntegrationUtils::minContentContributionHeightForGridItem(const ElementBox& box, LayoutUnit inlineAxisConstraint) const
+LayoutUnit IntegrationUtils::minContentContributionHeightForGridItem(const ElementBox& box, LayoutUnit gridAreaInlineSize) const
 {
     ASSERT(box.isGridItem());
-    return blockSizeForGridItem(m_globalLayoutState, box, inlineAxisConstraint, LayoutIntegration::LogicalHeightType::MinContentContribution);
+    return blockSizeForGridItem(m_globalLayoutState, box, gridAreaInlineSize, LayoutIntegration::LogicalHeightType::MinContentContribution);
 }
 
-LayoutUnit IntegrationUtils::maxContentContributionHeightForGridItem(const ElementBox& box, LayoutUnit inlineAxisConstraint) const
+LayoutUnit IntegrationUtils::maxContentContributionHeightForGridItem(const ElementBox& box, LayoutUnit gridAreaInlineSize) const
 {
     ASSERT(box.isGridItem());
-    return blockSizeForGridItem(m_globalLayoutState, box, inlineAxisConstraint, LayoutIntegration::LogicalHeightType::MaxContentContribution);
+    return blockSizeForGridItem(m_globalLayoutState, box, gridAreaInlineSize, LayoutIntegration::LogicalHeightType::MaxContentContribution);
 }
 
 LayoutUnit IntegrationUtils::minContentLogicalWidthContribution(const ElementBox& box) const
 {
     if (box.isGridItem())
-        return inlineWidthForGridItemWithGridArea(m_globalLayoutState, box, LayoutIntegration::LogicalWidthType::MinContentContribution, 0_lu);
+        return inlineWidthForGridItemWithGridArea(m_globalLayoutState, box, LayoutIntegration::LogicalWidthType::MinContentContribution, { });
     return m_globalLayoutState->logicalWidthWithFormattingContextForBox(box, LayoutIntegration::LogicalWidthType::MinContentContribution);
 }
 
 LayoutUnit IntegrationUtils::maxContentLogicalWidthContribution(const ElementBox& box) const
 {
     if (box.isGridItem())
-        return inlineWidthForGridItemWithGridArea(m_globalLayoutState, box, LayoutIntegration::LogicalWidthType::MaxContentContribution, 0_lu);
+        return inlineWidthForGridItemWithGridArea(m_globalLayoutState, box, LayoutIntegration::LogicalWidthType::MaxContentContribution, { });
     return m_globalLayoutState->logicalWidthWithFormattingContextForBox(box, LayoutIntegration::LogicalWidthType::MaxContentContribution);
 }
 

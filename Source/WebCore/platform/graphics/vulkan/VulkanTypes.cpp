@@ -36,8 +36,9 @@
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <wtf/Scope.h>
-#include <wtf/text/CStringView.h>
+#include <wtf/posix/POSIXExtras.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/UTF8CStringView.h>
 
 #if USE(GBM)
 #include "DRMDeviceManager.h"
@@ -59,9 +60,9 @@
 namespace WebCore {
 namespace Vulkan {
 
-ApplicationInfo::ApplicationInfo(const char* applicationName, uint32_t apiVersion)
+ApplicationInfo::ApplicationInfo(UTF8CStringView applicationName, uint32_t apiVersion)
 {
-    value().pApplicationName = applicationName;
+    value().pApplicationName = applicationName.utf8();
     value().apiVersion = apiVersion;
 }
 
@@ -194,7 +195,7 @@ bool Instance::hasLayers(std::span<const char* const> layerNames)
 {
     return std::ranges::all_of(layerNames, [](auto* layerName) -> bool {
         return availableLayers().containsIf([layerName](const auto& layer) -> bool {
-            return CStringView::unsafeFromUTF8(layerName) == CStringView::unsafeFromUTF8(layer.layerName);
+            return UTF8CStringView::unsafeFromUTF8(layerName) == UTF8CStringView::unsafeFromUTF8(layer.layerName);
         });
     });
 }
@@ -225,7 +226,7 @@ bool Instance::hasExtensions(const Vector<VkExtensionProperties>& availableExten
 {
     return std::ranges::all_of(extensionNames, [&availableExtensions](auto* extensionName) -> bool {
         return availableExtensions.containsIf([extensionName](const auto& extension) -> bool {
-            return CStringView::unsafeFromUTF8(extensionName) == CStringView::unsafeFromUTF8(extension.extensionName);
+            return UTF8CStringView::unsafeFromUTF8(extensionName) == UTF8CStringView::unsafeFromUTF8(extension.extensionName);
         });
     });
 }
@@ -327,7 +328,7 @@ static UnixFileDescriptor drmFileDescriptorForGBMDisplay()
 
     const auto& device = deviceManager.mainDevice();
     auto& deviceNode = device.renderNode.isNull() ? device.primaryNode : device.renderNode;
-    return { open(deviceNode.legacyCStringPointer(), O_RDWR | O_CLOEXEC), UnixFileDescriptor::Adopt };
+    return { posixOpen(deviceNode, O_RDWR | O_CLOEXEC), UnixFileDescriptor::Adopt };
 }
 #endif // USE(GBM)
 

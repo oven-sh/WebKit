@@ -26,7 +26,11 @@
 #include "config.h"
 #include "CyclicModuleRecord.h"
 
+#if ENABLE(AOT)
+#include "AOTModuleRecord.h"
+#endif
 #include "BuiltinNames.h"
+#include "ExceptionHelpers.h"
 #include "Interpreter.h"
 #include "JSAsyncFunction.h"
 #include "JSAsyncGeneratorFunction.h"
@@ -245,7 +249,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         // 7.b. If in.[[ImportName]] is NAMESPACE-OBJECT, then
         if (in.type == ImportEntryType::Namespace) {
             // 7.b.i. Let namespace be GetModuleNamespace(importedModule, in.[[Phase]]).
-            JSModuleNamespaceObject* ns = importedModule->getModuleNamespace(globalObject, in.phase);
+            JSObject* ns = importedModule->moduleNamespaceObject(globalObject, in.phase);
             RETURN_IF_EXCEPTION(scope, void());
             // 7.b.ii. Perform ! env.CreateImmutableBinding(in.[[LocalName]], true).
             // 7.b.iii. Perform ! env.InitializeBinding(in.[[LocalName]], namespace).
@@ -276,7 +280,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                         return;
                     }
                 }
-                throwSyntaxError(globalObject, scope, makeString("Export named '"_s, in.importName.string(), "' not found in module '"_s, importedModule->moduleKey().string(), "'."_s));
+                throwException(globalObject, scope, createExportNotFoundError(globalObject, in.importName.string(), importedModule->moduleKey().string()));
 #else
                 throwSyntaxError(globalObject, scope, makeString("Importing binding name '"_s, StringView(in.importName.impl()), "' is not found."_s));
 #endif
@@ -284,7 +288,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 
             case Resolution::Type::Ambiguous:
 #if USE(BUN_JSC_ADDITIONS)
-                throwSyntaxError(globalObject, scope, makeString("Export named '"_s, in.importName.string(), "' cannot be resolved due to ambiguous multiple bindings in module '"_s, importedModule->moduleKey().string(), "'."_s));
+                throwException(globalObject, scope, createAmbiguousExportError(globalObject, in.importName.string(), importedModule->moduleKey().string()));
 #else
                 throwSyntaxError(globalObject, scope, makeString("Importing binding name '"_s, StringView(in.importName.impl()), "' cannot be resolved due to ambiguous multiple bindings."_s));
 #endif
@@ -300,7 +304,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                         return;
                     }
                 }
-                throwSyntaxError(globalObject, scope, makeString("Missing 'default' export in module '"_s, importedModule->moduleKey().string(), "'."_s));
+                throwException(globalObject, scope, createMissingDefaultExportError(globalObject, importedModule->moduleKey().string()));
 #else
                 throwSyntaxError(globalObject, scope, "Importing binding name 'default' cannot be resolved by star export entries."_s);
 #endif
@@ -310,7 +314,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                 // 7.c.iii. If resolution.[[BindingName]] is NAMESPACE, then
                 if (vm.propertyNames->starNamespacePrivateName == resolution.localName) {
                     // 7.c.iii.1. Let namespace be GetModuleNamespace(resolution.[[Module]]).
-                    JSModuleNamespaceObject* ns = resolution.moduleRecord->getModuleNamespace(globalObject); // Force module namespace object materialization.
+                    JSObject* ns = resolution.moduleRecord->moduleNamespaceObject(globalObject); // Force module namespace object materialization.
                     RETURN_IF_EXCEPTION(scope, void());
                     // 7.c.iii.2. Perform ! env.CreateImmutableBinding(in.[[LocalName]], true).
                     // 7.c.iii.3. Perform ! env.InitializeBinding(in.[[LocalName]], namespace).
@@ -488,7 +492,8 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
             if (vm.typeProfiler() || vm.controlFlowProfiler()) {
                 vm.functionHasExecutedCache()->insertUnexecutedRange(moduleProgramExecutable->sourceID(),
                     unlinkedFunctionExecutable->unlinkedFunctionStart(),
-                    unlinkedFunctionExecutable->unlinkedFunctionEnd());
+                    unlinkedFunctionExecutable->unlinkedFunctionEnd(),
+                    unlinkedFunctionExecutable->parseMode());
             }
             // 24.a.iii. If d is either a FunctionDeclaration, a GeneratorDeclaration, an AsyncFunctionDeclaration, or an AsyncGeneratorDeclaration, then
             // 24.a.iii.1. Let fo be InstantiateFunctionObject of d with arguments env and privateEnv.
@@ -659,6 +664,10 @@ void CyclicModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capabi
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+        RELEASE_AND_RETURN(scope, compiled->execute(globalObject, capability));
+#endif
 #if ENABLE(WEBASSEMBLY)
     if (auto* wasmModule = dynamicDowncast<WebAssemblyModuleRecord>(this)) {
         wasmModule->initializeImports(globalObject, nullptr, Wasm::CreationMode::FromModuleLoader);
@@ -692,6 +701,10 @@ void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
     ASSERT(status() == Status::Evaluating || status() == Status::EvaluatingAsync);
     // 2. Assert: module.[[HasTLA]] is true.
     ASSERT(hasTLA());
+#if ENABLE(AOT)
+    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+        RELEASE_AND_RETURN(scope, compiled->executeAsync(globalObject));
+#endif
     // 3. Let capability be ! NewPromiseCapability(%Promise%).
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
     // 4. Let fulfilledClosure be a new Abstract Closure with no parameters that captures module and performs the following steps when called:

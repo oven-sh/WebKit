@@ -64,7 +64,7 @@ static const AtomString& summarySlotName()
 class DetailsSlotAssignment final : public NamedSlotAssignment {
 private:
     void hostChildElementDidChange(const Element&, ShadowRoot&) override;
-    const AtomString& NODELETE slotNameForHostChild(const Node&) const override;
+    const AtomString& LEGACY_NODELETE slotNameForHostChild(const Node&) const override;
 };
 
 void DetailsSlotAssignment::hostChildElementDidChange(const Element& childElement, ShadowRoot& shadowRoot)
@@ -82,7 +82,7 @@ void DetailsSlotAssignment::hostChildElementDidChange(const Element& childElemen
         didChangeSlot(NamedSlotAssignment::defaultSlotName(), shadowRoot);
 }
 
-SUPPRESS_NODELETE const AtomString& NODELETE DetailsSlotAssignment::slotNameForHostChild(const Node& child) const
+SUPPRESS_NODELETE const AtomString& LEGACY_NODELETE DetailsSlotAssignment::slotNameForHostChild(const Node& child) const
 {
     Ref details = downcast<HTMLDetailsElement>(*child.parentNode());
 
@@ -130,10 +130,10 @@ void HTMLDetailsElement::didAddUserAgentShadowRoot(ShadowRoot& root)
     ScriptDisallowedScope::EventAllowedScope defaultSlotScope { defaultSlot };
     defaultSlot->setUserAgentPart(UserAgentParts::detailsContent());
     ASSERT(!hasAttributeWithoutSynchronization(openAttr));
-    defaultSlot->setInlineStyleProperty(CSSPropertyContentVisibility, CSSValueHidden);
-    defaultSlot->setInlineStyleProperty(CSSPropertyDisplay, CSSValueBlock);
+    defaultSlot->setInlineStyleProperty(CSSPropertyID::ContentVisibility, CSSValueID::Hidden);
+    defaultSlot->setInlineStyleProperty(CSSPropertyID::Display, CSSValueID::Block);
     root.appendChild(defaultSlot);
-    m_defaultSlot = WTF::move(defaultSlot);
+    lazyInitialize(m_defaultSlot, WTF::move(defaultSlot));
 
     static MainThreadNeverDestroyed<const String> stylesheet(StringImpl::createWithoutCopying(detailsElementShadowUserAgentStyleSheet));
     Ref style = HTMLStyleElement::create(document);
@@ -158,7 +158,7 @@ bool HTMLDetailsElement::isActiveSummary(const HTMLSummaryElement& summary) cons
 void HTMLDetailsElement::queueDetailsToggleEventTask(ToggleState oldState, ToggleState newState)
 {
     if (!m_toggleEventTask)
-        m_toggleEventTask = ToggleEventTask::create(*this);
+        lazyInitialize(m_toggleEventTask, ToggleEventTask::create(*this));
 
     RefPtr { m_toggleEventTask }->queue(oldState, newState, nullptr);
 }
@@ -175,7 +175,7 @@ void HTMLDetailsElement::attributeChanged(const QualifiedName& name, const AtomS
             Style::PseudoClassChangeInvalidation styleInvalidation(*this, CSSSelector::PseudoClass::Open, isOpen);
             m_isOpen = isOpen;
             if (!newValue.isNull()) {
-                defaultSlot->removeInlineStyleProperty(CSSPropertyContentVisibility);
+                defaultSlot->removeInlineStyleProperty(CSSPropertyID::ContentVisibility);
                 queueDetailsToggleEventTask(ToggleState::Closed, ToggleState::Open);
                 if (!attributeWithoutSynchronization(nameAttr).isEmpty()) {
                     ShouldNotFireMutationEventsScope scope(document());
@@ -183,7 +183,7 @@ void HTMLDetailsElement::attributeChanged(const QualifiedName& name, const AtomS
                         otherDetailsElement->removeAttribute(openAttr);
                 }
             } else {
-                defaultSlot->setInlineStyleProperty(CSSPropertyContentVisibility, CSSValueHidden);
+                defaultSlot->setInlineStyleProperty(CSSPropertyID::ContentVisibility, CSSValueID::Hidden);
                 queueDetailsToggleEventTask(ToggleState::Open, ToggleState::Closed);
             }
         }

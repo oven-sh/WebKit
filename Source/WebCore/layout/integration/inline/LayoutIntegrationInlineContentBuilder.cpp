@@ -38,8 +38,10 @@
 #include "RenderBlockFlowInlines.h"
 #include "RenderBoxInlines.h"
 #include "RenderView.h"
+#include "SVGTextFragment.h"
 #include "StringTruncator.h"
 #include "StyleComputedStyle+GettersInlines.h"
+#include "UsedStyle.h"
 #include <WebCore/StyleShadow.h>
 
 namespace WebCore {
@@ -47,7 +49,7 @@ namespace LayoutIntegration {
 
 inline static float endPaddingQuirkValue(const RenderBlockFlow& flow)
 {
-    // FIXME: It's the copy of the lets-adjust-overflow-for-the-caret behavior from LegacyLineLayout::addOverflowFromInlineChildren.
+    // FIXME: It's the copy of the lets-adjust-overflow-for-the-caret behavior from legacy line layout.
     auto endPadding = flow.hasNonVisibleOverflow() ? flow.paddingEnd() : 0_lu;
     if (!endPadding)
         endPadding = flow.endPaddingWidthForCaret();
@@ -71,9 +73,9 @@ static std::tuple<float, float> glyphOverflowInInlineDirection(size_t firstTextB
             return FloatRect { };
         }
         auto character = isLeading ? textContent[0] : textContent[textContent.length() - 1];
-        auto& fontCascade = textBox.style().fontCascade();
-        auto glyphData = fontCascade.glyphDataForCharacter(character, !isLeftToRightDirection);
-        return (glyphData.font ? *glyphData.font : fontCascade.primaryFont()).boundsForGlyph(glyphData.glyph);
+        CheckedRef fontCascade = textBox.style().fontCascade();
+        auto glyphData = fontCascade->glyphDataForCharacter(character, !isLeftToRightDirection);
+        return protect(glyphData.font ? *glyphData.font : fontCascade->primaryFont())->boundsForGlyph(glyphData.glyph);
     };
 
     auto leadingOverflow = [&] {
@@ -135,7 +137,7 @@ static inline FloatBoxExtent strokeAndTextShadowInkOverflowOutsets(const Style::
     return { strokeWidth - textShadow.top(), strokeWidth + textShadow.right(), strokeWidth + textShadow.bottom(), strokeWidth - textShadow.left() };
 }
 
-static float logicalBottomForTextDecorationContent(std::span<const InlineDisplay::Box> boxes, bool isHorizontalWritingMode)
+static float LEGACY_NODELETE logicalBottomForTextDecorationContent(std::span<const InlineDisplay::Box> boxes, bool isHorizontalWritingMode)
 {
     auto logicalBottom = std::optional<float> { };
     for (auto& displayBox : boxes) {
@@ -291,8 +293,11 @@ void InlineContentBuilder::updateInkOverflowForInlineBoxes(std::span<InlineDispl
             CheckedRef style = displayBox.style();
             auto inkOverflowRect = FloatRect { displayBox.visualRectIgnoringBlockDirection() };
 
-            if (style->hasOutlineInVisualOverflow())
-                inkOverflowRect.inflate(style->usedOutlineSize(style->usedZoomForLength(), style->deviceScaleFactor()));
+            if (style->hasOutlineInVisualOverflow()) {
+                CheckedRef layoutBox = displayBox.layoutBox();
+                auto usedStyle = displayBox.isFirstFormattedLine() ? layoutBox->firstLineUsedStyle() : layoutBox->usedStyle();
+                inkOverflowRect.inflate(usedStyle.outlineSize());
+            }
 
             if (!style->boxShadow().isNone()) {
                 auto [topBoxShadow, bottomBoxShadow] = Style::shadowVerticalExtent(style->boxShadow(), style->usedZoomForLength());
@@ -314,7 +319,7 @@ void InlineContentBuilder::updateInkOverflowForInlineBoxes(std::span<InlineDispl
                 inkOverflowRect.uniteEvenIfEmpty(accumulatedInkOverflowRect);
 
             if (style->hasOutlineInVisualOverflow())
-                inkOverflowRect.inflate(style->usedOutlineSize(style->usedZoomForLength(), style->deviceScaleFactor()));
+                inkOverflowRect.inflate(layoutBox->usedStyle().outlineSize());
 
             if (!style->boxShadow().isNone()) {
                 auto [topBoxShadow, bottomBoxShadow] = Style::shadowVerticalExtent(style->boxShadow(), style->usedZoomForLength());
@@ -395,7 +400,7 @@ void InlineContentBuilder::computeOverflowFromBoxes(InlineContent& inlineContent
         // display boxes (see InlineDisplayContentBuilder) RenderBlockFlow expects visual overflow.
         // Visual overflow propagation is slightly different from ink overflow when it comes to renderers with self painting layers.
         // -and for now we consult atomic renderers for such visual overflow which is not how we are supposed to do in LFC.
-        // (visual overflow is computed during their ::layout() call which we issue right before running inline layout in RenderBlockFlow::layoutModernLines)
+        // (visual overflow is computed during their ::layout() call which we issue right before running inline layout in RenderBlockFlow::layoutInlineContent)
         auto firstTextBoxIndex = std::optional<size_t> { };
         auto lastTextBoxIndex = std::optional<size_t> { };
         for (; boxIndex < boxes.size() && boxes[boxIndex].lineIndex() == lineIndex; ++boxIndex) {
@@ -592,6 +597,9 @@ void InlineContentBuilder::computeIsFirstIsLastBoxAndBidiReorderingForInlineCont
 
 FloatRect InlineContentBuilder::handlePartialDisplayContentUpdate(Layout::InlineLayoutResult&& layoutResult, InlineContent& inlineContent, const Layout::InlineDamage* lineDamage) const
 {
+    if (lineDamage && lineDamage->hasTruncatedDisplayContent())
+        return appendToTruncatedDisplayContent(WTF::move(layoutResult), inlineContent, *lineDamage);
+
     auto firstDamagedLineIndex = [&]() -> std::optional<size_t> {
         auto& displayContentFromPreviousLayout = inlineContent.displayContent();
         if (!lineDamage || !lineDamage->layoutStartPosition() || !displayContentFromPreviousLayout.lines.size())
@@ -646,9 +654,7 @@ FloatRect InlineContentBuilder::handlePartialDisplayContentUpdate(Layout::Inline
 
     if (!firstDamagedLineIndex || !numberOfDamagedLines || !firstDamagedBoxIndex || !numberOfDamagedBoxes) {
         ASSERT_NOT_REACHED();
-        // We failed to compute the damaged range. The existing display content may still hold references to
-        // layout boxes that were detached (see InlineDamage::m_detachedLayoutBoxes) and will be destroyed as
-        // soon as line damage is released. Do not leave those stale display boxes in place.
+        // We failed to compute the damaged range. Do not leave stale display boxes in place.
         for (auto& line : inlineContent.displayContent().lines)
             damagedRect.unite(line.inkOverflow());
         inlineContent.displayContent().clear();
@@ -706,6 +712,54 @@ FloatRect InlineContentBuilder::handlePartialDisplayContentUpdate(Layout::Inline
     updateOverflow(inlineContent, *firstDamagedLineIndex);
     // Repaint the new content boundary.
     adjustDamagedRectWithLineRange(*firstDamagedLineIndex, numberOfNewLines);
+
+    return damagedRect;
+}
+
+void InlineContentBuilder::truncateDisplayContent(InlineContent& inlineContent, Layout::InlineDamage& lineDamage) const
+{
+    auto& displayContent = inlineContent.displayContent();
+    auto& lines = displayContent.lines;
+    auto& boxes = displayContent.boxes;
+    // No damaged line (SVG text) means every line is rebuilt.
+    auto lineIndex = lineDamage.layoutStartPosition() ? lineDamage.layoutStartPosition()->lineIndex : 0;
+    if (lineIndex >= lines.size())
+        return;
+
+    auto truncatedInkOverflow = FloatRect { };
+    for (auto& line : lines.subspan(lineIndex))
+        truncatedInkOverflow.unite(line.inkOverflow());
+
+    auto firstBoxIndex = lineIndex ? lines[lineIndex - 1].lastBoxIndex() + 1 : 0;
+    ASSERT(firstBoxIndex <= boxes.size());
+    displayContent.remove(lineIndex, lines.size() - lineIndex, firstBoxIndex, boxes.size() - firstBoxIndex);
+
+    auto& svgTextFragments = inlineContent.svgTextFragmentsForBoxes();
+    if (svgTextFragments.size() > boxes.size())
+        svgTextFragments.shrink(boxes.size());
+    inlineContent.releaseCaches();
+
+    lineDamage.setDisplayContentTruncated(truncatedInkOverflow);
+}
+
+FloatRect InlineContentBuilder::appendToTruncatedDisplayContent(Layout::InlineLayoutResult&& layoutResult, InlineContent& inlineContent, const Layout::InlineDamage& lineDamage) const
+{
+    // truncateDisplayContent dropped the lines from the damaged line on. There are no trailing display boxes
+    // to stop at, so layout always runs to the end of the content. Any further change after a removal
+    // invalidates the whole line layout, so the damaged line is still the one truncation happened at.
+    auto& displayContent = inlineContent.displayContent();
+    auto firstNewLineIndex = displayContent.lines.size();
+    ASSERT(lineDamage.layoutStartPosition() && lineDamage.layoutStartPosition()->lineIndex == firstNewLineIndex);
+    ASSERT(layoutResult.range == Layout::InlineLayoutResult::Range::FullFromDamage);
+
+    // Repaint the removed content boundary.
+    auto damagedRect = lineDamage.truncatedContentInkOverflow();
+
+    displayContent.append(WTF::move(layoutResult.displayContent));
+    updateOverflow(inlineContent, firstNewLineIndex);
+    // Repaint the new content boundary.
+    for (auto& line : displayContent.lines.subspan(firstNewLineIndex))
+        damagedRect.unite(line.inkOverflow());
 
     return damagedRect;
 }

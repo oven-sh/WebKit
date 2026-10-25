@@ -37,6 +37,7 @@
 #import <numeric>
 #import <pal/spi/cocoa/NSCalendarDateSPI.h>
 #import <ranges>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 #if PLATFORM(IOS_FAMILY)
 #import <WebCore/WebCoreThreadMessage.h>
@@ -46,22 +47,22 @@
 typedef int64_t WebHistoryDateKey;
 typedef HashMap<WebHistoryDateKey, RetainPtr<NSMutableArray>> DateToEntriesMap;
 
-NSString *WebHistoryItemsAddedNotification = @"WebHistoryItemsAddedNotification";
-NSString *WebHistoryItemsRemovedNotification = @"WebHistoryItemsRemovedNotification";
-NSString *WebHistoryAllItemsRemovedNotification = @"WebHistoryAllItemsRemovedNotification";
-NSString *WebHistoryLoadedNotification = @"WebHistoryLoadedNotification";
-NSString *WebHistoryItemsDiscardedWhileLoadingNotification = @"WebHistoryItemsDiscardedWhileLoadingNotification";
-NSString *WebHistorySavedNotification = @"WebHistorySavedNotification";
-NSString *WebHistoryItemsKey = @"WebHistoryItems";
+NSString * const WebHistoryItemsAddedNotification = @"WebHistoryItemsAddedNotification";
+NSString * const WebHistoryItemsRemovedNotification = @"WebHistoryItemsRemovedNotification";
+NSString * const WebHistoryAllItemsRemovedNotification = @"WebHistoryAllItemsRemovedNotification";
+NSString * const WebHistoryLoadedNotification = @"WebHistoryLoadedNotification";
+NSString * const WebHistoryItemsDiscardedWhileLoadingNotification = @"WebHistoryItemsDiscardedWhileLoadingNotification";
+NSString * const WebHistorySavedNotification = @"WebHistorySavedNotification";
+NSString * const WebHistoryItemsKey = @"WebHistoryItems";
 
-static RetainPtr<WebHistory>& NODELETE sharedHistory()
+static RetainPtr<WebHistory>& LEGACY_NODELETE sharedHistory()
 {
     static NeverDestroyed<RetainPtr<WebHistory>> _sharedHistory;
     return _sharedHistory;
 }
 
-NSString *FileVersionKey = @"WebHistoryFileVersion";
-NSString *DatesArrayKey = @"WebHistoryDates";
+NSString * const FileVersionKey = @"WebHistoryFileVersion";
+NSString * const DatesArrayKey = @"WebHistoryDates";
 
 #define currentFileVersion 1
 
@@ -284,7 +285,7 @@ static inline WebHistoryDateKey dateKey(NSTimeInterval date)
     NSString *URLString = [url _web_originalDataAsString];
     if (!URLString)
         URLString = @"";
-    auto entry = retainPtr([_entriesByURL objectForKey:URLString]);
+    RetainPtr entry = checked_objc_cast<WebHistoryItem>([_entriesByURL objectForKey:URLString]);
 
     if (entry) {
         LOG(History, "Updating global history entry %@", entry.get());
@@ -359,7 +360,8 @@ static inline WebHistoryDateKey dateKey(NSTimeInterval date)
     // Next, we rebuild the history, restore the states, and notify the clients.
     _entriesByURL = entriesByURL;
     for (size_t dayIndex = 0; dayIndex < entryArrays.size(); ++dayIndex) {
-        for (WebHistoryItem *entry in (entryArrays[dayIndex]).get())
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL WebHistoryItem *entry in (entryArrays[dayIndex]).get())
             [self addItemToDateCaches:entry];
     }
     [webHistory _sendNotification:WebHistoryItemsAddedNotification entries:allEntries];
@@ -388,7 +390,7 @@ static inline WebHistoryDateKey dateKey(NSTimeInterval date)
         return NO;
 
     for (NSUInteger index = 0; index < count; ++index)
-        [self removeItem:[entries objectAtIndex:index]];
+        [self removeItem:checked_objc_cast<WebHistoryItem>([entries objectAtIndex:index])];
     
     return YES;
 }
@@ -568,7 +570,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     BOOL itemLimitPassed = NO;
     ASSERT(*numberOfItemsLoaded == 0);
 
-    for (NSDictionary *itemAsDictionary in array) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSDictionary *itemAsDictionary in array) {
         @autoreleasepool {
             auto item = adoptNS([[WebHistoryItem alloc] initFromDictionaryRepresentation:itemAsDictionary]);
 
@@ -615,8 +618,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 - (NSData *)data
 {
     if (_entriesByDate->isEmpty()) {
-        static NSData *emptyHistoryData = [[NSData alloc] init];
-        return emptyHistoryData;
+        static NeverDestroyed<RetainPtr<NSData>> emptyHistoryData = adoptNS([[NSData alloc] init]);
+        return emptyHistoryData.get();
     }
 
     // Ignores the date and item count limits; these are respected when loading instead of when saving, so
@@ -644,13 +647,16 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (void)addVisitedLinksToVisitedLinkStore:(WebVisitedLinkStore&)visitedLinkStore
 {
-    for (NSString *urlString in _entriesByURL.get())
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *urlString in _entriesByURL.get())
         visitedLinkStore.addVisitedLink(urlString);
 }
 
 @end
 
-@implementation WebHistory
+@implementation WebHistory {
+    RetainPtr<WebHistoryPrivate> _historyPrivate;
+}
 
 + (WebHistory *)optionalSharedHistory
 {
@@ -671,7 +677,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (void)timeZoneChanged:(NSNotification *)notification
 {
-    [_historyPrivate rebuildHistoryByDayIfNeeded:self];
+    [protect(_historyPrivate) rebuildHistoryByDayIfNeeded:self];
 }
 
 - (id)init
@@ -679,7 +685,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     self = [super init];
     if (!self)
         return nil;
-    _historyPrivate = [[WebHistoryPrivate alloc] init];
+    _historyPrivate = adoptNS([[WebHistoryPrivate alloc] init]);
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(timeZoneChanged:)
                                                  name:NSSystemTimeZoneDidChangeNotification
@@ -692,7 +698,6 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     [[NSNotificationCenter defaultCenter] removeObserver:self
                                                     name:NSSystemTimeZoneDidChangeNotification
                                                   object:nil];
-    [_historyPrivate release];
     [super dealloc];
 }
 
@@ -710,7 +715,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (void)removeItems:(NSArray *)entries
 {
-    if ([_historyPrivate removeItems:entries]) {
+    if ([protect(_historyPrivate) removeItems:entries]) {
         [self _sendNotification:WebHistoryItemsRemovedNotification
                         entries:entries];
     }
@@ -718,14 +723,15 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (void)removeAllItems
 {
-    NSArray *entries = [_historyPrivate allItems];
-    if ([_historyPrivate removeAllItems])
+    RetainPtr historyPrivate = _historyPrivate;
+    NSArray *entries = [historyPrivate allItems];
+    if ([historyPrivate removeAllItems])
         [self _sendNotification:WebHistoryAllItemsRemovedNotification entries:entries];
 }
 
 - (void)addItems:(NSArray *)newEntries
 {
-    [_historyPrivate addItems:newEntries];
+    [protect(_historyPrivate) addItems:newEntries];
     [self _sendNotification:WebHistoryItemsAddedNotification
                     entries:newEntries];
 }
@@ -734,14 +740,14 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (NSArray *)orderedLastVisitedDays
 {
-    return [_historyPrivate orderedLastVisitedDays];
+    return [protect(_historyPrivate) orderedLastVisitedDays];
 }
 
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
 
 - (NSArray *)orderedItemsLastVisitedOnDay:(NSCalendarDate *)date
 {
-    return [_historyPrivate orderedItemsLastVisitedOnDay:date];
+    return [protect(_historyPrivate) orderedItemsLastVisitedOnDay:date];
 }
 
 ALLOW_DEPRECATED_DECLARATIONS_END
@@ -750,12 +756,12 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (BOOL)containsURL:(NSURL *)URL
 {
-    return [_historyPrivate containsURL:URL];
+    return [protect(_historyPrivate) containsURL:URL];
 }
 
 - (WebHistoryItem *)itemForURL:(NSURL *)URL
 {
-    return [_historyPrivate itemForURL:URL];
+    return [protect(_historyPrivate) itemForURL:URL];
 }
 
 // MARK: SAVING TO DISK
@@ -763,7 +769,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 - (BOOL)loadFromURL:(NSURL *)URL error:(NSError **)error
 {
     auto discardedItems = adoptNS([[NSMutableArray alloc] init]);
-    if (![_historyPrivate loadFromURL:URL collectDiscardedItemsInto:discardedItems.get() error:error])
+    if (![protect(_historyPrivate) loadFromURL:URL collectDiscardedItemsInto:discardedItems.get() error:error])
         return NO;
 
 #if PLATFORM(IOS_FAMILY)
@@ -782,7 +788,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (BOOL)saveToURL:(NSURL *)URL error:(NSError **)error
 {
-    if (![_historyPrivate saveToURL:URL error:error])
+    if (![protect(_historyPrivate) saveToURL:URL error:error])
         return NO;
 #if PLATFORM(IOS_FAMILY)
     WebThreadPostNotification(WebHistorySavedNotification, self, nil);
@@ -796,22 +802,22 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (void)setHistoryItemLimit:(int)limit
 {
-    [_historyPrivate setHistoryItemLimit:limit];
+    [protect(_historyPrivate) setHistoryItemLimit:limit];
 }
 
 - (int)historyItemLimit
 {
-    return [_historyPrivate historyItemLimit];
+    return [protect(_historyPrivate) historyItemLimit];
 }
 
 - (void)setHistoryAgeInDaysLimit:(int)limit
 {
-    [_historyPrivate setHistoryAgeInDaysLimit:limit];
+    [protect(_historyPrivate) setHistoryAgeInDaysLimit:limit];
 }
 
 - (int)historyAgeInDaysLimit
 {
-    return [_historyPrivate historyAgeInDaysLimit];
+    return [protect(_historyPrivate) historyAgeInDaysLimit];
 }
 
 @end
@@ -820,17 +826,17 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (WebHistoryItem *)_itemForURLString:(NSString *)URLString
 {
-    return [_historyPrivate itemForURLString:URLString];
+    return [protect(_historyPrivate) itemForURLString:URLString];
 }
 
 - (NSArray *)allItems
 {
-    return [_historyPrivate allItems];
+    return [protect(_historyPrivate) allItems];
 }
 
 - (NSData *)_data
 {
-    return [_historyPrivate data];
+    return [protect(_historyPrivate) data];
 }
 
 + (void)_setVisitedLinkTrackingEnabled:(BOOL)visitedLinkTrackingEnabled
@@ -849,19 +855,19 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (void)_visitedURL:(NSURL *)url withTitle:(NSString *)title method:(NSString *)method wasFailure:(BOOL)wasFailure
 {
-    WebHistoryItem *entry = [_historyPrivate visitedURL:url withTitle:title];
+    RetainPtr entry = [protect(_historyPrivate) visitedURL:url withTitle:title];
 
-    RefPtr item = core(entry);
+    RefPtr item = core(entry.get());
     item->setLastVisitWasFailure(wasFailure);
 
-    entry->_private->_redirectURLs = nullptr;
+    entry.get()->_private->_redirectURLs = nullptr;
 
-    [self _sendNotification:WebHistoryItemsAddedNotification entries:@[entry]];
+    [self _sendNotification:WebHistoryItemsAddedNotification entries:@[entry.get()]];
 }
 
 - (void)_addVisitedLinksToVisitedLinkStore:(WebVisitedLinkStore &)visitedLinkStore
 {
-    [_historyPrivate addVisitedLinksToVisitedLinkStore:visitedLinkStore];
+    [protect(_historyPrivate) addVisitedLinksToVisitedLinkStore:visitedLinkStore];
 }
 @end
 
@@ -881,6 +887,6 @@ void WebHistoryWriter::writeHistoryItems(BinaryPropertyListObjectStream& stream)
         RetainPtr<NSArray> entries = m_entriesByDate->get(m_dateKeys[dateIndex]);
         NSUInteger entryCount = [entries count];
         for (NSUInteger entryIndex = 0; entryIndex < entryCount; ++entryIndex)
-            writeHistoryItem(stream, [entries objectAtIndex:entryIndex]);
+            writeHistoryItem(stream, checked_objc_cast<WebHistoryItem>([entries objectAtIndex:entryIndex]));
     }
 }

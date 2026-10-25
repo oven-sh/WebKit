@@ -1,37 +1,14 @@
-accessibility/AXObjectCache.cpp
-accessibility/AccessibilityRenderObject.cpp
-[ iOS ] accessibility/cocoa/AXTextMarkerCocoa.mm
-[ iOS ] accessibility/ios/AccessibilityObjectIOS.mm
-[ iOS ] accessibility/ios/WebAccessibilityObjectWrapperIOS.mm
 dom/Document.cpp
 dom/Position.cpp
-[ iOS ] editing/cocoa/EditorCocoa.mm
-[ macOS ] html/HTMLMediaElement.cpp
-inspector/InspectorOverlay.cpp
-inspector/agents/InspectorDOMAgent.cpp
-inspector/agents/InspectorDOMDebuggerAgent.cpp
-layout/formattingContexts/FormattingGeometry.cpp
+[ iOS ] editing/cocoa/NodeHTMLConverter.mm
 layout/formattingContexts/inline/InlineLineBoxBuilder.cpp
 layout/formattingContexts/inline/InlineLineBuilder.cpp
 layout/formattingContexts/inline/InlineQuirks.cpp
 layout/formattingContexts/inline/IntrinsicWidthHandler.cpp
-layout/formattingContexts/inline/TextOnlySimpleLineBuilder.cpp
 layout/formattingContexts/inline/display/InlineDisplayContentBuilder.cpp
-layout/formattingContexts/table/TableFormattingContext.cpp
-layout/formattingContexts/table/TableLayout.cpp
 layout/integration/LayoutIntegrationBoxGeometryUpdater.cpp
 layout/integration/LayoutIntegrationBoxTreeUpdater.cpp
 layout/integration/inline/LayoutIntegrationLineLayout.cpp
-[ iOS ] page/DOMTimer.cpp
-page/ElementTargetingController.cpp
-page/EventHandler.cpp
-page/LocalFrameView.cpp
-[ iOS ] page/cocoa/ContentChangeObserver.cpp
-[ iOS ] page/ios/FrameIOS.mm
-platform/graphics/ca/GraphicsLayerCA.cpp
-platform/graphics/cg/CGSubimageCacheWithTimer.cpp
-[ iOS ] platform/ios/WebVideoFullscreenControllerAVKit.mm
-platform/network/cocoa/ResourceHandleCocoa.mm
 rendering/AutoTableLayout.cpp
 rendering/BackgroundPainter.cpp
 rendering/CounterNode.cpp
@@ -40,13 +17,8 @@ rendering/GridLayoutFunctions.cpp
 rendering/GridTrackSizingAlgorithm.cpp
 rendering/HitTestResult.cpp
 rendering/InlineBoxPainter.cpp
-rendering/LegacyInlineBox.cpp
-rendering/LegacyInlineFlowBox.cpp
-rendering/LegacyInlineIterator.h
-rendering/LegacyLineLayout.cpp
 rendering/MarkedText.cpp
 rendering/PositionedLayoutConstraints.cpp
-rendering/RenderAttachment.cpp
 rendering/RenderBlock.cpp
 rendering/RenderBlockFlow.cpp
 rendering/RenderBox.cpp
@@ -56,22 +28,17 @@ rendering/RenderCounter.cpp
 rendering/RenderDeprecatedFlexibleBox.cpp
 rendering/RenderElement.cpp
 rendering/RenderElementStyleInlines.h
-rendering/RenderFileUploadControl.cpp
 rendering/RenderFlexibleBox.cpp
 rendering/RenderFragmentedFlow.cpp
-rendering/RenderFrameSet.cpp
 rendering/RenderGrid.cpp
 rendering/RenderImage.cpp
-rendering/RenderInline.cpp
 rendering/RenderIterator.h
 rendering/RenderLayer.cpp
 rendering/RenderLayerBacking.cpp
-rendering/RenderLayerBackingSVGAdditions.cpp
 rendering/RenderLayerCompositor.cpp
 rendering/RenderLayerModelObject.cpp
 rendering/RenderLayerScrollableArea.cpp
 rendering/RenderLayoutState.cpp
-rendering/RenderListBox.cpp
 rendering/RenderListItem.cpp
 rendering/RenderListOutsideMarker.cpp
 rendering/RenderMultiColumnFlow.cpp
@@ -87,8 +54,6 @@ rendering/RenderText.cpp
 rendering/RenderText.h
 rendering/RenderTextControl.cpp
 rendering/RenderTextControlSingleLine.cpp
-rendering/RenderTreeAsText.cpp
-rendering/RenderVTTCue.cpp
 rendering/RenderView.cpp
 rendering/StyledMarkedText.cpp
 rendering/TextAutoSizing.cpp
@@ -97,32 +62,18 @@ rendering/TextBoxTrimmer.cpp
 rendering/TextDecorationPainter.cpp
 rendering/cocoa/RenderThemeCocoa.mm
 [ iOS ] rendering/ios/RenderThemeIOS.mm
-rendering/line/BreakingContext.h
-rendering/line/LineInlineHeaders.h
-rendering/mathml/MathMLStyle.cpp
-rendering/mathml/RenderMathMLBlock.cpp
-rendering/mathml/RenderMathMLRow.cpp
-rendering/mathml/RenderMathMLScripts.cpp
-rendering/mathml/RenderMathMLUnderOver.cpp
 rendering/shapes/ShapeOutsideInfo.cpp
 rendering/svg/RenderSVGInline.cpp
 rendering/svg/RenderSVGInlineText.cpp
-rendering/svg/RenderSVGPath.cpp
-rendering/svg/RenderSVGResourceClipper.cpp
-rendering/svg/RenderSVGRoot.cpp
 rendering/svg/RenderSVGText.cpp
-rendering/svg/SVGContainerLayout.cpp
-rendering/svg/SVGPaintServerHandlingInlines.h
 rendering/svg/SVGPathFromElement.cpp
 rendering/svg/SVGRenderSupport.cpp
-rendering/svg/SVGRenderTreeAsText.cpp
 rendering/svg/SVGRenderingContext.cpp
 rendering/svg/SVGTextBoxPainter.cpp
 rendering/svg/SVGTextLayoutAttributesBuilder.cpp
 rendering/svg/SVGTextLayoutEngine.cpp
 rendering/svg/SVGTextMetrics.cpp
 rendering/svg/SVGTextMetricsBuilder.cpp
-rendering/svg/SVGTransformComputation.h
 rendering/svg/legacy/LegacyRenderSVGContainer.cpp
 rendering/svg/legacy/LegacyRenderSVGPath.cpp
 rendering/svg/legacy/LegacyRenderSVGResource.cpp
@@ -152,7 +103,6 @@ style/ChildChangeInvalidation.cpp
 style/ElementRuleCollector.cpp
 style/InlineTextBoxStyle.cpp
 style/StyleAdjuster.cpp
-style/StyleBuilder.cpp
 style/StyleBuilderCustom.h
 style/StyleBuilderStateInlines.h
 style/StyleDifference.cpp
@@ -168,10 +118,4 @@ style/computed/StyleComputedStyleBase.cpp
 style/values/grid/StyleGridPositionsResolver.cpp
 style/values/images/kinds/StyleCanvasImage.cpp
 style/values/primitives/StyleLengthResolution.cpp
-svg/SVGFilterPrimitiveStandardAttributes.cpp
-svg/SVGGeometryElement.cpp
-svg/SVGLengthContext.cpp
-svg/SVGUseElement.cpp
-testing/Internals.cpp
 workers/WorkerGlobalScope.cpp
-workers/WorkerOrWorkletThread.cpp

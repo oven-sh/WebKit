@@ -41,6 +41,7 @@
 #include "StructureTransitionTable.h"
 #include "TypeInfoBlob.h"
 #include "Watchpoint.h"
+#include <span>
 #include <wtf/Atomics.h>
 #include <wtf/CompactPointerTuple.h>
 #include <wtf/CompactPtr.h>
@@ -56,7 +57,9 @@ namespace JSC {
 
 class DeferGC;
 class DeferredStructureTransitionWatchpointFire;
+class ImmutablePropertyNames;
 class LLIntOffsetsExtractor;
+class PropertyRun;
 class PropertyNameArrayBuilder;
 class PropertyNameArray;
 class PropertyTable;
@@ -66,6 +69,7 @@ class JSString;
 struct DumpContext;
 struct HashTable;
 struct HashTableValue;
+struct PropertyAdditionList;
 
 namespace Integrity {
 class Analyzer;
@@ -215,6 +219,7 @@ public:
     static constexpr int s_maxTransitionLength = 128;
     static constexpr int s_maxTransitionLengthForNonEvalPutById = 512;
     static constexpr int s_maxTransitionLengthForRemove = 4096; // Picked from benchmarking measurement.
+    static constexpr unsigned s_minDroppableTransitionChainLength = 4;
 
     using SeenProperties = TinyBloomFilter<CompactPtr<UniquedStringImpl>::StorageType>;
 
@@ -241,7 +246,7 @@ protected:
 private:
     inline void finishCreation(VM&, CreatingEarlyCellTag); // Defined in StructureInlines.h
 
-    void NODELETE validateFlags();
+    void LEGACY_NODELETE validateFlags();
 
 public:
     StructureID id() const { return StructureID::encode(this); }
@@ -301,6 +306,24 @@ public:
     static Structure* toUncacheableDictionaryTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* sealTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* freezeTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
+    JS_EXPORT_PRIVATE static Structure* makePropertiesImmutableTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
+    JS_EXPORT_PRIVATE static Structure* makeListedPropertiesImmutableTransition(VM&, Structure*, ImmutablePropertyNames&, DeferredStructureTransitionWatchpointFire* = nullptr);
+    static Structure* addPropertyRunTransitionToExistingStructure(Structure*, const PropertyRun&);
+    JS_EXPORT_PRIVATE static Structure* addPropertyRunTransition(VM&, Structure*, const PropertyRun&, DeferredStructureTransitionWatchpointFire* = nullptr);
+    JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* base, std::span<UniquedStringImpl* const> names, unsigned attributes = 0, DeferredStructureTransitionWatchpointFire* = nullptr);
+    JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* base, std::span<UniquedStringImpl* const> names, std::span<const unsigned> attributes, DeferredStructureTransitionWatchpointFire* = nullptr);
+    // For the one object that has these names in this order: no Structure is looked for, and none is remembered for the next. The base has no property. The names differ from each other, and none is an index.
+    // With more names than a line of Structures may have, the object is a dictionary.
+    JS_EXPORT_PRIVATE static Structure* createForOneObject(VM&, Structure* base, std::span<UniquedStringImpl* const> names);
+    JS_EXPORT_PRIVATE bool dropTransitionChain(VM&);
+    JS_EXPORT_PRIVATE bool restoreTransitionChain(Structure* previous);
+    bool isTransitionFrom(const Structure* previous) const
+    {
+        Structure* recordedPrevious = previousID();
+        return recordedPrevious == previous || (!recordedPrevious && isPinnedPropertyAdditionFrom(previous));
+    }
+    bool hasSameCellFlagsAs(const Structure& other) const { return typeInfo().inlineTypeFlags() == other.typeInfo().inlineTypeFlags() && hasPristineElements() == other.hasPristineElements(); }
+    bool isCacheableTransitionFrom(Structure* previous) { return (previousID() == previous || restoreTransitionChain(previous)) && hasSameCellFlagsAs(*previous); }
     static Structure* preventExtensionsTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* nonPropertyTransition(VM&, Structure*, TransitionKind, DeferredStructureTransitionWatchpointFire*);
     static Structure* setBrandTransitionFromExistingStructureConcurrently(Structure*, UniquedStringImpl*);
@@ -316,17 +339,20 @@ public:
     static constexpr DestructionMode needsDestruction = NeedsDestruction;
     static void destroy(JSCell*);
 
+    inline unsigned dictionaryPropertyCount() const;
+    PropertyTable* materializedPropertyTable() const { return m_propertyTableUnsafe.get(); }
+
     // Versions that take a func will call it after making the change but while still holding
     // the lock. The callback is not called if there is no change being made, like if you call
     // removePropertyWithoutTransition() and the property is not found.
     template<typename Func>
-    PropertyOffset addPropertyWithoutTransition(VM&, PropertyName, unsigned attributes, const Func&);
+    PropertyOffset addPropertyWithoutTransition(VM&, PropertyName, unsigned attributes, NOESCAPE const Func&);
     template<typename Func>
-    PropertyOffset removePropertyWithoutTransition(VM&, PropertyName, const Func&);
+    PropertyOffset removePropertyWithoutTransition(VM&, PropertyName, NOESCAPE const Func&);
     template<typename Func>
-    PropertyOffset attributeChangeWithoutTransition(VM&, PropertyName, unsigned attributes, const Func&);
+    PropertyOffset attributeChangeWithoutTransition(VM&, PropertyName, unsigned attributes, NOESCAPE const Func&);
     template<typename Func>
-    auto addOrReplacePropertyWithoutTransition(VM&, PropertyName, unsigned attributes, const Func&) -> decltype(auto);
+    auto addOrReplacePropertyWithoutTransition(VM&, PropertyName, unsigned attributes, NOESCAPE const Func&) -> decltype(auto);
     void setPrototypeWithoutTransition(VM&, JSValue prototype);
         
     bool isDictionary() const { return dictionaryKind() != NoneDictionaryKind; }
@@ -376,6 +402,47 @@ public:
         return typeInfo().hasStaticPropertyTable() && !staticPropertiesReified();
     }
 
+    // What sends a put off the fast path when the object is its receiver. One test, as both are bits of m_bitField.
+    bool hasReadOnlyOrGetterSetterPropertiesExcludingProtoOrImmutableProperties() const
+    {
+        return m_bitField & (s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits | s_anyImmutablePropertiesBits);
+    }
+
+    bool mayHaveImmutableProperties() const { return m_bitField & s_anyImmutablePropertiesBits; }
+    // Asked by whoever is about to write. Where the answer is no, the owner of the listed names is told of the write: see ImmutablePropertyNames::OutsideNames::willWrite().
+    ALWAYS_INLINE bool isImmutableProperty(UniquedStringImpl* uid) const
+    {
+        if (!mayHaveImmutableProperties()) [[likely]]
+            return false;
+        return hasImmutableProperties() || refusesWriteToListedProperty(uid);
+    }
+    // Asked by whoever writes nothing: a reader that wants to know whether what it has read can change.
+    ALWAYS_INLINE bool isImmutablePropertyForReader(UniquedStringImpl* uid) const
+    {
+        if (!mayHaveImmutableProperties()) [[likely]]
+            return false;
+        return hasImmutableProperties() || isListedImmutableProperty(uid);
+    }
+    ALWAYS_INLINE bool hasImmutableIndexedProperties() const
+    {
+        if (!mayHaveImmutableProperties()) [[likely]]
+            return false;
+        return hasImmutableProperties() || listsNumericKeysAsImmutable();
+    }
+    ALWAYS_INLINE bool hasImmutablePrototype() const
+    {
+        if (!mayHaveImmutableProperties()) [[likely]]
+            return false;
+        return hasImmutableProperties() || listsPrototypeAsImmutable();
+    }
+    inline ImmutablePropertyNames* listedImmutablePropertyNames() const; // Defined in StructureInlines.h
+
+    bool isPristine() const { return typeInfo().hasPristineNames(); }
+    JS_EXPORT_PRIVATE bool tryMarkPristine(VM&);
+    bool clearsPristineBitsOf(const Structure& previous) const { return (previous.isPristine() && !isPristine()) || (previous.hasPristineElements() && !hasPristineElements()); }
+
+    bool hasFrozenElementsInPlace() const { return transitionKind() == TransitionKind::FreezeElementsInPlace; }
+
     bool isNonExtensibleOrHasNonConfigurableProperties() const
     {
         return didPreventExtensions() || hasNonConfigurableProperties();
@@ -388,6 +455,8 @@ public:
 
     // Type accessors.
     TypeInfo typeInfo() const { return m_blob.typeInfo(m_outOfLineTypeFlags); }
+    // For a class whose put() matters in some realms only: see InternalFunction. Before anything has been stored to a cell of this Structure.
+    void setOverridesPut() { m_outOfLineTypeFlags |= OverridesPut >> numberOfInlineBits; }
     bool isObject() const { return typeInfo().isObject(); }
     const ClassInfo* classInfoForCells() const { return m_classInfo; }
     CellState typeInfoDefaultCellState() const { return m_blob.defaultCellState(); }
@@ -445,6 +514,7 @@ public:
     JSValue prototypeForLookup(JSGlobalObject*, JSCell* base) const;
     StructureChain* prototypeChain(VM&, JSGlobalObject*, JSObject* base) const;
     DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> ALWAYS_INLINE static void visitFields(Structure*, Visitor&); // Defined in StructureInlines.h
     
     // A Structure is cheap to mark during GC if doing so would only add a small and bounded amount
     // to our heap footprint. For example, if the structure refers to a global object that is not
@@ -578,6 +648,11 @@ public:
             || hijacksIndexingHeader();
     }
     
+    bool canAllocatePropertyStorageInJIT() const
+    {
+        return !hijacksIndexingHeader() && !hasAnyArrayStorage(indexingType()) && !hasElementsStartOffset();
+    }
+
     bool hasIndexingHeader(const JSCell*) const;    
     bool masqueradesAsUndefined(JSGlobalObject* lexicalGlobalObject)
     {
@@ -586,6 +661,7 @@ public:
 
     PropertyOffset get(VM&, PropertyName);
     PropertyOffset get(VM&, PropertyName, unsigned& attributes);
+    JS_EXPORT_PRIVATE std::optional<PropertyOffset> getWithoutMaterializing(UniquedStringImpl*, unsigned& attributes) const;
 
     inline bool canPerformFastPropertyEnumerationCommon() const; // Defined below
 
@@ -596,10 +672,12 @@ public:
     // call. So, you have to assume the worst. Also, the functor returns true if it wishes for you
     // to continue or false if it's done.
     template<typename Functor>
-    void forEachPropertyConcurrently(const Functor&);
+    void forEachPropertyConcurrently(NOESCAPE const Functor&);
 
     template<typename Functor>
-    void forEachProperty(VM&, const Functor&);
+    void forEachProperty(VM&, NOESCAPE const Functor&);
+    // For whoever asks where a property stands among the others. This may grab the lock.
+    PropertyTable* propertyTableInOrderOfAddition(VM& vm) { return ensurePropertyTable(vm); }
 
     IGNORE_RETURN_TYPE_WARNINGS_BEGIN
     inline PropertyOffset get(VM&, Concurrency, UniquedStringImpl* uid, unsigned& attributes); // Defined in StructureInlines.h
@@ -624,10 +702,10 @@ public:
     void setContainsReadOnlyProperties() { setHasReadOnlyOrGetterSetterPropertiesExcludingProto(true); }
     
     void setCachedPropertyNameEnumerator(VM&, JSPropertyNameEnumerator*, StructureChain*);
-    JSPropertyNameEnumerator* NODELETE cachedPropertyNameEnumerator() const;
-    uintptr_t NODELETE cachedPropertyNameEnumeratorAndFlag() const;
-    bool NODELETE canCachePropertyNameEnumerator(VM&) const;
-    bool NODELETE canAccessPropertiesQuicklyForEnumeration() const;
+    JSPropertyNameEnumerator* LEGACY_NODELETE cachedPropertyNameEnumerator() const;
+    uintptr_t LEGACY_NODELETE cachedPropertyNameEnumeratorAndFlag() const;
+    bool LEGACY_NODELETE canCachePropertyNameEnumerator(VM&) const;
+    bool LEGACY_NODELETE canAccessPropertiesQuicklyForEnumeration() const;
 
     inline JSCellButterfly* cachedPropertyNames(CachedPropertyNamesKind kind) const; // Defined in StructureInlines.h
     inline JSCellButterfly* cachedPropertyNamesIgnoringSentinel(CachedPropertyNamesKind kind) const; // Defined in StructureInlines.h
@@ -695,6 +773,14 @@ public:
         return OBJECT_OFFSETOF(Structure, m_bitField);
     }
 
+    static constexpr ptrdiff_t maxOffsetOffset()
+    {
+        return OBJECT_OFFSETOF(Structure, m_maxOffset);
+    }
+
+    // A greater one is kept in the rare data.
+    static constexpr PropertyOffset greatestMaxOffsetOutsideRareData = shortInvalidOffset - 1;
+
     static constexpr ptrdiff_t propertyHashOffset()
     {
         return OBJECT_OFFSETOF(Structure, m_propertyHash);
@@ -750,7 +836,7 @@ public:
         
     inline void addTransitionWatchpoint(Watchpoint* watchpoint) const; // Defined in StructureInlinesLight.h
     
-    void NODELETE didTransitionFromThisStructureWithoutFiringWatchpoint() const;
+    void LEGACY_NODELETE didTransitionFromThisStructureWithoutFiringWatchpoint() const;
     void fireStructureTransitionWatchpoint(DeferredStructureTransitionWatchpointFire*) const;
 
     InlineWatchpointSet& transitionWatchpointSet() const
@@ -836,6 +922,9 @@ public:
     DEFINE_BITFIELD(bool, hasNonEnumerableProperties, HasNonEnumerableProperties, 1, 6);
     DEFINE_BITFIELD(bool, hasSpecialProperties, HasSpecialProperties, 1, 7);
     DEFINE_BITFIELD(DefinitelyNonThenableState, definitelyNonThenableState, DefinitelyNonThenableState, 2, 8); // This flag can be flipped on the main thread at any timing.
+    DEFINE_BITFIELD(bool, hasImmutableProperties, HasImmutableProperties, 1, 10); // Set by TransitionKind::MakePropertiesImmutable and inherited by every later transition. See JSObject::makePropertiesImmutable().
+    DEFINE_BITFIELD(bool, hasListedImmutableProperties, HasListedImmutableProperties, 1, 11);
+    DEFINE_BITFIELD(bool, hasPristineElements, HasPristineElements, 1, 12);
     DEFINE_BITFIELD(TransitionKind, transitionKind, TransitionKind, 5, 13);
     DEFINE_BITFIELD(bool, isWatchingReplacement, IsWatchingReplacement, 1, 18); // This flag can be fliped on the main thread at any timing.
     DEFINE_BITFIELD(bool, mayBePrototype, MayBePrototype, 1, 19);
@@ -850,15 +939,30 @@ public:
     DEFINE_BITFIELD(bool, hasUnderscoreProtoPropertyExcludingOriginalProto, HasUnderscoreProtoPropertyExcludingOriginalProto, 1, 28);
     DEFINE_BITFIELD(bool, hasNonConfigurableProperties, HasNonConfigurableProperties, 1, 29);
     DEFINE_BITFIELD(bool, hasNonConfigurableReadOnlyOrGetterSetterProperties, HasNonConfigurableReadOnlyOrGetterSetterProperties, 1, 30);
+    DEFINE_BITFIELD(bool, hasElementsStartOffset, HasElementsStartOffset, 1, 31);
+
+    static constexpr uint32_t s_anyImmutablePropertiesBits = s_hasImmutablePropertiesBits | s_hasListedImmutablePropertiesBits;
 
     enum class StructureVariant : uint8_t {
         Normal,
         Branded,
         WebAssemblyGC,
+        Compiled,
     };
 
     StructureVariant variant() const { return m_structureVariant; }
     bool isBrandedStructure() { return variant() == StructureVariant::Branded; }
+#if ENABLE(AOT)
+    bool isCompiledStructure() const { return variant() == StructureVariant::Compiled; }
+#else
+    static constexpr bool isCompiledStructure() { return false; }
+#endif
+
+    uint8_t& markingStamp() { return m_markingStamp; }
+    CellVisitKind cellVisitKind() const { return m_cellVisitKind; }
+    // Never zero, and never the same for two marking versions in a row. The versions wrap from the last one to MarkedSpace::initialVersion
+    // and their number is odd, so two stamps are not enough.
+    static constexpr uint8_t markingStampFor(HeapVersion markingVersion) { return markingVersion % 3 + 1; }
 
     static_assert(s_bitWidthOfTransitionKind <= sizeof(TransitionKind) * 8);
 
@@ -866,6 +970,9 @@ public:
     {
         return flags == (flags & (
             s_didPreventExtensionsBits
+            | s_hasImmutablePropertiesBits
+            | s_hasListedImmutablePropertiesBits
+            | s_hasElementsStartOffsetBits
             | s_isQuickPropertyAccessAllowedForEnumerationBits
             | s_hasNonEnumerablePropertiesBits
             | s_hasSpecialPropertiesBits
@@ -892,12 +999,14 @@ public:
 protected:
     Structure(VM&, StructureVariant, Structure* previous); // Branded/Normal only
     Structure(VM&, StructureVariant, JSGlobalObject*, const TypeInfo&, const ClassInfo*); // WebAssemblyGC only
+    JS_EXPORT_PRIVATE Structure(VM&, StructureVariant, JSGlobalObject*, JSValue prototype, const TypeInfo&, const ClassInfo*); // Compiled only
+    JS_EXPORT_PRIVATE Structure(VM&, const Structure& templateStructure, JSValue prototype); // Compiled only
 
 private:
     friend class LLIntOffsetsExtractor;
 
     JS_EXPORT_PRIVATE Structure(VM&, JSGlobalObject*, JSValue prototype, const TypeInfo&, const ClassInfo*, IndexingType, unsigned inlineCapacity);
-    Structure(VM&, CreatingEarlyCellTag);
+    JS_EXPORT_PRIVATE Structure(VM&, CreatingEarlyCellTag);
 
     static Structure* create(VM&, Structure*, DeferredStructureTransitionWatchpointFire*);
 
@@ -921,13 +1030,14 @@ private:
 
     enum class ShouldPin : bool { No, Yes };
     template<ShouldPin, typename Func>
-    PropertyOffset add(VM&, PropertyName, unsigned attributes, const Func&);
+    PropertyOffset add(VM&, PropertyName, unsigned attributes, NOESCAPE const Func&);
     PropertyOffset add(VM&, PropertyName, unsigned attributes);
+    void didAddProperty(VM&, PropertyName, unsigned attributes);
     template<ShouldPin, typename Func>
-    PropertyOffset remove(VM&, PropertyName, const Func&);
+    PropertyOffset remove(VM&, PropertyName, NOESCAPE const Func&);
     PropertyOffset remove(VM&, PropertyName);
     template<ShouldPin, typename Func>
-    PropertyOffset attributeChange(VM&, PropertyName, unsigned attributes, const Func&);
+    PropertyOffset attributeChange(VM&, PropertyName, unsigned attributes, NOESCAPE const Func&);
     PropertyOffset attributeChange(VM&, PropertyName, unsigned attributes);
 
 #if ASSERT_ENABLED
@@ -992,14 +1102,36 @@ private:
     JS_EXPORT_PRIVATE void allocateRareData(VM&);
 
     template<typename DetailsFunc>
-    void checkOffsetConsistency(PropertyTable*, const DetailsFunc&) const;
+    void checkOffsetConsistency(PropertyTable*, NOESCAPE const DetailsFunc&) const;
     void checkOffsetConsistency() const;
 
     void startWatchingInternalProperties(VM&);
 
     inline void clearCachedPrototypeChain(); // Defined in StructureInlines.h
 
-    bool NODELETE holesMustForwardToPrototypeSlow(JSObject*) const;
+    bool LEGACY_NODELETE holesMustForwardToPrototypeSlow(JSObject*) const;
+
+    JS_EXPORT_PRIVATE bool isListedImmutableProperty(UniquedStringImpl*) const;
+    JS_EXPORT_PRIVATE bool refusesWriteToListedProperty(UniquedStringImpl*) const;
+    JS_EXPORT_PRIVATE bool listsNumericKeysAsImmutable() const;
+    JS_EXPORT_PRIVATE bool listsPrototypeAsImmutable() const;
+    struct PristineBits {
+        bool isPristine { false };
+        bool hasPristineElements { false };
+
+        friend bool operator==(const PristineBits&, const PristineBits&) = default;
+    };
+    PristineBits pristineBits() const { return { isPristine(), hasPristineElements() }; }
+    void setPristineBits(PristineBits);
+    void inheritPristineBits(VM&, Structure* previous);
+    static PristineBits pristineBitsAfterAddition(VM&, Structure*, PristineBits, UniquedStringImpl*);
+    static PristineBits pristineBitsAfterTransition(VM&, Structure*, PristineBits, Structure* transition);
+    static Structure* findPropertyRunStructure(VM&, Structure*, UniquedStringImpl* lastName);
+    static Structure* createWithPropertyAdditions(VM&, Structure* base, const PropertyAdditionList&, DeferredStructureTransitionWatchpointFire*);
+    void didAddPropertyWithAttributes(VM&, PropertyName, unsigned attributes);
+    JS_EXPORT_PRIVATE bool canDropTransitionChain();
+    bool dropTransitionChain(const AbstractLocker&, VM&, PropertyTable*);
+    JS_EXPORT_PRIVATE bool isPinnedPropertyAdditionFrom(const Structure* previous) const;
 
     // These need to be properly aligned at the beginning of the 'Structure'
     // part of the object.
@@ -1018,6 +1150,8 @@ private:
 
     uint16_t m_transitionOffset;
     uint16_t m_maxOffset;
+    uint8_t m_markingStamp { 0 };
+    CellVisitKind m_cellVisitKind { CellVisitKind::MethodTable };
 
     uint32_t m_propertyHash;
     SeenProperties m_seenProperties;
@@ -1047,6 +1181,10 @@ private:
     friend class JSDollarVMHelper;
     friend class Integrity::Analyzer;
 };
+
+#if CPU(ADDRESS64) && !HAVE(36BIT_ADDRESS)
+static_assert(sizeof(Structure) == 112);
+#endif
 
 JS_EXPORT_PRIVATE void dumpTransitionKind(PrintStream&, TransitionKind);
 MAKE_PRINT_ADAPTOR(TransitionKindDump, TransitionKind, dumpTransitionKind);

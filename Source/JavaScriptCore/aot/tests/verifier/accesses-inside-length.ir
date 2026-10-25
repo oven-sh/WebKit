@@ -1,0 +1,218 @@
+# An access inside the length names a guard that proves the position of that access below the length of that array, and its store a guard that proves storage of the array's own. The guards last until the kind, the place or the length of the array may change: a store inside the length changes none of them, whichever array it hits
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidGuard 4
+# DIAGNOSTIC: GuardNotAvailable 4
+# DIAGNOSTIC: OperandTypeMismatch 2
+# DIAGNOSTIC: PayloadOutOfRange 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="goodRead" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}] {
+    v3 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = IsInBounds v0, v1
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    v8 = GetArrayElement v0, v1, v7 arrayStorage=Int32 level=Expected [isInBounds]
+    Return v8
+  b3():
+    v9 = Undefined
+    Return v9
+}
+function f1 name="goodStoreThenRead" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}] {
+    v3 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = IsInBounds v0, v1
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    PutArrayElement v0, v1, v2, v7 arrayStorage=Int32 mode=Strict level=Expected [isInBounds]
+    v9 = GetArrayElement v0, v1, v7 arrayStorage=Int32 level=Expected [isInBounds]
+    Return v9
+  b3():
+    v10 = Undefined
+    Return v10
+}
+function f2 name="goodStoreInsideAnotherArrayThatMayBeThisOne" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=Array<i32, proven, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
+    v4 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v4 -> taken b1(| 0), notTaken b5()
+  b1(v5):
+    v6 = IsInBounds v0, v1
+    Branch v6 -> taken b2(| 0), notTaken b5()
+  b2(v7):
+    v8 = AllGuards v5, v7
+    v9 = HasArrayStorage v3 arrayStorage=Int32 [isWritable]
+    Branch v9 -> taken b3(| 0), notTaken b5()
+  b3(v10):
+    v11 = IsInBounds v3, v1
+    Branch v11 -> taken b4(| 0), notTaken b5()
+  b4(v12):
+    v13 = AllGuards v10, v12
+    PutArrayElement v3, v1, v2, v13 arrayStorage=Int32 mode=Strict level=Expected [isInBounds]
+    v15 = GetArrayElement v0, v1, v8 arrayStorage=Int32 level=Expected [isInBounds]
+    Return v15
+  b5():
+    v16 = Undefined
+    Return v16
+}
+function f3 name="badPositionOfAnotherValue" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v4 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v4 -> taken b1(| 0), notTaken b3()
+  b1(v5):
+    v6 = IsInBounds v0, v1
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = AllGuards v5, v7
+    v9 = GetArrayElement v0, v3, v8 arrayStorage=Int32 level=Expected [isInBounds]
+    Return v9
+  b3():
+    v10 = Undefined
+    Return v10
+}
+function f4 name="badArrayOfAnotherValue" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=Array<i32, proven, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
+    v4 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v4 -> taken b1(| 0), notTaken b3()
+  b1(v5):
+    v6 = IsInBounds v0, v1
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = AllGuards v5, v7
+    v9 = GetArrayElement v3, v1, v8 arrayStorage=Int32 level=Expected [isInBounds]
+    Return v9
+  b3():
+    v10 = Undefined
+    Return v10
+}
+function f5 name="badGuardWithoutTheTestOfThePosition" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}] {
+    v3 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = IsInBounds v0, v1
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    v8 = GetArrayElement v0, v1, v4 arrayStorage=Int32 level=Expected [isInBounds]
+    Return v8
+  b3():
+    v9 = Undefined
+    Return v9
+}
+function f6 name="badStoreIntoStorageThatMayBeShared" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}] {
+    v3 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = IsInBounds v0, v1
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    PutArrayElement v0, v1, v2, v7 arrayStorage=Int32 mode=Strict level=Expected [isInBounds]
+    Return
+  b3():
+    v9 = Undefined
+    Return v9
+}
+function f7 name="badReadAfterStoreAnywhere" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v4 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v4 -> taken b1(| 0), notTaken b3()
+  b1(v5):
+    v6 = IsInBounds v0, v1
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = AllGuards v5, v7
+    PutArrayElement v0, v3, v2, v5 arrayStorage=Int32 mode=Strict level=Expected
+    v10 = GetArrayElement v0, v1, v8 arrayStorage=Int32 level=Expected [isInBounds]
+    Return v10
+  b3():
+    v11 = Undefined
+    Return v11
+}
+function f8 name="badReadAfterStoreAnywhereInArrayThatMayBeThisOne" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v5 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v5 -> taken b1(| 0), notTaken b3()
+  b1(v6):
+    v7 = IsInBounds v0, v1
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = AllGuards v6, v8
+    PutArrayElement v3, v4, v2 arrayStorage=Other mode=Strict level=Proven
+    v11 = GetArrayElement v0, v1, v9 arrayStorage=Int32 level=Expected [isInBounds]
+    Return v11
+  b3():
+    v12 = Undefined
+    Return v12
+}
+function f9 name="badReadAfterAppend" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}] {
+    v3 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = IsInBounds v0, v1
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    AppendElement v0, v2
+    v9 = GetArrayElement v0, v1, v7 arrayStorage=Int32 level=Expected [isInBounds]
+    Return v9
+  b3():
+    v10 = Undefined
+    Return v10
+}
+function f10 name="badReadAfterCall" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=function}] results=[{type=anything}] {
+    v4 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v4 -> taken b1(| 0), notTaken b3()
+  b1(v5):
+    v6 = IsInBounds v0, v1
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = AllGuards v5, v7
+    v9 = Call v3, -
+    v10 = GetArrayElement v0, v1, v8 arrayStorage=Int32 level=Expected [isInBounds]
+    Return v10
+  b3():
+    v11 = Undefined
+    Return v11
+}
+function f11 name="badStoreOfValueThatMayNotFit" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=number}] results=[{type=anything}] {
+    v4 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v4 -> taken b1(| 0), notTaken b3()
+  b1(v5):
+    v6 = IsInBounds v0, v1
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = AllGuards v5, v7
+    PutArrayElement v0, v1, v3, v8 arrayStorage=Int32 mode=Strict level=Expected [isInBounds]
+    Return
+  b3():
+    v10 = Undefined
+    Return v10
+}
+function f12 name="badPositionThatMayBeAFraction" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}, {type=number}] results=[{type=anything}] {
+    v4 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v4 -> taken b1(| 0), notTaken b3()
+  b1(v5):
+    v6 = IsInBounds v0, v3
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = AllGuards v5, v7
+    v9 = GetArrayElement v0, v3, v8 arrayStorage=Int32 level=Expected [isInBounds]
+    Return v9
+  b3():
+    v10 = Undefined
+    Return v10
+}
+function f13 name="badWithoutNamedStorage" parameters=[{type=Array<i32, proven, pristine[Storage, Names, Dense]>}, {type=int[0, 1000]}, {type=i32}] results=[{type=anything}] {
+    v3 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4):
+    v5 = IsInBounds v0, v1
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v4, v6
+    v8 = GetArrayElement v0, v1, v7 arrayStorage=Other level=Expected [isInBounds]
+    Return v8
+  b3():
+    v9 = Undefined
+    Return v9
+}

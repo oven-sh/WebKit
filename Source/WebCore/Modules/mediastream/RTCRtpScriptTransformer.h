@@ -61,8 +61,8 @@ public:
     static ExceptionOr<Ref<RTCRtpScriptTransformer>> create(ScriptExecutionContext&, MessageWithMessagePorts&&);
     ~RTCRtpScriptTransformer();
 
-    ReadableStream& NODELETE readable();
-    WritableStream& NODELETE writable();
+    ReadableStream& LEGACY_NODELETE readable();
+    WritableStream& LEGACY_NODELETE writable();
     JSC::JSValue options(JSC::JSGlobalObject&);
 
     void generateKeyFrame(const String&, Ref<DeferredPromise>&&);
@@ -89,7 +89,7 @@ private:
 
     const Ref<RTCEncodedStreamProducer> m_streamProducer;
 
-    RefPtr<RTCRtpTransformBackend> m_backend;
+    const RefPtr<RTCRtpTransformBackend> m_backend;
     RefPtr<PendingActivity<RTCRtpScriptTransformer>> m_pendingActivity;
 
     bool m_isSender { false };

@@ -23,6 +23,9 @@
 #ifndef URENAME_H
 #define URENAME_H
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 /* U_DISABLE_RENAMING can be defined in the following ways:
  *   - when running configure, e.g.
  *        runConfigureICU Linux --disable-renaming

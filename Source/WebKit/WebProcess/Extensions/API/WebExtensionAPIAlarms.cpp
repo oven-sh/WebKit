@@ -48,12 +48,11 @@ static inline JSValueRef toWebAPI(JSContextRef context, const WebExtensionAlarmP
 {
     JSObjectRef result = JSObjectMake(context, 0, 0);
 
-    // Static analysis doesn't recognize JSRetainPtr.
-    SUPPRESS_UNCOUNTED_ARG JSObjectSetProperty(context, result, toJSString(nameKey).get(), toJSValueRef(context, alarm.name), 0, nullptr);
-    SUPPRESS_UNCOUNTED_ARG JSObjectSetProperty(context, result, toJSString(scheduledTimeKey).get(), JSValueMakeNumber(context, floor(alarm.nextScheduledTime.approximate<WallTime>().secondsSinceEpoch().milliseconds())), 0, nullptr);
+    JSObjectSetProperty(context, result, toJSString(nameKey).get(), toJSValueRef(context, alarm.name), 0, nullptr);
+    JSObjectSetProperty(context, result, toJSString(scheduledTimeKey).get(), JSValueMakeNumber(context, floor(alarm.nextScheduledTime.approximate<WallTime>().secondsSinceEpoch().milliseconds())), 0, nullptr);
 
     if (alarm.repeatInterval)
-        SUPPRESS_UNCOUNTED_ARG JSObjectSetProperty(context, result, toJSString(periodInMinutesKey).get(), JSValueMakeNumber(context, alarm.repeatInterval.minutes()), 0, nullptr);
+        JSObjectSetProperty(context, result, toJSString(periodInMinutesKey).get(), JSValueMakeNumber(context, alarm.repeatInterval.minutes()), 0, nullptr);
 
     return result;
 }
@@ -154,8 +153,8 @@ void WebExtensionAPIAlarms::clearAll(Ref<WebExtensionCallbackHandler>&& callback
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/alarms/clearAll
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::AlarmsClearAll(), [protectedThis = Ref { *this }, callback = WTF::move(callback)](bool success) {
-        callback->call(JSValueMakeBoolean(callback->globalContext(), success));
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::AlarmsClearAll(), [protectedThis = Ref { *this }, callback = WTF::move(callback)] {
+        callback->call();
     }, extensionContext().identifier());
 }
 
@@ -164,7 +163,7 @@ WebExtensionAPIEvent& WebExtensionAPIAlarms::onAlarm()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/alarms/onAlarm
 
     if (!m_onAlarm)
-        m_onAlarm = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::AlarmsOnAlarm);
+        lazyInitialize(m_onAlarm, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::AlarmsOnAlarm));
 
     return *m_onAlarm;
 }

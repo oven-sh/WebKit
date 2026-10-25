@@ -390,7 +390,7 @@ void RTCPeerConnection::createAnswer(RTCAnswerOptions&& options, Ref<DeferredPro
     });
 }
 
-static RTCSdpType NODELETE typeForSetLocalDescription(std::optional<RTCSdpType> descriptionType, RTCSignalingState signalingState)
+static RTCSdpType LEGACY_NODELETE typeForSetLocalDescription(std::optional<RTCSdpType> descriptionType, RTCSignalingState signalingState)
 {
     // https://w3c.github.io/webrtc-pc/#dom-peerconnection-setlocaldescription step 4.1.
     if (!descriptionType) {
@@ -944,7 +944,7 @@ void RTCPeerConnection::updateIceConnectionState(RTCIceConnectionState)
     });
 }
 
-static bool NODELETE isIceTransportUsedByTransceiver(const RTCIceTransport& iceTransport, RTCRtpTransceiver& transceiver)
+static bool LEGACY_NODELETE isIceTransportUsedByTransceiver(const RTCIceTransport& iceTransport, RTCRtpTransceiver& transceiver)
 {
     auto* dtlsTransport = transceiver.sender().transport();
     return dtlsTransport && &dtlsTransport->iceTransport() == &iceTransport;
@@ -1109,7 +1109,7 @@ void RTCPeerConnection::dispatchDataChannelEvent(UniqueRef<RTCDataChannelHandler
         if (connection.isClosed())
             return;
 
-        Ref channel = RTCDataChannel::create(*connection.document(), channelHandler.moveToUniquePtr(), WTF::move(label), WTF::move(channelInit), RTCDataChannelState::Open);
+        Ref channel = RTCDataChannel::create(protect(*connection.document()), channelHandler.moveToUniquePtr(), WTF::move(label), WTF::move(channelInit), RTCDataChannelState::Open);
         connection.m_channels.append(channel->identifier());
         ALWAYS_LOG_WITH_THIS(&connection, LOGIDENTIFIER_WITH_THIS(&connection), makeString("Dispatching data-channel event for channel "_s, channel->label()));
         connection.dispatchEvent(RTCDataChannelEvent::create(eventNames().datachannelEvent, Event::CanBubble::No, Event::IsCancelable::No, Ref { channel }));

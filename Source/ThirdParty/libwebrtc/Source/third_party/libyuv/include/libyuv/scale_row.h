@@ -11,7 +11,9 @@
 #ifndef INCLUDE_LIBYUV_SCALE_ROW_H_
 #define INCLUDE_LIBYUV_SCALE_ROW_H_
 
-#include "libyuv/basic_types.h"
+#include <stddef.h>
+#include <stdint.h>
+
 #include "libyuv/cpu_support.h"
 #include "libyuv/scale.h"
 
@@ -91,6 +93,14 @@ extern "C" {
 #define HAS_SCALEROWDOWN4_AVX2
 #endif
 
+// The following are available for AVX512 clang x64 platforms:
+#if !defined(LIBYUV_DISABLE_X86) &&                                          \
+    (defined(__x86_64__) || defined(_M_X64)) && defined(CLANG_HAS_AVX512) && \
+    !defined(LIBYUV_ENABLE_ROWWIN)
+#define HAS_SCALEADDROW_AVX512BW
+#define HAS_SCALEADDCOLS_AVX512BW
+#endif
+
 // The following are available on Neon platforms:
 #if !defined(LIBYUV_DISABLE_NEON) && \
     (defined(__ARM_NEON__) || defined(LIBYUV_NEON) || defined(__aarch64__))
@@ -149,19 +159,9 @@ extern "C" {
 #define HAS_SCALEROWDOWN34_LSX
 #endif
 
-// The following are available on RVV with 64 bit elements
-// TODO: Update compiler to support 64 bit
-#if !defined(LIBYUV_DISABLE_RVV) && defined(__riscv_vector) && \
-    defined(__riscv_zve64x)
+#if !defined(LIBYUV_DISABLE_RVV) && defined(__riscv_vector)
 #define HAS_SCALEUVROWDOWN4_RVV
 #define HAS_SCALEARGBROWDOWN2_RVV
-#endif
-
-#if !defined(LIBYUV_DISABLE_RVV) && defined(__riscv_vector) && \
-    defined(__riscv_v_intrinsic)
-// The following are available on RVV v0.11 and RVV v1.0
-// TODO: Port to RVV v0.12
-#if __riscv_v_intrinsic == 11000 || __riscv_v_intrinsic >= 100000
 #define HAS_SCALEROWDOWN34_0_BOX_RVV
 #define HAS_SCALEROWDOWN34_1_BOX_RVV
 #define HAS_SCALEROWDOWN38_2_BOX_RVV
@@ -188,12 +188,7 @@ extern "C" {
 #define HAS_SCALEUVROWDOWN2_RVV
 #define HAS_SCALEUVROWDOWN2BOX_RVV
 #define HAS_SCALEUVROWDOWN2LINEAR_RVV
-#endif
-
-// The following are available on RVV v0.11
-#if __riscv_v_intrinsic == 11000
 #define HAS_SCALEARGBFILTERCOLS_RVV
-#endif
 #endif
 
 // Scale ARGB vertically with bilinear interpolation.
@@ -221,31 +216,6 @@ void ScalePlaneVertical_16(int src_height,
                            int y,
                            int dy,
                            int wpp,
-                           enum FilterMode filtering);
-
-void ScalePlaneVertical_16To8(int src_height,
-                              int dst_width,
-                              int dst_height,
-                              int src_stride,
-                              int dst_stride,
-                              const uint16_t* src_argb,
-                              uint8_t* dst_argb,
-                              int x,
-                              int y,
-                              int dy,
-                              int wpp,
-                              int scale,
-                              enum FilterMode filtering);
-
-void ScalePlaneDown2_16To8(int src_width,
-                           int src_height,
-                           int dst_width,
-                           int dst_height,
-                           int src_stride,
-                           int dst_stride,
-                           const uint16_t* src_ptr,
-                           uint8_t* dst_ptr,
-                           int scale,
                            enum FilterMode filtering);
 
 // Simplify the filtering based on scale factors.
@@ -288,16 +258,6 @@ void ScaleRowDown2_16_C(const uint16_t* src_ptr,
                         ptrdiff_t src_stride,
                         uint16_t* dst,
                         int dst_width);
-void ScaleRowDown2_16To8_C(const uint16_t* src_ptr,
-                           ptrdiff_t src_stride,
-                           uint8_t* dst,
-                           int dst_width,
-                           int scale);
-void ScaleRowDown2_16To8_Odd_C(const uint16_t* src_ptr,
-                               ptrdiff_t src_stride,
-                               uint8_t* dst,
-                               int dst_width,
-                               int scale);
 void ScaleRowDown2Linear_C(const uint8_t* src_ptr,
                            ptrdiff_t src_stride,
                            uint8_t* dst,
@@ -306,16 +266,6 @@ void ScaleRowDown2Linear_16_C(const uint16_t* src_ptr,
                               ptrdiff_t src_stride,
                               uint16_t* dst,
                               int dst_width);
-void ScaleRowDown2Linear_16To8_C(const uint16_t* src_ptr,
-                                 ptrdiff_t src_stride,
-                                 uint8_t* dst,
-                                 int dst_width,
-                                 int scale);
-void ScaleRowDown2Linear_16To8_Odd_C(const uint16_t* src_ptr,
-                                     ptrdiff_t src_stride,
-                                     uint8_t* dst,
-                                     int dst_width,
-                                     int scale);
 void ScaleRowDown2Box_C(const uint8_t* src_ptr,
                         ptrdiff_t src_stride,
                         uint8_t* dst,
@@ -328,16 +278,6 @@ void ScaleRowDown2Box_16_C(const uint16_t* src_ptr,
                            ptrdiff_t src_stride,
                            uint16_t* dst,
                            int dst_width);
-void ScaleRowDown2Box_16To8_C(const uint16_t* src_ptr,
-                              ptrdiff_t src_stride,
-                              uint8_t* dst,
-                              int dst_width,
-                              int scale);
-void ScaleRowDown2Box_16To8_Odd_C(const uint16_t* src_ptr,
-                                  ptrdiff_t src_stride,
-                                  uint8_t* dst,
-                                  int dst_width,
-                                  int scale);
 void ScaleRowDown4_C(const uint8_t* src_ptr,
                      ptrdiff_t src_stride,
                      uint8_t* dst,
@@ -865,12 +805,27 @@ void ScaleRowDown38_2_Box_Any_SSSE3(const uint8_t* src_ptr,
 
 void ScaleAddRow_SSE2(const uint8_t* src_ptr, uint16_t* dst_ptr, int src_width);
 void ScaleAddRow_AVX2(const uint8_t* src_ptr, uint16_t* dst_ptr, int src_width);
+void ScaleAddRow_AVX512BW(const uint8_t* src_ptr,
+                          uint16_t* dst_ptr,
+                          int src_width);
 void ScaleAddRow_Any_SSE2(const uint8_t* src_ptr,
                           uint16_t* dst_ptr,
                           int src_width);
 void ScaleAddRow_Any_AVX2(const uint8_t* src_ptr,
                           uint16_t* dst_ptr,
                           int src_width);
+void ScaleAddCols1_AVX512BW(int dst_width,
+                            int boxheight,
+                            int x,
+                            int dx,
+                            const uint16_t* src_ptr,
+                            uint8_t* dst_ptr);
+void ScaleAddCols2_AVX512BW(int dst_width,
+                            int boxheight,
+                            int x,
+                            int dx,
+                            const uint16_t* src_ptr,
+                            uint8_t* dst_ptr);
 
 void ScaleFilterCols_SSSE3(uint8_t* dst_ptr,
                            const uint8_t* src_ptr,

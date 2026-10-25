@@ -31,6 +31,7 @@
 #include "LinkBuffer.h"
 #include "WasmBBQPlan.h"
 #include "WasmCallee.h"
+#include "WasmCodeInImage.h"
 #include "WasmIPIntPlan.h"
 #include "WasmMachineThreads.h"
 #include "WasmModuleInformation.h"
@@ -43,12 +44,57 @@ Ref<CalleeGroup> CalleeGroup::createFromIPInt(VM& vm, MemoryMode mode, ModuleInf
     return adoptRef(*new CalleeGroup(vm, mode, moduleInformation, WTF::move(ipintCallees)));
 }
 
-Ref<CalleeGroup> CalleeGroup::createFromExisting(MemoryMode mode, const CalleeGroup& other)
+Ref<CalleeGroup> CalleeGroup::createFromExisting(MemoryMode mode, const CalleeGroup& other, const ModuleInformation& moduleInformation)
 {
-    return adoptRef(*new CalleeGroup(mode, other));
+    return adoptRef(*new CalleeGroup(mode, other, moduleInformation));
 }
 
-CalleeGroup::CalleeGroup(MemoryMode mode, const CalleeGroup& other)
+static void crashOnInterpreterUse()
+{
+    dataLogLn("crashIfInterpreterIsUsed: a WebAssembly function without code in the image");
+    CRASH();
+}
+
+CodePtr<WasmEntryPtrTag> CalleeGroup::interpreterEntrypoint(unsigned functionCodeIndex) const
+{
+    return m_crashesOnInterpreterUse ? CodePtr<WasmEntryPtrTag>::fromUntaggedPtr(reinterpret_cast<void*>(crashOnInterpreterUse)) : m_ipintCallees->at(functionCodeIndex)->entrypoint();
+}
+
+void CalleeGroup::takeEntrypoints(const ModuleInformation& moduleInformation)
+{
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    // Bytes that the build never saw are to WebAssembly what text evaluated at run time is to JavaScript.
+    m_crashesOnInterpreterUse = Options::crashIfInterpreterIsUsed() && CodeInImage::isModuleOfProgram(moduleInformation);
+    if (!m_codeInImage || !m_codeInImage->isSafeToRun(m_mode)) {
+        m_codeInImage = m_calleeCount ? CodeInImage::tryCreate(moduleInformation, m_ipintCallees.get(), m_mode, interpreterEntrypoint(0)) : nullptr;
+        m_interpreterFallbackReason = m_codeInImage ? std::nullopt : CodeInImage::fallbackReason(moduleInformation, m_mode);
+    }
+    if (m_codeInImage) {
+        for (unsigned i = 0; i < m_calleeCount; ++i) {
+            auto entry = m_codeInImage->entrypoint(i);
+            m_wasmIndirectCallEntrypoints[i] = entry ? entry : interpreterEntrypoint(i);
+        }
+        for (unsigned i = 0; i < m_wasmToWasmExitStubs.size(); ++i)
+            m_wasmToWasmExitStubs[i] = MacroAssemblerCodeRef<WasmEntryPtrTag>::createSelfManagedCodeRef(m_codeInImage->importStub(i));
+        return;
+    }
+#else
+    UNUSED_PARAM(moduleInformation);
+#endif
+    for (unsigned i = 0; i < m_calleeCount; ++i)
+        m_wasmIndirectCallEntrypoints[i] = interpreterEntrypoint(i);
+}
+
+void CalleeGroup::countInterpreterFallbackOnce()
+{
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    if (!runnable() || !m_interpreterFallbackReason || m_didCountInterpreterFallback.exchange(true))
+        return;
+    CodeInImage::didFallBackToInterpreter(*m_interpreterFallbackReason);
+#endif
+}
+
+CalleeGroup::CalleeGroup(MemoryMode mode, const CalleeGroup& other, const ModuleInformation& moduleInformation)
     : m_calleeCount(other.m_calleeCount)
     , m_mode(mode)
     , m_ipintCallees(other.m_ipintCallees)
@@ -56,11 +102,15 @@ CalleeGroup::CalleeGroup(MemoryMode mode, const CalleeGroup& other)
     , m_wasmIndirectCallEntrypoints(other.m_wasmIndirectCallEntrypoints)
     , m_wasmIndirectCallWasmCallees(other.m_wasmIndirectCallWasmCallees)
     , m_wasmToWasmExitStubs(other.m_wasmToWasmExitStubs)
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    , m_codeInImage(other.m_codeInImage)
+#endif
 {
     {
         Locker otherLocker { other.m_jsToWasmCalleesLock };
         m_jsToWasmCallees = other.m_jsToWasmCallees;
     }
+    takeEntrypoints(moduleInformation);
     Locker locker { m_lock };
     setCompilationFinished();
 }
@@ -72,7 +122,7 @@ CalleeGroup::CalleeGroup(VM& vm, MemoryMode mode, ModuleInformation& moduleInfor
     , m_callers(m_calleeCount)
 {
     RefPtr<CalleeGroup> protectedThis = this;
-    m_plan = adoptRef(*new IPIntPlan(vm, moduleInformation, m_ipintCallees.copyRef(), createSharedTask<Plan::CallbackType>([this, protectedThis = WTF::move(protectedThis)] (Plan&) {
+    m_plan = adoptRef(*new IPIntPlan(vm, moduleInformation, m_ipintCallees.copyRef(), createSharedTask<Plan::CallbackType>([this, protectedThis = WTF::move(protectedThis), moduleInformation = Ref { moduleInformation }] (Plan&) {
         Locker locker { m_lock };
         if (m_plan->failed()) {
             m_errorMessage = m_plan->errorMessage();
@@ -83,12 +133,11 @@ CalleeGroup::CalleeGroup(VM& vm, MemoryMode mode, ModuleInformation& moduleInfor
         m_wasmIndirectCallEntrypoints = FixedVector<CodePtr<WasmEntryPtrTag>>(m_calleeCount);
         m_wasmIndirectCallWasmCallees = FixedVector<RefPtr<Wasm::IPIntCallee>>(m_calleeCount);
 
-        for (unsigned i = 0; i < m_calleeCount; ++i) {
-            m_wasmIndirectCallEntrypoints[i] = m_ipintCallees->at(i)->entrypoint();
+        for (unsigned i = 0; i < m_calleeCount; ++i)
             m_wasmIndirectCallWasmCallees[i] = m_ipintCallees->at(i).ptr();
-        }
 
         m_wasmToWasmExitStubs = m_plan->takeWasmToWasmExitStubs();
+        takeEntrypoints(moduleInformation.get());
 
         setCompilationFinished();
     })));
@@ -105,6 +154,26 @@ CalleeGroup::CalleeGroup(VM& vm, MemoryMode mode, ModuleInformation& moduleInfor
 }
 
 CalleeGroup::~CalleeGroup() = default;
+
+CodePtr<JSEntryPtrTag> CalleeGroup::jsEntrypointInImage(const RTT& rtt) const
+{
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    if (m_codeInImage)
+        return m_codeInImage->jsEntrypoint(rtt);
+#else
+    UNUSED_PARAM(rtt);
+#endif
+    return nullptr;
+}
+
+void* const* CalleeGroup::imageCodePointers() const
+{
+#if ENABLE(WEBASSEMBLY_OMGJIT)
+    if (m_codeInImage)
+        return m_codeInImage->pointers();
+#endif
+    return nullptr;
+}
 
 JSToWasmCallee& CalleeGroup::ensureJSToWasmCallee(const ModuleInformation& moduleInformation, FunctionSpaceIndex functionIndexSpace)
 {
@@ -136,6 +205,7 @@ void CalleeGroup::waitUntilFinished()
         worklist.completePlanSynchronously(*plan.get());
     }
     // else, if we don't have a plan, we're already compiled.
+    countInterpreterFallbackOnce();
 }
 
 void CalleeGroup::compileAsync(VM& vm, AsyncCompilationCallback&& task)
@@ -151,12 +221,14 @@ void CalleeGroup::compileAsync(VM& vm, AsyncCompilationCallback&& task)
         // We don't need to keep a RefPtr on the Plan because the worklist will keep
         // a RefPtr on the Plan until the plan finishes notifying all of its callbacks.
         isAsync = plan->addCompletionTaskIfNecessary(vm, createSharedTask<Plan::CallbackType>([this, task, protectedThis = Ref { *this }, isAsync](Plan&) {
+            countInterpreterFallbackOnce();
             task->run(Ref { *this }, isAsync);
         }));
         if (isAsync)
             return;
     }
 
+    countInterpreterFallbackOnce();
     task->run(Ref { *this }, isAsync);
 }
 
@@ -211,6 +283,8 @@ void CalleeGroup::releaseBBQCallee(const AbstractLocker& locker, FunctionCodeInd
     // Reported outside m_bbqCalleeLock: this takes the heap's own lock, and nothing in the heap
     // reaches back into CalleeGroup.
     bbqCallee->reportToVMsForDestruction();
+    if (OMGOSREntryCallee* osrEntryCallee = bbqCallee->osrEntryCallee())
+        osrEntryCallee->reportToVMsForDestruction();
 }
 #endif
 
@@ -233,7 +307,7 @@ void CalleeGroup::CallerCallsiteFlushes::flush()
     // This only invalidates the caller's instruction cache; it does not context-synchronize the
     // threads executing those callers. So a core that already prefetched the old branch target may
     // keep calling the previous callee for an architecturally unbounded time after this returns.
-    // That is safe because retired code is not freed until Heap::finalizeWasmCalleeCleanup() runs
+    // That is safe because retired code is not freed until Heap::releaseUnmarkedWasmCallees() runs
     // with the world stopped in every VM that could be running it, and stopping a thread is itself a
     // context-synchronizing event. Anything that shortens a retired callee's lifetime must preserve
     // that property.
@@ -548,6 +622,8 @@ TriState CalleeGroup::calleeIsReferenced(const AbstractLocker& locker, Wasm::Cal
 #if ENABLE(WEBASSEMBLY_OMGJIT)
     case CompilationMode::OMGMode: {
         FunctionCodeIndex index = toCodeIndex(callee->index());
+        if (m_codeInImage && m_codeInImage->holds(callee, index))
+            return TriState::True;
         const auto* tuple = optimizedCalleesTuple(locker, index);
         if (!tuple)
             return TriState::Indeterminate;
@@ -557,6 +633,7 @@ TriState CalleeGroup::calleeIsReferenced(const AbstractLocker& locker, Wasm::Cal
         FunctionCodeIndex index = toCodeIndex(callee->index());
         if (m_osrEntryCallees.get(index).get()) {
             // The BBQCallee really owns the OMGOSREntryCallee so as long as that's around the OMGOSREntryCallee is referenced.
+#if ENABLE(WEBASSEMBLY_BBQJIT)
             const auto* tuple = optimizedCalleesTuple(locker, index);
             if (!tuple)
                 return TriState::Indeterminate;
@@ -564,6 +641,7 @@ TriState CalleeGroup::calleeIsReferenced(const AbstractLocker& locker, Wasm::Cal
             Locker bbqLocker { tuple->m_bbqCallee.lock() };
             if (tuple->m_bbqCallee.get())
                 return TriState::True;
+#endif
             return TriState::Indeterminate;
         }
         return TriState::False;

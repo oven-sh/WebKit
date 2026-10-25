@@ -1,0 +1,99 @@
+# The parser of an object tries the members in declared order, then in any order in a loop, and allocates the layout in the closing block
+# FORM: Prepared optimizing
+# RUN: derived-functions Parser:g0 Parser:g1 Parser:g2
+# STATISTIC: ParsersCreated = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="User" fields=[{key="id" declared={type=number}}, {key="name" declared={type=string}}]
+layout L1 name="OptionalId" fields=[{key="id" declared={type=undefined|number}}]
+layout L2 name="KeyWithAccent" fields=[{key="caf\u{e9}" declared={type=number}}]
+variable g0 name="user" declared={type=L0} initialization=Undefined
+variable g1 name="optionalId" declared={type=L1} initialization=Undefined
+variable g2 name="keyWithAccent" declared={type=L2} initialization=Undefined
+
+# CHECK-LABEL: creator=Parser{type=L0 layout=L0 form=ParsedText}
+# CHECK-NEXT: b0(v0: cursor):
+# CHECK-NEXT: [[hasStack]]: boolean = JSONHasStackSpace
+# CHECK: [[rejected0]]() frequency=Rare:
+# CHECK-NEXT: [[two]]: 2 = Integer integer=2
+# CHECK-NEXT: [[noValue]]: undefined = Undefined
+# CHECK-NEXT: [[rejectedResults]]:{{*}}= Results [[two]], [[noValue]], v0
+# CHECK-NEXT: Return [[rejectedResults]]
+# CHECK-NEXT: [[unknown0]]() frequency=Rare:
+# CHECK-NEXT: [[zero]]: 0 = Integer
+# CHECK-NEXT: [[noValue2]]: undefined = Undefined
+# CHECK-NEXT: [[unknownResults]]:{{*}}= Results [[zero]], [[noValue2]], v0
+# CHECK-NEXT: Return [[unknownResults]]
+# CHECK: [[firstByte]]:{{*}}= JSONGetByte v0
+# CHECK-NEXT: [[brace]]: 123 = Integer integer=123
+# CHECK-NEXT: [[isBrace]]: boolean = StrictEq [[firstByte]], [[brace]]
+# CHECK-NEXT: Branch [[isBrace]] -> taken {{*}}, notTaken [[rejected0]]()
+# CHECK: [[afterBrace]]: cursor = JSONSkipByte v0
+# CHECK-NEXT: [[firstKey]]: cursor = JSONSkipWhitespace [[afterBrace]]
+# CHECK: [[begin]]: keyorder = JSONObjectBegin layout=L0
+# CHECK-NEXT: [[idInOrder]]: boolean = JSONStartsWith [[firstKey]] string="\"id\":" [isLikely]
+# CHECK-NEXT: Branch [[idInOrder]] -> taken [[idMatched]](| 0), notTaken
+# CHECK: [[loop]]([[id]]: undefined|number, [[seenId]]: boolean, [[name]]: undefined|string, [[seenName]]: boolean, [[key]]: cursor, [[order]]: keyorder, [[extra]]: anything):
+# CHECK-NEXT: LoopHint
+# CHECK: [[closing]]([[cId]]: undefined|number, [[cSeenId]]: boolean, [[cName]]: undefined|string, [[cSeenName]]: boolean, [[cCursor]]: cursor, [[cOrder]]: keyorder, [[cExtra]]: anything):
+# CHECK-NEXT: Branch [[cSeenId]] -> taken [[hasId]](), notTaken [[idIsMissing]]()
+# CHECK: = JSONStartsWith {{*}} string="\"name\":" [isLikely]
+# CHECK: [[idMatched]]([[idGuard]]: guard):
+# CHECK-NEXT: [[afterIdKey]]: cursor = JSONAdvance [[firstKey]], [[idGuard]] string="\"id\":"
+# CHECK-NEXT: [[idValue]]: cursor = JSONSkipWhitespace [[afterIdKey]]
+# CHECK-NEXT: = JSONParseNumber [[idValue]]
+# CHECK: [[repeats]]: boolean = JSONMemberRepeats [[idValue]] string="id"
+# CHECK-NEXT: Branch [[repeats]] -> taken [[unknown0]](), notTaken [[rejected0]]()
+# CHECK: [[orderAfterId]]: keyorder = JSONObjectKey [[begin]] layout=L0 @
+# CHECK: = JSONObjectKey [[orderAfterId]] layout=L0 field=1
+# CHECK: [[hasEscapes]]: boolean = JSONKeyHasEscapes [[key]]
+# CHECK-NEXT: Branch [[hasEscapes]] -> taken [[escapes]](), notTaken
+# CHECK-NEXT: [[escapes]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[unknown0]]()
+# CHECK: [[idInLoop]]: boolean = JSONStartsWith [[key]] string="\"id\"" @
+# CHECK: = JSONStartsWith [[key]] string="\"name\"" @
+# CHECK: Branch [[seenId]] -> taken [[idRepeats]](), notTaken
+# CHECK-NEXT: [[idRepeats]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[unknown0]]()
+# CHECK: = JSONObjectKey [[order]] layout=L0 @
+# CHECK: = JSONParseExtraMembers [[key]], [[extra]], [[order]] layout=L0
+# CHECK: Branch [[seenName]] -> taken [[nameRepeats]](), notTaken
+# CHECK-NEXT: [[nameRepeats]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[unknown0]]()
+# CHECK: [[hasId]]():
+# CHECK-NEXT: Branch [[cSeenName]] -> taken {{*}}, notTaken [[nameIsMissing]]()
+# CHECK-NEXT: [[idIsMissing]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[rejected0]]()
+# CHECK: [[next]]: cursor = JSONSkipByte [[cCursor]]
+# CHECK: [[nameIsMissing]]() frequency=Rare:
+# CHECK-NEXT: Jump -> next [[rejected0]]()
+# CHECK: [[object]]:{{*}}= NewObject -, {{*}} layout=L0 fields=[0, 1]
+# CHECK-NEXT: [[finished]]: int[0, 2] = JSONObjectFinish [[cOrder]], [[object]], [[cExtra]] layout=L0
+# CHECK-NEXT: Switch [[finished]] cases=[1] -> case {{*}}, otherwise [[unknown0]]()
+# CHECK: [[one]]: 1 = Integer integer=1
+# CHECK-NEXT: [[parsedResults]]:{{*}}= Results [[one]], [[object]], [[next]]
+# CHECK-NEXT: Return [[parsedResults]]
+
+# CHECK-LABEL: creator=Parser{type=L1 layout=L1 form=ParsedText}
+# CHECK: LoopHint
+# CHECK: ([[optionalId]]: undefined|number, [[seenOptionalId]]: boolean, [[cursor1]]: cursor, [[order1]]: keyorder, [[extra1]]: anything):
+# CHECK-NEXT: = JSONSkipByte [[cursor1]]
+# CHECK-NEXT: [[object1]]:{{*}}= NewObject layout=L1
+# CHECK-NEXT: Branch [[seenOptionalId]] -> taken [[storesOptionalId]](), notTaken
+# CHECK: [[storesOptionalId]]():
+# CHECK-NEXT: PutSlot [[object1]], [[object1]], [[optionalId]] key="id" receivers=[L1] level=Expected
+# CHECK: = JSONObjectFinish [[order1]], [[object1]], [[extra1]] layout=L1
+
+# CHECK-LABEL: creator=Parser{type=L2 layout=L2 form=ParsedText}
+# CHECK-NOT: JSONStartsWith
+# CHECK: LoopHint
+# CHECK-NOT: JSONStartsWith
+# CHECK: = JSONKeyHasEscapes [[key6]]
+# CHECK-NOT: JSONStartsWith
+# CHECK: [[parsedKey6]]:{{*}}= JSONParseKey [[key6]]
+# CHECK: [[keyText6]]: string = ResultAt [[parsedKey6]] index=1
+# CHECK: [[name6]]:{{*}}= String string="caf\u{e9}"
+# CHECK-NEXT: = StrictEq [[keyText6]], [[name6]]
+# CHECK-NOT: JSONStartsWith
+# CHECK: = JSONParseExtraMembers [[key6]],
+# CHECK-NOT: JSONStartsWith

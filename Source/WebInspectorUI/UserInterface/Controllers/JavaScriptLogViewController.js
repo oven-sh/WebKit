@@ -48,8 +48,10 @@ WI.JavaScriptLogViewController = class JavaScriptLogViewController extends WI.Ob
         this._lastConsoleMessageViewForTarget = new WeakMap;
         this._lastCommitted = {text: "", special: false};
         this._repeatCountWasInterrupted = false;
+        this._evaluationPreviewRequestIdentifier = 0;
 
         this._sessions = [];
+        this._currentSession = null;
         this._currentSessionOrGroup = null;
 
         this._failedSourceMapsGroup = null;
@@ -65,10 +67,90 @@ WI.JavaScriptLogViewController = class JavaScriptLogViewController extends WI.Ob
 
         WI.settings.showConsoleMessageTimestamps.addEventListener(WI.Setting.Event.Changed, this._handleShowConsoleMessageTimestampsSettingChanged, this);
 
-        this._pendingMessagesForSessionOrGroup = new Map;
+        this._pendingMessagesForSession = new Map;
         this._scheduledRenderIdentifier = 0;
 
         this.startNewSession();
+    }
+
+    // Static
+
+    static isSideEffectFreeForEvaluationPreview(text)
+    {
+        // Match WI.RuntimeManager.prototype.evaluateInInspectedWindow, which treats `{a: 1}` as an object literal.
+        text = WI.RuntimeManager.wrapLiteralExpression(text);
+
+        let program = null;
+        try {
+            program = esprima.parse(text);
+        } catch {
+            return false;
+        }
+
+        if (program.body.length !== 1 || program.body[0].type !== "ExpressionStatement")
+            return false;
+
+        // Reject syntax that explicitly calls, constructs, mutates, or iterates. Implicit calls (e.g. getters,
+        // `valueOf`/`toString` coercion, `Proxy` traps) can't be detected statically, so they are allowed.
+        function isSideEffectFree(node) {
+            switch (node.type) {
+            case "Identifier":
+            case "Literal":
+            case "ThisExpression":
+            case "FunctionExpression":
+            case "ArrowFunctionExpression":
+                return true;
+
+            case "ChainExpression":
+                return isSideEffectFree(node.expression);
+
+            case "MemberExpression":
+                return isSideEffectFree(node.object) && (!node.computed || isSideEffectFree(node.property));
+
+            case "ArrayExpression":
+                // Spreading invokes the iterator protocol, which can consume generators.
+                return node.elements.every((element) => !element || (element.type !== "SpreadElement" && isSideEffectFree(element)));
+
+            case "ObjectExpression":
+                return node.properties.every((property) => {
+                    if (property.type === "SpreadElement")
+                        return isSideEffectFree(property.argument);
+                    return (!property.computed || isSideEffectFree(property.key)) && isSideEffectFree(property.value);
+                });
+
+            case "ClassExpression":
+                if (node.decorators?.length || (node.superClass && !isSideEffectFree(node.superClass)))
+                    return false;
+                // Static blocks, static field initializers, computed keys, and decorators run when the class is defined.
+                return node.body.body.every((element) => {
+                    if (element.type === "StaticBlock" || element.decorators?.length)
+                        return false;
+                    if (element.computed && !isSideEffectFree(element.key))
+                        return false;
+                    return element.type === "MethodDefinition" || !element.static || !element.value || isSideEffectFree(element.value);
+                });
+
+            case "TemplateLiteral":
+                return node.expressions.every(isSideEffectFree);
+
+            case "UnaryExpression":
+                return node.operator !== "delete" && isSideEffectFree(node.argument);
+
+            case "BinaryExpression":
+            case "LogicalExpression":
+                return isSideEffectFree(node.left) && isSideEffectFree(node.right);
+
+            case "ConditionalExpression":
+                return isSideEffectFree(node.test) && isSideEffectFree(node.consequent) && isSideEffectFree(node.alternate);
+
+            case "SequenceExpression":
+                return node.expressions.every(isSideEffectFree);
+            }
+
+            return false;
+        }
+
+        return isSideEffectFree(program.body[0].expression);
     }
 
     // Public
@@ -84,13 +166,14 @@ WI.JavaScriptLogViewController = class JavaScriptLogViewController extends WI.Ob
     startNewSession(clearPreviousSessions = false, data = {})
     {
         if (clearPreviousSessions) {
-            this._pendingMessagesForSessionOrGroup.clear();
+            this._pendingMessagesForSession.clear();
 
             if (this._sessions.length) {
                 for (let session of this._sessions)
                     session.element.remove();
 
                 this._sessions = [];
+                this._currentSession = null;
                 this._currentSessionOrGroup = null;
             }
         }
@@ -102,7 +185,7 @@ WI.JavaScriptLogViewController = class JavaScriptLogViewController extends WI.Ob
         let lastSession = this._sessions.lastValue;
 
         // Remove empty session.
-        if (lastSession && !lastSession.hasMessages() && !this._pendingMessagesForSessionOrGroup.has(lastSession)) {
+        if (lastSession && !lastSession.hasMessages() && !this._pendingMessagesForSession.has(lastSession)) {
             this._sessions.pop();
             lastSession.element.remove();
         }
@@ -115,7 +198,7 @@ WI.JavaScriptLogViewController = class JavaScriptLogViewController extends WI.Ob
         this._repeatCountWasInterrupted = false;
 
         this._sessions.push(consoleSession);
-        this._currentSessionOrGroup = consoleSession;
+        this._currentSession = consoleSession;
 
         this._failedSourceMapsGroup = null;
 
@@ -242,7 +325,35 @@ WI.JavaScriptLogViewController = class JavaScriptLogViewController extends WI.Ob
             handler(result !== InspectorBackend.Enum.Runtime.SyntaxErrorType.Recoverable);
         }
 
-        WI.runtimeManager.activeExecutionContext.target.RuntimeAgent.parse(text, parseFinished.bind(this));
+        let activeCallFrame = WI.runtimeManager.useActiveCallFrame ? WI.debuggerManager.activeCallFrame : null;
+        let target = activeCallFrame?.target || WI.runtimeManager.activeExecutionContext.target;
+        target.RuntimeAgent.parse(text, parseFinished.bind(this));
+    }
+
+    consolePromptGetEvaluationPreviewObject(prompt, text, callback)
+    {
+        if (!WI.JavaScriptLogViewController.isSideEffectFreeForEvaluationPreview(text)) {
+            callback(null, false);
+            return;
+        }
+
+        let activeCallFrame = WI.runtimeManager.useActiveCallFrame ? WI.debuggerManager.activeCallFrame : null;
+        let target = activeCallFrame?.target || WI.runtimeManager.activeExecutionContext.target;
+        let options = {
+            objectGroup: `console-evaluation-preview-${++this._evaluationPreviewRequestIdentifier}`,
+            includeCommandLineAPI: true,
+            doNotPauseOnExceptionsAndMuteConsole: true,
+            returnByValue: false,
+            generatePreview: true,
+            saveResult: false,
+            disableAwaitConvenience: true,
+            emulateUserGesture: WI.settings.emulateInUserGesture.value,
+            sourceURLAppender: appendWebInspectorSourceURL,
+        };
+        WI.runtimeManager.evaluateInInspectedWindow(text, options, function(result, wasThrown) {
+            target.RuntimeAgent.releaseObjectGroup(options.objectGroup);
+            callback(result, wasThrown);
+        });
     }
 
     consolePromptTextCommitted(prompt, text)
@@ -332,9 +443,9 @@ WI.JavaScriptLogViewController = class JavaScriptLogViewController extends WI.Ob
 
     _addToPendingMessages(messageView)
     {
-        let pendingMessagesForSession = this._pendingMessagesForSessionOrGroup.getOrInsert(this._currentSessionOrGroup, []);
+        let pendingMessagesForSession = this._pendingMessagesForSession.getOrInsert(this._currentSession, []);
         pendingMessagesForSession.push(messageView);
-        this._pendingMessagesForSessionOrGroup.set(this._currentSessionOrGroup, pendingMessagesForSession);
+        this._pendingMessagesForSession.set(this._currentSession, pendingMessagesForSession);
     }
 
     renderPendingMessages()
@@ -344,17 +455,17 @@ WI.JavaScriptLogViewController = class JavaScriptLogViewController extends WI.Ob
             this._scheduledRenderIdentifier = 0;
         }
 
-        if (!this._pendingMessagesForSessionOrGroup.size)
+        if (!this._pendingMessagesForSession.size)
             return;
 
         let wasScrolledToBottom = this.isScrolledToBottom();
-        let savedCurrentConsoleGroup = this._currentSessionOrGroup;
         let lastMessageView = null;
 
         const maxMessagesPerFrame = 100;
         let renderedMessages = 0;
-        for (let [session, messages] of this._pendingMessagesForSessionOrGroup) {
-            this._currentSessionOrGroup = session;
+        for (let [session, messages] of this._pendingMessagesForSession) {
+            if (!this._currentSessionOrGroup || this._sessionForSessionOrGroup(this._currentSessionOrGroup) !== session)
+                this._currentSessionOrGroup = session;
 
             let messagesToRender = messages.splice(0, maxMessagesPerFrame - renderedMessages);
             for (let message of messagesToRender) {
@@ -365,14 +476,12 @@ WI.JavaScriptLogViewController = class JavaScriptLogViewController extends WI.Ob
             lastMessageView = messagesToRender.lastValue;
 
             if (!messages.length)
-                this._pendingMessagesForSessionOrGroup.delete(session);
+                this._pendingMessagesForSession.delete(session);
 
             renderedMessages += messagesToRender.length;
             if (renderedMessages >= maxMessagesPerFrame)
                 break;
         }
-
-        this._currentSessionOrGroup = savedCurrentConsoleGroup;
 
         this._handleShowConsoleMessageTimestampsSettingChanged();
 
@@ -381,7 +490,7 @@ WI.JavaScriptLogViewController = class JavaScriptLogViewController extends WI.Ob
 
         WI.quickConsole.needsLayout();
 
-        if (this._pendingMessagesForSessionOrGroup.size)
+        if (this._pendingMessagesForSession.size)
             this.renderPendingMessagesSoon();
     }
 
@@ -417,6 +526,14 @@ WI.JavaScriptLogViewController = class JavaScriptLogViewController extends WI.Ob
         if (this.delegate && typeof this.delegate.didAppendConsoleMessageView === "function")
             this.delegate.didAppendConsoleMessageView(messageView);
     }
+
+    _sessionForSessionOrGroup(sessionOrGroup)
+    {
+        let current = sessionOrGroup;
+        while (current instanceof WI.ConsoleGroup)
+            current = current.parentGroup;
+        return current;
+    }
     
     _addConsoleMessageToConsoleSourceMapErrorGroup(messageView)
     {
@@ -437,7 +554,7 @@ WI.JavaScriptLogViewController = class JavaScriptLogViewController extends WI.Ob
 
     _handleShowConsoleMessageTimestampsSettingChanged()
     {
-        this._currentSessionOrGroup.element.classList.toggle("timestamps-visible", WI.settings.showConsoleMessageTimestamps.value);
+        this._currentSession.element.classList.toggle("timestamps-visible", WI.settings.showConsoleMessageTimestamps.value);
     }
 };
 

@@ -1,0 +1,51 @@
+# A number that is read more often where the layout is known than through a set with a string keeps the representation of its own type. Members of a set that differ in it are groups of the agreement, and selection gives each group an access of its own
+# FORM: AsRead
+# OPTIONS: references=narrow only-passes=ResolveAccesses testing=NoLayoutIsMadeSeldom
+# RUN: plan-slots accesses
+# RUN(PLACED): place accesses
+# STATISTIC: SharedSlots = 1
+# STATISTIC: SharesRefused = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="HoldsNumber" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
+layout L1 name="HoldsString" fields=[{key="value" declared={type=string} flags=[IsRequired]}]
+layout L2 name="HoldsText" fields=[{key="text" declared={type=string} flags=[IsRequired]}]
+layout L3 name="HoldsOtherText" fields=[{key="text" declared={type=string} flags=[IsRequired]}]
+variable g0 name="numberOrString" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="texts" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = ToString v1
+    v4 = NewObject -, v2 layout=L0 fields=[0]
+    v5 = FinishObject v4
+    PutModuleVariable v5 variable=g0
+    v7 = NewObject -, v3 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    PutModuleVariable v8 variable=g0
+    v10 = NewObject -, v3 layout=L2 fields=[0]
+    v11 = FinishObject v10
+    PutModuleVariable v11 variable=g1
+    v13 = NewObject -, v3 layout=L3 fields=[0]
+    v14 = FinishObject v13
+    PutModuleVariable v14 variable=g1
+    v16 = GetModuleVariable variable=g0
+    v17 = PropGet v16 key="value"
+    v18 = GetModuleVariable variable=g1
+    v19 = PropGet v18 key="text"
+    v20 = PropGet v5 key="value"
+    v21 = PropGet v5 key="value"
+    Return
+}
+# CHECK: "value" {L0 L1} read weight=256 sites=1
+# CHECK-NEXT: 2 groups: {L0} Double @16, {L1} Cell32 @16
+# CHECK-NEXT: "text" {L2 L3} read weight=256 sites=1
+# CHECK-NEXT: one location Cell32 @16
+
+# PLACED: access 0 "value" [L0] read EveryMember Double @16
+# PLACED-NEXT: access 1 "value" [L1] read EveryMember Cell32 @16
+# PLACED-NEXT: access 2 "text" [L2, L3] read EveryMember Cell32 @16
+# PLACED-NOT: access

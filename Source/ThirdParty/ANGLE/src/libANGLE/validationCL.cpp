@@ -1795,14 +1795,9 @@ cl_int ValidateSetKernelArg(cl_kernel kernel,
         // as the MaxByteOffset SPIR-V decoration. This error code is missing before version 2.2.
         for (const auto &device : krnl.getProgram().getDevices())
         {
-            cl_ulong maxLocalMemSize      = 0;
+            cl_ulong maxLocalMemSize      = device->getImpl().getCaps().localMemSize;
             cl_ulong compiledLocalMemSize = krnl.getImpl().getCompiledLocalMemSize(*device);
-            if (ANGLE_UNLIKELY(IsError(device->getImpl<rx::CLDeviceImpl>().getInfoULong(
-                    cl::DeviceInfo::LocalMemSize, &maxLocalMemSize))))
-            {
-                // The implementation shouldn't come this far if device query can report errors.
-                ASSERT(false);
-            }
+
             if (arg_size + compiledLocalMemSize > maxLocalMemSize)
             {
                 if (krnl.getProgram().getContext().getPlatform().getVersion() >
@@ -2434,12 +2429,19 @@ cl_int ValidateEnqueueMapBuffer(cl_command_queue command_queue,
         ValidateEnqueueBuffer(queue, buffer, map_flags.intersects(CL_MAP_READ),
                               map_flags.intersects(CL_MAP_WRITE | CL_MAP_WRITE_INVALIDATE_REGION)));
 
+    const Buffer &clBuffer = buffer->cast<Buffer>();
     // CL_INVALID_VALUE if region being mapped given by (offset, size) is out of bounds
     // or if size is 0 or if values specified in map_flags are not valid.
-    if (!buffer->cast<Buffer>().isRegionValid(offset, size) || size == 0u ||
+    if (!clBuffer.isRegionValid(offset, size) || size == 0u ||
         !ValidateMapFlags(map_flags, queue.getContext().getPlatform()))
     {
         return CL_INVALID_VALUE;
+    }
+
+    // CL_INVALID_OPERATION if mapping would lead to overlapping regions being mapped for writing.
+    if (clBuffer.isRegionMappedForWrite(cl::MemoryRegion(offset, size)))
+    {
+        return CL_INVALID_OPERATION;
     }
 
     return CL_SUCCESS;
@@ -2493,6 +2495,14 @@ cl_int ValidateEnqueueMapImage(cl_command_queue command_queue,
         return CL_INVALID_VALUE;
     }
 
+    // CL_INVALID_OPERATION if mapping would lead to overlapping regions being mapped for writing.
+    if (map_flags.intersects(CL_MAP_WRITE_INVALIDATE_REGION | CL_MAP_WRITE) &&
+        img.isRegionMappedForWrite(cl::MemoryRegion(cl::Offset(origin[0], origin[1], origin[2]),
+                                                    cl::Extents(region[0], region[1], region[2]))))
+    {
+        return CL_INVALID_OPERATION;
+    }
+
     return CL_SUCCESS;
 }
 
@@ -2522,6 +2532,13 @@ cl_int ValidateEnqueueUnmapMemObject(cl_command_queue command_queue,
     if (&queue.getContext() != &memory.getContext())
     {
         return CL_INVALID_CONTEXT;
+    }
+
+    // CL_INVALID_VALUE if mapped_ptr is not a valid pointer returned by
+    // clEnqueueMap{Buffer,Image} for memobj.
+    if (!memory.isPtrMapped(mapped_ptr))
+    {
+        return CL_INVALID_VALUE;
     }
 
     return CL_SUCCESS;
@@ -2696,17 +2713,15 @@ cl_int ValidateEnqueueNDRangeKernel(cl_command_queue command_queue,
     }
 
     cl_ulong localMemSize    = 0;
-    cl_ulong maxLocalMemSize = 0;
-    if (ANGLE_UNLIKELY(
-            IsError(krnl.getWorkGroupInfo(const_cast<cl_device_id>(device.getNative()),
-                                          cl::KernelWorkGroupInfo::LocalMemSize,
-                                          sizeof(localMemSize), &localMemSize, nullptr)) ||
-            IsError(device.getImpl<rx::CLDeviceImpl>().getInfoULong(cl::DeviceInfo::LocalMemSize,
-                                                                    &maxLocalMemSize))))
+    cl_ulong maxLocalMemSize = device.getImpl().getCaps().localMemSize;
+    if (ANGLE_UNLIKELY(IsError(krnl.getWorkGroupInfo(
+            const_cast<cl_device_id>(device.getNative()), cl::KernelWorkGroupInfo::LocalMemSize,
+            sizeof(localMemSize), &localMemSize, nullptr))))
     {
         // The implementation shouldn't come this far if device query can report errors.
         ASSERT(false);
     }
+
     if (localMemSize > maxLocalMemSize)
     {
         ERR() << "Kernel exceeds the maximum local mem size capability";
@@ -3386,8 +3401,23 @@ cl_int ValidateCreateImage(cl_context context,
         image_desc->image_type == CL_MEM_OBJECT_IMAGE1D_ARRAY ? 1u : image_desc->image_height;
     const size_t sliceSize = imageHeight * rowPitch;
 
-    // CL_INVALID_IMAGE_DESCRIPTOR if values specified in image_desc are not valid.
     const MemObjectType memObjectType = FromCLenum<MemObjectType>(image_desc->image_type);
+    // Per the spec, image_depth and image_array_size are "only used" for their respective
+    // image types; for other types the values are unspecified and may be uninitialized
+    // garbage. Initialize them through cl::ImageDescriptor which will set these values correctly.
+    const ImageDescriptor desc{
+        memObjectType,
+        image_desc->image_width,
+        image_desc->image_height,
+        image_desc->image_depth,
+        image_desc->image_array_size,
+        image_desc->image_row_pitch,
+        image_desc->image_slice_pitch,
+        image_desc->num_mip_levels,
+        image_desc->num_samples,
+    };
+
+    // CL_INVALID_IMAGE_DESCRIPTOR if values specified in image_desc are not valid.
     switch (memObjectType)
     {
         case MemObjectType::Image1D:
@@ -3538,16 +3568,7 @@ cl_int ValidateCreateImage(cl_context context,
     // with mem_object
     if (image_desc->mem_object != nullptr && Image::IsValid(image_desc->mem_object))
     {
-        const ImageDescriptor imageDesc = {FromCLenum<MemObjectType>(image_desc->image_type),
-                                           image_desc->image_width,
-                                           image_desc->image_height,
-                                           image_desc->image_depth,
-                                           image_desc->image_array_size,
-                                           image_desc->image_row_pitch,
-                                           image_desc->image_slice_pitch,
-                                           image_desc->num_mip_levels,
-                                           image_desc->num_samples};
-        if (imageDesc != Image::Cast(image_desc->mem_object)->getDescriptor())
+        if (desc != Image::Cast(image_desc->mem_object)->getDescriptor())
         {
             return CL_INVALID_IMAGE_DESCRIPTOR;
         }
@@ -3586,6 +3607,22 @@ cl_int ValidateCreateImage(cl_context context,
     {
         return CL_IMAGE_FORMAT_NOT_SUPPORTED;
     }
+
+    // CL_MEM_OBJECT_ALLOCATION_FAILURE
+    //  - if there is a failure to allocate memory for the image object
+    angle::CheckedNumeric<size_t> imageSize(sliceSize);
+    imageSize *= desc.depth;
+    imageSize *= desc.arraySize;
+
+    for (const DevicePtr &device : ctx.getDevices())
+    {
+        // a given image cannot exceed the max mem alloc limit
+        if (!imageSize.IsValid() || imageSize.ValueOrDie() > device->getInfo().maxMemAllocSize)
+        {
+            return CL_MEM_OBJECT_ALLOCATION_FAILURE;
+        }
+    }
+
     return CL_SUCCESS;
 }
 

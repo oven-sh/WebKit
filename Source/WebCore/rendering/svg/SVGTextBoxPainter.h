@@ -40,10 +40,9 @@ namespace Style {
 class ComputedStyle;
 }
 
-template<typename TextBoxPath>
 class SVGTextBoxPainter {
 public:
-    SVGTextBoxPainter(TextBoxPath&&, PaintInfo&, const LayoutPoint& paintOffset);
+    SVGTextBoxPainter(const LayoutIntegration::InlineContent&, size_t boxIndex, PaintInfo&, const LayoutPoint& paintOffset);
     ~SVGTextBoxPainter() = default;
 
     void paint();
@@ -53,7 +52,7 @@ private:
     InlineIterator::SVGTextBoxIterator textBoxIterator() const;
 
     const RenderSVGInlineText& renderer() const { return m_renderer; }
-    const RenderBoxModelObject& parentRenderer() const;
+    const RenderBoxModelObject& parentRenderer() const { return m_parentRenderer; }
     OptionSet<RenderSVGResourceMode> paintingResourceMode() const { return m_paintingResourceMode; }
 
     void paintDecoration(Style::TextDecorationLine, const SVGTextFragment&);
@@ -69,8 +68,9 @@ private:
 
     std::pair<unsigned, unsigned> selectionStartEnd() const;
 
-    const TextBoxPath m_textBox;
+    const InlineIterator::SVGTextBox m_textBox;
     const RenderSVGInlineText& m_renderer;
+    const RenderBoxModelObject& m_parentRenderer;
     PaintInfo& m_paintInfo;
     const TextBoxSelectableRange m_selectableRange;
     const LayoutPoint m_paintOffset;
@@ -80,21 +80,8 @@ private:
     LegacyRenderSVGResource* m_legacyPaintingResource { nullptr };
 };
 
-extern template class SVGTextBoxPainter<InlineIterator::BoxLegacyPath>;
-extern template class SVGTextBoxPainter<InlineIterator::BoxModernPath>;
-
-class LegacySVGTextBoxPainter : public SVGTextBoxPainter<InlineIterator::BoxLegacyPath> {
-public:
-    LegacySVGTextBoxPainter(const SVGInlineTextBox&, PaintInfo&, const LayoutPoint& paintOffset);
-};
-
-class ModernSVGTextBoxPainter : public SVGTextBoxPainter<InlineIterator::BoxModernPath> {
-public:
-    ModernSVGTextBoxPainter(const LayoutIntegration::InlineContent&, size_t boxIndex, PaintInfo&, const LayoutPoint& paintOffset);
-};
-
 TextRun constructTextRun(StringView, TextDirection, const Style::ComputedStyle&, const SVGTextFragment&);
 FloatRect selectionRectForTextFragment(const RenderSVGInlineText&, TextDirection, const SVGTextFragment&, unsigned startPosition, unsigned endPosition, const Style::ComputedStyle&);
-bool mapStartEndPositionsIntoFragmentCoordinates(unsigned textBoxStart, const SVGTextFragment&, unsigned& startPosition, unsigned& endPosition);
+bool LEGACY_NODELETE mapStartEndPositionsIntoFragmentCoordinates(unsigned textBoxStart, const SVGTextFragment&, unsigned& startPosition, unsigned& endPosition);
 
 }

@@ -44,12 +44,14 @@
 #include "VMManager.h"
 #include <wtf/TZoneMallocInlines.h>
 
+#include "AOTEnvironment.h"
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
 #if ENABLE(JIT)
-static bool NODELETE ensureIsSafeToLock(Lock& lock) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+static bool LEGACY_NODELETE ensureIsSafeToLock(Lock& lock) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
     static constexpr unsigned maxRetries = 2;
     unsigned tryCount = 0;
@@ -199,7 +201,7 @@ struct CellAddressCheckFunctor : MarkedBlock::CountFunctor {
     {
     }
 
-    IterationStatus NODELETE operator()(HeapCell* cell, HeapCell::Kind) const
+    IterationStatus LEGACY_NODELETE operator()(HeapCell* cell, HeapCell::Kind) const
     {
         if (cell == candidate) {
             found = true;
@@ -231,7 +233,7 @@ bool VMInspector::isValidCodeBlock(VM* vm, CodeBlock* candidate)
         {
         }
 
-        void NODELETE operator()(CodeBlock* codeBlock) const
+        void LEGACY_NODELETE operator()(CodeBlock* codeBlock) const
         {
             if (codeBlock == candidate)
                 found = true;
@@ -261,7 +263,7 @@ CodeBlock* VMInspector::codeBlockForFrame(VM* vm, CallFrame* topCallFrame, unsig
         {
         }
 
-        IterationStatus NODELETE operator()(StackVisitor& visitor) const
+        IterationStatus LEGACY_NODELETE operator()(StackVisitor& visitor) const
         {
             auto currentFrame = nextFrame++;
             if (currentFrame == targetFrame) {
@@ -404,7 +406,7 @@ SUPPRESS_ASAN void VMInspector::dumpRegisters(CallFrame* callFrame)
         while (it < startOfVars) {
             JSValue v = it->jsValue();
             String name = codeBlock->nameForRegister(VirtualRegister(registerNumber));
-            dataLogF("% 4d  %-16s : %10p  0x%llx %s\n", registerNumber++, name.ascii().data(), it++, (long long)JSValue::encode(v), valueAsString(v).legacyCStringPointer());
+            SAFE_DATALOGF("% 4d  %-16s : %10p  0x%llx %s\n", registerNumber++, name.ascii(), it++, (long long)JSValue::encode(v), valueAsString(v));
         }
         
         dataLogF("--------------------------------------------------------------- Variables ---\n");
@@ -416,14 +418,14 @@ SUPPRESS_ASAN void VMInspector::dumpRegisters(CallFrame* callFrame)
         while (it < endOfCalleeSaves) {
             JSValue v = it->jsValue();
             String name = codeBlock->nameForRegister(VirtualRegister(registerNumber));
-            dataLogF("% 4d  %-16s : %10p  0x%llx %s\n", registerNumber++, name.ascii().data(), it++, (long long)JSValue::encode(v), valueAsString(v).legacyCStringPointer());
+            SAFE_DATALOGF("% 4d  %-16s : %10p  0x%llx %s\n", registerNumber++, name.ascii(), it++, (long long)JSValue::encode(v), valueAsString(v));
         }
         
         dataLogF("------------------------------------------------------------ Callee Saves ---\n");
         
         while (it != callFrameTop) {
             JSValue v = it->jsValue();
-            dataLogF("% 4d  %-16s : %10p  0x%llx %s\n", registerNumber++, "CalleeSaveReg", it++, (long long)JSValue::encode(v), valueAsString(v).legacyCStringPointer());
+            SAFE_DATALOGF("% 4d  %-16s : %10p  0x%llx %s\n", registerNumber++, "CalleeSaveReg"_s, it++, (long long)JSValue::encode(v), valueAsString(v));
         }
     }
 
@@ -438,7 +440,7 @@ SUPPRESS_ASAN void VMInspector::dumpRegisters(CallFrame* callFrame)
     dataLogLn(codeBlock);
     long long calleeBits = (long long)callFrame->callee().rawPtr();
     auto calleeString = valueAsString(it->jsValue());
-    dataLogF("% 4d  Callee           : %10p  0x%llx %s\n", registerNumber++, it++, calleeBits, calleeString.legacyCStringPointer());
+    SAFE_DATALOGF("% 4d  Callee           : %10p  0x%llx %s\n", registerNumber++, it++, calleeBits, calleeString);
     
     StackVisitor::visit(callFrame, vm, [&] (StackVisitor& visitor) {
         if (visitor->callFrame() == callFrame) {
@@ -456,7 +458,7 @@ SUPPRESS_ASAN void VMInspector::dumpRegisters(CallFrame* callFrame)
     while (it <= bottom) {
         JSValue v = it->jsValue();
         String name = codeBlock ? codeBlock->nameForRegister(VirtualRegister(registerNumber)) : emptyString();
-        dataLogF("% 4d  %-16s : %10p  0x%llx %s\n", registerNumber++, name.ascii().data(), it++, (long long)JSValue::encode(v), valueAsString(v).legacyCStringPointer());
+        SAFE_DATALOGF("% 4d  %-16s : %10p  0x%llx %s\n", registerNumber++, name.ascii(), it++, (long long)JSValue::encode(v), valueAsString(v));
     }
     
     dataLogF("--------------------------------------------------------------------- End ---\n");
@@ -499,15 +501,30 @@ private:
     unsigned& m_indentation;
 };
 
+static std::optional<uint32_t> compiledEnvironmentShape(JSCell* cell)
+{
+#if ENABLE(AOT)
+    if (cell->type() == CompiledEnvironmentType)
+        return uncheckedDowncast<AOT::Environment>(cell)->layout().shape;
+#else
+    UNUSED_PARAM(cell);
+#endif
+    return std::nullopt;
+}
+
+static bool hasButterfly(JSCell* cell)
+{
+    return hasButterflyField(cell->type());
+}
+
 void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
 {
     StructureID structureID = cell->structureID();
     Structure* structure = cell->structure();
-    IndexingType indexingTypeAndMisc = cell->indexingTypeAndMisc();
+    std::optional<uint32_t> environmentShape = compiledEnvironmentShape(cell);
     IndexingType indexingType = structure->indexingType();
     IndexingType indexingMode = structure->indexingMode();
     JSType type = cell->type();
-    TypeInfo::InlineTypeFlags inlineTypeFlags = cell->inlineTypeFlags();
     CellState cellState = cell->cellState();
     size_t cellSize = cell->cellSize();
     size_t slotCount = cellSize / sizeof(EncodedJSValue);
@@ -536,14 +553,22 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
     {
         IndentationScope scope(indentation);
         INDENT out.println("structureID ", format("%d 0x%" PRIx32, structureID, structureID), " structure ", RawPointer(structure));
-        INDENT out.println("indexingTypeAndMisc ", format("%d 0x%" PRIx8, indexingTypeAndMisc, indexingTypeAndMisc), " ", IndexingTypeDump(indexingMode));
+        if (environmentShape)
+            INDENT out.println("shape ", format("%" PRIu32 " 0x%" PRIx32, *environmentShape, *environmentShape));
+        else {
+            IndexingType indexingTypeAndMisc = cell->indexingTypeAndMisc();
+            INDENT out.println("indexingTypeAndMisc ", format("%d 0x%" PRIx8, indexingTypeAndMisc, indexingTypeAndMisc), " ", IndexingTypeDump(indexingMode));
+        }
         INDENT out.println("type ", format("%d 0x%" PRIx8, type, type));
-        INDENT out.println("flags ", format("%d 0x%" PRIx8, inlineTypeFlags, inlineTypeFlags));
+        if (!environmentShape) {
+            TypeInfo::InlineTypeFlags inlineTypeFlags = cell->inlineTypeFlags();
+            INDENT out.println("flags ", format("%d 0x%" PRIx8, inlineTypeFlags, inlineTypeFlags));
+        }
         INDENT out.println("cellState ", format("%d", cellState));
     }
 
     unsigned slotIndex = 1;
-    if (cell->isObject()) {
+    if (hasButterfly(cell)) {
         JSObject* obj = static_cast<JSObject*>(const_cast<JSCell*>(cell));
         Butterfly* butterfly = obj->butterfly();
         size_t butterflySize = obj->butterflyTotalSize();
@@ -564,8 +589,6 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
                 ? butterfly->base(preCapacity, propertyCapacity)
                 : butterfly->base(structure);
 
-            unsigned publicLength = butterfly->publicLength();
-            unsigned vectorLength = butterfly->vectorLength();
             size_t butterflyCellSize = MarkedSpace::optimalSizeFor(butterflySize);
 
             size_t endOfIndexedPropertiesIndex = butterflySize / sizeof(EncodedJSValue);
@@ -573,11 +596,13 @@ void VMInspector::dumpCellMemoryToStream(JSCell* cell, PrintStream& out)
 
             INDENT out.println("base ", RawPointer(base));
             INDENT out.println("hasIndexingHeader ", (hasIndexingHeader ? "YES" : "NO"), " hasAnyArrayStorage ", (hasAnyArrayStorage ? "YES" : "NO"));
-            if (hasIndexingHeader) {
-                INDENT out.print("publicLength ", publicLength, " vectorLength ", vectorLength);
+            if (hasIndexedProperties(indexingType)) {
+                INDENT out.print("publicLength ", butterfly->publicLength(), " vectorLength ", butterfly->vectorLength());
                 if (hasAnyArrayStorage)
                     out.print(" indexBias ", butterfly->arrayStorage()->m_indexBias);
                 out.print("\n");
+            } else if (hasIndexingHeader) {
+                INDENT out.println("arrayBuffer ", RawPointer(butterfly->indexingHeader()->arrayBuffer()));
             }
             INDENT out.println("preCapacity ", preCapacity, " propertyCapacity ", propertyCapacity);
 

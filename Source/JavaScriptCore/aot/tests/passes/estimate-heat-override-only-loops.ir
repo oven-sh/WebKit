@@ -1,0 +1,29 @@
+# With only loops hot each function has one activation and the class Warm, so the heat of a block is its frequency, and a block in a loop reaches the hot threshold
+# OPTIONS: only-passes=EstimateHeat heat=OnlyLoopsAreHot
+# RUN: pipeline EstimateHeat
+# RUN(BLOCKS): pass-context
+# CHECK: f0 Warm 50 1
+# CHECK-NEXT: f1 Warm 50 1
+# CHECK-NEXT: f2 Warm 50 1
+# CHECK-NEXT: f3 Warm 50 1
+# CHECK-NEXT: f4 Warm 50 1
+# CHECK-NEXT: f5 Warm 50 1
+# CHECK-NEXT: hottest: f1 f2 f0 f3 f4 f5
+# CHECK-NEXT: thresholds: cold=0.0625 hot=10
+# BLOCKS-LABEL: f0:
+# BLOCKS-NEXT: b0 heat=1 runsAtMostOnce
+# BLOCKS-NEXT: b1 heat=0.5 runsAtMostOnce
+# BLOCKS-NEXT: b2 heat=10 runsAtMostOnce
+# BLOCKS-NEXT: b3 heat=100 runsAtMostOnce
+# BLOCKS-LABEL: f1:
+# BLOCKS-NEXT: b0 heat=1 runsAtMostOnce
+# BLOCKS-LABEL: f2:
+# BLOCKS-NEXT: b0 heat=1 runsAtMostOnce
+# BLOCKS-NEXT: b1 heat=10 runsAtMostOnce
+# BLOCKS-NEXT: b2 heat=9 runsAtMostOnce
+# BLOCKS-NEXT: b3 heat=1 runsAtMostOnce
+# BLOCKS-LABEL: f3:
+# BLOCKS-NEXT: b0 heat=1 runsAtMostOnce
+# BLOCKS-NEXT: b1 heat=0.5 runsAtMostOnce
+# BLOCKS-NEXT: b2 heat=1 runsAtMostOnce
+# PROGRAM-OF: estimate-heat-thresholds.ir

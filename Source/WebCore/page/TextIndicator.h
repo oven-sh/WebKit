@@ -155,7 +155,7 @@ public:
     constexpr static float defaultHorizontalMargin { 2 };
     constexpr static float defaultVerticalMargin { 1 };
 
-    WEBCORE_EXPORT static Ref<TextIndicator> create();
+    WEBCORE_EXPORT static Ref<TextIndicator> LEGACY_NODELETE create();
     WEBCORE_EXPORT static Ref<TextIndicator> create(const TextIndicatorData&);
     WEBCORE_EXPORT static RefPtr<TextIndicator> createWithSelectionInFrame(LocalFrame&, OptionSet<TextIndicatorOption>, TextIndicatorPresentationTransition, FloatSize margin = FloatSize(defaultHorizontalMargin, defaultVerticalMargin));
     WEBCORE_EXPORT static RefPtr<TextIndicator> createWithRange(const SimpleRange&, OptionSet<TextIndicatorOption>, TextIndicatorPresentationTransition, FloatSize margin = FloatSize(defaultHorizontalMargin, defaultVerticalMargin));
@@ -188,8 +188,8 @@ public:
     TextIndicatorPresentationTransition presentationTransition() const { return m_data.presentationTransition; }
     void setPresentationTransition(TextIndicatorPresentationTransition transition) { m_data.presentationTransition = transition; }
 
-    WEBCORE_EXPORT bool NODELETE wantsBounce() const;
-    WEBCORE_EXPORT bool NODELETE wantsManualAnimation() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE wantsBounce() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE wantsManualAnimation() const;
 
     Color estimatedBackgroundColor() const { return m_data.estimatedBackgroundColor; }
     OptionSet<TextIndicatorOption> options() const { return m_data.options; }

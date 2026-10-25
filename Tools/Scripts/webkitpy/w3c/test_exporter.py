@@ -26,18 +26,21 @@
 
 import argparse
 import logging
+import re
+import string
 import sys
 import subprocess
+import textwrap
 
 from webkitcorepy import arguments, string_utils, run
-from webkitbugspy import bugzilla
-from webkitscmpy import local
+from webkitbugspy import Tracker, bugzilla, radar
+from webkitscmpy import PullRequest, local
 from webkitscmpy.program.pull_request import PullRequest as PullRequestProgram
 
 from webkitpy.common.host import Host
 from webkitpy.common.webkit_finder import WebKitFinder
 from webkitpy.w3c.wpt_linter import WPTLinter
-from webkitpy.w3c.common import WPT_GH_ORG, WPT_GH_REPO_NAME, WPT_GH_URL, WPTPaths
+from webkitpy.w3c.common import TEMPLATED_TEST_WRAPPER_SUFFIXES, WPT_GH_ORG, WPT_GH_REPO_NAME, WPT_GH_URL, WPTPaths, case_mismatches
 from webkitpy.common.memoized import memoized
 
 
@@ -47,7 +50,61 @@ WEBKIT_WPT_DIR = 'LayoutTests/imported/w3c/web-platform-tests'
 WPT_PR_URL = f'{WPT_GH_URL}/pull/'
 WEBKIT_EXPORT_PR_LABEL = 'webkit-export'
 
-EXCLUDED_FILE_SUFFIXES = ['-expected.txt', '-expected.html', '-expected.xht', '-expected-mismatch.html', '.worker.html', '.any.html', '.any.worker.html', '.any.serviceworker.html', '.any.sharedworker.html', 'w3c-import.log']
+EXCLUDED_FILE_SUFFIXES = ['-expected.txt', '-expected.html', '-expected.htm', '-expected.xht', '-expected.xhtml', '-expected.xml', '-expected.svg', '-expected-mismatch.html', '-expected-mismatch.xht', '-expected-mismatch.xhtml', '-expected-mismatch.svg', 'w3c-import.log', *TEMPLATED_TEST_WRAPPER_SUFFIXES]
+
+REVIEW_RE = re.compile(r'^(Reviewed by |Unreviewed\b)')
+TESTS_RE = re.compile(r'^Tests?:')
+CHANGED_FILE_RE = re.compile(r'^\* [^\s:]*[/.][^\s:]*:')
+CANONICAL_LINK_RE = re.compile(r'^Canonical[ -]link:\s*(?P<link>\S+)$', re.IGNORECASE)
+CO_AUTHORED_BY_RE = re.compile(r'^Co-authored-by:', re.IGNORECASE)
+WEBKIT_ONLY_TRAILER_RE = re.compile(r'^(Originally-landed-as|Identifier|git-svn-id):')
+WEBKIT_WPT_PATH_RE = re.compile(r'(?<![/\w])(LayoutTests/)?imported/w3c/web-platform-tests/')
+MARKDOWN_ESCAPE_TABLE = str.maketrans({c: rf'\{c}<!---->' for c in string.punctuation})
+
+
+def wpt_commit_message(message, bugs):
+    lines = message.rstrip().split('\n')
+    title = lines[0].strip()
+
+    description = []
+    canonical_link = None
+    co_authors = []
+    in_changed_files = False
+    tests_indent = None
+    body = lines[1:]
+    for index, line in enumerate(body):
+        stripped = line.strip()
+        indent = len(line) - len(line.lstrip())
+        if tests_indent is not None and stripped and (indent > tests_indent or len(stripped.split()) == 1):
+            continue
+        tests_indent = None
+
+        canonical_link_match = CANONICAL_LINK_RE.match(stripped)
+        preamble = not any(description)
+        standalone = (not index or not body[index - 1].strip()) and (index + 1 == len(body) or not body[index + 1].strip())
+        if canonical_link_match:
+            canonical_link = canonical_link_match['link']
+        elif CO_AUTHORED_BY_RE.match(stripped):
+            co_authors.append(stripped)
+        elif in_changed_files or CHANGED_FILE_RE.match(stripped):
+            in_changed_files = True
+        elif TESTS_RE.match(stripped):
+            tests_indent = indent
+        elif (preamble or standalone) and REVIEW_RE.match(stripped):
+            continue
+        elif preamble and all(Tracker.from_string(word) or radar.Tracker.parse_id(word) for word in stripped.split()):
+            continue
+        elif not WEBKIT_ONLY_TRAILER_RE.match(stripped):
+            description.append(line.rstrip())
+
+    title = WEBKIT_WPT_PATH_RE.sub('', title)
+    description = WEBKIT_WPT_PATH_RE.sub('', textwrap.dedent('\n'.join(description)))
+    description = re.sub(r'\n{3,}', '\n\n', description.strip('\n'))
+    trailers = [f'WebKit-Bug: {bug.link}' for bug in bugs]
+    if canonical_link:
+        trailers.append(f'WebKit-Canonical-Link: {canonical_link}')
+    trailers += co_authors
+    return '\n\n'.join(part for part in (title, description, '\n'.join(trailers)) if part)
 
 
 class WebPlatformTestExporter(object):
@@ -65,14 +122,20 @@ class WebPlatformTestExporter(object):
             raise ValueError('A git commit must be provided using `--git-commit`.')
 
         commit = self._repository.find(options.git_commit)
-        issue = next((issue for issue in commit.issues if isinstance(issue.tracker, bugzilla.Tracker)), None)
-        if not issue:
+        bugs = [issue for issue in commit.issues if isinstance(issue.tracker, bugzilla.Tracker)]
+        if not bugs:
             raise ValueError('Unable to find associated bug from commit.')
-        self._bug_id = issue.id
-        self._bug = issue
+        self._bug_id = bugs[0].id
+        self._bug = bugs[0]
         self._options.git_commit = commit.hash
 
-        self._commit_message = options.message or f'WebKit export of {issue.link}'
+        self._commit_message = options.message or wpt_commit_message(commit.message, bugs)
+        self._commit_author = self._author_of(commit)
+
+    def _author_of(self, commit):
+        # commit.author is normalized through contributors.json, which can change the email GitHub attributes to.
+        log = run([local.Git.executable(), 'log', commit.hash, '-1', '--no-decorate', '--date=unix', '--format=medium'], cwd=self._repository.root_path, capture_output=True, encoding='utf-8')
+        return next((line[len('Author: '):] for line in log.stdout.splitlines() if line.startswith('Author: ')), None)
 
     @property
     def username(self):
@@ -242,7 +305,17 @@ class WebPlatformTestExporter(object):
             self.delete_local_branch(is_success=True)
             sys.exit(0)
 
-        if self._run_wpt_git(['commit', '-m', self._commit_message]).returncode:
+        # git apply keeps the case of the patch, even where the file system resolves a path in another case.
+        mismatches = case_mismatches(self._filesystem, self._wpt_repo.path, self._wpt_repo.modified(staged=True))
+        for path, upstream_path in sorted(mismatches.items()):
+            _log.error(f'{WEBKIT_WPT_DIR}/{path} differs only in case from {upstream_path} in web-platform-tests. Rename it to match before exporting.')
+        if mismatches:
+            return False
+
+        command = ['commit', '-m', self._commit_message]
+        if self._commit_author:
+            command.append(f'--author={self._commit_author}')
+        if self._run_wpt_git(command).returncode:
             return False
 
         return True
@@ -291,11 +364,11 @@ class WebPlatformTestExporter(object):
             _log.error('Cannot create a WPT PR since it contains webkit test runner specific changes')
             return
 
-        title = self._bug.title.replace("[", "\\[").replace("]", "\\]")
-        # NOTE: this should contain the exact string "WebKit export" to match the condition in
-        # https://github.com/web-platform-tests/wpt-pr-bot/blob/f53e625c4871010277dc68336b340b5cd86e2a10/lib/metadata/index.js#L87
-        description = f'WebKit export from bug: [{title}]({self._bug.link})'
-        pr = self.create_wpt_pull_request(self._wpt_fork_remote + ':' + self._public_branch_name, self._commit_message, description)
+        title = self._bug.title.translate(MARKDOWN_ESCAPE_TABLE)
+        # wpt-pr-bot identifies WebKit exports by pr_title: https://github.com/web-platform-tests/wpt-pr-bot/blob/main/lib/metadata/webkit.js
+        pr_title = f'WebKit export of {self._bug.link}'
+        description = f'WebKit export from bug: [{title}]({self._bug.link})\n\n<pre>\n{PullRequest.escape_html(self._commit_message)}\n</pre>'
+        pr = self.create_wpt_pull_request(self._wpt_fork_remote + ':' + self._public_branch_name, pr_title, description)
         if pr and pr._metadata and pr._metadata.get('issue'):
             pr_issue = pr._metadata['issue']
             labels = pr_issue.labels
@@ -381,6 +454,7 @@ class WebPlatformTestExporter(object):
                 return 1
 
         if self._options.dry_run:
+            _log.info(f'Commit message:\n{textwrap.indent(self._commit_message, "    ")}')
             _log.info('Skipping pushing to remote since this is a dry run')
             self.delete_local_branch(is_success=True)
             return 0
@@ -423,7 +497,7 @@ def parse_args(args):
 
     parser.add_argument('-g', '--git-commit', dest='git_commit', default=None, help='Git commit to apply')
     parser.add_argument('-bn', '--branch-name', dest='public_branch_name', default=None, help='Branch name to push to')
-    parser.add_argument('-m', '--message', dest='message', default=None, help='Commit message')
+    parser.add_argument('-m', '--message', dest='message', default=None, help='Commit message. Default: derived from the WebKit commit message')
     parser.add_argument('-r', '--remote', dest='repository_remote', default=None, help='repository origin to use to push')
     parser.add_argument('-u', '--remote-url', dest='repository_remote_url', default=None, help='repository url to use to push')
     parser.add_argument('-d', '--repository', dest='repository_directory', default=None, help='WPT repository directory. Default: In the parent of your WebKit checkout, e.g. `~/WebKit/../wpt`')

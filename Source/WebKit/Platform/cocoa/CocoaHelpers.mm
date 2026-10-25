@@ -223,15 +223,17 @@ NSSet *objectForKey<NSSet>(NSDictionary *dictionary, id key, bool nilIfEmpty, Cl
 
 // MARK: JSON Helpers
 
-static inline NSJSONReadingOptions NODELETE toReadingImpl(JSONOptionSet options)
+static inline NSJSONReadingOptions LEGACY_NODELETE toReadingImpl(JSONOptionSet options)
 {
-    NSJSONReadingOptions result = 0;
+    // Mutable containers avoid the shared singleton that NSJSONSerialization returns for empty arrays and dictionaries,
+    // which JavaScriptCore would convert to the same JS object. See https://webkit.org/b/326597.
+    NSJSONReadingOptions result = NSJSONReadingMutableContainers;
     if (options.contains(JSONOptions::FragmentsAllowed))
         result |= NSJSONReadingFragmentsAllowed;
     return result;
 }
 
-static inline NSJSONWritingOptions NODELETE toWritingImpl(JSONOptionSet options)
+static inline NSJSONWritingOptions LEGACY_NODELETE toWritingImpl(JSONOptionSet options)
 {
     NSJSONWritingOptions result = 0;
     if (options.contains(JSONOptions::FragmentsAllowed))

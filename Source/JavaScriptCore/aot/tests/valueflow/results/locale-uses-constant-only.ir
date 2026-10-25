@@ -1,0 +1,17 @@
+# When every locale operand is a string literal, only those tags are reported
+# RUN: valueflow-results
+# CHECK: locale Constant "en-US" f0:v3
+# RUN(ALL): valueflow-results
+# ALL-NOT: locale Unknown
+# ALL-NOT: locale HostDefault
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Double number=1234.5
+    v1 = PropGet v0 key="toLocaleString"
+    v2 = String string="en-US"
+    v3 = Call v1, v0, v2 calleeKey="toLocaleString"
+    Return
+}

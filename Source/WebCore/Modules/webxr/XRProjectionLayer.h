@@ -60,12 +60,19 @@ public:
 
     std::optional<float> fixedFoveation() const;
     void setFixedFoveation(std::optional<float>);
-    WebXRRigidTransform* NODELETE deltaPose() const;
+    WebXRRigidTransform* LEGACY_NODELETE deltaPose() const;
     void setDeltaPose(WebXRRigidTransform*);
+
+    void setViewport(size_t viewIndex, const IntRect&);
 
     // WebXRLayer
     void startFrame(PlatformXR::FrameData&) final;
     PlatformXR::DeviceLayer endFrame() final;
+#if PLATFORM(VISION)
+    bool supportsViewportScaling() const final { return false; }
+#else
+    bool supportsViewportScaling() const final { return true; }
+#endif
 #if ENABLE(WEBGPU)
     std::optional<PlatformXR::FrameData::LayerData> layerData() const;
 #endif

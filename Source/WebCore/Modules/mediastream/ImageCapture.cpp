@@ -104,14 +104,13 @@ void ImageCapture::takePhoto(PhotoSettings&& settings, DOMPromiseDeferred<IDLInt
 
             ALWAYS_LOG_WITH_THIS(&capture, identifier, "resolving promise");
 
-            // FIXME: This is a static analysis false positive (rdar://146889777).
-            SUPPRESS_UNCOUNTED_ARG promise.resolve(Blob::create(capture.scriptExecutionContext(), WTF::move(get<0>(result.value())), WTF::move(get<1>(result.value()))));
+            promise.resolve(Blob::create(protect(capture.scriptExecutionContext()), WTF::move(get<0>(result.value())), WTF::move(get<1>(result.value()))));
         });
     });
 }
 
 // FIXME: Move this routine to VideoFrame.
-static ImageOrientation NODELETE videoFrameOrientation(const VideoFrame& videoFrame)
+static ImageOrientation LEGACY_NODELETE videoFrameOrientation(const VideoFrame& videoFrame)
 {
     switch (videoFrame.rotation()) {
     case VideoFrame::Rotation::None:
@@ -137,7 +136,7 @@ static Ref<ImageBitmap> createImageBitmapViaDrawing(Ref<ImageBuffer>&& imageBuff
 
 static Ref<ImageBitmap> createImageBitmapFromNativeImage(Ref<ImageBuffer>&& imageBuffer, NativeImage& nativeImage, ImageOrientation orientation)
 {
-    imageBuffer->context().drawNativeImage(nativeImage, { { }, imageBuffer->backendSize() }, { { }, imageBuffer->backendSize() }, ImagePaintingOptions { orientation });
+    imageBuffer->context().drawNativeImage(nativeImage, { { }, imageBuffer->backendSize() }, { { }, imageBuffer->backendSize() }, ImageDrawingOptions { orientation });
 
     bool isOriginClean = true;
     return ImageBitmap::create(WTF::move(imageBuffer), isOriginClean);
@@ -193,7 +192,7 @@ static void createImageBitmapOrException(VideoFrame& videoFrame, CompletionHandl
 
 class ImageCaptureVideoFrameObserver : public RealtimeMediaSource::VideoFrameObserver, public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<ImageCaptureVideoFrameObserver, WTF::DestructionThread::MainRunLoop> {
 public:
-    static Ref<ImageCaptureVideoFrameObserver> create(Ref<RealtimeMediaSource>&& source) { return adoptRef(*new ImageCaptureVideoFrameObserver(WTF::move(source))); }
+    static Ref<ImageCaptureVideoFrameObserver> LEGACY_NODELETE create(Ref<RealtimeMediaSource>&& source) { return adoptRef(*new ImageCaptureVideoFrameObserver(WTF::move(source))); }
     ~ImageCaptureVideoFrameObserver()
     {
         ASSERT(m_callbacks.isEmpty());

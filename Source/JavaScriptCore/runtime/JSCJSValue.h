@@ -132,9 +132,6 @@ public:
     enum JSTrueTag { JSTrue };
     enum JSFalseTag { JSFalse };
     enum JSCellTag { JSCellType };
-#if USE(BIGINT32)
-    enum EncodeAsBigInt32Tag { EncodeAsBigInt32 };
-#endif
     enum EncodeAsDoubleTag { EncodeAsDouble };
 
     JSValue();
@@ -144,9 +141,6 @@ public:
     JSValue(JSFalseTag);
     JSValue(JSCell* ptr);
     JSValue(const JSCell* ptr);
-#if USE(BIGINT32)
-    JSValue(EncodeAsBigInt32Tag, int32_t);
-#endif
 
     // Numbers
     JSValue(EncodeAsDoubleTag, double);
@@ -181,9 +175,6 @@ public:
     double asDouble() const;
     bool asBoolean() const;
     double asNumber() const;
-#if USE(BIGINT32)
-    int32_t bigInt32AsInt32() const; // must only be called on a BigInt32
-#endif
     
     int32_t asInt32ForArithmetic() const; // Boolean becomes an int, but otherwise like asInt32().
 
@@ -205,7 +196,6 @@ public:
     inline bool isBigInt() const; // Defined in JSCJSValueCell.h
     inline bool isHeapBigInt() const; // Defined in JSCJSValueCell.h
     JS_EXPORT_PRIVATE bool isHeapBigIntSlow() const;
-    bool isBigInt32() const;
     inline bool isSymbol() const; // Defined in JSCJSValueCell.h
     inline bool isPrimitive() const; // Defined in JSCJSValueCell.h
     inline bool isGetterSetter() const; // Defined in JSCJSValueCell.h
@@ -216,9 +206,9 @@ public:
     inline const ClassInfo* classInfoOrNull() const; // Defined in JSCJSValueStructure.h
 
     // Non-inline versions of above for use in header ASSERT macros:
-    JS_EXPORT_PRIVATE bool NODELETE isGetterSetterSlow() const;
-    JS_EXPORT_PRIVATE bool NODELETE isCustomGetterSetterSlow() const;
-    JS_EXPORT_PRIVATE bool NODELETE isStringSlow() const;
+    JS_EXPORT_PRIVATE bool LEGACY_NODELETE isGetterSetterSlow() const;
+    JS_EXPORT_PRIVATE bool LEGACY_NODELETE isCustomGetterSetterSlow() const;
+    JS_EXPORT_PRIVATE bool LEGACY_NODELETE isStringSlow() const;
 
     // Extracting the value.
     inline bool getString(JSGlobalObject*, WTF::String&) const; // Defined in JSCJSValueCell.h
@@ -242,7 +232,7 @@ public:
     inline JSBigInt* asHeapBigInt() const; // Defined in JSCJSValueBigInt.h
 
     // toNumber conversion if it can be done without side effects.
-    std::optional<double> NODELETE toNumberFromPrimitive() const;
+    std::optional<double> LEGACY_NODELETE toNumberFromPrimitive() const;
 
     inline JSString* toString(JSGlobalObject*) const; // On exception, this returns the empty string. Defined in JSCJSValuePropertyInlines.h
     inline JSString* toStringOrNull(JSGlobalObject*) const; // On exception, this returns null, to make exception checks faster. Defined in JSCJSValuePropertyInlines.h
@@ -373,15 +363,6 @@ public:
      *
      * No valid JSValue will have the bit pattern 0x0, this is used to represent array
      * holes, and as a C++ 'no value' result (e.g. JSValue() has an internal value of 0).
-     *
-     * When USE(BIGINT32), we have a special representation for BigInts that are small (32-bit at most):
-     *      0000:XXXX:XXXX:0012
-     * This representation works because of the following things:
-     * - It cannot be confused with a Double or Integer thanks to the top bits
-     * - It cannot be confused with a pointer to a Cell, thanks to bit 1 which is set to true
-     * - It cannot be confused with a pointer to wasm thanks to bit 0 which is set to false
-     * - It cannot be confused with true/false because bit 2 is set to false
-     * - It cannot be confused for null/undefined because bit 4 is set to true
      */
 
     // This value is 2^49, used to encode doubles such that the encoded value will begin
@@ -401,10 +382,6 @@ public:
     static constexpr int32_t OtherTag       = 0x2;
     static constexpr int32_t BoolTag        = 0x4;
     static constexpr int32_t UndefinedTag   = 0x8;
-#if USE(BIGINT32)
-    static constexpr int32_t BigInt32Tag    = 0x12;
-    static constexpr int64_t BigInt32Mask   = NumberTag | BigInt32Tag;
-#endif
     // Combined integer value for non-numeric immediates.
     static constexpr int32_t ValueFalse     = OtherTag | BoolTag | false;
     static constexpr int32_t ValueTrue      = OtherTag | BoolTag | true;
@@ -525,13 +502,6 @@ inline JSValue jsBoolean(bool b)
 {
     return b ? JSValue(JSValue::JSTrue) : JSValue(JSValue::JSFalse);
 }
-
-#if USE(BIGINT32)
-ALWAYS_INLINE JSValue jsBigInt32(int32_t intValue)
-{
-    return JSValue(JSValue::EncodeAsBigInt32, intValue);
-}
-#endif
 
 inline JSValue jsNaN()
 {
@@ -767,25 +737,6 @@ ALWAYS_INLINE JSCell* JSValue::asCell() const
     return u.ptr;
 }
 
-
-#if USE(BIGINT32)
-inline JSValue::JSValue(EncodeAsBigInt32Tag, int32_t value)
-{
-    uint64_t shiftedValue = static_cast<uint64_t>(static_cast<uint32_t>(value)) << 16;
-    ASSERT(!(shiftedValue & NumberTag));
-    u.asInt64 = shiftedValue | BigInt32Tag;
-}
-#endif // USE(BIGINT32)
-
-inline bool JSValue::isBigInt32() const
-{
-#if USE(BIGINT32)
-    return (u.asInt64 & BigInt32Mask) == BigInt32Tag;
-#else
-    return false;
-#endif
-}
-
 ALWAYS_INLINE double JSValue::toNumber(JSGlobalObject* globalObject) const
 {
     if (isInt32())
@@ -875,6 +826,21 @@ inline bool operator==(const JSValue a, const JSCell* b) { return a == JSValue(b
 
 inline int64_t tryConvertToInt52(double number)
 {
+#if CPU(ARM64) || CPU(X86_64)
+    // Unlike static_cast, these conversions are defined for NaN and out-of-range inputs. Comparing
+    // bit patterns after the round trip rejects NaN, infinities, fractions, and -0.0 at once, since
+    // 0 converts back to +0.0.
+#if CPU(ARM64)
+    int64_t asInt64 = vcvtd_s64_f64(number);
+#else
+    int64_t asInt64 = _mm_cvttsd_si64(_mm_set_sd(number));
+#endif
+    if (std::bit_cast<uint64_t>(static_cast<double>(asInt64)) != std::bit_cast<uint64_t>(number))
+        return JSValue::notInt52;
+    if (static_cast<uint64_t>(asInt64) + (static_cast<uint64_t>(1) << (JSValue::numberOfInt52Bits - 1)) >= (static_cast<uint64_t>(1) << JSValue::numberOfInt52Bits))
+        return JSValue::notInt52;
+    return asInt64;
+#else
     if (number != number)
         return JSValue::notInt52;
 #if OS(WINDOWS) && CPU(X86)
@@ -896,6 +862,7 @@ inline int64_t tryConvertToInt52(double number)
     if (asInt64 < -(static_cast<int64_t>(1) << (JSValue::numberOfInt52Bits - 1)))
         return JSValue::notInt52;
     return asInt64;
+#endif
 }
 
 inline bool isInt52(double number)
@@ -1000,14 +967,6 @@ ALWAYS_INLINE void clearEncodedJSValueConcurrent(EncodedJSValue& dest)
 {
     dest = JSValue::encode(JSValue());
 }
-
-#if USE(BIGINT32)
-inline int32_t JSValue::bigInt32AsInt32() const
-{
-    ASSERT(isBigInt32());
-    return static_cast<int32_t>(u.asInt64 >> 16);
-}
-#endif // USE(BIGINT32)
 
 ALWAYS_INLINE bool JSValue::getUInt32(uint32_t& v) const
 {

@@ -1,0 +1,17 @@
+# An operation that adds more names than a property run can count gets no run and stores them one by one. One within the limit keeps its run
+# FORM: Selected
+# OPTIONS: limit=MaxPropertyListNames:2
+# RUN: pass NumberAndEncode
+# LOSS: MaxPropertyListNames x1 f0 v3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="main" parameters=[{type=object}, {type=anything}] results=[{type=boolean}] {
+    v2 = TryPutByIds v0, v1, v1 keys=["a", "b"]
+    v3 = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"]
+    Return v2
+}
+# CHECK: propertyRun 0 ["a" "b"]
+# CHECK-NOT: propertyRun
+# CHECK: v2: boolean = TryPutByIds {{*}} request=0
+# CHECK-NEXT: v3: boolean = TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"]
+# CHECK-NOT: request=

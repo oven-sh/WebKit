@@ -27,16 +27,17 @@
 #pragma once
 
 #include "WebKitWindowProperties.h"
+#include <WebCore/IntRect.h>
 #include <WebCore/WindowFeatures.h>
 
 WebKitWindowProperties* webkitWindowPropertiesCreate();
 void webkitWindowPropertiesUpdateFromWebWindowFeatures(WebKitWindowProperties*, const WebCore::WindowFeatures&);
-#if PLATFORM(GTK)
-void webkitWindowPropertiesSetGeometry(WebKitWindowProperties*, GdkRectangle*);
-#endif
+void webkitWindowPropertiesSetGeometry(WebKitWindowProperties*, const WebCore::IntRect&);
+void webkitWindowPropertiesSetHasCustomGeometry(WebKitWindowProperties*, bool);
 void webkitWindowPropertiesSetToolbarVisible(WebKitWindowProperties*, bool toolbarsVisible);
 void webkitWindowPropertiesSetMenubarVisible(WebKitWindowProperties*, bool menuBarVisible);
 void webkitWindowPropertiesSetStatusbarVisible(WebKitWindowProperties*, bool statusBarVisible);
 void webkitWindowPropertiesSetScrollbarsVisible(WebKitWindowProperties*, bool scrollBarsVisible);
 void webkitWindowPropertiesSetResizable(WebKitWindowProperties*, bool resizable);
 void webkitWindowPropertiesSetFullscreen(WebKitWindowProperties*, bool fullscreen);
+void webkitWindowPropertiesSetIsPopup(WebKitWindowProperties*, bool isPopup);

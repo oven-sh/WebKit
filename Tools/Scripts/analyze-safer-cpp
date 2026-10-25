@@ -24,16 +24,15 @@
 """Run the SaferCPP clang static-analyzer checkers against your local changes
 without performing a full WebKit build.
 
-Downloads a recent toolchain from swift.org if needed.
+On macOS, downloads a recent toolchain from swift.org if needed. On Linux,
+uses the clang++ in PATH that implements the most SaferCPP checkers.
 
 Uses CMake for fast generation of compile_commands.json. Or you can supply
-your own.
+your own, or point at a GTK or WPE build-webkit tree with --gtk or --wpe.
 """
 
 import argparse
 import concurrent.futures
-import glob
-import json
 import os
 import re
 import shlex
@@ -41,115 +40,20 @@ import subprocess
 import sys
 import tempfile
 
-SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
-sys.path.insert(0, SCRIPT_DIR)
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
-
-def find_webkit_root():
-    proc = subprocess.run(['git', 'rev-parse', '--show-toplevel'],
-                          capture_output=True, text=True)
-    if proc.returncode == 0 and proc.stdout.strip():
-        return os.path.realpath(proc.stdout.strip())
-    return os.path.dirname(os.path.dirname(SCRIPT_DIR))
-
-
-WEBKIT_ROOT = find_webkit_root()
-
+from webkitpy.safer_cpp.analyzer import (  # noqa: E402
+    HEADER_EXT, SOURCE_EXT, WEBKIT_CHECKERS, WEBKIT_ROOT, CompileDB, add_compile_commands_arguments,
+    drop_unavailable_checkers, project_for_path, resolve_analyzer_clang, resolve_compile_commands_path, rewrite_argv)
 from webkitpy.safer_cpp.checkers import Checker, PROJECTS  # noqa: E402
 
-WEBKIT_CHECKERS = [
-    'alpha.webkit.ForwardDeclChecker',
-    'alpha.webkit.MemoryUnsafeCastChecker',
-    'alpha.webkit.NoDeleteChecker',
-    'alpha.webkit.NoUncheckedPtrMemberChecker',
-    'alpha.webkit.NoUnretainedMemberChecker',
-    'alpha.webkit.RetainPtrCtorAdoptChecker',
-    'alpha.webkit.UnborrowedCallArgsChecker',
-    'alpha.webkit.UnborrowedLambdaCapturesChecker',
-    'alpha.webkit.UnborrowedLocalVarsChecker',
-    'alpha.webkit.UncheckedCallArgsChecker',
-    'alpha.webkit.UncheckedLocalVarsChecker',
-    'alpha.webkit.UncountedCallArgsChecker',
-    'alpha.webkit.UncountedLocalVarsChecker',
-    'alpha.webkit.UnretainedCallArgsChecker',
-    'alpha.webkit.UnretainedLambdaCapturesChecker',
-    'alpha.webkit.UnretainedLocalVarsChecker',
-    'webkit.NoUncountedMemberChecker',
-    'webkit.RefCntblBaseVirtualDtor',
-    'webkit.UncountedLambdaCapturesChecker',
-]
 
-# Keep in sync with Tools/Scripts/build-and-analyze make_analyzer_flags().
-DISABLE_CATEGORIES = 'alpha,apiModeling,core,cplusplus,deadcode,debug,fuchsia,nullability,optin,osx,security,unix,webkit'
-
-SOURCE_EXT = {'.cpp', '.cc', '.cxx', '.c', '.mm', '.m'}
-HEADER_EXT = {'.h', '.hpp', '.hxx'}
-
-DEFAULT_BUILD_DIR = os.path.join(WEBKIT_ROOT, 'WebKitBuild', 'cmake-mac', 'Debug')
-TOOLCHAIN_DIRS = [
-    os.path.expanduser('~/Library/Developer/Toolchains'),
-    '/Library/Developer/Toolchains',
-]
-SWIFT_LATEST_URL = 'https://download.swift.org/development/xcode/latest-build.yml'
-SWIFT_DOWNLOAD_BASE = 'https://download.swift.org/development/xcode'
-
-# Ordered so that PAL (which lives under WebCore) is matched before WebCore.
-PROJECT_ROOTS = [
-    ('PAL', os.path.join(WEBKIT_ROOT, 'Source', 'WebCore', 'PAL')),
-    ('WTF', os.path.join(WEBKIT_ROOT, 'Source', 'WTF')),
-] + [(p, os.path.join(WEBKIT_ROOT, 'Source', p)) for p in PROJECTS if p not in ('PAL', 'WTF')]
-
-CHECKER_HELP_RE = re.compile(r'^ {2}(\S+)')
 DIAG_RE = re.compile(
     r'^(?P<path>[^:]+):(?P<line>\d+):(?P<col>\d+): '
     r'(?P<kind>warning|error|note): '
     r'(?P<msg>.*?)(?: \[(?P<checker>[\w.]+)\])?$'
 )
-INCLUDE_RE = re.compile(r'^\s*#\s*include\s+"([^"]+)"')
 SUMMARY_RE = re.compile(r'^\d+ warnings?( and \d+ errors?)? generated\.$')
-
-
-def project_for_path(absPath):
-    for name, root in PROJECT_ROOTS:
-        if absPath.startswith(root + os.sep):
-            return name, root
-    return None, None
-
-
-class CompileDB:
-    def __init__(self, compileCommandsPath):
-        with open(compileCommandsPath) as f:
-            entries = json.load(f)
-        self.byFile = {os.path.realpath(e['file']): e for e in entries}
-        self._bundleIndex = None
-
-    def _buildBundleIndex(self):
-        index = {}
-        for path, entry in self.byFile.items():
-            if '/unified-sources/UnifiedSource' not in path:
-                continue
-            try:
-                with open(path) as f:
-                    for line in f:
-                        m = INCLUDE_RE.match(line)
-                        if m:
-                            index.setdefault(m.group(1), entry)
-            except OSError:
-                pass
-        self._bundleIndex = index
-
-    def lookup(self, absSrc):
-        absSrc = os.path.realpath(absSrc)
-        entry = self.byFile.get(absSrc)
-        if entry:
-            return entry
-        if self._bundleIndex is None:
-            self._buildBundleIndex()
-        _, root = project_for_path(absSrc)
-        if not root:
-            return None
-        rel = os.path.relpath(absSrc, root).replace(os.sep, '/')
-        return self._bundleIndex.get(rel)
 
 
 class Expectations:
@@ -181,133 +85,6 @@ class Expectations:
         if key not in self._cache:
             self._cache[key] = self._load(project, shortChecker)
         return relPath in self._cache[key]
-
-
-def resolve_preset_build_dir(presetName):
-    presets = {}
-    for name in ('CMakePresets.json', 'CMakeUserPresets.json'):
-        path = os.path.join(WEBKIT_ROOT, name)
-        if not os.path.isfile(path):
-            continue
-        with open(path) as f:
-            for p in json.load(f).get('configurePresets', []):
-                presets[p['name']] = p
-
-    def findBinaryDir(name, seen):
-        if name in seen or name not in presets:
-            return None
-        seen.add(name)
-        p = presets[name]
-        if 'binaryDir' in p:
-            return p['binaryDir']
-        parents = p.get('inherits', [])
-        if isinstance(parents, str):
-            parents = [parents]
-        for parent in parents:
-            result = findBinaryDir(parent, seen)
-            if result:
-                return result
-        return None
-
-    if presetName not in presets:
-        sys.exit("error: unknown preset '{}'".format(presetName))
-    binaryDir = findBinaryDir(presetName, set())
-    if not binaryDir:
-        sys.exit("error: preset '{}' does not define binaryDir".format(presetName))
-    binaryDir = binaryDir.replace('${sourceDir}', WEBKIT_ROOT)
-    if not os.path.isabs(binaryDir):
-        binaryDir = os.path.join(WEBKIT_ROOT, binaryDir)
-    return binaryDir
-
-
-def is_cmake_pch(path):
-    return 'cmake_pch' in os.path.basename(path)
-
-# We include prefix header #includes directly instead of including the prefix
-# header itself because clang substitutes the precompiled .pcm for a prefix .h
-# automatically, which triggers version mismatch when you use a new toolchain
-# to run analysis on an existing build.
-def prefix_header_includes(pchHeaderPath):
-    headers = []
-    try:
-        with open(pchHeaderPath) as f:
-            for line in f:
-                m = INCLUDE_RE.match(line)
-                if m:
-                    headers.append(m.group(1))
-    except OSError:
-        pass
-    return headers
-
-
-def rewrite_argv(entry, absSrc, clang, checkers):
-    tokens = shlex.split(entry['command'])
-    out = [clang]
-    prefixHeaderIncludes = []
-    i = 1
-    n = len(tokens)
-    entryFile = entry['file']
-    entryFileReal = os.path.realpath(entryFile)
-    while i < n:
-        t = tokens[i]
-        if t == '-o' or t == '-MT' or t == '-MF' or t == '-MQ':
-            i += 2
-            continue
-        if t == '-include' and i + 1 < n:
-            if is_cmake_pch(tokens[i + 1]):
-                prefixHeaderIncludes += prefix_header_includes(tokens[i + 1])
-            else:
-                out += [t, tokens[i + 1]]
-            i += 2
-            continue
-        if t == '-x' and i + 1 < n:
-            i += 2
-            continue
-        if t in ('-c', '-MD', '-MMD', '-Winvalid-pch', '-fpch-instantiate-templates',
-                 '-Werror', '-fcolor-diagnostics'):
-            i += 1
-            continue
-        if t.startswith('-fdiagnostics-color') or t.startswith('-Werror='):
-            i += 1
-            continue
-        if t == '-Xclang' and i + 1 < n:
-            nxt = tokens[i + 1]
-            if nxt in ('-include-pch', '-include'):
-                if nxt == '-include' and i + 3 < n and is_cmake_pch(tokens[i + 3]):
-                    prefixHeaderIncludes += prefix_header_includes(tokens[i + 3])
-                i += 4
-                continue
-            if nxt == '-fno-pch-timestamp':
-                i += 2
-                continue
-        if t == entryFile or os.path.realpath(t) == entryFileReal:
-            i += 1
-            continue
-        out.append(t)
-        i += 1
-
-    for prefixHeaderInclude in prefixHeaderIncludes:
-        out += ['-include', prefixHeaderInclude]
-    out += [
-        absSrc,
-        '--analyze',
-        '-fno-color-diagnostics',
-        '-Wno-error',
-        # The SaferCPP EWS analyzes a Release build. Disable assertions so a
-        # Debug compile_commands.json produces the same checker results.
-        '-UASSERT_ENABLED', '-DASSERT_ENABLED=0', '-DNDEBUG=1',
-        '-DRELEASE_WITHOUT_OPTIMIZATIONS=1',
-        '-DENABLE_IPC_TESTING_API=1',
-        # Define these for compatibility when using open source clang.
-        '-D__ptrauth_swift_value_witness_function_pointer(x)=',
-        '-D__ptrauth_swift_class_method_pointer(x)=',
-        '-Xclang', '-analyzer-output=text',
-        '-Xclang', '-analyzer-disable-checker', '-Xclang', DISABLE_CATEGORIES,
-        '-Xclang', '-analyzer-checker', '-Xclang', ','.join(checkers),
-        '-Xclang', '-analyzer-config', '-Xclang', 'max-nodes=10000000',
-        '-o', os.devnull,
-    ]
-    return out, entry['directory']
 
 
 def filter_diagnostics(stderr, requestedPaths, expectations, ignoreExpectations):
@@ -433,128 +210,13 @@ def normalize_checkers(values, parser):
             result.append(v)
         elif v in shortNames:
             result.append(shortNames[v])
+        elif v.startswith(('alpha.webkit.', 'webkit.')):
+            # A checker the registry does not list yet, such as the borrow checkers.
+            result.append(v)
         else:
-            parser.error("unknown checker '{}'; valid names: {}".format(
+            parser.error("unknown checker '{}'; valid names: {}, or any full alpha.webkit.* or webkit.* name".format(
                 v, ', '.join(sorted(shortNames))))
     return result
-
-
-def available_checkers(clang):
-    proc = subprocess.run(
-        [clang, '-cc1', '-analyzer-checker-help', '-analyzer-checker-help-alpha'],
-        capture_output=True, text=True)
-    if proc.returncode != 0:
-        return None
-    names = set()
-    for line in proc.stdout.splitlines():
-        m = CHECKER_HELP_RE.match(line)
-        if m:
-            names.add(m.group(1))
-    return names or None
-
-
-def drop_unavailable_checkers(checkers, clang, explicit):
-    available = available_checkers(clang)
-    if available is None:
-        return checkers
-    missing = [c for c in checkers if c not in available]
-    if not missing:
-        return checkers
-    if explicit:
-        sys.exit('error: this analyzer does not implement {}'.format(', '.join(missing)))
-    remaining = [c for c in checkers if c in available]
-    if not remaining:
-        sys.exit('error: this analyzer implements none of the SaferCPP checkers; '
-                 'pass --clang PATH or --download-toolchain for a newer one.')
-    print('Skipping checkers this analyzer does not implement: {}'.format(
-        ', '.join(c.rsplit('.', 1)[-1] for c in missing)), file=sys.stderr)
-    return remaining
-
-
-def read_plist_key(plist, key):
-    proc = subprocess.run(['plutil', '-extract', key, 'raw', '-o', '-', plist],
-                          capture_output=True, text=True)
-    return proc.stdout.strip() if proc.returncode == 0 else ''
-
-
-def find_toolchain_clangs():
-    candidates = []
-    for d in TOOLCHAIN_DIRS:
-        for tc in glob.glob(os.path.join(d, '*.xctoolchain')):
-            clang = os.path.join(tc, 'usr', 'bin', 'clang++')
-            if not os.path.isfile(clang):
-                continue
-            plist = os.path.join(tc, 'Info.plist')
-            created = read_plist_key(plist, 'CreatedDate')
-            display = read_plist_key(plist, 'DisplayName') or os.path.basename(tc)
-            candidates.append((created, clang, display))
-    candidates.sort(reverse=True)
-    return candidates
-
-
-def download_swift_toolchain():
-    print('Fetching latest swift.org development snapshot manifest...', file=sys.stderr)
-    proc = subprocess.run(['curl', '-fsSL', SWIFT_LATEST_URL], capture_output=True, text=True)
-    if proc.returncode != 0:
-        sys.exit('error: failed to fetch {}: {}'.format(SWIFT_LATEST_URL, proc.stderr.strip()))
-    fields = dict(re.findall(r'^(\w+):\s*(\S+)', proc.stdout, re.M))
-    snapshot = fields.get('dir')
-    pkgName = fields.get('download')
-    if not snapshot or not pkgName:
-        sys.exit('error: could not parse snapshot manifest:\n' + proc.stdout)
-    url = '{}/{}/{}'.format(SWIFT_DOWNLOAD_BASE, snapshot, pkgName)
-    with tempfile.NamedTemporaryFile(suffix='.pkg', delete=False) as f:
-        pkgPath = f.name
-    print('Downloading {} (~1.5 GB)...'.format(url), file=sys.stderr)
-    rc = subprocess.call(['curl', '-fL', '-#', '-o', pkgPath, url])
-    if rc != 0:
-        sys.exit('error: download failed')
-    print('Installing to ~/Library/Developer/Toolchains/ ...', file=sys.stderr)
-    rc = subprocess.call(['installer', '-pkg', pkgPath, '-target', 'CurrentUserHomeDirectory'])
-    os.unlink(pkgPath)
-    if rc != 0:
-        sys.exit('error: installer failed (exit {})'.format(rc))
-    expected = os.path.join(TOOLCHAIN_DIRS[0], snapshot + '.xctoolchain', 'usr', 'bin', 'clang++')
-    if os.path.isfile(expected):
-        return expected, snapshot
-    for _, clang, display in find_toolchain_clangs():
-        if snapshot in clang:
-            return clang, display
-    sys.exit('error: installed toolchain not found at {}'.format(expected))
-
-
-def resolve_analyzer_clang(args):
-    if args.clang:
-        if not os.path.isfile(args.clang):
-            sys.exit("error: --clang path '{}' does not exist".format(args.clang))
-        print('Using analyzer: {}'.format(args.clang), file=sys.stderr)
-        return args.clang
-
-    if args.download_toolchain:
-        clang, display = download_swift_toolchain()
-        print('Using analyzer: {} ({})'.format(clang, display), file=sys.stderr)
-        return clang
-
-    candidates = find_toolchain_clangs()
-    if candidates:
-        _, clang, display = candidates[0]
-        print('Using analyzer: {} ({})'.format(clang, display), file=sys.stderr)
-        return clang
-
-    print(file=sys.stderr)
-    print('No Swift toolchain found in {}.'.format(' or '.join(TOOLCHAIN_DIRS)), file=sys.stderr)
-    print(file=sys.stderr)
-    if not sys.stdin.isatty():
-        sys.exit('Pass --clang PATH, or --download-toolchain to fetch a swift.org snapshot.')
-    try:
-        answer = input('`analyze-safer-cpp` requires an up-to-date toolchain. Download the latest swift.org development snapshot (~1.5 GB)? [Y/n] ')
-    except (EOFError, KeyboardInterrupt):
-        answer = ''
-    if answer.strip().lower() in ('y', 'yes', ''):
-        clang, display = download_swift_toolchain()
-        print('Using analyzer: {} ({})'.format(clang, display), file=sys.stderr)
-        return clang
-    sys.exit('No analyzer clang available. Pass --clang PATH or re-run with --download-toolchain.')
 
 
 def repo_relative(path):
@@ -570,12 +232,13 @@ def parse_args():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         usage='%(prog)s [-h] [--base BASE] [--clang CLANG] [--download-toolchain]\n'
-              '                         [--cmake-preset CMAKE_PRESET | --compile-commands PATH]\n'
+              '                         [--cmake-preset CMAKE_PRESET | --compile-commands PATH | --gtk | --wpe]\n'
               '                         [--checker NAME] [--ignore-expectations] [-j N] [-v]\n'
               '                         [--changed-files | FILE ...]',
         epilog='examples:\n'
                '  analyze-safer-cpp Source/WebCore/dom/Document.cpp\n'
-               '  analyze-safer-cpp --changed-files -j 12\n')
+               '  analyze-safer-cpp --changed-files -j 12\n'
+               '  analyze-safer-cpp --wpe --changed-files\n')
     parser.add_argument('files', nargs='*', metavar='FILE',
                         help='source or header files to analyze')
     parser.add_argument('--changed-files', action='store_true',
@@ -585,14 +248,12 @@ def parse_args():
                              "(default: auto = merge-base of origin/main and HEAD)")
     parser.add_argument('--clang', default=None,
                         help='clang with alpha.webkit.* checkers '
-                             '(default: newest installed swift.org toolchain)')
+                             '(default: newest installed swift.org toolchain on macOS; '
+                             'the clang++ in $CXX or PATH with the most checkers on Linux)')
     parser.add_argument('--download-toolchain', action='store_true',
                         help='download and install the latest swift.org development '
-                             'snapshot without prompting')
-    where = parser.add_mutually_exclusive_group()
-    where.add_argument('--cmake-preset', help='CMake configure preset name')
-    where.add_argument('--compile-commands', metavar='PATH',
-                       help='path to a compile_commands.json file')
+                             'snapshot without prompting (macOS only)')
+    add_compile_commands_arguments(parser)
     parser.add_argument('--checker', action='append', dest='checkers', metavar='NAME',
                         help='restrict to one checker (repeatable; short or full name)')
     parser.add_argument('--ignore-expectations', action='store_true',
@@ -614,19 +275,10 @@ def parse_args():
 
 def main():
     args = parse_args()
-    clang = resolve_analyzer_clang(args)
+
+    db = CompileDB(resolve_compile_commands_path(args))
+    clang = resolve_analyzer_clang(args, db)
     args.checkers = drop_unavailable_checkers(args.checkers, clang, args.explicit_checkers)
-
-    if args.compile_commands:
-        compileCommandsPath = os.path.abspath(args.compile_commands)
-    elif args.cmake_preset:
-        compileCommandsPath = os.path.join(resolve_preset_build_dir(args.cmake_preset), 'compile_commands.json')
-    else:
-        compileCommandsPath = os.path.join(DEFAULT_BUILD_DIR, 'compile_commands.json')
-    if not os.path.isfile(compileCommandsPath):
-        sys.exit("error: compile_commands.json not found at '{}' (run cmake --preset ... first)".format(compileCommandsPath))
-
-    db = CompileDB(compileCommandsPath)
     expectations = Expectations()
 
     requested = collect_input_files(args)

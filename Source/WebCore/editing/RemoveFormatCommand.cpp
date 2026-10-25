@@ -49,7 +49,7 @@ RemoveFormatCommand::RemoveFormatCommand(Ref<Document>&& document)
 {
 }
 
-static bool NODELETE isElementForRemoveFormatCommand(const Element* element)
+static bool LEGACY_NODELETE isElementForRemoveFormatCommand(const Element* element)
 {
     using namespace ElementNames;
 
@@ -96,7 +96,7 @@ void RemoveFormatCommand::doApply()
 
     // We want to remove everything but transparent background.
     // FIXME: We shouldn't access style().
-    protect(defaultStyle->style())->setProperty(CSSPropertyBackgroundColor, CSSValueTransparent);
+    protect(defaultStyle->style())->setProperty(CSSPropertyID::BackgroundColor, CSSValueID::Transparent);
 
     applyCommandToComposite(ApplyStyleCommand::create(document(), defaultStyle.ptr(), isElementForRemoveFormatCommand, editingAction()));
 }

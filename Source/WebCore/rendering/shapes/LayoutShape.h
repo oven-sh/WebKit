@@ -29,6 +29,7 @@
 
 #pragma once
 
+#include <WebCore/ConcreteObjectSize.h>
 #include <WebCore/LayoutRect.h>
 #include <WebCore/Path.h>
 #include <WebCore/StyleShapeForward.h>
@@ -38,11 +39,13 @@
 namespace WebCore {
 
 namespace Style {
+class Image;
 struct ZoomFactor;
 }
 
-class Image;
+class GraphicsContext;
 class LayoutRoundedRect;
+class RenderElement;
 
 struct LineSegment {
     LineSegment() = default;
@@ -72,7 +75,7 @@ public:
     };
 
     static Ref<const LayoutShape> createShape(const Style::BasicShape&, const LayoutPoint& borderBoxOffset, const LayoutSize& logicalBoxSize, LayoutUnit borderBoxLogicalWidth, WritingMode, float logicalMargin, Style::ZoomFactor, float deviceScaleFactor);
-    static Ref<const LayoutShape> createRasterShape(Image*, float threshold, const LayoutRect& logicalImageRect, const LayoutRect& logicalMarginRect, WritingMode, float logicalMargin);
+    static Ref<const LayoutShape> createRasterShape(const Style::Image&, const RenderElement&, float threshold, const LayoutRect& logicalImageRect, const LayoutRect& logicalMarginRect, WritingMode, float logicalMargin, ConcreteObjectSize);
     static Ref<const LayoutShape> createBoxShape(const LayoutRoundedRect&, Vector<FloatPoint>&& contour, WritingMode, float logicalMargin);
 
     virtual ~LayoutShape() = default;
@@ -88,7 +91,7 @@ public:
 protected:
     float shapeMargin() const { return m_margin; }
     WritingMode writingMode() const { return m_writingMode; }
-    static bool NODELETE shouldFlipStartAndEndPoints(WritingMode);
+    static bool LEGACY_NODELETE shouldFlipStartAndEndPoints(WritingMode);
 
 private:
     bool lineOverlapsBoundingBox(LayoutUnit lineTop, LayoutUnit lineHeight, const LayoutRect& rect) const

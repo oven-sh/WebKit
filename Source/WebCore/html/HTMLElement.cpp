@@ -88,6 +88,7 @@
 #include "PopoverData.h"
 #include "Position.h"
 #include "PseudoClassChangeInvalidation.h"
+#include "RenderBlock.h"
 #include "RenderElement.h"
 #include "ScriptController.h"
 #include "ScriptDisallowedScope.h"
@@ -161,11 +162,11 @@ String HTMLElement::nodeName() const
     return Element::nodeName();
 }
 
-static inline CSSValueID NODELETE unicodeBidiAttributeForDirAuto(HTMLElement& element)
+static inline CSSValueID LEGACY_NODELETE unicodeBidiAttributeForDirAuto(HTMLElement& element)
 {
     if (element.hasTagName(preTag) || element.hasTagName(textareaTag))
-        return CSSValuePlaintext;
-    return CSSValueIsolate;
+        return CSSValueID::Plaintext;
+    return CSSValueID::Isolate;
 }
 
 unsigned HTMLElement::parseBorderWidthAttribute(const AtomString& value) const
@@ -178,8 +179,8 @@ unsigned HTMLElement::parseBorderWidthAttribute(const AtomString& value) const
 
 void HTMLElement::applyBorderAttributeToStyle(const AtomString& value, MutableStyleProperties& style)
 {
-    addPropertyToPresentationalHintStyle(style, CSSPropertyBorderWidth, parseBorderWidthAttribute(value), CSSUnitType::Px);
-    addPropertyToPresentationalHintStyle(style, CSSPropertyBorderStyle, CSSValueSolid);
+    addPropertyToPresentationalHintStyle(style, CSSPropertyID::BorderWidth, parseBorderWidthAttribute(value), CSSUnitType::Px);
+    addPropertyToPresentationalHintStyle(style, CSSPropertyID::BorderStyle, CSSValueID::Solid);
 }
 
 bool HTMLElement::hasPresentationalHintsForAttribute(const QualifiedName& name) const
@@ -230,52 +231,52 @@ void HTMLElement::collectPresentationalHintsForAttribute(const QualifiedName& na
     switch (name.nodeName()) {
     case AttributeNames::alignAttr:
         if (equalLettersIgnoringASCIICase(value, "middle"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyTextAlign, CSSValueCenter);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::TextAlign, CSSValueID::Center);
         else
-            addPropertyToPresentationalHintStyle(style, CSSPropertyTextAlign, value);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::TextAlign, value);
         break;
     case AttributeNames::contenteditableAttr: {
-        CSSValueID userModifyValue = CSSValueReadWrite;
+        CSSValueID userModifyValue = CSSValueID::ReadWrite;
         switch (contentEditableType(value)) {
         case ContentEditableType::Inherit:
             return;
         case ContentEditableType::False:
-            userModifyValue = CSSValueReadOnly;
+            userModifyValue = CSSValueID::ReadOnly;
             break;
         case ContentEditableType::PlaintextOnly:
-            userModifyValue = CSSValueReadWritePlaintextOnly;
+            userModifyValue = CSSValueID::ReadWritePlaintextOnly;
             [[fallthrough]];
         case ContentEditableType::True:
-            addPropertyToPresentationalHintStyle(style, CSSPropertyOverflowWrap, CSSValueBreakWord);
-            addPropertyToPresentationalHintStyle(style, CSSPropertyWebkitNbspMode, CSSValueSpace);
-            addPropertyToPresentationalHintStyle(style, CSSPropertyLineBreak, CSSValueAfterWhiteSpace);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::OverflowWrap, CSSValueID::BreakWord);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::WebkitNbspMode, CSSValueID::Space);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::LineBreak, CSSValueID::AfterWhiteSpace);
 #if PLATFORM(IOS_FAMILY)
-            addPropertyToPresentationalHintStyle(style, CSSPropertyWebkitTextSizeAdjust, CSSValueNone);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::WebkitTextSizeAdjust, CSSValueID::None);
 #endif
             break;
         }
-        addPropertyToPresentationalHintStyle(style, CSSPropertyWebkitUserModify, userModifyValue);
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::WebkitUserModify, userModifyValue);
         break;
     }
     case AttributeNames::hiddenAttr:
         if (document().settings().hiddenUntilFoundEnabled() && equalIgnoringASCIICase(value, "until-found"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyContentVisibility, CSSValueHidden);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::ContentVisibility, CSSValueID::Hidden);
         else
-            addPropertyToPresentationalHintStyle(style, CSSPropertyDisplay, CSSValueNone);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::Display, CSSValueID::None);
         break;
     case AttributeNames::draggableAttr:
         if (equalLettersIgnoringASCIICase(value, "true"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyWebkitUserDrag, CSSValueElement);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::WebkitUserDrag, CSSValueID::Element);
         else if (equalLettersIgnoringASCIICase(value, "false"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyWebkitUserDrag, CSSValueNone);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::WebkitUserDrag, CSSValueID::None);
         break;
     case AttributeNames::dirAttr:
         if (equalLettersIgnoringASCIICase(value, "auto"_s))
-            addPropertyToPresentationalHintStyle(style, CSSPropertyUnicodeBidi, unicodeBidiAttributeForDirAuto(*this));
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::UnicodeBidi, unicodeBidiAttributeForDirAuto(*this));
         else if (equalLettersIgnoringASCIICase(value, "rtl"_s) || equalLettersIgnoringASCIICase(value, "ltr"_s)) {
-            addPropertyToPresentationalHintStyle(style, CSSPropertyDirection, value);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::Direction, value);
             if (!hasTagName(bdiTag) && !hasTagName(bdoTag) && !hasTagName(outputTag))
-                addPropertyToPresentationalHintStyle(style, CSSPropertyUnicodeBidi, CSSValueIsolate);
+                addPropertyToPresentationalHintStyle(style, CSSPropertyID::UnicodeBidi, CSSValueID::Isolate);
         }
         break;
     case AttributeNames::XML::langAttr:
@@ -405,6 +406,10 @@ void HTMLElement::attributeChanged(const QualifiedName& name, const AtomString& 
         return;
     case AttributeNames::inertAttr:
         invalidateStyle();
+        return;
+    case AttributeNames::drawableAttr:
+        if (document().settings().htmlInCanvasEnabled())
+            invalidateStyleAndRenderersForSubtree();
         return;
     case AttributeNames::inputmodeAttr:
         if (Ref document = this->document(); this == document->focusedElement()) {
@@ -599,9 +604,9 @@ void HTMLElement::applyAspectRatioWithoutDimensionalRulesFromWidthAndHeightAttri
 
 void HTMLElement::addParsedWidthAndHeightToAspectRatioList(double width, double height, MutableStyleProperties& style)
 {
-    style.setProperty(CSSPropertyAspectRatio,
+    style.setProperty(CSSPropertyID::AspectRatio,
         CSSValueList::createSpaceSeparated(
-            CSSKeywordValue::create(CSSValueAuto),
+            CSSKeywordValue::create(CSSValueID::Auto),
             CSSRatioValue::create(CSS::Ratio { width, height })
         )
     );
@@ -611,33 +616,33 @@ void HTMLElement::applyAlignmentAttributeToStyle(const AtomString& alignment, Mu
 {
     // Vertical alignment with respect to the current baseline of the text
     // right or left means floating images.
-    CSSValueID floatValue = CSSValueInvalid;
-    CSSValueID verticalAlignValue = CSSValueInvalid;
+    CSSValueID floatValue = CSSValueID::Invalid;
+    CSSValueID verticalAlignValue = CSSValueID::Invalid;
 
     if (equalLettersIgnoringASCIICase(alignment, "absmiddle"_s) || equalLettersIgnoringASCIICase(alignment, "abscenter"_s))
-        verticalAlignValue = CSSValueMiddle;
+        verticalAlignValue = CSSValueID::Middle;
     else if (equalLettersIgnoringASCIICase(alignment, "absbottom"_s))
-        verticalAlignValue = CSSValueBottom;
+        verticalAlignValue = CSSValueID::Bottom;
     else if (equalLettersIgnoringASCIICase(alignment, "left"_s)) {
-        floatValue = CSSValueLeft;
-        verticalAlignValue = CSSValueTop;
+        floatValue = CSSValueID::Left;
+        verticalAlignValue = CSSValueID::Top;
     } else if (equalLettersIgnoringASCIICase(alignment, "right"_s)) {
-        floatValue = CSSValueRight;
-        verticalAlignValue = CSSValueTop;
+        floatValue = CSSValueID::Right;
+        verticalAlignValue = CSSValueID::Top;
     } else if (equalLettersIgnoringASCIICase(alignment, "top"_s))
-        verticalAlignValue = CSSValueTop;
+        verticalAlignValue = CSSValueID::Top;
     else if (equalLettersIgnoringASCIICase(alignment, "middle"_s) || equalLettersIgnoringASCIICase(alignment, "center"_s))
-        verticalAlignValue = CSSValueWebkitBaselineMiddle;
+        verticalAlignValue = CSSValueID::WebkitBaselineMiddle;
     else if (equalLettersIgnoringASCIICase(alignment, "bottom"_s))
-        verticalAlignValue = CSSValueBaseline;
+        verticalAlignValue = CSSValueID::Baseline;
     else if (equalLettersIgnoringASCIICase(alignment, "texttop"_s))
-        verticalAlignValue = CSSValueTextTop;
+        verticalAlignValue = CSSValueID::TextTop;
 
-    if (floatValue != CSSValueInvalid)
-        addPropertyToPresentationalHintStyle(style, CSSPropertyFloat, floatValue);
+    if (floatValue != CSSValueID::Invalid)
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::Float, floatValue);
 
-    if (verticalAlignValue != CSSValueInvalid)
-        addPropertyToPresentationalHintStyle(style, CSSPropertyVerticalAlign, verticalAlignValue);
+    if (verticalAlignValue != CSSValueID::Invalid)
+        addPropertyToPresentationalHintStyle(style, CSSPropertyID::VerticalAlign, verticalAlignValue);
 }
 
 bool HTMLElement::hasCustomFocusLogic() const
@@ -1308,8 +1313,8 @@ ExceptionOr<void> HTMLElement::showPopoverInternal(HTMLElement* source)
         popoverData->setPreviouslyFocusedElement(nullptr);
 
     Style::PseudoClassChangeInvalidation styleInvalidation(*this, CSSSelector::PseudoClass::PopoverOpen, true);
-    if (auto* popoverData = this->popoverData())
-        popoverData->setVisibilityState(PopoverVisibilityState::Showing);
+    if (popoverData())
+        setPopoverVisibilityState(PopoverVisibilityState::Showing);
 
     runPopoverFocusingSteps(*this);
 
@@ -1409,8 +1414,7 @@ ExceptionOr<void> HTMLElement::hidePopoverInternal(FocusPreviousElement focusPre
     std::optional<Style::PseudoClassChangeInvalidation> styleInvalidation;
     if (parentNode())
         styleInvalidation.emplace(*this, CSSSelector::PseudoClass::PopoverOpen, false);
-    popoverWasHidden();
-    popoverData()->setVisibilityState(PopoverVisibilityState::Hidden);
+    setPopoverVisibilityState(PopoverVisibilityState::Hidden);
     popoverData()->setShowingAsHint(false);
     popoverData()->setHintStackParent(nullptr);
 
@@ -1438,7 +1442,14 @@ ExceptionOr<void> HTMLElement::hidePopoverInternal(FocusPreviousElement focusPre
         }
     }
 
+    popoverWasHidden();
+
     return { };
+}
+
+void HTMLElement::setPopoverVisibilityState(PopoverVisibilityState visibilityState)
+{
+    popoverData()->setVisibilityState(visibilityState);
 }
 
 ExceptionOr<void> HTMLElement::hidePopover()

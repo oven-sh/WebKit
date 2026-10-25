@@ -18,8 +18,6 @@
     clippy::missing_safety_doc,
     clippy::indexing_slicing,
     clippy::unwrap_used,
-    clippy::panic,
-    clippy::expect_used,
     clippy::undocumented_unsafe_blocks
 )]
 #![allow(private_bounds)]
@@ -33,9 +31,11 @@
 extern crate alloc;
 extern crate core;
 
+use alloc::boxed::Box;
 use core::panic::AssertUnwindSafe;
 
 pub mod alerts;
+pub mod alpn;
 pub mod ciphers;
 pub mod config;
 pub mod connection;
@@ -64,22 +64,54 @@ fn has_duplicates<T: Ord + Eq>(list: &[T]) -> bool {
     list.iter().any(|elem| !seen.insert(elem))
 }
 
+/// Method table accessor for connection-level state.
+///
+/// Returns `&'a mut Self` because connection state is exclusively owned.
+#[allow(unused)] // This trait will be used by certificate selection callback.
 pub(crate) trait Methods {
-    /// Safety: `ssl` must outlive `'a` and it must be passed in from BoringSSL
-    /// through vtable calls.
+    /// Safety:
+    /// - `ssl` must outlive `'a` and it must be passed in from BoringSSL
+    ///   through vtable calls.
+    /// - the returned method table **must not** be aliased.
+    unsafe extern "C" fn from_ssl<'a>(ssl: *mut bssl_sys::SSL) -> Option<&'a mut Self>;
+}
+
+/// Shared method table accessor.
+///
+/// Returns `&'a Self` for shared (non-exclusive) access to the method table.
+/// Used by context, connection, and credential method tables for read-only lookups.
+pub(crate) trait MethodsRef {
+    /// Safety:
+    /// - `ssl` must outlive `'a` and it must be passed in from BoringSSL
+    ///   through vtable calls.
     unsafe extern "C" fn from_ssl<'a>(ssl: *mut bssl_sys::SSL) -> Option<&'a Self>;
 }
 
-pub(crate) trait PrivateKeyMethods: Methods {
+pub(crate) trait HandshakeCompleteMethods: Methods {
+    fn handshake_complete_methods(
+        &mut self,
+    ) -> Option<Box<dyn connection::lifecycle::HandshakeComplete>>;
+}
+
+pub(crate) trait PrivateKeyMethods: MethodsRef {
     fn private_key_methods(&self) -> Option<&dyn credentials::PrivateKeyDelegate>;
 }
 
-pub(crate) trait VerifyCertificateMethods: Methods {
+pub(crate) trait VerifyCertificateMethods: MethodsRef {
     fn verify_certificate_methods(&self) -> Option<&dyn credentials::VerifyCertificate>;
 }
 
-pub(crate) trait EarlyCallbackMethods<M>: Methods {
+pub(crate) trait EarlyCallbackMethods<M>: MethodsRef {
     fn early_callback_handler(&self) -> Option<&dyn credentials::early_callback::EarlyCallback<M>>;
+}
+
+pub(crate) trait CertCallback<Mode>: MethodsRef {
+    fn server_cert_cb(
+        &self,
+    ) -> Option<&(dyn credentials::select_cert::ServerCertificateSelector<Mode> + 'static)>;
+    fn client_cert_cb(
+        &self,
+    ) -> Option<&(dyn credentials::select_cert::ClientCertificateSelector<Mode> + 'static)>;
 }
 
 #[inline]

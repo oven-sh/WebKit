@@ -20,22 +20,37 @@
 
 #include "config.h"
 #include <wtf/dtoa.h>
-#include <wtf/dragonbox/dragonbox_to_chars.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+IGNORE_CLANG_WARNINGS_BEGIN("comma")
+#include "zmij/zmij.h"
+IGNORE_CLANG_WARNINGS_END
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 namespace WTF {
 
+static_assert(numberToShortestStringBufferSize >= zmij::double_buffer_size);
+static_assert(sizeof(NumberToStringBuffer) >= numberToShortestStringBufferSize);
+static_assert(sizeof(NumberToStringBuffer) >= zmij::float_buffer_size);
+
+size_t numberToShortestString(double number, std::span<char, numberToShortestStringBufferSize> buffer)
+{
+    return zmij::write(buffer.data(), buffer.size(), number) - buffer.data();
+}
+
+NumberToStringSpan numberToShortestExponentialString(double number, NumberToStringBuffer& buffer LIFETIME_BOUND)
+{
+    return std::span { buffer }.first(zmij::write_scientific(buffer.data(), buffer.size(), number) - buffer.data());
+}
+
 NumberToStringSpan numberToStringAndSize(float number, NumberToStringBuffer& buffer LIFETIME_BOUND)
 {
-    static_assert(sizeof(buffer) >= (dragonbox::max_string_length<dragonbox::ieee754_binary32>() + 1));
-    auto result = dragonbox::detail::to_chars_n<WTF::dragonbox::Mode::ToShortest>(number, std::span { buffer });
-    return std::span { buffer }.first(result.data() - buffer.data());
+    return std::span { buffer }.first(zmij::write(buffer.data(), buffer.size(), number) - buffer.data());
 }
 
 NumberToStringSpan numberToStringAndSize(double number, NumberToStringBuffer& buffer LIFETIME_BOUND)
 {
-    static_assert(sizeof(buffer) >= (dragonbox::max_string_length<dragonbox::ieee754_binary64>() + 1));
-    auto result = dragonbox::detail::to_chars_n<WTF::dragonbox::Mode::ToShortest>(number, std::span { buffer });
-    return std::span { buffer }.first(result.data() - buffer.data());
+    return std::span { buffer }.first(numberToShortestString(number, std::span { buffer }.first<numberToShortestStringBufferSize>()));
 }
 
 NumberToStringSpan numberToStringWithTrailingPoint(double d, NumberToStringBuffer& buffer LIFETIME_BOUND)
@@ -46,7 +61,7 @@ NumberToStringSpan numberToStringWithTrailingPoint(double d, NumberToStringBuffe
     return builder.Finalize();
 }
 
-static inline void truncateTrailingZeros(std::span<const char> buffer, double_conversion::StringBuilder& builder)
+static inline void LEGACY_NODELETE truncateTrailingZeros(std::span<const char> buffer, double_conversion::StringBuilder& builder)
 {
     size_t length = builder.position();
     size_t decimalPointPosition = 0;

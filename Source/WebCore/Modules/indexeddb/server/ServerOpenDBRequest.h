@@ -42,13 +42,13 @@ class UniqueIDBDatabaseTransaction;
 
 class ServerOpenDBRequest : public RefCounted<ServerOpenDBRequest> {
 public:
-    static Ref<ServerOpenDBRequest> create(IDBConnectionToClient&, const IDBOpenRequestData&);
+    static Ref<ServerOpenDBRequest> LEGACY_NODELETE create(IDBConnectionToClient&, const IDBOpenRequestData&);
 
     IDBConnectionToClient& connection() { return m_connection; }
     const IDBOpenRequestData& requestData() const LIFETIME_BOUND { return m_requestData; }
 
-    bool NODELETE isOpenRequest() const;
-    bool NODELETE isDeleteRequest() const;
+    bool LEGACY_NODELETE isOpenRequest() const;
+    bool LEGACY_NODELETE isDeleteRequest() const;
 
     void maybeNotifyRequestBlocked(uint64_t currentVersion);
 
@@ -71,7 +71,7 @@ private:
 
     bool m_notifiedConnectionsOfVersionChange { false };
     HashSet<IDBDatabaseConnectionIdentifier> m_connectionsPendingVersionChangeEvent;
-    RefPtr<UniqueIDBDatabaseTransaction> m_versionChangeTransaction;
+    const RefPtr<UniqueIDBDatabaseTransaction> m_versionChangeTransaction;
 };
 
 } // namespace IDBServer

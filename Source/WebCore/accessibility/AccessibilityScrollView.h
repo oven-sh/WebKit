@@ -69,7 +69,7 @@ public:
     AXFrameGeometry frameGeometry() const;
     IntPoint frameScreenPosition() const final { return frameGeometry().screenPosition; }
     AffineTransform frameScreenTransform() const final { return frameGeometry().screenTransform; }
-    IntPoint frameViewOriginScrollPosition() const;
+    IntPoint LEGACY_NODELETE frameViewOriginScrollPosition() const;
 
     bool isFrameGeometryInitialized() const final;
 
@@ -84,10 +84,15 @@ public:
     bool isHostingFrameInert() const;
     bool isHostingFrameRenderHidden() const;
     bool isIgnoredFromHostingFrame() const { return isHostingFrameHidden() || isHostingFrameInert() || isHostingFrameRenderHidden(); }
+    // The accessible name of the iframe element, which names the hosted frame's web area.
+    String hostingFrameName() const;
 #endif // ENABLE(ACCESSIBLITY_LOCAL_FRAME)
 
 private:
     explicit AccessibilityScrollView(AXID, ScrollView&, AXObjectCache&);
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    InheritedFrameState hostingFrameInheritedState() const { return { isHostingFrameHidden(), isHostingFrameInert(), isHostingFrameRenderHidden(), hostingFrameName() }; }
+#endif
     void detachRemoteParts(AccessibilityDetachmentType) final;
 
     ScrollView* currentScrollView() const;
@@ -136,7 +141,7 @@ private:
     RefPtr<AccessibilityObject> m_horizontalScrollbar;
     RefPtr<AccessibilityObject> m_verticalScrollbar;
 #if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
-    RefPtr<AXLocalFrame> m_localFrame;
+    const RefPtr<AXLocalFrame> m_localFrame;
     InheritedFrameState m_inheritedFrameState;
 #endif
     RefPtr<AXRemoteFrame> m_remoteFrame;

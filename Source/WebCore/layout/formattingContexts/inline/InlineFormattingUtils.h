@@ -26,14 +26,14 @@
 #pragma once
 
 #include "BlockLayoutState.h"
-#include "InlineLine.h"
-#include "InlineLineBuilder.h"
+#include "FloatingContext.h"
+#include "InlineLineRun.h"
+#include "LineLayoutResult.h"
 #include <WebCore/InlineLineTypes.h>
 
 namespace WebCore {
 namespace Layout {
 
-class FloatingContext;
 class InlineFormattingContext;
 class InlineLevelBox;
 class LineBox;
@@ -55,11 +55,11 @@ public:
 
     FloatingContext::Constraints floatConstraintsForLine(InlineLayoutUnit lineLogicalTop, InlineLayoutUnit contentLogicalHeight, const FloatingContext&) const;
 
-    static InlineRect NODELETE flipVisualRectToLogicalForWritingMode(const InlineRect& visualRect, WritingMode);
+    static InlineRect LEGACY_NODELETE flipVisualRectToLogicalForWritingMode(const InlineRect& visualRect, WritingMode);
 
     static InlineLayoutUnit horizontalAlignmentOffset(const Style::ComputedStyle& rootStyle, InlineLayoutUnit contentLogicalRight, InlineLayoutUnit lineLogicalRight, InlineLayoutUnit hangingTrailingWidth, bool isLastLineOrLineEndsWithForcedLineBreak, std::optional<TextDirection> inlineBaseDirectionOverride = std::nullopt);
 
-    static InlineItemPosition leadingInlineItemPositionForNextLine(InlineItemPosition lineContentEnd, std::optional<InlineItemPosition> previousLineContentEnd, bool lineHasIntrusiveOrNewlyPlacedFloat, InlineItemPosition layoutRangeEnd);
+    static InlineItemPosition LEGACY_NODELETE leadingInlineItemPositionForNextLine(const LineLayoutResult&, std::optional<InlineItemPosition> previousLineContentEnd, InlineItemPosition layoutRangeEnd);
 
     InlineLayoutUnit inlineItemWidth(const InlineItem&, InlineLayoutUnit contentLogicalLeft, bool useFirstLineStyle) const;
 
@@ -67,11 +67,13 @@ public:
 
     static std::pair<InlineLayoutUnit, InlineLayoutUnit> textEmphasisForInlineBox(const Box&, const ElementBox& rootBox);
 
-    static LineEndingTruncationPolicy NODELETE lineEndingTruncationPolicy(const Style::ComputedStyle& rootStyle, size_t numberOfContentfulLines, std::optional<size_t> numberOfVisibleLinesAllowed, bool currentLineIsContentful);
+    static LineEndingTruncationPolicy LEGACY_NODELETE lineEndingTruncationPolicy(const Style::ComputedStyle& rootStyle, size_t numberOfContentfulLines, std::optional<size_t> numberOfVisibleLinesAllowed, bool currentLineIsContentful);
 
-    static std::optional<LineLayoutResult::InlineContentEnding> inlineContentEnding(const Line::Result&);
+    static std::optional<LineLayoutResult::InlineContentEnding> LEGACY_NODELETE inlineContentEnding(const LineResult&);
 
-    bool NODELETE shouldDiscardRemainingContentInBlockDirection() const;
+    bool LEGACY_NODELETE shouldDiscardRemainingContentInBlockDirection() const;
+
+    std::optional<BlockOverflowEllipsis> blockEllipsisForLine() const;
 
 private:
     bool isAtSoftWrapOpportunity(const InlineItem& previous, const InlineItem& next) const;

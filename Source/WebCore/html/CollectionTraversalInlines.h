@@ -38,7 +38,7 @@ template <typename CollectionClass>
 inline auto CollectionTraversal<CollectionTraversalType::Descendants>::begin(const CollectionClass& collection, ContainerNode& rootNode) -> Iterator
 {
     auto it = descendantsOfType<Element>(rootNode).begin();
-    while (it && !collection.elementMatches(*it))
+    while (it && !collection.elementMatches(protect(*it)))
         ++it;
     // Drop iterator assertions because HTMLCollections / NodeList use a fine-grained invalidation scheme.
     it.dropAssertions();
@@ -49,7 +49,7 @@ template <typename CollectionClass>
 inline auto CollectionTraversal<CollectionTraversalType::Descendants>::last(const CollectionClass& collection, ContainerNode& rootNode) -> Iterator
 {
     Iterator it { rootNode, ElementTraversal::lastWithin(rootNode) };
-    while (it && !collection.elementMatches(*it))
+    while (it && !collection.elementMatches(protect(*it)))
         --it;
     // Drop iterator assertions because HTMLCollections / NodeList use a fine-grained invalidation scheme.
     it.dropAssertions();
@@ -65,7 +65,7 @@ inline void CollectionTraversal<CollectionTraversalType::Descendants>::traverseF
             ++current;
             if (!current)
                 return;
-        } while (!collection.elementMatches(*current));
+        } while (!collection.elementMatches(protect(*current)));
     }
 }
 
@@ -78,7 +78,7 @@ inline void CollectionTraversal<CollectionTraversalType::Descendants>::traverseB
             --current;
             if (!current)
                 return;
-        } while (!collection.elementMatches(*current));
+        } while (!collection.elementMatches(protect(*current)));
     }
 }
 
@@ -88,7 +88,7 @@ template <typename CollectionClass>
 inline auto CollectionTraversal<CollectionTraversalType::WeakPtrDescendants>::begin(const CollectionClass& collection, ContainerNode& rootNode) -> Iterator
 {
     auto it = descendantsOfType<Element>(rootNode).begin();
-    while (it && !collection.elementMatches(*it))
+    while (it && !collection.elementMatches(protect(*it)))
         ++it;
     if (!it)
         return nullptr;
@@ -99,7 +99,7 @@ template <typename CollectionClass>
 inline auto CollectionTraversal<CollectionTraversalType::WeakPtrDescendants>::last(const CollectionClass& collection, ContainerNode& rootNode) -> Iterator
 {
     ElementDescendantIterator<Element> it { rootNode, ElementTraversal::lastWithin(rootNode) };
-    while (it && !collection.elementMatches(*it))
+    while (it && !collection.elementMatches(protect(*it)))
         --it;
     if (!it)
         return nullptr;
@@ -118,7 +118,7 @@ inline void CollectionTraversal<CollectionTraversalType::WeakPtrDescendants>::tr
                 current = nullptr;
                 return;
             }
-        } while (!collection.elementMatches(*iterator));
+        } while (!collection.elementMatches(protect(*iterator)));
     }
     if (iterator)
         current = *iterator;
@@ -138,7 +138,7 @@ inline void CollectionTraversal<CollectionTraversalType::WeakPtrDescendants>::tr
                 current = nullptr;
                 return;
             }
-        } while (!collection.elementMatches(*iterator));
+        } while (!collection.elementMatches(protect(*iterator)));
     }
     if (iterator)
         current = *iterator;
@@ -152,7 +152,7 @@ template <typename CollectionClass>
 inline auto CollectionTraversal<CollectionTraversalType::ChildrenOnly>::begin(const CollectionClass& collection, ContainerNode& rootNode) -> Iterator
 {
     auto it = childrenOfType<Element>(rootNode).begin();
-    while (it && !collection.elementMatches(*it))
+    while (it && !collection.elementMatches(protect(*it)))
         ++it;
     // Drop iterator assertions because HTMLCollections / NodeList use a fine-grained invalidation scheme.
     it.dropAssertions();
@@ -166,7 +166,7 @@ inline auto CollectionTraversal<CollectionTraversalType::ChildrenOnly>::last(con
     if (!lastElement)
         return childrenOfType<Element>(rootNode).begin();
     auto it = childrenOfType<Element>(rootNode).beginAt(*lastElement);
-    while (it && !collection.elementMatches(*it))
+    while (it && !collection.elementMatches(protect(*it)))
         --it;
     // Drop iterator assertions because HTMLCollections / NodeList use a fine-grained invalidation scheme.
     it.dropAssertions();
@@ -182,7 +182,7 @@ inline void CollectionTraversal<CollectionTraversalType::ChildrenOnly>::traverse
             ++current;
             if (!current)
                 return;
-        } while (!collection.elementMatches(*current));
+        } while (!collection.elementMatches(protect(*current)));
     }
 }
 
@@ -195,7 +195,7 @@ inline void CollectionTraversal<CollectionTraversalType::ChildrenOnly>::traverse
             --current;
             if (!current)
                 return;
-        } while (!collection.elementMatches(*current));
+        } while (!collection.elementMatches(protect(*current)));
     }
 }
 

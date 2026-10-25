@@ -26,6 +26,7 @@
 #include "config.h"
 #include "StochasticSpaceTimeMutatorScheduler.h"
 
+#include "Collector.h"
 #include "JSCInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -45,17 +46,17 @@ public:
         m_bytesAllocatedThisCycle = scheduler.bytesAllocatedThisCycleImpl();
     }
     
-    MonotonicTime NODELETE now() const { return m_now; }
+    MonotonicTime LEGACY_NODELETE now() const { return m_now; }
     
-    double NODELETE bytesAllocatedThisCycle() const { return m_bytesAllocatedThisCycle; }
+    double LEGACY_NODELETE bytesAllocatedThisCycle() const { return m_bytesAllocatedThisCycle; }
     
 private:
     MonotonicTime m_now;
     double m_bytesAllocatedThisCycle;
 };
 
-StochasticSpaceTimeMutatorScheduler::StochasticSpaceTimeMutatorScheduler(JSC::Heap& heap)
-    : m_heap(heap)
+StochasticSpaceTimeMutatorScheduler::StochasticSpaceTimeMutatorScheduler(Collector& collector)
+    : m_collector(collector)
     , m_minimumPause(Seconds::fromMilliseconds(Options::minimumGCPauseMS()))
     , m_pauseScale(Options::gcPauseScale())
 {
@@ -76,7 +77,7 @@ void StochasticSpaceTimeMutatorScheduler::beginCollection()
     m_bytesAllocatedThisCycleAtTheBeginning = bytesAllocatedThisCycleImpl();
     m_bytesAllocatedThisCycleAtTheEnd = 
         Options::concurrentGCMaxHeadroom() *
-        std::max<double>(m_bytesAllocatedThisCycleAtTheBeginning, m_heap.effectiveMaxEdenSize());
+        std::max<double>(m_bytesAllocatedThisCycleAtTheBeginning, m_collector.totalMaxEdenSize());
     
     dataLogIf(Options::logGC(), "ca=", m_bytesAllocatedThisCycleAtTheBeginning / 1024, "kb h=", (m_bytesAllocatedThisCycleAtTheEnd - m_bytesAllocatedThisCycleAtTheBeginning) / 1024, "kb ");
     
@@ -185,7 +186,7 @@ void StochasticSpaceTimeMutatorScheduler::endCollection()
 
 double StochasticSpaceTimeMutatorScheduler::bytesAllocatedThisCycleImpl()
 {
-    return m_heap.totalBytesAllocatedThisCycle();
+    return m_collector.totalBytesAllocatedThisCycle();
 }
 
 double StochasticSpaceTimeMutatorScheduler::bytesSinceBeginningOfCycle(const Snapshot& snapshot)

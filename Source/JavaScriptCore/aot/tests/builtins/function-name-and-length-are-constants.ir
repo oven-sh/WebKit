@@ -1,0 +1,124 @@
+# The closures of a function are created with the length and the name of its definition, and both are constants while flow sees no closure of that function change.
+# A store to a closure under another name leaves both as they are. A deletion, a store under a key nobody knows and another prototype end that for the function they reach, and its neighbors keep their constants. A function without a name of its own may be given one where it is evaluated, so only its length is a constant.
+# A value that is only expected to be a closure of the function is tested for being one, and no test of the closure itself follows: flow has answered for all of them.
+# Without the results of flow nothing is known about a closure, and every read goes by name
+# OPTIONS: only-passes=ResolveBuiltins,PlaceTypeTests
+# RUN: pass ResolveBuiltins
+# RUN(FLOW): pipeline ResolveBuiltins
+# RUN(PLACED): pipeline PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = PropGet v0 key="length"
+    v3 = PropGet v0 key="name"
+    v4 = NewClosure function=f2
+    v5 = Call v4
+    v6 = String string="sum"
+    PropSet v4, v6 key="label" mode=Strict
+    v8 = PropGet v4 key="length"
+    v9 = PropGet v4 key="name"
+    v10 = NewClosure function=f3
+    v11 = Call v10
+    v12 = Builtin builtin=ObjectSetPrototypeOf
+    v13 = Null
+    v14 = Call v12, -, v10, v13
+    v15 = PropGet v10 key="length"
+    v16 = PropGet v10 key="name"
+    v17 = NewClosure function=f4
+    v18 = Call v17
+    v19 = PropGet v17 key="length"
+    v20 = PropGet v17 key="name"
+    v21 = NewClosure function=f5
+    v22 = Call v21, -, v0
+    v23 = Integer integer=7
+    v24 = Call v21, -, v23
+    v25 = NewClosure function=f6
+    v26 = Call v25
+    v27 = PropDelete v25 key="length" mode=Strict
+    v28 = PropGet v25 key="length"
+    v29 = PropGet v25 key="name"
+    v30 = NewClosure function=f7
+    v31 = Call v30
+    v32 = Builtin builtin=MathRandom
+    v33 = Call v32
+    v34 = ToString v33
+    ElemSet v30, v34, v6 mode=Strict
+    v36 = PropGet v30 key="length"
+    v37 = PropGet v30 key="name"
+    v38 = NewArray v2, v3, v8, v9, v15, v16, v19, v20, v22, v24, v28, v29, v36, v37 contents=anything
+    Return v38
+# CHECK: [[addWithoutFlow]]: f1 = NewClosure function=f1
+# CHECK: = PropGet [[addWithoutFlow]] key="length"
+# CHECK-NEXT: = PropGet [[addWithoutFlow]] key="name"
+# CHECK: [[anonymousWithoutFlow]]: f4 = NewClosure function=f4
+# CHECK: = PropGet [[anonymousWithoutFlow]] key="length"
+# CHECK-NEXT: = PropGet [[anonymousWithoutFlow]] key="name"
+# FLOW: [[add]]: f1 = NewClosure function=f1
+# FLOW-NOT: PropGet [[add]]
+# FLOW: 2 = Integer integer=2
+# FLOW: "add" = String string="add"
+# FLOW-NOT: PropGet [[add]]
+# FLOW: [[labelled]]: f2 = NewClosure function=f2
+# FLOW-NOT: PropGet [[labelled]]
+# FLOW: 1 = Integer integer=1
+# FLOW: "labelled" = String string="labelled"
+# FLOW-NOT: PropGet [[labelled]]
+# FLOW: [[reparented]]: f3 = NewClosure function=f3
+# FLOW: = PropGet [[reparented]] key="length"
+# FLOW: = PropGet [[reparented]] key="name"
+# FLOW: [[anonymous]]: f4 = NewClosure function=f4
+# FLOW: 1 = Integer integer=1
+# FLOW: = PropGet [[anonymous]] key="name"
+# FLOW: [[shortened]]: f6 = NewClosure function=f6
+# FLOW: = PropGet [[shortened]] key="length"
+# FLOW: = PropGet [[shortened]] key="name"
+# FLOW: [[keyed]]: f7 = NewClosure function=f7
+# FLOW: = PropGet [[keyed]] key="length"
+# FLOW: = PropGet [[keyed]] key="name"
+}
+
+function f1 name="add" length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f2 name="labelled" length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f3 name="reparented" length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f4 kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f5 name="readsOfExpectedFunction" length=1 parameters=[{type=f1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ f1):
+    v1 = PropGet v0 key="length"
+    v2 = PropGet v0 key="name"
+    v3 = NewArray v1, v2 contents=anything
+    Return v3
+# ResolveBuiltins places no test.
+# FLOW-NOT: TypeTest
+# FLOW: = PropGet {{*}} key="length"
+# FLOW: = PropGet {{*}} key="name"
+# FLOW-NOT: TypeTest
+# PLACED-NOT: IsPristine
+# PLACED: = TypeTest {{*}} testedType=f1
+# PLACED-NOT: IsPristine
+# PLACED: 2 = Integer integer=2
+# PLACED: "add" = String string="add"
+# PLACED-NOT: IsPristine
+# PLACED: frequency=Unlikely
+# PLACED: = PropGet {{*}} key="length"
+# PLACED: = PropGet {{*}} key="name"
+# PLACED-NOT: IsPristine
+}
+
+function f6 name="shortened" length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f7 name="keyed" length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

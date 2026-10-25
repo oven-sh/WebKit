@@ -144,7 +144,7 @@ private:
     }
 
     template<typename Func>
-    void forAllAliases(const Func& func)
+    void forAllAliases(NOESCAPE const Func& func)
     {
         Inst& inst = m_block->at(m_instIndex);
 
@@ -203,7 +203,7 @@ private:
     }
 
     template<typename IsWhichDef>
-    void clobberDefTmps(Arg& arg, Arg::Role role, Bank bank, Width width, const IsWhichDef& isWhichDef)
+    void clobberDefTmps(Arg& arg, Arg::Role role, Bank bank, Width width, NOESCAPE const IsWhichDef& isWhichDef)
     {
         auto mayReportDefTmp = [](const Arg& arg, bool argRoleIsDef) {
             return argRoleIsDef || arg.isPreIndex() || arg.isPostIndex();
@@ -315,7 +315,7 @@ private:
         switch (inst.kind.opcode) {
         case Move: {
             if (inst.args()[0].isBigImm() && inst.args()[1].isReg()
-                && isValidForm(Add64, Arg::Imm, Arg::Tmp, Arg::Tmp)) {
+                && isValidForm(m_code.targetFeatures(), Add64, Arg::Imm, Arg::Tmp, Arg::Tmp)) {
                 // BigImm materializations are super expensive on both x86 and ARM. Let's try to
                 // materialize this bad boy using math instead. Note that we use unsigned math here
                 // since it's more deterministic.
@@ -422,22 +422,22 @@ private:
         };
         
         inst.forEachArg(handleArg);
-        if (!didThings || inst.isValidForm())
+        if (!didThings || inst.isValidForm(m_code.targetFeatures()))
             return;
         
         // We introduced something invalid along the way. Back up and carefully handle each argument.
         inst = instCopy;
-        ASSERT(inst.isValidForm());
+        ASSERT(inst.isValidForm(m_code.targetFeatures()));
         inst.forEachArg(
             [&] (Arg& arg, Arg::Role role, Bank bank, Width width) {
                 Arg argCopy = arg;
                 handleArg(arg, role, bank, width);
-                if (!inst.isValidForm())
+                if (!inst.isValidForm(m_code.targetFeatures()))
                     arg = argCopy;
             });
     }
     
-    static bool NODELETE isSpillSlot(const Arg& arg)
+    static bool LEGACY_NODELETE isSpillSlot(const Arg& arg)
     {
         return arg.isStack() && arg.stackSlot()->isSpill();
     }
@@ -476,9 +476,9 @@ private:
             return slot && reg;
         }
         
-        friend bool NODELETE operator==(const RegSlot&, const RegSlot&) = default;
+        friend bool LEGACY_NODELETE operator==(const RegSlot&, const RegSlot&) = default;
 
-        bool NODELETE operator<(const RegSlot& other) const
+        bool LEGACY_NODELETE operator<(const RegSlot& other) const
         {
             // We ignore `mode` on purpose, see merge() for how we deal with it.
             return slot < other.slot || (slot == other.slot && reg < other.reg);
@@ -521,9 +521,9 @@ private:
             return slot;
         }
 
-        friend bool NODELETE operator==(const SlotConst&, const SlotConst&) = default;
+        friend bool LEGACY_NODELETE operator==(const SlotConst&, const SlotConst&) = default;
 
-        bool NODELETE operator<(const SlotConst& other) const
+        bool LEGACY_NODELETE operator<(const SlotConst& other) const
         {
             return slot < other.slot || (slot == other.slot && constant < other.constant);
         }
@@ -538,11 +538,11 @@ private:
     };
 
     struct State {
-        bool NODELETE isEmpty() const { return constRegs.isEmpty() && slotConst.isEmpty() && regSlot.isEmpty(); }
+        bool LEGACY_NODELETE isEmpty() const { return constRegs.isEmpty() && slotConst.isEmpty() && regSlot.isEmpty(); }
 
-        bool NODELETE hasNoSlotAlias() const { return slotConst.isEmpty() && regSlot.isEmpty(); }
+        bool LEGACY_NODELETE hasNoSlotAlias() const { return slotConst.isEmpty() && regSlot.isEmpty(); }
 
-        bool NODELETE hasNoRegAlias() const { return constRegs.isEmpty() && regSlot.isEmpty(); }
+        bool LEGACY_NODELETE hasNoRegAlias() const { return constRegs.isEmpty() && regSlot.isEmpty(); }
 
         void addAlias(const RegConst& newAlias)
         {
@@ -580,14 +580,14 @@ private:
             return slotConst.contains(alias);
         }
 
-        std::optional<int64_t> NODELETE constantForReg(Reg reg) const
+        std::optional<int64_t> LEGACY_NODELETE constantForReg(Reg reg) const
         {
             if (!constRegs.contains(reg))
                 return std::nullopt;
             return constants[reg.index()];
         }
 
-        const RegSlot* NODELETE getRegSlot(StackSlot* slot) const
+        const RegSlot* LEGACY_NODELETE getRegSlot(StackSlot* slot) const
         {
             for (const RegSlot& alias : regSlot) {
                 if (alias.slot == slot)
@@ -596,7 +596,7 @@ private:
             return nullptr;
         }
 
-        const SlotConst* NODELETE getSlotConst(StackSlot* slot) const
+        const SlotConst* LEGACY_NODELETE getSlotConst(StackSlot* slot) const
         {
             for (const SlotConst& alias : slotConst) {
                 if (alias.slot == slot)
@@ -605,7 +605,7 @@ private:
             return nullptr;
         }
 
-        std::optional<int64_t> NODELETE constantFor(const Arg& arg)
+        std::optional<int64_t> LEGACY_NODELETE constantFor(const Arg& arg)
         {
             if (arg.isReg())
                 return constantForReg(arg.reg());

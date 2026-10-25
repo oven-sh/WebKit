@@ -1,0 +1,30 @@
+# A class without a constructor of its own hands its rest array to `super`. Its version that takes the allocated object reads as many elements as the parent names and hands its object on.
+# FORM: Prepared
+# RUN: derived-functions AllocatedThisVersion:f2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 fields=[{key="title" declared={type=anything} flags=[IsRequired]}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L1 kind=Instance name="Derived" module=m0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+
+function f0 name="main" results=[{type=undefined}] {
+    Return
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="title"
+    Return v3
+}
+function f2 name="Derived" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array<anything, pristine[Storage, Names]>}] results=[{type=anything}] constructedClass=L1 {
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L1 callees=[f1]
+    Return v4
+}
+
+# CHECK: function [[baseVersion]] name="Base" module=m0 kind=BaseConstructor role=AllocatedThisVersion
+# CHECK-NOT: NewObject
+# CHECK: function [[derivedVersion]] name="Derived" module=m0 kind=DerivedConstructor role=AllocatedThisVersion
+# CHECK-NEXT: b0([[this]]:{{*}}, [[callee]]: function, [[newTarget]]: anything, [[list]]: Array
+# CHECK-NOT: SuperConstructList
+# CHECK: [[title]]{{*}} = ElemGet [[list]], {{*}} [keyIsIntegral]
+# CHECK: = CallDirect [[this]], [[newTarget]], [[title]] function=[[baseVersion]] [isConstruction]

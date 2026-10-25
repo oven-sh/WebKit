@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "ImmutablePropertyNames.h"
 #include "JSCellButterfly.h"
 #include "JSPropertyNameEnumerator.h"
 #include "JSString.h"
@@ -55,6 +56,7 @@ struct SpecialPropertyCacheEntry {
 struct SpecialPropertyCache {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(SpecialPropertyCache);
     SpecialPropertyCacheEntry m_cache[numberOfCachedSpecialPropertyKeys];
+    RefPtr<ImmutablePropertyNames> m_immutablePropertyNames;
 
     static constexpr ptrdiff_t offsetOfCache(CachedSpecialPropertyKey key)
     {
@@ -166,6 +168,11 @@ inline bool StructureRareData::canCacheSpecialProperty(CachedSpecialPropertyKey 
     if (!cache)
         return true;
     return cache->m_cache[static_cast<unsigned>(key)].m_value.get() != JSCell::seenMultipleCalleeObjects();
+}
+
+inline ImmutablePropertyNames* StructureRareData::immutablePropertyNames() const
+{
+    return m_specialPropertyCache ? m_specialPropertyCache->m_immutablePropertyNames.get() : nullptr;
 }
 
 inline SpecialPropertyCache& StructureRareData::ensureSpecialPropertyCache()

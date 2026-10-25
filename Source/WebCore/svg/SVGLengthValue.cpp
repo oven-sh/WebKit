@@ -44,7 +44,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGLengthValue);
 
-static inline SVGLengthType NODELETE cssLengthUnitToSVGLengthType(CSS::LengthPercentageUnit unit)
+static inline SVGLengthType LEGACY_NODELETE cssLengthUnitToSVGLengthType(CSS::LengthPercentageUnit unit)
 {
     switch (unit) {
     case CSS::LengthPercentageUnit::Px:                 return SVGLengthType::Pixels;
@@ -62,7 +62,7 @@ static inline SVGLengthType NODELETE cssLengthUnitToSVGLengthType(CSS::LengthPer
     }
 }
 
-static inline CSS::LengthPercentageUnit NODELETE svgLengthTypeToCSSLengthUnit(SVGLengthType type)
+static inline CSS::LengthPercentageUnit LEGACY_NODELETE svgLengthTypeToCSSLengthUnit(SVGLengthType type)
 {
     switch (type) {
     case SVGLengthType::Number:       return CSS::LengthPercentageUnit::Px;
@@ -81,7 +81,7 @@ static inline CSS::LengthPercentageUnit NODELETE svgLengthTypeToCSSLengthUnit(SV
     }
 }
 
-static Variant<CSS::Number<>, CSS::LengthPercentage<>> createVariantForLengthType(float value, SVGLengthType lengthType)
+static Variant<CSS::Number<>, CSS::LengthPercentage<>> LEGACY_NODELETE createVariantForLengthType(float value, SVGLengthType lengthType)
 {
     if (lengthType == SVGLengthType::Number)
         return CSS::Number<>(value);
@@ -213,7 +213,7 @@ float SVGLengthValue::value(const SVGLengthContext& context) const
     return result.releaseReturnValue();
 }
 
-static float convertToPixels(float value, CSS::LengthPercentageUnit unit)
+static float LEGACY_NODELETE convertToPixels(float value, CSS::LengthPercentageUnit unit)
 {
     switch (unit) {
     case CSS::LengthPercentageUnit::Px:

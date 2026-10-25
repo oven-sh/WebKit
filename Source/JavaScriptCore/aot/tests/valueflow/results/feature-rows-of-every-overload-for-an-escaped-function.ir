@@ -1,0 +1,16 @@
+# somethingThatNoTableLists("".split)
+# RUN: valueflow-results
+# CHECK: feature 7 StringPrototypeSplit
+# CHECK: feature 8 StringPrototypeSplit
+# CHECK: feature 53 StringPrototypeSplit
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = String string=""
+    v3 = PropGet v2 key="split"
+    v4 = Call v1, -, v3
+    Return
+}

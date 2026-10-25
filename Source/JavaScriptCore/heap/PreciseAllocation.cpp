@@ -29,13 +29,14 @@
 #include "AlignedMemoryAllocator.h"
 #include "IsoCellSetInlines.h"
 #include "JSCInlines.h"
+#include "MarkedBlockCage.h"
 #include "Scribble.h"
 #include "SubspaceInlines.h"
 #include "WeakSetInlines.h"
 
 namespace JSC {
 
-constexpr size_t NODELETE dataCacheLineSize()
+constexpr size_t LEGACY_NODELETE dataCacheLineSize()
 {
 #if CPU(ARM64) || CPU(X86_64)
     return 64;
@@ -58,7 +59,7 @@ static_assert(PreciseAllocation::cacheLineAdjustment >= sizeof(JSObjectWithButte
 // not way to fit the JSObject header word and its butterfly in a cache line.
 static_assert(PreciseAllocation::cacheLineAdjustment <= dataCacheLineSize());
 
-static inline bool NODELETE isAlignedForPreciseAllocation(void* memory)
+static inline bool LEGACY_NODELETE isAlignedForPreciseAllocation(void* memory)
 {
     // Checks if the allocated pointer is 16 byte aligned. If it's 16 byte aligned,
     // then the object will have halfAlignment because headerSize() ensures that it
@@ -69,7 +70,7 @@ static inline bool NODELETE isAlignedForPreciseAllocation(void* memory)
     return maskedPointer;
 }
 
-static inline bool NODELETE isCacheAlignedForPreciseAllocation(void* memory)
+static inline bool LEGACY_NODELETE isCacheAlignedForPreciseAllocation(void* memory)
 {
     uintptr_t allocatedPointer = std::bit_cast<uintptr_t>(memory);
     uintptr_t cellStart = allocatedPointer + PreciseAllocation::headerSize();
@@ -166,6 +167,8 @@ PreciseAllocation* PreciseAllocation::tryCreateForLowerTierPrecise(JSC::Heap& he
     static_assert(halfAlignment == 8, "We assume that memory returned by malloc has alignment >= 8.");
 
     void* space = subspace->alignedMemoryAllocator()->tryAllocateMemory(adjustedAlignmentAllocationSize);
+    if (!space && MarkedBlockCage::isRequired()) [[unlikely]]
+        return nullptr;
     RELEASE_ASSERT(space);
 
     unsigned adjustment = halfAlignment;
@@ -244,7 +247,7 @@ void PreciseAllocation::flip()
     // Propagate the last time's mark bit to m_isNewlyAllocated so that `isLive` will say "yes" until this GC cycle finishes.
     // After that, m_isNewlyAllocated is cleared again. So only previously marked or actually newly created objects survive.
     // We do not need to care about concurrency here since marking thread is stopped right now. This is equivalent to the logic
-    // of MarkedBlock::aboutToMarkSlow.
+    // of MarkedBlock::resetStaleMarks.
     // We invoke this function only when this is full collection. This ensures that at the end of upcoming cycle, we will
     // clear NewlyAllocated bits of all objects. So this works correctly.
     //

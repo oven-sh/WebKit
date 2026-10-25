@@ -1,0 +1,38 @@
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: UnspecifiedValueInspected 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Made" fields=[{key="value" declared={type=anything}}]
+function f0 name="badTestInFrontOfTheSwitchBesideManyFlags" parameters=[{type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}, {type=L0}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b6()
+  b1():
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v20 = Integer integer=2
+    Jump -> next b4(v20, v19)
+  b3():
+    v21 = Integer integer=1
+    v22 = Unspecified valueType=null|L0
+    Jump -> next b4(v21, v22)
+  b4(v23: int[1, 2], v24: null|L0):
+    v25 = TypeTest v24 testedType=L0
+    Switch v23 cases=[2] -> case b5(), otherwise b5()
+  b5():
+    Return v25
+  b6():
+# REPEAT: i = 2..18
+    Branch v%(i) -> taken b%(i*3+1)(), notTaken b%(i*3+2)()
+  b%(i*3+1)():
+    v%(i*3+20) = Boolean boolean=true
+    Jump -> next b%(i*3+3)(v%(i*3+20))
+  b%(i*3+2)():
+    v%(i*3+21) = Boolean
+    Jump -> next b%(i*3+3)(v%(i*3+21))
+  b%(i*3+3)(v%(i*3+22): boolean):
+# END REPEAT
+# REPEAT: i = 77..92; a = 28 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91
+    v%(i) = StrictEq v%(a), v%(i*3-200)
+# END REPEAT
+    Return v92
+}

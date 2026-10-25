@@ -41,12 +41,12 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ViewportConfiguration);
 
-static inline bool NODELETE viewportArgumentValueIsValid(float value)
+static inline bool LEGACY_NODELETE viewportArgumentValueIsValid(float value)
 {
     return value > 0;
 }
 
-static inline void adjustViewportArgumentsToAvoidExcessiveZooming(ViewportArguments& arguments)
+static inline void LEGACY_NODELETE adjustViewportArgumentsToAvoidExcessiveZooming(ViewportArguments& arguments)
 {
     if (!viewportArgumentValueIsValid(arguments.zoom) || !viewportArgumentValueIsValid(arguments.width))
         return;
@@ -57,7 +57,7 @@ static inline void adjustViewportArgumentsToAvoidExcessiveZooming(ViewportArgume
     arguments.width = zoomedWidthFromArguments / arguments.zoom;
 }
 
-static inline void NODELETE ignoreViewportArgumentsToAvoidEnlargedView(ViewportArguments& arguments, FloatSize viewLayoutSize)
+static inline void LEGACY_NODELETE ignoreViewportArgumentsToAvoidEnlargedView(ViewportArguments& arguments, FloatSize viewLayoutSize)
 {
     if (!viewportArgumentValueIsValid(arguments.width))
         return;
@@ -75,7 +75,7 @@ static bool constraintsAreAllRelative(const ViewportConfiguration::Parameters& c
 }
 #endif // ASSERT_ENABLED
 
-static constexpr float NODELETE platformDeviceWidthOverride()
+static constexpr float LEGACY_NODELETE platformDeviceWidthOverride()
 {
 #if PLATFORM(WATCHOS)
     return 320;
@@ -84,7 +84,7 @@ static constexpr float NODELETE platformDeviceWidthOverride()
 #endif
 }
 
-static constexpr double NODELETE platformMinimumScaleForWebpage()
+static constexpr double LEGACY_NODELETE platformMinimumScaleForWebpage()
 {
 #if PLATFORM(WATCHOS)
     return 0.1;
@@ -93,7 +93,7 @@ static constexpr double NODELETE platformMinimumScaleForWebpage()
 #endif
 }
 
-static constexpr bool NODELETE shouldOverrideShrinkToFitArgument()
+static constexpr bool LEGACY_NODELETE shouldOverrideShrinkToFitArgument()
 {
 #if PLATFORM(WATCHOS)
     return true;
@@ -102,7 +102,7 @@ static constexpr bool NODELETE shouldOverrideShrinkToFitArgument()
 #endif
 }
 
-static bool NODELETE needsUpdateAfterChangingDisabledAdaptations(const OptionSet<DisabledAdaptations>& oldDisabledAdaptations, const OptionSet<DisabledAdaptations>& newDisabledAdaptations)
+static bool LEGACY_NODELETE needsUpdateAfterChangingDisabledAdaptations(const OptionSet<DisabledAdaptations>& oldDisabledAdaptations, const OptionSet<DisabledAdaptations>& newDisabledAdaptations)
 {
     if (oldDisabledAdaptations == newDisabledAdaptations)
         return false;
@@ -501,7 +501,7 @@ ViewportConfiguration::Parameters ViewportConfiguration::testingParameters()
     return parameters;
 }
 
-static inline bool applyViewportArgument(double& value, float viewportArgumentValue, float minimum, float maximum)
+static inline bool LEGACY_NODELETE applyViewportArgument(double& value, float viewportArgumentValue, float minimum, float maximum)
 {
     if (viewportArgumentValueIsValid(viewportArgumentValue)) {
         value = std::min(maximum, std::max(minimum, viewportArgumentValue));
@@ -511,7 +511,7 @@ static inline bool applyViewportArgument(double& value, float viewportArgumentVa
     return false;
 }
 
-static inline bool NODELETE booleanViewportArgumentIsSet(float value)
+static inline bool LEGACY_NODELETE booleanViewportArgumentIsSet(float value)
 {
     return !value || value == 1;
 }

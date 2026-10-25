@@ -68,11 +68,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC::LOL {
 
 namespace LOLJITInternal {
-#ifdef NDEBUG
 static constexpr bool verbose = false;
-#else
-static constexpr bool verbose = true;
-#endif
 }
 
 LOLJIT::LOLJIT(VM& vm, BaselineJITPlan& plan, CodeBlock* codeBlock)
@@ -407,7 +403,6 @@ void LOLJIT::privateCompileMainPass()
         DEFINE_OP(op_is_undefined_or_null)
         DEFINE_OP(op_is_boolean)
         DEFINE_OP(op_is_number)
-        DEFINE_OP(op_is_big_int)
         DEFINE_OP(op_is_object)
         DEFINE_OP(op_is_cell_with_type)
         DEFINE_OP(op_has_structure_with_flags)
@@ -725,7 +720,6 @@ void LOLJIT::privateCompileSlowCases()
         REPLAY_ALLOCATION_FOR_OP(op_is_undefined_or_null, OpIsUndefinedOrNull)
         REPLAY_ALLOCATION_FOR_OP(op_is_boolean, OpIsBoolean)
         REPLAY_ALLOCATION_FOR_OP(op_is_number, OpIsNumber)
-        REPLAY_ALLOCATION_FOR_OP(op_is_big_int, OpIsBigInt)
         REPLAY_ALLOCATION_FOR_OP(op_is_object, OpIsObject)
         REPLAY_ALLOCATION_FOR_OP(op_is_cell_with_type, OpIsCellWithType)
         REPLAY_ALLOCATION_FOR_OP(op_has_structure_with_flags, OpHasStructureWithFlags)
@@ -956,7 +950,7 @@ void LOLJIT::emitCompare(const JSInstruction* instruction, RelationalCondition c
 }
 
 template <typename EmitCompareFunctor>
-ALWAYS_INLINE void LOLJIT::emitCompareImpl(VirtualRegister op1, GPRReg op1GPR, VirtualRegister op2, GPRReg op2GPR, RelationalCondition condition, const EmitCompareFunctor& emitCompare)
+ALWAYS_INLINE void LOLJIT::emitCompareImpl(VirtualRegister op1, GPRReg op1GPR, VirtualRegister op2, GPRReg op2GPR, RelationalCondition condition, NOESCAPE const EmitCompareFunctor& emitCompare)
 {
     // We generate inline code for the following cases in the fast path:
     // - int immediate to constant int immediate
@@ -1027,7 +1021,7 @@ void LOLJIT::emitCompareSlow(const JSInstruction* instruction, DoubleCondition c
 
 // FIXME: Maybe this should take a shouldBox template parameter instead of relying on !dstGPR
 template<typename SlowOperation>
-void LOLJIT::emitCompareSlowImpl(const auto& allocations, VirtualRegister lhs, GPRReg lhsGPR, VirtualRegister rhs, GPRReg rhsGPR, GPRReg dstGPR, SlowOperation operation, Vector<SlowCaseEntry>::iterator& iter, const Invocable<void(FPRReg, FPRReg)> auto& emitDoubleCompare)
+void LOLJIT::emitCompareSlowImpl(const auto& allocations, VirtualRegister lhs, GPRReg lhsGPR, VirtualRegister rhs, GPRReg rhsGPR, GPRReg dstGPR, SlowOperation operation, Vector<SlowCaseEntry>::iterator& iter, NOESCAPE const Invocable<void(FPRReg, FPRReg)> auto& emitDoubleCompare)
 {
     // We generate inline code for the following cases in the slow path:
     // - floating-point number to constant int immediate
@@ -1837,6 +1831,11 @@ void LOLJIT::emit_op_create_this(const JSInstruction* currentInstruction)
     emitAllocateJSObject(resultReg, JITAllocator::variable(), allocatorReg, structureReg, butterfly, s_scratch, slowCases, SlowAllocationResult::UndefinedBehavior);
     load8(Address(structureReg, Structure::inlineCapacityOffset()), s_scratch);
     emitInitializeInlineStorage(resultReg, s_scratch);
+    Jump hasMonoProto = branchTest64(NonZero, Address(structureReg, Structure::prototypeOffset()));
+    loadPtr(Address(calleeReg, JSFunction::offsetOfExecutableOrRareData()), s_scratch);
+    loadPtr(Address(s_scratch, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfPrototype() - JSFunction::rareDataTag), s_scratch);
+    store64(s_scratch, Address(resultReg, offsetRelativeToBase(knownPolyProtoOffset)));
+    hasMonoProto.link(this);
     mutatorFence(*m_vm);
     addSlowCase(slowCases);
     move(resultReg, dstGPR);
@@ -1948,38 +1947,6 @@ void LOLJIT::emit_op_is_number(const JSInstruction* currentInstruction)
 
     m_fastAllocator.releaseScratches(allocations);
 }
-
-#if USE(BIGINT32)
-void LOLJIT::emit_op_is_big_int(const JSInstruction* currentInstruction)
-{
-    auto bytecode = currentInstruction->as<OpIsBigInt>();
-    auto allocations = m_fastAllocator.allocate(*this, bytecode, m_bytecodeIndex);
-    auto [ operandGPR ] = allocations.uses;
-    auto [ dstGPR ] = allocations.defs;
-
-    Jump isCell = branchIfCell(operandGPR);
-
-    move(TrustedImm64(JSValue::BigInt32Mask), s_scratch);
-    and64(operandGPR, s_scratch);
-    compare64(Equal, s_scratch, TrustedImm32(JSValue::BigInt32Tag), dstGPR);
-    boxBoolean(dstGPR, dstGPR);
-    Jump done = jump();
-
-    isCell.link(this);
-    compare8(Equal, Address(operandGPR, JSCell::typeInfoTypeOffset()), TrustedImm32(HeapBigIntType), dstGPR);
-    boxBoolean(dstGPR, dstGPR);
-
-    done.link(this);
-
-    m_fastAllocator.releaseScratches(allocations);
-}
-#else // if !USE(BIGINT32)
-void LOLJIT::emit_op_is_big_int(const JSInstruction*)
-{
-    // If we only have HeapBigInts, then we emit isCellWithType instead of isBigInt.
-    UNREACHABLE_FOR_PLATFORM();
-}
-#endif
 
 void LOLJIT::emit_op_is_object(const JSInstruction* currentInstruction)
 {

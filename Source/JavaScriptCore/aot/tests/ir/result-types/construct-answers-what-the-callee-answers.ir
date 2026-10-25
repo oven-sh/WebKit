@@ -1,0 +1,17 @@
+# A construction answers what the callee answers, as a call does: a function of the host may answer `new` with a string. That it is an object is known of compiled code and of the built-ins that the table describes.
+# FORM: Prepared
+# RUN: result-types
+# CHECK: v2: anything
+# CHECK-NEXT: v3: anything
+# CHECK-NEXT: v4: anything
+# CHECK-NEXT: v5: anything
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="c" parameters=[{type=anything}, {type=Array<anything>}] results=[{type=undefined}] {
+  b0(v0: anything, v1: Array):
+    v2 = Construct v0
+    v3 = Call v0
+    v4 = ConstructList v0, -, v1
+    v5 = CallList v0, -, v1
+    Return
+}

@@ -69,12 +69,12 @@
 // OOM null check deleted. https://bun.com/issues/sentry/BUN-2Z94.
 #if defined(__GNUC__) || defined(__clang__)
 #define BCRASH() do { \
-    BIGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE("core.FixedAddressDereference") *(int*)0xbbadbeef = 0; \
+    BIGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE("optin.core.FixedAddressDereference") *(int*)0xbbadbeef = 0; \
     __builtin_trap(); \
 } while (0)
 #else
 #define BCRASH() do { \
-    BIGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE("core.FixedAddressDereference") *(int*)0xbbadbeef = 0; \
+    BIGNORE_CLANG_STATIC_ANALYZER_WARNINGS_ATTRIBUTE("optin.core.FixedAddressDereference") *(int*)0xbbadbeef = 0; \
     ((void(*)())0)(); \
 } while (0)
 #endif // defined(__GNUC__) || defined(__clang__)

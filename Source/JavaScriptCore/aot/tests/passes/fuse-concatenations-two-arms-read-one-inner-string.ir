@@ -1,0 +1,72 @@
+# The two arms behind a test both go on with one inner string. Each absorbs it, so each joins the parts of the inner string once, and nobody is left who needs a copy of it.
+# An arm that cannot absorb it, and has absorbed another string first, reads its copy where the inner string stands among its parts now.
+# A string whose reader has itself been absorbed stays where it is: whoever absorbed the reader reads the string now, and no list of readers says so
+# FORM: Prepared
+# RUN: pass FuseConcatenations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bothArmsAbsorb" parameters=[{type=number}, {type=boolean}, {type=number}] results=[{type=anything}] {
+    v3 = String string=":"
+    v4 = Add v0, v3
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Add v4, v2
+    Return v5
+  b2():
+    v6 = Add v4, v0
+    Return v6
+# CHECK-NOT: = Add
+# CHECK: b1():
+# CHECK-NEXT: string = Strcat v0, v3, v2
+# CHECK-NOT: = Add
+# CHECK: b2():
+# CHECK-NEXT: string = Strcat v0, v3, v0
+# CHECK-NOT: = Add
+}
+
+function f1 name="armThatAbsorbedAnotherStringFirst" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+    v2 = String string=":"
+    v3 = Add v0, v2
+    v4 = Add v2, v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Add v3, v0
+    Return v5
+  b2():
+    v6 = Add v4, v3
+    v7 = Add v6, v3
+    Return v7
+# CHECK: b1():
+# CHECK-NEXT: string = Strcat v0, v2, v0
+# CHECK: b2():
+# CHECK-NEXT: [[copy1]]: string = Add v0, v2
+# CHECK-NEXT: string = Strcat v2, v0, [[copy1]], [[copy1]]
+}
+
+function f2 name="readerThatAnotherHasAbsorbed" parameters=[{type=number}, {type=boolean}, {type=boolean}, {type=number}] results=[{type=anything}] {
+    v4 = String string=":"
+    v5 = Add v0, v4
+    Branch v1 -> taken b1(), notTaken b6()
+  b1():
+    Branch v2 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v6 = Add v5, v3
+    Branch v2 -> taken b4(), notTaken b5()
+  b4():
+    v7 = Add v6, v0
+    Return v7
+  b5():
+    Return v0
+  b6():
+    v8 = Add v5, v0
+    Return v8
+# CHECK: v5: string = Add v0, v4
+# CHECK: b3():
+# CHECK-NEXT: Branch v2
+# CHECK: b4():
+# CHECK-NEXT: string = Strcat v5, v3, v0
+# CHECK: b6():
+# CHECK-NEXT: string = Add v5, v0
+}
