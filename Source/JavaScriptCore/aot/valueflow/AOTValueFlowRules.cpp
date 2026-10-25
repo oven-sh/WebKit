@@ -403,7 +403,8 @@ static void runEscape(const ValueFlowStatement&, ValueFlowRuleContext& context)
     v(Increment, runArithmetic) \
     v(Decrement, runArithmetic) \
     v(BitNot, runArithmetic) \
-    v(ToPropertyKey, runToPropertyKey)
+    v(ToPropertyKey, runToPropertyKey) \
+    v(TryPutDoubleIndex, runHeapOperation)
 
 bool hasRuleOfItsOwn(Opcode opcode)
 {

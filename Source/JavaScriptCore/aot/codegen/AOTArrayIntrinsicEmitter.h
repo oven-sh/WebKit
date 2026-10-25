@@ -31,6 +31,7 @@ public:
     void generateNewArrayWithCapacity(const ValueContext&);
     void generateTryPutByValDirect(const ValueContext&);
     void generateTryPutIndex(const ValueContext&);
+    void generateTryPutDoubleIndex(const ValueContext&);
     void generateGrowNewArray(const ValueContext&);
     void generateTruncateNewArray(const ValueContext&);
 

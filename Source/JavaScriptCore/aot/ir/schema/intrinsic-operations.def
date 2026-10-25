@@ -47,6 +47,7 @@ operation NewArrayLike (length: Integer/inspects, source?: Any/inspects, engine 
 operation NewArrayWithCapacity (length: Integer/inspects, source?: Any/inspects, engine allocationSite?: AllocationSite, engine arrayStorage: ArrayStorage) -> allocation(Array) ; Allocates reads(ArrayStorage) throws ; runtime = NewArrayWithHoles ; allocatesInline = true ; flow = Allocates
 operation TryPutByValDirect (array: Array/inspects+writesContents, position: Integer/inspects, value: Any/retains(array), engine arrayStorage: ArrayStorage) -> natural(boolean) ; reads(ArrayStorage) writes(Elements[Array]) ; runsOwnerBarrier = true ; flow = TableProves
 operation TryPutIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Any/retains(array)) -> natural(boolean) ; reads(ArrayStorage) writes(ArrayStorage, Elements[Array]) ; runsOwnerBarrier = true ; flow = TableProves
+operation TryPutDoubleIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Number/inspects) -> natural(boolean) ; reads(ArrayStorage) writes(Elements[Array]) ; flow = TableProves
 operation GrowNewArray (array: Array/inspects+writesContents, length: Integer/inspects) -> none ; GrowsArray ; runtime = GrowNewArray ; flow = Copies
 operation TruncateNewArray (array: Array/inspects+returns+writesContents, length: Integer/inspects) -> allocation(Array) ; GrowsArray ; runtime = TruncateNewArray ; flow = Copies
 

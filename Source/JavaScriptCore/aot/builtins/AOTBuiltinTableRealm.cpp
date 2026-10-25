@@ -894,13 +894,13 @@ private:
         BuiltinID member = table.findOwnMember(m_holder, name);
         if (!member)
             return false;
-        if (member == m_holder || std::ranges::binary_search(table.lockedMembers(), member))
-            return true;
         const Builtin& entry = table.at(member);
-        if (entry.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances) && table.at(m_holder).flags.contains(BuiltinFlag::HasLockedMembers))
-            return true;
         if (m_holder == Builtins::GlobalThis && !BuiltinBindings::provides(entry.origin))
             return false;
+        if (member == m_holder || std::ranges::binary_search(table.lockedMembers(), member))
+            return true;
+        if (entry.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances) && table.at(m_holder).flags.contains(BuiltinFlag::HasLockedMembers))
+            return true;
         return std::ranges::binary_search(m_constantMembers, member.index());
     }
 

@@ -1012,6 +1012,10 @@ void HeapRule::runOperation()
         write(m_context.valueOf(operand(At::TryPutIndex::array)), elementsName, operand(At::TryPutIndex::value));
         answerBoolean();
         return;
+    case Opcode::TryPutDoubleIndex:
+        write(m_context.valueOf(operand(At::TryPutDoubleIndex::array)), elementsName, operand(At::TryPutDoubleIndex::value));
+        answerBoolean();
+        return;
     case Opcode::PutDoubleIndex:
         write(m_context.valueOf(operand(At::PutDoubleIndex::array)), elementsName, operand(At::PutDoubleIndex::value));
         return;

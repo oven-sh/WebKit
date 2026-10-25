@@ -2,7 +2,7 @@
 # FORM: Placed
 # OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
 # RUN: generate-code
-# CHECK-COUNT-21: : size=
+# CHECK-COUNT-22: : size=
 # CHECK-NOT: no code
 # RUN(S): code-shapes
 
@@ -701,3 +701,30 @@ function f20 name="growAndTruncate" parameters=[{type=int[0, 100]}, {type=i32}, 
 # S: f20 b0 Balanced
 # S: f20 b1 Fast
 # S: f20 b3 Compact
+function f21 name="tryPutDoubleIndex" parameters=[{type=Array}, {type=i32}, {type=int}, {type=i32}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+    v6 = TryPutDoubleIndex v0, v1, v3
+    v7 = TryPutDoubleIndex v0, v1, v4
+    v8 = TryPutDoubleIndex v0, v2, v4
+    v9 = NewArray v6, v7, v8 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v11 = TryPutDoubleIndex v0, v1, v3
+    v12 = TryPutDoubleIndex v0, v1, v4
+    v13 = TryPutDoubleIndex v0, v2, v4
+    v14 = NewArray v11, v12, v13 contents=anything
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Branch v5 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v15 = TryPutDoubleIndex v0, v1, v3
+    v16 = TryPutDoubleIndex v0, v1, v4
+    v17 = TryPutDoubleIndex v0, v2, v4
+    v18 = NewArray v15, v16, v17 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f21 b0 Balanced
+# S: f21 b1 Fast
+# S: f21 b3 Compact

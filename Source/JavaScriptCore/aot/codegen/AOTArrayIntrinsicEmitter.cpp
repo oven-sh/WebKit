@@ -222,6 +222,25 @@ void ArrayIntrinsicEmitter::generateTryPutIndex(const ValueContext& value)
     define(value, elements().tryStoreElement(value, array, index, value->valueOperand()));
 }
 
+// Asks what putInBounds() asks and answers false to a no, so it may store into an array that the program holds. A NaN that it stores reads as a hole.
+void ArrayIntrinsicEmitter::generateTryPutDoubleIndex(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    Integer index = integerOperand(value->positionOperand());
+    Operand rawElement = get(value->valueOperand());
+    LBasicBlock otherwise = newBlock();
+    Join<Condition> join(m_out);
+    branchUnless(elements().hasWritableShape(elements().indexingMode(array, IndexingShapeAndWritabilityMask), doubles), otherwise);
+    ArrayElements storage = elements().elementsOf(array);
+    branchUnless(below(index, elements().publicLength(storage)), otherwise);
+    elements().storeRawElement(doubles, storage, index, rawElement);
+    join.add(boolean(true));
+
+    m_out.appendTo(otherwise);
+    join.add(boolean(false));
+    define(value, join.finish());
+}
+
 void ArrayIntrinsicEmitter::generateGrowNewArray(const ValueContext& value)
 {
     callVoidOperation(value, RuntimeOperation::GrowNewArray, { in<CellPointer>(value->arrayOperand()), integerOperand(value->lengthOperand()) });
