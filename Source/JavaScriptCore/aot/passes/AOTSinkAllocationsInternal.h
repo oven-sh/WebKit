@@ -642,7 +642,7 @@ struct BytesOperands {
     BuiltinOverloadID overloadInRanges;
     Vector<uint32_t, 2> operandIndexes;
 };
-std::optional<BytesOperands> findBytesOperands(const Program&, const Value& call, BuiltinCallForm formOfCall);
+std::optional<BytesOperands> findBytesOperands(const Program&, const Function&, const Value& call, BuiltinCallForm formOfCall);
 
 bool isFrameAllocatable(const AllocationSinking&, const Candidate&);
 bool buildsItsOperands(const Program&, const Value& user);

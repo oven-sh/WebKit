@@ -466,7 +466,7 @@ bool AllocationPrefilter::mayBeScalarReplacedBy(uint32_t object, const Use& use,
     EnumSet<VirtualObjectKind> kinds = m_objects[find(object)].kinds;
     if (kinds.contains(VirtualObjectKind::Arguments))
         return true;
-    if (std::optional<BytesOperands> bytes = kinds.contains(VirtualObjectKind::ViewRange) ? findBytesOperands(m_program, user, formOfCall) : std::nullopt)
+    if (std::optional<BytesOperands> bytes = kinds.contains(VirtualObjectKind::ViewRange) ? findBytesOperands(m_program, m_function, user, formOfCall) : std::nullopt)
         return bytes->operandIndexes.contains(use.operandIndex);
     return kinds.contains(VirtualObjectKind::Array) && user.opcode == Opcode::CallBuiltin && user.builtinCallForm() == BuiltinCallForm::List;
 }

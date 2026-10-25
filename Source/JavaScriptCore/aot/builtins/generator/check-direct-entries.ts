@@ -78,6 +78,10 @@ function holdsOnlyViews(type: ModelType): boolean {
   return holdsOnlyInstances(type) && type.parts.every(part => part.part === "Instance" && isViewClass(part.class));
 }
 
+function holdsOnlyObjects({ isAnything, integers, primitives, stringLiterals }: ModelType): boolean {
+  return !isAnything && integers === null && primitives.length === 0 && stringLiterals.length === 0;
+}
+
 // What a function can do to an operand of which it has nothing but the memory, and only until it returns.
 const usesOfContentsDuringCall: readonly OperandUse[] = ["Inspects", "ReadsContents", "WritesContents"];
 
@@ -96,6 +100,8 @@ function findContentsProblems({ value }: DirectParameterSpec, parameter: ModelPa
       const others = uses.filter(use => !usesOfContentsDuringCall.includes(use));
       if (others.length > 0 || !runsNoCodeOf(parameter))
         return [`${name}: ${value} hands over memory for the time of the call, and the row says more: ${others.join(", ") || "it runs code of the operand"}`];
+      // The row that takes whole views was checked, and only calls that matched it move to its form in ranges.
+      if (value === "BytesInRange") return holdsOnlyObjects(accepted) ? [] : [`${name}: ${value} is for objects`];
       return holdsOnlyViews(accepted) ? [] : [`${name}: ${value} is for typed arrays and DataViews, and for nothing else`];
     }
     case "Characters":

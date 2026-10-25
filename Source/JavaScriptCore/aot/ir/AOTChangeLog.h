@@ -13,6 +13,7 @@
 #include <limits>
 #include <optional>
 #include <span>
+#include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
@@ -115,8 +116,15 @@ public:
 
     bool wasAddedAndShownToNobody(BlockID block) const { return block.index() >= m_firstBlockShownToNobody; }
 
+    // A pass wrote this value's type, and its users have not been retyped yet.
+    bool hasUnpropagatedType(ValueID value) const { return m_valuesWithUnpropagatedType.get(value.index()); }
+    void markTypeAsUnpropagated(ValueID value) { m_valuesWithUnpropagatedType.set(value.index()); }
+    void didPropagateTypes() { m_valuesWithUnpropagatedType.clearAll(); }
+
     ALWAYS_INLINE void didEdit(ValueID value, OptionSet<ValueEdit> edits, TypeID typeBefore, TypeID expectedBefore)
     {
+        if (edits.contains(ValueEdit::Type) && !edits.contains(ValueEdit::Added))
+            markTypeAsUnpropagated(value);
         if (edits.contains(ValueEdit::Added) || value.index() >= m_firstValueShownToNobody) {
             didAddOrEditWhatNobodyWasShown(ValueChange { value, edits, typeBefore, expectedBefore });
             return;
@@ -166,6 +174,7 @@ public:
         m_numberOfShownBlocks = 0;
         m_numberOfSettledValues = 0;
         m_numberOfSettledBlocks = 0;
+        m_valuesWithUnpropagatedType.clearAll();
         didShowEntries();
     }
 
@@ -218,6 +227,7 @@ private:
 
     Vector<ValueChange, 8> m_values;
     Vector<BlockChange, 8> m_blocks;
+    BitVector m_valuesWithUnpropagatedType;
     mutable size_t m_numberOfShownValues { 0 };
     mutable size_t m_numberOfShownBlocks { 0 };
     mutable uint32_t m_firstValueShownToNobody { std::numeric_limits<uint32_t>::max() };

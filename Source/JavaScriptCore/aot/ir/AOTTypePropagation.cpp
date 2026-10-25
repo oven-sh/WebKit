@@ -1380,6 +1380,10 @@ bool PendingTyping::compact(Function& function, Renumbering* renumberingForCalle
             return !(change.block = renumbering.newIDOf(change.block));
         });
         m_seen = log.end();
+        for (const ValueChange& change : m_values) {
+            if (change.edits.contains(ValueEdit::Type) && !change.edits.contains(ValueEdit::Added))
+                function.changeLog()->markTypeAsUnpropagated(change.value);
+        }
     }
     if (renumberingForCaller)
         *renumberingForCaller = WTF::move(renumbering);
@@ -1441,8 +1445,11 @@ TypePropagationOutcome typeChangedValues(const TypePropagationInputs& inputs)
         if (ValueID value = typedFromNever ? findValueTypedWider(inputs, *typedFromNever) : ValueID())
             inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = inputs.analyses.subject().function, .value = value, .detail = "typed from what changed it is wider than typed from nothing"_s });
     }
-    if (pending->isEmpty(log) && !pending->waitsToCutCode())
-        inputs.function.setValuesAreTypedAsDefined();
+    if (pending->isEmpty(log)) {
+        inputs.function.changeLog()->didPropagateTypes();
+        if (!pending->waitsToCutCode())
+            inputs.function.setValuesAreTypedAsDefined();
+    }
     return outcome;
 }
 

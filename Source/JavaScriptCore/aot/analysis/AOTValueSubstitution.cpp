@@ -21,7 +21,11 @@ static bool hasTypesOf(const Function& function, ValueID replaced, ValueID repla
 {
     const Value& from = function.at(replaced);
     const Value& to = function.at(replacement);
-    return from.type == to.type && from.expectedForTyping() == to.expectedForTyping() && !opcodesWithIndirectUsers.contains(from.opcode) && !opcodesWithIndirectUsers.contains(to.opcode);
+    if (from.type != to.type || from.expectedForTyping() != to.expectedForTyping() || opcodesWithIndirectUsers.contains(from.opcode) || opcodesWithIndirectUsers.contains(to.opcode))
+        return false;
+    // The user may still be typed from the type that the replaced value had before.
+    const ChangeLog* log = function.changeLog();
+    return !log || !log->hasUnpropagatedType(replaced);
 }
 
 void replaceUse(Function& function, const Use& use, ValueID replacement)

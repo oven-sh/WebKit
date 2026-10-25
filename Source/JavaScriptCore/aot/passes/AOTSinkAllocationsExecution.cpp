@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinCalls.h"
 #include "AOTBuiltinTypes.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowApply.h"
@@ -408,7 +409,7 @@ ObjectState ObjectInterpreter::stateAtAllocation(VirtualObjectID object, Virtual
 }
 
 // The row of the function says that it only reads or writes the contents of these operands while it runs, so its direct entry takes an address and a count.
-std::optional<BytesOperands> findBytesOperands(const Program& program, const Value& call, BuiltinCallForm formOfCall)
+std::optional<BytesOperands> findBytesOperands(const Program& program, const Function& function, const Value& call, BuiltinCallForm formOfCall)
 {
     if (call.opcode != Opcode::CallBuiltin)
         return std::nullopt;
@@ -418,6 +419,9 @@ std::optional<BytesOperands> findBytesOperands(const Program& program, const Val
     bool entersDirectEntry = form == BuiltinCallForm::Whole || (form == BuiltinCallForm::Fields && overload.code.fieldsForm == InlineBuiltin::FieldsOfDirectEntry);
     // The bounds come behind the arguments, so none of them is left out.
     if (!overload.code.overloadInRanges || !entersDirectEntry || call.argumentsOperands().size() != overload.parameters.size())
+        return std::nullopt;
+    // The other overload takes a view on trust, so the types have to say here that each one is a view.
+    if (!overloadTakesOperands(program, function, call))
         return std::nullopt;
 
     BytesOperands bytes { overload.code.overloadInRanges, { } };
@@ -507,7 +511,7 @@ void ObjectInterpreter::requireCellsOfOperands(ValueID id, BuiltinCallForm formO
     if (m_state.objects.isEmpty())
         return;
 
-    std::optional<BytesOperands> bytes = findBytesOperands(program(), function().at(id), formOfCall);
+    std::optional<BytesOperands> bytes = findBytesOperands(program(), function(), function().at(id), formOfCall);
     bool passesRange = false;
     Opcode opcode = function().at(id).opcode;
     for (auto [operand, index] : indexedOperandsOf(function().at(id))) {

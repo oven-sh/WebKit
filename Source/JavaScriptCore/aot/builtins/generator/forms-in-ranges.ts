@@ -13,6 +13,9 @@ const kindsTakingReceiver: readonly DirectValue[] = ["NativeObjectOfReceiver", "
 // The compiler writes integers that are not negative here. An end beyond the view stands for the end of the view, whatever its length is when the call runs.
 const boundInBytes = b.any.parameter;
 
+// A call moves to the helper only after its operands matched the row. Later passes may know less about a view than that, and a helper has no function to fall back on.
+const viewThatMatchedTheRow = b.object.parameter;
+
 function signatureInRanges(signature: SignatureDeclaration): SignatureDeclaration[] {
   const { directEntry } = signature;
   const numberOfViews = directEntry?.parameters.filter(({ value }) => value in kindsInRanges).length ?? 0;
@@ -20,13 +23,19 @@ function signatureInRanges(signature: SignatureDeclaration): SignatureDeclaratio
   const bounds = Array.from({ length: numberOfViews }, (_, view) => [`startOfView${view}`, `endOfView${view}`]).flat();
   // A receiver that the C function does not take was tested by whoever picked the overload. The helper has none.
   const takesReceiver = directEntry.parameters.some(({ value }) => kindsTakingReceiver.includes(value));
+  const kindsOfArguments = directEntry.parameters.filter(({ value }) => value !== "Realm" && !kindsTakingReceiver.includes(value));
   const { this: usesOfReceiver, ...usesOfArguments } = signature.uses ?? {};
   return [
     {
       ...signature,
       isSpecialCase: undefined,
       receiver: takesReceiver ? signature.receiver : null,
-      parameters: [...signature.parameters, ...bounds.map(name => ({ name, type: boundInBytes }))],
+      parameters: [
+        ...signature.parameters.map((parameter, index) =>
+          kindsOfArguments[index]?.value === "Bytes" ? { ...parameter, type: viewThatMatchedTheRow } : parameter,
+        ),
+        ...bounds.map(name => ({ name, type: boundInBytes })),
+      ],
       uses: {
         ...(takesReceiver ? { this: usesOfReceiver } : {}),
         ...usesOfArguments,
