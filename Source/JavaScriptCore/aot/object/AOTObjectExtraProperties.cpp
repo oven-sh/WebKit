@@ -718,7 +718,7 @@ bool Object::repeatsExtraPropertyStore(VM& vm, PropertyName name) const
 
 void Object::willAddExtraProperty(VM& vm, PropertyName name)
 {
-    validateMutation(vm, *this, ObjectMutation::AddProperty);
+    validateMutation(vm, *this, name, ObjectMutation::AddProperty);
     ObjectModel& objects = *state().objects;
     objects.layouts.willAddProperty(vm, layout(), name.uid());
     objects.classes.didShadowMember(layout(), name.uid());

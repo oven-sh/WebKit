@@ -9,6 +9,7 @@
 
 #include "AOTPass.h"
 #include "AOTVector.h"
+#include <optional>
 #include <ranges>
 #include <utility>
 #include <wtf/BitVector.h>
@@ -54,7 +55,22 @@ private:
 // Answers whether the declared type of an entry parameter changed.
 bool expectLayoutsByNames(FunctionPassContext&, ExpectedTypesByUse&);
 
-bool expectsReceiverOfCalledMethod(FunctionPassContext&, BlockID, const Value& call);
+// The values of which expectLayoutsByNames() would expect something, as the function stands. Found at the first question.
+class ReceiversExpectedByNames {
+public:
+    explicit ReceiversExpectedByNames(FunctionPassContext& context)
+        : m_context(context)
+    {
+    }
+
+    bool contains(ValueID receiver);
+
+private:
+    FunctionPassContext& m_context;
+    std::optional<BitVector> m_receivers;
+};
+
+bool expectsReceiverOfCalledMethod(FunctionPassContext&, ReceiversExpectedByNames&, BlockID, const Value& call);
 
 } } } // namespace JSC::AOT::Typed
 

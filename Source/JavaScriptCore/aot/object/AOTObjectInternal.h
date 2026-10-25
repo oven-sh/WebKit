@@ -47,6 +47,14 @@ ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, ObjectMutation
         crashOnImpossibleMutation(vm, object, mutation);
 }
 
+[[noreturn]] void crashOnImpossibleMutation(VM&, const Object&, PropertyName, ObjectMutation);
+
+ALWAYS_INLINE void validateMutation(VM& vm, const Object& object, PropertyName name, ObjectMutation mutation)
+{
+    if (vm.aotState().validatesRuntime && object.layout().impossibleMutations().contains(mutation)) [[unlikely]]
+        crashOnImpossibleMutation(vm, object, name, mutation);
+}
+
 constexpr uint16_t flagOfFieldsThatCannot(ObjectMutation mutation)
 {
     if (mutation == ObjectMutation::DeleteField)

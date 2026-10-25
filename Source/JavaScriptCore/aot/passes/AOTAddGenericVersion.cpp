@@ -252,6 +252,7 @@ enum class ExpectedTypes : uint8_t { Dropped, Kept };
 struct CheckSite {
     ValueID check;
     ProgramPoint pointBehind;
+    bool isWorthExit { true };
     bool hasExit { true };
     BlockID block;
     BlockID continuation;
@@ -318,6 +319,8 @@ struct GenericVersionBuilder {
 
         // The first suspension of a generator stands once in its body.
         bool isUnsplitGenerator = function.isUnsplitCoroutine() && function.has(FunctionFlags::IsGenerator);
+        for (CheckSite& site : sites)
+            site.isWorthExit = !standsBetweenMethodReadAndCall(site);
         bool runsSeldom = isInColderPartOfProgram(context.inputs.heat, program, context.id);
         if (runsSeldom || isUnsplitGenerator || function.role == FunctionRole::GenericVersion || keepsMoreAliveOverAwaitThanFrameMapHolds() || !tryCreateGenericVersion()) {
             if (function.role != FunctionRole::GenericVersion) {
@@ -329,6 +332,23 @@ struct GenericVersionBuilder {
             finishTyping();
         }
         return PassOutcome::Changed;
+    }
+
+    // A method is read before its arguments are evaluated. An exit between the two hands the method on to the generic version, and a call is resolved by its receiver only where nobody else uses the method.
+    // Only a method that is one of several functions of the program is told by its receiver. Any other call gains nothing, and the exit proves the argument to what is called.
+    bool standsBetweenMethodReadAndCall(const CheckSite& site)
+    {
+        auto [block, indexBehind] = site.pointBehind;
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = indexBehind; index < values.size(); ++index) {
+            const Value& call = function.at(values[index]);
+            if (call.opcode != Opcode::Call || !call.calleeKey() || typeOf(call.calleeOperand()).functions.size() < 2)
+                continue;
+            ValueLocation read = analyses.useLists().locationOf(CastChain(function, call.calleeOperand()).last());
+            if (read.placement == ValuePlacement::InBlock && read.block == block && read.index < indexBehind)
+                return true;
+        }
+        return false;
     }
 
     // Such a function builds only where its allocations sink past the await, and a second version of what uses them stands in the way of that.
@@ -624,7 +644,7 @@ struct GenericVersionBuilder {
     void splitBlocks(std::span<const ProgramPoint> rejoinPoints)
     {
         for (CheckSite& site : sites) {
-            site.hasExit = !isAfterTailCall(function, site.pointBehind);
+            site.hasExit = site.isWorthExit && !isAfterTailCall(function, site.pointBehind);
             if (site.hasExit)
                 cuts.append(GenericVersionCut { site.pointBehind, { }, { } });
         }

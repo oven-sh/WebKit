@@ -95,23 +95,26 @@ static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, Hole
         break;
     }
     slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
-    allocateCell(jit, array, allocator, scratch, slowPath);
-    jit.addPtr(TrustedImm32(sizeof(JSArray)), array, storage);
+    std::optional<unsigned> cellSize;
+    if (operand == HoleArrayOperand::None && sizeOfArrayWithStorage(fixedCapacity) <= MarkedSpace::preciseCutoff)
+        cellSize = sizeOfArrayWithStorage(fixedCapacity);
+    const AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, array, allocator, scratch, slowPath, cellSize);
+    constexpr int32_t offsetOfLength = sizeof(JSArray);
+    constexpr int32_t offsetOfCapacity = offsetOfLength + sizeof(uint32_t);
+    jit.addPtr(TrustedImm32(sizeof(JSArray) + sizeof(IndexingHeader)), array, storage);
 
-    // The indexing header and the holes. The storage becomes the butterfly, and the allocator is dead.
+    // The indexing header and the holes. The allocator is dead.
     switch (operand) {
     case HoleArrayOperand::None:
-        jit.store64(TrustedImm64(static_cast<uint64_t>(fixedCapacity) << 32), Address(storage, 0));
-        jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), storage);
+        jit.store64(TrustedImm64(static_cast<uint64_t>(fixedCapacity) << 32), Address(array, offsetOfLength));
         jit.move(hole, scratch);
         for (unsigned i = 0; i + 1 < fixedCapacity; i += 2)
             jit.storePair64(scratch, scratch, storage, TrustedImm32(i * sizeof(EncodedJSValue)));
         jit.store64(scratch, Address(storage, (fixedCapacity - 1) * sizeof(EncodedJSValue)));
         break;
     case HoleArrayOperand::LengthAndCapacity: {
-        jit.store32(length, Address(storage, 0));
-        jit.store32(capacity, Address(storage, sizeof(uint32_t)));
-        jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), storage);
+        jit.store32(length, Address(array, offsetOfLength));
+        jit.store32(capacity, Address(array, offsetOfCapacity));
         Jump isFull = jit.branch32(CCallHelpers::AboveOrEqual, length, capacity);
         jit.move(hole, scratch);
         Label fill = jit.label();
@@ -124,9 +127,8 @@ static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, Hole
     case HoleArrayOperand::Capacity: {
         // The capacity is odd and at least 3: one hole, then pairs.
         const GPRReg cursor = allocator;
-        jit.store32(TrustedImm32(0), Address(storage, 0));
-        jit.store32(capacity, Address(storage, sizeof(uint32_t)));
-        jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), storage);
+        jit.store32(TrustedImm32(0), Address(array, offsetOfLength));
+        jit.store32(capacity, Address(array, offsetOfCapacity));
         jit.move(hole, scratch);
         jit.store64(scratch, Address(storage));
         jit.getEffectiveAddress(BaseIndex(storage, capacity, CCallHelpers::TimesEight), capacity);
@@ -147,6 +149,7 @@ static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, Hole
     fenceAfterAllocation(jit);
     jit.returnToCaller();
 
+    emitLateRefill(jit, refill, slowPath);
     if (!callerSlowPath.empty()) {
         callerSlowPath.link(&jit);
         if (operand == HoleArrayOperand::None && indexingType == ArrayWithDouble) {
@@ -176,11 +179,20 @@ static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, Hole
         break;
     }
     jit.move(TrustedImm32(indexingType), flags);
+    const StubSignature slow = signatureOfNewArrayOfHolesSlow(newArrayOfHolesSlow());
+    RELEASE_ASSERT(slow.operands[0] == Reg(lengthAndCapacity) && slow.operands[1] == Reg(flags));
+    jit.jumpToStub(newArrayOfHolesSlow());
+}
+
+StubSignature signatureOfNewArrayOfHolesSlow(StubKey) { return StubSignature::withGPRResult({ gprOf(arrayStorageRegister), gprOf(StubRegister::T13) }); }
+
+void generateNewArrayOfHolesSlow(StubAssembler& jit)
+{
     jit.callOperationAndReturn(Entry::operationAOTNewArrayOfHoles, {
         .returns = OperationCall::Returns::Value,
         .saves = OperationCall::Saves::CallerSavedRegisters,
-        .secondArgumentIn = lengthAndCapacity,
-        .thirdArgumentIn = flags,
+        .secondArgumentIn = jit.operand(0),
+        .thirdArgumentIn = jit.operand(1),
     });
 }
 
@@ -278,12 +290,14 @@ static constexpr IndexingType indexingShapeOf(ArrayElementKind kind)
     return indexingTypeOf(kind) & IndexingShapeMask;
 }
 
-// The realm is not having a bad time, so no stub entered from here returns 0.
-static void emitJumpToEmptyArrayStub(StubAssembler& jit, ArrayElementKind kind, GPRReg profileWord, GPRReg capacity)
+// No stub entered from here returns 0: one that would in a realm that is having a bad time is entered behind the test for that.
+static void emitJumpToEmptyArrayStub(StubAssembler& jit, ArrayElementKind kind, GPRReg shapeAndCapacity, GPRReg capacity)
 {
     static_assert(ArrayAllocationProfile::capacityMask == 0xff && (BASE_CONTIGUOUS_VECTOR_LEN_MAX | 1) <= maxHoleArrayCapacity);
     RELEASE_ASSERT(capacity == gprOf(StubRegister::T9));
-    jit.zeroExtend8To32(profileWord, capacity);
+    if (kind != ArrayElementKind::Double)
+        jit.linkToStub(branchIfHavingABadTime(jit), arrayLiteral(0));
+    jit.zeroExtend8To32(shapeAndCapacity, capacity);
     Jump hasDefaultCapacity = jit.branchTest32(CCallHelpers::Zero, capacity);
     switch (kind) {
     case ArrayElementKind::Int32:
@@ -291,6 +305,9 @@ static void emitJumpToEmptyArrayStub(StubAssembler& jit, ArrayElementKind kind, 
         break;
     case ArrayElementKind::Double:
         jit.linkToStub(hasDefaultCapacity, newEmptyArray(EmptyArray::DoubleDefaultCapacity));
+        jit.linkToStub(jit.branch32(CCallHelpers::Equal, capacity, TrustedImm32(1)), newEmptyArray(EmptyArray::DoubleCapacity1));
+        jit.linkToStub(jit.branch32(CCallHelpers::Equal, capacity, TrustedImm32(3)), newEmptyArray(EmptyArray::DoubleCapacity3));
+        jit.linkToStub(branchIfHavingABadTime(jit), arrayLiteral(0));
         break;
     case ArrayElementKind::Contiguous:
         jit.linkToStub(hasDefaultCapacity, arrayLiteral(0));
@@ -304,32 +321,29 @@ static void emitJumpToEmptyArrayStub(StubAssembler& jit, ArrayElementKind kind, 
 
 void generateNewEmptyArrayAtSite(StubAssembler& jit)
 {
-    constexpr unsigned numberOfShapeBits = std::popcount(ArrayAllocationProfile::shapeMask);
+    static_assert((ArrayAllocationProfile::shapeMask | ArrayAllocationProfile::capacityMask) == 0xffff && ArrayAllocationProfile::shapeShift == 8);
     const ArrayElementKind seed = static_cast<ArrayElementKind>(jit.key().form());
     const GPRReg profile = jit.clobberOperand(0);
-    const GPRReg word = jit.allocateScratch(StubRegister::T12);
+    const GPRReg shapeAndCapacity = jit.allocateScratch(StubRegister::T12);
     const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
     const GPRReg capacity = profile;
-    const GPRReg learnedShape = scratch;
     const Address wordInProfile(profile, OBJECT_OFFSETOF(ArrayAllocationProfile, word));
 
-    jit.load32(wordInProfile, word);
-    jit.add32(TrustedImm32(1 << ArrayAllocationProfile::allocationCountShift), word);
-    jit.store32(word, wordInProfile);
-    jit.and32(TrustedImm32(ArrayAllocationProfile::intervalMask), word, scratch);
-    Jump isDueForReview = jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(ArrayAllocationProfile::countAtReview));
-    jit.linkToStub(branchIfHavingABadTime(jit), arrayLiteral(0));
+    // Adding the negative carries unless the count was 0.
+    Jump isNotDueForReview = jit.branchAdd32(CCallHelpers::Carry, TrustedImm32(-static_cast<int32_t>(ArrayAllocationProfile::oneAllocation)), wordInProfile);
+    Jump isDueForReview = jit.jump();
+    isNotDueForReview.link(&jit);
 
-    if (seed != ArrayElementKind::Contiguous)
-        extractBits(jit, word, ArrayAllocationProfile::shapeShift, numberOfShapeBits, learnedShape);
+    jit.load16(wordInProfile, shapeAndCapacity);
     for (ArrayElementKind kind : { ArrayElementKind::Int32, ArrayElementKind::Double }) {
         if (indexingShapeOf(kind) < indexingShapeOf(seed))
             continue;
-        Jump needsMoreGeneralShape = jit.branch32(CCallHelpers::Above, learnedShape, TrustedImm32(indexingShapeOf(kind)));
-        emitJumpToEmptyArrayStub(jit, kind, word, capacity);
+        uint32_t largestOfShape = static_cast<uint32_t>(indexingShapeOf(kind)) << ArrayAllocationProfile::shapeShift | ArrayAllocationProfile::capacityMask;
+        Jump needsMoreGeneralShape = jit.branch32(CCallHelpers::Above, shapeAndCapacity, TrustedImm32(largestOfShape));
+        emitJumpToEmptyArrayStub(jit, kind, shapeAndCapacity, capacity);
         needsMoreGeneralShape.link(&jit);
     }
-    emitJumpToEmptyArrayStub(jit, ArrayElementKind::Contiguous, word, capacity);
+    emitJumpToEmptyArrayStub(jit, ArrayElementKind::Contiguous, shapeAndCapacity, capacity);
 
     isDueForReview.link(&jit);
     jit.move(TrustedImm32(indexingTypeOf(seed)), scratch);

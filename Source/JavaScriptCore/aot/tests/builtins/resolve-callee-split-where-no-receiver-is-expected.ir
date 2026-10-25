@@ -1,0 +1,27 @@
+# The analysis has followed the receiver to a layout that answers another name, so the names make nothing expected of it and no test of the receiver comes: the callee is tested
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Queue" fields=[{key="size" declared={type=number} flags=[IsRequired]}]
+function f0 name="followed" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="size" receivers=[L0]
+    v3 = PropGet v0 key="push"
+    v4 = Call v3, v0, v1 calleeKey="push"
+    Return v4
+# CHECK: = TypeTest v3 testedType=builtin(ArrayPrototypePush)
+}
+
+function f1 name="notFollowed" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1 calleeKey="push"
+    Return v3
+# CHECK-NOT: TypeTest
+# CHECK: anything = Call v2, v0, v1 calleeKey="push"
+}
+
+function f2 name="makesQueue" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}

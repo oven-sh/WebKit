@@ -305,24 +305,38 @@ bool Extension::tryInsert(uint64_t granuleBits)
     return true;
 }
 
+static StringView nameOfLayout(VM& vm, const LayoutData& layout)
+{
+    const ImageText& text = vm.aotState().image->text();
+    StringID name(layout.name);
+    return name && text.hasText(name) ? text.view(name) : StringView("-"_s);
+}
+
 void crashOnImpossibleMutation(VM& vm, const Object& object, ObjectMutation mutation)
 {
-    dataLogLn("impossible mutation ", static_cast<unsigned>(mutation), " of layout ", object.layout().index);
+    const LayoutData& layout = object.layout();
+    dataLogLn("AOT: ", nameOf(mutation), " on an object of layout ", layout.index, " (", nameOfLayout(vm, layout), "), which the compiler assumed never happens");
+    crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, &object });
+}
+
+void crashOnImpossibleMutation(VM& vm, const Object& object, PropertyName name, ObjectMutation mutation)
+{
+    const LayoutData& layout = object.layout();
+    dataLogLn("AOT: ", nameOf(mutation), " of ", String(name.uid()), " on an object of layout ", layout.index, " (", nameOfLayout(vm, layout), "), which the compiler assumed never happens");
     crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, &object });
 }
 
 void crashOnImpossibleMutation(VM& vm, const Object& object, const FieldData& field, ObjectMutation mutation)
 {
-    dataLogLn("impossible mutation ", static_cast<unsigned>(mutation), " of field ", String(propertyNameOf(vm, object, field)), " of layout ", object.layout().index);
+    const LayoutData& layout = object.layout();
+    dataLogLn("AOT: ", nameOf(mutation), " of field ", String(propertyNameOf(vm, object, field)), " on an object of layout ", layout.index, " (", nameOfLayout(vm, layout), "), which the compiler assumed never happens");
     crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, &object });
 }
 
 void crashOnLostStateOfBirth(VM& vm, const Object& object, const FieldData& field, ASCIILiteral event)
 {
     const LayoutData& layout = object.layout();
-    const ImageText& text = vm.aotState().image->text();
-    StringID layoutName(layout.name);
-    dataLogLn("AOT: ", event, " of field ", String(propertyNameOf(vm, object, field)), " of layout ", layout.index, " (", layoutName && text.hasText(layoutName) ? text.view(layoutName) : StringView("-"_s), "), which compiled code reads without a test");
+    dataLogLn("AOT: ", event, " of field ", String(propertyNameOf(vm, object, field)), " of layout ", layout.index, " (", nameOfLayout(vm, layout), "), which compiled code reads without a test");
     crashOnValidationFailure(vm, { ValidationFailureKind::ImpossibleMutation, { }, { }, &object });
 }
 

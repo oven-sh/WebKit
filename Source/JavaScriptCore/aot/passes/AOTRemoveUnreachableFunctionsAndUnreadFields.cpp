@@ -296,6 +296,13 @@ static constexpr bool findsFieldByKey(Opcode opcode)
     return Value::opcodesWithReceivers.contains(opcode) && !Value::opcodesWithField.contains(opcode) && !Value::opcodesWithPlacedKeys.contains(opcode);
 }
 
+static constexpr bool createsPropertyByName(Opcode opcode)
+{
+    return accessClassOf(opcode) == AccessClass::ByName && (accessOf(opcode) == Access::Store || accessOf(opcode) == Access::Define);
+}
+
+static_assert(createsPropertyByName(Opcode::PropSet) && createsPropertyByName(Opcode::PropDefine));
+
 static bool callsBuiltin(EffectRule rule)
 {
     switch (rule) {
@@ -441,6 +448,12 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
     });
     for (PropertyKeyID key : keysFound)
         keysOfCandidates.set(key.index());
+    Vector<std::pair<PropertyKeyID, uint32_t>> candidatesByKey;
+    for (uint32_t candidate = 0; candidate < fields.size(); ++candidate) {
+        if (PropertyKeyID key = fieldAt(program, fields[candidate]).key)
+            candidatesByKey.append({ key, candidate });
+    }
+    AOT::sort(candidatesByKey);
 
     for (const EvalScope& scope : program.evalScopes) {
         for (const EvalBinding& binding : scope.bindings) {
@@ -496,11 +509,15 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
             auto scanAccessByKey = [&] {
                 std::span<const LayoutID> members;
                 bool reachesOnlyCandidates = false;
+                bool mayReachAnyLayout = false;
                 if (LayoutSetID stamp = value.receivers()) {
                     members = program.at(stamp).members.span();
                     reachesOnlyCandidates = program.at(stamp).isComplete;
-                } else if (std::optional<uint8_t> receiver = receiverOf(opcode))
-                    members = membersOf(program, program.typeOf(function, value.operand(*receiver)));
+                } else if (std::optional<uint8_t> receiver = receiverOf(opcode)) {
+                    const Type& type = program.typeOf(function, value.operand(*receiver));
+                    members = membersOf(program, type);
+                    mayReachAnyLayout = type.anyObject;
+                }
 
                 PropertyKeyID key = Value::opcodesWithKey.contains(opcode) ? value.key() : PropertyKeyID();
                 if (!key) {
@@ -510,6 +527,12 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
                 // Most keys are the key of no candidate, and then no member has a candidate under the key.
                 if (!keysOfCandidates.get(key.index()))
                     return;
+                // Nothing says which objects arrive here. On one without the field the store would create a property.
+                if (mayReachAnyLayout && createsPropertyByName(opcode)) {
+                    for (auto [keyOfCandidate, candidate] : std::ranges::equal_range(candidatesByKey, key, { }, &std::pair<PropertyKeyID, uint32_t>::first))
+                        markLive(candidate);
+                    return;
+                }
 
                 Vector<uint32_t, 1> found;
                 for (LayoutID member : members) {

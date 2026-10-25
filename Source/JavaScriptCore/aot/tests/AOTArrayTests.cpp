@@ -380,7 +380,7 @@ static void testProfileKeepsCount()
 {
     Realms realms;
     constexpr uint32_t count = 0xabcdu << ArrayAllocationProfile::allocationCountShift;
-    constexpr uint32_t countMask = 0xffffu << ArrayAllocationProfile::allocationCountShift;
+    constexpr uint32_t countMask = ArrayAllocationProfile::countMask;
     ArrayAllocationProfile profile { };
     profile.word = count;
 
@@ -398,17 +398,44 @@ static void testProfileReviewInterval()
     ArrayAllocationProfile profile { };
     profile.set(BASE_CONTIGUOUS_VECTOR_LEN_MAX, ContiguousShape);
     AOT_TEST_CHECK(!profile.isDueForReview());
-    for (uint32_t allocation = 1; allocation <= 3 * ArrayAllocationProfile::interval; ++allocation) {
-        profile.word += 1u << ArrayAllocationProfile::allocationCountShift;
-        AOT_TEST_CHECK(profile.isDueForReview() == (allocation % ArrayAllocationProfile::interval == 1));
+    for (uint32_t allocation = 1; allocation <= 3 * ArrayAllocationProfile::shortestInterval; ++allocation) {
+        profile.word -= ArrayAllocationProfile::oneAllocation;
+        AOT_TEST_CHECK(profile.isDueForReview() == (allocation % ArrayAllocationProfile::shortestInterval == 1));
+        AOT_TEST_CHECK(profile.capacity() == BASE_CONTIGUOUS_VECTOR_LEN_MAX && profile.shape() == ContiguousShape);
+        if (profile.isDueForReview())
+            profile.startInterval();
     }
-    AOT_TEST_CHECK(profile.capacity() == BASE_CONTIGUOUS_VECTOR_LEN_MAX && profile.shape() == ContiguousShape);
+}
 
-    profile.word |= 0xffffu << ArrayAllocationProfile::allocationCountShift;
-    profile.word += 1u << ArrayAllocationProfile::allocationCountShift;
-    AOT_TEST_CHECK(profile.capacity() == BASE_CONTIGUOUS_VECTOR_LEN_MAX && profile.shape() == ContiguousShape && !profile.isDueForReview());
-    profile.word += 1u << ArrayAllocationProfile::allocationCountShift;
-    AOT_TEST_CHECK(profile.isDueForReview());
+static void testProfileReviewIntervalGrowsWhileNothingChanges()
+{
+    Realms realms;
+    constexpr uint32_t shortest = ArrayAllocationProfile::shortestInterval;
+    constexpr uint32_t longest = shortest << ArrayAllocationProfile::maxIntervalDoublings;
+    ArrayAllocationProfile profile { };
+    review(realms, profile, ArrayWithDouble, 3, window);
+    AOT_TEST_CHECK(profile.capacity() == 3 && profile.interval() == shortest);
+    for (uint32_t expected = 2 * shortest; expected <= longest; expected *= 2) {
+        review(realms, profile, ArrayWithDouble, 3, window - 1);
+        AOT_TEST_CHECK(profile.interval() == expected / 2);
+        review(realms, profile, ArrayWithDouble, 3);
+        AOT_TEST_CHECK(profile.interval() == expected && hasNewWindow(profile));
+    }
+    review(realms, profile, ArrayWithDouble, 3, 2 * window);
+    AOT_TEST_CHECK(profile.interval() == longest && profile.capacity() == 3);
+
+    review(realms, profile, ArrayWithDouble, 4);
+    AOT_TEST_CHECK(profile.interval() == shortest && profile.capacity() == 3);
+    review(realms, profile, ArrayWithDouble, 3, 2 * window);
+    AOT_TEST_CHECK(profile.interval() > shortest);
+    review(realms, profile, ArrayWithContiguous, 3);
+    AOT_TEST_CHECK(profile.interval() == shortest && profile.shape() == ContiguousShape);
+    review(realms, profile, ArrayWithContiguous, 3, 2 * window);
+    AOT_TEST_CHECK(profile.interval() > shortest);
+    review(realms, profile, ArrayWithContiguous, 1, 2 * window);
+    AOT_TEST_CHECK(profile.capacity() == 1);
+    reviewArrayAllocationProfile(profile, nullptr);
+    AOT_TEST_CHECK(profile.capacity() == 1);
 }
 
 static bool hasLengths(JSArray* array, unsigned publicLength, unsigned minVectorLength, unsigned maxVectorLength)
@@ -477,6 +504,7 @@ std::span<const NativeTest> arrayTests()
         { "arrays/profile/ignores-array-storage"_s, testProfileIgnoresArrayStorage },
         { "arrays/profile/keeps-count"_s, testProfileKeepsCount },
         { "arrays/profile/review-interval"_s, testProfileReviewInterval },
+        { "arrays/profile/review-interval-grows-while-nothing-changes"_s, testProfileReviewIntervalGrowsWhileNothingChanges },
         { "arrays/reserve/makes-room-once"_s, testReserveMakesRoomOnce },
         { "arrays/reserve/leaves-small-steps-to-usual-growth"_s, testReserveLeavesSmallStepsToUsualGrowth },
         { "arrays/reserve/declines"_s, testReserveDeclines },

@@ -537,6 +537,9 @@ static void boxMarkerAndReturn(StubAssembler& jit, GPRReg bitsAndResult, const S
     returnMarker(boxedMarkers.null);
 }
 
+static constexpr bool isNaN(uint64_t bits) { return (bits >> 52 & 0x7ff) == 0x7ff && bits << 12; }
+static_assert(isNaN(doubleMarkers.undefined) && isNaN(doubleMarkers.null) && isNaN(doubleMarkers.absent));
+
 void generateBoxNumber(StubAssembler& jit)
 {
     const BoxedNumberForm form = static_cast<BoxedNumberForm>(jit.key().form());
@@ -546,10 +549,6 @@ void generateBoxNumber(StubAssembler& jit)
     if (isInFPR(form)) {
         const FPRReg number = jit.operandFPR(0);
         const FPRReg scratch = jit.allocateScratch(FPRInfo::argumentFPR1);
-        if (form == BoxedNumberForm::OptionalDouble) {
-            jit.moveDoubleTo64(number, result);
-            isMarker = jit.branch64(CCallHelpers::GreaterThanOrEqual, result, TrustedImm64(static_cast<int64_t>(doubleMarkers.undefined)));
-        }
         JumpList isNotInt32;
         branchIfNotExactInt32(jit, number, result, isNotInt32, scratch);
         boxExactInt32(jit, result, result);
@@ -560,7 +559,12 @@ void generateBoxNumber(StubAssembler& jit)
         boxDouble(jit, PureDouble::branchIfNaN(jit, number, isNaN), result);
         jit.returnToCaller();
 
+        // Every marker is a NaN.
         isNaN.link(&jit);
+        if (form == BoxedNumberForm::OptionalDouble) {
+            jit.moveDoubleTo64(number, result);
+            isMarker = jit.branch64(CCallHelpers::GreaterThanOrEqual, result, TrustedImm64(static_cast<int64_t>(doubleMarkers.undefined)));
+        }
         jit.move(TrustedImm64(JSValue::encode(jsNaN())), result);
         jit.returnToCaller();
     } else {

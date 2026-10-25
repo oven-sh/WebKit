@@ -535,17 +535,25 @@ void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* last
             std::swap(entering, kept);
     }
 
+    if (length > inUse || learnedShape != profile.shape())
+        profile.intervalDoublings = 0;
+
     unsigned wanted = profile.largestLengths[ArrayAllocationProfile::lengthsKept - 1] | 1;
     if (wanted > inUse) {
         profile.set(std::min<unsigned>(wanted, BASE_CONTIGUOUS_VECTOR_LEN_MAX), learnedShape);
         startWindow(profile);
         return;
     }
-    if (++profile.reviews < ArrayAllocationProfile::reviewsInWindow) {
+    if (profile.reviews + 1 < ArrayAllocationProfile::reviewsInWindow) {
+        ++profile.reviews;
         profile.set(profile.capacity(), learnedShape);
         return;
     }
 
+    if (wanted < inUse)
+        profile.intervalDoublings = 0;
+    else if (profile.intervalDoublings < ArrayAllocationProfile::maxIntervalDoublings)
+        ++profile.intervalDoublings;
     profile.set(wanted < inUse ? wanted : profile.capacity(), learnedShape);
     startWindow(profile);
 }
@@ -565,6 +573,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayAtReviewedSite, JSCell*, (Instance*
     ASSERT(profile.isDueForReview());
 
     reviewArrayAllocationProfile(profile, lastArray);
+    profile.startInterval();
 
     IndexingType shape = std::max<IndexingType>(profile.shape(), seedIndexingType & IndexingShapeMask);
     JSArray* array = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(IsArray | shape), 0, capacityInUse(profile));

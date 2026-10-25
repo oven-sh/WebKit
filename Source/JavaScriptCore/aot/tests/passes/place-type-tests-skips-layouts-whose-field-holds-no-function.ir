@@ -1,0 +1,30 @@
+# A call under a name does not find a field that holds no function: `result.then(..)` in a program whose records of a schema have fields `if`, `then`, `else`.
+# Such layouts do not count among the receivers, so that they neither join the test nor make the receivers too many for one
+# FORM: Prepared optimizing
+# OPTIONS: heat=NothingIsHottest
+# RUN: pass ResolveBuiltins PlaceTypeTests ResolveBuiltins ResolveCalls ResolveAccesses SplitUnions ResolveBuiltins ResolveAccesses
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="First" fields=[{key="then" declared={type=undefined|null|boolean flags=[IsExpected]}}]
+layout L1 name="Second" fields=[{key="then" declared={type=undefined|null|L0 flags=[IsExpected]}}]
+layout L2 name="Third" fields=[{key="then" declared={type=undefined|null|L0|L1 flags=[IsExpected]}}]
+layout L3 name="Fourth" fields=[{key="then" declared={type=number flags=[IsExpected]}}]
+layout L4 name="Fifth" fields=[{key="then" declared={type=string flags=[IsExpected]}}]
+layout L5 name="Thenable" fields=[{key="then" declared={type=undefined|null|function flags=[IsExpected]}}]
+
+function f0 name="askedAndCalled" parameters=[{type=object}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: object, v1: anything, v2: anything):
+    v3 = PropGet v0 key="then"
+    v4 = TypeTest v3 testedType=function
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = PropGet v0 key="then"
+    v6 = Call v5, v0, v1, v2 calleeKey="then"
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+# CHECK-LABEL: function f0 name="askedAndCalled"
+# CHECK-NEXT: b0(v0: object ~ L5|Promise,
+# CHECK: = TypeTest v0 testedType=L5|Promise

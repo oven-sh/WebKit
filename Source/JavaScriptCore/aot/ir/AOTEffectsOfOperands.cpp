@@ -841,7 +841,7 @@ std::optional<uint32_t> entryParameterOf(const Function& callee, const Value& ca
         return std::nullopt;
 
     if (operandKindOf(call.opcode, operandIndex) == OperandKind::Declared) {
-        bool followsCalleeHeader = !Value::opcodesWithCallees.contains(call.opcode);
+        bool followsCalleeHeader = !Value::opcodesWithCallees.contains(call.opcode) || call.opcode == Opcode::CallTable;
         if (!followsCalleeHeader || *argument >= callee.numberOfEntryParameters())
             return std::nullopt;
         return argument;
@@ -1043,6 +1043,11 @@ OperandSummary summarizeOperand(const EffectContext& context, const Function& fu
         OperandSummary summary = summarizeDeclaredOperand(context.program, type, user.opcode, operandIndex, askedFor);
         if (askedFor == UsesAskedFor::All && mayBeReference(type) && isArgumentOfHasInstanceMethod(context.program, function, user, operandIndex))
             summary.uses.add(OperandUse::PassesToUserCode);
+        if (user.opcode == Opcode::Eq && summary.uses.contains(OperandUse::PassesToUserCode)) {
+            EffectDescription description = describeCodeRunBy(context.program, function, user);
+            if (!description.callsUnknownCode && description.functions.isEmpty())
+                summary.uses.remove(OperandUse::PassesToUserCode);
+        }
         return summary;
     }
     }

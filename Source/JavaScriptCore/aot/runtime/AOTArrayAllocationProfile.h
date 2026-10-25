@@ -24,19 +24,24 @@ class VM;
 namespace AOT {
 
 struct ArrayAllocationProfile {
+    // The allocations left until the next review fill the word's top bits, so the subtraction that wraps them around borrows from nothing else.
     static constexpr unsigned allocationCountShift = 16;
     static constexpr unsigned shapeShift = 8;
     static constexpr uint32_t capacityMask = 0xff;
     static constexpr uint32_t shapeMask = 0xff << shapeShift;
-    static constexpr uint32_t interval = 64;
-    static constexpr uint32_t intervalMask = (interval - 1) << allocationCountShift;
-    static constexpr uint32_t countAtReview = 1 << allocationCountShift;
+    static constexpr uint32_t oneAllocation = 1u << allocationCountShift;
+    static constexpr uint32_t countMask = 0xffffu << allocationCountShift;
+    // A site is reviewed less often the longer its reviews change nothing.
+    AOT_CLASS_THRESHOLD(uint32_t, shortestInterval, 64);
+    AOT_CLASS_THRESHOLD(uint8_t, maxIntervalDoublings, 4);
     AOT_CLASS_THRESHOLD(uint8_t, reviewsInWindow, 10);
     static constexpr unsigned lengthsKept = 3;
     static constexpr unsigned sizeOfLastArrayWord = 8;
 
     unsigned capacity() const { return word & capacityMask; }
-    bool isDueForReview() const { return (word & intervalMask) == countAtReview; }
+    bool isDueForReview() const { return (word & countMask) == countMask; }
+    uint32_t interval() const { return shortestInterval << intervalDoublings; }
+    void startInterval() { word = (word & ~countMask) | (interval() - 1) << allocationCountShift; }
     IndexingType shape() const { return static_cast<IndexingType>((word & shapeMask) >> shapeShift); }
     void set(unsigned capacity, IndexingType shape)
     {
@@ -45,12 +50,14 @@ struct ArrayAllocationProfile {
     }
 
     uint32_t word;
-    uint8_t reviews;
+    uint8_t reviews : 4;
+    uint8_t intervalDoublings : 4;
     // Of this window, the largest first.
     uint8_t largestLengths[lengthsKept];
 };
 
 static_assert(sizeof(ArrayAllocationProfile) == 8 && !OBJECT_OFFSETOF(ArrayAllocationProfile, word));
+static_assert(ArrayAllocationProfile::reviewsInWindow < 16 && ArrayAllocationProfile::maxIntervalDoublings < 16 && ArrayAllocationProfile::shortestInterval << ArrayAllocationProfile::maxIntervalDoublings <= 1u << 16);
 static_assert(std::is_trivially_default_constructible_v<ArrayAllocationProfile>);
 static_assert(BASE_CONTIGUOUS_VECTOR_LEN_MAX <= ArrayAllocationProfile::capacityMask);
 static_assert(Int32Shape < DoubleShape && DoubleShape < ContiguousShape);

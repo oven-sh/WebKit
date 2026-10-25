@@ -14,6 +14,7 @@ v(NewEmptyArray, CalledByCode, (ContiguousCapacity1, ContiguousCapacity3, Double
 // AOTStubsArrayHoles.cpp
 v(NewEmptyArrayWithCapacity, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewEmptyArrayWithCapacity)
 v(NewArrayWithLength, CalledByCode, (Int32, Double, Contiguous), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewArrayWithLength)
+v(NewArrayOfHolesSlow, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewArrayOfHolesSlow)
 v(NewArrayFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, NewArrayFrontEnd)
 AOT_STUB_FRONT_END(NewArray, NewArrayFrontEnd)
 v(NewEmptyArrayAtSite, CalledByCode, (Int32, Double, Contiguous), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, RuntimeState) | writes(AllocatorState, RuntimeState), NewEmptyArrayAtSite)

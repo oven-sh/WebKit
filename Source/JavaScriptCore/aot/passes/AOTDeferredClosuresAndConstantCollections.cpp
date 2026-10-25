@@ -694,8 +694,18 @@ struct DeferralAnalysis {
         std::span<const LayoutID> members;
         if (Value::opcodesWithFieldAccess.contains(access.opcode) || access.opcode == Opcode::IsSlotFilled)
             members = program.at(access.receivers()).members.span();
-        else if (access.numberOfOperands() && access.operand(0))
-            members = membersOf(program, program.typeOf(function, access.operand(0)));
+        else if (access.numberOfOperands() && access.operand(0)) {
+            const Type& type = program.typeOf(function, access.operand(0));
+            // Nothing says which objects arrive at a store by name into any object.
+            if (type.anyObject && storedOf(access.opcode)) {
+                for (FieldReference candidate : candidates) {
+                    if (fieldAt(program, candidate).key == access.key())
+                        functor(candidate, rowOf(candidate));
+                }
+                return;
+            }
+            members = membersOf(program, type);
+        }
         for (LayoutID member : members) {
             std::optional<uint32_t> field = program.at(member).findField(access.key());
             if (!field)
@@ -1019,8 +1029,11 @@ struct DeferralAnalysis {
                     continue;
                 bool isOtherThanObject = mayBeOtherThanObject(reference.function, store.operand(*stored));
                 bool isBehindInitialization = kind == SlotStore && !std::ranges::binary_search(initializingStores, reference);
+                // Of what a store into any object brings into one field, only the type of the slot speaks.
+                bool storesIntoAnyObject = kind == NamedAccess && program.typeOf(program.at(reference.function), store.operand(0)).anyObject;
                 forEachCandidateOf(reference, [&](FieldReference field, uint32_t row) {
-                    if (isOtherThanObject && (kind == SlotStore || isNeverMovedOutByStore(program, field)))
+                    bool mayBringOtherThanObject = isOtherThanObject && (!storesIntoAnyObject || mayBeOtherThanObjectOrNullish(program.at(slotTypeOf(program, fieldAt(program, field)))));
+                    if (mayBringOtherThanObject && (kind == SlotStore || isNeverMovedOutByStore(program, field)))
                         reject(row);
                     if (isBehindInitialization && keepsEnvironment(states[row]))
                         reject(row);

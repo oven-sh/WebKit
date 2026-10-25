@@ -1591,12 +1591,16 @@ static void expectOfReceivers(std::span<const NamedUse> uses, TypeID expected, E
     }
 }
 
-static std::optional<Type> receiversAmong(FunctionPassContext& context, const BuiltinClassList& classes, std::span<const PropertyKeyID> names)
+static std::optional<Type> receiversAmong(FunctionPassContext& context, const BuiltinClassList& classes, std::span<const PropertyKeyID> names, std::span<const PropertyKeyID> calledNames)
 {
     size_t maxReceivers = context.limit(LimitID::MaxDispatchCases);
-    LayoutList layouts = allocatedLayoutsWith(context.program, names, maxReceivers);
-    if (classes.size() + layouts.size() > maxReceivers)
-        return std::nullopt;
+    LayoutList layouts = allocatedLayoutsWith(context.program, names, maxReceivers, calledNames);
+    // A name that this many layouts have tells none of them apart. Where one class of the language has the method, its instances are the likeliest receivers.
+    if (classes.size() + layouts.size() > maxReceivers) {
+        if (classes.size() != 1 || !maxReceivers || context.program.builtins().at(*classes.begin()).origin != BuiltinOrigin::Engine)
+            return std::nullopt;
+        layouts = { };
+    }
 
     Type receivers = layouts.isEmpty() ? Type::never() : Type::forLayouts(layouts.span(), context.types);
     for (BuiltinClassID builtinClass : classes) {
@@ -1612,13 +1616,14 @@ static std::optional<Type> receiversAmong(FunctionPassContext& context, const Bu
 
 static std::optional<Type> receiversWithMethod(FunctionPassContext& context, PropertyKeyID key)
 {
-    return receiversAmong(context, builtinClassesWithMethod(context.program, key), singleElementSpan(key));
+    return receiversAmong(context, builtinClassesWithMethod(context.program, key), singleElementSpan(key), singleElementSpan(key));
 }
 
 static std::optional<Type> receiversWithEveryMethod(FunctionPassContext& context, std::span<const NamedUse> uses, CountedUses countedUses)
 {
     std::optional<BuiltinClassList> classes;
     NameList names;
+    NameList calledNames;
     for (const NamedUse& use : uses) {
         if (countedUses == CountedUses::OnEveryPath && !use.isOnEveryPath)
             continue;
@@ -1629,12 +1634,13 @@ static std::optional<Type> receiversWithEveryMethod(FunctionPassContext& context
             else
                 classes = WTF::move(classesWithMethod);
             names.add(use.key);
+            calledNames.add(use.key);
         } else if (use.demand == NameDemand::Required && !context.program.layoutsWithName(use.key).empty()) {
             classes = BuiltinClassList();
             names.add(use.key);
         }
     }
-    return classes ? receiversAmong(context, *classes, names.span()) : std::nullopt;
+    return classes ? receiversAmong(context, *classes, names.span(), calledNames.span()) : std::nullopt;
 }
 
 static bool expectReceiversOfBuiltinMethods(FunctionPassContext& context, std::span<const NamedUse> uses, ExpectedValues& expectedValues)
@@ -1912,7 +1918,7 @@ void rewriteTestedUnionReceiver(TestSiteRewriter&)
 {
 }
 
-bool expectsReceiverOfCalledMethod(FunctionPassContext& context, BlockID block, const Value& call)
+bool expectsReceiverOfCalledMethod(FunctionPassContext& context, ReceiversExpectedByNames& expectedReceivers, BlockID block, const Value& call)
 {
     const Function& function = context.function;
     if (!context.build.recordedOptions().usesExpectedTypes() || function.at(block).frequency != BlockFrequency::Normal)
@@ -1927,15 +1933,16 @@ bool expectsReceiverOfCalledMethod(FunctionPassContext& context, BlockID block, 
     const Type& type = context.program.typeOf(function, receiver);
     if (!type.anyObject || type.layouts || function.at(receiver).expected() || isAllocatedHere(context, receiver))
         return false;
-    return !!receiversWithMethod(context, key);
+    return receiversWithMethod(context, key) && expectedReceivers.contains(receiver);
 }
 
 // Of an object that nobody could follow, the names it is asked for are all there is to go by. Which layouts have a name is known, and where they are few the object is expected to be one of them.
-bool expectLayoutsByNames(FunctionPassContext& context, ExpectedTypesByUse& expectations)
+static ExpectedValues findValuesExpectedByNames(FunctionPassContext& context)
 {
+    ExpectedValues expectedValues;
     Vector<NamedUse> uses = collectNamedUsesOfUnknownObjects(context);
     if (uses.isEmpty())
-        return false;
+        return expectedValues;
 
     Vector<ValueID> subjects = findSubjects(context);
     for (NamedUse& use : uses)
@@ -1943,7 +1950,6 @@ bool expectLayoutsByNames(FunctionPassContext& context, ExpectedTypesByUse& expe
     AOT::stableSort(uses, { }, &NamedUse::subject);
     findUsesOnEveryPath(context, uses.mutableSpan());
 
-    ExpectedValues expectedValues;
     LayoutList layoutsMet;
     Vector<std::span<NamedUse>, 4> unsettledSubjects;
     for (std::span<NamedUse> usesOfSubject : uses.mutableSpan() | std::views::chunk_by([](const NamedUse& a, const NamedUse& b) { return a.subject == b.subject; })) {
@@ -1954,7 +1960,23 @@ bool expectLayoutsByNames(FunctionPassContext& context, ExpectedTypesByUse& expe
         addLayoutsOfKnownReceivers(context, layoutsMet);
     for (std::span<NamedUse> usesOfSubject : unsettledSubjects)
         expectLayoutsOf(context, usesOfSubject, layoutsMet, false, expectedValues);
-    return expectValues(context, expectedValues, expectations);
+    return expectedValues;
+}
+
+bool expectLayoutsByNames(FunctionPassContext& context, ExpectedTypesByUse& expectations)
+{
+    ExpectedValues expectedValues = findValuesExpectedByNames(context);
+    return !expectedValues.isEmpty() && expectValues(context, expectedValues, expectations);
+}
+
+bool ReceiversExpectedByNames::contains(ValueID receiver)
+{
+    if (!m_receivers) {
+        m_receivers.emplace();
+        for (auto [value, expected] : findValuesExpectedByNames(m_context))
+            m_receivers->set(value.index());
+    }
+    return m_receivers->get(receiver.index());
 }
 
 static BlockFrequency frequencyOfGenericCopy(BlockFrequency original)

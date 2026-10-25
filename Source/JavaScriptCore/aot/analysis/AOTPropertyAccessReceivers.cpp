@@ -122,7 +122,13 @@ bool hasMemberToFindUnder(const Program& program, LayoutID layout, PropertyKeyID
     return !field || !isRemovedField(program, *field);
 }
 
-LayoutList allocatedLayoutsWith(const Program& program, std::span<const PropertyKeyID> names, size_t stopsCountingAbove)
+static bool mayFindFunctionUnder(const Program& program, LayoutID layout, PropertyKeyID name)
+{
+    std::optional<FieldReference> field = findField(program, layout, name, BaseChain::Proven);
+    return !field || program.at(fieldAt(program, *field).declared.type).mayBeFunction();
+}
+
+LayoutList allocatedLayoutsWith(const Program& program, std::span<const PropertyKeyID> names, size_t stopsCountingAbove, std::span<const PropertyKeyID> calledNames)
 {
     LayoutList layouts;
     if (names.empty())
@@ -136,6 +142,11 @@ LayoutList allocatedLayoutsWith(const Program& program, std::span<const Property
             return hasMemberToFindUnder(program, layout, name);
         });
         if (!hasEveryName)
+            continue;
+        bool answersEveryCall = std::ranges::all_of(calledNames, [&](PropertyKeyID name) {
+            return mayFindFunctionUnder(program, layout, name);
+        });
+        if (!answersEveryCall)
             continue;
         layouts.add(layout);
         if (layouts.size() > stopsCountingAbove)
