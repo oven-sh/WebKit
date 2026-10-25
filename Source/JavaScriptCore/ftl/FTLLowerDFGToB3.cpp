@@ -1000,7 +1000,7 @@ private:
             break;
         case GetById:
         case GetByIdFlush:
-            compileGetById(AccessType::GetById);
+            compileGetById(m_node->resolveMode() == ThrowIfNotFound ? AccessType::GetByIdThrowIfNotFound : AccessType::GetById);
             break;
         case GetByIdMegamorphic:
             compileGetByIdMegamorphic();
@@ -4351,7 +4351,9 @@ private:
 
     void compileGetById(AccessType type)
     {
-        ASSERT(type == AccessType::GetById || type == AccessType::GetByIdDirect);
+        ASSERT(type == AccessType::GetById || type == AccessType::GetByIdDirect || type == AccessType::GetByIdThrowIfNotFound);
+        ASSERT((type == AccessType::GetByIdThrowIfNotFound) == (m_node->resolveMode() == ThrowIfNotFound));
+        ASSERT(type != AccessType::GetByIdThrowIfNotFound || m_node->child1().useKind() == CellUse);
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         switch (m_node->child1().useKind()) {
         case CellUse: {

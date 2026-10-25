@@ -4790,7 +4790,7 @@ void SpeculativeJIT::compile(Node* node)
 
     case GetById:
     case GetByIdFlush: {
-        compileGetById(node, AccessType::GetById);
+        compileGetById(node, node->resolveMode() == ThrowIfNotFound ? AccessType::GetByIdThrowIfNotFound : AccessType::GetById);
         break;
     }
 
@@ -7155,7 +7155,9 @@ void SpeculativeJIT::compileGetByValWithThis(Node* node)
 
 void SpeculativeJIT::compileGetById(Node* node, AccessType accessType)
 {
-    ASSERT(accessType == AccessType::GetById || accessType == AccessType::GetByIdDirect);
+    ASSERT(accessType == AccessType::GetById || accessType == AccessType::GetByIdDirect || accessType == AccessType::GetByIdThrowIfNotFound);
+    ASSERT((accessType == AccessType::GetByIdThrowIfNotFound) == (node->resolveMode() == ThrowIfNotFound));
+    ASSERT(accessType != AccessType::GetByIdThrowIfNotFound || node->child1().useKind() == CellUse);
     CacheType cacheType = CacheType::GetByIdSelf;
     if (node->cacheableIdentifier() == vm().propertyNames->length)
         cacheType = CacheType::ArrayLength;
