@@ -891,8 +891,11 @@ struct Copier {
     {
         Vector<ExpectedCall> calls;
         const Function& caller = program.at(activation.function);
-        forEachValueOf(caller, [&](ProgramPoint, ValueID id, const Value& value) {
+        forEachValueOf(caller, [&](ProgramPoint point, ValueID id, const Value& value) {
             if (value.opcode != Opcode::Call || caller.at(definitionBehindDeadZoneChecks(caller, value.calleeOperand())).opcode != Opcode::PropGet)
+                return;
+            // A call in tail position ends its block.
+            if (const Terminator& terminator = caller.at(point.block).terminator; terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == id)
                 return;
             if (std::optional<Activation> callee = expectedCalleeOf(activation, value, 0); callee && definesClosureUnderWrittenName(*callee, depth))
                 calls.append({ id, WTF::move(*callee) });
