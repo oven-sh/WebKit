@@ -532,37 +532,6 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
         return InlineBarrier::None;
     };
 
-    auto isLikely = [&](BlockID id) {
-        return function.at(id).frequency == BlockFrequency::Normal;
-    };
-
-    // A declared type has its test in the body already. Without a declared type the same test is placed after the body is copied.
-    auto bytesOfDeclaredTypeTest = [&](const Block& block) -> uint32_t {
-        const Terminator& terminator = block.terminator;
-        if (!terminator.isConditionalBranch() || block.values.isEmpty() || terminator.conditionOperand() != block.values.last())
-            return 0;
-        const Value& test = function.at(block.values.last());
-        if (test.opcode != Opcode::TypeTest || !isLikely(terminator.taken().block) || isLikely(terminator.notTaken().block))
-            return 0;
-        return estimatedCodeBytes(program, function, test) + estimatedCodeBytes(terminator);
-    };
-
-    auto computeLikelyBytes = [&]() -> uint32_t {
-        if (!isLikely(entryBlock) || !function.has(FunctionFlags::IsChecked))
-            return std::numeric_limits<uint32_t>::max();
-        uint32_t likelyBytes = 0;
-        uint32_t otherBytes = 0;
-        for (BlockID id : analyses.cfg().reversePostOrder()) {
-            uint32_t bytes = blockBytes[id.index()];
-            if (isLikely(id))
-                likelyBytes = saturatingSum<uint32_t>(likelyBytes, bytes - std::min(bytes, bytesOfDeclaredTypeTest(function.at(id))));
-            else
-                otherBytes = saturatingSum<uint32_t>(otherBytes, bytes);
-        }
-        // The copy for values that fail a test is about as large as the function without its types.
-        return std::max(likelyBytes, otherBytes);
-    };
-
     auto entryParameterBehind = [&](ValueID value) -> std::optional<uint32_t> {
         size_t index = function.at(entryBlock).parameters.find(sameObjectThroughCasts(function, value));
         if (index == notFound)
@@ -961,7 +930,6 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
     estimateComparisonChainsAsSwitches(analyses, blockBytes);
     for (uint32_t bytes : blockBytes)
         summary.codeBytes = saturatingSum<uint32_t>(summary.codeBytes, bytes);
-    summary.likelyCodeBytes = computeLikelyBytes();
     summary.hasCycle = cfg.hasCycle();
     summary.isWrapper = isWrapperCreatedByEngine(function);
     // A loop of the library runs once for each element, however seldom the function is entered: a caller asks what it does with a function that it is handed.
@@ -1879,13 +1847,8 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     // How often the caller is entered is a product along paths of calls. A loop around the call is in the text.
     bool isRepeatedByCaller = isHot(heat) && context.analyses.isInCycle(block);
     uint32_t foldedBytes = computeFoldedBytes(context, call, summary, isRepeatedByCaller ? DecidedTests::Go : DecidedTests::AreCharged);
-    uint32_t callBytes = estimatedCodeBytes(program, caller, value);
-    uint32_t removedBytes = saturatingSum<uint32_t>(foldedBytes, callBytes);
+    uint32_t removedBytes = saturatingSum<uint32_t>(foldedBytes, estimatedCodeBytes(program, caller, value));
     uint32_t cost = summary.codeBytes > removedBytes ? summary.codeBytes - removedBytes : 0;
-    // In a loop of the caller, what counts is the code that the loop runs. What folds may be code that is not expected to run, so it is not taken off a second time.
-    // A loop of the callee takes its heat from the function that holds it, and a caller that runs once has none to give.
-    bool countsLikelyCode = isRepeatedByCaller && (!summary.hasCycle || context.inputs.heat.of(program, context.id) != HeatClass::RunsOnce);
-    uint32_t likelyCost = !countsLikelyCode ? std::numeric_limits<uint32_t>::max() : summary.likelyCodeBytes > callBytes ? summary.likelyCodeBytes - callBytes : 0;
 
     unsigned depth = depthOfCopies(context, value.inlineFrame, heat);
     // The budget halves with each level and is small where code runs seldom. A bet that did neither let a body in at every level, and what a caller knew of one object cost it many times its size.
@@ -1897,9 +1860,8 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         verdict.benefits.add(benefit);
         verdict.benefitBytes = clampTo<uint32_t>(verdict.benefitBytes + bytes);
     };
-    // The bets are sized for whole bodies: beside the likely code they count for no more than the budget.
     auto isWithinBudget = [&] {
-        return cost <= uint64_t { verdict.budgetBytes } + verdict.benefitBytes || likelyCost <= uint64_t { verdict.budgetBytes } + std::min(verdict.benefitBytes, verdict.budgetBytes);
+        return cost <= uint64_t { verdict.budgetBytes } + verdict.benefitBytes;
     };
 
     bool isEntryChecks = callee.role == FunctionRole::EntryChecks;
@@ -1920,7 +1882,6 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         const auto& record = callee.creator.as<CreatorRecord::EntryChecks>();
         const InliningSummaries& inlining = context.inputs.inlining;
         cost = saturatingSum<uint32_t>(cost, inlining.of(program, record.body).codeBytes, inlining.of(program, record.fallback).codeBytes);
-        likelyCost = saturatingSum<uint32_t>(likelyCost, inlining.of(program, record.body).codeBytes, inlining.of(program, record.fallback).codeBytes);
         verdict.costBytes = cost;
     }
 
@@ -2502,15 +2463,13 @@ static Vector<ValueSite> findCallsOfHeads(const AnalysisContext& context, const 
             if (!analyses) {
                 analyses.emplace(context, caller);
                 // Without looking at the blocks: none of them is in a cycle or runs more often than the function is entered, and code that runs that often is not hot.
-                if (caller.role != FunctionRole::EntryChecks && !isHot(heat.classOf(heat.activationsOf(program, context.id) * roundingOfFrequencySums)) && runsNoBlockMoreOftenThanEntry(analyses->cfg()))
+                if (!isHot(heat.classOf(heat.activationsOf(program, context.id) * roundingOfFrequencySums)) && runsNoBlockMoreOftenThanEntry(analyses->cfg()))
                     return sites;
             }
             // A copy buys time where time is spent.
             HeatClass heatOfCall = heatClassOf(heat, *analyses, BlockID(blockIndex));
             bool isInCycle = analyses->isInCycle(BlockID(blockIndex));
-            // The tests in front of a body are entered for the body.
-            bool entersOwnBody = caller.role == FunctionRole::EntryChecks && caller.creator.as<CreatorRecord::EntryChecks>().body == value.function();
-            if (isHot(heatOfCall) || (headOf[value.function().index()]->holdsEveryLikelyPath && (isInCycle || entersOwnBody) && !isCold(heatOfCall)))
+            if (isHot(heatOfCall) || (headOf[value.function().index()]->holdsEveryLikelyPath && isInCycle && !isCold(heatOfCall)))
                 sites.append({ BlockID(blockIndex), valueIndex, call });
         }
     }

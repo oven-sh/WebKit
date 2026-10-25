@@ -252,7 +252,6 @@ enum class ExpectedTypes : uint8_t { Dropped, Kept };
 struct CheckSite {
     ValueID check;
     ProgramPoint pointBehind;
-    bool isWorthExit { true };
     bool hasExit { true };
     BlockID block;
     BlockID continuation;
@@ -319,10 +318,7 @@ struct GenericVersionBuilder {
 
         // The first suspension of a generator stands once in its body.
         bool isUnsplitGenerator = function.isUnsplitCoroutine() && function.has(FunctionFlags::IsGenerator);
-        for (CheckSite& site : sites)
-            site.isWorthExit = !standsBetweenMethodReadAndCall(site);
-        bool runsOnce = context.inputs.heat.of(program, context.id) == HeatClass::RunsOnce;
-        bool runsSeldom = runsOnce ? !findChecksThatLoopsRelyOn() : isInColderPartOfProgram(context.inputs.heat, program, context.id);
+        bool runsSeldom = isInColderPartOfProgram(context.inputs.heat, program, context.id);
         if (runsSeldom || isUnsplitGenerator || function.role == FunctionRole::GenericVersion || keepsMoreAliveOverAwaitThanFrameMapHolds() || !tryCreateGenericVersion()) {
             if (function.role != FunctionRole::GenericVersion) {
                 context.build.statistics().count(StatisticID::GenericVersionsNotCreated);
@@ -333,43 +329,6 @@ struct GenericVersionBuilder {
             finishTyping();
         }
         return PassOutcome::Changed;
-    }
-
-    // A function that runs once repeats only its loops. A guard at a use in a loop is paid at every turn, and anywhere else once.
-    bool findChecksThatLoopsRelyOn()
-    {
-        if (!analyses.cfg().hasCycle())
-            return false;
-        const UseLists& useLists = analyses.useLists();
-        auto isUsedInLoop = [&](ValueID value) {
-            return std::ranges::any_of(useLists.usesOf(value), [&](const Use& use) { return analyses.isInCycle(use.block); });
-        };
-        bool hasFound = false;
-        for (CheckSite& site : sites) {
-            if (!std::exchange(site.isWorthExit, false))
-                continue;
-            for (size_t value : computeTaintedValues(function, useLists, singleElementSpan(site.check)))
-                site.isWorthExit |= isUsedInLoop(ValueID(value));
-            hasFound |= site.isWorthExit;
-        }
-        return hasFound;
-    }
-
-    // A method is read before its arguments are evaluated. An exit between the two hands the method on to the generic version, and a call is resolved by its receiver only where nobody else uses the method.
-    // Where the method is one known function the call needs no receiver to be resolved, and the exit proves the argument to the body that is taken in.
-    bool standsBetweenMethodReadAndCall(const CheckSite& site)
-    {
-        auto [block, indexBehind] = site.pointBehind;
-        const BlockValues& values = function.at(block).values;
-        for (uint32_t index = indexBehind; index < values.size(); ++index) {
-            const Value& call = function.at(values[index]);
-            if (call.opcode != Opcode::Call || !call.calleeKey() || typeOf(call.calleeOperand()).withoutNullish().singleFunction())
-                continue;
-            ValueLocation read = analyses.useLists().locationOf(CastChain(function, call.calleeOperand()).last());
-            if (read.placement == ValuePlacement::InBlock && read.block == block && read.index < indexBehind)
-                return true;
-        }
-        return false;
     }
 
     // Such a function builds only where its allocations sink past the await, and a second version of what uses them stands in the way of that.
@@ -665,7 +624,7 @@ struct GenericVersionBuilder {
     void splitBlocks(std::span<const ProgramPoint> rejoinPoints)
     {
         for (CheckSite& site : sites) {
-            site.hasExit = site.isWorthExit && !isAfterTailCall(function, site.pointBehind);
+            site.hasExit = !isAfterTailCall(function, site.pointBehind);
             if (site.hasExit)
                 cuts.append(GenericVersionCut { site.pointBehind, { }, { } });
         }

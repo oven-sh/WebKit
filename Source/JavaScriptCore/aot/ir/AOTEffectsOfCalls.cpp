@@ -10,7 +10,6 @@
 
 #include "AOTEffectsDeclared.h"
 #include "AOTIR.h"
-#include "AOTPropertyAccessMembers.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -84,14 +83,6 @@ static Effects effectsOfContentsRead(OperandKind kind)
     return effects;
 }
 
-static bool mayEnterTableLookup(const Program& program, const Value& tableCall)
-{
-    MemberPartition partition = partitionMembers({ program, nullptr }, program.at(tableCall.receivers()).members.span(), tableCall.key(), Access::Read);
-    return !partition.rest.isEmpty() || std::ranges::any_of(partition.arms, [](const MemberArm& arm) {
-        return arm.answer.kind != MemberKind::Method || !arm.answer.receiverProofs.isEmpty() || !arm.answer.conditions.isEmpty();
-    });
-}
-
 CalleeList calleesOfCall(const Program& program, const Value& call)
 {
     CalleeList namedCallees = CalleeList::none();
@@ -99,8 +90,6 @@ CalleeList calleesOfCall(const Program& program, const Value& call)
         if (isCall(kind))
             namedCallees.add(callee);
     });
-    if (call.opcode == Opcode::CallTable && !mayEnterTableLookup(program, call))
-        namedCallees.functions.removeFirst(call.function());
     if (!namedCallees.functions.isEmpty())
         return namedCallees;
     if (Value::opcodesWithCallees.contains(call.opcode))

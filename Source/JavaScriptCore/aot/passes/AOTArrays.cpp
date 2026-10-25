@@ -30,7 +30,6 @@
 #include "AOTResolveCallsCallees.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTRuleSupport.h"
-#include "AOTSinkAllocations.h"
 #include "AOTSort.h"
 #include "AOTStringArena.h"
 #include "AOTTypeTestSite.h"
@@ -40,7 +39,6 @@
 #include <algorithm>
 #include <cmath>
 #include <utility>
-#include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 
@@ -1034,7 +1032,7 @@ static constexpr unsigned maxValuesFollowed = 8;
 // ResolveAccesses has rewritten these: the types of their operands needed no test. Whether the position holds an element is still open.
 static constexpr OpcodeSet resolvedAccessesWithPresenceTest { Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement };
 
-// SinkAllocations takes such an array apart by its accesses, which stay as they are, unless the array has to be made. The result of `x.map(f)` is an allocation too, and its reads get the test.
+// SinkAllocations takes such an array apart by its accesses, which stay as they are. The result of `x.map(f)` is an allocation too, and its reads get the test.
 static constexpr OpcodeSet localArrayAllocations { Opcode::NewArray, Opcode::NewArrayLike, Opcode::NewArrayWithCapacity, Opcode::NewContiguousArray, Opcode::NewDoubleArray, Opcode::CreateRest };
 
 static constexpr OpcodeSet equalityComparisons { Opcode::Eq, Opcode::StrictEq };
@@ -1073,7 +1071,6 @@ struct ArrayUses {
     Vector<std::pair<ValueID, BlockID>, 2> creations { };
     HashSet<ValueID> storedArrays { };
     std::optional<IntegerRelations> relations { };
-    std::optional<BitVector> allocationsThatSink { };
 
     void collectOnce()
     {
@@ -1110,21 +1107,6 @@ struct ArrayUses {
     {
         collectOnce();
         return storedArrays.contains(analyses.identityOf(array));
-    }
-
-    bool willBeTakenApart(ValueID array)
-    {
-        ValueID allocation = sameObjectThroughCasts(analyses.function(), array);
-        if (!localArrayAllocations.contains(analyses.function().at(allocation).opcode))
-            return false;
-        if (!allocationsThatSink) {
-            allocationsThatSink.emplace(analyses.function().values.size());
-            for (const SunkAllocation& predicted : predictSinking(analyses)) {
-                if (predicted.outcome == SunkAllocationOutcome::Removed || predicted.outcome == SunkAllocationOutcome::Sunk)
-                    allocationsThatSink->set(predicted.allocation.index());
-            }
-        }
-        return allocationsThatSink->get(allocation.index());
     }
 
     bool isComparedWithLength(ValueID array, ValueID position, BlockID at)
@@ -1247,7 +1229,7 @@ static bool hasFormWithoutAbsentElement(const Program& program, const Function& 
         return false;
     // The first elements of such a result are delivered without the array, each as the element or undefined.
     const Value& array = function.at(sameObjectThroughCasts(function, query.receiver));
-    return array.opcode != Opcode::CallBuiltin || !program.builtins().at(array.overload()).code.prefixForm;
+    return !localArrayAllocations.contains(array.opcode) && (array.opcode != Opcode::CallBuiltin || !program.builtins().at(array.overload()).code.prefixForm);
 }
 
 // That a hole reads as undefined is a fact about the prototypes, whose test pays only in front of a loop.
@@ -1354,11 +1336,9 @@ static PresenceQuery presenceQueryOf(ValueID access, BlockID block, const Value&
 }
 
 // Where nothing asks whether the element is there, an absent element leaves typed code: the access behind the test has no arm for it.
-static bool expectPresentElement(const TestSiteReporter& reporter, ArrayUses& arrays, const Value& use, ElementAccessPlan& plan)
+static bool expectPresentElement(const TestSiteReporter& reporter, const Value& use, ElementAccessPlan& plan)
 {
     if (plan.form != ElementAccessForm::Array && plan.form != ElementAccessForm::TypedArray)
-        return false;
-    if (plan.form == ElementAccessForm::Array && arrays.willBeTakenApart(use.objectOperand()))
         return false;
     PresenceQuery query = presenceQueryOf(reporter.use(), reporter.point().block, use, plan, reporter.typeOf(use.objectOperand()), keyTypeAfterTests(reporter, use, plan));
     std::optional<PresenceTest> test = choosePresenceTest(reporter.context(), query);
@@ -1413,8 +1393,6 @@ static void reportPresenceTestOfResolvedAccess(TestSiteReporter& reporter, Array
         return reportBoundsTestOfResolvedStore(reporter, arrays, use);
 
     ValueID receiver = isArrayRead ? use.arrayOperand() : use.viewOperand();
-    if (isArrayRead && arrays.willBeTakenApart(receiver))
-        return;
     ValueID position = use.positionOperand();
     const Type& positionType = reporter.typeOf(position);
     std::optional<PresenceTest> chosen = choosePresenceTest(reporter.context(), PresenceQuery {
@@ -1480,7 +1458,7 @@ void reportElementAccessTests(TestSiteReporter& reporter)
             if (!OperandPosition::value(plan.operation) || canStoreWithoutConversion(plan.arrayStorage, reporter.typeOf(use.valueOperand())))
                 plan.testsInBounds = arrays.isComparedWithLength(use.objectOperand(), use.propertyOperand(), reporter.point().block);
         }
-        bool expectsPresentElement = expectPresentElement(reporter, arrays, use, plan);
+        bool expectsPresentElement = expectPresentElement(reporter, use, plan);
         bool hasGuardedForm = plan.isCharacterReadAfterTests() || (plan.isResolved() && !plan.needsNoTest() && (plan.form != ElementAccessForm::Array || plan.arrayStorage == ArrayStorage::Other || hasArrayStorageForm(plan.arrayStorage)));
         std::optional<ElementAccessTests> tests = hasGuardedForm ? createTests(reporter, arrays, use, plan) : std::nullopt;
         if (!tests)

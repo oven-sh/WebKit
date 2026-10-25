@@ -1,9 +1,9 @@
-# The reads of an array that the function itself allocates and that SinkAllocations will take apart get no test for a present element: the array is taken apart by its accesses, which stay as they are, and the literal of a destructuring is still removed. An array that has to be made is read like one that comes from outside: its reads get the test
+# The reads of an array that the function itself allocates get no test for a present element. SinkAllocations and the narrowing of storage take such an array apart by its accesses, which stay as they are: the literal of a destructuring is still removed. The same reads of an array that comes from outside get the test
 # FORM: Prepared optimizing
 # RUN: pass PlaceTypeTests
 # RUN(PLAN): test-placement
 # RUN(SUNK): pass PlaceTypeTests SinkAllocations
-# STATISTIC: ElementPresenceTestsPlaced = 4
+# STATISTIC: ElementPresenceTestsPlaced = 2
 
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="first" module=m0 declared={type=anything} initialization=Undefined
@@ -69,17 +69,20 @@ function f1 name="destructuredLiteral" parameters=[{type=anything}, {type=anythi
 # SUNK-NOT: NewArray
 # SUNK-NOT: GetArrayElement
 
-# An array of holes has the kind that its allocation names. Its length is not known here, so it stays an array
+# An array of holes has the kind that its allocation names, and its reads test for that kind alone
 function f2 name="arrayOfHoles" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 999]}, {type=int[0, 999]}] results=[{type=anything}] {
     v3 = NewArrayLike v1, v0
     v4 = ElemGet v3, v2
     Return v4
 }
 # PLAN-LABEL: function f2
-# PLAN-NEXT: stretch 0: test HasArrayStorage v3 arrayStorage=Contiguous before v4; test IsElementPresent v3, v2 arrayStorage=Contiguous before v4; uses v4;
-# PLAN-NOT: stretch
+# PLAN-NOT: IsElementPresent
+# PLAN: test HasArrayStorage v3 arrayStorage=Contiguous before v4
+# PLAN-NOT: IsElementPresent
 # CHECK-LABEL: function f2 name="arrayOfHoles"
-# CHECK: v4:{{*}}= GetArrayElement v3, v2, {{*}} arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+# CHECK-NOT: IsElementPresent
+# CHECK: v4:{{*}}= GetArrayElement v3, v2, {{*}} arrayStorage=Contiguous level=Expected [keyIsIntegral]
+# CHECK-NOT: IsElementPresent
 # SUNK-LABEL: function f2 name="arrayOfHoles"
 
 function f3 name="textsFromOutside" parameters=[{type=Array<string>}] results=[{type=undefined}] {
@@ -96,18 +99,3 @@ function f3 name="textsFromOutside" parameters=[{type=Array<string>}] results=[{
 # PLAN-NOT: stretch
 # CHECK-LABEL: function f3 name="textsFromOutside"
 # CHECK-COUNT-2: = GetArrayElement v0, {{*}} arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
-
-# A module variable keeps the literal, so it has to be made
-function f4 name="literalThatIsKept" parameters=[{type=string}, {type=string}, {type=int[0, 999]}] results=[{type=anything}] {
-    v3 = NewArray v0, v1 contents=string
-    PutModuleVariable v3 variable=g0
-    v5 = ElemGet v3, v2
-    Return v5
-}
-# PLAN-LABEL: function f4
-# PLAN-NEXT: stretch 0: test IsElementPresent v3, v2 arrayStorage=Contiguous before v5; proof allocation v3; uses v5;
-# PLAN-NOT: stretch
-# CHECK-LABEL: function f4 name="literalThatIsKept"
-# CHECK: v5:{{*}}= GetArrayElement v3, v2, {{*}} arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
-# SUNK-LABEL: function f4 name="literalThatIsKept"
-# SUNK: = NewArray v0, v1

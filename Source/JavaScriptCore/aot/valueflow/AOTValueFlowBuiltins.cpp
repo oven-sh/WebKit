@@ -607,14 +607,7 @@ private:
         return refused;
     }
 
-    struct NarrowedOperand {
-        BuiltinOperand operand;
-        ValueSetID values;
-        bool mayBeAbsent;
-    };
-    using NarrowedOperands = Vector<NarrowedOperand, 2>;
-
-    void select(BuiltinDispatchTarget target, Vector<BuiltinOverloadID, 4>& selected, const NarrowedOperands& narrowedOperands = { })
+    void select(BuiltinDispatchTarget target, Vector<BuiltinOverloadID, 4>& selected)
     {
         if (target.isOverload()) {
             selected.appendIfNotContains(target.overload);
@@ -625,10 +618,6 @@ private:
         bool isRest = node.operand.kind() == BuiltinOperand::Kind::ArgumentsFrom;
         ValueSetID stillTested = ValueSets::complement(m_context.maker().of(ValueFlowUniverse::primitive(PrimitiveSet::Absent)));
         bool absenceIsStillTested = true;
-        if (auto narrowed = std::ranges::find(narrowedOperands, node.operand, &NarrowedOperand::operand); narrowed != narrowedOperands.end()) {
-            stillTested = m_context.maker().intersect(stillTested, narrowed->values);
-            absenceIsStillTested = narrowed->mayBeAbsent;
-        }
         for (const BuiltinDispatchBranch& branch : node.branches) {
             bool admitsAbsence = m_builtins.at(branch.tested).isAnything() || m_builtins.at(branch.tested).primitives.contains(BuiltinPrimitive::NotPassed);
             ValueSetID tested = m_context.maker().intersect(m_tables.maskOf(branch.tested), stillTested);
@@ -638,17 +627,8 @@ private:
                     throwValue(unknownObjectSet(m_context, ValueFlowUnknownSource::ThrownByRunTime));
                 tested = m_context.maker().intersect(tested, ValueSets::complement(refused));
             }
-            bool mayBeAbsent = admitsAbsence && absenceIsStillTested;
-            if (mayLieIn(node.operand, tested, mayBeAbsent)) {
-                NarrowedOperands narrowedInBranch = narrowedOperands;
-                if (!isRest) {
-                    narrowedInBranch.removeAllMatching([&](const NarrowedOperand& other) {
-                        return other.operand == node.operand;
-                    });
-                    narrowedInBranch.append(NarrowedOperand { node.operand, tested, mayBeAbsent });
-                }
-                select(branch.target, selected, narrowedInBranch);
-            }
+            if (mayLieIn(node.operand, tested, admitsAbsence && absenceIsStillTested))
+                select(branch.target, selected);
             if (isRest)
                 continue;
             stillTested = m_context.maker().intersect(stillTested, ValueSets::complement(m_tables.membersSurelyOf(branch.tested)));

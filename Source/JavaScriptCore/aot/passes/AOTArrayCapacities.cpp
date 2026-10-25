@@ -584,26 +584,6 @@ struct CapacityPlanner {
         });
     }
 
-    // `list.length = 0`, list.pop(), list.splice(..): the array does not hold what all the turns have appended.
-    bool mayTakeElementsAwayIn(const NaturalLoop& loop, ValueID array)
-    {
-        auto mayTakeAway = [&](ValueID id) {
-            const Value& writer = function.at(id);
-            const EffectsOnEdges& effects = analyses.effectsOf(id);
-            if (!effects.normal.writes.contains(AbstractHeap::ArrayStorage) && !effects.handler.writes.contains(AbstractHeap::ArrayStorage))
-                return false;
-            // A capacity is a prediction: a callback is taken not to change the array.
-            if (appendKindOf(writer) || effects.onAnyEdge().mayRunOtherCode())
-                return false;
-            return std::ranges::any_of(writer.operands(), [&](ValueID operand) {
-                return operand && !context.program.typeOf(function, operand).isNumber() && analyses.escape().mayAlias(operand, array);
-            });
-        };
-        return anyLikelyBlockOf(loop, [&](BlockID block) {
-            return std::ranges::any_of(function.at(block).values, mayTakeAway);
-        });
-    }
-
     // An exit outside the header that is rarer than the loop does not count: where a type test fails, the loop continues in its generic copy.
     bool hasOnlyRareSideExits(const NaturalLoop& loop)
     {
@@ -769,8 +749,6 @@ struct CapacityPlanner {
             return std::nullopt;
         TripCount count = iterationsAt(point, loop, array, CountedIterations::Remaining);
         if (count.added.kind == CapacityTermKind::Unknown || count.subtracted.kind == CapacityTermKind::Unknown)
-            return std::nullopt;
-        if (mayTakeElementsAwayIn(loop, array))
             return std::nullopt;
         return GrowthPlan { id, point, array, loop.header(), count };
     }
