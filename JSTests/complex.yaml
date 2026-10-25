@@ -127,7 +127,11 @@
           # The kernel caps one string at 128 KB.
           environment = (0...7).map { |i| "STACK_BOUNDS_PADDING_#{i}=" + "x" * 100000 }
           underStackLimit = ["sh", "-c", "ulimit -S -s 8192; exec \"$0\" \"$@\""]
-          addRunCommand("complex", underStackLimit + vmCommand + BASE_OPTIONS + $testSpecificRequiredOptions + [$benchmark.to_s], noisyOutputHandler, simpleErrorHandler, *environment)
+          arguments = BASE_OPTIONS + $testSpecificRequiredOptions + [$benchmark.to_s]
+          addRunCommand("complex", underStackLimit + vmCommand + arguments, noisyOutputHandler, simpleErrorHandler, *environment)
+          # Run as a command, glibc's loader points AT_EXECFN to argv[0], which is below the environment.
+          loader = ["/lib64/ld-linux-x86-64.so.2", "/lib/ld-linux-aarch64.so.1"].find { |path| File.exist?(path) }
+          addRunCommand("complex-loader", underStackLimit + vmInvocationPrefix + [loader, pathToVM.to_s] + arguments, noisyOutputHandler, simpleErrorHandler, *environment) if loader
       else
           skip
       end
