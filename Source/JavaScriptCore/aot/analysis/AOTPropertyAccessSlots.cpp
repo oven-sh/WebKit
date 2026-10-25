@@ -438,7 +438,7 @@ static void planFieldStore(const PropertyAccessContext& context, const PropertyA
         plan.requiredProofs.add(Proof::BirthFieldsFilled);
         return;
     }
-    if (query.isPrivate || query.isListedByAllocation) {
+    if (query.isPrivate || (query.isListedByAllocation && !query.usesOnlyPlansWithoutTests)) {
         requireFilledSlotForStore(state, plan);
         return;
     }

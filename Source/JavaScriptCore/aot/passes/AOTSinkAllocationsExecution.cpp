@@ -2564,8 +2564,11 @@ ValueID ObjectInterpreter::emitAllocation(VirtualObjectID object, const VirtualS
         properties.append(FieldValue { field, placeholder });
     }
     Vector<FieldValue, 4> parts;
-    for (const FreshResultField& part : variant.parts)
-        parts.append(FieldValue { part.field, valueOfField(object, *family.findField(part.field)) });
+    for (const FreshResultField& part : variant.parts) {
+        uint32_t field = *family.findField(part.field);
+        bool hasDeclaredType = part.field.kind == VirtualFieldKind::Capture;
+        parts.append(FieldValue { part.field, hasDeclaredType ? valueOfField(object, field, typeOfField(m_sinking.objectContext(), variant.description, part.field)) : valueOfField(object, field) });
+    }
 
     Value allocation = makeAllocation(program(), AllocationRequest { variant.description, variant.prototype, properties.span(), parts.span(), variant.length, absentResult == AbsentResult::IsPossible });
     if (allocation.opcode == Opcode::NewObject) {

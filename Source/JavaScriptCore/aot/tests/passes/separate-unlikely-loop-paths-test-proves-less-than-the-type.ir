@@ -67,3 +67,55 @@ function f1 name="undefinedOrRegExp" parameters=[{type=env L0}, {type=anything},
 # CHECK-NEXT: b9(v19: int|whole, v20: RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>):
 # CHECK-NEXT: LoopHint
 }
+
+# The same where no path has to leave the loop, and the test is what a turn begins with
+function f2 name="testAtTheHeadOfEveryTurn" parameters=[{type=env L0}, {type=i32}] results=[{type=anything}] {
+  b0(v0: env L0, v1: i32):
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = GetEnvironmentField v0 layout=L0 field=0
+    v6 = TypeTest v5 testedType=RegExp
+    Branch v6 -> taken b2(| 0), notTaken b4()
+  b2(v7):
+    v8 = Increment v3
+    v9 = Less v8, v1
+    Branch v9 -> taken b1(v8), notTaken b3()
+  b3():
+    Return v7
+  b4() frequency=Unlikely:
+    v10 = Undefined
+    Return v10
+# CHECK: b1(v3: int|whole, [[carried2]]: builtin(MathMax)|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>):
+# CHECK-NEXT: LoopHint
+# CHECK: v6: boolean = TypeTest [[carried2]] testedType=RegExp
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b4()
+}
+
+# The same for a value that goes around the loop without a variable
+function f3 name="valueGoesAroundTheLoop" parameters=[{type=anything}, {type=number}, {type=builtin(MathMax)|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: builtin(MathMax)|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>):
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    v8 = TypeTest v4 testedType=RegExp
+    Branch v8 -> taken b3(| 0), notTaken b4()
+  b3(v9):
+    Jump -> next b5()
+  b4() frequency=Unlikely:
+    v10 = Call v0, -, v4
+    Jump -> next b5()
+  b5():
+    v11 = Increment v5
+    Jump -> next b1(v4, v11)
+  b6():
+    Return v4
+# CHECK: b1(v4: builtin(MathMax)|RegExp<"a"[Global], pristine[Storage, Names, AsCreated]>, v5: int|whole):
+# CHECK: v8: boolean = TypeTest v4 testedType=RegExp
+# CHECK: Jump -> next b1(v4, v11)
+}

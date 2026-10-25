@@ -111,3 +111,34 @@ function f4 name="noElementIsAskedWhereEachIsANumber" parameters=[{type=i32}, {t
 # TWICE-NOT: NewArray
 # TWICE-NOT: HasArrayStorage
 }
+
+function f5 name="noElementIsAskedWhereOneMayBeUnspecified" parameters=[{type=boolean}, {type=undefined|i32}, {type=i32}] results=[{type=anything}] {
+    v3 = Integer integer=1
+    Branch v0 -> taken b2(v1, v3), notTaken b1()
+  b1():
+    v4 = Unspecified valueType=undefined|i32
+    v5 = Integer integer=2
+    Jump -> next b2(v4, v5)
+  b2(v6: undefined|i32, v7: i32):
+    v8 = NewArray v6 contents=undefined|i32
+    v9 = AssumeType v8 castType=Array<undefined|i32, proven, pristine[Storage, Names, Dense]>
+    v10 = Integer integer=2
+    v11 = BitAnd v7, v10
+    v12 = ToBoolean v11
+    Branch v12 -> taken b3(), notTaken b4()
+  b3():
+    v13 = Undefined
+    Return v13
+  b4():
+    v14 = HasArrayStorage v9 arrayStorage=Int32
+    Branch v14 -> taken b5(| 0), notTaken b6()
+  b5(v15):
+    v16 = GetArrayElement v9, v2, v15 arrayStorage=Int32 level=Expected [keyIsIntegral]
+    Return v16
+  b6() frequency=Rare:
+    v17 = ElemGet v9, v2 [keyIsIntegral]
+    Return v17
+}
+# TWICE-LABEL: function f5 name="noElementIsAskedWhereOneMayBeUnspecified"
+# ONCE-LABEL: function f5 name="noElementIsAskedWhereOneMayBeUnspecified"
+# ONCE-NOT: TypeTest

@@ -280,7 +280,8 @@ void SSARepair::separateUsesAsGuards()
     for (size_t index = 0; index < namedDefinitions.size(); ++index) {
         const NamedDefinition& definition = namedDefinitions[index];
         m_builder.setOrigin(function.at(definition.value).origin());
-        ValueID wrapper = m_builder.insertBefore(definition.pointAfter, IRBuilder::make(Opcode::AllGuards, { definition.value }));
+        bool provesNothing = function.at(definition.value).opcode == Opcode::Unspecified;
+        ValueID wrapper = m_builder.insertBefore(definition.pointAfter, provesNothing ? IRBuilder::make(Opcode::AllGuards) : IRBuilder::make(Opcode::AllGuards, { definition.value }));
         for (const Use& use : definition.usesAsGuard) {
             replaceUse(function, use, wrapper);
             m_analyses.didChangeBlock(use.block);
