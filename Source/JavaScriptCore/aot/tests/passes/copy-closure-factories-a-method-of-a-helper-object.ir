@@ -14,11 +14,11 @@
 # CHECK: [[second]]{{*}} = NewClosure v5 function=f7
 # CHECK-LABEL: function f5 name="define"
 # CHECK: [[read]]{{*}} = PropGet {{*}} key="target"
-# CHECK: [[member]]{{*}} = NewClosure v1 function=f4
+# CHECK: [[member]]{{*}} = NewClosure [[name]] function=f4
 # CHECK: [[same]]{{*}} = StrictEq [[read]], [[object]]
 # CHECK-NEXT: Branch [[same]]
-# CHECK: ElemSet [[read]], v1, [[member]]
-# CHECK: ElemSet [[object]], v1, [[member]]
+# CHECK: ElemSet [[object]], [[name]], [[member]]
+# CHECK: ElemSet [[read]], [[name]], [[member]]
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

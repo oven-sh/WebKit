@@ -9,8 +9,8 @@
 # CHECK-NEXT: [[plain]]{{*}} = NewClosure function=f
 # CHECK: [[same]]{{*}} = StrictEq [[read]], [[object]]
 # CHECK-NEXT: Branch [[same]]
-# CHECK: ElemSet [[read]], v1, [[plain]]
-# CHECK: ElemSet [[object]], v1, [[plain]]
+# CHECK: ElemSet [[object]], [[name]], [[plain]]
+# CHECK: ElemSet [[read]], [[name]], [[plain]]
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

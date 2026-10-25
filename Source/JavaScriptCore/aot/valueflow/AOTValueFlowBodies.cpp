@@ -1468,7 +1468,7 @@ private:
             forms.append(form);
     }
 
-    static constexpr size_t maxFormsComparedInPairs = 32;
+    AOT_CLASS_THRESHOLD(size_t, maxFormsComparedInPairs, 32);
 
     // Adds like addForm() while the list is short. A longer list takes every form, and removeRepeatedForms() leaves what addForm() would have.
     static void addFormToLongList(Forms& forms, const OperandForm& form)

@@ -168,6 +168,17 @@ static ValueID readWithItsType(Function& function, ValueID id)
     return id;
 }
 
+// What types the values later asks the first value of a function whether that is done.
+static void removeTypesOfValues(Function& function)
+{
+    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        for (ValueID id : function.blocks[blockIndex].values) {
+            if (function.at(id).type)
+                function.edit(id).type = TypeID();
+        }
+    }
+}
+
 static ProgramPoint pointOf(const Function& function, ValueID id)
 {
     for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
@@ -1057,13 +1068,17 @@ struct Copier {
 
         AnalysisContext context { build, program, nullptr, nullptr, activation.function };
         Function& function = editor.at(activation.function);
-        FunctionAnalyses analyses(context, function);
-        IRBuilder builder(context, function, types, &analyses);
-        testExpectedReads(activation.function, builder, analyses, WTF::move(reads), calls);
-        for (const ExpectedCall& call : calls) {
-            if (call.copy)
-                callCopyWhereCalleeIsExpected(builder, call);
+        {
+            FunctionAnalyses analyses(context, function);
+            IRBuilder builder(context, function, types, &analyses);
+            testExpectedReads(activation.function, builder, analyses, WTF::move(reads), calls);
+            for (const ExpectedCall& call : calls) {
+                if (call.copy)
+                    callCopyWhereCalleeIsExpected(builder, call);
+            }
         }
+        removeTypesOfValues(function);
+        compactFunction(function);
     }
 
     BitVector run()
