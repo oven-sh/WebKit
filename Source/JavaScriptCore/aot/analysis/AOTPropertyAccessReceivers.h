@@ -75,8 +75,7 @@ struct ReceiverCandidates {
 };
 
 bool hasMemberToFindUnder(const Program&, LayoutID, PropertyKeyID name);
-// Skips a layout that keeps one of the called names in a field that holds no function.
-LayoutList allocatedLayoutsWith(const Program&, std::span<const PropertyKeyID> names, size_t stopsCountingAbove = std::numeric_limits<size_t>::max(), std::span<const PropertyKeyID> calledNames = { });
+LayoutList allocatedLayoutsWith(const Program&, std::span<const PropertyKeyID> names, size_t stopsCountingAbove = std::numeric_limits<size_t>::max());
 
 ReceiverCandidates candidatesOf(const Program&, const Type& receiver, const Type* expected, LayoutSetID stamp);
 ReceiverCandidates receiverCandidates(const Program&, const Function&, ValueID receiver, LayoutSetID stamp = { });

@@ -89,6 +89,8 @@ public:
     static bool isRegistered() { return !!s_current.load(std::memory_order_acquire); }
     JS_EXPORT_PRIVATE static void setCurrentOfThread(const Image*);
     JS_EXPORT_PRIVATE static const Image* find(std::span<const uint8_t> bytes);
+    // Takes no lock and does not depend on the calling thread.
+    static const Image* findByCodeAddress(const void*);
 
     JS_EXPORT_PRIVATE static Wire::ImageVerdict check(std::span<const uint8_t> bytes, const std::array<uint8_t, 16>& identity);
     JS_EXPORT_PRIVATE static std::optional<Wire::AdmittedCode> admittedCode(std::span<const uint8_t> bytes);
@@ -166,10 +168,12 @@ private:
     JS_EXPORT_PRIVATE static const Image* currentOfThread();
 
     JS_EXPORT_PRIVATE static std::atomic<const Image*> s_current;
+    static std::atomic<const Image*> s_lastPublished;
 
     mutable std::array<std::atomic<void*>, 8> m_frequentStubs { };
     std::optional<PositionInFile> m_positionInFile;
     unsigned m_number { 0 };
+    const Image* m_publishedBefore { nullptr };
     std::span<const uint8_t> m_bytes;
     const uint8_t* m_code;
     const ImageFunction* m_functions;

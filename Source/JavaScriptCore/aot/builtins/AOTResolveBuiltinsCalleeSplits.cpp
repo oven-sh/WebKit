@@ -113,7 +113,7 @@ static bool mayHaveCalleeSplit(const Program& program, const Function& function,
     return program.typeOf(function, call.calleeOperand()).anyObject && !hasCalleesToDispatchOver(program, call);
 }
 
-static std::optional<CalleeSplit> planCalleeSplit(FunctionPassContext& context, ReceiversExpectedByNames& expectedReceivers, const ValueSite& site)
+static std::optional<CalleeSplit> planCalleeSplit(FunctionPassContext& context, const ValueSite& site)
 {
     const Program& program = context.program;
     const Function& function = context.function;
@@ -141,7 +141,7 @@ static std::optional<CalleeSplit> planCalleeSplit(FunctionPassContext& context, 
     bool bindsSeenFunction = bindsFunctionSeenByFlowInColdCode(context, site);
     if (!receiverType.anyObject && !bindsSeenFunction && !tailCallRequirementOf(function, site.block, site.value))
         return std::nullopt;
-    if (!knowsReceiver && !hasToStayTailCall && expectsReceiverOfCalledMethod(context, expectedReceivers, site.block, call))
+    if (!knowsReceiver && !hasToStayTailCall && expectsReceiverOfCalledMethod(context, site.block, call))
         return std::nullopt;
 
     Vector<MemberOfClasses, 4> methods = methodsNamed(program, name.name);
@@ -174,14 +174,13 @@ static std::optional<CalleeSplit> planCalleeSplit(FunctionPassContext& context, 
 Vector<CalleeSplit> planCalleeSplits(FunctionPassContext& context)
 {
     Vector<CalleeSplit> splits;
-    ReceiversExpectedByNames expectedReceivers(context);
     for (const ValueSite& site : context.sitesIn(SiteList::Calls)) {
         if (!mayHaveCalleeSplit(context.program, context.function, context.function.at(site.value)))
             continue;
         uint32_t state = RefusedSites::stateOf(context.function, site.value);
         if (context.refusedSites.contains(RefusalKind::CalleeSplit, site.value, state))
             continue;
-        if (std::optional<CalleeSplit> split = planCalleeSplit(context, expectedReceivers, site))
+        if (std::optional<CalleeSplit> split = planCalleeSplit(context, site))
             splits.append(WTF::move(*split));
         else
             context.refusedSites.add(RefusalKind::CalleeSplit, context.function, site.value, state);

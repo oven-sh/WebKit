@@ -30,6 +30,7 @@
 #include "AOTVarint.h"
 #include "AOTVector.h"
 #include "MachineContext.h"
+#include "VM.h"
 #include <algorithm>
 #include <bit>
 #include <functional>
@@ -450,12 +451,13 @@ static SignalAction handleLoopPoll(const Fault& fault, PlatformRegisters& regist
 }
 #endif
 
-static SignalAction handleDivertedReturn(const Image& image, PlatformRegisters& registers)
+static SignalAction handleDivertedReturn(PlatformRegisters& registers)
 {
-    void* target = findStub(image, handleException(false));
+    auto* instance = std::bit_cast<Instance*>(registerOf(registers, instanceGPR));
+    void* target = findStub(*instance->vm->aotState().image, handleException(false));
     if (!target)
         return SignalAction::NotHandled;
-    uintptr_t returnAddress = std::bit_cast<uintptr_t>(std::bit_cast<Instance*>(registerOf(registers, instanceGPR))->runtime.exceptions.stackPointerOfHandler);
+    uintptr_t returnAddress = std::bit_cast<uintptr_t>(instance->runtime.exceptions.stackPointerOfHandler);
 #if CPU(ARM64)
     registerOf(registers, ARM64Registers::lr) = returnAddress;
 #elif CPU(X86_64)
@@ -474,12 +476,15 @@ void installFaultHandler()
         auto instructionPointer = MachineContext::instructionPointer(registers);
         if (!instructionPointer)
             return SignalAction::NotHandled;
-        const Image* image = Image::current();
-        if (!image)
+        if (!Image::isRegistered())
             return SignalAction::NotHandled;
+        // This may run on another thread than the code it is about, so the registers say which image that code belongs to.
         void* pc = instructionPointer->untaggedPtr();
         if (std::bit_cast<uintptr_t>(pc) == registerOf(registers, instanceGPR) + InstanceLayout::offsetOfLoopPollPage() + offsetOfDivertedReturnInLoopPollPage) [[unlikely]]
-            return handleDivertedReturn(*image, registers);
+            return handleDivertedReturn(registers);
+        const Image* image = Image::findByCodeAddress(pc);
+        if (!image)
+            return SignalAction::NotHandled;
         std::optional<FaultSite> site = image->faultSiteAt(pc);
         if (!site)
             return SignalAction::NotHandled;

@@ -1,5 +1,5 @@
 # A split on the callee has at most as many arms as the limit: the first methods by id get an arm, the others take the generic call
-# A layout of the program has the name "push" too, so more kinds of receivers have it than the limit allows. One class of the language has the method, so its instances are expected and the call waits for the test of the receiver
+# A layout of the program has the name "push" too, so more kinds of receivers have it than the limit allows and the callee is tested, not the receiver
 # FORM: Prepared
 # OPTIONS: limit=MaxDispatchCases:1
 # RUN: pass ResolveBuiltins
@@ -31,10 +31,10 @@ function f1 name="oneMethod" parameters=[{type=anything}, {type=anything}] resul
     v2 = PropGet v0 key="push"
     v3 = Call v2, v0, v1 calleeKey="push"
     Return v3
-# CHECK-NOT: TypeTest
-# CHECK: v2: anything = PropGet v0 key="push"
-# CHECK-NEXT: anything = Call v2, v0, v1 calleeKey="push"
-# CHECK-NOT: TypeTest
+# CHECK: [[isPush]]: boolean = TypeTest v2 testedType=builtin(ArrayPrototypePush)
+# CHECK: = TypeTest v0 testedType=Array
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: anything = Call {{*}}, v0, v1 calleeKey="push"
 }
 
 function f2 name="makesStack" parameters=[{type=anything}] results=[{type=anything}] {

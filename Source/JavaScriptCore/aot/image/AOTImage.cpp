@@ -30,6 +30,7 @@ namespace JSC { namespace AOT {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Image);
 
 std::atomic<const Image*> Image::s_current { nullptr };
+std::atomic<const Image*> Image::s_lastPublished { nullptr };
 
 static thread_local const Image* t_currentImage { nullptr };
 static Lock s_publishedImagesLock;
@@ -54,6 +55,15 @@ const Image* Image::find(std::span<const uint8_t> bytes)
     Locker locker { s_publishedImagesLock };
     for (const Image* image : publishedImages()) {
         if (image->m_bytes.data() == bytes.data())
+            return image;
+    }
+    return nullptr;
+}
+
+const Image* Image::findByCodeAddress(const void* address)
+{
+    for (const Image* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->m_publishedBefore) {
+        if (std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(image->m_code) < image->header().codeSize)
             return image;
     }
     return nullptr;
@@ -247,6 +257,8 @@ void Image::publish(std::unique_ptr<Image>&& unpublishedImage, std::span<const u
     }
     RELEASE_ASSERT(JSCellButterfly::isOutsideHeap(std::bit_cast<const Butterfly*>(image->m_bytes.data())) && JSCellButterfly::isOutsideHeap(std::bit_cast<const Butterfly*>(image->m_bytes.data() + image->m_bytes.size() - 1)));
     t_currentImage = image.get();
+    image->m_publishedBefore = s_lastPublished.load(std::memory_order_relaxed);
+    s_lastPublished.store(image.get(), std::memory_order_release);
     s_current.store(images.isEmpty() ? image.get() : differsByThread(), std::memory_order_release);
     images.append(image.release());
 }
