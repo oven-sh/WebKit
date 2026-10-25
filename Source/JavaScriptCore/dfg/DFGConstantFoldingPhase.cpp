@@ -2643,7 +2643,7 @@ private:
             m_graph.globalObjectFor(origin.semantic),
             baseValue.m_structure.toStructureSet(),
             node->cacheableIdentifier(),
-            isDirect, privateFieldPutKind);
+            isDirect, privateFieldPutKind, node->hasResolveMode() ? node->resolveMode() : DoNotThrowIfNotFound);
 
         if (!status.isSimple())
             return;

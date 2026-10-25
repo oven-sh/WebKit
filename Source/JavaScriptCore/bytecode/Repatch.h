@@ -49,6 +49,7 @@ enum class GetByKind {
 enum class PutByKind {
     ByIdStrict,
     ByIdSloppy,
+    ByIdThrowIfNotFoundStrict,
     ByValStrict,
     ByValSloppy,
     ByIdDirectStrict,

@@ -1789,12 +1789,14 @@ MacroAssemblerCodeRef<JITThunkPtrTag> InlineCacheCompiler::generateSlowPathCode(
 
     case AccessType::PutByIdStrict:
     case AccessType::PutByIdSloppy:
+    case AccessType::PutByIdThrowIfNotFoundStrict:
     case AccessType::PutByIdDirectStrict:
     case AccessType::PutByIdDirectSloppy:
     case AccessType::DefinePrivateNameById:
     case AccessType::SetPrivateNameById: {
         using ArgumentTypes = FunctionTraits<decltype(operationPutByIdStrictOptimize)>::ArgumentTypes;
         static_assert(std::same_as<FunctionTraits<decltype(operationPutByIdSloppyOptimize)>::ArgumentTypes, ArgumentTypes>);
+        static_assert(std::same_as<FunctionTraits<decltype(operationPutByIdThrowIfNotFoundStrictOptimize)>::ArgumentTypes, ArgumentTypes>);
         static_assert(std::same_as<FunctionTraits<decltype(operationPutByIdDirectStrictOptimize)>::ArgumentTypes, ArgumentTypes>);
         static_assert(std::same_as<FunctionTraits<decltype(operationPutByIdDirectSloppyOptimize)>::ArgumentTypes, ArgumentTypes>);
         static_assert(std::same_as<FunctionTraits<decltype(operationPutByIdDefinePrivateFieldStrictOptimize)>::ArgumentTypes, ArgumentTypes>);
@@ -7385,10 +7387,11 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
             case AccessType::PutByIdDirectStrict:
             case AccessType::PutByIdStrict:
             case AccessType::PutByIdSloppy:
+            case AccessType::PutByIdThrowIfNotFoundStrict:
             case AccessType::PutByIdDirectSloppy:
             case AccessType::DefinePrivateNameById:
             case AccessType::SetPrivateNameById: {
-                bool isStrict = m_propertyCache.accessType == AccessType::PutByIdDirectStrict || m_propertyCache.accessType == AccessType::PutByIdStrict || m_propertyCache.accessType == AccessType::DefinePrivateNameById || m_propertyCache.accessType == AccessType::SetPrivateNameById;
+                bool isStrict = m_propertyCache.accessType == AccessType::PutByIdDirectStrict || m_propertyCache.accessType == AccessType::PutByIdStrict || m_propertyCache.accessType == AccessType::PutByIdThrowIfNotFoundStrict || m_propertyCache.accessType == AccessType::DefinePrivateNameById || m_propertyCache.accessType == AccessType::SetPrivateNameById;
                 switch (accessCase.m_type) {
                 case AccessCase::Replace: {
                     ASSERT(canBeViaGlobalProxy(accessCase.m_type));
@@ -7402,6 +7405,7 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                     break;
                 }
                 case AccessCase::Transition: {
+                    ASSERT(m_propertyCache.accessType != AccessType::PutByIdThrowIfNotFoundStrict);
                     ASSERT(!accessCase.viaGlobalProxy());
                     bool allocating = accessCase.newStructure()->outOfLineCapacity() != accessCase.structure()->outOfLineCapacity();
                     bool reallocating = allocating && accessCase.structure()->outOfLineCapacity();

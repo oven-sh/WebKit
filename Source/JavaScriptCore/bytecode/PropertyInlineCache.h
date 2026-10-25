@@ -60,6 +60,7 @@ class PolymorphicAccess;
     macro(GetByValWithThis) \
     macro(PutByIdStrict) \
     macro(PutByIdSloppy) \
+    macro(PutByIdThrowIfNotFoundStrict) \
     macro(PutByIdDirectStrict) \
     macro(PutByIdDirectSloppy) \
     macro(PutByValStrict) \
@@ -726,6 +727,8 @@ inline auto appropriatePutByIdOptimizeFunction(AccessType type) -> decltype(&ope
         return operationPutByIdStrictOptimize;
     case AccessType::PutByIdSloppy:
         return operationPutByIdSloppyOptimize;
+    case AccessType::PutByIdThrowIfNotFoundStrict:
+        return operationPutByIdThrowIfNotFoundStrictOptimize;
     case AccessType::PutByIdDirectStrict:
         return operationPutByIdDirectStrictOptimize;
     case AccessType::PutByIdDirectSloppy:
@@ -773,6 +776,7 @@ inline bool hasConstantIdentifier(AccessType accessType)
     case AccessType::GetByIdWithThis:
     case AccessType::PutByIdStrict:
     case AccessType::PutByIdSloppy:
+    case AccessType::PutByIdThrowIfNotFoundStrict:
     case AccessType::PutByIdDirectStrict:
     case AccessType::PutByIdDirectSloppy:
     case AccessType::DefinePrivateNameById:

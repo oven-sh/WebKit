@@ -27,6 +27,7 @@
 
 #include "CallLinkStatus.h"
 #include "ExitFlag.h"
+#include "GetPutInfo.h"
 #include "ICStatusMap.h"
 #include "PrivateFieldPutKind.h"
 #include "PropertyInlineCacheSummary.h"
@@ -101,8 +102,9 @@ public:
     }
     
     static PutByStatus computeFor(CodeBlock*, ICStatusMap&, BytecodeIndex, ExitFlag, CallLinkStatus::ExitSiteData);
-    static PutByStatus computeFor(JSGlobalObject*, const StructureSet&, CacheableIdentifier, bool isDirect, PrivateFieldPutKind);
-    static PutByStatus computeFor(CodeBlock* profiledBlock, BytecodeIndex, JSGlobalObject*, const StructureSet&, CacheableIdentifier, bool isDirect, PrivateFieldPutKind);
+    // With ThrowIfNotFound the write is to a variable through the object that holds it, and must not add the property.
+    static PutByStatus computeFor(JSGlobalObject*, const StructureSet&, CacheableIdentifier, bool isDirect, PrivateFieldPutKind, ResolveMode);
+    static PutByStatus computeFor(CodeBlock* profiledBlock, BytecodeIndex, JSGlobalObject*, const StructureSet&, CacheableIdentifier, bool isDirect, PrivateFieldPutKind, ResolveMode);
 
     static PutByStatus computeFor(CodeBlock* baselineBlock, ICStatusMap& baselineMap, ICStatusContextStack&, CodeOrigin);
 

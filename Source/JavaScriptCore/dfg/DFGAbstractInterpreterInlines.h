@@ -5232,7 +5232,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                 m_graph.globalObjectFor(node->origin.semantic),
                 value.m_structure.toStructureSet(),
                 node->cacheableIdentifier(),
-                isDirect, privateFieldPutKind);
+                isDirect, privateFieldPutKind, node->hasResolveMode() ? node->resolveMode() : DoNotThrowIfNotFound);
 
             bool allGood = true;
             if (status.isSimple()) {

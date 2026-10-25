@@ -361,7 +361,7 @@ PutByStatus PutByStatus::computeFor(CodeBlock* baselineBlock, ICStatusMap& basel
     return computeFor(baselineBlock, baselineMap, bytecodeIndex, didExit, callExitSiteData);
 }
 
-PutByStatus PutByStatus::computeFor(JSGlobalObject* globalObject, const StructureSet& set, CacheableIdentifier identifier, bool isDirect, PrivateFieldPutKind privateFieldPutKind)
+PutByStatus PutByStatus::computeFor(JSGlobalObject* globalObject, const StructureSet& set, CacheableIdentifier identifier, bool isDirect, PrivateFieldPutKind privateFieldPutKind, ResolveMode resolveMode)
 {
     UniquedStringImpl* uid = identifier.uid();
     if (parseIndex(*uid))
@@ -434,6 +434,10 @@ PutByStatus PutByStatus::computeFor(JSGlobalObject* globalObject, const Structur
         if (privateFieldPutKind.isSet())
             return PutByStatus(LikelyTakesSlowPath);
 
+        // With ThrowIfNotFound a write to a name that is not there throws, in the slow path. It never adds the property.
+        if (resolveMode == ThrowIfNotFound)
+            return PutByStatus(LikelyTakesSlowPath);
+
         // Our hypothesis is that we're doing a transition. Before we prove that this is really
         // true, we want to do some sanity checks.
     
@@ -474,12 +478,12 @@ PutByStatus PutByStatus::computeFor(JSGlobalObject* globalObject, const Structur
     return result;
 }
 
-PutByStatus PutByStatus::computeFor(CodeBlock* profiledBlock, BytecodeIndex bytecodeIndex, JSGlobalObject* globalObject, const StructureSet& set, CacheableIdentifier identifier, bool isDirect, PrivateFieldPutKind privateFieldPutKind)
+PutByStatus PutByStatus::computeFor(CodeBlock* profiledBlock, BytecodeIndex bytecodeIndex, JSGlobalObject* globalObject, const StructureSet& set, CacheableIdentifier identifier, bool isDirect, PrivateFieldPutKind privateFieldPutKind, ResolveMode resolveMode)
 {
     if (hasBadCacheExitSite(profiledBlock, bytecodeIndex))
         return PutByStatus(LikelyTakesSlowPath);
 
-    return computeFor(globalObject, set, identifier, isDirect, privateFieldPutKind);
+    return computeFor(globalObject, set, identifier, isDirect, privateFieldPutKind, resolveMode);
 }
 #endif
 

@@ -1369,14 +1369,27 @@ public:
         return getByIdData().m_cacheType;
     }
 
+    // The second OpInfo of PutById and PutByIdFlush is the ECMAMode in its low byte and the ResolveMode in this bit.
+    // ThrowIfNotFound is the write to a variable through the object that holds it: a name with no property is a
+    // ReferenceError there, and the write does not add one.
+    static constexpr uint64_t putByIdThrowIfNotFoundBit = 1 << 8;
+
+    static OpInfo putByIdOpInfo(ECMAMode ecmaMode, ResolveMode resolveMode)
+    {
+        ASSERT(resolveMode == DoNotThrowIfNotFound || ecmaMode.isStrict());
+        return OpInfo(static_cast<uint64_t>(ecmaMode.value()) | (resolveMode == ThrowIfNotFound ? putByIdThrowIfNotFoundBit : 0));
+    }
+
     bool hasResolveMode() const
     {
-        return hasGetByIdData();
+        return hasGetByIdData() || op() == PutById || op() == PutByIdFlush;
     }
 
     ResolveMode resolveMode()
     {
         ASSERT(hasResolveMode());
+        if (op() == PutById || op() == PutByIdFlush)
+            return m_opInfo2.as<uint64_t>() & putByIdThrowIfNotFoundBit ? ThrowIfNotFound : DoNotThrowIfNotFound;
         return getByIdData().m_resolveMode;
     }
 

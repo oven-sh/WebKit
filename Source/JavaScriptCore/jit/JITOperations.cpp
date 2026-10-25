@@ -1457,6 +1457,89 @@ JSC_DEFINE_JIT_OPERATION(operationPutByIdStrictOptimize, void, (EncodedJSValue e
     OPERATION_RETURN(scope);
 }
 
+// AccessType::PutByIdThrowIfNotFoundStrict is the write to a variable through the object that holds it, the way
+// op_put_to_scope does it with ThrowIfNotFound in strict mode code: a name with no property is a ReferenceError,
+// and the write does not add one. Only a write that found the property is cached.
+static ALWAYS_INLINE bool hasPropertyForPutByIdThrowIfNotFound(JSGlobalObject* globalObject, VM& vm, JSValue baseValue, PropertyName propertyName)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    bool hasProperty = asObject(baseValue)->hasProperty(globalObject, propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!hasProperty) [[unlikely]] {
+        throwException(globalObject, scope, createUndefinedVariableError(globalObject, Identifier::fromUid(vm, propertyName.uid())));
+        return false;
+    }
+    return true;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPutByIdThrowIfNotFoundStrictGaveUp, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache* propertyCache))
+{
+    SuperSamplerScope superSamplerScope(false);
+
+    JSGlobalObject* globalObject = propertyCache->globalObject();
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    ICSlowPathCallFrameTracer tracer(vm, callFrame, propertyCache);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    propertyCache->tookSlowPath = true;
+
+    JSValue baseValue = JSValue::decode(encodedBase);
+    PropertyName propertyName = propertyCache->identifier();
+
+    bool hasProperty = hasPropertyForPutByIdThrowIfNotFound(globalObject, vm, baseValue, propertyName);
+    EXCEPTION_ASSERT(!!scope.exception() == !hasProperty);
+    if (!hasProperty) [[unlikely]]
+        OPERATION_RETURN(scope);
+
+    PutPropertySlot slot(baseValue, true, callFrame->codeBlock()->putByIdContext());
+    baseValue.putInline(globalObject, propertyName, JSValue::decode(encodedValue), slot);
+
+    LOG_IC((ICEvent::OperationPutByIdThrowIfNotFoundStrictGaveUp, baseValue.classInfoOrNull(), slot.base() == baseValue));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPutByIdThrowIfNotFoundStrictOptimize, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache* propertyCache))
+{
+    SuperSamplerScope superSamplerScope(false);
+
+    JSGlobalObject* globalObject = propertyCache->globalObject();
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    ICSlowPathCallFrameTracer tracer(vm, callFrame, propertyCache);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    CacheableIdentifier identifier = propertyCache->identifier();
+    AccessType accessType = static_cast<AccessType>(propertyCache->accessType);
+
+    JSValue value = JSValue::decode(encodedValue);
+    JSValue baseValue = JSValue::decode(encodedBase);
+    CodeBlock* codeBlock = callFrame->codeBlock();
+
+    PropertyName propertyName = identifier;
+    bool hasProperty = hasPropertyForPutByIdThrowIfNotFound(globalObject, vm, baseValue, propertyName);
+    EXCEPTION_ASSERT(!!scope.exception() == !hasProperty);
+    if (!hasProperty) [[unlikely]]
+        OPERATION_RETURN(scope);
+
+    PutPropertySlot slot(baseValue, true, codeBlock->putByIdContext());
+
+    Structure* structure = CommonSlowPaths::originalStructureBeforePut(baseValue);
+    baseValue.putInline(globalObject, propertyName, value, slot);
+
+    LOG_IC((ICEvent::OperationPutByIdThrowIfNotFoundStrictOptimize, baseValue.classInfoOrNull(), slot.base() == baseValue));
+
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+
+    if (accessType != static_cast<AccessType>(propertyCache->accessType))
+        OPERATION_RETURN(scope);
+
+    if (propertyCache->considerRepatchingCacheBy(vm, codeBlock, structure, identifier))
+        repatchPutBy(globalObject, codeBlock, baseValue, structure, identifier, slot, *propertyCache, PutByKind::ByIdThrowIfNotFoundStrict, /* isNonStringPrimitiveKey */ false);
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationPutByIdSloppyOptimize, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache* propertyCache))
 {
     SuperSamplerScope superSamplerScope(false);

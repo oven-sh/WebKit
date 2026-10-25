@@ -5721,6 +5721,8 @@ private:
         LValue base = lowCell(node->child1());
         LValue value = lowJSValue(node->child2());
         auto accessType = node->op() == PutByIdDirect ? (node->ecmaMode().isStrict() ? AccessType::PutByIdDirectStrict : AccessType::PutByIdDirectSloppy) : (node->ecmaMode().isStrict() ? AccessType::PutByIdStrict : AccessType::PutByIdSloppy);
+        if (node->hasResolveMode() && node->resolveMode() == ThrowIfNotFound)
+            accessType = AccessType::PutByIdThrowIfNotFoundStrict;
         cachedPutById(node, base, value, accessType);
     }
 

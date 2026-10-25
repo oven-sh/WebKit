@@ -304,6 +304,7 @@ static ECMAMode LEGACY_NODELETE ecmaModeFor(PutByKind putByKind)
         return ECMAMode::sloppy();
 
     case PutByKind::ByIdStrict:
+    case PutByKind::ByIdThrowIfNotFoundStrict:
     case PutByKind::ByValStrict:
     case PutByKind::ByIdDirectStrict:
     case PutByKind::ByValDirectStrict:
@@ -986,6 +987,8 @@ static CodePtr<CFunctionPtrTag> LEGACY_NODELETE appropriatePutByGaveUpFunction(P
         return operationPutByIdStrictGaveUp;
     case PutByKind::ByIdSloppy:
         return operationPutByIdSloppyGaveUp;
+    case PutByKind::ByIdThrowIfNotFoundStrict:
+        return operationPutByIdThrowIfNotFoundStrictGaveUp;
     case PutByKind::ByIdDirectStrict:
         return operationPutByIdDirectStrictGaveUp;
     case PutByKind::ByIdDirectSloppy:
@@ -1027,6 +1030,8 @@ static CodePtr<CFunctionPtrTag> LEGACY_NODELETE appropriatePutByOptimizeFunction
         return operationPutByIdStrictOptimize;
     case PutByKind::ByIdSloppy:
         return operationPutByIdSloppyOptimize;
+    case PutByKind::ByIdThrowIfNotFoundStrict:
+        return operationPutByIdThrowIfNotFoundStrictOptimize;
     case PutByKind::ByIdDirectStrict:
         return operationPutByIdDirectStrictOptimize;
     case PutByKind::ByIdDirectSloppy:
@@ -1121,6 +1126,7 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                 return GiveUpOnCache;
             case PutByKind::ByIdStrict:
             case PutByKind::ByIdSloppy:
+            case PutByKind::ByIdThrowIfNotFoundStrict:
             case PutByKind::ByValStrict:
             case PutByKind::ByValSloppy:
             case PutByKind::ByIdDirectStrict:
@@ -1161,6 +1167,11 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
             } else {
                 ASSERT(!isGlobalProxy);
                 ASSERT(slot.type() == PutPropertySlot::NewProperty);
+
+                // PutByKind::ByIdThrowIfNotFoundStrict writes to a name that is there. This one was inherited. A cached
+                // transition would add the property again when that is no longer so, where the write is an error.
+                if (putByKind == PutByKind::ByIdThrowIfNotFoundStrict)
+                    return RetryCacheLater;
 
                 if (!oldStructure->isObject())
                     return GiveUpOnCache;
@@ -1219,6 +1230,8 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                 case PutByKind::DefinePrivateNameByVal:
                     ASSERT(ident.isPrivateName());
                     break;
+                case PutByKind::ByIdThrowIfNotFoundStrict:
+                    RELEASE_ASSERT_NOT_REACHED();
                 case PutByKind::ByIdDirectStrict:
                 case PutByKind::ByIdDirectSloppy:
                 case PutByKind::ByValDirectStrict:
@@ -1322,6 +1335,7 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
             case PutByKind::SetPrivateNameById:
             case PutByKind::SetPrivateNameByVal:
                 RELEASE_ASSERT_NOT_REACHED();
+            case PutByKind::ByIdThrowIfNotFoundStrict:
             case PutByKind::ByIdDirectStrict:
             case PutByKind::ByIdDirectSloppy:
             case PutByKind::ByValDirectStrict:
@@ -2183,6 +2197,9 @@ void resetPutBy(CodeBlock* codeBlock, PropertyInlineCache& propertyCache, PutByK
         break;
     case PutByKind::ByIdSloppy:
         optimizedFunction = operationPutByIdSloppyOptimize;
+        break;
+    case PutByKind::ByIdThrowIfNotFoundStrict:
+        optimizedFunction = operationPutByIdThrowIfNotFoundStrictOptimize;
         break;
     case PutByKind::ByIdDirectStrict:
         optimizedFunction = operationPutByIdDirectStrictOptimize;

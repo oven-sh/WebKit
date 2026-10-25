@@ -8131,7 +8131,10 @@ void SpeculativeJIT::compilePutById(Node* node)
 
     flushRegisters();
 
-    cachedPutById(node, node->origin.semantic, baseGPR, valueGPR, node->cacheableIdentifier(), node->ecmaMode().isStrict() ? AccessType::PutByIdStrict : AccessType::PutByIdSloppy);
+    AccessType accessType = node->ecmaMode().isStrict() ? AccessType::PutByIdStrict : AccessType::PutByIdSloppy;
+    if (node->resolveMode() == ThrowIfNotFound)
+        accessType = AccessType::PutByIdThrowIfNotFoundStrict;
+    cachedPutById(node, node->origin.semantic, baseGPR, valueGPR, node->cacheableIdentifier(), accessType);
 
     noResult(node);
 }

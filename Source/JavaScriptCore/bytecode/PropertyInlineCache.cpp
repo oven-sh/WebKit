@@ -316,6 +316,9 @@ NEVER_INLINE void PropertyInlineCache::reset(const ConcurrentJSLockerBase& locke
     case AccessType::PutByIdSloppy:
         resetPutBy(codeBlock, *this, PutByKind::ByIdSloppy);
         break;
+    case AccessType::PutByIdThrowIfNotFoundStrict:
+        resetPutBy(codeBlock, *this, PutByKind::ByIdThrowIfNotFoundStrict);
+        break;
     case AccessType::PutByIdDirectStrict:
         resetPutBy(codeBlock, *this, PutByKind::ByIdDirectStrict);
         break;
@@ -623,6 +626,8 @@ static CodePtr<OperationPtrTag> LEGACY_NODELETE slowOperationFromUnlinkedPropert
         return operationPutByIdStrictOptimize;
     case AccessType::PutByIdSloppy:
         return operationPutByIdSloppyOptimize;
+    case AccessType::PutByIdThrowIfNotFoundStrict:
+        return operationPutByIdThrowIfNotFoundStrictOptimize;
     case AccessType::PutByIdDirectStrict:
         return operationPutByIdDirectStrictOptimize;
     case AccessType::PutByIdDirectSloppy:
@@ -725,6 +730,7 @@ PropertyInlineCache::Registers PropertyInlineCache::registers() const
         break;
     case AccessType::PutByIdStrict:
     case AccessType::PutByIdSloppy:
+    case AccessType::PutByIdThrowIfNotFoundStrict:
     case AccessType::PutByIdDirectStrict:
     case AccessType::PutByIdDirectSloppy:
     case AccessType::DefinePrivateNameById:

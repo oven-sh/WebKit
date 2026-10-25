@@ -72,6 +72,8 @@ static constexpr bool traceHandlerChains = false;
     macro(OperationPutByIdDirectSloppyGaveUp) \
     macro(OperationPutByIdStrictOptimize) \
     macro(OperationPutByIdSloppyOptimize) \
+    macro(OperationPutByIdThrowIfNotFoundStrictGaveUp) \
+    macro(OperationPutByIdThrowIfNotFoundStrictOptimize) \
     macro(OperationPutByIdDirectStrictOptimize) \
     macro(OperationPutByIdDirectSloppyOptimize) \
     macro(OperationPutByIdStrictBuildList) \

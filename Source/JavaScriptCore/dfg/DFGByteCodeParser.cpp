@@ -11027,20 +11027,22 @@ void ByteCodeParser::parseBlock(unsigned limit)
 
                 PutByStatus status;
                 if (uid)
-                    status = PutByStatus::computeFor(m_inlineStackTop->m_profiledBlock, m_currentIndex, globalObject, structure, CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid), false, PrivateFieldPutKind::none());
+                    status = PutByStatus::computeFor(m_inlineStackTop->m_profiledBlock, m_currentIndex, globalObject, structure, CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid), false, PrivateFieldPutKind::none(), getPutInfo.resolveMode());
                 else
                     status = PutByStatus(PutByStatus::LikelyTakesSlowPath);
                 if (status.numVariants() != 1
                     || status[0].kind() != PutByVariant::Replace
                     || status[0].structure().size() != 1) {
-#if USE(BUN_JSC_ADDITIONS)
-                    // A store by id adds a property that is gone. This store throws a ReferenceError then.
-                    if (uid && getPutInfo.resolveMode() == ThrowIfNotFound) {
+                    // Nothing here proves that the property is there, and a plain put by id adds one that is not. With
+                    // ThrowIfNotFound that is a ReferenceError, as in the lower tiers. In strict mode code the inline
+                    // cache throws it. The sloppy mode code that has ThrowIfNotFound is the assignment of a function
+                    // declared in a block to its name in the top level scope, which is too rare for an inline cache.
+                    ResolveMode resolveMode = uid ? getPutInfo.resolveMode() : DoNotThrowIfNotFound;
+                    if (resolveMode == ThrowIfNotFound && !getPutInfo.ecmaMode().isStrict()) {
                         addToGraph(PutDynamicVar, OpInfo(makeDynamicVarOpInfo(identifierNumber, getPutInfo.operand())), OpInfo(getPutInfo.ecmaMode()), get(bytecode.m_scope), get(bytecode.m_value));
                         break;
                     }
-#endif
-                    addToGraph(PutById, OpInfo(CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid)), OpInfo(bytecode.m_getPutInfo.ecmaMode()), get(bytecode.m_scope), get(bytecode.m_value));
+                    addToGraph(PutById, OpInfo(CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid)), Node::putByIdOpInfo(getPutInfo.ecmaMode(), resolveMode), get(bytecode.m_scope), get(bytecode.m_value));
                     break;
                 }
                 Node* base = weakJSConstant(globalObject);
