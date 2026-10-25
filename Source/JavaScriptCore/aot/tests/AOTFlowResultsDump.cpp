@@ -222,6 +222,15 @@ void FlowResults::dump(PrintStream& out, const Program& program) const
         printOptionalWitness(use.witness);
         printer.endLine();
     }
+    for (const FlowWorkerEntry& entry : builtins.workerEntries) {
+        beginLine("worker-entry"_s);
+        printer.print(entry.path);
+        if (entry.isGuess)
+            out.print(" guess"_s);
+        if (entry.hasOptions)
+            out.print(" with-options"_s);
+        printer.endLine();
+    }
 
     for (const UnseenCodeRecord& record : wholeProgram.unseenCode) {
         beginLine("unseen-code"_s);

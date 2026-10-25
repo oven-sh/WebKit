@@ -155,6 +155,7 @@ export const operandRoles = [
   "FunctionsAreConvertedUnderNamesOnly",
   "BecomesLengthOfReceiver",
   "CopiesHolesToResult",
+  "WorkerEntryPath",
 ] as const;
 export type OperandRole = (typeof operandRoles)[number];
 

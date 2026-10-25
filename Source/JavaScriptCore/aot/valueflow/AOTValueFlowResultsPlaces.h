@@ -45,6 +45,7 @@ private:
 };
 
 Vector<FlowLocaleUse> collectLocaleUses(const ValueFlowResultInputs&, ValueFlowHeapView&, const BitVector& builtinsWhoseCodeRuns, std::span<const UnseenCodeRecord>);
+Vector<FlowWorkerEntry> collectWorkerEntries(const ValueFlowResultInputs&, ValueFlowHeapView&);
 
 } } } // namespace JSC::AOT::Typed
 

@@ -119,6 +119,17 @@ struct FlowDataNode {
 enum class LegacyRegExpStatics : uint8_t { Unknown, NeverRead };
 enum class BuiltinHolderState : uint8_t { Unknown, Intact };
 
+// The path of an embedded file that may be passed to `new Worker()`.
+struct FlowWorkerEntry {
+    StringID path;
+    // Flow lost track of the path, and some Worker gets an unknown value. False: flow followed the path to the Worker.
+    bool isGuess { false };
+    // The Worker may also get an options object.
+    bool hasOptions { false };
+
+    friend bool operator==(const FlowWorkerEntry&, const FlowWorkerEntry&) = default;
+};
+
 struct FlowLocaleUse {
     LocaleUseKind kind { LocaleUseKind::Unknown };
     StringID tag;
@@ -170,6 +181,8 @@ struct FlowBuiltinTables {
     Vector<FeatureUseRecord> featureUses;
     BitVector builtinsThatMayBeTrimmed;
     Vector<FlowLocaleUse> localeUses;
+    // Sorted by path, without duplicates.
+    Vector<FlowWorkerEntry> workerEntries;
     LegacyRegExpStatics legacyRegExpStatics { LegacyRegExpStatics::Unknown };
     bool areFilled { false };
 };
@@ -300,6 +313,7 @@ public:
     std::span<const BuiltinUseRecord> builtinUses() const LIFETIME_BOUND { return m_tables.builtins.uses.span(); }
     std::span<const FeatureUseRecord> featureUses() const LIFETIME_BOUND { return m_tables.builtins.featureUses.span(); }
     std::span<const FlowLocaleUse> localeUses() const LIFETIME_BOUND { return m_tables.builtins.localeUses.span(); }
+    std::span<const FlowWorkerEntry> workerEntries() const LIFETIME_BOUND { return m_tables.builtins.workerEntries.span(); }
     OptionSet<BuiltinUse> usesOf(BuiltinID) const;
     const BitVector& builtinsThatMayBeTrimmed() const LIFETIME_BOUND { return m_tables.builtins.builtinsThatMayBeTrimmed; }
     ProgramInstances programInstances() const { return m_tables.wholeProgram.instances; }

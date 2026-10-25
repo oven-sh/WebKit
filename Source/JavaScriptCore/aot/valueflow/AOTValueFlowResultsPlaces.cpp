@@ -687,6 +687,56 @@ Vector<FlowLocaleUse> collectLocaleUses(const ValueFlowResultInputs& inputs, Val
     return uses;
 }
 
+Vector<FlowWorkerEntry> collectWorkerEntries(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap)
+{
+    const BuiltinTable& builtins = inputs.program.builtins();
+    const ValueFlowUniverse& universe = inputs.universe();
+    auto isEntryPath = [](const BuiltinParameter& parameter) {
+        return parameter.roles.contains(BuiltinOperandRole::WorkerEntryPath);
+    };
+    BitVector constructors = builtinsWithOverload(builtins, [&](const BuiltinOverload& overload) {
+        return std::ranges::any_of(overload.parameters, isEntryPath);
+    });
+    if (constructors.isEmpty() || universe.embeddedFilePaths() == ValueSets::nothing)
+        return { };
+    ValueSetMaker& maker = heap.maker();
+    ValueSetID followed = ValueSets::nothing;
+    ValueSetID followedWithOptions = ValueSets::nothing;
+    bool getsUnknownValue = false;
+    bool getsUnknownValueWithOptions = false;
+    forEachBuiltinApplication(inputs, heap, constructors, [&](const ValueFlowBuiltinApplication& application) {
+        for (const BuiltinOverload& overload : builtins.overloadsOf(application.builtin)) {
+            bool hasOptions = inputs.sets().meet(application.otherArguments, universe.objects()) || std::ranges::any_of(overload.parameters, [&](const BuiltinParameter& parameter) {
+                return !isEntryPath(parameter) && inputs.sets().meet(application.valueAt(parameter.operand, maker), universe.objects());
+            });
+            for (const BuiltinParameter& parameter : overload.parameters) {
+                if (!isEntryPath(parameter))
+                    continue;
+                ValueSetID passed = application.valueAt(parameter.operand, maker);
+                ValueSetID paths = maker.intersect(passed, universe.embeddedFilePaths());
+                followed = maker.unite(followed, paths);
+                if (hasOptions)
+                    followedWithOptions = maker.unite(followedWithOptions, paths);
+                if (inputs.sets().contains(passed, ValueFlowUniverse::unknownObject())) {
+                    getsUnknownValue = true;
+                    getsUnknownValueWithOptions |= hasOptions;
+                }
+            }
+        }
+    });
+    // An unknown value may be any path that escaped, for example the result of a method called on an unknown receiver.
+    ValueSetID escapedPaths = ValueSets::nothing;
+    if (getsUnknownValue)
+        escapedPaths = maker.intersect(inputs.solver().valueOf(ValueFlowProgramNodes::escaped()), universe.embeddedFilePaths());
+    Vector<FlowWorkerEntry> entries;
+    inputs.sets().forEachMember(maker.unite(followed, escapedPaths), [&](ValueFlowObjectID key) {
+        bool isFollowed = inputs.sets().contains(followed, key);
+        entries.append({ inputs.program.at(universe.keyOf(key)).text, !isFollowed, isFollowed ? inputs.sets().contains(followedWithOptions, key) : getsUnknownValueWithOptions });
+    });
+    AOT::sort(entries, { }, &FlowWorkerEntry::path);
+    return entries;
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

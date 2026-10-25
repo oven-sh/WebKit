@@ -17,6 +17,7 @@
 #include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/Seconds.h>
 #include <atomic>
 #include <memory>
@@ -32,6 +33,9 @@ namespace Typed {
 class CFG;
 class ValueSetMaker;
 class ValueSets;
+
+// Calls the functor with the path that each `with { type: "file" }` import evaluates to.
+void forEachEmbeddedFilePath(const Program&, NOESCAPE const ScopedLambda<void(ModuleID, StringID)>&);
 
 enum class ValueFlowObjectKind : uint8_t {
     Primitive,
@@ -139,6 +143,8 @@ public:
     std::atomic<uint64_t>& rememberedBoundFunctionsBindingNoArgument() const { return m_boundFunctionsBindingNoArgument[0]; }
     ValueSetID arrays() const { return m_arrays; }
     ValueSetID keys() const { return m_keys; }
+    // A set that holds every string still lists these keys, so that collectWorkerEntries() can see where they arrive.
+    ValueSetID embeddedFilePaths() const { return m_embeddedFilePaths; }
     ValueSetID strings() const { return m_strings; }
     ValueSetID symbols() const { return m_symbols; }
     ValueSetID instancesOf(BuiltinClassID builtinClass) const { return m_objectsOfClass[builtinClass.index()]; }
@@ -233,6 +239,7 @@ private:
     ValueSetID m_symbols;
     ValueSetID m_textKeys;
     ValueSetID m_symbolKeys;
+    ValueSetID m_embeddedFilePaths;
     ValueSetID m_knownObjects;
     ValueSetID m_builtinObjects;
     ValueSetID m_objectsOfRealm;

@@ -120,7 +120,6 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/runtime/AOTGenerator.h
     aot/runtime/AOTHeapCellClasses.h
     aot/runtime/AOTHeapCellVisits.h
-    aot/runtime/AOTHeapHooks.h
     aot/runtime/AOTHost.h
     aot/runtime/AOTInstance.h
     aot/runtime/AOTInstanceLayout.h

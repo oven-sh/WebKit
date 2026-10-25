@@ -228,6 +228,10 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
             if (builtins.canonicalID(BuiltinID(index)) == BuiltinID(index) && builtins.letsInUnseenCode(BuiltinID(index)))
                 m_input.universe->appendObjectsOf(BuiltinID(index), objects);
         }
+        // A read of `.default` must find the path even where the receiver may also be an unknown object.
+        forEachEmbeddedFilePath(*m_input.program, [&](ModuleID module, StringID) {
+            objects.append(m_input.universe->namespaceOf(module));
+        });
         m_objectsAlwaysFollowed = maker.of(objects.span());
     }
     if (placeholders.objectsWithLayoutOfProgram)
@@ -236,7 +240,8 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
         m_objectsOfProgram = maker.unite(m_objectsOfProgram, placeholders.closures);
     if (m_input.universe) {
         ValueSetID keys = m_input.universe->keys();
-        m_kindsThatCoverKeys.append({ ValueFlowUniverse::primitive(PrimitiveSet::String), ValueSets::complement(maker.intersect(m_input.universe->strings(), keys)) });
+        ValueSetID coveredKeys = maker.intersect(keys, ValueSets::complement(m_input.universe->embeddedFilePaths()));
+        m_kindsThatCoverKeys.append({ ValueFlowUniverse::primitive(PrimitiveSet::String), ValueSets::complement(maker.intersect(m_input.universe->strings(), coveredKeys)) });
         m_kindsThatCoverKeys.append({ ValueFlowUniverse::primitive(PrimitiveSet::Symbol), ValueSets::complement(maker.intersect(m_input.universe->symbols(), keys)) });
     }
 
@@ -245,6 +250,7 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
         if (m_input.universe) {
             const ValueFlowHeapTables& heap = m_input.universe->builtinTables().heap();
             m_objectsLookedForBesideUnknownObject = maker.unite(m_input.universe->holdersOfLibraryExports(), maker.intersect(m_objectsAlwaysFollowed, heap.holdersWithMembers()));
+            m_objectsLookedForBesideUnknownObject = maker.unite(m_objectsLookedForBesideUnknownObject, m_input.universe->embeddedFilePaths());
         }
         m_graph.retireNodesCoveredBy(placeholders.unknown, m_input.escaped, m_input.universe ? maker.unite(m_input.universe->anyPrimitive(), unknownObjectAlone) : unknownObjectAlone, ValueSets::complement(m_objectsLookedForBesideUnknownObject));
         if (m_objectsLookedForBesideUnknownObject != ValueSets::nothing) {

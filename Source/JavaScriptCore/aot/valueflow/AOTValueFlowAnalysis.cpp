@@ -359,6 +359,31 @@ static void internKeysOfDeclaredStringLiterals(Program& program, const ParallelL
     }
 }
 
+void forEachEmbeddedFilePath(const Program& program, NOESCAPE const ScopedLambda<void(ModuleID, StringID)>& functor)
+{
+    constexpr size_t longestPath = 4096;
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        const Module& module = program.modules[index];
+        if (module.kind != ModuleKind::Data || module.exports.size() != 1 || !module.body || !program.at(module.body).hasBody())
+            continue;
+        const Function& body = program.at(module.body);
+        for (const Value& value : body.values) {
+            if (value.opcode != Opcode::PutModuleVariable || value.variable() != module.exports[0].variable)
+                continue;
+            const Value& stored = body.at(value.valueOperand());
+            if (stored.opcode == Opcode::String && program.string(stored.string()).size() <= longestPath)
+                functor(ModuleID(index), stored.string());
+        }
+    }
+}
+
+static void internEmbeddedFilePaths(Program& program)
+{
+    forEachEmbeddedFilePath(program, [&](ModuleID, StringID path) {
+        program.types.intern(PropertyKey { .kind = PropertyKeyKind::Text, .text = path });
+    });
+}
+
 static ValueFlowBodies reduceBodiesBehindKeys(Program& program, BuildContext& build, Vector<uint32_t>& positionOfKey)
 {
     PhaseTimes times(build, PassID::AnalyzeFlow);
@@ -367,6 +392,7 @@ static ValueFlowBodies reduceBodiesBehindKeys(Program& program, BuildContext& bu
     positionOfKey = ValueFlowInstancedFunctions::findParametersThatAreKeys(program, build.parallelLoops(), textsPassed, notedOperations);
     makeKeysOfTextsThatCallsPass(program, positionOfKey.span(), textsPassed.span());
     internKeysOfDeclaredStringLiterals(program, build.parallelLoops());
+    internEmbeddedFilePaths(program);
     times.didFinish("solve: keys"_s);
     ValueFlowBodies bodies = reduceBodies(program, build, WTF::move(notedOperations));
     times.didFinish("solve: bodies"_s);

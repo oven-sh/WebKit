@@ -1,7 +1,7 @@
 enum StatisticID {
     None
     SourceFilesChecked SourceFilesInferred SourceFilesTypesOnly SourceFilesData SourceFilesRuntime SourceFilesDemoted SourceBytes SourceLines
-    TypedVersionsUsed TypedVersionsRejected CheckerQueries CheckerQueriesGivenUp CheckerMembersGivenUp BuiltinTypesDegradedToViews ModulesBound FunctionsLowered
+    TypedVersionsUsed CheckerQueries CheckerQueriesGivenUp CheckerMembersGivenUp BuiltinTypesDegradedToViews ModulesBound FunctionsLowered
     KnownHelperFunctions KnownHelperCalls
     FunctionsDroppedByLink ProgramBytes
     LoadRuntimeProjectNanoseconds LinkMergeKeysNanoseconds LinkChooseDefinitionsNanoseconds LinkMarkNanoseconds LinkMergeStringsAndTypesNanoseconds

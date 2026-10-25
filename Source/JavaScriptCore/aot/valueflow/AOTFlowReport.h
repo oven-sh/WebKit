@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDTypes.h"
 #include "AOTDiagnostics.h"
 #include "AOTID.h"
 #include "AOTVector.h"
@@ -37,6 +38,8 @@ struct FlowReport {
     Vector<Wire::FeatureUseRecord> featuresUsed;
     Vector<Wire::LocaleUseRecord> localesUsed;
     Vector<uint8_t> localeTags;
+    Vector<Wire::WorkerEntryRecord> workerEntries;
+    Vector<uint8_t> workerEntryPaths;
     Vector<Wire::AccessCountRecord> accessCounts;
     Vector<Wire::AccessRecord> accesses;
     Vector<Wire::RemainingCheckRecord> remainingChecks;

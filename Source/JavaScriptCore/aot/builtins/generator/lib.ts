@@ -403,6 +403,8 @@ export const replacesContents: UseSpec = { use: "Role", role: "ReplacesContents"
 export const becomesLengthOfReceiver: UseSpec = { use: "Role", role: "BecomesLengthOfReceiver" };
 // The new array has a hole wherever this operand has one in the part that is copied.
 export const copiesHolesToResult: UseSpec = { use: "Role", role: "CopiesHolesToResult" };
+// The operand is the path of the file that a new Worker runs.
+export const workerEntryPath: UseSpec = { use: "Role", role: "WorkerEntryPath" };
 export const membersOnlyInspected: UseSpec = { use: "Role", role: "MembersAreOnlyInspected" };
 // Native code tests that a value is an object before it reads or calls a member of it, by name or to iterate over it: `(404).status` and `"OK"[Symbol.iterator]` are never looked up.
 export const membersOfObjectsOnly: UseSpec = { use: "Role", role: "MembersAreOfObjectsOnly" };

@@ -1031,6 +1031,11 @@ private:
         }
         universe.m_textKeys = maker.intersect(universe.m_keys, ValueSets::complement(take()));
         universe.m_symbolKeys = maker.of(symbolKeys.span());
+        forEachEmbeddedFilePath(m_program, [&](ModuleID, StringID path) {
+            if (std::optional<PropertyKeyID> key = m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = path }))
+                list.append(universe.keyConstant(*key));
+        });
+        universe.m_embeddedFilePaths = take();
 
         universe.m_builtinFunctions = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
             return isCallableBuiltin(builtins, builtin);

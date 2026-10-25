@@ -673,6 +673,7 @@ function needsText(role: OperandRole): boolean {
     case "FunctionsAreConvertedUnderNamesOnly":
     case "BecomesLengthOfReceiver":
     case "CopiesHolesToResult":
+    case "WorkerEntryPath":
       return false;
   }
 }

@@ -67,7 +67,7 @@ enum AllocationKind {
     Other Object Array Closure Environment Arguments Rest IteratorResult Generator Promise BoundFunction StringRange Collection
 }
 enum ResultSection {
-    Image Text UserDiagnostics InternalErrors EntryModuleIds UnseenCode BuiltinsUsed FeaturesUsed LocalesUsed Accesses AccessCounts TypeTests RemainingChecks
+    Image Text UserDiagnostics InternalErrors EntryModuleIds UnseenCode BuiltinsUsed FeaturesUsed LocalesUsed WorkerEntries Accesses AccessCounts TypeTests RemainingChecks
     Declines AllocationRemarks Losses Functions OperationCounts PassTimes Statistics LimitValues Symbols ObfuscatedSites
     ArrivalSites ArrivalSiteLayouts ArrivalLayouts ArrivalLayoutFields
 }
@@ -87,6 +87,7 @@ record UnseenCodeRecord abi { cause: UnseenCodeCause builtin: Builtin? witness: 
 record BuiltinUseRecord abi { builtin: Builtin uses: BuiltinUse witness: Witness }
 record FeatureUseRecord abi { feature: Feature builtin: Builtin? witness: Witness kind: FeatureUseKind }
 record LocaleUseRecord abi { kind: LocaleUseKind tag: TextRange builtin: Builtin? witness: Witness }
+record WorkerEntryRecord abi { path: TextRange isGuess: UInt32 hasOptions: UInt32 }
 record AccessRecord abi {
     location: SourceLocation kind: AccessKind level: KnowledgeLevel cause: UnprovenCause limit: LimitID layout: Layout? copies: UInt32 distance: UInt32 witness: Witness
     function: Function? illTypedCause: IllTypedCause cost: AccessCost hasOtherRoots: UInt32 reserved: UInt32 heat: Double

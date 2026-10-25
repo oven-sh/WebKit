@@ -356,6 +356,11 @@ FlowReport buildFlowReport(const Program& program, const FlowResults& flow, cons
     report.featuresUsed = Vector<Wire::FeatureUseRecord>(flow.featureUses());
     countDirectCallsAsUses(program, bodyRecords.builtinsCalledDirectly.span(), report, build);
     appendLocaleUses(program, flow, report);
+    for (const FlowWorkerEntry& entry : flow.workerEntries()) {
+        std::span<const uint8_t> text = program.string(entry.path);
+        report.workerEntries.append(Wire::WorkerEntryRecord { .path = { static_cast<uint32_t>(report.workerEntryPaths.size()), static_cast<uint32_t>(text.size()) }, .isGuess = entry.isGuess, .hasOptions = entry.hasOptions });
+        report.workerEntryPaths.append(text);
+    }
     if (build.options().collectsAllocationRemarks()) {
         report.allocationSites = WTF::map(flow.allocationSites(), [&](const AllocationSite& site) {
             return AllocationSiteReport { findFunctionAsRead(&program, site.function), allocationKindOf(program, flow, site) };
