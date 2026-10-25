@@ -74,7 +74,12 @@ public:
     };
     virtual Type type() const = 0;
     virtual bool remoteControlAllowed() const = 0;
+#if USE(BUN_JSC_ADDITIONS)
+    // `requester` is the channel that `message` came from. The response goes to it alone.
+    virtual void dispatchMessageFromRemote(String&& message, FrontendChannel& requester) = 0;
+#else
     virtual void dispatchMessageFromRemote(String&& message) = 0;
+#endif
 
 #if USE(CF)
     // The dispatch block will be scheduled on a global run loop if null is returned.

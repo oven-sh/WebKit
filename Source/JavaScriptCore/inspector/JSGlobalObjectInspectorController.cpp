@@ -171,10 +171,17 @@ void JSGlobalObjectInspectorController::disconnectFrontend(FrontendChannel& fron
     m_strongVM = nullptr;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void JSGlobalObjectInspectorController::dispatchMessageFromFrontend(const String& message, FrontendChannel& requester)
+{
+    m_backendDispatcher->dispatch(message, requester);
+}
+#else
 void JSGlobalObjectInspectorController::dispatchMessageFromFrontend(const String& message)
 {
     m_backendDispatcher->dispatch(message);
 }
+#endif
 
 void JSGlobalObjectInspectorController::appendAPIBacktrace(ScriptCallStack& callStack)
 {

@@ -56,7 +56,11 @@ public:
 
     void connect(Inspector::FrontendChannel&, bool isAutomaticConnection = false, bool immediatelyPause = false) final;
     void disconnect(Inspector::FrontendChannel&) final;
+#if USE(BUN_JSC_ADDITIONS)
+    void dispatchMessageFromRemote(String&& message, Inspector::FrontendChannel& requester) final;
+#else
     void dispatchMessageFromRemote(String&& message) final;
+#endif
 
     bool automaticInspectionAllowed() const final { return true; }
     void pauseWaitingForAutomaticInspection();
