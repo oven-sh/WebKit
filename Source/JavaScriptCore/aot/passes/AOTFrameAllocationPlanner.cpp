@@ -67,6 +67,7 @@ private:
     bool hasUntrackedAlias(ObjectID) const;
     bool escapesOnlyIntoClosures(ObjectID) const;
     bool keepClosureUntilItLeaves(ObjectID closure);
+    bool isPassedOnByBranch(const Use&) const;
     bool willHaveLongFormsInLine(BlockID);
     bool mayFindBorrowingCallee(const Value& call, uint32_t operandIndex) const;
     bool isOnlyCalled(ObjectID closure) const;
@@ -489,6 +490,22 @@ bool FramePlanner::willHaveLongFormsInLine(BlockID block)
     return codeShapeFor(heat, false, frequency, m_heat.leastHeatOfFastCode(m_program, m_plan.function, frequencyInFunction)) == CodeShape::Fast && m_heat.isAmongHottestCode(heat);
 }
 
+// A branch on a test passes the tested operand on as a parameter of the block it enters.
+bool FramePlanner::isPassedOnByBranch(const Use& use) const
+{
+    if (use.kind != Use::Kind::Operand || provesOf(m_function.at(use.user).opcode) == Proof::None)
+        return false;
+    return std::ranges::any_of(m_analyses.useLists().usesOf(use.user), [&](const Use& useOfTest) {
+        bool passesOperandOn = false;
+        if (useOfTest.kind == Use::Kind::TerminatorOperand) {
+            forEachEdgeResult(m_function, useOfTest.block, [&](const EdgeResult& result, ValueID) {
+                passesOperandOn |= result.kind == EdgeResultKind::NarrowedOperand && result.test == use.user && result.operandIndex == use.operandIndex;
+            });
+        }
+        return passesOperandOn;
+    });
+}
+
 // Whoever borrows the closure cannot tell it from another one afterwards.
 bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
 {
@@ -512,8 +529,8 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
         if (use.kind == Use::Kind::HandlerArgument || use.kind == Use::Kind::BlockSubject)
             return false;
         auto known = std::ranges::find(knownUses, use, &ObjectUse::use);
-        // A use that keeps the closure in a cell or gives it back makes another way to it, which is not among the uses of the value.
-        bool staysInFrame = use.kind == Use::Kind::Operand && known != knownUses.end() && (!known->isEscape || effectRuleOf(m_function.at(use.user).opcode) == EffectRule::Call);
+        // A use that keeps the closure in a cell, gives it back or passes it on makes another way to it, which is not among the uses of the value.
+        bool staysInFrame = use.kind == Use::Kind::Operand && known != knownUses.end() && (!known->isEscape || effectRuleOf(m_function.at(use.user).opcode) == EffectRule::Call) && !isPassedOnByBranch(use);
         if (staysInFrame && known->uses.containsOnly(usesOfBorrowedParameter) && checkUse(closure, *known) == AllocationHeapCause::None) {
             isBorrowed = true;
             continue;

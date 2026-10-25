@@ -659,6 +659,13 @@ struct WindowScanner {
 struct DeferralAnalysis {
     enum AccessKind : uint8_t { SlotRead, SlotStore, PresenceTest, NamedAccess, KeyOrderTest, FunctionEntry, Allocation };
 
+    struct CandidateWithKey {
+        auto operator<=>(const CandidateWithKey&) const = default;
+
+        PropertyKeyID key;
+        FieldReference field;
+    };
+
     const Value& valueAt(ValueReference reference) const { return program.at(reference.function).at(reference.value); }
     uint32_t rowOf(FieldReference reference) const
     {
@@ -686,26 +693,35 @@ struct DeferralAnalysis {
         });
     }
 
+    auto findCandidatesWithKey(PropertyKeyID key) const { return std::ranges::equal_range(candidatesByKey, key, { }, &CandidateWithKey::key); }
+
+    // Nothing says which objects arrive at a store by name into any object, so it reaches every candidate under its key.
+    bool storesIntoAnyObject(ValueReference reference) const
+    {
+        const Function& function = program.at(reference.function);
+        const Value& access = function.at(reference.value);
+        return !Value::opcodesWithFieldAccess.contains(access.opcode)
+            && access.opcode != Opcode::IsSlotFilled
+            && storedOf(access.opcode)
+            && access.operand(0)
+            && program.typeOf(function, access.operand(0)).anyObject;
+    }
+
     // An access to a slot names the layouts of its objects. For an access by name the type of the object says them.
     void forEachCandidateOf(ValueReference reference, const Invocable<void(FieldReference, uint32_t row)> auto& functor) const
     {
         const Function& function = program.at(reference.function);
         const Value& access = function.at(reference.value);
+        if (storesIntoAnyObject(reference)) {
+            for (const CandidateWithKey& candidate : findCandidatesWithKey(access.key()))
+                functor(candidate.field, rowOf(candidate.field));
+            return;
+        }
         std::span<const LayoutID> members;
         if (Value::opcodesWithFieldAccess.contains(access.opcode) || access.opcode == Opcode::IsSlotFilled)
             members = program.at(access.receivers()).members.span();
-        else if (access.numberOfOperands() && access.operand(0)) {
-            const Type& type = program.typeOf(function, access.operand(0));
-            // Nothing says which objects arrive at a store by name into any object.
-            if (type.anyObject && storedOf(access.opcode)) {
-                for (FieldReference candidate : candidates) {
-                    if (fieldAt(program, candidate).key == access.key())
-                        functor(candidate, rowOf(candidate));
-                }
-                return;
-            }
-            members = membersOf(program, type);
-        }
+        else if (access.numberOfOperands() && access.operand(0))
+            members = membersOf(program, program.typeOf(function, access.operand(0)));
         for (LayoutID member : members) {
             std::optional<uint32_t> field = program.at(member).findField(access.key());
             if (!field)
@@ -718,6 +734,8 @@ struct DeferralAnalysis {
 
     bool reachesCandidate(ValueReference reference, bool onlyIfItDefers) const
     {
+        if (!onlyIfItDefers && storesIntoAnyObject(reference))
+            return !findCandidatesWithKey(valueAt(reference).key()).empty();
         bool result = false;
         forEachCandidateOf(reference, [&](FieldReference, uint32_t row) {
             result |= !onlyIfItDefers || states[row].canDefer();
@@ -823,12 +841,14 @@ struct DeferralAnalysis {
             FieldState& state = states[rowOf(field)];
             state.function = chosen;
             candidates.append(field);
+            candidatesByKey.append({ fieldAt(program, field).key, field });
             keysOfCandidates.quickSet(fieldAt(program, field).key.index());
             if (std::get<0>(rankOfChosen))
                 continue;
             layoutsWithEnvironmentCandidates.quickSet(field.layout.index());
             state.isRejected |= numberOfFunctions > 1;
         }
+        AOT::sort(candidatesByKey);
 
         for (size_t index = 0; index < program.layouts.size(); ++index) {
             for (uint32_t field = 0; field < program.layouts[index].fields.size(); ++field) {
@@ -977,18 +997,25 @@ struct DeferralAnalysis {
     }
 
     // What is undefined or null is no closure over anything.
-    bool storesClosureOverReceiver(ValueReference reference, FunctionID closureFunction) const
+    bool storesUndefinedOrNull(ValueReference reference) const
     {
         const Function& function = program.at(reference.function);
         const Value& store = function.at(reference.value);
         ValueID stored = store.operand(*storedOf(store.opcode));
-        if (stored && program.typeOf(function, stored).isUndefinedOrNull())
-            return true;
-        const Value& closure = function.at(definitionThroughUpcasts(function, stored));
-        if (closure.opcode != Opcode::NewClosure || closure.function() != closureFunction || closure.isMadeOnDemand())
-            return false;
+        return stored && program.typeOf(function, stored).isUndefinedOrNull();
+    }
+
+    // The function of the closure that the store brings, where that closure is made over the object stored into.
+    FunctionID findStoredClosureOverReceiver(ValueReference reference) const
+    {
+        const Function& function = program.at(reference.function);
+        const Value& store = function.at(reference.value);
+        const Value& closure = function.at(definitionThroughUpcasts(function, store.operand(*storedOf(store.opcode))));
+        if (closure.opcode != Opcode::NewClosure || closure.isMadeOnDemand())
+            return { };
         std::span<const ValueID> captures = closure.capturesOperands();
-        return captures.size() == 1 && sameObjectThroughCasts(function, captures[0]) == sameObjectThroughCasts(function, store.operand(0));
+        bool isOverReceiver = captures.size() == 1 && sameObjectThroughCasts(function, captures[0]) == sameObjectThroughCasts(function, store.operand(0));
+        return isOverReceiver ? closure.function() : FunctionID();
     }
 
     // What the slot cannot hold takes the property out of its slot.
@@ -1020,6 +1047,15 @@ struct DeferralAnalysis {
         AOT::sort(initializingStores);
         AOT::sort(describedAllocations);
 
+        // One summary per key, kept at the index of the first candidate with that key.
+        struct AnyObjectStoreSummary {
+            bool storesNonObject { false };
+            bool storesOtherClosure { false };
+            FunctionID closureOverReceiver;
+        };
+        Vector<AnyObjectStoreSummary> summaries;
+        summaries.fill({ }, candidatesByKey.size());
+
         mayHoldOtherClosure.ensureSize(firstRows.last());
         for (AccessKind kind : { SlotStore, NamedAccess }) {
             for (ValueReference reference : accesses[kind]) {
@@ -1028,19 +1064,39 @@ struct DeferralAnalysis {
                 if (!stored)
                     continue;
                 bool isOtherThanObject = mayBeOtherThanObject(reference.function, store.operand(*stored));
+                bool storesSomething = !storesUndefinedOrNull(reference);
+                FunctionID closureOverReceiver = findStoredClosureOverReceiver(reference);
+                if (storesIntoAnyObject(reference)) {
+                    AnyObjectStoreSummary& summary = summaries[findCandidatesWithKey(store.key()).begin() - candidatesByKey.begin()];
+                    summary.storesNonObject |= isOtherThanObject;
+                    if (storesSomething) {
+                        summary.storesOtherClosure |= !closureOverReceiver || (summary.closureOverReceiver && summary.closureOverReceiver != closureOverReceiver);
+                        summary.closureOverReceiver = closureOverReceiver;
+                    }
+                    continue;
+                }
                 bool isBehindInitialization = kind == SlotStore && !std::ranges::binary_search(initializingStores, reference);
-                // Of what a store into any object brings into one field, only the type of the slot speaks.
-                bool storesIntoAnyObject = kind == NamedAccess && program.typeOf(program.at(reference.function), store.operand(0)).anyObject;
                 forEachCandidateOf(reference, [&](FieldReference field, uint32_t row) {
-                    bool mayBringOtherThanObject = isOtherThanObject && (!storesIntoAnyObject || mayBeOtherThanObjectOrNullish(program.at(slotTypeOf(program, fieldAt(program, field)))));
-                    if (mayBringOtherThanObject && (kind == SlotStore || isNeverMovedOutByStore(program, field)))
+                    if (isOtherThanObject && (kind == SlotStore || isNeverMovedOutByStore(program, field)))
                         reject(row);
                     if (isBehindInitialization && keepsEnvironment(states[row]))
                         reject(row);
-                    if (!storesClosureOverReceiver(reference, states[row].function))
+                    if (storesSomething && states[row].function != closureOverReceiver)
                         mayHoldOtherClosure.quickSet(row);
                 });
             }
+        }
+        for (size_t first = 0, index = 0; index < candidatesByKey.size(); ++index) {
+            if (candidatesByKey[index].key != candidatesByKey[first].key)
+                first = index;
+            const AnyObjectStoreSummary& summary = summaries[first];
+            FieldReference field = candidatesByKey[index].field;
+            uint32_t row = rowOf(field);
+            // Of what a store into any object brings into one field, only the type of the slot speaks.
+            if (summary.storesNonObject && isNeverMovedOutByStore(program, field) && mayBeOtherThanObjectOrNullish(program.at(slotTypeOf(program, fieldAt(program, field)))))
+                reject(row);
+            if (summary.storesOtherClosure || (summary.closureOverReceiver && summary.closureOverReceiver != states[row].function))
+                mayHoldOtherClosure.quickSet(row);
         }
         for (ValueReference reference : accesses[Allocation]) {
             const Value& allocation = valueAt(reference);
@@ -1288,13 +1344,24 @@ struct DeferralAnalysis {
         accesses[SlotRead].removeAllMatching([&](ValueReference reference) {
             return !reachesCandidate(reference, true);
         });
+        auto isNarrowed = [&](FieldReference field, uint32_t row) {
+            const FieldFlow& flow = flowOf(program, field);
+            return states[row].canDefer() && isFilledByEveryAllocation(field) && flow.occupancy != Occupancy::AlwaysFilled && flow.stability.containsAll(stabilityOfFilledSlot);
+        };
+        BitVector narrowedKeys;
+        narrowedKeys.ensureSize(program.types.numberOfPropertyKeys());
+        for (const CandidateWithKey& candidate : candidatesByKey) {
+            if (isNarrowed(candidate.field, rowOf(candidate.field)))
+                narrowedKeys.quickSet(candidate.key.index());
+        }
         accesses[NamedAccess].removeAllMatching([&](ValueReference reference) {
-            bool isNarrowed = false;
+            if (storesIntoAnyObject(reference))
+                return !narrowedKeys.quickGet(valueAt(reference).key().index());
+            bool reachesNarrowedCandidate = false;
             forEachCandidateOf(reference, [&](FieldReference field, uint32_t row) {
-                const FieldFlow& flow = flowOf(program, field);
-                isNarrowed |= states[row].canDefer() && isFilledByEveryAllocation(field) && flow.occupancy != Occupancy::AlwaysFilled && flow.stability.containsAll(stabilityOfFilledSlot);
+                reachesNarrowedCandidate |= isNarrowed(field, row);
             });
-            return !isNarrowed;
+            return !reachesNarrowedCandidate;
         });
         accesses[KeyOrderTest].removeAllMatching([&](ValueReference reference) {
             const ClosureEnvironmentField* field = findEnvironmentField(valueAt(reference).layout());
@@ -1336,6 +1403,7 @@ struct DeferralAnalysis {
     Vector<ClosureFieldFreshObject> objects { };
     Vector<ClosureStore> closureStores { };
     Vector<FieldReference> candidates { };
+    Vector<CandidateWithKey> candidatesByKey { };
     BitVector keysOfCandidates { };
     BitVector layoutsWithCandidates { };
     BitVector layoutsAllocatedOnlyByOperations { };

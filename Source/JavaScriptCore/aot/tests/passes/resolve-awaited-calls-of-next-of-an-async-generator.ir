@@ -118,9 +118,9 @@ function f14 name="resultIsReturned" role=CoroutineBody flags=[IsAsync] paramete
 # CHECK: [[made14]]() frequency=Rare:
 # CHECK-NEXT: Jump -> next [[rest14]]([[stepped14]])
 # CHECK: [[answered14]]():
-# CHECK-NEXT: [[object14]]: object = NewDictionary
-# CHECK-NEXT: PropDefine [[object14]], [[stepped14]] key="value"
-# CHECK: PropDefine [[object14]], [[completed14]] key="done"
+# CHECK: [[completed14]]: boolean = StrictEq
+# CHECK-NEXT: [[object14]]: L(IteratorResult) = NewObject -, [[stepped14]], [[completed14]] layout=L(IteratorResult) fields=[0, 1]
+# CHECK-NEXT: Jump -> next [[rest14]]([[object14]])
 }
 
 function f15 name="readsAnotherName" role=CoroutineBody flags=[IsAsync] parameters=[{type=AsyncGenerator}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f5} creator=Coroutine{kind=AsyncFunction ramp=f5 body=f15 entryWithoutPromise=f15 promiseType=Promise promiseParameter=1} {
@@ -138,9 +138,9 @@ function f15 name="readsAnotherName" role=CoroutineBody flags=[IsAsync] paramete
 # CHECK: [[made15]]() frequency=Rare:
 # CHECK-NEXT: Jump -> next [[rest15]]([[stepped15]])
 # CHECK: [[answered15]]():
-# CHECK-NEXT: [[object15]]: object = NewDictionary
-# CHECK-NEXT: PropDefine [[object15]], [[stepped15]] key="value"
-# CHECK: PropDefine [[object15]], [[completed15]] key="done"
+# CHECK: [[completed15]]: boolean = StrictEq
+# CHECK-NEXT: [[object15]]: L(IteratorResult) = NewObject -, [[stepped15]], [[completed15]] layout=L(IteratorResult) fields=[0, 1]
+# CHECK-NEXT: Jump -> next [[rest15]]([[object15]])
 }
 
 function f16 name="promiseHasSecondUse" role=CoroutineBody flags=[IsAsync] parameters=[{type=AsyncGenerator}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f6} creator=Coroutine{kind=AsyncFunction ramp=f6 body=f16 entryWithoutPromise=f16 promiseType=Promise promiseParameter=1} {
@@ -196,9 +196,9 @@ function f19 name="resultIsTested" role=CoroutineBody flags=[IsAsync] parameters
 # CHECK: [[made19]]() frequency=Rare:
 # CHECK-NEXT: Jump -> next [[rest19]]([[stepped19]])
 # CHECK: [[answered19]]():
-# CHECK-NEXT: [[object19]]: object = NewDictionary
-# CHECK-NEXT: PropDefine [[object19]], [[stepped19]] key="value"
-# CHECK: PropDefine [[object19]], [[completed19]] key="done"
+# CHECK: [[completed19]]: boolean = StrictEq
+# CHECK-NEXT: [[object19]]: L(IteratorResult) = NewObject -, [[stepped19]], [[completed19]] layout=L(IteratorResult) fields=[0, 1]
+# CHECK-NEXT: Jump -> next [[rest19]]([[object19]])
 }
 
 # The destructuring asks whether the result is undefined or null. It is an object, as the generator is
@@ -216,7 +216,7 @@ function f21 name="testsForPrimitives" role=CoroutineBody flags=[IsAsync] parame
     v7 = PropGet v6 key="value"
     v8 = ReturnAsyncResult v1, v7
     Return v8
-# CHECK-NOT: NewDictionary
+# CHECK-NOT: NewObject
 # CHECK: StepAsyncGenerator v0, v2, {{*}}
 # CHECK: TypeTest v0 testedType=undefined|null
 }
@@ -240,5 +240,5 @@ function f23 name="behindAJoin" role=CoroutineBody flags=[IsAsync] parameters=[{
 # CHECK-NOT: CallBuiltin
 # CHECK: StepAsyncGenerator v0, v4, {{*}}
 # CHECK: AwaitBySavingFrame v1, v3
-# CHECK: NewDictionary
+# CHECK: NewObject
 }

@@ -222,14 +222,18 @@ static void openIterators(ValueFlowRuleContext& context, ClimbingSet iterables, 
 
         ClimbingSet methods = context.valueOf(context.lookup(receivers, nameOf(context, BuiltinNames::iteratorSymbol)));
         ClimbingSet calledMethods = methods;
-        ValueSetID containersOfAnyIteration = ValueSets::nothing;
         context.forEachMember(context.restrict(methods, universe.builtinFunctions()), [&](ValueFlowObjectID method) {
             BuiltinID builtin = universe.builtinOf(method);
             std::optional<BuiltinIteration> iteration = iterationOverReceiverBy(context, builtin);
             if (!iteration)
                 return;
             calledMethods = without(context, calledMethods, method);
-            containersOfAnyIteration = context.maker().unite(containersOfAnyIteration, iteration->containers);
+
+            // The containers of one method may hold objects that find another method.
+            ClimbingSet otherReceivers = context.restrict(known(context, receivers), ValueSets::complement(iteration->containers));
+            if (holdsSomething(context, otherReceivers) && context.contains(context.valueOf(context.lookup(otherReceivers, nameOf(context, BuiltinNames::iteratorSymbol))), method))
+                callInProtocol(context, { .callees = only(context, method), .thisValue = otherReceivers, .result = state });
+
             ClimbingSet containers = context.restrict(receivers, iteration->containers);
             if (!holdsSomething(context, containers))
                 return;
@@ -239,15 +243,6 @@ static void openIterators(ValueFlowRuleContext& context, ClimbingSet iterables, 
             useStepOf(context, iteration->iteratorClass);
         });
         callInProtocol(context, { .callees = calledMethods, .thisValue = receivers, .result = state });
-
-        ClimbingSet otherReceivers = context.restrict(context.restrict(receivers, universe.knownObjects()), ValueSets::complement(containersOfAnyIteration));
-        if (containersOfAnyIteration == ValueSets::nothing || !holdsSomething(context, otherReceivers))
-            return;
-        ClimbingSet methodsOfOthers = context.valueOf(context.lookup(otherReceivers, nameOf(context, BuiltinNames::iteratorSymbol)));
-        context.forEachMember(context.restrict(methodsOfOthers, universe.builtinFunctions()), [&](ValueFlowObjectID method) {
-            if (iterationOverReceiverBy(context, universe.builtinOf(method)))
-                callInProtocol(context, { .callees = only(context, method), .thisValue = otherReceivers, .result = state });
-        });
     });
 }
 

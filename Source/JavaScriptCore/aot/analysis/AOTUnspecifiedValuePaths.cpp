@@ -162,6 +162,16 @@ public:
         return changed;
     }
 
+    bool disagreesWith(const Facts& other, NOESCAPE const Invocable<bool(ValueID)> auto& isRelevant) const
+    {
+        return std::ranges::any_of(m_sorted, [&](const Fact& fact) {
+            if (fact.testedType || fact.integers.isEmpty() || !isRelevant(fact.value))
+                return false;
+            const Integers* others = other.find(fact.value);
+            return others && !others->isEmpty() && fact.integers.intersectedWith(*others).isEmpty();
+        });
+    }
+
     size_t size() const { return m_sorted.size(); }
     const Fact& operator[](size_t index) const { return m_sorted[index]; }
 
@@ -634,9 +644,16 @@ public:
             m_queue.append({ m_analyses.cfg().reversePostOrderIndex(block), stateIndex });
             std::ranges::push_heap(m_queue, std::greater { });
         };
+        // States that disagree about a value defined in another block stay separate, so a later branch on that value sends each one down its own edge.
+        AOT_THRESHOLD(size_t, maxSeparateStates, 8);
+        const UseLists& useLists = m_analyses.useLists();
+        auto isDefinedInAnotherBlock = [&](ValueID id) { return useLists.blockOf(id) != block; };
+        size_t numberOfStates = 0;
         for (uint32_t stateIndex : m_statesOfBlock[block.index()]) {
             WalkState& state = m_states[stateIndex];
             if (state.marked != marked)
+                continue;
+            if (++numberOfStates < maxSeparateStates && state.facts.disagreesWith(facts, isDefinedInAnotherBlock))
                 continue;
             if (state.facts.mergeWith(facts) && !state.isQueued)
                 queue(stateIndex);
