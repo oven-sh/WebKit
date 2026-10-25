@@ -696,6 +696,35 @@ static void raiseEvent(ValueFlowRuleContext& context, BuiltinID builtin, UnseenC
     }
 }
 
+static bool isNameOfLibraryModule(const Program& program, std::span<const uint8_t> name)
+{
+    static constexpr std::array<uint8_t, 5> prefix { 'n', 'o', 'd', 'e', ':' };
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        const Module& module = program.modules[index];
+        if (!module.runtimeModule || !mayAnswerToName(program, ModuleID(index)) || (module.body && !isAskedOfHostByName(module)))
+            continue;
+        std::span<const uint8_t> path = program.string(module.path);
+        if (equalSpans(path, name) || (path.size() == prefix.size() + name.size() && spanHasPrefix(path, std::span(prefix)) && equalSpans(path.subspan(prefix.size()), name)))
+            return true;
+    }
+    return false;
+}
+
+static bool passesOnlyNamesOfLibraryModules(const ValueFlowStatement& call, ValueFlowRuleContext& context)
+{
+    constexpr size_t indexOfName = 2;
+    if (call.kind != ValueFlowStatementKind::Operation || call.opcode != Opcode::Call || call.operandCount <= indexOfName)
+        return false;
+    const Program& program = context.program();
+    const ValueFlowUniverse& universe = context.universe();
+    bool passesOnlyThose = true;
+    context.forEachMember(context.valueOf(context.operandsOf(call)[indexOfName]), [&](ValueFlowObjectID name) {
+        const PropertyKey* key = universe.kindOf(name) == ValueFlowObjectKind::Key ? &program.at(universe.keyOf(name)) : nullptr;
+        passesOnlyThose = passesOnlyThose && key && key->kind == PropertyKeyKind::Text && isNameOfLibraryModule(program, program.string(key->text));
+    });
+    return passesOnlyThose;
+}
+
 void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ClimbingSet callees)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -717,7 +746,7 @@ void applyEventsOfCall(const ValueFlowStatement& statement, ValueFlowRuleContext
         context.add(context.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode), only(context, callee));
         if (!cause)
             return;
-        if (loadsOnlyLibraryModules(builtin))
+        if (loadsOnlyLibraryModules(builtin) || (loadsModulesByName(*cause) && passesOnlyNamesOfLibraryModules(statement, context)))
             handLibraryModulesTo(context, statement.result);
         else
             raiseEvent(context, builtin, *cause, statement.result);

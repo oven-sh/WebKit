@@ -43,6 +43,9 @@ unsigned stepAwaitedAsyncGenerators(FunctionPassContext&);
 // For an unsplit async function or async generator, or the body of one. The results are those of StepAsyncGenerator.
 ValueID appendAsyncIteratorStep(IRBuilder&, ValueID iterator, ValueID sent);
 
+// What CreateIterResultObject makes.
+Value makeIteratorResultObject(const Program&, ValueID value, ValueID done, AllocationSiteID = { });
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

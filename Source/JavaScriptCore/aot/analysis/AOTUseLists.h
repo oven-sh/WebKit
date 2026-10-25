@@ -150,6 +150,9 @@ private:
     bool m_mustBeMadeAnew { false };
 };
 
+// A branch on a test passes the tested operand on as a parameter of the block it enters.
+Vector<ValueID, 2> findNarrowedParameters(const Function&, const UseLists&, const Use& useByTest);
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

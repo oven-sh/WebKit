@@ -29,6 +29,22 @@ ValueID usedValueOf(const Function& function, const Use& use)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+Vector<ValueID, 2> findNarrowedParameters(const Function& function, const UseLists& useLists, const Use& useByTest)
+{
+    Vector<ValueID, 2> parameters;
+    if (useByTest.kind != Use::Kind::Operand || provesOf(function.at(useByTest.user).opcode) == Proof::None)
+        return parameters;
+    for (const Use& useOfTest : useLists.usesOf(useByTest.user)) {
+        if (useOfTest.kind != Use::Kind::TerminatorOperand)
+            continue;
+        forEachEdgeResult(function, useOfTest.block, [&](const EdgeResult& result, ValueID parameter) {
+            if (result.kind == EdgeResultKind::NarrowedOperand && result.test == useByTest.user && result.operandIndex == useByTest.operandIndex)
+                parameters.append(parameter);
+        });
+    }
+    return parameters;
+}
+
 static uint32_t rankOf(Use::Kind kind)
 {
     switch (kind) {

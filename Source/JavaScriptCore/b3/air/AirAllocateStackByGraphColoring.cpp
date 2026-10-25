@@ -42,6 +42,7 @@
 #include "B3Common.h"
 #include "B3Procedure.h"
 #include "CompilerTimingScope.h"
+#include <array>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/InterferenceGraph.h>
 #include <wtf/Liveness.h>
@@ -959,6 +960,472 @@ private:
     AirStackAllocatorStats m_stats;
 };
 
+// What each block does to each spill slot it names, kept sorted so that a slice of the liveness matrix reads only its own slots.
+class SpillSlotBoundaryRows {
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    static constexpr bool recordsLayoutBoundaries = true;
+
+    explicit SpillSlotBoundaryRows(const StackSlotActions& actions)
+        : m_numberOfSlots(actions.numIndices())
+    {
+        Code& code = actions.code();
+        Vector<uint8_t> rowsOfSlot(FillWith { }, m_numberOfSlots, static_cast<uint8_t>(0));
+        Vector<uint32_t> namedSlots;
+        for (BasicBlock* block : code) {
+            auto blockActions = actions.actionsFor(block);
+            const unsigned blockSize = block->size();
+            namedSlots.shrink(0);
+            while (!blockActions.empty()) {
+                auto group = StackSlotActions::consumeLastGroup(blockActions);
+                const uint8_t rowOfUses = group.front().boundary == blockSize ? Tail : Gen;
+                for (const auto& action : group) {
+                    if (!action.isSpill)
+                        continue;
+                    uint8_t& rows = rowsOfSlot[action.slotIndex];
+                    if (!rows)
+                        namedSlots.append(action.slotIndex);
+                    rows |= action.kind == StackSlotActions::UseAction ? rowOfUses | IsNamed : IsNamed;
+                }
+                for (const auto& action : group) {
+                    if (action.isSpill && action.kind != StackSlotActions::UseAction)
+                        rowsOfSlot[action.slotIndex] = (rowsOfSlot[action.slotIndex] & ~Gen) | Kill;
+                }
+            }
+            for (uint32_t slotIndex : namedSlots)
+                m_facts.append(Fact { block->index(), slotIndex, std::exchange(rowsOfSlot[slotIndex], static_cast<uint8_t>(0)) });
+        }
+    }
+
+    unsigned numIndices() const { return m_numberOfSlots; }
+    bool needsLiveAtTail(BasicBlock*) const { return false; }
+
+    void willComputeInSlices(size_t wordsPerSlice)
+    {
+        const size_t slotsPerSlice = wordsPerSlice * 64;
+        Vector<size_t> endOfSlice(FillWith { }, m_numberOfSlots / slotsPerSlice + 1, static_cast<size_t>(0));
+        for (const Fact& fact : m_facts)
+            ++endOfSlice[fact.slotIndex / slotsPerSlice];
+        size_t numberOfFacts = 0;
+        for (size_t& end : endOfSlice)
+            numberOfFacts += std::exchange(end, numberOfFacts);
+        Vector<Fact> factsBySlice(m_facts.size());
+        for (const Fact& fact : m_facts)
+            factsBySlice[endOfSlice[fact.slotIndex / slotsPerSlice]++] = fact;
+        m_facts = WTF::move(factsBySlice);
+    }
+
+    // Asked block by block in index order, and slice by slice in slot order, which is the order of the facts.
+    bool fillRows(BasicBlock* block, size_t firstWord, size_t numberOfWords, uint64_t* gen, uint64_t* kill, uint64_t* tail)
+    {
+        bool isNamedHere = false;
+        for (; m_nextFact < m_facts.size(); ++m_nextFact) {
+            const Fact& fact = m_facts[m_nextFact];
+            const size_t word = fact.slotIndex / 64 - firstWord;
+            if (fact.blockIndex != block->index() || word >= numberOfWords)
+                break;
+            const uint64_t bit = static_cast<uint64_t>(1) << (fact.slotIndex % 64);
+            if (fact.rows & Gen)
+                gen[word] |= bit;
+            if (fact.rows & Kill)
+                kill[word] |= bit;
+            if (fact.rows & Tail)
+                tail[word] |= bit;
+            isNamedHere = true;
+        }
+        return isNamedHere;
+    }
+
+private:
+    enum Row : uint8_t { Gen = 1, Kill = 2, Tail = 4, IsNamed = 8 };
+
+    struct Fact {
+        uint32_t blockIndex;
+        uint32_t slotIndex;
+        uint8_t rows;
+    };
+
+    unsigned m_numberOfSlots;
+    Vector<Fact> m_facts;
+    size_t m_nextFact { 0 };
+};
+
+// Gives spill slots their places from the ranges of positions, in layout order, at which each is live. A slot shares a
+// place with another when all of its ranges lie between two ranges of the other, or behind the last one. No set of
+// pairs of slots is built, so the time does not grow with the number of slots that are live together.
+class LiveRangeStackAllocator {
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    LiveRangeStackAllocator(Code& code, SlotPlacement placement)
+        : m_code(code)
+        , m_placement(placement)
+    {
+    }
+
+    void run(StackColoring& coloring)
+    {
+        choosePools();
+        collectRanges();
+        linkRanges();
+        assignCells();
+        placeSlots(coloring);
+    }
+
+private:
+    static constexpr uint32_t noPosition = std::numeric_limits<uint32_t>::max();
+    static constexpr uint32_t noSlot = std::numeric_limits<uint32_t>::max();
+    static constexpr uint32_t noCell = std::numeric_limits<uint32_t>::max();
+    static constexpr unsigned unitsPerWideAlignment = 4;
+
+    enum PoolKind : uint8_t { OneUnit, TwoUnits, Wide, NoPool };
+    static constexpr unsigned numberOfPools = 3;
+
+    struct Range {
+        uint32_t slotIndex;
+        uint32_t start;
+        uint32_t end;
+        uint32_t startOfNextRange { noPosition };
+    };
+
+    // Cells of one size. Finds the lowest cell that stays free beyond a position in logarithmic time.
+    class CellPool {
+    public:
+        void reserve(size_t maxNumberOfCells)
+        {
+            m_numberOfLeaves = WTF::roundUpToPowerOfTwo(std::max<size_t>(1, maxNumberOfCells));
+            m_freeUntil.fill(noPosition, 2 * m_numberOfLeaves);
+            m_topOwner.fill(noSlot, maxNumberOfCells);
+        }
+
+        uint32_t findLowestCellFreeBeyond(uint32_t position) const
+        {
+            RELEASE_ASSERT(m_freeUntil[1] > position);
+            size_t node = 1;
+            while (node < m_numberOfLeaves) {
+                node *= 2;
+                if (m_freeUntil[node] <= position)
+                    ++node;
+            }
+            return static_cast<uint32_t>(node - m_numberOfLeaves);
+        }
+
+        void setFreeUntil(uint32_t cell, uint32_t position)
+        {
+            size_t node = m_numberOfLeaves + cell;
+            m_freeUntil[node] = position;
+            for (node /= 2; node; node /= 2)
+                m_freeUntil[node] = std::max(m_freeUntil[2 * node], m_freeUntil[2 * node + 1]);
+        }
+
+        void didUse(uint32_t cell) { m_numberOfCells = std::max(m_numberOfCells, cell + 1); }
+        uint32_t& topOwner(uint32_t cell) { return m_topOwner[cell]; }
+        uint32_t numberOfCells() const { return m_numberOfCells; }
+
+        unsigned unitsPerCell { 0 };
+        unsigned firstUnit { 0 };
+
+    private:
+        size_t m_numberOfLeaves { 0 };
+        Vector<uint32_t> m_freeUntil;
+        Vector<uint32_t> m_topOwner;
+        uint32_t m_numberOfCells { 0 };
+    };
+
+    static unsigned unitsNeededBy(StackSlot* slot)
+    {
+        return (slot->byteSize() + StackColoring::bytesPerUnit - 1) / StackColoring::bytesPerUnit;
+    }
+
+    void choosePools()
+    {
+        std::array<size_t, numberOfPools> numberOfSlotsInPool { };
+        m_pools[OneUnit].unitsPerCell = 1;
+        m_pools[TwoUnits].unitsPerCell = 2;
+        m_pools[Wide].unitsPerCell = unitsPerWideAlignment;
+        m_poolOfSlot.fill(NoPool, m_code.stackSlots().size());
+        for (StackSlot* slot : m_code.stackSlots()) {
+            if (m_placement == SlotPlacement::AssignsOffsets && slot->offsetFromFP()) {
+                RELEASE_ASSERT(slot->offsetFromFP() < 0);
+                m_firstFreeUnit = std::max<size_t>(m_firstFreeUnit, (static_cast<size_t>(-slot->offsetFromFP()) + StackColoring::bytesPerUnit - 1) / StackColoring::bytesPerUnit);
+                continue;
+            }
+            if (!slot->isSpill())
+                continue;
+            const unsigned unitsNeeded = unitsNeededBy(slot);
+            PoolKind pool = unitsNeeded <= 1 ? OneUnit : unitsNeeded == 2 ? TwoUnits : Wide;
+            if (pool == Wide)
+                m_pools[Wide].unitsPerCell = std::max<unsigned>(m_pools[Wide].unitsPerCell, WTF::roundUpToMultipleOf<unitsPerWideAlignment>(unitsNeeded));
+            m_poolOfSlot[slot->index()] = pool;
+            ++numberOfSlotsInPool[pool];
+        }
+        for (unsigned pool = 0; pool < numberOfPools; ++pool)
+            m_pools[pool].reserve(numberOfSlotsInPool[pool]);
+    }
+
+    void collectRanges()
+    {
+        CompilerTimingScope timingScope("Air"_s, "StackAllocator::ranges"_s);
+
+        StackSlotActions actions(m_code, false);
+        BitMatrixLiveness<SpillSlotBoundaryRows> liveness(m_code, actions);
+        liveness.compute();
+        RELEASE_ASSERT(liveness.status() == BitMatrixLivenessStatus::Solved);
+
+        Vector<BasicBlock*> blocks;
+        Vector<uint32_t> firstPositions;
+        size_t numberOfPositions = 0;
+        for (BasicBlock* block : m_code) {
+            blocks.append(block);
+            firstPositions.append(static_cast<uint32_t>(numberOfPositions));
+            numberOfPositions += block->size() + 1;
+            RELEASE_ASSERT(numberOfPositions < noPosition);
+        }
+
+        Vector<uint32_t> endOfOpenRange(FillWith { }, m_code.stackSlots().size(), noPosition);
+        auto isLive = [&](uint32_t slotIndex) {
+            return endOfOpenRange[slotIndex] != noPosition;
+        };
+        auto openRange = [&](uint32_t slotIndex, uint32_t position) {
+            if (!isLive(slotIndex))
+                endOfOpenRange[slotIndex] = position;
+        };
+        auto closeRange = [&](uint32_t slotIndex, uint32_t position) {
+            RELEASE_ASSERT(isLive(slotIndex));
+            m_ranges.append(Range { slotIndex, position, std::exchange(endOfOpenRange[slotIndex], noPosition) });
+        };
+
+        for (size_t order = blocks.size(); order--;) {
+            BasicBlock* block = blocks[order];
+            const uint32_t firstPosition = firstPositions[order];
+            if (order + 1 < blocks.size()) {
+                liveness.forEachLiveOnlyAtHeadOfNextBlock(block, [&](unsigned slotIndex) {
+                    closeRange(slotIndex, firstPositions[order + 1]);
+                });
+            }
+            liveness.forEachLiveOnlyAtTail(block, [&](unsigned slotIndex) {
+                openRange(slotIndex, firstPosition + block->size());
+            });
+
+            auto blockActions = actions.actionsFor(block);
+            auto killCandidates = actions.killCandidatesFor(block);
+            bool killedAny = false;
+            for (;;) {
+                int64_t actionBoundary = blockActions.empty() ? -1 : static_cast<int64_t>(blockActions.back().boundary);
+                int64_t killBoundary = killCandidates.empty() ? -1 : static_cast<int64_t>(killCandidates.back()) + 1;
+                int64_t boundary = std::max(actionBoundary, killBoundary);
+                if (boundary < 0)
+                    break;
+
+                const uint32_t position = firstPosition + static_cast<uint32_t>(boundary);
+                std::span<const StackSlotActions::Action> group;
+                if (actionBoundary == boundary)
+                    group = StackSlotActions::consumeLastGroup(blockActions);
+                for (const auto& action : group) {
+                    if (action.isSpill && action.kind == StackSlotActions::UseAction)
+                        openRange(action.slotIndex, position);
+                }
+
+                // A store whose late definitions are all dead is removed, as the graph coloring allocator does.
+                bool killedPreviousInst = false;
+                if (killBoundary == boundary) {
+                    uint32_t candidateInstIndex = consumeLast(killCandidates);
+                    killedPreviousInst = std::ranges::none_of(group, [&](const auto& action) {
+                        return action.kind == StackSlotActions::LateDefAction && isLive(action.slotIndex);
+                    });
+                    if (killedPreviousInst) {
+                        block->at(candidateInstIndex) = Inst();
+                        killedAny = true;
+                    }
+                }
+
+                for (const auto& action : group) {
+                    if (!action.isSpill || action.kind == StackSlotActions::UseAction)
+                        continue;
+                    if (action.kind == StackSlotActions::LateDefAction && killedPreviousInst)
+                        continue;
+                    // A definition that nothing reads still writes to its slot.
+                    openRange(action.slotIndex, position);
+                    closeRange(action.slotIndex, position);
+                }
+            }
+
+            if (killedAny) {
+                block->insts().removeAllMatching(
+                    [&] (const Inst& inst) -> bool {
+                        return !inst;
+                    });
+            }
+        }
+        liveness.forEachLiveAtHeadOfFirstBlock([&](unsigned slotIndex) {
+            closeRange(slotIndex, 0);
+        });
+    }
+
+    // Sorts the ranges by start, joins those of one slot that touch, and tells each where the next one of its slot starts.
+    void linkRanges()
+    {
+        m_ranges.removeAllMatching([&](const Range& range) {
+            return m_poolOfSlot[range.slotIndex] == NoPool;
+        });
+        std::ranges::sort(m_ranges, [](const Range& a, const Range& b) {
+            return a.start != b.start ? a.start < b.start : a.slotIndex < b.slotIndex;
+        });
+
+        constexpr size_t noRange = std::numeric_limits<size_t>::max();
+        Vector<size_t> lastRangeOfSlot(FillWith { }, m_code.stackSlots().size(), noRange);
+        for (size_t index = 0; index < m_ranges.size(); ++index) {
+            Range& range = m_ranges[index];
+            size_t& last = lastRangeOfSlot[range.slotIndex];
+            if (last != noRange && m_ranges[last].end + 1 >= range.start) {
+                m_ranges[last].end = std::max(m_ranges[last].end, range.end);
+                range.slotIndex = noSlot;
+                continue;
+            }
+            last = index;
+        }
+        m_ranges.removeAllMatching([&](const Range& range) {
+            return range.slotIndex == noSlot;
+        });
+
+        m_lastEndOfSlot.fill(noPosition, m_code.stackSlots().size());
+        Vector<uint32_t> startOfNextRange(FillWith { }, m_code.stackSlots().size(), noPosition);
+        for (size_t index = m_ranges.size(); index--;) {
+            Range& range = m_ranges[index];
+            if (m_lastEndOfSlot[range.slotIndex] == noPosition)
+                m_lastEndOfSlot[range.slotIndex] = range.end;
+            range.startOfNextRange = std::exchange(startOfNextRange[range.slotIndex], range.start);
+        }
+    }
+
+    template<typename StartFunc, typename EndFunc>
+    void forEachRangeBoundaryInOrder(NOESCAPE const StartFunc& start, NOESCAPE const EndFunc& end) const
+    {
+        // A range holds its place at its last position, so what starts at a position comes before what ends there.
+        size_t nextToStart = 0;
+        for (uint32_t rangeToEnd : m_rangesByEnd) {
+            for (; nextToStart < m_ranges.size() && m_ranges[nextToStart].start <= m_ranges[rangeToEnd].end; ++nextToStart)
+                start(m_ranges[nextToStart]);
+            end(m_ranges[rangeToEnd]);
+        }
+    }
+
+    void assignCells()
+    {
+        CompilerTimingScope timingScope("Air"_s, "StackAllocator::assign"_s);
+
+        m_rangesByEnd.grow(m_ranges.size());
+        for (size_t index = 0; index < m_ranges.size(); ++index)
+            m_rangesByEnd[index] = static_cast<uint32_t>(index);
+        std::ranges::sort(m_rangesByEnd, [&](uint32_t a, uint32_t b) {
+            return m_ranges[a].end != m_ranges[b].end ? m_ranges[a].end < m_ranges[b].end : a < b;
+        });
+
+        const size_t numberOfSlots = m_code.stackSlots().size();
+        m_cellOfSlot.fill(noCell, numberOfSlots);
+        Vector<uint32_t> ownerBelow(FillWith { }, numberOfSlots, noSlot);
+        Vector<uint32_t> startAfterGap(FillWith { }, numberOfSlots, noPosition);
+
+        forEachRangeBoundaryInOrder(
+            [&](const Range& range) {
+                CellPool& pool = m_pools[m_poolOfSlot[range.slotIndex]];
+                uint32_t& cell = m_cellOfSlot[range.slotIndex];
+                if (cell == noCell) {
+                    cell = pool.findLowestCellFreeBeyond(m_lastEndOfSlot[range.slotIndex]);
+                    pool.didUse(cell);
+                    ownerBelow[range.slotIndex] = std::exchange(pool.topOwner(cell), range.slotIndex);
+                }
+                pool.setFreeUntil(cell, 0);
+            },
+            [&](const Range& range) {
+                CellPool& pool = m_pools[m_poolOfSlot[range.slotIndex]];
+                const uint32_t cell = m_cellOfSlot[range.slotIndex];
+                if (range.startOfNextRange != noPosition) {
+                    startAfterGap[range.slotIndex] = range.startOfNextRange;
+                    pool.setFreeUntil(cell, range.startOfNextRange);
+                    return;
+                }
+                RELEASE_ASSERT(pool.topOwner(cell) == range.slotIndex);
+                const uint32_t owner = ownerBelow[range.slotIndex];
+                pool.topOwner(cell) = owner;
+                pool.setFreeUntil(cell, owner == noSlot ? noPosition : startAfterGap[owner]);
+            });
+    }
+
+    StackColoring::UnitRange unitsOf(StackSlot* slot) const
+    {
+        const CellPool& pool = m_pools[m_poolOfSlot[slot->index()]];
+        const unsigned end = pool.firstUnit + (m_cellOfSlot[slot->index()] + 1) * pool.unitsPerCell;
+        return { end - unitsNeededBy(slot), end - 1 };
+    }
+
+    void placeSlots(StackColoring& coloring)
+    {
+        for (StackSlot* slot : m_code.stackSlots()) {
+            // A slot that nothing names can be anywhere.
+            if (m_poolOfSlot[slot->index()] != NoPool && m_cellOfSlot[slot->index()] == noCell) {
+                m_cellOfSlot[slot->index()] = 0;
+                m_pools[m_poolOfSlot[slot->index()]].didUse(0);
+            }
+        }
+
+        size_t numberOfUnits = WTF::roundUpToMultipleOf<unitsPerWideAlignment>(m_firstFreeUnit);
+        for (PoolKind kind : { Wide, TwoUnits, OneUnit }) {
+            CellPool& pool = m_pools[kind];
+            RELEASE_ASSERT(numberOfUnits <= std::numeric_limits<int32_t>::max() / StackColoring::bytesPerUnit);
+            pool.firstUnit = static_cast<unsigned>(numberOfUnits);
+            numberOfUnits += static_cast<size_t>(pool.numberOfCells()) * pool.unitsPerCell;
+        }
+        RELEASE_ASSERT(numberOfUnits <= std::numeric_limits<int32_t>::max() / StackColoring::bytesPerUnit);
+
+        if (shouldValidateIRAtEachPhase(m_code.proc()))
+            validate(numberOfUnits);
+
+        switch (m_placement) {
+        case SlotPlacement::AssignsOffsets:
+            for (StackSlot* slot : m_code.stackSlots()) {
+                if (m_poolOfSlot[slot->index()] != NoPool)
+                    slot->setOffsetFromFP(-static_cast<intptr_t>(unitsOf(slot).last + 1) * static_cast<intptr_t>(StackColoring::bytesPerUnit));
+            }
+            updateFrameSizeBasedOnStackSlots(m_code);
+            break;
+        case SlotPlacement::OnlyColors:
+            coloring.unitsOfSlot.fill(std::nullopt, m_code.stackSlots().size());
+            for (StackSlot* slot : m_code.stackSlots()) {
+                if (m_poolOfSlot[slot->index()] != NoPool)
+                    coloring.unitsOfSlot[slot->index()] = unitsOf(slot);
+            }
+            coloring.numberOfUnits = static_cast<unsigned>(numberOfUnits);
+            break;
+        }
+    }
+
+    void validate(size_t numberOfUnits) const
+    {
+        Vector<uint32_t> slotAtUnit(FillWith { }, numberOfUnits, noSlot);
+        forEachRangeBoundaryInOrder(
+            [&](const Range& range) {
+                StackColoring::UnitRange units = unitsOf(m_code.stackSlots()[range.slotIndex]);
+                for (unsigned unit = units.first; unit <= units.last; ++unit)
+                    RELEASE_ASSERT(std::exchange(slotAtUnit[unit], range.slotIndex) == noSlot);
+            },
+            [&](const Range& range) {
+                StackColoring::UnitRange units = unitsOf(m_code.stackSlots()[range.slotIndex]);
+                for (unsigned unit = units.first; unit <= units.last; ++unit)
+                    RELEASE_ASSERT(std::exchange(slotAtUnit[unit], noSlot) == range.slotIndex);
+            });
+    }
+
+    Code& m_code;
+    const SlotPlacement m_placement;
+    size_t m_firstFreeUnit { 0 };
+    std::array<CellPool, numberOfPools> m_pools;
+    Vector<PoolKind> m_poolOfSlot;
+    Vector<Range> m_ranges;
+    Vector<uint32_t> m_rangesByEnd;
+    Vector<uint32_t> m_lastEndOfSlot;
+    Vector<uint32_t> m_cellOfSlot;
+};
+
 // Avoid computing the liveness information if there is no spill slot to allocate
 bool doTrivialStackAllocation(Code& code, SlotPlacement placement, StackColoring& coloring)
 {
@@ -1079,8 +1546,8 @@ StackColoring allocateStackByGraphColoring(Code& code)
                 GraphColoringStackAllocator<LargeIterableInterferenceGraph, StackSlotLiveness> allocator(code, placement);
                 allocator.run(assignedEscapedStackSlots, coloring);
             } else {
-                GraphColoringStackAllocator<HugeIterableInterferenceGraph, StackSlotLiveness> allocator(code, placement);
-                allocator.run(assignedEscapedStackSlots, coloring);
+                LiveRangeStackAllocator allocator(code, placement);
+                allocator.run(coloring);
             }
         }
     }

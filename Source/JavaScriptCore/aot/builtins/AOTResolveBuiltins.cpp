@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCoroutines.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTSimplifyBuiltinCallsInternal.h"
@@ -266,22 +267,6 @@ PassOutcome BuiltinResolver::run()
     return PassOutcome::Changed;
 }
 
-static Value makeIteratorResultObject(const Program& program, const Value& intrinsic)
-{
-    LayoutID layoutID = program.layoutOf(BuiltinLayouts::IteratorResult);
-    const Layout& layout = program.at(layoutID);
-    std::optional<uint32_t> valueField = layout.findField(program.keyOf(BuiltinNames::value));
-    std::optional<uint32_t> doneField = layout.findField(program.keyOf(BuiltinNames::done));
-    RELEASE_ASSERT(valueField && doneField);
-
-    Value object = IRBuilder::make(Opcode::NewObject);
-    object.setLayout(layoutID);
-    object.setFields(std::array { *valueField, *doneField });
-    object.setValuesOperands(std::array { intrinsic.valueOperand(), intrinsic.doneOperand() });
-    object.setAllocationSite(intrinsic.allocationSite());
-    return object;
-}
-
 static bool allocateIteratorResultsAsObjects(FunctionPassContext& context)
 {
     const Function& function = context.function;
@@ -289,8 +274,10 @@ static bool allocateIteratorResultsAsObjects(FunctionPassContext& context)
     for (const ValueSite& site : context.sitesIn(SiteList::IteratorResults))
         intrinsics.append(site.value);
 
-    for (ValueID intrinsic : intrinsics)
-        replaceKeepingType(context, intrinsic, makeIteratorResultObject(context.program, function.at(intrinsic)));
+    for (ValueID id : intrinsics) {
+        const Value& intrinsic = function.at(id);
+        replaceKeepingType(context, id, makeIteratorResultObject(context.program, intrinsic.valueOperand(), intrinsic.doneOperand(), intrinsic.allocationSite()));
+    }
     if (!intrinsics.isEmpty())
         context.analyses.didChangeValues();
     return !intrinsics.isEmpty();

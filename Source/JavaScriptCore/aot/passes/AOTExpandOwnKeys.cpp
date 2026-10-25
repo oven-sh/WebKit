@@ -1626,6 +1626,11 @@ struct OpenDataNode {
     size_t numberOfChildren;
     Vector<ValueID, 8> values;
     Vector<uint32_t, 2> holes;
+    Vector<uint32_t, 8> fieldsOfHead { };
+    Vector<ValueID, 8> valuesOfHead { };
+    Vector<size_t, 2> membersDefinedAfterHead { };
+    bool canAddToHead { true };
+    ValueID head { };
 
     size_t numberOfFinishedChildren() const { return values.size() + holes.size(); }
 };
@@ -1705,48 +1710,69 @@ static Value makeConstant(const DataNode& leaf)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static Value makeAggregate(Rewrite& rewrite, const OpenDataNode& closed, const FlowDataNodeStamp& stamp, const auto& insert)
+static Value makeHead(const OpenDataNode& open, const FlowDataNodeStamp& stamp)
 {
+    return Emission::make<&Value::setLayout, &Value::setFields, &Value::setValuesOperands, &Value::setAllocationSite, &Value::setAllocationClass>(Opcode::NewObject, { },
+        open.node->as<DataNode::Object>().layout, open.fieldsOfHead.span(), open.valuesOfHead.span(), stamp.site, stamp.allocationClass);
+}
+
+static void allocateHead(OpenDataNode& open, const FlowDataNodeStamp& stamp, const auto& insert)
+{
+    const Vector<DataMember>& members = open.node->as<DataNode::Object>().members;
+    open.head = insert(makeHead(open, stamp));
+    for (size_t index : std::exchange(open.membersDefinedAfterHead, { }))
+        insert(makeDefinitionOfProperty(open.head, members[index].key, open.values[index]));
+}
+
+// The values of this many members may all be made before the object is allocated.
+AOT_THRESHOLD(size_t, maxMembersMadeBeforeAllocation, 4095);
+
+// Array indexes are listed before the other own keys, which are listed in the order of their creation. A long object is allocated at the first
+// member with another name that the allocation cannot fill, and each later member is defined as soon as its value is made.
+static void addChild(Rewrite& rewrite, OpenDataNode& open, ValueID value, const auto& stampOf, const auto& insert)
+{
+    const size_t index = open.values.size();
+    open.values.append(value);
+    const auto* object = open.node->tryAs<DataNode::Object>();
+    if (!object)
+        return;
+
     const Program& program = rewrite.program;
+    const PropertyKeyID key = object->members[index].key;
+    if (open.head) {
+        insert(makeDefinitionOfProperty(open.head, key, value));
+        return;
+    }
+    const Layout& layout = program.at(object->layout);
+    std::optional<uint32_t> field = layout.findField(key);
+    // An allocation fills a slot without a test.
+    auto fitsSlot = [&] {
+        TypingContext typing { program, rewrite.function, rewrite.context.types };
+        return typing.typeOf(value).isSubsetOf(typing.typeOf(layout.fields[*field].declared), program);
+    };
+    if (field && open.canAddToHead && fitsSlot()) {
+        open.fieldsOfHead.append(*field);
+        open.valuesOfHead.append(value);
+        return;
+    }
+    open.membersDefinedAfterHead.append(index);
+    open.canAddToHead &= program.nameClassOf(key) == NameClass::Index;
+    if (!open.canAddToHead && object->members.size() > maxMembersMadeBeforeAllocation)
+        allocateHead(open, stampOf(open), insert);
+}
+
+static Value makeAggregate(OpenDataNode& closed, const FlowDataNodeStamp& stamp, const auto& insert)
+{
     if (const auto* array = closed.node->tryAs<DataNode::Array>()) {
         return Emission::make<&Value::setContents, &Value::setArrayStorage, &Value::setHoles, &Value::setElementsOperands, &Value::setAllocationSite>(Opcode::NewArray, { },
             stamp.elements ? stamp.elements : array->contents, stamp.arrayStorage, closed.holes.span(), closed.values.span(), stamp.site);
     }
 
-    const auto& object = closed.node->as<DataNode::Object>();
-    const Layout& layout = program.at(object.layout);
-    const Vector<DataMember>& members = object.members;
-
-    // Array indexes are listed before the other own keys, which are listed in the order of their creation.
-    Vector<uint32_t, 8> fields;
-    Vector<ValueID, 8> values;
-    Vector<size_t, 2> membersDefinedAfterHead;
-    bool canAddToHead = true;
-    for (size_t index = 0; index < members.size(); ++index) {
-        std::optional<uint32_t> field = layout.findField(members[index].key);
-        // An allocation fills a slot without a test.
-        auto fitsSlot = [&] {
-            TypingContext typing { program, rewrite.function, rewrite.context.types };
-            return typing.typeOf(closed.values[index]).isSubsetOf(typing.typeOf(layout.fields[*field].declared), program);
-        };
-        if (field && canAddToHead && fitsSlot()) {
-            fields.append(*field);
-            values.append(closed.values[index]);
-            continue;
-        }
-        membersDefinedAfterHead.append(index);
-        canAddToHead &= program.nameClassOf(members[index].key) == NameClass::Index;
-    }
-
-    Value allocation = Emission::make<&Value::setLayout, &Value::setFields, &Value::setValuesOperands, &Value::setAllocationSite, &Value::setAllocationClass>(Opcode::NewObject, { },
-        object.layout, fields.span(), values.span(), stamp.site, stamp.allocationClass);
-    if (membersDefinedAfterHead.isEmpty())
-        return allocation;
-
-    ValueID head = insert(WTF::move(allocation));
-    for (size_t index : membersDefinedAfterHead)
-        insert(makeDefinitionOfProperty(head, members[index].key, closed.values[index]));
-    return IRBuilder::make(Opcode::FinishObject, { head });
+    if (!closed.head && closed.membersDefinedAfterHead.isEmpty())
+        return makeHead(closed, stamp);
+    if (!closed.head)
+        allocateHead(closed, stamp, insert);
+    return IRBuilder::make(Opcode::FinishObject, { closed.head });
 }
 
 static void expandDataAt(Rewrite& rewrite, ProgramPoint point)
@@ -1757,6 +1783,9 @@ static void expandDataAt(Rewrite& rewrite, ProgramPoint point)
     const DataNode& root = rewrite.program.at(rewrite.at(id).data()).root;
     auto insert = [&](Value&& value) {
         return rewrite.insertBefore(point, origin, WTF::move(value));
+    };
+    auto stampOf = [&](const OpenDataNode& open) {
+        return rewrite.context.inputs.flow.dataNodeStamp(rootSite, open.ordinal);
     };
 
     Value replacement;
@@ -1770,19 +1799,19 @@ static void expandDataAt(Rewrite& rewrite, ProgramPoint point)
             else if (node.is<DataNode::Hole>())
                 openNodes.last().holes.append(static_cast<uint32_t>(openNodes.last().numberOfFinishedChildren()));
             else
-                openNodes.last().values.append(insert(makeConstant(node)));
+                addChild(rewrite, openNodes.last(), insert(makeConstant(node)), stampOf, insert);
 
             while (!openNodes.isEmpty() && openNodes.last().numberOfFinishedChildren() == openNodes.last().numberOfChildren) {
                 OpenDataNode closed = openNodes.takeLast();
-                FlowDataNodeStamp stamp = rewrite.context.inputs.flow.dataNodeStamp(rootSite, closed.ordinal);
-                Value aggregate = makeAggregate(rewrite, closed, stamp, insert);
+                FlowDataNodeStamp stamp = stampOf(closed);
+                Value aggregate = makeAggregate(closed, stamp, insert);
                 if (openNodes.isEmpty()) {
                     replacement = WTF::move(aggregate);
                     return;
                 }
                 // The field that takes an array may have been narrowed to what flow has proven of that very array.
                 ValueID made = insert(WTF::move(aggregate));
-                openNodes.last().values.append(stamp.type ? insert(makeAssumeType(made, stamp.type)) : made);
+                addChild(rewrite, openNodes.last(), stamp.type ? insert(makeAssumeType(made, stamp.type)) : made, stampOf, insert);
             }
         });
     }

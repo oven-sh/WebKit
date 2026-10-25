@@ -1249,9 +1249,22 @@ struct OutliningScan {
     void findBoundValues()
     {
         BitVector& bound = valuesBoundToFunction.emplace(function.values.size());
+        bool didBindEveryObject = false;
         auto bindObjectsOf = [&](const EscapeAnalysis& escape, ValueID pointer) {
-            for (ObjectID object : escape.pointsTo(pointer).objects)
-                bound.quickSet(escape.at(object).definition.index());
+            if (!escape.gaveUp()) {
+                for (ObjectID object : escape.pointsTo(pointer).objects)
+                    bound.quickSet(escape.at(object).definition.index());
+                return;
+            }
+            // An analysis that gave up does not say which objects a value names, so it may name any of them.
+            if (std::exchange(didBindEveryObject, true))
+                return;
+            for (BlockID block : cfg.reversePostOrder()) {
+                for (ValueID id : function.at(block).values) {
+                    if (mayDefineObject(id))
+                        bound.quickSet(id.index());
+                }
+            }
         };
 
         // What another rule wants in the function where it stands.
@@ -1484,6 +1497,8 @@ struct OutliningScan {
             return false;
         return std::ranges::any_of(liveIns, [&](ValueID liveIn) {
             const EscapeAnalysis& escape = analyses.escape();
+            if (escape.gaveUp())
+                return mayBeReference(program.typeOf(function, liveIn));
             for (ObjectID object : escape.pointsTo(liveIn).objects) {
                 if (escape.at(object).kind == ObjectKind::Allocation)
                     return true;

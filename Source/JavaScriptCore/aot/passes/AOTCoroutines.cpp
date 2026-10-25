@@ -15,6 +15,8 @@
 #include "AOTEffectsCheck.h"
 #include "AOTEffectsOfProtocols.h"
 #include "AOTFlowCoroutines.h"
+#include "AOTFlowResults.h"
+#include "AOTFlowUnseenCode.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
 #include "AOTFuseGeneratorLoops.h"
@@ -30,6 +32,7 @@
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <algorithm>
+#include <array>
 #include <initializer_list>
 #include <optional>
 #include <ranges>
@@ -89,6 +92,22 @@ ValueID appendAsyncIteratorStep(IRBuilder& builder, ValueID iterator, ValueID se
     Function& function = builder.function();
     ValueID driver = function.isUnsplitCoroutine() ? builder.appendUndefined() : driverOfAsyncBody(function);
     return builder.append(Opcode::StepAsyncGenerator, { iterator, sent, driver });
+}
+
+Value makeIteratorResultObject(const Program& program, ValueID value, ValueID done, AllocationSiteID site)
+{
+    LayoutID layoutID = program.layoutOf(BuiltinLayouts::IteratorResult);
+    const Layout& layout = program.at(layoutID);
+    std::optional<uint32_t> valueField = layout.findField(program.keyOf(BuiltinNames::value));
+    std::optional<uint32_t> doneField = layout.findField(program.keyOf(BuiltinNames::done));
+    RELEASE_ASSERT(valueField && doneField);
+
+    Value object = IRBuilder::make(Opcode::NewObject);
+    object.setLayout(layoutID);
+    object.setFields(std::array { *valueField, *doneField });
+    object.setValuesOperands(std::array { value, done });
+    object.setAllocationSite(site);
+    return object;
 }
 
 // A ramp takes over the id and the callers of its source, so what is known about those callers carries over.
@@ -696,8 +715,15 @@ static void retypeCallers(ProgramEditor& editor, BuildContext& build, const Vect
     });
 }
 
+static bool loadsModulesByName(const FlowResults& flow)
+{
+    return !flow.hasResults() || std::ranges::any_of(flow.unseenCode(), [](const UnseenCodeRecord& record) {
+        return loadsModulesByName(record.cause);
+    });
+}
+
 // A require() evaluates the ES module that it names and what that module imports.
-static void markModulesEvaluatedByRequire(ProgramEditor& editor, const ParallelLoops& loops)
+static void markModulesEvaluatedByRequire(ProgramEditor& editor, const FlowResults& flow, const ParallelLoops& loops)
 {
     const Program& program = editor.program();
     bool someModuleAwaits = std::ranges::any_of(program.modules, [](const Module& module) {
@@ -720,6 +746,11 @@ static void markModulesEvaluatedByRequire(ProgramEditor& editor, const ParallelL
                 work.append(request.target.index());
         }
     }
+    // A name computed at run time finds an entry point. A program with one entry point has begun it before any require() runs.
+    if (program.entries.size() > 1 && loadsModulesByName(flow)) {
+        for (const Entry& entry : program.entries)
+            work.append(entry.module.index());
+    }
     BitVector seen(program.modules.size());
     while (!work.isEmpty()) {
         uint32_t index = work.takeLast();
@@ -740,7 +771,7 @@ void splitCoroutines(ProgramEditor& editor, const OptimizationInputs& inputs, co
     });
     if (coroutines.isEmpty())
         return;
-    markModulesEvaluatedByRequire(editor, build.parallelLoops());
+    markModulesEvaluatedByRequire(editor, inputs.flow, build.parallelLoops());
     Vector<CoroutinePlan> plans(coroutines.size(), [&](size_t index) {
         CoroutinePlan plan;
         plan.record.kind = *coroutineKindOf(program.functions[coroutines[index]]);
@@ -922,8 +953,14 @@ static bool collectIteratorResultReads(FunctionPassContext& context, ValueID res
                 return false;
             continue;
         }
-        if (user.opcode == Opcode::TypeTest && !context.types.at(user.testedType()).hasObjects())
+        if (user.opcode == Opcode::TypeTest && !context.types.at(user.testedType()).hasObjects()) {
+            // Behind a branch on the test the result has another name.
+            for (ValueID parameter : findNarrowedParameters(context.function, context.analyses.useLists(), use)) {
+                if (!context.analyses.cfg().singleIncomingEdge(context.analyses.useLists().blockOf(parameter)) || !collectIteratorResultReads(context, parameter, reads))
+                    return false;
+            }
             continue;
+        }
         if (user.opcode != Opcode::PropGet || user.type != TypeTable::anything || (user.key() != program.keyOf(BuiltinNames::value) && user.key() != program.keyOf(BuiltinNames::done)))
             return false;
     }
@@ -1329,11 +1366,8 @@ static void expandAwaitOfGeneratorStep(FunctionPassContext& context, IRBuilder& 
     if (!site.resultReads) {
         builder.endExpansion(expansion, convertTo(builder, stepped, DeclaredType { .type = type }));
 
-        // What CreateIterResultObject makes: an ordinary object with the two as its own data properties, in this order.
         builder.moveToEndOf(blocks.notTaken);
-        ValueID object = builder.append(Opcode::NewDictionary, { });
-        appendWithKey(Opcode::PropDefine, { object, stepped }, valueKey);
-        appendWithKey(Opcode::PropDefine, { object, appendStatusTest(AsyncGeneratorStepStatus::Completed) }, doneKey);
+        ValueID object = builder.append(makeIteratorResultObject(context.program, stepped, appendStatusTest(AsyncGeneratorStepStatus::Completed)));
         builder.endExpansion(expansion, convertTo(builder, object, DeclaredType { .type = type }));
         return;
     }
