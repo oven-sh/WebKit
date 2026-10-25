@@ -193,6 +193,10 @@ JSC_DECLARE_JIT_OPERATION(operationGetByIdDirectOptimize, EncodedJSValue, (Encod
 JSC_DECLARE_JIT_OPERATION(operationGetByIdDirectGaveUp, EncodedJSValue, (EncodedJSValue, PropertyInlineCache*));
 JSC_DECLARE_JIT_OPERATION(operationGetByIdDirectGeneric, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, uintptr_t));
 
+JSC_DECLARE_JIT_OPERATION(operationGetByIdThrowIfNotFoundOptimize, EncodedJSValue, (EncodedJSValue, PropertyInlineCache*));
+JSC_DECLARE_JIT_OPERATION(operationGetByIdThrowIfNotFoundGaveUp, EncodedJSValue, (EncodedJSValue, PropertyInlineCache*));
+JSC_DECLARE_JIT_OPERATION(operationGetByIdThrowIfNotFoundGeneric, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, uintptr_t));
+
 JSC_DECLARE_JIT_OPERATION(operationGetByIdWithThisOptimize, EncodedJSValue, (EncodedJSValue, EncodedJSValue, PropertyInlineCache*));
 JSC_DECLARE_JIT_OPERATION(operationGetByIdWithThisMegamorphic, EncodedJSValue, (EncodedJSValue, EncodedJSValue, PropertyInlineCache*));
 JSC_DECLARE_JIT_OPERATION(operationGetByIdWithThisGaveUp, EncodedJSValue, (EncodedJSValue, EncodedJSValue, PropertyInlineCache*));
