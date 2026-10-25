@@ -2305,6 +2305,13 @@ private:
 
         case GetById:
         case GetByIdFlush: {
+            // The base of a ThrowIfNotFound read is a scope. No conversion below is for it, and as a cell it
+            // needs no operation for a base that is not one.
+            if (node->resolveMode() == ThrowIfNotFound) {
+                fixEdge<CellUse>(node->child1());
+                break;
+            }
+
             // FIXME: This should be done in the ByteCodeParser based on reading the
             // PolymorphicAccess, which will surely tell us that this is a AccessCase::ArrayLength.
             // https://bugs.webkit.org/show_bug.cgi?id=154990
