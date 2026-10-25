@@ -23,12 +23,6 @@ bool hasTextByItself(const Type& type)
     return !type.isNever() && type.hasOnlyPrimitives(Primitive::NumberLike | Primitive::AnyString | Primitive::BigInt);
 }
 
-// IsLooselyEqual converts an object only to compare it with a boolean, number, string, symbol or BigInt.
-static bool isComparedAsPrimitive(const Type& otherOperand)
-{
-    return otherOperand.primitives & ~Primitive::UndefinedOrNull;
-}
-
 namespace {
 
 struct OperandClasses {
@@ -63,20 +57,9 @@ static void describeOperatorOn(const Program& program, Opcode opcode, const Type
 {
     RELEASE_ASSERT(!declared.mayCallUnknownCode);
 
-    Vector<const Type*, 2> operandTypes;
-    forEachOperandType([&](const Type& type, uint32_t) {
-        operandTypes.append(&type);
-    });
-    auto behaviorOf = [&](uint32_t operandIndex) {
-        OperandBehavior behavior = declaredBehaviorOf(opcode, operandIndex);
-        if (opcode == Opcode::Eq && !isComparedAsPrimitive(*operandTypes[1 - operandIndex]))
-            behavior.protocols = { };
-        return behavior;
-    };
-
     OperandClasses classes;
     forEachOperandType([&](const Type& type, uint32_t operandIndex) {
-        classes.add(type, behaviorOf(operandIndex));
+        classes.add(type, declaredBehaviorOf(opcode, operandIndex));
     });
 
     if (classes.areAllInert && result && !result->hasCells())
@@ -92,7 +75,7 @@ static void describeOperatorOn(const Program& program, Opcode opcode, const Type
     if (!classes.convertsObjects)
         return;
     forEachOperandType([&](const Type& type, uint32_t operandIndex) {
-        describeOperandCode(program, type, behaviorOf(operandIndex), description);
+        describeOperandCode(program, type, declaredBehaviorOf(opcode, operandIndex), description);
     });
 }
 

@@ -345,7 +345,7 @@ static bool covers(const Program& program, FunctionID id, const FunctionSummaryV
     EffectsOnEdges elsewhere = summary.elsewhere();
     if (!effects.isSubsetOf(elsewhere.normal) || (elsewhere.mayThrow() && !effects.isSubsetOf(elsewhere.handler)))
         return false;
-    LocationMasks writes = effects.writes.restrictedTo(perObjectHeaps);
+    OperandMemory memory { effects.reads.restrictedTo(perObjectHeaps), effects.writes.restrictedTo(perObjectHeaps) };
     const Function& function = program.at(id);
     if (!function.hasBody())
         return true;
@@ -358,7 +358,8 @@ static bool covers(const Program& program, FunctionID id, const FunctionSummaryV
         // An operation that a pass adds looks at its operand, which may be a parameter that the body only handed on: MarkEnvironmentEscaped.
         if (!summary.operand(index).uses.contains(OperandUse::Inspects))
             return false;
-        if (!writes.isSubsetOf(summary.memory(index).writes))
+        OperandMemory memoryOfParameter = summary.memory(index);
+        if (!memory.reads.isSubsetOf(memoryOfParameter.reads) || !memory.writes.isSubsetOf(memoryOfParameter.writes))
             return false;
     }
     return true;
