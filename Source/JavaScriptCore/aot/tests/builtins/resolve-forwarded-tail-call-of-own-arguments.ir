@@ -1,0 +1,205 @@
+# f.apply(this, arguments): where no more arguments were passed than there are parameters, the call takes them by name; a tail call stays one on every arm
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="oneParameter" flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=function}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: anything, v4: Array):
+    v5 = CreateUnmappedArguments v2, v4, v3
+    v6 = Builtin builtin=FunctionPrototypeApply
+    v7 = Call v6, v0, v1, v5
+    ReturnCall v7
+# CHECK: Switch v2 cases=[0, 1] -> case [[none0]](), case [[one0]](), otherwise [[more0]]()
+# CHECK: [[none0]]():
+# CHECK-NEXT: [[callNone0]]: anything = Call v0, v1
+# CHECK-NEXT: ReturnCall [[callNone0]]
+# CHECK: [[one0]]():
+# CHECK-NEXT: [[callOne0]]: anything = Call v0, v1, v3
+# CHECK-NEXT: ReturnCall [[callOne0]]
+# CHECK: [[more0]]() frequency=Unlikely:
+# CHECK-NEXT: = IsPristine v4 builtinClass=Array aspects=[Storage, Names]
+# CHECK: [[parameters0]]: Array = NewArray v3 contents=anything
+# CHECK-NEXT: AppendElements [[parameters0]], v4,
+# CHECK-NEXT: [[callListed0]]: anything = CallList v0, v1, [[parameters0]]
+# CHECK-NEXT: ReturnCall [[callListed0]]
+# CHECK: frequency=Rare:
+# CHECK-NEXT: [[list0]]: {{*}} = NewArgumentList v0, v5
+# CHECK-NEXT: [[callMore0]]: anything = CallList v0, v1, [[list0]]
+# CHECK-NEXT: ReturnCall [[callMore0]]
+}
+
+function f1 name="readsDoNotChangeTheObject" flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=function}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: anything, v4: anything, v5: Array):
+    v6 = CreateUnmappedArguments v2, v5, v3, v4
+    v7 = PropGet v6 key="length"
+    v8 = Integer integer=5
+    v9 = ElemGet v6, v8
+    v10 = Builtin builtin=FunctionPrototypeApply
+    v11 = Call v10, v0, v1, v6
+    ReturnCall v11
+# CHECK: Switch v2 cases=[0, 1, 2] -> case [[none1]](), case [[one1]](), case [[two1]](), otherwise [[more1]]()
+# CHECK: [[two1]]():
+# CHECK-NEXT: [[callTwo1]]: anything = Call v0, v1, v3, v4
+# CHECK-NEXT: ReturnCall [[callTwo1]]
+}
+
+# A store may have replaced an argument.
+function f2 name="elementIsStored" flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=function}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: anything, v4: Array):
+    v5 = CreateUnmappedArguments v2, v4, v3
+    v6 = Integer integer=0
+    ElemSet v5, v6, v1
+    v8 = Builtin builtin=FunctionPrototypeApply
+    v9 = Call v8, v0, v1, v5
+    ReturnCall v9
+# CHECK-NOT: Switch
+# CHECK: [[list2]]: {{*}} = NewArgumentList v0, v5
+# CHECK-NEXT: v9: anything = CallList v0, v1, [[list2]]
+# CHECK-NEXT: ReturnCall v9
+}
+
+# Whoever gets the object may change it.
+function f3 name="objectIsPassed" flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=function}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: anything, v4: Array):
+    v5 = CreateUnmappedArguments v2, v4, v3
+    v6 = Call v0, v1, v5
+    v7 = Builtin builtin=FunctionPrototypeApply
+    v8 = Call v7, v0, v1, v5
+    ReturnCall v8
+# CHECK-NOT: Switch
+# CHECK: [[list3]]: {{*}} = NewArgumentList v0, v5
+# CHECK-NEXT: v8: anything = CallList v0, v1, [[list3]]
+# CHECK-NEXT: ReturnCall v8
+}
+
+# The callee sees the object itself as its receiver.
+function f4 name="objectIsAlsoTheReceiver" flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=function}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: anything, v4: Array):
+    v5 = CreateUnmappedArguments v2, v4, v3
+    v6 = Builtin builtin=FunctionPrototypeApply
+    v7 = Call v6, v0, v5, v5
+    ReturnCall v7
+# CHECK-NOT: Switch
+# CHECK: [[list4]]: {{*}} = NewArgumentList v0, v5
+# CHECK-NEXT: v7: anything = CallList v0, v5, [[list4]]
+# CHECK-NEXT: ReturnCall v7
+}
+
+# In a mapped object an element is the variable of its parameter, which may hold another value by now.
+function f5 name="mappedArguments" flags=[IsSloppy, TakesCallee, HasArgumentCount, HasHiddenRest] parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: int[0, 4294967295], v2: function, v3: anything, v4: Array):
+    v5 = CreateMappedArguments v0, v1, v4, v2, v3
+    v6 = Builtin builtin=FunctionPrototypeApply
+    v7 = Call v6, v2, v3, v5
+    ReturnCall v7
+# CHECK-NOT: Switch
+# CHECK: [[list5]]: {{*}} = NewArgumentList v2, v5
+# CHECK-NEXT: v7: anything = CallList v2, v3, [[list5]]
+# CHECK-NEXT: ReturnCall v7
+}
+
+# What takes the object on a path that never comes to the call cannot have changed it before the call.
+function f6 name="objectIsPassedOnAnotherPath" flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=function}] thisType={type=anything} parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: boolean, v4: Array):
+    v5 = CreateUnmappedArguments v2, v4, v3
+    Branch v3 -> taken b1(), notTaken b2(v5)
+  b1():
+    v6 = Builtin builtin=FunctionPrototypeApply
+    v7 = Call v6, v0, v1, v5
+    ReturnCall v7
+  b2(v8: Arguments):
+    v9 = Call v0, v1, v8
+    Return v9
+# CHECK: Switch v2 cases=[0, 1] -> case [[none6]](), case [[one6]](), otherwise [[more6]]()
+# CHECK: [[one6]]():
+# CHECK-NEXT: [[callOne6]]: anything = Call v0, v1, v3
+# CHECK-NEXT: ReturnCall [[callOne6]]
+}
+
+# A loop brings the object that was passed back to the call.
+function f7 name="objectIsPassedInALoop" flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=function}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: anything, v4: Array):
+    v5 = CreateUnmappedArguments v2, v4, v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = Call v0, v1
+    v8 = ToBoolean v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Call v0, v1, v5
+    Jump -> next b1()
+  b3():
+    v10 = Builtin builtin=FunctionPrototypeApply
+    v11 = Call v10, v0, v1, v5
+    ReturnCall v11
+# CHECK-NOT: Switch
+# CHECK: [[list7]]: {{*}} = NewArgumentList v0, v5
+# CHECK-NEXT: v11: anything = CallList v0, v1, [[list7]]
+# CHECK-NEXT: ReturnCall v11
+}
+
+# A call that is no tail call: the arms meet behind it, and the last two are calls of the built-in: with the list of the parameters and the hidden rest list, or with the object.
+function f8 name="resultIsUsed" flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=function}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: anything, v4: Array):
+    v5 = CreateUnmappedArguments v2, v4, v3
+    v6 = Builtin builtin=FunctionPrototypeApply
+    v7 = Call v6, v0, v1, v5
+    v8 = Call v0, v1, v7
+    Return v8
+# CHECK: Switch v2 cases=[0, 1] -> case [[none8]](), case [[one8]](), otherwise [[more8]]()
+# CHECK: [[one8]]():
+# CHECK-NEXT: [[callOne8]]: anything = Call v0, v1, v3
+# CHECK-NEXT: Jump -> next [[behind8]]([[callOne8]])
+# CHECK: [[more8]]() frequency=Unlikely:
+# CHECK-NEXT: = IsPristine v4 builtinClass=Array aspects=[Storage, Names]
+# CHECK: [[parameters8]]: Array = NewArray v3 contents=anything
+# CHECK-NEXT: AppendElements [[parameters8]], v4,
+# CHECK-NEXT: [[callListed8]]: anything = CallBuiltin v0, v1, [[parameters8]] overload=FunctionPrototypeApply/0
+# CHECK: frequency=Rare:
+# CHECK-NEXT: [[callMore8]]: anything = CallBuiltin v0, v1, v5 overload=FunctionPrototypeApply/0
+}
+
+# What takes the object behind the call finds it as it was made.
+function f9 name="objectIsPassedBehindTheCall" flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=function}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: anything, v4: Array):
+    v5 = CreateUnmappedArguments v2, v4, v3
+    v6 = Builtin builtin=FunctionPrototypeApply
+    v7 = Call v6, v0, v1, v5
+    v8 = Call v0, v1, v5
+    Return v8
+# CHECK: Switch v2 cases=[0, 1]
+# CHECK: Call v0, v1, v5
+}
+
+# Code that seldom runs stays small.
+function f10 name="seldomRuns" flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=function}] thisType={type=anything} parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: boolean, v4: Array):
+    v5 = CreateUnmappedArguments v2, v4, v3
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2() frequency=Unlikely:
+    v6 = Builtin builtin=FunctionPrototypeApply
+    v7 = Call v6, v0, v1, v5
+    ReturnCall v7
+# CHECK-NOT: Switch
+# CHECK: [[list10]]: {{*}} = NewArgumentList v0, v5
+# CHECK-NEXT: v7: anything = CallList v0, v1, [[list10]]
+# CHECK-NEXT: ReturnCall v7
+}
+
+# The hidden rest list is every argument: SinkAllocations passes it on without the object.
+function f11 name="noParameter" flags=[HasThis, HasArgumentCount, HasHiddenRest] captures=[{type=function}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: function, v1: anything, v2: int[0, 4294967295], v3: Array):
+    v4 = CreateUnmappedArguments v2, v3
+    v5 = Builtin builtin=FunctionPrototypeApply
+    v6 = Call v5, v0, v1, v4
+    ReturnCall v6
+# CHECK-NOT: Switch
+# CHECK: [[list11]]: {{*}} = NewArgumentList v0, v4
+# CHECK-NEXT: v6: anything = CallList v0, v1, [[list11]]
+# CHECK-NEXT: ReturnCall v6
+}

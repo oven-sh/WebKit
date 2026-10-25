@@ -53,7 +53,17 @@ public:
 
     void run()
     {
-        if (!findCandidates())
+        bool mayFindWork = m_procedure.hasEverAdded(DoubleToFloat) || m_procedure.hasEverAdded(FloatToDouble);
+        if (!mayFindWork && !shouldValidateIR(m_procedure)) {
+            for (BasicBlock* block : m_procedure) {
+                for (Value* value : *block)
+                    value->performSubstitution();
+            }
+            return;
+        }
+        bool foundCandidates = findCandidates();
+        RELEASE_ASSERT(mayFindWork || !foundCandidates);
+        if (!foundCandidates)
             return;
 
         findPhisContainingFloat();

@@ -1,0 +1,4 @@
+# every limit has a purpose and a statistic of its hits, and one that fails the build has a message
+# RUN: limits all
+# CHECK-NOT: bad limit
+# CHECK: limits: {{*}}, 0 bad

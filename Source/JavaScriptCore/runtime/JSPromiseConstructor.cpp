@@ -26,6 +26,8 @@
 #include "config.h"
 #include "JSPromiseConstructor.h"
 
+#include "AOTBuiltinModules.h"
+#include "AOTSavedFrame.h"
 #include "AggregateError.h"
 #include "BuiltinNames.h"
 #include "CachedCall.h"
@@ -80,8 +82,18 @@ const ClassInfo JSPromiseConstructor::s_info = { "Function"_s, &Base::s_info, &p
 JSPromiseConstructor* JSPromiseConstructor::create(VM& vm, Structure* structure, JSPromisePrototype* promisePrototype)
 {
     JSGlobalObject* globalObject = structure->realm();
-    FunctionExecutable* executable = promiseConstructorPromiseConstructorCodeGenerator(vm);
-    JSPromiseConstructor* constructor = new (NotNull, allocateCell<JSPromiseConstructor>(vm)) JSPromiseConstructor(vm, executable, globalObject, structure);
+    BuiltinCode code = promiseConstructorPromiseConstructorCodeGenerator(vm);
+    JSPromiseConstructor* constructor = nullptr;
+#if ENABLE(AOT)
+    if (!code.executable) {
+        if (NativeExecutable* compiled = AOT::builtinExecutable(globalObject, code.id))
+            constructor = new (NotNull, allocateCell<JSPromiseConstructor>(vm)) JSPromiseConstructor(vm, compiled, globalObject, structure);
+        else
+            code.executable = linkBuiltinCodeFromText(vm, code);
+    }
+#endif
+    if (!constructor)
+        constructor = new (NotNull, allocateCell<JSPromiseConstructor>(vm)) JSPromiseConstructor(vm, code.executable, globalObject, structure);
     constructor->finishCreation(vm, promisePrototype);
 #if USE(BUN_JSC_ADDITIONS)
     constructor->addOwnInternalSlots(vm, globalObject);
@@ -95,6 +107,11 @@ Structure* JSPromiseConstructor::createStructure(VM& vm, JSGlobalObject* globalO
 }
 
 JSPromiseConstructor::JSPromiseConstructor(VM& vm, FunctionExecutable* executable, JSGlobalObject* globalObject, Structure* structure)
+    : Base(vm, executable, globalObject, structure)
+{
+}
+
+JSPromiseConstructor::JSPromiseConstructor(VM& vm, NativeExecutable* executable, JSGlobalObject* globalObject, Structure* structure)
     : Base(vm, executable, globalObject, structure)
 {
 }
@@ -230,14 +247,10 @@ static JSObject* promiseRaceSlow(JSGlobalObject* globalObject, CallFrame* callFr
     ASSERT(promiseResolveCallData.type != CallData::Type::None);
 
     std::optional<CachedCall> cachedCallHolder;
-    CachedCall* cachedCall = nullptr;
-    if (promiseResolveCallData.type == CallData::Type::JS) [[likely]] {
-        cachedCallHolder.emplace(globalObject, uncheckedDowncast<JSFunction>(promiseResolveValue), 1);
-        if (scope.exception()) [[unlikely]] {
-            callRejectWithScopeException();
-            return promise;
-        }
-        cachedCall = &cachedCallHolder.value();
+    CachedCall* cachedCall = CachedCall::tryEmplace(cachedCallHolder, globalObject, promiseResolveValue.getObject(), promiseResolveCallData, 1);
+    if (scope.exception()) [[unlikely]] {
+        callRejectWithScopeException();
+        return promise;
     }
 
     JSValue iterable = callFrame->argument(0);
@@ -348,7 +361,7 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncRace, (JSGlobalObject* globalObje
     return JSValue::encode(promise);
 }
 
-static JSObject* promiseAllSlow(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue thisValue)
+static JSObject* promiseAllSlow(JSGlobalObject* globalObject, JSValue thisValue, unsigned vectorLengthHint, NOESCAPE const auto& forEachElement)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -385,18 +398,13 @@ static JSObject* promiseAllSlow(JSGlobalObject* globalObject, CallFrame* callFra
     ASSERT(promiseResolveCallData.type != CallData::Type::None);
 
     std::optional<CachedCall> cachedCallHolder;
-    CachedCall* cachedCall = nullptr;
-    if (promiseResolveCallData.type == CallData::Type::JS) [[likely]] {
-        cachedCallHolder.emplace(globalObject, uncheckedDowncast<JSFunction>(promiseResolveValue), 1);
-        if (scope.exception()) [[unlikely]] {
-            callRejectWithScopeException();
-            return promise;
-        }
-        cachedCall = &cachedCallHolder.value();
+    CachedCall* cachedCall = CachedCall::tryEmplace(cachedCallHolder, globalObject, promiseResolveValue.getObject(), promiseResolveCallData, 1);
+    if (scope.exception()) [[unlikely]] {
+        callRejectWithScopeException();
+        return promise;
     }
 
-    JSValue iterable = callFrame->argument(0);
-    JSArray* values = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0, vectorLengthHintForCombinator(iterable));
+    JSArray* values = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0, vectorLengthHint);
     if (!values) [[unlikely]] {
         callReject(createOutOfMemoryError(globalObject));
         return promise;
@@ -406,7 +414,7 @@ static JSObject* promiseAllSlow(JSGlobalObject* globalObject, CallFrame* callFra
 
     uint64_t index = 0;
 
-    forEachInIterable(globalObject, iterable, [&](VM& vm, JSGlobalObject* globalObject, JSValue value) {
+    forEachElement([&](VM& vm, JSGlobalObject* globalObject, JSValue value) {
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         values->putDirectIndex(globalObject, index, jsUndefined());
@@ -472,6 +480,14 @@ static JSObject* promiseAllSlow(JSGlobalObject* globalObject, CallFrame* callFra
     }
 
     return promise;
+}
+
+static JSObject* promiseAllSlow(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue thisValue)
+{
+    JSValue iterable = callFrame->argument(0);
+    return promiseAllSlow(globalObject, thisValue, vectorLengthHintForCombinator(iterable), [&](const auto& visit) {
+        forEachInIterable(globalObject, iterable, visit);
+    });
 }
 
 JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -582,6 +598,174 @@ JSC_DEFINE_HOST_FUNCTION(promiseConstructorFuncAll, (JSGlobalObject* globalObjec
     return JSValue::encode(promise);
 }
 
+#if ENABLE(AOT)
+static ALWAYS_INLINE bool isDirectCall(uint32_t directCalls, uint64_t index)
+{
+    static_assert(AOT::SavedFrame::maxCombinatorElements == sizeof(directCalls) * 8);
+    return index < AOT::SavedFrame::maxCombinatorElements && (directCalls >> index & 1);
+}
+
+static JSPromise* promiseOfDirectCall(JSGlobalObject* globalObject, VM& vm, JSValue result)
+{
+    if (result.isCell()) {
+        JSCell* cell = result.asCell();
+        if (cell->structureID() == globalObject->promiseStructure()->id())
+            return uncheckedDowncast<JSPromise>(cell);
+        if (cell->classInfo() == AOT::SavedFrame::info())
+            return uncheckedDowncast<AOT::SavedFrame>(cell)->ensurePromise(globalObject, vm);
+    }
+    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    promise->fulfill(vm, result);
+    return promise;
+}
+
+static bool tryAddDirectCallWithoutPromise(JSGlobalObject* globalObject, VM& vm, JSPromiseCombinatorsGlobalContext* globalContext, uint32_t index, JSValue result)
+{
+    if (!globalObject->promiseThenWatchpointSet().isStillValid() || globalObject->promiseSpeciesWatchpointSet().state() != IsWatched) [[unlikely]]
+        return false;
+
+    if (result.isCell()) {
+        JSCell* cell = result.asCell();
+        if (cell->structureID() == globalObject->promiseStructure()->id())
+            return false;
+        if (cell->classInfo() == AOT::SavedFrame::info()) {
+            auto* savedFrame = uncheckedDowncast<AOT::SavedFrame>(cell);
+            if (savedFrame->promise())
+                return false;
+            globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);
+            savedFrame->setCombinatorElement(vm, globalContext, index);
+            return true;
+        }
+    }
+
+    globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);
+    globalObject->queueMicrotask(vm, InternalMicrotask::PromiseAllResolveJob, static_cast<uint8_t>(JSPromise::Status::Fulfilled), globalContext, result, jsNumber(index));
+    return true;
+}
+
+static JSPromise* promiseAllOfElementsFast(JSGlobalObject* globalObject, VM& vm, std::span<const EncodedJSValue> elements, uint32_t directCalls)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+
+    auto callReject = [&]() -> void {
+        Exception* exception = scope.exception();
+        ASSERT(exception);
+        TRY_CLEAR_EXCEPTION(scope, void());
+        scope.release();
+        promise->reject(vm, exception);
+    };
+
+    JSArray* values = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0, static_cast<unsigned>(elements.size()));
+    if (!values) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        callReject();
+        return promise;
+    }
+
+    JSPromiseCombinatorsGlobalContext* globalContext = JSPromiseCombinatorsGlobalContext::create(vm, promise, values, 1);
+
+    JSFunction* onRejected = nullptr;
+
+    auto addElement = [&](uint64_t index, JSValue value) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        values->putDirectIndex(globalObject, index, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, void());
+
+        if (isDirectCall(directCalls, index)) {
+            if (tryAddDirectCallWithoutPromise(globalObject, vm, globalContext, static_cast<uint32_t>(index), value))
+                return;
+            value = promiseOfDirectCall(globalObject, vm, value);
+        } else if (canSkipIntermediatePromise(globalObject, value)) {
+            globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);
+            scope.release();
+            globalObject->queueMicrotask(vm, InternalMicrotask::PromiseAllResolveJob, static_cast<uint8_t>(JSPromise::Status::Fulfilled), globalContext, value, jsNumber(index));
+            return;
+        }
+
+        JSPromise* nextPromise = JSPromise::resolvedPromise(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, void());
+
+        globalContext->setRemainingElementsCount(globalContext->remainingElementsCount() + 1);
+
+        if (nextPromise->isThenFastAndNonObservable()) [[likely]] {
+            auto* constructor = promiseSpeciesConstructor(globalObject, nextPromise);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (constructor == globalObject->promiseConstructor()) [[likely]] {
+                scope.release();
+                nextPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseAllResolveJob, globalContext, jsNumber(index));
+                return;
+            }
+        }
+
+        if (!onRejected)
+            onRejected = promise->createFirstRejectFunction(vm, globalObject);
+        JSValue then = nextPromise->get(globalObject, vm.propertyNames->then);
+        RETURN_IF_EXCEPTION(scope, void());
+        CallData thenCallData = getCallDataInline(then);
+        if (thenCallData.type == CallData::Type::None) [[unlikely]] {
+            throwTypeError(globalObject, scope, "then is not a function"_s);
+            return;
+        }
+
+        JSPromiseCombinatorsContext* context = JSPromiseCombinatorsContext::create(vm, globalContext, index);
+        auto* onFulfilled = JSFunctionWithFields::create(vm, globalObject, vm.promiseAllFulfillFunctionExecutable());
+        onFulfilled->setField(vm, JSFunctionWithFields::Field::PromiseAllContext, context);
+
+        auto thenArguments = WTF::toArray<EncodedJSValue>({
+            JSValue::encode(onFulfilled),
+            JSValue::encode(onRejected),
+        });
+        scope.release();
+        call(globalObject, then, thenCallData, nextPromise, ArgList { thenArguments.data(), thenArguments.size() });
+    };
+
+    for (uint64_t index = 0; index < elements.size(); ++index) {
+        addElement(index, JSValue::decode(elements[index]));
+        if (scope.exception()) [[unlikely]] {
+            callReject();
+            return promise;
+        }
+    }
+
+    uint64_t count = globalContext->remainingElementsCount() - 1;
+    globalContext->setRemainingElementsCount(count);
+    if (!count) {
+        scope.release();
+        promise->resolve(globalObject, vm, values);
+        if (scope.exception()) [[unlikely]] {
+            callReject();
+            return promise;
+        }
+    }
+
+    return promise;
+}
+
+JSPromise* promiseAllOfElements(JSGlobalObject* globalObject, std::span<const EncodedJSValue> elements, uint32_t directCalls)
+{
+    VM& vm = globalObject->vm();
+
+    if (isFastPromiseConstructor(globalObject, globalObject->promiseConstructor())) [[likely]]
+        return promiseAllOfElementsFast(globalObject, vm, elements, directCalls);
+
+    auto forEachElement = [&](const auto& visit) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        for (uint64_t index = 0; index < elements.size(); ++index) {
+            JSValue element = JSValue::decode(elements[index]);
+            if (isDirectCall(directCalls, index))
+                element = promiseOfDirectCall(globalObject, vm, element);
+            visit(vm, globalObject, element);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    };
+    JSObject* promise = promiseAllSlow(globalObject, globalObject->promiseConstructor(), static_cast<unsigned>(elements.size()), forEachElement);
+    return promise ? uncheckedDowncast<JSPromise>(promise) : nullptr;
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(promiseAllFulfillFunction, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -689,14 +873,10 @@ static JSObject* promiseAllSettledSlow(JSGlobalObject* globalObject, CallFrame* 
     ASSERT(promiseResolveCallData.type != CallData::Type::None);
 
     std::optional<CachedCall> cachedCallHolder;
-    CachedCall* cachedCall = nullptr;
-    if (promiseResolveCallData.type == CallData::Type::JS) [[likely]] {
-        cachedCallHolder.emplace(globalObject, uncheckedDowncast<JSFunction>(promiseResolveValue), 1);
-        if (scope.exception()) [[unlikely]] {
-            callRejectWithScopeException();
-            return promise;
-        }
-        cachedCall = &cachedCallHolder.value();
+    CachedCall* cachedCall = CachedCall::tryEmplace(cachedCallHolder, globalObject, promiseResolveValue.getObject(), promiseResolveCallData, 1);
+    if (scope.exception()) [[unlikely]] {
+        callRejectWithScopeException();
+        return promise;
     }
 
     JSValue iterable = callFrame->argument(0);
@@ -1151,14 +1331,10 @@ static JSObject* promiseAnySlow(JSGlobalObject* globalObject, CallFrame* callFra
     ASSERT(promiseResolveCallData.type != CallData::Type::None);
 
     std::optional<CachedCall> cachedCallHolder;
-    CachedCall* cachedCall = nullptr;
-    if (promiseResolveCallData.type == CallData::Type::JS) [[likely]] {
-        cachedCallHolder.emplace(globalObject, uncheckedDowncast<JSFunction>(promiseResolveValue), 1);
-        if (scope.exception()) [[unlikely]] {
-            callRejectWithScopeException();
-            return promise;
-        }
-        cachedCall = &cachedCallHolder.value();
+    CachedCall* cachedCall = CachedCall::tryEmplace(cachedCallHolder, globalObject, promiseResolveValue.getObject(), promiseResolveCallData, 1);
+    if (scope.exception()) [[unlikely]] {
+        callRejectWithScopeException();
+        return promise;
     }
 
     JSValue iterable = callFrame->argument(0);

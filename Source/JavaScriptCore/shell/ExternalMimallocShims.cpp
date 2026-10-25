@@ -28,6 +28,8 @@
 // repository that links the archives against the vendored mimalloc-obj (the jsc shell, testFFI)
 // supplies those entry points here, in terms of the vendored API.
 
+#include "config.h"
+
 #include <bmalloc/mimalloc.h>
 
 // The consumer's hook for a thread that goes idle: collect the heap, discard the free runs inside
@@ -36,4 +38,10 @@
 extern "C" void mi_on_thread_idle(void) noexcept
 {
     mi_theap_collect(mi_theap_get_default(), /* force */ false);
+}
+
+// A value above 1 skips the teardown at process exit, like the consumer's MI_NO_PROCESS_DETACH.
+__attribute__((constructor)) static void skipProcessTeardown()
+{
+    mi_option_set_default(mi_option_destroy_on_exit, 2);
 }

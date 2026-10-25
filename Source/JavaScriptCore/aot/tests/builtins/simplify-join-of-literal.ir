@@ -1,0 +1,108 @@
+# join on an array literal that nothing else uses is a concatenation of the elements and the separator, so constants fold and no array is made
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="stringsAndSeparator" parameters=[{type=string}, {type=string}, {type=string}] results=[{type=string}] {
+    v3 = NewArray v0, v1, v0 contents=string
+    v4 = CallBuiltin v3, v2 overload=ArrayPrototypeJoin/0
+    Return v4
+# CHECK-NOT: CallBuiltin
+# CHECK: v4: string = Strcat v0, v2, v1, v2, v0
+}
+
+function f1 name="noSeparator" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+    v2 = NewArray v0, v1 contents=anything
+    v3 = CallBuiltin v2 overload=ArrayPrototypeJoin/0
+    Return v3
+# CHECK: [[comma1]]: "," = String string=","
+# CHECK-NEXT: v3: string = Strcat v0, [[comma1]], v1
+}
+
+function f2 name="undefinedSeparator" parameters=[{type=string}, {type=boolean}] results=[{type=string}] {
+    v2 = NewArray v0, v1 contents=anything
+    v3 = Undefined
+    v4 = CallBuiltin v2, v3 overload=ArrayPrototypeJoin/0
+    Return v4
+# CHECK: [[comma2]]: "," = String string=","
+# CHECK-NEXT: v4: string = Strcat v0, [[comma2]], v1
+}
+
+function f3 name="nullishElementsAreEmpty" parameters=[{type=string}, {type=string}] results=[{type=string}] {
+    v2 = Undefined
+    v3 = Null
+    v4 = NewArray v0, v2, v3, v0 contents=anything
+    v5 = CallBuiltin v4, v1 overload=ArrayPrototypeJoin/0
+    Return v5
+# CHECK: v5: string = Strcat v0, v1, v1, v1, v0
+}
+
+function f4 name="oneElement" parameters=[{type=number}, {type=string}] results=[{type=string}] {
+    v2 = NewArray v0 contents=number
+    v3 = CallBuiltin v2, v1 overload=ArrayPrototypeJoin/0
+    Return v3
+# CHECK: v3: string = ToString v0
+}
+
+function f5 name="noElement" parameters=[{type=string}] results=[{type=string}] {
+    v1 = NewArray contents=anything
+    v2 = CallBuiltin v1, v0 overload=ArrayPrototypeJoin/0
+    Return v2
+# CHECK: v2: "" = String string=""
+}
+
+function f6 name="throughAssumedType" parameters=[{type=string}, {type=string}] results=[{type=string}] {
+    v2 = NewArray v0, v0 contents=string
+    v3 = AssumeType v2 castType=Array<string, proven, pristine[Storage, Names]>
+    v4 = CallBuiltin v3, v1 overload=ArrayPrototypeJoin/0
+    Return v4
+# CHECK: v4: string = Strcat v0, v1, v0
+}
+
+function f7 name="elementMayBeObject" parameters=[{type=string}, {type=anything}] results=[{type=string}] {
+    v2 = NewArray v0, v1 contents=anything
+    v3 = CallBuiltin v2, v0 overload=ArrayPrototypeJoin/0
+    Return v3
+# CHECK-NOT: Strcat
+# CHECK: v3: string = CallBuiltin v2, v0 overload=ArrayPrototypeJoin/0
+}
+
+function f8 name="elementMayBeUndefined" parameters=[{type=string}, {type=undefined|string}] results=[{type=string}] {
+    v2 = NewArray v0, v1 contents=anything
+    v3 = CallBuiltin v2, v0 overload=ArrayPrototypeJoin/0
+    Return v3
+# CHECK-NOT: Strcat
+# CHECK: v3: string = CallBuiltin v2, v0 overload=ArrayPrototypeJoin/0
+}
+
+function f9 name="elementMayBeSymbol" parameters=[{type=string}, {type=string|symbol}] results=[{type=string}] {
+    v2 = NewArray v0, v1 contents=anything
+    v3 = CallBuiltin v2, v0 overload=ArrayPrototypeJoin/0
+    Return v3
+# CHECK-NOT: Strcat
+# CHECK: v3: string = CallBuiltin v2, v0 overload=ArrayPrototypeJoin/0
+}
+
+function f10 name="literalHasSecondUse" parameters=[{type=string}, {type=anything}] results=[{type=string}] {
+    v2 = NewArray v0, v0 contents=string
+    v3 = Call v1, -, v2
+    v4 = CallBuiltin v2, v0 overload=ArrayPrototypeJoin/0
+    Return v4
+# CHECK-NOT: Strcat
+# CHECK: v4: string = CallBuiltin v2, v0 overload=ArrayPrototypeJoin/0
+}
+
+function f11 name="literalHasHole" parameters=[{type=string}] results=[{type=string}] {
+    v1 = NewArray v0, v0 contents=string holes=[1]
+    v2 = CallBuiltin v1, v0 overload=ArrayPrototypeJoin/0
+    Return v2
+# CHECK-NOT: Strcat
+# CHECK: v2: string = CallBuiltin v1, v0 overload=ArrayPrototypeJoin/0
+}
+
+function f12 name="arrayIsParameter" parameters=[{type=Array<string, pristine[Storage, Names]>}, {type=string}] results=[{type=string}] {
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeJoin/0
+    Return v2
+# CHECK-NOT: Strcat
+# CHECK: v2: string = CallBuiltin v0, v1 overload=ArrayPrototypeJoin/0
+}

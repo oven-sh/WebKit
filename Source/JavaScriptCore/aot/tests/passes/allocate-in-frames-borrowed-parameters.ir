@@ -1,0 +1,210 @@
+# What a callee does with a parameter comes from the table of borrowed parameters, which follows direct calls to any depth. What a callee reads out of an environment may go anywhere: no field of an environment holds a frame pointer
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# RUN(PLAN): frame-plan flow
+# RUN(TABLE): borrowed-parameters flow
+# OPTIONS: check=VerifyEachPass only-passes=ComputeEffectSummaries,AllocateInFrames
+# CHECK: L0 only in frames
+# CHECK-NEXT: L1 only in frames
+# CHECK-NEXT: L2 only in frames
+# CHECK-NEXT: f13 only in frames
+# CHECK-NEXT: f15 only in frames
+# CHECK-NEXT: f16 only in frames
+# CHECK-NEXT: f18 only in frames
+# CHECK-NEXT: f19 only in frames
+# CHECK-NEXT: f16 capture 0 holds frame pointers
+# CHECK-NEXT: f18 capture 0 holds frame pointers
+# CHECK-NEXT: layout L0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="readByClosure" fields=[{key="node" declared={type=anything}}]
+layout L1 kind=Environment name="readByCallee" fields=[{key="node" declared={type=anything}}]
+layout L2 kind=Environment name="advancedByClosure" fields=[{key="node" declared={type=anything}}]
+layout L3 kind=Environment name="capturedByInnerClosure" fields=[{key="node" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect function=f1
+    v3 = CallDirect function=f2
+    v4 = CallDirect function=f3
+    v5 = CallDirect v1 function=f4
+    v6 = CallDirect v1 function=f5
+    v7 = CallDirect v1 function=f6
+    v8 = CallDirect v1 function=f7
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+
+function f1 name="calledTwoCallsDeep" results=[{type=anything}] {
+    v0 = NewClosure function=f13
+    v1 = CallDirect v0 function=f8
+    Return v1
+}
+# CHECK-LABEL: function f1 name="calledTwoCallsDeep"
+# CHECK: = NewClosure function=f13 {{*}}storage=Frame
+# PLAN-LABEL: function f1
+# PLAN-NEXT: v0: Frame
+
+function f2 name="storedTwoCallsDeep" results=[{type=anything}] {
+    v0 = NewClosure function=f14
+    v1 = CallDirect v0 function=f10
+    Return v1
+}
+# CHECK-LABEL: function f2 name="storedTwoCallsDeep"
+# CHECK-NOT: storage=
+# PLAN-LABEL: function f2
+# PLAN-NEXT: v0: Heap Escapes by v1(0)
+
+function f3 name="calledByRecursiveCallee" results=[{type=anything}] {
+    v0 = NewClosure function=f15
+    v1 = CallDirect v0 function=f12
+    Return v1
+}
+# CHECK-LABEL: function f3 name="calledByRecursiveCallee"
+# CHECK: = NewClosure function=f15 {{*}}storage=Frame
+# PLAN-LABEL: function f3
+# PLAN-NEXT: v0: Frame
+
+function f4 name="closureReturnsLoadedObject" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure v1 function=f16
+    v3 = CallDirect v2 function=f9
+    Return v3
+}
+# CHECK-LABEL: function f4 name="closureReturnsLoadedObject"
+# CHECK: = NewObject {{*}}layout=L0 {{*}}storage=Frame
+# CHECK: = NewClosure v1 function=f16 {{*}}storage=Frame
+# PLAN-LABEL: function f4
+# PLAN-NEXT: v1: Frame
+# PLAN-NEXT: v2: Frame
+
+function f5 name="calleeReturnsLoadedObject" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = CallDirect v1 function=f17
+    Return v2
+}
+# CHECK-LABEL: function f5 name="calleeReturnsLoadedObject"
+# CHECK: = NewObject {{*}}layout=L1 {{*}}storage=Frame
+# PLAN-LABEL: function f5
+# PLAN-NEXT: v1: Frame
+
+function f6 name="closureAdvancesVariable" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = NewClosure v1 function=f18
+    v3 = CallDirect v2 function=f8
+    v4 = GetEnvironmentField v1 layout=L2 field=0
+    Return v4
+}
+# CHECK-LABEL: function f6 name="closureAdvancesVariable"
+# CHECK: = NewObject {{*}}layout=L2 {{*}}storage=Frame
+# CHECK: = NewClosure v1 function=f18 {{*}}storage=Frame
+# PLAN-LABEL: function f6
+# PLAN-NEXT: v1: Frame
+# PLAN-NEXT: v2: Frame
+
+function f7 name="closureReturnsInnerClosure" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L3 fields=[0]
+    v2 = NewClosure v1 function=f19
+    v3 = CallDirect v2 function=f9
+    Return v3
+}
+# The inner closure outlives the activation and holds the environment itself, not something read out of it.
+# CHECK-LABEL: function f7 name="closureReturnsInnerClosure"
+# CHECK-NOT: layout=L3 {{*}}storage=
+# CHECK: = NewClosure v1 function=f19 {{*}}storage=Frame
+# PLAN-LABEL: function f7
+# PLAN-NEXT: v1: Heap MaterializationDoesNotPay
+# PLAN-NEXT: v2: Frame
+
+function f8 name="passesParameterOn" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f9
+    Return v1
+}
+# CHECK-LABEL: function f8 name="passesParameterOn"
+# PLAN-LABEL: function f8
+# TABLE: f8: 0 borrowed
+# TABLE-NOT: contents-leak
+
+function f9 name="callsParameter" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+# TABLE: f9: 0 borrowed
+# TABLE-NOT: contents-leak
+
+function f10 name="passesParameterToStore" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f11
+    Return v1
+}
+# TABLE: f10: 0 leaks
+
+function f11 name="storesParameter" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="holder" [isFreeName]
+    PropSet v2, v0 key="callback" mode=Strict
+    Return
+}
+# TABLE: f11: 0 leaks
+
+function f12 name="callsParameterUntilFalse" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect v0 function=f12
+    Return v3
+  b2():
+    Return v1
+}
+# TABLE: f12: 0 borrowed
+# TABLE-NOT: contents-leak
+
+function f13 name="callback" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f14 name="callback" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f15 name="hasMore" kind=Arrow results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    Return v1
+}
+
+function f16 name="returnsNode" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}
+# TABLE: f16: 0 borrowed contents-leak
+
+function f17 name="returnsNode" kind=Arrow captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=0
+    Return v1
+}
+# TABLE: f17: 0 borrowed contents-leak
+
+function f18 name="advances" kind=Arrow captures=[{type=env L2}] results=[{type=anything}] {
+  b0(v0: env L2):
+    v1 = GetEnvironmentField v0 layout=L2 field=0
+    v2 = PropGet v1 key="next"
+    PutEnvironmentField v0, v2 layout=L2 field=0
+    Return
+}
+# TABLE: f18: 0 borrowed contents-leak
+
+function f19 name="makesInnerClosure" kind=Arrow captures=[{type=env L3}] results=[{type=anything}] {
+  b0(v0: env L3):
+    v1 = NewClosure v0 function=f20
+    Return v1
+}
+# TABLE: f19: 0 leaks
+
+function f20 name="returnsNode" kind=Arrow captures=[{type=env L3}] results=[{type=anything}] {
+  b0(v0: env L3):
+    v1 = GetEnvironmentField v0 layout=L3 field=0
+    Return v1
+}

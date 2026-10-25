@@ -1,0 +1,16 @@
+# With the rule disabled the result of an async function goes through the stub
+# FORM: Prepared
+# OPTIONS: heat=only-loops-are-hot disable=rule:FreshPromiseFulfillment
+# STATISTIC: FreshPromiseFulfillmentGroups = 0
+# RUN: pass Select
+# CHECK: v3: anything = ReturnAsyncResult v1, v2
+# CHECK-NEXT: Return v3
+# CHECK-NOT: FulfillFreshPromise
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="number-with-promise" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=1} {
+    v2 = Integer integer=7
+    v3 = ReturnAsyncResult v1, v2
+    Return v3
+}
+function f1 name="number-with-promise" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=1}

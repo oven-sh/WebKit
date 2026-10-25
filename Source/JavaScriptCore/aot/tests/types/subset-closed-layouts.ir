@@ -1,0 +1,31 @@
+# A layout set is inside another when all its members are, and overlaps it when they share one. Only object holds every set.
+# RUN: subset
+# CHECK: t0 <= t1: no overlaps: yes
+# CHECK: t0 <= t2: no overlaps: yes
+# CHECK: t0 <= t4: no overlaps: no
+# CHECK: t0 <= t5: yes overlaps: yes
+# CHECK: t0 <= t6: yes overlaps: yes
+# CHECK: t0 <= t7: yes overlaps: yes
+# CHECK: t1 <= t0: yes overlaps: yes
+# CHECK: t1 <= t2: no overlaps: yes
+# CHECK: t1 <= t3: no overlaps: yes
+# CHECK: t1 <= t4: no overlaps: no
+# CHECK: t2 <= t0: yes overlaps: yes
+# CHECK: t2 <= t1: yes overlaps: yes
+# CHECK: t2 <= t3: yes overlaps: yes
+# CHECK: t2 <= t4: no overlaps: no
+# CHECK: t3 <= t0: no overlaps: yes
+# CHECK: t3 <= t2: no overlaps: yes
+# CHECK: t4 <= t3: yes overlaps: yes
+# CHECK: t5 <= t0: no overlaps: yes
+# CHECK: t6 <= t0: yes overlaps: yes
+# CHECK: t7 <= t0: no overlaps: yes
+# CHECK: t7 <= t5: no overlaps: yes
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Shape"
+layout L1 name="Circle" supertypes=[L0]
+layout L2 name="Square" supertypes=[L0]
+layout L3 name="Other"
+function f0 name="types" parameters=[{type=L0|L1|L2}, {type=L1|L2}, {type=L1}, {type=L1|L3}, {type=L3}, {type=object}, {type=L2|L0|L1}, {type=undefined|L0|L1|L2}] results=[{type=undefined}]

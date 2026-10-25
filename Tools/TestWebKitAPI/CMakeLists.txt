@@ -73,6 +73,7 @@ set(TestWTF_SOURCES
     Tests/WTF/DataMutex.cpp
     Tests/WTF/DateMath.cpp
     Tests/WTF/Deque.cpp
+    Tests/WTF/Dominators.cpp
     Tests/WTF/DominatorsTests.cpp
     Tests/WTF/EmbeddedFixedVector.cpp
     Tests/WTF/EnumSet.cpp
@@ -105,6 +106,7 @@ set(TestWTF_SOURCES
     Tests/WTF/LifecycleLogger.cpp
     Tests/WTF/LineEnding.cpp
     Tests/WTF/ListHashSet.cpp
+    Tests/WTF/Liveness.cpp
     Tests/WTF/Lock.cpp
     Tests/WTF/Logger.cpp
     Tests/WTF/Markable.cpp
@@ -142,6 +144,7 @@ set(TestWTF_SOURCES
     Tests/WTF/RunLoop.cpp
     Tests/WTF/SHA1.cpp
     Tests/WTF/SIMDHelpers.cpp
+    Tests/WTF/SSACalculator.cpp
     Tests/WTF/SafeStrerror.cpp
     Tests/WTF/SaturatingArithmeticOperations.cpp
     Tests/WTF/Scope.cpp
@@ -156,6 +159,7 @@ set(TestWTF_SOURCES
     Tests/WTF/SparseBitVector.cpp
     Tests/WTF/StackTraceTest.cpp
     Tests/WTF/StdLibExtrasTests.cpp
+    Tests/WTF/Stopwatch.cpp
     Tests/WTF/StringBuilder.cpp
     Tests/WTF/StringCommon.cpp
     Tests/WTF/StringConcatenate.cpp
@@ -215,7 +219,31 @@ set(TestWTF_FRAMEWORKS
     bmalloc
 )
 
+# Same as jsc: the static archives leave mi_* unresolved under USE_EXTERNAL_MIMALLOC.
+if (USE_EXTERNAL_MIMALLOC)
+    list(APPEND TestWTF_SOURCES ${JAVASCRIPTCORE_DIR}/shell/ExternalMimallocShims.cpp)
+    list(APPEND TestWTF_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
+endif ()
+
+# Same as jsc: the ICU data of the release lanes has a zstd frame per item (Source/JavaScriptCore/shell/CMakeLists.txt).
+if (BUN_ICU_ZSTD_SOURCE_DIR)
+    file(GLOB TestWTF_ZSTD_DECODER_SOURCES
+        ${BUN_ICU_ZSTD_SOURCE_DIR}/common/*.c
+        ${BUN_ICU_ZSTD_SOURCE_DIR}/decompress/*.c
+    )
+    set_source_files_properties(${TestWTF_ZSTD_DECODER_SOURCES} PROPERTIES COMPILE_DEFINITIONS "ZSTD_DISABLE_ASM=1;ZSTD_LEGACY_SUPPORT=0;DEBUGLEVEL=0")
+    list(APPEND TestWTF_SOURCES Helpers/CompressedICUData.cpp)
+    list(APPEND TestWTF_C_SOURCES ${TestWTF_ZSTD_DECODER_SOURCES})
+    list(APPEND TestWTF_PRIVATE_INCLUDE_DIRECTORIES ${BUN_ICU_ZSTD_SOURCE_DIR})
+endif ()
+
 WEBKIT_EXECUTABLE_DECLARE(TestWTF)
+
+# It prints with std::cout. From libstdc++ 13 on the library constructs the streams, before that each unit that includes
+# <iostream> did. CI runs the tests on a machine whose libstdc++ may be older than the one that this is compiled against.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND COMPILER_IS_GCC_OR_CLANG)
+    target_link_options(TestWTF PRIVATE -static-libstdc++)
+endif ()
 
 # TestJavaScriptCore definitions
 if (ENABLE_JAVASCRIPTCORE)
@@ -288,6 +316,7 @@ if (ENABLE_WEBCORE)
         Tests/WebCore/Decimal.cpp
         Tests/WebCore/DigitalCredentialsRequestDataBuilder.cpp
         Tests/WebCore/DisplayListRecorderTests.cpp
+        Tests/WebCore/DisplayRefreshMonitorManager.cpp
         Tests/WebCore/DocumentOrder.cpp
         Tests/WebCore/FidoHidMessageTest.cpp
         Tests/WebCore/FileMonitor.cpp

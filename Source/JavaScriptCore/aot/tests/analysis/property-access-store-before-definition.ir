@@ -1,0 +1,41 @@
+# class WithSetter { constructor() { this.guarded = 1 }  set guarded(value) { .. } }  class DefinesOverSetter extends WithSetter { guarded = 2 }
+# Every read finds the field of the subclass filled: its definition runs before the object leaks. The store in the base constructor runs before the definition, finds the slot empty
+# and goes to what the object inherits, so it creates the field only where the object inherits nothing under the name. That a lookup always finds the slot filled says nothing about that.
+# FORM: Prepared
+# RUN: property-access
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="WithSetter" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="guarded" kind=Setter function=f2 mutability=Fixed}] namedMembers=[{key="guarded" kind=Setter function=f2 mutability=Fixed}]}
+layout L1 kind=Instance name="DefinesOverSetter" base=L0 constructor=f1 fields=[{key="guarded" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="free" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L2 kind=Instance name="NamesNotComplete" constructor=f3 fields=[{key="filled" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="WithSetter" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="DefinesOverSetter" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f2 name="guarded" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+function f3 name="NamesNotComplete" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+
+function f4 name="store-meets-inherited-setter" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="guarded"
+    Return
+}
+function f5 name="definition-passes-the-setter" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
+    PropDefine v0, v1 key="guarded"
+    Return
+}
+function f6 name="nothing-inherited-by-the-lists-of-the-classes" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="free"
+    Return
+}
+function f7 name="nothing-inherited-while-the-guards-hold" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="filled"
+    Return
+}
+function f8 name="reads-find-the-field" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="guarded"
+    Return
+}
+# CHECK: F4 v2 PropSet [[guarded]]: form=Slot level=Expected operation=PutSlot receivers=[L1] proofs=[SlotFilled] testsDeclaredType storedValueFits missPath member=(Field level=Proven holder=L1 field=0)
+# CHECK-NEXT: F5 v2 PropDefine [[guarded]]: form=Slot level=Proven operation=PutSlotOrAdd receivers=[L1] storedValueFits member=(Field level=Proven holder=L1 field=0)
+# CHECK-NEXT: F6 v2 PropSet [[free]]: form=Slot level=Proven operation=PutSlotOrAdd receivers=[L1] storedValueFits member=(Field level=Proven holder=L1 field=1)
+# CHECK-NEXT: F7 v2 PropSet [[filled]]: form=Slot level=Expected operation=PutSlotOrAdd receivers=[L2] conditions=[MemberUnchanged(L2, Prototype, [[filled]]), PrototypeLinkUnchanged(L2, Prototype)] storedValueFits missPath member=(Field level=Proven holder=L2 field=0)
+# CHECK-NEXT: F8 v1 PropGet [[guarded]]: form=Slot level=Proven operation=GetSlot receivers=[L1] member=(Field level=Proven holder=L1 field=0)

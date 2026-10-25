@@ -1,0 +1,44 @@
+# The hidden field that holds the environment of the closures an object makes on demand stays a narrow reference, also where the cell has padding that a reference could be widened into:
+# the layout table hands the slot to the run time as Cell32
+# FORM: AsRead
+# OPTIONS: references=narrow
+# RUN: plan-slots layouts
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="state" fields=[{key="state" declared={type=anything}}]
+layout L1 name="Store" fields=[{key="get" declared={type=function} flags=[IsRequired]}, {key="set" declared={type=function} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f3
+    v3 = PropGet v0 key="publish" [isFreeName]
+    v4 = Call v3, -, v2
+    v5 = CallDirect v4 function=f3
+    v6 = Call v3, -, v5
+    Return
+}
+function f1 name="get" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}
+function f2 name="set" kind=Arrow captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Return
+}
+function f3 name="make" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure v1 function=f1
+    v3 = NewClosure v1 function=f2
+    v4 = NewObject -, v2, v3, v0 layout=L1 fields=[0, 1, 2]
+    v5 = FinishObject v4
+    Return v5
+}
+
+# CHECK-LABEL: L1 CompiledObject size=48
+# CHECK-NEXT: .0 "get" DeferredClosure @24 f1 capturesEnvironment
+# CHECK-NEXT: .1 "set" DeferredClosure @28 f2 capturesEnvironment
+# CHECK-NEXT: .2 "value" JSValue @16
+# CHECK-NEXT: .3 - Cell32 @32

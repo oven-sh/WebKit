@@ -1,0 +1,38 @@
+# [3, 1].sort(compare), where the library's sort hands the comparator to sortValues, a function of its file
+# The code behind Array.prototype.sort (runtimefunction 131088) is entered with operands nobody knows and hands them to a helper. The file does not export the helper, and every function of the file
+# that the table names stands behind a described built-in, so nobody else can name it: the comparator that the helper calls is an operand of a call whose records say what it is called with.
+# No code that nobody compiles writes anything, and `compare` is in nobody's hands.
+# In a file with a function that no record describes: helper-in-a-file-with-a-function-that-no-record-describes-calls-unknown-code.ir
+# LIBRARY: own
+# RUN: valueflow-why flag=h6 escaped=f2
+# CHECK: flag=h6
+# CHECK-NEXT: not held
+# CHECK: escaped=f2
+# CHECK-NEXT: not held
+# RUN(REACHED): valueflow-solve unreached
+# REACHED-NOT: unreached f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="array-sort.ts" displayPath="array-sort.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=131088 function=f1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=3
+    v1 = NewArray v0 contents=anything
+    v2 = NewClosure function=f2
+    v3 = PropGet v1 key="sort"
+    v4 = Call v3, v1, v2 calleeKey="sort"
+    Return
+}
+function f1 name="sort" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=131088 parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = NewClosure function=f3
+    v3 = Call v2, -, v0, v1
+    Return v0
+}
+function f2 name="compare" module=m0 kind=Arrow parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f3 name="sortValues" module=m1 role=Library parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v1, -, v0, v0
+    Return v2
+}

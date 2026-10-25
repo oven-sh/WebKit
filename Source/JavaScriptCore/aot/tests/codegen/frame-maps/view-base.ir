@@ -1,0 +1,42 @@
+# A string that is read through a range or as a flat string after a suspension is a root, and the bounds of the range and the flat string of before the suspension are not
+# RUN: frame-maps
+# CHECK: f0:
+# CHECK-NEXT: v9: v1:cell
+# CHECK-NOT: v
+# CHECK: f1:
+# CHECK-NEXT: v8: v1:cell
+# CHECK-NOT: v
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 declared={type=anything} initialization=Undefined
+function f0 name="view-base" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=string}, {type=int[0, 2147483647]}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f0 promiseType=Promise promiseParameter=3} {
+  b0(v0: anything @JSValue, v1: string @Cell, v2: int[0, 2147483647] @Int32, v3: undefined|Promise @JSValue):
+    v4 @Int32 = Integer integer=0
+    v5 @Int32 = Integer integer=1
+    v6 @Void = StringRange v2, v4, v5 method=Slice
+    v7 @Int32 = ResultAt v6 index=0
+    v8 @Int32 = ResultAt v6 index=1
+    v9 @JSValue = AwaitBySavingFrame v0, v3
+    v10 @Boolean = StringRangeEqualsLiteral v1, v7, v8 literal="a"
+    v11 @JSValue = Box v10
+    PutModuleVariable v11 variable=g0
+    v13 @JSValue = Undefined
+    Return v13
+}
+function f1 name="flattened-again-after-resume" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=string}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f1 promiseType=Promise promiseParameter=2} {
+  b0(v0: anything @JSValue, v1: string @Cell, v2: undefined|Promise @JSValue):
+    v3 @Cell = FlattenString v1
+    v4 @Int32 = Integer integer=0
+    v5 @Double = StringRangeCodeUnitOrNaN v3, -, -, v4
+    v6 @JSValue = Box v5
+    PutModuleVariable v6 variable=g0
+    v8 @JSValue = AwaitBySavingFrame v0, v2
+    v9 @Cell = FlattenString v1
+    v10 @Double = StringRangeCodeUnitOrNaN v9, -, -, v4
+    v11 @JSValue = Box v10
+    PutModuleVariable v11 variable=g0
+    v13 @JSValue = Undefined
+    Return v13
+}
+function f2 name="view-base" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}, {type=string}, {type=int[0, 2147483647]}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f0 promiseType=Promise promiseParameter=3}
+function f3 name="flattened-again-after-resume" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}, {type=string}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f3 body=f1 promiseType=Promise promiseParameter=2}

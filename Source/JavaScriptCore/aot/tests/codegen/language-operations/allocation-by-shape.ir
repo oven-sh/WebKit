@@ -1,0 +1,51 @@
+# An object and a closure on the heap come from their stubs in code of every shape
+# FORM: AsRead
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end disable=pass:InlineCalls,pass:SinkAllocations,pass:SplitFreshResults
+# RUN: generate-code calls
+# The module body runs once: compact.
+# CHECK: f0: size=
+# CHECK: stub AllocateCell.{{*}} x1
+# CHECK: stub New{{*}}Closure{{*}}.n1 x1
+# CHECK: f1: size=
+# CHECK-NEXT: stub AllocateCell.{{*}} x1
+# CHECK-NEXT: stub New{{*}}Closure{{*}}.n1 x1
+# CHECK-NEXT: f2: size=
+# CHECK-NOT: operation operationAOTAllocateSlow
+# CHECK-NOT: operation operationAOTNewClosureSlow
+# CHECK: stub AllocateCell.
+# CHECK-NEXT: stub New{{*}}Closure{{*}}.n1
+# CHECK: f3: size=
+
+layout L0 name="Node" fields=[{key="next" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = NewClosure v2 function=f3
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="register" [isFreeName]
+    v6 = Call v5, -, v0, v1, v3
+    Return v6
+}
+function f1 name="balanced" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure v1 function=f3
+    Return v2
+}
+function f2 name="fast" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToBoolean v0
+    Jump -> next b1(v0)
+  b1(v2: anything):
+    LoopHint
+    v4 = NewObject -, v2 layout=L0 fields=[0]
+    v5 = NewClosure v4 function=f3
+    Branch v1 -> taken b1(v5), notTaken b2()
+  b2():
+    Return v5
+}
+function f3 name="captures" captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

@@ -1,0 +1,88 @@
+# A value that is invariant in a loop and proven a string only inside it is tested on the loop entry and flattened there if it is a string
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: HoistStringCharactersGroups = 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="checked-in-every-iteration" parameters=[{type=undefined|string}, {type=number}] results=[{type=anything}] {
+    v2 = Integer integer=0
+    v3 = Integer integer=1
+    v4 = Undefined
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = RequireObjectCoercible v0
+    v10 = CallBuiltin v9, v5 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v11 = Add v5, v3
+    Jump -> next b1(v11, v10)
+  b3():
+    Return v6
+# CHECK-NOT: LoopHint
+# CHECK: [[isString0]]: boolean = TypeTest v0 testedType=string
+# CHECK-NEXT: Branch [[isString0]] -> taken [[stringArm0]](| 0), notTaken [[otherArm0]](| 0)
+# CHECK: LoopHint
+# CHECK-NOT: FlattenString
+# CHECK: = RequireObjectCoercible v0
+# CHECK-NEXT: : number = StringRangeCodeUnitOrNaN [[flat0]], -, -,
+# CHECK: [[stringArm0]]([[string0]]: string):
+# CHECK-NEXT: [[flattened0]]: flatstring = FlattenString [[string0]]
+# CHECK-NEXT: Jump -> next [[join0]]([[flattened0]])
+# CHECK: [[otherArm0]]({{*}}: undefined) frequency=Unlikely:
+# CHECK-NEXT: [[nothing0]]: flatstring = Unspecified valueType=flatstring
+# CHECK-NEXT: Jump -> next [[join0]]([[nothing0]])
+# CHECK: [[join0]]([[flat0]]: flatstring):
+# CHECK-NEXT: Jump -> next
+}
+
+function f1 name="tested-in-every-iteration" parameters=[{type=undefined|string}, {type=number}] results=[{type=anything}] {
+    v2 = Integer integer=0
+    v3 = Integer integer=1
+    v4 = Undefined
+    Jump -> next b1(v2, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(), notTaken b5()
+  b2():
+    v9 = TypeTest v0 testedType=undefined
+    Branch v9 -> taken b4(v6), notTaken b3(| 0)
+  b3(v10):
+    v11 = CallBuiltin v10, v5 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    Jump -> next b4(v11)
+  b4(v12):
+    v13 = Add v5, v3
+    Jump -> next b1(v13, v12)
+  b5():
+    Return v6
+# CHECK-NOT: LoopHint
+# CHECK: = TypeTest v0 testedType=string
+# CHECK: LoopHint
+# CHECK: : number = StringRangeCodeUnitOrNaN [[flat1]], -, -,
+# CHECK-COUNT-1: = FlattenString
+# CHECK: ([[flat1]]: flatstring):
+}
+
+function f2 name="value-varies" parameters=[{type=undefined|string}, {type=undefined|string}, {type=number}] results=[{type=anything}] {
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    v5 = Undefined
+    Jump -> next b1(v3, v5, v0)
+  b1(v6, v7, v8):
+    LoopHint
+    v10 = Less v6, v2
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    v11 = RequireObjectCoercible v8
+    v12 = CallBuiltin v11, v6 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v13 = Add v6, v4
+    Jump -> next b1(v13, v12, v1)
+  b3():
+    Return v7
+# CHECK-NOT: FlattenString
+# CHECK-NOT: TypeTest
+# CHECK: : number = StringRangeCodeUnitOrNaN v11, -, -, v6
+# CHECK-NOT: FlattenString
+}

@@ -1,0 +1,23 @@
+# function make(s: string) { return { v: s } }  make("x"); make(1.5 as any)
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Made" fields=[{key="v" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Made" fields=[{key="v" declared={type=string} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = String string="x"
+    v1 = Double number=1.5
+    v2 = NewClosure function=f1
+    v3 = Call v2, -, v0
+    v4 = Call v2, -, v1
+    v5 = NewArray v3, v4 contents=anything holes=[]
+    Return v5
+}
+function f1 name="make" parameters=[{type=string flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0):
+    v1 = Check v0 castType=string
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    Return v3
+}

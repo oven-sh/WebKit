@@ -1,0 +1,67 @@
+# A tail call copied to a site that is a tail call has its own casts first and then the casts of the site
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="withoutBody" parameters=[{type=number}] results=[{type=anything}]
+
+function f1 name="castsToNumberOrString" parameters=[{type=number}] results=[{type=number|string}] {
+    v1 = CallDirect v0 function=f0
+    ReturnCall v1 casts=[{declared={type=number|string} resolution=Assume}]
+}
+
+function f2 name="castsNothing" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f0
+    ReturnCall v1
+}
+
+function f3 name="returnsOrTailCalls" parameters=[{type=number}, {type=boolean}, {type=number|string}] results=[{type=number|string}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect v0 function=f0
+    ReturnCall v3 casts=[{declared={type=number|string} resolution=Assume}]
+  b2():
+    Return v2
+}
+
+function f4 name="bothCast" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f1
+    ReturnCall v1 casts=[{declared={type=number} resolution=Assume}]
+}
+# CHECK-LABEL: name="bothCast"
+# CHECK-NOT: function=f1
+# CHECK: [[call4]]: anything = CallDirect v0 function=f0
+# CHECK-NEXT: ReturnCall [[call4]] casts=[{declared={type=number|string} resolution=Assume}, {declared={type=number} resolution=Assume}]
+
+function f5 name="onlySiteCasts" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f2
+    ReturnCall v1 casts=[{declared={type=number} resolution=Assume}]
+}
+# CHECK-LABEL: name="onlySiteCasts"
+# CHECK-NOT: function=f2
+# CHECK: [[call5]]: anything = CallDirect v0 function=f0
+# CHECK-NEXT: ReturnCall [[call5]] casts=[{declared={type=number} resolution=Assume}]
+
+function f6 name="onlyCalleeCasts" parameters=[{type=number}] results=[{type=number|string}] {
+    v1 = CallDirect v0 function=f1
+    ReturnCall v1
+}
+# CHECK-LABEL: name="onlyCalleeCasts"
+# CHECK-NOT: function=f1
+# CHECK: [[call6]]: anything = CallDirect v0 function=f0
+# CHECK-NEXT: ReturnCall [[call6]] casts=[{declared={type=number|string} resolution=Assume}]
+
+function f7 name="calleeAlsoReturns" parameters=[{type=number}, {type=boolean}, {type=number|string}] results=[{type=number}] {
+    v3 = CallDirect v0, v1, v2 function=f3
+    ReturnCall v3 casts=[{declared={type=number} resolution=Assume}]
+}
+# CHECK-LABEL: name="calleeAlsoReturns"
+# CHECK-NOT: function=f3
+# CHECK: [[after7]](v3: number|string):
+# CHECK-NEXT: [[cast7]]: number = AssumeType v3 castType=number
+# CHECK-NEXT: Return [[cast7]]
+# CHECK: [[call7]]: anything = CallDirect v0 function=f0
+# CHECK-NEXT: ReturnCall [[call7]] casts=[{declared={type=number|string} resolution=Assume}, {declared={type=number} resolution=Assume}]
+# CHECK: Jump -> next [[after7]](v2)

@@ -1,0 +1,99 @@
+# A check of a parameter that flow has left at the head of a function is a test that every call would run, also a call that has proven its arguments.
+# So the function becomes three. Its own id holds the tests alone. A direct caller whose arguments pass every test by their types takes the tests in, and they fold there.
+# Where all pass it calls the body, which exists once and takes the tested types for proven. Where one fails it calls the generic version, which takes the values as they came.
+# FORM: Prepared
+# RUN: pass SplitBehindEntryChecks VerifyProgram
+# STATISTIC: FunctionsSplitBehindEntryChecks = 2
+# STATISTIC: ResultsProvenBehindEntryChecks = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Parameter
+typesite w2 module=m0 position=30 kind=Result
+typesite w3 module=m0 position=60 kind=This
+typesite w4 module=m0 position=50 kind=Field
+typesite w5 module=m0 position=90 kind=Parameter
+typesite w6 module=m0 position=110 kind=Parameter
+typesite w7 module=m0 position=130 kind=Parameter
+layout L0 kind=Instance name="Meter" constructor=f5 fields=[{key="total" declared={type=number site=w4}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    Return
+# CHECK: = NewClosure function=f1
+# CHECK-NEXT: = NewClosure function=f2
+}
+
+# Flow has proven the second parameter, so there is one test. The sum of two numbers is a number whatever the callers do, so the result of the body is proven again
+function f1 name="add" module=m0 position=5 flags=[IsChecked] length=2 parameters=[{type=number site=w0 flags=[IsExpected]}, {type=number site=w1}] results=[{type=number site=w2 flags=[IsExpected]}] {
+  b0(v0: anything ~ number, v1: number):
+    v2 = Check v0 castType=number site=w0
+    v3 = Check v1 castType=number site=w1
+    v4 = Add v2, v3
+    Return v4
+}
+# CHECK-LABEL: function f1 name="add" module=m0 position=5 role=EntryChecks flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number site=w0 flags=[IsExpected]}, {type=number site=w1}] results=[{type=number site=w2 flags=[IsExpected]}]
+# CHECK: b0(v0: anything, v1: number):
+# CHECK-NEXT: [[isNumber]]: boolean = TypeTest v0 testedType=number
+# CHECK-NEXT: Branch [[isNumber]] -> taken [[passed]](| 0), notTaken [[failed]](| 0)
+# CHECK-NEXT: [[passed]]([[number]]: number):
+# CHECK-NEXT: [[sum]]: number = CallDirect [[number]], v1 function=[[addBody]]
+# CHECK-NEXT: ReturnCall [[sum]]
+# CHECK: frequency=Unlikely:
+# CHECK: [[other]]: anything ~ number = CallDirect v0, v1 function=[[addFallback]]
+# CHECK-NEXT: ReturnCall [[other]]
+
+# `this` of a method is a parameter like any other
+function f2 name="read" module=m0 position=55 kind=Method flags=[HasThis, IsChecked] thisType={type=L0 site=w3 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = Check v0 castType=L0 site=w3
+    v2 = PropGet v1 key="total"
+    Return v2
+}
+# CHECK-LABEL: function f2 name="read" module=m0 position=55 kind=Method role=EntryChecks
+# CHECK: = TypeTest v0 testedType=L0
+
+# Every check folds: the function stays as it is
+function f3 name="proven" module=m0 position=85 flags=[IsChecked] length=1 parameters=[{type=number site=w5}] results=[{type=anything}] {
+    v1 = Check v0 castType=number site=w5
+    Return v1
+}
+# CHECK-LABEL: function f3 name="proven" module=m0 position=85 flags=[IsChecked]
+# CHECK-NOT: role=
+# CHECK: = Check v0 castType=number site=w5
+
+# Nobody uses what the check lets through, so nothing is tested
+function f4 name="ignores" module=m0 position=105 flags=[IsChecked] length=1 parameters=[{type=number site=w6 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ number):
+    v1 = Check v0 castType=number site=w6
+    Return
+}
+# CHECK-LABEL: function f4 name="ignores" module=m0 position=105 flags=[IsChecked]
+# CHECK-NOT: role=
+# CHECK: = Check v0
+
+# A constructor and a coroutine stay whole
+function f5 name="Meter" module=m0 position=125 kind=BaseConstructor flags=[HasNewTarget, IsChecked] length=1 parameters=[{type=number site=w7 flags=[IsExpected]}] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything, v1: anything ~ number):
+    v2 = Check v1 castType=number site=w7
+    v3 = GetConstructPrototype v0 layout=L0
+    v4 = NewObject v3 layout=L0
+    PropSet v4, v2 key="total"
+    Return v4
+}
+# CHECK-LABEL: function f5 name="Meter" module=m0 position=125 kind=BaseConstructor flags=[HasNewTarget, IsChecked]
+# CHECK: = Check v1 castType=number site=w7
+
+# The body as it was, under a new id. Only callers that have proven its types enter it
+# CHECK: function [[addBody]] name="add" module=m0 position=5 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number site=w0}, {type=number site=w1}] results=[{type=number site=w2}]{{*}}HasOnlyDirectCallers{{*}}derivation={source=f1 parameterMap=[{original=0}, {original=1}]}
+# CHECK: b0(v0: number, v1: number):
+# CHECK-NOT: Check v0
+# CHECK: = Add
+# CHECK: function {{*}} name="read" {{*}}thisType={type=L0 site=w3}
+
+# The generic version keeps its checks until AddGenericVersion makes guards of them
+# CHECK: function [[addFallback]] name="add" module=m0 position=5 role=GenericVersion flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number site=w0 flags=[IsExpected]}, {type=number site=w1}] results=[{type=number site=w2 flags=[IsExpected]}]{{*}}creator=Version{provenVersion=[[addBody]]}
+# CHECK: b0(v0: anything ~ number, v1: number) frequency=Unlikely:
+# CHECK-NEXT: = Check v0 castType=number site=w0

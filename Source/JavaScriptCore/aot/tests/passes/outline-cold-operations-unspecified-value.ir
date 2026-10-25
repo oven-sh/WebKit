@@ -1,0 +1,58 @@
+# No use of an Unspecified value is reached, and an operand of the call of a shared function would be one: a cold site that takes a value which is Unspecified on some path stays where it is
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="x" declared={type=anything}}]
+
+function f0 name="inputUnspecifiedOnOnePath" parameters=[{type=number}, {type=boolean}, {type=L0}, {type=anything}, {type=L0}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    v5 = Unspecified valueType=L0
+    Jump -> next b3(v5)
+  b3(v6: L0):
+    Switch v0 cases=[0, 1, 2, 3] -> case b4(), case b5(), case b6(), case b7(), otherwise b8()
+# REPEAT: i = 4..7
+  b%(i)() frequency=Rare:
+    v%(i*3-5) = String string="bad"
+    v%(i*3-4) = PropGet v3 key="logger"
+    v%(i*3-3) = CallMethod v%(i*3-4), v%(i*3-5), v6 key="report"
+    Return v%(i*3-3)
+# END REPEAT
+  b8():
+    Return v3
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-4: = CallMethod
+# CHECK-NOT: CallDirect
+
+function f1 name="inputSpecifiedOnBothPaths" parameters=[{type=number}, {type=boolean}, {type=L0}, {type=anything}, {type=L0}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v4)
+  b3(v5: L0):
+    Switch v0 cases=[0, 1, 2, 3] -> case b4(), case b5(), case b6(), case b7(), otherwise b8()
+# REPEAT: i = 4..7
+  b%(i)() frequency=Rare:
+    v%(i*3-6) = String string="bad"
+    v%(i*3-5) = PropGet v3 key="logger"
+    v%(i*3-4) = CallMethod v%(i*3-5), v%(i*3-6), v5 key="report"
+    Return v%(i*3-4)
+# END REPEAT
+  b8():
+    Return v3
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: CallMethod
+# CHECK-COUNT-4: = CallDirect v3, v5 function=[[body]]
+# CHECK-NOT: CallMethod
+# CHECK-LABEL: function f2 name="" module=m0 role=OutlinedBody
+# CHECK: = CallMethod

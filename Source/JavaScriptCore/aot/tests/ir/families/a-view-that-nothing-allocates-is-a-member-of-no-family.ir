@@ -1,0 +1,30 @@
+# interface Node { kind: number; pos: number }  interface Named extends Node { name: string }  interface Host { handle: number }  const made = { kind: 1, pos: 2, name: "a" }
+# A declared type is a view: the link says which records nothing allocates (IsNeverAllocated). Such a record is a member of no family, not even of its own: Node and Named
+# hold Made alone. A view that no layout of the program can pass for says nothing about the layout of what arrives: Host lists itself, and a position of that type reads as
+# `object`, alone or beside another type. A type parameter that only views reach says nothing at all.
+# Beside them: a record without the flag is a member as ever (Plain).
+# FORM: AsRead
+# RUN: members
+# RUN(READ): print
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+layout L0 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] flags=[IsNeverAllocated]
+layout L1 name="Named" fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=string} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] supertypes=[L0] flags=[IsNeverAllocated]
+layout L2 name="Made" fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=string} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}]
+layout L3 name="Host" fields=[{key="handle" declared={type=number} flags=[IsRequired]}] flags=[IsNeverAllocated]
+layout L4 name="Plain" fields=[{key="plain" declared={type=number} flags=[IsRequired]}]
+layout L5 name="T" supertypes=[] flags=[IsTypeParameter, IsNeverAllocated]
+layout L6 name="OnlyIntoT" fields=[{key="only" declared={type=number} flags=[IsRequired]}] supertypes=[L5] flags=[IsNeverAllocated]
+# CHECK: L0: members [L2]
+# CHECK-NEXT: L1: members [L2]
+# CHECK-NEXT: L2: members [L2]
+# CHECK-NEXT: L3: members [L3]
+# CHECK-NEXT: L4: members [L4]
+# CHECK-NEXT: L5: members [L5]
+# CHECK-NEXT: L6: members [L6]
+
+function f0 name="take" parameters=[{type=L0}, {type=L1}, {type=L3}, {type=L0|L3}, {type=L4}, {type=L5}] results=[{type=anything}] {
+    Return
+# READ: parameters=[{type=L2}, {type=L2}, {type=object}, {type=object}, {type=L4}, {type=anything}]
+}

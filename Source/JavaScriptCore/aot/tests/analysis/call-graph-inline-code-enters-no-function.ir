@@ -1,0 +1,44 @@
+# Inline code enters no function of the library. The call on its miss edge does
+# FORM: Selected
+# RUN: pass BuildCallGraph
+
+module m0 path="main.js" displayPath="main.js"
+runtimefunction id=4 function=f3
+runtimefunction id=5 function=f4
+
+function f0 name="wholeForm" role=OutlinedBody parameters=[{type=f5}] results=[{type=anything}] {
+    v1 = CallInline v0 inlineBuiltin=FunctionApply overload=FunctionPrototypeApply/0
+    Return v1
+}
+function f1 name="missLeavesFunction" role=OutlinedBody parameters=[{type=f5}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v2 = Undefined
+    TryCallInline -, v0, v2, v1 inlineBuiltin=ReflectApply overload=ReflectApply/0 -> done b1(), miss b2()
+  b1(v3):
+    Return v3
+  b2():
+    Return v2
+}
+function f2 name="missCallsBuiltin" role=OutlinedBody parameters=[{type=f5}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v2 = Undefined
+    TryCallInline -, v0, v2, v1 inlineBuiltin=ReflectApply overload=ReflectApply/0 -> done b1(), miss b2()
+  b1(v3):
+    Return v3
+  b2() frequency=Rare:
+    v4 = CallBuiltin -, v0, v2, v1 overload=ReflectApply/0
+    Return v4
+}
+function f3 name="apply" role=Library flags=[HasThis] enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v1
+}
+function f4 name="apply" role=Library enclosingRuntimeFunction=5 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v1
+}
+function f5 name="target" results=[{type=undefined}] {
+    Return
+}
+
+# CHECK: f0: callees f5 | callers |
+# CHECK-NEXT: f1: callees f5 | callers |
+# CHECK-NEXT: f2: callees f4 f5 | callers |
+# CHECK-NEXT: f3: callees | callers |
+# CHECK-NEXT: f4: callees | callers f2 |

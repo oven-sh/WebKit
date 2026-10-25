@@ -1,0 +1,27 @@
+# A call in cold code that keeps its generic form is not reported
+# FORM: Prepared
+# OPTIONS: report=Declines heat=EverythingIsCold limit=MaxDispatchCases:1
+# RUN: pass ResolveCalls
+# LOSS: MaxDispatchCases
+# CHECK: outcome: Changed
+# CHECK-NOT: decline
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="first" results=[{type=anything}] {
+    Return
+}
+function f1 name="second" results=[{type=anything}] {
+    Return
+}
+function f2 name="knownCallee" parameters=[{type=f0}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+function f3 name="unknownCallee" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+function f4 name="twoCallees" parameters=[{type=f0|f1}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}

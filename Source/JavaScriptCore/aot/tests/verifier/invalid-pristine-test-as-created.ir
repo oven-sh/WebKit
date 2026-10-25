@@ -1,0 +1,14 @@
+# Nothing in an object says that it stays as created, so no test asks for it
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: PayloadOutOfRange 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="bad" parameters=[{type=RegExp}] results=[{type=undefined}] {
+    v1 = IsPristine v0 builtinClass=RegExp aspects=[Names, AsCreated]
+    Return
+}
+function f1 name="good" parameters=[{type=RegExp}] results=[{type=undefined}] {
+    v1 = IsPristine v0 builtinClass=RegExp aspects=[Names]
+    Return
+}

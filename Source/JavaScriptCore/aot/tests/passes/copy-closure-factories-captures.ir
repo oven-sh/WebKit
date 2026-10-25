@@ -1,0 +1,40 @@
+# In a CommonJS module the variables at the top are locals, so a factory there captures the ones it names.
+# The closure of a copy is created where the call stands, over what the closure of the original captured.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[first]]{{*}} = NewClosure v0 function=f6
+# CHECK-NEXT: Call [[first]], -, v2
+# CHECK: [[second]]{{*}} = NewClosure v0 function=f8
+# CHECK-NEXT: Call [[second]], -, v4
+# CHECK-LABEL: function f6 name="once"
+# CHECK: NewClosure v0, v1 function=f5
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule results=[{type=anything}] {
+    v0 = Integer integer=7
+    v1 = NewClosure v0 function=f1
+    v2 = NewClosure function=f3
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f4
+    v5 = Call v1, -, v4
+    Return
+}
+function f1 name="once" module=m0 position=10 kind=Arrow length=1 captures=[{type=anything}] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = NewClosure v0, v1 function=f2
+    Return v2
+}
+function f2 name="get" module=m0 position=20 kind=Arrow captures=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v1, -, v0
+    Return v2
+}
+function f3 name="loadA" module=m0 position=30 kind=Arrow results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}
+function f4 name="loadB" module=m0 position=40 kind=Arrow results=[{type=anything}] {
+    v0 = String string="b"
+    Return v0
+}

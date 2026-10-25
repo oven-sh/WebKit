@@ -1,0 +1,12 @@
+# only a namespace export has the phase Defer
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidModule 2
+
+variable g0 name="a" module=m0 declared={type=anything}
+module m0 path="main" displayPath="main" requests=[{target=m1 phase=Defer}, {target=m2 completes=true}] exports=[{name="a" variable=g0 isFromStarExport=true}, {name="b" kind=Namespace module=m1 phase=Defer}, {name="c" kind=Indirect module=m2 importName="x"}]
+module m1 path="other" displayPath="other"
+module m2 path="external" displayPath="external" kind=External referrer=m0
+module m3 path="badVariableExport" displayPath="badVariableExport" exports=[{name="a" variable=g0 phase=Defer}]
+module m4 path="badIndirectExport" displayPath="badIndirectExport" requests=[{target=m2 completes=true}] exports=[{name="a" kind=Indirect module=m2 importName="x" phase=Defer}]
+entry module=m0

@@ -46,6 +46,7 @@
 #include "StructureID.h"
 #include "Synchronousness.h"
 #include "WeakHandleOwner.h"
+#include <JavaScriptCore/AOTHeapCellClasses.h>
 #include <JavaScriptCore/SubspaceAccess.h>
 #include <wtf/ApproximateTime.h>
 #include <wtf/AutomaticThread.h>
@@ -71,6 +72,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+class CagedAlignedMemoryAllocator;
 class CodeBlock;
 class CodeBlockSet;
 class CollectingScope;
@@ -90,13 +92,13 @@ class IncrementalSweeper;
 class JITStubRoutine;
 class JITStubRoutineSet;
 class JSCell;
-class JSCellButterfly;
 class JSRopeString;
 class JSString;
 class JSValue;
 class MachineThreads;
 class MarkStackArray;
 class MarkStackMergingConstraint;
+class MarkedBlockCage;
 class BlockDirectory;
 class MarkedVectorBase;
 class MarkingConstraint;
@@ -105,6 +107,7 @@ class RunningScope;
 class SlotVisitor;
 class SpaceTimeMutatorScheduler;
 class StopIfNecessaryTimer;
+class StoredCellLog;
 class StructureAlignedMemoryAllocator;
 class SweepingScope;
 class VM;
@@ -166,14 +169,14 @@ class Heap;
 #define FOR_EACH_JSC_WEBASSEMBLY_STRUCTURE_ISO_SUBSPACE(v)
 #endif
 
-#define FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(v) \
+#define FOR_EACH_JSC_STATIC_STRUCTURE_ISO_SUBSPACE(v) \
     v(structureSpace, destructibleCellHeapCellType, Structure) \
     v(brandedStructureSpace, destructibleCellHeapCellType, BrandedStructure) \
     FOR_EACH_JSC_WEBASSEMBLY_STRUCTURE_ISO_SUBSPACE(v)
 
 #define FOR_EACH_JSC_ISO_SUBSPACE(v) \
     FOR_EACH_JSC_COMMON_ISO_SUBSPACE(v) \
-    FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(v)
+    FOR_EACH_JSC_STATIC_STRUCTURE_ISO_SUBSPACE(v)
 
 #if JSC_OBJC_API_ENABLED
 #define FOR_EACH_JSC_OBJC_API_DYNAMIC_ISO_SUBSPACE(v) \
@@ -215,7 +218,7 @@ class Heap;
 #define FOR_EACH_JSC_WEBASSEMBLY_DYNAMIC_NON_ISO_SUBSPACE(v)
 #endif
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 #define FOR_EACH_JSC_FFI_DYNAMIC_ISO_SUBSPACE(v) \
     v(ffiFunctionSpace, ffiFunctionHeapCellType, JSFFIFunction) \
     v(ffiCallbackSpace, ffiCallbackHeapCellType, JSFFICallback)
@@ -223,10 +226,26 @@ class Heap;
 #define FOR_EACH_JSC_FFI_DYNAMIC_ISO_SUBSPACE(v)
 #endif
 
-#define FOR_EACH_JSC_DYNAMIC_ISO_SUBSPACE(v) \
+#if ENABLE(AOT)
+#define FOR_EACH_JSC_AOT_DYNAMIC_NON_ISO_SUBSPACE(v) \
+    v(aotClosureSpace, cellHeapCellType, AOT::Closure, CompleteSubspace) \
+    v(cagedAuxiliarySpace, auxiliaryHeapCellType, HeapCell, CompleteSubspace)
+#else
+#define FOR_EACH_JSC_AOT_DYNAMIC_NON_ISO_SUBSPACE(v)
+#endif
+
+#define FOR_EACH_JSC_DYNAMIC_NON_ISO_SUBSPACE(v) \
+    FOR_EACH_JSC_AOT_DYNAMIC_NON_ISO_SUBSPACE(v) \
+    FOR_EACH_JSC_WEBASSEMBLY_DYNAMIC_NON_ISO_SUBSPACE(v)
+
+#define FOR_EACH_JSC_DYNAMIC_STRUCTURE_ISO_SUBSPACE(v) \
+    FOR_EACH_JSC_AOT_STRUCTURE_ISO_SUBSPACE(v)
+
+#define FOR_EACH_JSC_DYNAMIC_COMMON_ISO_SUBSPACE(v) \
     FOR_EACH_JSC_OBJC_API_DYNAMIC_ISO_SUBSPACE(v) \
     FOR_EACH_JSC_GLIB_API_DYNAMIC_ISO_SUBSPACE(v) \
     FOR_EACH_JSC_FFI_DYNAMIC_ISO_SUBSPACE(v) \
+    FOR_EACH_JSC_AOT_DYNAMIC_ISO_SUBSPACE(v) \
     \
     v(apiGlobalObjectSpace, apiGlobalObjectHeapCellType, JSAPIGlobalObject) \
     v(apiValueWrapperSpace, cellHeapCellType, JSAPIValueWrapper) \
@@ -331,6 +350,10 @@ class Heap;
     \
     FOR_EACH_JSC_WEBASSEMBLY_DYNAMIC_ISO_SUBSPACE(v)
 
+#define FOR_EACH_JSC_DYNAMIC_ISO_SUBSPACE(v) \
+    FOR_EACH_JSC_DYNAMIC_COMMON_ISO_SUBSPACE(v) \
+    FOR_EACH_JSC_DYNAMIC_STRUCTURE_ISO_SUBSPACE(v)
+
 typedef HashCountedSet<JSCell*> ProtectCountSet;
 typedef HashCountedSet<ASCIILiteral> TypeCountSet;
 
@@ -357,6 +380,8 @@ public:
     
     // Take this if you know that from->cellState() < barrierThreshold.
     JS_EXPORT_PRIVATE void writeBarrierSlowPath(const JSCell* from);
+    JS_EXPORT_PRIVATE void writeBarrierSlowPath(const JSCell* from, JSCell* to);
+    JS_EXPORT_PRIVATE StoredCellLog& storedCellLog() LIFETIME_BOUND;
 
     Heap(VM&, HeapType);
     ~Heap();
@@ -366,6 +391,14 @@ public:
     VM& vm() const;
 
     MarkedSpace& objectSpace() LIFETIME_BOUND { return m_objectSpace; }
+    JS_EXPORT_PRIVATE MarkedBlockCage& cage();
+    JS_EXPORT_PRIVATE AlignedMemoryAllocator* cellAllocator();
+    bool tryCollectForExhaustedCage(GCDeferralContext*);
+    void collectForExhaustedCage();
+    bool tryUseReserveOfExhaustedCage(AlignedMemoryAllocator*);
+
+    bool validatesCellVisits() const { return m_validatesCellVisits; }
+    void setValidatesCellVisits(bool validates) { m_validatesCellVisits = validates; }
     MachineThreads& machineThreads() { return *m_machineThreads; }
 
     Collector& collector() LIFETIME_BOUND { return *m_collector; }
@@ -390,6 +423,7 @@ public:
     MutatorState mutatorState() const { return m_mutatorState; }
     std::optional<CollectionScope> collectionScope() const { return m_collectionScope; }
     std::optional<CollectionScope> lastCollectionScope() const { return m_lastCollectionScope; }
+    bool didSkipMarkingInLastCollection() const { return m_didSkipMarkingInLastCollection; }
 #if USE(BUN_JSC_ADDITIONS)
     // The most recent collection boundary: the end of the last one, or the start of the one in progress.
     MonotonicTime lastGCBoundaryTime() const { return std::max(m_lastGCEndTime, m_currentGCStartTime); }
@@ -481,6 +515,8 @@ public:
             reportExtraMemoryAllocatedSlowCase(deferralContext, cell, size);
     }
     JS_EXPORT_PRIVATE void reportExtraMemoryVisited(size_t);
+    // At the end of a collection, for a cell whose memory outside the heap is no longer what was reported for it.
+    JS_EXPORT_PRIVATE void didChangeVisitedExtraMemory(size_t reported, size_t current);
 
 #if ENABLE(RESOURCE_USAGE)
     // Use this API to report the subset of extra memory that lives outside this process.
@@ -693,9 +729,6 @@ public:
     
     Seconds totalGCTime() const { return m_totalGCTime; }
 
-    UncheckedKeyHashMap<JSCellButterfly*, JSString*> immutableButterflyToStringCache;
-
-
     void appendPossiblyAccessedStringFromConcurrentThreadsOrGCOwnedDataScope(const JSString* owner, String&& string)
     {
         m_possiblyAccessedStringsFromConcurrentThreadsOrGCOwnedDataScope.constructAndAppend(owner, WTF::move(string));
@@ -721,6 +754,7 @@ private:
     friend class Collector;
     friend class DeferGC;
     friend class DeferGCForAWhile;
+    friend class HeapUtil;
     friend class MarkStackMergingConstraint;
     friend class MarkedSpace;
     friend class RunningScope;
@@ -750,6 +784,9 @@ private:
     JS_EXPORT_PRIVATE void deprecatedReportExtraMemorySlowCase(size_t);
     
     size_t totalBytesAllocatedThisCycle() { return m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
+    bool isEdenCollectionWithEmptyEden() const { return !m_hasAllocatedSinceLastCollection && m_collectionScope && m_collectionScope.value() == CollectionScope::Eden; }
+    bool canSkipMarking() const;
+
     void checkConn(GCConductor);
 
     void collectInMutatorThread();
@@ -821,6 +858,7 @@ private:
     void releaseUnusedSharedBaselineCode();
     JS_EXPORT_PRIVATE void addToRememberedSet(const JSCell*);
     void updateAllocationLimits();
+    size_t memoryLimitForGrowth();
     void didFinishCollection();
     void recordCollectionTime(Seconds duration);
 #if USE(BUN_JSC_ADDITIONS)
@@ -829,6 +867,7 @@ private:
     void gatherExtraHeapData(HeapProfiler&);
     void removeDeadHeapSnapshotNodes(HeapProfiler&);
     void runCollectionEpilogue();
+    void sweepAndClearCachesInEpilogue();
     void sweepEagerlyInEpilogue();
     
     void addDetachedWeakBlock(WeakBlock*);
@@ -877,6 +916,9 @@ private:
     Lock m_lock;
     const HeapType m_heapType;
     MutatorState m_mutatorState { MutatorState::Running };
+    bool m_hasAllocatedSinceLastCollection { true };
+    bool m_didSkipMarkingInLastCollection { false };
+    bool m_validatesCellVisits { false };
     const size_t m_ramSize;
     const size_t m_minBytesPerCycle;
 
@@ -945,6 +987,7 @@ private:
     Collector* const m_collector;
     std::unique_ptr<SlotVisitor> m_mutatorSlotVisitor;
     std::unique_ptr<MarkStackArray> m_mutatorMarkStack;
+    std::unique_ptr<StoredCellLog> m_storedCellLog;
     
     StrongSet m_strongSet;
     std::unique_ptr<CodeBlockSet> m_codeBlocks;
@@ -1100,7 +1143,7 @@ public:
     IsoHeapCellType intlSegmentIteratorHeapCellType;
     IsoHeapCellType intlSegmenterHeapCellType;
     IsoHeapCellType intlSegmentsHeapCellType;
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
     IsoHeapCellType ffiFunctionHeapCellType;
     IsoHeapCellType ffiCallbackHeapCellType;
 #endif
@@ -1121,6 +1164,7 @@ public:
     std::unique_ptr<FastMallocAlignedMemoryAllocator> fastMallocAllocator;
     std::unique_ptr<GigacageAlignedMemoryAllocator> primitiveGigacageAllocator;
     std::unique_ptr<StructureAlignedMemoryAllocator> structureAllocator;
+    std::unique_ptr<CagedAlignedMemoryAllocator> cagedAllocator;
 
     // Subspaces
     CompleteSubspace primitiveGigacageAuxiliarySpace; // Typed arrays, strings, bitvectors, etc go here.
@@ -1274,7 +1318,7 @@ public:
     JS_EXPORT_PRIVATE SubspaceType* name##Slow(); \
     std::unique_ptr<SubspaceType> m_##name;
 
-    FOR_EACH_JSC_WEBASSEMBLY_DYNAMIC_NON_ISO_SUBSPACE(DEFINE_NON_ISO_SUBSPACE_MEMBER)
+    FOR_EACH_JSC_DYNAMIC_NON_ISO_SUBSPACE(DEFINE_NON_ISO_SUBSPACE_MEMBER)
 #undef DEFINE_NON_ISO_SUBSPACE_MEMBER
 
 };

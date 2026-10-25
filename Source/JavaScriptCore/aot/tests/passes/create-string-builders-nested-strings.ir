@@ -1,0 +1,489 @@
+# A string that is built only to become a part of a string in a builder is written into that builder: the parts in front of it are appended where it begins
+# FORM: Prepared
+# RUN: pass CreateStringBuilders
+# STATISTIC: StringBuildersCreated = 12
+# STATISTIC: StringBuildersJoined = 14
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="armsOfConditional" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=string}] {
+    v3 = String string=""
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(), notTaken b6()
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v9 = String string="a "
+    v10 = String string=" b"
+    v11 = Strcat v9, v0, v10
+    Jump -> next b5(v11)
+  b4():
+    v12 = String string="off"
+    Jump -> next b5(v12)
+  b5(v13):
+    v14 = String string="<li class="
+    v15 = String string=">"
+    v16 = Strcat v5, v14, v13, v15
+    v17 = Integer integer=1
+    v18 = Add v6, v17
+    Jump -> next b1(v16, v18)
+  b6():
+    Return v5
+}
+# CHECK-LABEL: name="armsOfConditional"
+# CHECK: [[h0]]: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: Jump -> next b1([[h0]], v4)
+# CHECK-NOT: StringBuilderBegin
+# CHECK-NOT: StringBuilderFinish
+# CHECK: [[open0]]: "<li class=" = String string="<li class="
+# CHECK-NEXT: StringBuilderAppend v5, [[open0]], v9, v0, v10
+# CHECK-NEXT: Jump -> next b5(v5)
+# CHECK: [[other0]]: "<li class=" = String string="<li class="
+# CHECK-NEXT: StringBuilderAppend v5, [[other0]], v12
+# CHECK-NEXT: Jump -> next b5(v5)
+# CHECK: b5(v13: stringbuilder):
+# CHECK: StringBuilderAppend v13, v15
+# CHECK: Jump -> next b1(v13, v18)
+# CHECK: [[r0]]: string = StringBuilderFinish v5
+# CHECK-NEXT: Return [[r0]]
+
+function f1 name="conditionalIsLastPart" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=string}] {
+    v3 = String string=""
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(), notTaken b6()
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v9 = String string=","
+    v10 = Add v9, v0
+    Jump -> next b5(v10)
+  b4():
+    Jump -> next b5(v0)
+  b5(v11):
+    v12 = Add v5, v11
+    v13 = Integer integer=1
+    v14 = Add v6, v13
+    Jump -> next b1(v12, v14)
+  b6():
+    Return v5
+}
+# CHECK-LABEL: name="conditionalIsLastPart"
+# CHECK: [[h1]]: stringbuilder = StringBuilderBegin
+# CHECK-NOT: StringBuilderBegin
+# CHECK-NOT: StringBuilderFinish
+# CHECK: StringBuilderAppend v5, v9, v0
+# CHECK-NEXT: Jump -> next b5(v5)
+# CHECK: StringBuilderAppend v5, v0
+# CHECK-NEXT: Jump -> next b5(v5)
+# CHECK: b5(v11: stringbuilder):
+# CHECK-NOT: StringBuilderAppend
+# CHECK: Jump -> next b1(v11, v14)
+# CHECK: [[r1]]: string = StringBuilderFinish v5
+# CHECK-NEXT: Return [[r1]]
+
+function f2 name="stringOfInnerLoop" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    v8 = String string=""
+    v9 = Integer integer=0
+    Jump -> next b3(v8, v9)
+  b3(v10, v11):
+    LoopHint
+    v13 = Less v11, v1
+    Branch v13 -> taken b4(), notTaken b5()
+  b4():
+    v14 = Add v10, v0
+    v15 = Integer integer=1
+    v16 = Add v11, v15
+    Jump -> next b3(v14, v16)
+  b5():
+    v17 = String string="<tr>"
+    v18 = String string="</tr>"
+    v19 = Strcat v4, v17, v10, v18
+    v20 = Integer integer=1
+    v21 = Add v5, v20
+    Jump -> next b1(v19, v21)
+  b6():
+    Return v4
+}
+# CHECK-LABEL: name="stringOfInnerLoop"
+# CHECK: [[h2]]: stringbuilder = StringBuilderBegin
+# CHECK-NOT: StringBuilderBegin
+# CHECK-NOT: StringBuilderFinish
+# CHECK: [[open2]]: "<tr>" = String string="<tr>"
+# CHECK-NEXT: StringBuilderAppend v4, [[open2]]
+# CHECK-NEXT: Jump -> next b3(v4, v9)
+# CHECK: b3(v10: stringbuilder, v11: int|whole):
+# CHECK: StringBuilderAppend v10, v0
+# CHECK: StringBuilderAppend v10, v18
+# CHECK: Jump -> next b1(v10, v21)
+# CHECK: [[r2]]: string = StringBuilderFinish v4
+# CHECK-NEXT: Return [[r2]]
+
+function f3 name="twoConditionalsInOneConcatenation" parameters=[{type=string}, {type=number}, {type=boolean}, {type=boolean}] results=[{type=string}] {
+    v4 = String string=""
+    v5 = Integer integer=0
+    Jump -> next b1(v4, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b2(), notTaken b9()
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v10 = String string="a "
+    v11 = Add v10, v0
+    Jump -> next b5(v11)
+  b4():
+    v12 = String string="off"
+    Jump -> next b5(v12)
+  b5(v13):
+    Branch v3 -> taken b6(), notTaken b7()
+  b6():
+    v14 = String string="b "
+    v15 = Add v14, v0
+    Jump -> next b8(v15)
+  b7():
+    v16 = String string="none"
+    Jump -> next b8(v16)
+  b8(v17):
+    v18 = String string="<"
+    v19 = String string="|"
+    v20 = String string=">"
+    v21 = Strcat v6, v18, v13, v19, v17, v20
+    v22 = Integer integer=1
+    v23 = Add v7, v22
+    Jump -> next b1(v21, v23)
+  b9():
+    Return v6
+}
+# CHECK-LABEL: name="twoConditionalsInOneConcatenation"
+# CHECK: [[h3]]: stringbuilder = StringBuilderBegin
+# CHECK-NOT: StringBuilderBegin
+# CHECK-NOT: StringBuilderFinish
+# CHECK: StringBuilderAppend v6, [[open3]], v10, v0
+# CHECK-NEXT: Jump -> next b5(v6)
+# CHECK: StringBuilderAppend v6, [[other3]], v12
+# CHECK-NEXT: Jump -> next b5(v6)
+# CHECK: b5(v13: stringbuilder):
+# CHECK: StringBuilderAppend v13, [[bar3]], v14, v0
+# CHECK-NEXT: Jump -> next b8(v13)
+# CHECK: StringBuilderAppend v13, [[otherBar3]], v16
+# CHECK-NEXT: Jump -> next b8(v13)
+# CHECK: b8(v17: stringbuilder):
+# CHECK: StringBuilderAppend v17, v20
+# CHECK: Jump -> next b1(v17, v23)
+# CHECK: [[r3]]: string = StringBuilderFinish v6
+# CHECK-NEXT: Return [[r3]]
+
+function f4 name="armWithoutBlock" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=string}] {
+    v3 = String string=""
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(), notTaken b5()
+  b2():
+    v9 = String string="off"
+    Branch v2 -> taken b3(), notTaken b4(v9)
+  b3():
+    v10 = String string="a "
+    v11 = Add v10, v0
+    Jump -> next b4(v11)
+  b4(v12):
+    v13 = String string=">"
+    v14 = Strcat v5, v12, v13
+    v15 = Integer integer=1
+    v16 = Add v6, v15
+    Jump -> next b1(v14, v16)
+  b5():
+    Return v5
+}
+# CHECK-LABEL: name="armWithoutBlock"
+# CHECK: [[h4]]: stringbuilder = StringBuilderBegin
+# CHECK-NOT: StringBuilderBegin
+# CHECK-NOT: StringBuilderFinish
+# CHECK: Branch v2 -> taken b3(), notTaken [[edge4]]()
+# CHECK: StringBuilderAppend v5, v10, v0
+# CHECK-NEXT: Jump -> next b4(v5)
+# CHECK: b4(v12: stringbuilder):
+# CHECK: StringBuilderAppend v12, v13
+# CHECK: [[r4]]: string = StringBuilderFinish v5
+# CHECK-NEXT: Return [[r4]]
+# CHECK: [[edge4]]():
+# CHECK-NEXT: StringBuilderAppend v5, v9
+# CHECK-NEXT: Jump -> next b4(v5)
+
+function f5 name="conditionalInsideArm" parameters=[{type=string}, {type=number}, {type=boolean}, {type=boolean}] results=[{type=string}] {
+    v4 = String string=""
+    v5 = Integer integer=0
+    Jump -> next b1(v4, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b2(), notTaken b9()
+  b2():
+    Branch v2 -> taken b3(), notTaken b7()
+  b3():
+    Branch v3 -> taken b4(), notTaken b5()
+  b4():
+    v10 = String string="x "
+    v11 = Add v10, v0
+    Jump -> next b6(v11)
+  b5():
+    v12 = String string="y"
+    Jump -> next b6(v12)
+  b6(v13):
+    v14 = String string="["
+    v15 = String string="]"
+    v16 = Strcat v14, v13, v15
+    Jump -> next b8(v16)
+  b7():
+    v17 = String string="off"
+    Jump -> next b8(v17)
+  b8(v18):
+    v19 = Add v6, v18
+    v20 = Integer integer=1
+    v21 = Add v7, v20
+    Jump -> next b1(v19, v21)
+  b9():
+    Return v6
+}
+# CHECK-LABEL: name="conditionalInsideArm"
+# CHECK: [[h5]]: stringbuilder = StringBuilderBegin
+# CHECK-NOT: StringBuilderBegin
+# CHECK-NOT: StringBuilderFinish
+# CHECK: StringBuilderAppend v6, [[open5]], v10, v0
+# CHECK-NEXT: Jump -> next b6(v6)
+# CHECK: StringBuilderAppend v6, [[other5]], v12
+# CHECK-NEXT: Jump -> next b6(v6)
+# CHECK: b6(v13: stringbuilder):
+# CHECK: StringBuilderAppend v13, v15
+# CHECK-NEXT: Jump -> next b8(v13)
+# CHECK: StringBuilderAppend v6, v17
+# CHECK-NEXT: Jump -> next b8(v6)
+# CHECK: b8(v18: stringbuilder):
+# CHECK: Jump -> next b1(v18, v21)
+# CHECK: [[r5]]: string = StringBuilderFinish v6
+# CHECK-NEXT: Return [[r5]]
+
+function f6 name="partThroughCast" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=string}] {
+    v3 = String string=""
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(), notTaken b6()
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v9 = String string="a "
+    v10 = Add v9, v0
+    Jump -> next b5(v10)
+  b4():
+    v11 = String string="off"
+    Jump -> next b5(v11)
+  b5(v12):
+    v13 = Upcast v12 castType=string
+    v14 = String string=">"
+    v15 = Strcat v5, v13, v14
+    v16 = Integer integer=1
+    v17 = Add v6, v16
+    Jump -> next b1(v15, v17)
+  b6():
+    Return v5
+}
+# CHECK-LABEL: name="partThroughCast"
+# CHECK: [[h6]]: stringbuilder = StringBuilderBegin
+# CHECK-NOT: StringBuilderBegin
+# CHECK-NOT: StringBuilderFinish
+# CHECK-NOT: Upcast
+# CHECK: StringBuilderAppend v5, v9, v0
+# CHECK: StringBuilderAppend v5, v11
+# CHECK: b5(v12: stringbuilder):
+# CHECK: StringBuilderAppend v12, v14
+# CHECK: [[r6]]: string = StringBuilderFinish v5
+# CHECK-NEXT: Return [[r6]]
+
+function f7 name="armMayBeUndefined" parameters=[{type=undefined|string}, {type=number}, {type=boolean}] results=[{type=string}] {
+    v3 = String string=""
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(), notTaken b6()
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v9 = String string=","
+    v10 = Add v9, v0
+    Jump -> next b5(v10)
+  b4():
+    Jump -> next b5(v0)
+  b5(v11):
+    v12 = Add v5, v11
+    v13 = Integer integer=1
+    v14 = Add v6, v13
+    Jump -> next b1(v12, v14)
+  b6():
+    Return v5
+}
+# CHECK-LABEL: name="armMayBeUndefined"
+# CHECK: [[h7]]: stringbuilder = StringBuilderBegin
+# CHECK-NOT: StringBuilderBegin
+# CHECK-NOT: StringBuilderFinish
+# CHECK: StringBuilderAppend v5, v9, v0
+# CHECK-NEXT: Jump -> next b5(v5)
+# CHECK: StringBuilderAppend v5, v0
+# CHECK-NEXT: Jump -> next b5(v5)
+# CHECK: b5(v11: stringbuilder):
+# CHECK: Jump -> next b1(v11, v14)
+# CHECK: [[r7]]: string = StringBuilderFinish v5
+# CHECK-NEXT: Return [[r7]]
+
+function f8 name="armIsUnspecified" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=string}] {
+    v3 = String string=""
+    v4 = Integer integer=0
+    v5 = Integer integer=1
+    Jump -> next b1(v3, v4, v5)
+  b1(v6, v7, v8):
+    LoopHint
+    v10 = Less v7, v1
+    Branch v10 -> taken b2(), notTaken b6()
+  b2():
+    Switch v8 cases=[1] -> case b3(), otherwise b4()
+  b3():
+    v11 = String string="a "
+    v12 = Add v11, v0
+    Jump -> next b5(v12)
+  b4():
+    v13 = Unspecified valueType=string
+    Jump -> next b5(v13)
+  b5(v14):
+    v15 = Add v6, v14
+    v16 = Integer integer=1
+    v17 = Add v7, v16
+    Jump -> next b1(v15, v17, v8)
+  b6():
+    Return v6
+}
+# CHECK-LABEL: name="armIsUnspecified"
+# CHECK: StringBuilderAppend v6, v11, v0
+# CHECK-NEXT: Jump -> next b5(v6)
+# CHECK: v13: string = Unspecified valueType=string
+# CHECK-NOT: StringBuilderAppend {{*}}v13
+# CHECK: b5(v14: stringbuilder):
+
+function f9 name="callInFrontOfArm" parameters=[{type=string}, {type=number}, {type=boolean}, {type=anything}] results=[{type=string}] {
+    v4 = String string=""
+    v5 = Integer integer=0
+    Jump -> next b1(v4, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b2(), notTaken b6()
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v10 = Call v3
+    v11 = String string="a "
+    v12 = Add v11, v0
+    Jump -> next b5(v12)
+  b4():
+    v13 = String string="off"
+    Jump -> next b5(v13)
+  b5(v14):
+    v15 = Add v6, v14
+    v16 = Integer integer=1
+    v17 = Add v7, v16
+    Jump -> next b1(v15, v17)
+  b6():
+    Return v6
+}
+# CHECK-LABEL: name="callInFrontOfArm"
+# CHECK: = Call v3
+# CHECK: StringBuilderAppend v6, v11, v0
+# CHECK-NEXT: Jump -> next b5(v6)
+# CHECK: StringBuilderAppend v6, v13
+# CHECK: b5(v14: stringbuilder):
+
+function f10 name="numberComputedAfterArm" parameters=[{type=string}, {type=number}, {type=boolean}] results=[{type=string}] {
+    v3 = String string=""
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(), notTaken b6()
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v9 = String string="a "
+    v10 = Add v9, v0
+    Jump -> next b5(v10)
+  b4():
+    v11 = String string="off"
+    Jump -> next b5(v11)
+  b5(v12):
+    v13 = Mul v6, v1
+    v14 = Strcat v5, v12, v13
+    v15 = Integer integer=1
+    v16 = Add v6, v15
+    Jump -> next b1(v14, v16)
+  b6():
+    Return v5
+}
+# CHECK-LABEL: name="numberComputedAfterArm"
+# CHECK: StringBuilderAppend v5, v9, v0
+# CHECK-NEXT: Jump -> next b5(v5)
+# CHECK: b5(v12: stringbuilder):
+# CHECK: StringBuilderAppend v12, v13
+
+function f11 name="conversionAfterArm" parameters=[{type=string}, {type=number}, {type=boolean}, {type=undefined|null|string}] results=[{type=string}] {
+    v4 = String string=""
+    v5 = Integer integer=0
+    Jump -> next b1(v4, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b2(), notTaken b6()
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v10 = String string="a "
+    v11 = Add v10, v0
+    Jump -> next b5(v11)
+  b4():
+    v12 = String string="off"
+    Jump -> next b5(v12)
+  b5(v13):
+    v14 = ToString v3
+    v15 = Strcat v6, v13, v14
+    v16 = Integer integer=1
+    v17 = Add v7, v16
+    Jump -> next b1(v15, v17)
+  b6():
+    Return v6
+}
+# CHECK-LABEL: name="conversionAfterArm"
+# CHECK: StringBuilderAppend v6, v10, v0
+# CHECK-NEXT: Jump -> next b5(v6)
+# CHECK: b5(v13: stringbuilder):
+# CHECK: StringBuilderAppend v13, v14

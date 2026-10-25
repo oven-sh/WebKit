@@ -1,0 +1,33 @@
+# PropGet has the field's type only on a proven layout and a field whose writers are all known and that is never deleted, redefined or stored with another type.
+# Undefined beside the layout takes nothing away: a read of it throws
+# FORM: Prepared
+# RUN: result-types
+# CHECK: v0: L0
+# CHECK-NEXT: v1: anything ~ L0
+# CHECK-NEXT: v2: object ~ L0
+# CHECK-NEXT: v3: undefined|L0
+# CHECK-NEXT: v4: i32
+# CHECK-NEXT: v5: anything ~ undefined|i32
+# CHECK-NEXT: v6: anything ~ undefined|i32
+# CHECK-NEXT: v7: anything ~ i32
+# CHECK-NEXT: v8: anything ~ i32
+# CHECK-NEXT: v9: anything
+# CHECK-NEXT: v10: anything ~ i32
+# CHECK-NEXT: v11: anything ~ i32
+# CHECK-NEXT: v12: i32
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="filled" declared={type=i32} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="optional" declared={type=i32} flow={location={writers=AllKnown} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="maybeInherited" declared={type=i32} flow={location={writers=AllKnown} stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="storedWithOtherType" declared={type=i32} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="unknownWriters" declared={type=i32} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+function f0 name="p" parameters=[{type=L0}, {type=L0 flags=[IsExpected]}, {type=object}, {type=undefined|L0}] results=[{type=undefined}] {
+  b0(v0: L0, v1: anything ~ L0, v2: object ~ L0, v3: undefined|L0):
+    v4 = PropGet v0 key="filled"
+    v5 = PropGet v0 key="optional"
+    v6 = PropGet v0 key="maybeInherited"
+    v7 = PropGet v0 key="storedWithOtherType"
+    v8 = PropGet v0 key="unknownWriters"
+    v9 = PropGet v0 key="undeclared"
+    v10 = PropGet v1 key="filled"
+    v11 = PropGet v2 key="filled"
+    v12 = PropGet v3 key="filled"
+    Return
+}

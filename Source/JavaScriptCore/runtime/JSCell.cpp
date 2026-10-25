@@ -176,6 +176,10 @@ bool JSCell::isObjectSlow() const
 
 bool JSCell::validateIsNotSweeping() const
 {
+#if ENABLE(AOT) && ASSERT_ENABLED
+    if (Thread::currentSingleton().stack().contains(const_cast<JSCell*>(this)))
+        return true;
+#endif
     ASSERT_IMPLIES(vm().currentThreadIsHoldingAPILock(), vm().heap.mutatorState() != MutatorState::Sweeping);
     return !vm().currentThreadIsHoldingAPILock() || vm().heap.mutatorState() != MutatorState::Sweeping;
 }

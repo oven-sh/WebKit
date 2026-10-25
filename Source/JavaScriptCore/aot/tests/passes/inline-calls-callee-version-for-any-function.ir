@@ -1,0 +1,69 @@
+# Outside hot code a call of a library function that passes one known function goes to one copy for whatever function is passed: in it the parameter is known to hold a function.
+# A hot call still gets a copy for its function alone
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: CalleeVersions = 2
+# LOSS: MaxInlineHeadBytes
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}
+function f1 name="negate" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+    v1 = Negate v0
+    Return v1
+}
+function f2 name="addIndex" kind=Arrow parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    v2 = Add v0, v1
+    Return v2
+}
+function f3 name="each" role=Library parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = TypeTest v0 testedType=function
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4: function):
+    v5 = Integer integer=0
+    v6 = Call v4, v2, v1, v5, v1
+# REPEAT: i = 6..65
+    v%(i+1) = Add v%(i), v1
+# END REPEAT
+    Return v66
+  b2():
+    Return v1
+}
+
+function f4 name="outsideLoops" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f0
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = CallDirect v1, v0, v0 function=f3
+    v5 = CallDirect v2, v0, v0 function=f3
+    v6 = CallDirect v3, v0, v0 function=f3
+    Return v6
+}
+# CHECK-LABEL: function f4 name="outsideLoops"
+# CHECK: v4{{*}}= CallDirect v1, v0, v0 function=[[forAnyFunction]]
+# CHECK-NEXT: v5{{*}}= CallDirect v2, v0, v0 function=[[forAnyFunction]]
+# CHECK-NEXT: v6{{*}}= CallDirect v3, v0, v0 function=[[forAnyFunction]]
+
+function f5 name="inLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewClosure function=f0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallDirect v2, v0, v0 function=f3
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+}
+# CHECK-LABEL: function f5 name="inLoop"
+# CHECK: = CallDirect v2, v0, v0 function=[[forDouble]]
+
+# CHECK: function [[forDouble]] name="each" {{*}}role=CalleeVersion
+# CHECK-NEXT: b0(v0: f0,
+# CHECK: = Call {{*}}, v2, v1, v5, v1
+# CHECK: function [[forAnyFunction]] name="each" {{*}}role=CalleeVersion
+# CHECK-NEXT: b0(v0: function,
+# CHECK: = Call {{*}}, v2, v1, v5, v1

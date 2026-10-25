@@ -1,0 +1,38 @@
+# A function without a direct call keeps a parameter that nothing uses: no call would gain
+# FORM: Prepared
+# RUN: pass RemoveUnusedParameters
+# STATISTIC: UnusedParametersRemoved = 0
+# CHECK: outcome: Unchanged
+# CHECK-NOT: derivation=
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="onlyCalledByValue" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    Return v0
+}
+# CHECK-LABEL: function f0 name="onlyCalledByValue"{{*}}parameters=[{type=number}, {type=number}]
+# CHECK-NEXT: b0(v0: number, v1: number):
+# CHECK-NEXT: Return v0
+
+function f1 name="onlyHandedOn" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    Return v0
+}
+# CHECK-LABEL: function f1 name="onlyHandedOn"{{*}}parameters=[{type=number}, {type=number}]
+# CHECK-NEXT: b0(v0: number, v1: number):
+# CHECK-NEXT: Return v0
+
+function f2 name="neverNamed" parameters=[{type=number}, {type=number}] results=[{type=number}] {
+    Return v0
+}
+# CHECK-LABEL: function f2 name="neverNamed"{{*}}parameters=[{type=number}, {type=number}]
+# CHECK-NEXT: b0(v0: number, v1: number):
+# CHECK-NEXT: Return v0
+
+function f3 name="caller" parameters=[{type=number}, {type=number}, {type=anything}] results=[{type=anything}] {
+    v3 = NewClosure function=f0
+    v4 = Call v3, -, v0, v1 callees=[f0]
+    v5 = NewClosure function=f1
+    v6 = Call v2, -, v5, v4
+    Return v6
+# CHECK: = Call v3, -, v0, v1
+# CHECK: = Call v2, -, v5, v4
+}

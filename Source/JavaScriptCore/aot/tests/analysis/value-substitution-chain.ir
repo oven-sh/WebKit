@@ -1,0 +1,24 @@
+# A chain of replacements ends at its last value in operands and edge arguments and terminator values
+# FORM: Prepared
+# RUN: substitute function=f0 replace=v3:v2 replace=v4:v3
+# RUN: substitute function=f0 replace=v4:v3 replace=v3:v2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="replacementChain" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    v2 = Negate v0
+    v3 = Negate v0
+    v4 = Negate v0
+    v5 = Add v4, v3
+    Branch v1 -> taken b1(v4), notTaken b2()
+  b1(v6):
+    Return v6
+  b2():
+    Return v3
+}
+# CHECK: v2: number = Negate v0
+# CHECK: v3: number = Negate v0
+# CHECK: v4: number = Negate v0
+# CHECK: v5: number = Add v2, v2
+# CHECK: Branch v1 -> taken b1(v2), notTaken b2()
+# CHECK: Return v6
+# CHECK: Return v2

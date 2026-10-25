@@ -1,0 +1,17 @@
+# [text].map(eval)
+# No operation spells the call out. Under a report the record has the place where the program names the evaluator,
+# and so has the record of the loads by name that evaluated text makes: no statement of the program loads anything.
+# RUN: valueflow-results
+# OPTIONS: report=Flow
+# CHECK: unseen-code EvaluatesText f0:v2 Eval
+# CHECK: unseen-code LoadsModuleByName f0:v2 Eval
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewArray
+    v1 = Builtin builtin=ArrayPrototypeMap
+    v2 = Builtin builtin=Eval
+    v3 = Call v1, v0, v2
+    Return v3
+}

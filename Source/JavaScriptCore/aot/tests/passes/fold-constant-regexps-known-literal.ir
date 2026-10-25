@@ -1,0 +1,68 @@
+# What a literal that stays as created answers is a constant, and a copy of it with constant flags is a literal
+# FORM: AsRead
+# RUN: pipeline FoldConstantRegExps
+# OPTIONS: only-passes=FoldConstantRegExps
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    v2 = CallDirect function=f3
+    v3 = CallDirect function=f4
+    v4 = CallDirect function=f5
+    v5 = CallDirect function=f6
+    Return
+}
+
+function f1 name="source" results=[{type=anything}] {
+    v0 = NewRegExp pattern="a+"
+    v1 = PropGet v0 key="source"
+    Return v1
+# CHECK: v1: "a+" = String string="a+"
+# CHECK-NOT: CallBuiltin
+}
+
+function f2 name="flags" results=[{type=anything}] {
+    v0 = NewRegExp pattern="b" regExpFlags=[Global, IgnoreCase]
+    v1 = PropGet v0 key="flags"
+    Return v1
+# CHECK: v1: "gi" = String string="gi"
+# CHECK-NOT: CallBuiltin
+}
+
+function f3 name="flagThatIsSet" results=[{type=anything}] {
+    v0 = NewRegExp pattern="c" regExpFlags=[Global]
+    v1 = PropGet v0 key="global"
+    Return v1
+# CHECK: v1: true = Boolean boolean=true
+# CHECK-NOT: CallBuiltin
+}
+
+function f4 name="flagThatIsNotSet" results=[{type=anything}] {
+    v0 = NewRegExp pattern="d" regExpFlags=[Global]
+    v1 = PropGet v0 key="sticky"
+    Return v1
+# CHECK: v1: false = Boolean
+# CHECK-NOT: CallBuiltin
+}
+
+function f5 name="copyWithFlags" results=[{type=anything}] {
+    v0 = NewRegExp pattern="e"
+    v1 = String string="g"
+    v2 = Builtin builtin=RegExp
+    v3 = Construct v2, -, v0, v1
+    Return v3
+# CHECK: v3: RegExp<"e"[Global]> = NewRegExp pattern="e" regExpFlags=[Global]
+# CHECK-NOT: CallBuiltin
+}
+
+function f6 name="literalWithAddedProperty" results=[{type=anything}] {
+    v0 = NewRegExp pattern="f"
+    v1 = Integer integer=1
+    PropSet v0, v1 key="extra"
+    v3 = PropGet v0 key="source"
+    Return v3
+# CHECK-NOT: = String
+}

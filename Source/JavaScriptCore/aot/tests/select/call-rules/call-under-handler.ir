@@ -1,0 +1,43 @@
+# A call under a handler is replaced where it is, and nothing is resolved in front of a loop whose header has another handler than the block that enters it
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: ResolvedCallTargetGroups = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="call-under-handler" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2() handler=b4():
+    v4 = Call v0, -, v2
+    Jump -> next b3()
+  b3():
+    Branch v1 -> taken b1(), notTaken b5()
+  b4() role=CatchHandler:
+    v5 = CatchValue
+    Return
+  b5():
+    Return
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[target]]: codeaddress = ResolveCallTarget v0 argumentCount=1
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: b2() handler=b4():
+# CHECK-NEXT: anything = CallResolved v0, [[target]], -, v2
+# CHECK-NEXT: Jump -> next b3()
+}
+
+function f1 name="header-under-handler" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1() handler=b2():
+    LoopHint
+    v4 = Call v0, -, v2
+    Branch v1 -> taken b1(), notTaken b3()
+  b2() role=CatchHandler:
+    v5 = CatchValue
+    Return
+  b3():
+    Return
+# CHECK-NOT: ResolveCallTarget
+# CHECK: anything = Call v0, -, v2
+}

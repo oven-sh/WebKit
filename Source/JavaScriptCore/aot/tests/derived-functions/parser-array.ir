@@ -1,0 +1,52 @@
+# The parser of an array appends in a loop, and an element that its typed parser does not take is read again as a plain value
+# FORM: Prepared optimizing
+# RUN: derived-functions Parser:g0
+# STATISTIC: ParsersCreated = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Row" fields=[{key="id" declared={type=number}}]
+variable g0 name="rows" declared={type=Array<L0>} initialization=Undefined
+
+# CHECK-LABEL: creator=Parser{type=Array<L0> form=ParsedText}
+# CHECK: [[rejected0]]() frequency=Rare:
+# CHECK-NEXT: : 2 = Integer integer=2
+# CHECK: [[unknown0]]() frequency=Rare:
+# CHECK-NEXT: : 0 = Integer
+# CHECK: [[firstByte0]]:{{*}}= JSONGetByte v0
+# CHECK-NEXT: [[bracket0]]: 91 = Integer integer=91
+# CHECK-NEXT: [[isBracket0]]: boolean = StrictEq [[firstByte0]], [[bracket0]]
+# CHECK-NEXT: Branch [[isBracket0]] -> taken {{*}}, notTaken [[rejected0]]()
+# CHECK: [[afterBracket0]]: cursor = JSONSkipWhitespace
+# CHECK-NEXT: [[array0]]: Array<L0> = NewArray contents=L0
+# CHECK-NEXT: [[byte0]]:{{*}}= JSONGetByte [[afterBracket0]]
+# CHECK-NEXT: [[closingBracket0]]: 93 = Integer integer=93
+# CHECK-NEXT: [[isEmpty0]]: boolean = StrictEq [[byte0]], [[closingBracket0]]
+# CHECK-NEXT: Branch [[isEmpty0]] -> taken [[empty0]](), notTaken [[hasElements0]]()
+# CHECK-NEXT: [[loop0]]([[element0]]: cursor):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[typed0]]:{{*}}= CallDirect [[element0]] function=[[parserOfRow]]
+# CHECK-NEXT: [[outcome0]]: int[0, 2] = ResultAt [[typed0]]
+# CHECK-NEXT: Switch [[outcome0]] cases=[1] -> case [[parsed0]](), otherwise [[again0]]()
+# CHECK-NEXT: [[done0]]([[atBracket0]]: cursor):
+# CHECK-NEXT: [[next0]]: cursor = JSONSkipByte [[atBracket0]]
+# CHECK: = Results {{*}}, [[array0]], [[next0]]
+# CHECK: [[empty0]]():
+# CHECK-NEXT: Jump -> next [[done0]]([[afterBracket0]])
+# CHECK-NEXT: [[hasElements0]]():
+# CHECK-NEXT: Jump -> next [[loop0]]([[afterBracket0]])
+# CHECK-NEXT: [[again0]]() frequency=Rare:
+# CHECK-NEXT: [[generic0]]:{{*}}= JSONParseValue [[element0]]
+# CHECK: [[merge0]]([[value0]]:{{*}}, [[afterValue0]]: cursor):
+# CHECK-NEXT: AppendElement [[array0]], [[value0]]
+# CHECK: [[parsed0]]():
+# CHECK-NEXT: [[typedValue0]]:{{*}}= ResultAt [[typed0]] index=1
+# CHECK-NEXT: [[typedNext0]]: cursor = ResultAt [[typed0]] index=2
+# CHECK-NEXT: Jump -> next [[merge0]]([[typedValue0]], [[typedNext0]])
+# CHECK: [[plain0]]: anything = ResultAt [[generic0]] index=1
+# CHECK-NEXT: [[plainNext0]]: cursor = ResultAt [[generic0]] index=2
+# CHECK-NEXT: [[isRow0]]: boolean = TypeTest [[plain0]] testedType=L0
+# CHECK-NEXT: Branch [[isRow0]] -> taken {{*}}, notTaken [[isNoRow0]](| 0)
+# CHECK: [[isNoRow0]]({{*}}) frequency=Rare:
+# CHECK-NEXT: Jump -> next [[unknown0]]()
+# CHECK: Jump -> next [[loop0]](
+# CHECK: Jump -> next [[done0]](

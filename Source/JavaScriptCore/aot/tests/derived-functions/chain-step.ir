@@ -1,0 +1,256 @@
+# A chain step takes the callbacks of one shape of chain as parameters and calls the traversal with the shape as a constant, which leaves the loop of that shape alone
+# TODO: slow-path: the generic copy of an inlined traversal keeps the loops of every shape
+# RUN(ARRAY): derived-functions ChainStep:f1:96
+# RUN(REDUCE): derived-functions ChainStep:f1:1043
+# RUN(JOIN): derived-functions ChainStep:f1:24
+# RUN(SHOWN): derived-functions ChainStep:f2:24
+# RUN(OPTIMIZED): pipeline EliminateGuards
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=131090 function=f1
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = Call v1, -, v2, v3
+    Return
+}
+
+# The traversal, cut down to two links and the ends Array, Reduce and Join. A shape has the end in bits 0 to 3, the links in bits 4 to 5 and 6 to 7 (1: map, 2: filter), "has an initial value" in bit 10
+function f1 name="traverseArray" role=Library flags=[IsHiddenInStackTraces] enclosingRuntimeFunction=131090 parameters=[{type=Array<anything>}, {type=number}, {type=undefined|number}, {type=number}, {type=Array<anything>}, {type=anything}] results=[{type=anything}] {
+    v6 = Integer integer=0
+    v7 = Integer integer=1
+    v8 = Integer integer=2
+    v9 = Integer integer=3
+    v10 = Integer integer=4
+    v11 = Integer integer=6
+    v12 = Integer integer=8
+    v13 = Integer integer=10
+    v14 = Integer integer=15
+    v15 = BitAnd v3, v14
+    v16 = RShift v3, v10
+    v17 = BitAnd v16, v9
+    v18 = RShift v3, v11
+    v19 = BitAnd v18, v9
+    v20 = RShift v3, v13
+    v21 = BitAnd v20, v7
+    v22 = StrictEq v21, v7
+    v23 = StrictEq v17, v7
+    v24 = StrictEq v17, v8
+    v25 = StrictEq v19, v7
+    v26 = StrictEq v19, v8
+    v27 = StrictEq v15, v6
+    v28 = StrictEq v15, v9
+    v29 = StrictEq v15, v12
+    v30 = ElemGet v4, v11
+    v31 = PropGet v0 key="length"
+    v32 = Check v31 castType=int[0, 4294967295]
+    v33 = Undefined
+    v34 = String string=""
+    Branch v27 -> taken b1(), notTaken b2(v33)
+  b1():
+    v35 = NewArrayWithCapacity v32, v0
+    Jump -> next b2(v35)
+  b2(v36):
+    Jump -> next b3(v6, v6, v5, v22, v34)
+  b3(v37, v38, v39, v40, v41):
+    LoopHint
+    v43 = Less v37, v32
+    Branch v43 -> taken b4(), notTaken b19()
+  b4():
+    v44 = Add v37, v7
+    v45 = ElemGet v0, v37
+    Branch v23 -> taken b5(), notTaken b6()
+  b5():
+    v46 = ElemGet v4, v6
+    v47 = ElemGet v4, v7
+    v48 = Call v46, v47, v45, v37, v0
+    Jump -> next b8(v48)
+  b6():
+    Branch v24 -> taken b7(), notTaken b8(v45)
+  b7():
+    v49 = ElemGet v4, v6
+    v50 = ElemGet v4, v7
+    v51 = Call v49, v50, v45, v37, v0
+    v52 = ToBoolean v51
+    Branch v52 -> taken b8(v45), notTaken b3(v44, v38, v39, v40, v41)
+  b8(v53):
+    Branch v25 -> taken b9(), notTaken b10()
+  b9():
+    v54 = ElemGet v4, v8
+    v55 = ElemGet v4, v9
+    v56 = Call v54, v55, v53, v37
+    Jump -> next b12(v56)
+  b10():
+    Branch v26 -> taken b11(), notTaken b12(v53)
+  b11():
+    v57 = ElemGet v4, v8
+    v58 = ElemGet v4, v9
+    v59 = Call v57, v58, v53, v37
+    v60 = ToBoolean v59
+    Branch v60 -> taken b12(v53), notTaken b3(v44, v38, v39, v40, v41)
+  b12(v61):
+    v62 = Add v38, v7
+    Branch v27 -> taken b13(), notTaken b15()
+  b13():
+    v63 = Check v36 castType=Array<anything>
+    v64 = Check v38 castType=int[0, 4294967295]
+    v65 = TryPutByValDirect v63, v64, v61
+    Branch v65 -> taken b3(v44, v62, v39, v40, v41), notTaken b14()
+  b14():
+    ElemSet v63, v38, v61
+    Jump -> next b3(v44, v62, v39, v40, v41)
+  b15():
+    Branch v28 -> taken b16(), notTaken b18()
+  b16():
+    v67 = Boolean boolean=true
+    Branch v40 -> taken b17(), notTaken b3(v44, v62, v61, v67, v41)
+  b17():
+    v68 = Call v30, v33, v39, v61, v37
+    Jump -> next b3(v44, v62, v68, v67, v41)
+  b18():
+    v69 = ToString v61
+    v70 = Add v41, v5
+    v71 = Add v70, v69
+    Jump -> next b3(v44, v62, v39, v40, v71)
+  b19():
+    Branch v27 -> taken b20(), notTaken b21()
+  b20():
+    v72 = Check v36 castType=Array<anything>
+    v73 = Check v38 castType=int[0, 4294967295]
+    v74 = TruncateNewArray v72, v73
+    Return v74
+  b21():
+    Branch v28 -> taken b22(), notTaken b25()
+  b22():
+    Branch v40 -> taken b23(), notTaken b24()
+  b23():
+    Return v39
+  b24():
+    v75 = ThrowNewError errorKind=TypeError message="reduce of empty array with no initial value"
+    Unreachable
+  b25():
+    Return v41
+}
+function f2 name="shownTraversal" role=Library parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v5
+}
+function f3 name="filterThenMapAsBuilt" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v7 = Undefined
+    v8 = NewArray v3, v4, v5, v6, v7, v7, v7, v7 contents=anything
+    v9 = Integer integer=96
+    v10 = Check v0 castType=Array<anything>
+    v11 = Check v1 castType=number
+    v12 = Check v2 castType=undefined|number
+    v13 = CallDirect v10, v11, v12, v9, v8, v7 function=f1 [isAlwaysInlined]
+    Return v13
+}
+function f4 name="shapeKnownAtRunTime" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
+    v8 = Undefined
+    v9 = NewArray v3, v4, v5, v6, v8, v8, v8, v8 contents=anything
+    v10 = Check v0 castType=Array<anything>
+    v11 = Check v1 castType=number
+    v12 = Check v2 castType=undefined|number
+    v13 = CallDirect v10, v11, v12, v7, v9, v8 function=f1 [isAlwaysInlined]
+    Return v13
+}
+# ARRAY: {role=ChainStep target=f1 parameter=96} -> request 0
+# ARRAY: name="traverseArray" module=m0 role=ChainStep flags=[IsHiddenInStackTraces] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[{{*}}IsHiddenInStackTraces] derivation={source=f1 parameter=96} creator=ChainStep {
+# ARRAY-NEXT: b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything):
+# ARRAY-NEXT: [[none]]: undefined = Undefined
+# ARRAY-NEXT: [[operands]]: Array = NewArray v3, v4, v5, v6, [[none]], [[none]], [[none]], [[none]] contents=anything
+# ARRAY-NEXT: [[shape]]: 96 = Integer integer=96
+# ARRAY-NEXT: [[array]]: Array ={{*}} v0 castType=Array
+# ARRAY-NEXT: [[start]]: number ={{*}} v1 castType=number
+# ARRAY-NEXT: [[end]]: undefined|number ={{*}} v2 castType=undefined|number
+# ARRAY-NEXT: [[result]]: anything = CallDirect [[array]], [[start]], [[end]], [[shape]], [[operands]], [[none]] function=f1 [isAlwaysInlined]
+# ARRAY-NEXT: Return [[result]]
+# ARRAY-NEXT: }
+# ARRAY-NOT: role=ChainStep
+# REDUCE: {role=ChainStep target=f1 parameter=1043} -> request 0
+# REDUCE: name="traverseArray" module=m0 role=ChainStep flags=[IsHiddenInStackTraces] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[{{*}}IsHiddenInStackTraces] derivation={source=f1 parameter=1043} creator=ChainStep {
+# REDUCE-NEXT: b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything):
+# REDUCE-NEXT: [[none]]: undefined = Undefined
+# REDUCE-NEXT: [[operands]]: Array = NewArray v3, v4, [[none]], [[none]], [[none]], [[none]], v5, [[none]] contents=anything
+# REDUCE-NEXT: [[shape]]: 1043 = Integer integer=1043
+# REDUCE-NEXT: [[array]]: Array ={{*}} v0 castType=Array
+# REDUCE-NEXT: [[start]]: number ={{*}} v1 castType=number
+# REDUCE-NEXT: [[end]]: undefined|number ={{*}} v2 castType=undefined|number
+# REDUCE-NEXT: [[result]]: anything = CallDirect [[array]], [[start]], [[end]], [[shape]], [[operands]], v6 function=f1 [isAlwaysInlined]
+# REDUCE-NEXT: Return [[result]]
+# REDUCE-NEXT: }
+# REDUCE-NOT: role=ChainStep
+# JOIN: {role=ChainStep target=f1 parameter=24} -> request 0
+# JOIN: name="traverseArray" module=m0 role=ChainStep flags=[IsHiddenInStackTraces] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[{{*}}IsHiddenInStackTraces] derivation={source=f1 parameter=24} creator=ChainStep {
+# JOIN-NEXT: b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+# JOIN-NEXT: [[none]]: undefined = Undefined
+# JOIN-NEXT: [[operands]]: Array = NewArray v3, v4, [[none]], [[none]], [[none]], [[none]], [[none]], [[none]] contents=anything
+# JOIN-NEXT: [[shape]]: 24 = Integer integer=24
+# JOIN-NEXT: [[array]]: Array ={{*}} v0 castType=Array
+# JOIN-NEXT: [[start]]: number ={{*}} v1 castType=number
+# JOIN-NEXT: [[end]]: undefined|number ={{*}} v2 castType=undefined|number
+# JOIN-NEXT: [[result]]: anything = CallDirect [[array]], [[start]], [[end]], [[shape]], [[operands]], v5 function=f1 [isAlwaysInlined]
+# JOIN-NEXT: Return [[result]]
+# JOIN-NEXT: }
+# JOIN-NOT: role=ChainStep
+# SHOWN: {role=ChainStep target=f2 parameter=24} -> request 0
+# SHOWN: name="shownTraversal" module=m0 role=ChainStep thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[{{*}}IsHiddenInStackTraces] derivation={source=f2 parameter=24} creator=ChainStep {
+# SHOWN-NEXT: b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
+# SHOWN-NEXT: [[none]]: undefined = Undefined
+# SHOWN-NEXT: [[operands]]: Array = NewArray v3, v4, [[none]], [[none]], [[none]], [[none]], [[none]], [[none]] contents=anything
+# SHOWN-NEXT: [[shape]]: 24 = Integer integer=24
+# SHOWN-NEXT: [[result]]: anything = CallDirect v0, v1, v2, [[shape]], [[operands]], v5 function=f2 [isAlwaysInlined]
+# SHOWN-NEXT: Return [[result]]
+# SHOWN-NEXT: }
+# SHOWN-NOT: role=ChainStep
+# OPTIMIZED-LABEL: function f3 name="filterThenMapAsBuilt"
+# OPTIMIZED-NOT: BitAnd
+# OPTIMIZED-NOT: RShift
+# OPTIMIZED-NOT: CallDirect
+# OPTIMIZED-NOT: = NewArray v3
+# OPTIMIZED-NOT: ThrowNewError
+# OPTIMIZED-NOT: ToString
+# OPTIMIZED: = Call v3, v4, [[element]],
+# OPTIMIZED-NEXT: Jump -> next [[rejoin]]([[element]],
+# OPTIMIZED-NOT: BitAnd
+# OPTIMIZED-NOT: RShift
+# OPTIMIZED-NOT: CallDirect
+# OPTIMIZED-NOT: = NewArray v3
+# OPTIMIZED-NOT: ThrowNewError
+# OPTIMIZED-NOT: ToString
+# OPTIMIZED: [[rejoin]]([[kept]]: anything,
+# OPTIMIZED-NOT: BitAnd
+# OPTIMIZED-NOT: RShift
+# OPTIMIZED-NOT: CallDirect
+# OPTIMIZED-NOT: = NewArray v3
+# OPTIMIZED-NOT: ThrowNewError
+# OPTIMIZED-NOT: ToString
+# OPTIMIZED: [[mapped]]: anything = Call v5, v6, [[kept]],
+# OPTIMIZED-NOT: BitAnd
+# OPTIMIZED-NOT: RShift
+# OPTIMIZED-NOT: CallDirect
+# OPTIMIZED-NOT: = NewArray v3
+# OPTIMIZED-NOT: ThrowNewError
+# OPTIMIZED-NOT: ToString
+# OPTIMIZED: = TryPutByValDirect {{*}}, {{*}}, [[mapped]]
+# OPTIMIZED-NOT: BitAnd
+# OPTIMIZED-NOT: RShift
+# OPTIMIZED-NOT: CallDirect
+# OPTIMIZED-NOT: = NewArray v3
+# OPTIMIZED-NOT: ThrowNewError
+# OPTIMIZED-NOT: ToString
+# OPTIMIZED: = TruncateNewArray
+# OPTIMIZED-NOT: BitAnd
+# OPTIMIZED-NOT: RShift
+# OPTIMIZED-NOT: CallDirect
+# OPTIMIZED-NOT: = NewArray v3
+# OPTIMIZED-NOT: ThrowNewError
+# OPTIMIZED-NOT: ToString
+# OPTIMIZED-LABEL: function f4 name="shapeKnownAtRunTime"
+# OPTIMIZED: BitAnd
+# OPTIMIZED: RShift
+# OPTIMIZED: ToString
+# OPTIMIZED: ThrowNewError

@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "AOTRemovableFeature.h"
 #include "BytecodeGeneratorBase.h"
 #include "BytecodeStructs.h"
 #include "CodeBlock.h"
@@ -353,8 +354,8 @@ namespace JSC {
         static constexpr OpcodeID opcodeForDisablingOptimizations = op_debug;
     };
 
-    // One character early, on the operator, parenthesis or white space before the expression: the basic block of an arrow
-    // function's own code starts at the expression, and two basic blocks with the same range share a counter.
+    // One character early, on whatever is before the expression: the basic block of an arrow function's own code starts at
+    // the expression, and two basic blocks with the same range share a counter.
     inline int startOffsetOfBasicBlock(ExpressionNode* node)
     {
         return node->startOffset() - 1;
@@ -404,8 +405,9 @@ namespace JSC {
         NeedsClassFieldInitializer needsClassFieldInitializer() const { return m_codeBlock->needsClassFieldInitializer(); }
 
         template<typename Node, typename UnlinkedCodeBlock>
-        static ParserError generate(VM& vm, Node* node, const SourceCode& sourceCode, UnlinkedCodeBlock* unlinkedCodeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* privateNameEnvironment, OptimizeBytecode optimize = OptimizeBytecode::No, RefPtr<DeclaredNamesLink> parentDeclaredNames = nullptr)
+        NEVER_INLINE static ParserError generate(VM& vm, Node* node, const SourceCode& sourceCode, UnlinkedCodeBlock* unlinkedCodeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* privateNameEnvironment, OptimizeBytecode optimize = OptimizeBytecode::No, RefPtr<DeclaredNamesLink> parentDeclaredNames = nullptr)
         {
+            JSC_REMOVABLE_DEFINITION(Interpreter, &BytecodeGenerator::generate<Node, UnlinkedCodeBlock>);
             MonotonicTime before;
             if (Options::reportBytecodeCompileTimes()) [[unlikely]]
                 before = MonotonicTime::now();
@@ -652,9 +654,17 @@ namespace JSC {
             return (m_codeType != FunctionCode || rightHasAssignments) && !rightIsPure;
         }
 
+        ALWAYS_INLINE bool leftHandSideNeedsCopy(ExpressionNode* leftHandSide, bool rightHasAssignments, bool rightIsPure)
+        {
+            // Reading |this| checks that it is bound, and super() throws instead of rebinding it, so it cannot change afterwards.
+            if (leftHandSide->isThisNode())
+                return false;
+            return leftHandSideNeedsCopy(rightHasAssignments, rightIsPure);
+        }
+
         ALWAYS_INLINE RefPtr<RegisterID> emitNodeForLeftHandSide(ExpressionNode* n, bool rightHasAssignments, bool rightIsPure)
         {
-            if (leftHandSideNeedsCopy(rightHasAssignments, rightIsPure)) {
+            if (leftHandSideNeedsCopy(n, rightHasAssignments, rightIsPure)) {
                 RefPtr<RegisterID> dst = newTemporary();
                 emitNode(dst.get(), n);
                 return dst;
@@ -665,7 +675,7 @@ namespace JSC {
 
         ALWAYS_INLINE RefPtr<RegisterID> emitNodeForLeftHandSideForProperty(ExpressionNode* n, bool rightHasAssignments, bool rightIsPure)
         {
-            if (leftHandSideNeedsCopy(rightHasAssignments, rightIsPure)) {
+            if (leftHandSideNeedsCopy(n, rightHasAssignments, rightIsPure)) {
                 RefPtr<RegisterID> dst = newTemporary();
                 emitNodeForProperty(dst.get(), n);
                 return dst;
@@ -712,6 +722,17 @@ namespace JSC {
                 emitProfileControlFlow(textOffset, textEndOffset);
         }
         bool& isInCaseTest() { return m_isInCaseTest; }
+        // For the condition, the increment or the left side in a loop header. A loop emits its condition twice, with one counter.
+        void emitProfileControlFlowForLoopHeader(int textOffset, int textEndOffset)
+        {
+            if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
+                emitProfileControlFlowSlow(textOffset, textEndOffset, true);
+        }
+        void emitProfileControlFlowForLoopHeader(ExpressionNode* conditionOrIncrement)
+        {
+            if (conditionOrIncrement)
+                emitProfileControlFlowForLoopHeader(startOffsetOfBasicBlock(conditionOrIncrement), conditionOrIncrement->endOffset());
+        }
         // For what is after a statement that control flow can leave, up to the end of the statements it is one of.
         // Nothing is after the last of them: what is left of the text has the count of the basic block they are in.
         bool emitProfileControlFlowAfter(StatementNode* statement)
@@ -1132,7 +1153,7 @@ namespace JSC {
         bool shouldEmitDebugHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::Debugger) && !isPrivateBuiltinFunction(); }
         bool shouldEmitTypeProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::TypeProfiler); }
         bool shouldEmitControlFlowProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::ControlFlowProfiler); }
-        void emitProfileControlFlowSlow(int textOffset, int textEndOffset);
+        void emitProfileControlFlowSlow(int textOffset, int textEndOffset, bool isInLoopHeader = false);
         bool emitProfileControlFlowAfterSlow(StatementNode*);
         bool shouldRunBytecodeOptimizer() const { return m_optimizeBytecode; }
         

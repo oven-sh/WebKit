@@ -27,7 +27,7 @@
 
 #include <wtf/Platform.h>
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include "CallFrame.h"
 #include "CodeOrigin.h"
@@ -135,4 +135,4 @@ private:
 
 } // namespace JSC
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)

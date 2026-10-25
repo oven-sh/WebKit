@@ -1,0 +1,49 @@
+# A deferred closure has no code and no value, so it is neither the result of an outlined body nor an argument of one: it moves only together with the allocation that names it
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Holder" fields=[{key="run" declared={type=function} flags=[IsRequired]}, {key="detail" declared={type=anything}}]
+
+function f0 name="holderStaysInTheFrame" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
+# REPEAT: i = 1..4
+  b%(i)() frequency=Rare:
+    v%(i*3-1) = NewClosure function=f2 allocationSite=1 closureForm=Deferred
+    v%(i*3) = NewObject -, v%(i*3-1), v1 layout=L0 fields=[0, 1] allocationSite=2 storage=Frame
+    v%(i*3+1) = StrictEq v%(i*3), v1
+    Return v%(i*3+1)
+# END REPEAT
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-4: = NewClosure function=f2 allocationSite=1 closureForm=Deferred
+# CHECK-NOT: CallDirect
+
+function f1 name="holderMovesToo" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3] -> case b1(), case b2(), case b3(), case b4(), otherwise b5()
+# REPEAT: i = 1..4
+  b%(i)() frequency=Rare:
+    v%(i*2) = NewClosure function=f2 allocationSite=3 closureForm=Deferred
+    v%(i*2+1) = NewObject -, v%(i*2), v1 layout=L0 fields=[0, 1] allocationSite=4
+    Return v%(i*2+1)
+# END REPEAT
+  b5():
+    Return v1
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: NewClosure
+# CHECK-COUNT-4: = CallDirect v1 function=[[body]]
+# CHECK-NOT: NewClosure
+
+function f2 name="run" results=[{type=anything}] {
+    Return
+}
+# CHECK: function [[body]] {{*}}role=OutlinedBody
+# CHECK: [[closure]]: f2 = NewClosure function=f2 allocationSite=3 closureForm=Deferred
+# CHECK-NEXT: = NewObject -, [[closure]], v0 layout=L0

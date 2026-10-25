@@ -1,0 +1,18 @@
+# The compiler's helpers and the functions of bun:bundle are in no realm: a call of one that ResolveBuiltins did not make a direct call has nothing to call
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: RequiredPassLeftOperation 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="helper" parameters=[{type=anything}, {type=string}] results=[{type=undefined}] {
+    v2 = CallBuiltin -, v0, v1 overload=CompilerHelpersStringifyProperty/0
+    Return
+}
+function f1 name="functionOfBunBundle" parameters=[{type=string}] results=[{type=undefined}] {
+    v1 = CallBuiltin -, v0 overload=BunBundleFeature/0
+    Return
+}
+function f2 name="good" parameters=[{type=object}] results=[{type=undefined}] {
+    v1 = CallBuiltin -, v0 overload=ObjectKeys/0
+    Return
+}

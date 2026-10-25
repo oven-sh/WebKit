@@ -1,0 +1,55 @@
+# A switch with a case that is not one character needs the string, so the character is created
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SubstringViewGroups = 0
+# CHECK-NOT: StringRangeCodeUnitOr
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="switch-string-long-case" parameters=[{type=string}, {type=int}] results=[{type=int}] {
+    v2 = ElemGet v0, v1
+    SwitchString v2 strings=["a", "bc"] -> case b1(), case b2(), otherwise b3()
+  b1():
+    v3 = Integer integer=1
+    Return v3
+  b2():
+    v4 = Integer integer=2
+    Return v4
+  b3():
+    v5 = Integer integer=3
+    Return v5
+}
+# CHECK: v2: undefined|string = StringRangeCharacterOrUndefined v0, -, -, v1
+# CHECK-NEXT: SwitchString v2 strings=["a", "bc"] -> case b1(), case b2(), otherwise b3()
+# CHECK-NOT: StringRangeCodeUnitOr
+
+function f1 name="switch-string-empty-case" parameters=[{type=string}, {type=int}] results=[{type=int}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeCharAt/0
+    SwitchString v2 strings=["a", ""] -> case b1(), case b2(), otherwise b2()
+  b1():
+    v3 = Integer integer=1
+    Return v3
+  b2():
+    v4 = Integer integer=2
+    Return v4
+}
+# CHECK: v2: string = StringRangeCharacterOrEmpty v0, -, -, v1
+# CHECK-NEXT: SwitchString v2 strings=["a", ""] -> case b1(), case b2(), otherwise b2()
+# CHECK-NOT: StringRangeCodeUnitOr
+
+function f2 name="switch-on-slice" parameters=[{type=string}, {type=int}, {type=int}] results=[{type=int}] {
+    v3 = GetStringLength v0
+    v4 = StringRange v3, v1, v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Substring v0, v5, v6
+    SwitchString v7 strings=["a"] -> case b1(), otherwise b2()
+  b1():
+    v8 = Integer integer=1
+    Return v8
+  b2():
+    v9 = Integer integer=2
+    Return v9
+}
+# CHECK: v7: string = Substring v0, v5, v6
+# CHECK-NEXT: SwitchString v7 strings=["a"] -> case b1(), otherwise b2()
+# CHECK-NOT: StringRangeCodeUnitOr

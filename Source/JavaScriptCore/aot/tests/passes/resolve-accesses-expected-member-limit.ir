@@ -1,0 +1,25 @@
+# MaxAccessPlanMembers bounds the receivers that an access is only expected to have: over the limit (2) the limit is reported, within it nothing is lost. Either way the access stays by name here
+# FORM: Prepared
+# OPTIONS: limit=MaxAccessPlanMembers:2
+# RUN: pass ResolveAccesses
+# LOSS: MaxAccessPlanMembers x1 f0 v1
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="First" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Second" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 name="Third" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="over-the-limit" parameters=[{type=L0|L1|L2 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1|L2):
+    v1 = PropGet v0 key="x"
+    Return v1
+# CHECK-NEXT: b0(v0: anything ~ L0|L1|L2):
+# CHECK-NEXT: = PropGet v0 key="x"
+}
+function f1 name="within-the-limit" parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1):
+    v1 = PropGet v0 key="x"
+    Return v1
+# CHECK-NEXT: b0(v0: anything ~ L0|L1):
+# CHECK-NEXT: = PropGet v0 key="x"
+}

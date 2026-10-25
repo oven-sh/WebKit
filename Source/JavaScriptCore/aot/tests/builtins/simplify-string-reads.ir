@@ -1,0 +1,156 @@
+# charCodeAt at a position that a comparison with the length of the same string puts inside the string is a code unit, an integer. At any other integer the read gets that comparison: the code unit on one path, NaN on an unlikely one. In unlikely code and on a range of a string the call stays
+# FORM: Prepared optimizing
+# RUN: pass SimplifyBuiltinCalls
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="loopUnderLength" parameters=[{type=string}] results=[{type=i32}] {
+    v1 = Integer
+    v2 = Integer
+    Jump -> next b1(v1, v2)
+  b1(v3: i32, v4: int[0, 2147483647]):
+    LoopHint
+    v6 = CallBuiltin v0 overload=StringPrototypeLength/0
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = CallBuiltin v0, v8 overload=StringPrototypeCharCodeAt/0
+    v10 = Add v3, v9
+    v11 = Integer
+    v12 = BitOr v10, v11
+    v13 = Increment v8
+    Jump -> next b1(v12, v13)
+  b3():
+    Return v3
+# CHECK: v6: int[0, 2147483647] = GetStringLength v0
+# CHECK: v9: int[0, 65535] = GetStringCodeUnit v0, v8
+}
+
+function f1 name="lengthReadOnce" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=number}] {
+    v2 = GetStringLength v0
+    v3 = Less v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    Return v4
+  b2():
+    v5 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    Return v5
+# CHECK: b1():
+# CHECK-NEXT: v4: int[0, 65535] = GetStringCodeUnit v0, v1
+# CHECK: b2():
+# CHECK-NOT: CallBuiltin
+# CHECK: = Less v1,
+}
+
+function f2 name="nextPosition" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=number}] {
+    v2 = GetStringLength v0
+    v3 = Increment v1
+    v4 = Less v3, v2
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    v6 = CallBuiltin v0, v3 overload=StringPrototypeCharCodeAt/0
+    v7 = Increment v3
+    v8 = CallBuiltin v0, v7 overload=StringPrototypeCharCodeAt/0
+    v9 = Add v5, v6
+    v10 = Add v9, v8
+    Return v10
+  b2():
+    v11 = Integer
+    Return v11
+# CHECK: v5: int[0, 65535] = GetStringCodeUnit v0, v1
+# CHECK-NEXT: v6: int[0, 65535] = GetStringCodeUnit v0, v3
+# CHECK-NOT: CallBuiltin
+# CHECK: [[length2]]: int[0, 2147483647] = GetStringLength v0
+# CHECK-NEXT: [[isInside2]]: boolean = Less v7, [[length2]]
+# CHECK-NEXT: Branch [[isInside2]] -> taken [[inside2]](| 0), notTaken [[outside2]](| 0)
+# CHECK: [[inside2]]([[position2]]: int[{{*}}]):
+# CHECK-NEXT: int[0, 65535] = GetStringCodeUnit v0, [[position2]]
+# CHECK: [[outside2]]({{*}}) frequency=Unlikely:
+# CHECK-NEXT: = Double number=NaN
+}
+
+function f3 name="positionMayEqualLength" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=number}] {
+    v2 = GetStringLength v0
+    v3 = LessEq v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    Return v4
+  b2():
+    v5 = Integer
+    Return v5
+# CHECK-NOT: GetStringCodeUnit v0, v1
+# CHECK: [[isInside3]]: boolean = Less v1,
+# CHECK-NEXT: Branch [[isInside3]] -> taken [[inside3]](| 0),
+# CHECK: [[inside3]]([[position3]]: int[{{*}}]):
+# CHECK-NEXT: = GetStringCodeUnit v0, [[position3]]
+}
+
+function f4 name="lengthOfAnotherString" parameters=[{type=string}, {type=string}, {type=int[0, 100]}] results=[{type=number}] {
+    v3 = GetStringLength v1
+    v4 = Less v2, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = CallBuiltin v0, v2 overload=StringPrototypeCharCodeAt/0
+    Return v5
+  b2():
+    v6 = Integer
+    Return v6
+# CHECK-NOT: GetStringCodeUnit v0, v2
+# CHECK: [[length4]]: int[0, 2147483647] = GetStringLength v0
+# CHECK-NEXT: = Less v2, [[length4]]
+}
+
+function f5 name="positionMayBeNegative" parameters=[{type=string}, {type=int[-1, 100]}] results=[{type=number}] {
+    v2 = GetStringLength v0
+    v3 = Less v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    Return v4
+  b2():
+    v5 = Integer
+    Return v5
+# CHECK-NOT: GetStringCodeUnit v0, v1
+# CHECK: [[unsigned5]]: int[0, 4294967295] = URShift v1,
+# CHECK: = Less [[unsigned5]],
+# CHECK: = Double number=NaN
+}
+
+function f6 name="untestedPosition" parameters=[{type=string}, {type=int[0, 100]}] results=[{type=number}] {
+    v2 = GetStringLength v0
+    v3 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    v4 = Add v2, v3
+    Return v4
+# CHECK-NOT: GetStringCodeUnit v0, v1
+# CHECK: = Less v1,
+# CHECK: = Double number=NaN
+}
+
+function f7 name="inUnlikelyCode" parameters=[{type=string}, {type=int[0, 100]}, {type=boolean}] results=[{type=number}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v3 = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+    Return v3
+  b2():
+    v4 = Integer
+    Return v4
+# CHECK: v3: number = CallBuiltin v0, v1 overload=StringPrototypeCharCodeAt/0
+}
+
+function f8 name="provenReadOfARange" parameters=[{type=string}, {type=int[0, 100]}, {type=int[0, 100]}, {type=int[0, 100]}] results=[{type=number}] {
+    v4 = Substring v0, v1, v2
+    v5 = GetStringLength v4
+    v6 = Less v3, v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = CallBuiltin v4, v3 overload=StringPrototypeCharCodeAt/0
+    Return v7
+  b2():
+    v8 = Integer
+    Return v8
+# CHECK-NOT: CallBuiltin
+# CHECK: = GetStringCodeUnit v4, v3
+}

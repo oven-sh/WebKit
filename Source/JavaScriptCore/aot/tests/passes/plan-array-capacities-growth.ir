@@ -1,0 +1,311 @@
+# An array that a counted loop appends to once per iteration reserves room for the iterations that are left when its vector is full
+# FORM: Prepared
+# RUN: pass PlanArrayCapacities
+# RUN(TWICE): pass PlanArrayCapacities PlanArrayCapacities
+# STATISTIC: ArrayGrowthsPlanned = 8
+# TWICE: outcome: Changed
+# TWICE-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Bag" fields=[{key="items" declared={type=Array<anything>} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+function f0 name="pushToParameter" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int[0, 1000000]}, {type=anything}] results=[{type=undefined}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallBuiltin v0, v2 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v9 = Integer integer=1
+    v10 = Add v7, v9
+    Jump -> next b1(v10)
+  b3():
+    Return
+# CHECK: [[room0]]: boolean = HasSpareArrayCapacity v0
+# CHECK-NEXT: Branch [[room0]] -> taken [[fast0]](), notTaken [[full0]]()
+# CHECK: [[fast0]]():
+# CHECK-NEXT: = CallBuiltin v0, v2 overload=ArrayPrototypePush/0
+# CHECK: [[full0]]() frequency=Rare:
+# CHECK-NEXT: [[left0]]:{{*}}= Sub v1, v4
+# CHECK-NEXT: ReserveArrayCapacity v0, [[left0]]
+# CHECK-NEXT: = CallBuiltin v0, v2 overload=ArrayPrototypePush/0
+}
+
+function f1 name="appendElementToParameter" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int[0, 1000000]}, {type=anything}] results=[{type=undefined}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    AppendElement v0, v2
+    v9 = Integer integer=1
+    v10 = Add v7, v9
+    Jump -> next b1(v10)
+  b3():
+    Return
+# CHECK: = HasSpareArrayCapacity v0
+# CHECK: AppendElement v0, v2
+# CHECK: ReserveArrayCapacity v0,
+# CHECK-NEXT: AppendElement v0, v2
+}
+
+function f2 name="inclusiveBound" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int[0, 1000000]}, {type=anything}] results=[{type=undefined}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = LessEq v4, v1
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallBuiltin v0, v2 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v9 = Integer integer=1
+    v10 = Add v7, v9
+    Jump -> next b1(v10)
+  b3():
+    Return
+# CHECK: frequency=Rare:
+# CHECK-NEXT: [[difference2]]:{{*}}= Sub v1, v4
+# CHECK-NEXT: [[one2]]:{{*}}= Integer integer=1
+# CHECK-NEXT: [[left2]]:{{*}}= Add [[difference2]], [[one2]]
+# CHECK-NEXT: ReserveArrayCapacity v0, [[left2]]
+}
+
+function f3 name="countingDown" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int[0, 1000000]}, {type=anything}] results=[{type=undefined}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v4):
+    LoopHint
+    v6 = Greater v4, v3
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallBuiltin v0, v2 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v9 = Integer integer=1
+    v10 = Sub v7, v9
+    Jump -> next b1(v10)
+  b3():
+    Return
+# CHECK: frequency=Rare:
+# CHECK-NEXT: [[zero3]]:{{*}}= Integer
+# CHECK-NEXT: [[left3]]:{{*}}= Sub v4, [[zero3]]
+# CHECK-NEXT: ReserveArrayCapacity v0, [[left3]]
+}
+
+function f4 name="boundIsNumber" parameters=[{type=Array<anything, pristine[Storage]>}, {type=number}, {type=anything}] results=[{type=undefined}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = CallBuiltin v0, v2 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v8 = Integer integer=1
+    v9 = Add v4, v8
+    Jump -> next b1(v9)
+  b3():
+    Return
+# CHECK: frequency=Rare:
+# CHECK-NEXT: [[difference4]]:{{*}}= Sub v1, v4
+# CHECK-NEXT: [[zero4]]:{{*}}= Integer
+# CHECK-NEXT: [[whole4]]:{{*}}= BitOr [[difference4]], [[zero4]]
+# CHECK-NEXT: [[one4]]:{{*}}= Integer integer=1
+# CHECK-NEXT: [[left4]]:{{*}}= Add [[whole4]], [[one4]]
+# CHECK-NEXT: ReserveArrayCapacity v0, [[left4]]
+}
+
+function f5 name="twoPushes" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int[0, 1000000]}, {type=anything}] results=[{type=undefined}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallBuiltin v0, v2 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v9 = CallBuiltin v0, v7 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v10 = Integer integer=1
+    v11 = Add v7, v10
+    Jump -> next b1(v11)
+  b3():
+    Return
+# CHECK-COUNT-2: = HasSpareArrayCapacity v0
+# CHECK: [[iterations5]]:{{*}}= Sub v1, v4
+# CHECK-NEXT: [[two5]]:{{*}}= Integer integer=2
+# CHECK-NEXT: [[left5]]:{{*}}= Mul [[iterations5]], [[two5]]
+# CHECK-NEXT: ReserveArrayCapacity v0, [[left5]]
+}
+
+function f6 name="literalMayExceedPlannedCapacity" parameters=[{type=int[0, 1000000]}, {type=anything}] results=[{type=Array<anything>}] {
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v9 = Integer integer=1
+    v10 = Add v7, v9
+    Jump -> next b1(v10)
+  b3():
+    Return v2
+# CHECK: = NewArray {{*}}capacity=
+# CHECK: = HasSpareArrayCapacity v2
+# CHECK: ReserveArrayCapacity v2,
+}
+
+function f7 name="literalWithinPlannedCapacity" parameters=[{type=int[0, 1000]}, {type=anything}] results=[{type=Array<anything>}] {
+    v2 = NewArray contents=anything
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallBuiltin v2, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v9 = Integer integer=1
+    v10 = Add v7, v9
+    Jump -> next b1(v10)
+  b3():
+    Return v2
+# CHECK: = NewArray {{*}}capacity=
+# CHECK-NOT: HasSpareArrayCapacity
+}
+
+function f8 name="conditionalPush" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int[0, 1000000]}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(| 0), notTaken b5()
+  b2(v8):
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    v9 = CallBuiltin v0, v2 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Jump -> next b4()
+  b4():
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b5():
+    Return
+# CHECK-NOT: HasSpareArrayCapacity
+}
+
+function f9 name="arrayChangesInLoop" parameters=[{type=Array<anything, pristine[Storage]>}, {type=Array<anything, pristine[Storage]>}, {type=int[0, 1000000]}, {type=anything}] results=[{type=undefined}] {
+    v4 = Integer integer=0
+    Jump -> next b1(v4, v0, v1)
+  b1(v5, v6, v7):
+    LoopHint
+    v9 = Less v5, v2
+    Branch v9 -> taken b2(| 0), notTaken b3()
+  b2(v10):
+    v11 = CallBuiltin v6, v3 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v12 = Integer integer=1
+    v13 = Add v10, v12
+    Jump -> next b1(v13, v7, v6)
+  b3():
+    Return
+# CHECK-NOT: HasSpareArrayCapacity
+}
+
+function f10 name="loopLeftEarly" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int[0, 1000000]}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(| 0), notTaken b4()
+  b2(v8):
+    v9 = CallBuiltin v0, v2 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Branch v3 -> taken b4(), notTaken b3()
+  b3():
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b4():
+    Return
+# CHECK-NOT: HasSpareArrayCapacity
+}
+
+function f11 name="pushOfTwoElements" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int[0, 1000000]}, {type=anything}] results=[{type=undefined}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = CallBuiltin v0, v2, v2 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v9 = Integer integer=1
+    v10 = Add v7, v9
+    Jump -> next b1(v10)
+  b3():
+    Return
+# CHECK-NOT: HasSpareArrayCapacity
+}
+
+function f12 name="pushOutsideLoop" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}] results=[{type=undefined}] {
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    Return
+# CHECK-NOT: HasSpareArrayCapacity
+}
+
+function f13 name="pushInRareBlock" parameters=[{type=Array<anything, pristine[Storage]>}, {type=int[0, 1000000]}, {type=anything}] results=[{type=undefined}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4) frequency=Rare:
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7) frequency=Rare:
+    v8 = CallBuiltin v0, v2 overload=ArrayPrototypePush/0 builtinCallForm=Whole
+    v9 = Integer integer=1
+    v10 = Add v7, v9
+    Jump -> next b1(v10)
+  b3():
+    Return
+# CHECK-NOT: HasSpareArrayCapacity
+}
+
+function f14 name="arrayReadFromFieldInLoop" parameters=[{type=L0}, {type=int[0, 1000000]}, {type=anything}] results=[{type=undefined}] {
+    v3 = Integer integer=0
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7):
+    v8 = GetSlot v0 key="items" receivers=[L0] level=Proven
+    v9 = CallBuiltin v8, v2 overload=ArrayPrototypePush/0 builtinCallForm=Whole [needsPristineReceiver]
+    v10 = Integer integer=1
+    v11 = Add v7, v10
+    Jump -> next b1(v11)
+  b3():
+    Return
+# CHECK-NOT: HasSpareArrayCapacity
+}
+
+function f15 name="arrayReadFromFieldBeforeLoop" parameters=[{type=L0}, {type=int[0, 1000000]}, {type=anything}] results=[{type=undefined}] {
+    v3 = GetSlot v0 key="items" receivers=[L0] level=Proven
+    v4 = Integer integer=0
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    v9 = CallBuiltin v3, v2 overload=ArrayPrototypePush/0 builtinCallForm=Whole [needsPristineReceiver]
+    v10 = Integer integer=1
+    v11 = Add v8, v10
+    Jump -> next b1(v11)
+  b3():
+    Return
+# CHECK-NOT: HasSpareArrayCapacity
+}

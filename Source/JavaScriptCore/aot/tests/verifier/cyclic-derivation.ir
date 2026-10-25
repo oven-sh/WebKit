@@ -1,0 +1,11 @@
+# the sources of derived functions form no cycle
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidCreatorRecord 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="source" results=[{type=anything}]
+function f1 name="goodFromSource" role=OutlinedBody results=[{type=anything}] derivation={source=f0}
+function f2 name="goodFromDerived" role=OutlinedBody results=[{type=anything}] derivation={source=f1}
+function f3 name="badFirst" role=OutlinedBody results=[{type=anything}] derivation={source=f4}
+function f4 name="badSecond" role=OutlinedBody results=[{type=anything}] derivation={source=f3}

@@ -45,6 +45,7 @@
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "JSTemplateObjectDescriptor.h"
+#include "MarkedBlockCage.h"
 #include "Options.h"
 #include "PrivateFieldPutKind.h"
 #include "StrongInlines.h"
@@ -2025,11 +2026,7 @@ bool BytecodeGenerator::emitEqualityOpImpl(RegisterID* dst, RegisterID* src1, Re
                 return true;
             }
             if (value == "bigint"_s) {
-#if USE(BIGINT32)
-                replaceLastInstruction<OpIsBigInt>(dst, op.m_value);
-#else
                 replaceLastInstruction<OpIsCellWithType>(dst, op.m_value, HeapBigIntType);
-#endif
                 return true;
             }
             if (value == "object"_s) {
@@ -2116,15 +2113,15 @@ void BytecodeGenerator::emitProfileControlFlow(int textOffset)
     if (shouldEmitControlFlowProfilerHooks()) {
         RELEASE_ASSERT(textOffset >= 0);
 
-        OpProfileControlFlow::emit(this, textOffset, 0);
+        OpProfileControlFlow::emit(this, textOffset, 0, false);
         m_codeBlock->addOpProfileControlFlowBytecodeOffset(m_lastInstruction.offset());
     }
 }
 
-void BytecodeGenerator::emitProfileControlFlowSlow(int textOffset, int textEndOffset)
+void BytecodeGenerator::emitProfileControlFlowSlow(int textOffset, int textEndOffset, bool isInLoopHeader)
 {
     RELEASE_ASSERT(textOffset >= 0 && textOffset < textEndOffset);
-    OpProfileControlFlow::emit(this, textOffset, textEndOffset);
+    OpProfileControlFlow::emit(this, textOffset, textEndOffset, isInLoopHeader);
     m_codeBlock->addOpProfileControlFlowBytecodeOffset(m_lastInstruction.offset());
 }
 
@@ -3608,6 +3605,9 @@ JSValue BytecodeGenerator::addBigIntConstant(const Identifier& identifier, uint8
         DeferTermination deferScope(vm);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         auto parseIntSign = sign ? JSBigInt::ParseIntSign::Signed : JSBigInt::ParseIntSign::Unsigned;
+        std::optional<MarkedBlockCage::InfallibleAllocationScope> infallibleAllocation;
+        if (MarkedBlockCage::isRequired())
+            infallibleAllocation.emplace(vm.heap.cage());
         JSValue bigIntInMap = JSBigInt::parseInt(nullptr, vm, identifier.string(), radix, JSBigInt::ErrorParseMode::ThrowExceptions, parseIntSign);
         scope.assertNoException();
         addConstantValue(bigIntInMap);
@@ -5573,6 +5573,10 @@ void BytecodeGenerator::emitYieldPoint(RegisterID* argument, JSAsyncGenerator::A
     // Restore the try contexts, which start offset is updated to the merge point.
     m_tryContextStack.swap(savedTryContextStack);
     emitLabel(mergePoint.get());
+
+    // The body is resumed with an undefined |this| because super() may not have run when the generator was created.
+    if (parseMode() == SourceParseMode::AsyncArrowFunctionBodyMode && isDerivedConstructorContext() && (m_scopeNode->usesThis() || m_scopeNode->usesSuperProperty()))
+        emitLoadThisFromArrowFunctionLexicalEnvironment();
 }
 
 RegisterID* BytecodeGenerator::emitYield(RegisterID* argument)

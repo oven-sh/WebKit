@@ -1,0 +1,30 @@
+# The conversion of a proven object finds valueOf and toString of Object.prototype, which run no code on an object without a tag of its own: the operator is not unknown code and the object reaches no user code
+# TODO: nobody: a built-in that a protocol finds is described as a call on any receiver, so adding a plain object counts as running unknown code
+# FORM: Prepared
+# RUN: effects summaries f0
+# RUN(OPERANDS): operands f0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Plain" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L1 kind=Instance name="Amount" constructor=f1 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="valueOf" function=f2 mutability=Fixed}]}
+variable g0 name="conversions" declared={type=number} initialization=Undefined
+function f0 name="add" parameters=[{type=number}, {type=object}, {type=L0}, {type=L1}] results=[{type=undefined}] {
+    v4 = Add v0, v2
+    v5 = Add v0, v3
+    v6 = Add v1, v2
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v4 Add: reads({{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NOT: callsUnknownCode
+# CHECK: v5 Add: reads({{*}}) writes(ModuleVariables/1, StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NOT: callsUnknownCode
+# CHECK: v6 Add: reads(all) {{*}}callsUnknownCode
+# OPERANDS: v6 Add 0: [Inspects, PassesToUserCode]
+# OPERANDS-NEXT: v6 Add 1: [Inspects]
+function f1 name="Amount" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f2 name="valueOf" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=number}] {
+    v1 = Integer integer=1
+    PutModuleVariable v1 variable=g0
+    Return v1
+}

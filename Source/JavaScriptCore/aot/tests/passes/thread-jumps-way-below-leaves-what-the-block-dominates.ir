@@ -1,0 +1,34 @@
+# The walk below the chosen successor stays inside what the block dominates, where all its users lie: the length of the function behind it counts for nothing
+# FORM: Prepared
+# OPTIONS: limit=MaxThreadingReachabilitySteps:1
+# RUN: pass ThreadJumps
+# STATISTIC: MaxThreadingReachabilityStepsHits = 0
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="successorIsReachedByAnotherWay" parameters=[{type=number}, {type=number}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b6()
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v4 = Null
+    Jump -> next b5(v4)
+  b4():
+    Jump -> next b5(v0)
+  b5(v5):
+    v6 = Null
+    v7 = StrictEq v5, v6
+    Branch v7 -> taken b6(), notTaken b7()
+  b6():
+    Jump -> next b8()
+  b7():
+    Return v5
+  b8():
+    Jump -> next b9()
+  b9():
+    Return v0
+# CHECK: b3():
+# CHECK: Jump -> next b6()
+}

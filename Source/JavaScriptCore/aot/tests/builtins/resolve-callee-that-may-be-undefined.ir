@@ -1,0 +1,58 @@
+# A complete callees stamp lists the functions a call can reach, not the values that reach its callee: after `delete Math.max` the callee of Math.max(1, 2) is undefined and the call throws. Such a call resolves only behind a test of the callee, and the call by value stays for the other values
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# RUN(TESTED): pass ResolveBuiltins PlaceTypeTests
+# STATISTIC: BuiltinCallsResolved = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="mayBeUndefined" parameters=[{type=anything}, {type=number}, {type=number}] results=[{type=anything}] {
+    v3 = Builtin builtin=Math
+    v4 = AssumeType v0 castType=undefined|builtin(MathMax)
+    v5 = Call v4, v3, v1, v2 calleeKey="max" callees=[builtin(MathMax)]
+    Return v5
+# CHECK-NOT: CallBuiltin
+# CHECK: v5: anything = Call v4, v3, v1, v2 calleeKey="max" callees=[builtin(MathMax)]
+# TESTED: [[test]]: boolean = TypeTest v4 testedType=builtin(MathMax)
+# TESTED-NEXT: Branch [[test]]
+# TESTED: CallBuiltin -, v1, v2 overload=MathMax/
+# TESTED: Call {{*}}calleeKey="max" callees=[builtin(MathMax)]
+}
+
+function f1 name="isTheBuiltin" parameters=[{type=anything}, {type=number}, {type=number}] results=[{type=anything}] {
+    v3 = Builtin builtin=Math
+    v4 = AssumeType v0 castType=builtin(MathMax)
+    v5 = Call v4, v3, v1, v2 calleeKey="max" callees=[builtin(MathMax)]
+    Return v5
+# CHECK: v5: number = CallBuiltin -, v1, v2 overload=MathMax/
+# TESTED-NOT: TypeTest
+# TESTED: v5: number = CallBuiltin -, v1, v2 overload=MathMax/
+}
+
+# The same for a call by value, as of a `var` that holds a built-in and may be read before its statement has run: the built-in is the only object among the values of the callee.
+function f2 name="variableMayBeUndefined" parameters=[{type=anything}, {type=number}, {type=number}] results=[{type=anything}] {
+    v3 = AssumeType v0 castType=undefined|builtin(MathMax)
+    v4 = Call v3, -, v1, v2 callees=[builtin(MathMax)]
+    Return v4
+# CHECK-NOT: CallBuiltin
+# CHECK: v4: anything = Call v3, -, v1, v2 callees=[builtin(MathMax)]
+# TESTED: [[isTheBuiltin]]: boolean = TypeTest v3 testedType=builtin(MathMax)
+# TESTED-NEXT: Branch [[isTheBuiltin]]
+# TESTED: CallBuiltin -, v1, v2 overload=MathMax/
+# TESTED: Call {{*}}callees=[builtin(MathMax)]
+}
+
+function f3 name="oneOfTwoBuiltins" parameters=[{type=anything}, {type=number}, {type=number}] results=[{type=anything}] {
+    v3 = AssumeType v0 castType=undefined|builtin(MathMax)|builtin(MathMin)
+    v4 = Call v3, -, v1, v2 callees=[builtin(MathMax), builtin(MathMin)]
+    Return v4
+# CHECK-NOT: CallBuiltin
+# TESTED-NOT: CallBuiltin
+}
+
+function f4 name="builtinOrAnyFunction" parameters=[{type=anything}, {type=number}, {type=number}] results=[{type=anything}] {
+    v3 = AssumeType v0 castType=function|builtin(MathMax)
+    v4 = Call v3, -, v1, v2
+    Return v4
+# CHECK-NOT: CallBuiltin
+# TESTED-NOT: CallBuiltin
+}

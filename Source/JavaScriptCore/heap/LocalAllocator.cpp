@@ -28,14 +28,21 @@
 
 #include "AlignedMemoryAllocator.h"
 #include "AllocatingScope.h"
+#include "CompleteSubspace.h"
 #include "FreeListInlines.h"
 #include "GCDeferralContext.h"
 #include "LocalAllocatorInlines.h"
+#include "MarkedBlockCage.h"
 #include "MarkedBlockInlines.h"
 #include "MarkedSpaceInlines.h"
 #include "Options.h"
 #include "ResourceExhaustion.h"
+#include "StructureAlignedMemoryAllocator.h"
 #include "SuperSampler.h"
+
+#if ENABLE(AOT)
+#include "AOTAllocationCounts.h"
+#endif
 
 namespace JSC {
 
@@ -135,7 +142,12 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
 
     ASSERT(!m_directory->markedSpace().isIterating());
     heap.didAllocate(m_freeList.originalSize());
-    
+
+#if ENABLE(AOT)
+    if (AOT::AllocationCounts::isEnabled()) [[unlikely]]
+        AOT::AllocationCounts::willRefill(heap.vm(), *this);
+#endif
+
     didConsumeFreeList();
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -147,6 +159,13 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     }
 #endif
     
+#if USE(BUN_JSC_ADDITIONS)
+    if (Options::runsCompiledImage() && m_directory->m_blocks.isEmpty() && !m_directory->m_subspace->isIsoSubspace()) {
+        if (void* result = static_cast<CompleteSubspace*>(m_directory->m_subspace)->tryAllocateInLargerCell(heap, *m_directory, deferralContext))
+            return result;
+    }
+#endif
+
     AllocatingScope helpingHeap(heap);
 
     heap.collectIfNecessaryOrDefer(deferralContext);
@@ -173,10 +192,28 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     ASSERT_WITH_MESSAGE(cellSize == m_directory->cellSize(), "non-preciseOnly allocations should match allocator's the size class");
     MarkedBlock::Handle* block = m_directory->tryAllocateBlock(heap);
     if (!block) [[unlikely]] {
-        RELEASE_ASSERT_RESOURCE_AVAILABLE(failureMode != AllocationFailureMode::Assert, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
-        return nullptr;
+        if (MarkedBlockCage::isRequired() && heap.cage().allocationsAreInfallible())
+            failureMode = AllocationFailureMode::Assert;
+        if (heap.tryCollectForExhaustedCage(deferralContext)) {
+            if (m_currentBlock)
+                return allocate(heap, cellSize, deferralContext, failureMode);
+            result = tryAllocateWithoutCollecting(cellSize);
+            if (result)
+                return result;
+            block = m_directory->tryAllocateBlock(heap);
+        }
+        if (!block && failureMode == AllocationFailureMode::Assert && heap.tryUseReserveOfExhaustedCage(m_directory->subspace()->alignedMemoryAllocator()))
+            block = m_directory->tryAllocateBlock(heap);
+        if (!block) {
+            if (failureMode == AllocationFailureMode::Assert)
+                MarkedBlockCage::logExhaustion(m_directory->subspace()->alignedMemoryAllocator() == heap.structureAllocator.get() ? MarkedBlockCage::ExhaustedHeap::Structures : MarkedBlockCage::ExhaustedHeap::Cells);
+            RELEASE_ASSERT_RESOURCE_AVAILABLE(failureMode != AllocationFailureMode::Assert, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
+            return nullptr;
+        }
     }
     m_directory->addBlock(block);
+    if (MarkedBlockCage::isRequired())
+        heap.cage().keepReserveOnceHalfFull();
     result = allocateIn(block, cellSize);
     ASSERT(result);
     return result;
@@ -259,9 +296,11 @@ void* LocalAllocator::tryAllocateIn(MarkedBlock::Handle* block, size_t cellSize)
     
     // It's possible to stumble on a completely full block. Marking tries to retire these, but
     // that algorithm is racy and may forget to do it sometimes.
+    // Sweeping to a free list discards the newlyAllocated bits, so the allocated bit has to
+    // record that every cell in this block is live.
     if (m_freeList.allocationWillFail()) {
         ASSERT(block->isFreeListed());
-        block->unsweepWithNoNewlyAllocated();
+        block->didConsumeFreeList();
         ASSERT(!block->isFreeListed());
         return nullptr;
     }
@@ -290,7 +329,7 @@ void LocalAllocator::doTestCollectionsIfNeeded(JSC::Heap& heap, GCDeferralContex
             if (deferralContext)
                 deferralContext->m_shouldGC = true;
             else
-                heap.collectNow(Sync, CollectionScope::Full);
+                heap.collectNow(Sync, Options::useEdenCollectionsAtSlowPathAllocs() ? CollectionScope::Eden : CollectionScope::Full);
         }
     }
     if (++allocationCount >= Options::slowPathAllocsBetweenGCs())

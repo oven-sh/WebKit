@@ -1,0 +1,62 @@
+# f1: members = new Set(); members.add({ a: 1 }); Array.from(members)    f2: table = new Map(); table.set("k", { b: 1 }); Array.from(table.keys())
+# f3: Array.from({ length: 2, 0: { c: 1 } })
+# RUN: valueflow-apply
+# CHECK: function f1 name="listOfSet" {{*}}results=[{type=Array<L0, proven
+# CHECK: function f2 name="listOfKeys" {{*}}results=[{type=Array<string, proven
+# CHECK: function f3 name="listOfLike" {{*}}results=[{type=Array<undefined|
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Member" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Value" fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="First" fields=[{key="c" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Like" fields=[{key="length" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    v2 = CallDirect function=f3
+    Return
+}
+function f1 name="listOfSet" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Set
+    v1 = Construct v0
+    v2 = Builtin builtin=SetPrototypeAdd
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = Call v2, v1, v4
+    v6 = Builtin builtin=Array
+    v7 = Builtin builtin=ArrayFrom
+    v8 = Call v7, v6, v1
+    Return v8
+}
+function f2 name="listOfKeys" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0
+    v2 = Builtin builtin=MapPrototypeSet
+    v3 = String string="k"
+    v4 = Integer integer=1
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = Call v2, v1, v3, v5
+    v7 = Builtin builtin=MapPrototypeKeys
+    v8 = Call v7, v1
+    v9 = Builtin builtin=Array
+    v10 = Builtin builtin=ArrayFrom
+    v11 = Call v10, v9, v8
+    Return v11
+}
+function f3 name="listOfLike" results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=2
+    v1 = NewObject -, v0 layout=L3 fields=[0]
+    v2 = Integer
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L2 fields=[0]
+    ElemSet v1, v2, v4 mode=Strict
+    v6 = Builtin builtin=Array
+    v7 = Builtin builtin=ArrayFrom
+    v8 = Call v7, v6, v1
+    Return v8
+}

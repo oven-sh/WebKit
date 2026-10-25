@@ -1,0 +1,54 @@
+# A function of Bun's own modules is never split: it stays one body with its check. There the cure for a check that survives is a better annotation or a better proof, not a second version.
+# A function that keeps another check that may fail in its body is split like any other: its typed body gets a generic version of its own, the third version of the function, and that is worth it:
+# without a typed body every call tests again what its caller has tested (TypeScript 6 checking effect: 738 M tests of parameters; split, the first thread runs 41.05 -> 36.61 G instructions).
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass SplitBehindEntryChecks VerifyProgram
+# STATISTIC: FunctionsSplitBehindEntryChecks = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+module m1 path="library.ts" displayPath="library.ts" flags=[IsLibrary]
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m1 position=10 kind=Parameter
+typesite w2 module=m0 position=40 kind=Parameter
+typesite w3 module=m0 position=50 kind=CallResult
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    Return
+}
+function f1 name="ofTheProgram" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=number site=w0 flags=[IsExpected]}] results=[{type=number}] {
+  b0(v0: anything ~ number):
+    v1 = Check v0 castType=number site=w0
+    v2 = Negate v1
+    Return v2
+}
+# CHECK-LABEL: function f1 name="ofTheProgram" module=m0 position=5 role=EntryChecks
+function f2 name="ofTheLibrary" module=m1 position=5 role=Library flags=[IsChecked] length=1 parameters=[{type=number site=w1 flags=[IsExpected]}] results=[{type=number}] {
+  b0(v0: anything ~ number):
+    v1 = Check v0 castType=number site=w1
+    v2 = Negate v1
+    Return v2
+}
+# CHECK-LABEL: function f2 name="ofTheLibrary" module=m1 position=5 role=Library
+# CHECK: = Check v0 castType=number site=w1
+function f3 name="checksInTheMiddle" module=m0 position=35 flags=[IsChecked] length=1 parameters=[{type=number site=w2 flags=[IsExpected]}] results=[{type=number}] {
+  b0(v0: anything ~ number):
+    v1 = Check v0 castType=number site=w2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="source" [isFreeName]
+    v4 = Call v3, -, v1
+    v5 = Check v4 castType=number site=w3
+    v6 = Add v1, v5
+    Return v6
+}
+# CHECK-LABEL: function f3 name="checksInTheMiddle" module=m0 position=35 role=EntryChecks flags=[IsChecked]
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: = CallDirect {{*}} function=[[middleBody]]
+# CHECK: function [[middleBody]] name="checksInTheMiddle" module=m0 position=35 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number site=w2}]
+# CHECK: b0(v0: number):
+# CHECK-NOT: Check v0
+# CHECK: = Check v4 castType=number site=w3

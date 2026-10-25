@@ -22,6 +22,7 @@
 #include "config.h"
 #include "Debugger.h"
 
+#include "AOTRemovableFeature.h"
 #include "CodeBlock.h"
 #include "DebuggerCallFrame.h"
 #include "DebuggerScope.h"
@@ -213,8 +214,9 @@ void Debugger::attach(JSGlobalObject* globalObject)
 #endif
 }
 
-void Debugger::detach(JSGlobalObject* globalObject, ReasonForDetach reason)
+NEVER_INLINE void Debugger::detach(JSGlobalObject* globalObject, ReasonForDetach reason)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::detach);
     // If we're detaching from the currently executing global object, manually tear down our
     // stack, since we won't get further debugger callbacks to do so. Also, resume execution,
     // since there's no point in staying paused once a window closes.
@@ -283,8 +285,9 @@ void Debugger::setSteppingMode(SteppingMode mode)
     m_vm.heap.forEachCodeBlock(functor);
 }
 
-void Debugger::registerCodeBlock(CodeBlock* codeBlock)
+NEVER_INLINE void Debugger::registerCodeBlock(CodeBlock* codeBlock)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::registerCodeBlock);
     applyBreakpoints(codeBlock);
     if (isStepping())
         codeBlock->setSteppingMode(CodeBlock::SteppingModeEnabled);
@@ -298,22 +301,25 @@ void Debugger::forEachRegisteredCodeBlock(NOESCAPE const Function<void(CodeBlock
     });
 }
 
-void Debugger::didCreateNativeExecutable(NativeExecutable& nativeExecutable)
+NEVER_INLINE void Debugger::didCreateNativeExecutable(NativeExecutable& nativeExecutable)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::didCreateNativeExecutable);
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.didCreateNativeExecutable(nativeExecutable);
     });
 }
 
-void Debugger::willCallNativeExecutable(CallFrame* callFrame)
+NEVER_INLINE void Debugger::willCallNativeExecutable(CallFrame* callFrame)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::willCallNativeExecutable);
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.willCallNativeExecutable(callFrame);
     });
 }
 
-void Debugger::didCreateInternalFunction(InternalFunction& internalFunction)
+NEVER_INLINE void Debugger::didCreateInternalFunction(InternalFunction& internalFunction)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::didCreateInternalFunction);
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.didCreateInternalFunction(internalFunction);
     });
@@ -1236,8 +1242,9 @@ private:
     Register m_values[CallFrame::headerSizeInRegisters + /* thisValue */ 1] { };
 };
 
-void Debugger::exception(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue exception, bool hasCatchHandler)
+NEVER_INLINE void Debugger::exception(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue exception, bool hasCatchHandler)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::exception);
     if (m_isPaused || isPauseBlockedByAnotherDebugger())
         return;
 
@@ -1274,8 +1281,9 @@ void Debugger::exception(JSGlobalObject* globalObject, CallFrame* callFrame, JSV
         m_currentCallFrame = nullptr;
 }
 
-void Debugger::atStatement(CallFrame* callFrame)
+NEVER_INLINE void Debugger::atStatement(CallFrame* callFrame)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::atStatement);
     if (m_isPaused)
         return;
 
@@ -1285,8 +1293,9 @@ void Debugger::atStatement(CallFrame* callFrame)
     updateCallFrame(lexicalGlobalObjectForCallFrame(m_vm, callFrame), callFrame, AttemptPause);
 }
 
-void Debugger::atExpression(CallFrame* callFrame)
+NEVER_INLINE void Debugger::atExpression(CallFrame* callFrame)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::atExpression);
     if (m_isPaused)
         return;
 
@@ -1303,8 +1312,9 @@ void Debugger::atExpression(CallFrame* callFrame)
     updateCallFrame(lexicalGlobalObjectForCallFrame(m_vm, callFrame), callFrame, shouldAttemptPause ? AttemptPause : NoPause);
 }
 
-void Debugger::willAwait(CallFrame* callFrame, JSValue generatorValue)
+NEVER_INLINE void Debugger::willAwait(CallFrame* callFrame, JSValue generatorValue)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::willAwait);
     if (m_isPaused)
         return;
 
@@ -1334,8 +1344,9 @@ void Debugger::willAwait(CallFrame* callFrame, JSValue generatorValue)
     resetEventualPauseState();
 }
 
-void Debugger::didAwait(CallFrame*, JSValue generatorValue)
+NEVER_INLINE void Debugger::didAwait(CallFrame*, JSValue generatorValue)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::didAwait);
     if (m_isPaused)
         return;
 
@@ -1353,8 +1364,9 @@ void Debugger::didAwait(CallFrame*, JSValue generatorValue)
     schedulePauseAtNextOpportunity();
 }
 
-void Debugger::callEvent(CallFrame* callFrame)
+NEVER_INLINE void Debugger::callEvent(CallFrame* callFrame)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::callEvent);
     if (m_isPaused)
         return;
 
@@ -1367,8 +1379,9 @@ void Debugger::callEvent(CallFrame* callFrame)
     }
 }
 
-void Debugger::returnEvent(CallFrame* callFrame)
+NEVER_INLINE void Debugger::returnEvent(CallFrame* callFrame)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::returnEvent);
     if (m_isPaused)
         return;
 
@@ -1396,8 +1409,9 @@ void Debugger::returnEvent(CallFrame* callFrame)
     updateCallFrame(lexicalGlobalObjectForCallFrame(m_vm, callerFrame), callerFrame, NoPause);
 }
 
-void Debugger::unwindEvent(CallFrame* callFrame)
+NEVER_INLINE void Debugger::unwindEvent(CallFrame* callFrame)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::unwindEvent);
     if (m_isPaused)
         return;
 
@@ -1416,16 +1430,18 @@ void Debugger::unwindEvent(CallFrame* callFrame)
     updateCallFrame(lexicalGlobalObjectForCallFrame(m_vm, callerFrame), callerFrame, NoPause);
 }
 
-void Debugger::willExecuteProgram(CallFrame* callFrame)
+NEVER_INLINE void Debugger::willExecuteProgram(CallFrame* callFrame)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::willExecuteProgram);
     if (m_isPaused)
         return;
 
     updateCallFrame(lexicalGlobalObjectForCallFrame(m_vm, callFrame), callFrame, NoPause);
 }
 
-void Debugger::didExecuteProgram(CallFrame* callFrame)
+NEVER_INLINE void Debugger::didExecuteProgram(CallFrame* callFrame)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::didExecuteProgram);
     if (m_isPaused)
         return;
 
@@ -1481,8 +1497,9 @@ void Debugger::resetAsyncPauseState()
         abandonPauseInAwaitTimer->cancelTimer();
 }
 
-void Debugger::didReachDebuggerStatement(CallFrame* callFrame)
+NEVER_INLINE void Debugger::didReachDebuggerStatement(CallFrame* callFrame)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::didReachDebuggerStatement);
     if (m_isPaused || isPauseBlockedByAnotherDebugger())
         return;
 
@@ -1495,22 +1512,25 @@ void Debugger::didReachDebuggerStatement(CallFrame* callFrame)
     updateCallFrame(lexicalGlobalObjectForCallFrame(m_vm, callFrame), callFrame, AttemptPause);
 }
 
-void Debugger::didQueueMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier)
+NEVER_INLINE void Debugger::didQueueMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::didQueueMicrotask);
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.didQueueMicrotask(globalObject, identifier);
     });
 }
 
-void Debugger::willRunMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier)
+NEVER_INLINE void Debugger::willRunMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::willRunMicrotask);
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.willRunMicrotask(globalObject, identifier);
     });
 }
 
-void Debugger::didRunMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier)
+NEVER_INLINE void Debugger::didRunMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &Debugger::didRunMicrotask);
     dispatchFunctionToObservers([&] (Observer& observer) {
         observer.didRunMicrotask(globalObject, identifier);
     });

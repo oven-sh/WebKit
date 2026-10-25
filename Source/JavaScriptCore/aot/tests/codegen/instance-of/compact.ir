@@ -1,0 +1,5 @@
+# instanceof against a class of the program, a built-in class and a parameter passes the back-end checks in compact code
+# RUN: compile
+# OPTIONS: heat=everything-is-cold validate check=validate-back-end
+# CHECK: image not empty
+# PROGRAM-OF: fast.ir

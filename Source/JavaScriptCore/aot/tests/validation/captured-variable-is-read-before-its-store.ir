@@ -1,0 +1,35 @@
+# early(() => late)  let late = 5  afterwards(() => late)
+# A read of a `let` that a closure has captured tests whether the variable has been stored to, and throws a ReferenceError if not. Where flow proves that every read follows a store, the test goes, the type of the variable loses `absent`, and the read is one load.
+# The lie: the flow analysis is off, and what it would have said and done stands in the text, written by hand: the variable is stored before every read, its type has no `absent`, the read has no test. The program hands the closure out before the store, and the caller calls it at once.
+# A validating build asks at such a read whether the slot is filled, and ends the process before the empty marker travels on as a value.
+# A caller that waits for the store gets the value, in the same build
+# FORM: AsRead
+# RUN: run-in-shell globalThis.early = read => { print(read()); }; globalThis.afterwards = read => { print(read()); };
+# RUN(SAME): run-in-shell globalThis.early = read => { }; globalThis.afterwards = read => { print(read()); };
+# OPTIONS: validate disable=flow-results
+# CHECK: AOT validation: BindingReadBeforeStore f
+# CHECK: crashed with
+# SAME-NOT: AOT validation
+# SAME: 5
+# SAME-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="scope" fields=[{key=@"late.0" declared={type=anything} flow={location={initialization=StoredBeforeEveryRead}}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewClosure v0 function=f1
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="early" [isFreeName]
+    v4 = Call v3, -, v1
+    v5 = Integer integer=5
+    PutEnvironmentField v0, v5 layout=L0 field=0
+    v7 = PropGet v2 key="afterwards" [isFreeName]
+    v8 = Call v7, -, v1
+    Return
+}
+function f1 name="read" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}

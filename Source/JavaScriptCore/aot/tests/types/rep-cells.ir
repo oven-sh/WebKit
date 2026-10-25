@@ -1,0 +1,32 @@
+# A type of cells only is a Cell, literal strings with or without a marker are a LiteralString, one marker alone needs no bits, every other mix is a JSValue
+# RUN: rep
+# CHECK: t0: rep Void slot JSValue cells no
+# CHECK-NEXT: t1: rep Void slot JSValue cells no
+# CHECK-NEXT: t2: rep JSValue slot JSValue cells yes
+# CHECK-NEXT: t3: rep Cell slot Cell cells yes
+# CHECK-NEXT: t4: rep JSValue slot JSValue cells yes
+# CHECK-NEXT: t5: rep LiteralString slot LiteralString cells yes
+# CHECK-NEXT: t6: rep LiteralString slot LiteralString cells yes
+# CHECK-NEXT: t7: rep Cell slot Cell cells yes
+# CHECK-NEXT: t8: rep Cell slot Cell cells yes
+# CHECK-NEXT: t9: rep Cell slot Cell cells yes
+# CHECK-NEXT: t10: rep Cell slot Cell cells yes
+# CHECK-NEXT: t11: rep Cell slot Cell cells yes
+# CHECK-NEXT: t12: rep JSValue slot JSValue cells yes
+# CHECK-NEXT: t13: rep Cell slot Cell cells yes
+# CHECK-NEXT: t14: rep Cell slot Cell cells yes
+# CHECK-NEXT: t15: rep Cell slot Cell cells yes
+# CHECK-NEXT: t16: rep Cell slot Cell cells yes
+# CHECK-NEXT: t17: rep JSValue slot JSValue cells yes
+# CHECK-NEXT: t18: rep Void slot JSValue cells no
+# CHECK-NEXT: t19: rep Void slot JSValue cells no
+# CHECK-NEXT: t20: rep JSValue slot JSValue cells yes
+# CHECK-NEXT: t21: rep Cell slot Cell cells yes
+# CHECK-NEXT: t22: rep Cell slot Cell cells yes
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+layout L0
+layout L1
+function f0 name="types" parameters=[{type=never}, {type=undefined}, {type=undefined|boolean}, {type=string}, {type=undefined|string}, {type="a"}, {type=null|"a"}, {type=symbol}, {type=symbol("p")@m0:10}, {type=bigint}, {type=L0}, {type=L0|L1}, {type=undefined|L0}, {type=function}, {type=f1}, {type=Array<number>}, {type=object}, {type=anything}, {type=absent}, {type=null}, {type=undefined|null}, {type=string|"a"|L0}, {type="a"|L0}] results=[{type=undefined}]
+function f1 name="listed" results=[{type=anything}]

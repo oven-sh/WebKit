@@ -1,0 +1,36 @@
+# A field of an environment that an eval scope binds to a name stays: evaluated text finds the binding in its slot
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="seenByEval" fields=[{key="x" declared={type=anything}}, {key="unused" declared={type=anything} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+layout L1 kind=Environment name="notSeenByEval" fields=[{key="x" declared={type=anything}}, {key="unused" declared={type=anything} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+evalscope e0 bindings=[{name="unused" layout=L0 field=1 operand=0}]
+# CHECK: layout L0 kind=Environment name="seenByEval"{{*}}{key="unused"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+# CHECK: layout L1 kind=Environment name="notSeenByEval"{{*}}{key="unused"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+
+function f0 name="evaluatesText" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    PutEnvironmentField v1, v0 layout=L0 field=1
+    v3 = Undefined
+    v4 = DirectEval v0, v3, -, v1 evalScope=e0
+    Return v4
+# CHECK: = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+# CHECK-NEXT: PutEnvironmentField v1, v0 layout=L0 field=1
+}
+
+function f1 name="evaluatesNoText" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    PutEnvironmentField v1, v0 layout=L1 field=1
+    v3 = NewClosure v1 function=f2
+    Return v3
+# CHECK: = NewObject -, v0 layout=L1 fields=[0]
+# CHECK-NOT: PutEnvironmentField
+}
+
+function f2 name="readsOtherField" kind=Arrow captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=0
+    Return v1
+}

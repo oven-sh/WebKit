@@ -30,6 +30,8 @@
 #include "config.h"
 #include "CodeBlock.h"
 
+#include "AOTInterpreterSlowPaths.h"
+#include "AOTRemovableFeature.h"
 #include "ModuleProgramExecutable.h"
 #include "Printer.h"
 #include "ProgramExecutable.h"
@@ -256,8 +258,9 @@ void CodeBlock::dumpBytecode()
     dumpBytecode(WTF::dataFile());
 }
 
-void CodeBlock::dumpBytecode(PrintStream& out)
+NEVER_INLINE void CodeBlock::dumpBytecode(PrintStream& out)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, static_cast<void (CodeBlock::*)(PrintStream&)>(&CodeBlock::dumpBytecode));
     ICStatusMap statusMap;
     getICStatusMap(statusMap);
     BytecodeGraph graph(this, this->instructions());
@@ -474,7 +477,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             for (size_t i = 0; i < count; i++) {
                 const UnlinkedHandlerInfo& unlinkedHandler = unlinkedCodeBlock->exceptionHandler(i);
                 HandlerInfo& handler = m_rareData->m_exceptionHandlers[i];
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
                 auto& instruction = *instructions().at(unlinkedHandler.target).ptr();
                 handler.initialize(unlinkedHandler, CodeLocationLabel<ExceptionHandlerPtrTag>(LLInt::handleCatch(instruction.width()).code()));
 #else
@@ -486,6 +489,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     auto link_objectAllocationProfile = [&](const auto& /*instruction*/, auto bytecode, auto& metadata) {
         metadata.m_objectAllocationProfile.initializeProfile(vm, m_globalObject.get(), this, m_globalObject->objectPrototype(), bytecode.m_inlineCapacity);
+#if ENABLE(AOT)
+        if (Options::runsCompiledImage())
+            AOT::Interpreter::didLinkNewObject(metadata.m_objectAllocationProfile);
+#endif
     };
 
     auto link_arrayAllocationProfile = [&](const auto& /*instruction*/, auto bytecode, auto& metadata) {
@@ -867,6 +874,11 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 #undef LINK_FIELD
 #undef LINK
 
+#if ENABLE(AOT)
+    if (Options::runsCompiledImage())
+        AOT::Interpreter::fuseReadsOfClosureVariables(*this);
+#endif
+
     if (m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes())
         insertBasicBlockBoundariesForControlFlowProfiler();
 
@@ -994,8 +1006,9 @@ void CodeBlock::setBaselineJITData(std::unique_ptr<BaselineJITData>&& jitData)
     checker().set(CrashChecker::PropertyInlineCacheCount, checker().hash(this, baselineJITData->propertyInlineCaches().size()));
 }
 
-void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
+NEVER_INLINE void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
 {
+    JSC_REMOVABLE_DEFINITION(JIT, &CodeBlock::setupWithUnlinkedBaselineCode);
     prepareLazyStateForConcurrentCompilation(); // shared baseline code can be installed on a block that only ever ran in the LLInt
     setJITCode(jitCode.copyRef());
 
@@ -1046,6 +1059,12 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
 
     if (jitCode->m_isShareable && !unlinkedCodeBlock()->m_unlinkedBaselineCode && Options::useBaselineJITCodeSharing())
         unlinkedCodeBlock()->m_unlinkedBaselineCode = WTF::move(jitCode);
+}
+
+template<typename JITData>
+static NEVER_INLINE void destroyJITData(JITData* jitData)
+{
+    delete jitData;
 }
 #endif // ENABLE(JIT)
 
@@ -1163,13 +1182,13 @@ CodeBlock::~CodeBlock()
 #if ENABLE(DFG_JIT)
         if (auto* jitData = dfgJITData()) {
             m_jitData = nullptr;
-            delete jitData;
+            callRemovable<RemovableFeature::JIT, RemovedFeatureStub::Abort, destroyJITData<DFG::JITData>>(jitData);
         }
 #endif
     } else {
         if (auto* jitData = baselineJITData()) {
             m_jitData = nullptr;
-            delete jitData;
+            callRemovable<RemovableFeature::JIT, RemovedFeatureStub::Abort, destroyJITData<BaselineJITData>>(jitData);
         }
     }
 #endif // ENABLE(JIT)
@@ -1416,6 +1435,7 @@ inline void CodeBlock::forEachPropertyInlineCache(Func func)
 #if ENABLE(JIT)
     if (JSC::JITCode::isOptimizingJIT(jitType())) {
 #if ENABLE(DFG_JIT)
+        JSC_BEGIN_REMOVABLE_ENTRY_POINT(JIT, Abort, void)
         for (auto* propertyCache : jitCode()->dfgCommon()->m_handlerPropertyInlineCaches) {
             if (func(*propertyCache) == IterationStatus::Done)
                 return;
@@ -1430,13 +1450,16 @@ inline void CodeBlock::forEachPropertyInlineCache(Func func)
                     return;
             }
         }
+        JSC_END_REMOVABLE_ENTRY_POINT
 #endif
     } else {
         if (auto* jitData = baselineJITData()) {
+            JSC_BEGIN_REMOVABLE_ENTRY_POINT(JIT, Abort, void)
             for (auto& propertyCache : jitData->propertyInlineCaches()) {
                 if (func(propertyCache) == IterationStatus::Done)
                     return;
             }
+            JSC_END_REMOVABLE_ENTRY_POINT
         }
     }
 #endif // ENABLE(JIT)
@@ -1846,8 +1869,9 @@ void CodeBlock::determineLiveness(const ConcurrentJSLocker&, Visitor& visitor)
 template void CodeBlock::determineLiveness(const ConcurrentJSLocker&, AbstractSlotVisitor&);
 template void CodeBlock::determineLiveness(const ConcurrentJSLocker&, SlotVisitor&);
 
-void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
+NEVER_INLINE void CodeBlock::reconcileLLIntInlineCachesAtGCEnd()
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, &CodeBlock::reconcileLLIntInlineCachesAtGCEnd);
     VM& vm = *m_vm;
 
     if (m_metadata) {
@@ -3532,15 +3556,17 @@ void CodeBlock::updateAllArrayAllocationProfilePredictions()
 // Folds each profile's sampled value into a pointer-free SpeculatedType and clears the sample.
 // The samples are untraced JSValues and StructureIDs, so this only runs while they are still
 // readable, which means any time from marking up to the sweep that would free them.
-void CodeBlock::updateAllPredictions(ValueProfileSamples samples)
+NEVER_INLINE void CodeBlock::updateAllPredictions(ValueProfileSamples samples)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, &CodeBlock::updateAllPredictions);
     updatePredictionsConcurrently(samples);
     // This reads Butterfly from JSObject to obtain vectorLength, which can be safe only from the main thread.
     updateAllArrayAllocationProfilePredictions();
 }
 
-void CodeBlock::updatePredictionsConcurrently(ValueProfileSamples samples)
+NEVER_INLINE void CodeBlock::updatePredictionsConcurrently(ValueProfileSamples samples)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, &CodeBlock::updatePredictionsConcurrently);
     updateAllNonLazyValueProfilePredictions(samples);
     updateAllLazyValueProfilePredictions();
     updateAllArrayProfilePredictions();
@@ -4041,7 +4067,7 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
     });
 
     for (size_t i = 0; i < offsetsLength; i++) {
-        auto& metadata = bytecodeAt(i).metadata(this);
+        auto bytecode = bytecodeAt(i);
         auto [basicBlockStartOffset, basicBlockEndOffset] = basicBlocks[i];
 
         BasicBlockLocation* basicBlockLocation = vm().controlFlowProfiler()->getBasicBlockLocation(ownerExecutable()->sourceID(), basicBlockStartOffset, basicBlockEndOffset);
@@ -4058,8 +4084,9 @@ void CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler()
             inner = std::ranges::upper_bound(inner, ranges.end(), inner->endOffset, { }, &Range::startOffset);
         }
         basicBlockLocation->insertGaps(gaps);
+        basicBlockLocation->setIsInLoopHeader(bytecode.m_isInLoopHeader);
 
-        metadata.m_basicBlockLocation = basicBlockLocation;
+        bytecode.metadata(this).m_basicBlockLocation = basicBlockLocation;
     }
 }
 

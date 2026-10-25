@@ -1,0 +1,26 @@
+# The variable of a function declaration holds a closure. Where nobody reads the variable the function is entered by its direct callers alone; a variable that is only called, or of which flow knows nothing, keeps the way in open
+# FORM: Prepared
+# RUN: pass BuildCallGraph
+# CHECK: f1: callees | callers f0 | sites 1 | {{*}} | entries DirectCallers |
+# CHECK-NEXT: f2: callees | callers f0 | sites 1 | {{*}} | entries Unknown |
+# CHECK-NEXT: f3: callees | callers f0 | sites 1 | {{*}} | entries Unknown |
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="neverRead" module=m0 declared={type=anything} initialization=Function function=f1 flow={stores=Never reads=NeverRead}
+variable g1 name="onlyCalled" module=m0 declared={type=anything} initialization=Function function=f2 flow={stores=Never reads=OnlyCalled}
+variable g2 name="unknown" module=m0 declared={type=anything} initialization=Function function=f3
+function f0 name="caller" results=[{type=anything}] {
+    v0: undefined = CallDirect function=f1
+    v1: undefined = CallDirect function=f2
+    v2: undefined = CallDirect function=f3
+    Return v2
+}
+function f1 name="neverRead" results=[{type=undefined}] {
+    Return
+}
+function f2 name="onlyCalled" results=[{type=undefined}] {
+    Return
+}
+function f3 name="unknown" results=[{type=undefined}] {
+    Return
+}

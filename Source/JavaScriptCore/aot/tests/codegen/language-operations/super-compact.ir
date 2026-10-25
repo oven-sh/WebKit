@@ -1,0 +1,5 @@
+# The base of a super access in an object literal, a class and its prototype, and reads and stores through it by name and by key, pass the back-end checks in compact code
+# RUN: compile
+# OPTIONS: heat=everything-is-cold validate check=validate-back-end only-passes=EstimateHeat
+# CHECK: image not empty
+# PROGRAM-OF: super-fast.ir

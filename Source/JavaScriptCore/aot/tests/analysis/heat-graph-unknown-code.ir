@@ -1,0 +1,50 @@
+# A function that unknown code may call is called once by the host and gets its share of the calls of unknown code
+# FORM: Prepared
+# RUN: heat-graph
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="handler" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="first" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Boolean boolean=true
+    v2 = CallDirect v1, v0 function=f3
+    Return v2
+}
+function f1 name="second" results=[{type=undefined}] {
+    Return
+}
+function f2 name="third" results=[{type=undefined}] {
+    Return
+}
+function f3 name="callsUnknownCodeInLoop" role=OutlinedBody parameters=[{type=boolean}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure function=f0
+    PutModuleVariable v2 variable=g0
+    v4 = NewClosure function=f1
+    PutModuleVariable v4 variable=g0
+    v6 = NewClosure function=f2
+    PutModuleVariable v6 variable=g0
+    v8 = CallDirect function=f4
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v10 = Call v1
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Return v10
+}
+function f4 name="onlyCalledDirectly" role=OutlinedBody results=[{type=undefined}] {
+    Return
+}
+# CHECK: f0 size 3 mass 3.000000: f3*1.000000
+# CHECK-NEXT: f1 size 1 mass 1.000000:
+# CHECK-NEXT: f2 size 1 mass 1.000000:
+# CHECK-NEXT: f3 size 12 mass 39.000000: f4*1.000000 unknown*10.000000
+# CHECK-NEXT: f4 size 1 mass 1.000000:
+# CHECK-NEXT: host: f0*1.000000 f1*1.000000 f2*1.000000
+# CHECK-NEXT: unknown: f0*0.333333 f1*0.333333 f2*0.333333
+# CHECK-NEXT: activations:
+# CHECK-NEXT: f0 10.000000
+# CHECK-NEXT: f1 34.333333
+# CHECK-NEXT: f2 34.333333
+# CHECK-NEXT: f3 10.000000
+# CHECK-NEXT: f4 10.000000

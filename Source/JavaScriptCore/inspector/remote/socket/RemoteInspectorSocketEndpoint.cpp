@@ -28,6 +28,7 @@
 
 #if ENABLE(REMOTE_INSPECTOR)
 
+#include "AOTRemovableFeature.h"
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
@@ -40,8 +41,9 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteInspectorSocketEndpoint);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteInspectorSocketEndpoint::BaseConnection);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteInspectorSocketEndpoint::ClientConnection);
 
-RemoteInspectorSocketEndpoint& RemoteInspectorSocketEndpoint::singleton()
+NEVER_INLINE RemoteInspectorSocketEndpoint& RemoteInspectorSocketEndpoint::singleton()
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, &RemoteInspectorSocketEndpoint::singleton);
     static LazyNeverDestroyed<RemoteInspectorSocketEndpoint> shared;
     static std::once_flag onceKey;
     std::call_once(onceKey, [&] {

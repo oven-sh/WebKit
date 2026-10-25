@@ -27,7 +27,7 @@
 
 #include <wtf/Platform.h>
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(B3_JIT)
 
 #include "FTLAbbreviatedTypes.h"
 
@@ -59,4 +59,4 @@ private:
 
 } } // namespace JSC::FTL
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(B3_JIT)

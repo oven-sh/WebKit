@@ -1,0 +1,37 @@
+# The arms of a dispatch over the places of a field are tested one after the other. A library handles the objects that it makes itself, so the group with a layout of the module
+# in which the function is written is tested first, though the groups of the application hold more layouts. In a function of the application the larger group comes first as before
+# FORM: Prepared
+# OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom
+# RUN: pass Select
+
+module m0 path="application.js" displayPath="application.js"
+module m1 path="library.js" displayPath="library.js"
+layout L0 name="Text" module=m0 fields=[{key="value" declared={type=undefined|string}}, {key="pad" declared={type=number}}] flow={members=[L0]}
+layout L1 name="Instance" module=m1 fields=[{key="value" declared={type=undefined|number}}] flow={members=[L1]}
+layout L2 name="Label" module=m0 fields=[{key="value" declared={type=undefined|string}}, {key="pad" declared={type=number}}] flow={members=[L2]}
+
+function f0 name="inTheLibrary" module=m1 parameters=[{type=L0|L1|L2}] results=[{type=anything}] {
+    v1 = GetSlotOrUndefined v0 key="value" receivers=[L0, L1, L2] level=Proven
+    Return v1
+# CHECK-NEXT: b0(v0: L0|L1|L2):
+# CHECK-NEXT: = TypeTest v0 testedType=L1
+}
+
+function f1 name="inTheApplication" module=m0 parameters=[{type=L0|L1|L2}] results=[{type=anything}] {
+    v1 = GetSlotOrUndefined v0 key="value" receivers=[L0, L1, L2] level=Proven
+    Return v1
+# CHECK-NEXT: b0(v0: L0|L1|L2):
+# CHECK-NEXT: = TypeTest v0 testedType=L0|L2
+}
+
+# The classes of the application that extend a class of the library are the library's too: among them the larger group comes first, not the class that the library makes itself.
+layout L3 kind=Instance name="Base" module=m1 fields=[{key="count" declared={type=undefined|number}}] flow={baseState=None members=[L3]}
+layout L4 kind=Instance name="First" module=m0 base=L3 fields=[{key="pad" declared={type=number}}, {key="count" declared={type=undefined|string}}] flow={members=[L4]}
+layout L5 kind=Instance name="Second" module=m0 base=L3 fields=[{key="pad" declared={type=number}}, {key="count" declared={type=undefined|string}}] flow={members=[L5]}
+
+function f2 name="inTheBaseClass" module=m1 parameters=[{type=L3|L4|L5}] results=[{type=anything}] {
+    v1 = GetSlotOrUndefined v0 key="count" receivers=[L3, L4, L5] level=Proven
+    Return v1
+# CHECK-NEXT: b0(v0: L3|L4|L5):
+# CHECK-NEXT: = TypeTest v0 testedType=L4|L5
+}

@@ -23,7 +23,41 @@
 #include "config.h"
 #include <wtf/text/AtomStringTable.h>
 
+#include <wtf/Threading.h>
+#include <wtf/text/AtomStringImpl.h>
+#include <wtf/text/StringView.h>
+
 namespace WTF {
+
+#if USE(BUN_JSC_ADDITIONS)
+constinit std::atomic<AtomStringTable::ReadOnlyAtomLookup> AtomStringTable::s_readOnlyAtomLookup { nullptr };
+
+void AtomStringTable::setReadOnlyAtomLookup(ReadOnlyAtomLookup lookup)
+{
+    if (readOnlyAtomLookup() == lookup)
+        return;
+    if (lookup) {
+        StringTableImpl& table = Thread::currentSingleton().atomStringTable()->table();
+        auto isReplaced = [&](const StringEntry& entry) {
+            SUPPRESS_UNCOUNTED_LOCAL StringImpl* string = entry.get();
+            return !string->isStatic() && lookup(StringView(*string), string->existingHash());
+        };
+        bool replacesAny = false;
+        for (const StringEntry& entry : table)
+            replacesAny |= isReplaced(entry);
+        if (replacesAny) {
+            table.removeIf([&](const StringEntry& entry) {
+                if (!isReplaced(entry))
+                    return false;
+                SUPPRESS_UNCOUNTED_LOCAL StringImpl* string = entry.get();
+                string->setIsAtom(false);
+                return true;
+            });
+        }
+    }
+    s_readOnlyAtomLookup.store(lookup, std::memory_order_release);
+}
+#endif
 
 AtomStringTable::~AtomStringTable()
 {

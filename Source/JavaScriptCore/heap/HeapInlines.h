@@ -107,7 +107,7 @@ inline void Heap::writeBarrier(const JSCell* from, JSCell* to)
         return;
     ASSERT_GC_OBJECT_LOOKS_VALID(to);
     if (isWithinThreshold(from->cellState(), barrierThreshold())) [[unlikely]]
-        writeBarrierSlowPath(from);
+        writeBarrierSlowPath(from, to);
 }
 
 inline void Heap::writeBarrier(const JSCell* from)

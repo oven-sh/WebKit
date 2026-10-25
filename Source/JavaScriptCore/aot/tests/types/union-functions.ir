@@ -1,0 +1,14 @@
+# Lists of functions and of built-ins unite. function absorbs the listed functions, object absorbs everything.
+# RUN: union
+# CHECK: t0 | t1 = f1|f2
+# CHECK: t0 | t2 = function
+# CHECK: t0 | t3 = f1|builtin(ArrayPrototypePush)
+# CHECK: t0 | t5 = undefined|f1
+# CHECK: t2 | t3 = function|builtin(ArrayPrototypePush)
+# CHECK: t3 | t4 = object
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=f1}, {type=f2}, {type=function}, {type=builtin(ArrayPrototypePush)}, {type=object}, {type=undefined}] results=[{type=undefined}]
+function f1 name="first" results=[{type=anything}]
+function f2 name="second" results=[{type=anything}]

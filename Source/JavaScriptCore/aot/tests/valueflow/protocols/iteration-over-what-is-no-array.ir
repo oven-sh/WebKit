@@ -1,0 +1,44 @@
+# function spreads() { [...arguments][0]() }  spreads(one); borrowed = { 0: two, length: 1, [Symbol.iterator]: Array.prototype[Symbol.iterator] }; for (const f of borrowed) f()
+# The iterator of arrays goes over any receiver by its indexes: an arguments object, which has the method from its creation, and an object of the program that borrows it.
+# RUN: valueflow-solve calls
+# CHECK: f0 v15 -> f3
+# CHECK: f1 v7 -> f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Borrowed"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f1
+    v2 = Call v1, -, v0
+    v3 = NewObject layout=L0 fields=[]
+    v4 = NewClosure function=f3
+    v5 = Integer
+    ElemSet v3, v5, v4 mode=Strict
+    v7 = Builtin builtin=ArrayPrototype
+    v8 = PropGet v7 key=@@iterator
+    PropSet v3, v8 key=@@iterator mode=Strict
+    v10 = IteratorOpen v3
+    v11 = IteratorResume v10
+    v12 = ResultAt v11
+    v13 = ResultAt v11 index=1
+    v14 = Undefined
+    v15 = Call v13
+    Return
+}
+function f1 name="spreads" flags=[HasArgumentCount, HasHiddenRest] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: Array):
+    v2 = CreateUnmappedArguments v0, v1
+    v3 = NewArray contents=anything
+    AppendSpread v3, v2
+    v5 = Integer integer=0
+    v6 = ElemGet v3, v5
+    v7 = Call v6
+    Return
+}
+function f2 name="one" results=[{type=anything}] {
+    Return
+}
+function f3 name="two" results=[{type=anything}] {
+    Return
+}

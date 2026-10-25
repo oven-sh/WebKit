@@ -1,0 +1,15 @@
+# A jump enters the primary entry, so a tail call that passes undefined asks for no entry
+# FORM: Prepared
+# RUN: pass ChooseCallingConventions
+# STATISTIC: SecondaryEntries = 0
+# CHECK-NOT: entries=
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="jumpedTo" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f1 name="caller" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = CallDirect v0, v1 function=f0
+    ReturnCall v2
+}

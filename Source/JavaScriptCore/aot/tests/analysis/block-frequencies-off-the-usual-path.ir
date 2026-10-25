@@ -1,0 +1,101 @@
+# The side on which an asked slot is empty, the side on which a type test fails, the side on which a value equals a constant and the side on which a bit under a constant mask is set are laid out of the way. Their blocks stay normal. A test of a value that may be anything has no such side
+# FORM: Prepared
+# RUN: frequencies
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Links" fields=[{key="type" declared={type=undefined|number}}]
+
+function f0 name="askedSlot" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = IsSlotFilled v0 key="type" receivers=[L0] level=Proven
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlot v0, v2 key="type" receivers=[L0] level=Proven
+    Return v3
+  b2():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: b0 frequency: Normal
+# CHECK-NEXT: b1 frequency: Normal count: 0.500000
+# CHECK-NEXT: b2 frequency: Normal count: 0.500000
+# CHECK-NEXT: b0.1 off the usual path
+
+function f1 name="typeTest" parameters=[{type=string|number}] results=[{type=undefined}] {
+    v1 = TypeTest v0 testedType=string
+    v2 = LogicalNot v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK: b0.0 off the usual path
+
+function f2 name="comparisons" parameters=[{type=number}, {type=number}, {type=string}] results=[{type=undefined}] {
+    v3 = Integer integer=7
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    v5 = String string="a"
+    v6 = StrictEq v5, v2
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    Return
+  b4():
+    v7 = StrictEq v0, v1
+    Branch v7 -> taken b5(), notTaken b6()
+  b5():
+    Return
+  b6():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK: b0.0 off the usual path
+# CHECK-NEXT: b2.0 off the usual path
+# CHECK-NOT: b4.
+
+function f3 name="sideThatIsRareAnyway" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = Integer integer=7
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2() frequency=Rare:
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NOT: off the usual path
+
+function f4 name="typeTestOfAnything" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK-NOT: off the usual path
+
+function f5 name="bitsUnderMask" parameters=[{type=i32}, {type=i32}] results=[{type=undefined}] {
+    v2 = Integer integer=4
+    v3 = BitAnd v0, v2
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    v5 = BitAnd v0, v1
+    v6 = ToBoolean v5
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    Return
+  b4():
+    Return
+}
+# CHECK-LABEL: function f5
+# CHECK: b0.0 off the usual path
+# CHECK-NOT: b2.

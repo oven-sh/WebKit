@@ -1,0 +1,41 @@
+# (function () { const once = ..; const a = once(loadA), b = once(loadB); })()
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f5 name="wrapper"
+# CHECK: [[first]]{{*}} = NewClosure function=f7
+# CHECK-NEXT: Call [[first]], -, v1
+# CHECK: [[second]]{{*}} = NewClosure function=f9
+# CHECK-NEXT: Call [[second]], -, v3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    v1 = Call v0
+    Return
+}
+function f1 name="once" module=m0 position=10 kind=Arrow length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure v0 function=f2
+    Return v1
+}
+function f2 name="get" module=m0 position=20 kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+function f3 name="loadA" module=m0 position=30 kind=Arrow results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}
+function f4 name="loadB" module=m0 position=40 kind=Arrow results=[{type=anything}] {
+    v0 = String string="b"
+    Return v0
+}
+function f5 name="wrapper" module=m0 position=1 results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f3
+    v2 = Call v0, -, v1
+    v3 = NewClosure function=f4
+    v4 = Call v0, -, v3
+    Return
+}

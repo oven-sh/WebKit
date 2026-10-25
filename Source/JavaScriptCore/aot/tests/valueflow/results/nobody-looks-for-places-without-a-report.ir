@@ -1,0 +1,15 @@
+# (1.5).toLocaleString("de")
+# The walk that finds where the program names a built-in is made for a report alone.
+# RUN: valueflow-results
+# CHECK: feature 10 NumberPrototypeToLocaleString
+# CHECK-NOT: feature 10 NumberPrototypeToLocaleString f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=NumberPrototypeToLocaleString
+    v1 = Double number=1.5
+    v2 = String string="de"
+    v3 = Call v0, v1, v2
+    Return v3
+}

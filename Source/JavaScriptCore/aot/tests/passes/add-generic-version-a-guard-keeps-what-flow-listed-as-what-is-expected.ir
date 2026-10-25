@@ -1,0 +1,20 @@
+# A check that becomes a guard lets through what it would have turned away, so the receivers that flow has proven of the read behind it are proven no longer. They are still what is expected to arrive:
+# the read keeps the list as one that is not complete, and gets a test and a load in place of a lookup by name. A list that only expected stays as it is.
+# FORM: Prepared optimizing
+# RUN: pass AddGenericVersion
+# STATISTIC: ChecksReplacedByGuards = 2
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="Rule" fields=[{key="limit" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Made" fields=[{key="limit" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="run" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v0 castType=L0 cause=MayFail
+    v3 = Check v1 castType=L0 cause=MayFail
+    v4 = PropGet v2 key="limit" receivers=[L0, L1]
+    v5 = PropGet v3 key="limit" receivers=[L1, ..]
+    v6 = Less v5, v4
+    Return v6
+# CHECK: = PropGet v2 key="limit" receivers=[L0, L1, ..]
+# CHECK: = PropGet v3 key="limit" receivers=[L1, ..]
+}

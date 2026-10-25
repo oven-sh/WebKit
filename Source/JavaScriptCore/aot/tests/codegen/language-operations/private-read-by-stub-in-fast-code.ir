@@ -1,0 +1,19 @@
+# Fast code reads a private field of a receiver nobody has proven by the same stub as all other code
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Holder" constructor=f1 fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"p"@L0 declared={type=anything} flags=[IsPrivate]}]
+function f0 name="inFastCode" captures=[{type=classtoken}] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = PrivateGet v1, v0 layout=L0 field=1
+    Return v2
+}
+# CHECK-LABEL: f0: size=
+# CHECK-NOT: operation operationAOTPrivateGet
+# CHECK: stub PrivateGet x1
+function f1 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}

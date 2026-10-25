@@ -1,0 +1,41 @@
+# first = {}; second = {}; first.run = one; second.run = two; first.other = three; first.run(); second.run(); first.missing()
+# What is stored under a name through one object is found under that name through that object, and nowhere else.
+# RUN: valueflow-solve calls
+# CHECK: f0 v9 -> f1
+# CHECK-NEXT: f0 v11 -> f2
+# CHECK-NOT: f0 v13 -> {{*}}
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First"
+layout L1 name="Second"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewObject layout=L1 fields=[]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    PropSet v0, v2 key="run" mode=Strict
+    PropSet v1, v3 key="run" mode=Strict
+    PropSet v0, v4 key="other" mode=Strict
+    v8 = PropGet v0 key="run"
+    v9 = Call v8, v0
+    v10 = PropGet v1 key="run"
+    v11 = Call v10, v1
+    v12 = PropGet v0 key="missing"
+    v13 = Call v12, v0
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}
+function f2 name="two" results=[{type=anything}] {
+    Return
+}
+function f3 name="three" results=[{type=anything}] {
+    Return
+}

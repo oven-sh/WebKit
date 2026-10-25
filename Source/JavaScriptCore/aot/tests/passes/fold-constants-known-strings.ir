@@ -1,0 +1,188 @@
+# An operation that makes a string from known primitives folds to the string the language gives, and with one unknown part it stays
+# FORM: Prepared
+# RUN: pass FoldConstants
+# STATISTIC: FoldConstantsChanges = 7
+# CHECK: outcome: Changed
+# RUN(AGAIN): pass FoldConstants FoldConstants
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="concatenation" results=[{type=string}] {
+    v0 = String string="a"
+    v1 = String string="b"
+    v2 = String string=""
+    v3 = Integer integer=7
+    v4 = Undefined
+    v5 = Strcat v0, v1, v0
+    v6 = Strcat v0, v2, v1
+    v7 = Strcat v0, v3, v4
+    v8 = Strcat v1
+    Return v5
+# CHECK-NOT: Strcat
+# CHECK: v5: "aba" = String string="aba"
+# CHECK-NEXT: v6: "ab" = String string="ab"
+# CHECK-NEXT: v7: "a7undefined" = String string="a7undefined"
+# CHECK-NEXT: v8: "b" = String string="b"
+# CHECK-NEXT: Return v5
+}
+
+function f1 name="sumOfStringAndPrimitive" results=[{type=string}] {
+    v0 = String string="x"
+    v1 = Integer integer=1
+    v2 = Integer integer=-5
+    v3 = Double number=1.5
+    v4 = Boolean boolean=true
+    v5 = Null
+    v6 = Undefined
+    v7 = Add v0, v1
+    v8 = Add v1, v0
+    v9 = Add v0, v2
+    v10 = Add v0, v3
+    v11 = Add v0, v4
+    v12 = Add v0, v5
+    v13 = Add v6, v0
+    v14 = Add v0, v0
+    Return v7
+# CHECK-NOT: Add
+# CHECK: v7: "x1" = String string="x1"
+# CHECK-NEXT: v8: "1x" = String string="1x"
+# CHECK-NEXT: v9: "x-5" = String string="x-5"
+# CHECK-NEXT: v10: "x1.5" = String string="x1.5"
+# CHECK-NEXT: v11: "xtrue" = String string="xtrue"
+# CHECK-NEXT: v12: "xnull" = String string="xnull"
+# CHECK-NEXT: v13: "undefinedx" = String string="undefinedx"
+# CHECK-NEXT: v14: "xx" = String string="xx"
+# CHECK-NEXT: Return v7
+}
+
+function f2 name="sumOfTwoNumbers" results=[{type=number}] {
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = Add v0, v1
+    Return v2
+# CHECK-NOT: String
+# CHECK: v2: 3 = Integer integer=3
+}
+
+function f3 name="textOfEachPrimitive" results=[{type=string}] {
+    v0 = Undefined
+    v1 = Null
+    v2 = Boolean boolean=true
+    v3 = Boolean boolean=false
+    v4 = Integer integer=0
+    v5 = Integer integer=9007199254740991
+    v6 = String string="kept"
+    v7 = ToString v0
+    v8 = ToString v1
+    v9 = ToString v2
+    v10 = ToString v3
+    v11 = ToString v4
+    v12 = ToString v5
+    v13 = ToString v6
+    Return v7
+# CHECK-NOT: ToString
+# CHECK: v7: "undefined" = String string="undefined"
+# CHECK-NEXT: v8: "null" = String string="null"
+# CHECK-NEXT: v9: "true" = String string="true"
+# CHECK-NEXT: v10: "false" = String string="false"
+# CHECK-NEXT: v11: "0" = String string="0"
+# CHECK-NEXT: v12: "9007199254740991" = String string="9007199254740991"
+# CHECK-NEXT: v13: "kept" = String string="kept"
+# CHECK-NEXT: Return v7
+}
+
+function f4 name="textOfNumbers" results=[{type=string}] {
+    v0 = Double number=-0
+    v1 = Double number=NaN
+    v2 = Double number=Infinity
+    v3 = Double number=-Infinity
+    v4 = Double number=0.1
+    v5 = Double number=1e+21
+    v6 = Double number=1e-7
+    v7 = Double number=123456789012345680000
+    v8 = ToString v0
+    v9 = ToString v1
+    v10 = ToString v2
+    v11 = ToString v3
+    v12 = ToString v4
+    v13 = ToString v5
+    v14 = ToString v6
+    v15 = ToString v7
+    Return v8
+# CHECK-NOT: ToString
+# CHECK: v8: "0" = String string="0"
+# CHECK-NEXT: v9: "NaN" = String string="NaN"
+# CHECK-NEXT: v10: "Infinity" = String string="Infinity"
+# CHECK-NEXT: v11: "-Infinity" = String string="-Infinity"
+# CHECK-NEXT: v12: "0.1" = String string="0.1"
+# CHECK-NEXT: v13: "1e+21" = String string="1e+21"
+# CHECK-NEXT: v14: "1e-7" = String string="1e-7"
+# CHECK-NEXT: v15: "123456789012345680000" = String string="123456789012345680000"
+# CHECK-NEXT: Return v8
+}
+
+function f5 name="surrogateHalves" results=[{type=string}] {
+    v0 = String string="\u{d83d}"
+    v1 = String string="\u{de00}"
+    v2 = String string="a\u{d83d}"
+    v3 = String string="\u{de00}b"
+    v4 = Add v0, v1
+    v5 = Strcat v2, v3
+    v6 = Add v1, v0
+    v7 = Strcat v0, v2
+    Return v4
+# CHECK: v4: "\u{1f600}" = String string="\u{1f600}"
+# CHECK-NEXT: v5: "a\u{1f600}b" = String string="a\u{1f600}b"
+# CHECK-NEXT: v6: "\u{de00}\u{d83d}" = String string="\u{de00}\u{d83d}"
+# CHECK-NEXT: v7: "\u{d83d}a\u{d83d}" = String string="\u{d83d}a\u{d83d}"
+# CHECK-NEXT: Return v4
+}
+
+function f6 name="partsKnownByType" parameters=[{type="on"}, {type=3}, {type=true}] results=[{type=string}] {
+    v3 = String string="Click"
+    v4 = Add v0, v3
+    v5 = Strcat v0, v1, v2
+    v6 = ToString v1
+    Return v4
+# CHECK: v4: "onClick" = String string="onClick"
+# CHECK-NEXT: v5: "on3true" = String string="on3true"
+# CHECK-NEXT: v6: "3" = String string="3"
+# CHECK-NEXT: Return v4
+}
+
+function f7 name="oneUnknownPart" parameters=[{type=string}, {type=number}, {type=anything}, {type=object}] results=[{type=string}] {
+    v4 = String string="a"
+    v5 = Strcat v4, v0, v4
+    v6 = Add v4, v1
+    v7 = Add v2, v4
+    v8 = Add v4, v3
+    v9 = ToString v1
+    v10 = ToString v3
+    Return v5
+# CHECK: v5:{{*}}= Strcat v4, v0, v4
+# CHECK-NEXT: v6:{{*}}= Add v4, v1
+# CHECK-NEXT: v7:{{*}}= Add v2, v4
+# CHECK-NEXT: v8:{{*}}= Add v4, v3
+# CHECK-NEXT: v9:{{*}}= ToString v1
+# CHECK-NEXT: v10:{{*}}= ToString v3
+# CHECK-NEXT: Return v5
+}
+
+function f8 name="symbolAndBigInt" results=[{type=string}] {
+    v0 = String string="a"
+    v1 = KeyConstant key=@@iterator
+    v2 = BigInt digits="1"
+    v3 = ToString v1
+    v4 = Strcat v0, v1
+    v5 = Add v0, v1
+    v6 = ToString v2
+    v7 = Add v0, v2
+    Return v3
+# CHECK: v3:{{*}}= ToString v1
+# CHECK-NEXT: v4:{{*}}= Strcat v0, v1
+# CHECK-NEXT: v5:{{*}}= Add v0, v1
+# CHECK-NEXT: v6:{{*}}= ToString v2
+# CHECK-NEXT: v7:{{*}}= Add v0, v2
+# CHECK-NEXT: Return v3
+}

@@ -1,0 +1,63 @@
+# Allocations that meet in a block parameter stay in their function when a guard on the parameter lasts across unknown code: it lasts only while the function sees that nothing else holds any of them
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 1
+# STATISTIC: ColdSitesOutlined = 3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="guardOnEitherArray" parameters=[{type=number}, {type=anything}, {type=object}, {type=boolean}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2] -> case b1(), case b7(), case b13(), otherwise b19()
+# REPEAT: i = 0..2
+  b%(i*6+1)() frequency=Rare:
+    Branch v3 -> taken b%(i*6+2)(), notTaken b%(i*6+3)()
+  b%(i*6+2)() frequency=Rare:
+    v%(i*8+4) = NewArray v1, v1, v1, v1 contents=anything
+    Jump -> next b%(i*6+4)(v%(i*8+4))
+  b%(i*6+3)() frequency=Rare:
+    v%(i*8+5) = NewArray v1, v1, v1, v1 contents=anything
+    Jump -> next b%(i*6+4)(v%(i*8+5))
+  b%(i*6+4)(v%(i*8+6): Array) frequency=Rare:
+    v%(i*8+7) = IsPristine v%(i*8+6) builtinClass=Array aspects=[Storage]
+    TestAndBranch v%(i*8+7) -> taken b%(i*6+5)(| 0), notTaken b%(i*6+6)()
+  b%(i*6+5)(v%(i*8+8)) frequency=Rare:
+    v%(i*8+9) = Integer integer=1
+    PropSet v2, v1 key="seen"
+    v%(i*8+11) = GetArrayElement v%(i*8+6), v%(i*8+9), v%(i*8+8) level=Expected [keyIsIntegral]
+    Return v%(i*8+11)
+  b%(i*6+6)() frequency=Rare:
+    Return
+# END REPEAT
+  b19():
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-6: = NewArray v1, v1, v1, v1 contents=anything
+# CHECK-NOT: CallDirect
+
+function f1 name="eitherArrayWithoutGuard" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2] -> case b1(), case b5(), case b9(), otherwise b13()
+# REPEAT: i = 0..2
+  b%(i*4+1)() frequency=Rare:
+    Branch v2 -> taken b%(i*4+2)(), notTaken b%(i*4+3)()
+  b%(i*4+2)() frequency=Rare:
+    v%(i*3+3) = NewArray v1, v1, v1, v1 contents=anything
+    Jump -> next b%(i*4+4)(v%(i*3+3))
+  b%(i*4+3)() frequency=Rare:
+    v%(i*3+4) = NewArray v1, v1, v1, v1 contents=anything
+    Jump -> next b%(i*4+4)(v%(i*3+4))
+  b%(i*4+4)(v%(i*3+5): Array) frequency=Rare:
+    Return v%(i*3+5)
+# END REPEAT
+  b13():
+    Return v1
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: NewArray
+# CHECK-COUNT-3: = CallDirect v2, v1 function=f2
+# CHECK-NOT: NewArray
+
+# CHECK-LABEL: function f2 {{*}}role=OutlinedBody
+# CHECK-COUNT-2: = NewArray v1, v1, v1, v1 contents=anything

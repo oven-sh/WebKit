@@ -270,6 +270,9 @@ template<typename Func>
 void checkDisassembly(Compilation& compilation, NOESCAPE const Func& func, const UTF8CString& failText)
 {
     auto disassembly = compilation.disassembly();
+#if !ENABLE(DISASSEMBLER)
+    return;
+#endif
     if (func(disassembly))
         return;
     
@@ -769,6 +772,10 @@ void testShlArgImm32(int32_t, int32_t);
 void testShlZShrArgImm32(int32_t, int32_t);
 void testClzArg64(int64_t);
 void testClzMem64(int64_t);
+void testPopCountArg64(int64_t);
+void testPopCountMem64(int64_t);
+void testPopCountArg32(int32_t);
+void testPopCountConstant64(int64_t);
 void testClzArg32(int32_t);
 void testClzMem32(int32_t);
 void testAbsArg(double);
@@ -989,6 +996,7 @@ void testBranchLoad8Z();
 void testBranchLoad16S();
 void testBranchLoad16Z();
 void testBranch8WithLoad8ZIndex();
+void testBranch16WithLoad16Z();
 void testComplex(unsigned numVars, unsigned numConstructs);
 void testBranchBitTest32TmpImm(uint32_t value, uint32_t imm);
 void testBranchBitTest32AddrImm(uint32_t value, uint32_t imm);
@@ -1407,6 +1415,7 @@ void addShrTests(const TestConfig*, Deque<RefPtr<SharedTask<void()>>>&);
 void addAtomicTests(const TestConfig*, Deque<RefPtr<SharedTask<void()>>>&);
 void addLoadTests(const TestConfig*, Deque<RefPtr<SharedTask<void()>>>&);
 void addTupleTests(const TestConfig*, Deque<RefPtr<SharedTask<void()>>>&);
+void addBunTests(const TestConfig*, Deque<RefPtr<SharedTask<void()>>>&);
 
 void testCSEStoreWithLoop();
 void testCSELoadAfterStoreDiamond(bool flag);

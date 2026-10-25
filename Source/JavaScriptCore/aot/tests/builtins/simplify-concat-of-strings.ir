@@ -1,0 +1,19 @@
+# text.concat(..) of strings is the concatenation that a template writes
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="four" parameters=[{type=string}, {type=string}, {type=string}, {type=string}] results=[{type=anything}] {
+    v4 = CallBuiltin v0, v1, v2, v3, v0 overload=StringPrototypeConcat/0
+    Return v4
+# CHECK-NOT: CallBuiltin
+# CHECK: v4: string = Strcat v0, v1, v2, v3, v0
+}
+
+function f1 name="none" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=StringPrototypeConcat/0
+    Return v1
+# CHECK-NOT: CallBuiltin
+# CHECK: ToString v0
+}

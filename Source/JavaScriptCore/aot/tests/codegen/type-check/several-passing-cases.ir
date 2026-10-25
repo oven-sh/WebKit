@@ -1,0 +1,91 @@
+# A test that several kinds of value pass tries its cases one after the other: only the last one can fail the test, and a number that needs a test of its own is decided in its own arm. However many cases can fail, a failed test throws nothing: the function has no site, and its only call is the one that asks whether a cell is callable
+# FORM: Selected
+# RUN: generate-code calls
+# OPTIONS: heat=everything-is-hot check=validate-back-end
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="numberOrNothing" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=undefined|null|number
+    TestAndBranch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3) frequency=Unlikely:
+    Return v3
+}
+# CHECK: f0: size={{*}} sites=0 handlers
+# CHECK-NOT: operation
+# CHECK-NOT: ThrowAtSite
+function f1 name="booleanNumberOrNothing" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=undefined|null|boolean|number
+    TestAndBranch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3) frequency=Unlikely:
+    Return v3
+}
+# CHECK: f1: size={{*}} sites=0 handlers
+# CHECK-NOT: operation
+# CHECK-NOT: ThrowAtSite
+function f2 name="smallIntegerOrNothing" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=undefined|null|int[0, 199999]
+    TestAndBranch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3) frequency=Unlikely:
+    Return v3
+}
+# CHECK: f2: size={{*}} sites=0 handlers
+# CHECK-NOT: operation
+# CHECK-NOT: ThrowAtSite
+function f3 name="smallInteger" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=int[0, 199999]
+    TestAndBranch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3) frequency=Unlikely:
+    Return v3
+}
+# CHECK: f3: size={{*}} sites=0 handlers
+# CHECK-NOT: operation
+# CHECK-NOT: ThrowAtSite
+function f4 name="stringOrFunction" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=string|function
+    TestAndBranch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3) frequency=Unlikely:
+    Return v3
+}
+# CHECK: f4: size={{*}} sites=0 handlers
+# CHECK-NEXT: stub ValueIsCallable x1
+# CHECK-NOT: operation
+# CHECK-NOT: ThrowAtSite
+function f5 name="everyCellOrNumber" parameters=[{type=undefined|number|string|object}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=number|string|object
+    TestAndBranch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3) frequency=Unlikely:
+    Return v3
+}
+# CHECK: f5: size={{*}} sites=0 handlers
+# CHECK-NOT: operation
+# CHECK-NOT: ThrowAtSite
+function f6 name="branchesOnFunction" parameters=[{type=anything}] results=[{type=i32}] {
+    v1 = TypeTest v0 testedType=function
+    TestAndBranch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=2
+    Return v3
+}
+# CHECK: f6: size={{*}} sites=0 handlers
+# CHECK-NEXT: stub ValueIsCallable x1
+function f7 name="functionAsValue" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = TypeTest v0 testedType=undefined|function
+    Return v1
+}
+# CHECK: f7: size={{*}} sites=0 handlers
+# CHECK-NEXT: stub ValueIsCallable x1

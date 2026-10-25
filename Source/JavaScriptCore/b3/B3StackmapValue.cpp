@@ -40,6 +40,7 @@ StackmapValue::~StackmapValue() = default;
 
 void StackmapValue::append(Value* value, const ValueRep& rep)
 {
+    RELEASE_ASSERT(!m_areConstraintsFrozen);
     if (rep == ValueRep::ColdAny) {
         childrenVector().append(value);
         return;
@@ -64,12 +65,14 @@ void StackmapValue::appendSomeRegisterWithClobber(Value* value)
 
 void StackmapValue::setConstrainedChild(unsigned index, const ConstrainedValue& constrainedValue)
 {
+    RELEASE_ASSERT(!m_areConstraintsFrozen);
     child(index) = constrainedValue.value();
     setConstraint(index, constrainedValue.rep());
 }
 
 void StackmapValue::setConstraint(unsigned index, const ValueRep& rep)
 {
+    RELEASE_ASSERT(!m_areConstraintsFrozen);
     if (rep == ValueRep(ValueRep::ColdAny))
         return;
 
@@ -89,6 +92,14 @@ void StackmapValue::dumpMeta(CommaPrinter& comma, PrintStream& out) const
 {
     out.print(
         comma, "generator = ", RawPointer(m_generator.get()));
+    if (m_runsWithoutFrame)
+        out.print(comma, "runsWithoutFrame"_s);
+    if (m_followsFrameSetup)
+        out.print(comma, "followsFrameSetup"_s);
+    if (m_needsFrameRecord)
+        out.print(comma, "needsFrameRecord"_s);
+    if (m_sharesLatePath)
+        out.print(comma, "sharesLatePath"_s);
     if constexpr (B3StackmapValueInternal::dumpRegisters) {
         out.print(", earlyClobbered = ", m_earlyClobbered,
             ", lateClobbered = ", m_lateClobbered, ", usedRegisters = ", m_usedRegisters);

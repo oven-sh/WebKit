@@ -1,0 +1,34 @@
+# Two integers whose ranges do not meet are not equal. Only -0, which is a whole number, equals an integer: 0
+# FORM: Prepared
+# RUN: pass FoldConstants
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="outsideTheRange" parameters=[{type=int[1, 3]}] results=[{type=boolean}] {
+    v1 = Integer integer=7
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK-NOT: StrictEq
+# CHECK: false = Boolean
+}
+
+function f1 name="insideTheRange" parameters=[{type=int[1, 3]}] results=[{type=boolean}] {
+    v1 = Integer integer=2
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK: = StrictEq v0, v1
+}
+
+function f2 name="negativeZero" parameters=[{type=whole}] results=[{type=boolean}] {
+    v1 = Integer
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK: = StrictEq v0, v1
+}
+
+function f3 name="wholeNumberAgainstSeven" parameters=[{type=whole}] results=[{type=boolean}] {
+    v1 = Integer integer=7
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK-NOT: StrictEq
+# CHECK: false = Boolean
+}

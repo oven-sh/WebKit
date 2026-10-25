@@ -1,0 +1,21 @@
+# Object.assign(globalThis, JSON.parse(text)); Date.now()
+# Nobody knows the names of the source, and "Date" may be one of them: every member of the global object counts as written
+# RUN: valueflow-results
+# CHECK: builtin-location GlobalThis."Date" Unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectAssign
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="text" [isFreeName]
+    v4 = Builtin builtin=JSON
+    v5 = Builtin builtin=JSONParse
+    v6 = Call v5, v4, v3
+    v7 = Call v1, v0, v2, v6
+    v8 = PropGet v2 key="Date" [isFreeName]
+    v9 = PropGet v8 key="now"
+    v10 = Call v9, v8
+    Return
+}

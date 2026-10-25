@@ -1,0 +1,33 @@
+# A literal that holds constants alone is constant data, not an allocation with operands. It is a literal of its layout all the same:
+# a name that it leaves out is not there at birth, one that lists nothing leaves nothing, and what it lists with every other literal is there. So is an object inside constant data.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Both" fields=[{key="a" {{*}}flow={occupancy=FilledAtBirth}}, {key="b" {{*}}flow={occupancy=FilledAtBirth}}]
+# CHECK: layout L1 name="One" fields=[{key="a" {{*}}flow={occupancy=FilledAtBirth}}, {key="b" declared={type=anything} flags=[IsEnforced]}]
+# CHECK: layout L2 name="None" fields=[{key="a" declared={type=anything} flags=[IsEnforced]}, {key="b" declared={type=anything} flags=[IsEnforced]}]
+# CHECK: layout L3 name="Inside" fields=[{key="a" {{*}}flow={occupancy=FilledAtBirth}}, {key="b" declared={type=anything} flags=[IsEnforced]}]
+# CHECK: layout L4 name="Holder"
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Both" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
+layout L1 name="One" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
+layout L2 name="None" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
+layout L3 name="Inside" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
+layout L4 name="Holder" fields=[{key="held" declared={type=anything}}]
+data d0 root=Object{layout=L0 members=[{key="a" value=Number{value=1}}, {key="b" value=Number{value=2}}]} module=m0
+data d1 root=Object{layout=L1 members=[{key="a" value=Number{value=1}}]} module=m0
+data d2 root=Object{layout=L2 members=[]} module=m0
+data d3 root=Object{layout=L4 members=[{key="held" value=Object{layout=L3 members=[{key="a" value=Number{value=1}}]}}]} module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="somethingThatNoTableLists" [isFreeName]
+    v2 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
+    v3 = Data data=d0
+    v4 = NewObject -, v1, v1 layout=L1 fields=[0, 1]
+    v5 = Data data=d1
+    v6 = NewObject -, v1, v1 layout=L2 fields=[0, 1]
+    v7 = Data data=d2
+    v8 = NewObject -, v1, v1 layout=L3 fields=[0, 1]
+    v9 = Data data=d3
+    v10 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9
+    Return
+}

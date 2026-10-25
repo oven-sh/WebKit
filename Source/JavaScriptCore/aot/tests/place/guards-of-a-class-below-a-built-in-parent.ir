@@ -1,0 +1,49 @@
+# class List extends Array { static make() {} }   List.make()   List.of()
+# The definition of List runs once, its members have constant names and its parent is proven to be the built-in Array, so it can only make what its record says: its guards hold from the start.
+# The record says nothing of what Array has. A name that List does not declare is looked for there, and nobody watches there for List: the condition on `of` gets no bit, so its test never passes.
+# FORM: AsRead
+# RUN: place guards
+# RUN(TABLES): tables layouts
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="List" module=m0 constructor=f1 flags=[HasHeritage]
+variable g0 name="List" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = PropGet v0 key="Array" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = ResolveHeritage v2
+    v5 = NewClass v3, v2, v4 layout=L0
+    v6 = NewClosure function=f2
+    DefineMethod v5, v6 layout=L0 side=Static key="make"
+    v8 = FinishClass v5 layout=L0
+    PutModuleVariable v8 variable=g0
+    v10 = NewClosure function=f3
+    v11 = Call v1, -, v8, v10
+    Return
+}
+function f1 name="List" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L0
+    Return v3
+}
+function f2 name="make" kind=Method flags=[HasThis] results=[{type=anything}] {
+    v1 = Builtin builtin=MathRandom
+    v2 = Call v1
+    Return v2
+}
+function f3 name="use" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="make"
+    v2 = Call v1, v0 calleeKey="make"
+    v3 = PropGet v0 key="of"
+    v4 = Call v3, v0 calleeKey="of"
+    v5 = NewArray v2, v4 contents=anything holes=[]
+    Return v5
+}
+
+# CHECK: L0 Static Member "make" {{*}} holdsWhileClear
+# CHECK-NOT: "of"
+# TABLES: class index=L0 {{*}}hasUntypedBase{{*}} guardsHoldWhileClear

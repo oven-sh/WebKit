@@ -1,0 +1,98 @@
+# function Type() {}    table.above = Object.create(target, { id: { get, set } }); table.above = plain    Object.setPrototypeOf(Type.prototype, table.above)
+# const made = new Type(); made.id = 1; publish(made)
+# A link that may hold one of several objects says of none of them that the program puts it there. In a large program such a link holds hundreds: one helper that hangs `superCtor.prototype` above
+# `ctor.prototype` for callers that nobody knows ties every prototype object to every other, and one accessor anywhere would take its name from every layout. Only a link that holds one object counts:
+# `id` gets its field in Type. The field is right whatever hangs above an instance, since a store that creates it and a read that finds it empty test that the object inherits nothing under the name.
+# An accessor that the program itself defines on the prototype object of the class does take the name: a store to `id` of a State runs the setter, and State gets no field.
+# So does one on the only object that the program hangs above that prototype object: Below gets no field either
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Type" constructor=f1 fields=[{key="id" {{*}}flags=[IsAddedLate
+# CHECK: layout L2 kind=Instance name="State" constructor=f4
+# CHECK-NOT: fields=[{key="id"
+# CHECK: layout L3
+# CHECK: layout L4 kind=Instance name="Below" constructor=f5
+# CHECK-NOT: fields=[{key="id"
+# CHECK: layout L5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Type" constructor=f1 flags=[IsConstructorFunction]
+layout L1 name="PropertyDescriptor" fields=[{key="get" declared={type=anything}}, {key="set" declared={type=anything}}]
+layout L2 kind=Instance name="State" constructor=f4 flags=[IsConstructorFunction]
+layout L3 name="Target" fields=[{key="text" declared={type=anything}}]
+layout L4 kind=Instance name="Below" constructor=f5 flags=[IsConstructorFunction]
+layout L5 name="Table" fields=[{key="above" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = Integer integer=1
+    v3 = NewClosure function=f1
+    v4 = NewObject layout=L3
+    v5 = FinishObject v4
+    v6 = NewDictionary
+    v7 = NewObject layout=L1
+    v8 = NewClosure function=f2
+    PropDefine v7, v8 key="get"
+    v10 = NewClosure function=f3
+    PropDefine v7, v10 key="set"
+    v12 = FinishObject v7
+    PropDefine v6, v12 key="id"
+    v14 = Builtin builtin=Object
+    v15 = Builtin builtin=ObjectCreate
+    v16 = Call v15, v14, v5, v6
+    v17 = NewObject layout=L3
+    v18 = FinishObject v17
+    v19 = NewObject layout=L5
+    v20 = FinishObject v19
+    PropSet v20, v16 key="above" mode=Strict
+    PropSet v20, v18 key="above" mode=Strict
+    v23 = PropGet v20 key="above"
+    v24 = PropGet v3 key="prototype"
+    v25 = Builtin builtin=ObjectSetPrototypeOf
+    v26 = Call v25, v14, v24, v23
+    v27 = Construct v3
+    PropSet v27, v2 key="id" mode=Strict
+    v29 = Call v1, -, v27
+    v30 = NewClosure function=f4
+    v31 = PropGet v30 key="prototype"
+    v32 = NewDictionary
+    v33 = NewObject layout=L1
+    v34 = NewClosure function=f2
+    PropDefine v33, v34 key="get"
+    v36 = NewClosure function=f3
+    PropDefine v33, v36 key="set"
+    v38 = FinishObject v33
+    PropDefine v32, v38 key="id"
+    v40 = Builtin builtin=ObjectDefineProperties
+    v41 = Call v40, v14, v31, v32
+    v42 = Construct v30
+    PropSet v42, v2 key="id" mode=Strict
+    v44 = Call v1, -, v42
+    v45 = NewClosure function=f5
+    v46 = PropGet v45 key="prototype"
+    v47 = Call v25, v14, v46, v16
+    v48 = Construct v45
+    PropSet v48, v2 key="id" mode=Strict
+    v50 = Call v1, -, v48
+    Return
+}
+function f1 name="Type" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Undefined
+    Return v1
+}
+function f2 name="get" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=7
+    Return v1
+}
+function f3 name="set" module=m0 kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Undefined
+    Return v2
+}
+function f4 name="State" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Undefined
+    Return v1
+}
+function f5 name="Below" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Undefined
+    Return v1
+}

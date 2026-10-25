@@ -1,0 +1,80 @@
+# Where a check fails, the generic version of the function goes on with the value that failed and stores it wherever the typed code stores the checked one. So a typed variable, environment field, capture or result
+# that takes a value which depends on a check is only expected, and whoever reads it checks it again. What a reader returns of it makes the reader's own result expected in the next round.
+# A position that takes a value whose type does not rest on the check keeps its type
+# FORM: AsRead
+# RUN: pass TypeValues GuardTaintedPositions VerifyProgram
+# STATISTIC: TaintedPositions = 8
+# STATISTIC: ChecksOnTaintedPositions = 4
+# CHECK: layout L0 kind=Environment{{*}}{key="binding" declared={type=number flags=[IsExpected]}
+# CHECK: variable g0 name="stored" module=m0 declared={type=number flags=[IsExpected]}
+# CHECK: variable g1 name="compared" module=m0 declared={type=boolean}
+# CHECK: variable g2 name="constant" module=m0 declared={type=number}
+# CHECK: variable g3 name="fromResult" module=m0 declared={type=number flags=[IsExpected]}
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="stored" module=m0 declared={type=number} initialization=Uninitialized
+variable g1 name="compared" module=m0 declared={type=boolean} initialization=Uninitialized
+variable g2 name="constant" module=m0 declared={type=number} initialization=Uninitialized
+variable g3 name="fromResult" module=m0 declared={type=number} initialization=Uninitialized
+layout L0 kind=Environment name="scope" fields=[{key="binding" declared={type=number}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = Convert v1 declared={type=number}
+    PutModuleVariable v2 variable=g0
+    v4 = Integer integer=1
+    v5 = StrictEq v2, v4
+    PutModuleVariable v5 variable=g1
+    PutModuleVariable v4 variable=g2
+    v8 = NewObject -, v2 layout=L0 fields=[0]
+    v9 = NewClosure v8 function=f2
+    v10 = NewClosure v2 function=f3
+    v11 = CallDirect v1 function=f4
+    PutModuleVariable v11 variable=g3
+    Return
+# CHECK: v2: number = Check v1 castType=number
+# CHECK-NEXT: PutModuleVariable v2 variable=g0
+# CHECK: [[result]]: anything ~ number = CallDirect v1 function=f4
+# CHECK-NEXT: [[checkedResult]]: number = Check [[result]] castType=number cause=AddedByPass
+# CHECK-NEXT: PutModuleVariable [[checkedResult]] variable=g3
+}
+
+function f1 name="readsVariables" results=[{type=number}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g2
+    v2 = Add v0, v1
+    Return v2
+# CHECK: results=[{type=number flags=[IsExpected]}]
+# CHECK: [[read]]: anything{{*}}~ number{{*}} = GetModuleVariable variable=g0
+# CHECK-NEXT: [[checkedRead]]: number = Check [[read]] castType=number cause=AddedByPass
+# CHECK-NEXT: [[other]]: number = GetModuleVariable variable=g2
+# CHECK-NEXT: = Add [[checkedRead]], [[other]]
+}
+
+function f2 name="readsEnvironmentField" kind=Arrow captures=[{type=env L0}] results=[{type=number}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+# CHECK: results=[{type=number flags=[IsExpected]}]
+# CHECK: [[field]]: anything{{*}}~ number{{*}} = GetEnvironmentField v0 layout=L0
+# CHECK-NEXT: [[checkedField]]: number = Check [[field]] castType=number cause=AddedByPass
+# CHECK-NEXT: Return [[checkedField]]
+}
+
+function f3 name="readsCapture" kind=Arrow captures=[{type=number}] results=[{type=number}] {
+    Return v0
+# CHECK: captures=[{type=number flags=[IsExpected]}]
+# CHECK: b0(v0: anything ~ number):
+# CHECK-NEXT: [[checkedCapture]]: number = Check v0 castType=number cause=AddedByPass
+# CHECK-NEXT: Return [[checkedCapture]]
+}
+
+function f4 name="returnsCheckedValue" parameters=[{type=anything}] results=[{type=number}] {
+    v1 = Convert v0 declared={type=number}
+    Return v1
+# CHECK: results=[{type=number flags=[IsExpected]}]
+# CHECK: v1: number = Check v0 castType=number
+# CHECK-NEXT: Return v1
+}

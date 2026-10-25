@@ -38,6 +38,7 @@ BlockInsertionSet::BlockInsertionSet(Procedure &proc)
     : GenericBlockInsertionSet(proc.m_blocks)
     , m_proc(proc)
 {
+    m_arena = proc.arenaOrNull();
 }
 
 BlockInsertionSet::~BlockInsertionSet() = default;

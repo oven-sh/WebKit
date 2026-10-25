@@ -1,0 +1,36 @@
+# The read of a brand gives a class token, which refers to nothing: by name or as a slot the read is a use of the object, like the read of the private field beside it, and its result is no alias of the object
+# FORM: Prepared
+# RUN: analyses escape
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Once" fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key=#"#secret"@L0 declared={type=number} flags=[IsRequired, IsPrivate] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L0]} classFlow={evaluations=AtMostOnce}
+function f0 name="readsByName" results=[{type=anything}] {
+    v0 = NewClassToken layout=L0
+    v1 = Integer integer=1
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = PrivateGet v2, v0 layout=L0 receivers=[L0]
+    v4 = PrivateGet v2, v0 layout=L0 field=1 receivers=[L0]
+    Return
+}
+function f1 name="readsSlots" results=[{type=anything}] {
+    v0 = NewClassToken layout=L0
+    v1 = Integer integer=1
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = GetSlot v2 key=#"#"@L0 receivers=[L0] level=Proven
+    v4 = GetSlot v2 key=#"#secret"@L0 receivers=[L0] level=Proven
+    Return
+}
+# CHECK: function f0
+# CHECK: objects: 1
+# CHECK: o0 definition: v2
+# CHECK: o0 state: DoesNotEscape
+# CHECK: o0 uses: [Inspects]
+# CHECK: o0 aliases: [v2]
+# CHECK: o0 object uses: [v3(0) v4(0)]
+# CHECK: function f1
+# CHECK: objects: 1
+# CHECK: o0 definition: v2
+# CHECK: o0 state: DoesNotEscape
+# CHECK: o0 uses: [Inspects]
+# CHECK: o0 aliases: [v2]
+# CHECK: o0 object uses: [v3(0) v4(0)]

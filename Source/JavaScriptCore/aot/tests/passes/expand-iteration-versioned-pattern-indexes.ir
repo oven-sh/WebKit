@@ -1,0 +1,61 @@
+# In the array copy of a pattern step i is an element read at the constant index i
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration SimplifyCasts RetypeValues FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions HoistTestsIntoPredecessors ThreadJumps EliminateDeadCode RetypeValues CompactBlocks
+# RUN(LEFT): pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 2
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="pattern" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = IteratorOpen v0 elementCount=2 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b4():
+    v2 = IteratorResume v1 stepIndex=0
+    v3 = ResultAt v2 index=1
+    v4 = IteratorResume v1 stepIndex=1
+    v5 = ResultAt v4 index=1
+    Jump -> next b2()
+  b2():
+    IteratorClose v1
+    Jump -> next b3()
+  b3():
+    v7 = Add v3, v5
+    Return v7
+  b4() role=IterationCleanup subject=v1:
+    v8 = CatchException
+    IteratorClose v1 completion=Throw
+    Rethrow v8
+# CHECK: = IsPristine [[array1]] builtinClass=Array aspects=[Storage, Names]
+# CHECK: [[zero1]]: 0 = Integer
+# CHECK: = ElemGet [[array1]], [[zero1]] [keyIsIntegral]
+# CHECK: [[one1]]: 1 = Integer integer=1
+# CHECK: = ElemGet [[array1]], [[one1]] [keyIsIntegral]
+}
+
+function f1 name="loop" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b2()
+  b2():
+    v7 = Call v1, -, v6
+    Jump -> next b1()
+  b3():
+    Return
+# The index of a loop is a parameter of its header, which no pass can fold.
+# CHECK: ([[index2]]: int[0, 9007199254740991]):
+# CHECK-NEXT: LoopHint
+# CHECK: [[inRange2]]: boolean = Less [[index2]],
+# CHECK-NEXT: Branch [[inRange2]] -> taken [[read2]](| 0), notTaken
+# CHECK: [[read2]]([[proven2]]: int[0, 9007199254740990]):
+# CHECK-NEXT: = ElemGet {{*}}, [[proven2]] [keyIsIntegral]
+}
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: AppendSpread

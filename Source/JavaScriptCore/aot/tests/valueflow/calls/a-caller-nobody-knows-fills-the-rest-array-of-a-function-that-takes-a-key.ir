@@ -1,0 +1,23 @@
+# function emit(table, type, ...args) { return table[type](args[0]) }  give(emit)
+# A function that calls what it has read under a parameter is gone through once for each constant that its callers pass there, and `args[0]` answers what the calls of that instance have passed at the position.
+# A caller nobody knows enters the instance of the other calls, with operands nobody knows at every position.
+# RUN: valueflow-why values=f1:v5
+# CHECK: ElemGet
+# CHECK: result {{*}} unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="give" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="emit" module=m0 flags=[HasRestParameter] parameters=[{type=anything}, {type=anything}, {type=Array}] results=[{type=anything}] {
+    v3 = ElemGet v0, v1
+    v4 = Integer integer=0
+    v5 = ElemGet v2, v4
+    v6 = Call v3, -, v5
+    Return v6
+}

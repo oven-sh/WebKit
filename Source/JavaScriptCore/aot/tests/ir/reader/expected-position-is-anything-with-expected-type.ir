@@ -1,0 +1,59 @@
+# Nothing checks what enters a position with the flag IsExpected: a file that is not checked, a type inferred from use, a declaration without a row in the table.
+# The reader leaves the type and the flag as they are. What comes out of the position is anything, and the type is only what is expected of it.
+# Beside each: the same position without the flag gives its type
+# FORM: AsRead
+# RUN: print
+# RUN(TYPED): pass TypeValues VerifyProgram
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=number flags=[IsExpected]}}]
+layout L1 name="Point3" fields=[{key="x" declared={type=number flags=[IsExpected]}}, {key="z" declared={type=number}}] supertypes=[L0]
+layout L2 kind=Environment fields=[{declared={type=string flags=[IsExpected]}}, {declared={type=string}}]
+variable g0 name="expectedCount" module=m0 declared={type=undefined|number flags=[IsExpected]} initialization=Undefined
+variable g1 name="checkedCount" module=m0 declared={type=undefined|number} initialization=Undefined
+# CHECK: layout L0 name="Point" fields=[{key="x" declared={type=number flags=[IsExpected]}}]
+# CHECK: layout L1 name="Point3" fields=[{key="x" declared={type=number flags=[IsExpected]}}, {key="z" declared={type=number}}] supertypes=[L0]
+# CHECK: layout L2 kind=Environment fields=[{declared={type=string flags=[IsExpected]}}, {declared={type=string}}]
+# CHECK: variable g0 name="expectedCount" module=m0 declared={type=undefined|number flags=[IsExpected]} initialization=Undefined
+# CHECK: variable g1 name="checkedCount" module=m0 declared={type=undefined|number} initialization=Undefined
+# TYPED: outcome: Changed
+# TYPED-NEXT: outcome: Unchanged
+function f0 name="entry" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} parameters=[{type=number flags=[IsExpected]}, {type=number}, {type=L0}] results=[{type=anything}] {
+    Return v1
+# CHECK: thisType={type=L0|L1 flags=[IsExpected]} parameters=[{type=number flags=[IsExpected]}, {type=number}, {type=L0|L1}]
+# TYPED: thisType={type=L0|L1 flags=[IsExpected]} parameters=[{type=number flags=[IsExpected]}, {type=number}, {type=L0|L1}]
+# TYPED-NEXT: b0(v0: anything ~ L0|L1, v1: anything ~ number, v2: number, v3: L0|L1):
+}
+function f1 name="variables" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    Return v0
+# TYPED: v0: anything ~ undefined|number = GetModuleVariable variable=g0
+# TYPED-NEXT: v1: undefined|number = GetModuleVariable variable=g1
+}
+function f2 name="environment" captures=[{type=env L2}] results=[{type=anything}] {
+  b0(v0: env L2):
+    v1 = GetEnvironmentField v0 layout=L2
+    v2 = GetEnvironmentField v0 layout=L2 field=1
+    Return v1
+# TYPED: v1: anything ~ string = GetEnvironmentField v0 layout=L2
+# TYPED-NEXT: v2: string = GetEnvironmentField v0 layout=L2 field=1
+}
+function f3 name="results" results=[{type=anything}] {
+    v0 = CallDirect function=f4
+    v1 = CallDirect function=f5
+    Return v0
+# TYPED: v0: anything ~ string = CallDirect function=f4
+# TYPED-NEXT: v1: string = CallDirect function=f5
+}
+function f4 name="expectedResult" results=[{type=string flags=[IsExpected]}]
+function f5 name="checkedResult" results=[{type=string}]
+# What is expected travels with the value, and an operation on it proves nothing
+function f6 name="use" parameters=[{type=number flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+    v2 = Add v0, v0
+    v3 = Add v1, v1
+    Return v2
+# TYPED: v2: number|string{{*}} ~ number = Add v0, v0
+# TYPED-NEXT: v3: number = Add v1, v1
+}

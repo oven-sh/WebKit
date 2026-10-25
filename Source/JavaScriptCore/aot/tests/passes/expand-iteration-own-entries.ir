@@ -1,0 +1,244 @@
+# A loop over Object.entries(object) that alone has the list asks the run time for the keys and values one behind the other in one list, at the moment the call stood for
+# Each step makes its pair in compiled code. Somebody else who has the list, or something that runs between the call and the loop, keeps the list of pairs
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" declared={type=anything} initialization=Undefined
+
+function f0 name="theLoopAloneHasTheList" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0 overload=ObjectEntries/0
+    v3 = IteratorOpen v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v8 = Call v1, -, v7
+    Jump -> next b1()
+  b3():
+    Return
+# CHECK-NOT: ObjectEntries
+# CHECK-NOT: AssumeType
+# CHECK: [[list0]]: Array = CallBuiltin -, v0 overload=CompilerHelpersOwnEntriesFlat/0
+# CHECK: [[length0]]: {{*}} = ToLength
+# CHECK-NEXT: [[has0]]: boolean = Less [[position0]], [[length0]]
+# CHECK-NEXT: Branch [[has0]] -> taken [[step0]](| 0), notTaken
+# CHECK: [[step0]]([[index0]]: {{*}}):
+# CHECK-NEXT: [[key0]]: {{*}} = ElemGet [[list0]], [[index0]] [keyIsIntegral]
+# CHECK: [[behind0]]: {{*}} = Add [[index0]],
+# CHECK-NEXT: [[value0]]: {{*}} = ElemGet [[list0]], [[behind0]] [keyIsIntegral]
+# CHECK: = NewArray [[key0]], [[value0]]
+# CHECK-NOT: IteratorResume
+}
+
+function f1 name="throughACastThatTestsNothing" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0 overload=ObjectEntries/0
+    v3 = AssumeType v2 castType=Array<object>
+    v4 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v9 = Call v1, -, v8
+    Jump -> next b1()
+  b3():
+    Return
+# CHECK-NOT: ObjectEntries
+# CHECK-NOT: AssumeType
+# CHECK: [[list1]]: Array = CallBuiltin -, v0 overload=CompilerHelpersOwnEntriesFlat/0
+# CHECK: [[length1]]: {{*}} = ToLength
+# CHECK-NEXT: [[has1]]: boolean = Less [[position1]], [[length1]]
+# CHECK-NEXT: Branch [[has1]] -> taken [[step1]](| 0), notTaken
+# CHECK: [[step1]]([[index1]]: {{*}}):
+# CHECK-NEXT: [[key1]]: {{*}} = ElemGet [[list1]], [[index1]] [keyIsIntegral]
+# CHECK: [[behind1]]: {{*}} = Add [[index1]],
+# CHECK-NEXT: [[value1]]: {{*}} = ElemGet [[list1]], [[behind1]] [keyIsIntegral]
+# CHECK: = NewArray [[key1]], [[value1]]
+# CHECK-NOT: IteratorResume
+}
+
+# Nobody has resolved the call yet: its callee is the function itself
+function f2 name="theCallIsNotResolved" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectEntries
+    v4 = Call v3, v2, v0 calleeName="entries"
+    v5 = IteratorOpen v4
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = IteratorResume v5
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b3(), notTaken b2()
+  b2():
+    v10 = Call v1, -, v9
+    Jump -> next b1()
+  b3():
+    Return
+# CHECK-NOT: = Call v3
+# CHECK-NOT: AssumeType
+# CHECK: [[list2]]: Array = CallBuiltin -, v0 overload=CompilerHelpersOwnEntriesFlat/0
+# CHECK: [[length2]]: {{*}} = ToLength
+# CHECK-NEXT: [[has2]]: boolean = Less [[position2]], [[length2]]
+# CHECK-NEXT: Branch [[has2]] -> taken [[step2]](| 0), notTaken
+# CHECK: [[step2]]([[index2]]: {{*}}):
+# CHECK-NEXT: [[key2]]: {{*}} = ElemGet [[list2]], [[index2]] [keyIsIntegral]
+# CHECK: [[behind2]]: {{*}} = Add [[index2]],
+# CHECK-NEXT: [[value2]]: {{*}} = ElemGet [[list2]], [[behind2]] [keyIsIntegral]
+# CHECK: = NewArray [[key2]], [[value2]]
+# CHECK-NOT: IteratorResume
+}
+
+function f3 name="anOperandNobodyKnows" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=Object
+    v3 = CallBuiltin v2, v0 overload=ObjectEntries/0 builtinCallForm=AnyReceiver
+    v4 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v9 = Call v1, -, v8
+    Jump -> next b1()
+  b3():
+    Return
+# CHECK-NOT: overload=ObjectEntries
+# CHECK-NOT: AssumeType
+# CHECK: [[list3]]: Array = CallBuiltin -, v0 overload=CompilerHelpersOwnEntriesFlat/0
+# CHECK: [[length3]]: {{*}} = ToLength
+# CHECK-NEXT: [[has3]]: boolean = Less [[position3]], [[length3]]
+# CHECK-NEXT: Branch [[has3]] -> taken [[step3]](| 0), notTaken
+# CHECK: [[step3]]([[index3]]: {{*}}):
+# CHECK-NEXT: [[key3]]: {{*}} = ElemGet [[list3]], [[index3]] [keyIsIntegral]
+# CHECK: [[behind3]]: {{*}} = Add [[index3]],
+# CHECK-NEXT: [[value3]]: {{*}} = ElemGet [[list3]], [[behind3]] [keyIsIntegral]
+# CHECK: = NewArray [[key3]], [[value3]]
+# CHECK-NOT: IteratorResume
+}
+
+function f4 name="theListIsKept" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0 overload=ObjectEntries/0
+    PutModuleVariable v2 variable=g0
+    v4 = IteratorOpen v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v9 = Call v1, -, v8
+    Jump -> next b1()
+  b3():
+    Return
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+# CHECK: overload=ObjectEntries/0
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}
+
+function f5 name="aStoreBetweenTheCallAndTheLoop" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0 overload=ObjectEntries/0
+    PropSet v0, v1 key="late"
+    v4 = IteratorOpen v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v9 = Call v1, -, v8
+    Jump -> next b1()
+  b3():
+    Return
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+# CHECK: overload=ObjectEntries/0
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}
+
+function f6 name="aReadBetweenTheCallAndTheLoop" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0 overload=ObjectEntries/0
+    v3 = GetModuleVariable variable=g0
+    v4 = IteratorOpen v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v9 = Call v1, -, v8, v3
+    Jump -> next b1()
+  b3():
+    Return
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+# CHECK: overload=ObjectEntries/0
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}
+
+function f7 name="anotherNumberOfOperands" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=Object
+    v3 = CallBuiltin v2, v0, v1 overload=ObjectEntries/0 builtinCallForm=AnyReceiver
+    v4 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b3(), notTaken b2()
+  b2():
+    v9 = Call v1, -, v8
+    Jump -> next b1()
+  b3():
+    Return
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+# CHECK: overload=ObjectEntries/0
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}
+
+function f8 name="theValuesAlone" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0 overload=ObjectValues/0
+    v3 = IteratorOpen v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b3(), notTaken b2()
+  b2():
+    v8 = Call v1, -, v7
+    Jump -> next b1()
+  b3():
+    Return
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+# CHECK: overload=ObjectValues/0
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}
+
+function f9 name="aPatternTakesTheListApart" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin -, v0 overload=ObjectEntries/0
+    v3 = IteratorOpen v2 elementCount=1 [isDestructuring]
+    v4 = IteratorResume v3 stepIndex=0
+    v5 = ResultAt v4 index=1
+    IteratorClose v3
+    Return v5
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+# CHECK: overload=ObjectEntries/0
+# CHECK-NOT: CompilerHelpersOwnEntriesFlat
+}

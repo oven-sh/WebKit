@@ -1,0 +1,56 @@
+# The loop holds a generic copy with a step of its own, which comes back to the header once the carried value is a number again: at whatever position it has reached. A turn stands for one position, so only what comes from the turn's own step enters the next turn
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass
+# RUN: pass ExpandOwnKeys
+# RUN(ONCE): pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 1
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="Record" fields=[{key="alpha" declared={type=number}}, {key="bravo" declared={type=number}}] flow={constructorOrders=[{fields=[0, 1]}]}
+
+function f0 name="keepsTheLast" parameters=[{type=object}] results=[{type=anything}] {
+  b0(v0: object ~ L0):
+    v1 = ForInOpen v0
+    v2 = Integer integer=0
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4: number, v5: int[0, 8589934591]):
+    LoopHint
+    v7 = ForInStep v1, v0 position=v5
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    v10 = ResultAt v7 index=2
+    v11 = Integer integer=1
+    v12 = Add v10, v11
+    Branch v8 -> taken b7(v4), notTaken b2()
+  b2():
+    v13 = ElemGet v0, v9
+    v14 = TypeTest v13 testedType=number
+    Branch v14 -> taken b3(| 0), notTaken b4(v13, v12)
+  b3(v15: number):
+    Jump -> next b1(v15, v12)
+  b4(v16: anything, v17: int[0, 8589934591]) frequency=Unlikely:
+    v18 = TypeTest v16 testedType=number
+    Branch v18 -> taken b5(| 0), notTaken b6()
+  b5(v19: number) frequency=Unlikely:
+    Jump -> next b1(v19, v17)
+  b6() frequency=Unlikely:
+    LoopHint
+    v21 = ForInStep v1, v0 position=v17
+    v22 = ResultAt v21 index=0
+    v23 = ResultAt v21 index=1
+    v24 = ResultAt v21 index=2
+    v25 = Integer integer=1
+    v26 = Add v24, v25
+    Branch v22 -> taken b7(v16), notTaken b8()
+  b7(v27: anything):
+    Return v27
+  b8() frequency=Unlikely:
+    v28 = ElemGet v0, v23
+    Jump -> next b4(v28, v26)
+# CHECK: b14({{*}}):
+# CHECK-NEXT: : 1 = Integer integer=1
+# CHECK-NEXT: = IsEnumeratorCurrent v1, v0,
+# ONCE-COUNT-1: -> next b14(
+# ONCE-NOT: -> next b14(
+}

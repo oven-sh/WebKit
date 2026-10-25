@@ -33,6 +33,8 @@
 #include "AirSpecial.h"
 #include "AirStackSlot.h"
 #include "AirTmp.h"
+#include "AirFrameLayout.h"
+#include "AirPolicy.h"
 #include "B3SparseCollection.h"
 #include "GPRInfo.h"
 #include "MacroAssembler.h"
@@ -68,6 +70,7 @@ class CCallSpecial;
 class CFG;
 class Code;
 class Disassembler;
+class InstObserver;
 struct GenerationContext;
 
 typedef void WasmBoundsCheckGeneratorFunction(CCallHelpers&, WasmBoundsCheckValue*, GPRReg);
@@ -75,6 +78,22 @@ typedef SharedTask<WasmBoundsCheckGeneratorFunction> WasmBoundsCheckGenerator;
 
 typedef void PrologueGeneratorFunction(CCallHelpers&, Code&, GenerationContext&);
 typedef SharedTask<PrologueGeneratorFunction> PrologueGenerator;
+
+struct StackCheckSite {
+    unsigned bytesAllocatedBelowFrameRecord { 0 };
+    unsigned bytesBelowFrameRecord { 0 };
+    // Of a frame without a record: how far the stack pointer is below the return address, and how far it still has to go.
+    unsigned bytesAllocatedBelowReturnAddress { 0 };
+    unsigned bytesLeftToAllocate { 0 };
+};
+
+typedef void StackCheckGeneratorFunction(CCallHelpers&, GenerationContext&, const StackCheckSite&);
+typedef SharedTask<StackCheckGeneratorFunction> StackCheckGenerator;
+
+struct FrameRange {
+    MacroAssembler::Label begin;
+    MacroAssembler::Label end;
+};
 
 inline constexpr ASCIILiteral tierName { "Air "_s };
 
@@ -207,6 +226,8 @@ public:
     {
         return m_prologueGenerators[entrypointIndex];
     }
+    void setStackCheckGenerator(RefPtr<StackCheckGenerator>&& generator) { m_stackCheckGenerator = WTF::move(generator); }
+    StackCheckGenerator* stackCheckGenerator() const { return m_stackCheckGenerator.get(); }
 
     void setNumEntrypoints(unsigned);
 
@@ -260,8 +281,15 @@ public:
     // what you're doing.
     Vector<std::unique_ptr<BasicBlock>>& blockList() LIFETIME_BOUND { return m_blocks; }
 
+    JS_EXPORT_PRIVATE void adoptBlockOrder(const Vector<BasicBlock*>&);
+
     // Finds the smallest index' such that at(index') != null and index' >= index.
-    JS_EXPORT_PRIVATE unsigned LEGACY_NODELETE findFirstBlockIndex(unsigned index) const;
+    unsigned LEGACY_NODELETE findFirstBlockIndex(unsigned index) const
+    {
+        while (index < size() && !at(index))
+            index++;
+        return index;
+    }
 
     // Finds the smallest index' such that at(index') != null and index' > index.
     unsigned LEGACY_NODELETE findNextBlockIndex(unsigned index) const;
@@ -358,9 +386,36 @@ public:
 
     RegisterSet mutableGPRs();
     ScalarRegisterSet pinnedRegisters() const { return m_pinnedRegs; }
+    const Policy& policy() const { return m_policy; }
+    CPUFeatureSet targetFeatures() const { return m_targetFeatures; }
+    const RegisterSet& unsavedCalleeSaves() const { return m_policy.registers.unsavedCalleeSaves; }
+    const RegisterSet& calleeSavesClobberedAtSuspensions() const { return m_policy.registers.calleeSavesClobberedAtSuspensions; }
+
+    const FrameLayout& frameLayout() const { return m_frameLayout; }
+    void setFrameLayout(FrameLayout&& layout) { m_frameLayout = WTF::move(layout); }
+    unsigned bytesBelowFrameRecord() const { return frameSize() - m_frameLayout.bytesAboveFrameRecord; }
+    // For code that runs while the frame is set up.
+    MacroAssembler::Address addressInFrame(intptr_t offsetFromFP) const
+    {
+        if (m_frameLayout.hasFrameRecord)
+            return MacroAssembler::Address(MacroAssembler::framePointerRegister, safeCast<int32_t>(offsetFromFP));
+        return MacroAssembler::Address(MacroAssembler::stackPointerRegister, safeCast<int32_t>(offsetFromFP + static_cast<intptr_t>(bytesBelowFrameRecord())));
+    }
+    StackSlot* calleeSaveStackSlot() const { return m_calleeSaveStackSlot; }
+    const Vector<FrameRange>& frameRanges() const LIFETIME_BOUND { return m_frameRanges; }
+    void setFrameRanges(Vector<FrameRange>&& ranges) { m_frameRanges = WTF::move(ranges); }
+
+    void setInstObserver(InstObserver* observer) { m_instObserver = observer; }
+    InstObserver* instObserver() const { return m_instObserver; }
+
+    // The index of the first block of rare code. The default is past every block.
+    void setNumberOfBlocksInChains(unsigned number) { m_numberOfBlocksInChains = number; }
+    unsigned numberOfBlocksInChains() const { return m_numberOfBlocksInChains; }
+    void recordRareCodeStart(MacroAssembler::Label label) { m_rareCodeStart = label; }
+    MacroAssembler::Label rareCodeStart() const { return m_rareCodeStart; }
     
     void emitDefaultPrologue(CCallHelpers&, GenerationContext&);
-    void emitEpilogue(CCallHelpers&);
+    JS_EXPORT_PRIVATE void emitEpilogue(CCallHelpers&);
 
     std::unique_ptr<GenerateAndAllocateRegisters> m_generateAndAllocateRegisters;
 
@@ -374,6 +429,7 @@ private:
     Code(Procedure&);
 
     void setRegsInPriorityOrder(Bank, const Vector<Reg>&);
+    void orderRegistersClobberedAtSuspensionsLast();
     
     Vector<Reg>& regsInPriorityOrderImpl(Bank bank)
     {
@@ -387,10 +443,14 @@ private:
     }
 
     Procedure& m_proc; // Some meta-data, like byproducts, is stored in the Procedure.
+    const Policy& m_policy;
+    const CPUFeatureSet m_targetFeatures;
     Vector<Reg> m_gpRegsInPriorityOrder;
     Vector<Reg> m_fpRegsInPriorityOrder;
     ScalarRegisterSet m_mutableRegs;
     ScalarRegisterSet m_pinnedRegs;
+    FrameLayout m_frameLayout;
+    InstObserver* m_instObserver { nullptr };
     SparseCollection<StackSlot> m_stackSlots;
     Vector<std::unique_ptr<BasicBlock>> m_blocks;
     SparseCollection<Special> m_specials;
@@ -401,7 +461,7 @@ private:
     unsigned m_numFPTmps { 0 };
     unsigned m_frameSize { stackAdjustmentForAlignment() };
     unsigned m_callArgAreaSize { 0 };
-    unsigned m_optLevel { defaultOptLevel() };
+    unsigned m_optLevel;
     bool m_stackIsAllocated { false };
     bool m_preserveB3Origins { true };
     RegisterAtOffsetList m_uncorrectedCalleeSaveRegisterAtOffsetList;
@@ -410,11 +470,15 @@ private:
     Vector<FrequentedBlock> m_entrypoints; // This is empty until after lowerEntrySwitch().
     Vector<MacroAssembler::Label> m_entrypointLabels; // This is empty until code generation.
     Vector<Ref<PrologueGenerator>, 1> m_prologueGenerators;
+    RefPtr<StackCheckGenerator> m_stackCheckGenerator;
     RefPtr<WasmBoundsCheckGenerator> m_wasmBoundsCheckGenerator;
     const char* m_lastPhaseName;
     std::unique_ptr<Disassembler> m_disassembler;
     const Ref<PrologueGenerator> m_defaultPrologueGenerator;
     RefPtr<JSON::Array> m_ionGraphPasses;
+    unsigned m_numberOfBlocksInChains { std::numeric_limits<unsigned>::max() };
+    MacroAssembler::Label m_rareCodeStart;
+    Vector<FrameRange> m_frameRanges;
 };
 
 } } } // namespace JSC::B3::Air

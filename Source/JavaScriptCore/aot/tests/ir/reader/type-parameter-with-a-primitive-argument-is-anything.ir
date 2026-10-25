@@ -1,0 +1,95 @@
+# Where a primitive, a function or a built-in is a type argument, the front end sets HasMembersWithoutLayout on the type parameter: values without a layout are converted to it.
+# A test against a family finds none of them, so the reader reads every type that names such a parameter as anything, whatever arguments with a layout it also has.
+# The flag follows the conversions as the members do: a parameter that such a parameter is passed on to is anything too.
+# Beside each: a parameter that only gets objects reads as its family, and a declared layout that is no type parameter keeps its family, which lists layouts alone: no test finds a member
+# without a layout, and every value of a checked position has passed a test or comes from one that has. So a value without a layout fails the test of the type and goes on in the generic version.
+# FORM: AsRead
+# RUN: print
+# RUN(MEMBERS): members
+# RUN(TYPED): pass TypeValues VerifyProgram
+# TYPED: outcome: Changed
+# TYPED-NEXT: outcome: Unchanged
+
+# class Box<Mixed> { value: Mixed }; new Box(item); new Box(1)
+# function hold<Reached>(value: Reached); function send<Sender>(value: Sender) { hold(value) }; hold(item); send(1)
+# function measure<Bounded extends Sized>(value: Bounded); measure(item); measure("text")
+# class Shelf<Objects> { value: Objects }; new Shelf(item); new Shelf(other)
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+layout L0 name="Sized" fields=[{key="length" declared={type=number}}]
+layout L1 name="Mixed" flags=[HasMembersWithoutLayout, IsTypeParameter]
+layout L2 name="Reached" flags=[IsTypeParameter]
+layout L3 name="Sender" supertypes=[L2] flags=[HasMembersWithoutLayout, IsTypeParameter]
+layout L4 name="Bounded" supertypes=[L0] flags=[HasMembersWithoutLayout, IsTypeParameter]
+layout L5 name="Objects" flags=[IsTypeParameter]
+layout L6 name="Item" fields=[{key="length" declared={type=number}}] supertypes=[L1, L2, L4, L5]
+layout L7 name="Other" fields=[{key="name" declared={type=string}}] supertypes=[L5]
+layout L8 kind=Instance name="Box" constructor=f6 fields=[{key="value" declared={type=L1}}]
+layout L9 kind=Instance name="Shelf" constructor=f7 fields=[{key="value" declared={type=L5}}]
+# MEMBERS: L0: members [L0, L4, L6]
+# MEMBERS-NEXT: L1: members [L1, L6]
+# MEMBERS-NEXT: L2: members [L2, L3, L6]
+# MEMBERS-NEXT: L3: members [L3]
+# MEMBERS-NEXT: L4: members [L4, L6]
+# MEMBERS-NEXT: L5: members [L5, L6, L7]
+# The reader leaves the flags of a layout as the front end sent them: what reaches Reached and Sized is said by their families
+# CHECK: layout L1 name="Mixed" flags=[HasMembersWithoutLayout, IsTypeParameter] {{*}}flow={allocation=NeverAllocated
+# CHECK-NEXT: layout L2 name="Reached" flags=[IsTypeParameter] {{*}}flow={allocation=NeverAllocated
+# CHECK-NEXT: layout L3 name="Sender" supertypes=[L2] flags=[HasMembersWithoutLayout, IsTypeParameter] {{*}}flow={allocation=NeverAllocated
+# CHECK-NEXT: layout L4 name="Bounded" supertypes=[L0] flags=[HasMembersWithoutLayout, IsTypeParameter] {{*}}flow={allocation=NeverAllocated
+# CHECK-NEXT: layout L5 name="Objects" flags=[IsTypeParameter] {{*}}flow={allocation=NeverAllocated
+# CHECK: layout L8 kind=Instance name="Box" constructor=f6 fields=[{key="value" declared={type=anything}}]
+# CHECK-NEXT: layout L9 kind=Instance name="Shelf" constructor=f7 fields=[{key="value" declared={type=L5|L6|L7}}]
+function f0 name="positions" parameters=[{type=L1}, {type=L2}, {type=L3}, {type=L4}, {type=undefined|null|L1}, {type=L1|L7}, {type=L1|L5}, {type=Array<L1>}] results=[{type=anything}] {
+    Return v0
+# CHECK: parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=Array}]
+# CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: Array):
+# The string that is converted to Bounded is converted to its bound with it. Sized is an object type of the program: its type lists its layouts, and the string fails the test of it
+}
+function f1 name="neighbors" parameters=[{type=L5}, {type=undefined|null|L5}, {type=Array<L5>}, {type=L0}] results=[{type=anything}] {
+    Return v0
+# CHECK: parameters=[{type=L5|L6|L7}, {type=undefined|null|L5|L6|L7}, {type=Array<L5|L6|L7>}, {type=L0|L4|L6}]
+# CHECK-NEXT: b0(v0: L5|L6|L7, v1: undefined|null|L5|L6|L7, v2: Array<L5|L6|L7>, v3: L0|L4|L6):
+# What the rule is for: the number and the object both enter the position without a test, and the program is valid
+}
+function f2 name="storesNumberAndItem" results=[{type=L1}] {
+    v0 = Integer integer=1
+    v1 = Convert v0 declared={type=L1}
+    v2 = CallDirect v1 function=f4
+    v3 = NewObject -, v0 layout=L6 fields=[0]
+    v4 = Convert v3 declared={type=L1}
+    v5 = CallDirect v4 function=f4
+    Return v1
+# CHECK: results=[{type=anything}]
+# CHECK: v1 = Convert v0 declared={type=anything}
+# CHECK: v4 = Convert v3 declared={type=anything}
+# TYPED: v0: 1 = Integer integer=1
+# TYPED-NEXT: anything = CallDirect v0 function=f4
+# TYPED-NEXT: [[item]]: L6 = NewObject -, v0 layout=L6 fields=[0]
+# TYPED-NEXT: anything = CallDirect [[item]] function=f4
+# TYPED-NEXT: Return v0
+}
+function f3 name="storesItem" results=[{type=L5}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L6 fields=[0]
+    v2 = Convert v1 declared={type=L5}
+    Return v2
+# CHECK: results=[{type=L5|L6|L7}]
+# CHECK: v2 = Convert v1 declared={type=L5|L6|L7}
+# TYPED: v1: L6 = NewObject -, v0 layout=L6 fields=[0]
+# TYPED-NEXT: Return v1
+}
+function f4 name="take" parameters=[{type=L1}] results=[{type=L1}]
+# CHECK-LABEL: function f4 name="take"
+# CHECK: parameters=[{type=anything}] results=[{type=anything}]
+# A number is no member of a family, so its conversion to a parameter that only gets objects keeps its test
+function f5 name="numberIntoObjects" results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = Convert v0 declared={type=L5} illTypedCause=Assertion
+    Return v1
+# TYPED: v0: 1 = Integer integer=1
+# TYPED-NEXT: v1: L5|L6|L7 = Check v0 castType=L5|L6|L7
+# TYPED-NEXT: Return v1
+}
+function f6 name="Box" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L8 flags=[IsFromCompiler]}]
+function f7 name="Shelf" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L9 flags=[IsFromCompiler]}]

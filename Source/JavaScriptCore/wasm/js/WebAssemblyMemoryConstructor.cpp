@@ -208,7 +208,7 @@ void WebAssemblyMemoryConstructor::finishCreation(VM& vm, WebAssemblyMemoryProto
 }
 
 WebAssemblyMemoryConstructor::WebAssemblyMemoryConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callJSWebAssemblyMemory, constructJSWebAssemblyMemory)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callJSWebAssemblyMemory), JSC_REGISTERED_HOST_FUNCTION(constructJSWebAssemblyMemory))
 {
 }
 

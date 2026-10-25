@@ -1,0 +1,40 @@
+# The request of a direct eval lists each binding with its operand, storage and declared type, and a variable it names is never stored with undefined as zero
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: place requests statics
+# RUN(TABLES): tables requests
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything}}]
+variable g0 name="g" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="unnamed" module=m0 declared={type=anything} initialization=Undefined
+evalscope e0 flags=[IsInFunction, AllowsNewTarget] bindings=[{name="x" layout=L0 field=0 operand=0}, {name="g" depth=1 variable=g0}, {kind=This operand=1}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v1 variable=g1
+    Return
+}
+function f1 name="evaluates" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = TypeTest v1 testedType=undefined|null
+    v3 = GetModuleVariable variable=g1
+    v4 = TypeTest v3 testedType=undefined|null
+    v5 = Undefined
+    v6 = NewObject -, v5 layout=L0 fields=[0]
+    v7 = DirectEval v0, v5, -, v6, v0 evalScope=e0
+    Return v7
+}
+# CHECK: request @4 DirectEval e0 m0
+# CHECK: g0 {{*}}representation=JSValue encoding=Plain
+# CHECK-NEXT: g1 {{*}}representation=JSValue encoding=UndefinedAsZero
+
+# An operand of a binding counts from the operands of the operation: the text and `this` come first. A variable has no operand.
+# TABLES: request 4 DirectEval module=m0 strict inFunction allowsNewTarget
+# TABLES-NEXT: binding name="x" kind=Variable depth=0 operand=2 {{*}}slot=JSValue@8 type=[[anything]]
+# TABLES-NEXT: binding name="g" kind=Variable depth=1 operand=- {{*}}slot=JSValue@{{*}} type=[[anything]]
+# TABLES-NEXT: binding name=- kind=This depth=0 operand=3 {{*}}slot=JSValue@0 type=[[anything]]

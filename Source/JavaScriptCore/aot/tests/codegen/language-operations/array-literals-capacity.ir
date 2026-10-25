@@ -1,0 +1,153 @@
+# An array literal with a planned capacity has code for constant capacities and one known at run time, with and without elements, for each storage form, in the three code shapes
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code
+# CHECK-COUNT-3: : size=
+# CHECK-NOT: no code
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="capacitiesForLiteralsOfInt32" parameters=[{type=i32}, {type=int[0, 100000]}, {type=int}, {type=boolean}] results=[{type=undefined}] {
+    v4 = Integer integer=0
+    v5 = Integer integer=1
+    v6 = Integer integer=3
+    v7 = Integer integer=5
+    v8 = Integer integer=64
+    v9 = Integer integer=200000
+# REPEAT: i = 0..7; a = 4 5 6 7 8 9 1 2
+    v%(i*2+10) = NewArray contents=i32 capacity=v%(a)
+    v%(i*2+11) = NewArray v0, v0 contents=i32 capacity=v%(a)
+# END REPEAT
+    v26 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=i32 capacity=v8
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v28 = Integer integer=0
+    v29 = Integer integer=1
+    v30 = Integer integer=3
+    v31 = Integer integer=5
+    v32 = Integer integer=64
+    v33 = Integer integer=200000
+# REPEAT: i = 0..7; a = 28 29 30 31 32 33 1 2
+    v%(i*2+34) = NewArray contents=i32 capacity=v%(a)
+    v%(i*2+35) = NewArray v0, v0 contents=i32 capacity=v%(a)
+# END REPEAT
+    v50 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=i32 capacity=v32
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Branch v3 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v51 = Integer integer=0
+    v52 = Integer integer=1
+    v53 = Integer integer=3
+    v54 = Integer integer=5
+    v55 = Integer integer=64
+    v56 = Integer integer=200000
+# REPEAT: i = 0..7; a = 51 52 53 54 55 56 1 2
+    v%(i*2+57) = NewArray contents=i32 capacity=v%(a)
+    v%(i*2+58) = NewArray v0, v0 contents=i32 capacity=v%(a)
+# END REPEAT
+    v73 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=i32 capacity=v55
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f0 b0 Balanced
+# S: f0 b1 Fast
+# S: f0 b3 Compact
+function f1 name="capacitiesForLiteralsOfNumbers" parameters=[{type=number}, {type=int[0, 100000]}, {type=int}, {type=boolean}] results=[{type=undefined}] {
+    v4 = Integer integer=0
+    v5 = Integer integer=1
+    v6 = Integer integer=3
+    v7 = Integer integer=5
+    v8 = Integer integer=64
+    v9 = Integer integer=200000
+# REPEAT: i = 0..7; a = 4 5 6 7 8 9 1 2
+    v%(i*2+10) = NewArray contents=number capacity=v%(a)
+    v%(i*2+11) = NewArray v0, v0 contents=number capacity=v%(a)
+# END REPEAT
+    v26 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=number capacity=v8
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v28 = Integer integer=0
+    v29 = Integer integer=1
+    v30 = Integer integer=3
+    v31 = Integer integer=5
+    v32 = Integer integer=64
+    v33 = Integer integer=200000
+# REPEAT: i = 0..7; a = 28 29 30 31 32 33 1 2
+    v%(i*2+34) = NewArray contents=number capacity=v%(a)
+    v%(i*2+35) = NewArray v0, v0 contents=number capacity=v%(a)
+# END REPEAT
+    v50 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=number capacity=v32
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Branch v3 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v51 = Integer integer=0
+    v52 = Integer integer=1
+    v53 = Integer integer=3
+    v54 = Integer integer=5
+    v55 = Integer integer=64
+    v56 = Integer integer=200000
+# REPEAT: i = 0..7; a = 51 52 53 54 55 56 1 2
+    v%(i*2+57) = NewArray contents=number capacity=v%(a)
+    v%(i*2+58) = NewArray v0, v0 contents=number capacity=v%(a)
+# END REPEAT
+    v73 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=number capacity=v55
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f1 b0 Balanced
+# S: f1 b1 Fast
+# S: f1 b3 Compact
+function f2 name="capacitiesForLiteralsOfAnything" parameters=[{type=anything}, {type=int[0, 100000]}, {type=int}, {type=boolean}] results=[{type=undefined}] {
+    v4 = Integer integer=0
+    v5 = Integer integer=1
+    v6 = Integer integer=3
+    v7 = Integer integer=5
+    v8 = Integer integer=64
+    v9 = Integer integer=200000
+# REPEAT: i = 0..7; a = 4 5 6 7 8 9 1 2
+    v%(i*2+10) = NewArray contents=anything capacity=v%(a)
+    v%(i*2+11) = NewArray v0, v0 contents=anything capacity=v%(a)
+# END REPEAT
+    v26 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything capacity=v8
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v28 = Integer integer=0
+    v29 = Integer integer=1
+    v30 = Integer integer=3
+    v31 = Integer integer=5
+    v32 = Integer integer=64
+    v33 = Integer integer=200000
+# REPEAT: i = 0..7; a = 28 29 30 31 32 33 1 2
+    v%(i*2+34) = NewArray contents=anything capacity=v%(a)
+    v%(i*2+35) = NewArray v0, v0 contents=anything capacity=v%(a)
+# END REPEAT
+    v50 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything capacity=v32
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Branch v3 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v51 = Integer integer=0
+    v52 = Integer integer=1
+    v53 = Integer integer=3
+    v54 = Integer integer=5
+    v55 = Integer integer=64
+    v56 = Integer integer=200000
+# REPEAT: i = 0..7; a = 51 52 53 54 55 56 1 2
+    v%(i*2+57) = NewArray contents=anything capacity=v%(a)
+    v%(i*2+58) = NewArray v0, v0 contents=anything capacity=v%(a)
+# END REPEAT
+    v73 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything capacity=v55
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f2 b0 Balanced
+# S: f2 b1 Fast
+# S: f2 b3 Compact

@@ -1,0 +1,129 @@
+# What a caller knows of a receiver is worth more than the bytes it saves only as a bet that the copy runs often. Where the call is not expected to run, and in a copy within copies within a copy,
+# an access is worth the bytes by which a slot is shorter than a name, as the budget there is small
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 4
+# STATISTIC: InlineDecisionCostExceedsBenefit = 8
+# STATISTIC: InlineBenefitKnownReceiver = 4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Record" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}, {key="d" declared={type=anything}}, {key="e" declared={type=anything}}, {key="f" declared={type=anything}}, {key="g" declared={type=anything}}, {key="h" declared={type=anything}}, {key="i" declared={type=anything}}, {key="j" declared={type=anything}}, {key="k" declared={type=anything}}, {key="l" declared={type=anything}}, {key="m" declared={type=anything}}, {key="n" declared={type=anything}}, {key="o" declared={type=anything}}, {key="p" declared={type=anything}}]
+
+function f0 name="storeSixteen" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+    PropSet v0, v1 key="a"
+    PropSet v0, v1 key="b"
+    PropSet v0, v1 key="c"
+    PropSet v0, v1 key="d"
+    PropSet v0, v1 key="e"
+    PropSet v0, v1 key="f"
+    PropSet v0, v1 key="g"
+    PropSet v0, v1 key="h"
+    PropSet v0, v1 key="i"
+    PropSet v0, v1 key="j"
+    PropSet v0, v1 key="k"
+    PropSet v0, v1 key="l"
+    PropSet v0, v1 key="m"
+    PropSet v0, v1 key="n"
+    PropSet v0, v1 key="o"
+    PropSet v0, v1 key="p"
+    v18 = Undefined
+    Return v18
+}
+
+function f1 name="expectedToRun" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f0
+    Return v0
+# CHECK-NOT: CallDirect
+# CHECK: PropSet {{*}}, v1 key="p"
+}
+
+function f2 name="notExpectedToRun" parameters=[{type=L0}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v3 = CallDirect v0, v1 function=f0
+    Jump -> next b2()
+  b2():
+    Return v0
+# CHECK: = CallDirect v0, v1 function=f0
+}
+
+function f3 name="third" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+    PropSet v0, v1 key="a"
+    PropSet v0, v1 key="b"
+    PropSet v0, v1 key="c"
+    PropSet v0, v1 key="d"
+    PropSet v0, v1 key="e"
+    PropSet v0, v1 key="f"
+    PropSet v0, v1 key="g"
+    PropSet v0, v1 key="h"
+    PropSet v0, v1 key="i"
+    PropSet v0, v1 key="j"
+    PropSet v0, v1 key="k"
+    PropSet v0, v1 key="l"
+    PropSet v0, v1 key="m"
+    PropSet v0, v1 key="n"
+    PropSet v0, v1 key="o"
+    PropSet v0, v1 key="p"
+    v18 = CallDirect v0, v1 function=f0
+    Return v18
+}
+
+function f4 name="second" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+    PropSet v0, v1 key="a"
+    PropSet v0, v1 key="b"
+    PropSet v0, v1 key="c"
+    PropSet v0, v1 key="d"
+    PropSet v0, v1 key="e"
+    PropSet v0, v1 key="f"
+    PropSet v0, v1 key="g"
+    PropSet v0, v1 key="h"
+    PropSet v0, v1 key="i"
+    PropSet v0, v1 key="j"
+    PropSet v0, v1 key="k"
+    PropSet v0, v1 key="l"
+    PropSet v0, v1 key="m"
+    PropSet v0, v1 key="n"
+    PropSet v0, v1 key="o"
+    PropSet v0, v1 key="p"
+    v18 = CallDirect v0, v1 function=f3
+    Return v18
+}
+
+function f5 name="first" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+    PropSet v0, v1 key="a"
+    PropSet v0, v1 key="b"
+    PropSet v0, v1 key="c"
+    PropSet v0, v1 key="d"
+    PropSet v0, v1 key="e"
+    PropSet v0, v1 key="f"
+    PropSet v0, v1 key="g"
+    PropSet v0, v1 key="h"
+    PropSet v0, v1 key="i"
+    PropSet v0, v1 key="j"
+    PropSet v0, v1 key="k"
+    PropSet v0, v1 key="l"
+    PropSet v0, v1 key="m"
+    PropSet v0, v1 key="n"
+    PropSet v0, v1 key="o"
+    PropSet v0, v1 key="p"
+    v18 = CallDirect v0, v1 function=f4
+    Return v18
+}
+
+function f6 name="copiesWithinCopies" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f5
+    Return v0
+# CHECK-NOT: function=f5
+# CHECK-NOT: function=f4
+# CHECK-NOT: function=f3
+# CHECK: = CallDirect {{*}} function=f0
+}
+
+# A body with one call site moves into its caller and is no copy.
+function f7 name="callsThemToo" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+    v2 = CallDirect v0, v1 function=f3
+    v3 = CallDirect v0, v1 function=f4
+    v4 = CallDirect v0, v1 function=f5
+    Return v4
+}

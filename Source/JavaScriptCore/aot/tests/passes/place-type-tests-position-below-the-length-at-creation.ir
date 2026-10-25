@@ -1,0 +1,82 @@
+# An array of holes has its length from the start. A position that is below the length the array was created with is expected inside its length: the store gets the test of the bounds, replaces one element and ends no proof about the storage of any array, so the tests of the kinds of storage stand in front of the loop.
+# FORM: Prepared
+# OPTIONS: heat=NothingIsHottest
+# RUN(PLAN): test-placement
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="arrayLikeItsSource" parameters=[{type=Array<string, proven, pristine[Storage, Names, Dense]>}] results=[{type=anything}] {
+    v1: int[0, 4294967295] = GetArrayLength v0
+    v2 = NewArrayLike v1, v0
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4: int[0, 4294967295]):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7: int[0, 4294967294]):
+    v8 = ElemGet v0, v7
+    ElemDefine v2, v7, v8
+    v10 = Increment v7
+    Jump -> next b1(v10)
+  b3():
+    Return v2
+}
+# PLAN-LABEL: function f0
+# PLAN: test HasArrayStorage v0 arrayStorage=Contiguous on b0.0; test HasArrayStorage v2 arrayStorage=Contiguous on b0.0; test IsInBounds v0, v4 before v8; test IsInBounds v2, v4 before v9
+
+function f1 name="arrayOfValues" parameters=[{type=int[0, 1000]}, {type=string}] results=[{type=anything}] {
+    v2 = NewContiguousArray v0
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4: int[0, 1000]):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7: int[0, 999]):
+    ElemSet v2, v7, v1
+    v9 = Increment v7
+    Jump -> next b1(v9)
+  b3():
+    Return v2
+}
+# PLAN-LABEL: function f1
+# PLAN: test IsInBounds v2, v4 before v8
+
+# The limit of the loop is another number than the length: the store may append
+function f2 name="comparedWithAnotherNumber" parameters=[{type=int[0, 1000]}, {type=int[0, 1000]}, {type=string}] results=[{type=anything}] {
+    v3 = NewContiguousArray v0
+    v4 = Integer
+    Jump -> next b1(v4)
+  b1(v5: int[0, 1000]):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8: int[0, 999]):
+    ElemSet v3, v8, v2
+    v10 = Increment v8
+    Jump -> next b1(v10)
+  b3():
+    Return v3
+}
+# PLAN-LABEL: function f2
+# PLAN-NOT: IsInBounds
+
+# One beyond the length
+function f3 name="atMostTheLength" parameters=[{type=int[0, 1000]}, {type=string}] results=[{type=anything}] {
+    v2 = NewContiguousArray v0
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4: int[0, 1001]):
+    LoopHint
+    v6 = LessEq v4, v0
+    Branch v6 -> taken b2(| 0), notTaken b3()
+  b2(v7: int[0, 1000]):
+    ElemSet v2, v7, v1
+    v9 = Increment v7
+    Jump -> next b1(v9)
+  b3():
+    Return v2
+}
+# PLAN-LABEL: function f3
+# PLAN-NOT: IsInBounds

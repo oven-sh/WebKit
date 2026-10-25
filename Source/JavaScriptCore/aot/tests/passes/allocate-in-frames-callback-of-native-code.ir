@@ -1,0 +1,37 @@
+# A closure that native code calls is on the heap: the stub native code enters it through finds the VM in the header of the callee's block. One that compiled code alone calls is in the frame
+# FORM: AsRead
+# RUN: pipeline AllocateInFrames
+# OPTIONS: only-passes=ComputeEffectSummaries,AllocateInFrames
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = NewClosure function=f1 {{*}}storage=Frame
+# CHECK: [[reviver]]:{{*}}= NewClosure function=f2
+# CHECK-NOT: storage=Frame
+# CHECK: = CallBuiltin -, {{*}}, [[reviver]] overload=JSONParse
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = PropGet v0 key="input" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f3
+    v5 = Call v4, -, v3, v2
+    v6 = Call v1, -, v5
+    v7 = NewClosure function=f2
+    v8 = Builtin builtin=JSONParse
+    v9 = String string="1"
+    v10 = Call v8, -, v9, v7
+    v11 = Call v1, -, v10
+    Return
+}
+function f1 name="calledByCompiledCode" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f2 name="reviver" kind=Arrow parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v1
+}
+function f3 name="apply" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+}

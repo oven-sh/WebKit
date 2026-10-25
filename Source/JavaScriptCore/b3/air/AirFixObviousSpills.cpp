@@ -315,7 +315,7 @@ private:
         switch (inst.kind.opcode) {
         case Move: {
             if (inst.args()[0].isBigImm() && inst.args()[1].isReg()
-                && isValidForm(Add64, Arg::Imm, Arg::Tmp, Arg::Tmp)) {
+                && isValidForm(m_code.targetFeatures(), Add64, Arg::Imm, Arg::Tmp, Arg::Tmp)) {
                 // BigImm materializations are super expensive on both x86 and ARM. Let's try to
                 // materialize this bad boy using math instead. Note that we use unsigned math here
                 // since it's more deterministic.
@@ -422,17 +422,17 @@ private:
         };
         
         inst.forEachArg(handleArg);
-        if (!didThings || inst.isValidForm())
+        if (!didThings || inst.isValidForm(m_code.targetFeatures()))
             return;
         
         // We introduced something invalid along the way. Back up and carefully handle each argument.
         inst = instCopy;
-        ASSERT(inst.isValidForm());
+        ASSERT(inst.isValidForm(m_code.targetFeatures()));
         inst.forEachArg(
             [&] (Arg& arg, Arg::Role role, Bank bank, Width width) {
                 Arg argCopy = arg;
                 handleArg(arg, role, bank, width);
-                if (!inst.isValidForm())
+                if (!inst.isValidForm(m_code.targetFeatures()))
                     arg = argCopy;
             });
     }

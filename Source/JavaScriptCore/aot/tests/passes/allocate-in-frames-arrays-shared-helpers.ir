@@ -1,0 +1,19 @@
+# A helper that several functions share has the role of an outlined body, and was never a part of its caller: an array that is handed to it is judged by what the helper does. This one appends to it
+# FORM: Prepared
+# RUN: frame-plan
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="handedToSharedHelper" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    v2 = CallDirect v1, v0 function=f1
+    v3 = CallList v0, -, v1
+    Return v3
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v1: Heap
+
+function f1 name="appends" role=OutlinedBody parameters=[{type=Array}, {type=anything}] results=[{type=anything}] {
+    AppendElement v0, v1
+    Return
+}

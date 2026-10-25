@@ -1,0 +1,4 @@
+# the width of a build is the thread count of its options
+# OPTIONS: threads=1
+# RUN: build-context thread-count
+# CHECK: thread count [1]

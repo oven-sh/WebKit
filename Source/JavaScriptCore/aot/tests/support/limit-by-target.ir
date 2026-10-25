@@ -1,0 +1,18 @@
+# a limit with two columns has the value of the target architecture
+# RUN(ARM64): limits DirectCallReach 134217728 134217729 2147483648 2147483649
+# REQUIRES(ARM64): arm64
+# ARM64: limit DirectCallReach = 134217728 (default 134217728)
+# ARM64-NEXT: can be lowered: yes
+# ARM64-NEXT: exceeds 134217728: no
+# ARM64-NEXT: exceeds 134217729: yes
+# ARM64-NEXT: exceeds 2147483648: yes
+# ARM64-NEXT: exceeds 2147483649: yes
+# RUN(X86): limits DirectCallReach 134217728 134217729 2147483648 2147483649
+# REQUIRES(X86): x86_64
+# X86: limit DirectCallReach = 2147483648 (default 2147483648)
+# X86-NEXT: can be lowered: yes
+# X86-NEXT: exceeds 134217728: no
+# X86-NEXT: exceeds 134217729: no
+# X86-NEXT: exceeds 2147483648: no
+# X86-NEXT: exceeds 2147483649: yes
+# LOSS: DirectCallReach

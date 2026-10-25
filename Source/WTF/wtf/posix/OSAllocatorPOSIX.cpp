@@ -211,7 +211,8 @@ void* OSAllocator::tryReserveUncommittedAligned(size_t bytes, size_t alignment, 
 
     void* aligned = address;
     kern_return_t result = mach_vm_map(mach_task_self(), reinterpret_cast<mach_vm_address_t*>(&aligned), bytes, alignment - 1, flags, MEMORY_OBJECT_NULL, 0, copy, protections, protections, childProcessInheritance);
-    ASSERT_UNUSED(result, result == KERN_SUCCESS || !aligned);
+    if (result != KERN_SUCCESS)
+        return nullptr;
 #if HAVE(MADV_FREE_REUSE)
     if (aligned) {
         // To support the "reserve then commit" model, we have to initially decommit.

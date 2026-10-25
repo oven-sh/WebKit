@@ -1,0 +1,42 @@
+# Under a handler a failed check is a branch to a rare block whose throw site unwinds to a landing pad: the function has a handler, and so a frame that is set up at its entry:
+# the stack is tested where the frame is set up, and a frame that does not fit is an error in the caller, which would pass the handler by
+# FORM: AsRead
+# RUN: generate-code
+# OPTIONS: heat=everything-is-hot disable=pass:InlineCalls check=validate-back-end
+# STATISTIC: ThrowSites = 2
+# CHECK: f1: size={{*}} frame={{*}}@[[setup]]-
+# CHECK: f2: size={{*}} frame=none entries=1 sites=1 handlers=0
+# CHECK: f3: size={{*}} frame={{*}}@[[setup]]-{{*}} entries=1 sites=1 handlers=1
+# CHECK: f5: size=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return v5
+}
+function f1 name="calls" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+function f2 name="leaf" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = RequireObjectCoercible v0 name="length"
+    Return v1
+}
+function f3 name="leafWithHandler" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b2():
+    v1 = RequireObjectCoercible v0 name="length"
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    v3 = Integer integer=0
+    Return v3
+}

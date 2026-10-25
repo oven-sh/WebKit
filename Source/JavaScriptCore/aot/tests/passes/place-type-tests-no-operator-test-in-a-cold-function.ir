@@ -1,0 +1,25 @@
+# In a cold function no test stands in front of an operator. Its general form is one call: smaller than a test, the form in line and a copy of what stands behind them, and no slower where code runs seldom.
+# A read of a property keeps its test there
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsCold
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Hook" constructor=f2 fields=[{key="memoizedState" declared={type=anything} flags=[IsRequired]}] flow={baseState=None}
+
+function f0 name="multiplies" parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ number):
+    v1 = Mul v0, v0
+    Return v1
+# CHECK-NOT: TypeTest
+# CHECK: = Mul v0, v0
+}
+
+function f1 name="reads" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="memoizedState"
+    Return v1
+# CHECK: = TypeTest v0 testedType=L0
+}
+
+function f2 name="Hook" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]

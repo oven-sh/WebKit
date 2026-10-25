@@ -28,6 +28,7 @@
 #include <wtf/Deque.h>
 #include <wtf/Function.h>
 
+#include "AOTRemovableFeature.h"
 #include "BaselineJITCode.h"
 #include "BuiltinNames.h"
 #include "BytecodeCacheError.h"
@@ -3397,7 +3398,7 @@ struct CachedMetadataSteps {
 
     static Ref<UnlinkedMetadataTable> build(unsigned numValueProfiles, std::span<const uint32_t> steps)
     {
-        Ref<UnlinkedMetadataTable> metadataTable = UnlinkedMetadataTable::create(UnlinkedMetadataTable::stepsNeed32BitOffsets(steps), numValueProfiles);
+        Ref<UnlinkedMetadataTable> metadataTable = UnlinkedMetadataTable::create(UnlinkedMetadataTable::stepsNeed32BitOffsets(steps) || metadataTablesAlwaysHave32BitOffsets(), numValueProfiles);
         metadataTable->m_isFinalized = true;
         metadataTable->m_isLinked = false;
         metadataTable->m_hasMetadata = true;
@@ -5320,7 +5321,8 @@ protected:
     // 12: a global code block and the entry of a builtin function have the line starts of their source.
     // 13: upstream's op_iterator_close_check (with metadata) replaces the fork's, and op_iterator_open / op_iterator_next
     // keep a String's iteration state in their registers too (321765@main, 322172@main; opcode numbering).
-    static constexpr uint32_t cachedTypesFormatRevision = 13;
+    // 14: op_profile_control_flow says whether its basic block is in a loop header.
+    static constexpr uint32_t cachedTypesFormatRevision = 14;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
@@ -5547,8 +5549,9 @@ UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> ca
     return executable;
 }
 
-RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, FileSystem::FileHandle& fileHandle, BytecodeCacheError& error, EncoderStringTable* externalStrings, BytecodeCacheUpdatable updatable)
+NEVER_INLINE RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const UnlinkedCodeBlock* codeBlock, FileSystem::FileHandle& fileHandle, BytecodeCacheError& error, EncoderStringTable* externalStrings, BytecodeCacheUpdatable updatable)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, static_cast<RefPtr<CachedBytecode> (*)(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, FileSystem::FileHandle&, BytecodeCacheError&, EncoderStringTable*, BytecodeCacheUpdatable)>(encodeCodeBlock));
     const ClassInfo* classInfo = codeBlock->classInfo();
 
     Encoder encoder(vm, fileHandle, Encoder::NumberStrings::Yes, externalStrings, updatable);
@@ -5845,8 +5848,9 @@ std::optional<CachedCodeDigest> digestOfAllCachedCode(VM& vm, const SourceCode& 
 }
 #endif
 
-RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCodeBlock* codeBlock, BytecodeCacheError& error)
+NEVER_INLINE RefPtr<CachedBytecode> encodeFunctionCodeBlock(VM& vm, const UnlinkedFunctionCodeBlock* codeBlock, BytecodeCacheError& error)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, encodeFunctionCodeBlock);
     FileSystem::FileHandle invalidFileHandle;
     Encoder encoder(vm, invalidFileHandle, Encoder::NumberStrings::No);
     ptrdiff_t rootOffset = encoder.offsetOf(CachedFunctionCodeBlock::create(encoder, *codeBlock));

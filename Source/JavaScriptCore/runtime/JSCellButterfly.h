@@ -80,8 +80,14 @@ public:
 
     static JSCellButterfly* create(VM& vm, IndexingType indexingType, unsigned length)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        RELEASE_ASSERT_RESOURCE_AVAILABLE(length <= IndexingHeader::maximumLength, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
+        auto* array = new (NotNull, allocateCell<JSCellButterfly>(vm, allocationSize(length))) JSCellButterfly(vm, vm.cellButterflyStructure(indexingType), length);
+        array->finishCreation(vm);
+#else
         auto* array = tryCreate(vm, indexingType, length);
         RELEASE_ASSERT_RESOURCE_AVAILABLE(array, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
+#endif
         return array;
     }
 
@@ -162,8 +168,16 @@ public:
     static JSCellButterfly* fromButterfly(Butterfly* butterfly) { return std::bit_cast<JSCellButterfly*>(std::bit_cast<char*>(butterfly) - offsetOfData()); }
     static bool isOnlyAtomStringsStructure(VM& vm, Butterfly* butterfly)
     {
-        return fromButterfly(butterfly)->structure() == vm.cellButterflyOnlyAtomStringsStructure.get();
+        return !isOutsideHeap(butterfly) && fromButterfly(butterfly)->structure() == vm.cellButterflyOnlyAtomStringsStructure.get();
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Copy-on-write storage without references may lie in read-only memory of the process. No cell stands in front of it, and the collector has nothing to do with it.
+    static bool isOutsideHeap(const Butterfly* butterfly) { return std::bit_cast<uintptr_t>(butterfly) - s_startOfStorageOutsideHeap < s_sizeOfStorageOutsideHeap; }
+    JS_EXPORT_PRIVATE static void setStorageOutsideHeap(std::span<const uint8_t>);
+#else
+    static constexpr bool isOutsideHeap(const Butterfly*) { return false; }
+#endif
 
     JSValue get(unsigned index) const
     {
@@ -176,6 +190,18 @@ public:
     }
 
     DECLARE_VISIT_CHILDREN;
+
+    template<typename Visitor>
+    ALWAYS_INLINE static void visitFields(JSCellButterfly* thisObject, Visitor& visitor)
+    {
+        if (!hasContiguous(thisObject->indexingType())) {
+            ASSERT(hasDouble(thisObject->indexingType()) || hasInt32(thisObject->indexingType()));
+            return;
+        }
+
+        Butterfly* butterfly = thisObject->toButterfly();
+        visitor.appendValuesHidden(butterfly->contiguous().data(), butterfly->publicLength());
+    }
 
     void LEGACY_NODELETE copyToArguments(JSGlobalObject*, JSValue* firstElementDest, unsigned offset, unsigned length);
 
@@ -226,6 +252,11 @@ private:
                 toButterfly()->contiguous().at(this, index).setStartingValue(JSValue());
         }
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE static uintptr_t s_startOfStorageOutsideHeap;
+    JS_EXPORT_PRIVATE static size_t s_sizeOfStorageOutsideHeap;
+#endif
 
     IndexingHeader m_header;
 };

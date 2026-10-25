@@ -1,0 +1,9 @@
+# lowering one limit leaves every other limit at its default, and the lowered one is not hit
+# OPTIONS: limit=MaxLayoutsInType:3
+# RUN: limits MaxLiteralsInType 1024 1025
+# CHECK: limit MaxLiteralsInType = 1024 (default 1024)
+# CHECK-NEXT: can be lowered: yes
+# CHECK-NEXT: exceeds 1024: no
+# CHECK-NEXT: exceeds 1025: yes
+# CHECK-NEXT: gave up: MaxLiteralsInType
+# LOSS: MaxLiteralsInType x2

@@ -1,0 +1,26 @@
+# import() of a known module reaches its body, and awaiting the promise gives the namespace object
+# RUN: valueflow-solve calls
+# CHECK: f0 v3 -> f2
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+
+module m0 path="main.js" displayPath="main.js" flags=[HasTopLevelAwait] body=f0
+module m1 path="other.js" displayPath="other.js" body=f1 exports=[{name="exported" variable=g0}]
+entry module=m0
+variable g0 name="exported" module=m1 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module flags=[IsAsync] results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    v1 = Await v0
+    v2 = PropGet v1 key="exported"
+    v3 = Call v2, v1
+    Return
+}
+function f1 name="other" module=m1 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f2 name="exported" module=m1 results=[{type=anything}] {
+    Return
+}

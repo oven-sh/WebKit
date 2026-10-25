@@ -1,0 +1,17 @@
+# The counterpart of allocation-under-prototype-is-no-guard.ir: no prototype object selects another object, so the allocation is the guard for its shape whatever new.target is.
+# Only the definition of a class ties a prototype object to a layout: a constructor function and a literal do not count.
+# FORM: Prepared
+# RUN: verify
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Only" constructor=f0 fields=[{key="x" declared={type=anything}}] flow={baseState=None}
+layout L1 kind=Instance name="Legacy" constructor=f1 flags=[IsConstructorFunction] flow={baseState=None}
+layout L2 name="Record" fields=[{key="x" declared={type=anything}}]
+function f0 name="Only" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="Legacy" flags=[HasThis] thisType={type=object} results=[{type=undefined}]
+function f2 name="goodNewTargetUnknown" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PutSlotOrAdd v3, v3, v1 key="x" receivers=[L0] level=Proven
+    Return v3
+}

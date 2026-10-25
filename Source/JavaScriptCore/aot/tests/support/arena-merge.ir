@@ -1,0 +1,26 @@
+# the merge of a phase numbers the types in task order, whatever the threads and the order in which the tasks ran
+# RUN: arena-merge 64
+# RUN: arena-merge 64 threads=2 seed=1
+# RUN: arena-merge 64 threads=16 seed=2
+# RUN: arena-merge 64 threads=16 seed=3
+# RUN: arena-merge 64 threads=1 seed=4
+# CHECK: new types 79 from 64 tasks
+# CHECK-NEXT: n0 = int[0,100]
+# CHECK-NEXT: n1 = int[0,1000]
+# CHECK-NEXT: n2 = Array<n0>
+# CHECK-NEXT: n3 = int[0,101]
+# CHECK: n21 = int[0,107]
+# CHECK-NEXT: n22 = int[0,1007]
+# CHECK-NEXT: n23 = Array<n21>
+# CHECK-NEXT: n24 = int[0,1008]
+# CHECK: n78 = int[0,1062]
+# CHECK-NEXT: task 0: [n0 n1 n2]
+# CHECK: task 7: [n21 n22 n23]
+# CHECK-NEXT: task 8: [n0 n24 n2]
+# CHECK: task 15: [n21 n31 n23]
+# CHECK: task 62: [n18 n78 n20]
+# CHECK-NEXT: task 63: [none]
+# CHECK-NEXT: existing types stay final: ok
+# CHECK-NEXT: new types are provisional until the merge: ok
+# CHECK-NEXT: types can be read during the phase: ok
+# CHECK-NEXT: only the last task is an identity: ok

@@ -1,0 +1,148 @@
+# What an allocation proves about its own result ends fact by fact, and the shape never ends: a use is available while the facts it relies on hold, and each run of the allocation renews them all
+# FORM: Prepared
+# RUN: guards points uses
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="storeIntoField" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutSlot v1, v1, v0 key="x" receivers=[L0] level=Proven
+    v3 = GetSlot v1, v1 key="x" receivers=[L0] level=Proven
+    Jump -> next b1()
+  b1():
+    Return v3
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v1 facts: [Shape OwnInstance of v1 by allocation v1 reads -, SlotFilled NotFrozen of v1 by allocation v1 reads ShapeWords[L0], NoExtraProperties NoFieldOutsideSlot of v1 by allocation v1 reads NamedProperties, KeyOrder of v1 by allocation v1 reads ShapeWords[L0] OrderWords]
+# CHECK-NEXT: b0 available at head: []
+# CHECK-NEXT: b1 available at head: [v1.0 v1.1 v1.2 v1.3]
+# CHECK-NEXT: b0:0 available: []
+# CHECK-NEXT: b0:1 available: [v1]
+# CHECK-NEXT: b0:2 available: [v1]
+# CHECK-NEXT: b0:3 available: [v1]
+# CHECK-NEXT: b1:0 available: [v1]
+# CHECK-NEXT: v2 guard v1: Available
+# CHECK-NEXT: v3 guard v1: Available
+
+function f1 name="namedPropertiesWritten" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    ExpectRows v1 layout=L0
+    v3 = GetSlot v1, v1 key="x" receivers=[L0] level=Proven
+    Jump -> next b1()
+  b1():
+    Return v3
+}
+# CHECK-LABEL: function f1
+# CHECK: b0 available at head: []
+# CHECK-NEXT: b1 available at head: [v1.0 v1.1 v1.3]
+# CHECK-NEXT: b0:0 available: []
+# CHECK-NEXT: b0:1 available: [v1]
+# CHECK-NEXT: b0:2 available: []
+# CHECK-NEXT: b0:3 available: []
+# CHECK-NEXT: b1:0 available: []
+# CHECK-NEXT: v3 guard v1: Available
+
+function f2 name="fieldAdded" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutSlotOrAdd v1, v1, v0 key="y" receivers=[L0] level=Proven
+    v3 = GetSlot v1, v1 key="x" receivers=[L0] level=Proven
+    Jump -> next b1()
+  b1():
+    Return v3
+}
+# CHECK-LABEL: function f2
+# CHECK: b0 available at head: []
+# CHECK-NEXT: b1 available at head: [v1.0 v1.1 v1.2]
+# CHECK-NEXT: b0:0 available: []
+# CHECK-NEXT: b0:1 available: [v1]
+# CHECK-NEXT: b0:2 available: []
+# CHECK-NEXT: b0:3 available: []
+# CHECK-NEXT: b1:0 available: []
+# CHECK-NEXT: v2 guard v1: Available
+# CHECK-NEXT: v3 guard v1: Available
+
+function f3 name="escapesToUnknownCode" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = GetSlot v2, v2 key="x" receivers=[L0] level=Proven
+    v4 = Call v0, -, v2
+    Jump -> next b1()
+  b1():
+    Return v3
+}
+# CHECK-LABEL: function f3
+# CHECK: b0 available at head: []
+# CHECK-NEXT: b1 available at head: [v2.0]
+# CHECK-NEXT: b0:0 available: []
+# CHECK-NEXT: b0:1 available: [v2]
+# CHECK-NEXT: b0:2 available: [v2]
+# CHECK-NEXT: b0:3 available: []
+# CHECK-NEXT: b1:0 available: []
+# CHECK-NEXT: v3 guard v2: Available
+
+function f4 name="escapesBeforeUnknownCodeRuns" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    PutModuleVariable v2 variable=g0
+    v4 = GetSlot v2, v2 key="x" receivers=[L0] level=Proven
+    v5 = Call v0
+    Jump -> next b1()
+  b1():
+    Return v4
+}
+# CHECK-LABEL: function f4
+# CHECK: b0 available at head: []
+# CHECK-NEXT: b1 available at head: [v2.0]
+# CHECK-NEXT: b0:0 available: []
+# CHECK-NEXT: b0:1 available: [v2]
+# CHECK-NEXT: b0:2 available: [v2]
+# CHECK-NEXT: b0:3 available: [v2]
+# CHECK-NEXT: b0:4 available: []
+# CHECK-NEXT: b1:0 available: []
+# CHECK-NEXT: v4 guard v2: Available
+
+function f5 name="unknownCodeRunsBeforeTheEscape" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = Call v0
+    v4 = GetSlot v2, v2 key="x" receivers=[L0] level=Proven
+    PutModuleVariable v2 variable=g0
+    Jump -> next b1()
+  b1():
+    Return v4
+}
+# CHECK-LABEL: function f5
+# CHECK: b0 available at head: []
+# CHECK-NEXT: b1 available at head: [v2.0 v2.1 v2.2 v2.3]
+# CHECK-NEXT: b0:0 available: []
+# CHECK-NEXT: b0:1 available: [v2]
+# CHECK-NEXT: b0:2 available: [v2]
+# CHECK-NEXT: b0:3 available: [v2]
+# CHECK-NEXT: b0:4 available: [v2]
+# CHECK-NEXT: b1:0 available: [v2]
+# CHECK-NEXT: v4 guard v2: Available
+
+function f6 name="allocationInLoop" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    v4 = GetSlot v3, v3 key="x" receivers=[L0] level=Proven
+    v5 = Call v0, -, v3
+    v6 = ToBoolean v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+}
+# CHECK-LABEL: function f6
+# CHECK: b0 available at head: []
+# CHECK-NEXT: b1 available at head: []
+# CHECK-NEXT: b2 available at head: [v3.0]
+# CHECK-NEXT: b0:0 available: []
+# CHECK-NEXT: b1:0 available: []
+# CHECK-NEXT: b1:1 available: []
+# CHECK-NEXT: b1:2 available: [v3]
+# CHECK-NEXT: b1:3 available: [v3]
+# CHECK-NEXT: b1:4 available: []
+# CHECK-NEXT: b1:5 available: []
+# CHECK-NEXT: b2:0 available: []
+# CHECK-NEXT: v4 guard v3: Available

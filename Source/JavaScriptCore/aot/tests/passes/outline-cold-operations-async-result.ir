@@ -1,0 +1,27 @@
+# What an async function returns is handed on from the frame of that function: the stub reads there whether the function was resumed from a saved frame. It is not moved into a shared body
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="answers" role=CoroutineRamp flags=[IsAsync] parameters=[{type=number}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f1
+    v3 = AssumeType v2 castType=Promise
+    Return v3
+}
+function f1 name="answers" role=CoroutineBody flags=[IsAsync] parameters=[{type=number}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=1} {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 1..6
+  b%(i)() frequency=Rare:
+    v%(i*2) = Undefined
+    v%(i*2+1) = ReturnAsyncResult v1, v%(i*2)
+    Return v%(i*2+1)
+# END REPEAT
+  b7():
+    v14 = Undefined
+    v15 = ReturnAsyncResult v1, v14
+    Return v15
+}

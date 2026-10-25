@@ -80,6 +80,7 @@ Value* ValueKey::materialize(Procedure& proc, Origin origin) const
     case SExt32:
     case ZExt32:
     case Clz:
+    case PopCount:
     case Trunc:
     case IToD:
     case IToF:
@@ -136,6 +137,10 @@ Value* ValueKey::materialize(Procedure& proc, Origin origin) const
         return proc.add<ArgumentRegValue>(origin, Reg::fromIndex(static_cast<unsigned>(value())));
     case SlotBase:
         return proc.add<SlotBaseValue>(origin, proc.stackSlots()[value()]);
+    case Relocatable: {
+        v128_t bits = vectorValue();
+        return proc.add<RelocatableValue>(origin, RelocationSymbol { bits.u32x4[1], bits.u32x4[0] }, static_cast<int64_t>(bits.u64x2[1]));
+    }
     case Extract:
         return proc.add<ExtractValue>(origin, type(), child(proc, 0), static_cast<int32_t>(u.indices[1]));
     case VectorNot:
@@ -223,6 +228,7 @@ Value* ValueKey::materialize(Procedure& proc, Origin origin) const
         if (u.indices[2] == UINT32_MAX)
             return proc.add<SIMDValue>(origin, kind(), type(), simdInfo(), child(proc, 0), child(proc, 1));
         return proc.add<SIMDValue>(origin, kind(), type(), simdInfo(), child(proc, 0), child(proc, 1), child(proc, 2));
+#if ENABLE(WEBASSEMBLY)
     case WasmRefTest:
     case WasmRefCast: {
         unsigned packedFlags = u.indices[3] >> 16;
@@ -254,6 +260,7 @@ Value* ValueKey::materialize(Procedure& proc, Origin origin) const
         v->setRange(proc.heaps().JSWebAssemblyArray_size.range());
         return v;
     }
+#endif // ENABLE(WEBASSEMBLY)
     case Nop:
     case Set:
     case Get:

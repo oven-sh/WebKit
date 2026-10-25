@@ -1,0 +1,7 @@
+# a discarded phase adds no type, and an arena without a phase interns final types at once
+# RUN(DISCARD): arena-merge discard
+# RUN(SERIAL): arena-merge serial
+# DISCARD: new types 0 from 4 tasks
+# SERIAL: new types 1 without a phase
+# SERIAL-NEXT: same id twice: ok
+# SERIAL-NEXT: final at once: ok

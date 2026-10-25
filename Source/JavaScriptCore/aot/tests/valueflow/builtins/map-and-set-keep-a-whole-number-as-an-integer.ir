@@ -1,0 +1,25 @@
+# const map = new Map(); map.set(-0, "zero"); const set = new Set(); set.add(-0); const halves = new Set(); halves.add(0.5)
+# A Map and a Set keep a number that fits an int32 as that int32: -0 lies there as the integer 0, and whoever reads the key back gets an integer. A number with a fraction stays as it came.
+# The values of a Map are kept as they came.
+# RUN: valueflow-apply
+# CHECK: = AssumeType v1 castType=Map<int|whole, whole, proven,
+# CHECK: = AssumeType v6 castType=Set<int|whole, proven,
+# CHECK: = AssumeType v9 castType=Set<fractional, proven,
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Map
+    v1 = Construct v0
+    v2 = Builtin builtin=MapPrototypeSet
+    v3 = Double number=-0
+    v4 = Call v2, v1, v3, v3
+    v5 = Builtin builtin=Set
+    v6 = Construct v5
+    v7 = Builtin builtin=SetPrototypeAdd
+    v8 = Call v7, v6, v3
+    v9 = Construct v5
+    v10 = Double number=0.5
+    v11 = Call v7, v9, v10
+    Return
+}

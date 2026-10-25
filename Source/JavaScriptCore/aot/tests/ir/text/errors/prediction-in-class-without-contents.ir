@@ -1,0 +1,6 @@
+# A prediction in a class that has no contents
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="x" module=m0 declared={type=RegExp<~ string>} initialization=Undefined

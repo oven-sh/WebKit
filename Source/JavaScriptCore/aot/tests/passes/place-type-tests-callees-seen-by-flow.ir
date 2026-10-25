@@ -1,0 +1,56 @@
+# Where neither the type of a callee nor its expected type lists a function, the functions that flow has seen arrive at the call are expected: the callee is tested for them, and behind the test
+# the call is direct and the construction allocates once. The list is not complete, so the operation by value stays for every other callee. A call that flow has seen no function arrive at is left alone
+# FORM: Prepared
+# RUN: pass PlaceTypeTests ResolveCalls
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Node" constructor=f0 fields=[{key="kind" declared={type=number}}] flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+function f0 name="Node" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=L0}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = AssumeType v3 castType=L0
+    PropSet v4, v1 key="kind"
+    Return v4
+}
+function f1 name="double" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}
+function f2 name="constructsSeen" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = Construct v0, v0, v1 callees=[f0, ..]
+    Return v2
+# CHECK: [[test2]]: boolean = IsClosureOf v0 function=f0
+# CHECK-NEXT: Branch [[test2]] -> taken
+# CHECK: b1({{*}}: f0):
+# CHECK-NOT: = Construct
+# CHECK: Return
+# CHECK: b2() frequency=Unlikely:
+# CHECK-NEXT: anything ~ object = Construct v0, v0, v1 callees=[f0, ..]
+}
+
+function f3 name="callsSeen" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = Call v0, -, v1 callees=[f1, ..]
+    Return v2
+# CHECK: [[test3]]: boolean = IsClosureOf v0 function=f1
+# CHECK-NEXT: Branch [[test3]] -> taken
+# CHECK: b1({{*}}: f1):
+# CHECK-NEXT: number = CallDirect v1 function=f1
+# CHECK: b2() frequency=Unlikely:
+# CHECK-NEXT: anything = Call v0, -, v1 callees=[f1, ..]
+}
+
+function f4 name="constructsUnseen" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = Construct v0, v0, v1
+    Return v2
+# CHECK-NOT: IsClosureOf
+# CHECK: anything ~ object = Construct v0, v0, v1
+# CHECK-NEXT: Return
+}
+
+function f5 name="callsUnseen" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+# CHECK-NOT: IsClosureOf
+# CHECK: anything = Call v0, -, v1
+# CHECK-NEXT: Return
+}

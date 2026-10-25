@@ -1,0 +1,54 @@
+# iterable = { [Symbol.iterator]() { return { next(sent) { sent(); return { value: one, done: false } }, return() {}, unused() {} } } }; state = open(iterable); step(state, two)(); close(state)
+# The language calls the method under @@iterator, then next of what that answers with what the step hands in, and reads `value` of what next answers. Closing calls `return`. No other member is entered.
+# RUN: valueflow-solve calls
+# CHECK: f0 v8 -> f5
+# CHECK: f2 v2 -> f6
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f3
+# UNREACHED: unreached f4
+# UNREACHED-NOT: unreached f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Iterable" fields=[{key=@@iterator declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Iterator" fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="return" declared={type=anything} flags=[IsRequired]}, {key="unused" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Result" fields=[{key="value" declared={type=anything} flags=[IsRequired]}, {key="done" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = IteratorOpen v2
+    v4 = NewClosure function=f6
+    v5 = IteratorResume v3, v4
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    v8 = Call v7
+    IteratorClose v3
+    Return
+}
+function f1 name="iterator" kind=Method flags=[HasThis] results=[{type=anything}] {
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewObject -, v1, v2, v3 layout=L1 fields=[0, 1, 2]
+    Return v4
+}
+function f2 name="next" kind=Method flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Call v1
+    v3 = NewClosure function=f5
+    v4 = Boolean boolean=false
+    v5 = NewObject -, v3, v4 layout=L2 fields=[0, 1]
+    Return v5
+}
+function f3 name="return" kind=Method flags=[HasThis] results=[{type=anything}] {
+    Return
+}
+function f4 name="unused" kind=Method flags=[HasThis] results=[{type=anything}] {
+    Return
+}
+function f5 name="one" results=[{type=anything}] {
+    Return
+}
+function f6 name="two" results=[{type=anything}] {
+    Return
+}

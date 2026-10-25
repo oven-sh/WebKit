@@ -1,0 +1,21 @@
+# somebody = new Proxy({}, {}); somebody[somebody.key] = 1
+# Under a key nobody knows the store may meet every setter of the host, and each of them throws for a receiver that is no instance of its class. No instance exists, so none runs.
+# The setter of the language that takes any receiver is found as before.
+# RUN: valueflow-solve used
+# CHECK-NOT: NativeZlibPrototypeOnerror
+# CHECK-NOT: UndeclaredNativeCode
+# CHECK: ObjectPrototype__proto__
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Empty"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewObject layout=L0
+    v2 = Builtin builtin=Proxy
+    v3 = Construct v2, -, v0, v1
+    v4 = PropGet v3 key="key"
+    v5 = Integer integer=1
+    ElemSet v3, v4, v5
+    Return v5
+}

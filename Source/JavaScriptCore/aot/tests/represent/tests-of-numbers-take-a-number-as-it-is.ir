@@ -1,0 +1,36 @@
+# Number.isNaN, isFinite, isInteger and isSafeInteger take anything. A number is asked as it is: a double is not boxed in front of the test and unboxed inside it. What may be something else arrives boxed.
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: pass ChooseRepresentations
+# RUN(CODE): generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="doubleStaysDouble" parameters=[{type=number}] results=[{type=boolean}] {
+    v1 = Mul v0, v0 form=Numbers
+    v2 = CallInline -, v1 inlineBuiltin=NumberIsNaN overload=NumberIsNaN/0
+    v3 = CallInline -, v1 inlineBuiltin=NumberIsFinite overload=NumberIsFinite/0
+    v4 = CallInline -, v1 inlineBuiltin=NumberIsInteger overload=NumberIsInteger/0
+    v5 = CallInline -, v1 inlineBuiltin=NumberIsSafeInteger overload=NumberIsSafeInteger/0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Branch v3 -> taken b3(), notTaken b2()
+  b2():
+    Return v4
+  b3():
+    Return v5
+# CHECK: v1: number @Double = Mul
+# CHECK-NOT: = Box
+# CHECK: = CallInline -, v1 inlineBuiltin=NumberIsNaN
+# CHECK-NEXT: = CallInline -, v1 inlineBuiltin=NumberIsFinite
+# CHECK-NEXT: = CallInline -, v1 inlineBuiltin=NumberIsInteger
+# CHECK-NEXT: = CallInline -, v1 inlineBuiltin=NumberIsSafeInteger
+}
+
+function f1 name="anythingArrivesBoxed" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = CallInline -, v0 inlineBuiltin=NumberIsInteger overload=NumberIsInteger/0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="anythingArrivesBoxed"
+# CHECK: b0(v0: anything @JSValue):
+# CHECK-NEXT: = CallInline -, v0 inlineBuiltin=NumberIsInteger
+# CODE-NOT: no code

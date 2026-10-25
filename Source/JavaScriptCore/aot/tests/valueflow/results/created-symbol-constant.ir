@@ -1,0 +1,110 @@
+# A symbol that its call creates at most once is a constant key: the uses of the call read KeyConstant, and a binding that holds the symbol has the symbol literal as its type.
+# The call stands in the body of an ES module, in the body of a CommonJS module, or in a function that is called once.
+# Two copies of one call make two symbols and a call in a loop makes many: they stay calls, and no type names what they make
+# RUN: valueflow-apply
+# CHECK: layout L4 {{*}}fields=[{key="k" declared={type=symbol("k")@m1:100
+# CHECK: variable g1 name="made" {{*}}declared={type={{*}}symbol@m0:300
+# RUN(REPEATED): valueflow-apply
+# REPEATED-NOT: symbol@m0:400
+# REPEATED-NOT: symbol@m0:500
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="keys.cjs" displayPath="keys.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
+entry module=m0
+layout L0 name="KeyedInCommonJS"
+layout L1 kind=Instance name="Holder" constructor=f3 staticFields=[{key="k" variable=g0}]
+layout L2 name="KeyedByStaticField"
+layout L3 name="KeyedInFunction"
+layout L4 kind=Environment name="scopeOfCommonJS" fields=[{key="k" declared={type=anything}}]
+variable g0 name="k" module=m0 declared={type=anything} owner=L1
+variable g1 name="made" module=m0 declared={type=anything} initialization=Uninitialized
+variable g2 name="madeByCopies" module=m0 declared={type=anything} initialization=Uninitialized
+variable g3 name="madeInLoop" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f3
+    v1 = NewClass v0 layout=L1
+    v2 = Builtin builtin=Symbol
+    v3 = String string="k"
+    v4 = Call v2, -, v3 @200
+    PutModuleVariable v4 variable=g0
+    v6 = FinishClass v1 layout=L1
+    v7 = Integer integer=1
+    v8 = GetModuleVariable variable=g0
+    v9 = NewObject layout=L2
+    ElemSet v9, v8, v7 mode=Strict
+    v11 = CallDirect function=f2
+    v12 = CallDirect function=f5
+    v13 = CallDirect function=f6
+    v14 = CallDirect function=f7
+    Return
+# CHECK: = Call v2, -, v3
+# CHECK-NEXT: [[static]]: symbol("k")@m0:200 = KeyConstant key=symbol("k")@m0:200
+# CHECK-NEXT: PutModuleVariable [[static]] variable=g0
+}
+function f1 name="keys" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = Builtin builtin=Symbol
+    v1 = String string="k"
+    v2 = Call v0, -, v1 @100
+    v3 = NewObject -, v2 layout=L4 fields=[0]
+    v4 = NewClosure v3 function=f4
+    v5 = Call v4
+    Return
+# CHECK: = Call v0, -, v1
+# CHECK-NEXT: [[top]]: symbol("k")@m1:100 = KeyConstant key=symbol("k")@m1:100
+# CHECK-NEXT: = NewObject -, [[top]] layout=L4
+}
+function f2 name="makeKey" results=[{type=anything}] {
+    v0 = Builtin builtin=Symbol
+    v1 = Call v0 @300
+    PutModuleVariable v1 variable=g1
+    v3 = NewObject layout=L3
+    v4 = Integer integer=1
+    ElemSet v3, v1, v4 mode=Strict
+    Return
+# CHECK: = Call v0
+# CHECK-NEXT: [[once]]: symbol@m0:300 = KeyConstant key=symbol@m0:300
+# CHECK-NEXT: PutModuleVariable [[once]] variable=g1
+# CHECK: ElemSet {{*}}, [[once]], v4
+}
+function f3 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f4 name="storeUnderKey" module=m1 kind=Arrow captures=[{type=env L4}] results=[{type=anything}] {
+  b0(v0: env L4):
+    v1 = GetEnvironmentField v0 layout=L4 field=0
+    v2 = NewObject layout=L0
+    v3 = Integer integer=1
+    ElemSet v2, v1, v3 mode=Strict
+    Return
+# CHECK: [[captured]]: symbol("k")@m1:100 = GetEnvironmentField v0 layout=L4
+# CHECK: ElemSet {{*}}, [[captured]], v3
+}
+function f5 name="copy" results=[{type=anything}] {
+    v0 = Builtin builtin=Symbol
+    v1 = Call v0 @400
+    PutModuleVariable v1 variable=g2
+    Return
+# CHECK-NOT: KeyConstant
+}
+function f6 name="otherCopy" results=[{type=anything}] {
+    v0 = Builtin builtin=Symbol
+    v1 = Call v0 @400
+    PutModuleVariable v1 variable=g2
+    Return
+# CHECK-NOT: KeyConstant
+}
+function f7 name="makeKeysInLoop" results=[{type=anything}] {
+    v0 = Builtin builtin=Symbol
+    v1 = Boolean boolean=true
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = Call v0 @500
+    PutModuleVariable v3 variable=g3
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+# CHECK-NOT: KeyConstant
+}

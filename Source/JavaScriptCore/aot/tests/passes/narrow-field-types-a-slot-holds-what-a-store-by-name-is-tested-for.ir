@@ -1,0 +1,21 @@
+# A store by name is tested at run time. Nothing there tells an ordinary object from any other object, so every object passes for the class Object.
+# The slot of a field that such a store may reach holds what the test admits, and the declared type stays what is expected.
+# Where every store is known and fits, the declared type holds as it is. A class that has a test of its own is tested.
+# FORM: AsRead
+# RUN: pass TypeValues NarrowFieldTypes VerifyProgram
+# CHECK: layout L1 name="MayGetAnyObject" fields=[{key="part" declared={type=undefined|L0|Object} flags=[IsRequired, IsEnforced] slotType=undefined|object}]
+# CHECK: layout L2 name="GetsOnlyWhatFits" fields=[{key="part" declared={type=undefined|L0|Object} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown} stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+# CHECK: layout L3 name="IsStoredWithAnotherType" fields=[{key="part" declared={type=undefined|L0|Object} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown} stability=[IsNeverDeleted, IsNeverRedefined]} slotType=undefined|object}]
+# CHECK: layout L4 name="HoldsClassWithTest" fields=[{key="part" declared={type=undefined|L0|Map} flags=[IsRequired, IsEnforced]}]
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Part" fields=[{key="size" declared={type=number} flags=[IsRequired]}]
+layout L1 name="MayGetAnyObject" fields=[{key="part" declared={type=undefined|L0|Object} flags=[IsRequired]}]
+layout L2 name="GetsOnlyWhatFits" fields=[{key="part" declared={type=undefined|L0|Object} flags=[IsRequired] flow={location={writers=AllKnown} stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L3 name="IsStoredWithAnotherType" fields=[{key="part" declared={type=undefined|L0|Object} flags=[IsRequired] flow={location={writers=AllKnown} stability=[IsNeverDeleted, IsNeverRedefined]}}]
+layout L4 name="HoldsClassWithTest" fields=[{key="part" declared={type=undefined|L0|Map} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}

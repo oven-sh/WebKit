@@ -1,0 +1,32 @@
+# The type never has every kind of JavaScript value, as an operand and as a terminator value, and it is no environment and no opaque value
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: OperandTypeMismatch 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="goodJavaScriptValueKinds" parameters=[{type=never}, {type=anything}, {type=object}, {type=function}] results=[{type=undefined}] {
+    v4 = NewArray contents=anything capacity=v0
+    v5 = ArraySpeciesCreate v0, v1
+    v6 = GetStringLength v0
+    SetFunctionName v3, v0
+    PropDefine v0, v1 key="x"
+    DefineGetter v2, v0 key="x"
+    AppendElement v0, v1
+    PropDefine v2, v0 key="y"
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Return
+}
+function f1 name="badEnvironment" parameters=[{type=never}] results=[{type=undefined}] {
+    MarkEnvironmentEscaped v0
+    Return
+}
+function f2 name="badOpaque" parameters=[{type=never}, {type=anything}] results=[{type=undefined}] {
+    v2 = ForInStep v0, v1
+    Return
+}
+function f3 name="badOpaqueTerminatorValue" parameters=[{type=never}] results=[{type=undefined}] {
+    Rethrow v0
+}

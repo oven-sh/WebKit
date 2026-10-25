@@ -1,0 +1,18 @@
+# An Upcast between types of unrelated representations is rejected in the form code generation reads
+# FORM: Placed
+# RUN: verify
+# DIAGNOSTIC: UpcastNotSubset 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badStringToNumber" parameters=[{type=string}] results=[{type=number}] {
+    v1 = Upcast v0 castType=number
+    Unreachable
+}
+function f1 name="badValueToNumber" parameters=[{type=anything}] results=[{type=number}] {
+    v1 = Upcast v0 castType=number
+    Return v1
+}
+function f2 name="good" parameters=[{type=i32}] results=[{type=number}] {
+    v1 = Upcast v0 castType=number
+    Return v1
+}

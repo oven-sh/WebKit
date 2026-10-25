@@ -27,6 +27,10 @@
 #include "config.h"
 #include "AsyncFromSyncIteratorPrototype.h"
 
+#if ENABLE(AOT)
+#include "AOTAsyncResumption.h"
+#include "JSMicrotask.h"
+#endif
 #include "AsyncContextSwapScope.h"
 
 #include "IteratorOperations.h"
@@ -75,6 +79,12 @@ static void awaitAndContinue(JSGlobalObject* globalObject, VM& vm, JSAsyncFromSy
 {
     InternalMicrotask task = done ? InternalMicrotask::AsyncFromSyncIteratorDone : InternalMicrotask::AsyncFromSyncIteratorContinue;
     iterator->setTarget(vm, target, closeSyncIteratorOnRejection);
+#if ENABLE(AOT)
+    if (JSValue awaited = vm.hasCompiledCode() ? AOT::tryAwaitForStepInProgress(globalObject, target, value) : JSValue()) {
+        asyncFromSyncIteratorContinueOrDone(iterator->realm(), vm, iterator, awaited, JSPromise::Status::Fulfilled, done, nullptr);
+        return;
+    }
+#endif
     JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, value, task, iterator);
 }
 

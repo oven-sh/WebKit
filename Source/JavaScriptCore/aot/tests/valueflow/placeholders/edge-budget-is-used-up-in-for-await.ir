@@ -1,0 +1,10 @@
+# The program of protocols/for-await.ir with a budget of one logged edge: every set of objects that still moves is given up, so the untracked object arrives wherever a rule expects a built-in, a closure or a container.
+# The solve ends with a result all the same, and the program with the results applied is valid
+# OPTIONS: limit=MaxValueFlowEdgesLogged:1
+# LOSS: MaxValueFlowEdgesLogged
+# RUN: valueflow-solve
+# CHECK-NOT: stopped at a limit
+# CHECK: functions
+# RUN(APPLY): valueflow-apply
+# APPLY: function f0
+# PROGRAM-OF: ../protocols/for-await.ir

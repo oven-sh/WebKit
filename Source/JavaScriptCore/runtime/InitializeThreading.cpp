@@ -29,6 +29,7 @@
 #include "config.h"
 #include "InitializeThreading.h"
 
+#include "AOTFaultHandler.h"
 #include "AssemblyComments.h"
 #include "AssertInvariants.h"
 #include "ExecutableAllocator.h"
@@ -37,6 +38,7 @@
 #include "JSCConfig.h"
 #include "JSCPtrTag.h"
 #include "LLIntData.h"
+#include "MarkedBlockCage.h"
 #include "NativeCalleeRegistry.h"
 #include "Options.h"
 #include "StructureAlignedMemoryAllocator.h"
@@ -111,6 +113,7 @@ void initializeWithOptionsCustomization(NOESCAPE const ScopedLambda<void()>& opt
 #endif
             }
             StructureAlignedMemoryAllocator::initializeStructureAddressSpace();
+            static_cast<void>(MarkedBlockCage::initialize());
         }
         Options::finalize();
 
@@ -151,6 +154,11 @@ void initializeWithOptionsCustomization(NOESCAPE const ScopedLambda<void()>& opt
 #endif
             }
         }
+
+#if ENABLE(AOT)
+        if (Options::runsCompiledImage())
+            AOT::installFaultHandler();
+#endif
 
         assertInvariants();
 

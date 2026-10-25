@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if ENABLE(B3_JIT)
+#if ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)
 
 #include "B3Effects.h"
 #include "B3HeapRange.h"
@@ -66,4 +66,4 @@ protected:
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-#endif // ENABLE(B3_JIT)
+#endif // ENABLE(B3_JIT) && ENABLE(WEBASSEMBLY)

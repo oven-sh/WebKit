@@ -1,0 +1,72 @@
+# A proven number that is expected to be an int32 is tested once, and the operators with an integer form work on the integer
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# RUN(PLAN): test-placement
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="provenNumberExpectedInt32" parameters=[{type=number}] results=[{type=boolean}] {
+  b0(v0: number ~ i32):
+    v1 = BitOr v0, v0
+    v2 = Add v0, v0
+    v3 = Less v0, v1
+    Return v3
+}
+# PLAN-LABEL: function f0
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=i32 before v1; uses v1 v2 v3; cloned 4
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f0 name="provenNumberExpectedInt32"
+# CHECK: [[test0]]:{{*}}= TypeTest v0 testedType=i32
+# CHECK-NEXT: Branch [[test0]] -> taken [[fast0]](| 0), notTaken [[copy0]]()
+# CHECK-NEXT: [[fast0]]([[integer0]]: i32):
+# CHECK-NEXT: v1: i32 = BitOr [[integer0]], [[integer0]]
+# CHECK-NEXT: v2: int[-4294967296, 4294967294] = Add [[integer0]], [[integer0]]
+# CHECK-NEXT: v3: boolean = Less [[integer0]], v1
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: [[copy0]]() frequency=Unlikely:
+# CHECK-NEXT: [[bits0]]: i32 = BitOr
+# CHECK-NEXT: : number{{*}}= Add
+# CHECK-NEXT: [[less0]]: boolean = Less {{*}}, [[bits0]]
+# CHECK-NEXT: Return [[less0]]
+# CHECK: }
+
+function f1 name="numberWithoutExpectedType" parameters=[{type=number}] results=[{type=boolean}] {
+    v1 = BitOr v0, v0
+    v2 = Add v0, v0
+    v3 = Less v0, v1
+    Return v3
+}
+# PLAN-LABEL: function f1
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f1 name="numberWithoutExpectedType"
+# CHECK: b0(v0: number):
+# CHECK-NEXT: v1: i32 = BitOr v0, v0
+# CHECK-NEXT: v2: number = Add v0, v0
+# CHECK-NEXT: v3: boolean = Less v0, v1
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+
+function f2 name="checkedIntegerForm" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number ~ i32):
+    v1 = Div v0, v0
+    Return v1
+}
+# PLAN-LABEL: function f2
+# PLAN-NEXT: stretch 0: test TypeTest v0 testedType=i32 before v1; uses v1; cloned 4
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f2 name="checkedIntegerForm"
+# CHECK: = TypeTest v0 testedType=i32
+# CHECK: ([[integer2]]: i32):
+# CHECK: v1: number = Div [[integer2]], [[integer2]]
+
+function f3 name="noIntegerForm" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number ~ i32):
+    v1 = Pow v0, v0
+    Return v1
+}
+# PLAN-LABEL: function f3
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f3 name="noIntegerForm"
+# CHECK: b0(v0: number ~ i32):
+# CHECK-NEXT: v1: number = Pow v0, v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }

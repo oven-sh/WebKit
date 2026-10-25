@@ -1,0 +1,44 @@
+enum JSONOutcome { | engine Unknown Parsed Rejected }
+enum JSONMemberSearch { | engine Unknown Found Absent }
+enum JSONPosition { | engine Root Property Element }
+enum JSONToken { | engine OpenObject CloseObject OpenArray CloseArray Comma Null EmptyObject EmptyArray CloseObjectOverComma }
+
+family JSONParse Prepared..Placed
+operation JSONSourceOpen (text: Any/inspects) -> natural(boolean) ; Allocates reads(ParserState, StringStorage, TypedArrayStorage, TypedArrayElements, RuntimeState) writes(ParserState, StringStorage, RuntimeState) ; proves = SourceOpen ; branches = May ; runtime = JSONSourceOpen
+operation JSONSourceStart (guard: Guard/inspects) -> natural(Cursor) ; reads(ParserState) ; relies = SourceOpen
+operation JSONSourceClose (guard: Guard/inspects, cursor: Cursor/inspects) -> natural(boolean) ; reads(ParserState) writes(ParserState) ; relies = SourceOpen ; branches = May ; runtime = JSONSourceClose
+operation JSONSourceAbandon (guard: Guard/inspects) -> none ; writes(ParserState) ; relies = SourceOpen ; runtime = JSONSourceAbandon
+operation JSONDecodeBytes (value: Any/returns) -> unknown ; Allocates reads(TypedArrayStorage, TypedArrayElements) throws ; runtime = JSONDecodeBytes
+operation JSONGetByte (cursor: Cursor/inspects) -> natural(int[0, 255]) ; reads(ParserState)
+operation JSONStartsWith (string: String, cursor: Cursor/inspects) [isLikely] -> natural(boolean) ; reads(ParserState) ; proves = TextMatches ; branches = May
+operation JSONAdvance (string: String, cursor: Cursor/inspects, guard: Guard/inspects) -> natural(Cursor) ; none ; relies = TextMatches ; guarded = cursor
+operation JSONSkipByte (cursor: Cursor/inspects) -> natural(Cursor) ; reads(ParserState)
+operation JSONSkipWhitespace (cursor: Cursor/inspects) -> natural(Cursor) ; reads(ParserState)
+operation JSONParseString (cursor: Cursor/inspects) -> results(natural(boolean), natural(string), natural(Cursor)) ; Allocates reads(ParserState) ; runtime = JSONParseString
+operation JSONParseKey (cursor: Cursor/inspects) -> results(natural(boolean), natural(string), natural(Cursor)) ; Allocates reads(ParserState) ; runtime = JSONParseKey
+operation JSONParseNumber (cursor: Cursor/inspects) -> results(natural(boolean), natural(number), natural(Cursor)) ; reads(ParserState) ; runtime = JSONParseNumber
+operation JSONParseInteger (cursor: Cursor/inspects) -> results(natural(boolean), natural(int[-9007199254740991, 9007199254740991]), natural(Cursor)) ; reads(ParserState) ; runtime = JSONParseInteger
+operation JSONParseValue (cursor: Cursor/inspects) -> results(natural(boolean), unknown, natural(Cursor)) ; Allocates reads(ParserState) ; runtime = JSONParseValue
+operation JSONFindMember (string: String, cursor: Cursor/inspects) -> results(natural(JSONMemberSearch), natural(Cursor)) ; reads(ParserState) ; runtime = JSONFindMember
+operation JSONMemberRepeats (string: String, valueStart: Cursor/inspects) -> natural(boolean) ; reads(ParserState) ; runtime = JSONMemberRepeats
+operation JSONKeyHasEscapes (cursor: Cursor/inspects) -> natural(boolean) ; reads(ParserState)
+operation JSONHasStackSpace () -> natural(boolean) ; reads(RuntimeState)
+operation JSONObjectBegin (layout: Layout) -> natural(KeyOrder) ; none
+operation JSONObjectKey (order: KeyOrder/inspects, layout: Layout, field: Field) -> natural(KeyOrder) ; reads(RuntimeState) ; runtime = JSONObjectKey
+operation JSONObjectFinish (order: KeyOrder/inspects, object: Layout/inspects, extra: Any/retains(object), layout: Layout) -> natural(JSONOutcome) ; Allocates reads(OrderWords, ObjectFields) writes(OrderWords, NamedProperties, RuntimeState) ; runtime = JSONObjectFinish
+operation JSONParseExtraMembers (layout: Layout, cursor: Cursor/inspects, extra: Any/returns, order: KeyOrder/inspects) -> results(natural(JSONOutcome), unknown, natural(Cursor), natural(KeyOrder)) ; Allocates reads(ParserState, NamedProperties, Elements, StringStorage) writes(NamedProperties, Elements, ArrayStorage, StringStorage, RuntimeState) ; runtime = JSONParseExtraMembers
+
+family ExpectedRows Prepared..Placed
+operation ExpectRows (target: Any/inspects, layout: Layout) -> none ; Allocates writes(NamedProperties) ; runtime = ExpectRows
+
+family JSONWrite Prepared..Placed ; base = builder
+operation StringBuilderReserve (builder: StringBuilder/inspects, size: UInt32) -> natural(BuilderCursor) ; Allocates reads(StringBuilderContents) writes(StringBuilderContents, RuntimeState) throws ; runtime = StringBuilderReserve
+operation StringBuilderCommit (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects) -> none ; writes(StringBuilderContents)
+operation JSONAppendKey (string: String, builder: StringBuilder/inspects, cursor: BuilderCursor/inspects) [opensObject followsMember] -> natural(BuilderCursor) ; writes(StringBuilderContents)
+operation JSONAppendToken (jsonToken: JSONToken, builder: StringBuilder/inspects, cursor: BuilderCursor/inspects) -> natural(BuilderCursor) ; reads(StringBuilderContents) writes(StringBuilderContents)
+operation JSONAppendBoolean (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, value: Boolean/inspects) -> natural(BuilderCursor) ; writes(StringBuilderContents)
+operation JSONAppendInteger (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, value: Integer/inspects) -> natural(BuilderCursor) ; writes(StringBuilderContents) ; runtime = JSONAppendInteger
+operation JSONAppendNumber (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, value: Number/inspects) -> natural(BuilderCursor) ; writes(StringBuilderContents) ; runtime = JSONAppendNumber
+operation JSONAppendDate (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, value: Number/inspects) -> natural(BuilderCursor) ; writes(StringBuilderContents) ; runtime = JSONAppendDate
+operation JSONAppendString (builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, value: String/inspects) -> natural(BuilderCursor) ; AppendsToBuilder ; runtime = JSONAppendString
+operation JSONAppendValue (jsonPosition: JSONPosition, builder: StringBuilder/inspects, cursor: BuilderCursor/inspects, value: Any/inspects) -> results(natural(JSONOutcome), natural(BuilderCursor)) ; AppendsToBuilder ReadsObjectGraph ; runtime = JSONAppendValue

@@ -1,0 +1,95 @@
+# Arrays seldom have holes. Where `k in array` only skips what is done with the element, as in the loops of map(), filter() and forEach(), the arm of the hole is marked as a slow path: the loop has one typed path, the tests of what does not change in it stand on the entering edge, and a hole comes back through them.
+# FORM: Prepared
+# OPTIONS: heat=NothingIsHottest
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="theHoleSkipsTheElement" parameters=[{type=Array<string, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1: int[0, 4294967295] = GetArrayLength v0
+    v2 = NewArrayLike v1, v0
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4: int[0, 4294967295]):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(| 0), notTaken b6()
+  b2(v7: int[0, 4294967294]):
+    v8 = ElemHas v0, v7 [keyIsIntegral]
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v9 = ElemGet v0, v7 [keyIsIntegral]
+    ElemDefine v2, v7, v9
+    Jump -> next b5()
+  b4():
+    Jump -> next b5()
+  b5():
+    v11 = Increment v7
+    Jump -> next b1(v11)
+  b6():
+    Return v2
+# CHECK: b1(v4: int[0, 4294967295]):
+# CHECK-NOT: = HasArrayStorage
+# CHECK: b4() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b5()
+# CHECK: b6():
+# CHECK: = HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK: PutArrayElement v2, v7, v9,
+# CHECK: = HasArrayStorage v2 arrayStorage=Contiguous [isWritable]
+# CHECK-NOT: = HasArrayStorage
+}
+
+# The arm has code of the program
+function f1 name="theHoleHasCodeOfItsOwn" parameters=[{type=Array<string, proven, pristine[Storage, Names]>}, {type=string}] results=[{type=anything}] {
+    v2: int[0, 4294967295] = GetArrayLength v0
+    v3 = NewArrayLike v2, v0
+    v4 = Integer
+    Jump -> next b1(v4)
+  b1(v5: int[0, 4294967295]):
+    LoopHint
+    v7 = Less v5, v2
+    Branch v7 -> taken b2(| 0), notTaken b6()
+  b2(v8: int[0, 4294967294]):
+    v9 = ElemHas v0, v8 [keyIsIntegral]
+    Branch v9 -> taken b3(), notTaken b4()
+  b3():
+    v10 = ElemGet v0, v8 [keyIsIntegral]
+    ElemDefine v3, v8, v10
+    Jump -> next b5()
+  b4():
+    ElemDefine v3, v8, v1
+    Jump -> next b5()
+  b5():
+    v13 = Increment v8
+    Jump -> next b1(v13)
+  b6():
+    Return v3
+# CHECK-NOT: b4() frequency=Unlikely:
+}
+
+# A new array takes what is stored into it but where it has left the storage that it was made with: the arm behind a store that failed is rare, and its store gets no test
+function f2 name="theStoreThatWasTriedFails" parameters=[{type=Array<string, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1: int[0, 4294967295] = GetArrayLength v0
+    v2 = NewArrayWithCapacity v1, v0
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4: int[0, 4294967295]):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(| 0), notTaken b5()
+  b2(v7: int[0, 4294967294]):
+    v8 = ElemGet v0, v7 [keyIsIntegral]
+    v9 = TryPutByValDirect v2, v7, v8
+    Branch v9 -> taken b4(), notTaken b3()
+  b3():
+    ElemSet v2, v7, v8 [keyIsIntegral]
+    Jump -> next b4()
+  b4():
+    v11 = Increment v7
+    Jump -> next b1(v11)
+  b5():
+    Return v2
+# CHECK: b3() frequency=Rare:
+# CHECK-NEXT: ElemSet v2, v7, v8
+# CHECK-NOT: PutArrayElement
+}

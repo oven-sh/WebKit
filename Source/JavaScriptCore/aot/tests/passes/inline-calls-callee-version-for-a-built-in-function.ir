@@ -1,0 +1,55 @@
+# A built-in function that is passed to a function that calls it is a known callee, as a function of the program is: `each(Boolean, x)`. All who pass one built-in function call one copy,
+# also where the call is seldom run, and in the copy the parameter holds that built-in and nothing else. A built-in object that is no function gets none
+# FORM: Prepared
+# RUN: pass InlineCalls
+# STATISTIC: CalleeVersions = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js" body=f3
+entry module=m0
+function f0 name="each" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = TypeTest v0 testedType=function
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4: function):
+    v5 = Integer integer=0
+    v6 = Call v4, v2, v1, v5, v1
+# REPEAT: i = 6..65
+    v%(i+1) = Add v%(i), v1
+# END REPEAT
+    Return v66
+  b2():
+    Return v1
+}
+
+function f1 name="first" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Boolean
+    v2 = Builtin builtin=MathAbs
+    v3 = Builtin builtin=Math
+    v4 = CallDirect v1, v0, v0 function=f0
+    v5 = CallDirect v2, v0, v0 function=f0
+    v6 = CallDirect v3, v0, v0 function=f0
+    Return v6
+}
+# CHECK-LABEL: function f1 name="first"
+# CHECK: v4{{*}}= CallDirect v1, v0, v0 function=[[forBoolean]]
+# CHECK-NEXT: v5{{*}}= CallDirect v2, v0, v0 function=[[forAbs]]
+# CHECK-NEXT: v6{{*}}= CallDirect v3, v0, v0 function=f0
+
+function f2 name="second" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Boolean
+    v2 = CallDirect v1, v0, v0 function=f0
+    Return v2
+}
+# CHECK-LABEL: function f2 name="second"
+# CHECK: v2{{*}}= CallDirect v1, v0, v0 function=[[forBoolean]]
+
+function f3 name="main" kind=Module results=[{type=anything}] {
+    v0 = Undefined
+    v1 = CallDirect v0 function=f1 [isNeverInlined]
+    v2 = CallDirect v0 function=f2 [isNeverInlined]
+    Return v2
+}
+# CHECK: function [[forBoolean]] name="each"{{*}}role=CalleeVersion
+# CHECK-NEXT: b0(v0: builtin(Boolean), v1: anything, v2: anything):
+# CHECK: function [[forAbs]] name="each"{{*}}role=CalleeVersion
+# CHECK-NEXT: b0(v0: builtin(MathAbs), v1: anything, v2: anything):

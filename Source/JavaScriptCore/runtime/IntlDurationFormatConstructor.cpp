@@ -66,7 +66,7 @@ static JSC_DECLARE_HOST_FUNCTION(callIntlDurationFormat);
 static JSC_DECLARE_HOST_FUNCTION(constructIntlDurationFormat);
 
 IntlDurationFormatConstructor::IntlDurationFormatConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callIntlDurationFormat, constructIntlDurationFormat)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callIntlDurationFormat), JSC_REGISTERED_HOST_FUNCTION(constructIntlDurationFormat))
 {
 }
 

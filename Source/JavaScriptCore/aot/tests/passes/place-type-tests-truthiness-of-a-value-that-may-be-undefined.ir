@@ -1,0 +1,47 @@
+# Whoever asks whether a value is truthy reckons with undefined and null. Where one of them is expected beside a boolean, a string or an object, both pass the test in front of the question:
+# `if (props.bold)` with `bold?: boolean` stays in the tested code when the property is absent
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.ts" displayPath="main.ts"
+
+function f0 name="optionalBoolean" parameters=[{type=undefined|boolean flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|boolean):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=2
+    Return v3
+# CHECK-NOT: testedType=boolean
+# CHECK: = TypeTest v0 testedType=undefined|null|boolean
+}
+
+function f1 name="optionalString" parameters=[{type=undefined|string flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|string):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=2
+    Return v3
+# CHECK-NOT: testedType=string
+# CHECK: = TypeTest v0 testedType=undefined|null|string
+}
+
+function f2 name="booleanAlone" parameters=[{type=boolean flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ boolean):
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Return v2
+  b2():
+    v3 = Integer integer=2
+    Return v3
+# CHECK: = TypeTest v0 testedType=boolean
+}

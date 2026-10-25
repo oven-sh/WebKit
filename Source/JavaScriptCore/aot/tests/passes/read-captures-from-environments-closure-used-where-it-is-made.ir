@@ -1,0 +1,72 @@
+# The function that makes the closure may call it as well, through the closure itself and through block parameters that it reaches. There too the closure stands for the environment it is stored in, and it is not made. Where that function hands the closure on, it is an object and is made as before.
+# FORM: Prepared
+# RUN: pass ReadCapturesFromEnvironments RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="calledWhereItIsMade" fields=[{key="inner" declared={type=f1}}]
+layout L1 kind=Environment name="handedOnWhereItIsMade" fields=[{key="inner" declared={type=f3}}]
+
+function f0 name="calledWhereItIsMade" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject layout=L0
+    v3 = NewClosure v2, v0 function=f1
+    PutEnvironmentField v2, v3 layout=L0 field=0
+    Jump -> next b3(v3)
+  b2():
+    v5 = NewObject layout=L0
+    v6 = Add v0, v0
+    v7 = NewClosure v5, v6 function=f1
+    PutEnvironmentField v5, v7 layout=L0 field=0
+    Jump -> next b3(v7)
+  b3(v9: f1):
+    v10 = GetCapture v9 function=f1
+    v11 = GetCapture v9 function=f1 index=1
+    v12 = CallDirect v10, v11 function=f1
+    Return v12
+# CHECK-NOT: NewClosure
+# CHECK-NOT: GetCapture
+# CHECK: [[first]]: env L0 = NewObject layout=L0
+# CHECK-NEXT: PutEnvironmentField [[first]], v0 layout=L0 field=1
+# CHECK-NEXT: Jump -> next b3([[first]])
+# CHECK: [[second]]: env L0 = NewObject layout=L0
+# CHECK: PutEnvironmentField [[second]], {{*}} layout=L0 field=1
+# CHECK-NEXT: Jump -> next b3([[second]])
+# CHECK: b3([[either]]: env L0):
+# CHECK-NEXT: [[captured]]: number = GetEnvironmentField [[either]] layout=L0 field=1
+# CHECK-NEXT: = CallDirect [[either]], [[captured]] function=f1
+}
+
+function f1 name="inner" captures=[{type=env L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: env L0, v1: number):
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    v3 = GetCapture v2 function=f1 index=1
+    v4 = Add v1, v3
+    Return v4
+# What it would read there it was given itself (read-captures-from-environments-own-captures.ir).
+# CHECK-NOT: GetCapture
+# CHECK-NOT: GetEnvironmentField
+# CHECK: = Add v1, v1
+}
+
+function f2 name="handedOnWhereItIsMade" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject layout=L1
+    v2 = NewClosure v1, v0 function=f3
+    PutEnvironmentField v1, v2 layout=L1 field=0
+    Return v2
+# CHECK: [[scope]]: env L1 = NewObject layout=L1
+# CHECK: [[closure]]: f3 = NewClosure [[scope]], v0 function=f3
+# CHECK: Return [[closure]]
+}
+
+function f3 name="inner" captures=[{type=env L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: env L1, v1: number):
+    v2 = GetEnvironmentField v0 layout=L1 field=0
+    v3 = GetCapture v2 function=f3 index=1
+    v4 = Add v1, v3
+    Return v4
+# CHECK-NOT: GetCapture
+# CHECK-NOT: GetEnvironmentField
+# CHECK: = Add v1, v1
+}

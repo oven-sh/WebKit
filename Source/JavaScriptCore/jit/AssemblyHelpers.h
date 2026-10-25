@@ -27,7 +27,7 @@
 
 #include <wtf/Platform.h>
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include "CodeBlock.h"
 #include "EntryFrame.h"
@@ -49,6 +49,7 @@
 #include "TagRegistersMode.h"
 #include "TypeofType.h"
 #include "VM.h"
+#include <wtf/ScopedLambda.h>
 #include <wtf/TZoneMalloc.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -308,6 +309,43 @@ public:
     }
 
 #if CPU(X86_64)
+    void readTagsFromMemory(Address numberTag, Address notCellMask)
+    {
+        m_numberTagInMemory = numberTag;
+        m_notCellMaskInMemory = notCellMask;
+    }
+    bool readsTagsFromMemory() const { return !!m_numberTagInMemory; }
+
+    template<typename Functor>
+    NEVER_INLINE static auto withTagInMemory(Functor functor, Address tag)
+    {
+        return functor(tag);
+    }
+#else
+    bool readsTagsFromMemory() const { return false; }
+#endif
+
+    template<typename Functor>
+    auto withNumberTag(const Functor& functor)
+    {
+#if CPU(X86_64)
+        if (m_numberTagInMemory) [[unlikely]]
+            return withTagInMemory(functor, *m_numberTagInMemory);
+#endif
+        return functor(GPRInfo::numberTagRegister);
+    }
+
+    template<typename Functor>
+    auto withNotCellMask(const Functor& functor)
+    {
+#if CPU(X86_64)
+        if (m_notCellMaskInMemory) [[unlikely]]
+            return withTagInMemory(functor, *m_notCellMaskInMemory);
+#endif
+        return functor(GPRInfo::notCellMaskRegister);
+    }
+
+#if CPU(X86_64)
     void emitFunctionPrologue()
     {
         push(framePointerRegister);
@@ -497,7 +535,7 @@ public:
     Jump branchIfNotCell(T maybeCell, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return branchTest64(NonZero, maybeCell, GPRInfo::notCellMaskRegister);
+            return withNotCellMask([=, this](auto mask) { return branchTest64(NonZero, maybeCell, mask); });
         return branchTest64(NonZero, maybeCell, TrustedImm64(JSValue::NotCellMask));
     }
 
@@ -505,7 +543,7 @@ public:
     Jump branchIfCell(T maybeCell, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return branchTest64(Zero, maybeCell, GPRInfo::notCellMaskRegister);
+            return withNotCellMask([=, this](auto mask) { return branchTest64(Zero, maybeCell, mask); });
         return branchTest64(Zero, maybeCell, TrustedImm64(JSValue::NotCellMask));
     }
     
@@ -524,35 +562,35 @@ public:
     Jump branchIfInt32(GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return branch64(AboveOrEqual, gpr, GPRInfo::numberTagRegister);
+            return withNumberTag([=, this](auto tag) { return branch64(AboveOrEqual, gpr, tag); });
         return branch64(AboveOrEqual, gpr, TrustedImm64(JSValue::NumberTag));
     }
 
     Jump branchIfNotInt32(GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return branch64(Below, gpr, GPRInfo::numberTagRegister);
+            return withNumberTag([=, this](auto tag) { return branch64(Below, gpr, tag); });
         return branch64(Below, gpr, TrustedImm64(JSValue::NumberTag));
     }
 
     Jump branchIfNumber(GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return branchTest64(NonZero, gpr, GPRInfo::numberTagRegister);
+            return withNumberTag([=, this](auto tag) { return branchTest64(NonZero, gpr, tag); });
         return branchTest64(NonZero, gpr, TrustedImm64(JSValue::NumberTag));
     }
 
     Jump branchIfNotNumber(GPRReg gpr, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return branchTest64(Zero, gpr, GPRInfo::numberTagRegister);
+            return withNumberTag([=, this](auto tag) { return branchTest64(Zero, gpr, tag); });
         return branchTest64(Zero, gpr, TrustedImm64(JSValue::NumberTag));
     }
 
     Jump branchIfNotDoubleKnownNotInt32(GPRReg valueGPR, TagRegistersMode mode = HaveTagRegisters)
     {
         if (mode == HaveTagRegisters)
-            return branchTest64(Zero, valueGPR, GPRInfo::numberTagRegister);
+            return withNumberTag([=, this](auto tag) { return branchTest64(Zero, valueGPR, tag); });
         return branchTest64(Zero, valueGPR, TrustedImm64(JSValue::NumberTag));
     }
 
@@ -569,34 +607,6 @@ public:
         xor64(TrustedImm32(JSValue::ValueFalse), gpr, tempGPR);
         return branchTest64(NonZero, tempGPR, TrustedImm32(static_cast<int32_t>(~1)));
     }
-
-#if USE(BIGINT32)
-    Jump branchIfBigInt32(GPRReg gpr, GPRReg tempGPR, TagRegistersMode mode = HaveTagRegisters)
-    {
-        ASSERT(tempGPR != InvalidGPRReg);
-        if (mode == HaveTagRegisters && gpr != tempGPR) {
-            static_assert(JSValue::BigInt32Mask == JSValue::NumberTag + JSValue::BigInt32Tag);
-            add64(TrustedImm32(JSValue::BigInt32Tag), GPRInfo::numberTagRegister, tempGPR);
-            and64(gpr, tempGPR);
-            return branch64(Equal, tempGPR, TrustedImm32(JSValue::BigInt32Tag));
-        }
-
-        and64(TrustedImm64(JSValue::BigInt32Mask), gpr, tempGPR);
-        return branch64(Equal, tempGPR, TrustedImm32(JSValue::BigInt32Tag));
-    }
-    Jump branchIfNotBigInt32(GPRReg gpr, GPRReg tempGPR, TagRegistersMode mode = HaveTagRegisters)
-    {
-        ASSERT(tempGPR != InvalidGPRReg);
-        if (mode == HaveTagRegisters && gpr != tempGPR) {
-            static_assert(JSValue::BigInt32Mask == JSValue::NumberTag + JSValue::BigInt32Tag);
-            add64(TrustedImm32(JSValue::BigInt32Tag), GPRInfo::numberTagRegister, tempGPR);
-            and64(gpr, tempGPR);
-            return branch64(NotEqual, tempGPR, TrustedImm32(JSValue::BigInt32Tag));
-        }
-        and64(TrustedImm64(JSValue::BigInt32Mask), gpr, tempGPR);
-        return branch64(NotEqual, tempGPR, TrustedImm32(JSValue::BigInt32Tag));
-    }
-#endif // USE(BIGINT32)
 
     // FIXME: rename these to make it clear that they require their input to be a cell.
     Jump branchIfObject(GPRReg cellGPR)
@@ -1057,7 +1067,7 @@ public:
         if (mode == DoNotHaveTagRegisters)
             sub64(TrustedImm64(JSValue::NumberTag), gpr);
         else {
-            sub64(GPRInfo::numberTagRegister, gpr);
+            withNumberTag([=, this](auto tag) { sub64(tag, gpr); });
             jitAssertIsJSDouble(gpr);
         }
         return gpr;
@@ -1068,7 +1078,7 @@ public:
             move(TrustedImm64(JSValue::NumberTag), resultGPR);
             add64(gpr, resultGPR);
         } else
-            add64(GPRInfo::numberTagRegister, gpr, resultGPR);
+            withNumberTag([=, this](auto tag) { add64(tag, gpr, resultGPR); });
         move64ToDouble(resultGPR, fpr);
         return fpr;
     }
@@ -1122,7 +1132,7 @@ public:
         
         isInt32.link(this);
         zeroExtend32ToWord(source, target);
-        or64(GPRInfo::numberTagRegister, target);
+        withNumberTag([=, this](auto tag) { or64(tag, target); });
         
         done.link(this);
     }
@@ -1161,24 +1171,6 @@ public:
         doneCases.link(this);
     }
 
-#if USE(BIGINT32)
-    void unboxBigInt32(GPRReg src, GPRReg dest)
-    {
-#if CPU(ARM64)
-        urshift64(src, trustedImm32ForShift(Imm32(16)), dest);
-#else
-        move(src, dest);
-        urshift64(trustedImm32ForShift(Imm32(16)), dest);
-#endif
-    }
-
-    void boxBigInt32(GPRReg gpr)
-    {
-        lshift64(trustedImm32ForShift(Imm32(16)), gpr);
-        or64(TrustedImm32(JSValue::BigInt32Tag), gpr);
-    }
-#endif
-
     void unboxNativeCallee(GPRReg boxedGPR, GPRReg calleeGPR)
     {
         and64(TrustedImm64(~static_cast<uint64_t>(JSValue::NativeCalleeTag)), boxedGPR, calleeGPR);
@@ -1200,7 +1192,7 @@ public:
         if (mode == DoNotHaveTagRegisters)
             or64(TrustedImm64(JSValue::NumberTag), intGPR, boxedGPR);
         else
-            or64(GPRInfo::numberTagRegister, intGPR, boxedGPR);
+            withNumberTag([=, this](auto tag) { or64(tag, intGPR, boxedGPR); });
     }
 
     void boxNativeCallee(GPRReg calleeGPR, GPRReg boxedGPR)
@@ -1435,8 +1427,6 @@ public:
         //     return object
         // } else if (is boolean) {
         //     return boolean
-        // } else if (is bigint32) {
-        //     return bigint
         // } else {
         //     return undefined
         // }
@@ -1486,12 +1476,6 @@ public:
         functor(TypeofType::Boolean, false);
         notBoolean.link(this);
 
-#if USE(BIGINT32)
-        Jump notBigInt32 = branchIfNotBigInt32(valueGPR, tempGPR);
-        functor(TypeofType::BigInt, false);
-        notBigInt32.link(this);
-#endif
-        
         functor(TypeofType::Undefined, true);
     }
     
@@ -1513,6 +1497,17 @@ public:
         UndefinedBehavior,
     };
     void emitAllocateWithNonNullAllocator(GPRReg resultGPR, const JITAllocator&, GPRReg allocatorGPR, GPRReg scratchGPR, JumpList& slowPath, SlowAllocationResult = SlowAllocationResult::ClearToNull);
+
+    struct FreeListRefill {
+        Jump isExhausted;
+        Label hasRoom;
+        GPRReg result { InvalidGPRReg };
+        GPRReg allocator { InvalidGPRReg };
+        GPRReg scratch { InvalidGPRReg };
+    };
+    [[nodiscard]] FreeListRefill emitAllocateFromFreeList(GPRReg result, GPRReg allocator, GPRReg scratch, JumpList& slowPath, std::optional<unsigned> constantCellSize = std::nullopt);
+    // atBoundary, if given, is called in front of each instruction between the test of the next interval and the jump back, and behind the last.
+    void emitFreeListRefill(const FreeListRefill&, JumpList& slowPath, const ScopedLambda<void()>* atBoundary = nullptr);
     
     void emitAllocate(GPRReg resultGPR, const JITAllocator&, GPRReg allocatorGPR, GPRReg scratchGPR, JumpList& slowPath, SlowAllocationResult = SlowAllocationResult::ClearToNull);
     
@@ -1685,10 +1680,14 @@ protected:
 
     CodeBlock* const m_codeBlock;
     CodeBlock* const m_baselineCodeBlock;
+#if CPU(X86_64)
+    std::optional<Address> m_numberTagInMemory;
+    std::optional<Address> m_notCellMaskInMemory;
+#endif
 };
 
 } // namespace JSC
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)
