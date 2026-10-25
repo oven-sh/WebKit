@@ -1151,6 +1151,12 @@ struct LoopEditor {
 
     const Type& typeOf(ValueID value) const LIFETIME_BOUND { return m_program.typeOf(m_function, value); }
     bool hasType(ValueID value, TypeID type) const { return typeOf(value).isSubsetOf(m_context.types.at(type), m_program); }
+    // A test can prove less than the type it starts from: a built-in object that the tested type does not name passes as any member of a class.
+    bool isNarrowedByTest(ValueID value, TypeID tested) const
+    {
+        const Type& given = typeOf(value);
+        return given.castTo(m_context.types.at(tested), m_context.types).isSubsetOf(given, m_program);
+    }
     TypePropagationInputs typingInputs() { return { m_program, m_context.id, m_function, m_analyses, m_context.types, m_context.build, &m_context.typingMemo }; }
     IRBuilder makeBuilder() { return IRBuilder(m_analyses.context(), m_function, m_context.types, &m_analyses); }
 
@@ -1668,7 +1674,7 @@ struct VariableCarrier : LoopEditor {
                 parameterOfHeader = index;
             else if (loops.belongsTo(useLists.locationOf(tested).block, loop))
                 break;
-            if (parameterOfHeader && !isPassedOnWithType(*parameterOfHeader, test.testedType()))
+            if (parameterOfHeader && (!isPassedOnWithType(*parameterOfHeader, test.testedType()) || !isNarrowedByTest(header.parameters[*parameterOfHeader], test.testedType())))
                 break;
             tests.append({ id, parameterOfHeader });
             proven.append(taken.proofs.isEmpty() ? ValueID() : m_function.at(taken.block).parameters.last());
@@ -2183,7 +2189,7 @@ struct LoopPathSeparator : LoopEditor {
                 if (terminator.kind != TerminatorKind::Branch || terminator.conditionOperand() != use.user || !leavesLoop.get(terminator.notTaken().block.index()))
                     continue;
                 TypeID testedType = m_function.at(use.user).testedType();
-                if (!dominatesAll(use.block, latches.span()) || hasType(header.parameters[index], testedType))
+                if (!dominatesAll(use.block, latches.span()) || hasType(header.parameters[index], testedType) || !isNarrowedByTest(header.parameters[index], testedType))
                     continue;
                 tested[index] = testedType;
                 break;
@@ -2250,7 +2256,7 @@ struct LoopPathSeparator : LoopEditor {
                         sameValues.append(m_function.at(taken.block).parameters.last());
                 }
             }
-            if (tested[index] && hasType(header.parameters[index], tested[index]))
+            if (tested[index] && (hasType(header.parameters[index], tested[index]) || !isNarrowedByTest(header.parameters[index], tested[index])))
                 tested[index] = TypeID();
         }
         return tested;
