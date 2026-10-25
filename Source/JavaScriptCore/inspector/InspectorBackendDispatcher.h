@@ -82,6 +82,11 @@ public:
         const Ref<BackendDispatcher> m_backendDispatcher;
         long m_requestId;
         bool m_alreadySent { false };
+#if USE(BUN_JSC_ADDITIONS)
+        // The channel that sent the command. The callback can complete while a command
+        // from another channel is being dispatched, so it keeps its own copy.
+        const FrontendChannel::Identifier m_requester;
+#endif
     };
 
     bool isActive() const;
@@ -98,7 +103,13 @@ public:
     };
 
     JS_EXPORT_PRIVATE void registerDispatcherForDomain(const String& domain, SupplementalBackendDispatcher*);
+#if USE(BUN_JSC_ADDITIONS)
+    // Every response to the command in `message` goes to `requester` alone. There is no
+    // dispatch() without a requester: FrontendRouter sends a response to one channel only.
+    JS_EXPORT_PRIVATE void dispatch(const String& message, FrontendChannel& requester);
+#else
     JS_EXPORT_PRIVATE void dispatch(const String& message);
+#endif
 
     // Note that 'unused' is a workaround so the compiler can pick the right sendResponse based on arity.
     // When <http://webkit.org/b/179847> is fixed or this class is renamed for the JSON::Object case,
@@ -108,7 +119,9 @@ public:
     void sendResponse(long requestId, Ref<JSON::Object>&& result);
     JS_EXPORT_PRIVATE void sendResponse(long requestId, Ref<JSON::Object>&& result, bool unused);
     JS_EXPORT_PRIVATE void sendPendingErrors();
+#if !USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE void sendErrorResponse(long requestId, CommonErrorCode, const String& errorMessage);
+#endif
 
     JS_EXPORT_PRIVATE void reportProtocolError(CommonErrorCode, const String& errorMessage);
     JS_EXPORT_PRIVATE void reportProtocolError(std::optional<long> relatedRequestId, CommonErrorCode, const String& errorMessage);
@@ -124,6 +137,16 @@ public:
 private:
     BackendDispatcher(Ref<FrontendRouter>&&, BackendDispatcher* fallback);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // For a response that is sent after dispatch() returned. Its sender passes the requester
+    // that it captured during dispatch(), because m_currentRequester is then another command's,
+    // or none. sendErrorResponse() has no form without a requester, so the asynchronous commands
+    // that the code generator writes as a lambda (without legacy_async_callbacks) do not compile
+    // until they capture one too.
+    void sendResponse(long requestId, Ref<JSON::Object>&& result, FrontendChannel::Identifier requester);
+    void sendErrorResponse(long requestId, CommonErrorCode, const String& errorMessage, FrontendChannel::Identifier requester);
+#endif
+
     template<typename T>
     WTF_INTERNAL T getPropertyValue(JSON::Object*, const String& name, bool required, std::function<T(JSON::Value&)> converter, ASCIILiteral typeName);
 
@@ -138,6 +161,12 @@ private:
     // For synchronously handled requests, avoid plumbing requestId through every
     // call that could potentially fail with a protocol error.
     std::optional<long> m_currentRequestId { std::nullopt };
+
+#if USE(BUN_JSC_ADDITIONS)
+    // The channel that sent the command being dispatched. Like m_currentRequestId, it is
+    // restored when a nested dispatch() returns.
+    FrontendChannel::Identifier m_currentRequester { FrontendChannel::noIdentifier };
+#endif
 
     WeakPtr<BackendDispatcher> m_fallbackDispatcher;
 };

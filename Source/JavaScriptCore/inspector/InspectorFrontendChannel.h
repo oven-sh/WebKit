@@ -27,12 +27,21 @@
 
 #include <wtf/text/WTFString.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "JSExportMacros.h"
+#include <wtf/Noncopyable.h>
+#endif
+
 namespace Inspector {
 
 // Represents a one-way connection from an Inspection or Automation target to
 // a local or remote controller (such as a debugger or UI automation script).
 
 class FrontendChannel {
+#if USE(BUN_JSC_ADDITIONS)
+    // A copy would be a second channel with the same identifier.
+    WTF_MAKE_NONCOPYABLE(FrontendChannel);
+#endif
 public:
 
     enum class ConnectionType : bool {
@@ -40,9 +49,28 @@ public:
         Local
     };
 
+#if USE(BUN_JSC_ADDITIONS)
+    FrontendChannel() = default;
+
+    // Names the channel that sent a command, so that FrontendRouter::sendResponse() can send the
+    // response to that channel alone. An asynchronous command can outlive its channel, and the
+    // next channel can be allocated at the same address, so a pointer cannot do this. An
+    // identifier is never used for a second channel.
+    using Identifier = uint64_t;
+    static constexpr Identifier noIdentifier = 0;
+    Identifier identifier() const { return m_identifier; }
+#endif
+
     virtual ~FrontendChannel() { }
     virtual ConnectionType connectionType() const = 0;
     virtual void sendMessageToFrontend(const String& message) = 0;
+
+#if USE(BUN_JSC_ADDITIONS)
+private:
+    JS_EXPORT_PRIVATE static Identifier generateIdentifier();
+
+    const Identifier m_identifier { generateIdentifier() };
+#endif
 };
 
 } // namespace Inspector

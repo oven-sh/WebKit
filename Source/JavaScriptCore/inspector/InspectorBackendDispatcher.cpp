@@ -48,6 +48,9 @@ SupplementalBackendDispatcher::~SupplementalBackendDispatcher() = default;
 BackendDispatcher::CallbackBase::CallbackBase(Ref<BackendDispatcher>&& backendDispatcher, long requestId)
     : m_backendDispatcher(WTF::move(backendDispatcher))
     , m_requestId(requestId)
+#if USE(BUN_JSC_ADDITIONS)
+    , m_requester(m_backendDispatcher->m_currentRequester)
+#endif
 {
 }
 
@@ -66,7 +69,11 @@ void BackendDispatcher::CallbackBase::sendFailure(const ErrorString& error)
     m_alreadySent = true;
 
     // Immediately send an error message since this is an async response with a single error.
+#if USE(BUN_JSC_ADDITIONS)
+    m_backendDispatcher->sendErrorResponse(m_requestId, ServerError, error, m_requester);
+#else
     m_backendDispatcher->sendErrorResponse(m_requestId, ServerError, error);
+#endif
 }
 
 void BackendDispatcher::CallbackBase::sendSuccess(Ref<JSON::Object>&& partialMessage)
@@ -75,7 +82,11 @@ void BackendDispatcher::CallbackBase::sendSuccess(Ref<JSON::Object>&& partialMes
         return;
 
     m_alreadySent = true;
+#if USE(BUN_JSC_ADDITIONS)
+    m_backendDispatcher->sendResponse(m_requestId, WTF::move(partialMessage), m_requester);
+#else
     m_backendDispatcher->sendResponse(m_requestId, WTF::move(partialMessage), false);
+#endif
 }
 
 BackendDispatcher::BackendDispatcher(Ref<FrontendRouter>&& router, BackendDispatcher* fallback)
@@ -103,9 +114,18 @@ void BackendDispatcher::registerDispatcherForDomain(const String& domain, Supple
     m_dispatchers.set(domain, dispatcher);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void BackendDispatcher::dispatch(const String& message, FrontendChannel& requester)
+#else
 void BackendDispatcher::dispatch(const String& message)
+#endif
 {
     Ref<BackendDispatcher> protect(*this);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Set before the message is parsed: the error for a message with no usable id needs a requester too.
+    SetForScope scopedRequester(m_currentRequester, requester.identifier());
+#endif
 
     ASSERT(!m_protocolErrors.size());
 
@@ -177,7 +197,11 @@ void BackendDispatcher::dispatch(const String& message)
         RefPtr domainDispatcher = m_dispatchers.get(domain);
         if (!domainDispatcher) {
             if (RefPtr fallback = m_fallbackDispatcher.get()) {
+#if USE(BUN_JSC_ADDITIONS)
+                fallback->dispatch(message, requester);
+#else
                 fallback->dispatch(message);
+#endif
                 return;
             }
 
@@ -214,7 +238,16 @@ void BackendDispatcher::sendResponse(long requestId, Ref<JSON::Object>&& result)
     sendResponse(requestId, WTF::move(result), false);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
 void BackendDispatcher::sendResponse(long requestId, Ref<JSON::Object>&& result, bool)
+{
+    sendResponse(requestId, WTF::move(result), m_currentRequester);
+}
+
+void BackendDispatcher::sendResponse(long requestId, Ref<JSON::Object>&& result, FrontendChannel::Identifier requester)
+#else
+void BackendDispatcher::sendResponse(long requestId, Ref<JSON::Object>&& result, bool)
+#endif
 {
     ASSERT(!m_protocolErrors.size());
 
@@ -223,7 +256,11 @@ void BackendDispatcher::sendResponse(long requestId, Ref<JSON::Object>&& result,
     Ref<JSON::Object> responseMessage = JSON::Object::create();
     responseMessage->setObject("result"_s, WTF::move(result));
     responseMessage->setInteger("id"_s, requestId);
+#if USE(BUN_JSC_ADDITIONS)
+    m_frontendRouter->sendResponse(responseMessage->toJSONString(), requester);
+#else
     m_frontendRouter->sendResponse(responseMessage->toJSONString());
+#endif
 }
 
 static String errorMessageForRequest(std::optional<long> requestId, const Vector<std::tuple<BackendDispatcher::CommonErrorCode, String>>& errors)
@@ -277,19 +314,31 @@ static String errorMessageForRequest(std::optional<long> requestId, const Vector
 
 void BackendDispatcher::sendPendingErrors()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    m_frontendRouter->sendResponse(errorMessageForRequest(m_currentRequestId, m_protocolErrors), m_currentRequester);
+#else
     m_frontendRouter->sendResponse(errorMessageForRequest(m_currentRequestId, m_protocolErrors));
+#endif
 
     m_protocolErrors.clear();
     m_currentRequestId = std::nullopt;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void BackendDispatcher::sendErrorResponse(long requestId, CommonErrorCode errorCode, const String& errorMessage, FrontendChannel::Identifier requester)
+#else
 void BackendDispatcher::sendErrorResponse(long requestId, CommonErrorCode errorCode, const String& errorMessage)
+#endif
 {
     ASSERT_ARG(errorCode, errorCode >= 0);
 
     // Unlike reportProtocolError(), this does not touch the errors of the request being processed:
     // an async response can complete while another request is being dispatched.
+#if USE(BUN_JSC_ADDITIONS)
+    m_frontendRouter->sendResponse(errorMessageForRequest(requestId, { { errorCode, errorMessage } }), requester);
+#else
     m_frontendRouter->sendResponse(errorMessageForRequest(requestId, { { errorCode, errorMessage } }));
+#endif
 }
     
 void BackendDispatcher::reportProtocolError(CommonErrorCode errorCode, const String& errorMessage)

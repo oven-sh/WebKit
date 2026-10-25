@@ -83,8 +83,13 @@ void RemoteConnectionToTarget::sendMessageToTarget(String&& message)
         Locker locker { m_targetMutex };
         target = m_target.get();
     }
-    if (target)
+    if (target) {
+#if USE(BUN_JSC_ADDITIONS)
+        target->dispatchMessageFromRemote(WTF::move(message), *this);
+#else
         target->dispatchMessageFromRemote(WTF::move(message));
+#endif
+    }
 }
 
 void RemoteConnectionToTarget::close()

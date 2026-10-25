@@ -78,14 +78,22 @@ void JSGlobalObjectDebuggable::disconnect(FrontendChannel& frontendChannel)
     protect(m_globalObject->inspectorController())->disconnectFrontend(frontendChannel);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void JSGlobalObjectDebuggable::dispatchMessageFromRemote(String&& message, FrontendChannel& requester)
+#else
 void JSGlobalObjectDebuggable::dispatchMessageFromRemote(String&& message)
+#endif
 {
     if (!m_globalObject)
         return;
 
     JSLockHolder locker(&m_globalObject->vm());
 
+#if USE(BUN_JSC_ADDITIONS)
+    protect(m_globalObject->inspectorController())->dispatchMessageFromFrontend(WTF::move(message), requester);
+#else
     protect(m_globalObject->inspectorController())->dispatchMessageFromFrontend(WTF::move(message));
+#endif
 }
 
 void JSGlobalObjectDebuggable::pauseWaitingForAutomaticInspection()

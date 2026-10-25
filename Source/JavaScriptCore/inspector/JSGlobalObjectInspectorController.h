@@ -89,7 +89,11 @@ public:
     void connectFrontend(FrontendChannel&, bool isAutomaticInspection, bool immediatelyPause);
     void disconnectFrontend(FrontendChannel&);
 
+#if USE(BUN_JSC_ADDITIONS)
+    void dispatchMessageFromFrontend(const String&, FrontendChannel& requester);
+#else
     void dispatchMessageFromFrontend(const String&);
+#endif
 
     void globalObjectDestroyed();
 

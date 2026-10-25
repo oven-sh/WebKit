@@ -27,6 +27,7 @@
 #include "InspectorFrontendRouter.h"
 
 #include "InspectorFrontendChannel.h"
+#include <atomic>
 #include <wtf/Assertions.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -90,11 +91,29 @@ void FrontendRouter::sendEvent(const String& message) const
         connection->sendMessageToFrontend(message);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void FrontendRouter::sendResponse(const String& message, FrontendChannel::Identifier requester) const
+{
+    for (auto* connection : m_connections) {
+        if (connection->identifier() == requester) {
+            connection->sendMessageToFrontend(message);
+            return;
+        }
+    }
+}
+
+FrontendChannel::Identifier FrontendChannel::generateIdentifier()
+{
+    static std::atomic<Identifier> lastIdentifier;
+    return ++lastIdentifier;
+}
+#else
 void FrontendRouter::sendResponse(const String& message) const
 {
     // FIXME: send responses to the appropriate frontend.
     for (auto* connection : m_connections)
         connection->sendMessageToFrontend(message);
 }
+#endif
 
 } // namespace Inspector

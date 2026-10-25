@@ -31,6 +31,10 @@
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "InspectorFrontendChannel.h"
+#endif
+
 namespace Inspector {
 
 class FrontendChannel;
@@ -52,7 +56,13 @@ public:
     JS_EXPORT_PRIVATE void disconnectAllFrontends();
 
     JS_EXPORT_PRIVATE void sendEvent(const String& message) const;
+#if USE(BUN_JSC_ADDITIONS)
+    // Sends the response to the channel that sent the command, and to no other channel.
+    // A requester that is not connected gets no response. Nothing else does either.
+    void sendResponse(const String& message, FrontendChannel::Identifier requester) const;
+#else
     void sendResponse(const String& message) const;
+#endif
 
 private:
     FrontendRouter() = default;
