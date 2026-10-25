@@ -111,6 +111,21 @@
 #include "StructureID.h"
 #include "SymbolConstructor.h"
 #include "SymbolTableInlines.h"
+#include "TemporalDuration.h"
+#include "TemporalDurationPrototype.h"
+#include "TemporalInstant.h"
+#include "TemporalInstantConstructor.h"
+#include "TemporalInstantPrototype.h"
+#include "TemporalObject.h"
+#include "TemporalPlainDateConstructor.h"
+#include "TemporalPlainDatePrototype.h"
+#include "TemporalPlainDateTimeConstructor.h"
+#include "TemporalPlainDateTimePrototype.h"
+#include "TemporalPlainTimeConstructor.h"
+#include "TemporalPlainTimePrototype.h"
+#include "TemporalZonedDateTime.h"
+#include "TemporalZonedDateTimeConstructor.h"
+#include "TemporalZonedDateTimePrototype.h"
 #include "WeakMapConstructor.h"
 #include "WeakSetConstructor.h"
 #include <wtf/CommaPrinter.h>
@@ -131,6 +146,74 @@ static constexpr bool verbose = false;
 static constexpr bool verbose = true;
 #endif
 } // namespace DFGByteCodeParserInternal
+
+// Told apart by native function, as the WeakMap and WeakSet constructors recognize the original adder.
+static std::optional<TemporalOperation> temporalOperationForHostFunction(TaggedNativeFunction function)
+{
+    if (function == temporalInstantConstructorFuncCompare)
+        return TemporalOperation::InstantCompare;
+    if (function == temporalPlainDateConstructorFuncCompare)
+        return TemporalOperation::PlainDateCompare;
+    if (function == temporalPlainDateTimeConstructorFuncCompare)
+        return TemporalOperation::PlainDateTimeCompare;
+    if (function == temporalZonedDateTimeConstructorFuncCompare)
+        return TemporalOperation::ZonedDateTimeCompare;
+    if (function == temporalPlainTimeConstructorFuncCompare)
+        return TemporalOperation::PlainTimeCompare;
+    if (function == temporalInstantPrototypeFuncEquals)
+        return TemporalOperation::InstantEquals;
+    if (function == temporalPlainDatePrototypeFuncEquals)
+        return TemporalOperation::PlainDateEquals;
+    if (function == temporalPlainDateTimePrototypeFuncEquals)
+        return TemporalOperation::PlainDateTimeEquals;
+    if (function == temporalZonedDateTimePrototypeFuncEquals)
+        return TemporalOperation::ZonedDateTimeEquals;
+    if (function == temporalPlainTimePrototypeFuncEquals)
+        return TemporalOperation::PlainTimeEquals;
+    return std::nullopt;
+}
+
+static std::optional<TemporalOperation> temporalOperationForCustomGetter(VM& vm, const ClassInfo* classInfo, UniquedStringImpl* uid, void* untaggedGetter)
+{
+    const ClassInfo* prototypeInfo;
+    if (classInfo == TemporalInstant::info())
+        prototypeInfo = TemporalInstantPrototype::info();
+    else if (classInfo == TemporalZonedDateTime::info())
+        prototypeInfo = TemporalZonedDateTimePrototype::info();
+    else if (classInfo == TemporalDuration::info())
+        prototypeInfo = TemporalDurationPrototype::info();
+    else
+        return std::nullopt;
+
+    // The getter must be the one this class's prototype table holds under this name.
+    const HashTableValue* entry = prototypeInfo->staticPropHashTable->entry(PropertyName(uid));
+    if (!entry || !(entry->attributes() & PropertyAttribute::CustomAccessor) || entry->attributes() & PropertyAttribute::DOMJITAttribute)
+        return std::nullopt;
+    if (entry->propertyGetter().untaggedPtr() != untaggedGetter)
+        return std::nullopt;
+
+    if (classInfo != TemporalDuration::info()) {
+        if (!WTF::equal(uid, "epochMilliseconds"_s))
+            return std::nullopt;
+        return classInfo == TemporalInstant::info() ? TemporalOperation::InstantEpochMilliseconds : TemporalOperation::ZonedDateTimeEpochMilliseconds;
+    }
+
+    static constexpr std::pair<TemporalUnit, TemporalOperation> durationGetters[] = {
+        { TemporalUnit::Year, TemporalOperation::DurationYears },
+        { TemporalUnit::Month, TemporalOperation::DurationMonths },
+        { TemporalUnit::Week, TemporalOperation::DurationWeeks },
+        { TemporalUnit::Day, TemporalOperation::DurationDays },
+        { TemporalUnit::Hour, TemporalOperation::DurationHours },
+        { TemporalUnit::Minute, TemporalOperation::DurationMinutes },
+        { TemporalUnit::Second, TemporalOperation::DurationSeconds },
+        { TemporalUnit::Millisecond, TemporalOperation::DurationMilliseconds },
+    };
+    for (auto [unit, operation] : durationGetters) {
+        if (uid == temporalUnitPluralPropertyName(vm, unit).uid())
+            return operation;
+    }
+    return std::nullopt;
+}
 
 #define VERBOSE_LOG(...) do { \
     dataLogIf(DFGByteCodeParserInternal::verbose && Options::verboseDFGBytecodeParsing(), __VA_ARGS__); \
@@ -527,6 +610,7 @@ private:
     Node* handlePutByOffset(Node* base, unsigned identifier, PropertyOffset, Node* value);
     Node* handleGetByOffset(SpeculatedType, Node* base, unsigned identifierNumber, PropertyOffset, NodeType = GetByOffset);
     bool handleDOMJITGetter(Operand result, const GetByVariant&, Node* thisNode, Node* unwrapped, unsigned identifierNumber, SpeculatedType prediction);
+    bool handleTemporalGetter(Operand result, SpeculatedType prediction, const GetByStatus&, const GetByVariant&, Node* base, UniquedStringImpl*);
     bool handleModuleNamespaceLoad(VirtualRegister result, SpeculatedType, Node* base, GetByStatus);
     bool handleProxyObjectLoad(VirtualRegister result, SpeculatedType, Node* base, GetByStatus, BytecodeIndex osrExitIndex);
     bool handleIndexedProxyObjectLoad(VirtualRegister result, SpeculatedType, Node* base, Node* subscript, GetByStatus, BytecodeIndex osrExitIndex);
@@ -2946,6 +3030,8 @@ static bool intrinsicSupportsCalleeFromAnyRealm(Intrinsic intrinsic)
     case NumberIsNaNIntrinsic:
     case NumberIsSafeIntegerIntrinsic:
     case ObjectIsIntrinsic:
+    // Every operand that is not of the operation's class exits to the generic call.
+    case TemporalIntrinsic:
     // Calling a bound function only calls its target, which runs in its own realm.
     case BoundFunctionCallIntrinsic:
     // RegExpExec takes its realm from the callee.
@@ -5202,6 +5288,59 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             return CallOptimizationResult::Inlined;
         }
 
+        case TemporalIntrinsic: {
+            NativeExecutable* executable = variant.nativeExecutable();
+            if (!executable)
+                return CallOptimizationResult::DidNothing;
+            auto operation = temporalOperationForHostFunction(executable->function());
+            if (!operation)
+                return CallOptimizationResult::DidNothing;
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+                return CallOptimizationResult::DidNothing;
+
+            bool isCompare = false;
+            switch (*operation) {
+            case TemporalOperation::InstantCompare:
+            case TemporalOperation::PlainDateCompare:
+            case TemporalOperation::PlainDateTimeCompare:
+            case TemporalOperation::ZonedDateTimeCompare:
+            case TemporalOperation::PlainTimeCompare:
+                isCompare = true;
+                break;
+            case TemporalOperation::InstantEquals:
+            case TemporalOperation::PlainDateEquals:
+            case TemporalOperation::PlainDateTimeEquals:
+            case TemporalOperation::ZonedDateTimeEquals:
+            case TemporalOperation::PlainTimeEquals:
+                break;
+            case TemporalOperation::InstantEpochMilliseconds:
+            case TemporalOperation::ZonedDateTimeEpochMilliseconds:
+            case TemporalOperation::DurationYears:
+            case TemporalOperation::DurationMonths:
+            case TemporalOperation::DurationWeeks:
+            case TemporalOperation::DurationDays:
+            case TemporalOperation::DurationHours:
+            case TemporalOperation::DurationMinutes:
+            case TemporalOperation::DurationSeconds:
+            case TemporalOperation::DurationMilliseconds:
+                // Getters are never tagged TemporalIntrinsic.
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+            // compare(one, two) reads arguments 1 and 2; receiver.equals(other) reads this and argument 1.
+            unsigned firstOperand = isCompare ? 1 : 0;
+            if (static_cast<unsigned>(argumentCountIncludingThis) < firstOperand + 2)
+                return CallOptimizationResult::DidNothing;
+
+            insertChecks();
+            const ClassInfo* classInfo = classInfoForTemporalOperation(*operation);
+            Node* one = get(virtualRegisterForArgumentIncludingThis(firstOperand, registerOffset));
+            Node* two = get(virtualRegisterForArgumentIncludingThis(firstOperand + 1, registerOffset));
+            addToGraph(CheckJSCast, OpInfo(classInfo), one);
+            addToGraph(CheckJSCast, OpInfo(classInfo), two);
+            setResult(addToGraph(isCompare ? TemporalCompare : TemporalEquals, OpInfo(static_cast<uint32_t>(*operation)), one, two));
+            return CallOptimizationResult::Inlined;
+        }
+
         case DatePrototypeGetTimeIntrinsic: {
             insertChecks();
             Node* base = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
@@ -6449,6 +6588,34 @@ bool ByteCodeParser::handleDOMJITGetter(Operand result, const GetByVariant& vari
     return true;
 }
 
+bool ByteCodeParser::handleTemporalGetter(Operand result, SpeculatedType prediction, const GetByStatus& getByStatus, const GetByVariant& variant, Node* base, UniquedStringImpl* uid)
+{
+    const ClassInfo* classInfo = nullptr;
+    for (Structure* structure : variant.structureSet()) {
+        const ClassInfo* structureClassInfo = structure->classInfoForCells();
+        if (classInfo && classInfo != structureClassInfo)
+            return false;
+        classInfo = structureClassInfo;
+    }
+    if (!classInfo)
+        return false;
+
+    auto operation = temporalOperationForCustomGetter(*m_vm, classInfo, uid, variant.customAccessorGetter().untaggedPtr<void*>());
+    if (!operation)
+        return false;
+
+    // Replacing the custom accessor always transitions the Structure, so checking the Structures and
+    // the condition set pins down the getter, as for a DOMJIT getter.
+    if (!check(variant.conditionSet()))
+        return false;
+
+    addToGraph(FilterGetByStatus, OpInfo(m_graph.m_plan.recordedStatuses().addGetByStatus(currentCodeOrigin(), getByStatus)), base);
+    // These Structures all have the operation's ClassInfo, which SafeToExecute relies on.
+    addToGraph(CheckStructure, OpInfo(m_graph.addStructureSet(variant.structureSet())), base);
+    set(result, addToGraph(TemporalGetNumber, OpInfo(static_cast<uint32_t>(*operation)), OpInfo(prediction), base));
+    return true;
+}
+
 bool ByteCodeParser::handleModuleNamespaceLoad(VirtualRegister result, SpeculatedType prediction, Node* base, GetByStatus getById)
 {
     if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantValue))
@@ -7524,6 +7691,12 @@ void ByteCodeParser::handleGetById(
                     return;
                 }
                 set(destination, addToGraph(getById, OpInfo(data), OpInfo(prediction), base));
+                return;
+            }
+
+            if (handleTemporalGetter(destination, prediction, getByStatus, variant, base, identifier.uid())) {
+                if (m_graph.compilation()) [[unlikely]]
+                    m_graph.compilation()->noticeInlinedGetById();
                 return;
             }
 

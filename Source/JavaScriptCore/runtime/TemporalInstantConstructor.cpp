@@ -52,7 +52,7 @@ const ClassInfo TemporalInstantConstructor::s_info = { "Function"_s, &Base::s_in
   from                   temporalInstantConstructorFuncFrom                   DontEnum|Function 1
   fromEpochMilliseconds  temporalInstantConstructorFuncFromEpochMilliseconds  DontEnum|Function 1
   fromEpochNanoseconds   temporalInstantConstructorFuncFromEpochNanoseconds   DontEnum|Function 1
-  compare                temporalInstantConstructorFuncCompare                DontEnum|Function 2
+  compare                temporalInstantConstructorFuncCompare                DontEnum|Function 2 TemporalIntrinsic
 @end
 */
 

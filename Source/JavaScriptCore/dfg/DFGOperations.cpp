@@ -50,6 +50,7 @@
 #include "FrameTracers.h"
 #include "GCMemoryOperations.h"
 #include "HasOwnPropertyCacheInlines.h"
+#include "ISOArithmetic.h"
 #include "Interpreter.h"
 #include "InterpreterInlines.h"
 #include "IntlCollator.h"
@@ -92,6 +93,7 @@
 #include "ObjectPrototypeInlines.h"
 #include "Operations.h"
 #include "ParseInt.h"
+#include "PlainDateTimeCore.h"
 #include "ReflectObject.h"
 #include "RegExpConstructor.h"
 #include "RegExpGlobalDataInlines.h"
@@ -107,6 +109,11 @@
 #include "StringRecursionChecker.h"
 #include "SuperSampler.h"
 #include "Symbol.h"
+#include "TemporalInstant.h"
+#include "TemporalPlainDate.h"
+#include "TemporalPlainDateTime.h"
+#include "TemporalPlainTime.h"
+#include "TemporalZonedDateTime.h"
 #include "TypeProfilerLog.h"
 #include "VMEntryScopeInlines.h"
 #include "VMInlines.h"
@@ -6901,6 +6908,68 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTriggerOSREntryNow, char*, (VM* vmPoi
 }
 
 #endif // ENABLE(FTL_JIT)
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTemporalCompare, UCPUStrictInt32, (JSCell* one, JSCell* two, uint32_t operation))
+{
+    switch (static_cast<TemporalOperation>(operation)) {
+    case TemporalOperation::PlainDateCompare:
+        return toUCPUStrictInt32(TemporalCore::isoDateCompare(uncheckedDowncast<TemporalPlainDate>(one)->plainDate(), uncheckedDowncast<TemporalPlainDate>(two)->plainDate()));
+    case TemporalOperation::PlainDateTimeCompare: {
+        auto* oneDateTime = uncheckedDowncast<TemporalPlainDateTime>(one);
+        auto* twoDateTime = uncheckedDowncast<TemporalPlainDateTime>(two);
+        return toUCPUStrictInt32(TemporalCore::compareISODateTime(oneDateTime->plainDate(), oneDateTime->plainTime(), twoDateTime->plainDate(), twoDateTime->plainTime()));
+    }
+    case TemporalOperation::PlainTimeCompare:
+        return toUCPUStrictInt32(TemporalPlainTime::compare(uncheckedDowncast<TemporalPlainTime>(one)->plainTime(), uncheckedDowncast<TemporalPlainTime>(two)->plainTime()));
+    default:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// Out of line, so that the call to timeZoneEquals doesn't give every other operationTemporalEquals case a frame.
+static NEVER_INLINE UCPUStrictInt32 zonedDateTimeEquals(JSCell* one, JSCell* two)
+{
+    auto* oneZonedDateTime = uncheckedDowncast<TemporalZonedDateTime>(one);
+    auto* twoZonedDateTime = uncheckedDowncast<TemporalZonedDateTime>(two);
+    return toUCPUStrictInt32(TemporalZonedDateTime::equals(oneZonedDateTime, twoZonedDateTime));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTemporalEquals, UCPUStrictInt32, (JSCell* one, JSCell* two, uint32_t operation))
+{
+    switch (static_cast<TemporalOperation>(operation)) {
+    case TemporalOperation::PlainDateEquals: {
+        auto* oneDate = uncheckedDowncast<TemporalPlainDate>(one);
+        auto* twoDate = uncheckedDowncast<TemporalPlainDate>(two);
+        return toUCPUStrictInt32(TemporalPlainDate::equals(oneDate, { twoDate->plainDate(), twoDate->calendarID() }));
+    }
+    case TemporalOperation::PlainDateTimeEquals: {
+        auto* oneDateTime = uncheckedDowncast<TemporalPlainDateTime>(one);
+        auto* twoDateTime = uncheckedDowncast<TemporalPlainDateTime>(two);
+        return toUCPUStrictInt32(TemporalPlainDateTime::equals(oneDateTime, { { twoDateTime->plainDate(), twoDateTime->plainTime() }, twoDateTime->calendarID() }));
+    }
+    case TemporalOperation::ZonedDateTimeEquals:
+        return zonedDateTimeEquals(one, two);
+    case TemporalOperation::PlainTimeEquals:
+        return toUCPUStrictInt32(uncheckedDowncast<TemporalPlainTime>(one)->plainTime() == uncheckedDowncast<TemporalPlainTime>(two)->plainTime());
+    default:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationTemporalGetEpochMilliseconds, int64_t, (JSCell* cell, uint32_t operation))
+{
+    switch (static_cast<TemporalOperation>(operation)) {
+    case TemporalOperation::InstantEpochMilliseconds:
+        return uncheckedDowncast<TemporalInstant>(cell)->exactTime().floorEpochMilliseconds();
+    case TemporalOperation::ZonedDateTimeEpochMilliseconds:
+        return uncheckedDowncast<TemporalZonedDateTime>(cell)->exactTime().floorEpochMilliseconds();
+    default:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
 
 } } // namespace JSC::DFG
 

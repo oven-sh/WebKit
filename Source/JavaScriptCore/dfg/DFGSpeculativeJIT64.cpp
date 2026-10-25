@@ -54,6 +54,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "StructureArrayStorageInlines.h"
 #include "StructureChain.h"
 #include "SuperSampler.h"
+#include "TemporalDuration.h"
+#include "TemporalInstant.h"
+#include "TemporalZonedDateTime.h"
 #include "YarrJITRegisters.h"
 
 namespace JSC { namespace DFG {
@@ -6365,6 +6368,15 @@ void SpeculativeJIT::compile(Node* node)
         compileDateSet(node);
         break;
 
+    case TemporalCompare:
+    case TemporalEquals:
+        compileTemporalCompareOrEquals(node);
+        break;
+
+    case TemporalGetNumber:
+        compileTemporalGetNumber(node);
+        break;
+
     case TypedArraySet:
         compileTypedArraySet(node);
         break;
@@ -7040,6 +7052,163 @@ void SpeculativeJIT::compileDateGetMilliseconds(Node* node)
 
     isNaN.link(this);
     jsValueResult(resultGPR, node);
+}
+
+void SpeculativeJIT::compileTemporalCompareOrEquals(Node* node)
+{
+    SpeculateCellOperand one(this, node->child1());
+    SpeculateCellOperand two(this, node->child2());
+    GPRReg oneGPR = one.gpr();
+    GPRReg twoGPR = two.gpr();
+
+    switch (node->temporalOperation()) {
+    case TemporalOperation::InstantCompare:
+    case TemporalOperation::InstantEquals:
+    case TemporalOperation::ZonedDateTimeCompare: {
+        // CompareEpochNanoseconds on the two Int128s: the high words compare signed, the low words unsigned.
+        bool isInstant = node->temporalOperation() == TemporalOperation::InstantCompare || node->temporalOperation() == TemporalOperation::InstantEquals;
+        ptrdiff_t lowOffset = isInstant ? TemporalInstant::offsetOfExactTime() : TemporalZonedDateTime::offsetOfExactTime();
+        ptrdiff_t highOffset = lowOffset + sizeof(uint64_t);
+        GPRTemporary result(this);
+        GPRTemporary oneWord(this);
+        GPRTemporary twoWord(this);
+        GPRReg resultGPR = result.gpr();
+        GPRReg oneWordGPR = oneWord.gpr();
+        GPRReg twoWordGPR = twoWord.gpr();
+
+        if (node->op() == TemporalEquals) {
+            load64(Address(oneGPR, lowOffset), oneWordGPR);
+            load64(Address(twoGPR, lowOffset), twoWordGPR);
+            xor64(oneWordGPR, twoWordGPR, resultGPR);
+            load64(Address(oneGPR, highOffset), oneWordGPR);
+            load64(Address(twoGPR, highOffset), twoWordGPR);
+            xor64(oneWordGPR, twoWordGPR);
+            or64(twoWordGPR, resultGPR);
+            test64(Zero, resultGPR, resultGPR, resultGPR);
+            unblessedBooleanResult(resultGPR, node);
+            return;
+        }
+
+        load64(Address(oneGPR, highOffset), oneWordGPR);
+        load64(Address(twoGPR, highOffset), twoWordGPR);
+        move(TrustedImm32(-1), resultGPR);
+        Jump less = branch64(LessThan, oneWordGPR, twoWordGPR);
+        move(TrustedImm32(1), resultGPR);
+        Jump greater = branch64(GreaterThan, oneWordGPR, twoWordGPR);
+        load64(Address(oneGPR, lowOffset), oneWordGPR);
+        load64(Address(twoGPR, lowOffset), twoWordGPR);
+        move(TrustedImm32(-1), resultGPR);
+        Jump lowLess = branch64(Below, oneWordGPR, twoWordGPR);
+        compare64(Above, oneWordGPR, twoWordGPR, resultGPR);
+        less.link(this);
+        greater.link(this);
+        lowLess.link(this);
+        strictInt32Result(resultGPR, node);
+        return;
+    }
+    default:
+        break;
+    }
+
+    GPRFlushedCallResult result(this);
+    GPRReg resultGPR = result.gpr();
+    flushRegisters();
+    if (node->op() == TemporalCompare) {
+        callOperationWithoutExceptionCheck(operationTemporalCompare, resultGPR, oneGPR, twoGPR, TrustedImm32(static_cast<uint32_t>(node->temporalOperation())));
+        strictInt32Result(resultGPR, node);
+        return;
+    }
+    callOperationWithoutExceptionCheck(operationTemporalEquals, resultGPR, oneGPR, twoGPR, TrustedImm32(static_cast<uint32_t>(node->temporalOperation())));
+    unblessedBooleanResult(resultGPR, node);
+}
+
+void SpeculativeJIT::compileTemporalGetNumber(Node* node)
+{
+    SpeculateCellOperand base(this, node->child1());
+
+    switch (node->temporalOperation()) {
+    case TemporalOperation::InstantEpochMilliseconds:
+    case TemporalOperation::ZonedDateTimeEpochMilliseconds: {
+#if CPU(X86_64)
+        GPRTemporary eax(this, X86Registers::eax);
+        GPRTemporary result(this, X86Registers::edx);
+#else
+        GPRTemporary result(this);
+#endif
+        GPRTemporary low(this);
+        GPRTemporary sign(this);
+        FPRTemporary asDouble(this);
+
+        GPRReg baseGPR = base.gpr();
+        GPRReg resultGPR = result.gpr();
+        GPRReg lowGPR = low.gpr();
+        GPRReg signGPR = sign.gpr();
+
+        GPRReg baseSaveGPR;
+#if CPU(X86_64)
+        if (baseGPR == X86Registers::eax || baseGPR == X86Registers::edx) {
+            baseSaveGPR = allocate();
+            ASSERT(baseGPR != baseSaveGPR);
+            move(baseGPR, baseSaveGPR);
+        } else
+            baseSaveGPR = baseGPR;
+
+        ASSERT(baseSaveGPR != X86Registers::eax);
+        ASSERT(baseSaveGPR != X86Registers::edx);
+#else
+        baseSaveGPR = baseGPR;
+#endif
+
+        // floor(ns / 10^6) in int64 when ns fits, else the Int128 slow path. For ns < 0 that is ~(~ns / 10^6), and
+        // x / 10^6 for 0 <= x < 2^63 is (x * ceil(2^82 / 10^6)) >> 82; the static_asserts bound the multiplier's error.
+        constexpr int64_t millisecondMultiplier = 0x431bde82d7b634db;
+        static_assert(Int128 { millisecondMultiplier } * ISO8601::ExactTime::nsPerMillisecond - (Int128 { 1 } << 82) >= 0);
+        static_assert(Int128 { millisecondMultiplier } * ISO8601::ExactTime::nsPerMillisecond - (Int128 { 1 } << 82) < (Int128 { 1 } << 19));
+        ptrdiff_t lowOffset = node->temporalOperation() == TemporalOperation::InstantEpochMilliseconds ? TemporalInstant::offsetOfExactTime() : TemporalZonedDateTime::offsetOfExactTime();
+        JumpList slowCases;
+        load64(Address(baseSaveGPR, lowOffset), lowGPR);
+        rshift64(lowGPR, TrustedImm32(63), signGPR);
+        slowCases.append(branch64(NotEqual, Address(baseSaveGPR, lowOffset + sizeof(uint64_t)), signGPR));
+        xor64(signGPR, lowGPR);
+#if CPU(X86_64)
+        move(lowGPR, eax.gpr());
+        move(TrustedImm64(millisecondMultiplier), lowGPR);
+        x86MulHigh64(lowGPR, eax.gpr(), resultGPR);
+#elif CPU(ARM64)
+        move(TrustedImm64(millisecondMultiplier), resultGPR);
+        mulHigh64(lowGPR, resultGPR, resultGPR);
+#else // No 64-bit multiply-high in this MacroAssembler.
+        slowCases.append(jump());
+#endif
+        rshift64(TrustedImm32(82 - 64), resultGPR);
+        xor64(signGPR, resultGPR);
+        addSlowPathGenerator(slowPathCall(slowCases, this, operationTemporalGetEpochMilliseconds, NeedToSpill, ExceptionCheckRequirement::CheckNotNeeded, resultGPR, baseSaveGPR, TrustedImm32(static_cast<uint32_t>(node->temporalOperation()))));
+
+        if (baseSaveGPR != baseGPR)
+            unlock(baseSaveGPR);
+
+        // Any int64 (epochMilliseconds can exceed int52), which boxInt52 handles.
+        boxInt52(resultGPR, resultGPR, lowGPR, asDouble.fpr());
+        jsValueResult(resultGPR, node);
+        return;
+    }
+    default: {
+        GPRTemporary result(this);
+        GPRTemporary scratch(this);
+        FPRTemporary asDouble(this);
+
+        GPRReg baseGPR = base.gpr();
+        GPRReg resultGPR = result.gpr();
+        GPRReg scratchGPR = scratch.gpr();
+
+        load64(Address(baseGPR, TemporalDuration::offsetOfDuration() + durationFieldOffsetForTemporalOperation(node->temporalOperation())), resultGPR);
+
+        // Any int64 (Duration milliseconds can exceed int52), which boxInt52 handles.
+        boxInt52(resultGPR, resultGPR, scratchGPR, asDouble.fpr());
+        jsValueResult(resultGPR, node);
+        return;
+    }
+    }
 }
 
 void SpeculativeJIT::compileDateGetTime(Node* node)

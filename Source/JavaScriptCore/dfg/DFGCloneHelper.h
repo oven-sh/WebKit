@@ -372,6 +372,9 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, NOESCAPE const Cust
     CLONE_STATUS(TailCallForwardVarargsInlinedCaller, Special) \
     CLONE_STATUS(TailCallInlinedCaller, Common) \
     CLONE_STATUS(TailCallVarargsInlinedCaller, Special) \
+    CLONE_STATUS(TemporalCompare, Common) \
+    CLONE_STATUS(TemporalEquals, Common) \
+    CLONE_STATUS(TemporalGetNumber, Common) \
     CLONE_STATUS(ToLength, Common) \
     CLONE_STATUS(ToLowerCase, Common) \
     CLONE_STATUS(ToPrimitive, Common) \

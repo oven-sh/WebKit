@@ -92,13 +92,20 @@ public:
 
     static std::optional<ISO8601::ExactTime> getEpochNanosecondsFor(JSGlobalObject*, const TimeZone&, const ISO8601::PlainDate&, const ISO8601::PlainTime&, TemporalDisambiguation);
 
+    static constexpr ptrdiff_t offsetOfExactTime() { return OBJECT_OFFSETOF(TemporalZonedDateTime, m_exactTime); }
+
 private:
     TemporalZonedDateTime(VM&, Structure*, ISO8601::ExactTime, TimeZone, CalendarID);
     DECLARE_DEFAULT_FINISH_CREATION;
 
-    ISO8601::ExactTime m_exactTime;
-    TimeZone m_timeZone;
-    CalendarID m_calendarID { 0 };
+    // Fills m_localDateTime and returns the offset it was computed with.
+    std::optional<int64_t> computeLocalDateTime(JSGlobalObject*) const;
+
+    const ISO8601::ExactTime m_exactTime;
+    const TimeZone m_timeZone;
+    const CalendarID m_calendarID { 0 };
+    // GetISODateTimeFor([[TimeZone]], [[EpochNanoseconds]]), computed on first use; PlainDate::sentinel() means not yet.
+    mutable ISO8601::PlainDateTime m_localDateTime { ISO8601::PlainDate::sentinel(), { } };
 };
 
 TemporalZonedDateTime* createTemporalZonedDateTime(JSGlobalObject*, ISO8601::ExactTime, TimeZone, CalendarID);

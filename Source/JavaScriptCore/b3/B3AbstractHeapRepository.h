@@ -207,6 +207,11 @@ namespace JSC::B3 {
     macro(StructureRareData_cachedPropertyNameEnumeratorAndFlag, StructureRareData::offsetOfCachedPropertyNameEnumeratorAndFlag(), Mutability::Mutable) \
     macro(StructureRareData_specialPropertyCache, StructureRareData::offsetOfSpecialPropertyCache(), Mutability::Mutable) \
     macro(SpecialPropertyCache_cachedToStringTagValue, SpecialPropertyCache::offsetOfCache(CachedSpecialPropertyKey::ToStringTag) + SpecialPropertyCacheEntry::offsetOfValue(), Mutability::Mutable) \
+    macro(TemporalDuration_fields, TemporalDuration::offsetOfDuration(), Mutability::Immutable) \
+    macro(TemporalInstant_epochNanosecondsHigh, TemporalInstant::offsetOfExactTime() + sizeof(uint64_t), Mutability::Immutable) \
+    macro(TemporalInstant_epochNanosecondsLow, TemporalInstant::offsetOfExactTime(), Mutability::Immutable) \
+    macro(TemporalZonedDateTime_epochNanosecondsHigh, TemporalZonedDateTime::offsetOfExactTime() + sizeof(uint64_t), Mutability::Immutable) \
+    macro(TemporalZonedDateTime_epochNanosecondsLow, TemporalZonedDateTime::offsetOfExactTime(), Mutability::Immutable) \
     macro(JSMap_storage, (JSMap::offsetOfStorage()), Mutability::Mutable) \
     macro(JSSet_storage, (JSSet::offsetOfStorage()), Mutability::Mutable) \
     macro(JSPromise_packed, JSPromise::offsetOfPacked(), Mutability::Mutable) \

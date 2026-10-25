@@ -99,7 +99,7 @@ const ClassInfo TemporalPlainDateTimePrototype::s_info = { "Temporal.PlainDateTi
   withCalendar     temporalPlainDateTimePrototypeFuncWithCalendar       DontEnum|Function 1
   withPlainTime    temporalPlainDateTimePrototypeFuncWithPlainTime      DontEnum|Function 0
   round            temporalPlainDateTimePrototypeFuncRound              DontEnum|Function 1
-  equals           temporalPlainDateTimePrototypeFuncEquals             DontEnum|Function 1
+  equals           temporalPlainDateTimePrototypeFuncEquals             DontEnum|Function 1 TemporalIntrinsic
   toPlainDate      temporalPlainDateTimePrototypeFuncToPlainDate        DontEnum|Function 0
   toPlainTime      temporalPlainDateTimePrototypeFuncToPlainTime        DontEnum|Function 0
   toZonedDateTime  temporalPlainDateTimePrototypeFuncToZonedDateTime    DontEnum|Function 1

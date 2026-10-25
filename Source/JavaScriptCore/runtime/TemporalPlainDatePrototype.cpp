@@ -96,7 +96,7 @@ const ClassInfo TemporalPlainDatePrototype::s_info = { "Temporal.PlainDate"_s, &
   with             temporalPlainDatePrototypeFuncWith               DontEnum|Function 1
   until            temporalPlainDatePrototypeFuncUntil              DontEnum|Function 1
   since            temporalPlainDatePrototypeFuncSince              DontEnum|Function 1
-  equals           temporalPlainDatePrototypeFuncEquals             DontEnum|Function 1
+  equals           temporalPlainDatePrototypeFuncEquals             DontEnum|Function 1 TemporalIntrinsic
   toPlainDateTime  temporalPlainDatePrototypeFuncToPlainDateTime    DontEnum|Function 0
   toZonedDateTime  temporalPlainDatePrototypeFuncToZonedDateTime    DontEnum|Function 1
   toString         temporalPlainDatePrototypeFuncToString           DontEnum|Function 0
