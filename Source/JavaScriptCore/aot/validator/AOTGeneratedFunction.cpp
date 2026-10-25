@@ -29,7 +29,7 @@ struct GeneratedFunctionAssembler::State {
     SegmentedVector<RegisterID, 4> arguments;
     SegmentedVector<Identifier, 16> identifiers;
     Vector<Ref<JSC::Label>, 64> labels;
-    Vector<RefPtr<RegisterID>, 32> keptRegisters;
+    Vector<RefPtr<RegisterID>, 32> pinnedRegisters;
     Vector<RefPtr<RegisterID>, 32> registers;
 };
 
@@ -41,7 +41,7 @@ GeneratedFunctionAssembler::GeneratedFunctionAssembler(BytecodeGenerator& genera
 
 GeneratedFunctionAssembler::~GeneratedFunctionAssembler()
 {
-    releaseRegistersFrom(0);
+    releaseRegistersAbove(0);
 }
 
 VM& GeneratedFunctionAssembler::vm() { return m_generator.vm(); }
@@ -63,20 +63,20 @@ auto GeneratedFunctionAssembler::newRegister() -> Register
     return m_state->registers.last().get();
 }
 
-unsigned GeneratedFunctionAssembler::registersInUse() const { return m_state->registers.size(); }
+unsigned GeneratedFunctionAssembler::liveRegisterCount() const { return m_state->registers.size(); }
 
-void GeneratedFunctionAssembler::releaseRegistersFrom(unsigned count)
+void GeneratedFunctionAssembler::releaseRegistersAbove(unsigned count)
 {
     while (m_state->registers.size() > count)
         m_state->registers.removeLast();
 }
 
-void GeneratedFunctionAssembler::keepUntilTheEnd(Register value) { m_state->keptRegisters.append(value); }
+void GeneratedFunctionAssembler::pinRegister(Register value) { m_state->pinnedRegisters.append(value); }
 
-void GeneratedFunctionAssembler::keepRegistersInUse()
+void GeneratedFunctionAssembler::pinLiveRegisters()
 {
     for (auto& one : m_state->registers)
-        m_state->keptRegisters.append(one);
+        m_state->pinnedRegisters.append(one);
 }
 
 auto GeneratedFunctionAssembler::newLabel() -> Label
@@ -89,50 +89,50 @@ void GeneratedFunctionAssembler::bind(Label label) { m_generator.emitLabel(m_sta
 void GeneratedFunctionAssembler::jump(Label label) { m_generator.emitJump(m_state->labels[label].get()); }
 void GeneratedFunctionAssembler::loopHint() { m_generator.emitLoopHint(); }
 
-void GeneratedFunctionAssembler::jumpIfTruthy(Register condition, bool whenItIs, Label label)
+void GeneratedFunctionAssembler::jumpIfTruthy(Register condition, bool expected, Label label)
 {
-    if (whenItIs)
+    if (expected)
         m_generator.emitJumpIfTrue(condition, m_state->labels[label].get());
     else
         m_generator.emitJumpIfFalse(condition, m_state->labels[label].get());
 }
 
-void GeneratedFunctionAssembler::jumpIfCellType(Register value, JSType type, bool whenItIs, Label label)
+void GeneratedFunctionAssembler::jumpIfCellType(Register value, JSType type, bool expected, Label label)
 {
-    jumpIfTruthy(m_generator.emitIsCellWithType(m_generator.newTemporary(), value, type), whenItIs, label);
+    jumpIfTruthy(m_generator.emitIsCellWithType(m_generator.newTemporary(), value, type), expected, label);
 }
 
-void GeneratedFunctionAssembler::jumpIfStructureFlags(Register value, unsigned flags, bool whenItHasAny, Label label)
+void GeneratedFunctionAssembler::jumpIfStructureFlags(Register value, unsigned flags, bool expected, Label label)
 {
-    jumpIfTruthy(m_generator.emitHasStructureWithFlags(m_generator.newTemporary(), value, flags), whenItHasAny, label);
+    jumpIfTruthy(m_generator.emitHasStructureWithFlags(m_generator.newTemporary(), value, flags), expected, label);
 }
 
-void GeneratedFunctionAssembler::jumpIfNumber(Register value, bool whenItIs, Label label)
+void GeneratedFunctionAssembler::jumpIfNumber(Register value, bool expected, Label label)
 {
-    jumpIfTruthy(m_generator.emitIsNumber(m_generator.newTemporary(), value), whenItIs, label);
+    jumpIfTruthy(m_generator.emitIsNumber(m_generator.newTemporary(), value), expected, label);
 }
 
-void GeneratedFunctionAssembler::jumpIfBoolean(Register value, bool whenItIs, Label label)
+void GeneratedFunctionAssembler::jumpIfBoolean(Register value, bool expected, Label label)
 {
-    jumpIfTruthy(m_generator.emitUnaryOp<OpIsBoolean>(m_generator.newTemporary(), value), whenItIs, label);
+    jumpIfTruthy(m_generator.emitUnaryOp<OpIsBoolean>(m_generator.newTemporary(), value), expected, label);
 }
 
-void GeneratedFunctionAssembler::jumpIfObject(Register value, bool whenItIs, Label label)
+void GeneratedFunctionAssembler::jumpIfObject(Register value, bool expected, Label label)
 {
-    jumpIfTruthy(m_generator.emitIsObject(m_generator.newTemporary(), value), whenItIs, label);
+    jumpIfTruthy(m_generator.emitIsObject(m_generator.newTemporary(), value), expected, label);
 }
 
-void GeneratedFunctionAssembler::jumpIfCallable(Register value, bool whenItIs, Label label)
+void GeneratedFunctionAssembler::jumpIfCallable(Register value, bool expected, Label label)
 {
-    jumpIfTruthy(m_generator.emitIsCallable(m_generator.newTemporary(), value), whenItIs, label);
+    jumpIfTruthy(m_generator.emitIsCallable(m_generator.newTemporary(), value), expected, label);
 }
 
-void GeneratedFunctionAssembler::jumpIfStrictlyEqual(Register left, Register right, bool whenTheyAre, Label label)
+void GeneratedFunctionAssembler::jumpIfStrictlyEqual(Register left, Register right, bool expected, Label label)
 {
-    jumpIfTruthy(m_generator.emitEqualityOp<OpStricteq>(m_generator.newTemporary(), left, right), whenTheyAre, label);
+    jumpIfTruthy(m_generator.emitEqualityOp<OpStricteq>(m_generator.newTemporary(), left, right), expected, label);
 }
 
-void GeneratedFunctionAssembler::jumpIfCompares(Comparison comparison, Register left, Register right, bool whenItHolds, Label label)
+void GeneratedFunctionAssembler::jumpIfCompares(Comparison comparison, Register left, Register right, bool expected, Label label)
 {
     Register result = m_generator.newTemporary();
     switch (comparison) {
@@ -149,7 +149,7 @@ void GeneratedFunctionAssembler::jumpIfCompares(Comparison comparison, Register 
         m_generator.emitBinaryOp<OpGreatereq>(result, left, right);
         break;
     }
-    jumpIfTruthy(result, whenItHolds, label);
+    jumpIfTruthy(result, expected, label);
 }
 
 void GeneratedFunctionAssembler::move(Register destination, Register source) { m_generator.move(destination, source); }
@@ -280,7 +280,7 @@ JSFunction* createGeneratedFunction(VM& vm, JSGlobalObject* globalObject, const 
     return JSFunction::create(vm, globalObject, unlinked->link(vm, nullptr, source), globalObject);
 }
 
-void prepareGeneratedFunction(VM& vm, JSFunction* function)
+void compileGeneratedFunction(VM& vm, JSFunction* function)
 {
     CodeBlock* codeBlock = nullptr;
     function->jsExecutable()->prepareForExecution<FunctionExecutable>(vm, function, function->scope(), CodeSpecializationKind::CodeForCall, codeBlock);

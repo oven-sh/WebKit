@@ -31,6 +31,7 @@
 #include "YarrFlatProgram.h"
 #include "YarrRequiredText.h"
 #include "YarrPattern.h"
+#include <atomic>
 #include <wtf/TZoneMalloc.h>
 
 namespace WTF {
@@ -542,6 +543,10 @@ public:
         return size;
     }
 
+    // interpret() says offsetNoMatch also where it has no answer: at matchLimit, without memory, without the form that stands behind a flat program. Each such end counts here: who wants to know reads the count around the one call.
+    unsigned searchesGivenUp() const { return m_searchesGivenUp.load(std::memory_order_relaxed); }
+    void noteSearchGivenUp() { m_searchesGivenUp.fetch_add(1, std::memory_order_relaxed); }
+
     bool hasDuplicateNamedCaptureGroups() const { return !!m_numDuplicateNamedCaptureGroups; }
     bool hasEndAnchoredFixedSize() const { return m_endAnchoredFixedSize != YarrPattern::endAnchoredFixedSizeNotSet; }
 
@@ -603,6 +608,7 @@ public:
     bool m_countsWhatJITCounts { false };
 
 private:
+    std::atomic<unsigned> m_searchesGivenUp { 0 };
     Vector<std::unique_ptr<ByteDisjunction>> m_allParenthesesInfo;
     Vector<std::unique_ptr<CharacterClass>> m_userCharacterClasses;
 };

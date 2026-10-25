@@ -8,12 +8,14 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTBuiltinCallPlan.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTJSONEmission.h"
+#include "AOTRegExpSummary.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
 #include "AOTSelectTypedResultsNodes.h"
@@ -22,6 +24,7 @@
 #include "AOTThreshold.h"
 #include "AOTValidationPlanText.h"
 #include "AOTValueFlowTypedResults.h"
+#include "YarrFlags.h"
 #include <algorithm>
 #include <ranges>
 
@@ -261,9 +264,38 @@ static TypedResultChoice chooseRows(FunctionPassContext& context, TypedResultSit
     return { .site = site };
 }
 
+// No search can be made with such a pattern, whether code or a plan tests the rule: the build ends with an error that quotes it.
+static void reportInvalidPatterns(FunctionPassContext& context, ValueID call, ExpectedResultID expected)
+{
+    Vector<char16_t> bufferForNonASCII;
+    auto check = [&](StringID source, bool isUnicode) {
+        OptionSet<Yarr::Flags> flags;
+        if (isUnicode)
+            flags.add(Yarr::Flags::Unicode);
+        if (context.build.regExpSummaries().summaryOf(source, flags, context.program.strings.viewOf(source, bufferForNonASCII)).isValid())
+            return;
+        context.build.diagnostics().add(UserDiagnostic {
+            .kind = isUnicode ? UserDiagnosticKind::InvalidUnicodeValidationPattern : UserDiagnosticKind::InvalidValidationPattern,
+            .text = source,
+            .location = context.function.locationOf(call),
+        });
+    };
+    for (const ValidationNode& node : context.program.at(expected).validation) {
+        for (const ValidationRule& rule : node.rules) {
+            if (const auto* pattern = rule.tryAs<ValidationRule::Pattern>())
+                check(pattern->source, pattern->isUnicode);
+            if (const auto* members = rule.tryAs<ValidationRule::PatternMembers>()) {
+                for (StringID source : members->sources)
+                    check(source, true);
+            }
+        }
+    }
+}
+
 static TypedResultChoice chooseValidatedResult(FunctionPassContext& context, TypedResultSite site, ExpectedResultID expected)
 {
     const Program& program = context.program;
+    reportInvalidPatterns(context, site.call, expected);
     site.root = ResultNodeRef::forValidation(canonicalValidationOf(program, expected), 0);
 
     // Flow allocated nothing at the call, so no object with a layout comes out of it, not even one with a layout that flow allocated at another call.

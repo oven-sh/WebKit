@@ -51,6 +51,7 @@
 #include "JSWrapForValidIterator.h"
 #include "LabelScope.h"
 #include "LinkTimeConstant.h"
+#include "MarkedBlockCage.h"
 #include "ModuleScopeData.h"
 #include "StackAlignment.h"
 #include "UnlinkedMetadataTableInlines.h"
@@ -508,6 +509,9 @@ RegisterID* ArrayNode::emitBytecode(BytecodeGenerator& generator, RegisterID* ds
             recommendedIndexingType |= CopyOnWrite;
 
             Structure* cellButterflyStructure = allDenseStrings ? vm.cellButterflyOnlyAtomStringsStructure.get() : vm.cellButterflyStructure(recommendedIndexingType);
+            std::optional<MarkedBlockCage::InfallibleAllocationScope> infallibleAllocation;
+            if (MarkedBlockCage::isRequired())
+                infallibleAllocation.emplace(vm.heap.cage());
             auto* array = JSCellButterfly::tryCreate(generator.vm(), cellButterflyStructure, length);
             RELEASE_ASSERT(array);
 

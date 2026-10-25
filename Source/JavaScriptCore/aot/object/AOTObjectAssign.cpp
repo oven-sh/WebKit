@@ -303,12 +303,11 @@ public:
 
     bool tryRunAsBefore(const AssignmentSource&);
     bool tryRunListingOnce(const AssignmentSource&);
-    // Stores into a slot that was empty or cannot be.
-    size_t numberOfStoresThatReplacedNothing() const { return m_numberOfStoresThatReplacedNothing; }
+    size_t emptySlotsFilled() const { return m_emptySlotsFilled; }
 
 private:
-    enum class Counting : bool { No, Yes };
-    template<Counting> bool tryStoreEveryProperty(const AssignmentSource&);
+    enum class CountEmptySlots : bool { No, Yes };
+    template<CountEmptySlots> bool tryStoreEveryProperty(const AssignmentSource&);
     bool acceptsObject(AssignmentPlan::FieldStore&, JSObject*);
     bool isAccepted(AssignmentPlan::FieldStore&, JSValue);
 
@@ -318,7 +317,7 @@ private:
     AssignmentPlan& m_plan;
     JSObject* m_extra;
     bool m_didStoreCell { false };
-    size_t m_numberOfStoresThatReplacedNothing { 0 };
+    size_t m_emptySlotsFilled { 0 };
 };
 
 }
@@ -450,7 +449,7 @@ static ALWAYS_INLINE void* slotIn(const Object& object, Extension* extensionOrNu
 }
 
 // Every field's value is read and put into the form of its slot before anything of the target changes. False where a value is missing or does not go to its slot.
-template<FieldStoreRun::Counting counting>
+template<FieldStoreRun::CountEmptySlots countEmptySlots>
 ALWAYS_INLINE bool FieldStoreRun::tryStoreEveryProperty(const AssignmentSource& source)
 {
     // Extra properties that the run creates are seen by nobody before they are complete.
@@ -504,8 +503,8 @@ ALWAYS_INLINE bool FieldStoreRun::tryStoreEveryProperty(const AssignmentSource& 
     for (const AssignmentPlan::FieldStore& store : m_plan.fieldStores) {
         void* to = slotIn(m_target, targetExtension, *store.to);
         RELEASE_ASSERT(to);
-        if constexpr (counting == Counting::Yes)
-            m_numberOfStoresThatReplacedNothing += !store.hasAbsent || loadSlotBits(store.width, to) == store.absentBits;
+        if constexpr (countEmptySlots == CountEmptySlots::Yes)
+            m_emptySlotsFilled += !store.hasAbsent || loadSlotBits(store.width, to) == store.absentBits;
         storeSlotBits(store.width, to, *bits++);
     }
     return true;
@@ -514,7 +513,7 @@ ALWAYS_INLINE bool FieldStoreRun::tryStoreEveryProperty(const AssignmentSource& 
 bool FieldStoreRun::tryRunAsBefore(const AssignmentSource& source)
 {
     ASSERT(m_plan.orderWordBeforeRun == m_target.orderWord());
-    if (!tryStoreEveryProperty<Counting::No>(source)) [[unlikely]]
+    if (!tryStoreEveryProperty<CountEmptySlots::No>(source)) [[unlikely]]
         return false;
     m_target.at<uint32_t>(offsetOfOrderWord) = m_plan.orderWordAfterRun;
     if (m_didStoreCell)
@@ -563,7 +562,7 @@ bool FieldStoreRun::tryRunListingOnce(const AssignmentSource& source)
         positioned.appendEntriesCountingTo(*numberOfExtraKeysBefore + numberOfExtraKeysAdded, keys);
         keys.append(key);
     }
-    if (!tryStoreEveryProperty<Counting::Yes>(source))
+    if (!tryStoreEveryProperty<CountEmptySlots::Yes>(source))
         return false;
     if (keys.size() != numberOfKeysBefore)
         m_target.setKeyOrder(m_vm, m_state, keys.span());
@@ -572,7 +571,7 @@ bool FieldStoreRun::tryRunListingOnce(const AssignmentSource& source)
     return true;
 }
 
-// A target that has the order word of an earlier one, and whose slots are as empty as that one's were, ends with the order word that the earlier one ended with.
+// Fast path: every target slot is still empty, so copy each field and set the order word that the first run produced.
 static bool tryFillEmptySlotsAsBefore(VM& vm, Object& target, State& state, const AssignmentPlan& plan, const Object& source)
 {
     ASSERT(plan.storesOnlyFieldsThatFit && plan.orderWordBeforeFillingAll == target.orderWord());
@@ -1229,7 +1228,7 @@ static void assignByPlan(VM& vm, Object& target, State& state, AssignmentPlan& p
         plan.numberOfRunsInVain = everyValueKeptItsSlot ? 0 : static_cast<uint8_t>(std::min(numberOfRunsInVain, maxNumberOfRunsInVain) + 1);
         return;
     }
-    if (plan.storesOnlyFieldsThatFit && !plan.fieldStores.isEmpty() && run.numberOfStoresThatReplacedNothing() == plan.fieldStores.size() && !target.hasOutOfLineKeyOrder()) {
+    if (plan.storesOnlyFieldsThatFit && !plan.fieldStores.isEmpty() && run.emptySlotsFilled() == plan.fieldStores.size() && !target.hasOutOfLineKeyOrder()) {
         plan.orderWordBeforeFillingAll = orderWordBefore;
         plan.orderWordAfterFillingAll = target.orderWord();
     } else if (!target.hasOutOfLineKeyOrder()) {

@@ -15,6 +15,7 @@
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTValidationRules.h"
 #include <cmath>
+#include <limits>
 #include <ranges>
 #include <wtf/text/StringBuilder.h>
 
@@ -53,7 +54,11 @@ namespace {
 enum class NumberSpelling : uint8_t { RoundTrip, Stringified };
 
 struct ValidationTextWriter {
+    static constexpr uint32_t notInPlan = std::numeric_limits<uint32_t>::max();
+
     const Program& program;
+    // By the index of a node in its list. Empty for a rule that is written alone: it has no plan whose nodes it could name.
+    Vector<uint32_t> numbers { };
     StringBuilder text { };
 
     // Punctuation and names go into the text as they are, every other part as the JSON text of its value.
@@ -116,11 +121,32 @@ struct ValidationTextWriter {
         text.append(']');
     }
 
+    uint32_t numberOf(uint32_t indexInList) const
+    {
+        RELEASE_ASSERT(indexInList < numbers.size() && numbers[indexInList] != notInPlan);
+        return numbers[indexInList];
+    }
+
+    void appendNumbers(const auto& indicesInList)
+    {
+        appendList(indicesInList, [&](uint32_t indexInList) {
+            append(numberOf(indexInList));
+        });
+    }
+
+    void appendStrings(const auto& strings)
+    {
+        appendList(strings, [&](StringID string) {
+            append(string);
+        });
+    }
+
     void appendRule(const ValidationRule& rule)
     {
         append("{\"rule\":\""_s, nameOf(rule.kind()), '"');
         switch (rule.kind()) {
         case ValidationRule::Kind::Integer:
+        case ValidationRule::Kind::UniqueItems:
         case ValidationRule::Kind::Message:
         case ValidationRule::Kind::DefaultNull:
         case ValidationRule::Kind::DefaultBoolean:
@@ -148,14 +174,16 @@ struct ValidationTextWriter {
         case ValidationRule::Kind::MaximumLength:
             append(",\"length\":"_s, rule.as<ValidationRule::MaximumLength>().length);
             break;
-        case ValidationRule::Kind::Pattern:
-            append(",\"source\":"_s, rule.as<ValidationRule::Pattern>().source);
-            break;
-        case ValidationRule::Kind::Format: {
-            TextFormat format = rule.as<ValidationRule::Format>().format;
-            append(",\"format\":"_s, String(formatName(format)), ",\"source\":"_s, String(formatExpression(format)));
+        case ValidationRule::Kind::Pattern: {
+            const auto& pattern = rule.as<ValidationRule::Pattern>();
+            append(",\"source\":"_s, pattern.source);
+            if (pattern.isUnicode)
+                append(",\"unicode\":true"_s);
             break;
         }
+        case ValidationRule::Kind::Format:
+            append(",\"format\":"_s, String(formatName(rule.as<ValidationRule::Format>().format)));
+            break;
         case ValidationRule::Kind::Template: {
             const auto& operands = rule.as<ValidationRule::Template>();
             append(",\"texts\":["_s, operands.head);
@@ -165,6 +193,58 @@ struct ValidationTextWriter {
             for (const TemplatePart& part : operands.parts)
                 append(placeholderLetter(part.placeholder));
             append('"');
+            break;
+        }
+        case ValidationRule::Kind::Contains: {
+            const auto& contains = rule.as<ValidationRule::Contains>();
+            append(",\"node\":"_s, numberOf(contains.node), ",\"minimum\":"_s, contains.minimum);
+            if (contains.maximum)
+                append(",\"maximum\":"_s, *contains.maximum);
+            break;
+        }
+        case ValidationRule::Kind::Not:
+            append(",\"node\":"_s, numberOf(rule.as<ValidationRule::Not>().node));
+            break;
+        case ValidationRule::Kind::If: {
+            const auto& choice = rule.as<ValidationRule::If>();
+            append(",\"condition\":"_s, numberOf(choice.condition), ",\"then\":"_s, numberOf(choice.then), ",\"otherwise\":"_s, numberOf(choice.otherwise));
+            break;
+        }
+        case ValidationRule::Kind::ExactlyOne:
+            append(",\"nodes\":"_s);
+            appendNumbers(rule.as<ValidationRule::ExactlyOne>().nodes);
+            break;
+        case ValidationRule::Kind::Every:
+            append(",\"nodes\":"_s);
+            appendNumbers(rule.as<ValidationRule::Every>().nodes);
+            break;
+        case ValidationRule::Kind::PatternMembers: {
+            const auto& members = rule.as<ValidationRule::PatternMembers>();
+            RELEASE_ASSERT(members.sources.size() == members.nodes.size());
+            append(",\"sources\":"_s);
+            appendStrings(members.sources);
+            append(",\"nodes\":"_s);
+            appendNumbers(members.nodes);
+            break;
+        }
+        case ValidationRule::Kind::MemberNames:
+            append(",\"node\":"_s, numberOf(rule.as<ValidationRule::MemberNames>().node));
+            break;
+        case ValidationRule::Kind::MinimumMembers:
+            append(",\"count\":"_s, rule.as<ValidationRule::MinimumMembers>().count);
+            break;
+        case ValidationRule::Kind::MaximumMembers:
+            append(",\"count\":"_s, rule.as<ValidationRule::MaximumMembers>().count);
+            break;
+        case ValidationRule::Kind::DependentMembers: {
+            const auto& dependent = rule.as<ValidationRule::DependentMembers>();
+            append(",\"key\":"_s, dependent.key, ",\"names\":"_s);
+            appendStrings(dependent.names);
+            break;
+        }
+        case ValidationRule::Kind::DependentNode: {
+            const auto& dependent = rule.as<ValidationRule::DependentNode>();
+            append(",\"key\":"_s, dependent.key, ",\"node\":"_s, numberOf(dependent.node));
             break;
         }
         }
@@ -185,12 +265,12 @@ Vector<uint8_t> writeValidationPlan(const Program& program, ExpectedResultID exp
         if (part != root)
             parts.append(static_cast<uint32_t>(part));
     }
-    Vector<uint32_t> numbers;
-    numbers.fill(0, list.size());
+    ValidationTextWriter writer { program };
+    writer.numbers.fill(ValidationTextWriter::notInPlan, list.size());
     for (uint32_t number = 0; number < parts.size(); ++number)
-        numbers[parts[number]] = number;
+        writer.numbers[parts[number]] = number;
     auto numberOf = [&](ResultNodeRef node) {
-        return numbers[node.part];
+        return writer.numberOf(node.part);
     };
 
     Vector<ResultNode> nodes = parts.map([&](uint32_t part) {
@@ -207,7 +287,6 @@ Vector<uint8_t> writeValidationPlan(const Program& program, ExpectedResultID exp
         return children[number];
     }).isInCycle;
 
-    ValidationTextWriter writer { program };
     writer.text.reserveCapacity(static_cast<unsigned>(std::min<size_t>(nodes.size() * typicalNodeLength, String::MaxLength)));
     auto appendNumbers = [&](ASCIILiteral member, const Vector<ResultNodeRef, 4>& refs) {
         writer.append(member);
@@ -251,6 +330,9 @@ Vector<uint8_t> writeValidationPlan(const Program& program, ExpectedResultID exp
         case ValidationShape::Kind::Tuple:
             if (!node.children.isEmpty())
                 appendNumbers(",\"elements\":"_s, node.children);
+            writer.append(",\"required\":"_s, node.requiredElements);
+            if (node.restElement)
+                writer.append(",\"rest\":"_s, numberOf(*node.restElement));
             break;
         case ValidationShape::Kind::Object:
             if (!node.members.isEmpty()) {
@@ -301,6 +383,7 @@ Vector<uint8_t> writeValidationPlan(const Program& program, ExpectedResultID exp
 
 Vector<uint8_t> writeValidationRule(const Program& program, const ValidationRule& rule)
 {
+    RELEASE_ASSERT(!namesNodes(rule));
     ValidationTextWriter writer { program };
     writer.appendRule(rule);
     return encodeProgramString(StringView(writer.text));

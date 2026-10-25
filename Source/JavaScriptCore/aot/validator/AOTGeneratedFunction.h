@@ -20,7 +20,7 @@ class RegisterID;
 class SourceProvider;
 class VM;
 
-// A function whose bytecode native code writes, instruction by instruction. It has no text of its own, and every tier runs it as it runs any function.
+// Writes the bytecode of a function from native code. Every tier runs the result like any other function.
 class GeneratedFunctionAssembler {
     WTF_MAKE_NONCOPYABLE(GeneratedFunctionAssembler);
 public:
@@ -42,26 +42,26 @@ public:
     JS_EXPORT_PRIVATE void readArgumentCount(Register destination);
     JS_EXPORT_PRIVATE Register constant(JSValue);
     JS_EXPORT_PRIVATE Register newRegister();
-    JS_EXPORT_PRIVATE unsigned registersInUse() const;
-    JS_EXPORT_PRIVATE void releaseRegistersFrom(unsigned);
-    JS_EXPORT_PRIVATE void keepUntilTheEnd(Register);
-    // For code that is written later and runs here: what it takes for itself is none of the registers that are in use now.
-    JS_EXPORT_PRIVATE void keepRegistersInUse();
+    JS_EXPORT_PRIVATE unsigned liveRegisterCount() const;
+    JS_EXPORT_PRIVATE void releaseRegistersAbove(unsigned);
+    JS_EXPORT_PRIVATE void pinRegister(Register);
+    // Call before deferring code that jumps back here, so the deferred code gets registers of its own.
+    JS_EXPORT_PRIVATE void pinLiveRegisters();
 
     JS_EXPORT_PRIVATE Label newLabel();
     JS_EXPORT_PRIVATE void bind(Label);
     JS_EXPORT_PRIVATE void jump(Label);
     JS_EXPORT_PRIVATE void loopHint();
 
-    JS_EXPORT_PRIVATE void jumpIfCellType(Register, JSType, bool whenItIs, Label);
-    JS_EXPORT_PRIVATE void jumpIfStructureFlags(Register, unsigned flags, bool whenItHasAny, Label);
-    JS_EXPORT_PRIVATE void jumpIfNumber(Register, bool whenItIs, Label);
-    JS_EXPORT_PRIVATE void jumpIfBoolean(Register, bool whenItIs, Label);
-    JS_EXPORT_PRIVATE void jumpIfObject(Register, bool whenItIs, Label);
-    JS_EXPORT_PRIVATE void jumpIfCallable(Register, bool whenItIs, Label);
-    JS_EXPORT_PRIVATE void jumpIfStrictlyEqual(Register, Register, bool whenTheyAre, Label);
-    JS_EXPORT_PRIVATE void jumpIfCompares(Comparison, Register, Register, bool whenItHolds, Label);
-    JS_EXPORT_PRIVATE void jumpIfTruthy(Register, bool whenItIs, Label);
+    JS_EXPORT_PRIVATE void jumpIfCellType(Register, JSType, bool expected, Label);
+    JS_EXPORT_PRIVATE void jumpIfStructureFlags(Register, unsigned flags, bool expected, Label);
+    JS_EXPORT_PRIVATE void jumpIfNumber(Register, bool expected, Label);
+    JS_EXPORT_PRIVATE void jumpIfBoolean(Register, bool expected, Label);
+    JS_EXPORT_PRIVATE void jumpIfObject(Register, bool expected, Label);
+    JS_EXPORT_PRIVATE void jumpIfCallable(Register, bool expected, Label);
+    JS_EXPORT_PRIVATE void jumpIfStrictlyEqual(Register, Register, bool expected, Label);
+    JS_EXPORT_PRIVATE void jumpIfCompares(Comparison, Register, Register, bool expected, Label);
+    JS_EXPORT_PRIVATE void jumpIfTruthy(Register, bool expected, Label);
 
     JS_EXPORT_PRIVATE void move(Register destination, Register source);
     JS_EXPORT_PRIVATE void compute(Arithmetic, Register destination, Register, Register);
@@ -73,7 +73,7 @@ public:
     JS_EXPORT_PRIVATE void writeOwnElement(Register object, Register key, Register value);
     JS_EXPORT_PRIVATE void call(Register destination, JSValue function, std::span<const Register> arguments);
 
-    // The cases and the default are bound between the two calls.
+    // Bind every case label and the default between these two calls.
     JS_EXPORT_PRIVATE void beginStringSwitch(Register);
     JS_EXPORT_PRIVATE void endStringSwitch(std::span<const StringCase>, Label defaultLabel);
 
@@ -92,8 +92,7 @@ public:
 };
 
 JS_EXPORT_PRIVATE JSFunction* createGeneratedFunction(VM&, JSGlobalObject*, const String& name, unsigned parameterCount, Ref<GeneratedFunctionBody>&&);
-// Writes the bytecode now, so that the first call finds it.
-JS_EXPORT_PRIVATE void prepareGeneratedFunction(VM&, JSFunction*);
+JS_EXPORT_PRIVATE void compileGeneratedFunction(VM&, JSFunction*);
 
 bool emitGeneratedFunctionBody(BytecodeGenerator&, SourceProvider*);
 

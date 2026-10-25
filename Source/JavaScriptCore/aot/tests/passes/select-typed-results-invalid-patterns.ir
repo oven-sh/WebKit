@@ -1,0 +1,24 @@
+# A pattern that does not compile under its flag ends the build with an error that quotes it, whether code or a plan would test the rule. The keys of an object are always matched with the 'u' flag
+# FORM: Prepared optimizing
+# RUN: pass SelectTypedResults
+# DIAGNOSTIC: InvalidValidationPattern 1
+# DIAGNOSTIC: InvalidUnicodeValidationPattern 2
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=string validation=[{shape=Primitive{} type=string rules=[Pattern{source="("}, Pattern{source="\\-"}]}]
+expectedresult x1 type=string validation=[{shape=Primitive{} type=string rules=[Pattern{source="\\-" isUnicode=true}, Pattern{source="^\\p{L}+$" isUnicode=true}]}]
+expectedresult x2 type=anything validation=[{shape=Object{} type=anything rules=[PatternMembers{sources=["^a", "\\_"] nodes=[1, 1]}]}, {shape=Primitive{} type=string}]
+
+function f0 name="withoutFlag" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x0
+    Return v1
+}
+function f1 name="withFlag" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x1
+    Return v1
+}
+function f2 name="keys" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallBuiltin -, v0 overload=BunBundleValidate/0 expectedResult=x2
+    Return v1
+}

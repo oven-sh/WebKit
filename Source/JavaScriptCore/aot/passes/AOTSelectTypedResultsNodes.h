@@ -9,6 +9,7 @@
 
 #include "AOTDerivedFunctions.h"
 #include "AOTIR.h"
+#include "AOTValidationNodes.h"
 #include "AOTVector.h"
 #include <optional>
 #include <span>
@@ -92,15 +93,20 @@ struct ResultMember {
 
 struct ResultNode {
     bool isContainer() const { return shape >= ResultShape::Array; }
+    bool hasFixedLength() const { return !restElement && requiredElements == children.size(); }
 
     void forEachChild(NOESCAPE const Invocable<void(ResultNodeRef)> auto& visit) const
     {
         for (ResultNodeRef child : children)
             visit(child);
+        if (restElement)
+            visit(*restElement);
         for (const ResultMember& member : members)
             visit(member.node);
         if (undeclaredValue)
             visit(*undeclaredValue);
+        for (ResultNodeRef tested : nodesOfRules)
+            visit(tested);
     }
 
     ResultShape shape { ResultShape::Unknown };
@@ -111,13 +117,17 @@ struct ResultNode {
     UndeclaredMembers undeclared { UndeclaredMembers::Allowed };
     std::optional<ResultNodeRef> undeclaredValue;
     Vector<ResultNodeRef, 4> children;
+    uint32_t requiredElements { 0 };
+    std::optional<ResultNodeRef> restElement;
     std::span<const ValidationRule> rules;
+    Vector<ResultNodeRef, 2> nodesOfRules;
     std::optional<ResultLiteral> defaultValue;
     StringID message;
     StringID text;
 };
 
 ResultNode describeNode(const Program&, ResultNodeRef);
+
 Value makeArrayOf(const Program&, const ResultNode& arrayOrTuple, std::span<const ValueID> elements);
 
 // Visits the node, and the arms of every union among what it visits.

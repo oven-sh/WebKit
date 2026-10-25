@@ -1,16 +1,18 @@
-# Rules on numbers and lengths are compares (the characters of a string are counted, on a rare path, where the number of its units does not decide), patterns and formats are shared regexp literals (matched without a record here, where nothing says that the program never reads RegExp.$1: passes/select-typed-results-patterns-*.ir), and a rule the builder cannot write is one call of a helper with the text of the rule
+# Rules on numbers and lengths are compares (the characters of a string are counted, on a rare path, where the number of its units does not decide), patterns are shared regexp literals under their flag (matched without a record here, where nothing says that the program never reads RegExp.$1: passes/select-typed-results-patterns-*.ir), and a rule the builder cannot write is one call of a helper with the text of the rule: a format, a multiple of a fraction, and a rule about the whole array, which gets the array as it was given
 # FORM: Prepared optimizing
-# RUN: derived-functions Validator:x0.0 Validator:x1.0 Validator:x2.0 Validator:x3.0 Validator:x4.0 Validator:x5.0
-# RUN(POSITION): derived-functions Validator:x0.0 Validator:x1.0 Validator:x2.0 Validator:x3.0 Validator:x4.0 Validator:x5.0
-# STATISTIC: ValidatorsCreated = 6
+# RUN: derived-functions Validator:x0.0 Validator:x1.0 Validator:x2.0 Validator:x3.0 Validator:x4.0 Validator:x5.0 Validator:x6.0 Validator:x7.0
+# RUN(POSITION): derived-functions Validator:x0.0 Validator:x1.0 Validator:x2.0 Validator:x3.0 Validator:x4.0 Validator:x5.0 Validator:x6.0 Validator:x7.0
+# STATISTIC: ValidatorsCreated = 8
 
 module m0 path="main.js" displayPath="main.js"
 expectedresult x0 type=number validation=[{shape=Primitive{primitive=Number} type=number rules=[Integer, Minimum{bound=1}, Maximum{bound=9}, ExclusiveMinimum{bound=0.5}, ExclusiveMaximum{bound=9.5}, MultipleOf{divisor=2}, Message{text="bad"}]}]
-expectedresult x1 type=string validation=[{shape=Primitive{} type=string rules=[MinimumLength{length=1}, MaximumLength{length=8}, Pattern{source="^a"}, Format{format=Uuid}]}]
+expectedresult x1 type=string validation=[{shape=Primitive{} type=string rules=[MinimumLength{length=1}, MaximumLength{length=8}, Pattern{source="^a"}, Pattern{source="b$" isUnicode=true}]}]
 expectedresult x2 type=Array<number> validation=[{shape=Array{element=1} type=Array<number> rules=[MinimumLength{length=1}, MaximumLength{length=3}]}, {shape=Primitive{primitive=Number} type=number}]
 expectedresult x3 type=string validation=[{shape=Primitive{} type=string rules=[Format{format=Url}, Template{head="id-" parts=[{placeholder=Number text="-"}, {text="!"}]}, Minimum{bound=1}, Pattern{source="("}]}]
 expectedresult x4 type=number validation=[{shape=Primitive{primitive=Number} type=number rules=[DefaultNumber{value=3}, Minimum{bound=1}]}]
 expectedresult x5 type=string validation=[{shape=Primitive{} type=string rules=[Pattern{source="(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:a)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))"}]}]
+expectedresult x6 type=number validation=[{shape=Primitive{primitive=Number} type=number rules=[MultipleOf{divisor=0.01}]}]
+expectedresult x7 type=Array<number> validation=[{shape=Array{element=1} type=Array<number> rules=[UniqueItems]}, {shape=Primitive{primitive=Number} type=number}]
 
 # CHECK: function {{*}}expectedResult=x0}
 # CHECK: ([[number0]]: number):
@@ -50,8 +52,8 @@ expectedresult x5 type=string validation=[{shape=Primitive{} type=string rules=[
 # CHECK-NEXT: [[characters1]]:{{*}}= CallBuiltin -, [[string1]] overload=CompilerHelpersCountCodePoints/0
 # CHECK-NEXT: [[maximumAgain1]]: 8 = Integer integer=8
 # CHECK-NEXT: = LessEq [[characters1]], [[maximumAgain1]]
-# CHECK: [[format1]]:{{*}}= SharedRegExpLiteral pattern="^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$" @
-# CHECK-NEXT: = MatchesUnrecorded [[format1]], [[string1]]
+# CHECK: [[second1]]:{{*}}= SharedRegExpLiteral pattern="b$" regExpFlags=[Unicode]
+# CHECK-NEXT: = MatchesUnrecorded [[second1]], [[string1]]
 # CHECK-NOT: CompilerHelpersHoldsRule
 # POSITION: function {{*}}expectedResult=x1}
 # POSITION: = SharedRegExpLiteral pattern="^a" @[[positionOfFirstLiteral]]
@@ -74,7 +76,7 @@ expectedresult x5 type=string validation=[{shape=Primitive{} type=string rules=[
 # CHECK: function {{*}}expectedResult=x3}
 # CHECK-NOT: SharedRegExpLiteral
 # CHECK: ([[string3]]: string):
-# CHECK-NEXT: [[url3]]:{{*}}= String string="{\"rule\":\"Format\",\"format\":\"url\",\"source\":\"\"}"
+# CHECK-NEXT: [[url3]]:{{*}}= String string="{\"rule\":\"Format\",\"format\":\"url\"}"
 # CHECK-NEXT: [[preparedAt3]]: anything = GetPreparedPlans
 # CHECK-NEXT: = CallBuiltin -, [[string3]], [[url3]], [[preparedAt3]] overload=CompilerHelpersHoldsRule/0
 # CHECK: [[template3]]:{{*}}= String string="{\"rule\":\"Template\",\"texts\":[\"id-\",\"-\",\"!\"],\"placeholders\":\"ns\"}"
@@ -110,3 +112,15 @@ expectedresult x5 type=string validation=[{shape=Primitive{} type=string rules=[
 # CHECK-NEXT: [[preparedAt7]]: anything = GetPreparedPlans
 # CHECK-NEXT: = CallBuiltin -, [[string5]], [[deep5]], [[preparedAt7]] overload=CompilerHelpersHoldsRule/0
 # CHECK-NOT: SharedRegExpLiteral
+
+# CHECK: function {{*}}expectedResult=x6}
+# CHECK: ([[number6]]: number):
+# CHECK: [[fraction6]]:{{*}}= String string="{\"rule\":\"MultipleOf\",\"divisor\":0.01}"
+# CHECK-NEXT: [[preparedAt8]]: anything = GetPreparedPlans
+# CHECK-NEXT: = CallBuiltin -, [[number6]], [[fraction6]], [[preparedAt8]] overload=CompilerHelpersHoldsRule/0
+# CHECK-NOT: = Mod
+
+# CHECK: function {{*}}expectedResult=x7}
+# CHECK: [[unique7]]:{{*}}= String string="{\"rule\":\"UniqueItems\"}"
+# CHECK-NEXT: [[preparedAt9]]: anything = GetPreparedPlans
+# CHECK-NEXT: = CallBuiltin -, v0, [[unique7]], [[preparedAt9]] overload=CompilerHelpersHoldsRule/0

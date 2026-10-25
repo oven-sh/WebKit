@@ -15,6 +15,7 @@
 #include "AOTSortedSet.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
+#include "AOTValidationNodes.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <optional>
@@ -648,8 +649,33 @@ static bool isValidObjectShape(const Program& program, const ValidationShape::Ob
     });
 }
 
+static bool isValidValidationRule(const ValidationRule& rule, size_t numberOfNodes)
+{
+    bool namesOnlyNodesOfList = true;
+    forEachNodeOf(rule, [&](uint32_t node) {
+        namesOnlyNodesOfList &= node < numberOfNodes;
+    });
+    if (!namesOnlyNodesOfList)
+        return false;
+    if (const auto* members = rule.tryAs<ValidationRule::PatternMembers>())
+        return members->sources.size() == members->nodes.size();
+    return true;
+}
+
+static bool isValidTupleShape(const ValidationShape::Tuple& tuple, size_t numberOfNodes)
+{
+    auto isNode = [&](uint32_t index) { return index < numberOfNodes; };
+    return tuple.required <= tuple.elements.size() && std::ranges::all_of(tuple.elements, isNode) && (!tuple.rest || isNode(*tuple.rest));
+}
+
 static bool isValidValidationNode(const Program& program, const ValidationNode& node, size_t numberOfNodes)
 {
+    bool hasValidRules = std::ranges::all_of(node.rules, [&](const ValidationRule& rule) {
+        return isValidValidationRule(rule, numberOfNodes);
+    });
+    if (!hasValidRules)
+        return false;
+
     auto isNode = [&](uint32_t index) { return index < numberOfNodes; };
     switch (node.shape.kind()) {
     case ValidationShape::Kind::Unknown:
@@ -665,7 +691,7 @@ static bool isValidValidationNode(const Program& program, const ValidationNode& 
     case ValidationShape::Kind::Array:
         return isNode(node.shape.as<ValidationShape::Array>().element);
     case ValidationShape::Kind::Tuple:
-        return std::ranges::all_of(node.shape.as<ValidationShape::Tuple>().elements, isNode);
+        return isValidTupleShape(node.shape.as<ValidationShape::Tuple>(), numberOfNodes);
     case ValidationShape::Kind::Dictionary:
         return isNode(node.shape.as<ValidationShape::Dictionary>().value);
     case ValidationShape::Kind::Object:

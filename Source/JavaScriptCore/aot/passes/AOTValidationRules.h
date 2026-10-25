@@ -13,15 +13,16 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-enum class RuleSubject : uint8_t { Number, Length, Text, Nothing };
+// GivenValue: the value as the caller or the text gave it: no default is filled in, no member is left out.
+enum class RuleSubject : uint8_t { Number, Length, Text, GivenValue, Nothing };
 enum class RuleCode : uint8_t { ByHelper, Inline, CountedCharacters, RegularExpression, Nothing };
 
 RuleSubject subjectOf(const ValidationRule&);
 bool appliesTo(const ValidationRule&, ResultShape);
 bool hasIntegerRule(const ResultNode&);
+bool hasRuleOnGivenValue(const ResultNode&);
 
 ASCIILiteral formatName(TextFormat);
-ASCIILiteral formatExpression(TextFormat);
 
 class ValidationRuleEmitter {
     WTF_MAKE_NONCOPYABLE(ValidationRuleEmitter);
@@ -33,7 +34,7 @@ public:
 
     RuleCode codeFor(const ValidationRule&, ResultShape);
 
-    void emitRules(const ResultNode&, ValueID value, BlockID rejected);
+    void emitRules(const ResultNode&, ValueID built, ValueID given, BlockID rejected);
     void emitLengthRules(const ResultNode&, ValueID length, BlockID rejected);
     void emitRequireFinite(ValueID number, BlockID rejected);
     ValueID appendLiteral(const ResultLiteral&);

@@ -1,4 +1,4 @@
-# No part of the program reads what the last match left in RegExp: patterns and formats are shared regexp literals, each at a position of its own
+# No part of the program reads what the last match left in RegExp: patterns are shared regexp literals, each at a position of its own
 # FORM: AsRead
 # OPTIONS: only-passes=ResolveBuiltins,SelectTypedResults
 # RUN: pipeline SelectTypedResults
@@ -6,7 +6,7 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-expectedresult x0 type=string validation=[{shape=Primitive{} type=string rules=[Pattern{source="^a"}, Format{format=Uuid}]}]
+expectedresult x0 type=string validation=[{shape=Primitive{} type=string rules=[Pattern{source="^a"}, Pattern{source="b$" isUnicode=true}]}]
 
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
@@ -28,9 +28,9 @@ function f2 name="parses" parameters=[{type=string}] results=[{type=anything}] {
 }
 # CHECK: [[pattern]]:{{*}}= SharedRegExpLiteral pattern="^a"
 # CHECK-NEXT: = CallBuiltin [[pattern]], {{*}} overload=RegExpPrototypeTest/0
-# CHECK: [[format]]:{{*}}= SharedRegExpLiteral pattern="^([0-9a-fA-F]{8}-
-# CHECK-NEXT: = CallBuiltin [[format]], {{*}} overload=RegExpPrototypeTest/0
+# CHECK: [[second]]:{{*}}= SharedRegExpLiteral pattern="b$" regExpFlags=[Unicode]
+# CHECK-NEXT: = CallBuiltin [[second]], {{*}} overload=RegExpPrototypeTest/0
 # CHECK-NOT: CompilerHelpersHoldsRule
 # POSITION: = SharedRegExpLiteral pattern="^a" @[[positionOfFirstLiteral]]
 # POSITION-NEXT: = CallBuiltin
-# POSITION-NOT: = SharedRegExpLiteral pattern="^([0-9a-fA-F]{8}-{{*}} @[[positionOfFirstLiteral]]
+# POSITION-NOT: = SharedRegExpLiteral pattern="b$"{{*}} @[[positionOfFirstLiteral]]

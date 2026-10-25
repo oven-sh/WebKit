@@ -217,6 +217,7 @@ static ValueID emitArray(ValidatorBuilder& validator, const ResultNode& node, Va
 
 static ValueID emitTuple(ValidatorBuilder& validator, const ResultNode& node, ValueID value, const ValidationExits& exits)
 {
+    RELEASE_ASSERT(node.hasFixedLength());
     IRBuilder& builder = validator.builder();
     PlainArray plain = emitPlainArray(validator, value, exits);
     ValueID expectedLength = builder.appendInteger(static_cast<int64_t>(node.children.size()));
@@ -850,7 +851,7 @@ ValueID ValidatorBuilder::emitNodeBody(ResultNodeRef ref, ValueID value, const V
         }
         node.rules = rulesAfterCopy.span();
     }
-    m_rules.emitRules(node, result, exits.rejected);
+    m_rules.emitRules(node, result, value, exits.rejected);
     return result;
 }
 

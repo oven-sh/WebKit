@@ -41,58 +41,55 @@ using Target = Writer::Label;
 using Comparison = Writer::Comparison;
 using Arithmetic = Writer::Arithmetic;
 
-static JSC_DECLARE_HOST_FUNCTION(validationPlainObjectFor);
-static JSC_DECLARE_HOST_FUNCTION(validationHasPlainElements);
-static JSC_DECLARE_HOST_FUNCTION(validationPlainArrayLength);
-static JSC_DECLARE_HOST_FUNCTION(validationPlainArrayFor);
-static JSC_DECLARE_HOST_FUNCTION(validationHolesOf);
-static JSC_DECLARE_HOST_FUNCTION(validationCopyPlainObject);
-static JSC_DECLARE_HOST_FUNCTION(validationCopyPlainArray);
-static JSC_DECLARE_HOST_FUNCTION(validationHasOnlyTheseKeys);
-static JSC_DECLARE_HOST_FUNCTION(validationHasOwnKey);
-static JSC_DECLARE_HOST_FUNCTION(validationOwnValue);
-static JSC_DECLARE_HOST_FUNCTION(validationMatchesPattern);
-static JSC_DECLARE_HOST_FUNCTION(validationMatchesFormat);
-static JSC_DECLARE_HOST_FUNCTION(validationIsUrl);
-static JSC_DECLARE_HOST_FUNCTION(validationMatchesTemplate);
-static JSC_DECLARE_HOST_FUNCTION(validationCodePointLength);
-static JSC_DECLARE_HOST_FUNCTION(validationParseText);
-static JSC_DECLARE_HOST_FUNCTION(validationStartRemembering);
-static JSC_DECLARE_HOST_FUNCTION(validationRecall);
-static JSC_DECLARE_HOST_FUNCTION(validationRemember);
-static JSC_DECLARE_HOST_FUNCTION(validationThrowTooManyVisits);
-static JSC_DECLARE_HOST_FUNCTION(validationHasUniqueItems);
-static JSC_DECLARE_HOST_FUNCTION(validationIsMultipleInDecimals);
-static JSC_DECLARE_HOST_FUNCTION(validationSaysOnlyJSON);
+static JSC_DECLARE_HOST_FUNCTION(copyExoticObject);
+static JSC_DECLARE_HOST_FUNCTION(hasPlainElements);
+static JSC_DECLARE_HOST_FUNCTION(getPlainArrayLength);
+static JSC_DECLARE_HOST_FUNCTION(copyExoticArray);
+static JSC_DECLARE_HOST_FUNCTION(countHoles);
+static JSC_DECLARE_HOST_FUNCTION(clonePlainObject);
+static JSC_DECLARE_HOST_FUNCTION(clonePlainArray);
+static JSC_DECLARE_HOST_FUNCTION(hasOnlyDeclaredKeys);
+static JSC_DECLARE_HOST_FUNCTION(hasOwnEnumerableKey);
+static JSC_DECLARE_HOST_FUNCTION(getOwnValue);
+static JSC_DECLARE_HOST_FUNCTION(matchesPattern);
+static JSC_DECLARE_HOST_FUNCTION(matchesFormat);
+static JSC_DECLARE_HOST_FUNCTION(isValidURL);
+static JSC_DECLARE_HOST_FUNCTION(matchesTemplate);
+static JSC_DECLARE_HOST_FUNCTION(countCodePoints);
+static JSC_DECLARE_HOST_FUNCTION(parseJSONText);
+static JSC_DECLARE_HOST_FUNCTION(startMemoizing);
+static JSC_DECLARE_HOST_FUNCTION(findVerdict);
+static JSC_DECLARE_HOST_FUNCTION(storeVerdict);
+static JSC_DECLARE_HOST_FUNCTION(throwTooManyObjects);
+static JSC_DECLARE_HOST_FUNCTION(hasUniqueItems);
+static JSC_DECLARE_HOST_FUNCTION(isDecimalMultiple);
+static JSC_DECLARE_HOST_FUNCTION(containsOnlyJSON);
 
 static ValidationFormatChecker formatChecker;
 
-// One call looks at so many objects and arrays, and takes so many holes for undefined.
-AOT_THRESHOLD(int32_t, mostVisits, 1 << 24);
-AOT_THRESHOLD(int32_t, mostHoles, 65536);
+AOT_THRESHOLD(int32_t, maxVisitedObjects, 1 << 24);
+AOT_THRESHOLD(int32_t, maxHoles, 65536);
 
-// What the functions of one validator share while a call runs. It is set anew when a call begins.
-enum StateIndex : unsigned { VisitsInState, MemoryInState, HolesInState, LookedThroughInState, LengthOfState };
+// Shared by the functions of one validator and reset at the start of each call.
+enum StateIndex : unsigned { StateVisitCount, StateMemo, StateHolesLeft, StateScannedObjects, StateLength };
 
-static SymbolImpl::StaticSymbolImpl endOfCheckName { "validationEndsHere", SymbolImpl::s_flagIsPrivate };
-static SymbolImpl::StaticSymbolImpl failureName { "validationFailed", SymbolImpl::s_flagIsPrivate };
-static SymbolImpl::StaticSymbolImpl rememberedCodeName { "validatorsByPlan", SymbolImpl::s_flagIsPrivate };
-static SymbolImpl::StaticSymbolImpl keptAliveName { "validatorKeepsAlive", SymbolImpl::s_flagIsPrivate };
+static SymbolImpl::StaticSymbolImpl bailoutMarkerName { "validatorBailout", SymbolImpl::s_flagIsPrivate };
+static SymbolImpl::StaticSymbolImpl failureMarkerName { "validatorFailure", SymbolImpl::s_flagIsPrivate };
+static SymbolImpl::StaticSymbolImpl codeCacheName { "validatorCodeCache", SymbolImpl::s_flagIsPrivate };
+static SymbolImpl::StaticSymbolImpl rootsName { "validatorRoots", SymbolImpl::s_flagIsPrivate };
 
-static PropertyName nameOf(SymbolImpl::StaticSymbolImpl& name) { return PropertyName(&static_cast<SymbolImpl&>(name)); }
+static PropertyName toPropertyName(SymbolImpl::StaticSymbolImpl& name) { return PropertyName(&static_cast<SymbolImpl&>(name)); }
 
-// Programs never see either. The first says that only running code of the value could answer, so that the whole check ends; the second that a node has refused its value.
-static Symbol* symbolOf(VM& vm, SymbolImpl::StaticSymbolImpl& name) { return Symbol::create(vm, static_cast<SymbolImpl&>(name)); }
+static Symbol* createMarker(VM& vm, SymbolImpl::StaticSymbolImpl& name) { return Symbol::create(vm, static_cast<SymbolImpl&>(name)); }
 
 static bool isAnyArray(JSValue value) { return value.isCell() && (value.asCell()->type() == ArrayType || value.asCell()->type() == DerivedArrayType); }
 
-// (value, mark): for an object that is not plain, a plain object that holds what { ...value } would read under a string. Undefined for what is no object in the sense of JSON; the mark where reading would run code.
-JSC_DEFINE_HOST_FUNCTION(validationPlainObjectFor, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(copyExoticObject, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = callFrame->uncheckedArgument(0);
-    JSValue mark = callFrame->uncheckedArgument(1);
+    JSValue bailoutMarker = callFrame->uncheckedArgument(1);
     if (!value.isObject() || isAnyArray(value))
         return JSValue::encode(jsUndefined());
     JSObject* object = asObject(value);
@@ -111,20 +108,19 @@ JSC_DEFINE_HOST_FUNCTION(validationPlainObjectFor, (JSGlobalObject * globalObjec
         if (!isPresent)
             continue;
         if (!slot.isValue())
-            return JSValue::encode(mark);
-        JSValue held = slot.getValue(globalObject, name);
+            return JSValue::encode(bailoutMarker);
+        JSValue current = slot.getValue(globalObject, name);
         RETURN_IF_EXCEPTION(scope, {});
         if (auto index = parseIndex(name))
-            copy->putDirectIndex(globalObject, *index, held);
+            copy->putDirectIndex(globalObject, *index, current);
         else
-            copy->putDirect(vm, name, held);
+            copy->putDirect(vm, name, current);
         RETURN_IF_EXCEPTION(scope, {});
     }
     return JSValue::encode(copy);
 }
 
-// Of a final object: whether reading it by any of its own keys runs nothing.
-JSC_DEFINE_HOST_FUNCTION(validationHasPlainElements, (JSGlobalObject*, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(hasPlainElements, (JSGlobalObject*, CallFrame* callFrame))
 {
     IndexingType indexing = asObject(callFrame->uncheckedArgument(0))->indexingType();
     return JSValue::encode(jsBoolean(!hasAnyArrayStorage(indexing) && !(indexing & MayHaveIndexedAccessors)));
@@ -137,7 +133,7 @@ static bool isPlainArray(JSArray* array)
     return !hasAnyArrayStorage(structure->indexingType()) && owner->isOriginalArrayStructure(structure) && owner->arrayPrototypeChainIsSane();
 }
 
-static unsigned holesOf(JSArray* array)
+static unsigned countHolesInPlainArray(JSArray* array)
 {
     unsigned length = array->length();
     unsigned holes = 0;
@@ -162,7 +158,7 @@ static unsigned holesOf(JSArray* array)
     }
 }
 
-JSC_DEFINE_HOST_FUNCTION(validationPlainArrayLength, (JSGlobalObject*, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(getPlainArrayLength, (JSGlobalObject*, CallFrame* callFrame))
 {
     JSValue value = callFrame->uncheckedArgument(0);
     if (!isJSArray(value) || !isPlainArray(asArray(value)))
@@ -170,13 +166,12 @@ JSC_DEFINE_HOST_FUNCTION(validationPlainArrayLength, (JSGlobalObject*, CallFrame
     return JSValue::encode(jsNumber(asArray(value)->length()));
 }
 
-// (value, mark): for an array that is not plain, one that has every element of its own: what the value has, and undefined for a hole. Undefined for what is no array; the mark where an element is no value, and where more is missing than any call takes.
-JSC_DEFINE_HOST_FUNCTION(validationPlainArrayFor, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(copyExoticArray, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = callFrame->uncheckedArgument(0);
-    JSValue mark = callFrame->uncheckedArgument(1);
+    JSValue bailoutMarker = callFrame->uncheckedArgument(1);
     if (!isAnyArray(value))
         return JSValue::encode(jsUndefined());
     JSArray* array = asArray(value);
@@ -188,18 +183,17 @@ JSC_DEFINE_HOST_FUNCTION(validationPlainArrayFor, (JSGlobalObject * globalObject
         PropertySlot slot(array, PropertySlot::InternalMethodType::VMInquiry, &vm);
         bool isPresent = array->methodTable()->getOwnPropertySlotByIndex(array, globalObject, i, slot);
         RETURN_IF_EXCEPTION(scope, {});
-        if (isPresent ? !slot.isValue() : ++holes > static_cast<unsigned>(mostHoles))
-            return JSValue::encode(mark);
-        JSValue held = isPresent ? slot.getValue(globalObject, Identifier::from(vm, i)) : jsUndefined();
+        if (isPresent ? !slot.isValue() : ++holes > static_cast<unsigned>(maxHoles))
+            return JSValue::encode(bailoutMarker);
+        JSValue current = isPresent ? slot.getValue(globalObject, Identifier::from(vm, i)) : jsUndefined();
         RETURN_IF_EXCEPTION(scope, {});
-        copy->putDirectIndex(globalObject, i, held);
+        copy->putDirectIndex(globalObject, i, current);
         RETURN_IF_EXCEPTION(scope, {});
     }
     return JSValue::encode(copy);
 }
 
-// How many holes an array has. One more than any call takes stands for all greater numbers.
-JSC_DEFINE_HOST_FUNCTION(validationHolesOf, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(countHoles, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -208,10 +202,10 @@ JSC_DEFINE_HOST_FUNCTION(validationHolesOf, (JSGlobalObject * globalObject, Call
         return JSValue::encode(jsNumber(0));
     JSArray* array = asArray(value);
     if (!hasAnyArrayStorage(array->indexingType()) && array->type() == ArrayType)
-        return JSValue::encode(jsNumber(holesOf(array)));
+        return JSValue::encode(jsNumber(countHolesInPlainArray(array)));
     unsigned length = array->length();
     unsigned holes = 0;
-    for (unsigned i = 0; i < length && holes <= static_cast<unsigned>(mostHoles); ++i) {
+    for (unsigned i = 0; i < length && holes <= static_cast<unsigned>(maxHoles); ++i) {
         PropertySlot slot(array, PropertySlot::InternalMethodType::VMInquiry, &vm);
         holes += !array->methodTable()->getOwnPropertySlotByIndex(array, globalObject, i, slot);
         RETURN_IF_EXCEPTION(scope, {});
@@ -219,8 +213,7 @@ JSC_DEFINE_HOST_FUNCTION(validationHolesOf, (JSGlobalObject * globalObject, Call
     return JSValue::encode(jsNumber(holes));
 }
 
-// Of a final object: what { ...value } makes, where making it runs nothing and every key is a string. Undefined elsewhere.
-JSC_DEFINE_HOST_FUNCTION(validationCopyPlainObject, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(clonePlainObject, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -257,7 +250,6 @@ JSC_DEFINE_HOST_FUNCTION(validationCopyPlainObject, (JSGlobalObject * globalObje
         values.appendWithCrashOnOverflow(source->getDirect(entry.offset()));
         return true;
     });
-    // What becomes of a key that is a symbol depends on the node.
     if (hasSymbol)
         return JSValue::encode(jsUndefined());
     for (unsigned i = 0; i < names.size(); ++i)
@@ -266,26 +258,25 @@ JSC_DEFINE_HOST_FUNCTION(validationCopyPlainObject, (JSGlobalObject * globalObje
     return JSValue::encode(copy);
 }
 
-// (array, fewest, most, mark): a copy, where the array is plain and has no hole. Undefined where its length is not within the two; the mark elsewhere.
-JSC_DEFINE_HOST_FUNCTION(validationCopyPlainArray, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(clonePlainArray, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* array = asArray(callFrame->uncheckedArgument(0));
-    JSValue mark = callFrame->uncheckedArgument(3);
+    JSValue bailoutMarker = callFrame->uncheckedArgument(3);
     if (!isPlainArray(array))
-        return JSValue::encode(mark);
+        return JSValue::encode(bailoutMarker);
     double length = array->length();
     if (length < callFrame->uncheckedArgument(1).asNumber() || length > callFrame->uncheckedArgument(2).asNumber())
         return JSValue::encode(jsUndefined());
-    if (holesOf(array))
-        return JSValue::encode(mark);
+    if (countHolesInPlainArray(array))
+        return JSValue::encode(bailoutMarker);
     JSArray* copy = tryCloneArrayFromFast<ArrayFillMode::Empty>(globalObject, array);
     RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(copy && isPlainArray(copy) ? JSValue(copy) : mark);
+    return JSValue::encode(copy && isPlainArray(copy) ? JSValue(copy) : bailoutMarker);
 }
 
-JSC_DEFINE_HOST_FUNCTION(validationHasOnlyTheseKeys, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(hasOnlyDeclaredKeys, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -305,7 +296,7 @@ JSC_DEFINE_HOST_FUNCTION(validationHasOnlyTheseKeys, (JSGlobalObject * globalObj
     return JSValue::encode(jsBoolean(true));
 }
 
-static bool findOwnWithoutRunningCode(JSGlobalObject* globalObject, JSObject* object, JSString* key, PropertySlot& slot)
+static bool getOwnSlotWithoutSideEffects(JSGlobalObject* globalObject, JSObject* object, JSString* key, PropertySlot& slot)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -314,27 +305,25 @@ static bool findOwnWithoutRunningCode(JSGlobalObject* globalObject, JSObject* ob
     RELEASE_AND_RETURN(scope, object->methodTable()->getOwnPropertySlot(object, globalObject, name, slot));
 }
 
-// (plain object, key): whether the key is its own and is enumerated.
-JSC_DEFINE_HOST_FUNCTION(validationHasOwnKey, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(hasOwnEnumerableKey, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* object = asObject(callFrame->uncheckedArgument(0));
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    bool isPresent = findOwnWithoutRunningCode(globalObject, object, asString(callFrame->uncheckedArgument(1)), slot);
+    bool isPresent = getOwnSlotWithoutSideEffects(globalObject, object, asString(callFrame->uncheckedArgument(1)), slot);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(isPresent && !(slot.attributes() & PropertyAttribute::DontEnum)));
 }
 
-// (plain object, key, mark): what it holds of its own under a key that is an index.
-JSC_DEFINE_HOST_FUNCTION(validationOwnValue, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(getOwnValue, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* object = asObject(callFrame->uncheckedArgument(0));
     JSString* key = asString(callFrame->uncheckedArgument(1));
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    bool isPresent = findOwnWithoutRunningCode(globalObject, object, key, slot);
+    bool isPresent = getOwnSlotWithoutSideEffects(globalObject, object, key, slot);
     RETURN_IF_EXCEPTION(scope, {});
     if (!isPresent || (slot.attributes() & PropertyAttribute::DontEnum))
         return JSValue::encode(jsUndefined());
@@ -345,7 +334,6 @@ JSC_DEFINE_HOST_FUNCTION(validationOwnValue, (JSGlobalObject * globalObject, Cal
     RELEASE_AND_RETURN(scope, JSValue::encode(slot.getValue(globalObject, name)));
 }
 
-// Nothing where the search was given up: that is no answer, and "no match" under a negation would be an accept. An engine that cannot tell says "no match".
 template<typename Expression>
 static std::optional<bool> searchFromStart(JSGlobalObject* globalObject, VM& vm, Expression* regExp, StringView text)
 {
@@ -358,7 +346,7 @@ static std::optional<bool> searchFromStart(JSGlobalObject* globalObject, VM& vm,
         return !!regExp->matchInline(globalObject, vm, text, 0);
 }
 
-JSC_DEFINE_HOST_FUNCTION(validationMatchesPattern, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(matchesPattern, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -372,7 +360,7 @@ JSC_DEFINE_HOST_FUNCTION(validationMatchesPattern, (JSGlobalObject * globalObjec
     return JSValue::encode(jsBoolean(*answer));
 }
 
-JSC_DEFINE_HOST_FUNCTION(validationMatchesFormat, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(matchesFormat, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -381,7 +369,7 @@ JSC_DEFINE_HOST_FUNCTION(validationMatchesFormat, (JSGlobalObject * globalObject
     return JSValue::encode(jsBoolean(formatChecker && formatChecker(vm, callFrame->uncheckedArgument(0).asInt32(), view)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(validationIsUrl, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(isValidURL, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -426,14 +414,13 @@ static bool matchesPlaceholder(char16_t kind, StringView part)
     return isIntegerText(part);
 }
 
-// (text, the texts around the placeholders, a letter for each placeholder)
-JSC_DEFINE_HOST_FUNCTION(validationMatchesTemplate, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(matchesTemplate, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto held = asString(callFrame->uncheckedArgument(0))->view(globalObject);
+    auto current = asString(callFrame->uncheckedArgument(0))->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    StringView value = held;
+    StringView value = current;
     JSArray* texts = asArray(callFrame->uncheckedArgument(1));
     StringView placeholders = asString(callFrame->uncheckedArgument(2))->tryGetValueImpl();
     auto textAt = [&](unsigned index) -> StringView { return asString(texts->getIndexQuickly(index))->tryGetValueImpl(); };
@@ -456,7 +443,7 @@ JSC_DEFINE_HOST_FUNCTION(validationMatchesTemplate, (JSGlobalObject * globalObje
     return JSValue::encode(jsBoolean(matchesPlaceholder(placeholders[last - 1], value.substring(position, end - position))));
 }
 
-JSC_DEFINE_HOST_FUNCTION(validationCodePointLength, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(countCodePoints, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -473,7 +460,7 @@ JSC_DEFINE_HOST_FUNCTION(validationCodePointLength, (JSGlobalObject * globalObje
     return JSValue::encode(jsNumber(count));
 }
 
-JSC_DEFINE_HOST_FUNCTION(validationParseText, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(parseJSONText, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -482,18 +469,16 @@ JSC_DEFINE_HOST_FUNCTION(validationParseText, (JSGlobalObject * globalObject, Ca
     RELEASE_AND_RETURN(scope, JSValue::encode(JSONParseWithException(globalObject, view)));
 }
 
-// From here to the end of the call, what a node that reaches itself has said of an object is not worked out again.
-JSC_DEFINE_HOST_FUNCTION(validationStartRemembering, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(startMemoizing, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     JSArray* state = asArray(callFrame->uncheckedArgument(0));
-    if (state->getIndexQuickly(MemoryInState).isUndefined())
-        state->setIndexQuickly(vm, MemoryInState, JSMap::create(vm, globalObject->mapStructure()));
+    if (state->getIndexQuickly(StateMemo).isUndefined())
+        state->setIndexQuickly(vm, StateMemo, JSMap::create(vm, globalObject->mapStructure()));
     return JSValue::encode(jsUndefined());
 }
 
-// (memory, node, value): what was said, or undefined.
-JSC_DEFINE_HOST_FUNCTION(validationRecall, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(findVerdict, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     JSValue value = callFrame->uncheckedArgument(2);
     if (!value.isObject())
@@ -510,8 +495,7 @@ JSC_DEFINE_HOST_FUNCTION(validationRecall, (JSGlobalObject * globalObject, CallF
     return JSValue::encode(jsUndefined());
 }
 
-// (memory, node, value, verdict)
-JSC_DEFINE_HOST_FUNCTION(validationRemember, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(storeVerdict, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -535,14 +519,13 @@ JSC_DEFINE_HOST_FUNCTION(validationRemember, (JSGlobalObject * globalObject, Cal
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(validationThrowTooManyVisits, (JSGlobalObject * globalObject, CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(throwTooManyObjects, (JSGlobalObject * globalObject, CallFrame*))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     return throwVMRangeError(globalObject, scope, "The value holds more than 16777216 objects and arrays"_s);
 }
 
-// Two values are equal exactly if they are written alike here. A key is written as the address of its one and only string, which is kept for as long as the writing.
 class CanonicalWriter {
 public:
     explicit CanonicalWriter(JSGlobalObject* globalObject)
@@ -551,7 +534,7 @@ public:
     {
     }
 
-    enum class End : uint8_t { Written, NeedsCode, Threw };
+    enum class End : uint8_t { Written, NeedsUserCode, Threw };
 
     End write(JSValue value)
     {
@@ -588,8 +571,8 @@ public:
                 PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &m_vm);
                 bool isPresent = object->methodTable()->getOwnPropertySlotByIndex(object, m_globalObject, i, slot);
                 RETURN_IF_EXCEPTION(scope, End::Threw);
-                if (isPresent ? !slot.isValue() : ++holes > static_cast<unsigned>(mostHoles))
-                    return End::NeedsCode;
+                if (isPresent ? !slot.isValue() : ++holes > static_cast<unsigned>(maxHoles))
+                    return End::NeedsUserCode;
                 JSValue element = isPresent ? slot.getValue(m_globalObject, Identifier::from(m_vm, i)) : jsUndefined();
                 RETURN_IF_EXCEPTION(scope, End::Threw);
                 End end = write(element);
@@ -617,14 +600,14 @@ public:
             if (!isPresent)
                 continue;
             if (!slot.isValue())
-                return End::NeedsCode;
-            JSValue held = slot.getValue(m_globalObject, key);
+                return End::NeedsUserCode;
+            JSValue current = slot.getValue(m_globalObject, key);
             RETURN_IF_EXCEPTION(scope, End::Threw);
-            if (held.isUndefined())
+            if (current.isUndefined())
                 continue;
             ++count;
             word(Text, reinterpret_cast<uintptr_t>(key));
-            End end = write(held);
+            End end = write(current);
             if (end != End::Written)
                 return end;
         }
@@ -655,8 +638,7 @@ private:
     Vector<RefPtr<UniquedStringImpl>, 32> m_keys;
 };
 
-// (an array that has every element of its own, mark): whether no two elements are equal. The mark where only running code could say.
-JSC_DEFINE_HOST_FUNCTION(validationHasUniqueItems, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(hasUniqueItems, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -692,39 +674,37 @@ JSC_DEFINE_HOST_FUNCTION(validationHasUniqueItems, (JSGlobalObject * globalObjec
     return JSValue::encode(jsBoolean(true));
 }
 
-JSC_DEFINE_HOST_FUNCTION(validationIsMultipleInDecimals, (JSGlobalObject*, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(isDecimalMultiple, (JSGlobalObject*, CallFrame* callFrame))
 {
-    return JSValue::encode(jsBoolean(isMultipleInDecimals(callFrame->uncheckedArgument(0).asNumber(), callFrame->uncheckedArgument(1).asNumber())));
+    return JSValue::encode(jsBoolean(isDecimalMultipleOf(callFrame->uncheckedArgument(0).asNumber(), callFrame->uncheckedArgument(1).asNumber())));
 }
 
-// Whether a value, with all that it holds under its enumerated keys and its indices, is one that a JSON text says. A member that holds undefined is absent.
-class JSONLook {
+class JSONScanner {
 public:
-    // What one call has looked through and found good is not looked through again.
-    JSONLook(JSGlobalObject* globalObject, JSMap* lookedThrough)
+    JSONScanner(JSGlobalObject* globalObject, JSMap* scannedObjects)
         : m_globalObject(globalObject)
         , m_vm(globalObject->vm())
-        , m_lookedThrough(lookedThrough)
+        , m_scannedObjects(scannedObjects)
     {
     }
 
-    ValidationLook look(JSValue value)
+    JSONScanResult look(JSValue value)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         if (value.isNumber())
-            return std::isfinite(value.asNumber()) ? ValidationLook::OnlyJSON : ValidationLook::HoldsOther;
+            return std::isfinite(value.asNumber()) ? JSONScanResult::OnlyJSON : JSONScanResult::HasNonJSON;
         if (value.isString() || value.isBoolean() || value.isNull())
-            return ValidationLook::OnlyJSON;
+            return JSONScanResult::OnlyJSON;
         if (!value.isObject() || isFunctionType(value.asCell()->type()))
-            return ValidationLook::HoldsOther;
+            return JSONScanResult::HasNonJSON;
         JSObject* object = asObject(value);
         if (object->type() == ProxyObjectType)
-            return ValidationLook::NeedsCode;
-        if (m_seen.contains(object) || (m_lookedThrough && m_lookedThrough->has(m_globalObject, object)))
-            return ValidationLook::OnlyJSON;
+            return JSONScanResult::NeedsUserCode;
+        if (m_seen.contains(object) || (m_scannedObjects && m_scannedObjects->has(m_globalObject, object)))
+            return JSONScanResult::OnlyJSON;
         if (!m_vm.isSafeToRecurse()) [[unlikely]] {
             throwStackOverflowError(m_globalObject, scope);
-            return ValidationLook::NeedsCode;
+            return JSONScanResult::NeedsUserCode;
         }
         if (isAnyArray(value)) {
             unsigned length = asArray(object)->length();
@@ -733,75 +713,73 @@ public:
                 if (!element) {
                     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &m_vm);
                     bool isPresent = object->methodTable()->getOwnPropertySlotByIndex(object, m_globalObject, i, slot);
-                    RETURN_IF_EXCEPTION(scope, ValidationLook::NeedsCode);
+                    RETURN_IF_EXCEPTION(scope, JSONScanResult::NeedsUserCode);
                     if (!isPresent)
-                        return ValidationLook::HoldsOther;
+                        return JSONScanResult::HasNonJSON;
                     if (!slot.isValue())
-                        return ValidationLook::NeedsCode;
+                        return JSONScanResult::NeedsUserCode;
                     element = slot.getValue(m_globalObject, Identifier::from(m_vm, i));
-                    RETURN_IF_EXCEPTION(scope, ValidationLook::NeedsCode);
+                    RETURN_IF_EXCEPTION(scope, JSONScanResult::NeedsUserCode);
                 }
-                ValidationLook answer = look(element);
-                if (answer != ValidationLook::OnlyJSON)
+                JSONScanResult answer = look(element);
+                if (answer != JSONScanResult::OnlyJSON)
                     return answer;
             }
         } else {
             PropertyNameArrayBuilder names(m_vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
             object->methodTable()->getOwnPropertyNames(object, m_globalObject, names, DontEnumPropertiesMode::Exclude);
-            RETURN_IF_EXCEPTION(scope, ValidationLook::NeedsCode);
+            RETURN_IF_EXCEPTION(scope, JSONScanResult::NeedsUserCode);
             for (auto& name : names) {
                 PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &m_vm);
                 bool isPresent = object->methodTable()->getOwnPropertySlot(object, m_globalObject, name, slot);
-                RETURN_IF_EXCEPTION(scope, ValidationLook::NeedsCode);
+                RETURN_IF_EXCEPTION(scope, JSONScanResult::NeedsUserCode);
                 if (!isPresent)
                     continue;
                 if (!slot.isValue())
-                    return ValidationLook::NeedsCode;
-                JSValue held = slot.getValue(m_globalObject, name);
-                RETURN_IF_EXCEPTION(scope, ValidationLook::NeedsCode);
-                if (held.isUndefined())
+                    return JSONScanResult::NeedsUserCode;
+                JSValue current = slot.getValue(m_globalObject, name);
+                RETURN_IF_EXCEPTION(scope, JSONScanResult::NeedsUserCode);
+                if (current.isUndefined())
                     continue;
-                ValidationLook answer = look(held);
-                if (answer != ValidationLook::OnlyJSON)
+                JSONScanResult answer = look(current);
+                if (answer != JSONScanResult::OnlyJSON)
                     return answer;
             }
         }
-        if (m_lookedThrough) {
-            m_lookedThrough->set(m_globalObject, object, jsBoolean(true));
-            RETURN_IF_EXCEPTION(scope, ValidationLook::NeedsCode);
+        if (m_scannedObjects) {
+            m_scannedObjects->set(m_globalObject, object, jsBoolean(true));
+            RETURN_IF_EXCEPTION(scope, JSONScanResult::NeedsUserCode);
         } else
             m_seen.add(object);
-        return ValidationLook::OnlyJSON;
+        return JSONScanResult::OnlyJSON;
     }
 
 private:
     JSGlobalObject* m_globalObject;
     VM& m_vm;
-    JSMap* m_lookedThrough;
+    JSMap* m_scannedObjects;
     UncheckedKeyHashSet<JSObject*> m_seen;
 };
 
-// (value, mark, the state of the call or undefined): a boolean, or the mark where only running code could say.
-JSC_DEFINE_HOST_FUNCTION(validationSaysOnlyJSON, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(containsOnlyJSON, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = callFrame->uncheckedArgument(0);
-    // Nothing is read from a function, so nothing can be said of it.
     if (value.isCell() && isFunctionType(value.asCell()->type()))
         return JSValue::encode(callFrame->uncheckedArgument(1));
-    JSMap* lookedThrough = nullptr;
+    JSMap* scannedObjects = nullptr;
     if (value.isObject() && callFrame->uncheckedArgument(2).isCell()) {
         JSArray* state = asArray(callFrame->uncheckedArgument(2));
-        if (state->getIndexQuickly(LookedThroughInState).isUndefined())
-            state->setIndexQuickly(vm, LookedThroughInState, JSMap::create(vm, globalObject->mapStructure()));
-        lookedThrough = uncheckedDowncast<JSMap>(state->getIndexQuickly(LookedThroughInState).asCell());
+        if (state->getIndexQuickly(StateScannedObjects).isUndefined())
+            state->setIndexQuickly(vm, StateScannedObjects, JSMap::create(vm, globalObject->mapStructure()));
+        scannedObjects = uncheckedDowncast<JSMap>(state->getIndexQuickly(StateScannedObjects).asCell());
     }
-    ValidationLook answer = JSONLook(globalObject, lookedThrough).look(value);
+    JSONScanResult answer = JSONScanner(globalObject, scannedObjects).look(value);
     RETURN_IF_EXCEPTION(scope, {});
-    if (answer == ValidationLook::NeedsCode)
+    if (answer == JSONScanResult::NeedsUserCode)
         return JSValue::encode(callFrame->uncheckedArgument(1));
-    return JSValue::encode(jsBoolean(answer == ValidationLook::OnlyJSON));
+    return JSValue::encode(jsBoolean(answer == JSONScanResult::OnlyJSON));
 }
 
 namespace {
@@ -810,29 +788,24 @@ enum class Mode : uint8_t { Check, Copy };
 
 static bool isContainer(Shape shape) { return shape >= Shape::Array && shape <= Shape::Object; }
 
-// A node that says nothing but the name of another is that other.
-static uint32_t aliasOf(const Plan::Node& node)
+static uint32_t findAlias(const Plan::Node& node)
 {
     bool isAlias = node.shape == Shape::Unknown && node.defaultKind == Plan::Literal::None && node.rules.size() == 1 && node.rules[0].kind == RuleKind::Every && node.rules[0].nodes.size() == 1;
     return isAlias ? node.rules[0].nodes[0] : Plan::none;
 }
 
 struct Analysis : ThreadSafeRefCounted<Analysis> {
-    // Functions of their own: the nodes that reach themselves, and large ones that several places name.
     Vector<bool> isFunction;
-    Vector<bool> reachesItself;
-    Vector<bool> reachesFunction;
-    // The node, or an arm of it, is an object or an array. So a copy of the value is another value.
+    Vector<bool> isRecursive;
+    Vector<bool> callsSharedFunction;
     Vector<bool> describesContainers;
-    // The node, or an arm of it, puts something in the place of undefined.
     Vector<bool> appliesDefault;
     Vector<bool> acceptsUndefined;
-    // An object or an array that can hold objects or arrays.
     Vector<bool> holdsContainers;
     bool hasFunctions { false };
     bool hasLoops { false };
     bool hasDefaults { false };
-    bool takesHoles { false };
+    bool acceptsHoles { false };
     bool isSupported { true };
 };
 
@@ -846,9 +819,11 @@ public:
         m_state.fill(State::New, size);
         m_weight.fill(0, size);
         m_uses.fill(0, size);
+        m_lastWalk.fill(0, size);
+        m_inlinedSize.fill(0, size);
         analysis.isFunction.fill(false, size);
-        analysis.reachesItself.fill(false, size);
-        analysis.reachesFunction.fill(false, size);
+        analysis.isRecursive.fill(false, size);
+        analysis.callsSharedFunction.fill(false, size);
         analysis.describesContainers.fill(false, size);
         analysis.appliesDefault.fill(false, size);
         analysis.acceptsUndefined.fill(false, size);
@@ -862,7 +837,7 @@ public:
             return;
         size_t size = m_plan.nodes.size();
         for (unsigned i = 0; i < size; ++i) {
-            if (m_uses[i] > 1 && m_weight[i] > largestRepeatedNode)
+            if (m_uses[i] > 1 && m_weight[i] > maxDuplicatedWeight)
                 m_analysis.isFunction[i] = true;
             m_analysis.hasFunctions |= m_analysis.isFunction[i];
         }
@@ -876,27 +851,35 @@ public:
             });
             m_analysis.hasDefaults |= m_analysis.appliesDefault[i];
         }
+        unsigned written = computeInlinedSize(m_plan.root);
+        for (unsigned i = 0; i < size; ++i) {
+            if (m_analysis.isFunction[i])
+                written = std::min(maxWeight, written + computeInlinedSize(i));
+        }
+        if (written > maxInlinedNodes)
+            m_analysis.isSupported = false;
+        if (!m_analysis.isSupported)
+            return;
         m_reaches.fill(Reaches::NotAsked, size);
         for (unsigned i = 0; i < size; ++i) {
             if (m_state[i] != State::Done)
                 continue;
-            m_analysis.reachesFunction[i] = reachesFunction(i);
+            m_analysis.callsSharedFunction[i] = callsSharedFunction(i);
             const Plan::Node& node = m_plan.nodes[i];
             if (!isContainer(node.shape))
                 continue;
             bool holds = false;
-            bool takesHoles = false;
+            bool acceptsHoles = false;
             forEachChildOfShape(node, [&](uint32_t child) {
                 holds |= m_analysis.describesContainers[child];
-                takesHoles |= m_analysis.acceptsUndefined[child];
+                acceptsHoles |= m_analysis.acceptsUndefined[child];
             });
             m_analysis.holdsContainers[i] = holds;
             if (node.shape == Shape::Array || node.shape == Shape::Tuple)
-                m_analysis.takesHoles |= takesHoles;
+                m_analysis.acceptsHoles |= acceptsHoles;
             m_analysis.hasLoops |= node.shape != Shape::Object || node.undeclared == Plan::Undeclared::Validated;
             for (auto& rule : node.rules) {
                 m_analysis.hasLoops |= rule.kind == RuleKind::PatternMembers;
-                // What a rule looks at below the value is looked at as what the shape says is.
                 for (uint32_t child : rule.nodes)
                     m_analysis.holdsContainers[i] = m_analysis.holdsContainers[i] || m_analysis.describesContainers[child];
             }
@@ -904,8 +887,11 @@ public:
     }
 
 private:
-    AOT_CLASS_THRESHOLD(unsigned, largestRepeatedNode, 12);
-    AOT_CLASS_THRESHOLD(unsigned, deepestPlan, 400);
+    AOT_CLASS_THRESHOLD(unsigned, maxDuplicatedWeight, 12);
+    AOT_CLASS_THRESHOLD(unsigned, maxPlanDepth, 400);
+    AOT_CLASS_THRESHOLD(unsigned, maxWeight, 1 << 20);
+    AOT_CLASS_THRESHOLD(unsigned, maxInlinedNodes, 1 << 17);
+    AOT_CLASS_THRESHOLD(unsigned, maxAnalysisSteps, 1 << 22);
     enum class State : uint8_t { New, Open, Done };
     enum class Reaches : uint8_t { NotAsked, No, Yes };
 
@@ -919,27 +905,52 @@ private:
             visit(member.node);
     }
 
-    void forEachAlternative(uint32_t index, NOESCAPE const Invocable<void(const Plan::Node&)> auto& visit) const
+    void forEachAlternative(uint32_t index, NOESCAPE const Invocable<void(const Plan::Node&)> auto& visit)
     {
-        Vector<uint32_t, 8> alternatives { index };
+        ++m_walk;
+        Vector<uint32_t, 8> alternatives;
+        auto add = [&](uint32_t alternative) {
+            if (std::exchange(m_lastWalk[alternative], m_walk) != m_walk)
+                alternatives.append(alternative);
+        };
+        add(index);
         for (unsigned i = 0; i < alternatives.size(); ++i) {
             const Plan::Node& node = m_plan.nodes[alternatives[i]];
-            if (uint32_t other = aliasOf(node); other != Plan::none) {
-                if (!alternatives.contains(other))
-                    alternatives.append(other);
+            if (++m_steps > maxAnalysisSteps) {
+                m_analysis.isSupported = false;
+                return;
+            }
+            if (uint32_t other = findAlias(node); other != Plan::none) {
+                add(other);
                 continue;
             }
             visit(node);
             if (node.shape != Shape::Union)
                 continue;
-            for (uint32_t arm : node.children) {
-                if (!alternatives.contains(arm))
-                    alternatives.append(arm);
-            }
+            for (uint32_t arm : node.children)
+                add(arm);
         }
     }
 
-    bool reachesFunction(uint32_t index)
+    unsigned computeInlinedSize(uint32_t index)
+    {
+        if (m_inlinedSize[index])
+            return m_inlinedSize[index];
+        const Plan::Node& node = m_plan.nodes[index];
+        unsigned size = 1 + node.rules.size();
+        auto add = [&](uint32_t child) {
+            size = std::min(maxWeight, size + (m_analysis.isFunction[child] ? 1 : computeInlinedSize(child)));
+        };
+        forEachChildOfShape(node, add);
+        for (auto& rule : node.rules) {
+            for (uint32_t child : rule.nodes)
+                add(child);
+        }
+        m_inlinedSize[index] = size;
+        return size;
+    }
+
+    bool callsSharedFunction(uint32_t index)
     {
         if (m_analysis.isFunction[index])
             return true;
@@ -948,18 +959,17 @@ private:
         const Plan::Node& node = m_plan.nodes[index];
         bool reaches = false;
         forEachChildOfShape(node, [&](uint32_t child) {
-            reaches = reaches || reachesFunction(child);
+            reaches = reaches || callsSharedFunction(child);
         });
         for (auto& rule : node.rules) {
             for (uint32_t child : rule.nodes)
-                reaches = reaches || reachesFunction(child);
+                reaches = reaches || callsSharedFunction(child);
         }
         m_reaches[index] = reaches ? Reaches::Yes : Reaches::No;
         return reaches;
     }
 
-    // Each rule speaks of one kind of value.
-    static bool suits(RuleKind kind, Shape shape)
+    static bool appliesToShape(RuleKind kind, Shape shape)
     {
         switch (kind) {
         case RuleKind::Integer:
@@ -996,7 +1006,7 @@ private:
         return false;
     }
 
-    static unsigned nodesOf(RuleKind kind)
+    static unsigned toNodeIndexes(RuleKind kind)
     {
         switch (kind) {
         case RuleKind::Not:
@@ -1031,7 +1041,7 @@ private:
 
     unsigned visit(uint32_t index)
     {
-        if (index >= m_plan.nodes.size() || m_depth > deepestPlan) {
+        if (index >= m_plan.nodes.size() || m_depth > maxPlanDepth) {
             m_analysis.isSupported = false;
             return 0;
         }
@@ -1039,7 +1049,7 @@ private:
         ++m_uses[index];
         if (m_state[index] == State::Open) {
             m_analysis.isFunction[index] = true;
-            m_analysis.reachesItself[index] = true;
+            m_analysis.isRecursive[index] = true;
             return 1;
         }
         if (m_state[index] == State::Done)
@@ -1047,23 +1057,26 @@ private:
         m_state[index] = State::Open;
         const Plan::Node& node = m_plan.nodes[index];
         unsigned weight = 1 + node.rules.size();
+        auto add = [&](unsigned more) {
+            weight = std::min(maxWeight, weight + std::min(maxWeight, more));
+        };
         bool needsChild = node.shape == Shape::Array || node.shape == Shape::Dictionary || (node.shape == Shape::Object && node.undeclared == Plan::Undeclared::Validated);
         if (needsChild && node.child == Plan::none)
             m_analysis.isSupported = false;
         if (node.shape == Shape::Tuple && node.required > node.children.size())
             m_analysis.isSupported = false;
         forEachChildOfShape(node, [&](uint32_t child) {
-            weight += visit(child);
+            add(visit(child));
         });
         for (auto& rule : node.rules) {
-            if (!suits(rule.kind, node.shape) || (nodesOf(rule.kind) && rule.nodes.size() != nodesOf(rule.kind)))
+            if (!appliesToShape(rule.kind, node.shape) || (toNodeIndexes(rule.kind) && rule.nodes.size() != toNodeIndexes(rule.kind)))
                 m_analysis.isSupported = false;
             if (rule.kind == RuleKind::PatternMembers && rule.texts.size() != rule.nodes.size())
                 m_analysis.isSupported = false;
             if (rule.kind == RuleKind::Template && (rule.texts.size() < 2 || rule.text.length() + 1 != rule.texts.size()))
                 m_analysis.isSupported = false;
             for (uint32_t child : rule.nodes)
-                weight += visit(child);
+                add(visit(child));
         }
         m_state[index] = State::Done;
         m_weight[index] = weight;
@@ -1076,6 +1089,10 @@ private:
     Vector<Reaches> m_reaches;
     Vector<unsigned> m_weight;
     Vector<unsigned> m_uses;
+    Vector<unsigned> m_lastWalk;
+    Vector<unsigned> m_inlinedSize;
+    unsigned m_walk { 0 };
+    unsigned m_steps { 0 };
     unsigned m_depth { 0 };
 };
 
@@ -1088,13 +1105,10 @@ struct Shared : ThreadSafeRefCounted<Shared> {
     {
     }
 
-    // A text shares nothing, so what is made of one has as many objects as the text says.
     bool limitsVisits() const { return kind != ValidatorKind::Parse && (analysis->hasFunctions || analysis->hasLoops); }
     bool countsVisits() const { return analysis->hasFunctions || limitsVisits(); }
-    bool countsHoles() const { return kind != ValidatorKind::Parse && analysis->takesHoles; }
-    // The functions of a validator have the counts in one place.
+    bool countsHoles() const { return kind != ValidatorKind::Parse && analysis->acceptsHoles; }
     bool hasState() const { return analysis->hasFunctions; }
-    // Nobody else has what a text was made into, so only a default changes it, and then it is copied as any value is.
     Mode mode() const { return kind == ValidatorKind::Validate || (kind == ValidatorKind::Parse && analysis->hasDefaults) ? Mode::Copy : Mode::Check; }
 
     const Ref<Plan> plan;
@@ -1103,10 +1117,9 @@ struct Shared : ThreadSafeRefCounted<Shared> {
     const ValidatorKind kind;
 };
 
-// What one writing of a validator's functions has in common. The first function holds all of it as constants.
 struct Functions {
-    JSFunction* checks { nullptr };
-    JSFunction* copies { nullptr };
+    JSFunction* checkFunction { nullptr };
+    JSFunction* copyFunction { nullptr };
     JSArray* state { nullptr };
 };
 
@@ -1123,8 +1136,8 @@ public:
     {
         m_undefined = a.constant(jsUndefined());
         m_zero = a.constant(jsNumber(0));
-        m_mark = a.constant(symbolOf(m_vm, endOfCheckName));
-        m_failure = a.constant(symbolOf(m_vm, failureName));
+        m_bailoutMarker = a.constant(createMarker(m_vm, bailoutMarkerName));
+        m_failureMarker = a.constant(createMarker(m_vm, failureMarkerName));
         if (functions.state)
             m_state = a.constant(functions.state);
     }
@@ -1132,43 +1145,43 @@ public:
     void emitCheck()
     {
         Target fail = a.newLabel();
-        m_refuse = fail;
-        m_tooMany = fail;
-        emitBeginning();
-        emitUse(m_plan.root, a.argument(0), fail, false);
+        m_bailout = fail;
+        m_tooManyObjects = fail;
+        emitResetState();
+        emitNodeOrCall(m_plan.root, a.argument(0), fail, false);
         a.returnValue(a.constant(jsBoolean(true)));
         a.bind(fail);
         a.returnValue(a.constant(jsBoolean(false)));
         emitDeferred();
     }
 
-    void emitValidate(JSObject* onRefused, JSObject* onNotLookedAt)
+    void emitValidate(JSObject* onRefused, JSObject* onBailout)
     {
         Target fail = a.newLabel();
-        m_refuse = a.newLabel();
-        m_tooMany = a.newLabel();
+        m_bailout = a.newLabel();
+        m_tooManyObjects = a.newLabel();
         Slot value = a.newRegister();
-        emitBeginning();
+        emitResetState();
         a.move(value, a.argument(0));
-        emitUse(m_plan.root, value, fail, false);
+        emitNodeOrCall(m_plan.root, value, fail, false);
         a.returnValue(value);
         Slot given[] = { a.argument(0) };
         a.bind(fail);
         a.call(value, onRefused, given);
         a.returnValue(value);
-        a.bind(m_refuse);
-        a.call(value, onNotLookedAt, given);
+        a.bind(m_bailout);
+        a.call(value, onBailout, given);
         a.returnValue(value);
-        emitTooMany();
+        emitThrowTooManyObjects();
         emitDeferred();
     }
 
-    void emitParse(JSObject* onRefused, JSObject* onNotLookedAt, JSObject* onOtherArguments)
+    void emitParse(JSObject* onRefused, JSObject* onBailout, JSObject* onOtherArguments)
     {
         Target fail = a.newLabel();
         Target isOther = a.newLabel();
-        m_refuse = a.newLabel();
-        m_tooMany = m_refuse;
+        m_bailout = a.newLabel();
+        m_tooManyObjects = m_bailout;
         Slot parsed = a.newRegister();
         Slot value = a.newRegister();
         Slot count = a.newRegister();
@@ -1176,19 +1189,18 @@ public:
         a.readArgumentCount(count);
         a.jumpIfStrictlyEqual(count, one, false, isOther);
         a.jumpIfCellType(a.argument(0), StringType, false, isOther);
-        callHelper(parsed, m_parseText, validationParseText, { a.argument(0) });
-        emitBeginning();
+        callHelper(parsed, m_parseJSONText, parseJSONText, { a.argument(0) });
+        emitResetState();
         a.move(value, parsed);
-        emitUse(m_plan.root, value, fail, false);
+        emitNodeOrCall(m_plan.root, value, fail, false);
         a.returnValue(m_mode == Mode::Copy ? value : parsed);
         Slot made[] = { parsed };
         a.bind(fail);
         a.call(value, onRefused, made);
         a.returnValue(value);
-        a.bind(m_refuse);
-        a.call(value, onNotLookedAt, made);
+        a.bind(m_bailout);
+        a.call(value, onBailout, made);
         a.returnValue(value);
-        // It is handed as many arguments as came.
         a.bind(isOther);
         Target hasNone = a.newLabel();
         Target hasOne = a.newLabel();
@@ -1206,12 +1218,11 @@ public:
         emitDeferred();
     }
 
-    // function (value, node). Where it checks: true, false, or undefined where the whole check ends in a refusal. Where it copies: the copy, or one of the two symbols.
-    void emitFunctionOfNodes()
+    void emitSharedNodesFunction()
     {
-        m_refuse = a.newLabel();
-        m_tooMany = m_shared.kind == ValidatorKind::Validate ? a.newLabel() : m_refuse;
-        bool copies = m_mode == Mode::Copy;
+        m_bailout = a.newLabel();
+        m_tooManyObjects = m_shared.kind == ValidatorKind::Validate ? a.newLabel() : m_bailout;
+        bool isCopying = m_mode == Mode::Copy;
         Vector<std::pair<uint32_t, Target>> entries;
         for (unsigned i = 0; i < m_plan.nodes.size(); ++i) {
             if (!m_analysis.isFunction[i])
@@ -1219,32 +1230,31 @@ public:
             entries.append({ i, a.newLabel() });
             a.jumpIfStrictlyEqual(a.argument(1), a.constant(jsNumber(i)), true, entries.last().second);
         }
-        a.jump(m_refuse);
+        a.jump(m_bailout);
         for (auto [node, label] : entries) {
-            SlotScope scope(a);
+            RegisterScope scope(a);
             a.bind(label);
             Target fail = a.newLabel();
             Slot value = a.newRegister();
             a.move(value, a.argument(0));
-            // A copy is made anew at every place, so only what a check has said is kept.
-            bool remembers = !copies && m_analysis.reachesItself[node];
-            Slot memory = remembers ? a.newRegister() : nullptr;
-            Slot verdict = remembers ? a.newRegister() : nullptr;
+            bool memoizes = !isCopying && m_analysis.isRecursive[node];
+            Slot memory = memoizes ? a.newRegister() : nullptr;
+            Slot verdict = memoizes ? a.newRegister() : nullptr;
             Target isNotKnown = a.newLabel();
             Target finish = a.newLabel();
-            if (remembers) {
-                a.readElement(memory, m_state, a.constant(jsNumber(MemoryInState)));
+            if (memoizes) {
+                a.readElement(memory, m_state, a.constant(jsNumber(StateMemo)));
                 a.jumpIfStrictlyEqual(memory, m_undefined, true, isNotKnown);
-                callHelper(verdict, m_recall, validationRecall, { memory, a.argument(1), a.argument(0) });
+                callHelper(verdict, m_findVerdict, findVerdict, { memory, a.argument(1), a.argument(0) });
                 a.jumpIfStrictlyEqual(verdict, m_undefined, true, isNotKnown);
                 a.returnValue(verdict);
                 a.bind(isNotKnown);
             }
             emitNode(node, value, fail, true);
-            if (!remembers) {
-                a.returnValue(copies ? value : a.constant(jsBoolean(true)));
+            if (!memoizes) {
+                a.returnValue(isCopying ? value : a.constant(jsBoolean(true)));
                 a.bind(fail);
-                a.returnValue(copies ? m_failure : a.constant(jsBoolean(false)));
+                a.returnValue(isCopying ? m_failureMarker : a.constant(jsBoolean(false)));
                 continue;
             }
             a.move(verdict, a.constant(jsBoolean(true)));
@@ -1253,39 +1263,38 @@ public:
             a.move(verdict, a.constant(jsBoolean(false)));
             a.bind(finish);
             Target isDone = a.newLabel();
-            a.readElement(memory, m_state, a.constant(jsNumber(MemoryInState)));
+            a.readElement(memory, m_state, a.constant(jsNumber(StateMemo)));
             a.jumpIfStrictlyEqual(memory, m_undefined, true, isDone);
-            callHelper(value, m_remember, validationRemember, { memory, a.argument(1), a.argument(0), verdict });
+            callHelper(value, m_storeVerdict, storeVerdict, { memory, a.argument(1), a.argument(0), verdict });
             a.bind(isDone);
             a.returnValue(verdict);
         }
-        a.bind(m_refuse);
-        a.returnValue(copies ? m_mark : m_undefined);
-        if (m_tooMany != m_refuse)
-            emitTooMany();
+        a.bind(m_bailout);
+        a.returnValue(isCopying ? m_bailoutMarker : m_undefined);
+        if (m_tooManyObjects != m_bailout)
+            emitThrowTooManyObjects();
         emitDeferred();
     }
 
 private:
-    class SlotScope {
+    class RegisterScope {
     public:
-        explicit SlotScope(Writer& assembler)
+        explicit RegisterScope(Writer& assembler)
             : m_assembler(assembler)
-            , m_count(assembler.registersInUse())
+            , m_count(assembler.liveRegisterCount())
         {
         }
-        ~SlotScope() { m_assembler.releaseRegistersFrom(m_count); }
+        ~RegisterScope() { m_assembler.releaseRegistersAbove(m_count); }
 
     private:
         Writer& m_assembler;
         unsigned m_count;
     };
 
-    const Plan::Node& nodeAt(uint32_t index) const { return m_plan.nodes[index]; }
-    bool copies() const { return m_mode == Mode::Copy; }
-    // Whether what the node hands on can be another value than it was given.
-    bool changes(uint32_t index) const { return copies() && (m_analysis.describesContainers[index] || m_analysis.appliesDefault[index]); }
-    bool saysNothing(uint32_t index) const { return nodeAt(index).shape == Shape::Unknown && nodeAt(index).rules.isEmpty() && nodeAt(index).defaultKind == Plan::Literal::None; }
+    const Plan::Node& getNode(uint32_t index) const { return m_plan.nodes[index]; }
+    bool isCopying() const { return m_mode == Mode::Copy; }
+    bool changes(uint32_t index) const { return isCopying() && (m_analysis.describesContainers[index] || m_analysis.appliesDefault[index]); }
+    bool acceptsAnything(uint32_t index) const { return getNode(index).shape == Shape::Unknown && getNode(index).rules.isEmpty() && getNode(index).defaultKind == Plan::Literal::None; }
 
     JSValue helper(NativeFunction function, unsigned length, Intrinsic intrinsic = NoIntrinsic)
     {
@@ -1303,9 +1312,9 @@ private:
     {
         for (Slot one : used) {
             if (one)
-                a.keepUntilTheEnd(one);
+                a.pinRegister(one);
         }
-        a.keepRegistersInUse();
+        a.pinLiveRegisters();
         m_deferred.append(WTF::move(block));
     }
 
@@ -1315,14 +1324,14 @@ private:
             m_deferred[i]();
     }
 
-    void emitBeginning()
+    void emitResetState()
     {
         if (m_state) {
-            a.writeOwnElement(m_state, a.constant(jsNumber(VisitsInState)), m_zero);
-            a.writeOwnElement(m_state, a.constant(jsNumber(MemoryInState)), m_undefined);
-            a.writeOwnElement(m_state, a.constant(jsNumber(LookedThroughInState)), m_undefined);
+            a.writeOwnElement(m_state, a.constant(jsNumber(StateVisitCount)), m_zero);
+            a.writeOwnElement(m_state, a.constant(jsNumber(StateMemo)), m_undefined);
+            a.writeOwnElement(m_state, a.constant(jsNumber(StateScannedObjects)), m_undefined);
             if (m_shared.countsHoles())
-                a.writeOwnElement(m_state, a.constant(jsNumber(HolesInState)), a.constant(jsNumber(mostHoles)));
+                a.writeOwnElement(m_state, a.constant(jsNumber(StateHolesLeft)), a.constant(jsNumber(maxHoles)));
             return;
         }
         if (m_shared.countsVisits()) {
@@ -1331,32 +1340,31 @@ private:
         }
         if (m_shared.countsHoles()) {
             m_holes = a.newRegister();
-            a.move(m_holes, a.constant(jsNumber(mostHoles)));
+            a.move(m_holes, a.constant(jsNumber(maxHoles)));
         }
     }
 
-    void emitTooMany()
+    void emitThrowTooManyObjects()
     {
-        a.bind(m_tooMany);
+        a.bind(m_tooManyObjects);
         Slot nothing = a.newRegister();
-        callHelper(nothing, m_throwTooManyVisits, validationThrowTooManyVisits, { });
+        callHelper(nothing, m_throwTooManyObjects, throwTooManyObjects, { });
         a.returnValue(nothing);
     }
 
     void readVisits(Slot destination)
     {
         if (m_state)
-            a.readElement(destination, m_state, a.constant(jsNumber(VisitsInState)));
+            a.readElement(destination, m_state, a.constant(jsNumber(StateVisitCount)));
         else
             a.move(destination, m_visits);
     }
 
-    // A value may hold one object at many places, and each place is looked at.
     void emitCountVisit(const Plan::Node& node)
     {
         if (!m_shared.countsVisits() || !m_analysis.holdsContainers[&node - m_plan.nodes.span().data()])
             return;
-        SlotScope scope(a);
+        RegisterScope scope(a);
         Slot visits = m_visits;
         if (m_state) {
             visits = a.newRegister();
@@ -1364,88 +1372,81 @@ private:
         }
         a.increment(visits);
         if (m_state)
-            a.writeOwnElement(m_state, a.constant(jsNumber(VisitsInState)), visits);
+            a.writeOwnElement(m_state, a.constant(jsNumber(StateVisitCount)), visits);
         if (m_shared.limitsVisits())
-            a.jumpIfCompares(Comparison::Greater, visits, a.constant(jsNumber(mostVisits)), true, m_tooMany);
+            a.jumpIfCompares(Comparison::Greater, visits, a.constant(jsNumber(maxVisitedObjects)), true, m_tooManyObjects);
     }
 
-    // An arm that has looked below its value and then failed: the next arm looks there again, and so at every level.
-    void emitAfterFailedArm(Slot visitsBefore)
+    // Without memoizing, arms that each recurse into the same value double the work at every level.
+    void emitMemoizeAfterDeepFailure(Slot visitsBefore)
     {
-        SlotScope scope(a);
+        RegisterScope scope(a);
         Slot visits = a.newRegister();
         Target isCheap = a.newLabel();
         readVisits(visits);
         a.compute(Arithmetic::Subtract, visits, visits, visitsBefore);
         a.jumpIfCompares(Comparison::Greater, visits, a.constant(jsNumber(1)), false, isCheap);
-        if (copies())
-            a.jump(m_refuse);
-        else
-            callHelper(visits, m_startRemembering, validationStartRemembering, { m_state });
+        callHelper(visits, m_startMemoizing, startMemoizing, { m_state });
         a.bind(isCheap);
     }
 
-    void emitStartRemembering(std::span<const uint32_t> nodes)
+    void emitStartMemoizing(std::span<const uint32_t> nodes)
     {
         bool reaches = false;
         for (uint32_t node : nodes)
-            reaches |= m_analysis.reachesFunction[node];
+            reaches |= m_analysis.callsSharedFunction[node];
         if (!reaches)
             return;
-        SlotScope scope(a);
+        RegisterScope scope(a);
         Slot memory = a.newRegister();
-        Target remembers = a.newLabel();
-        a.readElement(memory, m_state, a.constant(jsNumber(MemoryInState)));
-        a.jumpIfStrictlyEqual(memory, m_undefined, false, remembers);
-        callHelper(memory, m_startRemembering, validationStartRemembering, { m_state });
-        a.bind(remembers);
+        Target memoizes = a.newLabel();
+        a.readElement(memory, m_state, a.constant(jsNumber(StateMemo)));
+        a.jumpIfStrictlyEqual(memory, m_undefined, false, memoizes);
+        callHelper(memory, m_startMemoizing, startMemoizing, { m_state });
+        a.bind(memoizes);
     }
 
-    // What the node makes of the value is left in `value`. isSoft: a failure here does not end the check.
-    void emitUse(uint32_t index, Slot value, Target fail, bool isSoft)
+    void emitNodeOrCall(uint32_t index, Slot value, Target fail, bool isSoft)
     {
         if (!m_analysis.isFunction[index]) {
             emitNode(index, value, fail, isSoft);
             return;
         }
-        SlotScope scope(a);
+        RegisterScope scope(a);
         Slot result = a.newRegister();
         Slot arguments[] = { value, a.constant(jsNumber(index)) };
-        if (copies()) {
-            a.call(result, m_functions.copies, arguments);
-            a.jumpIfStrictlyEqual(result, m_failure, true, fail);
-            a.jumpIfStrictlyEqual(result, m_mark, true, m_refuse);
+        if (isCopying()) {
+            a.call(result, m_functions.copyFunction, arguments);
+            a.jumpIfStrictlyEqual(result, m_failureMarker, true, fail);
+            a.jumpIfStrictlyEqual(result, m_bailoutMarker, true, m_bailout);
             a.move(value, result);
             return;
         }
-        a.call(result, m_functions.checks, arguments);
+        a.call(result, m_functions.checkFunction, arguments);
         Target passed = a.newLabel();
         a.jumpIfTruthy(result, true, passed);
-        a.jumpIfStrictlyEqual(result, m_undefined, true, m_refuse);
+        a.jumpIfStrictlyEqual(result, m_undefined, true, m_bailout);
         a.jump(fail);
         a.bind(passed);
     }
 
-    // A rule asks whether a node takes the value. Nothing is made.
-    void emitTest(uint32_t index, Slot value, Target fail, bool isSoft)
+    void emitCheckOnly(uint32_t index, Slot value, Target fail, bool isSoft)
     {
         SetForScope mode(m_mode, Mode::Check);
         if (!m_analysis.describesContainers[index] && !m_analysis.appliesDefault[index]) {
-            emitUse(index, value, fail, isSoft);
+            emitNodeOrCall(index, value, fail, isSoft);
             return;
         }
-        SlotScope scope(a);
+        RegisterScope scope(a);
         Slot tested = a.newRegister();
         a.move(tested, value);
-        emitUse(index, tested, fail, isSoft);
+        emitNodeOrCall(index, tested, fail, isSoft);
     }
 
-    uint32_t indexOf(const Plan::Node& node) const { return &node - m_plan.nodes.span().data(); }
+    uint32_t getIndex(const Plan::Node& node) const { return &node - m_plan.nodes.span().data(); }
 
-    // A rule under which a node that refuses lets the value pass first looks through all of its value, at any depth, below what no node describes too:
-    // it fails if the value holds what no JSON text says (a number that is not finite, undefined or a hole among elements, a bigint, a symbol, a function).
-    // The outermost such rule fails first, so nothing turns that round.
-    void emitLookThrough(const Plan::Node& node, Slot value, Target fail)
+    // A rule that passes when a node fails must not pass because of a value JSON cannot hold.
+    void emitRequireOnlyJSON(const Plan::Node& node, Slot value, Target fail)
     {
         switch (node.shape) {
         case Shape::Null:
@@ -1468,14 +1469,14 @@ private:
         case Shape::Union:
             break;
         }
-        SlotScope scope(a);
+        RegisterScope scope(a);
         Slot answer = a.newRegister();
-        callHelper(answer, m_saysOnlyJSON, validationSaysOnlyJSON, { value, m_mark, m_state ? m_state : m_undefined });
-        a.jumpIfStrictlyEqual(answer, m_mark, true, m_refuse);
+        callHelper(answer, m_containsOnlyJSON, containsOnlyJSON, { value, m_bailoutMarker, m_state ? m_state : m_undefined });
+        a.jumpIfStrictlyEqual(answer, m_bailoutMarker, true, m_bailout);
         a.jumpIfTruthy(answer, false, fail);
     }
 
-    JSValue defaultOf(const Plan::Node& node)
+    JSValue getDefaultValue(const Plan::Node& node)
     {
         switch (node.defaultKind) {
         case Plan::Literal::None:
@@ -1494,57 +1495,57 @@ private:
 
     void emitNode(uint32_t index, Slot value, Target fail, bool isSoft)
     {
-        const Plan::Node& node = nodeAt(index);
-        if (JSValue standIn = defaultOf(node)) {
-            Target isThere = a.newLabel();
-            a.jumpIfStrictlyEqual(value, m_undefined, false, isThere);
-            a.move(value, a.constant(standIn));
-            a.bind(isThere);
+        const Plan::Node& node = getNode(index);
+        if (JSValue defaultValue = getDefaultValue(node)) {
+            Target hasValue = a.newLabel();
+            a.jumpIfStrictlyEqual(value, m_undefined, false, hasValue);
+            a.move(value, a.constant(defaultValue));
+            a.bind(hasValue);
         }
-        Target misfit = fail;
+        Target wrongShape = fail;
         switch (node.shape) {
         case Shape::Unknown:
             break;
         case Shape::Never:
-            a.jump(misfit);
+            a.jump(wrongShape);
             return;
         case Shape::Undefined:
-            a.jumpIfStrictlyEqual(value, m_undefined, false, misfit);
+            a.jumpIfStrictlyEqual(value, m_undefined, false, wrongShape);
             break;
         case Shape::Null:
-            a.jumpIfStrictlyEqual(value, a.constant(jsNull()), false, misfit);
+            a.jumpIfStrictlyEqual(value, a.constant(jsNull()), false, wrongShape);
             break;
         case Shape::AnyObject:
-            a.jumpIfObject(value, false, misfit);
+            a.jumpIfObject(value, false, wrongShape);
             break;
         case Shape::Boolean:
-            a.jumpIfBoolean(value, false, misfit);
+            a.jumpIfBoolean(value, false, wrongShape);
             break;
         case Shape::BigInt:
-            a.jumpIfCellType(value, HeapBigIntType, false, misfit);
+            a.jumpIfCellType(value, HeapBigIntType, false, wrongShape);
             break;
         case Shape::BooleanLiteral:
-            a.jumpIfStrictlyEqual(value, a.constant(jsBoolean(node.boolean)), false, misfit);
+            a.jumpIfStrictlyEqual(value, a.constant(jsBoolean(node.boolean)), false, wrongShape);
             break;
         case Shape::NumberLiteral:
-            a.jumpIfStrictlyEqual(value, a.constant(jsNumber(node.number)), false, misfit);
+            a.jumpIfStrictlyEqual(value, a.constant(jsNumber(node.number)), false, wrongShape);
             break;
         case Shape::StringLiteral:
-            a.jumpIfStrictlyEqual(value, a.constant(jsString(m_vm, node.string)), false, misfit);
+            a.jumpIfStrictlyEqual(value, a.constant(jsString(m_vm, node.string)), false, wrongShape);
             break;
         case Shape::Number:
-            emitNumber(node, value, misfit);
+            emitNumber(node, value, wrongShape);
             break;
         case Shape::String:
-            emitString(node, value, misfit, fail);
+            emitString(node, value, wrongShape, fail);
             break;
         case Shape::Array:
         case Shape::Tuple:
-            emitArray(node, value, misfit, fail, isSoft);
+            emitArray(node, value, wrongShape, fail, isSoft);
             break;
         case Shape::Dictionary:
         case Shape::Object:
-            emitObjectGuard(readsByKey(node), value, misfit);
+            emitObjectGuard(readsValuesByKey(node), value, wrongShape);
             emitObject(node, value, fail, isSoft, nullptr);
             break;
         case Shape::Union:
@@ -1560,9 +1561,9 @@ private:
             switch (rule.kind) {
             case RuleKind::Not: {
                 Target refused = a.newLabel();
-                emitLookThrough(node, value, fail);
-                emitStartRemembering(rule.nodes.span());
-                emitTest(rule.nodes[0], value, refused, true);
+                emitRequireOnlyJSON(node, value, fail);
+                emitStartMemoizing(rule.nodes.span());
+                emitCheckOnly(rule.nodes[0], value, refused, true);
                 a.jump(fail);
                 a.bind(refused);
                 break;
@@ -1570,25 +1571,25 @@ private:
             case RuleKind::If: {
                 Target otherwise = a.newLabel();
                 Target done = a.newLabel();
-                emitLookThrough(node, value, fail);
-                emitStartRemembering(rule.nodes.span());
-                emitTest(rule.nodes[0], value, otherwise, true);
-                emitTest(rule.nodes[1], value, fail, isSoft);
+                emitRequireOnlyJSON(node, value, fail);
+                emitStartMemoizing(rule.nodes.span());
+                emitCheckOnly(rule.nodes[0], value, otherwise, true);
+                emitCheckOnly(rule.nodes[1], value, fail, isSoft);
                 a.jump(done);
                 a.bind(otherwise);
-                emitTest(rule.nodes[2], value, fail, isSoft);
+                emitCheckOnly(rule.nodes[2], value, fail, isSoft);
                 a.bind(done);
                 break;
             }
             case RuleKind::ExactlyOne: {
-                SlotScope scope(a);
+                RegisterScope scope(a);
                 Slot hasPassed = a.newRegister();
-                emitLookThrough(node, value, fail);
-                emitStartRemembering(rule.nodes.span());
+                emitRequireOnlyJSON(node, value, fail);
+                emitStartMemoizing(rule.nodes.span());
                 a.move(hasPassed, a.constant(jsBoolean(false)));
                 for (uint32_t arm : rule.nodes) {
                     Target missed = a.newLabel();
-                    emitTest(arm, value, missed, true);
+                    emitCheckOnly(arm, value, missed, true);
                     a.jumpIfTruthy(hasPassed, true, fail);
                     a.move(hasPassed, a.constant(jsBoolean(true)));
                     a.bind(missed);
@@ -1597,15 +1598,14 @@ private:
                 break;
             }
             case RuleKind::Every:
-                // A node that says nothing but the name of another is that other.
-                if (aliasOf(node) != Plan::none) {
-                    emitUse(rule.nodes[0], value, fail, isSoft);
+                if (findAlias(node) != Plan::none) {
+                    emitNodeOrCall(rule.nodes[0], value, fail, isSoft);
                     break;
                 }
                 if (rule.nodes.size() > 1)
-                    emitStartRemembering(rule.nodes.span());
+                    emitStartMemoizing(rule.nodes.span());
                 for (uint32_t part : rule.nodes)
-                    emitTest(part, value, fail, isSoft);
+                    emitCheckOnly(part, value, fail, isSoft);
                 break;
             case RuleKind::Integer:
             case RuleKind::Minimum:
@@ -1634,7 +1634,7 @@ private:
 
     void emitNumber(const Plan::Node& node, Slot value, Target fail)
     {
-        SlotScope scope(a);
+        RegisterScope scope(a);
         a.jumpIfNumber(value, false, fail);
         bool isInteger = false;
         bool hasLower = false;
@@ -1672,8 +1672,8 @@ private:
                 a.jumpIfCompares(Comparison::Less, value, bound, false, fail);
                 break;
             case RuleKind::MultipleOf:
-                if ((rule.flags & Plan::byDecimals) && rule.number != std::trunc(rule.number)) {
-                    callHelper(scratch, m_isMultipleInDecimals, validationIsMultipleInDecimals, { value, bound });
+                if ((rule.flags & Plan::compareAsDecimals) && rule.number != std::trunc(rule.number)) {
+                    callHelper(scratch, m_isDecimalMultiple, isDecimalMultiple, { value, bound });
                     a.jumpIfTruthy(scratch, false, fail);
                     break;
                 }
@@ -1704,19 +1704,19 @@ private:
         }
     }
 
-    JSArray* arrayOfStrings(const auto& strings, NOESCAPE const auto& stringOf)
+    JSArray* createStringArray(const auto& strings, NOESCAPE const auto& toString)
     {
         JSArray* array = constructEmptyArray(m_shared.globalObject, nullptr);
         unsigned position = 0;
         for (auto& one : strings)
-            array->putDirectIndex(m_shared.globalObject, position++, jsOwnedString(m_vm, stringOf(one)));
+            array->putDirectIndex(m_shared.globalObject, position++, jsOwnedString(m_vm, toString(one)));
         return array;
     }
 
-    void emitString(const Plan::Node& node, Slot value, Target misfit, Target fail)
+    void emitString(const Plan::Node& node, Slot value, Target wrongShape, Target fail)
     {
-        SlotScope scope(a);
-        a.jumpIfCellType(value, StringType, false, misfit);
+        RegisterScope scope(a);
+        a.jumpIfCellType(value, StringType, false, wrongShape);
         Slot units = nullptr;
         Slot scratch = nullptr;
         auto needUnits = [&] {
@@ -1737,7 +1737,7 @@ private:
                     break;
                 Target isLongEnough = a.newLabel();
                 a.jumpIfCompares(Comparison::GreaterOrEqual, units, a.constant(jsNumber(2.0 * rule.count - 1)), true, isLongEnough);
-                callHelper(scratch, m_codePointLength, validationCodePointLength, { value });
+                callHelper(scratch, m_countCodePoints, countCodePoints, { value });
                 a.jumpIfCompares(Comparison::Less, scratch, a.constant(jsNumber(rule.count)), true, fail);
                 a.bind(isLongEnough);
                 break;
@@ -1747,7 +1747,7 @@ private:
                 Target isShortEnough = a.newLabel();
                 a.jumpIfCompares(Comparison::LessOrEqual, units, a.constant(jsNumber(rule.count)), true, isShortEnough);
                 a.jumpIfCompares(Comparison::Greater, units, a.constant(jsNumber(2.0 * rule.count)), true, fail);
-                callHelper(scratch, m_codePointLength, validationCodePointLength, { value });
+                callHelper(scratch, m_countCodePoints, countCodePoints, { value });
                 a.jumpIfCompares(Comparison::Greater, scratch, a.constant(jsNumber(rule.count)), true, fail);
                 a.bind(isShortEnough);
                 break;
@@ -1784,13 +1784,13 @@ private:
                 scratch = a.newRegister();
             switch (rule.kind) {
             case RuleKind::Pattern:
-                callHelper(scratch, m_matchesPattern, validationMatchesPattern, { a.constant(RegExp::create(m_vm, rule.text, OptionSet<Yarr::Flags>::fromRaw(rule.flags))), value });
+                callHelper(scratch, m_matchesPattern, matchesPattern, { a.constant(RegExp::create(m_vm, rule.text, OptionSet<Yarr::Flags>::fromRaw(rule.flags))), value });
                 break;
             case RuleKind::Format:
-                callHelper(scratch, m_matchesFormat, validationMatchesFormat, { a.constant(jsNumber(rule.count)), value });
+                callHelper(scratch, m_matchesFormat, matchesFormat, { a.constant(jsNumber(rule.count)), value });
                 break;
             case RuleKind::Url:
-                callHelper(scratch, m_isUrl, validationIsUrl, { value });
+                callHelper(scratch, m_isValidURL, isValidURL, { value });
                 break;
             case RuleKind::Integer:
             case RuleKind::Minimum:
@@ -1813,64 +1813,63 @@ private:
             case RuleKind::If:
             case RuleKind::ExactlyOne:
             case RuleKind::Every:
-                callHelper(scratch, m_matchesTemplate, validationMatchesTemplate, { value, a.constant(arrayOfStrings(rule.texts, [](const String& text) { return text; })), a.constant(jsOwnedString(m_vm, rule.text)) });
+                callHelper(scratch, m_matchesTemplate, matchesTemplate, { value, a.constant(createStringArray(rule.texts, [](const String& text) { return text; })), a.constant(jsOwnedString(m_vm, rule.text)) });
                 break;
             }
             a.jumpIfTruthy(scratch, false, fail);
         }
     }
 
-    bool readsByKey(const Plan::Node& node) const
+    bool readsValuesByKey(const Plan::Node& node) const
     {
         if (findRule(node, RuleKind::PatternMembers))
             return true;
         if (node.shape == Shape::Dictionary)
-            return !saysNothing(node.child);
-        return node.undeclared == Plan::Undeclared::Validated && !saysNothing(node.child);
+            return !acceptsAnything(node.child);
+        return node.undeclared == Plan::Undeclared::Validated && !acceptsAnything(node.child);
     }
 
-    // Behind it `value` is an object all of whose properties are values that are enumerated, and that nobody else has where a copy is made.
-    void emitObjectGuard(bool readsByKey, Slot value, Target fail)
+    void emitObjectGuard(bool readsValuesByKey, Slot value, Target fail)
     {
-        if (copies()) {
+        if (isCopying()) {
             Target isOther = a.newLabel();
             Slot copy = a.newRegister();
             a.jumpIfCellType(value, FinalObjectType, false, isOther);
-            callHelper(copy, m_copyPlainObject, validationCopyPlainObject, { value });
-            a.jumpIfStrictlyEqual(copy, m_undefined, true, m_refuse);
+            callHelper(copy, m_clonePlainObject, clonePlainObject, { value });
+            a.jumpIfStrictlyEqual(copy, m_undefined, true, m_bailout);
             a.move(value, copy);
             defer({ value }, [=, this] {
                 a.bind(isOther);
                 a.jumpIfObject(value, false, fail);
                 a.jumpIfCellType(value, ArrayType, true, fail);
                 a.jumpIfCellType(value, DerivedArrayType, true, fail);
-                a.jump(m_refuse);
+                a.jump(m_bailout);
             });
             return;
         }
-        Target isOdd = a.newLabel();
+        Target isExotic = a.newLabel();
         Target isPlain = a.newLabel();
         Slot copy = a.newRegister();
-        a.jumpIfCellType(value, FinalObjectType, false, isOdd);
-        a.jumpIfStructureFlags(value, Structure::s_hasAnyKindOfGetterSetterPropertiesBits | Structure::s_hasNonEnumerablePropertiesBits, true, isOdd);
-        if (readsByKey) {
-            callHelper(copy, m_hasPlainElements, validationHasPlainElements, { value });
-            a.jumpIfTruthy(copy, false, isOdd);
+        a.jumpIfCellType(value, FinalObjectType, false, isExotic);
+        a.jumpIfStructureFlags(value, Structure::s_hasAnyKindOfGetterSetterPropertiesBits | Structure::s_hasNonEnumerablePropertiesBits, true, isExotic);
+        if (readsValuesByKey) {
+            callHelper(copy, m_hasPlainElements, hasPlainElements, { value });
+            a.jumpIfTruthy(copy, false, isExotic);
         }
         a.bind(isPlain);
         defer({ value, copy }, [=, this] {
-            a.bind(isOdd);
-            callHelper(copy, m_plainObjectFor, validationPlainObjectFor, { value, m_mark });
+            a.bind(isExotic);
+            callHelper(copy, m_copyExoticObject, copyExoticObject, { value, m_bailoutMarker });
             a.jumpIfStrictlyEqual(copy, m_undefined, true, fail);
-            a.jumpIfStrictlyEqual(copy, m_mark, true, m_refuse);
+            a.jumpIfStrictlyEqual(copy, m_bailoutMarker, true, m_bailout);
             a.move(value, copy);
             a.jump(isPlain);
         });
     }
 
-    unsigned costOf(uint32_t index) const
+    unsigned getCost(uint32_t index) const
     {
-        const Plan::Node& node = nodeAt(index);
+        const Plan::Node& node = getNode(index);
         if (m_analysis.isFunction[index])
             return 2;
         switch (node.shape) {
@@ -1881,7 +1880,7 @@ private:
             return 2;
         case Shape::Union:
             for (uint32_t arm : node.children) {
-                if (nodeAt(arm).shape != Shape::StringLiteral)
+                if (getNode(arm).shape != Shape::StringLiteral)
                     return 1;
             }
             break;
@@ -1915,26 +1914,25 @@ private:
         return nullptr;
     }
 
-    // What is said of every key of an object, and of what it holds under the keys that are not declared.
     bool needsKeysLoop(const Plan::Node& node) const
     {
-        return readsByKey(node) || findRule(node, RuleKind::MemberNames);
+        return readsValuesByKey(node) || findRule(node, RuleKind::MemberNames);
     }
 
     void emitKeysLoop(const Plan::Node& node, Slot object, Target fail, bool isSoft)
     {
-        SlotScope scope(a);
+        RegisterScope scope(a);
         const Plan::Rule* names = findRule(node, RuleKind::MemberNames);
         const Plan::Rule* patterns = findRule(node, RuleKind::PatternMembers);
         bool rejects = node.shape == Shape::Object && node.undeclared == Plan::Undeclared::Rejected;
         uint32_t valueNode = node.shape == Shape::Dictionary || node.undeclared == Plan::Undeclared::Validated ? node.child : Plan::none;
-        if (valueNode != Plan::none && saysNothing(valueNode))
+        if (valueNode != Plan::none && acceptsAnything(valueNode))
             valueNode = Plan::none;
         Slot keys = a.newRegister();
         Slot count = a.newRegister();
         Slot index = a.newRegister();
         Slot key = a.newRegister();
-        Slot held = a.newRegister();
+        Slot current = a.newRegister();
         Slot isCovered = patterns ? a.newRegister() : nullptr;
         callHelper(keys, m_objectKeys, objectConstructorKeys, { object }, ObjectKeysIntrinsic);
         a.readLength(count, keys);
@@ -1947,17 +1945,17 @@ private:
         a.jumpIfCompares(Comparison::Less, index, count, false, exit);
         a.readElement(key, keys, index);
         if (names)
-            emitTest(names->nodes[0], key, fail, isSoft);
+            emitCheckOnly(names->nodes[0], key, fail, isSoft);
         if (patterns) {
             a.move(isCovered, a.constant(jsBoolean(false)));
             for (unsigned i = 0; i < patterns->nodes.size(); ++i) {
                 Target isNoMatch = a.newLabel();
-                callHelper(held, m_matchesPattern, validationMatchesPattern, { a.constant(RegExp::create(m_vm, patterns->texts[i], OptionSet<Yarr::Flags>::fromRaw(patterns->flags))), key });
-                a.jumpIfTruthy(held, false, isNoMatch);
+                callHelper(current, m_matchesPattern, matchesPattern, { a.constant(RegExp::create(m_vm, patterns->texts[i], OptionSet<Yarr::Flags>::fromRaw(patterns->flags))), key });
+                a.jumpIfTruthy(current, false, isNoMatch);
                 a.move(isCovered, a.constant(jsBoolean(true)));
-                if (!saysNothing(patterns->nodes[i])) {
-                    a.readElement(held, object, key);
-                    emitTest(patterns->nodes[i], held, fail, isSoft);
+                if (!acceptsAnything(patterns->nodes[i])) {
+                    a.readElement(current, object, key);
+                    emitCheckOnly(patterns->nodes[i], current, fail, isSoft);
                 }
                 a.bind(isNoMatch);
             }
@@ -1974,10 +1972,10 @@ private:
             if (valueNode == Plan::none)
                 a.jump(fail);
             else {
-                a.readElement(held, object, key);
-                emitUse(valueNode, held, fail, isSoft);
+                a.readElement(current, object, key);
+                emitNodeOrCall(valueNode, current, fail, isSoft);
                 if (changes(valueNode))
-                    a.writeOwnElement(object, key, held);
+                    a.writeOwnElement(object, key, current);
             }
         }
         a.bind(next);
@@ -1999,14 +1997,14 @@ private:
             a.readOwnProperty(destination, object, name.impl());
             return;
         }
-        callHelper(destination, m_ownValue, validationOwnValue, { object, a.constant(jsOwnedString(m_vm, name.string())), m_mark });
-        a.jumpIfStrictlyEqual(destination, m_mark, true, m_refuse);
+        callHelper(destination, m_getOwnValue, getOwnValue, { object, a.constant(jsOwnedString(m_vm, name.string())), m_bailoutMarker });
+        a.jumpIfStrictlyEqual(destination, m_bailoutMarker, true, m_bailout);
     }
 
     void emitRulesOfObjects(const Plan::Node& node, Slot value, Target fail, bool isSoft)
     {
         for (auto& rule : node.rules) {
-            SlotScope scope(a);
+            RegisterScope scope(a);
             switch (rule.kind) {
             case RuleKind::MinimumMembers:
             case RuleKind::MaximumMembers: {
@@ -2018,18 +2016,18 @@ private:
             }
             case RuleKind::DependentMembers:
             case RuleKind::DependentNode: {
-                Slot held = a.newRegister();
+                Slot current = a.newRegister();
                 Target isAbsent = a.newLabel();
-                readOwn(held, value, rule.text);
-                a.jumpIfStrictlyEqual(held, m_undefined, true, isAbsent);
+                readOwn(current, value, rule.text);
+                a.jumpIfStrictlyEqual(current, m_undefined, true, isAbsent);
                 for (auto& name : rule.texts) {
-                    readOwn(held, value, name);
-                    a.jumpIfStrictlyEqual(held, m_undefined, true, fail);
+                    readOwn(current, value, name);
+                    a.jumpIfStrictlyEqual(current, m_undefined, true, fail);
                 }
                 if (rule.kind == RuleKind::DependentNode) {
-                    emitLookThrough(node, value, fail);
-                    emitStartRemembering(rule.nodes.span());
-                    emitTest(rule.nodes[0], value, fail, isSoft);
+                    emitRequireOnlyJSON(node, value, fail);
+                    emitStartMemoizing(rule.nodes.span());
+                    emitCheckOnly(rule.nodes[0], value, fail, isSoft);
                 }
                 a.bind(isAbsent);
                 break;
@@ -2065,8 +2063,8 @@ private:
             a.readOwnProperty(destination, object, member.key.impl());
             return;
         }
-        callHelper(destination, m_ownValue, validationOwnValue, { object, a.constant(jsOwnedString(m_vm, member.key.string())), m_mark });
-        a.jumpIfStrictlyEqual(destination, m_mark, true, m_refuse);
+        callHelper(destination, m_getOwnValue, getOwnValue, { object, a.constant(jsOwnedString(m_vm, member.key.string())), m_bailoutMarker });
+        a.jumpIfStrictlyEqual(destination, m_bailoutMarker, true, m_bailout);
     }
 
     void writeMember(Slot object, const Plan::Member& member, Slot value)
@@ -2077,10 +2075,9 @@ private:
             a.writeOwnProperty(object, member.key.impl(), value);
     }
 
-    // The value is a plain object. The member that chose this arm of a union has been looked at.
     void emitObject(const Plan::Node& node, Slot value, Target fail, bool isSoft, const UniquedStringImpl* chosenBy)
     {
-        SlotScope scope(a);
+        RegisterScope scope(a);
         emitCountVisit(node);
         if (node.shape == Shape::Dictionary) {
             emitRulesOfObjects(node, value, fail, isSoft);
@@ -2088,94 +2085,90 @@ private:
                 emitKeysLoop(node, value, fail, isSoft);
             return;
         }
-        // A key that a pattern takes is declared, which only a look at each key shows.
         bool isClosed = node.undeclared == Plan::Undeclared::Rejected && !findRule(node, RuleKind::PatternMembers);
-        // Whether such a member is among the keys shows only when the code runs.
-        auto mayBeAbsent = [&](const Plan::Member& member) {
+        auto canBeAbsent = [&](const Plan::Member& member) {
             return member.isOptional || m_analysis.appliesDefault[member.node];
         };
-        unsigned alwaysPresent = 0;
-        bool someMayBeAbsent = false;
+        unsigned requiredKeyCount = 0;
+        bool hasOptionalKeys = false;
         for (auto& member : node.members) {
-            alwaysPresent += !mayBeAbsent(member);
-            someMayBeAbsent |= mayBeAbsent(member);
+            requiredKeyCount += !canBeAbsent(member);
+            hasOptionalKeys |= canBeAbsent(member);
         }
-        Slot held = a.newRegister();
-        Slot present = nullptr;
-        if (isClosed && someMayBeAbsent) {
-            present = a.newRegister();
-            a.move(present, a.constant(jsNumber(alwaysPresent)));
+        Slot current = a.newRegister();
+        Slot presentKeyCount = nullptr;
+        if (isClosed && hasOptionalKeys) {
+            presentKeyCount = a.newRegister();
+            a.move(presentKeyCount, a.constant(jsNumber(requiredKeyCount)));
         }
-        // A default that is filled in becomes the last key, so where a copy is made such members keep their order.
-        bool fillsDefaults = false;
+        bool writesDefaults = false;
         for (auto& member : node.members)
-            fillsDefaults |= copies() && m_analysis.appliesDefault[member.node];
-        Vector<const Plan::Member*, 16> cheapestFirst;
+            writesDefaults |= isCopying() && m_analysis.appliesDefault[member.node];
+        Vector<const Plan::Member*, 16> orderedMembers;
         for (unsigned cost = 0; cost < 3; ++cost) {
             for (auto& member : node.members) {
-                if (fillsDefaults ? !cost : costOf(member.node) == cost)
-                    cheapestFirst.append(&member);
+                if (writesDefaults ? !cost : getCost(member.node) == cost)
+                    orderedMembers.append(&member);
             }
         }
-        for (auto* next : cheapestFirst) {
+        for (auto* next : orderedMembers) {
             auto& member = *next;
             if (member.key.impl() == chosenBy)
                 continue;
-            if (member.isOptional && saysNothing(member.node) && !isClosed)
+            if (member.isOptional && acceptsAnything(member.node) && !isClosed)
                 continue;
             bool appliesDefault = m_analysis.appliesDefault[member.node];
             Target isAbsent = a.newLabel();
-            readMember(held, value, member);
+            readMember(current, value, member);
             if (member.isOptional && !appliesDefault)
-                a.jumpIfStrictlyEqual(held, m_undefined, true, isAbsent);
-            else if (!member.isOptional && !member.mustBeOwn && !appliesDefault && m_analysis.acceptsUndefined[member.node])
-                a.jumpIfStrictlyEqual(held, m_undefined, true, fail);
-            // A default is written into a copy, and is then one of its keys.
-            if (present && mayBeAbsent(member) && !copies()) {
+                a.jumpIfStrictlyEqual(current, m_undefined, true, isAbsent);
+            else if (m_plan.treatsUndefinedAsMissing && !member.isOptional && !member.mustBeOwn && !appliesDefault && m_analysis.acceptsUndefined[member.node])
+                a.jumpIfStrictlyEqual(current, m_undefined, true, fail);
+            if (presentKeyCount && canBeAbsent(member) && !isCopying()) {
                 Target isCounted = a.newLabel();
-                a.jumpIfStrictlyEqual(held, m_undefined, true, isCounted);
-                a.increment(present);
+                a.jumpIfStrictlyEqual(current, m_undefined, true, isCounted);
+                a.increment(presentKeyCount);
                 a.bind(isCounted);
             }
-            emitUse(member.node, held, fail, isSoft);
+            emitNodeOrCall(member.node, current, fail, isSoft);
             if (member.mustBeOwn) {
                 Target isOwn = a.newLabel();
                 Slot answer = a.newRegister();
-                a.jumpIfStrictlyEqual(held, m_undefined, false, isOwn);
-                callHelper(answer, m_hasOwnKey, validationHasOwnKey, { value, a.constant(jsOwnedString(m_vm, member.key.string())) });
+                a.jumpIfStrictlyEqual(current, m_undefined, false, isOwn);
+                callHelper(answer, m_hasOwnEnumerableKey, hasOwnEnumerableKey, { value, a.constant(jsOwnedString(m_vm, member.key.string())) });
                 a.jumpIfTruthy(answer, false, fail);
                 a.bind(isOwn);
             }
             if (changes(member.node)) {
                 if (m_analysis.acceptsUndefined[member.node]) {
                     Target isNothing = a.newLabel();
-                    a.jumpIfStrictlyEqual(held, m_undefined, true, isNothing);
-                    writeMember(value, member, held);
+                    a.jumpIfStrictlyEqual(current, m_undefined, true, isNothing);
+                    writeMember(value, member, current);
                     a.bind(isNothing);
                 } else
-                    writeMember(value, member, held);
+                    writeMember(value, member, current);
             }
-            if (present && mayBeAbsent(member) && copies()) {
+            if (presentKeyCount && canBeAbsent(member) && isCopying()) {
                 Target isCounted = a.newLabel();
-                a.jumpIfStrictlyEqual(held, m_undefined, true, isCounted);
-                a.increment(present);
+                a.jumpIfStrictlyEqual(current, m_undefined, true, isCounted);
+                a.increment(presentKeyCount);
                 a.bind(isCounted);
             }
             a.bind(isAbsent);
         }
         if (isClosed) {
-            Target askByName = a.newLabel();
+            Target checkEachKey = a.newLabel();
             Target done = a.newLabel();
-            callHelper(held, m_objectKeys, objectConstructorKeys, { value }, ObjectKeysIntrinsic);
-            a.readLength(held, held);
-            a.jumpIfStrictlyEqual(held, present ? present : a.constant(jsNumber(alwaysPresent)), false, askByName);
+            callHelper(current, m_objectKeys, objectConstructorKeys, { value }, ObjectKeysIntrinsic);
+            a.readLength(current, current);
+            a.jumpIfStrictlyEqual(current, presentKeyCount ? presentKeyCount : a.constant(jsNumber(requiredKeyCount)), false, checkEachKey);
             a.bind(done);
             const Plan::Node* declaredBy = &node;
-            defer({ value, held }, [=, this] {
-                a.bind(askByName);
-                JSArray* names = arrayOfStrings(declaredBy->members, [](const Plan::Member& member) { return member.key.string(); });
-                callHelper(held, m_hasOnlyTheseKeys, validationHasOnlyTheseKeys, { value, a.constant(names) });
-                a.jumpIfTruthy(held, false, fail);
+            defer({ value, current }, [=, this] {
+                a.bind(checkEachKey);
+                JSArray* names = createStringArray(declaredBy->members, [](const Plan::Member& member) { return member.key.string(); });
+                callHelper(current, m_hasOnlyDeclaredKeys, hasOnlyDeclaredKeys, { value, a.constant(names) });
+                a.jumpIfTruthy(current, false, fail);
                 a.jump(done);
             });
         }
@@ -2184,61 +2177,61 @@ private:
             emitKeysLoop(node, value, fail, isSoft);
     }
 
-    void emitArray(const Plan::Node& node, Slot value, Target misfit, Target fail, bool isSoft)
+    void emitArray(const Plan::Node& node, Slot value, Target wrongShape, Target fail, bool isSoft)
     {
-        SlotScope scope(a);
+        RegisterScope scope(a);
         Slot length = a.newRegister();
         unsigned first = node.shape == Shape::Tuple ? node.children.size() : 0;
-        double fewest = node.shape == Shape::Tuple ? node.required : 0;
-        double most = node.shape == Shape::Tuple && node.child == Plan::none ? first : std::numeric_limits<uint32_t>::max();
+        double minLength = node.shape == Shape::Tuple ? node.required : 0;
+        double maxLength = node.shape == Shape::Tuple && node.child == Plan::none ? first : std::numeric_limits<uint32_t>::max();
         for (auto& rule : node.rules) {
             if (rule.kind == RuleKind::MinimumLength)
-                fewest = std::max<double>(fewest, rule.count);
+                minLength = std::max<double>(minLength, rule.count);
             else if (rule.kind == RuleKind::MaximumLength)
-                most = std::min<double>(most, rule.count);
+                maxLength = std::min<double>(maxLength, rule.count);
         }
-        bool takesHoles = node.child != Plan::none && m_analysis.acceptsUndefined[node.child];
+        bool acceptsHoles = node.child != Plan::none && m_analysis.acceptsUndefined[node.child];
         for (uint32_t child : node.children)
-            takesHoles |= m_analysis.acceptsUndefined[child];
+            acceptsHoles |= m_analysis.acceptsUndefined[child];
 
-        if (copies()) {
+        if (isCopying()) {
             Target isOther = a.newLabel();
-            Target isOdd = a.newLabel();
+            Target isExotic = a.newLabel();
             a.jumpIfCellType(value, ArrayType, false, isOther);
-            callHelper(length, m_copyPlainArray, validationCopyPlainArray, { value, a.constant(jsNumber(fewest)), a.constant(jsNumber(most)), m_mark });
-            a.jumpIfCellType(length, ArrayType, false, isOdd);
+            callHelper(length, m_clonePlainArray, clonePlainArray, { value, a.constant(jsNumber(minLength)), a.constant(jsNumber(maxLength)), m_bailoutMarker });
+            a.jumpIfCellType(length, ArrayType, false, isExotic);
             a.move(value, length);
             a.readLength(length, value);
             defer({ value, length }, [=, this] {
                 a.bind(isOther);
-                a.jumpIfCellType(value, DerivedArrayType, true, m_refuse);
-                a.jumpIfCellType(value, ProxyObjectType, true, m_refuse);
-                a.jump(misfit);
-                a.bind(isOdd);
+                a.jumpIfCellType(value, DerivedArrayType, true, m_bailout);
+                a.jumpIfCellType(value, ProxyObjectType, true, m_bailout);
+                a.jump(wrongShape);
+                a.bind(isExotic);
                 a.jumpIfStrictlyEqual(length, m_undefined, true, fail);
-                a.jump(m_refuse);
+                a.jump(m_bailout);
             });
         } else {
-            Target isOdd = a.newLabel();
+            Target isExotic = a.newLabel();
             Target isPlain = a.newLabel();
             Target hasHoles = a.newLabel();
-            bool countsHoles = takesHoles && m_shared.countsHoles();
+            bool countsHoles = acceptsHoles && m_shared.countsHoles();
             Slot holes = countsHoles ? a.newRegister() : nullptr;
-            a.jumpIfCellType(value, ArrayType, false, isOdd);
-            callHelper(length, m_plainArrayLength, validationPlainArrayLength, { value });
-            a.jumpIfCompares(Comparison::Less, length, m_zero, true, isOdd);
+            a.jumpIfCellType(value, ArrayType, false, isExotic);
+            callHelper(length, m_getPlainArrayLength, getPlainArrayLength, { value });
+            a.jumpIfCompares(Comparison::Less, length, m_zero, true, isExotic);
             if (countsHoles) {
-                callHelper(holes, m_holesOf, validationHolesOf, { value });
+                callHelper(holes, m_countHoles, countHoles, { value });
                 a.jumpIfTruthy(holes, true, hasHoles);
             }
             a.bind(isPlain);
             defer({ value, length, holes }, [=, this] {
-                a.bind(isOdd);
+                a.bind(isExotic);
                 if (countsHoles)
-                    callHelper(holes, m_holesOf, validationHolesOf, { value });
-                callHelper(length, m_plainArrayFor, validationPlainArrayFor, { value, m_mark });
-                a.jumpIfStrictlyEqual(length, m_undefined, true, misfit);
-                a.jumpIfStrictlyEqual(length, m_mark, true, m_refuse);
+                    callHelper(holes, m_countHoles, countHoles, { value });
+                callHelper(length, m_copyExoticArray, copyExoticArray, { value, m_bailoutMarker });
+                a.jumpIfStrictlyEqual(length, m_undefined, true, wrongShape);
+                a.jumpIfStrictlyEqual(length, m_bailoutMarker, true, m_bailout);
                 a.move(value, length);
                 a.readLength(length, value);
                 if (!countsHoles) {
@@ -2249,45 +2242,45 @@ private:
                 Slot left = m_holes;
                 if (m_state) {
                     left = a.newRegister();
-                    a.readElement(left, m_state, a.constant(jsNumber(HolesInState)));
+                    a.readElement(left, m_state, a.constant(jsNumber(StateHolesLeft)));
                 }
                 a.compute(Arithmetic::Subtract, left, left, holes);
                 if (m_state)
-                    a.writeOwnElement(m_state, a.constant(jsNumber(HolesInState)), left);
-                a.jumpIfCompares(Comparison::Less, left, m_zero, true, m_refuse);
+                    a.writeOwnElement(m_state, a.constant(jsNumber(StateHolesLeft)), left);
+                a.jumpIfCompares(Comparison::Less, left, m_zero, true, m_bailout);
                 a.jump(isPlain);
             });
-            if (fewest)
-                a.jumpIfCompares(Comparison::Less, length, a.constant(jsNumber(fewest)), true, fail);
-            if (most < std::numeric_limits<uint32_t>::max())
-                a.jumpIfCompares(Comparison::Greater, length, a.constant(jsNumber(most)), true, fail);
+            if (minLength)
+                a.jumpIfCompares(Comparison::Less, length, a.constant(jsNumber(minLength)), true, fail);
+            if (maxLength < std::numeric_limits<uint32_t>::max())
+                a.jumpIfCompares(Comparison::Greater, length, a.constant(jsNumber(maxLength)), true, fail);
         }
         emitCountVisit(node);
 
-        Slot held = a.newRegister();
+        Slot current = a.newRegister();
         Target done = a.newLabel();
         for (unsigned i = 0; i < first; ++i) {
             Slot position = a.constant(jsNumber(i));
             if (i >= node.required)
                 a.jumpIfCompares(Comparison::Greater, length, position, false, done);
-            if (saysNothing(node.children[i]))
+            if (acceptsAnything(node.children[i]))
                 continue;
-            a.readElement(held, value, position);
-            emitUse(node.children[i], held, fail, isSoft);
+            a.readElement(current, value, position);
+            emitNodeOrCall(node.children[i], current, fail, isSoft);
             if (changes(node.children[i]))
-                a.writeOwnElement(value, position, held);
+                a.writeOwnElement(value, position, current);
         }
-        if (node.child != Plan::none && !saysNothing(node.child)) {
+        if (node.child != Plan::none && !acceptsAnything(node.child)) {
             Slot index = a.newRegister();
             a.move(index, a.constant(jsNumber(first)));
             Target head = a.newLabel();
             a.bind(head);
             a.loopHint();
             a.jumpIfCompares(Comparison::Less, index, length, false, done);
-            a.readElement(held, value, index);
-            emitUse(node.child, held, fail, isSoft);
+            a.readElement(current, value, index);
+            emitNodeOrCall(node.child, current, fail, isSoft);
             if (changes(node.child))
-                a.writeOwnElement(value, index, held);
+                a.writeOwnElement(value, index, current);
             a.increment(index);
             a.jump(head);
         }
@@ -2295,34 +2288,34 @@ private:
 
         for (auto& rule : node.rules) {
             if (rule.kind == RuleKind::UniqueItems) {
-                callHelper(held, m_hasUniqueItems, validationHasUniqueItems, { value, m_mark });
-                a.jumpIfStrictlyEqual(held, m_mark, true, m_refuse);
-                a.jumpIfTruthy(held, false, fail);
+                callHelper(current, m_hasUniqueItems, hasUniqueItems, { value, m_bailoutMarker });
+                a.jumpIfStrictlyEqual(current, m_bailoutMarker, true, m_bailout);
+                a.jumpIfTruthy(current, false, fail);
             }
             if (rule.kind != RuleKind::Contains)
                 continue;
-            SlotScope ruleScope(a);
+            RegisterScope ruleScope(a);
             Slot index = a.newRegister();
             Slot found = a.newRegister();
             Target head = a.newLabel();
             Target missed = a.newLabel();
             Target exit = a.newLabel();
             Target enough = a.newLabel();
-            if (rule.most != Plan::none)
-                emitLookThrough(node, value, fail);
-            emitStartRemembering(rule.nodes.span());
+            if (rule.maxCount != Plan::none)
+                emitRequireOnlyJSON(node, value, fail);
+            emitStartMemoizing(rule.nodes.span());
             a.move(index, m_zero);
             a.move(found, m_zero);
             a.bind(head);
             a.loopHint();
             a.jumpIfCompares(Comparison::Less, index, length, false, exit);
-            a.readElement(held, value, index);
-            emitTest(rule.nodes[0], held, missed, true);
+            a.readElement(current, value, index);
+            emitCheckOnly(rule.nodes[0], current, missed, true);
             a.increment(found);
-            if (rule.most == Plan::none)
+            if (rule.maxCount == Plan::none)
                 a.jumpIfCompares(Comparison::GreaterOrEqual, found, a.constant(jsNumber(rule.count)), true, enough);
             else
-                a.jumpIfCompares(Comparison::Greater, found, a.constant(jsNumber(rule.most)), true, fail);
+                a.jumpIfCompares(Comparison::Greater, found, a.constant(jsNumber(rule.maxCount)), true, fail);
             a.bind(missed);
             a.increment(index);
             a.jump(head);
@@ -2334,7 +2327,7 @@ private:
 
     void appendLiterals(uint32_t index, Vector<const Plan::Node*, 8>& literals, bool& areAllStrings) const
     {
-        const Plan::Node& node = nodeAt(index);
+        const Plan::Node& node = getNode(index);
         if (node.shape == Shape::Union && node.rules.isEmpty() && node.defaultKind == Plan::Literal::None && !m_analysis.isFunction[index]) {
             for (uint32_t arm : node.children)
                 appendLiterals(arm, literals, areAllStrings);
@@ -2344,23 +2337,22 @@ private:
         literals.append(&node);
     }
 
-    // A required member that every arm holds to strings no other arm allows.
-    const UniquedStringImpl* discriminatorOf(const Plan::Node& node, Vector<std::pair<StringImpl*, unsigned>, 16>& tags) const
+    const UniquedStringImpl* findDiscriminator(const Plan::Node& node, Vector<std::pair<StringImpl*, unsigned>, 16>& tags) const
     {
         if (node.children.size() < 2)
             return nullptr;
         for (uint32_t arm : node.children) {
-            if (nodeAt(arm).shape != Shape::Object || nodeAt(arm).defaultKind != Plan::Literal::None || m_analysis.isFunction[arm])
+            if (getNode(arm).shape != Shape::Object || getNode(arm).defaultKind != Plan::Literal::None || m_analysis.isFunction[arm])
                 return nullptr;
         }
-        for (auto& candidate : nodeAt(node.children[0]).members) {
+        for (auto& candidate : getNode(node.children[0]).members) {
             if (parseIndex(*candidate.key.impl()))
                 continue;
             tags.clear();
             bool holds = true;
             for (unsigned i = 0; i < node.children.size() && holds; ++i) {
                 const Plan::Member* found = nullptr;
-                for (auto& member : nodeAt(node.children[i]).members) {
+                for (auto& member : getNode(node.children[i]).members) {
                     if (member.key == candidate.key)
                         found = &member;
                 }
@@ -2386,9 +2378,9 @@ private:
 
     void emitUnion(const Plan::Node& node, Slot value, Target fail, bool isSoft)
     {
-        SlotScope scope(a);
+        RegisterScope scope(a);
         Target done = a.newLabel();
-        Target misfit = fail;
+        Target wrongShape = fail;
 
         Vector<const Plan::Node*, 8> literals;
         bool areAllStrings = true;
@@ -2398,7 +2390,7 @@ private:
             Target missed = a.newLabel();
             a.beginStringSwitch(value);
             a.bind(missed);
-            a.jump(misfit);
+            a.jump(wrongShape);
             a.bind(done);
             Vector<Writer::StringCase, 16> cases;
             for (auto* literal : literals)
@@ -2408,11 +2400,11 @@ private:
         }
 
         Vector<std::pair<StringImpl*, unsigned>, 16> tags;
-        if (auto* key = discriminatorOf(node, tags)) {
-            bool readsByKey = false;
+        if (auto* key = findDiscriminator(node, tags)) {
+            bool readsValuesByKey = false;
             for (uint32_t arm : node.children)
-                readsByKey |= this->readsByKey(nodeAt(arm));
-            emitObjectGuard(readsByKey, value, misfit);
+                readsValuesByKey |= this->readsValuesByKey(getNode(arm));
+            emitObjectGuard(readsValuesByKey, value, wrongShape);
             Slot tag = a.newRegister();
             a.readOwnProperty(tag, value, const_cast<UniquedStringImpl*>(key));
             Target missed = a.newLabel();
@@ -2423,8 +2415,8 @@ private:
             for (uint32_t arm : node.children) {
                 arms.append(a.newLabel());
                 a.bind(arms.last());
-                emitObject(nodeAt(arm), value, fail, isSoft, key);
-                emitRulesOfAnyShape(nodeAt(arm), value, fail, isSoft);
+                emitObject(getNode(arm), value, fail, isSoft, key);
+                emitRulesOfAnyShape(getNode(arm), value, fail, isSoft);
                 a.jump(done);
             }
             Vector<Writer::StringCase, 16> cases;
@@ -2438,31 +2430,40 @@ private:
         for (unsigned i = 0; i < node.children.size(); ++i) {
             uint32_t arm = node.children[i];
             if (i + 1 == node.children.size()) {
-                emitUse(arm, value, fail, isSoft);
+                emitNodeOrCall(arm, value, fail, isSoft);
                 break;
             }
-            SlotScope armScope(a);
+            RegisterScope armScope(a);
             Target next = a.newLabel();
+            if (isCopying() && m_analysis.callsSharedFunction[arm]) {
+                uint32_t asked[] = { arm };
+                emitStartMemoizing(asked);
+                emitCheckOnly(arm, value, next, true);
+                emitNodeOrCall(arm, value, m_bailout, isSoft);
+                a.jump(done);
+                a.bind(next);
+                continue;
+            }
             Slot attempt = value;
-            if (m_analysis.appliesDefault[arm] || (copies() && m_analysis.describesContainers[arm])) {
+            if (m_analysis.appliesDefault[arm] || (isCopying() && m_analysis.describesContainers[arm])) {
                 attempt = a.newRegister();
                 a.move(attempt, value);
             }
             Slot visitsBefore = nullptr;
-            if (m_analysis.reachesFunction[arm]) {
+            if (m_analysis.callsSharedFunction[arm]) {
                 visitsBefore = a.newRegister();
                 readVisits(visitsBefore);
             }
-            emitUse(arm, attempt, next, true);
+            emitNodeOrCall(arm, attempt, next, true);
             if (attempt != value)
                 a.move(value, attempt);
             a.jump(done);
             a.bind(next);
             if (visitsBefore)
-                emitAfterFailedArm(visitsBefore);
+                emitMemoizeAfterDeepFailure(visitsBefore);
         }
         if (node.children.isEmpty())
-            a.jump(misfit);
+            a.jump(wrongShape);
         a.bind(done);
     }
 
@@ -2475,51 +2476,50 @@ private:
     Mode m_mode;
     Slot m_undefined;
     Slot m_zero;
-    Slot m_mark;
-    Slot m_failure;
+    Slot m_bailoutMarker;
+    Slot m_failureMarker;
     Slot m_state { nullptr };
     Slot m_visits { nullptr };
     Slot m_holes { nullptr };
-    Target m_refuse { 0 };
-    Target m_tooMany { 0 };
+    Target m_bailout { 0 };
+    Target m_tooManyObjects { 0 };
     Vector<Function<void()>> m_deferred;
-    JSValue m_plainObjectFor;
+    JSValue m_copyExoticObject;
     JSValue m_hasPlainElements;
-    JSValue m_plainArrayLength;
-    JSValue m_plainArrayFor;
-    JSValue m_holesOf;
-    JSValue m_copyPlainObject;
-    JSValue m_copyPlainArray;
-    JSValue m_hasOnlyTheseKeys;
-    JSValue m_hasOwnKey;
-    JSValue m_ownValue;
+    JSValue m_getPlainArrayLength;
+    JSValue m_copyExoticArray;
+    JSValue m_countHoles;
+    JSValue m_clonePlainObject;
+    JSValue m_clonePlainArray;
+    JSValue m_hasOnlyDeclaredKeys;
+    JSValue m_hasOwnEnumerableKey;
+    JSValue m_getOwnValue;
     JSValue m_matchesPattern;
     JSValue m_matchesFormat;
-    JSValue m_isUrl;
+    JSValue m_isValidURL;
     JSValue m_matchesTemplate;
-    JSValue m_codePointLength;
+    JSValue m_countCodePoints;
     JSValue m_objectKeys;
-    JSValue m_parseText;
-    JSValue m_startRemembering;
-    JSValue m_recall;
-    JSValue m_remember;
-    JSValue m_throwTooManyVisits;
+    JSValue m_parseJSONText;
+    JSValue m_startMemoizing;
+    JSValue m_findVerdict;
+    JSValue m_storeVerdict;
+    JSValue m_throwTooManyObjects;
     JSValue m_hasUniqueItems;
-    JSValue m_isMultipleInDecimals;
-    JSValue m_saysOnlyJSON;
+    JSValue m_isDecimalMultiple;
+    JSValue m_containsOnlyJSON;
 };
 
-class FunctionOfNodesBody final : public GeneratedFunctionBody {
+class SharedNodesBody final : public GeneratedFunctionBody {
 public:
-    FunctionOfNodesBody(Ref<Shared>&& shared, Mode mode)
+    SharedNodesBody(Ref<Shared>&& shared, Mode mode)
         : m_shared(WTF::move(shared))
         , m_mode(mode)
     {
     }
 
-    void emit(Writer& assembler) final { Emitter(assembler, m_shared.get(), functions, m_mode).emitFunctionOfNodes(); }
+    void emit(Writer& assembler) final { Emitter(assembler, m_shared.get(), functions, m_mode).emitSharedNodesFunction(); }
 
-    // Each of the functions holds all of them as constants, or under a name of its own until it is written.
     Functions functions;
 
 private:
@@ -2529,10 +2529,10 @@ private:
 
 class ValidatorBody final : public GeneratedFunctionBody {
 public:
-    explicit ValidatorBody(Ref<Shared>&& shared, JSObject* onRefused = nullptr, JSObject* onNotLookedAt = nullptr, JSObject* onOtherArguments = nullptr)
+    explicit ValidatorBody(Ref<Shared>&& shared, JSObject* onRefused = nullptr, JSObject* onBailout = nullptr, JSObject* onOtherArguments = nullptr)
         : m_shared(WTF::move(shared))
         , m_onRefused(onRefused)
-        , m_onNotLookedAt(onNotLookedAt)
+        , m_onBailout(onBailout)
         , m_onOtherArguments(onOtherArguments)
     {
     }
@@ -2545,39 +2545,39 @@ public:
         Functions functions;
         if (m_shared->hasState()) {
             functions.state = constructEmptyArray(globalObject, nullptr);
-            for (unsigned i = 0; i < LengthOfState; ++i)
-                functions.state->putDirectIndex(globalObject, i, i == MemoryInState || i == LookedThroughInState ? jsUndefined() : jsNumber(0));
-            auto checks = adoptRef(*new FunctionOfNodesBody(m_shared.copyRef(), Mode::Check));
-            functions.checks = createGeneratedFunction(vm, globalObject, "check"_s, 2, checks.copyRef());
-            RefPtr<FunctionOfNodesBody> copies;
+            for (unsigned i = 0; i < StateLength; ++i)
+                functions.state->putDirectIndex(globalObject, i, i == StateMemo || i == StateScannedObjects ? jsUndefined() : jsNumber(0));
+            auto checkFunction = adoptRef(*new SharedNodesBody(m_shared.copyRef(), Mode::Check));
+            functions.checkFunction = createGeneratedFunction(vm, globalObject, "check"_s, 2, checkFunction.copyRef());
+            RefPtr<SharedNodesBody> copyFunction;
             if (mode == Mode::Copy) {
-                copies = adoptRef(*new FunctionOfNodesBody(m_shared.copyRef(), Mode::Copy));
-                functions.copies = createGeneratedFunction(vm, globalObject, "validate"_s, 2, *copies);
+                copyFunction = adoptRef(*new SharedNodesBody(m_shared.copyRef(), Mode::Copy));
+                functions.copyFunction = createGeneratedFunction(vm, globalObject, "validate"_s, 2, *copyFunction);
             }
-            JSArray* kept = constructEmptyArray(globalObject, nullptr);
-            kept->putDirectIndex(globalObject, 0, functions.state);
-            kept->putDirectIndex(globalObject, 1, functions.checks);
-            if (functions.copies)
-                kept->putDirectIndex(globalObject, 2, functions.copies);
-            functions.checks->putDirect(vm, nameOf(keptAliveName), kept);
-            checks->functions = functions;
-            if (copies) {
-                functions.copies->putDirect(vm, nameOf(keptAliveName), kept);
-                copies->functions = functions;
+            JSArray* roots = constructEmptyArray(globalObject, nullptr);
+            roots->putDirectIndex(globalObject, 0, functions.state);
+            roots->putDirectIndex(globalObject, 1, functions.checkFunction);
+            if (functions.copyFunction)
+                roots->putDirectIndex(globalObject, 2, functions.copyFunction);
+            functions.checkFunction->putDirect(vm, toPropertyName(rootsName), roots);
+            checkFunction->functions = functions;
+            if (copyFunction) {
+                functions.copyFunction->putDirect(vm, toPropertyName(rootsName), roots);
+                copyFunction->functions = functions;
             }
         }
         Emitter emitter(assembler, m_shared.get(), functions, mode);
-        if (functions.checks)
-            assembler.constant(functions.checks);
+        if (functions.checkFunction)
+            assembler.constant(functions.checkFunction);
         switch (m_shared->kind) {
         case ValidatorKind::Check:
             emitter.emitCheck();
             break;
         case ValidatorKind::Validate:
-            emitter.emitValidate(m_onRefused, m_onNotLookedAt);
+            emitter.emitValidate(m_onRefused, m_onBailout);
             break;
         case ValidatorKind::Parse:
-            emitter.emitParse(m_onRefused, m_onNotLookedAt, m_onOtherArguments);
+            emitter.emitParse(m_onRefused, m_onBailout, m_onOtherArguments);
             break;
         }
     }
@@ -2585,17 +2585,17 @@ public:
 private:
     const Ref<Shared> m_shared;
     JSObject* const m_onRefused;
-    JSObject* const m_onNotLookedAt;
+    JSObject* const m_onBailout;
     JSObject* const m_onOtherArguments;
 };
 
-// Says everything that a plan says, so two plans with one text are one plan.
-class PlanText {
+class PlanCacheKey {
 public:
     static String of(const Plan& plan)
     {
-        PlanText text;
+        PlanCacheKey text;
         text.number(plan.root);
+        text.number(plan.treatsUndefinedAsMissing);
         text.number(plan.nodes.size());
         for (auto& node : plan.nodes) {
             text.number(static_cast<uint32_t>(node.shape) | static_cast<uint32_t>(node.undeclared) << 8 | static_cast<uint32_t>(node.boolean) << 16 | static_cast<uint32_t>(node.defaultKind) << 17 | static_cast<uint32_t>(node.defaultBoolean) << 25);
@@ -2616,7 +2616,7 @@ public:
             for (auto& rule : node.rules) {
                 text.number(static_cast<uint32_t>(rule.kind) | static_cast<uint32_t>(rule.flags) << 8);
                 text.number(rule.count);
-                text.number(rule.most);
+                text.number(rule.maxCount);
                 text.number(std::bit_cast<uint64_t>(rule.number));
                 text.string(rule.text);
                 text.number(rule.texts.size());
@@ -2654,22 +2654,20 @@ private:
     Vector<Latin1Character, 1024> m_bytes;
 };
 
-AOT_THRESHOLD(unsigned, mostRememberedPlans, 256);
+AOT_THRESHOLD(unsigned, maxCachedPlans, 256);
 
-// The code of a plan, for the next validator with the same plan: what the code cache does for two functions with one text.
-static JSMap* rememberedCode(VM& vm, JSGlobalObject* globalObject)
+static JSMap* getCodeCache(VM& vm, JSGlobalObject* globalObject)
 {
-    if (JSValue found = globalObject->getDirect(vm, nameOf(rememberedCodeName)))
+    if (JSValue found = globalObject->getDirect(vm, toPropertyName(codeCacheName)))
         return uncheckedDowncast<JSMap>(found.asCell());
     JSMap* map = JSMap::create(vm, globalObject->mapStructure());
-    globalObject->putDirect(vm, nameOf(rememberedCodeName), map, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    globalObject->putDirect(vm, toPropertyName(codeCacheName), map, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     return map;
 }
 
 static RefPtr<Shared> analyze(Ref<Plan>&& plan, JSGlobalObject* globalObject, ValidatorKind kind)
 {
 #if ENABLE(AOT)
-    // A program that was compiled ahead of time runs no code that was made later.
     if (globalObject->aotInstance())
         return nullptr;
 #endif
@@ -2680,25 +2678,24 @@ static RefPtr<Shared> analyze(Ref<Plan>&& plan, JSGlobalObject* globalObject, Va
     return shared;
 }
 
-static JSFunction* createWithHandlers(VM& vm, JSGlobalObject* globalObject, Ref<Plan>&& plan, ValidatorKind kind, ASCIILiteral name, unsigned parameterCount, JSObject* onRefused, JSObject* onNotLookedAt, JSObject* onOtherArguments)
+static JSFunction* createWithHandlers(VM& vm, JSGlobalObject* globalObject, Ref<Plan>&& plan, ValidatorKind kind, ASCIILiteral name, unsigned parameterCount, JSObject* onRefused, JSObject* onBailout, JSObject* onOtherArguments)
 {
     auto shared = analyze(WTF::move(plan), globalObject, kind);
     if (!shared)
         return nullptr;
-    JSFunction* function = createGeneratedFunction(vm, globalObject, name, parameterCount, adoptRef(*new ValidatorBody(shared.releaseNonNull(), onRefused, onNotLookedAt, onOtherArguments)));
-    JSArray* kept = constructEmptyArray(globalObject, nullptr);
-    kept->putDirectIndex(globalObject, 0, onRefused);
-    kept->putDirectIndex(globalObject, 1, onNotLookedAt);
+    JSFunction* function = createGeneratedFunction(vm, globalObject, name, parameterCount, adoptRef(*new ValidatorBody(shared.releaseNonNull(), onRefused, onBailout, onOtherArguments)));
+    JSArray* roots = constructEmptyArray(globalObject, nullptr);
+    roots->putDirectIndex(globalObject, 0, onRefused);
+    roots->putDirectIndex(globalObject, 1, onBailout);
     if (onOtherArguments)
-        kept->putDirectIndex(globalObject, 2, onOtherArguments);
-    function->putDirect(vm, nameOf(keptAliveName), kept);
+        roots->putDirectIndex(globalObject, 2, onOtherArguments);
+    function->putDirect(vm, toPropertyName(rootsName), roots);
     return function;
 }
 
-// The text that AOTValidationPlanText.cpp writes.
-class PlanReader {
+class PlanParser {
 public:
-    explicit PlanReader(JSGlobalObject* globalObject)
+    explicit PlanParser(JSGlobalObject* globalObject)
         : m_globalObject(globalObject)
         , m_vm(globalObject->vm())
         , m_plan(Plan::create())
@@ -2712,107 +2709,124 @@ public:
             return nullptr;
         JSArray* nodes = asArray(parsed);
         unsigned count = nodes->length();
-        if (!count || count > mostNodes)
+        if (!count || count > maxPlanNodes)
             return nullptr;
         m_count = count;
         m_plan->nodes.grow(count);
-        for (unsigned i = 0; i < count && m_isRight; ++i)
-            readNode(m_plan->nodes[i], elementOf(nodes, i));
-        return m_isRight ? RefPtr<Plan>(m_plan.ptr()) : nullptr;
+        for (unsigned i = 0; i < count && m_isValid; ++i)
+            parseNode(m_plan->nodes[i], getElement(nodes, i));
+        for (auto& [node, discriminant] : m_discriminants) {
+            if (m_isValid)
+                parseDiscriminant(m_plan->nodes[node], discriminant);
+        }
+        return m_isValid ? RefPtr<Plan>(m_plan.ptr()) : nullptr;
     }
 
 private:
-    AOT_CLASS_THRESHOLD(unsigned, mostNodes, 1 << 16);
+    AOT_CLASS_THRESHOLD(unsigned, maxPlanNodes, 1 << 16);
 
-    JSValue giveUp()
+    JSValue fail()
     {
-        m_isRight = false;
+        m_isValid = false;
         return { };
     }
 
-    JSValue elementOf(JSArray* array, unsigned index) { return array->getDirectIndex(m_globalObject, index); }
+    JSValue getElement(JSArray* array, unsigned index) { return array->getDirectIndex(m_globalObject, index); }
 
     JSValue find(JSObject* object, ASCIILiteral name) { return object->getDirect(m_vm, Identifier::fromString(m_vm, name)); }
 
-    JSObject* objectOf(JSValue value)
+    void requireOnlyKeys(JSObject* object, std::span<const ASCIILiteral> allowed)
+    {
+        PropertyNameArrayBuilder names(m_vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        object->methodTable()->getOwnPropertyNames(object, m_globalObject, names, DontEnumPropertiesMode::Include);
+        for (auto& name : names) {
+            bool isAllowed = false;
+            for (ASCIILiteral one : allowed)
+                isAllowed |= name.string() == one;
+            if (!isAllowed)
+                fail();
+        }
+    }
+
+    JSObject* toObject(JSValue value)
     {
         if (value && value.isObject() && !isJSArray(value))
             return asObject(value);
-        giveUp();
+        fail();
         return nullptr;
     }
 
-    String stringOf(JSValue value)
+    String toString(JSValue value)
     {
         if (value && value.isString())
             return asString(value)->value(m_globalObject);
-        giveUp();
+        fail();
         return String();
     }
 
-    double numberOf(JSValue value)
+    double toNumber(JSValue value)
     {
         if (value && value.isNumber())
             return value.asNumber();
-        giveUp();
+        fail();
         return 0;
     }
 
-    uint32_t countOf(JSValue value)
+    uint32_t toCount(JSValue value)
     {
-        double number = numberOf(value);
+        double number = toNumber(value);
         if (number >= 0 && number < Plan::none && number == std::trunc(number))
             return static_cast<uint32_t>(number);
-        giveUp();
+        fail();
         return 0;
     }
 
-    uint32_t nodeOf(JSValue value)
+    uint32_t toNodeIndex(JSValue value)
     {
-        uint32_t node = countOf(value);
+        uint32_t node = toCount(value);
         if (node >= m_count)
-            giveUp();
+            fail();
         return node;
     }
 
-    bool booleanOf(JSValue value)
+    bool toBoolean(JSValue value)
     {
         if (value && value.isBoolean())
             return value.asBoolean();
-        giveUp();
+        fail();
         return false;
     }
 
     void forEachElement(JSValue list, NOESCAPE const Invocable<void(JSValue)> auto& visit)
     {
         if (!list || !isJSArray(list)) {
-            giveUp();
+            fail();
             return;
         }
         JSArray* array = asArray(list);
-        for (unsigned i = 0; i < array->length() && m_isRight; ++i)
-            visit(elementOf(array, i));
+        for (unsigned i = 0; i < array->length() && m_isValid; ++i)
+            visit(getElement(array, i));
     }
 
-    Vector<uint32_t> nodesOf(JSValue list)
+    Vector<uint32_t> toNodeIndexes(JSValue list)
     {
         Vector<uint32_t> nodes;
         forEachElement(list, [&](JSValue one) {
-            nodes.append(nodeOf(one));
+            nodes.append(toNodeIndex(one));
         });
         return nodes;
     }
 
-    Vector<String> stringsOf(JSValue list)
+    Vector<String> toStrings(JSValue list)
     {
         Vector<String> strings;
         forEachElement(list, [&](JSValue one) {
-            strings.append(stringOf(one));
+            strings.append(toString(one));
         });
         return strings;
     }
 
-    void readDefault(Plan::Node& node, JSValue value)
+    void parseDefault(Plan::Node& node, JSValue value)
     {
         if (value.isNull())
             node.defaultKind = Plan::Literal::Null;
@@ -2824,13 +2838,13 @@ private:
             node.defaultNumber = value.asNumber();
         } else {
             node.defaultKind = Plan::Literal::String;
-            node.defaultString = stringOf(value);
+            node.defaultString = toString(value);
         }
     }
 
-    void readRule(Plan::Node& node, JSObject* object)
+    void parseRule(Plan::Node& node, JSObject* object)
     {
-        String name = stringOf(find(object, "rule"_s));
+        String name = toString(find(object, "rule"_s));
         Plan::Rule rule;
         auto is = [&](ASCIILiteral word, RuleKind kind) {
             if (name != word)
@@ -2838,73 +2852,117 @@ private:
             rule.kind = kind;
             return true;
         };
+        Vector<ASCIILiteral, 2> allowed;
         if (is("Integer"_s, RuleKind::Integer)) {
-        } else if (is("Minimum"_s, RuleKind::Minimum) || is("Maximum"_s, RuleKind::Maximum) || is("ExclusiveMinimum"_s, RuleKind::ExclusiveMinimum) || is("ExclusiveMaximum"_s, RuleKind::ExclusiveMaximum))
-            rule.number = numberOf(find(object, "bound"_s));
-        else if (is("MultipleOf"_s, RuleKind::MultipleOf))
-            rule.number = numberOf(find(object, "divisor"_s));
-        else if (is("MinimumLength"_s, RuleKind::MinimumLength) || is("MaximumLength"_s, RuleKind::MaximumLength))
-            rule.count = countOf(find(object, "length"_s));
-        else if (is("Pattern"_s, RuleKind::Pattern)) {
-            rule.text = stringOf(find(object, "source"_s));
-            if (JSValue isUnicode = find(object, "unicode"_s); isUnicode && booleanOf(isUnicode))
-                rule.flags = OptionSet<Yarr::Flags> { Yarr::Flags::Unicode }.toRaw();
+        } else if (is("Minimum"_s, RuleKind::Minimum) || is("Maximum"_s, RuleKind::Maximum) || is("ExclusiveMinimum"_s, RuleKind::ExclusiveMinimum) || is("ExclusiveMaximum"_s, RuleKind::ExclusiveMaximum)) {
+            rule.number = toNumber(find(object, "bound"_s));
+            allowed = { "bound"_s };
+        } else if (is("MultipleOf"_s, RuleKind::MultipleOf)) {
+            rule.number = toNumber(find(object, "divisor"_s));
+            allowed = { "divisor"_s };
+        } else if (is("MinimumLength"_s, RuleKind::MinimumLength) || is("MaximumLength"_s, RuleKind::MaximumLength)) {
+            rule.count = toCount(find(object, "length"_s));
+            allowed = { "length"_s };
+        } else if (is("Pattern"_s, RuleKind::Pattern)) {
+            rule.text = toString(find(object, "source"_s));
+            allowed = { "source"_s };
         } else if (is("Format"_s, RuleKind::Pattern)) {
-            // An expression, or none for what URL.canParse() answers.
-            rule.text = stringOf(find(object, "source"_s));
-            if (rule.text.isEmpty())
+            rule.text = toString(find(object, "source"_s));
+            String format = toString(find(object, "format"_s));
+            allowed = { "source"_s, "format"_s };
+            if (rule.text.isEmpty()) {
                 rule.kind = RuleKind::Url;
-        } else if (is("Template"_s, RuleKind::Template)) {
-            rule.texts = stringsOf(find(object, "texts"_s));
-            rule.text = stringOf(find(object, "placeholders"_s));
-        } else if (is("Not"_s, RuleKind::Not))
-            rule.nodes.append(nodeOf(find(object, "node"_s)));
-        else if (is("If"_s, RuleKind::If)) {
-            rule.nodes.append(nodeOf(find(object, "condition"_s)));
-            rule.nodes.append(nodeOf(find(object, "then"_s)));
-            rule.nodes.append(nodeOf(find(object, "otherwise"_s)));
-        } else if (is("ExactlyOne"_s, RuleKind::ExactlyOne) || is("Every"_s, RuleKind::Every))
-            rule.nodes = nodesOf(find(object, "nodes"_s));
-        else if (is("UniqueItems"_s, RuleKind::UniqueItems)) {
-        } else if (is("Contains"_s, RuleKind::Contains)) {
-            rule.nodes.append(nodeOf(find(object, "node"_s)));
-            rule.count = countOf(find(object, "minimum"_s));
-            if (JSValue most = find(object, "maximum"_s))
-                rule.most = countOf(most);
-        } else if (is("PatternMembers"_s, RuleKind::PatternMembers)) {
-            // The patterns of a JSON Schema.
-            rule.flags = OptionSet<Yarr::Flags> { Yarr::Flags::Unicode }.toRaw();
-            rule.texts = stringsOf(find(object, "sources"_s));
-            rule.nodes = nodesOf(find(object, "nodes"_s));
-            for (auto& source : rule.texts) {
-                if (m_isRight && !RegExp::create(m_vm, source, OptionSet<Yarr::Flags>::fromRaw(rule.flags))->isValid())
-                    giveUp();
+                if (format != "url"_s)
+                    fail();
             }
-        } else if (is("MemberNames"_s, RuleKind::MemberNames))
-            rule.nodes.append(nodeOf(find(object, "node"_s)));
-        else if (is("MinimumMembers"_s, RuleKind::MinimumMembers) || is("MaximumMembers"_s, RuleKind::MaximumMembers))
-            rule.count = countOf(find(object, "count"_s));
-        else if (is("DependentMembers"_s, RuleKind::DependentMembers)) {
-            rule.text = stringOf(find(object, "key"_s));
-            rule.texts = stringsOf(find(object, "names"_s));
-        } else if (is("DependentNode"_s, RuleKind::DependentNode)) {
-            rule.text = stringOf(find(object, "key"_s));
-            rule.nodes.append(nodeOf(find(object, "node"_s)));
+        } else if (is("Template"_s, RuleKind::Template)) {
+            rule.texts = toStrings(find(object, "texts"_s));
+            rule.text = toString(find(object, "placeholders"_s));
+            allowed = { "texts"_s, "placeholders"_s };
         } else {
-            giveUp();
+            fail();
             return;
         }
-        if (rule.kind == RuleKind::Pattern && m_isRight && !RegExp::create(m_vm, rule.text, OptionSet<Yarr::Flags>::fromRaw(rule.flags))->isValid())
-            giveUp();
+        allowed.append("rule"_s);
+        requireOnlyKeys(object, allowed.span());
+        if (rule.kind == RuleKind::Pattern && m_isValid && !RegExp::create(m_vm, rule.text, OptionSet<Yarr::Flags>::fromRaw(rule.flags))->isValid())
+            fail();
         node.rules.append(WTF::move(rule));
     }
 
-    void readNode(Plan::Node& node, JSValue value)
+    bool isLiteral(const Plan::Node& node, JSValue tag)
     {
-        JSObject* object = objectOf(value);
+        if (!node.rules.isEmpty() || node.defaultKind != Plan::Literal::None)
+            return false;
+        switch (node.shape) {
+        case Shape::Null:
+            return tag.isNull();
+        case Shape::BooleanLiteral:
+            return tag.isBoolean() && tag.asBoolean() == node.boolean;
+        case Shape::NumberLiteral:
+            return tag.isNumber() && tag.asNumber() == node.number;
+        case Shape::StringLiteral:
+            return tag.isString() && asString(tag)->value(m_globalObject) == node.string;
+        case Shape::Unknown:
+        case Shape::Never:
+        case Shape::Undefined:
+        case Shape::AnyObject:
+        case Shape::String:
+        case Shape::Number:
+        case Shape::Boolean:
+        case Shape::BigInt:
+        case Shape::Array:
+        case Shape::Tuple:
+        case Shape::Dictionary:
+        case Shape::Object:
+        case Shape::Union:
+            return false;
+        }
+        return false;
+    }
+
+    // Puts the tagged arms first. That keeps the order of attempts only if each tagged arm requires its own tag.
+    void parseDiscriminant(Plan::Node& node, JSValue value)
+    {
+        JSObject* object = toObject(value);
         if (!object)
             return;
-        String shape = stringOf(find(object, "shape"_s));
+        static constexpr ASCIILiteral words[] = { "key"_s, "tags"_s, "tagged"_s, "untagged"_s, "expected"_s };
+        requireOnlyKeys(object, words);
+        AtomString key(toString(find(object, "key"_s)));
+        Vector<uint32_t> tagged = toNodeIndexes(find(object, "tagged"_s));
+        Vector<uint32_t> untagged = toNodeIndexes(find(object, "untagged"_s));
+        Vector<JSValue> tags;
+        forEachElement(find(object, "tags"_s), [&](JSValue tag) {
+            tags.append(tag);
+        });
+        if (!m_isValid || tags.size() != tagged.size())
+            return void(fail());
+        for (unsigned i = 0; i < tagged.size(); ++i) {
+            const Plan::Node& arm = m_plan->nodes[tagged[i]];
+            bool requiresTag = false;
+            for (auto& member : arm.members)
+                requiresTag |= arm.shape == Shape::Object && member.key == key && !member.isOptional && isLiteral(m_plan->nodes[member.node], tags[i]);
+            if (!requiresTag)
+                return void(fail());
+        }
+        Vector<uint32_t> ordered = tagged;
+        ordered.appendVector(untagged);
+        Vector<uint32_t> sorted = ordered;
+        Vector<uint32_t> arms = node.children;
+        std::sort(sorted.begin(), sorted.end());
+        std::sort(arms.begin(), arms.end());
+        if (sorted != arms)
+            return void(fail());
+        node.children = WTF::move(ordered);
+    }
+
+    void parseNode(Plan::Node& node, JSValue value)
+    {
+        JSObject* object = toObject(value);
+        if (!object)
+            return;
+        String shape = toString(find(object, "shape"_s));
         if (shape == "Unknown"_s)
             node.shape = Shape::Unknown;
         else if (shape == "Never"_s)
@@ -2916,7 +2974,7 @@ private:
         else if (shape == "AnyObject"_s)
             node.shape = Shape::AnyObject;
         else if (shape == "Primitive"_s) {
-            String primitive = stringOf(find(object, "primitive"_s));
+            String primitive = toString(find(object, "primitive"_s));
             if (primitive == "string"_s)
                 node.shape = Shape::String;
             else if (primitive == "number"_s)
@@ -2926,74 +2984,81 @@ private:
             else if (primitive == "bigint"_s)
                 node.shape = Shape::BigInt;
             else
-                giveUp();
+                fail();
         } else if (shape == "BooleanLiteral"_s) {
             node.shape = Shape::BooleanLiteral;
-            node.boolean = booleanOf(find(object, "value"_s));
+            node.boolean = toBoolean(find(object, "value"_s));
         } else if (shape == "NumberLiteral"_s) {
-            // A number that JSON cannot say is written as null, and equals nothing.
-            JSValue number = find(object, "value"_s);
             node.shape = Shape::NumberLiteral;
-            node.number = number && number.isNull() ? PNaN : numberOf(number);
+            node.number = toNumber(find(object, "value"_s));
         } else if (shape == "StringLiteral"_s) {
             node.shape = Shape::StringLiteral;
-            node.string = stringOf(find(object, "value"_s));
+            node.string = toString(find(object, "value"_s));
         } else if (shape == "Array"_s || shape == "Dictionary"_s) {
             node.shape = shape == "Array"_s ? Shape::Array : Shape::Dictionary;
-            node.child = nodeOf(find(object, "element"_s));
+            node.child = toNodeIndex(find(object, "element"_s));
         } else if (shape == "Tuple"_s) {
             node.shape = Shape::Tuple;
             if (JSValue elements = find(object, "elements"_s))
-                node.children = nodesOf(elements);
-            JSValue required = find(object, "required"_s);
-            node.required = required ? countOf(required) : node.children.size();
-            if (JSValue rest = find(object, "rest"_s))
-                node.child = nodeOf(rest);
+                node.children = toNodeIndexes(elements);
+            node.required = node.children.size();
         } else if (shape == "Object"_s) {
             node.shape = Shape::Object;
             if (JSValue members = find(object, "members"_s)) {
                 forEachElement(members, [&](JSValue one) {
-                    JSObject* member = objectOf(one);
+                    JSObject* member = toObject(one);
                     if (!member)
                         return;
-                    String key = stringOf(find(member, "key"_s));
-                    if (!m_isRight)
+                    String key = toString(find(member, "key"_s));
+                    if (!m_isValid)
                         return;
-                    node.members.append(Plan::Member { AtomString(key), nodeOf(find(member, "node"_s)), booleanOf(find(member, "isOptional"_s)), booleanOf(find(member, "mustBeOwn"_s)) });
+                    static constexpr ASCIILiteral memberKeys[] = { "key"_s, "node"_s, "isOptional"_s, "mustBeOwn"_s };
+                    requireOnlyKeys(member, memberKeys);
+                    AtomString name(key);
+                    for (auto& other : node.members) {
+                        if (other.key == name)
+                            fail();
+                    }
+                    node.members.append(Plan::Member { name, toNodeIndex(find(member, "node"_s)), toBoolean(find(member, "isOptional"_s)), toBoolean(find(member, "mustBeOwn"_s)) });
                 });
             }
-            String undeclared = stringOf(find(object, "undeclared"_s));
+            String undeclared = toString(find(object, "undeclared"_s));
             if (undeclared == "Allowed"_s)
                 node.undeclared = Plan::Undeclared::Allowed;
             else if (undeclared == "Rejected"_s)
                 node.undeclared = Plan::Undeclared::Rejected;
             else if (undeclared == "Validated"_s) {
                 node.undeclared = Plan::Undeclared::Validated;
-                node.child = nodeOf(find(object, "undeclaredValue"_s));
+                node.child = toNodeIndex(find(object, "undeclaredValue"_s));
             } else
-                giveUp();
+                fail();
         } else if (shape == "Union"_s) {
             node.shape = Shape::Union;
             if (JSValue arms = find(object, "arms"_s))
-                node.children = nodesOf(arms);
+                node.children = toNodeIndexes(arms);
+            if (JSValue discriminant = find(object, "discriminant"_s))
+                m_discriminants.append({ static_cast<uint32_t>(&node - m_plan->nodes.span().data()), discriminant });
         } else
-            giveUp();
+            fail();
 
+        static constexpr ASCIILiteral nodeKeys[] = { "shape"_s, "primitive"_s, "value"_s, "element"_s, "elements"_s, "arms"_s, "members"_s, "undeclared"_s, "undeclaredValue"_s, "discriminant"_s, "remembers"_s, "rules"_s, "message"_s, "default"_s, "text"_s };
+        requireOnlyKeys(object, nodeKeys);
         if (JSValue rules = find(object, "rules"_s)) {
             forEachElement(rules, [&](JSValue one) {
-                if (JSObject* rule = objectOf(one))
-                    readRule(node, rule);
+                if (JSObject* rule = toObject(one))
+                    parseRule(node, rule);
             });
         }
-        if (JSValue standIn = find(object, "default"_s))
-            readDefault(node, standIn);
+        if (JSValue defaultValue = find(object, "default"_s))
+            parseDefault(node, defaultValue);
     }
 
     JSGlobalObject* m_globalObject;
     VM& m_vm;
     Ref<Plan> m_plan;
+    Vector<std::pair<uint32_t, JSValue>> m_discriminants;
     unsigned m_count { 0 };
-    bool m_isRight { true };
+    bool m_isValid { true };
 };
 
 } // namespace
@@ -3002,13 +3067,12 @@ private:
 
 namespace {
 
-// digits x 10^exponent
-struct Decimals {
+struct Decimal {
     uint64_t digits { 0 };
     int exponent { 0 };
 };
 
-Decimals decimalsOf(double positive)
+Decimal toDecimal(double positive)
 {
     using Converter = WTF::double_conversion::DoubleToStringConverter;
     std::array<char, Converter::kBase10MaximalLength + 1> buffer;
@@ -3016,7 +3080,7 @@ Decimals decimalsOf(double positive)
     int length = 0;
     int point = 0;
     Converter::DoubleToAscii(positive, Converter::SHORTEST, 0, std::span<char> { buffer }, isNegative, length, point);
-    Decimals result;
+    Decimal result;
     for (int i = 0; i < length; ++i)
         result.digits = result.digits * 10 + (buffer[i] - '0');
     result.exponent = point - length;
@@ -3025,15 +3089,15 @@ Decimals decimalsOf(double positive)
 
 } // namespace
 
-bool isMultipleInDecimals(double number, double divisor)
+bool isDecimalMultipleOf(double number, double divisor)
 {
     using Wide = UInt128;
     if (!std::isfinite(number) || !std::isfinite(divisor) || !(divisor > 0))
         return false;
     if (!number)
         return true;
-    Decimals dividend = decimalsOf(std::abs(number));
-    Decimals unit = decimalsOf(divisor);
+    Decimal dividend = toDecimal(std::abs(number));
+    Decimal unit = toDecimal(divisor);
     int shift = dividend.exponent - unit.exponent;
     if (shift >= 0) {
         Wide remainder = dividend.digits % unit.digits;
@@ -3045,9 +3109,8 @@ bool isMultipleInDecimals(double number, double divisor)
         }
         return !remainder;
     }
-    // The digits of a double are below 10^17.
-    AOT_THRESHOLD(int, mostDigits, 17);
-    if (-shift > mostDigits)
+    AOT_THRESHOLD(int, maxDecimalDigits, 17);
+    if (-shift > maxDecimalDigits)
         return false;
     Wide whole = unit.digits;
     for (int i = 0; i < -shift; ++i)
@@ -3055,16 +3118,16 @@ bool isMultipleInDecimals(double number, double divisor)
     return !(dividend.digits % whole);
 }
 
-ValidationLook lookThroughForJSON(JSGlobalObject* globalObject, JSValue value)
+JSONScanResult scanForNonJSON(JSGlobalObject* globalObject, JSValue value)
 {
-    return ValidatorBytecode::JSONLook(globalObject, nullptr).look(value);
+    return ValidatorBytecode::JSONScanner(globalObject, nullptr).look(value);
 }
 
 void setValidationFormatChecker(ValidationFormatChecker checker) { ValidatorBytecode::formatChecker = checker; }
 
-RefPtr<ValidationPlan> readValidationPlan(JSGlobalObject* globalObject, const String& text)
+RefPtr<ValidationPlan> parseValidationPlan(JSGlobalObject* globalObject, const String& text)
 {
-    return ValidatorBytecode::PlanReader(globalObject).read(text);
+    return ValidatorBytecode::PlanParser(globalObject).read(text);
 }
 
 JSFunction* createCheckFunction(VM& vm, JSGlobalObject* globalObject, Ref<ValidationPlan>&& plan)
@@ -3074,9 +3137,9 @@ JSFunction* createCheckFunction(VM& vm, JSGlobalObject* globalObject, Ref<Valida
     if (globalObject->aotInstance())
         return nullptr;
 #endif
-    JSMap* remembered = rememberedCode(vm, globalObject);
-    JSString* text = jsString(vm, PlanText::of(plan.get()));
-    JSValue code = remembered->get(globalObject, text);
+    JSMap* codeCache = getCodeCache(vm, globalObject);
+    JSString* text = jsString(vm, PlanCacheKey::of(plan.get()));
+    JSValue code = codeCache->get(globalObject, text);
     if (code.isCell())
         return JSFunction::create(vm, globalObject, uncheckedDowncast<FunctionExecutable>(code.asCell()), globalObject);
 
@@ -3084,40 +3147,40 @@ JSFunction* createCheckFunction(VM& vm, JSGlobalObject* globalObject, Ref<Valida
     if (!shared)
         return nullptr;
     JSFunction* function = createGeneratedFunction(vm, globalObject, "check"_s, 1, adoptRef(*new ValidatorBody(shared.releaseNonNull())));
-    prepareGeneratedFunction(vm, function);
-    if (remembered->size() >= mostRememberedPlans)
-        remembered->clear(globalObject);
-    remembered->set(globalObject, text, function->jsExecutable());
+    compileGeneratedFunction(vm, function);
+    if (codeCache->size() >= maxCachedPlans)
+        codeCache->clear(globalObject);
+    codeCache->set(globalObject, text, function->jsExecutable());
     return function;
 }
 
-JSFunction* createValidateFunction(VM& vm, JSGlobalObject* globalObject, Ref<ValidationPlan>&& plan, JSObject* onRefused, JSObject* onNotLookedAt)
+JSFunction* createValidateFunction(VM& vm, JSGlobalObject* globalObject, Ref<ValidationPlan>&& plan, JSObject* onRefused, JSObject* onBailout)
 {
-    return ValidatorBytecode::createWithHandlers(vm, globalObject, WTF::move(plan), ValidatorKind::Validate, "validate"_s, 1, onRefused, onNotLookedAt, nullptr);
+    return ValidatorBytecode::createWithHandlers(vm, globalObject, WTF::move(plan), ValidatorKind::Validate, "validate"_s, 1, onRefused, onBailout, nullptr);
 }
 
-JSFunction* createParseFunction(VM& vm, JSGlobalObject* globalObject, Ref<ValidationPlan>&& plan, JSObject* onRefused, JSObject* onNotLookedAt, JSObject* onOtherArguments)
+JSFunction* createParseFunction(VM& vm, JSGlobalObject* globalObject, Ref<ValidationPlan>&& plan, JSObject* onRefused, JSObject* onBailout, JSObject* onOtherArguments)
 {
-    return ValidatorBytecode::createWithHandlers(vm, globalObject, WTF::move(plan), ValidatorKind::Parse, "parse"_s, 2, onRefused, onNotLookedAt, onOtherArguments);
+    return ValidatorBytecode::createWithHandlers(vm, globalObject, WTF::move(plan), ValidatorKind::Parse, "parse"_s, 2, onRefused, onBailout, onOtherArguments);
 }
 
-JSFunction* createValidatorOfPlanText(JSGlobalObject* globalObject, ValidatorKind kind, const String& planText, JSObject* onRefused, JSObject* onNotLookedAt, JSObject* onOtherArguments)
+JSFunction* createValidatorFromPlanText(JSGlobalObject* globalObject, ValidatorKind kind, const String& planText, JSObject* onRefused, JSObject* onBailout, JSObject* onOtherArguments)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    RefPtr<ValidationPlan> plan = readValidationPlan(globalObject, planText);
+    RefPtr<ValidationPlan> plan = parseValidationPlan(globalObject, planText);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (!plan) {
-        throwTypeError(globalObject, scope, "The text is no validation plan"_s);
+        throwTypeError(globalObject, scope, "Invalid validation plan"_s);
         return nullptr;
     }
     switch (kind) {
     case ValidatorKind::Check:
         RELEASE_AND_RETURN(scope, createCheckFunction(vm, globalObject, plan.releaseNonNull()));
     case ValidatorKind::Validate:
-        RELEASE_AND_RETURN(scope, createValidateFunction(vm, globalObject, plan.releaseNonNull(), onRefused, onNotLookedAt));
+        RELEASE_AND_RETURN(scope, createValidateFunction(vm, globalObject, plan.releaseNonNull(), onRefused, onBailout));
     case ValidatorKind::Parse:
-        RELEASE_AND_RETURN(scope, createParseFunction(vm, globalObject, plan.releaseNonNull(), onRefused, onNotLookedAt, onOtherArguments));
+        RELEASE_AND_RETURN(scope, createParseFunction(vm, globalObject, plan.releaseNonNull(), onRefused, onBailout, onOtherArguments));
     }
     return nullptr;
 }

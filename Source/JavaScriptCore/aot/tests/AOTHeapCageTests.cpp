@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTChildProcess.h"
+#include "AOTRuntimeTable.h"
 #include "AOTVector.h"
 #include "CagedAlignedMemoryAllocator.h"
 #include "Completion.h"
@@ -21,6 +22,7 @@
 #include "JSBigInt.h"
 #include "JSCInlines.h"
 #include "JSLock.h"
+#include "JSMapInlines.h"
 #include "MarkStack.h"
 #include "MarkedBlock.h"
 #include "MarkedBlockCage.h"
@@ -565,6 +567,34 @@ static void checkInfallibleScopeUsesReserve()
     AOT_TEST_CHECK(!traps.needsOutOfMemoryError() && !cage.owesCollection() && cage.reserveSize());
 }
 
+static void fillSmallSizeClasses(VM& vm)
+{
+    for (unsigned length = 1; length <= 64; ++length) {
+        while (JSBigInt::tryCreateWithLength(vm, length)) { }
+    }
+}
+
+static void checkPreparedPlansAreCreatedInFullCage()
+{
+    TestVM test;
+    JSGlobalObject* realm = test.createRealm();
+    DeferGCForAWhile deferGC(test.vm());
+    fillSmallSizeClasses(test.vm());
+    JSMap* plans = createPreparedPlans(realm);
+    AOT_TEST_CHECK(plans && plans->size() == 2);
+}
+
+static void checkConstantsAreCompiledInFullCage()
+{
+    TestVM test;
+    JSGlobalObject* realm = test.createRealm();
+    DeferGCForAWhile deferGC(test.vm());
+    fillSmallSizeClasses(test.vm());
+    NakedPtr<Exception> exception;
+    JSValue result = evaluate(realm, makeSource("[1.5, 2.5].length + ['a', 'b', 'c'].length + Number(123456789012345678901234567890n % 7n)"_s, SourceOrigin { }, SourceTaintedOrigin::Untainted), JSValue(), exception);
+    AOT_TEST_CHECK(!exception && result.isInt32() && result.asInt32() == 5);
+}
+
 // An error that waits for the next function entry holds the limit that entries test, not the polls of loops, and an ordinary stop that comes and goes leaves it waiting.
 static void checkErrorWaitsAtFunctionEntriesAlone()
 {
@@ -877,6 +907,8 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/range-is-reused"_s, withCage<checkRangeIsReused> },
         { "heap-cage/cage/reserve-is-kept-once-half-full"_s, withCage<checkReserveIsKeptOnceHalfFull> },
         { "heap-cage/cage/infallible-scope-uses-reserve"_s, withCage<checkInfallibleScopeUsesReserve> },
+        { "heap-cage/cage/prepared-plans-are-created-in-full-cage"_s, withCage<checkPreparedPlansAreCreatedInFullCage> },
+        { "heap-cage/cage/constants-are-compiled-in-full-cage"_s, withCage<checkConstantsAreCompiledInFullCage> },
         { "heap-cage/cage/error-waits-at-function-entries-alone"_s, withCage<checkErrorWaitsAtFunctionEntriesAlone> },
         { "heap-cage/cage/error-is-owed-once-collections-buy-next-to-nothing"_s, withCage<checkErrorIsOwedOnceCollectionsBuyNextToNothing> },
         { "heap-cage/cage/error-owed-by-barren-collections-is-offered-to-a-poll-once"_s, withCage<checkErrorOwedByBarrenCollectionsIsOfferedToPollOnce> },

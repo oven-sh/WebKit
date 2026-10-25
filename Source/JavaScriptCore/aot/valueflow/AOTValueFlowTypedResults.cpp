@@ -20,6 +20,7 @@
 #include "AOTStringArena.h"
 #include "AOTTypeArena.h"
 #include "AOTUseLists.h"
+#include "AOTValidationNodes.h"
 #include "AOTValueFlowPositions.h"
 #include "AOTValueFlowResultsInternal.h"
 #include "AOTValueFlowRules.h"
@@ -43,6 +44,10 @@ TypeID typedElementTypeOf(const Program& program, const ClassPart& array)
 bool placesLayoutsWhereTypesNameThem(const ExpectedResult& expected)
 {
     return std::ranges::all_of(expected.validation, [](const ValidationNode& node) {
+        // No type leads to a node that only a rule names.
+        if (std::ranges::any_of(node.rules, namesNodes))
+            return false;
+
         switch (node.shape.kind()) {
         case ValidationShape::Kind::Tuple:
         case ValidationShape::Kind::Dictionary:

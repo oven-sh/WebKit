@@ -50,7 +50,10 @@ enum LoopDeclineReason {
     None NotInnermost SeveralEntries NoSingleLikelyPath UncloneableValue NothingToHoist NotCounted CounterMayWrap BoundNotInvariant TestNotOnLikelyPath
     EffectsBeforeTopTest LimitReached
 }
-enum InterpretedCause { None TooManyNodes RepeatedRecursion MemberKeyIsNotText LayoutIsNotModeled MemberIsNotNamedField FieldTypeIsNotTestable }
+enum InterpretedCause {
+    None TooManyNodes RepeatedRecursion MemberKeyIsNotText LayoutIsNotModeled MemberIsNotNamedField FieldTypeIsNotTestable RuleNamesNodes
+    RuleReadsGivenValue TupleLengthVaries UniqueItemsAreRecursive
+}
 flags AllocationEscapeReason {
     Returned Thrown StoredInUnknownMemory PassedToUnknownCode RetainedByCallee StoredInEscapingObject LeakedByContainer LimitReached
 }

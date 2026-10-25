@@ -352,8 +352,10 @@ struct JSONParserBuilder final : Emission {
             break;
         }
         // The other containers test their rules themselves, or leave them to the validator.
-        if (!node.isContainer() || node.shape == ResultShape::Tuple)
-            m_rules.emitRules(node, parsed.value, exits.rejected);
+        if (!node.isContainer() || node.shape == ResultShape::Tuple) {
+            RELEASE_ASSERT(!node.isContainer() || !hasRuleOnGivenValue(node));
+            m_rules.emitRules(node, parsed.value, parsed.value, exits.rejected);
+        }
         return { emitTypeTest(parsed.value, valueTypeOf(inputs(), node), exits.unknown), parsed.next };
     }
 
@@ -469,12 +471,14 @@ struct JSONParserBuilder final : Emission {
 
         builder().moveToEndOf(done);
         ValueID next = builder().append(Opcode::JSONSkipByte, { cursorAtDone });
-        m_rules.emitRules(node, array, exits.rejected);
+        RELEASE_ASSERT(!hasRuleOnGivenValue(node));
+        m_rules.emitRules(node, array, array, exits.rejected);
         return { array, next };
     }
 
     ParsedValue emitTuple(const ResultNode& node, ValueID cursor, const ParseExits& exits)
     {
+        RELEASE_ASSERT(node.hasFixedLength());
         emitRequireByte(cursor, '[', exits.rejected);
         ValueID position = appendSkipPunctuator(cursor);
 
@@ -745,7 +749,8 @@ struct JSONParserBuilder final : Emission {
         emitBranchOnOutcome(outcome, finished, parse.exits.unknown, parse.exits.unknown);
 
         builder().moveToEndOf(finished);
-        m_rules.emitRules(parse.node, object, parse.exits.rejected);
+        RELEASE_ASSERT(!hasRuleOnGivenValue(parse.node));
+        m_rules.emitRules(parse.node, object, object, parse.exits.rejected);
         return { object, next };
     }
 
@@ -846,7 +851,7 @@ struct JSONParserBuilder final : Emission {
 
         builder().moveToEndOf(branch.notTaken);
         ValueID defaultValue = m_rules.appendLiteral(*memberNode.defaultValue);
-        m_rules.emitRules(memberNode, defaultValue, parse.exits.rejected);
+        m_rules.emitRules(memberNode, defaultValue, defaultValue, parse.exits.rejected);
         ValueID orderWithDefault = appendObjectKey(state.order(), parse.node.layout, member);
         ValueID value = builder().addParameter(filled, inputs().types.unionOf(member.valueType, function().at(defaultValue).type));
         ValueID order = builder().addParameter(filled, keyOrderType());
@@ -954,7 +959,8 @@ struct JSONParserBuilder final : Emission {
             return emitArmsInOrder({ }, cursor, exits);
         if (groups.size() == 1 && groups[0].arms.size() == 1) {
             ParsedValue parsed = emitNode(groups[0].arms[0], cursor, exits);
-            m_rules.emitRules(node, parsed.value, exits.rejected);
+            RELEASE_ASSERT(!hasRuleOnGivenValue(node));
+            m_rules.emitRules(node, parsed.value, parsed.value, exits.rejected);
             return parsed;
         }
 
@@ -983,7 +989,8 @@ struct JSONParserBuilder final : Emission {
         }
 
         ParsedValue merged = continueAt(merge);
-        m_rules.emitRules(node, merged.value, exits.rejected);
+        RELEASE_ASSERT(!hasRuleOnGivenValue(node));
+        m_rules.emitRules(node, merged.value, merged.value, exits.rejected);
         return merged;
     }
 

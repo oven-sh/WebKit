@@ -5,7 +5,7 @@
 
 module m0 path="main.js" displayPath="main.js"
 expectedresult x0 type=Array<number> validation=[{shape=Array{element=1} type=Array<number>}, {shape=Primitive{primitive=Number} type=number}]
-expectedresult x1 type=Array validation=[{shape=Tuple{elements=[1, 1]} type=Array}, {shape=Primitive{primitive=Number} type=number}]
+expectedresult x1 type=Array validation=[{shape=Tuple{elements=[1, 1] required=2} type=Array}, {shape=Primitive{primitive=Number} type=number}]
 
 # CHECK: function {{*}}role=Validator {{*}}expectedResult=x0}
 # CHECK-NOT: CompilerHelpers

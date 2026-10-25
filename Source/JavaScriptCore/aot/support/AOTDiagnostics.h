@@ -68,6 +68,8 @@ struct UserDiagnostic {
     Typed::LayoutID layout { };
     LimitID limit { LimitID::None };
     uint32_t count { 0 };
+    // A string of the program that the message quotes.
+    Typed::StringID text { };
     SourceLocation location { noSourceLocation };
     // About an int32 promise: the type site of the position, and the least and the greatest number that may enter it.
     SourceLocation origin { noSourceLocation };
@@ -84,6 +86,8 @@ struct InternalError {
     Typed::LayoutID layout { };
     LimitID limit { LimitID::None };
     uint32_t count { 0 };
+    // A string of the program that the message quotes.
+    Typed::StringID text { };
     SourceLocation location { noSourceLocation };
     std::optional<LineColumn> textPosition { };
     PassID pass { PassID::None };

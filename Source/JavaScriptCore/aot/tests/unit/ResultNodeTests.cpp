@@ -744,6 +744,47 @@ static void testRulesThatTestNothingApplyEverywhere()
     }
 }
 
+static constexpr ASCIILiteral rulesOnGivenValue =
+    "UniqueItems, Contains{node=0 minimum=1}, Not{node=0}, If{condition=0 then=0 otherwise=0}, ExactlyOne{nodes=[0]}, Every{nodes=[0]}, PatternMembers{sources=[\"^a\"] nodes=[0]}, "
+    "MemberNames{node=0}, MinimumMembers{count=1}, MaximumMembers{count=2}, DependentMembers{key=\"a\" names=[\"b\"]}, DependentNode{key=\"a\" node=0}"_s;
+
+static void testRulesOnTheGivenValueApplyEverywhere()
+{
+    Graph graph({ { unknown, rulesOnGivenValue } });
+    ResultNode node = graph.node(0);
+    AOT_TEST_CHECK(node.rules.size() == 12);
+    for (const ValidationRule& rule : node.rules) {
+        AOT_TEST_CHECK(subjectOf(rule) == RuleSubject::GivenValue);
+        for (ResultShape shape : everyShape)
+            AOT_TEST_CHECK(appliesTo(rule, shape));
+    }
+}
+
+static void testTupleSaysWhatIsRequiredAndWhatFollows()
+{
+    Graph graph({
+        { "Tuple{elements=[4, 5] required=2}"_s }, { "Tuple{elements=[4, 5] required=1}"_s }, { "Tuple{elements=[4] required=1 rest=5}"_s }, { "Tuple{}"_s },
+        { "Primitive{}"_s }, { "Primitive{primitive=Number}"_s },
+    });
+    AOT_TEST_CHECK(graph.node(0).hasFixedLength() && graph.node(0).requiredElements == 2 && !graph.node(0).restElement);
+    AOT_TEST_CHECK(!graph.node(1).hasFixedLength() && graph.node(1).requiredElements == 1 && graph.node(1).children.size() == 2);
+    AOT_TEST_CHECK(!graph.node(2).hasFixedLength() && graph.node(2).restElement == graph.ref(5) && graph.node(2).children.size() == 1);
+    AOT_TEST_CHECK(graph.node(3).hasFixedLength());
+    AOT_TEST_CHECK(bitsOf(nodesReachableFrom(graph.program(), ExpectedResultID(0u), 2)) == Vector<uint32_t>({ 2, 4, 5 }));
+}
+
+static void testNodesOfRulesAreBelowTheirNode()
+{
+    Graph graph({
+        { unknown, "If{condition=1 then=2 otherwise=3}, Not{node=1}"_s }, { "Null"_s }, { "Primitive{}"_s }, { "Array{element=4}"_s },
+        { "Primitive{primitive=Number}"_s }, { "Never"_s },
+    });
+    ResultNode node = graph.node(0);
+    AOT_TEST_CHECK(node.nodesOfRules.size() == 4 && node.children.isEmpty());
+    AOT_TEST_CHECK(node.nodesOfRules[0] == graph.ref(1) && node.nodesOfRules[1] == graph.ref(2) && node.nodesOfRules[2] == graph.ref(3) && node.nodesOfRules[3] == graph.ref(1));
+    AOT_TEST_CHECK(bitsOf(nodesReachableFrom(graph.program(), ExpectedResultID(0u), 0)) == Vector<uint32_t>({ 0, 1, 2, 3, 4 }));
+}
+
 static void testIntegerRuleIsFoundAmongOtherRules()
 {
     Graph graph({
@@ -997,6 +1038,96 @@ layout L1 name="Made" fields=[{key="id" declared={type=number}}]
     }
 }
 
+static constexpr NodeUse bothUses[] = { NodeUse::ParsedFromText, NodeUse::CopiedFromValue };
+
+static void testNodeWithRuleThatNamesNodesIsInterpreted()
+{
+    Graph graph({ { unknown, "Not{node=1}"_s }, { "Null"_s }, { "Primitive{}"_s, "ExactlyOne{}"_s }, { "Object{members=[{key=\"a\" node=0}]}"_s } });
+    for (NodeUse use : bothUses) {
+        AOT_TEST_CHECK(isInterpretedFor(graph.decide(graph.ref(0), use), InterpretedCause::RuleNamesNodes));
+        AOT_TEST_CHECK(isInterpretedFor(graph.decide(graph.ref(2), use), InterpretedCause::RuleNamesNodes));
+        AOT_TEST_CHECK(isCompiled(graph.decide(graph.ref(1), use)) && isCompiled(graph.decide(graph.ref(3), use)));
+    }
+}
+
+static void testEveryRuleOnTheGivenValueIsEitherInterpretedOrWrittenAlone()
+{
+    Graph graph({ { unknown, rulesOnGivenValue } });
+    unsigned numberWrittenAlone = 0;
+    for (const ValidationRule& rule : graph.node(0).rules)
+        numberWrittenAlone += !namesNodes(rule);
+    AOT_TEST_CHECK(numberWrittenAlone == 4);
+}
+
+static void testContainerWithRuleOnTheGivenValueIsNotBuiltFromText()
+{
+    Graph graph({
+        { "Array{element=4}"_s, "UniqueItems"_s }, { "Object{members=[{key=\"a\" node=4}]}"_s, "MinimumMembers{count=1}"_s },
+        { unknown, "UniqueItems, MaximumMembers{count=2}"_s }, { "AnyObject"_s, "DependentMembers{key=\"a\" names=[\"b\"]}"_s },
+        { "Primitive{}"_s, "Format{format=Hostname}"_s }, { "Union{arms=[4, 6]}"_s, "MaximumMembers{count=2}"_s }, { "AnyObject"_s },
+    });
+    for (uint32_t container : { 0u, 1u }) {
+        AOT_TEST_CHECK(isInterpretedFor(graph.decide(graph.ref(container), NodeUse::ParsedFromText), InterpretedCause::RuleReadsGivenValue));
+        AOT_TEST_CHECK(isCompiled(graph.decide(graph.ref(container), NodeUse::CopiedFromValue)));
+    }
+    for (NodeUse use : bothUses) {
+        for (uint32_t handsOnTheValueItself : { 2u, 3u, 5u })
+            AOT_TEST_CHECK(isInterpretedFor(graph.decide(graph.ref(handsOnTheValueItself), use), InterpretedCause::RuleReadsGivenValue));
+        AOT_TEST_CHECK(isCompiled(graph.decide(graph.ref(4), use)));
+    }
+}
+
+static void testUniqueItemsThatHoldArraysOfTheSameNodeAreInterpreted()
+{
+    Graph graph({
+        { "Object{members=[{key=\"kids\" node=1}]}"_s }, { "Array{element=0}"_s, "UniqueItems"_s }, { "Array{element=2}"_s, "UniqueItems"_s },
+        { "Array{element=0}"_s, "UniqueItems"_s }, { "Array{element=5}"_s, "UniqueItems"_s }, { "Primitive{}"_s },
+    });
+    for (NodeUse use : bothUses) {
+        AOT_TEST_CHECK(isInterpretedFor(graph.decide(graph.ref(1), use), InterpretedCause::UniqueItemsAreRecursive));
+        AOT_TEST_CHECK(isInterpretedFor(graph.decide(graph.ref(2), use), InterpretedCause::UniqueItemsAreRecursive));
+    }
+    AOT_TEST_CHECK(isCompiled(graph.decide(graph.ref(4), NodeUse::CopiedFromValue)));
+}
+
+static void testUniqueItemsThatMayBeObjectsAreCopiedByPlan()
+{
+    Graph graph({
+        { "Array{element=5}"_s, "UniqueItems"_s }, { "Array{element=6}"_s, "UniqueItems"_s }, { "Array{element=7}"_s, "UniqueItems"_s }, { "Array{element=8}"_s, "UniqueItems"_s },
+        { "Array{element=9}"_s, "UniqueItems"_s }, { "Object{members=[{key=\"a\" node=9}]}"_s }, { unknown }, { "Union{arms=[9, 10]}"_s }, { "Union{arms=[9, 9]}"_s },
+        { "Primitive{}"_s }, { "Array{element=9}"_s },
+    });
+    for (uint32_t mayHoldObjects : { 0u, 1u, 2u })
+        AOT_TEST_CHECK(isInterpretedFor(graph.decide(graph.ref(mayHoldObjects), NodeUse::CopiedFromValue), InterpretedCause::RuleReadsGivenValue));
+    for (uint32_t holdsNoObject : { 3u, 4u })
+        AOT_TEST_CHECK(isCompiled(graph.decide(graph.ref(holdsNoObject), NodeUse::CopiedFromValue)));
+}
+
+static void testTupleWhoseLengthVariesIsInterpreted()
+{
+    Graph graph({ { "Tuple{elements=[3] required=1}"_s }, { "Tuple{elements=[3]}"_s }, { "Tuple{rest=3}"_s }, { "Primitive{}"_s } });
+    for (NodeUse use : bothUses) {
+        AOT_TEST_CHECK(isCompiled(graph.decide(graph.ref(0), use)));
+        AOT_TEST_CHECK(isInterpretedFor(graph.decide(graph.ref(1), use), InterpretedCause::TupleLengthVaries));
+        AOT_TEST_CHECK(isInterpretedFor(graph.decide(graph.ref(2), use), InterpretedCause::TupleLengthVaries));
+    }
+}
+
+static void testObjectWhoseDefaultIsTestedByNodesIsNotBuiltFromText()
+{
+    Graph graph({ { "Object{members=[{key=\"a\" node=1 isOptional=true}]}"_s }, { "Primitive{}"_s, "DefaultString{value=\"d\"}, Not{node=2}"_s }, { "Null"_s } });
+    AOT_TEST_CHECK(isInterpretedFor(graph.decide(graph.ref(0), NodeUse::ParsedFromText), InterpretedCause::RuleNamesNodes));
+    AOT_TEST_CHECK(isCompiled(graph.decide(graph.ref(0), NodeUse::CopiedFromValue)));
+}
+
+static void testUnionWithArmsThatRecurThroughRulesIsInterpreted()
+{
+    Graph graph({ { "Union{arms=[1, 2]}"_s }, { "Array{element=3}"_s }, { "Array{element=4}"_s }, { unknown, "Not{node=0}"_s }, { unknown, "Every{nodes=[0]}"_s } });
+    AOT_TEST_CHECK(canRepeatRecursion(graph.program(), graph.ref(0)));
+    for (NodeUse use : bothUses)
+        AOT_TEST_CHECK(isInterpretedFor(graph.decide(graph.ref(0), use), InterpretedCause::RepeatedRecursion));
+}
+
 std::span<const NativeTest> resultNodeTests()
 {
     static constexpr NativeTest tests[] = {
@@ -1033,6 +1164,9 @@ std::span<const NativeTest> resultNodeTests()
         { "result-nodes/length-rules-apply-to-strings-and-arrays"_s, testLengthRulesApplyToStringsAndArrays },
         { "result-nodes/text-rules-apply-to-strings"_s, testTextRulesApplyToStrings },
         { "result-nodes/rules-that-test-nothing-apply-everywhere"_s, testRulesThatTestNothingApplyEverywhere },
+        { "result-nodes/rules-on-the-given-value-apply-everywhere"_s, testRulesOnTheGivenValueApplyEverywhere },
+        { "result-nodes/tuple-says-what-is-required-and-what-follows"_s, testTupleSaysWhatIsRequiredAndWhatFollows },
+        { "result-nodes/nodes-of-rules-are-below-their-node"_s, testNodesOfRulesAreBelowTheirNode },
         { "result-nodes/integer-rule-is-found-among-other-rules"_s, testIntegerRuleIsFoundAmongOtherRules },
         { "result-nodes/type-nodes/alternatives-of-string-or-null"_s, testAlternativesOfStringOrNull },
         { "result-nodes/type-nodes/alternatives-of-literal-union"_s, testAlternativesOfLiteralUnion },
@@ -1047,6 +1181,14 @@ std::span<const NativeTest> resultNodeTests()
         { "result-nodes/decisions/union-that-repeats-recursion-is-interpreted"_s, testUnionThatRepeatsRecursionIsInterpreted },
         { "result-nodes/decisions/object-with-symbol-key-is-interpreted"_s, testObjectWithSymbolKeyIsInterpreted },
         { "result-nodes/decisions/layout-that-is-never-allocated-is-interpreted"_s, testLayoutThatIsNeverAllocatedIsInterpreted },
+        { "result-nodes/decisions/node-with-rule-that-names-nodes-is-interpreted"_s, testNodeWithRuleThatNamesNodesIsInterpreted },
+        { "result-nodes/decisions/every-rule-on-the-given-value-is-either-interpreted-or-written-alone"_s, testEveryRuleOnTheGivenValueIsEitherInterpretedOrWrittenAlone },
+        { "result-nodes/decisions/container-with-rule-on-the-given-value-is-not-built-from-text"_s, testContainerWithRuleOnTheGivenValueIsNotBuiltFromText },
+        { "result-nodes/decisions/unique-items-that-hold-arrays-of-the-same-node-are-interpreted"_s, testUniqueItemsThatHoldArraysOfTheSameNodeAreInterpreted },
+        { "result-nodes/decisions/unique-items-that-may-be-objects-are-copied-by-plan"_s, testUniqueItemsThatMayBeObjectsAreCopiedByPlan },
+        { "result-nodes/decisions/tuple-whose-length-varies-is-interpreted"_s, testTupleWhoseLengthVariesIsInterpreted },
+        { "result-nodes/decisions/object-whose-default-is-tested-by-nodes-is-not-built-from-text"_s, testObjectWhoseDefaultIsTestedByNodesIsNotBuiltFromText },
+        { "result-nodes/decisions/union-with-arms-that-recur-through-rules-is-interpreted"_s, testUnionWithArmsThatRecurThroughRulesIsInterpreted },
     };
     return tests;
 }

@@ -16,7 +16,8 @@
 #include "AOTValidationPlanText.h"
 #include "AOTValidationRules.h"
 #include "AOTVector.h"
-#include "RegularExpression.h"
+#include "YarrInterpreter.h"
+#include <wtf/BumpPointerAllocator.h>
 #include <wtf/DataLog.h>
 #include <wtf/JSONValues.h>
 #include <wtf/text/MakeString.h>
@@ -122,12 +123,12 @@ static void testPlanHoldsOnlyWhatIsBelowItsRoot()
         { "Object{members=[{key=\"a\" node=1}, {key=\"b\" node=4}]}"_s },
         { "Array{element=3}"_s },
         stringNode,
-        { "Tuple{elements=[5, 2, 1]}"_s },
+        { "Tuple{elements=[5, 2, 1] required=3}"_s },
         numberNode,
         { "Null"_s },
     });
-    AOT_TEST_CHECK(hasText(graph.plan(3), R"([{"shape":"Tuple","elements":[3,2,1]},{"shape":"Array","element":0},{"shape":"Primitive","primitive":"string"},{"shape":"Null"}])"_s));
-    AOT_TEST_CHECK(hasText(graph.plan(1), R"([{"shape":"Array","element":2},{"shape":"Primitive","primitive":"string"},{"shape":"Tuple","elements":[3,1,0]},{"shape":"Null"}])"_s));
+    AOT_TEST_CHECK(hasText(graph.plan(3), R"([{"shape":"Tuple","elements":[3,2,1],"required":3},{"shape":"Array","element":0},{"shape":"Primitive","primitive":"string"},{"shape":"Null"}])"_s));
+    AOT_TEST_CHECK(hasText(graph.plan(1), R"([{"shape":"Array","element":2},{"shape":"Primitive","primitive":"string"},{"shape":"Tuple","elements":[3,1,0],"required":3},{"shape":"Null"}])"_s));
     AOT_TEST_CHECK(hasText(graph.plan(4), R"([{"shape":"Primitive","primitive":"number"}])"_s));
 }
 
@@ -163,8 +164,11 @@ static void testContainersNameTheirNodes()
     constexpr ASCIILiteral number = R"({"shape":"Primitive","primitive":"number"})"_s;
     constexpr ASCIILiteral string = R"({"shape":"Primitive","primitive":"string"})"_s;
     AOT_TEST_CHECK(hasPlan({ { "Array{element=1}"_s }, numberNode, stringNode }, makeString(R"([{"shape":"Array","element":1},)"_s, number, ']')));
-    AOT_TEST_CHECK(hasPlan({ { "Tuple{elements=[1, 2, 1]}"_s }, numberNode, stringNode }, makeString(R"([{"shape":"Tuple","elements":[1,2,1]},)"_s, number, ',', string, ']')));
-    AOT_TEST_CHECK(hasPlan({ { "Tuple{}"_s }, numberNode, stringNode }, R"([{"shape":"Tuple"}])"_s));
+    AOT_TEST_CHECK(hasPlan({ { "Tuple{elements=[1, 2, 1] required=3}"_s }, numberNode, stringNode }, makeString(R"([{"shape":"Tuple","elements":[1,2,1],"required":3},)"_s, number, ',', string, ']')));
+    AOT_TEST_CHECK(hasPlan({ { "Tuple{}"_s }, numberNode, stringNode }, R"([{"shape":"Tuple","required":0}])"_s));
+    AOT_TEST_CHECK(hasPlan({ { "Tuple{elements=[1, 2] required=1 rest=1}"_s }, numberNode, stringNode }, makeString(R"([{"shape":"Tuple","elements":[1,2],"required":1,"rest":1},)"_s, number, ',', string, ']')));
+    AOT_TEST_CHECK(hasPlan({ { "Tuple{elements=[1]}"_s }, numberNode, stringNode }, makeString(R"([{"shape":"Tuple","elements":[1],"required":0},)"_s, number, ']')));
+    AOT_TEST_CHECK(hasPlan({ { "Tuple{rest=2}"_s }, numberNode, stringNode }, makeString(R"([{"shape":"Tuple","required":0,"rest":1},)"_s, string, ']')));
     AOT_TEST_CHECK(hasPlan({ { "Dictionary{value=2}"_s }, numberNode, stringNode }, makeString(R"([{"shape":"Dictionary","element":1},)"_s, string, ']')));
     AOT_TEST_CHECK(hasPlan({ { "Union{arms=[1, 2]}"_s }, numberNode, stringNode }, makeString(R"([{"shape":"Union","arms":[1,2]},)"_s, number, ',', string, ']')));
     AOT_TEST_CHECK(hasPlan({ { "Union{}"_s }, numberNode, stringNode }, R"([{"shape":"Union"}])"_s));
@@ -214,7 +218,9 @@ static void testOtherShapesOnCyclesRememberNothing()
 {
     AOT_TEST_CHECK(hasPlan({ { "Array{}"_s } }, R"([{"shape":"Array","element":0}])"_s));
     AOT_TEST_CHECK(hasPlan({ { "Dictionary{}"_s } }, R"([{"shape":"Dictionary","element":0}])"_s));
-    AOT_TEST_CHECK(hasPlan({ { "Tuple{elements=[0]}"_s } }, R"([{"shape":"Tuple","elements":[0]}])"_s));
+    AOT_TEST_CHECK(hasPlan({ { "Tuple{elements=[0] required=1}"_s } }, R"([{"shape":"Tuple","elements":[0],"required":1}])"_s));
+    AOT_TEST_CHECK(hasPlan({ { "Tuple{rest=0}"_s } }, R"([{"shape":"Tuple","required":0,"rest":0}])"_s));
+    AOT_TEST_CHECK(hasPlan({ { unknown, "Not{node=0}"_s } }, R"([{"shape":"Unknown","rules":[{"rule":"Not","node":0}]}])"_s));
 }
 
 static void testEveryDiscriminantHasFiveMembers()
@@ -261,7 +267,7 @@ static void testRules()
 {
     Graph graph({ { unknown,
         "Integer, Minimum{bound=1}, Maximum{bound=2.5}, ExclusiveMinimum{bound=-1}, ExclusiveMaximum{bound=1e21}, MultipleOf{divisor=0.25}, MinimumLength{length=2}, MaximumLength{length=4294967295}, "
-        "Pattern{source=\"^\\\\d+$\"}, Format{format=Url}, Format{format=Ipv4}, "
+        "Pattern{source=\"^\\\\d+$\"}, Pattern{source=\"^.$\" isUnicode=true}, Format{format=Url}, Format{format=Ipv4}, "
         "Template{head=\"id-\" parts=[{placeholder=Number text=\"/\"}, {text=\"#\"}, {placeholder=BigInt text=\"\"}]}, Template{head=\"\"}"_s } });
     const ASCIILiteral expected[] = {
         R"({"rule":"Integer"})"_s,
@@ -273,8 +279,9 @@ static void testRules()
         R"({"rule":"MinimumLength","length":2})"_s,
         R"({"rule":"MaximumLength","length":4294967295})"_s,
         R"({"rule":"Pattern","source":"^\\d+$"})"_s,
-        R"({"rule":"Format","format":"url","source":""})"_s,
-        R"({"rule":"Format","format":"ipv4","source":"^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$"})"_s,
+        R"({"rule":"Pattern","source":"^.$","unicode":true})"_s,
+        R"({"rule":"Format","format":"url"})"_s,
+        R"({"rule":"Format","format":"ipv4"})"_s,
         R"({"rule":"Template","texts":["id-","/","#",""],"placeholders":"nsb"})"_s,
         R"({"rule":"Template","texts":[""],"placeholders":""})"_s,
     };
@@ -364,7 +371,7 @@ static void testPlanWithEveryCaseIsJSON()
         { "Primitive{primitive=Number}"_s, "Integer, Minimum{bound=1}, Maximum{bound=9}, ExclusiveMinimum{bound=0.5}, ExclusiveMaximum{bound=Infinity}, MultipleOf{divisor=2}, DefaultNumber{value=3}"_s },
         { "Primitive{primitive=Boolean}"_s, "DefaultBoolean{value=true}"_s }, { "Primitive{primitive=BigInt}"_s },
         { "BooleanLiteral{value=true}"_s }, { "NumberLiteral{value=4}"_s }, { "StringLiteral{value=\"s\"}"_s },
-        { "Array{element=7}"_s }, { "Tuple{elements=[6, 7]}"_s }, { "Dictionary{value=7}"_s },
+        { "Array{element=7}"_s }, { "Tuple{elements=[6, 7] required=2}"_s }, { "Dictionary{value=7}"_s },
         { "Union{arms=[17, 18, 0]}"_s },
         { "Object{members=[{key=\"kind\" node=12}] undeclared=Rejected}"_s },
         { "Object{members=[{key=\"kind\" node=11}]}"_s },
@@ -409,7 +416,7 @@ static void testPlanWithEveryCaseIsJSON()
 static void testEqualPlansInternToOneString()
 {
     Graph graph({
-        { "Tuple{elements=[1, 2, 3]}"_s },
+        { "Tuple{elements=[1, 2, 3] required=3}"_s },
         { "Array{element=4}"_s },
         { "Array{element=4}"_s },
         { "Array{element=5}"_s },
@@ -432,96 +439,103 @@ static void testEqualPlansInternToOneString()
     AOT_TEST_CHECK(validationRuleText(rules.program(), ruleStrings, list[2]) != minimum && validationRuleText(rules.program(), ruleStrings, list[3]) != minimum);
 }
 
-static constexpr TextFormat formats[] = { TextFormat::Email, TextFormat::Uuid, TextFormat::Ipv4, TextFormat::Ipv6, TextFormat::Date, TextFormat::DateTime, TextFormat::Url };
+static constexpr TextFormat formats[] = {
+    TextFormat::Email, TextFormat::Uuid, TextFormat::Ipv4, TextFormat::Ipv6, TextFormat::Date, TextFormat::DateTime, TextFormat::Url, TextFormat::Time,
+    TextFormat::Duration, TextFormat::Hostname, TextFormat::Uri, TextFormat::UriReference, TextFormat::Regex, TextFormat::JsonPointer, TextFormat::RelativeJsonPointer,
+};
 
 static void testFormatNames()
 {
-    const ASCIILiteral names[] = { "email"_s, "uuid"_s, "ipv4"_s, "ipv6"_s, "date"_s, "date-time"_s, "url"_s };
+    const ASCIILiteral names[] = {
+        "email"_s, "uuid"_s, "ipv4"_s, "ipv6"_s, "date"_s, "date-time"_s, "url"_s, "time"_s,
+        "duration"_s, "hostname"_s, "uri"_s, "uri-reference"_s, "regex"_s, "json-pointer"_s, "relative-json-pointer"_s,
+    };
+    AOT_TEST_CHECK(std::size(names) == std::size(formats));
     for (unsigned index = 0; index < std::size(formats); ++index)
         AOT_TEST_CHECK(formatName(formats[index]) == names[index]);
 }
 
-static void testFormatExpressions()
+static void testRulesWithoutNodesAreWrittenAlone()
 {
-    constexpr ASCIILiteral dateExpression = R"((?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8]))))"_s;
-    AOT_TEST_CHECK(formatExpression(TextFormat::Email) == R"(^(?!\.)(?!.*\.\.)([A-Za-z0-9_'+\-\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\-]*\.)+[A-Za-z]{2,}$)"_s);
-    AOT_TEST_CHECK(formatExpression(TextFormat::Uuid) == R"(^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$)"_s);
-    AOT_TEST_CHECK(formatExpression(TextFormat::Ipv4) == R"(^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$)"_s);
-    AOT_TEST_CHECK(formatExpression(TextFormat::Ipv6) == R"(^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})$)"_s);
-    AOT_TEST_CHECK(String(formatExpression(TextFormat::Date)) == makeString('^', dateExpression, '$'));
-    AOT_TEST_CHECK(String(formatExpression(TextFormat::DateTime)) == makeString('^', dateExpression, R"(T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?Z$)"_s));
-    AOT_TEST_CHECK(formatExpression(TextFormat::Url).isEmpty());
-}
-
-static void testFormatExpressionsMatchEntireStrings()
-{
-    for (TextFormat format : formats) {
-        String expression = formatExpression(format);
-        AOT_TEST_CHECK((expression.startsWith('^') && expression.endsWith('$')) == (format != TextFormat::Url));
-    }
-    String date = formatExpression(TextFormat::Date);
-    AOT_TEST_CHECK(String(formatExpression(TextFormat::DateTime)).startsWith(date.left(date.length() - 1)));
-}
-
-static void checkSamples(TextFormat format, std::initializer_list<ASCIILiteral> accepted, std::initializer_list<ASCIILiteral> refused)
-{
-    AOT_TEST_CHECK(accepted.size() == 10 && refused.size() == 10);
-    Yarr::RegularExpression expression { StringView(formatExpression(format)) };
-    AOT_TEST_CHECK(expression.isValid());
-    for (ASCIILiteral sample : accepted) {
-        if (expression.match(sample) < 0)
-            dataLogLn(formatName(format), " refuses ", sample);
-        AOT_TEST_CHECK(!expression.match(sample));
-    }
-    for (ASCIILiteral sample : refused) {
-        if (expression.match(sample) >= 0)
-            dataLogLn(formatName(format), " accepts ", sample);
-        AOT_TEST_CHECK(expression.match(sample) < 0);
+    Graph graph({ { unknown,
+        "UniqueItems, MinimumMembers{count=1}, MaximumMembers{count=4294967295}, DependentMembers{key=\"a\" names=[\"b\", \"__proto__\"]}, DependentMembers{key=\"\"}"_s } });
+    const ASCIILiteral expected[] = {
+        R"({"rule":"UniqueItems"})"_s,
+        R"({"rule":"MinimumMembers","count":1})"_s,
+        R"({"rule":"MaximumMembers","count":4294967295})"_s,
+        R"({"rule":"DependentMembers","key":"a","names":["b","__proto__"]})"_s,
+        R"({"rule":"DependentMembers","key":"","names":[]})"_s,
+    };
+    const Vector<ValidationRule>& rules = graph.program().at(ExpectedResultID(0u)).validation[0].rules;
+    for (uint32_t index = 0; index < std::size(expected); ++index) {
+        AOT_TEST_CHECK(!namesNodes(rules[index]));
+        AOT_TEST_CHECK(hasText(graph.rule(index), expected[index]));
     }
 }
 
-static void testSamplesOfEmail()
+static void testRulesNameNodesByTheirNumberInThePlan()
 {
-    checkSamples(TextFormat::Email,
-        { "a@b.co"_s, "john.doe@example.com"_s, "user+tag@example.org"_s, "o'brien@example.ie"_s, "x_y-z@sub.domain.example.com"_s, "A1@B2.CD"_s, "first.last+tag@a-b.io"_s, "1@2.aa"_s, "u-@example.museum"_s, "_@example.com"_s },
-        { ""_s, "plain"_s, "@example.com"_s, ".a@example.com"_s, "a..b@example.com"_s, "a.@example.com"_s, "a@example"_s, "a@-example.com"_s, "a@example.c"_s, "a@example.c0m"_s });
+    Graph graph({
+        numberNode,
+        { unknown,
+            "Not{node=3}, Contains{node=0 minimum=2}, Contains{node=0 maximum=5}, If{condition=3 then=0 otherwise=4}, ExactlyOne{nodes=[4, 3]}, Every{nodes=[0]}, "
+            "PatternMembers{sources=[\"^a\", \"b$\"] nodes=[3, 0]}, MemberNames{node=3}, DependentNode{key=\"k\" node=4}, ExactlyOne{}"_s },
+        { "Never"_s },
+        stringNode,
+        { "Null"_s },
+    });
+    for (const ValidationRule& rule : graph.program().at(ExpectedResultID(0u)).validation[1].rules)
+        AOT_TEST_CHECK(namesNodes(rule));
+    AOT_TEST_CHECK(hasText(graph.plan(1), makeString(
+        R"([{"shape":"Unknown","rules":[{"rule":"Not","node":2},{"rule":"Contains","node":1,"minimum":2},{"rule":"Contains","node":1,"minimum":0,"maximum":5},)"_s,
+        R"({"rule":"If","condition":2,"then":1,"otherwise":3},{"rule":"ExactlyOne","nodes":[3,2]},{"rule":"Every","nodes":[1]},)"_s,
+        R"({"rule":"PatternMembers","sources":["^a","b$"],"nodes":[2,1]},{"rule":"MemberNames","node":2},{"rule":"DependentNode","key":"k","node":3},{"rule":"ExactlyOne","nodes":[]}]},)"_s,
+        R"({"shape":"Primitive","primitive":"number"},{"shape":"Primitive","primitive":"string"},{"shape":"Null"}])"_s)));
 }
 
-static void testSamplesOfUuid()
+static void testUnionOnCycleThroughRuleOrRestRemembers()
 {
-    checkSamples(TextFormat::Uuid,
-        { "123e4567-e89b-12d3-a456-426614174000"_s, "00000000-0000-0000-0000-000000000000"_s, "ffffffff-ffff-ffff-ffff-ffffffffffff"_s, "550e8400-e29b-41d4-a716-446655440000"_s, "6BA7B810-9DAD-11D1-80B4-00C04FD430C8"_s,
-            "f47ac10b-58cc-4372-a567-0e02b2c3d479"_s, "01890a5d-ac96-774b-bcce-b302099a8057"_s, "00000000-0000-8000-9000-000000000000"_s, "aaaaaaaa-aaaa-5aaa-Aaaa-aaaaaaaaaaaa"_s, "12345678-1234-6234-B234-123456789abc"_s },
-        { ""_s, "123e4567e89b12d3a456426614174000"_s, "123e4567-e89b-02d3-a456-426614174000"_s, "123e4567-e89b-92d3-a456-426614174000"_s, "123e4567-e89b-12d3-c456-426614174000"_s,
-            "123e4567-e89b-12d3-7456-426614174000"_s, "g23e4567-e89b-12d3-a456-426614174000"_s, "123e4567-e89b-12d3-a456-42661417400"_s, "{123e4567-e89b-12d3-a456-426614174000}"_s, "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"_s });
+    AOT_TEST_CHECK(hasPlan({ { "Union{arms=[1, 2]}"_s }, { unknown, "Not{node=0}"_s }, { "Null"_s } },
+        R"([{"shape":"Union","arms":[1,2],"remembers":true},{"shape":"Unknown","rules":[{"rule":"Not","node":0}]},{"shape":"Null"}])"_s));
+    AOT_TEST_CHECK(hasPlan({ { "Union{arms=[1, 2]}"_s }, { "Tuple{rest=0}"_s }, { "Null"_s } },
+        R"([{"shape":"Union","arms":[1,2],"remembers":true},{"shape":"Tuple","required":0,"rest":0},{"shape":"Null"}])"_s));
+    AOT_TEST_CHECK(hasPlan({ { "Union{arms=[1, 2]}"_s }, { unknown, "Not{node=2}"_s }, { "Null"_s } },
+        R"([{"shape":"Union","arms":[1,2]},{"shape":"Unknown","rules":[{"rule":"Not","node":2}]},{"shape":"Null"}])"_s));
 }
 
-static void testSamplesOfIpv4()
+// A rule under Not, a pattern for members and a test of names turn "no match" into "accepted". So a search without an answer has to be told from one that found nothing.
+static void testSearchThatIsGivenUpIsToldFromNoMatch()
 {
-    checkSamples(TextFormat::Ipv4,
-        { "0.0.0.0"_s, "255.255.255.255"_s, "1.2.3.4"_s, "192.168.0.1"_s, "10.0.0.255"_s, "127.0.0.1"_s, "99.100.199.200"_s, "249.250.251.252"_s, "8.8.8.8"_s, "172.16.254.1"_s },
-        { ""_s, "256.0.0.1"_s, "1.2.3"_s, "1.2.3.4.5"_s, "01.2.3.4"_s, "1.2.3.04"_s, "1.2.3.a"_s, "1..2.3"_s, "1.2.3.4 "_s, "1.2.3.256"_s });
+    Yarr::ErrorCode error { Yarr::ErrorCode::NoError };
+    Yarr::YarrPattern pattern("(a+)+$"_s, { }, error);
+    AOT_TEST_CHECK(!Yarr::hasError(error));
+    BumpPointerAllocator allocator;
+    std::unique_ptr<Yarr::BytecodePattern> bytecode = Yarr::byteCompile(pattern, &allocator, error);
+    AOT_TEST_CHECK(bytecode && !bytecode->searchesGivenUp());
+
+    Vector<unsigned, 8> output(FillWith { }, bytecode->m_offsetsSize, Yarr::offsetNoMatch);
+    AOT_TEST_CHECK(!Yarr::interpret(bytecode.get(), "aaa"_s, 0, output.mutableSpan().data()));
+    AOT_TEST_CHECK(Yarr::interpret(bytecode.get(), "bbb"_s, 0, output.mutableSpan().data()) == Yarr::offsetNoMatch);
+    AOT_TEST_CHECK(!bytecode->searchesGivenUp());
+
+    AOT_TEST_CHECK(Yarr::interpret(bytecode.get(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!"_s, 0, output.mutableSpan().data()) == Yarr::offsetNoMatch);
+    AOT_TEST_CHECK(bytecode->searchesGivenUp() == 1);
+    AOT_TEST_CHECK(Yarr::interpret(bytecode.get(), "bbb"_s, 0, output.mutableSpan().data()) == Yarr::offsetNoMatch);
+    AOT_TEST_CHECK(bytecode->searchesGivenUp() == 1);
 }
 
-static void testSamplesOfIpv6()
+static void testMessageOfInvalidPatternQuotesItsSource()
 {
-    checkSamples(TextFormat::Ipv6,
-        { "2001:0db8:85a3:0000:0000:8a2e:0370:7334"_s, "1:2:3:4:5:6:7:8"_s, "::"_s, "::1"_s, "1::"_s, "fe80::1"_s, "a::b:c:d"_s, "::ffff:1:2"_s, "ABCD::EF01"_s, "1::2:3:4:5:6:7"_s },
-        { ""_s, ":"_s, ":::"_s, "1:2:3:4:5:6:7"_s, "1:2:3:4:5:6:7:8:9"_s, "g::1"_s, "12345::1"_s, "1:2::3"_s, "1.2.3.4"_s, "1::2:3:4:5:6:7:8"_s });
-}
+    Graph graph({ { "Primitive{}"_s, "Pattern{source=\"{count}(\"}"_s } });
+    StringID source = graph.program().at(ExpectedResultID(0u)).validation[0].rules[0].as<ValidationRule::Pattern>().source;
 
-static void testSamplesOfDate()
-{
-    checkSamples(TextFormat::Date,
-        { "2024-02-29"_s, "2000-02-29"_s, "2023-02-28"_s, "1999-12-31"_s, "2020-01-01"_s, "0000-01-01"_s, "2021-04-30"_s, "2021-11-30"_s, "2021-07-31"_s, "2400-02-29"_s },
-        { ""_s, "2023-02-29"_s, "1900-02-29"_s, "2021-04-31"_s, "2021-13-01"_s, "2021-00-10"_s, "2021-01-00"_s, "2021-1-01"_s, "2021/01/01"_s, "2021-02-30"_s });
-}
-
-static void testSamplesOfDateTime()
-{
-    checkSamples(TextFormat::DateTime,
-        { "2024-02-29T00:00:00Z"_s, "2020-01-01T23:59:59Z"_s, "2020-01-01T12:30Z"_s, "2020-01-01T12:30:15.5Z"_s, "2020-01-01T12:30:15.123456789Z"_s, "1999-12-31T19:00:00Z"_s, "2000-02-29T09:05Z"_s, "2021-07-31T20:00:00.000Z"_s, "2021-11-30T10:10:10Z"_s, "0000-01-01T00:00Z"_s },
-        { ""_s, "2020-01-01"_s, "2020-01-01T24:00:00Z"_s, "2020-01-01T12:60:00Z"_s, "2020-01-01T12:30:60Z"_s, "2020-01-01T12:30:15"_s, "2020-01-01T12:30:15+00:00"_s, "2020-01-01 12:30:15Z"_s, "2023-02-29T00:00:00Z"_s, "2020-01-01T12:30:15.Z"_s });
+    Diagnostics diagnostics;
+    diagnostics.add(UserDiagnostic { .kind = UserDiagnosticKind::InvalidValidationPattern, .text = source });
+    diagnostics.add(UserDiagnostic { .kind = UserDiagnosticKind::InvalidUnicodeValidationPattern, .text = source });
+    diagnostics.finish(&graph.program());
+    AOT_TEST_CHECK(diagnostics.hasErrors());
+    AOT_TEST_CHECK(hasText(diagnostics.messageOfUserDiagnostic(0), "the type that is validated here has a pattern that is not a valid regular expression: /{count}(/"_s));
+    AOT_TEST_CHECK(hasText(diagnostics.messageOfUserDiagnostic(1), "the type that is validated here has a pattern that is not a valid regular expression with the 'u' flag: /{count}(/u"_s));
 }
 
 std::span<const NativeTest> validationPlanTextTests()
@@ -548,14 +562,11 @@ std::span<const NativeTest> validationPlanTextTests()
         { "validation-plan-text/plan-with-every-case-is-json"_s, testPlanWithEveryCaseIsJSON },
         { "validation-plan-text/equal-plans-intern-to-one-string"_s, testEqualPlansInternToOneString },
         { "validation-plan-text/format-names"_s, testFormatNames },
-        { "validation-plan-text/format-expressions"_s, testFormatExpressions },
-        { "validation-plan-text/format-expressions-match-entire-strings"_s, testFormatExpressionsMatchEntireStrings },
-        { "validation-plan-text/samples-of-email"_s, testSamplesOfEmail },
-        { "validation-plan-text/samples-of-uuid"_s, testSamplesOfUuid },
-        { "validation-plan-text/samples-of-ipv4"_s, testSamplesOfIpv4 },
-        { "validation-plan-text/samples-of-ipv6"_s, testSamplesOfIpv6 },
-        { "validation-plan-text/samples-of-date"_s, testSamplesOfDate },
-        { "validation-plan-text/samples-of-date-time"_s, testSamplesOfDateTime },
+        { "validation-plan-text/rules-without-nodes-are-written-alone"_s, testRulesWithoutNodesAreWrittenAlone },
+        { "validation-plan-text/rules-name-nodes-by-their-number-in-the-plan"_s, testRulesNameNodesByTheirNumberInThePlan },
+        { "validation-plan-text/union-on-cycle-through-rule-or-rest-remembers"_s, testUnionOnCycleThroughRuleOrRestRemembers },
+        { "validation-plan-text/search-that-is-given-up-is-told-from-no-match"_s, testSearchThatIsGivenUpIsToldFromNoMatch },
+        { "validation-plan-text/message-of-invalid-pattern-quotes-its-source"_s, testMessageOfInvalidPatternQuotesItsSource },
     };
     return tests;
 }

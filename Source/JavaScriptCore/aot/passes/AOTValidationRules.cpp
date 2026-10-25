@@ -10,42 +10,50 @@
 
 #include "AOTBuiltinCallPlan.h"
 #include "AOTFlowResults.h"
+#include "AOTRegExpFlags.h"
 #include "AOTRegExpSummary.h"
 #include "AOTStringArena.h"
 #include "AOTValidationPlanText.h"
 #include <algorithm>
+#include <cmath>
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static std::pair<ASCIILiteral, ASCIILiteral> nameAndExpressionOf(TextFormat format)
+ASCIILiteral formatName(TextFormat format)
 {
     switch (format) {
     case TextFormat::Email:
-        return { "email"_s, R"(^(?!\.)(?!.*\.\.)([A-Za-z0-9_'+\-\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\-]*\.)+[A-Za-z]{2,}$)"_s };
+        return "email"_s;
     case TextFormat::Uuid:
-        return { "uuid"_s, R"(^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$)"_s };
+        return "uuid"_s;
     case TextFormat::Ipv4:
-        return { "ipv4"_s, R"(^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$)"_s };
+        return "ipv4"_s;
     case TextFormat::Ipv6:
-        return { "ipv6"_s, R"(^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::|([0-9a-fA-F]{1,4})?::([0-9a-fA-F]{1,4}:?){0,6})$)"_s };
+        return "ipv6"_s;
     case TextFormat::Date:
-        return { "date"_s, R"(^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))$)"_s };
+        return "date"_s;
     case TextFormat::DateTime:
-        return { "date-time"_s, R"(^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?Z$)"_s };
+        return "date-time"_s;
     case TextFormat::Url:
-        return { "url"_s, ""_s };
+        return "url"_s;
+    case TextFormat::Time:
+        return "time"_s;
+    case TextFormat::Duration:
+        return "duration"_s;
+    case TextFormat::Hostname:
+        return "hostname"_s;
+    case TextFormat::Uri:
+        return "uri"_s;
+    case TextFormat::UriReference:
+        return "uri-reference"_s;
+    case TextFormat::Regex:
+        return "regex"_s;
+    case TextFormat::JsonPointer:
+        return "json-pointer"_s;
+    case TextFormat::RelativeJsonPointer:
+        return "relative-json-pointer"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-ASCIILiteral formatName(TextFormat format)
-{
-    return nameAndExpressionOf(format).first;
-}
-
-ASCIILiteral formatExpression(TextFormat format)
-{
-    return nameAndExpressionOf(format).second;
 }
 
 RuleSubject subjectOf(const ValidationRule& rule)
@@ -65,6 +73,19 @@ RuleSubject subjectOf(const ValidationRule& rule)
     case ValidationRule::Kind::Format:
     case ValidationRule::Kind::Template:
         return RuleSubject::Text;
+    case ValidationRule::Kind::UniqueItems:
+    case ValidationRule::Kind::Contains:
+    case ValidationRule::Kind::Not:
+    case ValidationRule::Kind::If:
+    case ValidationRule::Kind::ExactlyOne:
+    case ValidationRule::Kind::Every:
+    case ValidationRule::Kind::PatternMembers:
+    case ValidationRule::Kind::MemberNames:
+    case ValidationRule::Kind::MinimumMembers:
+    case ValidationRule::Kind::MaximumMembers:
+    case ValidationRule::Kind::DependentMembers:
+    case ValidationRule::Kind::DependentNode:
+        return RuleSubject::GivenValue;
     case ValidationRule::Kind::Message:
     case ValidationRule::Kind::DefaultNull:
     case ValidationRule::Kind::DefaultBoolean:
@@ -89,6 +110,7 @@ bool appliesTo(const ValidationRule& rule, ResultShape shape)
         return isText(shape) || shape == ResultShape::Array || shape == ResultShape::Tuple;
     case RuleSubject::Text:
         return isText(shape);
+    case RuleSubject::GivenValue:
     case RuleSubject::Nothing:
         return true;
     }
@@ -102,27 +124,16 @@ bool hasIntegerRule(const ResultNode& node)
     });
 }
 
-static bool hasExpression(TextFormat format)
+bool hasRuleOnGivenValue(const ResultNode& node)
 {
-    switch (format) {
-    case TextFormat::Email:
-    case TextFormat::Uuid:
-    case TextFormat::Ipv4:
-    case TextFormat::Ipv6:
-    case TextFormat::Date:
-    case TextFormat::DateTime:
-        return true;
-    case TextFormat::Url:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return std::ranges::any_of(node.rules, [](const ValidationRule& rule) {
+        return subjectOf(rule) == RuleSubject::GivenValue;
+    });
 }
 
-static StringView expressionOf(const Program& program, const ValidationRule& rule, Vector<char16_t>& bufferForNonASCII)
+static OptionSet<RegExpFlags> flagsOf(const ValidationRule::Pattern& pattern)
 {
-    if (const auto* pattern = rule.tryAs<ValidationRule::Pattern>())
-        return program.strings.viewOf(pattern->source, bufferForNonASCII);
-    return formatExpression(rule.as<ValidationRule::Format>().format);
+    return pattern.isUnicode ? OptionSet<RegExpFlags> { RegExpFlags::Unicode } : OptionSet<RegExpFlags> { };
 }
 
 RuleCode ValidationRuleEmitter::codeFor(const ValidationRule& rule, ResultShape shape)
@@ -136,8 +147,12 @@ RuleCode ValidationRuleEmitter::codeFor(const ValidationRule& rule, ResultShape 
     case ValidationRule::Kind::Maximum:
     case ValidationRule::Kind::ExclusiveMinimum:
     case ValidationRule::Kind::ExclusiveMaximum:
-    case ValidationRule::Kind::MultipleOf:
         return RuleCode::Inline;
+    case ValidationRule::Kind::MultipleOf: {
+        // The remainder by a whole divisor is exact. That by a fraction is not what the decimal spelling of the two numbers says.
+        double divisor = rule.as<ValidationRule::MultipleOf>().divisor;
+        return std::trunc(divisor) == divisor ? RuleCode::Inline : RuleCode::ByHelper;
+    }
     case ValidationRule::Kind::MinimumLength:
         // One unit is one character, whatever it is.
         return isText(shape) && rule.as<ValidationRule::MinimumLength>().length > 1 ? RuleCode::CountedCharacters : RuleCode::Inline;
@@ -146,13 +161,25 @@ RuleCode ValidationRuleEmitter::codeFor(const ValidationRule& rule, ResultShape 
     case ValidationRule::Kind::Pattern: {
         const EmissionInputs& inputs = m_emission.inputs();
         Vector<char16_t> bufferForNonASCII;
-        StringView source = expressionOf(inputs.program, rule, bufferForNonASCII);
-        const RegExpSummary& summary = inputs.build.regExpSummaries().summaryOf(inputs.strings.intern(source), { }, source);
+        const auto& pattern = rule.as<ValidationRule::Pattern>();
+        StringView source = inputs.program.strings.viewOf(pattern.source, bufferForNonASCII);
+        const RegExpSummary& summary = inputs.build.regExpSummaries().summaryOf(inputs.strings.intern(source), toYarrFlags(flagsOf(pattern)), source);
         return summary.isValid() && summary.metadata == RegExpMetadata::Known ? RuleCode::RegularExpression : RuleCode::ByHelper;
     }
     case ValidationRule::Kind::Format:
-        return hasExpression(rule.as<ValidationRule::Format>().format) ? RuleCode::RegularExpression : RuleCode::ByHelper;
     case ValidationRule::Kind::Template:
+    case ValidationRule::Kind::UniqueItems:
+    case ValidationRule::Kind::Contains:
+    case ValidationRule::Kind::Not:
+    case ValidationRule::Kind::If:
+    case ValidationRule::Kind::ExactlyOne:
+    case ValidationRule::Kind::Every:
+    case ValidationRule::Kind::PatternMembers:
+    case ValidationRule::Kind::MemberNames:
+    case ValidationRule::Kind::MinimumMembers:
+    case ValidationRule::Kind::MaximumMembers:
+    case ValidationRule::Kind::DependentMembers:
+    case ValidationRule::Kind::DependentNode:
         return RuleCode::ByHelper;
     case ValidationRule::Kind::Message:
     case ValidationRule::Kind::DefaultNull:
@@ -209,6 +236,18 @@ static ValueID appendNumberTest(IRBuilder& builder, const ValidationRule& rule, 
     case ValidationRule::Kind::DefaultBoolean:
     case ValidationRule::Kind::DefaultNumber:
     case ValidationRule::Kind::DefaultString:
+    case ValidationRule::Kind::UniqueItems:
+    case ValidationRule::Kind::Contains:
+    case ValidationRule::Kind::Not:
+    case ValidationRule::Kind::If:
+    case ValidationRule::Kind::ExactlyOne:
+    case ValidationRule::Kind::Every:
+    case ValidationRule::Kind::PatternMembers:
+    case ValidationRule::Kind::MemberNames:
+    case ValidationRule::Kind::MinimumMembers:
+    case ValidationRule::Kind::MaximumMembers:
+    case ValidationRule::Kind::DependentMembers:
+    case ValidationRule::Kind::DependentNode:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -255,12 +294,12 @@ static void emitCharacterCountRule(Emission& emission, const ValidationRule& rul
     builder.moveToEndOf(after);
 }
 
-static ValueID appendExpressionTest(Emission& emission, StringView source, ValueID string)
+static ValueID appendExpressionTest(Emission& emission, StringView source, OptionSet<RegExpFlags> flags, ValueID string)
 {
     IRBuilder& builder = emission.builder();
     Value literal = IRBuilder::make(Opcode::SharedRegExpLiteral);
     literal.setPattern(emission.inputs().strings.intern(source));
-    literal.setRegExpFlags({ });
+    literal.setRegExpFlags(flags);
     ValueID regExp = builder.append(WTF::move(literal));
     // Placement keys the cell of a literal by (function, position), and every other value of a derived function has the same position.
     builder.function().edit(regExp, ValueEdit::Definition).setOrigin({ regExp.index(), builder.origin().inlineFrame });
@@ -270,10 +309,11 @@ static ValueID appendExpressionTest(Emission& emission, StringView source, Value
     return appendMatchedBuiltinCall(emission, Builtins::RegExpPrototypeTest, BuiltinCallMode::Call, regExp, singleElementSpan(string));
 }
 
-void ValidationRuleEmitter::emitRules(const ResultNode& node, ValueID value, BlockID rejected)
+void ValidationRuleEmitter::emitRules(const ResultNode& node, ValueID built, ValueID given, BlockID rejected)
 {
     IRBuilder& builder = m_emission.builder();
     for (const ValidationRule& rule : node.rules) {
+        ValueID value = subjectOf(rule) == RuleSubject::GivenValue ? given : built;
         Vector<char16_t> bufferForNonASCII;
         ValueID test;
         switch (codeFor(rule, node.shape)) {
@@ -296,9 +336,11 @@ void ValidationRuleEmitter::emitRules(const ResultNode& node, ValueID value, Blo
                 emitRequireFinite(value, rejected);
             test = appendNumberTest(builder, rule, value);
             break;
-        case RuleCode::RegularExpression:
-            test = appendExpressionTest(m_emission, expressionOf(m_emission.program(), rule, bufferForNonASCII), value);
+        case RuleCode::RegularExpression: {
+            const auto& pattern = rule.as<ValidationRule::Pattern>();
+            test = appendExpressionTest(m_emission, m_emission.program().strings.viewOf(pattern.source, bufferForNonASCII), flagsOf(pattern), value);
             break;
+        }
         }
         m_emission.emitJumpUnless(test, rejected);
     }

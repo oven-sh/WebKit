@@ -7,7 +7,7 @@
 module m0 path="main.js" displayPath="main.js"
 expectedresult x0 type=Array<L0> layouts=[L0] validation=[{shape=Array{element=1} type=Array<L0>}, {shape=Object{layout=L0 members=[{key="id" node=2 field=0}]} type=L0}, {shape=Primitive{primitive=Number} type=number}]
 expectedresult x1 type=Array<string> validation=[{shape=Array{element=1} type=Array<string> rules=[MinimumLength{length=1}, MaximumLength{length=3}]}, {shape=Primitive{} type=string}]
-expectedresult x2 type=Array<number|string> validation=[{shape=Tuple{elements=[1, 2]} type=Array<number|string>}, {shape=Primitive{primitive=Number} type=number}, {shape=Primitive{} type=string}]
+expectedresult x2 type=Array<number|string> validation=[{shape=Tuple{elements=[1, 2] required=2} type=Array<number|string>}, {shape=Primitive{primitive=Number} type=number}, {shape=Primitive{} type=string}]
 layout L0 name="Row" fields=[{key="id" declared={type=number}}]
 
 # CHECK-LABEL: form=ParsedText expectedResult=x0}

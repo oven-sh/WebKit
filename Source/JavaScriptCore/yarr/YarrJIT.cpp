@@ -2797,7 +2797,9 @@ class YarrGenerator final : public YarrJITInfo {
 #else
             moveBodyResult(static_cast<size_t>(JSRegExpResult::JITCodeFailure));
 #endif
-            finishExiting.append(m_jit.jump());
+            m_jit.move(MacroAssembler::TrustedImm32(0), m_regs.returnRegister2);
+            if (!m_hitMatchLimit.empty())
+                finishExiting.append(m_jit.jump());
         }
 
         if (!m_hitMatchLimit.empty()) {
@@ -2807,10 +2809,10 @@ class YarrGenerator final : public YarrJITInfo {
 #else
             moveBodyResult(static_cast<size_t>(JSRegExpResult::ErrorNoMatch));
 #endif
+            m_jit.move(MacroAssembler::TrustedImm32(static_cast<int32_t>(MatchResult::endOfSearchGivenUp)), m_regs.returnRegister2);
         }
 
         finishExiting.link(&m_jit);
-        m_jit.move(MacroAssembler::TrustedImm32(0), m_regs.returnRegister2);
         generateReturn();
     }
 

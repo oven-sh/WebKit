@@ -129,6 +129,10 @@ public:
     
     JS_EXPORT_PRIVATE MatchResult match(JSGlobalObject*, StringView, unsigned startOffset);
 
+    // match() says "no match" also where the search was given up. Whoever takes "no match" for an answer asks here.
+    enum class SearchAnswer : uint8_t { Matches, DoesNotMatch, GaveUp };
+    JS_EXPORT_PRIVATE SearchAnswer searchFromStart(JSGlobalObject*, StringView);
+
     bool matchConcurrently(VM&, StringView, unsigned startOffset, MatchResult&);
 
     // Call these versions of the match functions if you're desperate for performance.
@@ -266,7 +270,7 @@ private:
 #if ENABLE(AOT)
     void finishCreationFromImage(VM&, const AOT::ImageRegExp&);
     bool takeCodeFromImage(VM&);
-    int matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset, int* offsetVector);
+    int matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset, int* offsetVector, bool* hasGivenUp = nullptr);
     static void countInterpretedMatch(VM&);
     void crashIfLiteralIsInterpreted() const;
 #endif

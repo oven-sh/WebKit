@@ -93,8 +93,8 @@ static void resolveLocations(Vector<Record>& records, const Typed::Program* prog
 
 static auto orderKey(const UserDiagnostic& diagnostic)
 {
-    const auto& [kind, function, block, value, layout, limit, count, location, origin, siteKind, minimum, maximum] = diagnostic;
-    return std::tuple { location.module, location.position, function, block, value, layout, kind, limit, count, origin.module, origin.position, siteKind, minimum, maximum };
+    const auto& [kind, function, block, value, layout, limit, count, text, location, origin, siteKind, minimum, maximum] = diagnostic;
+    return std::tuple { location.module, location.position, function, block, value, layout, kind, limit, count, text, origin.module, origin.position, siteKind, minimum, maximum };
 }
 
 namespace {
@@ -110,9 +110,9 @@ struct OrderedText {
 
 static auto orderKey(const InternalError& error)
 {
-    const auto& [kind, function, block, value, layout, limit, count, location, textPosition, pass, detail] = error;
+    const auto& [kind, function, block, value, layout, limit, count, text, location, textPosition, pass, detail] = error;
     LineColumn lineColumn = textPosition.value_or(LineColumn { });
-    return std::tuple { location.module, location.position, function, block, value, layout, kind, limit, count, pass, lineColumn.line, lineColumn.column, OrderedText { detail } };
+    return std::tuple { location.module, location.position, function, block, value, layout, kind, limit, count, text, pass, lineColumn.line, lineColumn.column, OrderedText { detail } };
 }
 
 template<typename Record>
@@ -135,7 +135,7 @@ using Typed::IDPrefix;
 
 namespace {
 
-enum class Placeholder : uint8_t { Function, Block, Value, Layout, Limit, Count, Pass, TextPosition };
+enum class Placeholder : uint8_t { Function, Block, Value, Layout, Limit, Count, Text, Pass, TextPosition };
 
 struct PlaceholderText {
     Placeholder placeholder;
@@ -152,6 +152,7 @@ static constexpr PlaceholderText placeholderTexts[] = {
     { Placeholder::Layout, "layout"_s, "layout "_s },
     { Placeholder::Limit, "limit"_s, "limit "_s },
     { Placeholder::Count, "count"_s, { } },
+    { Placeholder::Text, "text"_s, { } },
     { Placeholder::Pass, "pass"_s, "after pass "_s },
     { Placeholder::TextPosition, { }, "line "_s },
 };
@@ -180,6 +181,8 @@ static bool isSet(Placeholder placeholder, const InternalError& fields)
         return fields.limit != LimitID::None;
     case Placeholder::Count:
         return true;
+    case Placeholder::Text:
+        return !!fields.text;
     case Placeholder::Pass:
         return fields.pass != PassID::None;
     case Placeholder::TextPosition:
@@ -231,6 +234,10 @@ static void appendPlaceholder(StringBuilder& builder, Placeholder placeholder, c
         return;
     case Placeholder::Count:
         builder.append(fields.count);
+        return;
+    case Placeholder::Text:
+        if (program && fields.text.index() < program->strings.size())
+            builder.append(String::fromUTF8ReplacingInvalidSequences(program->string(fields.text)));
         return;
     case Placeholder::Pass:
         builder.append(nameOf(fields.pass));
@@ -292,6 +299,7 @@ static String formatMessage(const UserDiagnostic& diagnostic, const Typed::Progr
         .layout = diagnostic.layout,
         .limit = diagnostic.limit,
         .count = diagnostic.count,
+        .text = diagnostic.text,
     };
     return format(Wire::messageOf(diagnostic.kind), fields, program, positionsInIR);
 }

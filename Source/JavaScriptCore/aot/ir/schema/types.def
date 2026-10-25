@@ -54,19 +54,24 @@ record TailCast wire { declared: DeclaredType | engine resolution: CastResolutio
 
 enum ValidatedPrimitive { String Number Boolean BigInt }
 enum TemplatePlaceholder { String Number BigInt }
-enum TextFormat { Email Uuid Ipv4 Ipv6 Date DateTime Url }
+enum TextFormat { Email Uuid Ipv4 Ipv6 Date DateTime Url Time Duration Hostname Uri UriReference Regex JsonPointer RelativeJsonPointer }
 enum UndeclaredMembers { Allowed Rejected Validated }
 record TemplatePart wire { placeholder: TemplatePlaceholder text: String }
 variant ValidationRule wire {
     Integer Minimum { bound: Double } Maximum { bound: Double } ExclusiveMinimum { bound: Double } ExclusiveMaximum { bound: Double }
-    MultipleOf { divisor: Double } MinimumLength { length: UInt32 } MaximumLength { length: UInt32 } Pattern { source: String }
-    Format { format: TextFormat } Template { head: String parts: Span<TemplatePart> } Message { text: String } DefaultNull
-    DefaultBoolean { value: Bool } DefaultNumber { value: Double } DefaultString { value: String }
+    MultipleOf { divisor: Double } MinimumLength { length: UInt32 } MaximumLength { length: UInt32 }
+    Pattern { source: String isUnicode: Bool } Format { format: TextFormat } Template { head: String parts: Span<TemplatePart> }
+    Message { text: String } DefaultNull DefaultBoolean { value: Bool } DefaultNumber { value: Double } DefaultString { value: String }
+    UniqueItems Contains { node: UInt32 minimum: UInt32 maximum: UInt32? } Not { node: UInt32 }
+    If { condition: UInt32 then: UInt32 otherwise: UInt32 } ExactlyOne { nodes: Span<UInt32> } Every { nodes: Span<UInt32> }
+    PatternMembers { sources: Span<String> nodes: Span<UInt32> } MemberNames { node: UInt32 } MinimumMembers { count: UInt32 }
+    MaximumMembers { count: UInt32 } DependentMembers { key: String names: Span<String> } DependentNode { key: String node: UInt32 }
 }
 record ValidationMember wire { key: PropertyKey node: UInt32 field: UInt32? isOptional: Bool }
 variant ValidationShape wire {
     Unknown Never Undefined Null AnyObject Primitive { primitive: ValidatedPrimitive } BooleanLiteral { value: Bool } NumberLiteral { value: Double }
-    StringLiteral { value: String } Array { element: UInt32 } Tuple { elements: Span<UInt32> } Dictionary { value: UInt32 }
+    StringLiteral { value: String } Array { element: UInt32 } Tuple { elements: Span<UInt32> required: UInt32 rest: UInt32? }
+    Dictionary { value: UInt32 }
     Object { layout: Layout? members: Span<ValidationMember> undeclared: UndeclaredMembers undeclaredValue: UInt32? } Union { arms: Span<UInt32> }
 }
 record ValidationNode wire { shape: ValidationShape type: Type rules: Span<ValidationRule> text: String? }

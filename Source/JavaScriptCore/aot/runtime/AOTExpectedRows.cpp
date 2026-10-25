@@ -21,8 +21,11 @@
 #include "ErrorInstance.h"
 #include "JSCInlines.h"
 #include "JSMapInlines.h"
+#include "MarkedBlockCage.h"
 #include "RegExp.h"
 #include "TopExceptionScope.h"
+#include "Yarr.h"
+#include <cmath>
 #include <cstddef>
 #include <span>
 #include <wtf/StdLibExtras.h>
@@ -169,24 +172,33 @@ JSC_DEFINE_HOST_FUNCTION(deferReport, (JSGlobalObject* realm, CallFrame* callFra
     return JSValue::encode(jsBoolean(true));
 }
 
-// matchesPattern(source, value): what new RegExp(source).test(value) answers. RegExp.$1 and its like stay what the last match of the program made them.
+// matchesPattern(source, text, isUnicode, remainingSteps): whether new RegExp(source, isUnicode ? "u" : "").test(text), and the steps that the caller may still spend: that number where the text matches, -1 less that number where it does not.
+// RegExp.$1 and its like stay what the last match of the program made them. A search that was given up is no answer, and a caller of another form means another expression: both throw.
 JSC_DEFINE_HOST_FUNCTION(matchesPattern, (JSGlobalObject* realm, CallFrame* callFrame))
 {
     VM& vm = realm->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue pattern = callFrame->argument(0);
-    if (!pattern.isString()) [[unlikely]]
-        return throwVMTypeError(realm, scope, "Expected pattern to be a string"_s);
-    String source = asString(pattern)->value(realm);
+    JSValue steps = callFrame->argument(3);
+    bool hasItsOperands = callFrame->argument(0).isString() && callFrame->argument(1).isString() && callFrame->argument(2).isBoolean() && steps.isNumber();
+    if (!hasItsOperands || !(steps.asNumber() >= 0 && steps.asNumber() <= Yarr::matchLimit && std::trunc(steps.asNumber()) == steps.asNumber())) [[unlikely]]
+        return throwVMTypeError(realm, scope, "Expected a pattern, a string, a flag and the steps that are left"_s);
+    int32_t remainingSteps = static_cast<int32_t>(steps.asNumber());
+
+    String source = asString(callFrame->argument(0))->value(realm);
     RETURN_IF_EXCEPTION(scope, { });
-    RegExp* regExp = RegExp::create(vm, source, { });
+    OptionSet<Yarr::Flags> flags;
+    if (callFrame->argument(2).asBoolean())
+        flags.add(Yarr::Flags::Unicode);
+    RegExp* regExp = RegExp::create(vm, source, flags);
     if (!regExp->isValid()) [[unlikely]]
         return throwVMError(realm, scope, regExp->errorToThrow(realm));
-    JSString* text = callFrame->argument(1).toString(realm);
+    auto characters = asString(callFrame->argument(1))->view(realm);
     RETURN_IF_EXCEPTION(scope, { });
-    auto characters = text->view(realm);
+    RegExp::SearchAnswer answer = remainingSteps ? regExp->searchFromStart(realm, characters) : RegExp::SearchAnswer::GaveUp;
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(!!regExp->match(realm, characters, 0))));
+    if (answer == RegExp::SearchAnswer::GaveUp) [[unlikely]]
+        return throwVMRangeError(realm, scope, "Too many steps in regular expression"_s);
+    return JSValue::encode(jsNumber(answer == RegExp::SearchAnswer::Matches ? remainingSteps : -1 - remainingSteps));
 }
 
 bool tryStoreInExpectedRow(ObjectBuilder& builder, unsigned index, const JSC__AOT__FieldValue& value)
@@ -212,11 +224,12 @@ JSMap* createPreparedPlans(JSGlobalObject* globalObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     DeferGCForAWhile deferGC(vm);
     DeferTerminationForAWhile deferTermination(vm);
+    MarkedBlockCage::InfallibleAllocationScope infallibleAllocation(vm.heap.cage());
     JSMap* map = JSMap::create(vm, globalObject->mapStructure());
     // A plan and a rule are JSON, which neither name is.
     map->set(globalObject, jsNontrivialString(vm, "deferReport"_s), JSFunction::create(vm, globalObject, 3, "deferReport"_s, deferReport, ImplementationVisibility::Private));
     scope.releaseAssertNoException();
-    map->set(globalObject, jsNontrivialString(vm, "matchesPattern"_s), JSFunction::create(vm, globalObject, 2, "matchesPattern"_s, matchesPattern, ImplementationVisibility::Private));
+    map->set(globalObject, jsNontrivialString(vm, "matchesPattern"_s), JSFunction::create(vm, globalObject, 4, "matchesPattern"_s, matchesPattern, ImplementationVisibility::Private));
     scope.releaseAssertNoException();
     return map;
 }

@@ -222,6 +222,18 @@ static std::optional<ResultLiteral> defaultOf(const ValidationRule& rule)
     case ValidationRule::Kind::Format:
     case ValidationRule::Kind::Template:
     case ValidationRule::Kind::Message:
+    case ValidationRule::Kind::UniqueItems:
+    case ValidationRule::Kind::Contains:
+    case ValidationRule::Kind::Not:
+    case ValidationRule::Kind::If:
+    case ValidationRule::Kind::ExactlyOne:
+    case ValidationRule::Kind::Every:
+    case ValidationRule::Kind::PatternMembers:
+    case ValidationRule::Kind::MemberNames:
+    case ValidationRule::Kind::MinimumMembers:
+    case ValidationRule::Kind::MaximumMembers:
+    case ValidationRule::Kind::DependentMembers:
+    case ValidationRule::Kind::DependentNode:
         return std::nullopt;
     case ValidationRule::Kind::DefaultNull:
         return ResultLiteral { .kind = ResultLiteral::Kind::Null };
@@ -285,16 +297,19 @@ static ResultNode describeValidationNode(const Program& program, ExpectedResultI
     const Vector<ValidationNode>& nodes = program.at(expectedResult).validation;
     const ValidationNode& source = nodes[part];
     ResultNode node { .type = source.type, .rules = source.rules.span(), .text = source.text };
+    auto refTo = [&](uint32_t child) {
+        return ResultNodeRef::forValidation(expectedResult, child);
+    };
     for (const ValidationRule& rule : node.rules) {
         if (!node.defaultValue)
             node.defaultValue = defaultOf(rule);
         if (const auto* message = rule.tryAs<ValidationRule::Message>(); message && !node.message)
             node.message = message->text;
+        forEachNodeOf(rule, [&](uint32_t tested) {
+            node.nodesOfRules.append(refTo(tested));
+        });
     }
 
-    auto refTo = [&](uint32_t child) {
-        return ResultNodeRef::forValidation(expectedResult, child);
-    };
     auto literal = [&](ResultShape shape, ResultLiteral value) {
         node.literal = value;
         return shape;
@@ -314,7 +329,12 @@ static ResultNode describeValidationNode(const Program& program, ExpectedResultI
         [&](const Shape::NumberLiteral& shape) { return literal(ResultShape::NumberLiteral, { .kind = ResultLiteral::Kind::Number, .number = shape.value }); },
         [&](const Shape::StringLiteral& shape) { return literal(ResultShape::StringLiteral, { .kind = ResultLiteral::Kind::String, .string = shape.value }); },
         [&](const Shape::Array& shape) { return container(ResultShape::Array, singleElementSpan(shape.element)); },
-        [&](const Shape::Tuple& shape) { return container(ResultShape::Tuple, shape.elements.span()); },
+        [&](const Shape::Tuple& shape) {
+            node.requiredElements = shape.required;
+            if (shape.rest)
+                node.restElement = refTo(*shape.rest);
+            return container(ResultShape::Tuple, shape.elements.span());
+        },
         [&](const Shape::Dictionary& shape) { return container(ResultShape::Dictionary, singleElementSpan(shape.value)); },
         [&](const Shape::Union& shape) { return container(ResultShape::Union, shape.arms.span()); },
         [&](const Shape::Object& shape) {
@@ -346,7 +366,10 @@ BitVector nodesReachableFrom(const Program& program, ExpectedResultID expectedRe
             worklist.append(child);
     };
     while (!worklist.isEmpty()) {
-        const ValidationShape& shape = nodes[worklist.takeLast()].shape;
+        const ValidationNode& reached = nodes[worklist.takeLast()];
+        for (const ValidationRule& rule : reached.rules)
+            forEachNodeOf(rule, visit);
+        const ValidationShape& shape = reached.shape;
         switch (shape.kind()) {
         case ValidationShape::Kind::Unknown:
         case ValidationShape::Kind::Never:
@@ -364,9 +387,13 @@ BitVector nodesReachableFrom(const Program& program, ExpectedResultID expectedRe
         case ValidationShape::Kind::Dictionary:
             visit(shape.as<ValidationShape::Dictionary>().value);
             continue;
-        case ValidationShape::Kind::Tuple:
-            std::ranges::for_each(shape.as<ValidationShape::Tuple>().elements, visit);
+        case ValidationShape::Kind::Tuple: {
+            const auto& tuple = shape.as<ValidationShape::Tuple>();
+            std::ranges::for_each(tuple.elements, visit);
+            if (tuple.rest)
+                visit(*tuple.rest);
             continue;
+        }
         case ValidationShape::Kind::Union:
             std::ranges::for_each(shape.as<ValidationShape::Union>().arms, visit);
             continue;
@@ -659,6 +686,72 @@ bool allocatesLayout(const NodeDecisionInputs& inputs, LayoutID layout)
     return !inputs.flow.hasResults() || !!inputs.flow.typedResultSite(layout);
 }
 
+static bool liesOnCycle(const Program& program, ResultNodeRef ref, const ResultNode& node)
+{
+    bool isReachedAgain = false;
+    node.forEachChild([&](ResultNodeRef child) {
+        isReachedAgain |= child == ref || canReach(program, child, ref);
+    });
+    return isReachedAgain;
+}
+
+static bool handsOnTheValueItself(const Program& program, ResultNodeRef ref)
+{
+    bool handsOn = false;
+    forEachAlternative(program, ref, [&](const ResultNode& alternative) {
+        handsOn |= alternative.shape == ResultShape::Unknown || alternative.shape == ResultShape::AnyObject;
+    });
+    return handsOn;
+}
+
+static bool itemsMayBeObjects(const Program& program, const ResultNode& array)
+{
+    bool mayBeObjects = false;
+    array.forEachChild([&](ResultNodeRef item) {
+        forEachAlternative(program, item, [&](const ResultNode& alternative) {
+            bool isObject = alternative.isContainer() && alternative.shape != ResultShape::Union;
+            mayBeObjects |= isObject || alternative.shape == ResultShape::Unknown || alternative.shape == ResultShape::AnyObject;
+        });
+    });
+    return mayBeObjects;
+}
+
+// The parser tests the default of a missing member by the rules of its node alone, without a plan.
+static bool hasDefaultTestedByNodes(const Program& program, const ResultNode& object)
+{
+    return std::ranges::any_of(object.members, [&](const ResultMember& member) {
+        ResultNode node = describeNode(program, member.node);
+        return node.defaultValue && std::ranges::any_of(node.rules, namesNodes);
+    });
+}
+
+// Every node and rule that has no code yet is named here and nowhere else: what this function lets through, the builders emit.
+static InterpretedCause causeWithoutCode(const Program& program, ResultNodeRef ref, const ResultNode& node, NodeUse use)
+{
+    if (std::ranges::any_of(node.rules, namesNodes))
+        return InterpretedCause::RuleNamesNodes;
+    // The helper judges what it reads of the value, so what is handed on has to be a copy.
+    if (hasRuleOnGivenValue(node) && handsOnTheValueItself(program, ref))
+        return InterpretedCause::RuleReadsGivenValue;
+    // The helper reads all that lies below the array. Called at each level of a value, it would read the deepest level once for every level above.
+    bool hasUniqueItems = std::ranges::any_of(node.rules, [](const ValidationRule& rule) {
+        return rule.is<ValidationRule::UniqueItems>();
+    });
+    if (hasUniqueItems && liesOnCycle(program, ref, node))
+        return InterpretedCause::UniqueItemsAreRecursive;
+    // The helper compares all that lies below the array, also what no node describes. Only a plan hands on the very copies that were compared.
+    if (hasUniqueItems && use == NodeUse::CopiedFromValue && itemsMayBeObjects(program, node))
+        return InterpretedCause::RuleReadsGivenValue;
+    // What a parser builds has defaults filled in and members left out. These rules are about the text's own value.
+    if (use == NodeUse::ParsedFromText && node.isContainer() && hasRuleOnGivenValue(node))
+        return InterpretedCause::RuleReadsGivenValue;
+    if (use == NodeUse::ParsedFromText && node.shape == ResultShape::Object && hasDefaultTestedByNodes(program, node))
+        return InterpretedCause::RuleNamesNodes;
+    if (node.shape == ResultShape::Tuple && !node.hasFixedLength())
+        return InterpretedCause::TupleLengthVaries;
+    return InterpretedCause::None;
+}
+
 NodeDecision decideNodeCode(const NodeDecisionInputs& inputs, ResultNodeRef ref, NodeUse use)
 {
     RELEASE_ASSERT(use == NodeUse::ParsedFromText || ref.isValidated());
@@ -666,6 +759,8 @@ NodeDecision decideNodeCode(const NodeDecisionInputs& inputs, ResultNodeRef ref,
         return { NodeCode::Interpreted, InterpretedCause::TooManyNodes };
 
     ResultNode node = describeNode(inputs.program, ref);
+    if (InterpretedCause cause = causeWithoutCode(inputs.program, ref, node, use); cause != InterpretedCause::None)
+        return { NodeCode::Interpreted, cause };
     if (node.shape == ResultShape::Union && hasRepeatedRecursion(inputs.program, ref, node))
         return { NodeCode::Interpreted, InterpretedCause::RepeatedRecursion };
     if (node.shape == ResultShape::Object) {

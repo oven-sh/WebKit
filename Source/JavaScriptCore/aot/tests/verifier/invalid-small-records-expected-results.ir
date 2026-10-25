@@ -1,13 +1,13 @@
-# an expected result lists object layouts, and its validation nodes name nodes of the same record and fields of their layout
+# an expected result lists object layouts, and its validation nodes and their rules name nodes of the same record and fields of their layout
 # FORM: AsRead
 # RUN: verify
-# DIAGNOSTIC: PayloadOutOfRange 11
+# DIAGNOSTIC: PayloadOutOfRange 18
 
 module m0 path="main" displayPath="main"
 entry module=m0
 layout L0 kind=Environment fields=[{key="c" declared={type=anything}}]
 layout L1 fields=[{key="c" declared={type=anything}}]
-expectedresult x0 type=anything layouts=[L1] validation=[{shape=Object{layout=L1 members=[{key="c" node=1 field=0}] undeclared=Validated undeclaredValue=1} type=anything text="good"}, {shape=Union{arms=[2, 3]} type=anything}, {shape=Array{element=4} type=anything}, {shape=Tuple{elements=[4, 4]} type=anything}, {shape=Dictionary{value=4} type=anything}]
+expectedresult x0 type=anything layouts=[L1] validation=[{shape=Object{layout=L1 members=[{key="c" node=1 field=0}] undeclared=Validated undeclaredValue=1} type=anything text="good"}, {shape=Union{arms=[2, 3]} type=anything}, {shape=Array{element=4} type=anything}, {shape=Tuple{elements=[4, 4] required=1 rest=4} type=anything}, {shape=Dictionary{value=4} type=anything rules=[Not{node=4}, PatternMembers{sources=["^a"] nodes=[4]}]}]
 expectedresult x1 type=anything layouts=[L0] validation=[{shape=Unknown type=anything text="badLayoutIsEnvironment"}]
 expectedresult x2 type=anything validation=[{shape=Array{element=1} type=anything text="badElementPastNodes"}]
 expectedresult x3 type=anything validation=[{shape=Tuple{elements=[0, 1]} type=anything text="badTupleElementPastNodes"}]
@@ -19,3 +19,10 @@ expectedresult x8 type=anything validation=[{shape=Object{undeclared=Validated} 
 expectedresult x9 type=anything validation=[{shape=Object{undeclared=Validated undeclaredValue=1} type=anything text="badUndeclaredValuePastNodes"}]
 expectedresult x10 type=anything validation=[{shape=Object{layout=L1 members=[{key="c" node=1 field=0}]} type=anything text="badMemberNodePastNodes"}]
 expectedresult x11 type=anything validation=[{shape=Object{layout=L1 members=[{key="c" node=0 field=1}]} type=anything text="badMemberFieldPastLayout"}]
+expectedresult x12 type=anything validation=[{shape=Tuple{elements=[0] required=2} type=anything text="badRequiredPastElements"}]
+expectedresult x13 type=anything validation=[{shape=Tuple{elements=[0] required=1 rest=1} type=anything text="badRestPastNodes"}]
+expectedresult x14 type=anything validation=[{shape=Unknown type=anything rules=[Not{node=1}] text="badRuleNodePastNodes"}]
+expectedresult x15 type=anything validation=[{shape=Unknown type=anything rules=[If{condition=0 then=0 otherwise=1}] text="badBranchPastNodes"}]
+expectedresult x16 type=anything validation=[{shape=Unknown type=anything rules=[ExactlyOne{nodes=[0, 1]}] text="badListedNodePastNodes"}]
+expectedresult x17 type=anything validation=[{shape=Unknown type=anything rules=[PatternMembers{sources=["^a"] nodes=[1]}] text="badPatternNodePastNodes"}]
+expectedresult x18 type=anything validation=[{shape=Unknown type=anything rules=[PatternMembers{sources=["^a", "^b"] nodes=[0]}] text="badSourceWithoutNode"}]

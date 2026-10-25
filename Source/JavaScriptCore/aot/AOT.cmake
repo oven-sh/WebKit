@@ -175,6 +175,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/support/AOTLosses.h
     aot/support/AOTStatistics.h
     aot/support/AOTThreshold.h
+    aot/validator/AOTValidatorBytecode.h
     aot/valueflow/AOTFlowReport.h
 )
 
