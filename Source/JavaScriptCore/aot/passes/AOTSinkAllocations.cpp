@@ -877,19 +877,12 @@ static void testElementsOfList(IRBuilder& builder, const Program& program, Funct
 bool AllocationSinking::testElementsOfLists(IRBuilder& builder)
 {
     Vector<ProgramPoint, 2> points;
-    UnspecifiedValues unspecifiedValues(m_analyses);
     for (ValueID literal : m_testedListsThatMayNotFit) {
         const Value& list = m_function.at(literal);
         ValueLocation location = m_analyses.useLists().locationOf(literal);
         if (list.opcode != Opcode::NewArray || location.placement != ValuePlacement::InBlock)
             continue;
         if (list.elementsOperands().empty() || !list.holes().empty() || list.capacityOperand())
-            continue;
-        // A list may hold an Unspecified value, and a test would look at it.
-        bool holdsUnspecifiedValue = std::ranges::any_of(list.elementsOperands(), [&](ValueID element) {
-            return unspecifiedValues.mayContain(element);
-        });
-        if (holdsUnspecifiedValue)
             continue;
         // Only an allocation is a guard of what it makes.
         bool isGuard = std::ranges::any_of(m_analyses.useLists().usesOf(literal), [&](const Use& use) {
