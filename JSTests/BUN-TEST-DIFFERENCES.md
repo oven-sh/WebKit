@@ -179,6 +179,7 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | `stress/array-sort-inline-int32-double-comparator.js` | an earlier, smaller test for the sort fix |
 | `stress/bun-object-assign-calls-indexed-setters-on-the-chain.js` | `Object.assign()` stores with `[[Set]]` on its fast path too: an indexed setter on the target's prototype chain is called, and a read-only element there refuses the store |
 | the last block of `stress/regexp-test-sticky-first-char-filter.js` (the file is upstream's; nothing of upstream's text changes) | the first-character filter of a sticky `test()` comes from the first sets of the alternatives (`yarr/YarrFirstFollowSets.*`): behind a leading lookbehind, forward reference or lookahead, and in groups nested more than eight deep, a byte that passes the filter still reaches the matcher |
+| `complex/stack-bounds-large-environment.js` (and its entry at the end of `complex.yaml`, upstream's file; nothing of upstream's text changes) | the bound of the main thread's stack counts the strings of `execve()` when glibc's loader is run as a command |
 
 `jsc` cannot compile a program ahead of time by itself (the compiler's input comes from the front end, in Bun's repository), so
 the programs that test ahead-of-time compilation are in Bun's `test/aot`.

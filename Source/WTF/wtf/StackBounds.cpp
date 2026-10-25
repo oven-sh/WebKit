@@ -148,27 +148,25 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif // OS(OPENBSD)
 
 #if OS(LINUX) && USE(BUN_JSC_ADDITIONS)
-// execve() copies strings to the top of the new stack: the arguments, the environment, and last the path of the executable, one pointer below the end of the mapping. AT_EXECFN points to the path.
+// execve() copies strings to the top of the new stack, from the bottom: the arguments, the environment, and the path of the executable, which ends one pointer below the end of the mapping. AT_EXECFN points to the path.
 // glibc's pthread_getattr_np() reads /proc/self/maps for the main thread, with sscanf() on each line.
 static void* endOfMainThreadStack()
 {
-    // The pointers to the environment lie above every frame and below the strings; execve() takes 6 MB of strings at the most.
+    // The pointers to the environment lie above every frame and below the strings.
     auto* environment = reinterpret_cast<const char*>(environ);
     if (environment < currentStackPointer())
         return nullptr;
-    // glibc's ld.so, run as a command, and PRoot point AT_EXECFN to argv[0], the first string. The environment is then the closest to the end.
-    auto* last = reinterpret_cast<const char*>(getauxval(AT_EXECFN));
+    // glibc's ld.so, run as a command, and PRoot point AT_EXECFN to argv[0]. The environment is then the closest to the end.
+    auto* lastString = reinterpret_cast<const char*>(getauxval(AT_EXECFN));
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-    for (char** variable = environ; *variable; ++variable) {
-        if (*variable > last)
-            last = *variable;
-    }
+    for (char** variable = environ; *variable; ++variable)
+        lastString = std::max<const char*>(lastString, *variable);
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-    // Without a string above the pointers (no environment, and a tracer that keeps the path below the first frame) nothing tells where the mapping ends.
-    if (last < environment || static_cast<size_t>(last - environment) > 8 * MB)
+    // execve() takes 6 MB of strings at the most. Without a string above the pointers nothing tells where the mapping ends.
+    if (lastString < environment || static_cast<size_t>(lastString - environment) > 8 * MB)
         return nullptr;
     uintptr_t pageSize = static_cast<uintptr_t>(sysconf(_SC_PAGESIZE));
-    uintptr_t end = reinterpret_cast<uintptr_t>(last) + strlen(last) + 1;
+    uintptr_t end = reinterpret_cast<uintptr_t>(lastString) + strlen(lastString) + 1;
     return reinterpret_cast<void*>((end + pageSize - 1) & ~(pageSize - 1));
 }
 #endif
@@ -210,11 +208,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         // environment variables if we use `environ` global variable as a origin of the stack.
         // But `setenv` / `putenv` may alter `environ` variable's content. So we record the oldest `environ` variable content, and use it.
         StackBounds stackBounds { origin, bound };
-#if USE(BUN_JSC_ADDITIONS)
-        // The child of a fork() in another thread runs on that thread's stack.
-        if (endOfStack && !stackBounds.contains(currentStackPointer()))
-            return newThreadStackBounds(pthread_self());
-#endif
         if (stackBounds.contains(oldestEnviron))
             stackBounds = { oldestEnviron, bound };
         return stackBounds;
