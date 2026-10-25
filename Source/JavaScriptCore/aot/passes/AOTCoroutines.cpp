@@ -953,8 +953,14 @@ static bool collectIteratorResultReads(FunctionPassContext& context, ValueID res
                 return false;
             continue;
         }
-        if (user.opcode == Opcode::TypeTest && !context.types.at(user.testedType()).hasObjects())
+        if (user.opcode == Opcode::TypeTest && !context.types.at(user.testedType()).hasObjects()) {
+            // Behind a branch on the test the result has another name.
+            for (ValueID parameter : findNarrowedParameters(context.function, context.analyses.useLists(), use)) {
+                if (!context.analyses.cfg().singleIncomingEdge(context.analyses.useLists().blockOf(parameter)) || !collectIteratorResultReads(context, parameter, reads))
+                    return false;
+            }
             continue;
+        }
         if (user.opcode != Opcode::PropGet || user.type != TypeTable::anything || (user.key() != program.keyOf(BuiltinNames::value) && user.key() != program.keyOf(BuiltinNames::done)))
             return false;
     }

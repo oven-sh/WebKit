@@ -1,7 +1,7 @@
 # `await generator.next(sent)` is the step that serves `for await`: no promise. While nothing but `value` and `done` of the result is read there is no iterator result either; for anybody else it is made as the engine makes it
 # FORM: Prepared
 # RUN: pass ResolveAwaitedCalls
-# STATISTIC: AwaitedCallsResolved = 10
+# STATISTIC: AwaitedCallsResolved = 12
 # STATISTIC: AwaitsSunkIntoPredecessors = 1
 # CHECK: outcome: Changed
 
@@ -241,4 +241,47 @@ function f23 name="behindAJoin" role=CoroutineBody flags=[IsAsync] parameters=[{
 # CHECK: StepAsyncGenerator v0, v4, {{*}}
 # CHECK: AwaitBySavingFrame v1, v3
 # CHECK: NewObject
+}
+
+# The branch on the test passes the result on under another name: what reads that name reads the result
+function f24 name="readsBehindTheTest" role=CoroutineRamp flags=[IsAsync] parameters=[{type=AsyncGenerator}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f24 body=f25 entryWithoutPromise=f25 promiseType=Promise promiseParameter=1}
+function f25 name="readsBehindTheTest" role=CoroutineBody flags=[IsAsync] parameters=[{type=AsyncGenerator}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f24} creator=Coroutine{kind=AsyncFunction ramp=f24 body=f25 entryWithoutPromise=f25 promiseType=Promise promiseParameter=1} {
+    v2 = Undefined
+    v3 = CallBuiltin v0, v2 overload=AsyncGeneratorPrototypeNext/0
+    v4 = AwaitBySavingFrame v3, v1
+    v5 = TypeTest v4 testedType=undefined|null
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v6: undefined|null):
+    Unreachable
+  b2(v7: boolean|number|string|symbol|bigint|object):
+    v8 = PropGet v7 key="value"
+    v9 = ReturnAsyncResult v1, v8
+    Return v9
+# CHECK-NOT: NewObject
+# CHECK: StepAsyncGenerator v0, v2, {{*}}
+# CHECK: v8: anything = Upcast [[value25]] castType=anything
+# CHECK: [[rest25]](v4: anything, [[value25]]: anything, [[done25]]: anything):
+# CHECK-NEXT: TypeTest v0 testedType=undefined|null
+}
+
+function f26 name="copiesBehindTheTest" role=CoroutineRamp flags=[IsAsync] parameters=[{type=AsyncGenerator}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f26 body=f27 entryWithoutPromise=f27 promiseType=Promise promiseParameter=1}
+function f27 name="copiesBehindTheTest" role=CoroutineBody flags=[IsAsync] parameters=[{type=AsyncGenerator}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f26} creator=Coroutine{kind=AsyncFunction ramp=f26 body=f27 entryWithoutPromise=f27 promiseType=Promise promiseParameter=1} {
+    v2 = Undefined
+    v3 = CallBuiltin v0, v2 overload=AsyncGeneratorPrototypeNext/0
+    v4 = AwaitBySavingFrame v3, v1
+    v5 = TypeTest v4 testedType=undefined|null
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v6: undefined|null):
+    Unreachable
+  b2(v7: boolean|number|string|symbol|bigint|object):
+    v8 = PropGet v7 key="value"
+    v9 = NewDictionary
+    CopyDataProperties v9, v7 excludedKeys=["value"]
+    v11 = ReturnAsyncResult v1, v9
+    Return v11
+# CHECK: StepAsyncGenerator v0, v2, {{*}}
+# CHECK: PropGet v7 key="value"
+# CHECK: CopyDataProperties v9, v7 excludedKeys=["value"]
+# CHECK: TypeTest v4 testedType=undefined|null
+# CHECK: NewObject {{*}} layout=L(IteratorResult)
 }

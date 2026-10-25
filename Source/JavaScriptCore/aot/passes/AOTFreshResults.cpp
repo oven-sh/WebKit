@@ -859,6 +859,8 @@ enum class TailCalls : uint8_t { Required, Allowed, None };
 struct SplitCandidate {
     FunctionID id;
     std::optional<Function> expandedBody;
+    Function worker { };
+    FreshResultShape shape { };
 };
 
 struct WrapperCallSite {
@@ -1094,38 +1096,44 @@ struct FreshResultSplitter {
         if (candidates.isEmpty())
             return 0;
 
+        auto bodyOf = [&](unsigned index) -> const Function& {
+            const SplitCandidate& candidate = candidates[index];
+            return candidate.expandedBody ? *candidate.expandedBody : program.at(candidate.id);
+        };
+        Vector<uint32_t> largestFirst = findLargestFirst(candidates.size(), bodyOf);
+
+        InterningPhases workerPhases(editor, candidates.size());
+        {
+            ProgramCaches caches(program, build);
+            forEachIndexInParallel(loops, candidates.size(), largestFirst.span(), [&](unsigned index) {
+                TaskArenas arenas(workerPhases, index);
+                SplitCandidate& candidate = candidates[index];
+                std::tie(candidate.worker, candidate.shape) = createResultWorker(contextFor(candidate.id), candidate.id, bodyOf(index), arenas.types);
+                if (candidate.shape.isFresh())
+                    simplifyEditedFunction(runner, program, inputs, candidate.id, candidate.worker, arenas);
+            });
+        }
+        BodyRemaps workerRemaps = workerPhases.finish();
+
+        // A worker is analyzed again after its edges are split, and the larger body can reach a limit of the analysis.
+        candidates.removeAllMatching([](const SplitCandidate& candidate) {
+            return !candidate.shape.isFresh();
+        });
+        if (candidates.isEmpty())
+            return 0;
+
         unsigned count = candidates.size();
         FunctionID firstWorker = editor.reserveFunctions(count);
         auto workerAt = [&](size_t index) {
             return FunctionID(firstWorker.index() + index);
         };
-        auto bodyOf = [&](unsigned index) -> const Function& {
-            const SplitCandidate& candidate = candidates[index];
-            return candidate.expandedBody ? *candidate.expandedBody : program.at(candidate.id);
-        };
-        Vector<uint32_t> largestFirst = findLargestFirst(count, bodyOf);
-
-        Vector<FreshResultShape> shapes(count);
-        InterningPhases workerPhases(editor, count);
-        {
-            ProgramCaches caches(program, build);
-            forEachIndexInParallel(loops, count, largestFirst.span(), [&](unsigned index) {
-                TaskArenas arenas(workerPhases, index);
-                FunctionID id = candidates[index].id;
-                auto [worker, shape] = createResultWorker(contextFor(id), id, bodyOf(index), arenas.types);
-                RELEASE_ASSERT(shape.isFresh());
-                simplifyEditedFunction(runner, program, inputs, id, worker, arenas);
-                editor.replaceFunction(workerAt(index), WTF::move(worker));
-                shapes[index] = WTF::move(shape);
-            });
-        }
-        BodyRemaps workerRemaps = workerPhases.finish();
-        if (!workerRemaps.isIdentity()) {
-            forEachIndexInParallel(loops, count, [&](unsigned index) {
-                applyRemaps(workerRemaps, editor.at(workerAt(index)));
-                remapShape(workerRemaps, shapes[index]);
-            });
-        }
+        forEachIndexInParallel(loops, count, [&](unsigned index) {
+            editor.replaceFunction(workerAt(index), WTF::move(candidates[index].worker));
+            if (workerRemaps.isIdentity())
+                return;
+            applyRemaps(workerRemaps, editor.at(workerAt(index)));
+            remapShape(workerRemaps, candidates[index].shape);
+        });
 
         Vector<Function> createdWrappers(count);
         InterningPhases wrapperPhases(editor, count);
@@ -1134,7 +1142,7 @@ struct FreshResultSplitter {
             forEachIndexInParallel(loops, count, [&](unsigned index) {
                 TaskArenas arenas(wrapperPhases, index);
                 FunctionID id = candidates[index].id;
-                createdWrappers[index] = createResultWrapper(contextFor(id), workerAt(index), program.at(id), shapes[index], arenas.types);
+                createdWrappers[index] = createResultWrapper(contextFor(id), workerAt(index), program.at(id), candidates[index].shape, arenas.types);
             });
         }
         BodyRemaps wrapperRemaps = wrapperPhases.finish();
@@ -1164,7 +1172,6 @@ struct FreshResultSplitter {
             wrappersOfLastRound.set(candidate.id.index());
         }
         build.destroyLater(WTF::move(candidates));
-        build.destroyLater(WTF::move(shapes));
         return count;
     }
 

@@ -490,20 +490,9 @@ bool FramePlanner::willHaveLongFormsInLine(BlockID block)
     return codeShapeFor(heat, false, frequency, m_heat.leastHeatOfFastCode(m_program, m_plan.function, frequencyInFunction)) == CodeShape::Fast && m_heat.isAmongHottestCode(heat);
 }
 
-// A branch on a test passes the tested operand on as a parameter of the block it enters.
 bool FramePlanner::isPassedOnByBranch(const Use& use) const
 {
-    if (use.kind != Use::Kind::Operand || provesOf(m_function.at(use.user).opcode) == Proof::None)
-        return false;
-    return std::ranges::any_of(m_analyses.useLists().usesOf(use.user), [&](const Use& useOfTest) {
-        bool passesOperandOn = false;
-        if (useOfTest.kind == Use::Kind::TerminatorOperand) {
-            forEachEdgeResult(m_function, useOfTest.block, [&](const EdgeResult& result, ValueID) {
-                passesOperandOn |= result.kind == EdgeResultKind::NarrowedOperand && result.test == use.user && result.operandIndex == use.operandIndex;
-            });
-        }
-        return passesOperandOn;
-    });
+    return !findNarrowedParameters(m_function, m_analyses.useLists(), use).isEmpty();
 }
 
 // Whoever borrows the closure cannot tell it from another one afterwards.
