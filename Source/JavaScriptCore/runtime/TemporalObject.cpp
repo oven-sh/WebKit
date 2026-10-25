@@ -906,6 +906,14 @@ bool isPartialTemporalObject(JSGlobalObject* globalObject, JSValue value)
     return true;
 }
 
+std::optional<TimeZone> timeZoneFromName(StringView name)
+{
+    auto identifierRecord = ISO8601::parseTimeZoneName(name);
+    if (!identifierRecord) [[unlikely]]
+        return std::nullopt;
+    return TimeZone::fromID(*identifierRecord);
+}
+
 std::optional<TimeZone> timeZoneFromIdentifierParseRecord(const ISO8601::TimeZoneIdentifierParseRecord& parseRecord)
 {
     // If [[OffsetMinutes]] is not ~empty~, FormatOffsetTimeZoneIdentifier(offsetMinutes).
@@ -913,10 +921,7 @@ std::optional<TimeZone> timeZoneFromIdentifierParseRecord(const ISO8601::TimeZon
         return TimeZone::fromUTCOffset(*parseRecord.offsetMinutes * static_cast<int64_t>(ISO8601::ExactTime::nsPerMinute));
 
     // Otherwise GetAvailableNamedTimeZoneIdentifier([[Name]]); ~empty~ is the caller's RangeError.
-    auto identifierRecord = ISO8601::parseTimeZoneName(parseRecord.name.span());
-    if (!identifierRecord) [[unlikely]]
-        return std::nullopt;
-    return TimeZone::fromID(*identifierRecord);
+    return timeZoneFromName(parseRecord.name.span());
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal-totemporaltimezoneidentifier
@@ -941,6 +946,15 @@ std::optional<TimeZone> toTemporalTimeZoneIdentifier(JSGlobalObject* globalObjec
         throwRangeError(globalObject, scope, makeString("'"_s, ellipsizeAt(100, tzString), "' is not a valid time zone identifier"_s));
         return std::nullopt;
     };
+
+    // Steps 3-9 for an available named time zone: step 3 would parse the whole string as [[Name]] and step 7 resolve it.
+    // Names start with a letter not followed by a digit, so offsets and ISO strings (even T10:00) skip the lookup.
+    if (!tzString.isEmpty() && isASCIIAlpha(tzString[0]) && !(tzString.length() > 1 && isASCIIDigit(tzString[1]))) {
+        if (auto timeZone = timeZoneFromName(tzString)) {
+            ASSERT(ISO8601::parseTimeZoneIdentifier(tzString));
+            return timeZone;
+        }
+    }
 
     // Step 3: Let parseResult be ? ParseTemporalTimeZoneString(temporalTimeZoneLike).
     auto parseResult = ISO8601::parseTemporalTimeZoneString(tzString);
