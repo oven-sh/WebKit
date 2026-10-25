@@ -153,6 +153,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 static void* endOfMainThreadStack()
 {
     auto* path = reinterpret_cast<const char*>(getauxval(AT_EXECFN));
+    // Before glibc 2.36 getauxval() finds nothing on arm64 when ld.so is run as a command (glibc bug 23293). The first string of the environment stands in.
+    if (!path && environ)
+        path = *environ;
     // The pointers to the environment lie above every frame and below the strings, of which the path is the last; execve() takes 6 MB of strings at the most.
     // A path that lies elsewhere was written into the auxiliary vector by a tracer or an emulator and says nothing about the mapping.
     auto* environment = reinterpret_cast<const char*>(environ);
