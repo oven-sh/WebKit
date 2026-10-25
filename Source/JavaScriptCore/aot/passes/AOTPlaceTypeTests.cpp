@@ -2946,6 +2946,9 @@ struct TestPlacer {
         auto replacedOperands = std::ranges::equal_range(subjectOperands, useIndex, { }, &SubjectOperand::use);
         Vector<uint32_t, 2> operandsToCast;
         function.at(use).forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            OperandKind kind = function.at(use).operandKind(operandIndex);
+            if (mustBeDefinition(kind) || kind == OperandKind::Guard)
+                return;
             if (ownTypeOf(operand) != function.at(operand).type && !std::ranges::contains(replacedOperands, operandIndex, &SubjectOperand::operandIndex))
                 operandsToCast.append(operandIndex);
         });
