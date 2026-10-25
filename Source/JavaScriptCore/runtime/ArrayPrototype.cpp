@@ -42,6 +42,7 @@
 #include "ObjectPrototypeInlines.h"
 #include "StableSort.h"
 #include "StringRecursionChecker.h"
+#include "TemporalObject.h"
 #include "VMEntryScopeInlines.h"
 #include <algorithm>
 #include <array>
@@ -1017,6 +1018,11 @@ static ALWAYS_INLINE std::span<EncodedJSValue> sortStableSort(JSGlobalObject* gl
 
             RELEASE_AND_RETURN(scope, coerceComparatorResultToBoolean(globalObject, jsResult));
         })));
+    }
+
+    if (callData.type == CallData::Type::Native) {
+        if (auto sorted = sortWithTemporalCompareFunction(vm, callData.native.function, compacted, workingSet))
+            RELEASE_AND_RETURN(scope, *sorted);
     }
 
     RELEASE_AND_RETURN(scope, (arrayStableSort<MergeStrategy::Galloping>(vm, compacted, workingSet, [&](auto left, auto right) ALWAYS_INLINE_LAMBDA {

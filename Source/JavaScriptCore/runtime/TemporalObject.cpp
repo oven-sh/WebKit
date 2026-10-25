@@ -22,15 +22,19 @@
 #include "config.h"
 #include "TemporalObject.h"
 
+#include "DurationArithmetic.h"
 #include "FractionToDouble.h"
 #include "FunctionPrototype.h"
 #include "ISO8601.h"
+#include "ISOArithmetic.h"
 #include "IntlObjectInlines.h"
 #include "JSCJSValueInlines.h"
 #include "JSGlobalObject.h"
 #include "JSObjectInlines.h"
 #include "ObjectPrototype.h"
+#include "PlainDateTimeCore.h"
 #include "Rounding.h"
+#include "StableSort.h"
 #include "TemporalCalendar.h"
 #include "TemporalDuration.h"
 #include "TemporalDurationConstructor.h"
@@ -997,6 +1001,86 @@ TemporalType temporalType(JSValue value)
     if (cell->inherits<TemporalDuration>())
         return TemporalType::Duration;
     return TemporalType::None;
+}
+
+// One out-of-line arrayStableSort instantiation, comparing through a function pointer, for every class but Duration.
+static NEVER_INLINE std::optional<std::span<EncodedJSValue>> sortTemporalCells(VM& vm, std::span<EncodedJSValue> values, std::span<EncodedJSValue> workingSet, const ClassInfo* classInfo, bool (*lessThan)(EncodedJSValue, EncodedJSValue))
+{
+    for (EncodedJSValue value : values) {
+        JSValue decoded = JSValue::decode(value);
+        if (!decoded.isCell() || !decoded.asCell()->inherits(classInfo))
+            return std::nullopt;
+    }
+    return arrayStableSort<MergeStrategy::Galloping>(vm, values, workingSet, [lessThan](EncodedJSValue left, EncodedJSValue right) ALWAYS_INLINE_LAMBDA {
+        return lessThan(left, right);
+    });
+}
+
+// Each ToTemporal* conversion of an argument that already has the class's slots only copies them, so comparing the
+// slots gives the same order.
+std::optional<std::span<EncodedJSValue>> sortWithTemporalCompareFunction(VM& vm, TaggedNativeFunction function, std::span<EncodedJSValue> values, std::span<EncodedJSValue> workingSet)
+{
+    if (function == temporalInstantConstructorFuncCompare) {
+        return sortTemporalCells(vm, values, workingSet, TemporalInstant::info(), [](EncodedJSValue left, EncodedJSValue right) {
+            return uncheckedDowncast<TemporalInstant>(JSValue::decode(left))->exactTime() < uncheckedDowncast<TemporalInstant>(JSValue::decode(right))->exactTime();
+        });
+    }
+    if (function == temporalZonedDateTimeConstructorFuncCompare) {
+        return sortTemporalCells(vm, values, workingSet, TemporalZonedDateTime::info(), [](EncodedJSValue left, EncodedJSValue right) {
+            return uncheckedDowncast<TemporalZonedDateTime>(JSValue::decode(left))->exactTime() < uncheckedDowncast<TemporalZonedDateTime>(JSValue::decode(right))->exactTime();
+        });
+    }
+    if (function == temporalPlainDateConstructorFuncCompare) {
+        return sortTemporalCells(vm, values, workingSet, TemporalPlainDate::info(), [](EncodedJSValue left, EncodedJSValue right) {
+            return TemporalCore::isoDateCompare(uncheckedDowncast<TemporalPlainDate>(JSValue::decode(left))->plainDate(), uncheckedDowncast<TemporalPlainDate>(JSValue::decode(right))->plainDate()) < 0;
+        });
+    }
+    if (function == temporalPlainDateTimeConstructorFuncCompare) {
+        return sortTemporalCells(vm, values, workingSet, TemporalPlainDateTime::info(), [](EncodedJSValue left, EncodedJSValue right) {
+            auto* one = uncheckedDowncast<TemporalPlainDateTime>(JSValue::decode(left));
+            auto* two = uncheckedDowncast<TemporalPlainDateTime>(JSValue::decode(right));
+            return TemporalCore::compareISODateTime(one->plainDate(), one->plainTime(), two->plainDate(), two->plainTime()) < 0;
+        });
+    }
+    if (function == temporalPlainTimeConstructorFuncCompare) {
+        return sortTemporalCells(vm, values, workingSet, TemporalPlainTime::info(), [](EncodedJSValue left, EncodedJSValue right) {
+            return TemporalPlainTime::compare(uncheckedDowncast<TemporalPlainTime>(JSValue::decode(left))->plainTime(), uncheckedDowncast<TemporalPlainTime>(JSValue::decode(right))->plainTime()) < 0;
+        });
+    }
+    if (function == temporalPlainYearMonthConstructorFuncCompare) {
+        return sortTemporalCells(vm, values, workingSet, TemporalPlainYearMonth::info(), [](EncodedJSValue left, EncodedJSValue right) {
+            return TemporalCore::isoDateCompare(uncheckedDowncast<TemporalPlainYearMonth>(JSValue::decode(left))->plainYearMonth().isoPlainDate(), uncheckedDowncast<TemporalPlainYearMonth>(JSValue::decode(right))->plainYearMonth().isoPlainDate()) < 0;
+        });
+    }
+    if (function == temporalDurationConstructorFuncCompare) {
+        // Without relativeTo, compare orders durations by timeDurationForCompareWithoutRelativeTo, computed here once per
+        // element. Where it fails (years, months or weeks), compare may throw, so the generic path runs.
+        for (EncodedJSValue value : values) {
+            if (!JSValue::decode(value).inherits<TemporalDuration>())
+                return std::nullopt;
+        }
+        struct Entry {
+            Int128 time;
+            EncodedJSValue value;
+        };
+        Vector<Entry> entries;
+        Vector<Entry> entriesWorkingSet;
+        if (!entries.tryReserveInitialCapacity(values.size()) || !entriesWorkingSet.tryGrow(values.size())) [[unlikely]]
+            return std::nullopt;
+        for (EncodedJSValue value : values) {
+            auto time = TemporalCore::timeDurationForCompareWithoutRelativeTo(uncheckedDowncast<TemporalDuration>(JSValue::decode(value))->duration());
+            if (!time) [[unlikely]]
+                return std::nullopt;
+            entries.append({ *time, value });
+        }
+        auto sorted = arrayStableSort<MergeStrategy::Galloping>(vm, entries.mutableSpan(), entriesWorkingSet.mutableSpan(), [](const Entry& left, const Entry& right) ALWAYS_INLINE_LAMBDA {
+            return left.time < right.time;
+        });
+        for (size_t i = 0; i < values.size(); ++i)
+            values[i] = sorted[i].value;
+        return values;
+    }
+    return std::nullopt;
 }
 
 } // namespace JSC
