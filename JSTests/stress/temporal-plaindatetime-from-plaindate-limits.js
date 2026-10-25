@@ -25,6 +25,12 @@ const nextDate = Temporal.PlainDate.from("-271821-04-20");
 const dateTime = new Temporal.PlainDateTime(2000, 1, 1);
 
 shouldThrow(() => Temporal.PlainDateTime.from(earliestDate), RangeError);
+// The overflow option is read before the date-time is created.
+{
+    let overflowRead = false;
+    shouldThrow(() => Temporal.PlainDateTime.from(earliestDate, { get overflow() { overflowRead = true; return "constrain"; } }), RangeError);
+    shouldBe(overflowRead, true);
+}
 shouldThrow(() => Temporal.PlainDateTime.compare(earliestDate, dateTime), RangeError);
 shouldThrow(() => Temporal.PlainDateTime.compare(dateTime, earliestDate), RangeError);
 shouldThrow(() => dateTime.equals(earliestDate), RangeError);
@@ -46,4 +52,5 @@ for (const method of ["until", "since"]) {
 shouldBe(Temporal.PlainDateTime.from(nextDate).toString(), "-271821-04-20T00:00:00");
 shouldBe(Temporal.PlainDateTime.compare(nextDate, dateTime), -1);
 shouldBe(dateTime.equals(nextDate), false);
-shouldBe(dateTime.since(nextDate, { largestUnit: "days" }).days > 0, true);
+shouldBe(dateTime.since(nextDate, { largestUnit: "days" }).days, 100010957);
+shouldBe(Temporal.PlainDateTime.from(new Temporal.PlainDate(275760, 9, 13)).toString(), "+275760-09-13T00:00:00");
