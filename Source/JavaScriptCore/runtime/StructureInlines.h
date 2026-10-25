@@ -208,12 +208,19 @@ inline void Structure::didCachePropertyReplacement(VM& vm, PropertyOffset offset
 
 inline WatchpointSet* Structure::propertyReplacementWatchpointSet(PropertyOffset offset)
 {
+    if (!isValidOffset(offset))
+        return nullptr;
     ConcurrentJSLocker locker(m_lock);
     StructureRareData* rareData = tryRareData();
     if (!rareData)
         return nullptr;
-    if (!rareData->m_replacementWatchpointSets.isNullStorage())
-        return rareData->m_replacementWatchpointSets.get(offset);
+    auto* watchpoints = rareData->m_replacementWatchpoints.get();
+    if (!watchpoints)
+        return nullptr;
+    if (watchpoints->firedOffsets.get(offset))
+        return &vm().invalidatedPropertyReplacementWatchpointSet();
+    if (!watchpoints->sets.isEmpty())
+        return watchpoints->sets.get(offset);
     return nullptr;
 }
 
