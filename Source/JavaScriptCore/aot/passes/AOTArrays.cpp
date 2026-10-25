@@ -853,6 +853,8 @@ struct LiteralPlan {
     Vector<ElementStore> stores { };
     ValueID array { };
     ValueID lengthOfArray { };
+    // The elements are appended in their order to an empty array of the literal's type. A store without an element appends a hole.
+    bool appendsElements { false };
 };
 
 struct DominatorChain {
@@ -870,8 +872,15 @@ struct DominatorChain {
 PassOutcome expandLongArrayLiterals(FunctionPassContext& context)
 {
     Function& function = context.function;
-    auto isComputedElement = [&](ValueID element) {
-        return !isRematerializable(function.at(element)) && !context.program.typeOf(function, element).isNumber();
+    // The code generator makes a constant that is no number where it is defined, so the constants of a very long literal are stored one by one too.
+    AOT_THRESHOLD(size_t, maxConstantsMadeBeforeAllocation, 4095);
+    auto isStoredWhenMade = [&](const Value& literal, ValueID element) {
+        bool countsConstants = literal.elementsOperands().size() > maxConstantsMadeBeforeAllocation;
+        return (countsConstants || !isRematerializable(function.at(element))) && !context.program.typeOf(function, element).isNumber();
+    };
+    // Numbers decide the form of the array that holds them, so a very long list of computed numbers is appended to an array that starts in the form of the literal.
+    auto isComputed = [&](ValueID element) {
+        return !isRematerializable(function.at(element));
     };
     Vector<LiteralPlan> plans;
     for (size_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
@@ -880,9 +889,16 @@ PassOutcome expandLongArrayLiterals(FunctionPassContext& context)
             const Value& value = function.at(values[index]);
             if (value.opcode != Opcode::NewArray)
                 continue;
-            uint64_t numberOfComputedElements = std::ranges::count_if(value.elementsOperands(), isComputedElement);
-            if (context.exceeds(LimitID::MaxArrayLiteralBatch, numberOfComputedElements, values[index]))
+            uint64_t numberOfComputedElements = std::ranges::count_if(value.elementsOperands(), [&](ValueID element) {
+                return isStoredWhenMade(value, element);
+            });
+            bool storesElements = context.exceeds(LimitID::MaxArrayLiteralBatch, numberOfComputedElements, values[index]);
+            bool appendsElements = !storesElements && !value.capacityOperand() && value.literalStorage() == ArrayLiteralStorage::Fresh && value.storage() == AllocationStorage::Heap
+                && static_cast<size_t>(std::ranges::count_if(value.elementsOperands(), isComputed)) > maxConstantsMadeBeforeAllocation;
+            if (storesElements || appendsElements) {
                 plans.append({ values[index], static_cast<uint32_t>(value.elementsOperands().size() + value.holes().size()), { BlockID(blockIndex), index } });
+                plans.last().appendsElements = appendsElements;
+            }
         }
     }
     if (plans.isEmpty())
@@ -965,7 +981,7 @@ PassOutcome expandLongArrayLiterals(FunctionPassContext& context)
         if (cfg.isReachable(point.block)) {
             Vector<ChainPoint, 8> ownAvailabilities;
             for (ValueID element : literal.elementsOperands()) {
-                bool isOwnElement = !visitedElements.quickSet(element.index()) && isComputedElement(element) && std::ranges::all_of(useLists.usesOf(element), [&](const Use& use) {
+                bool isOwnElement = !visitedElements.quickSet(element.index()) && (plan.appendsElements ? isComputed(element) : isStoredWhenMade(literal, element)) && std::ranges::all_of(useLists.usesOf(element), [&](const Use& use) {
                     return use.kind == Use::Kind::Operand && use.user == plan.literal;
                 });
                 if (isOwnElement)
@@ -985,11 +1001,27 @@ PassOutcome expandLongArrayLiterals(FunctionPassContext& context)
 
         std::span<const uint32_t> holes = literal.holes();
         uint32_t arrayIndex = 0;
+        ChainPoint lastAppend = allocation;
+        auto programPointOf = [&](ChainPoint storePoint) {
+            return allocation.isEarlierThan(storePoint) ? chain->programPointOf(storePoint) : plan.allocation;
+        };
         for (ValueID element : literal.elementsOperands()) {
-            for (; !holes.empty() && holes.front() == arrayIndex; holes = holes.subspan(1))
+            for (; !holes.empty() && holes.front() == arrayIndex; holes = holes.subspan(1)) {
+                if (plan.appendsElements)
+                    plan.stores.append({ programPointOf(lastAppend), arrayIndex, ValueID() });
                 ++arrayIndex;
+            }
             ChainPoint availability = chain ? chain->moveToUsableBlock(availabilityOf(element)) : allocation;
-            plan.stores.append({ allocation.isEarlierThan(availability) ? chain->programPointOf(availability) : plan.allocation, arrayIndex++, element });
+            if (plan.appendsElements) {
+                if (lastAppend.isEarlierThan(availability))
+                    lastAppend = availability;
+                availability = lastAppend;
+            }
+            plan.stores.append({ programPointOf(availability), arrayIndex++, element });
+        }
+        if (plan.appendsElements) {
+            for (; !holes.empty(); holes = holes.subspan(1))
+                plan.stores.append({ programPointOf(lastAppend), arrayIndex++, ValueID() });
         }
     }
 
@@ -997,14 +1029,25 @@ PassOutcome expandLongArrayLiterals(FunctionPassContext& context)
     auto insertStores = [&](const LiteralPlan& plan, bool standBehindAllocation) {
         builder.setOrigin(function.at(plan.literal).origin());
         for (const ElementStore& store : plan.stores) {
-            if ((store.point == plan.allocation) == standBehindAllocation)
+            if ((store.point == plan.allocation) != standBehindAllocation)
+                continue;
+            if (!plan.appendsElements)
                 builder.insertBefore(store.point, IRBuilder::make(Opcode::PutContiguousIndex, { plan.array, builder.insertBefore(store.point, makeInteger(store.arrayIndex)), store.element }));
+            else if (store.element)
+                builder.insertBefore(store.point, IRBuilder::make(Opcode::AppendElement, { plan.array, store.element }));
+            else
+                builder.insertBefore(store.point, IRBuilder::make(Opcode::AppendHole, { plan.array }));
         }
     };
     for (LiteralPlan& plan : plans) {
         builder.setOrigin(function.at(plan.literal).origin());
         plan.lengthOfArray = builder.insertBefore(plan.allocation, makeInteger(plan.length));
-        Value allocation = IRBuilder::make(Opcode::NewContiguousArray, { plan.lengthOfArray });
+        Value allocation = plan.appendsElements ? IRBuilder::make(Opcode::NewArray) : IRBuilder::make(Opcode::NewContiguousArray, { plan.lengthOfArray });
+        if (plan.appendsElements) {
+            allocation.setContents(function.at(plan.literal).contents());
+            allocation.setArrayStorage(function.at(plan.literal).arrayStorage());
+            allocation.setCapacityOperand(plan.lengthOfArray);
+        }
         allocation.setAllocationSite(function.at(plan.literal).allocationSite());
         plan.array = builder.insertBefore(plan.allocation, WTF::move(allocation));
         insertStores(plan, true);

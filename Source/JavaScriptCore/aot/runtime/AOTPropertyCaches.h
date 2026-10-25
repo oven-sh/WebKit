@@ -330,6 +330,7 @@ private:
     static constexpr uint32_t missesBeforeFiling = 2;
     static constexpr uint32_t storeMissesBeforeFiling = 1;
     static constexpr uint32_t numberOfFirstAdditionsByKey = 1 << 12;
+    static constexpr uint32_t firstAdditionsByKeyPerSet = 8;
 
     void ensureChangesAreReported(std::span<JSObject* const>);
     bool canCache(Structure*, const PropertyAnswer&) const;
@@ -345,6 +346,7 @@ private:
     Vector<Addition> m_additionsSinceCollection;
     std::array<uint8_t, numberOfMissCounters> m_missCounters { };
     std::array<uint32_t, numberOfFirstAdditionsByKey> m_firstAdditionsByKey { };
+    uint32_t m_evictionSeed { 0 };
     StructureID m_structureMadeForAdditionByKey;
     std::atomic<bool> m_shouldForgetMisses { false };
     std::unique_ptr<UncheckedKeyHashSet<uint64_t>> m_countedFilings;

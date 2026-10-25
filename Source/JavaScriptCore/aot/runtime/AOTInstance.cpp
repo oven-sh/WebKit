@@ -458,6 +458,7 @@ Instance* Instance::create(JSGlobalObject* realm)
     {
         Locker locker { vmState.instancesLock };
         vmState.instances.append(instance);
+        vmState.didChangeInstances();
     }
     vmState.propertyCaches->didCreateInstance(*instance);
     RuntimeHooks::didChangeMicrotaskQueueing(vm);
@@ -475,6 +476,7 @@ void Instance::destroy(Instance* instance)
     {
         Locker locker { vmState.instancesLock };
         vmState.instances.removeFirst(instance);
+        vmState.didChangeInstances();
         vmState.instancesToDestroy.removeFirst(instance);
     }
     vmState.counters->add(instance->runtime.counters);

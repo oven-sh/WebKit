@@ -137,6 +137,18 @@ private:
     struct PassedValues;
     class MergingParameters;
 
+    // Shared by all blocks. Each entry names the block that wrote it.
+    struct MergingParameterChains {
+        struct Chain {
+            uint32_t block { 0 };
+            uint32_t first { UINT32_MAX };
+            uint32_t last { UINT32_MAX };
+        };
+
+        uint32_t block { 0 };
+        Vector<Chain> chainOfFirstValue;
+    };
+
     enum class Expectation : uint8_t {
         IsPassedOneValue,
         ReceivesWhatEarlierParameterReceives,
@@ -190,6 +202,7 @@ private:
     Vector<ValueID> m_passedValues;
     Vector<uint32_t> m_firstPassedValue;
     Vector<ValueID> m_operandsOfCasts;
+    MergingParameterChains m_mergingParameterChains;
 };
 
 Vector<ValueID, 2> findSingleUseCastChain(const Function&, const UseLists&, ValueID user);

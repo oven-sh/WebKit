@@ -258,8 +258,10 @@ static BitVector findBuiltinsWhoseCodeRuns(const ValueFlowResultInputs& inputs)
     }
     BitVector builtinsWhoseCodeRuns(builtins.builtinCount());
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-        OptionSet<BuiltinUse> enteringUses = usesEnteringCode(builtins.at(BuiltinID(index)).kind);
-        if (namespacesOfModules.get(index))
+        const Builtin& entry = builtins.at(BuiltinID(index));
+        OptionSet<BuiltinUse> enteringUses = usesEnteringCode(entry.kind);
+        bool mayHoldFunctionsWithoutEntry = (entry.kind == BuiltinKind::Function || entry.kind == BuiltinKind::Method) && !entry.flags.contains(BuiltinFlag::ListsAllMembers);
+        if (namespacesOfModules.get(index) || mayHoldFunctionsWithoutEntry)
             enteringUses.add(accessingBuiltinUses);
         if (inputs.solver().usesOf(BuiltinID(index)).containsAny(enteringUses))
             builtinsWhoseCodeRuns.quickSet(builtins.canonicalID(BuiltinID(index)).index());

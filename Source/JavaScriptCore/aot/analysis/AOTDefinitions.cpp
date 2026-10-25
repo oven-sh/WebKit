@@ -15,6 +15,7 @@
 #include "AOTKnownClosures.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -147,16 +148,18 @@ std::optional<ClassDefinitionSite> findClassDefinitionSite(const Program& progra
 
     const Vector<ClassMember>& members = layout.classFlow.members;
     BitVector isDefinedHere(members.size());
+    HashMap<FunctionID, size_t> firstPositionOfFunction;
+    for (size_t position = 0; position < members.size(); ++position)
+        firstPositionOfFunction.add(members[position].function, position);
     auto addDefinition = [&](ValueID id) {
         const Value& definition = function.at(id);
         const Value& closure = function.at(definition.functionOperand());
         if (definition.layout() != site.layout || !definition.key() || definition.computedKeyOperand() || closure.opcode != Opcode::NewClosure)
             return false;
-        size_t position = members.findIf([&](const ClassMember& member) {
-            return member.function == closure.function();
-        });
-        if (position == notFound)
+        auto found = firstPositionOfFunction.find(closure.function());
+        if (found == firstPositionOfFunction.end())
             return false;
+        size_t position = found->value;
         const ClassMember& member = members[position];
         bool isAsListed = member.key == definition.key() && member.side == definition.side() && member.kind == definition.methodKind();
         if (!isAsListed || isDefinedHere.quickSet(position) || !isOnlyClosureOperand(function, useLists, definition.functionOperand(), member.function))

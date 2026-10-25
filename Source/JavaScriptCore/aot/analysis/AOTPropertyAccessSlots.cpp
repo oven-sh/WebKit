@@ -47,6 +47,7 @@ static FieldArmState computeStateOfFieldArm(const Program& program, std::span<co
         state.hasSlotNowhere &= !isPrivate && isNeverStored(program, *reference) && !program.at(layout).flow.observedUses.contains(ObservedUse::ReachesTypedParse);
         state.isRequired &= field.flags.contains(FieldFlags::IsRequired);
         state.isAddedLate &= field.flags.contains(FieldFlags::IsAddedLate);
+        state.isFilledByCreator &= field.flags.contains(FieldFlags::IsFilledByCreator);
         state.isAddedLateInSomeMember |= field.flags.contains(FieldFlags::IsAddedLate);
         state.isLeftOutAtConstruction |= reference->layout == layout && std::ranges::any_of(program.at(layout).flow.constructorOrders, [&](const FieldOrder& order) {
             return !order.fields.contains(reference->field);
@@ -381,7 +382,7 @@ static void planFieldRead(const PropertyAccessContext& context, const PropertyAc
     }
     bool holdsUnfinishedObjects = !state.isInContainer && isInCodeThatHoldsUnfinishedObjects(context, query);
     bool isOptionAmongMany = query.expectsEmptySlot && !state.isRequired && state.isLeftOutAtConstruction && !state.hasConstructor && !state.isInContainer;
-    bool isOftenEmpty = (state.isAddedLate && state.admitsUndefined && !state.isRequired) || holdsUnfinishedObjects || isOptionAmongMany;
+    bool isOftenEmpty = (state.isAddedLate && state.admitsUndefined && !state.isRequired && !state.isFilledByCreator) || holdsUnfinishedObjects || isOptionAmongMany;
     bool mayNeedNoTest = state.isAddedLate || state.cannotMoveOut;
     if ((isOftenEmpty || mayNeedNoTest) && !state.isAlwaysFilled && !query.isPrivate && state.form.isEmpty()) {
         std::optional<TestsOfEmptySlot> tests = testsOfEmptySlotFor(context, query, arm, state, Access::Read);

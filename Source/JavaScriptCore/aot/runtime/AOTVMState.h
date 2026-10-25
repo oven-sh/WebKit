@@ -44,7 +44,10 @@ public:
     void releaseImage(VM&);
     template<typename Visitor> void visitAggregate(Visitor&);
 
+    void didChangeInstances() { onlyInstance = instances.size() == 1 ? instances.first() : nullptr; }
+
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VMState, structureIDBase); }
+    static constexpr ptrdiff_t offsetOfOnlyInstance() { return OBJECT_OFFSETOF(VMState, onlyInstance); }
     static constexpr ptrdiff_t offsetOfRegExpMatchOutput() { return OBJECT_OFFSETOF(VMState, regExpMatchOutput); }
     // regExpMatchOutput has room for the literals of the image, and for any pattern made at run time with so many groups.
     static constexpr unsigned maxGroupsInRegExpMatchOutput = 15;
@@ -58,6 +61,7 @@ public:
     bool hasCompiledCode { false };
     bool validatesRuntime { false };
     uintptr_t structureIDBase { 0 };
+    Instance* onlyInstance { nullptr };
     std::unique_ptr<RuntimeTable> runtimeTable;
     std::unique_ptr<ProgramIdentifiers> identifiers;
     std::unique_ptr<CacheRegistry> caches;

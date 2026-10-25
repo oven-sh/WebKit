@@ -403,17 +403,9 @@ const SlotAgreement& SlotPlan::agreementOf(const Program& program, PropertyKeyID
 
 MemberCreation SlotPlan::creationOf(const Program& program, LayoutID classLayout, FunctionID member) const
 {
-    const Vector<ClassMember>& members = program.at(classLayout).classFlow.members;
-    const Vector<MemberCreation>& creations = classCreation(classLayout).members;
-    MemberCreation creation = MemberCreation::AtDefinition;
-    for (size_t index = 0; index < members.size(); ++index) {
-        if (members[index].function != member)
-            continue;
-        if (index >= creations.size() || creations[index] == MemberCreation::AtDefinition)
-            return MemberCreation::AtDefinition;
-        creation = MemberCreation::ByClassRecord;
-    }
-    return creation;
+    UNUSED_PARAM(program);
+    bool isCreatedByClassRecord = std::ranges::binary_search(classCreation(classLayout).functionsCreatedByClassRecord, member.index(), { }, &FunctionID::index);
+    return isCreatedByClassRecord ? MemberCreation::ByClassRecord : MemberCreation::AtDefinition;
 }
 
 static LayoutID provenBaseOf(const Layout& layout)
@@ -927,6 +919,14 @@ static ClassCreationPlan planClass(const Program& program, const Layout& layout,
         if (recordCreatesNextMember)
             plan.members[index] = MemberCreation::ByClassRecord;
     }
+    Vector<FunctionID> functionsCreatedAtDefinition;
+    for (size_t index = 0; index < members.size(); ++index)
+        (plan.members[index] == MemberCreation::ByClassRecord ? plan.functionsCreatedByClassRecord : functionsCreatedAtDefinition).append(members[index].function);
+    AOT::sort(plan.functionsCreatedByClassRecord, { }, &FunctionID::index);
+    AOT::sort(functionsCreatedAtDefinition, { }, &FunctionID::index);
+    plan.functionsCreatedByClassRecord.removeAllMatching([&](FunctionID& function) {
+        return std::ranges::binary_search(functionsCreatedAtDefinition, function.index(), { }, &FunctionID::index);
+    });
 
     bool recordCreatesPrototypeSide = recordCreatesSide[static_cast<unsigned>(ClassSide::Prototype)];
     bool recordCreatesStaticSide = recordCreatesSide[static_cast<unsigned>(ClassSide::Static)];

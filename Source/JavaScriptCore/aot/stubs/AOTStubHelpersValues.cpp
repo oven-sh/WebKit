@@ -217,10 +217,12 @@ void loadCellVM(StubAssembler& jit, GPRReg cellAndResult)
     Jump isPreciseAllocation = jit.branchTestPtr(CCallHelpers::NonZero, cellAndResult, TrustedImm32(PreciseAllocation::halfAlignment));
     jit.and64(TrustedImm64(static_cast<int64_t>(MarkedBlock::blockMask)), cellAndResult);
     jit.loadPtr(Address(cellAndResult, MarkedBlock::offsetOfHeader + MarkedBlock::Header::offsetOfVM()), cellAndResult);
-    Jump done = jit.jump();
-    isPreciseAllocation.link(&jit);
-    jit.loadPtr(Address(cellAndResult, PreciseAllocation::offsetOfWeakSet() + WeakSet::offsetOfVM() - PreciseAllocation::headerSize()), cellAndResult);
-    done.link(&jit);
+    Label done = jit.label();
+    jit.addOutOfLinePart([=](StubAssembler& jit) {
+        isPreciseAllocation.link(&jit);
+        jit.loadPtr(Address(cellAndResult, PreciseAllocation::offsetOfWeakSet() + WeakSet::offsetOfVM() - PreciseAllocation::headerSize()), cellAndResult);
+        jit.jump().linkTo(done, &jit);
+    });
 }
 
 Jump branchIfNotOfThisRealm(StubAssembler& jit, GPRReg structure)

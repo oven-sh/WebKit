@@ -584,8 +584,22 @@ private:
             return;
         Description& description = at(id);
         BodySource source { value, mask };
-        if (std::ranges::contains(m_sources.subspan(description.firstSource), source))
-            return;
+        std::span<const BodySource> sources = m_sources.subspan(description.firstSource);
+        if (sources.size() < minSourcesFoundByHash) {
+            if (std::ranges::contains(sources, source))
+                return;
+        } else {
+            auto keyOf = [](const BodySource& source) {
+                return (static_cast<uint64_t>(source.value.index()) << 32 | source.mask) + 1;
+            };
+            if (std::exchange(m_valueWithHashedSources, id) != id) {
+                m_hashedSources.clear();
+                for (const BodySource& earlier : sources)
+                    m_hashedSources.add(keyOf(earlier));
+            }
+            if (!m_hashedSources.add(keyOf(source)).isNewEntry)
+                return;
+        }
         m_sources.append(source);
         ++description.sourceCount;
     }
@@ -1826,6 +1840,9 @@ private:
     InternedBodyRecords<Body::Mask> m_masks;
     Vector<Description, 48> m_descriptions;
     Vector<BodySource, 48> m_sources;
+    AOT_CLASS_THRESHOLD(size_t, minSourcesFoundByHash, 32);
+    ValueID m_valueWithHashedSources;
+    UncheckedKeyHashSet<uint64_t> m_hashedSources;
     Vector<BlockParameter, 16> m_blockParameters;
     Vector<ValueID, 8> m_returnedValues;
     bool m_returnsCall { false };

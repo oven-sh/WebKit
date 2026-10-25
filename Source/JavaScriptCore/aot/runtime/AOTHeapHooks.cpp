@@ -115,6 +115,7 @@ void finalize(VM& vm, CollectionScope scope)
             state.instancesToDestroy.append(instance);
             return true;
         });
+        state.didChangeInstances();
     }
 
     CacheValidation validation = state.validatesRuntime ? CacheValidation::On : CacheValidation::Off;

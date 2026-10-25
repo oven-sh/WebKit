@@ -1525,9 +1525,9 @@ static bool resolvesSomeUse(FunctionPassContext& context, std::span<const NamedU
         query->receivers.level = KnowledgeLevel::Expected;
         query->receivers.predicted = layouts;
         PropertyAccessPlan plan = planPropertyAccess({ context.program, &context.inputs.flow }, *query);
-        // `events.removeListener === undefined`, `if (value.then)`: whoever reads a name and does not call what he got asks whether it is there.
-        bool readsMethodAsValue = plan.form == AccessForm::Method && !query->isOnlyCalled;
-        return plan.isResolved() && !readsMethodAsValue;
+        // `events.removeListener === undefined`, `if (value.then)`: whoever reads a name and does not call what he got asks whether it is there. `target.get.apply(..)` does not ask.
+        bool asksWhetherMethodIsThere = plan.form == AccessForm::Method && !query->isOnlyCalled && use.demand != NameDemand::Required;
+        return plan.isResolved() && !asksWhetherMethodIsThere;
     });
 }
 
@@ -1669,6 +1669,26 @@ static LayoutList layoutsMetThatAnswer(FunctionPassContext& context, std::span<c
     return layouts;
 }
 
+// `this.response.status`: the layouts that the program stores under `response` and that answer `status`.
+static LayoutList findLayoutsStoredUnderNameOfSubject(FunctionPassContext& context, std::span<const NamedUse> uses, size_t maxLayouts)
+{
+    const Program& program = context.program;
+    auto read = propertyReadBy(program, context.function.at(context.analyses.identityOf(uses[0].receiver)));
+    if (!read || !read->second || context.function.at(uses[0].receiver).expected())
+        return { };
+    LayoutList layouts;
+    for (LayoutID layout : program.layoutsWithName(uses[0].key)) {
+        if (!context.inputs.heat.isStoredUnder(layout, read->second))
+            continue;
+        if (!std::ranges::all_of(uses, [&](const NamedUse& use) { return hasMemberToFindUnder(program, layout, use.key); }))
+            continue;
+        layouts.add(layout);
+        if (layouts.size() > maxLayouts)
+            return { };
+    }
+    return layouts;
+}
+
 // Answers whether the subject is settled. One whose names have more declarations than a test is made for waits until the layouts of the other subjects are known.
 static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> usesOfSubject, LayoutList& layoutsMet, bool waitsForOtherSubjects, ExpectedValues& expectedValues)
 {
@@ -1694,13 +1714,21 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
             return true;
         if (waitsForOtherSubjects)
             return false;
-        LayoutList layouts = layoutsMetThatAnswer(context, uses, layoutsMet);
+        LayoutList layouts = findLayoutsStoredUnderNameOfSubject(context, uses, context.limit(LimitID::MaxDeclarationsPredictedFromNames));
+        if (layouts.isEmpty())
+            layouts = layoutsMetThatAnswer(context, uses, layoutsMet);
         if (!layouts.isEmpty())
             expectLayouts(uses, layouts);
         return true;
     }
 
     size_t maxDeclarations = context.limit(LimitID::MaxDeclarationsPredictedFromNames);
+    LayoutList layoutsStoredUnderName = findLayoutsStoredUnderNameOfSubject(context, uses, maxDeclarations);
+    if (!layoutsStoredUnderName.isEmpty() && resolvesSomeUse(context, uses, layoutsStoredUnderName)) {
+        layoutsMet.unite(layoutsStoredUnderName);
+        expectLayouts(uses, layoutsStoredUnderName);
+        return true;
+    }
     LayoutsToTest chosen = findLayoutsToTestFor(context, uses, maxDeclarations, context.limit(LimitID::MaxAccessPlanMembers), layoutsMet);
     if (chosen.layouts.isEmpty())
         return true;
@@ -2026,6 +2054,7 @@ struct TestPlacer {
     TypeArena& types { context.types };
     IRBuilder builder { analyses.context(), function, types, &analyses };
     bool expectsCheckedTypes { function.has(FunctionFlags::IsChecked) && !isLibraryCode(context.program, function) };
+    bool everyTestIsUnpredictable { false };
     std::optional<GenericCopy> copy { };
     GenericCopy::Extent extentOfCopy { GenericCopy::Extent::NotCopied };
     BitVector unclonableStretches { };
@@ -2545,7 +2574,13 @@ struct TestPlacer {
         if (!copy)
             return;
         // In a checked function of the program the type that a test expects is what the checker says. Elsewhere it is a guess, and the copy runs.
-        copy->clone(expectsCheckedTypes ? +[](BlockFrequency) { return BlockFrequency::Rare; } : frequencyOfGenericCopy);
+        everyTestIsUnpredictable = std::ranges::all_of(plan.uses, [&](const PlannedUse& use) {
+            return !isPlaced(use.stretch) || plan.sites.sites[use.site].outcome == TestOutcome::IsUnpredictable;
+        });
+        if (everyTestIsUnpredictable)
+            copy->clone(+[](BlockFrequency original) { return original; });
+        else
+            copy->clone(expectsCheckedTypes ? +[](BlockFrequency) { return BlockFrequency::Rare; } : frequencyOfGenericCopy);
 
         RELEASE_ASSERT(extentOfCopy != GenericCopy::Extent::NotCopied);
         if (extentOfCopy == GenericCopy::Extent::ToWaysBack)
@@ -2731,7 +2766,7 @@ struct TestPlacer {
                 targets.enteredOnlyWhenTaken = passedTarget.block;
             if (provesNothingWhenFailed)
                 targets.whenNotTaken = failedTarget;
-            IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, testedOperandIndex, frequency, frequencyOfGenericCopy(frequency), WTF::move(targets));
+            IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, testedOperandIndex, frequency, everyTestIsUnpredictable ? frequency : frequencyOfGenericCopy(frequency), WTF::move(targets));
             if (!provesNothingWhenFailed) {
                 builder.moveToEndOf(branch.notTaken);
                 builder.emitJump(failedTarget.block, Arguments(failedTarget.arguments));

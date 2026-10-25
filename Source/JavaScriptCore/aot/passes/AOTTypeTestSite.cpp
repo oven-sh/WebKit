@@ -294,7 +294,7 @@ static bool asksForMoreThanLayoutsTell(const TestSiteReporter& reporter, const V
     });
 }
 
-void TestSiteReporter::report(std::span<const Value> tests, const Effects& effectsWhenPassed)
+void TestSiteReporter::report(std::span<const Value> tests, const Effects& effectsWhenPassed, TestOutcome outcome)
 {
     RELEASE_ASSERT(m_use && !m_didReport && !tests.empty());
     for (const Value& test : tests)
@@ -315,7 +315,7 @@ void TestSiteReporter::report(std::span<const Value> tests, const Effects& effec
     if (hasFailedTest(tests))
         return;
 
-    m_sites.sites.append(TestSite { m_rule, m_use, m_point, static_cast<uint32_t>(m_sites.tests.size()), static_cast<uint32_t>(tests.size()), effectsWhenPassed });
+    m_sites.sites.append(TestSite { m_rule, m_use, m_point, static_cast<uint32_t>(m_sites.tests.size()), static_cast<uint32_t>(tests.size()), effectsWhenPassed, outcome });
     m_sites.tests.append(tests);
     m_isClaimed.set(m_use.index());
     m_didReport = true;
@@ -388,7 +388,7 @@ static bool isDefinedOutsideLoop(TestSiteReporter& reporter, ValueID value, cons
 }
 
 // What stands behind the passing edge of the test does not run in the copy, where the test has failed.
-static bool holdsAccessOrCallWhereTestFails(TestSiteReporter& reporter, const NaturalLoop& loop)
+static bool holdsTestedUseWhereTestFails(TestSiteReporter& reporter, const NaturalLoop& loop)
 {
     const Function& function = reporter.function();
     FunctionAnalyses& analyses = reporter.analyses();
@@ -404,7 +404,7 @@ static bool holdsAccessOrCallWhereTestFails(TestSiteReporter& reporter, const Na
         if (accessClassOf(block.terminator.kind) != AccessClass::None)
             return true;
         for (ValueID value : block.values) {
-            if (accessClassOf(function.at(value).opcode) != AccessClass::None)
+            if (accessClassOf(function.at(value).opcode) != AccessClass::None || reporter.isClaimed(value))
                 return true;
         }
     }
@@ -469,9 +469,13 @@ void reportRepeatedTests(TestSiteReporter& reporter)
             return;
         RarerSide rarerSide = rarerSideOf(reporter);
         std::optional<Value> testInFront = testInFrontOf(reporter, test, rarerSide);
-        bool losesNothingInCopy = isInvariantInLoop && !holdsAccessOrCallWhereTestFails(reporter, *loop);
-        if (testInFront && (losesNothingInCopy || rarerSide != RarerSide::Neither || isSurpriseWhereItFails(reporter, *testInFront)))
+        bool losesNothingInCopy = isInvariantInLoop && !holdsTestedUseWhereTestFails(reporter, *loop);
+        if (!testInFront)
+            return;
+        if (rarerSide != RarerSide::Neither || isSurpriseWhereItFails(reporter, *testInFront))
             reporter.report({ *testInFront }, Effects::none());
+        else if (losesNothingInCopy)
+            reporter.report({ *testInFront }, Effects::none(), TestOutcome::IsUnpredictable);
     });
 }
 

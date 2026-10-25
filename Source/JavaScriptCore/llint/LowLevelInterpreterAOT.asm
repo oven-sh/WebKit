@@ -1263,6 +1263,13 @@ aotOp(op_mov, OpMov, macro (size, get, dispatch, metadata, return)
     return(t0)
 end)
 
+# No JIT waits for the count of returns.
+aotOp(op_ret, OpRet, macro (size, get, dispatch, metadata, return)
+    get(m_value, t2)
+    loadConstantOrVariable(size, t2, r0)
+    doReturn()
+end)
+
 # AOT::generateNewPromise().
 aotOp(op_new_promise, OpNewPromise, macro (size, get, dispatch, metadata, return)
     loadInstanceOfRealm(t5, .slow)
@@ -2276,6 +2283,7 @@ entry(llint_aot, macro ()
     setEntryAddresses(OpNstricteq, op_nstricteq)
     setEntryAddresses(OpPutById, op_put_by_id)
     setEntryAddresses(OpResolveScope, op_resolve_scope)
+    setEntryAddresses(OpRet, op_ret)
     setEntryAddresses(OpStricteq, op_stricteq)
     setEntryAddresses(OpToThis, op_to_this)
     setEntryAddresses(OpTypeofIsFunction, op_typeof_is_function)

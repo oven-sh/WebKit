@@ -52,6 +52,8 @@ public:
             return m_live.quickGet(id.index());
         }
 
+        size_t numberOfLiveValues() const { return m_live.bitCount(); }
+
         void forEachLive(NOESCAPE const Invocable<void(ValueID)> auto& functor) const
         {
             for (size_t index : m_live)

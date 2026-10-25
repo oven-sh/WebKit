@@ -12,6 +12,7 @@
         RUN(testInterferenceGraphsAgree()); \
         RUN(testDenseInterferenceLimit()); \
         RUN(testManySlotsShareCells()); \
+        RUN(testManySlotsDropMovesToThemselves()); \
         RUN(testManySlotsInRandomGraphs()); \
         RUN(testManySlotsOfMixedSizes()); \
         RUN(testFirstFitSizes()); \
@@ -442,6 +443,35 @@ void testManySlotsShareCells()
         allocateStackByGraphColoring(code);
         checkLiveSlotsDoNotOverlap(code);
         CHECK(countDistinctOffsets(code) == 1);
+    }
+}
+
+void testManySlotsDropMovesToThemselves()
+{
+    B3::Procedure proc;
+    proc.setOptLevel(2);
+    Code& code = proc.code();
+    Vector<StackSlot*> slots;
+    for (unsigned i = 0; i < slotCountBeyondGraphs; ++i)
+        slots.append(code.addStackSlot(8, StackSlotKind::Spill));
+    BasicBlock* block = code.addBlock();
+    for (unsigned i = 0; i < slots.size(); ++i) {
+        if (i && !(i % 64)) {
+            BasicBlock* next = code.addBlock();
+            appendJump(block, next);
+            block = next;
+        }
+        block->append(Move, nullptr, argumentTmp(0), Arg::stack(slots[i]));
+        block->append(Move, nullptr, Arg::stack(slots[i]), Arg::stack(slots[i]), argumentTmp(2));
+        block->append(Move, nullptr, Arg::stack(slots[i]), argumentTmp(1));
+    }
+    appendReturn(block);
+    code.resetReachability();
+    allocateStackByGraphColoring(code);
+    checkLiveSlotsDoNotOverlap(code);
+    for (BasicBlock* block : code) {
+        for (Inst& inst : *block)
+            CHECK(inst.args().size() != 3);
     }
 }
 

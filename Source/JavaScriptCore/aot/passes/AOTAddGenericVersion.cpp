@@ -23,6 +23,7 @@
 #include "AOTSimplifyBuiltinCallsInternal.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include <algorithm>
 #include <atomic>
 #include <limits>
@@ -1009,8 +1010,39 @@ struct GenericVersionBuilder {
         finishTypedValues(typingInputs());
     }
 
+    // Each exit enters the copy at a block that takes every value that is live behind the check as a parameter. The parameters must not outgrow the function.
+    bool wouldAddTooManyParameters()
+    {
+        AOT_THRESHOLD(uint64_t, maxAddedParametersPerValue, 16);
+
+        if (sites.size() <= maxAddedParametersPerValue)
+            return false;
+        uint64_t maxAddedParameters = maxAddedParametersPerValue * function.values.size();
+        uint64_t numberOfAddedParameters = 0;
+        const Liveness& liveness = analyses.liveness();
+        for (size_t end = sites.size(); end;) {
+            BlockID block = sites[end - 1].pointBehind.block;
+            Liveness::LocalCalc live(liveness, block);
+            for (uint32_t index = function.at(block).values.size(); end && sites[end - 1].pointBehind.block == block; --end) {
+                const CheckSite& site = sites[end - 1];
+                while (index > site.pointBehind.index)
+                    live.execute(--index);
+                if (site.isWorthExit)
+                    numberOfAddedParameters += live.numberOfLiveValues();
+                if (numberOfAddedParameters > maxAddedParameters)
+                    return true;
+            }
+        }
+        return false;
+    }
+
     bool tryCreateGenericVersion()
     {
+        if (wouldAddTooManyParameters()) {
+            context.gaveUp(LimitID::MaxGenericVersionJoinWork, sites.first().check);
+            return false;
+        }
+
         uint64_t maxBlocks = context.limit(LimitID::MaxBlocksInGenericVersion);
         // An access to a checked receiver runs unknown code in the copy alone: in the typed code it becomes a load.
         bool comesBackBehindCalls = isLibraryCode(program, function);

@@ -50,6 +50,7 @@ enum class LimitPurpose : uint8_t {
     macro(MaxRecordedWritesPerMemoryState, 256, CompileTime, "the state starts a new epoch"_s) \
     macro(MaxLivenessStepsPerBlock, 48, CompileTime, "the dense liveness runs, with the same result"_s) \
     macro(MaxLinearDominatorSteps, 32, CompileTime, "jump pointers are built, with the same result"_s) \
+    macro(MaxPathConstantsScanned, 32, CompileTime, "an index is built, with the same result"_s) \
     macro(MaxBlocksPerPlacedConstant, 8192, CompileTime, "each stretch of blocks gets a copy of the constant"_s) \
     macro(MaxRangeAnalysisDepth, 5, CompileTime, "the range is top"_s) \
     macro(MaxLeavesToRebalance, 32, CompileTime, "the expression tree is not rebalanced"_s) \

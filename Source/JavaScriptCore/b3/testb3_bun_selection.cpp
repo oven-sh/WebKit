@@ -508,6 +508,65 @@ static void testBranchOnLoad16()
     }
 }
 
+struct StoreBetweenLoadsAndUsers {
+    unsigned slot;
+    HeapRange range;
+};
+
+static void buildLoadsFarFromTheirUsers(Procedure& proc, unsigned count, const Vector<StoreBetweenLoadsAndUsers>& storesBetween)
+{
+    BasicBlock* root = proc.addBlock();
+    Value* base = root->appendNew<ArgumentRegValue>(proc, Origin(), GPRInfo::argumentGPR0);
+    auto offsetOf = [](unsigned slot) { return static_cast<int32_t>(slot * sizeof(int32_t)); };
+    Vector<Value*> loads;
+    for (unsigned slot = 0; slot < count; ++slot)
+        loads.append(root->appendNew<MemoryValue>(proc, Load, Int32, Origin(), base, offsetOf(slot), HeapRange(slot)));
+    for (const StoreBetweenLoadsAndUsers& store : storesBetween)
+        root->appendNew<MemoryValue>(proc, Store, Origin(), root->appendNew<Const32Value>(proc, Origin(), -1), base, offsetOf(store.slot), store.range);
+    for (unsigned slot = 0; slot < count; ++slot) {
+        Value* sum = root->appendNew<Value>(proc, Add, Origin(), loads[slot], root->appendNew<Const32Value>(proc, Origin(), 1));
+        root->appendNew<MemoryValue>(proc, Store, Origin(), sum, base, offsetOf(slot), HeapRange(slot));
+    }
+    root->appendNew<Value>(proc, Return, Origin());
+}
+
+static void testLoadsFarFromTheirUsers()
+{
+    constexpr unsigned count = 2000;
+    WeakRandom random(11);
+    Vector<StoreBetweenLoadsAndUsers> storesBetween;
+    for (unsigned slot = 0; slot < count; slot += 3)
+        storesBetween.append({ slot, HeapRange(slot) });
+    for (unsigned i = 0; i < 40; ++i) {
+        unsigned begin = random.getUint32(count);
+        storesBetween.append({ count, HeapRange(begin, begin + 1 + random.getUint32(20)) });
+    }
+    unsigned loadsThatCanMove = 0;
+    for (unsigned slot = 0; slot < count; ++slot) {
+        loadsThatCanMove += !storesBetween.containsIf([&](const StoreBetweenLoadsAndUsers& store) {
+            return store.range.overlaps(HeapRange(slot));
+        });
+    }
+
+    for (bool usesPolicy : { false, true }) {
+        Procedure lowered(usesPolicy ? selectionPolicy() : Policy());
+        buildLoadsFarFromTheirUsers(lowered, count, storesBetween);
+        lowerToAirForTesting(lowered);
+        unsigned additionsToMemory = numberOfInsts(lowered, [](Air::Inst& inst) {
+            return inst.kind.opcode == Air::Add32 && inst.args().back().isMemory();
+        });
+        CHECK_EQ(additionsToMemory, isX86() ? loadsThatCanMove : 0u);
+
+        Procedure proc(usesPolicy ? selectionPolicy() : Policy());
+        buildLoadsFarFromTheirUsers(proc, count, storesBetween);
+        auto code = compileProc(proc);
+        Vector<int32_t> memory(count + 1, [](size_t slot) { return static_cast<int32_t>(10 * slot); });
+        invoke<void>(*code, memory.mutableSpan().data());
+        for (unsigned slot = 0; slot < count; ++slot)
+            CHECK_EQ(memory[slot], static_cast<int32_t>(10 * slot + 1));
+    }
+}
+
 static unsigned numberOfMovesFromRegister(Procedure& proc, GPRReg reg)
 {
     return numberOfInsts(proc, [&](Air::Inst& inst) {
@@ -1075,6 +1134,7 @@ void addBunSelectionTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testStoreOfIncrementedAddressAtAddress());
     RUN(testSelectOfIncrementedValue());
     RUN(testBranchOnLoad16());
+    RUN(testLoadsFarFromTheirUsers());
     RUN(testPinnedRegisterIsNamedDirectly());
     RUN(testDefaultPolicySelectsUpstreamInstructions());
     RUN(testPatchFormsAreFilled());

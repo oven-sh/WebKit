@@ -11,6 +11,7 @@
 #include "B3FoldPathConstants.h"
 #include "B3SwitchValue.h"
 #include "B3ThreadJumps.h"
+#include <wtf/StringPrintStream.h>
 
 static Policy policyWithMaxTailSize(unsigned maxSize)
 {
@@ -772,6 +773,110 @@ static void testFoldPathConstantsFoldsComparisonImpliedByBranch()
     }
 }
 
+static void appendRandomBranchTree(Procedure& proc, unsigned seed)
+{
+    static constexpr B3::Opcode opcodes[] = { Equal, NotEqual, LessThan, GreaterThan, LessEqual, GreaterEqual };
+    static constexpr int64_t constants[] = { std::numeric_limits<int64_t>::min(), -3, 0, 1, 2, 3, 7, std::numeric_limits<int64_t>::max() };
+    constexpr unsigned numberOfBlocks = 400;
+    Graph graph { proc };
+    WeakRandom random(seed);
+    BasicBlock* root = proc.addBlock();
+    Vector<BasicBlock*> unused;
+    for (unsigned i = 1; i < numberOfBlocks; ++i)
+        unused.append(proc.addBlock());
+    for (unsigned i = unused.size(); i > 1; --i)
+        std::swap(unused[i - 1], unused[random.getUint32(i)]);
+    BasicBlock* join = unused.takeLast();
+    graph.ret(join, graph.int64(join, -1));
+
+    auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
+    Value* operands[] = { arguments[0], arguments[1] };
+    auto makeComparison = [&](BasicBlock* block) {
+        return graph.make(block, opcodes[random.getUint32(std::size(opcodes))], operands[random.getUint32(2)], graph.int64(block, constants[random.getUint32(std::size(constants))]));
+    };
+    Vector<Value*> conditionsInRoot { operands[0] };
+    for (unsigned i = 0; i < 4; ++i)
+        conditionsInRoot.append(makeComparison(root));
+    auto chooseCondition = [&](BasicBlock* block) {
+        return random.getUint32(3) ? makeComparison(block) : conditionsInRoot[random.getUint32(conditionsInRoot.size())];
+    };
+
+    Vector<BasicBlock*> open { root };
+    while (!open.isEmpty()) {
+        BasicBlock* block = open.takeLast();
+        if (unused.size() < 3 || (!open.isEmpty() && !random.getUint32(3))) {
+            Value* sum = graph.int64(block, 0);
+            for (unsigned i = 0; i < 3; ++i) {
+                Value* condition = chooseCondition(block);
+                sum = graph.make(block, Add, graph.make(block, Shl, sum, graph.int32(block, 1)), condition->type() == Int32 ? graph.make(block, ZExt32, condition) : condition);
+            }
+            graph.ret(block, sum);
+            continue;
+        }
+        if (!random.getUint32(8)) {
+            SwitchValue* switchValue = block->appendNew<SwitchValue>(proc, Origin(), operands[0]);
+            for (int64_t caseValue : { 0, 5 }) {
+                open.append(unused.takeLast());
+                switchValue->appendCase(SwitchCase(caseValue, FrequentedBlock(open.last())));
+            }
+            open.append(unused.takeLast());
+            switchValue->setFallThrough(FrequentedBlock(open.last()));
+            continue;
+        }
+        BasicBlock* taken = random.getUint32(8) ? unused.takeLast() : join;
+        BasicBlock* notTaken = unused.takeLast();
+        graph.branch(block, chooseCondition(block), taken, notTaken);
+        if (taken != join)
+            open.append(taken);
+        open.insert(random.getUint32(open.size() + 1), notTaken);
+    }
+    for (BasicBlock* block : unused)
+        graph.ret(block, graph.int64(block, -2));
+    proc.resetReachability();
+    validate(proc);
+}
+
+static String dumpBlocks(Procedure& proc)
+{
+    StringPrintStream out;
+    for (BasicBlock* block : proc)
+        block->deepDump(proc, out);
+    return out.toString();
+}
+
+static void testFoldPathConstantsFindsTheSameInIndexAndList()
+{
+    auto policyWithLimit = [](uint64_t limit) {
+        return policyWith([&](Policy& policy) {
+            policy.optimization.foldsImpliedComparisons = true;
+            policy.limits.set(Limit::MaxPathConstantsScanned, limit);
+        });
+    };
+    for (unsigned seed = 1; seed <= 50; ++seed) {
+        Procedure scanned(policyWithLimit(std::numeric_limits<uint64_t>::max()));
+        appendRandomBranchTree(scanned, seed);
+        foldPathConstants(scanned);
+        validate(scanned);
+        CHECK(!limitHits(scanned, Limit::MaxPathConstantsScanned));
+
+        Procedure indexed(policyWithLimit(0));
+        appendRandomBranchTree(indexed, seed);
+        foldPathConstants(indexed);
+        validate(indexed);
+        CHECK(limitHits(indexed, Limit::MaxPathConstantsScanned));
+        CHECK(dumpBlocks(scanned) == dumpBlocks(indexed));
+
+        Procedure unchanged;
+        appendRandomBranchTree(unchanged, seed);
+        auto foldedCode = compileProc(indexed);
+        auto unchangedCode = compileProc(unchanged);
+        for (int64_t first : { -4, -3, 0, 1, 2, 3, 5, 7, 8 }) {
+            for (int64_t second : { -4, -3, 0, 1, 2, 3, 7, 8 })
+                CHECK_EQ(invoke<int64_t>(*foldedCode, first, second), invoke<int64_t>(*unchangedCode, first, second));
+        }
+    }
+}
+
 static void testFoldPathConstantsBypassesSelectDecidedByBranch()
 {
     for (bool usesPolicy : { true, false }) {
@@ -1013,6 +1118,7 @@ void addBunJumpThreadingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testDuplicateTailsUnderDefaultPolicy());
     RUN(testDuplicateTailsSizeFromPolicy());
     RUN(testFoldPathConstantsFoldsComparisonImpliedByBranch());
+    RUN(testFoldPathConstantsFindsTheSameInIndexAndList());
     RUN(testFoldPathConstantsBypassesSelectDecidedByBranch());
     RUN(testFoldPathConstantsFoldsSelect());
     RUN(testFoldPathConstantsKeepsComparisonNotImplied());

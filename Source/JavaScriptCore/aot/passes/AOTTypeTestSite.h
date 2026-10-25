@@ -164,6 +164,8 @@ inline Value makeClosureTest(ValueID value, FunctionID function)
     return test;
 }
 
+enum class TestOutcome : uint8_t { IsExpectedToPass, IsUnpredictable };
+
 struct TestSite {
     TestSiteRuleID rule { TestSiteRuleID::Operator };
     ValueID use;
@@ -171,6 +173,7 @@ struct TestSite {
     uint32_t firstTest { 0 };
     uint32_t numberOfTests { 0 };
     Effects effectsWhenPassed;
+    TestOutcome outcome { TestOutcome::IsExpectedToPass };
 };
 
 struct TestSites {
@@ -220,8 +223,8 @@ public:
     void keepPlanOfUse(PlannedAccess&&);
     std::optional<PlannedAccess> takePlanOfUse(bool isOnlyCalled);
 
-    void report(std::span<const Value> tests, const Effects& effectsWhenPassed);
-    void report(std::initializer_list<Value> tests, const Effects& effectsWhenPassed) { report(std::span<const Value> { tests.begin(), tests.size() }, effectsWhenPassed); }
+    void report(std::span<const Value> tests, const Effects& effectsWhenPassed, TestOutcome = TestOutcome::IsExpectedToPass);
+    void report(std::initializer_list<Value> tests, const Effects& effectsWhenPassed, TestOutcome outcome = TestOutcome::IsExpectedToPass) { report(std::span<const Value> { tests.begin(), tests.size() }, effectsWhenPassed, outcome); }
 
     void forEachCandidate(NOESCAPE const Invocable<void(const Value&)> auto& functor)
     {

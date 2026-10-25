@@ -1325,6 +1325,40 @@ static void testPairsThatMissInTurnAreAllFiled(LoadedProgram& program)
     AOT_TEST_CHECK(isFiled.bitCount() == numberOfPairs);
 }
 
+static void testAdditionsByKeyThatTakeTurnsAllGetStructures(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    PropertyCaches& caches = *program.state().propertyCaches;
+    Structure* structure = program.realm()->nullPrototypeObjectStructure();
+    unsigned numberOfNamesMade = 0;
+    auto makeName = [&] {
+        return Identifier::fromString(vm, makeString("name"_s, numberOfNamesMade++));
+    };
+    auto countTurnsUntilAllGetStructures = [&](unsigned numberOfNames, unsigned maxTurns) {
+        Vector<Identifier> waiting(numberOfNames, [&](size_t) {
+            return makeName();
+        });
+        unsigned turns = 0;
+        for (; !waiting.isEmpty() && turns < maxTurns; ++turns) {
+            waiting.removeAllMatching([&](const Identifier& name) {
+                return caches.shouldMakeStructureForAdditionByKey(structure, name.impl());
+            });
+        }
+        return waiting.isEmpty() ? turns : UINT_MAX;
+    };
+
+    AOT_TEST_CHECK(countTurnsUntilAllGetStructures(2048, 16) <= 16);
+
+    constexpr unsigned numberOfNamesThatComeOnce = 1 << 16;
+    for (unsigned i = 0; i < numberOfNamesThatComeOnce; ++i)
+        caches.shouldMakeStructureForAdditionByKey(structure, makeName().impl());
+    AOT_TEST_CHECK(countTurnsUntilAllGetStructures(2, 64) <= 64);
+    AOT_TEST_CHECK(countTurnsUntilAllGetStructures(2048, 128) <= 128);
+
+    constexpr unsigned moreNamesThanAreRemembered = 1 << 14;
+    AOT_TEST_CHECK(countTurnsUntilAllGetStructures(moreNamesThanAreRemembered, 256) <= 256);
+}
+
 static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -1413,6 +1447,7 @@ std::span<const NativeTest> propertyLookupTests()
         { "property-lookup/presence-is-cached-under-name"_s, withProgram<testPresenceIsCachedUnderName> },
         { "property-lookup/store-is-filed-one-miss-earlier-than-read"_s, withProgram<testStoreIsFiledOneMissEarlierThanRead> },
         { "property-lookup/pairs-that-miss-in-turn-are-all-filed"_s, withProgram<testPairsThatMissInTurnAreAllFiled> },
+        { "property-lookup/additions-by-key-that-take-turns-all-get-structures"_s, withProgram<testAdditionsByKeyThatTakeTurnsAllGetStructures> },
         { "property-lookup/absence-filter-names-what-stops-stores"_s, withProgram<testAbsenceFilterNamesWhatStopsStores> },
         { "property-lookup/slot-filed-by-number-is-copied-for-keys"_s, withProgram<testSlotFiledByNumberIsCopiedForKeys> },
         { "property-lookup/leaf-operations-answer-by-name"_s, withProgram<testLeafOperationsAnswerByName> },

@@ -1602,10 +1602,16 @@ end
             bpa t2, t0, .zeroStackLoop
         else
             move 0, t3
-        .zeroStackLoop:
+            fq2d t3, ft0
+            subp t2, t0, t3
+            btpz t3, 2 * PtrSize, .zeroStackLoop
             subp 2 * PtrSize, t2
-            storeq t3, [t2]
-            storeq t3, PtrSize[t2]
+            storev v0, [t2]
+            bpeq t2, t0, .zeroStackDone
+        .zeroStackLoop:
+            subp 4 * PtrSize, t2
+            storev v0, [t2]
+            storev v0, 2 * PtrSize[t2]
             bpa t2, t0, .zeroStackLoop
         end
 .zeroStackDone:

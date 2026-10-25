@@ -29,8 +29,8 @@ function f0 name="castAddsProofs" parameters=[{type=anything}, {type=boolean}] r
 # SIMPLE: = TypeTest v0 testedType=Array
 # SIMPLE: LoopHint
 # SIMPLE-NOT: TypeTest
-# SIMPLE: frequency=Unlikely:
-# SIMPLE-NEXT: LoopHint
+# SIMPLE-NOT: frequency=
+# SIMPLE: LoopHint
 }
 
 function f1 name="castOutsideTheLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -107,6 +107,6 @@ function f3 name="castAddsNothing" parameters=[{type=anything}, {type=boolean}] 
 # CHECK: LoopHint
 # CHECK-NEXT: v3: true = TypeTest [[narrowed3]] testedType=Array
 # CHECK: = TypeTest v0 testedType=Array
-# CHECK: ({{*}}: Array):
+# CHECK: b7({{*}}: Array):
 # CHECK-NEXT: Jump -> next b1(
 }

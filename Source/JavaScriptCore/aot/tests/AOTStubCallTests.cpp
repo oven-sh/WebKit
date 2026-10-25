@@ -335,7 +335,10 @@ static void testCallsOfBoundFunctions(bool hasOneInstance)
     AOT_TEST_CHECK(!static_cast<uint32_t>(run.landedCall.count));
 
     FakeBoundFunction callBoundToNumber;
+    FakeExecutable executableOfBoundFunction;
+    executableOfBoundFunction.setHeader(0, NativeExecutableType);
     initializeBoundFunction(calls, callBoundToNumber, calls.functionPrototypeCall(), boundThis, { });
+    callBoundToNumber.at<uint64_t>(JSFunction::offsetOfExecutableOrRareData()) = executableOfBoundFunction.address();
     run = calls.runner.runCall(callValue(countInKey), callBoundToNumber.address(), thisValue, { firstArgument, secondArgument });
     checkLandedInEngine(run, callBoundToNumber.address(), thisValue, std::array { firstArgument, secondArgument });
 }

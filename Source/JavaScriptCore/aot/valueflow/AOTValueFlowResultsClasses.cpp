@@ -510,6 +510,14 @@ static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID 
     namedMembers.shrink(std::ranges::unique(namedMembers, { }, memberOrderOf).begin() - namedMembers.begin());
     if (listsEveryStoredName)
         listWhatIsStoredOverMembers(inputs, writes.of(id), namedMembers);
+    Vector<decltype(memberOrderOf(std::declval<const ClassMember&>())), 16> definedMembers(definition.definitions.size(), [&](size_t index) {
+        return memberOrderOf(definition.definitions[index].member);
+    });
+    AOT::sort(definedMembers);
+    Vector<FunctionID, 16> definedFunctions(definition.definitions.size(), [&](size_t index) {
+        return definition.definitions[index].member.function;
+    });
+    AOT::sort(definedFunctions);
     for (size_t first = 0, end = 0; first < namedMembers.size(); first = end) {
         while (end < namedMembers.size() && namedMembers[end].side == namedMembers[first].side && namedMembers[end].key == namedMembers[first].key)
             ++end;
@@ -519,17 +527,13 @@ static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID 
         bool isEveryValueData = group.back().kind == MethodKind::Method;
         bool hasOneDefinition = (isEveryValueData || group.front().kind != MethodKind::Method) && std::ranges::adjacent_find(group, { }, &ClassMember::kind) == group.end();
         bool isThereFromTheStart = std::ranges::all_of(group, [&](const ClassMember& member) {
-            return std::ranges::contains(definition.definitions, memberOrderOf(member), [](const ClassMemberDefinition& entry) {
-                return memberOrderOf(entry.member);
-            });
+            return std::ranges::binary_search(definedMembers, memberOrderOf(member));
         });
         for (ClassMember& member : group) {
             if (holdsWhatWasDefined && isThereFromTheStart && hasOneDefinition)
                 member.mutability = MemberMutability::Fixed;
             member.isWritableData = holdsWhatWasDefined && isEveryValueData && !mutations[side].contains(ObjectMutation::ChangeIntegrity);
-            bool isDefinedByClass = std::ranges::contains(definition.definitions, member.function, [](const ClassMemberDefinition& entry) {
-                return entry.member.function;
-            });
+            bool isDefinedByClass = std::ranges::binary_search(definedFunctions, member.function);
             if (followsUses && member.function && isDefinedByClass && isOnlyCalled(member.function))
                 member.closureUse = ClosureUse::CalledOnly;
         }

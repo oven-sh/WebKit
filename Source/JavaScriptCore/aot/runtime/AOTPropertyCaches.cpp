@@ -47,6 +47,7 @@
 #include <wtf/AlignedStorage.h>
 #include <wtf/Atomics.h>
 #include <wtf/PageBlock.h>
+#include <wtf/SIMDHelpers.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #if OS(LINUX)
@@ -1338,11 +1339,28 @@ bool PropertyCaches::shouldMakeStructureForAdditionByKey(Structure* structure, U
     if (structure->id() == m_structureMadeForAdditionByKey)
         return true;
     // Zero stands for no pair.
-    uint32_t hash = WTF::pairIntHash(structure->id().bits(), WTF::PtrHash<UniquedStringImpl*>::hash(uid)) | 1;
-    uint32_t& first = m_firstAdditionsByKey[(hash >> 1) % numberOfFirstAdditionsByKey];
-    if (first == hash)
+    uint32_t hash = WTF::pairIntHash(structure->id().bits(), uid->existingSymbolAwareHash()) | 1;
+    constexpr uint32_t numberOfSets = numberOfFirstAdditionsByKey / firstAdditionsByKeyPerSet;
+    static_assert(hasOneBitSet(numberOfSets) && !(firstAdditionsByKeyPerSet % SIMD::stride<uint32_t>));
+    uint32_t* set = &m_firstAdditionsByKey[(hash >> 1) % numberOfSets * firstAdditionsByKeyPerSet];
+    auto findInSet = [&](uint32_t wanted) -> uint32_t* {
+        for (uint32_t* places = set; places < set + firstAdditionsByKeyPerSet; places += SIMD::stride<uint32_t>) {
+            if (std::optional<uint8_t> index = SIMD::findFirstNonZeroIndex(SIMD::equal(SIMD::load(places), SIMD::splat32(wanted))))
+                return places + *index;
+        }
+        return nullptr;
+    };
+    if (uint32_t* found = findInSet(hash)) {
+        *found = 0;
         return true;
-    first = hash;
+    }
+    uint32_t* place = findInSet(0);
+    if (!place) {
+        // Each place of a full set is replaced half as often as the one before it, so a pair is remembered until it returns whether few or many others arrive in between.
+        m_evictionSeed = m_evictionSeed * 1664525 + 1013904223;
+        place = set + std::min<uint32_t>(std::countl_zero(m_evictionSeed), firstAdditionsByKeyPerSet - 1);
+    }
+    *place = hash;
     return false;
 }
 

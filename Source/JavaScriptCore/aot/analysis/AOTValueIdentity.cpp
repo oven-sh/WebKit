@@ -129,8 +129,10 @@ private:
 
 class ValueIdentities::MergingParameters {
 public:
-    explicit MergingParameters(size_t numberOfValues)
+    MergingParameters(size_t numberOfValues, MergingParameterChains& chains)
         : m_numberOfValues(numberOfValues)
+        , m_block(chains.block)
+        , m_chainOfFirstValue(chains.chainOfFirstValue)
     {
     }
 
@@ -181,11 +183,7 @@ private:
         uint32_t next;
     };
 
-    struct Chain {
-        uint32_t block { 0 };
-        uint32_t first { noPosition };
-        uint32_t last { noPosition };
-    };
+    using Chain = MergingParameterChains::Chain;
 
     void appendToChain(uint32_t position)
     {
@@ -199,9 +197,9 @@ private:
     }
 
     size_t m_numberOfValues;
-    uint32_t m_block { 0 };
+    uint32_t& m_block;
     Vector<Entry, maxSearchedParameters + 1> m_parameters;
-    Vector<Chain> m_chainOfFirstValue;
+    Vector<Chain>& m_chainOfFirstValue;
 };
 
 ValueIdentities::ValueIdentities(const Function& function, const CFG& cfg, RepeatedWalks repeatedWalks, const OpcodeSet* opcodesOfValues, Evaluation evaluation)
@@ -262,6 +260,7 @@ void ValueIdentities::computeAll()
     m_passedValues.clear();
     m_firstPassedValue.clear();
     m_operandsOfCasts.clear();
+    m_mergingParameterChains.chainOfFirstValue.clear();
 
     for (size_t index = 0; index < m_identities.size(); ++index) {
         if (!m_identities[index])
@@ -309,7 +308,7 @@ auto ValueIdentities::passedValuesInto(const Function& function, const CFG& cfg,
 
 void ValueIdentities::walk(const Function& function, const CFG& cfg, uint32_t firstOrderIndex)
 {
-    MergingParameters mergingParameters(function.values.size());
+    MergingParameters mergingParameters(function.values.size(), m_mergingParameterChains);
     if (m_firstBlockThatReadUnknownIdentity && *m_firstBlockThatReadUnknownIdentity >= firstOrderIndex)
         m_firstBlockThatReadUnknownIdentity = std::nullopt;
     std::span<const BlockID> order = cfg.reversePostOrder();
@@ -614,7 +613,7 @@ ValueID ValueIdentities::tryResolveParametersInOrder(const PassedValues& passedV
         if (passed && !tryResolve(passed, blockingParameter))
             return { };
     }
-    MergingParameters mergingParameters(m_numberOfValues);
+    MergingParameters mergingParameters(m_numberOfValues, m_mergingParameterChains);
     mergingParameters.clear();
     size_t numberOfParameters = passedValueList.size() / passedValues.numberOfEdges;
     for (uint32_t parameterIndex = 0; parameterIndex < numberOfParameters; ++parameterIndex)

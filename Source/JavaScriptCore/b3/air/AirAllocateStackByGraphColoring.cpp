@@ -1015,6 +1015,13 @@ public:
         m_facts = WTF::move(factsBySlice);
     }
 
+    std::optional<unsigned> nextBlockInSlice(size_t firstWord, size_t numberOfWords) const
+    {
+        if (m_nextFact == m_facts.size() || m_facts[m_nextFact].slotIndex / 64 - firstWord >= numberOfWords)
+            return std::nullopt;
+        return m_facts[m_nextFact].blockIndex;
+    }
+
     // Asked block by block in index order, and slice by slice in slot order, which is the order of the facts.
     bool fillRows(BasicBlock* block, size_t firstWord, size_t numberOfWords, uint64_t* gen, uint64_t* kill, uint64_t* tail)
     {
@@ -1064,6 +1071,7 @@ public:
 
     void run(StackColoring& coloring)
     {
+        removeUselessMoves();
         choosePools();
         collectRanges();
         linkRanges();
@@ -1134,6 +1142,18 @@ private:
     static unsigned unitsNeededBy(StackSlot* slot)
     {
         return (slot->byteSize() + StackColoring::bytesPerUnit - 1) / StackColoring::bytesPerUnit;
+    }
+
+    void removeUselessMoves()
+    {
+        bool coalesceSpillSlots = m_code.policy().frame.coalescesSpillSlots;
+        if (!coalesceSpillSlots)
+            return;
+        for (BasicBlock* block : m_code) {
+            block->insts().removeAllMatching([&](Inst& inst) {
+                return isUselessMove(inst, coalesceSpillSlots);
+            });
+        }
     }
 
     void choosePools()

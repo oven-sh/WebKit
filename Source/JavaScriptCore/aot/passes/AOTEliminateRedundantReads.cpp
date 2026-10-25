@@ -78,6 +78,8 @@ struct IndexRange {
 };
 
 struct RedundantReadElimination {
+    static constexpr uint32_t maxBitsOfClassSolvedTwice = 16384;
+
     struct Access {
         MemoryLocation location;
         ValueID base { };
@@ -116,6 +118,8 @@ struct RedundantReadElimination {
         // Found when it is first asked for.
         ObjectID allocation;
         bool hasLookedForAllocation;
+        // Behind the bits of the last class of the section with the same location.
+        uint32_t endOfBitsAtLocation { 0 };
     };
 
     struct Action {
@@ -172,6 +176,14 @@ struct RedundantReadElimination {
     // By position in the reverse postorder: a position that no block that the block may reach stands in front of. Empty where nothing leads back.
     Vector<uint32_t> m_firstPositionReachedFrom { };
     IndexRange m_group { };
+    // A class with more bits than a group may hold is solved in parts, from its first bits on: the group is one part, and these are all the bits of the class. Empty otherwise.
+    IndexRange m_bitsOfClassInParts { };
+    // A read that was replaced by a value looks no more and defines no more: whatever its bit would reach, the bit of that value reaches, it comes first, and its type is as narrow.
+    BitVector m_isReplacedByValue { };
+    BitVector m_isReplacedByUndefined { };
+    Vector<uint32_t> m_bitsReplacedByValue { };
+    // By the bit of a read of the class that is solved in parts: the value found for each edge into its block so far.
+    UncheckedKeyHashMap<uint32_t, Vector<ValueID, 4>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_valuesOnEdges { };
     uint32_t m_numberOfWords { 0 };
     Vector<StateOfBlock> m_states { };
     Vector<BlockID, 16> m_visitedBlocks { };
@@ -381,6 +393,11 @@ struct RedundantReadElimination {
                     m_firstClobberableBit = m_bits.size();
             });
         }
+        for (size_t index = m_classes.size(); index--;) {
+            AccessClass& accessClass = m_classes[index];
+            bool isFollowedAtLocation = index + 1 < m_classes.size() && m_classes[index + 1].isFixed == accessClass.isFixed && m_classes[index + 1].location == accessClass.location;
+            accessClass.endOfBitsAtLocation = isFollowedAtLocation ? m_classes[index + 1].endOfBitsAtLocation : accessClass.bits.end;
+        }
     }
 
     IndexRange bitsOfClassesAt(bool isFixed, const MemoryLocation& location) const
@@ -576,10 +593,21 @@ struct RedundantReadElimination {
         if (!effects.normal.writes.containsAny(accessedHeapSet) && !effects.handler.writes.containsAny(accessedHeapSet))
             return;
         LocationMasks writes = effects.onAnyEdge().writes;
-        forEachClassWithBitIn(row, { m_firstClobberableBit, static_cast<uint32_t>(m_bits.size()) }, [&](AccessClass& accessClass) {
-            if (writes.overlaps(accessClass.location.heap(), accessClass.mask) && !survives(accessClass) && !m_context.build.isSabotaged(Sabotage::RememberedReadsOutlastWrites))
+        IndexRange bits = IndexRange { m_firstClobberableBit, static_cast<uint32_t>(m_bits.size()) }.clippedTo(m_group);
+        if (bits.isEmpty())
+            return;
+        // The classes of one location have one mask, so a location that is not written is passed over with all its classes.
+        size_t end = bits.end - m_group.first;
+        for (size_t bit = findBit(row, bits.first - m_group.first); bit < end;) {
+            AccessClass& accessClass = m_classes[m_bits[m_group.first + bit].accessClass];
+            if (!writes.overlaps(accessClass.location.heap(), accessClass.mask)) {
+                bit = findBit(row, accessClass.endOfBitsAtLocation - m_group.first);
+                continue;
+            }
+            if (!survives(accessClass) && !m_context.build.isSabotaged(Sabotage::RememberedReadsOutlastWrites))
                 appendClear(actions, accessClass.bits);
-        });
+            bit = findBit(row, accessClass.bits.end - m_group.first);
+        }
     }
 
     void appendClearsOfEffects(ProgramPoint point, std::span<const Word> row, ActionList& actions)
@@ -685,8 +713,12 @@ struct RedundantReadElimination {
             else if (const Access& access = accessesOfValue.front(); access.stored && access.isOperationOnMemory())
                 appendClearsOfStore(access, live, actions);
             for (const Access& access : accessesOfValue) {
-                if (access.bit && m_group.contains(*access.bit))
+                if (!access.bit || m_isReplacedByValue.quickGet(*access.bit))
+                    continue;
+                if (m_group.contains(*access.bit))
                     actions.append(Action { access.mayPrecedeStore ? Action::Kind::Looks : Action::Kind::Defines, { *access.bit, *access.bit + 1 } });
+                else if (m_bitsOfClassInParts.contains(*access.bit) && access.isRead())
+                    actions.append(Action { Action::Kind::Looks, { *access.bit, *access.bit + 1 } });
             }
             if (watchesThrows && m_analyses.effectsOf(id).mayThrow())
                 functor(Action { Action::Kind::MayThrow, { 0, static_cast<uint32_t>(std::ranges::count(actions, Action::Kind::Clears, &Action::kind)) } });
@@ -791,6 +823,8 @@ struct RedundantReadElimination {
             m_firstPositionReachedFrom[position] = m_firstPositionReachedFrom[m_firstPositionReachedFrom[position]];
     }
 
+    bool isPartOfClass() const { return !m_bitsOfClassInParts.isEmpty(); }
+
     void markAsPending(BlockID block) { m_isPending.quickSet(m_cfg.reversePostOrderIndex(block)); }
 
     // A block that was not visited has empty rows. In the first sweep a block that comes later may still be visited, so an edge back from it is left out until the sweep is over.
@@ -846,7 +880,7 @@ struct RedundantReadElimination {
         uint32_t firstPositionReached = m_firstPositionReachedFrom.isEmpty() ? position : m_firstPositionReachedFrom[position];
         forEachClassWithBitIn(row.span(), m_group, [&](AccessClass& accessClass) {
             if (m_lastPositionOfClass[&accessClass - m_classes.span().data()] < firstPositionReached)
-                clear(row.mutableSpan(), accessClass.bits.first - m_group.first, accessClass.bits.end - m_group.first);
+                carryOut(Action { Action::Kind::Clears, accessClass.bits }, row.mutableSpan());
         });
         Row rowForHandler = row;
         carryThrough(block, state, isFirstVisit, row, rowForHandler);
@@ -863,7 +897,7 @@ struct RedundantReadElimination {
         });
     }
 
-    void solve(IndexRange group)
+    void solve(IndexRange group, IndexRange bitsOfClassInParts = { })
     {
         for (BlockID block : m_visitedBlocks)
             m_states[block.index()].isVisited = false;
@@ -872,10 +906,13 @@ struct RedundantReadElimination {
         m_actions.shrink(0);
         m_rows.shrink(0);
         m_group = group;
+        m_bitsOfClassInParts = bitsOfClassInParts;
         m_numberOfWords = (group.size() + 63) / 64;
 
-        for (uint32_t bit = group.first; bit < group.end; ++bit)
-            markAsPending(accessOf(bit).point.block);
+        for (uint32_t bit = group.first; bit < group.end; ++bit) {
+            if (!m_isReplacedByValue.quickGet(bit))
+                markAsPending(accessOf(bit).point.block);
+        }
 
         std::span<const BlockID> order = m_cfg.reversePostOrder();
         m_isFirstSweep = true;
@@ -890,6 +927,57 @@ struct RedundantReadElimination {
             }
         }
         findReplacements();
+        for (uint32_t bit : m_bitsReplacedByValue)
+            m_isReplacedByValue.quickSet(bit);
+        m_bitsReplacedByValue.shrink(0);
+    }
+
+    // The parts are solved in the order of the bits, and a read takes the first suitable bit, so what an earlier part has found stands.
+    void solveInParts(IndexRange bitsOfClass, uint32_t maxBitsPerPart)
+    {
+        size_t firstReplacement = m_replacements.size();
+        for (IndexRange part { bitsOfClass.first, bitsOfClass.first }; part.end < bitsOfClass.end; part.first = part.end) {
+            part.end = static_cast<uint32_t>(std::min<uint64_t>(uint64_t { part.first } + maxBitsPerPart, bitsOfClass.end));
+            solve(part, bitsOfClass);
+        }
+        std::span<Replacement> replacementsOfClass = m_replacements.mutableSpan().subspan(firstReplacement);
+        AOT::sort(replacementsOfClass, { }, [&](const Replacement& replacement) {
+            return std::pair { m_cfg.reversePostOrderIndex(replacement.point.block), replacement.point.index };
+        });
+
+        Vector<uint32_t> readsToMerge;
+        for (const auto& [bit, values] : m_valuesOnEdges) {
+            if (!m_isReplacedByValue.quickGet(bit) && !m_isReplacedByUndefined.quickGet(bit) && !values.contains(ValueID()))
+                readsToMerge.append(bit);
+        }
+        AOT::sort(readsToMerge);
+        for (uint32_t bit : readsToMerge) {
+            const Access& read = accessOf(bit);
+            std::span<const Edge> edges = m_cfg.incomingEdges(read.point.block);
+            const Vector<ValueID, 4>& values = m_valuesOnEdges.find(bit)->value;
+            Merge merge { read.id, read.point, { } };
+            for (size_t index = 0; index < edges.size(); ++index)
+                merge.incoming.append({ edges[index], values[index] });
+            m_merges.append(WTF::move(merge));
+        }
+        m_valuesOnEdges.clear();
+    }
+
+    void checkAgainstSolveOfWholeClass(IndexRange bitsOfClass, size_t firstReplacement, size_t firstMerge)
+    {
+        Vector<Replacement> replacements(m_replacements.span().subspan(firstReplacement));
+        Vector<Merge> merges(m_merges.span().subspan(firstMerge));
+        m_replacements.shrink(firstReplacement);
+        m_merges.shrink(firstMerge);
+        m_isReplacedByValue.clearAll();
+        m_isReplacedByUndefined.clearAll();
+        solve(bitsOfClass);
+        RELEASE_ASSERT(std::ranges::equal(m_replacements.span().subspan(firstReplacement), replacements, [](const Replacement& a, const Replacement& b) {
+            return a.read == b.read && a.value == b.value;
+        }));
+        RELEASE_ASSERT(std::ranges::equal(m_merges.span().subspan(firstMerge), merges, [](const Merge& a, const Merge& b) {
+            return a.read == b.read && std::ranges::equal(a.incoming, b.incoming, { }, &std::pair<Edge, ValueID>::second, &std::pair<Edge, ValueID>::second);
+        }));
     }
 
     bool canForward(const Access& source, const Type& readType) const
@@ -899,7 +987,7 @@ struct RedundantReadElimination {
 
     const Access* findAvailableAccess(uint32_t readBit, std::span<const Word> available, NOESCAPE const Invocable<bool(const Access&)> auto& isSuitable) const
     {
-        IndexRange bits = m_classes[m_bits[readBit].accessClass].bits;
+        IndexRange bits = m_classes[m_bits[readBit].accessClass].bits.clippedTo(m_group);
         for (size_t bit = m_group.first + findBit(available, bits.first - m_group.first); bit < bits.end; bit = m_group.first + findBit(available, bit + 1 - m_group.first)) {
             if (bit != readBit && isSuitable(accessOf(bit)))
                 return &accessOf(bit);
@@ -938,11 +1026,26 @@ struct RedundantReadElimination {
             bitsOfReads = bitsOfReads.subspan(1);
             const Access& read = accessOf(action.bits.first);
             const Type& readType = typeOf(read.id);
-            Merge merge { read.id, read.point, { } };
-            for (size_t index = 0; index < edges.size(); ++index) {
-                const Access* source = findAvailableAccess(action.bits.first, available[index].span(), [&](const Access& access) {
+            auto findSourceOn = [&](size_t index) {
+                return findAvailableAccess(action.bits.first, available[index].span(), [&](const Access& access) {
                     return !access.isAbsent && canForward(access, readType);
                 });
+            };
+            if (isPartOfClass()) {
+                Vector<ValueID, 4>& values = m_valuesOnEdges.ensure(action.bits.first, [&] {
+                    return Vector<ValueID, 4>(FillWith { }, edges.size(), ValueID());
+                }).iterator->value;
+                for (size_t index = 0; index < edges.size(); ++index) {
+                    if (values[index])
+                        continue;
+                    if (const Access* source = findSourceOn(index))
+                        values[index] = source->valueAfter();
+                }
+                return;
+            }
+            Merge merge { read.id, read.point, { } };
+            for (size_t index = 0; index < edges.size(); ++index) {
+                const Access* source = findSourceOn(index);
                 if (!source)
                     return;
                 merge.incoming.append({ edges[index], source->valueAfter() });
@@ -969,16 +1072,22 @@ struct RedundantReadElimination {
             readsToMerge.shrink(0);
             for (uint32_t actionIndex = state.actions.first; actionIndex < state.endOfActionsOfValues; ++actionIndex) {
                 const Action& action = m_actions[actionIndex];
-                if (action.standsAtAccess() && accessOf(action.bits.first).isRead()) {
+                if (action.standsAtAccess() && accessOf(action.bits.first).isRead() && !m_isReplacedByUndefined.quickGet(action.bits.first)) {
                     const Access& read = accessOf(action.bits.first);
                     const Type& readType = typeOf(read.id);
                     bool readsAbsentAsUndefined = m_function.at(read.id).opcode == Opcode::GetSlotOrUndefined && (readType.primitives & Primitive::Undefined);
                     const Access* source = findAvailableAccess(action.bits.first, available.span(), [&](const Access& access) {
                         return access.isAbsent ? readsAbsentAsUndefined : canForward(access, readType);
                     });
-                    if (source)
+                    if (source) {
                         m_replacements.append({ read.id, source->isAbsent ? ValueID() : source->valueAfter(), read.point });
-                    else if (readType.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull))
+                        if (isPartOfClass()) {
+                            if (source->isAbsent)
+                                m_isReplacedByUndefined.quickSet(action.bits.first);
+                            else
+                                m_bitsReplacedByValue.append(action.bits.first);
+                        }
+                    } else if (readType.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull))
                         readsToMerge.append(action.bits.first);
                 }
                 carryOut(action, available.mutableSpan());
@@ -1037,16 +1146,29 @@ struct RedundantReadElimination {
             return PassOutcome::Unchanged;
         prepareToSolve();
 
-        uint64_t maxBitsPerGroup = m_context.limit(LimitID::MaxReadsPerSolve);
+        m_isReplacedByValue.ensureSize(m_bits.size());
+        m_isReplacedByUndefined.ensureSize(m_bits.size());
+        uint64_t maxBitsPerGroup = std::max<uint64_t>(m_context.limit(LimitID::MaxReadsPerSolve), 1);
+        auto solveGroup = [&](IndexRange group) {
+            if (group.size() <= maxBitsPerGroup) {
+                solve(group);
+                return;
+            }
+            size_t firstReplacement = m_replacements.size();
+            size_t firstMerge = m_merges.size();
+            solveInParts(group, static_cast<uint32_t>(maxBitsPerGroup));
+            if (m_checksScreens && group.size() <= maxBitsOfClassSolvedTwice) [[unlikely]]
+                checkAgainstSolveOfWholeClass(group, firstReplacement, firstMerge);
+        };
         IndexRange group;
         for (const AccessClass& accessClass : m_classes) {
             if (!group.isEmpty() && accessClass.bits.end - group.first > maxBitsPerGroup) {
-                solve(group);
+                solveGroup(group);
                 group.first = accessClass.bits.first;
             }
             group.end = accessClass.bits.end;
         }
-        solve(group);
+        solveGroup(group);
         bool hasSeveralGroups = group.first;
         if (hasSeveralGroups)
             m_context.gaveUp(LimitID::MaxReadsPerSolve);

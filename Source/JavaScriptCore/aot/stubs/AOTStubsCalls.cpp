@@ -22,6 +22,7 @@
 #include "AOTStubsOperations.h"
 #include "BaselineJITRegisters.h"
 #include "CallFrame.h"
+#include "FunctionExecutable.h"
 #include "FunctionRareData.h"
 #include "InternalFunction.h"
 #include "JSBoundFunction.h"
@@ -833,10 +834,29 @@ void generateCallEngineCallee(StubAssembler& jit)
 #if CPU(X86_64)
     jit.emitMaterializeTagCheckRegisters();
 #endif
-    jit.move(calleeGPR, jit.reuseScratch(StubRegister::R0));
-    jit.loadRuntimePointer(Entry::CallLinkInfoForCall, jit.allocateScratch(StubRegister::A2));
-    jit.callEngineThunk(Entry::VirtualCallTrampoline, frame);
+    // A function that has bytecode is entered as the trampoline would enter it.
+    const GPRReg calleeOfTrampoline = jit.reuseScratch(StubRegister::R0);
+    const GPRReg callLinkInfo = jit.allocateScratch(StubRegister::A2);
+    JumpList needsTrampoline;
+    needsTrampoline.append(jit.branchIfNotCell(calleeGPR));
+    needsTrampoline.append(jit.branchIfNotType(calleeGPR, JSFunctionType));
+    jit.loadPtr(Address(calleeGPR, JSFunction::offsetOfExecutableOrRareData()), word);
+    needsTrampoline.append(jit.branchTestPtr(CCallHelpers::NonZero, word, TrustedImm32(JSFunction::rareDataTag)));
+    needsTrampoline.append(jit.branchIfNotType(word, FunctionExecutableType));
+    jit.loadPtr(Address(word, ExecutableBase::offsetOfJITCodeWithArityCheckFor(CodeSpecializationKind::CodeForCall)), frame);
+    needsTrampoline.append(jit.branchTestPtr(CCallHelpers::Zero, frame));
+    jit.loadPtr(Address(word, FunctionExecutable::offsetOfCodeBlockForCall()), word);
+    jit.storePtr(word, outgoingFrameSlot(CallFrameSlot::codeBlock));
+    Label hasTarget = jit.label();
+    jit.call(frame, JSEntryPtrTag);
     jit.bindReturnLabel(StubFrameKind::EngineCallee);
+    jit.addOutOfLinePart([=](StubAssembler& jit) {
+        needsTrampoline.link(&jit);
+        jit.move(calleeGPR, calleeOfTrampoline);
+        jit.loadRuntimePointer(Entry::CallLinkInfoForCall, callLinkInfo);
+        jit.loadRuntimePointer(Entry::VirtualCallTrampoline, frame);
+        jit.jump().linkTo(hasTarget, &jit);
+    });
     for (const AdapterFrame::SavedRegister& saved : EngineCalleeFrame::savedRegisters)
         jit.loadPtr(Address(fp, static_cast<int32_t>(saved.offset)), saved.reg);
     jit.emitFunctionEpilogue();

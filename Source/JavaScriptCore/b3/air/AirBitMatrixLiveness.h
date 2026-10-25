@@ -447,14 +447,22 @@ private:
                 visitedBlocks.append(blockIndex);
             };
 
-            for (BasicBlock* block : m_code) {
+            auto fillRowsOf = [&](BasicBlock* block) {
                 uint64_t* tail = liveAtTail + block->index() * words;
                 uint64_t* gen = gens + block->index() * words;
                 uint64_t* kill = kills + block->index() * words;
                 if (!this->fillRows(block, firstWord, words, gen, kill, tail))
-                    continue;
+                    return;
                 markVisited(block->index());
                 worklist.add(positionOfBlock[block->index()]);
+            };
+            // There can be as many slices as blocks, so an adapter that knows which blocks name an index of the slice says so.
+            if constexpr (requires { this->nextBlockInSlice(firstWord, words); }) {
+                while (std::optional<unsigned> blockIndex = this->nextBlockInSlice(firstWord, words))
+                    fillRowsOf(m_code[*blockIndex]);
+            } else {
+                for (BasicBlock* block : m_code)
+                    fillRowsOf(block);
             }
 
             const Matrices matrices { liveAtHead, liveAtTail, gens, kills, words };

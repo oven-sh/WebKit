@@ -192,6 +192,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxHoistedLoadsPerLoop(GenerateCode, CodeSize, NotOptimized, 8, 8, 0, "loads hoisted out of a loop")
     MaxLivenessStepsPerBlock(GenerateCode, CompileTime, NotOptimized, 48, 48, 0, "liveness analysis work per block")
     MaxLinearDominatorSteps(GenerateCode, CompileTime, NotOptimized, 32, 32, 0, "dominator walk length")
+    MaxPathConstantsScanned(GenerateCode, CompileTime, NotOptimized, 32, 32, 0, "branches on one value that are searched one by one")
     MaxSlotsForDenseInterference(GenerateCode, Memory, NotOptimized, 8192, 8192, 0, "stack slot interference memory")
     MaxBlocksPerPlacedConstant(GenerateCode, CompileTime, NotOptimized, 8192, 8192, 0, "constant placement work")
     MaxRangeAnalysisDepth(GenerateCode, CompileTime, NotOptimized, 5, 5, 0, "range analysis depth")

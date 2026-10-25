@@ -99,12 +99,19 @@ void emitEnterAdapter(StubAssembler& jit, GPRReg callee, unsigned extraBytes)
     const GPRReg scratch = jit.reuseScratch(StubRegister::T9);
     ASSERT(noOverlap(instance, thisGPR, countGPR, calleeGPR));
     jit.loadPtr(incomingFrameSlot(CallFrameSlot::callee), callee);
-    jit.move(callee, instance);
-    loadCellVM(jit, instance);
-    jit.load32(Address(callee, JSCell::structureIDOffset()), scratch);
-    jit.add64(Address(instance, VM::offsetOfAOTState() + VMState::offsetOfStructureIDBase()), scratch);
-    jit.loadPtr(Address(scratch, Structure::realmOffset()), instance);
-    jit.loadPtr(Address(instance, JSGlobalObject::offsetOfAOTInstance()), instance);
+    jit.move(callee, scratch);
+    loadCellVM(jit, scratch);
+    jit.loadPtr(Address(scratch, VM::offsetOfAOTState() + VMState::offsetOfOnlyInstance()), instance);
+    Jump hasSeveralInstances = jit.branchTestPtr(CCallHelpers::Zero, instance);
+    Label hasInstance = jit.label();
+    jit.addOutOfLinePart([=](StubAssembler& jit) {
+        hasSeveralInstances.link(&jit);
+        jit.load32(Address(callee, JSCell::structureIDOffset()), instance);
+        jit.add64(Address(scratch, VM::offsetOfAOTState() + VMState::offsetOfStructureIDBase()), instance);
+        jit.loadPtr(Address(instance, Structure::realmOffset()), instance);
+        jit.loadPtr(Address(instance, JSGlobalObject::offsetOfAOTInstance()), instance);
+        jit.jump().linkTo(hasInstance, &jit);
+    });
 
     jit.emitFunctionPrologue();
     static_assert(!(AdapterFrame::saveAreaSize % stackAlignmentBytes()));
