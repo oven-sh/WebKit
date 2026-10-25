@@ -52,7 +52,7 @@ const ClassInfo TemporalZonedDateTimeConstructor::s_info = { "Function"_s, &Base
 /* Source for TemporalZonedDateTimeConstructor.lut.h
 @begin temporalZonedDateTimeConstructorTable
   from     temporalZonedDateTimeConstructorFuncFrom     DontEnum|Function 1
-  compare  temporalZonedDateTimeConstructorFuncCompare  DontEnum|Function 2
+  compare  temporalZonedDateTimeConstructorFuncCompare  DontEnum|Function 2 TemporalIntrinsic
 @end
 */
 

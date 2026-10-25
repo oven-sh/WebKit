@@ -71,7 +71,7 @@ const ClassInfo TemporalPlainTimePrototype::s_info = { "Temporal.PlainTime"_s, &
   until            temporalPlainTimePrototypeFuncUntil              DontEnum|Function 1
   since            temporalPlainTimePrototypeFuncSince              DontEnum|Function 1
   round            temporalPlainTimePrototypeFuncRound              DontEnum|Function 1
-  equals           temporalPlainTimePrototypeFuncEquals             DontEnum|Function 1
+  equals           temporalPlainTimePrototypeFuncEquals             DontEnum|Function 1 TemporalIntrinsic
   toString         temporalPlainTimePrototypeFuncToString           DontEnum|Function 0
   toJSON           temporalPlainTimePrototypeFuncToJSON             DontEnum|Function 0
   toLocaleString   temporalPlainTimePrototypeFuncToLocaleString     DontEnum|Function 0

@@ -121,7 +121,7 @@ const ClassInfo TemporalZonedDateTimePrototype::s_info = { "Temporal.ZonedDateTi
   round              temporalZonedDateTimePrototypeFuncRound              DontEnum|Function 1
   startOfDay         temporalZonedDateTimePrototypeFuncStartOfDay         DontEnum|Function 0
   getTimeZoneTransition temporalZonedDateTimePrototypeFuncGetTimeZoneTransition DontEnum|Function 1
-  equals             temporalZonedDateTimePrototypeFuncEquals             DontEnum|Function 1
+  equals             temporalZonedDateTimePrototypeFuncEquals             DontEnum|Function 1 TemporalIntrinsic
   toInstant          temporalZonedDateTimePrototypeFuncToInstant          DontEnum|Function 0
   toPlainDateTime    temporalZonedDateTimePrototypeFuncToPlainDateTime    DontEnum|Function 0
   toPlainDate        temporalZonedDateTimePrototypeFuncToPlainDate        DontEnum|Function 0

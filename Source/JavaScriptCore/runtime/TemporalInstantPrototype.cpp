@@ -68,7 +68,7 @@ const ClassInfo TemporalInstantPrototype::s_info = { "Temporal.Instant"_s, &Base
   until                temporalInstantPrototypeFuncUntil                DontEnum|Function 1
   since                temporalInstantPrototypeFuncSince                DontEnum|Function 1
   round                temporalInstantPrototypeFuncRound                DontEnum|Function 1
-  equals               temporalInstantPrototypeFuncEquals               DontEnum|Function 1
+  equals               temporalInstantPrototypeFuncEquals               DontEnum|Function 1 TemporalIntrinsic
   toZonedDateTimeISO   temporalInstantPrototypeFuncToZonedDateTimeISO   DontEnum|Function 1
   toString             temporalInstantPrototypeFuncToString             DontEnum|Function 0
   toJSON               temporalInstantPrototypeFuncToJSON               DontEnum|Function 0

@@ -90,6 +90,15 @@ public:
     Int128 microseconds() const { return m_microseconds; }
     Int128 nanoseconds() const { return m_nanoseconds; }
 
+    static constexpr ptrdiff_t offsetOfYears() { return OBJECT_OFFSETOF(Duration, m_years); }
+    static constexpr ptrdiff_t offsetOfMonths() { return OBJECT_OFFSETOF(Duration, m_months); }
+    static constexpr ptrdiff_t offsetOfWeeks() { return OBJECT_OFFSETOF(Duration, m_weeks); }
+    static constexpr ptrdiff_t offsetOfDays() { return OBJECT_OFFSETOF(Duration, m_days); }
+    static constexpr ptrdiff_t offsetOfHours() { return OBJECT_OFFSETOF(Duration, m_hours); }
+    static constexpr ptrdiff_t offsetOfMinutes() { return OBJECT_OFFSETOF(Duration, m_minutes); }
+    static constexpr ptrdiff_t offsetOfSeconds() { return OBJECT_OFFSETOF(Duration, m_seconds); }
+    static constexpr ptrdiff_t offsetOfMilliseconds() { return OBJECT_OFFSETOF(Duration, m_milliseconds); }
+
     // Typed setters for internal arithmetic with already-validated integer values.
     // double overloads are deleted: use setField(TemporalUnit, double) for JS inputs,
     // which routes through doubleToInt64Saturating to avoid UB on ARM32.
@@ -167,6 +176,16 @@ private:
     int64_t m_milliseconds { 0 };
     Int128 m_microseconds { 0 };
     Int128 m_nanoseconds { 0 };
+
+    // The JIT loads the fields that have an offsetOf accessor as int64s.
+    static_assert(std::is_same_v<decltype(m_years), int64_t>);
+    static_assert(std::is_same_v<decltype(m_months), int64_t>);
+    static_assert(std::is_same_v<decltype(m_weeks), int64_t>);
+    static_assert(std::is_same_v<decltype(m_days), int64_t>);
+    static_assert(std::is_same_v<decltype(m_hours), int64_t>);
+    static_assert(std::is_same_v<decltype(m_minutes), int64_t>);
+    static_assert(std::is_same_v<decltype(m_seconds), int64_t>);
+    static_assert(std::is_same_v<decltype(m_milliseconds), int64_t>);
 };
 
 class InternalDuration;

@@ -1085,7 +1085,8 @@ private:
         case DataViewGetInt:
         case DataViewGetFloat:
         case DateGetInt32OrNaN:
-        case DateGetMilliseconds: {
+        case DateGetMilliseconds:
+        case TemporalGetNumber: {
             setPrediction(m_currentNode->getHeapPrediction());
             break;
         }
@@ -1121,6 +1122,16 @@ private:
 
         case DateGetTime: {
             setPrediction(SpecFullNumber);
+            break;
+        }
+
+        case TemporalCompare: {
+            setPrediction(SpecInt32Only);
+            break;
+        }
+
+        case TemporalEquals: {
+            setPrediction(SpecBoolean);
             break;
         }
 

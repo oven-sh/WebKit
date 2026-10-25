@@ -65,10 +65,12 @@ public:
         return TemporalCore::instantToString(exactTime(), std::nullopt, precision);
     }
 
+    static constexpr ptrdiff_t offsetOfExactTime() { return OBJECT_OFFSETOF(TemporalInstant, m_exactTime); }
+
 private:
     TemporalInstant(VM&, Structure*, ISO8601::ExactTime);
 
-    ISO8601::ExactTime m_exactTime;
+    const ISO8601::ExactTime m_exactTime;
 };
 
 JS_EXPORT_PRIVATE std::optional<ISO8601::ExactTime> bigIntValueToExactTime(JSGlobalObject*, JSValue bigIntValue, ASCIILiteral typeName);
