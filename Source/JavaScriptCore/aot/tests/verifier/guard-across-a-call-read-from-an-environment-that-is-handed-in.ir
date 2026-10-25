@@ -1,7 +1,8 @@
 # A function stores one list in a variable of the environment that it is handed, and calls what it reads from that environment.
 # Each variable is a slot of its own, as in an environment that the function makes itself: what is read from another variable is not the list that is stored.
 # So a second list, which lies in the stored one and is handed to nobody before that, is still as it was made when the call returns.
-# Read from the variable that is stored to, the callee may be the stored list for all that anybody knows, and the call may reach what lies in it
+# That holds for a callee read from the variable that is stored to as well: the store comes after the call.
+# Once the list is stored, a call may reach what lies in it
 # FORM: Prepared
 # RUN: verify
 # DIAGNOSTIC: GuardNotAvailable 1
@@ -31,4 +32,16 @@ function f1 name="readsTheSameVariable" kind=Arrow captures=[{type=env L0}] para
     v7 = NewArray v2 contents=anything
     PutEnvironmentField v0, v7 layout=L0 field=1
     Return v6
+}
+
+function f2 name="badCallAfterTheStore" kind=Arrow captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    v2 = NewArray v1 contents=anything
+    v3 = NewArray v2 contents=anything
+    PutEnvironmentField v0, v3 layout=L0 field=1
+    v5 = GetEnvironmentField v0 layout=L0 field=0
+    v6 = Call v5, -, v1
+    v7 = Integer integer=0
+    v8 = GetArrayElement v2, v7, v2 arrayStorage=Contiguous level=Expected [keyIsIntegral]
+    Return v8
 }

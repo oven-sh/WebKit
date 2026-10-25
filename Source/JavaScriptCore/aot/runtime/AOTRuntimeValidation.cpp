@@ -82,7 +82,8 @@ static bool entriesHaveType(Instance& instance, Collection* collection, Typed::C
 {
     JSCell* storage = collection->storage();
     typename Collection::Helper::Entry entry = 0;
-    for (unsigned numberOfTestedEntries = 0; storage && numberOfTestedEntries < maxNumberOfTestedElements; ++numberOfTestedEntries) {
+    // Deleted entries stay in the table until it is rebuilt, and the walk passes them one by one.
+    for (unsigned numberOfTestedEntries = 0; storage && entry < maxNumberOfTestedElements; ++numberOfTestedEntries) {
         auto next = Collection::Helper::transitAndNext(*instance.vm, *storage, entry);
         if (!next.storage)
             return true;

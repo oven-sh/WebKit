@@ -402,6 +402,40 @@ static void updateInheritedFields(Program& program, const ParallelLoops& loops)
     });
 }
 
+static bool everyStoreIsProvenToFit(const FieldFlow& flow)
+{
+    return flow.location.writers == WriterState::AllKnown && flow.stability.containsAll({ FieldStability::IsNeverRedefined, FieldStability::IsNeverStoredWithOtherType });
+}
+
+static std::optional<Type> typeAdmittedByTestedStores(const Program& program, const Field& field)
+{
+    if (!field.flags.contains(FieldFlags::IsEnforced) || field.flags.contains(FieldFlags::IsInherited) || field.form.contains(FieldForm::IsAccessor) || field.slotType)
+        return std::nullopt;
+    const Type& declared = program.at(field.declared.type);
+    if ((declared.classes.isEmpty() && declared.builtins.isEmpty()) || everyStoreIsProvenToFit(field.flow))
+        return std::nullopt;
+    Type tested = declared.withoutClassProofs().withUntestableBuiltinsWidened();
+    if (tested.anyObject == declared.anyObject && tested.anyFunction == declared.anyFunction)
+        return std::nullopt;
+    return tested;
+}
+
+// A store by name is tested at run time. Any object passes there for a class that has no instance test, so the slot may hold any object.
+static void widenSlotTypesToTestedTypes(Program& program, const ParallelLoops& loops)
+{
+    Vector<uint32_t> layouts = findIndicesInParallel(loops, program.layouts.size(), [&](unsigned index) {
+        return std::ranges::any_of(program.layouts[index].fields, [&](const Field& field) {
+            return typeAdmittedByTestedStores(program, field).has_value();
+        });
+    });
+    for (uint32_t index : layouts) {
+        for (Field& field : program.layouts[index].fields) {
+            if (std::optional<Type> tested = typeAdmittedByTestedStores(program, field))
+                field.slotType = program.types.intern(WTF::move(*tested));
+        }
+    }
+}
+
 void markEnforcedFields(Program& program, BuildContext& build)
 {
     const ParallelLoops& loops = build.parallelLoops();
@@ -415,6 +449,7 @@ void markEnforcedFields(Program& program, BuildContext& build)
                 field.flags.set(FieldFlags::IsEnforced, hasSlots && !field.declared.flags.contains(PositionFlags::IsExpected));
         }
     });
+    widenSlotTypesToTestedTypes(program, loops);
     updateInheritedFields(program, loops);
 }
 

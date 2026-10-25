@@ -32,8 +32,15 @@ using B3::operationMemoryFill;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CodeInImage);
 
-constinit const uint8_t* CodeInImage::s_directory { nullptr };
-constinit std::span<const uint8_t> CodeInImage::s_code;
+struct CodeInImage::PublishedImage {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PublishedImage);
+
+    std::span<const uint8_t> directory;
+    std::span<const uint8_t> code;
+    const PublishedImage* publishedBefore { nullptr };
+};
+
+constinit std::atomic<const CodeInImage::PublishedImage*> CodeInImage::s_lastPublished { nullptr };
 constinit std::array<std::atomic<unsigned>, numberOfInterpreterFallbackReasons> CodeInImage::s_interpreterFallbackCounts { };
 
 static std::array<void*, ImagePointerTable::numberOfOperations> imageCodeOperations()
@@ -102,24 +109,45 @@ RegisterAtOffsetList CodeInImage::savedRegistersFrom(const SavedRegistersInImage
     return list;
 }
 
-void CodeInImage::setImage(const uint8_t* directory, std::span<const uint8_t> code)
+void CodeInImage::addImage(std::span<const uint8_t> directory, std::span<const uint8_t> code)
 {
-    RELEASE_ASSERT(!s_directory);
-    if (!directory)
+    if (directory.empty())
         return;
-    s_directory = directory;
-    s_code = code;
+    auto* image = new PublishedImage { directory, code, s_lastPublished.load(std::memory_order_relaxed) };
+    while (!s_lastPublished.compare_exchange_weak(image->publishedBefore, image, std::memory_order_release, std::memory_order_relaxed)) { }
+}
+
+bool CodeInImage::contains(const void* pc)
+{
+    for (auto* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->publishedBefore) {
+        if (std::bit_cast<uintptr_t>(pc) - std::bit_cast<uintptr_t>(image->code.data()) < image->code.size())
+            return true;
+    }
+    return false;
 }
 
 bool CodeInImage::isInProcess()
 {
-    return s_directory && reinterpret_cast<const DirectoryInImage*>(s_directory)->numberOfModules;
+    for (auto* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->publishedBefore) {
+        if (reinterpret_cast<const DirectoryInImage*>(image->directory.data())->numberOfModules)
+            return true;
+    }
+    return false;
 }
 
 // Only Options::crashIfInterpreterIsUsed() asks about a module without code.
 bool CodeInImage::needsSourceDigests()
 {
-    return isInProcess() || (s_directory && Options::crashIfInterpreterIsUsed());
+    return isInProcess() || (s_lastPublished.load(std::memory_order_acquire) && Options::crashIfInterpreterIsUsed());
+}
+
+const CodeInImage::PublishedImage& CodeInImage::imageHolding(const ModuleInImage& module)
+{
+    for (auto* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->publishedBefore) {
+        if (std::bit_cast<uintptr_t>(&module) - std::bit_cast<uintptr_t>(image->directory.data()) < image->directory.size())
+            return *image;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static std::span<const ModuleInImage> modulesIn(const uint8_t* directory)
@@ -134,16 +162,18 @@ static std::span<const DeclinedModuleInImage> declinedModulesIn(const uint8_t* d
     return { reinterpret_cast<const DeclinedModuleInImage*>(std::to_address(modulesIn(directory).end())), header.numberOfDeclinedModules };
 }
 
-static const ModuleInImage* findRecord(const uint8_t* directory, const ModuleInformation& info)
+const ModuleInImage* CodeInImage::findRecord(const ModuleInformation& info)
 {
-    if (!directory || !info.hasSourceDigest)
+    if (!info.hasSourceDigest)
         return nullptr;
-    for (auto& module : modulesIn(directory)) {
-        if (module.sourceSize != info.sourceSize || module.digest != info.sourceDigest)
-            continue;
-        if (module.numberOfFunctions != info.internalFunctionCount() || module.numberOfImportedFunctions != info.importFunctionCount())
-            return nullptr;
-        return &module;
+    for (auto* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->publishedBefore) {
+        for (auto& module : modulesIn(image->directory.data())) {
+            if (module.sourceSize != info.sourceSize || module.digest != info.sourceDigest)
+                continue;
+            if (module.numberOfFunctions != info.internalFunctionCount() || module.numberOfImportedFunctions != info.importFunctionCount())
+                return nullptr;
+            return &module;
+        }
     }
     return nullptr;
 }
@@ -164,34 +194,39 @@ static std::optional<InterpreterFallbackReason> fallbackReasonFor(const ModuleIn
 
 const ModuleInImage* CodeInImage::find(const ModuleInformation& info)
 {
-    const ModuleInImage* module = findRecord(s_directory, info);
+    const ModuleInImage* module = findRecord(info);
     return module && !usesDisabledVectors(*module) ? module : nullptr;
 }
 
 bool CodeInImage::isModuleOfProgram(const ModuleInformation& info)
 {
-    if (!s_directory || !info.hasSourceDigest)
+    if (!info.hasSourceDigest)
         return false;
     auto hasSameSource = [&](auto& module) {
         return module.sourceSize == info.sourceSize && module.digest == info.sourceDigest;
     };
-    return std::ranges::any_of(modulesIn(s_directory), hasSameSource) || std::ranges::any_of(declinedModulesIn(s_directory), hasSameSource);
+    for (auto* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->publishedBefore) {
+        const uint8_t* directory = image->directory.data();
+        if (std::ranges::any_of(modulesIn(directory), hasSameSource) || std::ranges::any_of(declinedModulesIn(directory), hasSameSource))
+            return true;
+    }
+    return false;
 }
 
 std::span<const FunctionInImage> CodeInImage::functionsOf(const ModuleInImage& module)
 {
-    return { reinterpret_cast<const FunctionInImage*>(s_directory + module.functions), module.numberOfFunctions };
+    return { reinterpret_cast<const FunctionInImage*>(imageHolding(module).directory.data() + module.functions), module.numberOfFunctions };
 }
 
 std::optional<InterpreterFallbackReason> CodeInImage::fallbackReason(const ModuleInformation& info, MemoryMode mode)
 {
-    const ModuleInImage* module = findRecord(s_directory, info);
+    const ModuleInImage* module = findRecord(info);
     return module ? fallbackReasonFor(*module, mode) : std::nullopt;
 }
 
 RefPtr<CodeInImage> CodeInImage::tryCreate(const ModuleInformation& info, const IPIntCallees& ipintCallees, MemoryMode mode, CodePtr<WasmEntryPtrTag> interpreterEntrypoint)
 {
-    const ModuleInImage* module = findRecord(s_directory, info);
+    const ModuleInImage* module = findRecord(info);
     if (!module || fallbackReasonFor(*module, mode))
         return nullptr;
     return adoptRef(*new CodeInImage(info, ipintCallees, *module, interpreterEntrypoint));
@@ -211,8 +246,10 @@ CodeInImage::CodeInImage(const ModuleInformation& info, const IPIntCallees& ipin
     m_pointers[ImagePointerTable::genericJSEntrypoint] = LLInt::getCodePtr<JSEntryPtrTag>(js_to_wasm_wrapper_entry).taggedPtr();
     m_pointers[ImagePointerTable::interpreterEntrypoint] = interpreterEntrypoint.taggedPtr();
 
+    const PublishedImage& image = imageHolding(module);
+    const uint8_t* directory = image.directory.data();
     std::span functions = functionsOf(module);
-    auto* savedRegisters = reinterpret_cast<const SavedRegistersInImage*>(s_directory + module.savedRegisters);
+    auto* savedRegisters = reinterpret_cast<const SavedRegistersInImage*>(directory + module.savedRegisters);
     Vector<Ref<OMGCallee>> calleesWithCode;
     calleesWithCode.reserveInitialCapacity(functions.size());
     for (size_t index = 0; index < functions.size(); ++index) {
@@ -225,7 +262,7 @@ CodeInImage::CodeInImage(const ModuleInformation& info, const IPIntCallees& ipin
         uint32_t end = index + 1 < functions.size() ? functions[index + 1].entry : module.functionsEnd;
         FunctionSpaceIndex functionIndexSpace = info.toSpaceIndex(FunctionCodeIndex(index));
         Ref<OMGCallee> callee = OMGCallee::create(functionIndexSpace, info.nameSection().get(functionIndexSpace), Ref { ipintCallees.at(index).get() });
-        callee->setCodeInImage(s_code.subspan(function.entry, end - function.entry), savedRegistersFrom(savedRegisters[function.savedRegisters]));
+        callee->setCodeInImage(image.code.subspan(function.entry, end - function.entry), savedRegistersFrom(savedRegisters[function.savedRegisters]));
         m_pointers[slot] = CalleeBits::boxNativeCallee(callee.ptr());
         m_callees[index] = callee.copyRef();
         calleesWithCode.append(WTF::move(callee));
@@ -235,18 +272,18 @@ CodeInImage::CodeInImage(const ModuleInformation& info, const IPIntCallees& ipin
     for (uint32_t type = 0; type < info.typeCount(); ++type)
         m_pointers[table.rtt(TypeSignatureIndex(type))] = const_cast<RTT*>(&info.rtt(TypeSignatureIndex(type)));
 
-    auto* jsEntrypoints = reinterpret_cast<const JSEntrypointInImage*>(s_directory + module.jsEntrypoints);
+    auto* jsEntrypoints = reinterpret_cast<const JSEntrypointInImage*>(directory + module.jsEntrypoints);
     for (unsigned index = 0; index < module.numberOfJSEntrypoints; ++index) {
         const RTT& rtt = info.rtt(TypeSignatureIndex(jsEntrypoints[index].type));
         Ref<JSToWasmICCallee> callee = JSToWasmICCallee::create(rtt.icEntrypointSavedRegisters());
-        callee->setEntrypoint(MacroAssemblerCodeRef<JSEntryPtrTag>::createSelfManagedCodeRef(CodePtr<JSEntryPtrTag>::fromUntaggedPtr(const_cast<uint8_t*>(s_code.data() + jsEntrypoints[index].code))));
+        callee->setEntrypoint(MacroAssemblerCodeRef<JSEntryPtrTag>::createSelfManagedCodeRef(CodePtr<JSEntryPtrTag>::fromUntaggedPtr(const_cast<uint8_t*>(image.code.data() + jsEntrypoints[index].code))));
         m_pointers[table.jsEntrypointCallee(index)] = CalleeBits::boxNativeCallee(callee.ptr());
         m_jsEntrypoints.append({ &rtt, WTF::move(callee) });
     }
 
-    auto* importStubs = reinterpret_cast<const uint32_t*>(s_directory + module.importStubs);
+    auto* importStubs = reinterpret_cast<const uint32_t*>(directory + module.importStubs);
     for (unsigned index = 0; index < module.numberOfImportedFunctions; ++index)
-        m_importStubs[index] = CodePtr<WasmEntryPtrTag>::fromUntaggedPtr(const_cast<uint8_t*>(s_code.data() + importStubs[index]));
+        m_importStubs[index] = CodePtr<WasmEntryPtrTag>::fromUntaggedPtr(const_cast<uint8_t*>(image.code.data() + importStubs[index]));
 }
 
 void CodeInImage::didFallBackToInterpreter(InterpreterFallbackReason reason)

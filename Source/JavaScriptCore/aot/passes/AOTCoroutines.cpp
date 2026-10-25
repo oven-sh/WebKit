@@ -696,6 +696,41 @@ static void retypeCallers(ProgramEditor& editor, BuildContext& build, const Vect
     });
 }
 
+// A require() evaluates the ES module that it names and what that module imports.
+static void markModulesEvaluatedByRequire(ProgramEditor& editor, const ParallelLoops& loops)
+{
+    const Program& program = editor.program();
+    bool someModuleAwaits = std::ranges::any_of(program.modules, [](const Module& module) {
+        return module.flags.contains(ModuleFlags::HasTopLevelAwait);
+    });
+    if (!someModuleAwaits)
+        return;
+
+    Vector<uint32_t> work = collectInParallel<uint32_t>(loops, program.functions.size(), [&](unsigned index, Vector<uint32_t>& found) {
+        if (!mayListValueWith(program, FunctionID(index), OpcodeSet { Opcode::RequireModule }))
+            return;
+        for (const Value& value : program.functions[index].values) {
+            if (value.opcode == Opcode::RequireModule)
+                found.append(value.module().index());
+        }
+    });
+    for (const Module& module : program.modules) {
+        for (const ModuleRequest& request : module.requests) {
+            if (request.kind == ModuleRequestKind::Require)
+                work.append(request.target.index());
+        }
+    }
+    BitVector seen(program.modules.size());
+    while (!work.isEmpty()) {
+        uint32_t index = work.takeLast();
+        if (program.modules[index].kind != ModuleKind::SourceText || seen.quickSet(index))
+            continue;
+        editor.at(ModuleID(index)).flags.add(ModuleFlags::IsEvaluatedByRequire);
+        for (const ModuleRequest& request : program.modules[index].requests)
+            work.append(request.target.index());
+    }
+}
+
 void splitCoroutines(ProgramEditor& editor, const OptimizationInputs& inputs, const PassRunner& runner)
 {
     BuildContext& build = runner.build();
@@ -705,6 +740,7 @@ void splitCoroutines(ProgramEditor& editor, const OptimizationInputs& inputs, co
     });
     if (coroutines.isEmpty())
         return;
+    markModulesEvaluatedByRequire(editor, build.parallelLoops());
     Vector<CoroutinePlan> plans(coroutines.size(), [&](size_t index) {
         CoroutinePlan plan;
         plan.record.kind = *coroutineKindOf(program.functions[coroutines[index]]);
@@ -987,7 +1023,7 @@ static std::optional<AwaitOfMergedValues> findAwaitOfMergedValues(FunctionPassCo
 {
     const Function& function = context.function;
     const UseLists& useLists = context.analyses.useLists();
-    if (function.at(await).takesExtraTurn() || function.isModuleBody())
+    if (function.at(await).takesExtraTurn() || isBodyOfModuleEvaluatedByRequire(context.program, function))
         return std::nullopt;
 
     Vector<ValueID, 1> casts;
@@ -1127,7 +1163,7 @@ static std::optional<AwaitedCall> findAwaitedCall(FunctionPassContext& context, 
 {
     const Function& function = context.function;
     // Whether the body of a module goes on inside a require() depends on whether it awaits a promise, so the callee makes one.
-    if (function.at(await).takesExtraTurn() || function.isModuleBody())
+    if (function.at(await).takesExtraTurn() || isBodyOfModuleEvaluatedByRequire(context.program, function))
         return std::nullopt;
 
     Vector<ValueID, 1> casts;

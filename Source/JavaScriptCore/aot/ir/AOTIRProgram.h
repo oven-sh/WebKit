@@ -241,6 +241,8 @@ bool isBundlerHelperNamedByProgram(const Program&, ModuleID);
 ModuleID compiledModuleWithObject(const Program&, BuiltinID);
 ModuleID commonJsModuleCapturedBy(const Program&, const Module& face);
 bool namesWaysToModuleObjects(const Program&);
+// From SplitCoroutines on.
+bool isBodyOfModuleEvaluatedByRequire(const Program&, const Function&);
 
 class ProgramEditor {
     WTF_MAKE_NONCOPYABLE(ProgramEditor);

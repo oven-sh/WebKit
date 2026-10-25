@@ -64,7 +64,7 @@ enum ModuleRequestKind { Import Require }
 enum ModuleExportKind { Variable Namespace Indirect }
 flags ModuleFlags {
     HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects KeepsError IsBundlerHelper NamesWayToModuleObjects HasInstalledPositions
-    | engine EvaluatesItself
+    | engine EvaluatesItself IsEvaluatedByRequire
 }
 record ColumnAdjustment wire { offset: UInt32 line: UInt32 column: UInt32 }
 record SourcePositions wire { lineStarts: Span<Word> columnAdjustments: Span<ColumnAdjustment> }

@@ -638,6 +638,11 @@ bool namesWaysToModuleObjects(const Program& program)
     });
 }
 
+bool isBodyOfModuleEvaluatedByRequire(const Program& program, const Function& function)
+{
+    return function.kind == FunctionKind::Module && program.at(function.module).flags.contains(ModuleFlags::IsEvaluatedByRequire);
+}
+
 ProgramEditor::ProgramEditor(Program& program)
     : m_program(program)
     , m_changes(FillWith { }, program.functions.size(), static_cast<uint8_t>(0))

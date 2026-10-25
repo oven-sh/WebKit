@@ -140,7 +140,9 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             }
             number = std::nullopt;
         }
-        if (number && !BuiltinBindings::directFunctionAt(*number).entersHostFunction() && !(generator().validates() && BuiltinBindings::directFunctionAt(*number).takesFrame())) {
+        // A validating build makes no host frame for a direct call, so what needs one goes through the host function there.
+        bool needsHostFrame = number && (BuiltinBindings::directFunctionAt(*number).takesFrame() || (receiver && overload.throws() && !overload.onlyPropagatesErrors() && BuiltinCellKey::object(overload.builtin).hasCell(m_builtins)));
+        if (number && !BuiltinBindings::directFunctionAt(*number).entersHostFunction() && !(generator().validates() && needsHostFrame)) {
             defineResult(callDirectFunction(value, *number));
             return;
         }
@@ -592,9 +594,12 @@ BuiltinCallEmitter::DirectOperands BuiltinCallEmitter::directOperandsOf(const Va
 Boxed BuiltinCallEmitter::callDirectFunction(const ValueContext& value, uint32_t number)
 {
     DirectOperands operands = directOperandsOf(value, BuiltinBindings::directFunctionAt(number));
+    const BuiltinOverload& overload = m_builtins.at(value->overload());
+    // An error that the function makes lists the function in its stack, so the function needs a frame of its own.
+    bool makesErrors = !generator().validates() && value->receiverOperand() && overload.throws() && !overload.onlyPropagatesErrors() && operands.words.size() <= directCalleeArgumentIndex && BuiltinCellKey::object(overload.builtin).hasCell(m_builtins);
     std::optional<RuntimeCallEmitter::HostFrameOfDirectCall> hostFrame;
-    if (operands.takesFrame)
-        hostFrame = RuntimeCallEmitter::HostFrameOfDirectCall { boxedOperand(value, value->receiverOperand()).value(), calleeOf(value, m_builtins.at(value->overload())).value() };
+    if (operands.takesFrame || makesErrors)
+        hostFrame = RuntimeCallEmitter::HostFrameOfDirectCall { boxedOperand(value, value->receiverOperand()).value(), calleeOf(value, overload).value() };
     return Boxed(emitter<RuntimeCallEmitter>().callDirectFunction(value, number, operands.words.span(), operands.keptAlive.span(), hostFrame));
 }
 

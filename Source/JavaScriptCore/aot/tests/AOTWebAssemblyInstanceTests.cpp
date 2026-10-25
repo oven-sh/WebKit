@@ -219,7 +219,7 @@ static void setProcessImage(Wasm::ModuleForImage&& module)
     WasmSectionBuilder builder;
     AOT_TEST_CHECK(builder.append(WTF::move(module)));
     section.get() = builder.finish();
-    Wasm::CodeInImage::setImage(section->directory.span().data(), section->code.span());
+    Wasm::CodeInImage::addImage(section->directory.span(), section->code.span());
     AOT_TEST_CHECK(Wasm::CodeInImage::isInProcess());
 }
 

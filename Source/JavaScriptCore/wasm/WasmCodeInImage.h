@@ -26,10 +26,12 @@ public:
     JS_EXPORT_PRIVATE static std::array<uint8_t, 20> digestOf(std::span<const uint8_t> source);
     static RegisterAtOffsetList savedRegistersFrom(const SavedRegistersInImage&);
 
-    JS_EXPORT_PRIVATE static void setImage(const uint8_t* directory, std::span<const uint8_t> code);
+    // A process may hold several images: each entry point has its own. They stay until the process ends.
+    JS_EXPORT_PRIVATE static void addImage(std::span<const uint8_t> directory, std::span<const uint8_t> code);
     JS_EXPORT_PRIVATE static bool isInProcess();
     static bool needsSourceDigests();
-    static bool contains(const void* pc) { return std::bit_cast<uintptr_t>(pc) - std::bit_cast<uintptr_t>(s_code.data()) < s_code.size(); }
+    // Safe to call from a signal handler.
+    static bool contains(const void* pc);
 
     static const ModuleInImage* find(const ModuleInformation&);
     static bool isModuleOfProgram(const ModuleInformation&);
@@ -58,8 +60,11 @@ private:
     Vector<std::pair<const RTT*, Ref<JSToWasmICCallee>>> m_jsEntrypoints;
     bool m_isForSignalingMemory { false };
 
-    static const uint8_t* s_directory;
-    static std::span<const uint8_t> s_code;
+    struct PublishedImage;
+    static const PublishedImage& imageHolding(const ModuleInImage&);
+    static const ModuleInImage* findRecord(const ModuleInformation&);
+
+    static std::atomic<const PublishedImage*> s_lastPublished;
     static std::array<std::atomic<unsigned>, numberOfInterpreterFallbackReasons> s_interpreterFallbackCounts;
 };
 

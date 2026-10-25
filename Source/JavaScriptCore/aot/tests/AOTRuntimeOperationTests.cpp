@@ -13,17 +13,20 @@
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTOpcode.h"
+#include "AOTOperationCallScope.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSchemaOperations.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTTemporaryFile.h"
 #include "AOTVector.h"
 #include "ClonedArguments.h"
+#include "DeferTermination.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include "OperationResult.h"
 #include "Options.h"
 #include "TopExceptionScope.h"
+#include "VMTrapsInlines.h"
 #include <bit>
 #include <type_traits>
 #include <wtf/DataLog.h>
@@ -42,6 +45,7 @@ static constexpr ASCIILiteral readsOfArgumentsTest = "runtime-operations/reads-o
 static constexpr ASCIILiteral appendElementsTest = "runtime-operations/append-elements"_s;
 static constexpr ASCIILiteral arrayLiteralsTest = "runtime-operations/array-literals-are-pristine-and-contiguous"_s;
 static constexpr ASCIILiteral pushesAndHolesTest = "runtime-operations/pushes-and-holes"_s;
+static constexpr ASCIILiteral deferredTerminationTest = "runtime-operations/poll-throws-deferred-termination-after-the-deferral"_s;
 
 static constexpr ASCIILiteral programText =
     "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
@@ -377,6 +381,23 @@ static void checkPushesAndHoles(LoadedProgram& program)
     array->validatePristine(program.vm());
 }
 
+static void checkPollThrowsDeferredTerminationAfterTheDeferral(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    vm.ensureTerminationException();
+    {
+        DeferTerminationForAWhile deferTermination(vm);
+        vm.notifyNeedTermination();
+        callFromNativeCode(program, operationAOTPollSlow);
+        AOT_TEST_CHECK(vm.traps().needHandling(VMTraps::NeedTermination));
+    }
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    callOperationFromTest(vm, operationAOTPollSlow, &program.instance());
+    AOT_TEST_CHECK(scope.exception() && vm.hasPendingTerminationException());
+    scope.clearException();
+    vm.clearHasTerminationRequest();
+}
+
 static void unusedEntriesTrap()
 {
     runWithLoadedProgram(unusedEntriesTrapTest, programText, checkUnusedEntriesTrap);
@@ -405,6 +426,28 @@ static void arrayLiteralsArePristineAndContiguous()
 static void pushesAndHoles()
 {
     runWithLoadedProgram(pushesAndHolesTest, programText, checkPushesAndHoles);
+}
+
+// A build with assertions checks in the child that somebody looks for an exception behind every call that may throw.
+static void pollThrowsDeferredTerminationAfterTheDeferral()
+{
+    if (Options::aotImagePath()) {
+        runWithLoadedProgram(deferredTerminationTest, programText, checkPollThrowsDeferredTerminationAfterTheDeferral);
+        return;
+    }
+
+    TemporaryFile image(".image"_s, compileProgramText(programText).span());
+    ChildProcessLauncher launcher(String(programPath()), { });
+    Vector<String> arguments {
+        String(nativeSubcommandName), String(singleProcessFlag), String(deferredTerminationTest),
+        makeString("--aotImagePath="_s, image.path()), "--validateExceptionChecks=true"_s,
+    };
+    ChildProcessResult result = launcher.run(arguments.span());
+    if (!result.exitedWith(0)) {
+        dataLogLn(result.output);
+        dataLogLn("The process that polls ", result.description());
+        failNativeTest(__FILE__, __LINE__, deferredTerminationTest.characters());
+    }
 }
 
 static void callsAreNotCountedByDefault()
@@ -459,6 +502,7 @@ std::span<const NativeTest> runtimeOperationTests()
         { appendElementsTest, appendElements },
         { arrayLiteralsTest, arrayLiteralsArePristineAndContiguous },
         { pushesAndHolesTest, pushesAndHoles },
+        { deferredTerminationTest, pollThrowsDeferredTerminationAfterTheDeferral },
     };
     return tests;
 }

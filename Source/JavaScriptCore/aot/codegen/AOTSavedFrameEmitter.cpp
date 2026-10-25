@@ -161,7 +161,7 @@ void SavedFrameEmitter::generateAwaitBySavingFrame(const ValueContext& value)
     ValueID driver = value->promiseOperand();
     switch (kindOfFunction()) {
     case CoroutineKind::AsyncFunction: {
-        AwaitedOperand form = value->takesExtraTurn() ? AwaitedOperand::ValueAfterTurn : m_function.isModuleBody() ? AwaitedOperand::ValueInModuleBody : AwaitedOperand::Value;
+        AwaitedOperand form = value->takesExtraTurn() ? AwaitedOperand::ValueAfterTurn : isBodyOfModuleEvaluatedByRequire(m_program, m_function) ? AwaitedOperand::ValueInModuleBody : AwaitedOperand::Value;
         define(value, Boxed(suspend(value, awaitBySavingFrame(form), { in<Boxed>(awaited).value() }, driver).first));
         return;
     }

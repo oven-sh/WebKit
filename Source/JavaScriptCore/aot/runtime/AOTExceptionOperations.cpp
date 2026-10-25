@@ -54,6 +54,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPollSlow, void, (Instance* instance))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollSlow);
     vm.traps().handleTraps(VMTraps::AsyncEvents);
+    OPERATION_RETURN_IF_EXCEPTION(scope);
     vm.throwTerminationExceptionIfNeeded();
     OPERATION_RETURN_IF_EXCEPTION(scope);
     if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm)) [[unlikely]] {
@@ -69,6 +70,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPollAtPrologue, void*, (Instance* instance,
     // What a caller knows about a callee that collects nothing holds for the callee's prologue too.
     DeferGCForAWhile deferGC(vm);
     vm.traps().handleTraps(VMTraps::AsyncEvents);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     vm.throwTerminationExceptionIfNeeded();
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().errorWaitsForPoll()) [[unlikely]] {

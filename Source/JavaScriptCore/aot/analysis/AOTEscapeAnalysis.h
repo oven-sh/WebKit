@@ -47,6 +47,12 @@ struct TrackedObject {
     OperandUses uses { OperandUses::all() };
 };
 
+// Code outside the function can reach the object, so a store into it is an escape of what is stored.
+inline bool isOpenContainer(const TrackedObject& object)
+{
+    return object.kind == ObjectKind::EntryParameter || !object.reasons.isEmpty();
+}
+
 class ObjectSet {
 public:
     class Iterator {

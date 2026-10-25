@@ -26,6 +26,7 @@
 #include "RegExpObject.h"
 #include <algorithm>
 #include <bit>
+#include <wtf/UnalignedAccess.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -99,9 +100,21 @@ static void forEachAtEnds(std::span<const T> values, size_t maxAtEachEnd, const 
 static uint64_t hashSnapshotBytes(std::span<const uint8_t> bytes)
 {
     uint64_t hash = 0xcbf29ce484222325ull;
-    forEachAtEnds(bytes, maxCheckedBytesAtEachEnd, [&](uint8_t byte) {
-        hash = (hash ^ byte) * 0x100000001b3ull;
-    });
+    auto mix = [&](uint64_t bits) {
+        hash = (hash ^ bits) * 0x100000001b3ull;
+    };
+    auto mixAll = [&](std::span<const uint8_t> part) {
+        for (; part.size() >= sizeof(uint64_t); part = part.subspan(sizeof(uint64_t)))
+            mix(WTF::unalignedLoad<uint64_t>(part.data()));
+        for (uint8_t byte : part)
+            mix(byte);
+    };
+    if (bytes.size() <= 2 * maxCheckedBytesAtEachEnd)
+        mixAll(bytes);
+    else {
+        mixAll(bytes.first(maxCheckedBytesAtEachEnd));
+        mixAll(bytes.last(maxCheckedBytesAtEachEnd));
+    }
     return hash;
 }
 

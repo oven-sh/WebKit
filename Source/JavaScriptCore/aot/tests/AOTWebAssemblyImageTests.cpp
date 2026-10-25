@@ -841,7 +841,7 @@ static void testInterpreterFallbackIsCountedOnce()
 
     static NeverDestroyed<WebAssemblyImageInputs> section;
     section.get() = layOut(Vector<Wasm::ModuleForImage>::from(WTF::move(moduleForImage)));
-    Wasm::CodeInImage::setImage(section->directory.span().data(), section->code.span());
+    Wasm::CodeInImage::addImage(section->directory.span(), section->code.span());
     AOT_TEST_CHECK(Wasm::CodeInImage::isInProcess());
 
     TestVM vm;

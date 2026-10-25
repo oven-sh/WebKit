@@ -55,11 +55,6 @@ static const ValueSet* createdAliasSetOf(const PointsToResults& results, const S
     return set;
 }
 
-static bool isOpenContainer(const TrackedObject& object)
-{
-    return object.kind == ObjectKind::EntryParameter || !object.reasons.isEmpty();
-}
-
 static bool escapesThroughContainer(const EscapeAnalysis& escape, const PointsToResults& results, const SolvedUse& use, std::span<const Containment> leaked)
 {
     if (!use.retainedBy)

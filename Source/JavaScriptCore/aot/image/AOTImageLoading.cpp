@@ -518,8 +518,7 @@ static void unblockAccessFaults()
 static void didPublishImage(const Image& image)
 {
 #if ENABLE(WEBASSEMBLY_OMGJIT)
-    if (auto directory = image.section<uint8_t>(ImageSection::WebAssemblyDirectory); !directory.empty() && !Wasm::CodeInImage::isInProcess())
-        Wasm::CodeInImage::setImage(directory.data(), image.webAssemblyCode());
+    Wasm::CodeInImage::addImage(image.section<uint8_t>(ImageSection::WebAssemblyDirectory), image.webAssemblyCode());
 #else
     UNUSED_PARAM(image);
 #endif

@@ -366,7 +366,11 @@ private:
             for (size_t object : operandObjects())
                 worklist.append(ObjectID(object));
             while (!worklist.isEmpty()) {
-                for (ObjectID content : escape.contentsOf(worklist.takeLast())) {
+                ObjectID container = worklist.takeLast();
+                // A store into an open container is an escape, and the history says whether it has happened yet.
+                if (isOpenContainer(escape.at(container)))
+                    continue;
+                for (ObjectID content : escape.contentsOf(container)) {
                     if (!m_objectsInsideOperands->set(content.index()))
                         worklist.append(content);
                 }
