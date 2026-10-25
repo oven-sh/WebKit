@@ -182,6 +182,7 @@ void throwTemporalError(JSGlobalObject*, ThrowScope&, const TemporalError&);
 
 std::optional<TimeZone> toTemporalTimeZoneIdentifier(JSGlobalObject*, JSValue);
 
+std::optional<TimeZone> timeZoneFromName(StringView);
 std::optional<TimeZone> timeZoneFromIdentifierParseRecord(const ISO8601::TimeZoneIdentifierParseRecord&);
 
 enum class TemporalConstructTarget : bool { Intrinsic, NewTarget };

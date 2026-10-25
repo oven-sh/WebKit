@@ -105,36 +105,37 @@ TemporalZonedDateTime::TemporalZonedDateTime(VM& vm, Structure* structure, ISO86
 {
 }
 
-std::optional<int64_t> TemporalZonedDateTime::getOffsetNanoseconds(JSGlobalObject* globalObject) const
+std::optional<int64_t> TemporalZonedDateTime::computeLocalDateTime(JSGlobalObject* globalObject) const
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto result = TemporalCore::getOffsetNanosecondsFor(m_timeZone, exactTime());
-    if (!result) [[unlikely]] {
-        if (result.error().kind == TemporalErrorKind::RangeError)
-            throwRangeError(globalObject, scope, result.error().message);
-        else
-            throwTypeError(globalObject, scope, result.error().message);
+    auto offset = TemporalCore::getOffsetNanosecondsFor(m_timeZone, exactTime());
+    if (!offset) [[unlikely]] {
+        throwTemporalError(globalObject, scope, offset.error());
         return std::nullopt;
     }
-    return *result;
+    // https://tc39.es/proposal-temporal/#sec-temporal-getisodatetimefor steps 2-3.
+    m_localDateTime = TemporalCore::exactTimeToLocalDateAndTime(exactTime(), *offset);
+    return *offset;
+}
+
+std::optional<int64_t> TemporalZonedDateTime::getOffsetNanoseconds(JSGlobalObject* globalObject) const
+{
+    if (m_timeZone.isUTCOffset())
+        return m_timeZone.utcOffsetNanoseconds();
+    if (m_localDateTime.date == ISO8601::PlainDate::sentinel())
+        return computeLocalDateTime(globalObject);
+    auto [date, time] = m_localDateTime;
+    auto localAsUTC = ISO8601::ExactTime::fromISOPartsAndOffset(date.year(), date.month(), date.day(), time.hour(), time.minute(), time.second(), time.millisecond(), time.microsecond(), time.nanosecond(), 0);
+    return static_cast<int64_t>(localAsUTC.epochNanoseconds() - m_exactTime.epochNanoseconds());
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal-getisodatetimefor
-// Thin JS-side wrapper: forwards TemporalResult errors to the caller's ThrowScope.
 ISO8601::PlainDateTime TemporalZonedDateTime::getLocalDateTime(JSGlobalObject* globalObject) const
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto result = TemporalCore::getISODateTimeFor(m_timeZone, exactTime());
-    if (!result) [[unlikely]] {
-        if (result.error().kind == TemporalErrorKind::RangeError)
-            throwRangeError(globalObject, scope, result.error().message);
-        else
-            throwTypeError(globalObject, scope, result.error().message);
+    if (m_localDateTime.date == ISO8601::PlainDate::sentinel() && !computeLocalDateTime(globalObject)) [[unlikely]]
         return { };
-    }
-    return *result;
+    return m_localDateTime;
 }
 
 // https://tc39.es/proposal-temporal/#sec-temporal-temporalzoneddatetimetostring
@@ -231,9 +232,7 @@ std::optional<TimeZone> timeZoneFromRecord(const ISO8601::ISOStringTimeZoneParse
         return TimeZone::fromUTCOffset(*offsetNanoseconds);
     auto& name = std::get<Vector<Latin1Character>>(nameOrOffset);
     ASSERT(!name.isEmpty());
-    if (auto tzId = ISO8601::parseTimeZoneName(name.span()))
-        return TimeZone::fromID(*tzId);
-    return std::nullopt; // invalid IANA name in bracket
+    return timeZoneFromName(name.span()); // std::nullopt for an invalid IANA name in the bracket
 }
 
 // Aggregate of all inputs needed by the unified steps 6-12 epilogue in TemporalZonedDateTime::from().

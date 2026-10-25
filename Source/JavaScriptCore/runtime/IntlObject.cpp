@@ -651,18 +651,7 @@ String intlStringOption(JSGlobalObject* globalObject, JSObject* options, Propert
     JSValue value = options->get(globalObject, property);
     RETURN_IF_EXCEPTION(scope, String());
 
-    if (!value.isUndefined()) {
-        String stringValue = value.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, String());
-
-        if (values.size() && std::ranges::find(values, stringValue) == values.end()) {
-            throwException(globalObject, scope, createRangeError(globalObject, notFound));
-            return { };
-        }
-        return stringValue;
-    }
-
-    return fallback;
+    RELEASE_AND_RETURN(scope, intlStringOptionFromValue(globalObject, value, values, notFound, fallback));
 }
 
 unsigned intlNumberOption(JSGlobalObject* globalObject, JSObject* options, PropertyName property, unsigned minimum, unsigned maximum, unsigned fallback)
@@ -2172,8 +2161,11 @@ static const UncheckedKeyHashMap<String, TimeZoneID, ASCIICaseInsensitiveHash>& 
     std::call_once(onceKey, [&] {
         const auto& entries = intlAvailableTimeZoneEntries();
         UncheckedKeyHashMap<String, TimeZoneID, ASCIICaseInsensitiveHash> table;
-        for (TimeZoneID i = 0; i < entries.size(); ++i)
-            table.add(entries[i].identifier, i);
+        for (TimeZoneID i = 0; i < entries.size(); ++i) {
+            // Time zone names never differ only in case (tzdata theory.html), so every entry keeps its own key.
+            auto addResult = table.add(entries[i].identifier, i);
+            ASSERT_UNUSED(addResult, addResult.isNewEntry);
+        }
         index.construct(WTF::move(table));
     });
     return index.get();
@@ -2181,22 +2173,6 @@ static const UncheckedKeyHashMap<String, TimeZoneID, ASCIICaseInsensitiveHash>& 
 
 std::optional<TimeZoneID> intlResolveTimeZoneID(StringView name)
 {
-    const auto& entries = intlAvailableTimeZoneEntries();
-    unsigned primaryCount = primaryTimeZoneCount;
-
-    auto findInRegion = [&](unsigned begin, unsigned end) -> std::optional<TimeZoneID> {
-        auto first = entries.begin() + begin;
-        auto last = entries.begin() + end;
-        auto it = std::ranges::lower_bound(first, last, name, WTF::codePointCompareLessThan, &TimeZoneEntry::identifier);
-        if (it != last && StringView(it->identifier) == name)
-            return static_cast<TimeZoneID>(it - entries.begin());
-        return std::nullopt;
-    };
-    if (auto id = findInRegion(0, primaryCount))
-        return id;
-    if (auto id = findInRegion(primaryCount, entries.size()))
-        return id;
-
     const auto& index = intlAvailableTimeZoneIndex();
     auto entry = index.find<ASCIICaseInsensitiveStringViewHashTranslator>(name);
     if (entry == index.end())
