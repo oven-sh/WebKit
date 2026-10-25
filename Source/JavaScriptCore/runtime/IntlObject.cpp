@@ -1959,12 +1959,6 @@ static JSArray* availableNumberingSystems(JSGlobalObject* globalObject)
 
 static bool isValidTimeZoneNameFromICUTimeZone(StringView timeZoneName)
 {
-#if USE(BUN_JSC_ADDITIONS)
-    // A zone ID that ICU holds canonical is a time zone, with or without '/'. The tz database has EST5EDT, CST6CDT,
-    // MST7MDT and PST8PDT as zones of their own before 2024b and from 2026d on, and CET, EET, MET and WET before 2024b.
-    // The two exceptions: the tz database has no "SystemV/" zone, and its "Factory" zone is for a clock that is not set.
-    return !timeZoneName.startsWith("SystemV/"_s) && timeZoneName != "Factory"_s;
-#else
     // Some time zone names are included in ICU, but they are not included in the IANA Time Zone Database.
     // We need to filter them out.
     if (timeZoneName.startsWith("SystemV/"_s))
@@ -1976,7 +1970,6 @@ static bool isValidTimeZoneNameFromICUTimeZone(StringView timeZoneName)
     if (!timeZoneName.contains('/'))
         return timeZoneName == "UTC"_s || timeZoneName == "GMT"_s;
     return true;
-#endif
 }
 
 // https://tc39.es/proposal-intl-enumeration/#sec-canonicalizetimezonename
@@ -1987,6 +1980,35 @@ static std::optional<String> canonicalizeTimeZoneNameFromICUTimeZone(String&& ti
     return std::make_optional(WTF::move(timeZoneName));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// The tz database has these names as zones of their own before 2024b, and the four US names again from 2026d on.
+// In between, each is a link to the city zone here. That is what they stay, as tc39/ecma402#1103 has it: an alias
+// of the city zone, not a primary identifier. Null when ICU has the name as a link: ICU then gives the primary.
+static ASCIILiteral primaryOfLegacyZone(StringView timeZone)
+{
+    static constexpr std::pair<ASCIILiteral, ASCIILiteral> legacyZones[] = {
+        { "CET"_s, "Europe/Brussels"_s },
+        { "CST6CDT"_s, "America/Chicago"_s },
+        { "EET"_s, "Europe/Athens"_s },
+        { "EST5EDT"_s, "America/New_York"_s },
+        { "MET"_s, "Europe/Brussels"_s },
+        { "MST7MDT"_s, "America/Denver"_s },
+        { "PST8PDT"_s, "America/Los_Angeles"_s },
+        { "WET"_s, "Europe/Lisbon"_s },
+    };
+    for (auto& [zone, primary] : legacyZones) {
+        if (timeZone != zone)
+            continue;
+        auto characters = timeZone.upconvertedCharacters();
+        Vector<char16_t, 32> canonical;
+        if (U_FAILURE(callBufferProducingFunction(ucal_getCanonicalTimeZoneID, characters.get(), static_cast<int32_t>(timeZone.length()), canonical, nullptr)))
+            return { };
+        return StringView(canonical.span()) == timeZone ? primary : ASCIILiteral();
+    }
+    return { };
+}
+#endif
+
 // Map a known-valid IANA time zone ID to its primary IANA zone identifier. On ICU 74+,
 // ucal_getIanaTimeZoneID honors the IANA "Backward" links and returns up-to-date
 // names (e.g. "Asia/Calcutta" -> "Asia/Kolkata", "America/Buenos_Aires" ->
@@ -1994,6 +2016,10 @@ static std::optional<String> canonicalizeTimeZoneNameFromICUTimeZone(String&& ti
 // form. UTC-equivalent zones are normalized to "UTC" per ECMA-402.
 String toPrimaryIanaTimeZoneIdentifier(std::span<const char16_t> timeZone)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (auto primary = primaryOfLegacyZone(timeZone); !primary.isNull())
+        return primary;
+#endif
     Vector<char16_t, 32> buffer;
     // Bun on macOS links against system libicucore.A.dylib whose version is
     // determined by the macOS deployment target, not the bundled ICU 74 headers.
@@ -2033,6 +2059,10 @@ String toPrimaryIanaTimeZoneIdentifier(StringView timeZone)
 struct TimeZoneEntry {
     String identifier;
     TimeZoneID primary;
+#if USE(BUN_JSC_ADDITIONS)
+    // ICU has this alias as a zone of its own, with rules and names that are not those of the primary.
+    bool opensAsPrimary { false };
+#endif
 };
 
 static unsigned primaryTimeZoneCount = 0;
@@ -2140,6 +2170,10 @@ static const Vector<TimeZoneEntry>& intlAvailableTimeZoneEntries()
             ASSERT(primaryEntry != nameToIndex.end());
             combined.append({ WTF::move(alias.identifier), primaryEntry->value });
         }
+#if USE(BUN_JSC_ADDITIONS)
+        for (auto& alias : combined.mutableSpan().subspan(primaryTimeZoneCount))
+            alias.opensAsPrimary = !primaryOfLegacyZone(alias.identifier).isNull();
+#endif
 
         entries.construct(WTF::move(combined));
     });
@@ -2219,8 +2253,13 @@ String TimeZone::toString() const
 
 String TimeZone::toICUString() const
 {
-    if (!isUTCOffset())
+    if (!isUTCOffset()) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (intlAvailableTimeZoneEntries()[m_id].opensAsPrimary)
+            return intlTimeZoneIDToString(intlPrimaryTimeZoneID(m_id));
+#endif
         return intlTimeZoneIDToString(m_id);
+    }
     // ICU expects offsets in "GMT[+-]HHMM" form, no colon, four digits.
     int64_t offset = m_offset;
     bool negative = offset < 0;

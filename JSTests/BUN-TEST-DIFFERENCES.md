@@ -114,19 +114,28 @@ Rules for an edit to an upstream test:
 - Fork code: `DecoderStringTable::jsStringFor` (`runtime/CachedTypes.h:132`): loading a cache interns nothing.
 - File: `stress/jsstring-definitely-atom-bit.js`: `$skipModes << "bytecode-cache"`. The other modes run it unchanged.
 
-### A10. A zone ID that ICU holds canonical is a time zone, with or without '/'
+### A10. `EST5EDT`, `CST6CDT`, `MST7MDT`, `PST8PDT`, `CET`, `EET`, `MET` and `WET` are aliases of city zones with every tz data
 
-- Upstream drops a canonical zone ID with no '/' other than `UTC` and `GMT` from its table of time zone names. The tz
-  database has `EST5EDT`, `CST6CDT`, `MST7MDT` and `PST8PDT` as zones of their own before 2024b and from 2026d on, and
-  `CET`, `EET`, `MET` and `WET` before 2024b. With such data upstream has `RangeError: invalid time zone: EST5EDT`, and
-  UTC as the host zone for `TZ=EST5EDT`.
-- Fork code: `isValidTimeZoneNameFromICUTimeZone` (`runtime/IntlObject.cpp:1960`) under `USE(BUN_JSC_ADDITIONS)` drops
-  only `SystemV/*` and `Factory`.
-- Recognize: a test expects one of those eight names to be rejected, or to be absent from
-  `Intl.supportedValuesOf("timeZone")`, and the ICU data holds the name canonical.
+- The tz database has these eight names as zones of their own before 2024b, and the four US names again from 2026d on.
+  ICU then holds them canonical. Upstream has no zone for a canonical ID with no '/' other than `UTC` and `GMT`: with
+  such data it has `RangeError: invalid time zone: EST5EDT`, and UTC as the host zone for `TZ=EST5EDT`.
+- This fork keeps what tz 2024b to 2026c has. Each name is an alias of its city zone: `America/New_York`,
+  `America/Chicago`, `America/Denver`, `America/Los_Angeles`, `Europe/Brussels`, `Europe/Athens`, `Europe/Brussels` and
+  `Europe/Lisbon`. The name is accepted and kept, it is not in `Intl.supportedValuesOf("timeZone")`, it equals its city
+  zone in Temporal, and ICU is asked for the city zone. ECMA-402 TG2 agreed on 2026-10-08 that the four US names stay
+  aliases and are not primary identifiers (tc39/ecma402#1103).
+- Fork code: `primaryOfLegacyZone` and `TimeZoneEntry::opensAsPrimary` (`runtime/IntlObject.cpp`) under
+  `USE(BUN_JSC_ADDITIONS)`. The city zones there are a copy of the tz database's links, used only where ICU has no
+  link. Read them again when the ECMA-402 change lands, or when a tz release gives one of the names a rule that its
+  city zone does not have.
+- Recognize: with such data a test expects one of the eight names to be rejected (upstream), or to be a primary
+  identifier in `resolvedOptions().timeZone`, `Temporal.Now.timeZoneId()` or `Intl.supportedValuesOf("timeZone")` (what
+  ICU's data says). In this fork it is an alias.
+- Not covered: `Intl.Locale.prototype.getTimeZones()` (`runtime/IntlLocale.cpp`) does not use the table. It returns
+  what ICU holds canonical for the region.
 - Files: none of upstream's. `complex/intl-default-timezone-legacy-zone.js` is this fork's test for it. It runs with
   `ICU_TIMEZONE_FILES_DIR=icu-tz-2024a`: `complex/icu-tz-2024a/timezoneTypes.res` is that file of tz 2024a from
-  unicode-org/icu-data, so the test does not depend on the tz data of the ICU in use.
+  unicode-org/icu-data, so ICU holds the four US names canonical whatever tz data it was built with.
 
 ---
 
