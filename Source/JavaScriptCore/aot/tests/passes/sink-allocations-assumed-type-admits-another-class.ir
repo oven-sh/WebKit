@@ -1,0 +1,63 @@
+# What was assumed of a name of the object may admit objects of other classes. The cell that is built keeps its own class, and takes the place of each name with the type of that name
+# FORM: Prepared optimizing
+# OPTIONS: check=VerifyEachPass
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+
+# A default value of a parameter that also takes an iterator, as inlining leaves it: the test for an array is answered while the literal is virtual.
+function f0 name="builtOnOneWay" parameters=[{type=fractional}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewArray v0 contents=fractional holes=[1]
+    v3 = AssumeType v2 castType=Array<fractional, proven, pristine[Storage, Names]>|ArrayIterator<pristine[Storage, Names]>
+    v4 = TypeTest v3 testedType=Array<fractional>
+    Branch v4 -> taken b1(| 0), notTaken b5()
+  b1(v5):
+    Branch v1 -> taken b2(), notTaken b5()
+  b2():
+    v6 = IsPristine v5 builtinClass=Array aspects=[Storage, Names]
+    Branch v6 -> taken b3(| 0), notTaken b5()
+  b3(v7):
+    v8 = HasArrayStorage v5 arrayStorage=Double
+    Branch v8 -> taken b4(| 0), notTaken b5()
+  b4(v9):
+    v10 = AllGuards v7, v9
+    v11 = Integer
+    v12 = GetArrayElement v5, v11, v10 arrayStorage=Double [keyIsIntegral]
+    Return v12
+  b5():
+    Return
+# CHECK: [[cell0]]: Array<fractional> = NewArray v0 contents=fractional holes=[1]
+# CHECK: = HasArrayStorage {{*}} arrayStorage=Double
+}
+
+# The cell goes around a loop in a parameter of its own.
+function f1 name="carriedIntoALoop" parameters=[{type=fractional}, {type=boolean}, {type=i32}] results=[{type=anything}] {
+    v3 = NewArray v0 contents=fractional holes=[1]
+    v4 = AssumeType v3 castType=Array<fractional, proven, pristine[Storage, Names]>|ArrayIterator<pristine[Storage, Names]>
+    v5 = TypeTest v4 testedType=Array<fractional>
+    Branch v5 -> taken b1(| 0), notTaken b7()
+  b1(v6):
+    Branch v1 -> taken b2(), notTaken b7()
+  b2():
+    v7 = IsPristine v6 builtinClass=Array aspects=[Storage, Names]
+    Branch v7 -> taken b3(| 0), notTaken b7()
+  b3(v8):
+    v9 = HasArrayStorage v6 arrayStorage=Double
+    Branch v9 -> taken b4(| 0), notTaken b7()
+  b4(v10):
+    v11 = AllGuards v8, v10
+    v12 = Integer
+    Jump -> next b5(v12)
+  b5(v13):
+    LoopHint
+    v15 = GetArrayElement v6, v13, v11 arrayStorage=Double [keyIsIntegral]
+    v16 = Increment v13
+    v17 = Less v16, v2
+    Branch v17 -> taken b5(v16), notTaken b6()
+  b6():
+    Return v15
+  b7():
+    Return
+# CHECK: [[cell1]]: Array<fractional> = NewArray v0 contents=fractional holes=[1]
+# CHECK: = HasArrayStorage {{*}} arrayStorage=Double
+}

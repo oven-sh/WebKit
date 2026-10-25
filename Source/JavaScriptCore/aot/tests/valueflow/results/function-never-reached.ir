@@ -1,0 +1,33 @@
+# A function whose closure is created and never called is never reached and loses its body. One that is called keeps it
+# RUN: valueflow-results
+# CHECK-NOT: function f0 reachability
+# CHECK-NOT: function f1 reachability
+# CHECK: function f2 reachability=Unreached
+# CHECK: function f3 reachability=Unreached
+# CHECK-NOT: unseen-code
+# RUN(APPLY): valueflow-apply
+# APPLY: integer=1
+# APPLY-NOT: string="unreached"
+# STATISTIC: FlowUnreachedFunctions >= 2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = NewClosure function=f2
+    Return
+}
+function f1 name="called" results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}
+function f2 name="created" results=[{type=anything}] {
+    v0 = String string="unreached"
+    v1 = CallDirect function=f3
+    Return v0
+}
+function f3 name="calledByUnreached" results=[{type=anything}] {
+    v0 = String string="unreached"
+    Return v0
+}

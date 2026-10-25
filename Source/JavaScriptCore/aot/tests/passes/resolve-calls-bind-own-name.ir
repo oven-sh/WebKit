@@ -1,0 +1,291 @@
+# `this.run = this.run.bind(this)` in a constructor: the read finds the method of the prototype alone, so bind makes a closure of a bound function over the object. Every later read of the field finds that closure alone, so a call of it is a direct call and handing it on does not hand on the method. A subclass that inherits the method changes nothing, though its objects come out of the same constructor through super(). A subclass that overrides the method, the new.target of another class, a getter under the name above the object, a constructor that stores on one path only and a deletion each end their part of it
+# TODO: flow-termination: none of the four results of Function.prototype.bind is known as a bound function
+# FORM: AsRead
+# RUN: pipeline ChooseCallingConventions
+# OPTIONS: check=VerifyEachPass only-passes=InsertObjectCoercibleChecks,ResolveAccesses,ResolveCalls,PlaceTypeTests,ChooseCallingConventions
+# STATISTIC: BoundFunctions = 4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Worker" constructor=f1 fields=[{key="count" declared={type=anything}}]
+layout L1 kind=Instance name="Overridden" constructor=f3 fields=[{key="count" declared={type=anything}}]
+layout L2 kind=Instance name="Overriding" base=L1 constructor=f5 flags=[HasHeritage]
+layout L3 kind=Instance name="OnePath" constructor=f7 fields=[{key="count" declared={type=anything}}]
+layout L4 kind=Instance name="Deleted" constructor=f9 fields=[{key="count" declared={type=anything}}]
+layout L5 kind=Instance name="Inherited" constructor=f14 fields=[{key="count" declared={type=anything}}]
+layout L6 kind=Instance name="Inheriting" base=L5 constructor=f16 flags=[HasHeritage]
+layout L7 kind=Instance name="ConstructedForOther" constructor=f18 fields=[{key="count" declared={type=anything}}]
+layout L8 kind=Instance name="Other" constructor=f20
+layout L9 kind=Instance name="GetterAbove" constructor=f22 fields=[{key="count" declared={type=anything}}]
+# CHECK: layout L0 {{*}}{key="run" declared={type=[[bound]]}{{*}}occupancy=AlwaysFilled
+# CHECK: layout L3 {{*}}{key="run"
+# CHECK-NOT: layout L3 {{*}}{key="run" {{*}}occupancy=AlwaysFilled
+# CHECK-NOT: layout L4 {{*}}{key="run" {{*}}occupancy=AlwaysFilled
+# CHECK-NOT: layout L9 {{*}}{key="run" {{*}}occupancy=AlwaysFilled
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = PropGet v0 key="input" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = NewClass v3 layout=L0
+    v5 = NewClosure function=f2
+    DefineMethod v4, v5 layout=L0 key="run"
+    v7 = FinishClass v4 layout=L0
+    v8 = Construct v7
+    v9 = CallDirect v8, v1 function=f11
+    v10 = NewClosure function=f3
+    v11 = NewClass v10 layout=L1
+    v12 = NewClosure function=f4
+    DefineMethod v11, v12 layout=L1 key="run"
+    v14 = FinishClass v11 layout=L1
+    v15 = NewClosure function=f5
+    v16 = ResolveHeritage v14
+    v17 = NewClass v15, v14, v16 layout=L2
+    v18 = NewClosure function=f6
+    DefineMethod v17, v18 layout=L2 key="run"
+    v20 = FinishClass v17 layout=L2
+    v21 = Construct v14
+    v22 = Construct v20
+    v23 = NewClosure function=f7
+    v24 = NewClass v23 layout=L3
+    v25 = NewClosure function=f8
+    DefineMethod v24, v25 layout=L3 key="run"
+    v27 = FinishClass v24 layout=L3
+    v28 = Construct v27, -, v2
+    v29 = CallDirect v28 function=f12
+    v30 = NewClosure function=f9
+    v31 = NewClass v30 layout=L4
+    v32 = NewClosure function=f10
+    DefineMethod v31, v32 layout=L4 key="run"
+    v34 = FinishClass v31 layout=L4
+    v35 = Construct v34
+    v36 = CallDirect v35 function=f13
+    v37 = NewClosure function=f14
+    v38 = NewClass v37 layout=L5
+    v39 = NewClosure function=f15
+    DefineMethod v38, v39 layout=L5 key="run"
+    v41 = FinishClass v38 layout=L5
+    v42 = NewClosure function=f16
+    v43 = ResolveHeritage v41
+    v44 = NewClass v42, v41, v43 layout=L6
+    v45 = FinishClass v44 layout=L6
+    v46 = Construct v41
+    v47 = Construct v45
+    v48 = CallDirect v46 function=f17
+    v49 = CallDirect v47 function=f17
+    v50 = NewClosure function=f18
+    v51 = NewClass v50 layout=L7
+    v52 = NewClosure function=f19
+    DefineMethod v51, v52 layout=L7 key="run"
+    v54 = FinishClass v51 layout=L7
+    v55 = NewClosure function=f20
+    v56 = NewClass v55 layout=L8
+    v57 = NewClosure function=f21
+    DefineMethod v56, v57 layout=L8 key="run"
+    v59 = FinishClass v56 layout=L8
+    v60 = Construct v54
+    v61 = PropGet v60 key="run"
+    v62 = Call v61, v60 calleeKey="run"
+    v63 = Builtin builtin=ReflectConstruct
+    v64 = NewArray contents=anything
+    v65 = Call v63, -, v54, v64, v59
+    v66 = NewClosure function=f22
+    v67 = NewClass v66 layout=L9
+    v68 = NewClosure function=f23
+    DefineMethod v67, v68 layout=L9 methodKind=Getter key="run"
+    v70 = FinishClass v67 layout=L9
+    v71 = Construct v70
+    v72 = PropGet v71 key="run"
+    v73 = Call v72, v71 calleeKey="run"
+    Return
+}
+function f1 name="Worker" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    v3 = PropGet v2 key="run"
+    v4 = PropGet v3 key="bind"
+    v5 = Call v4, v3, v2 calleeKey="bind"
+    PropSet v2, v5 key="run" mode=Strict
+    v7 = Integer integer=1
+    PropSet v2, v7 key="count" mode=Strict
+    Return v2
+# CHECK: [[worker]]: L0 = NewObject
+# CHECK: [[prototype]]:{{*}}= GetSuperBase [[worker]]
+# CHECK: = SuperGet [[prototype]], [[worker]] key="run"
+# CHECK: = NewClosure [[worker]], {{*}} function=[[bound]]
+# CHECK-NOT: CallBuiltin
+}
+function f2 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK-LABEL: function f2 name="run"{{*}}thisType={type=L0
+function f3 name="Overridden" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    v3 = PropGet v2 key="run"
+    v4 = PropGet v3 key="bind"
+    v5 = Call v4, v3, v2 calleeKey="bind"
+    PropSet v2, v5 key="run" mode=Strict
+    v7 = Integer integer=1
+    PropSet v2, v7 key="count" mode=Strict
+    Return v2
+# CHECK-NOT: NewClosure
+# CHECK: = CallBuiltin {{*}} overload=FunctionPrototypeBind/0
+# CHECK-NOT: NewClosure
+}
+function f4 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+function f5 name="Overriding" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}
+function f6 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=2
+    Return v1
+}
+function f7 name="OnePath" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L3
+    v3 = NewObject v2 layout=L3 fields=[]
+    v4 = Integer integer=1
+    PropSet v3, v4 key="count" mode=Strict
+    v6 = ToBoolean v1
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = PropGet v3 key="run"
+    v8 = PropGet v7 key="bind"
+    v9 = Call v8, v7, v3 calleeKey="bind"
+    PropSet v3, v9 key="run" mode=Strict
+    Jump -> next b2()
+  b2():
+    Return v3
+# CHECK: = NewClosure {{*}} function=[[boundOnOnePath]]
+}
+function f8 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+function f9 name="Deleted" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L4
+    v2 = NewObject v1 layout=L4 fields=[]
+    v3 = PropGet v2 key="run"
+    v4 = PropGet v3 key="bind"
+    v5 = Call v4, v3, v2 calleeKey="bind"
+    PropSet v2, v5 key="run" mode=Strict
+    v7 = Integer integer=1
+    PropSet v2, v7 key="count" mode=Strict
+    Return v2
+# CHECK: = NewClosure {{*}} function=[[boundThenDeleted]]
+}
+function f10 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+function f11 name="useWorker" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="run"
+    v3 = Call v2, v0 calleeKey="run"
+    v4 = PropGet v0 key="run"
+    v5 = Call v1, -, v4
+    Return v3
+# CHECK: [[closure]]: [[bound]] = GetSlot v0 key="run" receivers=[L0] level=Proven
+# CHECK-NOT: = Call {{*}} calleeKey="run"
+# CHECK: = CallDirect {{*}} function=[[bound]]
+# CHECK-NOT: = Call {{*}} calleeKey="run"
+}
+function f12 name="useOnePath" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="run"
+    v2 = Call v1, v0 calleeKey="run"
+    Return v1
+# CHECK: : f8|[[boundOnOnePath]]{{*}}= AssumeType
+}
+function f13 name="useDeleted" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="run"
+    v2 = Call v1, v0 calleeKey="run"
+    v3 = PropDelete v0 key="run" mode=Strict
+    v4 = PropGet v0 key="run"
+    Return v4
+# CHECK: f10|[[boundThenDeleted]]{{*}}= AssumeType
+}
+function f14 name="Inherited" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L5
+    v2 = NewObject v1 layout=L5 fields=[]
+    v3 = PropGet v2 key="run"
+    v4 = PropGet v3 key="bind"
+    v5 = Call v4, v3, v2 calleeKey="bind"
+    PropSet v2, v5 key="run" mode=Strict
+    v7 = Integer integer=1
+    PropSet v2, v7 key="count" mode=Strict
+    Return v2
+# CHECK: [[either]]: L5|L6 = AssumeType
+# CHECK: = NewClosure [[either]], {{*}} function=[[boundForBoth]]
+# CHECK-NOT: CallBuiltin
+}
+function f15 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK-LABEL: function f15 name="run"{{*}}thisType={type=L5|L6
+function f16 name="Inheriting" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L6
+    Return v3
+}
+function f17 name="useEither" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="run"
+    v2 = Call v1, v0 calleeKey="run"
+    Return v2
+# CHECK-NOT: = Call {{*}} calleeKey="run"
+# CHECK: = CallDirect {{*}} function=[[boundForBoth]]
+# CHECK-NOT: = Call {{*}} calleeKey="run"
+}
+function f18 name="ConstructedForOther" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L7
+    v2 = NewObject v1 layout=L7 fields=[]
+    v3 = PropGet v2 key="run"
+    v4 = PropGet v3 key="bind"
+    v5 = Call v4, v3, v2 calleeKey="bind"
+    PropSet v2, v5 key="run" mode=Strict
+    v7 = Integer integer=1
+    PropSet v2, v7 key="count" mode=Strict
+    Return v2
+# CHECK-NOT: NewClosure
+}
+function f19 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+function f20 name="Other" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L8
+    v2 = NewObject v1 layout=L8 fields=[]
+    Return v2
+}
+function f21 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=3
+    Return v1
+}
+# CHECK-LABEL: function f21 name="run"
+function f22 name="GetterAbove" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L9
+    v2 = NewObject v1 layout=L9 fields=[]
+    v3 = Integer integer=1
+    PropSet v2, v3 key="count" mode=Strict
+    v5 = PropGet v2 key="run"
+    v6 = PropGet v5 key="bind"
+    v7 = Call v6, v5, v2 calleeKey="bind"
+    PropSet v2, v7 key="run" mode=Strict
+    Return v2
+# The store throws, which only the store by name does.
+# CHECK: PropSet {{*}} key="run"
+}
+function f23 name="run" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = NewClosure function=f24
+    Return v1
+}
+function f24 name="made" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+# CHECK-LABEL: function f24 name="made"

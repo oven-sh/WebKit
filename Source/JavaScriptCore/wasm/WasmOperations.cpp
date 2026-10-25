@@ -30,6 +30,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "AOTRemovableFeature.h"
 #include "ButterflyInlines.h"
 #include "FrameTracers.h"
 #include "GCMemoryOperations.h"
@@ -77,6 +78,8 @@ static constexpr bool verbose = false;
 
 JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildFrame, JSToWasmCallee*, (void* sp, CallFrame* callFrame, WebAssemblyFunction* function))
 {
+    void* returnAddress = OUR_RETURN_ADDRESS;
+    JSC_REMOVABLE_DEFINITION(WebAssembly, operationJSToWasmEntryWrapperBuildFrame);
     dataLogLnIf(WasmOperationsInternal::verbose, "operationJSToWasmEntryWrapperBuildFrame sp: ", RawPointer(sp), " fp: ", RawPointer(callFrame));
 
     auto* globalObject = function->realm();
@@ -85,7 +88,7 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildFrame, JSToWasmCallee
     if (function->taintedness().isTainted())
         vm.setMightBeExecutingTaintedCode();
 
-    WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, OUR_RETURN_ADDRESS);
+    WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, returnAddress);
     auto* callee = function->jsToWasmCallee();
     ASSERT(function);
     ASSERT(callee->compilationMode() == CompilationMode::JSToWasmMode);
@@ -149,13 +152,15 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildFrame, JSToWasmCallee
 // Marshalls wasm return values into JS: a single JSValue for one result, or a JSArray for multi-value.
 JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildReturnFrame, EncodedJSValue, (void* sp, CallFrame* callFrame))
 {
+    void* returnAddress = OUR_RETURN_ADDRESS;
+    JSC_REMOVABLE_DEFINITION(WebAssembly, operationJSToWasmEntryWrapperBuildReturnFrame);
     dataLogLnIf(WasmOperationsInternal::verbose, "operationJSToWasmEntryWrapperBuildReturnFrame sp: ", RawPointer(sp), " fp: ", RawPointer(callFrame));
 
     auto* instance = callFrame->wasmInstance();
     ASSERT(instance);
     ASSERT(instance->realm());
     VM& vm = instance->vm();
-    WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, OUR_RETURN_ADDRESS);
+    WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, returnAddress);
 
     uint64_t* registerSpace = reinterpret_cast<uint64_t*>(sp);
     auto* callee = uncheckedDowncast<JSToWasmCallee>(uncheckedDowncast<Wasm::Callee>(callFrame->callee().asNativeCallee()));
@@ -299,6 +304,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationGetWasmCalleeStackSize, UCPUStrictInt
 
 JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalArguments, void, (void* sp, CallFrame* callFrame, void* argumentRegisters, JSWebAssemblyInstance* instance))
 {
+    void* returnAddress = OUR_RETURN_ADDRESS;
+    JSC_REMOVABLE_DEFINITION(WebAssembly, operationWasmToJSExitMarshalArguments);
     auto access = []<typename V>(auto* arr, int i) -> V* {
         return &reinterpret_cast<V*>(arr)[i / static_cast<int>(sizeof(V))];
     };
@@ -313,7 +320,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalArguments, void, (void* sp,
     JSGlobalObject* globalObject = instance->realm();
     ASSERT(globalObject);
     VM& vm = instance->vm();
-    WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, OUR_RETURN_ADDRESS);
+    WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, returnAddress);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -442,6 +449,8 @@ ALWAYS_INLINE void assertCalleeIsReferenced(CallFrame* frame, JSWebAssemblyInsta
 
 JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* sp, CallFrame* callFrame, JSWebAssemblyInstance* instance))
 {
+    void* returnAddress = OUR_RETURN_ADDRESS;
+    JSC_REMOVABLE_DEFINITION(WebAssembly, operationWasmToJSExitMarshalReturnValues);
     auto access = []<typename V>(auto* arr, int i) -> V* {
         return &reinterpret_cast<V*>(arr)[i / static_cast<int>(sizeof(V))];
     };
@@ -449,7 +458,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* 
     void* registerSpace = sp;
 
     assertCalleeIsReferenced(callFrame, instance);
-    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), callFrame, OUR_RETURN_ADDRESS);
+    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), callFrame, returnAddress);
     auto scope = DECLARE_THROW_SCOPE(instance->vm());
 
     auto* importableFunction = *access.operator()<WasmOrJSImportableFunctionCallLinkInfo*>(callFrame, WasmToJSCallableFunctionSlot);
@@ -664,7 +673,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* 
     OPERATION_RETURN(scope);
 }
 
-#if ENABLE(WEBASSEMBLY_OMGJIT)
+#if ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)
 static bool shouldTriggerOMGCompile(TierUpCount& tierUp, OMGCallee* replacement, FunctionCodeIndex functionIndex)
 {
     if (!OMGPlan::ensureGlobalOMGAllowlist().containsWasmFunction(functionIndex)) {
@@ -715,6 +724,9 @@ static void triggerOMGReplacementCompile(TierUpCount& tierUp, JSWebAssemblyInsta
     }
 }
 
+#endif // ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)
+
+#if ENABLE(WEBASSEMBLY_OMGJIT)
 // loadValuesIntoBuffer assumes context saved vector-width FPRs.
 void loadValuesIntoBuffer(Probe::Context& context, const StackMap& values, Wasm::Context::ScratchBufferEntry* buffer)
 {
@@ -794,7 +806,9 @@ void loadValuesIntoBuffer(Probe::Context& context, const StackMap& values, Wasm:
             RELEASE_ASSERT_NOT_REACHED();
     }
 }
+#endif // ENABLE(WEBASSEMBLY_OMGJIT)
 
+#if ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)
 SUPPRESS_ASAN
 static void doOSREntry(JSWebAssemblyInstance* instance, Probe::Context& context, BBQCallee& callee, OMGOSREntryCallee& osrEntryCallee, OSREntryData& osrEntryData)
 {
@@ -889,7 +903,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTriggerTierUpNow, void, (CallFram
 }
 #endif
 
-#if ENABLE(WEBASSEMBLY_OMGJIT)
+#if ENABLE(WEBASSEMBLY_OMGJIT) && ENABLE(JIT)
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTriggerOSREntryNow, void, (Probe::Context& context))
 {
     OSREntryData& osrEntryData = *context.arg<OSREntryData*>();
@@ -1104,7 +1118,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTriggerOSREntryNow, void, (Probe:
 }
 
 #endif
-#if ENABLE(WEBASSEMBLY_OMGJIT) || ENABLE(WEBASSEMBLY_BBQJIT)
+#if ENABLE(WEBASSEMBLY_BBQJIT)
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmLoopOSREnterBBQJIT, void, (Probe::Context & context))
 {
@@ -1198,13 +1212,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmUnwind, void*, (JSWebAssemblyInst
 {
     ASSERT(instance->type() == WebAssemblyInstanceType);
     CallFrame* callFrame = DECLARE_WASM_CALL_FRAME(instance);
+    void* returnAddress = OUR_RETURN_ADDRESS;
+    JSC_REMOVABLE_DEFINITION(WebAssembly, operationWasmUnwind);
 #if ASSERT_ENABLED
     // JS -> Wasm might throw before it's transitioned to a NativeCallee. It should have restored any callee saves at this point already though.
     if (callFrame->callee().isNativeCallee())
         assertCalleeIsReferenced(callFrame, instance);
 #endif
     VM& vm = instance->vm();
-    WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, OUR_RETURN_ADDRESS);
+    WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, returnAddress);
     genericUnwind(vm, callFrame);
     ASSERT(!!vm.callFrameForCatch);
     ASSERT(!!vm.targetMachinePCForThrow);

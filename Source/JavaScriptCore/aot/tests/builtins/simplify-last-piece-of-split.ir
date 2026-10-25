@@ -1,0 +1,273 @@
+# The last element of the array of a split at a literal, where nothing else uses the array, is the rest of the string behind the last separator, so no array is made. A separator that can overlap itself is searched from the left, as split does. A read in a loop whose split stands outside the loop keeps the array
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+# RUN(SUNK): pass SimplifyBuiltinCalls EliminateDeadCode SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="popped" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = String string="/"
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = AssumeType v2 castType=Array<string, proven, pristine[Storage, Names]>
+    v4 = CallBuiltin v3 overload=ArrayPrototypePop/0
+    Return v4
+# CHECK: [[from0]]: 2147483647 = Integer integer=2147483647
+# CHECK-NEXT: [[found0]]: int[-1, 2147483647] = StringLastIndexOfLiteral v0, [[from0]] literal="/"
+# CHECK-NEXT: [[width0]]: 1 = Integer integer=1
+# CHECK-NEXT: [[start0]]: {{*}} = Add [[found0]], [[width0]]
+# CHECK-NEXT: [[end0]]: {{*}} = GetStringLength v0
+# CHECK-NEXT: v4: string = Substring v0, [[start0]], [[end0]]
+# CHECK-NEXT: Return v4
+# SUNK-NOT: StringPrototypeSplit
+# SUNK: = Substring v0,
+}
+
+function f1 name="atMinusOne" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = String string=", "
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = AssumeType v2 castType=Array<string, proven, pristine[Storage, Names]>
+    v4 = Integer integer=-1
+    v5 = CallBuiltin v3, v4 overload=ArrayPrototypeAt/0
+    Return v5
+# CHECK: [[found1]]: int[-1, 2147483647] = StringLastIndexOfLiteral v0, {{*}} literal=", "
+# CHECK-NEXT: [[width1]]: 2 = Integer integer=2
+# CHECK-NEXT: [[behind1]]: {{*}} = Add [[found1]], [[width1]]
+# CHECK-NEXT: [[bits1]]: 31 = Integer integer=31
+# CHECK-NEXT: [[signs1]]: {{*}} = RShift [[found1]], [[bits1]]
+# CHECK-NEXT: [[mask1]]: {{*}} = BitNot [[signs1]]
+# CHECK-NEXT: [[start1]]: {{*}} = BitAnd [[behind1]], [[mask1]]
+# CHECK-NEXT: [[end1]]: {{*}} = GetStringLength v0
+# CHECK-NEXT: v5: string = Substring v0, [[start1]], [[end1]]
+# SUNK-NOT: StringPrototypeSplit
+}
+
+function f2 name="atLengthMinusOne" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = String string="."
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = AssumeType v2 castType=Array<string, proven, pristine[Storage, Names]>
+    v4 = CallBuiltin v3 overload=ArrayPrototypeLength/0
+    v5 = Integer integer=1
+    v6 = Sub v4, v5
+    v7 = ElemGet v3, v6
+    Return v7
+# CHECK: = StringLastIndexOfLiteral v0, {{*}} literal="."
+# CHECK-NOT: ElemGet
+# CHECK: v7: string = Substring v0,
+# SUNK-NOT: StringPrototypeSplit
+# SUNK-NOT: ArrayPrototypeLength
+# SUNK: = Substring v0,
+}
+
+function f3 name="arrayIsUsedAfterwards" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+    v2 = String string="/"
+    v3 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
+    v4 = AssumeType v3 castType=Array<string, proven, pristine[Storage, Names]>
+    v5 = CallBuiltin v4 overload=ArrayPrototypePop/0
+    v6 = Call v1, -, v5, v4
+    Return v6
+# CHECK-NOT: StringLastIndexOfLiteral
+# CHECK: v5:{{*}}= CallBuiltin v4 overload=ArrayPrototypePop/0
+}
+
+function f4 name="separatorNotKnown" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = AssumeType v2 castType=Array<string, proven, pristine[Storage, Names]>
+    v4 = CallBuiltin v3 overload=ArrayPrototypePop/0
+    Return v4
+# CHECK-NOT: StringLastIndexOfLiteral
+# CHECK: v4:{{*}}= CallBuiltin v3 overload=ArrayPrototypePop/0
+}
+
+function f5 name="emptySeparator" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = String string=""
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = AssumeType v2 castType=Array<string, proven, pristine[Storage, Names]>
+    v4 = CallBuiltin v3 overload=ArrayPrototypePop/0
+    Return v4
+# CHECK-NOT: StringLastIndexOfLiteral
+# CHECK: v4:{{*}}= CallBuiltin v3 overload=ArrayPrototypePop/0
+}
+
+function f6 name="secondToLast" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = String string="/"
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = AssumeType v2 castType=Array<string, proven, pristine[Storage, Names]>
+    v4 = Integer integer=-2
+    v5 = CallBuiltin v3, v4 overload=ArrayPrototypeAt/0
+    Return v5
+# CHECK-NOT: StringLastIndexOfLiteral
+# CHECK: v5:{{*}}= CallBuiltin v3, v4 overload=ArrayPrototypeAt/0
+}
+
+function f7 name="lengthIsAlsoReturned" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+    v2 = String string="/"
+    v3 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
+    v4 = AssumeType v3 castType=Array<string, proven, pristine[Storage, Names]>
+    v5 = CallBuiltin v4 overload=ArrayPrototypeLength/0
+    v6 = Integer integer=1
+    v7 = Sub v5, v6
+    v8 = ElemGet v4, v7
+    v9 = Call v1, -, v8, v5
+    Return v9
+# CHECK-NOT: StringLastIndexOfLiteral
+# CHECK: v8:{{*}}= ElemGet v4, v7
+}
+
+function f8 name="lengthOfAnotherArray" parameters=[{type=string}, {type=Array<string, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v2 = String string="/"
+    v3 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
+    v4 = AssumeType v3 castType=Array<string, proven, pristine[Storage, Names]>
+    v5 = CallBuiltin v1 overload=ArrayPrototypeLength/0
+    v6 = Integer integer=1
+    v7 = Sub v5, v6
+    v8 = ElemGet v4, v7
+    Return v8
+# CHECK-NOT: StringLastIndexOfLiteral
+# CHECK: v8:{{*}}= ElemGet v4, v7
+}
+
+function f9 name="separatorOverlapsItself" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = String string="::"
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = AssumeType v2 castType=Array<string, proven, pristine[Storage, Names]>
+    v4 = CallBuiltin v3 overload=ArrayPrototypePop/0
+    Return v4
+# CHECK-NOT: StringLastIndexOfLiteral
+# CHECK-NOT: ArrayPrototypePop
+# CHECK: [[zero9]]: 0 = Integer
+# CHECK-NEXT: Jump -> next [[header9]]([[zero9]], [[zero9]])
+# CHECK: [[header9]]([[position9]]: int[0, 4294967294], [[startOfLast9]]: int[0, 2147483647]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[length9]]: {{*}} = GetStringLength v0
+# CHECK-NEXT: [[has9]]: boolean = LessEq [[position9]], [[length9]]
+# CHECK-NEXT: Branch [[has9]] -> taken [[search9]](| 0), notTaken [[done9]](
+# CHECK: [[search9]]([[start9]]: int[0, 2147483647]):
+# CHECK-NEXT: = CallBuiltin v0, v1, [[start9]] overload=StringPrototypeIndexOf/0
+# CHECK: [[done9]](
+# CHECK: [[end9]]: {{*}} = GetStringLength v0
+# CHECK-NEXT: [[last9]]: string = Substring v0, [[startOfLast9]], [[end9]]
+# CHECK: Jump -> next [[header9]]({{*}}, [[start9]])
+# SUNK-NOT: StringPrototypeSplit
+# SUNK: = Substring v0,
+}
+
+function f10 name="separatorEndsAsItBegins" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = String string="-+-"
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = AssumeType v2 castType=Array<string, proven, pristine[Storage, Names]>
+    v4 = Integer integer=-1
+    v5 = CallBuiltin v3, v4 overload=ArrayPrototypeAt/0
+    Return v5
+# CHECK-NOT: StringLastIndexOfLiteral
+# CHECK-NOT: ArrayPrototypeAt
+# CHECK: LoopHint
+# CHECK: overload=StringPrototypeIndexOf/0
+}
+
+function f11 name="longSeparatorWithoutOverlap" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = String string="-->"
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = AssumeType v2 castType=Array<string, proven, pristine[Storage, Names]>
+    v4 = CallBuiltin v3 overload=ArrayPrototypePop/0
+    Return v4
+# CHECK-NOT: LoopHint
+# CHECK: = StringLastIndexOfLiteral v0, {{*}} literal="-->"
+# CHECK: v4: string = Substring v0,
+}
+
+function f12 name="oneOfTwoSeparators" parameters=[{type=string}, {type="/"|"."}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = AssumeType v2 castType=Array<string, proven, pristine[Storage, Names]>
+    v4 = CallBuiltin v3 overload=ArrayPrototypePop/0
+    Return v4
+# CHECK-NOT: ArrayPrototypePop
+# CHECK: LoopHint
+# CHECK: = CallBuiltin v0, v1, {{*}} overload=StringPrototypeIndexOf/0
+}
+
+function f13 name="oneSeparatorIsEmpty" parameters=[{type=string}, {type=""|"/"}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeSplit/0
+    v3 = AssumeType v2 castType=Array<string, proven, pristine[Storage, Names]>
+    v4 = CallBuiltin v3 overload=ArrayPrototypePop/0
+    Return v4
+# CHECK-NOT: LoopHint
+# CHECK: v4:{{*}}= CallBuiltin v3 overload=ArrayPrototypePop/0
+}
+
+function f14 name="poppedInLoop" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+    v2 = String string="/"
+    v3 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
+    v4 = AssumeType v3 castType=Array<string, proven, pristine[Storage, Names]>
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = CallBuiltin v4 overload=ArrayPrototypePop/0
+    v7 = Call v1, -, v6
+    v8 = ToBoolean v7
+    Branch v8 -> taken b1(), notTaken b2()
+  b2():
+    Return
+# CHECK-NOT: StringLastIndexOfLiteral
+# CHECK: v6:{{*}}= CallBuiltin v4 overload=ArrayPrototypePop/0
+}
+
+function f15 name="poppedInLoopAtOverlappingSeparator" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+    v2 = String string="::"
+    v3 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
+    v4 = AssumeType v3 castType=Array<string, proven, pristine[Storage, Names]>
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = CallBuiltin v4 overload=ArrayPrototypePop/0
+    v7 = Call v1, -, v6
+    v8 = ToBoolean v7
+    Branch v8 -> taken b1(), notTaken b2()
+  b2():
+    Return
+# CHECK-NOT: StringPrototypeIndexOf
+# CHECK: v6:{{*}}= CallBuiltin v4 overload=ArrayPrototypePop/0
+}
+
+function f16 name="splitAndPoppedInLoop" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+    v2 = String string="/"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
+    v5 = AssumeType v4 castType=Array<string, proven, pristine[Storage, Names]>
+    v6 = CallBuiltin v5 overload=ArrayPrototypePop/0
+    v7 = Call v1, -, v6
+    v8 = ToBoolean v7
+    Branch v8 -> taken b1(), notTaken b2()
+  b2():
+    Return
+# CHECK-NOT: ArrayPrototypePop
+# CHECK: = StringLastIndexOfLiteral v0, {{*}} literal="/"
+# CHECK: v6: string = Substring v0,
+# SUNK-NOT: StringPrototypeSplit
+# SUNK: = Substring v0,
+}
+
+function f17 name="poppedInInnerLoop" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+    v2 = String string="/"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
+    v5 = AssumeType v4 castType=Array<string, proven, pristine[Storage, Names]>
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v7 = CallBuiltin v5 overload=ArrayPrototypePop/0
+    v8 = Call v1, -, v7
+    v9 = ToBoolean v8
+    Branch v9 -> taken b2(), notTaken b3()
+  b3():
+    v10 = Call v1
+    v11 = ToBoolean v10
+    Branch v11 -> taken b1(), notTaken b4()
+  b4():
+    Return
+# CHECK-NOT: StringLastIndexOfLiteral
+# CHECK: v7:{{*}}= CallBuiltin v5 overload=ArrayPrototypePop/0
+# SUNK: = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
+}

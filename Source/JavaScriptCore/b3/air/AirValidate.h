@@ -27,13 +27,20 @@
 
 #if ENABLE(B3_JIT)
 
+#include "AirTmp.h"
+#include <optional>
 #include <wtf/text/UTF8CStringView.h>
 
 namespace JSC { namespace B3 { namespace Air {
 
 class Code;
+struct Inst;
 
 JS_EXPORT_PRIVATE void validate(Code&, UTF8CStringView dumpBefore = { });
+JS_EXPORT_PRIVATE Inst* findUseOfUndefinedFlags(Code&);
+JS_EXPORT_PRIVATE Inst* findMisplacedBlockEntryClobber(Code&);
+// Finds a Tmp that is not a register and is live at the head of an entrypoint. Liveness follows the predecessor lists, so they have to be current.
+JS_EXPORT_PRIVATE std::optional<Tmp> findUndefinedTmp(Code&);
 
 } } } // namespace JSC::B3::Air
 

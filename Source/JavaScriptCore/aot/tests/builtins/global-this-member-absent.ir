@@ -1,0 +1,76 @@
+# `globalThis.nope` answers undefined where nothing ever puts the name on the global object or on Object.prototype. `nope` alone throws a ReferenceError that names it, so it stays the read that it is.
+# RUN: pass ResolveBuiltins
+# RUN(FLOW): pipeline ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    v2 = CallDirect function=f3
+    v3 = CallDirect function=f4
+    v4 = CallDirect function=f5
+    v5 = CallDirect function=f6
+    Return
+}
+
+function f1 name="memberOfGlobalObject" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="nope"
+    Return v1
+# CHECK: v1: anything = PropGet v0 key="nope"
+# FLOW-NOT: PropGet
+# FLOW: [[absent]]: undefined = Undefined
+# FLOW-NEXT: [[proven]]: undefined = AssumeType [[absent]] castType=undefined
+# FLOW-NEXT: Return [[proven]]
+}
+
+function f2 name="freeName" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="nope" [isFreeName]
+    Return v1
+# CHECK: = PropGet v0 key="nope" [isFreeName]
+# FLOW-NOT: = Undefined
+# FLOW: = PropGet {{*}}key="nope"{{*}}[isFreeName]
+}
+
+function f3 name="typeofFreeName" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="nope" [isFreeName, isForTypeOf]
+    v2 = TypeOf v1
+    Return v2
+# CHECK: = PropGet v0 key="nope" [isFreeName, isForTypeOf]
+# FLOW-NOT: PropGet
+# FLOW: = Undefined
+}
+
+function f4 name="symbolKey" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key=@@iterator
+    Return v1
+# CHECK: = PropGet v0 key=@@iterator
+# FLOW-NOT: PropGet
+# FLOW: = Undefined
+}
+
+function f5 name="memberThatTheProgramAdds" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = Integer integer=1
+    PropSet v0, v1 key="added" mode=Strict
+    v3 = PropGet v0 key="added"
+    Return v3
+# CHECK: = PropGet v0 key="added"
+# FLOW-NOT: = Undefined
+# FLOW: = PropGet {{*}}key="added"
+}
+
+# The global object holds undefined under `undefined`, for good
+function f6 name="memberNamedUndefined" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="undefined"
+    Return v1
+# CHECK: v1: undefined = Undefined
+# FLOW-NOT: PropGet
+# FLOW: = Undefined
+}

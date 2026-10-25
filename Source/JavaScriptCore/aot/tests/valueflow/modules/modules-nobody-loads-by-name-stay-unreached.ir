@@ -1,0 +1,30 @@
+# The same modules without the load under a computed name: nobody asks for the other module
+# RUN: valueflow-solve unreached
+# CHECK: unreached f1
+# CHECK-NEXT: unreached f2
+# CHECK-NEXT: unreached f3
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN-NOT: unseen {{*}} f
+# UNSEEN: unseen-code no
+# UNSEEN-NEXT: modules-by-name no
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f1 name="other" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g1
+    v2 = NewClosure function=f3
+    Return
+}
+function f2 name="exported" module=m1 results=[{type=anything}] {
+    Return
+}
+function f3 name="keptInside" module=m1 results=[{type=anything}] {
+    Return
+}

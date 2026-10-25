@@ -1,0 +1,32 @@
+# A direct call that suspends its frame is unknown code whatever the summary of its callee: any code may run before the frame resumes
+# FORM: Prepared
+# RUN: effects summaries f3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callee" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=0} {
+    v0 = NewPromise
+    v1 = CallDirect v0 function=f1
+    Return v0
+}
+function f1 name="callee" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=0} {
+    v1 = Undefined
+    Return v1
+}
+function f2 name="caller" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=0} {
+    v0 = NewPromise
+    v1 = CallDirect v0 function=f3
+    Return v0
+}
+function f3 name="caller" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=0} {
+    v1 = CallDirect v0 function=f1
+    v2 = AwaitCallBySavingFrame v0 function=f1
+    Return v2
+}
+# CHECK-NOT: suspends
+# CHECK: f1 return: none throw: none
+# CHECK-NOT: suspends
+# CHECK: f3 return: {{*}}callsUnknownCode
+# CHECK-NOT: suspends
+# CHECK-LABEL: function f3
+# CHECK: v1 CallDirect: none
+# CHECK-NEXT: v2 AwaitCallBySavingFrame: unknownCode suspends

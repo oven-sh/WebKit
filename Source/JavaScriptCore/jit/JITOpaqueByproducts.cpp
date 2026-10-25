@@ -26,7 +26,7 @@
 #include "config.h"
 #include "JITOpaqueByproducts.h"
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include <wtf/TZoneMallocInlines.h>
 
@@ -57,5 +57,5 @@ void OpaqueByproducts::dump(PrintStream& out) const
 
 } // namespace JSC
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)
 

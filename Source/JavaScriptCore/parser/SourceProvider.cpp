@@ -402,8 +402,11 @@ static ALWAYS_INLINE size_t lineStartAfterTerminator(std::span<const CharType> t
 
 LineColumn BuiltinsSourceProvider::lineColumnInTextForOffset(unsigned offset)
 {
+    auto allText = source().span8();
+    if (!allText.data())
+        return { };
     unsigned start = *(std::ranges::upper_bound(m_starts, offset) - 1);
-    auto text = source().span8().subspan(start, offset - start);
+    auto text = allText.subspan(start, offset - start);
     unsigned line = 0;
     size_t lineStart = 0;
     while (lineStart < text.size()) {
@@ -415,6 +418,13 @@ LineColumn BuiltinsSourceProvider::lineColumnInTextForOffset(unsigned offset)
     }
     return { line, static_cast<unsigned>(text.size() - lineStart) };
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+std::optional<uint32_t> BuiltinsSourceProvider::builtinFunctionAt(unsigned offset) const
+{
+    return m_firstID + static_cast<uint32_t>(std::ranges::upper_bound(m_starts, offset) - m_starts.begin()) - 1;
+}
+#endif
 
 } // namespace JSC
 

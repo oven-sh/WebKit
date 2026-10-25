@@ -45,6 +45,7 @@
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "JSTemplateObjectDescriptor.h"
+#include "MarkedBlockCage.h"
 #include "Options.h"
 #include "PrivateFieldPutKind.h"
 #include "StrongInlines.h"
@@ -3604,6 +3605,9 @@ JSValue BytecodeGenerator::addBigIntConstant(const Identifier& identifier, uint8
         DeferTermination deferScope(vm);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         auto parseIntSign = sign ? JSBigInt::ParseIntSign::Signed : JSBigInt::ParseIntSign::Unsigned;
+        std::optional<MarkedBlockCage::InfallibleAllocationScope> infallibleAllocation;
+        if (MarkedBlockCage::isRequired())
+            infallibleAllocation.emplace(vm.heap.cage());
         JSValue bigIntInMap = JSBigInt::parseInt(nullptr, vm, identifier.string(), radix, JSBigInt::ErrorParseMode::ThrowExceptions, parseIntSign);
         scope.assertNoException();
         addConstantValue(bigIntInMap);

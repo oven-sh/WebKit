@@ -1,0 +1,64 @@
+# a value of type guard that no test, allocation or AllGuards stands behind proves nothing
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidGuard 4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+function f0 name="badUnspecifiedGuard" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = Unspecified valueType=guard
+    v2 = GetSlotOrUndefined v0, v1 key="x" receivers=[L0] level=Proven
+    Return v2
+}
+function f1 name="badUnspecifiedGuardOnOnePath" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Jump -> next b3(v2)
+  b2():
+    v3 = Unspecified valueType=guard
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = GetSlotOrUndefined v0, v4 key="x" receivers=[L0] level=Proven
+    Return v5
+}
+function f2 name="goodGuardOnBothPaths" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Jump -> next b4(v2)
+  b2():
+    v3 = ShapeTest v0 layouts=[L0]
+    Branch v3 -> taken b3(| 0), notTaken b5()
+  b3(v4):
+    Jump -> next b4(v4)
+  b4(v5):
+    v6 = GetSlotOrUndefined v0, v5 key="x" receivers=[L0] level=Proven
+    Return v6
+  b5():
+    Return
+}
+function f3 name="badUnspecifiedGuardOfFilledSlot" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = Unspecified valueType=guard
+    v2 = GetSlot v0, v1 key="x" receivers=[L0] level=Proven
+    Return v2
+}
+function f4 name="badUnspecifiedGuardBesideUnspecifiedObject" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = AllGuards v2
+    Jump -> next b3(v2, v3)
+  b2():
+    v4 = Unspecified valueType=object
+    v5 = Unspecified valueType=guard
+    Jump -> next b3(v4, v5)
+  b3(v6, v7):
+    v8 = GetSlot v6, v7 key="x" receivers=[L0] level=Proven
+    Return v8
+}
+function f5 name="goodUnspecifiedGuardWhereTheTypeIsEnough" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = Unspecified valueType=guard
+    v2 = GetSlotOrUndefined v0, v1 key="x" receivers=[L0] level=Proven
+    Return v2
+}

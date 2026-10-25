@@ -1,0 +1,9 @@
+# the owner of a private name is a class, never an environment
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidPropertyKey 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="good" fields=[{key=#"p"@L0 declared={type=anything} flags=[IsPrivate]}]
+layout L1 kind=Environment name="environment"
+layout L2 kind=Instance name="badOwnerIsEnvironment" fields=[{key=#"p"@L1 declared={type=anything} flags=[IsPrivate]}]

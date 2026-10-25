@@ -1,0 +1,14 @@
+# a built-in call takes a list only where its overload has a form for a list
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidBuiltinCall 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="goodList" parameters=[{type=Array<number>}] results=[{type=undefined}] {
+    v1 = CallBuiltin -, v0 overload=MathMax/0 builtinCallForm=List
+    Return
+}
+function f1 name="badListOfOverloadWithoutListForm" parameters=[{type=Array<number>}] results=[{type=undefined}] {
+    v1 = CallBuiltin -, v0 overload=MathAbs/0 builtinCallForm=List
+    Return
+}

@@ -1,0 +1,46 @@
+# class Point { x = 1.5; readX() { return this.x } }  register(Point.prototype.readX, new Point(), { text: "label" })
+# `this` of a method is a position like any parameter: whoever takes the method off its class calls it on whatever it likes, so the method is entered through a test of `this`, and its typed body takes `this` for an instance.
+# The lie: the first type test of every function passes whatever it is given (drop-guard). That is the test of `this`, so the typed body runs on an object of another layout.
+# A validating build tests the value that the passing edge hands on, finds the other layout and ends the process.
+# On an instance of the class the same build runs to its end: the dropped test would have passed
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (readX, point, label) => { print(readX.call(label)); };
+# RUN(SAME): run-in-shell globalThis.register = (readX, point, label) => { print(readX.call(point)); };
+# OPTIONS: validate drop-guard=TypeTest:0
+# STATISTIC: FunctionsWithTypesCheckedAtEntry = 1
+# CHECK: AOT validation: ValueType f
+# CHECK: crashed with
+# SAME-NOT: AOT validation
+# SAME: 1.5
+# SAME-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=24 kind=This
+layout L0 kind=Instance name="Point" constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Label" fields=[{key="text" declared={type=string} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="readX"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = String string="label"
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="register" [isFreeName]
+    v11 = Call v10, -, v2, v5, v8
+    Return
+}
+function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = Double number=1.5
+    v3 = NewObject v1, v2 layout=L0 fields=[0]
+    Return v3
+}
+function f2 name="readX" kind=Method flags=[HasThis] thisType={type=L0 site=w0} results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}

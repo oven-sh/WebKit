@@ -37,11 +37,12 @@ namespace JSC {
 class ArgList;
 class Exception;
 class FunctionExecutable;
+class JSGlobalObject;
 class JSScope;
 class JSValue;
 
 struct CallData {
-    enum class Type : uint8_t { None, Native, JS };
+    enum class Type : uint8_t { None, Native, JS, Compiled };
     Type type { Type::None };
 
     CallData() { } // Needed for the anonymous union below.
@@ -55,7 +56,20 @@ struct CallData {
             FunctionExecutable* functionExecutable;
             JSScope* scope;
         } js;
+        struct {
+            const void* entrypoint;
+            JSGlobalObject* realm;
+        } compiled;
     };
+
+    static CallData forCompiledCode(const void* taggedEntrypoint, JSGlobalObject* realm)
+    {
+        CallData result;
+        result.type = Type::Compiled;
+        result.compiled.entrypoint = taggedEntrypoint;
+        result.compiled.realm = realm;
+        return result;
+    }
 };
 
 enum class ProfilingReason : uint8_t {

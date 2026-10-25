@@ -1,0 +1,93 @@
+# A typed function starts with a check of each parameter. The set of a parameter whose callers are all known holds whatever arrives, so it says that numbers alone do:
+# then the sum behind the checks is the sum of the integers that arrive, although the type of a value that rests on a check counts for nothing.
+# `add` gets int32 and an integer from 0 to 3. `apply` calls what its checked parameter holds, which is `add` alone. `sum` hands the result of a call round a loop.
+# `addAny` also gets a string, so its sum may be a string, and of the numbers only the kinds count: integers arrive, and a sum of integers has no fraction.
+# `addFraction` gets a string and what Math.random answers, so its sum may be a string or any number
+# RUN: valueflow-apply
+# CHECK: function f1 name="add" {{*}}parameters=[{type=i32}, {type=int[0, 3]}] results=[{type=int[-2147483648, 2147483650]}]
+# CHECK: function f2 name="apply" {{*}}parameters=[{type=f1}, {type=i32}] results=[{type=int[-2147483648, 2147483650]}]
+# CHECK: function f3 name="sum" {{*}}parameters=[{type=i32}] results=[{type=i32}]
+# CHECK: function f4 name="clamp" {{*}}parameters=[{type=i32}] results=[{type=i32}]
+# CHECK: function f5 name="addAny" {{*}}parameters=[{type=number flags=[IsExpected]}] results=[{type=int|whole|string}]
+# CHECK: function f6 name="addFraction" {{*}}parameters=[{type=number flags=[IsExpected]}] results=[{type=number|string}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = Integer integer=0
+    v4 = BitOr v2, v3
+    v5 = Integer integer=3
+    v6 = BitAnd v2, v5
+    v7 = NewClosure function=f1
+    v8 = Call v7, -, v4, v6
+    v9 = NewClosure function=f2
+    v10 = Call v9, -, v7, v4
+    v11 = NewClosure function=f3
+    v12 = Call v11, -, v4
+    v13 = NewClosure function=f5
+    v14 = Call v13, -, v4
+    v15 = String string="a"
+    v16 = Call v13, -, v15
+    v17 = NewClosure function=f6
+    v18 = Call v17, -, v2
+    v19 = Call v17, -, v15
+    v20 = NewArray v8, v10, v12, v14, v16, v18, v19 contents=anything holes=[]
+    Return v20
+}
+function f1 name="add" parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=number}] {
+  b0(v0, v1):
+    v2 = Check v0 castType=number
+    v3 = Check v1 castType=number
+    v4 = Add v2, v3
+    Return v4
+}
+function f2 name="apply" parameters=[{type=f1 flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=number}] {
+  b0(v0, v1):
+    v2 = Check v0 castType=f1
+    v3 = Check v1 castType=number
+    v4 = Integer integer=3
+    v5 = Call v2, -, v3, v4
+    v6 = Check v5 castType=number
+    Return v6
+}
+function f3 name="sum" parameters=[{type=number flags=[IsExpected]}] results=[{type=number}] {
+  b0(v0):
+    v1 = Check v0 castType=number
+    v2 = NewClosure function=f4
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = Call v2, -, v3
+    v6 = Check v5 castType=number
+    v7 = Integer integer=100
+    v8 = Less v6, v7
+    Branch v8 -> taken b1(v6), notTaken b2()
+  b2():
+    Return v6
+}
+function f4 name="clamp" parameters=[{type=number flags=[IsExpected]}] results=[{type=number}] {
+  b0(v0):
+    v1 = Check v0 castType=number
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    v4 = Integer integer=0
+    v5 = BitOr v3, v4
+    Return v5
+}
+function f5 name="addAny" parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0):
+    v1 = Check v0 castType=number
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    Return v3
+}
+function f6 name="addFraction" parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0):
+    v1 = Check v0 castType=number
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    Return v3
+}

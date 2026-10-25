@@ -29,6 +29,7 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 
+#include "FFICallingConvention.h"
 #include "FFIType.h"
 #include "JSCPtrTag.h"
 #include "JSExportMacros.h"
@@ -73,6 +74,8 @@ public:
     unsigned slotCount() const { return argumentCount() + 1; }
     size_t slotBufferBytes() const { return static_cast<size_t>(slotCount()) * slotSize; }
 
+    const CallLayout& callLayout() const LIFETIME_BOUND { return m_callLayout; }
+
     unsigned hash() const { return m_hash; }
     JS_EXPORT_PRIVATE String toString() const;
 
@@ -90,6 +93,7 @@ private:
     FixedVector<Type> m_arguments;
     Type m_returnType;
     unsigned m_hash { 0 };
+    CallLayout m_callLayout;
 
     Lock m_codeLock;
     MacroAssemblerCodeRef<JITThunkPtrTag> m_invokeThunkCode WTF_GUARDED_BY_LOCK(m_codeLock);

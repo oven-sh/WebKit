@@ -1,0 +1,100 @@
+# A guarded stretch lasts through the rounds of the optimize schedule, and the schedule ends by itself
+# FORM: AsRead
+# RUN: pipeline EliminateGuards
+# OPTIONS: disable=flow:ProvenLayoutSets
+# STATISTIC: MaxOptimizationRoundsHits = 0
+# STATISTIC: StretchesGuarded >= 2
+# STATISTIC: StretchesNotClonable >= 1
+# LOSS: MaxOptimizationRounds x0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number}}, {key="z" declared={type=number}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = Call v1
+    v3 = ToNumber v2
+    v4 = NewObject -, v3, v3, v3 layout=L0 fields=[0, 1, 2]
+    v5 = Call v1, -, v4
+    v6 = NewClosure function=f1
+    v7 = Call v1, -, v6
+    v8 = NewClosure function=f2
+    v9 = Call v1, -, v8
+    v10 = NewClosure function=f4
+    v11 = Call v1, -, v10
+    Return
+}
+
+function f1 name="twoReads" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    v3 = Mul v1, v2
+    Return v3
+# CHECK: [[test1]]:{{*}}= TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[test1]] -> taken [[fast1]](| 0), notTaken
+# CHECK-NEXT: [[fast1]]([[object1]]: L0):
+# CHECK-NOT: testedType=L0
+# CHECK: [[x1]]: number = GetSlot [[object1]]{{*}} key="x" receivers=[L0]
+# CHECK-NOT: testedType=L0
+# CHECK: [[y1]]: number = GetSlot [[object1]]{{*}} key="y" receivers=[L0]
+# CHECK-NEXT: : number = Mul [[x1]], [[y1]]
+# CHECK-NOT: testedType=L0
+# CHECK: frequency=Unlikely:
+# CHECK: = PropGet v0 key="x"
+# CHECK-NOT: testedType=L0
+# CHECK: = PropGet v0 key="y"
+# CHECK-NOT: testedType=L0
+}
+
+function f2 name="readsThroughCallee" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="x"
+    v2 = CallDirect v0 function=f3
+    v3 = PropGet v0 key="z"
+    v4 = Mul v1, v2
+    v5 = Mul v4, v3
+    Return v5
+}
+# CHECK-LABEL: function f2 name="readsThroughCallee"
+# CHECK: [[test2]]:{{*}}= TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[test2]] -> taken [[fast2]](| 0), notTaken
+# CHECK-NEXT: [[fast2]]([[object2]]: L0):
+# CHECK-NOT: CallDirect
+# CHECK-NOT: testedType=L0
+# CHECK: : number = GetSlot [[object2]]{{*}} key="x" receivers=[L0]
+# CHECK-NOT: CallDirect
+# CHECK-NOT: testedType=L0
+# CHECK: : number = GetSlot [[object2]]{{*}} key="y" receivers=[L0]
+# CHECK-NOT: CallDirect
+# CHECK-NOT: testedType=L0
+# CHECK: : number = GetSlot [[object2]]{{*}} key="z" receivers=[L0]
+# CHECK-NOT: CallDirect
+# CHECK-NOT: testedType=L0
+# CHECK: Return
+# The generic copy behind the failed test of the receiver keeps the call. No copy tests the receiver again.
+# CHECK-NOT: testedType=L0
+# CHECK-LABEL: function f3 name="readY"
+
+function f3 name="readY" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="y"
+    Return v1
+}
+
+function f4 name="branchBehindStretch" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything, v2: number):
+    v3 = PropGet v0 key="x"
+    v4 = TypeTest v1 testedType=string
+    v5 = PropGet v0 key="y"
+    v6 = Add v2, v2
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v7):
+    Return v7
+  b2():
+    v8 = Mul v3, v5
+    v9 = Mul v8, v6
+    Return v9
+}

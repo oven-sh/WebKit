@@ -1,0 +1,42 @@
+# class F extends Function { constructor() { super("return 7") }  static create() { return new F() } }        new Proxy(F, {}).create()
+# The class is in unknown hands before anybody constructs it: only whoever holds the proxy calls `create`. What lies above the class may have been changed, so the super call may enter anything.
+# It still enters `Function`, which the class names as its base. Were `Function` handed out with the class, the unknown object would stand for it,
+# the call would count as a call of the unknown object alone, and the run time would refuse the text.
+# FORM: AsRead
+# RUN: valueflow-solve unseen
+# CHECK: unseen EvaluatesText Function f1:
+# CHECK: unseen-code yes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="F" module=m0 constructor=f1 flags=[HasHeritage]
+variable g0 name="F" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Function" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Function) flags=[IsExpected]}
+    v3 = ResolveHeritage v2
+    v4 = NewClosure function=f1
+    v5 = NewClass v4, v2, v3 layout=L0
+    v6 = NewClosure function=f2
+    DefineMethod v5, v6 layout=L0 side=Static key="create"
+    v8 = FinishClass v5 layout=L0
+    PutModuleVariable v8 variable=g0
+    v10 = NewObject
+    v11 = Builtin builtin=Proxy
+    v12 = Construct v11, -, v8, v10
+    v13 = PropGet v12 key="create"
+    v14 = Call v13, v12
+    Return v14
+}
+function f1 name="F" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] results=[{type=object flags=[IsFromCompiler]}] {
+    v2 = GetSuperBase v0
+    v3 = String string="return 7"
+    v4 = SuperConstruct v2, v1, v3 layout=L0
+    Return v4
+}
+function f2 name="create" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = Construct v0
+    Return v1
+}

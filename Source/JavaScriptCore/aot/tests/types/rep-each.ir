@@ -1,0 +1,35 @@
+# Each representation once: the default of a type, its slot, whether the collector must see it, every representation that can hold the type, and the widest type of each representation
+# FORM: Prepared
+# RUN: rep
+# CHECK: t0: rep Boolean slot Boolean cells no legal [Boolean, JSValue]
+# CHECK-NEXT: t1: rep Int32 slot Uint8 cells no legal [Int32, Int64, Double, OptionalInt64, OptionalDouble, JSValue]
+# CHECK-NEXT: t2: rep Int32 slot Int16 cells no legal [Int32, Int64, Double, OptionalInt64, OptionalDouble, JSValue]
+# CHECK-NEXT: t3: rep Int64 slot Int64 cells no legal [Int64, Double, OptionalInt64, OptionalDouble, JSValue]
+# CHECK-NEXT: t4: rep Double slot Double cells no legal [Double, OptionalDouble, JSValue]
+# CHECK-NEXT: t5: rep OptionalInt64 slot OptionalInt64 cells no legal [OptionalInt64, OptionalDouble, JSValue]
+# CHECK-NEXT: t6: rep OptionalDouble slot OptionalDouble cells no legal [OptionalDouble, JSValue]
+# CHECK-NEXT: t7: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue, LiteralString]
+# CHECK-NEXT: t8: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t9: rep JSValue slot JSValue cells yes legal [JSValue]
+# CHECK-NEXT: t10: rep LiteralString slot LiteralString cells yes legal [Cell32, JSValue, LiteralString]
+# CHECK-NEXT: t11: rep RawWord slot Int64 cells no legal [RawWord]
+# CHECK-NEXT: t12: rep Cell slot Cell cells yes legal [Cell, Cell32, JSValue]
+# CHECK-NEXT: t13: rep JSValue slot JSValue cells yes legal [Cell32, JSValue]
+# CHECK-NEXT: t14: rep Void slot JSValue cells no legal [Void, OptionalInt64, OptionalDouble, Cell32, JSValue, LiteralString]
+# CHECK-NEXT: Void: never
+# CHECK-NEXT: Boolean: boolean
+# CHECK-NEXT: Int32: i32
+# CHECK-NEXT: Int64: int
+# CHECK-NEXT: Double: number
+# CHECK-NEXT: OptionalInt64: undefined|null|int|absent
+# CHECK-NEXT: OptionalDouble: undefined|null|number|absent
+# CHECK-NEXT: Cell: string|symbol|bigint|object
+# CHECK-NEXT: Cell32: undefined|null|string|symbol|bigint|object|absent
+# CHECK-NEXT: JSValue: anything|absent
+# CHECK-NEXT: LiteralString: undefined|null|string|absent
+# CHECK-NEXT: RawWord: never
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment
+function f0 name="types" parameters=[{type=boolean}, {type=int[0, 255]}, {type=int[-1, 255]}, {type=int}, {type=number}, {type=undefined|int}, {type=null|number}, {type=string}, {type=symbol("p")@m0:10}, {type=anything}, {type=undefined|"a"}, {type=cursor}, {type=env L0}, {type=absent|env L0}, {type=undefined}] results=[{type=undefined}]

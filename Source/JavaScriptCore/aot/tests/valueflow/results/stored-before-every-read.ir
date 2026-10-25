@@ -1,0 +1,25 @@
+# The order of execution is computed from the stamps: a variable that its module stores before anything that reads it can run is stored before every read, and its type loses the dead zone.
+# A function that is called before the store reads the dead zone
+# RUN: valueflow-apply
+# CHECK: variable g0 name="early" {{*}}declared={type=1} flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead isUnchangedDuringActivation=true}
+# CHECK: variable g1 name="late" {{*}}declared={type=1|absent} flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="early" module=m0 declared={type=anything|absent} initialization=Uninitialized
+variable g1 name="late" module=m0 declared={type=anything|absent} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f1
+    v3 = Call v2
+    PutModuleVariable v0 variable=g1
+    Return v3
+}
+function f1 name="reader" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="early"
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="late"
+    Return v1
+}

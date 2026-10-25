@@ -1,0 +1,27 @@
+# A block parameter of type guard is a guard of the object, never a join of the objects its guards are about
+# FORM: Prepared optimizing
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 1
+# STATISTIC: AllocationsSunk = 0
+# STATISTIC: AllocationsMergedAtJoins = 0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Holder" fields=[{key="list" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="guardOfVirtualObjectPassedOnTwoEdges" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = AllGuards v2
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = GetSlotOrUndefined v2, v4 key="list" receivers=[L0] level=Expected
+    Return v5
+# CHECK-NOT: NewObject
+# CHECK-NOT: AllGuards
+# CHECK-NOT: guard
+# CHECK: b3([[list1]]: anything):
+# CHECK-NEXT: v5: anything = Upcast [[list1]] castType=anything
+}

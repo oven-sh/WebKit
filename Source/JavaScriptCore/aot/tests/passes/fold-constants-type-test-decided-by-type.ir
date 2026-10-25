@@ -1,0 +1,38 @@
+# A TypeTest that the type of its operand decides becomes a constant
+# FORM: Prepared
+# RUN: pass FoldConstants
+# STATISTIC: FoldConstantsChanges = 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="alwaysTrue" parameters=[{type=string}] results=[{type=boolean}] {
+    v1 = TypeTest v0 testedType=string
+    Return v1
+# CHECK-NOT: TypeTest
+# CHECK: v1: true = Boolean boolean=true
+}
+
+function f1 name="alwaysFalse" parameters=[{type=string}] results=[{type=boolean}] {
+    v1 = TypeTest v0 testedType=number
+    Return v1
+# CHECK-NOT: TypeTest
+# CHECK: v1: false = Boolean
+# CHECK-NEXT: Return v1
+}
+
+function f2 name="undecided" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = TypeTest v0 testedType=string
+    Return v1
+# CHECK: = TypeTest v0 testedType=string
+}
+
+function f3 name="conditionOfBranchWithoutProofs" parameters=[{type=number}] results=[{type=number}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    Return v0
+# CHECK-NOT: TypeTest
+# CHECK: v1: true = Boolean boolean=true
+# CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
+}

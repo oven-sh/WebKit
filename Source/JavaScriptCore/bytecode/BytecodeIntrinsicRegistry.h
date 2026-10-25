@@ -40,6 +40,13 @@ class BytecodeIntrinsicNode;
 class RegisterID;
 enum class LinkTimeConstant : int32_t;
 
+#if ENABLE(SHADOW_REALM)
+#define JSC_SHADOW_REALM_BYTECODE_INTRINSIC_FUNCTIONS_EACH_NAME(macro) \
+    macro(isShadowRealm)
+#else
+#define JSC_SHADOW_REALM_BYTECODE_INTRINSIC_FUNCTIONS_EACH_NAME(macro)
+#endif
+
 #define JSC_COMMON_BYTECODE_INTRINSIC_FUNCTIONS_EACH_NAME(macro) \
     macro(argument) \
     macro(argumentCount) \
@@ -70,7 +77,7 @@ enum class LinkTimeConstant : int32_t;
     macro(isRegExpObject) \
     macro(isMap) \
     macro(isSet) \
-    macro(isShadowRealm) \
+    JSC_SHADOW_REALM_BYTECODE_INTRINSIC_FUNCTIONS_EACH_NAME(macro) \
     macro(isArrayIterator) \
     macro(isUndefinedOrNull) \
     macro(isWrapForValidIterator) \
@@ -155,8 +162,7 @@ enum class LinkTimeConstant : int32_t;
     macro(InternalMicrotaskAsyncFromSyncIteratorDone) \
 
 
-#define JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_CUSTOM_EACH_NAME(macro) \
-    macro(orderedHashTableSentinel)
+#define JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_CUSTOM_EACH_NAME(macro)
 
 class BytecodeIntrinsicRegistry {
     WTF_MAKE_NONCOPYABLE(BytecodeIntrinsicRegistry);

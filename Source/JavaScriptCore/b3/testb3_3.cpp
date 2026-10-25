@@ -2223,6 +2223,50 @@ void testClzMem64(int64_t a)
     CHECK_EQ(compileAndRun<unsigned>(proc, &a), countLeadingZero(a));
 }
 
+void testPopCountArg64(int64_t a)
+{
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t>(proc, root);
+    Value* count = root->appendNew<Value>(proc, PopCount, Origin(), arguments[0]);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), count);
+    CHECK_EQ(compileAndRun<uint64_t>(proc, a), static_cast<uint64_t>(std::popcount(static_cast<uint64_t>(a))));
+}
+
+void testPopCountMem64(int64_t a)
+{
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t*>(proc, root);
+    MemoryValue* value = root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), arguments[0]);
+    Value* count = root->appendNew<Value>(proc, PopCount, Origin(), value);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), count);
+    CHECK_EQ(compileAndRun<uint64_t>(proc, &a), static_cast<uint64_t>(std::popcount(static_cast<uint64_t>(a))));
+}
+
+void testPopCountArg32(int32_t a)
+{
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t>(proc, root);
+    Value* count = root->appendNew<Value>(proc, PopCount, Origin(), arguments[0]);
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), count);
+    CHECK_EQ(compileAndRun<uint32_t>(proc, a), static_cast<uint32_t>(std::popcount(static_cast<uint32_t>(a))));
+}
+
+void testPopCountConstant64(int64_t a)
+{
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    Value* count = root->appendNew<Value>(proc, PopCount, Origin(), root->appendNew<Const64Value>(proc, Origin(), a));
+    root->clearSuccessors();
+    root->appendNew<Value>(proc, Return, Origin(), count);
+    CHECK_EQ(compileAndRun<uint64_t>(proc), static_cast<uint64_t>(std::popcount(static_cast<uint64_t>(a))));
+}
+
 void testClzArg32(int32_t a)
 {
     Procedure proc;

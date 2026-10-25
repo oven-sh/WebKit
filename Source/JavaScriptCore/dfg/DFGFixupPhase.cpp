@@ -1138,7 +1138,7 @@ private:
                 break;
 
             case Array::Float16Array:
-                if (!CCallHelpers::supportsFloat16())
+                if (!CCallHelpers::supportsFloat16(CPUFeatureSet::host()))
                     node->setArrayMode(ArrayMode(Array::Generic, node->arrayMode().action()));
                 break;
 
@@ -1377,7 +1377,7 @@ private:
                 node->setArrayMode(ArrayMode(Array::Generic, node->arrayMode().action()));
                 break;
             case Array::Float16Array: {
-                if (!CCallHelpers::supportsFloat16())
+                if (!CCallHelpers::supportsFloat16(CPUFeatureSet::host()))
                     node->setArrayMode(ArrayMode(Array::Generic, node->arrayMode().action()));
                 break;
             }

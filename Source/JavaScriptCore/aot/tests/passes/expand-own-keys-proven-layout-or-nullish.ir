@@ -1,0 +1,53 @@
+# Behind the test for undefined and null a spread of undefined|null|L is a spread of L: no second test for an object, and no test of an order that flow has proven
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Copy"
+layout L1 name="OneProvenOrder" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled}}] flow={baseState=None constructorOrders=[{fields=[1, 0]}] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, StoreOfOtherType]}
+layout L2 name="OrderIsOnlyExpected" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}] flow={constructorOrders=[{fields=[0, 1]}]}
+
+function f0 name="surelyThere" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = NewObject layout=L0 fields=[]
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    Return v3
+# CHECK-NOT: TypeTest
+# CHECK-NOT: HasKeyOrder
+# CHECK-NOT: CopyDataProperties
+# CHECK: = GetSlot v0 key="b" receivers=[L1]
+# CHECK-NOT: CopyDataProperties
+}
+
+function f1 name="mayBeUndefinedOrNull" parameters=[{type=undefined|null|L1}] results=[{type=anything}] {
+    v1 = NewObject layout=L0 fields=[]
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    Return v3
+# CHECK: = TypeTest v0 testedType=undefined|null
+# CHECK-NOT: TypeTest
+# CHECK-NOT: HasKeyOrder
+# CHECK-NOT: CopyDataProperties
+# CHECK: ([[object1]]: L1):
+# CHECK-NOT: TypeTest
+# CHECK-NOT: HasKeyOrder
+# CHECK-NOT: CopyDataProperties
+# CHECK: = GetSlot [[object1]] key="b" receivers=[L1]
+# CHECK-NOT: TypeTest
+# CHECK-NOT: CopyDataProperties
+}
+
+function f2 name="orderIsTestedOnWhatIsLeft" parameters=[{type=undefined|L2}] results=[{type=anything}] {
+    v1 = NewObject layout=L0 fields=[]
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    Return v3
+# CHECK: = TypeTest v0 testedType=undefined|null
+# CHECK-NOT: testedType=object
+# CHECK: ([[object2]]: L2):
+# CHECK-NOT: testedType=object
+# CHECK: = HasKeyOrder [[object2]] layout=L2 fields=[0, 1]
+# CHECK-NOT: testedType=object
+}

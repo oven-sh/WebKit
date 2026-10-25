@@ -1,0 +1,34 @@
+# function tryPut(list: number[], at: number, value: number) { return $tryPutDoubleIndex(list, at, value) }
+# TryPutDoubleIndex stores into storage of doubles that may be written, inside the length, and answers true. It refuses every other store: it answers false and the array stays as it was.
+# It compares the whole byte that names the kind of storage, where the lock of the cell lies too, so it also refuses while a thread holds the lock.
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = tryPut => { const filled = first => { const list = []; list.push(first, first, first); return list; }; const integers = filled(1); const doubles = filled(1.5); const frozen = Object.freeze(filled(1.5)); const holes = filled(1.5); delete holes[1]; const values = filled("a"); const show = (name, list, at) => print(name + ": " + tryPut(list, at, 9.5) + " | " + list.join() + " | " + list.length); show("first", doubles, 0); show("last", doubles, 2); show("at the length", doubles, 3); show("far outside", doubles, 1000000); show("below zero", doubles, -1); lockCell(doubles); show("lock held", doubles, 1); unlockCell(doubles); show("lock free", doubles, 1); show("integers", integers, 0); show("values", values, 0); show("shared with a literal", [1.5, 2.5], 0); show("frozen", frozen, 0); show("empty", [], 0); show("a hole", holes, 1); };
+# CHECK-NOT: AOT validation
+# CHECK: first: true | 9.5,1.5,1.5 | 3
+# CHECK-NEXT: last: true | 9.5,1.5,9.5 | 3
+# CHECK-NEXT: at the length: false | 9.5,1.5,9.5 | 3
+# CHECK-NEXT: far outside: false | 9.5,1.5,9.5 | 3
+# CHECK-NEXT: below zero: false | 9.5,1.5,9.5 | 3
+# CHECK-NEXT: lock held: false | 9.5,1.5,9.5 | 3
+# CHECK-NEXT: lock free: true | 9.5,9.5,9.5 | 3
+# CHECK-NEXT: integers: false | 1,1,1 | 3
+# CHECK-NEXT: values: false | a,a,a | 3
+# CHECK-NEXT: shared with a literal: false | 1.5,2.5 | 2
+# CHECK-NEXT: frozen: false | 1.5,1.5,1.5 | 3
+# CHECK-NEXT: empty: false |  | 0
+# CHECK-NEXT: a hole: true | 1.5,9.5,1.5 | 3
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="tryPut" role=Library parameters=[{type=Array}, {type=i32}, {type=number}] results=[{type=anything}] {
+    v3 = TryPutDoubleIndex v0, v1, v2
+    Return v3
+}

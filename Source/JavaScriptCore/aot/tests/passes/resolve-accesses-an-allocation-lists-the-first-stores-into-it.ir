@@ -1,0 +1,255 @@
+# From its allocation on an object is in nobody's hands but the function's, until the function hands it on, and nobody can tell when it was allocated.
+# The allocation moves down behind the values of the first definitions and stores and lists them, in the order in which they would have created the properties: they are gone.
+# Objects of the layout may be frozen, get another prototype and lose fields from their slots elsewhere: on any other object each of these stores waits for tests.
+# A value that the slot may not admit is left to the run time behind the allocation, which lists something that fits in its place.
+# It ends at a spread, a computed key, an accessor, a name for the second time, a value for which nothing can stand in, a store below another prototype, and at whatever may hand the object on
+# FORM: Prepared
+# RUN: pass ResolveAccesses
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Options" fields=[{key="first" declared={type=number}}, {key="second" declared={type=number}}, {key="third" declared={type=number}}]
+layout L1 name="Holder" fields=[{key="first" declared={type=number}}, {key="held" declared={type=L0}}, {key="third" declared={type=number}}]
+function f0 name="somebody" parameters=[{type=anything}] results=[{type=number}]
+function f1 name="lazy" kind=Getter flags=[HasThis] results=[{type=anything}]
+
+function f2 name="definitions-in-the-literal" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = CallDirect v0 function=f0
+    PropDefine v1, v2 key="third"
+    v4 = CallDirect v2 function=f0
+    PropDefine v1, v4 key="second"
+    v6 = FinishObject v1
+    Return v6
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v2: number = CallDirect v0 function=f0
+# CHECK-NEXT: v4: number = CallDirect v2 function=f0
+# CHECK-NEXT: v1: L0 = NewObject -, v0, v2, v4 layout=L0 fields=[0, 2, 1]
+# CHECK-NEXT: v6: L0 = FinishObject v1
+# CHECK-NEXT: Return v6
+}
+
+function f3 name="stores-behind-the-literal" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = CallDirect v0 function=f0
+    PropSet v2, v3 key="second"
+    PropDefine v2, v0 key="third"
+    Return v2
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v3: number = CallDirect v0 function=f0
+# CHECK-NEXT: v1: L0 = NewObject -, v0, v3, v0 layout=L0 fields=[0, 1, 2]
+# CHECK-NEXT: v2: L0 = FinishObject v1
+# CHECK-NEXT: Return v2
+}
+
+function f4 name="a-filler-gives-way-to-the-value" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = Integer
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = CallDirect v0 function=f0
+    PropSet v2, v3 key="first"
+    v5 = FinishObject v2
+    Return v5
+# CHECK: v3: number = CallDirect v0 function=f0
+# CHECK-NEXT: v2: L0 = NewObject -, v3 layout=L0 fields=[0]
+# CHECK-NEXT: v5: L0 = FinishObject v2
+}
+
+function f5 name="a-value-that-the-run-time-looks-at-waits-behind-the-allocation" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = Integer
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    PropSet v3, v1 key="first"
+    v5 = CallDirect v0 function=f0
+    PropDefine v3, v5 key="second"
+    v7 = FinishObject v3
+    Return v7
+# CHECK: v5: number = CallDirect v0 function=f0
+# CHECK-NEXT: v3: L0 = NewObject -, v2, v5 layout=L0 fields=[0, 1]
+# CHECK-NEXT: PropSet v3, v1 key="first"
+# CHECK-NEXT: v7: L0 = FinishObject v3
+}
+
+function f6 name="another-prototype" parameters=[{type=number}, {type=object}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v2, v1
+    PropDefine v2, v0 key="second"
+    v5 = FinishObject v2
+    PropSet v5, v0 key="third"
+    Return v5
+# CHECK: v2: L0 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+# CHECK-NEXT: SetLiteralPrototype v2, v1
+# CHECK-NEXT: v5: L0 = FinishObject v2
+# CHECK-NEXT: PropSet v5, v0 key="third"
+}
+
+function f7 name="handed-on-in-between" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    PropSet v2, v0 key="second"
+    v4 = CallDirect v2 function=f0
+    PropSet v2, v0 key="third"
+    Return v2
+# CHECK: v1: L0 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+# CHECK: PropSet v2, v0 key="third"
+}
+
+function f8 name="stored-as-a-value" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    PropSet v1, v3 key="kept"
+    PropSet v3, v0 key="second"
+    Return v3
+# CHECK: v2: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK: PropSet v3, v0 key="second"
+}
+
+function f9 name="stored-into-itself" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    PropSet v2, v2 key="self"
+    PropSet v2, v0 key="second"
+    Return v2
+# CHECK: v1: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK: PropSet v2, v0 key="second"
+}
+
+function f10 name="the-prototype-of-another-literal" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    SetLiteralPrototype v2, v1
+    PropDefine v1, v0 key="second"
+    v5 = FinishObject v1
+    v6 = FinishObject v2
+    Return v6
+# CHECK: v1: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK: PropDefine v1, v0 key="second"
+}
+
+function f11 name="a-name-for-the-second-time" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PropDefine v1, v0 key="second"
+    PropDefine v1, v0 key="second"
+    PropDefine v1, v0 key="third"
+    v5 = FinishObject v1
+    Return v5
+# CHECK: v1: L0 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+# CHECK-NEXT: PropDefine v1, v0 key="second"
+# CHECK-NEXT: PropDefine v1, v0 key="third"
+}
+
+function f12 name="something-stands-in-for-a-value-that-the-slot-may-not-admit" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    PropDefine v2, v1 key="second"
+    PropDefine v2, v0 key="third"
+    v5 = FinishObject v2
+    Return v5
+# CHECK-NEXT: b0(v0: number, v1: anything):
+# CHECK-NEXT: [[filler]]: {{*}} = Integer
+# CHECK-NEXT: v2: L0 = NewObject -, v0, [[filler]], v0 layout=L0 fields=[0, 1, 2]
+# CHECK-NEXT: PropDefine v2, v1 key="second"
+# CHECK-NEXT: v5: L0 = FinishObject v2
+}
+
+function f13 name="a-spread" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    CopyDataProperties v2, v1
+    PropDefine v2, v0 key="second"
+    v5 = FinishObject v2
+    Return v5
+# CHECK: v2: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK: PropDefine v2, v0 key="second"
+}
+
+function f14 name="a-computed-key" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    ElemDefine v2, v1, v0
+    PropDefine v2, v0 key="second"
+    v5 = FinishObject v2
+    Return v5
+# CHECK: v2: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK: PropDefine v2, v0 key="second"
+}
+
+function f15 name="an-accessor" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewClosure function=f1
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    PropDefine v2, v0 key="second"
+    DefineGetter v2, v1, - key="lazy"
+    PropDefine v2, v0 key="third"
+    v6 = FinishObject v2
+    Return v6
+# CHECK: v2: L0 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+# CHECK-NEXT: DefineGetter v2, v1 key="lazy"
+# CHECK-NEXT: PropDefine v2, v0 key="third"
+}
+
+function f16 name="the-setter-that-every-object-inherits" parameters=[{type=number}, {type=object}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    PropSet v3, v1 key="__proto__"
+    PropSet v3, v0 key="second"
+    Return v3
+# CHECK: v2: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK: PropSet v3, v0 key="second"
+}
+
+function f17 name="a-prototype-given-to-the-allocation" parameters=[{type=number}, {type=object}] results=[{type=anything}] {
+    v2 = NewObject v1, v0 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    PropSet v3, v0 key="second"
+    Return v3
+# CHECK: v2: L0 = NewObject v1, v0 layout=L0 fields=[0]
+# CHECK: PropSet v3, v0 key="second"
+}
+
+function f18 name="in-another-block" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    PropSet v3, v0 key="second"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PropSet v3, v0 key="third"
+    v7 = CallDirect v3 function=f0
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+# CHECK: v2: L0 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+# CHECK: PropSet v3, v0 key="third"
+}
+
+function f19 name="allocated-in-a-loop" parameters=[{type=number}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    PropSet v4, v0 key="second"
+    v6 = CallDirect v4 function=f0
+    PropSet v4, v0 key="third"
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+# CHECK: v3: L0 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+# CHECK: PropSet v4, v0 key="third"
+}
+
+function f20 name="nothing-stands-in-for-an-object" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    PropDefine v2, v1 key="held"
+    PropDefine v2, v0 key="third"
+    v5 = FinishObject v2
+    Return v5
+# CHECK: v2: L1 = NewObject -, v0 layout=L1 fields=[0]
+# CHECK-NEXT: PropDefine v2, v1 key="held"
+# CHECK-NEXT: PropDefine v2, v0 key="third"
+}
+
+function f21 name="nothing-is-listed-for-the-sake-of-a-stand-in-alone" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    PropDefine v2, v1 key="second"
+    v4 = FinishObject v2
+    Return v4
+# CHECK: v2: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: PropDefine v2, v1 key="second"
+}

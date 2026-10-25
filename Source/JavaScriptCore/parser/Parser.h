@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "AOTRemovableFeature.h"
 #include "ExecutableInfo.h"
 #include "Lexer.h"
 #include "ModuleScopeData.h"
@@ -2277,7 +2278,7 @@ std::unique_ptr<ParsedNode> Parser<LexerType>::parse(ParserError& error, const I
 }
 
 template <class ParsedNode>
-std::unique_ptr<ParsedNode> parse(
+NEVER_INLINE std::unique_ptr<ParsedNode> parse(
     VM& vm, const SourceCode& source,
     const Identifier& name, ImplementationVisibility implementationVisibility, JSParserBuiltinMode builtinMode,
     LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, SourceParseMode parseMode, FunctionMode functionMode, SuperBinding superBinding,
@@ -2289,6 +2290,7 @@ std::unique_ptr<ParsedNode> parse(
     const FixedVector<UnlinkedFunctionExecutable::ClassElementDefinition>* classElementDefinitions = nullptr,
     bool isInsideOrdinaryFunction = false)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, parse<ParsedNode>);
     ASSERT(!source.provider()->source().isNull());
 
     MonotonicTime before;
@@ -2324,7 +2326,7 @@ std::unique_ptr<ParsedNode> parse(
 }
 
 template <class ParsedNode>
-std::unique_ptr<ParsedNode> parseRootNode(
+NEVER_INLINE std::unique_ptr<ParsedNode> parseRootNode(
     VM& vm, const SourceCode& source,
     ImplementationVisibility implementationVisibility, JSParserBuiltinMode builtinMode,
     LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, SourceParseMode parseMode,
@@ -2332,6 +2334,7 @@ std::unique_ptr<ParsedNode> parseRootNode(
     ConstructorKind constructorKindForTopLevelFunctionExpressions = ConstructorKind::None,
     DebuggerParseData* debuggerParseData = nullptr)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, parseRootNode<ParsedNode>);
     static_assert(std::is_same_v<ParsedNode, ProgramNode> || std::is_same_v<ParsedNode, ModuleProgramNode>);
     ASSERT(!source.provider()->source().isNull());
 
@@ -2365,8 +2368,9 @@ std::unique_ptr<ParsedNode> parseRootNode(
     return result;
 }
 
-inline std::unique_ptr<ProgramNode> parseFunctionForFunctionConstructor(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, ParserError& error, std::optional<int> functionConstructorParametersEndPosition)
+NEVER_INLINE inline std::unique_ptr<ProgramNode> parseFunctionForFunctionConstructor(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, ParserError& error, std::optional<int> functionConstructorParametersEndPosition)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, parseFunctionForFunctionConstructor);
     ASSERT(!source.provider()->source().isNull());
 
     MonotonicTime before;

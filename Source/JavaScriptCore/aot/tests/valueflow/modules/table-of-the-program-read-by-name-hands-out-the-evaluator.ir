@@ -1,0 +1,25 @@
+# intrinsics = { "%parse%": parse, "%eval%": eval }; intrinsics["%eval%"]("12")
+# The key is a constant, so the read names the member, and the value arrives at the call: an event
+# RUN: valueflow-solve unseen
+# CHECK: unseen EvaluatesText
+# CHECK: unseen-code yes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Intrinsics" fields=[{key="%parse%" declared={type=anything} flags=[IsRequired]}, {key="%eval%" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Eval
+    v2 = NewObject layout=L0
+    PropDefine v2, v0 key="%parse%"
+    PropDefine v2, v1 key="%eval%"
+    v5 = FinishObject v2
+    v6 = String string="%eval%"
+    v7 = ElemGet v5, v6
+    v8 = String string="12"
+    v9 = Call v7, -, v8
+    Return
+}
+function f1 name="parse" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

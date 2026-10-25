@@ -1,0 +1,32 @@
+# [held].map(somethingThatNoTableLists)
+# The callback that this call hands to Array.prototype.map is one nobody knows. The records of map say so where the call is: code that nobody compiles runs, it may write whatever it reaches,
+# and it gets the element, so `held` is in unknown hands. The library's code behind map (runtimefunction 66) adds nothing to that.
+# A callback of the program: unknown-callback-in-the-code-behind-a-described-built-in-is-no-unknown-code.ir
+# LIBRARY: own
+# RUN: valueflow-why flag=h6 escaped=f2
+# CHECK: flag=h6
+# CHECK-NEXT: {{*}} by Call
+# CHECK: escaped=f2
+# CHECK-NEXT: n0 escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=65 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = NewArray v0 contents=anything
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="somethingThatNoTableLists" [isFreeName]
+    v4 = PropGet v1 key="map"
+    v5 = Call v4, v1, v3 calleeKey="map"
+    Return
+}
+function f1 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=65 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, v2, v4, v3, v0
+    Return v5
+}
+function f2 name="held" kind=Arrow results=[{type=anything}] {
+    Return
+}

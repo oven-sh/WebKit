@@ -1,0 +1,27 @@
+# class Labeled { constructor(label) {} }; Array.prototype.indexOf.call(input(new Labeled("mine")), "mine")
+# The instance has escaped and the class above it has not. indexOf constructs nothing and nobody reads `constructor` through the unknown object, so the one construction in the program is the only one there is.
+# This holds for a class that extends no built-in class: one that does escapes with the object that the built-in constructor makes for it.
+# RUN: valueflow-apply
+# CHECK: function f1 name="Labeled" {{*}}parameters=[{type=string}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Labeled" constructor=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = String string="mine"
+    v4 = Construct v2, -, v3
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="input" [isFreeName]
+    v7 = Call v6, -, v4
+    v8 = Builtin builtin=ArrayPrototypeIndexOf
+    v9 = Call v8, v7, v3
+    Return
+}
+function f1 name="Labeled" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    Return v3
+}

@@ -1,0 +1,35 @@
+# A push with more operands than the limit stays a call
+# RUN: compile
+# RUN(SELECTED): pipeline Select
+# Hot, so that the entrypoint takes the body in: the budget for warm code (InlineBudgetWarmBytes) leaves a body of this size where it is, and the entrypoint calls it
+# OPTIONS: limit=MaxInlinePushOperands:2 heat=EverythingIsHot
+# LOSS: MaxInlinePushOperands f1
+# CHECK: loss MaxInlinePushOperands
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="publish" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f1 name="pushesThreeThenTwo" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
+    v2 = PropGet v0 key="push"
+    v3 = Call v2, v0, v1, v1, v1 calleeKey="push"
+    v4 = PropGet v0 key="push"
+    v5 = Call v4, v0, v1, v1 calleeKey="push"
+    Return v5
+}
+# Only its entrypoint enters the function, so the body is there
+# SELECTED-LABEL: name="pushesThreeThenTwo" module=m0 role=GenericEntrypoint
+# SELECTED: [[array]]: Array<number> = AssumeType v2 castType=Array<number>
+# SELECTED: [[number]]: number = AssumeType v3 castType=number
+# SELECTED-NOT: CallInline [[array]], [[number]], [[number]], [[number]]
+# SELECTED: = CallBuiltin [[array]], [[number]], [[number]], [[number]] overload=ArrayPrototypePush/0
+# SELECTED-NOT: CallInline [[array]], [[number]], [[number]], [[number]]
+# SELECTED: TryCallInline [[array]], [[number]], [[number]] inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+# SELECTED-NOT: CallInline [[array]], [[number]], [[number]], [[number]]

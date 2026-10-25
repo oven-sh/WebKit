@@ -30,10 +30,24 @@
 #include "B3Effects.h"
 #include "B3StackmapValue.h"
 #include "B3Value.h"
+#include <optional>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace B3 {
+
+struct PureFunction {
+    uint64_t id;
+    bool dependsOnChildren { false };
+
+    friend bool operator==(const PureFunction&, const PureFunction&) = default;
+};
+
+struct ClientTag {
+    uint16_t kind { 0 };
+    uint16_t flags { 0 };
+    uint32_t data { 0 };
+};
 
 class PatchpointValue final : public StackmapValue {
 public:
@@ -51,6 +65,14 @@ public:
     // other StackmapValue meta-data. If there are read effects but not write effects, then this same sort
     // of substitution could be made so long as there are no interfering writes.
     Effects effects;
+
+    bool isLoopPoll { false };
+    std::optional<PureFunction> pureFunction;
+    ClientTag clientTag;
+
+    JS_EXPORT_PRIVATE void clobberLateOnSuccessor(unsigned successorIndex, const RegisterSet&);
+    JS_EXPORT_PRIVATE RegisterSet lateClobberedOnSuccessor(unsigned successorIndex) const;
+    unsigned numberOfSuccessorClobbers() const { return m_lateClobberedOnSuccessor.size(); }
 
     // The input representation (i.e. constraint) of the return value. This defaults to WarmAny if the
     // type is Void and it defaults to SomeRegister otherwise. It's illegal to mess with this if the type
@@ -75,7 +97,25 @@ private:
     static Opcode opcodeFromConstructor(Type, Origin) { return Patchpoint; }
     static Opcode opcodeFromConstructor(Type, Origin, Kind) { return Patchpoint; }
     JS_EXPORT_PRIVATE PatchpointValue(Type, Origin, Kind = Patchpoint);
+
+    Vector<RegisterSet, 0> m_lateClobberedOnSuccessor;
 };
+
+template<typename Functor>
+bool isSamePureCall(const PatchpointValue* a, const PatchpointValue* b, const Functor& canonicalChild)
+{
+    if (!a->pureFunction || a->pureFunction != b->pureFunction || a->type() != b->type())
+        return false;
+    if (!a->pureFunction->dependsOnChildren)
+        return true;
+    if (a->numChildren() != b->numChildren())
+        return false;
+    for (unsigned i = 0; i < a->numChildren(); ++i) {
+        if (canonicalChild(a->child(i)) != canonicalChild(b->child(i)))
+            return false;
+    }
+    return true;
+}
 
 } } // namespace JSC::B3
 

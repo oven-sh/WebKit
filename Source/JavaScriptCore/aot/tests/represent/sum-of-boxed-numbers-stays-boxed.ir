@@ -1,0 +1,119 @@
+# x + 1 where x is a number that arrives boxed and the sum leaves boxed: the sum is made of the boxed words: behind one test of the tag it is an addition of two int32, and nothing is unboxed to a double and boxed again.
+# A sum that something wants as a double, or that is made of a double, stays a double
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: pass ChooseRepresentations
+# RUN(CODE): generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="incrementOfTestedNumber" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=number
+    TestAndBranch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: number):
+    v3 = Increment v2 form=Numbers
+    Return v3
+  b2():
+    Return v0
+# CHECK: b1(v2: number @JSValue):
+# CHECK-NEXT: v3: number @JSValue = Increment v2 form=Numbers
+# CHECK-NEXT: Return v3
+}
+
+function f1 name="sumWithSmallInteger" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=undefined|number
+    TestAndBranch v2 -> taken b1(| 0), notTaken b5()
+  b1(v3: undefined|number):
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v4 = Integer integer=2
+    Jump -> next b4(v4)
+  b3():
+    v5 = Integer integer=1
+    Jump -> next b4(v5)
+  b4(v6: int[1, 2]):
+    v7 = Add v3, v6 form=Numbers
+    Return v7
+  b5():
+    Return v0
+# CHECK: b1(v3: undefined|number @JSValue):
+# CHECK: 2 @Int32 = Integer integer=2
+# CHECK: 1 @Int32 = Integer integer=1
+# CHECK: b4(v6: int[1, 2] @Int32):
+# CHECK-NEXT: v7: number @JSValue = Add v3, v6 form=Numbers
+# CHECK-NEXT: Return v7
+}
+
+function f2 name="differenceOfTwoBoxedNumbers" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = AssumeType v0 castType=number
+    v3 = AssumeType v1 castType=number
+    v4 = Sub v2, v3 form=Numbers
+    v5 = Upcast v4 castType=anything
+    Return v5
+# CHECK: v4: number @JSValue = Sub v2, v3 form=Numbers
+}
+
+function f3 name="sumAlsoWantedAsDouble" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = AssumeType v0 castType=number
+    v3 = Decrement v2 form=Numbers
+    v4 = Mul v3, v1 form=Numbers
+    v5 = Less v4, v1 form=Numbers
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    Return v3
+  b2():
+    Return v0
+# CHECK: number @Double = Decrement {{*}} form=Numbers
+}
+
+function f4 name="sumOfDouble" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = AssumeType v0 castType=number
+    v3 = Add v2, v1 form=Numbers
+    Return v3
+# CHECK: number @Double = Add {{*}} form=Numbers
+}
+
+function f5 name="sumAlsoCarriedAroundLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = AssumeType v0 castType=number
+    Jump -> next b1(v2)
+  b1(v3: number):
+    LoopHint
+    v5 = Increment v2 form=Numbers
+    Branch v1 -> taken b1(v5), notTaken b2()
+  b2():
+    Return v3
+# CHECK: b1(v3: number @JSValue):
+# CHECK: v5: number @JSValue = Increment v2 form=Numbers
+}
+
+function f6 name="doubleWantedWhereSeldomEntered" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
+    v3 = AssumeType v0 castType=number
+    v4 = Increment v3 form=Numbers
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v4
+  b2() frequency=Unlikely:
+    v5 = Mul v4, v1 form=Numbers
+    Return v5
+# CHECK: v4: number @JSValue = Increment v3 form=Numbers
+# CHECK: b2() frequency=Unlikely:
+# CHECK-NEXT: number @Double = Mul v4, v1 form=Numbers
+}
+
+function f7 name="storedInLoopAndWantedAsDoubleBehindIt" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=number}] {
+    v3 = AssumeType v0 castType=number
+    Jump -> next b1(v3)
+  b1(v4: number):
+    LoopHint
+    v6 = Increment v3 form=Numbers
+    v7 = StrictEq v6, v0 form=Generic
+    Branch v2 -> taken b1(v6), notTaken b2()
+  b2():
+    v8 = Mul v4, v1 form=Numbers
+    Return v8
+}
+# CHECK-LABEL: function f7 name="storedInLoopAndWantedAsDoubleBehindIt"
+# CHECK: b1(v4: number @JSValue):
+# CHECK: v6: number @JSValue = Increment v3 form=Numbers
+# CHECK: b2():
+# CHECK-NEXT: number @Double = Mul v4, v1 form=Numbers
+# CODE-NOT: no code

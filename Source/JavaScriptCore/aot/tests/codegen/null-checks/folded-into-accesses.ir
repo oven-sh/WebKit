@@ -1,0 +1,59 @@
+# A null check is a load that faults, and where an access through the same reference follows in the block, with nothing in between that somebody could observe, that access faults for it and the load is gone
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot check=validate-back-end
+# RUN: generate-code NullChecksFoldedIntoAccesses
+# REQUIRES: unsanitized-code
+# CHECK: f1: size={{*}} faults=1
+# CHECK: f2: size={{*}} faults=2
+# CHECK: f3: size={{*}} faults=1
+# CHECK: f4: size={{*}} faults=1
+# CHECK: f5: size={{*}} faults=1
+# CHECK: f6: size={{*}} faults=1
+# ARM64 has no address of a base, a scaled index and an offset: where the check and the access then name other registers, the check keeps its load.
+# RUN(X64): generate-code NullChecksFoldedIntoAccesses
+# REQUIRES(X64): x86_64 unsanitized-code
+# X64: statistic NullChecksFoldedIntoAccesses 4
+# RUN(ARM64): generate-code NullChecksFoldedIntoAccesses
+# REQUIRES(ARM64): arm64 unsanitized-code
+# ARM64: statistic NullChecksFoldedIntoAccesses 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Node" fields=[{key="next" declared={type=null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="value" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="count" declared={type=i32} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="allocate" parameters=[{type=number}, {type=i32}] results=[{type=L0}] {
+    v2 = Null
+    v3 = NewObject -, v2, v0, v1 layout=L0 fields=[0, 1, 2]
+    Return v3
+}
+function f1 name="readsReference" parameters=[{type=null|L0}] results=[{type=null|L0}] {
+    v1 = RequireObjectCoercible v0 name="next"
+    v2 = GetSlot v1 key="next" receivers=[L0] level=Proven
+    Return v2
+}
+function f2 name="readsThroughTwoReferences" parameters=[{type=null|L0}] results=[{type=null|L0}] {
+    v1 = RequireObjectCoercible v0 name="next"
+    v2 = GetSlot v1 key="next" receivers=[L0] level=Proven
+    v3 = RequireObjectCoercible v2 name="next"
+    v4 = GetSlot v3 key="next" receivers=[L0] level=Proven
+    Return v4
+}
+function f3 name="stores" parameters=[{type=null|L0}, {type=number}] results=[{type=undefined}] {
+    v2 = RequireObjectCoercible v0 name="value"
+    PutSlot v2, -, v1 key="value" receivers=[L0] level=Proven
+    Return
+}
+function f4 name="onlyChecks" parameters=[{type=null|L0}] results=[{type=i32}] {
+    v1 = RequireObjectCoercible v0 name="count"
+    v2 = Integer integer=2
+    Return v2
+}
+function f5 name="callsBeforeReading" parameters=[{type=null|L0}, {type=number}, {type=i32}] results=[{type=null|L0}] {
+    v3 = RequireObjectCoercible v0 name="next"
+    v4 = CallDirect v1, v2 function=f0
+    v5 = GetSlot v3 key="next" receivers=[L0] level=Proven
+    Return v5
+}
+function f6 name="readsOtherObjectFirst" parameters=[{type=null|L0}, {type=L0}] results=[{type=null|L0}] {
+    v2 = RequireObjectCoercible v0 name="next"
+    v3 = GetSlot v1 key="next" receivers=[L0] level=Proven
+    Return v3
+}

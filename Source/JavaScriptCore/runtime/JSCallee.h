@@ -77,6 +77,12 @@ public:
 
     DECLARE_VISIT_CHILDREN;
 
+    template<typename Visitor>
+    ALWAYS_INLINE static void visitFields(JSCallee* thisObject, Visitor& visitor)
+    {
+        visitor.append(thisObject->m_scope);
+    }
+
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     static constexpr ptrdiff_t offsetOfScopeChain()

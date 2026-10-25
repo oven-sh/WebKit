@@ -1,0 +1,172 @@
+# A store that holds only under tests: after the layout come the tests that the name is nowhere but in the slot, the test for a frozen object and the test of the stored value, and the slot store names the guard and the narrowed values
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Loose" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="late" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="fixed" declared={type=number} flags=[IsImmutable] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L1 name="Sealed" fields=[{key="x" declared={type=number}}, {key="y" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 name="Unlisted" fields=[{key="late" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangePrototype] keys=NeverEnumerated}
+layout L3 name="Holder" fields=[{key="list" declared={type=Array<number, proven>} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="either" declared={type=number|Array<number, proven>} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="plain" declared={type=Array} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="loose" declared={type=L0} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="sealed" declared={type=L1} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="every-test" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    PropSet v0, v1 key="x"
+    Return
+# CHECK-NEXT: b0(v0: anything ~ L0, v1: anything):
+# CHECK-NEXT: [[hasLayout]]: boolean{{*}}= TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[hasLayout]] -> taken [[typed]](| 0), notTaken {{*}}
+# CHECK: [[fitting]]([[number]]: number):
+# CHECK: PutSlotOrAdd [[object]], [[guard]], [[number]] key="x" receivers=[L0] level=Expected
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: PropSet v0, v1 key="x"
+# CHECK: [[typed]]([[object]]: L0):
+# CHECK-NEXT: [[isOwn]]: boolean = BelongsToInstance [[object]]
+# CHECK-NEXT: Branch [[isOwn]] -> taken [[own]](| 0), notTaken {{*}}()
+# CHECK: [[own]]({{*}}: guard):
+# CHECK: [[hasPrototype]]: boolean = HasLayoutPrototype [[object]]
+# CHECK-NEXT: Branch [[hasPrototype]] -> taken [[inherits]](| 0), notTaken {{*}}()
+# CHECK: [[inherits]]({{*}}: guard):
+# CHECK: [[hasNoOthers]]: boolean = HasNoFieldOutsideSlot [[object]]
+# CHECK-NEXT: Branch [[hasNoOthers]] -> taken [[plain]](| 0), notTaken {{*}}()
+# CHECK: [[plain]]({{*}}: guard):
+# CHECK: [[isNotFrozen]]: boolean = IsNotFrozen [[object]]
+# CHECK-NEXT: Branch [[isNotFrozen]] -> taken [[notFrozen]](| 0), notTaken {{*}}()
+# CHECK: [[notFrozen]]({{*}}: guard):
+# CHECK-NEXT: [[fits]]: boolean = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch [[fits]] -> taken [[fitting]](| 0), notTaken {{*}}
+}
+function f1 name="slot-is-always-filled" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    PropSet v0, v1 key="y"
+    Return
+# CHECK-NOT: IsSlotFilled
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK-NOT: IsSlotFilled
+# CHECK: ([[filledNumber]]: number):
+# CHECK-NOT: IsSlotFilled
+# CHECK: PutSlot [[filledObject]], {{*}}, [[filledNumber]] key="y" receivers=[L0] level=Expected
+# CHECK-NOT: IsSlotFilled
+# CHECK: = IsNotFrozen [[filledObject]]
+# CHECK-NOT: IsSlotFilled
+# CHECK: = TypeTest v1 testedType=number
+}
+function f2 name="value-fits" parameters=[{type=L0 flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: number):
+    PropSet v0, v1 key="x"
+    Return
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK-NOT: TypeTest
+# CHECK: PutSlotOrAdd [[fittingObject]], {{*}}, v1 key="x" receivers=[L0] level=Expected
+# CHECK-NOT: TypeTest
+# CHECK: = HasNoFieldOutsideSlot [[fittingObject]]
+# CHECK: = IsNotFrozen [[fittingObject]]
+# CHECK-NOT: TypeTest
+}
+function f3 name="object-is-never-frozen" parameters=[{type=L1}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="x"
+    Return
+# CHECK-NEXT: b0(v0: L1, v1: anything):
+# CHECK-NEXT: [[sealedHasNoOthers]]: boolean = HasNoFieldOutsideSlot v0
+# CHECK-NEXT: Branch [[sealedHasNoOthers]] -> taken [[sealedPlain]](| 0), notTaken {{*}}()
+# CHECK-NOT: IsNotFrozen
+# CHECK: ([[sealedNumber]]: number):
+# CHECK-NOT: IsNotFrozen
+# CHECK: PutSlotOrAdd v0, [[sealedGuard]], [[sealedNumber]] key="x" receivers=[L1] level=Expected
+# CHECK: [[sealedPlain]]([[sealedGuard]]: guard):
+# CHECK-NEXT: = TypeTest v1 testedType=number
+}
+function f4 name="store-may-create-the-property" parameters=[{type=L0 flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: number):
+    PropSet v0, v1 key="late"
+    Return
+# CHECK-NOT: IsSlotFilled
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: PutSlotOrAdd [[lateObject]], {{*}}, v1 key="late" receivers=[L0] level=Expected
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: PropSet v0, v1 key="late"
+# CHECK: = IsNotFrozen [[lateObject]]
+# CHECK-NOT: IsSlotFilled
+}
+function f5 name="store-may-create-a-property-nobody-enumerates" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="late"
+    Return
+# CHECK-NEXT: b0(v0: L2, v1: number):
+# CHECK-NEXT: = IsNotFrozen v0
+# CHECK-NOT: PutSlotOrAdd
+# CHECK: PutSlot v0, {{*}}, v1 key="late" receivers=[L2] level=Expected
+# CHECK-NOT: PutSlotOrAdd
+}
+function f6 name="definition" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: number):
+    PropDefine v0, v1 key="y"
+    Return
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: PutSlot [[definedObject]], {{*}}, v1 key="y" receivers=[L0] level=Expected
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: PropDefine v0, v1 key="y"
+# CHECK: = IsNotFrozen [[definedObject]]
+}
+function f7 name="part-of-the-field-type-can-be-tested" parameters=[{type=L3}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="either"
+    Return
+# CHECK-NEXT: b0(v0: L3, v1: anything):
+# CHECK-NEXT: [[isNumber]]: boolean = TypeTest v1 testedType=number
+# CHECK-NEXT: Branch [[isNumber]] -> taken [[numbers]](| 0), notTaken {{*}}(| 0)
+# CHECK: [[numbers]]([[testedNumber]]: number):
+# CHECK-NOT: TypeTest
+# CHECK: PutSlot v0, -, [[testedNumber]] key="either" receivers=[L3] level=Expected
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: PropSet v0, {{*}} key="either"
+# CHECK-NOT: TypeTest
+}
+function f8 name="class-of-the-field-type-can-be-tested" parameters=[{type=L3}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="plain"
+    Return
+# CHECK-NEXT: b0(v0: L3, v1: anything):
+# CHECK-NEXT: = TypeTest v1 testedType=Array
+# CHECK: ([[testedArray]]: Array):
+# CHECK: PutSlot v0, -, [[testedArray]] key="plain" receivers=[L3] level=Expected
+}
+function f9 name="layout-of-the-field-type-can-be-tested" parameters=[{type=L3}, {type=L1|L2}] results=[{type=anything}] {
+    PropSet v0, v1 key="sealed"
+    Return
+# CHECK-NEXT: b0(v0: L3, v1: L1|L2):
+# CHECK-NEXT: = TypeTest v1 testedType=L1
+# CHECK: ([[testedObject]]: L1):
+# CHECK: PutSlot v0, -, [[testedObject]] key="sealed" receivers=[L3] level=Expected
+}
+function f10 name="proven-contents-cannot-be-tested" parameters=[{type=L3}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="list"
+    Return
+# CHECK-NEXT: b0(v0: L3, v1: anything):
+# CHECK-NEXT: PropSet v0, v1 key="list"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+}
+function f11 name="object-of-an-unknown-instance-cannot-be-tested-for-a-layout" parameters=[{type=L3}, {type=object}] results=[{type=anything}] {
+    PropSet v0, v1 key="loose"
+    Return
+# CHECK-NEXT: b0(v0: L3, v1: object):
+# CHECK-NEXT: PropSet v0, v1 key="loose"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+}
+function f12 name="value-never-fits" parameters=[{type=L0 flags=[IsExpected]}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: string):
+    PropSet v0, v1 key="x"
+    Return
+# CHECK-NEXT: b0(v0: anything ~ L0, v1: string):
+# CHECK-NEXT: PropSet v0, v1 key="x"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+}
+function f13 name="field-is-written-by-its-definition-only" parameters=[{type=L0 flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: number):
+    PropSet v0, v1 key="fixed"
+    Return
+# CHECK-NEXT: b0(v0: anything ~ L0, v1: number):
+# CHECK-NEXT: PropSet v0, v1 key="fixed"
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+}

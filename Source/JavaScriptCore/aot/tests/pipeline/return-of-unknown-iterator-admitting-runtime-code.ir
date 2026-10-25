@@ -1,0 +1,62 @@
+# `x.return()` on a value nothing is known about, in a program that hands the caller to code the compiler does not see and makes no iterator helper itself: what arrives may be any object of the realm, so a lookup through it finds the library functions named `return` and flow enters them. The call tests for each, they are compiled, and the build succeeds
+# RUN: compile
+# RUN(SPLIT): pipeline ResolveBuiltins
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="library.js" displayPath="library.js" flags=[IsLibrary]
+entry module=m0
+layout L0 kind=Environment fields=[{key="count" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=0
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = CallDirect v1 function=f1
+    v3 = GetEnvironmentField v1 layout=L0 field=0
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="publish" [isFreeName]
+    v6 = NewClosure function=f2
+    v7 = Call v5, -, v6, v3
+    Return
+}
+function f1 name="increment" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = Integer integer=1
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Return
+}
+function f2 name="close" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="return"
+    v2 = Call v1, v0 calleeKey="return" calleeName="return"
+    Return v2
+# SPLIT: [[isOfHelper]]: boolean = TypeTest {{*}} testedType=builtin(IteratorHelperPrototypeReturn)
+# SPLIT-NEXT: Branch [[isOfHelper]] -> taken
+# SPLIT: = CallBuiltin v0 overload=IteratorHelperPrototypeReturn/0 builtinCallForm=AnyReceiver
+# SPLIT: [[isOfWrapper]]: boolean = TypeTest {{*}} testedType=builtin(WrapForValidIteratorPrototypeReturn)
+# SPLIT-NEXT: Branch [[isOfWrapper]] -> taken
+# SPLIT: = CallBuiltin v0 overload=WrapForValidIteratorPrototypeReturn/0 builtinCallForm=AnyReceiver
+# SPLIT: frequency=Unlikely:
+# SPLIT-NEXT: = Call {{*}}, v0 calleeKey="return"
+}
+function f3 name="return" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] enclosingRuntimeFunction=87 thisType={type=anything} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler]}
+    v2 = GetInternalField v1
+    v3 = Undefined
+    v4 = ResumeGenerator v2, v3 resumeMode=Return
+    Return v4
+}
+# SPLIT: function f3 name="return"
+# SPLIT-NEXT: b0(
+# SPLIT: = ResumeGenerator
+# SPLIT: function f4 name="return"
+# SPLIT-NEXT: b0(
+# SPLIT: = PropGet {{*}} key="return"
+# SPLIT: function f5
+function f4 name="return" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] enclosingRuntimeFunction=88 thisType={type=anything} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler]}
+    v2 = GetInternalField v1
+    v3 = PropGet v2 key="return"
+    v4 = Call v3, v2
+    Return v4
+}
+runtimefunction id=87 function=f3
+runtimefunction id=88 function=f4

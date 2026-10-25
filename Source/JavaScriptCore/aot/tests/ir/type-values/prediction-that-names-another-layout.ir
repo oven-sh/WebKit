@@ -1,0 +1,28 @@
+# What was predicted of a value earlier stays while the rules admit it: the two are met. Where both name objects and no object is in both, the earlier prediction is refuted, and what the rules give now is taken whole, not the undefined and null the two have in common
+# FORM: Prepared
+# RUN: pass RetypeValues
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Node" fields=[{key="next" declared={type=undefined|null|L0 flags=[IsExpected]}}]
+layout L1 name="Other" fields=[{key="other" declared={type=number}}]
+
+function f0 name="earlierPredictionNamesAnotherLayout" parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|L0):
+    v1: anything ~ undefined|null|L1 = Upcast v0 castType=anything
+    Return v1
+# CHECK: v1: anything ~ undefined|null|L0 = Upcast v0
+}
+
+function f1 name="earlierPredictionIsNarrower" parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|L0):
+    v1: anything ~ L0 = Upcast v0 castType=anything
+    Return v1
+# CHECK: v1: anything ~ L0 = Upcast v0
+}
+
+function f2 name="earlierPredictionNamesNoObject" parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ undefined|null|L0):
+    v1: anything ~ undefined|null|number = Upcast v0 castType=anything
+    Return v1
+# CHECK: v1: anything ~ undefined|null = Upcast v0
+}

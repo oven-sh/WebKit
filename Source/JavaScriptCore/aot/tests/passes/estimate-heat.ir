@@ -1,0 +1,98 @@
+# Estimated activations and the order of functions by heat without flow results
+# FORM: Prepared
+# RUN: pass EstimateHeat
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 kind=Assertion
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f2
+    v3 = CallDirect v1 function=f3
+    v4 = Check v1 castType=function site=w0
+    v5 = Call v4, -, v1 callees=[f4, f5]
+    v6 = Call v4, -, v1 callees=[f6]
+    v7 = NewClosure function=f8
+    v8 = Call v1, -, v7
+    v9 = NewClosure function=f9
+    v10 = Call v4, -, v9 callees=[f7]
+    v11 = CallDirect v1 function=f10
+    v12 = ToBoolean v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = CallDirect v1 function=f1
+    Branch v12 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Branch v12 -> taken b4(), notTaken b5()
+  b4() frequency=Rare:
+    v15 = CallDirect v1 function=f11
+    Return v15
+  b5():
+    Return v1
+}
+
+function f1 name="inLoop" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f2 name="once" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f3 name="onceAgain" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f4 name="either" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f5 name="or" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f6 name="onlyCandidate" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f7 name="map" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return v1
+}
+
+function f8 name="escapingClosure" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f9 name="callback" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f10 name="recursive" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f10
+    Return v1
+}
+
+function f11 name="onlyInRareBlock" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+# CHECK: f0 Warm 20 1.67
+# CHECK-NEXT: f1 Hot 91 19.3
+# CHECK-NEXT: f2 Warm 82 4.33
+# CHECK-NEXT: f3 Warm 82 4.33
+# CHECK-NEXT: f4 Warm 14 3.5
+# CHECK-NEXT: f5 Warm 14 3.5
+# CHECK-NEXT: f6 Warm 82 4.33
+# CHECK-NEXT: f7 Warm 5 3.33
+# CHECK-NEXT: f8 Warm 5 3.33
+# CHECK-NEXT: f9 Warm 0 2.67
+# CHECK-NEXT: f10 Hot 94 43.3
+# CHECK-NEXT: f11 Warm 2 2.67
+# CHECK-NEXT: hottest: f10 f1 f2 f3 f6 f0 f4 f5 f7 f8 f11 f9
+# CHECK-NEXT: thresholds: cold=1 hot=15
+# CHECK-NEXT: outcome: Unchanged

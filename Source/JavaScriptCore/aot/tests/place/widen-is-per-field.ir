@@ -1,0 +1,43 @@
+# Whether a slot is widened into free bytes is decided for its own field: a field of the same name in a layout with a full cell does not hold it back
+# FORM: AsRead
+# OPTIONS: references=narrow only-passes=AnalyzeFlow disable=flow:NarrowedTypes testing=NoLayoutIsMadeSeldom
+# RUN: plan-slots
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Node" fields=[{key="id" declared={type=i32} flags=[IsRequired]}]
+layout L1 name="HasRoom" fields=[{key="peer" declared={type=null|L0} flags=[IsRequired]}]
+layout L2 name="Full" fields=[{key="peer" declared={type=null|L0} flags=[IsRequired]}, {key="low" declared={type=i32} flags=[IsRequired]}, {key="middle" declared={type=i32} flags=[IsRequired]}, {key="high" declared={type=i32} flags=[IsRequired]}]
+layout L3 name="NumbersHaveRoom" fields=[{key="count" declared={type=null|int[0, 100]} flags=[IsRequired]}, {key="total" declared={type=null|int[0, 100]} flags=[IsRequired]}]
+layout L4 name="NumbersFull" fields=[{key="total" declared={type=null|int[0, 100]} flags=[IsRequired]}, {key="count" declared={type=null|int[0, 100]} flags=[IsRequired]}, {key="rest" declared={type=i32} flags=[IsRequired]}, {key="more" declared={type=i32} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = Null
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = NewObject -, v1 layout=L1 fields=[0]
+    v5 = FinishObject v4
+    v6 = NewObject -, v3, v0, v0, v0 layout=L2 fields=[0, 1, 2, 3]
+    v7 = FinishObject v6
+    v8 = NewObject -, v0, v0 layout=L3 fields=[0, 1]
+    v9 = FinishObject v8
+    v10 = NewObject -, v1, v1 layout=L3 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = NewObject -, v0, v0, v0, v0 layout=L4 fields=[0, 1, 2, 3]
+    v13 = FinishObject v12
+    v14 = NewObject -, v1, v1, v0, v0 layout=L4 fields=[0, 1, 2, 3]
+    v15 = FinishObject v14
+    Return
+}
+# CHECK: L1 CompiledObject size=32
+# CHECK-NEXT: "peer" JSValue @16
+# CHECK-NEXT: L2 CompiledObject size=32
+# CHECK-NEXT: "peer" OptionalCell32 @16
+# "count" and "total" end at 24. "count" takes bytes 24 to 32, and "total" grows over the 4 bytes that "count" leaves.
+# CHECK: L3 CompiledObject size=32
+# CHECK-NEXT: "count" OptionalInt64 @24
+# CHECK-NEXT: "total" OptionalInt64 @16
+# CHECK: L4 CompiledObject size=32
+# CHECK-NEXT: "total" OptionalInt32 @16
+# CHECK-NEXT: "count" OptionalInt32 @20

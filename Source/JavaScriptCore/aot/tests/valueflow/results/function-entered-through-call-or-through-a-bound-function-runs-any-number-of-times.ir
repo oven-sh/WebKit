@@ -1,0 +1,30 @@
+# const each = { call: Array.prototype.forEach.bind(list) }  (flag ? callback : each).call(callback)
+# The callee of the one call is Function.prototype.call, which calls its receiver once, or a bound forEach, which is handed the same operands and calls its argument for each element.
+# A bound function is in no list of callees, so the list of this call is not complete and says nothing about how often the call enters `callback`
+# RUN: valueflow-results
+# CHECK: function f0 executions=AtMostOnce
+# CHECK-NEXT: function f1 callers=AllKnown closureUse=CalledOnly
+# CHECK: access S1 function=f0 kind=Call loss cause=UnknownCallee witness=f0:v5
+# CHECK-NEXT: indirect f0 S1 -> f1 BuiltinCallback Once
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=FunctionPrototypeCall
+    v1 = Builtin builtin=ArrayPrototypeForEach
+    v2 = Builtin builtin=FunctionPrototypeBind
+    v3 = Integer integer=1
+    v4 = NewArray v3 contents=anything
+    v5 = Call v2, v1, v4
+    v6 = NewClosure function=f1
+    v7 = Boolean boolean=true
+    Branch v7 -> taken b1(), notTaken b2(v0)
+  b1():
+    Jump -> next b2(v5)
+  b2(v8: anything):
+    v9 = Call v8, v6, v6
+    Return
+}
+function f1 name="callback" results=[{type=anything}] {
+    Return
+}

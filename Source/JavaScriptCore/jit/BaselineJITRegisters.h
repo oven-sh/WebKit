@@ -27,10 +27,9 @@
 
 #include <wtf/Platform.h>
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include "GPRInfo.h"
-#include "JITOperations.h"
 
 namespace JSC {
 
@@ -41,6 +40,20 @@ namespace Call {
     static constexpr GPRReg callLinkInfoGPR { GPRInfo::regT2 };
     static constexpr GPRReg callTargetGPR { GPRInfo::regT5 };
 }
+
+} // namespace BaselineJITRegisters
+
+} // namespace JSC
+
+#endif // ENABLE(CODE_GENERATION)
+
+#if ENABLE(JIT)
+
+#include "JITOperations.h"
+
+namespace JSC {
+
+namespace BaselineJITRegisters {
 
 namespace CallDirectEval {
     namespace SlowPath {

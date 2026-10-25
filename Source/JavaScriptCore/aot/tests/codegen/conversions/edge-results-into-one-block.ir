@@ -1,0 +1,43 @@
+# Where two tests pass what they narrowed into one block, the code generator converts each value on its own edge, as a value of the type of that edge alone
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: pass ChooseRepresentations
+# RUN(CODE): generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="numberMeetsAnything" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = ToBoolean v0 form=Numbers
+    TestAndBranch v3 -> taken b4(), notTaken b3(| 0)
+  b2():
+    v4 = ToBoolean v1 form=Bits
+    TestAndBranch v4 -> taken b4(), notTaken b3(| 0)
+  b3(v5):
+    Return v5
+  b4():
+    Return
+}
+# CHECK-LABEL: function f0 name="numberMeetsAnything"
+# CHECK: b0(v0: number @Double,
+# CHECK: TestAndBranch v3 -> taken b4(), notTaken b3(| 0)
+# CHECK: TestAndBranch v4 -> taken b4(), notTaken b3(| 0)
+# CHECK: b3(v5: undefined|null|false|0|whole|string|bigint @JSValue):
+# CODE-NOT: diagnostic
+
+function f1 name="anythingMeetsAnything" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = ToBoolean v0 form=Bits
+    TestAndBranch v3 -> taken b4(), notTaken b3(| 0)
+  b2():
+    v4 = ToBoolean v1 form=Bits
+    TestAndBranch v4 -> taken b4(), notTaken b3(| 0)
+  b3(v5):
+    Return v5
+  b4():
+    Return
+# CHECK: TestAndBranch v3 -> taken b4(), notTaken b3(| 0)
+# CHECK: TestAndBranch v4 -> taken b4(), notTaken b3(| 0)
+# CHECK-NOT: Box
+}

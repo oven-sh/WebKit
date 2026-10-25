@@ -54,7 +54,7 @@ static JSC_DECLARE_HOST_FUNCTION(callIntlLocale);
 static JSC_DECLARE_HOST_FUNCTION(constructIntlLocale);
 
 IntlLocaleConstructor::IntlLocaleConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callIntlLocale, constructIntlLocale)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callIntlLocale), JSC_REGISTERED_HOST_FUNCTION(constructIntlLocale))
 {
 }
 

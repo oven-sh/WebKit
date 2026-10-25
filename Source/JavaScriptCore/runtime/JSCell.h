@@ -149,10 +149,18 @@ public:
     // We use this abstraction to make it easier to grep for places where we lock cells.
     // to lock a cell you can just do:
     // Locker locker { cell->cellLock() };
-    JSCellLock& cellLock() const { return *reinterpret_cast<JSCellLock*>(const_cast<JSCell*>(this)); }
+    JSCellLock& cellLock() const
+    {
+        ASSERT(m_type != CompiledEnvironmentType);
+        return *reinterpret_cast<JSCellLock*>(const_cast<JSCell*>(this));
+    }
     
     JSType type() const { return m_type; }
-    IndexingType indexingTypeAndMisc() const { return m_indexingTypeAndMisc; }
+    IndexingType indexingTypeAndMisc() const
+    {
+        ASSERT(m_type != CompiledEnvironmentType);
+        return m_indexingTypeAndMisc;
+    }
     IndexingType indexingMode() const { return indexingTypeAndMisc() & AllArrayTypes; }
     IndexingType indexingType() const { return indexingTypeAndMisc() & AllWritableArrayTypes; }
     StructureID structureID() const { return m_structureID; }
@@ -161,7 +169,12 @@ public:
     void setStructureIDDirectly(StructureID id) { m_structureID = id; }
     void clearStructure() { m_structureID = StructureID(); }
 
-    TypeInfo::InlineTypeFlags inlineTypeFlags() const { return m_flags; }
+    TypeInfo::InlineTypeFlags inlineTypeFlags() const
+    {
+        ASSERT(m_type != CompiledEnvironmentType);
+        return m_flags;
+    }
+    bool isPristine() const;
     
     ASCIILiteral LEGACY_NODELETE className() const;
 
@@ -301,6 +314,9 @@ private:
         };
     };
 };
+
+static_assert(JSCell::indexingTypeAndMiscOffset() == 4 && JSCell::typeInfoTypeOffset() == 5 && JSCell::typeInfoFlagsOffset() == 6, "AOT::Environment keeps its shape number in bytes 4 and 6, and one 32-bit load at 4 gives the indexing mode, the JSType and IsPristine");
+static_assert(CompiledEnvironmentType < ObjectType, "a cell whose header bytes are shape bytes is never an object");
 
 class JSCellLock : public JSCell {
 public:

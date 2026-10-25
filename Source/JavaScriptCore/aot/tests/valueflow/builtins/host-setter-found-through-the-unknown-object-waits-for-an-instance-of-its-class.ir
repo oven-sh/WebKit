@@ -1,0 +1,29 @@
+# class Body { constructor() { this.hits = 0 } }; body = new Body; somebody = new Proxy({}, {}); somebody.onerror = body; return body.hits
+# The proxy is the unknown object. The classes of the host that have a setter under the name throw for a receiver that is no instance of theirs, and nothing has made an instance.
+# So no code of the host runs: the value is in unknown hands, as after a store under any other name.
+# RUN: valueflow-solve used
+# CHECK-NOT: NativeZlibPrototypeOnerror
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Body" constructor=f1 fields=[{key="hits" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Empty"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    v4 = NewObject layout=L1
+    v5 = NewObject layout=L1
+    v6 = Builtin builtin=Proxy
+    v7 = Construct v6, -, v4, v5
+    PropSet v7, v3 key="onerror"
+    v9 = PropGet v3 key="hits"
+    Return v9
+}
+function f1 name="Body" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = Integer integer=0
+    v3 = NewObject v1, v2 layout=L0 fields=[0]
+    Return v3
+}

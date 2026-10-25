@@ -1,0 +1,29 @@
+# options = { held }; copy = Object.assign({}, options); somethingNoTableLists(copy)
+# Code that nobody compiles holds the copy and reads out of it what was copied: the function has escaped. Nothing that it does to the copy is done to the source, which stays in the program.
+# RUN: valueflow-why escaped=f1 escaped-layout=L0 escaped-layout=L1
+# CHECK: escaped=f1
+# CHECK-NEXT: n0 escaped
+# CHECK: escaped-layout=L0
+# CHECK-NOT: escaped
+# CHECK: escaped-layout=L1
+# CHECK: n0 escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="held" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Copy"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject layout=L1
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectAssign
+    v5 = Call v4, v3, v2, v1
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="somethingThatNoTableLists" [isFreeName]
+    v8 = Call v7, -, v5
+    Return
+}
+function f1 name="held" kind=Arrow results=[{type=anything}] {
+    Return
+}

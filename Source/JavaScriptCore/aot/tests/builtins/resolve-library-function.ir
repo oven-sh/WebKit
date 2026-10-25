@@ -1,0 +1,148 @@
+# A call that matches an overload implemented by a library function of the program becomes a direct call of that function
+# FORM: Prepared
+# RUN: pass ResolveBuiltins ResolveBuiltins
+# CHECK: outcome: Changed
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+runtimefunction id=31 function=f0
+runtimefunction id=35 function=f1
+runtimefunction id=44 function=f2
+runtimefunction id=50 function=f3
+runtimefunction id=60 function=f4
+function f0 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=31 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+    v3 = Boolean boolean=true
+    Return v3
+}
+function f1 name="find" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=35 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    Return v1
+}
+function f2 name="forEach" role=Library flags=[HasThis] enclosingRuntimeFunction=44 thisType={type=anything} parameters=[{type=anything}, {type=number}] results=[{type=undefined}] {
+    Return
+}
+function f3 name="fromAsync" role=Library flags=[HasThis, IsAsync] enclosingRuntimeFunction=50 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Return v1
+}
+function f4 name="groupBy" role=Library enclosingRuntimeFunction=60 parameters=[{type=anything}, {type=anything}] results=[{type=object}] {
+    v2 = NewObject
+    Return v2
+}
+
+function f5 name="method" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=anything}] {
+    v3 = PropGet v0 key="every"
+    v4 = Call v3, v0, v1, v2 calleeKey="every" accessSite=3
+    Return v4
+# CHECK-NOT: CallBuiltin
+# CHECK: v4: boolean = CallDirect v0, v1, v2 function=f0 accessSite=3
+}
+
+function f6 name="functionWithoutThis" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2 = Builtin builtin=ObjectGroupBy
+    v3 = Call v2, -, v0, v1
+    Return v3
+# CHECK-NOT: CallBuiltin
+# CHECK: v3: object = CallDirect v0, v1 function=f4
+}
+
+function f7 name="omittedArgument" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}] results=[{type=anything}] {
+    v2 = Builtin builtin=ArrayPrototypeEvery
+    v3 = Call v2, v0, v1
+    Return v3
+# CHECK: [[omitted7]]: undefined = Undefined
+# CHECK-NEXT: boolean = CallDirect v0, v1, [[omitted7]] function=f0
+}
+
+function f8 name="surplusArgument" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v4 = Builtin builtin=ArrayPrototypeEvery
+    v5 = Call v4, v0, v1, v2, v3
+    Return v5
+# CHECK: v5: boolean = CallDirect v0, v1, v2 function=f0
+}
+
+function f9 name="convertedReceiver" parameters=[{type=string}, {type=function}, {type=anything}] results=[{type=anything}] {
+    v3 = Builtin builtin=ArrayPrototypeEvery
+    v4 = Call v3, v0, v1, v2
+    Return v4
+# CHECK: [[object9]]: object = ToObject v0
+# CHECK-NEXT: boolean = CallDirect [[object9]], v1, v2 function=f0
+}
+
+function f10 name="argumentsBehindTheParameters" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=anything}] {
+    v3 = Builtin builtin=ArrayPrototypeFind
+    v4 = Call v3, v0, v1, v2
+    Return v4
+# CHECK: [[others10]]: {{*}} = NewArray v2
+# CHECK-NEXT: anything = CallDirect v0, v1, [[others10]] function=f1
+}
+
+function f11 name="underHandler" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=anything}] {
+  b0(v0: Array<anything, pristine[Storage, Names]>, v1: function, v2: anything) handler=b2():
+    v3 = Builtin builtin=ArrayPrototypeEvery
+    v4 = Call v3, v0, v1, v2
+    Jump -> next b1()
+  b1():
+    Return v4
+  b2() role=CatchHandler:
+    v5 = CatchValue
+    Return v5
+# CHECK: handler=b2():
+# CHECK: v4: boolean = CallDirect v0, v1, v2 function=f0
+# CHECK-NEXT: Jump -> next b1()
+}
+
+function f12 name="resolvedCallWithoutAccessSite" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=anything}] {
+    v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeEvery/0
+    Return v3
+# CHECK-NOT: CallBuiltin
+# CHECK: v3: boolean = CallDirect v0, v1, v2 function=f0
+# CHECK-NEXT: Return v3
+}
+
+function f13 name="neverInlined" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=anything}] {
+    v3 = Builtin builtin=ArrayPrototypeEvery
+    v4 = Call v3, v0, v1, v2 [isNeverInlined]
+    Return v4
+# CHECK: v4: boolean = CallDirect v0, v1, v2 function=f0 [isNeverInlined]
+}
+
+function f14 name="argumentOutsideDeclaredParameter" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=anything}] {
+    v3 = Builtin builtin=ArrayPrototypeForEach
+    v4 = Call v3, v0, v1, v2
+    Return v4
+# CHECK: [[assumed14]]: number = AssumeType v2 castType=number
+# CHECK-NEXT: undefined = CallDirect v0, v1, [[assumed14]] function=f2
+}
+
+function f15 name="functionNotInProgram" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}] results=[{type=anything}] {
+    v2 = Builtin builtin=ArrayPrototypeMap
+    v3 = Call v2, v0, v1
+    Return v3
+# CHECK-NOT: CallDirect
+# CHECK: v3: Array = CallBuiltin v0, v1 overload=ArrayPrototypeMap/0
+}
+
+function f16 name="asyncLibraryFunction" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=Array
+    v2 = Builtin builtin=ArrayFromAsync
+    v3 = Call v2, v1, v0
+    Return v3
+# CHECK-NOT: CallDirect
+# CHECK: v3: Promise{{*}} = CallBuiltin {{*}}v0 overload=ArrayFromAsync/0
+}
+
+function f17 name="inlineOverload" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=ArrayPrototypePush
+    v3 = Call v2, v0, v1
+    Return v3
+# CHECK-NOT: CallDirect
+# CHECK: v3: int[0, 4294967295] = CallBuiltin v0, v1 overload=ArrayPrototypePush/0
+}
+
+function f18 name="unmatchedOperands" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=anything}] results=[{type=anything}] {
+    v2 = Builtin builtin=ArrayPrototypeEvery
+    v3 = Call v2, v0, v1
+    Return v3
+# CHECK-NOT: CallDirect
+# CHECK: v3: boolean = CallBuiltin v0, v1 overload=ArrayPrototypeEvery/0 builtinCallForm=AnyReceiver
+}

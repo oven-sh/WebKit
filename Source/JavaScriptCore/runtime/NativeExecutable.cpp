@@ -78,7 +78,7 @@ NativeExecutable::NativeExecutable(VM& vm, TaggedNativeFunction function, Tagged
     : ExecutableBase(vm, vm.nativeExecutableStructure.get())
     , m_function(function)
     , m_constructor(constructor)
-    , m_implementationVisibility(static_cast<unsigned>(implementationVisibility))
+    , m_implementationVisibility(static_cast<uint8_t>(implementationVisibility))
 {
 }
 

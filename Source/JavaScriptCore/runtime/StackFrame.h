@@ -26,6 +26,7 @@
 #pragma once
 
 #include "BytecodeIndex.h"
+#include "CodeType.h"
 #include "Heap.h"
 #include "LineColumn.h"
 #include "SlotVisitorMacros.h"
@@ -35,10 +36,17 @@
 #include <limits.h>
 #include <wtf/Variant.h>
 
+#if ENABLE(AOT)
+#include "AOTTraceFrame.h"
+#endif
+
 namespace JSC {
+
+namespace AOT { struct ReturnAddressTrace; }
 
 class CodeBlock;
 class JSObject;
+class ScriptExecutable;
 
 struct JSFrameData {
     WriteBarrier<JSCell> callee;
@@ -52,11 +60,23 @@ struct WasmFrameData {
     size_t functionIndex { 0 };
 };
 
+#if ENABLE(AOT)
+struct CompiledFrameData {
+    AOT::TraceFrame frame;
+    bool isAsyncFrame { false };
+};
+static_assert(sizeof(CompiledFrameData) <= sizeof(JSFrameData) && std::is_trivially_copyable_v<CompiledFrameData>);
+#endif
+
 enum class AllowURLOverride : bool { No, Yes };
 
 class StackFrame {
 public:
+#if ENABLE(AOT)
+    using FrameData = Variant<JSFrameData, WasmFrameData, CompiledFrameData>;
+#else
     using FrameData = Variant<JSFrameData, WasmFrameData>;
+#endif
 
     StackFrame(VM&, JSCell* owner, JSCell* callee);
     StackFrame(VM&, JSCell* owner, JSCell* callee, CodeBlock*, BytecodeIndex);
@@ -67,11 +87,24 @@ public:
     StackFrame(Wasm::IndexOrName, size_t functionIndex);
     StackFrame() = default;
 
+#if ENABLE(AOT)
+    explicit StackFrame(const AOT::TraceFrame& frame, bool isAsyncFrame = false)
+        : m_frameData(CompiledFrameData { frame, isAsyncFrame })
+    {
+    }
+    static void appendCompiledFrames(const AOT::ReturnAddressTrace&, Vector<StackFrame>&);
+    const AOT::TraceFrame& compiledFrame() const { return std::get<CompiledFrameData>(m_frameData).frame; }
+    JS_EXPORT_PRIVATE std::optional<AOT::SourcePosition> compiledPosition() const;
+    bool isCompiledFrame() const { return std::holds_alternative<CompiledFrameData>(m_frameData); }
+#else
+    static constexpr bool isCompiledFrame() { return false; }
+#endif
+
     bool hasLineAndColumnInfo() const
     {
         if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
             return !!jsFrame->codeBlock;
-        return false;
+        return isCompiledFrame() && !representsHostFunction();
     }
 
     CodeBlock* codeBlock() const
@@ -80,6 +113,12 @@ public:
             return jsFrame->codeBlock.get();
         return nullptr;
     }
+
+    JS_EXPORT_PRIVATE ScriptExecutable* ownerExecutable() const;
+    JS_EXPORT_PRIVATE CodeType codeType() const;
+    JS_EXPORT_PRIVATE bool isConstructor() const;
+    JS_EXPORT_PRIVATE bool isBuiltinFunction() const;
+    JS_EXPORT_PRIVATE bool representsHostFunction() const;
 
     JSCell* callee() const
     {
@@ -104,6 +143,10 @@ public:
     {
         if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
             return jsFrame->m_isAsyncFrame;
+#if ENABLE(AOT)
+        if (auto* compiledFrame = std::get_if<CompiledFrameData>(&m_frameData))
+            return compiledFrame->isAsyncFrame;
+#endif
         return false;
     }
 #endif
@@ -112,6 +155,10 @@ public:
     {
         if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
             return jsFrame->m_isAsyncFrame && !codeBlock();
+#if ENABLE(AOT)
+        if (auto* compiledFrame = std::get_if<CompiledFrameData>(&m_frameData))
+            return compiledFrame->isAsyncFrame && representsHostFunction();
+#endif
         return false;
     }
 
@@ -133,5 +180,6 @@ public:
 private:
     FrameData m_frameData { JSFrameData {} };
 };
+static_assert(sizeof(StackFrame) == 32);
 
 } // namespace JSC

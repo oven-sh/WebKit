@@ -1,0 +1,32 @@
+# const P = function () { this.px = 1 }; const first = new P(); publish(first.constructor === P): the construct body allocates, under the prototype object of the class and without a read from the closure, and the comparison with what the instance inherits is still made
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: pipeline CheckPlacement
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="P" constructor=f1 fields=[{key="px" declared={type=anything}}] flags=[IsConstructorFunction]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Construct v2
+    v4 = PropGet v3 key="constructor"
+    v5 = StrictEq v4, v2
+    v6 = Call v1, -, v5
+    Return
+}
+function f1 name="P" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    PropSet v0, v1 key="px" mode=Strict
+    Return
+}
+
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[closure]]: f1 = NewClosure function=f1 {{*}}closureForm=Singleton
+# CHECK: [[instance]]: L0 = CallDirect function=[[constructBody]] {{*}}[isConstruction]
+# CHECK: [[read]]: anything = PropGet [[instance]] key="constructor"
+# CHECK: : boolean = StrictEq [[read]], [[closure]]
+# CHECK-LABEL: function f1 name="P"
+# CHECK-LABEL: name="P" module=m0 role=ConstructBody
+# CHECK: : L0 = NewObject {{*}}layout=L0

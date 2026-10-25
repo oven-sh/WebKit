@@ -506,14 +506,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEval, (JSGlobalObject* globalObject, CallFram
         SourceProfiler::profile(SourceProfiler::Type::Eval, source);
     }
 
-    JSValue parsedValue;
-    if (programSource.is8Bit()) {
-        LiteralParser<Latin1Character, JSONReviverMode::Disabled> preparser(globalObject, programSource.span8(), SloppyJSON, nullptr);
-        parsedValue = preparser.tryEval();
-    } else {
-        LiteralParser<char16_t, JSONReviverMode::Disabled> preparser(globalObject, programSource.span16(), SloppyJSON, nullptr);
-        parsedValue = preparser.tryEval();
-    }
+    JSValue parsedValue = tryEvalAsJSON(globalObject, programSource, nullptr);
     RETURN_IF_EXCEPTION(scope, { });
     if (parsedValue)
         return JSValue::encode(parsedValue);
@@ -874,6 +867,35 @@ static CodeBlock* getCallerCodeBlock(CallFrame* callFrame)
     return callerFrame->codeBlock();
 }
 
+#if ENABLE(AOT)
+// False, with nothing copied, where listing the own properties of the compiled object may run code, or one of them is named __proto__.
+static bool tryCopyDataPropertiesOfCompiledObject(VM& vm, JSObject* target, JSObject* source, const Invocable<bool(PropertyName)> auto& isExcluded)
+{
+    Vector<UniquedStringImpl*, 8> properties;
+    MarkedArgumentBuffer values;
+    EnsureStillAliveScope sourceScope(source);
+    auto result = AOT::PropertyWalk::forEachOwnPropertyInline(vm, source, AOT::PropertyWalk::Filter::StringsAndSymbols, [&](const AOT::PropertyWalk::OwnProperty& property) {
+        PropertyName propertyName(property.name);
+        if (propertyName == vm.propertyNames->underscoreProto)
+            return IterationStatus::Done;
+        if (!(property.attributes & PropertyAttribute::DontEnum) && !propertyName.isPrivateName() && !isExcluded(propertyName)) {
+            properties.append(property.name);
+            values.appendWithCrashOnOverflow(property.value);
+        }
+        return IterationStatus::Continue;
+    });
+    if (result != AOT::PropertyWalk::Result::Completed)
+        return false;
+    if (target->inherits<JSFinalObject>() && target->canPerformFastPutInlineExcludingProto() && target->isStructureExtensible()) [[likely]]
+        target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
+    else {
+        for (size_t i = 0; i < properties.size(); ++i)
+            target->putDirect(vm, properties[i], values.at(i));
+    }
+    return true;
+}
+#endif
+
 // https://tc39.es/ecma262/#sec-copydataproperties
 JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -969,6 +991,13 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
         return JSValue::encode(target);
     }
 
+#if ENABLE(AOT)
+    if (sourceStructure->isCompiledStructure() && tryCopyDataPropertiesOfCompiledObject(vm, target, source, isPropertyNameExcluded)) {
+        ensureStillAliveHere(unlinkedCodeBlock);
+        return JSValue::encode(target);
+    }
+#endif
+
     PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     source->methodTable()->getOwnPropertyNames(source, globalObject, propertyNames, DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1055,6 +1084,11 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCloneObject, (JSGlobalObject* globalObject, C
 
         return JSValue::encode(target);
     }
+
+#if ENABLE(AOT)
+    if (sourceStructure->isCompiledStructure() && tryCopyDataPropertiesOfCompiledObject(vm, target, source, [](PropertyName) { return false; }))
+        return JSValue::encode(target);
+#endif
 
     PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     source->methodTable()->getOwnPropertyNames(source, globalObject, propertyNames, DontEnumPropertiesMode::Include);

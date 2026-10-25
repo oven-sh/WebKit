@@ -61,9 +61,16 @@ enum class GlobalPropertyLookUpStatus {
     NotFound,
     Configurable,
     NonConfigurable,
+#if ENABLE(AOT)
+    Immutable,
+#endif
 };
 static GlobalPropertyLookUpStatus hasRestrictedGlobalProperty(JSGlobalObject* globalObject, PropertyName propertyName)
 {
+#if ENABLE(AOT)
+    if (globalObject->structure()->isImmutablePropertyForReader(propertyName.uid())) [[unlikely]]
+        return GlobalPropertyLookUpStatus::Immutable;
+#endif
     PropertyDescriptor descriptor;
     if (!globalObject->getOwnPropertyDescriptor(globalObject, propertyName, descriptor))
         return GlobalPropertyLookUpStatus::NotFound;
@@ -158,6 +165,10 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
             switch (status) {
             case GlobalPropertyLookUpStatus::NonConfigurable:
                 return createSyntaxError(globalObject, makeString("Can't create duplicate variable that shadows a global property: '"_s, StringView(entry.key.get()), '\''));
+#if ENABLE(AOT)
+            case GlobalPropertyLookUpStatus::Immutable:
+                return createSyntaxError(globalObject, withAOTErrorNote(makeString("Cannot declare '"_s, StringView(entry.key.get()), "': compiled code treats the global '"_s, StringView(entry.key.get()), "' as a constant, so a script can't shadow it with a top-level let, const or class"_s)));
+#endif
             case GlobalPropertyLookUpStatus::Configurable:
                 // Lexical bindings can shadow global properties if the given property's attribute is configurable.
                 // https://tc39.github.io/ecma262/#sec-globaldeclarationinstantiation step 5-c, `hasRestrictedGlobal` becomes false

@@ -1,0 +1,23 @@
+# Only the body of a coroutine may hold TakeGeneratorPrototype, so it stays there, however rare its block and however many bodies hold the like of it
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# CHECK-NOT: role=OutlinedBody
+# CHECK-COUNT-8: TakeGeneratorPrototype v0, v1
+
+module m0 path="main.js" displayPath="main.js"
+# REPEAT: i = 0..7
+
+function f%(i*2) name="ramp%(i)" role=CoroutineRamp flags=[IsGenerator, TakesCallee] results=[{type=anything}] creator=Coroutine{ramp=f%(i*2) body=f%(i*2+1)} {
+    v1 = NewGenerator v0 function=f%(i*2)
+    Return v1
+}
+function f%(i*2+1) name="body%(i)" role=CoroutineBody parameters=[{type=object}, {type=function}, {type=boolean}] results=[{type=anything}] derivation={source=f%(i*2)} creator=Coroutine{ramp=f%(i*2) body=f%(i*2+1)} {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    TakeGeneratorPrototype v0, v1
+    Jump -> next b2()
+  b2():
+    Return
+}
+# END REPEAT

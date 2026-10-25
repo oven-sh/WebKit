@@ -1,0 +1,132 @@
+# A test whose branch passes a proof stays in the merge block: a block parameter as condition proves nothing
+# FORM: Prepared
+# RUN: pass HoistTestsIntoPredecessors
+# STATISTIC: HoistTestsIntoPredecessorsChanges = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="truthinessWithoutProof" parameters=[{type=boolean}, {type=undefined|number}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = ToBoolean v3
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    Return v0
+  b5():
+    Return v1
+# CHECK: b2():
+# CHECK-NEXT: [[converted]]:{{*}}= ToBoolean v1
+# CHECK-NEXT: Jump -> next b3([[converted]])
+# CHECK: b3(v3: boolean):
+# CHECK-NEXT: Branch v3 -> taken b4(), notTaken b5()
+}
+
+function f1 name="truthinessProvenOnTakenEdge" parameters=[{type=boolean}, {type=undefined|number}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = ToBoolean v3
+    Branch v4 -> taken b4(| 0), notTaken b5()
+  b4(v5):
+    Return v5
+  b5():
+    Return v1
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b3(v1)
+# CHECK: b3(v3: undefined|boolean|number):
+# CHECK-NEXT: v4: boolean = ToBoolean v3
+# CHECK-NEXT: Branch v4 -> taken b4(| 0), notTaken b5()
+}
+
+function f2 name="truthinessProvenOnNotTakenEdge" parameters=[{type=boolean}, {type=undefined|number}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = ToBoolean v3
+    Branch v4 -> taken b4(), notTaken b5(| 0)
+  b4():
+    Return v0
+  b5(v5):
+    Return v5
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b3(v1)
+# CHECK: b3(v3: undefined|boolean|number):
+# CHECK-NEXT: v4: boolean = ToBoolean v3
+# CHECK-NEXT: Branch v4 -> taken b4(), notTaken b5(| 0)
+}
+
+function f3 name="comparisonWithoutProof" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = Less v3, v0
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    Return v0
+  b5():
+    Return v1
+# CHECK: b1():
+# CHECK-NEXT: [[first]]:{{*}}= Less v0, v0
+# CHECK-NEXT: Jump -> next b3([[first]])
+# CHECK: b2():
+# CHECK-NEXT: [[second]]:{{*}}= Less v1, v0
+# CHECK-NEXT: Jump -> next b3([[second]])
+# CHECK: b3([[joined]]: boolean):
+# CHECK-NEXT: Branch [[joined]] -> taken b4(), notTaken b5()
+}
+
+function f4 name="comparisonProvesItsParameter" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = Less v3, v0
+    Branch v4 -> taken b4(| 0), notTaken b5()
+  b4(v5):
+    Return v5
+  b5():
+    Return v1
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v0)
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b3(v1)
+# CHECK: b3(v3: anything):
+# CHECK-NEXT: v4: boolean = Less v3, v0
+# CHECK-NEXT: Branch v4 -> taken b4(| 0), notTaken b5()
+}
+
+function f5 name="comparisonProvesItsOtherOperand" parameters=[{type=number}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = Less v3, v0
+    Branch v4 -> taken b4(), notTaken b5(| 1)
+  b4():
+    Return v0
+  b5(v5):
+    Return v5
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v0)
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b3(v1)
+# CHECK: b3(v3: anything):
+# CHECK-NEXT: v4: boolean = Less v3, v0
+# CHECK-NEXT: Branch v4 -> taken b4(), notTaken b5(| 1)
+}

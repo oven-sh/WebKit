@@ -539,6 +539,9 @@ inline JSString* replaceUsingStringSearch(VM& vm, JSGlobalObject* globalObject, 
     if (callData.type == CallData::Type::JS) {
         cachedCall.emplace(globalObject, uncheckedDowncast<JSFunction>(replaceValue), 3);
         RETURN_IF_EXCEPTION(scope, nullptr);
+    } else if (callData.type == CallData::Type::Compiled) {
+        cachedCall.emplace(globalObject, asObject(replaceValue), callData, 3);
+        RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
     size_t endOfLastMatch = 0;
@@ -878,7 +881,7 @@ ALWAYS_INLINE JSCellButterfly* addToRegExpSearchCache(VM& vm, JSGlobalObject* gl
     RELEASE_AND_RETURN(scope, result);
 }
 
-static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArguments(VM& vm, JSGlobalObject* globalObject, JSString* string, const String& source, RegExp* regExp, JSFunction* replaceFunction, JSCellButterfly* result)
+static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArguments(VM& vm, JSGlobalObject* globalObject, JSString* string, const String& source, RegExp* regExp, JSObject* replaceFunction, const CallData& callData, JSCellButterfly* result)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -896,7 +899,7 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArgument
         return nullptr;
     }
 
-    CachedCall cachedCall(globalObject, replaceFunction, 3);
+    CachedCall cachedCall = CachedCall::create(globalObject, replaceFunction, callData, 3);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     ASSERT(!regExp->numSubpatterns());
@@ -1006,7 +1009,7 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArgument
     RELEASE_AND_RETURN(scope, jsString(vm, impl.releaseNonNull()));
 }
 
-static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, const String& source, RegExp* regExp, JSFunction* replaceFunction)
+static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearch(VM& vm, JSGlobalObject* globalObject, JSString* string, const String& source, RegExp* regExp, JSObject* replaceFunction, const CallData& callData)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     SuperSamplerScope superSamplerScope(true);
@@ -1026,7 +1029,7 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearch(VM& vm, JSGl
         return string;
 
     if (argCount == 3)
-        RELEASE_AND_RETURN(scope, replaceAllWithCacheUsingRegExpSearchThreeArguments(vm, globalObject, string, source, regExp, replaceFunction, result));
+        RELEASE_AND_RETURN(scope, replaceAllWithCacheUsingRegExpSearchThreeArguments(vm, globalObject, string, source, regExp, replaceFunction, callData, result));
 
     // regExp->numSubpatterns() + 1 for pattern args, + 2 for match start and string
     unsigned length = result->length();
@@ -1039,7 +1042,7 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearch(VM& vm, JSGl
     }
     replacements.grow(items);
 
-    CachedCall cachedCall(globalObject, replaceFunction, argCount);
+    CachedCall cachedCall = CachedCall::create(globalObject, replaceFunction, callData, argCount);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (argCount == 3) {
         ASSERT(!regExp->numSubpatterns());
@@ -1236,6 +1239,8 @@ static ALWAYS_INLINE JSString* tryTrimSpaces(VM& vm, JSGlobalObject* globalObjec
     case Yarr::SpecificPattern::LeadingSpacesStar:
     case Yarr::SpecificPattern::Atom:
     case Yarr::SpecificPattern::Newlines:
+    case Yarr::SpecificPattern::CharacterClass:
+    case Yarr::SpecificPattern::CharacterClassPlus:
     case Yarr::SpecificPattern::OptionalCRThenLF:
     case Yarr::SpecificPattern::None:
         break;

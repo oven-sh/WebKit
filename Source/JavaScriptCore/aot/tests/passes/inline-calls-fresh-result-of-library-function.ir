@@ -1,0 +1,36 @@
+# A library function whose result is a fresh object is worth a copy where the caller only takes the object apart
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# LOSS: MaxInlineHeadBytes x1 f0
+# STATISTIC: InlineDecisionInline = 1
+# STATISTIC: InlineBenefitSunkAllocation = 1
+# STATISTIC: InlineDecisionCostExceedsBenefit = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Pair" fields=[{key="a" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}, {key="b" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}]
+
+function f0 name="createsPair" role=Library parameters=[{type=number}] results=[{type=L0}] {
+# REPEAT: i = 0..23
+    v%(i+1) = Mul v%(i), v0
+# END REPEAT
+    v25 = NewObject -, v24, v0 layout=L0 fields=[0, 1]
+    Return v25
+}
+
+function f1 name="readsFreshResult" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f0
+    v2 = GetSlot v1 key="a" receivers=[L0] level=Proven
+    Return v2
+}
+# CHECK-LABEL: name="readsFreshResult"
+# CHECK-NOT: CallDirect
+# CHECK: = NewObject
+
+function f2 name="returnsFreshResult" parameters=[{type=number}] results=[{type=L0}] {
+    v1 = CallDirect v0 function=f0
+    Return v1
+}
+# CHECK-LABEL: name="returnsFreshResult"
+# CHECK: = CallDirect {{*}} function=f0
+# CHECK-NEXT: Return

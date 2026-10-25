@@ -1,0 +1,55 @@
+# A value that a cleanup block names as its subject is used, whoever else reads it
+# FORM: Prepared optimizing
+# RUN: pass EliminateDeadCode
+# STATISTIC: EliminateDeadCodeChanges = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Resource" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={location={initialization=SetAtCreation} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes}}] flow={impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype]}
+
+function f0 name="iteratorStateNamedByCleanupBlock" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = Add v1, v1
+    v3 = IteratorOpen v0
+    Jump -> next b1()
+  b1() handler=b2():
+    v4 = Call v0
+    Return v4
+  b2() role=IterationCleanup subject=v3:
+    v5 = CatchException
+    Rethrow v5
+# CHECK-NEXT: b0(v0: anything, v1: number):
+# CHECK-NEXT: v3: iteratorstate = IteratorOpen v0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: b2() role=IterationCleanup subject=v3:
+}
+
+function f1 name="resourceNamedByDisposalBlock" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutSlot v1, -, v0 key="x" receivers=[L0] level=Proven
+    Jump -> next b1()
+  b1() handler=b2():
+    v3 = Call v0
+    Return v3
+  b2() role=DisposalCleanup subject=v1:
+    v4 = CatchValue
+    Throw v4
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1: L0 = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: PutSlot v1, -, v0 key="x"
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: b2() role=DisposalCleanup subject=v1:
+}
+
+function f2 name="objectNoBlockNames" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PutSlot v1, -, v0 key="x" receivers=[L0] level=Proven
+    Jump -> next b1()
+  b1() handler=b2():
+    v3 = Call v0
+    Return v3
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    Throw v4
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: b2() role=CatchHandler:
+}

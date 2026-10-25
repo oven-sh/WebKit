@@ -1,0 +1,75 @@
+# An argument whose type has nothing in common with the type its callee declares never gets to the call: its conversion has the type never, it ends its block, and neither the conversions behind it nor the call are left
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+typesite w0 module=m0 position=9 kind=Parameter text="number"
+function f0 name="takesStringAndNumber" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+    Return
+}
+function f1 name="takesNumberAndNumber" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+    Return
+}
+function f2 name="asynchronous" role=CoroutineRamp flags=[IsAsync] parameters=[{type=number site=w0}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f3
+    Return v1
+}
+function f3 name="asynchronous" role=CoroutineBody flags=[IsAsync] parameters=[{type=number}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=1} {
+    Return
+}
+
+function f4 name="first-argument-never-fits" parameters=[{type=f0}, {type=number}, {type=anything}] results=[{type=anything}] {
+    v3 = Call v0, -, v1, v2
+    Return v3
+# CHECK-NEXT: b0(v0: f0, v1: number, v2: anything):
+# CHECK-NEXT: : never = AssumeType v1 castType=string
+# CHECK-NEXT: Unreachable
+# CHECK-NOT: AssumeType
+# CHECK-NOT: CallDirect
+}
+function f5 name="second-argument-never-fits" parameters=[{type=f0}, {type=anything}, {type=string}] results=[{type=anything}] {
+    v3 = Call v0, -, v1, v2
+    Return v3
+# CHECK-NEXT: b0(v0: f0, v1: anything, v2: string):
+# CHECK-NEXT: : string = AssumeType v1 castType=string
+# CHECK-NEXT: : never = AssumeType v2 castType=number
+# CHECK-NEXT: Unreachable
+# CHECK-NOT: CallDirect
+}
+function f6 name="missing-argument-never-fits" parameters=[{type=f0}, {type=string}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+# CHECK-NEXT: b0(v0: f0, v1: string):
+# CHECK-NEXT: [[missing]]: undefined = Undefined
+# CHECK-NEXT: : never = AssumeType [[missing]] castType=number
+# CHECK-NEXT: Unreachable
+# CHECK-NOT: CallDirect
+}
+function f7 name="arguments-may-fit" parameters=[{type=f0}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Call v0, -, v1, v2
+    Return v3
+# CHECK-NEXT: b0(v0: f0, v1: anything, v2: anything):
+# CHECK-NEXT: [[first]]: string = AssumeType v1 castType=string
+# CHECK-NEXT: [[second]]: number = AssumeType v2 castType=number
+# CHECK-NEXT: = CallDirect [[first]], [[second]] function=f0
+}
+function f8 name="fits-one-of-two-callees" parameters=[{type=f0|f1}, {type=number}, {type=number}] results=[{type=anything}] {
+    v3 = Call v0, -, v1, v2
+    Return v3
+# CHECK: : never = AssumeType v1 castType=string
+# CHECK-NEXT: Unreachable
+# CHECK-NOT: function=f0
+# CHECK: = CallDirect v1, v2 function=f1
+# CHECK-NOT: function=f0
+}
+function f9 name="async-callee" parameters=[{type=f2}, {type=string}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+# CHECK-NEXT: b0(v0: f2, v1: string):
+# CHECK-NEXT: : never = AssumeType v1 castType=number
+# CHECK-NEXT: Unreachable
+# CHECK-NOT: function=f2
+# CHECK-NOT: RejectPromise
+}

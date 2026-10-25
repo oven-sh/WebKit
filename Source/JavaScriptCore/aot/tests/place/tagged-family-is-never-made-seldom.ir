@@ -1,0 +1,47 @@
+# The nodes of a tree come from one constructor, which stores their tag, and the program calls it through a variable: by the estimate it runs seldom, and there are a great many nodes.
+# So the layouts of a tagged family never count as made seldom: what does not fit under the inline cap lies in the Extension, as in pack-out-of-line.ir
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow
+# RUN: plan-slots layouts
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=number}}, {key="pos" declared={type=number}}] supertypes=[L1] flags=[IsConstructorFunction]
+layout L1 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}] flags=[IsNeverAllocated]
+layout L2 name="Wide" fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="late0" declared={type=undefined|number}}, {key="late1" declared={type=undefined|number}}, {key="late2" declared={type=undefined|number}}, {key="late3" declared={type=undefined|number}}, {key="late4" declared={type=undefined|number}}, {key="late5" declared={type=undefined|number}}, {key="late6" declared={type=undefined|number}}, {key="late7" declared={type=undefined|number}}, {key="late8" declared={type=undefined|number}}, {key="late9" declared={type=undefined|number}}, {key="late10" declared={type=undefined|number}}, {key="late11" declared={type=undefined|number}}, {key="late12" declared={type=undefined|number}}, {key="late13" declared={type=undefined|number}}, {key="late14" declared={type=undefined|number}}, {key="late15" declared={type=undefined|number}}, {key="late16" declared={type=undefined|number}}, {key="late17" declared={type=undefined|number}}, {key="late18" declared={type=undefined|number}}, {key="late19" declared={type=undefined|number}}, {key="late20" declared={type=undefined|number}}, {key="late21" declared={type=undefined|number}}, {key="late22" declared={type=undefined|number}}, {key="late23" declared={type=undefined|number}}] supertypes=[L1] flags=[IsNeverAllocated]
+layout L3 name="Num" fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1] flags=[IsNeverAllocated]
+variable g0 name="NodeConstructor" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    PutModuleVariable v0 variable=g0
+    v2 = GetModuleVariable variable=g0
+    v3 = Integer integer=1
+    v4 = Integer integer=2
+    v5 = Construct v2, -, v3, v4
+    v6 = Construct v2, -, v4, v4
+    v7 = Check v5 castType=undefined|null|L2
+    v8 = CallDirect v7, v4 function=f2
+    v9 = CallDirect v7 function=f3
+    Return
+}
+function f1 name="NodeObject" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="kind" mode=Strict
+    PropSet v0, v2 key="pos" mode=Strict
+    Return
+}
+function f2 name="fill" parameters=[{type=undefined|null|L2}, {type=number}] results=[{type=anything}] {
+# REPEAT: i = 0..23
+    PropSet v0, v1 key="late%(i)"
+# END REPEAT
+    Return
+}
+function f3 name="look" parameters=[{type=undefined|null|L2}] results=[{type=anything}] {
+# REPEAT: i = 0..23
+    v%(i+1) = PropGet v0 key="late%(i)"
+# END REPEAT
+    Return
+}
+
+# CHECK: L4 CompiledObject size=64 extension=152
+# CHECK: "late23" JSValue out@144
+# CHECK-NEXT: extension Cell32 @16

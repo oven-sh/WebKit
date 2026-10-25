@@ -1,0 +1,27 @@
+# StringBuilderAppendJSON writes a part of the value that JSON.stringify was called with, in the serializer that has taken the place of the call. It runs what the call runs for that part:
+# nothing for plain data, unknown code for an object of which nothing is known. So the function around it says no more after the expansion than it did before
+# FORM: Prepared
+# RUN: effects f0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Plain" fields=[{key="x" declared={type=number} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L1 name="ReachedUnknownCode" fields=[{key="x" declared={type=number}}]
+function f0 name="written" parameters=[{type=L0}, {type=L1}, {type=object}, {type=string}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+    v4 = Undefined
+    v5 = StringBuilderBegin
+    v6 = CallBuiltin -, v0, v4, v4 overload=JSONStringify/0
+    v7 = StringBuilderAppendJSON v5, v0, v3
+    v8 = StringBuilderAppendJSON v5, v3, v3
+    v9 = StringBuilderAppendJSON v5, v1, v3
+    v10 = StringBuilderAppendJSON v5, v2, v3
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK: v6 CallBuiltin: reads(ObjectFields,
+# CHECK-NOT: unknownCode
+# CHECK: v7 StringBuilderAppendJSON: reads(ObjectFields,
+# CHECK-NOT: unknownCode
+# CHECK: v8 StringBuilderAppendJSON: reads(
+# CHECK-NOT: unknownCode
+# CHECK: v9 StringBuilderAppendJSON: unknownCode
+# CHECK-NEXT: v10 StringBuilderAppendJSON: unknownCode

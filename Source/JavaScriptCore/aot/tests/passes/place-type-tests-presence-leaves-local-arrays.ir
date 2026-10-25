@@ -1,0 +1,101 @@
+# The reads of an array that the function itself allocates get no test for a present element. SinkAllocations and the narrowing of storage take such an array apart by its accesses, which stay as they are: the literal of a destructuring is still removed. The same reads of an array that comes from outside get the test
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# RUN(PLAN): test-placement
+# RUN(SUNK): pass PlaceTypeTests SinkAllocations
+# STATISTIC: ElementPresenceTestsPlaced = 2
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="first" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="second" module=m0 declared={type=anything} initialization=Undefined
+
+# The allocation proves the kind that texts ask for, so nothing but the rule for local arrays keeps the test away
+function f0 name="literalOfTexts" parameters=[{type=string}, {type=string}] results=[{type=undefined}] {
+    v2 = NewArray v0, v1 contents=string
+    v3 = Integer integer=0
+    v4 = ElemGet v2, v3
+    PutModuleVariable v4 variable=g0
+    v6 = Integer integer=1
+    v7 = ElemGet v2, v6
+    PutModuleVariable v7 variable=g1
+    Return
+}
+# PLAN-LABEL: function f0
+# PLAN-NEXT: stretch 0: proof allocation v2; proof allocation v2; uses v4 v7; cloned 0
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f0 name="literalOfTexts"
+# CHECK-NOT: IsElementPresent
+# CHECK: v4:{{*}}= GetArrayElement v2, v3, {{*}} arrayStorage=Contiguous level=Expected [keyIsIntegral]
+# CHECK-NOT: IsElementPresent
+# CHECK: v7:{{*}}= GetArrayElement v2, v6, {{*}} arrayStorage=Contiguous level=Expected [keyIsIntegral]
+# CHECK-NOT: IsElementPresent
+# SUNK-LABEL: function f0 name="literalOfTexts"
+# SUNK-NOT: NewArray
+# SUNK-NOT: GetArrayElement
+# SUNK: v4:{{*}}= Upcast v0 castType=
+# SUNK-NOT: NewArray
+# SUNK-NOT: GetArrayElement
+# SUNK: v7:{{*}}= Upcast v1 castType=
+# SUNK-NOT: NewArray
+# SUNK-NOT: GetArrayElement
+
+# const [a, b] = [x, y]: the literal stands where a tuple is expected, so nothing is declared of its elements
+function f1 name="destructuredLiteral" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+    v2 = NewArray v0, v1 contents=anything
+    v3 = Integer integer=0
+    v4 = ElemGet v2, v3
+    PutModuleVariable v4 variable=g0
+    v6 = Integer integer=1
+    v7 = ElemGet v2, v6
+    PutModuleVariable v7 variable=g1
+    Return
+}
+# PLAN-LABEL: function f1
+# PLAN-NEXT: stretch 0: proof allocation v2; uses v4 v7; cloned 0
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f1 name="destructuredLiteral"
+# CHECK-NOT: IsElementPresent
+# CHECK: v4:{{*}}= GetArrayElement v2, v3, v2 level=Expected [keyIsIntegral]
+# CHECK-NOT: IsElementPresent
+# CHECK: v7:{{*}}= GetArrayElement v2, v6, v2 level=Expected [keyIsIntegral]
+# CHECK-NOT: IsElementPresent
+# SUNK-LABEL: function f1 name="destructuredLiteral"
+# SUNK-NOT: NewArray
+# SUNK-NOT: GetArrayElement
+# SUNK: v4:{{*}}= Upcast v0 castType=
+# SUNK-NOT: NewArray
+# SUNK-NOT: GetArrayElement
+# SUNK: v7:{{*}}= Upcast v1 castType=
+# SUNK-NOT: NewArray
+# SUNK-NOT: GetArrayElement
+
+# An array of holes has the kind that its allocation names, and its reads test for that kind alone
+function f2 name="arrayOfHoles" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 999]}, {type=int[0, 999]}] results=[{type=anything}] {
+    v3 = NewArrayLike v1, v0
+    v4 = ElemGet v3, v2
+    Return v4
+}
+# PLAN-LABEL: function f2
+# PLAN-NOT: IsElementPresent
+# PLAN: test HasArrayStorage v3 arrayStorage=Contiguous before v4
+# PLAN-NOT: IsElementPresent
+# CHECK-LABEL: function f2 name="arrayOfHoles"
+# CHECK-NOT: IsElementPresent
+# CHECK: v4:{{*}}= GetArrayElement v3, v2, {{*}} arrayStorage=Contiguous level=Expected [keyIsIntegral]
+# CHECK-NOT: IsElementPresent
+# SUNK-LABEL: function f2 name="arrayOfHoles"
+
+function f3 name="textsFromOutside" parameters=[{type=Array<string>}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    v2 = ElemGet v0, v1
+    PutModuleVariable v2 variable=g0
+    v4 = Integer integer=1
+    v5 = ElemGet v0, v4
+    PutModuleVariable v5 variable=g1
+    Return
+}
+# PLAN-LABEL: function f3
+# PLAN-NEXT: stretch 0: test HasArrayStorage v0 arrayStorage=Contiguous before v2; test IsElementPresent v0, v1 arrayStorage=Contiguous before v2; test IsElementPresent v0, v4 arrayStorage=Contiguous before v5; uses v2 v5; cloned
+# PLAN-NOT: stretch
+# CHECK-LABEL: function f3 name="textsFromOutside"
+# CHECK-COUNT-2: = GetArrayElement v0, {{*}} arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]

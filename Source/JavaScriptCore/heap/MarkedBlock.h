@@ -155,6 +155,16 @@ public:
         // mistake of making a pop freelist rather than a bump freelist.
         // Takes bitvectorLock().mutate() itself, so callers must not hold it.
         void sweep(FreeList*);
+
+#if ASAN_ENABLED
+        void poisonDeadCells();
+        void poisonDeadCellsIfUnswept();
+        void unpoisonCells();
+        // Every other cell is never allocated and stays poisoned.
+        static bool hasRedZoneCells();
+        bool isRedZoneCell(const void*);
+        void poisonRedZoneCells();
+#endif
         
         // This is to be called by Subspace.
         template<typename DestroyFunc>
@@ -245,6 +255,10 @@ public:
 
         template<bool, EmptyMode, SweepMode, SweepDestructionMode, ScribbleMode, NewlyAllocatedMode, MarksMode, typename DestroyFunc>
         void specializedSweep(FreeList*, EmptyMode, SweepMode, SweepDestructionMode, ScribbleMode, NewlyAllocatedMode, MarksMode, NOESCAPE const DestroyFunc&);
+
+        void rebuildNewlyAllocatedByWord(const FreeList&);
+        template<typename Func> void forEachFreeIntervalByWord(const WTF::BitSet<atomsPerBlock>& live, NOESCAPE const Func&);
+        JS_EXPORT_PRIVATE void validateFreeIntervals(const WTF::BitSet<atomsPerBlock>& live, std::span<const std::pair<unsigned, unsigned>>);
         
         unsigned m_atomsPerCell { std::numeric_limits<unsigned>::max() };
         unsigned m_startAtom { std::numeric_limits<unsigned>::max() }; // Exact location of the first allocatable atom.
@@ -262,6 +276,7 @@ public:
 
         // WeakSet is rarely accessed so keep it after the other members.
         WeakSet m_weakSet;
+        void* m_verifierMemo { nullptr };
     };
 
 private:    
@@ -290,7 +305,7 @@ public:
         // m_vm must remain a pointer (instead of a reference) because JSCLLIntOffsetsExtractor
         // will fail otherwise.
         VM* const m_vm;
-        Subspace* m_subspace;
+        uint32_t m_cellSize { 0 };
 
         CountingLock m_lock;
     
@@ -363,7 +378,7 @@ public:
 
         WTF::BitSet<atomsPerBlock> m_marks;
         WTF::BitSet<atomsPerBlock> m_newlyAllocated;
-        void* m_verifierMemo { nullptr };
+        Subspace* m_subspace;
     };
     
 private:
@@ -389,7 +404,8 @@ public:
     static_assert(endAtom * atomSize == blockSize);
     static_assert(endAtom - firstPayloadRegionAtom == numberOfPayloadAtoms);
 
-    static MarkedBlock::Handle* tryCreate(Heap&, AlignedMemoryAllocator*);
+    enum class IsFirstInDirectory : bool { No, Yes };
+    static MarkedBlock::Handle* tryCreate(Heap&, AlignedMemoryAllocator*, IsFirstInDirectory);
         
     Handle& handle();
     const Handle& handle() const;
@@ -427,6 +443,7 @@ public:
     void resetNewlyAllocatedForVersionWrap();
         
     size_t cellSize();
+    size_t cellSizeInHeader();
     CellAttributes attributes() const;
 
     bool hasAnyMarked() const;
@@ -593,6 +610,11 @@ inline size_t MarkedBlock::cellSize()
     return handle().cellSize();
 }
 
+inline size_t MarkedBlock::cellSizeInHeader()
+{
+    return header().m_cellSize;
+}
+
 inline CellAttributes MarkedBlock::Handle::attributes() const
 {
     return m_attributes;
@@ -736,13 +758,13 @@ inline bool MarkedBlock::hasAnyMarked() const
 
 inline void MarkedBlock::setVerifierMemo(void* p)
 {
-    header().m_verifierMemo = p;
+    handle().m_verifierMemo = p;
 }
 
 template<typename T>
 T MarkedBlock::verifierMemo() const
 {
-    return std::bit_cast<T>(header().m_verifierMemo);
+    return std::bit_cast<T>(header().m_handle.m_verifierMemo);
 }
 
 } // namespace JSC

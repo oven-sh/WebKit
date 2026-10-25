@@ -1,0 +1,49 @@
+# an allocation that lists a number proves the raw read of its slot, whatever is stored under the key into an object that cannot be the one it has made
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidGuard 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=undefined|number}}, {key="y" declared={type=undefined|number}}]
+layout L1 name="Holder" fields=[{key="inner" declared={type=L0} flow={occupancy=AlwaysFilled}}]
+
+function f0 name="goodStoreIntoAnotherAllocation" parameters=[{type=number}, {type=undefined|number}] results=[{type=number}] {
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v4 = GetSlot v2, v2 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
+    PutSlot v3, v3, v1 key="y" receivers=[L0] level=Proven
+    Return v4
+}
+function f1 name="badStoreIntoTheSameAllocation" parameters=[{type=number}, {type=undefined|number}] results=[{type=number}] {
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = GetSlot v2, v2 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
+    PutSlot v2, v2, v1 key="y" receivers=[L0] level=Proven
+    Return v3
+}
+function f2 name="badStoreIntoEitherAllocation" parameters=[{type=number}, {type=undefined|number}, {type=boolean}] results=[{type=number}] {
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v4 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v5 = GetSlot v3, v3 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v4)
+  b3(v6: L0):
+    PutSlot v6, -, v1 key="y" receivers=[L0] level=Proven
+    Return v5
+}
+function f3 name="goodStoreIntoAnObjectFromOutside" parameters=[{type=number}, {type=undefined|number}, {type=L0}] results=[{type=number}] {
+    PutSlot v2, -, v1 key="y" receivers=[L0] level=Proven
+    v4 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v5 = GetSlot v4, v4 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
+    Return v5
+}
+function f4 name="badStoreIntoWhatIsReadFromWhereTheAllocationWasStored" parameters=[{type=number}, {type=undefined|number}, {type=L1}] results=[{type=number}] {
+    v3 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    PutSlot v2, -, v3 key="inner" receivers=[L1] level=Proven
+    v5 = GetSlot v2 key="inner" receivers=[L1] level=Proven
+    v6 = GetSlot v3, v3 key="y" receivers=[L0] level=Proven [holdsDeclaredType]
+    PutSlot v5, -, v1 key="y" receivers=[L0] level=Proven
+    Return v6
+}

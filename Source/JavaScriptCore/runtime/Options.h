@@ -134,6 +134,8 @@ public:
 
     JS_EXPORT_PRIVATE static void assertOptionsAreCoherent();
     JS_EXPORT_PRIVATE static void notifyOptionsChanged();
+    static constexpr double sizeClassProgressionForCompiledCode = 1.1;
+    JS_EXPORT_PRIVATE static double sizeClassProgressionWithAOT();
 
 #define DECLARE_OPTION_ACCESSORS(type_, name_, defaultValue_, availability_, description_) \
 public: \
@@ -145,6 +147,13 @@ public: \
 
     FOR_EACH_JSC_OPTION(DECLARE_OPTION_ACCESSORS)
 #undef DECLARE_OPTION_ACCESSORS
+
+    // What the folders outside aot/ ask. Without the ahead-of-time compiler it is a constant, so what hangs on it is not in the binary.
+#if ENABLE(AOT)
+    ALWAYS_INLINE static bool runsCompiledImage() { return useAOT(); }
+#else
+    static constexpr bool runsCompiledImage() { return false; }
+#endif
 
     static bool LEGACY_NODELETE isAvailable(ID, Availability);
     JS_EXPORT_PRIVATE static SandboxPolicy machExceptionHandlerSandboxPolicy;

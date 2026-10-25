@@ -1,0 +1,125 @@
+# What flow could not follow is expected to be anything that reached the place. A part of the expected type on which another access of the same value is not resolved is dropped: an index finds nothing in the slots of a layout, so the length is read from the array too, and one test of the value guards both accesses
+# TODO: known-layouts: a read of a name that no part of the expected type has gets four tests that can prove nothing
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="List" fields=[{key="length" declared={type=number} flags=[IsRequired]}, {key="head" declared={type=anything} flags=[IsRequired]}]
+function f0 name="lengthAndIndex" parameters=[{type=L0|Array<anything>|Object flags=[IsExpected]}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|Array<anything>|Object, v1: int[0, 1000]):
+    v2 = PropGet v0 key="length"
+    v3 = ElemGet v0, v1
+    v4 = Add v2, v3
+    Return v4
+# CHECK-NOT: testedType=L0
+# CHECK: [[isArray0]]: boolean ~ true = TypeTest v0 testedType=Array
+# CHECK-NEXT: Branch [[isArray0]] -> taken [[arrayBlock0]](| 0), notTaken
+# CHECK-NEXT: [[arrayBlock0]]([[array0]]: Array):
+# CHECK-NOT: testedType=L0
+# CHECK: = CallBuiltin [[array0]] overload=ArrayPrototypeLength/0
+# CHECK-NOT: testedType=L0
+# CHECK: = GetArrayElement [[array0]], v1, {{*}} level=Expected
+# CHECK-NOT: testedType=L0
+}
+
+function f1 name="lengthAlone" parameters=[{type=L0|Array<anything>|Object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|Array<anything>|Object):
+    v1 = PropGet v0 key="length"
+    Return v1
+# One access alone contradicts nothing.
+# CHECK-NOT: testedType=Array
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK-NOT: testedType=Array
+# CHECK: = GetSlot {{*}} key="length" receivers=[L0] level=Expected
+# CHECK-NOT: testedType=Array
+}
+
+function f2 name="lengthAndOtherField" parameters=[{type=L0|Array<anything>|Object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|Array<anything>|Object):
+    v1 = PropGet v0 key="length"
+    v2 = PropGet v0 key="head"
+    v3 = Add v1, v2
+    Return v3
+# CHECK-NOT: testedType=Array
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: = GetSlot {{*}} key="length"
+# CHECK: = GetSlot {{*}} key="head"
+}
+
+function f3 name="nothingResolves" parameters=[{type=L0|Array<anything>|Object flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|Array<anything>|Object):
+    v1 = PropGet v0 key="other"
+    Return v1
+# CHECK-NOT: testedType=L0
+# CHECK-NOT: testedType=Array
+# CHECK: = PropGet v0 key="other"
+}
+
+function f4 name="noPartServesAll" parameters=[{type=L0|Array<anything> flags=[IsExpected]}, {type=int[0, 1000]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|Array<anything>, v1: int[0, 1000]):
+    v2 = PropGet v0 key="head"
+    v3 = ElemGet v0, v1
+    v4 = Add v2, v3
+    Return v4
+# No part serves both accesses, so each keeps the part that serves it.
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: testedType=Array
+}
+
+function f5 name="nothingExpected" parameters=[{type=anything}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = PropGet v0 key="length"
+    v3 = ElemGet v0, v1
+    v4 = Add v2, v3
+    Return v4
+# Of a value that nobody could follow, its uses are all there is to go by.
+# CHECK: = TypeTest v0 testedType=Array
+# CHECK: = CallBuiltin {{*}} overload=ArrayPrototypeLength/0
+# CHECK: = GetArrayElement {{*}}, v1, {{*}} level=Expected
+}
+
+function f6 name="nothingExpectedAndOtherName" parameters=[{type=anything}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = PropGet v0 key="head"
+    v3 = ElemGet v0, v1
+    v4 = Add v2, v3
+    Return v4
+# An array has no such name.
+# CHECK-NOT: testedType=Array
+}
+
+function f7 name="nothingExpectedAndStringKey" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+    v2 = PropGet v0 key="length"
+    v3 = ElemGet v0, v1
+    v4 = Add v2, v3
+    Return v4
+# CHECK-NOT: testedType=Array
+}
+
+function f8 name="nothingExpectedAndLengthAlone" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="length"
+    Return v1
+# CHECK-NOT: testedType=Array
+}
+
+function f9 name="readAgainForEachUse" parameters=[{type=object}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = PropGet v0 key="tags"
+    v3 = PropGet v2 key="length"
+    v4 = PropGet v0 key="tags"
+    v5 = ElemGet v4, v1
+    v6 = Add v3, v5
+    Return v6
+# What is read from one object under one name is used as one value: the length is the length of what is read by index.
+# CHECK: = TypeTest v2 testedType=Array
+# CHECK: = CallBuiltin {{*}} overload=ArrayPrototypeLength/0
+# CHECK: = TypeTest v4 testedType=Array
+# CHECK: = GetArrayElement
+}
+
+function f10 name="otherNameReadFromOneObject" parameters=[{type=object}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = PropGet v0 key="name"
+    v3 = PropGet v2 key="length"
+    v4 = PropGet v0 key="tags"
+    v5 = ElemGet v4, v1
+    v6 = Add v3, v5
+    Return v6
+# CHECK-NOT: TypeTest v2 testedType=Array
+}

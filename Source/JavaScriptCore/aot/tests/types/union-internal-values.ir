@@ -1,0 +1,16 @@
+# An internal value unites with itself and with absent. No type holds it together with anything else: the answer is anything.
+# RUN: union
+# CHECK: t0 | t0 = env L0
+# CHECK: t0 | t1 = anything
+# CHECK: t0 | t2 = anything
+# CHECK: t0 | t3 = anything
+# CHECK: t0 | t4 = anything
+# CHECK: t0 | t5 = absent|env L0
+# CHECK: t2 | t4 = anything
+# CHECK: t4 | t5 = absent|cursor
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment
+layout L1 kind=Environment
+function f0 name="types" parameters=[{type=env L0}, {type=env L1}, {type=undefined}, {type=int}, {type=cursor}, {type=absent}] results=[{type=undefined}]

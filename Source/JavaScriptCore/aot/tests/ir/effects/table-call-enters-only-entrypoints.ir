@@ -1,0 +1,128 @@
+# A call through the method table enters the lookup of its selector only after a method or a prototype link was replaced. Where the layouts prove that nothing replaces them, the call does what the entrypoints do, and each operand is the entry parameter at its position
+# FORM: Prepared
+# RUN: effects summaries f14 f15
+# RUN(OPERANDS): operands summaries f14 f15
+
+layout L0 kind=Instance name="Shape0" constructor=f0 fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None allocationClasses=[0] impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="area" function=f1}] namedMembers=[{key="area" function=f1 mutability=Fixed}]}
+layout L1 kind=Instance name="Shape1" constructor=f2 fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None allocationClasses=[1] impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="area" function=f3}] namedMembers=[{key="area" function=f3 mutability=Fixed}]}
+layout L2 kind=Instance name="Shape2" constructor=f4 fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None allocationClasses=[2] impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="area" function=f5}] namedMembers=[{key="area" function=f5 mutability=Fixed}]}
+layout L3 kind=Instance name="Shape3" constructor=f6 fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None allocationClasses=[3] impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="area" function=f7}] namedMembers=[{key="area" function=f7 mutability=Fixed}]}
+layout L4 kind=Instance name="Shape4" constructor=f8 fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None allocationClasses=[4] impossibleMutations=[RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="area" function=f9}] namedMembers=[{key="area" function=f9 mutability=Fixed}]}
+layout L5 kind=Instance name="Open5" constructor=f10 fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None allocationClasses=[5]} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed members=[{key="size" function=f11}] namedMembers=[{key="size" function=f11}]}
+layout L6 kind=Instance name="Open6" constructor=f12 fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1 flow={baseState=None allocationClasses=[6]} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed members=[{key="size" function=f13}] namedMembers=[{key="size" function=f13}]}
+module m0 path="main.ts" displayPath="main.ts" namespaceLayout=L(m0)
+function f0 name="Class0" module=m0 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
+function f1 name="area" module=m0 kind=Method flags=[HasThis] thisType={type=L0} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1: number = GetSlot v0 key="x" receivers=[L0] level=Proven
+    Return v1
+}
+function f2 name="Class1" module=m0 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1
+function f3 name="area" module=m0 kind=Method flags=[HasThis] thisType={type=L1} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    v1: number = GetSlot v0 key="x" receivers=[L1] level=Proven
+    Return v1
+}
+function f4 name="Class2" module=m0 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2
+function f5 name="area" module=m0 kind=Method flags=[HasThis] thisType={type=L2} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L2):
+    v1: number = GetSlot v0 key="x" receivers=[L2] level=Proven
+    Return v1
+}
+function f6 name="Class3" module=m0 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3
+function f7 name="area" module=m0 kind=Method flags=[HasThis] thisType={type=L3} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L3):
+    v1: number = GetSlot v0 key="x" receivers=[L3] level=Proven
+    Return v1
+}
+function f8 name="Class4" module=m0 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4
+function f9 name="area" module=m0 kind=Method flags=[HasThis] thisType={type=L4} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L4):
+    v1: number = GetSlot v0 key="x" receivers=[L4] level=Proven
+    Return v1
+}
+function f10 name="Class5" module=m0 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5
+function f11 name="size" module=m0 kind=Method flags=[HasThis] thisType={type=L5} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L5):
+    v1: number = GetSlot v0 key="x" receivers=[L5] level=Proven
+    Return v1
+}
+function f12 name="Class6" module=m0 kind=BaseConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L6
+function f13 name="size" module=m0 kind=Method flags=[HasThis] thisType={type=L6} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L6):
+    v1: number = GetSlot v0 key="x" receivers=[L6] level=Proven
+    Return v1
+}
+function f14 name="methodsThatNothingReplaces" module=m0 thisType={type=anything} parameters=[{type=L0|L1|L2|L3|L4}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0|L1|L2|L3|L4):
+    v1 = CallTable v0 function=f16 key="area" receivers=[L0, L1, L2, L3, L4] entrypoints=[f18, f19, f20, f21, f22]
+    Return v1
+}
+function f15 name="methodsThatMayBeReplaced" module=m0 thisType={type=anything} parameters=[{type=L5|L6}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L5|L6):
+    v1 = CallTable v0 function=f17 key="size" receivers=[L5, L6] entrypoints=[f23, f24]
+    Return v1
+}
+function f16 role=TableLookup flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={parameter=2147483648 node=1} creator=TableLookup{key="area"} {
+  b0(v0: object):
+    v1: anything = PropGet v0 key="area" @0
+    v2: anything = Call v1, v0 calleeKey="area" [isNeverInlined] @0
+    Return v2 @0
+}
+function f17 role=TableLookup flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={parameter=2147483648 node=2} creator=TableLookup{key="size"} {
+  b0(v0: object):
+    v1: anything = PropGet v0 key="size" @0
+    v2: anything = Call v1, v0 calleeKey="size" [isNeverInlined] @0
+    Return v2 @0
+}
+function f18 name="area" module=m0 kind=Method role=TableEntrypoint flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1 parameter=2147483648 node=1} creator=Entrypoint{target=f1 arguments=Registers} {
+  b0(v0: object):
+    v1: L0 = AssumeType v0 castType=L0 @0
+    v2: number = CallDirect v1 function=f1 @0
+    ReturnCall v2 requirement=Allowed @0
+}
+function f19 name="area" module=m0 kind=Method role=TableEntrypoint flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3 parameter=2147483648 node=1} creator=Entrypoint{target=f3 arguments=Registers} {
+  b0(v0: object):
+    v1: L1 = AssumeType v0 castType=L1 @0
+    v2: number = CallDirect v1 function=f3 @0
+    ReturnCall v2 requirement=Allowed @0
+}
+function f20 name="area" module=m0 kind=Method role=TableEntrypoint flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5 parameter=2147483648 node=1} creator=Entrypoint{target=f5 arguments=Registers} {
+  b0(v0: object):
+    v1: L2 = AssumeType v0 castType=L2 @0
+    v2: number = CallDirect v1 function=f5 @0
+    ReturnCall v2 requirement=Allowed @0
+}
+function f21 name="area" module=m0 kind=Method role=TableEntrypoint flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f7 parameter=2147483648 node=1} creator=Entrypoint{target=f7 arguments=Registers} {
+  b0(v0: object):
+    v1: L3 = AssumeType v0 castType=L3 @0
+    v2: number = CallDirect v1 function=f7 @0
+    ReturnCall v2 requirement=Allowed @0
+}
+function f22 name="area" module=m0 kind=Method role=TableEntrypoint flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f9 parameter=2147483648 node=1} creator=Entrypoint{target=f9 arguments=Registers} {
+  b0(v0: object):
+    v1: L4 = AssumeType v0 castType=L4 @0
+    v2: number = CallDirect v1 function=f9 @0
+    ReturnCall v2 requirement=Allowed @0
+}
+function f23 name="size" module=m0 kind=Method role=TableEntrypoint flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f11 parameter=2147483648 node=2} creator=Entrypoint{target=f11 arguments=Registers} {
+  b0(v0: object):
+    v1: L5 = AssumeType v0 castType=L5 @0
+    v2: number = CallDirect v1 function=f11 @0
+    ReturnCall v2 requirement=Allowed @0
+}
+function f24 name="size" module=m0 kind=Method role=TableEntrypoint flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f13 parameter=2147483648 node=2} creator=Entrypoint{target=f13 arguments=Registers} {
+  b0(v0: object):
+    v1: L6 = AssumeType v0 castType=L6 @0
+    v2: number = CallDirect v1 function=f13 @0
+    ReturnCall v2 requirement=Allowed @0
+}
+# CHECK-LABEL: function f14
+# CHECK-NEXT: v1 CallTable: reads(ObjectFields/1)
+# CHECK-LABEL: function f15
+# CHECK-NEXT: v1 CallTable: {{*}}callsUnknownCode
+# OPERANDS-LABEL: function f14
+# OPERANDS-NEXT: v1 CallTable 0: [Inspects, ReadsContents, WritesContents]
+# OPERANDS-NOT: Retains
+# OPERANDS-LABEL: function f15
+# OPERANDS-NEXT: v1 CallTable 0: [Inspects, Retains, Returns, Calls,

@@ -374,7 +374,7 @@ void WebAssemblyModuleConstructor::finishCreation(VM& vm, WebAssemblyModuleProto
 }
 
 WebAssemblyModuleConstructor::WebAssemblyModuleConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callJSWebAssemblyModule, constructJSWebAssemblyModule)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callJSWebAssemblyModule), JSC_REGISTERED_HOST_FUNCTION(constructJSWebAssemblyModule))
 {
 }
 

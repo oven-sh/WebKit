@@ -1,0 +1,13 @@
+# A join that adds no string to the longer of its two lists keeps that list, however long it is. One string from outside makes a longer list, and that one is widened.
+# OPTIONS: limit=MaxLiteralsInType:4
+# RUN: union-widening
+# LOSS: MaxLiteralsInType x2 f0
+# CHECK: t0 | t0 = "a"|"b"|"c"|"d"|"e"
+# CHECK-NEXT: t0 | t1 = "a"|"b"|"c"|"d"|"e"
+# CHECK-NEXT: t0 | t2 = string
+# CHECK-NEXT: t0 | t3 = number|"a"|"b"|"c"|"d"|"e"
+# CHECK: loss MaxLiteralsInType x2
+# CHECK-NEXT: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type="a"|"b"|"c"|"d"|"e"}, {type="b"|"d"}, {type="f"}, {type=number}] results=[{type=undefined}]

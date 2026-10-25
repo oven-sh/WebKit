@@ -1,0 +1,83 @@
+# A release stands behind a last use that may throw: when it throws the cell is not handed back, unless the handler reads the environment and releases it
+# FORM: Prepared
+# RUN: pass ReuseEnvironments
+# OPTIONS: disable=pass:AllocateInFrames
+# STATISTIC: EnvironmentsReused = 2
+# CHECK: reused environments: [L0 L1]
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="deadInHandler" fields=[{key="x" declared={type=anything}}]
+layout L1 kind=Environment name="readInHandler" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="deadInHandler" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    Jump -> next b2()
+  b2() handler=b3():
+    v4 = CallDirect v3, v0 function=f2
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    v6 = Call v0, -, v5
+    Jump -> next b4()
+  b4():
+    Branch v1 -> taken b1(), notTaken b5()
+  b5():
+    Return v0
+# CHECK-NOT: ReleaseEnvironment
+# CHECK: b2() handler=b3():
+# CHECK-NEXT: = CallDirect v3, v0 function=f2
+# CHECK-NEXT: ReleaseEnvironment v3
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NOT: ReleaseEnvironment
+# CHECK-NOT: MarkEnvironmentEscaped
+}
+
+function f1 name="readInHandler" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    Jump -> next b2()
+  b2() handler=b3():
+    v4 = CallDirect v3, v0 function=f3
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    v6 = GetEnvironmentField v3 layout=L1 field=0
+    v7 = Call v0, -, v6
+    Jump -> next b4()
+  b4():
+    Branch v1 -> taken b1(), notTaken b5()
+  b5():
+    Return v0
+# CHECK-NOT: ReleaseEnvironment
+# CHECK: b2() handler=b3():
+# CHECK-NEXT: = CallDirect v3, v0 function=f3
+# CHECK-NEXT: Jump -> next [[behindCovered]]()
+# CHECK-NEXT: b3() role=CatchHandler:
+# CHECK-NEXT: = CatchValue
+# CHECK-NEXT: = GetEnvironmentField v3
+# CHECK-NEXT: ReleaseEnvironment v3
+# CHECK-NOT: ReleaseEnvironment
+# CHECK: [[behindCovered]]():
+# CHECK-NEXT: ReleaseEnvironment v3
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NOT: ReleaseEnvironment
+}
+
+function f2 name="mayThrow" kind=Arrow captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    v3 = Call v1, -, v2
+    Return v3
+}
+
+function f3 name="mayThrow" kind=Arrow captures=[{type=env L1}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L1, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L1 field=0
+    v3 = Call v1, -, v2
+    Return v3
+}

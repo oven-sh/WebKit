@@ -1,0 +1,40 @@
+# What a value does is computed again where the type of an operand has changed, though the value names the same operands.
+# The sum in `addsWhatIsLeft` may join strings, which may throw, as long as its operand may be the text. SimplifyControlFlow decides the first branch, and the sum stays:
+# its operand still has the type it had. RetypeValues leaves numbers only. A sum of numbers does nothing, so EliminateDeadCode removes it in the next round.
+# With VerifyEachPass an answer that was kept wrongly fails the comparison with a fresh one.
+# OPTIONS: check=VerifyEachPass
+# RUN: pipeline NarrowConstantVariables
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+
+function f1 name="addsWhatIsLeft" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Boolean boolean=false
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = String string="text"
+    Jump -> next b5(v2)
+  b2():
+    v3 = ToBoolean v0
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    v4 = Integer integer=1
+    Jump -> next b5(v4)
+  b4():
+    v5 = Integer integer=2
+    Jump -> next b5(v5)
+  b5(v6):
+    v7 = Add v6, v6
+    Return v0
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: = Add
+# CHECK: Return

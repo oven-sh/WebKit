@@ -1,0 +1,57 @@
+# In a validating build a test stands beside every assumed type, and it stays when a pass folds the cast away
+# OPTIONS: validate
+# RUN: pipeline ApplyFlowResults
+# RUN(END): pipeline PlanSlots
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[callee]]: anything = PropGet {{*}}key="toLocaleString"
+# CHECK-NEXT: ValidateType [[callee]] validatedType=builtin(ObjectPrototypeToLocaleString)
+# CHECK-NEXT: [[proven]]: builtin(ObjectPrototypeToLocaleString) = AssumeType [[callee]]
+# CHECK-NEXT: ValidateCallee [[proven]] validatedType=builtin(ObjectPrototypeToLocaleString)
+# CHECK-NEXT: [[result]]: anything = Call [[proven]],
+# CHECK-NEXT: ValidateType [[result]] validatedType=int
+# CHECK-NEXT: : int = AssumeType [[result]] castType=int
+# CHECK-LABEL: function f2 name="callsByValue"
+# CHECK: [[byValue]]: 1 = Call {{*}}callees=[f3]
+# CHECK-NEXT: ValidateType [[byValue]] validatedType=1
+# CHECK-NEXT: : 1 = AssumeType [[byValue]] castType=1
+# The call becomes direct, its result has the type of the callee's result, and the cast goes.
+# END-LABEL: function f2 name="callsByValue"
+# END-NOT: AssumeType
+# END: [[direct]]: 1 = CallDirect function=f3
+# END-NEXT: ValidateType [[direct]] validatedType=1
+# END-NOT: AssumeType
+# END-LABEL: function f3 name="one"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 name="Source" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = PropGet v2 key="toLocaleString"
+    v4 = Call v3, v2 calleeKey="toLocaleString"
+    v5 = Add v4, v0
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="print" [isFreeName]
+    v8 = CallDirect function=f2 [isNeverInlined]
+    v9 = Call v7, -, v5, v8
+    Return
+}
+function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=131085 thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="a"
+    Return v1
+}
+function f2 name="callsByValue" results=[{type=anything}] {
+    v0 = NewClosure function=f3
+    v1 = Call v0 [isNeverInlined]
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    Return v3
+}
+function f3 name="one" results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}
+runtimefunction id=131085 function=f1

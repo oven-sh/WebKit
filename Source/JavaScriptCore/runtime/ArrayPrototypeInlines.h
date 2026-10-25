@@ -36,6 +36,10 @@
 #include "JSStringInlines.h"
 #include "ObjectPrototype.h"
 
+#if ENABLE(AOT)
+#include "AOTPropertyWalk.h"
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
@@ -82,6 +86,10 @@ ALWAYS_INLINE bool arrayMissingIsConcatSpreadable(VM& vm, JSObject* thisObject)
     } else {
         if (globalObject->objectPrototype() != thisObject->getPrototypeDirect())
             return false;
+#if ENABLE(AOT)
+        if (AOT::PropertyWalk::isCompiledObject(thisObject))
+            return AOT::PropertyWalk::hasOwnProperty(thisObject, vm.propertyNames->isConcatSpreadableSymbol.impl()) == AOT::PropertyWalk::Presence::Absent;
+#endif
     }
 
     if (!thisObject->hasCustomProperties())
@@ -154,8 +162,8 @@ ALWAYS_INLINE void setLength(JSGlobalObject* globalObject, VM& vm, JSObject* obj
             return;
         }
         JSArray* array = uncheckedDowncast<JSArray>(obj);
-        // Only ArrayStorage can hold a read-only length, whose unchanged assignment must still throw.
-        if (!hasAnyArrayStorage(array->indexingType()) && array->length() == value)
+        // An array with ArrayStorage or with elements frozen in place can have a read-only length, whose unchanged assignment must still throw.
+        if (!hasAnyArrayStorage(array->indexingType()) && array->length() == value && !(isCopyOnWrite(array->indexingMode()) && array->structure()->hasFrozenElementsInPlace()))
             return;
         scope.release();
         array->setLength(globalObject, static_cast<uint32_t>(value), throwException);

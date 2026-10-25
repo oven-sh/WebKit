@@ -27,7 +27,7 @@
 
 #include <wtf/Platform.h>
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include "AssemblyHelpers.h"
 #include "DisallowMacroScratchRegisterUsage.h"
@@ -719,4 +719,4 @@ public:
 
 } // namespace JSC
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)

@@ -1,0 +1,169 @@
+# The start of a key, `a.id + ","`, is made on several ways that meet before the rest of the key is added. Where it is the same form on every edge, of numbers and of texts of the source, and nobody reads it
+# where it is made, the numbers are passed instead and the string is made behind the merge, where the concatenation that takes it in takes its parts. It stays where the texts differ, where another string
+# comes over one of the edges, where it is read in front of the merge, where a part is a string of any length, and where no concatenation takes it in
+# FORM: Prepared
+# RUN: pass FuseConcatenations
+# STATISTIC: ConcatenationsFused = 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="overTwoEdges" parameters=[{type=number}, {type=number}, {type=number}, {type=boolean}] results=[{type=string}] {
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = String string=","
+    v5 = Add v0, v4
+    Jump -> next b3(v5)
+  b2():
+    v6 = String string=","
+    v7 = Add v1, v6
+    Jump -> next b3(v7)
+  b3(v8: string):
+    v9 = Strcat v8, v2
+    Return v9
+# CHECK-NOT: = Add
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v0)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b3(v1)
+# CHECK-NEXT: b3([[number0]]: number):
+# CHECK-NEXT: [[text0]]: "," = String string=","
+# CHECK-NEXT: v9: string = Strcat [[number0]], [[text0]], v2
+# CHECK-NEXT: Return v9
+}
+
+function f1 name="throughTwoMerges" parameters=[{type=number}, {type=number}, {type=number}, {type=boolean}, {type=boolean}] results=[{type=string}] {
+    Branch v3 -> taken b1(), notTaken b4()
+  b1():
+    v5 = String string=","
+    v6 = Add v0, v5
+    Branch v4 -> taken b2(), notTaken b3(v6)
+  b2():
+    Jump -> next b5(v6)
+  b3(v7: string) frequency=Unlikely:
+    Jump -> next b5(v7)
+  b4() frequency=Unlikely:
+    v8 = String string=","
+    v9 = Add v1, v8
+    Jump -> next b3(v9)
+  b5(v10: string):
+    v11 = Strcat v10, v2
+    Return v11
+# CHECK-NOT: = Add
+# CHECK: Branch v4 -> taken b2(), notTaken b3(v0)
+# CHECK: Jump -> next b5(v0)
+# CHECK: b3([[first1]]: number) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b5([[first1]])
+# CHECK: Jump -> next b3(v1)
+# CHECK: b5([[number1]]: number):
+# CHECK-NEXT: [[text1]]: "," = String string=","
+# CHECK-NEXT: v11: string = Strcat [[number1]], [[text1]], v2
+}
+
+function f2 name="otherText" parameters=[{type=number}, {type=number}, {type=number}, {type=boolean}] results=[{type=string}] {
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = String string=","
+    v5 = Add v0, v4
+    Jump -> next b3(v5)
+  b2():
+    v6 = String string=";"
+    v7 = Add v1, v6
+    Jump -> next b3(v7)
+  b3(v8: string):
+    v9 = Strcat v8, v2
+    Return v9
+# CHECK: Jump -> next b3(v5)
+# CHECK: Jump -> next b3(v7)
+# CHECK: = Strcat v8, v2
+}
+
+function f3 name="anotherStringOverOneEdge" parameters=[{type=number}, {type=string}, {type=number}, {type=boolean}] results=[{type=string}] {
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = String string=","
+    v5 = Add v0, v4
+    Jump -> next b3(v5)
+  b2():
+    Jump -> next b3(v1)
+  b3(v6: string):
+    v7 = Strcat v6, v2
+    Return v7
+# CHECK: Jump -> next b3(v5)
+# CHECK: = Strcat v6, v2
+}
+
+function f4 name="readInFrontOfTheMerge" parameters=[{type=number}, {type=number}, {type=number}, {type=boolean}, {type=function}] results=[{type=string}] {
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v5 = String string=","
+    v6 = Add v0, v5
+    v7 = Call v4, v6
+    Jump -> next b3(v6)
+  b2():
+    v8 = String string=","
+    v9 = Add v1, v8
+    Jump -> next b3(v9)
+  b3(v10: string):
+    v11 = Strcat v10, v2
+    Return v11
+# CHECK: Jump -> next b3(v6)
+# CHECK: Jump -> next b3(v9)
+# CHECK: = Strcat v10, v2
+}
+
+function f5 name="nothingTakesItIn" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=string}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = String string=","
+    v4 = Add v0, v3
+    Jump -> next b3(v4)
+  b2():
+    v5 = String string=","
+    v6 = Add v1, v5
+    Jump -> next b3(v6)
+  b3(v7: string):
+    Return v7
+# CHECK: Jump -> next b3(v4)
+# CHECK: Jump -> next b3(v6)
+# CHECK: Return v7
+}
+
+function f6 name="partOfAnyLength" parameters=[{type=string}, {type=string}, {type=number}, {type=boolean}] results=[{type=string}] {
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = String string=","
+    v5 = Add v0, v4
+    Jump -> next b3(v5)
+  b2():
+    v6 = String string=","
+    v7 = Add v1, v6
+    Jump -> next b3(v7)
+  b3(v8: string):
+    v9 = Strcat v8, v2
+    Return v9
+# CHECK: Jump -> next b3(v5)
+# CHECK: Jump -> next b3(v7)
+# CHECK: = Strcat v8, v2
+}
+
+function f7 name="passedAroundALoop" parameters=[{type=number}, {type=int[0, 1000000]}, {type=function}] results=[{type=undefined}] {
+    v3 = String string=":"
+    v4 = Add v0, v3
+    v5 = Integer integer=0
+    Jump -> next b1(v4, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Less v7, v1
+    Branch v9 -> taken b2(| 0), notTaken b3()
+  b2(v10):
+    v11 = Strcat v6, v10
+    v12 = Call v2, v11
+    v13 = Integer integer=1
+    v14 = Add v10, v13
+    Jump -> next b1(v6, v14)
+  b3():
+    Return
+# CHECK: Jump -> next b1(v5, v0)
+# CHECK: b1(v7: {{*}}, [[number7]]: number):
+# CHECK: = Strcat [[number7]], {{*}}, v10
+# CHECK: Jump -> next b1(v14, [[number7]])
+}

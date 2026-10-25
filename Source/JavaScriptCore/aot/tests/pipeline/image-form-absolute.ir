@@ -1,0 +1,41 @@
+# Whatever form of image the compiler's own run time loads, it writes the absolute form where the run time it compiles for loads that one.
+# RUN: compile
+# OPTIONS: image-form=absolute heat=everything-is-hot check=validate-back-end
+# STATISTIC: StringHeaderBytesEmitted >= 1
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="register" [isFreeName]
+    v7 = Call v6, -, v0, v1, v2, v3, v4
+    Return v7
+}
+function f1 name="readByName" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="width"
+    Return v1
+}
+function f2 name="readByKey" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f3 name="storeByName" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="height"
+    Return v1
+}
+function f4 name="isThatText" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="a text of some length"
+    v2 = StrictEq v0, v1
+    Return v2
+}
+function f5 name="thatText" results=[{type=anything}] {
+    v0 = String string="another text of some length"
+    Return v0
+}

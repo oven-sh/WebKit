@@ -1,0 +1,41 @@
+# The result of a NewObject with a prototype operand is an object while another class with instances exists: under the prototype object of another class the run time answers with another object.
+# The layout it names and the layouts proven below it are what is expected of it, until the flow analysis says which one it is. Without the operand the result has the layout it names
+# FORM: Prepared
+# RUN: print
+# CHECK-LABEL: name="newTargetUnknown"
+# CHECK: v3: object ~ L0|L1 = NewObject v2 layout=L0
+# CHECK-LABEL: name="classWithoutSubclass"
+# CHECK: v3: object ~ L2 = NewObject v2 layout=L2
+# CHECK-LABEL: name="provenByFlow"
+# CHECK: v3: object ~ L0|L1 = NewObject v2 layout=L0
+# CHECK-NEXT: v4: L0 = AssumeType v3 castType=L0
+# CHECK-LABEL: name="withoutPrototype"
+# CHECK: v2: L0 = NewObject layout=L0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Base" constructor=f0 fields=[{key="x" declared={type=anything}}] flow={baseState=None}
+layout L1 kind=Instance name="Below" base=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0}
+layout L2 kind=Instance name="Stranger" constructor=f2 fields=[{key="x" declared={type=anything}}] flow={baseState=None}
+function f0 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="Below" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f2 name="Stranger" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="newTargetUnknown" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    Return v3
+}
+function f4 name="classWithoutSubclass" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L2
+    v3 = NewObject v2 layout=L2
+    Return v3
+}
+function f5 name="provenByFlow" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = AssumeType v3 castType=L0
+    Return v4
+}
+function f6 name="withoutPrototype" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject layout=L0
+    Return v2
+}

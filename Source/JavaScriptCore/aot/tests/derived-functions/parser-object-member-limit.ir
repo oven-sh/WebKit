@@ -1,0 +1,24 @@
+# An object with more members than the limit is read as a plain value, and one at the limit still allocates its layout
+# FORM: Prepared optimizing
+# OPTIONS: limit=MaxParsedObjectMembers:1
+# RUN: derived-functions Parser:g0 Parser:g1
+# LOSS: MaxParsedObjectMembers x1 L0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="TwoMembers" fields=[{key="id" declared={type=number}}, {key="name" declared={type=string}}]
+layout L1 name="OneMember" fields=[{key="id" declared={type=number}}]
+variable g0 name="two" declared={type=L0} initialization=Undefined
+variable g1 name="one" declared={type=L1} initialization=Undefined
+
+# CHECK-LABEL: creator=Parser{type=L0 layout=L0 form=ParsedText}
+# CHECK-NOT: NewObject
+# CHECK-NOT: JSONObjectBegin
+# CHECK: [[generic]]:{{*}}= JSONParseValue v0
+# CHECK: [[value]]: anything = ResultAt [[generic]] index=1
+# CHECK: = TypeTest [[value]] testedType=L0
+# CHECK-NOT: NewObject
+# CHECK-NOT: JSONObjectBegin
+
+# CHECK-LABEL: creator=Parser{type=L1 layout=L1 form=ParsedText}
+# CHECK: = JSONObjectBegin layout=L1
+# CHECK: = NewObject -, {{*}} layout=L1 fields=[0]

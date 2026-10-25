@@ -161,6 +161,14 @@ public:
 
     DECLARE_VISIT_CHILDREN;
 
+    template<typename Visitor>
+    ALWAYS_INLINE static void visitFields(JSPromise* thisObject, Visitor& visitor)
+    {
+        if (JSCell* payload = thisObject->m_packed.pointer())
+            visitor.appendUnbarriered(payload);
+        visitor.append(thisObject->m_slot);
+    }
+
     // This is abstract operations defined in the spec.
     void performPromiseThen(VM&, JSGlobalObject*, JSValue onFulfilled, JSValue onRejected, JSValue);
 #if USE(BUN_JSC_ADDITIONS)
@@ -263,6 +271,14 @@ public:
     }
     void setSlot(VM& vm, JSValue value) { m_slot.set(vm, this, value); }
     void clearSlot() { m_slot.clear(); }
+#if ENABLE(AOT)
+    struct InlineJob {
+        InternalMicrotask task;
+        JSValue context;
+        JSValue asyncContext;
+    };
+    std::optional<InlineJob> tryFulfillTakingInlineJob(VM&, JSValue argument);
+#endif
 #if USE(BUN_JSC_ADDITIONS)
 private:
 #endif

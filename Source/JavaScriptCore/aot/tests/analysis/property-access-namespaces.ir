@@ -1,0 +1,143 @@
+# What a lookup on a module namespace object finds: an export is a variable or another namespace, a name the module cannot export is absent, and a type test tells the namespace of one module from other objects
+# FORM: Prepared
+# RUN(VARIABLE): member-lookup layout=L(m0) key="a"
+# VARIABLE: Variable level=Proven holder=L{{*}} variable=V0
+# RUN(NAMESPACE): member-lookup layout=L(m0) key="n"
+# NAMESPACE: Namespace level=Proven module=M1
+# RUN(DEFERRED): member-lookup layout=L(m0) key="lazy"
+# DEFERRED: Unknown level=Unknown cause=Unknown
+# RUN(ABSENT): member-lookup layout=L(m0) key="zz"
+# ABSENT: Absent level=Proven
+# RUN(HAS): member-lookup layout=L(m0) key="a" access=Has
+# HAS: Variable level=Proven holder=L{{*}} variable=V0
+# RUN(HASABSENT): member-lookup layout=L(m0) key="zz" access=Has
+# HASABSENT: Absent level=Proven
+# RUN(STORE): member-lookup layout=L(m0) key="a" access=Store
+# STORE: Unknown level=Unknown cause=Unknown
+# RUN(DEFINE): member-lookup layout=L(m0) key="a" access=Define
+# DEFINE: Unknown level=Unknown cause=Unknown
+# RUN(STOREABSENT): member-lookup layout=L(m0) key="zz" access=Store
+# STOREABSENT: Unknown level=Unknown cause=Unknown
+# RUN(TOSTRINGTAG): member-lookup layout=L(m0) key=@@toStringTag
+# TOSTRINGTAG: Unknown level=Unknown cause=Unknown
+# RUN(OTHERSYMBOL): member-lookup layout=L(m0) key=@@iterator
+# OTHERSYMBOL: Absent level=Proven
+# RUN(REQUIREMARK): member-lookup layout=L(m0) key="__esModule"
+# REQUIREMARK: Unknown level=Unknown cause=PropertyAdded
+# RUN(EXPORTEDREQUIREMARK): member-lookup layout=L(m1) key="__esModule"
+# EXPORTEDREQUIREMARK: Variable level=Proven holder=L{{*}} variable=V3
+# RUN(PRIVATENAME): member-lookup layout=L(m0) key=#"x"@L0
+# PRIVATENAME: Unknown level=Unknown cause=PropertyAdded
+# RUN(PROTO): member-lookup layout=L(m1) key="__proto__"
+# PROTO: Variable level=Proven holder=L{{*}} variable=V4
+# RUN(DYNAMICSTAR): member-lookup layout=L(m2) key="zz"
+# DYNAMICSTAR: Unknown level=Unknown cause=UnknownObject
+# RUN(OWNEXPORTBESIDEDYNAMICSTAR): member-lookup layout=L(m2) key="b"
+# OWNEXPORTBESIDEDYNAMICSTAR: Variable level=Proven holder=L{{*}} variable=V5
+# RUN(SYMBOLBESIDEDYNAMICSTAR): member-lookup layout=L(m2) key=@@iterator
+# SYMBOLBESIDEDYNAMICSTAR: Absent level=Proven
+# RUN(INDIRECT): member-lookup layout=L(m2) key="c"
+# INDIRECT: Unknown level=Unknown
+# RUN: property-access
+
+variable g0 name="a" module=m0 declared={type=number} initialization=Undefined
+variable g1 name="late" module=m0 declared={type=number|absent} initialization=Uninitialized
+variable g2 name="a" module=m1 declared={type=string} initialization=Undefined
+variable g3 name="__esModule" module=m1 declared={type=boolean} initialization=Undefined
+variable g4 name="__proto__" module=m1 declared={type=number} initialization=Undefined
+variable g5 name="b" module=m2 declared={type=number} initialization=Undefined
+module m0 path="main.js" displayPath="main.js" requests=[{target=m1 completes=true}, {target=m3 phase=Defer}] exports=[{name="a" variable=g0}, {name="late" variable=g1}, {name="lazy" kind=Namespace module=m3 phase=Defer}, {name="n" kind=Namespace module=m1}]
+module m1 path="lib.js" displayPath="lib.js" exports=[{name="__esModule" variable=g3}, {name="__proto__" variable=g4}, {name="a" variable=g2}]
+module m2 path="star.js" displayPath="star.js" requests=[{target=m4 isDynamicStarExport=true completes=true}] exports=[{name="b" variable=g5}, {name="c" kind=Indirect module=m4 importName="c"}]
+module m3 path="lazy.js" displayPath="lazy.js"
+module m4 path="plain.js" displayPath="plain.js" kind=External referrer=m2
+layout L0 kind=Instance name="Holder" fields=[{key=#"x"@L0 declared={type=number} flags=[IsPrivate]}]
+
+function f0 name="read-export" results=[{type=anything}] {
+    v0 = ModuleNamespace module=m0
+    v1 = PropGet v0 key="a"
+    Return v1
+}
+# CHECK: F0 v1 PropGet [[a]]: form=Variable level=Proven operation=GetModuleVariable receivers=[{{*}}[[main]]] member=(Variable level=Proven holder=[[main]] variable=V0)
+function f1 name="read-export-maybe-uninitialized" results=[{type=anything}] {
+    v0 = ModuleNamespace module=m0
+    v1 = PropGet v0 key="late"
+    Return v1
+}
+# CHECK-NEXT: F1 v1 PropGet [[late]]: form=Variable level=Proven operation=GetModuleVariable receivers=[{{*}}[[main]]] member=(Variable level=Proven holder=[[main]] variable=V1)
+function f2 name="read-namespace-export" results=[{type=anything}] {
+    v0 = ModuleNamespace module=m0
+    v1 = PropGet v0 key="n"
+    Return v1
+}
+# CHECK-NEXT: F2 v1 PropGet [[n]]: form=Namespace level=Proven receivers=[{{*}}[[main]]] member=(Namespace level=Proven module=M1)
+function f3 name="read-deferred-namespace-export" results=[{type=anything}] {
+    v0 = ModuleNamespace module=m0
+    v1 = PropGet v0 key="lazy"
+    Return v1
+}
+# CHECK-NEXT: F3 v1 PropGet [[lazy]]: form=ByName level=Unknown receivers=[{{*}}[[main]]]
+function f4 name="read-name-not-exported" results=[{type=anything}] {
+    v0 = ModuleNamespace module=m0
+    v1 = PropGet v0 key="zz"
+    Return v1
+}
+# CHECK-NEXT: F4 v1 PropGet [[zz]]: form=Constant level=Proven operation=Undefined receivers=[{{*}}[[main]]] member=(Absent level=Proven)
+function f5 name="read-name-a-dynamic-star-may-export" results=[{type=anything}] {
+    v0 = ModuleNamespace module=m2
+    v1 = PropGet v0 key="zz"
+    Return v1
+}
+# CHECK-NEXT: F5 v1 PropGet [[zz]]: form=ByName level=Unknown receivers=[{{*}}[[star]]] cause=UnknownObject
+function f6 name="test-export" results=[{type=anything}] {
+    v0 = ModuleNamespace module=m0
+    v1 = PropHas v0 key="a"
+    v2 = PropHas v0 key="n"
+    v3 = PropHas v0 key="late"
+    v4 = PropHas v0 key="zz"
+    Return v4
+}
+# CHECK-NEXT: F6 v1 PropHas [[a]]: form=Constant level=Proven operation=Boolean value=true receivers=[{{*}}[[main]]]
+# CHECK-NEXT: F6 v2 PropHas [[n]]: form=Constant level=Proven operation=Boolean value=true receivers=[{{*}}[[main]]]
+# CHECK-NEXT: F6 v3 PropHas [[late]]: form=Constant level=Proven operation=Boolean value=true receivers=[{{*}}[[main]]]
+# CHECK-NEXT: F6 v4 PropHas [[zz]]: form=Constant level=Proven operation=Boolean value=false receivers=[{{*}}[[main]]]
+function f7 name="own-test-reads-the-binding" results=[{type=anything}] {
+    v0 = ModuleNamespace module=m0
+    v1 = PropHasOwn v0 key="a"
+    v2 = PropHasOwn v0 key="late"
+    Return v2
+}
+# CHECK-NEXT: F7 v1 PropHasOwn [[a]]: form=Constant level=Proven operation=Boolean value=true receivers=[{{*}}[[main]]]
+# CHECK-NEXT: F7 v2 PropHasOwn [[late]]: form=ByName level=Unknown receivers=[{{*}}[[main]]]
+function f8 name="store-to-export" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = ModuleNamespace module=m0
+    PropSet v1, v0 key="a"
+    Return
+}
+# CHECK-NEXT: F8 v2 PropSet [[a]]: form=ByName level=Unknown receivers=[{{*}}[[main]]]
+function f9 name="read-of-one-of-two-namespaces" parameters=[{type=L(m0)|L(m1)}] results=[{type=anything}] {
+    v1 = PropGet v0 key="a"
+    Return v1
+}
+# CHECK-NEXT: F9 v1 PropGet [[a]]: form=Split level=Proven receivers=[{{*}}[[main]], [[lib]]]
+function f10 name="read-of-expected-namespace" parameters=[{type=L(m0) flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L(m0)):
+    v1 = PropGet v0 key="a"
+    Return v1
+}
+# CHECK-NEXT: F10 v1 PropGet [[a]]: form=Variable level=Expected operation=GetModuleVariable receivers=[{{*}}[[main]]] receiverTest=Type proofs=[OwnInstance] missPath member=(Variable level=Proven holder=[[main]] variable=V0)
+function f11 name="read-of-deferred-namespace" results=[{type=anything}] {
+    v0 = ModuleNamespace module=m3 phase=Defer
+    v1 = PropGet v0 key="a"
+    Return v1
+}
+# CHECK-NEXT: F11 v1 PropGet [[a]]: form=ByName level=Unknown receivers=[] cause=UnknownObject
+function f12 name="otherKeys" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key=@@toStringTag
+    v2 = PropGet v0 key=@@iterator
+    v3 = PropGet v0 key="__esModule"
+    v4 = PropGet v0 key="__proto__"
+    v5 = PropGet v0 key="b"
+    v6 = PropGet v0 key="c"
+    Return v6
+}

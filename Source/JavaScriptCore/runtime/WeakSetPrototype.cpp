@@ -36,7 +36,7 @@ namespace JSC {
 const ClassInfo WeakSetPrototype::s_info = { "WeakSet"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(WeakSetPrototype) };
 
 static JSC_DECLARE_HOST_FUNCTION(protoFuncWeakSetDelete);
-static JSC_DECLARE_HOST_FUNCTION(protoFuncWeakSetHas);
+JSC_DECLARE_HOST_FUNCTION(protoFuncWeakSetHas);
 
 void WeakSetPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {

@@ -1,0 +1,52 @@
+# the variadic operands of a selected operation fit its keys, an array literal has one batch of computed elements, accessor masks have 32 bits
+# FORM: Selected
+# RUN: verify
+# DIAGNOSTIC: ArgumentCountMismatch 5
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}]
+function f0 name="badArrayBatch" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything
+    Return
+}
+function f1 name="goodArrayBatch" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 contents=anything
+    Return
+}
+function f2 name="goodConstantBesideArrayBatch" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = Integer integer=1
+    v2 = NewArray v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v1 contents=anything
+    Return
+}
+function f3 name="badDefineAccessors" parameters=[{type=object}, {type=function}] results=[{type=undefined}] {
+    DefineAccessors v0, v1 keys=["a", "b"]
+    Return
+}
+function f4 name="goodDefineAccessors" parameters=[{type=object}, {type=function}] results=[{type=undefined}] {
+    DefineAccessors v0, v1 keys=["a"]
+    Return
+}
+function f5 name="badAccessorMasks" parameters=[{type=object}, {type=function}] results=[{type=undefined}] {
+    DefineAccessors v0, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1 keys=["k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9", "k10", "k11", "k12", "k13", "k14", "k15", "k16", "k17", "k18", "k19", "k20", "k21", "k22", "k23", "k24", "k25", "k26", "k27", "k28", "k29", "k30", "k31", "k32"]
+    Return
+}
+function f6 name="goodAccessorMasks" parameters=[{type=object}, {type=function}] results=[{type=undefined}] {
+    DefineAccessors v0, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1, v1 keys=["k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9", "k10", "k11", "k12", "k13", "k14", "k15", "k16", "k17", "k18", "k19", "k20", "k21", "k22", "k23", "k24", "k25", "k26", "k27", "k28", "k29", "k30", "k31"]
+    Return
+}
+function f7 name="badTryPutByIds" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+    v2 = TryPutByIds v0, v1 keys=["a", "b"]
+    Return
+}
+function f8 name="goodTryPutByIds" parameters=[{type=object}, {type=anything}] results=[{type=undefined}] {
+    v2 = TryPutByIds v0, v1 keys=["a"]
+    Return
+}
+function f9 name="badPutSlots" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
+    PutSlots v0, -, v1 placedKeys=[{key="a"}, {key="b"}] receivers=[L0]
+    Return
+}
+function f10 name="goodPutSlots" parameters=[{type=L0}, {type=anything}] results=[{type=undefined}] {
+    PutSlots v0, -, v1, v1 placedKeys=[{key="a"}, {key="b"}] receivers=[L0]
+    Return
+}

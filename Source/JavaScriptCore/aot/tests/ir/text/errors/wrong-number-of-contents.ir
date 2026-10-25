@@ -1,0 +1,6 @@
+# A class with another number of contents than the built-ins table gives it
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="x" module=m0 declared={type=Map<string>} initialization=Undefined

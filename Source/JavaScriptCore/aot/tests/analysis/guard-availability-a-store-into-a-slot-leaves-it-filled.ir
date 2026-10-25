@@ -1,0 +1,50 @@
+# The guard of a test that a slot is filled holds behind a store into that slot. One that says the slot holds a value of the field's type ends at a store of a value that may be undefined or null
+# FORM: Prepared
+# RUN: guards points uses
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=undefined|number}}, {key="y" declared={type=undefined|number}}]
+
+function f0 name="storeToTestedField" parameters=[{type=L0}, {type=undefined|number}] results=[{type=anything}] {
+    v2 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    PutSlot v0, v3, v1 key="x" receivers=[L0] level=Proven
+    v5 = GetSlot v0, v3 key="x" receivers=[L0] level=Proven
+    Return v5
+  b2():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK: b1:0 available: [v3]
+# CHECK-NEXT: b1:1 available: [v3]
+# CHECK-NEXT: b1:2 available: [v3]
+# CHECK: v5 guard v3: Available
+
+function f1 name="undefinedStoredToFieldTestedForItsType" parameters=[{type=L0}, {type=undefined|number}] results=[{type=anything}] {
+    v2 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven [holdsDeclaredType]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    PutSlot v0, v3, v1 key="x" receivers=[L0] level=Proven
+    v5 = GetSlotOrUndefined v0 key="x" receivers=[L0] level=Proven
+    Return v5
+  b2():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK: b1:0 available: [v3]
+# CHECK-NEXT: b1:1 available: []
+
+# Between a test and its branch every store counts: one that fills an empty slot would turn the answer of the test, and whoever makes the test again in front of the branch relies on finding the same.
+function f2 name="storedBetweenTestAndBranch" parameters=[{type=L0}, {type=L0}, {type=number}] results=[{type=anything}] {
+    v3 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven
+    PutSlotOrAdd v1, -, v2 key="x" receivers=[L0] level=Proven
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    v6 = GetSlotOrUndefined v0 key="x" receivers=[L0] level=Proven
+    Return v6
+  b2():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK: b1 available at head: []

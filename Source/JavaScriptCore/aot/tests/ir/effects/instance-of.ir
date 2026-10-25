@@ -1,0 +1,35 @@
+# InstanceOf runs what its operands bring: nothing where the constructor finds the ordinary Symbol.hasInstance and the chain of the value is proven, the method of a class that defines one, else unknown code
+# FORM: Prepared
+# RUN: effects f0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Cache" constructor=f1 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L1 name="MayChangePrototype" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[RedefineProperty, AddProperty]}
+layout L2 kind=Instance name="Matcher" constructor=f2 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key=@@hasInstance side=Static function=f3 mutability=Fixed}]}
+layout L3 kind=Instance name="MayGainStaticNames" constructor=f4 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true}
+function f0 name="tests" parameters=[{type=L0}, {type=L1}, {type=object}, {type=number}, {type=f1}, {type=function}, {type=f2}, {type=f4}, {type=BoundFunction<pristine[Storage, Names]>}, {type=builtin(Promise)}] results=[{type=undefined}] {
+    v10 = InstanceOf v0, v4
+    v11 = InstanceOf v3, v4
+    v12 = InstanceOf v0, v9
+    v13 = InstanceOf v1, v4
+    v14 = InstanceOf v2, v4
+    v15 = InstanceOf v0, v5
+    v16 = InstanceOf v0, v7
+    v17 = InstanceOf v0, v8
+    v18 = InstanceOf v0, v6
+    Return
+}
+function f1 name="Cache" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f2 name="Matcher" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f3 name="hasInstance" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+function f4 name="MayGainStaticNames" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v10 InstanceOf: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
+# CHECK-NEXT: v11 InstanceOf: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
+# CHECK-NEXT: v12 InstanceOf: reads(ObjectFields, PrototypeLinks, NamedProperties, AllocatorState) writes(AllocatorState) throws collects
+# CHECK-NEXT: v13 InstanceOf: unknownCode
+# CHECK-NEXT: v14 InstanceOf: unknownCode
+# CHECK-NEXT: v15 InstanceOf: unknownCode
+# CHECK-NEXT: v16 InstanceOf: unknownCode
+# CHECK-NEXT: v17 InstanceOf: unknownCode
+# CHECK-NEXT: v18 InstanceOf: unknownCode

@@ -245,6 +245,9 @@ public:
 
     ALWAYS_INLINE bool equalInline(JSGlobalObject*, JSString* other) const;
     inline bool equal(JSGlobalObject*, JSString* other) const;
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE bool equalResolvingRopes(JSString* other) const;
+#endif
     GCOwnedDataScope<const String&> value(JSGlobalObject*) const;
     inline GCOwnedDataScope<const String&> tryGetValue(bool allocationAllowed = true) const;
     GCOwnedDataScope<const String&> tryGetValueWithoutGC() const;
@@ -273,6 +276,7 @@ public:
     static void dumpToStream(const JSCell*, PrintStream&);
     static size_t estimatedSize(JSCell*, VM&);
     DECLARE_VISIT_CHILDREN;
+    template<typename Visitor> ALWAYS_INLINE static void visitFields(JSString*, Visitor&);
 
     ALWAYS_INLINE bool isRope() const
     {
@@ -330,6 +334,9 @@ protected:
     friend class JSCell;
 
     JS_EXPORT_PRIVATE bool equalSlowCase(JSGlobalObject*, JSString* other) const;
+#if USE(BUN_JSC_ADDITIONS)
+    bool equalWithoutResolvingRopes(JSString* other) const;
+#endif
 
     inline JSString* tryReplaceOneCharImpl(JSGlobalObject*, char16_t search, JSString* replacement, uint8_t* stackLimit, bool& found);
 
@@ -431,6 +438,10 @@ public:
         static constexpr ptrdiff_t offsetOfFiber2() { return OBJECT_OFFSETOF(CompactFibers, m_fiber1Upper); }
         static constexpr ptrdiff_t offsetOfFiber1Lower() { return OBJECT_OFFSETOF(CompactFibers, m_fiber1Lower); }
         static constexpr ptrdiff_t offsetOfFiber2Lower() { return OBJECT_OFFSETOF(CompactFibers, m_fiber2Lower); }
+
+        static constexpr unsigned shiftOfFiber1LowerInLengthWord = 32;
+        static constexpr unsigned widthOfFiber1LowerInLengthWord = 64 - shiftOfFiber1LowerInLengthWord;
+        static constexpr unsigned shiftOfFiber2InUpperWord = 16;
 
     private:
         friend class LLIntOffsetsExtractor;
@@ -665,6 +676,27 @@ public:
     JS_EXPORT_PRIVATE const String& resolveRope(JSGlobalObject* nullOrGlobalObjectForOOM) const;
     JS_EXPORT_PRIVATE const String& resolveRopeWithoutGC() const;
 
+    JSString* substringBase() const { return fiber1(); }
+
+    unsigned substringOffset() const
+    {
+        return static_cast<unsigned>(std::bit_cast<uintptr_t>(fiber2()));
+    }
+
+#if ENABLE(AOT)
+    void resolveSubstringBySharing(StringImpl&) const;
+#endif
+
+    class LeafIterator {
+    public:
+        explicit LeafIterator(const JSString* string) { m_pending.append(string); }
+        bool isAtEnd() const { return m_pending.isEmpty(); }
+        JS_EXPORT_PRIVATE StringView next();
+
+    private:
+        Vector<const JSString*, 16> m_pending;
+    };
+
     template<typename CharacterType>
     static void resolveToBuffer(JSString*, JSString*, JSString*, std::span<CharacterType> buffer, uint8_t* stackLimit);
 
@@ -765,16 +797,9 @@ private:
         initializeFiber1(fiber);
     }
 
-    JSString* substringBase() const { return fiber1(); }
-
     void initializeSubstringOffset(unsigned offset)
     {
         m_compactFibers.initializeFiber2(std::bit_cast<JSString*>(static_cast<uintptr_t>(offset)));
-    }
-
-    unsigned substringOffset() const
-    {
-        return static_cast<unsigned>(std::bit_cast<uintptr_t>(fiber2()));
     }
 
     static_assert(s_maxInternalRopeLength >= 2);
@@ -800,6 +825,12 @@ private:
     friend JSString* jsAtomString(JSGlobalObject*, VM&, JSString*, JSString*);
     friend JSString* jsAtomString(JSGlobalObject*, VM&, JSString*, JSString*, JSString*);
 };
+
+#if CPU(ADDRESS64)
+static_assert(8 * (JSRopeString::CompactFibers::offsetOfFiber1Lower() - JSRopeString::CompactFibers::offsetOfLength()) == static_cast<ptrdiff_t>(JSRopeString::CompactFibers::shiftOfFiber1LowerInLengthWord));
+static_assert(8 * (JSRopeString::CompactFibers::offsetOfFiber2Lower() - JSRopeString::CompactFibers::offsetOfFiber2()) == static_cast<ptrdiff_t>(JSRopeString::CompactFibers::shiftOfFiber2InUpperWord));
+static_assert(JSRopeString::CompactFibers::offsetOfFiber2() - JSRopeString::CompactFibers::offsetOfLength() == static_cast<ptrdiff_t>(sizeof(uint64_t)));
+#endif
 
 template<> void JSRopeString::RopeBuilder<RecordOverflow>::expand();
 
@@ -903,6 +934,8 @@ ALWAYS_INLINE void JSString::swapToAtomString(VM& vm, RefPtr<AtomStringImpl>&& a
     // end we prune entries whose JSString was not discovered. Between GCs,
     // Heap::clearConcurrentRetainedDataIfPossible clears the vector entirely when no JS is executing
     // and no JIT compilations are in progress.
+    // Code compiled ahead of time keeps the characters, length and width of a flat string it holds in a
+    // live JSString* across calls, and relies on the old StringImpl staying alive as described above.
     ASSERT(!isCompilationThread() && !Thread::mayBeGCThread());
     ASSERT(atom && atom->isAtom());
     String target(WTF::move(atom));

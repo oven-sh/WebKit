@@ -1,0 +1,37 @@
+# A function stays whole when the analysis of its worker, which has more blocks, reaches a limit that the analysis of the function stayed under
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot limit=MaxSinkingWork:18
+# RUN: pass SplitFreshResults VerifyProgram
+# LOSS: MaxSinkingWork
+# STATISTIC: FreshResultsSplit = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Box" fields=[{key="f" declared={type=number|string} flags=[IsRequired]}]
+
+function f0 name="storesIntoOneOfTwo" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=L0}] {
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = NewObject -, v1 layout=L0 fields=[0]
+    Branch v2 -> taken b1(v3), notTaken b1(v4)
+  b1(v5: L0):
+    v6 = String string="stored"
+    PropSet v5, v6 key="f" receivers=[L0]
+    Return v3
+}
+# CHECK-LABEL: function f0 name="storesIntoOneOfTwo" module=m0 thisType=
+# CHECK: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK: Return v3
+
+function f1 name="box" parameters=[{type=number}] results=[{type=L0}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+# CHECK-LABEL: function f1 name="box" module=m0 role=ResultWrapper
+
+function f2 name="dropsTheResults" parameters=[{type=number}, {type=boolean}] results=[{type=undefined}] {
+    v2 = CallDirect v0, v0, v1 function=f0
+    v3 = CallDirect v0 function=f1
+    v4 = Undefined
+    Return v4
+}
+# CHECK: name="box" module=m0 role=ResultWorker
+# CHECK-NOT: role=ResultWorker

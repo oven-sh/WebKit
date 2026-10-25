@@ -26,7 +26,7 @@
 #include "config.h"
 #include "BunFFI.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 #include "Error.h"
 #include "FFIContext.h"
@@ -141,14 +141,9 @@ JSFFICallback* createCallback(JSGlobalObject* globalObject, Ref<Signature>&& sig
         return nullptr;
     }
 
-    if (!Options::useJIT()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "bun:ffi requires the JIT"_s);
-        return nullptr;
-    }
-
     RELEASE_AND_RETURN(scope, JSFFICallback::create(vm, globalObject, globalObject->ffiCallbackStructure(), callable, WTF::move(signature), threadsafe, embedderContext));
 }
 
 } } // namespace JSC::FFI
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

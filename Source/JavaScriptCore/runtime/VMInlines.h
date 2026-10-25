@@ -34,6 +34,10 @@
 #include "VM.h"
 #include "Watchdog.h"
 
+#if ENABLE(AOT)
+#include "AOTCompiledCaller.h"
+#endif
+
 #if ENABLE(C_LOOP)
 #include "CLoopStackInlines.h"
 #endif
@@ -88,10 +92,18 @@ inline CallFrame* VM::topJSCallFrame() const
     CallFrame* frame = topCallFrame;
     if (!frame) [[unlikely]]
         return frame;
+#if ENABLE(AOT)
+    if (hasCompiledCode() && AOT::isTopFrameCompiled(const_cast<VM&>(*this))) [[unlikely]]
+        return nullptr;
+#endif
     if (!frame->isNativeCalleeFrame() && !frame->isZombieFrame()) [[likely]]
         return frame;
     EntryFrame* entryFrame = topEntryFrame;
     do {
+#if ENABLE(AOT)
+        if (hasCompiledCode() && AOT::isCallerCompiled(const_cast<VM&>(*this), frame))
+            return nullptr;
+#endif
         frame = frame->callerFrame(entryFrame);
         ASSERT(!frame || !frame->isZombieFrame());
     } while (frame && frame->isNativeCalleeFrame());

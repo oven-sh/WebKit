@@ -1,0 +1,36 @@
+# The copy of a serializer in its caller appends to the caller's builder itself: a parameter of an opaque kind is bound to the argument without a cast, so the cursors of the copy and of the caller have one base
+# The call stands in a loop: in a block that is proven to run at most once, as the body of a module is, JSON.stringify stays a call whatever the heat (passes/expand-own-keys-negative-runs-once.ir)
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass
+# RUN: compile
+# CHECK: image not empty
+# RUN(COPY): pipeline InlineCalls
+# COPY-LABEL: function f0 name="main"
+# COPY: [[builder]]: stringbuilder = StringBuilderBegin
+# COPY-NOT: castType=stringbuilder
+# COPY: = JSONAppendKey [[builder]], {{*}} string="a"
+# COPY-NOT: castType=stringbuilder
+# COPY: function f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Named" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = Integer integer=1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = NewObject -, v2 layout=L0 fields=[0]
+    PropSet v4, v2 key="b" mode=Strict
+    v6 = PropGet v0 key="JSON" [isFreeName]
+    v7 = PropGet v6 key="stringify"
+    v8 = Call v7, v6, v4 calleeKey="stringify"
+    v9 = Call v1, -, v8
+    v10 = Builtin builtin=MathRandom
+    v11 = Call v10
+    v12 = ToBoolean v11
+    Branch v12 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}

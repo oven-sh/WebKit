@@ -1,0 +1,91 @@
+# class Widget { first() {} }   class Button extends (publish() as typeof Widget) { second() {} }   class Loose extends publish() { third() {} }
+# Nobody has followed the parent of Button: the type names Widget, so Widget is expected. The definition compares, and with another parent it breaks the link guards of Button and what hangs on them
+# before Button has an object. So the guards of Button hold from the start like those of Widget.
+# Nobody knows the parent of Loose. Its record says what Loose declares, so the guard of `third` holds from the start. `other` is looked for in the parent, of which no record speaks: its condition gets no bit.
+# Hot, so that the calls rest on guards: cold code, and all of this runs once, keeps its calls by name and asks for no guard.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot
+# RUN: place guards
+# RUN(TABLES): tables layouts
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Widget" module=m0 constructor=f1
+layout L1 kind=Instance name="Button" module=m0 base=L0 constructor=f2 flags=[HasHeritage]
+layout L2 kind=Instance name="Loose" module=m0 constructor=f3 flags=[HasHeritage]
+variable g0 name="Button" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="Loose" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure function=f4
+    DefineMethod v3, v4 layout=L0 key="first"
+    v6 = FinishClass v3 layout=L0
+    v7 = Call v1, -, v6
+    v8 = ResolveHeritage v7
+    v9 = NewClosure function=f2
+    v10 = NewClass v9, v7, v8 layout=L1
+    v11 = NewClosure function=f5
+    DefineMethod v10, v11 layout=L1 key="second"
+    v13 = FinishClass v10 layout=L1
+    PutModuleVariable v13 variable=g0
+    v15 = Call v1, -
+    v16 = ResolveHeritage v15
+    v17 = NewClosure function=f3
+    v18 = NewClass v17, v15, v16 layout=L2
+    v19 = NewClosure function=f6
+    DefineMethod v18, v19 layout=L2 key="third"
+    v21 = FinishClass v18 layout=L2
+    PutModuleVariable v21 variable=g1
+    v23 = NewClosure function=f7
+    v24 = Call v1, -, v13, v21, v23
+    Return
+}
+function f1 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="Button" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f3 name="Loose" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}
+function f4 name="first" kind=Method flags=[HasThis] results=[{type=anything}] {
+    Return
+}
+function f5 name="second" kind=Method flags=[HasThis] results=[{type=anything}] {
+    Return
+}
+function f6 name="third" kind=Method flags=[HasThis] results=[{type=anything}] {
+    Return
+}
+function f7 name="use" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = Construct v0, -
+    v2 = PropGet v1 key="first"
+    v3 = Call v2, v1 calleeKey="first"
+    v4 = PropGet v1 key="second"
+    v5 = Call v4, v1 calleeKey="second"
+    v6 = GetModuleVariable variable=g1
+    v7 = Construct v6, -
+    v8 = PropGet v7 key="third"
+    v9 = Call v8, v7 calleeKey="third"
+    v10 = PropGet v7 key="other"
+    v11 = Call v10, v7 calleeKey="other"
+    Return
+}
+
+# CHECK: L1 Prototype Member "first" {{*}} holdsWhileClear
+# CHECK: L1 Prototype PrototypeLink - {{*}} holdsWhileClear
+# CHECK: L2 Prototype Member "third" {{*}} holdsWhileClear
+# CHECK-NOT: "other"
+# TABLES: class index=L1 {{*}}expectedBase=L0 {{*}} guardsHoldWhileClear
+# TABLES: class index=L2 {{*}}expectedBase=- {{*}}hasUntypedBase{{*}} guardsHoldWhileClear

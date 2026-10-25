@@ -26,12 +26,13 @@
 #include "config.h"
 #include "JSFFIFunction.h"
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
 #include "Error.h"
 #include "FFICallHost.h"
 #include "FFIConversions.h"
 #include "FFISignature.h"
+#include "FFIStubs.h"
 #include "JITCode.h"
 #include "JSCInlines.h"
 #include "JSObjectInlines.h"
@@ -60,7 +61,7 @@ JSFFIFunction::JSFFIFunction(VM& vm, NativeExecutable* executable, JSGlobalObjec
     ASSERT(!m_hooks || !m_icCode);
 }
 
-JSFFIFunction::~JSFFIFunction() = default;
+NEVER_INLINE JSFFIFunction::~JSFFIFunction() = default;
 
 template<typename Visitor>
 void JSFFIFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
@@ -98,7 +99,8 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!Options::useJIT()) [[unlikely]] {
+    FFI::CodeSource source = FFI::codeSource();
+    if (source == FFI::CodeSource::None) [[unlikely]] {
         throwTypeError(globalObject, scope, "bun:ffi requires the JIT"_s);
         return nullptr;
     }
@@ -122,7 +124,7 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
 
     RefPtr<JITCode> stub;
 #if ENABLE(JIT)
-    if (Options::useFFIICStub() && !hooks)
+    if (source == FFI::CodeSource::JIT && Options::useFFIICStub() && !hooks)
         stub = FFI::generateICStubCode(vm, globalObject, signature.get(), target);
 #endif
 
@@ -147,4 +149,4 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
 
 } // namespace JSC
 
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)

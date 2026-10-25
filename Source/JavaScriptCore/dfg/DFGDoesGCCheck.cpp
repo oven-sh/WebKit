@@ -26,6 +26,7 @@
 #include "config.h"
 #include "DFGDoesGCCheck.h"
 
+#include "AOTHeapHooks.h"
 #include "CallFrameInlines.h"
 #include "CodeBlock.h"
 #include "DFGGraph.h"
@@ -42,6 +43,10 @@ namespace DFG {
 
 void DoesGCCheck::verifyCanGC(VM& vm)
 {
+#if ENABLE(AOT)
+    if (!vm.heap.isDeferred())
+        ++AOT::placesThatMayCollect;
+#endif
     // We do this check here just so we don't have to #include DFGNodeType.h
     // in the header file.
     static_assert(numberOfNodeTypes <= (1 << nodeOpBits));

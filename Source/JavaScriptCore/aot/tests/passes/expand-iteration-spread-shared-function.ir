@@ -1,0 +1,54 @@
+# The function that walks what a spread knows nothing about has an arm for each class that has one, and follows the protocol for the rest
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration ExpandIteration
+# RUN(ABSENT): pass ExpandIteration ExpandIteration
+# RUN(LEFT): pass ExpandIteration ExpandIteration
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="unknown" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+}
+
+function f1 name="alsoUnknown" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewArray contents=anything
+    AppendSpread v2, v0
+    AppendSpread v2, v1
+    Return v2
+}
+# Every site calls the same function.
+# CHECK-LABEL: function f0 name="unknown"
+# CHECK: = CallDirect v1, {{*}} function=f2 [isNeverInlined]
+# CHECK-LABEL: function f1 name="alsoUnknown"
+# CHECK-COUNT-2: = CallDirect v2, {{*}} function=f2 [isNeverInlined]
+
+# CHECK-LABEL: function f2 name="appendIterable"
+# CHECK: b0([[array]]: Array, [[iterable]]: anything ~ Array|Generator|Map|Set):
+# CHECK-NEXT: [[isArray]]: boolean = TypeTest [[iterable]] testedType=Array
+# CHECK: AppendElements [[array]],
+# An array with odd storage keeps the index loop.
+# CHECK: = PropGet {{*}} key="length"
+# CHECK: AppendElement [[array]],
+# A spread has errors of its own for a nullish operand and for a step that answers no object.
+# CHECK: [[coercible]]: {{*}} = RequireObjectCoercible {{*}} nullishAccess=Spread
+# CHECK-NEXT: = PropGet [[coercible]] key=@@iterator
+# CHECK: never = ThrowNotIterable {{*}} [isSpread]
+# CHECK: = RequireObject {{*}} runtimeError=SpreadResultNotObject
+# ABSENT-LABEL: function f2 name="appendIterable"
+# ABSENT-NOT: CallDirect
+# ABSENT-NOT: nullishAccess=Iterate
+# ABSENT-NOT: runtimeError=IteratorResultNotObject
+# ABSENT-NOT: key="return"
+# ABSENT-NOT: handler=
+# ABSENT-COUNT-1: AppendElements
+# ABSENT-NOT: AppendElements
+
+# The loop that follows the protocol also walks a string.
+# LEFT-LABEL: function f2 name="appendIterable"
+# LEFT: = StepGenerator
+# LEFT: = MapNext
+# LEFT: = SetNext
+# LEFT: = GetStringLength
+# LEFT-NOT: function f3

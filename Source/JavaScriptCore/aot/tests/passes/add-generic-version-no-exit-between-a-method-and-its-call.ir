@@ -1,0 +1,65 @@
+# A method is read before its arguments are evaluated. Where the method is one of several functions of the program, a check of an argument gets no exit to the generic version:
+# the exit would hand the method on, and a call is resolved by its receiver only where the call alone uses the method. The check in front of the read keeps its exit.
+# So does every check where nothing is known of the method: that call gains nothing, and the exit proves the argument to what is called
+# FORM: Prepared
+# RUN: pass AddGenericVersion
+# STATISTIC: GenericVersionsCreated = 2
+# STATISTIC: ExitsToGenericVersion = 3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js" body=f5
+entry module=m0
+function f0 name="oneOfTwoMethods" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Call v0
+    v4 = Check v3 castType=number
+    v5 = PropGet v2 key="scaled"
+    v6 = AssumeType v5 castType=undefined|f2|f3
+    v7 = Call v1
+    v8 = Check v7 castType=number
+    v9 = Call v6, v2, v8 calleeKey="scaled"
+    v10 = Add v9, v4
+    Return v10
+}
+# CHECK-LABEL: function f0 name="oneOfTwoMethods"
+# CHECK: = TypeTest v3 testedType=number
+# CHECK-NOT: = TypeTest v7
+
+function f1 name="methodNobodyKnows" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Call v0
+    v4 = Check v3 castType=number
+    v5 = PropGet v2 key="scaled"
+    v6 = Call v1
+    v7 = Check v6 castType=number
+    v8 = Call v5, v2, v7 calleeKey="scaled"
+    v9 = Add v8, v4
+    Return v9
+}
+# CHECK-LABEL: function f1 name="methodNobodyKnows"
+# CHECK: = TypeTest v3 testedType=number
+# CHECK: = TypeTest v6 testedType=number
+
+function f2 name="scaled" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f3 name="scaled" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Add v0, v0
+    Return v1
+}
+# CHECK-LABEL: function f3 name="scaled"
+function f4 name="drive" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallDirect v0, v0, v1 function=f0
+    v5 = CallDirect v0, v0, v1 function=f1
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return v5
+}
+function f5 name="main" kind=Module results=[{type=anything}] {
+    v0 = Undefined
+    v1 = Undefined
+    v2 = Boolean boolean=true
+    v3 = CallDirect v0, v1, v2 function=f4
+    Return v3
+}

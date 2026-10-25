@@ -1,0 +1,62 @@
+# The elements of arrays and of arguments objects are two locations of one heap, a row that names no base touches all of it, and a store to an element writes no object field
+# FORM: Prepared
+# RUN: effects summaries
+# RUN(L): locations f0
+# RUN(W): write-overlap f4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="bothBases" parameters=[{type=Arguments}, {type=Array<number>}, {type=int[0, 10]}, {type=number}] results=[{type=undefined}] {
+    v4 = GetContiguousIndex v1, v2
+    SetMappedArgument v0, v3 index=0
+    v6 = GetMappedArgument v0 index=0
+    PutContiguousIndex v1, v2, v3
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v4 GetContiguousIndex: reads(Elements/1, ArrayStorage)
+# CHECK-NEXT: v5 SetMappedArgument: writes(Elements/1)
+# CHECK-NEXT: v6 GetMappedArgument: reads(Elements/1)
+# CHECK-NEXT: v7 PutContiguousIndex: reads(ArrayStorage) writes(Elements/1)
+# L: overlap Elements[Array] Elements[Arguments]: None
+# L-NOT: overlap
+function f1 name="oneBase" parameters=[{type=Array<number>}, {type=Array<number>}, {type=int[0, 10]}, {type=number}] results=[{type=undefined}] {
+    PutContiguousIndex v0, v2, v3
+    PutContiguousIndex v1, v2, v3
+    Return
+}
+function f2 name="noBase" parameters=[{type=cursor}] results=[{type=undefined}] capabilities=[HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+    v1 = JSONObjectBegin layout=L0
+    v2 = Undefined
+    v3 = JSONParseExtraMembers v0, v2, v1 layout=L0
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK: v3 JSONParseExtraMembers: reads(NamedProperties, Elements, StringStorage, ParserState, AllocatorState) writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) collects
+function f3 name="calls" parameters=[{type=Arguments}, {type=Array<number>}, {type=int[0, 10]}, {type=number}, {type=cursor}] results=[{type=undefined}] capabilities=[HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+    v5 = CallDirect v0, v1, v2, v3 function=f0
+    v6 = CallDirect v1, v1, v2, v3 function=f1
+    v7 = CallDirect v4 function=f2
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v5 CallDirect: reads(Elements/2, ArrayStorage) writes(Elements/2)
+# CHECK-NEXT: v6 CallDirect: reads(ArrayStorage) writes(Elements/1)
+# CHECK-NEXT: v7 CallDirect: reads(NamedProperties, Elements, StringStorage, ParserState, AllocatorState) writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) collects
+function f4 name="fieldAcrossElementStores" parameters=[{type=L0}, {type=Array<number, pristine[Storage, Names]>}, {type=int[0, 10]}, {type=number}, {type=Arguments}, {type=object}] results=[{type=undefined}] {
+    v6 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    PutArrayElement v1, v2, v3 level=Proven [keyIsIntegral]
+    PutArrayElement v1, v3, v3 level=Proven
+    SetMappedArgument v4, v3 index=0
+    AppendElement v1, v3
+    PutSlot v0, -, v3 key="x" receivers=[L0] level=Proven
+    ElemSet v5, v2, v3
+    Return
+}
+# W-LABEL: function f4
+# W-NEXT: v7 on v6: None
+# W-NEXT: v8 on v6: None
+# W-NEXT: v9 on v6: None
+# W-NEXT: v10 on v6: None
+# W-NEXT: v11 on v6: Exact
+# W-NEXT: v12 on v6: May

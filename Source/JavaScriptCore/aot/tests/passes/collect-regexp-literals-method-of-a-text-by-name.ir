@@ -1,0 +1,80 @@
+# `text.replace(name, value)` where flow does not say what `text` is, because somebody also calls the function with what nobody knows: the call goes by name. The walk comes with the argument of the
+# call that it follows, which is a text, and a name that is looked for on a text is found on String.prototype. A receiver that is no text, and a name that String.prototype does not have, give nothing.
+# FORM: AsRead
+# RUN: pipeline CollectRegExpLiterals
+# OPTIONS: only-passes=AnalyzeFlow
+# DIAGNOSTIC: RegExpWithoutCode 2
+# CHECK: regexp requests: 3
+# CHECK-NEXT: literal "_" flags=- sites=f1:v1
+# CHECK-NEXT: evaluated "[a-z]+-[0-9]+" flags=- sites=f2:v3
+# CHECK-NEXT: evaluated "[A-Z]+X" flags=- sites=f4:v3
+# CHECK-NEXT: variable g0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="unused" module=m0 declared={type=anything}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect v1 function=f3
+    v4 = CallDirect v1 function=f6
+    v5 = CallDirect function=f2
+    v6 = CallDirect function=f4
+    v7 = CallDirect function=f5
+    v8 = CallDirect function=f7
+    Return v8
+}
+
+function f1 name="edited" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewRegExp pattern="_" regExpFlags=[]
+    v2 = String string="-"
+    v3 = PropGet v0 key="replace"
+    v4 = Call v3, v0, v1, v2
+    Return v4
+}
+
+function f2 name="aTextIsEdited" results=[{type=anything}] {
+    v0 = String string="[a-z]+_[0-9]+"
+    v1 = CallDirect v0 function=f1
+    v2 = Builtin builtin=RegExp
+    v3 = Construct v2, -, v1 @20
+    Return v3
+}
+
+function f3 name="raised" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="toUpperCase"
+    v2 = Call v1, v0
+    Return v2
+}
+
+function f4 name="aTextIsRaised" results=[{type=anything}] {
+    v0 = String string="[a-z]+x"
+    v1 = CallDirect v0 function=f3
+    v2 = Builtin builtin=RegExp
+    v3 = Construct v2, -, v1 @30
+    Return v3
+}
+
+function f5 name="noText" results=[{type=anything}] {
+    v0 = Integer integer=7
+    v1 = CallDirect v0 function=f1
+    v2 = Builtin builtin=RegExp
+    v3 = Construct v2, -, v1 @40
+    Return v3
+}
+
+function f6 name="named" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="notOfTexts"
+    v2 = Call v1, v0
+    Return v2
+}
+
+function f7 name="noSuchName" results=[{type=anything}] {
+    v0 = String string="[a-z]+"
+    v1 = CallDirect v0 function=f6
+    v2 = Builtin builtin=RegExp
+    v3 = Construct v2, -, v1 @50
+    Return v3
+}

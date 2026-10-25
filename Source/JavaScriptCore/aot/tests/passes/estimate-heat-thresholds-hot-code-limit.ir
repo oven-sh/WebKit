@@ -1,0 +1,8 @@
+# What is hot fits MaxHotCodeValues: of the blocks that reach into the hottest fifth only the hottest stay hot where the next ones do not fit beside them. The hottest are hot however many they are.
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat limit=MaxHotCodeValues:1
+# RUN: pipeline EstimateHeat
+# CHECK: f1 Hot 97 100
+# CHECK-NEXT: f2 Warm 83 10
+# CHECK: thresholds: cold=1 hot=100
+# PROGRAM-OF: estimate-heat-thresholds.ir

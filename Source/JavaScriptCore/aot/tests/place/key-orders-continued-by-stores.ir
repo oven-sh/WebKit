@@ -1,0 +1,38 @@
+# The code of a store names at most two places where its field comes next, so the image has the orders that the store makes of the first two orders it can continue, and no more: nine allocation orders and eight created fields make 16 orders, not 72. The other seven allocation orders stay as they are, and what a store makes of one is numbered at run time
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: place key-orders key-order-continuations
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Record" fields=[{key="a0" declared={type=number}}, {key="a1" declared={type=number}}, {key="a2" declared={type=number}}, {key="a3" declared={type=number}}, {key="a4" declared={type=number}}, {key="a5" declared={type=number}}, {key="a6" declared={type=number}}, {key="a7" declared={type=number}}, {key="a8" declared={type=number}}, {key="b0" declared={type=number}}, {key="b1" declared={type=number}}, {key="b2" declared={type=number}}, {key="b3" declared={type=number}}, {key="b4" declared={type=number}}, {key="b5" declared={type=number}}, {key="b6" declared={type=number}}, {key="b7" declared={type=number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = Builtin builtin=ObjectKeys
+# REPEAT: i = 0..8
+    v%(i*2+4) = NewObject -, v2 layout=L0 fields=[%(i)]
+    v%(i*2+5) = FinishObject v%(i*2+4)
+# END REPEAT
+    v22 = CallDirect v5, v2 function=f1
+    v23 = CallDirect v5, v2 function=f2
+    v24 = CallDirect v5, v2 function=f3
+    v25 = CallDirect v5, v2 function=f4
+    v26 = CallDirect v5, v2 function=f5
+    v27 = CallDirect v5, v2 function=f6
+    v28 = CallDirect v5, v2 function=f7
+    v29 = CallDirect v5, v2 function=f8
+# REPEAT: i = 30..38
+    v%(i) = Call v3, -, v%(i*2-55)
+# END REPEAT
+    Return
+}
+# REPEAT: i = 0..7
+function f%(i+1) name="add%(i)" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="b%(i)"
+    Return
+}
+# END REPEAT
+# CHECK: L0 orders=23: [0 9] [0 10] {{*}} [1 15] [1 16] [2] [3] [4] [5] [6] [7] [8]
+# CHECK: L0 creating [9]: order=0 count=1 -> order=0 count=2; order=8 count=1 -> order=8 count=2;

@@ -1,0 +1,29 @@
+# const kState: unique symbol = Symbol("state"); const holder = { a: 1 }; holder[kState] = 1
+# The call of Symbol has no body to prove its type, so the variable is only expected to hold a symbol and each read of it is checked, in front of the test that the variable is initialized.
+# Behind a Check a node holds what the generic version of the function goes on with too. That version throws on an uninitialized variable like the typed one,
+# so the mark of an empty variable does not get past CheckInitialized: the key is the one symbol, and the store names a field
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Holder" fields=[{key="a"
+# CHECK: {key=symbol("state")@m0:100 declared={type=int} flags=[IsAddedLate
+# CHECK: variable g0 name="kState" {{*}}declared={type=symbol("state")@m0:100
+
+typesite w0 module=m0 position=6 kind=Variable text="unique symbol"
+typesite w1 module=m0 position=26 kind=CallResult
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="a" declared={type=number}}]
+variable g0 name="kState" module=m0 declared={type=undefined|null|symbol|absent site=w0 flags=[IsExpected]} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Symbol
+    v1 = String string="state"
+    v2 = Call v0, -, v1 @100
+    v3 = Check v2 castType=undefined|null|symbol site=w1
+    PutModuleVariable v3 variable=g0
+    v5 = GetModuleVariable variable=g0
+    v6 = Check v5 castType=undefined|null|symbol|absent site=w0 cause=AddedByPass
+    v7 = CheckInitialized v6 name="kState"
+    v8 = Integer integer=1
+    v9 = NewObject -, v8 layout=L0 fields=[0]
+    ElemSet v9, v7, v8 mode=Strict
+    Return v9
+}

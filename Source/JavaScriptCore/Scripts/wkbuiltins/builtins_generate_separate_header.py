@@ -85,6 +85,7 @@ class BuiltinsSeparateHeaderGenerator(BuiltinsGenerator):
     def generate_forward_declarations(self):
         return """namespace JSC {
 class FunctionExecutable;
+struct BuiltinCode;
 }"""
 
     def generate_secondary_header_includes(self):

@@ -1,0 +1,50 @@
+# interface Body { id: number; name: string }  interface Kept { key: string }
+# function handle(body: Body) { return body.name }  function keep(kept: Kept) { return kept.key }
+# publish({ id: 1, name: "a" }); keep({ key: "k" }); parsed = JSON.parse(text); handle(parsed); keep(parsed)
+# Where the names in the text are the fields of a record that typed code takes, the parser of the run time makes an object with the layout of the record, which passes the test at the entrance of that code.
+# Only of a record of which nothing is claimed. An object of Body has been handed to code that nobody has seen: what is parsed may be a Body, handle() is entered behind its test, and the layout says that a parser makes it.
+# Nobody but followed code has an object of Kept: no parser makes one, nothing that is parsed passes the test of keep(), and its field keeps what is known of it.
+# FORM: AsRead
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Body" {{*}}observedUses=[ReachesTypedParse]
+# CHECK: layout L1 name="Kept" {{*}}writers=AllKnown{{*}}occupancy=AlwaysFilled
+# CHECK-NOT: ReachesTypedParse
+# CHECK: function f1
+# CHECK: L0 = Check v0 castType=L0
+# RUN(SOLVE): valueflow-solve unreached
+# SOLVE-NOT: unreached f1
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=80 kind=Parameter
+typesite w1 module=m0 position=90 kind=Parameter
+layout L0 name="Body" fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=string} flags=[IsRequired]}]
+layout L1 name="Kept" fields=[{key="key" declared={type=string} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = String string="a"
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="publish" [isFreeName]
+    v5 = Call v4, -, v2
+    v6 = String string="k"
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = NewClosure function=f2
+    v9 = Call v8, -, v7
+    v10 = String string="{\"id\":2,\"name\":\"b\"}"
+    v11 = Builtin builtin=JSON
+    v12 = Builtin builtin=JSONParse
+    v13 = Call v12, v11, v10
+    v14 = NewClosure function=f1
+    v15 = Call v14, -, v13
+    v16 = Call v8, -, v13
+    Return
+}
+function f1 name="handle" flags=[IsChecked] parameters=[{type=L0 site=w0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="name"
+    Return v1
+}
+function f2 name="keep" flags=[IsChecked] parameters=[{type=L1 site=w1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="key"
+    Return v1
+}

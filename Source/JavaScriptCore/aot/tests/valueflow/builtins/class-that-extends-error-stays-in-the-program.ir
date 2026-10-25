@@ -1,0 +1,35 @@
+# class Refused extends Error { constructor(message) { super(message) } unused() {} }; new Refused("no").message
+# The constructor of Error converts its message, which may run code of that operand, and calls nothing that lies on the new object: the class says so. What it puts on the instance is what it puts on any error.
+# LIBRARY: own
+# RUN: valueflow-why escaped=f1 escaped=f2 values=f0:v9 timeline
+# CHECK: escaped=f1
+# CHECK-NEXT: not held
+# CHECK: escaped=f2
+# CHECK-NEXT: not held
+# CHECK: result n{{*}} 2 members: primitive0 primitive7
+# CHECK-NOT: flag
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Refused" constructor=f1 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Error
+    v1 = NewClosure function=f1
+    v2 = ResolveHeritage v0
+    v3 = NewClass v1, v0, v2 layout=L0
+    v4 = NewClosure function=f2
+    DefineMethod v3, v4 layout=L0 key="unused"
+    v6 = FinishClass v3 layout=L0
+    v7 = String string="no"
+    v8 = Construct v6, -, v7
+    v9 = PropGet v8 key="message"
+    Return v9
+}
+function f1 name="Refused" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L0
+    Return v4
+}
+function f2 name="unused" results=[{type=anything}] {
+    Return
+}

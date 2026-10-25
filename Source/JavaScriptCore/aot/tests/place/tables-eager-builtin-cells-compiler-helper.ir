@@ -1,0 +1,20 @@
+# No object stands for the holder of a compiler helper, so no store reaches the helper and its cell waits for its first use, whatever unknown JavaScript does. Date.now beside it is filled at start-up
+# OPTIONS: admit=Inspector
+# RUN: tables constants
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = Builtin builtin=CompilerHelpersStringifyElement
+    v3 = Builtin builtin=DateNow
+    v4 = Call v1, -, v2, v3
+    Return
+}
+
+# CHECK: builtinCell [[helper]] cell=CompilerHelpersStringifyElement
+# CHECK: builtinCell [[now]] cell=DateNow
+# CHECK-NOT: eagerBuiltinCell
+# CHECK: eagerBuiltinCell [[now]] cell=DateNow
+# CHECK-NOT: eagerBuiltinCell

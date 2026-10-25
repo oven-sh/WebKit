@@ -1,0 +1,11 @@
+# Two parts of one class become one part: contents that differ become anything, and the part stays proven when both are
+# RUN: canonical
+# CHECK: t0..t0 = Map<string, int, proven>
+# CHECK-NEXT: t0..t1 = Array<int, proven>|Map<string, int, proven>
+# CHECK-NEXT: t0..t2 = Array<anything, proven>|Map<string, int, proven>
+# CHECK-NEXT: t0..t3 = Array<anything, proven>|Map<string, int, proven>
+# CHECK-NEXT: t0..t4 = Array|Map<string, int, proven>
+# CHECK-NEXT: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=Map<string, int, proven>}, {type=Array<int, proven>}, {type=Array<string, proven>}, {type=Map<string, int, proven>}, {type=Array<int>}] results=[{type=undefined}]

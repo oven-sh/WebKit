@@ -1,0 +1,39 @@
+# A cycle of direct calls can overflow the stack, so its functions and their callers may throw. A call chain without a cycle cannot
+# FORM: Prepared
+# RUN: effects summaries
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callsItself" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f0
+    Return v1
+}
+function f1 name="callsSecond" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+function f2 name="callsFirst" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f1
+    Return v1
+}
+function f3 name="tailCallsItself" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f3
+    ReturnCall v1
+}
+function f4 name="callsRecursiveFunction" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f0
+    Return v1
+}
+function f5 name="callsLeaf" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f6
+    Return v1
+}
+function f6 name="leaf" parameters=[{type=number}] results=[{type=number}] {
+    Return v0
+}
+# CHECK: f0 return: throws throw: throws
+# CHECK: f1 return: throws throw: throws
+# CHECK: f2 return: throws throw: throws
+# CHECK: f3 return: throws throw: throws
+# CHECK: f4 return: throws throw: throws
+# CHECK: f5 return: none throw: none
+# CHECK: f6 return: none throw: none
