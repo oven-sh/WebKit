@@ -39,7 +39,9 @@ static BlockID createLoopHeader(FunctionPassContext& context, IRBuilder& builder
     for (ValueID entryParameter : entryParameters)
         builder.appendArgument({ entryBlock, 0 }, entryParameter);
 
-    builder.insertBefore(ProgramPoint::atHeadOf(header), IRBuilder::make(Opcode::LoopHint));
+    Value hint = IRBuilder::make(Opcode::LoopHint);
+    hint.setReplacesTailCalls(true);
+    builder.insertBefore(ProgramPoint::atHeadOf(header), WTF::move(hint));
     builder.applyInsertions();
     return header;
 }

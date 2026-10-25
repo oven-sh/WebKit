@@ -43,6 +43,12 @@ JS_EXPORT_PRIVATE NativeFunction functionUnlessRemovedSlow(NativeFunction functi
 }
 
 template<>
+JS_EXPORT_PRIVATE GetValueFunc functionUnlessRemovedSlow(GetValueFunc function)
+{
+    return removedFeatureAt(function.untaggedPtr()) ? GetValueFunc(CustomGetterSetter::getRemovedProperty) : function;
+}
+
+template<>
 JS_EXPORT_PRIVATE PutValueFunc functionUnlessRemovedSlow(PutValueFunc function)
 {
     return removedFeatureAt(function.untaggedPtr()) ? PutValueFunc(CustomGetterSetter::setRemovedProperty) : function;
@@ -62,17 +68,34 @@ void CustomGetterSetter::replaceRemovedFunctions()
 
 enum class AccessorFunction : bool { Getter, Setter };
 
+static std::optional<RemovableFeature> findFeatureOfRemovedAccessor(VM& vm, JSObject* object, PropertyName propertyName, AccessorFunction function)
+{
+    bool isGetter = function == AccessorFunction::Getter;
+    unsigned attributes;
+    if (JSValue value = object->getDirect(vm, propertyName, attributes)) {
+        if (!(attributes & PropertyAttribute::CustomAccessorOrValue))
+            return std::nullopt;
+        auto* accessor = uncheckedDowncast<CustomGetterSetter>(value);
+        return isGetter ? accessor->removedGetterFeature() : accessor->removedSetterFeature();
+    }
+
+    if (!object->structure()->hasNonReifiedStaticProperties())
+        return std::nullopt;
+    auto entry = object->findPropertyHashEntry(propertyName);
+    if (!entry || entry->value->attributes() & PropertyAttribute::BuiltinOrFunctionOrAccessorOrLazyPropertyOrConstant)
+        return std::nullopt;
+    const HashTableValue& value = *entry->value;
+    if (value.attributes() & PropertyAttribute::DOMJITAttribute)
+        return removedFeatureAt(isGetter ? GetValueFunc(value.domJIT()->getter()).untaggedPtr() : value.domJITSetter().untaggedPtr());
+    return removedFeatureAt(isGetter ? value.propertyGetter().untaggedPtr() : value.propertyPutter().untaggedPtr());
+}
+
 static void throwForRemovedAccessor(JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName propertyName, AccessorFunction function)
 {
     // The embedder has a text for an index that no feature has.
     uint16_t index = removableFeatureIndexLimit;
     for (JSObject* object = JSValue::decode(thisValue).getObject(); object; object = object->getPrototypeDirect().getObject()) {
-        unsigned attributes;
-        JSValue value = object->getDirect(globalObject->vm(), propertyName, attributes);
-        if (!value || !(attributes & PropertyAttribute::CustomAccessorOrValue))
-            continue;
-        auto* accessor = uncheckedDowncast<CustomGetterSetter>(value);
-        if (std::optional<RemovableFeature> feature = function == AccessorFunction::Getter ? accessor->removedGetterFeature() : accessor->removedSetterFeature()) {
+        if (std::optional<RemovableFeature> feature = findFeatureOfRemovedAccessor(globalObject->vm(), object, propertyName, function)) {
             index = static_cast<uint16_t>(*feature);
             break;
         }

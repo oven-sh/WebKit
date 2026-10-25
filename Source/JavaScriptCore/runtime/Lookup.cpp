@@ -105,10 +105,22 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
     return true;
 }
 
-bool setUpReifiedCustomSlot(VM& vm, const ClassInfo* classInfo, const HashTableValue* entry, JSObject* thisObject, PropertyName propertyName, PropertySlot& slot)
+bool setUpCustomSlotWithoutRemovedFunctions(const ClassInfo* classInfo, const HashTableValue* entry, JSObject* thisObject, PropertySlot& slot)
 {
-    reifyStaticProperty(vm, classInfo, propertyName, *entry, *thisObject);
-    return thisObject->getOwnNonIndexPropertySlot(vm, thisObject->structure(), propertyName, slot);
+    unsigned attributes = attributesForStructure(entry->attributes());
+    if (entry->attributes() & PropertyAttribute::DOMJITAttribute) {
+        const DOMJIT::GetterSetter* domJIT = entry->domJIT();
+        slot.setCacheableCustom(thisObject, attributes, functionUnlessRemoved(GetValueFunc(domJIT->getter())), functionUnlessRemoved(entry->domJITSetter()), DOMAttributeAnnotation { classInfo, domJIT });
+        return true;
+    }
+
+    GetValueFunc getter = functionUnlessRemoved(entry->propertyGetter());
+    PutValueFunc setter = functionUnlessRemoved(entry->propertyPutter());
+    if (entry->attributes() & PropertyAttribute::DOMAttribute)
+        slot.setCacheableCustom(thisObject, attributes, getter, setter, DOMAttributeAnnotation { classInfo, nullptr });
+    else
+        slot.setCacheableCustom(thisObject, attributes, getter, setter);
+    return true;
 }
 
 } // namespace JSC

@@ -1264,7 +1264,8 @@ static bool isListedByAllocation(const VirtualObjectContext& context, const Virt
 LateStore canStoreLate(const VirtualObjectContext& context, const VirtualObjectDescription& description, const VirtualField& field)
 {
     const Program& program = context.program;
-    if (!layoutFieldOf(program, description, field))
+    std::optional<uint32_t> layoutField = layoutFieldOf(program, description, field);
+    if (!layoutField)
         return LateStore::Unknown;
 
     switch (description.kind) {
@@ -1274,7 +1275,9 @@ LateStore canStoreLate(const VirtualObjectContext& context, const VirtualObjectD
         if (field.kind != VirtualFieldKind::Named)
             return LateStore::Unknown;
         const Type& fieldType = program.at(typeOfField(context, description, field));
-        if (program.at(TypeTable::undefined).isSubsetOf(fieldType, program))
+        // A placeholder is a store too, so a field whose stores flow has counted gets none.
+        bool hasCountedStores = flowOf(program, { description.layout, *layoutField }).location.stores != StoreCount::Unknown;
+        if (!hasCountedStores && program.at(TypeTable::undefined).isSubsetOf(fieldType, program))
             return LateStore::NeedsUndefinedPlaceholder;
         // Flow proves a field filled from the start where every allocation lists it, and placement then gives its slot no absent state for a store to find.
         return isListedByAllocation(context, description, field) ? LateStore::Unknown : LateStore::CreatesProperty;

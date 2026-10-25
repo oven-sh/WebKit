@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAnalysisTestCommands.h"
 #include "AOTCompile.h"
 #include "AOTDerivedFunctions.h"
 #include "AOTDiagnostics.h"
@@ -94,25 +95,23 @@ static void printDeclines(TestCommandContext& context)
     }
 }
 
-static bool loseTypeOf(Program& program, StringView word)
-{
-    size_t separator = word.find(':');
-    if (separator == notFound || !word.startsWith('f') || !word.substring(separator + 1).startsWith('v'))
-        return false;
-    std::optional<uint32_t> function = parseTestNumber<uint32_t>(word.substring(1, separator - 1));
-    std::optional<uint32_t> value = parseTestNumber<uint32_t>(word.substring(separator + 2));
-    if (!function || !value || *function >= program.functions.size() || *value >= program.functions[*function].values.size())
-        return false;
-    program.functions[*function].edit(ValueID(*value)).type = TypeTable::anything;
-    return true;
-}
-
 static void runPassCommand(TestCommandContext& context)
 {
+    // The word f0:v3 retypes value v3 of function f0 to anything.
+    auto parseRetypedValue = pairParser(':', idParser<FunctionID>('f', UINT32_MAX), idParser<ValueID>('v', UINT32_MAX));
+    Vector<Function>& functions = context.program->functions;
     Vector<PassID> passes;
     for (const String& word : context.arguments) {
-        if (loseTypeOf(*context.program, word))
+        if (auto retyped = parseRetypedValue(word)) {
+            auto [function, value] = *retyped;
+            size_t valueCount = function.index() < functions.size() ? functions[function.index()].values.size() : 0;
+            if (value.index() >= valueCount) {
+                context.out.println("error: no value ", word, ": the program has ", functions.size(), " functions, and f", function.index(), " has ", valueCount, " values");
+                return;
+            }
+            functions[function.index()].edit(value).type = TypeTable::anything;
             continue;
+        }
         std::optional<PassID> pass = passNamed(word);
         if (!pass) {
             context.out.println("error: unknown pass ", word);

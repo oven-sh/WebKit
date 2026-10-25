@@ -725,6 +725,53 @@ void testRemovedAccessorsOfReifiedTable(Realms& realms)
     checkAccessorsOf(realms, holderOfDOMAttributes);
 }
 
+class HolderWithTable final : public JSNonFinalObject {
+public:
+    using Base = JSNonFinalObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
+
+    template<typename CellType, SubspaceAccess>
+    static GCClient::IsoSubspace* subspaceFor(VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(HolderWithTable, Base);
+        return &vm.plainObjectSpace();
+    }
+
+    static HolderWithTable* create(VM& vm, JSGlobalObject* realm)
+    {
+        Structure* structure = Structure::create(vm, realm, realm->objectPrototype(), TypeInfo(ObjectType, StructureFlags), info());
+        auto* holder = new (NotNull, allocateCell<HolderWithTable>(vm)) HolderWithTable(vm, structure);
+        holder->finishCreation(vm);
+        return holder;
+    }
+
+    DECLARE_INFO;
+
+private:
+    HolderWithTable(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+};
+
+// With a mask of 0 every name starts at the first entry and follows the chain.
+const CompactHashIndex accessorTableIndex[] = { { 0, 1 }, { 1, -1 } };
+const HashTable accessorTable = { 2, 0, static_cast<uint8_t>(PropertyAttribute::CustomAccessor), nullptr, accessorTableValues, accessorTableIndex };
+const ClassInfo HolderWithTable::s_info = { "HolderWithTable"_s, &Base::s_info, &accessorTable, nullptr, CREATE_METHOD_TABLE(HolderWithTable) };
+
+void testAccessorsOfTableStayInTable(Realms& realms)
+{
+    VM& vm = realms.vm();
+    JSObject* holder = HolderWithTable::create(vm, realms.plain());
+    checkAccessorsOf(realms, holder);
+    AOT_TEST_CHECK(!holder->staticPropertiesReified());
+    AOT_TEST_CHECK(!holder->getDirect(vm, removedName(realms)) && !holder->getDirect(vm, keptName(realms)));
+
+    holder->reifyAllStaticProperties(realms.plain());
+    AOT_TEST_CHECK(holder->getDirect(vm, removedName(realms)) && holder->getDirect(vm, keptName(realms)));
+    checkAccessorsOf(realms, holder);
+}
+
 void testRemovedAccessorsThroughInlineCaches(Realms& realms)
 {
     constexpr unsigned iterations = 20000;
@@ -851,6 +898,7 @@ std::span<const NativeTest> removableFeatureTests()
         { "removable-feature/removed-custom-value"_s, runInTrimmedExecutable<testRemovedCustomValue> },
         { "removable-feature/removed-dom-attribute"_s, runInTrimmedExecutable<testRemovedDOMAttribute> },
         { "removable-feature/removed-accessors-of-reified-table"_s, runInTrimmedExecutable<testRemovedAccessorsOfReifiedTable> },
+        { "removable-feature/accessors-of-table-stay-in-table"_s, runInTrimmedExecutable<testAccessorsOfTableStayInTable> },
         { "removable-feature/removed-accessors-through-inline-caches"_s, runInTrimmedExecutable<testRemovedAccessorsThroughInlineCaches> },
         { "removable-feature/removed-accessor-of-unrelated-receiver"_s, runInTrimmedExecutable<testRemovedAccessorOfUnrelatedReceiver> },
         { "removable-feature/listed-functions-without-trimming"_s, runWithCleanFeatureState<testListedFunctionsWithoutTrimming> },

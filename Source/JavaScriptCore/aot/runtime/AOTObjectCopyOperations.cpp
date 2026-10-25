@@ -330,6 +330,11 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
     }
     if (excluded.isEmpty() && target->type() == FinalObjectType && tryCopyRecordDataProperties(vm, target, from))
         return "final objects, tryCopyRecordDataProperties"_s;
+    // As in the engine's own copy, which decides the order of the source's keys from here on.
+    if (from->hasNonReifiedStaticProperties()) {
+        from->reifyAllStaticProperties(globalObject);
+        RETURN_IF_EXCEPTION(scope, threw);
+    }
     auto* ordinary = dynamicDowncast<JSFinalObject>(target);
     bool canPutDirectly = ordinary && ordinary->canPerformFastPutInlineExcludingProto() && ordinary->isStructureExtensible();
     if (canPutDirectly && excluded.isEmpty()) {

@@ -301,7 +301,7 @@ ALWAYS_INLINE decltype(function) addressUnlessRemoved(decltype(function) replace
     return function;
 }
 
-// AOTRemovableFeature.cpp instantiates it for NativeFunction and PutValueFunc.
+// AOTRemovableFeature.cpp instantiates it for NativeFunction, GetValueFunc and PutValueFunc.
 template<typename FunctionPointer>
 FunctionPointer functionUnlessRemovedSlow(FunctionPointer);
 

@@ -287,8 +287,15 @@ void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* target,
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-    if (target->structure()->isCompiledStructure() && AOT::PropertyWalk::tryAssign(vm, target, source))
-        return;
+    if (target->structure()->isCompiledStructure()) {
+        // As for an ordinary target that takes properties directly.
+        if (source->hasNonReifiedStaticProperties() && AOT::PropertyWalk::testIntegrity(target, AOT::PropertyWalk::Integrity::NonExtensible) == AOT::PropertyWalk::Presence::Absent) {
+            source->reifyAllStaticProperties(globalObject);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        if (AOT::PropertyWalk::tryAssign(vm, target, source))
+            return;
+    }
 #endif
 
     // [[GetOwnPropertyNames]], [[Get]] etc. could modify target object and invalidate this assumption.

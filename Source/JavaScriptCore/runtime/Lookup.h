@@ -428,7 +428,7 @@ struct HashTable {
 };
 
 JS_EXPORT_PRIVATE bool setUpStaticFunctionSlot(VM&, const ClassInfo*, const HashTableValue*, JSObject* thisObject, PropertyName, PropertySlot&);
-JS_EXPORT_PRIVATE bool setUpReifiedCustomSlot(VM&, const ClassInfo*, const HashTableValue*, JSObject* thisObject, PropertyName, PropertySlot&);
+JS_EXPORT_PRIVATE bool setUpCustomSlotWithoutRemovedFunctions(const ClassInfo*, const HashTableValue*, JSObject* thisObject, PropertySlot&);
 JS_EXPORT_PRIVATE void reifyStaticAccessor(VM&, const HashTableValue&, JSObject& thisObject, PropertyName);
 
 inline BuiltinGenerator HashTableValue::builtinAccessorGetterGenerator() const
@@ -465,7 +465,7 @@ inline bool getStaticPropertySlotFromTable(VM& vm, const ClassInfo* classInfo, c
     }
 
     if (Bun__removableFeatureState.isTrimmed) [[unlikely]]
-        return setUpReifiedCustomSlot(vm, classInfo, entry, thisObject, propertyName, slot);
+        return setUpCustomSlotWithoutRemovedFunctions(classInfo, entry, thisObject, slot);
 
     if (entry->attributes() & PropertyAttribute::DOMJITAttribute) {
         ASSERT_WITH_MESSAGE(entry->attributes() & PropertyAttribute::ReadOnly, "DOMJITAttribute supports readonly attributes currently.");

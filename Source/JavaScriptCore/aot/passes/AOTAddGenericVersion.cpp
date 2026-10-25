@@ -2720,9 +2720,16 @@ static BitVector findBlocksThatEndBeforeAnyEffect(FunctionPassContext& pass)
         return (effects.writes.containsOnly(heapsWhoseWritesNobodySees) && !effects.mayRunOtherCode()) || pass.build.isSabotaged(Sabotage::WritesMayRunTwice);
     };
     auto canRunTwiceOnAnyEdge = [&](const EffectsOnEdges& effects) { return canRunTwice(effects.normal) && canRunTwice(effects.handler); };
+    // Once a tail call has jumped back here, the parameters of the entry block belong to an earlier call.
+    auto beginsNextCall = [&](BlockID block) {
+        return pass.analyses.isInCycle(block) && std::ranges::any_of(pass.function.at(block).values, [&](ValueID id) {
+            const Value& value = pass.function.at(id);
+            return value.opcode == Opcode::LoopHint && value.replacesTailCalls();
+        });
+    };
     BitVector endsBeforeAnyEffect(pass.function.blocks.size());
     for (BlockID block : cfg.reversePostOrder()) {
-        if (canRunTwiceOnAnyEdge(pass.analyses.effectsOfTerminator(block)) && std::ranges::all_of(pass.function.at(block).values, [&](ValueID id) { return canRunTwiceOnAnyEdge(pass.analyses.effectsOf(id)); }))
+        if (!beginsNextCall(block) && canRunTwiceOnAnyEdge(pass.analyses.effectsOfTerminator(block)) && std::ranges::all_of(pass.function.at(block).values, [&](ValueID id) { return canRunTwiceOnAnyEdge(pass.analyses.effectsOf(id)); }))
             endsBeforeAnyEffect.quickSet(block.index());
     }
     for (bool changed = true; std::exchange(changed, false);) {
