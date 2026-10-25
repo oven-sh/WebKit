@@ -278,7 +278,7 @@ void ConservativeRoots::genericAddSpanOfCompiledProcess(void* begin, void* end, 
             return;
         void* cell = pointer;
 #if ENABLE(AOT)
-        if (candidate->hasInnerCells() && MarkedBlock::isAtomAligned(pointer) && !AOT::HeapHooks::isSabotaged(AOT::HeapHooks::SabotagedPart::NarrowReferenceOnStackNamesNoInnerCell)) [[unlikely]]
+        if (candidate->hasInnerCells() && MarkedBlock::isAtomAligned(pointer)) [[unlikely]]
             cell = candidate->outerCellOf(pointer);
 #endif
         if (candidate->handle().isLiveCell(markingVersion, newlyAllocatedVersion, true, cell))

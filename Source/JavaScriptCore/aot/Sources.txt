@@ -259,7 +259,6 @@ aot/object/AOTPropertyWalk.cpp
 aot/object/AOTSlotAccess.cpp
 aot/object/AOTThisAllocation.cpp
 aot/passes/AOTAddGenericVersion.cpp
-aot/passes/AOTAllocateInnerObjects.cpp
 aot/passes/AOTArrayCapacities.cpp
 aot/passes/AOTArrays.cpp
 aot/passes/AOTCallModules.cpp

@@ -106,15 +106,6 @@ void validateFunctionCellIsNotInFrame(VM& vm, const JSCell* cell)
 
 namespace HeapHooks {
 
-uint8_t sabotage;
-static_assert(static_cast<uint8_t>(SabotagedPart::StackNamesNoInnerCell) == static_cast<uint8_t>(Sabotage::StackNamesNoInnerCell));
-static_assert(static_cast<uint8_t>(SabotagedPart::NarrowReferenceOnStackNamesNoInnerCell) == static_cast<uint8_t>(Sabotage::NarrowReferenceOnStackNamesNoInnerCell));
-static_assert(static_cast<uint8_t>(SabotagedPart::InnerObjectIsVisitedWithoutItsFields) == static_cast<uint8_t>(Sabotage::InnerObjectIsVisitedWithoutItsFields));
-static_assert(static_cast<uint8_t>(SabotagedPart::InnerArrayIsVisitedWithoutItsElements) == static_cast<uint8_t>(Sabotage::InnerArrayIsVisitedWithoutItsElements));
-static_assert(static_cast<uint8_t>(SabotagedPart::InnerCellVisitedInPlaceStaysWhite) == static_cast<uint8_t>(Sabotage::InnerCellVisitedInPlaceStaysWhite));
-static_assert(static_cast<uint8_t>(SabotagedPart::InnerCellIsMarkedWithoutItsOuterCell) == static_cast<uint8_t>(Sabotage::InnerCellIsMarkedWithoutItsOuterCell));
-static_assert(static_cast<uint8_t>(SabotagedPart::InnerCellLetGoKeepsItsHeader) == static_cast<uint8_t>(Sabotage::InnerCellLetGoKeepsItsHeader));
-
 void finalize(VM& vm, CollectionScope scope)
 {
     VMState& state = vm.aotState();
@@ -165,8 +156,6 @@ JSCell* innerCellAround(JSCell* outerCell, const void* address)
         if (offset <= distance)
             inner = reinterpret_cast<JSCell*>(reinterpret_cast<uint8_t*>(outerCell) + offset);
     }
-    if (isSabotaged(SabotagedPart::StackNamesNoInnerCell)) [[unlikely]]
-        return nullptr;
     return inner && inner->structureID() ? inner : nullptr;
 }
 
@@ -205,7 +194,7 @@ void didFinishMarking(VM& vm)
     VMState& state = vm.aotState();
     Locker locker { state.innerCellsWithoutMark.lock };
     for (JSCell* inner : state.innerCellsWithoutMark.cells) {
-        if (!vm.heap.isMarked(inner) && !isSabotaged(SabotagedPart::InnerCellLetGoKeepsItsHeader))
+        if (!vm.heap.isMarked(inner))
             *reinterpret_cast<uint64_t*>(inner) = 0;
     }
     state.innerCellsWithoutMark.cells.clear();

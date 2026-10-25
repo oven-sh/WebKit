@@ -168,7 +168,6 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(imageFunctionTableTests) \
     v(imageTextTests) \
     v(inlinedSerializerTests) \
-    v(innerObjectTests) \
     v(instanceKeyOrderTests) \
     v(interpretedStoreUnderCompiledPrototypeTests) \
     v(jsonKeyOrderTests) \

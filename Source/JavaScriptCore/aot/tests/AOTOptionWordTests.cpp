@@ -282,8 +282,8 @@ static constexpr OptionWordCase optionWordCases[] = {
         options.testing = Wire::TestingSwitch::FailPredictions;
         options.bisection.predictionFailure = { .period = 100, .seed = 3 };
     } },
-    { "sabotage=InnerCellLetGoKeepsItsHeader"_s, [](WireOptions& options) { options.sabotage = Wire::Sabotage::InnerCellLetGoKeepsItsHeader; } },
-    { "sabotage=inner-cell-visited-in-place-stays-white"_s, [](WireOptions& options) { options.sabotage = Wire::Sabotage::InnerCellVisitedInPlaceStaysWhite; } },
+    { "sabotage=NoCallCollects"_s, [](WireOptions& options) { options.sabotage = Wire::Sabotage::NoCallCollects; } },
+    { "sabotage=fields-never-change"_s, [](WireOptions& options) { options.sabotage = Wire::Sabotage::FieldsNeverChange; } },
     { "count-branches"_s, [](WireOptions& options) { options.instrumentation = Wire::Instrumentation::CountBranches; } },
     { "count-arrivals"_s, [](WireOptions& options) { options.instrumentation = Wire::Instrumentation::CountArrivals; } },
     { "drop-guard=TypeTest:2"_s, [](WireOptions& options) {
@@ -841,8 +841,8 @@ static void testInstrumentationAndTestingSwitchesAreRecorded()
 
     RecordedOptions ignoring = readWords({ "testing=IgnoreExpectedTypes"_s }).recorded;
     AOT_TEST_CHECK(!ignoring.usesExpectedTypes() && ignoring.has(Wire::TestingSwitch::IgnoreExpectedTypes) && !ignoring.has(Wire::TestingSwitch::DropGuard) && !ignoring.droppedGuard());
-    RecordedOptions sabotaged = readWords({ "sabotage=StackNamesNoInnerCell"_s }).recorded;
-    AOT_TEST_CHECK(sabotaged.isSabotaged(Wire::Sabotage::StackNamesNoInnerCell) && !sabotaged.isSabotaged(Wire::Sabotage::InnerCellLetGoKeepsItsHeader) && !sabotaged.isSabotaged(Wire::Sabotage::None));
+    RecordedOptions sabotaged = readWords({ "sabotage=NoCallCollects"_s }).recorded;
+    AOT_TEST_CHECK(sabotaged.isSabotaged(Wire::Sabotage::NoCallCollects) && !sabotaged.isSabotaged(Wire::Sabotage::FieldsNeverChange) && !sabotaged.isSabotaged(Wire::Sabotage::None));
     AOT_TEST_CHECK(readWords({ }).recorded.isSabotaged(Wire::Sabotage::None) && !readWords({ }).recorded.sabotage);
     RecordedOptions dropping = readWords({ "drop-guard=TypeTest:2"_s }).recorded;
     AOT_TEST_CHECK(dropping.has(Wire::TestingSwitch::DropGuard) && dropping.usesExpectedTypes());

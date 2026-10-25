@@ -79,15 +79,11 @@ private:
         case CellVisitKind::CompiledObject: {
             // An inner object is no outer object.
             appender.appendStructure(structure);
-            if (!AOT::HeapHooks::isSabotaged(AOT::HeapHooks::SabotagedPart::InnerObjectIsVisitedWithoutItsFields)) [[likely]]
-                AOT::Object::visitFields(uncheckedDowncast<AOT::Object>(inner), appender);
+            AOT::Object::visitFields(uncheckedDowncast<AOT::Object>(inner), appender);
             return;
         }
         case CellVisitKind::Array:
-            if (AOT::HeapHooks::isSabotaged(AOT::HeapHooks::SabotagedPart::InnerArrayIsVisitedWithoutItsElements)) [[unlikely]]
-                appender.appendStructure(structure);
-            else
-                InlineCellVisit<CellVisitKind::Array>::tryVisit(appender, inner, structure);
+            InlineCellVisit<CellVisitKind::Array>::tryVisit(appender, inner, structure);
             return;
         default:
             appender.appendMarkedCell(inner);

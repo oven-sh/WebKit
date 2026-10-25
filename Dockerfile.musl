@@ -289,8 +289,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cp -r /webkit/Source/JavaScriptCore/aot/ir/schema /output/Source/JavaScriptCore/aot/ir && \
     cp -r /webkit/Source/JavaScriptCore/aot/ir/generator /output/Source/JavaScriptCore/aot/ir && \
     cp -r /webkit/Source/JavaScriptCore/aot/builtins/generator /output/Source/JavaScriptCore/aot/builtins && \
-    mkdir /output/Source/JavaScriptCore/aot/builtins/generated && \
-    (cd $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/aot && cp AOTBuiltinEngineDeclarations.json AOTBuiltinFeatures.h AOTBuiltinIDs.h AOTBuiltinTableEngineBindings.cpp AOTBuiltinTableEnums.h AOTBuiltinTableWords.h /output/Source/JavaScriptCore/aot/builtins/generated) && \
+    cp -r $WEBKIT_OUT_DIR/JavaScriptCore/ReleasedSources/aot/builtins/generated /output/Source/JavaScriptCore/aot/builtins && \
     mkdir -p /output/Tools/Scripts/aot && \
     cp /webkit/Tools/Scripts/aot/find-structures-decoded-behind-calls.py /webkit/Tools/Scripts/aot/calls-that-never-collect.txt /webkit/Tools/Scripts/aot/structures-decoded-behind-calls-expected.txt /output/Tools/Scripts/aot && \
     cp -r /webkit/Source/JavaScriptCore/aot/tests /output/Source/JavaScriptCore/aot/tests && \

@@ -311,7 +311,6 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTImageTextTests.cpp
     aot/tests/AOTImageUnitPlacementTests.cpp
     aot/tests/AOTInlinedSerializerTests.cpp
-    aot/tests/AOTInnerObjectTests.cpp
     aot/tests/AOTInstanceKeyOrderTests.cpp
     aot/tests/AOTInterpretedStoreUnderCompiledPrototypeTests.cpp
     aot/tests/AOTListedFieldsTests.cpp
@@ -547,12 +546,14 @@ function(AOT_GENERATE_BUILTIN_TABLE)
         COMMAND_ERROR_IS_FATAL ANY
     )
     AOT_REQUIRE_GENERATED_FILES(aot/builtins/generator/engine.ts
-        ${JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_HEADERS}
-        ${JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES}
+        ${JavaScriptCore_AOT_BUILTIN_TABLE_RELEASED_FILES}
         ${JavaScriptCore_AOT_BUILTIN_TABLE_DATA_HEADERS}
         ${JavaScriptCore_AOT_BUILTIN_TABLE_DATA_SOURCES}
-        "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinEngineDeclarations.json"
     )
+    # The Dockerfiles copy this folder into the release.
+    set(released "${CMAKE_BINARY_DIR}/JavaScriptCore/ReleasedSources/aot/builtins/generated")
+    file(REMOVE_RECURSE "${released}")
+    file(COPY ${JavaScriptCore_AOT_BUILTIN_TABLE_RELEASED_FILES} DESTINATION "${released}")
 endfunction()
 
 function(AOT_GENERATE_VECTOR)

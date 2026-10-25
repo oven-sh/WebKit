@@ -309,7 +309,7 @@ ALWAYS_INLINE void SlotVisitor::appendToMarkStack(ContainerType& container, JSCe
     // Whoever holds an inner cell holds the cell that it lies in. No field says so.
     if constexpr (std::is_same_v<ContainerType, MarkedBlock>) {
 #if ENABLE(AOT)
-        if (isCountedWithOuterCell && !AOT::HeapHooks::isSabotaged(AOT::HeapHooks::SabotagedPart::InnerCellIsMarkedWithoutItsOuterCell)) [[unlikely]]
+        if (isCountedWithOuterCell) [[unlikely]]
             appendHiddenSlow(static_cast<JSCell*>(container.outerCellOf(cell)), Dependency());
 #endif
     }

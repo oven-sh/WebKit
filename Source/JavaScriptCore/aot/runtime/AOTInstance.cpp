@@ -831,7 +831,6 @@ void VMState::attachImage(VM& vm)
 
     structureIDBase = JSC::structureIDBase();
     validatesRuntime = image->header().options.validates || Options::validateAOTRuntime();
-    HeapHooks::sabotage = image->header().options.sabotage;
     vm.updateSoftReservedZoneSize(Options::softReservedZoneSize() + BuiltinCells::stackKeptFromProgram);
 
     caches = makeUnique<CacheRegistry>();

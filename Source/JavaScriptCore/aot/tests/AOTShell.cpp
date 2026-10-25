@@ -410,6 +410,9 @@ static JSValue requireSpecifier(JSGlobalObject* globalObject, JSObject*, JSValue
     if (specifier.isString()) {
         if (std::optional<ModuleID> module = findModule(text))
             RELEASE_AND_RETURN(scope, requireModule(globalObject, *module));
+        // The exports of "bun" are the members of the global `Bun`, which the script that runs the image provides.
+        if (text == "bun"_s)
+            RELEASE_AND_RETURN(scope, globalObject->get(globalObject, Identifier::fromString(vm, "Bun"_s)));
     }
     throwException(globalObject, scope, createError(globalObject, makeString("Cannot find module '"_s, text, '\'')));
     return { };
@@ -511,11 +514,10 @@ static JSObject* captureSyntheticExports(JSGlobalObject* globalObject, Synthetic
     switch (rule) {
     case SyntheticExportRule::CommonJs:
     case SyntheticExportRule::CommonJsIgnoringAnnotation:
+    // Only "bun" gets here.
+    case SyntheticExportRule::RuntimeModule:
         scope.release();
         captureCommonJSExports(globalObject, rule, value, names, values);
-        return nullptr;
-    case SyntheticExportRule::RuntimeModule:
-        throwTypeError(globalObject, scope, "the shell has no runtime modules"_s);
         return nullptr;
     case SyntheticExportRule::None:
         break;

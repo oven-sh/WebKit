@@ -69,6 +69,13 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinTableEngineBindings.cpp"
 )
 
+# What a release of WebKit ships of them, in Source/JavaScriptCore/aot/builtins/generated. Bun's generator compares its own output with these files.
+set(JavaScriptCore_AOT_BUILTIN_TABLE_RELEASED_FILES
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTBuiltinEngineDeclarations.json"
+    ${JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_HEADERS}
+    ${JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES}
+)
+
 # The table itself. A static JavaScriptCore names its symbols and does not define them: whoever links the library compiles a table.
 # Bun compiles its own, from its own declarations. These are for the programs that WebKit's build links: the engine's entries and the stand-in host's.
 set(JavaScriptCore_AOT_BUILTIN_TABLE_DATA_HEADERS

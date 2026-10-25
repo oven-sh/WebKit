@@ -200,10 +200,6 @@ ALWAYS_INLINE void FastMarkAppender::pushNewlyMarkedCell(JSCell* cell, MarkedBlo
     if (outer) [[unlikely]] {
         if (block.marks().get(block.atomNumber(outer)))
             return;
-#if ENABLE(AOT)
-        if (AOT::HeapHooks::isSabotaged(AOT::HeapHooks::SabotagedPart::InnerCellIsMarkedWithoutItsOuterCell)) [[unlikely]]
-            return;
-#endif
         m_cursor.store();
         appendOutOfLine(m_visitor, static_cast<JSCell*>(outer));
         m_cursor.load();
@@ -322,10 +318,6 @@ ALWAYS_INLINE bool FastMarkAppender::markInnerCellOfVisitedCell(JSCell* cell)
         return false;
     if (word->exchangeOr(mask, std::memory_order_relaxed) & mask) [[unlikely]]
         return false;
-#if ENABLE(AOT)
-    if (AOT::HeapHooks::isSabotaged(AOT::HeapHooks::SabotagedPart::InnerCellVisitedInPlaceStaysWhite)) [[unlikely]]
-        return true;
-#endif
     cell->setCellState(CellState::PossiblyBlack);
     if (!m_mutatorsAreStopped)
         WTF::storeLoadFence();

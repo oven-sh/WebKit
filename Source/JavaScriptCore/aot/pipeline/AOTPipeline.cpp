@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTAddGenericVersion.h"
-#include "AOTAllocateInnerObjects.h"
 #include "AOTBackgroundTask.h"
 #include "AOTBorrowedParameters.h"
 #include "AOTBuildContext.h"
@@ -179,7 +178,6 @@ constexpr std::array rows {
     addingOnly({ }, countingOwnChanges(programPass(ChooseCallingConventions, Optional, { Prepared, Prepared }, simplifyInputs | Results { CallGraph }, { CallingConventions }, resultsAboutBodies))),
     addingOnly({ Opcode::GetDeferredClosureSlot, Opcode::GetDeferredClosureSlotOrUndefined }, programPass(DeferClosuresInFields, Optional, { Prepared, Prepared }, { }, { }, resultsAboutBodies)),
     addingOnly({ Opcode::MaterializeEnvironment, Opcode::EmptyArgumentList }, programPass(AllocateInFrames, Optional, { Prepared, Prepared }, { Flow, CallGraph, Heat, EffectSummaries }, { FrameAllocation }, { EffectSummaries })),
-    addingOnly({ }, programPass(AllocateInnerObjects, Optional, { Prepared, Prepared }, { Flow, CallGraph, Heat }, { }, { })),
     addingOnly({ Opcode::ReleaseEnvironment, Opcode::MarkEnvironmentEscaped }, programPass(ReuseEnvironments, Optional, { Prepared, Prepared }, { Flow, FrameAllocation }, { EnvironmentReuse }, { EffectSummaries })),
     programPass(NumberLiteralStrings, Required, { Prepared, Placed }, { }, { LiteralStrings }, { }),
     addingOnly({ Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData }, programPass(EmbedConstantCollections, Optional, { Prepared, Prepared }, { Flow }, { ConstantCollections }, { })),
@@ -1372,11 +1370,6 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         }
         *output.frameAllocation = edit(id, allocateInFrames, inputsFor(id), *output.flow, m_build);
         return m_runner.lastProgramPassOutcome();
-    case PassID::AllocateInnerObjects: {
-        OptimizationInputs inputs = inputsFor(id);
-        edit(id, allocateInnerObjects, flow(), inputs.callGraph, inputs.heat, m_build);
-        return m_runner.lastProgramPassOutcome();
-    }
     case PassID::ReuseEnvironments:
         *output.environmentReuse = edit(id, [&](ProgramEditor& editor) {
             return reuseEnvironments(editor, flow(), *output.frameAllocation, m_build, [&] {
@@ -1530,7 +1523,6 @@ void Pipeline::runOptimizeStage()
     stage.run(PassID::ChooseCallingConventions);
     stage.run(PassID::DeferClosuresInFields);
     stage.run(PassID::AllocateInFrames);
-    stage.run(PassID::AllocateInnerObjects);
     stage.run(PassID::ReuseEnvironments);
     if (m_build.options().verifiesAfterEveryStage)
         stage.verify(IRForm::Prepared);

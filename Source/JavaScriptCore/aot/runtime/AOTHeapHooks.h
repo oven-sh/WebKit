@@ -28,19 +28,6 @@ struct Instance;
 
 namespace HeapHooks {
 
-// What --aot-sabotage left out of this executable (Wire::Sabotage). Zero in every product. Asked only at places that are rare.
-extern JS_EXPORT_PRIVATE uint8_t sabotage;
-enum class SabotagedPart : uint8_t {
-    StackNamesNoInnerCell = 1,
-    NarrowReferenceOnStackNamesNoInnerCell,
-    InnerObjectIsVisitedWithoutItsFields,
-    InnerArrayIsVisitedWithoutItsElements,
-    InnerCellVisitedInPlaceStaysWhite,
-    InnerCellIsMarkedWithoutItsOuterCell,
-    InnerCellLetGoKeepsItsHeader,
-};
-ALWAYS_INLINE bool isSabotaged(SabotagedPart part) { return sabotage == static_cast<uint8_t>(part); }
-
 void finalize(VM&, CollectionScope);
 // For a thread of the collector, before it does anything for the heap of the VM: what it asks of the image it asks of the image of that VM.
 void willWorkOnThisThread(VM&);
