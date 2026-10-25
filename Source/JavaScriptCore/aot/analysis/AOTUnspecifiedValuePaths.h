@@ -10,6 +10,7 @@
 #include "AOTID.h"
 #include "AOTVector.h"
 #include <optional>
+#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -29,7 +30,8 @@ struct UsesOfUnspecifiedValues {
 
 enum class OtherFunctions : bool { AreAtRest, MayChange };
 
-UsesOfUnspecifiedValues findUsesOfUnspecifiedValues(FunctionAnalyses&, size_t maxUses, OtherFunctions, size_t maxBlockVisits = 1 << 22);
+// The operations in `countedAsLooking` only keep their operands. A pass that wants to test those operands there asks as if the operations looked at them.
+UsesOfUnspecifiedValues findUsesOfUnspecifiedValues(FunctionAnalyses&, size_t maxUses, OtherFunctions, size_t maxBlockVisits = 1 << 22, const BitVector* countedAsLooking = nullptr);
 
 } } } // namespace JSC::AOT::Typed
 

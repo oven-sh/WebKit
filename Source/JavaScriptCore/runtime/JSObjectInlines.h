@@ -1045,6 +1045,10 @@ inline void JSObject::definePrivateField(JSGlobalObject* globalObject, PropertyN
         return;
     }
 
+    // Freezing an object does not keep private fields from being added to it.
+    if (structure()->hasFrozenElementsInPlace()) [[unlikely]]
+        moveFrozenElementsToSparseMap(vm);
+
     if (structure()->hasImmutableProperties()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Cannot define private field on object with immutable properties"_s);
         return;
@@ -1157,6 +1161,11 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
         structure = this->structure();
     }
 #endif
+
+    if (structure->hasFrozenElementsInPlace()) [[unlikely]] {
+        moveFrozenElementsToSparseMap(vm);
+        structure = this->structure();
+    }
 
     if (structure->hasImmutableProperties()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Cannot add private method to object with immutable properties"_s);

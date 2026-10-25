@@ -49,6 +49,7 @@ struct TypePropagationOutcome {
     uint32_t replacedUpcasts { 0 };
     bool waitsToCutCode { false };
     bool didLookForCodeToCut { false };
+    bool gaveUpOnRounds { false };
 
     bool didChange() const { return retypedValues || changedExpectedTypes || cutBlocks; }
     bool didChangeControlFlow() const { return cutBlocks; }
@@ -59,6 +60,7 @@ struct TypePropagationOutcome {
         changedExpectedTypes += other.changedExpectedTypes;
         cutBlocks += other.cutBlocks;
         replacedUpcasts += other.replacedUpcasts;
+        gaveUpOnRounds |= other.gaveUpOnRounds;
         if (other.didLookForCodeToCut) {
             didLookForCodeToCut = true;
             waitsToCutCode = other.waitsToCutCode;
@@ -208,7 +210,6 @@ private:
     bool m_didMarkSourcesOfUnreachableValues { false };
     bool m_everyOtherValueIsAsTyped { false };
     bool m_didTypeAllValues { false };
-    bool m_didGiveUp { false };
     bool m_dropsExpectedTypesAtOnce { false };
 
     BitVector m_didEnqueueParametersOf;
@@ -277,6 +278,8 @@ public:
 
 private:
     friend class TypePropagation;
+
+    void moveEntriesOutOfUnreachableBlocks(const Function&);
 
     ChangeLog::Cursor m_seen;
     Vector<ValueChange, 16> m_values;

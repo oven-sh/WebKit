@@ -73,6 +73,7 @@ static bool hasStringsForMessagesOnly(Typed::Opcode opcode)
     case Typed::Opcode::RequireObjectCoercible:
     case Typed::Opcode::ToObject:
     case Typed::Opcode::NewRuntimeError:
+    case Typed::Opcode::NewFunctionThatThrows:
     case Typed::Opcode::ThrowNewError:
         return true;
     default:

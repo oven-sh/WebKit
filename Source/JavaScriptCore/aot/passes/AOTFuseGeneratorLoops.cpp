@@ -302,6 +302,76 @@ static Vector<GeneratorLoopCut, 4> findCuts(FunctionAnalyses& analyses, std::spa
     return cuts;
 }
 
+// The run that begins at the creation ends at the initial yield. A yield that no later run comes to always returns behind the creation.
+static BitVector findYieldsOnlyFirstRunReaches(FunctionAnalyses& bodyAnalyses, std::span<const ValueID> yields)
+{
+    const CFG& cfg = bodyAnalyses.cfg();
+    const UseLists& useLists = bodyAnalyses.useLists();
+    BitVector enteredByLaterRuns;
+    Vector<BlockID, 16> worklist;
+    for (ValueID yield : yields)
+        worklist.append(useLists.pointOf(yield).block);
+    while (!worklist.isEmpty()) {
+        for (BlockID successor : cfg.successors(worklist.takeLast())) {
+            if (!enteredByLaterRuns.set(successor.index()))
+                worklist.append(successor);
+        }
+    }
+
+    BitVector result;
+    for (unsigned index = 0; index < yields.size(); ++index) {
+        ProgramPoint point = useLists.pointOf(yields[index]);
+        bool followsYieldInBlock = std::ranges::any_of(yields, [&](ValueID other) {
+            ProgramPoint pointOfOther = useLists.pointOf(other);
+            return pointOfOther.block == point.block && pointOfOther.index < point.index;
+        });
+        if (!followsYieldInBlock && !enteredByLaterRuns.get(point.block.index()))
+            result.set(index);
+    }
+    return result;
+}
+
+static bool firstRunAlwaysEndsAt(FunctionAnalyses& bodyAnalyses, std::span<const ValueID> yields, const BitVector& yieldsOfFirstRun)
+{
+    const Function& body = bodyAnalyses.function();
+    const CFG& cfg = bodyAnalyses.cfg();
+    const UseLists& useLists = bodyAnalyses.useLists();
+    auto findFirstYieldIn = [&](BlockID block) {
+        std::optional<unsigned> first;
+        for (unsigned index = 0; index < yields.size(); ++index) {
+            ProgramPoint point = useLists.pointOf(yields[index]);
+            if (point.block == block && (!first || point.index < useLists.pointOf(yields[*first]).index))
+                first = index;
+        }
+        return first;
+    };
+
+    BitVector visited;
+    Vector<BlockID, 16> worklist { entryBlock };
+    visited.set(entryBlock.index());
+    while (!worklist.isEmpty()) {
+        BlockID block = worklist.takeLast();
+        if (std::optional<unsigned> yield = findFirstYieldIn(block)) {
+            if (!yieldsOfFirstRun.get(*yield))
+                return false;
+            if (body.at(block).handler && !visited.set(body.at(block).handler->block.index()))
+                worklist.append(body.at(block).handler->block);
+            continue;
+        }
+        const Terminator& terminator = body.at(block).terminator;
+        if (terminator.kind == TerminatorKind::Return || terminator.kind == TerminatorKind::ReturnCall)
+            return false;
+        // The first run finds a generator that is not running yet.
+        bool asksWhetherRunning = terminator.kind == TerminatorKind::Branch && body.at(terminator.conditionOperand()).opcode == Opcode::IsGeneratorRunning;
+        BlockID skipped = asksWhetherRunning && terminator.targets[0].block != terminator.targets[1].block ? terminator.targets[0].block : BlockID();
+        for (BlockID successor : cfg.successors(block)) {
+            if (successor != skipped && !visited.set(successor.index()))
+                worklist.append(successor);
+        }
+    }
+    return true;
+}
+
 static void fuseGenerator(FunctionPassContext& pass, IRBuilder& builder, const FusionCandidate& candidate)
 {
     RELEASE_ASSERT(candidate.sites[startSite].step == candidate.body.startAtCreation);
@@ -313,6 +383,8 @@ static void fuseGenerator(FunctionPassContext& pass, IRBuilder& builder, const F
     CarriedValues carried = collectCarriedValues(pass, candidate, bodyAnalyses);
     RELEASE_ASSERT(findMergeObstacle(pass, candidate, bodyAnalyses, carried) == GeneratorFusionDeclineReason::None);
     Vector<ValueID, 4> yields = listValues(bodyAnalyses, Opcode::YieldBySavingFrame);
+    BitVector yieldsOfFirstRun = findYieldsOnlyFirstRunReaches(bodyAnalyses, yields.span());
+    bool firstRunSkipsLeave = candidate.sites.size() > 1 && firstRunAlwaysEndsAt(bodyAnalyses, yields.span(), yieldsOfFirstRun);
     SSARepair repair(builder, analyses);
 
     // Where the generator was made, the two variables of its state: where the body goes on, and which site it returns to.
@@ -342,15 +414,15 @@ static void fuseGenerator(FunctionPassContext& pass, IRBuilder& builder, const F
     auto emitJumpToLeave = [&](ValueID result, GeneratorStepStatus statusOfResult) {
         builder.emitJump(leave, { result, builder.appendInteger(static_cast<int64_t>(statusOfResult)) });
     };
-    auto emitSwitchOnReturnSite = [&](Vector<Target, 4>&& targets) {
+    auto emitSwitchOnReturnSite = [&](Vector<Target, 4>&& targets, size_t firstSite = startSite) {
         Target last = targets.takeLast();
-        if (targets.isEmpty()) {
+        if (targets.size() <= firstSite) {
             builder.emitJump(last.block, WTF::move(last.arguments));
             return;
         }
         Vector<std::pair<int64_t, Target>> cases;
-        cases.reserveInitialCapacity(targets.size());
-        for (size_t site = 0; site < targets.size(); ++site)
+        cases.reserveInitialCapacity(targets.size() - firstSite);
+        for (size_t site = firstSite; site < targets.size(); ++site)
             cases.append({ static_cast<int64_t>(site), WTF::move(targets[site]) });
         builder.emitSwitch(returnSite, WTF::move(cases), WTF::move(last));
     };
@@ -455,7 +527,10 @@ static void fuseGenerator(FunctionPassContext& pass, IRBuilder& builder, const F
         ValueID yielded = function.at(copiesOfYields[cut.index]).valueOperand();
         yieldCuts[cut.index] = beginCut(cut);
         defineResumePoint(resumePointAfter(cut.index));
-        emitJumpToLeave(yielded, GeneratorStepStatus::Yielded);
+        if (firstRunSkipsLeave && yieldsOfFirstRun.get(cut.index))
+            builder.emitJump(siteCuts[startSite].continuation, { yielded });
+        else
+            emitJumpToLeave(yielded, GeneratorStepStatus::Yielded);
     }
 
     builder.setOrigin(origin);
@@ -499,7 +574,7 @@ static void fuseGenerator(FunctionPassContext& pass, IRBuilder& builder, const F
         continuations.append(Target { siteCuts[site].continuation, site == startSite ? Arguments { value } : Arguments(std::span<const ValueID>(resultsOfStep)), { } });
     builder.setOrigin(origin);
     builder.moveToEndOf(leave);
-    emitSwitchOnReturnSite(WTF::move(continuations));
+    emitSwitchOnReturnSite(WTF::move(continuations), firstRunSkipsLeave ? startSite + 1 : startSite);
 
     // What lives across a yield or a step has one definition on each way round.
     Vector<ValueID> definitions;

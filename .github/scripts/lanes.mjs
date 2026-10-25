@@ -7,6 +7,7 @@
 //   node .github/scripts/lanes.mjs --json                       the same, in full
 //   node .github/scripts/lanes.mjs build <label> --output <dir> build a lane into <dir>, like CI does
 //                                  [--base-image <ref>]         ... starting from a prebuilt toolchain image
+//                                  [--fail-if-slow]             ... and give up early on a slow machine, see SLOW
 //   node .github/scripts/lanes.mjs image <name> --push          build a toolchain image and push it to its ref
 //   node .github/scripts/lanes.mjs plan                         the outputs of the workflow's `plan` job. Asks the
 //                                                               registry which images are already there.
@@ -18,10 +19,11 @@
 // build arguments below. Every lane is cross-compiled from the same kind of machine, linux x86_64. To add, drop, change
 // or test a lane, change `platforms` and nothing else.
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -342,6 +344,18 @@ const lanes = platforms.flatMap(platform =>
   ),
 );
 
+// `build --fail-if-slow`, which CI passes. Some runners are five times slower than the rest, from the first step to the
+// last. A lane on one of them fails within minutes instead of holding up the release, and "Re-run failed jobs" builds it
+// on another runner.
+//   compressSeconds  icu/compress-data.ts does the same work in every lane that runs it. It takes 67 to 115 seconds, and
+//                    over 440 on a slow runner.
+//   minutes(lane)    the whole docker build: twice the longest that the lane takes (19 minutes; 36 with musl, LTO and
+//                    the compiler). It has to stay under the job's timeout-minutes.
+const SLOW = {
+  compressSeconds: 240,
+  minutes: lane => (lane.dockerfile === "Dockerfile.musl" && lane.build_args.LTO_FLAG && lane.aot ? 75 : 40),
+};
+
 const labels = lanes.map(lane => lane.label);
 const duplicate = labels.find((label, i) => labels.indexOf(label) !== i);
 if (duplicate) throw new Error(`two lanes are called ${duplicate}`);
@@ -361,15 +375,39 @@ if (twice) throw new Error(`two different toolchain images are called ${twice.na
 // `test` waits for the tested lanes and `release` for both halves, and a job cannot have an empty matrix.
 if (!lanes.some(lane => lane.test) || lanes.every(lane => lane.test)) throw new Error("at least one lane has to be tested, and at least one not");
 
-function docker(lane, rest, dryRun) {
+function docker(lane, rest, dryRun, failIfSlow = false) {
   const argv = ["buildx", "build", "-f", lane.dockerfile, "--platform", "linux/amd64", "--progress=plain"];
   for (const [key, value] of Object.entries(lane.build_args)) argv.push("--build-arg", `${key}=${value}`);
   argv.push(...rest, ".");
   if (dryRun) return console.log(JSON.stringify(["docker", ...argv]));
   console.error(`docker ${argv.map(arg => (/^[\w./:=,-]+$/.test(arg) ? arg : `'${arg}'`)).join(" ")}`);
+  if (failIfSlow) return dockerUnlessSlow(lane, argv);
   const { status, error } = spawnSync("docker", argv, { cwd: root, stdio: "inherit" });
   if (error) throw error;
   process.exit(status ?? 1);
+}
+
+// --progress=plain goes to stderr: every line is passed on, and the two lines of icu/compress-data.ts are timed.
+function dockerUnlessSlow(lane, argv) {
+  const child = spawn("docker", argv, { cwd: root, stdio: ["inherit", "inherit", "pipe"] });
+  let gaveUp = false;
+  const giveUp = what => {
+    if (gaveUp) return;
+    gaveUp = true;
+    console.log(`::error::${lane.label}: ${what}. This runner is too slow. Use "Re-run failed jobs" to build the lane on another one.`);
+    child.kill();
+    setTimeout(() => process.exit(1), 15_000);
+  };
+  setTimeout(giveUp, SLOW.minutes(lane) * 60_000, `the build has taken ${SLOW.minutes(lane)} minutes`);
+  let compress;
+  createInterface({ input: child.stderr }).on("line", line => {
+    console.error(line);
+    if (line.includes("[icu-compress] round-trip OK")) compress = setTimeout(giveUp, SLOW.compressSeconds * 1000, `icu/compress-data.ts has taken ${SLOW.compressSeconds} seconds`);
+    else if (/\[icu-compress\] \d+ items/.test(line)) clearTimeout(compress);
+  });
+  child.on("error", error => { throw error; });
+  child.on("exit", () => gaveUp && process.exit(1));
+  child.on("close", status => process.exit(status ?? 1));
 }
 
 function option(args, name) {
@@ -397,6 +435,7 @@ if (command === "build") {
       `type=local,dest=${resolve(output)}`,
     ],
     args.includes("--dry-run"),
+    args.includes("--fail-if-slow"),
   );
 } else if (command === "image") {
   const image = images.find(image => image.name === args[0]) ?? fail(`no image is called ${args[0]}: ${images.map(image => image.name).join(", ")}`);

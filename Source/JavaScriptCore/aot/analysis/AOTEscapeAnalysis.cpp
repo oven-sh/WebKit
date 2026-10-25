@@ -139,6 +139,12 @@ static std::optional<SolveOfEntryParameters> describeSolveOfEntryParameters(Func
     return SolveOfEntryParameters { numberOfObjects.value(), maxWork.value(), maxHistoryBits.value() };
 }
 
+uint64_t AnalysisContext::limit(LimitID limit) const
+{
+    uint64_t ofBuild = build.limit(limit);
+    return workLimits == WorkLimits::OfBuild ? ofBuild : std::max(ofBuild, defaultLimitValue(limit, hostArchitecture()));
+}
+
 EscapeAnalysis::EscapeAnalysis(FunctionAnalyses& analyses)
     : m_analyses(analyses)
     , m_program(analyses.program())
@@ -147,7 +153,7 @@ EscapeAnalysis::EscapeAnalysis(FunctionAnalyses& analyses)
     const BuildContext& build = analyses.context().build;
     std::optional<SolveOfEntryParameters> solveOfEntryParameters = describeSolveOfEntryParameters(analyses);
     m_tracksOnlyEntryParameters = solveOfEntryParameters
-        && solveOfEntryParameters->maxWork <= build.limit(LimitID::MaxEscapeAnalysisWork)
+        && solveOfEntryParameters->maxWork <= analyses.context().limit(LimitID::MaxEscapeAnalysisWork)
         && solveOfEntryParameters->maxHistoryBits <= build.limit(LimitID::MaxUseEffectHistoryBits);
     // None of them is an allocation, so there is nothing to compute.
     m_hasLiveInstances = m_tracksOnlyEntryParameters;

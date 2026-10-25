@@ -907,15 +907,20 @@ private:
         }
         Vector<ValueFlowObjectID> objectsThatPickTheirLayout = allocatedByAnyClass;
         Vector<ValueFlowObjectID> instancesOfClasses;
+        Vector<ValueFlowObjectID> constructorsWithLayouts;
         for (unsigned index = 0; index < m_program.layouts.size(); ++index) {
             const Layout& layout = m_program.layouts[index];
-            if (layout.kind == LayoutKind::Instance && layout.constructor)
+            if (layout.kind == LayoutKind::Instance && layout.constructor) {
                 objectsThatPickTheirLayout.append(universe.instanceOf(LayoutID(index)));
+                if (m_program.at(layout.constructor).constructedClass == LayoutID(index))
+                    constructorsWithLayouts.append(universe.closureOf(layout.constructor));
+            }
             if (layoutIsDefinedByClass(layout))
                 instancesOfClasses.append(universe.instanceOf(LayoutID(index)));
         }
         m_result.m_universe.m_objectsThatPickTheirLayout = maker.of(objectsThatPickTheirLayout.span());
         m_result.m_universe.m_instancesOfClasses = maker.of(instancesOfClasses.span());
+        m_result.m_universe.m_constructorsWithLayouts = maker.of(constructorsWithLayouts.span());
         if (allocatedByAnyClass.isEmpty())
             return;
 

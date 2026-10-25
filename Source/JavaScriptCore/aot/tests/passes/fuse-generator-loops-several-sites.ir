@@ -36,6 +36,7 @@ function f0 name="loopWithBreak" parameters=[{type=anything}, {type=anything}] r
     v16 = Undefined
     Return v16
 # The call that starts the body is place 0, the step of the loop place 1, the step that closes at the break place 2.
+# The initial yield goes on behind the start without asking for the place.
 # CHECK: v3: Generator = NewGenerator v2 function=f3 @40
 # CHECK: LoopHint @40
 # CHECK-NEXT: [[startPlace2]]: 0 = Integer @40
@@ -43,15 +44,15 @@ function f0 name="loopWithBreak" parameters=[{type=anything}, {type=anything}] r
 # CHECK-NEXT: b1(
 # CHECK: [[stepPlace2]]: 1 = Integer integer=1 @50
 # CHECK-NEXT: [[next2]]: 0 = Integer @50
-# CHECK-NEXT: Jump -> next [[enter2]](v6, [[next2]], [[stepPlace2]]
+# CHECK-NEXT: Jump -> next [[enter2]](v6, [[next2]], {{*}}, [[stepPlace2]]
 # CHECK: b3():
 # CHECK: [[closePlace2]]: 2 = Integer integer=2 @52
 # CHECK-NEXT: [[return2]]: 2 = Integer integer=2 @52
-# CHECK-NEXT: Jump -> next [[enter2]](v14, [[return2]], [[closePlace2]]
-# CHECK: [[enter2]]([[sent2]]: anything, [[mode2]]: int[0, 2], [[placeAtEnter2]]: int[0, 2]
+# CHECK-NEXT: Jump -> next [[enter2]](v14, [[return2]], {{*}}, [[closePlace2]]
+# CHECK: [[enter2]]([[sent2]]: anything, [[mode2]]: int[0, 2], [[resumePoint2]]: int[-1, 2], [[place2]]: int[0, 2]
 # CHECK-NEXT: Switch [[resumePoint2]] cases=[1, 2] -> case [[afterInitialYield2]]([[sent2]], [[mode2]]), case [[afterYield2]]([[sent2]], [[mode2]]), otherwise [[finished2]]()
-# CHECK-NEXT: [[leave2]]([[value2]]: anything, [[status2]]: int[0, 1], [[resumePoint2]]: int[-1, 2], [[place2]]: int[0, 2]
-# CHECK-NEXT: Switch [[place2]] cases=[0, 1] -> case [[afterStart2]]([[value2]]), case [[afterStep2]]([[value2]], [[status2]]), otherwise [[afterClose2]]([[value2]], [[status2]])
+# CHECK-NEXT: [[leave2]]([[value2]]: anything, [[status2]]: int[0, 1], {{*}}: int[-1, 2]):
+# CHECK-NEXT: Switch [[place2]] cases=[1] -> case [[afterStep2]]([[value2]], [[status2]]), otherwise [[afterClose2]]([[value2]], [[status2]])
 # CHECK-NEXT: [[afterClose2]](
 # CHECK: Return
 # CHECK-NEXT: [[afterStep2]](v8: anything, v9: int[0, 2]):
@@ -59,7 +60,8 @@ function f0 name="loopWithBreak" parameters=[{type=anything}, {type=anything}] r
 # CHECK: [[afterStart2]](v4: anything):
 # CHECK-NEXT: Jump -> next b1(
 # A yield hands on the place it was entered from.
-# CHECK: Jump -> next [[leave2]](v0, {{*}}, [[placeAtEnter2]]
+# CHECK: Jump -> next [[afterStart2]](
+# CHECK: Jump -> next [[leave2]](v0, {{*}})
 # ABSENT-NOT: StepGenerator
 # ABSENT-NOT: YieldBySavingFrame
 # ABSENT-NOT: function=f4
@@ -81,10 +83,10 @@ function f1 name="patternWithTwoSteps" parameters=[{type=anything}] results=[{ty
 # CHECK: LoopHint @41
 # CHECK-NEXT: [[startPlace3]]: 0 = Integer @41
 # CHECK-NEXT: Jump -> next [[start3]]() @41
-# CHECK: [[enter3]]([[sent3]]: anything, [[mode3]]: int[0, 2],
+# CHECK: [[enter3]]([[sent3]]: anything, [[mode3]]: int[0, 2], {{*}}: int[-1, 2], [[place3]]: int[0, 3], [[carriedFirst3]]: anything, [[carriedSecond3]]: anything):
 # CHECK-NEXT: Switch {{*}} cases=[1, 2] ->
-# CHECK-NEXT: [[leave3]]([[value3]]: anything, [[status3]]: int[0, 1], {{*}}: int[-1, 2], [[place3]]: int[0, 3], [[carriedFirst3]]: anything, [[carriedSecond3]]: anything):
-# CHECK-NEXT: Switch [[place3]] cases=[0, 1, 2] -> case [[afterStart3]]([[value3]]), case [[afterFirst3]]([[value3]], [[status3]]), case [[afterSecond3]]([[value3]], [[status3]]), otherwise [[afterClose3]]([[value3]], [[status3]])
+# CHECK-NEXT: [[leave3]]([[value3]]: anything, [[status3]]: int[0, 1], {{*}}: int[-1, 2]):
+# CHECK-NEXT: Switch [[place3]] cases=[1, 2] -> case [[afterFirst3]]([[value3]], [[status3]]), case [[afterSecond3]]([[value3]], [[status3]]), otherwise [[afterClose3]]([[value3]], [[status3]])
 # CHECK: [[afterClose3]](
 # CHECK: = Add [[carriedFirst3]], [[carriedSecond3]]
 # CHECK: [[afterSecond3]](v8: anything,

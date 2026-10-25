@@ -994,10 +994,19 @@ static String messageOfEntryThatNothingEnters(const AnalysisContext& context, co
 }
 
 // No call that flow follows comes here.
-static void emitEntryThatNothingEnters(IRBuilder& builder, const Function& target, StringArena& strings)
+static void emitEntryThatNothingEnters(IRBuilder& builder, const Function& target, ValueID closure, StringArena& strings)
 {
     const AnalysisContext& context = builder.context();
-    if (!context.build.validates() || !context.flow || context.flow->unseenCodeCanRun() || target.role == FunctionRole::Library) {
+    bool canBeEntered = !context.build.validates() || !context.flow || context.flow->unseenCodeCanRun() || target.role == FunctionRole::Library;
+    // Reading a property does not throw. Calling what was read does.
+    if (canBeEntered && target.kind == FunctionKind::Getter) {
+        Value function = IRBuilder::make(Opcode::NewFunctionThatThrows);
+        function.setGetterOperand(closure);
+        function.setName(context.build.options().obfuscates() || !target.name ? context.program.strings.emptyString() : target.name);
+        builder.emitReturn(builder.append(WTF::move(function)));
+        return;
+    }
+    if (canBeEntered) {
         Value error = IRBuilder::make(Opcode::ThrowNewError);
         error.setErrorKind(ErrorKind::Error);
         error.setMessage(strings.intern(StringView(messageOfEntryThatNothingEnters(context, target))));
@@ -1048,7 +1057,7 @@ Function createGenericEntrypoint(const AnalysisContext& context, TypeArena& type
 
     // A body is removed once nothing can enter it. The closure may still be created, and its identity is the entrypoint.
     if (!target.hasBody()) {
-        emitEntryThatNothingEnters(builder, target, strings);
+        emitEntryThatNothingEnters(builder, target, closure, strings);
         return entry;
     }
     // new.target is the closure here: whoever enters has seen to that.
@@ -1056,7 +1065,7 @@ Function createGenericEntrypoint(const AnalysisContext& context, TypeArena& type
     // Flow narrows `this` from every call that reaches the function. `function Base() {}` that is only called with the objects of others, by Base.call(this) and by super(), never sees an object of its own layout.
     TypingContext typing { context.program, entry, types };
     if (object && typing.typeOf(object).castTo(typing.typeOf(target.thisType), types).isNever())
-        emitEntryThatNothingEnters(builder, target, strings);
+        emitEntryThatNothingEnters(builder, target, closure, strings);
     else {
         Vector<ValueID, 8> captures = appendCaptures(builder, request.target, closure);
         ValueID call = appendDirectCall(builder, {

@@ -576,7 +576,7 @@ PointsToSolver::PointsToSolver(const EscapeAnalysisInputs& inputs, Sweep sweep)
     , m_function(inputs.function)
     , m_cfg(inputs.cfg)
     , m_useLists(inputs.useLists)
-    , m_maxWork(inputs.context.build.limit(LimitID::MaxEscapeAnalysisWork))
+    , m_maxWork(inputs.context.limit(LimitID::MaxEscapeAnalysisWork))
     , m_maxWordsOfSets(std::max<uint64_t>(m_maxWork, inputs.function.values.size()))
     , m_sweep(sweep)
 {

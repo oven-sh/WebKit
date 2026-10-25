@@ -162,6 +162,7 @@ runtime ThrowAtSite : void (const uint64_t* registers, const uint32_t* site, uin
 runtime ThrowStackOverflowError : void () ; reads(all) throws
 runtime NewRuntimeError : JSCell* (uint32_t errorKind) ; RuntimeAllocates
 runtime NewRuntimeErrorWithName : JSCell* (uint32_t errorKind, uint32_t name) ; RuntimeAllocates
+runtime NewFunctionThatThrows : JSCell* (EncodedJSValue getter, uint32_t name) ; RuntimeAllocates
 runtime NewSuppressedError : JSCell* (EncodedJSValue error, EncodedJSValue suppressed) ; RuntimeAllocates
 runtime ThrowRuntimeError : void (uint32_t errorKind) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime ReportMismatch : void (EncodedJSValue value, uint32_t type, uint32_t typeSite) ; reads(all) writes(ExternalState) throws

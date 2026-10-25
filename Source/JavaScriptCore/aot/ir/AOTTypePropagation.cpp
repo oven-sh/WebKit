@@ -673,7 +673,7 @@ void TypePropagation::giveUpOnRounds(TypeLevel level, Direction direction)
     Function& function = m_inputs.function;
     TypeArena& types = m_inputs.types;
     m_inputs.build.gaveUp(LimitID::MaxTypeValuesRounds, m_inputs.analyses.subject());
-    m_didGiveUp = true;
+    m_outcome.gaveUpOnRounds = true;
 
     Vector<ValueID, 64> pendingValues = std::exchange(m_worklist, { });
     m_isQueued.clearAll();
@@ -1221,7 +1221,7 @@ void TypePropagation::tellWhatIsTyped()
     reportRetypedValues(false);
     if (log->hasForgottenSince(m_logAtStart))
         return;
-    if (m_didTypeAllValues || m_didGiveUp) {
+    if (m_didTypeAllValues || m_outcome.gaveUpOnRounds) {
         pending->didTypeEverythingBefore(m_logAtStart);
         pending->takeEntries(*log);
         pending->forgetChangesOfTypesAlone();
@@ -1369,11 +1369,45 @@ void PendingTyping::didEnterScheduleTyped(const ChangeLog& log)
     m_valuesTypedFromRecordsArePending = true;
 }
 
+// An unreachable block is removed, and its entry with it. The reachable blocks that it led to have lost an edge.
+void PendingTyping::moveEntriesOutOfUnreachableBlocks(const Function& function)
+{
+    if (m_blocks.isEmpty())
+        return;
+    BitVector isReachable(function.blocks.size());
+    Vector<BlockID, 16> worklist { entryBlock };
+    isReachable.quickSet(entryBlock.index());
+    while (!worklist.isEmpty()) {
+        function.at(worklist.takeLast()).forEachTarget([&](const Target& target) {
+            if (target.block && !isReachable.quickSet(target.block.index()))
+                worklist.append(target.block);
+        });
+    }
+
+    BitVector didVisit(function.blocks.size());
+    for (const BlockChange& change : m_blocks) {
+        if (!isReachable.quickGet(change.block.index()) && !didVisit.quickSet(change.block.index()))
+            worklist.append(change.block);
+    }
+    while (!worklist.isEmpty()) {
+        function.at(worklist.takeLast()).forEachTarget([&](const Target& target) {
+            if (!target.block || didVisit.quickSet(target.block.index()))
+                return;
+            if (isReachable.quickGet(target.block.index()))
+                m_blocks.append(BlockChange { target.block, BlockEdit::Incoming });
+            else
+                worklist.append(target.block);
+        });
+    }
+}
+
 bool PendingTyping::compact(Function& function, Renumbering* renumberingForCaller)
 {
     const ChangeLog& log = *function.changeLog();
     takeEntries(log);
     bool wasEverythingPending = isEverythingPending(log);
+    if (!wasEverythingPending)
+        moveEntriesOutOfUnreachableBlocks(function);
     Renumbering renumbering;
     bool didMove = compactFunction(function, &renumbering);
     if (didMove && !wasEverythingPending) {
@@ -1442,11 +1476,13 @@ TypePropagationOutcome typeChangedValues(const TypePropagationInputs& inputs)
         if (inputs.build.options().verifiesAfterEveryPass) {
             typedFromNever = inputs.function;
             FunctionAnalyses analyses(inputs.analyses.context(), *typedFromNever);
-            typeValuesFromNever({ inputs.program, inputs.id, *typedFromNever, analyses, inputs.types, inputs.build });
+            // Where the rounds run out, the types depend on the types that typing began with.
+            if (typeValuesFromNever({ inputs.program, inputs.id, *typedFromNever, analyses, inputs.types, inputs.build }).gaveUpOnRounds)
+                typedFromNever = std::nullopt;
         }
         outcome = typeUntilNothingIsCut(inputs, TypedFirst::PendingValues);
         statistics.count(outcome.didChange() ? StatisticID::FunctionsTypedFromChanges : StatisticID::FunctionsTypedAsBefore);
-        if (ValueID value = typedFromNever ? findValueTypedWider(inputs, *typedFromNever) : ValueID())
+        if (ValueID value = typedFromNever && !outcome.gaveUpOnRounds ? findValueTypedWider(inputs, *typedFromNever) : ValueID())
             inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = inputs.analyses.subject().function, .value = value, .detail = "typed from what changed it is wider than typed from nothing"_s });
     }
     if (pending->isEmpty(log)) {

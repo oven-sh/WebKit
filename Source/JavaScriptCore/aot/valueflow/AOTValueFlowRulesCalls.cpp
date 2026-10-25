@@ -794,6 +794,40 @@ static void passAllocatedInstances(ValueFlowRuleContext& context, const ValueFlo
     add(thisParameter);
 }
 
+static bool mayBeBelow(const Program& program, LayoutID layout, LayoutID base)
+{
+    for (size_t steps = 0; layout && steps <= program.layouts.size(); ++steps) {
+        if (layout == base)
+            return true;
+        if (!program.at(layout).has(LayoutFlags::HasHeritage))
+            return false;
+        layout = predictedHeritageOf(program.at(layout));
+    }
+    return true;
+}
+
+// The unknown object stands for every constructor that has escaped. A constructor function makes an instance of new.target's class when that class is its own or below it.
+static void passInstancesOfEscapedConstructors(ValueFlowRuleContext& context, const ValueFlowCallGroup& group, LayoutID constructed, ValueFlowNodeID thisParameter)
+{
+    if (!constructed || !context.contains(context.valueOf(group.newTarget), ValueFlowUniverse::unknownObject()))
+        return;
+    const ValueFlowUniverse& universe = context.universe();
+    const Program& program = context.program();
+    Vector<ValueFlowObjectID, 16> instances;
+    context.forEachMember(context.valueWithin(ClimbingSet(universe.constructorsWithLayouts()), ValueFlowProgramNodes::escaped()), [&](ValueFlowObjectID newTarget) {
+        LayoutID layout = program.at(universe.closureFunction(newTarget)).constructedClass;
+        if (!mayBeBelow(program, layout, constructed))
+            return;
+        ValueFlowObjectID instance = universe.instanceOf(layout);
+        instances.append(instance);
+        context.connect(context.lookup(only(context, newTarget), prototypeProperty(context)), context.written(only(context, instance), prototypeLinkName));
+    });
+    ClimbingSet made(context.maker().of(instances.span()));
+    context.add(group.result, made);
+    if (thisParameter)
+        context.add(thisParameter, made);
+}
+
 static void enter(ValueFlowRuleContext& context, const ValueFlowCallGroup& group, ValueFlowCallKind kind, ValueFlowObjectID closure, FunctionID function, AllocatedInstances& allocated)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -816,9 +850,10 @@ static void enter(ValueFlowRuleContext& context, const ValueFlowCallGroup& group
         else
             context.add(nodes.entryParameter(function, *index), universe.undefinedValue());
     }
-    if (isConstruction && callee.kind == FunctionKind::Plain)
+    if (isConstruction && callee.kind == FunctionKind::Plain) {
         passAllocatedInstances(context, group, allocated, thisParameterOf(context, function));
-    else
+        passInstancesOfEscapedConstructors(context, group, callee.constructedClass, thisParameterOf(context, function));
+    } else
         context.connect(group.thisValue, thisParameterOf(context, function));
     passArguments(context, group, kind, function, callee);
 

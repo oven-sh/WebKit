@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTErrorMessages.h"
 #include "AOTVector.h"
 #include "Error.h"
 #include "Exception.h"
@@ -155,6 +156,17 @@ JSValue takeStandInForGetterLeftOut(JSGlobalObject* realm, JSObject* getter)
     if (name.startsWith("get "_s))
         name = name.substring(4);
     return standInThatThrows(realm, WTF::move(message), name, getter);
+}
+
+JSObject* standInForCompiledGetter(JSGlobalObject* realm, JSObject* getter, const String& name)
+{
+    {
+        Locker locker { membersLock };
+        membersByVM().ensure(&realm->vm(), [] {
+            return MembersLeftOut { };
+        });
+    }
+    return asObject(standInThatThrows(realm, name.isEmpty() ? functionNotCompiledMessage() : functionNotCompiledMessage(name), name, getter));
 }
 
 void explainErrorBehindMemberLeftOut(JSGlobalObject* realm, JSObject* error, JSValue base)

@@ -158,6 +158,7 @@ public:
     ValueSetID objectsThatPickTheirLayout() const { return m_objectsThatPickTheirLayout; }
     ValueSetID constructedObjects() const { return m_constructedObjects; }
     ValueSetID instancesOfClasses() const { return m_instancesOfClasses; }
+    ValueSetID constructorsWithLayouts() const { return m_constructorsWithLayouts; }
     std::span<const LayoutID> recordsThatTypedCodeTakes() const LIFETIME_BOUND { return m_recordsThatTypedCodeTakes.span(); }
     ValueFlowObjectID objectAllocatedUnder(const Program&, ValueFlowObjectID site, ValueFlowObjectID prototype) const;
     ValueSetID constructorsAnsweringOnlyWhatTheyConstruct() const { return m_constructorsAnsweringOnlyWhatTheyConstruct; }
@@ -217,6 +218,7 @@ private:
     ValueSetID m_objectsThatPickTheirLayout;
     ValueSetID m_constructedObjects;
     ValueSetID m_instancesOfClasses;
+    ValueSetID m_constructorsWithLayouts;
     ValueSetID m_constructorsAnsweringOnlyWhatTheyConstruct;
     BitVector m_isLayoutOfTable;
     BitVector m_isAllocatedByProgram;

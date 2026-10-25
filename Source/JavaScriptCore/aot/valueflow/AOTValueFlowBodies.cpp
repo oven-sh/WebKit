@@ -1096,6 +1096,7 @@ private:
             return;
         }
         case Opcode::NewRuntimeError:
+        case Opcode::NewFunctionThatThrows:
         case Opcode::NewSuppressedError:
             return setConstant(id, constantOf({ ValueFlowObjectKind::UnknownObject, 0, { } }));
         default:

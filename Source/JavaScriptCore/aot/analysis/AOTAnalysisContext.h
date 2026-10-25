@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIR.h"
+#include "AOTLimits.h"
 
 namespace JSC { namespace AOT {
 
@@ -19,6 +20,8 @@ class EffectSummaries;
 class FlowResults;
 
 enum class CallResults : uint8_t { MayAliasOperands, NotFollowed };
+// The verifier judges code that the passes have finished, so a limit that the build lowers stays as usual for it.
+enum class WorkLimits : bool { OfBuild, NeverLowered };
 
 struct AnalysisContext {
     BuildContext& build;
@@ -27,6 +30,9 @@ struct AnalysisContext {
     const EffectSummaries* effects { nullptr };
     FunctionID id { };
     CallResults callResults { CallResults::MayAliasOperands };
+    WorkLimits workLimits { WorkLimits::OfBuild };
+
+    uint64_t limit(LimitID) const;
 };
 
 } } } // namespace JSC::AOT::Typed

@@ -55,7 +55,7 @@ void FunctionVerifier::verifyGuards()
                 verifyGuardOperand(block, id, value, neededFromGuard, guard);
                 if (hasFailed())
                     return;
-                if (state != GuardState::Unavailable || m_inputs.cannotJudgeGuards)
+                if (state != GuardState::Unavailable || m_inputs.cannotJudgeGuards || analyses().escape().gaveUp())
                     continue;
                 if (!readsKeptForValidation)
                     readsKeptForValidation = findReadsKeptForValidation(m_function);

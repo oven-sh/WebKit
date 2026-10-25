@@ -109,7 +109,7 @@ function f2 name="finallyRunsOnReturn" parameters=[{type=anything}] results=[{ty
 # CHECK: [[leave2]]({{*}}: anything, {{*}}: int[0, 1],
 # CHECK: [[closePlace2]]: 2 = Integer integer=2 @71
 # CHECK-NEXT: [[return2]]: 2 = Integer integer=2 @71
-# CHECK-NEXT: Jump -> next [[enter2]](v6, [[return2]], [[closePlace2]])
+# CHECK-NEXT: Jump -> next [[enter2]](v6, [[return2]], {{*}}, [[closePlace2]])
 # CHECK: [[failed2]]({{*}}) role=CleanupHandler frequency=Rare:
 # CHECK: frequency=Rare handler=[[ownLanding2]]():
 # CHECK-NEXT: Throw
@@ -125,7 +125,7 @@ function f2 name="finallyRunsOnReturn" parameters=[{type=anything}] results=[{ty
 # CHECK: Switch [[modeAtYield2]] cases=[1, 2] -> case {{*}}, case [[returns2]](), otherwise
 # CHECK: [[returned2]]() frequency=Rare handler=[[failed2]](
 # CHECK-NEXT: [[isCompleted2]]: 1 = Integer integer=1
-# CHECK-NEXT: Jump -> next [[leave2]]([[sentAtYield2]], [[isCompleted2]], [[completed2]],
+# CHECK-NEXT: Jump -> next [[leave2]]([[sentAtYield2]], [[isCompleted2]], [[completed2]])
 # ABSENT-NOT: StepGenerator
 # ABSENT-NOT: YieldBySavingFrame
 }

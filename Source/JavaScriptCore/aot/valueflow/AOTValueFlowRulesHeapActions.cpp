@@ -72,6 +72,12 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         for (ValueFlowNodeID node : nodesTakingCopies)
             connect(members, node);
     }
+    ClimbingSet otherHolders = m_context.restrict(sources, m_context.maker().intersect(m_tables.holdersWithMembers(), ValueSets::complement(m_tables.holdersOfMembersThatHostMakes())));
+    if (holdsAnything(otherHolders)) {
+        ValueFlowNodeID members = m_context.lookup(otherHolders, nameOfLookupForValue(enumeratedHeapKey));
+        for (ValueFlowNodeID node : nodesTakingCopies)
+            connect(members, node);
+    }
     if (ValueFlowNodeID exports = exportsOfHoldersListedBesideUnknownObject(source)) {
         for (ValueFlowNodeID node : nodesTakingCopies)
             connect(exports, node);

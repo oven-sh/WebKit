@@ -413,7 +413,7 @@ struct WalkState {
 
 class MergingWalker {
 public:
-    MergingWalker(FunctionAnalyses& analyses, size_t maxUses, size_t maxBlockVisits)
+    MergingWalker(FunctionAnalyses& analyses, size_t maxUses, size_t maxBlockVisits, const BitVector* countedAsLooking)
         : m_analyses(analyses)
         , m_function(analyses.function())
         , m_program(analyses.context().program)
@@ -421,6 +421,7 @@ public:
         , m_statesOfBlock(m_function.blocks.size())
         , m_maxUses(maxUses)
         , m_blockVisitsLeft(maxBlockVisits)
+        , m_countedAsLooking(countedAsLooking)
     {
     }
 
@@ -482,7 +483,8 @@ public:
             bool isUnspecified = m_origin ? marked.contains(operand) : isAlwaysUnspecified(operand);
             if (!isUnspecified || user.operandKind(operandIndex) == OperandKind::Guard)
                 return;
-            if (user.operandUses(operandIndex).containsOnly(usesThatLookAtNothing))
+            bool isCountedAsLooking = id && m_countedAsLooking && m_countedAsLooking->get(id.index());
+            if (user.operandUses(operandIndex).containsOnly(usesThatLookAtNothing) && !isCountedAsLooking)
                 return;
             bool isListed = std::ranges::any_of(m_uses, [&](const UseOfUnspecifiedValue& use) {
                 return use.block == block && use.user == id && use.operand == operand;
@@ -730,6 +732,7 @@ public:
     std::optional<uint32_t> m_current;
     size_t m_maxUses;
     size_t m_blockVisitsLeft;
+    const BitVector* m_countedAsLooking;
     bool m_gaveUp { false };
     Vector<UseOfUnspecifiedValue> m_uses;
 };
@@ -789,7 +792,7 @@ bool MergingWalker::narrow(Facts& facts, ValueID id, Integers allowed, unsigned 
 
 } // anonymous namespace
 
-UsesOfUnspecifiedValues findUsesOfUnspecifiedValues(FunctionAnalyses& analyses, size_t maxUses, OtherFunctions otherFunctions, size_t maxBlockVisits)
+UsesOfUnspecifiedValues findUsesOfUnspecifiedValues(FunctionAnalyses& analyses, size_t maxUses, OtherFunctions otherFunctions, size_t maxBlockVisits, const BitVector* countedAsLooking)
 {
     if (!analyses.opcodesOfValues().contains(Opcode::Unspecified))
         return { };
@@ -798,7 +801,7 @@ UsesOfUnspecifiedValues findUsesOfUnspecifiedValues(FunctionAnalyses& analyses, 
     });
     if (callsOutlinedBody)
         return { };
-    return MergingWalker(analyses, maxUses, maxBlockVisits).run();
+    return MergingWalker(analyses, maxUses, maxBlockVisits, countedAsLooking).run();
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -17,6 +17,7 @@
 #include "AOTSort.h"
 #include "AOTStatistics.h"
 #include "AOTThreshold.h"
+#include "AOTUnspecifiedValuePaths.h"
 #include "AOTVector.h"
 #include <algorithm>
 
@@ -876,7 +877,11 @@ static void testElementsOfList(IRBuilder& builder, const Program& program, Funct
 
 bool AllocationSinking::testElementsOfLists(IRBuilder& builder)
 {
+    AOT_THRESHOLD(size_t, maxBlockVisitsToFindUnspecifiedElements, 65536);
     Vector<ProgramPoint, 2> points;
+    Vector<ValueID, 2> lists;
+    BitVector isListToTest;
+    size_t numberOfElements = 0;
     for (ValueID literal : m_testedListsThatMayNotFit) {
         const Value& list = m_function.at(literal);
         ValueLocation location = m_analyses.useLists().locationOf(literal);
@@ -890,6 +895,21 @@ bool AllocationSinking::testElementsOfLists(IRBuilder& builder)
         });
         if (isGuard)
             continue;
+        lists.append(literal);
+        isListToTest.set(literal.index());
+        numberOfElements += list.elementsOperands().size();
+    }
+    if (lists.isEmpty())
+        return false;
+    // A list may hold an Unspecified value on a way that reaches it, and a test would look at that value.
+    UsesOfUnspecifiedValues found = findUsesOfUnspecifiedValues(m_analyses, numberOfElements + 1, OtherFunctions::AreAtRest, maxBlockVisitsToFindUnspecifiedElements, &isListToTest);
+    for (ValueID literal : lists) {
+        bool holdsUnspecifiedValue = !found.wasEveryPathFollowed || std::ranges::any_of(found.uses, [&](const UseOfUnspecifiedValue& use) {
+            return use.user == literal;
+        });
+        if (holdsUnspecifiedValue)
+            continue;
+        ValueLocation location = m_analyses.useLists().locationOf(literal);
         points.append(ProgramPoint { location.block, location.index });
     }
     AOT::sort(points, [](const ProgramPoint& a, const ProgramPoint& b) {

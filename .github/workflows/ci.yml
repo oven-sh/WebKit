@@ -221,6 +221,7 @@ jobs:
       # One lane's failure shouldn't cancel the others.
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.build) }}
+    # Never reached by a slow build: lanes.mjs fails it first (SLOW).
     timeout-minutes: 90
     steps: &build_steps
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -263,7 +264,8 @@ jobs:
           rm -rf "$RUNNER_TEMP/bun-webkit" "$RUNNER_TEMP/bun-webkit.tar.gz"
           # Starting from the lane's toolchain image, which is in the registry: `plan` found it there or `image` put it.
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          node .github/scripts/lanes.mjs build "$LABEL" --output "$RUNNER_TEMP/bun-webkit" --base-image "$IMAGE"
+          # --fail-if-slow: a failed lane leaves a pull request its preview, and can be run again by itself.
+          node .github/scripts/lanes.mjs build "$LABEL" --output "$RUNNER_TEMP/bun-webkit" --base-image "$IMAGE" --fail-if-slow
           cd "$RUNNER_TEMP"
           echo "#define BUN_WEBKIT_VERSION \"$BUILD_REF\"" >> bun-webkit/include/cmakeconfig.h
           # ENABLE_AOT stands on the lane's command line alone (lanes.mjs), and it changes the layout of classes in the
