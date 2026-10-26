@@ -213,6 +213,7 @@ inline constexpr ValueFlowName describedObjectName { ValueFlowNameKind::HiddenSl
 inline constexpr ValueFlowName elementsName = ValueFlowName::of(ValueFlowNameKind::Elements);
 inline constexpr ValueFlowName unknownKeyName = ValueFlowName::of(ValueFlowNameKind::UnknownKey);
 inline constexpr ValueFlowName everyPropertyName = ValueFlowName::of(ValueFlowNameKind::EveryProperty);
+inline constexpr ValueFlowName everyOwnPropertyName { ValueFlowNameKind::EveryProperty, 3 };
 inline constexpr ValueFlowName everyGetterName = ValueFlowName::of(ValueFlowNameKind::EveryGetter);
 inline constexpr ValueFlowName copiedFromName = ValueFlowName::of(ValueFlowNameKind::CopiedFrom);
 inline constexpr ValueFlowName prototypeLinkName = ValueFlowName::of(ValueFlowNameKind::PrototypeLink);

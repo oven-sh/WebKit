@@ -878,7 +878,8 @@ ModuleRecord* Modules::exposeRecord(ModuleID module)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (status(module) == ModuleStatus::Unlinked || data(module).capturesExports()) {
+    // The walk of the root has loaded what a module on the way down from it needs, and is kept for the link.
+    if ((status(module) == ModuleStatus::Unlinked || data(module).capturesExports()) && !m_levelsOfLoads.contains(module)) {
         std::unique_ptr<ModuleLinkWalk> linkWalk = takeLinkWalk(module);
         loadRuntimeModules(*linkWalk);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -898,7 +899,7 @@ ModuleRecord* Modules::exposeRecord(ModuleID module)
     RELEASE_AND_RETURN(scope, appendRequestsOfUncompiledCode(module, record));
 }
 
-// `bun run` loads a graph module by module, in jobs. A program can tell how many they are only if other jobs wait, if its own code runs between them, or if another graph is being loaded.
+// `bun run` loads a graph module by module, in jobs. A program can tell how many they are only if other jobs wait, if its own code runs between them, if another graph is being loaded, or if another one has run and the steps that settle the promise of its import() wait.
 bool Modules::canTellHowGraphIsLoaded(ModuleID root)
 {
     VM& vm = *m_instance.vm;
@@ -908,11 +909,16 @@ bool Modules::canTellHowGraphIsLoaded(ModuleID root)
         return false;
     if (vm.m_synchronousModuleQueue || numberOfGraphsBeingLoaded() > 1)
         return true;
-    // With one load in flight the steps of the loader that wait are its own, or come behind the evaluation of an entry point. None of them runs code of the program before the graph is loaded.
+    // No step of the loader waits for a graph whose root has not run to its end: it goes on with a job of the program.
+    if (m_loadsInFlight.containsIf([&](const LoadInFlight& load) { return load.isLoaded && status(load.root) != ModuleStatus::Evaluating && status(load.root) != ModuleStatus::EvaluatingAsync; }))
+        return true;
+    // With one graph being loaded the steps of the loader that wait are its own, or come behind the evaluation of an entry point. None of them runs code of the program before the graph is loaded.
     return !vm.defaultMicrotaskQueue().allOf([&](const QueuedTask& task) {
         if (task.job() >= InternalMicrotask::ModuleRegistryFetchSettled && task.job() <= InternalMicrotask::ImportModuleNamespace)
             return true;
-        return task.job() == InternalMicrotask::PromiseResolveThenableJobFast && !m_loadsInFlight.isEmpty() && task.arguments()[0] == JSValue(m_loadsInFlight[0].promise.get());
+        return task.job() == InternalMicrotask::PromiseResolveThenableJobFast && m_loadsInFlight.containsIf([&](const LoadInFlight& load) {
+            return !load.isLoaded && task.arguments()[0] == JSValue(load.promise.get());
+        });
     });
 }
 
@@ -946,12 +952,8 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record)
             appendRequestsOfUncompiledCode(module, record);
             return;
         }
-        for (LoadInFlight& load : m_loadsInFlight) {
-            if (load.root != module || load.isWalked)
-                continue;
-            load.isWalked = true;
-            markModulesBelowWalkedRoot(module);
-        }
+        for (LoadInFlight& load : m_loadsInFlight)
+            load.isWalked |= load.root == module;
         if (!data(module).isLoadedByLoader() && m_rootWhoseFilesRanAhead != module && !m_instance.vm->m_synchronousModuleQueue && planLevelsOfLoad(module)) {
             appendNextOnWay();
             return;

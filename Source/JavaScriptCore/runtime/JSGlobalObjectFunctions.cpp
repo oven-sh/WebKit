@@ -902,7 +902,9 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSFinalObject* target = uncheckedDowncast<JSFinalObject>(callFrame->thisValue());
+    // llint_aot_op_new_object may have made a compiled object of the literal's first members.
+    JSObject* target = asObject(callFrame->thisValue());
+    ASSERT(target->inherits<JSFinalObject>() || target->structure()->isCompiledStructure());
     ASSERT(target->isStructureExtensible());
 
     JSValue sourceValue = callFrame->uncheckedArgument(0);
@@ -947,7 +949,8 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
 
     auto sourceStructure = source->structure();
     if (canPerformFastPropertyEnumerationForCopyDataProperties(sourceStructure)) [[likely]] {
-        if ((!excludedSet || excludedSet->isEmpty()) && objectCloneFast(vm, target, source))
+        auto* finalTarget = dynamicDowncast<JSFinalObject>(target);
+        if (finalTarget && (!excludedSet || excludedSet->isEmpty()) && objectCloneFast(vm, finalTarget, source))
             return JSValue::encode(target);
 
         EnsureStillAliveScope sourceStructureScope(sourceStructure);
@@ -981,7 +984,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
         // excludedSet is no longer used.
         ensureStillAliveHere(unlinkedCodeBlock);
 
-        if (target->inherits<JSFinalObject>() && target->canPerformFastPutInlineExcludingProto() && target->isStructureExtensible()) [[likely]]
+        if (finalTarget && target->canPerformFastPutInlineExcludingProto() && target->isStructureExtensible()) [[likely]]
             target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
         else {
             for (size_t i = 0; i < properties.size(); ++i)

@@ -114,6 +114,10 @@ ClimbingSet HeapRule::startOfLookup(ClimbingSet receivers)
 HeapChain HeapRule::chainFrom(ClimbingSet receivers, ValueFlowName nameOfChain)
 {
     ClimbingSet start = startOfLookup(receivers);
+    if (m_findsOwnPropertiesAlone) {
+        ClimbingSet objects = m_context.unite(known(start), withSourcesOfCopies(m_context, known(valueOfNodeIfAny(readWhereWritten(known(start), copiedFromName)))));
+        return { start, ClimbingSet(ValueSets::nothing), objects, objects, mayBeUnknownObject(receivers), mayBeUntrackedObject(receivers) };
+    }
     ValueFlowNodeID wholeChain = m_context.lookup(start, nameOfChain);
     ClimbingSet chain = m_context.valueOf(wholeChain);
     ClimbingSet objects = known(chain);
@@ -756,6 +760,19 @@ bool HeapRule::endsAtPropertyOfCreation(ValueFlowObjectID receiver, const HeapKe
     return !hasEscaped(closure) && !hasBeenLost(closure) && !holdsAnything(m_context.markedAmong(closure, { ObjectMutation::DeleteField, ObjectMutation::RedefineProperty }));
 }
 
+// A function object finds its own `length` and `name` as long as it has them as it was created with them: no accessor further up is entered with it.
+ClimbingSet HeapRule::receiversThatLookPastPropertiesOfCreation(ClimbingSet receivers, const HeapKey& key)
+{
+    if (key.keyClass != HeapKeyClass::Name || (key.name != m_program.keyOf(BuiltinNames::length) && key.name != m_program.keyOf(BuiltinNames::name)))
+        return receivers;
+    Members ending;
+    m_context.forEachMember(m_context.restrict(known(receivers), m_universe.closures()), [&](ValueFlowObjectID receiver) {
+        if (endsAtPropertyOfCreation(receiver, key))
+            ending.append(receiver);
+    });
+    return ending.isEmpty() ? receivers : m_context.restrict(receivers, ValueSets::complement(m_context.maker().of(ending.span())));
+}
+
 ClimbingSet HeapRule::receiversBelowAccessorNobodyKnows(ClimbingSet start, const HeapKey& key, HeapPropertyPart part)
 {
     auto mayLieAbove = [&](ClimbingSet receivers) {
@@ -1228,6 +1245,8 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
     HeapReceiver thisValue = receiver;
     if (!receiver.operand && mayBeAccessorNobodyKnows(getters))
         thisValue.belowAccessorNobodyKnows = receiversBelowAccessorNobodyKnows(chain.start, key, HeapPropertyPart::Getter);
+    if (!receiver.operand)
+        thisValue.set = receiversThatLookPastPropertiesOfCreation(receiver.set, key);
     SetForScope ofEngine(m_undescribedNativeCodeIsOfEngine, undescribedNativeCodeIsOfEngine);
     callAccessors(getters, ValueFlowCallKind::Get, thisValue, nullptr, result);
 }
@@ -1427,6 +1446,7 @@ void HeapRule::runLookup()
 {
     ValueFlowName name = m_context.nameOfKey();
     m_keepsHoldersOfExportsItStartsFrom = name == everyPropertyOfListedHoldersOfExports;
+    m_findsOwnPropertiesAlone = name == everyOwnPropertyName;
     switch (name.kind) {
     case ValueFlowNameKind::PrototypeLink:
         collectChain();

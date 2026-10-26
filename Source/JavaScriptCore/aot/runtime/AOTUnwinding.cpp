@@ -14,6 +14,7 @@
 #include "AOTInstance.h"
 #include "AOTInstanceLayout.h"
 #include "AOTSavedFrame.h"
+#include "AOTStackTrace.h"
 #include "AOTState.h"
 #include "AOTStubEntrypoints.h"
 #include "AOTStubFrames.h"
@@ -21,6 +22,7 @@
 #include "AOTStubsExceptions.h"
 #include "CallFrame.h"
 #include "DeferGCInlines.h"
+#include "ErrorInstance.h"
 #include "HandlerInfo.h"
 #include "Interpreter.h"
 #include "JITExceptions.h"
@@ -241,12 +243,81 @@ bool isCaughtByCompiledCode(VM&, CompiledFrameIterator frames)
     return findCatchInRun(frames);
 }
 
+enum class HandlerSearch : bool { Nearest, NearestThatEndsThrow };
+
+// Looks at the callers of `callee` in its run of compiled frames. A frame that turns a throw into a rejection counts as a `catch`. Nothing is no answer: the run may go on in ways that this walk does not follow.
+template<HandlerSearch search>
+static ALWAYS_INLINE std::optional<HandlerType> findHandlerInRun(VM& vm, CallFrame* callee, void* stackPointer, void* framePointer, EntryFrame* entryFrame)
+{
+    const VMState& state = vm.aotState();
+    CallSiteCache& cache = *state.callSiteCache;
+    CallFrame* first = callee;
+    unsigned remainingFrames = search == HandlerSearch::NearestThatEndsThrow ? Options::exceptionStackTraceLimit() : 0;
+    while (framePointer != entryFrame) {
+        const CallSiteCache::Entry* site = cache.resolve(*state.image, removeCodePtrTag(callee->rawReturnPC()));
+        if (!site) {
+            if (callee != first)
+                checkReturnAddressInRun(*state.image, removeCodePtrTag(callee->rawReturnPC()), callee);
+            return std::nullopt;
+        }
+        if (site->isStubReturnSite()) {
+            if (!letsThrowPass(site->stubFrameKind))
+                return std::nullopt;
+        } else {
+            const HandlerRecord* handler = site->exceptionHandler();
+            if (handler && (search == HandlerSearch::Nearest || handler->type != HandlerType::Finally))
+                return handler->type;
+            if (site->rejectsOnThrow)
+                return HandlerType::Catch;
+            if (search == HandlerSearch::NearestThatEndsThrow && !--remainingFrames)
+                return std::nullopt;
+        }
+        callee = frameAtReturnSite(site->frame, stackPointer, static_cast<CallFrame*>(framePointer));
+        stackPointer = stackPointerOfCaller(callee, bytesAboveReturnAddressOf(*site));
+        if (site->frame.hasFrameRecord())
+            framePointer = callee->callerFrameOrEntryFrame();
+    }
+    return std::nullopt;
+}
+
+std::optional<HandlerType> findNearestHandler(VM& vm, CallFrame* stubFrame)
+{
+    return findHandlerInRun<HandlerSearch::Nearest>(vm, stubFrame, stackPointerOfCaller(stubFrame), stubFrame->callerFrameOrEntryFrame(), vm.topEntryFrame);
+}
+
+// Asked before every error of a throw site is created.
+bool nearestHandlerIgnoresValue(VM& vm, const Instance&, CallFrame* stubFrame)
+{
+    return findNearestHandler(vm, stubFrame) == HandlerType::SynthesizedCatch;
+}
+
+bool isCaughtAboveCleanup(VM& vm, const CompiledFrameIterator& framesAtCleanup)
+{
+    CallFrame* frame = framesAtCleanup.machineFrame();
+    void* framePointer = framesAtCleanup.callSite().frame.hasFrameRecord() ? frame->callerFrameOrEntryFrame() : framesAtCleanup.framePointer();
+    if (findHandlerInRun<HandlerSearch::NearestThatEndsThrow>(vm, frame, framesAtCleanup.callerStackPointer(), framePointer, framesAtCleanup.entryFrame()))
+        return true;
+    return isCaughtByCompiledCode(vm, framesAtCleanup);
+}
+
+bool beginsInTopCompiledFrame(VM& vm, const ReturnAddressTrace& trace)
+{
+    if (!vm.topCallFrame || vm.topCallFrame->callerFrameOrEntryFrame() == vm.topEntryFrame)
+        return true;
+    std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, vm.topCallFrame, vm.topEntryFrame);
+    return !frames || frames->isAtEnd() || beginsAt(trace, frames->callSite().address);
+}
+
 // Native code has called the run that the throw leaves, and hands the exception on to its own caller unless it reports it.
 static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
 {
     for (unsigned remainingRuns = Options::exceptionStackTraceLimit(); remainingRuns && exit.callFrame; --remainingRuns) {
         if (exit.callFrame->callerFrameOrEntryFrame() == exit.entryFrame)
             return false;
+        if (void* taker = vm.aotState().stackPointerOfExceptionTaker; taker && taker < static_cast<void*>(exit.callFrame))
+            return false;
+        if (findHandlerInRun<HandlerSearch::NearestThatEndsThrow>(vm, exit.callFrame, stackPointerOfCaller(exit.callFrame), exit.callFrame->callerFrameOrEntryFrame(), exit.entryFrame))
+            return true;
         std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, exit.callFrame, exit.entryFrame);
         if (!frames || frames->isAtEnd())
             return false;
@@ -259,49 +330,41 @@ static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
     return false;
 }
 
-NEVER_INLINE Exception::StackCaptureAction stackCaptureActionOfThrow(VM& vm, const Instance& instance, const CallerFrameAndPC* frameRecordOfOperation, const CompiledFrameIterator* framesAtEndOfRun)
+static bool isAddressInCompiledCode(uint64_t word)
+{
+    std::span<const uint8_t> code = Image::current()->code();
+    return word - std::bit_cast<uintptr_t>(code.data()) < code.size();
+}
+
+Exception* exceptionKeptByCleanup(uint64_t kept, JSValue thrown)
+{
+    if (isAddressInCompiledCode(kept))
+        return nullptr;
+    auto* exception = std::bit_cast<Exception*>(kept);
+    return exception->value() == thrown ? exception : nullptr;
+}
+
+NEVER_INLINE Exception::StackCaptureAction stackCaptureActionOfThrow(VM& vm, const Instance& instance, JSValue thrown, const CallerFrameAndPC* frameRecordOfOperation, const CompiledFrameIterator* framesAtEndOfRun)
 {
     using Action = Exception::StackCaptureAction;
-    // The program threw the value somewhere else, and an Error keeps the stack that it holds.
-    if (removeCodePtrTag(frameRecordOfOperation->callerFrame->rawReturnPC()) == instance.state->returnAddressOfThrowAfterCleanup)
-        return Action::CaptureStack;
+    if (removeCodePtrTag(frameRecordOfOperation->callerFrame->rawReturnPC()) == instance.state->returnAddressOfThrowAfterCleanup) {
+        uint64_t kept = instance.state->keptByCleanup;
+        // The program threw the value somewhere else, and an Error keeps the stack that it holds.
+        if (!isAddressInCompiledCode(kept))
+            return Action::CaptureStack;
+        // The `throw` stands in this frame, and nothing returns to the end of the cleanup.
+        frameRecordOfOperation->callerFrame->setReturnPC(std::bit_cast<void*>(kept));
+    }
     if (!framesAtEndOfRun || needsExceptionForEveryThrow(instance))
         return Action::CaptureStackOfThrow;
     // The promise of the handler is rejected with the value.
     if (framesAtEndOfRun->runEnd().hasCalledHandlerOfJob && instance.coroutines.promiseOfEnteredHandler)
         return Action::DoNotCaptureStack;
+    // For what holds no stack of its own the frames are walked either way.
+    auto* error = dynamicDowncast<ErrorInstance>(thrown);
+    if (!error || !error->returnAddresses())
+        return Action::CaptureStackOfThrow;
     return isCaughtByCallersOfNativeCode(vm, framesAtEndOfRun->exit()) ? Action::CaptureStack : Action::CaptureStackOfThrow;
-}
-
-// Asked before every error of a throw site is created.
-bool nearestHandlerIgnoresValue(VM& vm, const Instance&, CallFrame* stubFrame)
-{
-    const VMState& state = vm.aotState();
-    CallSiteCache& cache = *state.callSiteCache;
-    void* framePointer = stubFrame->callerFrameOrEntryFrame();
-    void* stackPointer = stackPointerOfCaller(stubFrame);
-    for (CallFrame* callee = stubFrame; framePointer != vm.topEntryFrame;) {
-        const CallSiteCache::Entry* site = cache.resolve(*state.image, removeCodePtrTag(callee->rawReturnPC()));
-        if (!site) {
-            if (callee != stubFrame)
-                checkReturnAddressInRun(*state.image, removeCodePtrTag(callee->rawReturnPC()), callee);
-            return false;
-        }
-        if (site->isStubReturnSite()) {
-            if (!letsThrowPass(site->stubFrameKind))
-                return false;
-        } else {
-            if (const HandlerRecord* handler = site->exceptionHandler())
-                return handler->ignoresValue();
-            if (site->rejectsOnThrow)
-                return false;
-        }
-        callee = frameAtReturnSite(site->frame, stackPointer, static_cast<CallFrame*>(framePointer));
-        stackPointer = stackPointerOfCaller(callee, bytesAboveReturnAddressOf(*site));
-        if (site->frame.hasFrameRecord())
-            framePointer = callee->callerFrameOrEntryFrame();
-    }
-    return false;
 }
 
 // A caller that has handlers, and none at its call, plans no error there: the call may stand in a try. Then the error waits for the next poll.

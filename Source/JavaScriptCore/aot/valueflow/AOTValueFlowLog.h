@@ -151,6 +151,7 @@ public:
         uint32_t endOfValuesShown { 0 };
         uint32_t endOfPartsWatched { 0 };
         uint32_t endOfNodesAskedWhetherEmpty { 0 };
+        uint32_t endOfNamesWatched { 0 };
     };
 
     ValueFlowRoundLog() = default;
@@ -187,7 +188,7 @@ public:
         auto shrinkToNothing = [](auto&... lists) {
             (lists.shrink(0), ...);
         };
-        shrinkToNothing(made, edges, reached, whoReached, uses, m_usesLogged, statementsWithMembersNotToldApart, runs, nodesRead, functionsAsked, madeNodesAskedFor, valuesShown, partsWatched, partsWatchedLast, nodesAskedWhetherEmpty);
+        shrinkToNothing(made, edges, reached, whoReached, uses, m_usesLogged, statementsWithMembersNotToldApart, runs, nodesRead, functionsAsked, madeNodesAskedFor, valuesShown, partsWatched, partsWatchedLast, nodesAskedWhetherEmpty, namesWatched);
         numberOfMadeNodes = 0;
         numberMadeWhereAskedFor = 0;
         m_madeByKey = HashedIndex();
@@ -227,6 +228,12 @@ public:
     Vector<ValueFlowNodeSet> partsWatched;
     Vector<uint32_t> partsWatchedLast;
     Vector<ValueFlowNodeID> nodesAskedWhetherEmpty;
+    struct NameWatched {
+        ValueFlowName name;
+        ValueSetID within;
+        uint32_t numberOfName { UINT32_MAX };
+    };
+    Vector<NameWatched> namesWatched;
 
 private:
     HashedIndex m_madeByKey;

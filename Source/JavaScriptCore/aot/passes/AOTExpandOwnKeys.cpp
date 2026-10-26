@@ -692,11 +692,25 @@ static bool fillsEmptyLiteral(const Function& function, const OwnKeyWalkSite& si
     return false;
 }
 
+// Once its fields are stored one by one, such an object need not be made.
+static bool isKeptByNobody(FunctionPassContext& context, ValueID object)
+{
+    const EscapeAnalysis& escape = context.analyses.escape();
+    std::optional<ObjectID> tracked = escape.gaveUp() ? std::nullopt : escape.objectDefinedBy(object);
+    return tracked && std::ranges::none_of(escape.usesOf(*tracked), &ObjectUse::isEscape);
+}
+
+static bool walksWithoutTests(const OwnKeyWalkPlan& plan)
+{
+    return plan.arms.size() == 1 && !plan.needsShapeTest && !plan.needsKeyOrderTest && !plan.needsOriginalCall;
+}
+
 // The sites are listed last first: an expansion moves only the values after its point.
 static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
 {
     const Function& function = context.function;
     Vector<OwnKeyWalkSite, 4> sites;
+    Vector<ValueID, 4> fillingLiteralsOutsideHotCode;
     for (BlockID block : context.analyses.cfg().reversePostOrder() | std::views::reverse) {
         if (function.at(block).frequency == BlockFrequency::Rare)
             continue;
@@ -706,8 +720,11 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
                 continue;
             HeatClass heat = heatClassOf(context, block);
             // The operation copies a record by its words. What the arms add to that, the layout of the copy and no call, is worth their bytes in hot code.
-            if (!isCold(heat) && ((site->walk != OwnKeyWalk::Copy && !fillsEmptyLiteral(function, *site)) || isHot(heat)) && !isListThatLivesOn(context, *site))
+            if (!isCold(heat) && (site->walk != OwnKeyWalk::Copy || isHot(heat)) && !isListThatLivesOn(context, *site)) {
+                if (!isHot(heat) && fillsEmptyLiteral(function, *site))
+                    fillingLiteralsOutsideHotCode.append(site->value);
                 sites.append(WTF::move(*site));
+            }
         }
     }
     UnchangedAllocations unchanged(context, sites.span());
@@ -721,6 +738,9 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
         } else if (isExpandedByPlan(walk.site.walk)) {
             std::optional<OwnKeyWalkPlan> plan = planOwnKeyWalk(context, unchanged, walk.site);
             if (!plan)
+                continue;
+            // A load and a store for each field take the place of the call. Arms behind tests, with the call behind them, are worth their bytes in hot code, or where they leave no object to make.
+            if (fillingLiteralsOutsideHotCode.contains(walk.site.value) && !walksWithoutTests(*plan) && !isKeptByNobody(context, walk.site.target))
                 continue;
             walk.walkedSources.append(WalkedSource { walk.site.source, WTF::move(*plan), function.at(walk.site.value) });
         }

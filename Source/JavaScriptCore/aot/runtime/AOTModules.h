@@ -367,6 +367,7 @@ private:
         Strong<JSPromise> promise;
         ModuleID root;
         bool isWalked { false };
+        bool hasMarksBelowRoot { false };
         bool isLoaded { false };
     };
     Vector<LoadInFlight, 2> m_loadsInFlight;

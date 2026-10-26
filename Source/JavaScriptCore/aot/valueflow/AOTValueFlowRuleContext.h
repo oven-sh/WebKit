@@ -178,6 +178,8 @@ private:
     ValueFlowNodeID notPlain();
     ValueFlowNodeID writtenUnderUnknownKey();
     ValueFlowNodeID rareWriteNode(ValueFlowRareWrite);
+    std::optional<ClimbingSet> holdersUnder(ValueFlowName, ClimbingSet within);
+    ClimbingSet objectsThatMayHoldSomethingUnder(ValueFlowName, ClimbingSet objects);
     ValueFlowNodeID mutationNode(ObjectMutation);
     void logMadeNodesAskedFor(const ValueFlowNodeKey&, uint32_t madeNodes);
     void addObjectsOfProgram(ValueFlowNodeID, ClimbingSet objects);
@@ -231,6 +233,7 @@ private:
     size_t m_firstEdgeOfRun { 0 };
     size_t m_firstNodeReadOfRun { 0 };
     size_t m_firstNodeAskedWhetherEmptyOfRun { 0 };
+    size_t m_firstNameWatchedOfRun { 0 };
     std::array<ValueSetID, numberOfSetsRememberedByThread> m_rememberedByThread { ValueSets::nothing, ValueSets::nothing, ValueSets::nothing };
     std::optional<ValueFlowUnknownSource> m_unknownSource;
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_constantsOfThisTurn;

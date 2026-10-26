@@ -1152,8 +1152,11 @@ static unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
         if (uses.directStores.isEmpty()) {
             if (uses.testedStores.isEmpty() || uses.hasOtherUseOfStorage)
                 continue;
-            bool holdsDoubles = std::ranges::all_of(uses.testedStores, [&](ValueID store) {
-                return canStoreWithoutConversion(ArrayStorage::Double, context.types.at(function.at(function.at(store).valueOperand()).type));
+            // Only a store inside the length takes its value unseen. The others look for a NaN and leave it to the operation.
+            bool holdsDoubles = std::ranges::all_of(uses.testedStores, [&](ValueID id) {
+                const Value& store = function.at(id);
+                const Type& stored = context.types.at(function.at(store.valueOperand()).type);
+                return store.isInBounds() ? canStoreWithoutConversion(ArrayStorage::Double, stored) : stored.isNumber();
             });
             if (!holdsDoubles || !isReadAsDoubles(group))
                 continue;

@@ -893,7 +893,10 @@ static void expandReadsOfFieldsThatMayBeEmpty(FunctionPassContext& context, IRBu
         ValueID isFilled = builder.append(WTF::move(test));
         BlockFrequency frequencyOfFailure = testsDeclaredType ? rarerOf(expansion.frequency(), BlockFrequency::Unlikely) : expansion.frequency();
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(isFilled, OperandIndex::IsSlotFilled::object, expansion.frequency(), frequencyOfFailure);
-        builder.endPrediction(failedUnasked, branch, object);
+        // Only an empty slot answers with the method. Where no test was asked, the name is looked up.
+        BlockID byName = methodAbove ? failedUnasked : BlockID();
+        if (!methodAbove)
+            builder.endPrediction(failedUnasked, branch, object);
 
         builder.moveToEndOf(branch.taken);
         if (read.plan.form == AccessForm::GetterInSlot)
@@ -906,7 +909,6 @@ static void expandReadsOfFieldsThatMayBeEmpty(FunctionPassContext& context, IRBu
         }
 
         builder.moveToEndOf(branch.notTaken);
-        BlockID byName;
         if (methodAbove) {
             for (Value& testOfMethod : createAccessTests(context, *methodAbove, { object, { }, { stamp.key, stamp.receivers, stamp.level, { } } }).tests) {
                 if (!byName)

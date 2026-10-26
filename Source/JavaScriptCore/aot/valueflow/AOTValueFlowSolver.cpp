@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTCFG.h"
+#include "AOTPhaseTimes.h"
 #include "AOTSort.h"
 #include "AOTSystemResources.h"
 #include "AOTThreshold.h"
@@ -171,6 +172,12 @@ struct ValueFlowSolver::Thread {
     std::array<Vector<PartWatched>, numberOfWatchShards> partsWatchedOfShard;
     std::array<Vector<NodeRead>, numberOfReaderShards> nodesReadOfShard;
     std::array<Vector<NodeRead>, numberOfReaderShards> nodesAskedWhetherEmptyOfShard;
+    struct NameWatched {
+        ValueFlowName name;
+        ValueSetID within;
+        ValueFlowStatementID statement;
+    };
+    Vector<NameWatched> namesWatched;
     Vector<uint32_t> numberOfMadeNode;
     size_t numberOfReachedTaken { 0 };
     size_t numberOfMadeTaken { 0 };
@@ -2117,12 +2124,87 @@ void ValueFlowSolver::removeNodesAtRestFrom(Vector<NodeOfSet>& list)
     });
 }
 
+void ValueFlowSolver::numberNamesWatched()
+{
+    for (const std::unique_ptr<Thread>& thread : m_threads) {
+        for (const Thread::NameWatched& watched : thread->namesWatched) {
+            uint32_t number = m_numberOfName.ensure(static_cast<uint64_t>(watched.name.kind) << 32 | watched.name.payload, [&] {
+                makeRoomByDoubling(m_names);
+                m_names.append(Name { watched.name, { }, { } });
+                return static_cast<uint32_t>(m_names.size() - 1);
+            }).iterator->value;
+            m_linkShards[linkShardOf(number)].namesWatchedInRound.append({ number, watched.within, watched.statement });
+        }
+        thread->namesWatched.shrink(0);
+    }
+}
+
+void ValueFlowSolver::noteNamesWatched(unsigned numberOfShard, ValueSetMaker& maker)
+{
+    LinkShard& shard = m_linkShards[numberOfShard];
+    uint32_t round = m_counters.rounds;
+    for (const LinkShard::NameWatched& watched : shard.namesWatchedInRound) {
+        Name& name = m_names[watched.numberOfName];
+        if (!name.holders || name.roundOfFirstQuestion == round)
+            listIfItMayBecomeDue(watched.statement, shard.woken);
+        auto added = shard.partWatchedOf.add(static_cast<uint64_t>(watched.numberOfName) << 32 | watched.statement.index(), shard.partsWatched.size());
+        if (!added.isNewEntry) {
+            PartOfNameWatched& part = shard.partsWatched[added.iterator->value];
+            part.within = part.round == round ? maker.unite(part.within, watched.within) : watched.within;
+            part.round = round;
+            continue;
+        }
+        if (!name.holders) {
+            name.roundOfFirstQuestion = round;
+            Vector<ValueSetID, 16> written { m_input.universe->placeholdersAlone(), m_input.universe->builtinTables().heap().objectsDeclaringField(PropertyKeyID(name.name.payload)) };
+            for (const Vector<NodeOfSet>* list : { &name.written.ofFewObjects, &name.written.ofManyObjects, &name.written.ofVeryManyObjects }) {
+                for (const NodeOfSet& node : *list)
+                    written.append(node.set);
+            }
+            name.holders = maker.uniteAll(written.span());
+        }
+        shard.partsWatched.append(PartOfNameWatched { watched.statement, watched.within, round, std::exchange(name.firstPartWatched, static_cast<uint32_t>(shard.partsWatched.size())) });
+    }
+    shard.namesWatchedInRound.shrink(0);
+}
+
+void ValueFlowSolver::wakeWatchersOfNamesWrittenOnMoreObjects(unsigned numberOfShard, ValueSetMaker& maker)
+{
+    LinkShard& shard = m_linkShards[numberOfShard];
+    Vector<std::pair<uint32_t, ValueSetID>>& written = shard.writtenUnderWatchedNames;
+    if (written.isEmpty())
+        return;
+    AOT::sort(written, { }, [](const std::pair<uint32_t, ValueSetID>& entry) {
+        return std::pair(entry.first, entry.second.index());
+    });
+    Vector<ValueSetID, 16> setsOfName;
+    for (size_t first = 0; first < written.size();) {
+        Name& name = m_names[written[first].first];
+        setsOfName.shrink(0);
+        size_t end = first;
+        for (; end < written.size() && written[end].first == written[first].first; ++end)
+            setsOfName.append(written[end].second);
+        first = end;
+        ValueSetID whatIsNew = maker.intersect(maker.uniteAll(setsOfName.span()), ValueSets::complement(name.holders));
+        if (whatIsNew == ValueSets::nothing)
+            continue;
+        name.holders = maker.unite(name.holders, whatIsNew);
+        for (uint32_t part = name.firstPartWatched; part != noSolverIndex; part = shard.partsWatched[part].next) {
+            if (m_sets.meet(whatIsNew, shard.partsWatched[part].within))
+                listIfItMayBecomeDue(shard.partsWatched[part].statement, shard.woken);
+        }
+    }
+    written.shrink(0);
+}
+
 void ValueFlowSolver::insertNode(const NodeToLink& toLink, bool isRead)
 {
     const NodeOfSet& node = toLink.node;
     MadeNodes& madeNodes = m_madeNodes[toLink.madeNodes];
     if (std::exchange(madeNodes.isListedUnderName, true))
         return;
+    if (!isRead && !toLink.standsForKind && m_names[toLink.numberOfName].holders)
+        m_linkShards[linkShardOf(toLink.numberOfName)].writtenUnderWatchedNames.append({ toLink.numberOfName, node.set });
     unsigned kind = static_cast<unsigned>(toLink.name.kind);
     NodesOfName& nodes = toLink.standsForKind ? (isRead ? m_kindsOfNames[kind].read : m_kindsOfNames[kind].written) : isRead ? m_names[toLink.numberOfName].read : m_names[toLink.numberOfName].written;
     if (toLink.size == SizeOfSetToLink::VeryMany) {
@@ -2146,7 +2228,7 @@ void ValueFlowSolver::insertNode(const NodeToLink& toLink, bool isRead)
         m_sets.forEachMember(node.set, add);
 }
 
-void ValueFlowSolver::linkNamedNodes(unsigned numberOfShard, bool isRead)
+void ValueFlowSolver::linkNamedNodes(unsigned numberOfShard, bool isRead, ValueSetMaker& maker)
 {
     Linked& linked = m_linkShards[numberOfShard].linked;
     for (const NodeToLink& toLink : isRead ? m_readToLink : m_writtenToLink) {
@@ -2158,6 +2240,8 @@ void ValueFlowSolver::linkNamedNodes(unsigned numberOfShard, bool isRead)
         linked.listsMostlyAtRest.shrink(0);
         insertNode(toLink, isRead);
     }
+    if (!isRead)
+        wakeWatchersOfNamesWrittenOnMoreObjects(numberOfShard, maker);
 }
 
 void ValueFlowSolver::linkNode(const NodeToLink& toLink, bool isRead, Linked& linked)
@@ -2230,7 +2314,7 @@ void ValueFlowSolver::linkInChunks(bool isRead, unsigned numberOfOtherTasks, NOE
 
 void ValueFlowSolver::insertNodesOfShards(const ListWithRoomToFill<NodeToLink>& toInsert, bool isRead)
 {
-    forEachIndexInParallel(m_loops, numberOfLinkShards, [&](unsigned task) {
+    forEachIndexInParallel(m_loops, numberOfLinkShards, [&](unsigned task, unsigned worker) {
         Vector<uint32_t>& nodesOfShard = m_nodesToInsertOfShards[numberOfLinkShards - 1 - task];
         constexpr size_t distance = 8;
         for (size_t position = 0; position < nodesOfShard.size(); ++position) {
@@ -2239,6 +2323,8 @@ void ValueFlowSolver::insertNodesOfShards(const ListWithRoomToFill<NodeToLink>& 
             insertNode(toInsert[nodesOfShard[position]], isRead);
         }
         nodesOfShard.shrink(0);
+        if (!isRead)
+            wakeWatchersOfNamesWrittenOnMoreObjects(numberOfLinkShards - 1 - task, *m_makers[worker]);
     });
 }
 
@@ -2720,6 +2806,7 @@ void ValueFlowSolver::countRunsAndEdges()
         size_t nextWatchedLast = 0;
         uint32_t nodeRead = 0;
         uint32_t nodeAskedWhetherEmpty = 0;
+        uint32_t nameWatched = 0;
         Thread& thread = *m_threads[number];
         for (const ValueFlowRoundLog::Run& run : thread.log.runs) {
             for (; nodeRead < run.endOfNodesRead; ++nodeRead) {
@@ -2730,6 +2817,8 @@ void ValueFlowSolver::countRunsAndEdges()
                 ValueFlowNodeID node = thread.numberInGraph(thread.log.nodesAskedWhetherEmpty[nodeAskedWhetherEmpty]);
                 thread.nodesAskedWhetherEmptyOfShard[readerShardOf(node)].append({ node, run.statement });
             }
+            for (; nameWatched < run.endOfNamesWatched; ++nameWatched)
+                thread.namesWatched.append({ thread.log.namesWatched[nameWatched].name, thread.log.namesWatched[nameWatched].within, run.statement });
             for (; partWatched < run.endOfPartsWatched; ++partWatched) {
                 ValueFlowNodeID node = thread.numberInGraph(thread.log.partsWatched[partWatched].node);
                 ValueSetID within = thread.log.partsWatched[partWatched].set;
@@ -3020,6 +3109,15 @@ bool ValueFlowSolver::merge()
             }
         }
     }
+    bool areNamesWatched = std::ranges::any_of(m_threads, [](const std::unique_ptr<Thread>& thread) {
+        return !thread->namesWatched.isEmpty();
+    });
+    if (areNamesWatched) {
+        numberNamesWatched();
+        forEachIndexInParallel(m_loops, numberOfLinkShardsOfNames, [&](unsigned shard, unsigned worker) {
+            noteNamesWatched(shard, *m_makers[worker]);
+        });
+    }
     m_stepTimes.didFinish("merge: tables grown, names numbered"_s);
     AOT_THRESHOLD(size_t, fewestNodesToLinkInChunks, 1024);
     size_t numberOfEdgesAdded = 0;
@@ -3041,13 +3139,13 @@ bool ValueFlowSolver::merge()
                 return;
             }
             if (task) {
-                linkNamedNodes(task - 1, false);
-                linkNamedNodes(task - 1, true);
+                linkNamedNodes(task - 1, false, *m_makers[worker]);
+                linkNamedNodes(task - 1, true, *m_makers[worker]);
                 return;
             }
             for (unsigned shard = numberOfLinkShardsOfNames; shard < numberOfLinkShards; ++shard) {
-                linkNamedNodes(shard, false);
-                linkNamedNodes(shard, true);
+                linkNamedNodes(shard, false, *m_makers[worker]);
+                linkNamedNodes(shard, true, *m_makers[worker]);
             }
         });
     } else {
@@ -3070,6 +3168,8 @@ bool ValueFlowSolver::merge()
         m_edgesOfRound.appendVector(shard.linked.edges);
         shard.linked.edges.shrink(0);
         m_counters.testsWhetherSetsMeet += std::exchange(shard.linked.testsWhetherSetsMeet, 0);
+        m_due.appendVector(shard.woken);
+        shard.woken.shrink(0);
     }
     m_writtenToLink.shrink(0);
     m_readToLink.shrink(0);
@@ -3876,7 +3976,7 @@ bool ValueFlowSolver::solve()
         m_counters.merge += afterMerge - afterRules;
         m_counters.values += MonotonicTime::now() - afterMerge;
         if (m_input.build && m_input.build->options().logging.logsPhaseTimes)
-            dataLogLn("AOT flow round ", m_counters.rounds, " | rules ", (afterRules - start).milliseconds(), " ms | merge ", (afterMerge - afterRules).milliseconds(), " ms | values ", (MonotonicTime::now() - afterMerge).milliseconds(), " ms | turns ", m_turnsOfRound, " | statement runs ", m_counters.statementRuns - before.statementRuns, " | nodes ", m_numberOfNodesMade - m_numberOfNodesBeforeRound, " | edges ", m_graph.numberOfEdges() - numberOfEdgesBefore, " | moved ", moved.size(), " | waves ", m_graph.counters().waves - graphBefore.waves, " | evaluations ", m_graph.counters().evaluations - graphBefore.evaluations);
+            dataLogLn("AOT flow round ", m_counters.rounds, " | rules ", (afterRules - start).milliseconds(), " ms | merge ", (afterMerge - afterRules).milliseconds(), " ms | values ", (MonotonicTime::now() - afterMerge).milliseconds(), " ms | turns ", m_turnsOfRound, " | statement runs ", m_counters.statementRuns - before.statementRuns, " | nodes ", m_numberOfNodesMade - m_numberOfNodesBeforeRound, " | edges ", m_graph.numberOfEdges() - numberOfEdgesBefore, " | moved ", moved.size(), " | waves ", m_graph.counters().waves - graphBefore.waves, " | evaluations ", m_graph.counters().evaluations - graphBefore.evaluations, " | resident ", PhaseTimes::residentMegabytes(), " MB");
 
         m_roundsDone.append(Round {
             isFullRound,
@@ -3923,6 +4023,8 @@ bool ValueFlowSolver::solve()
             m_addedByGeneralRules.builtinsUsedMore += index < usesAtRest.size() ? m_usesOfBuiltin[index] != usesAtRest[index] : !m_usesOfBuiltin[index].isEmpty();
     }
     m_stepTimes.dump();
+    if (m_stepTimes.isOn)
+        dumpBytesByTable();
     fillNumbersThatNobodyGave();
     if (m_allButMarks != ValueSets::anything) {
         m_graph.removeFromEveryNode(ValueFlowUniverse::markOfNamedBun());
@@ -3936,7 +4038,6 @@ bool ValueFlowSolver::solve()
     findClosuresFollowedToConstructions();
     findUnknownSources([&] {
         report();
-        m_memoryInBytesAtEndOfRounds = memoryInBytes();
         m_graph.releaseSolvingState(m_input.isAskedHowValuesCame || m_input.remembersWhoLoggedEachEdge ? ValueFlowGraph::Predecessors::AreKept : ValueFlowGraph::Predecessors::AreReleased);
         auto release = [&](auto& state) {
             auto taken = std::exchange(state, { });
@@ -3951,28 +4052,158 @@ bool ValueFlowSolver::solve()
     return true;
 }
 
-size_t ValueFlowSolver::memoryInBytes() const
+void ValueFlowSolver::dumpBytesByTable() const
 {
-    if (m_memoryInBytesAtEndOfRounds)
-        return *m_memoryInBytesAtEndOfRounds;
-    auto bytesOf = [](const auto& vector) {
-        return vector.capacity() * sizeof(vector[0]);
+    ValueFlowBytesByTable bytes;
+    m_graph.addBytesTo(bytes);
+    m_sets.addBytesTo(bytes);
+    for (const std::unique_ptr<ValueSetMaker>& maker : m_makers)
+        maker->addBytesTo(bytes);
+
+    bytes.addList("records: made nodes"_s, m_madeNodes);
+    bytes.addList("records: number of users"_s, m_numberOfUsers);
+    bytes.addList("records: asker that keeps nothing awake"_s, m_askerThatKeepsNothingAwake);
+    for (const IndexOfMadeNodes& index : m_madeNodesByKey) {
+        for (IndexOfMadeNodes::Table table : index.tables)
+            bytes.add("records: index by key"_s, 0, table.numberOfSlots() * sizeof(IndexOfMadeNodes::Slot));
+        bytes.add("records: index by key"_s, index.size * sizeof(IndexOfMadeNodes::Slot), 0);
+    }
+    bytes.addList("records: made statements"_s, m_madeStatements);
+    bytes.addList("records: record of node"_s, m_madeNodesOfNode);
+    bytes.addList("records: parts"_s, m_partsOfMadeNodes);
+    bytes.addList("records: record of statement"_s, m_madeNodesOfStatement);
+    for (const NodesOfManyObjects& nodes : m_nodesOfManyObjects) {
+        constexpr ASCIILiteral table = "records: nodes of many objects"_s;
+        bytes.addList(table, nodes.madeNodes);
+        bytes.addMap(table, nodes.latest);
+        bytes.addMap(table, nodes.latestWithBlock);
+        bytes.addMap(table, nodes.sampleOfSet);
+    }
+    bytes.addList("uses: first use of statement"_s, m_firstUseOfStatement);
+    bytes.addList("uses: records asked for by statements"_s, m_uses);
+    bytes.addList("uses: free"_s, m_freeUses);
+
+    constexpr ASCIILiteral statements = "statements: bits, lists of due ones, who waits"_s;
+    auto addBitsOfStatements = [&](const auto&... bits) {
+        (bytes.addBits(statements, bits), ...);
     };
-    size_t bytes = m_graph.memoryInBytes() + m_sets.memoryInBytes() + bytesOf(m_madeNodes) + bytesOf(m_madeStatements) + bytesOf(m_firstReaderOfNode) + bytesOf(m_seenByReadersOfNode);
-    for (const WatchShard& shard : m_watchShards)
-        bytes += bytesOf(shard.readers);
-    for (const LinkShard& shard : m_linkShards) {
-        for (const NodesOfMembers& nodesOfMembers : shard.nodesOfMembers)
-            bytes += bytesOf(nodesOfMembers.chained) + nodesOfMembers.first.capacity() * 12;
+    auto addListsOfStatements = [&](const auto&... lists) {
+        (bytes.addList(statements, lists), ...);
+    };
+    addBitsOfStatements(m_isReached, m_hasStatementOfBodyRun, m_isDue, m_isDear, m_hasLongRowBehindIt, m_hasRunInTurn, m_isDueLast, m_statementsWithMembersNotToldApart);
+    addListsOfStatements(m_firstStatementWaitingForNode, m_nextStatementWaiting, m_reachedBy, m_dearStatements, m_due, m_dueStatementsThatWait, m_dueBehindLongRows, m_dueInNextTurn, m_dueLast, m_bodiesReachedInRound);
+    bytes.addList("statements: set remembered"_s, m_rememberedByStatement);
+    bytes.addMap("statements: values shown"_s, m_valuesShownToStatement);
+    for (const auto& shown : m_valuesShownToStatement.values())
+        bytes.add("statements: values shown"_s, shown.size() > 1 ? shown.size() * sizeof(shown[0]) : 0, shown.capacity() > 1 ? shown.capacity() * sizeof(shown[0]) : 0);
+    bytes.addMap("statements: readers of functions"_s, m_readersOfFunction);
+    for (const auto& readers : m_readersOfFunction.values())
+        bytes.addList("statements: readers of functions"_s, readers);
+    bytes.addMap("witnesses: statement of edge"_s, m_statementOfEdge);
+    bytes.addList("witnesses: edges in the order logged"_s, m_edgesInOrderLogged);
+
+    bytes.addList("readers: first reader of node"_s, m_firstReaderOfNode);
+    bytes.addList("readers: seen by readers of node"_s, m_seenByReadersOfNode);
+    bytes.addList("readers: listeners of node"_s, m_listenersOfNode);
+    for (const ReaderShard& shard : m_readerShards) {
+        bytes.addList("readers: chained"_s, shard.readers);
+        bytes.add("readers: known pairs"_s, shard.known.memoryInBytes());
+        bytes.add("readers: known to wait for something"_s, shard.knownToWaitForSomething.memoryInBytes());
+        bytes.addMap("readers: known to wait for something"_s, shard.firstReaderWaitingForSomething);
     }
-    for (const ReaderShard& shard : m_readerShards)
-        bytes += bytesOf(shard.readers) + shard.known.memoryInBytes();
-    bytes += bytesOf(m_layoutOrCalleeOfMember) + bytesOf(m_lastCountThatSaw) + bytesOf(m_unknownSourceOfNode);
+    for (const WatchShard& shard : m_watchShards) {
+        bytes.addList("watches: readers chained"_s, shard.readers);
+        bytes.addList("watches: watches"_s, shard.watches);
+        bytes.addMap("watches: watch of part"_s, shard.watchOfPart);
+        bytes.add("watches: known watchers"_s, shard.knownWatchers.memoryInBytes());
+        bytes.addList("watches: watched nodes"_s, shard.watchedNodes);
+        for (const WatchedNode& node : shard.watchedNodes) {
+            bytes.addList("watches: watches of watched nodes"_s, node.watches);
+            bytes.addList("watches: watches of watched nodes"_s, node.watchesOfManyObjects);
+        }
+        bytes.addMap("watches: watched node of node"_s, shard.watchedNodeOfNode);
+        bytes.addMap("watches: first watch of member"_s, shard.firstWatchOfMember);
+        bytes.addList("watches: watches of members"_s, shard.watchesOfMembers);
+        constexpr ASCIILiteral cover = "watches: sets watched for cover"_s;
+        bytes.addMap(cover, shard.numberOfSetWatchedForCover);
+        bytes.addList(cover, shard.watchesOfSetWatchedForCover);
+        for (const auto& watches : shard.watchesOfSetWatchedForCover)
+            bytes.add(cover, 0, watches.capacity() > 2 ? watches.capacity() * sizeof(uint32_t) : 0);
+        bytes.addLists(cover, shard.membersToChain);
+    }
+    bytes.addList("watches: sets watched for cover"_s, m_firstSetWatchedForCoverOfMember);
+    bytes.addLists("watches: sets watched for cover"_s, m_setsWatchedForCoverOfMembers);
+    bytes.addBits("watches: sets watched for cover"_s, m_isWatched);
+
+    bytes.addList("names: names"_s, m_names);
+    bytes.addMap("names: names"_s, m_numberOfName);
+    auto addNodesOfName = [&](const NodesOfName& nodes) {
+        bytes.addList("names: nodes of few objects"_s, nodes.ofFewObjects);
+        bytes.addList("names: nodes of many objects"_s, nodes.ofManyObjects);
+        bytes.addList("names: nodes of very many objects"_s, nodes.ofVeryManyObjects);
+    };
     for (const Name& name : m_names) {
-        for (const NodesOfName* nodes : { &name.read, &name.written })
-            bytes += bytesOf(nodes->ofFewObjects) + bytesOf(nodes->ofManyObjects) + bytesOf(nodes->ofVeryManyObjects);
+        addNodesOfName(name.read);
+        addNodesOfName(name.written);
     }
-    return bytes + bytesOf(m_names);
+    for (const KindOfNames& kind : m_kindsOfNames) {
+        addNodesOfName(kind.read);
+        addNodesOfName(kind.written);
+    }
+    for (const LinkShard& shard : m_linkShards) {
+        for (const NodesOfMembers& nodesOfMembers : shard.nodesOfMembers) {
+            bytes.addMap("names: first node of member"_s, nodesOfMembers.first);
+            bytes.addList("names: nodes of members chained"_s, nodesOfMembers.chained);
+        }
+        bytes.addList("names: parts watched"_s, shard.partsWatched);
+        bytes.addMap("names: parts watched"_s, shard.partWatchedOf);
+        constexpr ASCIILiteral linksOfRound = "names: links of one round"_s;
+        bytes.addList(linksOfRound, shard.linked.edges);
+        bytes.addList(linksOfRound, shard.linked.listsMostlyAtRest);
+        bytes.addList(linksOfRound, shard.namesWatchedInRound);
+        bytes.addList(linksOfRound, shard.writtenUnderWatchedNames);
+        bytes.addList(linksOfRound, shard.woken);
+    }
+    auto addLinksOfRound = [&](const auto&... lists) {
+        (bytes.addList("names: links of one round"_s, lists), ...);
+    };
+    addLinksOfRound(m_readToLink, m_writtenToLink, m_readToInsert, m_edgesOfRound, m_edgesInFrontOfLinks, m_placeholdersStopped);
+    bytes.addLists("names: links of one round"_s, m_nodesToInsertOfShards);
+
+    constexpr ASCIILiteral members = "members: layout or callee, counts, marks"_s;
+    bytes.addList(members, m_layoutOrCalleeOfMember);
+    bytes.addList(members, m_lastCountThatSaw);
+    bytes.addList(members, m_marksOfObject);
+    bytes.addMap(members, m_isTooLarge);
+    bytes.addBits(members, m_isSaturated);
+    bytes.addMap(members, m_familyObjectsOfMask);
+
+    constexpr ASCIILiteral wakers = "readers: lists of one round"_s;
+    bytes.addLists(wakers, m_readersOfWorker);
+    bytes.addLists(wakers, m_newMembersOfWorker);
+    bytes.addLists(wakers, m_watchesToTestOfWorker);
+    bytes.addList(wakers, m_newMembers);
+
+    for (const std::unique_ptr<Thread>& thread : m_threads) {
+        const ValueFlowRoundLog& log = thread->log;
+        bytes.addList("logs: runs"_s, log.runs);
+        bytes.addList("logs: edges"_s, log.edges);
+        bytes.addList("logs: edges"_s, log.edgesOfMadeNodes);
+        bytes.addList("logs: nodes read"_s, log.nodesRead);
+        bytes.addList("logs: records asked for"_s, log.madeNodesAskedFor);
+        bytes.addList("logs: parts watched"_s, log.partsWatched);
+        bytes.addList("logs: parts watched"_s, log.partsWatchedLast);
+        auto addRest = [&](const auto&... lists) {
+            (bytes.addList("logs: the rest"_s, lists), ...);
+        };
+        addRest(log.made, log.madeWhereAskedFor, log.madeWithStatementToRun, log.askedForAtRest, log.recordsOfRunsWhereMade, log.whoReached, log.rememberedByStatementsRunWhereMade, log.partsOfMadeNodes, log.reached, log.uses, log.statementsWithMembersNotToldApart, log.functionsAsked, log.valuesShown, log.nodesAskedWhetherEmpty, log.namesWatched);
+        addRest(thread->thrownOfStatementsThatWait, thread->statementsFound, thread->dueInNextTurn, thread->bodiesReached, thread->namesWatched, thread->numberOfMadeNode);
+        bytes.addLists("logs: sorted by shard"_s, thread->partsWatchedOfShard);
+        bytes.addLists("logs: sorted by shard"_s, thread->nodesReadOfShard);
+        bytes.addLists("logs: sorted by shard"_s, thread->nodesAskedWhetherEmptyOfShard);
+        bytes.add("logs: threads"_s, sizeof(Thread));
+    }
+    bytes.dump();
 }
 
 } } } // namespace JSC::AOT::Typed

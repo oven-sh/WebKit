@@ -590,7 +590,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
             exceptions.thrownValue = JSValue::encode(rethrownException->value());
         return handlerCodeAndFrame;
     }
+    bool clearsDeadStack = false;
     if (isHandled && vm.heap.cage().hasDeadStackToClear()) [[unlikely]] {
+        clearsDeadStack = true;
         ExceptionWords& wordsOfHandler = frames->instance()->runtime.exceptions;
         uintptr_t bytes = std::bit_cast<uintptr_t>(wordsOfHandler.stackPointerOfHandler) - std::bit_cast<uintptr_t>(vm.heap.cage().takeLowestAddressOfDeadStack(vm));
         wordsOfHandler.bytesOfDeadStackBelowHandler = static_cast<uint32_t>(std::min<uintptr_t>(bytes, std::numeric_limits<uint32_t>::max()) & ~static_cast<uintptr_t>(sizeof(void*) - 1));
@@ -602,9 +604,25 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
             return handlerCodeAndFrame;
         }
     }
-    bool stackIsUnobserved = !exception && !rethrownException && isHandled && !needsException && (!takesException || isCaughtByCompiledCode(vm, *frames));
     if (isHandled && (exception || !(takesException || needsException))) [[likely]]
         return handlerCodeAndFrame;
+    bool stackIsUnobserved = false;
+    if (!exception && !rethrownException) {
+        if (removeCodePtrTag(frameRecord->callerFrame->rawReturnPC()) == instance->state->returnAddressOfThrowAfterCleanup) {
+            if (uint64_t kept = instance->state->keptByCleanup)
+                rethrownException = exceptionKeptByCleanup(kept, JSValue::decode(exceptions.thrownValue));
+        }
+        if (rethrownException)
+            exceptions.thrownValue = JSValue::encode(rethrownException);
+        if (isHandled && !needsException) {
+            if (rethrownException)
+                return handlerCodeAndFrame;
+            stackIsUnobserved = isCaughtAboveCleanup(vm, *frames);
+            // The handler takes the value, and makes an Exception of it if it wants one. That is a call.
+            if (stackIsUnobserved && !clearsDeadStack)
+                return handlerCodeAndFrame;
+        }
+    }
     AOTOperationPrologueCallFrameTracer tracer(vm, frameRecord);
     if (!exception) {
         JSValue thrown = JSValue::decode(std::exchange(exceptions.thrownValue, 0));
@@ -612,7 +630,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
         auto scope = DECLARE_THROW_SCOPE(vm);
         auto action = Exception::StackCaptureAction::DoNotCaptureStack;
         if (!stackIsUnobserved && !rethrownException)
-            action = stackCaptureActionOfThrow(vm, *instance, frameRecord, frames && frames->isAtEnd() ? &*frames : nullptr);
+            action = stackCaptureActionOfThrow(vm, *instance, thrown, frameRecord, frames && frames->isAtEnd() ? &*frames : nullptr);
         Exception* thrownException = throwException(instance->globalObject, scope, rethrownException ? thrown : JSValue(Exception::create(vm, thrown, action)));
         if (isHandled && takesException && !needsException) {
             auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

@@ -27,6 +27,7 @@
 #include "Exception.h"
 
 #include "AOTStackTrace.h"
+#include "AOTUnwinding.h"
 #include "CallFrameInlines.h"
 #include "DeferGCInlines.h"
 #include "ErrorInstance.h"
@@ -118,7 +119,7 @@ void Exception::retainReturnAddresses(VM& vm, AOT::ReturnAddressTrace* returnAdd
     vm.heap.reportExtraMemoryAllocated(this, m_stack.sizeInBytes());
 }
 
-// An Error that native code throws was made on the spot. Two readers still tell its stack from the stack of the throw: an inspector lists the frames, and node:vm marks the throw in the source text of the bytecode on top.
+// Two readers tell the stack of an Error that was made on the spot from the stack of the throw: an inspector lists the frames, and node:vm marks the throw in the source text of the bytecode on top.
 ErrorInstance* Exception::errorToTakeStackFrom(VM& vm, JSValue thrownValue)
 {
     auto* error = dynamicDowncast<ErrorInstance>(thrownValue);
@@ -136,10 +137,12 @@ void Exception::takeStackFrom(VM& vm, ErrorInstance& error)
     retainReturnAddresses(vm, error.returnAddresses(), otherFrames ? Vector<StackFrame>(*otherFrames) : Vector<StackFrame>());
 }
 
-Exception* Exception::tryCreateWithStackOfError(VM& vm, JSValue thrownValue)
+Exception* Exception::tryCreateWithStackOfError(VM& vm, JSValue thrownValue, StackOfError accepted)
 {
     ErrorInstance* error = errorToTakeStackFrom(vm, thrownValue);
     if (!error)
+        return nullptr;
+    if (accepted == StackOfError::MadeHere && !AOT::beginsInTopCompiledFrame(vm, *error->returnAddresses()))
         return nullptr;
     // The end of a collection may turn the stack of the Error into text.
     DeferGC deferGC(vm);

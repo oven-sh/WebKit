@@ -77,6 +77,8 @@ public:
     Instance* onlyInstance { nullptr };
     // The frame of the host function that throws because a class was called without `new`, while it makes the error.
     CallFrame* classCalledWithoutNew { nullptr };
+    // In the innermost native code that has asked for the Exception of what it calls, and so may list the frames of the throw.
+    void* stackPointerOfExceptionTaker { nullptr };
     std::unique_ptr<RuntimeTable> runtimeTable;
     std::unique_ptr<ProgramIdentifiers> identifiers;
     std::unique_ptr<CacheRegistry> caches;

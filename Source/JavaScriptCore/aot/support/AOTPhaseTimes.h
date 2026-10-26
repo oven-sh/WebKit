@@ -47,6 +47,7 @@ public:
     ~PhaseTimes();
 
     void didFinish(ASCIILiteral phase);
+    static size_t residentMegabytes();
 
 private:
     PhaseTimes(BuildContext&, ASCIILiteral namePrefix, ASCIILiteral name, std::optional<Stage> timedStage, PassID);

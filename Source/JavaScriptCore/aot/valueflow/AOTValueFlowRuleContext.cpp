@@ -51,6 +51,7 @@ void ValueFlowRuleContext::begin(ValueFlowStatementID statement)
     m_firstEdgeOfRun = m_log.edges.size();
     m_firstNodeReadOfRun = m_log.nodesRead.size();
     m_firstNodeAskedWhetherEmptyOfRun = m_log.nodesAskedWhetherEmpty.size();
+    m_firstNameWatchedOfRun = m_log.namesWatched.size();
     m_unknownSource = std::nullopt;
     m_holdingNothing = { };
     if (!m_constantsOfThisTurn.isEmpty())
@@ -104,6 +105,15 @@ void ValueFlowRuleContext::leaveOutWhatIsKnown()
                 m_log.nodesAskedWhetherEmpty[kept++] = node;
         }
         m_log.nodesAskedWhetherEmpty.shrink(kept);
+        if (m_log.namesWatched.size() != m_firstNameWatchedOfRun) [[unlikely]] {
+            kept = m_firstNameWatchedOfRun;
+            for (size_t index = m_firstNameWatchedOfRun; index < m_log.namesWatched.size(); ++index) {
+                ValueFlowRoundLog::NameWatched watched = m_log.namesWatched[index];
+                if (m_solver.partOfNameWatchedBy(m_statement, watched.numberOfName) != watched.within)
+                    m_log.namesWatched[kept++] = watched;
+            }
+            m_log.namesWatched.shrink(kept);
+        }
     }
     if (!m_filtersKnownEdges) {
         if (endOfEdges > m_log.mostEdges) [[unlikely]] {
@@ -161,6 +171,7 @@ void ValueFlowRuleContext::end()
         static_cast<uint32_t>(m_log.valuesShown.size()),
         static_cast<uint32_t>(m_log.partsWatched.size()),
         static_cast<uint32_t>(m_log.nodesAskedWhetherEmpty.size()),
+        static_cast<uint32_t>(m_log.namesWatched.size()),
     });
 }
 
@@ -499,8 +510,39 @@ bool ValueFlowRuleContext::isGuardedByRemovedFeature(BuiltinID builtin) const
 
 ValueFlowNodeID ValueFlowRuleContext::holdingNothing() { return m_holdingNothing = nodeFor(ValueFlowNodeKey::constant(ValueSets::nothing)); }
 
+// The objects of `within` that declare a field of the name or are written under it. The statement runs again when one more of them is written under it. What its earlier runs have asked about the name is forgotten.
+// Whoever asks about a name in the first round in which it is asked about gets no answer and runs again: the solver keeps the holders under a name from then on.
+std::optional<ClimbingSet> ValueFlowRuleContext::holdersUnder(ValueFlowName name, ClimbingSet within)
+{
+    uint32_t number = m_solver.numberOfName(name);
+    std::span<ValueFlowRoundLog::NameWatched> watchedInRun = m_log.namesWatched.mutableSpan().subspan(m_firstNameWatchedOfRun);
+    auto earlier = std::ranges::find(watchedInRun, name, &ValueFlowRoundLog::NameWatched::name);
+    if (earlier != watchedInRun.end())
+        earlier->within = m_maker.unite(earlier->within, within.m_set);
+    else
+        m_log.namesWatched.append({ name, within.m_set, number });
+    ValueSetID holders = m_solver.holdersUnder(number);
+    if (!holders)
+        return std::nullopt;
+    return restrict(within, holders);
+}
+
+// A set of receivers that grows keeps its record for a name as long as none of the new receivers holds anything under that name.
+NEVER_INLINE ClimbingSet ValueFlowRuleContext::objectsThatMayHoldSomethingUnder(ValueFlowName name, ClimbingSet objects)
+{
+    if (!m_solver.m_input.nodes || !m_solver.m_input.universe)
+        return objects;
+    std::optional<ClimbingSet> holders = holdersUnder(name, objects);
+    if (!holders || holders->m_set == objects.m_set)
+        return objects;
+    return m_solver.mayBeComputedKey(name) ? unite(*holders, valueWithin(objects, writtenUnderUnknownKey())) : *holders;
+}
+
 ValueFlowNodeID ValueFlowRuleContext::read(ClimbingSet objects, ValueFlowName name)
 {
+    AOT_THRESHOLD(uint32_t, mostObjectsReadWhole, 8);
+    if (name.kind == ValueFlowNameKind::Property && !ValueSets::isComplement(objects.m_set) && sets().size(objects.m_set) > mostObjectsReadWhole)
+        objects = objectsThatMayHoldSomethingUnder(name, objects);
     if (objects.m_set == ValueSets::nothing)
         return holdingNothing();
     return nodeFor(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Read, objects.m_set, name));
@@ -653,7 +695,9 @@ void ValueFlowRuleContext::connectAsNamed(ValueFlowNodeID from, ValueFlowNodeID 
     if (m_log.edges.size() - m_firstEdgeOfRun >= mostEdgesThatWait) [[unlikely]] {
         size_t firstNodeRead = std::exchange(m_firstNodeReadOfRun, m_log.nodesRead.size());
         size_t firstNodeAskedWhetherEmpty = std::exchange(m_firstNodeAskedWhetherEmptyOfRun, m_log.nodesAskedWhetherEmpty.size());
+        size_t firstNameWatched = std::exchange(m_firstNameWatchedOfRun, m_log.namesWatched.size());
         leaveOutWhatIsKnown();
+        m_firstNameWatchedOfRun = firstNameWatched;
         m_firstEdgeOfRun = m_log.edges.size();
         m_firstNodeReadOfRun = firstNodeRead;
         m_firstNodeAskedWhetherEmptyOfRun = firstNodeAskedWhetherEmpty;

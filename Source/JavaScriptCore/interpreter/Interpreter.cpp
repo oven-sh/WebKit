@@ -950,8 +950,11 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
     size_t asyncStackTraceInsertPos = 0;
     EntryFrame* previousEntryFrame = start.entryFrameOfFramesAbove;
     size_t previousEntryFrameStackTraceInsertPos = results.size();
+    EntryFrame* entryFrameWhoseContextWaits = nullptr;
     auto updateAsyncStackTraceOriginGenerator = [&]() -> void {
         ASSERT(Options::useAsyncStackTrace());
+        if (previousEntryFrame == entryFrameWhoseContextWaits)
+            return;
         if (JSCell* awaiter = asyncFunctionIn(vmEntryRecord(previousEntryFrame)->m_context)) {
             asyncStackTraceOriginGenerator = awaiter;
             asyncStackTraceInsertPos = previousEntryFrameStackTraceInsertPos;
@@ -1013,6 +1016,8 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
                     results.append(StackFrame(AOT::TraceFrame { frame.code, AOT::functionInFramesOf(frame.calledBuiltin), frame.callSite, !!frame.inlineFrame, false }));
                 else
                     results.append(StackFrame(vm, owner, AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall() }, visitor.compiledFrames().recordedCallee()));
+                if (Options::useAsyncStackTrace() && !frame.inlineFrame && AOT::FunctionDescription(frame.function).isAsync() && visitor.compiledFrames().isAboveFramesThatWait())
+                    entryFrameWhoseContextWaits = currentEntryFrame;
 #endif
 #if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
             } else if (!!visitor->codeBlock())

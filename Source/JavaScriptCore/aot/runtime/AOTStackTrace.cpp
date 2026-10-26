@@ -31,6 +31,7 @@
 #include "JSPromise.h"
 #include "Microtask.h"
 #include "StackFrame.h"
+#include "StackVisitor.h"
 #include "VMEntryRecord.h"
 #include "VMInlines.h"
 #include <wtf/HashSet.h>
@@ -181,6 +182,7 @@ public:
 
     const Image& image() const { return m_image; }
     bool isAtEnd() const { return !m_site; }
+    bool isAmongFramesThatWait() const { return m_isAmongFramesThatWait; }
     const CallSiteCache::Entry& site() const
     {
         ASSERT(!isAtEnd());
@@ -494,6 +496,26 @@ void recordCallee(VM& vm, JSObject* closure)
     FunctionTables::of(vm).recordCallee(vm, walk.callerStackPointer(), closure);
 }
 
+void forEachCallThatRecordsCallee(VM& vm, const void* outermost, const ScopedLambda<void(const void* stackPointerOfCaller)>& functor)
+{
+    const Image& image = *vm.aotState().image;
+    StackVisitor::visitWithCompiledFrames(vm.topCallFrame, vm, [&](auto& visitor) {
+        if constexpr (std::remove_reference_t<decltype(visitor)>::visitsCompiledFrames) {
+            if (visitor->isCompiledFrame()) {
+                for (CompiledFrameIterator& frames = visitor.compiledFrames(); !frames.isAtEnd(); frames.advanceToCallerMachineFrame()) {
+                    const void* stackPointerOfCaller = frames.callerStackPointer();
+                    if (stackPointerOfCaller > outermost)
+                        return IterationStatus::Done;
+                    if (FunctionDescription(image.rootFunctionOf(frames.callSite().code.index())).recordsCallee())
+                        functor(stackPointerOfCaller);
+                }
+                return IterationStatus::Continue;
+            }
+        }
+        return static_cast<const void*>(visitor->callFrame()) > outermost ? IterationStatus::Done : IterationStatus::Continue;
+    }, false, StackVisitor::CompiledFrameVisit::EachRunOnce);
+}
+
 static NEVER_INLINE std::optional<RunStart> findRunBelowOtherFrames(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& framesOnTop, size_t maxStackSize)
 {
     std::optional<CompiledFrameIterator> frames;
@@ -571,10 +593,12 @@ ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackS
 
     // The frames below go behind the frames on top, so the frames on top count as results and not as frames above.
     size_t numberOfFramesAbove = std::min(run.numberShown, maxStackSize);
-    if (mayHaveFramesBelow(vm, walk, start->entryFrame, numberOfFramesAbove < maxStackSize)) {
+    // The body of an async generator that has gone on behind an await runs above the function that the job entered. Nobody awaits the body.
+    EntryFrame* entryFrameOfFramesAbove = walk.isAmongFramesThatWait() ? nullptr : start->entryFrame;
+    if (mayHaveFramesBelow(vm, walk, entryFrameOfFramesAbove, numberOfFramesAbove < maxStackSize)) {
         vm.interpreter.appendStackTrace(owner, results, {
             .compiledFrameExit = walk.isAtEnd() ? &walk.exit() : nullptr,
-            .entryFrameOfFramesAbove = start->entryFrame,
+            .entryFrameOfFramesAbove = entryFrameOfFramesAbove,
             .numberOfFramesAbove = numberOfFramesAbove - framesAbove.numberShown,
         }, maxStackSize);
     }
@@ -586,6 +610,11 @@ ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackS
     if (validatesRuntime(vm)) [[unlikely]]
         validateCapturedTrace(vm, owner, *trace, otherFrames.get(), maxStackSize, lastConstructorToSkip);
     return trace;
+}
+
+bool beginsAt(const ReturnAddressTrace& trace, const void* returnAddress)
+{
+    return trace.numberOfReturnAddresses && ReturnAddressTrace::decode(trace.returnAddresses()[0], imageCodeStart()) == returnAddress;
 }
 
 void forEachShownFrame(const ReturnAddressTrace& trace, const ScopedLambda<void(const TraceFrame&)>& functor)

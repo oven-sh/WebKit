@@ -493,8 +493,9 @@ void HeapRule::notePrototypeObjectsThatWriteMayReach(const ValueFlowOperand& obj
     if (!object.node || key.keyClass != HeapKeyClass::Unknown || !mayBeUnknownObject(receivers) || key.receivers == HeapKeyReceivers::AllButBuiltinObjects)
         return;
     add(m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), m_context.valueWithin(ClimbingSet(m_tables.prototypeObjectsThatListingDoesNotName()), object.node));
+    // A lookup above the unknown object lets every prototype object of the language escape. Only one that was carried out comes back as a value.
     if (isInProgramCode())
-        add(m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), escapedAmong(ClimbingSet(m_tables.prototypeObjectsThatListingDoesNotName())));
+        add(m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), m_context.valueWithin(ClimbingSet(m_tables.prototypeObjectsThatListingDoesNotName()), m_context.nodes().ofHost(ValueFlowHostNode::ValuesCarriedOut)));
 }
 
 ClimbingSet HeapRule::unlockedObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)

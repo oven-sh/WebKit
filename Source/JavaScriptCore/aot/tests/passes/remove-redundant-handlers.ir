@@ -1,4 +1,4 @@
-# A block that cannot throw loses its handler, and a handler that only throws what it caught again is skipped
+# A block that cannot throw loses its handler, and a cleanup that only throws on what it caught is skipped. A `catch` that throws the value again stays: that is another throw
 # FORM: Prepared
 # RUN: pass RemoveRedundantHandlers
 # STATISTIC: RemoveRedundantHandlersChanges = 13
@@ -100,13 +100,13 @@ function f6 name="rethrowsException" parameters=[{type=anything}] results=[{type
 # CHECK-NOT: CatchException
 }
 
-function f7 name="throwsCaughtValue" parameters=[{type=anything}] results=[{type=anything}] {
+function f7 name="cleanupThrowsCaughtValue" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2():
     v1 = Call v0
     Jump -> next b1()
   b1():
     Return v1
-  b2() role=CatchHandler:
+  b2() role=CleanupHandler:
     v2 = CatchValue
     Throw v2
 # CHECK: b0(v0: anything):
@@ -290,4 +290,18 @@ function f21 name="doubles" parameters=[{type=number}] results=[{type=number}] {
 function f22 name="callsItsArgument" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = Call v0
     Return v1
+}
+
+function f23 name="catchThrowsCaughtValueAgain" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b2():
+    v1 = Call v0
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Throw v2
+# CHECK: b0(v0: anything) handler=b2():
+# CHECK: = CatchValue
+# CHECK-NEXT: Throw v2
 }

@@ -183,7 +183,7 @@ static Seconds serialCPUTimeOfCurrentThread()
     return CPUTime::forCurrentThread() - ParallelRegionScope::cpuTimeOfCurrentThread();
 }
 
-static size_t residentMegabytes()
+size_t PhaseTimes::residentMegabytes()
 {
 #if OS(LINUX)
     unsigned long totalPages = 0;

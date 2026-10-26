@@ -259,6 +259,8 @@ public:
 
     JS_EXPORT_PRIVATE void advance();
     JS_EXPORT_PRIVATE void advanceToCallerMachineFrame();
+    // The frame is the last one shown of its run: the functions below wait for the step of an async generator that it belongs to.
+    JS_EXPORT_PRIVATE bool isAboveFramesThatWait() const;
     JS_EXPORT_PRIVATE bool isConstructCall();
     // The function object that runs in the frame, where its function records it.
     JS_EXPORT_PRIVATE JSObject* recordedCallee();

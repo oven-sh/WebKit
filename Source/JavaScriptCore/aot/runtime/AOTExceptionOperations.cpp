@@ -89,8 +89,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowToHandlerInFunction, void, (Instance* 
     OPERATION_RETURN(scope);
 }
 
-// The program threw the value somewhere else, and a cleanup that took the value throws it on. An Error keeps the stack that it holds.
-JSC_DEFINE_JIT_OPERATION(operationAOTThrowAfterCleanup, void, (Instance* instance, EncodedJSValue value))
+// The program threw the value somewhere else, and a cleanup that took the value throws it on.
+JSC_DEFINE_JIT_OPERATION(operationAOTThrowAfterCleanup, void, (Instance* instance, EncodedJSValue value, uint64_t kept))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowAfterCleanup);
     if (vm.exceptionForInspection()) [[unlikely]] {
@@ -100,7 +100,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAfterCleanup, void, (Instance* instanc
     }
     instance->runtime.exceptions.thrownValue = value;
     instance->state->returnAddressOfThrowAfterCleanup = removeCodePtrTag(callFrame->rawReturnPC());
+    instance->state->keptByCleanup = kept;
     return { std::bit_cast<Exception*>(static_cast<uintptr_t>(1)) };
+}
+
+// A `throw` that jumps to a cleanup of its function calls nothing else, and a stack trace finds the place of a frame by a return address.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAddressOfThrow, uint64_t, (Instance*))
+{
+    return std::bit_cast<uint64_t>(removeCodePtrTag(AOT_OPERATION_FRAME_RECORD()->returnPC));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrow, void, (Instance* instance, EncodedJSValue value))
@@ -129,9 +136,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, EncodedJSValue, (Instance* 
     return JSValue::encode(value);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchException, EncodedJSValue, (Instance* instance))
+static Exception* takePendingException(VM& vm)
 {
-    VM& vm = *instance->vm;
     if (vm.heap.cage().hasDeadStackToClear()) [[unlikely]]
         vm.heap.cage().clearDeadStack(vm);
     DeferGC collectsWhatThrowingPutOff(vm);
@@ -139,7 +145,22 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchException, EncodedJSValue, (I
     Exception* exception = scope.exception();
     RELEASE_ASSERT(exception && !vm.isTerminationException(exception));
     scope.clearException();
-    return JSValue::encode(exception);
+    return exception;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchException, EncodedJSValue, (Instance* instance))
+{
+    VM& vm = *instance->vm;
+    // Nobody lists the frames of a throw that compiled code catches further up.
+    if (JSValue thrown = JSValue::decode(std::exchange(instance->runtime.exceptions.thrownValue, 0)))
+        return JSValue::encode(Exception::create(vm, thrown, Exception::StackCaptureAction::DoNotCaptureStack));
+    return JSValue::encode(takePendingException(vm));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchValueAndException, UGPRPair, (Instance* instance))
+{
+    Exception* exception = takePendingException(*instance->vm);
+    return makeUGPRPair(JSValue::encode(exception->value()), std::bit_cast<UCPURegister>(exception));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTReportMismatch, void, (Instance* instance, EncodedJSValue value, uint32_t type, uint32_t typeSite))
@@ -245,7 +266,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewSuppressedError, JSCell*, (Inst
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewSuppressedError);
     DeferTerminationForAWhile deferTermination(vm);
-    constexpr bool useCurrentFrame = false;
+    constexpr bool useCurrentFrame = true;
     RELEASE_AND_RETURN(scope, createSuppressedError(globalObject, vm, globalObject->errorStructure(ErrorType::SuppressedError), JSValue::decode(error), JSValue::decode(suppressed), jsUndefined(), nullptr, TypeNothing, useCurrentFrame));
 }
 

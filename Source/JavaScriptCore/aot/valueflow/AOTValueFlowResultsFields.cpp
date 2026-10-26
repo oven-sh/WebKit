@@ -315,9 +315,6 @@ struct FieldResults {
 
     void collectBirthsWithCopiesIn(FunctionID id, Vector<BirthWithCopies>& births) const
     {
-        constexpr OpcodeSet piecesOfLiterals { Opcode::PropDefine, Opcode::ElemDefine, Opcode::DefineGetter, Opcode::DefineSetter, Opcode::CopyDataProperties };
-        static_assert(!OperandIndex::PropDefine::object && !OperandIndex::ElemDefine::object && !OperandIndex::DefineGetter::object && !OperandIndex::DefineSetter::object);
-        static_assert(!OperandIndex::CopyDataProperties::target && !OperandIndex::FinishObject::object);
         const Function& function = program.at(id);
         const BuiltinTable& builtins = program.builtins();
         bool copiesIntoLiteral = false;
@@ -345,7 +342,7 @@ struct FieldResults {
                     if (open == none)
                         continue;
                     BirthWithCopies& birth = born[open].birth;
-                    bool isPiece = piecesOfLiterals.contains(value.opcode) && value.operand(0) == operand && std::ranges::count(value.operands(), operand) == 1;
+                    bool isPiece = isPieceOfLiteral(value, operand) && std::ranges::count(value.operands(), operand) == 1;
                     if (!isPiece) {
                         if (value.opcode == Opcode::FinishObject)
                             born[open].object = valueID;

@@ -24,6 +24,11 @@ static_assert(OperandIndex::PropDefine::object == literalOperandOfPiece && Opera
 static_assert(OperandIndex::DefineGetter::object == literalOperandOfPiece && OperandIndex::DefineSetter::object == literalOperandOfPiece);
 static_assert(OperandIndex::CopyDataProperties::target == literalOperandOfPiece);
 
+bool isPieceOfLiteral(const Value& operation, ValueID literal)
+{
+    return literalPieceOperations.contains(operation.opcode) && operation.operand(literalOperandOfPiece) == literal;
+}
+
 namespace {
 
 using KeyOrder = Vector<PropertyKeyID>;

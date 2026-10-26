@@ -132,6 +132,8 @@ struct State {
     uint64_t registerBeforeFault { 0 };
     // Where the last Throw at the end of a cleanup returns to. No other throw returns there.
     const void* returnAddressOfThrowAfterCleanup { nullptr };
+    // What that cleanup has kept of the throw that entered it: the Exception, or where a `throw` of the same function returns to, or zero. It is read only between that Throw and the search for its handler.
+    uint64_t keptByCleanup { 0 };
 
 private:
     explicit State(Instance&);

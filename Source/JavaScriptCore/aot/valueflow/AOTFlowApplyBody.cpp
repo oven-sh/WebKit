@@ -35,18 +35,27 @@ struct FlowCastInsertion {
     // Of the body as it was when the checks that flow has answered were gone.
     const PredictedValues& predicted;
 
+    // What was put into the body since is made from its operands.
+    bool isBehindCheck(ValueID value) const
+    {
+        if (predicted.hasSeen(value))
+            return predicted.isBehindCheck(value);
+        const Value& definition = body.function.at(value);
+        return definition.opcode == Opcode::Check || std::ranges::any_of(definition.operands(), [&](ValueID operand) { return operand && isBehindCheck(operand); });
+    }
+
     // The type was cut out of the type of the value as read, which may be owed to any check in front of it.
-    ProvenType provenOfValue(ValueID value, TypeID type) const { return Proven::byFlow(type, predicted.isBehindCheck(value) ? ProofScope::BehindChecks : ProofScope::EveryVersion); }
+    ProvenType provenOfValue(ValueID value, TypeID type) const { return Proven::byFlow(type, isBehindCheck(value) ? ProofScope::BehindChecks : ProofScope::EveryVersion); }
     // What flow says of a position leaves out the primitives that the checks in front of its stores turn away. Where the value was inside the type before it came to its checks, it is so whether they stand or go.
     ProvenType provenOfPosition(ValueID value, TypeID type) const
     {
-        if (!predicted.isBehindCheck(value))
+        if (!isBehindCheck(value))
             return Proven::byFlow(type, ProofScope::EveryVersion);
         const Function& function = body.function;
         ValueID unchecked = value;
-        while (predicted.isBehindCheck(unchecked) && isCast(function.at(unchecked).opcode))
+        while (isBehindCheck(unchecked) && isCast(function.at(unchecked).opcode))
             unchecked = function.at(unchecked).operand(0);
-        bool holdsWithoutChecks = !predicted.isBehindCheck(unchecked) && body.types.at(function.at(unchecked).type).isSubsetOf(body.types.at(type), body.program);
+        bool holdsWithoutChecks = !isBehindCheck(unchecked) && body.types.at(function.at(unchecked).type).isSubsetOf(body.types.at(type), body.program);
         return Proven::byFlow(type, holdsWithoutChecks ? ProofScope::EveryVersion : ProofScope::BehindChecks);
     }
 };

@@ -1,0 +1,117 @@
+# A closure in a field of an environment that nothing reads holds what it captures. Where the environment names each captured object in a field of its own that stays,
+# is stored once and is filled in front of the closure, the closure holds nothing that the environment does not hold: the store goes, and the closure with it.
+# A suspension that lists such a closure holds it and does not look at it: it lists what the closure captured.
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation}}}, {key="unread" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+layout L1 kind=Environment name="scopeStoredTwice" fields=[{key="x" declared={type=anything} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}, {key="unread" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+layout L2 kind=Environment name="scopeOfUnreadNames" fields=[{key="n" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation}}}, {key="unread" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="alsoUnread" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+layout L3 kind=Environment name="scopeFilledLate" fields=[{key="x" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation}}}, {key="unread" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+
+function f0 name="namedAtBirth" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure v1, v0 function=f7
+    PutEnvironmentField v1, v2 layout=L0 field=1
+    v4 = NewClosure v1 function=f8
+    Return v4
+# CHECK: = NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = NewClosure v1 function=f8
+}
+
+function f1 name="namedInFrontOfTheClosure" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = NewObject layout=L0
+    PutEnvironmentField v1, v0 layout=L0 field=0
+    v3 = NewClosure v1, v0 function=f7
+    PutEnvironmentField v1, v3 layout=L0 field=1
+    v5 = NewClosure v1 function=f8
+    Return v5
+# CHECK: PutEnvironmentField v1, v0 layout=L0
+# CHECK-NEXT: = NewClosure v1 function=f8
+}
+
+function f2 name="namedBehindTheClosure" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = NewObject layout=L3
+    v2 = NewClosure v1, v0 function=f13
+    PutEnvironmentField v1, v2 layout=L3 field=1
+    PutEnvironmentField v1, v0 layout=L3 field=0
+    v5 = NewClosure v1 function=f14
+    Return v5
+# CHECK: = NewClosure v1, v0 function=f13
+# CHECK-NEXT: PutEnvironmentField v1, v2 layout=L3 field=1
+}
+
+function f3 name="namedInAFieldThatIsStoredAgain" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewClosure v1, v0 function=f9
+    PutEnvironmentField v1, v2 layout=L1 field=1
+    v4 = NewClosure v1 function=f10
+    Return v4
+# CHECK: = NewClosure v1, v0 function=f9
+# CHECK-NEXT: PutEnvironmentField v1, v2 layout=L1 field=1
+}
+
+function f4 name="namedInAFieldThatNothingReads" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
+    v2 = NewObject -, v1, v0 layout=L2 fields=[0, 2]
+    v3 = NewClosure v2, v0 function=f11
+    PutEnvironmentField v2, v3 layout=L2 field=1
+    v5 = NewClosure v2 function=f12
+    Return v5
+# CHECK: = NewClosure v2, v0 function=f11
+# CHECK-NEXT: PutEnvironmentField v2, v3 layout=L2 field=1
+}
+
+function f5 name="listedBySuspension" role=CoroutineRamp flags=[IsAsync] parameters=[{type=object}, {type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f5 body=f6 entryWithoutPromise=f6 promiseType=Promise promiseParameter=2} {
+    v2 = NewPromise
+    v3 = CallDirect v0, v1, v2 function=f6
+    Return v2
+}
+
+function f6 name="listedBySuspension" role=CoroutineBody flags=[IsAsync] parameters=[{type=object}, {type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f5 body=f6 entryWithoutPromise=f6 promiseType=Promise promiseParameter=2} {
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = NewClosure v3, v0 function=f7
+    PutEnvironmentField v3, v4 layout=L0 field=1
+    v6 = NewClosure v3 function=f8
+    v7 = AwaitBySavingFrame v1, v2, v4
+    Return v6
+# CHECK-NOT: function=f7
+# CHECK: AwaitBySavingFrame v1, v2, v3, v0
+}
+
+function f7 name="readsScopeAndObject" kind=Arrow captures=[{type=env L0}, {type=object}] results=[{type=anything}] {
+  b0(v0: env L0, v1: object):
+    Return v1
+}
+function f8 name="readsScope" kind=Arrow captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=0
+    Return v1
+}
+function f9 name="readsScopeStoredTwiceAndObject" kind=Arrow captures=[{type=env L1}, {type=object}] results=[{type=anything}] {
+  b0(v0: env L1, v1: object):
+    Return v1
+}
+function f10 name="readsScopeStoredTwice" kind=Arrow captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=0
+    Return v1
+}
+function f11 name="readsScopeOfUnreadNamesAndObject" kind=Arrow captures=[{type=env L2}, {type=object}] results=[{type=anything}] {
+  b0(v0: env L2, v1: object):
+    Return v1
+}
+function f12 name="readsScopeOfUnreadNames" kind=Arrow captures=[{type=env L2}] results=[{type=anything}] {
+  b0(v0: env L2):
+    v1 = GetEnvironmentField v0 layout=L2 field=0
+    Return v1
+}
+function f13 name="readsScopeFilledLateAndObject" kind=Arrow captures=[{type=env L3}, {type=object}] results=[{type=anything}] {
+  b0(v0: env L3, v1: object):
+    Return v1
+}
+function f14 name="readsScopeFilledLate" kind=Arrow captures=[{type=env L3}] results=[{type=anything}] {
+  b0(v0: env L3):
+    v1 = GetEnvironmentField v0 layout=L3 field=0
+    Return v1
+}

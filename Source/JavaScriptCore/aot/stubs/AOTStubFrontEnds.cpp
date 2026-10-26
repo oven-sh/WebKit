@@ -32,8 +32,10 @@ std::span<const OperationPrelude> operationPreludes()
     static constexpr OperationPrelude preludes[] = {
         { Entry::operationAOTBarrierSlow, emitBarrierPrelude },
         { Entry::operationAOTBarrierSlowPreservingRegisters, emitBarrierPrelude },
+        { Entry::operationAOTAddressOfThrow, emitAddressOfThrowPrelude },
         { Entry::operationAOTCatch, emitCatchPrelude },
-        { Entry::operationAOTCatchException, emitCatchPrelude },
+        { Entry::operationAOTCatchException, emitCatchExceptionPrelude },
+        { Entry::operationAOTCatchValueAndException, emitCatchValueAndExceptionPrelude },
         { Entry::operationAOTGetConstructPrototype, emitGetConstructPrototypePrelude },
         { Entry::operationAOTGetSuperBase, emitGetSuperBasePrelude },
         { Entry::operationAOTStringToLowerCase, emitToLowerCasePrelude },

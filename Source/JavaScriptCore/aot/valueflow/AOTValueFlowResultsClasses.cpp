@@ -153,8 +153,11 @@ static Vector<FlowMemberKey> findKeysOfMembers(const ValueFlowResultInputs& inpu
     for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(id.index())) {
         if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::DefineMethod || function.at(statement.site).key())
             continue;
-        if (PropertyKeyID key = findOnlyNameAmong(inputs, possibleValuesOf(inputs, inputs.bodies().operandsOf(statement)[OperandIndex::DefineMethod::computedKey], maker)))
-            keys.append({ statement.site, key });
+        PropertyKeyID key = findOnlyNameAmong(inputs, possibleValuesOf(inputs, inputs.bodies().operandsOf(statement)[OperandIndex::DefineMethod::computedKey], maker));
+        // The prototype property of a class cannot be redefined: that definition throws, and one with a written key never does.
+        if (!key || (function.at(statement.site).side() == ClassSide::Static && inputs.program.nameClassOf(key) == NameClass::Prototype))
+            continue;
+        keys.append({ statement.site, key });
     }
     AOT::sort(keys, { }, &FlowMemberKey::definition);
     return keys;

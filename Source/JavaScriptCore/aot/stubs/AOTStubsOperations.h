@@ -146,6 +146,9 @@ constexpr StubKey throwAtSite(ThrowSiteSource source, CallerFrame callerFrame)
 }
 
 PreludeExit emitCatchPrelude(StubAssembler&);
+PreludeExit emitCatchExceptionPrelude(StubAssembler&);
+PreludeExit emitCatchValueAndExceptionPrelude(StubAssembler&);
+PreludeExit emitAddressOfThrowPrelude(StubAssembler&);
 PreludeExit emitThrowPrelude(StubAssembler&);
 PreludeExit emitThrowAfterCleanupPrelude(StubAssembler&);
 

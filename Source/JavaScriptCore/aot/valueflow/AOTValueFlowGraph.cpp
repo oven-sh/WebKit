@@ -1442,7 +1442,6 @@ void ValueFlowGraph::releaseRows()
 
 void ValueFlowGraph::releaseSolvingState(Predecessors predecessors)
 {
-    m_memoryInBytesBeforeRelease = memoryInBytes();
     m_rows.release(*m_team);
     m_successors.release(*m_team);
     for (const std::unique_ptr<Shard>& shard : m_shards)
@@ -1500,19 +1499,61 @@ void ValueFlowGraph::layPredecessorsInRows()
     });
 }
 
-size_t ValueFlowGraph::memoryInBytes() const
+void ValueFlowGraph::addBytesTo(ValueFlowBytesByTable& bytes) const
 {
-    if (m_hasReleasedSolvingState)
-        return m_memoryInBytesBeforeRelease;
-    auto bytesOf = [](const auto& vector) {
-        return vector.capacity() * sizeof(vector[0]);
-    };
-    size_t bytes = static_cast<size_t>(m_numberOfNodes) * (sizeof(Gate) + sizeof(Row) + 2 * sizeof(Links) + sizeof(ValueSetID));
-    bytes += bytesOf(m_masks) + bytesOf(m_edgesNotInLists) + bytesOf(m_edgesOfSolve);
-    bytes += (1 + 3 * m_coverings.size()) * (m_capacity / 8);
-    for (const std::unique_ptr<Shard>& shard : m_shards)
-        bytes += shard->blocksOfSuccessors.memoryInBytes() + shard->blocksOfPredecessors.memoryInBytes() + shard->edgesOfNodesWithManySuccessors.memoryInBytes() + shard->edgesOutOfConstantsIntoNodesWithManyPredecessors.memoryInBytes() + bytesOf(shard->listedEdgesOutOfConstants);
-    return bytes;
+    RELEASE_ASSERT(!m_hasReleasedSolvingState);
+    size_t numberOfNodes = m_numberOfNodes;
+    bytes.add("graph: gates of nodes"_s, numberOfNodes * sizeof(Gate));
+    bytes.add("graph: rows of nodes"_s, numberOfNodes * sizeof(Row));
+    bytes.add("graph: successors of nodes, the first two"_s, numberOfNodes * sizeof(Links));
+    bytes.add("graph: predecessors of nodes, the first two"_s, numberOfNodes * sizeof(Links));
+    bytes.add("graph: values of nodes"_s, numberOfNodes * sizeof(ValueSetID));
+    bytes.add("graph: bits of nodes"_s, (3 + 3 * m_coverings.size()) * (m_capacity / 8));
+    bytes.addList("graph: masks"_s, m_masks);
+    size_t wordsOfSuccessors = 0;
+    size_t wordsOfPredecessors = 0;
+    for (uint32_t node = 0; node < m_numberOfNodes; ++node) {
+        wordsOfSuccessors += m_successors[node].count > 2 ? m_successors[node].count : 0;
+        wordsOfPredecessors += m_predecessors[node].count > 2 ? m_predecessors[node].count : 0;
+    }
+    bytes.add("graph: successors of nodes, blocks"_s, wordsOfSuccessors * sizeof(uint32_t), 0);
+    bytes.add("graph: predecessors of nodes, blocks"_s, wordsOfPredecessors * sizeof(uint32_t), 0);
+    constexpr ASCIILiteral edgesOfRound = "graph: edges of one round"_s;
+    constexpr ASCIILiteral waves = "graph: messages and arrivals of waves"_s;
+    bytes.addList(edgesOfRound, m_isNewEdge);
+    bytes.addList(edgesOfRound, m_edgesNotInLists);
+    bytes.addList(edgesOfRound, m_edgesOfSolve);
+    bytes.addLists(edgesOfRound, m_indicesBySource);
+    bytes.addLists(edgesOfRound, m_edgesByTarget);
+    bytes.addLists(edgesOfRound, m_edgesOnlyToLink);
+    bytes.addLists(waves, m_messages);
+    bytes.addList(waves, m_arrivals.nodes);
+    bytes.addList(waves, m_arrivals.list);
+    bytes.addList(waves, m_nodesWoken);
+    bytes.addList(waves, m_found);
+    bytes.addLists(waves, m_foundInShare);
+    for (const Covering& covering : m_coverings) {
+        bytes.addList(waves, covering.nodesJustRetired);
+        bytes.addList(waves, covering.nodesToLookAt);
+    }
+    for (const std::unique_ptr<Worker>& worker : m_workers) {
+        bytes.addList(waves, worker->movedNodes);
+        bytes.addMap("graph: sets of low members"_s, worker->setsOfLowMembers);
+    }
+    for (const std::unique_ptr<Shard>& shard : m_shards) {
+        bytes.add("graph: successors of nodes, blocks"_s, 0, shard->blocksOfSuccessors.memoryInBytes());
+        bytes.add("graph: predecessors of nodes, blocks"_s, 0, shard->blocksOfPredecessors.memoryInBytes());
+        bytes.add("graph: edges of nodes with many successors"_s, shard->edgesOfNodesWithManySuccessors.memoryInBytes());
+        bytes.add("graph: edges out of constants into nodes with many predecessors"_s, shard->edgesOutOfConstantsIntoNodesWithManyPredecessors.memoryInBytes());
+        bytes.addList("graph: listed edges out of constants"_s, shard->listedEdgesOutOfConstants);
+        bytes.addList(waves, shard->arrivals.nodes);
+        bytes.addList(waves, shard->arrivals.list);
+        for (const auto& messagesOfWave : shard->messages)
+            bytes.addLists(waves, messagesOfWave);
+        bytes.addList(waves, shard->nodesWithRecentSuccessors);
+        bytes.addList(waves, shard->nodesWithRecentPredecessors);
+        bytes.addList(waves, shard->placeholdersStopped);
+    }
 }
 
 } } } // namespace JSC::AOT::Typed

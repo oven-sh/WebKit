@@ -581,6 +581,18 @@ static BitVector findFunctionsWhoseClosuresMayBeRenamed(const ValueFlowResultInp
             keys.append(*key);
     }
 
+    // A displayName that is written through an object nobody follows is filed under that object alone, which stands for every closure that has gone the same way.
+    auto isDisplayNameWrittenThrough = [&](ValueFlowObjectID placeholder) {
+        return keys.size() > 1 && std::ranges::any_of(std::array { ValueFlowNameKind::Property, ValueFlowNameKind::Getter, ValueFlowNameKind::Setter }, [&](ValueFlowNameKind kind) {
+            const ValueFlowHeapIndex::NodesWrittenUnderName* written = inputs.heapIndex->findNodesWrittenUnder({ kind, keys[1].index() });
+            return written && std::ranges::any_of(written->nodes, [&](const ValueFlowHeapIndex::WrittenNode& node) {
+                return inputs.sets().contains(node.objects, placeholder);
+            });
+        });
+    };
+    bool escapedClosuresMayBeRenamed = isDisplayNameWrittenThrough(ValueFlowUniverse::unknownObject());
+    bool lostClosuresMayBeRenamed = isDisplayNameWrittenThrough(ValueFlowUniverse::untrackedObject());
+
     BitVector functions(program.functions.size());
     inputs.sets().forEachMember(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename)), [&](ValueFlowObjectID object) {
         if (FunctionID function = inputs.universe().closureFunction(object); function && function.index() < program.functions.size())
@@ -603,7 +615,9 @@ static BitVector findFunctionsWhoseClosuresMayBeRenamed(const ValueFlowResultInp
         };
         if (std::ranges::any_of(std::ranges::equal_range(added, index, { }, &std::pair<uint32_t, PropertyKeyID>::first), mayNameFramesOfThisFunction, &std::pair<uint32_t, PropertyKeyID>::second)
             || std::ranges::any_of(std::ranges::equal_range(added, UINT32_MAX, { }, &std::pair<uint32_t, PropertyKeyID>::first), mayNameFrames, &std::pair<uint32_t, PropertyKeyID>::second)
-            || (constructedClass && std::ranges::any_of(program.at(constructedClass).staticFields, mayNameFrames, &StaticField::key)))
+            || (constructedClass && std::ranges::any_of(program.at(constructedClass).staticFields, mayNameFrames, &StaticField::key))
+            || (escapedClosuresMayBeRenamed && inputs.hasEscaped(inputs.universe().closureOf(closures.closureFunction)))
+            || (lostClosuresMayBeRenamed && inputs.isLost(inputs.universe().closureOf(closures.closureFunction))))
             functions.quickSet(index);
     }
     return functions;

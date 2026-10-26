@@ -87,7 +87,7 @@ static void forEachNodeReadByWalkOver(ValueFlowRuleContext& context, ClimbingSet
     }
     ClimbingSet others = context.restrict(holders, ValueSets::complement(context.maker().of(holdersOfSuchMembers.span())));
     if (context.meet(others, ValueSets::anything))
-        functor(context.lookup(others, everyPropertyName));
+        functor(context.lookup(others, everyOwnPropertyName));
     for (ValueFlowObjectID holder : holdersOfSuchMembers) {
         functor(context.read(only(context, holder), everyPropertyName));
         for (BuiltinID member : builtins.membersOf(universe.builtinOf(holder))) {

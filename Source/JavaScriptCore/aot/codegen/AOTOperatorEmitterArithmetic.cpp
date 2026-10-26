@@ -23,6 +23,7 @@
 #include <cmath>
 #include <limits>
 #include <type_traits>
+#include <wtf/Atomics.h>
 #include <wtf/MathExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -70,6 +71,10 @@ protected:
 
     // An invalid operation produces a NaN with the sign bit set on x86-64 and clear on ARM64. A C library function may pick either.
     static bool matchesHardwareNaN(double libraryNaN) { return std::signbit(libraryNaN) == isX86_64(); }
+
+    // What the function answers when a program calls it. A C++ compiler that sees the callee and constant operands computes the result itself, and its NaN may have the other sign.
+    template<typename Function>
+    static double resultAtRunTime(Function* function, double left, double right) { return WTF::opaque(function)(left, right); }
 
     Number callLibraryIfNaN(Number inlineResult, RuntimeOperation function, Number left, Number right)
     {
@@ -183,7 +188,7 @@ public:
             Number fraction = sub(dividend, trunc(dividend));
             Number result = select(equal(fraction, number(0)), mul(dividend, number(0)), fraction);
             constexpr double infinity = std::numeric_limits<double>::infinity();
-            if (matchesHardwareNaN(Math::fmodDouble(infinity, *constantDivisor)) && matchesHardwareNaN(Math::fmodDouble(-infinity, *constantDivisor)))
+            if (matchesHardwareNaN(resultAtRunTime(Math::fmodDouble, infinity, *constantDivisor)) && matchesHardwareNaN(resultAtRunTime(Math::fmodDouble, -infinity, *constantDivisor)))
                 return result;
             return callLibraryIfNaN(result, RuntimeOperation::Fmod, dividend, divisor);
         }
@@ -270,6 +275,8 @@ private:
         return sub(dividend, mul(quotient, integer(divisor)));
     }
 
+    static double remainderByZero(double dividend) { return AOT::withoutPayload(resultAtRunTime(Math::fmodDouble, dividend, 0)); }
+
     template<typename T>
     Number remainderAsNumber(T whole, T dividend, T divisor, bool mayBeNaN)
     {
@@ -306,7 +313,14 @@ private:
                 isZero.link(&jit);
                 if (mayBeNaN) {
                     CCallHelpers::Jump isNumber = branchOnTest(jit, CCallHelpers::NonZero, divisor);
-                    produce(AOT::withoutPayload(Math::fmodDouble(0, 0)));
+                    double ofNegative = remainderByZero(-1);
+                    double ofNonNegative = remainderByZero(1);
+                    if (std::signbit(ofNegative) != std::signbit(ofNonNegative)) {
+                        CCallHelpers::Jump isNonNegative = branchOnTest(jit, CCallHelpers::PositiveOrZero, dividend);
+                        produce(ofNegative);
+                        isNonNegative.link(&jit);
+                    }
+                    produce(ofNonNegative);
                     isNumber.link(&jit);
                 }
                 branchOnTest(jit, CCallHelpers::PositiveOrZero, dividend).linkTo(done, &jit);
@@ -388,7 +402,7 @@ private:
             Number result = exponent > 0
                 ? select(equal(magnitude, zero), zero, select(equal(magnitude, infinity), infinity, sqrt(base)))
                 : select(equal(magnitude, zero), infinity, select(equal(magnitude, infinity), zero, div(number(1), sqrt(base))));
-            if (matchesHardwareNaN(operationMathPow(-1, exponent)))
+            if (matchesHardwareNaN(resultAtRunTime(operationMathPow, -1, exponent)))
                 return result;
             return callLibraryIfNaN(result, RuntimeOperation::Pow, base, number(exponent));
         }

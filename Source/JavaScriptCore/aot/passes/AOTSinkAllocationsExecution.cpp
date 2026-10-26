@@ -385,7 +385,7 @@ void ObjectInterpreter::holdMembersOfUnbuiltObjects(ValueID suspension)
     };
     Vector<ValueID, 8> held;
     Vector<VirtualObjectID, 4> unbuilt;
-    Vector<VirtualObjectID, 4> built;
+    BitVector isBuilt;
     for (ValueID operand : heldOperandsOf(function().at(suspension))) {
         VirtualObjectID object = objectOf(operand);
         if (isUnbuilt(object)) {
@@ -394,10 +394,21 @@ void ObjectInterpreter::holdMembersOfUnbuiltObjects(ValueID suspension)
         }
         held.append(operand);
         if (object)
-            built.append(object);
+            isBuilt.set(object.index());
     }
     if (unbuilt.isEmpty())
         return;
+
+    BitVector isReached;
+    while (!unbuilt.isEmpty()) {
+        VirtualObjectID object = unbuilt.takeLast();
+        if (!isReached.add(object.index()))
+            continue;
+        if (const ObjectState* state = m_state.find(object)) {
+            for (const HeldObject& member : state->heldObjects)
+                unbuilt.append(member.object);
+        }
+    }
 
     Function& rewritten = cursor().builder().function();
     BitVector isListed;
@@ -408,12 +419,9 @@ void ObjectInterpreter::holdMembersOfUnbuiltObjects(ValueID suspension)
             held.append(member);
     };
     for (const ObjectEntry& entry : m_state.objects) {
-        if (built.contains(entry.object))
+        if (isBuilt.get(entry.object.index()) || !isReached.get(entry.object.index()))
             continue;
-        bool isReached = std::ranges::any_of(unbuilt, [&](VirtualObjectID object) {
-            return object == entry.object || m_state.canReach(object, entry.object);
-        });
-        const ObjectValues* members = isReached ? values().find(entry.object) : nullptr;
+        const ObjectValues* members = values().find(entry.object);
         if (!members)
             continue;
         if (entry.state.hasCell())

@@ -471,6 +471,15 @@ void CompiledFrameIterator::advance()
     m_isInlinedConstructCall = caller.isInlinedConstructCall;
 }
 
+bool CompiledFrameIterator::isAboveFramesThatWait() const
+{
+    if (m_isAtEnd || m_cursor.isAmongFramesThatWait)
+        return false;
+    CompiledFrameIterator callers(*this);
+    callers.advanceToCallerMachineFrame();
+    return callers.m_cursor.isAmongFramesThatWait;
+}
+
 void CompiledFrameIterator::advanceToCallerMachineFrame()
 {
     if (m_isAtEnd)

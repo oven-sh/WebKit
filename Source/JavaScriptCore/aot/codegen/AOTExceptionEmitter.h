@@ -18,6 +18,9 @@ namespace JSC {
 
 namespace B3 {
 class Variable;
+namespace Air {
+class StackSlot;
+}
 }
 
 namespace AOT { namespace Typed {
@@ -52,18 +55,29 @@ private:
 
     LBasicBlock landingPadFor(const Target& handler);
     HandlerType handlerTypeOf(BlockID handler) const;
+    HandlerType handlerTypeByOperations(BlockID handler) const;
     bool isEnteredByJump(BlockID handler) const { return m_handlersEnteredByJump.get(handler.index()); }
+    // Beside the value, such a cleanup takes what says where the value was thrown, and hands it to the Throw at its end.
+    bool keepsException(BlockID handler) const { return m_cleanupsThatKeepException.get(handler.index()); }
     B3::Variable* caughtVariableFor(BlockID handler);
     void setCaughtVariable(BlockID handler, LValue);
+    TypedPointer wordKeptBy(BlockID cleanup);
+    void keep(BlockID cleanup, LValue);
+    LValue keptBy(ValueID thrown);
     void jumpToHandler(const Target& handler, LValue caught);
     void throwByOperation(const TerminatorContext&, RuntimeOperation, Boxed thrown);
+    void throwAfterCleanup(const TerminatorContext&, Boxed thrown);
     void findValuesCaughtByCleanups();
+    void findCleanupsThatKeepException();
     LValue caughtWord(const ValueContext&);
     Boxed valueOfException(CellPointer exception);
 
     BitVector m_handlersEnteredByJump;
-    BitVector m_valuesCaughtByCleanups;
+    BitVector m_cleanupsThatKeepException;
+    // No block for a value that comes from one of several cleanups.
+    UncheckedKeyHashMap<ValueID, BlockID> m_valuesCaughtByCleanups;
     BlockMap<B3::Variable*> m_caughtVariables;
+    BlockMap<B3::Air::StackSlot*> m_keptWords;
     BlockMap<LValue> m_caughtWords;
     BlockMap<Vector<LandingPad, 2>> m_landingPads;
     Box<LandingPadsBySuccessor> m_landingPadsBySuccessor;

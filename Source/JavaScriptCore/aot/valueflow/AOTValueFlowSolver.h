@@ -398,7 +398,6 @@ public:
 
     const Counters& counters() const { return m_counters; }
     std::span<const Round> rounds() const LIFETIME_BOUND { return m_roundsDone.span(); }
-    size_t memoryInBytes() const;
 
 private:
     friend class ValueFlowRuleContext;
@@ -456,6 +455,9 @@ private:
         ValueFlowName name;
         NodesOfName read;
         NodesOfName written;
+        ValueSetID holders;
+        uint32_t roundOfFirstQuestion { 0 };
+        uint32_t firstPartWatched { UINT32_MAX };
     };
 
     struct KindOfNames {
@@ -498,6 +500,20 @@ private:
         const WatchShard& shard = m_watchShards[watchShardOf(node, within)];
         auto watch = shard.watchOfPart.find(static_cast<uint64_t>(node.index()) << 32 | within.index());
         return watch != shard.watchOfPart.end() && shard.knownWatchers.contains(watch->value, statement.index());
+    }
+    uint32_t numberOfName(ValueFlowName name) const
+    {
+        auto number = m_numberOfName.find(static_cast<uint64_t>(name.kind) << 32 | name.payload);
+        return number != m_numberOfName.end() ? number->value : UINT32_MAX;
+    }
+    ValueSetID holdersUnder(uint32_t numberOfName) const { return numberOfName != UINT32_MAX ? m_names[numberOfName].holders : ValueSetID(); }
+    ValueSetID partOfNameWatchedBy(ValueFlowStatementID statement, uint32_t numberOfName) const
+    {
+        if (numberOfName == UINT32_MAX)
+            return { };
+        const LinkShard& shard = m_linkShards[linkShardOf(numberOfName)];
+        auto part = shard.partWatchedOf.find(static_cast<uint64_t>(numberOfName) << 32 | statement.index());
+        return part != shard.partWatchedOf.end() ? shard.partsWatched[part->value].within : ValueSetID();
     }
     bool isKnownToWaitForSomethingIn(ValueFlowNodeID node, ValueFlowStatementID statement) const { return !ValueFlowRoundLog::isNumberedByLog(node) && m_readerShards[readerShardOf(node)].knownToWaitForSomething.contains(node.index(), statement.index()); }
     bool hasStatementOfBodyNeverRun(ValueFlowStatementID statement) const
@@ -557,13 +573,16 @@ private:
     ValueFlowNodeID makeNodes(const ValueFlowNodeKey&);
     ValueFlowNodeID ensureNodes(const ValueFlowNodeKey&);
     static void listToLink(const MadeNodes&, auto& readToLink, auto& writtenToLink);
-    void linkNamedNodes(unsigned shard, bool isRead);
+    void linkNamedNodes(unsigned shard, bool isRead, ValueSetMaker&);
     struct Linked;
     struct NodeToLink;
     void link(const NodeOfSet&, bool isRead, NodesOfName& others, uint32_t numberOfName, Linked&);
     void linkNode(const NodeToLink&, bool isRead, Linked&);
     void insertNode(const NodeToLink&, bool isRead);
     void insertNodesOfShards(const ListWithRoomToFill<NodeToLink>&, bool isRead);
+    void numberNamesWatched();
+    void noteNamesWatched(unsigned shard, ValueSetMaker&);
+    void wakeWatchersOfNamesWrittenOnMoreObjects(unsigned shard, ValueSetMaker&);
     void removeNodesAtRestFrom(Vector<NodeOfSet>&);
     void linkInChunks(bool isRead, unsigned numberOfOtherTasks, NOESCAPE const ScopedLambda<void(unsigned task, unsigned worker)>& otherTask);
     void noteReaders(unsigned shard, ValueSetMaker&);
@@ -620,6 +639,7 @@ private:
     void findUnknownSources(NOESCAPE const ScopedLambda<void()>& whatRunsBesideTheWalk);
     Subject subjectOf(ValueFlowNodeID) const;
     void report();
+    void dumpBytesByTable() const;
 
     const ValueFlowSolverInput& m_input;
     ValueSets& m_sets;
@@ -918,9 +938,25 @@ private:
         uint64_t testsWhetherSetsMeet { 0 };
         Vector<Vector<NodeOfSet>*> listsMostlyAtRest;
     };
+    struct PartOfNameWatched {
+        ValueFlowStatementID statement;
+        ValueSetID within;
+        uint32_t round { 0 };
+        uint32_t next { UINT32_MAX };
+    };
     struct LinkShard {
         std::array<NodesOfMembers, 2> nodesOfMembers;
         Linked linked;
+        Vector<PartOfNameWatched> partsWatched;
+        HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> partWatchedOf;
+        struct NameWatched {
+            uint32_t numberOfName { 0 };
+            ValueSetID within;
+            ValueFlowStatementID statement;
+        };
+        Vector<NameWatched> namesWatchedInRound;
+        Vector<std::pair<uint32_t, ValueSetID>> writtenUnderWatchedNames;
+        Vector<ValueFlowStatementID> woken;
     };
     std::array<LinkShard, numberOfLinkShards> m_linkShards;
     struct NodeToLink {
@@ -953,7 +989,6 @@ private:
 
     Counters m_counters;
     Vector<Round> m_roundsDone;
-    std::optional<size_t> m_memoryInBytesAtEndOfRounds;
 };
 
 } } } // namespace JSC::AOT::Typed

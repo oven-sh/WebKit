@@ -14,7 +14,9 @@
 #include "AOTCallGraph.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowResults.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
+#include "AOTHeldOperands.h"
 #include "AOTIRBuilder.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPassRunner.h"
@@ -37,7 +39,7 @@
 #include <span>
 #include <wtf/Atomics.h>
 #include <wtf/BitVector.h>
-#include <wtf/HashSet.h>
+#include <wtf/HashMap.h>
 #include <wtf/UnionFind.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -330,8 +332,9 @@ private:
 // Whether a store in one function keeps an object alive that would go without it.
 class StoresOfObjects {
 public:
-    StoresOfObjects(const Program& program, const FlowResults& flow, const UnnoticedObjects& unnoticedObjects, const EffectSummaries* effects, FunctionID id, FreshDataFunctions* freshDataFunctions = nullptr, unsigned callDepth = FreshDataFunctions::maxCallDepth)
-        : m_program(program)
+    StoresOfObjects(const BuildContext& build, const Program& program, const FlowResults& flow, const UnnoticedObjects& unnoticedObjects, const EffectSummaries* effects, FunctionID id, FreshDataFunctions* freshDataFunctions = nullptr, unsigned callDepth = FreshDataFunctions::maxCallDepth)
+        : m_build(build)
+        , m_program(program)
         , m_flow(flow)
         , m_unnoticedObjects(unnoticedObjects)
         , m_effects(effects)
@@ -372,11 +375,19 @@ private:
     bool closureKeepsObjectAlive(ValueID stored, ValueID holder, unsigned depth)
     {
         const Value& closure = m_function.at(stored);
-        if (closure.isMadeOnDemand() || (!m_flow.closuresGoUnnoticed(closure.function()) && useLists().useCount(stored) != 1))
+        if (closure.isMadeOnDemand() || (!m_flow.closuresGoUnnoticed(closure.function()) && !isSeenOnlyByStore(stored)))
             return true;
         return std::ranges::any_of(closure.capturesOperands(), [&](ValueID capture) {
-            return keepsObjectAlive(capture, holder, depth - 1) && !isEnvironmentHeldBy(holder, capture);
+            return keepsObjectAlive(capture, holder, depth - 1) && !isHeldBy(holder, capture, stored);
         });
+    }
+
+    // A suspension that lists the closure holds it and does not look at it.
+    bool isSeenOnlyByStore(ValueID closure)
+    {
+        return std::ranges::count_if(useLists().usesOf(closure), [&](const Use& use) {
+            return use.kind != Use::Kind::Operand || !isHeldOperand(m_function.at(use.user), use.operandIndex);
+        }) == 1;
     }
 
     // The annotation says that the call may go when nobody uses its answer.
@@ -454,7 +465,7 @@ private:
         const Function& function = m_program.at(callee);
         bool answer = !function.blocks.isEmpty() && function.results.size() == 1 && function.hasOrdinaryFrame() && !function.isUnsplitCoroutine();
         if (answer) {
-            StoresOfObjects stores(m_program, m_flow, m_unnoticedObjects, m_effects, callee, m_freshDataFunctions, callDepth);
+            StoresOfObjects stores(m_build, m_program, m_flow, m_unnoticedObjects, m_effects, callee, m_freshDataFunctions, callDepth);
             answer = std::ranges::none_of(function.blocks, [&](const Block& block) {
                 if (block.terminator.kind == TerminatorKind::Return)
                     return !block.terminator.valueOperand() || stores.keepsObjectAlive(block.terminator.valueOperand(), ValueID());
@@ -465,32 +476,44 @@ private:
         return answer;
     }
 
-    // An environment that its holder names in a field of its own, stored once, lives as long as the holder.
-    bool isEnvironmentHeldBy(ValueID holder, ValueID held)
+    // What its holder names in a field of its own, stored once, lives as long as the holder: an environment wherever the store stands, anything else where the holder is an environment whose field stays and is filled in front of the closure.
+    bool isHeldBy(ValueID holder, ValueID held, ValueID closure)
     {
-        if (!holder || !m_program.typeOf(m_function, held).environment)
+        if (!holder)
             return false;
         auto keyOf = [](ValueID holder, ValueID held) {
             return static_cast<uint64_t>(holder.index()) << 32 | held.index();
         };
-        if (!m_environmentsHeld) {
-            m_environmentsHeld.emplace();
-            auto add = [&](ValueID holder, FieldReference field, ValueID held) {
-                if (m_program.typeOf(m_function, held).environment && fieldAt(m_program, field).flow.location.stores == StoreCount::AtMostOnce)
-                    m_environmentsHeld->add(keyOf(holder, held));
+        if (!m_valuesHeld) {
+            m_valuesHeld.emplace();
+            auto add = [&](ValueID holder, FieldReference reference, ValueID held, ValueID store) {
+                const Field& field = fieldAt(m_program, reference);
+                if (field.flow.location.stores != StoreCount::AtMostOnce)
+                    return;
+                const Layout& layout = m_program.at(reference.layout);
+                if (m_program.typeOf(m_function, held).environment || (layout.isEnvironment() && !isUnread(m_build, layout, field)))
+                    m_valuesHeld->add(keyOf(holder, held), store);
             };
             forEachListedValue(m_program, m_id, { Opcode::NewObject, Opcode::PutEnvironmentField }, [&](BlockID, uint32_t, ValueID valueID, const Value& value) {
                 if (value.opcode == Opcode::PutEnvironmentField) {
-                    add(value.operand(OperandIndex::PutEnvironmentField::environment), { value.layout(), value.field() }, value.operand(OperandIndex::PutEnvironmentField::value));
+                    add(value.operand(OperandIndex::PutEnvironmentField::environment), { value.layout(), value.field() }, value.operand(OperandIndex::PutEnvironmentField::value), valueID);
                     return;
                 }
                 for (size_t listed = 0; listed < value.fields().size(); ++listed)
-                    add(valueID, { value.layout(), value.fields()[listed] }, value.variadicOperands()[listed]);
+                    add(valueID, { value.layout(), value.fields()[listed] }, value.variadicOperands()[listed], valueID);
             });
         }
-        return m_environmentsHeld->contains(keyOf(holder, held));
+        auto found = m_valuesHeld->find(keyOf(holder, held));
+        if (found == m_valuesHeld->end())
+            return false;
+        if (found->value == holder || m_program.typeOf(m_function, held).environment)
+            return true;
+        ValueLocation store = useLists().locationOf(found->value);
+        ValueLocation made = useLists().locationOf(closure);
+        return store.placement == ValuePlacement::InBlock && made.placement == ValuePlacement::InBlock && store.block == made.block && store.index < made.index;
     }
 
+    const BuildContext& m_build;
     const Program& m_program;
     const FlowResults& m_flow;
     const UnnoticedObjects& m_unnoticedObjects;
@@ -501,7 +524,7 @@ private:
     unsigned m_callDepth;
     std::optional<CFG> m_cfg;
     std::optional<UseLists> m_useLists;
-    std::optional<HashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> m_environmentsHeld;
+    std::optional<HashMap<uint64_t, ValueID, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> m_valuesHeld;
 };
 
 static bool mayHaveNamespaceObject(NamespaceUse use)
@@ -715,7 +738,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
             return;
         bool canChangeFunction = build.isEnabled(PassID::RemoveUnreadFields, id);
         std::optional<BitVector> usedValues;
-        StoresOfObjects stores(program, inputs.flow, unnoticedObjects, &inputs.effects, id, &freshDataFunctions);
+        StoresOfObjects stores(build, program, inputs.flow, unnoticedObjects, &inputs.effects, id, &freshDataFunctions);
         Vector<RemovableAccess> accesses;
         forEachListedValue(program, id, scannedOpcodes, [&](BlockID block, uint32_t, ValueID valueID, const Value& value) {
             Opcode opcode = value.opcode;
@@ -897,6 +920,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
         auto isNext = [&](BlockID block) {
             return !accesses.empty() && accesses.front().block == block;
         };
+        Vector<ValueID, 4> valuesOfErasedStores;
         while (!accesses.empty()) {
             BlockID block = accesses.front().block;
             const BlockValues& values = function.at(block).values;
@@ -909,6 +933,8 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
 
                 Value& access = function.edit(values[position]);
                 if (access.opcode != Opcode::NewObject) {
+                    if (access.opcode == Opcode::PutEnvironmentField)
+                        valuesOfErasedStores.append(access.valueOperand());
                     erasedIndexes.set(position);
                     continue;
                 }
@@ -928,6 +954,17 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
             RELEASE_ASSERT(!isNext(block));
             if (!erasedIndexes.isEmpty())
                 builder.eraseValues(block, erasedIndexes);
+        }
+        // What only a suspension lists now is not built: the suspension lists what it would hold.
+        bool isListedBySuspension = !valuesOfErasedStores.isEmpty() && std::ranges::any_of(function.blocks, [&](const Block& block) {
+            return std::ranges::any_of(block.values, [&](ValueID value) {
+                return canHoldOperands(function.at(value).opcode) && std::ranges::find_first_of(heldOperandsOf(function.at(value)), valuesOfErasedStores) != heldOperandsOf(function.at(value)).end();
+            });
+        });
+        if (isListedBySuspension) {
+            FunctionAnalyses analyses(AnalysisContext { build, program, &inputs.flow, &inputs.effects, id }, function);
+            FunctionPassContext context { program, inputs, id, function, analyses, arenas.types, arenas.strings, build };
+            runner.runFunctionPass(PassID::SinkAllocations, context);
         }
         simplifyEditedFunction(runner, program, inputs, id, function, arenas);
     });
@@ -980,7 +1017,7 @@ void removeUnreadExports(ProgramEditor& editor, const FlowResults& flow, BuildCo
     UnnoticedObjects unnoticedObjects(program, flow);
     Vector<FunctionStores> stores = collectInParallel<FunctionStores>(loops, program.functions.size(), [&](unsigned index, Vector<FunctionStores>& found) {
         Vector<VariableID, 4> storedVariables;
-        StoresOfObjects storesOfObjects(program, flow, unnoticedObjects, &unknownSummaries, FunctionID(index));
+        StoresOfObjects storesOfObjects(build, program, flow, unnoticedObjects, &unknownSummaries, FunctionID(index));
         forEachListedValue(program, FunctionID(index), { Opcode::PutModuleVariable }, [&](BlockID, uint32_t, ValueID, const Value& value) {
             if (!unreadVariables.get(value.variable().index()))
                 return;

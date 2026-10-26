@@ -133,11 +133,11 @@ struct FunctionTables {
     std::span<RecordedCallee> recordedCallees() { return recordedCalleeStorage.mutableSpan().subspan(hasRecordedCallees() ? 1 : 0); }
     // Null unless the last call made from there recorded its callee.
     JSObject* recordedCalleeOfCallFrom(const void* stackPointerOfCaller);
-    // Those of calls made from further out than the stack pointer.
-    template<typename Visitor> void visitRecordedCallees(Visitor&, const void* stackPointer);
-    void finalizeRecordedCallees(VM&, const void* stackPointer);
+    // Those of calls that have not returned. The others leave the table.
+    template<typename Visitor> void visitRecordedCallees(VM&, Visitor&);
+    void finalizeRecordedCallees(VM&);
 
-    // Only the thread of the VM changes them: compiled code writes an entry, the run time moves the table.
+    // While the thread of the VM runs only it changes them: compiled code writes an entry, the run time moves the table.
     Lock recordedCalleesLock;
     Vector<RecordedCallee> recordedCalleeStorage;
     TextsByFunction sourceTexts;

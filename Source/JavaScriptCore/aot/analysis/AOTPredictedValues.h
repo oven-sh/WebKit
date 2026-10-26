@@ -35,6 +35,8 @@ public:
     PredictedValues(const Function&, const CFG&, Options);
 
     bool hasChecks() const { return m_hasChecks; }
+    // Of a value that was put into the body afterwards nothing is known here.
+    bool hasSeen(ValueID value) const { return value.index() < m_numberOfValues; }
     // The type of the value may be owed to a check, which stands until the function gets its generic version.
     bool isBehindCheck(ValueID value) const { return has(value, BehindCheck); }
 

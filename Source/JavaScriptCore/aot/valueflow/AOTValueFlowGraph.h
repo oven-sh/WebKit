@@ -177,7 +177,7 @@ public:
     void releaseRows();
 
     const Counters& counters() const { return m_counters; }
-    size_t memoryInBytes() const;
+    void addBytesTo(ValueFlowBytesByTable&) const;
 
 private:
     class Team;
@@ -447,7 +447,6 @@ private:
     bool m_hasSolved { false };
     bool m_hasReleasedSolvingState { false };
     bool m_keepsPredecessors { false };
-    size_t m_memoryInBytesBeforeRelease { 0 };
 
     Vector<std::unique_ptr<Worker>> m_workers;
     Vector<Vector<uint32_t>> m_foundInShare;

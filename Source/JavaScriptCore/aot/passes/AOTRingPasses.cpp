@@ -3031,7 +3031,8 @@ static bool onlyRethrows(Rewrite& rewrite, BlockID id, const Block& block)
         return false;
     ValueID caught = block.values[0];
     const Terminator& terminator = block.terminator;
-    bool rethrowsCaughtValue = (rewrite.at(caught).opcode == Opcode::CatchValue && terminator.kind == TerminatorKind::Throw && terminator.valueOperand() == caught)
+    // A `catch` of the program that throws the value again begins another throw, which has frames of its own.
+    bool rethrowsCaughtValue = (rewrite.at(caught).opcode == Opcode::CatchValue && terminator.kind == TerminatorKind::Throw && terminator.valueOperand() == caught && block.role != BlockRole::CatchHandler)
         || (rewrite.at(caught).opcode == Opcode::CatchException && terminator.kind == TerminatorKind::Rethrow && terminator.exceptionOperand() == caught);
     if (!rethrowsCaughtValue || !std::ranges::all_of(block.values.span().subspan(1), [&](ValueID value) { return rewrite.analyses.isRemovableWhenUnused(value); }))
         return false;

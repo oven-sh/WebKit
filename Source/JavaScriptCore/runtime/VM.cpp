@@ -1478,12 +1478,15 @@ NEVER_INLINE static Exception* createExceptionWithCompiledCode(VM& vm, JSGlobalO
     using Action = Exception::StackCaptureAction;
     if (globalObject->debugger())
         return Exception::create(vm, thrownValue, Action::CaptureStack);
-    AOT::Instance* instance = globalObject->aotInstance();
-    if (instance && vm.topCallFrame && AOT::nearestHandlerIgnoresValue(vm, *instance, vm.topCallFrame))
+    std::optional<HandlerType> nearest;
+    if (globalObject->aotInstance() && vm.topCallFrame)
+        nearest = AOT::findNearestHandler(vm, vm.topCallFrame);
+    if (nearest == HandlerType::SynthesizedCatch)
         return Exception::create(vm, thrownValue, Action::DoNotCaptureStack);
-    if (Exception* exception = Exception::tryCreateWithStackOfError(vm, thrownValue))
+    // Nobody lists the frames of what a `catch` takes.
+    if (Exception* exception = Exception::tryCreateWithStackOfError(vm, thrownValue, nearest == HandlerType::Catch ? Exception::StackOfError::MadeAnywhere : Exception::StackOfError::MadeHere))
         return exception;
-    return Exception::create(vm, thrownValue, vm.interpreter.isExceptionCaughtByUserCatchClause() ? Action::DoNotCaptureStack : Action::CaptureStack);
+    return Exception::create(vm, thrownValue, vm.interpreter.isExceptionCaughtByUserCatchClause() ? Action::DoNotCaptureStack : Action::CaptureStackOfThrow);
 }
 #endif
 

@@ -865,6 +865,8 @@ struct ValueFlowConstructions {
 
 ValueFlowConstructions computeConstructions(const ValueFlowResultInputs&, ValueFlowHeapView&, const FlowResultTables&);
 void computeLiteralKeyOrders(const ValueFlowResultInputs&, ValueFlowHeapView&, Vector<PropertyKeyKind>&& kindsOfKeys, FlowResultTables&);
+// Whether the operation gives properties to the literal, between its NewObject and its FinishObject.
+bool isPieceOfLiteral(const Value& operation, ValueID literal);
 
 struct ValueFlowWriteUnderNewName {
     BuiltinID holder;

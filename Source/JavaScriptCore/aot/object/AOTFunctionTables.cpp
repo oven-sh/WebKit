@@ -21,6 +21,7 @@
 #include "AOTObjectWords.h"
 #include "AOTProgramStrings.h"
 #include "AOTSlimClosure.h"
+#include "AOTStackTrace.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
 #include "AOTThreshold.h"
@@ -287,29 +288,49 @@ JSObject* FunctionTables::recordedCalleeOfCallFrom(const void* stackPointer)
     return entry.stackPointerOfCaller == stackPointerOfCaller ? entry.closure : nullptr;
 }
 
+// A call made from further out than the top frame may have returned as well: the stack has grown again from there. The frames on the stack say which calls have not.
+static void removeCalleesOfReturnedCalls(VM& vm, FunctionTables& tables)
+{
+    uintptr_t outermost = 0;
+    for (const RecordedCallee& entry : tables.recordedCallees())
+        outermost = std::max(outermost, entry.stackPointerOfCaller);
+    if (!outermost)
+        return;
+
+    Vector<RecordedCallee, 16> kept;
+    forEachCallThatRecordsCallee(vm, std::bit_cast<const void*>(outermost), [&](const void* stackPointerOfCaller) {
+        if (JSObject* closure = tables.recordedCalleeOfCallFrom(stackPointerOfCaller))
+            kept.append({ std::bit_cast<uintptr_t>(stackPointerOfCaller), closure });
+    });
+    std::ranges::fill(tables.recordedCallees(), RecordedCallee { 0, nullptr });
+    for (const RecordedCallee& entry : kept)
+        entryOfCallFrom(tables.recordedCalleeStorage.mutableSpan(), entry.stackPointerOfCaller) = entry;
+}
+
 template<typename Visitor>
-void FunctionTables::visitRecordedCallees(Visitor& visitor, const void* stackPointer)
+void FunctionTables::visitRecordedCallees(VM& vm, Visitor& visitor)
 {
     Locker locker { recordedCalleesLock };
+    removeCalleesOfReturnedCalls(vm, *this);
     for (const RecordedCallee& entry : recordedCallees()) {
-        if (JSObject* closure = entry.closure; closure && entry.stackPointerOfCaller > std::bit_cast<uintptr_t>(stackPointer))
-            visitor.appendUnbarriered(closure);
+        if (entry.closure)
+            visitor.appendUnbarriered(entry.closure);
     }
 }
-template void FunctionTables::visitRecordedCallees(AbstractSlotVisitor&, const void*);
-template void FunctionTables::visitRecordedCallees(SlotVisitor&, const void*);
+template void FunctionTables::visitRecordedCallees(VM&, AbstractSlotVisitor&);
+template void FunctionTables::visitRecordedCallees(VM&, SlotVisitor&);
 
-// No entry is older than one collection unless its function object was marked.
-void FunctionTables::finalizeRecordedCallees(VM& vm, const void* stackPointer)
+void FunctionTables::finalizeRecordedCallees(VM& vm)
 {
     if (!hasRecordedCallees())
         return;
     Locker locker { recordedCalleesLock };
+    removeCalleesOfReturnedCalls(vm, *this);
     bool isInUse = false;
     for (RecordedCallee& entry : recordedCallees()) {
         if (!entry.closure)
             continue;
-        if (entry.stackPointerOfCaller > std::bit_cast<uintptr_t>(stackPointer) && vm.heap.isMarked(entry.closure))
+        if (vm.heap.isMarked(entry.closure))
             isInUse = true;
         else
             entry = { 0, nullptr };

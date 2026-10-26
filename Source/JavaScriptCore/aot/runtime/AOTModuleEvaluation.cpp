@@ -774,12 +774,14 @@ bool Modules::comesToLoadInFlight(ModuleID required)
 {
     Vector<ModuleID, 8> rootsThatWait;
     bool loaderGoesThroughGraph = false;
-    for (const LoadInFlight& load : m_loadsInFlight) {
+    for (LoadInFlight& load : m_loadsInFlight) {
         if (load.isLoaded)
             continue;
-        if (load.isWalked)
+        if (load.isWalked) {
             loaderGoesThroughGraph = true;
-        else if (status(load.root) != ModuleStatus::Evaluating)
+            if (!std::exchange(load.hasMarksBelowRoot, true))
+                markModulesBelowWalkedRoot(load.root);
+        } else if (status(load.root) != ModuleStatus::Evaluating)
             rootsThatWait.append(load.root);
     }
     if (!loaderGoesThroughGraph && rootsThatWait.isEmpty())
@@ -812,7 +814,7 @@ bool Modules::hasNotBegunAsFile(ModuleID module) const
     return isCommonJSFileOrFace(module) && (status(module) == ModuleStatus::Unlinked || status(module) == ModuleStatus::Linked);
 }
 
-// Once for a load. A mark outlives the load: whoever reads it asks whether the module is loaded by now.
+// Once for a load, when the first require() asks. A mark outlives the load: whoever reads it asks whether the module is loaded by now.
 void Modules::markModulesBelowWalkedRoot(ModuleID root)
 {
     m_modulesBelowWalkedRoots.ensureSize(m_table.size());
@@ -919,6 +921,11 @@ bool Modules::planLevelsOfLoad(ModuleID root)
             return load.root == module;
         });
     };
+    // A module with nothing to link and nothing to run stays as the loader left it when it had loaded it. The loader takes no step for it again.
+    auto isLeftAsLoaded = [&](ModuleID module) {
+        ModuleRecord* record = isCommonJSFileOrFace(module) ? nullptr : recordIfExists(module);
+        return record && record->status() == CyclicModuleRecord::Status::Unlinked;
+    };
     BitVector seen(m_table.size());
     seen.quickSet(root.index());
     Vector<Level, 8> levels(1);
@@ -930,7 +937,7 @@ bool Modules::planLevelsOfLoad(ModuleID root)
         for (uint32_t importer = 0; importer < level.modules.size(); ++importer) {
             for (const ModuleRequestData& request : m_table.imports(level.modules[importer].module)) {
                 ModuleID target = request.targetModule();
-                if (request.isHoisted || seen.quickSet(target.index()) || wasLoadedWithEarlierGraph(target))
+                if (request.isHoisted || seen.quickSet(target.index()) || wasLoadedWithEarlierGraph(target) || isLeftAsLoaded(target))
                     continue;
                 // Another graph that is being loaded has come to the module, or will.
                 if (isInHandsOfLoader(target))
@@ -1012,8 +1019,8 @@ void Modules::evaluateFilesOfLevel(ModuleID moduleOnWay, bool runsWhenLoaded)
             return;
         m_filesLoadedWithoutLoader.set(file.index());
     }
-    // The loader asks a file for no requests.
-    if (!isLoadedWithRequests(moduleOnWay)) {
+    // The loader asks a file for no requests, nor the module that stands for one: it has run by now.
+    if (!isLoadedWithRequests(moduleOnWay) || isCommonJSFileOrFace(moduleOnWay)) {
         m_filesLoadedWithoutLoader.set(moduleOnWay.index());
         m_levelsOfLoads.remove(moduleOnWay);
     }
@@ -1070,7 +1077,11 @@ void Modules::evaluateLoadedCommonJSFile(ModuleID module)
         ensureLoaded(m_table.fileBehindFace(module).value_or(module)).wasLoadedWhileItRan = true;
     if (statusAtStart != ModuleStatus::Unlinked && statusAtStart != ModuleStatus::Linked && statusAtStart != ModuleStatus::Failed)
         return;
-    evaluateModuleInRecord(module);
+    // As the start of an importer would call it.
+    if (storedStatus(module) < StoredModuleStatus::InRecord && data(module).evaluatesItself())
+        evaluateByCallingBody(module);
+    else
+        evaluateModuleInRecord(module);
     Exception* exception = scope.exception();
     if (!exception) [[likely]]
         return;
