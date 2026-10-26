@@ -2774,6 +2774,7 @@ public:
             begin = end;
         }
         alternatives.shrink(kept);
+        alternatives.last()->m_isLastAlternative = true;
     }
 
     // checkForTerminalParentheses() explains why a greedy * or + group at the end of the pattern needs no state from earlier
