@@ -1485,10 +1485,14 @@ struct VariableCarrier : LoopEditor {
         Vector<BlockID, 2> blocksOfOtherWrites { };
         bool isReadInEveryTurn { false };
         bool isWrittenOnLeavingPath { false };
+        // Whoever gets to the end of the block ahead of the loop has read the variable or is about to, whichever way the tests turn out.
+        bool isReadWheneverLoopIsEntered { false };
     };
 
     // False for a loop that is entered from its copy, behind a whole turn: what every turn reads has been read when it is read ahead of the loop.
     bool m_firstTurnRunsHere { true };
+    // The copy of such a loop.
+    const RegionCloner* m_copy { nullptr };
     BitVector m_keptReads { m_context.build.validates() ? findReadsKeptForValidation(m_function) : BitVector() };
     BitVector m_stays { };
     Vector<CarriedVariable, 8> m_variables { };
@@ -1595,20 +1599,44 @@ struct VariableCarrier : LoopEditor {
             return;
         // The read ahead of the loop stands for the read of the first turn, so the first turn has to get as far: a loop may well end at its first test.
         BitVector runsInFirstTurn(m_function.blocks.size());
+        // A path that is seldom taken does not count above. That a variable has been stored may hang on the very test that such a path begins with.
+        std::optional<ProgramPoint> firstWayOut;
+        BitVector beginsBeforeAnyWayOut(m_function.blocks.size());
         for (BlockID block = loop.header(); m_firstTurnRunsHere && !runsInFirstTurn.set(block.index());) {
+            const BlockValues& values = m_function.at(block).values;
+            if (!firstWayOut)
+                beginsBeforeAnyWayOut.set(block.index());
+            for (uint32_t index = 0; index < values.size() && !firstWayOut; ++index) {
+                Effects effects = m_analyses.effectsOf(values[index]).onAnyEdge();
+                if (effects.mayThrowByRule() || effects.mayRunOtherCode() || !effects.writes.restrictedTo(carriedHeaps).isEmpty())
+                    firstWayOut = ProgramPoint { block, index };
+            }
             BlockID next;
             bool mayEndHere = false;
             for (const Target& target : m_function.at(block).terminator.targets) {
                 if (m_stays.get(target.block.index())) {
                     mayEndHere |= !!next;
                     next = target.block;
-                } else if (!loops.belongsTo(target.block, loop))
+                    continue;
+                }
+                if (!firstWayOut)
+                    firstWayOut = pointBeforeTerminatorOf(m_function, block);
+                if (!loops.belongsTo(target.block, loop))
                     mayEndHere |= m_function.at(target.block).frequency <= m_function.at(loop.header()).frequency;
             }
             if (mayEndHere || !next)
                 break;
             block = next;
         }
+        std::optional<Edge> entry = m_copy ? loops.findSingleEntry(loop) : std::nullopt;
+        auto isReachedWheneverLoopIsEntered = [&](const VariableAccess& read) {
+            if (isUnspecifiedAtDefinition(m_function, m_function.at(read.id)))
+                return false;
+            BlockID block = read.point.block;
+            if (BlockID blockOfCopy = entry ? m_copy->cloneOf(block) : BlockID())
+                return dominators.dominates(blockOfCopy, entry->from);
+            return beginsBeforeAnyWayOut.get(block.index()) && (!firstWayOut || firstWayOut->block != block || read.point.index < firstWayOut->index);
+        };
 
         for (const VariableAccess& access : accesses) {
             if (access.stored || m_keptReads.get(access.id.index()) || !typeOf(access.id).isJavaScriptValue())
@@ -1626,6 +1654,7 @@ struct VariableCarrier : LoopEditor {
             }
             variable->reads.append(access.id);
             variable->isReadInEveryTurn |= (!m_firstTurnRunsHere || runsInFirstTurn.get(access.point.block.index())) && dominatesAll(access.point.block, latches.span());
+            variable->isReadWheneverLoopIsEntered |= isReachedWheneverLoopIsEntered(access);
         }
 
         // The closure of a declared function, for one: nobody stores to it while this function runs, or it is stored to once, ahead of every read.
@@ -1806,6 +1835,8 @@ struct VariableCarrier : LoopEditor {
             Vector<ValueID, 4>& definitions = definitionsOfVariables[index];
             auto insertRead = [&](ProgramPoint point) {
                 Value read = m_function.at(variable.reads.first());
+                if (read.opcode == Opcode::GetModuleVariable && !variable.isReadWheneverLoopIsEntered && m_program.at(read.variable()).flow.initialization == InitializationState::StoredBeforeEveryRead)
+                    read.setMayPrecedeItsStore(true);
                 builder.setOrigin(read.origin());
                 return builder.insertBefore(point, WTF::move(read));
             };
@@ -2622,7 +2653,7 @@ struct LoopPathSeparator : LoopEditor {
         if (!addWayBack(builder, plan, cloner.cloneOf(plan.header), isInCopy))
             m_context.build.statistics().count(StatisticID::LoopsWithoutWayBack);
         else if (plan.letsVariablesBeCarried)
-            carryVariables(builder, plan.header, cloner.cloneOf(plan.header), isInCopy);
+            carryVariables(builder, plan.header, cloner, isInCopy);
 
         // A parameter that the repair adds holds what the definitions it joins hold.
         restoreRememberedTypes();
@@ -2869,9 +2900,10 @@ struct LoopPathSeparator : LoopEditor {
     }
 
     // The loop has one entering edge, from the way back. What is read ahead of the loop is read there, and tested there for what every turn tested it for.
-    void carryVariables(IRBuilder& builder, BlockID header, BlockID headerOfCopy, const BitVector& isInCopy)
+    void carryVariables(IRBuilder& builder, BlockID header, const RegionCloner& copy, const BitVector& isInCopy)
     {
-        VariableCarrier carrier { { m_context }, false };
+        BlockID headerOfCopy = copy.cloneOf(header);
+        VariableCarrier carrier { { m_context }, false, &copy };
         BitVector leaves;
         bool changed = carrier.carryAround(header, leaves);
         m_variablesWithStores.appendVector(carrier.m_variablesWithStores);

@@ -1,0 +1,119 @@
+# That a variable is stored before it is read may hang on a test in front of the read. A path that is seldom taken does not keep the variable from going around the loop, so the read ahead of the loop may
+# stand in front of that test and find the variable empty. It is marked, and counts as a value that may be unspecified
+# FORM: Prepared
+# RUN: pass SeparateUnlikelyLoopPaths
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="text" declared={type=string} flow={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
+variable g1 name="textOrUndefined" declared={type=undefined|string} initialization=Undefined flow={writers=AllKnown storeNaming=EveryStoreNamesLocation}
+
+function f0 name="readBehindTest" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = IsClosureOf v0 function=f4
+    Branch v2 -> taken b2(), notTaken b4()
+  b2():
+    v3 = GetModuleVariable variable=g0
+    v4 = String string="n"
+    v5 = Add v3, v4
+    PutModuleVariable v5 variable=g0
+    v7 = GetStringLength v5
+    v8 = Integer integer=9
+    v9 = Less v7, v8
+    Branch v9 -> taken b1(), notTaken b3()
+  b3():
+    Return v0
+  b4() frequency=Unlikely:
+    v10 = Undefined
+    Return v10
+# CHECK: b0(
+# CHECK-NEXT: [[first0]]: string = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+# CHECK-NEXT: Jump -> next b1([[first0]])
+# CHECK: b2():
+# CHECK-NOT: GetModuleVariable
+# CHECK: b3():
+}
+
+# Nothing leaves the first turn in front of the read
+function f1 name="readAtOnce" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = GetModuleVariable variable=g0
+    v3 = IsClosureOf v0 function=f4
+    Branch v3 -> taken b2(), notTaken b4()
+  b2():
+    v4 = String string="n"
+    v5 = Add v2, v4
+    PutModuleVariable v5 variable=g0
+    v7 = GetStringLength v5
+    v8 = Integer integer=9
+    v9 = Less v7, v8
+    Branch v9 -> taken b1(), notTaken b3()
+  b3():
+    Return v0
+  b4() frequency=Unlikely:
+    v10 = Undefined
+    Return v10
+# CHECK: b0(
+# CHECK-NEXT: [[first1]]: string = GetModuleVariable variable=g0
+# CHECK-NOT: mayPrecedeItsStore
+# CHECK: Jump -> next b1([[first1]])
+}
+
+# An operation that may throw leaves it as a test does
+function f2 name="readBehindOperationThatMayThrow" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = RequireObject v0 runtimeError=IteratorIsNotAnObject
+    v3 = GetModuleVariable variable=g0
+    v4 = String string="n"
+    v5 = Add v3, v4
+    PutModuleVariable v5 variable=g0
+    v7 = GetStringLength v5
+    v8 = Integer integer=9
+    v9 = Less v7, v8
+    Branch v9 -> taken b1(), notTaken b2()
+  b2():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+}
+
+# What the variable holds from the start is of its type
+function f3 name="variableThatStartsAsUndefined" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = IsClosureOf v0 function=f4
+    Branch v2 -> taken b2(), notTaken b4()
+  b2():
+    v3 = GetModuleVariable variable=g1
+    v4 = String string="n"
+    v5 = Add v3, v4
+    PutModuleVariable v5 variable=g1
+    v7 = GetStringLength v5
+    v8 = Integer integer=9
+    v9 = Less v7, v8
+    Branch v9 -> taken b1(), notTaken b3()
+  b3():
+    Return v0
+  b4() frequency=Unlikely:
+    v10 = Undefined
+    Return v10
+# CHECK: b0(
+# CHECK-NEXT: = GetModuleVariable variable=g1
+# CHECK-NOT: mayPrecedeItsStore
+# CHECK: b1(
+}
+
+function f4 name="callee" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}

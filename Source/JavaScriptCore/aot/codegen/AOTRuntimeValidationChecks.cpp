@@ -62,8 +62,7 @@ void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)
         // A deleted member leaves its variable empty, and a read may stand in front of the test that the member is unchanged.
         const Value& definition = m_function.at(id);
         bool readsMemberKeptInVariable = definition.opcode == Opcode::GetModuleVariable && m_program.at(definition.variable()).owner;
-        bool mayPrecedeItsStore = definition.opcode == Opcode::GetModuleVariable && definition.mayPrecedeItsStore();
-        checkHasType(id, operand, readsMemberKeptInVariable || mayPrecedeItsStore ? type.withPrimitives(Primitive::Absent) : type, ValidationFailureKind::ValueType);
+        checkHasType(id, operand, readsMemberKeptInVariable ? type.withPrimitives(Primitive::Absent) : type, ValidationFailureKind::ValueType);
         return;
     }
     if (operand.is<CellPointer>())

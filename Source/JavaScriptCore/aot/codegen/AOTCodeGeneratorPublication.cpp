@@ -47,14 +47,6 @@ static bool receivesUnspecifiedValue(const Function& function, const BitVector& 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A function that returns the parts of an object returns Unspecified values for the parts that the returned variant does not have.
-static bool isUnspecifiedAtDefinition(const Function& function, const Value& value)
-{
-    if (value.opcode == Opcode::Unspecified)
-        return true;
-    return value.opcode == Opcode::ResultAt && effectRuleOf(function.at(value.resultsOperand()).opcode) == EffectRule::Call;
-}
-
 static bool returnsUnspecifiedOperand(const Function& function, const Value& value, const BitVector& unspecifiedValues)
 {
     if (!hasRegister(value.representation))

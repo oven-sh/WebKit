@@ -323,15 +323,14 @@ bool mayReturnOperand(Opcode opcode)
     return false;
 }
 
-static bool hasSourceOfUnspecifiedValues(FunctionAnalyses& analyses)
+static bool isReadThatMayPrecedeItsStore(const Value& value)
 {
-    const OpcodeSet& opcodes = analyses.opcodesOfValues();
-    return opcodes.contains(Opcode::Unspecified) || opcodes.contains(Opcode::ResultAt);
+    return value.opcode == Opcode::GetModuleVariable && value.mayPrecedeItsStore();
 }
 
-static bool isSourceOfUnspecifiedValues(const Function& function, const Value& value)
+bool isUnspecifiedAtDefinition(const Function& function, const Value& value)
 {
-    if (value.opcode == Opcode::Unspecified)
+    if (value.opcode == Opcode::Unspecified || isReadThatMayPrecedeItsStore(value))
         return true;
     return value.opcode == Opcode::ResultAt && effectRuleOf(function.at(value.resultsOperand()).opcode) == EffectRule::Call;
 }
@@ -355,7 +354,7 @@ static void forEachValueHandedOn(FunctionAnalyses& analyses, ValueID id, NOESCAP
 
 UnspecifiedValues::UnspecifiedValues(FunctionAnalyses& analyses)
     : m_analyses(analyses)
-    , m_hasSource(hasSourceOfUnspecifiedValues(analyses))
+    , m_hasSource(analyses.opcodesOfValues().intersects(OpcodeSet { Opcode::Unspecified, Opcode::ResultAt, Opcode::GetModuleVariable }))
 {
     if (m_hasSource)
         m_isSpecified.ensureSize(analyses.function().values.size());
@@ -374,7 +373,7 @@ bool UnspecifiedValues::mayContain(ValueID start)
         if (m_isSpecified.quickSet(id.index()))
             continue;
         m_visited.append(id);
-        if (isSourceOfUnspecifiedValues(function, function.at(id))) {
+        if (isUnspecifiedAtDefinition(function, function.at(id))) {
             for (ValueID visited : m_visited)
                 m_isSpecified.quickClear(visited.index());
             return true;

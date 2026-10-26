@@ -1,0 +1,62 @@
+# A variable that goes around a loop is read ahead of it, in front of the test that says whether the variable has been stored. A builder begun on the edge into the loop would append what was read
+# FORM: Prepared
+# RUN: pass CreateStringBuilders VerifyProgram
+# STATISTIC: StringBuildersCreated = 1
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="text" declared={type=string} flow={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
+
+function f0 name="firstStateMayPrecedeItsStore" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: string):
+    v2 = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+    Jump -> next b1(v2)
+  b1(v3: string):
+    LoopHint
+    v5 = IsClosureOf v0 function=f2
+    Branch v5 -> taken b2(), notTaken b4()
+  b2():
+    v6 = Add v3, v1
+    v7 = Add v6, v1
+    v8 = GetStringLength v1
+    v9 = Integer integer=9
+    v10 = Less v8, v9
+    Branch v10 -> taken b1(v7), notTaken b3()
+  b3():
+    PutModuleVariable v7 variable=g0
+    Return v0
+  b4() frequency=Unlikely:
+    v12 = Undefined
+    Return v12
+}
+# CHECK-LABEL: name="firstStateMayPrecedeItsStore"
+# CHECK-NOT: StringBuilderBegin
+
+function f1 name="firstStateIsAlwaysThere" parameters=[{type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: string):
+    v2 = GetModuleVariable variable=g0
+    Jump -> next b1(v2)
+  b1(v3: string):
+    LoopHint
+    v5 = IsClosureOf v0 function=f2
+    Branch v5 -> taken b2(), notTaken b4()
+  b2():
+    v6 = Add v3, v1
+    v7 = Add v6, v1
+    v8 = GetStringLength v1
+    v9 = Integer integer=9
+    v10 = Less v8, v9
+    Branch v10 -> taken b1(v7), notTaken b3()
+  b3():
+    PutModuleVariable v7 variable=g0
+    Return v0
+  b4() frequency=Unlikely:
+    v12 = Undefined
+    Return v12
+}
+# CHECK-LABEL: name="firstStateIsAlwaysThere"
+# CHECK: StringBuilderBegin
+
+function f2 name="callee" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
