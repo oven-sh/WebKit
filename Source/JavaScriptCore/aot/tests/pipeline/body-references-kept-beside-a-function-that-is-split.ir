@@ -20,7 +20,7 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
 
 function f1 name="checked" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=number site=w0 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
   b0(v0: anything ~ number):
-    v1 = Check v0 castType=number site=w0
+    v1 = Check v0 expectedType=number site=w0
     v2 = Add v1, v1
     Return v2
 }

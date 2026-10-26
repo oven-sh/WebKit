@@ -25,21 +25,21 @@ function f0 name="main" kind=Module parameters=[{type=undefined|L0}, {type=L0}] 
 }
 function f1 name="leftOut" module=m0 position=100 flags=[IsChecked] length=1 parameters=[{type=undefined|null|L0 site=w0 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
   b0(v0: anything ~ undefined|null|L0):
-    v1 = Check v0 castType=undefined|null|L0 site=w0
+    v1 = Check v0 expectedType=undefined|null|L0 site=w0
     Return v1
 }
 # CHECK-LABEL: function f1 name="leftOut" module=m0 position=100 role=EntryChecks
 # CHECK: = TypeTest v0 testedType=L0
 function f2 name="written" module=m0 position=200 flags=[IsChecked] length=1 parameters=[{type=undefined|null|L0 site=w1 flags=[IsExpected, OmitsNull]}] results=[{type=anything}] {
   b0(v0: anything ~ undefined|null|L0):
-    v1 = Check v0 castType=undefined|null|L0 site=w1
+    v1 = Check v0 expectedType=undefined|null|L0 site=w1
     Return v1
 }
 # CHECK-LABEL: function f2 name="written" module=m0 position=200 role=EntryChecks
 # CHECK: = TypeTest v0 testedType=undefined|L0
 function f3 name="mayArrive" module=m0 position=300 flags=[IsChecked] length=1 parameters=[{type=undefined|null|L0 site=w2 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
   b0(v0: anything ~ undefined|null|L0):
-    v1 = Check v0 castType=undefined|null|L0 site=w2
+    v1 = Check v0 expectedType=undefined|null|L0 site=w2
     Return v1
 }
 # CHECK-LABEL: function f3 name="mayArrive" module=m0 position=300 role=EntryChecks

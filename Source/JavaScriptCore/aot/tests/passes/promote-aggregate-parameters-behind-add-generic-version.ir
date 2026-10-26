@@ -14,7 +14,7 @@ layout L0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b
 function f0 name="oneFieldIsChecked" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
     v2 = PropGet v0 key="a" receivers=[L0]
     v3 = PropGet v0 key="b" receivers=[L0]
-    v4 = Check v3 castType=number site=w0
+    v4 = Check v3 expectedType=number site=w0
     v5 = Builtin builtin=GlobalThis
     v6 = PropGet v5 key="sink" [isFreeName]
     v7 = Call v6, -, v2, v4, v1
@@ -24,9 +24,9 @@ function f0 name="oneFieldIsChecked" parameters=[{type=L0}, {type=anything}] res
 
 function f1 name="bothFieldsAreChecked" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
     v2 = PropGet v0 key="a" receivers=[L0]
-    v3 = Check v2 castType=number site=w0
+    v3 = Check v2 expectedType=number site=w0
     v4 = PropGet v0 key="b" receivers=[L0]
-    v5 = Check v4 castType=number site=w1
+    v5 = Check v4 expectedType=number site=w1
     v6 = Builtin builtin=GlobalThis
     v7 = PropGet v6 key="sink" [isFreeName]
     v8 = Call v7, -, v3, v5, v1

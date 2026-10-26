@@ -475,7 +475,7 @@ private:
 
     void findSourcesOfResult()
     {
-        if (m_function.results.size() != 1 || !m_program.at(m_function.results[0].type).layouts)
+        if (m_function.results.size() != 1 || !m_program.at(m_function.results[0].expected().predicted()).layouts)
             return;
         Vector<SlotUseFreshObject, 4> objects;
         for (const Block& block : m_function.blocks) {

@@ -94,7 +94,7 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::InlineCalls, { .opcodes = { Opcode::CallDirect } } },
     { PassID::SimplifyCasts, { .opcodes = simplifiableCasts } },
     { PassID::SinkAllocations, { .opcodes = opcodesInterpretedAs(Interpretation::Allocation) } },
-    { PassID::EliminateRedundantReads, { .opcodes = opcodesReadingAccessedHeaps } },
+    { PassID::EliminateRedundantReads, { .opcodes = opcodesOfRedundantReadElimination } },
     { PassID::EliminateGuards, { .opcodes = opcodesOfGuardElimination } },
     { PassID::SeparateUnlikelyLoopPaths, { .opcodes = { Opcode::LoopHint } } },
     { PassID::ConvertCountersToIntegers, { .traits = BodyTrait::BlockParameters } },
@@ -536,7 +536,7 @@ static OptionSet<ValueEdit> editsBetween(const Value& before, const Value& after
     OptionSet<ValueEdit> edits;
     if (before.opcode != after.opcode || !hasSameWords(before, after))
         edits.add(ValueEdit::Definition);
-    if (before.type != after.type || before.expected() != after.expected() || before.representation != after.representation)
+    if (before.type != after.type || before.expected().predicted() != after.expected().predicted() || before.representation != after.representation)
         edits.add(ValueEdit::Type);
     return edits;
 }
@@ -840,14 +840,14 @@ static String describeFirstDifference(const Function& function, const Function& 
     for (size_t index = 0; index < function.values.size(); ++index) {
         const Value& before = function.values[index];
         const Value& after = changed.values[index];
-        if (before.opcode == after.opcode && before.type == after.type && before.expected() == after.expected())
+        if (before.opcode == after.opcode && before.type == after.type && before.expected().predicted() == after.expected().predicted())
             continue;
         out.print("; v", index, " (", nameOf(before.opcode), ")");
         if (before.opcode != after.opcode)
             out.print(" becomes ", nameOf(after.opcode));
         if (before.type != after.type)
             out.print(" gets another type");
-        if (before.expected() != after.expected())
+        if (before.expected().predicted() != after.expected().predicted())
             out.print(" is expected to be of another type");
         break;
     }

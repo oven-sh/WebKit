@@ -201,7 +201,7 @@ public:
                 continue;
             const Variable& variable = m_index.program().variables[location];
             bool isSetAtCreation = variable.initialization == VariableInitialization::Function;
-            bool startsAbsent = m_index.program().at(variable.declared.type).primitives & Primitive::Absent;
+            bool startsAbsent = m_index.program().at(variable.declared.written()).primitives & Primitive::Absent;
             orders[location] = { initializationOf(location, isSetAtCreation, startsAbsent), storeCountOf(location, isSetAtCreation, canRunTwiceAtAll) };
             if (orders[location].initialization == InitializationState::StoredBeforeEveryRead && orders[location].stores == StoreCount::AtMostOnce)
                 orders[location].isStoredBeforeCallersOfReaders = isStoredBeforeCallersOfReaders(location);
@@ -894,7 +894,7 @@ private:
                 orders[location] = { InitializationState::StoredBeforeEveryRead, storeCountOf(location, false, canRunTwicePerInstance), true };
                 continue;
             }
-            bool startsAbsent = m_index.program().at(fields[field].declared.type).primitives & Primitive::Absent;
+            bool startsAbsent = m_index.program().at(fields[field].declared.written()).primitives & Primitive::Absent;
             orders[location] = { initializationOf(location, isSetAtCreation, startsAbsent), storeCountOf(location, isSetAtCreation, canRunTwicePerInstance) };
         }
     }

@@ -438,9 +438,9 @@ void IRPrinter::printEngineValueFields(const Value& value)
         m_out.print(": "_s);
         print(value.type);
     }
-    if (value.expected()) {
+    if (value.expected().predicted()) {
         m_out.print(" ~ "_s);
-        print(value.expected());
+        print(value.expected().predicted());
     }
     if (value.representation != Representation::Unchosen) {
         m_out.print(" @"_s);

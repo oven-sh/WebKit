@@ -15,6 +15,7 @@
 #include "AOTBuiltinIDTypes.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperands.h"
+#include "AOTFlowResults.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
@@ -1024,7 +1025,7 @@ static ArrayStorage storageHolding(FunctionPassContext& context, const Value& al
         stored = context.types.unionOf(stored, function.at(function.at(store).valueOperand()).type);
     ArrayStorage kind = arrayStorageAtAllocation(context.types.at(stored));
     // The readers test for the kind that the declared elements give the array.
-    if (kind == ArrayStorage::Int32 && allocation.expected() && arrayStorageDeclaredBy(context.program, context.types.at(allocation.expected())) == ArrayStorage::Double)
+    if (kind == ArrayStorage::Int32 && allocation.expected().predicted() && arrayStorageDeclaredBy(context.program, context.types.at(allocation.expected().predicted())) == ArrayStorage::Double)
         return ArrayStorage::Double;
     return kind;
 }
@@ -1231,6 +1232,28 @@ static bool summaryAllowsConversion(FunctionPassContext& context, const Function
     return isAllowed;
 }
 
+static bool flowAllowsConversion(FunctionPassContext& context, ValueID array)
+{
+    static constexpr OpcodeSet accessesOfElements { Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::HasArrayElement };
+    const Function& function = context.function;
+    const FlowResults& flow = context.inputs.flow;
+    const ClassPart* part = context.program.typeOf(function, array).singleBuiltinClass();
+    if (part && part->arrayStorage != ArrayStorage::Other)
+        return false;
+    // Only flow calls contents proven, and only where it has seen every array that arrives. Those share what is decided about their storage: here, nothing.
+    if (part && part->contentsAreProven)
+        return true;
+    bool isReceiver = false;
+    for (const Use& use : context.analyses.useLists().usesOf(array)) {
+        if (use.kind != Use::Kind::Operand || !accessesOfElements.contains(function.at(use.user).opcode) || function.at(use.user).arrayOperand() != array)
+            continue;
+        if (!flow.mayChangeStorageOfReceiver(function.at(use.user).accessSite()))
+            return false;
+        isReceiver = true;
+    }
+    return isReceiver || flow.mayChangeStorageOfReceiver({ });
+}
+
 static bool convertsAtHead(const Function& function, BlockID block, ValueID array)
 {
     const BlockValues& values = function.at(block).values;
@@ -1293,10 +1316,10 @@ static Vector<FailedStorageTest, 4> collectFailedTestsForDoubleStorage(FunctionP
         BlockID whenFailed = function.at(block).terminator.notTaken().block;
         // Whoever goes on to ask for another kind reads the array as it is.
         const Value* nextTest = findStorageTestBranchedOnBy(function, whenFailed);
-        if (convertsAtHead(function, block, array) || convertsAtHead(function, whenFailed, array) || (nextTest && nextTest->arrayOperand() == array) || standsBehindPassedTest(context, block, array) || !summaryAllowsConversion(context, *summary, functionMaySuspend, array))
+        if (convertsAtHead(function, block, array) || convertsAtHead(function, whenFailed, array) || (nextTest && nextTest->arrayOperand() == array) || standsBehindPassedTest(context, block, array) || !flowAllowsConversion(context, array) || !summaryAllowsConversion(context, *summary, functionMaySuspend, array))
             continue;
         ValueID copied = findCopiedArrayToConvert(context, array);
-        if (copied && !summaryAllowsConversion(context, *summary, functionMaySuspend, copied))
+        if (copied && (!flowAllowsConversion(context, copied) || !summaryAllowsConversion(context, *summary, functionMaySuspend, copied)))
             copied = { };
         failedTests.append(FailedStorageTest { Edge { block, 1 }, array, test->origin(), copied });
     }

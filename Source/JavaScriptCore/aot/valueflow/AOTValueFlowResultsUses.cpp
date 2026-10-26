@@ -516,7 +516,7 @@ ValueSetID UsesOfObjects::builtinObjectsExpectedAt(ValueSetMaker& maker, const F
 {
     ValueSetID objects = ValueSets::nothing;
     for (ValueID value : values) {
-        TypeID expected = value ? function.at(value).expected() : TypeID();
+        TypeID expected = value ? function.at(value).expected().predicted() : TypeID();
         if (BuiltinID builtin = expected ? m_inputs.program.types.at(expected).withoutNullish().singleBuiltin() : BuiltinID())
             objects = maker.unite(objects, maker.of(m_inputs.universe().objectOf(builtin)));
     }

@@ -45,27 +45,8 @@ struct ConventionRegisters {
 
 constexpr bool isPassedInFPR(Representation representation)
 {
-    switch (representation) {
-    case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
-    case Representation::OptionalDouble:
-        return true;
-    case Representation::Boolean:
-    case Representation::Int32:
-    case Representation::Int64:
-    case Representation::OptionalInt64:
-    case Representation::Cell:
-    case Representation::Cell32:
-    case Representation::JSValue:
-    case Representation::LiteralString:
-    case Representation::RawWord:
-        return false;
-    case Representation::Unchosen:
-    case Representation::Void:
-        break;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+    RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(representation != Representation::Unchosen && representation != Representation::Void);
+    return isPassedInFPROf(representation);
 }
 
 EntryConvention entryConventionOf(const Function&);

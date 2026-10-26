@@ -17,20 +17,24 @@ function findPackedKind(scope: Scope, syntax: KindSyntax): PackedKind | null {
     const element = scope.packedRecords.get(syntax.element.name.text);
     return element === undefined ? null : { tag: "List", element };
   }
-  if (syntax.element !== null || syntax.role !== null || syntax.arrayLength !== null) return null;
-  if (word === "Bool" || word === "CodeOffset" || word === "Bytes") return { tag: word };
+  if (syntax.element !== null || syntax.role !== null) return null;
   if (word in numberTypes) return { tag: "Number", cppType: numberTypes[word] };
+  const external = scope.externals.get(word);
+  if (external !== undefined && external.form === "enum")
+    return syntax.arrayLength === null ? null : { tag: "ExternalEnum", cppType: external.cppType };
+  if (syntax.arrayLength !== null) return null;
+  if (word === "Bool" || word === "CodeOffset" || word === "Signed" || word === "Bytes") return { tag: word };
   const type = scope.enums.get(word);
   if (type !== undefined) return type.isFlags ? null : { tag: "Enum", type };
-  const external = scope.externals.get(word);
-  if (external !== undefined) return external.form === "id" ? { tag: "Id", cppType: external.cppType } : null;
+  if (external !== undefined) return { tag: "Id", cppType: external.cppType };
   if (scope.idKinds.has(word)) return { tag: "Id", cppType: `Typed::${cppIdTypeName(word)}` };
   const element = scope.packedRecords.get(word);
   return element === undefined ? null : { tag: "Record", element };
 }
 
 /** How many bits of its word the field takes. Null: all that the fields in front of it leave. */
-function widthOf(kind: PackedKind): number | null {
+function widthOf(kind: PackedKind, { arrayLength }: KindSyntax): number | null {
+  if (typeof arrayLength === "bigint") return Number(arrayLength);
   if (kind.tag === "Bool") return 1;
   return kind.tag === "Enum" ? bitsToCount(kind.type.members.length) : null;
 }
@@ -81,7 +85,7 @@ function resolveWord(scope: Scope, syntax: PackedWordSyntax, earlier: readonly P
       scope.errors.add(name.location, `${name.text} needs a word of its own: write ';' in front of it`);
       continue;
     }
-    const width = widthOf(kind);
+    const width = widthOf(kind, kindSyntax);
     fields.push({ name: name.text, kind, shift, width, location: name.location });
     shift = width === null ? null : shift + width;
     if (shift !== null && shift > bitsInWord) scope.errors.add(name.location, `${name.text} does not fit its word`);

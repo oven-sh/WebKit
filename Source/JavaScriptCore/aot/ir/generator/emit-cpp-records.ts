@@ -109,9 +109,17 @@ function engineVariant(variant: Variant): string[] {
   ];
 }
 
+function isHandwritten(type: SchemaType): boolean {
+  return type.tag === "Record" && type.record.isHandwrittenStruct;
+}
+
+function handwrittenHeadersOf(types: readonly SchemaType[]): string[] {
+  return types.filter(isHandwritten).map(type => `"AOT${engineStructNameOf(type)}.h"`);
+}
+
 function definitionsOf(types: readonly SchemaType[]): string[] {
   const declarations = forwardDeclarationsOf(types).map(type => `struct ${engineStructNameOf(type)};`);
-  const definitions = types.map(type => {
+  const definitions = types.filter(type => !isHandwritten(type)).map(type => {
     if (type.tag === "Variant") return engineVariant(type.variant);
     return engineStruct(engineRecordNameOf(type.record), engineFieldsOf(type.record), isComparable(type));
   });
@@ -130,7 +138,10 @@ function recordsHeaders(schema: Schema): OutputFile[] {
   return [
     {
       name: leadingRecordsHeaderName,
-      lines: cppHeader(recordIncludes, definitionsOf(types.slice(0, numberOfLeadingTypes))),
+      lines: cppHeader(
+        [...handwrittenHeadersOf(types), ...recordIncludes],
+        definitionsOf(types.slice(0, numberOfLeadingTypes)),
+      ),
     },
     {
       name: "AOTSchemaRecords.h",

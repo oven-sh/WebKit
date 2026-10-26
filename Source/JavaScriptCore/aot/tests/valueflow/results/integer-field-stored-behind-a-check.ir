@@ -23,9 +23,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 function f1 name="make" parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}, {type=int[0, 1000] flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0, v1, v2):
-    v3 = Check v0 castType=number
-    v4 = Check v1 castType=number
-    v5 = Check v2 castType=int[0, 1000]
+    v3 = Check v0 expectedType=number
+    v4 = Check v1 expectedType=number
+    v5 = Check v2 expectedType=int[0, 1000]
     v6 = Integer integer=255
     v7 = BitAnd v3, v6
     v8 = Integer integer=1

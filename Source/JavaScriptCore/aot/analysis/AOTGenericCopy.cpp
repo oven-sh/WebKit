@@ -232,7 +232,7 @@ BitVector findValuesTypedCodeKnowsMoreAbout(FunctionAnalyses& analyses, const Ty
         const Value& value = function.at(id);
         if (!value.type)
             return;
-        bool hasOpenExpectation = value.expected() && value.expected() != value.type;
+        bool hasOpenExpectation = value.expected().predicted() && value.expected().predicted() != value.type;
         bool isUnknown = false;
         if (!hasOpenExpectation) {
             const Type& type = types.at(value.type);
@@ -583,7 +583,7 @@ Vector<TypeID> GenericCopy::computeTypesIgnoringCopy(std::span<const ValueID> ch
     };
     Vector<StoredTypes> storedTypes(m_function.values.size(), [&](size_t index) {
         const Value& value = m_function.values[index];
-        return StoredTypes { value.type, value.expected() };
+        return StoredTypes { value.type, value.expected().predicted() };
     });
 
     TypePropagation propagation(TypePropagationInputs { m_context.program, m_context.id, m_function, m_analyses, m_context.types, m_context.build, &m_context.typingMemo });
@@ -595,11 +595,11 @@ Vector<TypeID> GenericCopy::computeTypesIgnoringCopy(std::span<const ValueID> ch
     });
     for (size_t index = 0; index < storedTypes.size(); ++index) {
         const Value& typed = m_function.values[index];
-        if (typed.type == storedTypes[index].type && typed.expectedForTyping() == storedTypes[index].expected)
+        if (typed.type == storedTypes[index].type && typed.expectedForTyping().predicted() == storedTypes[index].expected)
             continue;
         Value& value = m_function.edit(ValueID(index), ValueEdit::Type);
         value.type = storedTypes[index].type;
-        value.setExpected(storedTypes[index].expected);
+        value.setExpected(ExpectedType(storedTypes[index].expected));
     }
     m_analyses.didChangeValuesButNotUses();
     return types;
@@ -629,12 +629,12 @@ TypeID GenericCopy::typeAssumedInTypedCode(ValueID value, TypeID type, const Bit
             if (use.kind != Use::Kind::Operand || isCopy.get(use.block.index()))
                 continue;
             const Value& cast = m_function.at(use.user);
-            if (cast.opcode != Opcode::Upcast && cast.opcode != Opcode::AssumeType)
+            if (!isCastThatProvesNothing(cast.opcode) && cast.opcode != Opcode::AssumeType)
                 continue;
             worklist.append(use.user);
             ValueID copy = copyOf(use.user);
             if (cast.opcode == Opcode::AssumeType && copy && m_function.at(copy).opcode != Opcode::AssumeType)
-                type = m_context.types.intersectionOf(type, cast.castType());
+                type = m_context.types.intersectionOf(type, cast.provenType());
         }
     }
     return type;
@@ -670,7 +670,7 @@ auto GenericCopy::planRejoin(const TestedRejoin& rejoin, const RejoinTypes& rejo
         if (parameterIndex && !rejoin.typesOfCounters.isEmpty() && rejoin.typesOfCounters[*parameterIndex])
             typeInTypedCode = types.intersectionOf(typeInTypedCode, rejoin.typesOfCounters[*parameterIndex]);
         if (m_typesTestedOnWayBack == TypesTestedOnWayBack::Expected && m_mayBeNarrowed.get(inTypedCode.index())) {
-            if (TypeID expected = m_function.at(inTypedCode).expected())
+            if (TypeID expected = m_function.at(inTypedCode).expected().predicted())
                 typeInTypedCode = types.intersectionOf(typeInTypedCode, types.intern(types.at(expected).withoutClassProofs()));
         }
         const Type& given = types.at(typeInCopy);

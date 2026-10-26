@@ -223,9 +223,9 @@ static bool mayReturnObject(const Program& program, const Type& calledValue)
         return true;
     return std::ranges::any_of(callees.functions, [&](FunctionID callee) {
         const Function& function = program.at(callee);
-        if (function.results.size() != 1 || function.isUnsplitCoroutine() || function.result().flags.contains(PositionFlags::IsExpected))
+        if (function.results.size() != 1 || function.isUnsplitCoroutine() || function.result().isExpected())
             return true;
-        TypeID type = function.result().type;
+        TypeID type = *function.result().established();
         return !type || program.at(type).hasObjects();
     });
 }

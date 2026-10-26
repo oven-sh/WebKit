@@ -68,6 +68,9 @@ export const roleEnumNames: ReadonlyMap<string, string> = new Map([
 ]);
 export const idKindsWithRoles: ReadonlySet<string> = new Set(roleEnumNames.keys());
 
+export const typeHolders = ["ExpectedType", "ProvenType"] as const;
+export type TypeHolder = (typeof typeHolders)[number];
+
 export const primitiveWords = ["Undefined", "Null", "False", "True", "Number", "String", "Symbol", "BigInt"] as const;
 export type PrimitiveWord = (typeof primitiveWords)[number];
 
@@ -181,6 +184,8 @@ export interface SchemaRecord {
   readonly isCustomEngine: boolean;
   readonly isCustomText: boolean;
   readonly isExtendedEngine: boolean;
+  // The struct stands in AOT<name>.h with the same fields, and what is generated for it is its friend.
+  readonly isHandwrittenStruct: boolean;
   readonly fields: readonly Field[];
   readonly wireFields: readonly Field[];
   readonly wireWords: number;
@@ -194,10 +199,10 @@ export interface SchemaRecord {
 }
 
 export type PackedKind =
-  | { readonly tag: "Bool" | "CodeOffset" | "Bytes" }
+  | { readonly tag: "Bool" | "CodeOffset" | "Signed" | "Bytes" }
   | { readonly tag: "Number"; readonly cppType: "uint32_t" | "uint64_t" }
   | { readonly tag: "Enum"; readonly type: SchemaEnum }
-  | { readonly tag: "Id"; readonly cppType: string }
+  | { readonly tag: "Id" | "ExternalEnum"; readonly cppType: string }
   | { readonly tag: "Record" | "List"; readonly element: PackedRecord };
 
 export interface PackedField {
@@ -362,6 +367,7 @@ export interface PayloadField {
   readonly tag: "Payload";
   readonly name: string;
   readonly kind: Kind;
+  readonly heldAs: TypeHolder | null;
   readonly payloadKind: Member;
   readonly elementPayloadKind: Member | null;
   readonly isOptional: boolean;

@@ -82,7 +82,7 @@ constexpr unsigned stringSwitch = 24;
 
 } // namespace CodeSize
 
-static constexpr OpcodeSet opcodesWithoutCode {
+static constexpr OpcodeSet opcodesWithoutCode = castsThatProveNothing | OpcodeSet {
     Opcode::Parameter,
     Opcode::Undefined,
     Opcode::Null,
@@ -95,7 +95,6 @@ static constexpr OpcodeSet opcodesWithoutCode {
     Opcode::Results,
     Opcode::ResultAt,
     Opcode::LoopHint,
-    Opcode::Upcast,
     Opcode::AssumeType,
     Opcode::FinishObject,
     Opcode::AllGuards,
@@ -144,7 +143,7 @@ static bool isConstantExpression(const Function& function, const Value& value, u
         return true;
     if (!remainingDepth)
         return false;
-    if (value.opcode == Opcode::Upcast)
+    if (isCastThatProvesNothing(value.opcode))
         return isConstantExpression(function, function.at(value.valueOperand()), remainingDepth - 1);
     if (!foldableOpcodes.contains(value.opcode))
         return false;
@@ -1108,8 +1107,8 @@ ValueID upcastToParameterType(IRBuilder& builder, const Value& parameter, ValueI
         return argument;
 
     ValueID converted = builder.appendUpcast(argument, parameter.type);
-    TypeID expected = parameter.expected();
-    if (!expected || expected == builder.function().at(converted).expected())
+    TypeID expected = parameter.expected().predicted();
+    if (!expected || expected == builder.function().at(converted).expected().predicted())
         return converted;
 
     if (program.typeOf(builder.function(), converted).isSubsetOf(program.at(expected), program))
@@ -1118,7 +1117,7 @@ ValueID upcastToParameterType(IRBuilder& builder, const Value& parameter, ValueI
     // Of two expectations that exclude each other the one nearer to the use stands.
     TypeArena& types = builder.types();
     TypeID proven = builder.function().at(converted).type;
-    TypeID narrowed = types.intersectionOf(builder.function().at(converted).expectedOrType(), expected);
+    TypeID narrowed = types.intersectionOf(builder.function().at(converted).expectedOrType().predicted(), expected);
     if (narrowed == TypeTable::never)
         narrowed = types.intersectionOf(proven, expected);
     // An intersection may keep a part of one side that the subset test does not find in the other.
@@ -1128,7 +1127,7 @@ ValueID upcastToParameterType(IRBuilder& builder, const Value& parameter, ValueI
     // What the copy expects of the value stands on a cast that changes nothing else: the caller's other uses of the argument expect what the caller does.
     Value cast = IRBuilder::make(Opcode::Upcast, { converted });
     cast.setCastType(proven);
-    cast.setExpected(narrowed);
+    cast.setExpected(ExpectedType(narrowed));
     return builder.append(WTF::move(cast));
 }
 
@@ -2460,7 +2459,7 @@ static Vector<ValueSite> findCallsOfHeads(const AnalysisContext& context, const 
             if (value.opcode != Opcode::CallDirect || call == tailCall || value.isAfterInlinedHead() || value.function() == context.id || !headOf[value.function().index()])
                 continue;
             const Function& callee = program.at(value.function());
-            if (value.numberOfOperands() != callee.numberOfEntryParameters() || !program.at(callee.result().type).isSubsetOf(program.at(value.type), program))
+            if (value.numberOfOperands() != callee.numberOfEntryParameters() || !program.at(program.provenTypeOf(callee.result())).isSubsetOf(program.at(value.type), program))
                 continue;
             if (!analyses) {
                 analyses.emplace(context, caller);
@@ -2497,7 +2496,7 @@ static void skipTestsThatArgumentsDecide(IRBuilder& builder, FunctionAnalyses& a
         if (call.opcode != Opcode::CallDirect || !call.isAfterInlinedHead() || call.isConstruction())
             return false;
         const Function& callee = program.at(call.function());
-        return callee.results.size() == 1 && callee.results[0].flags.contains(PositionFlags::IsExpected) && program.at(callee.results[0].type).isSubsetOf(tested, program);
+        return callee.results.size() == 1 && callee.results[0].isExpected() && program.at(callee.results[0].expected().predicted()).isSubsetOf(tested, program);
     };
     for (BlockID id : cfg.reversePostOrder()) {
         const Block& block = function.at(id);
@@ -2657,8 +2656,8 @@ void inlineHeads(ProgramEditor& editor, const OptimizationInputs& inputs, BuildC
         narrowValueTypes(TypePropagationInputs { program, id, caller, analyses, arenas.types, build }, changedValues.span());
         // Typing gives a value what its declaration expects of it. Behind selection nothing tests for that any more.
         for (Value& value : caller.editAllValues()) {
-            if (value.expected())
-                value.setExpected(TypeID());
+            if (value.expected().predicted())
+                value.setExpected({ });
         }
         analyses.didChangeControlFlow();
         IRBuilder builder(contextOf(id), caller, arenas.types, &analyses);

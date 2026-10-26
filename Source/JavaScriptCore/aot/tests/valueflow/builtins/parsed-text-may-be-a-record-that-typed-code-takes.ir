@@ -10,7 +10,7 @@
 # CHECK: layout L1 name="Kept" {{*}}writers=AllKnown{{*}}occupancy=AlwaysFilled
 # CHECK-NOT: ReachesTypedParse
 # CHECK: function f1
-# CHECK: L0 = Check v0 castType=L0
+# CHECK: L0 = Check v0 expectedType=L0
 # RUN(SOLVE): valueflow-solve unreached
 # SOLVE-NOT: unreached f1
 

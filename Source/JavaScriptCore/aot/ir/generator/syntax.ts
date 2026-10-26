@@ -234,6 +234,7 @@ export type ParameterSyntax =
       readonly form: "Payload";
       readonly name: Name;
       readonly kind: KindSyntax;
+      readonly heldAs: Name | null;
       readonly isOptional: boolean;
       readonly isVariadic: boolean;
       readonly isEngine: boolean;

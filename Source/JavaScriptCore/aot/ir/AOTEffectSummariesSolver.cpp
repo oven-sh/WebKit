@@ -260,8 +260,8 @@ public:
 
     void add(const DeclaredType& declared)
     {
-        add(static_cast<uint64_t>(declared.type.index()) << 32 | declared.site.index());
-        add(declared.flags.toRaw());
+        add(static_cast<uint64_t>(declared.written().index()) << 32 | declared.site.index());
+        add(declared.writtenFlags().toRaw());
     }
 
     void add(const Vector<DeclaredType>& types)

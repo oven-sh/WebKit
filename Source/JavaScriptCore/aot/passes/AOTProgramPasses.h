@@ -56,7 +56,7 @@ inline constexpr OpcodeSet opcodesOfGuardElimination = testsThatProveForStretch 
 
 inline constexpr AbstractHeapSet accessedHeapSet { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields, AbstractHeap::ObjectFields };
 
-// What memoryAccessOf() may take for a read of one of the heaps. EliminateRedundantReads has nothing to do in a function without any of these.
+// What memoryAccessOf() may take for a read of one of the heaps.
 inline constexpr OpcodeSet opcodesReadingAccessedHeaps = [] {
     OpcodeSet opcodes;
     for (Opcode opcode : allMembersOf<Opcode>) {
@@ -65,6 +65,9 @@ inline constexpr OpcodeSet opcodesReadingAccessedHeaps = [] {
     }
     return opcodes;
 }();
+
+// EliminateRedundantReads replaces such reads and drops a call of a built-in that repeats the call in front of it. A body that holds none of these gives it nothing to do.
+inline constexpr OpcodeSet opcodesOfRedundantReadElimination = opcodesReadingAccessedHeaps | OpcodeSet { Opcode::CallBuiltin };
 
 enum class ExpansionStep : uint8_t {
     ForInPositions = 1 << 0,

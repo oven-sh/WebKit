@@ -326,16 +326,20 @@ void FunctionVerifier::verifyCast(BlockID block, ValueID id, const Value& value)
     case Opcode::Upcast:
         need(InternalErrorKind::UpcastNotSubset, block, id, value.valueOperand(), m_program.at(value.castType()));
         return;
+    case Opcode::Expect:
+        if (hasClassProofs(m_program.at(value.expectedType().predicted())))
+            fail(InternalErrorKind::PayloadOutOfRange, block, id);
+        return;
     case Opcode::Check:
     case Opcode::TypeTest: {
         bool isCheck = value.opcode == Opcode::Check;
-        const Type& tested = m_program.at(isCheck ? value.castType() : value.testedType());
+        const Type& tested = m_program.at(isCheck ? value.expectedType().predicted() : value.testedType());
         if (hasClassProofs(tested) || (isCheck && hasUntestableBuiltins(tested)))
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
     }
     case Opcode::ReportMismatch: {
-        const Type& expected = m_program.at(value.expectedType());
+        const Type& expected = m_program.at(value.expectedType().predicted());
         if (hasClassProofs(expected) || hasUntestableBuiltins(expected))
             fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
@@ -462,7 +466,7 @@ void FunctionVerifier::verifyReturnCall(BlockID block, const Terminator& termina
     Type returned = typeOf(call);
     for (TailCast cast : terminator.casts()) {
         DeclaredType target = cast.declared;
-        target.type = targetOfConvert(context, target);
+        target.changeType(Proven::byPosition(targetOfConvert(context, target)));
         const Type& declared = context.typeOf(target);
         bool narrowsWithoutProof = !canNarrow(cast.resolution) && !returned.isSubsetOf(declared, m_program);
         if (!isLegalIn(cast.resolution, m_form) || narrowsWithoutProof) {
@@ -506,14 +510,14 @@ void FunctionVerifier::verifyFormRules(BlockID blockID, const Block& block)
     }
 
     for (ValueID parameter : block.parameters) {
-        if (m_function.at(parameter).expected()) {
+        if (m_function.at(parameter).expected().predicted()) {
             fail(InternalErrorKind::ExpectedTypeAfterSelection, blockID, parameter);
             return;
         }
     }
     for (ValueID id : block.values) {
         const Value& value = m_function.at(id);
-        if (value.expected()) {
+        if (value.expected().predicted()) {
             fail(InternalErrorKind::ExpectedTypeAfterSelection, blockID, id);
             return;
         }

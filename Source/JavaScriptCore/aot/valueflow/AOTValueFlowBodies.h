@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTPredictedValues.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlow.h"
 #include "AOTValueFlowBuiltinTables.h"
@@ -677,7 +678,11 @@ private:
     Vector<ValueFlowBodyRange> m_ranges;
 };
 
-BitVector findValuesBehindChecks(const Program&, const Function&, const CFG&, const BitVector* checksThatTestNothing = nullptr);
+// The values whose types as read may be owed to a check.
+inline BitVector valuesTypedBehindChecks(const Program& program, const Function& function, const CFG& cfg, const BitVector* checksThatTestNothing = nullptr)
+{
+    return PredictedValues(function, cfg, { .programToReadComparisonsWith = &program, .checksToLeaveOut = checksThatTestNothing }).valuesBehindChecks();
+}
 
 struct ValueFlowInstancedFunction {
     FunctionID function;

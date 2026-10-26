@@ -25,10 +25,7 @@ namespace {
 
 DeclaredType createDeclaredType(TypeID type, OptionSet<PositionFlags> flags = { })
 {
-    DeclaredType declared;
-    declared.type = type;
-    declared.flags = flags;
-    return declared;
+    return flags.contains(PositionFlags::IsExpected) ? DeclaredType(ExpectedType(type)) : DeclaredType(Proven::byPosition(type));
 }
 
 ConstructorForm constructorFormOf(FunctionKind kind, OptionSet<FunctionFlags> flags = { })
@@ -193,7 +190,7 @@ static void declaredEntryTypeOfThisFollowsLevel()
     AOT_TEST_CHECK(declaredEntryTypeOf(typing.atLevel(TypeLevel::Expected), function, 0) == TypeTable::function);
     AOT_TEST_CHECK(declaredEntryTypeOf(typing.expecting(), function, 0) == TypeTable::function);
 
-    function.thisType.flags = { };
+    function.thisType.establish(Proven::byPosition(function.thisType.written()));
     AOT_TEST_CHECK(declaredEntryTypeOf(typing, function, 0) == TypeTable::function);
     AOT_TEST_CHECK(declaredEntryTypeOf(typing.expecting(), function, 0) == TypeTable::function);
 }
@@ -268,13 +265,13 @@ static void copyOfFunctionSharesNothing()
     copy.edit(entry).terminator.next().arguments.append(array);
     copy.edit(entry).handler->arguments.clear();
     copy.edit(entry).values.clear();
-    copy.parameters[0].type = TypeTable::string;
+    copy.parameters[0].establish(Proven::byPosition(TypeTable::string));
     addBlock(copy);
 
     AOT_TEST_CHECK(function.blocks.size() == 2 && hasElements(function.at(entry).values, { element, array }));
     AOT_TEST_CHECK(hasElements(function.at(array).holes(), { 1u, 2u }) && hasElements(function.at(array).variadicOperands(), { element }));
     AOT_TEST_CHECK(hasElements(function.at(entry).terminator.next().arguments, { element }) && hasElements(function.at(entry).handler->arguments, { array }));
-    AOT_TEST_CHECK(function.parameters[0].type == TypeTable::number);
+    AOT_TEST_CHECK(function.parameters[0].written() == TypeTable::number);
 }
 
 static void declarationLocationNeedsModule()
@@ -380,16 +377,16 @@ static void remapIDsRewritesTypesOfValues()
     ValueID unlisted = addUnlistedValue(function, Opcode::Undefined);
     ValueID untouched = addUnlistedValue(function, Opcode::Undefined);
     function.edit(typed).type = fixture.firstType;
-    function.edit(typed).setExpected(fixture.secondType);
+    function.edit(typed).setExpected(ExpectedType(fixture.secondType));
     function.edit(unlisted).type = fixture.thirdType;
-    function.edit(untouched).setExpected(TypeTable::string);
+    function.edit(untouched).setExpected(ExpectedType(TypeTable::string));
 
     fixture.remap(function);
     AOT_TEST_CHECK(function.at(typed).type == fixture.types(fixture.firstType) && !TypeTable::isProvisional(function.at(typed).type));
-    AOT_TEST_CHECK(function.at(typed).expected() == fixture.types(fixture.secondType) && !TypeTable::isProvisional(function.at(typed).expected()));
-    AOT_TEST_CHECK(function.at(typed).type != function.at(typed).expected());
-    AOT_TEST_CHECK(function.at(unlisted).type == fixture.types(fixture.thirdType) && !function.at(unlisted).expected());
-    AOT_TEST_CHECK(function.at(untouched).type == TypeTable::anything && function.at(untouched).expected() == TypeTable::string);
+    AOT_TEST_CHECK(function.at(typed).expected().predicted() == fixture.types(fixture.secondType) && !TypeTable::isProvisional(function.at(typed).expected().predicted()));
+    AOT_TEST_CHECK(function.at(typed).type != function.at(typed).expected().predicted());
+    AOT_TEST_CHECK(function.at(unlisted).type == fixture.types(fixture.thirdType) && !function.at(unlisted).expected().predicted());
+    AOT_TEST_CHECK(function.at(untouched).type == TypeTable::anything && function.at(untouched).expected().predicted() == TypeTable::string);
     AOT_TEST_CHECK(fixture.test.program.at(function.at(typed).type).primitives == (Primitive::String | Primitive::Boolean));
 }
 
@@ -420,13 +417,13 @@ static void remapIDsClearsExpectedTypeThatBecomesTheType()
     ValueID sameType = addValue(function, entry, Opcode::Undefined);
     ValueID narrowerType = addValue(function, entry, Opcode::Undefined);
     function.edit(sameType).type = inFirstArena;
-    function.edit(sameType).setExpected(inSecondArena);
+    function.edit(sameType).setExpected(ExpectedType(inSecondArena));
     function.edit(narrowerType).type = inFirstArena;
-    function.edit(narrowerType).setExpected(narrower);
+    function.edit(narrowerType).setExpected(ExpectedType(narrower));
 
     remapIDs(function, types, strings, functions);
-    AOT_TEST_CHECK(function.at(sameType).type == types(inFirstArena) && !function.at(sameType).expected());
-    AOT_TEST_CHECK(function.at(narrowerType).type == types(inFirstArena) && function.at(narrowerType).expected() == narrower);
+    AOT_TEST_CHECK(function.at(sameType).type == types(inFirstArena) && !function.at(sameType).expected().predicted());
+    AOT_TEST_CHECK(function.at(narrowerType).type == types(inFirstArena) && function.at(narrowerType).expected().predicted() == narrower);
 }
 
 static void adoptIDsGivesBodyBuiltInAnotherArenaTheIDsOfThisOne()
@@ -442,7 +439,7 @@ static void adoptIDsGivesBodyBuiltInAnotherArenaTheIDsOfThisOne()
         ValueID typeTest = addValue(function, entry, Opcode::TypeTest);
         ValueID untouched = addValue(function, entry, Opcode::Undefined);
         function.edit(typed).type = builder.unionOf(TypeTable::string, TypeTable::boolean);
-        function.edit(typed).setExpected(builder.unionOf(TypeTable::string, TypeTable::undefined));
+        function.edit(typed).setExpected(ExpectedType(builder.unionOf(TypeTable::string, TypeTable::undefined)));
         function.edit(typeTest).type = TypeTable::boolean;
         function.edit(typeTest).setTestedType(builder.unionOf(TypeTable::string, TypeTable::boolean));
         function.edit(untouched).type = TypeTable::anything;
@@ -454,9 +451,9 @@ static void adoptIDsGivesBodyBuiltInAnotherArenaTheIDsOfThisOne()
         adoptIDs(function, optimizer);
         AOT_TEST_CHECK(!numberOfForeignIDs(function, optimizer) && numberOfForeignIDs(function, builder) == 3);
         AOT_TEST_CHECK(function.at(typed).type == computed);
-        AOT_TEST_CHECK(function.at(typed).expected() == optimizer.unionOf(TypeTable::string, TypeTable::undefined));
+        AOT_TEST_CHECK(function.at(typed).expected().predicted() == optimizer.unionOf(TypeTable::string, TypeTable::undefined));
         AOT_TEST_CHECK(function.at(typeTest).testedType() == computed && function.at(typeTest).type == TypeTable::boolean);
-        AOT_TEST_CHECK(function.at(untouched).type == TypeTable::anything && !function.at(untouched).expected());
+        AOT_TEST_CHECK(function.at(untouched).type == TypeTable::anything && !function.at(untouched).expected().predicted());
     }
     typePhase.discard();
 }
@@ -534,10 +531,10 @@ static void remapIDsRewritesHeader()
     function.inlineFrames[1].callee = fixture.function;
 
     fixture.remap(function);
-    AOT_TEST_CHECK(function.name == fixture.strings(fixture.string) && function.captures[0].type == fixture.types(fixture.firstType));
+    AOT_TEST_CHECK(function.name == fixture.strings(fixture.string) && function.captures[0].written() == fixture.types(fixture.firstType));
     AOT_TEST_CHECK(function.thisType == createDeclaredType(fixture.types(fixture.secondType), PositionFlags::IsExpected));
-    AOT_TEST_CHECK(function.parameters[0].type == TypeTable::string && function.parameters[1].type == fixture.types(fixture.thirdType));
-    AOT_TEST_CHECK(function.results[0].type == fixture.types(fixture.thirdType));
+    AOT_TEST_CHECK(function.parameters[0].written() == TypeTable::string && function.parameters[1].written() == fixture.types(fixture.thirdType));
+    AOT_TEST_CHECK(function.results[0].written() == fixture.types(fixture.thirdType));
     AOT_TEST_CHECK(function.creator.as<CreatorRecord::Version>().provenVersion == fixture.finalFunction && function.derivation.source == fixture.finalFunction);
     AOT_TEST_CHECK(!function.inlineFrames[0].callee && function.inlineFrames[1].callee == fixture.finalFunction);
 }
@@ -558,7 +555,7 @@ static void remapIDsWithIdentityRemapsChangesNothing()
     AOT_TEST_CHECK(types.isIdentity() && strings.isIdentity() && functions.isIdentity());
     remapIDs(function, types, strings, functions);
     AOT_TEST_CHECK(function.at(value).type == fixture.firstType && function.at(value).testedType() == fixture.secondType);
-    AOT_TEST_CHECK(function.captures[0].type == fixture.thirdType && function.derivation.source == fixture.function);
+    AOT_TEST_CHECK(function.captures[0].written() == fixture.thirdType && function.derivation.source == fixture.function);
 }
 
 static void logNamesWhatWasHandedOut()

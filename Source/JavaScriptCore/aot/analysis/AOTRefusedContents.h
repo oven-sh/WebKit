@@ -52,7 +52,7 @@ public:
         }
         const Value& value = function.at(id);
         add(value.type);
-        add(value.expected());
+        add(value.expected().predicted());
     }
 
     bool holdsOnlyIDsOfProgram() const { return m_holdsOnlyIDsOfProgram; }

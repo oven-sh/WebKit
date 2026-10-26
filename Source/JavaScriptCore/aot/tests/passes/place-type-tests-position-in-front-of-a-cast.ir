@@ -13,11 +13,11 @@ function f0 name="slot" parameters=[{type=Array<i32, proven, pristine[Storage, N
     v4 = Undefined
     Return v4
   b2():
-    v5: undefined|int ~ int = AssumeType v1 castType=undefined|int
+    v5: undefined|int ~ int = AssumeType v1 provenType=undefined|int
     v6 = ElemGet v0, v5
     Return v6
 # CHECK: ([[passed]]: number):
 # CHECK: = GetArrayElement v0,
-# CHECK: [[position]]: int = AssumeType [[passed]] castType=int
+# CHECK: [[position]]: int = AssumeType [[passed]] provenType=int
 # CHECK-NEXT: = IsInBounds v0, [[position]]
 }

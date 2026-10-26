@@ -22,7 +22,7 @@ function f1 name="memberOfGlobalObject" results=[{type=anything}] {
 # CHECK: v1: anything = PropGet v0 key="nope"
 # FLOW-NOT: PropGet
 # FLOW: [[absent]]: undefined = Undefined
-# FLOW-NEXT: [[proven]]: undefined = AssumeType [[absent]] castType=undefined
+# FLOW-NEXT: [[proven]]: undefined = AssumeType [[absent]] provenType=undefined
 # FLOW-NEXT: Return [[proven]]
 }
 

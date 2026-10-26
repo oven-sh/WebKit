@@ -14,7 +14,7 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="use" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=undefined|string
+    v1 = Check v0 expectedType=undefined|string
     v2 = ToBoolean v1
     Branch v2 -> taken b1(| 0), notTaken b2(| 0)
   b1(v3):

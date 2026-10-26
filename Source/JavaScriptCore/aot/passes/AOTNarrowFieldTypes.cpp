@@ -13,6 +13,7 @@
 #include "AOTBuildContext.h"
 #include "AOTCellFormat.h"
 #include "AOTCellSizeClasses.h"
+#include "AOTCurrentWork.h"
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
@@ -57,7 +58,7 @@ TypeID slotTypeOf(const Program& program, const Field& field)
     // The slot of an accessor holds its GetterSetter. Its type is that of the getter, which every writer of the slot tests.
     if (field.form.contains(FieldForm::IsAccessor))
         return field.slotType ? field.slotType : TypeTable::anything;
-    if (field.slotType && !field.declared.flags.contains(PositionFlags::IsExpected))
+    if (field.slotType && !field.declared.isExpected())
         return field.slotType;
     return program.provenTypeOf(field.declared);
 }
@@ -193,7 +194,7 @@ static std::optional<FieldEvidence> collectFieldEvidence(const Program& program,
         Vector<LayoutSetID, 16> kept;
         Vector<LayoutSetID, 4> returned;
         auto expectedOrTypeOf = [&](ValueID value) -> const ScannedType& {
-            return types[function.at(value).expectedOrType().index()];
+            return types[function.at(value).expectedOrType().predicted().index()];
         };
         // Of an operand that is retained.
         auto noteHandedOn = [&](ValueID operand, const OperandInfo& info) {
@@ -330,8 +331,8 @@ static std::optional<Type> findIntegersToKeepInSlot(const Program& program, cons
         return std::nullopt;
 
     StoredKinds stored = evidence.stores.kindsStoredIn(reference.layout, reference.field);
-    bool listsOnlyInt32s = !field.declared.flags.contains(PositionFlags::IsExpected) && program.at(field.declared.type).isInt32OrNullish();
-    bool isDeclaredInt32 = listsOnlyInt32s || slotType.isInt32OrNullish() || field.declared.flags.contains(PositionFlags::IsInt32Promise);
+    bool listsOnlyInt32s = field.declared.established() && program.at(*field.declared.established()).isInt32OrNullish();
+    bool isDeclaredInt32 = listsOnlyInt32s || slotType.isInt32OrNullish() || field.declared.has(PositionFlags::IsInt32Promise);
     // A position in a text and an index of a table get numbers that nobody can bound: what a scanner counts up, what a caller passes.
     bool isCountedWith = admitted == IntegerEvidence::Uses && slotType.isNumberOrNullish() && stored.contains(StoredKind::Int32) && !stored.contains(StoredKind::NoInt32)
         && evidence.stores.isUsedAsInteger(reference.layout, reference.field) && isDeclaredInCheckedCode(program, reference.layout);
@@ -341,7 +342,7 @@ static std::optional<Type> findIntegersToKeepInSlot(const Program& program, cons
     if (!isDeclaredInt32 && !isShownOnlyInt32s && !isCountedWith)
         return std::nullopt;
 
-    Range integers = (listsOnlyInt32s ? program.at(field.declared.type) : slotType).integers.intersectWith(inlineInt32s);
+    Range integers = (listsOnlyInt32s ? program.at(*field.declared.established()) : slotType).integers.intersectWith(inlineInt32s);
     if (integers.isEmpty())
         return std::nullopt;
 
@@ -411,7 +412,7 @@ static std::optional<Type> typeAdmittedByTestedStores(const Program& program, co
 {
     if (!field.flags.contains(FieldFlags::IsEnforced) || field.flags.contains(FieldFlags::IsInherited) || field.form.contains(FieldForm::IsAccessor) || field.slotType)
         return std::nullopt;
-    const Type& declared = program.at(field.declared.type);
+    const Type& declared = program.at(field.declared.expected().predicted());
     if ((declared.classes.isEmpty() && declared.builtins.isEmpty()) || everyStoreIsProvenToFit(field.flow))
         return std::nullopt;
     Type tested = declared.withoutClassProofs().withUntestableBuiltinsWidened();
@@ -446,7 +447,7 @@ void markEnforcedFields(Program& program, BuildContext& build)
         bool hasSlots = hasOnlyCompiledBases(program, LayoutID(layoutIndex));
         for (Field& field : layout.fields) {
             if (!field.flags.contains(FieldFlags::IsInherited))
-                field.flags.set(FieldFlags::IsEnforced, hasSlots && !field.declared.flags.contains(PositionFlags::IsExpected));
+                field.flags.set(FieldFlags::IsEnforced, hasSlots && !field.declared.isExpected());
         }
     });
     widenSlotTypesToTestedTypes(program, loops);
@@ -478,7 +479,8 @@ static bool isUnprovenInitialValue(const Program& program, const Function& funct
     const Type& value = program.typeOf(function, allocation.variadicOperands()[valueIndex]);
     if (value.mayBeUndefinedOrNull() && slotHoldsUndefinedAndNull(program, { allocation.layout(), allocation.fields()[valueIndex] }))
         return !value.withoutNullish().isSubsetOf(program.at(slotType), program);
-    return !value.isSubsetOf(program.at(slotType), program);
+    // No test of a store tells what is proven of the instances of a class: that is flow's word about the field.
+    return !value.isSubsetOf(program.at(slotType), program) && !value.isSubsetOf(program.at(slotType).withoutClassProofs(), program);
 }
 
 static bool hasUnprovenInitialValue(const Program& program, const Function& function, const Value& value)
@@ -563,7 +565,7 @@ void storeUnprovenInitialValues(const Program& program, FunctionID id, Function&
                     .function = builder.context().id,
                     .block = point.block,
                     .value = allocationID,
-                    .pass = PassID::NarrowFieldTypes,
+                    .pass = CurrentWork::ofCurrentThread().pass.load(std::memory_order_relaxed),
                 });
                 continue;
             }
@@ -614,7 +616,7 @@ static void forEachCheckedNumberParameter(const Function& function, NOESCAPE con
     unsigned first = function.firstParameterIndex();
     for (ValueID value : function.at(entryBlock).values) {
         const Value& check = function.at(value);
-        if (check.opcode != Opcode::Check || check.castType() != TypeTable::number)
+        if (check.opcode != Opcode::Check || check.expectedType().predicted() != TypeTable::number)
             continue;
         auto position = std::ranges::find(parameters, check.valueOperand());
         if (position == parameters.end())
@@ -623,7 +625,7 @@ static void forEachCheckedNumberParameter(const Function& function, NOESCAPE con
         if (function.entryParameterKind(index) != EntryParameter::Parameter || index - first >= function.numberOfPositionalParameters())
             continue;
         const DeclaredType& declared = *function.declaredEntryParameter(index);
-        if (declared.type == TypeTable::number && declared.flags.contains(PositionFlags::IsExpected))
+        if (declared.written() == TypeTable::number && declared.isExpected())
             functor(value, index);
     }
 }
@@ -650,8 +652,8 @@ static void expectInt32(const Program& program, FunctionID id, Function& functio
 
     Vector<ValueID, 8> changed;
     for (auto [check, index] : checkedParameters) {
-        function.edit(check, ValueEdit::Definition).setCastType(TypeTable::int32);
-        function.declaredEntryParameter(index)->type = TypeTable::int32;
+        function.edit(check, ValueEdit::Definition).setExpectedType(ExpectedType(TypeTable::int32));
+        function.declaredEntryParameter(index)->expect(ExpectedType(TypeTable::int32));
         changed.append(function.at(entryBlock).parameters[index]);
         changed.append(check);
     }
@@ -698,7 +700,7 @@ static Vector<FunctionID> findAffectedFunctionsLargestFirst(const Program& progr
                 return false;
             if (!types)
                 types.emplace(program.types);
-            return resultTypeOf(program, program.at(id), value, *types) != value.type || expectedTypeOf(program, program.at(id), value, *types) != value.expected();
+            return resultTypeOf(program, program.at(id), value, *types) != value.type || expectedTypeOf(program, program.at(id), value, *types) != value.expected().predicted();
         });
     };
     auto hasUnprovenValue = [&](FunctionID id) {
@@ -744,10 +746,9 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
     auto narrow = [&](FieldReference reference, const Type& expected) {
         TypeID type = program.types.intern(expected);
         Field& field = program.at(reference.layout).fields[reference.field];
-        if (field.declared.type == type && !field.declared.flags.contains(PositionFlags::IsExpected))
+        if (field.declared.established() == type)
             return;
-        field.declared.type = type;
-        field.declared.flags.remove(PositionFlags::IsExpected);
+        field.declared.establish(Proven::byPosition(type));
         narrowedKeys.set(field.key.index());
         ++numberOfNarrowedFields;
     };
@@ -812,8 +813,8 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
     });
     for (FieldReference reference : fieldsInitializedWithOtherValues) {
         Field& field = program.at(reference.layout).fields[reference.field];
-        field.declared.flags.add(PositionFlags::IsExpected);
-        field.declared.flags.remove(PositionFlags::IsInt32Promise);
+        field.declared.expect(field.declared.expected());
+        field.declared.remove(PositionFlags::IsInt32Promise);
         field.flags.remove(FieldFlags::IsEnforced);
     }
     if (!fieldsInitializedWithOtherValues.isEmpty())

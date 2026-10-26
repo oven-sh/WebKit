@@ -542,7 +542,8 @@ static BitVector findFunctionsWhoseClosuresMayBeRenamed(const ValueFlowResultInp
 
     BitVector functions(program.functions.size());
     inputs.sets().forEachMember(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsWriteUnderKeysNobodyKnows)), [&](ValueFlowObjectID closure) {
-        functions.quickSet(inputs.universe().closureFunction(closure).index());
+        if (inputs.universe().kindOf(closure) == ValueFlowObjectKind::Closure)
+            functions.quickSet(inputs.universe().closureFunction(closure).index());
     });
     for (const AllocationClass& closures : classesOfClosures) {
         bool isSeenByKnownCodeAlone = closures.impossibleMutations.containsAll({ ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript });

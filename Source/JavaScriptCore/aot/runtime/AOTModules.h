@@ -12,9 +12,11 @@
 #include "AOTModuleTable.h"
 #include "AOTModuleWords.h"
 #include "JSPromise.h"
+#include "MicrotaskQueue.h"
 #include "RememberedSlot.h"
 #include "ScriptFetcher.h"
 #include "SourceOrigin.h"
+#include "Strong.h"
 #include <wtf/HashMap.h>
 #include <wtf/SetForScope.h>
 #include <wtf/TZoneMalloc.h>
@@ -45,6 +47,8 @@ enum class ModuleStatus : uint8_t {
 static_assert(static_cast<uint8_t>(ModuleStatus::Evaluated) == static_cast<uint8_t>(CyclicModuleRecord::Status::Evaluated));
 
 enum class SynchronousEvaluationReason : uint8_t { Require, DeferredNamespace };
+enum class JobsOfImportedFiles : uint8_t { StayQueued, WaitForLoader };
+enum class ErrorOfImportedFile : uint8_t { IsThrown, IsLeftToLoader };
 
 struct LinkContext {
     ModuleLinkingStack& stack;
@@ -137,8 +141,35 @@ public:
     // The modules that compiled code begins to evaluate below the body fail with it.
     JSValue callBodyOfModuleEnteredByLoader(ModuleID module) { return callBodyUnderOwnMark(module, false); }
     void evaluateModuleInRecord(ModuleID);
+    // Says whether the start that asks goes on to run the module.
+    bool beginModuleInRecord(ModuleID);
     // Says whether a file ran.
-    bool evaluateImportedCommonJSFiles(ModuleID root);
+    bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown);
+    void queueJobsThatWaitForLoader();
+    void didLoadGraph(ModuleID root);
+    void evaluateFilesOfLevel(ModuleID moduleOnWay);
+    // The start of the module is on the stack only to run the files that the module imports.
+    bool isRunningFilesOf(ModuleID root) const { return m_rootWhoseFilesRun == root; }
+    bool stopLoadingBehindFile(ModuleID file);
+    void evaluateLoadedCommonJSFile(ModuleID);
+    bool isCommonJSFileOrFace(ModuleID module) const { return data(module).kind == ModuleKind::CommonJs || m_table.fileBehindFace(module); }
+    // The loader can load a file of the program as it loads code that is not compiled.
+    bool isFileOfProgram(ModuleID module) const { return !data(module).isOfLibrary() && (data(module).kind == ModuleKind::SourceText || data(module).kind == ModuleKind::CommonJs); }
+    bool isLoadedWithRequests(ModuleID module) const { return isFileOfProgram(module) && data(module).kind == ModuleKind::SourceText; }
+    bool isImportedByLoader(ModuleID module) const { return isFileOfProgram(m_table.fileBehindFace(module).value_or(module)); }
+    bool needsLoaderForRequire(ModuleID);
+    bool canTellHowGraphIsLoaded(ModuleID root);
+    void appendRequestsForLoader(ModuleID, ModuleRecord*);
+    ModuleRecord* appendRequestsOfUncompiledCode(ModuleID, ModuleRecord*);
+    bool setIsWalkingRequests(bool isWalkingRequests) { return std::exchange(m_isWalkingRequests, isWalkingRequests); }
+    // A graph is being loaded until its root is linked.
+    unsigned numberOfGraphsBeingLoaded();
+    bool loaderGoesThroughGraph();
+    void didStartLoad(JSPromise*, ModuleID root);
+    ModuleRecord* recordOfCommonJSFile(ModuleID);
+    bool isNotLoaded(ModuleID) const;
+    bool wasLoadedWithEarlierGraph(ModuleID);
+    bool setIsAskingHost(bool isAskingHost) { return std::exchange(m_isAskingHost, isAskingHost); }
     bool wasImportedWhileItRan(ModuleID file) const;
     void evaluateCommonJSForLoader(ModuleID file);
     JSValue execute(ModuleID);
@@ -206,6 +237,7 @@ private:
         bool capturedFieldsAreOfRuntimeModule { false };
         Identifier resolvedKey;
         std::optional<uint32_t> firstAbsentExport;
+        bool wasLoadedWhileItRan { false };
         BitVector ambiguousExports;
         std::unique_ptr<SourceOrigin> sourceOrigin;
         Vector<ModuleID> requiredModules;
@@ -261,8 +293,10 @@ private:
     Vector<DynamicExport> collectDynamicExports(ModuleID);
 
     void evaluateWithOwnStack(ModuleID root);
+    void holdJobsBehind(size_t numberOfJobs, ModuleID file);
+    bool planLevelsOfLoad(ModuleID root);
     JSValue callBody(ModuleID);
-    JSValue callBodyUnderOwnMark(ModuleID, bool bodyStoresStatus);
+    JSValue callBodyUnderOwnMark(ModuleID, bool bodyStoresStatus, bool runsImportedFilesAlone = false);
     Vector<ModuleID, 8> modulesThatEvaluationWillBegin(ModuleID root);
     void evaluateByCallingBody(ModuleID module) { callBodyUnderOwnMark(module, true); }
     void didThrowInBody(ModuleID, JSValue error);
@@ -302,6 +336,33 @@ private:
     const bool m_admitsInspector;
     bool m_loadsModulesByName;
     bool m_isAskingHost { false };
+    bool m_isWalkingRequests { false };
+    struct LoadInFlight {
+        Strong<JSPromise> promise;
+        ModuleID root;
+        bool isWalked { false };
+    };
+    Vector<LoadInFlight, 2> m_loadsInFlight;
+    // `bun run` loads a graph level by level, and the steps of one level follow each other with no other job between them. So the loader need only go down one way to the lowest level:
+    // when it comes to the module of a level on that way, the files of the level that stand in front of the module run. It comes to the first file behind the module too, and those behind that one run with it.
+    struct LevelOfLoad {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(LevelOfLoad);
+
+        std::optional<ModuleID> next;
+        std::optional<ModuleID> firstFileBehindNext;
+        Vector<ModuleID, 4> files;
+        Strong<Unknown> firstError;
+    };
+    UncheckedKeyHashMap<ModuleID, std::unique_ptr<LevelOfLoad>> m_levelsOfLoads;
+    // Their imported files ran without the loader. The set is filled from the list when it is asked.
+    Vector<ModuleID, 4> m_rootsLoadedWithoutLoader;
+    BitVector m_filesLoadedWithoutLoader;
+    // A file ran before the loader came to it and queued jobs. They are queued where the loader comes to the file, as under `bun run`.
+    std::optional<ModuleID> m_fileWhoseJobsWaitForLoader;
+    std::optional<ModuleID> m_rootWhoseFilesRun;
+    // The loader goes through its graph, and comes to files that have run.
+    std::optional<ModuleID> m_rootWhoseFilesRanAhead;
+    RefPtr<MicrotaskQueue> m_jobsThatWaitForLoader;
     bool m_isStartingRuntimeModule { false };
     // The link of the entry point that the image has a plan for stores no status.
     bool m_entryPointIsLinked { false };

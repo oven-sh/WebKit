@@ -454,7 +454,7 @@ struct Copier {
         if (copiedEnvironments.isEmpty())
             return;
         for (DeclaredType& capture : copy.captures)
-            capture.type = withCopiedEnvironment(capture.type);
+            capture.changeType(Proven::byPosition(withCopiedEnvironment(capture.written())));
         for (Value& value : copy.editAllValues()) {
             value.type = withCopiedEnvironment(value.type);
             if (value.opcode == Opcode::NewObject || value.opcode == Opcode::GetEnvironmentField || value.opcode == Opcode::PutEnvironmentField)
@@ -747,7 +747,7 @@ struct Copier {
             RELEASE_ASSERT(parameters.last() == added);
             parameters.removeLast();
             parameters.insert(copy.captures.size(), added);
-            copy.captures.append(DeclaredType { .type = TypeTable::anything });
+            copy.captures.append(DeclaredType(Proven::byPosition(TypeTable::anything)));
             holdersOfLiterals.add(keyOfHolder(copyID, layout), added);
         }
     }

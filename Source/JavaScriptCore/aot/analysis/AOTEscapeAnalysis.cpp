@@ -206,7 +206,7 @@ void EscapeAnalysis::rememberTypes()
         return;
     m_typesWhenAnswered = Vector<TypesOfValue>(m_function.values.size(), [&](size_t index) {
         const Value& value = m_function.values[index];
-        return TypesOfValue { value.type, value.expected() };
+        return TypesOfValue { value.type, value.expected().predicted() };
     });
 }
 
@@ -223,7 +223,7 @@ bool EscapeAnalysis::didRetypeValues()
     BitVector isRetyped(numberOfValues);
     for (size_t index = 0; index < numberOfValues; ++index) {
         const Value& value = m_function.values[index];
-        TypesOfValue types { value.type, value.expected() };
+        TypesOfValue types { value.type, value.expected().predicted() };
         if (m_typesWhenAnswered[index] == types)
             continue;
         m_typesWhenAnswered[index] = types;

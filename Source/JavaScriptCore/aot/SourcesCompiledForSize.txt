@@ -73,6 +73,7 @@ aot/ir/AOTVerifierDominance.cpp
 aot/ir/AOTVerifierEdges.cpp
 aot/ir/AOTVerifierGuards.cpp
 aot/ir/AOTVerifierOperations.cpp
+aot/ir/AOTVerifierProofs.cpp
 aot/ir/AOTVerifierTypes.cpp
 aot/ir/AOTVerifierUnspecifiedValues.cpp
 aot/passes/AOTAllocateTaggedLayouts.cpp

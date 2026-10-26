@@ -544,7 +544,7 @@ static void finish(const BuiltinUseRewrite& rewrite, const ReplacedEffects& repl
     FunctionPassContext& context = rewrite.context;
     Value& value = context.function.edit(rewrite.use);
     value.type = resultTypeOf(context.program, context.function, value, context.types, &context.typingMemo);
-    value.setExpected(expectedTypeOf(context.program, context.function, value, context.types, &context.typingMemo));
+    value.setExpected(ExpectedType(expectedTypeOf(context.program, context.function, value, context.types, &context.typingMemo)));
     checkRewrite(context, ValueSite { rewrite.block, 0, rewrite.use }, replaced);
 }
 
@@ -670,7 +670,7 @@ void applyBuiltinUse(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& pla
             ValueID result = insert(WTF::move(call));
             if (context.build.validates())
                 insert(makeValidateType(result, plan.assumedResult));
-            call = makeAssumeType(result, plan.assumedResult);
+            call = makeAssumeType(result, Proven::byConstruction(plan.assumedResult));
         }
         replaceKeepingOrigin(function.edit(rewrite.use), WTF::move(call));
         break;

@@ -8,7 +8,7 @@ module m0 path="main.js" displayPath="main.js"
 function f0 name="proofBetween" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=AsyncGenerator}] {
     InitialYield @10
     v3 = Await v1 @11
-    v4 = AssumeType v3 castType=int[0, 9]
+    v4 = AssumeType v3 provenType=int[0, 9]
     v5 = Yield v4 @12
     v6 = ResultAt v5 index=0
     Return v6
@@ -17,7 +17,7 @@ function f1 name="expectedTypeAndProofBetween" flags=[IsAsync, IsGenerator, Take
     InitialYield @10
     v3 = Await v1 @11
     v4 ~ number = Upcast v3 castType=anything
-    v5 = AssumeType v4 castType=number|string
+    v5 = AssumeType v4 provenType=number|string
     v6 = Upcast v5 castType=anything
     v7 = Yield v6 @12
     v8 = ResultAt v7 index=0
@@ -26,7 +26,7 @@ function f1 name="expectedTypeAndProofBetween" flags=[IsAsync, IsGenerator, Take
 function f2 name="proofHasSecondUse" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=AsyncGenerator}] {
     InitialYield @10
     v3 = Await v1 @11
-    v4 = AssumeType v3 castType=int[0, 9]
+    v4 = AssumeType v3 provenType=int[0, 9]
     v5 = Yield v4 @12
     v6 = ResultAt v5 index=0
     Return v4
@@ -34,8 +34,8 @@ function f2 name="proofHasSecondUse" flags=[IsAsync, IsGenerator, TakesCallee] p
 function f3 name="testBehindProof" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
     InitialYield @10
     v3 = Await v1 @11
-    v4 = AssumeType v3 castType=number|string
-    v5 = Check v4 castType=number cause=AddedByPass
+    v4 = AssumeType v3 provenType=number|string
+    v5 = Check v4 expectedType=number cause=AddedByPass
     v6 = Yield v5 @12
     v7 = ResultAt v6 index=0
     Return v7
@@ -62,7 +62,7 @@ function f3 name="testBehindProof" flags=[IsAsync, IsGenerator, TakesCallee] par
 # CHECK-LABEL: function f6 name="proofHasSecondUse"
 # CHECK-NOT: AsyncGeneratorYield
 # CHECK: v3{{*}}= AwaitBySavingFrame v1, [[driver2]], v0 @11
-# CHECK-NEXT: v4{{*}}= AssumeType v3 castType=int[0, 9]
+# CHECK-NEXT: v4{{*}}= AssumeType v3 provenType=int[0, 9]
 # CHECK-NEXT: v5{{*}}= YieldBySavingFrame [[driver2]], v4, v0 @12
 # CHECK: Return v4
 # CHECK-NOT: AsyncGeneratorYield
@@ -70,7 +70,7 @@ function f3 name="testBehindProof" flags=[IsAsync, IsGenerator, TakesCallee] par
 # CHECK-LABEL: function f7 name="testBehindProof"
 # CHECK-NOT: AsyncGeneratorYield
 # CHECK: v3{{*}}= AwaitBySavingFrame v1, [[driver3]], v0 @11
-# CHECK-NEXT: v4{{*}}= AssumeType v3 castType=number|string
-# CHECK-NEXT: v5: number = Check v4 castType=number cause=AddedByPass
+# CHECK-NEXT: v4{{*}}= AssumeType v3 provenType=number|string
+# CHECK-NEXT: v5: number = Check v4 expectedType=number cause=AddedByPass
 # CHECK-NEXT: v6{{*}}= YieldBySavingFrame [[driver3]], v5, v0 @12
 # CHECK-NOT: AsyncGeneratorYield

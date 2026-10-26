@@ -66,6 +66,9 @@ public:
         m_isKnown[position] = 1;
     }
 
+    // The arrays whose kind of storage is decided and would not be what it is behind a conversion to the storage of numbers.
+    ValueSetID arraysThatMustNotBeConverted { ValueSets::nothing };
+
 private:
     Vector<uint32_t> m_positionOfObject;
     Vector<ValueFlowContainerFacts> m_facts;

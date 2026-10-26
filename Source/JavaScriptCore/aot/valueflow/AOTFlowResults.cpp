@@ -58,6 +58,7 @@ static void checkTableOrder(const FlowResultTables& tables)
 
     RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.accessSiteLosses, tables.sites.accessSites));
     RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.callsOfBoundFunctions, tables.sites.accessSites));
+    RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.receiversThatMayHaveDecidedStorage, tables.sites.accessSites));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.sinkOperands));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.typedResultCalls));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.boundFunctionsAtSites));
@@ -185,6 +186,12 @@ const AllocationSite& FlowResults::at(AllocationSiteID id) const { return record
 const AllocationClass& FlowResults::at(AllocationClassID id) const { return recordAt(m_tables.sites.allocationClasses, id, m_unknown.allocationClass); }
 const FlowSiteLoss& FlowResults::lossOf(AccessSiteID id) const { return recordAt(m_tables.sites.accessSiteLosses, id, m_unknown.loss); }
 bool FlowResults::mayCallBoundFunction(AccessSiteID call) const { return recordAt(m_tables.sites.callsOfBoundFunctions, call, false); }
+
+bool FlowResults::mayChangeStorageOfReceiver(AccessSiteID access) const
+{
+    const Vector<bool>& mayHaveDecidedStorage = m_tables.sites.receiversThatMayHaveDecidedStorage;
+    return mayHaveDecidedStorage.isEmpty() || (access && !recordAt(mayHaveDecidedStorage, access, true));
+}
 AllocationSiteID FlowResults::typedResultSite(LayoutID layout) const { return recordAt(m_tables.sites.typedResultSites, layout, AllocationSiteID()); }
 const BuiltinLocationFlow* FlowResults::findBuiltinLocation(BuiltinID holder, PropertyKeyID key) const { return findRecord(m_tables.builtins.locations, std::tuple(holder, key)); }
 

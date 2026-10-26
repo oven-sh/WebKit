@@ -8,7 +8,7 @@ module m0 path="main.js" displayPath="main.js" flags=[IsLibrary]
 
 function f0 name="straightLine" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
     v2 = Call v0
-    v3 = Check v2 castType=number
+    v3 = Check v2 expectedType=number
     v4 = Add v3, v1
     Return v4
 # CHECK: v2: anything = Call v0
@@ -16,7 +16,8 @@ function f0 name="straightLine" parameters=[{type=anything}, {type=number}] resu
 # CHECK-NEXT: Branch [[fails]] -> taken [[failed]](v2), notTaken [[asked]]()
 # CHECK: [[copy]]() frequency=Unlikely:
 # CHECK-NEXT: : number|string|bigint = Add [[unknown]], v1
-# CHECK: [[failed]]([[unknown]]: anything) frequency=Unlikely:
+# CHECK: [[failed]]([[given]]: anything) frequency=Unlikely:
+# CHECK-NEXT: [[unknown]]: anything = Expect [[given]] expectedType=anything|absent
 # CHECK-NEXT: Jump -> next [[copy]]()
 # CHECK: [[asked]]():
 # CHECK-NEXT: [[test]]: boolean = TypeTest v2 testedType=number

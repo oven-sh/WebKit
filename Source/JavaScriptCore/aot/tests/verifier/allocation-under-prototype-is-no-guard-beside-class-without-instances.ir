@@ -20,7 +20,7 @@ function f2 name="badNewTargetUnknown" parameters=[{type=anything}, {type=anythi
 function f3 name="goodLayoutProvenByFlow" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = AssumeType v3 castType=L0
+    v4 = AssumeType v3 provenType=L0
     PutSlotOrAdd v4, -, v1 key="x" receivers=[L0] level=Proven
     Return v4
 }

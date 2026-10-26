@@ -269,7 +269,7 @@ function f21 name="anyCalleeAndCallBetweenSpreadAndCall" parameters=[{type=anyth
 
 function f22 name="spreadIntoCastOfList" parameters=[{type=anything}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
     v2 = NewArray contents=anything
-    v3 = AssumeType v2 castType=Array<anything, pristine[Storage, Names]>
+    v3 = AssumeType v2 provenType=Array<anything, pristine[Storage, Names]>
     AppendSpread v3, v1
     v5 = CallList v0, -, v3
     Return v5
@@ -280,7 +280,7 @@ function f22 name="spreadIntoCastOfList" parameters=[{type=anything}, {type=Arra
 
 function f23 name="castOfListUsedTwice" parameters=[{type=anything}, {type=Array<number, pristine[Storage, Names]>}] results=[{type=anything}] {
     v2 = NewArray contents=anything
-    v3 = AssumeType v2 castType=Array<anything, pristine[Storage, Names]>
+    v3 = AssumeType v2 provenType=Array<anything, pristine[Storage, Names]>
     AppendSpread v3, v1
     v5 = CallList v0, v3, v3
     Return v5

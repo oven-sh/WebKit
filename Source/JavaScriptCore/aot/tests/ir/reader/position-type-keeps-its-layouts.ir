@@ -34,7 +34,7 @@ function f0 name="pick" flags=[HasThis] captures=[{type=env L3}] thisType={type=
 # TYPED-NEXT: outcome: Unchanged
 # TYPED-LABEL: function f0 name="pick"
 # TYPED: b0(v0: env L3, v1: L2, v2: undefined|null|L0|L1|L2, v3: string|L1):
-# TYPED-NEXT: v4: L1 = Check v2 castType=L1 site=w1
+# TYPED-NEXT: v4: L1 = Check v2 expectedType=L1 site=w1
 function f1 name="forward" parameters=[{type=anything}] results=[{type=undefined|null|L0 site=w2}] {
     v1 = Call v0
     ReturnCall v1 casts=[{declared={type=undefined|null|L0 site=w2}}]

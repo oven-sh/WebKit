@@ -39,7 +39,7 @@ ValueID sameObjectThroughConversionsToObject(const Function& function, ValueID v
 
 ValueID definitionThroughUpcasts(const Function& function, ValueID value)
 {
-    return stripCasts(function, value, [](Opcode opcode) { return opcode == Opcode::Upcast; });
+    return stripCasts(function, value, [](Opcode opcode) { return isCastThatProvesNothing(opcode); });
 }
 
 Vector<ValueID, 2> findSingleUseCastChain(const Function& function, const UseLists& useLists, ValueID user)

@@ -12,7 +12,7 @@ function f0 name="returnsProvenPromise" flags=[IsAsync] parameters=[{type=anythi
 # CHECK: results=[{type=Promise<number, proven>}]
 # CHECK: [[p0]]: Promise = NewPromise
 # CHECK-NEXT: [[r0]]: anything = CallDirect v0, [[p0]] function=f6
-# CHECK-NEXT: [[a0]]: Promise<number, proven> = AssumeType [[r0]] castType=Promise<number, proven>
+# CHECK-NEXT: [[a0]]: Promise<number, proven> = AssumeType [[r0]] provenType=Promise<number, proven>
 # CHECK-NOT: Return [[p0]]
 # CHECK: Return [[a0]]
 }
@@ -23,7 +23,7 @@ function f1 name="returnsPromise" flags=[IsAsync] parameters=[{type=anything}] r
 # CHECK: results=[{type=Promise}]
 # CHECK: [[p1]]: Promise = NewPromise
 # CHECK-NEXT: [[r1]]: anything = CallDirect v0, [[p1]] function=f7
-# CHECK-NEXT: [[a1]]: Promise = AssumeType [[r1]] castType=Promise
+# CHECK-NEXT: [[a1]]: Promise = AssumeType [[r1]] provenType=Promise
 # CHECK-NOT: Return [[p1]]
 # CHECK: Return [[a1]]
 }
@@ -34,7 +34,7 @@ function f2 name="returnsAnything" flags=[IsAsync] parameters=[{type=anything}] 
 # CHECK: results=[{type=Promise}]
 # CHECK: [[p2]]: Promise = NewPromise
 # CHECK-NEXT: [[r2]]: anything = CallDirect v0, [[p2]] function=f8
-# CHECK-NEXT: [[a2]]: Promise = AssumeType [[r2]] castType=Promise
+# CHECK-NEXT: [[a2]]: Promise = AssumeType [[r2]] provenType=Promise
 # CHECK-NOT: Return [[p2]]
 # CHECK: Return [[a2]]
 }
@@ -46,7 +46,7 @@ function f3 name="isExpectedToReturnNumber" flags=[IsAsync] parameters=[{type=an
 # CHECK: results=[{type=Promise}]
 # CHECK: [[p3]]: Promise = NewPromise
 # CHECK-NEXT: [[r3]]: anything = CallDirect v0, [[p3]] function=f9
-# CHECK-NEXT: [[a3]]: Promise = AssumeType [[r3]] castType=Promise
+# CHECK-NEXT: [[a3]]: Promise = AssumeType [[r3]] provenType=Promise
 # CHECK-NOT: Return [[p3]]
 # CHECK: Return [[a3]]
 }

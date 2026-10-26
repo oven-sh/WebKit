@@ -15,7 +15,7 @@
 # CHECK: function f6 name="clamped" {{*}}parameters=[{type=i32 flags=[IsExpected]}] results=[{type=i32}]
 # CHECK: function f7 name="guessed" {{*}}parameters=[{type=int[-2147483647, 2147483648]}] results=[{type=int[-2147483647, 2147483648]}]
 # CHECK-NEXT: b0(v0: int[-2147483647, 2147483648] {{*}}):
-# CHECK-NEXT: : int[-2147483647, 2147483647] = Check v0 castType=i32
+# CHECK-NEXT: : int[-2147483647, 2147483647] = Check v0 expectedType=i32
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
@@ -72,14 +72,14 @@ function f4 name="escaped" captures=[{type=number}] parameters=[{type=anything}]
 }
 function f5 name="checked" parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number}] {
   b0(v0):
-    v1 = Check v0 castType=i32
+    v1 = Check v0 expectedType=i32
     v2 = Integer integer=1
     v3 = Add v1, v2
     Return v3
 }
 function f6 name="clamped" parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number}] {
   b0(v0):
-    v1 = Check v0 castType=i32
+    v1 = Check v0 expectedType=i32
     v2 = Integer integer=1
     v3 = Add v1, v2
     v4 = Integer integer=0
@@ -88,6 +88,6 @@ function f6 name="clamped" parameters=[{type=i32 flags=[IsExpected]}] results=[{
 }
 function f7 name="guessed" parameters=[{type=i32 flags=[IsExpected]}] results=[{type=number}] {
   b0(v0):
-    v1 = Check v0 castType=i32
+    v1 = Check v0 expectedType=i32
     Return v1
 }

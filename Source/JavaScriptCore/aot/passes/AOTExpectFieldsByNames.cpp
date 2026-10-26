@@ -46,7 +46,7 @@ struct NameAskedOfField {
 
 static bool tellsNothingOfWhatItHolds(const Program& program, const Field& field)
 {
-    return field.declared.type == TypeTable::anything && !field.declared.flags.contains(PositionFlags::IsExpected) && field.form.isEmpty() && !field.slotType
+    return field.declared.written() == TypeTable::anything && !field.declared.isExpected() && field.form.isEmpty() && !field.slotType
         && field.flow.location.deferral == ClosureDeferral::Unknown && !field.flags.containsAny({ FieldFlags::IsPrivate, FieldFlags::IsHidden }) && program.at(field.key).kind == PropertyKeyKind::Text;
 }
 
@@ -92,7 +92,7 @@ static void collectNamesAsked(const Program& program, const Function& function, 
                 ValueID stored = sameObjectThroughCasts(function, access.operand(OperandIndex::PropSet::value));
                 ReceiverCandidates candidates = receiverCandidates(program, function, stored);
                 const LayoutList& layoutsStored = candidates.isProven() ? candidates.proven : candidates.predicted;
-                bool tellsNothing = program.typeOf(function, stored) == Type::anything() && !function.at(stored).expected();
+                bool tellsNothing = program.typeOf(function, stored) == Type::anything() && !function.at(stored).expected().predicted();
                 bool listsLayouts = !layoutsStored.isEmpty() && layoutsStored.size() <= maxLayoutsExpectedOfField;
                 if (!tellsNothing && !listsLayouts)
                     continue;
@@ -109,7 +109,7 @@ static void collectNamesAsked(const Program& program, const Function& function, 
                 }
                 continue;
             }
-            if (access.opcode != Opcode::PropGet || !access.key() || program.typeOf(function, id) != Type::anything() || access.expected())
+            if (access.opcode != Opcode::PropGet || !access.key() || program.typeOf(function, id) != Type::anything() || access.expected().predicted())
                 continue;
             FieldReferenceList fields = findUntoldFields(program, function, access.objectOperand(), access.key());
             if (!fields.isEmpty())
@@ -212,8 +212,7 @@ void expectFieldsByNamesAsked(Program& program, BuildContext& build)
     Vector<FieldReference> changed;
     auto expect = [&](FieldReference reference, TypeID expected) {
         Field& field = editor.at(reference);
-        field.declared.type = expected;
-        field.declared.flags.add(PositionFlags::IsExpected);
+        field.declared.expect(ExpectedType(expected));
         field.flags.remove(FieldFlags::IsEnforced);
         changed.append(reference);
     };

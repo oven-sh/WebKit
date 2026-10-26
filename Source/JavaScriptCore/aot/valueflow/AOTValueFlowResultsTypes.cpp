@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTAddGenericVersion.h"
+#include "AOTPredictedValues.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTCFG.h"
 #include "AOTEffectsOfOperands.h"
@@ -155,7 +156,7 @@ private:
     BitVector collectWritersOfMaps(ValueFlowHeapView&);
     std::optional<uint32_t> indexOfMap(ValueFlowObjectID) const;
     const ReadOfMaps* readOfMapsAt(FunctionID caller, ValueID site) const;
-    void findValuesThatRestOnChecks(const FlowResultTables&);
+    void findValuesBehindEveryCheck(const FlowResultTables&);
     std::span<const CallByValue> callsAt(FunctionID caller, ValueID site) const;
     Type typeAt(uint32_t position, Type&& known) const;
     Type typeAt(Evaluation&, uint32_t position, Type&& known) const;
@@ -180,7 +181,7 @@ private:
     Vector<CallByValue> m_calls;
     Vector<uint8_t> m_hasOtherEntry;
     bool m_someCallEntersAnything { false };
-    Vector<BitVector> m_restsOnCheck;
+    Vector<BitVector> m_valuesBehindChecks;
     Vector<Vector<PassedValue>> m_passedValues;
     BitVector m_holdsPrimitivesAlone;
     Vector<uint16_t> m_primitives;
@@ -303,7 +304,7 @@ NumbersOfPositions::NumbersOfPositions(const ValueFlowResultInputs& inputs, Valu
     runTasksInParallel(inputs.loops(), {
         [&] {
             startFromTypes();
-            findValuesThatRestOnChecks(tables);
+            findValuesBehindEveryCheck(tables);
             times.didFinish("numbers: values that rest on checks"_s);
             collectCalls();
             times.didFinish("numbers: calls"_s);
@@ -346,10 +347,10 @@ void NumbersOfPositions::startFromTypes()
 {
     const Program& program = m_inputs.program;
     auto start = [&](uint32_t position, const DeclaredType* declared) {
-        if (!declared || !declared->type || declared->flags.contains(PositionFlags::IsExpected))
+        if (!declared || !declared->written() || declared->isExpected())
             return;
         m_numbers[position] = { };
-        m_numbers[position].add(program.at(declared->type));
+        m_numbers[position].add(program.at(*declared->established()));
     };
     forEachIndexInParallel(m_inputs.loops(), program.variables.size(), [&](unsigned index) {
         start(index, &program.variables[index].declared);
@@ -368,10 +369,10 @@ void NumbersOfPositions::startFromTypes()
     });
 }
 
-void NumbersOfPositions::findValuesThatRestOnChecks(const FlowResultTables& tables)
+void NumbersOfPositions::findValuesBehindEveryCheck(const FlowResultTables& tables)
 {
     const Program& program = m_inputs.program;
-    m_restsOnCheck = Vector<BitVector>(program.functions.size());
+    m_valuesBehindChecks = Vector<BitVector>(program.functions.size());
     m_passedValues = Vector<Vector<PassedValue>>(program.functions.size());
     forEachIndexInParallel(m_inputs.loops(), program.functions.size(), [&](unsigned index) {
         const Function& function = program.functions[index];
@@ -387,7 +388,7 @@ void NumbersOfPositions::findValuesThatRestOnChecks(const FlowResultTables& tabl
         if (checks.isEmpty())
             return;
         CFG cfg(function);
-        m_restsOnCheck[index] = computeTaintedValues(function, cfg, checks.span());
+        m_valuesBehindChecks[index] = valuesBehind(function, cfg, checks.span());
 
         for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
             BlockID block(blockIndex);
@@ -395,7 +396,7 @@ void NumbersOfPositions::findValuesThatRestOnChecks(const FlowResultTables& tabl
             if (block == entryBlock || contents.isHandlerBlock())
                 continue;
             for (uint32_t parameter = 0; parameter < contents.parameters.size(); ++parameter) {
-                if (!m_restsOnCheck[index].get(contents.parameters[parameter].index()))
+                if (!m_valuesBehindChecks[index].get(contents.parameters[parameter].index()))
                     continue;
                 for (Edge edge : cfg.incomingEdges(block))
                     m_passedValues[index].append({ contents.parameters[parameter], valuePassedOn(function, edge, parameter) });
@@ -472,7 +473,6 @@ void NumbersOfPositions::choosePositions(const FlowResultTables& tables)
     std::array<ValueFlowObjectID, 3> kindsOfNumbers { ValueFlowUniverse::primitive(PrimitiveSet::Integer), ValueFlowUniverse::primitive(PrimitiveSet::WholeNumber), ValueFlowUniverse::primitive(PrimitiveSet::FractionalNumber) };
     ValueSetID numbers = maker.of(kindsOfNumbers);
     ValueFlowPositionCounts counts(nullptr);
-    const Type& anything = program.at(TypeTable::anything);
     struct Followed {
         uint32_t position;
         bool holdsPrimitivesAlone;
@@ -489,7 +489,7 @@ void NumbersOfPositions::choosePositions(const FlowResultTables& tables)
                 ValueSetID held = m_inputs.solver().possibleValuesOf(node);
                 if (!ValueSets::isComplement(held) && !sets.meet(held, numbers))
                     return;
-                ValueFlowPositionResult result = positions.resultAt(anything, held);
+                ValueFlowPositionResult result = positions.resultAmongAllValues(held);
                 bool holdsPrimitivesAlone = result.proof == ValueFlowProof::Proven && result.narrowed && !result.narrowed->hasObjects();
                 followedOfTask[task].append({ position, holdsPrimitivesAlone });
                 if (holdsPrimitivesAlone)
@@ -1014,8 +1014,8 @@ Type NumbersOfPositions::typeOf(Evaluation& evaluation, FunctionID id, ValueID v
     const Program& program = m_inputs.program;
     const Function& function = program.at(id);
     const Value& value = function.at(valueID);
-    bool restsOnCheck = m_restsOnCheck[id.index()].get(valueID.index());
-    Type known = program.at(restsOnCheck || !value.type ? TypeTable::anything : value.type);
+    bool isBehindCheck = m_valuesBehindChecks[id.index()].get(valueID.index());
+    Type known = program.at(isBehindCheck || !value.type ? TypeTable::anything : value.type);
     if (!depth || !evaluation.stepsLeft || !(known.primitives & Primitive::Number))
         return known;
     --evaluation.stepsLeft;
@@ -1045,7 +1045,7 @@ Type NumbersOfPositions::typeOf(Evaluation& evaluation, FunctionID id, ValueID v
         size_t index = function.at(entryBlock).parameters.find(valueID);
         if (index != notFound)
             return typeAt(evaluation, m_firstEntryParameter[id.index()] + index, WTF::move(known));
-        if (!restsOnCheck)
+        if (!isBehindCheck)
             return known;
         auto passed = std::ranges::equal_range(m_passedValues[id.index()], valueID, { }, &PassedValue::parameter);
         if (passed.empty())
@@ -1063,7 +1063,7 @@ Type NumbersOfPositions::typeOf(Evaluation& evaluation, FunctionID id, ValueID v
     }
     if (isCast(value.opcode)) {
         Type operand = typeOf(evaluation, id, value.operand(0), depth - 1);
-        if (!restsOnCheck)
+        if (!isBehindCheck)
             return withNumbersOf(operand);
         operand.primitives &= ~Primitive::Absent;
         return operand;
@@ -1079,7 +1079,7 @@ Type NumbersOfPositions::typeOf(Evaluation& evaluation, FunctionID id, ValueID v
         operandTypes.last().primitives &= ~Primitive::Absent;
     }
     Type computed = computeOperatorResultType(TypingContext { program, function, evaluation.arena }, value.opcode, operandTypes.span());
-    return restsOnCheck ? computed : withNumbersOf(computed);
+    return isBehindCheck ? computed : withNumbersOf(computed);
 }
 
 ValueFlowNumbers NumbersOfPositions::numbersOf(FunctionID id, ValueID value) const
@@ -1108,13 +1108,12 @@ bool NumbersOfPositions::typeWritersByRules(TypeArena& arena, FunctionID id, std
     for (uint32_t index = 0; index < copy.numberOfEntryParameters(); ++index) {
         DeclaredType* declared = copy.declaredEntryParameter(index);
         uint32_t position = m_firstEntryParameter[id.index()] + index;
-        if (!declared || !declared->type || !m_isFollowed.quickGet(position))
+        if (!declared || !declared->written() || !m_isFollowed.quickGet(position))
             continue;
         positionsAsked.append(position);
-        declared->type = arena.intern(typeAt(position, typeWithoutProof(*declared)));
-        declared->flags.remove(PositionFlags::IsExpected);
+        declared->establish(Proven::byFlowOfPosition(arena.intern(typeAt(position, typeWithoutProof(*declared)))));
     }
-    for (size_t index : m_restsOnCheck[id.index()]) {
+    for (size_t index : m_valuesBehindChecks[id.index()]) {
         Value& value = copy.edit(ValueID(index));
         if (value.opcode == Opcode::Check || value.opcode == Opcode::AssumeType) {
             ValueID operand = value.valueOperand();
@@ -1330,7 +1329,7 @@ static void replaceUnobservedDefinitions(const ValueFlowResultInputs& inputs, co
     auto typeOf = [&](FieldReference reference) {
         const Field& field = fieldAt(program, reference);
         const FlowPositionUpdate& position = positionOf(reference);
-        TypeID typeIfProven = position.type ? position.type : field.declared.type;
+        TypeID typeIfProven = position.type ? position.type : field.declared.written();
         return position.isProven ? typeIfProven : slotTypeOf(program, field);
     };
     auto holdsUndefined = [&](FieldReference reference) {
@@ -1352,7 +1351,7 @@ static void replaceUnobservedDefinitions(const ValueFlowResultInputs& inputs, co
             continue;
         }
         for (FieldReference reference : fieldsDefined[index]) {
-            if (positionOf(reference).isProven && !holdsUndefined(reference) && program.at(fieldAt(program, reference).declared.type).primitives & Primitive::Undefined)
+            if (positionOf(reference).isProven && !holdsUndefined(reference) && program.at(fieldAt(program, reference).declared.written()).primitives & Primitive::Undefined)
                 positionOf(reference).type = types.intern(types.at(typeOf(reference)).withPrimitives(Primitive::Undefined));
         }
     }
@@ -1370,7 +1369,7 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
         if (flow.location.writers != WriterState::AllKnown)
             continue;
         ValueSetID stored = contents.stored[id.index()][index];
-        const Type& asRead = program.at(layout.fields[index].declared.type);
+        const Type& asRead = program.at(layout.fields[index].declared.written());
         bool startsAbsent = asRead.primitives & Primitive::Absent && !inputs.sets().isEmpty(stored);
         auto resultWith = [&](ValueSetID held) {
             return positions.resultAt(layout.fields[index].declared, startsAbsent ? maker.unite(held, maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Absent))) : held);
@@ -1384,7 +1383,7 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
         }
         update.fields[index].position = positions.updateFrom(result, asRead);
 
-        ValueSetID surelyInside = inputs.universe().membersSurelyInside(maker, program, layout.fields[index].declared.type);
+        ValueSetID surelyInside = inputs.universe().membersSurelyInside(maker, program, layout.fields[index].declared.written());
         bool storesOnlyObjectsOfType = (result.proof == ValueFlowProof::Proven && !positions.holdsObjectThatMayLieOutside(stored, asRead)) || result.proof == ValueFlowProof::NothingArrives
             || positions.isSurelyInside(maker.intersect(stored, inputs.universe().objects()), asRead);
         const ValueFlowNumbers& storedNumbers = contents.storedNumbers[id.index()][index];
@@ -1487,7 +1486,7 @@ static void narrowVariable(const ValueFlowResultInputs& inputs, VariableID id, c
         deadZone = DeadZone::UndefinedAtStartMayBeObserved;
     update.position = positions.updateFor(inputs.program.at(id).declared, inputs.bodies().nodes().variable(id), deadZone, numbers.ofVariable(id));
     if (inputs.variablesOnObjects->staticFieldsStoredIntegersBehindChecks.quickGet(id.index()))
-        widenToStoredIntegers(inputs.program.at(inputs.program.at(id).declared.type), numbers.ofVariable(id), types, update.position);
+        widenToStoredIntegers(inputs.program.at(inputs.program.at(id).declared.written()), numbers.ofVariable(id), types, update.position);
 }
 
 using LayoutsCreatedBelowMembers = Vector<Vector<LayoutID, 2>>;
@@ -1513,11 +1512,11 @@ static LayoutsCreatedBelowMembers collectLayoutsCreatedBelowMembers(const Progra
 
 static void expectThisToBeCreatedBelow(const Program& program, const FlowApplication& application, const DeclaredType& declared, std::span<const LayoutID> createdBelow, TypeArena& types, FlowPositionUpdate& update)
 {
-    bool isUnchecked = !declared.site && (declared.flags.contains(PositionFlags::IsExpected) || declared.type == TypeTable::anything);
+    bool isUnchecked = !declared.site && (declared.isExpected() || declared.written() == TypeTable::anything);
     if (createdBelow.empty() || !isUnchecked)
         return;
     Vector<LayoutID, 4> expected(createdBelow);
-    if (LayoutSetID layouts = program.at(declared.type).layouts) {
+    if (LayoutSetID layouts = program.at(declared.expected().predicted()).layouts) {
         for (LayoutID layout : program.at(layouts).members) {
             if (!application.layouts[layout.index()].objectsAreDictionaries && !expected.contains(layout))
                 expected.append(layout);
@@ -1561,8 +1560,7 @@ static void narrowResults(const ValueFlowResultInputs& inputs, FunctionID id, co
     Vector<FlowPositionUpdate, 1> results(function.results.size(), [&](size_t index) {
         if (!function.isUnsplitCoroutine())
             return positions.updateFor(function.results[index], inputs.bodies().nodes().result(id, index), DeadZone::MayBeObserved, numbers.ofResult(id, index));
-        const Type& asRead = program.at(function.results[index].type);
-        return positions.updateFrom(positions.resultAt(asRead, maker.of(inputs.universe().coroutineResultOf(id))), asRead);
+        return positions.updateFrom(positions.resultAt(function.results[index], maker.of(inputs.universe().coroutineResultOf(id))), program.at(function.results[index].written()));
     });
     if (!std::ranges::all_of(results, &FlowPositionUpdate::isEmpty))
         update.results = WTF::move(results);
@@ -1621,7 +1619,8 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
                 return;
             }
         }
-        ValueFlowPositionResult result = positions.resultAt(asRead, held, DeadZone::MayBeObserved, answered ? &*answered : nullptr);
+        ProvenType typeByRules = Proven::byRulesBehindChecks(keepsTypeAsRead ? function.at(value).type : TypeTable::anythingOrAbsent);
+        ValueFlowPositionResult result = positions.resultAt(typeByRules, held, DeadZone::MayBeObserved, answered ? &*answered : nullptr);
         std::optional<Type>& narrowed = result.narrowed;
         bool isTestedLookup = narrowed && inputs.build.validates() && function.at(value).opcode == Opcode::PropGet && !asRead.isSubsetOf(*narrowed, program);
         if (!narrowed || (!isTestedLookup && !isWorthNarrowing(program, asRead, *narrowed))) {
@@ -1672,21 +1671,21 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
             continue;
         size_t numberOfClaimsBefore = update.claims.size();
         if (mayComeFromUnseenCaller(test.operand(0))) {
-        } else if (positions.isSurelyInside(held, program.at(test.castType()), test.castType()))
+        } else if (positions.isSurelyInside(held, program.at(test.expectedType().predicted()), test.expectedType().predicted()))
             update.claims.append(FlowClaimUpdate { .claim = observed.test, .isRedundant = true });
         else if (hasTypeOfNarrowedLocation(application, function.at(test.operand(0)))) {
-            if (std::optional<Type> arriving = positions.typeWhereNothingPasses(held, program.at(test.castType()))) {
+            if (std::optional<Type> arriving = positions.typeWhereNothingPasses(held, program.at(test.expectedType().predicted()))) {
                 update.claims.append(FlowClaimUpdate { .claim = observed.test, .arriving = types.intern(*arriving) });
                 replacedChecks.append(observed.test);
             }
         }
-        if (update.claims.size() == numberOfClaimsBefore && positions.turnsAwayConstructedObject(inputs.seenValuesOf(maker, observed.operand), program.at(test.castType())))
+        if (update.claims.size() == numberOfClaimsBefore && positions.turnsAwayConstructedObject(inputs.seenValuesOf(maker, observed.operand), program.at(test.expectedType().predicted())))
             update.claims.append(FlowClaimUpdate { .claim = observed.test, .mayFail = true });
     }
 
     // What stands behind a replaced check is typed anew from what arrives, so only what flow holds is known of it.
     if (!replacedChecks.isEmpty()) {
-        isTypedByReplacedCheck = computeTaintedValues(function, CFG(function), replacedChecks.span());
+        isTypedByReplacedCheck = valuesBehind(function, CFG(function), replacedChecks.span());
         bool provesAnew = update.proofs.removeAllMatching([&](const FlowValueProof& proof) {
             if (!isTypedByReplacedCheck.get(proof.value.index()))
                 return false;
@@ -1726,7 +1725,7 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
             continue;
         bool passesEveryCheck = true;
         for (TailCast cast : function.at(checkedTailCalls[found].second).terminator.casts())
-            passesEveryCheck &= cast.resolution != CastResolution::Check || positions.isSurelyInside(held, program.at(cast.declared.type), cast.declared.type);
+            passesEveryCheck &= cast.resolution != CastResolution::Check || positions.isSurelyInside(held, program.at(cast.declared.expected().predicted()), cast.declared.expected().predicted());
         if (passesEveryCheck)
             update.tailCalls.append(FlowTailCallUpdate { .call = statement.site, .claimsAreRedundant = true });
     }
@@ -1745,10 +1744,10 @@ static void proveReadsAfterInitialization(const Program& program, const Parallel
             bool isVariable = value.opcode == Opcode::GetModuleVariable;
             const FlowPositionUpdate& position = isVariable ? application.variables[value.variable().index()].position : application.layouts[value.layout().index()].fields[value.field()].position;
             const DeclaredType& declared = isVariable ? program.at(value.variable()).declared : program.at(value.layout()).fields[value.field()].declared;
-            const Type& held = types.at(position.type ? position.type : declared.type);
+            const Type& held = types.at(position.type ? position.type : declared.written());
             if (!(held.primitives & Primitive::Absent) || !held.isJavaScriptValue())
                 continue;
-            bool isOnlyExpected = declared.flags.contains(PositionFlags::IsExpected) && !position.isProven;
+            bool isOnlyExpected = declared.isExpected() && !position.isProven;
             update.proofs.append(FlowValueProof { read, isOnlyExpected ? TypeTable::anything : types.intern(held.withoutPrimitives(Primitive::Absent)) });
         }
         AOT::sort(update.proofs, { }, &FlowValueProof::value);

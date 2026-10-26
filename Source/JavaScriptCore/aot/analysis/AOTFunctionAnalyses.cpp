@@ -188,7 +188,7 @@ static bool addOperands(AnalysisWordHasher& hasher, const Function& function, co
         if (!operand)
             continue;
         const Value& definition = function.at(operand);
-        hasher.add(definition.type.index(), definition.expected().index());
+        hasher.add(definition.type.index(), definition.expected().predicted().index());
         if (inputs == EffectInputs::DefinitionsBehindCasts && !addDefinitionBehindCasts(hasher, function, operand))
             return false;
     }
@@ -217,7 +217,7 @@ static uint64_t stampOf(const Function& function, const Value& value, EffectInpu
     AnalysisWordHasher hasher;
     hasher.add(static_cast<uint32_t>(value.opcode));
     if (inputs != EffectInputs::Payload)
-        hasher.add(value.type.index(), value.expected().index());
+        hasher.add(value.type.index(), value.expected().predicted().index());
     return finishStamp(hasher, function, value, inputs);
 }
 

@@ -37,8 +37,8 @@ static bool capturesAtMostClassEnvironment(const Program& program, const Functio
         return true;
     if (function.captures.size() != 1 || constructor.captures.size() != 1)
         return false;
-    TypeID captured = function.captures[0].type;
-    return captured && captured == constructor.captures[0].type && program.at(captured).environment;
+    TypeID captured = function.captures[0].written();
+    return captured && captured == constructor.captures[0].written() && program.at(captured).environment;
 }
 
 static bool canClassRecordCreate(const Program& program, const Function& constructor, const ClassMember& member)
@@ -144,7 +144,7 @@ std::optional<ClassDefinitionSite> findClassDefinitionSite(const Program& progra
 
     for (ValueID current = head.prototypeParentOperand(); current;) {
         const Value& value = function.at(current);
-        bool isCastThatDoesNothing = value.opcode == Opcode::AssumeType || value.opcode == Opcode::Upcast;
+        bool isCastThatDoesNothing = value.opcode == Opcode::AssumeType || isCastThatProvesNothing(value.opcode);
         if (value.opcode != Opcode::ResolveHeritage && !isCastThatDoesNothing)
             return std::nullopt;
         unsigned otherUses = 0;

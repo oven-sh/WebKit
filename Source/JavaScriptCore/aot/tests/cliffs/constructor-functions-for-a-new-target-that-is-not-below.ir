@@ -4,18 +4,18 @@
 # RUN: pipeline ApplyFlowResults
 # CHECK-LABEL: function f0
 # CHECK: [[plain]]: anything ~ object = Construct {{*}} calleeName="Plain"
-# CHECK-NEXT: : L0 = AssumeType [[plain]] castType=L0
+# CHECK-NEXT: : L0 = AssumeType [[plain]] provenType=L0
 # CHECK: [[parent]]: anything ~ object = Construct {{*}} calleeName="Parent"
-# CHECK-NEXT: : object = AssumeType [[parent]] castType=object
+# CHECK-NEXT: : object = AssumeType [[parent]] provenType=object
 # CHECK: calleeName="construct"
 # CHECK-LABEL: function f1 name="Plain"
 # CHECK: PropSet {{*}} key="p" {{*}} receivers=[L0]
 # CHECK-LABEL: function f3 name="Child"
-# CHECK-NOT: castType=L1
-# CHECK-NOT: castType=L2
+# CHECK-NOT: Type=L1
+# CHECK-NOT: Type=L2
 # CHECK: PropSet {{*}} key="x" {{*}} receivers=[L1, L2, ..]
-# CHECK-NOT: castType=L1
-# CHECK-NOT: castType=L2
+# CHECK-NOT: Type=L1
+# CHECK-NOT: Type=L2
 # CHECK: PropSet {{*}} key="z" {{*}} receivers=[L2, ..]
 # CHECK: Return
 

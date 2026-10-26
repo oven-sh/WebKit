@@ -1,6 +1,7 @@
 # Rows of the image's tables. `packed` says once what a row holds and how it lies in bytes: the generator writes the struct, append() and read().
 # A word is a number of variable length. Its fields lie from the lowest bit up, and the last may take all that is left. ';' begins the next word.
 # `if`: the word is there only then. List: how many, then the rows. Bytes: how many, then the bytes. CodeOffset: in units of codeOffsetUnit.
+# Signed: small in either direction is short. [n]: in n bits.
 
 # What a site with code says beyond where it is. Of a first read only the number is read. A site inside a callee lies behind a tail call.
 enum CallSiteKind (isFirstRead: Bool, isConstruct: Bool, isTailCall: Bool, isInsideCallee: Bool, namesBuiltin: Bool) {
@@ -17,7 +18,7 @@ enum CallSiteKind (isFirstRead: Bool, isConstruct: Bool, isTailCall: Bool, isIns
 
 packed PrologueCheckRow { callOffset: CodeOffset ; resumeOffset: CodeOffset }
 packed CallSiteHead {
-    reserved: Bool hasInlineFrames: Bool hasPrologueChecks: Bool numberOfSites: UInt64
+    hasInlineFrames: Bool hasPrologueChecks: Bool numberOfSites: UInt64
     ; prologueChecks: List<PrologueCheckRow> if hasPrologueChecks
     ; numberOfSitesWithoutCode: UInt64
     ; numberOfInlineFrames: UInt64 if hasInlineFrames
@@ -27,3 +28,17 @@ packed InlineFrameRow { isTailCall: Bool isConstruct: Bool parent: UInt32 ; func
 # The frame applies until the next site with details. The kind applies to this site only.
 packed CallSiteDetails { kind: CallSiteKind frame: UInt32 ; calledBuiltin: Builtin if namesBuiltin(kind) }
 packed CallSiteRow { hasDetails: Bool distance: CodeOffset ; details: CallSiteDetails if hasDetails }
+
+# Sites in a row with one handler. The first lies `sitesSkipped` behind the end of the row in front.
+packed HandlerRow { sitesSkipped: UInt32 ; furtherSites: UInt32 ; type: HandlerType[2] targetChange: Signed }
+
+# The line counts from the function in front, unless that one is in another source.
+packed PositionsHead {
+    followsInlineFrames: Bool hasCheckpoints: Bool size: UInt64
+    ; isInOtherSource: Bool lineChange: Signed
+    ; sourceChange: Signed if isInOtherSource
+    ; column: UInt32
+    ; count: UInt64 if hasCheckpoints
+}
+
+packed FaultStep { isFrameless: Bool isLoopPoll: Bool distance: UInt32 }

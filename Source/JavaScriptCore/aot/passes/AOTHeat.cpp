@@ -2246,10 +2246,10 @@ static Function createBodyHead(const Program& program, const OutliningSite& site
     created.kind = FunctionKind::Plain;
     created.role = FunctionRole::OutlinedBody;
     created.length = static_cast<uint32_t>(site.liveIns.size());
-    created.thisType = DeclaredType { .type = TypeTable::anything };
+    created.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
     for (ValueID liveIn : site.liveIns)
-        created.parameters.append(DeclaredType { .type = function.at(liveIn).type });
-    created.results.append(DeclaredType { .type = site.resultType });
+        created.parameters.append(DeclaredType(Proven::byRulesWithoutChecks(function.at(liveIn).type)));
+    created.results.append(DeclaredType(Proven::byRulesWithoutChecks(site.resultType)));
     created.capabilities = initialCapabilitiesOf(created);
     return created;
 }

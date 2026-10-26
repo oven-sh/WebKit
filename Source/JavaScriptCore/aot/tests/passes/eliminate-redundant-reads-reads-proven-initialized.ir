@@ -9,7 +9,7 @@ variable g1 name="storedTwice" module=m0 declared={type=anything|absent} flow={w
 
 function f0 name="provenBeforeCall" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = GetModuleVariable variable=g0
-    v2 = AssumeType v1 castType=anything
+    v2 = AssumeType v1 provenType=anything
     v3 = Call v0, -, v2
     v4 = GetModuleVariable variable=g0
     v5 = CheckInitialized v4 name="settled"
@@ -22,7 +22,7 @@ function f0 name="provenBeforeCall" parameters=[{type=anything}] results=[{type=
 
 function f1 name="storedTwice" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = GetModuleVariable variable=g1
-    v2 = AssumeType v1 castType=anything
+    v2 = AssumeType v1 provenType=anything
     v3 = Call v0, -, v2
     v4 = GetModuleVariable variable=g1
     v5 = CheckInitialized v4 name="storedTwice"

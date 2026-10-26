@@ -24,6 +24,7 @@ aot/analysis/AOTIntegerRelations.cpp
 aot/analysis/AOTLiveness.cpp
 aot/analysis/AOTParameterUses.cpp
 aot/analysis/AOTPointsToSolver.cpp
+aot/analysis/AOTPredictedValues.cpp
 aot/analysis/AOTPropertyAccess.cpp
 aot/analysis/AOTPropertyAccessElements.cpp
 aot/analysis/AOTPropertyAccessMembers.cpp

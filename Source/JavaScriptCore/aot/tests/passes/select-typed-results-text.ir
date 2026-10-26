@@ -54,17 +54,17 @@ function f0 name="expectedResult" parameters=[{type=string}] results=[{type=anyt
 function f1 name="checked" parameters=[{type=string}] results=[{type=anything}] {
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
-    v3 = Check v2 castType=undefined|null|L0
+    v3 = Check v2 expectedType=undefined|null|L0
     Return v3
 # CHECK: = JSONSourceOpen v0
-# CHECK: = Check v2 castType=undefined|null|L0
+# CHECK: = Check v2 expectedType=undefined|null|L0
 # CHECK: = CallDirect {{*}} function=[[parserOfUser]]
 }
 
 function f2 name="storedInTypedVariable" parameters=[{type=string}] results=[{type=undefined}] {
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
-    v3 = Check v2 castType=undefined|null|L0
+    v3 = Check v2 expectedType=undefined|null|L0
     PutModuleVariable v3 variable=g0
     Return
 # CHECK: = JSONSourceOpen v0
@@ -75,7 +75,7 @@ function f3 name="doubleCast" parameters=[{type=string}] results=[{type=anything
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
     v3 = Upcast v2 castType=anything
-    v4 = Check v3 castType=undefined|null|L0
+    v4 = Check v3 expectedType=undefined|null|L0
     Return v4
 # CHECK: = JSONSourceOpen v0
 # CHECK: = CallDirect {{*}} function=[[parserOfUser]]
@@ -95,7 +95,7 @@ function f4 name="expected" parameters=[{type=string}] results=[{type=anything}]
 function f5 name="checkedAsArray" parameters=[{type=string}] results=[{type=anything}] {
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
-    v3 = Check v2 castType=Array<number>
+    v3 = Check v2 expectedType=Array<number>
     Return v3
 # CHECK: = JSONSourceOpen v0
 # CHECK-NOT: function=[[parserOfUser]]
@@ -106,23 +106,23 @@ function f5 name="checkedAsArray" parameters=[{type=string}] results=[{type=anyt
 function f6 name="twoDifferentChecks" parameters=[{type=string}] results=[{type=anything}] {
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
-    v3 = Check v2 castType=undefined|null|L0
-    v4 = Check v2 castType=undefined|null|L1
+    v3 = Check v2 expectedType=undefined|null|L0
+    v4 = Check v2 expectedType=undefined|null|L1
     v5 = NewArray v3, v4 contents=anything
     Return v5
 # CHECK: v1: undefined = Undefined
 # CHECK-NEXT: v2:{{*}}= CallBuiltin -, v0, v1 overload=JSONParse/0
-# CHECK-NEXT: v3:{{*}}= Check v2 castType=undefined|null|L0
+# CHECK-NEXT: v3:{{*}}= Check v2 expectedType=undefined|null|L0
 }
 
 function f7 name="checkOfPrimitive" parameters=[{type=string}] results=[{type=anything}] {
     v1 = Undefined
     v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
-    v3 = Check v2 castType=string
+    v3 = Check v2 expectedType=string
     Return v3
 # CHECK: v1: undefined = Undefined
 # CHECK-NEXT: v2:{{*}}= CallBuiltin -, v0, v1 overload=JSONParse/0
-# CHECK-NEXT: v3:{{*}}= Check v2 castType=string
+# CHECK-NEXT: v3:{{*}}= Check v2 expectedType=string
 }
 
 function f8 name="checkBehindBlockParameter" parameters=[{type=string}, {type=boolean}] results=[{type=anything}] {
@@ -132,7 +132,7 @@ function f8 name="checkBehindBlockParameter" parameters=[{type=string}, {type=bo
   b1():
     Jump -> next b2(v3)
   b2(v4):
-    v5 = Check v4 castType=undefined|null|L0
+    v5 = Check v4 expectedType=undefined|null|L0
     Return v5
 # CHECK: v2: undefined = Undefined
 # CHECK-NEXT: v3:{{*}}= CallBuiltin -, v0, v2 overload=JSONParse/0
@@ -155,11 +155,11 @@ function f10 name="checkedInRareBlock" parameters=[{type=string}, {type=boolean}
     Return v2
   b2() frequency=Rare:
     v3 = CallBuiltin -, v0, v2 overload=JSONParse/0
-    v4 = Check v3 castType=undefined|null|L0
+    v4 = Check v3 expectedType=undefined|null|L0
     Return v4
 # CHECK: b2() frequency=Rare:
 # CHECK-NEXT: v3:{{*}}= CallBuiltin -, v0, v2 overload=JSONParse/0
-# CHECK-NEXT: v4:{{*}}= Check v3 castType=undefined|null|L0
+# CHECK-NEXT: v4:{{*}}= Check v3 expectedType=undefined|null|L0
 # CHECK-NEXT: Return v4
 # CHECK: function [[parserOfUser]] {{*}}role=Parser {{*}}parameters=[{type=cursor}] results=[{type=int[0, 2]}, {type=undefined|null|L0}, {type=cursor}]
 # CHECK: function [[parserOfNumbers]] {{*}}role=Parser {{*}}parameters=[{type=cursor}] results=[{type=int[0, 2]}, {type=undefined|Array<number>{{*}}}, {type=cursor}]

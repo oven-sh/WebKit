@@ -658,7 +658,7 @@ static void printModules(const TablesContext& context)
     printModuleRecords(context);
     auto requests = tables.moduleRequests();
     for (uint32_t index = 0; index < requests.size(); ++index)
-        RecordLine(context, "request"_s, index).field("target"_s, requests[index].targetModule()).flag("deferred"_s, requests[index].isDeferred).flag("dynamicStarExport"_s, requests[index].isDynamicStarExport);
+        RecordLine(context, "request"_s, index).field("target"_s, requests[index].targetModule()).flag("deferred"_s, requests[index].isDeferred).flag("dynamicStarExport"_s, requests[index].isDynamicStarExport).flag("hoisted"_s, requests[index].isHoisted);
     ModuleNumbers linkRequests(tables.linkRequests(), tables.modules().size());
     for (uint32_t index = 0; index < linkRequests.size(); ++index)
         RecordLine(context, "linkRequest"_s, index).field("target"_s, ModuleID(linkRequests[index]));

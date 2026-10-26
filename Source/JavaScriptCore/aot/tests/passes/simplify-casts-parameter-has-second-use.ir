@@ -13,13 +13,13 @@ function f0 name="usedByValue" parameters=[{type=anything}, {type=boolean}] resu
   b2():
     Jump -> next b3(v0)
   b3(v3):
-    v4 = Check v3 castType=number
+    v4 = Check v3 expectedType=number
     v5 = StrictEq v3, v4
     Return v5
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK-NEXT: b3(v3: anything):
-# CHECK-NEXT: v4: number = Check v3 castType=number
+# CHECK-NEXT: v4: number = Check v3 expectedType=number
 # CHECK-NEXT: v5: boolean = StrictEq v3, v4
 # CHECK-NEXT: Return v5
 }
@@ -32,7 +32,7 @@ function f1 name="usedAsHandlerArgument" parameters=[{type=anything}, {type=bool
   b2():
     Jump -> next b3(v0)
   b3(v3):
-    v4 = Check v3 castType=number
+    v4 = Check v3 expectedType=number
     Jump -> next b4()
   b4() handler=b5(v3):
     v5 = Call v0, -, v4
@@ -43,7 +43,7 @@ function f1 name="usedAsHandlerArgument" parameters=[{type=anything}, {type=bool
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK-NEXT: b3(v3: anything):
-# CHECK-NEXT: v4: number = Check v3 castType=number
+# CHECK-NEXT: v4: number = Check v3 expectedType=number
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4() handler=b5(v3):
 }

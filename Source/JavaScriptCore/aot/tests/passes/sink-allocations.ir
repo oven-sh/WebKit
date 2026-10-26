@@ -200,7 +200,7 @@ function f11 name="checkIsLeftToRun" parameters=[{type=anything}, {type=anything
     v3 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     Branch v2 -> taken b1(), notTaken b2()
   b1():
-    v4 = Check v3 castType=L1
+    v4 = Check v3 expectedType=L1
     Return v4
   b2():
     Return v1
@@ -208,7 +208,7 @@ function f11 name="checkIsLeftToRun" parameters=[{type=anything}, {type=anything
 # CHECK-NEXT: Branch
 # CHECK: b1():
 # CHECK-NEXT: [[cell11]]:{{*}}= NewObject
-# CHECK-NEXT: = Check [[cell11]] castType=L1
+# CHECK-NEXT: = Check [[cell11]] expectedType=L1
 }
 
 function f12 name="testsFold" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {

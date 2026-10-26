@@ -180,17 +180,17 @@ std::optional<InternalError> findTypeError(const Program& program, TypeID id, Re
 
 bool isValidPosition(const Program& program, const DeclaredType& declared)
 {
-    if (!declared.type)
+    if (!declared.written())
         return false;
-    if (!declared.flags.contains(PositionFlags::IsInt32Promise))
+    if (!declared.has(PositionFlags::IsInt32Promise))
         return true;
-    const Type& type = program.at(declared.type);
-    return !declared.flags.contains(PositionFlags::IsExpected) && !(type.primitives & Primitive::Double) && type.integers.isSubsetOf(Range::int32());
+    const Type& type = program.at(declared.written());
+    return !declared.isExpected() && !(type.primitives & Primitive::Double) && type.integers.isSubsetOf(Range::int32());
 }
 
 bool canOutliveActivation(const Program& program, const DeclaredType& declared)
 {
-    std::optional<OpaqueKind> opaque = program.at(declared.type).opaque;
+    std::optional<OpaqueKind> opaque = program.at(declared.written()).opaque;
     return !opaque || !isFunctionLocal(*opaque);
 }
 

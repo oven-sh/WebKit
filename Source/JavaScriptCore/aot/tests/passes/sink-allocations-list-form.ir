@@ -22,7 +22,7 @@ function f1 name="elementsAreConverted" parameters=[{type=anything}, {type=anyth
 # CHECK-NOT: NewArray
 # CHECK: [[callee1]]: builtin(MathMax) = Builtin builtin=MathMax
 # CHECK-NEXT: [[call1]]: anything = Call [[callee1]], -, v0, v1
-# CHECK-NEXT: [[max1]]: number = AssumeType [[call1]] castType=number
+# CHECK-NEXT: [[max1]]: number = AssumeType [[call1]] provenType=number
 # CHECK-NEXT: v3: number = Upcast [[max1]] castType=number
 # CHECK-NEXT: Return v3
 }

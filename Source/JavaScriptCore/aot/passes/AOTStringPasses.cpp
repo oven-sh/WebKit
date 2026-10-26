@@ -377,7 +377,7 @@ StringBuilderPlan StringBuilderStep::findWebs()
     auto isPartOfOtherWeb = [&](uint32_t web) {
         return std::ranges::any_of(webs[web].members, [&](ValueID member) {
             return std::ranges::any_of(useLists.usesOf(member), [&](Use use) {
-                while (use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::Upcast) {
+                while (use.kind == Use::Kind::Operand && isCastThatProvesNothing(function.at(use.user).opcode)) {
                     std::optional<Use> next = useLists.singleUse(use.user);
                     if (!next)
                         return false;
@@ -525,7 +525,7 @@ StringBuilderPlan StringBuilderStep::findWebs()
         const Value& value = function.at(ValueID(index));
         if (value.opcode == Opcode::Parameter)
             return argumentsOfParameters.subspan(argumentRanges[index].first, argumentRanges[index].second);
-        if (value.opcode == Opcode::Upcast || isStringConcatenation(program, function, value))
+        if (isCastThatProvesNothing(value.opcode) || isStringConcatenation(program, function, value))
             return value.operands();
         return { };
     };
@@ -763,7 +763,7 @@ PassOutcome StringBuilderStep::mergeNestedWebs(const StringBuilderPlan& plan)
         NestedWeb nested;
         nested.lastState = function.at(concatenation).operand(operandIndex);
         nested.readOfLastState = operandUse(concatenation, operandIndex);
-        while (function.at(nested.lastState).opcode == Opcode::Upcast && useLists.useCount(nested.lastState) == 1) {
+        while (isCastThatProvesNothing(function.at(nested.lastState).opcode) && useLists.useCount(nested.lastState) == 1) {
             nested.casts.append(nested.lastState);
             nested.readOfLastState = operandUse(nested.lastState, OperandIndex::Upcast::value);
             nested.lastState = function.at(nested.lastState).valueOperand();
@@ -1389,7 +1389,7 @@ PassOutcome StringBuilderStep::joinNestedBuilders()
             if (use->kind != Use::Kind::Operand)
                 return std::nullopt;
             const Value& user = function.at(use->user);
-            if (user.opcode == Opcode::Upcast) {
+            if (isCastThatProvesNothing(user.opcode)) {
                 string = use->user;
                 continue;
             }
@@ -2807,7 +2807,7 @@ static_assert(defaultLimitValue(LimitID::MaxLiteralStrings, Architecture::X86_64
 static_assert(literalStringWord(0) == emptyLiteralStringWord);
 
 // Their value is one that another value, a field or a variable of the program held before.
-static constexpr OpcodeSet operationsHandingOnValues { Opcode::Parameter, Opcode::Upcast, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::CallDirect };
+static constexpr OpcodeSet operationsHandingOnValues = castsThatProveNothing | OpcodeSet { Opcode::Parameter, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::CallDirect };
 
 std::optional<uint32_t> LiteralStringTable::indexOf(StringID string) const
 {
@@ -2867,12 +2867,12 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
     };
     auto collectLiteralsOfAll = [&](std::span<const DeclaredType> positions, Source source) {
         for (const DeclaredType& declared : positions)
-            collectLiteralsOf(declared.type, source);
+            collectLiteralsOf(declared.written(), source);
     };
     auto collectStringsOfFunction = [&](FunctionID id, Source sourceOfArguments) {
         const Function& function = program.at(id);
         collectLiteralsOfAll(function.captures.span(), Source::Program);
-        collectLiteralsOf(function.thisType.type, sourceOfArguments);
+        collectLiteralsOf(function.thisType.written(), sourceOfArguments);
         collectLiteralsOfAll(function.parameters.span(), sourceOfArguments);
         collectLiteralsOfAll(function.results.span(), Source::Program);
 
@@ -2933,11 +2933,11 @@ LiteralStringTable numberLiteralStrings(const Program& program, const FlowResult
         bool isParsedByType = layout.flow.observedUses.contains(ObservedUse::IsParsedByType);
         bool isFilledByNativeCode = layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse);
         for (const Field& field : layout.fields)
-            collectLiteralsOf(field.declared.type, isParsedByType ? Source::Parser : !isFilledByNativeCode && field.flow.location.writers == WriterState::AllKnown ? Source::Program : Source::Anywhere);
+            collectLiteralsOf(field.declared.written(), isParsedByType ? Source::Parser : !isFilledByNativeCode && field.flow.location.writers == WriterState::AllKnown ? Source::Program : Source::Anywhere);
     }
     BitVector described = findVariablesDescribedToRunTime(program, flow);
     for (unsigned index = 0; index < program.variables.size(); ++index) {
-        TypeID type = program.variables[index].declared.type;
+        TypeID type = program.variables[index].declared.written();
         if (described.quickGet(index) || variablesNamedByCode.at(index)) {
             collectLiteralsOf(type, !described.quickGet(index) && program.variables[index].flow.writers == WriterState::AllKnown ? Source::Program : Source::Anywhere);
             continue;

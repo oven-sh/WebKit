@@ -52,7 +52,7 @@ static FieldArmState computeStateOfFieldArm(const Program& program, std::span<co
         state.isLeftOutAtConstruction |= reference->layout == layout && std::ranges::any_of(program.at(layout).flow.constructorOrders, [&](const FieldOrder& order) {
             return !order.fields.contains(reference->field);
         });
-        state.admitsUndefined |= !!(program.at(field.declared.type).primitives & Primitive::Undefined);
+        state.admitsUndefined |= !!(program.at(program.provenTypeOf(field.declared)).primitives & Primitive::Undefined);
         state.hasConstructor |= !!program.at(declaredLayoutOf(program, layout)).constructor;
         state.isInContainer |= program.at(layout).kind == LayoutKind::Container;
         state.cannotMoveOut &= staysInSlot(program, *reference);
@@ -542,7 +542,7 @@ void planVariableArm(const PropertyAccessContext& context, const PropertyAccessQ
         return;
     case Access::Store:
     case Access::Define: {
-        bool valueFits = query.stored && (variable.declared.flags.contains(PositionFlags::IsExpected) || query.stored->isSubsetOf(program.at(variable.declared.type), program));
+        bool valueFits = query.stored && (variable.declared.isExpected() || query.stored->isSubsetOf(program.at(*variable.declared.established()), program));
         if (!isStaticField || variable.flags.contains(VariableFlags::IsImmutable) || !valueFits)
             return;
         plan.form = AccessForm::Variable;

@@ -5,6 +5,7 @@ import type { EmitContext, OutputFile } from "./outputs.ts";
 import { isFoundByColumns } from "./resolve-packed.ts";
 
 const bitsInWord = 64;
+const bitsInByteOfVarint = 7;
 
 function fieldsOf(record: PackedRecord): PackedField[] {
   return record.words.flatMap(word => word.fields);
@@ -16,8 +17,11 @@ function typeOf({ kind }: PackedField): string {
       return "bool";
     case "CodeOffset":
       return "uint32_t";
+    case "Signed":
+      return "int64_t";
     case "Number":
     case "Id":
+    case "ExternalEnum":
       return kind.cppType;
     case "Enum":
       return kind.type.name;
@@ -35,11 +39,13 @@ function initializerOf({ kind }: PackedField): string {
     case "Bool":
       return " { false }";
     case "CodeOffset":
+    case "Signed":
     case "Number":
       return " { 0 }";
     case "Enum":
       return ` { ${kind.type.name}::${kind.type.members[0].name} }`;
     case "Id":
+    case "ExternalEnum":
     case "Record":
     case "Bytes":
       return " { }";
@@ -62,23 +68,39 @@ function saysNothingText({ name, kind }: PackedField): string {
       return `${name} == ${kind.type.name}::${kind.type.members[0].name}`;
     case "Record":
       return `${name} == ${kind.element.name} { }`;
+    case "ExternalEnum":
+      return `${name} == ${kind.cppType} { }`;
     default:
       return `!${name}`;
   }
 }
 
+function rawBitsOf({ name, kind }: PackedField): string {
+  if (kind.tag === "Id") return `static_cast<uint64_t>(${name}.index())`;
+  if (kind.tag === "CodeOffset") return `static_cast<uint64_t>(${name} / codeOffsetUnit)`;
+  if (kind.tag === "Signed") return `zigZagEncode(${name})`;
+  return kind.tag === "Number" && kind.cppType === "uint64_t" ? name : `static_cast<uint64_t>(${name})`;
+}
+
+/** How many bits a value of the kind can need where nothing bounds it. */
+function bitsOfKind(kind: PackedField["kind"]): number {
+  return kind.tag === "Signed" || (kind.tag === "Number" && kind.cppType === "uint64_t") ? bitsInWord : 32;
+}
+
 function mayBeWrittenEmpty({ kind }: PackedField): boolean {
-  return kind.tag === "Number" || kind.tag === "CodeOffset" || kind.tag === "Record";
+  return kind.tag === "Number" || kind.tag === "CodeOffset" || kind.tag === "Signed" || kind.tag === "Record";
 }
 
 /** Nothing says anything where it is not written. But for numbers and rows, what is written says something. */
 function checksOf(word: PackedWord): string[] {
   const offsets = word.fields.filter(field => field.kind.tag === "CodeOffset");
-  const wide = word.fields.filter(({ kind, shift }) => kind.tag === "Number" && kind.cppType === "uint64_t" && shift);
+  const wide = word.fields.filter(({ kind, shift, width }) => width === null && bitsOfKind(kind) + shift > bitsInWord);
+  const narrow = word.fields.filter(({ kind, width }) => width !== null && kind.tag !== "Bool" && kind.tag !== "Enum");
   const condition = word.condition;
   return [
     ...offsets.map(({ name }) => `RELEASE_ASSERT(!(${name} % codeOffsetUnit));`),
-    ...wide.map(({ name, shift }) => `RELEASE_ASSERT(!(${name} >> ${bitsInWord - shift}));`),
+    ...wide.map(field => `RELEASE_ASSERT(!(${rawBitsOf(field)} >> ${bitsInWord - field.shift}));`),
+    ...narrow.map(field => `RELEASE_ASSERT(!(${rawBitsOf(field)} >> ${field.width}));`),
     ...(condition === null ? [] : word.fields).map(field => {
       const isWritten = conditionText(condition!, "");
       return `RELEASE_ASSERT(${isWritten} ${mayBeWrittenEmpty(field) ? "||" : "!="} ${saysNothingText(field)});`;
@@ -86,16 +108,8 @@ function checksOf(word: PackedWord): string[] {
   ];
 }
 
-function bitsOf({ name, kind, shift }: PackedField): string {
-  const value =
-    kind.tag === "Id"
-      ? `static_cast<uint64_t>(${name}.index())`
-      : kind.tag === "CodeOffset"
-        ? `static_cast<uint64_t>(${name} / codeOffsetUnit)`
-        : kind.tag === "Number" && kind.cppType === "uint64_t"
-          ? name
-          : `static_cast<uint64_t>(${name})`;
-  return shift ? `${value} << ${shift}` : value;
+function bitsOf(field: PackedField): string {
+  return field.shift ? `${rawBitsOf(field)} << ${field.shift}` : rawBitsOf(field);
 }
 
 /** The lines of all words. Neighbors that are there under one condition share its test. */
@@ -142,6 +156,8 @@ function valueFrom(field: PackedField, word: string): string {
       return `static_cast<uint32_t>(${shift ? `(${bits})` : bits} * codeOffsetUnit)`;
     case "Id":
       return `${kind.cppType}(static_cast<uint32_t>(${bits}))`;
+    case "Signed":
+      return `zigZagDecode(${bits})`;
     case "Number":
       if (kind.cppType === "uint64_t") return bits;
       break;
@@ -175,6 +191,20 @@ function readLinesOf(word: PackedWord, position: number): string[] {
   ];
 }
 
+/** Null: the row holds as many rows or bytes as it likes. */
+function maxSizeOf(record: PackedRecord): number | null {
+  let size = 0;
+  for (const { fields } of record.words) {
+    const last = fields[fields.length - 1];
+    if (last.kind.tag === "List" || last.kind.tag === "Bytes") return null;
+    const nested = last.kind.tag === "Record" ? maxSizeOf(last.kind.element) : 0;
+    if (nested === null) return null;
+    const bits = Math.min(bitsInWord, last.shift + (last.width ?? bitsOfKind(last.kind)));
+    size += last.kind.tag === "Record" ? nested : Math.ceil(bits / bitsInByteOfVarint);
+  }
+  return size;
+}
+
 function isComparableRecord(record: PackedRecord): boolean {
   return fieldsOf(record).every(({ kind }) => {
     if (kind.tag === "Record" || kind.tag === "List") return isComparableRecord(kind.element);
@@ -186,7 +216,9 @@ function structLines(record: PackedRecord): string[] {
   const { name, words } = record;
   const isComparable = isComparableRecord(record);
   const equality = `friend bool operator==(const ${name}&, const ${name}&) = default;`;
+  const maxSize = maxSizeOf(record);
   const body = blocks(
+    maxSize === null ? [] : [`static constexpr unsigned maxSize = ${maxSize};`],
     isComparable ? [equality] : [],
     [
       "void append(Vector<uint8_t>& bytes) const",
@@ -249,6 +281,6 @@ export function emitCppPacked({ schema }: EmitContext): OutputFile[] {
     ["} } // namespace JSC::AOT"],
     ["WTF_ALLOW_UNSAFE_BUFFER_USAGE_END"],
   );
-  const includes = ['"AOTImageFormat.h"', '"AOTRecordTypes.h"', '"AOTVarint.h"', "<optional>", "<span>"];
+  const includes = ['"AOTImageFormat.h"', '"AOTRecordTypes.h"', '"AOTVarint.h"', '"HandlerInfo.h"', "<optional>", "<span>"];
   return [{ name: "AOTSchemaPackedRecords.h", lines: cppHeader(includes, body) }];
 }

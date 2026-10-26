@@ -19,6 +19,7 @@
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
 #include "AOTInlineCopy.h"
+#include "AOTPredictedValues.h"
 #include "AOTRegionCloner.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTThreads.h"
@@ -517,8 +518,10 @@ static std::optional<Vector<ValueID, 6>> findPromotedValues(FunctionAnalyses& an
     }
     promoted.append(function.at(body.head).parameters.span());
 
+    // The body is typed with the types of what it is handed, and a parameter outlives the checks of the caller.
+    PredictedValues predicted(function, analyses.cfg());
     for (ValueID id : promoted) {
-        if (!program.typeOf(function, id).isJavaScriptValue())
+        if (!program.typeOf(function, id).isJavaScriptValue() || predicted.isBehindCheck(id))
             return std::nullopt;
     }
     if (analyses.context().build.exceeds(LimitID::MaxPromotedParameters, promoted.size(), subject))
@@ -526,11 +529,12 @@ static std::optional<Vector<ValueID, 6>> findPromotedValues(FunctionAnalyses& an
     return promoted;
 }
 
-static DeclaredType promotedParameterType(const Value& value)
+static DeclaredType promotedParameterType(const Function& function, const PredictedValues& predicted, ValueID id)
 {
-    if (value.expected() && value.type == TypeTable::anything)
-        return { .type = value.expected(), .flags = PositionFlags::IsExpected };
-    return { .type = value.type };
+    const Value& value = function.at(id);
+    if (value.expected().predicted() && value.type == TypeTable::anything)
+        return DeclaredType(value.expected());
+    return DeclaredType(*Proven::byRules(predicted, id, value.type).inEveryVersion());
 }
 
 static Function createBodySignature(const Promotion& promotion)
@@ -558,8 +562,9 @@ static Function createBodySignature(const Promotion& promotion)
     body.flags.remove(FunctionFlags::HasRestParameter);
     if (!promotion.keepsParameter)
         body.parameters.removeAt(promotion.parameter);
+    PredictedValues predicted(function, CFG(function));
     for (ValueID id : promotion.promoted)
-        body.parameters.append(promotedParameterType(function.at(id)));
+        body.parameters.append(promotedParameterType(function, predicted, id));
     return body;
 }
 

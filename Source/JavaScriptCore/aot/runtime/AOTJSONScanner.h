@@ -66,7 +66,7 @@ const uint8_t* decodeJSONString(const JSONWords&, const uint8_t* afterQuote, con
 ParsedJSONString makeJSONStringWithEscapes(Instance&, VM&, const uint8_t* afterQuote, const uint8_t* firstSpecial);
 ParsedJSONString makeUncachedJSONString(Instance&, VM&, const uint8_t* afterQuote);
 // Up to here JSONCache makes the narrowest string whatever the source. A longer one has the width of its source.
-static constexpr unsigned maxLengthOfJSONStringOfEitherWidth = 16;
+AOT_THRESHOLD(unsigned, maxLengthOfJSONStringOfEitherWidth, 16);
 
 ALWAYS_INLINE const uint8_t* skipJSONWhitespaceCharacters(const uint8_t* cursor)
 {

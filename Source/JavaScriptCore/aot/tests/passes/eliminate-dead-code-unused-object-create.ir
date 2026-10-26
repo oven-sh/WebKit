@@ -7,7 +7,7 @@ layout L0 name="Holder" fields=[{key="a" declared={type=anything}}]
 function f0 name="underObjectPrototype" results=[{type=undefined}] {
     v0 = Builtin builtin=ObjectPrototype
     v1 = CallBuiltin -, v0 overload=ObjectCreate/0
-    v2 = AssumeType v1 castType=object
+    v2 = AssumeType v1 provenType=object
     Return
 # CHECK-NOT: ObjectCreate
 }

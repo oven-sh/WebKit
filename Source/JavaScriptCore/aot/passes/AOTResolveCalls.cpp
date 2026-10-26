@@ -86,7 +86,7 @@ CalleeCandidates calleeCandidates(const Program& program, const Function& functi
         return result;
 
     for (ValueID id : CastChain(function, callee)) {
-        TypeID expected = function.at(id).expected();
+        TypeID expected = function.at(id).expected().predicted();
         if (expected && !program.at(expected).functions.isEmpty()) {
             expectFunctions(result, program.at(expected).functions.span());
             break;
@@ -176,7 +176,7 @@ ValueID convertTo(const ValueInsertion& insertion, ValueID value, const Declared
         return value;
     if (insertion.context.build.validates())
         insertWithOrigin(insertion, makeValidateType(value, required));
-    return insertWithOrigin(insertion, makeAssumeType(value, required));
+    return insertWithOrigin(insertion, makeAssumeType(value, Proven::byRulesWithoutChecks(required)));
 }
 
 ValueID convertTo(IRBuilder& builder, ValueID value, const DeclaredType& target)
@@ -195,7 +195,7 @@ static TypeID provenElementTypeOfHiddenRest(const Program& program, const Functi
         const Value& value = callee.at(id);
         if (value.opcode != Opcode::AssumeType || value.valueOperand() != entry.parameters[*index])
             continue;
-        if (const ClassPart* part = program.at(value.castType()).findClassPart(BuiltinClasses::Array); part && part->contentsAreProven)
+        if (const ClassPart* part = program.at(value.provenType()).findClassPart(BuiltinClasses::Array); part && part->contentsAreProven)
             return part->contentsAt(program.builtins(), ContentsSlot::Element);
     }
     return TypeTable::anything;
@@ -219,7 +219,7 @@ Value makeDirectCall(const ValueInsertion& insertion, const DirectCallRequest& r
         RELEASE_ASSERT(!request.restArray);
         Vector<ValueID, 8> elements;
         for (ValueID element : request.arguments.subspan(std::min(numberOfPositionalParameters, request.arguments.size())))
-            elements.append(convertsElements ? convert(element, DeclaredType { .type = contents }) : element);
+            elements.append(convertsElements ? convert(element, DeclaredType(Proven::byPosition(contents))) : element);
         Value array = IRBuilder::make(Opcode::NewArray);
         array.setContents(contents);
         array.setElementsOperands(elements.span());
@@ -358,9 +358,9 @@ static bool canPassRestArguments(const Program& program, const Function& callee)
     if (callee.parameters.isEmpty())
         return false;
     const DeclaredType& declared = callee.parameters.last();
-    if (declared.flags.contains(PositionFlags::IsExpected))
+    if (declared.isExpected())
         return true;
-    const Type& rest = program.at(declared.type);
+    const Type& rest = program.at(*declared.established());
     return rest.anyObject || rest.findClassPart(BuiltinClasses::Array);
 }
 
@@ -641,8 +641,8 @@ static bool canHaveConstructBody(const Program& program, FunctionID id)
     const Function& function = program.at(id);
     if (!function.hasBody() || !function.mayBeCloned() || function.results.size() != 1 || !isConstructorFunction(program, function))
         return false;
-    if (function.thisType.type && !function.thisType.flags.contains(PositionFlags::IsExpected)) {
-        const Type& bound = program.at(function.thisType.type);
+    if (function.thisType.written() && !function.thisType.isExpected()) {
+        const Type& bound = program.at(*function.thisType.established());
         if (!bound.anyObject && !std::ranges::binary_search(membersOf(program, bound), function.constructedClass))
             return false;
     }
@@ -687,7 +687,7 @@ Function buildConstructBody(const DerivedFunctionKey& key, DerivedFunctionInputs
     body.creator = CreatorRecord::Version { .provenVersion = key.target };
     body.flags.remove(FunctionFlags::HasThis);
     body.flags.add(FunctionFlags::AllocatesOwnThis);
-    body.thisType = DeclaredType { .type = TypeTable::anything };
+    body.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
     if (readsPrototypeOfNewTarget && !original.has(FunctionFlags::HasNewTarget)) {
         body.flags.add(FunctionFlags::HasNewTarget);
         parameterMap.insert(*body.newTargetParameterIndex(), ParameterOrigin { });
@@ -723,7 +723,7 @@ Function buildConstructBody(const DerivedFunctionKey& key, DerivedFunctionInputs
         TypeID closureType = inputs.types.intern(Type::forFunction(closureFunction));
         if (inputs.build.validates())
             validation = insertAtHead(makeValidateType(closure, closureType));
-        ownClosure = insertAtHead(makeAssumeType(closure, closureType));
+        ownClosure = insertAtHead(makeAssumeType(closure, Proven::byRulesWithoutChecks(closureType)));
     }
     ValueID object = emitThis(program, original.constructedClass, readsPrototypeOfNewTarget ? ownClosure : ValueID(), insertAtHead);
     builder.applyInsertions();
@@ -771,7 +771,7 @@ Function buildConstructBody(const DerivedFunctionKey& key, DerivedFunctionInputs
         if (block.terminator.kind == TerminatorKind::Return)
             typeOfResult = inputs.types.unionOf(typeOfResult, body.at(block.terminator.valueOperand()).type);
     }
-    body.results[0] = DeclaredType { .type = typeOfResult == TypeTable::never ? body.at(object).type : typeOfResult };
+    body.results[0] = DeclaredType(Proven::byPosition(typeOfResult == TypeTable::never ? body.at(object).type : typeOfResult));
     return body;
 }
 
@@ -1121,7 +1121,7 @@ static bool canCallDeferredClosure(const Program& program, TypeArena& types, con
     const Function& method = program.at(read.member.method);
     if (!read.capturesReceiver)
         return method.captures.isEmpty();
-    return method.captures.size() == 1 && Type::forLayouts(read.receivers.span(), types).isSubsetOf(program.at(method.captures[0].type), program);
+    return method.captures.size() == 1 && Type::forLayouts(read.receivers.span(), types).isSubsetOf(program.at(method.captures[0].written()), program);
 }
 
 static bool isGenericSpread(const Program& program, const Value& value, uint32_t operandIndex)
@@ -1439,9 +1439,9 @@ struct CallResolver {
     // An arm of a dispatch may be for the method of a class that the receiver is known not to have: `this.describe()` of a base constructor, inlined under `new Base()`, has an arm for the method of the subclass.
     bool cannotBeThisOf(const Function& callee, ValueID thisValue) const
     {
-        if (!thisValue || !callee.has(FunctionFlags::HasThis) || !callee.thisType.type || callee.thisType.flags.contains(PositionFlags::IsExpected))
+        if (!thisValue || !callee.has(FunctionFlags::HasThis) || !callee.thisType.written() || callee.thisType.isExpected())
             return false;
-        const Type& declared = program.at(callee.thisType.type);
+        const Type& declared = program.at(*callee.thisType.established());
         return typeOf(thisValue).hasOnlyLayouts(program) && declared.hasOnlyLayouts(program) && !typeOf(thisValue).overlaps(declared, program);
     }
 
@@ -1469,7 +1469,7 @@ struct CallResolver {
                 check.setName(name.text);
             check.setOrigin(read.origin());
             check.type = resultTypeOf(program, function, check, context.types);
-            check.setExpected(expectedTypeOf(program, function, check, context.types));
+            check.setExpected(ExpectedType(expectedTypeOf(program, function, check, context.types)));
             function.edit(reads.read().value) = WTF::move(check);
         } else
             becomeUndefined(function, reads.read().value);
@@ -2066,7 +2066,7 @@ struct CallResolver {
     {
         const UseLists& useLists = context.analyses.useLists();
         ValueID id = construct.listOperand();
-        while (useLists.singleUse(id) && function.at(id).opcode == Opcode::Upcast)
+        while (useLists.singleUse(id) && isCastThatProvesNothing(function.at(id).opcode))
             id = function.at(id).valueOperand();
         const Value& list = function.at(id);
         return useLists.singleUse(id) && list.opcode == Opcode::NewArray && list.holes().empty() && !list.capacityOperand();

@@ -1204,8 +1204,8 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
     LayoutID environment;
     if (layout.constructor) {
         const Vector<DeclaredType>& captures = program.at(layout.constructor).captures;
-        if (captures.size() == 1 && captures[0].type)
-            environment = program.at(captures[0].type).environment;
+        if (captures.size() == 1 && captures[0].written())
+            environment = program.at(captures[0].written()).environment;
     }
     static_assert(LayoutData::noBase == UINT32_MAX);
     bool hasProvenBase = layout.flow.baseState == BaseState::Layout;
@@ -2322,6 +2322,7 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
     ModuleData entry { };
     setDisplayPath(encoder, id, module, lists, entry);
     entry.hasInstalledPositions = module.flags.contains(ModuleFlags::HasInstalledPositions);
+    entry.loadedByLoader = module.flags.contains(ModuleFlags::IsLoadedByLoader);
     entry.kind = module.kind;
     entry.externalKind = module.externalKind;
     entry.exportRule = module.exportRule;
@@ -2449,7 +2450,7 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
             bool isRequire = request.kind == ModuleRequestKind::Require;
             if (isRequire && !isAnsweredByCode(encoder, id, request))
                 continue;
-            lists.requests.append(ModuleRequestData::create(request.target.index(), request.phase == ImportPhase::Defer, request.isDynamicStarExport, isRequire));
+            lists.requests.append(ModuleRequestData::create(request.target.index(), request.phase == ImportPhase::Defer, request.isDynamicStarExport, isRequire, request.isHoisted));
         }
         appendExports(encoder, id, module, lists);
         for (const SyntheticExport& syntheticExport : module.syntheticExports) {

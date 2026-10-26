@@ -168,13 +168,13 @@ struct ValueFlowAccessesThroughObjects {
     bool storesValueInside(const ValueFlowStatement& statement, VariableID variable)
     {
         const DeclaredType& declared = inputs.program.at(variable).declared;
-        if (declared.flags.contains(PositionFlags::IsExpected) || inputs.program.at(declared.type).isAnything())
+        if (declared.isExpected() || inputs.program.at(declared.written()).isAnything())
             return true;
         std::optional<uint32_t> index = indexOfValueStoredIntoProperty(statement.opcode);
         if (!index || !holdsFewMembers(inputs.bodies().operandsOf(statement)[*index]))
             return false;
         const Function& function = inputs.program.at(statement.function);
-        const Type& type = inputs.program.at(declared.type);
+        const Type& type = inputs.program.at(*declared.established());
         ValueID stored = function.at(statement.site).operand(*index);
         const BitVector* valuesBehindChecks = inputs.bodies().valuesBehindChecks(statement.function);
         bool isBehindCheck = !valuesBehindChecks || valuesBehindChecks->get(stored.index());
@@ -415,8 +415,8 @@ struct ValueFlowAccessesThroughObjects {
         valuesInsideType.fill(ValueSets::nothing, program.variables.size());
         for (const VariableOnObject& variable : variables) {
             const DeclaredType& declared = program.at(variable.variable).declared;
-            if (!isNamespace(variable.object) && !declared.flags.contains(PositionFlags::IsExpected))
-                valuesInsideType[variable.variable.index()] = inputs.universe().membersSurelyInside(heap.maker(), program, declared.type);
+            if (!isNamespace(variable.object) && !declared.isExpected())
+                valuesInsideType[variable.variable.index()] = inputs.universe().membersSurelyInside(heap.maker(), program, *declared.established());
         }
         findLookupsReachingFollowedObjects();
 

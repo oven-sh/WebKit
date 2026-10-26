@@ -51,12 +51,23 @@ public:
     // Until it does, the table of the modules has the status, and the record only stands for the module where a name is resolved.
     bool holdsStatus() const { return m_holdsStatus; }
     void setHoldsStatus() { m_holdsStatus = true; }
+    void clearHoldsStatus() { m_holdsStatus = false; }
 
     bool isRetained() const { return m_isRetained; }
     void retain() { m_isRetained = true; }
 
     unsigned innerModuleEvaluation(JSGlobalObject*, ModuleEvaluationStack&, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise);
     void generateDeferredSyntheticModules(JSGlobalObject*, VisitedModuleRecords&);
+    void willLoadRequests();
+    void didLoad();
+    void takeStatus();
+    bool isRunningCommonJSFile();
+    void setRunsWhenLoaded() { m_runsWhenLoaded = true; }
+    bool isRequestedByWalkedModule() const { return m_isRequestedByWalkedModule; }
+    void setIsRequestedByWalkedModule() { m_isRequestedByWalkedModule = true; }
+    // Around a request that the loader makes for the module. The first returns what the second takes.
+    uint8_t willAskHostForRequest();
+    void didAskHostForRequest(uint8_t flagsBefore);
     unsigned innerModuleLinking(JSGlobalObject*, ModuleLinkingStack&, unsigned index, RefPtr<ScriptFetcher>);
     void execute(JSGlobalObject*, JSPromise* capability = nullptr);
     void executeAsync(JSGlobalObject*);
@@ -82,6 +93,8 @@ private:
     Vector<UniquedStringImpl*, 2> m_resolveSet;
     bool m_holdsStatus { false };
     bool m_isRetained { false };
+    bool m_runsWhenLoaded { false };
+    bool m_isRequestedByWalkedModule { false };
 };
 
 } } // namespace JSC::AOT

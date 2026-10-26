@@ -19,6 +19,7 @@ struct SameValueRules {
 
     ValueID sameAs(const Instruction& instruction, uint32_t operandIndex) { return instruction.operand(operandIndex); }
     ValueID cast(const Value& value, uint32_t operandIndex, TypeID = { }) { return value.operand(operandIndex); }
+    ValueID cast(const Value& value, uint32_t operandIndex, ExpectedType) { return value.operand(operandIndex); }
 
     ValueID none(const Instruction&) { return { }; }
     ValueID constant(const Value&) { return { }; }

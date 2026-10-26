@@ -225,7 +225,7 @@ static ValueID emitReplacement(AllocationSinking& sinking, ObjectInterpreter& in
 
     ValueID emitted = cursor.emit(WTF::move(replacement));
     Function& function = cursor.builder().function();
-    if (!function.at(emitted).expected() && function.at(emitted).type == function.at(read).type)
+    if (!function.at(emitted).expected().predicted() && function.at(emitted).type == function.at(read).type)
         function.edit(emitted, ValueEdit::Type).setExpected(function.at(read).expected());
     return emitted;
 }
@@ -403,7 +403,7 @@ void ObjectInterpreter::readArguments(ValueID read, VirtualObjectID object, cons
     auto replaceReadBy = [&](ValueID argument) {
         if (assumesTypeOfRead && m_sinking.context().build.validates())
             cursor().emit(makeValidateType(argument, type));
-        replaceRead(read, assumesTypeOfRead ? cursor().emit(makeAssumeType(argument, type)) : argument);
+        replaceRead(read, assumesTypeOfRead ? cursor().emit(makeAssumeType(argument, Proven::byRulesWithoutChecks(type))) : argument);
     };
     if (!selectsParameter) {
         replaceReadBy(emitReplacement(m_sinking, *this, read, WTF::move(*surplusRead)));
@@ -759,7 +759,7 @@ void ObjectInterpreter::passListedElements(ValueID call)
             ValueID result = emitReplacement(m_sinking, *this, call, WTF::move(ordinary));
             if (m_sinking.context().build.validates())
                 cursor().emit(makeValidateType(result, original.type));
-            replaceRead(call, cursor().emit(makeAssumeType(result, original.type)));
+            replaceRead(call, cursor().emit(makeAssumeType(result, Proven::byRulesWithoutChecks(original.type))));
         }
     }
     forgetFieldsWrittenBy(call);
@@ -830,7 +830,7 @@ static void retypeProducer(const Program& program, IRBuilder& builder, ValueID p
     Function& function = builder.function();
     Value& value = function.edit(producer);
     value.type = resultTypeOf(program, function, value, builder.types());
-    value.setExpected(expectedTypeOf(program, function, value, builder.types()));
+    value.setExpected(ExpectedType(expectedTypeOf(program, function, value, builder.types())));
 }
 
 static ValueID emitResult(IRBuilder& builder, ValueID producer, uint32_t resultIndex)

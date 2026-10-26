@@ -452,8 +452,8 @@ static bool capturesOnlyClassEnvironment(const Program& program, const Function&
         return true;
     if (method.captures.size() != 1 || constructor.captures.size() != 1)
         return false;
-    TypeID captured = method.captures[0].type;
-    return captured && captured == constructor.captures[0].type && program.at(captured).environment;
+    TypeID captured = method.captures[0].written();
+    return captured && captured == constructor.captures[0].written() && program.at(captured).environment;
 }
 
 static bool hasKnownBaseChain(const Program& program, LayoutID id)

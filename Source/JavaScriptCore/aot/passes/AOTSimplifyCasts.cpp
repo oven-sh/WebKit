@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTFlowApply.h"
+#include "AOTPredictedValues.h"
 #include "AOTResultRules.h"
 #include "AOTRewrite.h"
 #include "AOTTypePropagation.h"
@@ -71,7 +72,7 @@ struct CastSimplification : Rewrite {
             return std::nullopt;
 
         ValueID parameter = cast.operand(0);
-        if (hasTest && (cast.opcode != Opcode::AssumeType || test.valueOperand() != parameter || test.validatedType() != cast.castType()))
+        if (hasTest && (cast.opcode != Opcode::AssumeType || test.valueOperand() != parameter || test.validatedType() != cast.provenType()))
             return std::nullopt;
         size_t parameterIndex = block.parameters.find(parameter);
         if (parameterIndex == notFound || parameterIndex >= numberOfSharedExplicitParameters(function, cfg, id))
@@ -129,7 +130,7 @@ struct CastSimplification : Rewrite {
                 ValueID passed = analyses.definitionThroughUpcasts(argument);
                 if (edgeNeedsCast(candidate, edge)) {
                     if (candidate.hasTest)
-                        builder().insertBefore(pointBeforeTerminatorOf(function, edge.from), makeValidateType(argument, cast.castType()));
+                        builder().insertBefore(pointBeforeTerminatorOf(function, edge.from), makeValidateType(argument, cast.typeNamedByCast()));
                     Value castOnEdge = cast;
                     castOnEdge.setOperand(0, argument);
                     castOnEdge.setExpected({ });
@@ -159,8 +160,8 @@ struct CastSimplification : Rewrite {
 
     bool expectsNarrowerTypeThan(const Value& cast, ValueID operand)
     {
-        TypeID expected = cast.expected();
-        if (!expected || expected == at(operand).expected())
+        TypeID expected = cast.expected().predicted();
+        if (!expected || expected == at(operand).expected().predicted())
             return false;
         return !typeOf(operand).isSubsetOf(program.at(expected), program);
     }
@@ -203,7 +204,7 @@ struct CastSimplification : Rewrite {
         ValueID operand = substitution.resolve(cast.operand(0));
 
         ValueID narrowest = operand;
-        while (cast.opcode != Opcode::Upcast && at(narrowest).opcode == Opcode::Upcast) {
+        while (!isCastThatProvesNothing(cast.opcode) && isCastThatProvesNothing(at(narrowest).opcode)) {
             ValueID inner = substitution.resolve(at(narrowest).operand(0));
             if (expectsNarrowerTypeThan(at(narrowest), inner) || !isUnchangedByCastTo(typeOf(inner), typeOf(narrowest)))
                 break;
@@ -374,11 +375,7 @@ struct CastSimplification : Rewrite {
                     ++changed;
                 } else if (wasPastDeadZone && opcode == Opcode::CheckInitialized) {
                     Value& test = edit(id);
-                    ValueID operand = test.valueOperand();
-                    TypeID type = test.type;
-                    test.become(Opcode::AssumeType);
-                    test.setValueOperand(operand);
-                    test.setCastType(type);
+                    test.becomeAssumeType(test.valueOperand(), Proven::byConstruction(TypeTable::anything));
                     ++changed;
                 } else {
                     // A cast of what an earlier cast has let through asks only for what that one left open, and the next round removes it where that is nothing.
@@ -410,6 +407,8 @@ PassOutcome simplifyCasts(FunctionPassContext& context)
 {
     if (!CastSimplification(context).run())
         return PassOutcome::Unchanged;
+    // A check that the type of its operand answers is gone.
+    settleProofsBehindAnsweredChecks(context.function, context.analyses.cfg());
     // Every step drops what its edits have made stale, so what is held at the end was made behind the last edit.
     context.keptAnalyses = allAnalyses;
     return PassOutcome::Changed;

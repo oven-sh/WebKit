@@ -15,7 +15,7 @@ layout L6 kind=Instance name="Observed" constructor=f6 flags=[IsConstructorFunct
 function f0 name="Point" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=L0}] {
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = AssumeType v3 castType=L0
+    v4 = AssumeType v3 provenType=L0
     Return v4
 }
 function f1 name="Point3D" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
@@ -24,7 +24,7 @@ function f2 name="Lazy" kind=BaseConstructor flags=[HasNewTarget] results=[{type
   b1():
     v1 = GetConstructPrototype v0 layout=L2
     v2 = NewObject v1 layout=L2
-    v3 = AssumeType v2 castType=L2
+    v3 = AssumeType v2 provenType=L2
     Return v3
 }
 function f3 name="Scoped" kind=BaseConstructor flags=[HasNewTarget] captures=[{type=number}] results=[{type=L3}] {
@@ -32,7 +32,7 @@ function f3 name="Scoped" kind=BaseConstructor flags=[HasNewTarget] captures=[{t
   b1():
     v2 = GetConstructPrototype v1 layout=L3
     v3 = NewObject v2 layout=L3
-    v4 = AssumeType v3 castType=L3
+    v4 = AssumeType v3 provenType=L3
     Return v4
 }
 function f4 name="Legacy" flags=[HasThis] thisType={type=L4} parameters=[{type=anything}] results=[{type=anything}] {
@@ -212,7 +212,7 @@ function f29 name="super-construct-built-in-parent" parameters=[{type=builtin(Er
 
 # CHECK: function [[pointVersion]] name="Point"{{*}}role=AllocatedThisVersion
 # CHECK: function [[legacyBody]] name="Legacy"{{*}}role=ConstructBody
-# CHECK: [[legacyClosure]]: f4 = AssumeType {{*}} castType=f4
+# CHECK: [[legacyClosure]]: f4 = AssumeType {{*}} provenType=f4
 # CHECK-NEXT: [[prototype]]: object = GetConstructPrototype [[legacyClosure]] layout=L4
 # CHECK-NEXT: [[legacy]]: L4 = NewObject [[prototype]] layout=L4 allocationClass=5
 # CHECK-NEXT: [[isObject]]: boolean = TypeTest {{*}} testedType=object

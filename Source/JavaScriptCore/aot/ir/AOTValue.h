@@ -13,6 +13,7 @@
 #include "AOTOpcode.h"
 #include "AOTSchemaRecords.h"
 #include "AOTSchemaSupport.h"
+#include "AOTTypeKinds.h"
 #include "AOTVector.h"
 #include "IterationKind.h"
 #include "TypedArrayType.h"
@@ -504,21 +505,41 @@ public:
         resetOperandsAndPayload(numberOfNamedOperandsOf(newOpcode), defaultPayloadOf(newOpcode));
     }
 
-    TypeID expected() const { return isExpectedNever() ? TypeID() : m_expected; }
-    void setExpected(TypeID expected) { m_expected = expected; }
-    TypeID expectedOrType() const { return m_expected && !isExpectedNever() ? m_expected : type; }
+    ExpectedType expected() const { return isExpectedNever() ? ExpectedType() : ExpectedType(m_expected); }
+    void setExpected(ExpectedType expected) { m_expected = expected.predicted(); }
+    ExpectedType expectedOrType() const { return ExpectedType(m_expected && !isExpectedNever() ? m_expected : type); }
 
     bool isExpectedNever() const { return !m_expected.index(); }
-    TypeID expectedForTyping() const { return m_expected; }
-    TypeID expectedOrTypeForTyping() const { return m_expected ? m_expected : type; }
+    ExpectedType expectedForTyping() const { return ExpectedType(m_expected); }
+    ExpectedType expectedOrTypeForTyping() const { return ExpectedType(m_expected ? m_expected : type); }
 
     OperandKind operandKind(uint32_t operandIndex) const { return operandKindOf(opcode, operandIndex); }
     OperandUses operandUses(uint32_t operandIndex) const { return operandUsesOf(opcode, operandIndex); }
 
 #include "AOTSchemaValueAccessors.inc"
+
+    // The type that a cast names, whatever makes it true.
+    TypeID typeNamedByCast() const
+    {
+        if (opcode == Opcode::Upcast)
+            return castType();
+        return opcode == Opcode::AssumeType ? provenType() : expectedType().predicted();
+    }
+
+    void becomeAssumeType(ValueID operand, ProvenType proven)
+    {
+        become(Opcode::AssumeType);
+        setValueOperand(operand);
+        setProvenType(proven);
+        setIsBehindChecks(proven.scope() == ProofScope::BehindChecks);
+    }
 };
 
 static_assert(sizeof(Value) <= 40);
+
+// The value goes on as it is, and nothing more is known of it behind the cast.
+inline constexpr OpcodeSet castsThatProveNothing { Opcode::Upcast, Opcode::Expect };
+constexpr bool isCastThatProvesNothing(Opcode opcode) { return castsThatProveNothing.contains(opcode); }
 
 template<> inline constexpr bool canMoveWithMemcpy<Value> = true;
 

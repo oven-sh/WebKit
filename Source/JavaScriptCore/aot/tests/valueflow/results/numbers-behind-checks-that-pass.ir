@@ -39,29 +39,29 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 function f1 name="add" parameters=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=number}] {
   b0(v0, v1):
-    v2 = Check v0 castType=number
-    v3 = Check v1 castType=number
+    v2 = Check v0 expectedType=number
+    v3 = Check v1 expectedType=number
     v4 = Add v2, v3
     Return v4
 }
 function f2 name="apply" parameters=[{type=f1 flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=number}] {
   b0(v0, v1):
-    v2 = Check v0 castType=f1
-    v3 = Check v1 castType=number
+    v2 = Check v0 expectedType=f1
+    v3 = Check v1 expectedType=number
     v4 = Integer integer=3
     v5 = Call v2, -, v3, v4
-    v6 = Check v5 castType=number
+    v6 = Check v5 expectedType=number
     Return v6
 }
 function f3 name="sum" parameters=[{type=number flags=[IsExpected]}] results=[{type=number}] {
   b0(v0):
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     v2 = NewClosure function=f4
     Jump -> next b1(v1)
   b1(v3):
     LoopHint
     v5 = Call v2, -, v3
-    v6 = Check v5 castType=number
+    v6 = Check v5 expectedType=number
     v7 = Integer integer=100
     v8 = Less v6, v7
     Branch v8 -> taken b1(v6), notTaken b2()
@@ -70,7 +70,7 @@ function f3 name="sum" parameters=[{type=number flags=[IsExpected]}] results=[{t
 }
 function f4 name="clamp" parameters=[{type=number flags=[IsExpected]}] results=[{type=number}] {
   b0(v0):
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     v2 = Integer integer=1
     v3 = Add v1, v2
     v4 = Integer integer=0
@@ -79,14 +79,14 @@ function f4 name="clamp" parameters=[{type=number flags=[IsExpected]}] results=[
 }
 function f5 name="addAny" parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0):
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     v2 = Integer integer=1
     v3 = Add v1, v2
     Return v3
 }
 function f6 name="addFraction" parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0):
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     v2 = Integer integer=1
     v3 = Add v1, v2
     Return v3

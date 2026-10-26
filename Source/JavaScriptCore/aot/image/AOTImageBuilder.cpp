@@ -343,6 +343,7 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
     SideTables result;
     result.frames = WTF::move(frameTable->frames);
     result.frameMapWords.grow(numberOfWords);
+    result.flags.grow(functions.size());
     Vector<Vector<uint8_t>> streams(functions.size());
     Vector<Vector<uint8_t>> positions(functions.size());
     Vector<SideTablePartSizes> partSizes(functions.size());
@@ -362,13 +363,15 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
             encodePositions(positions[position], sites, position % PositionIndex::functionsBetween ? OwnPosition::of(functions[position - 1].sites) : OwnPosition { });
             numberOfPositions.exchangeAdd(sites.positions.size(), std::memory_order_relaxed);
         }
-        SideTableParts::append(streams[position], {
+        SideTableInputs inputs {
             .frameRanges = frameRanges.span(),
             .frame = frameTable->frameOf[position],
             .frameMapRange = frameMapRange,
             .handlers = handlers.span(),
             .callSites = callSites[position].span(),
-        });
+        };
+        SideTableParts::append(streams[position], inputs);
+        result.flags[position] = inputs.flags();
         partSizes[position] = { static_cast<uint32_t>(frameRanges.size()), static_cast<uint32_t>(handlers.size()), static_cast<uint32_t>(callSites[position].size()) };
     });
     context.statistics().count(StatisticID::SitePositionsEmitted, numberOfPositions.loadRelaxed());
@@ -938,7 +941,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     if (diagnostics.hasErrors())
         return result;
     sections[ImageSection::ProgramTables] = WTF::move(inputs.programTables);
-    EncodedFunctionTables functionTables = encodeFunctionTables({ functions, result.aliases, result.layout, index, callSites.span(), sideTables.offsets.span(), sections.programTables(), !context.options().obfuscates() }, context);
+    EncodedFunctionTables functionTables = encodeFunctionTables({ functions, result.aliases, result.layout, index, sideTables.flags.span(), sideTables.offsets.span(), sections.programTables(), !context.options().obfuscates() }, context);
     context.destroyLater(WTF::move(callSites));
     times.didFinish("encode function tables"_s);
     if (diagnostics.hasErrors())

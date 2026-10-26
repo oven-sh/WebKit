@@ -46,12 +46,13 @@ static bool isOfRuntimeModule(const Program& program, ModuleID module)
 
 static void applyPosition(DeclaredType& declared, const FlowPositionUpdate& update)
 {
-    if (update.type)
-        declared.type = update.type;
-    if (update.isProven)
-        declared.flags.remove(PositionFlags::IsExpected);
+    ProvenInEveryVersion type = Proven::byFlowOfPosition(update.type ? update.type : declared.written());
     if (update.replacesExpectation)
-        declared.flags.add(PositionFlags::IsExpected);
+        declared.expect(ExpectedType(type));
+    else if (update.isProven)
+        declared.establish(type);
+    else
+        declared.changeType(type);
 }
 
 static BitVector findLayoutsNeverStoredOtherTypes(const Program& program, const FlowResults& results, const Vector<FlowLayoutUpdate>& updates)
@@ -118,7 +119,7 @@ static void applyAccessorFields(TypeArena& arena, Layout& layout, const FlowLayo
 
 static bool isPlaceholder(const Program& program, const Field& field)
 {
-    return field.key && field.form.isEmpty() && field.declared.flags.contains(PositionFlags::IsExpected) && program.at(field.declared.type).isUndefinedOrNull();
+    return field.key && field.form.isEmpty() && field.declared.isExpected() && program.at(field.declared.expected().predicted()).isUndefinedOrNull();
 }
 
 static std::optional<Type> uniteTypesDeclaredIn(const Program& program, std::span<const LayoutID> layouts, PropertyKeyID key, TypeArena& arena)
@@ -241,7 +242,7 @@ static Vector<TypeOfPlaceholder> findTypesOfPlaceholders(const Program& program,
             std::optional<Type> declared = typeDeclaredInFamilies(program, cache, families.span(), declaredViews[index].span(), layout.fields[field].key, arena);
             if (!declared || (declared->isNumberOrNullish() && declared->primitives & Primitive::Double))
                 continue;
-            found.append({ { id, field }, declared->unionWith(program.at(layout.fields[field].declared.type), arena) });
+            found.append({ { id, field }, declared->unionWith(program.at(layout.fields[field].declared.written()), arena) });
         }
     }
     return found;
@@ -280,7 +281,7 @@ static void applyTypeDeclaredInFamily(const Program& program, TypeArena& arena, 
 {
     if (!declared)
         return;
-    const Type& proven = program.at(field.declared.type);
+    const Type& proven = program.at(field.declared.written());
     bool fitsDeclaredType = proven.isSubsetOf(declared->withPrimitives(Primitive::Absent), program);
     if (field.flow.stability.contains(FieldStability::IsNeverStoredWithOtherType)) {
         if (fitsDeclaredType)
@@ -289,9 +290,9 @@ static void applyTypeDeclaredInFamily(const Program& program, TypeArena& arena, 
     }
     const Type& slotType = fitsDeclaredType ? proven : *declared;
     if (!fitsDeclaredType)
-        field.declared.type = arena.intern(*declared);
+        field.declared.changeType(Proven::byPosition(arena.intern(*declared)));
     if (!fitsDeclaredType && slotType.isNumberOrNullish() && slotType.primitives & Primitive::Double)
-        field.declared.flags.add(PositionFlags::IsExpected);
+        field.declared.expect(field.declared.expected());
 }
 
 static void appendFlowFields(const Program& program, TypeArena& arena, std::span<const std::optional<Type>> typesDeclaredInFamilies, bool mustKeepTypes, Layout& layout, const FlowLayoutUpdate& update)
@@ -301,7 +302,7 @@ static void appendFlowFields(const Program& program, TypeArena& arena, std::span
         RELEASE_ASSERT(!layout.findField(appended.key));
         Field field;
         field.key = appended.key;
-        field.declared.type = TypeTable::anything;
+        field.declared.establish(Proven::byPosition(TypeTable::anything));
         if (!appended.accessor.isAccessor())
             applyPosition(field.declared, appended.position);
         field.flags = { FieldFlags::IsAddedLate };
@@ -357,8 +358,7 @@ static void applyLayoutUpdates(const FlowApplyContext& context)
         Field& field = program.at(placeholder.field.layout).fields[placeholder.field.field];
         if (!isPlaceholder(program, field))
             continue;
-        field.declared.type = arena.intern(placeholder.declared);
-        field.declared.flags.remove(PositionFlags::IsExpected);
+        field.declared.establish(Proven::byFlowOfPosition(arena.intern(placeholder.declared)));
     }
     program.setKeysStoredThroughUnknownReceivers(Vector<PropertyKeyID>(context.results.keysStoredThroughUnknownReceivers()));
     program.setKeysDefinedOnObjectsWithoutKnownLayout(Vector<PropertyKeyID>(context.results.keysDefinedOnObjectsWithoutKnownLayout()));
@@ -509,7 +509,7 @@ static void narrowContentsOfData(const FlowApplyContext& context)
 static void proveEveryPosition(Program& program, BuildContext& build)
 {
     auto prove = [](DeclaredType& declared) {
-        declared.flags.remove(PositionFlags::IsExpected);
+        declared.establish(Proven::byPosition(declared.expected().predicted()));
     };
     for (Layout& layout : program.layouts) {
         if (isOfRuntimeModule(program, layout.module))
@@ -547,7 +547,7 @@ static VariableID addMark(ProgramEditor& editor, ModuleID module)
 {
     Variable variable;
     variable.module = module;
-    variable.declared.type = TypeTable::anythingOrAbsent;
+    variable.declared.establish(Proven::byPosition(TypeTable::anythingOrAbsent));
     return editor.addVariable(WTF::move(variable));
 }
 
@@ -597,7 +597,7 @@ static Vector<BitVector> findExpectedFields(const Program& program, const Parall
         const Vector<Field>& fields = program.layouts[index].fields;
         BitVector expectedFields(fields.size());
         for (size_t field = 0; field < fields.size(); ++field) {
-            if (fields[field].declared.flags.contains(PositionFlags::IsExpected))
+            if (fields[field].declared.isExpected())
                 expectedFields.quickSet(field);
         }
         expectedFieldsOfLayouts[index] = WTF::move(expectedFields);

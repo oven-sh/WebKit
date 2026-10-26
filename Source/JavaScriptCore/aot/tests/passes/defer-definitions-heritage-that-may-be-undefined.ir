@@ -42,7 +42,7 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     PutModuleVariable v2 variable=g0
     v4 = GetModuleVariable variable=g3
     v5 = ResolveHeritage v4
-    v6 = AssumeType v5 castType=object
+    v6 = AssumeType v5 provenType=object
     v7 = NewClosure function=f2
     v8 = NewClass v7, v4, v6 layout=L1
     v9 = FinishClass v8 layout=L1
@@ -54,9 +54,9 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     v15 = FinishClass v14 layout=L2
     PutModuleVariable v15 variable=g2
     v17 = GetModuleVariable variable=g6
-    v18 = Check v17 castType=f1
+    v18 = Check v17 expectedType=f1
     v19 = ResolveHeritage v18
-    v20 = AssumeType v19 castType=object
+    v20 = AssumeType v19 provenType=object
     v21 = NewClosure function=f4
     v22 = NewClass v21, v18, v20 layout=L3
     v23 = FinishClass v22 layout=L3

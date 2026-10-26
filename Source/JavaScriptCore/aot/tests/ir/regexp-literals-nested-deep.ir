@@ -23,7 +23,7 @@ function f1 name="twoLiterals" results=[{type=anything}] {
 # CHECK-NEXT: String string="((a+))"
 # CHECK-NEXT: String string="gi"
 # CHECK-NEXT: Construct
-# CHECK-NEXT: Check {{*}} castType=RegExp
+# CHECK-NEXT: Check {{*}} expectedType=RegExp
 # CHECK-NEXT: Jump
 # CHECK: PropGet
 # CHECK: String string="(?:(?:b))"

@@ -103,7 +103,7 @@ TypeSiteKind siteKindOf(const Program& program, const DeclaredType& declared)
 
 bool isAssertionOfDependency(const Program& program, const DeclaredType& declared)
 {
-    return declared.flags.contains(PositionFlags::IsDeclaredByDependency) && siteKindOf(program, declared) == TypeSiteKind::Assertion;
+    return declared.has(PositionFlags::IsDeclaredByDependency) && siteKindOf(program, declared) == TypeSiteKind::Assertion;
 }
 
 static NumberBounds join(const NumberBounds& a, const NumberBounds& b)

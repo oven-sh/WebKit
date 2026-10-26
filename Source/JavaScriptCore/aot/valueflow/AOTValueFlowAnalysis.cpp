@@ -335,18 +335,18 @@ static void internKeysOfDeclaredStringLiterals(Program& program, const ParallelL
     };
     visitAll(collectInParallel<TypeID>(loops, program.layouts.size(), [&](unsigned index, Vector<TypeID>& found) {
         for (const Field& field : program.layouts[index].fields)
-            found.append(field.declared.type);
+            found.append(field.declared.written());
     }));
     for (const Variable& variable : program.variables)
-        visit(variable.declared.type);
+        visit(variable.declared.written());
     visitAll(collectInParallel<TypeID>(loops, program.functions.size(), [&](unsigned functionIndex, Vector<TypeID>& found) {
         const Function& function = program.functions[functionIndex];
         for (uint32_t index = 0; index < function.numberOfEntryParameters(); ++index) {
             if (const DeclaredType* declared = function.declaredEntryParameter(index))
-                found.append(declared->type);
+                found.append(declared->written());
         }
         for (const DeclaredType& result : function.results)
-            found.append(result.type);
+            found.append(result.written());
     }));
     while (!worklist.isEmpty()) {
         const Type& type = program.types.at(worklist.takeLast());

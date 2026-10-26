@@ -866,13 +866,13 @@ static void testElementsOfList(IRBuilder& builder, const Program& program, Funct
     Value listOfNumbers = list;
     listOfNumbers.setContents(builder.types().intern(program.at(list.contents()).intersectWith(numbers, builder.types())));
     listOfNumbers.setElementsOperands(elements.span());
-    builder.endExpansion(expansion, builder.append(makeAssumeType(builder.append(WTF::move(listOfNumbers)), typeOfList)));
+    builder.endExpansion(expansion, builder.append(makeAssumeType(builder.append(WTF::move(listOfNumbers)), Proven::byConstruction(typeOfList))));
 
     if (!holdsOtherValue)
         return;
     builder.moveToEndOf(holdsOtherValue);
     list.setContents(TypeTable::anything);
-    builder.emitJump(expansion.continuation, { builder.append(makeAssumeType(builder.append(WTF::move(list)), typeOfList)) });
+    builder.emitJump(expansion.continuation, { builder.append(makeAssumeType(builder.append(WTF::move(list)), Proven::byConstruction(typeOfList))) });
 }
 
 bool AllocationSinking::testElementsOfLists(IRBuilder& builder)

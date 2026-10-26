@@ -30,7 +30,7 @@ function f2 name="layoutIsProven" parameters=[{type=L0}] results=[{type=anything
 
 function f3 name="layoutIsChecked" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ L0):
-    v1 = Check v0 castType=L0
+    v1 = Check v0 expectedType=L0
     v2 = PropGet v1 key="x"
     Return v2
 }

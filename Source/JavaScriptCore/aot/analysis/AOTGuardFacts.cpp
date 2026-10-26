@@ -747,7 +747,7 @@ static std::optional<MemoryLocation> findShapeWordsOf(const Program& program, co
 {
     if (!Value::opcodesWithLayout.contains(allocation.opcode) || !allocation.layout())
         return std::nullopt;
-    for (TypeID type : { allocation.type, allocation.expected() }) {
+    for (TypeID type : { allocation.type, allocation.expected().predicted() }) {
         LayoutSetID layouts = type ? program.at(type).layouts : LayoutSetID();
         if (!layouts)
             continue;

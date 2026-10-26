@@ -28,7 +28,7 @@ function f1 name="aFieldThatHoldsLinks" parameters=[{type=undefined|null|L0|L2}]
     v3 = Undefined
     Return v3
 # CHECK: ([[passed]]: undefined|L2):
-# CHECK-NEXT: [[link]]: L2 = AssumeType [[passed]] castType=L2
+# CHECK-NEXT: [[link]]: L2 = AssumeType [[passed]] provenType=L2
 # CHECK: PutSlotOrAdd [[link]], {{*}}, [[passed]] key="self" receivers=[L2] level=Expected
 # CHECK: = TypeTest v0 testedType=undefined|L2
 }

@@ -100,7 +100,7 @@ function f4 name="passes" parameters=[{type=anything}] results=[{type=anything}]
     Return v1
 }
 function f5 name="keepsValues" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v1 castType=number
+    v2 = Check v1 expectedType=number
     v3 = Integer integer=1
     v4 = Add v2, v3
     v5 = Add v4, v3

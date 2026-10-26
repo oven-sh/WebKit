@@ -568,7 +568,7 @@ bool ObjectPacker::mayExistWithoutStorage(LayoutID id, SlotRow row) const
     if (!use.storesOfUndefined || m_rowsInUnorderedLayouts.quickGet(row))
         return false;
     const DeclaredType& declared = declarationAt(id, row).declared;
-    return declared.flags.contains(PositionFlags::IsExpected) || (m_context.program.at(declared.type).primitives & Primitive::Undefined);
+    return declared.isExpected() || (m_context.program.at(*declared.established()).primitives & Primitive::Undefined);
 }
 
 void ObjectPacker::moveOutOfLine(LayoutID id, SlotRow row)

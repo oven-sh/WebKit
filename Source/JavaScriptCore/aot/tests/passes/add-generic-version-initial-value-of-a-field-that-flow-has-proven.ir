@@ -6,7 +6,7 @@
 # STATISTIC: InitialValuesStoredBehindAllocations = 1
 # CHECK: frequency=Unlikely
 # CHECK: [[array]]: Array = NewArray
-# CHECK: [[proven]]: Array<anything, proven, pristine[Storage, Names]> = AssumeType {{*}} castType=Array<anything, proven, pristine[Storage, Names]>
+# CHECK: [[proven]]: Array<anything, proven, pristine[Storage, Names]> = AssumeType {{*}} provenType=Array<anything, proven, pristine[Storage, Names]>
 # CHECK: [[links]]: L0 = NewObject -, [[proven]], {{*}} layout=L0 fields=[0, 1]
 # CHECK-NEXT: PropSet [[links]], {{*}} key="count"
 
@@ -14,9 +14,9 @@ module m0 path="main.ts" displayPath="main.ts"
 layout L0 name="Links" fields=[{key="chain" declared={type=Array<anything, proven, pristine[Storage, Names]>} flags=[IsRequired, IsEnforced] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="count" declared={type=undefined|number} flags=[IsRequired, IsEnforced]}]
 
 function f0 name="make" parameters=[{type=anything}] results=[{type=L0}] {
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     v2 = NewArray v1 contents=anything
-    v3 = AssumeType v2 castType=Array<anything, proven, pristine[Storage, Names]>
+    v3 = AssumeType v2 provenType=Array<anything, proven, pristine[Storage, Names]>
     v4 = NewObject -, v3, v1 layout=L0 fields=[0, 1]
     v5 = FinishObject v4
     Return v5

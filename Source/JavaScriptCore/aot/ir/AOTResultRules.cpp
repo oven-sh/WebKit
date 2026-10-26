@@ -318,14 +318,14 @@ static Type typeOfSharedRegExpLiteral(const TypingContext& context, const Value&
 
 static bool isAssertedInt32(const Program& program, const DeclaredType& declared)
 {
-    return declared.flags.contains(PositionFlags::IsInt32Promise) && declared.site && program.at(declared.site).kind == TypeSiteKind::Assertion;
+    return declared.has(PositionFlags::IsInt32Promise) && declared.site && program.at(declared.site).kind == TypeSiteKind::Assertion;
 }
 
 TypeID targetOfConvert(const TypingContext& context, const DeclaredType& declared)
 {
     if (!isAssertedInt32(context.program, declared))
-        return declared.type;
-    return context.types.withPrimitives(declared.type, Primitive::Number);
+        return declared.expected().predicted();
+    return context.types.withPrimitives(declared.expected().predicted(), Primitive::Number);
 }
 
 static bool hasInstanceTest(const BuiltinTable& builtins, const ClassPart& part)
@@ -378,7 +378,7 @@ static Type typeOfCheck(const TypingContext& context, const Type& source, TypeID
 
 ConvertResolution resolveConvert(const TypingContext& context, const Type& proven, const DeclaredType& declared)
 {
-    if (declared.flags.contains(PositionFlags::IsExpected))
+    if (declared.isExpected())
         return { };
 
     TypeID targetID = targetOfConvert(context, declared);
@@ -399,10 +399,10 @@ ConvertResolution resolveConvert(const TypingContext& context, const Type& prove
 Type typeOfConvert(const TypingContext& context, const Type& source, const Type& proven, const DeclaredType& declared)
 {
     TypeArena& types = context.types;
-    if (declared.flags.contains(PositionFlags::IsExpected)) {
+    if (declared.isExpected()) {
         if (context.level == TypeLevel::Proven)
             return source;
-        const Type& expected = types.at(declared.type);
+        const Type& expected = types.at(declared.expected().predicted());
         Type narrowed = source.castTo(expected, types);
         return narrowed.isNever() ? proven.castTo(expected, types) : narrowed;
     }
@@ -632,10 +632,22 @@ Type ResultRules::unknown(const Value& value)
 
 Type ResultRules::cast(const Value& value, uint32_t operandIndex, TypeID castType)
 {
-    const Type& source = context.typeOf(value.operand(operandIndex));
+    return context.typeOf(value.operand(operandIndex)).castTo(context.types.at(castType), context.types);
+}
+
+// The one place where what is expected of a value becomes what is proven of it: a check tests. An expectation that nothing tests proves nothing.
+Type ResultRules::cast(const Value& value, uint32_t operandIndex, ExpectedType expected)
+{
+    ValueID operand = value.operand(operandIndex);
+    const Type& source = context.typeOf(operand);
     if (value.opcode == Opcode::Check)
-        return typeOfCheck(context, source, castType);
-    return source.castTo(context.types.at(castType), context.types);
+        return typeOfCheck(context, source, expected.predicted());
+    RELEASE_ASSERT(value.opcode == Opcode::Expect);
+    if (context.level == TypeLevel::Proven)
+        return source;
+    const Type& predicted = context.types.at(expected.predicted());
+    Type narrowed = source.castTo(predicted, context.types);
+    return narrowed.isNever() ? context.types.at(context.function.at(operand).type).castTo(predicted, context.types) : narrowed;
 }
 
 Type ResultRules::cast(const Value& value, uint32_t operandIndex)
@@ -887,6 +899,19 @@ struct ResultRulesWithoutType {
         });
     }
 
+    TypeID cast(const Value& value, uint32_t operandIndex, ExpectedType expected)
+    {
+        if (value.opcode == Opcode::Check)
+            return cast(value, operandIndex, expected.predicted());
+        ValueID operand = value.operand(operandIndex);
+        if (context.level == TypeLevel::Proven)
+            return context.typeIDOf(operand);
+        return rememberedResult(Key::CastToType, SharedAnswers::AboutTypes, value, [&](auto& hasher) {
+            hasher.add(context.typeIDOf(operand).index(), context.function.at(operand).type.index());
+            hasher.add(expected.predicted());
+        });
+    }
+
     TypeID cast(const Value& value, uint32_t operandIndex)
     {
         TypeID sourceID = context.typeIDOf(value.operand(operandIndex));
@@ -945,6 +970,7 @@ struct AnswerSharingRules {
 
     Result sameAs(const Value& value, uint32_t) { return value.opcode == Opcode::Convert ? SharedAnswers::AboutProgram : SharedAnswers::AboutTypes; }
     Result cast(const Value&, uint32_t, TypeID) { return SharedAnswers::AboutTypes; }
+    Result cast(const Value&, uint32_t, ExpectedType) { return SharedAnswers::AboutTypes; }
     Result cast(const Value& value, uint32_t) { return value.opcode == Opcode::NarrowByField ? SharedAnswers::AboutProgram : SharedAnswers::AboutTypes; }
 
     Result unknown(const Value& value)

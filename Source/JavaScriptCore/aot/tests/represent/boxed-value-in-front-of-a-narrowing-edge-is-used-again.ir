@@ -50,7 +50,7 @@ function f1 name="joinedNumberIsBoxed" parameters=[{type=anything}, {type=number
 # CODE: stub BoxNumber.Double x1
 
 function f2 name="parameterWiderThanWhatArrives" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-    v2 = AssumeType v0 castType=i32
+    v2 = AssumeType v0 provenType=i32
     v3 = StrictEq v2, v0 form=Generic
     Jump -> next b1(v2)
   b1(v4: number):

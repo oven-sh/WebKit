@@ -162,7 +162,7 @@ ReferencesOfBody BodyReferenceCollector::finish(const FlowResults& flow, Functio
     if (mayHoldExpectedTypes(m_program, id)) {
         Vector<TypeID>& types = m_references.expectedFunctionTypes;
         for (const Value& value : m_program.at(id).values) {
-            TypeID expected = value.expected();
+            TypeID expected = value.expected().predicted();
             if (expected && (types.isEmpty() || types.last() != expected) && !m_program.at(expected).functions.isEmpty())
                 types.append(expected);
         }

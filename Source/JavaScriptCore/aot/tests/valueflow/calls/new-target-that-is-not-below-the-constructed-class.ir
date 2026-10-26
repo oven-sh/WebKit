@@ -13,7 +13,7 @@
 # APPLY-LABEL: function f0
 # APPLY: v10: anything ~ object = Construct
 # APPLY: v12: anything ~ object = Construct
-# APPLY-NOT: castType=L
+# APPLY-NOT: Type=L
 # APPLY-LABEL: function f1
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

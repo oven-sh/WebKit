@@ -159,7 +159,7 @@ bool isUnfinishedAllocationLeavingOut(const Program& program, const Function& fu
 
 static FunctionID expectedClassObjectOf(const Program& program, const Function& function, ValueID value)
 {
-    TypeID expected = function.at(value).expected();
+    TypeID expected = function.at(value).expected().predicted();
     if (!expected || !classOfClassObject(program, program.at(expected)))
         return { };
     return program.at(expected).singleFunction();

@@ -18,7 +18,7 @@ function f0 name="everyOperandNarrows" parameters=[{type=boolean}, {type=boolean
     v4 = Boolean boolean=false
     Jump -> next b7()
   b6():
-    v5 = AssumeType v2 castType=undefined
+    v5 = AssumeType v2 provenType=undefined
     v6 = Upcast v5 castType=anything
     Jump -> next b7()
   b7() frequency=Unlikely:

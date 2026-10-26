@@ -27,7 +27,7 @@ function f3 name="promisedString" parameters=[{type=anything}, {type=string}] re
     Return v2
 # CHECK-NOT: CallBuiltin
 # CHECK: [[called3]]: anything{{*}} = CallDirect v0, v1 function=f0
-# CHECK-NEXT: v2: string = AssumeType [[called3]] castType=string
+# CHECK-NEXT: v2: string = AssumeType [[called3]] provenType=string
 # CHECK-NEXT: Return v2
 }
 
@@ -51,7 +51,7 @@ function f6 name="promisedClass" parameters=[{type=Array<anything, pristine[Stor
 # The table promises the class and nothing about its contents
 # CHECK-NOT: CallBuiltin
 # CHECK: [[called6]]: anything{{*}} = CallDirect v0, v1, v2 function=f7
-# CHECK-NEXT: v3: Array = AssumeType [[called6]] castType=Array
+# CHECK-NEXT: v3: Array = AssumeType [[called6]] provenType=Array
 }
 
 function f7 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {

@@ -267,8 +267,8 @@ Function buildChainStep(const DerivedFunctionKey& key, DerivedFunctionInputs& in
     step.kind = traversal.kind;
     step.role = FunctionRole::ChainStep;
     step.flags = traversal.flags & FunctionFlags::IsHiddenInStackTraces;
-    step.thisType = DeclaredType { .type = TypeTable::anything };
-    step.results.append(DeclaredType { .type = TypeTable::anything });
+    step.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
+    step.results.append(DeclaredType(Proven::byPosition(TypeTable::anything)));
     step.capabilities = initialCapabilitiesOf(step);
     step.creator = CreatorRecord::ChainStep { };
 
@@ -276,7 +276,7 @@ Function buildChainStep(const DerivedFunctionKey& key, DerivedFunctionInputs& in
     builder.setOrigin({ traversal.position, 0 });
     BlockID block = builder.addBlock();
     auto addParameter = [&] {
-        step.parameters.append(DeclaredType { .type = TypeTable::anything });
+        step.parameters.append(DeclaredType(Proven::byPosition(TypeTable::anything)));
         return builder.addParameter(block, TypeTable::anything);
     };
     ValueID array = addParameter();
@@ -355,7 +355,7 @@ Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector
             break;
         }
         FunctionID callee = call.arguments.isEmpty() ? FunctionID() : calleeOf(call.arguments[0]);
-        return callee && program.at(callee).results.size() == 1 && arrayStorageAtAllocation(program.at(program.at(callee).results[0].type)) != ArrayStorage::Contiguous;
+        return callee && program.at(callee).results.size() == 1 && arrayStorageAtAllocation(program.at(program.at(callee).results[0].expected().predicted())) != ArrayStorage::Contiguous;
     };
     auto takeEnd = [&](ArrayChain& chain, const ArrayMethodCall& last) {
         switch (last.method->end) {
@@ -566,8 +566,8 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
     }
     if (chain.shape.end == ChainEndKind::FlatMap) {
         FunctionID mapper = chain.callbacks.last().callee;
-        bool hasProvenResult = mapper && program.at(mapper).results.size() == 1 && !program.at(mapper).result().flags.contains(PositionFlags::IsExpected);
-        const Type* parts = hasProvenResult ? &program.at(program.at(mapper).result().type) : nullptr;
+        bool hasProvenResult = mapper && program.at(mapper).results.size() == 1 && !program.at(mapper).result().isExpected();
+        const Type* parts = hasProvenResult ? &program.at(*program.at(mapper).result().established()) : nullptr;
         if (!parts || (parts->hasObjects() && !pristineAspectsProvenBy(*parts, BuiltinClasses::Array).contains(PristineAspects::Storage)))
             effects.last().merge(context.inputs.effects.unknownCode());
     }
@@ -731,7 +731,7 @@ static void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, 
     // A step that is called calls each callback by value, and costs more than the methods that it stands for.
     call.setIsAlwaysInlined(true);
     ValueID fused = insert(WTF::move(call));
-    ValueID converted = convertTo(insertion, fused, DeclaredType { .type = resultType });
+    ValueID converted = convertTo(insertion, fused, DeclaredType(Proven::byPosition(resultType)));
     builder.applyInsertions();
 
     ValueSubstitution substitution(function);
@@ -1321,7 +1321,7 @@ static TypeID testedTypeOfKey(const TestSiteReporter& reporter, ValueID key)
 {
     if (TypeID tested = testedTypeOfPrimitive(reporter, key))
         return tested;
-    bool mayBeIndex = !reporter.function().at(key).expected() && reporter.typeOf(key).overlaps(reporter.types().at(TypeTable::int32), reporter.program());
+    bool mayBeIndex = !reporter.function().at(key).expected().predicted() && reporter.typeOf(key).overlaps(reporter.types().at(TypeTable::int32), reporter.program());
     return mayBeIndex ? TypeTable::int32 : TypeID();
 }
 

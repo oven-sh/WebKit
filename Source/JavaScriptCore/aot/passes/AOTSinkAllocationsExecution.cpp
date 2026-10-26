@@ -300,7 +300,7 @@ void ObjectInterpreter::executeCast(ValueID id)
     }
 
     if (function().at(id).opcode == Opcode::AssumeType)
-        stateOf(object)->assume(function().at(id).castType());
+        stateOf(object)->assume(function().at(id).provenType());
     if (!m_sinking.decisions().holdsCells(id)) {
         bind(id, object);
         return;
@@ -1374,7 +1374,7 @@ ValueID ObjectInterpreter::valueOfField(VirtualObjectID object, uint32_t field, 
     ValueID value = valueOfField(object, field);
     if (isWithin(program(), function().at(value).type, typeInVariants))
         return value;
-    return cursor().emit(makeAssumeType(value, typeInVariants));
+    return cursor().emit(makeAssumeType(value, Proven::byConstruction(typeInVariants)));
 }
 
 ValueID ObjectInterpreter::emitUndefined()
@@ -2802,7 +2802,7 @@ ValueID ObjectInterpreter::resolve(ValueID value)
     TypeID type = function().at(value).type;
     if (!type || function().at(cell).type == type || program().typeOf(function(), cell).isSubsetOf(program().at(type), program()))
         return cell;
-    return cursor().emit(makeAssumeType(cell, type));
+    return cursor().emit(makeAssumeType(cell, Proven::byConstruction(type)));
 }
 
 ValueID ObjectInterpreter::cellOf(VirtualObjectID object)
@@ -2824,7 +2824,7 @@ ValueID ObjectInterpreter::cellOf(VirtualObjectID object)
             continue;
         if (m_sinking.context().build.validates() && function().at(cell).opcode != Opcode::Parameter)
             cursor().emit(makeValidateType(cell, assumedType));
-        cell = cursor().emit(makeAssumeType(cell, assumedType));
+        cell = cursor().emit(makeAssumeType(cell, Proven::byConstruction(assumedType)));
     }
     return cell;
 }

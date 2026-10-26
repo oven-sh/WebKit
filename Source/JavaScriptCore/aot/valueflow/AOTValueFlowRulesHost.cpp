@@ -59,16 +59,16 @@ static void passFromNativeCode(ValueFlowRuleContext& context, FunctionID functio
         return;
     }
     const DeclaredType* declared = callee.declaredEntryParameter(index);
-    bool hasType = declared && declared->type;
-    bool isAssumedByEveryEntrypoint = hasType && !declared->site && !declared->flags.contains(PositionFlags::IsExpected);
-    bool isKeptByHost = hasType && caller == NativeCaller::NamedByTable && callee.entryParameterKind(index) == EntryParameter::Parameter && declared->site && !declared->flags.contains(PositionFlags::IsFromCompiler) && callee.has(FunctionFlags::IsChecked);
-    ValueSetID mask = isAssumedByEveryEntrypoint || isKeptByHost ? universe.maskOf(context.maker(), program, program.at(declared->type)) : ValueSets::anything;
+    bool hasType = declared && declared->written();
+    bool isAssumedByEveryEntrypoint = hasType && !declared->site && !declared->isExpected();
+    bool isKeptByHost = hasType && caller == NativeCaller::NamedByTable && callee.entryParameterKind(index) == EntryParameter::Parameter && declared->site && !declared->has(PositionFlags::IsFromCompiler) && callee.has(FunctionFlags::IsChecked);
+    ValueSetID mask = isAssumedByEveryEntrypoint || isKeptByHost ? universe.maskOf(context.maker(), program, program.at(declared->expected().predicted())) : ValueSets::anything;
     if (mask == ValueSets::anything) {
         context.add(parameter, unknown);
         return;
     }
 
-    const Type& type = program.at(declared->type);
+    const Type& type = program.at(declared->expected().predicted());
     context.add(parameter, context.maker().intersect(universe.anyPrimitive(), mask));
     if (!type.hasObjects())
         return;

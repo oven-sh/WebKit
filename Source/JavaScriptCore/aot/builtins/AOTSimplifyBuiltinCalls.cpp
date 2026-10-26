@@ -89,11 +89,11 @@ void replaceKeepingType(FunctionPassContext& context, ValueID original, Value&& 
     if (context.build.options().verifiesProgram)
         replaced.add({ context.program, context.inputs.effects }, function, value);
 
-    TypeID expected = value.expected();
+    TypeID expected = value.expected().predicted();
     rewritten.setOrigin(value.origin());
     value = WTF::move(rewritten);
     value.type = resultTypeOf(context.program, function, value, context.types);
-    value.setExpected(narrowExpectedType(context.program, context.types, expected, value.type));
+    value.setExpected(ExpectedType(narrowExpectedType(context.program, context.types, expected, value.type)));
     checkRewrite(context, ValueSite { block, 0, original }, replaced);
 }
 

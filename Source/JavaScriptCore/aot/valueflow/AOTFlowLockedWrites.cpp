@@ -263,7 +263,7 @@ static bool mayLeaveMemberAsItIs(const Program& program, const Function& functio
         if (!index)
             return nullptr;
         const Field& field = program.at(layout).fields[*index];
-        return field.flags.containsAll({ FieldFlags::IsRequired, FieldFlags::IsEnforced }) ? &program.at(field.declared.type) : nullptr;
+        return field.flags.containsAll({ FieldFlags::IsRequired, FieldFlags::IsEnforced }) ? &program.at(field.declared.expected().predicted()) : nullptr;
     };
     bool hasAccessorFunction = typeUnder(BuiltinNames::get) || typeUnder(BuiltinNames::set);
     const Type* value = typeUnder(BuiltinNames::value);

@@ -491,7 +491,7 @@ size_t numberOfForeignIDs(const Function& constFunction, const TypeArena& types)
     ForeignIDCounter counter { types, count };
     forEachReference(static_cast<FunctionRecord&>(function), counter);
     for (Value& value : function.storageOfValues()) {
-        count += !types.owns(value.type) + !types.owns(value.expected());
+        count += !types.owns(value.type) + !types.owns(value.expected().predicted());
         forEachReference(value, counter);
     }
     for (Block& block : function.storageOfBlocks())
@@ -506,8 +506,8 @@ void adoptIDs(Function& function, TypeArena& types)
     forEachReference(static_cast<FunctionRecord&>(function), adopter);
     for (Value& value : function.editAllValues()) {
         value.type = types.adopt(value.type);
-        TypeID expected = types.adopt(value.expectedForTyping());
-        value.setExpected(expected == value.type ? TypeID() : expected);
+        TypeID expected = types.adopt(value.expectedForTyping().predicted());
+        value.setExpected(ExpectedType(expected == value.type ? TypeID() : expected));
         forEachReference(value, adopter);
     }
     for (Block& block : function.editAllBlocks())
@@ -526,8 +526,8 @@ void remapIDs(Function& function, const TypeRemap& types, const StringRemap& str
     forEachReference(static_cast<FunctionRecord&>(function), rewriter);
     for (Value& value : function.editAllValues()) {
         types.apply(value.type);
-        TypeID expected = types(value.expectedForTyping());
-        value.setExpected(expected == value.type ? TypeID() : expected);
+        TypeID expected = types(value.expectedForTyping().predicted());
+        value.setExpected(ExpectedType(expected == value.type ? TypeID() : expected));
         forEachReference(value, rewriter);
     }
     for (Block& block : function.editAllBlocks())

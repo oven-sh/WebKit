@@ -70,12 +70,12 @@ static bool passesCallOn(const BuiltinTable& table, BuiltinID method)
 
 static bool knowsNothingAbout(const Function& function, const Type& type, ValueID id)
 {
-    return type.anyObject && !function.at(id).expected();
+    return type.anyObject && !function.at(id).expected().predicted();
 }
 
 static bool isExpectedToBe(FunctionPassContext& context, ValueID callee, BuiltinID method)
 {
-    TypeID expected = context.function.at(callee).expected();
+    TypeID expected = context.function.at(callee).expected().predicted();
     return !expected || Type::forBuiltin(method).isSubsetOf(context.types.at(expected), context.program);
 }
 

@@ -536,14 +536,14 @@ public:
                 continue;
             bool takesRecord = false;
             for (const DeclaredType& parameter : function.parameters) {
-                take(parameter.type);
-                takesRecord |= parameter.type && !membersOf(m_program, m_program.at(parameter.type)).empty();
+                take(parameter.written());
+                takesRecord |= parameter.written() && !membersOf(m_program, m_program.at(parameter.written())).empty();
             }
             if (!takesRecord)
                 continue;
             for (const Value& value : function.values) {
                 if (value.opcode == Opcode::Check)
-                    take(value.castType());
+                    take(value.expectedType().predicted());
             }
         }
         while (!types.isEmpty()) {
@@ -557,7 +557,7 @@ public:
                     continue;
                 layouts.append(member);
                 for (const Field& field : m_program.at(member).fields)
-                    take(field.declared.type);
+                    take(field.declared.written());
             }
         }
 
@@ -571,7 +571,7 @@ public:
                 if (!field.flags.contains(FieldFlags::IsRequired))
                     continue;
                 requiresField = true;
-                const Type& type = m_program.at(field.declared.type);
+                const Type& type = m_program.at(field.declared.expected().predicted());
                 bool admitsData = type.primitives & (Primitive::Defined & ~Primitive::Undefined) || type.anyObject || type.layouts || !type.classes.isEmpty() || !type.stringLiterals.isEmpty();
                 if (field.flags.contains(FieldFlags::IsMethod) || !admitsData)
                     return true;

@@ -64,6 +64,6 @@ function f4 name="twoReadsCheckedOnce" results=[{type=boolean}] {
     Return v4
 # CHECK: v1: anything = CheckInitialized v0 name="late"
 # CHECK-NEXT: = GetModuleVariable variable=g1
-# CHECK-NEXT: v3: anything = AssumeType v2 castType=anything
+# CHECK-NEXT: v3: anything = AssumeType v2 provenType=anything
 # CHECK-NEXT: = StrictEq v1, v3
 }

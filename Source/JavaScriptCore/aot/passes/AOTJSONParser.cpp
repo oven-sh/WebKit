@@ -387,9 +387,9 @@ struct JSONParserBuilder final : Emission {
     // The slot of a field of a function type holds fewer functions than the type admits.
     TypeID typeStoredInSlotOf(const Field& field)
     {
-        if (field.slotType && program().at(field.slotType).isSubsetOf(program().at(field.declared.type), program()))
+        if (field.slotType && program().at(field.slotType).isSubsetOf(program().at(field.declared.expected().predicted()), program()))
             return field.slotType;
-        return field.declared.type;
+        return field.declared.expected().predicted();
     }
 
     TypeID testedFieldTypeOf(const MemberParse& member) { return fieldTypeToTest(typeStoredInSlotOf(*member.field)); }
@@ -440,7 +440,7 @@ struct JSONParserBuilder final : Emission {
                 parse.quotedKeyAndColon = quotedIfPlain(parse.name, true);
             parse.valueType = valueTypeOf(inputs(), memberNode);
             parse.missing = member.isOptional ? MissingMember::Absent : MissingMember::Rejected;
-            if (parse.missing == MissingMember::Absent && !(program().at(parse.field->declared.type).primitives & Primitive::Undefined))
+            if (parse.missing == MissingMember::Absent && !(program().at(parse.field->declared.written()).primitives & Primitive::Undefined))
                 parse.missing = MissingMember::Unknown;
             members.append(parse);
         }

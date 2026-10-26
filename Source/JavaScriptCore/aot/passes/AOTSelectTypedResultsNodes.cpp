@@ -178,7 +178,7 @@ static ResultNode describeAlternative(const Program& program, TypeID type, const
             .key = field.key,
             .node = ResultNodeRef { expectation ? expectation : TypeTable::anything },
             .field = index,
-            .isOptional = !field.declared.type || program.at(field.declared.type).primitives & Primitive::Undefined,
+            .isOptional = !field.declared.written() || program.at(field.declared.expected().predicted()).primitives & Primitive::Undefined,
         });
     }
     return node;
@@ -527,7 +527,7 @@ static Vector<TypeID, 4> collectRequestedTypes(const Program& program, const Fun
         for (const Use& use : uses.usesOf(followed.value)) {
             if (use.kind == Use::Kind::TerminatorOperand && function.at(use.block).terminator.kind == TerminatorKind::ReturnCall) {
                 for (TailCast cast : function.at(use.block).terminator.casts())
-                    consider(cast.declared.type);
+                    consider(cast.declared.expected().predicted());
             }
             if (use.kind != Use::Kind::Operand)
                 continue;
@@ -540,7 +540,7 @@ static Vector<TypeID, 4> collectRequestedTypes(const Program& program, const Fun
                 std::optional<uint32_t> entryParameter = user.variadicOperandIndex(use.operandIndex);
                 const Function& callee = program.at(user.function());
                 if (entryParameter && *entryParameter < callee.numberOfEntryParameters() && callee.entryParameterKind(*entryParameter) == EntryParameter::Parameter)
-                    consider(callee.declaredEntryParameter(*entryParameter)->type);
+                    consider(callee.declaredEntryParameter(*entryParameter)->expected().predicted());
             }
 
             bool isSameValue = isCast(user.opcode) && !use.operandIndex;
@@ -548,8 +548,8 @@ static Vector<TypeID, 4> collectRequestedTypes(const Program& program, const Fun
             if (!isSameValue && !isResolvedValue)
                 continue;
             if (user.opcode == Opcode::Check)
-                consider(user.castType());
-            consider(user.expected());
+                consider(user.expectedType().predicted());
+            consider(user.expected().predicted());
             if (visited.add(use.user.index()))
                 worklist.append({ use.user, followed.mayBePromise && isSameValue });
         }

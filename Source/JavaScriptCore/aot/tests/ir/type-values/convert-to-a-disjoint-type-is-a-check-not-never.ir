@@ -21,7 +21,7 @@ function f0 name="numberIntoString" parameters=[{type=number}] results=[{type=an
     v3 = Strcat v1, v1
     Return v3
 # CHECK: b0(v0: number):
-# CHECK-NEXT: v1: string = Check v0 castType=string site=w0
+# CHECK-NEXT: v1: string = Check v0 expectedType=string site=w0
 # CHECK-NEXT: PutModuleVariable v1 variable=g0
 # CHECK-NEXT: v3: string = Strcat v1, v1
 # CHECK-NEXT: Return v3
@@ -32,7 +32,7 @@ function f1 name="layoutOutsideTheFamily" results=[{type=anything}] {
     v2 = PropGet v1 key="x"
     Return v2
 # CHECK: v0: L2 = NewObject layout=L2
-# CHECK-NEXT: v1: L0|L1 = Check v0 castType=L0|L1 site=w1
+# CHECK-NEXT: v1: L0|L1 = Check v0 expectedType=L0|L1 site=w1
 # CHECK-NOT: never
 # CHECK: = PropGet v1 key="x"
 # CHECK-NEXT: Return v2
@@ -49,7 +49,7 @@ function f2 name="oneArmOfAJoin" parameters=[{type=boolean}, {type=number}] resu
     Return v4
 # CHECK: Branch v0 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v2: string = Check v1 castType=string site=w0
+# CHECK-NEXT: v2: string = Check v1 expectedType=string site=w0
 # CHECK-NEXT: Jump -> next b3(v2)
 # CHECK: Jump -> next b3(v3)
 # CHECK-NEXT: b3(v4: string):

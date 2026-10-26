@@ -77,7 +77,7 @@ static bool isPartOfEdgeToUnlikelyBlock(const Function& function, BlockID id)
         return false;
     return std::ranges::all_of(block.values, [&](ValueID valueID) {
         const Value& value = function.at(valueID);
-        return value.opcode == Opcode::Upcast || value.opcode == Opcode::AssumeType || isRematerializable(value);
+        return isCastThatProvesNothing(value.opcode) || value.opcode == Opcode::AssumeType || isRematerializable(value);
     });
 }
 
@@ -217,7 +217,7 @@ static std::pair<BranchSide, BranchSide> findRarerSides(const FrequencyInputs& i
         return integerConstantThroughCasts(inputs.program, function, value) || inputs.program.typeOf(function, value).singleStringLiteral();
     };
     auto isMaskedByConstant = [&](ValueID value) {
-        while (function.at(value).opcode == Opcode::Upcast || function.at(value).opcode == Opcode::AssumeType)
+        while (isCastThatProvesNothing(function.at(value).opcode) || function.at(value).opcode == Opcode::AssumeType)
             value = function.at(value).operand(0);
         auto& bits = function.at(value);
         return bits.opcode == Opcode::BitAnd && (integerConstantThroughCasts(inputs.program, function, bits.operand(0)) || integerConstantThroughCasts(inputs.program, function, bits.operand(1)));

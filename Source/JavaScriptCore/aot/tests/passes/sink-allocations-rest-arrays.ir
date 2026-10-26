@@ -44,7 +44,7 @@ function f4 name="length" role=GenericEntrypoint flags=[HasThis] captures=[{type
 
 function f5 name="integerIndex" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
     v2 = GetArgument argumentIndex=0
-    v3 = Check v2 castType=i32
+    v3 = Check v2 expectedType=i32
     v4 = CreateRest firstArgument=1
     v5 = ElemGet v4, v3
     Return v5
@@ -85,7 +85,7 @@ function f8 name="forwardedCallWithoutThis" role=GenericEntrypoint flags=[HasThi
 
 function f9 name="forwardedSuperConstruct" role=GenericEntrypoint flags=[HasThis] captures=[{type=f0}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0} {
     v2 = GetArgument argumentIndex=0
-    v3 = Check v2 castType=function
+    v3 = Check v2 expectedType=function
     v4 = CreateRest firstArgument=1
     v5 = SuperConstructList v3, v2, v4 layout=L1
     Return v5

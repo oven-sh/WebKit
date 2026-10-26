@@ -55,7 +55,7 @@ function f6 name="eitherKey" parameters=[{type=string}, {type=string}, {type=boo
   b2():
     v4 = Add v1, v0
     v5 = Upcast v4 castType=undefined|string
-    v6 = AssumeType v5 castType=string
+    v6 = AssumeType v5 provenType=string
     Jump -> next b3(v6)
   b3(v7: string):
     Return v7

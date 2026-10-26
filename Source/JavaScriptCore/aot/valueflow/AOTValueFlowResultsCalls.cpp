@@ -41,6 +41,7 @@ struct StampedOperand {
     const Function& function;
     const ValueFlowStatement& statement;
     const ValueFlowOperand& operand;
+    ProvenType typeByRules;
     const Type& family;
     ValueSetID held;
     ValueSetID seen;
@@ -61,7 +62,7 @@ struct ListedReceivers {
 
 static FlowSiteLoss lossOfStampedOperand(const StampedOperand& stamped, NOESCAPE const Invocable<void(FlowSiteLoss&)> auto& explain)
 {
-    FlowSiteLoss loss = stamped.positions.lossOf(stamped.positions.resultAt(stamped.family, stamped.held), stamped.operand.node);
+    FlowSiteLoss loss = stamped.positions.lossOf(stamped.positions.resultAt(stamped.typeByRules, stamped.held), stamped.operand.node);
     if (loss.cause == UnprovenCause::Unknown)
         explain(loss);
     if (!hasFunction(loss.witness))
@@ -104,11 +105,12 @@ static void stampOperands(const ValueFlowResultInputs& inputs, TypeTable& types,
                 continue;
             unsigned operandIndex = operandIndexOf(statement.opcode);
             const ValueFlowOperand& operand = inputs.bodies().operandsOf(statement)[operandIndex];
-            const Type& family = program.typeOf(function, function.at(statement.site).operand(operandIndex));
+            ProvenType typeByRules = Proven::byRulesBehindChecks(function.at(function.at(statement.site).operand(operandIndex)).type);
+            const Type& family = program.at(typeByRules);
             ValueSetID held = inputs.possibleValuesOf(maker, operand);
             ValueSetID seen = inputs.seenValuesOf(maker, operand);
             numberOfUnknownOperands += inputs.sets().contains(held, ValueFlowUniverse::unknownObject());
-            stamp(StampedOperand { id, function, statement, operand, family, held, seen, arena, positions, maker, application.bodies[index], worker });
+            stamp(StampedOperand { id, function, statement, operand, typeByRules, family, held, seen, arena, positions, maker, application.bodies[index], worker });
         }
         AOT::sort(application.bodies[index].*stamps, { }, [](const auto& entry) { return entry.value; });
         inputs.build.statistics().count(statisticOfUnknownOperands, numberOfUnknownOperands);
@@ -319,8 +321,13 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         return receivers;
     };
 
+    ValueSetID arraysThatMustNotBeConverted = inputs.containers ? inputs.containers->arraysThatMustNotBeConverted : ValueSets::nothing;
+    if (arraysThatMustNotBeConverted != ValueSets::nothing)
+        tables.sites.receiversThatMayHaveDecidedStorage.fill(true, tables.application->accessSites.numberOfSites());
     stampOperands<hasReceiverStamp, receiverOperandOf, &FlowBodyUpdate::accesses>(inputs, types, tables, FlowResultKind::ReceiverSets, StatisticID::FlowAccessesOfUnknownReceivers, [&](const StampedOperand& receiver) {
         ValueID site = receiver.statement.site;
+        if (arraysThatMustNotBeConverted != ValueSets::nothing && receiver.maker.intersect(receiver.held, arraysThatMustNotBeConverted) == ValueSets::nothing)
+            tables.sites.receiversThatMayHaveDecidedStorage[tables.application->accessSites.siteOfValue(receiver.id, site).index()] = false;
         if (std::optional<LayoutSet> receivers = receiver.positions.receiversAt(receiver.family, receiver.held); receivers && receivers->isComplete) {
             receiver.update.accesses.append(FlowAccessStamp { site, receiver.types.intern(WTF::move(*receivers)) });
             return;
@@ -357,19 +364,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
 
 static bool callsValue(const ValueFlowStatement& statement)
 {
-    if (statement.kind != ValueFlowStatementKind::Operation)
-        return false;
-    switch (statement.opcode) {
-    case Opcode::Call:
-    case Opcode::CallList:
-    case Opcode::Construct:
-    case Opcode::ConstructList:
-    case Opcode::SuperConstruct:
-    case Opcode::SuperConstructList:
-        return true;
-    default:
-        return false;
-    }
+    return statement.kind == ValueFlowStatementKind::Operation && flowRuleOf(statement.opcode) == FlowRule::Call;
 }
 
 ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs& inputs, TypeTable& types, FlowResultTables& tables)

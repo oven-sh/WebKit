@@ -586,9 +586,9 @@ static bool addTypesOfOwnValues(const Program& program, LayoutID instanceLayout,
             const Field& field = layout.fields[index];
             if (field.flags.contains(FieldFlags::IsHidden))
                 continue;
-            if (!field.declared.type || field.declared.flags.contains(PositionFlags::IsExpected) || fieldTypeStateOf(program, { current, index }) != FieldTypeState::Proven)
+            if (!field.declared.written() || field.declared.isExpected() || fieldTypeStateOf(program, { current, index }) != FieldTypeState::Proven)
                 return false;
-            types.add(field.declared.type);
+            types.add(*field.declared.established());
         }
 
         Ancestry ancestry = ancestryOf(layout.kind);

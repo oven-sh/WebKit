@@ -15,7 +15,7 @@ function f0 name="oneOfTwoLiterals" parameters=[{type=boolean}, {type=string}, {
     v5 = NewArray v1, v2 contents=string
     Jump -> next b3(v5)
   b3(v6):
-    v7 = AssumeType v6 castType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+    v7 = AssumeType v6 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
     v8 = GetArrayLength v7
     v9 = Integer
     v10 = Less v9, v8
@@ -39,7 +39,7 @@ function f0 name="oneOfTwoLiterals" parameters=[{type=boolean}, {type=string}, {
 
 function f1 name="oneLiteral" parameters=[{type=string}, {type=string}, {type=int[1, 9]}] results=[{type=anything}] {
     v3 = NewArray v0, v1 contents=string
-    v4 = AssumeType v3 castType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+    v4 = AssumeType v3 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
     v5 = Integer
     v6 = Less v5, v2
     Branch v6 -> taken b1(| 0), notTaken b4()
@@ -70,7 +70,7 @@ function f2 name="insideTheLongerLiteralAlone" parameters=[{type=boolean}, {type
     v4 = NewArray contents=string
     Jump -> next b3(v4)
   b3(v5):
-    v6 = AssumeType v5 castType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+    v6 = AssumeType v5 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
     v7 = GetArrayLength v6
     v8 = Integer
     v9 = Less v8, v7

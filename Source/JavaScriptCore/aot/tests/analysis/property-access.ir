@@ -66,7 +66,7 @@ function f11 name="read-member-without-field" parameters=[{type=L0|L3}] results=
 }
 # CHECK-NEXT: F11 v1 PropGet [[name]]: form=Split level=Proven receivers=[L0, L3]
 function f12 name="read-checked-receiver" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=L1
+    v1 = Check v0 expectedType=L1
     v2 = PropGet v1 key="pos"
     Return v2
 }

@@ -44,12 +44,12 @@ function f5 name="chain" parameters=[{type=Array<number, proven, pristine[Storag
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f1
     ValidateType v3 validatedType=Array<number>
-    v5 = AssumeType v3 castType=Array<number>
+    v5 = AssumeType v3 provenType=Array<number>
     ValidateType v5 validatedType=Array<number>
     v7 = NewClosure function=f4
     v8 = NewArray contents=anything
     v9 = CallDirect v5, v7, v8 function=f2
-    v10 = AssumeType v9 castType=Array<number>
+    v10 = AssumeType v9 provenType=Array<number>
     Return v10
 # CHECK-NOT: function=f1
 # CHECK-NOT: ValidateType

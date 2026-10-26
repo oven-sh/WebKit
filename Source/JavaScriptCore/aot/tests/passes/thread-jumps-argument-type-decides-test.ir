@@ -53,7 +53,7 @@ function f2 name="castInFrontOfTest" parameters=[{type=string}, {type=anything},
   b2():
     Jump -> next b3(v1)
   b3(v3):
-    v4 = AssumeType v3 castType=undefined|string|object
+    v4 = AssumeType v3 provenType=undefined|string|object
     v5 = TypeTest v4 testedType=string
     Branch v5 -> taken b4(| 0), notTaken b5(| 0)
   b4(v6):

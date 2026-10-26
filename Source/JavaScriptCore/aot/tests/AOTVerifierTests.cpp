@@ -362,7 +362,7 @@ void testTypeIDOutOfRange()
         copy.edit(v2).type = TypeID(idPastEveryTable);
     });
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
-        copy.edit(v9).setExpected(TypeID(idPastEveryTable));
+        copy.edit(v9).setExpected(ExpectedType(TypeID(idPastEveryTable)));
     });
     expectFailure(Kind::IdOutOfRange, [](Typed::Function& copy) {
         copy.edit(v15).type = { };
@@ -393,7 +393,7 @@ void addRequest(Typed::Function& function)
 {
     ValueID request = addValue(function, b3, Opcode::Convert, { v0 });
     DeclaredType declared;
-    declared.type = TypeTable::anything;
+    declared.establish(Proven::byPosition(TypeTable::anything));
     function.edit(request).setDeclared(declared);
 }
 

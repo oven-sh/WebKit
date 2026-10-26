@@ -23,7 +23,7 @@ function f3 name="collects" flags=[HasRestParameter] parameters=[{type=Array<any
 function f4 name="Shape" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}, {type=anything}] results=[{type=L0|L1}] {
     v3 = GetConstructPrototype v0 layout=L0
     v4 = NewObject v3 layout=L0
-    v5 = AssumeType v4 castType=L0|L1
+    v5 = AssumeType v4 provenType=L0|L1
     Return v5
 }
 function f5 name="Circle" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]

@@ -69,7 +69,7 @@ static constexpr OpcodeSet operatorsThatTakeNullish { Opcode::ToBoolean, Opcode:
 static TypeID admitExpectedNullish(TestSiteReporter& reporter, ValueID operand, TypeID tested)
 {
     TypeArena& types = reporter.types();
-    if (!(types.at(reporter.function().at(operand).expectedOrType()).primitives & Primitive::UndefinedOrNull))
+    if (!(types.at(reporter.function().at(operand).expectedOrType().predicted()).primitives & Primitive::UndefinedOrNull))
         return tested;
     return types.intern(types.at(tested).withPrimitives(Primitive::UndefinedOrNull));
 }

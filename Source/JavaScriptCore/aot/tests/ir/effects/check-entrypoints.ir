@@ -9,7 +9,7 @@ function f0 name="typed" parameters=[{type=undefined|null|number site=w0}] resul
     Unreachable
 }
 function f1 name="typed" role=GenericEntrypoint captures=[{type=f0}] parameters=[{type=anything}] results=[{type=anything}] derivation={source=f0} creator=Entrypoint{target=f0 arguments=Registers} {
-    v2 = Check v1 castType=undefined|null|number site=w0 cause=UnknownObject
+    v2 = Check v1 expectedType=undefined|null|number site=w0 cause=UnknownObject
     v3 = CallDirect v2 function=f0
     ReturnCall v3 requirement=Allowed
 }
@@ -17,7 +17,7 @@ function f2 name="narrowedThis" flags=[HasThis, IsAsync] thisType={type=Map} res
     Return
 }
 function f3 name="narrowedThis" role=GenericEntrypoint flags=[HasThis] captures=[{type=f2}] thisType={type=anything} results=[{type=anything}] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} {
-    v2 = Check v1 castType=Map cause=AddedByPass
+    v2 = Check v1 expectedType=Map cause=AddedByPass
     v3 = CallDirect v2 function=f2
     ReturnCall v3 requirement=Allowed
 }
@@ -26,7 +26,7 @@ function f4 name="readsNewTarget" flags=[HasThis, HasNewTarget] thisType={type=L
     Return
 }
 function f5 name="readsNewTarget" role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f4}] thisType={type=anything} results=[{type=anything}] derivation={source=f4 parameter=1} creator=Entrypoint{target=f4 arguments=Registers takesNewTarget=true} {
-    v3 = Check v1 castType=L0 cause=AddedByPass
+    v3 = Check v1 expectedType=L0 cause=AddedByPass
     v4 = CallDirect v3, v2 function=f4
     ReturnCall v4 requirement=Allowed
 }

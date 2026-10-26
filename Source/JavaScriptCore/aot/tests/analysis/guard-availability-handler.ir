@@ -188,7 +188,7 @@ function f7 name="thrownObjectIsChangedThroughTheCaughtValue" parameters=[{type=
     Throw v2
   b2() role=CatchHandler:
     v4 = CatchValue
-    v5 = Check v4 castType=object
+    v5 = Check v4 expectedType=object
     DefineGetter v5, v0 key="z"
     Return v3
 }

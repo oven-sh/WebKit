@@ -129,11 +129,11 @@ function f17 name="sourceNotPristine" parameters=[{type=Array<number>}] results=
     v1 = NewClosure function=f6
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = NewClosure function=f6
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f4
-    v8 = AssumeType v7 castType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number>
     Return v8
 # CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
 # CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f4
@@ -143,11 +143,11 @@ function f18 name="sourcePristine" parameters=[{type=Array<number, proven, prist
     v1 = NewClosure function=f6
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = NewClosure function=f6
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f4
-    v8 = AssumeType v7 castType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number>
     Return v8
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
@@ -162,10 +162,10 @@ function f19 name="callbackMayBeUndefined" parameters=[{type=Array<number, prove
     v2 = NewClosure function=f6
     v3 = NewArray contents=anything
     v4 = CallDirect v0, v2, v3 function=f4
-    v5 = AssumeType v4 castType=Array<number>
+    v5 = AssumeType v4 provenType=Array<number>
     v6 = NewArray contents=anything
     v7 = CallDirect v5, v1, v6 function=f4
-    v8 = AssumeType v7 castType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number>
     Return v8
 # CHECK: v4: anything = CallDirect v0, v2, {{*}} function=f4
 # CHECK: v7: anything = CallDirect v5, v1, {{*}} function=f4
@@ -175,10 +175,10 @@ function f20 name="unknownSecondCallee" parameters=[{type=Array<number, proven, 
     v2 = NewClosure function=f6
     v3 = NewArray contents=anything
     v4 = CallDirect v0, v2, v3 function=f4
-    v5 = AssumeType v4 castType=Array<number>
+    v5 = AssumeType v4 provenType=Array<number>
     v6 = NewArray contents=anything
     v7 = CallDirect v5, v1, v6 function=f4
-    v8 = AssumeType v7 castType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number>
     Return v8
 # CHECK: v4: anything = CallDirect v0, v2, {{*}} function=f4
 # CHECK: v7: anything = CallDirect v5, v1, {{*}} function=f4
@@ -187,11 +187,11 @@ function f20 name="unknownSecondCallee" parameters=[{type=Array<number, proven, 
 function f21 name="unknownFirstCallee" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=function}] results=[{type=anything}] {
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = NewClosure function=f44
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f4
-    v8 = AssumeType v7 castType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number>
     Return v8
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
@@ -206,11 +206,11 @@ function f22 name="secondCallbackReadsArray" parameters=[{type=Array<number, pro
     v1 = NewClosure function=f6
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = NewClosure function=f7
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f4
-    v8 = AssumeType v7 castType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number>
     Return v8
 # CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
 # CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f4
@@ -220,11 +220,11 @@ function f23 name="secondCallbackDeclaresButIgnoresArray" parameters=[{type=Arra
     v1 = NewClosure function=f6
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = NewClosure function=f8
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f4
-    v8 = AssumeType v7 castType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number>
     Return v8
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
@@ -239,11 +239,11 @@ function f24 name="firstCallbackReadsArray" parameters=[{type=Array<number, prov
     v1 = NewClosure function=f7
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<anything>
+    v4 = AssumeType v3 provenType=Array<anything>
     v5 = NewClosure function=f6
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f4
-    v8 = AssumeType v7 castType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number>
     Return v8
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
@@ -258,11 +258,11 @@ function f25 name="secondCallbackUsesArguments" parameters=[{type=Array<number, 
     v1 = NewClosure function=f6
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = NewClosure function=f9
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f4
-    v8 = AssumeType v7 castType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number>
     Return v8
 # CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
 # CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f4
@@ -272,11 +272,11 @@ function f26 name="firstWritesWhatSecondReads" parameters=[{type=Array<number, p
     v1 = NewClosure function=f10
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = NewClosure function=f11
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f4
-    v8 = AssumeType v7 castType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number>
     Return v8
 # CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
 # CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f4
@@ -286,11 +286,11 @@ function f27 name="bothOnlyRead" parameters=[{type=Array<number, proven, pristin
     v1 = NewClosure function=f11
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<anything>
+    v4 = AssumeType v3 provenType=Array<anything>
     v5 = NewClosure function=f11
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f4
-    v8 = AssumeType v7 castType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number>
     Return v8
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
@@ -305,11 +305,11 @@ function f28 name="bothMayThrow" parameters=[{type=Array<number, proven, pristin
     v1 = NewClosure function=f12
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = NewClosure function=f12
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f4
-    v8 = AssumeType v7 castType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number>
     Return v8
 # CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
 # CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f4
@@ -319,12 +319,12 @@ function f29 name="firstMayThrowSecondPure" parameters=[{type=Array<number, prov
     v1 = NewClosure function=f12
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<number>
-    v5 = AssumeType v4 castType=Array<number, proven>
+    v4 = AssumeType v3 provenType=Array<number>
+    v5 = AssumeType v4 provenType=Array<number, proven>
     v6 = NewClosure function=f6
     v7 = NewArray contents=anything
     v8 = CallDirect v5, v6, v7 function=f4
-    v9 = AssumeType v8 castType=Array<number>
+    v9 = AssumeType v8 provenType=Array<number>
     Return v9
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v5, v6, v7 function=
@@ -339,11 +339,11 @@ function f30 name="secondMayThrowFirstWrites" parameters=[{type=Array<number, pr
     v1 = NewClosure function=f10
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = NewClosure function=f12
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f4
-    v8 = AssumeType v7 castType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number>
     Return v8
 # CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
 # CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f4
@@ -353,7 +353,7 @@ function f31 name="findAfterMapThatLogs" parameters=[{type=Array<number, proven,
     v1 = NewClosure function=f10
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = NewClosure function=f5
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f2
@@ -366,7 +366,7 @@ function f32 name="findAfterPureMap" parameters=[{type=Array<number, proven, pri
     v1 = NewClosure function=f6
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = NewClosure function=f5
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f2
@@ -384,11 +384,11 @@ function f33 name="secondPushesToSource" parameters=[{type=Array<number, proven,
     v1 = NewClosure function=f6
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = NewClosure v0 function=f13
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f4
-    v8 = AssumeType v7 castType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number>
     Return v8
 # CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
 # CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f4
@@ -397,12 +397,12 @@ function f33 name="secondPushesToSource" parameters=[{type=Array<number, proven,
 function f34 name="secondPushesToLocalArray" parameters=[{type=number}, {type=Array<anything>}] results=[{type=anything}] {
     v2 = NewArray v0, v0 contents=number
     v3 = CallBuiltin v2 overload=ArrayPrototypeSlice/0
-    v4 = AssumeType v3 castType=Array<number, proven>
+    v4 = AssumeType v3 provenType=Array<number, proven>
     v5 = NewClosure function=f6
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f4
-    v8 = AssumeType v7 castType=Array<number>
-    v9 = AssumeType v8 castType=Array<number, proven>
+    v8 = AssumeType v7 provenType=Array<number>
+    v9 = AssumeType v8 provenType=Array<number, proven>
     v10 = NewClosure v1 function=f13
     v11 = NewArray contents=anything
     v12 = CallDirect v9, v10, v11 function=f3
@@ -420,12 +420,12 @@ function f34 name="secondPushesToLocalArray" parameters=[{type=number}, {type=Ar
 
 function f35 name="copyOfParameterWalkedByUnknownCode" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=function}] results=[{type=anything}] {
     v2 = CallBuiltin v0 overload=ArrayPrototypeSlice/0
-    v3 = AssumeType v2 castType=Array<number, proven>
+    v3 = AssumeType v2 provenType=Array<number, proven>
     v4 = NewClosure function=f6
     v5 = NewArray contents=anything
     v6 = CallDirect v3, v4, v5 function=f4
-    v7 = AssumeType v6 castType=Array<number>
-    v8 = AssumeType v7 castType=Array<number, proven>
+    v7 = AssumeType v6 provenType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number, proven>
     v9 = NewClosure v1 function=f14
     v10 = NewArray contents=anything
     v11 = CallDirect v8, v9, v10 function=f3
@@ -438,12 +438,12 @@ function f35 name="copyOfParameterWalkedByUnknownCode" parameters=[{type=Array<n
 function f36 name="copyOfLocalArrayWalkedByUnknownCode" parameters=[{type=number}, {type=function}] results=[{type=anything}] {
     v2 = NewArray v0, v0 contents=number
     v3 = CallBuiltin v2 overload=ArrayPrototypeSlice/0
-    v4 = AssumeType v3 castType=Array<number, proven>
+    v4 = AssumeType v3 provenType=Array<number, proven>
     v5 = NewClosure function=f6
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f4
-    v8 = AssumeType v7 castType=Array<number>
-    v9 = AssumeType v8 castType=Array<number, proven>
+    v8 = AssumeType v7 provenType=Array<number>
+    v9 = AssumeType v8 provenType=Array<number, proven>
     v10 = NewClosure v1 function=f14
     v11 = NewArray contents=anything
     v12 = CallDirect v9, v10, v11 function=f3
@@ -463,12 +463,12 @@ function f37 name="callBetweenLinks" parameters=[{type=Array<number, proven, pri
     v2 = NewClosure function=f6
     v3 = NewArray contents=anything
     v4 = CallDirect v0, v2, v3 function=f4
-    v5 = AssumeType v4 castType=Array<number>
+    v5 = AssumeType v4 provenType=Array<number>
     v6 = Call v1
     v7 = NewClosure function=f6
     v8 = NewArray contents=anything
     v9 = CallDirect v5, v7, v8 function=f4
-    v10 = AssumeType v9 castType=Array<number>
+    v10 = AssumeType v9 provenType=Array<number>
     Return v10
 # CHECK: v4: anything = CallDirect v0, v2, {{*}} function=f4
 # CHECK: v9: anything = CallDirect v5, v7, {{*}} function=f4
@@ -478,14 +478,14 @@ function f38 name="variableReadBetweenLinks" parameters=[{type=Array<number, pro
     v1 = NewClosure function=f10
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<number>
-    v5 = AssumeType v4 castType=Array<number, proven>
+    v4 = AssumeType v3 provenType=Array<number>
+    v5 = AssumeType v4 provenType=Array<number, proven>
     v6 = GetModuleVariable variable=g0
     PutModuleVariable v6 variable=g1
     v8 = NewClosure function=f6
     v9 = NewArray contents=anything
     v10 = CallDirect v5, v8, v9 function=f4
-    v11 = AssumeType v10 castType=Array<number>
+    v11 = AssumeType v10 provenType=Array<number>
     Return v11
 # CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
 # CHECK: v10: anything = CallDirect v5, v8, {{*}} function=f4
@@ -495,12 +495,12 @@ function f39 name="closureCreatedBetweenLinks" parameters=[{type=Array<number, p
     v1 = NewClosure function=f6
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = NewClosure function=f5
     v6 = NewClosure function=f6
     v7 = NewArray contents=anything
     v8 = CallDirect v4, v6, v7 function=f4
-    v9 = AssumeType v8 castType=Array<number>
+    v9 = AssumeType v8 provenType=Array<number>
     Return v9
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v6, v7 function=
@@ -515,12 +515,12 @@ function f40 name="capturedVariableRead" parameters=[{type=Array<number, proven,
     v1 = NewClosure function=f6
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = GetModuleVariable variable=g1
-    v6 = AssumeType v5 castType=f6
+    v6 = AssumeType v5 provenType=f6
     v7 = NewArray contents=anything
     v8 = CallDirect v4, v6, v7 function=f4
-    v9 = AssumeType v8 castType=Array<number>
+    v9 = AssumeType v8 provenType=Array<number>
     Return v9
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v6, v7 function=
@@ -535,11 +535,11 @@ function f41 name="sloppyFunction" flags=[IsSloppy] parameters=[{type=Array<numb
     v1 = NewClosure function=f15
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = NewClosure function=f15
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f4
-    v8 = AssumeType v7 castType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number>
     Return v8
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
@@ -553,8 +553,8 @@ function f41 name="sloppyFunction" flags=[IsSloppy] parameters=[{type=Array<numb
 function f42 name="oneCallbackWithEffects" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=function}] results=[{type=anything}] {
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<anything>
-    v5 = AssumeType v4 castType=Array<anything, proven, pristine[Storage, Names]>
+    v4 = AssumeType v3 provenType=Array<anything>
+    v5 = AssumeType v4 provenType=Array<anything, proven, pristine[Storage, Names]>
     v6 = GetArrayLength v5
     Return v6
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
@@ -570,8 +570,8 @@ function f43 name="joinOfObjects" parameters=[{type=Array<number, proven, pristi
     v1 = NewClosure function=f16
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<object>
-    v5 = AssumeType v4 castType=Array<object, proven>
+    v4 = AssumeType v3 provenType=Array<object>
+    v5 = AssumeType v4 provenType=Array<object, proven>
     v6 = CallBuiltin v5 overload=ArrayPrototypeJoin/0
     Return v6
 # CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f4
@@ -586,11 +586,11 @@ function f44 name="same" kind=Arrow parameters=[{type=anything}] results=[{type=
 function f45 name="unknownFirstCalleeSecondTakesNumbers" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}, {type=function}] results=[{type=anything}] {
     v2 = NewArray contents=anything
     v3 = CallDirect v0, v1, v2 function=f4
-    v4 = AssumeType v3 castType=Array<number>
+    v4 = AssumeType v3 provenType=Array<number>
     v5 = NewClosure function=f6
     v6 = NewArray contents=anything
     v7 = CallDirect v4, v5, v6 function=f4
-    v8 = AssumeType v7 castType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number>
     Return v8
 # CHECK-NOT: = CallDirect v0, v1, v2 function=
 # CHECK-NOT: = CallDirect v4, v5, v6 function=
@@ -604,12 +604,12 @@ function f45 name="unknownFirstCalleeSecondTakesNumbers" parameters=[{type=Array
 function f46 name="copyOfLocalArrayThatSecondCallbackHoldsAndPushesTo" parameters=[{type=number}] results=[{type=anything}] {
     v1 = NewArray v0, v0 contents=number
     v2 = CallBuiltin v1 overload=ArrayPrototypeSlice/0
-    v3 = AssumeType v2 castType=Array<number, proven>
+    v3 = AssumeType v2 provenType=Array<number, proven>
     v4 = NewClosure function=f6
     v5 = NewArray contents=anything
     v6 = CallDirect v3, v4, v5 function=f4
-    v7 = AssumeType v6 castType=Array<number>
-    v8 = AssumeType v7 castType=Array<number, proven>
+    v7 = AssumeType v6 provenType=Array<number>
+    v8 = AssumeType v7 provenType=Array<number, proven>
     v9 = NewClosure v1 function=f13
     v10 = NewArray contents=anything
     v11 = CallDirect v8, v9, v10 function=f3

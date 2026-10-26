@@ -49,8 +49,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = PropGet v0 key="input" [isFreeName]
-    v3 = Check v2 castType=number
-    v4 = Check v2 castType=string
+    v3 = Check v2 expectedType=number
+    v4 = Check v2 expectedType=string
     v5 = NewObject -, v3 layout=L0 fields=[0]
     v6 = NewObject -, v3 layout=L1 fields=[0]
     v7 = NewObject -, v3, v4, v2, v5, v6, v5 layout=L2 fields=[0, 1, 2, 3, 4, 5]
@@ -79,8 +79,8 @@ function f2 name="perimeter" parameters=[{type=anything}] results=[{type=anythin
     Return v1
 }
 function f3 name="checks" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v0 castType=string|Array site=w0
-    v3 = Check v1 castType=string|Array site=w1
+    v2 = Check v0 expectedType=string|Array site=w0
+    v3 = Check v1 expectedType=string|Array site=w1
     v4 = Add v2, v3
     Return v4
 }

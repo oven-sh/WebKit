@@ -890,8 +890,8 @@ static bool capturesNothingButClassEnvironment(const Program& program, const Fun
         return true;
     if (function.captures.size() != 1 || constructor.captures.size() != 1)
         return false;
-    TypeID captured = function.captures[0].type;
-    return captured && captured == constructor.captures[0].type && program.at(captured).environment;
+    TypeID captured = function.captures[0].written();
+    return captured && captured == constructor.captures[0].written() && program.at(captured).environment;
 }
 
 static bool canBeCreatedByClassRecord(const Program& program, const Function& constructor, const ClassMember& member)

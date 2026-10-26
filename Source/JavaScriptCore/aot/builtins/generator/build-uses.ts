@@ -1013,8 +1013,8 @@ export function applyWrittenUses(context: OverloadContext): void {
   for (const name of Object.keys(uses)) context.operandOf(name, context.source);
   for (const state of context.states) {
     const { name, operand, accepted, converted } = state.parameter;
-    // The host describes an argument that it refuses in the message of the error.
-    if (context.source.origin === "Host" && !isUndeclared && !accepted.isAnything && operand.operand !== "Receiver")
+    // The host describes an argument or a receiver that it refuses in the message of the error.
+    if (context.source.origin === "Host" && !isUndeclared && !accepted.isAnything)
       state.roles.add("DescribedWhenRefused");
     const isWritten = !isUndeclared && Object.hasOwn(uses, name);
     if (isWritten) {

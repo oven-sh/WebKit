@@ -101,7 +101,7 @@ static void listLayoutsNamedIn(const Program& program, const FlowApplication& ap
         if (!layoutOfPlainLiteral(program, value))
             forEachReference(value, finder);
         if (value.opcode == Opcode::Check)
-            listLayoutsTestedAlone(value.castType());
+            listLayoutsTestedAlone(value.expectedType().predicted());
         if (value.opcode == Opcode::TypeTest)
             listLayoutsTestedAlone(value.testedType());
     }
@@ -111,7 +111,7 @@ static void listLayoutsNamedIn(const Program& program, const FlowApplication& ap
             continue;
         for (const TailCast& cast : block.terminator.casts()) {
             if (cast.resolution == CastResolution::Check)
-                finder(program.at(cast.declared.type).layouts);
+                finder(program.at(cast.declared.written()).layouts);
         }
     }
 }

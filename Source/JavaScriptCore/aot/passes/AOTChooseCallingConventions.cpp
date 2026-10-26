@@ -162,8 +162,8 @@ EntryConvention entryConventionOf(const Function& callee)
 
 Representation declaredRepresentationOf(const Program& program, const DeclaredType& declared)
 {
-    const Type& type = program.at(declared.type);
-    if (declared.flags.contains(PositionFlags::IsExpected) && type.isJavaScriptValue())
+    const Type& type = program.at(declared.written());
+    if (declared.isExpected() && type.isJavaScriptValue())
         return Representation::JSValue;
     Representation representation = defaultRepresentationOf(type);
     if (representation != Representation::Void)
@@ -223,8 +223,8 @@ static ArgumentLocation singleResultLocation(const Program& program, const Funct
         return { .kind = ArgumentLocation::Kind::GPR, .reg = GPRInfo::returnValueGPR, .representation = Representation::JSValue };
 
     const DeclaredType& declared = callee.result();
-    const Type& type = program.at(declared.type);
-    bool isProven = !declared.flags.contains(PositionFlags::IsExpected);
+    const Type& type = program.at(declared.written());
+    bool isProven = !declared.isExpected();
     if (isProven && (type.isNever() || type.hasOnlyPrimitives(Primitive::Undefined)))
         return { .kind = ArgumentLocation::Kind::None, .representation = Representation::JSValue };
 

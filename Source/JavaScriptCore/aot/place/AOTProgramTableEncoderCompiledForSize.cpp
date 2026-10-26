@@ -208,7 +208,7 @@ static void encodeEvalBinding(const TableEncoder& encoder, const EvalBinding& bi
     TypeID type;
     if (binding.variable) {
         data.slot = placedVariableSlot(encoder, binding.variable);
-        type = program.at(binding.variable).declared.type;
+        type = program.at(binding.variable).declared.written();
     } else {
         RELEASE_ASSERT(binding.operand);
         data.operand = operandOf(binding.operand);
@@ -221,7 +221,7 @@ static void encodeEvalBinding(const TableEncoder& encoder, const EvalBinding& bi
             const PlacedSlot& slot = encoder.slots.slot(field);
             RELEASE_ASSERT(!program.at(binding.layout).isEnvironment() || slot.hasStorage());
             data.slot = slot.data();
-            type = declaration.declared.type;
+            type = declaration.declared.written();
         }
     }
     data.type = encoder.typeOffset(type);

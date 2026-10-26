@@ -248,6 +248,9 @@ static constexpr uint32_t offsetOfAbsentStub = 0xffffffffu;
 
 // frameRanges says whether the function has its frame at a return address, and at nothing else: it holds the distances between the offsets at which the answer changes, in units of codeOffsetUnit.
 struct SideTableInputs {
+    // Which parts are written. Their reader goes by these flags in the function's record.
+    OptionSet<ImageFunctionFlag> flags() const;
+
     std::span<const uint8_t> frameRanges;
     uint32_t frame { 0 };
     std::optional<std::pair<uint32_t, uint32_t>> frameMapRange;
@@ -299,17 +302,27 @@ inline SideTableParts SideTableParts::read(const ImageFunction& function, const 
     return parts;
 }
 
+inline OptionSet<ImageFunctionFlag> SideTableInputs::flags() const
+{
+    OptionSet<ImageFunctionFlag> flags;
+    flags.set(ImageFunctionFlag::HasFrameMaps, frameMapRange && frameMapRange->second);
+    flags.set(ImageFunctionFlag::HasHandlers, !handlers.empty());
+    flags.set(ImageFunctionFlag::HasCallSites, !callSites.empty());
+    return flags;
+}
+
 inline void SideTableParts::append(Vector<uint8_t>& stream, const SideTableInputs& inputs)
 {
+    OptionSet<ImageFunctionFlag> flags = inputs.flags();
     appendVarint(stream, inputs.frameRanges.size());
     stream.append(inputs.frameRanges);
     if (!inputs.frameRanges.empty())
         appendVarint(stream, inputs.frame);
-    if (inputs.frameMapRange && inputs.frameMapRange->second) {
+    if (flags.contains(ImageFunctionFlag::HasFrameMaps)) {
         appendVarint(stream, inputs.frameMapRange->first);
         appendVarint(stream, inputs.frameMapRange->second);
     }
-    if (!inputs.handlers.empty()) {
+    if (flags.contains(ImageFunctionFlag::HasHandlers)) {
         appendVarint(stream, inputs.handlers.size());
         stream.append(inputs.handlers);
     }

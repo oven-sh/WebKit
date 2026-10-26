@@ -231,7 +231,7 @@ struct JSONTextWriter final : Emission {
     ValuePlan planValue(ValueID id) const
     {
         const Value& value = function().at(id);
-        TypeID expected = value.expected();
+        TypeID expected = value.expected().predicted();
         return planType(program().at(value.type), expected ? &program().at(expected) : nullptr);
     }
 
@@ -523,9 +523,9 @@ struct JSONTextWriter final : Emission {
     {
         TypingContext typing { program(), function(), inputs().types };
         const Field& field = program().at(layout).fields[fieldIndex];
-        bool holdsMoreThanDeclared = field.slotType || field.declared.flags.contains(PositionFlags::IsExpected);
+        bool holdsMoreThanDeclared = field.slotType || field.declared.isExpected();
         Type proven = field.slotType ? program().at(slotTypeOf(program(), field)) : typing.typeOf(field.declared);
-        return planType(proven, holdsMoreThanDeclared ? &program().at(field.declared.type) : nullptr);
+        return planType(proven, holdsMoreThanDeclared ? &program().at(field.declared.expected().predicted()) : nullptr);
     }
 
     bool mayHoldItself(const ValuePlan& plan, Vector<LayoutID, 8>& layoutsAround, BitVector& finishedLayouts) const
@@ -1006,7 +1006,7 @@ struct JSONTextWriter final : Emission {
                 MemberSupport support = memberSupportOf(layout, field);
                 if (support != MemberSupport::Slot)
                     return support != MemberSupport::ByName;
-                return !!(program().at(fields[field].slotType ? fields[field].slotType : fields[field].declared.type).primitives & Primitive::Undefined);
+                return !!(program().at(fields[field].slotType ? fields[field].slotType : TypeID(program().provenTypeOf(fields[field].declared))).primitives & Primitive::Undefined);
             });
         };
 

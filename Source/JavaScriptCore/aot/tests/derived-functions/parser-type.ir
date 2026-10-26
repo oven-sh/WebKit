@@ -104,5 +104,5 @@ variable g3 name="t3" declared={type=L3} initialization=Undefined
 # CHECK-NEXT: Branch [[isArray4]] -> taken [[array4]](| 0), notTaken
 # CHECK-NOT: TypeTest {{*}}proven
 # CHECK-NOT: TypeTest {{*}}pristine
-# CHECK: [[assumed4]]:{{*}}= AssumeType {{*}} castType=Array<number, pristine[Storage, Names]>
+# CHECK: [[assumed4]]:{{*}}= AssumeType {{*}} provenType=Array<number, pristine[Storage, Names]>
 # CHECK: = NewObject -, [[assumed4]], {{*}} layout=L3 fields=[0, 1]

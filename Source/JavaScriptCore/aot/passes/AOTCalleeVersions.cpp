@@ -109,7 +109,7 @@ Function buildCalleeVersion(const DerivedFunctionKey& key, DerivedFunctionInputs
         type = program.at(parameter.type).intersectWith(type, inputs.types);
     parameter.type = inputs.types.intern(type);
     parameter.setExpected({ });
-    *version.declaredEntryParameter(entryParameter) = DeclaredType { .type = parameter.type };
+    *version.declaredEntryParameter(entryParameter) = DeclaredType(Proven::byPosition(parameter.type));
     return version;
 }
 

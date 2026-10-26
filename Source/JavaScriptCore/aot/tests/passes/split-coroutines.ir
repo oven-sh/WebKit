@@ -19,7 +19,7 @@ function f0 name="awaitsOnce" kind=Arrow flags=[IsAsync] captures=[{type=number}
 # CHECK-NEXT: b0(v0: number, v1: anything):
 # CHECK-NEXT: [[promise]]: Promise = NewPromise
 # CHECK-NEXT: [[started]]: anything = CallDirect v0, v1, [[promise]] function=f3
-# CHECK-NEXT: [[returned]]: Promise = AssumeType [[started]] castType=Promise
+# CHECK-NEXT: [[returned]]: Promise = AssumeType [[started]] provenType=Promise
 # CHECK-NEXT: Return [[returned]]
 }
 function f1 name="yieldsOnce" flags=[IsGenerator, TakesCallee] captures=[{type=number}] parameters=[{type=anything}] results=[{type=Generator}] {

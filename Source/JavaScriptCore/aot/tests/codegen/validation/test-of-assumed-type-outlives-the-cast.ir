@@ -9,11 +9,11 @@
 # CHECK-NEXT: ValidateCallee [[proven]] validatedType=builtin(ObjectPrototypeToLocaleString)
 # CHECK-NEXT: [[result]]: anything = Call [[proven]],
 # CHECK-NEXT: ValidateType [[result]] validatedType=int
-# CHECK-NEXT: : int = AssumeType [[result]] castType=int
+# CHECK-NEXT: : int = AssumeType [[result]] provenType=int
 # CHECK-LABEL: function f2 name="callsByValue"
 # CHECK: [[byValue]]: 1 = Call {{*}}callees=[f3]
 # CHECK-NEXT: ValidateType [[byValue]] validatedType=1
-# CHECK-NEXT: : 1 = AssumeType [[byValue]] castType=1
+# CHECK-NEXT: : 1 = AssumeType [[byValue]] provenType=1
 # The call becomes direct, its result has the type of the callee's result, and the cast goes.
 # END-LABEL: function f2 name="callsByValue"
 # END-NOT: AssumeType

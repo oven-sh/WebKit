@@ -24,69 +24,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-BitVector findValuesBehindChecks(const Program& program, const Function& function, const CFG& cfg, const BitVector* checksThatTestNothing)
-{
-    BitVector isBehindCheck;
-    isBehindCheck.ensureSize(function.values.size());
-    bool hasCheck = std::ranges::any_of(function.values, [](const Value& value) {
-        return value.opcode == Opcode::Check;
-    });
-    if (!hasCheck)
-        return isBehindCheck;
-    bool hasChanged = false;
-    bool takesFromLaterBlock = false;
-    auto isNoted = [&](ValueID value) {
-        return value && isBehindCheck.get(value.index());
-    };
-    auto note = [&](ValueID value) {
-        hasChanged |= !isBehindCheck.set(value.index());
-    };
-    auto visitParameter = [&](BlockID block, uint32_t index, ValueID parameter) {
-        for (Edge edge : cfg.incomingEdges(block)) {
-            takesFromLaterBlock |= cfg.reversePostOrderIndex(edge.from) >= cfg.reversePostOrderIndex(block);
-            IncomingValue incoming = incomingValueOf(function, edge, index);
-            if (incoming.kind == IncomingValue::Kind::Argument) {
-                if (isNoted(incoming.argument))
-                    note(parameter);
-                continue;
-            }
-            const EdgeResult& result = edgeResultAt(function, incoming.result);
-            bool takesTypeFromTest = isNoted(result.test);
-            if (takesTypeFromTest && !isNoted(result.subject)) {
-                const Value& test = function.at(result.test);
-                if (test.opcode == Opcode::Less || test.opcode == Opcode::LessEq || test.opcode == Opcode::Greater || test.opcode == Opcode::GreaterEq)
-                    takesTypeFromTest = program.typeOf(function, test.operand(result.operandIndex ? 0 : 1)).integers != Range::full();
-            }
-            if (isNoted(result.subject) || takesTypeFromTest)
-                note(parameter);
-        }
-    };
-    auto visitValue = [&](ValueID id) {
-        const Value& value = function.at(id);
-        if (value.opcode == Opcode::Check && !(checksThatTestNothing && checksThatTestNothing->get(id.index())))
-            return note(id);
-        for (uint32_t index = 0; index < value.numberOfOperands(); ++index) {
-            if (isNoted(value.operand(index)))
-                return note(id);
-        }
-    };
-    do {
-        hasChanged = false;
-        for (BlockID id : cfg.reversePostOrder()) {
-            const Block& block = function.at(id);
-            for (uint32_t index = 0; id != entryBlock && index < block.parameters.size(); ++index) {
-                if (!isNoted(block.parameters[index]))
-                    visitParameter(id, index, block.parameters[index]);
-            }
-            for (ValueID value : block.values) {
-                if (!isNoted(value))
-                    visitValue(value);
-            }
-        }
-    } while (hasChanged && takesFromLaterBlock);
-    return isBehindCheck;
-}
-
 namespace {
 
 using Body = ValueFlowBody;
@@ -138,15 +75,6 @@ struct PendingStatement {
 };
 
 constexpr OperandUses inspectsOrReturns { OperandUse::Inspects, OperandUse::Returns };
-
-constexpr OpcodeSet operationsWithoutRule {
-    Opcode::Undefined, Opcode::Null, Opcode::Absent, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String, Opcode::BigInt, Opcode::KeyConstant,
-    Opcode::Parameter, Opcode::GetModuleVariable, Opcode::PutModuleVariable, Opcode::GetEnvironmentField, Opcode::PutEnvironmentField, Opcode::NewClosure,
-    Opcode::CallDirect, Opcode::Results, Opcode::ResultAt, Opcode::CatchValue, Opcode::CatchException, Opcode::Yield,
-    Opcode::LoopHint, Opcode::InitialYield, Opcode::ReportMismatch, Opcode::RecordRequire,
-};
-
-constexpr OpcodeSet operationsCallingValues { Opcode::Call, Opcode::CallList, Opcode::Construct, Opcode::ConstructList, Opcode::SuperConstruct, Opcode::SuperConstructList };
 
 bool carriesProgramValues(OpaqueKind kind)
 {
@@ -241,7 +169,7 @@ public:
     Body reduce()
     {
         addInterface();
-        m_isBehindCheck = findValuesBehindChecks(m_program, m_function, m_cfg);
+        m_isBehindCheck = valuesTypedBehindChecks(m_program, m_function, m_cfg);
         for (BlockID id : m_cfg.reversePostOrder()) {
             const Block& block = m_function.at(id);
             for (uint32_t index = 0; id != entryBlock && index < block.parameters.size(); ++index) {
@@ -672,9 +600,9 @@ private:
         TypeID type = m_function.at(parameter).type;
         switch (result.kind) {
         case EdgeResultKind::NarrowedOperand: {
-            bool restsOnCheck = isBehindCheck(parameter);
-            uint32_t mask = restsOnCheck ? 0 : maskFor(m_function.at(result.subject).type, type);
-            if (restsOnCheck && result.test && result.side == EdgeSide::Taken) {
+            bool parameterIsBehindCheck = isBehindCheck(parameter);
+            uint32_t mask = parameterIsBehindCheck ? 0 : maskFor(m_function.at(result.subject).type, type);
+            if (parameterIsBehindCheck && result.test && result.side == EdgeSide::Taken) {
                 const Value& test = m_function.at(result.test);
                 if (test.opcode == Opcode::TypeTest)
                     mask = maskInside(test.testedType(), ValueFlowMaskKind::Checked);
@@ -687,7 +615,7 @@ private:
                 } else if (test.opcode == Opcode::ToBoolean)
                     mask = maskOfTruthinessTest(result.side);
             }
-            if (restsOnCheck && result.caseIndex)
+            if (parameterIsBehindCheck && result.caseIndex)
                 mask = maskOfCase(terminator, *result.caseIndex);
             if (result.test && result.side == EdgeSide::NotTaken) {
                 const Value& test = m_function.at(result.test);
@@ -699,7 +627,7 @@ private:
                         mask = intersectMasks(mask, maskOutside(m_function.at(other).type));
                     else if (const Value& compared = m_function.at(other); compared.opcode == Opcode::ModuleBuiltin && isObjectKind(m_program.builtins().at(m_program.builtins().canonicalID(compared.builtin())).kind))
                         mask = intersectMasks(mask, maskOutside(m_program.builtins().canonicalID(compared.builtin()), compared.module()));
-                } else if (restsOnCheck && test.opcode == Opcode::ToBoolean)
+                } else if (parameterIsBehindCheck && test.opcode == Opcode::ToBoolean)
                     mask = maskOfTruthinessTest(result.side);
             }
             return addSource(parameter, result.subject, mask);
@@ -716,7 +644,7 @@ private:
     void describeValue(BlockID block, ValueID id)
     {
         const Value& value = m_function.at(id);
-        if (operationsWithoutRule.contains(value.opcode)) {
+        if (flowsWithoutRuleOf(value.opcode)) {
             if (mayThrow(value.opcode))
                 noteHostError(block);
             return describeOperationWithoutRule(block, id, value);
@@ -966,7 +894,7 @@ private:
             at(id).role = Role::Result;
             return;
         }
-        if (operationsCallingValues.contains(value.opcode)) {
+        if (flowRuleOf(value.opcode) == FlowRule::Call) {
             bool namesLayout = value.opcode == Opcode::SuperConstruct || value.opcode == Opcode::SuperConstructList;
             addSite({ ValueFlowSiteOrigin::BuiltinResult, id, 0, namesLayout ? value.layout() : LayoutID(), { } });
             addSite({ ValueFlowSiteOrigin::BuiltinResult, id, 1, { }, { } });
@@ -982,7 +910,7 @@ private:
             return describeConversionToObject(id, value);
         if (value.opcode == Opcode::Check) {
             beginSources(id);
-            addSource(id, value.valueOperand(), maskInside(value.castType(), ValueFlowMaskKind::Expected));
+            addSource(id, value.valueOperand(), maskInside(value.expectedType().predicted(), ValueFlowMaskKind::Expected));
             m_checks.append(id);
             return;
         }
@@ -1143,7 +1071,7 @@ private:
         for (uint32_t field : allocation.fields())
             isListed.set(field);
         for (uint32_t field = 0; field < fields.size(); ++field) {
-            bool hasDeadZone = m_program.at(fields[field].declared.type).primitives & Primitive::Absent;
+            bool hasDeadZone = m_program.at(fields[field].declared.written()).primitives & Primitive::Absent;
             if (hasDeadZone && !isListed.get(field))
                 m_body.seedsOnceReached.append({ NodeName::field(allocation.layout(), field), constantOf(Primitive::Absent), 0 });
         }
@@ -1268,7 +1196,7 @@ private:
         }
         for (uint32_t index = 0; index < m_body.numberOfResults; ++index) {
             connect(returned, NodeName::ofBody(m_body.result(index)));
-            m_body.seedsOnceReached.append({ NodeName::ofBody(m_body.result(index)), constantOfType(m_program.at(m_function.results[index].type)), 0 });
+            m_body.seedsOnceReached.append({ NodeName::ofBody(m_body.result(index)), constantOfType(m_program.at(m_program.provenTypeOf(m_function.results[index]))), 0 });
         }
     }
 
@@ -1774,7 +1702,7 @@ private:
     OperandForm operandFormOf(const Value& operation, uint32_t index, ValueID value)
     {
         OperandForm form = operandFormOf(value);
-        bool isLookedThrough = receiverOf(operation.opcode) == index || (!index && operationsCallingValues.contains(operation.opcode));
+        bool isLookedThrough = receiverOf(operation.opcode) == index || (!index && flowRuleOf(operation.opcode) == FlowRule::Call);
         if (!isLookedThrough || !form.node || form.mask)
             return form;
         const Type& type = typeOf(value);

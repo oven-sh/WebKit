@@ -26,6 +26,10 @@
 
 #include "config.h"
 #include "JSModuleLoader.h"
+
+#if ENABLE(AOT)
+#include "AOTModuleRecord.h"
+#endif
 #include "ProgramExecutable.h"
 
 #include "BuiltinNames.h"
@@ -384,7 +388,7 @@ void JSModuleLoader::fetchSynchronously(JSGlobalObject* globalObject, JSPromise*
 }
 #endif
 
-JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identifier& specifier, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder, const String& referrer)
+JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identifier& specifier, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder, const String& referrer, AbstractModuleRecord* recordInPlaceOfFetch)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -420,6 +424,10 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
         }
     }
 
+    if (!promise && recordInPlaceOfFetch) {
+        promise = JSPromise::create(vm, globalObject->promiseStructure());
+        promise->fulfill(vm, recordInPlaceOfFetch);
+    }
     if (!promise) {
         promise = fetch(globalObject, identifierToJSValue(vm, specifier), referrer, WTF::move(parameters), scriptFetcher);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -508,7 +516,7 @@ JSPromise* JSModuleLoader::requestImportModule(JSGlobalObject* globalObject, con
     RELEASE_AND_RETURN(scope, requestImportModuleForKey(globalObject, resolved, referrer, WTF::move(parameters), WTF::move(scriptFetcher), deferred, referrerAsyncOrder));
 }
 
-JSPromise* JSModuleLoader::requestImportModuleForKey(JSGlobalObject* globalObject, const Identifier& resolvedKey, const Identifier& referrer, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, bool deferred, int64_t referrerAsyncOrder)
+JSPromise* JSModuleLoader::requestImportModuleForKey(JSGlobalObject* globalObject, const Identifier& resolvedKey, const Identifier& referrer, RefPtr<ScriptFetchParameters> parameters, RefPtr<ScriptFetcher> scriptFetcher, bool deferred, int64_t referrerAsyncOrder, AbstractModuleRecord* recordInPlaceOfFetch)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -517,7 +525,7 @@ JSPromise* JSModuleLoader::requestImportModuleForKey(JSGlobalObject* globalObjec
     if (deferred)
         flags.add(ModuleLoadFlag::Deferred);
     // Per "fetch an import() module script graph", the referring script's base URL is the fetch's referrer.
-    JSPromise* promise = loadModule(globalObject, resolvedKey, WTF::move(parameters), WTF::move(scriptFetcher), flags, referrerAsyncOrder, moduleReferrer(referrer));
+    JSPromise* promise = loadModule(globalObject, resolvedKey, WTF::move(parameters), WTF::move(scriptFetcher), flags, referrerAsyncOrder, moduleReferrer(referrer), recordInPlaceOfFetch);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
@@ -990,6 +998,12 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
             if (auto* cyclic = dynamicDowncast<CyclicModuleRecord>(module); cyclic && cyclic->status() == CyclicModuleRecord::Status::New) {
                 // 2.a. Append module to state.[[Visited]].
                 state->appendVisited(vm, cyclic);
+#if ENABLE(AOT)
+                if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(cyclic)) {
+                    compiled->willLoadRequests();
+                    RETURN_IF_EXCEPTION(scope, void());
+                }
+#endif
                 // 2.b. Let requestedModulesCount be the number of elements in module.[[RequestedModules]].
                 size_t requestedModulesCount = module->requestedModules().size();
                 // 2.c. Set state.[[PendingModulesCount]] to state.[[PendingModulesCount]] + requestedModulesCount.
@@ -1022,7 +1036,17 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     // 2.d.iii. Else,
                     // 2.d.iii.1. Perform HostLoadImportedModule(module, request, state.[[HostDefined]], state).
                     unsigned loadedModulesCountBefore = module->loadedModules().size();
-                    JSPromise* promise = hostLoadImportedModule(globalObject, cyclic, request, state, state->scriptFetcher(), true);
+                    bool useImportMap = true;
+#if ENABLE(AOT)
+                    auto* compiled = dynamicDowncast<AOT::ModuleRecord>(cyclic);
+                    useImportMap = !compiled;
+                    uint8_t flagsBefore = compiled ? compiled->willAskHostForRequest() : 0;
+#endif
+                    JSPromise* promise = hostLoadImportedModule(globalObject, cyclic, request, state, state->scriptFetcher(), useImportMap);
+#if ENABLE(AOT)
+                    if (compiled)
+                        compiled->didAskHostForRequest(flagsBefore);
+#endif
                     if (scope.exception()) [[unlikely]] {
                         state->setDrainingInnerLoad(false);
                         return;
@@ -1484,6 +1508,12 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
     if (auto* record = dynamicDowncast<AbstractModuleRecord>(moduleData)) {
         JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
         promise->markAsHandled();
+#if ENABLE(AOT)
+        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(record)) {
+            compiled->didLoad();
+            RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
+        }
+#endif
         scope.release();
         promise->fulfill(vm, record);
         return promise;

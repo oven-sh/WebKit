@@ -109,7 +109,7 @@ Value TestConditions::canonicalize(const Value& test) const
             canonical.setOperand(operandIndex, m_identities.identityOf(operand));
     }
     canonical.type = TypeID();
-    canonical.setExpected(TypeID());
+    canonical.setExpected({ });
     canonical.representation = Representation::Unchosen;
     canonical.setOrigin({ Instruction::noPosition, 0 });
     return canonical;
@@ -188,7 +188,7 @@ TestSiteReporter::TestSiteReporter(FunctionPassContext& context)
 std::optional<Type> TestSiteReporter::expectedPartOf(ValueID operand, uint16_t droppedPrimitives) const
 {
     const Value& value = function().at(operand);
-    TypeID expectedType = value.expectedOrType();
+    TypeID expectedType = value.expectedOrType().predicted();
     if (expectedType == value.type)
         return std::nullopt;
 
@@ -474,7 +474,7 @@ static std::optional<Value> testInFrontOf(TestSiteReporter& reporter, const Valu
 // Behind a test that failed stands the copy of the failed tests, where nothing else is tested either.
 static bool isSurpriseWhereItFails(TestSiteReporter& reporter, const Value& testInFront)
 {
-    Type expected = reporter.types().at(reporter.function().at(testInFront.valueOperand()).expectedOrType()).withoutClassProofs();
+    Type expected = reporter.types().at(reporter.function().at(testInFront.valueOperand()).expectedOrType().predicted()).withoutClassProofs();
     return expected.isSubsetOf(reporter.types().at(testInFront.testedType()), reporter.program());
 }
 

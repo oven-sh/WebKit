@@ -11,13 +11,13 @@ module m0 path="main.js" displayPath="main.js"
 # k = s[k], four times, with s: number[] and k: number
 function f0 name="chainOfReads" parameters=[{type=Array<number>}, {type=number}] results=[{type=number}] {
     v2 = ElemGet v0, v1
-    v3 = Check v2 castType=number
+    v3 = Check v2 expectedType=number
     v4 = ElemGet v0, v3
-    v5 = Check v4 castType=number
+    v5 = Check v4 expectedType=number
     v6 = ElemGet v0, v5
-    v7 = Check v6 castType=number
+    v7 = Check v6 expectedType=number
     v8 = ElemGet v0, v7
-    v9 = Check v8 castType=number
+    v9 = Check v8 expectedType=number
     Return v9
 }
 # PLAN-LABEL: function f0

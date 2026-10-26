@@ -8,8 +8,8 @@ module m0 path="main.js" displayPath="main.js"
 
 function f0 name="added" parameters=[{type=Array<number>}, {type=i32}, {type=number}] results=[{type=number}] {
     v3 = ElemGet v0, v1
-    v4 = AssumeType v3 castType=undefined|number
-    v5 = Check v4 castType=number
+    v4 = AssumeType v3 provenType=undefined|number
+    v5 = Check v4 expectedType=number
     v6 = Add v2, v5
     Return v6
 # CHECK-NOT: TypeTest
@@ -19,8 +19,8 @@ function f0 name="added" parameters=[{type=Array<number>}, {type=i32}, {type=num
 
 function f1 name="usedTwice" parameters=[{type=Array<number>}, {type=i32}] results=[{type=number}] {
     v2 = ElemGet v0, v1
-    v3 = AssumeType v2 castType=undefined|number
-    v4 = Check v3 castType=number
+    v3 = AssumeType v2 provenType=undefined|number
+    v4 = Check v3 expectedType=number
     v5 = Add v4, v4
     Return v5
 # CHECK: = TypeTest v3 testedType=number
@@ -28,15 +28,15 @@ function f1 name="usedTwice" parameters=[{type=Array<number>}, {type=i32}] resul
 
 function f2 name="returned" parameters=[{type=Array<number>}, {type=i32}] results=[{type=anything}] {
     v2 = ElemGet v0, v1
-    v3 = AssumeType v2 castType=undefined|number
-    v4 = Check v3 castType=number
+    v3 = AssumeType v2 provenType=undefined|number
+    v4 = Check v3 expectedType=number
     Return v4
 # CHECK: = TypeTest v3 testedType=number
 }
 
 function f3 name="mayBeAnObject" parameters=[{type=Array}, {type=i32}, {type=number}] results=[{type=number}] {
     v3 = ElemGet v0, v1
-    v4 = Check v3 castType=number
+    v4 = Check v3 expectedType=number
     v5 = Add v2, v4
     Return v5
 # CHECK: = TypeTest v3 testedType=number
@@ -44,8 +44,8 @@ function f3 name="mayBeAnObject" parameters=[{type=Array}, {type=i32}, {type=num
 
 function f4 name="readOfAField" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
     v2 = PropGet v0 key="size"
-    v3 = AssumeType v2 castType=undefined|number
-    v4 = Check v3 castType=number
+    v3 = AssumeType v2 provenType=undefined|number
+    v4 = Check v3 expectedType=number
     v5 = Add v1, v4
     Return v5
 # CHECK: = TypeTest v3 testedType=number
@@ -53,8 +53,8 @@ function f4 name="readOfAField" parameters=[{type=anything}, {type=number}] resu
 
 function f5 name="compared" parameters=[{type=Array<number>}, {type=i32}, {type=number}] results=[{type=boolean}] {
     v3 = ElemGet v0, v1
-    v4 = AssumeType v3 castType=undefined|number
-    v5 = Check v4 castType=number
+    v4 = AssumeType v3 provenType=undefined|number
+    v5 = Check v4 expectedType=number
     v6 = Less v2, v5
     Return v6
 # CHECK: = TypeTest v4 testedType=number

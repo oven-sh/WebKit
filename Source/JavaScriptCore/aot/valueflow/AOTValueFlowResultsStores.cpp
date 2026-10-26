@@ -323,7 +323,7 @@ void StoresByLayout::findReceiversBehindChecks()
         }
         if (hasCheck && hasTypedReceiver) {
             const BitVector* known = m_inputs.bodies().valuesBehindChecks(FunctionID(index));
-            m_valuesBehindChecks[index] = known ? *known : findValuesBehindChecks(program, function, CFG(function));
+            m_valuesBehindChecks[index] = known ? *known : valuesTypedBehindChecks(program, function, CFG(function));
         }
         m_hasChecksNotLookedAt[index] = hasCheck && !hasTypedReceiver;
     });
@@ -710,7 +710,7 @@ uint32_t StoresByLayout::familyDeclaredForReceiverOf(const Writer& writer) const
         return type.layouts.index();
     if (!storesIntoThisOfConstructor(program, writer))
         return UINT32_MAX;
-    const Type& typeOfThis = program.at(function.thisType.type);
+    const Type& typeOfThis = program.at(function.thisType.expected().predicted());
     return typeOfThis.hasOnlyLayouts(program) ? typeOfThis.layouts.index() : UINT32_MAX;
 }
 

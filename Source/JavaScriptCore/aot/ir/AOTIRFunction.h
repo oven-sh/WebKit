@@ -127,7 +127,7 @@ struct Function : FunctionRecord {
         Value& value = values.m_storage.mutableSpan().data()[id.index()];
         m_changes.didEdit();
         if (m_changes.log)
-            m_changes.log->didEdit(id, edits, value.type, value.expectedForTyping());
+            m_changes.log->didEdit(id, edits, value.type, value.expectedForTyping().predicted());
         return value;
     }
     Block& edit(BlockID id, OptionSet<BlockEdit> edits = anyBlockEdit)

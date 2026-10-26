@@ -344,10 +344,10 @@ static BitVector blockSetOf(const Function& function, std::span<const BlockID> b
 
 static ValueID addParameterLike(FunctionPassContext& pass, IRBuilder& builder, BlockID block, ValueID model)
 {
-    TypeID expected = pass.function.at(model).expected();
+    TypeID expected = pass.function.at(model).expected().predicted();
     ValueID parameter = builder.addParameter(block, pass.function.at(model).type);
     if (expected) {
-        pass.function.edit(parameter, ValueEdit::Type).setExpected(expected);
+        pass.function.edit(parameter, ValueEdit::Type).setExpected(ExpectedType(expected));
         pass.analyses.didChangeValues();
     }
     return parameter;
@@ -800,9 +800,9 @@ static FunctionID findGeneratorMethodOpening(FunctionPassContext& pass, ValueID 
         return { };
 
     const Function& method = program.at(plan.member.method);
-    if (method.results.size() != 1 || method.results[0].flags.contains(PositionFlags::IsExpected))
+    if (method.results.size() != 1 || method.results[0].isExpected())
         return { };
-    const Type& made = program.at(method.results[0].type);
+    const Type& made = program.at(*method.results[0].established());
     bool isUnchangedGenerator = made.isSubsetOf(Type::builtinClass(BuiltinClasses::Generator), program) && pristineAspectsProvenBy(made, BuiltinClasses::Generator).contains(PristineAspects::Names);
     return isUnchangedGenerator && hasConstantIteratorMethod(pass, IterationArm { .form = IterationForm::Generator, .builtinClass = BuiltinClasses::Generator }) ? plan.member.method : FunctionID();
 }
@@ -974,7 +974,7 @@ static bool tryNarrowToContentsOfEntry(IterationExpansion& expansion, const ArmS
         TypeID castType = expansion.types.intern(*contents);
         if (expansion.pass->build.validates())
             expansion.builder.append(makeValidateType(result, castType));
-        result = expansion.builder.append(makeAssumeType(result, castType));
+        result = expansion.builder.append(makeAssumeType(result, Proven::byConstruction(castType)));
     }
     return expansion.function.at(result).type != TypeTable::never;
 }
@@ -1465,13 +1465,13 @@ static Function buildSharedFunction(DerivedFunctionInputs& inputs, ASCIILiteral 
     function.kind = FunctionKind::Plain;
     function.role = FunctionRole::OutlinedBody;
     function.length = static_cast<uint32_t>(parameterTypes.size());
-    function.thisType = DeclaredType { .type = TypeTable::anything };
+    function.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
     for (TypeID type : parameterTypes) {
-        function.parameters.append(DeclaredType { .type = type });
+        function.parameters.append(DeclaredType(Proven::byPosition(type)));
         function.derivation.parameterMap.append(ParameterOrigin { });
     }
     for (TypeID type : resultTypes)
-        function.results.append(DeclaredType { .type = type });
+        function.results.append(DeclaredType(Proven::byPosition(type)));
     function.capabilities = initialCapabilitiesOf(function);
 
     IRBuilder builder({ inputs.build, inputs.program, &inputs.flow, nullptr }, function, inputs.types);
@@ -1501,7 +1501,7 @@ Function buildOutlinedIteration(const DerivedFunctionKey& key, DerivedFunctionIn
     switch (static_cast<OutlinedIteration>(key.node)) {
     case OutlinedIteration::AppendIterable:
         return buildSharedFunction(inputs, "appendIterable"_s, { inputs.types.intern(Type::builtinClass(BuiltinClasses::Array)), TypeTable::anything }, { TypeTable::undefined }, [&](IterationExpansion& expansion, Parameters parameters) {
-            expansion.function.edit(parameters[1], ValueEdit::Type).setExpected(inputs.types.intern(iterablesExpectedBy(key, inputs.types)));
+            expansion.function.edit(parameters[1], ValueEdit::Type).setExpected(ExpectedType(inputs.types.intern(iterablesExpectedBy(key, inputs.types))));
             expansion.builder.append(Opcode::AppendSpread, { parameters[0], parameters[1] });
             expansion.finishClose();
         });
@@ -1553,7 +1553,7 @@ static void emitArrayIteratorStep(IterationExpansion& expansion, ValueID iterato
 
     // An array iterator is made for an object and keeps it.
     builder.moveToEndOf(finished.notTaken);
-    ValueID iterated = convertTo(builder, appendFieldRead(JSArrayIterator::Field::IteratedObject), DeclaredType { .type = TypeTable::object });
+    ValueID iterated = convertTo(builder, appendFieldRead(JSArrayIterator::Field::IteratedObject), DeclaredType(Proven::byPosition(TypeTable::object)));
     BlockID merge = expansion.addSiblingBlock();
     ValueID length = builder.addParameter(merge, TypeTable::number);
     Value isTypedArrayView = makeWith(Opcode::HasJSType, { iterated }, &Value::setFirst, CheckedJSType::Int8ArrayType);

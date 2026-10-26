@@ -8,7 +8,7 @@ layout L0 kind=Instance name="Node" constructor=f0 fields=[{key="kind" declared=
 function f0 name="Node" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}] results=[{type=L0}] {
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = AssumeType v3 castType=L0
+    v4 = AssumeType v3 provenType=L0
     PropSet v4, v1 key="kind"
     Return v4
 }

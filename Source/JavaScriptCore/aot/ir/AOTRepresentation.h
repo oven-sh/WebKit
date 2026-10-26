@@ -32,29 +32,7 @@ constexpr bool holdsAnyNaN(Representation representation)
 }
 static_assert(Representation::Double < Representation::DoubleWithPayload && Representation::DoubleWithPayload < Representation::ImpureDouble);
 
-constexpr bool holdsCells(Representation representation)
-{
-    switch (representation) {
-    case Representation::Cell:
-    case Representation::Cell32:
-    case Representation::JSValue:
-    case Representation::LiteralString:
-        return true;
-    case Representation::Unchosen:
-    case Representation::Void:
-    case Representation::Boolean:
-    case Representation::Int32:
-    case Representation::Int64:
-    case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
-    case Representation::OptionalInt64:
-    case Representation::OptionalDouble:
-    case Representation::RawWord:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
+constexpr bool holdsCells(Representation representation) { return holdsCellsOf(representation); }
 
 } } } // namespace JSC::AOT::Typed
 

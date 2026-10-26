@@ -264,12 +264,12 @@ void BodyDecoder::checkConvertedAllocation(const Value& conversion)
     bool isDecoded = operand.index() < m_value.index();
     if (!isDecoded || m_function.at(operand).opcode != Opcode::NewObject)
         return;
-    if (conversion.illTypedCause() != IllTypedCause::None || declared.flags.contains(PositionFlags::IsExpected))
+    if (conversion.illTypedCause() != IllTypedCause::None || declared.isExpected())
         return;
 
     const Reader& reader = m_checker.reader();
     LayoutID allocated = m_function.at(operand).layout();
-    const Type& type = reader.program().at(declared.type);
+    const Type& type = reader.program().at(declared.expected().predicted());
     if (type.anyObject || std::ranges::binary_search(membersOf(reader.program(), type), allocated))
         return;
 

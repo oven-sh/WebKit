@@ -41,7 +41,7 @@ function f2 name="twoInOneBlock" flags=[IsAsync, IsGenerator, TakesCallee] param
 function f3 name="checkBetween" flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] {
     InitialYield @10
     v3 = Await v1 @11
-    v4 = Check v3 castType=number cause=AddedByPass
+    v4 = Check v3 expectedType=number cause=AddedByPass
     v5 = Yield v4 @12
     v6 = ResultAt v5 index=0
     Return v6
@@ -136,7 +136,7 @@ function f10 name="synchronousGenerator" flags=[IsGenerator, TakesCallee] parame
 # CHECK-LABEL: function f14 name="checkBetween"
 # CHECK-NOT: AsyncGeneratorYield
 # CHECK: v3: anything = AwaitBySavingFrame v1, [[driver3]], v0 @11
-# CHECK-NEXT: v4: number = Check v3 castType=number cause=AddedByPass
+# CHECK-NEXT: v4: number = Check v3 expectedType=number cause=AddedByPass
 # CHECK-NEXT: v5{{*}}= YieldBySavingFrame [[driver3]], v4, v0 @12
 # CHECK-NOT: AsyncGeneratorYield
 

@@ -3,7 +3,7 @@
 # Unknown code holds the constructed object, so the unknown object that arrives beside it stands for it as well. It stays listed among what arrives: the check says that it may fail.
 # RUN: valueflow-apply
 # CHECK-LABEL: function f2 name="readsMade"
-# CHECK: = Check v0 castType=undefined|null|L0 cause=MayFail
+# CHECK: = Check v0 expectedType=undefined|null|L0 cause=MayFail
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -25,7 +25,7 @@ function f1 name="Made" module=m0 flags=[HasThis] thisType={type=anything} resul
 }
 function f2 name="readsMade" module=m0 parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Check v0 castType=undefined|null|L0
+    v1 = Check v0 expectedType=undefined|null|L0
     v2 = PropGet v1 key="limit"
     Return v2
 }

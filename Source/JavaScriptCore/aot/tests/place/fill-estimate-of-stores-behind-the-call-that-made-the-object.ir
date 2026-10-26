@@ -22,7 +22,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v2 = CallDirect v1 function=f3
     PutModuleVariable v2 variable=g0
     v4 = CallDirect v2, v1 function=f4
-    v5 = Check v4 castType=L0
+    v5 = Check v4 expectedType=L0
     PropSet v5, v1 key="picked"
     v7 = CallDirect v2, v1 function=f5
     Return

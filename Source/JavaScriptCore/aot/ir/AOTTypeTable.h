@@ -160,7 +160,7 @@ public:
     void didInternKeysThatOperationsSpell() { m_numberOfKeysThatOperationsSpell = m_propertyKeys.size(); }
     bool isSpelledByOperations(PropertyKeyID key) const { return key.index() < m_numberOfKeysThatOperationsSpell; }
 
-    TypeID provenTypeOf(const DeclaredType&) const;
+    ProvenInEveryVersion provenTypeOf(const DeclaredType&) const;
 
     std::optional<TypeID> find(const Type& canonical) const;
     std::optional<PropertyKeyID> find(const PropertyKey&) const;

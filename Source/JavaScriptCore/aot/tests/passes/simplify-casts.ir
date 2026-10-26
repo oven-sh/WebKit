@@ -7,27 +7,27 @@ module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 
 function f0 name="checkOfSubset" parameters=[{type=i32}] results=[{type=number}] {
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     Return v1
 # CHECK-NOT: Check
 }
 
 function f1 name="fallibleCheck" parameters=[{type=anything}] results=[{type=number}] {
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     Return v1
 # CHECK: Check v0
 }
 
 function f2 name="checkThroughUpcast" parameters=[{type=i32}] results=[{type=number}] {
     v1 = Upcast v0 castType=anything
-    v2 = Check v1 castType=number
+    v2 = Check v1 expectedType=number
     Return v2
 # CHECK-NOT: Check
 }
 
 function f3 name="nestedEqualChecks" parameters=[{type=anything}] results=[{type=number}] {
-    v1 = Check v0 castType=number
-    v2 = Check v1 castType=number
+    v1 = Check v0 expectedType=number
+    v2 = Check v1 expectedType=number
     Return v2
 # CHECK: Check v0
 # CHECK-NOT: Check
@@ -41,7 +41,7 @@ function f4 name="upcastToEqualType" parameters=[{type=number}] results=[{type=n
 }
 
 function f5 name="expectedTypeIsRetained" parameters=[{type=number}] results=[{type=number}] {
-    v1 ~ i32 = Check v0 castType=number
+    v1 ~ i32 = Check v0 expectedType=number
     Return v1
 # CHECK-NOT: Check
 # CHECK: Upcast v0
@@ -49,10 +49,10 @@ function f5 name="expectedTypeIsRetained" parameters=[{type=number}] results=[{t
 }
 
 function f6 name="repeatedBelow" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
-    v2 = Check v0 castType=number
+    v2 = Check v0 expectedType=number
     Branch v1 -> taken b1(), notTaken b2()
   b1():
-    v3 = Check v0 castType=number
+    v3 = Check v0 expectedType=number
     Return v3
   b2():
     Return v2
@@ -65,10 +65,10 @@ function f6 name="repeatedBelow" parameters=[{type=anything}, {type=boolean}] re
 function f7 name="repeatedInSiblingBranches" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
     Branch v1 -> taken b1(), notTaken b2()
   b1():
-    v2 = Check v0 castType=number
+    v2 = Check v0 expectedType=number
     Return v2
   b2():
-    v3 = Check v0 castType=number
+    v3 = Check v0 expectedType=number
     Return v3
 # CHECK: b1():
 # CHECK-NEXT: Check v0
@@ -77,10 +77,10 @@ function f7 name="repeatedInSiblingBranches" parameters=[{type=anything}, {type=
 }
 
 function f8 name="repeatedUnderHandler" parameters=[{type=anything}] results=[{type=number}] {
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     Jump -> next b1()
   b1() handler=b3():
-    v2 = Check v0 castType=number
+    v2 = Check v0 expectedType=number
     Jump -> next b2()
   b2():
     Return v2
@@ -98,14 +98,14 @@ function f8 name="repeatedUnderHandler" parameters=[{type=anything}] results=[{t
 
 function f9 name="checkInCoveredBlock" parameters=[{type=anything}] results=[{type=number}] {
   b0(v0: anything) handler=b2():
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     Jump -> next b1()
   b1():
-    v2 = Check v0 castType=number
+    v2 = Check v0 expectedType=number
     Return v2
   b2() role=CatchHandler:
     v3 = CatchValue
-    v4 = Check v0 castType=number
+    v4 = Check v0 expectedType=number
     Return v4
 # CHECK: b0(v0: anything) handler=b2():
 # CHECK: b1():
@@ -115,14 +115,14 @@ function f9 name="checkInCoveredBlock" parameters=[{type=anything}] results=[{ty
 }
 
 function f10 name="accessThroughDominatingCheck" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=L0
+    v1 = Check v0 expectedType=L0
     v2 = PropGet v0 key="x"
     Return v2
 # CHECK: PropGet v1 key="x"
 }
 
 function f11 name="accessToUndeclaredName" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=L0
+    v1 = Check v0 expectedType=L0
     v2 = PropGet v0 key="y"
     Return v2
 # CHECK: PropGet v1 key="y"
@@ -131,7 +131,7 @@ function f11 name="accessToUndeclaredName" parameters=[{type=anything}] results=
 function f12 name="accessNotDominatedByCheck" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
     Branch v1 -> taken b1(), notTaken b2()
   b1():
-    v2 = Check v0 castType=L0
+    v2 = Check v0 expectedType=L0
     Return v2
   b2():
     v3 = PropGet v0 key="x"

@@ -46,7 +46,7 @@ struct FlowBodyCounts {
 FlowBodyCounts applyBodyUpdate(const FlowBodyApplication&);
 void demoteTailCallsWithChecks(const Program&, FunctionID, Function&, TypeArena&, BuildContext&);
 
-Value makeAssumeType(ValueID operand, TypeID castType);
+Value makeAssumeType(ValueID operand, ProvenType);
 Value makeValidateType(ValueID operand, TypeID validatedType);
 Value makeValidateCallee(ValueID callee, TypeID validatedType);
 

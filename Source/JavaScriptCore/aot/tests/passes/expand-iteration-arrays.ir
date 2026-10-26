@@ -155,7 +155,7 @@ function f4 name="sumOfNullableArray" parameters=[{type=undefined|null|Array<num
   b2():
     Return v3
   b3():
-    v8 = Check v7 castType=number
+    v8 = Check v7 expectedType=number
     v9 = Add v3, v8
     Jump -> next b1(v9)
 }

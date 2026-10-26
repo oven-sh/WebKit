@@ -402,8 +402,6 @@ void* resumeAddressAfterStackCheck(const void* returnAddress)
 static_assert(!static_cast<uint8_t>(HandlerType::Catch) && static_cast<uint8_t>(HandlerType::Finally) == 1 && static_cast<uint8_t>(HandlerType::SynthesizedCatch) == 2 && static_cast<uint8_t>(HandlerType::SynthesizedFinally) == 3);
 static_assert(std::endian::native == std::endian::little);
 
-static constexpr unsigned bitsPerType = 2;
-static constexpr uint8_t typeMask = (1 << bitsPerType) - 1;
 static constexpr uint8_t takesExceptionBit = 1 << 0;
 static constexpr uint8_t ignoresValueBit = 1 << 1;
 
@@ -420,9 +418,7 @@ void encodeHandlers(Vector<uint8_t>& bytes, std::span<const SiteHandler> handler
         for (; !handlers.empty() && handlers.front().site == end && handlers.front().codeOffset == target && handlers.front().type == type; handlers = handlers.subspan(1))
             ++end;
         RELEASE_ASSERT(start >= endOfLast && end > start);
-        appendVarint(bytes, start - endOfLast);
-        appendVarint(bytes, end - start - 1);
-        appendVarint(bytes, zigZagEncode(target - targetOfLast) << bitsPerType | static_cast<uint8_t>(type));
+        HandlerRow { .sitesSkipped = start - endOfLast, .furtherSites = end - start - 1, .type = type, .targetChange = target - targetOfLast }.append(bytes);
         endOfLast = end;
         targetOfLast = target;
     }
@@ -435,14 +431,14 @@ std::optional<HandlerRecord> findHandler(std::span<const uint8_t> handlers, Call
     uint64_t endOfLast = 0;
     int64_t target = 0;
     while (cursor < end) {
-        uint64_t start = endOfLast + readVarint(cursor);
-        endOfLast = start + readVarint(cursor) + 1;
-        uint64_t word = readVarint(cursor);
-        target += zigZagDecode(word >> bitsPerType);
+        HandlerRow row = HandlerRow::read(cursor);
+        uint64_t start = endOfLast + row.sitesSkipped;
+        endOfLast = start + row.furtherSites + 1;
+        target += row.targetChange;
         if (site.bits() < start)
             return std::nullopt;
         if (site.bits() < endOfLast)
-            return HandlerRecord { static_cast<uint32_t>(target), static_cast<HandlerType>(word & typeMask) };
+            return HandlerRecord { static_cast<uint32_t>(target), row.type };
     }
     return std::nullopt;
 }
@@ -456,9 +452,7 @@ bool catchesExceptions(const Image& image, uint32_t function)
     const uint8_t* cursor = handlers.data();
     const uint8_t* end = cursor + handlers.size();
     while (cursor < end) {
-        readVarint(cursor);
-        readVarint(cursor);
-        if (HandlerRecord { 0, static_cast<HandlerType>(readVarint(cursor) & typeMask) }.catchesExceptions())
+        if (HandlerRecord { 0, HandlerRow::read(cursor).type }.catchesExceptions())
             return true;
     }
     return false;
@@ -557,13 +551,16 @@ void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites, OwnP
 
     bool hasCheckpoints = !checkpoints.isEmpty();
     bool isInOtherSource = start.source != ofFunctionInFront.source;
-    appendVarint(stream, static_cast<uint64_t>(checkpoints.size() + positions.size()) << 2 | hasCheckpoints << 1 | followsInlineFrames);
-    appendVarint(stream, zigZagEncode(start.line - (isInOtherSource ? 0 : static_cast<int64_t>(ofFunctionInFront.line))) << 1 | isInOtherSource);
-    if (isInOtherSource)
-        appendVarint(stream, zigZagEncode(static_cast<int64_t>(start.source) - ofFunctionInFront.source));
-    appendVarint(stream, sites.positions[0].column);
-    if (hasCheckpoints)
-        appendVarint(stream, count);
+    PositionsHead {
+        .followsInlineFrames = followsInlineFrames,
+        .hasCheckpoints = hasCheckpoints,
+        .size = checkpoints.size() + positions.size(),
+        .isInOtherSource = isInOtherSource,
+        .lineChange = start.line - (isInOtherSource ? 0 : static_cast<int64_t>(ofFunctionInFront.line)),
+        .sourceChange = static_cast<int64_t>(start.source) - ofFunctionInFront.source,
+        .column = sites.positions[0].column,
+        .count = hasCheckpoints ? count : 0,
+    }.append(stream);
     stream.appendVector(checkpoints);
     stream.appendVector(positions);
 }
@@ -571,21 +568,15 @@ void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites, OwnP
 static PositionsEntry readEntry(const uint8_t*& cursor, OwnPosition& ofFunctionInFront)
 {
     PositionsEntry entry;
-    uint64_t sizeAndFlags = readVarint(cursor);
-    uint64_t lineWord = readVarint(cursor);
-    entry.start.source = ofFunctionInFront.source;
-    entry.start.line = ofFunctionInFront.line;
-    if (lineWord & 1) {
-        entry.start.source = static_cast<uint32_t>(ofFunctionInFront.source + zigZagDecode(readVarint(cursor)));
-        entry.start.line = 0;
-    }
-    entry.start.line += zigZagDecode(lineWord >> 1);
-    entry.start.column = static_cast<int64_t>(readVarint(cursor));
-    entry.followsInlineFrames = sizeAndFlags & 1;
-    if (sizeAndFlags & 2)
-        entry.count = readVarint(cursor);
+    PositionsHead head = PositionsHead::read(cursor);
+    entry.start.source = static_cast<uint32_t>(ofFunctionInFront.source + head.sourceChange);
+    entry.start.line = (head.isInOtherSource ? 0 : ofFunctionInFront.line) + head.lineChange;
+    entry.start.column = head.column;
+    entry.followsInlineFrames = head.followsInlineFrames;
+    if (head.hasCheckpoints)
+        entry.count = head.count;
     entry.sites = cursor;
-    entry.end = cursor + (sizeAndFlags >> 2);
+    entry.end = cursor + head.size;
     cursor = entry.end;
     ofFunctionInFront = { static_cast<uint32_t>(entry.start.line), entry.start.source };
     return entry;

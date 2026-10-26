@@ -13,7 +13,7 @@ function f0 name="proofOfSentValue" flags=[IsAsync, IsGenerator, TakesCallee] pa
     v4 = Yield v3 @12
     v5 = ResultAt v4 index=0
     ValidateType v5 validatedType=undefined|int
-    v7 = AssumeType v5 castType=undefined|int
+    v7 = AssumeType v5 provenType=undefined|int
     v8 = ResultAt v4 index=1
     Switch v8 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
   b1():
@@ -30,7 +30,7 @@ function f1 name="readWhereArmsMeet" flags=[IsAsync, IsGenerator, TakesCallee] p
     v3 = Await v1 @11
     v4 = Yield v3 @12
     v5 = ResultAt v4 index=0
-    v6 = AssumeType v5 castType=undefined|int
+    v6 = AssumeType v5 provenType=undefined|int
     v7 = ResultAt v4 index=1
     Switch v7 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
   b1():
@@ -46,7 +46,7 @@ function f2 name="noAwaitInFront" flags=[IsAsync, IsGenerator, TakesCallee] para
     InitialYield @10
     v3 = Yield v1 @12
     v4 = ResultAt v3 index=0
-    v5 = AssumeType v4 castType=undefined|int
+    v5 = AssumeType v4 provenType=undefined|int
     v6 = ResultAt v3 index=1
     Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
   b1():
@@ -61,7 +61,7 @@ function f3 name="castOfProof" flags=[IsAsync, IsGenerator, TakesCallee] paramet
     v3 = Await v1 @11
     v4 = Yield v3 @12
     v5 = ResultAt v4 index=0
-    v6 = AssumeType v5 castType=undefined|int
+    v6 = AssumeType v5 provenType=undefined|int
     v7 = Upcast v6 castType=undefined|number
     v8 = ResultAt v4 index=1
     Switch v8 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
@@ -79,11 +79,11 @@ function f3 name="castOfProof" flags=[IsAsync, IsGenerator, TakesCallee] paramet
 # CHECK-NEXT: Throw v5
 # CHECK-NEXT: b2() frequency=Rare:
 # CHECK-NEXT: ValidateType v5 validatedType=undefined|int
-# CHECK-NEXT: [[returned0]]: undefined|int = AssumeType v5 castType=undefined|int
+# CHECK-NEXT: [[returned0]]: undefined|int = AssumeType v5 provenType=undefined|int
 # CHECK-NEXT: Return [[returned0]]
 # CHECK-NEXT: b3():
 # CHECK-NEXT: ValidateType v5 validatedType=undefined|int
-# CHECK-NEXT: [[sent0]]: undefined|int = AssumeType v5 castType=undefined|int
+# CHECK-NEXT: [[sent0]]: undefined|int = AssumeType v5 provenType=undefined|int
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4():
 # CHECK-NEXT: Return [[sent0]]
@@ -97,23 +97,23 @@ function f3 name="castOfProof" flags=[IsAsync, IsGenerator, TakesCallee] paramet
 # CHECK: Return v6
 # CHECK: v4{{*}}= AsyncGeneratorYield {{*}}, v1, v0 @12
 # CHECK-NEXT: v5: anything = ResultAt v4
-# CHECK-NEXT: v6: undefined|int = AssumeType v5 castType=undefined|int
+# CHECK-NEXT: v6: undefined|int = AssumeType v5 provenType=undefined|int
 
 # CHECK-LABEL: function f6 name="noAwaitInFront"
 # CHECK: Throw v5
 # CHECK: v3{{*}}= YieldBySavingFrame {{*}}, v1, v0 @12
 # CHECK-NEXT: v4: anything = ResultAt v3
-# CHECK-NEXT: v5: undefined|int = AssumeType v4 castType=undefined|int
+# CHECK-NEXT: v5: undefined|int = AssumeType v4 provenType=undefined|int
 
 # CHECK-LABEL: function f7 name="castOfProof"
 # CHECK: b1() frequency=Rare:
 # CHECK-NEXT: Throw v5
 # CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: [[proof3]]: undefined|int = AssumeType v5 castType=undefined|int
+# CHECK-NEXT: [[proof3]]: undefined|int = AssumeType v5 provenType=undefined|int
 # CHECK-NEXT: {{*}}= Upcast [[proof3]] castType=undefined|number
 # CHECK-NEXT: Return [[proof3]]
 # CHECK-NEXT: b3():
-# CHECK-NEXT: [[other3]]: undefined|int = AssumeType v5 castType=undefined|int
+# CHECK-NEXT: [[other3]]: undefined|int = AssumeType v5 provenType=undefined|int
 # CHECK-NEXT: [[cast3]]{{*}}= Upcast [[other3]] castType=undefined|number
 # CHECK-NEXT: Return [[cast3]]
 # CHECK: v4{{*}}= AsyncGeneratorYield {{*}}, v1, v0 @12

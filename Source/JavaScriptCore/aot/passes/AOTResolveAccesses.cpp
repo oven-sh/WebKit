@@ -290,7 +290,7 @@ static void finishRewrittenAccess(FunctionPassContext& context, const ValueSite&
 {
     Value& value = context.function.edit(site.value);
     value.type = resultTypeOf(context.program, context.function, value, context.types, &context.typingMemo);
-    value.setExpected(expectedTypeOf(context.program, context.function, value, context.types, &context.typingMemo));
+    value.setExpected(ExpectedType(expectedTypeOf(context.program, context.function, value, context.types, &context.typingMemo)));
     checkRewrite(context, site, replaced);
 }
 
@@ -389,9 +389,9 @@ void AccessRewriter::rewrite(const NamedAccessSite& site, const AccessOperands& 
         RELEASE_ASSERT(plan.operation == Opcode::PutModuleVariable || plan.operation == Opcode::GetModuleVariable);
         // A variable whose type flow has not narrowed keeps the mark of its dead zone in that type, though every read may be proven to come after a store. Whoever uses the read takes a value of the language.
         bool canObserveDeadZone = plan.operation != Opcode::PutModuleVariable && variable.initialization == VariableInitialization::Uninitialized
-            && (variable.flow.initialization == InitializationState::Unknown || (!variable.owner && (program.at(variable.declared.type).primitives & Primitive::Absent)));
+            && (variable.flow.initialization == InitializationState::Unknown || (!variable.owner && (program.at(variable.declared.written()).primitives & Primitive::Absent)));
         if (!canObserveDeadZone) {
-            ASSERT(plan.operation != Opcode::PutModuleVariable || variable.declared.flags.contains(PositionFlags::IsExpected) || program.typeOf(function, operands.stored).isSubsetOf(program.at(variable.declared.type), program));
+            ASSERT(plan.operation != Opcode::PutModuleVariable || variable.declared.isExpected() || program.typeOf(function, operands.stored).isSubsetOf(program.at(variable.declared.written()), program));
             value->become(plan.operation);
             value->setVariable(variableID);
             if (plan.operation == Opcode::PutModuleVariable)
@@ -1570,7 +1570,7 @@ void rewriteTestedPropertyAccess(TestSiteRewriter& rewriter)
         TypeID castType = types.intern(narrowed);
         if (context.build.validates())
             rewriter.insertBeforeUse(makeValidateType(operands.stored, castType));
-        operands.stored = rewriter.insertBeforeUse(makeAssumeType(operands.stored, castType));
+        operands.stored = rewriter.insertBeforeUse(makeAssumeType(operands.stored, Proven::byRulesWithoutChecks(castType)));
         plan.storedValueFits = true;
     }
 
@@ -1808,7 +1808,7 @@ void SiteExpansion::finishArm(ValueID result)
     }
 
     RELEASE_ASSERT(result && m_expansion.results.size() == 1);
-    ValueID converted = convertTo(m_builder, result, DeclaredType { .type = m_original.type });
+    ValueID converted = convertTo(m_builder, result, DeclaredType(Proven::byPosition(m_original.type)));
     if (function().at(converted).type == TypeTable::never) {
         finishArmAsUnreachable();
         return;
@@ -1831,7 +1831,7 @@ void SiteExpansion::finishArmWithReturn(ValueID result)
         function().edit(result, ValueEdit::Definition).isTailCall = false;
         m_context.analyses.didChangeValues();
     } else
-        result = convertTo(m_builder, result, DeclaredType { .type = m_original.type });
+        result = convertTo(m_builder, result, DeclaredType(Proven::byPosition(m_original.type)));
     if (function().at(result).type == TypeTable::never) {
         finishArmAsUnreachable();
         return;
@@ -1917,7 +1917,7 @@ static PropertyAccessPlan planOnLayouts(const FunctionPassContext& context, cons
 
 static const Type* findExpectedType(const Program& program, const Function& function, ValueID id)
 {
-    TypeID expected = function.at(id).expected();
+    TypeID expected = function.at(id).expected().predicted();
     return expected ? &program.at(expected) : nullptr;
 }
 
@@ -2131,7 +2131,7 @@ static bool isUsedAsNumber(FunctionPassContext& context, ValueID element)
         if (use.kind != Use::Kind::Operand)
             continue;
         const Value& user = function.at(use.user);
-        if (user.opcode == Opcode::Upcast && isUsedAsNumber(context, use.user))
+        if (isCastThatProvesNothing(user.opcode) && isUsedAsNumber(context, use.user))
             return true;
         if (familyOf(user.opcode) != OperationFamily::Operator)
             continue;
@@ -2160,7 +2160,7 @@ static bool holdsNumbersByUse(FunctionPassContext& context, ValueID receiver, co
 
 static bool isExpectedToHoldNumbers(FunctionPassContext& context, ValueID receiver, ValueID narrowestName, const BitVector& isInLoop)
 {
-    TypeID expected = context.function.at(narrowestName).expected();
+    TypeID expected = context.function.at(narrowestName).expected().predicted();
     if (!expected)
         return holdsNumbersByUse(context, receiver, isInLoop);
     const Type& type = context.types.at(expected);

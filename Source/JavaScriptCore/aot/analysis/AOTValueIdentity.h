@@ -52,7 +52,7 @@ inline bool leavesDeadZoneBehind(const Program& program, const Function& functio
 {
     if (value.opcode == Opcode::CheckInitialized)
         return true;
-    return value.opcode == Opcode::AssumeType && !(program.at(value.castType()).primitives & Primitive::Absent) && program.typeOf(function, value.valueOperand()).primitives & Primitive::Absent;
+    return value.opcode == Opcode::AssumeType && !(program.at(value.provenType()).primitives & Primitive::Absent) && program.typeOf(function, value.valueOperand()).primitives & Primitive::Absent;
 }
 
 class CastChain {

@@ -128,7 +128,7 @@ function f12 name="returnsWholeNumber" parameters=[{type=anything}] results=[{ty
 # CHECK: stub ReturnMisfit
 function f13 name="testsBehindCasts" parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame] {
     v1 = CallDirect v0 function=f12
-    v2 = AssumeType v1 castType=number
+    v2 = AssumeType v1 provenType=number
     v3 = Upcast v2 castType=undefined|number
     v4 = TypeTest v3 testedType=i32
     TestAndBranch v4 -> taken b1(| 0), notTaken b2()

@@ -1039,7 +1039,7 @@ static PassOutcome expandStringify(FunctionPassContext& context, Emission& emiss
         BuiltinCallStamps stamps { original.expectedResult(), original.accessSite(), original.allocationSite() };
         result = builder.append(makeBuiltinCall(textFormCall->overload, BuiltinCallForm::Whole, passedOperands, stamps));
     }
-    builder.endExpansion(expansion, convertTo(builder, result, DeclaredType { .type = original.type }));
+    builder.endExpansion(expansion, convertTo(builder, result, DeclaredType(Proven::byPosition(original.type))));
 
     builder.moveToEndOf(noText);
     builder.append(Opcode::StringBuilderDiscard, { stringBuilder });
@@ -1566,7 +1566,7 @@ static PassOutcome defineFieldsOfMergedLiterals(FunctionPassContext& context, IR
     for (size_t index = 0; index < literals.size(); ++index) {
         builder.moveToEndOf(arms[index]);
         for (size_t field = 0; field < literals[index]->properties.size(); ++field, ++passed) {
-            ValueID held = builder.append(makeAssumeType(passed->first, passed->second));
+            ValueID held = builder.append(makeAssumeType(passed->first, Proven::byConstruction(passed->second)));
             builder.append(makeDefinitionOfProperty(target, literals[index]->properties[field].first, held));
         }
         endArm();
@@ -1844,7 +1844,7 @@ static void expandDataAt(Rewrite& rewrite, ProgramPoint point)
                 }
                 // The field that takes an array may have been narrowed to what flow has proven of that very array.
                 ValueID made = insert(WTF::move(aggregate));
-                addChild(rewrite, openNodes.last(), stamp.type ? insert(makeAssumeType(made, stamp.type)) : made, stampOf, insert);
+                addChild(rewrite, openNodes.last(), stamp.type ? insert(makeAssumeType(made, Proven::byConstruction(stamp.type))) : made, stampOf, insert);
             }
         });
     }
@@ -1852,7 +1852,7 @@ static void expandDataAt(Rewrite& rewrite, ProgramPoint point)
 
     replacement.setOrigin(origin);
     replacement.type = resultTypeOf(rewrite.program, rewrite.function, replacement, rewrite.context.types);
-    replacement.setExpected(expectedTypeOf(rewrite.program, rewrite.function, replacement, rewrite.context.types));
+    replacement.setExpected(ExpectedType(expectedTypeOf(rewrite.program, rewrite.function, replacement, rewrite.context.types)));
     rewrite.edit(id) = WTF::move(replacement);
 }
 

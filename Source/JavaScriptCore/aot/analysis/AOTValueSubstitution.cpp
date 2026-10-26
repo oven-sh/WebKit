@@ -21,7 +21,7 @@ static bool hasTypesOf(const Function& function, ValueID replaced, ValueID repla
 {
     const Value& from = function.at(replaced);
     const Value& to = function.at(replacement);
-    if (from.type != to.type || from.expectedForTyping() != to.expectedForTyping() || opcodesWithIndirectUsers.contains(from.opcode) || opcodesWithIndirectUsers.contains(to.opcode))
+    if (from.type != to.type || from.expectedForTyping().predicted() != to.expectedForTyping().predicted() || opcodesWithIndirectUsers.contains(from.opcode) || opcodesWithIndirectUsers.contains(to.opcode))
         return false;
     // The user may still be typed from the type that the replaced value had before.
     const ChangeLog* log = function.changeLog();
@@ -91,7 +91,7 @@ void becomeUndefined(Function& function, ValueID id)
     Value& value = function.edit(id);
     value.become(Opcode::Undefined);
     value.type = TypeTable::undefined;
-    value.setExpected(TypeID());
+    value.setExpected({ });
 }
 
 void ValueSubstitution::replace(ValueID from, ValueID to)
@@ -127,6 +127,14 @@ void ValueSubstitution::apply(Function& function, FunctionAnalyses* analyses)
     RELEASE_ASSERT(!analyses || &analyses->function() == &function);
     if (isEmpty())
         return;
+
+    // A check goes for a value of which as much is proven. To take it away without a proof is for expectInsteadOfChecking().
+    for (uint32_t from = 0; analyses && from < m_replacements.size() && from < function.values.size(); ++from) {
+        if (m_replacements[from] == ValueID(from) || function.values[from].opcode != Opcode::Check)
+            continue;
+        const Program& program = analyses->context().program;
+        RELEASE_ASSERT(program.typeOf(function, resolve(ValueID(from))).isSubsetOf(program.typeOf(function, ValueID(from)), program));
+    }
 
     auto rewrite = [&](ValueID& value) {
         value = resolve(value);

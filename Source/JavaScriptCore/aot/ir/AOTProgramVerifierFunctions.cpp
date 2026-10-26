@@ -37,7 +37,7 @@ bool isSentByFrontEnd(FunctionRole role)
 
 bool isUntypedPosition(const DeclaredType& declared)
 {
-    return declared == DeclaredType { .type = TypeTable::anything };
+    return declared == DeclaredType(Proven::byPosition(TypeTable::anything));
 }
 
 bool createsGenerators(const Function& function)
@@ -57,7 +57,7 @@ bool hasValidSignature(const Function& function)
 
 bool canCrossCalls(const Program& program, const DeclaredType& declared)
 {
-    std::optional<OpaqueKind> opaque = program.at(declared.type).opaque;
+    std::optional<OpaqueKind> opaque = program.at(declared.written()).opaque;
     return !opaque || !isFunctionLocal(*opaque);
 }
 

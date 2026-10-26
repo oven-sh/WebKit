@@ -327,14 +327,13 @@ static bool expectOperandTypesOfFirstOverload(FunctionPassContext& context)
     for (unsigned index = 0; index < function.numberOfEntryParameters(); ++index) {
         std::optional<BuiltinOperand> operand = builtinOperandOf(function, index);
         DeclaredType* declared = function.declaredEntryParameter(index);
-        if (!operand || !declared || declared->type != TypeTable::anything || declared->flags.contains(PositionFlags::IsInt32Promise))
+        if (!operand || !declared || declared->written() != TypeTable::anything || declared->has(PositionFlags::IsInt32Promise))
             continue;
         TypeID accepted = context.types.intern(parameterTypeOfOverload(program, overload, *operand));
-        TypeID expected = context.types.intersectionOf(declared->type, accepted);
-        if (expected == TypeTable::never || expected == declared->type)
+        TypeID expected = context.types.intersectionOf(TypeTable::anything, accepted);
+        if (expected == TypeTable::never || expected == TypeTable::anything)
             continue;
-        declared->type = expected;
-        declared->flags.add(PositionFlags::IsExpected);
+        declared->expect(ExpectedType(expected));
         changed.append(entryParameters[index]);
     }
     if (changed.isEmpty())

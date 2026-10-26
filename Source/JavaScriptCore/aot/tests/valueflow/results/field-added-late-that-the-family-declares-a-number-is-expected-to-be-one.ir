@@ -23,14 +23,14 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 function f1 name="mark" parameters=[{type=L0|L1 flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything, v1: anything):
-    v2 = Check v0 castType=L0|L1
-    v3 = Check v1 castType=number
+    v2 = Check v0 expectedType=L0|L1
+    v3 = Check v1 expectedType=number
     PropSet v2, v3 key="marked" mode=Strict
     Return
 }
 function f2 name="isMarked" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Check v0 castType=L0
+    v1 = Check v0 expectedType=L0
     v2 = PropGet v1 key="marked"
     Return v2
 }

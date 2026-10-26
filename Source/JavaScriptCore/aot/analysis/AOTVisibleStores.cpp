@@ -466,7 +466,7 @@ public:
             return;
         const Function& function = m_program.at(callee);
         const DeclaredType* declared = function.declaredEntryParameter(function.firstParameterIndex() + parameter);
-        if (declared && declared->type == TypeTable::number)
+        if (declared && declared->written() == TypeTable::number)
             part.numbersPassedOtherTypes.append(nodeOfParameter(callee, parameter));
     }
 
@@ -746,7 +746,7 @@ public:
 
     StoreSource sourceOf(ValueID id) const { return id ? m_sources[id.index()] : StoreSource(StoredKind::Other); }
     const TypeFacts& typeFactsOf(ValueID id) const { return m_graph.factsOf(m_function.at(id).type); }
-    LayoutSetID expectedLayoutsOf(ValueID id) const { return m_graph.factsOf(m_function.at(id).expectedOrType()).layouts; }
+    LayoutSetID expectedLayoutsOf(ValueID id) const { return m_graph.factsOf(m_function.at(id).expectedOrType().predicted()).layouts; }
     Argument argumentOf(ValueID id) const { return { sourceOf(id), id && typeFactsOf(id).isInt32 }; }
     void connect(StoreSource from, Node to) { m_graph.connect(m_part, from, to); }
 

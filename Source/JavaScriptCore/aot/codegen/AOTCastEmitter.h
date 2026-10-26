@@ -19,6 +19,7 @@ public:
     }
 
     void generateUpcast(const ValueContext& value) { define(value, get(value->valueOperand())); }
+    void generateExpect(const ValueContext& value) { define(value, get(value->valueOperand())); }
     void generateNarrowByField(const ValueContext& value) { define(value, get(value->valueOperand())); }
     void generateAssumeType(const ValueContext&);
     void generateReportMismatch(const ValueContext&);

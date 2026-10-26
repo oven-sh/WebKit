@@ -222,7 +222,7 @@ static bool canBeCreatedOnDemand(const Program& program, const Value& closure)
     if (isConstructorOfClass || callee.captures.size() > 1 || namesClosureOfTable(program, closure))
         return false;
     if (!callee.captures.isEmpty()) {
-        const Type& captured = program.at(callee.captures[0].type);
+        const Type& captured = program.at(callee.captures[0].written());
         if (captured.environment && captured.primitives)
             return false;
     }
@@ -234,7 +234,7 @@ static ClosureDeferral deferralFor(const Program& program, FunctionID function)
     const Function& callee = program.at(function);
     if (callee.captures.isEmpty())
         return ClosureDeferral::CapturesNothing;
-    return program.at(callee.captures[0].type).environment ? ClosureDeferral::CapturesEnvironment : ClosureDeferral::CapturesObject;
+    return program.at(callee.captures[0].written()).environment ? ClosureDeferral::CapturesEnvironment : ClosureDeferral::CapturesObject;
 }
 
 static bool createsValueWithoutRunningCode(const Value& value)
@@ -1284,13 +1284,13 @@ struct DeferralAnalysis {
             const Layout& layout = program.layouts[index];
             TypeID type;
             if (layout.flow.closureEnvironmentField)
-                type = layout.fields[*layout.flow.closureEnvironmentField].declared.type;
+                type = layout.fields[*layout.flow.closureEnvironmentField].declared.written();
             bool hasSeveralTypes = false;
             for (uint32_t field = 0; field < layout.fields.size(); ++field) {
                 const FieldState& state = stateOf({ LayoutID(index), field });
                 if (!defersOverEnvironment(state))
                     continue;
-                TypeID captured = program.at(state.function).captures[0].type;
+                TypeID captured = program.at(state.function).captures[0].written();
                 hasSeveralTypes |= type && type != captured;
                 type = captured;
             }
@@ -1314,7 +1314,7 @@ struct DeferralAnalysis {
                 continue;
             const Layout& layout = program.at(candidate.layout);
             std::optional<uint32_t> existingField = layout.flow.closureEnvironmentField;
-            environmentFields.append({ candidate.layout, existingField.value_or(static_cast<uint32_t>(layout.fields.size())), program.at(state.function).captures[0].type, !existingField });
+            environmentFields.append({ candidate.layout, existingField.value_or(static_cast<uint32_t>(layout.fields.size())), program.at(state.function).captures[0].written(), !existingField });
         }
         AOT::sort(environmentFields, { }, &ClosureEnvironmentField::layout);
         removeRepeatedElements(environmentFields, [](const ClosureEnvironmentField& a, const ClosureEnvironmentField& b) {
@@ -1499,7 +1499,7 @@ static void rewriteClosureFields(const AnalysisContext& context, const DeferralA
         if (!mayFindSlotEmpty)
             read.setHoldsDeclaredType(previous.opcode == Opcode::GetSlot && previous.holdsDeclaredType());
         setResultType(id, read, previous.type);
-        read.setExpected(expectedTypeOf(program, function, read, types));
+        read.setExpected(ExpectedType(expectedTypeOf(program, function, read, types)));
     };
 
     auto hoist = [&](auto& self, ValueID id) -> void {
@@ -1729,7 +1729,7 @@ static void applyDeferrals(ProgramEditor& editor, BuildContext& build, const Def
         if (!entry.isNew)
             continue;
         Field field;
-        field.declared = DeclaredType { .type = entry.type, .flags = { PositionFlags::IsFromCompiler } };
+        field.declared = DeclaredType(Proven::byPosition(entry.type)).with(PositionFlags::IsFromCompiler);
         field.flags = { FieldFlags::IsRequired, FieldFlags::IsHidden, FieldFlags::IsAddedLate };
         field.flow.location.initialization = InitializationState::SetAtCreation;
         field.flow.occupancy = Occupancy::AlwaysFilled;

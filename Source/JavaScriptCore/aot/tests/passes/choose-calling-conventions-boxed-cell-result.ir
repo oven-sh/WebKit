@@ -30,7 +30,7 @@ function f2 name="returnsNumber" parameters=[{type=number}] results=[{type=numbe
     v1 = CallDirect v0 function=f3
     ReturnCall v1 casts=[{declared={type=number} resolution=Assume}] requirement=Allowed
 # CHECK: v1: number|L0 = CallDirect v0 function=f3 @0 tail
-# CHECK-NEXT: [[number]]: number = AssumeType v1 castType=number
+# CHECK-NEXT: [[number]]: number = AssumeType v1 provenType=number
 # CHECK-NEXT: Return [[number]]
 }
 

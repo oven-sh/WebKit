@@ -17,7 +17,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v6 = PropGet v0 key="keep" [isFreeName]
     v7 = Call v6, -, v4
     Return
-# CHECK: v2: number = Check v1 castType=number
+# CHECK: v2: number = Check v1 expectedType=number
 # CHECK-NEXT: v3: number = Add v2, v2
 # CHECK-NEXT: PutModuleVariable v3 variable=g1
 # CHECK-NEXT: = NewClosure function=f1
@@ -25,6 +25,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 function f1 name="readsCapture" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
     Return v0
 # CHECK: [[read]]: anything ~ number = GetModuleVariable variable=g1
-# CHECK-NEXT: [[proven]]: number|string|bigint = AssumeType [[read]] castType=number|string|bigint
+# CHECK-NEXT: [[proven]]: number|string|bigint = AssumeType [[read]] provenType=number|string|bigint
 # CHECK-NEXT: Return [[proven]]
 }

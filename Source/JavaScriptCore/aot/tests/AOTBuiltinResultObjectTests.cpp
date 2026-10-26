@@ -434,9 +434,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=69 results=[{type=anything}] {
-    v1 = Check v0 castType=object
+    v1 = Check v0 expectedType=object
     v2 = GetInternalField v1
-    v3 = Check v2 castType=i32
+    v3 = Check v2 expectedType=i32
     v4 = Integer integer=-1
     v5 = StrictEq v3, v4
     Branch v5 -> taken b1(), notTaken b2()
@@ -447,7 +447,7 @@ function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeF
     Return v8
   b2():
     v9 = GetInternalField v1 index=1
-    v10 = Check v9 castType=Array<anything>
+    v10 = Check v9 expectedType=Array<anything>
     v11 = PropGet v10 key="length"
     v12 = ToLength v11
     v13 = Less v3, v12

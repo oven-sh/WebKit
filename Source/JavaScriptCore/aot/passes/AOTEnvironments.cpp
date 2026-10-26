@@ -17,6 +17,7 @@
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperands.h"
+#include "AOTFlowApply.h"
 #include "AOTFlowResults.h"
 #include "AOTFrameAllocation.h"
 #include "AOTFrameAllocationPointers.h"
@@ -24,6 +25,7 @@
 #include "AOTFunctionEditing.h"
 #include "AOTHeldOperands.h"
 #include "AOTIRBuilder.h"
+#include "AOTPredictedValues.h"
 #include "AOTKnownValue.h"
 #include "AOTLargeVectors.h"
 #include "AOTLiveness.h"
@@ -228,11 +230,11 @@ static PromotionScan scanForPromotion(const Program& program, const FlowResults&
         scan.suppliers.append(WTF::move(supplier));
     };
 
-    addUse(function.thisType.type);
+    addUse(function.thisType.written());
     for (const DeclaredType& parameter : function.parameters)
-        addUse(parameter.type);
+        addUse(parameter.written());
     for (const DeclaredType& result : function.results)
-        addUse(result.type);
+        addUse(result.written());
 
     bool holdsEnvironment = function.values.containsIf([&](const Value& value) {
         return !!types.environmentOf(value.type);
@@ -326,17 +328,21 @@ static Variable createFieldVariable(const Program& program, ModuleID module, con
     return variable;
 }
 
-// Where the type of the value rests on a check, the generic version of the function stores what it makes of the value that the check has turned away.
-static Variable createValueVariable(const Function& function, ValueID id, const DeclaredType& capture, bool restsOnCheck)
+// Where the type of the value rests on a check, the generic version of the function stores what the check has turned away.
+static Variable createValueVariable(const Function& function, const PredictedValues& predicted, ValueID id, const DeclaredType& capture)
 {
     const Value& value = function.at(id);
     Variable variable;
     variable.module = function.module;
     // A position has one type. What is expected of a value is worth keeping where nothing is proven of it.
-    bool isOnlyExpected = value.type == TypeTable::anything && value.expected();
-    variable.declared.type = isOnlyExpected ? value.expected() : value.type;
-    if (isOnlyExpected || restsOnCheck || capture.flags.contains(PositionFlags::IsExpected))
-        variable.declared.flags.add(PositionFlags::IsExpected);
+    bool isOnlyExpected = value.type == TypeTable::anything && value.expected().predicted();
+    std::optional<ProvenInEveryVersion> proven = Proven::byRules(predicted, id, value.type).inEveryVersion();
+    if (isOnlyExpected)
+        variable.declared.expect(value.expected());
+    else if (!proven || capture.isExpected())
+        variable.declared.expect(ExpectedType(value.type));
+    else
+        variable.declared.establish(*proven);
     variable.flags.add(VariableFlags::IsImmutable);
     variable.flow.writers = WriterState::AllKnown;
     variable.flow.stores = StoreCount::AtMostOnce;
@@ -464,10 +470,10 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
     });
     addUsesIn(program.layouts.size(), [&](unsigned index, const auto& addUse) {
         for (const Field& field : program.layouts[index].fields)
-            addUse(field.declared.type);
+            addUse(field.declared.written());
     });
     addUsesIn(program.variables.size(), [&](unsigned index, const auto& addUse) {
-        addUse(program.variables[index].declared.type);
+        addUse(program.variables[index].declared.written());
     });
     for (const EvalScope& scope : program.evalScopes) {
         for (const EvalBinding& binding : scope.bindings) {
@@ -479,7 +485,7 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
         if (!hasFixedCaptures(FunctionID(index)))
             return;
         for (const DeclaredType& capture : program.functions[index].captures)
-            addUse(capture.type);
+            addUse(capture.written());
     });
 
     // An environment of which there is one instance at most.
@@ -504,7 +510,7 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
             return;
         const auto& captures = program.functions[index].captures;
         for (uint32_t capture = 0; capture < captures.size(); ++capture) {
-            LayoutID layout = types.environmentOf(captures[capture].type);
+            LayoutID layout = types.environmentOf(captures[capture].written());
             if (layout && plan.isPromoted(layout))
                 found.append({ FunctionID(index), capture });
         }
@@ -559,17 +565,16 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
         return isSameInVersions && !constant.isObject() ? constant : KnownValue();
     };
     UncheckedKeyHashMap<uint64_t, VariableID, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> variablesByValue;
-    UncheckedKeyHashMap<uint32_t, BitVector, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> valuesThatRestOnChecks;
-    auto restsOnCheck = [&](const PromotedCaptureSource& source) {
-        return valuesThatRestOnChecks.ensure(source.function.index(), [&] {
-            return computeValuesThatRestOnChecks(program.at(source.function));
-        }).iterator->value.get(source.value.index());
-    };
+    UncheckedKeyHashMap<uint32_t, std::unique_ptr<PredictedValues>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> predictedValuesOfFunctions;
     auto ensureVariable = [&](const PromotedCaptureSource& source, const DeclaredType& capture) {
         if (source.variable)
             return source.variable;
         return variablesByValue.ensure(static_cast<uint64_t>(source.function.index()) << 32 | source.value.index(), [&] {
-            VariableID variable = addVariable(createValueVariable(program.at(source.function), source.value, capture, restsOnCheck(source)));
+            const Function& function = program.at(source.function);
+            const PredictedValues& predicted = *predictedValuesOfFunctions.ensure(source.function.index(), [&] {
+                return makeUniqueWithoutFastMallocCheck<PredictedValues>(function, CFG(function));
+            }).iterator->value;
+            VariableID variable = addVariable(createValueVariable(function, predicted, source.value, capture));
             plan.storedValues.append({ variable, source.function, source.value });
             return variable;
         }).iterator->value;
@@ -585,7 +590,7 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
             const auto& captures = program.at(closureFunction).captures;
             for (uint32_t capture = 0; capture < captures.size(); ++capture) {
                 std::span<const PlannedCapture> planned = plan.capturesOf(closureFunction);
-                if ((!planned.empty() && planned[capture].isRemoved) || !program.at(captures[capture].type).isJavaScriptValue())
+                if ((!planned.empty() && planned[capture].isRemoved) || !program.at(captures[capture].written()).isJavaScriptValue())
                     continue;
                 if (KnownValue constant = findConstant(closureFunction, capture); constant.isKnown()) {
                     plannedCapture(closureFunction, capture) = { true, { }, constant };
@@ -737,13 +742,12 @@ static void promoteInBody(const PromotionPlan& plan, IRBuilder& builder, Functio
         read.become(Opcode::GetModuleVariable);
         read.setVariable(planned[capture].variable);
         // One variable stands for the captures of several functions, and is only expected as soon as one of them is. What is proven of this capture is then said by a cast.
-        if (program.at(planned[capture].variable).declared.flags.contains(PositionFlags::IsExpected) && provenType != TypeTable::anything) {
+        if (program.at(planned[capture].variable).declared.isExpected() && provenType != TypeTable::anything) {
             builder.setOrigin(read.origin());
             ValueID readOfVariable = builder.addDetached(WTF::move(read));
             values.append(readOfVariable);
-            read = IRBuilder::make(Opcode::AssumeType, { readOfVariable });
+            read = makeAssumeType(readOfVariable, Proven::byPosition(provenType));
             read.setOrigin(function.at(readOfVariable).origin());
-            read.setCastType(provenType);
             read.type = provenType;
         }
         values.append(parameters[capture]);
@@ -1011,7 +1015,7 @@ struct ClosureWebs {
         }
     }
 
-    static bool isCast(Opcode opcode) { return opcode == Opcode::AssumeType || opcode == Opcode::Upcast; }
+    static bool isCast(Opcode opcode) { return opcode == Opcode::AssumeType || isCastThatProvesNothing(opcode); }
     uint32_t candidateOf(ValueID id) const { return candidates[id.index()]; }
     bool isObject(ValueID id) const { return objects.quickGet(id.index()); }
     bool standsForCapturesOnly(ValueID id) const { return candidateOf(id) != noCandidate && !isObject(id); }
@@ -1094,8 +1098,8 @@ static CaptureCandidateTable findCandidates(const Program& program)
             continue;
         for (uint32_t field = 0; field < layout.fields.size(); ++field) {
             const DeclaredType& declared = layout.fields[field].declared;
-            const Type& type = program.at(declared.type);
-            if (declared.flags.contains(PositionFlags::IsExpected) || type.primitives || !type.singleFunction())
+            const Type& type = program.at(declared.written());
+            if (declared.isExpected() || type.primitives || !type.singleFunction())
                 continue;
             candidates.fields.append({ LayoutID(index), field });
             candidates.layouts.quickSet(index);
@@ -1512,7 +1516,7 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
         }
         if (plan.closures[candidate].fate == Fate::IsMadeAtFirstUse) {
             Field& field = editor.at(reference.layout).fields[reference.field];
-            field.declared.type = editor.types().intern(editor.program().at(field.declared.type).withPrimitives(Primitive::Absent));
+            field.declared.changeType(Proven::byPosition(editor.types().intern(editor.program().at(field.declared.written()).withPrimitives(Primitive::Absent))));
             field.flags.remove({ FieldFlags::IsRequired, FieldFlags::IsImmutable });
             field.flow.location.stores = StoreCount::Unknown;
             field.flow.location.initialization = InitializationState::Unknown;
@@ -2366,11 +2370,11 @@ static void classifyHolders(const AnalysisContext& context, const EffectContext&
             const Function& callee = program.at(user.function());
             std::optional<uint32_t> entryParameter = entryParameterOf(callee, user, operandIndex);
             const DeclaredType* declared = callee.hasBody() && entryParameter ? callee.declaredEntryParameter(*entryParameter) : nullptr;
-            return declared && types.environmentOf(declared->type) == layout ? HolderAction::Ignore : HolderAction::Disqualify;
+            return declared && types.environmentOf(declared->written()) == layout ? HolderAction::Ignore : HolderAction::Disqualify;
         }
         // One of several results goes to the caller under its declared type, and the caller's uses of it are classified like any other. What holds the results in between is followed like the environment itself.
         if (user.opcode == Opcode::Results)
-            return operandIndex < function.results.size() && types.environmentOf(function.results[operandIndex].type) == layout ? HolderAction::Ignore : HolderAction::Disqualify;
+            return operandIndex < function.results.size() && types.environmentOf(function.results[operandIndex].written()) == layout ? HolderAction::Ignore : HolderAction::Disqualify;
         // No operation reads the hidden field that holds the environment. The closures that the object makes on demand do: they are cells of the heap wherever the object lies.
         if (user.opcode == Opcode::NewObject) {
             std::optional<uint32_t> field = program.at(user.layout()).flow.closureEnvironmentField;
@@ -2471,7 +2475,7 @@ static bool holdsAmongSeveralResults(const Program& program, const EnvironmentTy
         return false;
     auto& results = program.at(value.function()).results;
     return results.size() > 1 && results.containsIf([&](const auto& result) {
-        return types.environmentOf(result.type) == layout;
+        return types.environmentOf(result.written()) == layout;
     });
 }
 
@@ -2484,7 +2488,7 @@ static void findResultsMadeHere(const AnalysisContext& context, const Environmen
     const Function& function = context.program.at(context.id);
     BitVector madeHere;
     for (unsigned index = 0; index < function.results.size(); ++index) {
-        if (types.environmentOf(function.results[index].type))
+        if (types.environmentOf(function.results[index].written()))
             madeHere.set(index);
     }
     if (madeHere.isEmpty())

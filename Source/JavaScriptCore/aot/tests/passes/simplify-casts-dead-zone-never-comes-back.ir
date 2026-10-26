@@ -16,7 +16,7 @@ function f0 name="testedTwice" parameters=[{type=anything}] results=[{type=anyth
     Return v5
 # CHECK: = CheckInitialized v1 name="changing"
 # CHECK: v4: anything|absent = GetModuleVariable variable=g0
-# CHECK-NEXT: v5: anything = AssumeType v4 castType=anything
+# CHECK-NEXT: v5: anything = AssumeType v4 provenType=anything
 }
 
 function f1 name="storedFirst" parameters=[{type=anything}] results=[{type=anything}] {
@@ -57,7 +57,7 @@ function f3 name="fieldTestedTwice" kind=Arrow captures=[{type=env L0}, {type=en
     v12 = Call v2, -, v7, v9, v11
     Return v12
 # CHECK: = CheckInitialized v3 name="y"
-# CHECK: v7: anything = AssumeType v6 castType=anything
+# CHECK: v7: anything = AssumeType v6 provenType=anything
 # CHECK: = CheckInitialized v8 name="x"
 # CHECK: = CheckInitialized v10 name="y"
 }

@@ -500,9 +500,9 @@ bool hasCursorInSignature(const Program& program, const Function& function)
         std::optional<OpaqueKind> kind = program.at(type).opaque;
         return kind && allowsDirectCallsOnly(*kind);
     };
-    return std::ranges::any_of(function.captures, allowsOnlyDirectCalls, &DeclaredType::type)
-        || std::ranges::any_of(function.parameters, allowsOnlyDirectCalls, &DeclaredType::type)
-        || std::ranges::any_of(function.results, allowsOnlyDirectCalls, &DeclaredType::type);
+    return std::ranges::any_of(function.captures, allowsOnlyDirectCalls, &DeclaredType::written)
+        || std::ranges::any_of(function.parameters, allowsOnlyDirectCalls, &DeclaredType::written)
+        || std::ranges::any_of(function.results, allowsOnlyDirectCalls, &DeclaredType::written);
 }
 
 bool referencesFunctionWithCursor(const Program& program, const Value& value)

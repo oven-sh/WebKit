@@ -6,16 +6,16 @@
 # RUN: valueflow-apply
 # CHECK-LABEL: function f0
 # CHECK: v5: anything ~ object = Construct
-# CHECK-NEXT: : object = AssumeType v5 castType=object
+# CHECK-NEXT: : object = AssumeType v5 provenType=object
 # CHECK: v11:{{*}}= Construct
-# CHECK: AssumeType v11 castType=L1
+# CHECK: AssumeType v11 provenType=L1
 # CHECK-LABEL: function f2
 # CHECK: v3:{{*}}= SuperConstruct
 # CHECK-NOT: AssumeType v3
 # CHECK: Return
 # CHECK-LABEL: function f4
 # CHECK: v3:{{*}}= SuperConstruct
-# CHECK: AssumeType v3 castType=L1
+# CHECK: AssumeType v3 provenType=L1
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 kind=Instance name="Wide" constructor=f2 fields=[{key="x" declared={type=anything}}] flags=[HasHeritage]

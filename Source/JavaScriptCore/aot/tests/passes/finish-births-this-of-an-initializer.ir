@@ -51,7 +51,7 @@ function f1 name="ofDerivedClass" kind=Initializer flags=[HasThis] thisType={typ
 function f2 name="theCheckOfThisHasBecomeATest" kind=Initializer flags=[HasThis] thisType={type=L0 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] {
   b0(v0: anything):
     v1 = Undefined
-    v2 = AssumeType v0 castType=object
+    v2 = AssumeType v0 provenType=object
     v3 = TypeTest v2 testedType=L0
     Branch v3 -> taken b1(| 0), notTaken b3()
   b1(v4: L0):

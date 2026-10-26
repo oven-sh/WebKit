@@ -13,7 +13,7 @@ function f0 name="readsTheCastAfterTheLoop" parameters=[{type=object}, {type=any
     v3 = Integer integer=0
     Jump -> next b1(v1, v3)
   b1(v4: anything, v5: int[0, 8589934591]) handler=b4(v4):
-    v6 = AssumeType v4 castType=string
+    v6 = AssumeType v4 provenType=string
     LoopHint
     v8 = ForInStep v2, v0 position=v5
     v9 = ResultAt v8 index=0
@@ -30,7 +30,7 @@ function f0 name="readsTheCastAfterTheLoop" parameters=[{type=object}, {type=any
   b4(v15: anything) role=CatchHandler:
     Return v15
 # CHECK: b6(v17: anything, v18: int[0, 8589934591]) handler=b4(v17):
-# CHECK-NEXT: = AssumeType v17 castType=string
+# CHECK-NEXT: = AssumeType v17 provenType=string
 # CHECK-NEXT: Jump -> next b19()
 # CHECK: b16() handler=b4(v4):
 # CHECK-NEXT: LoopHint
@@ -53,7 +53,7 @@ function f1 name="hasTheLoopHintFirst" parameters=[{type=object}, {type=anything
     Jump -> next b1(v1, v3)
   b1(v4: anything, v5: int[0, 8589934591]) handler=b4(v4):
     LoopHint
-    v7 = AssumeType v4 castType=string
+    v7 = AssumeType v4 provenType=string
     v8 = ForInStep v2, v0 position=v5
     v9 = ResultAt v8 index=0
     v10 = ResultAt v8 index=1
@@ -72,7 +72,7 @@ function f1 name="hasTheLoopHintFirst" parameters=[{type=object}, {type=anything
 # CHECK-NEXT: LoopHint
 # CHECK-NOT: LoopHint
 # CHECK: b6(v17: anything, v18: int[0, 8589934591]) handler=b4(v17):
-# CHECK-NEXT: = AssumeType v17 castType=string
+# CHECK-NEXT: = AssumeType v17 provenType=string
 # CHECK-NEXT: Jump -> next b19()
 # CHECK-NOT: LoopHint
 # CHECK: b19() handler=b4(v17):

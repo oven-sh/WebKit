@@ -11,7 +11,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = CallDirect v1 function=f2
     v3 = CallDirect v1 function=f3
-    v4 = Check v1 castType=function site=w0
+    v4 = Check v1 expectedType=function site=w0
     v5 = Call v4, -, v1 callees=[f4, f5]
     v6 = Call v4, -, v1 callees=[f6]
     v7 = NewClosure function=f8

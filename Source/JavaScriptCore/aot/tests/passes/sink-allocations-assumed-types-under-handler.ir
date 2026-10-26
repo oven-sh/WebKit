@@ -7,7 +7,7 @@ module m0 path="main.js" displayPath="main.js"
 
 function f0 name="oneArrayBuiltInCoveredBlock" parameters=[{type=anything}, {type=Array<anything, pristine[Storage]>}, {type=boolean}] results=[{type=Array<anything, pristine[Storage]>}] {
     v3 = NewArray v0 contents=anything
-    v4 = AssumeType v3 castType=Array<anything, Contiguous, pristine[Storage]>
+    v4 = AssumeType v3 provenType=Array<anything, Contiguous, pristine[Storage]>
     Branch v2 -> taken b1(), notTaken b4()
   b1() handler=b3():
     v5 = Call v0, -, v4
@@ -31,11 +31,11 @@ function f1 name="twoArraysMeetAndAreBuiltInCoveredBlock" parameters=[{type=anyt
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v4 = NewArray contents=anything
-    v5 = AssumeType v4 castType=Array<anything, Contiguous, pristine[Storage]>
+    v5 = AssumeType v4 provenType=Array<anything, Contiguous, pristine[Storage]>
     Jump -> next b3(v5)
   b2():
     v6 = NewArray v0 contents=anything
-    v7 = AssumeType v6 castType=Array<anything, Contiguous, pristine[Storage]>
+    v7 = AssumeType v6 provenType=Array<anything, Contiguous, pristine[Storage]>
     Jump -> next b3(v7)
   b3(v8):
     Branch v3 -> taken b4(), notTaken b7()

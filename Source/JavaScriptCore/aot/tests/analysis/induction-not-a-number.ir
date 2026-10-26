@@ -13,7 +13,7 @@ function f0 name="boundMayBeNaN" parameters=[{type=number}] results=[{type=undef
     Branch v4 -> taken b3(), notTaken b2()
   b2():
     v5 = Increment v2
-    v6 = Check v5 castType=i32
+    v6 = Check v5 expectedType=i32
     Jump -> next b1(v6)
   b3():
     Return
@@ -32,7 +32,7 @@ function f1 name="boundIsInt32" parameters=[{type=i32}] results=[{type=undefined
     Branch v4 -> taken b3(), notTaken b2()
   b2():
     v5 = Increment v2
-    v6 = Check v5 castType=i32
+    v6 = Check v5 expectedType=i32
     Jump -> next b1(v6)
   b3():
     Return

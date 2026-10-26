@@ -132,9 +132,18 @@ function listAccessorLines(name: string, element: Kind, position: string): strin
   ];
 }
 
-function accessorLines(name: string, kind: Kind, isOptional: boolean, tag: string): string[] {
+function accessorLines(name: string, field: PayloadField, isOptional: boolean, tag: string): string[] {
+  const { kind, heldAs } = field;
   const setter = cppSetterName(name);
   const position = `declaredPosition(PayloadWord::${name}(${tag}))`;
+  // Anybody may read a fact. A prediction stays one in the hands of who reads it.
+  if (heldAs !== null) {
+    const read = `decodePayloadWord<TypeID>(payloadWordAt(${position}))`;
+    return [
+      heldAs === "ProvenType" ? `TypeID ${name}() const { return ${read}; }` : `${heldAs} ${name}() const { return ${heldAs}(${read}); }`,
+      `void ${setter}(${heldAs} ${name}) { setPayloadWordAt(${position}, encodePayloadWord(${name}.payload())); }`,
+    ];
+  }
   if (kind.tag === "List") return listAccessorLines(name, kind.element, position);
   if (kind.tag === "Scalar" && twoWordScalars.has(kind.scalar)) {
     const type = engineTypeOf(kind);
@@ -177,7 +186,7 @@ function accessorsInc(parts: NamedParts, entryEnum: EntryEnum, part: AccessorPar
       if (own.length === 0) continue;
       const isOptional = users.some(user => user.field.isOptional);
       groups.push([
-        ...indent(accessorLines(name, users[0].field.kind, isOptional, tag)),
+        ...indent(accessorLines(name, users[0].field, isOptional, tag)),
         ...entrySet(entryEnum, name, own),
       ]);
     }

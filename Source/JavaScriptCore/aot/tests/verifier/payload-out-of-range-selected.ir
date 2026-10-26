@@ -30,7 +30,7 @@ function f3 name="goodSameStorage" parameters=[{type=int[0, 100]}, {type=number}
 function f4 name="goodThroughCasts" parameters=[{type=int[0, 100]}, {type=Array<anything>}, {type=number}] results=[{type=undefined}] {
     v3 = NewArrayLike v0, v1 arrayStorage=Double
     v4 = Upcast v3 castType=anything
-    v5 = AssumeType v4 castType=Array<anything>
+    v5 = AssumeType v4 provenType=Array<anything>
     v6 = Integer integer=0
     v7 = TryPutByValDirect v5, v6, v2 arrayStorage=Double
     Return

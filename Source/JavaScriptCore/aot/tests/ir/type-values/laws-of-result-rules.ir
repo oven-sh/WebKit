@@ -35,7 +35,7 @@ function f3 name="operators" parameters=[{type=anything}, {type=number}, {type=u
     v14 = TypeTest v0 testedType=number
     v15 = RequireObjectCoercible v2 name="x"
     v16 = Upcast v1 castType=anything
-    v17 = AssumeType v0 castType=undefined|number
+    v17 = AssumeType v0 provenType=undefined|number
     Return v3
 }
 function f4 name="reads" parameters=[{type=anything}, {type=anything}, {type=Array<number>}] results=[{type=anything}] {

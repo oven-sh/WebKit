@@ -417,7 +417,7 @@ private:
         const BitVector* behindChecks = m_inputs.bodies().valuesBehindChecks(id);
         if (!behindChecks) {
             if (std::exchange(walker.functionOfValuesBehindChecks, id) != id)
-                walker.valuesBehindChecks = findValuesBehindChecks(program(), function, CFG(function));
+                walker.valuesBehindChecks = valuesTypedBehindChecks(program(), function, CFG(function));
             behindChecks = &walker.valuesBehindChecks;
         }
         if (behindChecks->get(value.index()))
@@ -844,7 +844,7 @@ private:
 
     Type typeOfContents(ValueFlowPositions& positions, uint32_t index, const BuiltinSlot& slot)
     {
-        ValueFlowPositionResult result = positions.resultAt(Type::anything(), m_containers[index].stored[*slot.indexInType]);
+        ValueFlowPositionResult result = positions.resultAmongAllValues(m_containers[index].stored[*slot.indexInType]);
         switch (result.proof) {
         case ValueFlowProof::NothingArrives:
             return Type::never();
@@ -992,6 +992,7 @@ private:
                 m_facts[array].arrayStorageToldToCreator = storage == arrayStorageAtAllocation(type) ? ArrayStorage::Other : storage;
             }
         }
+        Vector<ValueFlowObjectID> arraysThatMustNotBeConverted;
         for (uint32_t index = 0; index < m_containers.size(); ++index) {
             if (!isArray(index))
                 continue;
@@ -1000,8 +1001,11 @@ private:
                 if (arrayStorageHolding(elements) == ArrayStorage::Contiguous && !mayGetDoubleStorage(ArrayStorage::Contiguous, elements))
                     m_facts[index].arrayStorage = ArrayStorage::Contiguous;
             }
+            if (m_facts[index].arrayStorage != ArrayStorage::Other && mayGetDoubleStorage(m_facts[index].arrayStorage, m_types.at(m_facts[index].contents[m_indexOfElements])))
+                arraysThatMustNotBeConverted.append(m_containers[index].object);
             m_results.set(m_containers[index].object, ValueFlowContainerFacts(m_facts[index]));
         }
+        m_results.arraysThatMustNotBeConverted = maker().of(arraysThatMustNotBeConverted.span());
     }
 
     bool isUnchangedHolder(BuiltinID holder) const

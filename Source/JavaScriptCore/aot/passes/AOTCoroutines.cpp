@@ -159,11 +159,10 @@ static Function buildRamp(const AnalysisContext& context, TypeArena& types, cons
     RELEASE_ASSERT(ramp.results.size() == 1);
     // A ramp returns what it allocates, whatever is said of its result. What is said of the contents stays in the type, where contents are no proof.
     DeclaredType& declared = ramp.results[0];
-    plan.didNarrowResult = declared.flags.contains(PositionFlags::IsExpected) || !types.at(declared.type).isSubsetOf(types.at(plan.allocatedType), context.program);
+    plan.didNarrowResult = declared.isExpected() || !types.at(declared.written()).isSubsetOf(types.at(plan.allocatedType), context.program);
     if (plan.didNarrowResult) {
-        TypeID met = types.intersectionOf(plan.allocatedType, declared.type);
-        declared.type = met == TypeTable::never ? plan.allocatedType : met;
-        declared.flags.remove(PositionFlags::IsExpected);
+        TypeID met = types.intersectionOf(plan.allocatedType, declared.expected().predicted());
+        declared.establish(Proven::byConstruction(met == TypeTable::never ? plan.allocatedType : met));
     }
 
     // A ramp is built before its body exists, so the result type of this call cannot come from the callee. A worker takes no driver.
@@ -176,7 +175,7 @@ static Function buildRamp(const AnalysisContext& context, TypeArena& types, cons
         return builder.appendWithType(WTF::move(call), TypeTable::anything);
     };
     auto emitReturnOfDriver = [&](ValueID returned) {
-        emitReturnOfCall(builder, convertTo(builder, returned, DeclaredType { .type = ramp.results[0].type }));
+        emitReturnOfCall(builder, convertTo(builder, returned, DeclaredType(Proven::byPosition(*ramp.results[0].established()))));
     };
 
     if (plan.neverSuspends) {
@@ -246,7 +245,7 @@ static Function buildAsyncWorker(TypeArena& types, Function&& unsplit, const Cor
         ValueID value = block.terminator.valueOperand();
         returned = types.unionOf(returned, value ? worker.at(value).type : TypeTable::undefined);
     }
-    worker.results = Vector<DeclaredType> { DeclaredType { .type = returned } };
+    worker.results = Vector<DeclaredType> { DeclaredType(Proven::byPosition(returned)) };
     worker.derivation = Derivation {
         .source = record.ramp,
         .parameterMap = Vector<ParameterOrigin>(worker.numberOfEntryParameters(), [](size_t index) { return ParameterOrigin { static_cast<uint32_t>(index) }; }),
@@ -308,13 +307,13 @@ static void prepareHeaderOfBody(const AnalysisContext& context, TypeArena& types
         TypingContext typing { context.program, body, types };
         TypeID restType = declaredEntryTypeOf(typing, body, *hiddenRest);
         body.flags.remove(FunctionFlags::HasHiddenRest);
-        body.parameters.append(DeclaredType { .type = restType });
+        body.parameters.append(DeclaredType(Proven::byPosition(restType)));
     }
     body.flags.remove(FunctionFlags::HasRestParameter);
-    body.parameters.append(DeclaredType { .type = plan.driverType });
+    body.parameters.append(DeclaredType(Proven::byPosition(plan.driverType)));
     RELEASE_ASSERT(plan.record.promiseParameter == sourceParameters && body.numberOfEntryParameters() == sourceParameters + 1);
 
-    body.results = Vector<DeclaredType> { DeclaredType { .type = TypeTable::anything } };
+    body.results = Vector<DeclaredType> { DeclaredType(Proven::byPosition(TypeTable::anything)) };
     body.derivation = Derivation {
         .source = plan.record.ramp,
         .parameterMap = Vector<ParameterOrigin>(sourceParameters + 1, [&](size_t index) {
@@ -542,11 +541,11 @@ static void replaceStepsAndAwaits(BodyRewrite& body)
         successor.setHeldOperands(heldOperandsOf(await));
         // An expected type is set only where it says more than the type.
         TypeID type = resultTypeOf(program, function, successor, types);
-        if (await.expected() && await.expected() != type && types.at(await.expected()).isSubsetOf(types.at(type), program))
+        if (await.expected().predicted() && await.expected().predicted() != type && types.at(await.expected().predicted()).isSubsetOf(types.at(type), program))
             successor.setExpected(await.expected());
         ValueID result = builder.append(WTF::move(successor));
         checkSuccessor(body, point.block, result, replaced);
-        builder.endExpansion(expansion, convertTo(builder, result, DeclaredType { .type = await.type }));
+        builder.endExpansion(expansion, convertTo(builder, result, DeclaredType(Proven::byPosition(await.type))));
     }
 }
 
@@ -833,7 +832,7 @@ static void retypeCallers(ProgramEditor& editor, BuildContext& build, const Vect
                 const Value& value = caller.at(id);
                 if (value.opcode != Opcode::CallDirect || !narrowedRamps.get(value.function().index()))
                     continue;
-                TypeID resultType = program.at(value.function()).result().type;
+                TypeID resultType = program.provenTypeOf(program.at(value.function()).result());
                 if (resultType != value.type && program.at(resultType).isSubsetOf(program.at(value.type), program))
                     calls.append(id);
             }
@@ -846,7 +845,7 @@ static void retypeCallers(ProgramEditor& editor, BuildContext& build, const Vect
         for (ValueID id : staleCalls[index].calls) {
             Value& call = caller.edit(id);
             call.type = resultTypeOf(program, caller, call, arenas.types);
-            call.setExpected(expectedTypeOf(program, caller, call, arenas.types));
+            call.setExpected(ExpectedType(expectedTypeOf(program, caller, call, arenas.types)));
         }
     });
 }
@@ -869,10 +868,10 @@ static void markModulesEvaluatedByRequire(ProgramEditor& editor, const FlowResul
         return;
 
     Vector<uint32_t> work = collectInParallel<uint32_t>(loops, program.functions.size(), [&](unsigned index, Vector<uint32_t>& found) {
-        if (!mayListValueWith(program, FunctionID(index), OpcodeSet { Opcode::RequireModule }))
+        if (!mayListValueWith(program, FunctionID(index), OpcodeSet { Opcode::RequireModule, Opcode::EvaluateRequiredModule }))
             return;
         for (const Value& value : program.functions[index].values) {
-            if (value.opcode == Opcode::RequireModule)
+            if (value.opcode == Opcode::RequireModule || value.opcode == Opcode::EvaluateRequiredModule)
                 found.append(value.module().index());
         }
     });
@@ -1176,12 +1175,12 @@ static Value makeAwaitLike(FunctionPassContext& context, const Value& original, 
 {
     Value await = IRBuilder::make(Opcode::AwaitBySavingFrame, { awaited, original.promiseOperand() });
     await.setHeldOperands(held);
-    TypeID expected = original.expected();
+    TypeID expected = original.expected().predicted();
     if (!expected)
         return await;
     TypeID type = resultTypeOf(context.program, context.function, await, context.types);
     if (expected != type && context.types.at(expected).isSubsetOf(context.types.at(type), context.program))
-        await.setExpected(expected);
+        await.setExpected(ExpectedType(expected));
     return await;
 }
 
@@ -1403,7 +1402,7 @@ static void enterCalleeWithoutPromise(FunctionPassContext& context, IRBuilder& b
     replaced.add(effects, function, function.at(site.await));
 
     TypeID type = function.at(site.await).type;
-    auto becomeAwaitOfCall = [&, promise = function.at(site.await).promiseOperand(), expected = function.at(site.await).expected(), held = Vector<ValueID, 8>(function.at(site.await).heldOperands())](Value& value) {
+    auto becomeAwaitOfCall = [&, promise = function.at(site.await).promiseOperand(), expected = function.at(site.await).expected().predicted(), held = Vector<ValueID, 8>(function.at(site.await).heldOperands())](Value& value) {
         const Value& call = function.at(site.call);
         value.become(Opcode::AwaitCallBySavingFrame);
         value.setFunction(site.callee.entryWithoutPromise);
@@ -1412,7 +1411,7 @@ static void enterCalleeWithoutPromise(FunctionPassContext& context, IRBuilder& b
         setHeldOperands(value, held.span());
         value.setOrigin(call.origin());
         value.setAccessSite(call.accessSite());
-        value.setExpected(expected);
+        value.setExpected(ExpectedType(expected));
     };
     Value successor;
     becomeAwaitOfCall(successor);
@@ -1429,7 +1428,7 @@ static void enterCalleeWithoutPromise(FunctionPassContext& context, IRBuilder& b
     checkReplacement(effects, function, { context.id, site.point.block, result }, function.at(result), replaced, context.build.diagnostics());
 
     builder.setOrigin(awaitOrigin);
-    builder.endExpansion(expansion, convertTo(builder, result, DeclaredType { .type = type }));
+    builder.endExpansion(expansion, convertTo(builder, result, DeclaredType(Proven::byPosition(type))));
 }
 
 // The promise of a function that never suspends is settled when the function returns, so the caller awaits what it would have been settled with.
@@ -1477,7 +1476,7 @@ static void expandAwaitOfWorker(FunctionPassContext& context, IRBuilder& builder
 
     builder.setOrigin(awaitOrigin);
     builder.moveToEndOf(awaiting);
-    builder.endExpansion(expansion, convertTo(builder, builder.append(makeAwaitLike(context, await, awaited, await.heldOperands())), DeclaredType { .type = await.type }));
+    builder.endExpansion(expansion, convertTo(builder, builder.append(makeAwaitLike(context, await, awaited, await.heldOperands())), DeclaredType(Proven::byPosition(await.type))));
 }
 
 // `for await` is Await(Call(next)) as well, so the step that serves it takes as many turns of the job queue as the call and the await.
@@ -1519,11 +1518,11 @@ static void expandAwaitOfGeneratorStep(FunctionPassContext& context, IRBuilder& 
     IRBuilder::BranchBlocks blocks = builder.emitBranch(appendStatusTest(AsyncGeneratorStepStatus::Result), BlockFrequency::Rare, frequency);
 
     if (!site.resultReads) {
-        builder.endExpansion(expansion, convertTo(builder, stepped, DeclaredType { .type = type }));
+        builder.endExpansion(expansion, convertTo(builder, stepped, DeclaredType(Proven::byPosition(type))));
 
         builder.moveToEndOf(blocks.notTaken);
         ValueID object = builder.append(makeIteratorResultObject(context.program, stepped, appendStatusTest(AsyncGeneratorStepStatus::Completed)));
-        builder.endExpansion(expansion, convertTo(builder, object, DeclaredType { .type = type }));
+        builder.endExpansion(expansion, convertTo(builder, object, DeclaredType(Proven::byPosition(type))));
         return;
     }
 

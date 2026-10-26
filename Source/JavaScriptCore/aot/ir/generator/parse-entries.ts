@@ -98,7 +98,8 @@ function parseParameter(cursor: Cursor, owner: string): ParameterSyntax {
     if (firstForm !== null) throw new SchemaError(name.location, `operand ${name.text} of ${owner} has a first form`);
     return { form: "Operand", name, kind: kind.name, uses: parseUses(cursor), isOptional, isVariadic, isEngine };
   }
-  return { form: "Payload", name, kind, isOptional, isVariadic, isEngine, firstForm };
+  const heldAs = cursor.accept("as") ? takeWord(cursor) : null;
+  return { form: "Payload", name, kind, heldAs, isOptional, isVariadic, isEngine, firstForm };
 }
 
 export function parseParameters(cursor: Cursor, owner: string): ParameterSyntax[] {

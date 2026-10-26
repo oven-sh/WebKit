@@ -62,8 +62,8 @@ function f1 name="sum" flags=[IsChecked] results=[{type=anything}] {
 # CHECK: : number = GetModuleVariable variable=g2
 # CHECK-NOT: = Check
 # CHECK: = GetModuleVariable variable=g3
-# CHECK: = Check {{*}}castType=number site=w2
-# CHECK: = Check {{*}}castType=number site=w3
+# CHECK: = Check {{*}}expectedType=number site=w2
+# CHECK: = Check {{*}}expectedType=number site=w3
 }
 function f2 name="Options" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
     v1 = Double number=0.5

@@ -695,13 +695,14 @@ CastOutcome evaluateCast(const ShapeContext& context, const VirtualShape& shape,
         return CastOutcome::Unknown;
     switch (cast.opcode) {
     case Opcode::Upcast:
+    case Opcode::Expect:
     case Opcode::NarrowByField:
     case Opcode::AssumeType:
     case Opcode::FinishObject:
     case Opcode::CheckInitialized:
         return CastOutcome::Passes;
     case Opcode::Check:
-        return evaluateTypeTestOfShape(context, shape, context.objects.program.at(cast.castType())) == KnownBoolean::True ? CastOutcome::Passes : CastOutcome::Unknown;
+        return evaluateTypeTestOfShape(context, shape, context.objects.program.at(cast.expectedType().predicted())) == KnownBoolean::True ? CastOutcome::Passes : CastOutcome::Unknown;
     case Opcode::RequireObjectCoercible:
         return isNullish(shape) ? CastOutcome::Throws : CastOutcome::Passes;
     case Opcode::RequireObject:

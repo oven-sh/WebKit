@@ -13,7 +13,7 @@ function f0 name="onlyMergeIsCovered" parameters=[{type=anything}, {type=boolean
   b2():
     Jump -> next b3(v0)
   b3(v3) handler=b4():
-    v4 = Check v3 castType=number
+    v4 = Check v3 expectedType=number
     Return v4
   b4() role=CatchHandler:
     v5 = CatchValue
@@ -22,7 +22,7 @@ function f0 name="onlyMergeIsCovered" parameters=[{type=anything}, {type=boolean
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK-NEXT: b3(v3: anything) handler=b4():
-# CHECK-NEXT: v4: number = Check v3 castType=number
+# CHECK-NEXT: v4: number = Check v3 expectedType=number
 # CHECK-NEXT: Return v4
 }
 
@@ -39,13 +39,13 @@ function f1 name="onlyPredecessorIsCovered" parameters=[{type=anything}, {type=b
     v5 = Integer integer=0
     Return v5
   b4(v6):
-    v7 = Check v6 castType=number
+    v7 = Check v6 expectedType=number
     Return v7
 # CHECK: b2() handler=b3():
 # CHECK-NEXT: v3: anything = Call v0
 # CHECK-NEXT: Jump -> next b4(v3)
 # CHECK: b4(v6: anything):
-# CHECK-NEXT: v7: number = Check v6 castType=number
+# CHECK-NEXT: v7: number = Check v6 expectedType=number
 # CHECK-NEXT: Return v7
 }
 
@@ -57,7 +57,7 @@ function f2 name="sameHandlerOtherArguments" parameters=[{type=anything}, {type=
   b2() handler=b4(v1):
     Jump -> next b3(v0)
   b3(v4) handler=b4(v2):
-    v5 = Check v4 castType=number
+    v5 = Check v4 expectedType=number
     Return v5
   b4(v6) role=CatchHandler:
     v7 = CatchValue
@@ -66,6 +66,6 @@ function f2 name="sameHandlerOtherArguments" parameters=[{type=anything}, {type=
 # CHECK: b2() handler=b4(v1):
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK-NEXT: b3(v4: anything) handler=b4(v2):
-# CHECK-NEXT: v5: number = Check v4 castType=number
+# CHECK-NEXT: v5: number = Check v4 expectedType=number
 # CHECK-NEXT: Return v5
 }

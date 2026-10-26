@@ -69,11 +69,11 @@ static void printFamilies(PrintStream& out, ValueFlowSolution& solution)
     std::array<Counts, numberOfPositionKinds> countsOf;
 
     auto familyOf = [&](const DeclaredType& declared) -> const Family* {
-        auto result = families.add(declared.type.index(), nullptr);
+        auto result = families.add(declared.written().index(), nullptr);
         if (!result.isNewEntry)
             return result.iterator->value.get();
 
-        const Type& type = program.at(declared.type);
+        const Type& type = program.at(declared.written());
         auto family = makeUnique<Family>();
         for (LayoutID member : membersOf(program, type))
             family->members.set(member.index());
@@ -266,7 +266,7 @@ constexpr unsigned numberOfExpectedReceivers = 6;
 
 static ExpectedReceiver expectedReceiverOf(const Program& program, const ValueFlowSolution& solution, const Function& function, ValueID receiver)
 {
-    const Type& type = program.at(function.at(receiver).expectedOrType());
+    const Type& type = program.at(function.at(receiver).expectedOrType().predicted());
     if (type.isAnything())
         return ExpectedReceiver::Anything;
     if (type.anyObject)
@@ -361,7 +361,7 @@ constexpr unsigned numberOfWrittenAtCallees = 3;
 
 static ExpectedCallee expectedCalleeOf(const Program& program, const Function& function, ValueID callee)
 {
-    const Type& type = program.at(function.at(callee).expectedOrType());
+    const Type& type = program.at(function.at(callee).expectedOrType().predicted());
     if (type.isAnything())
         return ExpectedCallee::Anything;
     if (type.anyObject)

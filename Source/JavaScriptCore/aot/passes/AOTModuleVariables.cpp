@@ -28,6 +28,7 @@
 #include "AOTNarrowConstantVariables.h"
 #include "AOTPassRunner.h"
 #include "AOTPhaseTimes.h"
+#include "AOTPredictedValues.h"
 #include "AOTProgramCaches.h"
 #include "AOTSlotPlan.h"
 #include "AOTStronglyConnectedComponents.h"
@@ -57,7 +58,7 @@ static ValueID assumeType(IRBuilder& builder, ValueID value, TypeID wanted)
     TypeID castType = builder.types().intersectionOf(type, wanted);
     if (builder.context().build.validates())
         builder.append(makeValidateType(value, castType));
-    return builder.append(makeAssumeType(value, castType));
+    return builder.append(makeAssumeType(value, Proven::byRulesWithoutChecks(castType)));
 }
 
 static bool listsAccessOf(const Program& program, FunctionID id, Opcode opcode, const Invocable<bool(VariableID)> auto& isWanted)
@@ -157,7 +158,7 @@ static Vector<ConstantVariableStore> collectConstantStores(const Program& progra
             bool readsSeeOnlyStoredValue = variable.initialization == VariableInitialization::Uninitialized
                 || (variable.initialization == VariableInitialization::Undefined && variable.flow.initialization == InitializationState::StoredBeforeEveryRead);
             // A static field is a property of its class too, which has more ways to change than a store.
-            if (variable.owner || variable.flow.writers != WriterState::AllKnown || variable.flow.stores != StoreCount::AtMostOnce || variable.declared.flags.contains(PositionFlags::IsExpected) || !readsSeeOnlyStoredValue)
+            if (variable.owner || variable.flow.writers != WriterState::AllKnown || variable.flow.stores != StoreCount::AtMostOnce || variable.declared.isExpected() || !readsSeeOnlyStoredValue)
                 return;
             // The type of what a store stores has to lie inside the type of the variable, so the type has to say the constant.
             KnownValue stored;
@@ -212,15 +213,15 @@ ConstantLists narrowConstantVariables(ProgramEditor& editor, const FlowResults& 
         if (!contentsOfVariable[index].isStored || !contentsOfVariable[index].isOneConstant)
             continue;
         const Variable& variable = program.variables[index];
-        const Type& declared = program.at(variable.declared.type);
+        const Type& declared = program.at(variable.declared.written());
         Type constant = typeOfKnownPrimitive(contentsOfVariable[index].constant);
         if (!constant.isSubsetOf(declared, program))
             continue;
         // A location with a dead zone holds `absent` until its store, and one that is born undefined holds that.
         uint16_t primitivesBeforeStore = declared.primitives & (variable.initialization == VariableInitialization::Undefined ? Primitive::Absent | Primitive::Undefined : Primitive::Absent);
         TypeID narrowed = editor.types().intern(constant.withPrimitives(primitivesBeforeStore));
-        if (narrowed != variable.declared.type)
-            editor.at(VariableID(index)).declared.type = narrowed;
+        if (narrowed != variable.declared.written())
+            editor.at(VariableID(index)).declared.changeType(Proven::byPosition(narrowed));
     }
     return collectListsStoredAlone(program, stores);
 }
@@ -327,22 +328,22 @@ static void findDeferrals(const Program& program, const FlowResults& flow, Build
     auto hasOnlyClosure = [&](FunctionID closed) { return counts.closuresOfFunction[closed.index()] == 1; };
 
     // In the generic version of the function the type of a value that rests on a check says nothing.
-    std::optional<BitVector> valuesThatRestOnChecks;
-    auto restsOnCheck = [&](ValueID id) {
-        if (!valuesThatRestOnChecks)
-            valuesThatRestOnChecks = computeValuesThatRestOnChecks(function);
-        return valuesThatRestOnChecks->get(id.index());
+    std::optional<PredictedValues> predicted;
+    auto isBehindCheck = [&](ValueID id) {
+        if (!predicted)
+            predicted.emplace(function, CFG(function));
+        return predicted->isBehindCheck(id);
     };
     auto neverThrows = [&](ValueID heritageLook) {
         ValueID heritage = function.at(heritageLook).heritageOperand();
-        return hasOnlyClassesAndBuiltins(program, program.typeOf(function, heritage)) && !restsOnCheck(heritage);
+        return hasOnlyClassesAndBuiltins(program, program.typeOf(function, heritage)) && !isBehindCheck(heritage);
     };
 
     // SomethingElse where the variable needs the object itself.
     auto whatIsReadBefore = [&](const Value& store, Deferral::Kind kind) {
         const Variable& variable = program.at(store.variable());
         bool isNamedByRecord = counts.isNamedByRecord.quickGet(store.variable().index());
-        bool isExpected = variable.declared.flags.contains(PositionFlags::IsExpected);
+        bool isExpected = variable.declared.isExpected();
         if (counts.storesOfVariable[store.variable().index()] != 1 || variable.initialization == VariableInitialization::Function || variable.owner
             || variable.flow.writers != WriterState::AllKnown || variable.flow.stores != StoreCount::AtMostOnce)
             return BeforeStore::SomethingElse;
@@ -366,7 +367,7 @@ static void findDeferrals(const Program& program, const FlowResults& flow, Build
         if (variable.initialization != VariableInitialization::Uninitialized || isExpected)
             return BeforeStore::SomethingElse;
         // A read has the type of the variable, so a variable whose type leaves out `absent` is never read while it is empty.
-        if (!(program.at(variable.declared.type).primitives & Primitive::Absent))
+        if (!(program.at(program.provenTypeOf(variable.declared)).primitives & Primitive::Absent))
             return BeforeStore::NothingIsRead;
         // The run time takes what the variable holds for the value of the binding.
         return isNamedByRecord ? BeforeStore::SomethingElse : BeforeStore::DeadZone;
@@ -417,11 +418,11 @@ static void findDeferrals(const Program& program, const FlowResults& flow, Build
     // A read gives what its variable is declared to hold, and every use of the class object was typed with the type of the class object.
     auto findVariableOfType = [&](const Deferral& deferral, TypeID type) {
         for (VariableID variable : deferral.variables) {
-            if (program.at(variable).declared.type == type && !program.at(variable).declared.flags.contains(PositionFlags::IsExpected))
+            if (program.at(variable).declared.established() == type)
                 return variable;
         }
         for (VariableID variable : deferral.variablesWithDeadZone) {
-            if (program.at(program.at(variable).declared.type).withoutPrimitives(Primitive::Absent) == program.at(type))
+            if (program.at(program.provenTypeOf(program.at(variable).declared)).withoutPrimitives(Primitive::Absent) == program.at(type))
                 return variable;
         }
         return VariableID();
@@ -552,10 +553,10 @@ static void changeVariables(ProgramEditor& editor, DefinitionPlan& plan)
         for (VariableID deadZone : deferral.variablesWithDeadZone) {
             // Every read of this one stands behind the test of the other, which passes only after the declaration has run.
             Variable beside = program.at(deadZone);
-            beside.declared.type = editor.types().intern(program.at(beside.declared.type).withoutPrimitives(Primitive::Absent));
+            beside.declared.changeType(Proven::byPosition(editor.types().intern(program.at(beside.declared.written()).withoutPrimitives(Primitive::Absent))));
             beside.flow.initialization = InitializationState::StoredBeforeEveryRead;
             VariableID object = editor.addVariable(WTF::move(beside));
-            editor.at(deadZone).declared = DeclaredType { .type = plan.typeOfDeadZone };
+            editor.at(deadZone).declared = DeclaredType(Proven::byPosition(plan.typeOfDeadZone));
             plan.objectBeside.add(deadZone.index(), object);
             deferral.variables.append(object);
             if (deferral.variableReadInBody == deadZone)
@@ -571,7 +572,7 @@ static void changeVariables(ProgramEditor& editor, DefinitionPlan& plan)
                 variable.flow.stores = StoreCount::Never;
                 break;
             case Deferral::Kind::RegExp:
-                variable.declared.type = editor.types().intern(program.at(variable.declared.type).withPrimitives(Primitive::Absent));
+                variable.declared.changeType(Proven::byPosition(editor.types().intern(program.at(variable.declared.written()).withPrimitives(Primitive::Absent))));
                 variable.initialization = VariableInitialization::Uninitialized;
                 variable.flow.initialization = InitializationState::Unknown;
                 variable.flow.isUnchangedDuringActivation = false;
@@ -623,7 +624,7 @@ static void readObjectsBehindDeadZoneTests(const DefinitionPlan& plan, IRBuilder
             if (!objectBesideReadBy(id))
                 continue;
             value.type = plan.typeOfDeadZone;
-            value.setExpected(TypeID());
+            value.setExpected({ });
         }
     }
     for (uint32_t index = 0; index < function.blocks.size(); ++index) {
@@ -636,14 +637,14 @@ static void readObjectsBehindDeadZoneTests(const DefinitionPlan& plan, IRBuilder
             if (VariableID object = objectReadThrough(id)) {
                 if (function.at(id).opcode == Opcode::CheckInitialized) {
                     Value test = function.at(id);
-                    test.setExpected(TypeID());
+                    test.setExpected({ });
                     builder.setOrigin(test.origin());
                     rewritten.append(builder.addDetached(WTF::move(test)));
                 }
                 Value& read = function.edit(id);
                 read.become(Opcode::GetModuleVariable);
                 read.setVariable(object);
-                ASSERT(plan.regExps.contains(object.index()) || read.type == builder.context().program.at(object).declared.type);
+                ASSERT(plan.regExps.contains(object.index()) || read.type == builder.context().program.at(object).declared.written());
             }
             rewritten.append(id);
         }
@@ -664,8 +665,8 @@ static void fillRegExpVariablesAtReads(const DefinitionPlan& plan, IRBuilder& bu
         // The casts between the literal and its store went with the definition. What flow proved of the variable's object it proved of this one.
         const DeclaredType& declared = builder.context().program.at(variable).declared;
         ValueID made = builder.append(Value(plan.regExps.find(variable.index())->value));
-        if (!declared.flags.contains(PositionFlags::IsExpected))
-            made = assumeType(builder, made, declared.type);
+        if (!declared.isExpected())
+            made = assumeType(builder, made, *declared.established());
         builder.append(makeVariableAccess(Opcode::PutModuleVariable, variable, { made }));
         builder.endExpansion(expansion, made);
 
@@ -772,9 +773,10 @@ struct InitializerScanContext {
     const Vector<ModuleID>& moduleWithBody;
 };
 
-// A stretch of a body that runs once: one operation of a block that every run passes, or all that lies between two such blocks.
+// A stretch of a body that runs once: one operation of a block that every run passes, all that lies between two such blocks, or the return of the last one with all that it enters by throwing.
 struct Item {
     bool isRegion() const { return !value; }
+    bool endsBody() const { return isRegion() && !join; }
     Origin originIn(const Function& body) const { return isRegion() ? body.at(block).terminator.origin() : body.at(value).origin(); }
 
     BlockID block;
@@ -905,8 +907,8 @@ static VariableFacts collectVariableFacts(const Program& program, const FlowResu
         const Variable& variable = program.variables[index];
         if (variable.flow.writers != WriterState::AllKnown || variable.owner)
             continue;
-        const Type& type = program.at(variable.declared.type);
-        bool isExpected = variable.declared.flags.contains(PositionFlags::IsExpected);
+        const Type& type = program.at(variable.declared.written());
+        bool isExpected = variable.declared.isExpected();
         bool isNeverReadEmpty = variable.flow.initialization != InitializationState::Unknown || (!isExpected && variable.initialization == VariableInitialization::Uninitialized && !(type.primitives & Primitive::Absent));
         if (variable.initialization == VariableInitialization::Function) {
             if ((isNeverReadEmpty || !(type.primitives & Primitive::Absent)) && variable.flow.stores == StoreCount::Never && !numberOfStores[index])
@@ -935,7 +937,7 @@ static VariableFacts collectVariableFacts(const Program& program, const FlowResu
 static bool haveSameOperations(const Function& a, const Function& b)
 {
     auto isSameOperation = [](const Value& a, const Value& b) {
-        return a.opcode == b.opcode && a.type == b.type && a.expected() == b.expected() && a.hasSamePayloadAs(b) && std::ranges::equal(a.operands(), b.operands());
+        return a.opcode == b.opcode && a.type == b.type && a.expected().predicted() == b.expected().predicted() && a.hasSamePayloadAs(b) && std::ranges::equal(a.operands(), b.operands());
     };
     return std::ranges::equal(a.values, b.values, isSameOperation) && std::ranges::equal(a.blocks, b.blocks, [](const Block& a, const Block& b) {
         return a.terminator.kind == b.terminator.kind && std::ranges::equal(a.values, b.values);
@@ -1216,7 +1218,7 @@ struct MovableCode {
         for (auto [blockOfRead, index, type] : narrowings) {
             ValueID read = function.at(blockOfRead).values[index];
             builder.setOrigin(function.at(read).origin());
-            ValueID cast = builder.addDetached(makeAssumeType(read, arenas.types.intersectionOf(function.at(read).type, type)));
+            ValueID cast = builder.addDetached(makeAssumeType(read, Proven::byRulesWithoutChecks(arenas.types.intersectionOf(function.at(read).type, type))));
             auto replace = [&](ValueID& operand) {
                 if (operand == read)
                     operand = cast;
@@ -1240,7 +1242,7 @@ struct MovableCode {
                 continue;
             const Value& parameter = original.at(original.at(entryBlock).parameters[index]);
             TypeID narrowed = arenas.types.intersectionOf(parameter.type, handed.types[index]);
-            if (narrowed == parameter.type && !parameter.expected())
+            if (narrowed == parameter.type && !parameter.expected().predicted())
                 continue;
             if (!version)
                 version = original;
@@ -1248,7 +1250,7 @@ struct MovableCode {
             narrowedParameter.type = narrowed;
             narrowedParameter.setExpected({ });
             if (DeclaredType* declared = version->declaredEntryParameter(index))
-                *declared = DeclaredType { .type = narrowed };
+                *declared = DeclaredType(Proven::byPosition(narrowed));
         }
         for (unsigned round = 0; version && round < 2; ++round) {
             {
@@ -1611,17 +1613,19 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
             itemOf[value.index()] = items.size();
             items.append(Item { .block = spine[position], .value = value });
         }
-        if (position + 1 == spine.size())
-            break;
-        Item region { .block = spine[position], .join = spine[position + 1] };
+        bool isLast = position + 1 == spine.size();
+        Item region { .block = spine[position], .join = isLast ? BlockID() : spine[position + 1] };
         BitVector seen(function.blocks.size());
         Vector<BlockID, 8> worklist { region.block };
         while (!worklist.isEmpty()) {
             for (BlockID successor : cfg.successors(worklist.takeLast())) {
                 if (successor == region.join || seen.quickSet(successor.index()))
                     continue;
-                if (isOnSpine.quickGet(successor.index()))
+                if (isOnSpine.quickGet(successor.index())) {
+                    if (isLast)
+                        continue;
                     return;
+                }
                 region.blocks.append(successor);
                 worklist.append(successor);
             }
@@ -1631,7 +1635,8 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
             addToNextItem(function.at(interior).parameters);
             addToNextItem(function.at(interior).values);
         }
-        addToNextItem(function.at(region.join).parameters);
+        if (region.join)
+            addToNextItem(function.at(region.join).parameters);
         items.append(WTF::move(region));
     }
     auto storeAt = [&](uint32_t index) -> const Value* {
@@ -1737,11 +1742,11 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
             if (location.placement == ValuePlacement::Detached || !isInside.quickGet(location.block.index()))
                 functor(taken);
         };
-        function.at(item.block).terminator.forEachChild(take);
+        function.at(item.block).forEachChildOutsideValues(take);
         for (BlockID block : item.blocks) {
             for (ValueID value : function.at(block).values)
                 function.at(value).forEachChild(take);
-            function.at(block).terminator.forEachChild(take);
+            function.at(block).forEachChildOutsideValues(take);
         }
     };
     auto mayMove = [&](const Item& item, const Knowledge& given) {
@@ -1777,7 +1782,7 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
             states[index] = State::IsRepeated;
             return;
         }
-        if (block.handler || block.isHandlerBlock() || analyses.executionCountOf(item.block) != ExecutionCount::AtMostOnce)
+        if (block.handler || block.isHandlerBlock() || item.endsBody() || analyses.executionCountOf(item.block) != ExecutionCount::AtMostOnce)
             return stay();
         if (value && value->opcode == Opcode::GetModuleVariable && isStoredHere.get(value->variable().index())) {
             uint32_t store = firstStoreTo.get(value->variable().index());
@@ -1836,10 +1841,6 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
     };
     for (uint32_t index = 0; index < items.size(); ++index)
         classify(index);
-    function.at(items.last().block).terminator.forEachOperand([&](ValueID returned, uint32_t) {
-        if (stateOf(returned) == State::Moves)
-            itemsUsedByCodeThatStays.append(itemOf[returned.index()]);
-    });
 
     auto estimatedCostOf = [&](const Item& item) -> unsigned {
         constexpr unsigned costOfCode = 1000;
@@ -2144,7 +2145,7 @@ static void fillVariablesAtReads(const InitializerPlan& plan, FunctionID id, IRB
                 if (retypesTests)
                     value.type = builder.types().intern(builder.types().at(function.at(read).type).withoutPrimitives(Primitive::Absent));
                 else
-                    value.type = builder.context().program.at(value.variable()).declared.type;
+                    value.type = builder.context().program.provenTypeOf(builder.context().program.at(value.variable()).declared);
             }
         }
     }
@@ -2245,11 +2246,16 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
         std::span<InitializerUnit> unitsOfBody = units.first(numberOfUnits);
         units = units.subspan(numberOfUnits);
         addedInBody.clear();
+        std::optional<PredictedValues> predicted;
         for (InitializerUnit& unit : unitsOfBody) {
             for (ValueOfVariable& added : unit.addedVariables) {
+                if (!predicted)
+                    predicted.emplace(body, CFG(body));
+                TypeID type = body.at(added.value).type;
+                std::optional<ProvenInEveryVersion> proven = Proven::byRules(*predicted, added.value, type).inEveryVersion();
                 Variable variable;
                 variable.module = body.module;
-                variable.declared = DeclaredType { .type = body.at(added.value).type };
+                variable.declared = proven ? DeclaredType(*proven) : DeclaredType(ExpectedType(type));
                 variable.initialization = VariableInitialization::Uninitialized;
                 variable.flow.writers = WriterState::AllKnown;
                 variable.flow.stores = StoreCount::AtMostOnce;
@@ -2289,8 +2295,8 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
         head.kind = FunctionKind::Plain;
         head.role = FunctionRole::OutlinedBody;
         head.flags = body.flags & OptionSet<FunctionFlags> { FunctionFlags::IsSloppy, FunctionFlags::IsChecked };
-        head.thisType = DeclaredType { .type = TypeTable::anything };
-        head.results.append(DeclaredType { .type = unit.type });
+        head.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
+        head.results.append(DeclaredType(Proven::byPosition(unit.type)));
         head.capabilities = initialCapabilitiesOf(head);
         unit.function = editor.addFunctionLike(unit.body, WTF::move(head));
         created.append(unit.function);
@@ -2300,7 +2306,7 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
             ++numberOfVariablesFilled;
             Variable& variable = editor.at(id);
             Emptiness emptiness = plan.emptinessOf(id);
-            variable.declared.type = editor.types().intern(program.at(variable.declared.type).withPrimitives(emptiness == Emptiness::UndefinedFromDeclaration ? Primitive::Absent | Primitive::Undefined : Primitive::Absent));
+            variable.declared.changeType(Proven::byPosition(editor.types().intern(program.at(variable.declared.written()).withPrimitives(emptiness == Emptiness::UndefinedFromDeclaration ? Primitive::Absent | Primitive::Undefined : Primitive::Absent))));
             if (emptiness == Emptiness::AbsentFromBirth)
                 variable.initialization = VariableInitialization::Uninitialized;
             else

@@ -28,10 +28,10 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     v2 = NewRegExp pattern="a+"
     PutModuleVariable v2 variable=g1
     v4 = GetModuleVariable variable=g0
-    v5 = AssumeType v4 castType=f1
+    v5 = AssumeType v4 provenType=f1
     v6 = Call v5
     v7 = GetModuleVariable variable=g1
-    v8 = AssumeType v7 castType=RegExp
+    v8 = AssumeType v7 provenType=RegExp
     v9 = Call v5, -, v8
     Return
 }

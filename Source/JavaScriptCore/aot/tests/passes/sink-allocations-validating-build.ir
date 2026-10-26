@@ -10,7 +10,7 @@ module m0 path="main.js" displayPath="main.js"
 function f0 name="returnedInOneBranch" parameters=[{type=anything}, {type=Array<anything, pristine[Storage]>}, {type=boolean}] results=[{type=Array<anything, pristine[Storage]>}] {
     v3 = NewArray v0 contents=anything
     ValidateType v3 validatedType=Array<anything, Contiguous, pristine[Storage]>
-    v5 = AssumeType v3 castType=Array<anything, Contiguous, pristine[Storage]>
+    v5 = AssumeType v3 provenType=Array<anything, Contiguous, pristine[Storage]>
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     Return v5
@@ -22,7 +22,7 @@ function f0 name="returnedInOneBranch" parameters=[{type=anything}, {type=Array<
 # CHECK: b1():
 # CHECK-NEXT: [[cell]]: Array = NewArray v0 contents=anything
 # CHECK-NEXT: ValidateType [[cell]] validatedType=Array<anything, pristine[Storage]>
-# CHECK-NEXT: = AssumeType [[cell]] castType=Array<anything, pristine[Storage]>
+# CHECK-NEXT: = AssumeType [[cell]] provenType=Array<anything, pristine[Storage]>
 # CHECK: b2():
 # CHECK-NEXT: Return v1
 }
@@ -30,7 +30,7 @@ function f0 name="returnedInOneBranch" parameters=[{type=anything}, {type=Array<
 function f1 name="neverBuilt" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = NewArray v0 contents=anything
     ValidateType v1 validatedType=Array<anything, Contiguous, pristine[Storage]>
-    v3 = AssumeType v1 castType=Array<anything, Contiguous, pristine[Storage]>
+    v3 = AssumeType v1 provenType=Array<anything, Contiguous, pristine[Storage]>
     v4 = Integer integer=0
     v5 = ElemGet v3, v4
     Return v5

@@ -48,7 +48,7 @@ Function createDerivedHeader(const Function& target, FunctionID targetID, Functi
     header.flags = target.flags & FunctionFlags::IsChecked;
     header.length = target.length;
     header.enclosingRuntimeFunction = target.enclosingRuntimeFunction;
-    header.thisType = DeclaredType { .type = TypeTable::anything };
+    header.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
     header.capabilities = capabilitiesOf(role);
     header.derivation = Derivation { .source = targetID, .parameter = keyParameter };
     return header;
@@ -263,8 +263,8 @@ Function buildBoundFunction(const DerivedFunctionKey& key, DerivedFunctionInputs
     auto addEntryParameter = [&](const DeclaredType& declared) {
         TypeID proven = TypingContext { program, bound, inputs.types }.typeIDOf(declared);
         ValueID parameter = builder.addParameter(block, proven);
-        if (declared.type != proven)
-            bound.edit(parameter, ValueEdit::Type).setExpected(declared.type);
+        if (declared.expected().predicted() != proven)
+            bound.edit(parameter, ValueEdit::Type).setExpected(declared.expected());
         return parameter;
     };
     auto addCapture = [&](const DeclaredType& capture) {
@@ -288,7 +288,7 @@ Function buildBoundFunction(const DerivedFunctionKey& key, DerivedFunctionInputs
     for (uint32_t i = 0; i < record.numberOfCapturedArguments; ++i) {
         if (isConstructedByRunTime && !holdsCells(declaredRepresentationOf(program, target.parameters[i]))) {
             argumentsHeldAsValues.append(i);
-            arguments.append(addCapture(DeclaredType { .type = TypeTable::anything }));
+            arguments.append(addCapture(DeclaredType(Proven::byPosition(TypeTable::anything))));
             continue;
         }
         arguments.append(addCapture(target.parameters[i]));
@@ -296,7 +296,7 @@ Function buildBoundFunction(const DerivedFunctionKey& key, DerivedFunctionInputs
     // The run time reads the target closure for instanceof.
     ValueID targetClosure;
     if (record.capturesTargetClosure)
-        targetClosure = addCapture(DeclaredType { .type = inputs.types.intern(Type::forFunction(targetID)) });
+        targetClosure = addCapture(DeclaredType(Proven::byPosition(inputs.types.intern(Type::forFunction(targetID)))));
     for (size_t i = record.numberOfCapturedArguments; i < target.parameters.size(); ++i) {
         bound.parameters.append(target.parameters[i]);
         arguments.append(addEntryParameter(target.parameters[i]));
@@ -306,7 +306,7 @@ Function buildBoundFunction(const DerivedFunctionKey& key, DerivedFunctionInputs
     if (targetClosure)
         targetCaptures = appendCaptures(builder, targetID, targetClosure);
     for (uint32_t i : argumentsHeldAsValues)
-        arguments[i] = builder.append(makeAssumeType(arguments[i], TypingContext { program, bound, inputs.types }.typeIDOf(target.parameters[i])));
+        arguments[i] = builder.append(makeAssumeType(arguments[i], Proven::byPosition(TypingContext { program, bound, inputs.types }.typeIDOf(target.parameters[i]))));
     ValueID result = appendDirectCall(builder, {
         .callee = targetID,
         .captures = targetCaptures.span(),
@@ -397,7 +397,7 @@ Vector<TypeID, 4> parameterTypesOf(const Program& program, TypeArena& types, Met
             for (uint32_t index = 0; index < selector.numberOfArguments; ++index) {
                 // An argument that goes into a list, or that the method may find among `arguments`, is any value.
                 bool isDeclared = index < numberOfPositionalParameters && !method.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest });
-                declared[index] = declared[index].unionWith(isDeclared ? program.at(method.parameters[index].type) : Type::anything(), types);
+                declared[index] = declared[index].unionWith(isDeclared ? program.at(method.parameters[index].expected().predicted()) : Type::anything(), types);
             }
             return false;
         });
@@ -423,10 +423,10 @@ bool canHaveTableEntrypoint(const Program& program, TypeArena& types, FunctionID
         return false;
     const Vector<DeclaredType>& parameters = program.at(method).parameters;
     for (size_t index = 0; index < parameters.size(); ++index) {
-        if (parameters[index].flags.contains(PositionFlags::IsExpected))
+        if (parameters[index].isExpected())
             continue;
         Type passed = index < given.size() ? types.at(given[index]) : Type::fromPrimitives(Primitive::Undefined);
-        if (!passed.isSubsetOf(types.at(parameters[index].type), program))
+        if (!passed.isSubsetOf(types.at(*parameters[index].established()), program))
             return false;
     }
     return true;
@@ -452,11 +452,11 @@ struct FoundEntrypoints {
 static void declareTableConvention(const Program& program, Function& function, TypeArena& types, MethodSelector selector)
 {
     function.flags.add(FunctionFlags::HasThis);
-    function.thisType = DeclaredType { .type = types.intern(Type::object()) };
+    function.thisType = DeclaredType(Proven::byPosition(types.intern(Type::object())));
     function.length = selector.numberOfArguments;
     for (TypeID parameter : parameterTypesOf(program, types, selector))
-        function.parameters.append(DeclaredType { .type = parameter });
-    function.results.append(DeclaredType { .type = TypeTable::anything });
+        function.parameters.append(DeclaredType(Proven::byPosition(parameter)));
+    function.results.append(DeclaredType(Proven::byPosition(TypeTable::anything)));
 }
 
 static TableParameters addEntryBlock(IRBuilder& builder)
@@ -466,9 +466,9 @@ static TableParameters addEntryBlock(IRBuilder& builder)
     builder.moveToEndOf(block);
 
     TableParameters parameters;
-    parameters.thisValue = builder.addParameter(block, function.thisType.type);
+    parameters.thisValue = builder.addParameter(block, *function.thisType.established());
     for (const DeclaredType& parameter : function.parameters)
-        parameters.arguments.append(builder.addParameter(block, parameter.type));
+        parameters.arguments.append(builder.addParameter(block, *parameter.established()));
     return parameters;
 }
 
@@ -494,7 +494,7 @@ Function buildTableEntrypoint(const DerivedFunctionKey& key, DerivedFunctionInpu
         TypeID instances = inputs.types.intern(Type::forLayoutSet(inputs.types.completeLayoutSet(receivers.span())));
         if (inputs.build.validates())
             builder.append(makeValidateType(receiver, instances));
-        receiver = builder.append(makeAssumeType(receiver, instances));
+        receiver = builder.append(makeAssumeType(receiver, Proven::byPosition(instances)));
     }
 
     ValueID result = appendDirectCall(builder, {

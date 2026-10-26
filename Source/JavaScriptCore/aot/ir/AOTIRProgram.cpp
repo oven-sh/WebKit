@@ -359,7 +359,7 @@ void Program::appendBuiltinLayouts()
             Field field;
             if (builtinField.name)
                 field.key = keyOf(builtinField.name);
-            field.declared.type = arena.intern(typeOfBuiltinLayoutField(*this, builtinField, arena));
+            field.declared.establish(Proven::byPosition(arena.intern(typeOfBuiltinLayoutField(*this, builtinField, arena))));
             if (!builtinField.isOptional)
                 field.flags.add(FieldFlags::IsRequired);
             layout.fields.append(WTF::move(field));
@@ -387,7 +387,7 @@ static TypeID typeOfExportedNamespace(const Program& program, const ModuleExport
 static DeclaredType declaredTypeOfExport(const Program& program, const ModuleExport& entry, TypeArena& arena)
 {
     DeclaredType declared;
-    declared.type = TypeTable::anything;
+    declared.establish(Proven::byPosition(TypeTable::anything));
     switch (entry.kind) {
     case ModuleExportKind::Variable:
         if (!entry.variable)
@@ -396,7 +396,7 @@ static DeclaredType declaredTypeOfExport(const Program& program, const ModuleExp
         declared.site = { };
         return declared;
     case ModuleExportKind::Namespace:
-        declared.type = typeOfExportedNamespace(program, entry, arena);
+        declared.establish(Proven::byPosition(typeOfExportedNamespace(program, entry, arena)));
         return declared;
     case ModuleExportKind::Indirect:
         return declared;

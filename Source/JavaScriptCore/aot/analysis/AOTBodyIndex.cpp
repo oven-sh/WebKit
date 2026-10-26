@@ -106,7 +106,7 @@ BodyIndex::Row::Row(const Function& function, BodyIDs ids)
     hot.listsParameters = numberOfParameters;
     hot.traits.add(traitsBesideBlocks(function, hot.listsParameters, hasNeverValue));
     hot.holdsExpectedTypes = function.values.containsIf([](const Value& value) {
-        return !!value.expected();
+        return !!value.expected().predicted();
     });
     if (ids == BodyIDs::Final) {
         cold.makeNames(function);
@@ -163,7 +163,7 @@ void BodyIndex::ColdRow::makeNames(const Function& function)
     forEachReference(static_cast<const FunctionRecord&>(function), collector);
     for (const Value& value : function.values) {
         collector(value.type);
-        collector(value.expected());
+        collector(value.expected().predicted());
         forEachReference(value, collector);
     }
     for (const Block& block : function.blocks)

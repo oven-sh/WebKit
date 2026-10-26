@@ -8,7 +8,7 @@
 # STATISTIC: BoundFunctions = 1
 # IR-NOT: FunctionPrototypeBind
 # IR: name="multiply"{{*}}role=BoundFunction{{*}}captures=[{type=anything}, {type=f{{*}}}]
-# IR: = AssumeType {{*}}castType=
+# IR: = AssumeType {{*}}provenType=
 # CHECK: 15 18 bound multiply 1
 # CHECK-NEXT: object true
 # CHECK-NEXT: true

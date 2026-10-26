@@ -26,15 +26,15 @@ function f5 name="typed-parameter" parameters=[{type=f4}, {type=anything}, {type
     v3 = Call v0, -, v1, v2
     Return v3
 # CHECK-NEXT: b0(v0: f4, v1: anything, v2: number|string):
-# CHECK-NEXT: [[unknownArgument]]: number = AssumeType v1 castType=number
-# CHECK-NEXT: [[unionArgument]]: string = AssumeType v2 castType=string
+# CHECK-NEXT: [[unknownArgument]]: number = AssumeType v1 provenType=number
+# CHECK-NEXT: [[unionArgument]]: string = AssumeType v2 provenType=string
 # CHECK-NEXT: = CallDirect [[unknownArgument]], [[unionArgument]] function=f4
 }
 function f6 name="argument-of-a-wider-type" parameters=[{type=f4}, {type=number|string}, {type=string}] results=[{type=anything}] {
     v3 = Call v0, -, v1, v2
     Return v3
 # CHECK-NEXT: b0(v0: f4, v1: number|string, v2: string):
-# CHECK-NEXT: [[narrowedArgument]]: number = AssumeType v1 castType=number
+# CHECK-NEXT: [[narrowedArgument]]: number = AssumeType v1 provenType=number
 # CHECK-NEXT: = CallDirect [[narrowedArgument]], v2 function=f4
 }
 function f7 name="arguments-inside" parameters=[{type=f4}, {type=i32}, {type="a"}] results=[{type=anything}] {
@@ -55,7 +55,7 @@ function f8 name="async-callee-under-handler" parameters=[{type=f0}, {type=anyth
     v3 = CatchValue
     Return v3
 # CHECK-NEXT: b0(v0: f0, v1: anything) handler=b2():
-# CHECK-NEXT: [[asyncArgument]]: number = AssumeType v1 castType=number
+# CHECK-NEXT: [[asyncArgument]]: number = AssumeType v1 provenType=number
 # CHECK-NEXT: : Promise = CallDirect [[asyncArgument]] function=f0
 # CHECK-NOT: RejectPromise
 }
@@ -70,7 +70,7 @@ function f10 name="generator-callee" parameters=[{type=f2}, {type=anything}] res
     v2 = Call v0, -, v1
     Return v2
 # CHECK-NEXT: b0(v0: f2, v1: anything):
-# CHECK-NEXT: [[generatorArgument]]: number = AssumeType v1 castType=number
+# CHECK-NEXT: [[generatorArgument]]: number = AssumeType v1 provenType=number
 # CHECK-NEXT: = CallDirect v0, [[generatorArgument]] function=f2
 # CHECK-NOT: CatchValue
 }

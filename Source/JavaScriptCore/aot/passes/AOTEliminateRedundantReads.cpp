@@ -2466,7 +2466,7 @@ struct LoopPathSeparator : LoopEditor {
                     if (use.kind != Use::Kind::Operand || !loops.belongsTo(use.block, loop) || leavesLoop.get(use.block.index()))
                         continue;
                     const Value& user = m_function.at(use.user);
-                    if (user.opcode == Opcode::Upcast || user.opcode == Opcode::AssumeType) {
+                    if (isCastThatProvesNothing(user.opcode) || user.opcode == Opcode::AssumeType) {
                         sameValues.append(use.user);
                         continue;
                     }

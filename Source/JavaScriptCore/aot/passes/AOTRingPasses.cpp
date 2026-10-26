@@ -440,7 +440,7 @@ static std::optional<int64_t> distanceAddedTo(const Program& program, const Func
 
 KnownValue evaluateOperation(const Program& program, const Function& function, const Value& value, std::array<KnownValue, 2> operands)
 {
-    RELEASE_ASSERT(opcodesWithKnownValueRules.contains(value.opcode));
+    RELEASE_ASSERT(hasKnownValueRuleOf(value.opcode));
     auto [left, right] = operands;
     bool areNumbers = left.isNumber() && right.isNumber();
     switch (value.opcode) {
@@ -452,12 +452,13 @@ KnownValue evaluateOperation(const Program& program, const Function& function, c
     case Opcode::String:
         return evaluateConstant(value);
     case Opcode::Upcast:
+    case Opcode::Expect:
     case Opcode::NarrowByField:
     case Opcode::AssumeType:
     case Opcode::CheckInitialized:
         return left;
     case Opcode::Check:
-        return evaluateTypeTest(program, left, program.at(value.castType())) == KnownBoolean::True ? left : KnownValue();
+        return evaluateTypeTest(program, left, program.at(value.expectedType().predicted())) == KnownBoolean::True ? left : KnownValue();
     case Opcode::RequireObjectCoercible:
         return left.isNullish() ? KnownValue() : left;
     case Opcode::RequireObject:
@@ -1100,19 +1101,13 @@ enum class FoldingRule : uint8_t {
 
 using FoldingRules = OptionSet<FoldingRule>;
 
-constexpr OpcodeSet opcodesWithOwnFoldingRule {
-    Opcode::TypeTest, Opcode::IsClosureOf, Opcode::StrictEq, Opcode::Eq, Opcode::ToBoolean, Opcode::ToString, Opcode::ToPropertyKey,
-    Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete, Opcode::ElemDefine, Opcode::SuperGet, Opcode::SuperSet,
-    Opcode::CopyDataProperties, Opcode::CallBuiltin, Opcode::HasInPrototypeChain,
-};
-
 constexpr std::array<FoldingRules, numberOfOpcodes> foldingRulesOfOpcodes = [] {
     std::array<FoldingRules, numberOfOpcodes> result { };
     for (Opcode opcode : allMembersOf<Opcode>) {
         FoldingRules& rules = result[static_cast<unsigned>(opcode)];
         if (!foldableOpcodes.contains(opcode))
             continue;
-        if (opcodesWithKnownValueRules.contains(opcode))
+        if (hasKnownValueRuleOf(opcode))
             rules.add(FoldingRule::KnownOperands);
         if (isCastOrConversion(opcode))
             rules.add(FoldingRule::SingleValueBehindCasts);
@@ -1120,7 +1115,7 @@ constexpr std::array<FoldingRules, numberOfOpcodes> foldingRulesOfOpcodes = [] {
             rules.add(FoldingRule::SingleValueType);
         if (opcodesCreatingKnownStrings.contains(opcode))
             rules.add(FoldingRule::KnownString);
-        if (opcodesWithOwnFoldingRule.contains(opcode))
+        if (hasOwnFoldingRuleOf(opcode))
             rules.add(FoldingRule::OwnRule);
         if (rules.isEmpty())
             continue;
@@ -1381,7 +1376,7 @@ struct ConstantFolder {
             const Value& user = function.at(use.user);
             if (isPatternOfCreatedRegExp(user, text))
                 return true;
-            bool makesTextOfOperands = user.opcode == Opcode::Upcast || opcodesCreatingKnownStrings.contains(user.opcode) || calledStringFunctionOf(user);
+            bool makesTextOfOperands = isCastThatProvesNothing(user.opcode) || opcodesCreatingKnownStrings.contains(user.opcode) || calledStringFunctionOf(user);
             return makesTextOfOperands && operationsLeft && feedsOnlyRegExpPatterns(use.user, operationsLeft - 1);
         });
     }
@@ -1404,7 +1399,7 @@ struct ConstantFolder {
             const Value& definition = function.at(regExp);
             if (definition.opcode == Opcode::NewRegExp)
                 return RegExpLiteralInType { definition.pattern(), definition.regExpFlags().toRaw() };
-            if (definition.opcode != Opcode::Upcast && definition.opcode != Opcode::AssumeType)
+            if (!isCastThatProvesNothing(definition.opcode) && definition.opcode != Opcode::AssumeType)
                 return std::nullopt;
             user = regExp;
             regExp = definition.valueOperand();
@@ -1521,14 +1516,14 @@ struct ConstantFolder {
             return false;
 
         TypeArena& types = context.types;
-        TypeID expected = value.expectedOrType();
+        TypeID expected = value.expectedOrType().predicted();
         Value& access = function.edit(id);
         becomeNamedAccess(access, key);
         access.type = resultTypeOf(program, function, access, types);
         TypeID narrowed = types.intersectionOf(access.type, expected);
         // An intersection may keep a part of one side that the subset test does not find in the other.
         bool saysMoreThanType = narrowed != TypeTable::never && narrowed != access.type && types.at(narrowed).isSubsetOf(types.at(access.type), program);
-        access.setExpected(saysMoreThanType ? narrowed : TypeID());
+        access.setExpected(ExpectedType(saysMoreThanType ? narrowed : TypeID()));
         return true;
     }
 };
@@ -1575,7 +1570,7 @@ static bool canReplaceParameter(const Function& function, ValueID argument, Valu
 {
     const Value& replacement = function.at(argument);
     const Value& replaced = function.at(parameter);
-    return replacement.type == replaced.type && replacement.expected() == replaced.expected();
+    return replacement.type == replaced.type && replacement.expected().predicted() == replaced.expected().predicted();
 }
 
 static bool isCastOf(const Function& function, const ValueSubstitution& substitution, ValueID value, ValueID of)
@@ -1764,7 +1759,7 @@ struct TrivialParameterRemover {
             if (canReplace)
                 replacements.replace(parameter, argument);
             else
-                upcasts.append({ parameter, argument, function.at(parameter).type, function.at(parameter).expected() });
+                upcasts.append({ parameter, argument, function.at(parameter).type, function.at(parameter).expected().predicted() });
         }
         builder.removeParameters(id, removedIndexes);
         if (constants.isEmpty() && upcasts.isEmpty())
@@ -1780,7 +1775,7 @@ struct TrivialParameterRemover {
         for (const PendingUpcast& upcast : upcasts) {
             Value& value = function.edit(upcast.parameter, ValueEdit::Type);
             value.type = upcast.type;
-            value.setExpected(upcast.expected);
+            value.setExpected(ExpectedType(upcast.expected));
             becomeUpcast(function, upcast.parameter, upcast.argument);
             values.insert(index++, upcast.parameter);
             // The subject is named at the head of the block, above the Upcast.

@@ -444,12 +444,12 @@ static void testGranules()
     Vector<EntryAlias> aliases;
     CodeIndex index(functions.span());
     Vector<uint32_t> zeroOffsets(FillWith { }, numberOfBodies, 0);
-    Vector<Vector<uint8_t>> noCallSites(numberOfBodies);
+    Vector<OptionSet<ImageFunctionFlag>> noSideTables(numberOfBodies);
     Vector<uint8_t> tableBytes = build.encodeTables();
     auto& programTables = *reinterpret_cast<const ProgramTables*>(tableBytes.span().data());
     for (unsigned shift : { minCodeGranuleShift, maxCodeGranuleShift }) {
         layout.codeGranuleShift = shift;
-        FunctionTableInputs inputs { functions, aliases, layout, index, noCallSites.span(), zeroOffsets.span(), programTables, true };
+        FunctionTableInputs inputs { functions, aliases, layout, index, noSideTables.span(), zeroOffsets.span(), programTables, true };
         checkGranules(encodeFunctionTables(inputs, build.context()), layout);
     }
 }

@@ -10,7 +10,7 @@ function f0 name="awaitsPromise" flags=[IsAsync] parameters=[{type=undefined|nul
     v2 = Convert v1 declared={type=undefined|null|number site=w1} illTypedCause=ContainerWriterUnseen
     Return v2
 # CHECK: v1: anything ~ undefined|null|number = Await v0
-# CHECK-NEXT: v2: undefined|null|number = Check v1 castType=undefined|null|number site=w1
+# CHECK-NEXT: v2: undefined|null|number = Check v1 expectedType=undefined|null|number site=w1
 }
 function f1 name="awaitsMap" flags=[IsAsync] parameters=[{type=undefined|null|Map<undefined|null|string, undefined|null|number> site=w0}] results=[{type=anything}] {
     v1 = Await v0

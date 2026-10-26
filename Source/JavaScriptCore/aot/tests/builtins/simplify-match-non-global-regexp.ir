@@ -5,7 +5,7 @@
 module m0 path="main.js" displayPath="main.js"
 function f0 name="literalWithoutFlags" parameters=[{type=string}] results=[{type=anything}] {
     v1 = NewRegExp pattern="a(b)"
-    v2 = AssumeType v1 castType=RegExp<pristine[Storage, Names, AsCreated]>
+    v2 = AssumeType v1 provenType=RegExp<pristine[Storage, Names, AsCreated]>
     v3 = CallBuiltin v0, v2 overload=StringPrototypeMatch/0
     Return v3
 # CHECK-NOT: StringPrototypeMatch
@@ -15,7 +15,7 @@ function f0 name="literalWithoutFlags" parameters=[{type=string}] results=[{type
 
 function f1 name="stickyLiteral" parameters=[{type=string}] results=[{type=anything}] {
     v1 = NewRegExp pattern="a" regExpFlags=[Sticky]
-    v2 = AssumeType v1 castType=RegExp<pristine[Storage, Names, AsCreated]>
+    v2 = AssumeType v1 provenType=RegExp<pristine[Storage, Names, AsCreated]>
     v3 = CallBuiltin v0, v2 overload=StringPrototypeMatch/0
     Return v3
 # CHECK-NOT: StringPrototypeMatch
@@ -24,7 +24,7 @@ function f1 name="stickyLiteral" parameters=[{type=string}] results=[{type=anyth
 
 function f2 name="globalLiteral" parameters=[{type=string}] results=[{type=anything}] {
     v1 = NewRegExp pattern="a" regExpFlags=[Global]
-    v2 = AssumeType v1 castType=RegExp<pristine[Storage, Names, AsCreated]>
+    v2 = AssumeType v1 provenType=RegExp<pristine[Storage, Names, AsCreated]>
     v3 = CallBuiltin v0, v2 overload=StringPrototypeMatch/0
     Return v3
 # CHECK-NOT: RegExpPrototypeExec

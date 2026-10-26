@@ -769,7 +769,7 @@ static Vector<ProgramPoint> findPointsToSplitStretchesAt(FunctionPassContext& co
     FunctionAnalyses& analyses = context.analyses;
     auto isConverted = [&](ValueID id) {
         const Value& value = function.at(id);
-        return value.type && value.expected() && defaultRepresentationOf(context.types.at(value.type)) != defaultRepresentationOf(context.types.at(value.expected()));
+        return value.type && value.expected().predicted() && defaultRepresentationOf(context.types.at(value.type)) != defaultRepresentationOf(context.types.at(value.expected().predicted()));
     };
     uint64_t numberOfTests = 0;
     for (uint32_t index = 0; index < plan.requirements.size(); ++index)
@@ -934,7 +934,7 @@ static bool expectedTypeTellsResultOf(FunctionPassContext& context, const TestSi
         break;
     }
     const Value& use = context.function.at(site.use);
-    if (!use.type || use.expected())
+    if (!use.type || use.expected().predicted())
         return true;
     TypeID expectedNow = expectedTypeOf(context.program, context.function, use, context.types, &context.typingMemo);
     return !expectedNow || expectedNow == use.type;
@@ -1488,7 +1488,7 @@ static Vector<NamedUse> collectNamedUsesOfUnknownObjects(FunctionPassContext& co
             if (*isColdBlock && program.at(key).kind != PropertyKeyKind::PrivateName && (tellsLayoutsApart(program, key) || !callsBuiltinMethod(context, id, key)))
                 continue;
             // `Promise.resolve` through a variable that is expected to hold the constructor: flow has followed the one object, and it answers.
-            if (TypeID expected = function.at(receiver).expected(); expected && !context.types.at(expected).builtins.isEmpty())
+            if (TypeID expected = function.at(receiver).expected().predicted(); expected && !context.types.at(expected).builtins.isEmpty())
                 continue;
             bool tellsLayouts = tellsLayoutsApart(program, key);
             bool isBuiltinMethodCall = !tellsLayouts && callsBuiltinMethod(context, id, key);
@@ -1583,7 +1583,7 @@ static void findUsesOnEveryPath(FunctionPassContext& context, std::span<NamedUse
 static bool isExpectedToFindMember(const Program& program, const Function& function, const NamedUse& use)
 {
     LayoutSetID stamp = use.stamp && program.at(use.stamp).isComplete ? use.stamp : LayoutSetID();
-    if (!function.at(use.receiver).expected() && !stamp)
+    if (!function.at(use.receiver).expected().predicted() && !stamp)
         return false;
     std::span<const LayoutID> holders = program.layoutsWithName(use.key);
     return std::ranges::any_of(receiverCandidates(program, function, use.receiver, stamp).predicted, [&](LayoutID layout) { return std::ranges::binary_search(holders, layout); });
@@ -1829,7 +1829,7 @@ static bool expectReceiversOfBuiltinMethods(FunctionPassContext& context, std::s
 static LayoutList layoutsMetThatAnswer(FunctionPassContext& context, std::span<const NamedUse> uses, const LayoutList& layoutsMet)
 {
     bool isExpectedToBeSomeObject = std::ranges::any_of(uses, [&](const NamedUse& use) {
-        TypeID expected = context.function.at(use.receiver).expected();
+        TypeID expected = context.function.at(use.receiver).expected().predicted();
         return expected && !context.types.at(expected).withOnlyObjects().isNever();
     });
     LayoutList layouts;
@@ -1847,7 +1847,7 @@ static LayoutList findLayoutsStoredUnderNameOfSubject(FunctionPassContext& conte
 {
     const Program& program = context.program;
     auto read = propertyReadBy(program, context.function.at(context.analyses.identityOf(uses[0].receiver)));
-    if (!read || !read->second || context.function.at(uses[0].receiver).expected())
+    if (!read || !read->second || context.function.at(uses[0].receiver).expected().predicted())
         return { };
     LayoutList layouts;
     for (LayoutID layout : program.layoutsWithName(uses[0].key)) {
@@ -1872,7 +1872,7 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
     bool isFollowed = std::ranges::any_of(usesOfSubject, [&](const NamedUse& use) { return isExpectedToFindMember(context.program, function, use); });
     // In a checked function what is expected of a value is what the checker says of it. Where that lists layouts the names have nothing to add: a name that none of them holds is found above them.
     bool typeListsLayouts = function.has(FunctionFlags::IsChecked) && std::ranges::any_of(usesOfSubject, [&](const NamedUse& use) {
-        TypeID expected = function.at(use.receiver).expected();
+        TypeID expected = function.at(use.receiver).expected().predicted();
         return expected && context.types.at(expected).layouts;
     });
     if (isFollowed || typeListsLayouts || isAllocatedHere(context, usesOfSubject[0].receiver))
@@ -1944,7 +1944,7 @@ static DeclaredType* findUncheckedEntryParameter(Function& function, ValueID val
     if (parameter == parameters.end())
         return nullptr;
     DeclaredType* declared = function.declaredEntryParameter(static_cast<unsigned>(parameter - parameters.begin()));
-    bool isUnchecked = declared && (declared->flags.contains(PositionFlags::IsExpected) || declared->type == TypeTable::anything);
+    bool isUnchecked = declared && (declared->isExpected() || declared->written() == TypeTable::anything);
     return isUnchecked ? declared : nullptr;
 }
 
@@ -1955,7 +1955,7 @@ static bool expectValues(FunctionPassContext& context, const ExpectedValues& exp
     auto narrowedTypeOf = [&](ValueID id, TypeID expected) {
         const Value& value = function.at(id);
         TypeID narrowed = context.types.intersectionOf(value.type, expected);
-        TypeID expectedAlready = value.expected() ? context.types.intersectionOf(narrowed, value.expected()) : TypeTable::never;
+        TypeID expectedAlready = value.expected().predicted() ? context.types.intersectionOf(narrowed, value.expected().predicted()) : TypeTable::never;
         if (expectedAlready != TypeTable::never)
             narrowed = expectedAlready;
         return narrowed == TypeTable::never || narrowed == value.type ? TypeID() : narrowed;
@@ -1967,9 +1967,8 @@ static bool expectValues(FunctionPassContext& context, const ExpectedValues& exp
         DeclaredType* declared = narrowed ? findUncheckedEntryParameter(function, value) : nullptr;
         if (!declared)
             continue;
-        if (declared->type != narrowed || !declared->flags.contains(PositionFlags::IsExpected)) {
-            declared->type = narrowed;
-            declared->flags.add(PositionFlags::IsExpected);
+        if (declared->written() != narrowed || !declared->isExpected()) {
+            declared->expect(ExpectedType(narrowed));
             changedParameters.append(value);
         }
         if (context.types.at(narrowed).layouts)
@@ -1981,7 +1980,7 @@ static bool expectValues(FunctionPassContext& context, const ExpectedValues& exp
 
     for (auto [value, expected] : expectedValues) {
         TypeID narrowed = narrowedTypeOf(value, expected);
-        if (narrowed && narrowed != function.at(value).expected()) {
+        if (narrowed && narrowed != function.at(value).expected().predicted()) {
             expectations.expect(value, narrowed);
             if (context.types.at(narrowed).layouts)
                 expectations.didGuessFromNames(value);
@@ -2126,7 +2125,7 @@ bool expectsReceiverOfCalledMethod(FunctionPassContext& context, BlockID block, 
         return false;
     ValueID receiver = callee.objectOperand();
     const Type& type = context.program.typeOf(function, receiver);
-    if (!type.anyObject || type.layouts || function.at(receiver).expected() || isAllocatedHere(context, receiver))
+    if (!type.anyObject || type.layouts || function.at(receiver).expected().predicted() || isAllocatedHere(context, receiver))
         return false;
     return !!receiversWithMethod(context, key);
 }
@@ -2367,7 +2366,7 @@ struct TestPlacer {
             ValueID tested = !test.operands.isEmpty() ? test.operands[testedOperandIndex] : written.numberOfOperands() ? written.operand(testedOperandIndex) : ValueID();
             bool isGuess = tested && expectations.isGuessedFromNames(tested);
             if (tested && !expectsCheckedTypes) {
-                TypeID expected = function.at(tested).expected();
+                TypeID expected = function.at(tested).expected().predicted();
                 isGuess |= expected && types.at(expected).layouts;
             }
             (isGuess ? stretchesThatGuessLayouts : stretchesWithOtherTests).quickSet(test.stretch);
@@ -2972,7 +2971,7 @@ struct TestPlacer {
                 return;
             }
             if (std::optional<TypeID> castType = findTypeOfOperand(test, *prerequisite.narrowedOperand, proof))
-                proof = emit(makeAssumeType(proof, *castType));
+                proof = emit(makeAssumeType(proof, Proven::byRulesWithoutChecks(*castType)));
             test.setOperand(*prerequisite.narrowedOperand, proof);
         });
 
@@ -3143,7 +3142,7 @@ struct TestPlacer {
     {
         if (context.build.validates())
             builder.insertBefore(point, makeValidateType(value, castType));
-        return builder.insertBefore(point, makeAssumeType(value, castType));
+        return builder.insertBefore(point, makeAssumeType(value, Proven::byRulesWithoutChecks(castType)));
     }
 
     // While the uses are rewritten, a representative has the type of the join that it stands for.
@@ -3227,11 +3226,11 @@ struct TestPlacer {
 
         // Until SSA is repaired a site behind the join names the value of the fast copy. Its rule has to see the type the site was planned with, which is the type of the join.
         TypeID type = function.at(site.use).type;
-        TypeID expected = function.at(site.use).expected();
+        TypeID expected = function.at(site.use).expected().predicted();
         ruleOf(site.rule).rewrite(rewriter);
         Value& use = function.edit(site.use, ValueEdit::Type);
         use.type = type;
-        use.setExpected(expected);
+        use.setExpected(ExpectedType(expected));
     }
 
     // Nobody can tell that it ran, so nobody can tell that the copy runs it again.
@@ -3522,7 +3521,7 @@ struct TestPlacer {
                 ProgramPoint head { target, indexAfterCaughtValues(function, function.at(target)) };
                 if (context.build.validates())
                     builder.insertBefore(head, makeValidateType(proven, planned.castType));
-                castsOfProvenValue.append({ planned.castType, builder.insertBefore(head, makeAssumeType(proven, planned.castType)) });
+                castsOfProvenValue.append({ planned.castType, builder.insertBefore(head, makeAssumeType(proven, Proven::byRulesWithoutChecks(planned.castType))) });
             }
             replace(*planned.use, castsOfProvenValue[found].second);
         }
@@ -3611,7 +3610,7 @@ static void settleExpectedTypesByUses(FunctionPassContext& context, ExpectedType
     };
     const Function& function = context.function;
     auto settle = [&](std::span<const ValueID> values) {
-        TypeID expected = function.at(values[0]).expected();
+        TypeID expected = function.at(values[0]).expected().predicted();
         TypeID settled = expected ? narrowExpectedTypeByUses(context, values, expected) : expectArrayByUses(context, values);
         if (settled == expected)
             return;
@@ -3623,10 +3622,10 @@ static void settleExpectedTypesByUses(FunctionPassContext& context, ExpectedType
     for (uint32_t index = 0; index < function.values.size(); ++index) {
         ValueID id(index);
         const Value& value = function.at(id);
-        if (value.expected() == value.type || (!value.expected() && !context.types.at(value.type).anyObject) || !context.analyses.useLists().useCount(id))
+        if (value.expected().predicted() == value.type || (!value.expected().predicted() && !context.types.at(value.type).anyObject) || !context.analyses.useLists().useCount(id))
             continue;
         if (value.opcode == Opcode::PropGet)
-            reads.append(PropertyRead { { value.objectOperand(), value.key(), value.expected() }, id });
+            reads.append(PropertyRead { { value.objectOperand(), value.key(), value.expected().predicted() }, id });
         else
             settle(singleElementSpan(id));
     }

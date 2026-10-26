@@ -44,8 +44,8 @@ function f1 name="sumWithSmallInteger" parameters=[{type=anything}, {type=boolea
 }
 
 function f2 name="differenceOfTwoBoxedNumbers" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = AssumeType v0 castType=number
-    v3 = AssumeType v1 castType=number
+    v2 = AssumeType v0 provenType=number
+    v3 = AssumeType v1 provenType=number
     v4 = Sub v2, v3 form=Numbers
     v5 = Upcast v4 castType=anything
     Return v5
@@ -53,7 +53,7 @@ function f2 name="differenceOfTwoBoxedNumbers" parameters=[{type=anything}, {typ
 }
 
 function f3 name="sumAlsoWantedAsDouble" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-    v2 = AssumeType v0 castType=number
+    v2 = AssumeType v0 provenType=number
     v3 = Decrement v2 form=Numbers
     v4 = Mul v3, v1 form=Numbers
     v5 = Less v4, v1 form=Numbers
@@ -66,14 +66,14 @@ function f3 name="sumAlsoWantedAsDouble" parameters=[{type=anything}, {type=numb
 }
 
 function f4 name="sumOfDouble" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-    v2 = AssumeType v0 castType=number
+    v2 = AssumeType v0 provenType=number
     v3 = Add v2, v1 form=Numbers
     Return v3
 # CHECK: number @Double = Add {{*}} form=Numbers
 }
 
 function f5 name="sumAlsoCarriedAroundLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-    v2 = AssumeType v0 castType=number
+    v2 = AssumeType v0 provenType=number
     Jump -> next b1(v2)
   b1(v3: number):
     LoopHint
@@ -86,7 +86,7 @@ function f5 name="sumAlsoCarriedAroundLoop" parameters=[{type=anything}, {type=b
 }
 
 function f6 name="doubleWantedWhereSeldomEntered" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
-    v3 = AssumeType v0 castType=number
+    v3 = AssumeType v0 provenType=number
     v4 = Increment v3 form=Numbers
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -100,7 +100,7 @@ function f6 name="doubleWantedWhereSeldomEntered" parameters=[{type=anything}, {
 }
 
 function f7 name="storedInLoopAndWantedAsDoubleBehindIt" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=number}] {
-    v3 = AssumeType v0 castType=number
+    v3 = AssumeType v0 provenType=number
     Jump -> next b1(v3)
   b1(v4: number):
     LoopHint

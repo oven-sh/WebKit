@@ -483,7 +483,7 @@ static void refinePartTypes(Function& worker, FreshResultShape& shape, TypeArena
             operand.type = refined;
         }
         shape.partTypes[part] = refined;
-        worker.results[result].type = refined;
+        worker.results[result].changeType(Proven::byConstruction(refined));
     }
 }
 
@@ -507,12 +507,12 @@ static std::optional<FreshResultShape> tryReturnParts(const AnalysisContext& con
 
         worker.results.clear();
         if (shape.hasTag())
-            worker.results.append(DeclaredType { .type = TypeTable::int32 });
+            worker.results.append(DeclaredType(Proven::byPosition(TypeTable::int32)));
         for (TypeID type : shape.partTypes)
-            worker.results.append(DeclaredType { .type = type });
+            worker.results.append(DeclaredType(Proven::byPosition(type)));
         // A function has at least one result. The worker of an aggregate without parts, such as {}, returns undefined.
         if (worker.results.isEmpty())
-            worker.results.append(DeclaredType { .type = TypeTable::undefined });
+            worker.results.append(DeclaredType(Proven::byPosition(TypeTable::undefined)));
 
         sinking.rewrite(builder, &shape);
         sinking.countStatistics();
@@ -557,7 +557,7 @@ static ValueID assumeDeclaredType(IRBuilder& builder, ValueID value, TypeID decl
         return value;
     if (builder.context().build.validates())
         builder.append(makeValidateType(value, declared));
-    return builder.append(makeAssumeType(value, declared));
+    return builder.append(makeAssumeType(value, Proven::byPosition(declared)));
 }
 
 static ValueID appendRebuiltVariant(IRBuilder& builder, const FreshResultShape& shape, const FreshResultVariant& variant, std::span<const ValueID> results)

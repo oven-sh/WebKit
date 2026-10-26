@@ -17,10 +17,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=Symbol
     v1 = String string="state"
     v2 = Call v0, -, v1 @100
-    v3 = Check v2 castType=undefined|null|symbol site=w1
+    v3 = Check v2 expectedType=undefined|null|symbol site=w1
     PutModuleVariable v3 variable=g0
     v5 = GetModuleVariable variable=g0
-    v6 = Check v5 castType=undefined|null|symbol|absent site=w0 cause=AddedByPass
+    v6 = Check v5 expectedType=undefined|null|symbol|absent site=w0 cause=AddedByPass
     v7 = CheckInitialized v6 name="kState"
     v8 = Integer integer=1
     v9 = NewObject -, v8 layout=L0 fields=[0]

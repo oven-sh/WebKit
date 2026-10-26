@@ -13,6 +13,7 @@
 #include "AOTCFG.h"
 #include "AOTChooseCallingConventions.h"
 #include "AOTHeldOperands.h"
+#include "AOTInductionVariables.h"
 #include "AOTOperatorForms.h"
 #include "AOTPlacement.h"
 #include "AOTResultRules.h"
@@ -42,7 +43,6 @@ static constexpr OpcodeSet testOperators {
 };
 static_assert((representedBitwiseOperators | testOperators | Value::opcodesWithForm) == Value::opcodesWithForm);
 static_assert(!representedBitwiseOperators.intersects(testOperators));
-static constexpr OpcodeSet relations { Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq };
 static constexpr OpcodeSet binaryOperatorsOnInt32 { Opcode::BitAnd, Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift };
 
 static constexpr RepresentationSet unboxedElementRepresentations { Representation::Int32, Representation::Double, Representation::DoubleWithPayload, Representation::ImpureDouble, Representation::OptionalDouble };
@@ -235,7 +235,7 @@ static Representation wantedByNumbers(const RepresentationInputs& inputs, const 
     }
     if (isSumOfBoxedNumbers(user))
         return type.isInt32() ? Representation::Int32 : Representation::JSValue;
-    bool takesNumberAsItIs = relations.contains(user.opcode) || isEqualityOfNumbers(inputs.program, inputs.function, user) || (user.opcode == Opcode::ToBoolean && type.isNumber());
+    bool takesNumberAsItIs = relationalOperators.contains(user.opcode) || isEqualityOfNumbers(inputs.program, inputs.function, user) || (user.opcode == Opcode::ToBoolean && type.isNumber());
     if (takesNumberAsItIs && (isBoxedOrUnchosen(chosen) || (chosen == Representation::Int32 && type.isInt32())))
         return Representation::Unchosen;
     if (type.isNumber())
@@ -472,7 +472,7 @@ static Representation wantedByResults(const RepresentationInputs& inputs, const 
     const Function& function = inputs.function;
     if (function.results.size() != 1 && resultIndex < function.results.size() && isReturnedByFunction(function, results))
         return inputs.conventions.resultRepresentation(inputs.program, inputs.id, resultIndex);
-    return declaredRepresentationOf(inputs.program, DeclaredType { .type = function.at(results.valuesOperands()[resultIndex]).type });
+    return declaredRepresentationOf(inputs.program, DeclaredType(Proven::byPosition(function.at(results.valuesOperands()[resultIndex]).type)));
 }
 
 static Representation wantedByDeclaredPosition(const RepresentationInputs& inputs, const Value& user, uint32_t operandIndex)

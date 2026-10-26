@@ -27,24 +27,24 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="low" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     v2 = Integer integer=31
     v3 = BitAnd v1, v2
     Return v3
 }
 function f2 name="flipped" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     v2 = BitNot v1
     Return v2
 }
 function f3 name="shifted" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     v2 = Integer integer=2
     v3 = LShift v1, v2
     Return v3
 }
 function f4 name="half" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     v2 = Integer integer=2
     v3 = Div v1, v2
     Return v3

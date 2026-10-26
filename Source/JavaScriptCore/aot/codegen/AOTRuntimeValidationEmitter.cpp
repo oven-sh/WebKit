@@ -89,7 +89,7 @@ void RuntimeValidationEmitter::checkSlotAccessWithoutGuard(const OperationContex
 void RuntimeValidationEmitter::checkAssumedType(const ValueContext& value)
 {
     ValueID source = value->valueOperand();
-    const Type& type = m_program.at(value->castType());
+    const Type& type = m_program.at(value->provenType());
     if (type.isNever() || !hasTestableBits(source) || type.opaque || type.environment || !type.functions.isEmpty())
         return;
     checkHasType(value.id(), get(source), type, ValidationFailureKind::AssumedType);

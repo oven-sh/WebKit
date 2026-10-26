@@ -174,6 +174,8 @@ struct FlowSiteTables {
     Vector<WrittenPositionOfSite> writtenPositionsOfSites;
     Vector<FlowSiteLoss> accessSiteLosses;
     Vector<bool> callsOfBoundFunctions;
+    // Empty where no array has such a kind.
+    Vector<bool> receiversThatMayHaveDecidedStorage;
     // Sorted by site, use, target and number of bound arguments.
     Vector<FlowBoundFunctionAtSite> boundFunctionsAtSites;
     Vector<AllocationSite> allocationSites;
@@ -323,6 +325,9 @@ public:
     const FlowSiteLoss& lossOf(AccessSiteID) const LIFETIME_BOUND;
     bool seesOnlyFinishedObjects(AccessSiteID) const;
     bool mayCallBoundFunction(AccessSiteID) const;
+    // Flow decides the kind of storage of some arrays for the whole program, and whoever reads one of them by that decision reads it without a test.
+    // So nothing that the compiler adds may change the kind of an array that may be one of them. Whoever adds such an operation asks here for each access that the array is the receiver of; no site stands for an access that flow has not seen.
+    bool mayChangeStorageOfReceiver(AccessSiteID) const;
     // A prediction: the caller must test the value at run time.
     std::span<const FlowBoundFunctionAtSite> boundFunctionsSeenAt(AccessSiteID, FlowBoundFunctionUseAtSite) const LIFETIME_BOUND;
     const SinkCandidates& sinkCandidates(AccessSiteID call, uint32_t operandIndex) const LIFETIME_BOUND;

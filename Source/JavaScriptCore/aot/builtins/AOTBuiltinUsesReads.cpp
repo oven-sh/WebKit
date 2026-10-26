@@ -62,7 +62,7 @@ static std::optional<MemberSite> findMember(const BuiltinUseInputs& inputs, Valu
     MemberSite site { .receiver = receiver, .key = key };
     site.start = builtinReceiverOf(program, present);
     if (!site.start) {
-        TypeID expectedType = inputs.function.at(receiver).expected();
+        TypeID expectedType = inputs.function.at(receiver).expected().predicted();
         if (!expectedType)
             return std::nullopt;
         Type expected = inputs.types.at(expectedType).intersectWith(present, inputs.types).withoutNullish();

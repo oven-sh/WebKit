@@ -33,7 +33,7 @@ function f2 name="checkOfItselfOverBackEdge" parameters=[{type=anything}, {type=
     Jump -> next b1(v0)
   b1(v2):
     LoopHint
-    v4 = Check v2 castType=number
+    v4 = Check v2 expectedType=number
     Branch v1 -> taken b1(v4), notTaken b2()
   b2():
     Return v2

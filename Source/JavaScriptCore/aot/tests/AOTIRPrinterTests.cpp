@@ -625,7 +625,7 @@ void addEngineFields(PrinterTest& test)
 
     Value& read = stream.edit(v9);
     read.type = TypeTable::number;
-    read.setExpected(TypeTable::int32);
+    read.setExpected(ExpectedType(TypeTable::int32));
     read.representation = Representation::Double;
     read.inlineFrame = 1;
     read.setAccessSite(AccessSiteID(4u));

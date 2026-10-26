@@ -483,6 +483,7 @@ private:
             sites.bigIntConstants.append(value.digits());
             break;
         case Opcode::RequireModule:
+        case Opcode::EvaluateRequiredModule:
             sites.requireEdges.append(RequireEdgeUse { { value.referrer(), value.module() }, value.specifier() });
             break;
         case Opcode::ModuleBuiltin:

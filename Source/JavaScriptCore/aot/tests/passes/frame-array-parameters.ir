@@ -121,7 +121,7 @@ function f10 name="throws" parameters=[{type=Array}] results=[{type=anything}] {
 
 function f11 name="handsOnToReader" parameters=[{type=Array}] results=[{type=anything}] {
     v1 = Upcast v0 castType=anything
-    v2 = AssumeType v1 castType=Array
+    v2 = AssumeType v1 provenType=Array
     v3 = CallDirect v2 function=f1
     Return v3
 }
@@ -247,7 +247,7 @@ function f22 name="mergedValueIsTested" parameters=[{type=Array}, {type=anything
     Jump -> next b3(v0)
   b2():
     v3 = GetModuleVariable variable=g0
-    v4 = AssumeType v3 castType=Array
+    v4 = AssumeType v3 provenType=Array
     Jump -> next b3(v4)
   b3(v5: Array):
     v6 = IsPristine v5 builtinClass=Array aspects=[Storage]

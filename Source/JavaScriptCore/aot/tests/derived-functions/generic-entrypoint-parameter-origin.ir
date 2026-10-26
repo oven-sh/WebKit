@@ -12,7 +12,7 @@ function f0 name="double" position=1 flags=[HasThis] thisType={type=number site=
 # CHECK: name="double" module=m0 position=1 role=GenericEntrypoint
 # CHECK-NOT: inlineFrames=
 # CHECK: b0([[closure]]: f0, [[receiver]]: anything, [[argument]]: anything):
-# CHECK-NEXT: [[assumedReceiver]]: number = AssumeType [[receiver]] castType=number @1
-# CHECK-NEXT: [[assumedArgument]]: number = AssumeType [[argument]] castType=number @1
+# CHECK-NEXT: [[assumedReceiver]]: number = AssumeType [[receiver]] provenType=number @1
+# CHECK-NEXT: [[assumedArgument]]: number = AssumeType [[argument]] provenType=number @1
 # CHECK-NEXT: [[result]]: anything = CallDirect [[assumedReceiver]], [[assumedArgument]] function=f0 @1
 # CHECK-NEXT: ReturnCall [[result]] requirement=Allowed @1

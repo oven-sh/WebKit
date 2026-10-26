@@ -42,7 +42,7 @@ enum TypeSiteKind (logWord: Text) {
 }
 record TypeSite wire { module: Module(Referrer) position: UInt32 kind: TypeSiteKind text: String? | engine function: Function(Dispatch)? }
 flags PositionFlags { IsInt32Promise IsFromCompiler IsExpected OmitsNull OmitsUndefined IsDeclaredByDependency }
-record DeclaredType wire { type: Type site: TypeSite? flags: PositionFlags }
+record DeclaredType wire handwrittenStruct { type: Type site: TypeSite? flags: PositionFlags }
 
 enum IllTypedCause abi {
     None Unclassified FromLooseType Assertion SuppressedError DeclarationWithoutBody OutsideData LayoutOutsideFamily MemberWithoutSlot

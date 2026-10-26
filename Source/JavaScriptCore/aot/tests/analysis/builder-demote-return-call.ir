@@ -24,7 +24,7 @@ function f0 name="nothingUpcastCheck" parameters=[{type=boolean}, {type=Array<nu
 # CHECK: b1():
 # CHECK-NEXT: v2: undefined|Array<number> = CallDirect function=f5 @0 tail
 # CHECK-NEXT: [[upcast]]: undefined|Array<number|string> = Upcast v2 castType=undefined|Array<number|string>
-# CHECK-NEXT: [[check]]: Array<number|string> = Check [[upcast]] castType=Array<number|string>
+# CHECK-NEXT: [[check]]: Array<number|string> = Check [[upcast]] expectedType=Array<number|string>
 # CHECK-NEXT: Return [[check]]
 # CHECK-NEXT: b2():
 # RETURN-NOT: function f0
@@ -36,7 +36,7 @@ function f1 name="checkOfLayout" parameters=[{type=anything}] results=[{type=L0}
 }
 # LAYOUT: function f1
 # LAYOUT: v1: anything = Call v0 @0 tail
-# LAYOUT-NEXT: [[check]]: L0 = Check v1 castType=L0
+# LAYOUT-NEXT: [[check]]: L0 = Check v1 expectedType=L0
 # LAYOUT-NEXT: Return [[check]]
 function f2 name="checkOfType" parameters=[{type=anything}] results=[{type=object}] {
     v1 = Call v0
@@ -44,7 +44,7 @@ function f2 name="checkOfType" parameters=[{type=anything}] results=[{type=objec
 }
 # TYPE: function f2
 # TYPE: v1: anything = Call v0 @0 tail
-# TYPE-NEXT: [[check]]: object = Check v1 castType=object
+# TYPE-NEXT: [[check]]: object = Check v1 expectedType=object
 # TYPE-NEXT: Return [[check]]
 function f3 name="expectedType" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = Call v0

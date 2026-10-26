@@ -20,7 +20,7 @@
 # CHECK-NEXT: v5: Array<number, proven, Double> = NewArray v2 contents=number capacity=v4 allocationSite=2 literalStorage=Profiled
 # CHECK-NEXT: v6: undefined|string ~ "a" = Call v0 accessSite=4 callees=[f1, f2, builtin(MathMax), ..]
 # CHECK-NEXT: v7 = Call v0 callees=[f1]
-# CHECK-NEXT: v8: number = Check v0 castType=number cause=MayFail
+# CHECK-NEXT: v8: number = Check v0 expectedType=number cause=MayFail
 # CHECK-NEXT: v9 = ElemGet v0, v4 [keyIsIntegral]
 # CHECK-NEXT: v10 = CallDirect function=f0 accessSite=5 [isNeverInlined, isAfterInlinedHead, isConstruction]
 # CHECK-NEXT: v11 = Strcat v6 [isLikelyKey]
@@ -51,7 +51,7 @@ function f2 name="values" module=m0 thisType={type=anything} parameters=[{type=a
     v5: Array<number, proven, Double> = NewArray v2 contents=number capacity=v4 allocationSite=2 literalStorage=Profiled
     v6: undefined|string ~ "a" = Call v0 accessSite=4 callees=[f1, f2, builtin(MathMax), ..]
     v7 = Call v0 callees=[f1]
-    v8: number = Check v0 castType=number cause=MayFail
+    v8: number = Check v0 expectedType=number cause=MayFail
     v9 = ElemGet v0, v4 [keyIsIntegral]
     v10 = CallDirect function=f0 accessSite=5 [isNeverInlined, isAfterInlinedHead, isConstruction]
     v11 = Strcat v6 [isLikelyKey]

@@ -28,30 +28,6 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool canBeKeyRepresentation(Representation representation)
-{
-    switch (representation) {
-    case Representation::Int32:
-    case Representation::Int64:
-    case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
-    case Representation::JSValue:
-        return true;
-    case Representation::Unchosen:
-    case Representation::Void:
-    case Representation::Boolean:
-    case Representation::OptionalInt64:
-    case Representation::OptionalDouble:
-    case Representation::Cell:
-    case Representation::Cell32:
-    case Representation::LiteralString:
-    case Representation::RawWord:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 Word32 ArgumentsEmitter::restLength(uint32_t firstArgument)
 {
     Word32 count = emitter<EntryEmitter>().argumentCount();
@@ -125,7 +101,7 @@ void ArgumentsEmitter::generateGetMyArgumentByVal(const ValueContext& value)
     uint32_t firstArgument = value->firstArgument();
     ValueID key = value->propertyOperand();
     Representation keyRepresentation = representationOf(key);
-    if (!canBeKeyRepresentation(keyRepresentation)) {
+    if (!canBeKeyOf(keyRepresentation)) {
         fail(value, InternalErrorKind::OpcodeWithoutCode);
         define(value, emitter<ConstantEmitter>().zeroOf(value.representation()));
         return;

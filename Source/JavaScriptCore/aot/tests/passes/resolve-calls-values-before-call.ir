@@ -10,7 +10,7 @@ layout L1 kind=Instance name="Plugin" constructor=f2 flags=[HasHeritage] flow={i
 function f0 name="Task" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L0}] {
     v1 = GetConstructPrototype v0 layout=L0
     v2 = NewObject v1 layout=L0
-    v3 = AssumeType v2 castType=L0
+    v3 = AssumeType v2 provenType=L0
     Return v3
 }
 function f1 name="run" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] {

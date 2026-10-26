@@ -3,8 +3,8 @@
 # For the loader such a module has nothing to run: its record names no body, and nothing is made for the host to enter its code by.
 # FORM: Prepared
 # RUN: pass CallModules
-# STATISTIC: ModulesWithState = 1
-# STATISTIC: ModulesWithoutState = 5
+# STATISTIC: ModulesWithState = 2
+# STATISTIC: ModulesWithoutState = 4
 # CHECK: outcome: Changed
 
 variable g0 name="a" module=m1 declared={type=anything} initialization=Undefined
@@ -23,12 +23,12 @@ entry module=m0
 # CHECK: module m1 path="/a.js" displayPath="a.js" requests=
 # CHECK: module m2 path="/barrel.js" displayPath="barrel.js" requests=
 # CHECK: module m3 path="/b.js" displayPath="b.js" requests=
-# CHECK: module m4 path="/c.cjs" displayPath="c.cjs" kind=CommonJs
-# CHECK-NOT: body=f4
+# CHECK: module m4 path="/c.cjs" displayPath="c.cjs" kind=CommonJs flags=[EvaluatesItself] requireResult=ModuleExports body=f4
 # CHECK: module m5 {{*}}kind=Data exports=
 # CHECK: module m6 path="/empty.js" displayPath="empty.js" body=f6
 
-# The CommonJS module stands first among the requests of the entry point, where the front end has put it: it runs before every ES module of the graph, and it is a function like them.
+# The CommonJS module stands first among the requests of the entry point, where the front end has put it: it runs before the entry point begins. The run time also calls the start while it loads the entry point:
+# the file runs, and the start returns where the file has queued a job or where the entry point would begin. So the file has a state, and a body that the loader can call.
 # What a module imports comes before it, and a module comes once: b, which a imports, then a; the barrel has no code, and what it imports has run. The cycle from b to the entry ends here, in the build.
 # The body of the data stores what the data exports. Nothing is called for a module that runs nothing and leads to nothing that runs. Nothing is stored for a module without a state.
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -38,10 +38,16 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 # CHECK-LABEL: function f0 name="main"{{*}}capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] {
 # CHECK-NEXT: b0():
+# CHECK-NEXT: = CallDirect function=f4
+# CHECK-NEXT: [[stops]]: boolean = StopLoadingBehindFile module=m4
+# CHECK-NEXT: Branch [[stops]] -> taken [[stopped]](), notTaken [[loaded]]()
+# CHECK-NEXT: [[stopped]]():
+# CHECK-NEXT: [[nothingYet]]: undefined = Undefined
+# CHECK-NEXT: Return [[nothingYet]]
+# CHECK-NEXT: [[loaded]]():
 # CHECK-NEXT: [[begins]]: boolean = BeginModuleEvaluation module=m0
 # CHECK-NEXT: Branch [[begins]] -> taken [[run]](), notTaken [[done]]()
 # CHECK-NEXT: [[run]]():
-# CHECK-NEXT: = CallDirect function=f4
 # CHECK-NEXT: = CallDirect function=f3
 # CHECK-NEXT: = CallDirect function=f1
 # CHECK-NEXT: = CallDirect function=f5
@@ -82,8 +88,9 @@ function f4 name="c" module=m4 kind=CommonJsModule flags=[IsSloppy] results=[{ty
     PutModuleVariable v0 variable=g2
     Return
 }
-# CHECK-LABEL: function f4 name="c"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] {
+# CHECK-LABEL: function f4 name="c"{{*}}IsHiddenInStackTraces] {
 # CHECK-NOT: ModuleEvaluation
+# CHECK: = CallDirect function=f8
 function f5 name="d" module=m5 kind=Module results=[{type=anything}] {
     v0 = Integer integer=3
     PutModuleVariable v0 variable=g3
@@ -103,4 +110,7 @@ function f6 name="empty" module=m6 kind=Module results=[{type=anything}] {
 # CHECK-NEXT: [[read]]: anything = GetModuleVariable variable=g0
 # CHECK-NEXT: PutModuleVariable [[read]] variable=g1
 # CHECK-NEXT: Return
-# CHECK-NOT: function f8
+# CHECK-LABEL: function f8 name="c"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4} {
+# CHECK: = BeginModuleEvaluation module=m4
+# CHECK: FinishModuleEvaluation module=m4
+# CHECK-NOT: function f9

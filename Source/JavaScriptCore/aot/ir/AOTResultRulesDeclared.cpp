@@ -25,12 +25,12 @@ TypeID TypingContext::typeIDOf(const DeclaredType& declared) const
         if (std::optional<Type> known = knownPositions->find(declared))
             return types.intern(*known);
     }
-    return level == TypeLevel::Expected ? declared.type : program.provenTypeOf(declared);
+    return level == TypeLevel::Expected ? declared.expected().predicted() : program.provenTypeOf(declared);
 }
 
 static const Type& typeOfField(const TypingContext& context, const Field& field)
 {
-    if (context.level == TypeLevel::Proven && field.slotType && !field.declared.flags.contains(PositionFlags::IsExpected))
+    if (context.level == TypeLevel::Proven && field.slotType && !field.declared.isExpected())
         return context.types.at(field.slotType);
     return context.typeOf(field.declared);
 }
@@ -383,7 +383,7 @@ static TypeID requiredTypeOfField(const TypingContext& positions, LayoutID layou
     const Vector<Field>& fields = positions.program.at(layout).fields;
     if (field >= fields.size())
         return { };
-    if (positions.level == TypeLevel::Proven && fields[field].slotType && !fields[field].declared.flags.contains(PositionFlags::IsExpected))
+    if (positions.level == TypeLevel::Proven && fields[field].slotType && !fields[field].declared.isExpected())
         return fields[field].slotType;
     return positions.typeIDOf(fields[field].declared);
 }

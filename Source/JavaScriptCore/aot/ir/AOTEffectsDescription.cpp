@@ -148,7 +148,7 @@ static bool castCannotFail(const Program& program, const Function& function, con
 
 static bool reportsNothing(const Program& program, const Function& function, const Value& value)
 {
-    return value.opcode == Opcode::ReportMismatch && program.typeOf(function, value.valueOperand()).isSubsetOf(program.at(value.expectedType()), program);
+    return value.opcode == Opcode::ReportMismatch && program.typeOf(function, value.valueOperand()).isSubsetOf(program.at(value.expectedType().predicted()), program);
 }
 
 static constexpr OpcodeSet checkedCasts { Opcode::Check, Opcode::AssumeType };
@@ -168,7 +168,7 @@ static bool typeDependsOnPosition(const Program& program, const Function& functi
         case ResultRule::Results:
             return true;
         case ResultRule::Cast:
-            if (checkedCasts.contains(definition.opcode) && program.at(definition.castType()).isSubsetOf(validated, program))
+            if (checkedCasts.contains(definition.opcode) && program.at(definition.typeNamedByCast()).isSubsetOf(validated, program))
                 return false;
             break;
         case ResultRule::Natural:

@@ -189,7 +189,7 @@ static bool canCreateClosuresAtDefinition(SelectionContext& context, const Descr
         const Function& callee = program.at(function.at(closure).function());
         if (callee.captures.isEmpty())
             return true;
-        if (!match.closureEnvironment || !program.at(callee.captures[0].type).environment)
+        if (!match.closureEnvironment || !program.at(callee.captures[0].written()).environment)
             return false;
         FunctionAnalyses& analyses = context.analyses();
         return analyses.dominates(match.closureEnvironment, analyses.useLists().pointOf(closure));

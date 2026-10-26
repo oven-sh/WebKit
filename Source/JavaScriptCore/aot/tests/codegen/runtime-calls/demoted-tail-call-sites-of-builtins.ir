@@ -34,7 +34,7 @@ function f3 name="callInline" parameters=[{type=Map<anything, anything, pristine
 function f4 name="callee" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f4 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=1} {
     v1 = NewPromise
     v2 = CallDirect v0, v1 function=f7
-    v3 = AssumeType v2 castType=Promise
+    v3 = AssumeType v2 provenType=Promise
     Return v3
 }
 function f5 name="markedAwaitedCall" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f5 body=f8 entryWithoutPromise=f8 promiseType=Promise promiseParameter=1}

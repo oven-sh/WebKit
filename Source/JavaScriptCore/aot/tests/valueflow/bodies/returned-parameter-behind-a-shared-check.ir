@@ -6,7 +6,7 @@
 module m0 path="main.js" displayPath="main.js"
 entry module=m0
 function f0 name="usesAndReturns" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=string
+    v1 = Check v0 expectedType=string
     v2 = PropGet v1 key="length"
     Return v1
 }

@@ -132,35 +132,11 @@ static RefPtr<B3::StackmapGenerator> generatorOf(CodeRecords& records, const Thr
     });
 }
 
-static bool canBeNamedByThrowWords(Representation representation)
-{
-    switch (representation) {
-    case Representation::JSValue:
-    case Representation::Int64:
-    case Representation::Double:
-    case Representation::DoubleWithPayload:
-    case Representation::ImpureDouble:
-    case Representation::OptionalInt64:
-    case Representation::OptionalDouble:
-    case Representation::Cell:
-        return true;
-    case Representation::Boolean:
-    case Representation::Int32:
-    case Representation::Cell32:
-    case Representation::LiteralString:
-    case Representation::Void:
-    case Representation::RawWord:
-    case Representation::Unchosen:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static Representation representationInThrowWords(const std::optional<Operand>& operand)
 {
     if (!operand)
         return Representation::Void;
-    RELEASE_ASSERT(canBeNamedByThrowWords(operand->representation));
+    RELEASE_ASSERT(canBeNamedByThrowWordsOf(operand->representation));
     return operand->representation == Representation::Cell ? Representation::JSValue : operand->representation;
 }
 
@@ -231,7 +207,7 @@ void ThrowEmitter::throwAt(const OperationContext& context, const ThrowSite& sit
 {
     RELEASE_ASSERT(!generator().isInitializingCell());
     operand = withoutUndefinedConstant(operand);
-    if (operand && !canBeNamedByThrowWords(operand->representation))
+    if (operand && !canBeNamedByThrowWordsOf(operand->representation))
         operand = inFormNamedByThrowWords(context, *operand);
 
     build().statistics().count(StatisticID::ThrowSites);
@@ -264,7 +240,7 @@ void ThrowEmitter::requireOrThrow(const OperationContext& context, Condition mus
     if (mustHold.value()->isInt32(1))
         return;
     operand = withoutUndefinedConstant(operand);
-    bool operandNeedsConversion = operand && !canBeNamedByThrowWords(operand->representation);
+    bool operandNeedsConversion = operand && !canBeNamedByThrowWordsOf(operand->representation);
     if (operandNeedsConversion || emitter<ExceptionEmitter>().unwindsWithinFunction(context)) {
         LBasicBlock fails = newBlock();
         LBasicBlock continuation = newBlock();

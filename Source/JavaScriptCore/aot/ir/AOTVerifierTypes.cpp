@@ -56,7 +56,7 @@ static bool isOnlyReturned(std::span<const Use> uses)
 
 static bool hasExpectedTypeInsideType(const Program& program, const Value& value)
 {
-    TypeID expectedID = value.expected();
+    TypeID expectedID = value.expected().predicted();
     if (!expectedID)
         return true;
     const Type& type = program.at(value.type);
@@ -69,7 +69,7 @@ static ValueID findValueWithInvalidTypeID(const FunctionVerifier& verifier, cons
     const Function& function = verifier.function();
     ValueID found;
     auto visit = [&](ValueID id) {
-        TypeID expected = function.at(id).expected();
+        TypeID expected = function.at(id).expected().predicted();
         if (!found && (!verifier.isValid(function.at(id).type) || (expected && !verifier.isValid(expected))))
             found = id;
     };
@@ -314,7 +314,7 @@ void FunctionVerifier::verifyRequiredTypes(BlockID block, ValueID id, const Valu
         if (hasFailed() || value.operandKind(operandIndex) != OperandKind::Declared)
             return;
         const Value& definition = m_function.at(operand);
-        if (definition.opcode == Opcode::Check && context.types.at(definition.castType()).isNever())
+        if (definition.opcode == Opcode::Check && context.types.at(definition.expectedType().predicted()).isNever())
             return;
         if (TypeID required = requiredTypeOfOperand(context, value, operandIndex))
             need(InternalErrorKind::StoredTypeMismatch, block, id, operand, context.types.at(required));
@@ -402,7 +402,7 @@ static bool fillsFieldsInsideTheirTypes(const Program& program, const DataNode::
         if (!field)
             return true;
         const Field& filled = layout.fields[*field];
-        return filled.declared.flags.contains(PositionFlags::IsExpected) || includesData(program, program.at(slotTypeOf(program, filled)), member.value);
+        return filled.declared.isExpected() || includesData(program, program.at(slotTypeOf(program, filled)), member.value);
     });
 }
 

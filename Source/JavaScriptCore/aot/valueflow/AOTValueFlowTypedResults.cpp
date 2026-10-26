@@ -229,7 +229,7 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
     auto fillField = [&](ClimbingSet object, const Field& field) {
         ValueFlowNodeID node = context.written(object, program.isIndexLike(field.key) ? elementsName : ValueFlowName::property(field.key));
         context.add(node, valueOf(expectationOf(field.declared)));
-        if (!field.declared.type || program.at(field.declared.type).primitives & Primitive::Undefined)
+        if (!field.declared.written() || program.at(field.declared.expected().predicted()).primitives & Primitive::Undefined)
             context.add(node, universe.undefinedValue());
     };
 

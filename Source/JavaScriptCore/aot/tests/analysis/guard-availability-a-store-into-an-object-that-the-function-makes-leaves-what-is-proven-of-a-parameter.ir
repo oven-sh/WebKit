@@ -46,7 +46,7 @@ function f2 name="whatAReadGaveIsTested" parameters=[{type=undefined|number}] re
     v1 = NewObject layout=L0
     PutModuleVariable v1 variable=g0
     v3 = GetModuleVariable variable=g0
-    v4 = AssumeType v3 castType=L0
+    v4 = AssumeType v3 provenType=L0
     v5 = IsSlotFilled v4 key="count" receivers=[L0] level=Proven [holdsDeclaredType]
     Branch v5 -> taken b1(| 0), notTaken b2()
   b1(v6):

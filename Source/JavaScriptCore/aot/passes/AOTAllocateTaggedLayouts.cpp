@@ -186,7 +186,7 @@ static Function createAllocatingCopy(const Program& program, BuildContext& build
     builder.removeParameters(entryBlock, removedParameters);
     copy.flags.remove(FunctionFlags::HasThis);
     copy.flags.add(FunctionFlags::AllocatesOwnThis);
-    copy.thisType = DeclaredType { .type = TypeTable::anything };
+    copy.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
 
     reopen(builder, entryBlock);
     Value read = IRBuilder::make(Opcode::GetConstructPrototype, { copy.at(entryBlock).parameters[*copy.newTargetParameterIndex()] });
@@ -225,7 +225,7 @@ static Function createAllocatingCopy(const Program& program, BuildContext& build
         builder.emitReturn(object);
     }
     TypeID constructed = types.intern(Type::forLayoutSet(program.declaredMembersOf(family.maker)));
-    copy.results[0] = DeclaredType { .type = mayReturnOtherObject ? TypeTable::object : constructed, .flags = { PositionFlags::IsFromCompiler } };
+    copy.results[0] = DeclaredType(Proven::byPosition(mayReturnOtherObject ? TypeTable::object : constructed)).with(PositionFlags::IsFromCompiler);
 
     compactFunction(copy);
     return copy;
@@ -269,8 +269,8 @@ static void enterAllocatingCopy(Program& program, BuildContext& build, TypeArena
     builder.emitTerminator(WTF::move(terminator));
 
     DeclaredType& result = function.results[0];
-    result.type = types.unionOf(result.type, copy.results[0].type);
-    result.flags.remove(PositionFlags::IsInt32Promise);
+    result.changeType(Proven::byPosition(types.unionOf(result.written(), copy.results[0].written())));
+    result.remove(PositionFlags::IsInt32Promise);
     compactFunction(function);
 }
 

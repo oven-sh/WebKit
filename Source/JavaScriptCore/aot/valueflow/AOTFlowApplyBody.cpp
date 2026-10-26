@@ -13,6 +13,7 @@
 #include "AOTBuiltinMembers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTPredictedValues.h"
 #include "AOTRepresentation.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaWalkers.h"
@@ -28,6 +29,23 @@ struct FlowCastInsertion {
     const FlowBodyApplication& body;
     FunctionAnalyses& analyses;
     IRBuilder& builder;
+    // Of the body as it was when the checks that flow has answered were gone.
+    const PredictedValues& predicted;
+
+    // The type was cut out of the type of the value as read, which may be owed to any check in front of it.
+    ProvenType provenOfValue(ValueID value, TypeID type) const { return Proven::byFlow(type, predicted.isBehindCheck(value) ? ProofScope::BehindChecks : ProofScope::EveryVersion); }
+    // What flow says of a position leaves out the primitives that the checks in front of its stores turn away. Where the value was inside the type before it came to its checks, it is so whether they stand or go.
+    ProvenType provenOfPosition(ValueID value, TypeID type) const
+    {
+        if (!predicted.isBehindCheck(value))
+            return Proven::byFlow(type, ProofScope::EveryVersion);
+        const Function& function = body.function;
+        ValueID unchecked = value;
+        while (predicted.isBehindCheck(unchecked) && isCast(function.at(unchecked).opcode))
+            unchecked = function.at(unchecked).operand(0);
+        bool holdsWithoutChecks = !predicted.isBehindCheck(unchecked) && body.types.at(function.at(unchecked).type).isSubsetOf(body.types.at(type), body.program);
+        return Proven::byFlow(type, holdsWithoutChecks ? ProofScope::EveryVersion : ProofScope::BehindChecks);
+    }
 };
 
 struct ListedMember {
@@ -38,10 +56,10 @@ struct ListedMember {
 
 } // anonymous namespace
 
-Value makeAssumeType(ValueID operand, TypeID castType)
+Value makeAssumeType(ValueID operand, ProvenType proven)
 {
-    Value value = IRBuilder::make(Opcode::AssumeType, { operand });
-    value.setCastType(castType);
+    Value value;
+    value.becomeAssumeType(operand, proven);
     return value;
 }
 
@@ -59,44 +77,32 @@ Value makeValidateCallee(ValueID callee, TypeID validatedType)
     return value;
 }
 
-static void assumeCheckedType(Value& check)
+// Which checks stand in front of it is known when every answered check is gone: applyScopesOfAnsweredChecks().
+static void assumeInPlaceOfChecking(Value& check, TypeID held)
 {
     RELEASE_ASSERT(check.opcode == Opcode::Check);
-    ValueID operand = check.valueOperand();
-    TypeID castType = check.castType();
-    check.become(Opcode::AssumeType);
-    check.setValueOperand(operand);
-    check.setCastType(castType);
+    check.becomeAssumeType(check.valueOperand(), Proven::byFlow(held, ProofScope::EveryVersion));
 }
 
-static void forgetWhatReplacedChecksProved(const FlowBodyApplication& body, std::span<const ValueID> replacedChecks)
-{
-    Function& function = body.function;
-    TypeID anyValue = body.types.withPrimitives(TypeTable::anything, Primitive::Absent);
-    for (size_t index : computeTaintedValues(function, CFG(function), replacedChecks)) {
-        if (function.values[index].opcode == Opcode::Upcast)
-            function.edit(ValueID(index)).setCastType(anyValue);
-    }
-}
-
-static uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBodyUpdate& update)
+static uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBodyUpdate& update, Vector<ValueID, 8>& answeredChecks)
 {
     uint64_t numberOfRemovedChecks = 0;
     if (body.provesEverything) {
         for (Value& value : body.function.editAllValues()) {
             if (value.opcode != Opcode::Check)
                 continue;
-            assumeCheckedType(value);
+            value.becomeAssumeType(value.valueOperand(), Proven::byFlow(value.expectedType().predicted(), ProofScope::EveryVersion));
             ++numberOfRemovedChecks;
         }
         return numberOfRemovedChecks;
     }
 
-    Vector<ValueID, 4> replacedChecks;
+    Vector<ValueID, 4> refutedChecks;
     for (const FlowClaimUpdate& entry : update.claims) {
         Value& check = body.function.edit(entry.claim);
         if (entry.isRedundant) {
-            assumeCheckedType(check);
+            assumeInPlaceOfChecking(check, check.expectedType().predicted());
+            answeredChecks.append(entry.claim);
             ++numberOfRemovedChecks;
             continue;
         }
@@ -104,15 +110,23 @@ static uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBod
             check.setCause(CheckCause::MayFail);
             continue;
         }
+        // Nothing that arrives passes. What does arrive goes on, and the type that was declared says nothing of what is made from it.
         RELEASE_ASSERT(entry.arriving);
-        assumeCheckedType(check);
-        check.setCastType(entry.arriving);
-        replacedChecks.append(entry.claim);
+        assumeInPlaceOfChecking(check, entry.arriving);
+        answeredChecks.append(entry.claim);
+        refutedChecks.append(entry.claim);
         ++numberOfRemovedChecks;
     }
-    if (!replacedChecks.isEmpty())
-        forgetWhatReplacedChecksProved(body, replacedChecks.span());
+    forgetProofsBehind(body.function, CFG(body.function), body.types, refutedChecks.span(), { }, ExpectedTypes::Dropped);
     return numberOfRemovedChecks;
+}
+
+static void applyScopesOfAnsweredChecks(Function& function, const PredictedValues& predicted, std::span<const ValueID> answeredChecks)
+{
+    for (ValueID claim : answeredChecks) {
+        if (predicted.isBehindCheck(function.at(claim).valueOperand()))
+            function.edit(claim, ValueEdit::Definition).setIsBehindChecks(true);
+    }
 }
 
 static bool pointDominates(const FlowCastInsertion& insertion, const UseLists& useLists, ProgramPoint point, const Use& use)
@@ -277,20 +291,19 @@ static Vector<ValueID> insertCastsForRequiredTypes(const FlowCastInsertion& inse
         return inserted.last();
     };
     auto checkRequiredType = [&](ProgramPoint point, Origin origin, ValueID operand, TypeID required) {
-        DeclaredType declared;
-        declared.type = required;
+        DeclaredType declared(Proven::byPosition(required));
         ConvertResolution resolution = resolveConvert(typing, typing.typeOf(operand), declared);
         RELEASE_ASSERT(resolution.cast == CastResolution::Check);
 
         Value check = IRBuilder::make(Opcode::Check, { operand });
-        check.setCastType(resolution.castType);
+        check.setExpectedType(ExpectedType(resolution.castType));
         check.setCause(CheckCause::AddedByPass);
         ValueID checked = insert(point, origin, WTF::move(check));
 
         Type passed = typing.typeOf(operand).castTo(types.at(resolution.castType), types);
         if (passed.isSubsetOf(types.at(required), body.program))
             return checked;
-        return insert(point, origin, makeAssumeType(checked, required));
+        return insert(point, origin, makeAssumeType(checked, Proven::byFlow(required, ProofScope::BehindChecks)));
     };
     auto castDeclaredOperands = [&](ProgramPoint point) {
         ValueID user = function.at(point.block).values[point.index];
@@ -308,7 +321,7 @@ static Vector<ValueID> insertCastsForRequiredTypes(const FlowCastInsertion& inse
             bool mayAssume = mayAssumeRequiredType(body, value, operandIndex);
 
             Origin origin = value.origin();
-            ValueID cast = mayAssume ? insert(point, origin, makeAssumeType(operand, required)) : checkRequiredType(point, origin, operand, required);
+            ValueID cast = mayAssume ? insert(point, origin, makeAssumeType(operand, insertion.provenOfPosition(operand, required))) : checkRequiredType(point, origin, operand, required);
             function.edit(user).setOperand(operandIndex, cast);
         }
     };
@@ -317,7 +330,7 @@ static Vector<ValueID> insertCastsForRequiredTypes(const FlowCastInsertion& inse
         TypeID required = requiredTypeOfOperand(typing, terminator, OperandIndex::Return::value);
         if (!required || hasRequiredType(terminator.valueOperand(), required))
             return;
-        terminator.setValueOperand(insert(pointBeforeTerminatorOf(function, block), terminator.origin(), makeAssumeType(terminator.valueOperand(), required)));
+        terminator.setValueOperand(insert(pointBeforeTerminatorOf(function, block), terminator.origin(), makeAssumeType(terminator.valueOperand(), insertion.provenOfPosition(terminator.valueOperand(), required))));
     };
     auto assumeTailCallResult = [&](BlockID block) {
         Terminator& terminator = function.edit(block).terminator;
@@ -334,7 +347,7 @@ static Vector<ValueID> insertCastsForRequiredTypes(const FlowCastInsertion& inse
             return;
 
         TailCast assumed;
-        assumed.declared.type = required;
+        assumed.declared.establish(Proven::byPosition(required));
         assumed.resolution = CastResolution::Assume;
         tailCasts.append(assumed);
         terminator.setCasts(tailCasts.span());
@@ -443,7 +456,7 @@ static void insertRuntimeValidation(const FlowCastInsertion& insertion)
             const Value& value = function.at(function.at(block).values[index]);
             builder.setOrigin(value.origin());
             if (value.opcode == Opcode::AssumeType) {
-                builder.insertBefore({ block, index }, makeValidateType(value.valueOperand(), value.castType()));
+                builder.insertBefore({ block, index }, makeValidateType(value.valueOperand(), value.provenType()));
                 continue;
             }
             if (VariableID mark = firstTimeMarkOf(body, value)) {
@@ -600,15 +613,15 @@ static Vector<ListedMember> makeOrdinaryObjects(const FlowBodyApplication& body)
     DictionaryTypeRewriter rewriter { body.application };
     for (Value& value : function.editAllValues()) {
         TypeID passed = value.opcode == Opcode::Check ? rewriter.typeTestedBehind(value.type) : TypeID();
-        TypeID tested = value.opcode == Opcode::Check ? rewriter.typeTestedBehind(value.castType()) : value.opcode == Opcode::TypeTest ? rewriter.typeTestedBehind(value.testedType()) : TypeID();
+        TypeID tested = value.opcode == Opcode::Check ? rewriter.typeTestedBehind(value.expectedType().predicted()) : value.opcode == Opcode::TypeTest ? rewriter.typeTestedBehind(value.testedType()) : TypeID();
         rewriter(value.type);
         if (passed)
             value.type = passed;
-        TypeID expected = rewriter.typeBehind(value.expected());
-        value.setExpected(expected == value.type ? TypeID() : expected);
+        TypeID expected = rewriter.typeBehind(value.expected().predicted());
+        value.setExpected(ExpectedType(expected == value.type ? TypeID() : expected));
         forEachReference(value, rewriter);
         if (value.opcode == Opcode::Check)
-            value.setCastType(tested);
+            value.setExpectedType(ExpectedType(tested));
         if (value.opcode == Opcode::TypeTest)
             value.setTestedType(tested);
     }
@@ -676,7 +689,7 @@ static bool tryExpectInPlaceOfChecking(const Program& program, Function& functio
         bool restsOnTest = cast.resolution == CastResolution::Nothing && !returned.isSubsetOf(typing.typeOf(cast.declared), program);
         if (isCheck(cast) || restsOnTest) {
             cast.resolution = CastResolution::Nothing;
-            cast.declared.flags.add(PositionFlags::IsExpected);
+            cast.declared.expect(cast.declared.expected());
         }
         returned = returned.castTo(typing.typeOf(cast.declared), types);
         casts.append(cast);
@@ -811,9 +824,13 @@ static void eraseBuiltinConstantsWithoutUse(const FlowCastInsertion& insertion)
 FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
 {
     const FlowBodyUpdate& update = body.application.bodies[body.id.index()];
-    applyStamps(body, update);
     FlowBodyCounts counts;
-    counts.removedChecks = applyCheckUpdates(body, update);
+    Vector<ValueID, 8> answeredChecks;
+    counts.removedChecks = applyCheckUpdates(body, update, answeredChecks);
+    CFG cfg(body.function);
+    PredictedValues predicted(body.function, cfg);
+    applyScopesOfAnsweredChecks(body.function, predicted, answeredChecks.span());
+    applyStamps(body, update);
     Vector<ListedMember> listedMembers = makeOrdinaryObjects(body);
 
     AnalysisContext context { body.build, body.program, nullptr, nullptr, body.id };
@@ -822,11 +839,11 @@ FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
     applyTailCalls(body, builder, update, counts);
     defineListedMembers(body.function, builder, listedMembers.span());
 
-    FlowCastInsertion insertion { body, analyses, builder };
+    FlowCastInsertion insertion { body, analyses, builder, predicted };
     insertBehindDefinitions(insertion, update.proofs, &FlowValueProof::value, [](const FlowValueProof& proof) {
         return proof.type == TypeTable::never;
-    }, [](const FlowValueProof& proof) {
-        return makeAssumeType(proof.value, proof.type);
+    }, [&](const FlowValueProof& proof) {
+        return makeAssumeType(proof.value, insertion.provenOfValue(proof.value, proof.type));
     });
     insertBehindDefinitions(insertion, update.symbolConstants, &FlowSymbolConstant::call, [](const FlowSymbolConstant&) {
         return false;

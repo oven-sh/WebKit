@@ -26,8 +26,8 @@ function f1 name="pushesThreeThenTwo" parameters=[{type=Array<number>}, {type=nu
 }
 # Only its entrypoint enters the function, so the body is there
 # SELECTED-LABEL: name="pushesThreeThenTwo" module=m0 role=GenericEntrypoint
-# SELECTED: [[array]]: Array<number> = AssumeType v2 castType=Array<number>
-# SELECTED: [[number]]: number = AssumeType v3 castType=number
+# SELECTED: [[array]]: Array<number> = AssumeType v2 provenType=Array<number>
+# SELECTED: [[number]]: number = AssumeType v3 provenType=number
 # SELECTED-NOT: CallInline [[array]], [[number]], [[number]], [[number]]
 # SELECTED: = CallBuiltin [[array]], [[number]], [[number]], [[number]] overload=ArrayPrototypePush/0
 # SELECTED-NOT: CallInline [[array]], [[number]], [[number]], [[number]]

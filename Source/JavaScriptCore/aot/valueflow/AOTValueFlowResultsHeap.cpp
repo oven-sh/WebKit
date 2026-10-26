@@ -593,19 +593,7 @@ BuiltinCallMode ValueFlowBuiltinApplication::mode() const
 
 static bool statementCallsValue(const ValueFlowStatement& statement)
 {
-    if (statement.kind != ValueFlowStatementKind::Operation)
-        return false;
-    switch (statement.opcode) {
-    case Opcode::Call:
-    case Opcode::CallList:
-    case Opcode::Construct:
-    case Opcode::ConstructList:
-    case Opcode::SuperConstruct:
-    case Opcode::SuperConstructList:
-        return true;
-    default:
-        return false;
-    }
+    return statement.kind == ValueFlowStatementKind::Operation && flowRuleOf(statement.opcode) == FlowRule::Call;
 }
 
 static bool passesAnyOf(const ValueFlowBuiltinApplication& application, SetsMeetingOneSet* wanted)

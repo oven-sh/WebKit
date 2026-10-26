@@ -146,7 +146,7 @@ Vector<ClosureForm> chooseClosureForms(const SlotPlanContext& context, const Slo
     return forms;
 }
 
-static DeclaredType declaredCapture(TypeID type) { return { .type = type }; }
+static DeclaredType declaredCapture(TypeID type) { return DeclaredType(Proven::byPosition(type)); }
 static const DeclaredType& declaredCapture(const DeclaredType& declared) { return declared; }
 
 template<typename Capture>

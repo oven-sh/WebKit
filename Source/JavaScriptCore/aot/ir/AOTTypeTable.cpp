@@ -137,14 +137,16 @@ TypeTable::TypeTable(const BuiltinTable& builtins, const Program* program)
     internWellKnownType(anythingOrAbsent, Type::anything().withPrimitives(Primitive::Absent));
 }
 
-TypeID TypeTable::provenTypeOf(const DeclaredType& declared) const
+ProvenInEveryVersion TypeTable::provenTypeOf(const DeclaredType& declared) const
 {
-    if (!declared.flags.contains(PositionFlags::IsExpected))
-        return declared.type;
-    const Type& expected = at(declared.type);
+    if (std::optional<ProvenInEveryVersion> established = declared.established())
+        return *established;
+    // Only the compiler fills a position with what is no value of the language, and only it leaves one empty.
+    TypeID predicted = declared.expected().predicted();
+    const Type& expected = at(predicted);
     if (!expected.isJavaScriptValue())
-        return declared.type;
-    return expected.primitives & Primitive::Absent ? anythingOrAbsent : anything;
+        return Proven::byPosition(predicted);
+    return Proven::byPosition(expected.primitives & Primitive::Absent ? anythingOrAbsent : anything);
 }
 
 std::optional<TypeID> TypeTable::find(const Type& canonical) const

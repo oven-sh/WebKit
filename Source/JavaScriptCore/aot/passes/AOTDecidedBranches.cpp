@@ -311,7 +311,7 @@ static bool declareSameType(const Program& program, std::span<const LayoutID> la
         std::optional<FieldReference> field = findField(program, layout, key, BaseChain::Proven);
         if (!field)
             continue;
-        TypeID type = fieldAt(program, *field).declared.type;
+        TypeID type = fieldAt(program, *field).declared.written();
         if (common && common != type)
             return false;
         common = type;
@@ -583,7 +583,7 @@ void castArgumentsToParameters(IRBuilder& builder, BlockID block, bool validates
         TypeID narrowed = function.at(parameter).type;
         if (validates)
             builder.insertBefore(pointBeforeTerminatorOf(function, block), makeValidateType(argument, narrowed));
-        target.arguments[index] = builder.insertBefore(pointBeforeTerminatorOf(function, block), makeAssumeType(argument, narrowed));
+        target.arguments[index] = builder.insertBefore(pointBeforeTerminatorOf(function, block), makeAssumeType(argument, Proven::byRulesWithoutChecks(narrowed)));
     }
 }
 

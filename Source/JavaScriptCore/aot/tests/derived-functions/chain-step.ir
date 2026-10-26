@@ -47,7 +47,7 @@ function f1 name="traverseArray" role=Library flags=[IsHiddenInStackTraces] encl
     v29 = StrictEq v15, v12
     v30 = ElemGet v4, v11
     v31 = PropGet v0 key="length"
-    v32 = Check v31 castType=int[0, 4294967295]
+    v32 = Check v31 expectedType=int[0, 4294967295]
     v33 = Undefined
     v34 = String string=""
     Branch v27 -> taken b1(), notTaken b2(v33)
@@ -96,8 +96,8 @@ function f1 name="traverseArray" role=Library flags=[IsHiddenInStackTraces] encl
     v62 = Add v38, v7
     Branch v27 -> taken b13(), notTaken b15()
   b13():
-    v63 = Check v36 castType=Array<anything>
-    v64 = Check v38 castType=int[0, 4294967295]
+    v63 = Check v36 expectedType=Array<anything>
+    v64 = Check v38 expectedType=int[0, 4294967295]
     v65 = TryPutByValDirect v63, v64, v61
     Branch v65 -> taken b3(v44, v62, v39, v40, v41), notTaken b14()
   b14():
@@ -119,8 +119,8 @@ function f1 name="traverseArray" role=Library flags=[IsHiddenInStackTraces] encl
   b19():
     Branch v27 -> taken b20(), notTaken b21()
   b20():
-    v72 = Check v36 castType=Array<anything>
-    v73 = Check v38 castType=int[0, 4294967295]
+    v72 = Check v36 expectedType=Array<anything>
+    v73 = Check v38 expectedType=int[0, 4294967295]
     v74 = TruncateNewArray v72, v73
     Return v74
   b21():
@@ -142,18 +142,18 @@ function f3 name="filterThenMapAsBuilt" parameters=[{type=anything}, {type=anyth
     v7 = Undefined
     v8 = NewArray v3, v4, v5, v6, v7, v7, v7, v7 contents=anything
     v9 = Integer integer=96
-    v10 = Check v0 castType=Array<anything>
-    v11 = Check v1 castType=number
-    v12 = Check v2 castType=undefined|number
+    v10 = Check v0 expectedType=Array<anything>
+    v11 = Check v1 expectedType=number
+    v12 = Check v2 expectedType=undefined|number
     v13 = CallDirect v10, v11, v12, v9, v8, v7 function=f1 [isAlwaysInlined]
     Return v13
 }
 function f4 name="shapeKnownAtRunTime" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {
     v8 = Undefined
     v9 = NewArray v3, v4, v5, v6, v8, v8, v8, v8 contents=anything
-    v10 = Check v0 castType=Array<anything>
-    v11 = Check v1 castType=number
-    v12 = Check v2 castType=undefined|number
+    v10 = Check v0 expectedType=Array<anything>
+    v11 = Check v1 expectedType=number
+    v12 = Check v2 expectedType=undefined|number
     v13 = CallDirect v10, v11, v12, v7, v9, v8 function=f1 [isAlwaysInlined]
     Return v13
 }

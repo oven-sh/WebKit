@@ -6,9 +6,9 @@
 # RUN: valueflow-apply
 # CHECK-LABEL: function f0 name="main"
 # CHECK: [[ofCircle]]: {{*}} = PropGet {{*}} key="side"
-# CHECK-NEXT: : undefined|int = AssumeType [[ofCircle]] castType=undefined|int
+# CHECK-NEXT: : undefined|int = AssumeType [[ofCircle]] provenType=undefined|int
 # CHECK: [[ofDot]]: {{*}} = PropGet {{*}} key="side"
-# CHECK-NEXT: : int = AssumeType [[ofDot]] castType=int
+# CHECK-NEXT: : int = AssumeType [[ofDot]] provenType=int
 # CHECK-LABEL: function f2 name="Circle"
 # CHECK: = SuperConstructList {{*}} callees=[f1, f3]
 

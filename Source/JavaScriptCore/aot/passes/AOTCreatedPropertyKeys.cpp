@@ -125,7 +125,7 @@ void markResultsUsedAsKeys(ProgramEditor& editor, BuildContext& build)
     unsigned numberOfFunctions = program.functions.size();
     Vector<ReturnedStrings> returned = collectInParallel<ReturnedStrings>(build.parallelLoops(), numberOfFunctions, [&](unsigned index, Vector<ReturnedStrings>& found) {
         const Function& function = program.functions[index];
-        if (!function.hasBody() || function.results.size() != 1 || !(program.at(function.results[0].type).primitives & Primitive::AnyString))
+        if (!function.hasBody() || function.results.size() != 1 || !(program.at(function.results[0].expected().predicted()).primitives & Primitive::AnyString))
             return;
         ReturnedStrings strings = findReturnedStrings(program, FunctionID(index));
         if (!strings.made.isEmpty() || !strings.forwarded.isEmpty())
@@ -260,8 +260,6 @@ std::optional<PropertyKey> keyOfSymbolRegisteredBy(const BuiltinTable& builtins,
     return PropertyKey { .kind = PropertyKeyKind::RegisteredSymbol, .text = text->string() };
 }
 
-static constexpr OpcodeSet accessesByKey { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete, Opcode::ElemDefine };
-
 static bool isUsedOnlyAsKey(const Function& function, const UseLists& useLists, ValueID value)
 {
     return std::ranges::all_of(useLists.usesOf(value), [&](const Use& use) {
@@ -270,7 +268,7 @@ static bool isUsedOnlyAsKey(const Function& function, const UseLists& useLists, 
         const Value& user = function.at(use.user);
         if (isCast(user.opcode))
             return isUsedOnlyAsKey(function, useLists, use.user);
-        return accessesByKey.contains(user.opcode) && use.operandIndex == OperandPosition::property(user.opcode);
+        return use.operandIndex == OperandPosition::property(user.opcode);
     });
 }
 

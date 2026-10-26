@@ -341,7 +341,7 @@ static void letUnseenCodeCreateRecords(ValueFlowRuleContext& context, ClimbingSe
         if (layout.kind != LayoutKind::Record || layout.constructor || layout.base || layout.flags.containsAny(flagsOfOtherLayouts) || layout.fields.isEmpty())
             return;
         bool holdsValuesAsTheyAre = std::ranges::all_of(layout.fields, [&](const Field& field) {
-            const Type& type = program.at(field.declared.type);
+            const Type& type = program.at(field.declared.expected().predicted());
             return field.key && (type.isAnything() || (!type.anyFunction && type.functions.isEmpty()));
         });
         if (holdsValuesAsTheyAre)

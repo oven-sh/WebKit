@@ -48,7 +48,7 @@ function f2 name="store" parameters=[{type=anything}, {type=anything}] results=[
     Branch v2 -> taken b1(), notTaken b2()
   b1() frequency=Unlikely:
     v3 = GetModuleVariable variable=g0
-    v4 = Check v3 castType=L0
+    v4 = Check v3 expectedType=L0
     PropSet v4, v1 key="label" mode=Strict
     Return v1
   b2():

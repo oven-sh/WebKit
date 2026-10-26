@@ -136,7 +136,7 @@ static bool hasOneBinding(const Program& program, const ModuleExport& entry)
 static bool hasDuplicateRequests(const Vector<ModuleRequest>& requests)
 {
     auto keys = WTF::map(requests, [](const ModuleRequest& request) {
-        return std::tuple { request.target, request.phase, request.kind };
+        return std::tuple { request.target, request.phase, request.kind, request.isHoisted };
     });
     AOT::sort(keys);
     return std::ranges::adjacent_find(keys) != keys.end();
@@ -144,6 +144,8 @@ static bool hasDuplicateRequests(const Vector<ModuleRequest>& requests)
 
 static bool isValidRequest(const ModuleRequest& request)
 {
+    if (request.isHoisted && (request.kind != ModuleRequestKind::Import || request.phase != ImportPhase::Evaluation || request.isDynamicStarExport))
+        return false;
     switch (request.kind) {
     case ModuleRequestKind::Import:
         return request.completes || request.phase == ImportPhase::Defer;
@@ -205,7 +207,8 @@ static std::optional<InternalErrorKind> findModuleError(const Program& program, 
     bool hasValidLists = (rules.hasExportTable ? module.syntheticExports.isEmpty() || module.exportRule != SyntheticExportRule::None : module.exports.isEmpty())
         && (rules.hasRequests || module.requests.isEmpty())
         && (rules.hasRequiredNames || module.requiredNames.isEmpty())
-        && std::ranges::all_of(module.requests, isValidRequest);
+        && std::ranges::all_of(module.requests, isValidRequest)
+        && std::ranges::is_partitioned(module.requests, &ModuleRequest::isHoisted);
     bool hasValidLibraryFlag = !isLibrary || (rules.body != BodyRule::Absent && !module.body && module.exports.isEmpty());
     bool hasValidImportOnlyFlag = !module.flags.contains(ModuleFlags::IsLoadedByImportOnly) || module.runtimeModule;
     bool hasValidFlagsOfFiles = !module.flags.containsAny({ ModuleFlags::HasNoSideEffects, ModuleFlags::KeepsError, ModuleFlags::NamesWayToModuleObjects }) || isFileOfProgram(module);
@@ -275,7 +278,7 @@ bool ProgramVerifier::hasValidBody(const Module& module) const
         && body->captures.isEmpty()
         && body->parameters.isEmpty()
         && body->results.size() == 1
-        && isAnything(body->results[0].type)
+        && isAnything(body->results[0].written())
         && !body->flags.containsAny(rules.forbiddenBodyFlags);
 }
 

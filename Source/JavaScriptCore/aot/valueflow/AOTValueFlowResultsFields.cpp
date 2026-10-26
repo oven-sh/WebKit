@@ -1295,7 +1295,7 @@ static void typeAppendedFields(const ValueFlowResultInputs& inputs, const ValueF
                 if (flow.location.writers != WriterState::AllKnown)
                     continue;
                 ValueSetID stored = contents.storedInAppendedFields[index][field];
-                ValueFlowPositionResult result = positions.resultAt(Type::anything(), maker.unite(stored, maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Absent))));
+                ValueFlowPositionResult result = positions.resultAmongAllValues(maker.unite(stored, maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Absent))));
                 if (result.proof == ValueFlowProof::Proven && result.narrowed) {
                     const ValueFlowNumbers& storedNumbers = contents.numbersStoredInAppendedFields[index][field];
                     if (!storedNumbers.isEmpty())
@@ -1398,7 +1398,7 @@ static void keepFieldsOnlyCalledWhoseReadsHaveStamps(const ValueFlowResultInputs
                 bool hasCheckThatStays = false;
                 for (uint32_t index = 0; index < function.values.size() && !hasCheckThatStays; ++index)
                     hasCheckThatStays = function.values[index].opcode == Opcode::Check && !checksThatTestNothing.quickGet(index);
-                valuesBehindChecks = hasCheckThatStays ? findValuesBehindChecks(program, function, CFG(function), &checksThatTestNothing) : BitVector();
+                valuesBehindChecks = hasCheckThatStays ? valuesTypedBehindChecks(program, function, CFG(function), &checksThatTestNothing) : BitVector();
             }
             return valuesBehindChecks->get(read.index());
         };

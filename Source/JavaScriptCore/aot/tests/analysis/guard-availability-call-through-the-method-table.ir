@@ -48,12 +48,12 @@ function f6 role=TableLookup flags=[HasThis] length=1 thisType={type=object} par
     Return v3
 }
 function f7 name="scaled" kind=Method role=TableEntrypoint flags=[HasThis] length=1 thisType={type=object} parameters=[{type=number}] results=[{type=anything}] derivation={source=f1 parameter=2147483649} creator=Entrypoint{target=f1 arguments=Registers} {
-    v2 = AssumeType v0 castType=L0
+    v2 = AssumeType v0 provenType=L0
     v3 = CallDirect v2, v1 function=f1
     ReturnCall v3 requirement=Allowed
 }
 function f8 name="scaled" kind=Method role=TableEntrypoint flags=[HasThis] length=1 thisType={type=object} parameters=[{type=number}] results=[{type=anything}] derivation={source=f3 parameter=2147483649} creator=Entrypoint{target=f3 arguments=Registers} {
-    v2 = AssumeType v0 castType=L1
+    v2 = AssumeType v0 provenType=L1
     v3 = CallDirect v2, v1 function=f3
     ReturnCall v3 requirement=Allowed
 }
