@@ -199,7 +199,7 @@ struct AllocationWords {
     static constexpr unsigned numberOfCopiesWithoutFrame = 64;
     static constexpr unsigned placeOfCopyWithoutFrame(uint64_t targetWords, uint64_t sourceWords, uint32_t excludedRunNumberPlusOne)
     {
-        return static_cast<uint32_t>(sourceWords + (sourceWords >> 32) + (targetWords >> 31) + excludedRunNumberPlusOne) & (numberOfCopiesWithoutFrame - 1);
+        return static_cast<uint32_t>(sourceWords + (sourceWords >> 32) + 2 * (targetWords >> 32) + excludedRunNumberPlusOne) & (numberOfCopiesWithoutFrame - 1);
     }
 
     void* auxiliarySpace;

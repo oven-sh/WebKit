@@ -674,7 +674,7 @@ static BuiltinOverloadID findFormTakingParts(FunctionPassContext& context, const
             continue;
         if (!resultTypeOfBuiltinCall(typing, { .overload = overload, .operands = operands }, 0).isSubsetOf(context.types.at(call.type), context.program))
             return { };
-        if (!effectsOfOverload(effectContext, overload, nullptr, operands.arguments.span()).isSubsetOf(effectsOf(effectContext, context.function, call)))
+        if (!effectsOfOverload(effectContext, overload, TypeID(), operands.arguments.span()).isSubsetOf(effectsOf(effectContext, context.function, call)))
             return { };
         return overload;
     }

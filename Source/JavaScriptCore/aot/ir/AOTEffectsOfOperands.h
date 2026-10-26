@@ -40,6 +40,8 @@ struct OperandBehavior {
     bool isDescribedWhenRefused { false };
     BuiltinTypeID accepted { };
     bool onlyBoxedPrimitivesAreConverted { false };
+
+    bool saysTheSameFromTheSameLists(const OperandBehavior&) const;
 };
 
 struct OperandSummary {
@@ -103,7 +105,7 @@ bool isDescribedByModel(const BuiltinOverload&);
 Vector<BuiltinName> namesReadFromOperands(const BuiltinTable&);
 
 void addOperandCode(const EffectContext&, const Type& operand, const OperandBehavior&, EffectsOnEdges&);
-void describeOverload(const Program&, BuiltinOverloadID, BuiltinCallForm, const Type* receiver, std::span<const TypeID> arguments, EffectDescription&);
+void describeOverload(const Program&, BuiltinOverloadID, BuiltinCallForm, TypeID receiver, std::span<const TypeID> arguments, EffectDescription&);
 
 enum class UsesAskedFor : uint8_t { All, AllButPassesToUserCode };
 

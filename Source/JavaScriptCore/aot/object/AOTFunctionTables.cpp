@@ -324,29 +324,44 @@ void FunctionTables::recordCalleeOfCallByValue(VM& vm, const void* stackPointer,
     recordCallee(vm, stackPointer, closure);
 }
 
+// In the lowest bit of the function object: a collection has left the entry in the table. The call that writes the entry anew takes the mark away.
+static constexpr uintptr_t markOfCollection = 1;
+
+static JSObject* closureOf(const RecordedCallee& entry)
+{
+    return std::bit_cast<JSObject*>(std::bit_cast<uintptr_t>(entry.closure) & ~markOfCollection);
+}
+
 JSObject* FunctionTables::recordedCalleeOfCallFrom(const void* stackPointer)
 {
     if (!hasRecordedCallees())
         return nullptr;
     uintptr_t stackPointerOfCaller = std::bit_cast<uintptr_t>(stackPointer);
     const RecordedCallee& entry = entryOfCallFrom(recordedCalleeStorage.mutableSpan(), stackPointerOfCaller);
-    return entry.stackPointerOfCaller == stackPointerOfCaller ? entry.closure : nullptr;
+    return entry.stackPointerOfCaller == stackPointerOfCaller ? closureOf(entry) : nullptr;
+}
+
+// How far the stack of the program reaches is not asked during a collection. A call has returned for sure once the program has returned to whoever entered it from outside.
+static bool hasReturned(VM& vm, const FunctionTables& tables, const RecordedCallee& entry)
+{
+    if (!vm.isEntered())
+        return true;
+    return std::bit_cast<uintptr_t>(entry.closure) & markOfCollection && vm.entryCountFromOutside() != tables.entryCountAtLastCollection;
 }
 
 template<typename Visitor>
-void FunctionTables::visitRecordedCallees(Visitor& visitor, const void* stackPointer)
+void FunctionTables::visitRecordedCallees(VM& vm, Visitor& visitor)
 {
     Locker locker { recordedCalleesLock };
     for (const RecordedCallee& entry : recordedCallees()) {
-        if (JSObject* closure = entry.closure; closure && entry.stackPointerOfCaller > std::bit_cast<uintptr_t>(stackPointer))
-            visitor.appendUnbarriered(closure);
+        if (entry.closure && !hasReturned(vm, *this, entry))
+            visitor.appendUnbarriered(closureOf(entry));
     }
 }
-template void FunctionTables::visitRecordedCallees(AbstractSlotVisitor&, const void*);
-template void FunctionTables::visitRecordedCallees(SlotVisitor&, const void*);
+template void FunctionTables::visitRecordedCallees(VM&, AbstractSlotVisitor&);
+template void FunctionTables::visitRecordedCallees(VM&, SlotVisitor&);
 
-// No entry is older than one collection unless its function object was marked.
-void FunctionTables::finalizeRecordedCallees(VM& vm, const void* stackPointer)
+void FunctionTables::finalizeRecordedCallees(VM& vm)
 {
     if (!hasRecordedCallees())
         return;
@@ -355,11 +370,14 @@ void FunctionTables::finalizeRecordedCallees(VM& vm, const void* stackPointer)
     for (RecordedCallee& entry : recordedCallees()) {
         if (!entry.closure)
             continue;
-        if (entry.stackPointerOfCaller > std::bit_cast<uintptr_t>(stackPointer) && vm.heap.isMarked(entry.closure))
-            isInUse = true;
-        else
+        if (hasReturned(vm, *this, entry) || !vm.heap.isMarked(closureOf(entry))) {
             entry = { 0, nullptr };
+            continue;
+        }
+        entry.closure = std::bit_cast<JSObject*>(std::bit_cast<uintptr_t>(entry.closure) | markOfCollection);
+        isInUse = true;
     }
+    entryCountAtLastCollection = vm.entryCountFromOutside();
     if (!isInUse && recordedCallees().size() > leastNumberOfRecordedCallees)
         setRecordedCalleeStorage(vm, *this, { });
 }

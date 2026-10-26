@@ -2805,9 +2805,18 @@ static void callTargetsWithoutBoundArguments(ClimbingSet callees, const ValueFlo
     });
 }
 
-static void callTargetsWithBoundArguments(ClimbingSet callees, ValueFlowCallKind kind, const ValueFlowBuiltinCall& description, ValueFlowRuleContext& context)
+static void callOtherCallables(ClimbingSet callees, const ValueFlowBuiltinCall& description, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
+    ValueFlowCallKind kind = isConstruction(description.kind) ? ValueFlowCallKind::ConstructByNativeCode : ValueFlowCallKind::CallByNativeCode;
+    ClimbingSet allCallees = callees;
+    if (!isConstruction(kind)) {
+        ValueSetID bindingNoArgument = boundFunctionsBindingNoArgumentAmong(callees, context);
+        if (context.meet(callees, bindingNoArgument)) {
+            callTargetsWithoutBoundArguments(context.restrict(callees, bindingNoArgument), description, context);
+            callees = context.restrict(callees, ValueSets::complement(bindingNoArgument));
+        }
+    }
     auto slot = [&](BuiltinSlotID id) {
         return context.read(callees, { ValueFlowNameKind::HiddenSlot, id.index() });
     };
@@ -2836,30 +2845,19 @@ static void callTargetsWithBoundArguments(ClimbingSet callees, ValueFlowCallKind
     forEachPartOfCallees(context, context.restrict(context.valueOf(slot(BuiltinSlots::BoundFunctionTarget)), universe.callables()), [&](ClimbingSet targets) {
         if (!isConstruction(kind))
             return callTargets(targets);
-        // `new` on a bound function enters its target with that target as new.target, and no other.
-        context.forEachMember(targets, [&](ValueFlowObjectID target) {
+        // `new` on a bound function enters its target with the target as new.target: a target that reads new.target sees itself there, and no other target.
+        Vector<ValueFlowObjectID, 8> readingNewTarget;
+        context.forEachMember(context.restrict(targets, universe.closures()), [&](ValueFlowObjectID target) {
+            if (context.program().at(universe.closureFunction(target)).newTargetParameterIndex())
+                readingNewTarget.append(target);
+        });
+        for (ValueFlowObjectID target : readingNewTarget)
             callTargets(only(context, target));
-        });
+        ClimbingSet others = readingNewTarget.isEmpty() ? targets : context.restrict(targets, ValueSets::complement(context.maker().of(readingNewTarget.span())));
+        if (context.meet(others, ValueSets::anything))
+            callTargets(others);
     });
-}
-
-// Each bound function enters its own target, with its own receiver and its own arguments, whichever others are called at the same place.
-static void callOtherCallables(ClimbingSet callees, const ValueFlowBuiltinCall& description, ValueFlowRuleContext& context)
-{
-    ValueFlowCallKind kind = isConstruction(description.kind) ? ValueFlowCallKind::ConstructByNativeCode : ValueFlowCallKind::CallByNativeCode;
-    ValueSetID bindingNoArgument = isConstruction(kind) ? ValueSets::nothing : boundFunctionsBindingNoArgumentAmong(callees, context);
-    auto callTargetsOf = [&](ClimbingSet boundFunctions) {
-        if (ClimbingSet bare = context.restrict(boundFunctions, bindingNoArgument); context.meet(bare, ValueSets::anything))
-            callTargetsWithoutBoundArguments(bare, description, context);
-        if (ClimbingSet others = context.restrict(boundFunctions, ValueSets::complement(bindingNoArgument)); context.meet(others, ValueSets::anything))
-            callTargetsWithBoundArguments(others, kind, description, context);
-    };
-    if (std::optional<ClimbingSet> boundFunctions = context.holdersUnder({ ValueFlowNameKind::HiddenSlot, BuiltinSlots::BoundFunctionTarget.index() }, callees)) {
-        context.forEachMember(*boundFunctions, [&](ValueFlowObjectID boundFunction) {
-            callTargetsOf(only(context, boundFunction));
-        });
-    }
-    settlePromisesThrough(callees, description, context);
+    settlePromisesThrough(allCallees, description, context);
 }
 
 void enterCodeThatEntryDescribes(ValueFlowObjectID closure, ValueFlowRuleContext& context)

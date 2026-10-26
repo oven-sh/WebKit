@@ -462,14 +462,16 @@ struct FieldResults {
         }
     }
 
-    // The own enumerable data properties that no object with the layout is ever without, once it is born.
-    Vector<PropertyKeyID> keysKeptByObjectsWith(ValueSetMaker& maker, const BitVector& hasOtherSites, LayoutID id) const
+    // The own enumerable data properties that the object is never without, once it is born. What happens to another object of its layout takes none from it.
+    Vector<PropertyKeyID> keysKeptBy(ValueSetMaker& maker, const BitVector& hasOtherSites, ValueFlowObjectID object, LayoutID id) const
     {
         Vector<PropertyKeyID> keys;
         LayoutKind kind = program.at(id).kind;
-        if ((kind != LayoutKind::Record && kind != LayoutKind::Instance) || !hasObjects(id) || stores.getsCopiedProperties(id) || stores.hasObjectOfCodeWithoutSolve(id))
+        ObjectsOfLayout reached = inputs.hasEscaped(object) || inputs.isLost(object) ? ObjectsOfLayout::All : ObjectsOfLayout::Followed;
+        if ((kind != LayoutKind::Record && kind != LayoutKind::Instance) || !hasObjects(id) || stores.getsCopiedProperties(id, reached) || stores.hasObjectOfCodeWithoutSolve(id))
             return keys;
-        if (possibleMutationsOf(id).containsAny({ ObjectMutation::DeleteField, ObjectMutation::RedefineProperty, ObjectMutation::ReachUnknownJavaScript }))
+        OptionSet<ObjectMutation> possible = reached == ObjectsOfLayout::All ? possibleMutationsOf(id) : markedMutationsOf(inputs, object);
+        if (possible.containsAny({ ObjectMutation::DeleteField, ObjectMutation::RedefineProperty, ObjectMutation::ReachUnknownJavaScript }))
             return keys;
         if (kind == LayoutKind::Record ? hasOtherSites.quickGet(id.index()) : !constructions.isFollowed(id))
             return keys;
@@ -490,7 +492,7 @@ struct FieldResults {
         removeRepeatedElements(keys);
         AOT::sort(keysOfOtherForms);
         keys.removeAllMatching([&](PropertyKeyID key) {
-            return std::ranges::binary_search(keysOfOtherForms, key) || stores.mayGetAccessorUnder(id, key) || stores.accessorDefinedUnder(maker, id, key).isAccessor();
+            return std::ranges::binary_search(keysOfOtherForms, key) || stores.mayGetAccessorUnder(id, key, reached) || stores.accessorDefinedUnder(maker, id, key).isAccessor();
         });
         return keys;
     }
@@ -506,7 +508,7 @@ struct FieldResults {
             bool hasLayout = false;
             layoutsOfObjects.forEachLayoutOf(object, [&](LayoutID layout) {
                 hasLayout = true;
-                Vector<PropertyKeyID> kept = keysKeptByObjectsWith(maker, hasOtherSites, layout);
+                Vector<PropertyKeyID> kept = keysKeptBy(maker, hasOtherSites, object, layout);
                 if (!keys) {
                     keys = WTF::move(kept);
                     return;

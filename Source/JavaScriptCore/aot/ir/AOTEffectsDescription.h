@@ -37,6 +37,9 @@ struct EffectDescription {
     void addFunctions(std::span<const FunctionID>);
     void addSlowPathFunction(FunctionID);
     void addUnknownCode() { callsUnknownCode = true; }
+    void add(const EffectDescription&);
+
+    friend bool operator==(const EffectDescription&, const EffectDescription&) = default;
 };
 
 EffectDescription describeEffects(const Program&, const Function&, const Value&);
@@ -73,11 +76,12 @@ void describeBound(const Effects& declared, EffectDescription&);
 void describeCallees(const Program&, const CalleeList&, BuiltinCallMode, EffectDescription&);
 void describeCallees(const Program&, const CalleeList&, BuiltinCallMode, const EnteringOperands&, EffectDescription&);
 void describeCallOf(const Program&, BuiltinID, BuiltinCallMode, EffectDescription&);
-void describeOperandsOfCall(const Program&, BuiltinID, BuiltinCallMode, BuiltinCallForm, const Type& receiver, std::span<const TypeID> arguments, EffectDescription&);
-void describeOverload(const Program&, BuiltinOverloadID, const Type* receiver, std::span<const TypeID> arguments, EffectDescription&);
+void describeOperandsOfCall(const Program&, BuiltinID, BuiltinCallMode, BuiltinCallForm, TypeID receiver, std::span<const TypeID> arguments, EffectDescription&);
+void describeOverload(const Program&, BuiltinOverloadID, TypeID receiver, std::span<const TypeID> arguments, EffectDescription&);
 void describeTypedResult(const Program&, BuiltinOverloadID, ExpectedResultID, EffectDescription&);
 void describeOverload(const Program&, BuiltinOverloadID, const Type& argument, EffectDescription&);
 void describeOperandCode(const Program&, const Type& operand, const OperandBehavior&, EffectDescription&);
+void describeOperandCode(const Program&, TypeID operand, const OperandBehavior&, EffectDescription&);
 
 CalleeList calleesOfCall(const Program&, const Value& call);
 CalleeList calleesThatBoundEffectsOf(const Program&, const Value& call);

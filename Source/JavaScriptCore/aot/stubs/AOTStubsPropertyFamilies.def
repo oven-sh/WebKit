@@ -65,8 +65,6 @@ v(StoreSlot, Handler, (StrictById, StrictByIdPacked, StrictByVal, StrictFreeName
 v(StoreSlotExit, InternalEntry, (StrictByIdMiss, StrictByIdUncached, StrictByValMiss, StrictByValUncached, StrictFreeNameMiss, StrictFreeNameUncached, SloppyByIdMiss, SloppyByIdUncached, SloppyByValMiss, SloppyByValUncached, SloppyFreeNameMiss, SloppyFreeNameUncached, DefineByIdMiss, DefineByIdUncached, DefineByValMiss, DefineByValUncached), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, StoreSlotExit)
 
 // AOTStubsObjectCopy.cpp
-v(CopyDataPropertiesFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CopyDataPropertiesFrontEnd)
-AOT_STUB_FRONT_END(CopyDataProperties, CopyDataPropertiesFrontEnd)
 v(CopyObjectFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CopyObjectFrontEnd)
 AOT_STUB_FRONT_END(CopyObject, CopyObjectFrontEnd)
 

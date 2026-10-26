@@ -31,7 +31,6 @@
 #include "JSPromise.h"
 #include "Microtask.h"
 #include "StackFrame.h"
-#include "StackVisitor.h"
 #include "VMEntryRecord.h"
 #include "VMInlines.h"
 #include <wtf/HashSet.h>

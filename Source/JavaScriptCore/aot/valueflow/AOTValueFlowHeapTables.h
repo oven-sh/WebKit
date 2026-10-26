@@ -90,6 +90,7 @@ bool isMadeWithCodeOfLibrary(const BuiltinTable&, BuiltinID member);
     macro(ValueSetID, holdersWithMembers) \
     macro(ValueSetID, holdersWithMembersUnderNumericNames) \
     macro(ValueSetID, holdersOfMembersThatHostMakes) \
+    macro(ValueSetID, closedHoldersOfReplaceableMembers) \
     macro(ValueSetID, namespacesWhoseHoldersListThem) \
     macro(ValueSetID, namespacesNotedWhenCarriedOut) \
     macro(ValueSetID, holdersOfUndeclaredPropertiesUnderAnyKey) \

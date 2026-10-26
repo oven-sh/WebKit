@@ -27,7 +27,7 @@ public:
     ModuleLinkWalk(const Modules&, ModuleID root);
 
     ModuleID root() const { return m_root; }
-    // Whether a walk made now would be this walk: no module that it enters has been linked or has run since.
+    // Whether a replay does what the replay of a walk made now would do.
     bool stillHolds(const Modules&) const;
     // Such a walk enters the root only. Of the modules below it, didLeave() hears of those that resolve names, whether another link has finished them or not.
     bool hasPlan() const { return !m_plan.empty(); }

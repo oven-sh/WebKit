@@ -11,6 +11,7 @@
 #include "AOTStubDescriptor.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsConstruct.h"
+#include "AOTStubsObjectCopy.h"
 #include "AOTStubsOperations.h"
 #include "AOTStubsStrings.h"
 
@@ -36,6 +37,7 @@ std::span<const OperationPrelude> operationPreludes()
         { Entry::operationAOTCatch, emitCatchPrelude },
         { Entry::operationAOTCatchException, emitCatchExceptionPrelude },
         { Entry::operationAOTCatchValueAndException, emitCatchValueAndExceptionPrelude },
+        { Entry::operationAOTCopyDataProperties, emitCopyDataPropertiesPrelude },
         { Entry::operationAOTGetConstructPrototype, emitGetConstructPrototypePrelude },
         { Entry::operationAOTGetSuperBase, emitGetSuperBasePrelude },
         { Entry::operationAOTStringToLowerCase, emitToLowerCasePrelude },

@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinMembers.h"
+#include "AOTFlowBuiltinLocations.h"
 #include "AOTFlowObjectOperations.h"
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionKinds.h"
@@ -503,6 +504,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         Objects holdersWithMembers;
         Objects holdersWithMembersUnderNumericNames;
         Objects holdersOfMembersThatHostMakes;
+        Objects closedHoldersOfReplaceableMembers;
         Objects namespacesWhoseHoldersListThem;
         Objects holdersThatListAllMembers;
         Objects lockedObjects;
@@ -585,6 +587,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             holdersWithMembers.appendVector(objects);
 
             bool hasMemberThatHostMakes = false;
+            bool hasReplaceableMember = false;
             bool hasMemberUnderNumericName = false;
             for (BuiltinID member : builtins.membersOf(holder)) {
                 const Builtin& memberEntry = builtins.at(member);
@@ -596,6 +599,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                     continue;
                 }
                 hasMemberThatHostMakes = hasMemberThatHostMakes || isMadeWithCodeOfLibrary(builtins, member);
+                hasReplaceableMember = hasReplaceableMember || canLockAtStartUp(builtins, member);
                 if (hasNumericText(memberEntry.name)) {
                     m_hasNumericName.quickSet(member.index());
                     hasMemberUnderNumericName = true;
@@ -624,6 +628,9 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 if (isNamespaceOrFunction && holder != Builtins::GlobalThis && holder != Builtins::Bun)
                     namespacesWhoseHoldersListThem.appendVector(objects);
             }
+            // A prototype object is found above every instance: HeapRule::notePrototypeObjectsThatWriteMayReach() says which of them a write reaches.
+            if (hasReplaceableMember && hasClosedKeys && entry.kind != BuiltinKind::Prototype)
+                closedHoldersOfReplaceableMembers.appendVector(objects);
             if (hasMemberUnderNumericName)
                 holdersWithMembersUnderNumericNames.appendVector(objects);
         }
@@ -647,6 +654,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_holdersWithMembers = maker.of(holdersWithMembers.span());
         m_holdersWithMembersUnderNumericNames = maker.of(holdersWithMembersUnderNumericNames.span());
         m_holdersOfMembersThatHostMakes = maker.of(holdersOfMembersThatHostMakes.span());
+        m_closedHoldersOfReplaceableMembers = maker.of(closedHoldersOfReplaceableMembers.span());
         m_namespacesWhoseHoldersListThem = maker.of(namespacesWhoseHoldersListThem.span());
         m_namespacesNotedWhenCarriedOut = maker.unite(m_namespacesWhoseHoldersListThem, universe.holdersOfLibraryExports());
         m_holdersThatListNotAllMembers = maker.unite(without(builtinObjects, maker.of(holdersThatListAllMembers.span())), maker.of(m_undescribedNativeCode));

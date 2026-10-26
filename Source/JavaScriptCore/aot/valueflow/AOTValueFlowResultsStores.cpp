@@ -224,12 +224,24 @@ void StoresByLayout::noteListedWrites()
     times.didFinish("stores by layout: copied properties"_s);
 }
 
-std::optional<Vector<LayoutID, 4>> StoresByLayout::layoutsCopiedOnto(LayoutID target)
+// The objects that are copied onto those of a layout, with what is copied onto them in turn, where the analysis follows each of them: whatever such an object holds
+// was stored through a set that lists it, whoever else has its layout.
+auto StoresByLayout::objectsCopiedOnto(LayoutID target) -> std::optional<CopiedObjects>
 {
     const ValueSets& sets = m_inputs.sets();
-    ValueSetID sources = m_heap.writtenUnder(m_layoutsOfObjects.objectsWith(target), ValueFlowName::of(ValueFlowNameKind::CopiedFrom));
-    if (ValueSets::isComplement(sources) || sets.meet(sources, m_inputs.universe().placeholdersAlone()))
-        return std::nullopt;
+    ValueSetMaker& maker = m_heap.maker();
+    ValueSetID objectsNotFollowed = maker.unite(m_inputs.universe().placeholdersAlone(), maker.unite(m_heap.escaped(), m_heap.lost()));
+    ValueSetID sources = ValueSets::nothing;
+    ValueSetID copiedOnto = m_layoutsOfObjects.objectsWith(target);
+    while (true) {
+        ValueSetID found = m_heap.writtenUnder(copiedOnto, ValueFlowName::of(ValueFlowNameKind::CopiedFrom));
+        if (ValueSets::isComplement(found) || sets.meet(found, objectsNotFollowed))
+            return std::nullopt;
+        if (sets.isSubset(found, sources))
+            break;
+        sources = maker.unite(sources, found);
+        copiedOnto = found;
+    }
 
     Vector<LayoutID, 4> layouts;
     bool holdOnlyWhatIsWritten = true;
@@ -249,14 +261,22 @@ std::optional<Vector<LayoutID, 4>> StoresByLayout::layoutsCopiedOnto(LayoutID ta
         LayoutKind kind = m_inputs.program.at(layout).kind;
         if (kind != LayoutKind::Record && kind != LayoutKind::Instance)
             return std::nullopt;
-        if (m_hasEscapedObject.quickGet(layout.index()) || m_hasLostObject.quickGet(layout.index()) || getsNameNobodyLists(layout))
+        if (m_hasObjectOfCodeWithoutSolve.quickGet(layout.index()))
             return std::nullopt;
-        for (PropertyKeyID key : keysStoredInto(layout)) {
-            if (mayGetAccessorUnder(layout, key))
+    }
+    auto isStoredUnder = [&](ValueFlowName name) {
+        return m_heap.writtenUnder(sources, name) != ValueSets::nothing;
+    };
+    constexpr std::array namesNobodyLists { ValueFlowNameKind::UnknownKey, ValueFlowNameKind::Elements, ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowNameKind::SetterUnderUnknownKey };
+    if (std::ranges::any_of(namesNobodyLists, [&](ValueFlowNameKind kind) { return isStoredUnder(ValueFlowName::of(kind)); }))
+        return std::nullopt;
+    for (LayoutID layout : layouts) {
+        for (PropertyKeyID key : keysStoredInto(layout, ObjectsOfLayout::Followed)) {
+            if (isStoredUnder(ValueFlowName::getter(key)) || isStoredUnder(ValueFlowName::setter(key)))
                 return std::nullopt;
         }
     }
-    return layouts;
+    return CopiedObjects { sources, WTF::move(layouts) };
 }
 
 void StoresByLayout::followCopiedProperties()
@@ -266,36 +286,33 @@ void StoresByLayout::followCopiedProperties()
         if (m_storesOfLayout[index].getsCopiedProperties)
             targets.append(LayoutID(index));
     }
-    for (bool hasChanged = !targets.isEmpty(); hasChanged;) {
-        hasChanged = false;
-        for (LayoutID target : targets) {
-            StoresIntoObjects& stores = m_storesOfLayout[target.index()];
-            if (!stores.getsCopiedProperties)
-                continue;
-            stores.getsCopiedProperties = false;
-            std::optional<Vector<LayoutID, 4>> sources = layoutsCopiedOnto(target);
-            if (!sources) {
-                stores.getsCopiedProperties = true;
-                continue;
+    Vector<std::optional<CopiedObjects>> sourcesOfTargets = WTF::map(targets, [&](LayoutID target) {
+        return objectsCopiedOnto(target);
+    });
+    for (size_t position = 0; position < targets.size(); ++position) {
+        if (!sourcesOfTargets[position])
+            continue;
+        const CopiedObjects& sources = *sourcesOfTargets[position];
+        StoresIntoObjects& stores = m_storesOfLayout[targets[position].index()];
+        stores.getsCopiedProperties = false;
+        for (LayoutID source : sources.layouts) {
+            for (PropertyKeyID key : keysStoredInto(source, ObjectsOfLayout::Followed)) {
+                if (stores.keysLeftOutOfEveryCopy && stores.keysLeftOutOfEveryCopy->contains(key))
+                    continue;
+                ValueSetID value = m_heap.writtenUnder(sources.objects, ValueFlowName::property(key));
+                if (value == ValueSets::nothing)
+                    continue;
+                ValueFlowNumbers numbers = numbersStoredUnder(source, key, ObjectsOfLayout::Followed);
+                // A copy reads the field, and a read of an int32 slot says no more than that: what it delivers goes into the target without a test.
+                constexpr Range integersOfSlots { minInlineInt32, INT32_MAX };
+                if (!numbers.integers.isEmpty() && numbers.integers.isSubsetOf(integersOfSlots))
+                    numbers.integers = integersOfSlots;
+                StoredUnderKey& stored = stores.underKey.add(key.index(), StoredUnderKey { }).iterator->value;
+                unite(stored.value, value);
+                stored.uniteNumbers(numbers);
+                stored.isStoredAfterCreation = true;
+                stored.isNamedByOperation |= !stores.getsCopyWithoutComputedKey;
             }
-            for (LayoutID source : *sources) {
-                for (PropertyKeyID key : keysStoredInto(source)) {
-                    if (stores.keysLeftOutOfEveryCopy && stores.keysLeftOutOfEveryCopy->contains(key))
-                        continue;
-                    ValueSetID value = storedUnder(source, key);
-                    ValueFlowNumbers numbers = numbersStoredUnder(source, key);
-                    // A copy reads the field, and a read of an int32 slot says no more than that: what it delivers goes into the target without a test.
-                    constexpr Range integersOfSlots { minInlineInt32, INT32_MAX };
-                    if (!numbers.integers.isEmpty() && numbers.integers.isSubsetOf(integersOfSlots))
-                        numbers.integers = integersOfSlots;
-                    StoredUnderKey& stored = stores.underKey.add(key.index(), StoredUnderKey { }).iterator->value;
-                    unite(stored.value, value);
-                    stored.uniteNumbers(numbers);
-                    stored.isStoredAfterCreation = true;
-                    stored.isNamedByOperation |= !stores.getsCopyWithoutComputedKey;
-                }
-            }
-            hasChanged = true;
         }
     }
 }
@@ -1318,10 +1335,10 @@ void StoresByLayout::noteCodeWithoutSolve(const Function& function)
     }
 }
 
-ValueFlowNumbers StoresByLayout::numbersStoredUnder(LayoutID layout, PropertyKeyID key) const
+ValueFlowNumbers StoresByLayout::numbersStoredUnder(LayoutID layout, PropertyKeyID key, ObjectsOfLayout objects) const
 {
     ValueFlowNumbers numbers;
-    forEachSourceOf(layout, [&](const StoresIntoObjects& stores) {
+    forEachSourceOf(layout, objects, [&](const StoresIntoObjects& stores) {
         auto found = stores.underKey.find(key.index());
         if (found != stores.underKey.end())
             numbers.unite(found->value.numbers());
@@ -1333,7 +1350,7 @@ ValueFlowNumbers StoresByLayout::numbersStoredUnder(LayoutID layout, PropertyKey
 ValueSetID StoresByLayout::storedUnder(ValueSetMaker& maker, LayoutID layout, PropertyKeyID key) const
 {
     ValueSetID stored = ValueSets::nothing;
-    forEachSourceOf(layout, [&](const StoresIntoObjects& stores) {
+    forEachSourceOf(layout, ObjectsOfLayout::All, [&](const StoresIntoObjects& stores) {
         auto found = stores.underKey.find(key.index());
         if (found != stores.underKey.end())
             stored = maker.unite(stored, found->value.value);
@@ -1345,17 +1362,17 @@ ValueSetID StoresByLayout::storedUnder(ValueSetMaker& maker, LayoutID layout, Pr
 bool StoresByLayout::isStoredAfterCreation(LayoutID layout, PropertyKeyID key) const
 {
     bool isStored = false;
-    forEachSourceOf(layout, [&](const StoresIntoObjects& stores) {
+    forEachSourceOf(layout, ObjectsOfLayout::All, [&](const StoresIntoObjects& stores) {
         auto found = stores.underKey.find(key.index());
         isStored |= (found != stores.underKey.end() && found->value.isStoredAfterCreation) || stores.underUnknownKey != ValueSets::nothing || stores.getsAccessorUnderUnknownKey || stores.getsCopiedProperties;
     });
     return isStored;
 }
 
-bool StoresByLayout::getsCopiedProperties(LayoutID layout) const
+bool StoresByLayout::getsCopiedProperties(LayoutID layout, ObjectsOfLayout objects) const
 {
     bool getsThem = false;
-    forEachSourceOf(layout, [&](const StoresIntoObjects& stores) {
+    forEachSourceOf(layout, objects, [&](const StoresIntoObjects& stores) {
         getsThem |= stores.getsCopiedProperties;
     });
     return getsThem;
@@ -1364,13 +1381,13 @@ bool StoresByLayout::getsCopiedProperties(LayoutID layout) const
 bool StoresByLayout::getsNameNobodyLists(LayoutID layout) const
 {
     bool getsOne = false;
-    forEachSourceOf(layout, [&](const StoresIntoObjects& stores) {
+    forEachSourceOf(layout, ObjectsOfLayout::All, [&](const StoresIntoObjects& stores) {
         getsOne |= stores.getsNameNobodyLists();
     });
     return getsOne;
 }
 
-Vector<PropertyKeyID> StoresByLayout::keysStoredInto(LayoutID layout) const
+Vector<PropertyKeyID> StoresByLayout::keysStoredInto(LayoutID layout, ObjectsOfLayout objects) const
 {
     Vector<PropertyKeyID> keys = sortedKeysOf(m_storesOfLayout[layout.index()]);
     uniteSortedKeys(keys, m_keysIntoEveryObject);
@@ -1378,6 +1395,8 @@ Vector<PropertyKeyID> StoresByLayout::keysStoredInto(LayoutID layout) const
         uniteSortedKeys(keys, m_keysIntoEveryEscapedClass);
     if (m_isLostClass.quickGet(layout.index()))
         uniteSortedKeys(keys, m_keysIntoEveryLostClass);
+    if (objects == ObjectsOfLayout::Followed)
+        return keys;
     if (m_hasEscapedObject.quickGet(layout.index()))
         uniteSortedKeys(keys, m_keysThroughUnknownObject);
     if (m_hasLostObject.quickGet(layout.index()))
@@ -1408,10 +1427,10 @@ bool StoresByLayout::isStoredByConstructor(LayoutID layout, PropertyKeyID key) c
     return found != underKey.end() && found->value.isStoredByConstructor;
 }
 
-bool StoresByLayout::mayGetAccessorUnder(LayoutID layout, PropertyKeyID key) const
+bool StoresByLayout::mayGetAccessorUnder(LayoutID layout, PropertyKeyID key, ObjectsOfLayout objects) const
 {
     bool mayGetOne = false;
-    forEachSourceOf(layout, [&](const StoresIntoObjects& stores) {
+    forEachSourceOf(layout, objects, [&](const StoresIntoObjects& stores) {
         auto found = stores.underKey.find(key.index());
         mayGetOne |= found != stores.underKey.end() && found->value.mayBeAccessor;
     });

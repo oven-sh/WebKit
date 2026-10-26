@@ -849,6 +849,7 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     context.passesThatCanWait = { };
     context.lookedOnlyNearby = false;
     context.mayDecideTestsAcrossBlocks = run.mayDecideTestsAcrossBlocks;
+    context.opcodesWhereRunBegins = hasTriggers(id) ? &run.contentsOf(context.function, context.changes).opcodes : nullptr;
     if (id == PassID::SimplifyControlFlow)
         run.mayDecideTestsAcrossBlocks = false;
     std::optional<Function> functionBeforeRun;

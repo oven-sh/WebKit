@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinMembers.h"
+#include "AOTEffectsDescription.h"
 #include "AOTEffectsOfAccesses.h"
 #include "AOTPropertyAccessInternal.h"
 #include "AOTRefusedContents.h"
@@ -101,6 +102,13 @@ public:
 
     using ProvenNamedAccess = Answer<ProvenAccessKey, ProvenAccess>;
 
+    struct CodeOfOperand {
+        TypeID operand;
+        OperandBehavior behavior;
+        bool calledUnknownCode { false };
+        EffectDescription added;
+    };
+
     struct MethodsOfName {
         BuiltinName name;
         Vector<MemberOfClasses, 4> methods;
@@ -117,6 +125,7 @@ public:
     SharedMemo<Optionality> optionalities;
     SharedMemo<ProvenNamedAccess> provenAccesses;
     SharedMemo<MethodsOfName> methodsByName;
+    SharedMemo<CodeOfOperand> codeOfOperands;
     RefusedContents refusedContents;
     bool checksAnswers { false };
 };

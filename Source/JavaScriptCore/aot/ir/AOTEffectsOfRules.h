@@ -25,8 +25,8 @@ EffectsOnEdges effectsOfCalling(const EffectContext&, FunctionID);
 EffectsOnEdges effectsOfCalling(const EffectContext&, BuiltinID, BuiltinCallMode);
 EffectsOnEdges effectsOfCallees(const EffectContext&, const CalleeList&, BuiltinCallMode);
 
-EffectsOnEdges effectsOfOverload(const EffectContext&, BuiltinOverloadID, const Type* receiver, std::span<const TypeID> arguments);
-EffectsOnEdges effectsOfOverload(const EffectContext&, BuiltinOverloadID, BuiltinCallForm, const Type* receiver, std::span<const TypeID> arguments);
+EffectsOnEdges effectsOfOverload(const EffectContext&, BuiltinOverloadID, TypeID receiver, std::span<const TypeID> arguments);
+EffectsOnEdges effectsOfOverload(const EffectContext&, BuiltinOverloadID, BuiltinCallForm, TypeID receiver, std::span<const TypeID> arguments);
 EffectsOnEdges effectsOfTypedResult(const EffectContext&, BuiltinOverloadID, ExpectedResultID);
 Effects ownEffectsOf(const BuiltinOverload&);
 

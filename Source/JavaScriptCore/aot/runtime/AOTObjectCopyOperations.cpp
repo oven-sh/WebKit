@@ -431,7 +431,7 @@ static ExcludedRun excludedRunAt(Instance* instance, uint32_t numberPlusOne)
     return { numberPlusOne, instance->tables().propertyRunRow(numberPlusOne - 1).subspan(1) };
 }
 
-static NEVER_INLINE ExceptionOperationResult<void> copyDataPropertiesInFrame(CallerFrameAndPC* frameRecord, Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys)
+static NEVER_INLINE NOT_TAIL_CALLED ExceptionOperationResult<void> copyDataPropertiesInFrame(CallerFrameAndPC* frameRecord, Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys)
 {
     AOT_OPERATION_BEGIN_IN_FRAME(instance, frameRecord, Entry::operationAOTCopyDataProperties);
     if (!hasOwnPropertiesToCopy(JSValue::decode(source)))

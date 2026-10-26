@@ -27,6 +27,8 @@ public:
         // A comparison with a number of any size leaves the same of the other side whatever that number is. Asked for by whoever reads the types on the edges.
         const Program* programToReadComparisonsWith { nullptr };
         const BitVector* checksToLeaveOut { nullptr };
+        // Said by whoever has looked.
+        bool holdsCheck { false };
     };
 
     // Makes the graph itself, where the body holds a check.
@@ -81,6 +83,8 @@ ForgottenProofs expectInsteadOfChecking(Function&, const CFG&, TypeArena&, std::
 // For whoever has answered a check by a proof, or has put a test that stands in its place: what was proven behind that check alone holds in every version from now on.
 void settleProofsBehindAnsweredChecks(Function&, const CFG&);
 void settleProofsBehindAnsweredChecks(Function&);
+// The same for whoever has listed the claims that hold behind checks. Without the marks no check is left.
+void settleProofsBehindAnsweredChecks(Function&, std::span<const ValueID> claimsBehindChecks, const PredictedValues*);
 // For whoever has taken from an operation an operand that it only kept, as a closure keeps a capture. The type of such an operation says nothing of that operand, and whoever reads what was kept
 // reads a position with a type of its own. So what is made from the operation never rested on the checks in front of that operand.
 void settleProofsBehindOperandsThatWereOnlyKept(Function&);

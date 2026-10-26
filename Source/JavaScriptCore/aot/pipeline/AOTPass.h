@@ -118,6 +118,8 @@ struct FunctionPassContext {
     bool isBehindRounds { false };
     bool hasUsesAwaitingExpansion { false };
     bool hasCountersConvertedSinceTestsWerePlaced { false };
+    // The opcodes of the values in the blocks where the run of a pass begins, for a pass that the runner starts by what the body holds.
+    const OpcodeSet* opcodesWhereRunBegins { nullptr };
     // Set by a pass in a run that changes the function: the analyses that describe the function as it is behind the run. The runner empties it in front of every run and drops what the row of the pass names, less these.
     AnalysisSet keptAnalyses { };
     Vector<uint64_t> tracesOfAllocationsNotWorthSinking;

@@ -49,7 +49,7 @@ struct CastSimplification : Rewrite {
         for (;;) {
             changed += removeCasts();
             // What has gone may have been the last way from a check to such a claim.
-            while (std::exchange(hasKeptClaimBehindCheck, false) & std::exchange(hasTakenValuesFromBehindChecksInThisTurn, false))
+            while (std::exchange(hasTakenValuesFromBehindChecksInThisTurn, false) && hasKeptClaimThatNoCheckHolds())
                 changed += removeCasts();
             // removeCasts() judges each cast by what it leaves behind, so it finds nothing more until removeRepeatedCasts() has changed something.
             unsigned repeated = removeRepeatedCasts();
@@ -196,6 +196,9 @@ struct CastSimplification : Rewrite {
     unsigned removeCasts()
     {
         unsigned changed = 0;
+        holdsRepeatableCast = false;
+        claimsBehindChecks.shrink(0);
+        claimsKeptBehindChecks.shrink(0);
         for (BlockID block : blocks()) {
             const BlockValues& values = at(block).values;
             for (uint32_t index = 0; index < values.size(); ++index) {
@@ -223,10 +226,12 @@ struct CastSimplification : Rewrite {
         if (changed)
             edit(id, ValueEdit::Definition).setOperand(0, narrowest);
         operand = narrowest;
-        if (!typeOf(operand).isSubsetOf(typeOf(id), program))
+        if (!typeOf(operand).isSubsetOf(typeOf(id), program)) {
+            noteCastThatStays(id);
             return changed;
+        }
         if (saysMoreThanTypeOnCredit(cast, operand)) {
-            hasKeptClaimBehindCheck = true;
+            claimsKeptBehindChecks.append(id);
             return changed;
         }
         // A cast stands behind the checks in front of every operand, and what takes its place behind those in front of the first.
@@ -237,11 +242,29 @@ struct CastSimplification : Rewrite {
             eraseValue(block, index);
         } else if (repeatableCasts.contains(cast.opcode))
             becomeUpcast(function, id, operand);
-        else
+        else {
+            noteCastThatStays(id);
             return changed;
+        }
         hasTakenValuesFromBehindChecksInThisTurn |= standsBehindMoreChecksThanOperand;
         mayHaveTakenValuesFromBehindChecks |= standsBehindMoreChecksThanOperand;
         return changed + 1;
+    }
+
+    // Nothing else makes one more turn find what the last one has left.
+    bool hasKeptClaimThatNoCheckHolds()
+    {
+        return std::ranges::any_of(claimsKeptBehindChecks, [&](ValueID claim) {
+            return !isBehindCheck(at(claim).operand(0));
+        });
+    }
+
+    void noteCastThatStays(ValueID id)
+    {
+        const Value& cast = at(id);
+        holdsRepeatableCast |= repeatableCasts.contains(cast.opcode);
+        if (cast.opcode == Opcode::AssumeType && cast.isBehindChecks())
+            claimsBehindChecks.append(id);
     }
 
     // What is assumed in every version says more than a type that is owed to a check: the check may go.
@@ -252,13 +275,27 @@ struct CastSimplification : Rewrite {
 
     bool isBehindCheck(ValueID value)
     {
-        if (!hasChecks)
-            hasChecks = std::ranges::any_of(function.values, [](const Value& candidate) { return candidate.opcode == Opcode::Check; });
+        return marksOfChecks() && predicted->isBehindCheck(value);
+    }
+
+    const PredictedValues* marksOfChecks()
+    {
+        if (!hasChecks) {
+            hasChecks = context.opcodesWhereRunBegins ? context.opcodesWhereRunBegins->contains(Opcode::Check)
+                : std::ranges::any_of(function.values, [](const Value& candidate) { return candidate.opcode == Opcode::Check; });
+        }
         if (!*hasChecks)
-            return false;
+            return nullptr;
         if (!predicted)
-            predicted.emplace(function, analyses.cfg());
-        return predicted->isBehindCheck(value);
+            predicted.emplace(function, analyses.cfg(), PredictedValues::Options { .holdsCheck = true });
+        return &*predicted;
+    }
+
+    // A check that the type of its operand answers is gone.
+    void settleProofs()
+    {
+        if (mayHaveTakenValuesFromBehindChecks && !claimsBehindChecks.isEmpty())
+            settleProofsBehindAnsweredChecks(function, claimsBehindChecks.span(), marksOfChecks());
     }
 
     std::tuple<ValueID, TypeID, uint32_t> keyOf(ValueID id)
@@ -308,12 +345,7 @@ struct CastSimplification : Rewrite {
 
     unsigned removeRepeatedCasts()
     {
-        bool hasRepeatableCast = std::ranges::any_of(blocks(), [&](BlockID block) {
-            return std::ranges::any_of(at(block).values, [&](ValueID id) {
-                return repeatableCasts.contains(at(id).opcode);
-            });
-        });
-        if (!hasRepeatableCast)
+        if (!holdsRepeatableCast)
             return 0;
 
         // Of a block that adds casts or bindings, or hides some. Any other block leaves the tables as they are.
@@ -435,13 +467,16 @@ struct CastSimplification : Rewrite {
     }
 
     ValueSubstitution substitution { function };
-    bool hasKeptClaimBehindCheck { false };
     bool hasTakenValuesFromBehindChecksInThisTurn { false };
     // A check has gone, or a cast that read something else beside what it let through, or an operation has got another operand than a cast of the one that it had.
     bool mayHaveTakenValuesFromBehindChecks { false };
     // The pass makes no check.
     std::optional<bool> hasChecks;
     std::optional<PredictedValues> predicted;
+    // Of the casts that the last removeCasts() has left.
+    bool holdsRepeatableCast { false };
+    Vector<ValueID, 8> claimsBehindChecks;
+    Vector<ValueID, 8> claimsKeptBehindChecks;
     Vector<std::pair<BlockID, BitVector>, 4> erasedValues;
 };
 
@@ -452,9 +487,7 @@ PassOutcome simplifyCasts(FunctionPassContext& context)
     CastSimplification simplification(context);
     if (!simplification.run())
         return PassOutcome::Unchanged;
-    // A check that the type of its operand answers is gone.
-    if (simplification.mayHaveTakenValuesFromBehindChecks)
-        settleProofsBehindAnsweredChecks(context.function, context.analyses.cfg());
+    simplification.settleProofs();
     // Every step drops what its edits have made stale, so what is held at the end was made behind the last edit.
     context.keptAnalyses = allAnalyses;
     return PassOutcome::Changed;

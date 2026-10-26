@@ -316,6 +316,12 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
             keptOutOfNodesMadeForUnknownObject = maker.unite(keptOutOfNodesMadeForUnknownObject, marks);
         }
         m_takenByRetiredNodes = takenByRetiredNodes;
+        if (m_input.universe) {
+            // Start-up locks a member that no statement writes, and a write counts for the holders that its receiver lists. So a node lists such a holder whether it arrives before the unknown object or after it, and a read off the unknown object lists none.
+            ValueSetID holders = m_input.universe->builtinTables().heap().closedHoldersOfReplaceableMembers();
+            takenByRetiredNodes = maker.unite(takenByRetiredNodes, holders);
+            keptOutOfNodesMadeForUnknownObject = maker.unite(keptOutOfNodesMadeForUnknownObject, holders);
+        }
         ValueSetID wholeUnknownValue = m_input.universe ? maker.unite(m_input.universe->anyPrimitive(), unknownObjectAlone) : unknownObjectAlone;
         m_graph.retireNodesCoveredBy(placeholders.unknown, m_input.escaped, wholeUnknownValue, ValueSets::complement(takenByRetiredNodes));
         if (m_input.nodes && m_input.universe) {

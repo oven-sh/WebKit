@@ -491,14 +491,16 @@ static Arms collectCandidates(FunctionPassContext& pass, const PlannedValue& pla
         addClass(part);
     };
 
+    const Type& proven = pass.program.typeOf(pass.function, planned.value);
     const Type& expected = pass.program.expectedOrTypeOf(pass.function, planned.value);
-    for (const Type* type : { &expected, &pass.program.typeOf(pass.function, planned.value) }) {
+    for (const Type* type : { &expected, &proven }) {
         for (const ClassPart& part : type->classes)
             addClass(part);
         if (planned.kind == IteratorKind::Sync && type->primitives & Primitive::AnyString && !type->withPrimitives(Primitive::UndefinedOrNull).isAnything())
             add(IterationArm { .form = IterationForm::String, .testedType = TypeTable::string });
     }
-    if (!expected.anyObject)
+    // An iteration over undefined or null throws: whoever expects nothing else says nothing about what is iterated.
+    if (!(expected.isUndefinedOrNull() ? proven : expected).anyObject)
         return candidates;
 
     // What an iterable that nobody knows anything about is tested for. Of the classes with an arm only a generator does anything with what it is sent.

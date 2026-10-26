@@ -725,8 +725,7 @@ Effects effectsOfPlannedCall(const BuiltinCallQuery& query, const BuiltinCallPla
         appendOperand(converted, position, type);
     }
 
-    const Type* receiver = converted.receiver ? &context.types.at(converted.receiver) : nullptr;
-    effects.merge(effectsOfOverload(query.effects, plan.overload, form, receiver, converted.arguments.span()).normal);
+    effects.merge(effectsOfOverload(query.effects, plan.overload, form, converted.receiver, converted.arguments.span()).normal);
     return effects;
 }
 

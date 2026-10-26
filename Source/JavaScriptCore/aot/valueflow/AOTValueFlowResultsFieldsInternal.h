@@ -417,6 +417,9 @@ struct Writer {
     LayoutSetID familyOfReceiver;
 };
 
+// A store through a placeholder reaches the objects of a layout that escaped or were lost, and none that the analysis still follows.
+enum class ObjectsOfLayout : uint8_t { All, Followed };
+
 class StoresByLayout {
 public:
     StoresByLayout(const ValueFlowResultInputs&, const FlowResultTables&, ValueFlowHeapView&, const LayoutsOfObjects&);
@@ -424,11 +427,11 @@ public:
 
     ValueSetID storedUnder(LayoutID layout, PropertyKeyID key) { return storedUnder(m_heap.maker(), layout, key); }
     ValueSetID storedUnder(ValueSetMaker&, LayoutID, PropertyKeyID) const;
-    ValueFlowNumbers numbersStoredUnder(LayoutID, PropertyKeyID) const;
+    ValueFlowNumbers numbersStoredUnder(LayoutID, PropertyKeyID, ObjectsOfLayout = ObjectsOfLayout::All) const;
     bool isStoredAfterCreation(LayoutID, PropertyKeyID) const;
-    bool getsCopiedProperties(LayoutID) const;
+    bool getsCopiedProperties(LayoutID, ObjectsOfLayout = ObjectsOfLayout::All) const;
     bool getsNameNobodyLists(LayoutID) const;
-    Vector<PropertyKeyID> keysStoredInto(LayoutID) const;
+    Vector<PropertyKeyID> keysStoredInto(LayoutID, ObjectsOfLayout = ObjectsOfLayout::All) const;
     Vector<PropertyKeyID> keysStoredIntoKnownObjects(LayoutID) const;
     Vector<PropertyKeyID> keysNamedByStoresIntoKnownObjects(LayoutID) const;
     bool isStoredByConstructor(LayoutID, PropertyKeyID) const;
@@ -440,7 +443,7 @@ public:
             || (m_isEscapedClass.quickGet(layout.index()) && !m_keysIntoEveryEscapedClass.isEmpty())
             || (m_isLostClass.quickGet(layout.index()) && !m_keysIntoEveryLostClass.isEmpty());
     }
-    bool mayGetAccessorUnder(LayoutID, PropertyKeyID) const;
+    bool mayGetAccessorUnder(LayoutID, PropertyKeyID, ObjectsOfLayout = ObjectsOfLayout::All) const;
     FlowAccessorField accessorDefinedUnder(LayoutID layout, PropertyKeyID key) const { return accessorDefinedUnder(m_heap.maker(), layout, key); }
     FlowAccessorField accessorDefinedUnder(ValueSetMaker&, LayoutID, PropertyKeyID) const;
     Vector<PropertyKeyID> keysOfAccessorsDefinedIn(ValueSetMaker&, LayoutID) const;
@@ -557,9 +560,13 @@ private:
     ValueFlowNumbers numbersInData(LayoutID, ValueFlowName) const;
     void noteNumbers(StoresIntoObjects&, ValueFlowName, const ValueFlowNumbers&);
     void noteCodeWithoutSolve(const Function&);
-    std::optional<Vector<LayoutID, 4>> layoutsCopiedOnto(LayoutID);
+    struct CopiedObjects {
+        ValueSetID objects;
+        Vector<LayoutID, 4> layouts;
+    };
+    std::optional<CopiedObjects> objectsCopiedOnto(LayoutID);
     void followCopiedProperties();
-    void forEachSourceOf(LayoutID, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto&) const;
+    void forEachSourceOf(LayoutID, ObjectsOfLayout, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto&) const;
 
     const ValueFlowResultInputs& m_inputs;
     ValueFlowHeapView& m_heap;
@@ -885,7 +892,7 @@ void StoresByLayout::forEachLayoutListedAmong(const ObjectsOfSet& objects, const
     }
 }
 
-void StoresByLayout::forEachSourceOf(LayoutID layout, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto& functor) const
+void StoresByLayout::forEachSourceOf(LayoutID layout, ObjectsOfLayout objects, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto& functor) const
 {
     functor(m_storesOfLayout[layout.index()]);
     functor(m_storesIntoEveryObject);
@@ -893,6 +900,8 @@ void StoresByLayout::forEachSourceOf(LayoutID layout, NOESCAPE const Invocable<v
         functor(m_storesIntoEveryEscapedClass);
     if (m_isLostClass.quickGet(layout.index()))
         functor(m_storesIntoEveryLostClass);
+    if (objects == ObjectsOfLayout::Followed)
+        return;
     if (m_hasEscapedObject.quickGet(layout.index()))
         functor(m_storesThroughUnknownObject);
     if (m_hasLostObject.quickGet(layout.index()))

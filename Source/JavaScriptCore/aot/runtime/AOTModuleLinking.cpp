@@ -230,16 +230,28 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
     }
 }
 
-// A link that has finished since leaves the walk as it is unless it has linked a module that the walk enters. What has no work left by now has a step that does nothing.
+// What has no work left by now has a step that does nothing. A replay goes past an ES module that another link has linked since and past all that the walk found below it: a walk made now would find none of it
+// if all of that is settled too.
 bool ModuleLinkWalk::stillHolds(const Modules& modules) const
 {
     if (m_linkEpoch != modules.linkEpoch())
         return false;
     if (hasPlan())
         return modules.status(m_root) == ModuleStatus::Unlinked && (!m_memberOfCycle || modules.status(*m_memberOfCycle) == ModuleStatus::Unlinked);
-    return std::ranges::all_of(m_steps, [&](const Step& step) {
-        return static_cast<StepKind>(step.kind) != StepKind::Enter || modules.status(ModuleID(step.module)) == ModuleStatus::Unlinked;
-    });
+    std::span<const Step> steps = m_steps.span();
+    for (size_t index = 0; index < steps.size(); ++index) {
+        const Step& step = steps[index];
+        if (static_cast<StepKind>(step.kind) != StepKind::Enter || modules.status(ModuleID(step.module)) == ModuleStatus::Unlinked)
+            continue;
+        if (!index || modules.data(ModuleID(step.module)).capturesExports())
+            return false;
+        for (const Step& below : steps.subspan(index + 1, step.leave - index - 1)) {
+            if (static_cast<StepKind>(below.kind) != StepKind::Leave && !modules.isSettledForLinks(ModuleID(below.module)))
+                return false;
+        }
+        index = step.leave;
+    }
+    return true;
 }
 
 // A module that follows requests is never unlinked again. One that captures exports has work until it is evaluated and its importers read what was captured last.

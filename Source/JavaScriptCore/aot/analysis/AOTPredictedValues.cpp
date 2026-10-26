@@ -191,7 +191,7 @@ PredictedValues::PredictedValues(const Function& function, const CFG& cfg)
 
 PredictedValues::PredictedValues(const Function& function, const CFG& cfg, Options options)
     : m_numberOfValues(function.values.size())
-    , m_hasChecks(holdsCheck(function))
+    , m_hasChecks(options.holdsCheck || holdsCheck(function))
 {
     if (m_hasChecks)
         walk(function, cfg, options);
@@ -242,6 +242,14 @@ void settleProofsBehindAnsweredChecks(Function& function, const CFG& cfg)
             predicted.emplace(function, cfg);
         if (!predicted->isBehindCheck(value.valueOperand()))
             function.edit(ValueID(index), ValueEdit::Definition).setIsBehindChecks(false);
+    }
+}
+
+void settleProofsBehindAnsweredChecks(Function& function, std::span<const ValueID> claimsBehindChecks, const PredictedValues* predicted)
+{
+    for (ValueID claim : claimsBehindChecks) {
+        if (!predicted || !predicted->isBehindCheck(function.at(claim).valueOperand()))
+            function.edit(claim, ValueEdit::Definition).setIsBehindChecks(false);
     }
 }
 

@@ -246,7 +246,7 @@ static void describeOperandsGivenToBuiltins(const Program& program, const Functi
 
     Vector<TypeID, 4> arguments = typesOfArguments(function, call, *form);
     ValueID receiver = receiverOf(call);
-    const Type& receiverType = receiver ? program.typeOf(function, receiver) : program.at(TypeTable::undefined);
+    TypeID receiverType = receiver ? function.at(receiver).type : TypeTable::undefined;
     for (BuiltinID callee : callees.builtins)
         describeOperandsOfCall(program, callee, mode, *form, receiverType, arguments.span(), description);
 }

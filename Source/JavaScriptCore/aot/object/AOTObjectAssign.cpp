@@ -719,6 +719,73 @@ static const MappedCopy*& placeOfCopyWithoutFrame(State& state, const MappedCopy
     return state.instance.allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(copy.targetWords, copy.sourceWords, copy.excludedRunNumberPlusOne)];
 }
 
+static bool tryDescribeForStub(MappedCopy::Move& move)
+{
+    using Kind = MappedCopy::MoveKind;
+    using Run = MappedCopy::RunOfStub;
+    auto isMadeIn = [&](Run run, uint64_t firstBitsRefused, uint64_t numberOfBitsRefused) {
+        move.runOfStub = run;
+        move.firstBitsRefusedByStub = firstBitsRefused;
+        move.numberOfBitsRefusedByStub = numberOfBitsRefused;
+        return true;
+    };
+    switch (move.kind) {
+    case Kind::HalfWord:
+        return isMadeIn(Run::HalfWords, 0, 0);
+    case Kind::HalfWordUnlessZero:
+        return isMadeIn(Run::HalfWords, 0, 1);
+    case Kind::OptionalInt32:
+        return isMadeIn(Run::HalfWords, traitsOf(SlotRepresentation::OptionalInt32).absentBits, 1);
+    case Kind::Int32AsOptionalInt32:
+        return isMadeIn(Run::HalfWords, static_cast<uint32_t>(INT32_MIN), static_cast<int64_t>(minInlineInt32) - INT32_MIN);
+    case Kind::NarrowWideReference:
+        return isMadeIn(Run::NarrowedReferences, 0, 0);
+    case Kind::Word:
+        return isMadeIn(Run::Words, 0, 0);
+    case Kind::WordUnlessZero:
+        return isMadeIn(Run::Words, 0, 1);
+    case Kind::OptionalInt64:
+        return isMadeIn(Run::Words, traitsOf(SlotRepresentation::OptionalInt64).absentBits, 1);
+    case Kind::OptionalDouble:
+        return isMadeIn(Run::Words, traitsOf(SlotRepresentation::OptionalDouble).absentBits, 1);
+    case Kind::Byte:
+        return isMadeIn(Run::Bytes, 0, 0);
+    case Kind::ByteUnlessZero:
+        return isMadeIn(Run::Bytes, 0, 1);
+    case Kind::QuarterWord:
+    case Kind::BoxedOptionalInt32:
+    case Kind::BoxedInt32:
+    case Kind::OptionalInt32AsDouble:
+    case Kind::Int32AsDouble:
+    case Kind::WideNarrowReference:
+    case Kind::OtherForm:
+    case Kind::Tested:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void describeMovesForStub(MappedCopy& copy)
+{
+    if (copy.granuleBitsOfSource || copy.granuleBitsFilled)
+        return;
+    for (MappedCopy::Move& move : copy.moves) {
+        if (!tryDescribeForStub(move))
+            return;
+    }
+    std::ranges::stable_sort(copy.moves.mutableSpan(), { }, &MappedCopy::Move::runOfStub);
+    for (const MappedCopy::Move& move : copy.moves) {
+        MappedCopy::Run& run = copy.runsOfStub[static_cast<size_t>(move.runOfStub)];
+        run.end = &move + 1;
+        run.negativeSize -= sizeof(MappedCopy::Move);
+    }
+    auto hasMovesIn = [&](MappedCopy::RunOfStub run) {
+        return !!copy.runsOfStub[static_cast<size_t>(run)].negativeSize;
+    };
+    copy.hasWordsOrBytesForStub = hasMovesIn(MappedCopy::RunOfStub::Words) || hasMovesIn(MappedCopy::RunOfStub::Bytes);
+    copy.structureOfSourceForStub = copy.structureOfSource;
+}
+
 static bool takesNoFrame(VM& vm, State& state, MappedCopy& copy, const Object& target, const Object& source)
 {
     if (target.orderWord() != unorderedOrderWord || copy.granuleBitsOfTargetBefore)
@@ -746,6 +813,7 @@ static bool takesNoFrame(VM& vm, State& state, MappedCopy& copy, const Object& t
     }
     copy.structureOfTarget = target.structureID();
     copy.structureOfSource = source.structureID();
+    describeMovesForStub(copy);
     return true;
 }
 

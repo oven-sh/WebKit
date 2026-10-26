@@ -1493,7 +1493,7 @@ struct ConstantFolder {
         }
 
         EffectDescription description;
-        describeOverload(program, value.overload(), &typeOf(receiverOperand), argumentTypes.span(), description);
+        describeOverload(program, value.overload(), function.at(receiverOperand).type, argumentTypes.span(), description);
         if (description.callsUnknownCode || !description.functions.isEmpty())
             return false;
         static constexpr AbstractHeapSet heapsNobodyObserves = bookkeepingHeaps | AbstractHeapSet { AbstractHeap::StringStorage };

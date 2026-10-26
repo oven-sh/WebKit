@@ -16,6 +16,7 @@
 #include "AOTEffectsOfAccesses.h"
 #include "AOTHeldOperands.h"
 #include "AOTIR.h"
+#include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
@@ -466,7 +467,7 @@ static bool holdsOnlyPrimitives(const Program& program, const Type& operand)
 
 using MembersBeingDescribed = Vector<BuiltinID, 4>;
 
-static void describeOperandCode(const Program&, const Type& operand, const OperandBehavior&, MembersBeingDescribed&, EffectDescription&);
+static void describeOperandCode(const Program&, const Type& operand, const OperandBehavior&, MembersBeingDescribed&, EffectDescription&, TypeID operandID = { });
 
 static constexpr OperandUses usesOfReaders {
     OperandUse::Inspects,
@@ -709,7 +710,7 @@ void ReachableValueWalk::describeCallOn(const Type& receivers, BuiltinID member)
 
 void ReachableValueWalk::describeOverloadOn(const Type& receivers, BuiltinOverloadID id)
 {
-    describeOverload(m_program, id, nullptr, { }, m_description);
+    describeOverload(m_program, id, TypeID(), { }, m_description);
 
     const BuiltinOverload& overload = m_program.builtins().at(id);
     bool isDeclaredByParameters = !overload.isUndeclared() && !overload.libraryFunction() && !isDescribedByModel(overload);
@@ -795,16 +796,76 @@ void describeOperandCode(const Program& program, const Type& operand, const Oper
     describeOperandCode(program, operand, behavior, membersBeingDescribed, description);
 }
 
-static void describeOperandCode(const Program& program, const Type& operand, const OperandBehavior& behavior, MembersBeingDescribed& membersBeingDescribed, EffectDescription& description)
+static bool isSameList(std::span<const BuiltinName> a, std::span<const BuiltinName> b)
+{
+    return a.data() == b.data() && a.size() == b.size();
+}
+
+bool OperandBehavior::saysTheSameFromTheSameLists(const OperandBehavior& other) const
+{
+    return uses == other.uses && protocols == other.protocols && isSameList(namedMembers, other.namedMembers) && isSameList(calledMembers, other.calledMembers)
+        && retainedIn == other.retainedIn && retainingOperand == other.retainingOperand && declarer == other.declarer && namedMemberUse == other.namedMemberUse
+        && resultOfCallEscapes == other.resultOfCallEscapes && membersAreOfObjectsOnly == other.membersAreOfObjectsOnly
+        && functionsAreConvertedUnderNamesOnly == other.functionsAreConvertedUnderNamesOnly && isSameList(convertedMembers, other.convertedMembers)
+        && isDescribedWhenRefused == other.isDescribedWhenRefused && accepted == other.accepted && onlyBoxedPrimitivesAreConverted == other.onlyBoxedPrimitivesAreConverted;
+}
+
+static uint32_t hashOf(TypeID operand, const OperandBehavior& behavior, const EffectDescription& description)
+{
+    uint64_t flags = static_cast<uint64_t>(behavior.retainedIn) << 16 | static_cast<uint64_t>(behavior.declarer) << 8 | static_cast<uint64_t>(behavior.namedMemberUse) << 7
+        | static_cast<uint64_t>(behavior.resultOfCallEscapes) << 6 | static_cast<uint64_t>(behavior.membersAreOfObjectsOnly) << 5 | static_cast<uint64_t>(behavior.functionsAreConvertedUnderNamesOnly) << 4
+        | static_cast<uint64_t>(behavior.isDescribedWhenRefused) << 3 | static_cast<uint64_t>(behavior.onlyBoxedPrimitivesAreConverted) << 2
+        | static_cast<uint64_t>(description.callsUnknownCode) << 1 | static_cast<uint64_t>(description.leavesOutOwnEffects);
+    uint64_t hash = operand.index();
+    for (uint64_t word : { static_cast<uint64_t>(behavior.uses.toRaw()), static_cast<uint64_t>(behavior.protocols.toRaw()), flags, static_cast<uint64_t>(behavior.retainingOperand) << 32 | behavior.accepted.index(),
+        static_cast<uint64_t>(std::bit_cast<uintptr_t>(behavior.namedMembers.data())), static_cast<uint64_t>(std::bit_cast<uintptr_t>(behavior.calledMembers.data())), static_cast<uint64_t>(std::bit_cast<uintptr_t>(behavior.convertedMembers.data())) })
+        hash = (hash ^ hash >> 32 ^ word) * 0x9e3779b97f4a7c15ull;
+    return static_cast<uint32_t>(hash >> 32);
+}
+
+// What is added depends on the description only by the two flags that an entry is found by.
+void describeOperandCode(const Program& program, TypeID operand, const OperandBehavior& behavior, EffectDescription& description)
+{
+    PropertyAccessCache* cache = program.propertyAccessCache();
+    if (!cache || TypeTable::isProvisional(operand)) {
+        describeOperandCode(program, program.at(operand), behavior, description);
+        return;
+    }
+
+    auto describeAnew = [&] {
+        EffectDescription added;
+        added.callsUnknownCode = description.callsUnknownCode;
+        added.leavesOutOwnEffects = description.leavesOutOwnEffects;
+        MembersBeingDescribed membersBeingDescribed;
+        describeOperandCode(program, program.at(operand), behavior, membersBeingDescribed, added, operand);
+        return added;
+    };
+    auto isWanted = [&](const PropertyAccessCache::CodeOfOperand& entry) {
+        return entry.operand == operand && entry.calledUnknownCode == description.callsUnknownCode && entry.added.leavesOutOwnEffects == description.leavesOutOwnEffects
+            && entry.behavior.saysTheSameFromTheSameLists(behavior);
+    };
+    uint32_t hash = hashOf(operand, behavior, description);
+    const PropertyAccessCache::CodeOfOperand* known = cache->codeOfOperands.find(hash, isWanted);
+    if (!known)
+        known = &cache->codeOfOperands.add(hash, { operand, behavior, description.callsUnknownCode, describeAnew() }, isWanted);
+    RELEASE_ASSERT(!cache->checksAnswers || known->added == describeAnew());
+    description.add(known->added);
+}
+
+static void describeOperandCode(const Program& program, const Type& operand, const OperandBehavior& behavior, MembersBeingDescribed& membersBeingDescribed, EffectDescription& description, TypeID operandID)
 {
     constexpr OperandUses usesRunningSettersAndTraps { OperandUse::StoresByKey, OperandUse::AssignsFrom, OperandUse::DeletesByKey };
     constexpr OperandUses usesStoringValues { OperandUse::StoresByKey, OperandUse::AssignsFrom, OperandUse::TakesDescriptor };
 
     bool hasObjects = operand.hasObjects();
     if (mayBeDescribedInMessage(program.builtins(), behavior, operand)) {
-        if (const BuiltinParameter* described = findParameterDescribedInMessages(program.builtins()))
-            describeOperandCode(program, operand, { described->uses, described->protocols, described->namedMembers, described->calledMembers }, membersBeingDescribed, description);
-        else
+        if (const BuiltinParameter* described = findParameterDescribedInMessages(program.builtins())) {
+            OperandBehavior behaviorOfMessage { described->uses, described->protocols, described->namedMembers, described->calledMembers };
+            if (operandID && membersBeingDescribed.isEmpty())
+                describeOperandCode(program, operandID, behaviorOfMessage, description);
+            else
+                describeOperandCode(program, operand, behaviorOfMessage, membersBeingDescribed, description);
+        } else
             description.addUnknownCode();
     }
     if (!behavior.protocols.isEmpty()) {

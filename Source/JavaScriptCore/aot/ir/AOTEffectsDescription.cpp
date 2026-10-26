@@ -107,6 +107,15 @@ void EffectDescription::addSlowPathFunction(FunctionID id)
     insertAscending(slowPathFunctions, id);
 }
 
+void EffectDescription::add(const EffectDescription& other)
+{
+    own.merge(other.own);
+    uniteAscending(functions, other.functions.span());
+    uniteAscending(slowPathFunctions, other.slowPathFunctions.span());
+    callsUnknownCode |= other.callsUnknownCode;
+    followsFieldsOfOperands |= other.followsFieldsOfOperands;
+}
+
 void describeBound(const Effects& declared, EffectDescription& description)
 {
     if (!declared.mayCallUnknownCode) {
