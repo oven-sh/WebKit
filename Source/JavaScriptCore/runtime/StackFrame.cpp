@@ -97,7 +97,7 @@ std::optional<AOT::SourcePosition> StackFrame::compiledPosition() const
 
 static String compiledSourceURL(const std::optional<AOT::SourcePosition>& position)
 {
-    return position && position->source ? AOT::sourceURLOf(position->source) : emptyString();
+    return position ? AOT::sourceProviderURLOf(position->source) : emptyString();
 }
 
 static String compiledFunctionName(VM& vm, const CompiledFrameData& compiledFrame, const AOT::FunctionDescription& description)
@@ -105,7 +105,7 @@ static String compiledFunctionName(VM& vm, const CompiledFrameData& compiledFram
     if (description.codeType() == ModuleCode)
         return "module code"_s;
     if (!compiledFrame.frame.isAsyncFrame)
-        return description.nameInFrames(vm, compiledFrame.callee.get());
+        return description.calculatedDisplayName(vm, compiledFrame.callee.get(), compiledFrame.frame.calleeLiesInFrame);
     String name = description.name(vm);
     if (name.isEmpty() || description.isNamedByOwner())
         return emptyString();
@@ -276,7 +276,7 @@ String StackFrame::sourceURL(VM& vm, AllowURLOverride allowOverride) const
         }
 #if ENABLE(AOT)
         , [this](const CompiledFrameData&) -> String {
-            return compiledSourceURL(compiledPosition());
+            return representsHostFunction() ? "[native code]"_s : compiledSourceURL(compiledPosition());
         }
 #endif
     );
@@ -305,7 +305,7 @@ String StackFrame::sourceURLStripped(VM& vm) const
         }
 #if ENABLE(AOT)
         , [this](const CompiledFrameData&) -> String {
-            return compiledSourceURL(compiledPosition());
+            return representsHostFunction() ? "[native code]"_s : compiledSourceURL(compiledPosition());
         }
 #endif
     );
@@ -411,13 +411,13 @@ ALWAYS_INLINE auto StackFrame::withPartsOfString(VM& vm, const Functor& functor)
     if (auto* compiledFrame = std::get_if<CompiledFrameData>(&m_frameData)) {
         AOT::FunctionDescription description(compiledFrame->frame.function);
         functionName = compiledFunctionName(vm, *compiledFrame, description);
+        if (description.builtinKind() == AOT::StackTraceBuiltinKind::HostFunction)
+            return functor(functionName, "@[native code]"_s);
         auto position = AOT::positionOf(compiledFrame->frame);
         fullSourceURL = compiledSourceURL(position);
-        hasLineAndColumnInfo = description.builtinKind() != AOT::StackTraceBuiltinKind::HostFunction;
+        hasLineAndColumnInfo = true;
         if (position)
             lineColumn = position->lineColumn;
-        if (fullSourceURL.isEmpty() && !hasLineAndColumnInfo)
-            return functor(functionName, "@[native code]"_s);
     } else
 #endif
     {

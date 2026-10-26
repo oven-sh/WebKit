@@ -127,6 +127,8 @@ public:
     void tailCallOperation(Entry entry, OperationCall::FirstArgument firstArgument) { emitOperationTailCall(entry, firstArgument); }
     void tailCallOperation(GPRReg offsetInRuntimeTable, OperationCall::FirstArgument firstArgument) { emitOperationTailCall(offsetInRuntimeTable, firstArgument); }
     void callLeaf(Entry, unsigned bytesPushed = 0);
+    // In the head of a call of an operation: the call goes to this one, which takes the same arguments.
+    void jumpToOperationCallOf(Entry);
 
     void exitOnMiss(Entry cachingOperation, const OperationCall&);
     void exitOnCannot(Entry finisher, RuntimeCounterID reason, GPRReg reasonArgument, const OperationCall&);

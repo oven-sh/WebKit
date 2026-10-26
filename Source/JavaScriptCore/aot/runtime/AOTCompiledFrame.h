@@ -262,8 +262,8 @@ public:
     // The frame is the last one shown of its run: the functions below wait for the step of an async generator that it belongs to.
     JS_EXPORT_PRIVATE bool isAboveFramesThatWait() const;
     JS_EXPORT_PRIVATE bool isConstructCall();
-    // The function object that runs in the frame, where its function records it.
-    JS_EXPORT_PRIVATE JSObject* recordedCallee();
+    // The function object that runs in the frame, where its function records it. Null: it lies in a frame.
+    JS_EXPORT_PRIVATE std::optional<JSObject*> recordedCallee();
     void* callerStackPointer() const { return AOT::stackPointerOfCaller(m_cursor.callFrame, m_cursor.bytesAboveReturnAddress); }
     bool isAtFirstReadSite() const { return m_cursor.isAtFirstReadSite && m_callSite.site.firstReadSite; }
     bool calleeWasEntered() const { return m_calleeWasEntered; }

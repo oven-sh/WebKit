@@ -1,0 +1,130 @@
+# A block from which every way ends in a throw is told apart from one that is rare by a guess. A handler of the function that catches the throw changes nothing about that, and a loop is not judged by what stands behind it. Where a function has no way but the throw, nothing in it is rarer than the function
+# FORM: Prepared
+# RUN: frequencies
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="armOfSeveralBlocks" parameters=[{type=boolean}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b5()
+  b1():
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b4()
+  b3():
+    Jump -> next b4()
+  b4():
+    Throw v2
+  b5():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: always ends in a throw
+# CHECK: b1 frequency: Rare {{*}} always ends in a throw
+# CHECK-NEXT: b2 frequency: Rare {{*}} always ends in a throw
+# CHECK-NEXT: b3 frequency: Rare {{*}} always ends in a throw
+# CHECK-NEXT: b4 frequency: Rare {{*}} always ends in a throw
+# CHECK-NOT: always ends in a throw
+function f1 name="armThatCatchesOnItsWay" parameters=[{type=boolean}, {type=anything}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b4()
+  b1() handler=b2():
+    v2 = Call v1
+    Jump -> next b3()
+  b2() role=CatchHandler:
+    Jump -> next b3()
+  b3():
+    Throw v1
+  b4():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: always ends in a throw
+# CHECK: b1 frequency: Rare {{*}} always ends in a throw
+# CHECK-NEXT: b2 frequency: Rare {{*}} always ends in a throw
+# CHECK-NEXT: b3 frequency: Rare {{*}} always ends in a throw
+# CHECK-NOT: always ends in a throw
+function f2 name="caughtInTheFunction" parameters=[{type=boolean}, {type=anything}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1() handler=b4():
+    Branch v0 -> taken b2(), notTaken b5()
+  b2() handler=b4():
+    v2 = Call v1
+    Jump -> next b3()
+  b3() handler=b4():
+    Throw v2
+  b4() role=CatchHandler:
+    Jump -> next b5()
+  b5():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NOT: always ends in a throw
+# CHECK: b2 frequency: Rare {{*}} always ends in a throw
+# CHECK-NEXT: b3 frequency: Rare {{*}} always ends in a throw
+# CHECK-NOT: always ends in a throw
+function f3 name="oneWayReturns" parameters=[{type=boolean}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b3()
+  b1():
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Throw v2
+  b3():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NOT: always ends in a throw
+# CHECK: b2 frequency: Rare {{*}} always ends in a throw
+# CHECK-NOT: always ends in a throw
+function f4 name="neverReturns" parameters=[{type=anything}] results=[{type=never}] {
+    Throw v0
+}
+# CHECK-LABEL: function f4
+# CHECK-NOT: always ends in a throw
+function f5 name="callsWhatNeverReturns" parameters=[{type=boolean}, {type=anything}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b3()
+  b1():
+    Jump -> next b2()
+  b2():
+    v2 = CallDirect v1 function=f4
+    Unreachable
+  b3():
+    Return
+}
+# CHECK-LABEL: function f5
+# CHECK-NOT: always ends in a throw
+# CHECK: b1 frequency: Rare {{*}} always ends in a throw
+# CHECK-NEXT: b2 frequency: Rare {{*}} always ends in a throw
+# CHECK-NOT: always ends in a throw
+function f6 name="loopThatIsLeftByThrowAlone" parameters=[{type=boolean}, {type=anything}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = Call v1
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    Throw v3
+}
+# CHECK-LABEL: function f6
+# CHECK-NOT: always ends in a throw
+# CHECK: b2 frequency: Rare {{*}} always ends in a throw
+function f7 name="rareByRecordAlone" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f7
+# CHECK-NOT: always ends in a throw
+function f8 name="noWayButTheThrowThatItCatches" parameters=[{type=boolean}, {type=anything}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1() handler=b4():
+    Branch v0 -> taken b2(), notTaken b3()
+  b2() handler=b4():
+    Throw v1
+  b3() handler=b4():
+    v2 = CallDirect v1 function=f4
+    Unreachable
+  b4() role=CatchHandler:
+    Return
+}
+# CHECK-LABEL: function f8
+# CHECK-NOT: always ends in a throw

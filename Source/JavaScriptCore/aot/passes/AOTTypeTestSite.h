@@ -294,7 +294,6 @@ private:
     mutable std::optional<FailedConditions> m_failedConditions;
     Vector<PlannedAccess> m_plannedAccesses;
     Vector<uint32_t> m_plannedAccessOfValue;
-    std::optional<bool> m_isColdFunction;
     BlockID m_blockOfHeatClass;
     bool m_blockIsCold { false };
 };

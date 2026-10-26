@@ -21,10 +21,12 @@
 #include "AOTStubsClosures.h"
 #include "AOTStubsExceptions.h"
 #include "CallFrame.h"
+#include "EntryFrame.h"
 #include "JSGlobalObject.h"
 #include "StackAlignment.h"
 #include "StackManager.h"
 #include "VM.h"
+#include "VMEntryRecord.h"
 #include <limits>
 
 namespace JSC { namespace AOT {
@@ -93,11 +95,42 @@ static void emitSaveRegistersInAdapter(StubAssembler& jit, GPRReg instance)
 #endif
 }
 
-void emitEnterAdapter(StubAssembler& jit, GPRReg callee, unsigned extraBytes)
+// vmEntryToJavaScript() and its kin store only to the head of the record in their frame. The frame pointer is still the caller's.
+static void emitFillFrameOfEntryFromNativeCode(StubAssembler& jit, GPRReg vm, AdapterCaller caller)
+{
+    const ptrdiff_t begin = EntryFrame::vmEntryRecordOffset() + OBJECT_OFFSETOF(VMEntryRecord, calleeSaveRegistersBuffer);
+    RELEASE_ASSERT(begin < 0 && !(begin % static_cast<ptrdiff_t>(stackAlignmentBytes())));
+    Jump isCalledByInterpreter;
+    if (caller == AdapterCaller::NativeCodeOrInterpreter)
+        isCalledByInterpreter = jit.branchPtr(CCallHelpers::NotEqual, Address(vm, VM::topEntryFrameOffset()), fp);
+    else if (jit.options().validates) {
+        Jump isCalledByNativeCode = jit.branchPtr(CCallHelpers::Equal, Address(vm, VM::topEntryFrameOffset()), fp);
+        jit.breakpoint();
+        isCalledByNativeCode.link(&jit);
+    }
+#if CPU(ARM64)
+    for (ptrdiff_t offset = begin; offset < 0; offset += 2 * sizeof(CPURegister))
+        jit.storePair64(ARM64Registers::zr, ARM64Registers::zr, fp, TrustedImm32(static_cast<int32_t>(offset)));
+#else
+    for (ptrdiff_t offset = begin; offset < 0; offset += sizeof(CPURegister))
+        jit.store64(TrustedImm32(0), Address(fp, static_cast<int32_t>(offset)));
+    if (caller == AdapterCaller::NativeCodeOrInterpreter) {
+        // An even number of arguments, this among them, leaves one word between the arguments and the record.
+        Jump argumentsFillFrame = jit.branchTest32(CCallHelpers::NonZero, incomingFrameSlot(CallFrameSlot::argumentCountIncludingThis), TrustedImm32(1));
+        jit.store64(TrustedImm32(JSValue::ValueUndefined), Address(fp, static_cast<int32_t>(EntryFrame::vmEntryRecordOffset() - sizeof(Register))));
+        argumentsFillFrame.link(&jit);
+    }
+#endif
+    if (isCalledByInterpreter.isSet())
+        isCalledByInterpreter.link(&jit);
+}
+
+void emitEnterAdapter(StubAssembler& jit, AdapterCaller caller, unsigned extraBytes)
 {
     const GPRReg instance = jit.reuseScratch(StubRegister::EntryT12);
     const GPRReg scratch = jit.reuseScratch(StubRegister::T9);
-    ASSERT(noOverlap(instance, thisGPR, countGPR, calleeGPR));
+    constexpr GPRReg callee = calleeGPR;
+    RELEASE_ASSERT(noOverlap(instance, scratch, thisGPR, calleeGPR) && noOverlap(instance, countGPR));
     jit.loadPtr(incomingFrameSlot(CallFrameSlot::callee), callee);
     jit.move(callee, scratch);
     loadCellVM(jit, scratch);
@@ -113,6 +146,7 @@ void emitEnterAdapter(StubAssembler& jit, GPRReg callee, unsigned extraBytes)
         jit.jump().linkTo(hasInstance, &jit);
     });
 
+    emitFillFrameOfEntryFromNativeCode(jit, scratch, caller);
     jit.emitFunctionPrologue();
     static_assert(!(AdapterFrame::saveAreaSize % stackAlignmentBytes()));
     jit.subPtr(TrustedImm32(AdapterFrame::saveAreaSize + extraBytes), sp);
@@ -128,7 +162,6 @@ void emitEnterAdapter(StubAssembler& jit, GPRReg callee, unsigned extraBytes)
     jit.emitMaterializeTagCheckRegisters();
 #endif
     jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), CCallHelpers::addressFor(CallFrameSlot::codeBlock));
-    jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), calleeGPR);
 }
 
 void emitRestoreAdapterCallerRegisters(StubAssembler& jit, GPRReg adapterFrame)
@@ -264,13 +297,13 @@ void generateEnterClosure(StubAssembler& jit)
 {
     const GPRReg word = jit.reuseScratch(StubRegister::T11);
     JumpList hasWord;
-    emitEnterAdapter(jit, word);
+    emitEnterAdapter(jit, AdapterCaller::NativeCodeOrInterpreter);
     jit.load64(Address(calleeGPR, offsetOfClosureEntry), word);
     hasWord.append(jit.jump());
 
     // The callee only says which realm is entered. The first argument is the number of the function, an int32.
     jit.bindEntry(enterModuleBody());
-    emitEnterAdapter(jit, word);
+    emitEnterAdapter(jit, AdapterCaller::NativeCodeOrInterpreter);
     jit.load32(Address(fp, offsetOfFirstArgument), word);
     jit.lshift64(TrustedImm32(3), word);
     jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), word);
@@ -278,7 +311,7 @@ void generateEnterClosure(StubAssembler& jit)
     hasWord.append(jit.jump());
 
     jit.bindEntry(enterSlimClosure());
-    emitEnterAdapter(jit, word);
+    emitEnterAdapter(jit, AdapterCaller::NativeCodeOrInterpreter);
     loadSlimClosureWord(jit, calleeGPR, word);
 
     hasWord.link(&jit);
@@ -405,7 +438,7 @@ void generateEnterClosureForConstruct(StubAssembler& jit)
 {
     const GPRReg word = jit.reuseScratch(StubRegister::T11);
     const GPRReg base = jit.reuseScratch(constructArgumentBaseRegister);
-    emitEnterAdapter(jit, word, constructSlotsSize);
+    emitEnterAdapter(jit, AdapterCaller::NativeCodeOrInterpreter, constructSlotsSize);
     jit.load64(CCallHelpers::addressFor(CallFrameSlot::thisArgument), base);
     jit.store64(base, Address(fp, AdapterFrame::offsetOfNewTarget));
 

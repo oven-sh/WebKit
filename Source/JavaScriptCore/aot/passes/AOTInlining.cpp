@@ -1479,6 +1479,7 @@ constexpr uint8_t percentileOfMostEnteredFunctions = 98;
 constexpr uint32_t storeIntoOwnAllocationBytes = 32;
 // What an entrypoint that has to convert the result pays to enter the tests: a frame, a call, a return.
 constexpr uint32_t bodyCopiedIntoHotEntrypointBytes = 48;
+AOT_THRESHOLD(uint32_t, bodyMovedToArmBytes, 32);
 
 } // namespace InlineModel
 
@@ -1878,13 +1879,17 @@ static uint32_t inlineBudgetBytes(const FunctionPassContext& context, HeatClass 
     return clampTo<uint32_t>(budget >> std::min(depth, 31u));
 }
 
-static uint32_t budgetAt(const FunctionPassContext& context, const InliningSummary& summary, const Value& call, HeatClass heat, unsigned depth, bool isRepeatedByCaller)
+static uint32_t budgetAt(const FunctionPassContext& context, const InliningSummary& summary, BlockID block, const Value& call, HeatClass heat, unsigned depth, bool isRepeatedByCaller)
 {
     uint32_t budget = inlineBudgetBytes(context, heat, depth);
     // What a call costs, a loop around it pays at every turn, and what the loop knows of the arguments stops at the call. Of a function with one call site there is one copy at most.
     // A callee with a loop of its own spends its time there, and the call costs it little.
     if (isRepeatedByCaller && !summary.hasCycle && hasSingleCallSite(context, call.function(), call.inlineFrame, heat))
         return std::max(budget, clampTo<uint32_t>(context.limit(LimitID::InlineBudgetOnlyCallBytes) >> std::min(depth, 31u)));
+    // How seldom one arm of a function that runs often is taken is the weakest estimate there is. A small function that only such an arm calls moves there: nothing is copied, and the call goes.
+    bool isArmOfBusyFunction = heat == HeatClass::Cold && context.function.at(block).frequency == BlockFrequency::Normal && !isCold(context.inputs.heat.of(context.program, context.id));
+    if (isArmOfBusyFunction && !summary.hasCycle && context.function.role != FunctionRole::GenericEntrypoint && hasSingleCallSite(context, call.function(), call.inlineFrame, heat))
+        return std::max(budget, InlineModel::bodyMovedToArmBytes);
     // A function that is entered from many places runs often, though none of the places may.
     if (isHot(heat) || isCold(heat) || context.inputs.heat.percentileOf(context.program, call.function()) < InlineModel::percentileOfMostEnteredFunctions)
         return budget;
@@ -1935,7 +1940,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     unsigned depth = depthOfCopies(context, value.inlineFrame, heat);
     // The budget halves with each level and is small where code runs seldom. A bet that did neither let a body in at every level, and what a caller knew of one object cost it many times its size.
     Bets bets = isCold(heat) || depth >= InlineModel::depthWithoutBets ? Bets::None : Bets::OnSpeed;
-    uint32_t budget = wouldCopySharedBodyIntoEntrypoint(context, value, heat) ? 0 : budgetAt(context, summary, value, heat, depth, isRepeatedByCaller);
+    uint32_t budget = wouldCopySharedBodyIntoEntrypoint(context, value, heat) ? 0 : budgetAt(context, summary, block, value, heat, depth, isRepeatedByCaller);
     InlineVerdict verdict { .costBytes = cost, .budgetBytes = budget };
 
     auto addBenefit = [&](InlineBenefit benefit, uint64_t bytes) {

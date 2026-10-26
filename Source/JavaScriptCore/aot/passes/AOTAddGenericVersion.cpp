@@ -632,11 +632,13 @@ struct GenericVersionBuilder {
         context.build.statistics().count(StatisticID::ChecksReplacedByGuards, checks.size());
     }
 
-    void finishTyping()
+    void finishTyping(std::span<const BlockID> copiedBlocks = { })
     {
         // Every check is a test by now or is gone.
         settleProofsBehindAnsweredChecks(function, analyses.cfg());
         typeAgain();
+        if (assumeTypesOfPositionsAtStoresInCopy(builder, function, types, copiedBlocks))
+            analyses.didChangeValues();
         // Whatever it stores behind an allocation, it puts a value in for.
         size_t numberOfValuesBefore = function.values.size();
         storeUnprovenInitialValues(program, context.id, function, types, context.build);
@@ -787,7 +789,7 @@ struct GenericVersionBuilder {
         statistics.count(StatisticID::ExitsToGenericVersion, checksWithExit.size());
         statistics.count(StatisticID::WaysBackFromGenericVersion, copy.numberOfWaysBack());
         statistics.count(StatisticID::BlocksInGenericVersions, copy.copiedBlocks().size());
-        finishTyping();
+        finishTyping(copy.copiedBlocks());
         return true;
     }
 };

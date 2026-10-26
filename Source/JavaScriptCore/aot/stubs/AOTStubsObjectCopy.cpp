@@ -140,33 +140,40 @@ static void walkRun(StubAssembler& jit, const MoveWalk& walk, MappedCopy::RunOfS
     isEmpty.link(&jit);
 }
 
-// What tryCopyByFieldMapWithoutFrame() does, for a copy all of whose moves the stub makes.
-static void copyByFieldMap(StubAssembler& jit, GPRReg target, GPRReg source, GPRReg excludedRun, GPRReg count, GPRReg excludedKeys, GPRReg structureIDOfTarget, GPRReg copy, GPRReg word, JumpList& callsOperation)
+// The copy that is kept at the place of this one. Where there is none, every copy of this kind takes a frame.
+static Jump loadCopyWithoutFrame(StubAssembler& jit, GPRReg target, GPRReg source, GPRReg excludedRun, GPRReg copy)
 {
     static_assert(std::endian::native == std::endian::little && offsetOfShapeWord == offsetOfOrderWord + sizeof(uint32_t));
     static_assert(hasOneBitSet(AllocationWords::numberOfCopiesWithoutFrame));
     static_assert(AllocationWords::placeOfCopyWithoutFrame(5ull << 32, 3ull << 32 | 2, 1) == 2 * 5 + 3 + 2 + 1);
     const GPRReg place = copy;
-    const GPRReg structure = structureIDOfTarget;
-    callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, count));
     jit.load32(Address(target, offsetOfShapeWord), place);
     jit.getEffectiveAddress(BaseIndex(excludedRun, place, CCallHelpers::TimesTwo), place);
     jit.add32(Address(source, offsetOfShapeWord), place);
     jit.add32(Address(source, offsetOfOrderWord), place);
     jit.and32(TrustedImm32(AllocationWords::numberOfCopiesWithoutFrame - 1), place);
     jit.loadPtr(BaseIndex(instanceGPR, place, CCallHelpers::ScalePtr, AOT_INSTANCE_OFFSET(allocation.copiesWithoutFrame)), copy);
-    callsOperation.append(jit.branchTestPtr(CCallHelpers::Zero, copy));
+    return jit.branchTestPtr(CCallHelpers::Zero, copy);
+}
+
+// What tryCopyByFieldMapWithoutFrame() does, for a copy all of whose moves the stub makes. It falls through where that function is to make the copy.
+static void copyByFieldMap(StubAssembler& jit, GPRReg target, GPRReg source, GPRReg excludedRun, GPRReg count, GPRReg excludedKeys, GPRReg structureIDOfTarget, GPRReg copy, GPRReg word, JumpList& takesFrame)
+{
+    const GPRReg structure = structureIDOfTarget;
+    JumpList isLeftToOperation;
+    takesFrame.append(jit.branchTest32(CCallHelpers::NonZero, count));
+    takesFrame.append(loadCopyWithoutFrame(jit, target, source, excludedRun, copy));
     jit.load32(Address(source, JSCell::structureIDOffset()), word);
-    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, Address(copy, OBJECT_OFFSETOF(MappedCopy, structureOfSourceForStub))));
-    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, structureIDOfTarget, Address(copy, OBJECT_OFFSETOF(MappedCopy, structureOfTarget))));
+    isLeftToOperation.append(jit.branch32(CCallHelpers::NotEqual, word, Address(copy, OBJECT_OFFSETOF(MappedCopy, structureOfSourceForStub))));
+    isLeftToOperation.append(jit.branch32(CCallHelpers::NotEqual, structureIDOfTarget, Address(copy, OBJECT_OFFSETOF(MappedCopy, structureOfTarget))));
     jit.load64(Address(source, offsetOfOrderWord), word);
-    callsOperation.append(jit.branch64(CCallHelpers::NotEqual, word, Address(copy, OBJECT_OFFSETOF(MappedCopy, sourceWords))));
+    isLeftToOperation.append(jit.branch64(CCallHelpers::NotEqual, word, Address(copy, OBJECT_OFFSETOF(MappedCopy, sourceWords))));
     jit.load64(Address(target, offsetOfOrderWord), word);
-    callsOperation.append(jit.branch64(CCallHelpers::NotEqual, word, Address(copy, OBJECT_OFFSETOF(MappedCopy, targetWords))));
-    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, excludedRun, Address(copy, OBJECT_OFFSETOF(MappedCopy, excludedRunNumberPlusOne))));
-    callsOperation.append(branchIfBarrierIsNeeded(jit, target, word));
+    isLeftToOperation.append(jit.branch64(CCallHelpers::NotEqual, word, Address(copy, OBJECT_OFFSETOF(MappedCopy, targetWords))));
+    isLeftToOperation.append(jit.branch32(CCallHelpers::NotEqual, excludedRun, Address(copy, OBJECT_OFFSETOF(MappedCopy, excludedRunNumberPlusOne))));
+    isLeftToOperation.append(branchIfBarrierIsNeeded(jit, target, word));
     decodeStructureID(jit, structure);
-    callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits)));
+    isLeftToOperation.append(jit.branchTest32(CCallHelpers::NonZero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits)));
 
     // The operation reads no keys where their number is zero.
     const MoveWalk walk {
@@ -199,6 +206,7 @@ static void copyByFieldMap(StubAssembler& jit, GPRReg target, GPRReg source, GPR
 
     isRefused.link(&jit);
     jit.move(TrustedImm32(0), count);
+    isLeftToOperation.link(&jit);
 }
 
 struct ChunkCopy {
@@ -293,13 +301,13 @@ PreludeExit emitCopyDataPropertiesPrelude(StubAssembler& jit)
     JumpList callsOperation;
     callsOperation.append(jit.branchIfNotCell(source));
 
-    // A call that preserves registers may write that of its immediate. With it the Structures are compared; what the copy by chunks writes is saved behind that. The copy by moves writes more: there it is left to the operation.
+    // A call that preserves registers may write that of its immediate. With it the Structures are compared and the place of the copy is looked at; what the copy by chunks writes is saved behind that. The copy by moves writes more: there it is left to the operation.
     if (preservesRegisters) {
         const GPRReg immediate = *jit.signature().immediate;
         RELEASE_ASSERT(noOverlap(immediate, target, source, excludedRun, count, word, structure, instanceGPR));
         jit.recordClobbers(RegisterSet(immediate));
         jit.load32(Address(target, JSCell::structureIDOffset()), immediate);
-        callsOperation.append(jit.branch32(CCallHelpers::NotEqual, immediate, Address(source, JSCell::structureIDOffset())));
+        Jump structuresDiffer = jit.branch32(CCallHelpers::NotEqual, immediate, Address(source, JSCell::structureIDOffset()));
         Vector<GPRReg, 4> saved;
         for (GPRReg written : { word, orderWord, structure }) {
             if (written != immediate)
@@ -318,8 +326,13 @@ PreludeExit emitCopyDataPropertiesPrelude(StubAssembler& jit)
             jit.move(TrustedImm32(1), immediate);
             isCopied.link(&jit);
         });
-        callsOperation.append(jit.branchTest32(CCallHelpers::NonZero, immediate));
+        Jump isNotCopied = jit.branchTest32(CCallHelpers::NonZero, immediate);
         jit.returnToCaller();
+
+        isNotCopied.link(&jit);
+        structuresDiffer.link(&jit);
+        callsOperation.append(loadCopyWithoutFrame(jit, target, source, excludedRun, immediate));
+        jit.jumpToOperationCallOf(Entry::operationAOTCopyDataPropertiesByFieldMap);
         callsOperation.link(&jit);
         return PreludeExit::CallsOperation;
     }
@@ -328,11 +341,15 @@ PreludeExit emitCopyDataPropertiesPrelude(StubAssembler& jit)
     jit.recordClobbers(RegisterSet(excludedRun, count, excludedKeys));
     jit.load32(Address(target, JSCell::structureIDOffset()), structure);
     Jump structuresDiffer = jit.branch32(CCallHelpers::NotEqual, structure, Address(source, JSCell::structureIDOffset()));
-    copyByChunks(jit, { target, source, excludedRun, count, structure, word, orderWord }, callsOperation);
+    JumpList isNotCopiedByChunks;
+    copyByChunks(jit, { target, source, excludedRun, count, structure, word, orderWord }, isNotCopiedByChunks);
     jit.returnToCaller();
 
+    isNotCopiedByChunks.link(&jit);
+    jit.load32(Address(target, JSCell::structureIDOffset()), structure);
     structuresDiffer.link(&jit);
     copyByFieldMap(jit, target, source, excludedRun, count, excludedKeys, structure, word, orderWord, callsOperation);
+    jit.jumpToOperationCallOf(Entry::operationAOTCopyDataPropertiesByFieldMap);
     callsOperation.link(&jit);
     return PreludeExit::CallsOperation;
 }

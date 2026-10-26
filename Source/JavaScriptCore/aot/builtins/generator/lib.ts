@@ -26,6 +26,7 @@ import type {
   ClassColumns,
   ClassName,
   ConditionSpec,
+  ConstructedOperand,
   ContentsSlot,
   Conversion,
   CppClassRef,
@@ -789,6 +790,7 @@ export interface SignatureOptions extends SignatureColumns {
 export interface UndeclaredSignature {
   otherwise: true;
   implementation?: ImplementationSpec;
+  constructs?: ConstructedOperand;
 }
 
 export const otherwise: UndeclaredSignature = { otherwise: true };
@@ -796,6 +798,11 @@ export const otherwiseBy = (implementation: ImplementationSpec): UndeclaredSigna
   otherwise: true,
   implementation,
 });
+// The signatures before it are written for one constructor in this operand. Native code constructs any other that it gets there.
+export const otherwiseConstructs = (
+  constructs: ConstructedOperand,
+  implementation?: ImplementationSpec,
+): UndeclaredSignature => ({ otherwise: true, implementation, constructs });
 
 export type FunctionField = (SignatureOptions & EntryColumns) | UndeclaredSignature;
 
@@ -998,6 +1005,7 @@ function undeclaredSignature(mode: CallMode, field: UndeclaredSignature): Signat
     throws: true,
     isUndeclared: true,
     implementation: field.implementation,
+    constructs: field.constructs,
   };
 }
 

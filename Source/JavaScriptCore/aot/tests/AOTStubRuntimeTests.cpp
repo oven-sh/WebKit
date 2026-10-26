@@ -269,6 +269,11 @@ static bool isNumberInCanonicalForm(uint64_t result, double expected)
     return result == encoded(jsNumber(expected));
 }
 
+static bool isNumberInCanonicalFormWithSign(uint64_t result, double expected)
+{
+    return isNumberInCanonicalForm(result, expected) && std::signbit(JSValue::decode(static_cast<EncodedJSValue>(result)).asNumber()) == std::signbit(expected);
+}
+
 static void checkLeftToOperation(StubRunner& runner, StubKey key, Entry entry, std::initializer_list<uint64_t> operands)
 {
     constexpr uint64_t resultOfOperation = 0x7777;
@@ -316,13 +321,13 @@ static void testUnaryOperations()
     StubRunner runner;
     FakeString string("7"_s, CharacterWidth::Is8Bit);
     constexpr double insideInt64[] = { 0, 1, -1, 7, 2147483647, -2147483648.0, 2147483648.0, -2147483649.0, 4294967296.0, 0.5, -0.5, -0.0, 1e15, -1e15 };
-    constexpr double outsideInt64[] = { 1e300, -1e300, std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(), PNaN };
+    constexpr double outsideInt64[] = { 1e300, -1e300, std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(), PNaN, -PNaN };
 
     for (const UnaryCase& unaryCase : unaryCases) {
         StubKey key = unaryOperation(unaryCase.form);
         for (double number : insideInt64) {
             StubRun run = runner.run(key, { encoded(jsNumber(number)) });
-            AOT_TEST_CHECK(!run.calledOperation && isNumberInCanonicalForm(run.result, unaryCase.apply(number)));
+            AOT_TEST_CHECK(!run.calledOperation && isNumberInCanonicalFormWithSign(run.result, unaryCase.apply(number)));
         }
         for (double number : outsideInt64) {
             // Without FJCVTZS a stub converts through int64, and ARM64 converts NaN to 0.
@@ -332,7 +337,7 @@ static void testUnaryOperations()
                 continue;
             }
             StubRun run = runner.run(key, { encoded(jsNumber(number)) });
-            AOT_TEST_CHECK(!run.calledOperation && isNumberInCanonicalForm(run.result, unaryCase.apply(number)));
+            AOT_TEST_CHECK(!run.calledOperation && isNumberInCanonicalFormWithSign(run.result, unaryCase.apply(number)));
         }
         for (uint64_t value : { encoded(jsUndefined()), encoded(jsNull()), encoded(jsBoolean(true)), encoded(jsBoolean(false)), string.address() })
             checkLeftToOperation(runner, key, unaryCase.entry, { value });
@@ -729,6 +734,7 @@ struct CopiedField {
 class CopiesByMoves {
 public:
     static constexpr Entry operation = Entry::operationAOTCopyDataProperties;
+    static constexpr Entry operationByFieldMap = Entry::operationAOTCopyDataPropertiesByFieldMap;
     static constexpr uint32_t excludedRun = 3;
     static constexpr uint32_t orderAfter = orderWordOf(2, 3);
     static constexpr uint64_t untouched = 0xababababababababULL;
@@ -783,12 +789,14 @@ public:
 
     const MappedCopy*& place() { return m_runner.instance().allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(m_copy.targetWords, m_copy.sourceWords, excludedRun)]; }
 
-    // True where the stub has made the copy. Else it has handed the operation what it was handed.
+    // True where the stub has made the copy. Else it has handed what it was handed to the operation that looks for the copy again or, where none is kept at the place or keys are handed over, to the one that takes a frame at once.
     bool run(uint32_t run = excludedRun, uint32_t count = 0)
     {
-        m_runner.recordCallsOf(operation);
+        bool isKept = !count && m_runner.instance().allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(wordsOf(m_target), wordsOf(m_source), run)];
+        m_runner.recordCallsOf(isKept ? operationByFieldMap : operation);
         m_lastRun = m_runner.runOperationCall(call(), { m_target.address(), m_source.address(), run, count });
         m_runner.countCallsOf(operation);
+        m_runner.countCallsOf(operationByFieldMap);
         if (!m_lastRun.calledOperation)
             return true;
         AOT_TEST_CHECK(m_lastRun.numberOfRecordedCalls == 1 && m_lastRun.recordedArguments[0] == m_target.address() && m_lastRun.recordedArguments[1] == m_source.address());
@@ -928,6 +936,7 @@ static void testCopiesOfPropertiesByMoves()
 static void testCopiesOfPropertiesByChunks()
 {
     constexpr Entry operation = Entry::operationAOTCopyDataProperties;
+    constexpr Entry operationByFieldMap = Entry::operationAOTCopyDataPropertiesByFieldMap;
     constexpr unsigned maxNumberOfFields = 5;
     constexpr size_t sizeOfCell = offsetOfFirstField + (maxNumberOfFields + 1) * sizeof(uint64_t);
     constexpr uint64_t untouched = 0xababababababababULL;
@@ -964,9 +973,12 @@ static void testCopiesOfPropertiesByChunks()
             target.at<uint64_t>(offsetOfFirstField + index * sizeof(uint64_t)) = untouched;
     };
     // True where the stub has made the copy. Else it has written nothing and has handed the operation what it was handed.
+    Entry operationCalled = operation;
     auto isCopiedByStub = [&](StubKey head, uint32_t excludedRun = 0, uint32_t count = 0) {
         FakeObject<sizeOfCell> before = target;
-        runner.recordCallsOf(operation);
+        runner.countCallsOf(operation);
+        runner.countCallsOf(operationByFieldMap);
+        runner.recordCallsOf(operationCalled);
         StubRun run = runner.runOperationCall(head, { target.address(), source.address(), excludedRun, count });
         if (!run.calledOperation)
             return true;
@@ -1001,6 +1013,16 @@ static void testCopiesOfPropertiesByChunks()
         AOT_TEST_CHECK(!isCopiedByStub(head, 1) && !isCopiedByStub(head, 0, 1));
         target.at<uint32_t>(offsetOfOrderWord) = orderOfSource;
         AOT_TEST_CHECK(!isCopiedByStub(head));
+
+        // Where a copy that takes no frame is kept at the place of this one, the operation is called that looks for it.
+        MappedCopy kept;
+        const MappedCopy*& place = instance.allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(target.at<uint64_t>(offsetOfOrderWord), source.at<uint64_t>(offsetOfOrderWord), 0)];
+        place = &kept;
+        operationCalled = operationByFieldMap;
+        AOT_TEST_CHECK(!isCopiedByStub(head));
+        AOT_TEST_CHECK(isCopiedOnlyWithout(source.at<uint32_t>(JSCell::structureIDOffset()), static_cast<uint32_t>(structures[1].address())));
+        place = nullptr;
+        operationCalled = operation;
     }
 }
 

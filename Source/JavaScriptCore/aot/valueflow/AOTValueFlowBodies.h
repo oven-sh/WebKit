@@ -152,6 +152,8 @@ public:
     ValueSetID builtinFunctions() const { return m_builtinFunctions; }
     ValueSetID builtinFunctionsOfProtocols() const { return m_builtinFunctionsOfProtocols; }
     ValueSetID builtinFunctionsThatReadSpecies() const { return m_builtinFunctionsThatReadSpecies; }
+    // They store into their receiver, change it, or construct what its `constructor` names. None of that happens to an object because it has escaped.
+    ValueSetID builtinFunctionsThatActOnReceiver() const { return m_builtinFunctionsThatActOnReceiver; }
     ValueSetID otherCallables() const { return m_otherCallables; }
     std::atomic<uint64_t>& rememberedBoundFunctionsBindingNoArgument() const { return m_boundFunctionsBindingNoArgument[0]; }
     ValueSetID arrays() const { return m_arrays; }
@@ -240,6 +242,7 @@ private:
     ValueSetID m_builtinFunctions;
     ValueSetID m_builtinFunctionsOfProtocols;
     ValueSetID m_builtinFunctionsThatReadSpecies;
+    ValueSetID m_builtinFunctionsThatActOnReceiver;
     ValueSetID m_builtinsThatMayBeAnyLibraryClosure;
     uint32_t m_numberOfRememberedLayoutSets { 0 };
     std::unique_ptr<std::atomic<uint32_t>[]> m_objectsSurelyWithLayoutIn;

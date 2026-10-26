@@ -40,7 +40,8 @@ public:
 
     FunctionID function() const { return m_function; }
     JS_EXPORT_PRIVATE String name(VM&) const;
-    JS_EXPORT_PRIVATE String nameInFrames(VM&, JSCell* callee = nullptr) const;
+    JS_EXPORT_PRIVATE String nameInFrames(VM&, JSCell* callee = nullptr, bool calleeLiesInFrame = false) const;
+    String calculatedDisplayName(VM&, JSCell* callee, bool calleeLiesInFrame) const;
     JS_EXPORT_PRIVATE CodeType codeType() const;
     JS_EXPORT_PRIVATE bool isStrict() const;
     JS_EXPORT_PRIVATE bool isConstructor() const;

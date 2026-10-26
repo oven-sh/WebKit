@@ -907,6 +907,24 @@ struct StoreBehindChecks {
 
 enum class ValidatesClaims : bool { No, Yes };
 
+static void assumeClaimedTypes(Function& function, IRBuilder& builder, std::span<const StoreBehindChecks> stores, ValidatesClaims validatesClaims)
+{
+    if (stores.empty())
+        return;
+
+    for (const StoreBehindChecks& store : stores) {
+        const Instruction& user = store.user ? static_cast<const Instruction&>(function.at(store.user)) : function.at(store.point.block).terminator;
+        ValueID stored = user.operand(store.operandIndex);
+        builder.setOrigin(user.origin());
+        if (validatesClaims == ValidatesClaims::Yes)
+            builder.insertBefore(store.point, makeValidateType(stored, store.claimed));
+        ValueID assumed = builder.insertBefore(store.point, makeAssumeType(stored, Proven::byFlowOfPosition(store.claimed)));
+        Instruction& edited = store.user ? static_cast<Instruction&>(function.edit(store.user, ValueEdit::Definition)) : function.edit(store.point.block, BlockEdit::Terminator).terminator;
+        edited.setOperand(store.operandIndex, assumed);
+    }
+    builder.applyInsertions();
+}
+
 static void assumeTypesOfPositionsAtStores(const Program& program, Function& function, TypeArena& types, FunctionAnalyses& analyses, IRBuilder& builder, ValidatesClaims validatesClaims)
 {
     PredictedValues predicted(function, analyses.cfg());
@@ -1009,20 +1027,7 @@ static void assumeTypesOfPositionsAtStores(const Program& program, Function& fun
         casts.append(TailCast { DeclaredType(Proven::byFlowOfPosition(requiredResult)), CastResolution::Assume });
         function.edit(block, BlockEdit::Terminator).terminator.setCasts(casts.span());
     }
-    if (found.isEmpty())
-        return;
-
-    for (const StoreBehindChecks& store : found) {
-        const Instruction& user = store.user ? static_cast<const Instruction&>(function.at(store.user)) : function.at(store.point.block).terminator;
-        ValueID stored = user.operand(store.operandIndex);
-        builder.setOrigin(user.origin());
-        if (validatesClaims == ValidatesClaims::Yes)
-            builder.insertBefore(store.point, makeValidateType(stored, store.claimed));
-        ValueID assumed = builder.insertBefore(store.point, makeAssumeType(stored, Proven::byFlowOfPosition(store.claimed)));
-        Instruction& edited = store.user ? static_cast<Instruction&>(function.edit(store.user, ValueEdit::Definition)) : function.edit(store.point.block, BlockEdit::Terminator).terminator;
-        edited.setOperand(store.operandIndex, assumed);
-    }
-    builder.applyInsertions();
+    assumeClaimedTypes(function, builder, found.span(), validatesClaims);
 }
 
 void assumeTypesOfPositionsAtStores(const Program& program, FunctionID id, Function& function, TypeArena& types, BuildContext& build)
@@ -1031,6 +1036,36 @@ void assumeTypesOfPositionsAtStores(const Program& program, FunctionID id, Funct
     FunctionAnalyses analyses(context, function);
     IRBuilder builder(context, function, types, &analyses);
     assumeTypesOfPositionsAtStores(program, function, types, analyses, builder, build.validates() ? ValidatesClaims::Yes : ValidatesClaims::No);
+}
+
+bool assumeTypesOfPositionsAtStoresInCopy(IRBuilder& builder, Function& function, TypeArena& types, std::span<const BlockID> copiedBlocks)
+{
+    const Program& program = builder.context().program;
+    TypingContext typing { program, function, types };
+    const OpcodeSet& opcodesWithRequiredTypes = opcodesWithRequiredOperandTypes();
+    Vector<StoreBehindChecks, 8> found;
+    auto visit = [&](ProgramPoint point, ValueID user, ValueID stored, uint32_t operandIndex, TypeID required) {
+        if (stored && required && !typing.typeOf(stored).isSubsetOf(types.at(required), program))
+            found.append({ point, user, operandIndex, required });
+    };
+    for (BlockID block : copiedBlocks) {
+        const Block& contents = function.at(block);
+        uint32_t numberOfValues = contents.values.size();
+        for (uint32_t index = 0; index < numberOfValues; ++index) {
+            ValueID user = contents.values[index];
+            const Value& value = function.at(user);
+            if (!opcodesWithRequiredTypes.contains(value.opcode))
+                continue;
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                if (value.operandKind(operandIndex) == OperandKind::Declared && takesOnlyWhatFlowHolds(program, value, operandIndex))
+                    visit({ block, index }, user, operand, operandIndex, requiredTypeOfOperand(typing, value, operandIndex));
+            });
+        }
+        if (contents.terminator.kind == TerminatorKind::Return)
+            visit({ block, numberOfValues }, { }, contents.terminator.valueOperand(), OperandIndex::Return::value, requiredTypeOfOperand(typing, contents.terminator, OperandIndex::Return::value));
+    }
+    assumeClaimedTypes(function, builder, found.span(), builder.context().build.validates() ? ValidatesClaims::Yes : ValidatesClaims::No);
+    return !found.isEmpty();
 }
 
 FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)

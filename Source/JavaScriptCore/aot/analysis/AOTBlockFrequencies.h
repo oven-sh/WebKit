@@ -12,6 +12,7 @@
 #include "AOTCFG.h"
 #include "AOTVector.h"
 #include <optional>
+#include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/FrequencyEstimator.h>
 #include <wtf/Noncopyable.h>
@@ -66,6 +67,8 @@ public:
     BlockFrequency classOf(BlockID) const;
     BlockFrequency classOf(Edge) const;
     BlockFrequency classForBlockOrder(Edge) const;
+    // Whichever way it goes on from the block, it ends in a throw, and the function has another way. A handler of the function that catches it makes the way no likelier.
+    bool alwaysEndsInThrow(BlockID block) const { return m_blocksEndingInThrow.get(block.index()); }
     void dump(PrintStream&, const Function&) const;
 
 private:
@@ -79,6 +82,7 @@ private:
     FrequencyFacts m_facts;
     Vector<BlockFrequency> m_edges;
     Vector<uint8_t> m_weights;
+    BitVector m_blocksEndingInThrow;
     mutable Vector<BlockFrequency> m_blocks;
     mutable bool m_hasClassesOfBlocks { false };
     mutable bool m_hasCounts { false };

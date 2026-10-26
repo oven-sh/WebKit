@@ -381,7 +381,6 @@ static TestSites collectTestSites(FunctionPassContext& context)
     for (const TestSite& site : sites.sites)
         RELEASE_ASSERT(testSiteOpcodes.contains(context.function.at(site.use).opcode));
     // A test buys a fast path and costs a copy of what stands behind it.
-    bool isColdFunction = isCold(context.inputs.heat.of(context.program, context.id));
     BitVector receiversThatMayHaveNoLayout = findReceiversAskedOnlyForNamesDefinedWithoutLayout(context, sites);
     sites.sites.removeAllMatching([&](const TestSite& site) {
         if (ValueID receiver = receiversThatMayHaveNoLayout.isEmpty() ? ValueID() : findReceiverWithGuessedLayout(context, sites, site); receiver && receiversThatMayHaveNoLayout.quickGet(receiver.index()))
@@ -394,9 +393,9 @@ static TestSites collectTestSites(FunctionPassContext& context)
         if (holdsMemberUnderSymbolOfProgram(context.program, sites.testsOf(site)) ? !paysToTestMembersUnderSymbolsOfProgram(context, site.point.block) : readsMemberUnderSymbolOfProgram(context, use))
             return true;
         HeatClass heatClass = heatClassOf(context, site.point.block);
-        // What a test buys in the cold code of a cold function, against the copy that it costs. The general form of these is one call.
+        // What a test buys in cold code, against the copy that it costs. The general form of these is one call.
         bool paysInColdCode = site.rule != TestSiteRuleID::ElementAccess && site.rule != TestSiteRuleID::Operator;
-        return heatClass == HeatClass::RunsOnce || (isColdFunction && heatClass == HeatClass::Cold && (isCompactFunction || !paysInColdCode));
+        return heatClass == HeatClass::RunsOnce || (heatClass == HeatClass::Cold && (isCompactFunction || !paysInColdCode));
     });
     const CFG& cfg = context.analyses.cfg();
     AOT::sort(sites.sites, { }, [&](const TestSite& site) { return std::pair { cfg.reversePostOrderIndex(site.point.block), site.point.index }; });

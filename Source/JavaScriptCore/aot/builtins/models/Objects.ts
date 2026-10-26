@@ -18,6 +18,17 @@ export function fromEntries(iterable) {
     return object;
 }
 
+export function getOwnPropertyDescriptors(object) {
+    "use strict";
+
+    // No literal: what the call answers has no layout of this file.
+    const descriptors = Object.create(Object.prototype);
+    const keys = Reflect.ownKeys(Object(object));
+    for (let index = 0; index < keys.length; index++)
+        $putByValDirect(descriptors, keys[index], Object.getOwnPropertyDescriptor(object, keys[index]));
+    return descriptors;
+}
+
 export function groupBy(items, callback) {
     "use strict";
 

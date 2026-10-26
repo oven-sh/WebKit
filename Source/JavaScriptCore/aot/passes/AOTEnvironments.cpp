@@ -120,15 +120,18 @@ struct CaptureSupplier {
     FunctionID callee;
     FunctionID function;
     ValueID site;
+    // Nothing takes the closure, so it holds what it captures for nobody.
+    bool isUnused { false };
     Vector<SuppliedCapture, 2> captures;
 };
 
 struct PromotionScan {
-    bool isEmpty() const { return allocations.isEmpty() && suppliers.isEmpty() && layoutsWithOtherUses.isEmpty() && functionsWithOtherReferences.isEmpty(); }
+    bool isEmpty() const { return allocations.isEmpty() && suppliers.isEmpty() && layoutsWithOtherUses.isEmpty() && capturedLayouts.isEmpty() && functionsWithOtherReferences.isEmpty(); }
 
     Vector<EnvironmentAllocation, 1> allocations;
     Vector<CaptureSupplier, 4> suppliers;
     Vector<LayoutID, 1> layoutsWithOtherUses;
+    Vector<LayoutID, 1> capturedLayouts;
     Vector<FunctionID, 1> functionsWithOtherReferences;
 };
 
@@ -200,6 +203,19 @@ static PromotionScan scanForPromotion(const Program& program, const FlowResults&
         BlockID block = definingBlocks[value.index()];
         return block && (runsAtMostOnce(block) || build.isSabotaged(Sabotage::PromotedEnvironmentsAreMadeOften));
     };
+    auto isUsed = [&](auto& isUsed, ValueID value) -> bool {
+        return std::ranges::any_of(analyses->useLists().usesOf(value), [&](const Use& use) {
+            return use.kind != Use::Kind::Operand || !isCastWithoutTest(function.at(use.user).opcode) || isUsed(isUsed, use.user);
+        });
+    };
+    // Only where code runs once does a variable outlive what a closure would have held.
+    auto isUnusedClosure = [&](ValueID site, const Value& value) {
+        if (value.opcode != Opcode::NewClosure || !flow.runsAtMostOnce(program, id))
+            return false;
+        if (!analyses)
+            analyses.emplace(AnalysisContext { build, program, &flow, nullptr, id }, function);
+        return !isUsed(isUsed, site);
+    };
     auto scanFunctionReference = [&](ValueID site, const Value& value) {
         FunctionID callee = value.function();
         // A closure that is made on demand lists no captures: the object that holds it keeps what it captures.
@@ -211,7 +227,7 @@ static PromotionScan scanForPromotion(const Program& program, const FlowResults&
         if (!numberOfCaptures)
             return;
 
-        CaptureSupplier supplier { callee, id, site, { } };
+        CaptureSupplier supplier { callee, id, site, isUnusedClosure(site, value), { } };
         supplier.captures.reserveInitialCapacity(numberOfCaptures);
         for (ValueID captured : value.variadicOperands().first(numberOfCaptures)) {
             SuppliedCapture description { .supplied = captured, .isComputedAtMostOnce = isComputedAtMostOnce(captured) };
@@ -262,6 +278,8 @@ static PromotionScan scanForPromotion(const Program& program, const FlowResults&
                 LayoutID layout = types.environmentOf(function, operand);
                 if (layout && !isRewrittenUse(program, value, operandIndex))
                     scan.layoutsWithOtherUses.append(layout);
+                else if (layout && Value::opcodesWithFunction.contains(value.opcode) && !isUnusedClosure(listed, value))
+                    scan.capturedLayouts.append(layout);
             });
         }
         block.terminator.forEachOperand([&](ValueID operand, uint32_t) {
@@ -381,6 +399,7 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
     Vector<EnvironmentAllocation> allocations;
     Vector<CaptureSupplier> suppliers;
     BitVector layoutsWithOtherUses;
+    BitVector capturedLayouts;
     BitVector functionsWithOtherReferences;
     for (PromotionScan& scan : collectInParallel<PromotionScan>(loops, numberOfFunctions, [&](unsigned index, Vector<PromotionScan>& found) {
         PromotionScan scan = scanForPromotion(program, flow, build, types, FunctionID(index));
@@ -391,6 +410,8 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
         suppliers.appendVector(WTF::move(scan.suppliers));
         for (LayoutID layout : scan.layoutsWithOtherUses)
             layoutsWithOtherUses.set(layout.index());
+        for (LayoutID layout : scan.capturedLayouts)
+            capturedLayouts.set(layout.index());
         for (FunctionID function : scan.functionsWithOtherReferences)
             functionsWithOtherReferences.set(function.index());
     }
@@ -497,7 +518,7 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
     for (auto sites : allocations.span() | std::views::chunk_by([](const EnvironmentAllocation& a, const EnvironmentAllocation& b) { return a.layout == b.layout; })) {
         auto [layoutID, function, runsAtMostOnce] = sites.front();
         const Layout& layout = program.at(layoutID);
-        if (sites.size() != 1 || !runsAtMostOnce || layout.kind != LayoutKind::Environment || layoutsWithOtherUses.get(layoutID.index()) || !isEnabled(function))
+        if (sites.size() != 1 || !runsAtMostOnce || layout.kind != LayoutKind::Environment || layoutsWithOtherUses.get(layoutID.index()) || !capturedLayouts.get(layoutID.index()) || !isEnabled(function))
             continue;
         ModuleID module = layout.module ? layout.module : program.at(function).module;
         plan.promotedLayouts.set(layoutID.index());
@@ -538,6 +559,8 @@ static PromotionPlan planEnvironmentPromotion(const Program& program, const Flow
         for (const CaptureSupplier& supplier : suppliersOfFunction) {
             // It hands on its own capture.
             if (plan.closureFunctionOf(supplier.function) == closureFunction && supplier.captures[capture].entryParameter == capture)
+                continue;
+            if (supplier.isUnused)
                 continue;
             PromotedCaptureSource source = findSource(supplier, capture);
             if (!source || (common && common != source))

@@ -1,6 +1,6 @@
 # Over the work limit the guards in the most frequent blocks are solved as far as the limit goes, and only the state of the others is Unknown. Every guard keeps its facts, and a function at the limit keeps all its answers
 # FORM: Prepared
-# OPTIONS: limit=MaxGuardAvailabilityWork:4
+# OPTIONS: limit=MaxGuardAvailabilityWork:6
 # RUN: guards points uses
 # LOSS: MaxGuardAvailabilityWork f0
 
@@ -36,7 +36,7 @@ function f0 name="fourBlocksTimesTwoFacts" parameters=[{type=object}] results=[{
 # CHECK-NEXT: v3 guard v2: Available
 # CHECK-NEXT: v5 guard v2: Available
 
-function f1 name="oneBlockTimesFourFacts" parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="oneBlockTimesSixFacts" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = NewObject -, v0 layout=L0 fields=[0]
     v2 = GetSlot v1, v1 key="x" receivers=[L0] level=Proven
     Return v2

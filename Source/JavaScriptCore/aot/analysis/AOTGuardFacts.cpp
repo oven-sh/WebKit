@@ -351,6 +351,16 @@ bool leavesSlotsAsTested(const Program& program, const Function& function, const
     return stored && fillsSlot(writer.operand(*stored));
 }
 
+// The definition adds a property, or gives one that is there another value. Where the object takes no property it throws.
+bool definesPropertyBesideFields(const Program& program, const Value& writer, const Effects& effectsOfWriter, const Value& object)
+{
+    if (writer.opcode != Opcode::PropDefine || effectsOfWriter.mayRunOtherCode())
+        return false;
+    if (!Value::opcodesWithLayout.contains(object.opcode) || !object.layout() || !allocatesOwnLayout(program, object))
+        return false;
+    return !findField(program, object.layout(), writer.key(), BaseChain::Proven) && !findField(program, object.layout(), writer.key(), BaseChain::Predicted);
+}
+
 static bool listsFieldWithKey(const Program& program, const Value& value, PropertyKeyID key)
 {
     if (!Value::opcodesWithFields.contains(value.opcode))
@@ -774,7 +784,7 @@ static GuardFacts factsOfAllocation(FunctionAnalyses& analyses, ValueID id)
             std::ranges::replace(locations, MemoryLocation(AbstractHeap::ShapeWords), *shapeWords);
 
         auto existing = std::ranges::find_if(result.facts, [&](const GuardFact& fact) {
-            return fact.dependsOn == locations;
+            return fact.dependsOn == locations && areLeftByPropertiesBesideFields(fact.proofs) == proofsLeftByPropertiesBesideFields.contains(proof);
         });
         if (existing != result.facts.end()) {
             existing->proofs.add(proof);

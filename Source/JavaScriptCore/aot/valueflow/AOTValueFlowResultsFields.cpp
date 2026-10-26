@@ -676,7 +676,7 @@ struct FieldResults {
                     found.append(declarationOf(program, { id, field }));
             }
             forEachFieldOfObjectsWith(program, application, id, [&](FieldReference declaration, const Field& field) {
-                if (isFollowed ? !constructions.isStoredBeforeObjectLeaks(id, field.key, declaration) : declaration.layout != id && constructions.mayBeKeptFromCreatingInheritedField(id, field.key))
+                if (isFollowed ? !constructions.isStoredBeforeObjectLeaks(id, field.key, declaration) : declaration.layout != id && (constructions.isNewTargetOfOtherFunctions(id) || constructions.mayBeKeptFromCreatingInheritedField(id, field.key)))
                     found.append(declaration);
             });
         });

@@ -24,6 +24,7 @@
 #include "config.h"
 #include "Error.h"
 
+#include "AOTCallSiteTable.h"
 #include "AOTCompiledFrame.h"
 #include "AOTStackTrace.h"
 #include "ErrorInstanceInlines.h"
@@ -217,10 +218,11 @@ bool getLineColumnAndSource(VM& vm, Vector<StackFrame>* stackTrace, LineColumn& 
         StackFrame& frame = stackTrace->at(i);
 #if ENABLE(AOT)
         if (frame.isCompiledFrame()) [[unlikely]] {
-            lineColumn = frame.computeLineAndColumn();
-            if (!lineColumn.line)
+            auto position = frame.representsHostFunction() ? std::nullopt : frame.compiledPosition();
+            if (!position || !position->lineColumn.line)
                 continue;
-            sourceURL = frame.sourceURLStripped(vm);
+            lineColumn = position->lineColumn;
+            sourceURL = AOT::sourceProviderURLOf(position->source);
             return true;
         }
 #endif

@@ -15,9 +15,9 @@ function f0 name="storeIntoField" parameters=[{type=anything}] results=[{type=an
     Return v3
 }
 # CHECK-LABEL: function f0
-# CHECK-NEXT: v1 facts: [Shape OwnInstance of v1 by allocation v1 reads -, SlotFilled NotFrozen of v1 by allocation v1 reads ShapeWords[L0], NoExtraProperties NoFieldOutsideSlot of v1 by allocation v1 reads NamedProperties, KeyOrder of v1 by allocation v1 reads ShapeWords[L0] OrderWords]
+# CHECK-NEXT: v1 facts: [Shape OwnInstance of v1 by allocation v1 reads -, SlotFilled of v1 by allocation v1 reads ShapeWords[L0], NoExtraProperties of v1 by allocation v1 reads NamedProperties, NoFieldOutsideSlot of v1 by allocation v1 reads NamedProperties, NotFrozen of v1 by allocation v1 reads ShapeWords[L0], KeyOrder of v1 by allocation v1 reads ShapeWords[L0] OrderWords]
 # CHECK-NEXT: b0 available at head: []
-# CHECK-NEXT: b1 available at head: [v1.0 v1.1 v1.2 v1.3]
+# CHECK-NEXT: b1 available at head: [v1.0 v1.1 v1.2 v1.3 v1.4 v1.5]
 # CHECK-NEXT: b0:0 available: []
 # CHECK-NEXT: b0:1 available: [v1]
 # CHECK-NEXT: b0:2 available: [v1]
@@ -36,7 +36,7 @@ function f1 name="namedPropertiesWritten" parameters=[{type=anything}] results=[
 }
 # CHECK-LABEL: function f1
 # CHECK: b0 available at head: []
-# CHECK-NEXT: b1 available at head: [v1.0 v1.1 v1.3]
+# CHECK-NEXT: b1 available at head: [v1.0 v1.1 v1.4 v1.5]
 # CHECK-NEXT: b0:0 available: []
 # CHECK-NEXT: b0:1 available: [v1]
 # CHECK-NEXT: b0:2 available: []
@@ -54,7 +54,7 @@ function f2 name="fieldAdded" parameters=[{type=anything}] results=[{type=anythi
 }
 # CHECK-LABEL: function f2
 # CHECK: b0 available at head: []
-# CHECK-NEXT: b1 available at head: [v1.0 v1.1 v1.2]
+# CHECK-NEXT: b1 available at head: [v1.0 v1.1 v1.2 v1.3 v1.4]
 # CHECK-NEXT: b0:0 available: []
 # CHECK-NEXT: b0:1 available: [v1]
 # CHECK-NEXT: b0:2 available: []
@@ -112,7 +112,7 @@ function f5 name="unknownCodeRunsBeforeTheEscape" parameters=[{type=function}, {
 }
 # CHECK-LABEL: function f5
 # CHECK: b0 available at head: []
-# CHECK-NEXT: b1 available at head: [v2.0 v2.1 v2.2 v2.3]
+# CHECK-NEXT: b1 available at head: [v2.0 v2.1 v2.2 v2.3 v2.4 v2.5]
 # CHECK-NEXT: b0:0 available: []
 # CHECK-NEXT: b0:1 available: [v2]
 # CHECK-NEXT: b0:2 available: [v2]

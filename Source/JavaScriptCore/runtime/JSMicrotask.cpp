@@ -650,7 +650,7 @@ void reportErrorOfMicrotask(JSGlobalObject* globalObject, JSValue exceptionOrVal
 }
 
 // https://tc39.es/ecma262/#sec-asyncgeneratorresume (then AsyncGeneratorStart's completion handling).
-static void asyncGeneratorBodyCall(JSGlobalObject* globalObject, JSAsyncGenerator* generator, JSValue resumeValue, int32_t resumeMode, MicrotaskCallCache* microtaskCallCache)
+static ALWAYS_INLINE void asyncGeneratorBodyCallImpl(JSGlobalObject* globalObject, JSAsyncGenerator* generator, JSValue resumeValue, int32_t resumeMode, MicrotaskCallCache* microtaskCallCache, [[maybe_unused]] bool hasCompiledCode)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -663,7 +663,7 @@ static void asyncGeneratorBodyCall(JSGlobalObject* globalObject, JSAsyncGenerato
     JSValue generatorFrame = generator->frame();
 #if ENABLE(AOT)
     AOT::AsyncGeneratorBodyEntry compiledEntry;
-    if (vm.hasCompiledCode())
+    if (hasCompiledCode)
         compiledEntry = AOT::willEnterAsyncGeneratorBody(generator, microtaskCallCache && microtaskCallCache->isOwnedByJobLoop());
 #endif
 
@@ -680,14 +680,41 @@ static void asyncGeneratorBodyCall(JSGlobalObject* globalObject, JSAsyncGenerato
         }
     }
 #if ENABLE(AOT)
-    generator = AOT::didReturnFromAsyncGeneratorBody(compiledEntry, generator, value, error, isTerminated);
-    if (!generator)
-        return;
+    if (hasCompiledCode) {
+        generator = AOT::didReturnFromAsyncGeneratorBody(compiledEntry, generator, value, error, isTerminated);
+        if (!generator)
+            return;
+    }
 #endif
     if (isTerminated) [[unlikely]]
         return;
 
     RELEASE_AND_RETURN(scope, finishAsyncGeneratorBodyCall(globalObject, generator, value, error, microtaskCallCache));
+}
+
+#if ENABLE(AOT)
+static NEVER_INLINE void asyncGeneratorBodyCallOnClearedStack(JSGlobalObject* globalObject, JSAsyncGenerator* generator, JSValue resumeValue, int32_t resumeMode, MicrotaskCallCache* microtaskCallCache)
+{
+    asyncGeneratorBodyCallImpl(globalObject, generator, resumeValue, resumeMode, microtaskCallCache, true);
+}
+
+static NEVER_INLINE void asyncGeneratorBodyCallBesideCompiledCode(JSGlobalObject* globalObject, JSAsyncGenerator* generator, JSValue resumeValue, int32_t resumeMode, MicrotaskCallCache* microtaskCallCache)
+{
+    NO_TAIL_CALLS();
+    AOT::clearStackBelowCaller();
+    asyncGeneratorBodyCallOnClearedStack(globalObject, generator, resumeValue, resumeMode, microtaskCallCache);
+}
+#endif
+
+static void asyncGeneratorBodyCall(JSGlobalObject* globalObject, JSAsyncGenerator* generator, JSValue resumeValue, int32_t resumeMode, MicrotaskCallCache* microtaskCallCache)
+{
+#if ENABLE(AOT)
+    if (globalObject->vm().hasCompiledCode()) [[unlikely]] {
+        asyncGeneratorBodyCallBesideCompiledCode(globalObject, generator, resumeValue, resumeMode, microtaskCallCache);
+        return;
+    }
+#endif
+    asyncGeneratorBodyCallImpl(globalObject, generator, resumeValue, resumeMode, microtaskCallCache, false);
 }
 
 void finishAsyncGeneratorBodyCall(JSGlobalObject* globalObject, JSAsyncGenerator* generator, JSValue value, JSValue error, MicrotaskCallCache* microtaskCallCache)

@@ -42,6 +42,8 @@ public:
     struct Answer {
         KnownValue primitive;
         String text;
+        // A literal is flat, and is held in 16 bits only if it has a character outside Latin-1. Whoever asks for the characters alone need not ask this.
+        bool isStoredLikeLiteral { true };
     };
 
     ScratchRealm()
@@ -92,12 +94,11 @@ public:
             return std::nullopt;
 
         if (result.isString()) {
-            // A literal is flat, and is held in 16 bits only if it has a character outside Latin-1.
             bool mayHaveNarrowParts = !asString(result)->is8Bit() && asString(result)->isRope() && !asString(result)->isSubstring();
             auto text = asString(result)->value(realm);
-            if (scope.exception() || mayHaveNarrowParts || (!text->is8Bit() && text->containsOnlyLatin1()))
+            if (scope.exception())
                 return std::nullopt;
-            return Answer { { }, text->isolatedCopy() };
+            return Answer { { }, text->isolatedCopy(), !mayHaveNarrowParts && (text->is8Bit() || !text->containsOnlyLatin1()) };
         }
         if (result.isUndefined())
             return Answer { KnownValue::undefined(), { } };

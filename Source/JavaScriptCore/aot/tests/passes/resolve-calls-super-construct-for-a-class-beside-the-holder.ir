@@ -1,0 +1,50 @@
+# function Legacy() {}  class Left extends Legacy {}  class BelowLeft extends Left {}  class Right extends Legacy {}  Reflect.construct(Left, [], Right)
+# Where the parent of a super call is a constructor function, the object is allocated in place with the layout of the class that holds the call,
+# and the run time exchanges it for an instance of a class below that class. Right stands beside Left: what Legacy makes for it is decided where Legacy is constructed.
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: ConstructsResolved = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Legacy" constructor=f0 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L1 kind=Instance name="Left" base=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L2 kind=Instance name="BelowLeft" base=L1 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L1} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L3 kind=Instance name="Right" base=L0 constructor=f3 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+function f0 name="Legacy" flags=[HasThis] thisType={type=object} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+    Return v1
+}
+function f1 name="Left" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f2 name="BelowLeft" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f3 name="Right" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
+
+function f4 name="for-the-holder" parameters=[{type=f0}, {type=f1}, {type=anything}] results=[{type=anything}] {
+    v3 = SuperConstruct v0, v1, v2 layout=L1
+    Return v3
+# CHECK-NEXT: b0(v0: f0, v1: f1, v2: anything):
+# CHECK-NEXT: [[prototype]]: object = GetConstructPrototype v1 layout=L1
+# CHECK-NEXT: = NewObject [[prototype]] layout=L1
+# CHECK-NOT: SuperConstruct
+}
+function f5 name="for-the-holder-or-a-class-below-it" parameters=[{type=f0}, {type=f1|f2}, {type=anything}] results=[{type=anything}] {
+    v3 = SuperConstruct v0, v1, v2 layout=L1
+    Return v3
+# CHECK-NEXT: b0(v0: f0, v1: f1|f2, v2: anything):
+# CHECK-NEXT: [[prototypeOfEither]]: object = GetConstructPrototype v1 layout=L1
+# CHECK-NEXT: = NewObject [[prototypeOfEither]] layout=L1
+# CHECK-NOT: SuperConstruct
+}
+function f6 name="for-a-class-beside-the-holder" parameters=[{type=f0}, {type=f3}, {type=anything}] results=[{type=anything}] {
+    v3 = SuperConstruct v0, v1, v2 layout=L1
+    Return v3
+# CHECK-NEXT: b0(v0: f0, v1: f3, v2: anything):
+# CHECK-NEXT: = SuperConstruct v0, v1, v2 layout=L1
+# CHECK-NEXT: Return v3
+}
+function f7 name="for-the-holder-or-a-class-beside-it" parameters=[{type=f0}, {type=f1|f3}, {type=anything}] results=[{type=anything}] {
+    v3 = SuperConstruct v0, v1, v2 layout=L1
+    Return v3
+# CHECK-NEXT: b0(v0: f0, v1: f1|f3, v2: anything):
+# CHECK-NEXT: = SuperConstruct v0, v1, v2 layout=L1
+# CHECK-NEXT: Return v3
+}

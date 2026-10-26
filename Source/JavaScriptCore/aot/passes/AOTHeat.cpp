@@ -735,7 +735,12 @@ HeatClass heatClassOf(const Heat& heat, FunctionAnalyses& analyses, BlockID bloc
     case HeatOverride::NothingIsHottest:
         break;
     }
-    return analyses.executionCountOf(block) == ExecutionCount::AtMostOnce ? HeatClass::RunsOnce : heatClass;
+    if (analyses.executionCountOf(block) == ExecutionCount::AtMostOnce)
+        return HeatClass::RunsOnce;
+    // The throw costs more than all that leads up to it, however often the function is entered.
+    if (heatClass > HeatClass::Cold && analyses.blockFrequencies().alwaysEndsInThrow(block))
+        return HeatClass::Cold;
+    return heatClass;
 }
 
 bool isInColderPartOfProgram(const Heat& heat, const Program& program, FunctionID id)

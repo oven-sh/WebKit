@@ -227,10 +227,6 @@ bool TestSiteReporter::mayHaveFailedTestOf(ValueID value) const
 
 bool TestSiteReporter::takesAwaySitesInColdCode()
 {
-    if (!m_isColdFunction)
-        m_isColdFunction = isCold(m_context.inputs.heat.of(program(), m_context.id));
-    if (!*m_isColdFunction)
-        return false;
     if (m_blockOfHeatClass != m_point.block) {
         m_blockOfHeatClass = m_point.block;
         m_blockIsCold = heatClassOf(m_context, m_point.block) == HeatClass::Cold;

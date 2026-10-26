@@ -661,6 +661,8 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
                 }
                 // As in the loop below.
                 if (!wasImportedWhileItRan(m_table.fileBehindFace(*failedFile).value_or(*failedFile))) {
+                    if (!queue.isEmpty())
+                        holdJobsBehind(0, *failedFile);
                     m_rootWhoseFilesRanAhead = root;
                     return true;
                 }
@@ -711,6 +713,8 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
             // `bun run` loads the rest of the graph, and with it runs the other files, before it reports the error. The loader goes through the graph and finds the error where it comes to the file.
             if (error == ErrorOfImportedFile::IsLeftToLoader && !vm.isTerminationException(exception)) {
                 TRY_CLEAR_EXCEPTION(scope, didRunFile);
+                if (jobs == JobsOfImportedFiles::WaitForLoader && queue.size() != numberOfJobs)
+                    holdJobsBehind(numberOfJobs, imported);
                 m_rootWhoseFilesRanAhead = root;
             }
             return didRunFile;

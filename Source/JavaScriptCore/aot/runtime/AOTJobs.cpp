@@ -19,9 +19,11 @@
 #include "AOTState.h"
 #include "AOTStubFrames.h"
 #include "AOTStubsCoroutines.h"
+#include "AOTThreshold.h"
 #include "AOTUnwinding.h"
 #include "AsyncContextSwapScope.h"
 #include "DeferTermination.h"
+#include "EnsureStillAliveHere.h"
 #include "ExceptionHelpers.h"
 #include "InternalFunction.h"
 #include "IteratorOperations.h"
@@ -37,6 +39,7 @@
 #include "MicrotaskQueueInlines.h"
 #include "TopExceptionScope.h"
 #include "VMInlines.h"
+#include <array>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/Noncopyable.h>
 
@@ -252,6 +255,16 @@ bool tryFinishStepInProgress(JSValue settlementTarget, JSValue value, bool isDon
     step->value = value;
     step->isDone = isDone;
     return true;
+}
+
+// Room for the frames from the function that enters a body down to the frame of the body.
+AOT_THRESHOLD(size_t, bytesOfStackClearedBelowCaller, 1024);
+
+SUPPRESS_ASAN NEVER_INLINE void clearStackBelowCaller()
+{
+    std::array<uintptr_t, bytesOfStackClearedBelowCaller / sizeof(uintptr_t)> words;
+    words.fill(0);
+    ensureStillAliveHere(words.data());
 }
 
 AsyncGeneratorBodyEntry willEnterAsyncGeneratorBody(JSAsyncGenerator* generator, bool isEnteredByJobLoop)

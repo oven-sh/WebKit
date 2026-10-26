@@ -1,8 +1,10 @@
 # What the bundler imports for the constructs that it lowers is Bun's own code in the form of a file of the program. Its importers are linked to it, so it has a record like any module that is evaluated.
 # A file of the program that imports it names it, so the table by path lists it: a load under that name at run time finds the compiled module.
 # One that only another helper imports is named by no file of the program and stays out: isBundlerHelperNamedByProgram().
+# It is evaluated as a file of the program is, so its functions are ordinary function objects. Those of a file of library functions are built-in functions.
 # RUN: tables
 # RUN(MODULES): tables modules
+# RUN(FUNCTIONS): tables functions
 
 variable g0 name="helper" module=m1 declared={type=anything} initialization=Undefined
 module m0 path="/app/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}, {target=m2 completes=true}]
@@ -31,3 +33,9 @@ function f3 name="other" module=m2 kind=Module results=[{type=anything}] {
 # MODULES-NEXT: module m1 kind=SourceText path="bun:wrap"
 # MODULES-NEXT: module m2 kind=SourceText path="/app/other.js"
 # MODULES: modulesByPath modules=[m0 m2 m1 m3]
+# FUNCTIONS: function f1 name="wrap"
+# FUNCTIONS-NOT: inRuntimeModule
+# FUNCTIONS: function f3 name="other"
+# FUNCTIONS: function f4 {{*}}inRuntimeModule
+# FUNCTIONS: function f6 name="wrap"
+# FUNCTIONS-NOT: inRuntimeModule

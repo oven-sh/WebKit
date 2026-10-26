@@ -204,7 +204,18 @@ static String nameSetAtRunTime(VM& vm, FunctionID function)
         return String();
     FunctionID sourceFunction = sourceFunctionOf(function);
     Locker locker { tables.namesLock };
+    if (String name = tables.namesShownUntilLookedFor.get(sourceFunction); !name.isNull())
+        return name;
     return tables.namesSetAtRunTime.get(sourceFunction);
+}
+
+static String nameShownUntilLookedFor(VM& vm, FunctionID function)
+{
+    FunctionTables& tables = FunctionTables::of(vm);
+    if (!tables.hasNamesSetAtRunTime.load(std::memory_order_acquire)) [[likely]]
+        return String();
+    Locker locker { tables.namesLock };
+    return tables.namesShownUntilLookedFor.get(sourceFunctionOf(function));
 }
 
 static String nameLookedFor(VM& vm, FunctionID function)
@@ -306,39 +317,48 @@ void FunctionTables::recordCalleesOf(VM& vm, FunctionID sourceFunction)
         makeCallsByValuePoll(*instance, isRenamedAtRunTime.load(std::memory_order_acquire));
 }
 
+// In the lowest bit of the function object: a collection has left the entry in the table. The call that writes the entry anew takes the mark away.
+static constexpr uintptr_t markOfCollection = 1;
+// In the next bit: the function object lies in a frame. The collector visits what is recorded, so the function as it is written stands above the two bits in its place.
+static constexpr uintptr_t markOfClosureInFrame = 2;
+static constexpr unsigned numberOfMarks = 2;
+
+static bool liesInFrame(const RecordedCallee& entry)
+{
+    return std::bit_cast<uintptr_t>(entry.closure) & markOfClosureInFrame;
+}
+
+static JSObject* closureOnHeapOf(const RecordedCallee& entry)
+{
+    return liesInFrame(entry) ? nullptr : std::bit_cast<JSObject*>(std::bit_cast<uintptr_t>(entry.closure) & ~markOfCollection);
+}
+
+static FunctionID sourceFunctionOf(const RecordedCallee& entry)
+{
+    if (liesInFrame(entry))
+        return FunctionID(safeCast<uint32_t>(std::bit_cast<uintptr_t>(entry.closure) >> numberOfMarks));
+    return sourceFunctionOf(*functionOf(closureOnHeapOf(entry)));
+}
+
 void FunctionTables::recordCalleeOfCallByValue(VM& vm, const void* stackPointer, JSObject* closure)
 {
     std::optional<FunctionID> function = functionOf(closure);
     if (!function || !recordsCalleesOf(*function))
         return;
-    // Nobody has seen a closure that lies in a frame, so it has the name of its function. The collector visits what is recorded.
-    if (Thread::currentSingleton().stack().contains(closure)) {
-        Locker locker { recordedCalleesLock };
-        if (hasRecordedCallees()) {
-            RecordedCallee& entry = entryOfCallFrom(recordedCalleeStorage.mutableSpan(), std::bit_cast<uintptr_t>(stackPointer));
-            if (entry.stackPointerOfCaller == std::bit_cast<uintptr_t>(stackPointer))
-                entry = { 0, nullptr };
-        }
-        return;
-    }
+    if (Thread::currentSingleton().stack().contains(closure))
+        closure = std::bit_cast<JSObject*>(static_cast<uintptr_t>(sourceFunctionOf(*function).index()) << numberOfMarks | markOfClosureInFrame);
     recordCallee(vm, stackPointer, closure);
 }
 
-// In the lowest bit of the function object: a collection has left the entry in the table. The call that writes the entry anew takes the mark away.
-static constexpr uintptr_t markOfCollection = 1;
-
-static JSObject* closureOf(const RecordedCallee& entry)
-{
-    return std::bit_cast<JSObject*>(std::bit_cast<uintptr_t>(entry.closure) & ~markOfCollection);
-}
-
-JSObject* FunctionTables::recordedCalleeOfCallFrom(const void* stackPointer)
+std::optional<JSObject*> FunctionTables::recordedCalleeOfCallFrom(const void* stackPointer, FunctionID sourceFunction)
 {
     if (!hasRecordedCallees())
-        return nullptr;
+        return std::nullopt;
     uintptr_t stackPointerOfCaller = std::bit_cast<uintptr_t>(stackPointer);
     const RecordedCallee& entry = entryOfCallFrom(recordedCalleeStorage.mutableSpan(), stackPointerOfCaller);
-    return entry.stackPointerOfCaller == stackPointerOfCaller ? closureOf(entry) : nullptr;
+    if (entry.stackPointerOfCaller != stackPointerOfCaller || sourceFunctionOf(entry) != sourceFunction)
+        return std::nullopt;
+    return closureOnHeapOf(entry);
 }
 
 // How far the stack of the program reaches is not asked during a collection. A call has returned for sure once the program has returned to whoever entered it from outside.
@@ -354,8 +374,8 @@ void FunctionTables::visitRecordedCallees(VM& vm, Visitor& visitor)
 {
     Locker locker { recordedCalleesLock };
     for (const RecordedCallee& entry : recordedCallees()) {
-        if (entry.closure && !hasReturned(vm, *this, entry))
-            visitor.appendUnbarriered(closureOf(entry));
+        if (JSObject* closure = closureOnHeapOf(entry); closure && !hasReturned(vm, *this, entry))
+            visitor.appendUnbarriered(closure);
     }
 }
 template void FunctionTables::visitRecordedCallees(VM&, AbstractSlotVisitor&);
@@ -370,7 +390,7 @@ void FunctionTables::finalizeRecordedCallees(VM& vm)
     for (RecordedCallee& entry : recordedCallees()) {
         if (!entry.closure)
             continue;
-        if (hasReturned(vm, *this, entry) || !vm.heap.isMarked(closureOf(entry))) {
+        if (hasReturned(vm, *this, entry) || (!liesInFrame(entry) && !vm.heap.isMarked(closureOnHeapOf(entry)))) {
             entry = { 0, nullptr };
             continue;
         }
@@ -396,13 +416,20 @@ static JSValue ownDataProperty(JSObject* closure, UniquedStringImpl* uid)
     return closure->getDirect(offset);
 }
 
-static String ownTextProperty(JSObject* closure, const Identifier& name)
+static String nullIfEmpty(const String& text)
+{
+    return text.isEmpty() ? String() : text;
+}
+
+static String ownStringProperty(JSObject* closure, const Identifier& name)
 {
     JSValue value = ownDataProperty(closure, name.impl());
-    if (!value || !value.isString())
-        return String();
-    String text = asString(value)->tryGetValueWithoutGC();
-    return text.isEmpty() ? String() : text;
+    return value && value.isString() ? asString(value)->tryGetValueWithoutGC() : String();
+}
+
+static String ownTextProperty(JSObject* closure, const Identifier& name)
+{
+    return nullIfEmpty(ownStringProperty(closure, name));
 }
 
 void didChangeDisplayName(VM& vm, JSObject* closure)
@@ -416,7 +443,7 @@ void didChangeDisplayName(VM& vm, JSObject* closure)
         return;
     auto* classObject = dynamicDowncast<Closure>(closure);
     bool isClassObject = classObject && classObject->classData();
-    String text = isClassObject ? String() : ownTextProperty(closure, vm.propertyNames->displayName);
+    String text = isClassObject ? String() : ownStringProperty(closure, vm.propertyNames->displayName);
     bool mayHaveDisplayName = isClassObject || !text.isNull();
     Locker locker { tables.namesLock };
     if (!mayHaveDisplayName && !tables.displayNames.contains(sourceFunction))
@@ -453,7 +480,7 @@ static String displayNameInFrames(VM& vm, FunctionID function)
     if (!entry->value.stateOfClassObject)
         return entry->value.text;
     JSCell* classObject = entry->value.stateOfClassObject->objects->closures.closureIfCreated(entry->value.constructorOfClass);
-    return classObject == entry->value.functionObject ? ownTextProperty(asObject(classObject), vm.propertyNames->displayName) : String();
+    return classObject == entry->value.functionObject ? ownStringProperty(asObject(classObject), vm.propertyNames->displayName) : String();
 }
 
 static String functionNameAsWritten(const FunctionDescription& description)
@@ -476,9 +503,12 @@ static String nameInFramesOfFunctionNamedByComputedKey(FunctionID function)
 static String nameGivenTo(VM& vm, JSObject* callee)
 {
     FunctionID function = *functionOf(callee);
+    if (String name = nameShownUntilLookedFor(vm, function); !name.isNull())
+        return name;
     // Such a closure has the property from the first look for it on. A slim closure of any other kind has it from its first property on, whichever that is.
     bool hasNameOnceLookedFor = functionKindData(function).notesLooksForName();
-    String name = ownTextProperty(callee, vm.propertyNames->name);
+    bool isHeldBySlimClosure = callee->type() == SlimClosureType && uncheckedDowncast<SlimClosure>(callee)->nameWasLookedFor();
+    String name = isHeldBySlimClosure ? nullIfEmpty(initialNameProperty(function)) : ownTextProperty(callee, vm.propertyNames->name);
     if (!name.isNull() && (hasNameOnceLookedFor || name != initialNameProperty(function)))
         return name;
     if (!hasNameOnceLookedFor) {
@@ -495,7 +525,7 @@ static bool runsInBodyWithoutName(const FunctionDescription& description)
     return kind.hasInferredName && (kind.isGenerator || (kind.isAsync && description.isNamedByOwner()));
 }
 
-String functionName(VM& vm, const FunctionDescription& description, NameForm form, JSObject* callee)
+String functionName(VM& vm, const FunctionDescription& description, NameForm form, JSObject* callee, bool calleeLiesInFrame)
 {
     FunctionID function = description.function();
     switch (form) {
@@ -511,11 +541,19 @@ String functionName(VM& vm, const FunctionDescription& description, NameForm for
             return name;
         else if (String name = nameLookedFor(vm, function); !name.isNull()) [[unlikely]]
             return name;
-        else if (String displayName = displayNameInFrames(vm, function); !displayName.isNull()) [[unlikely]]
+        else if (String displayName = calleeLiesInFrame ? String() : displayNameInFrames(vm, function); !displayName.isEmpty()) [[unlikely]]
             return displayName;
         if (description.isNamedByComputedKey()) [[unlikely]]
             return nameInFramesOfFunctionNamedByComputedKey(function);
         return functionNameAsWritten(description);
+    case NameForm::CalculatedDisplayName: {
+        if (runsInBodyWithoutName(description))
+            return emptyString();
+        String displayName = callee ? ownStringProperty(callee, vm.propertyNames->displayName) : calleeLiesInFrame ? String() : displayNameInFrames(vm, function);
+        if (!displayName.isNull()) [[unlikely]]
+            return displayName;
+        return description.isNamedByComputedKey() ? emptyString() : functionNameAsWritten(description);
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -573,8 +611,24 @@ void didLookForNameProperty(VM& vm, JSObject* closure)
         return;
     FunctionTables& tables = FunctionTables::of(vm);
     Locker locker { tables.namesLock };
-    if (tables.namesLookedFor.add(sourceFunction.index()))
-        tables.hasNamesLookedFor.store(true, std::memory_order_release);
+    if (!tables.namesLookedFor.add(sourceFunction.index()))
+        return;
+    tables.hasNamesLookedFor.store(true, std::memory_order_release);
+    tables.namesShownUntilLookedFor.remove(sourceFunction);
+}
+
+void showNameUntilLookedFor(VM& vm, JSObject* closure, const String& name)
+{
+    FunctionID function = *functionOf(closure);
+    FunctionID sourceFunction = sourceFunctionOf(function);
+    if (functionKindData(function).isBound() || functionKindData(sourceFunction).isGenerator || FunctionDescription(function).isAsync())
+        return;
+    FunctionTables& tables = FunctionTables::of(vm);
+    Locker locker { tables.namesLock };
+    if (tables.namesLookedFor.contains(sourceFunction.index()))
+        return;
+    tables.namesShownUntilLookedFor.set(sourceFunction, name);
+    tables.hasNamesSetAtRunTime.store(true, std::memory_order_release);
 }
 
 void setComputedFunctionName(VM& vm, JSObject* closure, const Identifier& key, MethodKind kind)
@@ -758,6 +812,12 @@ void setNameProperty(JSGlobalObject* globalObject, JSObject* callee, JSString* n
         callee->putDirect(vm, vm.propertyNames->name, name, attributes);
     }
     didDefineNameProperty(vm, callee, text);
+}
+
+void showNameUntilLookedFor(VM& vm, JSObject* callee, const String& name)
+{
+    RELEASE_ASSERT(isCompiledCallee(callee));
+    AOT::showNameUntilLookedFor(vm, callee, name);
 }
 
 Structure* cachedBoundFunctionStructure(JSObject* callee)

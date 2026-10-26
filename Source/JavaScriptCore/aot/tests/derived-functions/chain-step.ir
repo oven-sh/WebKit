@@ -8,7 +8,7 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=131090 function=f1
+runtimefunction id=131091 function=f1
 
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
@@ -20,7 +20,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 
 # The traversal, cut down to two links and the ends Array, Reduce and Join. A shape has the end in bits 0 to 3, the links in bits 4 to 5 and 6 to 7 (1: map, 2: filter), "has an initial value" in bit 10
-function f1 name="traverseArray" role=Library flags=[IsHiddenInStackTraces] enclosingRuntimeFunction=131090 parameters=[{type=Array<anything>}, {type=number}, {type=undefined|number}, {type=number}, {type=Array<anything>}, {type=anything}] results=[{type=anything}] {
+function f1 name="traverseArray" role=Library flags=[IsHiddenInStackTraces] enclosingRuntimeFunction=131091 parameters=[{type=Array<anything>}, {type=number}, {type=undefined|number}, {type=number}, {type=Array<anything>}, {type=anything}] results=[{type=anything}] {
     v6 = Integer integer=0
     v7 = Integer integer=1
     v8 = Integer integer=2

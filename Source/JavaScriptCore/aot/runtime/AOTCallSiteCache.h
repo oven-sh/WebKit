@@ -36,8 +36,9 @@ public:
         const void* address { nullptr };
         CompiledFunctionID code;
         CallSiteRecord site { CallSiteIndex(0), 0 };
-        bool innermostIsInlinedConstructCall { false };
-        bool rejectsOnThrow { false };
+        bool innermostIsInlinedConstructCall : 1 { false };
+        bool rejectsOnThrow : 1 { false };
+        bool isInModuleBody : 1 { false };
         TraceVisibility innermostVisibility { TraceVisibility::Visible };
         StubFrameKind stubFrameKind { StubFrameKind::Plain };
         FunctionID innermostFunction;

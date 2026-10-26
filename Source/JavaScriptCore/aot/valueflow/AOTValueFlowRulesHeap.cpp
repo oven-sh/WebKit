@@ -266,12 +266,18 @@ void HeapRule::noteMembersLookedForBeforeChange(ClimbingSet receivers, const Hea
         noteMaking(unknownHeapKey);
 }
 
-// Retired nodes list the holders of replaceable members all over a program. What is written escapes through the unknown object, so such a holder takes the unknown value, and the writes that list it are not joined with the reads that do.
+// Retired nodes list the holders of replaceable members all over a program. An object that is written escapes through the unknown object, so such a holder takes the unknown value for it, and the writes that list it are not joined with the reads that do.
+// A primitive holds nothing and runs nothing: it is written as it is.
 void HeapRule::writeToListedObjects(ClimbingSet listed, ValueFlowName name, const ValueFlowOperand& value)
 {
     ValueSetID holders = m_tables.holdersOfReplaceableMembers();
     write(m_context.restrict(listed, ValueSets::complement(holders)), name, value);
-    write(m_context.restrict(listed, holders), name, ValueFlowOperand { { }, unknownValue(ValueFlowUnknownSource::ContentsOfEscapedObject) });
+    ClimbingSet listedHolders = m_context.restrict(listed, holders);
+    ValueFlowOperand primitives = value;
+    primitives.mask = m_context.maker().intersect(value.mask, m_universe.primitives());
+    write(listedHolders, name, primitives);
+    if (m_context.meet(m_context.valueOf(value), m_universe.objects()))
+        write(listedHolders, name, ValueFlowOperand { { }, unknownValue(ValueFlowUnknownSource::ContentsOfEscapedObject) });
 }
 
 void HeapRule::noteWrittenMembers(ClimbingSet receivers, const HeapKey& key, bool areOnlyListed)

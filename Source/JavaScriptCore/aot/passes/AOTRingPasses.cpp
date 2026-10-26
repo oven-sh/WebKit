@@ -1515,7 +1515,7 @@ struct ConstantFolder {
         }
 
         std::optional<ScratchRealm::Answer> answer = context.build.scratchRealms().ofCurrentThread().call(program, callee, receiver, arguments.span());
-        if (!answer)
+        if (!answer || !answer->isStoredLikeLiteral)
             return false;
         if (answer->text.isNull())
             return becomeConstant(id, answer->primitive);

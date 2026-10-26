@@ -79,6 +79,11 @@ TestedSlotState slotStateTestedBy(const Value& test);
 TestedSlotState slotStateProvenBy(const Function&, const GuardFact&);
 bool leavesSlotsAsTested(const Program&, const Function&, const Value& writer, const Effects& effectsOfWriter, TestedSlotState);
 
+// What these say of an object is about the fields of its layout and about the object as a whole, not about the properties it has beside the fields.
+inline constexpr ProofSet proofsLeftByPropertiesBesideFields { Proof::NoFieldOutsideSlot, Proof::NotFrozen };
+constexpr bool areLeftByPropertiesBesideFields(ProofSet proofs) { return !proofs.isEmpty() && (proofs | proofsLeftByPropertiesBesideFields) == proofsLeftByPropertiesBesideFields; }
+bool definesPropertyBesideFields(const Program&, const Value& writer, const Effects& effectsOfWriter, const Value& object);
+
 struct DependedLocations {
     DependedLocations() = default;
     DependedLocations(const Program&, Vector<MemoryLocation, 2>&&);
@@ -87,6 +92,7 @@ struct DependedLocations {
     Vector<uint64_t, 2> masksOfLocations;
     LocationMasks masks;
     TestedSlotState slotState { TestedSlotState::None };
+    bool isLeftByPropertiesBesideFields { false };
 };
 
 struct GuardDependencies : DependedLocations {

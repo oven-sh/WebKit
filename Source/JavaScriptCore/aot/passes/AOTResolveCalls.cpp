@@ -643,12 +643,27 @@ ValueID appendThisOfConstructorFunction(IRBuilder& builder, FunctionID construct
     return appendThis(builder, constructed, hasOnePrototypeObject(program, constructed) ? ValueID() : closure);
 }
 
-// new.target selects what is allocated, and the allocation is handed its prototype object alone.
-static bool isAlwaysClass(const Program& program, const Type& newTarget)
+static bool mayBeAtOrBelow(const Program& program, LayoutID layout, LayoutID base)
+{
+    for (size_t steps = 0; layout && steps <= program.layouts.size(); ++steps) {
+        if (layout == base)
+            return true;
+        const LayoutFlow& flow = program.at(layout).flow;
+        if (flow.baseState != BaseState::Layout)
+            return program.at(layout).has(LayoutFlags::HasHeritage);
+        layout = flow.base;
+    }
+    return false;
+}
+
+// new.target selects what is allocated, and the allocation is handed its prototype object alone. For a class beside the holder of the super call, the function that is constructed decides.
+static bool isAlwaysClassAtOrBelow(const Program& program, const Type& newTarget, LayoutID holder)
 {
     if (!newTarget.isObject() || !newTarget.hasOnlyKnownCallees() || newTarget.layouts || !newTarget.builtins.isEmpty())
         return false;
-    return std::ranges::all_of(newTarget.functions, [&](FunctionID function) { return isConstructorOfClass(program.at(function)); });
+    return std::ranges::all_of(newTarget.functions, [&](FunctionID function) {
+        return isConstructorOfClass(program.at(function)) && mayBeAtOrBelow(program, program.at(function).constructedClass, holder);
+    });
 }
 
 // The run time exchanges the object for an instance of the class that new.target selects, so the class that holds the super call stands for all of them.
@@ -2079,7 +2094,7 @@ struct CallResolver {
         if (!allocatesOwnThis(program.at(member))) {
             if (!(isSuperCall ? construct.layout() : constructed))
                 return std::unexpected(CallDeclineReason::CalleeNotCallable);
-            if (!isOwnNewTarget && !(isSuperCall && isAlwaysClass(program, typeOf(newTarget))))
+            if (!isOwnNewTarget && !(isSuperCall && isAlwaysClassAtOrBelow(program, typeOf(newTarget), construct.layout())))
                 return declined;
             arm.allocatedClass = isSuperCall ? findClassAllocatedBySuperCall(program, construct.layout()) : constructed;
             if (!arm.allocatedClass)

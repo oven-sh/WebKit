@@ -97,11 +97,18 @@ String FunctionDescription::name(VM& vm) const
     return Image::current()->isObfuscated() ? emptyString() : functionName(vm, *this, NameForm::AsWritten);
 }
 
-String FunctionDescription::nameInFrames(VM& vm, JSCell* callee) const
+String FunctionDescription::nameInFrames(VM& vm, JSCell* callee, bool calleeLiesInFrame) const
 {
     if (m_record == &traceOfCalledBuiltin)
         return nameOfBuiltin(vm, builtinOfFunctionInFrames(m_function));
-    return Image::current()->isObfuscated() ? emptyString() : functionName(vm, *this, NameForm::InFrames, callee ? asObject(callee) : nullptr);
+    return Image::current()->isObfuscated() ? emptyString() : functionName(vm, *this, NameForm::InFrames, callee ? asObject(callee) : nullptr, calleeLiesInFrame);
+}
+
+String FunctionDescription::calculatedDisplayName(VM& vm, JSCell* callee, bool calleeLiesInFrame) const
+{
+    if (m_record == &traceOfCalledBuiltin)
+        return nameOfBuiltin(vm, builtinOfFunctionInFrames(m_function));
+    return Image::current()->isObfuscated() ? emptyString() : functionName(vm, *this, NameForm::CalculatedDisplayName, callee ? asObject(callee) : nullptr, calleeLiesInFrame);
 }
 
 #define AOT_DEFINE_FLAG_OF_TRACE_RECORD(flag) \
@@ -757,6 +764,11 @@ String sourceURLOf(ModuleID module)
     return module ? modulePath(module) : emptyString();
 }
 
+String sourceProviderURLOf(ModuleID module)
+{
+    return module ? sourceProviderURL(module) : emptyString();
+}
+
 String describeCodeAddresses(std::span<const void* const> addresses)
 {
     const Image* image = Image::current();
@@ -817,7 +829,7 @@ static void appendFrames(VM& vm, const SuspendedAsyncFunction& suspended, WTF::V
     const Image& image = *Image::current();
     // The function goes on behind the call that suspended it, so its resume address lies in it.
     const CallSiteCache::Entry* entry = vm.aotState().callSiteCache->resolve(image, suspended.coroutine->resumeAddress());
-    if (!entry || entry->isStubReturnSite() || FunctionDescription(image.rootFunctionOf(entry->code.index())).codeType() == ModuleCode)
+    if (!entry || entry->isStubReturnSite() || entry->isInModuleBody)
         return;
     ShownFrameFilter filter(true);
     forEachShownFrame(entry->code, entry->site, filter, [&](const TraceFrame& frame) {
@@ -827,19 +839,22 @@ static void appendFrames(VM& vm, const SuspendedAsyncFunction& suspended, WTF::V
     });
 }
 
+static ALWAYS_INLINE bool isModuleBody(VM& vm, const SavedFrame& saved)
+{
+    const CallSiteCache::Entry* entry = vm.aotState().callSiteCache->resolve(*Image::current(), saved.resumeAddress());
+    return entry && entry->isInModuleBody;
+}
+
 bool isSuspendedAsyncFunction(JSCell* cell)
 {
-    return findSuspendedAsyncFunction(cell).coroutine && !isSuspendedModuleBody(cell->vm(), cell);
+    SavedFrame* saved = tryGetSavedFrame(cell);
+    return saved && saved->kind() == CoroutineKind::AsyncFunction && !isModuleBody(cell->vm(), *saved);
 }
 
 bool isSuspendedModuleBody(VM& vm, JSValue coroutine)
 {
     SavedFrame* saved = coroutine.isCell() ? tryGetSavedFrame(coroutine.asCell()) : nullptr;
-    if (!saved)
-        return false;
-    const Image& image = *Image::current();
-    const CallSiteCache::Entry* entry = vm.aotState().callSiteCache->resolve(image, saved->resumeAddress());
-    return entry && !entry->isStubReturnSite() && FunctionDescription(image.rootFunctionOf(entry->code.index())).codeType() == ModuleCode;
+    return saved && isModuleBody(vm, *saved);
 }
 
 JSPromise* asyncFunctionPromise(JSCell* coroutine)

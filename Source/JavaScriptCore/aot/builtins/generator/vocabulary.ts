@@ -241,6 +241,8 @@ export type ClassName = string;
 export type LayoutName = string;
 export type SlotName = string;
 export type OperandName = "this" | (string & {});
+// An operand of a signature that names none: the receiver, or the argument at an index.
+export type ConstructedOperand = "this" | number;
 
 export interface CheckedNumber {
   value: number;

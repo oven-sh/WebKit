@@ -15,7 +15,7 @@ variable g2 name="count" module=m0 declared={type=anything} initialization=Undef
 variable g3 name="once" module=m1 declared={type=anything} initialization=Undefined
 runtimefunction id=33 function=f7
 runtimefunction id=65 function=f8
-runtimefunction id=131090 function=f10
+runtimefunction id=131091 function=f10
 
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Integer integer=0
@@ -165,7 +165,7 @@ function f8 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRunt
   b4():
     Return v7
 }
-function f9 name="clampToLength" role=Library enclosingRuntimeFunction=131090 parameters=[{type=number}, {type=number}] results=[{type=int[0, 4294967295]}] {
+function f9 name="clampToLength" role=Library enclosingRuntimeFunction=131091 parameters=[{type=number}, {type=number}] results=[{type=int[0, 4294967295]}] {
     v2 = Integer integer=0
     v3 = Less v0, v2
     Branch v3 -> taken b1(), notTaken b4()
@@ -185,7 +185,7 @@ function f9 name="clampToLength" role=Library enclosingRuntimeFunction=131090 pa
     v9 = URShift v8, v2
     Return v9
 }
-function f10 name="traverseArray" role=Library enclosingRuntimeFunction=131090 parameters=[{type=Array<anything>}, {type=number}, {type=undefined|number}, {type=number}, {type=Array<anything>}, {type=anything}] results=[{type=anything}] {
+function f10 name="traverseArray" role=Library enclosingRuntimeFunction=131091 parameters=[{type=Array<anything>}, {type=number}, {type=undefined|number}, {type=number}, {type=Array<anything>}, {type=anything}] results=[{type=anything}] {
     v6 = Integer integer=0
     v7 = Integer integer=1
     v8 = Integer integer=2

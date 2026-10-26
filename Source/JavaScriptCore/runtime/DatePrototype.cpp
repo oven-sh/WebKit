@@ -26,6 +26,7 @@
 
 #include "DateConversion.h"
 #include "DateInstance.h"
+#include "DateTimeWriter.h"
 #include "Error.h"
 #include "IntegrityInlines.h"
 #include "IntlDateTimeFormat.h"
@@ -347,36 +348,11 @@ JSC_DEFINE_HOST_FUNCTION(dateProtoFuncToISOString, (JSGlobalObject* globalObject
         return throwVMTypeError(globalObject, scope);
 
     Integrity::auditStructureID(thisDateObj->structureID());
-    if (!std::isfinite(thisDateObj->internalNumber()))
+    double timeValue = thisDateObj->internalNumber();
+    if (!std::isfinite(timeValue))
         return throwVMError(globalObject, scope, createRangeError(globalObject, "Invalid Date"_s));
 
-    auto gregorianDateTime = thisDateObj->gregorianDateTimeUTC(vm.dateCache);
-    if (!gregorianDateTime)
-        return JSValue::encode(jsNontrivialString(vm, String("Invalid Date"_s)));
-
-    // https://tc39.es/ecma262/#sec-date-time-string-format
-
-    // If the year is outside the bounds of 0 and 9999 inclusive we want to use the extended year format (ES 15.9.1.15.1).
-    int ms = static_cast<int>(fmod(thisDateObj->internalNumber(), msPerSecond));
-    if (ms < 0)
-        ms += msPerSecond;
-
-    int year = gregorianDateTime.year();
-    int month = gregorianDateTime.month() + 1;
-    int day = gregorianDateTime.monthDay();
-    int hour = gregorianDateTime.hour();
-    int minute = gregorianDateTime.minute();
-    int second = gregorianDateTime.second();
-
-    String prefix;
-    auto yearDigits = 4;
-    if (year < 0 || year > 9999) {
-        prefix = year < 0 ? "-"_s : "+"_s;
-        yearDigits = 6;
-        year = std::abs(year);
-    }
-
-    return JSValue::encode(jsNontrivialString(vm, makeString(prefix, pad('0', yearDigits, year), '-', pad('0', 2, month), '-', pad('0', 2, day), 'T', pad('0', 2, hour), ':', pad('0', 2, minute), ':', pad('0', 2, second), '.', pad('0', 3, ms), 'Z')));
+    return JSValue::encode(jsNontrivialString(vm, makeISODateTimeString(timeValue)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(dateProtoFuncToDateString, (JSGlobalObject* globalObject, CallFrame* callFrame))

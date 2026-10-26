@@ -15,6 +15,7 @@
 #include "AOTCreateEntrypoints.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionDescription.h"
+#include "AOTIRProgram.h"
 #include "AOTPlacementSteps.h"
 #include "AOTRepresentation.h"
 #include "AOTThreads.h"
@@ -263,8 +264,11 @@ static bool takesNewTarget(const Function& function)
 }
 
 // A file of library functions is no runtime module, and a pass that replaces a function in place gives it another role.
+// What the bundler imports is evaluated as a file of the program is, so its functions are ordinary function objects.
 bool isInRuntimeModule(const Program& program, const Function& function)
 {
+    if (function.module && isBundlerHelperModule(program, program.at(function.module)))
+        return false;
     if (function.role == FunctionRole::Library || function.enclosingRuntimeFunction)
         return true;
     return function.module && program.at(function.module).kind == ModuleKind::RuntimeSource;
@@ -421,9 +425,12 @@ bool rejectsOnThrow(const Program& program, const Function& function)
 // StackFrame gives an async frame of such a function no name. The frame of an async function keeps the name the function itself has, not one it takes from a variable or a property.
 static bool isNamedByOwner(const Function& function)
 {
+    bool hasExplicitName = function.has(FunctionFlags::HasExplicitName);
+    // The engine goes by the text. An `await` is written in the function, and the build has found that the function never reaches it.
+    if (function.role == FunctionRole::AsyncWorker)
+        return !hasExplicitName && function.hasWrittenAwait;
     if (function.role != FunctionRole::CoroutineBody)
         return false;
-    bool hasExplicitName = function.has(FunctionFlags::HasExplicitName);
     switch (kindOfCoroutine(function)) {
     case CoroutineKind::AsyncFunction:
         return !hasExplicitName;

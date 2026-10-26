@@ -1088,20 +1088,29 @@ ClimbingSet HeapRule::publicModulesThatMayBe(const ValueFlowOperand& object)
     return m_context.restrict(objects, m_tables.objectsOfPublicModules());
 }
 
-// module[key]: the read leaves out createRequire, which loads nothing by itself. Where what it answers is only called, it answers that too.
-void HeapRule::readMembersLeftOutThatAreOnlyCalled(const ValueFlowOperand& object)
+// require("node:module")[key], Module[key] on an import: the operation that loads or names the module hands it to the read itself.
+static bool readsWhatModuleOperationAnswers(const Function& function, ValueID read)
+{
+    const Value& operation = function.at(read);
+    return operation.opcode == Opcode::ElemGet && flowRuleOf(function.at(definitionThroughSameValues(function, operation.objectOperand())).opcode) == FlowRule::Module;
+}
+
+// module[key]: the read leaves out createRequire, which loads nothing by itself. It answers that too where the operations say which module it reads, as a read that names the member does, and where what it answers is only called.
+void HeapRule::readMembersLeftOutThatLoadNothing(const ValueFlowOperand& object)
 {
     if (m_statement.kind != ValueFlowStatementKind::Operation || !m_statement.function || !m_statement.site || !m_statement.result)
         return;
+    const Function& function = m_program.at(m_statement.function);
+    bool namesModule = readsWhatModuleOperationAnswers(function, m_statement.site);
     ValueSetID membersThatLoadNothingThemselves = m_context.maker().intersect(m_tables.objectsThatLetInUnseenCode(), ValueSets::complement(m_tables.objectsThatLetInUnseenCodeWhenCalled()));
-    if (!m_context.holdsAnyOf(ClimbingSet(membersThatLoadNothingThemselves), m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed)))
+    if (!namesModule && !m_context.holdsAnyOf(ClimbingSet(membersThatLoadNothingThemselves), m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed)))
         return;
     ValueSetID members = ValueSets::nothing;
     m_context.forEachMember(publicModulesThatMayBe(object), [&](ValueFlowObjectID holder) {
         members = m_context.maker().unite(members, m_tables.membersOf(m_universe.builtinOf(holder)).leftOut);
     });
     members = m_context.maker().intersect(members, membersThatLoadNothingThemselves);
-    if (members == ValueSets::nothing || !isOnlyCalled(m_program, m_program.at(m_statement.function), m_statement.site))
+    if (members == ValueSets::nothing || (!namesModule && !isOnlyCalled(m_program, function, m_statement.site)))
         return;
     m_context.sets().forEachMember(members, [&](ValueFlowObjectID member) {
         use(m_universe.builtinOf(member), BuiltinUse::Read);
@@ -1119,7 +1128,7 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
     case HeapKeyClass::Index:
         break;
     case HeapKeyClass::Unknown:
-        readMembersLeftOutThatAreOnlyCalled(object);
+        readMembersLeftOutThatLoadNothing(object);
         break;
     }
     if (holders == ValueSets::nothing || !isOperationOfFunction())

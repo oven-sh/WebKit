@@ -11,6 +11,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
+#include "AOTEffectsOfOperands.h"
 #include "AOTPhaseTimes.h"
 #include "AOTResultRules.h"
 #include "AOTSort.h"
@@ -1069,6 +1070,14 @@ private:
                 if (overload.code.model || !doRecordsDescribe(builtins, overload))
                     return false;
                 return (overload.receiver && readsSpecies(*overload.receiver)) || std::ranges::any_of(overload.parameters, readsSpecies);
+            });
+        });
+        constexpr OperandUses usesChangingObject = operandWritingUses | OperandUses { OperandUse::DefinesName, OperandUse::TakesDescriptor, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype };
+        universe.m_builtinFunctionsThatActOnReceiver = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
+            return isCallableBuiltin(builtins, builtin) && std::ranges::any_of(builtins.overloadsOf(builtins.canonicalID(builtin)), [&](const BuiltinOverload& overload) {
+                if (overload.mode != BuiltinCallMode::Call || !overload.receiver || overload.code.model || !doRecordsDescribe(builtins, overload))
+                    return false;
+                return readsSpecies(*overload.receiver) || overload.receiver->uses.containsAny(usesChangingObject);
             });
         });
 

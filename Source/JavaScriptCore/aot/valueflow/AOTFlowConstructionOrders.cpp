@@ -1675,6 +1675,10 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
     result.functionsSeeingOnlyFinishedObjects = findFunctionsSeeingOnlyFinishedObjects(program, inputs.loops(), graph);
 
     ValueSetID newTargetsOfOtherFunctions = findNewTargetsOfOtherFunctions(inputs, heap);
+    inputs.sets().forEachMember(newTargetsOfOtherFunctions, [&](ValueFlowObjectID newTarget) {
+        if (LayoutID constructed = program.at(inputs.universe().closureFunction(newTarget)).constructedClass)
+            result.layouts[constructed.index()].isNewTargetOfOtherFunctions = true;
+    });
     BitVector isAllocatedElsewhere = findLayoutsAllocatedElsewhere(inputs, tables);
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         const Layout& layout = program.layouts[index];
@@ -1736,6 +1740,7 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
         for (const TaggedLayout& member : family.members) {
             ValueFlowConstructions::OfLayout& construction = result.layouts[member.layout.index()];
             construction.isFollowed = maker.isFollowed;
+            construction.isNewTargetOfOtherFunctions = maker.isNewTargetOfOtherFunctions;
             construction.keysStoredBeforeObjectLeaks = maker.keysStoredBeforeObjectLeaks;
             construction.fieldsStoredBeforeObjectLeaks = maker.fieldsStoredBeforeObjectLeaks;
             construction.keysStoredAtBirth = maker.keysStoredAtBirth;

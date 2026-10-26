@@ -20,7 +20,7 @@ const requiresNew = {
   implementation: b.hostCall,
 } satisfies b.FunctionField;
 
-const otherReceiver = b.otherwiseBy(b.hostCall);
+const otherReceiver = b.otherwiseConstructs("this", b.hostCall);
 
 const chainedReaction = (settled: b.TableType) => [
   b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Later", this: b.undefined, args: [settled], result: "Stored", resultTo: b.resultSlot("value") }),

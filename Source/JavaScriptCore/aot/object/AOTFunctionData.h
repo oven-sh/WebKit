@@ -44,6 +44,8 @@ struct FunctionKindData {
     constexpr MethodKind accessor() const { return accessorKind == methodThatNotesLooksForName ? MethodKind::Method : static_cast<MethodKind>(accessorKind); }
     constexpr bool notesLooksForName() const { return accessorKind != static_cast<unsigned>(MethodKind::Method); }
     constexpr bool isBound() const { return callable() == CallableKind::Bound; }
+    // A slim closure stays one: the name that the look brings into its frames is the one they show until it has a displayName, for which it needs properties.
+    constexpr bool notesLooksForNameInSlimClosure() const { return accessorKind == methodThatNotesLooksForName && isSlim && !isBound(); }
     constexpr bool hasInitialNamePrefix() const { return isBound() || accessor() != MethodKind::Method; }
 };
 static_assert(sizeof(FunctionKindData) == 2 && isImageRecord<FunctionKindData>);

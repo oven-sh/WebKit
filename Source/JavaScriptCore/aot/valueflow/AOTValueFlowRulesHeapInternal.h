@@ -225,7 +225,7 @@ private:
     void readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey&, ValueFlowNodeID result, Members& getters);
     void readEvaluators(const ValueFlowOperand& object, const HeapKey&);
     ClimbingSet publicModulesThatMayBe(const ValueFlowOperand& object);
-    void readMembersLeftOutThatAreOnlyCalled(const ValueFlowOperand& object);
+    void readMembersLeftOutThatLoadNothing(const ValueFlowOperand& object);
     bool isNativeModuleThatNobodyNames(ValueFlowObjectID holder) { return m_context.sets().contains(m_tables.objectsOfNativeModules(), holder) && !m_context.holdsAnyOf(ClimbingSet(only(holder)), m_context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)); }
     bool isMemberOfBun(BuiltinID member) const { return m_builtins.at(member).holder && m_builtins.canonicalID(m_builtins.at(member).holder) == Builtins::Bun; }
     bool isMemberOfBunUsedByNameAlone(BuiltinID member) const;

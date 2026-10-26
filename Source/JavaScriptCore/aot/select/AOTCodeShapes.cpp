@@ -35,7 +35,7 @@ static CodeShape computeCodeShape(FunctionPassContext& pass, BlockID block, std:
         return CodeShape::Compact;
     if (!isCompactEverywhere)
         isCompactEverywhere = isCompactAtEveryFrequencyUpToEntry(pass) && runsNoBlockMoreOftenThanEntry(pass.analyses.cfg());
-    if (*isCompactEverywhere)
+    if (*isCompactEverywhere || pass.analyses.blockFrequencies().alwaysEndsInThrow(block))
         return CodeShape::Compact;
     // The long forms in line pay where the code is at hand when it runs. Of a very large program most is not, and most never runs.
     double heat = pass.heatOf(block);

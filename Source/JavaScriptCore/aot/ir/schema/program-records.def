@@ -41,7 +41,7 @@ enum EntryParameter (presentWith: FunctionFlags) {
 record SourceRange wire { start: UInt32 end: UInt32 }
 record Body wire customEngine customText { code: Span<CodeWord> blockCount: UInt32 valueCount: UInt32 }
 record Function wire extendedEngine {
-    name: String? module: Module(Referrer) position: UInt32 text: SourceRange kind: FunctionKind role: FunctionRole flags: FunctionFlags length: UInt32
+    name: String? module: Module(Referrer) position: UInt32 text: SourceRange kind: FunctionKind role: FunctionRole flags: FunctionFlags length: UInt32 hasWrittenAwait: Bool
     enclosingRuntimeFunction: RuntimeFunction? captures: Span<DeclaredType> thisType: DeclaredType parameters: Span<DeclaredType>
     results: Span<DeclaredType> body: Body functionTypes: Span<Function(Dispatch)> sorted builtinMembers: Span<Builtin> sorted
     | engine capabilities: FunctionCapabilities derivation: Derivation creator: CreatorRecord constructedClass: Layout? inlineFrames: List<InlineFrame>

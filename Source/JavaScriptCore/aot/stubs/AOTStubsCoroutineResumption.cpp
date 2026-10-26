@@ -130,7 +130,7 @@ StubSignature signatureOfEnterHandlerOfJob(StubKey) { return { }; }
 void generateEnterSavedFrame(StubAssembler& jit)
 {
     const GPRReg scratch = jit.reuseScratch(StubRegister::T11);
-    emitEnterAdapter(jit, scratch);
+    emitEnterAdapter(jit, AdapterCaller::NativeCodeForJobOfCoroutine);
     const GPRReg saved = jit.reuseScratch(StubRegister::A0);
     const GPRReg mode = jit.reuseScratch(StubRegister::A1);
     const GPRReg value = jit.reuseScratch(StubRegister::A2);
@@ -327,7 +327,7 @@ void generateEnterSavedFrame(StubAssembler& jit)
         // The arguments lie where the adapter finds those of a coroutine: the promise, the handler, what the handler is called with. Without a promise the function is called without an argument.
         jit.align();
         jit.bindEntry(enterHandlerOfJob());
-        emitEnterAdapter(jit, scratch);
+        emitEnterAdapter(jit, AdapterCaller::NativeCodeForJobOfCoroutine);
         jit.load8(coroutineWord(AOT_INSTANCE_OFFSET(coroutines.nextEntryEndsJob)), scratch);
         jit.store8(TrustedImm32(0), coroutineWord(AOT_INSTANCE_OFFSET(coroutines.nextEntryEndsJob)));
         jit.store64(scratch, endsJob);

@@ -77,6 +77,8 @@ const ModuleHost& moduleHostOf(JSGlobalObject*);
 
 JS_EXPORT_PRIVATE std::optional<ModuleID> findModule(StringView publicPath);
 JS_EXPORT_PRIVATE String modulePath(ModuleID);
+// The URL of the source provider that the engine would run the module from. A text that the program evaluates, `new Function(text)`, has none.
+String sourceProviderURL(ModuleID);
 JS_EXPORT_PRIVATE bool entryPointIsCommonJS(JSGlobalObject*);
 JS_EXPORT_PRIVATE void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>&);
 // Code: what the host would have to interpret or link at run time. Data files load in every executable.

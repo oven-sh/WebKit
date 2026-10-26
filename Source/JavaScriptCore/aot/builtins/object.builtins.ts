@@ -296,6 +296,7 @@ export default b.declarations(
           ],
         },
         reads: ownProperties,
+        model: b.functionIn("models/Objects", "getOwnPropertyDescriptors"),
         implementation: b.hostCall,
       },
       getOwnPropertyNames: ownKeyList("Names", b.string),

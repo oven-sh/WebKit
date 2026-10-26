@@ -609,8 +609,9 @@ static AllocationHeapCause checkCellForm(const Program& program, const Value& al
 {
     if (allocation.opcode != Opcode::NewClosure)
         return checkObjectForm(program, allocation);
-    // The list of recorded callees holds the closure that the function is entered through, and the collector visits the list.
-    if (program.at(allocation.function()).has(FunctionCapabilities::RecordsCallee))
+    // The list of recorded callees holds the closure that the function is entered through, and the collector visits the list. Where it is the run time that records, once a closure of the function was renamed, no closure that lies in a frame is written into the list.
+    const Function& callee = program.at(allocation.function());
+    if (callee.has(FunctionCapabilities::RecordsCallee) && !callee.has(FunctionCapabilities::RecordsCalleeOnceRenamed))
         return AllocationHeapCause::ClosureIsNotOnlyCalled;
     return checkClosureForm(program, allocation);
 }

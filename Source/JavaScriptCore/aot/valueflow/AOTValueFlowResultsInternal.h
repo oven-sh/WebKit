@@ -825,6 +825,7 @@ ValueSetID objectsWithEnumerableKeysShown(const ValueFlowUsesOfHeap&);
 struct ValueFlowConstructions {
     struct OfLayout {
         bool isFollowed { false };
+        bool isNewTargetOfOtherFunctions { false };
         bool createsFieldsOnlyInListedOrders { false };
         Vector<PropertyKeyID> keysStoredBeforeObjectLeaks;
         Vector<FieldReference> fieldsStoredBeforeObjectLeaks;
@@ -836,6 +837,7 @@ struct ValueFlowConstructions {
     };
 
     bool isFollowed(LayoutID layout) const { return layouts[layout.index()].isFollowed; }
+    bool isNewTargetOfOtherFunctions(LayoutID layout) const { return layouts[layout.index()].isNewTargetOfOtherFunctions; }
     bool createsFieldsOnlyInListedOrders(LayoutID layout) const { return layouts[layout.index()].createsFieldsOnlyInListedOrders; }
     const Vector<FieldOrder>& ordersOf(LayoutID layout) const LIFETIME_BOUND { return layouts[layout.index()].orders; }
     bool isStoredBeforeObjectLeaks(LayoutID layout, PropertyKeyID key, FieldReference declaration) const

@@ -2,6 +2,7 @@
 # In the pipeline ResolveAccesses comes first and rewrites such a store, which needs no test of a type: PlaceTypeTests looks at the position of the rewritten store as it does at that of a rewritten read.
 # An append by index gets no test: it would fail every time. A value that the storage does not take as it is leaves the store as it was
 # FORM: Prepared optimizing
+# OPTIONS: heat=OnlyLoopsAreHot
 # RUN: pass PlaceTypeTests
 # RUN(RESOLVED): pass ResolveAccesses PlaceTypeTests
 

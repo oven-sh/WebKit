@@ -16,6 +16,7 @@
 #include "AOTStubsValues.h"
 #include "JSCJSValueInlines.h"
 #include "JSString.h"
+#include <limits>
 
 namespace JSC { namespace AOT {
 
@@ -474,6 +475,9 @@ static void emitUnaryOnDouble(StubAssembler& jit, UnaryOperationForm form, GPRRe
     const FPRReg number = jit.allocateScratch(FPRInfo::fpRegT0);
     const FPRReg other = jit.allocateScratch(FPRInfo::fpRegT1);
 
+    // The sign of a boxed double is the highest bit of the box. A NaN changes its sign too, which a product with -1 would keep.
+    if (form == UnaryOperationForm::Negate)
+        jit.xor64(TrustedImm64(std::numeric_limits<int64_t>::min()), value);
     unboxDouble(jit, value, scratch, number);
     if (form == UnaryOperationForm::BitNot) {
         emitDoubleToInt32(jit, number, scratch, slow);
@@ -481,9 +485,11 @@ static void emitUnaryOnDouble(StubAssembler& jit, UnaryOperationForm form, GPRRe
         boxInt32AndReturn(jit, scratch, value);
         return;
     }
-    jit.move(TrustedImm32(form == UnaryOperationForm::Increment ? 1 : -1), scratch);
-    jit.convertInt32ToDouble(scratch, other);
-    form == UnaryOperationForm::Negate ? jit.mulDouble(other, number) : jit.addDouble(other, number);
+    if (form != UnaryOperationForm::Negate) {
+        jit.move(TrustedImm32(form == UnaryOperationForm::Increment ? 1 : -1), scratch);
+        jit.convertInt32ToDouble(scratch, other);
+        jit.addDouble(other, number);
+    }
     boxResultOfArithmeticAndReturn(jit, number, other, scratch, value);
 }
 

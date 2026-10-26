@@ -582,9 +582,10 @@ const isRestOperand = (place: ModelPlace): boolean =>
 
 function checkCallback(overload: ModelOverload, callback: ModelCallback, problems: Problems): void {
   const callee = parameterAt(overload, callback.callee);
-  if (callee === null) {
+  const takesEveryReceiver = overload.flags.includes("IsUndeclared") && callback.callee.operand === "Receiver";
+  if (callee === null && !takesEveryReceiver) {
     report(problems, overload, `it calls ${describeOperand(callback.callee)}, which it does not have`);
-  } else if (!admits(callee.accepted, "Function") && !admits(callee.converted, "Function")) {
+  } else if (callee !== null && !admits(callee.accepted, "Function") && !admits(callee.converted, "Function")) {
     report(problems, overload, `it calls ${describeOperand(callback.callee)}, which is never a function`);
   }
   if ((callback.resultUse === "Stored") !== (callback.resultTo.place !== "None")) {

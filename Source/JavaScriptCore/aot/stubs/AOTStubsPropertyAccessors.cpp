@@ -13,6 +13,7 @@
 #include "AOTInstance.h"
 #include "AOTProgramTables.h"
 #include "AOTRuntimeRecords.h"
+#include "AOTSlimClosure.h"
 #include "AOTStubProgramTables.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsConstants.h"
@@ -193,38 +194,50 @@ void callCustomSetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg value
     callRecordedAccessorAndReturn(jit, receiver, record, uid, value);
 }
 
-// functionNames has no "get ", "set " or "bound ". The run time notes a look that stack frames tell of.
-static void branchUnlessNameIsReadFromTable(StubAssembler& jit, GPRReg function, GPRReg kind, JumpList& hasPrefix)
+// functionNames has no "get ", "set " or "bound ". A look that stack frames tell of is noted in a slim closure, and by the run time in every other function object.
+static void noteLookForNameReadFromTable(StubAssembler& jit, GPRReg closure, GPRReg function, GPRReg kind, JumpList& isLeftToRunTime)
 {
     constexpr CallableKind callableKinds[] = { CallableKind::Plain, CallableKind::Arrow, CallableKind::Method, CallableKind::Bound };
-    auto encode = [](unsigned accessorKind, unsigned callableKind) -> uint32_t {
+    auto encode = [](unsigned accessorKind, unsigned callableKind, bool isSlim) -> uint32_t {
         FunctionKindData data { };
         data.accessorKind = accessorKind;
         data.callableKind = callableKind;
+        data.isSlim = isSlim;
         return std::bit_cast<uint16_t>(data);
     };
-    const uint32_t methodAccessorKind = encode(static_cast<unsigned>(MethodKind::Method), 0);
-    const uint32_t boundCallableKind = encode(0, static_cast<unsigned>(CallableKind::Bound));
-    uint32_t accessorKindMask = 0;
+    const uint32_t methodAccessorKind = encode(static_cast<unsigned>(MethodKind::Method), 0, false);
+    const uint32_t boundCallableKind = encode(0, static_cast<unsigned>(CallableKind::Bound), false);
+    const uint32_t flipped = methodAccessorKind | boundCallableKind;
+    const uint32_t accessorKindMask = encode(methodThatNotesLooksForName, 0, false);
+    const uint32_t accessorKindAndFormMask = encode(methodThatNotesLooksForName, 0, true);
     uint32_t callableKindMask = 0;
-    for (MethodKind accessorKind : allMembersOf<MethodKind>)
-        accessorKindMask |= encode(static_cast<unsigned>(accessorKind), 0);
     for (CallableKind callableKind : callableKinds)
-        callableKindMask |= encode(0, static_cast<unsigned>(callableKind));
-    RELEASE_ASSERT(!(accessorKindMask & callableKindMask));
+        callableKindMask |= encode(0, static_cast<unsigned>(callableKind), false);
+    RELEASE_ASSERT(!(accessorKindAndFormMask & callableKindMask) && !(accessorKindAndFormMask & flipped));
+    for (MethodKind accessorKind : allMembersOf<MethodKind>)
+        RELEASE_ASSERT(!(encode(static_cast<unsigned>(accessorKind), 0, false) & ~accessorKindMask));
     for (unsigned accessorKind = 0; accessorKind <= methodThatNotesLooksForName; ++accessorKind) {
         for (CallableKind callableKind : callableKinds) {
-            const uint32_t functionKind = encode(accessorKind, static_cast<unsigned>(callableKind));
-            const bool testLeaves = (functionKind & accessorKindMask) != methodAccessorKind || (functionKind & callableKindMask) == boundCallableKind;
-            const FunctionKindData data = std::bit_cast<FunctionKindData>(static_cast<uint16_t>(functionKind));
-            RELEASE_ASSERT(testLeaves == (data.hasInitialNamePrefix() || data.notesLooksForName()));
+            for (bool isSlim : { false, true }) {
+                const uint32_t tested = encode(accessorKind, static_cast<unsigned>(callableKind), isSlim) ^ flipped;
+                const bool needsNoNote = !(tested & accessorKindMask);
+                const bool isNotedHere = (tested & accessorKindAndFormMask) == accessorKindAndFormMask;
+                const bool leaves = !(tested & callableKindMask) || (!needsNoNote && !isNotedHere);
+                const FunctionKindData data = std::bit_cast<FunctionKindData>(static_cast<uint16_t>(tested ^ flipped));
+                RELEASE_ASSERT(leaves == (data.hasInitialNamePrefix() || (data.notesLooksForName() && !data.notesLooksForNameInSlimClosure())));
+                RELEASE_ASSERT(leaves || needsNoNote == !data.notesLooksForName());
+            }
         }
     }
 
     loadKindOfClosureFunction(jit, function, kind);
-    jit.xor32(TrustedImm32(methodAccessorKind | boundCallableKind), kind);
-    hasPrefix.append(jit.branchTest32(CCallHelpers::NonZero, kind, TrustedImm32(accessorKindMask)));
-    hasPrefix.append(jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(callableKindMask)));
+    jit.xor32(TrustedImm32(flipped), kind);
+    isLeftToRunTime.append(jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(callableKindMask)));
+    Jump needsNoNote = jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(accessorKindMask));
+    jit.and32(TrustedImm32(accessorKindAndFormMask), kind);
+    isLeftToRunTime.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(accessorKindAndFormMask)));
+    jit.store8(TrustedImm32(SlimClosure::nameWasLookedForBit), Address(closure, JSCell::indexingTypeAndMiscOffset()));
+    needsNoNote.link(&jit);
 }
 
 static void loadClosureFunction(StubAssembler& jit, GPRReg value, GPRReg function, JumpList& isNotClosure)
@@ -284,7 +297,7 @@ void readClosureNameAndReturn(StubAssembler& jit, GPRReg closure, JumpList& miss
     }
     loadClosureFunction(jit, closure, function, miss);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
-    branchUnlessNameIsReadFromTable(jit, function, scratch, miss);
+    noteLookForNameReadFromTable(jit, closure, function, scratch, miss);
     // ProgramTables::nameOfFunction(): functionSources begins at the first form of another function, and the groups of names end there.
     auto loadNumberOfFunctionsInFrontOfForms = [&] {
         jit.load32(programTableCount(tables, ProgramTableIndex::functionRecordNumbers), scratch);

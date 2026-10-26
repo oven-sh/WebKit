@@ -1,0 +1,13 @@
+# Array.of.call(Function)
+# Array.of constructs a receiver that is not Array. No operation of the program spells the construction out, and the evaluator is applied all the same.
+# RUN: valueflow-solve unseen
+# CHECK: unseen-code yes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Function
+    v1 = Builtin builtin=ArrayOf
+    v2 = Call v1, v0
+    Return
+}

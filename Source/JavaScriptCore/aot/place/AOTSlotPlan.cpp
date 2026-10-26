@@ -647,7 +647,7 @@ bool isDescribedToRunTime(const Program& program, const FlowResults& flow, Modul
         case NamespaceUse::Unknown:
             return true;
         case NamespaceUse::NamedReadsOnly:
-            return program.at(moduleExport.variable).flow.reads != ReadState::NeverRead;
+            return std::ranges::binary_search(flow.module(exporter).exportsReadByName, moduleExport.variable);
         case NamespaceUse::NeverCreated:
             return program.at(moduleExport.variable).flow.reads == ReadState::Unknown;
         }

@@ -529,11 +529,11 @@ bool CompiledFrameIterator::isConstructCall()
     }
 }
 
-JSObject* CompiledFrameIterator::recordedCallee()
+std::optional<JSObject*> CompiledFrameIterator::recordedCallee()
 {
     FunctionTables& tables = FunctionTables::of(*m_vm);
     if (!tables.hasRecordedCallees() && !tables.recordsCalleesOfCallsByValue()) [[likely]]
-        return nullptr;
+        return std::nullopt;
 
     // The entrypoint records the callee. Its frame, or the one that took its place in a tail call, is the outermost of the hidden frames of the function.
     FunctionID source = FunctionDescription(frame().function).sourceFunction();
@@ -546,7 +546,7 @@ JSObject* CompiledFrameIterator::recordedCallee()
         return true;
     };
     if (!hasOnlyEntrypoints(m_frame.code, { m_frame.function, m_frame.callSite, m_frame.inlineFrame, m_isInlinedConstructCall, m_frame.isTailDeleted }))
-        return nullptr;
+        return std::nullopt;
 
     Cursor cursor = m_cursor;
     Exit exit;
@@ -558,16 +558,14 @@ JSObject* CompiledFrameIterator::recordedCallee()
         stackPointer = AOT::stackPointerOfCaller(cursor.callFrame, cursor.bytesAboveReturnAddress);
     }
     if (runEnd.resumesSavedFrame)
-        return nullptr;
+        return std::nullopt;
     // Who enters compiled code from outside comes by no stub that records, and has the function object in his own frame.
     if (runEnd.adapterFrame && tables.recordsCalleesOf(source)) {
         JSObject* callee = runEnd.adapterFrame->jsCallee();
         std::optional<FunctionID> function = functionOf(callee);
-        return function && sourceFunctionOf(*function) == source ? callee : nullptr;
+        return function && sourceFunctionOf(*function) == source ? std::optional(callee) : std::nullopt;
     }
-
-    JSObject* closure = tables.recordedCalleeOfCallFrom(stackPointer);
-    return closure && sourceFunctionOf(*functionOf(closure)) == source ? closure : nullptr;
+    return tables.recordedCalleeOfCallFrom(stackPointer, source);
 }
 
 bool isOperationFrameRecord(VM& vm, const CallFrame* frameRecord)
@@ -706,7 +704,9 @@ static CallSiteCache::Entry createFunctionEntry(const Image& image, InlineFrameR
         entry.site = *returnSite.site;
     entry.handler = returnSite.handler;
     entry.frame = returnSite.frame;
-    entry.rejectsOnThrow = FunctionDescription(image.rootFunctionOf(location.function)).rejectsOnThrow();
+    FunctionDescription root(image.rootFunctionOf(location.function));
+    entry.rejectsOnThrow = root.rejectsOnThrow();
+    entry.isInModuleBody = root.codeType() == ModuleCode;
 
     LogicalFrame innermost = innermostLogicalFrame(image, reader, { entry.code, entry.site.callSite, entry.site.inlineFrame, false });
     entry.innermostFunction = innermost.function;

@@ -896,6 +896,7 @@ ReifiedSlimClosure* SlimClosure::becomeReified(VM& vm, Structure* structure, std
 {
     static_assert(offsetOfWord() == butterflyOffset());
     RELEASE_ASSERT(structure->outOfLineCapacity() == values.size() && getPrototypeDirect() == structure->storedPrototype());
+    bool takesName = nameWasLookedFor();
     Butterfly* butterfly = Butterfly::createUninitialized(vm, this, 0, values.size(), false, 0);
     for (unsigned i = 0; i < values.size(); ++i)
         butterfly->propertyStorage()[offsetInOutOfLineStorage(firstOutOfLineOffset + i)].setWithoutWriteBarrier(values[i]);
@@ -906,7 +907,10 @@ ReifiedSlimClosure* SlimClosure::becomeReified(VM& vm, Structure* structure, std
     WTF::storeStoreFence();
     JSCell::setStructure(vm, structure);
     vm.writeBarrier(this);
-    return uncheckedDowncast<ReifiedSlimClosure>(static_cast<JSObject*>(this));
+    auto* reified = uncheckedDowncast<ReifiedSlimClosure>(static_cast<JSObject*>(this));
+    if (takesName)
+        reified->lookForNameProperty(vm);
+    return reified;
 }
 
 ReifiedSlimClosure* SlimClosure::reify(VM& vm, PrototypeObject prototypeObject)
@@ -983,11 +987,13 @@ bool SlimClosure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObj
         return true;
     }
     if (name == vm.propertyNames->name) {
-        if (closure->kind().notesLooksForName()) {
+        if (closure->kind().notesLooksForNameInSlimClosure())
+            closure->noteLookForName();
+        else if (closure->kind().notesLooksForName()) {
             closure->reify(vm);
             return ReifiedSlimClosure::getOwnPropertySlot(object, globalObject, name, slot);
-        }
-        didLookForNameProperty(vm, closure);
+        } else
+            didLookForNameProperty(vm, closure);
         slot.setValue(object, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum, initialNamePropertyString(vm, closure->state(), closure->function()));
         return true;
     }

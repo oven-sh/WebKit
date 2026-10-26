@@ -1032,7 +1032,7 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record)
         }
         for (LoadInFlight& load : m_loadsInFlight)
             load.isWalked |= load.root == module;
-        if (!data(module).isLoadedByLoader() && m_rootWhoseFilesRanAhead != module && !m_instance.vm->m_synchronousModuleQueue && planLevelsOfLoad(module)) {
+        if (!data(module).isLoadedByLoader() && m_rootWhoseFilesRanAhead != module && planLevelsOfLoad(module)) {
             appendNextOnWay();
             return;
         }
@@ -1322,12 +1322,17 @@ std::optional<ModuleID> findModule(StringView publicPath)
 }
 
 // Each frame of each stack trace asks.
-String modulePath(ModuleID module)
+struct PathOfModule {
+    // A static string: every thread may hold it.
+    StringImpl* path;
+    bool isEvaluatedText;
+};
+
+static PathOfModule pathOfModule(ModuleID module)
 {
-    // Static strings: every thread may hold them.
     struct PathsOfModules {
         Lock lock;
-        UncheckedKeyHashMap<uint64_t, StringImpl*> byImageAndModule WTF_GUARDED_BY_LOCK(lock);
+        UncheckedKeyHashMap<uint64_t, PathOfModule> byImageAndModule WTF_GUARDED_BY_LOCK(lock);
     };
     static NeverDestroyed<PathsOfModules> pathsOfModules;
     PathsOfModules& paths = pathsOfModules.get();
@@ -1339,8 +1344,19 @@ String modulePath(ModuleID module)
         // A text that the program evaluates is shown under the URL of the file that evaluates it, as the engine shows the text of `new Function(text)`.
         std::optional<ModuleID> evaluator = table->data(module).evaluatorModule();
         String path = evaluator ? URL::fileURLWithFileSystemPath(table->pathText(*evaluator)).string() : table->pathText(module);
-        return &(path.is8Bit() ? StringImpl::createStaticStringImpl(path.span8()) : StringImpl::createStaticStringImpl(path.span16())).leakRef();
+        return PathOfModule { &(path.is8Bit() ? StringImpl::createStaticStringImpl(path.span8()) : StringImpl::createStaticStringImpl(path.span16())).leakRef(), !!evaluator };
     }).iterator->value;
+}
+
+String modulePath(ModuleID module)
+{
+    return pathOfModule(module).path;
+}
+
+String sourceProviderURL(ModuleID module)
+{
+    PathOfModule found = pathOfModule(module);
+    return found.isEvaluatedText ? emptyString() : String(found.path);
 }
 
 bool entryPointIsCommonJS(JSGlobalObject* realm)

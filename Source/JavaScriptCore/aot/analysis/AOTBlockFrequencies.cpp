@@ -358,7 +358,9 @@ BlockFrequencies::BlockFrequencies(const AnalysisContext& context, const Functio
     m_weights.fill(FullWeight, cfg.numNodes());
     uint8_t* weights = m_weights.mutableSpan().data();
     bool hasHandlers = cfg.hasHandlers();
+    bool hasBlockEndingInThrow = false;
     for (BlockID block : order) {
+        hasBlockEndingInThrow |= facts[block.index()].isInherentlyRare;
         switch (facts[block.index()].unlikelySide) {
         case BranchSide::Unknown:
             break;
@@ -401,6 +403,15 @@ BlockFrequencies::BlockFrequencies(const AnalysisContext& context, const Functio
             weight = std::max(weight, weightLevelOfEdge(weights[successors[edge].index()], edges[edge]));
         }
     };
+    auto findWhetherAlwaysEndsInThrow = [&](BlockID block) ALWAYS_INLINE_LAMBDA {
+        unsigned index = block.index();
+        std::span<const BlockID> targets { successors + firstSuccessor[index], successors + firstSuccessor[index + 1] - (hasHandlers && cfg.hasHandler(block) ? 1 : 0) };
+        bool leadsOnlyToSuchBlocks = !targets.empty() && std::ranges::all_of(targets, [&](BlockID target) {
+            return m_blocksEndingInThrow.quickGet(target.index());
+        });
+        if (facts[index].isInherentlyRare || leadsOnlyToSuchBlocks)
+            m_blocksEndingInThrow.quickSet(index);
+    };
     auto markRareEdges = [&](BlockID block) ALWAYS_INLINE_LAMBDA {
         unsigned index = block.index();
         if (weights[index] == RareWeight || facts[index].isNormalExit)
@@ -424,6 +435,20 @@ BlockFrequencies::BlockFrequencies(const AnalysisContext& context, const Functio
     }
     for (BlockID block : order.subspan(1))
         m_blocks[block.index()] = classOfWeightLevel(weights[block.index()]);
+
+    if (!hasBlockEndingInThrow)
+        return;
+    m_blocksEndingInThrow.ensureSize(cfg.numNodes());
+    if (!hasCycle) {
+        for (size_t index = order.size(); index--;)
+            findWhetherAlwaysEndsInThrow(order[index]);
+    } else {
+        for (BlockID block : forest->nodesInPostOrder())
+            findWhetherAlwaysEndsInThrow(block);
+    }
+    // Such a function has no other way, so nothing in it runs less often than the function is entered.
+    if (m_blocksEndingInThrow.quickGet(cfg.root().index()))
+        m_blocksEndingInThrow.clearAll();
 }
 
 BlockFrequencies::~BlockFrequencies() = default;

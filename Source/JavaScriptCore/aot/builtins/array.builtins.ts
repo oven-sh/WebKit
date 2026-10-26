@@ -183,7 +183,7 @@ export default b.declarations(
           requiresHolderAsThis: true,
           implementation: b.inline("ArrayOf"),
         },
-        b.otherwise,
+        b.otherwiseConstructs("this"),
       ],
     },
     instance: {

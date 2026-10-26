@@ -1017,8 +1017,21 @@ export function applyUses(context: OverloadContext, operand: ModelOperand, uses:
   for (const use of uses) applyUse(context, state, use);
 }
 
+const constructionWithAnyArguments: UseOf<"Calls"> = {
+  use: "Calls",
+  times: "Once",
+  afterwards: "TouchesOnlyWhatRowNames",
+  constructs: true,
+  spreadArguments: { place: "NewValue", value: { type: "Anything" } },
+  result: "Escapes",
+};
+
 export function applyWrittenUses(context: OverloadContext): void {
-  const { uses = {}, isUndeclared, mode } = context.signature;
+  const { uses = {}, isUndeclared, mode, constructs } = context.signature;
+  if (constructs !== undefined) {
+    const constructed = constructs === "this" ? receiverOperand : ({ operand: "Argument", index: constructs } as const);
+    applyCallback(context, constructed, constructionWithAnyArguments);
+  }
   // A getter or a setter names its class and its attribute, and nothing of the receiver.
   const namesNoReceiver = mode !== "Call";
   for (const name of Object.keys(uses)) context.operandOf(name, context.source);

@@ -112,8 +112,13 @@ void StubAssembler::emitOperationCallHead()
         if (prelude.operation == entry && prelude.emit(*this) == PreludeExit::Returns)
             return;
     }
+    jumpToOperationCallOf(entry);
+}
+
+void StubAssembler::jumpToOperationCallOf(Entry entry)
+{
     recordCall(entry);
-    move(TrustedImm32(offset), *m_signature.immediate);
+    move(TrustedImm32(offsetInRuntimeTable(entry)), *m_signature.immediate);
     jumpToStub(key().withoutImmediate());
 }
 

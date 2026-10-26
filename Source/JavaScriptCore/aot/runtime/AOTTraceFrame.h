@@ -24,6 +24,8 @@ struct TraceFrame {
     bool isAsyncFrame : 1 { false };
     // What the site called was entered.
     bool isCaller : 1 { false };
+    // CompiledFrameIterator::recordedCallee() is null.
+    bool calleeLiesInFrame : 1 { false };
 
     static TraceFrame of(CompiledFrameIterator&);
 };

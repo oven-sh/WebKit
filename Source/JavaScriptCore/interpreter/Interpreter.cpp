@@ -1014,8 +1014,10 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
                 const AOT::CompiledFrame& frame = visitor->compiledFrame();
                 if (visitor->isOfBuiltinCalledByCompiledFrame())
                     results.append(StackFrame(AOT::TraceFrame { frame.code, AOT::functionInFramesOf(frame.calledBuiltin), frame.callSite, !!frame.inlineFrame, false }));
-                else
-                    results.append(StackFrame(vm, owner, AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall(), false, false, visitor.compiledFrames().calleeWasEntered() }, visitor.compiledFrames().recordedCallee()));
+                else {
+                    std::optional<JSObject*> callee = visitor.compiledFrames().recordedCallee();
+                    results.append(StackFrame(vm, owner, AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall(), false, false, visitor.compiledFrames().calleeWasEntered(), callee && !*callee }, callee.value_or(nullptr)));
+                }
                 if (Options::useAsyncStackTrace() && !frame.inlineFrame && AOT::FunctionDescription(frame.function).isAsync() && visitor.compiledFrames().isAboveFramesThatWait())
                     entryFrameWhoseContextWaits = currentEntryFrame;
 #endif

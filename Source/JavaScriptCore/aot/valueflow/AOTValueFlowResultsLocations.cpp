@@ -342,6 +342,27 @@ static void noteModules(const ValueFlowResultInputs& inputs, std::span<const Mod
     });
 }
 
+// A read that names the variable finds it without the namespace object.
+static void listExportsReadByName(const ValueFlowResultInputs& inputs, const Locations& locations, std::span<ModuleFlow> modules)
+{
+    const Program& program = inputs.program;
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        if (modules[index].namespaceUse != NamespaceUse::NamedReadsOnly)
+            continue;
+        Vector<VariableID> listed;
+        for (const ModuleExport& entry : program.modules[index].exports) {
+            if (entry.kind != ModuleExportKind::Variable || !entry.variable)
+                continue;
+            bool isReadByHost = OptionSet<LocationEvent>::fromRaw(locations.events[locations.of(entry.variable)]).contains(LocationEvent::ReadOutsideOperations);
+            if (isReadByHost || !inputs.variablesOnObjects->accessesTo(entry.variable).empty())
+                listed.append(entry.variable);
+        }
+        AOT::sort(listed);
+        removeRepeatedElements(listed);
+        modules[index].exportsReadByName = WTF::move(listed);
+    }
+}
+
 static BitVector findLocationsStoredAtMostOnce(const ValueFlowResultInputs& inputs, std::span<const FunctionFlow> functions, const Locations& locations)
 {
     const Program& program = inputs.program;
@@ -393,6 +414,7 @@ void computeLocationResults(const ValueFlowResultInputs& inputs, ValueFlowOperat
     noteModules(inputs, tables.wholeProgram.modules.span(), locations);
     noteAccessesThroughObjects(inputs, locations);
     noteStaticFields(*inputs.variablesOnObjects, locations);
+    listExportsReadByName(inputs, locations, tables.wholeProgram.modules.mutableSpan());
 
     BitVector storedAtMostOnce = findLocationsStoredAtMostOnce(inputs, tables.functions.functions.span(), locations);
     auto flowOf = [&](uint32_t location, uint32_t switchSubject) {

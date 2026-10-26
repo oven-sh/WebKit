@@ -178,7 +178,7 @@ constexpr std::array rows {
     programPass(CallModules, Required, { Prepared, Prepared }, { Flow }, { }, resultsAboutBodies | Results { Heat }),
     countingOwnChanges(programPass(CreateEntrypoints, Required, { Prepared, Prepared }, { Flow }, { }, resultsAboutBodies)),
     addingOnly({ }, countingOwnChanges(programPass(ChooseCallingConventions, Optional, { Prepared, Prepared }, simplifyInputs | Results { CallGraph }, { CallingConventions }, resultsAboutBodies))),
-    addingOnly({ Opcode::GetDeferredClosureSlot, Opcode::GetDeferredClosureSlotOrUndefined }, programPass(DeferClosuresInFields, Optional, { Prepared, Prepared }, { }, { }, resultsAboutBodies)),
+    addingOnly({ Opcode::GetDeferredClosureSlot, Opcode::GetDeferredClosureSlotOrUndefined }, programPass(DeferClosuresInFields, Optional, { Prepared, Prepared }, { Heat }, { }, resultsAboutBodies)),
     addingOnly({ Opcode::MaterializeEnvironment, Opcode::EmptyArgumentList }, programPass(AllocateInFrames, Optional, { Prepared, Prepared }, { Flow, CallGraph, Heat, EffectSummaries }, { FrameAllocation }, { EffectSummaries })),
     addingOnly({ Opcode::ReleaseEnvironment, Opcode::MarkEnvironmentEscaped }, programPass(ReuseEnvironments, Optional, { Prepared, Prepared }, { Flow, FrameAllocation }, { EnvironmentReuse }, { EffectSummaries })),
     programPass(NumberLiteralStrings, Required, { Prepared, Placed }, { }, { LiteralStrings }, { }),
@@ -1324,7 +1324,7 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         edit(id, markResultsUsedAsKeys, m_build);
         return m_runner.lastProgramPassOutcome();
     case PassID::DeferClosuresInFields:
-        edit(id, deferClosuresInFields, m_build);
+        edit(id, deferClosuresInFields, inputsFor(id).heat, m_build);
         return m_runner.lastProgramPassOutcome();
     case PassID::ReadCapturesFromEnvironments:
         edit(id, readCapturesFromEnvironments, flow(), m_build);

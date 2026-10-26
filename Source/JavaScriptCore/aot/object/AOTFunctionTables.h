@@ -16,6 +16,7 @@
 #include "Weak.h"
 #include <array>
 #include <atomic>
+#include <optional>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/SparseBitVector.h>
@@ -118,6 +119,7 @@ struct FunctionTables {
     Vector<Strong<Structure>> closureStructuresWithoutTable;
     Lock namesLock;
     NamesByFunction namesSetAtRunTime WTF_GUARDED_BY_LOCK(namesLock);
+    NamesByFunction namesShownUntilLookedFor WTF_GUARDED_BY_LOCK(namesLock);
     DisplayNamesByFunction displayNames WTF_GUARDED_BY_LOCK(namesLock);
     // By the function as it is written.
     SparseBitVector<> namesLookedFor WTF_GUARDED_BY_LOCK(namesLock);
@@ -143,8 +145,8 @@ struct FunctionTables {
     // Its frames are named by the function object that runs in them.
     bool framesAreNamedByCallee(FunctionID);
     std::span<RecordedCallee> recordedCallees() { return recordedCalleeStorage.mutableSpan().subspan(hasRecordedCallees() ? 1 : 0); }
-    // Null unless the last call made from there recorded its callee.
-    JSObject* recordedCalleeOfCallFrom(const void* stackPointerOfCaller);
+    // Nothing unless the last call made from there recorded a function object of the function. Null: one that lies in a frame.
+    std::optional<JSObject*> recordedCalleeOfCallFrom(const void* stackPointerOfCaller, FunctionID sourceFunction);
     // Those of calls that may not have returned. The others leave the table.
     template<typename Visitor> void visitRecordedCallees(VM&, Visitor&);
     void finalizeRecordedCallees(VM&);

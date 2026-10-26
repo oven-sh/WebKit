@@ -360,7 +360,7 @@ uint16_t AssignmentPlanCache::describeMappedField(VM& vm, const LayoutData& targ
     const FieldData* to = layouts.field(vm, target, name);
     if (!to || to->flags & (fieldIsStoredOnce | fieldAttributeFlags | fieldMayExistWithoutStorage))
         return FieldMap::isNotServed;
-    if (to->holdsRawValueFromBirth || from.holdsRawValueFromBirth)
+    if (to->holdsRawValueFromBirth)
         return FieldMap::isNotServed;
     SlotRepresentation representation = to->slot.representation();
     if (from.slot.representation() == SlotRepresentation::DeferredClosure || representation == SlotRepresentation::DeferredClosure)

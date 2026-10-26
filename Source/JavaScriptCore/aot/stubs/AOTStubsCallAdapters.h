@@ -19,7 +19,9 @@ constexpr StubKey enterSlimClosure() { return StubKey(StubFamily::EnterSlimClosu
 constexpr StubKey enterModuleBody() { return StubKey(StubFamily::EnterModuleBody); }
 constexpr StubKey enterClosureForConstruct() { return StubKey(StubFamily::EnterClosureForConstruct); }
 
-void emitEnterAdapter(StubAssembler&, GPRReg calleeScratch, unsigned extraBytes = 0);
+// Only native code enters for a job of a coroutine, with as many arguments as fill their frame.
+enum class AdapterCaller : uint8_t { NativeCodeOrInterpreter, NativeCodeForJobOfCoroutine };
+void emitEnterAdapter(StubAssembler&, AdapterCaller, unsigned extraBytes = 0);
 void emitAdapterEpilogue(StubAssembler&);
 void emitRestoreAdapterCallerRegisters(StubAssembler&, GPRReg adapterFrame);
 

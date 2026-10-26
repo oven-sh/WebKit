@@ -202,7 +202,7 @@ void BlockFrequencies::dump(PrintStream& out, const Function& function) const
     RELEASE_ASSERT(function.blocks.size() == m_blocks.size());
     for (size_t index = 0; index < m_blocks.size(); ++index) {
         if (m_cfg.isReachable(BlockID(index)))
-            out.println("b", index, " frequency: ", nameOf(classOf(BlockID(index))), " count: ", WTF::format("%.6f", frequencyOf(BlockID(index))));
+            out.println("b", index, " frequency: ", nameOf(classOf(BlockID(index))), " count: ", WTF::format("%.6f", frequencyOf(BlockID(index))), alwaysEndsInThrow(BlockID(index)) ? " always ends in a throw" : "");
     }
     for (size_t index = 0; index < m_blocks.size(); ++index) {
         if (!m_cfg.isReachable(BlockID(index)))
