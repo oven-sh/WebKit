@@ -37,8 +37,11 @@ PristineTest pristineTestOf(const BuiltinTable& table, BuiltinClassID builtinCla
 
 BuiltinClassID classBelowWithTestedStructure(const BuiltinTable& table, BuiltinClassID builtinClass)
 {
-    BuiltinClassID below = BuiltinClasses::Buffer;
-    if (below == builtinClass || !table.isSameOrSubclassOf(below, builtinClass) || pristineTestOf(table, below) != PristineTest::InstanceStructure)
+    bool hasClosures = pristineTestOf(table, builtinClass) == PristineTest::ClosureAsCreated;
+    BuiltinClassID below = hasClosures ? BuiltinClasses::AsyncFunction : BuiltinClasses::Buffer;
+    if (below == builtinClass || !table.isSameOrSubclassOf(below, builtinClass) || pristineTestOf(table, below) != (hasClosures ? PristineTest::ClosureAsCreated : PristineTest::InstanceStructure))
+        return { };
+    if (hasClosures && !table.hasLockedPrototypeChain(below))
         return { };
     return below;
 }

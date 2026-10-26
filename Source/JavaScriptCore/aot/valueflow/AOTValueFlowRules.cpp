@@ -51,6 +51,27 @@ static void runConvert(const ValueFlowStatement& statement, ValueFlowRuleContext
         context.add(statement.result, context.maker().intersect(unknownValue(context, ValueFlowUnknownSource::UncheckedConversionOfUntracked), context.universe().objects()));
 }
 
+// Every use of `this` stands behind `this instanceof` the function itself. Which method answers that test, what `prototype` of the function holds and what stands above the global object are up to the program.
+static void addWhatUndefinedBecomesBehindTestForOwnInstances(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    ClimbingSet closure = only(context, universe.closureOf(statement.function));
+    auto objectsFound = [&](ClimbingSet start, ValueFlowName name) {
+        return context.restrict(context.valueOf(context.lookup(start, name)), universe.objects());
+    };
+    PropertyKeyID hasInstance = context.program().keyOf(BuiltinNames::hasInstanceSymbol);
+    ValueSetID inheritedMethod = context.maker().of(universe.objectOf(Builtins::FunctionPrototypeSymbolHasInstance));
+    ClimbingSet methods = context.unite(context.restrict(objectsFound(closure, ValueFlowName::property(hasInstance)), ValueSets::complement(inheritedMethod)), objectsFound(closure, ValueFlowName::getter(hasInstance)));
+    ClimbingSet held = objectsFound(closure, ValueFlowName::property(context.program().keyOf(BuiltinNames::prototype)));
+    ClimbingSet above = objectsFound(only(context, universe.objectOf(Builtins::GlobalThis)), prototypeLinkName);
+    if (context.meet(methods, universe.knownObjects()) || context.meet(context.restrict(held, universe.knownObjects()), above))
+        context.add(statement.result, only(context, universe.objectOf(Builtins::GlobalThis)));
+    // A function that native code may call is handed every escaped object as `this`, itself too, so its own stores under keys nobody knows write all three with objects nobody knows.
+    // Those do not name the global object. They make `this` an object nobody knows, of which no layout is said, and a store through it is to the global object what a store by unseen code is.
+    if (context.meet(context.unite(methods, context.unite(held, above)), universe.placeholdersAlone()))
+        context.add(statement.result, only(context, ValueFlowUniverse::unknownObject()));
+}
+
 static void runConversionToObject(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -75,8 +96,12 @@ static void runConversionToObject(const ValueFlowStatement& statement, ValueFlow
         if (wrapper && mayBe(value, wrappersOfPrimitives[ordinal].first))
             context.add(statement.result, only(context, wrapper));
     }
-    if (statement.opcode == Opcode::ToThis && mayBe(value, Primitive::Undefined | Primitive::Null) && !isUsedOnlyAsInstanceOfOwnFunction(context.program(), statement.function, statement.site))
-        context.add(statement.result, only(context, universe.objectOf(Builtins::GlobalThis)));
+    if (statement.opcode != Opcode::ToThis || !mayBe(value, Primitive::Undefined | Primitive::Null))
+        return;
+    // Where every use stands behind a test that the global object fails, the uses never meet it. proveValuesOfOperations() says of the value itself that it may be the global object.
+    if (isUsedOnlyAsInstanceOfOwnFunction(context.program(), statement.function, statement.site))
+        return addWhatUndefinedBecomesBehindTestForOwnInstances(statement, context);
+    context.add(statement.result, only(context, universe.objectOf(Builtins::GlobalThis)));
 }
 
 static void runNewDictionary(const ValueFlowStatement& statement, ValueFlowRuleContext& context)

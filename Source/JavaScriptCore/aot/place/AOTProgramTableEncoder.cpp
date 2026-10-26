@@ -2008,45 +2008,11 @@ static void appendClosureFunctionTables(TableEncoder& encoder)
     encoder.header.numberOfClosureCells = countClosureCells(encoder, range);
 }
 
-static bool showsSourceText(FunctionRole role)
-{
-    switch (role) {
-    case FunctionRole::Source:
-    case FunctionRole::CoroutineRamp:
-    case FunctionRole::ResultWrapper:
-    case FunctionRole::ParameterWrapper:
-    case FunctionRole::EntryChecks:
-        return true;
-    case FunctionRole::Library:
-    case FunctionRole::Model:
-    case FunctionRole::Signature:
-    case FunctionRole::GenericEntrypoint:
-    case FunctionRole::TableEntrypoint:
-    case FunctionRole::TableLookup:
-    case FunctionRole::GenericVersion:
-    case FunctionRole::AllocatedThisVersion:
-    case FunctionRole::ConstructBody:
-    case FunctionRole::CallSiteVersion:
-    case FunctionRole::CalleeVersion:
-    case FunctionRole::CoroutineBody:
-    case FunctionRole::AsyncWorker:
-    case FunctionRole::BoundFunction:
-    case FunctionRole::ResultWorker:
-    case FunctionRole::OutlinedBody:
-    case FunctionRole::Serializer:
-    case FunctionRole::Parser:
-    case FunctionRole::ChainStep:
-    case FunctionRole::StubBody:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static bool hasFunctionText(const Program& program, const Function& function)
 {
     if (!function.module || function.text.start >= function.text.end)
         return false;
-    return showsSourceText(function.role) && !function.enclosingRuntimeFunction && program.at(function.module).kind != ModuleKind::RuntimeSource;
+    return showsSourceTextOf(function.role) && !function.enclosingRuntimeFunction && program.at(function.module).kind != ModuleKind::RuntimeSource;
 }
 
 static void appendFunctionTexts(TableEncoder& encoder)
@@ -2499,21 +2465,6 @@ static Vector<uint16_t> encodeModuleNumbers(const TableEncoder& encoder, const V
     return words;
 }
 
-static bool isFoundByPath(ModuleKind kind)
-{
-    switch (kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::Data:
-    case ModuleKind::RuntimeSource:
-        return true;
-    case ModuleKind::Runtime:
-    case ModuleKind::External:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static void appendTablesOfCompiledModules(TableEncoder& encoder)
 {
     const Program& program = encoder.program;
@@ -2521,7 +2472,7 @@ static void appendTablesOfCompiledModules(TableEncoder& encoder)
     Vector<CompiledRuntimeModuleData> runtimeModules;
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         const Module& module = program.modules[index];
-        if (!isFoundByPath(module.kind) || (module.kind == ModuleKind::RuntimeSource && !hasCompiledBody(program, module)))
+        if (!isFoundByPathOf(module.kind) || (module.kind == ModuleKind::RuntimeSource && !hasCompiledBody(program, module)))
             continue;
         if (module.kind == ModuleKind::RuntimeSource && module.runtimeModule)
             runtimeModules.append({ module.runtimeModule.index(), index });

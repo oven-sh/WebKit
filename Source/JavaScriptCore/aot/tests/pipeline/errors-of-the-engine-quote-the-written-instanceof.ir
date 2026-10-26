@@ -1,0 +1,56 @@
+# The right side of `instanceof` is an object that is no function, or one whose Symbol.hasInstance is no function: the engine's errors, worded by the engine. Where it quotes the source
+# of the expression, a compiled frame has no source: the engine quotes the text that the operation holds. An operation without a text quotes nothing.
+# FORM: AsRead
+# RUN: run-in-shell globalThis.report = (...all) => { for (const f of all) { for (const v of [{}, [], { [Symbol.hasInstance]: 5 }, new Proxy({}, {}), Object, 5]) { try { print(f.name, f(v)); } catch (error) { print(f.name, String(error)); } } } };
+# CHECK: quotes TypeError: right is not a function. (evaluating 'left instanceof right')
+# CHECK-NEXT: quotes TypeError: right is not a function. (evaluating 'left instanceof right')
+# CHECK-NEXT: quotes TypeError: right[Symbol.hasInstance] is not a function, undefined, or null. (evaluating 'left instanceof right')
+# CHECK-NEXT: quotes TypeError: right is not a function. (evaluating 'left instanceof right')
+# CHECK-NEXT: quotes true
+# CHECK-NEXT: quotes TypeError: Right hand side of instanceof is not an object
+# CHECK-NEXT: quotesInBranch TypeError: holder.member is not a function. (evaluating 'this.value instanceof holder.member')
+# CHECK-NEXT: quotesInBranch TypeError: holder.member is not a function. (evaluating 'this.value instanceof holder.member')
+# CHECK-NEXT: quotesInBranch TypeError: holder.member[Symbol.hasInstance] is not a function, undefined, or null. (evaluating 'this.value instanceof holder.member')
+# CHECK-NEXT: quotesInBranch TypeError: holder.member is not a function. (evaluating 'this.value instanceof holder.member')
+# CHECK-NEXT: quotesInBranch 1
+# CHECK-NEXT: quotesInBranch TypeError: Right hand side of instanceof is not an object
+# CHECK-NEXT: quotesNothing TypeError: Object  is not a function
+# CHECK-NEXT: quotesNothing TypeError: Array  is not a function
+# CHECK-NEXT: quotesNothing TypeError: Object [Symbol.hasInstance] is not a function, undefined, or null
+# CHECK-NEXT: quotesNothing TypeError: ProxyObject  is not a function
+# CHECK-NEXT: quotesNothing true
+# CHECK-NEXT: quotesNothing TypeError: Right hand side of instanceof is not an object
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="report" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return
+}
+function f1 name="quotes" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewDictionary
+    v2 = InstanceOf v1, v0 writtenExpression="left instanceof right"
+    Return v2
+}
+function f2 name="quotesInBranch" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewDictionary
+    v2 = InstanceOf v1, v0 writtenExpression="this.value instanceof holder.member"
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=1
+    Return v3
+  b2():
+    v4 = Integer integer=2
+    Return v4
+}
+function f3 name="quotesNothing" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewDictionary
+    v2 = InstanceOf v1, v0
+    Return v2
+}

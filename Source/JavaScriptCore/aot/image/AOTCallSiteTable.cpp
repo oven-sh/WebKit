@@ -214,12 +214,20 @@ static StreamHead readHead(const uint8_t* cursor)
     return head;
 }
 
-static std::optional<StreamHead> readHead(const Image& image, uint32_t function)
+static const uint8_t* findCallSites(const Image& image, uint32_t function)
 {
     const ImageFunction& record = image.function(function);
     if (!record.has(ImageFunctionFlag::HasCallSites))
+        return nullptr;
+    return SideTableParts::read(record, image.section<uint8_t>(ImageSection::SideTables).data()).callSites;
+}
+
+static std::optional<StreamHead> readHead(const Image& image, uint32_t function)
+{
+    const uint8_t* callSites = findCallSites(image, function);
+    if (!callSites)
         return std::nullopt;
-    return readHead(SideTableParts::read(record, image.section<uint8_t>(ImageSection::SideTables).data()).callSites);
+    return readHead(callSites);
 }
 
 void InlineFrameReader::read(const Image& image, uint32_t function, unsigned last)
@@ -240,16 +248,23 @@ void InlineFrameReader::read(const Image& image, uint32_t function, unsigned las
 }
 
 SiteFrames::SiteFrames(const Image& image, uint32_t function)
+    : SiteFrames(findCallSites(image, function))
 {
-    std::optional<StreamHead> head = readHead(image, function);
-    if (!head || !head->numberOfSites)
+}
+
+SiteFrames::SiteFrames(const uint8_t* callSites)
+{
+    if (!callSites)
         return;
-    m_remainingInlineFrames = head->numberOfInlineFrames;
-    m_inlineFrames = head->inlineFrames.data();
-    RELEASE_ASSERT(m_remainingInlineFrames <= head->numberOfSitesWithoutCode);
-    m_remainingSuspensionSites = head->numberOfSitesWithoutCode - m_remainingInlineFrames;
-    m_remainingSitesWithCode = head->numberOfSites;
-    m_sites = head->sites();
+    StreamHead head = readHead(callSites);
+    if (!head.numberOfSites)
+        return;
+    m_remainingInlineFrames = head.numberOfInlineFrames;
+    m_inlineFrames = head.inlineFrames.data();
+    RELEASE_ASSERT(m_remainingInlineFrames <= head.numberOfSitesWithoutCode);
+    m_remainingSuspensionSites = head.numberOfSitesWithoutCode - m_remainingInlineFrames;
+    m_remainingSitesWithCode = head.numberOfSites;
+    m_sites = head.sites();
 }
 
 unsigned SiteFrames::next()
@@ -458,9 +473,7 @@ bool catchesExceptions(const Image& image, uint32_t function)
     return false;
 }
 
-static constexpr uint64_t maxLineWord = zigZagEncode(std::numeric_limits<uint32_t>::max()) << 2 | 2;
-static constexpr size_t maxPositionSize = sizeOfVarint(maxLineWord) + 2 * sizeOfVarint(std::numeric_limits<uint32_t>::max());
-static_assert(sitesBetweenPositionCheckpoints * maxPositionSize <= std::numeric_limits<uint16_t>::max(), "a checkpoint stores the size of a run of positions in 16 bits");
+static_assert(sitesBetweenPositionCheckpoints * (1 + ConstructionStartRow::maxSize + PositionRow::maxSize) <= std::numeric_limits<uint16_t>::max(), "a checkpoint stores the size of a run of positions in 16 bits");
 
 namespace {
 
@@ -468,6 +481,7 @@ struct PositionState {
     int64_t line { 0 };
     int64_t column { 0 };
     uint32_t source { 0 };
+    LineColumn constructionStart { 0, 0 };
 };
 
 struct PositionsEntry {
@@ -485,6 +499,7 @@ struct RememberedPosition {
     uint32_t line;
     uint32_t column;
     uint32_t sourcePlusOne;
+    LineColumn constructionStart;
 };
 
 } // anonymous namespace
@@ -497,14 +512,28 @@ static uint32_t sourceNumber(const SitePosition& position)
 static void appendPosition(Vector<uint8_t>& stream, PositionState& last, const SitePosition& position)
 {
     uint32_t source = sourceNumber(position);
-    if (position.line == last.line && source == last.source)
-        appendVarint(stream, zigZagEncode(static_cast<int64_t>(position.column) - last.column) << 1 | 1);
-    else {
-        appendVarint(stream, zigZagEncode(static_cast<int64_t>(position.line) - last.line) << 2 | (source != last.source) << 1);
-        if (source != last.source)
-            appendVarint(stream, source);
-        appendVarint(stream, position.column);
+    bool startsOnSameLine = position.constructionStartLine == position.line;
+    if (position.constructionStartLine && (startsOnSameLine ? position.constructionStartColumn < position.column : position.constructionStartLine < position.line)) {
+        stream.append(0);
+        ConstructionStartRow start { .isOnSameLine = startsOnSameLine };
+        if (startsOnSameLine)
+            start.columnsBack = position.column - position.constructionStartColumn;
+        else {
+            start.linesBack = position.line - position.constructionStartLine;
+            start.column = position.constructionStartColumn;
+        }
+        start.append(stream);
     }
+    PositionRow row { .isOnSameLine = position.line == last.line && source == last.source };
+    if (row.isOnSameLine)
+        row.columnChange = static_cast<int64_t>(position.column) - last.column;
+    else {
+        row.isInOtherSource = source != last.source;
+        row.lineChange = static_cast<int64_t>(position.line) - last.line;
+        row.source = row.isInOtherSource ? source : 0;
+        row.column = position.column;
+    }
+    row.append(stream);
     last = { position.line, position.column, source };
 }
 
@@ -513,23 +542,16 @@ OwnPosition OwnPosition::of(const SiteDescription& sites)
     return { sites.positions[0].line, sourceNumber(sites.positions[0]) };
 }
 
-void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites, OwnPosition ofFunctionInFront)
+void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites, const uint8_t* callSites, OwnPosition ofFunctionInFront)
 {
     RELEASE_ASSERT(!sites.positions.isEmpty());
     size_t count = sites.positions.size();
     size_t numberOfInlineFrames = inlineFrameCount(sites);
     size_t numberOfSitesWithoutCode = sites.numberOfSitesWithoutCode;
     RELEASE_ASSERT(numberOfInlineFrames <= numberOfSitesWithoutCode && numberOfSitesWithoutCode < count);
-    size_t numberOfSuspensionSites = numberOfSitesWithoutCode - numberOfInlineFrames;
     bool followsInlineFrames = sites.hasEncodedInlineFrames();
-    // Has to match SiteFrames::next(), the decoder's only way to learn the frame of a site.
-    auto stateFrame = [&](size_t site) -> uint32_t {
-        if (!followsInlineFrames || site <= numberOfSuspensionSites)
-            return 0;
-        if (site <= numberOfSitesWithoutCode)
-            return sites.inlineFrames[site - numberOfSuspensionSites].parent;
-        return sites.positions[site].inlineFrame;
-    };
+    // The decoder's only way to learn the frame of a site.
+    SiteFrames frames(followsInlineFrames ? callSites : nullptr);
 
     PositionState start { sites.positions[0].line, sites.positions[0].column, sourceNumber(sites.positions[0]) };
     Vector<uint8_t> checkpoints;
@@ -540,13 +562,13 @@ void encodePositions(Vector<uint8_t>& stream, const SiteDescription& sites, OwnP
     for (size_t site = 1; site < count; ++site) {
         if (!(site % sitesBetweenPositionCheckpoints)) {
             size_t bytesSinceLast = positions.size() - lastRunEnd;
-            ASSERT(bytesSinceLast <= sitesBetweenPositionCheckpoints * maxPositionSize);
+            ASSERT(bytesSinceLast <= sitesBetweenPositionCheckpoints * (1 + ConstructionStartRow::maxSize + PositionRow::maxSize));
             checkpoints.append(static_cast<uint8_t>(bytesSinceLast));
             checkpoints.append(static_cast<uint8_t>(bytesSinceLast >> 8));
             lastRunEnd = positions.size();
             states.fill(start);
         }
-        appendPosition(positions, states[stateFrame(site)], sites.positions[site]);
+        appendPosition(positions, states[frames.next()], sites.positions[site]);
     }
 
     bool hasCheckpoints = !checkpoints.isEmpty();
@@ -584,20 +606,32 @@ static PositionsEntry readEntry(const uint8_t*& cursor, OwnPosition& ofFunctionI
 
 static void readPosition(const uint8_t*& cursor, PositionState& state)
 {
-    uint64_t word = readVarint(cursor);
-    if (word & 1)
-        state.column += zigZagDecode(word >> 1);
-    else {
-        state.line += zigZagDecode(word >> 2);
-        if (word & 2)
-            state.source = static_cast<uint32_t>(readVarint(cursor));
-        state.column = static_cast<int64_t>(readVarint(cursor));
+    std::optional<ConstructionStartRow> start;
+    if (!*cursor) {
+        ++cursor;
+        start = ConstructionStartRow::read(cursor);
     }
+    PositionRow row = PositionRow::read(cursor);
+    if (row.isOnSameLine)
+        state.column += row.columnChange;
+    else {
+        state.line += row.lineChange;
+        if (row.isInOtherSource)
+            state.source = row.source;
+        state.column = row.column;
+    }
+    state.constructionStart = { 0, 0 };
+    if (!start)
+        return;
+    if (start->isOnSameLine)
+        state.constructionStart = { static_cast<unsigned>(state.line), static_cast<unsigned>(state.column - start->columnsBack) };
+    else
+        state.constructionStart = { static_cast<unsigned>(state.line - start->linesBack), start->column };
 }
 
 static SourcePosition sourcePositionFor(const PositionState& state)
 {
-    return { { static_cast<unsigned>(state.line), static_cast<unsigned>(state.column) }, state.source ? ModuleID(state.source - 1) : ModuleID() };
+    return { { static_cast<unsigned>(state.line), static_cast<unsigned>(state.column) }, state.source ? ModuleID(state.source - 1) : ModuleID(), state.constructionStart };
 }
 
 std::optional<SourcePosition> decodePosition(const Image& image, uint32_t function, const uint8_t* entryInSection, OwnPosition ofFunctionInFront, CallSiteIndex site)
@@ -674,12 +708,12 @@ std::optional<SourcePosition> Image::positionOf(uint32_t function, CallSiteIndex
     {
         Locker locker { rememberedPositionsLock };
         if (remembered.image == this && remembered.function == function && remembered.site == site.bits())
-            return SourcePosition { { remembered.line, remembered.column }, remembered.sourcePlusOne ? ModuleID(remembered.sourcePlusOne - 1) : ModuleID() };
+            return SourcePosition { { remembered.line, remembered.column }, remembered.sourcePlusOne ? ModuleID(remembered.sourcePlusOne - 1) : ModuleID(), remembered.constructionStart };
     }
     std::optional<SourcePosition> position = findPosition(*this, function, site);
     if (position) {
         Locker locker { rememberedPositionsLock };
-        remembered = { this, function, site.bits(), position->lineColumn.line, position->lineColumn.column, position->source ? position->source.index() + 1 : 0 };
+        remembered = { this, function, site.bits(), position->lineColumn.line, position->lineColumn.column, position->source ? position->source.index() + 1 : 0, position->constructionStart };
     }
     return position;
 }

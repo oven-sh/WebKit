@@ -16,7 +16,7 @@ module m0 path="main.js" displayPath="main.js"
 expectedresult x0 type=undefined|null|L0 layouts=[L0]
 layout L0 name="User" fields=[{key="id" declared={type=number}}, {key="name" declared={type=string}}]
 layout L1 name="Other" fields=[{key="z" declared={type=number}}]
-variable g0 name="user" module=m0 declared={type=undefined|null|L0} initialization=Undefined
+variable g0 name="user" module=m0 declared={type=undefined|null|L0 flags=[IsExpected]} initialization=Undefined
 
 function f0 name="expectedResult" parameters=[{type=string}] results=[{type=anything}] {
     v1 = Undefined

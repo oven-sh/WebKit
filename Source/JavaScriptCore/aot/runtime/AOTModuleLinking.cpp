@@ -144,6 +144,7 @@ ALWAYS_INLINE void ModuleLinkWalk::append(ModuleID module, StepKind kind, bool r
 
 ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
     : m_root(root)
+    , m_numberOfLinksBefore(modules.numberOfLinks())
 {
     struct Frame {
         uint32_t enter;
@@ -211,6 +212,17 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
     }
 }
 
+bool ModuleLinkWalk::stillHolds(const Modules& modules) const
+{
+    if (m_numberOfLinksBefore != modules.numberOfLinks())
+        return false;
+    if (hasPlan())
+        return modules.status(m_root) == ModuleStatus::Unlinked && (!m_memberOfCycle || modules.status(*m_memberOfCycle) == ModuleStatus::Unlinked);
+    return std::ranges::all_of(m_steps, [&](const Step& step) {
+        return static_cast<StepKind>(step.kind) != StepKind::Enter || modules.status(ModuleID(step.module)) == ModuleStatus::Unlinked;
+    });
+}
+
 // JavaScriptCore's loader creates a module of the run time when it fetches it, in an earlier job than the one that links and evaluates the importing graph.
 bool Modules::loadRuntimeModules(ModuleID root)
 {
@@ -263,7 +275,11 @@ void Modules::link(const ModuleLinkWalk& walk)
 
 void Modules::captureSyntheticExports(ModuleID root, VisitedModuleRecords& visited)
 {
-    captureSyntheticExports(ModuleLinkWalk(*this, root), visited);
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    std::unique_ptr<ModuleLinkWalk> walk = takeLinkWalk(root);
+    captureSyntheticExports(*walk, visited);
+    RETURN_IF_EXCEPTION(scope, void());
+    m_linkWalkOfQueuedImport = WTF::move(walk);
 }
 
 void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleRecords& visited)
@@ -322,13 +338,14 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
 
 void Modules::finishLink(ModuleID root, LinkContext& context)
 {
-    finishLink(ModuleLinkWalk(*this, root), context);
+    finishLink(*takeLinkWalk(root), context);
 }
 
 void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    ++m_numberOfLinks;
 
     auto isUnlinked = [&](ModuleID module) {
         return status(module) == ModuleStatus::Unlinked;

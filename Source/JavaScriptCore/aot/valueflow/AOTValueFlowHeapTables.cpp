@@ -400,6 +400,8 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
     m_lengthKey = program.keyOf(BuiltinNames::length);
     m_calleeKey = program.keyOf(BuiltinNames::callee);
     m_nameKey = program.keyOf(BuiltinNames::name);
+    if (StringID text = program.strings.find(byteCast<uint8_t>("displayName"_span)))
+        m_displayNameKey = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = text }).value_or(PropertyKeyID());
 
     uint32_t numberOfKeys = universe.numberOfObjects() - universe.keyConstant(PropertyKeyID(0u)).index();
     ValueSetID knownObjectsOfProgram = without(universe.knownObjects(), builtinObjects);

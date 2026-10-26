@@ -2147,7 +2147,7 @@ private:
         // Now append the instructions. m_insts contains them in reverse order, so we process
         // it in reverse.
         Air::BasicBlock::InstList& list = target->insts();
-        list.reserveCapacity(std::max<size_t>(list.size() + m_insts.insts.size(), 16));
+        list.reserveCapacity(list.size() + m_insts.insts.size());
         unsigned end = m_insts.insts.size();
         for (unsigned i = m_insts.starts.size(); i--;) {
             unsigned start = m_insts.starts[i];

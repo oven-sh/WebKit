@@ -330,6 +330,9 @@ Boxed ElementAccessEmitter::appendOutOfLine(const OperationContext& store, CellP
     Operand operand = get(element);
     if (operand.is<Number>() && typeOf(element).isInt32())
         operand = Operand(boxInt32(conversions.toInt32(operand.as<Number>())));
+    // The stub drops a payload and keeps the sign.
+    if (operand.is<Number>() && getInFormOfItsNaN(element).is<ImpureNumber>())
+        operand = conversions.purified(operand.as<Number>());
     if (operand.is<Number>())
         return Boxed(callStub(store, arrayPushDouble(), { array.value(), conversions.bitsOf(operand).value() }).first);
     return Boxed(callStub(store, arrayPush(), { array.value(), conversions.box(store, operand, typeOf(element)).value() }).first);

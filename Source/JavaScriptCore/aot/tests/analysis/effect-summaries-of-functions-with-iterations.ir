@@ -9,7 +9,7 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Box" fields=[{key="k" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
 
-function f0 name="forOf" parameters=[{type=Array<number, proven, Double, pristine[Storage, Names, Dense]>}] results=[{type=number}] {
+function f0 name="forOf" parameters=[{type=Array<number, proven, Double, pristine[Storage, Names, Dense]>}] results=[{type=number flags=[IsExpected]}] {
     v1 = Integer
     v2 = IteratorOpen v0
     Jump -> next b1(v1)

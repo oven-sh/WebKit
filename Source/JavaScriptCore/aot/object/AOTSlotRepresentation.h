@@ -35,22 +35,7 @@ struct SlotData {
 };
 static_assert(sizeof(SlotData) == 4 && isImageRecord<SlotData>);
 
-constexpr bool isObjectLayout(LayoutKind kind)
-{
-    switch (kind) {
-    case LayoutKind::Record:
-    case LayoutKind::Instance:
-    case LayoutKind::Container:
-    case LayoutKind::BuiltinResult:
-        return true;
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
-    case LayoutKind::ModuleNamespace:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
+constexpr bool isObjectLayout(LayoutKind kind) { return isObjectLayoutOf(kind); }
 
 static constexpr int64_t maxSlotInteger = (1ll << 62) - 1;
 static constexpr int64_t undefinedInteger = 0x4000ll << 48;
@@ -70,12 +55,6 @@ ALWAYS_INLINE double withoutPayload(double number)
     return std::bit_cast<double>(quietNaNWithSignOf(std::bit_cast<uint64_t>(number)));
 }
 static_assert(quietNaNWithSignOf(absentDouble) == PNaNAsBits && quietNaNWithSignOf(UINT64_MAX) == (PNaNAsBits | 1ull << 63));
-// What the processor answers where arithmetic on numbers has no number to give.
-#if CPU(X86_64)
-static constexpr uint64_t bitsOfNaNFromArithmetic = PNaNAsBits | 1ull << 63;
-#else
-static constexpr uint64_t bitsOfNaNFromArithmetic = PNaNAsBits;
-#endif
 
 static constexpr int32_t absentInt32 = INT32_MIN + 1;
 static constexpr int32_t undefinedInt32 = INT32_MIN + 2;

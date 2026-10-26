@@ -249,6 +249,11 @@ static bool mayBeMadeByBuiltinConstructor(const Program& program, const Type& ty
     });
 }
 
+static bool mayBeProxy(const Program& program, const Type& type)
+{
+    return type.anyObject || type.anyFunction || type.findClassPart(BuiltinClasses::Proxy) || hasMembersWithoutLayout(program, type);
+}
+
 static Type typeOfArraysAmong(FunctionPassContext& context, const Type& operand)
 {
     Type arrays = Type::builtinClass(BuiltinClasses::Array);
@@ -516,9 +521,8 @@ static std::optional<Value> simplifyPrimitiveCall(FunctionPassContext& context, 
     // Number(value) and ToNumber differ only for a BigInt.
     if (overload->builtin == Builtins::Number && !operand.isNever() && operand.isNumberLike())
         return IRBuilder::make(Opcode::ToNumber, { arguments[0] });
-    if (overload->builtin == Builtins::ArrayIsArray && !operand.anyObject && !operand.findClassPart(BuiltinClasses::Proxy) && !mayBeMadeByBuiltinConstructor(context.program, operand)) {
+    if (overload->builtin == Builtins::ArrayIsArray && !mayBeProxy(context.program, operand) && !mayBeMadeByBuiltinConstructor(context.program, operand))
         return makeTypeTest(arguments[0], context.types.intern(typeOfArraysAmong(context, operand)));
-    }
 
     KnownBoolean answer = evaluateNumberTest(overload->builtin, operand);
     if (answer == KnownBoolean::Unknown)

@@ -41,7 +41,7 @@ export default b.declarations(
       construct: [
         {
           ...operandCodeEffects,
-          args: { target: b.callable, argumentsList: b.object, newTarget: b.notPassed },
+          args: { target: b.any, argumentsList: b.any, newTarget: b.notPassed },
           returns: b.callbackResult("target"),
           throws: true,
           uses: {
@@ -52,7 +52,7 @@ export default b.declarations(
         },
         {
           ...operandCodeEffects,
-          args: { target: b.callable, argumentsList: b.object, newTarget: b.callable },
+          args: { target: b.any, argumentsList: b.any, newTarget: b.any },
           returns: b.callbackResult("target"),
           throws: true,
           uses: {

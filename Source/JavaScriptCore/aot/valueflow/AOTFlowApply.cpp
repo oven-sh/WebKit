@@ -605,8 +605,54 @@ static Vector<BitVector> findExpectedFields(const Program& program, const Parall
     return expectedFieldsOfLayouts;
 }
 
+static bool makesTailCall(const Function& function)
+{
+    return std::ranges::any_of(function.blocks, [](const Block& block) { return block.terminator.kind == TerminatorKind::ReturnCall; });
+}
+
+// The functions with a tail call whose callers are all known and all construct them.
+static BitVector findFunctionsThatAreOnlyConstructed(const FlowApplyContext& context)
+{
+    const Program& program = context.program;
+    std::span<const FlowBodyUpdate> bodies = context.application.bodies.span();
+    BitVector constructed(program.functions.size());
+    auto forEachStampedCallee = [&](bool ofConstructions, const auto& functor) {
+        for (size_t index = 0; index < bodies.size(); ++index) {
+            for (const FlowCallStamp& stamp : bodies[index].calls) {
+                if (!!OperandPosition::newTarget(program.functions[index].at(stamp.value).opcode) != ofConstructions)
+                    continue;
+                for (FunctionID callee : program.at(stamp.callees).functions)
+                    functor(callee);
+            }
+        }
+    };
+    forEachStampedCallee(true, [&](FunctionID callee) {
+        const Function& function = program.at(callee);
+        if (function.kind == FunctionKind::Plain && context.results.function(callee).callers == CallerState::AllKnown && makesTailCall(function))
+            constructed.quickSet(callee.index());
+    });
+    if (constructed.isEmpty())
+        return constructed;
+
+    forEachStampedCallee(false, [&](FunctionID callee) {
+        constructed.quickClear(callee.index());
+    });
+    for (const FlowIndirectCall& call : context.results.indirectCalls())
+        constructed.quickClear(call.callee.index());
+    for (const Function& function : program.functions) {
+        for (const Block& block : function.blocks) {
+            for (ValueID id : block.values) {
+                if (function.at(id).opcode == Opcode::CallDirect && !function.at(id).isConstruction())
+                    constructed.quickClear(function.at(id).function().index());
+            }
+        }
+    }
+    return constructed;
+}
+
 static void applyBodyUpdates(const FlowApplyContext& context, ProgramEditor& editor, const Vector<BitVector>& fieldsExpectedAsRead)
 {
+    BitVector onlyConstructed = findFunctionsThatAreOnlyConstructed(context);
     FlowFirstTimeMarks firstTimeMarks = createFirstTimeMarks(context, editor);
     Vector<VariableID> firstRunMarks = createFirstRunMarks(context, editor);
     Vector<FunctionID> functions = collectBodiesLargestFirst(context.program, context.application.bodies.size(), context.build.parallelLoops());
@@ -615,6 +661,7 @@ static void applyBodyUpdates(const FlowApplyContext& context, ProgramEditor& edi
     editFunctionsInParallel(editor, context.build, BehindEdit::Nothing, functions.span(), [&](unsigned task, FunctionID id, Function& function, TaskArenas& arenas) {
         FlowBodyApplication body { context.program, context.results, context.application, id, function, arenas.types, context.build, fieldsExpectedAsRead, firstRunMarks[id.index()], &firstTimeMarks };
         body.provesEverything = provesEverything && !isOfRuntimeModule(context.program, function.module);
+        body.isOnlyConstructed = onlyConstructed.quickGet(id.index());
         countsByTask[task] = applyBodyUpdate(body);
     });
 

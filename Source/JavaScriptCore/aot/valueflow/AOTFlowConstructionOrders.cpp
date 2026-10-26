@@ -1153,8 +1153,11 @@ struct StoredNamesProblem {
             return;
         case ConstructionEventKind::Store:
             applyCallees(state, stateBeforeOperation, resolved, false);
-            if (!resolved.storesOnlyData())
+            if (!resolved.storesOnlyData()) {
+                if (!stateBeforeOperation.stored.contains(*event.name))
+                    solved.readBeforeStore.add(*event.name);
                 return;
+            }
             if (event.isExact) {
                 state.stored.add(*event.name);
                 if (event.storesValue)

@@ -1,5 +1,5 @@
 # The state of an iterator cannot be handed from one version to the other, so the second check has no exit: it becomes a guard at each use, and the typed blocks behind it run with what it would have turned away.
-# Flow has proven the result for that too, so the product is assumed to be a number in the typed blocks as in the copy
+# Flow has proven the result for that too and says so in front of the store, so the product stays a number in the typed blocks as in the copy
 # FORM: Prepared optimizing
 # RUN: pass AddGenericVersion
 # STATISTIC: GenericVersionsCreated = 1
@@ -18,11 +18,12 @@ function f0 name="checkWithoutExitBesideOneWithAnExit" parameters=[{type=anythin
     Jump -> next b2()
   b2():
     IteratorClose v3
-    Return v6
+    v8 = AssumeType v6 provenType=number
+    Return v8
   b3() role=IterationCleanup subject=v3:
-    v8 = CatchException
+    v9 = CatchException
     IteratorClose v3 completion=Throw
-    Rethrow v8
+    Rethrow v9
 # CHECK: = TypeTest v0 testedType=object
 # CHECK-NOT: = TypeTest
 # CHECK: v5: anything ~ number = Expect v4 expectedType=number

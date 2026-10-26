@@ -69,6 +69,33 @@ void Program::copyBorrowedLineStarts(const ParallelLoops& loops)
     });
 }
 
+void Program::collectConstructionStarts()
+{
+    m_constructionStartsOfModules.grow(modules.size());
+    for (Function& function : functions) {
+        if (function.constructionStarts.isEmpty())
+            continue;
+        if (function.module && function.module.index() < modules.size())
+            m_constructionStartsOfModules[function.module.index()].appendVector(function.constructionStarts);
+        function.constructionStarts = { };
+    }
+    for (Vector<ConstructionStart>& starts : m_constructionStartsOfModules) {
+        std::ranges::sort(starts, { }, &ConstructionStart::reported);
+        starts.shrinkToFit();
+    }
+}
+
+const ConstructionStart* Program::findConstructionReportedAt(ModuleID id, uint32_t position) const
+{
+    if (!id || id.index() >= m_constructionStartsOfModules.size())
+        return nullptr;
+    const Vector<ConstructionStart>& starts = m_constructionStartsOfModules[id.index()];
+    auto found = std::ranges::lower_bound(starts, position, { }, &ConstructionStart::reported);
+    if (found == starts.end() || found->reported != position)
+        return nullptr;
+    return &*found;
+}
+
 void Program::recordCountsAsRead()
 {
     m_countsAsRead = { static_cast<unsigned>(functions.size()), static_cast<unsigned>(layouts.size()) };

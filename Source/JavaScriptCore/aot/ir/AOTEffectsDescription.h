@@ -48,6 +48,18 @@ EffectsOnEdges resolveEffects(const EffectContext&, const EffectDescription&);
 bool isRefinedByValue(Opcode, const Effects& bound);
 void describeDeclaredEntry(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
 bool hasTextByItself(const Type&);
+
+// The texts of values that one string is made of. A string longer than a string may be is a RangeError.
+class JoinedTexts {
+public:
+    void add(const Program&, const Type&);
+    bool fitInString() const;
+
+private:
+    uint64_t m_longest { 0 };
+    bool m_haveAllTextByThemselves { true };
+};
+
 void describeOperator(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);
 void describeOperator(const Program&, Opcode, std::span<const Type> operandTypes, const Type& result, EffectDescription&);
 void describeAccess(const Program&, const Function&, const Value&, const Effects& declared, EffectDescription&);

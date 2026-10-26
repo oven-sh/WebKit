@@ -327,16 +327,10 @@ static void findDeferrals(const Program& program, const FlowResults& flow, Build
     };
     auto hasOnlyClosure = [&](FunctionID closed) { return counts.closuresOfFunction[closed.index()] == 1; };
 
-    // In the generic version of the function the type of a value that rests on a check says nothing.
-    std::optional<PredictedValues> predicted;
-    auto isBehindCheck = [&](ValueID id) {
-        if (!predicted)
-            predicted.emplace(function, CFG(function));
-        return predicted->isBehindCheck(id);
-    };
+    EffectSummaries noSummaries;
+    ObservableOperations observable({ program, noSummaries }, function);
     auto neverThrows = [&](ValueID heritageLook) {
-        ValueID heritage = function.at(heritageLook).heritageOperand();
-        return hasOnlyClassesAndBuiltins(program, program.typeOf(function, heritage)) && !isBehindCheck(heritage);
+        return observable.neitherThrowsNorRunsCode(heritageLook);
     };
 
     // SomethingElse where the variable needs the object itself.
@@ -698,6 +692,7 @@ void deferDefinitions(ProgramEditor& editor, const FlowResults& flow, BuildConte
         removeDefinitions(thoseIn(plan.deferrals, id), builder);
         readObjectsBehindDeadZoneTests(plan, builder);
         fillRegExpVariablesAtReads(plan, builder);
+        settleProofsBehindOperandsThatWereOnlyKept(function);
     });
 
     build.statistics().count(StatisticID::ClosuresDeferredInVariables, std::ranges::count(plan.deferrals, Deferral::Kind::Closure, &Deferral::kind));

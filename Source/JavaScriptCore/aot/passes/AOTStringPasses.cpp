@@ -2035,8 +2035,10 @@ PassOutcome fuseConcatenations(FunctionPassContext& context)
     };
     // No string is too long to be made of such parts, so the concatenation throws nothing and may run at any later time.
     auto hasBoundedLength = [&](const Value& value) {
-        constexpr uint16_t bounded = Primitive::Number | Primitive::Boolean | Primitive::UndefinedOrNull | Primitive::LiteralString;
-        return std::ranges::all_of(value.operands(), [&](ValueID operand) { return typeOf(operand).hasOnlyPrimitives(bounded); });
+        JoinedTexts texts;
+        for (ValueID operand : value.operands())
+            texts.add(program, typeOf(operand));
+        return texts.fitInString();
     };
     // A key is looked up by its parts, and no string is made of a number among them.
     auto mayBecomeKey = [&](ValueID string) {
@@ -2050,8 +2052,8 @@ PassOutcome fuseConcatenations(FunctionPassContext& context)
             return isKeyOperand(program, function, use);
         });
     };
-    // A concatenation fails for lack of memory alone. Which of two such operations fails first, nobody can tell: `a[i] + a[j] + a[k]` reads a character, which may have to be made, between two concatenations.
-    auto hasObservableEffects = [&](ValueID id) { return !analyses.isRemovableWhenUnused(id); };
+    // A concatenation fails for lack of memory or for its length, with one error. Which of two such operations fails first, nobody can tell: `a[i] + a[j] + a[k]` reads a character, which may have to be made, between two concatenations.
+    auto hasObservableEffects = [&](ValueID id) { return !analyses.isRemovableWhenUnused(id) && !isConcatenation(function.at(id)); };
     auto hasObservableEffectsBetween = [&](BlockID id, uint32_t begin, uint32_t end) { return std::ranges::any_of(function.at(id).values.subspan(begin, end - begin), hasObservableEffects); };
 
     auto becomeConcatenationOf = [&](ValueID id, std::span<const ValueID> parts) {

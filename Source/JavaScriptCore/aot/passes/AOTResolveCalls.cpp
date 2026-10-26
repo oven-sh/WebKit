@@ -15,9 +15,11 @@
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfRules.h"
 #include "AOTFlowApply.h"
+#include "AOTFlowPrototypes.h"
 #include "AOTFlowResults.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTHeat.h"
+#include "AOTInlineCopy.h"
 #include "AOTMethodTableEntrypoints.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessInternal.h"
@@ -292,6 +294,7 @@ Value makeDirectCall(const ValueInsertion& insertion, const DirectCallRequest& r
     call.setArgumentsOperands(all.span());
     if (request.accessSite)
         call.setAccessSite(request.accessSite);
+    call.setCalledBuiltin(request.calledBuiltin);
     call.setIsConstruction(request.isConstruction);
     call.setIsNeverInlined(request.isNeverInlined);
     call.setIsAlwaysInlined(request.isAlwaysInlined);
@@ -765,6 +768,8 @@ Function buildConstructBody(const DerivedFunctionKey& key, DerivedFunctionInputs
         builder.moveToEndOf(block);
         emitReturnOfConstruction(builder, returned, object);
     }
+    Vector<BlockID> blocks(body.blocks.size(), [](size_t index) { return BlockID(index); });
+    keepFrameBelowTailCalls(body, blocks.span(), 0);
 
     TypeID typeOfResult = TypeTable::never;
     for (const Block& block : body.blocks) {
@@ -1543,6 +1548,7 @@ struct CallResolver {
             .arguments = arguments,
             .restArray = restArray,
             .accessSite = original.accessSite(),
+            .calledBuiltin = original.opcode == Opcode::Call ? original.calledBuiltin() : BuiltinID(),
             .isConstruction = !!newTarget,
             .isNeverInlined = original.opcode == Opcode::Call && original.isNeverInlined(),
             .isAlwaysInlined = original.opcode == Opcode::Call && original.isAlwaysInlined(),
@@ -2003,6 +2009,7 @@ struct CallResolver {
                 .calleeValue = callee.has(FunctionFlags::TakesCallee) ? closure : ValueID(),
                 .arguments = original.variadicOperands(),
                 .accessSite = original.accessSite(),
+                .calledBuiltin = original.calledBuiltin(),
                 .isNeverInlined = original.isNeverInlined(),
                 .isAlwaysInlined = original.isAlwaysInlined(),
                 .isTailCall = !!original.isTailCall,
@@ -2295,7 +2302,7 @@ struct CallResolver {
         return !context.exceeds(LimitID::MaxCaptures, target.captures.size() + numberOfBoundThisAndTargetCaptures + numberOfCapturedArguments, site);
     }
 
-    std::optional<bool> findPristineTestInFrontOf(const ValueSite& site, ValueID receiver)
+    std::optional<bool> findPristineTestInFrontOf(const ValueSite& site, ValueID receiver, BuiltinClassID closureClass)
     {
         FunctionAnalyses& analyses = context.analyses;
         std::span<const BlockID> predecessors = analyses.cfg().predecessors(site.block);
@@ -2306,7 +2313,11 @@ struct CallResolver {
             return std::nullopt;
         ValueID testID = tests.terminator.conditionOperand();
         const Value& test = function.at(testID);
-        if (test.opcode != Opcode::IsPristine || test.builtinClass() != BuiltinClasses::Function || !test.aspects().contains(PristineAspects::Names) || analyses.identityOf(test.operand(0)) != analyses.identityOf(receiver))
+        if (test.opcode != Opcode::IsPristine || analyses.identityOf(test.operand(0)) != analyses.identityOf(receiver))
+            return std::nullopt;
+        bool asksClosuresOfClass = test.builtinClass() == closureClass && test.aspects().contains(PristineAspects::Names);
+        bool asksClosuresOfBothClasses = test.builtinClass() == BuiltinClasses::Function && test.aspects().contains(PristineAspects::NamesKeptBelow);
+        if (!asksClosuresOfClass && !asksClosuresOfBothClasses)
             return std::nullopt;
         // The engine binds what has failed the test, whatever has run since.
         if (tests.terminator.notTaken().block == site.block)
@@ -2353,13 +2364,14 @@ struct CallResolver {
         // A closure of a bound function answers with the name and the length its target was written with.
         // Nobody has said that the closure has its name and its length as it was created with them: the bind asks, and a closure that has not is bound by the engine.
         bool testsThatClosureIsAsCreated = false;
+        BuiltinClassID closureClass = classOfFunctionObject(program.at(targetID));
         Vector<PropertyKeyID, 2> namedMembers(overload.receiver->namedMembers.size(), [&](size_t index) { return program.keyOf(overload.receiver->namedMembers[index]); });
         if (!flow.areClosuresAsCreated(targetID, namedMembers.span())) {
             // A bound function takes its name, its length and its prototype at the bind.
             if (program.at(targetID).role == FunctionRole::BoundFunction)
                 return std::unexpected(CallDeclineReason::UnknownMember);
-            if (!isProvenPristine(bind.receiver, { BuiltinClasses::Function, PristineAspects::Names }, site)) {
-                std::optional<bool> hasPassedTest = findPristineTestInFrontOf(site.position, bind.receiver);
+            if (!isProvenPristine(bind.receiver, { closureClass, PristineAspects::Names }, site) && !isProvenPristine(bind.receiver, { BuiltinClasses::Function, PristineAspects::NamesKeptBelow }, site)) {
+                std::optional<bool> hasPassedTest = findPristineTestInFrontOf(site.position, bind.receiver, closureClass);
                 // The test that stood where `bind` was looked up may have met its other side again in front of the call.
                 if (hasPassedTest ? !*hasPassedTest : isRare(site))
                     return std::unexpected(CallDeclineReason::UnknownMember);
@@ -2374,10 +2386,10 @@ struct CallResolver {
         if (record.numberOfCapturedArguments > numberOfBound || numberOfCaptures != program.at(boundFunction).captures.size())
             return declined;
 
-        return [this, &site, record, boundFunction, capturesThis, testsThatClosureIsAsCreated, testsTarget, targetID, receiver = candidates.value, arm = directCallArm(targetID, { }, candidates.value)] {
+        return [this, &site, record, boundFunction, capturesThis, testsThatClosureIsAsCreated, closureClass, testsTarget, targetID, receiver = candidates.value, arm = directCallArm(targetID, { }, candidates.value)] {
             auto appendBoundClosure = [&](ValueID closure) {
                 if (testsThatClosureIsAsCreated) {
-                    IRBuilder::BranchBlocks branch = builder.emitBranch(expansion.append(makePristineTest(closure, BuiltinClasses::Function, PristineAspects::Names)), expansion.frequency(), BlockFrequency::Unlikely);
+                    IRBuilder::BranchBlocks branch = builder.emitBranch(expansion.append(makePristineTest(closure, closureClass, PristineAspects::Names)), expansion.frequency(), BlockFrequency::Unlikely);
                     builder.moveToEndOf(branch.notTaken);
                     expansion.finishArm(expansion.appendOriginal());
                     builder.moveToEndOf(branch.taken);
@@ -3313,6 +3325,7 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
         // The receiver is the value that passed the tests, so the callee's own test of `this` folds once the callee is inlined.
         ValueID thisValue = testsCallee ? call.thisValueOperand() : use->operands.receiver;
         AccessSiteID accessSite = call.accessSite();
+        BuiltinID calledBuiltin = call.calledBuiltin();
         bool isNeverInlined = call.isNeverInlined();
         bool isTailCall = call.isTailCall;
         Vector<ValueID, 8> arguments(call.variadicOperands());
@@ -3329,6 +3342,7 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
             .calleeValue = testsCallee && context.program.at(function).has(FunctionFlags::TakesCallee) ? callee : ValueID(),
             .arguments = arguments.span(),
             .accessSite = accessSite,
+            .calledBuiltin = calledBuiltin,
             .isNeverInlined = isNeverInlined,
             .isTailCall = isTailCall,
         });

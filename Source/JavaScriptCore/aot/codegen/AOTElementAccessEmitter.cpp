@@ -340,7 +340,7 @@ Boxed ElementAccessEmitter::boxedPosition(ValueID position)
     case Representation::Double:
     case Representation::DoubleWithPayload:
     case Representation::ImpureDouble:
-        return emitter<ConversionEmitter>().boxNumber(operand.as<Number>());
+        return emitter<ConversionEmitter>().boxNumber(getInFormOfItsNaN(position));
     case Representation::Unchosen:
     case Representation::Void:
     case Representation::Boolean:

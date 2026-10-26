@@ -375,27 +375,6 @@ bool isWrapperCreatedByEngine(const Function& function)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool canEndHeadBlock(TerminatorKind kind)
-{
-    switch (kind) {
-    case TerminatorKind::Jump:
-    case TerminatorKind::Branch:
-    case TerminatorKind::Switch:
-    case TerminatorKind::Return:
-        return true;
-    case TerminatorKind::SwitchString:
-    case TerminatorKind::ReturnCall:
-    case TerminatorKind::Throw:
-    case TerminatorKind::Rethrow:
-    case TerminatorKind::Unreachable:
-    case TerminatorKind::SwitchOnShape:
-    case TerminatorKind::TryCallInline:
-    case TerminatorKind::TestAndBranch:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static bool isRepeated(BuiltinCallbackTimes times)
 {
     switch (times) {
@@ -555,7 +534,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
         uint32_t admittedBytes = 0;
         BitVector headBlocks = findHeadBlocks(function, analyses, [&](BlockID id) {
             const Block& block = function.at(id);
-            if (!canEndHeadBlock(block.terminator.kind) || block.handler || summary.blocksBoundToFrame.get(id.index()))
+            if (!canEndHeadBlockOf(block.terminator.kind) || block.handler || summary.blocksBoundToFrame.get(id.index()))
                 return false;
             bool leavesNoTrace = std::ranges::all_of(block.values, [&](ValueID value) {
                 const Effects& effects = analyses.effectsOf(value).normal;
@@ -1140,6 +1119,20 @@ void cloneBlocksIntoInlineFrame(IRBuilder& builder, RegionCloner& cloner, std::s
         builder.function().edit(id, BlockEdit::Terminator).terminator.inlineFrame += firstFrame;
 }
 
+void keepFrameBelowTailCalls(Function& function, std::span<const BlockID> blocks, uint32_t frame)
+{
+    for (BlockID block : blocks) {
+        for (ValueID id : function.at(block).values) {
+            if (function.at(id).inlineFrame == frame && function.at(id).isTailCall)
+                function.edit(id, ValueEdit::Definition).isTailCall = false;
+        }
+    }
+    for (size_t index = 1; index < function.inlineFrames.size(); ++index) {
+        if (function.inlineFrames[index].parent == frame)
+            function.inlineFrames[index].isTailCall = false;
+    }
+}
+
 static ValueID argumentAt(const Value& call, size_t entryParameter)
 {
     if (entryParameter >= call.numberOfOperands())
@@ -1171,6 +1164,12 @@ static bool hasSignatureMismatch(const FunctionPassContext& context, const Inlin
     return summary.hasBareReturn && !program.at(TypeTable::undefined).isSubsetOf(program.at(resultType), program);
 }
 
+// A chain of array methods whose links have places of their own calls its step from a frame of that step, which holds nothing else and is no copy of the step.
+static bool isSiteOfChain(const Program& program, const Function& caller, const Value& call)
+{
+    return call.inlineFrame && caller.inlineFrames[call.inlineFrame].callee == call.function() && program.at(call.function()).role == FunctionRole::ChainStep;
+}
+
 // A function that calls what it is given does something else with each function it is given: a traversal in the callback of the same traversal repeats nothing.
 static bool closesCycle(const FunctionPassContext& context, const InliningSummary& summary, const Value& call)
 {
@@ -1184,7 +1183,8 @@ static bool closesCycle(const FunctionPassContext& context, const InliningSummar
     auto functionOf = [&](uint32_t frame) {
         return frame ? frames[frame].callee : context.id;
     };
-    for (uint32_t frame = call.inlineFrame; frame; frame = frames[frame].parent) {
+    uint32_t innermostFrame = isSiteOfChain(context.program, context.function, call) ? frames[call.inlineFrame].parent : call.inlineFrame;
+    for (uint32_t frame = innermostFrame; frame; frame = frames[frame].parent) {
         if (frames[frame].callee != callee)
             continue;
         if (!differsByCall || (frames[frame].callPosition == call.position && functionOf(frames[frame].parent) == functionOf(call.inlineFrame)))
@@ -1207,6 +1207,62 @@ InlineDecision canInline(const FunctionPassContext& context, const InliningSumma
     if (closesCycle(context, summary, call))
         return InlineDecision::ClosesCycle;
     return InlineDecision::Unknown;
+}
+
+// One traversal runs the callbacks of all methods of a chain. A trace that is taken in the callback of a link names the link and the place of its call, so the calls of each link lie in a frame of the traversal of their own, below the frame of the link.
+static void placeCallsOfLinks(const Program& program, Function& caller, const Function& traversal, std::span<const BlockID> region, const RegionCloner& cloner, const Value& call)
+{
+    if (!call.inlineFrame)
+        return;
+    const InlineFrame step = caller.inlineFrames[call.inlineFrame];
+    if (!step.parent || caller.inlineFrames[step.parent].callee != step.callee || program.at(step.callee).role != FunctionRole::ChainStep)
+        return;
+    unsigned numberOfLinks = ChainShape::decode(program.at(step.callee).derivation.parameter).numberOfLinks();
+    RELEASE_ASSERT(numberOfLinks < step.parent);
+    uint32_t frameOfFirstLink = step.parent - numberOfLinks;
+
+    // The traversal reads each callback from the list of its operands, the one list that it reads at constant positions, where it calls it.
+    static constexpr int64_t isNoRead = -1;
+    auto positionInOperands = [&](ValueID id) {
+        const Value& value = traversal.at(id);
+        if (value.opcode == Opcode::GetArrayElement)
+            return integerConstantThroughCasts(program, traversal, value.positionOperand()).value_or(isNoRead);
+        if (value.opcode == Opcode::ElemGet)
+            return integerConstantThroughCasts(program, traversal, value.propertyOperand()).value_or(isNoRead);
+        return isNoRead;
+    };
+    // A read with more than one path arrives as a parameter of the block that holds the call.
+    Vector<std::optional<int64_t>> positionOfParameter(traversal.values.size());
+    for (BlockID block : region) {
+        for (const Target& target : traversal.at(block).terminator.targets) {
+            const auto& parameters = traversal.at(target.block).parameters;
+            for (uint32_t index = 0; index < target.arguments.size(); ++index) {
+                int64_t position = positionInOperands(sameObjectThroughCasts(traversal, target.arguments[index]));
+                std::optional<int64_t>& known = positionOfParameter[parameters[index].index()];
+                known = known.value_or(position) == position ? position : isNoRead;
+            }
+        }
+    }
+
+    std::array<uint32_t, ChainShape::maxNumberOfLinks> frames { };
+    for (BlockID block : region) {
+        for (ValueID id : traversal.at(block).values) {
+            const Value& value = traversal.at(id);
+            if (value.opcode != Opcode::Call || value.inlineFrame)
+                continue;
+            ValueID callback = sameObjectThroughCasts(traversal, value.calleeOperand());
+            int64_t position = positionOfParameter[callback.index()].value_or(positionInOperands(callback));
+            if (position < 0 || position % 2 || position >= 2 * static_cast<int64_t>(numberOfLinks))
+                continue;
+            uint32_t& frame = frames[position / 2];
+            if (!frame) {
+                uint32_t frameOfLink = frameOfFirstLink + static_cast<uint32_t>(position / 2);
+                caller.inlineFrames.append(InlineFrame { .callee = call.function(), .callPosition = program.at(caller.inlineFrames[frameOfLink].callee).position, .parent = frameOfLink, .module = traversal.module });
+                frame = caller.inlineFrames.size() - 1;
+            }
+            caller.edit(cloner.cloneOf(id), ValueEdit::Definition).inlineFrame = frame;
+        }
+    }
 }
 
 // Copies the body that is given, or else the body of the function that the call names: the head blocks that are given, or else all of it.
@@ -1266,6 +1322,16 @@ static void copyBodyIn(IRBuilder& builder, ProgramPoint point, const Function* b
         }
     }
     cloneBlocksIntoInlineFrame(builder, cloner, region.span(), firstFrame);
+    placeCallsOfLinks(program, caller, callee, region.span(), cloner, call);
+    // No stack trace lists the callee, so the built-in function that the call names stands right below what the callee calls.
+    if (BuiltinID calledBuiltin = call.calledBuiltin(); calledBuiltin && callee.isHiddenInStackTraces()) {
+        for (BlockID block : cloner.clonedBlocks()) {
+            for (ValueID id : caller.at(block).values) {
+                if (Value::opcodesWithCalledBuiltin.contains(caller.at(id).opcode) && !caller.at(id).calledBuiltin())
+                    caller.edit(id).setCalledBuiltin(calledBuiltin);
+            }
+        }
+    }
     builder.emitJump(cloner.cloneOf(entryBlock));
 
     auto replaceReturn = [&](BlockID block) {
@@ -1346,6 +1412,8 @@ static void copyBodyIn(IRBuilder& builder, ProgramPoint point, const Function* b
         }
         finishTerminator(clones[index]);
     }
+    if (call.isConstruction())
+        keepFrameBelowTailCalls(caller, cloner.clonedBlocks(), firstFrame);
 
     if (fullCallBlock) {
         Origin origin = call.origin();
@@ -1711,14 +1779,17 @@ static bool hasSingleCallSite(const FunctionPassContext& context, FunctionID fun
     return isEnteredThroughCallerAlone(context, function, heat);
 }
 
-// The frame of the built-in that a traversal stands for holds the step of the traversal and nothing else: the two are one level.
+// The frame of the built-in that a traversal stands for holds the step of the traversal and nothing else: the two are one level. So are the site of a chain and its step.
 static bool isLevelOfCopies(const Program& program, const Function& caller, uint32_t frame)
 {
     const InlineFrame& inlineFrame = caller.inlineFrames[frame];
     const Function& callee = program.at(inlineFrame.callee);
     if (isWrapperCreatedByEngine(callee))
         return false;
-    return callee.role != FunctionRole::ChainStep || !inlineFrame.parent || !program.at(caller.inlineFrames[inlineFrame.parent].callee).enclosingRuntimeFunction;
+    if (callee.role != FunctionRole::ChainStep || !inlineFrame.parent)
+        return true;
+    FunctionID holder = caller.inlineFrames[inlineFrame.parent].callee;
+    return holder != inlineFrame.callee && !program.at(holder).enclosingRuntimeFunction;
 }
 
 unsigned inlineDepthOf(const Program& program, const Function& caller, uint32_t inlineFrame)
@@ -2367,27 +2438,6 @@ static bool hasEffectsOfCall(Opcode opcode)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool canEndBlockOfHead(TerminatorKind kind)
-{
-    switch (kind) {
-    case TerminatorKind::Jump:
-    case TerminatorKind::Branch:
-    case TerminatorKind::Switch:
-    case TerminatorKind::TestAndBranch:
-    case TerminatorKind::Return:
-        return true;
-    case TerminatorKind::ReturnCall:
-    case TerminatorKind::SwitchString:
-    case TerminatorKind::Throw:
-    case TerminatorKind::Rethrow:
-    case TerminatorKind::Unreachable:
-    case TerminatorKind::SwitchOnShape:
-    case TerminatorKind::TryCallInline:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static std::optional<Head> findHead(const AnalysisContext& context)
 {
     const Function& function = context.program.at(context.id);
@@ -2401,7 +2451,7 @@ static std::optional<Head> findHead(const AnalysisContext& context)
     };
     BitVector blocks = findHeadBlocks(function, analyses, [&](BlockID id) {
         const Block& block = function.at(id);
-        if (block.handler || !canEndBlockOfHead(block.terminator.kind) || boundToOf(block.terminator.kind) != BoundTo::Nothing)
+        if (block.handler || !canEndBlockOfHeadOf(block.terminator.kind) || boundToOf(block.terminator.kind) != BoundTo::Nothing)
             return false;
         for (uint32_t index = 0; index < block.values.size(); ++index) {
             const Value& value = function.at(block.values[index]);

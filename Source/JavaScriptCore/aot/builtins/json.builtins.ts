@@ -1,8 +1,6 @@
 import * as b from "bun-builtins-table";
 
 const serialized = b.runsTransitively("OwnKeys", "OwnValues", "ToJSON", "ToPrimitive");
-// It refuses a BigInt and an object that holds itself.
-const treeWithoutBigInt = b.union(b.plainData, b.null, b.bool, b.f64, b.string, b.symbol);
 
 export default b.declarations(
   b.namespace(
@@ -42,10 +40,10 @@ export default b.declarations(
       ],
       stringify: [
         {
-          args: { value: b.any.admitting(treeWithoutBigInt), replacer: b.null, space: b.any.optional },
+          args: { value: b.any, replacer: b.null, space: b.any.optional },
           returns: b.union(b.string, b.undefined),
           capability: "js",
-          throws: b.propagated,
+          throws: true,
           runsOnlyOperandCode: true,
           uses: { value: [serialized], space: [b.runs("ToPrimitive")] },
           boxedCallStub: "JSONStringify",

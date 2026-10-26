@@ -251,13 +251,6 @@ static FunctionKindData kindDataOf(FunctionKind functionKind)
     return kind;
 }
 
-static unsigned closureStructureOf(FunctionKindData kind)
-{
-    if (kind.isConstructor)
-        return classObjectClosureStructure;
-    return kind.isAsync | kind.isGenerator << 1;
-}
-
 static bool takesNewTarget(const Function& function)
 {
     if (function.role != FunctionRole::GenericEntrypoint)
@@ -287,42 +280,8 @@ static FunctionKindData functionKindOf(const Program& program, const SlotPlan& s
     kind.hasInferredName = !described.has(FunctionFlags::HasExplicitName);
     kind.isInRuntimeModule = isInRuntimeModule(program, described);
     kind.isSlim = slots.closureFormOf(targetID) == ClosureForm::Slim;
-    kind.closureStructure = closureStructureOf(kind);
+    kind.closureStructure = kind.closureStructureOfKind();
     return kind;
-}
-
-static bool hasClosureWord(FunctionRole role)
-{
-    switch (role) {
-    case FunctionRole::GenericEntrypoint:
-        return true;
-    case FunctionRole::Source:
-    case FunctionRole::Library:
-    case FunctionRole::Model:
-    case FunctionRole::Signature:
-    case FunctionRole::TableEntrypoint:
-    case FunctionRole::TableLookup:
-    case FunctionRole::GenericVersion:
-    case FunctionRole::AllocatedThisVersion:
-    case FunctionRole::ConstructBody:
-    case FunctionRole::CallSiteVersion:
-    case FunctionRole::CalleeVersion:
-    case FunctionRole::CoroutineRamp:
-    case FunctionRole::CoroutineBody:
-    case FunctionRole::AsyncWorker:
-    case FunctionRole::BoundFunction:
-    case FunctionRole::ResultWrapper:
-    case FunctionRole::ResultWorker:
-    case FunctionRole::ParameterWrapper:
-    case FunctionRole::EntryChecks:
-    case FunctionRole::OutlinedBody:
-    case FunctionRole::Serializer:
-    case FunctionRole::Parser:
-    case FunctionRole::ChainStep:
-    case FunctionRole::StubBody:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static ClosureFunctionRange closureFunctionRangeOf(const Program& program)
@@ -330,7 +289,7 @@ static ClosureFunctionRange closureFunctionRangeOf(const Program& program)
     uint32_t firstClosureFunction = program.functions.size();
     uint32_t endOfClosureFunctions = program.functions.size();
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
-        if (!hasClosureWord(program.functions[index].role))
+        if (!hasClosureWordOf(program.functions[index].role))
             continue;
         firstClosureFunction = std::min(firstClosureFunction, index);
         endOfClosureFunctions = index + 1;
@@ -436,7 +395,7 @@ static TraceVisibility visibilityOf(const Function& function, bool implementsBui
     case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
-        // What the front end hides is a function of its own that no trace lists, unless it is a built-in. What its role hides is a part of a function that traces list.
+        // What the front end hides is a function of its own that no trace lists, unless it is a built-in that programs can call. What its role hides is a part of a function that traces list.
         if (function.has(FunctionFlags::IsHiddenInStackTraces) && !implementsBuiltin)
             return TraceVisibility::Hidden;
         return function.isHiddenInStackTraces() ? TraceVisibility::VisibleOnlyOnTop : TraceVisibility::Visible;
@@ -516,6 +475,11 @@ static bool isInsideBuiltinFunction(const BuiltinTable& builtins, const Function
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool isCompilerFunction(const BuiltinTable& builtins, const Function& source)
+{
+    return source.enclosingRuntimeFunction && builtins.at(source.enclosingRuntimeFunction).role == RuntimeFunctionRole::CompilerFunction;
+}
+
 static StackTraceBuiltinKind builtinKindOf(const BuiltinTable& builtins, const Function& source, std::optional<BuiltinID> builtin)
 {
     if (!builtin)
@@ -535,7 +499,7 @@ FunctionTraceRecord functionTraceOf(const Program& program, FunctionID id)
     record.sourceFunctionIndex = sourceID.index();
     record.implementedBuiltinPlusOne = builtin ? builtin->index() + 1 : 0;
     record.implementsBuiltin = builtin.has_value();
-    record.visibilityBits = static_cast<uint32_t>(visibilityOf(function, builtin.has_value()));
+    record.visibilityBits = static_cast<uint32_t>(visibilityOf(function, builtin && !isCompilerFunction(program.builtins(), source)));
     record.builtinKindBits = static_cast<uint32_t>(builtinKindOf(program.builtins(), source, builtin));
     record.codeTypeBits = static_cast<uint32_t>(source.kind == FunctionKind::Module ? ModuleCode : FunctionCode);
     record.rejectsOnThrow = rejectsOnThrow(program, function);

@@ -382,6 +382,9 @@ ConvertResolution resolveConvert(const TypingContext& context, const Type& prove
         return { };
 
     TypeID targetID = targetOfConvert(context, declared);
+    // Nothing tests a claim. It stays although the value has the type by now: the position or the check that gives the type may go.
+    if (declared.has(PositionFlags::IsClaim))
+        return { CastResolution::Assume, targetID };
     const Type& target = context.types.at(targetID);
     if (!proven.isSubsetOf(target, context.program))
         return { CastResolution::Check, testablePartOf(context, targetID) };

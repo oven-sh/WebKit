@@ -63,6 +63,7 @@ public:
     bool ownsBuffer() const { return !m_bytes.owned.isEmpty(); }
     std::span<const uint8_t> copyBorrowedBytes(std::span<const uint8_t>, const ParallelLoops&);
     void copyBorrowedLineStarts(const ParallelLoops&);
+    void collectConstructionStarts();
     void adoptBuffer(Vector<uint8_t>&&);
 
     StringTable strings;
@@ -169,6 +170,8 @@ public:
 
     bool isEntry(FunctionID) const;
     LineColumn lineColumnFor(ModuleID, uint32_t position) const;
+    // A stack trace reports a construction at its callee. Call sites and the report of an uncaught error show where the expression starts.
+    const ConstructionStart* findConstructionReportedAt(ModuleID, uint32_t position) const;
     StringID pathForLineColumns(ModuleID) const;
 
 private:
@@ -213,6 +216,7 @@ private:
     const ProvisionalFunctions* m_provisionalFunctions { nullptr };
     Bytes m_bytes;
     CountsAsRead m_countsAsRead;
+    Vector<Vector<ConstructionStart>> m_constructionStartsOfModules;
     bool m_readerPreparedFunctionsForTyping { false };
     std::optional<BodiesAsRead> m_bodiesAsRead;
     DerivedTables m_derivedTables;

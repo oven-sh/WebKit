@@ -48,7 +48,7 @@ function f1 name="expectedUnion" parameters=[{type=undefined|number|string|L0|Ar
 # CHECK-NEXT: = IsPristine [[narrowed1]] builtinClass=Array aspects=[Storage, Names]
 # CHECK: [[others1]]([[remaining1]]:
 # CHECK-NEXT: = TypeTest [[remaining1]] testedType=object
-# CHECK: JSONEnterHolder [[builder1]], [[narrowed1]]
+# CHECK: = JSONEnterHolder [[builder1]], [[narrowed1]]
 # CHECK: = ShapeTest [[element1]] layouts=[L1]
 # CHECK: = CallDirect [[element1]], [[builder1]] function=[[serializerOfOther]]
 # CHECK: = ShapeTest [[object1]] layouts=[L0]

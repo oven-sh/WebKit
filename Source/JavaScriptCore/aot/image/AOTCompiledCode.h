@@ -123,6 +123,8 @@ struct SitePosition {
     ModuleID source;
     uint32_t sourceOffset;
     uint32_t inlineFrame;
+    uint32_t constructionStartLine { 0 };
+    uint32_t constructionStartColumn { 0 };
 };
 
 struct InlineFrame {

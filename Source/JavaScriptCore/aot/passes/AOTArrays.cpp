@@ -440,7 +440,19 @@ Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector
             }
         }
     };
+    // No copy of the traversal goes into a copy of the traversal. A traversal that is called costs more than the methods that it stands for, and a trace names none of them.
+    FunctionID traversal = findChainTraversal(program);
+    auto standsInTraversal = [&](ValueID call) {
+        for (uint32_t frame = function.at(call).inlineFrame; frame; frame = function.inlineFrames[frame].parent) {
+            if (function.inlineFrames[frame].callee == traversal)
+                return true;
+        }
+        return false;
+    };
+
     auto tryChain = [&](BlockID block, const ArrayMethodCall& last) {
+        if (standsInTraversal(last.call))
+            return;
         ArrayChain chain;
         chain.block = block;
         chain.lastCall = last.call;
@@ -678,18 +690,39 @@ static void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, 
     }
     ProgramPoint point { chain.block, indexInBlock(chain.lastCall) };
 
-    // The traversal stands for one call of a built-in that is written in JavaScript: a trace that is taken in the callback names the built-in between the callback and the caller, as it does where the text of the built-in takes the place of the call.
+    // The traversal stands for calls of built-ins that are written in JavaScript: a trace that is taken in a callback names the built-in between the callback and the caller, at the place of its own call, as it does where the text of the built-in takes the place of the call.
     // `flatMap` ends in a tail call of the helper that calls the callback, and a trace names neither.
-    std::optional<Origin> originInBuiltin;
-    if (const Value& onlyCall = function.at(chain.lastCall); chain.firstCall() == chain.lastCall && shape.end == ChainEndKind::Array && onlyCall.opcode == Opcode::CallDirect) {
-        const Function& builtin = context.program.at(onlyCall.function());
-        Vector<InlineFrame>& frames = function.inlineFrames;
+    Vector<InlineFrame>& frames = function.inlineFrames;
+    auto appendFrame = [&](const InlineFrame& frame) {
         if (frames.isEmpty())
             frames.append(InlineFrame { });
-        frames.append(InlineFrame { .callee = onlyCall.function(), .callPosition = onlyCall.position, .parent = onlyCall.inlineFrame, .isTailCall = !!onlyCall.isTailCall, .module = builtin.module });
-        originInBuiltin = Origin { builtin.position, static_cast<uint32_t>(frames.size() - 1) };
+        frames.append(frame);
+        return static_cast<uint32_t>(frames.size() - 1);
+    };
+    auto appendFrameOfBuiltin = [&](ValueID id) -> std::optional<Origin> {
+        const Value& call = function.at(id);
+        if (call.opcode != Opcode::CallDirect)
+            return std::nullopt;
+        const Function& builtin = context.program.at(call.function());
+        return Origin { builtin.position, appendFrame({ .callee = call.function(), .callPosition = call.position, .parent = call.inlineFrame, .isTailCall = !!call.isTailCall, .module = builtin.module }) };
+    };
+    Origin origin = function.at(chain.lastCall).origin();
+    if (shape.end != ChainEndKind::FlatMap)
+        origin = appendFrameOfBuiltin(chain.lastCall).value_or(origin);
+    std::span<const ChainCallback> links = chain.callbacks.span().first(shape.numberOfLinks());
+    bool linksHavePlacesOfTheirOwn = std::ranges::any_of(links, [&](const ChainCallback& link) {
+        return link.call != chain.lastCall;
+    });
+    bool linksAreWrittenInJavaScript = std::ranges::all_of(links, [&](const ChainCallback& link) {
+        return function.at(link.call).opcode == Opcode::CallDirect;
+    });
+    if (linksHavePlacesOfTheirOwn && linksAreWrittenInJavaScript) {
+        // The frames of the links stand in a row in front of the frame of the site, which is where the copy of the traversal looks for them.
+        for (const ChainCallback& link : links)
+            appendFrameOfBuiltin(link.call);
+        const Function& traversal = context.program.at(findChainTraversal(context.program));
+        origin = Origin { traversal.position, appendFrame({ .callee = step, .callPosition = origin.position, .parent = origin.inlineFrame, .isTailCall = origin.isTailCall, .module = traversal.module }) };
     }
-    Origin origin = originInBuiltin ? *originInBuiltin : function.at(chain.lastCall).origin();
     TypeID resultType = function.at(chain.lastCall).type;
     size_t numberOfValuesBeforeInsertions = function.at(chain.block).values.size();
 

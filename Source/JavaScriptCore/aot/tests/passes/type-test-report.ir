@@ -24,7 +24,7 @@ function f1 name="callee" module=m1 parameters=[{type=object}] results=[{type=bo
     Return v1
 }
 function f2 name="load" module=m1 role=ResultWrapper parameters=[{type=anything}] results=[{type=Array<number>}] creator=ResultWrapper{worker=f3}
-function f3 name="load" module=m1 role=ResultWorker parameters=[{type=anything}] results=[{type=number}, {type=number}] derivation={source=f2} creator=ResultWorker{origin=f2} {
+function f3 name="load" module=m1 role=ResultWorker parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}, {type=number flags=[IsExpected]}] derivation={source=f2} creator=ResultWorker{origin=f2} {
     v1 = Check v0 expectedType=number @70
     v2 = Results v1, v1
     Return v2

@@ -628,11 +628,12 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         if (storedStatus(root) == StoredModuleStatus::InRecord) {
             callBodyUnderOwnMark(root, false, true);
             didRunFile = true;
-            if (m_fileWhoseJobsWaitForLoader) {
+            Exception* exception = scope.exception();
+            if (!exception && m_fileWhoseJobsWaitForLoader) {
                 m_rootWhoseFilesRanAhead = root;
                 return true;
             }
-            if (Exception* exception = scope.exception()) [[unlikely]] {
+            if (exception) [[unlikely]] {
                 if (vm.isTerminationException(exception))
                     return true;
                 TRY_CLEAR_EXCEPTION(scope, true);
@@ -660,7 +661,18 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         }
     }
     // The files stand in front of everything else that the root requests.
-    for (const ModuleRequestData& request : m_table.imports(root)) {
+    std::span<const ModuleRequestData> requests = m_table.requests(root);
+    for (size_t index = 0; index < requests.size(); ++index) {
+        // Most of the files below a root of a large program ran with an earlier graph.
+        while (requests[index].isHoisted && m_storedStatuses[requests[index].target()] == static_cast<uint8_t>(StoredModuleStatus::Evaluated)) {
+            if (++index == requests.size())
+                break;
+        }
+        if (index == requests.size())
+            break;
+        const ModuleRequestData& request = requests[index];
+        if (request.isRequire)
+            continue;
         ModuleID imported = request.targetModule();
         if (request.isDeferred || !isCommonJSFileOrFace(imported)) {
             if (request.isHoisted)
@@ -779,13 +791,40 @@ bool Modules::needsLoaderForRequire(ModuleID module)
 }
 
 // The loader has not linked the module, so it may not have walked what the module imports.
-bool Modules::isNotLoaded(ModuleID module) const
+bool Modules::isNotLoaded(ModuleID module)
 {
     if (!isLoadedWithRequests(module))
         return false;
     if (ModuleRecord* record = recordIfExists(module))
         return record->status() == CyclicModuleRecord::Status::New || record->status() == CyclicModuleRecord::Status::Unlinked;
-    return storedStatus(module) == StoredModuleStatus::Unlinked && !(m_entryPointIsLinked && data(module).isLinkedWithEntryPoint());
+    if (storedStatus(module) != StoredModuleStatus::Unlinked || (m_entryPointIsLinked && data(module).isLinkedWithEntryPoint()))
+        return false;
+    return data(module).needsLink() || !wasLoadedWithGraphBeingEvaluated(module);
+}
+
+// A graph is loaded before a module of it begins, and nothing is stored when a module that needs no link is loaded. What has not begun below a module that is being evaluated was loaded with it.
+bool Modules::wasLoadedWithGraphBeingEvaluated(ModuleID module)
+{
+    if (!m_innermostEvaluation)
+        return false;
+    m_modulesLoadedWithGraphs.ensureSize(m_table.size());
+    Vector<ModuleID, 32> importers;
+    for (const EvaluationInProgress* evaluation = m_innermostEvaluation; evaluation; evaluation = evaluation->outer) {
+        for (const EvaluationFrame& frame : evaluation->frames) {
+            if (!m_modulesLoadedWithGraphs.quickSet(frame.module.index()))
+                importers.append(frame.module);
+        }
+    }
+    while (!importers.isEmpty()) {
+        for (const ModuleRequestData& request : m_table.requests(importers.takeLast())) {
+            ModuleID target = request.targetModule();
+            if (request.isRequire || request.isHoisted || storedStatus(target) == StoredModuleStatus::Evaluated || !isLoadedWithRequests(target))
+                continue;
+            if (!m_modulesLoadedWithGraphs.quickSet(target.index()))
+                importers.append(target);
+        }
+    }
+    return m_modulesLoadedWithGraphs.quickGet(module.index());
 }
 
 bool Modules::planLevelsOfLoad(ModuleID root)
@@ -871,15 +910,17 @@ bool Modules::planLevelsOfLoad(ModuleID root)
     return true;
 }
 
-void Modules::evaluateFilesOfLevel(ModuleID moduleOnWay)
+void Modules::evaluateFilesOfLevel(ModuleID moduleOnWay, bool runsWhenLoaded)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (m_levelsOfLoads.isEmpty()) [[likely]]
-        return;
+    if (runsWhenLoaded)
+        evaluateLoadedCommonJSFile(moduleOnWay);
     auto found = m_levelsOfLoads.find(moduleOnWay);
-    if (found == m_levelsOfLoads.end())
+    if (found == m_levelsOfLoads.end()) [[likely]] {
+        scope.release();
         return;
+    }
 
     // `bun run` loads the rest of the graph, and with it runs the other files, before it reports an error.
     JSValue firstError = found->value->firstError.get();

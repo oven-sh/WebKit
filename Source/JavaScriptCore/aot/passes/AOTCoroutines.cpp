@@ -657,8 +657,7 @@ static void forEachSuspensionFromLastToFirst(const Function& function, FunctionA
     }
 }
 
-// What the function as it is written reads behind a suspension it holds there, also where a later pass finds that the read is never reached.
-PassOutcome listLiveValuesAtSuspensions(FunctionPassContext& context)
+static PassOutcome listLiveValues(FunctionPassContext& context)
 {
     Function& function = context.function;
     PassOutcome outcome = PassOutcome::Unchanged;
@@ -707,6 +706,29 @@ PassOutcome listLiveValuesAtSuspensions(FunctionPassContext& context)
         outcome = PassOutcome::Changed;
     });
     return outcome;
+}
+
+// A block goes on listing each value that it was read with.
+static PassOutcome replaceReadsOfScopes(Function& function)
+{
+    PassOutcome outcome = PassOutcome::Unchanged;
+    for (uint32_t block = 0; block < function.blocks.size(); ++block) {
+        for (ValueID id : function.at(BlockID(block)).values) {
+            if (function.at(id).opcode != Opcode::ReadScope)
+                continue;
+            function.edit(id).become(Opcode::Undefined);
+            outcome = PassOutcome::Changed;
+        }
+    }
+    return outcome;
+}
+
+// What the function as it is written reads behind a suspension it holds there, also where a later pass finds that the read is never reached.
+// A read of a scope reads all that the names of the scope hold.
+PassOutcome listLiveValuesAtSuspensions(FunctionPassContext& context)
+{
+    PassOutcome outcome = listLiveValues(context);
+    return outcome | replaceReadsOfScopes(context.function);
 }
 
 // A constant of a module holds its value as long as the program runs.

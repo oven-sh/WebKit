@@ -21,10 +21,12 @@
 #include "AOTIRBuilder.h"
 #include "AOTInterningPhases.h"
 #include "AOTMethodTableEntrypoints.h"
+#include "AOTPropertyAccessElements.h"
 #include "AOTRepresentation.h"
 #include "AOTResolveCallsCallees.h"
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
+#include "AOTSchemaOperandIndexes.h"
 #include "AOTSlotPlan.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
@@ -85,15 +87,53 @@ static bool mayBeReadWithItsFunction(const Variable& variable)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static FunctionID writtenFunctionOf(const Program& program, FunctionID id)
+{
+    while (FunctionID source = program.at(id).derivation.source)
+        id = source;
+    return id;
+}
+
+// A function under a key in brackets takes its name from the key where its object is made. One key names the function as it is written.
+static BitVector findWrittenFunctionsNamedBySeveralKeys(const Program& program, const ParallelLoops& loops)
+{
+    struct NameTaken {
+        FunctionID written;
+        // None for an async function: the tables of names leave those out.
+        ConstantKey key;
+        MethodKind kind;
+    };
+    Vector<NameTaken> names = collectInParallel<NameTaken>(loops, program.functions.size(), [&](unsigned index, Vector<NameTaken>& found) {
+        const Function& function = program.functions[index];
+        for (const Block& block : function.blocks) {
+            for (ValueID id : block.values) {
+                const Value& operation = function.at(id);
+                if (operation.opcode != Opcode::SetFunctionName)
+                    continue;
+                ConstantKey key = constantKeyOf(program, program.typeOf(function, operation.operand(OperandIndex::SetFunctionName::computedKey)));
+                for (FunctionID named : program.typeOf(function, operation.operand(OperandIndex::SetFunctionName::function)).functions)
+                    found.append({ writtenFunctionOf(program, named), program.at(named).has(FunctionFlags::IsAsync) ? ConstantKey { } : key, operation.methodKind() });
+            }
+        }
+    });
+    BitVector functions(program.functions.size());
+    UncheckedKeyHashMap<uint32_t, const NameTaken*, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> firstNames;
+    for (const NameTaken& name : names) {
+        const NameTaken& first = *firstNames.add(name.written.index(), &name).iterator->value;
+        if (!name.key || first.key.kind != name.key.kind || first.key.text != name.key.text || first.key.symbol != name.key.symbol || first.kind != name.kind)
+            functions.quickSet(name.written.index());
+    }
+    return functions;
+}
+
 // A stack frame shows the name that the function object has when the stack is read. One function object stands for every frame of the function as it is written.
-static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const FlowResults& flow)
+static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const FlowResults& flow, const ParallelLoops& loops)
 {
     const Program& program = editor.program();
     auto writtenFunctionOf = [&](FunctionID id) {
-        while (FunctionID source = program.at(id).derivation.source)
-            id = source;
-        return id;
+        return Typed::writtenFunctionOf(program, id);
     };
+    BitVector namedBySeveralKeys = findWrittenFunctionsNamedBySeveralKeys(program, loops);
     auto hasClosures = [&](const Function& function) {
         return function.hasBody() && canBeCalledByValueOf(function.role);
     };
@@ -102,22 +142,32 @@ static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const Flow
         if (auto key = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = text }))
             keysOfNames.append(*key);
     }
+    BitVector hasBody(program.functions.size());
     BitVector hasForm(program.functions.size());
     BitVector hasSeveralForms(program.functions.size());
     for (unsigned index = 0; index < program.functions.size(); ++index) {
-        if (hasClosures(program.functions[index]) && hasForm.set(writtenFunctionOf(FunctionID(index)).index()))
-            hasSeveralForms.quickSet(writtenFunctionOf(FunctionID(index)).index());
+        if (!program.functions[index].hasBody())
+            continue;
+        uint32_t written = writtenFunctionOf(FunctionID(index)).index();
+        hasBody.quickSet(written);
+        if (hasClosures(program.functions[index]) && hasForm.set(written))
+            hasSeveralForms.quickSet(written);
     }
     for (unsigned index = 0; index < program.functions.size(); ++index) {
         const Function& function = program.functions[index];
         FunctionID id(index);
+        // Nothing enters a function that has no body in any form, so no frame shows a name of its function objects and the run time keeps none.
+        if (FunctionID written = writtenFunctionOf(id); !hasBody.quickGet(written.index())) {
+            if (canBeCalledByValueOf(function.role) && flow.closuresMayBeRenamed(id))
+                editor.at(written).capabilities.add(FunctionCapabilities::RecordsCallee);
+            continue;
+        }
         // The body of a generator, and of an async function that may wait, runs under a function object of its own.
         bool mayWait = function.role == FunctionRole::CoroutineRamp && function.creator.as<CreatorRecord::Coroutine>().worker != function.creator.as<CreatorRecord::Coroutine>().body;
-        if (!hasClosures(function) || mayWait || function.hasAny({ FunctionFlags::IsGenerator, FunctionFlags::IsHiddenInStackTraces }) || !flow.closuresMayBeRenamed(id))
+        if (!hasClosures(function) || mayWait || function.hasAny({ FunctionFlags::IsGenerator, FunctionFlags::IsHiddenInStackTraces }))
             continue;
         FunctionID written = writtenFunctionOf(id);
-        // The modules of the run time name their functions once, when they start.
-        if (program.at(written).role == FunctionRole::Library)
+        if (!flow.closuresMayBeRenamed(id) && !namedBySeveralKeys.quickGet(written.index()))
             continue;
         // The tables leave async functions out. A static field is stored without a word to the run time.
         bool isNamedByStaticField = function.constructedClass && std::ranges::any_of(program.at(function.constructedClass).staticFields, [&](PropertyKeyID key) { return keysOfNames.contains(key); }, &StaticField::key);
@@ -132,7 +182,7 @@ void createEntrypoints(ProgramEditor& editor, const OptimizationInputs& inputs, 
 {
     const Program& program = editor.program();
     const ParallelLoops& loops = build.parallelLoops();
-    markFunctionsThatRecordTheirCallee(editor, inputs.flow);
+    markFunctionsThatRecordTheirCallee(editor, inputs.flow, loops);
     AnalysisContext context { build, program, &inputs.flow, nullptr };
     size_t numberOfFunctionsBefore = program.functions.size();
 
@@ -202,29 +252,10 @@ void createEntrypoints(ProgramEditor& editor, const OptimizationInputs& inputs, 
 
 static constexpr OptionSet<FunctionFlags> flagsOfUnboundTargets { FunctionFlags::IsGenerator, FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest, FunctionFlags::HasArgumentCount, FunctionFlags::TakesCallee };
 
-static bool canBeBound(FunctionKind kind)
-{
-    switch (kind) {
-    case FunctionKind::Arrow:
-    case FunctionKind::Method:
-    case FunctionKind::Plain:
-        return true;
-    case FunctionKind::Getter:
-    case FunctionKind::Setter:
-    case FunctionKind::BaseConstructor:
-    case FunctionKind::DerivedConstructor:
-    case FunctionKind::Initializer:
-    case FunctionKind::Module:
-    case FunctionKind::CommonJsModule:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 bool canCreateBoundFunction(const Program& program, FunctionID targetID)
 {
     const Function& target = program.at(targetID);
-    return canBeBound(target.kind) && !target.hasAny(flagsOfUnboundTargets) && mayBeCalledDirectly(program, targetID);
+    return canBeBoundOf(target.kind) && !target.hasAny(flagsOfUnboundTargets) && mayBeCalledDirectly(program, targetID);
 }
 
 // instanceof asks the target of a bound function.

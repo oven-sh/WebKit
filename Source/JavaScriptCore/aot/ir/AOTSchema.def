@@ -4,7 +4,9 @@ constant WrittenPositionFollows = 0x80000000
 
 enum IRForm { | engine AsRead Prepared Selected Placed }
 enum ResultRule { | engine None Constant Natural Allocation Declared Unknown Cast Results }
-enum EffectRule { | engine Declared Operator Access Call Builtin Inline }
+enum EffectRule (| engine callsBuiltin: Bool) {
+    | engine Declared(false) Operator(false) Access(false) Call(false) Builtin(true) Inline(true)
+}
 enum RetainedIn { | engine UnknownMemory Result Operand }
 enum Branches { | engine No May Only }
 enum Access { | engine None Read Store Define Has }
@@ -102,7 +104,7 @@ effects ReadsObjectGraph = reads(ObjectFields, ShapeWords, OrderWords, NamedProp
 opaque IteratorState Enumerator Exception ClassToken
 opaque StringBuilder engine
 opaque Cursor KeyOrder engine directCallsOnly
-opaque Guard FlatString CodeAddress engine functionLocal
+opaque Guard FlatString CodeAddress JSONHolders engine functionLocal
 opaque BuilderCursor engine functionLocal interior
 
 external Builtin : id = BuiltinID, crate::builtins::id::BuiltinId ; namedInText
@@ -148,6 +150,10 @@ column allocatesAfterLastSafepoint : Bool
 column runsOwnerBarrier : Bool
 column remembersOwner : Bool
 column runsBeforeCallee : Bool
+column canStartRegion : Bool
+column canEndInteriorBlock : Bool
+column canEndHeadBlock : Bool
+column canEndBlockOfHead : Bool
 column hasKnownValueRule : Bool
 column hasOwnFoldingRule : Bool
 

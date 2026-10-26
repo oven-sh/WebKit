@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTFlowApply.h"
+#include "AOTObservableOperations.h"
 #include "AOTPredictedValues.h"
 #include "AOTResultRules.h"
 #include "AOTRewrite.h"
@@ -47,6 +48,9 @@ struct CastSimplification : Rewrite {
         unsigned changed = static_cast<unsigned>(moveCastsToEdges());
         for (;;) {
             changed += removeCasts();
+            // The check that has gone may have been the last one in front of such a claim.
+            while (std::exchange(hasKeptClaimBehindCheck, false) & std::exchange(hasRemovedCheck, false))
+                changed += removeCasts();
             // removeCasts() judges each cast by what it leaves behind, so it finds nothing more until removeRepeatedCasts() has changed something.
             unsigned repeated = removeRepeatedCasts();
             if (!repeated) {
@@ -72,6 +76,8 @@ struct CastSimplification : Rewrite {
             return std::nullopt;
 
         ValueID parameter = cast.operand(0);
+        if (saysMoreThanTypeOnCredit(cast, parameter))
+            return std::nullopt;
         if (hasTest && (cast.opcode != Opcode::AssumeType || test.valueOperand() != parameter || test.validatedType() != cast.provenType()))
             return std::nullopt;
         size_t parameterIndex = block.parameters.find(parameter);
@@ -145,6 +151,7 @@ struct CastSimplification : Rewrite {
             return 0;
 
         builder().applyInsertions();
+        predicted.reset();
         // The arguments of the edges were written past the builder.
         analyses.didChangeValues();
         // A join may widen, so the cast at the head stays until the type of its parameter is inside it.
@@ -181,6 +188,7 @@ struct CastSimplification : Rewrite {
             builder().eraseValues(block, indexes);
         substitution.apply(function, &analyses);
         analyses.didChangeValues();
+        predicted.reset();
         return changed;
     }
 
@@ -216,6 +224,11 @@ struct CastSimplification : Rewrite {
         operand = narrowest;
         if (!typeOf(operand).isSubsetOf(typeOf(id), program))
             return changed;
+        if (saysMoreThanTypeOnCredit(cast, operand)) {
+            hasKeptClaimBehindCheck = true;
+            return changed;
+        }
+        hasRemovedCheck |= cast.opcode == Opcode::Check;
 
         if (!expectsNarrowerTypeThan(cast, operand) && typeOf(operand).hasLiteralStrings() == typeOf(id).hasLiteralStrings() && isUnchangedByCastTo(typeOf(operand), typeOf(id))) {
             substitution.replace(id, operand);
@@ -225,6 +238,23 @@ struct CastSimplification : Rewrite {
         else
             return changed;
         return changed + 1;
+    }
+
+    // What is assumed in every version says more than a type that is owed to a check: the check may go.
+    bool saysMoreThanTypeOnCredit(const Value& cast, ValueID operand)
+    {
+        return cast.opcode == Opcode::AssumeType && !cast.isBehindChecks() && isBehindCheck(operand);
+    }
+
+    bool isBehindCheck(ValueID value)
+    {
+        if (!hasChecks)
+            hasChecks = std::ranges::any_of(function.values, [](const Value& candidate) { return candidate.opcode == Opcode::Check; });
+        if (!*hasChecks)
+            return false;
+        if (!predicted)
+            predicted.emplace(function, analyses.cfg());
+        return predicted->isBehindCheck(value);
     }
 
     std::tuple<ValueID, TypeID, uint32_t> keyOf(ValueID id)
@@ -371,6 +401,7 @@ struct CastSimplification : Rewrite {
                     continue;
                 if (ValueID earlier = passed.get(keyOf(id))) {
                     substitution.replace(id, earlier);
+                    explainOperationThatGoes(function, id, InPlaceOfOperation::AnEarlierOneThatCompleted);
                     eraseValue(block, index);
                     ++changed;
                 } else if (wasPastDeadZone && opcode == Opcode::CheckInitialized) {
@@ -398,6 +429,11 @@ struct CastSimplification : Rewrite {
     }
 
     ValueSubstitution substitution { function };
+    bool hasKeptClaimBehindCheck { false };
+    bool hasRemovedCheck { false };
+    // The pass makes no check.
+    std::optional<bool> hasChecks;
+    std::optional<PredictedValues> predicted;
     Vector<std::pair<BlockID, BitVector>, 4> erasedValues;
 };
 

@@ -530,10 +530,49 @@ static KeysAddedToClosures collectKeysAddedToClosures(const ValueFlowResultInput
     return added;
 }
 
+static FunctionID writtenFunctionOf(const Program& program, FunctionID id)
+{
+    while (FunctionID source = program.at(id).derivation.source)
+        id = source;
+    return id;
+}
+
+// One text that statements give to every function object of a function as it is written names the function itself. So does the key under which a function stands where its object is made: who reads the key's type decides that.
+static BitVector findWrittenFunctionsNamedWithSeveralTexts(const ValueFlowResultInputs& inputs)
+{
+    const Program& program = inputs.program;
+    const ValueFlowUniverse& universe = inputs.universe();
+    BitVector functions(program.functions.size());
+    ValueSetID namedByStatements = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsName));
+    uint32_t nameKey = program.keyOf(BuiltinNames::name).index();
+    UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> textOfFunction;
+    for (const ValueFlowHeapIndex::Stretch& stretch : inputs.heapIndex->stretchesOfNodesWrittenUnder([&](ValueFlowName name) { return name.kind == ValueFlowNameKind::Property && name.payload == nameKey; })) {
+        for (const auto& node : stretch.nodes) {
+            if (ValueSets::isComplement(node.objects))
+                continue;
+            ValueFlowObjectID text = inputs.sets().onlyMember(node.value);
+            bool isOneText = text && universe.kindOf(text) == ValueFlowObjectKind::Key && program.at(universe.keyOf(text)).kind == PropertyKeyKind::Text;
+            inputs.sets().forEachMember(node.objects, [&](ValueFlowObjectID object) {
+                if (universe.kindOf(object) != ValueFlowObjectKind::Closure)
+                    return;
+                FunctionID function = universe.closureFunction(object);
+                if (!program.at(function).constructedClass && !inputs.sets().contains(namedByStatements, object))
+                    return;
+                uint32_t written = writtenFunctionOf(program, function).index();
+                // The tables of names leave async functions out.
+                if (!isOneText || program.at(function).has(FunctionFlags::IsAsync) || textOfFunction.add(written, text.index()).iterator->value != text.index())
+                    functions.quickSet(written);
+            });
+        }
+    }
+    return functions;
+}
+
 // A stack frame shows the own property `name` or `displayName` of the function object. What code that nobody has seen may do to a closure is written down as stores under unknown keys.
 static BitVector findFunctionsWhoseClosuresMayBeRenamed(const ValueFlowResultInputs& inputs, const KeysAddedToClosures& added, std::span<const AllocationClass> classesOfClosures)
 {
     const Program& program = inputs.program;
+    BitVector namedWithSeveralTexts = findWrittenFunctionsNamedWithSeveralTexts(inputs);
     Vector<PropertyKeyID, 2> keys { program.keyOf(BuiltinNames::name) };
     if (StringID text = program.strings.find(byteCast<uint8_t>("displayName"_span))) {
         if (auto key = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = text }))
@@ -541,10 +580,15 @@ static BitVector findFunctionsWhoseClosuresMayBeRenamed(const ValueFlowResultInp
     }
 
     BitVector functions(program.functions.size());
-    inputs.sets().forEachMember(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsWriteUnderKeysNobodyKnows)), [&](ValueFlowObjectID closure) {
-        if (inputs.universe().kindOf(closure) == ValueFlowObjectKind::Closure)
-            functions.quickSet(inputs.universe().closureFunction(closure).index());
+    inputs.sets().forEachMember(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename)), [&](ValueFlowObjectID object) {
+        if (FunctionID function = inputs.universe().closureFunction(object); function && function.index() < program.functions.size())
+            functions.quickSet(function.index());
     });
+    // A function that nothing enters has no class of closures.
+    for (auto [function, key] : added) {
+        if (function != UINT32_MAX && key && keys.contains(key) && !inputs.isReached(FunctionID(function)))
+            functions.quickSet(function);
+    }
     for (const AllocationClass& closures : classesOfClosures) {
         bool isSeenByKnownCodeAlone = closures.impossibleMutations.containsAll({ ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript });
         auto mayNameFrames = [&](PropertyKeyID key) {
@@ -552,7 +596,10 @@ static BitVector findFunctionsWhoseClosuresMayBeRenamed(const ValueFlowResultInp
         };
         uint32_t index = closures.closureFunction.index();
         LayoutID constructedClass = program.functions[index].constructedClass;
-        if (std::ranges::any_of(std::ranges::equal_range(added, index, { }, &std::pair<uint32_t, PropertyKeyID>::first), mayNameFrames, &std::pair<uint32_t, PropertyKeyID>::second)
+        auto mayNameFramesOfThisFunction = [&](PropertyKeyID key) {
+            return key == keys[0] ? namedWithSeveralTexts.quickGet(writtenFunctionOf(program, closures.closureFunction).index()) : mayNameFrames(key);
+        };
+        if (std::ranges::any_of(std::ranges::equal_range(added, index, { }, &std::pair<uint32_t, PropertyKeyID>::first), mayNameFramesOfThisFunction, &std::pair<uint32_t, PropertyKeyID>::second)
             || std::ranges::any_of(std::ranges::equal_range(added, UINT32_MAX, { }, &std::pair<uint32_t, PropertyKeyID>::first), mayNameFrames, &std::pair<uint32_t, PropertyKeyID>::second)
             || (constructedClass && std::ranges::any_of(program.at(constructedClass).staticFields, mayNameFrames, &StaticField::key)))
             functions.quickSet(index);

@@ -781,6 +781,7 @@ void promoteEnvironmentsToVariables(ProgramEditor& editor, FlowResults& flow, Bu
         if (function.hasBody()) {
             IRBuilder builder(AnalysisContext { build, program, &flow, nullptr, id }, function, arenas.types);
             promoteInBody(plan, builder, id, removedCaptures);
+            settleProofsBehindOperandsThatWereOnlyKept(function);
         } else
             removeEntryParameters(function, removedCaptures);
         for (ParameterOrigin& origin : function.derivation.parameterMap) {

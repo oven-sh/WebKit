@@ -126,7 +126,8 @@ bool isMadeWithCodeOfLibrary(const BuiltinTable&, BuiltinID member);
     macro(PropertyKeyID, rawKey) \
     macro(PropertyKeyID, lengthKey) \
     macro(PropertyKeyID, calleeKey) \
-    macro(PropertyKeyID, nameKey)
+    macro(PropertyKeyID, nameKey) \
+    macro(PropertyKeyID, displayNameKey)
 
 class ValueFlowHeapTables {
     WTF_MAKE_NONCOPYABLE(ValueFlowHeapTables);

@@ -394,9 +394,14 @@ String describe(const ProgramTables& tables, const RuntimeType& type, Typed::Typ
 
 static thread_local const String* quotedSource;
 
-StringView quotedSourceOfFailedExpression()
+String quotedSourceOfFailedExpression(VM& vm)
 {
-    return quotedSource ? StringView(*quotedSource) : StringView();
+    if (quotedSource)
+        return *quotedSource;
+    if (!vm.hasCompiledCode())
+        return { };
+    StringView constructor = nameOfConstructorThatRunsOnTop(vm);
+    return constructor.isNull() ? String() : tryMakeString("new "_s, constructor);
 }
 
 static JSObject* createQuoting(const String& source, JSObject* (*create)(JSGlobalObject*, JSValue), JSGlobalObject* globalObject, JSValue value)
@@ -459,6 +464,16 @@ JSObject* createNotAConstructorError(JSGlobalObject* globalObject, JSValue calle
 {
     String source = name.isNull() ? String() : tryMakeString("new "_s, name);
     return createQuoting(source, JSC::createNotAConstructorError, globalObject, callee);
+}
+
+JSObject* createInstanceofRightHandSideNotAFunctionError(JSGlobalObject* globalObject, JSValue constructor, StringView expression)
+{
+    return createQuoting(expression.isNull() ? String() : expression.toString(), createInvalidInstanceofParameterErrorNotFunction, globalObject, constructor);
+}
+
+JSObject* createHasInstanceNotAFunctionError(JSGlobalObject* globalObject, JSValue constructor, StringView expression)
+{
+    return createQuoting(expression.isNull() ? String() : expression.toString(), createInvalidInstanceofParameterErrorHasInstanceValueNotFunction, globalObject, constructor);
 }
 
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, const Identifier& name)

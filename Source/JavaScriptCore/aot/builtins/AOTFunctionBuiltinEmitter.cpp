@@ -127,7 +127,7 @@ void FunctionBuiltinEmitter::generateReflectConstruct(const InlineCall& call)
     Boxed target = constructorOrMiss(call.argument(0));
     Boxed list = boxCell(objectOrMiss(call, call.argument(1)));
     Boxed newTarget = call.numberOfArguments() == 3 ? constructorOrMiss(call.argument(2)) : target;
-    finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::ConstructWithArray, { target, newTarget, list }));
+    finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::ConstructWithArray, { target, newTarget, list }, { .constructs = true }));
 }
 
 void FunctionBuiltinEmitter::generateFunctionApply(const InlineCall& call)

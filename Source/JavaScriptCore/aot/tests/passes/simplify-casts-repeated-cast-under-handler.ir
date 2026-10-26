@@ -5,7 +5,7 @@
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="repeatedInCoveredBlockAndInHandler" parameters=[{type=anything}] results=[{type=number}] {
+function f0 name="repeatedInCoveredBlockAndInHandler" parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
   b0(v0: anything) handler=b1():
     v1 = Check v0 expectedType=number
     v2 = Check v0 expectedType=number
@@ -24,7 +24,7 @@ function f0 name="repeatedInCoveredBlockAndInHandler" parameters=[{type=anything
 # CHECK-NEXT: Return v5
 }
 
-function f1 name="repeatedBehindHandler" parameters=[{type=anything}, {type=anything}] results=[{type=number}] {
+function f1 name="repeatedBehindHandler" parameters=[{type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] {
   b0(v0: anything, v1: anything) handler=b1():
     v2 = Call v1
     v3 = Check v0 expectedType=number
@@ -44,7 +44,7 @@ function f1 name="repeatedBehindHandler" parameters=[{type=anything}, {type=anyt
 # CHECK-NEXT: Return v7
 }
 
-function f2 name="onlyInHandler" parameters=[{type=anything}, {type=anything}] results=[{type=number}] {
+function f2 name="onlyInHandler" parameters=[{type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] {
   b0(v0: anything, v1: anything) handler=b1():
     v2 = Call v1
     v3 = Check v0 expectedType=number

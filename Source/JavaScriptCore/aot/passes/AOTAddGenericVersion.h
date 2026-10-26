@@ -24,6 +24,7 @@ enum class TaintedPositionsRun : uint8_t { BeforeFlow, AfterFlow };
 void guardTaintedPositions(Program&, BuildContext&, TaintedPositionsRun);
 void guardTaintedPositionsAfterFlow(Program&, const FlowResults&, BuildContext&);
 bool mayReturnTaintedValue(const Program&, FunctionID, BuildContext&);
+bool mayTurnValueAway(const Program&, const Function&, const Value& check);
 
 } } } // namespace JSC::AOT::Typed
 

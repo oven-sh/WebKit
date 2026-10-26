@@ -62,13 +62,11 @@ static constexpr bool looksUpKeysByName(Operation operation)
 
 static bool hasStringsForMessagesOnly(Typed::Opcode opcode)
 {
+    // An indirect call names its callee for the message of an error.
+    if (accessClassOf(opcode) == Typed::AccessClass::IndirectCall)
+        return true;
     switch (opcode) {
-    case Typed::Opcode::Call:
-    case Typed::Opcode::CallList:
-    case Typed::Opcode::CallMethod:
-    case Typed::Opcode::CallResolved:
-    case Typed::Opcode::Construct:
-    case Typed::Opcode::ConstructList:
+    case Typed::Opcode::InstanceOf:
     case Typed::Opcode::CheckInitialized:
     case Typed::Opcode::RequireObjectCoercible:
     case Typed::Opcode::ToObject:

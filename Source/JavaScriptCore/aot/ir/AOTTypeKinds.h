@@ -87,6 +87,8 @@ struct Proven {
     static ProvenInEveryVersion byRulesWithoutChecks(TypeID type) { return ProvenInEveryVersion(type); }
     // The pass has made the value that way, or the operation that takes it has no other form.
     static ProvenInEveryVersion byConstruction(TypeID type) { return ProvenInEveryVersion(type); }
+    // The front end says so of a value in code that it lays down itself, or that the library has written: it rests on no position and on no check, so no pass takes it back.
+    static ProvenInEveryVersion byFrontEnd(TypeID type) { return ProvenInEveryVersion(type); }
     // Every store into the position is held to its type.
     static ProvenInEveryVersion byPosition(TypeID type) { return ProvenInEveryVersion(type); }
     // What the whole program lets arrive.

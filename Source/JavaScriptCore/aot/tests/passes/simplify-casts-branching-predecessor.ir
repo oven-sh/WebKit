@@ -5,7 +5,7 @@
 # CHECK: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="branchEdgeNeedsCheck" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+function f0 name="branchEdgeNeedsCheck" parameters=[{type=anything}, {type=boolean}] results=[{type=number flags=[IsExpected]}] {
     Branch v1 -> taken b1(), notTaken b2(v0)
   b1():
     v2 = Integer integer=1
@@ -24,7 +24,7 @@ function f0 name="branchEdgeNeedsCheck" parameters=[{type=anything}, {type=boole
 # CHECK-NEXT: }
 }
 
-function f1 name="jumpEdgeNeedsCheck" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+function f1 name="jumpEdgeNeedsCheck" parameters=[{type=anything}, {type=boolean}] results=[{type=number flags=[IsExpected]}] {
     v2 = Integer integer=1
     Branch v1 -> taken b1(), notTaken b2(v2)
   b1():

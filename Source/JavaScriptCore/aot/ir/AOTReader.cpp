@@ -319,6 +319,7 @@ static std::unique_ptr<Program> readProgram(std::span<const uint8_t> bytes, cons
     if (!reader.run())
         return nullptr;
     program->copyBorrowedLineStarts(build.parallelLoops());
+    program->collectConstructionStarts();
     program->borrowBuffer({ });
     return program;
 }

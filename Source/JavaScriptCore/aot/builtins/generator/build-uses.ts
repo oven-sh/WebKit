@@ -1009,13 +1009,15 @@ export function applyUses(context: OverloadContext, operand: ModelOperand, uses:
 }
 
 export function applyWrittenUses(context: OverloadContext): void {
-  const { uses = {}, isUndeclared } = context.signature;
+  const { uses = {}, isUndeclared, mode } = context.signature;
+  // A getter or a setter names its class and its attribute, and nothing of the receiver.
+  const namesNoReceiver = mode !== "Call";
   for (const name of Object.keys(uses)) context.operandOf(name, context.source);
   for (const state of context.states) {
     const { name, operand, accepted, converted } = state.parameter;
     // The host describes an argument or a receiver that it refuses in the message of the error.
-    if (context.source.origin === "Host" && !isUndeclared && !accepted.isAnything)
-      state.roles.add("DescribedWhenRefused");
+    const isDescribed = !accepted.isAnything && !(namesNoReceiver && operand.operand === "Receiver");
+    if (context.source.origin === "Host" && !isUndeclared && isDescribed) state.roles.add("DescribedWhenRefused");
     const isWritten = !isUndeclared && Object.hasOwn(uses, name);
     if (isWritten) {
       applyUses(context, operand, uses[name]!);

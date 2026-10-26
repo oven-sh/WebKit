@@ -6,7 +6,7 @@
 
 module m0 path="main.js" displayPath="main.js"
 
-function f0 name="bothEdges" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=number}] {
+function f0 name="bothEdges" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] {
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     Jump -> next b3(v1)
@@ -23,7 +23,7 @@ function f0 name="bothEdges" parameters=[{type=boolean}, {type=anything}, {type=
 # CHECK-NEXT: v4: number = Check v3 expectedType=number
 }
 
-function f1 name="twoOfThreeEdges" parameters=[{type=i32}, {type=anything}, {type=string|number}, {type=number}] results=[{type=number}] {
+function f1 name="twoOfThreeEdges" parameters=[{type=i32}, {type=anything}, {type=string|number}, {type=number}] results=[{type=number flags=[IsExpected]}] {
     Switch v0 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
   b1():
     Jump -> next b4(v1)
@@ -44,7 +44,7 @@ function f1 name="twoOfThreeEdges" parameters=[{type=i32}, {type=anything}, {typ
 # CHECK-NEXT: v5: number = Check v4 expectedType=number
 }
 
-function f2 name="sameValueOnTwoOfThreeEdges" parameters=[{type=i32}, {type=anything}, {type=number}] results=[{type=number}] {
+function f2 name="sameValueOnTwoOfThreeEdges" parameters=[{type=i32}, {type=anything}, {type=number}] results=[{type=number flags=[IsExpected]}] {
     Switch v0 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
   b1():
     Jump -> next b4(v1)
@@ -63,7 +63,7 @@ function f2 name="sameValueOnTwoOfThreeEdges" parameters=[{type=i32}, {type=anyt
 # CHECK-NEXT: v4: number = Check v3 expectedType=number
 }
 
-function f3 name="onlyEdge" parameters=[{type=anything}] results=[{type=number}] {
+function f3 name="onlyEdge" parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
     Jump -> next b1(v0)
   b1(v1):
     v2 = Check v1 expectedType=number

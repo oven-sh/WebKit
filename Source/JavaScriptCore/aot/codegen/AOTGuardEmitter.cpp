@@ -297,7 +297,7 @@ void GuardEmitter::generateIsPristine(const ValueContext& value)
         }
         // Only closures have the tested Structures, so the test needs no test of the class in front of it.
         defineTestByBranching(value, [&](BranchTargets targets) {
-            branch(isClosureAsCreated(cellOrElse(value, subject, targets.notTaken)), targets);
+            branch(isClosureAsCreated(cellOrElse(value, subject, targets.notTaken), builtinClass, value->aspects()), targets);
         });
         return;
     }
@@ -394,14 +394,23 @@ Condition GuardEmitter::holds(GuardBitID id)
     return holdsWhileClear ? hasNoBits(byte, statics.guardMaskOf(id)) : hasBits(byte, statics.guardMaskOf(id));
 }
 
-Condition GuardEmitter::isClosureAsCreated(CellPointer cell)
+Condition GuardEmitter::isClosureAsCreated(CellPointer cell, BuiltinClassID builtinClass, OptionSet<PristineAspects> aspects)
 {
     // A new property, another prototype and a change of integrity each give a closure another Structure.
-    constexpr FunctionKindData plainFunction { };
+    RELEASE_ASSERT(builtinClass == BuiltinClasses::Function || builtinClass == BuiltinClasses::AsyncFunction);
+    FunctionKindData kind { };
+    kind.isAsync = builtinClass == BuiltinClasses::AsyncFunction;
     Word32 structureID = loadStructureID(cell);
-    Condition isFullClosure = equal(structureID, loadImmutable32(AOT_INSTANCE_OFFSET(closures.closureHeaders) + plainFunction.closureStructure * sizeof(uint64_t)));
-    Condition isSlimClosure = equal(structureID, loadImmutable32(AOT_INSTANCE_OFFSET(slimClosureHeaders) + plainFunction.slimClosureKind() * sizeof(uint64_t)));
+    Condition isFullClosure = equal(structureID, loadImmutable32(AOT_INSTANCE_OFFSET(closures.closureHeaders) + kind.closureStructureOfKind() * sizeof(uint64_t)));
+    Condition isSlimClosure = equal(structureID, loadImmutable32(AOT_INSTANCE_OFFSET(slimClosureHeaders) + kind.slimClosureKind() * sizeof(uint64_t)));
     Condition isAsCreated = logicalOr(isFullClosure, isSlimClosure);
+    if (kind.isAsync)
+        return isAsCreated;
+    if (aspects.contains(PristineAspects::NamesKeptBelow)) {
+        BuiltinClassID below = classBelowWithTestedStructure(m_builtins, builtinClass);
+        RELEASE_ASSERT(below);
+        isAsCreated = logicalOr(isAsCreated, isClosureAsCreated(cell, below, PristineAspects::Names));
+    }
     // `Base.call(this)`: a constructor function has its `prototype` property, which hides no other name. A word that is read too early is zero, and the test fails.
     for (unsigned index = 0; index < ClosureWords::numberOfStructuresWithPrototypeProperty; ++index)
         isAsCreated = logicalOr(isAsCreated, equal(structureID, loadImmutable32(AOT_INSTANCE_OFFSET(closures.structuresWithPrototypeProperty) + index * sizeof(uint32_t))));

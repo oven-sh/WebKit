@@ -12,6 +12,7 @@
 #include "AOTCallSiteCache.h"
 #include "AOTClosure.h"
 #include "AOTCompiledCall.h"
+#include "AOTCompiledCaller.h"
 #include "AOTCompiledFrame.h"
 #include "AOTErrorMessages.h"
 #include "AOTFunctionTables.h"
@@ -461,18 +462,51 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSuperConstructList, EncodedJSValue, (Instan
     OPERATION_RETURN(scope, JSValue::encode(constructValue<true>(globalObject, vm, JSValue::decode(parent), JSValue::decode(newTarget), arguments)));
 }
 
-static StringView nameOfCalleeAtCallSite(VM& vm)
+static StringView nameOfCalleeAt(const CallSiteCache::Entry& callSite)
 {
-    auto frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, vm.topCallFrame, vm.topEntryFrame);
-    if (!frames || frames->isAtEnd())
-        return { };
-    std::optional<FaultSite> site = Image::current()->faultSiteAt(static_cast<const uint8_t*>(frames->callSite().address) - sizeOfNearCall);
+    std::optional<FaultSite> site = Image::current()->faultSiteAt(static_cast<const uint8_t*>(callSite.address) - sizeOfNearCall);
     if (!site || site->kind != FaultSiteKind::NullCheck)
         return { };
     ThrowSiteWord word = std::bit_cast<ThrowSiteWord>(site->throwSite[0]);
     if (static_cast<ThrowKind>(word.kind) != ThrowKind::NotAFunction)
         return { };
     return Image::current()->text().view(StringID(word.hasWideA ? site->throwSite[1] : word.narrowA()));
+}
+
+static StringView nameOfCalleeAtCallSite(VM& vm)
+{
+    auto frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, vm.topCallFrame, vm.topEntryFrame);
+    if (!frames || frames->isAtEnd())
+        return { };
+    return nameOfCalleeAt(frames->callSite());
+}
+
+StringView instanceofExpressionOnTop(VM& vm)
+{
+    auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
+    if (!frames || frames->isAtEnd())
+        return { };
+    return nameOfCalleeAt(frames->callSite());
+}
+
+StringView nameOfConstructorThatRunsOnTop(VM& vm)
+{
+    CallFrame* constructorFrame = vm.topCallFrame;
+    EntryFrame* entryFrame = vm.topEntryFrame;
+    if (!constructorFrame || !entryFrame || isTopFrameCompiled(vm))
+        return { };
+    CallFrame* calleeOfCompiledCode = constructorFrame;
+    if (constructorFrame->callerFrameOrEntryFrame() == entryFrame) {
+        VMEntryRecord* record = vmEntryRecord(entryFrame);
+        calleeOfCompiledCode = record->prevTopCallFrame();
+        entryFrame = record->prevTopEntryFrame();
+        if (!calleeOfCompiledCode)
+            return { };
+    }
+    auto frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, calleeOfCompiledCode, entryFrame);
+    if (!frames || frames->isAtEnd() || !frames->callSite().site.isConstruct())
+        return { };
+    return nameOfCalleeAt(frames->callSite());
 }
 
 static JSValue calleeOfDecodedReference(Instance* instance, EncodedJSValue callee)

@@ -311,26 +311,6 @@ static bool hasOnlyOrdinaryObjectsOfProgram(const Program& program, const Type& 
 
 static constexpr uint64_t maxReachableTypes = defaultLimitValue(LimitID::MaxAccessPlanMembers, hostArchitecture());
 
-static bool isTreeOfData(const Program& program, const Type& type, uint16_t admittedPrimitives, Vector<const Type*, 8>& typesAbove)
-{
-    if (type.primitives & ~admittedPrimitives)
-        return false;
-    if (!type.hasObjects())
-        return true;
-    if (typesAbove.contains(&type) || typesAbove.size() >= maxReachableTypes || !hasOnlyOrdinaryObjectsOfProgram(program, type))
-        return false;
-    std::optional<SortedSet<TypeID, 8>> ownValues = provenOwnValueTypesOf(program, type);
-    if (!ownValues)
-        return false;
-
-    typesAbove.append(&type);
-    bool holdsTrees = std::ranges::all_of(*ownValues, [&](TypeID held) {
-        return isTreeOfData(program, program.at(held), admittedPrimitives, typesAbove);
-    });
-    typesAbove.removeLast();
-    return holdsTrees;
-}
-
 static bool isAdmitted(const Program& program, BuiltinTypeID admittedID, const Type& operand)
 {
     const BuiltinType& admitted = program.builtins().at(admittedID);
@@ -342,10 +322,7 @@ static bool isAdmitted(const Program& program, BuiltinTypeID admittedID, const T
 
     if (admitted.flags.contains(BuiltinTypeFlag::HasOnlyIntegers) && operand.primitives & Primitive::Integer && !operand.integers.isSubsetOf({ admitted.integers.minimum, admitted.integers.maximum }))
         return false;
-    if (!admitted.flags.contains(BuiltinTypeFlag::HasPlainData))
-        return operand.hasOnlyPrimitives(primitives);
-    Vector<const Type*, 8> typesAbove;
-    return operand.isJavaScriptValue() && isTreeOfData(program, operand, primitives, typesAbove);
+    return operand.hasOnlyPrimitives(primitives);
 }
 
 static bool mayRefuseChanges(const Program& program, const Type& operand, OperandUses changes)
@@ -715,6 +692,22 @@ static void describeCodeOfContents(const Program& program, const Type& operand, 
         describeCallees(program, membersRunBy(program, Type::fromPrimitives(Primitive::String), behavior), BuiltinCallMode::Call, description);
 }
 
+// An object remembers that it has been a prototype, and what is done to it later goes by that.
+static constexpr Effects effectsOfBecomingPrototype = [] {
+    Effects effects = Effects::none();
+    effects.writes = AbstractHeapSet { AbstractHeap::PrototypeLinks };
+    return effects;
+}();
+
+static bool isCreatedAsPrototype(const Program& program, const Type& objects)
+{
+    if (objects.anyObject || objects.anyFunction || objects.layouts || !objects.classes.isEmpty() || !objects.functions.isEmpty())
+        return false;
+    return std::ranges::all_of(objects.builtins, [&](BuiltinID builtin) {
+        return program.builtins().at(builtin).kind == BuiltinKind::Prototype;
+    });
+}
+
 Effects effectsOfCreatingPrototypeProperty(const Program& program, const Type& functions)
 {
     Effects effects = Effects::none();
@@ -760,6 +753,8 @@ static void describeOperandCode(const Program& program, const Type& operand, con
     }
     if (!hasObjects)
         return;
+    if (behavior.uses.contains(OperandUse::BecomesPrototype) && !isCreatedAsPrototype(program, operand))
+        description.addOwn(effectsOfBecomingPrototype);
     if (behavior.declarer == OperandDeclarer::Builtin && behavior.uses.containsAny(usesRunningSettersAndTraps) && !isFreeOfSettersAndTraps(operand))
         description.addUnknownCode();
     if (behavior.declarer == OperandDeclarer::Builtin && behavior.uses.containsAny(usesStoringValues) && !description.callsUnknownCode && mayConvertStoredValues(program, operand))

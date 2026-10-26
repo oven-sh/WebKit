@@ -92,8 +92,10 @@ public:
             return std::nullopt;
 
         if (result.isString()) {
+            // A literal is flat, and is held in 16 bits only if it has a character outside Latin-1.
+            bool mayHaveNarrowParts = !asString(result)->is8Bit() && asString(result)->isRope() && !asString(result)->isSubstring();
             auto text = asString(result)->value(realm);
-            if (scope.exception())
+            if (scope.exception() || mayHaveNarrowParts || (!text->is8Bit() && text->containsOnlyLatin1()))
                 return std::nullopt;
             return Answer { { }, text->isolatedCopy() };
         }
@@ -121,8 +123,10 @@ private:
         case KnownValue::Kind::Integer:
         case KnownValue::Kind::Double:
             return jsNumber(value.asNumber());
-        case KnownValue::Kind::String:
-            return jsString(*m_vm, program.strings.toWTFString(value.asString()));
+        case KnownValue::Kind::String: {
+            String text = program.strings.toWTFString(value.asString());
+            return jsString(*m_vm, text.is8Bit() || !text.containsOnlyLatin1() ? text : String::make8Bit(text.span16()));
+        }
         case KnownValue::Kind::Unknown:
         case KnownValue::Kind::Object:
         case KnownValue::Kind::Function:

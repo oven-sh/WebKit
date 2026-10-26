@@ -1123,48 +1123,6 @@ struct OutliningSiteFinder::State {
     Vector<uint8_t> hasSites = Vector<uint8_t>(FillWith { }, program.functions.size(), static_cast<uint8_t>(0));
 };
 
-static bool canStartRegion(TerminatorKind kind)
-{
-    switch (kind) {
-    case TerminatorKind::Branch:
-    case TerminatorKind::TestAndBranch:
-    case TerminatorKind::Switch:
-    case TerminatorKind::SwitchString:
-    case TerminatorKind::SwitchOnShape:
-        return true;
-    case TerminatorKind::Jump:
-    case TerminatorKind::Return:
-    case TerminatorKind::ReturnCall:
-    case TerminatorKind::Throw:
-    case TerminatorKind::Rethrow:
-    case TerminatorKind::TryCallInline:
-    case TerminatorKind::Unreachable:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static bool canEndInteriorBlock(TerminatorKind kind)
-{
-    switch (kind) {
-    case TerminatorKind::Jump:
-    case TerminatorKind::Branch:
-    case TerminatorKind::TestAndBranch:
-    case TerminatorKind::Switch:
-    case TerminatorKind::SwitchString:
-    case TerminatorKind::SwitchOnShape:
-    case TerminatorKind::Throw:
-    case TerminatorKind::Unreachable:
-        return true;
-    case TerminatorKind::Return:
-    case TerminatorKind::ReturnCall:
-    case TerminatorKind::Rethrow:
-    case TerminatorKind::TryCallInline:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 namespace {
 
 struct OutliningScan {
@@ -1559,7 +1517,7 @@ struct OutliningScan {
         const Block& block = function.at(blockID);
         if (block.isHandlerBlock() || block.handler != function.at(region.entryBlock).handler)
             return false;
-        return canEndInteriorBlock(block.terminator.kind);
+        return canEndInteriorBlockOf(block.terminator.kind);
     }
 
     bool addPendingTargets(const OutliningSite& region, const Terminator& terminator, Vector<uint32_t, 8>& pending)
@@ -1866,7 +1824,7 @@ struct OutliningScan {
     std::optional<OutliningSite> tryCreateRegion(BlockID blockID)
     {
         const Block& block = function.at(blockID);
-        if (blocksInSites.quickGet(blockID.index()) || !canStartRegion(block.terminator.kind))
+        if (blocksInSites.quickGet(blockID.index()) || !canStartRegionOf(block.terminator.kind))
             return std::nullopt;
 
         OutliningSite region { .function = id, .entryBlock = blockID, .firstIndex = static_cast<uint32_t>(block.values.size()), .orderOfEntryBlock = cfg.reversePostOrderIndex(blockID) };

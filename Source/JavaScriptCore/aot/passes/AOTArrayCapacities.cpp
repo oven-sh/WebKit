@@ -1234,7 +1234,6 @@ static bool summaryAllowsConversion(FunctionPassContext& context, const Function
 
 static bool flowAllowsConversion(FunctionPassContext& context, ValueID array)
 {
-    static constexpr OpcodeSet accessesOfElements { Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::HasArrayElement };
     const Function& function = context.function;
     const FlowResults& flow = context.inputs.flow;
     const ClassPart* part = context.program.typeOf(function, array).singleBuiltinClass();
@@ -1245,9 +1244,11 @@ static bool flowAllowsConversion(FunctionPassContext& context, ValueID array)
         return true;
     bool isReceiver = false;
     for (const Use& use : context.analyses.useLists().usesOf(array)) {
-        if (use.kind != Use::Kind::Operand || !accessesOfElements.contains(function.at(use.user).opcode) || function.at(use.user).arrayOperand() != array)
+        const Value& access = function.at(use.user);
+        if (use.kind != Use::Kind::Operand || !PayloadWord::accessSite(access.opcode) || OperandPosition::array(access.opcode) != use.operandIndex)
             continue;
-        if (!flow.mayChangeStorageOfReceiver(function.at(use.user).accessSite()))
+        bool storageIsUndecided = Value::opcodesWithStorageIsUndecided.contains(access.opcode) && access.storageIsUndecided();
+        if (!storageIsUndecided && !flow.mayChangeStorageOfReceiver(access.accessSite()))
             return false;
         isReceiver = true;
     }

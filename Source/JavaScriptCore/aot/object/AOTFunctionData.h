@@ -36,6 +36,7 @@ struct FunctionKindData {
     uint16_t isDerivedConstructor : 1;
     uint16_t hasInferredName : 1;
 
+    constexpr unsigned closureStructureOfKind() const { return isConstructor ? classObjectClosureStructure : isAsync | isGenerator << 1; }
     constexpr unsigned slimClosureKind() const { return isAsync; }
     constexpr CallableKind callable() const { return static_cast<CallableKind>(callableKind); }
     constexpr MethodKind accessor() const { return static_cast<MethodKind>(accessorKind); }

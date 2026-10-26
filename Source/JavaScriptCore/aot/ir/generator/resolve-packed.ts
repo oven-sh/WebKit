@@ -1,8 +1,23 @@
-import type { EnumColumn, PackedCondition, PackedField, PackedKind, PackedRecord, PackedWord } from "./model.ts";
+import type {
+  EnumColumn,
+  PackedArms,
+  PackedCondition,
+  PackedField,
+  PackedKind,
+  PackedRecord,
+  PackedWord,
+} from "./model.ts";
 import { cppIdTypeName } from "./names.ts";
 import type { DeclarationInFile } from "./parse.ts";
 import type { Scope } from "./resolve.ts";
-import type { KindSyntax, Name, PackedConditionSyntax, PackedSyntax, PackedWordSyntax } from "./syntax.ts";
+import type {
+  KindSyntax,
+  Name,
+  PackedConditionSyntax,
+  PackedFieldSyntax,
+  PackedSyntax,
+  PackedWordSyntax,
+} from "./syntax.ts";
 
 const numberTypes: Readonly<Record<string, "uint32_t" | "uint64_t">> = { UInt32: "uint32_t", UInt64: "uint64_t" };
 const bitsInWord = 64;
@@ -63,17 +78,27 @@ function resolveCondition(
   }
   if (syntax.column !== null) {
     const column = findBoolColumn(scope, field, syntax.column);
-    return column === null ? null : { field, column };
+    return column === null ? null : { field, column, isNegated: syntax.isNegated };
   }
-  if (field.kind.tag === "Bool") return { field, column: null };
+  if (field.kind.tag === "Bool") return { field, column: null, isNegated: syntax.isNegated };
   scope.errors.add(syntax.field.location, `${field.name} is not a Bool`);
   return null;
 }
 
-function resolveWord(scope: Scope, syntax: PackedWordSyntax, earlier: readonly PackedField[]): PackedWord {
+export function fieldsOfWord({ fields, arms }: PackedWord): PackedField[] {
+  return arms === null ? [...fields] : [...fields, ...arms.whenTrue, ...arms.whenFalse];
+}
+
+/** The fields from the bit `start` up. Null: a field in front takes all the bits. */
+function resolveFields(
+  scope: Scope,
+  syntaxes: readonly PackedFieldSyntax[],
+  earlier: readonly PackedField[],
+  start: number | null,
+): { fields: PackedField[]; end: number | null } {
   const fields: PackedField[] = [];
-  let shift: number | null = 0;
-  for (const { name, kind: kindSyntax } of syntax.fields) {
+  let shift = start;
+  for (const { name, kind: kindSyntax } of syntaxes) {
     const kind = findPackedKind(scope, kindSyntax);
     if (kind === null) {
       scope.errors.add(kindSyntax.name.location, `${kindSyntax.name.text} cannot be packed`);
@@ -81,7 +106,7 @@ function resolveWord(scope: Scope, syntax: PackedWordSyntax, earlier: readonly P
     }
     if ([...earlier, ...fields].some(other => other.name === name.text))
       scope.errors.add(name.location, `${name.text} is declared twice`);
-    if (shift === null || (fillsWordsOfItsOwn(kind) && syntax.fields.length > 1)) {
+    if (shift === null || (fillsWordsOfItsOwn(kind) && (syntaxes.length > 1 || start !== 0))) {
       scope.errors.add(name.location, `${name.text} needs a word of its own: write ';' in front of it`);
       continue;
     }
@@ -90,20 +115,36 @@ function resolveWord(scope: Scope, syntax: PackedWordSyntax, earlier: readonly P
     shift = width === null ? null : shift + width;
     if (shift !== null && shift > bitsInWord) scope.errors.add(name.location, `${name.text} does not fit its word`);
   }
+  return { fields, end: shift };
+}
+
+function resolveArms(
+  scope: Scope,
+  { arms }: PackedWordSyntax,
+  earlier: readonly PackedField[],
+  common: { fields: PackedField[]; end: number | null },
+): PackedArms | null {
+  if (arms === null) return null;
+  const condition = common.fields.find(({ name, kind }) => name === arms.condition.text && kind.tag === "Bool");
+  if (condition === undefined) {
+    scope.errors.add(arms.condition.location, `${arms.condition.text} is not a Bool of this word`);
+    return null;
+  }
+  const whenTrue = resolveFields(scope, arms.whenTrue, [...earlier, ...common.fields], common.end).fields;
+  const taken = [...earlier, ...common.fields, ...whenTrue];
+  return { condition, whenTrue, whenFalse: resolveFields(scope, arms.whenFalse, taken, common.end).fields };
+}
+
+function resolveWord(scope: Scope, syntax: PackedWordSyntax, earlier: readonly PackedField[]): PackedWord {
+  const common = resolveFields(scope, syntax.fields, earlier, 0);
   const condition = syntax.condition === null ? null : resolveCondition(scope, syntax.condition, earlier);
-  return { fields, condition };
+  return { fields: common.fields, arms: resolveArms(scope, syntax, earlier, common), condition };
 }
 
 function resolvePackedRecord(scope: Scope, syntax: PackedSyntax): PackedRecord {
   const words: PackedWord[] = [];
   for (const word of syntax.words) {
-    words.push(
-      resolveWord(
-        scope,
-        word,
-        words.flatMap(({ fields }) => fields),
-      ),
-    );
+    words.push(resolveWord(scope, word, words.flatMap(fieldsOfWord)));
   }
   return { name: syntax.name.text, words, location: syntax.name.location };
 }
@@ -114,7 +155,7 @@ function columnsAsText(type: Extract<PackedKind, { tag: "Enum" }>["type"], posit
 
 /** An enumerator is found by its columns, so no two may have the same. */
 function checkEnumeratorsDiffer(scope: Scope, record: PackedRecord): void {
-  for (const { kind } of record.words.flatMap(({ fields }) => fields)) {
+  for (const { kind } of record.words.flatMap(fieldsOfWord)) {
     if (kind.tag !== "Enum" || !isFoundByColumns(kind.type)) continue;
     const seen = new Map<string, string>();
     kind.type.members.forEach((member, position) => {

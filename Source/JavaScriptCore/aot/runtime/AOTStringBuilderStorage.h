@@ -23,7 +23,7 @@ namespace JSC { namespace AOT {
 
 struct Instance;
 
-// An object or an array that compiled code is writing as JSON. The record is in the frame of that code.
+// An object or an array that compiled code is writing as JSON. The record is in the frame of that code, and holds what that code puts back when it has written the holder.
 struct JSONHolderRecord {
     JSONHolderRecord* outer;
     EncodedJSValue holder;
@@ -180,7 +180,7 @@ private:
     uint32_t m_limit { 0 };
     uint32_t m_lengthOutsideBuffer { 0 };
     uint32_t m_sharedLength { 0 };
-    // The innermost first. Compiled code empties the list before it writes a value, and what it adds it takes away again unless an exception ends the writing.
+    // The innermost first. A frame that an exception ends takes nothing off the list: the handler that catches the exception puts back the list of its own frame.
     JSONHolderRecord* m_jsonHolders { nullptr };
     WriteBarrier<StringBuilderStorage> m_nextFree;
     WriteBarrier<JSString> m_lastString;

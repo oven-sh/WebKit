@@ -1,0 +1,105 @@
+# A number kept as DoubleWithPayload is taken as it is where it becomes an index, where it is pushed, where its type is tested and where it is switched on.
+# Each function that computes with a number or undefined has the size of the one before it, which computes with numbers.
+# FORM: Placed
+# OPTIONS: heat=everything-is-hot check=validate-back-end
+# RUN: generate-code calls
+# RUN(R): pass ChooseRepresentations
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="readAtSumOfNumbers" parameters=[{type=Array<i32, proven, Int32>}, {type=number}, {type=undefined|number}] results=[{type=undefined|i32}] {
+    v3 = Add v1, v1 form=Numbers
+    v4 = IsElementPresent v0, v3 arrayStorage=Int32
+    TestAndBranch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    v6 = GetArrayElement v0, v3, v5 arrayStorage=Int32 level=Proven [isPresent]
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f1 name="readAtSumWithUndefined" parameters=[{type=Array<i32, proven, Int32>}, {type=number}, {type=undefined|number}] results=[{type=undefined|i32}] {
+    v3 = Add v1, v2 form=Numbers
+    v4 = IsElementPresent v0, v3 arrayStorage=Int32
+    TestAndBranch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    v6 = GetArrayElement v0, v3, v5 arrayStorage=Int32 level=Proven [isPresent]
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+# R-LABEL: function f0 name="readAtSumOfNumbers"
+# R: v3: number @Double = Add v1, v1 form=Numbers
+# R-LABEL: function f1 name="readAtSumWithUndefined"
+# R: v3: number @DoubleWithPayload = Add v1, v2 form=Numbers
+# R-NEXT: = IsElementPresent v0, v3 arrayStorage=Int32
+# R: = GetArrayElement v0, v3, v5 arrayStorage=Int32
+
+function f2 name="pushSumOfNumbers" parameters=[{type=Array<number, proven, Double>}, {type=number}, {type=undefined|number}] results=[{type=undefined}] {
+    v3 = Add v1, v1 form=Numbers
+    v4 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    Return
+}
+function f3 name="pushSumWithUndefined" parameters=[{type=Array<number, proven, Double>}, {type=number}, {type=undefined|number}] results=[{type=undefined}] {
+    v3 = Add v1, v2 form=Numbers
+    v4 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    Return
+}
+# R-LABEL: function f3 name="pushSumWithUndefined"
+# R: v3: number @DoubleWithPayload = Add v1, v2 form=Numbers
+# R-NEXT: = CallInline v0, v3 inlineBuiltin=ArrayPush
+
+function f4 name="testSumOfNumbers" parameters=[{type=number}, {type=undefined|number}] results=[{type=boolean}] {
+    v2 = Add v0, v0 form=Numbers
+    v3 = TypeTest v2 testedType=i32
+    Return v3
+}
+function f5 name="testSumWithUndefined" parameters=[{type=number}, {type=undefined|number}] results=[{type=boolean}] {
+    v2 = Add v0, v1 form=Numbers
+    v3 = TypeTest v2 testedType=i32
+    Return v3
+}
+# R-LABEL: function f5 name="testSumWithUndefined"
+# R: v2: number @DoubleWithPayload = Add v0, v1 form=Numbers
+# R-NEXT: = TypeTest v2 testedType=i32
+
+function f6 name="switchOnSumOfNumbers" parameters=[{type=number}, {type=undefined|number}] results=[{type=i32}] {
+    v2 = Add v0, v0 form=Numbers
+    Switch v2 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    v3 = Integer integer=10
+    Return v3
+  b2():
+    v4 = Integer integer=20
+    Return v4
+  b3():
+    v5 = Integer integer=30
+    Return v5
+}
+function f7 name="switchOnSumWithUndefined" parameters=[{type=number}, {type=undefined|number}] results=[{type=i32}] {
+    v2 = Add v0, v1 form=Numbers
+    Switch v2 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    v3 = Integer integer=10
+    Return v3
+  b2():
+    v4 = Integer integer=20
+    Return v4
+  b3():
+    v5 = Integer integer=30
+    Return v5
+}
+# R-LABEL: function f7 name="switchOnSumWithUndefined"
+# R: v2: number @DoubleWithPayload = Add v0, v1 form=Numbers
+# R-NEXT: Switch v2
+# CHECK: f0: size={{*}}
+# X64: f0: size=55 frame
+# X64-NEXT: f1: size=55 frame
+# X64-NEXT: f2: size=76 frame
+# X64-NEXT: f3: size=76 frame
+# X64-NEXT: f4: size=38 frame
+# X64-NEXT: f5: size=38 frame
+# X64-NEXT: f6: size=70 frame
+# X64-NEXT: f7: size=70 frame

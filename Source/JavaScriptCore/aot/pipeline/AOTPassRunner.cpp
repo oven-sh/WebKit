@@ -20,6 +20,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
 #include "AOTInt32Conversions.h"
+#include "AOTObservableOperations.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPlaceTypeTestsPlan.h"
 #include "AOTProgramPasses.h"
@@ -76,7 +77,7 @@ struct PassesByContent {
 
 // A pass without a row may have something to do in any body.
 static constexpr TriggersOfPass triggersOfPasses[] {
-    { PassID::ListLiveValuesAtSuspensions, { .opcodes = { Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::IteratorResume, Opcode::IteratorClose } } },
+    { PassID::ListLiveValuesAtSuspensions, { .opcodes = { Opcode::Await, Opcode::Yield, Opcode::InitialYield, Opcode::IteratorResume, Opcode::IteratorClose, Opcode::ReadScope } } },
     { PassID::CheckInt32Promises, { .opcodes = { Opcode::Convert }, .terminators = { TerminatorKind::ReturnCall } } },
     { PassID::CheckRegExpLiterals, { .opcodes = { Opcode::NewRegExp } } },
     { PassID::AddGenericVersion, { .opcodes = { Opcode::Check, Opcode::Construct, Opcode::CallBuiltin } } },
@@ -92,7 +93,6 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::ExpandOwnKeys, { .opcodes = ownKeyExpansionOpcodes } },
     { PassID::SelectTypedResults, { .opcodes = typedResultCallOpcodes } },
     { PassID::InlineCalls, { .opcodes = { Opcode::CallDirect } } },
-    { PassID::SimplifyCasts, { .opcodes = simplifiableCasts } },
     { PassID::SinkAllocations, { .opcodes = opcodesInterpretedAs(Interpretation::Allocation) } },
     { PassID::EliminateRedundantReads, { .opcodes = opcodesOfRedundantReadElimination } },
     { PassID::EliminateGuards, { .opcodes = opcodesOfGuardElimination } },
@@ -393,6 +393,76 @@ void PassRunner::shrinkChangedFunctionsToFit(Program& program, const ProgramEdit
     });
 }
 
+enum class TakesHandlersAway : bool { No, Yes };
+
+struct OperationsThatPassAnswersFor {
+    PassID pass;
+    InPlaceOfOperation reason;
+    bool isEveryOperation;
+    TakesHandlersAway takesHandlersAway;
+    OpcodeSet opcodes;
+};
+
+// An operation that may throw or run code of the program goes where ObservableOperations says that it does neither, where the pass names its reason at the place (explainOperationThatGoes),
+// where something new that may do the same stands at its place in the source, or where this table has the pass answer for it. Whatever else goes stops a build that verifies each pass.
+static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
+    { PassID::AddGenericVersion, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
+    { PassID::ApplyFlowResults, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
+    { PassID::CallModules, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
+    { PassID::ConvertCountersToIntegers, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
+    { PassID::DeferInitializers, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
+    { PassID::EliminateTailRecursion, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::ExpandIteration, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
+    { PassID::ExpandOwnKeys, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::ExpandProvenIterations, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
+    { PassID::InlineCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::InlineHeads, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
+    { PassID::OutlineColdOperations, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
+    { PassID::PlaceTypeTests, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::RemoveRedundantHandlers, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
+    { PassID::RemoveUnreachableFunctions, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
+    { PassID::ResolveAccesses, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::ResolveAwaitedCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::ResolveBuiltins, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::ResolveCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::RetypeValues, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
+    { PassID::Select, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::SeparateUnlikelyLoopPaths, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
+    { PassID::SinkAllocations, InPlaceOfOperation::NothingByProofOfThePass, true, TakesHandlersAway::No, { } },
+    { PassID::SplitBehindEntryChecks, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
+    { PassID::SplitCoroutines, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
+    { PassID::SplitFreshResults, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
+    { PassID::SplitUnions, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::StartGeneratorsAtFirstStep, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::CreateStringBuilders, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::Add, Opcode::Strcat } },
+    { PassID::DeferClosuresInFields, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Call } },
+    { PassID::DeferDefinitions, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CheckInitialized, Opcode::DefineMethod, Opcode::NewClass } },
+    { PassID::EliminateRedundantReads, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Add, Opcode::AppendElements, Opcode::Call, Opcode::CallBuiltin, Opcode::CallDirect, Opcode::CallList, Opcode::Construct, Opcode::JSONAppendValue, Opcode::PropDefine, Opcode::PropGet, Opcode::PropSet, Opcode::RequireObjectCoercible } },
+    { PassID::EmbedConstantCollections, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::PropDefine } },
+    { PassID::FoldConstants, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::PropHas } },
+    { PassID::FuseConcatenations, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::Add, Opcode::Strcat } },
+    { PassID::GuardTaintedPositions, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::ElemGet, Opcode::PropHas } },
+    { PassID::InsertObjectCoercibleChecks, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::CallDirect, Opcode::Construct, Opcode::PropHas, Opcode::RequireObjectCoercible } },
+    { PassID::RemoveUnusedParameters, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Add } },
+    { PassID::SimplifyCasts, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CheckInitialized, Opcode::RequireObject, Opcode::RequireObjectCoercible } },
+    { PassID::SimplifyBuiltinCalls, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::AwaitBySavingFrame } },
+};
+
+static String findOperationNobodyAnswersFor(PassID id, const Vector<OperationThatWent>& operations)
+{
+    const OperationsThatPassAnswersFor* entry = nullptr;
+    for (const OperationsThatPassAnswersFor& candidate : operationsThatPassesAnswerFor) {
+        if (candidate.pass == id)
+            entry = &candidate;
+    }
+    for (const OperationThatWent& operation : operations) {
+        bool isAnswered = entry && (operation.how == OperationThatWent::How::LostItsHandler ? entry->takesHandlersAway == TakesHandlersAway::Yes : entry->isEveryOperation || entry->opcodes.contains(operation.opcode));
+        if (!isAnswered)
+            return describe(operation);
+    }
+    return { };
+}
+
 PassOutcome PassRunner::updateAnalyses(PassID id, const ProgramEditor& editor, ProgramAnalyses& analyses)
 {
     const PassDescriptor& descriptor = descriptorOf(id);
@@ -411,7 +481,7 @@ void PassRunner::checkFormAndInputs(const PassDescriptor& descriptor, const Prog
     RELEASE_ASSERT(m_availableResults.containsAll(descriptor.inputs));
 }
 
-auto PassRunner::beginProgramPass(PassID id, const Program& program) -> std::optional<PassTimer>
+auto PassRunner::beginProgramPass(PassID id, const Program& program, MayChangeBodies mayChangeBodies) -> std::optional<PassTimer>
 {
     const PassDescriptor& descriptor = descriptorOf(id);
     RELEASE_ASSERT(descriptor.scope == PassScope::Program);
@@ -433,6 +503,13 @@ auto PassRunner::beginProgramPass(PassID id, const Program& program) -> std::opt
     work.setPass(id);
     if (m_build.recordedOptions().sabotage) [[unlikely]]
         stopWhereSabotaged(m_build, std::nullopt, id);
+    if (mayChangeBodies == MayChangeBodies::Yes && m_build.options().verifiesAfterEveryPass) [[unlikely]] {
+        timer.bodiesBefore = std::make_shared<BodiesBeforeProgramPass>();
+        timer.bodiesBefore->functions = program.functions;
+        timer.bodiesBefore->reasons = Vector<ReasonsForOperationsThatWent>(program.functions.size());
+        for (size_t index = 0; index < program.functions.size(); ++index)
+            program.functions[index].setListenerForOperationsThatGo(&timer.bodiesBefore->reasons[index]);
+    }
     return timer;
 }
 
@@ -451,6 +528,20 @@ void PassRunner::endProgramPass(PassID id, const Program& program, PassTimer tim
     flushFunctionPassTotals();
 
     didCompute(descriptor.outputs);
+
+    if (timer.bodiesBefore) [[unlikely]] {
+        for (const Function& function : program.functions)
+            function.setListenerForOperationsThatGo(nullptr);
+        EffectSummaries noSummaries;
+        size_t count = std::min(program.functions.size(), timer.bodiesBefore->functions.size());
+        for (size_t index = 0; index < count && outcome == PassOutcome::Changed; ++index) {
+            String problem = findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ program, noSummaries }, timer.bodiesBefore->functions[index], program.functions[index], timer.bodiesBefore->reasons[index]));
+            if (problem.isNull())
+                continue;
+            m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = findFunctionAsRead(&program, FunctionID(index)), .pass = id, .detail = problem });
+            break;
+        }
+    }
 
     if (outcome == PassOutcome::Changed) {
         m_build.resolveFunctionToDump(program);
@@ -705,8 +796,15 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
         functionBeforeRun.emplace(context.function);
     if (functionBeforeRun || isTimed) [[unlikely]]
         logBeforeRun = context.changes.end();
+    std::optional<ReasonsForOperationsThatWent> reasons;
+    if (functionBeforeRun) [[unlikely]] {
+        reasons.emplace(context.function.listenerForOperationsThatGo());
+        context.function.setListenerForOperationsThatGo(&*reasons);
+    }
     currentWork().setPass(id);
     PassOutcome outcome = descriptor.run(context);
+    if (reasons) [[unlikely]]
+        context.function.setListenerForOperationsThatGo(reasons->outer());
     auto stopWhereThereIsOne = [&](const String& problem) {
         if (problem.isNull())
             return;
@@ -715,8 +813,11 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     };
     if (m_build.options().checksThatUsedValuesAreListed && outcome == PassOutcome::Changed) [[unlikely]]
         stopWhereThereIsOne(findValueListedWrongly(context.function));
-    if (functionBeforeRun) [[unlikely]]
+    if (functionBeforeRun) [[unlikely]] {
         stopWhereThereIsOne(findEditWithoutEntry(*functionBeforeRun, context.function, context.changes, logBeforeRun));
+        if (outcome == PassOutcome::Changed)
+            stopWhereThereIsOne(findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ context.program, context.inputs.effects }, *functionBeforeRun, context.function, *reasons)));
+    }
     if (isTimed) {
         if (outcome == PassOutcome::Unchanged && !context.analyses.computed().containsAll(analysesBefore))
             m_functionPassTotals[index].needlessDrops.fetch_add(1, std::memory_order_relaxed);

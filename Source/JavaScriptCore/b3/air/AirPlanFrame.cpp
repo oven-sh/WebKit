@@ -11,6 +11,7 @@
 #include "AirCode.h"
 #include "AirCustom.h"
 #include "AirFrameEmission.h"
+#include "AirInsertionSet.h"
 #include "AirInstInlines.h"
 #include "AirLimits.h"
 #include "AirPhaseScope.h"
@@ -111,6 +112,7 @@ private:
     WordsAtFrameSite chooseWords(const FrameSite&) const;
     void rewriteFrameSites();
     void reportWordsDeadAcrossSuspensions() const;
+    void clearWordsNotStoredToBeforeSuspensions();
 
     Code& m_code;
     const StackColoring& m_coloring;
@@ -167,6 +169,7 @@ void FramePlanner::run()
     }
     rewriteFrameSites();
     reportWordsDeadAcrossSuspensions();
+    clearWordsNotStoredToBeforeSuspensions();
     m_code.setFrameLayout(WTF::move(m_layout));
     m_code.setStackIsAllocated(true);
 }
@@ -200,6 +203,175 @@ void FramePlanner::reportWordsDeadAcrossSuspensions() const
                 removeWordsOf(deadWords, slot);
         }
         suspension->as<StackmapValue>()->setFrameWordsDeadAcrossSuspension(WTF::move(deadWords));
+    }
+}
+
+// A word that nothing has stored to since the frame was set up holds what an earlier call left at its address.
+// A suspension would keep that word, and every resumption would put it back on the stack.
+void FramePlanner::clearWordsNotStoredToBeforeSuspensions()
+{
+    if (m_coloring.spillSlotsLiveAcrossEachSuspension.isEmpty() || !m_layout.hasFrameRecord || m_layout.slotArea != SlotArea::BelowFrameRecord)
+        return;
+
+    constexpr unsigned unitsPerWord = StackColoring::unitsPerWord;
+    constexpr unsigned bytesPerUnit = StackColoring::bytesPerUnit;
+    // A suspension keeps whole pairs of words.
+    const unsigned numberOfWordsKept = (m_code.frameSize() - m_layout.bytesDeadAtSuspensions / stackAlignmentBytes() * stackAlignmentBytes()) / wordSize;
+    const unsigned numberOfUnits = numberOfWordsKept * unitsPerWord;
+    if (!numberOfUnits)
+        return;
+
+    auto wordsDeadAcross = [](const Inst& inst) -> const BitVector* {
+        if (inst.kind.opcode != Patch || !inst.origin)
+            return nullptr;
+        auto* stackmap = inst.origin->as<StackmapValue>();
+        if (!stackmap || !stackmap->isSuspension() || !stackmap->frameWordsDeadAcrossSuspension())
+            return nullptr;
+        return &*stackmap->frameWordsDeadAcrossSuspension();
+    };
+    struct BytesBelowFramePointer {
+        unsigned begin;
+        unsigned end;
+    };
+    auto bytesOf = [](intptr_t offsetFromFramePointer, unsigned numberOfBytes) -> BytesBelowFramePointer {
+        if (offsetFromFramePointer >= 0)
+            return { 0, 0 };
+        intptr_t top = offsetFromFramePointer + static_cast<intptr_t>(numberOfBytes);
+        return { top < 0 ? static_cast<unsigned>(-top) : 0, static_cast<unsigned>(-offsetFromFramePointer) };
+    };
+    auto addStoresOf = [&](Inst& inst, BitVector& storedUnits) {
+        if (inst.kind.opcode == EnterFrame) {
+            storedUnits.clearAll();
+            for (unsigned i = 1; i < inst.args().size(); ++i) {
+                if (!inst.args()[i].isImm())
+                    continue;
+                unsigned firstUnit = static_cast<unsigned>(inst.args()[i].value()) * unitsPerWord;
+                for (unsigned unit = firstUnit; unit < std::min(firstUnit + unitsPerWord, numberOfUnits); ++unit)
+                    storedUnits.quickSet(unit);
+            }
+            return;
+        }
+        inst.forEachArg([&](Arg& arg, Arg::Role role, Bank, Width width) {
+            if (!arg.isStack() || !Arg::isAnyDef(role) || role == Arg::Scratch)
+                return;
+            const StackSlot* slot = arg.stackSlot();
+            unsigned numberOfBytes = bytesForWidth(width);
+            // lowerStackArgs() clears the rest of the slot.
+            if (Arg::isZDef(role) && slot->isSpill() && arg.offset() >= 0 && static_cast<unsigned>(arg.offset()) < slot->byteSize())
+                numberOfBytes = std::max(numberOfBytes, slot->byteSize() - static_cast<unsigned>(arg.offset()));
+            BytesBelowFramePointer bytes = bytesOf(slot->offsetFromFP() + arg.offset(), numberOfBytes);
+            for (unsigned unit = (bytes.begin + bytesPerUnit - 1) / bytesPerUnit; unit < std::min(bytes.end / bytesPerUnit, numberOfUnits); ++unit)
+                storedUnits.quickSet(unit);
+        });
+    };
+
+    BitVector everyUnit(numberOfUnits);
+    for (unsigned unit = 0; unit < numberOfUnits; ++unit)
+        everyUnit.quickSet(unit);
+
+    struct StoresOfBlock {
+        BitVector units;
+        bool setsUpFrame { false };
+        bool hasSuspension { false };
+    };
+    Vector<StoresOfBlock> storesOfBlock(m_code.size());
+    bool isSomeWordDead = false;
+    for (BasicBlock* block : m_code) {
+        StoresOfBlock& stores = storesOfBlock[block->index()];
+        stores.units.ensureSize(numberOfUnits);
+        for (Inst& inst : *block) {
+            if (const BitVector* deadWords = wordsDeadAcross(inst)) {
+                for (unsigned word = 1; word <= numberOfWordsKept && !isSomeWordDead; ++word)
+                    isSomeWordDead = deadWords->get(word);
+                stores.hasSuspension = true;
+                stores.units = everyUnit;
+                continue;
+            }
+            stores.setsUpFrame |= inst.kind.opcode == EnterFrame;
+            addStoresOf(inst, stores.units);
+        }
+    }
+    if (!isSomeWordDead)
+        return;
+
+    Vector<BitVector> unitsStoredAtHead;
+    unitsStoredAtHead.fill(everyUnit, m_code.size());
+    unitsStoredAtHead[m_code[0]->index()].clearAll();
+    for (unsigned i = 0; i < m_code.numEntrypoints(); ++i)
+        unitsStoredAtHead[m_code.entrypoint(i).block()->index()].clearAll();
+    for (bool didChange = true; didChange;) {
+        didChange = false;
+        for (BasicBlock* block : m_code) {
+            const StoresOfBlock& stores = storesOfBlock[block->index()];
+            BitVector unitsStoredAtTail = stores.units;
+            if (!stores.setsUpFrame)
+                unitsStoredAtTail.merge(unitsStoredAtHead[block->index()]);
+            for (BasicBlock* successor : block->successorBlocks()) {
+                BitVector& atHead = unitsStoredAtHead[successor->index()];
+                size_t numberBefore = atHead.bitCount();
+                atHead.filter(unitsStoredAtTail);
+                didChange |= atHead.bitCount() != numberBefore;
+            }
+        }
+    }
+
+    auto addressOf = [&](unsigned word) -> std::optional<Arg> {
+        Value::OffsetType offsetFromFramePointer = -static_cast<Value::OffsetType>(word * wordSize);
+        Arg address = Arg::addr(Tmp(GPRInfo::callFrameRegister), offsetFromFramePointer);
+        if (address.isValidForm(Move, pointerWidth()))
+            return address;
+        address = Arg::addr(Tmp(MacroAssembler::stackPointerRegister), offsetFromFramePointer + static_cast<Value::OffsetType>(m_code.frameSize()));
+        if (address.isValidForm(Move, pointerWidth()))
+            return address;
+        return std::nullopt;
+    };
+    auto movesIntoRegister = [](const Inst& inst) {
+        return (inst.kind.opcode == Move || inst.kind.opcode == MoveDouble) && inst.args().size() == 2 && inst.args()[1].isReg()
+            && (inst.args()[0].isReg() || inst.args()[0].isSomeImm() || inst.args()[0].isZeroReg());
+    };
+    auto removeWordsOf = [&](BitVector& words, const StackSlot* slot) {
+        BytesBelowFramePointer bytes = bytesOf(slot->offsetFromFP(), slot->byteSize());
+        for (unsigned word = bytes.begin / wordSize + 1; word <= std::min((bytes.end + wordSize - 1) / wordSize, numberOfWordsKept); ++word)
+            words.quickClear(word);
+    };
+
+    const Arg zero = isX86_64() ? Arg::imm(0) : Arg::zeroReg();
+    InsertionSet insertionSet(m_code);
+    for (BasicBlock* block : m_code) {
+        if (!storesOfBlock[block->index()].hasSuspension)
+            continue;
+        BitVector storedUnits = unitsStoredAtHead[block->index()];
+        for (unsigned instIndex = 0; instIndex < block->size(); ++instIndex) {
+            Inst& inst = block->at(instIndex);
+            const BitVector* deadWords = wordsDeadAcross(inst);
+            if (!deadWords) {
+                addStoresOf(inst, storedUnits);
+                continue;
+            }
+            BitVector wordsToClear(numberOfWordsKept + 1);
+            for (unsigned word = 1; word <= numberOfWordsKept; ++word) {
+                unsigned firstUnit = (word - 1) * unitsPerWord;
+                if (deadWords->get(word) && !(storedUnits.quickGet(firstUnit) && storedUnits.quickGet(firstUnit + 1)))
+                    wordsToClear.quickSet(word);
+            }
+            if (const StackSlot* saveSlot = m_code.calleeSaveStackSlot())
+                removeWordsOf(wordsToClear, saveSlot);
+            for (const Arg& arg : inst.args()) {
+                if (arg.isStack())
+                    removeWordsOf(wordsToClear, arg.stackSlot());
+            }
+            // resequenceMovesBeforePatches() looks at the moves that stand right in front of a Patch.
+            unsigned insertionIndex = instIndex;
+            while (insertionIndex && movesIntoRegister(block->at(insertionIndex - 1)))
+                --insertionIndex;
+            wordsToClear.forEachSetBit([&](size_t word) {
+                if (std::optional<Arg> address = addressOf(static_cast<unsigned>(word)))
+                    insertionSet.insert(insertionIndex, Move, inst.origin, zero, *address);
+            });
+            // Behind a suspension every word kept is one that the function stored or that was cleared here.
+            break;
+        }
+        insertionSet.execute(block);
     }
 }
 

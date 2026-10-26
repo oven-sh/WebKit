@@ -5,7 +5,7 @@
 # CHECK: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="onlyMergeIsCovered" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+function f0 name="onlyMergeIsCovered" parameters=[{type=anything}, {type=boolean}] results=[{type=number flags=[IsExpected]}] {
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=1
@@ -26,7 +26,7 @@ function f0 name="onlyMergeIsCovered" parameters=[{type=anything}, {type=boolean
 # CHECK-NEXT: Return v4
 }
 
-function f1 name="onlyPredecessorIsCovered" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+function f1 name="onlyPredecessorIsCovered" parameters=[{type=anything}, {type=boolean}] results=[{type=number flags=[IsExpected]}] {
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=1
@@ -49,7 +49,7 @@ function f1 name="onlyPredecessorIsCovered" parameters=[{type=anything}, {type=b
 # CHECK-NEXT: Return v7
 }
 
-function f2 name="sameHandlerOtherArguments" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=number}] {
+function f2 name="sameHandlerOtherArguments" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=number flags=[IsExpected]}] {
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v3 = Integer integer=1

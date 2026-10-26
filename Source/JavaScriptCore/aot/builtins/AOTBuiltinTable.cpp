@@ -521,6 +521,19 @@ bool BuiltinTable::isHostFunctionOfEngine(BuiltinID id) const
     });
 }
 
+bool BuiltinTable::isNativeFunction(BuiltinID id) const
+{
+    if (isHostFunctionOfEngine(id))
+        return true;
+    const Builtin& entry = at(id);
+    if (entry.kind != BuiltinKind::Function && entry.kind != BuiltinKind::Method)
+        return false;
+    std::span<const BuiltinOverloadSummary> overloads = overloadSummariesOf(id);
+    return !overloads.empty() && std::ranges::all_of(overloads, [](const BuiltinOverloadSummary& overload) {
+        return overload.mode == BuiltinCallMode::Call && overload.callee == BuiltinCallee::HostFunction;
+    });
+}
+
 bool BuiltinTable::isFunctionOfEngine(BuiltinID id) const
 {
     const Builtin& entry = at(id);

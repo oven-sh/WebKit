@@ -20,6 +20,8 @@ uint32_t appendInlineFrames(Function& caller, const InlineFrame& callFrame, cons
 ValueID upcastToParameterType(IRBuilder&, const Value& parameter, ValueID argument);
 
 void cloneBlocksIntoInlineFrame(IRBuilder&, RegionCloner&, std::span<const BlockID> region, uint32_t firstFrame);
+// A function that is constructed stays on the stack until it has seen what its last call returns: no call of the frame counts as a tail call.
+void keepFrameBelowTailCalls(Function&, std::span<const BlockID>, uint32_t frame);
 
 InlineDecision canInline(const FunctionPassContext&, const InliningSummary& callee, ValueID call);
 

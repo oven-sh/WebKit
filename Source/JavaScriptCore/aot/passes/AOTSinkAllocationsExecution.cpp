@@ -385,11 +385,16 @@ void ObjectInterpreter::holdMembersOfUnbuiltObjects(ValueID suspension)
     };
     Vector<ValueID, 8> held;
     Vector<VirtualObjectID, 4> unbuilt;
+    Vector<VirtualObjectID, 4> built;
     for (ValueID operand : heldOperandsOf(function().at(suspension))) {
-        if (VirtualObjectID object = objectOf(operand); isUnbuilt(object))
+        VirtualObjectID object = objectOf(operand);
+        if (isUnbuilt(object)) {
             unbuilt.append(object);
-        else
-            held.append(operand);
+            continue;
+        }
+        held.append(operand);
+        if (object)
+            built.append(object);
     }
     if (unbuilt.isEmpty())
         return;
@@ -403,7 +408,7 @@ void ObjectInterpreter::holdMembersOfUnbuiltObjects(ValueID suspension)
             held.append(member);
     };
     for (const ObjectEntry& entry : m_state.objects) {
-        if (entry.state.isCell())
+        if (built.contains(entry.object))
             continue;
         bool isReached = std::ranges::any_of(unbuilt, [&](VirtualObjectID object) {
             return object == entry.object || m_state.canReach(object, entry.object);
@@ -413,7 +418,9 @@ void ObjectInterpreter::holdMembersOfUnbuiltObjects(ValueID suspension)
             continue;
         if (entry.state.hasCell())
             hold(members->cell);
-        std::ranges::for_each(members->fields, hold);
+        // A member that is built holds its own members.
+        if (!entry.state.isCell())
+            std::ranges::for_each(members->fields, hold);
     }
     setHeldOperands(rewritten.edit(suspension), held.span());
 }

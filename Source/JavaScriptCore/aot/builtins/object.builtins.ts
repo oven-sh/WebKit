@@ -409,7 +409,7 @@ export default b.declarations(
           this: b.object,
           returns: b.string,
           capability: "js",
-          throws: b.propagated,
+          throws: true,
           runsOnlyOperandCode: true,
           uses: { this: [b.runs(b.named("@@toStringTag")), b.membersOnlyInspected] },
           reads: inheritedProperties,

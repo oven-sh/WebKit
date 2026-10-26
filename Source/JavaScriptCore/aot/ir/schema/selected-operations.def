@@ -72,4 +72,4 @@ operation CallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt3
 terminator TryCallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt32>, overload: BuiltinOverload, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, accessSite?: AccessSite, allocationSite?: AllocationSite) -> done(declared(overload)), miss ; unknownCode by Inline ; accessClass = DirectCall
 
 family Control Selected..Placed
-terminator TestAndBranch (condition: Boolean/inspects) -> taken(proof), notTaken(proof) ; none ; replaces = Branch
+terminator TestAndBranch (condition: Boolean/inspects) -> taken(proof), notTaken(proof) ; none ; replaces = Branch ; canStartRegion = true ; canEndInteriorBlock = true ; canEndBlockOfHead = true

@@ -90,6 +90,7 @@ public:
 
     Instance& instance() { return m_instance; }
     const ModuleTable& table() const { return m_table; }
+    unsigned numberOfLinks() const { return m_numberOfLinks; }
     const ModuleData& data(ModuleID module) const { return m_table.data(module); }
     const ModuleHost& host() const;
     Identifier identifier(uint32_t number) const;
@@ -147,7 +148,7 @@ public:
     bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown);
     void queueJobsThatWaitForLoader();
     void didLoadGraph(ModuleID root);
-    void evaluateFilesOfLevel(ModuleID moduleOnWay);
+    void evaluateFilesOfLevel(ModuleID moduleOnWay, bool runsWhenLoaded);
     // The start of the module is on the stack only to run the files that the module imports.
     bool isRunningFilesOf(ModuleID root) const { return m_rootWhoseFilesRun == root; }
     bool stopLoadingBehindFile(ModuleID file);
@@ -167,8 +168,9 @@ public:
     bool loaderGoesThroughGraph();
     void didStartLoad(JSPromise*, ModuleID root);
     ModuleRecord* recordOfCommonJSFile(ModuleID);
-    bool isNotLoaded(ModuleID) const;
+    bool isNotLoaded(ModuleID);
     bool wasLoadedWithEarlierGraph(ModuleID);
+    bool wasLoadedWithGraphBeingEvaluated(ModuleID);
     bool setIsAskingHost(bool isAskingHost) { return std::exchange(m_isAskingHost, isAskingHost); }
     bool wasImportedWhileItRan(ModuleID file) const;
     void evaluateCommonJSForLoader(ModuleID file);
@@ -264,6 +266,7 @@ private:
     void throwEvaluationError(ModuleID);
     static JSPromise* rejectedPromiseWithPendingException(JSGlobalObject*, ThrowScope&);
     Identifier moduleKey(ModuleID);
+    Identifier keyOfRequest(ModuleID target);
     JSObject* namespaceIfCreated(ModuleID, ModulePhase) const;
     void setNamespace(ModuleID, ModulePhase, JSObject*);
     JSObject* createNamespace(ModuleID, ModulePhase);
@@ -321,7 +324,9 @@ private:
     UncheckedKeyHashMap<ModuleID, ModuleRecord*> m_records;
     UncheckedKeyHashMap<ModuleID, std::unique_ptr<LoadedModule>> m_loaded;
     RememberedSlotSet m_storedReferences;
+    std::unique_ptr<ModuleLinkWalk> takeLinkWalk(ModuleID root);
     std::unique_ptr<ModuleLinkWalk> m_linkWalkOfQueuedImport;
+    unsigned m_numberOfLinks { 0 };
     // Compared, never followed: its job holds the promise.
     JSPromise* m_importThatWaitsForQueuedJobs { nullptr };
     const EvaluationInProgress* m_innermostEvaluation { nullptr };
@@ -357,6 +362,7 @@ private:
     // Their imported files ran without the loader. The set is filled from the list when it is asked.
     Vector<ModuleID, 4> m_rootsLoadedWithoutLoader;
     BitVector m_filesLoadedWithoutLoader;
+    BitVector m_modulesLoadedWithGraphs;
     // A file ran before the loader came to it and queued jobs. They are queued where the loader comes to the file, as under `bun run`.
     std::optional<ModuleID> m_fileWhoseJobsWaitForLoader;
     std::optional<ModuleID> m_rootWhoseFilesRun;

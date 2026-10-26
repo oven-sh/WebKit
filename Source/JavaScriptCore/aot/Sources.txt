@@ -22,6 +22,7 @@ aot/analysis/AOTIRBuilderExpansion.cpp
 aot/analysis/AOTInductionVariables.cpp
 aot/analysis/AOTIntegerRelations.cpp
 aot/analysis/AOTLiveness.cpp
+aot/analysis/AOTObservableOperations.cpp
 aot/analysis/AOTParameterUses.cpp
 aot/analysis/AOTPointsToSolver.cpp
 aot/analysis/AOTPredictedValues.cpp

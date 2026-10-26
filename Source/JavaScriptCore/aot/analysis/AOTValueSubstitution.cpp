@@ -128,14 +128,6 @@ void ValueSubstitution::apply(Function& function, FunctionAnalyses* analyses)
     if (isEmpty())
         return;
 
-    // A check goes for a value of which as much is proven. To take it away without a proof is for expectInsteadOfChecking().
-    for (uint32_t from = 0; analyses && from < m_replacements.size() && from < function.values.size(); ++from) {
-        if (m_replacements[from] == ValueID(from) || function.values[from].opcode != Opcode::Check)
-            continue;
-        const Program& program = analyses->context().program;
-        RELEASE_ASSERT(program.typeOf(function, resolve(ValueID(from))).isSubsetOf(program.typeOf(function, ValueID(from)), program));
-    }
-
     auto rewrite = [&](ValueID& value) {
         value = resolve(value);
     };
@@ -171,9 +163,14 @@ void ValueSubstitution::apply(Function& function, FunctionAnalyses* analyses)
         ++index;
     }
     if (analyses) {
+        const Program& program = analyses->context().program;
         for (size_t index = 0; index < m_replacements.size(); ++index) {
-            if (ValueID from(index); m_replacements[index] != from)
-                analyses->didReplaceUses(from, resolve(from));
+            ValueID from(index);
+            if (m_replacements[index] == from)
+                continue;
+            // A check goes for a value of which as much is proven. To take it away without a proof is for expectInsteadOfChecking().
+            RELEASE_ASSERT(index >= function.values.size() || function.values[index].opcode != Opcode::Check || program.typeOf(function, resolve(from)).isSubsetOf(program.typeOf(function, from), program));
+            analyses->didReplaceUses(from, resolve(from));
         }
     }
 

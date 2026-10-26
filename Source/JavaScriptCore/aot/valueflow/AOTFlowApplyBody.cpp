@@ -13,12 +13,14 @@
 #include "AOTBuiltinMembers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTNarrowFieldTypes.h"
 #include "AOTPredictedValues.h"
 #include "AOTRepresentation.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTTypePropagation.h"
+#include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -117,7 +119,8 @@ static uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBod
         refutedChecks.append(entry.claim);
         ++numberOfRemovedChecks;
     }
-    forgetProofsBehind(body.function, CFG(body.function), body.types, refutedChecks.span(), { }, ExpectedTypes::Dropped);
+    if (!refutedChecks.isEmpty())
+        forgetProofsBehind(body.function, CFG(body.function), body.types, refutedChecks.span(), { }, ExpectedTypes::Dropped);
     return numberOfRemovedChecks;
 }
 
@@ -585,6 +588,9 @@ static void applyStamps(const FlowBodyApplication& body, const FlowBodyUpdate& u
     for (const FlowAccessStamp& stamp : update.accesses)
         function.edit(stamp.value).setReceivers(stamp.receivers);
 
+    for (ValueID open : update.opensOfUndecidedStorage)
+        function.edit(open).setStorageIsUndecided(true);
+
     for (const FlowCallStamp& stamp : update.calls)
         function.edit(stamp.value).setCallees(stamp.callees);
 
@@ -737,6 +743,17 @@ static void applyTailCalls(const FlowBodyApplication& body, IRBuilder& builder, 
             continue;
 
         ValueID call = terminator.callOperand();
+        // A function that is constructed stays on the stack until it has seen what its last call returns.
+        if (body.isOnlyConstructed) {
+            demoteTailCall(body, builder, block);
+            function.edit(call, ValueEdit::Definition).isTailCall = false;
+            continue;
+        }
+        // What a built-in function calls returns to that function, and the frame of the caller is the one that stands for it.
+        if (function.at(call).opcode == Opcode::Call && function.at(call).calledBuiltin()) {
+            demoteTailCall(body, builder, block);
+            continue;
+        }
         const FlowTailCallUpdate* known = findByValue(update.tailCalls.span(), call, &FlowTailCallUpdate::call);
         FlowTailCallUpdate entry = known ? *known : FlowTailCallUpdate { };
         terminator.setRequirement(TailCallRequirement::Required);
@@ -821,14 +838,161 @@ static void eraseBuiltinConstantsWithoutUse(const FlowCastInsertion& insertion)
     }
 }
 
+bool takesOnlyWhatFlowHolds(const Program& program, const Value& store, uint32_t operandIndex)
+{
+    switch (holderOfRequiredTypes(program, store)) {
+    case RequiredTypeHolder::StoredSlot:
+        return false;
+    case RequiredTypeHolder::InitializedSlot: {
+        std::optional<uint32_t> valueIndex = store.variadicOperandIndex(operandIndex);
+        if (!valueIndex)
+            return false;
+        FieldReference field = declarationOf(program, { store.layout(), store.fields()[*valueIndex] });
+        return fieldAt(program, field).flow.stability.contains(FieldStability::IsNeverStoredWithOtherType) || !canStoreInitialValueBehindAllocation(program, store, *valueIndex);
+    }
+    case RequiredTypeHolder::PositionThatFlowFollows:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+namespace {
+
+struct StoreBehindChecks {
+    ProgramPoint point;
+    // Null: the terminator of the block.
+    ValueID user;
+    uint32_t operandIndex;
+    TypeID claimed;
+};
+
+} // anonymous namespace
+
+enum class ValidatesClaims : bool { No, Yes };
+
+static void assumeTypesOfPositionsAtStores(const Program& program, Function& function, TypeArena& types, FunctionAnalyses& analyses, IRBuilder& builder, ValidatesClaims validatesClaims)
+{
+    PredictedValues predicted(function, analyses.cfg());
+    if (!predicted.hasChecks())
+        return;
+    // What is proven of a position that takes the very value that a check tests may rest on that check.
+    Vector<ValueID, 16> checks;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            if (function.at(id).opcode == Opcode::Check && mayTurnValueAway(program, function, function.at(id)))
+                checks.append(id);
+        }
+    }
+    BitVector isCheckedValueItself = valuesThatAre(function, analyses.cfg(), checks.span());
+    TypingContext typing { program, function, types };
+    Vector<StoreBehindChecks, 8> found;
+
+    auto isTypedOnCredit = [&](ValueID value, TypeID claimed) {
+        if (!value || !predicted.isBehindCheck(value))
+            return false;
+        const Value& definition = function.at(value);
+        if (!types.at(definition.type).isJavaScriptValue() || !types.at(claimed).isJavaScriptValue())
+            return false;
+        // An allocation and a direct call are typed by their own words, whatever their operands are.
+        const Value& producer = definition.opcode == Opcode::ResultAt ? function.at(definition.resultsOperand()) : definition;
+        if (resultRuleOf(definition.opcode) == ResultRule::Allocation || definition.opcode == Opcode::NewClosure || producer.opcode == Opcode::CallDirect)
+            return false;
+        return definition.opcode != Opcode::AssumeType || definition.isBehindChecks() || !types.at(definition.provenType()).isSubsetOf(types.at(claimed), program);
+    };
+    // A literal is born with the storage that fits the types of its elements: one whose element is not known to be a number gets the storage that holds everything.
+    // Its contents are what flow holds, cut by no type, so they hold of the very value that a check tests too.
+    BitVector literalsSeen;
+    auto visitElementsOfLiteral = [&](ValueID array, TypeID claimed) {
+        const ClassPart* part = types.at(claimed).singleBuiltinClass();
+        if (!part || !part->contentsAreProven || (part->arrayStorage != ArrayStorage::Int32 && part->arrayStorage != ArrayStorage::Double))
+            return;
+        ValueID literal = sameObjectThroughCasts(function, array);
+        if (function.at(literal).opcode != Opcode::NewArray || literalsSeen.set(literal.index()))
+            return;
+        TypeID elements = part->contentsAt(program.builtins(), ContentsSlot::Element);
+        for (uint32_t index = OperandIndex::NewArray::elements; index < function.at(literal).numberOfOperands(); ++index) {
+            if (isTypedOnCredit(function.at(literal).operand(index), elements))
+                found.append({ analyses.useLists().pointOf(literal), literal, index, elements });
+        }
+    };
+    auto visit = [&](ProgramPoint point, ValueID user, ValueID stored, uint32_t operandIndex, TypeID required) {
+        if (!required || required == TypeTable::anything || !isTypedOnCredit(stored, required) || isCheckedValueItself.get(stored.index()))
+            return;
+        found.append({ point, user, operandIndex, required });
+        visitElementsOfLiteral(stored, required);
+    };
+
+    const OpcodeSet& opcodesWithRequiredTypes = opcodesWithRequiredOperandTypes();
+    bool hasOneResult = function.results.size() == 1 && !function.isUnsplitCoroutine();
+    TypeID requiredResult = hasOneResult ? typing.typeIDOf(function.result()) : TypeID();
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        const Block& contents = function.at(block);
+        uint32_t numberOfValues = contents.values.size();
+        for (uint32_t index = 0; index < numberOfValues; ++index) {
+            ValueID user = contents.values[index];
+            const Value& value = function.at(user);
+            // It need not come by a position of this function: it may be stored by name.
+            if (value.opcode == Opcode::AssumeType)
+                visitElementsOfLiteral(value.valueOperand(), value.provenType());
+            if (!opcodesWithRequiredTypes.contains(value.opcode))
+                continue;
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                if (value.operandKind(operandIndex) != OperandKind::Declared)
+                    return;
+                TypeID required = requiredTypeOfOperand(typing, value, operandIndex);
+                if (takesOnlyWhatFlowHolds(program, value, operandIndex))
+                    return visit({ block, index }, user, operand, operandIndex, required);
+                // Of the slot of an object that a store tests flow leaves out primitives, and no object. No test of a store tells what is proven of the instances of a class: that is flow's word.
+                if (required && holderOfRequiredTypes(program, value) == RequiredTypeHolder::InitializedSlot && types.at(required) != types.at(required).withoutClassProofs())
+                    visit({ block, index }, user, operand, operandIndex, types.withPrimitives(required, Primitive::All));
+            });
+        }
+        const Terminator& terminator = contents.terminator;
+        if (terminator.kind == TerminatorKind::Return)
+            visit({ block, numberOfValues }, { }, terminator.valueOperand(), OperandIndex::Return::value, requiredResult);
+        if (terminator.kind != TerminatorKind::ReturnCall || !requiredResult || requiredResult == TypeTable::anything || !predicted.isBehindCheck(terminator.callOperand()))
+            continue;
+        // The casts of a tail call are no operands. What a direct call answers is the word of its callee.
+        bool isAnsweredByCallee = function.at(terminator.callOperand()).opcode == Opcode::CallDirect && typing.typeOf(terminator.callOperand()).isSubsetOf(types.at(requiredResult), program);
+        if (isAnsweredByCallee || std::ranges::any_of(terminator.casts(), [&](TailCast cast) { return isClaimOfResult(function, cast); }))
+            continue;
+        Vector<TailCast, 2> casts;
+        for (TailCast cast : terminator.casts())
+            casts.append(cast);
+        casts.append(TailCast { DeclaredType(Proven::byFlowOfPosition(requiredResult)), CastResolution::Assume });
+        function.edit(block, BlockEdit::Terminator).terminator.setCasts(casts.span());
+    }
+    if (found.isEmpty())
+        return;
+
+    for (const StoreBehindChecks& store : found) {
+        const Instruction& user = store.user ? static_cast<const Instruction&>(function.at(store.user)) : function.at(store.point.block).terminator;
+        ValueID stored = user.operand(store.operandIndex);
+        builder.setOrigin(user.origin());
+        if (validatesClaims == ValidatesClaims::Yes)
+            builder.insertBefore(store.point, makeValidateType(stored, store.claimed));
+        ValueID assumed = builder.insertBefore(store.point, makeAssumeType(stored, Proven::byFlowOfPosition(store.claimed)));
+        Instruction& edited = store.user ? static_cast<Instruction&>(function.edit(store.user, ValueEdit::Definition)) : function.edit(store.point.block, BlockEdit::Terminator).terminator;
+        edited.setOperand(store.operandIndex, assumed);
+    }
+    builder.applyInsertions();
+}
+
+void assumeTypesOfPositionsAtStores(const Program& program, FunctionID id, Function& function, TypeArena& types, BuildContext& build)
+{
+    AnalysisContext context { build, program, nullptr, nullptr, id };
+    FunctionAnalyses analyses(context, function);
+    IRBuilder builder(context, function, types, &analyses);
+    assumeTypesOfPositionsAtStores(program, function, types, analyses, builder, build.validates() ? ValidatesClaims::Yes : ValidatesClaims::No);
+}
+
 FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
 {
     const FlowBodyUpdate& update = body.application.bodies[body.id.index()];
     FlowBodyCounts counts;
     Vector<ValueID, 8> answeredChecks;
     counts.removedChecks = applyCheckUpdates(body, update, answeredChecks);
-    CFG cfg(body.function);
-    PredictedValues predicted(body.function, cfg);
+    PredictedValues predicted(body.function);
     applyScopesOfAnsweredChecks(body.function, predicted, answeredChecks.span());
     applyStamps(body, update);
     Vector<ListedMember> listedMembers = makeOrdinaryObjects(body);
@@ -867,6 +1031,8 @@ FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
     }
     if (!typing.waitsToCutCode)
         body.function.setValuesAreTypedAsDefined();
+    // insertRuntimeValidation() validates every claim that it finds.
+    assumeTypesOfPositionsAtStores(body.program, body.function, body.types, analyses, builder, ValidatesClaims::No);
     if (body.build.validates())
         insertRuntimeValidation(insertion);
 

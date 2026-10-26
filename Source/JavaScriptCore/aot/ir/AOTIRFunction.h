@@ -14,17 +14,21 @@
 #include "AOTVector.h"
 #include "AOTWire.h"
 #include <optional>
+#include <utility>
 #include <wtf/OptionSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 class FunctionRemap;
+class ReasonsForOperationsThatWent;
 class StringRemap;
 class TypeRemap;
 
 enum class ConstructorForm : uint8_t { NotConstructor, Base, Derived };
 
 struct Function;
+
+void didReplaceBody(ReasonsForOperationsThatWent&);
 
 template<typename T, size_t minCapacity>
 class BodyTable {
@@ -63,17 +67,24 @@ public:
     ChangeLogOfFunction() = default;
     ChangeLogOfFunction(const ChangeLogOfFunction&) { }
     ChangeLogOfFunction(ChangeLogOfFunction&& other)
-        : valuesAreTypedAsDefined(other.valuesAreTypedAsDefined)
+        : reasonsForOperationsThatWent(std::exchange(other.reasonsForOperationsThatWent, nullptr))
+        , valuesAreTypedAsDefined(other.valuesAreTypedAsDefined)
     {
     }
     ChangeLogOfFunction& operator=(const ChangeLogOfFunction&)
     {
         didEditEverything();
+        if (reasonsForOperationsThatWent) [[unlikely]]
+            didReplaceBody(*reasonsForOperationsThatWent);
         return *this;
     }
     ChangeLogOfFunction& operator=(ChangeLogOfFunction&& other)
     {
         didEditEverything();
+        if (reasonsForOperationsThatWent) [[unlikely]]
+            didReplaceBody(*reasonsForOperationsThatWent);
+        else
+            reasonsForOperationsThatWent = std::exchange(other.reasonsForOperationsThatWent, nullptr);
         valuesAreTypedAsDefined = other.valuesAreTypedAsDefined;
         return *this;
     }
@@ -92,6 +103,7 @@ public:
     }
 
     ChangeLog* log { nullptr };
+    mutable ReasonsForOperationsThatWent* reasonsForOperationsThatWent { nullptr };
     uint32_t numberOfEdits { 0 };
     bool valuesAreTypedAsDefined { false };
 };
@@ -99,6 +111,13 @@ public:
 struct WrittenPosition {
     ValueID value;
     uint32_t position { 0 };
+};
+
+struct ConstructionStart {
+    uint32_t reported { 0 };
+    uint32_t start { 0 };
+    // Reflect.construct(..), which calls the host function where it cannot construct.
+    bool isWrittenAsCall { false };
 };
 
 struct Function : FunctionRecord {
@@ -109,6 +128,7 @@ struct Function : FunctionRecord {
     Values values;
     // Sorted by value. A value's position is where an error is reported; only a value that the source text has elsewhere is listed.
     Vector<WrittenPosition> writtenPositions;
+    Vector<ConstructionStart> constructionStarts;
     bool representationsAreChosen { false };
     bool bodyIsReleased { false };
 
@@ -211,6 +231,8 @@ struct Function : FunctionRecord {
         RELEASE_ASSERT(m_changes.log == &log);
         m_changes.log = nullptr;
     }
+    ReasonsForOperationsThatWent* listenerForOperationsThatGo() const { return m_changes.reasonsForOperationsThatWent; }
+    void setListenerForOperationsThatGo(ReasonsForOperationsThatWent* listener) const { m_changes.reasonsForOperationsThatWent = listener; }
     uint32_t numberOfEdits() const { return m_changes.numberOfEdits; }
     bool valuesAreTypedAsDefined() const { return m_changes.valuesAreTypedAsDefined; }
     void setValuesAreTypedAsDefined() { m_changes.valuesAreTypedAsDefined = true; }

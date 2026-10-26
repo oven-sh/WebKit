@@ -54,7 +54,7 @@ operation SetGlobalBinding (key: PropertyKey, mode: ECMAMode, value: Any/retains
 
 family ElementAccess Prepared..Placed
 operation GetArrayLength (array: Array/inspects, guard?: Guard/inspects) -> natural(uint32) ; reads(ArrayStorage) ; relies = Pristine, ArrayStorage ; guarded = array ; interpreted = Read
-operation GetArrayElement (array: Array/inspects+readsContents, position: Number/inspects, guard?: Guard/inspects, arrayStorage: ArrayStorage, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInBounds isPresent readsHoleAsNaN] -> unknown => declared(array) ; CreatesString reads(ArrayStorage, Elements[Array], NamedProperties) ; relies = Pristine, ArrayStorage, InBounds ; guarded = array ; interpreted = Read ; replaces = ElemGet ; accessClass = Slot
+operation GetArrayElement (array: Array/inspects+readsContents, position: Number/inspects, guard?: Guard/inspects, arrayStorage: ArrayStorage, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInBounds isPresent readsHoleAsNaN | engine storageIsUndecided] -> unknown => declared(array) ; CreatesString reads(ArrayStorage, Elements[Array], NamedProperties) ; relies = Pristine, ArrayStorage, InBounds ; guarded = array ; interpreted = Read ; replaces = ElemGet ; accessClass = Slot
 operation PutArrayElement (array: Array/inspects+writesContents, position: Number/inspects, value: Any/retains(array), guard?: Guard/inspects, arrayStorage: ArrayStorage, mode: ECMAMode, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInBounds] -> none ; GrowsArray writes(NamedProperties) ; relies = Pristine, ArrayStorage, InBounds ; guarded = array ; interpreted = Store ; replaces = ElemSet, ElemDefine ; accessClass = Slot ; runtime = ArrayPutAtIndex ; runsOwnerBarrier = true
 operation HasArrayElement (array: Array/inspects, position: Number/inspects, guard?: Guard/inspects, arrayStorage: ArrayStorage, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral] -> natural(boolean) ; CreatesString reads(ArrayStorage, Elements[Array], NamedProperties) ; relies = Pristine, ArrayStorage ; guarded = array ; interpreted = Test ; replaces = ElemHas ; accessClass = Slot ; branches = May
 operation AppendElements (array: Array/inspects+writesContents, source: Array/Listed, guard?: Guard/inspects) -> none ; GrowsArray ; relies = Pristine, ArrayStorage ; guarded = source ; interpreted = List ; replaces = AppendSpread ; runtime = AppendElements
@@ -142,8 +142,8 @@ operation AbandonModuleEvaluation (module: Module(Target), exception: Exception/
 family StringBuilder Prepared..Placed
 operation StringBuilderBegin () -> natural(StringBuilder) ; Allocates UsesRuntime writes(StringBuilderContents) ; runtime = StringBuilderBegin
 operation StringBuilderAppend (builder: StringBuilder/inspects, parts...: Any/inspects) -> none ; AppendsToBuilder ; Prepared..Prepared ; runtime = StringBuilderAppend
-operation StringBuilderAppendJSON (builder: StringBuilder/inspects, value: Any/retains, property: Any/inspects, holder: Any/inspects) -> natural(boolean) ; unknownCode ; runtime = StringBuilderAppendJSON
-operation StringBuilderAppendJSONMembers (builder: StringBuilder/inspects, object: Any/retains, names: Any/inspects, start: Integer/inspects, holder: Any/inspects) -> natural(boolean) ; unknownCode ; runtime = StringBuilderAppendJSONMembers
+operation StringBuilderAppendJSON (builder: StringBuilder/inspects, value: Any/retains, property: Any/inspects, holder: Any/inspects, calledBuiltin?: Builtin) -> natural(boolean) ; unknownCode ; runtime = StringBuilderAppendJSON
+operation StringBuilderAppendJSONMembers (builder: StringBuilder/inspects, object: Any/retains, names: Any/inspects, start: Integer/inspects, holder: Any/inspects, calledBuiltin?: Builtin) -> natural(boolean) ; unknownCode ; runtime = StringBuilderAppendJSONMembers
 operation StringBuilderLength (builder: StringBuilder/inspects) -> natural(int[0, 2147483647]) ; reads(StringBuilderContents)
 operation StringBuilderToString (builder: StringBuilder/inspects) -> natural(string) ; AppendsToBuilder ; runtime = StringBuilderToString
 operation StringBuilderFinish (builder: StringBuilder/inspects) [isLikelyKey] -> natural(string) ; AppendsToBuilder ; runtime = StringBuilderFinish
@@ -160,4 +160,4 @@ operation ValidateSameValue (kept: Any/inspects, replacement: Any/inspects) -> n
 operation ShouldFailPrediction () -> natural(boolean) ; reads(RuntimeState) writes(RuntimeState)
 
 family Control Prepared..Placed
-terminator SwitchOnShape (subject: Object/inspects, layoutSets: List<LayoutSet>) -> case...(proof), otherwise ; reads(ShapeWords) ; proves = Shape
+terminator SwitchOnShape (subject: Object/inspects, layoutSets: List<LayoutSet>) -> case...(proof), otherwise ; reads(ShapeWords) ; proves = Shape ; canStartRegion = true ; canEndInteriorBlock = true

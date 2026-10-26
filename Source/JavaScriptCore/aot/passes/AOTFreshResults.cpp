@@ -37,47 +37,13 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(defaultLimitValue(LimitID::MaxVirtualObjectVariants, Architecture::ARM64) <= maxTagBitsInInt32);
 static_assert(defaultLimitValue(LimitID::MaxVirtualObjectVariants, Architecture::X86_64) <= maxTagBitsInInt32);
 
-static bool isWrapperOrWorker(FunctionRole role)
-{
-    switch (role) {
-    case FunctionRole::AsyncWorker:
-    case FunctionRole::ResultWrapper:
-    case FunctionRole::ResultWorker:
-    case FunctionRole::ParameterWrapper:
-    case FunctionRole::EntryChecks:
-        return true;
-    case FunctionRole::Source:
-    case FunctionRole::Library:
-    case FunctionRole::Model:
-    case FunctionRole::Signature:
-    case FunctionRole::GenericEntrypoint:
-    case FunctionRole::TableEntrypoint:
-    case FunctionRole::TableLookup:
-    case FunctionRole::GenericVersion:
-    case FunctionRole::AllocatedThisVersion:
-    case FunctionRole::ConstructBody:
-    case FunctionRole::CallSiteVersion:
-    case FunctionRole::CalleeVersion:
-    case FunctionRole::CoroutineRamp:
-    case FunctionRole::CoroutineBody:
-    case FunctionRole::BoundFunction:
-    case FunctionRole::OutlinedBody:
-    case FunctionRole::Serializer:
-    case FunctionRole::Parser:
-    case FunctionRole::ChainStep:
-    case FunctionRole::StubBody:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static bool canReturnParts(const Function& function)
 {
     if (!function.hasBody() || !function.mayChangeSignature() || !function.mayBeCloned() || !function.hasOrdinaryFrame())
         return false;
     if (function.results.size() != 1 || function.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest }))
         return false;
-    if (isWrapperOrWorker(function.role))
+    if (isWrapperOrWorkerOf(function.role))
         return false;
     // A construction by value names the function itself, and is resolved only while that is no wrapper. The body that a resolved construction calls is split like any other.
     if (function.role == FunctionRole::Source && function.constructedClass)

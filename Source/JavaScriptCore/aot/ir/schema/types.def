@@ -41,7 +41,7 @@ enum TypeSiteKind (logWord: Text) {
     SetElement("element") PromiseValue("element") CallResult("call-result") PropertyRead("property") Assertion("cast")
 }
 record TypeSite wire { module: Module(Referrer) position: UInt32 kind: TypeSiteKind text: String? | engine function: Function(Dispatch)? }
-flags PositionFlags { IsInt32Promise IsFromCompiler IsExpected OmitsNull OmitsUndefined IsDeclaredByDependency }
+flags PositionFlags { IsInt32Promise IsFromCompiler IsExpected OmitsNull OmitsUndefined IsDeclaredByDependency IsClaim }
 record DeclaredType wire handwrittenStruct { type: Type site: TypeSite? flags: PositionFlags }
 
 enum IllTypedCause abi {

@@ -288,6 +288,7 @@ void FunctionVerifier::verifyOperandKind(BlockID block, ValueID user, uint32_t, 
         case OperandKind::KeyOrder:
         case OperandKind::FlatString:
         case OperandKind::CodeAddress:
+        case OperandKind::JSONHolders:
         case OperandKind::BuilderCursor:
             return type.isOpaque(*opaqueKindOf(kind));
         }

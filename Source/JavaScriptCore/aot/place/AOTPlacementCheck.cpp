@@ -525,29 +525,10 @@ static void checkDefinedMethods(const PlacementCheckContext& context, FunctionID
     }
 }
 
-static bool isClassConstructor(FunctionKind kind)
-{
-    switch (kind) {
-    case FunctionKind::BaseConstructor:
-    case FunctionKind::DerivedConstructor:
-        return true;
-    case FunctionKind::Plain:
-    case FunctionKind::Arrow:
-    case FunctionKind::Method:
-    case FunctionKind::Getter:
-    case FunctionKind::Setter:
-    case FunctionKind::Initializer:
-    case FunctionKind::Module:
-    case FunctionKind::CommonJsModule:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static void checkClosureForm(const PlacementCheckContext& context, FunctionID id)
 {
     const Function& function = context.program.at(id);
-    bool canHaveSlimForm = !function.hasAny({ FunctionFlags::IsGenerator, FunctionFlags::HasNewTarget, FunctionFlags::TakesCallee }) && !isClassConstructor(function.kind);
+    bool canHaveSlimForm = !function.hasAny({ FunctionFlags::IsGenerator, FunctionFlags::HasNewTarget, FunctionFlags::TakesCallee }) && !isClassConstructorOf(function.kind);
     context.expect(context.slots.closureFormOf(id) != ClosureForm::Slim || canHaveSlimForm, PlacementRule::ClosureFormNotProven, { }, id);
     bool targetIsSlim = context.slots.closureFormOf(closureTargetOf(context.program, id)) == ClosureForm::Slim;
     context.expect(static_cast<bool>(context.placement.functionKind(id).isSlim) == targetIsSlim, PlacementRule::ClosureFormNotProven, { }, id);

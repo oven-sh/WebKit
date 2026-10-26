@@ -6,26 +6,26 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
 
-function f0 name="checkOfSubset" parameters=[{type=i32}] results=[{type=number}] {
+function f0 name="checkOfSubset" parameters=[{type=i32}] results=[{type=number flags=[IsExpected]}] {
     v1 = Check v0 expectedType=number
     Return v1
 # CHECK-NOT: Check
 }
 
-function f1 name="fallibleCheck" parameters=[{type=anything}] results=[{type=number}] {
+function f1 name="fallibleCheck" parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
     v1 = Check v0 expectedType=number
     Return v1
 # CHECK: Check v0
 }
 
-function f2 name="checkThroughUpcast" parameters=[{type=i32}] results=[{type=number}] {
+function f2 name="checkThroughUpcast" parameters=[{type=i32}] results=[{type=number flags=[IsExpected]}] {
     v1 = Upcast v0 castType=anything
     v2 = Check v1 expectedType=number
     Return v2
 # CHECK-NOT: Check
 }
 
-function f3 name="nestedEqualChecks" parameters=[{type=anything}] results=[{type=number}] {
+function f3 name="nestedEqualChecks" parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
     v1 = Check v0 expectedType=number
     v2 = Check v1 expectedType=number
     Return v2
@@ -40,7 +40,7 @@ function f4 name="upcastToEqualType" parameters=[{type=number}] results=[{type=n
 # CHECK: Return v0
 }
 
-function f5 name="expectedTypeIsRetained" parameters=[{type=number}] results=[{type=number}] {
+function f5 name="expectedTypeIsRetained" parameters=[{type=number}] results=[{type=number flags=[IsExpected]}] {
     v1 ~ i32 = Check v0 expectedType=number
     Return v1
 # CHECK-NOT: Check
@@ -48,7 +48,7 @@ function f5 name="expectedTypeIsRetained" parameters=[{type=number}] results=[{t
 # CHECK: Return v1
 }
 
-function f6 name="repeatedBelow" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+function f6 name="repeatedBelow" parameters=[{type=anything}, {type=boolean}] results=[{type=number flags=[IsExpected]}] {
     v2 = Check v0 expectedType=number
     Branch v1 -> taken b1(), notTaken b2()
   b1():
@@ -62,7 +62,7 @@ function f6 name="repeatedBelow" parameters=[{type=anything}, {type=boolean}] re
 # CHECK-NOT: Check
 }
 
-function f7 name="repeatedInSiblingBranches" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+function f7 name="repeatedInSiblingBranches" parameters=[{type=anything}, {type=boolean}] results=[{type=number flags=[IsExpected]}] {
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Check v0 expectedType=number
@@ -76,7 +76,7 @@ function f7 name="repeatedInSiblingBranches" parameters=[{type=anything}, {type=
 # CHECK-NEXT: Check v0
 }
 
-function f8 name="repeatedUnderHandler" parameters=[{type=anything}] results=[{type=number}] {
+function f8 name="repeatedUnderHandler" parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
     v1 = Check v0 expectedType=number
     Jump -> next b1()
   b1() handler=b3():
@@ -96,7 +96,7 @@ function f8 name="repeatedUnderHandler" parameters=[{type=anything}] results=[{t
 # CHECK-NEXT: Return v1
 }
 
-function f9 name="checkInCoveredBlock" parameters=[{type=anything}] results=[{type=number}] {
+function f9 name="checkInCoveredBlock" parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
   b0(v0: anything) handler=b2():
     v1 = Check v0 expectedType=number
     Jump -> next b1()

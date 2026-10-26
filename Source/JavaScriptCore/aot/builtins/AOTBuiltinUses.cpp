@@ -329,8 +329,6 @@ BuiltinUsePlan planKnownBuiltinCall(const BuiltinUseInputs& inputs, const KnownB
     const BuiltinTable& table = inputs.program.builtins();
     if (isCalledOnlyDirectly(table, known.callee) && !hasDirectFunction(table, known.callee))
         return { };
-    if (inputs.program.mayBeTrimmed(known.callee))
-        return { };
     CallQueryStorage storage(inputs, known.callee, known.mode, known.operands, known.nullishReceiver);
 
     BuiltinUsePlan plan;
@@ -341,6 +339,9 @@ BuiltinUsePlan planKnownBuiltinCall(const BuiltinUseInputs& inputs, const KnownB
     if (!plan.call.overload)
         return { };
     if (staysGenericOperation(table.at(plan.call.overload)))
+        return { };
+    // The message of a construction that is refused quotes the callee as it is written, which only a Construct holds.
+    if (known.mode == BuiltinCallMode::Construct && table.at(table.at(plan.call.overload).result.type).isNever())
         return { };
     if (plan.call.state == BuiltinMatchState::Unknown) {
         if (isCalledOnlyDirectly(table, known.callee))

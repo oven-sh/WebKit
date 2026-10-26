@@ -123,22 +123,9 @@ static TypeID typeOfKind(TypeArena& types, OperandKind kind)
     case OperandKind::KeyOrder:
     case OperandKind::FlatString:
     case OperandKind::CodeAddress:
+    case OperandKind::JSONHolders:
     case OperandKind::BuilderCursor:
         return { };
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-// The slot of an object is written without a test. storeUnprovenInitialValues() has dealt with what an allocation writes: what it has left there fits the slot but for what flow has proven of the field.
-static bool writesSlotOfObjectWithoutProof(const Program& program, const Value& value, uint32_t operandIndex)
-{
-    switch (holderOfRequiredTypes(program, value)) {
-    case RequiredTypeHolder::StoredSlot:
-        return true;
-    case RequiredTypeHolder::InitializedSlot:
-        return !value.variadicOperandIndex(operandIndex);
-    case RequiredTypeHolder::PositionThatFlowFollows:
-        return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -180,11 +167,6 @@ struct GenericVersionBuilder {
     bool reportsMismatches { context.build.recordedOptions().policy() == MismatchPolicy::Report };
     Vector<CheckSite, 8> sites { };
     Vector<GenericVersionCut, 16> cuts { };
-    // Empty where the function has no generic version, and every block runs with what a check would have turned away.
-    BitVector isGenericBlock { };
-    // A check without an exit has become a guard at each use, so the typed blocks behind it run with what it would have turned away too.
-    bool hasGuardsInTypedBlocks { false };
-    Vector<std::pair<ValueID, TypeID>, 4> forgottenProofsOfLiterals { };
 
     const Type& typeOf(ValueID value) const LIFETIME_BOUND { return program.typeOf(function, value); }
     TypePropagationInputs typingInputs() { return { program, context.id, function, analyses, types, context.build, &context.typingMemo }; }
@@ -606,10 +588,6 @@ struct GenericVersionBuilder {
 
     void didForgetProofs(const ForgottenProofs& forgotten)
     {
-        for (auto [value, proven] : forgotten.claims) {
-            if (function.at(sameObjectThroughCasts(function, value)).opcode == Opcode::NewArray)
-                forgottenProofsOfLiterals.append({ value, proven });
-        }
         // A validation that is erased lets go of its operand.
         if (forgotten.hasErasedValidation)
             analyses.didChangeValues();
@@ -678,7 +656,7 @@ struct GenericVersionBuilder {
         } else
             turnedAway = branch.provenOnNotTaken;
         Value unexpected;
-        becomeExpect(unexpected, turnedAway, ExpectedType(anyValue), InPlaceOfCheck::Yes);
+        becomeExpect(unexpected, turnedAway, ExpectedType(anyValue));
         copy.addDefinition(site.check, builder.append(WTF::move(unexpected)));
         builder.emitJump(genericContinuation);
     }
@@ -698,7 +676,6 @@ struct GenericVersionBuilder {
             builder.applyInsertions();
         }
 
-        hasGuardsInTypedBlocks = true;
         didForgetProofs(expectInsteadOfChecking(function, analyses.cfg(), types, checks, expectedTypes));
         context.build.statistics().count(StatisticID::ChecksReplacedByGuards, checks.size());
     }
@@ -745,81 +722,6 @@ struct GenericVersionBuilder {
         return true;
     }
 
-    // Flow follows what a check turns away through the same operations, so what it has proven of a position holds for the generic version too.
-    bool assumeTypesOfProvenPositions()
-    {
-        TypingContext typing { program, function, types };
-        PredictedValues predicted(function, analyses.cfg());
-        Vector<OperandOfOtherKind, 8> found;
-        // A literal is born with the storage that fits the types of its elements: one whose element is not known to be a number gets the storage that holds everything.
-        BitVector literalsSeen;
-        auto assumeElementsOfLiteral = [&](ValueID array, TypeID required) {
-            const ClassPart* part = types.at(required).singleBuiltinClass();
-            if (!part || !part->contentsAreProven || (part->arrayStorage != ArrayStorage::Int32 && part->arrayStorage != ArrayStorage::Double))
-                return;
-            ValueID literal = analyses.sameObjectThroughCasts(array);
-            if (function.at(literal).opcode != Opcode::NewArray || literalsSeen.set(literal.index()))
-                return;
-            TypeID elements = part->contentsAt(program.builtins(), ContentsSlot::Element);
-            ProgramPoint point = analyses.useLists().pointOf(literal);
-            for (uint32_t index = OperandIndex::NewArray::elements; index < function.at(literal).numberOfOperands(); ++index) {
-                ValueID element = function.at(literal).operand(index);
-                if (!predicted.isUncheckedValueItself(element) && !types.at(function.at(element).type).isSubsetOf(types.at(elements), program))
-                    found.append({ point, literal, index, elements });
-            }
-        };
-        auto visit = [&](ProgramPoint point, ValueID user, ValueID operand, uint32_t operandIndex, TypeID required) {
-            if (!operand || !required || required == TypeTable::anything || predicted.isUncheckedValueItself(operand))
-                return;
-            const Type& type = types.at(function.at(operand).type);
-            if (!type.isJavaScriptValue() || !types.at(required).isJavaScriptValue() || type.isSubsetOf(types.at(required), program))
-                return;
-            found.append({ point, user, operandIndex, required });
-            assumeElementsOfLiteral(operand, required);
-        };
-
-        bool hasChanged = false;
-        bool hasOneResult = function.results.size() == 1 && !function.isUnsplitCoroutine();
-        for (BlockID block : analyses.cfg().reversePostOrder()) {
-            // An ill-typed store in the typed code is somebody's mistake, for the verifier to find.
-            if (!hasGuardsInTypedBlocks && !isGenericBlock.isEmpty() && !isGenericBlock.get(block.index()))
-                continue;
-            const Block& contents = function.at(block);
-            uint32_t numberOfValues = contents.values.size();
-            for (uint32_t index = 0; index < numberOfValues; ++index) {
-                ValueID user = contents.values[index];
-                const Value& value = function.at(user);
-                value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-                    if (value.operandKind(operandIndex) == OperandKind::Declared && !writesSlotOfObjectWithoutProof(program, value, operandIndex))
-                        visit({ block, index }, user, operand, operandIndex, requiredTypeOfOperand(typing, value, operandIndex));
-                });
-            }
-            if (!hasOneResult)
-                continue;
-            TypeID requiredResult = typing.typeIDOf(function.result());
-            Terminator& terminator = function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
-            if (terminator.kind == TerminatorKind::Return)
-                visit({ block, numberOfValues }, { }, terminator.valueOperand(), OperandIndex::Return::value, requiredResult);
-            if (terminator.kind != TerminatorKind::ReturnCall || requiredResult == TypeTable::anything)
-                continue;
-            Type returned = typing.typeOf(terminator.callOperand());
-            Vector<TailCast, 2> casts;
-            for (TailCast cast : terminator.casts()) {
-                returned = returned.castTo(typing.typeOf(cast.declared), types);
-                casts.append(cast);
-            }
-            if (returned.isSubsetOf(types.at(requiredResult), program))
-                continue;
-            casts.append(TailCast { DeclaredType(Proven::byPosition(requiredResult)), CastResolution::Assume });
-            terminator.setCasts(casts.span());
-            hasChanged = true;
-        }
-        // A literal need not come by a position of this function: it may be stored by name.
-        for (auto [array, proven] : std::exchange(forgottenProofsOfLiterals, { }))
-            assumeElementsOfLiteral(array, proven);
-        return insertAssumedTypes(found.span(), Proven::byPosition) || hasChanged;
-    }
-
     void finishTyping()
     {
         // Every check is a test by now or is gone.
@@ -832,9 +734,6 @@ struct GenericVersionBuilder {
         storeUnprovenInitialValues(program, context.id, function, types, context.build);
         if (function.values.size() != numberOfValuesBefore)
             analyses.didChangeValues();
-        // The casts of a tail call are no operands.
-        if (assumeTypesOfProvenPositions())
-            typeAgain();
         finishTypedValues(typingInputs());
     }
 
@@ -971,7 +870,6 @@ struct GenericVersionBuilder {
         copy.addWaysBack(checks.span(), GenericCopy::TypesTestedOnWayBack::Expected);
         SSARepair repair(builder, analyses);
         copy.addVariablesTo(repair);
-        size_t numberOfBlocksBeforeRepair = function.blocks.size();
         repair.run();
         analyses.didChangeControlFlow();
         mergeBlocksCutForNothing();
@@ -981,16 +879,6 @@ struct GenericVersionBuilder {
         statistics.count(StatisticID::ExitsToGenericVersion, checksWithExit.size());
         statistics.count(StatisticID::WaysBackFromGenericVersion, copy.numberOfWaysBack());
         statistics.count(StatisticID::BlocksInGenericVersions, copy.copiedBlocks().size());
-        for (BlockID block : copy.copiedBlocks())
-            isGenericBlock.set(block.index());
-        // SSARepair cuts a covered block behind a definition, and what it cuts off a generic block is as generic.
-        const CFG& cfg = analyses.cfg();
-        for (BlockID block : cfg.reversePostOrder()) {
-            if (block.index() < numberOfBlocksBeforeRepair)
-                continue;
-            if (std::optional<Edge> incoming = cfg.singleIncomingEdge(block); incoming && isGenericBlock.get(incoming->from.index()))
-                isGenericBlock.set(block.index());
-        }
         finishTyping();
         return true;
     }
@@ -1269,7 +1157,7 @@ static std::optional<Position> variableReadThroughCastsAndChecks(const Function&
 }
 
 // AddGenericVersion drops a check that has nothing left to test, so no generic version comes of it.
-static bool mayTurnValueAway(const Program& program, const Function& function, const Value& check)
+bool mayTurnValueAway(const Program& program, const Function& function, const Value& check)
 {
     return !program.typeOf(function, check.valueOperand()).isSubsetOf(program.at(check.expectedType().predicted()), program);
 }
@@ -1838,7 +1726,7 @@ struct PositionsProvenByTypes {
             check.becomeAssumeType(check.valueOperand(), Proven::byPosition(check.expectedType().predicted()));
             numberOfChecks.fetch_add(1, std::memory_order_relaxed);
         }
-        settleProofsBehindAnsweredChecks(function, CFG(function));
+        settleProofsBehindAnsweredChecks(function);
         if (!body.variablesNamed.isEmpty())
             stopListingStartsThatNobodyReads(function);
         if (!isAssumed({ Position::Kind::Result, body.function.index(), 0 }))
@@ -1920,142 +1808,6 @@ static bool isTypedWithoutOperands(const Function& function, const Value& value)
     return value.opcode == Opcode::CallDirect || value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewObject;
 }
 
-static void letEverythingThrough(Value& cast, TypeID anyValue)
-{
-    if (cast.opcode == Opcode::Upcast)
-        cast.setCastType(anyValue);
-    else
-        becomeUpcast(cast, cast.valueOperand(), anyValue);
-}
-
-// Gives the values that are asked about the types that they have without the checks of the body: what TypePropagation finds where every check and every cast behind one lets everything through and all that rests on a check starts over. Behind the functor the casts and all types are what they were.
-static void typeWithoutChecks(const TypePropagationInputs& inputs, std::span<const ValueID> checks, std::span<const ValueID> asked, NOESCAPE const Invocable<void()> auto& readTypes)
-{
-    static constexpr uint8_t isListed = 1 << 0;
-    static constexpr uint8_t isBehindItsSources = 1 << 1;
-    struct SavedTypes {
-        ValueID id;
-        TypeID type;
-        TypeID expected;
-    };
-    struct PlaceOfParameter {
-        BlockID block;
-        uint32_t index { 0 };
-    };
-    Function& function = inputs.function;
-    TypePropagation propagation(inputs);
-    TypeID anyValue = anyValueType(inputs.types);
-    Vector<uint8_t, 64> flags(FillWith { }, function.values.size(), static_cast<uint8_t>(0));
-    Vector<PlaceOfParameter> placesOfParameters;
-    auto placeOf = [&](ValueID parameter) {
-        if (placesOfParameters.isEmpty()) {
-            placesOfParameters.grow(function.values.size());
-            for (BlockID block : inputs.analyses.cfg().reversePostOrder()) {
-                const auto& parameters = function.at(block).parameters;
-                for (uint32_t index = 0; index < parameters.size(); ++index)
-                    placesOfParameters[parameters[index].index()] = { block, index };
-            }
-        }
-        return placesOfParameters[parameter.index()];
-    };
-    auto forEachSourceOf = [&](ValueID id, const auto& functor) {
-        if (function.at(id).opcode != Opcode::Parameter)
-            propagation.forEachSourceOf(id, functor);
-        else if (PlaceOfParameter place = placeOf(id); place.block && place.block != entryBlock)
-            propagation.forEachSourceOfParameter(place.block, place.index, functor);
-    };
-
-    // Whatever the values are typed from, each behind its sources but where a value is typed from itself.
-    bool hasCycle = false;
-    Vector<ValueID, 64> sources;
-    Vector<std::pair<ValueID, bool>, 32> stack;
-    for (ValueID first : asked) {
-        stack.append({ first, false });
-        while (!stack.isEmpty()) {
-            auto [id, hasVisitedSources] = stack.last();
-            if (hasVisitedSources) {
-                stack.removeLast();
-                flags[id.index()] |= isBehindItsSources;
-                sources.append(id);
-                continue;
-            }
-            // It may wait here more than once: whoever is typed from it has put it here.
-            if (flags[id.index()] & isListed) {
-                stack.removeLast();
-                continue;
-            }
-            flags[id.index()] |= isListed;
-            stack.last().second = true;
-            forEachSourceOf(id, [&](ValueID source) {
-                if (!(flags[source.index()] & isListed))
-                    stack.append({ source, false });
-                else if (!(flags[source.index()] & isBehindItsSources))
-                    hasCycle = true;
-            });
-        }
-    }
-
-    BitVector isBehindCheck = valuesBehind(function, inputs.analyses.cfg(), checks);
-    Vector<ValueID, 32> valuesToType;
-    for (ValueID id : sources) {
-        if (isBehindCheck.get(id.index()))
-            valuesToType.append(id);
-    }
-    // Among the values to type: one stands in front of one of its sources.
-    auto isTypedFromItself = [&] {
-        Vector<uint32_t> places(FillWith { }, function.values.size(), UINT32_MAX);
-        for (uint32_t place = 0; place < valuesToType.size(); ++place)
-            places[valuesToType[place].index()] = place;
-        for (uint32_t place = 0; place < valuesToType.size(); ++place) {
-            bool standsInFrontOfSource = false;
-            forEachSourceOf(valuesToType[place], [&](ValueID source) { standsInFrontOfSource |= places[source.index()] != UINT32_MAX && places[source.index()] >= place; });
-            if (standsInFrontOfSource)
-                return true;
-        }
-        return false;
-    };
-
-    Vector<std::pair<ValueID, Value>, 16> savedCasts;
-    Vector<SavedTypes, 32> savedTypes;
-    Vector<SavedTypes> typesBeforeRounds;
-    for (ValueID id : valuesToType) {
-        Value& value = function.edit(id);
-        if (value.opcode == Opcode::Upcast || value.opcode == Opcode::AssumeType || value.opcode == Opcode::Check) {
-            savedCasts.append({ id, value });
-            letEverythingThrough(value, anyValue);
-        } else
-            savedTypes.append({ id, value.type, value.expected().predicted() });
-    }
-    if (!valuesToType.isEmpty() && hasCycle && isTypedFromItself()) {
-        // Rounds that do not end within their limit type every value of the body.
-        typesBeforeRounds = Vector<SavedTypes>(function.values.size(), [&](size_t index) { return SavedTypes { ValueID(index), function.values[index].type, function.values[index].expected().predicted() }; });
-        propagation.restartListedValues(valuesToType.span());
-        propagation.solveTypes();
-    } else {
-        for (ValueID id : valuesToType) {
-            Value& value = function.edit(id);
-            if (value.opcode != Opcode::Parameter)
-                value.type = propagation.provenTypeByRule(id);
-            else
-                value.type = propagation.provenTypeOfParameterByRule(id, placeOf(id).block, placeOf(id).index);
-        }
-    }
-    readTypes();
-
-    auto restore = [&](const SavedTypes& saved) {
-        Value& value = function.edit(saved.id, ValueEdit::Type);
-        value.type = saved.type;
-        value.setExpected(ExpectedType(saved.expected));
-    };
-    for (size_t index = savedCasts.size(); index--;)
-        function.edit(savedCasts[index].first) = WTF::move(savedCasts[index].second);
-    std::ranges::for_each(savedTypes, restore);
-    for (const SavedTypes& saved : typesBeforeRounds) {
-        if (function.at(saved.id).type != saved.type || function.at(saved.id).expected().predicted() != saved.expected)
-            restore(saved);
-    }
-}
-
 static bool tellsObjectsApartByLayout(const Type& type)
 {
     return type.layouts && !type.anyObject;
@@ -2109,15 +1861,14 @@ static void appendFieldsGivenObjectsThatChecksTurnAway(const Program& program, c
     }
 }
 
-// After flow only the very value that a check has turned away counts. Without a body to type in place a copy is typed, before flow.
-static void collectTaintedStores(const Program& program, FunctionID id, Function* bodyToTypeInPlace, BuildContext& build, TaintedPositionsRun run, const PositionsProvenByTypes* proofs, Vector<Position>& positions)
+// After flow only the very value that a check has turned away counts.
+static void collectTaintedStores(const Program& program, FunctionID id, BuildContext& build, TaintedPositionsRun run, const PositionsProvenByTypes* proofs, Vector<Position>& positions)
 {
     const Function& function = program.at(id);
     ScratchTypeArena scratch(program.types);
     TypeArena& types = scratch.arena();
     AnalysisContext context { build, program, nullptr, nullptr, id };
     bool isAfterFlow = run == TaintedPositionsRun::AfterFlow;
-    RELEASE_ASSERT(bodyToTypeInPlace ? program.form() == IRForm::AsRead : !isAfterFlow);
     Vector<ValueID, 16> checks = findChecks(program, id, proofs);
     if (isAfterFlow && checks.isEmpty())
         return;
@@ -2126,57 +1877,48 @@ static void collectTaintedStores(const Program& program, FunctionID id, Function
     if (isAfterFlow)
         appendFieldsGivenObjectsThatChecksTurnAway(program, function, analyses.cfg(), checks.span(), positions);
     TypingContext typing { program, function, types };
-    // Erasing a check changes neither which operands are stores nor what they require.
+    // Forgetting a check changes neither which operands are stores nor what they require.
     Vector<TypedStore, 16> stores = findTypedStores(typing, analyses.cfg());
     if (stores.isEmpty())
         return;
-    BitVector storedValues;
+    BitVector isBehindCheck;
+    BitVector isCheckedValueItself;
+    if (!checks.isEmpty())
+        isBehindCheck = valuesBehind(function, analyses.cfg(), checks.span());
     if (isAfterFlow)
-        storedValues = valuesThatAre(function, analyses.cfg(), checks.span());
-    else if (!bodyToTypeInPlace && !checks.isEmpty())
-        storedValues = valuesBehind(function, analyses.cfg(), checks.span());
-    const BitVector* storedValuesThatCount = isAfterFlow ? &storedValues : nullptr;
+        isCheckedValueItself = valuesThatAre(function, analyses.cfg(), checks.span());
+    const BitVector& storedValuesThatCount = isAfterFlow ? isCheckedValueItself : isBehindCheck;
 
-    // Past form AsRead the type of a value need not be what its rule gives, and a typing counts the limits that it hits.
-    bool looksAtTaintedStores = program.form() == IRForm::AsRead;
-    Vector<ValueID, 16> storedValuesToType;
-    for (const TypedStore& store : stores) {
-        if (checks.isEmpty() || ((isAfterFlow || !bodyToTypeInPlace) && !storedValues.get(store.stored.index())))
-            continue;
-        if (!looksAtTaintedStores || (!isTypedWithoutOperands(function, function.at(store.stored)) && storedPosition(program, id, store)))
-            storedValuesToType.append(store.stored);
-    }
-    if (storedValuesToType.isEmpty()) {
+    // Past form AsRead the type of a value need not be what its rule gives.
+    bool isAsRead = program.form() == IRForm::AsRead;
+    bool mayStoreOtherTypeWithoutChecks = std::ranges::any_of(stores, [&](const TypedStore& store) {
+        return storedValuesThatCount.get(store.stored.index()) && (!isAsRead || (!isTypedWithoutOperands(function, function.at(store.stored)) && storedPosition(program, id, store)));
+    });
+    if (!mayStoreOtherTypeWithoutChecks) {
         if (!isAfterFlow)
             appendIllTypedStores(typing, id, stores.span(), nullptr, positions);
         return;
     }
-    if (bodyToTypeInPlace) {
-        typeWithoutChecks({ program, id, *bodyToTypeInPlace, analyses, types, build }, checks.span(), storedValuesToType.span(), [&] {
-            appendIllTypedStores(typing, id, stores.span(), storedValuesThatCount, positions);
-        });
-        return;
-    }
 
     // A check that has nothing left to test in the typed code is dropped in front of the copy, so it holds nothing back there.
-    Function erased(function);
-    TypeID anyValue = anyValueType(types);
-    for (size_t index : storedValues) {
-        Opcode opcode = erased.values[index].opcode;
-        if (opcode == Opcode::Upcast || opcode == Opcode::AssumeType || opcode == Opcode::Check)
-            letEverythingThrough(erased.edit(ValueID(index)), anyValue);
+    Function withoutChecks(function);
+    // A check answers a claim of flow that says no more than the check does, whatever the claim rests on, and the claim is gone when the check goes.
+    for (size_t index : isBehindCheck) {
+        if (function.values[index].opcode == Opcode::AssumeType && !function.values[index].isWordOfFrontEnd())
+            withoutChecks.edit(ValueID(index)).setIsBehindChecks(true);
     }
+    forgetProofsOf(withoutChecks, types, isBehindCheck, isBehindCheck, ExpectedTypes::Dropped);
     // A cast has become another cast of the same operand: the graph and the use lists of the body are those of the body without its checks.
-    TypePropagation propagation(TypePropagationInputs { program, id, erased, analyses, types, build });
+    TypePropagation propagation(TypePropagationInputs { program, id, withoutChecks, analyses, types, build });
     propagation.restartDependentsOf(checks.span());
     propagation.solveTypes();
-    appendIllTypedStores(TypingContext { program, erased, types }, id, stores.span(), nullptr, positions);
+    appendIllTypedStores(TypingContext { program, withoutChecks, types }, id, stores.span(), isAfterFlow ? &storedValuesThatCount : nullptr, positions);
 }
 
 bool mayReturnTaintedValue(const Program& program, FunctionID id, BuildContext& build)
 {
     Vector<Position> positions;
-    collectTaintedStores(program, id, nullptr, build, TaintedPositionsRun::BeforeFlow, nullptr, positions);
+    collectTaintedStores(program, id, build, TaintedPositionsRun::BeforeFlow, nullptr, positions);
     return std::ranges::any_of(positions, [&](Position position) { return position.kind == Position::Kind::Result && position.owner == id.index(); });
 }
 
@@ -2376,6 +2118,7 @@ static uint32_t insertReadChecks(const Program& program, FunctionID id, Function
     uint32_t numberOfChecks = 0;
     IRBuilder builder(context, function, types, &analyses);
     Vector<ValueID, 16> changedValues;
+    Vector<ValueID, 8> checks;
     for (const GuardedRead& read : collectGuardedReads(program, id, function, analyses, marked, changedValues)) {
         DeclaredType checked = read.declared;
         checked.establish(Proven::byPosition(read.declared.expected().predicted()));
@@ -2391,9 +2134,16 @@ static uint32_t insertReadChecks(const Program& program, FunctionID id, Function
         for (const Use& use : read.uses)
             replaceUse(function, use, checkID);
         changedValues.append(checkID);
+        checks.append(checkID);
         ++numberOfChecks;
     }
     builder.applyInsertions();
+    // A position that is taken back takes along what flow has said of the value that is read from it.
+    for (size_t index : valuesThatAre(function, analyses.cfg(), checks.span())) {
+        const Value& claim = function.values[index];
+        if (claim.opcode == Opcode::AssumeType && !claim.isBehindChecks() && !claim.isWordOfFrontEnd())
+            function.edit(ValueID(index), ValueEdit::Definition).setIsBehindChecks(true);
+    }
 
     // A check has the type that its read had, so most of what is typed from the read keeps its types, and nothing behind such a value needs a look.
     if (!analyses.cfg().hasCycle()) {
@@ -2453,7 +2203,7 @@ static uint64_t guardTaintedPositions(Program& program, BuildContext& build, Tai
             ProgramCaches caches(program, build);
             // No task reads the values of another task's body: typing a call reads the record of the callee.
             forEachIndexInParallel(loops, worklist.size(), [&](unsigned index) {
-                collectTaintedStores(program, worklist[index], &program.at(worklist[index]), build, run, proofs, storesByFunction[index]);
+                collectTaintedStores(program, worklist[index], build, run, proofs, storesByFunction[index]);
                 listReadsOf(worklist[index]);
             });
         }
@@ -2507,6 +2257,8 @@ static uint64_t guardTaintedPositions(Program& program, BuildContext& build, Tai
         sortLargestFirst(program, loops, worklist);
         editFunctionsInParallel(editor, build, BehindEdit::Nothing, worklist.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
             numberOfChecks.fetch_add(insertReadChecks(program, id, function, arenas.types, build, marked.span()), std::memory_order_relaxed);
+            if (run == TaintedPositionsRun::AfterFlow)
+                assumeTypesOfPositionsAtStores(program, id, function, arenas.types, build);
             readsOfBodies[id.index()].isListed = false;
         });
     }

@@ -15,7 +15,6 @@ export default b.declarations(
     "%CompilerHelpers%.scanPlainURL",
     "%CompilerHelpers%.scanPlainURLWithBase",
     "%CompilerHelpers%.scanPlainURLWithPlainBase",
-    "%CompilerHelpers%.stringifyProperties",
     "%CompilerHelpers%.traverseArray",
   ),
   b.hostRoles(

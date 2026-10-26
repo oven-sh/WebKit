@@ -518,7 +518,7 @@ static void checkEncodedPositions(std::initializer_list<Vector<SitePosition>> ta
         sites.positions = positions;
         for (OwnPosition ofFunctionInFront : { OwnPosition { }, OwnPosition::of(sites), OwnPosition { 0xffffffff, OwnPosition::of(sites).source }, OwnPosition { 7, 0xffffffff }, OwnPosition { 0, 1 } }) {
             Vector<uint8_t> stream;
-            encodePositions(stream, sites, ofFunctionInFront);
+            encodePositions(stream, sites, nullptr, ofFunctionInFront);
             checkPositions(any.table(), 0, stream.span().data(), ofFunctionInFront, positions);
         }
     }
@@ -578,7 +578,7 @@ static void testPositionsEntrySizes()
         SiteDescription sites;
         sites.positions = WTF::move(positions);
         Vector<uint8_t> stream;
-        encodePositions(stream, sites, ofFunctionInFront);
+        encodePositions(stream, sites, nullptr, ofFunctionInFront);
         return stream.size();
     };
     AOT_TEST_CHECK(sizeOfEntry({ positionAt(1000, 5, ModuleID(20000u)) }, { 990, 20001 }) == 3);

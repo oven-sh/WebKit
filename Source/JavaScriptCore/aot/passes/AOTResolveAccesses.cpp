@@ -459,6 +459,7 @@ void AccessRewriter::rewrite(const ElementAccessSite& site, const AccessOperands
     ReplacedEffects replaced = effectsReplacedAt(context, value);
     ValueID position = value.propertyOperand();
     AccessSiteID accessSite = value.accessSite();
+    bool storageIsUndecided = Value::opcodesWithStorageIsUndecided.contains(value.opcode) && value.storageIsUndecided();
     // A definition throws when it fails, as a strict store does.
     ECMAMode mode = PayloadWord::mode(value.opcode) ? value.mode() : ECMAMode::Strict;
 
@@ -479,6 +480,8 @@ void AccessRewriter::rewrite(const ElementAccessSite& site, const AccessOperands
             value.setIsPresent(plan.isPresent);
         if (Value::opcodesWithReadsHoleAsNaN.contains(plan.operation))
             value.setReadsHoleAsNaN(plan.readsHoleAsNaN);
+        if (Value::opcodesWithStorageIsUndecided.contains(plan.operation))
+            value.setStorageIsUndecided(storageIsUndecided);
         if (PayloadWord::mode(plan.operation))
             value.setMode(mode);
     } else {

@@ -385,7 +385,7 @@ void HeapRule::define(const ValueFlowOperand& object, const HeapKey& key, HeapPr
         noteWrittenMembers(holders, key, true);
     }
     notePrototypeObjectsListedAtWrite(object, receivers, key);
-    noteClosuresWrittenUnder(key, receivers);
+    noteClosuresThatMayBeRenamed(object, key, receivers);
     markDefinition(receivers, key, part);
     mayThrow();
 }
@@ -466,12 +466,23 @@ ClimbingSet HeapRule::builtinObjectsListedBesideUnknownObject(const ValueFlowOpe
     return m_context.valueWithin(ClimbingSet(m_context.maker().intersect(m_context.maker().intersect(m_universe.builtinObjects(), objectsThatListingNamesUnder(key)), allButBunUnlessNamed(object))), object.node);
 }
 
-void HeapRule::noteClosuresWrittenUnder(const HeapKey& key, ClimbingSet receivers)
+// A stack frame shows the own property `name` or `displayName` of the function object. A rule reads no closure that has escaped beside the object nobody knows, so the node of the operand is asked.
+void HeapRule::noteClosuresThatMayBeRenamed(const ValueFlowOperand& object, const HeapKey& key, ClimbingSet receivers)
 {
-    if (key.keyClass != HeapKeyClass::Unknown)
+    if (key.keyClass == HeapKeyClass::Index || (key.keyClass == HeapKeyClass::Name && key.name != m_tables.nameKey() && key.name != m_tables.displayNameKey()))
         return;
-    if (ClimbingSet closures = m_context.restrict(known(receivers), m_universe.closures()); holdsAnything(closures))
-        add(m_context.nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsWriteUnderKeysNobodyKnows), closures);
+    if (m_namesFunctionWhereItIsMade)
+        return;
+    // The texts that are written as the `name` of a closure that the rule reads say whether they rename it.
+    bool writesTextOfName = key.keyClass == HeapKeyClass::Name && key.name == m_tables.nameKey();
+    ClimbingSet closures = m_context.restrict(known(receivers), m_universe.closures());
+    if (writesTextOfName && holdsAnything(closures))
+        add(m_context.nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsName), std::exchange(closures, { }));
+    // The modules of the run time name a function of the program only under the key as it is written.
+    if (object.node && (key.keyClass == HeapKeyClass::Name || isInProgramCode()) && m_context.meet(receivers, m_universe.placeholdersAlone()))
+        closures = m_context.unite(closures, m_context.valueWithin(ClimbingSet(m_universe.closures()), object.node));
+    if (holdsAnything(closures))
+        add(m_context.nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename), closures);
 }
 
 void HeapRule::notePrototypeObjectsListedAtWrite(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
@@ -546,7 +557,7 @@ void HeapRule::store(const ValueFlowOperand& object, const HeapKey& key, const V
         noteWrittenMembers(listed, key, true);
     }
     notePrototypeObjectsListedAtWrite(object, receivers, key);
-    noteClosuresWrittenUnder(key, receivers);
+    noteClosuresThatMayBeRenamed(object, key, receivers);
     markStore(receivers, key);
     forEachStartOfLookup(receivers, [&](ClimbingSet start) {
         callSettersOfReceivers(start, key, value);
@@ -754,7 +765,9 @@ void HeapRule::runOperation()
         return;
     case Opcode::SetFunctionName: {
         ValueFlowOperand text { { }, m_universe.strings(), { } };
+        m_namesFunctionWhereItIsMade = true;
         define(operand(At::SetFunctionName::function), keyNamed(m_program.keyOf(BuiltinNames::name)), HeapPropertyPart::Value, text);
+        m_namesFunctionWhereItIsMade = false;
         return;
     }
     case Opcode::AppendHole:

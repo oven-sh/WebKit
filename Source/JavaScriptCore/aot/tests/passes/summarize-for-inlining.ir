@@ -46,7 +46,7 @@ function f4 name="addsAnything" parameters=[{type=anything}, {type=anything}] re
 }
 # CHECK: f4: barrier=None bytes=36
 
-function f5 name="checks" parameters=[{type=anything}] results=[{type=number}] {
+function f5 name="checks" parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
     v1 = Check v0 expectedType=number site=w0
     Return v1
 }

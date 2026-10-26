@@ -29,43 +29,36 @@ public:
         const BitVector* checksToLeaveOut { nullptr };
     };
 
+    // Makes the graph itself, where the body holds a check.
+    explicit PredictedValues(const Function&);
     PredictedValues(const Function&, const CFG&);
     PredictedValues(const Function&, const CFG&, Options);
 
     bool hasChecks() const { return m_hasChecks; }
     // The type of the value may be owed to a check, which stands until the function gets its generic version.
     bool isBehindCheck(ValueID value) const { return has(value, BehindCheck); }
-    // The value is made from one that was expected to have a type and that nothing has tested.
-    bool isBehindExpectation(ValueID value) const { return has(value, BehindExpectation); }
-    // A check or a test of the program stands in front of the value.
-    bool isBehindTest(ValueID value) const { return has(value, BehindCheck | BehindTest); }
-    // The value is the very one that a check would have tested: what stands in place of the check, a cast of it, or a parameter that takes it.
-    // What is proven of a position that takes it may rest on that check.
-    bool isUncheckedValueItself(ValueID value) const { return has(value, UncheckedItself); }
 
     BitVector valuesBehindChecks() const;
 
 private:
-    enum Mark : uint8_t { BehindCheck = 1 << 0, BehindExpectation = 1 << 1, BehindTest = 1 << 2, UncheckedItself = 1 << 3 };
-    static constexpr uint8_t marksOfWhatIsMade = BehindCheck | BehindExpectation | BehindTest;
+    enum Mark : uint8_t { BehindCheck = 1 << 0, BehindExpectation = 1 << 1, BehindTest = 1 << 2 };
 
     bool has(ValueID value, uint8_t marks) const { return value && value.index() < m_marks.size() && m_marks[value.index()] & marks; }
+    void walk(const Function&, const CFG&, Options);
 
     Vector<uint8_t> m_marks;
     size_t m_numberOfValues;
-    bool m_hasChecks { false };
+    bool m_hasChecks;
 };
 
 enum class ExpectedTypes : uint8_t { Kept, Dropped };
 
 struct ForgottenProofs {
     bool hasErasedValidation { false };
-    // The claims that went, with the value each was about.
-    Vector<std::pair<ValueID, TypeID>, 4> claims;
 };
 
 // A claim that has lost its test is a prediction. In what is made from the given values: a claim that holds behind checks and an Upcast become an Expect, a validation becomes nothing,
-// the receivers and callees of an operation are no longer all there are, and a tail call casts nothing. Checks stay unless they are listed.
+// the receivers and callees of an operation are no longer all there are, and a tail call keeps the claim of the result alone. Checks stay unless they are listed.
 ForgottenProofs forgetProofsBehind(Function&, const CFG&, TypeArena&, std::span<const ValueID> values, const BitVector& checksThatGo, ExpectedTypes);
 // The same for whoever has those values at hand: the copies of what is made from a check that has failed.
 ForgottenProofs forgetProofsOf(Function&, TypeArena&, const BitVector& values, const BitVector& checksThatGo, ExpectedTypes);
@@ -75,9 +68,15 @@ ForgottenProofs expectInsteadOfChecking(Function&, const CFG&, TypeArena&, std::
 
 // For whoever has answered a check by a proof, or has put a test that stands in its place: what was proven behind that check alone holds in every version from now on.
 void settleProofsBehindAnsweredChecks(Function&, const CFG&);
+void settleProofsBehindAnsweredChecks(Function&);
+// For whoever has taken from an operation an operand that it only kept, as a closure keeps a capture. The type of such an operation says nothing of that operand, and whoever reads what was kept
+// reads a position with a type of its own. So what is made from the operation never rested on the checks in front of that operand.
+void settleProofsBehindOperandsThatWereOnlyKept(Function&);
 
-enum class InPlaceOfCheck : bool { No, Yes };
-void becomeExpect(Value&, ValueID operand, ExpectedType, InPlaceOfCheck);
+// What is proven of the result of a function holds of what a tail call hands on, in every version.
+bool isClaimOfResult(const Function&, const TailCast&);
+
+void becomeExpect(Value&, ValueID operand, ExpectedType);
 
 } } } // namespace JSC::AOT::Typed
 

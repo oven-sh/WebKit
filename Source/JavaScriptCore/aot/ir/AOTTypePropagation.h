@@ -50,6 +50,7 @@ struct TypePropagationOutcome {
     bool waitsToCutCode { false };
     bool didLookForCodeToCut { false };
     bool gaveUpOnRounds { false };
+    bool leftTypesAboveTheirRules { false };
 
     bool didChange() const { return retypedValues || changedExpectedTypes || cutBlocks; }
     bool didChangeControlFlow() const { return cutBlocks; }
@@ -61,6 +62,7 @@ struct TypePropagationOutcome {
         cutBlocks += other.cutBlocks;
         replacedUpcasts += other.replacedUpcasts;
         gaveUpOnRounds |= other.gaveUpOnRounds;
+        leftTypesAboveTheirRules |= other.leftTypesAboveTheirRules;
         if (other.didLookForCodeToCut) {
             didLookForCodeToCut = true;
             waitsToCutCode = other.waitsToCutCode;
@@ -91,12 +93,6 @@ public:
 
     void restartAllValues();
     void restartDependentsOf(std::span<const ValueID>);
-    void restartListedValues(std::span<const ValueID>);
-
-    TypeID provenTypeByRule(ValueID id) { return computeValue(typingContext(TypeLevel::Proven), id); }
-    TypeID provenTypeOfParameterByRule(ValueID id, BlockID block, uint32_t index) { return computeParameter(typingContext(TypeLevel::Proven), id, block, index); }
-    void forEachSourceOf(ValueID id, NOESCAPE const Invocable<void(ValueID)> auto& functor) const { forEachSourceOf(m_inputs.function.at(id), functor); }
-    void forEachSourceOfParameter(BlockID, uint32_t index, NOESCAPE const Invocable<void(ValueID)> auto&) const;
 
     void solveTypes() { solve(TypeLevel::Proven); }
     void solveExpectedTypes();
@@ -127,6 +123,8 @@ private:
         uint32_t index;
     };
 
+    void forEachSourceOf(ValueID id, NOESCAPE const Invocable<void(ValueID)> auto& functor) const { forEachSourceOf(m_inputs.function.at(id), functor); }
+    void forEachSourceOfParameter(BlockID, uint32_t index, NOESCAPE const Invocable<void(ValueID)> auto&) const;
     void forEachSourceOf(const Instruction&, NOESCAPE const Invocable<void(ValueID)> auto&) const;
     bool isEveryValueTypedBehindItsSources() const;
     void sweep(TypeLevel);
@@ -263,7 +261,9 @@ class PendingTyping {
 public:
     bool isEverythingPending(const ChangeLog& log) const { return m_isEverythingPending || log.hasForgottenSince(m_seen); }
     bool waitsToCutCode() const { return m_waitsToCutCode; }
+    bool holdsTypesLeftWhenRoundsRanOut() const { return m_holdsTypesLeftWhenRoundsRanOut; }
     void setWaitsToCutCode(bool waits) { m_waitsToCutCode = waits; }
+    void setHoldsTypesLeftWhenRoundsRanOut(bool holds) { m_holdsTypesLeftWhenRoundsRanOut = holds; }
     bool isEmpty(const ChangeLog& log) const { return !isEverythingPending(log) && !log.hasChangesSince(m_seen) && m_values.isEmpty() && m_blocks.isEmpty() && !m_valuesTypedFromRecordsArePending; }
 
     void didTypeEverything(const ChangeLog& log) { didTypeEverythingBefore(log.end()); }
@@ -287,6 +287,7 @@ private:
     bool m_isEverythingPending { true };
     bool m_valuesTypedFromRecordsArePending { false };
     bool m_waitsToCutCode { false };
+    bool m_holdsTypesLeftWhenRoundsRanOut { false };
 };
 
 TypePropagationOutcome typeChangedValues(const TypePropagationInputs&);

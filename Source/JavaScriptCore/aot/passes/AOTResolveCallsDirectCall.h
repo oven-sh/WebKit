@@ -38,6 +38,7 @@ struct DirectCallRequest {
     ValueID argumentCount;
     ValueID hiddenRest;
     AccessSiteID accessSite;
+    BuiltinID calledBuiltin;
     bool isConstruction { false };
     bool isNeverInlined { false };
     bool isAlwaysInlined { false };

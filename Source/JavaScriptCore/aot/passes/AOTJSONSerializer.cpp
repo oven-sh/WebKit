@@ -126,6 +126,12 @@ struct JSONTextWriter final : Emission {
         ValueID numberOfOwnMembers;
     };
 
+    // Holders that were listed one behind the other. What leaves the outermost of them leaves them all.
+    struct ListedHolders {
+        uint32_t number { 0 };
+        ValueID outermost;
+    };
+
     struct ObjectArm {
         TestedObject object;
         LayoutID layout;
@@ -135,13 +141,14 @@ struct JSONTextWriter final : Emission {
         Vector<Member, 8> members;
         BlockID remainder;
         BlockID done;
-        uint32_t numberOfListedHolders { 0 };
+        ListedHolders listedHolders;
     };
 
     // An object or an array that this function is writing. The builder keeps a list of those that are listed, which the host reads to find a cycle.
     struct Holder {
         ValueID value;
-        bool isListed { false };
+        // While the holder is listed, the list that begins with it.
+        ValueID listed;
     };
 
     struct ArrayLoop {
@@ -568,41 +575,53 @@ struct JSONTextWriter final : Emission {
         return mayHoldItself(plan, layoutsAround, finishedLayouts);
     }
 
-    // Lists the first holders that are not listed yet, and answers how many those were.
-    uint32_t listHolders(size_t numberOfHolders)
+    // Lists those of the first holders that are not listed yet.
+    ListedHolders listHolders(size_t numberOfHolders)
     {
-        uint32_t numberListed = 0;
+        ListedHolders listed;
         for (Holder& holder : m_holders.mutableSpan().first(numberOfHolders)) {
-            if (std::exchange(holder.isListed, true))
+            if (holder.listed)
                 continue;
-            builder().append(Opcode::JSONEnterHolder, { m_stringBuilder, holder.value });
-            ++numberListed;
+            holder.listed = builder().append(Opcode::JSONEnterHolder, { m_stringBuilder, holder.value });
+            if (!listed.number++)
+                listed.outermost = holder.listed;
         }
-        return numberListed;
+        return listed;
     }
 
-    void appendLeaveHolders(uint32_t numberListed)
+    void appendLeaveHolders(const ListedHolders& listed)
     {
-        for (uint32_t index = 0; index < numberListed; ++index)
-            builder().append(Opcode::JSONLeaveHolder, { m_stringBuilder });
+        if (listed.number)
+            builder().append(Opcode::JSONLeaveHolder, { m_stringBuilder, listed.outermost });
     }
 
     // The holders that were listed last are the innermost ones.
-    void markHoldersAsNotListed(uint32_t numberListed)
+    void markHoldersAsNotListed(const ListedHolders& listed)
     {
+        uint32_t numberLeft = listed.number;
         for (Holder& holder : m_holders | std::views::reverse) {
-            if (!numberListed)
+            if (!numberLeft)
                 return;
-            if (std::exchange(holder.isListed, false))
-                --numberListed;
+            if (std::exchange(holder.listed, ValueID()))
+                --numberLeft;
         }
-        RELEASE_ASSERT(!numberListed);
+        RELEASE_ASSERT(!numberLeft);
     }
 
-    void unlistHolders(uint32_t numberListed)
+    void unlistHolders(const ListedHolders& listed)
     {
-        appendLeaveHolders(numberListed);
-        markHoldersAsNotListed(numberListed);
+        appendLeaveHolders(listed);
+        markHoldersAsNotListed(listed);
+    }
+
+    // The list as it is here. A handler that goes on writing puts it back, because the frames that the exception has ended have taken nothing off it.
+    ValueID appendListedHolders()
+    {
+        for (const Holder& holder : m_holders | std::views::reverse) {
+            if (holder.listed)
+                return holder.listed;
+        }
+        return builder().append(Opcode::JSONListedHolders, { m_stringBuilder });
     }
 
     TypeArm beginTypeArm(ValueID value, TypeID tested, BlockFrequency otherwise)
@@ -821,6 +840,13 @@ struct JSONTextWriter final : Emission {
         mergeIfAnyArmLeftFor(done);
     }
 
+    ValueID appendCallOfSerializer(FunctionID serializer, ValueID object)
+    {
+        ValueID outcome = appendCallOf(serializer, { object, m_stringBuilder });
+        builder().function().edit(outcome).setCalledBuiltin(m_calledBuiltin);
+        return outcome;
+    }
+
     void appendByHost(ValueID value, const Position& position)
     {
         RELEASE_ASSERT(position.kind != JSONPosition::Root);
@@ -836,10 +862,10 @@ struct JSONTextWriter final : Emission {
         }
         commit();
         RELEASE_ASSERT(!m_holders.isEmpty());
-        uint32_t numberListed = listHolders(m_holders.size() - 1);
-        ValueID innermostHolder = m_holders.last().isListed ? builder().append(Opcode::Undefined, { }) : m_holders.last().value;
-        ValueID hasText = builder().append(Opcode::StringBuilderAppendJSON, { m_stringBuilder, value, property, innermostHolder });
-        unlistHolders(numberListed);
+        ListedHolders listed = listHolders(m_holders.size() - 1);
+        ValueID innermostHolder = m_holders.last().listed ? builder().append(Opcode::Undefined, { }) : m_holders.last().value;
+        ValueID hasText = builder().append(make<&Value::setCalledBuiltin>(Opcode::StringBuilderAppendJSON, { m_stringBuilder, value, property, innermostHolder }, m_calledBuiltin));
+        unlistHolders(listed);
         BlockID hasNoText = builder().emitBranch(hasText).notTaken;
         appendCommaOf(position);
         jumpTo(done);
@@ -886,9 +912,10 @@ struct JSONTextWriter final : Emission {
             BlockID unknown = builder().addBlock(BlockFrequency::Rare);
             FunctionID serializer = inputs().functions.ensure(derivedFunctionKey(FunctionRole::Serializer, layout));
             BlockID written = builder().addBlock(currentFrequency());
-            uint32_t numberListed = runsCode ? listHolders(m_holders.size()) : 0;
+            ListedHolders listed = runsCode ? listHolders(m_holders.size()) : ListedHolders { };
             ValueID outcome;
             if (isWrittenByHostAfterThrow) {
+                ValueID holdersAroundCall = appendListedHolders();
                 std::optional<Target> outerHandler = builder().handler();
                 BlockID afterCall = builder().addBlock(currentFrequency());
                 BlockID threw = builder().addHandlerBlock(BlockRole::CatchHandler, ValueID());
@@ -898,16 +925,17 @@ struct JSONTextWriter final : Emission {
                 builder().emitJump(covered);
 
                 builder().moveToEndOf(covered);
-                outcome = appendCallOf(serializer, { tested.object, m_stringBuilder });
+                outcome = appendCallOfSerializer(serializer, tested.object);
                 builder().emitJump(afterCall);
 
                 builder().moveToEndOf(threw);
                 builder().append(Opcode::CatchValue, { });
+                builder().append(Opcode::JSONRestoreHolders, { m_stringBuilder, holdersAroundCall });
                 builder().emitJump(unknown);
                 builder().moveToEndOf(afterCall);
             } else
-                outcome = appendCallOf(serializer, { tested.object, m_stringBuilder });
-            unlistHolders(numberListed);
+                outcome = appendCallOfSerializer(serializer, tested.object);
+            unlistHolders(listed);
             emitBranchOnOutcome(outcome, written, unknown, unknown);
 
             builder().moveToEndOf(written);
@@ -975,18 +1003,18 @@ struct JSONTextWriter final : Emission {
 
             m_holders.append(Holder { tested.object });
             if (std::ranges::any_of(arm.members, [&](const Member& member) { return callsSerializerThatRunsCode(member.plan); }))
-                arm.numberOfListedHolders = listHolders(m_holders.size());
+                arm.listedHolders = listHolders(m_holders.size());
 
             MemberListState memberList = notOpened;
             for (size_t index = 0; index < arm.members.size(); ++index)
                 appendMember(arm, index, memberList);
             appendToken(memberList.closing);
             commit();
-            appendLeaveHolders(arm.numberOfListedHolders);
+            appendLeaveHolders(arm.listedHolders);
             builder().emitJump(done);
 
             appendRemainder(arm);
-            markHoldersAsNotListed(arm.numberOfListedHolders);
+            markHoldersAsNotListed(arm.listedHolders);
             m_holders.removeLast();
             builder().moveToEndOf(next);
         }
@@ -1167,19 +1195,19 @@ struct JSONTextWriter final : Emission {
             builder().append(make<&Value::setKey, &Value::setMode>(Opcode::PropSet, { keys, arm.numberOfOwnMembers }, program().keyOf(BuiltinNames::length), ECMAMode::Strict));
 
         RELEASE_ASSERT(m_holders.last().value == arm.object.object);
-        uint32_t numberListed = listHolders(m_holders.size() - 1);
-        ValueID innermostHolder = m_holders.last().isListed ? builder().append(Opcode::Undefined, { }) : arm.object.object;
-        ValueID hasText = builder().append(Opcode::StringBuilderAppendJSONMembers, { m_stringBuilder, arm.object.object, keys, firstMember, innermostHolder });
-        unlistHolders(numberListed);
+        ListedHolders listed = listHolders(m_holders.size() - 1);
+        ValueID innermostHolder = m_holders.last().listed ? builder().append(Opcode::Undefined, { }) : arm.object.object;
+        ValueID hasText = builder().append(make<&Value::setCalledBuiltin>(Opcode::StringBuilderAppendJSONMembers, { m_stringBuilder, arm.object.object, keys, firstMember, innermostHolder }, m_calledBuiltin));
+        unlistHolders(listed);
         BlockID hasNoText = builder().emitBranch(hasText).notTaken;
         appendText(appendString("}"_s));
-        appendLeaveHolders(arm.numberOfListedHolders);
+        appendLeaveHolders(arm.listedHolders);
         builder().emitJump(arm.done);
 
         builder().moveToEndOf(hasNoText);
         appendToken(JSONToken::CloseObjectOverComma);
         commit();
-        appendLeaveHolders(arm.numberOfListedHolders);
+        appendLeaveHolders(arm.listedHolders);
         builder().emitJump(arm.done);
     }
 
@@ -1207,9 +1235,8 @@ struct JSONTextWriter final : Emission {
 
         builder().moveToEndOf(hasElements);
         bool elementsMayRunUnknownCode = false;
-        bool listsHolders = callsSerializerThatRunsCode(plan);
-        uint32_t numberOfListedHolders = 0;
         m_holders.append(Holder { array });
+        ListedHolders listed = callsSerializerThatRunsCode(plan) ? listHolders(m_holders.size()) : ListedHolders { };
         for (const ArrayStorageForm& form : arrayStorageForms) {
             if (!typeOfElementRead(form.kind).withoutNullish().overlaps(program().at(plan.element), program()))
                 continue;
@@ -1218,19 +1245,17 @@ struct JSONTextWriter final : Emission {
             m_cursor = start;
             appendKeyOf(position);
             appendToken(JSONToken::OpenArray);
-            if (listsHolders)
-                numberOfListedHolders = listHolders(m_holders.size());
             elementsMayRunUnknownCode |= appendArrayLoop({ array, builder().appendAllGuards(guards), length, plan.element, closing }, form.kind) == ElementCode::MayRunUnknownCode;
-            markHoldersAsNotListed(numberOfListedHolders);
             builder().moveToEndOf(hasStorage.notTaken);
         }
+        unlistHolders(listed);
         m_holders.removeLast();
         builder().emitJump(generic);
 
         if (closing.block) {
             continueAt(closing);
             appendToken(JSONToken::CloseArray);
-            appendLeaveHolders(numberOfListedHolders);
+            appendLeaveHolders(listed);
             if (elementsMayRunUnknownCode && m_afterUnknownCode) {
                 appendCommaOf(position);
                 leaveAfterUnknownCode();
@@ -1340,6 +1365,7 @@ struct JSONTextWriter final : Emission {
     }
 
     ValueID m_stringBuilder;
+    BuiltinID m_calledBuiltin { };
     Cursor m_cursor { };
     // The outermost first.
     Vector<Holder, 4> m_holders;
@@ -1382,7 +1408,7 @@ bool JSONSerializerBuilder::mayHoldItself(ValueID value) const
 
 void JSONSerializerBuilder::appendRoot(ValueID value, BlockID whenThereIsNoText)
 {
-    JSONTextWriter { { builder, inputs }, stringBuilder }.appendRoot(value, whenThereIsNoText);
+    JSONTextWriter { { builder, inputs }, stringBuilder, calledBuiltin }.appendRoot(value, whenThereIsNoText);
 }
 
 DerivedSignature signatureOfSerializer(const EmissionInputs& inputs)

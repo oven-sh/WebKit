@@ -27,6 +27,8 @@ struct JSONSerializerBuilder {
     IRBuilder& builder;
     const EmissionInputs& inputs;
     ValueID stringBuilder;
+    // The function that a stack trace lists below the code of the program that runs while the value is written.
+    BuiltinID calledBuiltin { };
 };
 
 } } } // namespace JSC::AOT::Typed

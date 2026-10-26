@@ -2302,7 +2302,9 @@ struct LoopPathSeparator : LoopEditor {
     std::optional<SeparationPlan> planFor(const NaturalLoop& loop, bool mayCarryVariables, PathsThatOnlyCompute pathsThatOnlyCompute)
     {
         BlockID header = loop.header();
-        if (!isHotLoop(m_context, loop))
+        // What is hot is a share of the program. A loop that is expected to run gets its copy whatever else the program holds, where the likely paths then carry narrower values.
+        bool isHot = isHotLoop(m_context, loop);
+        if (!isHot && (m_analyses.blockFrequencies().classOf(header) != BlockFrequency::Normal || isCold(heatClassOf(m_context, header))))
             return std::nullopt;
         if (!isHeaderOfLoopOfProgram(header))
             return std::nullopt;
@@ -2323,7 +2325,7 @@ struct LoopPathSeparator : LoopEditor {
         }
 
         BitVector leaves = findLeavingBlocks(loop, isInLoop, pathsThatOnlyCompute);
-        plan.letsVariablesBeCarried = mayCarryVariables && VariableCarrier { { m_context }, false }.letWritersOfVariablesLeave(loop, leaves);
+        plan.letsVariablesBeCarried = isHot && mayCarryVariables && VariableCarrier { { m_context }, false }.letWritersOfVariablesLeave(loop, leaves);
         if (leaves.isEmpty() || leaves.get(header.index()))
             return std::nullopt;
         UnspecifiedValues unspecifiedValues(m_analyses);
@@ -2332,7 +2334,7 @@ struct LoopPathSeparator : LoopEditor {
             if (unspecifiedValues.mayContain(parameters[index]))
                 plan.carriedValuesThatMayBeUnspecified.set(index);
         }
-        bool movesTest = std::ranges::any_of(findTestsOfEveryTurn(loop, leaves, plan.carriedValuesThatMayBeUnspecified), [](TypeID tested) {
+        bool movesTest = isHot && std::ranges::any_of(findTestsOfEveryTurn(loop, leaves, plan.carriedValuesThatMayBeUnspecified), [](TypeID tested) {
             return !!tested;
         });
         if (!movesTest && !plan.letsVariablesBeCarried && !narrowsParameter(isInLoop, leaves))

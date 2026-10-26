@@ -369,20 +369,7 @@ std::optional<LayoutID> findCyclicLayoutChain(const Program& program, const Step
 
 } // anonymous namespace
 
-bool hoistsFunctionsIntoVariables(ModuleKind kind)
-{
-    switch (kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::RuntimeSource:
-        return true;
-    case ModuleKind::Data:
-    case ModuleKind::Runtime:
-    case ModuleKind::External:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
+bool hoistsFunctionsIntoVariables(ModuleKind kind) { return hoistsFunctionsIntoVariablesOf(kind); }
 
 bool isValidPropertyKey(const PropertyKey& key)
 {

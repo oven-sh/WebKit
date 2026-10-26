@@ -18,6 +18,7 @@ namespace JSC {
 class Identifier;
 class JSGlobalObject;
 class JSObject;
+class VM;
 
 namespace AOT {
 
@@ -38,7 +39,11 @@ enum class LoaderChange : uint8_t {
 };
 
 // The engine's own errors, worded by the engine.
-JS_EXPORT_PRIVATE StringView quotedSourceOfFailedExpression();
+JS_EXPORT_PRIVATE String quotedSourceOfFailedExpression(VM&);
+// A native constructor runs in the top frame, for a `new` expression of compiled code: the callee as the expression writes it.
+StringView nameOfConstructorThatRunsOnTop(VM&);
+// An operation runs in the top frame, for an `instanceof` of compiled code: the expression as it is written. Null for any other frame and where the site holds no text.
+StringView instanceofExpressionOnTop(VM&);
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, StringView member);
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, const Identifier& member);
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, JSValue key);
@@ -46,6 +51,8 @@ JSObject* createSuperBaseNotAnObjectError(JSGlobalObject*, JSValue base, const I
 JSObject* createNotAFunctionError(JSGlobalObject*, JSValue callee, StringView name);
 JSObject* createNotAFunctionError(JSGlobalObject*, JSValue callee, const Identifier& name);
 JSObject* createNotAConstructorError(JSGlobalObject*, JSValue callee, StringView name);
+JSObject* createInstanceofRightHandSideNotAFunctionError(JSGlobalObject*, JSValue constructor, StringView expression);
+JSObject* createHasInstanceNotAFunctionError(JSGlobalObject*, JSValue constructor, StringView expression);
 
 JSObject* createBuiltinModulesUnavailableError(JSGlobalObject*);
 JSObject* createNativeBindingsUnavailableError(JSGlobalObject*);

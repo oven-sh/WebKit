@@ -202,6 +202,21 @@ static String nameSetAtRunTime(VM& vm, FunctionID function)
     return tables.namesSetAtRunTime.get(sourceFunction);
 }
 
+static String nameLookedFor(VM& vm, FunctionID function)
+{
+    FunctionTables& tables = FunctionTables::of(vm);
+    if (!tables.hasNamesLookedFor.load(std::memory_order_acquire)) [[likely]]
+        return String();
+    FunctionID sourceFunction = sourceFunctionOf(function);
+    {
+        Locker locker { tables.namesLock };
+        if (!tables.namesLookedFor.get(sourceFunction.index()))
+            return String();
+    }
+    String name = initialNameProperty(sourceFunction);
+    return name.isEmpty() ? String() : name;
+}
+
 static constinit RecordedCallee entryOfEmptyList[1] { { nullptr, nullptr } };
 static constinit RecordedCalleeList emptyList { entryOfEmptyList + 1, entryOfEmptyList + 1 };
 
@@ -377,6 +392,8 @@ static String nameGivenTo(VM& vm, JSObject* callee)
     String name = ownTextProperty(callee, vm.propertyNames->name);
     if (!name.isNull() && name != initialNameProperty(*functionOf(callee)))
         return name;
+    if (String name = nameLookedFor(vm, *functionOf(callee)); !name.isNull())
+        return name;
     return ownTextProperty(callee, vm.propertyNames->displayName);
 }
 
@@ -399,6 +416,8 @@ String functionName(VM& vm, FunctionID function, NameForm form, JSObject* callee
             if (String name = nameGivenTo(vm, callee); !name.isNull())
                 return name;
         } else if (String name = nameSetAtRunTime(vm, function); !name.isEmpty()) [[unlikely]]
+            return name;
+        else if (String name = nameLookedFor(vm, function); !name.isNull()) [[unlikely]]
             return name;
         else if (String displayName = displayNameInFrames(vm, function); !displayName.isNull()) [[unlikely]]
             return displayName;
@@ -443,6 +462,21 @@ void didDefineNameProperty(VM& vm, JSObject* closure, const String& name)
     Locker locker { tables.namesLock };
     tables.namesSetAtRunTime.set(sourceFunctionOf(function), name);
     tables.hasNamesSetAtRunTime.store(true, std::memory_order_release);
+}
+
+void didLookForNameProperty(VM& vm, JSObject* closure)
+{
+    FunctionID function = *functionOf(closure);
+    FunctionID sourceFunction = sourceFunctionOf(function);
+    if (functionKindData(function).isBound() || functionKindData(sourceFunction).isGenerator || FunctionDescription(function).isAsync())
+        return;
+    FunctionTables& tables = FunctionTables::of(vm);
+    unsigned index = sourceFunction.index();
+    Locker locker { tables.namesLock };
+    if (tables.namesLookedFor.get(index))
+        return;
+    tables.namesLookedFor.set(index);
+    tables.hasNamesLookedFor.store(true, std::memory_order_release);
 }
 
 void setComputedFunctionName(VM& vm, JSObject* closure, const Identifier& key, MethodKind kind)

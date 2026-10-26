@@ -1,7 +1,7 @@
 # Rows of the image's tables. `packed` says once what a row holds and how it lies in bytes: the generator writes the struct, append() and read().
 # A word is a number of variable length. Its fields lie from the lowest bit up, and the last may take all that is left. ';' begins the next word.
 # `if`: the word is there only then. List: how many, then the rows. Bytes: how many, then the bytes. CodeOffset: in units of codeOffsetUnit.
-# Signed: small in either direction is short. [n]: in n bits.
+# Signed: small in either direction is short. [n]: in n bits. `if c { .. } else { .. }`: what the rest of the word holds goes by a bit of it. `unless`: `if` the other way round.
 
 # What a site with code says beyond where it is. Of a first read only the number is read. A site inside a callee lies behind a tail call.
 enum CallSiteKind (isFirstRead: Bool, isConstruct: Bool, isTailCall: Bool, isInsideCallee: Bool, namesBuiltin: Bool) {
@@ -40,5 +40,14 @@ packed PositionsHead {
     ; column: UInt32
     ; count: UInt64 if hasCheckpoints
 }
+
+# A site on the line of the site in front says how far the column moves. Any other says how far the line moves, and its column.
+packed PositionRow {
+    isOnSameLine: Bool if isOnSameLine { columnChange: Signed } else { isInOtherSource: Bool lineChange: Signed }
+    ; source: UInt32 if isInOtherSource
+    ; column: UInt32 unless isOnSameLine
+}
+# Where the expression of a site that constructs starts, counted back from the site. It stands in front of the site's row, behind a zero, which begins no row.
+packed ConstructionStartRow { isOnSameLine: Bool if isOnSameLine { columnsBack: UInt32 } else { linesBack: UInt32 } ; column: UInt32 unless isOnSameLine }
 
 packed FaultStep { isFrameless: Bool isLoopPoll: Bool distance: UInt32 }

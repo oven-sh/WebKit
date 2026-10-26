@@ -272,15 +272,6 @@ void TypePropagation::restartAllValues()
         forEachValueOf(block, [&](ValueID id) { restart(id); });
 }
 
-void TypePropagation::restartListedValues(std::span<const ValueID> values)
-{
-    willRestartValues();
-    m_queuedValues = QueuedValues::OnlyListed;
-    m_listedValues = &m_isRestarted;
-    for (ValueID id : values)
-        restart(id);
-}
-
 void TypePropagation::restartDependentsOf(std::span<const ValueID> values)
 {
     willRestartValues();
@@ -692,6 +683,8 @@ void TypePropagation::giveUpOnRounds(TypeLevel level, Direction direction)
         return;
     }
 
+    m_outcome.leftTypesAboveTheirRules = true;
+    m_didTypeAllValues = true;
     forEachListedValue(function, m_cfg, [&](ValueID id) { rememberState(id); });
 
     TypingContext context = typingContext(TypeLevel::Proven);
@@ -777,7 +770,7 @@ void TypePropagation::replaceUpcastsOfWidenedValues()
 {
     Function& function = m_inputs.function;
     const TypeArena& types = m_inputs.types;
-    bool hasChecks = !m_rememberedValues.isEmpty() && m_inputs.analyses.opcodesOfValues().contains(Opcode::Check);
+    std::optional<ProofScope> scope;
     for (ValueID id : m_rememberedValues) {
         TypeID before = m_statesBeforeRestart[id.index()].type;
         TypeID now = function.at(id).type;
@@ -794,7 +787,9 @@ void TypePropagation::replaceUpcastsOfWidenedValues()
             TypeID castType = function.at(use.user).castType();
             if (type.isSubsetOf(types.at(castType), m_inputs.program))
                 continue;
-            function.edit(use.user).becomeAssumeType(id, Proven::byRulesBeforeWidening(castType, hasChecks ? ProofScope::BehindChecks : ProofScope::EveryVersion));
+            if (!scope)
+                scope = m_inputs.analyses.opcodesOfValues().contains(Opcode::Check) ? ProofScope::BehindChecks : ProofScope::EveryVersion;
+            function.edit(use.user).becomeAssumeType(id, Proven::byRulesBeforeWidening(castType, *scope));
             ++m_outcome.replacedUpcasts;
         }
     }
@@ -876,7 +871,7 @@ void TypePropagation::cutAfterNeverValues()
         if (index == notFound)
             continue;
         bool keepsValue = !isNeverEntered && !isNeverReached(block.values[index]);
-        if (endsInUnreachable && (isNeverEntered ? block.values.isEmpty() : keepsValue && index + 1 == block.values.size()))
+        if (endsInUnreachable && (isNeverEntered ? block.values.isEmpty() && !block.handler : keepsValue && index + 1 == block.values.size()))
             continue;
         if (waits) {
             m_outcome.waitsToCutCode = true;
@@ -885,6 +880,9 @@ void TypePropagation::cutAfterNeverValues()
         Origin origin = isNeverEntered ? block.terminator.origin() : function.at(block.values[index]).origin();
         Block& cut = m_inputs.function.edit(id);
         cut.values.shrink(index + keepsValue);
+        // A handler sees the parameters of the block that it covers. Nothing is left here that throws.
+        if (cut.values.isEmpty())
+            cut.handler = std::nullopt;
         cut.terminator.become(TerminatorKind::Unreachable);
         cut.terminator.setOrigin(origin);
         ++m_outcome.cutBlocks;
@@ -1219,7 +1217,7 @@ void TypePropagation::tellWhatIsTyped()
     reportRetypedValues(false);
     if (log->hasForgottenSince(m_logAtStart))
         return;
-    if (m_didTypeAllValues || m_outcome.gaveUpOnRounds) {
+    if (m_didTypeAllValues) {
         pending->didTypeEverythingBefore(m_logAtStart);
         pending->takeEntries(*log);
         pending->forgetChangesOfTypesAlone();
@@ -1268,6 +1266,7 @@ TypePropagationOutcome typeUntilNothingIsCut(const TypePropagationInputs& inputs
     PendingTyping* pending = pendingTypingOf(inputs);
     TypePropagationOutcome total;
     Vector<ValueID> parametersBehindRemovedEdges;
+    bool typesAllValues = typedFirst == TypedFirst::AllValues;
     while (true) {
         TypePropagation propagation(inputs);
         switch (typedFirst) {
@@ -1312,6 +1311,8 @@ TypePropagationOutcome typeUntilNothingIsCut(const TypePropagationInputs& inputs
     }
     if (pending && total.didLookForCodeToCut)
         pending->setWaitsToCutCode(total.waitsToCutCode);
+    if (pending && (total.leftTypesAboveTheirRules || typesAllValues))
+        pending->setHoldsTypesLeftWhenRoundsRanOut(total.leftTypesAboveTheirRules);
     return total;
 }
 
@@ -1471,7 +1472,8 @@ TypePropagationOutcome typeChangedValues(const TypePropagationInputs& inputs)
             pending->didTypeEverything(log);
     } else {
         std::optional<Function> typedFromNever;
-        if (inputs.build.options().verifiesAfterEveryPass) {
+        // Where the rounds ran out, values stay above their rules until every value is typed again.
+        if (inputs.build.options().verifiesAfterEveryPass && !pending->holdsTypesLeftWhenRoundsRanOut()) {
             typedFromNever = inputs.function;
             FunctionAnalyses analyses(inputs.analyses.context(), *typedFromNever);
             // Where the rounds run out, the types depend on the types that typing began with.
@@ -1512,8 +1514,11 @@ bool becomeResolved(Function& function, ValueID id, const ConvertResolution& res
         convert.setExpectedType(ExpectedType(resolution.castType));
         convert.setSite(site);
         break;
-    case CastResolution::Unresolved:
     case CastResolution::Assume:
+        convert.becomeAssumeType(operand, Proven::byFrontEnd(resolution.castType));
+        convert.setIsWordOfFrontEnd(true);
+        return true;
+    case CastResolution::Unresolved:
         RELEASE_ASSERT_NOT_REACHED();
     }
     convert.setValueOperand(operand);

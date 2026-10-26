@@ -297,13 +297,15 @@ function f12 name="checkOfProvenValue" parameters=[{type=number}] results=[{type
 # CHECK-NEXT: }
 }
 
-# Flow has seen all that the operation makes of what the check turns away, and has proven the result. By its operands the product in the copy is number|bigint, so the copy assumes the proven type
+# Flow has seen all that the operation makes of what the check turns away, has proven the result and says so in front of the store. By its operands the product in the copy is number|bigint, and the copy keeps what holds in every version
 function f13 name="computedValueGoesToProvenPosition" parameters=[{type=anything}] results=[{type=number}] {
     v1 = Check v0 expectedType=number
     v2 = Mul v1, v1
-    Return v2
+    v3 = AssumeType v2 provenType=number
+    Return v3
 # CHECK: v2: number = Mul v1, v1
-# CHECK-NEXT: Return v2
+# CHECK-NEXT: v3: number = AssumeType v2 provenType=number
+# CHECK-NEXT: Return v3
 # CHECK: ) frequency=Unlikely:
 # CHECK: [[product13]]: number|bigint{{*}} = Mul
 # CHECK-NEXT: [[assumed13]]: number = AssumeType [[product13]] provenType=number

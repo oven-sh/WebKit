@@ -226,6 +226,21 @@ void BodyDecoder::decodeParameters(Block& block, uint32_t count)
     }
 }
 
+static bool constructsWhereWritten(const Value& value)
+{
+    switch (value.opcode) {
+    case Opcode::Construct:
+    case Opcode::ConstructList:
+    case Opcode::SuperConstruct:
+    case Opcode::SuperConstructList:
+        return true;
+    case Opcode::Call:
+        return value.isReflectConstructSyntax();
+    default:
+        return false;
+    }
+}
+
 void BodyDecoder::decodeValue(Block& block)
 {
     ValueID id = allocateValueID();
@@ -246,8 +261,13 @@ void BodyDecoder::decodeValue(Block& block)
         value.flags = nextFlags(wireFlags, declaredFlagsOf(opcode));
     decodeFields(*this, value);
     adoptCheckerFailure();
-    if (head.opcode & Wire::WrittenPositionFollows)
-        m_function.writtenPositions.append({ id, next() });
+    if (head.opcode & Wire::WrittenPositionFollows) {
+        uint32_t written = next();
+        if (constructsWhereWritten(value))
+            m_function.constructionStarts.append({ value.position, written, opcode == Opcode::Call });
+        else
+            m_function.writtenPositions.append({ id, written });
+    }
     if (opcode == Opcode::Convert && !hasFailed())
         checkConvertedAllocation(value);
     if (opcode == Opcode::Builtin && !hasFailed())
@@ -421,6 +441,7 @@ Failure Reader::readFunction(uint32_t index, Function& function, SeenInBody& see
         function.editAllBlocks().clear();
         function.editAllValues().clear();
         function.writtenPositions.clear();
+        function.constructionStarts.clear();
         if (Failure failure = BodyDecoder(*this, id, wire.body, code, function, remap).run())
             return failure;
     }

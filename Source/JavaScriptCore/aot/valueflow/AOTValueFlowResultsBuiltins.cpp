@@ -700,15 +700,16 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
     const ValueFlowUniverse& universe = inputs.universe();
     const ValueSets& sets = inputs.sets();
     bool writesLockedLocation = false;
+    PropertyKeyID keyOfPrototypeLink = program.keyOf(BuiltinNames::__proto__);
     holders.forEachNameWritten([&](BuiltinID holder, PropertyKeyID key) {
+        writesLockedLocation |= key == keyOfPrototypeLink && builtins.isNativeFunction(holder);
         if (!isLockedLocation(program, holder, key))
             return;
         locations.append(BuiltinLocationFlow { holder, key, BuiltinLocationState::Constant, noWitness });
         writesLockedLocation = true;
     });
-    PropertyKeyID keyOfPrototypeLink = program.keyOf(BuiltinNames::__proto__);
     holders.forEachHolderOfWrittenPrototypeLink([&](BuiltinID holder) {
-        writesLockedLocation |= isLockedLocation(program, holder, keyOfPrototypeLink);
+        writesLockedLocation |= isLockedLocation(program, holder, keyOfPrototypeLink) || builtins.isNativeFunction(holder);
     });
     if (!writesLockedLocation && !holders.mayWriteLockedLocationUnderKeyNobodyKnows())
         return { };
@@ -722,6 +723,8 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
     struct Notes {
         ValueSetMaker& maker;
         Vector<Write>& writes;
+        // A store under `__proto__` goes to the setter of Object.prototype. A definition makes an own property of that name.
+        bool changesPrototypeUnderItsName { false };
     };
     auto listsItsObjects = [&](ValueSetID objects) {
         return !ValueSets::isComplement(objects) && !sets.meet(objects, universe.objectsThatMayBeAnything());
@@ -730,6 +733,12 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
         return keyValue ? program.typeOf(program.at(function), keyValue).stringLiterals.span() : std::span<const StringID>();
     };
     auto note = [&](const Notes& notes, ValueSetID receivers, PropertyKeyID key, const Witness& witness) {
+        if (notes.changesPrototypeUnderItsName && key == keyOfPrototypeLink) {
+            for (BuiltinID holder : holders.holdersIn(notes.maker, notes.maker.intersect(receivers, universe.builtinFunctions()))) {
+                if (builtins.isNativeFunction(holder) && !isLockedLocation(program, holder, key))
+                    notes.writes.append({ holder, key, { }, witness });
+            }
+        }
         const ValueFlowHeapTables& tables = universe.builtinTables().heap();
         ValueSetID holdersThatMayLockKey = tables.under(key).holdersWithLockedLocation;
         if (program.isIndexLike(key))
@@ -784,8 +793,8 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
     Vector<Write> writes = collectWithMakers<Write>(inputs, makers, program.functions.size(), [&](unsigned function, ValueSetMaker& maker, Vector<Write>& found) {
         if (!inputs.isReached(FunctionID(function)))
             return;
-        Notes notes { maker, found };
         for (const ValueFlowStatement& statement : bodies.statementsOf(function)) {
+            Notes notes { maker, found, statement.opcode == Opcode::PropSet || statement.opcode == Opcode::ElemSet };
             std::optional<unsigned> object = statement.kind == ValueFlowStatementKind::Operation && statement.site && !modeOfCallOperation(statement.opcode) ? OperandPosition::object(statement.opcode) : std::nullopt;
             std::span<const ValueFlowOperand> operands = bodies.operandsOf(statement);
             if (!object || !listsItsObjects(heap.possibleValuesOf(maker, operands[*object])))
@@ -797,6 +806,8 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
                     note(notes, key.set, PropertyKeyID(key.payload), witness);
             });
             const Value& operation = program.at(statement.function).at(statement.site);
+            if (operation.opcode == Opcode::PropSet && operation.key() == keyOfPrototypeLink)
+                note(notes, heap.possibleValuesOf(maker, operands[*object]), keyOfPrototypeLink, witness);
             if (std::optional<unsigned> key = computedKeyOfWrite(operation))
                 noteUnderNamesAmong(notes, heap.possibleValuesOf(maker, operands[*key]), statement.function, operation.operand(*key), heap.possibleValuesOf(maker, operands[*object]), witness);
         }
@@ -836,7 +847,7 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
                 if (!listsItsObjects(receivers))
                     continue;
                 if (changesPrototype) {
-                    note(notes, receivers, keyOfPrototypeLink, witness);
+                    note(Notes { notes.maker, notes.writes, true }, receivers, keyOfPrototypeLink, witness);
                     continue;
                 }
                 switch (action.key.kind) {

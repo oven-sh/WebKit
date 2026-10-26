@@ -492,6 +492,7 @@ void Closure::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globa
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(object);
     validateIsNotInFrame(vm, closure);
+    didLookForNameProperty(vm, closure);
     closure->prepareForGenericAccess(vm);
     if (closure->kind().isConstructor)
         StaticFields::ensureProperties(vm, *closure);
@@ -500,13 +501,17 @@ void Closure::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globa
         names.add(vm.propertyNames->prototype);
 }
 
-static void clearAllocationOf(Closure* closure)
+static void didChangePrototypeProperty(Closure* closure)
 {
+    VM& vm = closure->vm();
     if (FunctionRareData* rareData = closure->rareData())
         rareData->clear("Store to prototype property of a function");
     ClassTable& classes = closure->state().objects->classes;
     if (const LayoutData* constructed = classes.classConstructedBy(closure->function()))
-        classes.didChangeMember(*constructed, ClassSide::Static, closure->vm().propertyNames->prototype.impl());
+        classes.didChangeMember(*constructed, ClassSide::Static, vm.propertyNames->prototype.impl());
+    // A construction whose result nobody uses is not compiled, so the object counts as a prototype from here on, as the one that the function is created with does.
+    if (JSValue prototype = closure->getDirect(vm, vm.propertyNames->prototype); prototype && prototype.isObject())
+        asObject(prototype)->didBecomePrototype(vm);
 }
 
 static bool isPlainDataDescriptor(const PropertyDescriptor& descriptor)
@@ -543,6 +548,8 @@ bool Closure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject,
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(object);
     validateIsNotInFrame(vm, closure);
+    if (propertyName == vm.propertyNames->name) [[unlikely]]
+        didLookForNameProperty(vm, closure);
     const LayoutData* classLayout = closure->classData();
     if (const FieldData* field = classLayout ? StaticFields::findOwnField(*closure, propertyName.uid()) : nullptr) {
         if (JSValue value = closure->state().objects->classes.readStaticField(*field)) {
@@ -627,7 +634,7 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
     }
     if (name == vm.propertyNames->prototype) [[unlikely]] {
         slot.disableCaching();
-        clearAllocationOf(closure);
+        didChangePrototypeProperty(closure);
     }
     if (name == vm.propertyNames->displayName) [[unlikely]] {
         slot.disableCaching();
@@ -649,8 +656,10 @@ bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
     validateIsNotInFrame(vm, closure);
     if (closure->refusesOwnProperty(vm, name)) [[unlikely]]
         return typeError(globalObject, scope, shouldThrow, assignmentToNameThatBuiltinFunctionInheritsMessage(name.uid()));
-    if (restatesInitialName(vm, *closure, name, descriptor))
+    if (restatesInitialName(vm, *closure, name, descriptor)) {
+        didLookForNameProperty(vm, closure);
         return true;
+    }
     ClassTable& classes = closure->state().objects->classes;
     const LayoutData* classLayout = closure->classData();
     const FieldData* field = classLayout ? StaticFields::findOwnField(*closure, name.uid()) : nullptr;
@@ -673,7 +682,7 @@ bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
     if (classLayout)
         classes.didChangeMember(*classLayout, ClassSide::Static, name.uid());
     if (name == vm.propertyNames->prototype) [[unlikely]]
-        clearAllocationOf(closure);
+        didChangePrototypeProperty(closure);
     if (name == vm.propertyNames->displayName) [[unlikely]]
         didChangeDisplayName(vm, closure);
     if (result && name == vm.propertyNames->name && descriptor.value() && descriptor.value().isString()) [[unlikely]] {
@@ -705,7 +714,7 @@ bool Closure::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Propert
             closure->state().objects->classes.didChangeMember(*classLayout, ClassSide::Static, name.uid());
     }
     if (name == vm.propertyNames->prototype) [[unlikely]]
-        clearAllocationOf(closure);
+        didChangePrototypeProperty(closure);
     if (name == vm.propertyNames->displayName) [[unlikely]]
         didChangeDisplayName(vm, closure);
     return result;
@@ -952,6 +961,7 @@ bool SlimClosure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObj
         return true;
     }
     if (name == vm.propertyNames->name) {
+        didLookForNameProperty(vm, closure);
         slot.setValue(object, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum, initialNamePropertyString(vm, closure->state(), closure->function()));
         return true;
     }
@@ -965,6 +975,7 @@ bool SlimClosure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObj
 
 void SlimClosure::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& names, DontEnumPropertiesMode mode)
 {
+    didLookForNameProperty(globalObject->vm(), object);
     uncheckedDowncast<SlimClosure>(object)->reify(globalObject->vm());
     JSObject::getOwnPropertyNames(object, globalObject, names, mode);
 }

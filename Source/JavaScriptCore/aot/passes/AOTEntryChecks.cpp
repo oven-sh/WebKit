@@ -11,7 +11,6 @@
 #include "AOTAddGenericVersion.h"
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
-#include "AOTCFG.h"
 #include "AOTCheckTypesAtEntry.h"
 #include "AOTCreateEntrypointsInternal.h"
 #include "AOTDerivedFunctions.h"
@@ -528,7 +527,7 @@ static Function createTypedBody(const Program& program, Function&& body, std::sp
             proven.becomeAssumeType(operand, Proven::byPosition(provenType));
         proven.type = provenType;
     }
-    settleProofsBehindAnsweredChecks(body, CFG(body));
+    settleProofsBehindAnsweredChecks(body);
     body.results[0].establish(Proven::byPosition(body.results[0].expected().predicted()));
     body.capabilities = initialCapabilitiesOf(body) | capabilitiesBehindEntrance;
     return WTF::move(body);

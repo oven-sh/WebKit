@@ -770,7 +770,7 @@ export const whenObjectNobodyKnowsIsWritten: ConditionSpec = { objectNobodyKnows
 // The target of a build decides which of the types it is: every run of an executable sees the same one.
 export type TypeByPlatform = Readonly<Record<TargetPlatform, TableType>>;
 
-// With operands that it admits (.admitting(), or else all that it accepts) the entry has no step of its own that throws: no RangeError for a number, no SyntaxError for a text, no TypeError for the state of an object.
+// With operands that it admits (.admitting(), or else all that it accepts) the entry has no step of its own that throws: no RangeError for a number or for a text longer than a string may be, no SyntaxError for a text, no TypeError for the state of an object.
 export const propagated = "Propagated";
 
 export interface SignatureOptions extends SignatureColumns {

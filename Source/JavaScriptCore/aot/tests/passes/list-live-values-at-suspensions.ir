@@ -53,3 +53,26 @@ function f3 name="capturesAnEnvironment" flags=[IsAsync, HasThis] captures=[{typ
 # What the function captures and its receiver are not listed here: what is left of them when the function is split is held until the function ends.
 # CHECK-LABEL: function f3 name="capturesAnEnvironment"
 # CHECK: Await v2, v2 @55
+
+function f4 name="readsAScope" flags=[IsAsync] thisType={type=anything} parameters=[{type=object}, {type=boolean}] results=[{type=Promise}] {
+  b0(v0: object, v1: boolean):
+    v2 = NewArray contents=number
+    v3 = NewArray contents=number
+    v4 = Await v0 @60
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    ReadScope v2
+    v6 = Await v0 @65
+    Return v6
+  b2():
+    v7 = Await v0 @70
+    ReadScope v3
+    Return v7
+}
+# A read of a scope reads what it lists, so every suspension in front of it lists that. The pass leaves no read of a scope.
+# CHECK-LABEL: function f4 name="readsAScope"
+# CHECK: Await v0, v0, v1, v2, v3 @60
+# CHECK-NOT: ReadScope
+# CHECK: Await v0 @65
+# CHECK: Await v0, v3 @70
+# CHECK-NOT: ReadScope

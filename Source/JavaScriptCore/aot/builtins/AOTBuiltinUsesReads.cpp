@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTableRealm.h"
+#include "AOTFlowPrototypes.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
@@ -146,6 +147,39 @@ static bool isClosureAsCreated(const BuiltinUseInputs& inputs, const MemberSite&
     });
 }
 
+// The closures of async functions inherit from a prototype of their own, which takes no name. Where an instance of that class finds the same member,
+// a receiver that can only be such a closure takes the test of that class, and one that may be or is expected to be such a closure takes the test that the closures of both classes pass.
+static PristineRequirement testThatFindsMember(const BuiltinUseInputs& inputs, const MemberSite& site)
+{
+    const BuiltinTable& table = inputs.program.builtins();
+    BuiltinClassID start = site.start.builtinClass;
+    PristineRequirement names { start, aspectThatFindsMember(table, start, site.answer.member) };
+    if (pristineTestOf(table, start) != PristineTest::ClosureAsCreated)
+        return names;
+    BuiltinClassID below = classBelowWithTestedStructure(table, start);
+    if (!below)
+        return names;
+    BuiltinMemberLookup found = table.findForInstance(below, table.at(site.answer.member).name);
+    if (found.outcome != BuiltinMemberLookup::Outcome::Found || table.canonicalID(found.member) != table.canonicalID(site.answer.member))
+        return names;
+
+    auto isClosureOfClassBelow = [&](FunctionID function) {
+        return classOfFunctionObject(inputs.program.at(function)) == below;
+    };
+    const Type& receiver = receiverTypeAt(inputs, site);
+    if (!receiver.anyFunction && receiver.classes.isEmpty() && !receiver.functions.isEmpty()) {
+        if (std::ranges::all_of(receiver.functions, isClosureOfClassBelow))
+            return { below, PristineAspects::Names };
+        if (std::ranges::any_of(receiver.functions, isClosureOfClassBelow))
+            return { start, PristineAspects::NamesKeptBelow };
+        return names;
+    }
+    TypeID expected = inputs.function.at(site.receiver).expected().predicted();
+    if (expected && std::ranges::any_of(inputs.types.at(expected).functions, isClosureOfClassBelow))
+        return { start, PristineAspects::NamesKeptBelow };
+    return names;
+}
+
 static bool isClosureChangedByProgram(const BuiltinUseInputs& inputs, const MemberSite& site)
 {
     if (site.start.builtinClass != BuiltinClasses::Function)
@@ -169,7 +203,7 @@ static void addReceiverRequirements(const BuiltinUseInputs& inputs, const Member
 
     bool isInherited = site.start.kind == BuiltinReceiverKind::Instance && !table.at(site.answer.member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
     if (isInherited && !isClosureAsCreated(inputs, site)) {
-        PristineRequirement names { site.start.builtinClass, aspectThatFindsMember(table, site.start.builtinClass, site.answer.member) };
+        PristineRequirement names = testThatFindsMember(inputs, site);
         if (pristineProofOf(inputs.pristine(), site.receiver, names, point) != PristineProof::Proven) {
             if (pristineTestOf(table, names.builtinClass) == PristineTest::NeverPasses || isClosureChangedByProgram(inputs, site)) {
                 isPossible = false;

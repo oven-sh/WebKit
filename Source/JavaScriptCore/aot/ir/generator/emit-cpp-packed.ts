@@ -2,13 +2,13 @@ import { blocks, cppHeader, indent } from "./lines.ts";
 import type { PackedCondition, PackedField, PackedRecord, PackedWord, Schema, SchemaEnum } from "./model.ts";
 import { cppColumnFunctionName } from "./names.ts";
 import type { EmitContext, OutputFile } from "./outputs.ts";
-import { isFoundByColumns } from "./resolve-packed.ts";
+import { fieldsOfWord, isFoundByColumns } from "./resolve-packed.ts";
 
 const bitsInWord = 64;
 const bitsInByteOfVarint = 7;
 
 function fieldsOf(record: PackedRecord): PackedField[] {
-  return record.words.flatMap(word => word.fields);
+  return record.words.flatMap(fieldsOfWord);
 }
 
 function typeOf({ kind }: PackedField): string {
@@ -54,8 +54,10 @@ function initializerOf({ kind }: PackedField): string {
   }
 }
 
-function conditionText({ field, column }: PackedCondition, owner: string): string {
-  return column === null ? `${owner}${field.name}` : `${cppColumnFunctionName(column.name)}(${owner}${field.name})`;
+function conditionText({ field, column, isNegated }: PackedCondition, owner: string): string {
+  const text =
+    column === null ? `${owner}${field.name}` : `${cppColumnFunctionName(column.name)}(${owner}${field.name})`;
+  return isNegated ? `!${text}` : text;
 }
 
 function saysNothingText({ name, kind }: PackedField): string {
@@ -93,9 +95,10 @@ function mayBeWrittenEmpty({ kind }: PackedField): boolean {
 
 /** Nothing says anything where it is not written. But for numbers and rows, what is written says something. */
 function checksOf(word: PackedWord): string[] {
-  const offsets = word.fields.filter(field => field.kind.tag === "CodeOffset");
-  const wide = word.fields.filter(({ kind, shift, width }) => width === null && bitsOfKind(kind) + shift > bitsInWord);
-  const narrow = word.fields.filter(({ kind, width }) => width !== null && kind.tag !== "Bool" && kind.tag !== "Enum");
+  const all = fieldsOfWord(word);
+  const offsets = all.filter(field => field.kind.tag === "CodeOffset");
+  const wide = all.filter(({ kind, shift, width }) => width === null && bitsOfKind(kind) + shift > bitsInWord);
+  const narrow = all.filter(({ kind, width }) => width !== null && kind.tag !== "Bool" && kind.tag !== "Enum");
   const condition = word.condition;
   return [
     ...offsets.map(({ name }) => `RELEASE_ASSERT(!(${name} % codeOffsetUnit));`),
@@ -105,6 +108,12 @@ function checksOf(word: PackedWord): string[] {
       const isWritten = conditionText(condition!, "");
       return `RELEASE_ASSERT(${isWritten} ${mayBeWrittenEmpty(field) ? "||" : "!="} ${saysNothingText(field)});`;
     }),
+    ...(word.arms?.whenTrue ?? []).map(
+      field => `RELEASE_ASSERT(${word.arms!.condition.name} || ${saysNothingText(field)});`,
+    ),
+    ...(word.arms?.whenFalse ?? []).map(
+      field => `RELEASE_ASSERT(!${word.arms!.condition.name} || ${saysNothingText(field)});`,
+    ),
   ];
 }
 
@@ -142,7 +151,11 @@ function appendLinesOf(word: PackedWord): string[] {
   }
   if (first.kind.tag === "Bytes") return [`appendVarint(bytes, ${first.name}.size());`, `bytes.append(${first.name});`];
   if (first.kind.tag === "Record") return [`${first.name}.append(bytes);`];
-  return [`appendVarint(bytes, ${word.fields.map(bitsOf).join(" | ")});`];
+  const common = word.fields.map(bitsOf).join(" | ");
+  if (word.arms === null) return [`appendVarint(bytes, ${common});`];
+  const { condition, whenTrue, whenFalse } = word.arms;
+  const [taken, other] = [whenTrue, whenFalse].map(fields => fields.map(bitsOf).join(" | "));
+  return [`appendVarint(bytes, ${common} | (${condition.name} ? ${taken} : ${other}));`];
 }
 
 function valueFrom(field: PackedField, word: string): string {
@@ -183,19 +196,31 @@ function readLinesOf(word: PackedWord, position: number): string[] {
     ];
   }
   if (first.kind.tag === "Record") return [`result.${first.name} = ${first.kind.element.name}::read(cursor);`];
-  if (word.fields.length === 1) return [`result.${first.name} = ${valueFrom(first, "readVarint(cursor)")};`];
+  if (word.fields.length === 1 && word.arms === null)
+    return [`result.${first.name} = ${valueFrom(first, "readVarint(cursor)")};`];
   const name = position ? `word${position + 1}` : "word";
+  const reads = (fields: readonly PackedField[]) =>
+    fields.map(field => `result.${field.name} = ${valueFrom(field, name)};`);
+  const common = [`uint64_t ${name} = readVarint(cursor);`, ...reads(word.fields)];
+  if (word.arms === null) return common;
+  const { condition, whenTrue, whenFalse } = word.arms;
+  const [open, close] = whenTrue.length > 1 || whenFalse.length > 1 ? [" {", ["}"]] : ["", []];
   return [
-    `uint64_t ${name} = readVarint(cursor);`,
-    ...word.fields.map(field => `result.${field.name} = ${valueFrom(field, name)};`),
+    ...common,
+    `if (result.${condition.name})${open}`,
+    ...indent(reads(whenTrue)),
+    `${close.length > 0 ? "} " : ""}else${open}`,
+    ...indent(reads(whenFalse)),
+    ...close,
   ];
 }
 
 /** Null: the row holds as many rows or bytes as it likes. */
 function maxSizeOf(record: PackedRecord): number | null {
   let size = 0;
-  for (const { fields } of record.words) {
-    const last = fields[fields.length - 1];
+  const endOf = ({ shift, width, kind }: PackedField) => shift + (width ?? bitsOfKind(kind));
+  for (const word of record.words) {
+    const last = fieldsOfWord(word).reduce((widest, field) => (endOf(field) > endOf(widest) ? field : widest));
     if (last.kind.tag === "List" || last.kind.tag === "Bytes") return null;
     const nested = last.kind.tag === "Record" ? maxSizeOf(last.kind.element) : 0;
     if (nested === null) return null;
@@ -281,6 +306,13 @@ export function emitCppPacked({ schema }: EmitContext): OutputFile[] {
     ["} } // namespace JSC::AOT"],
     ["WTF_ALLOW_UNSAFE_BUFFER_USAGE_END"],
   );
-  const includes = ['"AOTImageFormat.h"', '"AOTRecordTypes.h"', '"AOTVarint.h"', '"HandlerInfo.h"', "<optional>", "<span>"];
+  const includes = [
+    '"AOTImageFormat.h"',
+    '"AOTRecordTypes.h"',
+    '"AOTVarint.h"',
+    '"HandlerInfo.h"',
+    "<optional>",
+    "<span>",
+  ];
   return [{ name: "AOTSchemaPackedRecords.h", lines: cppHeader(includes, body) }];
 }

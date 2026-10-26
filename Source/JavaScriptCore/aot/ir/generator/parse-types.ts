@@ -179,22 +179,40 @@ export function parseRecord(cursor: Cursor): RecordSyntax {
   return { declares: "record", name, form, marks, fields };
 }
 
-function parsePackedCondition(cursor: Cursor): PackedConditionSyntax {
+function parsePackedCondition(cursor: Cursor, isNegated: boolean): PackedConditionSyntax {
   const first = takeWord(cursor);
-  if (!cursor.accept("(")) return { field: first, column: null };
+  if (!cursor.accept("(")) return { field: first, column: null, isNegated };
   const field = takeWord(cursor);
   cursor.expect(")");
-  return { field, column: first };
+  return { field, column: first, isNegated };
 }
 
-function parsePackedWord(cursor: Cursor): PackedWordSyntax {
+function parsePackedFields(cursor: Cursor): PackedFieldSyntax[] {
   const fields: PackedFieldSyntax[] = [];
   do {
     const name = takeName(cursor);
     cursor.expect(":");
     fields.push({ name, kind: parseKind(cursor) });
-  } while (!cursor.at(";") && !cursor.at("}") && !cursor.at("if"));
-  return { fields, condition: cursor.accept("if") ? parsePackedCondition(cursor) : null };
+  } while (!cursor.at(";") && !cursor.at("}") && !cursor.at("if") && !cursor.at("unless"));
+  return fields;
+}
+
+function parsePackedArm(cursor: Cursor): PackedFieldSyntax[] {
+  cursor.expect("{");
+  const fields = parsePackedFields(cursor);
+  cursor.expect("}");
+  return fields;
+}
+
+function parsePackedWord(cursor: Cursor): PackedWordSyntax {
+  const fields = parsePackedFields(cursor);
+  if (cursor.accept("unless")) return { fields, arms: null, condition: parsePackedCondition(cursor, true) };
+  if (!cursor.accept("if")) return { fields, arms: null, condition: null };
+  const condition = parsePackedCondition(cursor, false);
+  if (!cursor.at("{")) return { fields, arms: null, condition };
+  const whenTrue = parsePackedArm(cursor);
+  cursor.expect("else");
+  return { fields, arms: { condition: condition.field, whenTrue, whenFalse: parsePackedArm(cursor) }, condition: null };
 }
 
 export function parsePacked(cursor: Cursor): PackedSyntax {

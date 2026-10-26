@@ -26,6 +26,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxExpectedResultLayouts(Lower, CompileTime, WiderType, 256, 256, 0, "object types reachable from one call's declared result type")
     MaxSupertypePairs(Lower, CompileTime, GenericPath, 4096, 4096, 0, "type pairs compared for one conversion")
     MaxInferenceNodes(Lower, CompileTime, WiderType, 4096, 4096, 0, "expressions visited to infer a type from how a value is used")
+    MaxStepsToPrintedInitializer(Lower, CompileTime, NotOptimized, 256, 256, 0, "expressions and declarations looked at to find where a stack trace places the call of a variable that is used once")
     MaxCaptures(Lower, BitWidth, HeapAllocation, 255, 255, 255, "variables a closure captures")
     MaxHandlerArguments(Lower, CompileTime, HeapAllocation, 16384, 16384, 0, "variables that one try stores, times its stores")
     MaxHandlerArgumentsPerBlock(Lower, CompileTime, HeapAllocation, 16, 16, 0, "variables that a try with any number of stores may store")

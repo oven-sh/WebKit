@@ -217,6 +217,7 @@ ModuleRecord* Modules::ensureRecord(ModuleID module)
 void Modules::didLinkEntryPoint()
 {
     m_entryPointIsLinked = true;
+    ++m_numberOfLinks;
     for (ModuleRecord* record : m_records.values()) {
         if (data(record->module()).isLinkedWithEntryPoint() && statusOf(*record) == ModuleStatus::Unlinked)
             record->setStatus(CyclicModuleRecord::Status::Linked);
@@ -278,6 +279,14 @@ auto Modules::ensureLoaded(ModuleID module) -> LoadedModule&
 Identifier Modules::moduleKey(ModuleID module)
 {
     return Identifier::fromString(*m_instance.vm, m_table.pathText(module));
+}
+
+// The loader hands the key to the host, which asks for the module under it.
+Identifier Modules::keyOfRequest(ModuleID target)
+{
+    Identifier key = moduleKey(target);
+    m_table.willBeAskedForPath(target, key.impl()->hash());
+    return key;
 }
 
 JSString* Modules::pathString(ModuleID module)
@@ -704,6 +713,15 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     return importPromise;
 }
 
+// A load asks for the walk of its root when it begins and when it links.
+std::unique_ptr<ModuleLinkWalk> Modules::takeLinkWalk(ModuleID root)
+{
+    std::unique_ptr<ModuleLinkWalk> walk = std::exchange(m_linkWalkOfQueuedImport, nullptr);
+    if (!walk || walk->root() != root || !walk->stillHolds(*this))
+        walk = makeUnique<ModuleLinkWalk>(*this, root);
+    return walk;
+}
+
 void Modules::continueImport(JSPromise* importPromise, ModuleID module, std::optional<int64_t> referrerAsyncOrder)
 {
     VM& vm = *m_instance.vm;
@@ -725,9 +743,7 @@ void Modules::continueImport(JSPromise* importPromise, ModuleID module, std::opt
         m_importThatWaitsForQueuedJobs = nullptr;
     }
 
-    std::unique_ptr<ModuleLinkWalk> linkWalk = std::exchange(m_linkWalkOfQueuedImport, nullptr);
-    if (!linkWalk || linkWalk->root() != module)
-        linkWalk = makeUnique<ModuleLinkWalk>(*this, module);
+    std::unique_ptr<ModuleLinkWalk> linkWalk = takeLinkWalk(module);
     bool didRunModule = loadRuntimeModules(*linkWalk);
     if (scope.exception()) [[unlikely]] {
         importPromise->rejectWithCaughtException(vm, scope);
@@ -840,8 +856,12 @@ ModuleRecord* Modules::exposeRecord(ModuleID module)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    loadRuntimeModules(module);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (status(module) == ModuleStatus::Unlinked || data(module).capturesExports()) {
+        std::unique_ptr<ModuleLinkWalk> linkWalk = takeLinkWalk(module);
+        loadRuntimeModules(*linkWalk);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        m_linkWalkOfQueuedImport = WTF::move(linkWalk);
+    }
     ModuleRecord* record = ensureRecord(module);
     record->retain();
     if (record->status() != CyclicModuleRecord::Status::New || !record->requestedModules().isEmpty())
@@ -884,9 +904,9 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record)
         if (!level)
             return false;
         if (level->next)
-            record->appendRequestedModule(moduleKey(*level->next), nullptr, ModulePhase::Evaluation);
+            record->appendRequestedModule(keyOfRequest(*level->next), nullptr, ModulePhase::Evaluation);
         if (level->firstFileBehindNext)
-            record->appendRequestedModule(moduleKey(*level->firstFileBehindNext), nullptr, ModulePhase::Evaluation);
+            record->appendRequestedModule(keyOfRequest(*level->firstFileBehindNext), nullptr, ModulePhase::Evaluation);
         return true;
     };
     if (!m_levelsOfLoads.isEmpty() && appendNextOnWay())
@@ -926,7 +946,7 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record)
             keptAlive.append(resolvedKey(target));
             RETURN_IF_EXCEPTION(scope, void());
         } else if (isCommonJSFileOrFace(target) || targetData.kind == ModuleKind::Data || isFileOfProgram(target))
-            keptAlive.append(moduleKey(target));
+            keptAlive.append(keyOfRequest(target));
         else
             continue;
         if (keys.add(keptAlive.last().impl()).isNewEntry)
@@ -1451,9 +1471,7 @@ void ModuleRecord::willLoadRequests()
 
 void ModuleRecord::didLoad()
 {
-    if (m_runsWhenLoaded)
-        modules().evaluateLoadedCommonJSFile(m_module);
-    modules().evaluateFilesOfLevel(m_module);
+    modules().evaluateFilesOfLevel(m_module, m_runsWhenLoaded);
 }
 
 void ModuleRecord::takeStatus()

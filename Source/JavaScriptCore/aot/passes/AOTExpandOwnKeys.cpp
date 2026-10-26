@@ -412,22 +412,7 @@ static constexpr bool copiesNothingFromNullish(OwnKeyWalk walk)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-static bool hasOrdinaryOwnKeys(LayoutKind kind)
-{
-    switch (kind) {
-    case LayoutKind::Record:
-    case LayoutKind::Instance:
-        return true;
-    case LayoutKind::Container:
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
-    case LayoutKind::BuiltinResult:
-    case LayoutKind::ModuleNamespace:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
+static bool hasOrdinaryOwnKeys(LayoutKind kind) { return hasOrdinaryOwnKeysOf(kind); }
 
 static bool isUnchangedLiteral(FunctionPassContext& context, const UnchangedAllocations& unchanged, ValueID value, ProgramPoint point)
 {
@@ -994,7 +979,7 @@ static PassOutcome expandStringify(FunctionPassContext& context, Emission& emiss
     BlockID noText = builder.addBlock(BlockFrequency::Rare);
 
     ValueID stringBuilder = builder.append(Opcode::StringBuilderBegin, { });
-    JSONSerializerBuilder serializer(builder, emission.inputs(), stringBuilder);
+    JSONSerializerBuilder serializer(builder, emission.inputs(), stringBuilder, calledBuiltinOf(context.program.builtins(), original));
 
     bool listsHolders = serializer.mayListHolders(site.source);
     bool isCovered = listsHolders || (!serializer.writingRunsCode(site.source) && serializer.mayHoldItself(site.source));
@@ -1026,6 +1011,7 @@ static PassOutcome expandStringify(FunctionPassContext& context, Emission& emiss
         } else {
             // No code of the program has run, so the call as written starts from the beginning. It finds the cycle, or that the text is too long.
             builder.append(Opcode::CatchValue, { });
+            builder.append(Opcode::JSONResetHolders, { stringBuilder });
             builder.emitJump(generic);
         }
         builder.moveToEndOf(finished);

@@ -218,10 +218,19 @@ export interface PackedField {
 export interface PackedCondition {
   readonly field: PackedField;
   readonly column: EnumColumn | null;
+  readonly isNegated: boolean;
+}
+
+/** What the bits above the common fields hold goes by one of those fields. */
+export interface PackedArms {
+  readonly condition: PackedField;
+  readonly whenTrue: readonly PackedField[];
+  readonly whenFalse: readonly PackedField[];
 }
 
 export interface PackedWord {
   readonly fields: readonly PackedField[];
+  readonly arms: PackedArms | null;
   readonly condition: PackedCondition | null;
 }
 

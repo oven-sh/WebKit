@@ -408,6 +408,11 @@ private:
     bool m_needsPristineProof { false };
 };
 
+struct FitWithoutProofs {
+    TypeFit fit { TypeFit::Unknown };
+    bool needsPristineProof { false };
+};
+
 } // anonymous namespace
 
 static constexpr TypeFit fitOfAtom(bool isCovered, bool isTouched)
@@ -606,33 +611,45 @@ TypeFit FitWalk::fitOfClassPart(const ClassPart& part)
     }));
 }
 
-OperandFit fitOf(const TypingContext& context, TypeID operandOrNotPassed, BuiltinTypeID testedID)
+static FitWithoutProofs fitWithoutProofs(const TypingContext& context, TypeID operandOrNotPassed, BuiltinTypeID testedID)
 {
     const BuiltinTable& table = context.program.builtins();
     if (!testedID || table.at(testedID).isAnything())
-        return { TypeFit::Inside, { } };
+        return { TypeFit::Inside, false };
 
     const BuiltinType& tested = table.at(testedID);
     if (std::ranges::any_of(tested.parts, isRelativeToOperands))
-        return { TypeFit::Unknown, { } };
+        return { TypeFit::Unknown, false };
     if (!operandOrNotPassed) {
         bool takesOmittedOperand = tested.primitives.containsAny({ BuiltinPrimitive::NotPassed, BuiltinPrimitive::Undefined });
-        return { takesOmittedOperand ? TypeFit::Inside : TypeFit::Outside, { } };
+        return { takesOmittedOperand ? TypeFit::Inside : TypeFit::Outside, false };
     }
 
     const Type& operand = context.types.at(operandOrNotPassed);
     if (operand.isNever())
-        return { TypeFit::Inside, { } };
+        return { TypeFit::Inside, false };
     if (!operand.isJavaScriptValue())
-        return { TypeFit::Unknown, { } };
+        return { TypeFit::Unknown, false };
 
     FitWalk walk(context, operand, tested);
     TypeFit fit = walk.run();
-    if (fit != TypeFit::Inside || !walk.needsPristineProof())
-        return { fit, { } };
+    return { fit, fit == TypeFit::Inside && walk.needsPristineProof() };
+}
+
+OperandFit fitOf(const TypingContext& context, TypeID operandOrNotPassed, BuiltinTypeID tested)
+{
+    FitWithoutProofs unproven = fitWithoutProofs(context, operandOrNotPassed, tested);
+    if (!unproven.needsPristineProof)
+        return { unproven.fit, { } };
+    const Type& operand = context.types.at(operandOrNotPassed);
     if (!operand.singleBuiltinClass())
         return { TypeFit::Unknown, { } };
-    return { TypeFit::Inside, pristineRequirementOf(table, operand, testedID) };
+    return { TypeFit::Inside, pristineRequirementOf(context.program.builtins(), operand, tested) };
+}
+
+bool fitsIfPristine(const TypingContext& context, TypeID operandOrNotPassed, BuiltinTypeID tested)
+{
+    return fitWithoutProofs(context, operandOrNotPassed, tested).fit == TypeFit::Inside;
 }
 
 Type typeOfBuiltinConstant(const BuiltinTable& table, BuiltinID id)

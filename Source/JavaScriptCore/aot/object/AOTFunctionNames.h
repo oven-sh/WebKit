@@ -38,6 +38,8 @@ void setComputedFunctionName(VM&, JSObject* closure, const Identifier& key, Meth
 void recordCallee(VM&, JSObject* closure);
 
 void didDefineNameProperty(VM&, JSObject* closure, const String& name);
+// The engine makes `name` a property of the function object when somebody first looks for it there: a read, a test, a list of the own keys, a definition.
+void didLookForNameProperty(VM&, JSObject* closure);
 // Behind whatever may have changed the own property `displayName` of the function object: a store, a definition, a deletion.
 void didChangeDisplayName(VM&, JSObject* closure);
 

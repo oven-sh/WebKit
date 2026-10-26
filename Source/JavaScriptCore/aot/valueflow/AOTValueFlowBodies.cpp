@@ -90,6 +90,7 @@ bool carriesProgramValues(OpaqueKind kind)
     case OpaqueKind::Guard:
     case OpaqueKind::FlatString:
     case OpaqueKind::CodeAddress:
+    case OpaqueKind::JSONHolders:
     case OpaqueKind::BuilderCursor:
         return false;
     }
@@ -753,6 +754,7 @@ private:
         case Opcode::Parameter:
         case Opcode::LoopHint:
         case Opcode::InitialYield:
+        case Opcode::ReadScope:
         case Opcode::ReportMismatch:
         case Opcode::RecordRequire:
             return;
@@ -846,9 +848,11 @@ private:
         addSource(id, value.valueOperand(), maskInside(TypeTable::object, ValueFlowMaskKind::Checked));
     }
 
-    uint32_t maskInEveryVersion(Opcode opcode)
+    uint32_t maskInEveryVersion(const Value& value)
     {
-        switch (opcode) {
+        switch (value.opcode) {
+        case Opcode::AssumeType:
+            return value.isWordOfFrontEnd() ? maskInside(value.provenType(), ValueFlowMaskKind::Checked) : 0;
         case Opcode::CheckInitialized:
             return maskOutside(TypeTable::absent);
         case Opcode::RequireObjectCoercible:
@@ -917,7 +921,7 @@ private:
         if (std::optional<uint32_t> returned = returnedOperandOf(value)) {
             ValueID operand = value.operand(*returned);
             beginSources(id);
-            return addSource(id, operand, isBehindCheck(operand) ? maskInEveryVersion(value.opcode) : maskFor(m_function.at(operand).type, value.type));
+            return addSource(id, operand, isBehindCheck(operand) ? maskInEveryVersion(value) : maskFor(m_function.at(operand).type, value.type));
         }
 
         std::optional<Type> typeInGenericVersion;

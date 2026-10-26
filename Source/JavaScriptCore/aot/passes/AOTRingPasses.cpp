@@ -718,6 +718,7 @@ struct DeadCodeEliminator {
     BitVector isActive { };
     bool tookProofsFromEdges { false };
     bool madeEdgesAlikeOrBlocksEmpty { false };
+    bool tookArgumentsFromEmptyBlocks { false };
     const bool checksRules { context.build.options().verifiesAfterEveryPass };
 
     void mark(ValueID id)
@@ -965,6 +966,11 @@ struct DeadCodeEliminator {
         return deadEntries;
     }
 
+    static bool isEmptyBlockThatJumps(const Block& block)
+    {
+        return block.values.isEmpty() && block.parameters.isEmpty() && block.terminator.kind == TerminatorKind::Jump;
+    }
+
     bool sweep()
     {
         // Whatever is dead at the end was left behind as dead by the walk, or found dead by an edge.
@@ -989,13 +995,14 @@ struct DeadCodeEliminator {
                         continue;
                     tookProofsFromEdges |= !!numberOfEdgeResults(function, edges[index].from, edges[index].targetIndex);
                     madeEdgesAlikeOrBlocksEmpty |= index && edges[index - 1].from == edges[index].from;
+                    tookArgumentsFromEmptyBlocks |= isEmptyBlockThatJumps(function.at(edges[index].from));
                 }
                 builder.removeParameters(id, deadParameters);
             }
             if (deadValues.isEmpty() && deadParameters.isEmpty())
                 continue;
             changed = true;
-            madeEdgesAlikeOrBlocksEmpty |= block.values.isEmpty() && block.parameters.isEmpty() && block.terminator.kind == TerminatorKind::Jump;
+            madeEdgesAlikeOrBlocksEmpty |= isEmptyBlockThatJumps(block);
         }
         RELEASE_ASSERT(changed);
         return true;
@@ -1020,7 +1027,7 @@ PassOutcome eliminateDeadCode(FunctionPassContext& context)
     context.keptAnalyses = allAnalyses;
     // With fewer objects left, the escape analysis may prove more on a second run.
     context.reachedFixpoint = !usedEscapeAnalysis;
-    bool mayHaveGivenControlFlowWork = eliminator.madeEdgesAlikeOrBlocksEmpty || eliminator.cfg.hasHandlers();
+    bool mayHaveGivenControlFlowWork = eliminator.madeEdgesAlikeOrBlocksEmpty || eliminator.tookArgumentsFromEmptyBlocks || eliminator.cfg.hasHandlers();
     context.passesLeftIdle = { };
     if (!eliminator.tookProofsFromEdges) {
         context.passesLeftIdle.add(PassID::PropagateBranchConditions);
@@ -1204,6 +1211,8 @@ struct ConstantFolder {
             if (conditionsWithProofs->get(id.index()))
                 return false;
         }
+        if (rules.contains(FoldingRule::KnownString) && joinsNarrowAndWideParts(value))
+            return false;
         if (rules.contains(FoldingRule::KnownOperands)) {
             KnownValue result = evaluateWithKnownOperands(program, function, value, [&](ValueID operand) { return knownValueOf(operand); });
             if (isPrimitive(result) && becomeConstant(id, result))
@@ -1307,6 +1316,26 @@ struct ConstantFolder {
             return tested && becomeTypeTest(id, operand, *tested);
         }
         return false;
+    }
+
+    // A piece of such a text that lies in an 8-bit part is an 8-bit string. A piece of a 16-bit literal is not.
+    bool joinsNarrowAndWideParts(const Value& value)
+    {
+        bool hasNarrowPart = false;
+        bool hasWidePart = false;
+        for (uint32_t index = 0; index < value.numberOfOperands(); ++index) {
+            KnownValue operand = knownValueOf(value.operand(index));
+            if (operand.kind() != KnownValue::Kind::String) {
+                hasNarrowPart |= isPrimitive(operand);
+                continue;
+            }
+            std::span<const uint8_t> text = program.string(operand.asString());
+            // In UTF-8 a larger byte begins a character outside Latin-1.
+            bool isWide = std::ranges::any_of(text, [](uint8_t byte) { return byte > 0xc3; });
+            hasWidePart |= isWide;
+            hasNarrowPart |= !isWide && !text.empty();
+        }
+        return hasNarrowPart && hasWidePart;
     }
 
     bool foldKnownString(ValueID id, const Value& value)
@@ -1850,6 +1879,7 @@ struct ControlFlowSimplifier {
     bool onlyJoinedBlocks { !analyses.cfg().hasHandlers() };
     bool replacedParameterByKnownValue { false };
     bool mayFindMoreAtOnce { false };
+    bool movedArgumentsToOtherEdges { false };
 
     bool leadsTo(BlockID from, BlockID place, unsigned mostSteps) const
     {
@@ -2300,6 +2330,7 @@ struct ControlFlowSimplifier {
         for (size_t index = 0; index < forwardedEdges.size(); ++index) {
             Edge edge = forwardedEdges[index];
             const Target& next = function.at(lastEmptyBlocks[index]).terminator.next();
+            movedArgumentsToOtherEdges |= !next.arguments.isEmpty();
             builder.redirectEdge(edge, next.block, Arguments(next.arguments));
             if (sources.isEmpty() || sources.last() != edge.from)
                 sources.append(edge.from);
@@ -2459,7 +2490,9 @@ PassOutcome simplifyControlFlow(FunctionPassContext& context)
         context.passesThatCanWait.add(PassID::FoldConstants);
     if (!simplifier.onlyJoinedBlocks)
         return PassOutcome::Changed;
-    context.passesLeftIdle = { PassID::RemoveTrivialParameters, PassID::PropagateBranchConditions, PassID::EliminateDeadCode };
+    context.passesLeftIdle = { PassID::RemoveTrivialParameters, PassID::EliminateDeadCode };
+    if (!simplifier.movedArgumentsToOtherEdges)
+        context.passesLeftIdle.add(PassID::PropagateBranchConditions);
     if (!context.foldingAskedForUses)
         context.passesLeftIdle.add(PassID::FoldConstants);
     context.reachedFixpoint = !simplifier.mayFindMoreAtOnce;

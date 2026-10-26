@@ -19,25 +19,39 @@ static_assert(StringBuilderEmitter::maxInlineDigits <= jsonIntegerBytes);
 static_assert(StringBuilderEmitter::maxInlineDigits <= jsonNumberBytes);
 static_assert(sizeof(uint32_t) + sizeof(uint8_t) <= jsonBooleanBytes);
 
+TypedPointer JSONWriteEmitter::listedHoldersOf(const ValueContext& value)
+{
+    return builders().storageField(builderOf(value), StringBuilderStorage::offsetOfJSONHolders());
+}
+
 void JSONWriteEmitter::generateJSONResetHolders(const ValueContext& value)
 {
-    m_out.storePtr(m_out.constIntPtr(0), builders().storageField(builderOf(value), StringBuilderStorage::offsetOfJSONHolders()));
+    m_out.storePtr(m_out.constIntPtr(0), listedHoldersOf(value));
 }
 
 void JSONWriteEmitter::generateJSONEnterHolder(const ValueContext& value)
 {
-    TypedPointer innermost = builders().storageField(builderOf(value), StringBuilderStorage::offsetOfJSONHolders());
+    TypedPointer listed = listedHoldersOf(value);
     Pointer record(m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), m_proc.addStackSlot(sizeof(JSONHolderRecord))));
-    m_out.storePtr(m_out.loadPtr(innermost), builders().bytesAt(record, OBJECT_OFFSETOF(JSONHolderRecord, outer)));
+    m_out.storePtr(m_out.loadPtr(listed), builders().bytesAt(record, OBJECT_OFFSETOF(JSONHolderRecord, outer)));
     m_out.store64(in<Boxed>(value->holderOperand()).value(), builders().bytesAt(record, OBJECT_OFFSETOF(JSONHolderRecord, holder)));
-    m_out.storePtr(record.value(), innermost);
+    m_out.storePtr(record.value(), listed);
+    define(value, record);
 }
 
 void JSONWriteEmitter::generateJSONLeaveHolder(const ValueContext& value)
 {
-    TypedPointer innermost = builders().storageField(builderOf(value), StringBuilderStorage::offsetOfJSONHolders());
-    Pointer record(m_out.loadPtr(innermost));
-    m_out.storePtr(m_out.loadPtr(builders().bytesAt(record, OBJECT_OFFSETOF(JSONHolderRecord, outer))), innermost);
+    m_out.storePtr(m_out.loadPtr(builders().bytesAt(holdersOf(value), OBJECT_OFFSETOF(JSONHolderRecord, outer))), listedHoldersOf(value));
+}
+
+void JSONWriteEmitter::generateJSONListedHolders(const ValueContext& value)
+{
+    define(value, Pointer(m_out.loadPtr(listedHoldersOf(value))));
+}
+
+void JSONWriteEmitter::generateJSONRestoreHolders(const ValueContext& value)
+{
+    m_out.storePtr(holdersOf(value).value(), listedHoldersOf(value));
 }
 
 void JSONWriteEmitter::generateJSONAppendKey(const ValueContext& value)

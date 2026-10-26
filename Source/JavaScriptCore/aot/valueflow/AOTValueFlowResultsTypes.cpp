@@ -17,6 +17,7 @@
 #include "AOTFlowRecords.h"
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTKnownClosures.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPhaseTimes.h"
 #include "AOTResultRules.h"
@@ -1599,6 +1600,14 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
     auto mayComeFromUnseenCaller = [&](ValueID value) {
         return callers != CallerState::AllKnown && function.at(entryBlock).parameters.find(value) != notFound;
     };
+    // runConversionToObject() leaves the global object out of what the uses behind the test meet. In front of the test the value holds it.
+    Vector<ValueID, 1> conversionsTestedBeforeUse;
+    for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(id.index())) {
+        if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::ToThis || !isUsedOnlyAsInstanceOfOwnFunction(program, id, statement.site))
+            continue;
+        if (maker.meet(inputs.possibleValuesOf(maker, inputs.bodies().operandsOf(statement)[0]), maker.of(std::array { ValueFlowUniverse::primitive(PrimitiveSet::Undefined), ValueFlowUniverse::primitive(PrimitiveSet::Null) })))
+            conversionsTestedBeforeUse.append(statement.site);
+    }
     auto aliveForComparisonsOnly = std::ranges::equal_range(inputs.bodies().valuesAliveForComparisonsOnly(), id, { }, &ValueFlowValueOfFunction::function);
     auto prove = [&](ValueID value, NOESCAPE const Invocable<ValueSetID()> auto& findHeld) {
         if (std::ranges::binary_search(aliveForComparisonsOnly, value, { }, &ValueFlowValueOfFunction::value))
@@ -1606,6 +1615,8 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         if (isDecided.quickSet(value.index()) || mayComeFromUnseenCaller(value) || hasTypeOfNarrowedLocation(application, function.at(value)))
             return;
         ValueSetID held = findHeld();
+        if (!conversionsTestedBeforeUse.isEmpty() && conversionsTestedBeforeUse.contains(definitionThroughSameValues(function, value)))
+            held = maker.unite(held, maker.of(inputs.universe().objectOf(Builtins::GlobalThis)));
         bool keepsTypeAsRead = !isTypedByReplacedCheck.get(value.index());
         const Type& asRead = keepsTypeAsRead ? program.typeOf(function, value) : *anyValue;
         std::optional<ValueFlowNumbers> answered = function.at(value).opcode == Opcode::Call ? numbers.ofCall(id, value) : std::nullopt;

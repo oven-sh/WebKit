@@ -122,6 +122,7 @@ export interface RecordSyntax {
 export interface PackedConditionSyntax {
   readonly field: Name;
   readonly column: Name | null;
+  readonly isNegated: boolean;
 }
 
 export interface PackedFieldSyntax {
@@ -129,8 +130,15 @@ export interface PackedFieldSyntax {
   readonly kind: KindSyntax;
 }
 
+export interface PackedArmsSyntax {
+  readonly condition: Name;
+  readonly whenTrue: readonly PackedFieldSyntax[];
+  readonly whenFalse: readonly PackedFieldSyntax[];
+}
+
 export interface PackedWordSyntax {
   readonly fields: readonly PackedFieldSyntax[];
+  readonly arms: PackedArmsSyntax | null;
   readonly condition: PackedConditionSyntax | null;
 }
 

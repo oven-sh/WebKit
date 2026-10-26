@@ -293,6 +293,8 @@ BuiltinOverloadID OverloadWalk::firstReachableOverload(BuiltinDispatchTarget tar
 
 OverloadMatch matchOverload(const OverloadQuery& query)
 {
+    if (query.context.program.mayBeTrimmed(query.builtin))
+        return { };
     std::optional<BuiltinDispatchTarget> root = dispatchRootOf(query);
     if (!root)
         return { };

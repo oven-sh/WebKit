@@ -116,6 +116,7 @@ struct FlowDefinedValue {
 struct FlowBodyUpdate {
     Vector<FlowValueProof> proofs;
     Vector<ValueID> readsAfterInitialization;
+    Vector<ValueID> opensOfUndecidedStorage;
     Vector<FlowClaimUpdate> claims;
     Vector<FlowAccessStamp> accesses;
     Vector<FlowCallStamp> calls;

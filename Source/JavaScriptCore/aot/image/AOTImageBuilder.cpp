@@ -360,7 +360,7 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
         Vector<uint8_t> handlers;
         encodeHandlers(handlers, sites.handlers.span());
         if (hasPositions) {
-            encodePositions(positions[position], sites, position % PositionIndex::functionsBetween ? OwnPosition::of(functions[position - 1].sites) : OwnPosition { });
+            encodePositions(positions[position], sites, callSites[position].span().data(), position % PositionIndex::functionsBetween ? OwnPosition::of(functions[position - 1].sites) : OwnPosition { });
             numberOfPositions.exchangeAdd(sites.positions.size(), std::memory_order_relaxed);
         }
         SideTableInputs inputs {

@@ -7,11 +7,11 @@
 module m0 path="main.js" displayPath="main.js"
 runtimefunction id=31 function=f2
 runtimefunction id=65 function=f7
+runtimefunction id=89 function=f0
 runtimefunction id=131090 function=f1
-runtimefunction id=131111 function=f0
-function f0 name="stringifyProperty" role=Library enclosingRuntimeFunction=131111 parameters=[{type=anything}, {type=string flags=[IsExpected]}] results=[{type=string flags=[IsExpected]}] {
-  b0(v0: anything, v1: anything):
-    Return v1
+function f0 name="some" role=Library flags=[HasThis] enclosingRuntimeFunction=89 thisType={type=anything} parameters=[{type=anything}, {type=boolean flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v2
 }
 function f1 name="traverseArray" role=Library enclosingRuntimeFunction=131090 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything):
@@ -22,13 +22,13 @@ function f2 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=3
     Return v3
 }
 
-function f3 name="promisedString" parameters=[{type=anything}, {type=string}] results=[{type=string}] {
-    v2 = CallBuiltin -, v0, v1 overload=CompilerHelpersStringifyProperty/0
-    Return v2
+function f3 name="promisedBoolean" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=boolean}] {
+    v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSome/0
+    Return v3
 # CHECK-NOT: CallBuiltin
-# CHECK: [[called3]]: anything{{*}} = CallDirect v0, v1 function=f0
-# CHECK-NEXT: v2: string = AssumeType [[called3]] provenType=string
-# CHECK-NEXT: Return v2
+# CHECK: [[called3]]: anything{{*}} = CallDirect v0, v1, v2 function=f0
+# CHECK-NEXT: v3: boolean = AssumeType [[called3]] provenType=boolean
+# CHECK-NEXT: Return v3
 }
 
 function f4 name="nothingPromised" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {

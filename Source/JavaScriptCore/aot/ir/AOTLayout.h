@@ -25,22 +25,7 @@ namespace Typed {
 class Program;
 struct Value;
 
-constexpr bool isEnvironmentKind(LayoutKind kind)
-{
-    switch (kind) {
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
-        return true;
-    case LayoutKind::Record:
-    case LayoutKind::Instance:
-    case LayoutKind::Container:
-    case LayoutKind::BuiltinResult:
-    case LayoutKind::ModuleNamespace:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
+constexpr bool isEnvironmentKind(LayoutKind kind) { return isEnvironmentKindOf(kind); }
 
 inline constexpr uint32_t maxFieldsAlwaysInline = 14;
 

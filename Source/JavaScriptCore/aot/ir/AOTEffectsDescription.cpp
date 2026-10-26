@@ -235,11 +235,14 @@ static bool readsPrototypePropertyWithoutRunningCode(const Program& program, con
     return newTarget.isObject() && membersRunBy(program, newTarget, behavior.protocols, behavior.namedMembers, behavior.calledMembers, behavior.namedMemberUse).runsNothing();
 }
 
-static bool joinsTextsOfPrimitives(const Program& program, const Function& function, const Value& value)
+static bool joinsTextsThatFitInString(const Program& program, const Function& function, const Value& value)
 {
-    return value.opcode == Opcode::Strcat && std::ranges::all_of(value.partsOperands(), [&](ValueID part) {
-        return hasTextByItself(program.typeOf(function, part));
-    });
+    if (value.opcode != Opcode::Strcat)
+        return false;
+    JoinedTexts texts;
+    for (ValueID part : value.partsOperands())
+        texts.add(program, program.typeOf(function, part));
+    return texts.fitInString();
 }
 
 static Effects refinedEffectsOf(const Program& program, const Function& function, const Value& value, const Effects& declared)
@@ -249,7 +252,7 @@ static Effects refinedEffectsOf(const Program& program, const Function& function
     if (std::optional<Effects> lookup = effectsOfLookupFromBase(program, function, value))
         return *lookup;
     Effects effects = declared;
-    if (readsPrototypePropertyWithoutRunningCode(program, function, value) || joinsTextsOfPrimitives(program, function, value))
+    if (readsPrototypePropertyWithoutRunningCode(program, function, value) || joinsTextsThatFitInString(program, function, value))
         effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
     if (resolvesNoRope(program, function, value, declared)) {
         effects = Effects::none();

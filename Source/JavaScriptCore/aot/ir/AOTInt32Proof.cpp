@@ -21,6 +21,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr uint16_t nullishOrAbsentPrimitives = Primitive::UndefinedOrNull | Primitive::Absent;
+static constexpr OpcodeSet castsThatNameType = Value::opcodesWithCastType | Value::opcodesWithExpectedType | Value::opcodesWithProvenType;
 
 NumberBounds boundsOfType(const Type& type)
 {
@@ -425,7 +426,7 @@ NumberBounds Int32Prover::computePromise(const Value& request)
 NumberBounds Int32Prover::computeCast(ValueID id, const Value& cast)
 {
     NumberBounds operand = find(cast.operand(0));
-    if (Value::opcodesWithCastType.contains(cast.opcode))
+    if (castsThatNameType.contains(cast.opcode))
         return narrowToType(operand, typeOf(id));
     operand.mayBeNullish = operand.mayBeNullish && typeOf(id).primitives & nullishOrAbsentPrimitives;
     return operand;

@@ -16,6 +16,7 @@
 #include "Weak.h"
 #include <array>
 #include <atomic>
+#include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/text/WTFString.h>
@@ -118,7 +119,10 @@ struct FunctionTables {
     Lock namesLock;
     NamesByFunction namesSetAtRunTime WTF_GUARDED_BY_LOCK(namesLock);
     DisplayNamesByFunction displayNames WTF_GUARDED_BY_LOCK(namesLock);
+    // By the function as it is written.
+    BitVector namesLookedFor WTF_GUARDED_BY_LOCK(namesLock);
     std::atomic<bool> hasNamesSetAtRunTime { false };
+    std::atomic<bool> hasNamesLookedFor { false };
     std::atomic<bool> hasDisplayNames { false };
 
     // For an instance that has recorded nothing yet. It has no room.

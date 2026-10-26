@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFlowPrototypes.h"
 #include "AOTValueFlowBuiltinTables.h"
 #include "AOTValueFlowRuleContext.h"
 
@@ -92,14 +93,6 @@ inline BuiltinClassID classAbovePrototypeProperty(const Function& function)
     if (!function.has(FunctionFlags::IsGenerator))
         return BuiltinClasses::Object;
     return function.has(FunctionFlags::IsAsync) ? BuiltinClasses::AsyncGenerator : BuiltinClasses::Generator;
-}
-
-inline BuiltinClassID classOfFunctionObject(const Function& function)
-{
-    bool isAsync = function.has(FunctionFlags::IsAsync);
-    if (function.has(FunctionFlags::IsGenerator))
-        return isAsync ? BuiltinClasses::AsyncGeneratorFunction : BuiltinClasses::GeneratorFunction;
-    return isAsync ? BuiltinClasses::AsyncFunction : BuiltinClasses::Function;
 }
 
 inline bool mayReturnUnknownObject(const BuiltinType& type)

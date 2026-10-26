@@ -500,30 +500,13 @@ static bool hasObjectKind(const Program& program, LayoutID layout)
     return layout && isObjectLayout(program.at(layout).kind);
 }
 
-static bool canHaveExtraKeys(LayoutKind kind)
-{
-    switch (kind) {
-    case LayoutKind::Record:
-        return true;
-    case LayoutKind::Instance:
-    case LayoutKind::Container:
-    case LayoutKind::BuiltinResult:
-    case LayoutKind::ModuleNamespace:
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static bool hasValidMembers(const Program& program, const DataNode::Object& object, bool mayLackLayout, Vector<PropertyKeyID, 16>& keys)
 {
     if (object.layout ? !hasObjectKind(program, object.layout) : !mayLackLayout)
         return false;
 
     const Layout* layout = object.layout ? &program.at(object.layout) : nullptr;
-    bool hasOnlyFields = layout && !canHaveExtraKeys(layout->kind);
+    bool hasOnlyFields = layout && !canHaveExtraKeysOf(layout->kind);
     keys.shrink(0);
     for (const DataMember& member : object.members) {
         if (!member.key || member.value.is<DataNode::Hole>() || (hasOnlyFields && !layout->findField(member.key)))

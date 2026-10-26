@@ -9,6 +9,7 @@
 
 #include "AOTBodyIndex.h"
 #include "AOTInterningPhases.h"
+#include "AOTObservableOperations.h"
 #include "AOTOpcode.h"
 #include "AOTPass.h"
 #include "AOTProgramAnalyses.h"
@@ -18,6 +19,7 @@
 #include <array>
 #include <atomic>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <span>
 #include <type_traits>
@@ -83,11 +85,17 @@ private:
     };
     static const AffectedPasses& passesAffectedBy(PassID);
 
+    struct BodiesBeforeProgramPass {
+        Vector<Function> functions;
+        Vector<ReasonsForOperationsThatWent> reasons;
+    };
+
     struct PassTimer {
         MonotonicTime wallStart;
         Seconds cpuStart;
         PassID enclosingPass { PassID::None };
         double startOfEnclosingPassInSeconds { 0 };
+        std::shared_ptr<BodiesBeforeProgramPass> bodiesBefore;
     };
 
     // To read either takes a microsecond, and a build runs millions of function passes, most of them on functions of a few values, where the pass takes no longer than that.
@@ -243,7 +251,8 @@ private:
 
     void checkFormAndInputs(const PassDescriptor&, const Program&) const;
 
-    std::optional<PassTimer> beginProgramPass(PassID, const Program&);
+    enum class MayChangeBodies : bool { No, Yes };
+    std::optional<PassTimer> beginProgramPass(PassID, const Program&, MayChangeBodies = MayChangeBodies::No);
     void endProgramPass(PassID, const Program&, PassTimer, PassOutcome);
     void runTogether(NOESCAPE const ScopedLambda<void()>&, NOESCAPE const ScopedLambda<void()>&) const;
     bool canVerify(IRForm form) const { return form != IRForm::Placed || m_verifierInputs.placed; }
@@ -276,7 +285,7 @@ private:
 template<typename Functor>
 auto PassRunner::runProgramPass(PassID id, Program& program, ProgramAnalyses& analyses, const Functor& functor) -> std::invoke_result_t<Functor, ProgramEditor&>
 {
-    auto timer = beginProgramPass(id, program);
+    auto timer = beginProgramPass(id, program, MayChangeBodies::Yes);
     if (!timer)
         return std::invoke_result_t<Functor, ProgramEditor&>();
     ProgramEditor editor(program);
@@ -290,7 +299,7 @@ auto PassRunner::runProgramPass(PassID id, Program& program, ProgramAnalyses& an
 template<typename Functor>
 auto PassRunner::runProgramPassWithoutEditor(PassID id, Program& program, ProgramAnalyses& analyses, const Functor& functor, BodiesAreChanged bodiesAreChanged) -> std::invoke_result_t<Functor>
 {
-    auto timer = beginProgramPass(id, program);
+    auto timer = beginProgramPass(id, program, MayChangeBodies::Yes);
     if (!timer)
         return std::invoke_result_t<Functor>();
     analyses.willChangeBodies(bodiesAreChanged);

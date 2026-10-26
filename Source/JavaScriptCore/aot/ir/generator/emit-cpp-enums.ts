@@ -158,10 +158,24 @@ function typeColumnLines(type: SchemaEnum, column: EnumColumn, position: number)
   ];
 }
 
+const bitsInWord = 64;
+
+/** A bit an enumerator. */
+function boolColumnLines(type: SchemaEnum, column: EnumColumn, position: number): string[] {
+  let bits = 0n;
+  type.members.forEach((member, number) => {
+    const value = member.values[position];
+    if (value.tag === "Bool" && value.value) bits |= 1n << BigInt(number);
+  });
+  const head = `constexpr bool ${cppColumnFunctionName(column.name)}(${type.name} value)`;
+  return [`${head} { return 0x${bits.toString(16)}ull >> static_cast<unsigned>(value) & 1; }`];
+}
+
 function columnLines(type: SchemaEnum, isWanted: (column: EnumColumn) => boolean = () => true): string[] {
   const lookups = type.columns.map((column, position) => {
     if (!isWanted(column)) return [];
     if (column.kind.tag === "Type") return typeColumnLines(type, column, position);
+    if (column.kind.tag === "Bool" && type.members.length <= bitsInWord) return boolColumnLines(type, column, position);
     const cppType = columnType(column.kind);
     const table = `${column.name}By${type.name}`;
     const head = `inline constexpr ${cppType} ${table}[] =`;

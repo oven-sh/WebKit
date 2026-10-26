@@ -51,6 +51,7 @@ import {
 const allocatorHeap = "AllocatorState";
 const promiseClassToken = "Promise";
 const functionClassToken = "Function";
+const classesOfTestedClosures = [functionClassToken, "AsyncFunction"];
 const engineFileExtension = ".ts";
 const cppIdentifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const maximumOwnSlotOffset = 0xff;
@@ -394,9 +395,11 @@ function extendsClass(builtinClass: ModelClass, ancestor: ModelClass): boolean {
   return current !== null;
 }
 
-// The test compares with the Structures that closures are created with, which inherit from Function.prototype.
+// The test compares with the Structures that closures are created with, which inherit from the prototype of one of these classes.
 function checkPristineTests(model: TableModel, problems: Problems): void {
-  const functionClass = model.classes.find(builtinClass => builtinClass.token === functionClassToken);
+  const prototypesOfClosures = model.classes
+    .filter(builtinClass => classesOfTestedClosures.includes(builtinClass.token))
+    .map(builtinClass => builtinClass.prototype);
   for (const { pristineTest, isNeverPristine, prototype, token, instanceStructureCppExpression } of model.classes) {
     if (pristineTest === "Mark") continue;
     if (!isNeverPristine) {
@@ -414,10 +417,10 @@ function checkPristineTests(model: TableModel, problems: Problems): void {
       }
       continue;
     }
-    if (prototype === null || prototype !== functionClass?.prototype) {
+    if (prototype === null || !prototypesOfClosures.includes(prototype)) {
       problems.add(
         null,
-        `the class ${token} has the test ${pristineTest}, and its prototype is not that of ${functionClassToken}`,
+        `the class ${token} has the test ${pristineTest}, and its prototype is that of none of ${classesOfTestedClosures.join(", ")}`,
       );
     }
   }

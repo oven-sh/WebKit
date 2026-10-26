@@ -325,6 +325,18 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillSiteCache, void, (Instance* in
     instance->state->propertyCaches->fillSiteCacheFromTables(cache, base, key, static_cast<SlotAccess>(access));
 }
 
+// What JSObject::hasInstance() refuses, in a message that quotes the expression.
+static JSObject* tryCreateErrorOfConstructorThatNeverAnswers(JSGlobalObject* globalObject, JSObject* constructor, JSValue hasInstance)
+{
+    VM& vm = globalObject->vm();
+    if (!hasInstance.isUndefinedOrNull() && hasInstance != globalObject->functionProtoHasInstanceSymbolFunction())
+        return hasInstance.isCallable() ? nullptr : createHasInstanceNotAFunctionError(globalObject, constructor, instanceofExpressionOnTop(vm));
+    TypeInfo info = constructor->structure()->typeInfo();
+    if (info.implementsDefaultHasInstance() || info.implementsHasInstance())
+        return nullptr;
+    return createInstanceofRightHandSideNotAFunctionError(globalObject, constructor, instanceofExpressionOnTop(vm));
+}
+
 bool instanceOfAndCache(Instance* instance, JSValue value, JSValue constructorValue)
 {
     JSGlobalObject* globalObject = instance->globalObject;
@@ -343,8 +355,13 @@ bool instanceOfAndCache(Instance* instance, JSValue value, JSValue constructorVa
     JSValue hasInstance = JSValue(constructor).get(globalObject, hasInstanceSymbol, hasInstanceSlot);
     RETURN_IF_EXCEPTION(scope, false);
     fileRead(instance, constructor, structureBefore, { hasInstanceSymbol.impl(), std::nullopt }, hasInstanceSlot);
-    if (hasInstance != globalObject->functionProtoHasInstanceSymbolFunction() || !constructor->structure()->typeInfo().implementsDefaultHasInstance())
+    if (hasInstance != globalObject->functionProtoHasInstanceSymbolFunction() || !constructor->structure()->typeInfo().implementsDefaultHasInstance()) {
+        if (JSObject* error = tryCreateErrorOfConstructorThatNeverAnswers(globalObject, constructor, hasInstance)) {
+            throwException(globalObject, scope, error);
+            return false;
+        }
         RELEASE_AND_RETURN(scope, constructor->hasInstance(globalObject, value, hasInstance));
+    }
 
     // OrdinaryHasInstance reads "prototype" only for an object, so for any other value the lookup that fills the cache may run no code.
     bool readsPrototype = value.isObject();

@@ -65,6 +65,8 @@ private:
 class SiteFrames {
 public:
     SiteFrames(const Image&, uint32_t function);
+    // Of the encoded call sites of one function. Without any, every site is in frame 0.
+    explicit SiteFrames(const uint8_t* callSites);
     unsigned next();
     void skip(uint64_t numberOfSites);
 
@@ -102,8 +104,11 @@ bool catchesExceptions(const Image&, uint32_t function);
 struct SourcePosition {
     friend bool operator==(const SourcePosition&, const SourcePosition&) = default;
 
+    const LineColumn& startOfExpression() const { return constructionStart.line ? constructionStart : lineColumn; }
+
     LineColumn lineColumn;
     ModuleID source;
+    LineColumn constructionStart { 0, 0 };
 };
 
 static constexpr unsigned sitesBetweenPositionCheckpoints = 512;
@@ -115,7 +120,7 @@ struct OwnPosition {
     uint32_t source { 0 };
 };
 
-void encodePositions(Vector<uint8_t>& stream, const SiteDescription&, OwnPosition ofFunctionInFront);
+void encodePositions(Vector<uint8_t>& stream, const SiteDescription&, const uint8_t* callSites, OwnPosition ofFunctionInFront);
 std::optional<SourcePosition> decodePosition(const Image&, uint32_t function, const uint8_t* entry, OwnPosition ofFunctionInFront, CallSiteIndex);
 void forgetRememberedPositions();
 

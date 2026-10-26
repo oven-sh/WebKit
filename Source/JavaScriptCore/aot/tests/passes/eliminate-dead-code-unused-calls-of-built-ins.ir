@@ -15,7 +15,7 @@ function f0 name="operandsThatRunNothing" parameters=[{type=L0}, {type=string}, 
     v8 = CallBuiltin -, v0, v1 overload=ObjectHasOwn/0
     v9 = CallBuiltin v1 overload=StringPrototypeToUpperCase/0
     v10 = CallBuiltin v1, v2 overload=StringPrototypeCharAt/0
-    v11 = CallBuiltin v1, v1 overload=StringPrototypeConcat/0
+    v11 = CallBuiltin v1 overload=StringPrototypeTrim/0
     v12 = CallBuiltin -, v1 overload=Error/1
     v13 = CallBuiltin -, v1 overload=TypeError/1
     v14 = CallBuiltin -, v2 overload=Uint8Array/4
@@ -43,6 +43,8 @@ function f1 name="operandsThatMayMakeItThrow" parameters=[{type=anything}, {type
     v13 = CallBuiltin v5, v3 overload=StringPrototypeRepeat/0
     v14 = Undefined
     v15 = CallBuiltin -, v5, v14 overload=JSONParse/0
+    v16 = CallBuiltin v5, v5 overload=StringPrototypeConcat/0
+    v17 = CallBuiltin v5 overload=StringPrototypeBold/0
     Return
 }
 # CHECK-LABEL: function f1 name="operandsThatMayMakeItThrow"
@@ -56,6 +58,8 @@ function f1 name="operandsThatMayMakeItThrow" parameters=[{type=anything}, {type
 # CHECK-NEXT: = CallBuiltin v5, v3 overload=StringPrototypeRepeat/0
 # CHECK-NEXT: = Undefined
 # CHECK-NEXT: = CallBuiltin -, v5, v14 overload=JSONParse/0
+# CHECK-NEXT: = CallBuiltin v5, v5 overload=StringPrototypeConcat/0
+# CHECK-NEXT: = CallBuiltin v5 overload=StringPrototypeBold/0
 # EFFECTS-LABEL: function f1
 # EFFECTS-NEXT: v6 CallBuiltin: unknownCode
 # EFFECTS-NEXT: v7 CallBuiltin: unknownCode
@@ -67,6 +71,8 @@ function f1 name="operandsThatMayMakeItThrow" parameters=[{type=anything}, {type
 # EFFECTS-NEXT: v13 CallBuiltin: {{*}} throws collects
 # EFFECTS-NEXT: v14 Undefined: none
 # EFFECTS-NEXT: v15 CallBuiltin: {{*}} throws collects
+# EFFECTS-NEXT: v16 CallBuiltin: {{*}} throws collects
+# EFFECTS-NEXT: v17 CallBuiltin: {{*}} throws collects
 
 # A lookup may move the table of a collection, and so may a new iterator: that changes how the collection is stored and the result of no operation.
 function f2 name="lookupsAndIterators" parameters=[{type=Map}, {type=Set}, {type=string}] results=[{type=undefined}] {

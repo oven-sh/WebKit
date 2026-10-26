@@ -19,7 +19,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 # CHECK: v2: number = Check v1 expectedType=number
 # CHECK-NEXT: v3: number = Add v2, v2
-# CHECK-NEXT: PutModuleVariable v3 variable=g1
+# CHECK-NEXT: [[held]]: number = AssumeType v3 provenType=number|string|bigint
+# CHECK-NEXT: PutModuleVariable [[held]] variable=g1
 # CHECK-NEXT: = NewClosure function=f1
 }
 function f1 name="readsCapture" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {

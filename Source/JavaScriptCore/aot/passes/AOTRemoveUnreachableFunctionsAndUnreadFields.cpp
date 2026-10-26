@@ -151,41 +151,6 @@ void removeUnreachableFunctions(ProgramEditor& editor, const CallGraph& callGrap
     times.didFinish("remove bodies"_s);
 }
 
-// Every table names entrypoints, for closures and for the host alike.
-static bool isEnteredOnlyByCalls(FunctionRole role)
-{
-    switch (role) {
-    case FunctionRole::GenericEntrypoint:
-    case FunctionRole::TableEntrypoint:
-    case FunctionRole::TableLookup:
-    case FunctionRole::CoroutineBody:
-    case FunctionRole::StubBody:
-    case FunctionRole::Model:
-        return false;
-    case FunctionRole::Source:
-    case FunctionRole::Library:
-    case FunctionRole::Signature:
-    case FunctionRole::GenericVersion:
-    case FunctionRole::AllocatedThisVersion:
-    case FunctionRole::ConstructBody:
-    case FunctionRole::CallSiteVersion:
-    case FunctionRole::CalleeVersion:
-    case FunctionRole::CoroutineRamp:
-    case FunctionRole::AsyncWorker:
-    case FunctionRole::BoundFunction:
-    case FunctionRole::ResultWrapper:
-    case FunctionRole::ResultWorker:
-    case FunctionRole::ParameterWrapper:
-    case FunctionRole::EntryChecks:
-    case FunctionRole::OutlinedBody:
-    case FunctionRole::Serializer:
-    case FunctionRole::Parser:
-    case FunctionRole::ChainStep:
-        return true;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 BitVector findBodiesWithoutCode(const Program& program, const BuildContext& build, std::span<const Vector<FunctionID>> calledFunctions)
 {
     const ParallelLoops& loops = build.parallelLoops();
@@ -194,7 +159,8 @@ BitVector findBodiesWithoutCode(const Program& program, const BuildContext& buil
     BitVector hasNoCode(count);
     for (uint32_t index : findIndicesInParallel(loops, count, [&](unsigned index) {
         RecordFacts facts = recordFactsOf(program, FunctionID(index));
-        return facts.hasBody && isEnteredOnlyByCalls(facts.role) && !isCalledByHost.get(index) && build.isEnabled(PassID::RemoveUnreachableFunctions, FunctionID(index));
+        // Every table names entrypoints, for closures and for the host alike.
+        return facts.hasBody && isEnteredOnlyByCallsOf(facts.role) && !isCalledByHost.get(index) && build.isEnabled(PassID::RemoveUnreachableFunctions, FunctionID(index));
     }))
         hasNoCode.quickSet(index);
     if (hasNoCode.isEmpty())
@@ -225,23 +191,6 @@ BitVector findBodiesWithoutCode(const Program& program, const BuildContext& buil
 }
 
 static constexpr OperandUses keyedStoreUses { OperandUse::StoresByKey, OperandUse::AssignsFrom, OperandUse::DefinesName, OperandUse::TakesDescriptor };
-
-static bool supportsRemoval(LayoutKind kind)
-{
-    switch (kind) {
-    case LayoutKind::Record:
-    case LayoutKind::Instance:
-    case LayoutKind::Environment:
-        return true;
-    case LayoutKind::Container:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
-    case LayoutKind::BuiltinResult:
-    case LayoutKind::ModuleNamespace:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
 
 static bool isUnread(const BuildContext& build, const Layout& layout, const Field& field)
 {
@@ -594,21 +543,6 @@ static constexpr bool createsPropertyByName(Opcode opcode)
 
 static_assert(createsPropertyByName(Opcode::PropSet) && createsPropertyByName(Opcode::PropDefine));
 
-static bool callsBuiltin(EffectRule rule)
-{
-    switch (rule) {
-    case EffectRule::Builtin:
-    case EffectRule::Inline:
-        return true;
-    case EffectRule::Declared:
-    case EffectRule::Operator:
-    case EffectRule::Access:
-    case EffectRule::Call:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static BitVector findUsedValues(const Function& function)
 {
     BitVector isUsed(function.values.size());
@@ -637,7 +571,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
         areReceiverSetsEnabled = build.isEnabled(FlowResultKind::ReceiverSets, function);
     for (uint32_t layoutIndex = 0; areReceiverSetsEnabled && layoutIndex < program.layouts.size(); ++layoutIndex) {
         const Layout& layout = program.layouts[layoutIndex];
-        if (!supportsRemoval(layout.kind) || layout.flow.allocation == AllocationState::NeverAllocated)
+        if (!supportsRemovalOf(layout.kind) || layout.flow.allocation == AllocationState::NeverAllocated)
             continue;
         for (uint32_t field = 0; field < layout.fields.size(); ++field) {
             if (isUnread(build, layout, layout.fields[field]))
@@ -719,7 +653,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
     OpcodeSet opcodesStoringThroughOperands;
     OpcodeSet scannedOpcodes = Value::opcodesWithLayout | Value::opcodesWithVariable;
     for (Opcode opcode : allMembersOf<Opcode>) {
-        bool mayStore = callsBuiltin(effectRuleOf(opcode));
+        bool mayStore = callsBuiltinOf(effectRuleOf(opcode));
         for (uint32_t operandIndex = 0, end = numberOfNamedOperandsOf(opcode) + hasVariadicOperand(opcode); operandIndex < end; ++operandIndex)
             mayStore |= operandUsesOf(opcode, operandIndex).containsAny(keyedStoreUses);
         if (mayStore)

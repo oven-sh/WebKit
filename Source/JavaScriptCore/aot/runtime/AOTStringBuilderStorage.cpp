@@ -271,13 +271,6 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, std::span<const 
 {
     if (characters.empty())
         return AppendResult::Appended;
-    if (WTF::charactersAreAllLatin1(characters)) {
-        if (!ensureRoom(globalObject, characters.size()))
-            return AppendResult::Failed;
-        StringImpl::copyCharacters(std::span { m_characters + m_position, characters.size() }, characters);
-        m_position += static_cast<uint32_t>(characters.size());
-        return AppendResult::Appended;
-    }
     std::span<char16_t> copy;
     RefPtr<StringImpl> impl = canGrowBy(characters.size()) ? StringImpl::tryCreateUninitialized(characters.size(), copy) : nullptr;
     if (!impl) {
@@ -286,17 +279,6 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, std::span<const 
     }
     StringImpl::copyCharacters(copy, characters);
     return addSegment(globalObject, jsString(globalObject->vm(), String { impl.releaseNonNull() }));
-}
-
-// The units of a 16-bit string that lie in one piece of memory: of a flat string, and of a part of one.
-static std::optional<std::span<const char16_t>> flatUnitsOf(JSString* string)
-{
-    if (const StringImpl* impl = string->tryGetValueImpl())
-        return impl->span16();
-    if (!string->isSubstring())
-        return std::nullopt;
-    auto* rope = uncheckedDowncast<JSRopeString>(string);
-    return rope->substringBase()->tryGetValueImpl()->span16().subspan(rope->substringOffset(), rope->length());
 }
 
 auto StringBuilderStorage::append(JSGlobalObject* globalObject, JSString* string) -> AppendResult
@@ -309,10 +291,6 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, JSString* string
     // What a builder begins with has been built before. Copying it would cost a loop that begins a builder with its own last result the whole text at every turn.
     uint32_t minLengthAppendedByReference = wasEmpty ? std::min(m_limits.minLengthAdoptedByFinish, m_limits.minLengthAppendedByReference) : m_limits.minLengthAppendedByReference;
     bool isAppendedByReference = length >= minLengthAppendedByReference || !string->is8Bit();
-    if (isAppendedByReference && length < minLengthAppendedByReference) {
-        if (std::optional<std::span<const char16_t>> units = flatUnitsOf(string); units && WTF::charactersAreAllLatin1(*units))
-            return append(globalObject, *units);
-    }
     AppendResult result = isAppendedByReference ? addSegment(globalObject, string) : appendCharactersOf(globalObject, string);
     if (wasEmpty && result == AppendResult::Appended) {
         m_lastString.set(vm, this, string);
@@ -647,24 +625,32 @@ JSString* StringBuilderStorage::createStringFromPieces(JSGlobalObject* globalObj
         pieces.append(piece);
     });
 
+    auto is8Bit = [](const Piece& piece) {
+        return !piece.string || piece.string->is8Bit();
+    };
+    // A 16-bit rope may have 8-bit parts, and a piece of the text that lies in an 8-bit part is an 8-bit string.
+    auto isFiber = [&](const Piece& piece) {
+        return piece.string && (piece.length >= minFiberLength || (!piece.string->is8Bit() && piece.string->isRope() && !piece.string->isSubstring()));
+    };
     JSRopeString::RopeBuilder<RecordOverflow> fibers(vm);
     size_t runStart = 0;
     for (size_t index = 0; index <= pieces.size(); ++index) {
-        bool hasPiece = index < pieces.size();
-        if (hasPiece && (!pieces[index].string || pieces[index].length < minFiberLength))
+        bool hasFiber = index < pieces.size() && isFiber(pieces[index]);
+        if (index < pieces.size() && !hasFiber && (index == runStart || is8Bit(pieces[index]) == is8Bit(pieces[runStart])))
             continue;
         if (index > runStart) {
             JSString* run = createFlatRun(globalObject, pieces.span().subspan(runStart, index - runStart));
             RETURN_IF_EXCEPTION(scope, nullptr);
             fibers.append(run);
         }
-        if (hasPiece) {
+        runStart = index;
+        if (hasFiber) {
             const Piece& piece = pieces[index];
             JSString* fiber = piece.length == piece.string->length() ? piece.string : jsSubstring(globalObject, piece.string, 0, piece.length);
             RETURN_IF_EXCEPTION(scope, nullptr);
             fibers.append(fiber);
+            runStart = index + 1;
         }
-        runStart = index + 1;
     }
     if (fibers.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
@@ -886,6 +872,23 @@ JSString* StringBuilderStorage::concatenate(JSGlobalObject* globalObject, Instan
             return key;
     }
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // Beside a 16-bit string each part stays a part of a rope: a piece of the text that lies in an 8-bit part is an 8-bit string.
+    bool hasWidePart = std::ranges::any_of(primitives, [](EncodedJSValue primitive) {
+        JSValue value = JSValue::decode(primitive);
+        return value.isString() && !asString(value)->is8Bit();
+    });
+    if (hasWidePart) [[unlikely]] {
+        JSRopeString::RopeBuilder<RecordOverflow> parts(vm);
+        for (EncodedJSValue primitive : primitives) {
+            JSString* part = JSValue::decode(primitive).toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (!parts.append(part)) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return nullptr;
+            }
+        }
+        return parts.release();
+    }
     StringBuilderStorage* storage = acquire(instance);
     AppendResult result = storage->append(globalObject, primitives);
     EXCEPTION_ASSERT(!!scope.exception() == (result == AppendResult::Failed));
@@ -1089,6 +1092,23 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderAppendString, void, (Instance*
     [[clang::musttail]] return appendAnyString(instance, builder, string);
 }
 
+struct NarrowPart {
+    std::span<const Latin1Character> span() const LIFETIME_BOUND { return std::span { characters }.first(length); }
+
+    std::array<Latin1Character, 2> characters;
+    size_t length;
+};
+
+// A part of a 16-bit string is an 8-bit string if it is one Latin-1 unit or two ASCII units.
+static ALWAYS_INLINE std::optional<NarrowPart> narrowPartOf(std::span<const char16_t> units)
+{
+    if (units.size() == 1 && units[0] <= maxSingleCharacterString)
+        return NarrowPart { { static_cast<Latin1Character>(units[0]) }, 1 };
+    if (units.size() == 2 && isASCII(units[0] | units[1]))
+        return NarrowPart { { static_cast<Latin1Character>(units[0]), static_cast<Latin1Character>(units[1]) }, 2 };
+    return std::nullopt;
+}
+
 static void appendStringRange(JSGlobalObject* globalObject, StringBuilderStorage& storage, JSString* base, int32_t start, int32_t end, Entry entry)
 {
     VM& vm = globalObject->vm();
@@ -1098,7 +1118,9 @@ static void appendStringRange(JSGlobalObject* globalObject, StringBuilderStorage
     unsigned length = end - start;
     if (!length)
         return;
-    if (length < storage.minLengthAppendedByReference()) {
+    // A piece of a 16-bit rope may lie in an 8-bit part of it.
+    bool mayHaveNarrowParts = !base->is8Bit() && base->isRope() && !base->isSubstring();
+    if (length < storage.minLengthAppendedByReference() && !mayHaveNarrowParts) {
         auto view = base->view(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         if (view->is8Bit()) {
@@ -1106,11 +1128,9 @@ static void appendStringRange(JSGlobalObject* globalObject, StringBuilderStorage
             storage.append(globalObject, view->span8().subspan(start, length));
             return;
         }
-        // One wide character anywhere makes a whole source text wide. Most pieces of it are plain.
-        std::span<const char16_t> units = view->span16().subspan(start, length);
-        if (WTF::charactersAreAllLatin1(units)) {
+        if (std::optional<NarrowPart> part = narrowPartOf(view->span16().subspan(start, length))) {
             scope.release();
-            storage.append(globalObject, units);
+            storage.append(globalObject, part->span());
             return;
         }
     }
@@ -1271,9 +1291,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderAppendStringRange, uint8_
     size_t room = byteCast<uint8_t>(reinterpret_cast<StackStringBuilder*>(builder)->limit) - cursor;
     if (impl && !impl->is8Bit() && start >= 0 && start <= end && static_cast<unsigned>(end) <= impl->length() && static_cast<size_t>(end - start) <= std::min<size_t>(room, StackStringBuilder::minLengthAppendedByReference - 1)) {
         size_t length = end - start;
-        std::span<const char16_t> units = impl->span16().subspan(start, length);
-        if (WTF::charactersAreAllLatin1(units)) {
-            StringImpl::copyCharacters(std::span<Latin1Character> { byteCast<Latin1Character>(cursor), length }, units);
+        if (std::optional<NarrowPart> part = narrowPartOf(impl->span16().subspan(start, length))) {
+            StringImpl::copyCharacters(std::span<Latin1Character> { byteCast<Latin1Character>(cursor), length }, part->span());
             return { cursor + length, nullptr };
         }
     }

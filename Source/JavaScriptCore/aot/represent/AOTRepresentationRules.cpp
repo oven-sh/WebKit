@@ -160,6 +160,7 @@ static Representation wantedByKind(const RepresentationInputs& inputs, OperandKi
     case OperandKind::KeyOrder:
     case OperandKind::FlatString:
     case OperandKind::CodeAddress:
+    case OperandKind::JSONHolders:
     case OperandKind::BuilderCursor:
         return representationOf(*opaqueKindOf(kind));
     }
@@ -653,11 +654,24 @@ static bool storesAsElement(const Terminator&, uint32_t)
     return false;
 }
 
+// A position becomes an index, and a test asks which number it is.
+static bool keepsNoBitsOfNumber(const Value& value, uint32_t operandIndex)
+{
+    return value.opcode == Opcode::TypeTest || acceptsIntegerOrDouble(value.opcode, operandIndex);
+}
+
+static bool keepsNoBitsOfNumber(const Terminator& terminator, uint32_t)
+{
+    return terminator.kind == TerminatorKind::Switch;
+}
+
 template<typename User>
 static bool takesAnyNaN(const User& user, uint32_t operandIndex)
 {
     std::optional<InlineBuiltin> builtin = inlineBuiltinOf(user);
-    return handsBitsOfNaNOnToResult(user) || storesAsElement(user, operandIndex) || (builtin && (builtinsThatMoveBytes.contains(*builtin) || builtinsThatInspectNumbers.contains(*builtin)));
+    if (builtin == InlineBuiltin::ArrayPush)
+        return !!user.variadicOperandIndex(operandIndex);
+    return handsBitsOfNaNOnToResult(user) || storesAsElement(user, operandIndex) || keepsNoBitsOfNumber(user, operandIndex) || (builtin && (builtinsThatMoveBytes.contains(*builtin) || builtinsThatInspectNumbers.contains(*builtin)));
 }
 
 static bool convertsOperand(const Value& value)

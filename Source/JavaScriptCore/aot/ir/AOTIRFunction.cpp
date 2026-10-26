@@ -10,6 +10,7 @@
 
 #include "AOTCFG.h"
 #include "AOTDiagnostics.h"
+#include "AOTObservableOperations.h"
 #include "AOTProvisionalFunctions.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTStringArena.h"
@@ -430,6 +431,8 @@ bool compactFunction(Function& function, Renumbering* renumbering)
         return false;
 
     Vector<ValueID> movedValues = renumberValues(function, numberOfListedValues);
+    if (ReasonsForOperationsThatWent* listener = function.listenerForOperationsThatGo()) [[unlikely]]
+        listener->didRenumber(movedBlocks.span(), movedValues.span());
     if (renumbering)
         *renumbering = { WTF::move(movedBlocks), WTF::move(movedValues) };
     if (valuesAreTypedAsDefined)

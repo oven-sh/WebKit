@@ -167,6 +167,24 @@ static Vector<uint32_t> findLayoutsOfMembers(const ValueFlowResultInputs& inputs
     return layouts;
 }
 
+// The reads that an iteration over an array becomes have no site of their own: the open says it for them.
+static void findOpensOfUndecidedStorage(const ValueFlowResultInputs& inputs, FlowApplication& application, ValueSetID arraysThatMustNotBeConverted)
+{
+    ValueSetMakers makers(inputs);
+    forEachIndexInParallel(inputs.loops(), inputs.program.functions.size(), [&](unsigned index, unsigned worker) {
+        if (!inputs.isReached(FunctionID(index)) || !inputs.build.isEnabled(FlowResultKind::ReceiverSets, index))
+            return;
+        for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
+            if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::IteratorOpen)
+                continue;
+            ValueSetMaker& maker = makers.of(worker);
+            ValueSetID held = inputs.possibleValuesOf(maker, inputs.bodies().operandsOf(statement)[OperandIndex::IteratorOpen::iterable]);
+            if (maker.intersect(held, arraysThatMustNotBeConverted) == ValueSets::nothing)
+                application.bodies[index].opensOfUndecidedStorage.append(statement.site);
+        }
+    });
+}
+
 void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types, FlowResultTables& tables)
 {
     using ListedReceiversKnownToWorker = HashMap<uint64_t, const ListedReceivers*, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
@@ -322,8 +340,10 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
     };
 
     ValueSetID arraysThatMustNotBeConverted = inputs.containers ? inputs.containers->arraysThatMustNotBeConverted : ValueSets::nothing;
-    if (arraysThatMustNotBeConverted != ValueSets::nothing)
+    if (arraysThatMustNotBeConverted != ValueSets::nothing) {
         tables.sites.receiversThatMayHaveDecidedStorage.fill(true, tables.application->accessSites.numberOfSites());
+        findOpensOfUndecidedStorage(inputs, *tables.application, arraysThatMustNotBeConverted);
+    }
     stampOperands<hasReceiverStamp, receiverOperandOf, &FlowBodyUpdate::accesses>(inputs, types, tables, FlowResultKind::ReceiverSets, StatisticID::FlowAccessesOfUnknownReceivers, [&](const StampedOperand& receiver) {
         ValueID site = receiver.statement.site;
         if (arraysThatMustNotBeConverted != ValueSets::nothing && receiver.maker.intersect(receiver.held, arraysThatMustNotBeConverted) == ValueSets::nothing)

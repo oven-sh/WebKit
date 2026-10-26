@@ -181,6 +181,7 @@ struct ArmState {
     ValueID nextMethod;
     ValueID isSteppedWithoutCall;
     bool callsSharedFunctions { false };
+    bool storageIsUndecided { false };
     std::optional<StateVariable> position;
     std::optional<StateVariable> table;
 };
@@ -272,7 +273,12 @@ struct IterationExpansion {
     ValueID appendBuiltin(BuiltinID id) { return builder.append(makeWith(Opcode::Builtin, { }, &Value::setBuiltin, id)); }
     ValueID appendPropGet(ValueID object, auto name) { return builder.append(makeWith(Opcode::PropGet, { object }, &Value::setKey, keyOf(name))); }
     ValueID appendLength(ValueID object) { return builder.append(Opcode::ToLength, { appendPropGet(object, BuiltinNames::length) }); }
-    ValueID appendElement(ValueID object, ValueID index) { return builder.append(makeWith(Opcode::ElemGet, { object, index }, &Value::setKeyIsIntegral, true)); }
+    ValueID appendElement(const ArmState& state, ValueID index)
+    {
+        Value read = makeWith(Opcode::ElemGet, { state.subject, index }, &Value::setKeyIsIntegral, true);
+        read.setStorageIsUndecided(state.storageIsUndecided);
+        return builder.append(WTF::move(read));
+    }
     ValueID appendRequireObject(ValueID value, RuntimeErrorKind kind) { return builder.append(makeWith(Opcode::RequireObject, { value }, &Value::setRuntimeError, kind)); }
     ValueID appendUnspecifiedLike(ValueID model) { return builder.append(makeWith(Opcode::Unspecified, { }, &Value::setValueType, function.at(model).type)); }
     ValueID appendAwait(ValueID value) { return Typed::appendAwait(builder, value, held); }
@@ -908,7 +914,7 @@ static void emitElementStep(IterationExpansion& expansion, const ArmState& state
         read.setKeyIsIntegral(true);
         element = builder.append(WTF::move(read));
     } else if (state.arm.kind != JSC::IterationKind::Keys)
-        element = expansion.appendElement(state.subject, index);
+        element = expansion.appendElement(state, index);
     expansion.define(*state.position, expansion.appendIncrement(index, 1));
     ValueID done = builder.appendBoolean(false);
     expansion.finishStep(done, expansion.appendValueOfKind(state.arm.kind, index, element));
@@ -954,8 +960,8 @@ static void emitOwnEntriesStep(IterationExpansion& expansion, const ArmState& st
 {
     IRBuilder::ProvenBranch branch = expansion.branchOnInRange(state, expansion.appendLength(state.subject));
     ValueID index = branch.provenOnTaken;
-    ValueID key = expansion.appendElement(state.subject, index);
-    ValueID value = expansion.appendElement(state.subject, expansion.appendIncrement(index, 1));
+    ValueID key = expansion.appendElement(state, index);
+    ValueID value = expansion.appendElement(state, expansion.appendIncrement(index, 1));
     expansion.define(*state.position, expansion.appendIncrement(index, 2));
     expansion.finishStep(expansion.builder.appendBoolean(false), expansion.appendPair(key, value));
     expansion.finishStepAsDoneIn(branch.notTaken);
@@ -2001,6 +2007,7 @@ struct ArmDispatcher {
     BlockID head { open.block };
     BlockID tail { function.at(head).terminator.next().block };
     IterationPlan plan { };
+    bool storageIsUndecided { false };
     bool mayBeUsedAfterDone { true };
     Vector<ProgramPoint, 2> cutsAfterLastCloses { };
     bool hasCopyPerArm { true };
@@ -2018,6 +2025,9 @@ struct ArmDispatcher {
     {
         RELEASE_ASSERT(open.placement == ValuePlacement::InBlock && function.at(head).terminator.next().arguments.isEmpty());
         plan = planIteration(pass, iteration);
+        // Flow has answered for the iterable. An arm may walk another object: the receiver of the call that made the iterator.
+        const Value& opened = function.at(iteration.open);
+        storageIsUndecided = opened.storageIsUndecided() && plan.armSources.isEmpty() && plan.source == opened.iterableOperand();
         BitVector liveRegion = blockSetOf(function, region.span());
         mayBeUsedAfterDone = findsOperationAfterDone(liveRegion);
         if (plan.arms.size() <= 1)
@@ -2152,7 +2162,7 @@ struct ArmDispatcher {
 
     void openArm(const IterationArm& arm, ValueID subject)
     {
-        states.append(ArmState { .arm = arm, .patternRead = patternReads[states.size()], .subject = subject });
+        states.append(ArmState { .arm = arm, .patternRead = patternReads[states.size()], .subject = subject, .storageIsUndecided = storageIsUndecided });
         ArmState& state = states.last();
         switch (arm.form) {
         case IterationForm::Array:
@@ -2429,7 +2439,7 @@ struct ArmDispatcher {
         } else if (state.patternRead == PatternRead::ByIndex) {
             ValueID index = builder.appendInteger(*original.stepIndex());
             ValueID isPastEnd = builder.append(Opcode::LogicalNot, { builder.append(Opcode::Less, { index, expansion.appendLength(state.subject) }) });
-            expansion.finishStep(isPastEnd, expansion.appendElement(state.subject, index));
+            expansion.finishStep(isPastEnd, expansion.appendElement(state, index));
         } else
             emitArmStep(expansion, state, request);
     }

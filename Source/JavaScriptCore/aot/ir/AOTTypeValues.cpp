@@ -44,8 +44,9 @@ static StatisticID statisticOf(CastResolution cast)
         return StatisticID::RequestsResolvedToUpcast;
     case CastResolution::Check:
         return StatisticID::RequestsResolvedToCheck;
-    case CastResolution::Unresolved:
     case CastResolution::Assume:
+        return StatisticID::RequestsResolvedToClaim;
+    case CastResolution::Unresolved:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -281,6 +281,20 @@ static ShownFunctions findShownFunctions(const DescribedFunction& described)
     return shownFunctions;
 }
 
+static void describeConstructionStart(const Program& program, const ShownFunction& shown, bool siteConstructs, SitePosition& position)
+{
+    if (shown.positionInBuiltin)
+        return;
+    ModuleID module = program.at(shown.id).module;
+    const ConstructionStart* construction = program.findConstructionReportedAt(module, position.sourceOffset);
+    // A construction may have become an allocation and a call of the body.
+    if (!construction || (construction->isWrittenAsCall && !siteConstructs))
+        return;
+    LineColumn lineColumn = program.lineColumnFor(module, construction->start);
+    position.constructionStartLine = lineColumn.line;
+    position.constructionStartColumn = lineColumn.column;
+}
+
 static Vector<SitePosition> describePositions(const DescribedFunction& described, const Vector<RecordedSite>& renumbered)
 {
     const Program& program = described.program;
@@ -291,8 +305,10 @@ static Vector<SitePosition> describePositions(const DescribedFunction& described
     positions.append(positionIn(program, shownFunctions[0], outermost.position, 0));
     if (isDefaultConstructor(program, outermost))
         positions[0].column = startOfBuiltinFunction.column;
-    for (const RecordedSite& site : renumbered)
+    for (const RecordedSite& site : renumbered) {
         positions.append(positionIn(program, shownFunctions[site.origin.inlineFrame], site.origin.position, site.origin.inlineFrame));
+        describeConstructionStart(program, shownFunctions[site.origin.inlineFrame], isConstructOf(site.kind), positions.last());
+    }
     return positions;
 }
 

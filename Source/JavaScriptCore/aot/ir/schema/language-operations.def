@@ -21,7 +21,7 @@ operation PrivateDefine (object: Any/inspects, token: ClassToken/inspects, layou
 operation PrivateHas (object: Any/inspects, token: ClassToken/inspects, layout: Layout, field: Field, with AccessStamp) -> natural(boolean) ; reads(ObjectFields, NamedProperties, ShapeWords) throws by Access ; access = Has ; receiver = object ; interpreted = Test ; accessClass = ByName ; runtime = PrivateHas ; branches = May ; flow = TableProves ; flowRule = Heap
 
 family Iteration AsRead..AsRead
-operation IteratorOpen (iterable: Any/retains(result)+runs(Iterate), iteratorKind: IteratorKind, elementCount?: UInt32) [isDestructuring hasRest isDelegating] -> natural(IteratorState) ; Allocates throws ; removedBy = ExpandIteration ; flow = Copies ; flowRule = Iteration
+operation IteratorOpen (iterable: Any/retains(result)+runs(Iterate), iteratorKind: IteratorKind, elementCount?: UInt32) [isDestructuring hasRest isDelegating | engine storageIsUndecided] -> natural(IteratorState) ; Allocates throws ; removedBy = ExpandIteration ; flow = Copies ; flowRule = Iteration
 operation IteratorResume (iterator: IteratorState/inspects+runs(Iterate), sent?: Any/retains, iteratorKind: IteratorKind, resumeMode: ResumeMode, stepIndex?: UInt32, held...: Convertible/retains) [readsValueWhenDone] -> results(IteratorResumeResult: natural(boolean), unknown) ; unknownCode suspends ; removedBy = ExpandIteration ; flow = Copies ; flowRule = Iteration
 operation IteratorClose (iterator: IteratorState/inspects+runs(Iterate), iteratorKind: IteratorKind, completion: IteratorCompletion, held...: Convertible/retains) -> none ; unknownCode suspends ; removedBy = ExpandIteration ; flow = Copies ; flowRule = Iteration
 
@@ -33,6 +33,7 @@ family Coroutine AsRead..Prepared
 operation Await (value: Any/retains+runs(Thenable), held...: Convertible/retains) [takesExtraTurn] -> unknown => declared(value) ; unknownCode suspends ; requires = IsAsync ; boundTo = Frame ; flow = Copies ; flowRule = Await
 operation Yield (value: Any/retains, held...: Convertible/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; requires = IsGenerator ; boundTo = Frame ; flow = Copies ; flowsWithoutRule = true
 operation InitialYield (held...: Convertible/retains) -> none ; unknownCode suspends ; requires = IsGenerator ; boundTo = Frame ; flow = Copies ; flowsWithoutRule = true
+operation ReadScope (values...: Convertible/inspects) -> none ; none ; AsRead..AsRead ; removedBy = ListLiveValuesAtSuspensions ; flow = Copies ; flowsWithoutRule = true
 
 family Module AsRead..Placed
 operation ModuleNamespace (module: Module(Target), phase: ImportPhase) -> declared(module) ; unknownCode ; runtime = GetModuleNamespace ; flow = Copies ; flowRule = Module

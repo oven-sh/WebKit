@@ -144,21 +144,6 @@ static bool isEvaluatedWithImporter(ValueFlowRuleContext& context, const ModuleR
     return context.isReached(program.at(request.target).body) || exportsUsedNameAgain(context, request.target);
 }
 
-static bool hasExportTable(ModuleKind kind)
-{
-    switch (kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::Data:
-        return true;
-    case ModuleKind::CommonJs:
-    case ModuleKind::RuntimeSource:
-    case ModuleKind::Runtime:
-    case ModuleKind::External:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static bool mayHaveExportsNobodyLists(const Module& module)
 {
     if (module.kind != ModuleKind::SourceText || module.exportRule != SyntheticExportRule::None)
@@ -284,7 +269,7 @@ static ValueFlowSources defaultExportOf(ValueFlowRuleContext& context, ModuleID 
 {
     const Program& program = context.program();
     const Module& module = program.at(id);
-    if (!hasExportTable(module.kind))
+    if (!hasExportTableOf(module.kind))
         return moduleExportsValueOf(context, id);
     if (const ModuleExport* entry = findExport(module, program.stringOf(BuiltinNames::defaultKeyword)))
         return exportedValueOf(context, *entry);

@@ -9,7 +9,7 @@
 module m0 path="main.js" displayPath="main.js"
 
 # k = s[k], four times, with s: number[] and k: number
-function f0 name="chainOfReads" parameters=[{type=Array<number>}, {type=number}] results=[{type=number}] {
+function f0 name="chainOfReads" parameters=[{type=Array<number>}, {type=number}] results=[{type=number flags=[IsExpected]}] {
     v2 = ElemGet v0, v1
     v3 = Check v2 expectedType=number
     v4 = ElemGet v0, v3

@@ -1,4 +1,4 @@
-# The generic version stores into a capture what flow has proven of the capture, so it assumes that type in front of the closure. It does so in every generic block:
+# The generic version stores into a capture what flow has proven of the capture. Flow says so in front of the closure, and what holds in every version stays in every generic block:
 # also in the one that is cut off behind a value that is live where the generic version comes back, as a block with a handler is
 # FORM: Prepared
 # RUN: pass AddGenericVersion VerifyProgram
@@ -18,15 +18,17 @@ function f0 name="outer" parameters=[{type=anything}, {type=anything}] results=[
     v4 = Construct v3, -, v2
     v5 = AssumeType v4 provenType=Set<anything, proven, pristine[Storage, Names]> [isBehindChecks]
     v6 = Add v2, v2
-    v7 = NewClosure v5 function=f1
-    v8 = Call v1, -, v7
-    v9 = Check v8 expectedType=number
-    v10 = Add v9, v6
-    Return v10
-  b2() role=CatchHandler:
-    v11 = CatchValue
-    v12 = Integer integer=-1
+    v7 = AssumeType v5 provenType=Set<anything, proven, pristine[Storage, Names]>
+    v8 = NewClosure v7 function=f1
+    v9 = Call v1, -, v8
+    v10 = Check v9 expectedType=number
+    v11 = Add v10, v6
+    v12 = AssumeType v11 provenType=number
     Return v12
+  b2() role=CatchHandler:
+    v13 = CatchValue
+    v14 = Integer integer=-1
+    Return v14
 }
 function f1 name="inner" kind=Arrow captures=[{type=Set<anything, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
     Return v0

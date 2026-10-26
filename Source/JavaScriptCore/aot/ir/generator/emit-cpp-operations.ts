@@ -137,14 +137,13 @@ function lookup(
   valueOf: (entry: Entry) => string,
   defaultValue: string | null,
 ): EntryEmitter {
-  return (entries, enumName, parameter) =>
-    constexprSwitch({
-      signature: `${type} ${name}(${enumName} ${parameter})`,
-      subject: parameter,
-      enumName,
-      cases: entries.map(entry => ({ label: entry.name, value: valueOf(entry) })),
-      defaultValue,
-    });
+  return (entries, enumName, parameter) => {
+    const cases = entries.map(entry => ({ label: entry.name, value: valueOf(entry) }));
+    if (defaultValue !== null && cases.every(({ value }) => value === defaultValue))
+      return [`constexpr ${type} ${name}(${enumName}) { return ${defaultValue}; }`];
+    const signature = `${type} ${name}(${enumName} ${parameter})`;
+    return constexprSwitch({ signature, subject: parameter, enumName, cases, defaultValue });
+  };
 }
 
 function operandsOf(entry: Entry): Operand[] {

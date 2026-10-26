@@ -341,22 +341,7 @@ inline bool isLookupOfCalleeByCall(const ValueFlowResultInputs& inputs, const Va
     return calleeKey && key.name() == ValueFlowName::property(calleeKey) && inputs.sets().onlyMember(key.set);
 }
 
-inline bool hasObjectsThatCodeAlters(LayoutKind kind)
-{
-    switch (kind) {
-    case LayoutKind::Record:
-    case LayoutKind::Instance:
-    case LayoutKind::Container:
-        return true;
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
-    case LayoutKind::BuiltinResult:
-    case LayoutKind::ModuleNamespace:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
+inline bool hasObjectsThatCodeAlters(LayoutKind kind) { return hasObjectsThatCodeAltersOf(kind); }
 
 inline bool isSiteOfTypedResultThatNothingAllocates(const ValueFlowResultInputs& inputs, ValueFlowObjectID object)
 {

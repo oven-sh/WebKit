@@ -5,7 +5,7 @@
 # CHECK: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="filledByTestOnOneEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+function f0 name="filledByTestOnOneEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=number flags=[IsExpected]}] {
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = TypeTest v0 testedType=number|string

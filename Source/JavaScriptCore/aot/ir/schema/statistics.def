@@ -10,7 +10,7 @@ enum StatisticID {
     TypesInterned ProvisionalTypesInterned LayoutSetsInterned CalleeSetsInterned
     FunctionTypesWithoutMembers FunctionTypesWithOneMember FunctionTypesWithFewMembers FunctionTypesWithManyMembers
     TaggedLayoutsAllocated TaggedLayoutsNeverAllocated
-    RequestsResolvedToNothing RequestsResolvedToUpcast RequestsResolvedToCheck ConversionsOutsideFamily
+    RequestsResolvedToNothing RequestsResolvedToUpcast RequestsResolvedToCheck RequestsResolvedToClaim ConversionsOutsideFamily
     FlowAllocationSites FlowAllocationClasses FlowProvenPositions FlowUnprovenPositions
     FlowNarrowedPositions FlowProvenContentsSites FlowRemovedChecks FlowRemainingChecks
     FlowUnreachedFunctions FlowAppendedFields

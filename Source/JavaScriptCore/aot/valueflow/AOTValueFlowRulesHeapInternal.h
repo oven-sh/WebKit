@@ -201,6 +201,7 @@ private:
     bool isHandedOutThroughPlaceholder(BuiltinID member, const HeapKey&);
     bool mayHoldUndeclaredProperty(ClimbingSet objects, const HeapKey&);
     bool m_undescribedNativeCodeIsOfEngine { false };
+    bool m_namesFunctionWhereItIsMade { false };
     bool isNameThatTableDoesNotListOnGlobalObject(const HeapKey&) const;
     bool namesObjectOfAccess() const;
     ClimbingSet settersFoundFrom(ClimbingSet start, const HeapKey&);
@@ -259,7 +260,7 @@ private:
     ClimbingSet holdersOfExportsListedBesideUnknownObjectInProgram(const ValueFlowOperand& object, ClimbingSet receivers) { return object.node && mayBeUnknownObject(receivers) && isInProgramCode() ? m_context.valueWithin(ClimbingSet(m_universe.holdersOfLibraryExports()), object.node) : ClimbingSet(); }
     void readExportsOfListedHolders(const ValueFlowOperand& object, ClimbingSet receivers);
     bool m_keepsHoldersOfExportsItStartsFrom { false };
-    void noteClosuresWrittenUnder(const HeapKey&, ClimbingSet receivers);
+    void noteClosuresThatMayBeRenamed(const ValueFlowOperand& object, const HeapKey&, ClimbingSet receivers);
     void notePrototypeObjectsListedAtWrite(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     void store(const ValueFlowOperand& object, const HeapKey&, const ValueFlowOperand& value);
     void callSettersOfReceivers(ClimbingSet start, const HeapKey&, const ValueFlowOperand& value);

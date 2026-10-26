@@ -1,0 +1,83 @@
+# function result(x: number) { return x + 1 }   function variable(x: number) { held = x + 1 }   function argument(x: number) { return taker(x + 1) }   function capture(x: number) { const sum = x + 1; return () => sum }
+# function itself(x: number) { return x }   Each is called with 1 and with "a", so the check of its parameter stays.
+# Flow follows what a check turns away through the same operations: the sum is an integer or a string, and so is every position that takes it. By the rules the sum behind the check is a number, which lies inside that type
+# as long as the check stands. The check may go, so flow writes what it holds of the position in front of each store, as a type that holds in every version.
+# The very value that the check tests gets no such type: the position that takes it is only expected
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass
+# RUN: pipeline ApplyFlowResults
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="held" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = String string="a"
+    v2 = CallDirect v0 function=f1
+    v3 = CallDirect v1 function=f1
+    v4 = CallDirect v0 function=f2
+    v5 = CallDirect v1 function=f2
+    v6 = CallDirect v0 function=f3
+    v7 = CallDirect v1 function=f3
+    v8 = CallDirect v0 function=f5
+    v9 = CallDirect v1 function=f5
+    v10 = CallDirect v0 function=f7
+    v11 = CallDirect v1 function=f7
+    v12 = Call v8
+    v13 = Call v9
+    Return
+# CHECK: int|whole|string = CallDirect v0 function=f1
+# CHECK: anything ~ 1|"a" = CallDirect v0 function=f7
+}
+function f1 name="result" parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=number
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    Return v3
+# CHECK: [[sum1]]: int|whole = Add
+# CHECK-NEXT: [[held1]]: int|whole = AssumeType [[sum1]] provenType=int|whole|string
+# CHECK-NEXT: Return [[held1]]
+}
+function f2 name="variable" parameters=[{type=number flags=[IsExpected]}] results=[{type=undefined}] {
+    v1 = Check v0 expectedType=number
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    PutModuleVariable v3 variable=g0
+    Return
+# CHECK: [[sum2]]: int|whole = Add
+# CHECK-NEXT: [[held2]]: int|whole = AssumeType [[sum2]] provenType=int|whole|string
+# CHECK-NEXT: PutModuleVariable [[held2]] variable=g0
+}
+function f3 name="argument" parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=number
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    v4 = CallDirect v3 function=f4
+    Return v4
+# CHECK: [[sum3]]: int|whole = Add
+# CHECK-NEXT: [[held3]]: int|whole = AssumeType [[sum3]] provenType=int|whole|string
+# CHECK-NEXT: = CallDirect [[held3]] function=f4
+}
+function f4 name="taker" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f5 name="capture" parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=number
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    v4 = NewClosure v3 function=f6
+    Return v4
+# CHECK: [[sum5]]: int|whole = Add
+# CHECK-NEXT: [[held5]]: int|whole = AssumeType [[sum5]] provenType=int|whole|string
+# CHECK-NEXT: = NewClosure [[held5]] function=f6
+}
+function f6 name="inner" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f7 name="itself" parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=number
+    Return v1
+# CHECK: [[tested]]: number = Check v0 expectedType=number
+# CHECK-NEXT: [[narrowed]]: 1 = AssumeType [[tested]] provenType=1|"a" [isBehindChecks]
+# CHECK-NEXT: Return [[narrowed]]
+}

@@ -1143,8 +1143,11 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
             answer(m_context.read(holdersOfExports, value));
             takeGetters(m_context.read(holdersOfExports, getter));
         }
-        if (key.keyClass == HeapKeyClass::Unknown || (key.keyClass == HeapKeyClass::Name && key.name == m_tables.constructorKey()))
-            connect(m_context.nodes().ofHost(ValueFlowHostNode::ConstructorsAboveEscapedInstances), result);
+        if (key.keyClass == HeapKeyClass::Unknown || (key.keyClass == HeapKeyClass::Name && key.name == m_tables.constructorKey())) {
+            ValueFlowNodeID constructors = m_context.nodes().ofHost(ValueFlowHostNode::ConstructorsAboveEscapedInstances);
+            connect(m_context.masked(constructors, ValueSets::complement(m_universe.builtinObjects())), result);
+            connect(m_context.masked(constructors, m_universe.builtinObjects()), ValueFlowProgramNodes::escaped());
+        }
         bool mayBeCalled = mayCallWhateverHasEscaped(m_context);
         Members handedOutAsUnknownObject;
         forEachMemberUnder(holdersFoundThroughUnknownObject(key), key, [&](BuiltinID member, ModuleID module) {

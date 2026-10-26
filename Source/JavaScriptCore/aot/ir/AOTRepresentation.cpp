@@ -124,6 +124,7 @@ Representation representationOf(OpaqueKind kind)
     case OpaqueKind::Cursor:
     case OpaqueKind::KeyOrder:
     case OpaqueKind::CodeAddress:
+    case OpaqueKind::JSONHolders:
     case OpaqueKind::BuilderCursor:
         return Representation::RawWord;
     }

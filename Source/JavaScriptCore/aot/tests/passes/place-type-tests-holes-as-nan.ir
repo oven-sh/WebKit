@@ -196,7 +196,7 @@ function f5 name="returned" parameters=[{type=Array<number, proven>}, {type=int[
 # NONE-NOT: IsPristine
 
 # What the array holds is only expected, so the read by key may give anything and a check stands between it and the sum: a check tells undefined from NaN
-function f6 name="contentsOnlyExpected" parameters=[{type=Array<number>}, {type=int[0, 1000]}] results=[{type=number}] {
+function f6 name="contentsOnlyExpected" parameters=[{type=Array<number>}, {type=int[0, 1000]}] results=[{type=number flags=[IsExpected]}] {
     v2 = Integer integer=0
     v3 = Double number=0.5
     Jump -> next b1(v2, v3)

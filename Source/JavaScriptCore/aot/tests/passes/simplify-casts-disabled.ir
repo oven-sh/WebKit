@@ -6,7 +6,7 @@
 # CHECK: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="repeatedBelow" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+function f0 name="repeatedBelow" parameters=[{type=anything}, {type=boolean}] results=[{type=number flags=[IsExpected]}] {
     v2 = Check v0 expectedType=number
     Branch v1 -> taken b1(), notTaken b2()
   b1():
