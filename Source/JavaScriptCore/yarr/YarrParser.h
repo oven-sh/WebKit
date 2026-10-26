@@ -103,7 +103,7 @@ public:
      */
     ErrorCode parse()
     {
-        if (m_size > maxPatternSize && (m_size > maxPatternSizeWithCharacterClasses || sizeOutsideCharacterClasses() > maxPatternSize))
+        if (m_size > maxPatternSize && (m_size > maxPatternSizeWithCharacterClasses || sizeWithoutPlainCharacterClasses() > maxPatternSize))
             return ErrorCode::PatternTooLarge;
 
         parseTokens();
@@ -2222,59 +2222,68 @@ private:
             m_errorCode = ErrorCode::TooManyCaptures;
     }
 
-    // However long a character class is written, it ends up as one set of characters, which is one term.
-    // A class counts as one character here. The strings of a \q{...} become alternatives, so they count in full.
-    // So does a class with a property escape, which is short to write and a large set.
-    unsigned sizeOutsideCharacterClasses() const
+    // A class of nothing but characters and ranges ends up as one sorted list, however long it is written. It counts as one character.
+    // Anything else in a class can cost far more than its length: \p{L} is about 650 ranges, and [\S--a] goes through every code point.
+    // A class with any of that counts in full.
+    unsigned sizeWithoutPlainCharacterClasses() const
     {
+        auto isSetOfCharacters = [](char32_t escaped) {
+            switch (escaped) {
+            case 'd':
+            case 'D':
+            case 's':
+            case 'S':
+            case 'w':
+            case 'W':
+            case 'p':
+            case 'P':
+            case 'q':
+                return true;
+            default:
+                return false;
+            }
+        };
+
         unsigned size = 0;
         unsigned classDepth = 0;
         unsigned classStart = 0;
-        unsigned sizeBeforeClass = 0;
-        bool inClassStrings = false;
-        bool hasPropertyEscape = false;
+        bool isPlain = true;
         for (unsigned index = 0; index < m_size; ++index) {
             char32_t ch = m_data[index];
+            if (!classDepth)
+                ++size;
             if (ch == '\\') {
-                if (classDepth && !inClassStrings && isUnicodeSetsCompilation() && index + 2 < m_size && m_data[index + 1] == 'q' && m_data[index + 2] == '{') {
-                    inClassStrings = true;
-                    index += 2;
-                    continue;
-                }
-                if (classDepth && isEitherUnicodeCompilation() && index + 1 < m_size && (m_data[index + 1] == 'p' || m_data[index + 1] == 'P'))
-                    hasPropertyEscape = true;
-                ++index;
-                if (!classDepth || inClassStrings)
-                    size += 2;
-                continue;
-            }
-            if (inClassStrings) {
-                if (ch == '}')
-                    inClassStrings = false;
-                else
+                if (++index == m_size)
+                    break;
+                if (!classDepth)
                     ++size;
+                else if (isSetOfCharacters(m_data[index]))
+                    isPlain = false;
                 continue;
             }
             if (!classDepth) {
                 if (ch == '[') {
                     classDepth = 1;
                     classStart = index;
-                    sizeBeforeClass = size;
-                    hasPropertyEscape = false;
+                    isPlain = true;
                 }
-                ++size;
                 continue;
             }
             if (ch == ']') {
-                if (!--classDepth && hasPropertyEscape)
-                    size = sizeBeforeClass + index + 1 - classStart;
-            } else if (ch == '[' && isUnicodeSetsCompilation()) {
-                ++classDepth;
-                ++size;
+                if (!--classDepth && !isPlain)
+                    size += index - classStart;
+                continue;
             }
+            if (!isUnicodeSetsCompilation())
+                continue;
+            if (ch == '[') {
+                ++classDepth;
+                isPlain = false;
+            } else if (index + 1 < m_size && ((ch == '-' && m_data[index + 1] == '-') || (ch == '&' && m_data[index + 1] == '&')))
+                isPlain = false;
         }
-        if (classDepth && hasPropertyEscape)
-            size = sizeBeforeClass + m_size - classStart;
+        if (classDepth && !isPlain)
+            size += m_size - 1 - classStart;
         return size;
     }
 
@@ -2310,7 +2319,7 @@ private:
     UncheckedKeyHashSet<String> m_forwardReferenceNames;
 
     static constexpr unsigned maxPatternSize = 1024 * 1024; // Derived by empirical testing of compile time in PCRE and WREC.
-    static constexpr unsigned maxPatternSizeWithCharacterClasses = 16 * maxPatternSize;
+    static constexpr unsigned maxPatternSizeWithCharacterClasses = 4 * maxPatternSize;
     static constexpr unsigned maxCapturesCount = (1 << 16) / 2; // Derived from V8's configuration.
 };
 

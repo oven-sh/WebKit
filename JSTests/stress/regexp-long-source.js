@@ -17,7 +17,7 @@ function shouldBeTooLarge(source, flags)
 }
 
 const limit = 1024 * 1024;
-const limitWithCharacterClasses = 16 * limit;
+const limitWithCharacterClasses = 4 * limit;
 
 // Few terms, long source: nearly all of it is the \u{...} escapes of the ranges.
 let ranges = "";
@@ -50,31 +50,31 @@ for (const flags of ["u", "iu", "giu", "v"]) {
 const filler = "a".repeat(limit);
 shouldBe(new RegExp(`^[${filler}\\]b]$`).test("]"), true);
 shouldBe(new RegExp(`^[${filler}[]$`).test("["), true);
-shouldBe(new RegExp(`^[${filler}[b]c]$`, "v").test("b"), true);
-shouldBe(new RegExp(`^[${filler}\\q{bc}]$`, "v").test("bc"), true);
-shouldBe(new RegExp(`^[\\q{${filler}}]$`).test("q"), true);
+shouldBe(new RegExp(`^[^${filler}]$`, "v").test("b"), true);
 shouldBeTooLarge(`[b]${filler}`);
 shouldBeTooLarge(`[b\\]]${filler}`);
 shouldBeTooLarge(`\\[${filler}]`);
 shouldBeTooLarge(`[[b]${filler}`);
 shouldBeTooLarge(`[[b]]${filler}`, "v");
-shouldBeTooLarge(`[\\q{${filler}}]`, "v");
+
+// Only a class of characters and ranges is cheap for its length. Any other counts in full.
+for (const [inClass, flags] of [["\\p{L}", "u"], ["\\P{L}", "u"], ["\\S", "u"], ["\\w", ""], ["\\d", "v"], ["[b]", "v"], ["--b", "v"], ["&&b", "v"], ["\\q{bc}", "v"]]) {
+    shouldBeTooLarge(`[${filler}${inClass}]`, flags);
+    shouldBeTooLarge(`[${inClass}${filler}]`, flags);
+    shouldBeTooLarge(`[${filler}${inClass}`, flags);
+}
+shouldBeTooLarge("[\\p{L}a]".repeat(limit / 8 + 1), "u");
+shouldBeTooLarge("[\\S--a]".repeat(limit / 7 + 1), "v");
+shouldBeTooLarge("[[^a]]".repeat(limit / 6 + 1), "v");
+shouldBeTooLarge("[a[\\p{L}]]".repeat(limit / 10 + 1), "v");
+shouldBe(new RegExp(`^[${filler}]\\p{L}[\\S--a][${filler}]$`, "v").test("abba"), true);
+shouldBe(new RegExp(`^[${filler}&&b]$`, "u").test("&"), true);
 
 // Outside of classes the limit is what it was.
 shouldBeTooLarge("a" + filler);
 shouldBeTooLarge("a|".repeat(limit / 2) + "a");
 shouldBeTooLarge("[a]".repeat(limit + 1));
 shouldBeTooLarge("[" + "[a]".repeat(limit) + "]", "v");
-
-// A property escape is a large set, however short it is written. A class with one counts in full.
-shouldBeTooLarge("[\\p{L}a]".repeat(limit / 8 + 1), "u");
-shouldBeTooLarge("[\\P{L}a]".repeat(limit / 8 + 1), "u");
-shouldBeTooLarge("[a[\\p{L}]]".repeat(limit / 10 + 1), "v");
-shouldBeTooLarge(`[\\p{L}${filler}]`, "u");
-shouldBeTooLarge(`[${filler}\\p{L}]`, "u");
-shouldBeTooLarge(`[${filler}\\p{L}`, "u");
-shouldBe(new RegExp(`^[${filler}]\\p{L}[${filler}]$`, "u").test("aba"), true);
-shouldBe(new RegExp(`^[\\p{L}${filler}]$`).test("{"), true);
 
 shouldBe(new RegExp("[" + "a".repeat(limitWithCharacterClasses - 2) + "]").test("a"), true);
 shouldBeTooLarge("[" + "a".repeat(limitWithCharacterClasses - 1) + "]");
