@@ -65,7 +65,8 @@ Boxed HashTableBuiltinEmitter::normalizedNumber(const OperationContext& context,
 {
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     auto anyNumber = [&] {
-        Boxed boxedKey = conversions.boxNumber(key);
+        // Every NaN is one key.
+        Boxed boxedKey = conversions.boxNumber(ImpureNumber(key.value()));
         return select(equal(key, number(0)), boxInt32(word32(0)), boxedKey);
     };
     if (context.shape() != CodeShape::Fast)
