@@ -2432,7 +2432,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImportSettled(globalObject, argument0, argument1, argument2, static_cast<JSPromise::Status>(payload)));
 
     case InternalMicrotask::CompiledModuleImportStep:
-        RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImportStep(argument0, argument1, argument2, payload));
+        RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImportStep(argument0, argument1, payload));
 #endif
 
     case InternalMicrotask::AsyncModuleExecutionResume: {

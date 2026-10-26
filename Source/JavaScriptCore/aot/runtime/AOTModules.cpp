@@ -34,7 +34,6 @@
 #include "ExceptionHelpers.h"
 #include "GlobalObjectMethodTable.h"
 #include "JSCInlines.h"
-#include "JSMicrotask.h"
 #include "JSModuleLoader.h"
 #include "MicrotaskQueueInlines.h"
 #include "ModuleGraphLoadingState.h"
@@ -694,10 +693,17 @@ static void queueImportJob(JSGlobalObject* realm, JSPromise* importPromise, Modu
 void runCompiledModuleImport(JSGlobalObject*, JSValue importPromise, JSValue module, JSValue referrerAsyncOrder)
 {
     auto* promise = uncheckedDowncast<JSPromise>(importPromise);
-    Modules* modules = modulesOf(promise->realm());
-    if (modules->continueCountedImport(promise, module, referrerAsyncOrder))
-        return;
-    modules->continueImport(promise, ModuleID(static_cast<uint32_t>(module.asInt32())), referrerAsyncOrder.isUndefined() ? std::nullopt : std::optional(static_cast<int64_t>(referrerAsyncOrder.asNumber())));
+    modulesOf(promise->realm())->continueImport(promise, ModuleID(static_cast<uint32_t>(module.asInt32())), referrerAsyncOrder.isUndefined() ? std::nullopt : std::optional(static_cast<int64_t>(referrerAsyncOrder.asNumber())));
+}
+
+void runCompiledModuleImportSettled(JSGlobalObject*, JSValue importPromise, JSValue resolution, JSValue module, JSPromise::Status status)
+{
+    auto* promise = uncheckedDowncast<JSPromise>(importPromise);
+    RELEASE_ASSERT(status != JSPromise::Status::Pending);
+    if (status == JSPromise::Status::Rejected)
+        promise->reject(promise->vm(), resolution);
+    else
+        modulesOf(promise->realm())->resolveWithNamespace(promise, ModuleID(static_cast<uint32_t>(module.asInt32())));
 }
 
 // The jobs, one behind the other, in which the loader of `bun run` hands on the namespace object of a module that it has evaluated.
@@ -711,39 +717,19 @@ static constexpr InternalMicrotask jobsOfImportOfEvaluatedModule[] = {
     InternalMicrotask::ImportModuleNamespace,
 };
 
-// Behind the fetch of the root, the making of its record and the entry of the record in the registry.
-static constexpr uint32_t jobInWhichLoaderAsksRoot = 4;
-// The first two find the module loaded and run what is left to run of it.
-static constexpr size_t numberOfJobsBehindEvaluation = std::size(jobsOfImportOfEvaluatedModule) - 2;
-
-// The error is empty where the evaluation has not failed.
-static void queueStepOfImport(JSPromise* importPromise, JSValue module, uint8_t stepsLeft, JSValue error = { })
+static void queueStepOfImport(JSPromise* importPromise, JSValue module, uint8_t stepsLeft)
 {
     JSGlobalObject* realm = importPromise->realm();
-    realm->queueMicrotask(realm->vm(), InternalMicrotask::CompiledModuleImportStep, stepsLeft, importPromise, module, error);
+    realm->queueMicrotask(realm->vm(), InternalMicrotask::CompiledModuleImportStep, stepsLeft, importPromise, module, jsUndefined());
 }
 
-void runCompiledModuleImportStep(JSValue importPromise, JSValue module, JSValue error, uint8_t stepsLeft)
+void runCompiledModuleImportStep(JSValue importPromise, JSValue module, uint8_t stepsLeft)
 {
     auto* promise = uncheckedDowncast<JSPromise>(importPromise);
     if (--stepsLeft)
-        queueStepOfImport(promise, module, stepsLeft, error);
+        queueStepOfImport(promise, module, stepsLeft);
     else
-        modulesOf(promise->realm())->finishImportOfEvaluatedModule(promise, ModuleID(static_cast<uint32_t>(module.asInt32())), error);
-}
-
-void runCompiledModuleImportSettled(JSGlobalObject*, JSValue importPromise, JSValue resolution, JSValue module, JSPromise::Status status)
-{
-    auto* promise = uncheckedDowncast<JSPromise>(importPromise);
-    RELEASE_ASSERT(status != JSPromise::Status::Pending);
-    Modules* modules = modulesOf(promise->realm());
-    ModuleID imported(static_cast<uint32_t>(module.asInt32()));
-    if (modules->isImportedByLoader(imported))
-        queueStepOfImport(promise, module, numberOfJobsBehindEvaluation - 1, status == JSPromise::Status::Rejected ? resolution : JSValue());
-    else if (status == JSPromise::Status::Rejected)
-        promise->reject(promise->vm(), resolution);
-    else
-        modules->resolveWithNamespace(promise, imported);
+        modulesOf(promise->realm())->finishImportOfEvaluatedModule(promise, ModuleID(static_cast<uint32_t>(module.asInt32())));
 }
 
 std::optional<int64_t> Modules::asyncEvaluationOrder(ModuleID module) const
@@ -788,26 +774,6 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
                 return promise;
             }
         }
-        if (isFile && canCountJobsOfImport(module)) {
-            // What the graph needs of the library is loaded at the call, as where the loader is asked.
-            std::unique_ptr<ModuleLinkWalk> linkWalk = takeLinkWalk(module);
-            loadRuntimeModules(*linkWalk);
-            RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
-            keepLinkWalk(WTF::move(linkWalk));
-            JSPromise* promise = JSPromise::create(vm, realm->promiseStructure());
-            if (promise->isThenFastAndNonObservable()) [[likely]] {
-                uint32_t serial = m_serialOfNextCountedImport++;
-                m_countedImports.append(CountedImport { Strong<JSPromise>(vm, promise), module, referrerAsyncOrder, serial });
-                ++m_numberOfCountedImports;
-                if (!m_orderOfCountedJobs.isEmpty()) {
-                    m_orderOfCountedJobs.append(serial);
-                    m_modulesOfCountedImports.set(module.index());
-                }
-                queueImportJob(realm, promise, module, referrerAsyncOrder);
-                return promise;
-            }
-        }
-        handCountedImportsToLoader();
         // `bun run` has loaded a module with the graph that first came to it, and its loader knows the module from then on.
         if (isBuiltinModuleThatLoaderHas || (data(module).kind == ModuleKind::SourceText && !isNotLoaded(module))) {
             ModuleRecord* record = registerWithLoader(module, RecordHolder::Loader);
@@ -815,8 +781,13 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
             if (ModuleRegistryEntry* entry = loader()->registryEntry(record->moduleKey()); entry && entry->record() == record)
                 entry->markLoaded();
         }
-        JSPromise* loaded = askLoaderForImport(module, referrerAsyncOrder);
+        bool wasAskingHost = setIsAskingHost(true);
+        // What the host would answer when it is asked to fetch the module.
+        ModuleRecord* record = isCommonJSFileOrFace(module) ? recordOfCommonJSFile(module) : exposeRecord(module, RecordHolder::Loader);
+        JSPromise* loaded = scope.exception() ? nullptr : loader()->requestImportModuleForKey(realm, record->moduleKey(), Identifier(), nullptr, nullptr, false, referrerAsyncOrder.value_or(-1), record);
+        setIsAskingHost(wasAskingHost);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+        didStartLoad(loaded, module);
         // The program gets a promise of its own, as from import() in code that is not compiled.
         JSPromise* promise = JSPromise::create(vm, realm->promiseStructure());
         scope.release();
@@ -828,7 +799,6 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     }
 
     if (data(module).reachesUncompiledCode() && status(module) == ModuleStatus::Unlinked) {
-        handCountedImportsToLoader();
         ModuleRecord* record = registerWithLoader(module);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         JSPromise* promise = loader()->requestImportModuleForKey(realm, record->moduleKey(), Identifier(), nullptr, nullptr, false, referrerAsyncOrder.value_or(-1));
@@ -840,353 +810,6 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     JSPromise* importPromise = JSPromise::create(*m_instance.vm, realm->promiseStructure());
     queueImportJob(realm, importPromise, module, referrerAsyncOrder);
     return importPromise;
-}
-
-JSPromise* Modules::askLoaderForImport(ModuleID module, std::optional<int64_t> referrerAsyncOrder)
-{
-    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    bool wasAskingHost = setIsAskingHost(true);
-    // What the host would answer when it is asked to fetch the module.
-    ModuleRecord* record = isCommonJSFileOrFace(module) ? recordOfCommonJSFile(module) : exposeRecord(module, RecordHolder::Loader);
-    JSPromise* loaded = scope.exception() ? nullptr : loader()->requestImportModuleForKey(m_instance.globalObject, record->moduleKey(), Identifier(), nullptr, nullptr, false, referrerAsyncOrder.value_or(-1), record);
-    setIsAskingHost(wasAskingHost);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    didStartLoad(loaded, module);
-    return loaded;
-}
-
-bool Modules::isAnythingBeingLoaded() const
-{
-    if (m_instance.vm->m_synchronousModuleQueue || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_fileWhoseJobsWaitForLoader || !m_levelsOfLoads.isEmpty())
-        return true;
-    // The host loads the graph of the entry point.
-    if (!m_firstModuleRequestedByHost || status(*m_firstModuleRequestedByHost) < ModuleStatus::Evaluating)
-        return true;
-    return m_loadsInFlight.containsIf([](const LoadInFlight& load) { return load.promise->status() == JSPromise::Status::Pending; });
-}
-
-// The steps in which the loader of `bun run` loads a graph run no code of the program but the files of the graph. Where those have run, a program sees of the steps only how many jobs they take,
-// as long as it asks for no other module: so long one job counts them, and nothing else is made for the import(). Graphs that share nothing that is left to load are loaded side by side, each in its own steps.
-bool Modules::canCountJobsOfImport(ModuleID root)
-{
-    const ModuleData& moduleData = data(root);
-    if (storedStatus(root) != StoredModuleStatus::Unlinked || !isLoadedWithRequests(root) || isCommonJSFileOrFace(root))
-        return false;
-    if (moduleData.isLoadedByLoader() || moduleData.reachesUncompiledCode() || !moduleData.isSynchronous())
-        return false;
-    if (isAnythingBeingLoaded() || !isNotLoaded(root))
-        return false;
-    if (m_numberOfCountedImports == 1)
-        noteOrderAndModulesOfOnlyCountedImport();
-    return !m_numberOfCountedImports || !m_modulesOfCountedImports.get(root.index());
-}
-
-void Modules::forEachCountedImport(const Invocable<void(CountedImport&)> auto& functor)
-{
-    for (CountedImport* import = m_innermostCountedImportInOwnJob; import; import = import->outerInOwnJob)
-        functor(*import);
-    for (CountedImport& import : m_countedImports)
-        functor(import);
-}
-
-// While the jobs of one import() alone are counted, their number says in which order they ran, and nobody asks what its graph holds.
-void Modules::noteOrderAndModulesOfOnlyCountedImport()
-{
-    if (!m_orderOfCountedJobs.isEmpty())
-        return;
-    forEachCountedImport([&](CountedImport& import) {
-        if (import.jobsOfLoader)
-            return;
-        m_orderOfCountedJobs.appendUsingFunctor(1 + import.jobsRun, [&](size_t) { return import.serial; });
-        m_modulesOfCountedImports.set(import.module.index());
-        if (!import.plan)
-            return;
-        for (const PlanOfLoad::Found& found : import.plan->found)
-            m_modulesOfCountedImports.set(found.module.index());
-    });
-}
-
-static void runJobsThatAreDue(VM& vm, MicrotaskQueue& jobs)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    // What they queue goes to the queue of the realm.
-    jobs.allOf([&](const QueuedTask& job) {
-        auto arguments = job.arguments();
-        runInternalMicrotask(job.globalObject(), vm, job.job(), job.payload(), arguments[0], arguments[1], arguments[2], arguments[3]);
-        return !scope.exception();
-    });
-    jobs.clear();
-}
-
-// As comesToLoadInFlight(), of the graphs whose jobs are counted. A graph that shares nothing with them that is left to load is evaluated beside them, and they are none the wiser.
-bool Modules::comesToCountedImport(ModuleID required)
-{
-    if (!m_numberOfCountedImports)
-        return false;
-    // No graph leads to a root that no module imports.
-    bool mayComeToOne = false;
-    forEachCountedImport([&](CountedImport& import) {
-        if (!import.jobsOfLoader)
-            mayComeToOne |= import.module == required || data(import.module).isImportedByModule() || (import.plan && import.plan->found.size() > 1);
-    });
-    if (!mayComeToOne)
-        return false;
-    noteOrderAndModulesOfOnlyCountedImport();
-    BitVector seen(m_table.size());
-    seen.quickSet(required.index());
-    Vector<ModuleID, 16> modules { required };
-    while (!modules.isEmpty()) {
-        ModuleID module = modules.takeLast();
-        if (m_modulesOfCountedImports.get(module.index()))
-            return true;
-        // The loader asks a module that it has loaded for no requests.
-        if (!isNotLoaded(module))
-            continue;
-        for (const ModuleRequestData& request : m_table.requests(module)) {
-            if (request.isHoisted || request.isRequire)
-                continue;
-            ModuleID target = request.targetModule();
-            if (!seen.quickSet(target.index()) && !isLoadedModuleWithoutRecord(target))
-                modules.append(target);
-        }
-    }
-    return false;
-}
-
-// The loader is asked for each graph and takes the steps that it would have taken in the jobs that were counted, in the order in which those ran. What it queues in the last step for a graph is due
-// where the job of that import() stands in the queue. From here on they are loads in flight like any other. All go together: the loader decides by what else is being loaded.
-void Modules::handCountedImportsToLoader()
-{
-    if (!m_numberOfCountedImports)
-        return;
-    VM& vm = *m_instance.vm;
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
-    size_t numberOfJobsOfOthers = queue.size();
-    noteOrderAndModulesOfOnlyCountedImport();
-    m_numberOfCountedImports = 0;
-    m_modulesOfCountedImports.clearAll();
-    auto find = [&](uint32_t serial) -> CountedImport& {
-        CountedImport* found = nullptr;
-        forEachCountedImport([&](CountedImport& import) {
-            if (import.serial == serial)
-                found = &import;
-        });
-        RELEASE_ASSERT(found);
-        return *found;
-    };
-    // The steps run no code of the program, so nothing joins or leaves the list.
-    for (uint32_t serial : std::exchange(m_orderOfCountedJobs, { })) {
-        CountedImport& import = find(serial);
-        if (!import.jobsOfLoader) {
-            import.jobsOfLoader = MicrotaskQueue::create(vm);
-            JSPromise* loaded = askLoaderForImport(import.module, import.referrerAsyncOrder);
-            if (scope.exception()) [[unlikely]] {
-                import.promise->rejectWithCaughtException(vm, scope);
-                continue;
-            }
-            import.promise->resolve(m_instance.globalObject, vm, loaded);
-        } else {
-            // Other jobs waited when the loader would have asked the root for its requests.
-            SetForScope rootKnownToBeWatched(m_rootKnownToBeWatched, import.jobsRun >= jobInWhichLoaderAsksRoot && !import.isLoaded ? std::optional(import.module) : std::nullopt);
-            SetForScope rootWhoseGraphIsLoaded(m_rootWhoseGraphIsLoaded, import.isLoaded ? std::optional(import.module) : std::nullopt);
-            runJobsThatAreDue(vm, *import.jobsOfLoader);
-        }
-        RETURN_IF_EXCEPTION(scope, void());
-        queue.moveTasksBehind(numberOfJobsOfOthers, *import.jobsOfLoader);
-    }
-}
-
-bool Modules::hasImportedFileLeftToRun(ModuleID root) const
-{
-    // The files stand in front of everything else that the root requests.
-    for (const ModuleRequestData& request : m_table.requests(root)) {
-        // Most of the files below a root of a large program ran with an earlier graph.
-        if ((request.isHoisted && m_storedStatuses[request.target()] == static_cast<uint8_t>(StoredModuleStatus::Evaluated)) || request.isRequire)
-            continue;
-        ModuleID imported = request.targetModule();
-        if (request.isDeferred || !isCommonJSFileOrFace(imported)) {
-            if (request.isHoisted)
-                continue;
-            return false;
-        }
-        if (storedStatus(imported) != StoredModuleStatus::Evaluated)
-            return true;
-    }
-    return false;
-}
-
-bool Modules::continueCountedImport(JSPromise* importPromise, JSValue module, JSValue referrerAsyncOrder)
-{
-    size_t index = m_countedImports.findIf([&](const CountedImport& import) { return import.promise.get() == importPromise; });
-    if (index == notFound)
-        return false;
-    CountedImport& counted = m_countedImports[index];
-    uint32_t job = counted.jobsRun + 1;
-    // Most of the jobs only pass the turn on.
-    if (job > 1 && job != jobInWhichLoaderAsksRoot && job != counted.jobOfEvaluation && !counted.jobsOfLoader && !m_instance.vm->defaultMicrotaskQueue().isEmpty()) {
-        counted.jobsRun = job;
-        if (!m_orderOfCountedJobs.isEmpty())
-            m_orderOfCountedJobs.append(counted.serial);
-        constexpr uint8_t unusedPayload = 0;
-        m_instance.globalObject->queueMicrotask(*m_instance.vm, InternalMicrotask::CompiledModuleImport, unusedPayload, importPromise, module, referrerAsyncOrder);
-        return true;
-    }
-    CountedImport import = WTF::move(counted);
-    m_countedImports.removeAt(index);
-    decideHowCountedImportGoesOn(import);
-    return true;
-}
-
-void Modules::forgetCountedImport(const CountedImport& import)
-{
-    ASSERT(m_numberOfCountedImports);
-    --m_numberOfCountedImports;
-    if (m_orderOfCountedJobs.isEmpty())
-        return;
-    // The order of the jobs of the last one says no more than their number.
-    if (m_numberOfCountedImports <= 1) {
-        m_orderOfCountedJobs.shrink(0);
-        m_modulesOfCountedImports.clearAll();
-        return;
-    }
-    m_orderOfCountedJobs.removeAllMatching([&](uint32_t serial) { return serial == import.serial; });
-    m_modulesOfCountedImports.clear(import.module.index());
-    if (!import.plan)
-        return;
-    for (const PlanOfLoad::Found& found : import.plan->found)
-        m_modulesOfCountedImports.clear(found.module.index());
-}
-
-void Modules::decideHowCountedImportGoesOn(CountedImport& import)
-{
-    VM& vm = *m_instance.vm;
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
-    JSPromise* importPromise = import.promise.get();
-    ModuleID module = import.module;
-
-    // Whoever asks about loads while the job runs finds the import() among those that are counted.
-    import.outerInOwnJob = std::exchange(m_innermostCountedImportInOwnJob, &import);
-    auto didLeaveJob = makeScopeExit([&] {
-        m_innermostCountedImportInOwnJob = import.outerInOwnJob;
-    });
-    auto goOnWithLoader = [&] {
-        handCountedImportsToLoader();
-        RETURN_IF_EXCEPTION(scope, void());
-        scope.release();
-        runJobsThatAreDue(vm, *import.jobsOfLoader);
-    };
-    if (import.jobsOfLoader)
-        return goOnWithLoader();
-
-    // Where no job waits none will run before the graph has run: nobody can tell in how many jobs it is loaded, unless the host does something of its own behind a job.
-    bool isWatched = !queue.isEmpty() || vm.hostObservesMicrotaskBoundaries();
-    if (!import.jobsRun) {
-        // Whatever began to load a graph since the call has handed this one to the loader.
-        if (m_innermostEvaluation || storedStatus(module) != StoredModuleStatus::Unlinked)
-            return goOnWithLoader();
-        if (hasImportedFileLeftToRun(module)) {
-            // Where somebody can tell, each file runs when the loader comes to it.
-            if (isWatched)
-                return goOnWithLoader();
-            // Nobody sees in which step a file runs, until one of them queues a job or throws. The loader runs them where it asks the root for its requests: what a file asks for finds the load there.
-            import.jobsRun = jobInWhichLoaderAsksRoot - 1;
-            if (!m_orderOfCountedJobs.isEmpty())
-                m_orderOfCountedJobs.appendUsingFunctor(import.jobsRun, [&](size_t) { return import.serial; });
-            evaluateImportedCommonJSFiles(module, JobsOfImportedFiles::WaitForLoader, ErrorOfImportedFile::IsLeftToLoader);
-            RETURN_IF_EXCEPTION(scope, void());
-            if (import.jobsOfLoader || m_rootWhoseFilesRanAhead == module || storedStatus(module) != StoredModuleStatus::Unlinked)
-                return goOnWithLoader();
-        }
-    }
-
-    // A job counts when it has passed the turn on: the loader never catches up with the job in which the graph runs.
-    uint32_t job = import.jobsRun + 1;
-    bool isEvaluatedNow = !isWatched;
-    if (!isEvaluatedNow && job == jobInWhichLoaderAsksRoot) {
-        RefPtr<PlanOfLoad> plan;
-        if (!planLevelsOfLoad(module, &plan))
-            return goOnWithLoader();
-        // Another graph whose jobs are counted comes to one of the modules too.
-        if (!m_orderOfCountedJobs.isEmpty()) {
-            auto belowRoot = plan->found.span().subspan(1);
-            if (std::ranges::any_of(belowRoot, [&](const PlanOfLoad::Found& found) { return m_modulesOfCountedImports.get(found.module.index()); }))
-                return goOnWithLoader();
-            for (const PlanOfLoad::Found& found : belowRoot)
-                m_modulesOfCountedImports.set(found.module.index());
-        }
-        uint32_t jobsOfLevels = 0;
-        for (uint32_t level = 1; level < plan->levels.size(); ++level)
-            jobsOfLevels = std::max(jobsOfLevels, level * PlanOfLoad::jobsOfLevel + plan->levels[level].laterRequests);
-        // The loader hears that the root is loaded in the next job, and links and evaluates in the one behind that.
-        import.jobOfEvaluation = jobInWhichLoaderAsksRoot + jobsOfLevels + 2;
-        import.plan = WTF::move(plan);
-    }
-    isEvaluatedNow |= job == import.jobOfEvaluation;
-    if (!isEvaluatedNow) {
-        import.jobsRun = job;
-        if (!m_orderOfCountedJobs.isEmpty())
-            m_orderOfCountedJobs.append(import.serial);
-        queueImportJob(m_instance.globalObject, importPromise, module, import.referrerAsyncOrder);
-        didLeaveJob.release();
-        m_innermostCountedImportInOwnJob = std::exchange(import.outerInOwnJob, nullptr);
-        m_countedImports.append(WTF::move(import));
-        return;
-    }
-    if (m_innermostEvaluation) [[unlikely]]
-        return goOnWithLoader();
-
-    auto noteFilesThatLoaderHasComeTo = [&] {
-        if (!import.plan)
-            return;
-        for (const PlanOfLoad::Found& found : import.plan->found) {
-            if (found.isFile)
-                m_filesLoadedWithoutLoader.set(found.module.index());
-        }
-    };
-    std::unique_ptr<ModuleLinkWalk> linkWalk = takeLinkWalk(module);
-    link(*linkWalk);
-    if (Exception* exception = scope.exception()) [[unlikely]] {
-        if (vm.isTerminationException(exception))
-            return;
-        // The loader remembers what does not link, and reports it to whoever imports it again. It stands where it has loaded the graph and heard so of the root: it links in this job.
-        TRY_CLEAR_EXCEPTION(scope, void());
-        keepLinkWalk(WTF::move(linkWalk));
-        if (import.jobsOfLoader) [[unlikely]]
-            return goOnWithLoader();
-        noteFilesThatLoaderHasComeTo();
-        import.isLoaded = true;
-        import.jobsRun = jobInWhichLoaderAsksRoot + 1;
-        if (!m_orderOfCountedJobs.isEmpty()) {
-            m_orderOfCountedJobs.removeAllMatching([&](uint32_t serial) { return serial == import.serial; });
-            m_orderOfCountedJobs.appendUsingFunctor(1 + import.jobsRun, [&](size_t) { return import.serial; });
-        }
-        return goOnWithLoader();
-    }
-    if (import.jobsOfLoader) [[unlikely]]
-        return goOnWithLoader();
-
-    forgetCountedImport(import);
-    didLeaveJob.release();
-    m_innermostCountedImportInOwnJob = import.outerInOwnJob;
-    noteFilesThatLoaderHasComeTo();
-    constexpr bool isLinked = true;
-    JSPromise* evaluation = evaluate(module, import.referrerAsyncOrder, importPromise, nullptr, isLinked);
-    RETURN_IF_EXCEPTION(scope, void());
-    switch (evaluation->status()) {
-    case JSPromise::Status::Fulfilled:
-        queueStepOfImport(importPromise, jsNumber(module.index()), numberOfJobsBehindEvaluation);
-        return;
-    case JSPromise::Status::Rejected:
-        evaluation->markAsHandled();
-        queueStepOfImport(importPromise, jsNumber(module.index()), numberOfJobsBehindEvaluation, evaluation->result());
-        return;
-    case JSPromise::Status::Pending:
-        evaluation->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::CompiledModuleImportSettled, importPromise, jsNumber(module.index()));
-        return;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 // The steps of the loader find nothing to load, to link or to run, and no other load meets them: the module has no step of its own left that a synchronous load could take over.
@@ -1204,15 +827,12 @@ bool Modules::loaderOnlyHandsOverNamespace(ModuleID module) const
 }
 
 // The last step of the loader resolves its own promise, and the promise of the program follows that one.
-void Modules::finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID module, JSValue error)
+void Modules::finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID module)
 {
     VM& vm = *m_instance.vm;
     JSPromise* loaded = JSPromise::create(vm, m_instance.globalObject->promiseStructure());
     loaded->markAsHandled();
-    if (error) [[unlikely]]
-        loaded->reject(vm, error);
-    else
-        resolveWithNamespace(loaded, module);
+    resolveWithNamespace(loaded, module);
     loaded->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, importPromise, jsUndefined());
 }
 
@@ -1336,7 +956,6 @@ JSPromise* Modules::importUncompiled(const Identifier& key, ModuleID referrer, R
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    handCountedImportsToLoader();
     JSPromise* promise = loader()->requestImportModuleForKey(realm, key, moduleKey(referrer), WTF::move(fetchParameters), nullptr, false, asyncEvaluationOrder(referrer).value_or(-1));
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     return promise;
@@ -1418,9 +1037,7 @@ ModuleRecord* Modules::exposeRecord(ModuleID module, RecordHolder holder)
 bool Modules::canTellHowGraphIsLoaded(ModuleID root)
 {
     VM& vm = *m_instance.vm;
-    if (m_rootWhoseGraphIsLoaded == root) [[unlikely]]
-        return false;
-    if (data(root).isLoadedByLoader() || m_fileWhoseJobsWaitForLoader || m_rootWhoseFilesRanAhead == root || m_rootKnownToBeWatched == root)
+    if (data(root).isLoadedByLoader() || m_fileWhoseJobsWaitForLoader || m_rootWhoseFilesRanAhead == root)
         return true;
     if (data(root).isEntryPoint())
         return false;
@@ -1971,7 +1588,6 @@ AbstractModuleRecord* moduleRecord(JSGlobalObject* realm, ModuleID module)
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
     // The loader asks for a module when it loads it. Where it goes on to what the module imports, each file runs when the loader comes to it.
     if (!modules->isAskingHost()) {
-        modules->handCountedImportsToLoader();
         modules->evaluateImportedCommonJSFiles(module, JobsOfImportedFiles::WaitForLoader, ErrorOfImportedFile::IsLeftToLoader);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }

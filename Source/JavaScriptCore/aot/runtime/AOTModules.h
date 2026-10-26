@@ -145,7 +145,7 @@ public:
     void captureSyntheticExports(ModuleID root, VisitedModuleRecords&);
     void finishLink(ModuleID root, LinkContext&);
 
-    JSPromise* evaluate(ModuleID root, std::optional<int64_t> referrerAsyncOrder, JSPromise* importPromise, const ModuleLinkWalk* = nullptr, bool isLinked = false);
+    JSPromise* evaluate(ModuleID root, std::optional<int64_t> referrerAsyncOrder, JSPromise* importPromise, const ModuleLinkWalk* = nullptr);
     void evaluateSynchronously(ModuleID, SynchronousEvaluationReason);
     void innerModuleEvaluation(ModuleID root, EvaluationContext&);
     void gatherAsynchronousTransitiveDependencies(ModuleID, OrderedHashSet<AbstractModuleRecord*>& result, VisitedModuleRecords& seen);
@@ -217,11 +217,7 @@ public:
     JSPromise* importDynamic(JSValue specifier, JSValue options, ModuleID referrer);
     void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder);
     void resolveWithNamespace(JSPromise* importPromise, ModuleID);
-    void finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID, JSValue error);
-    // Says whether the jobs of that import() are counted.
-    bool continueCountedImport(JSPromise* importPromise, JSValue module, JSValue referrerAsyncOrder);
-    void handCountedImportsToLoader();
-    bool comesToCountedImport(ModuleID required);
+    void finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID);
 
     enum class RecordHolder : uint8_t { Anyone, Loader };
     ModuleRecord* exposeRecord(ModuleID, RecordHolder = RecordHolder::Anyone);
@@ -331,7 +327,7 @@ private:
     void holdJobsBehind(size_t numberOfJobs, ModuleID file);
     struct LevelOfLoad;
     struct PlanOfLoad;
-    bool planLevelsOfLoad(ModuleID root, RefPtr<PlanOfLoad>* planWithoutWay = nullptr);
+    bool planLevelsOfLoad(ModuleID root);
     bool isLeftAsLoaded(ModuleID) const;
     bool isModuleWithoutRecord(const ModuleData&, StoredModuleStatus) const;
     bool isNeitherOfProgramNorData(const ModuleData&, StoredModuleStatus) const;
@@ -358,10 +354,6 @@ private:
 
     JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&);
     bool loaderOnlyHandsOverNamespace(ModuleID) const;
-    JSPromise* askLoaderForImport(ModuleID, std::optional<int64_t> referrerAsyncOrder);
-    bool isAnythingBeingLoaded() const;
-    bool canCountJobsOfImport(ModuleID root);
-    bool hasImportedFileLeftToRun(ModuleID root) const;
     std::optional<int64_t> asyncEvaluationOrder(ModuleID) const;
     ModuleRecord* registerWithLoader(ModuleID, RecordHolder = RecordHolder::Anyone);
     const Identifier& resolvedKey(ModuleID);
@@ -451,38 +443,6 @@ private:
         std::span<Found> level(size_t depth) { return found.mutableSpan().subspan(levels[depth].first, (depth + 1 == levels.size() ? found.size() : levels[depth + 1].first) - levels[depth].first); }
     };
     bool isLeftToLoad(PlanOfLoad&, PlanOfLoad::Found&);
-    struct CountedImport {
-        Strong<JSPromise> promise;
-        ModuleID module;
-        std::optional<int64_t> referrerAsyncOrder;
-        uint32_t serial;
-        // Of the jobs in which the loader would load the graph.
-        uint32_t jobsRun { 0 };
-        // Known from the job in which the loader would ask the root for its requests.
-        uint32_t jobOfEvaluation { 0 };
-        RefPtr<PlanOfLoad> plan { };
-        // The loader has the graph in its hands.
-        RefPtr<MicrotaskQueue> jobsOfLoader { };
-        CountedImport* outerInOwnJob { nullptr };
-        // All the jobs in which the loader would load the graph have passed.
-        bool isLoaded { false };
-    };
-    void decideHowCountedImportGoesOn(CountedImport&);
-    void forgetCountedImport(const CountedImport&);
-    Vector<CountedImport, 2> m_countedImports;
-    // Out of the list while their own jobs run.
-    CountedImport* m_innermostCountedImportInOwnJob { nullptr };
-    void forEachCountedImport(const Invocable<void(CountedImport&)> auto&);
-    void noteOrderAndModulesOfOnlyCountedImport();
-    // That the loader does not have in its hands.
-    uint32_t m_numberOfCountedImports { 0 };
-    uint32_t m_serialOfNextCountedImport { 0 };
-    // A serial for the call of import() and for each job counted since, of those that are still counted. Kept while there are several.
-    Vector<uint32_t, 32> m_orderOfCountedJobs;
-    // Their roots, and what their plans have found. Kept while there are several.
-    BitVector m_modulesOfCountedImports;
-    std::optional<ModuleID> m_rootKnownToBeWatched;
-    std::optional<ModuleID> m_rootWhoseGraphIsLoaded;
     struct LevelOfLoad {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(LevelOfLoad);
 

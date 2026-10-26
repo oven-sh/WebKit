@@ -971,7 +971,7 @@ bool Modules::isStillToBeLoaded(ModuleID module)
     return !wasLoadedWithEarlierGraph(module) && !isLeftAsLoaded(module);
 }
 
-bool Modules::planLevelsOfLoad(ModuleID root, RefPtr<PlanOfLoad>* planWithoutWay)
+bool Modules::planLevelsOfLoad(ModuleID root)
 {
     using Found = PlanOfLoad::Found;
     using Level = PlanOfLoad::Level;
@@ -1078,10 +1078,6 @@ bool Modules::planLevelsOfLoad(ModuleID root, RefPtr<PlanOfLoad>* planWithoutWay
             return false;
     }
 
-    if (planWithoutWay) {
-        *planWithoutWay = plan.ptr();
-        return true;
-    }
     layWayOfLoad(plan.get(), nullptr);
     // What is found is what lies below the root and is not loaded. It is marked when a require() asks, where one can come between.
     bool marksWait = false;
@@ -1405,7 +1401,7 @@ void Modules::evaluateWithOwnStack(ModuleID root)
     }
 }
 
-JSPromise* Modules::evaluate(ModuleID root, std::optional<int64_t> referrerAsyncOrder, JSPromise* importPromise, const ModuleLinkWalk* linkWalk, bool isLinked)
+JSPromise* Modules::evaluate(ModuleID root, std::optional<int64_t> referrerAsyncOrder, JSPromise* importPromise, const ModuleLinkWalk* linkWalk)
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -1418,7 +1414,7 @@ JSPromise* Modules::evaluate(ModuleID root, std::optional<int64_t> referrerAsync
         throwEvaluationError(root);
     else if (linkWalk)
         link(*linkWalk);
-    else if (!isLinked)
+    else
         link(root);
     if (!scope.exception() && moduleData.kind == ModuleKind::CommonJs)
         evaluateCommonJSForLoader(root);
@@ -1568,8 +1564,6 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     if (isPassedOverByEvaluationInProgress(module))
         return;
 
-    if (comesToCountedImport(module))
-        handCountedImportsToLoader();
     bool needsLoader = needsLoaderForRequire(module);
     auto didLeaveLoad = makeScopeExit([&] {
         if (m_rootWhoseFilesRanAhead == module)
