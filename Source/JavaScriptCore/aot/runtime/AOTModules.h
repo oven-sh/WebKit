@@ -153,6 +153,7 @@ public:
     void queueJobsThatWaitForLoader();
     void didLoadGraph(ModuleID root);
     void evaluateFilesOfLevel(ModuleID moduleOnWay, bool runsWhenLoaded);
+    void captureExportsAgain(ModuleID);
     // The start of the module is on the stack only to run the files that the module imports.
     bool isRunningFilesOf(ModuleID root) const { return m_rootWhoseFilesRun == root; }
     bool stopLoadingBehindFile(ModuleID file);
@@ -170,6 +171,7 @@ public:
     // A graph is being loaded until its root is linked.
     unsigned numberOfGraphsBeingLoaded();
     bool loaderGoesThroughGraph();
+    bool comesToRootOfLoadInFlight(ModuleID required);
     void didStartLoad(JSPromise*, ModuleID root);
     ModuleRecord* recordOfCommonJSFile(ModuleID);
     bool isNotLoaded(ModuleID);
@@ -242,8 +244,8 @@ private:
         bool capturedFieldsAreOfESModule { false };
         bool capturedFieldsAreOfRuntimeModule { false };
         Identifier resolvedKey;
-        std::optional<uint32_t> firstAbsentExport;
         bool wasLoadedWhileItRan { false };
+        bool bindsEarlierCapture { false };
         BitVector ambiguousExports;
         std::unique_ptr<SourceOrigin> sourceOrigin;
         Vector<ModuleID> requiredModules;
@@ -284,6 +286,7 @@ private:
     void didLinkEntryPoint();
     bool didCaptureExports(ModuleID) const;
     void captureExports(ModuleID);
+    void bindLatestCapture(ModuleID);
     void captureExportsBehindEvaluation(ModuleID);
     void captureExportsOfFilesBeingEvaluated(ModuleID root);
     JSValue evaluateForCapture(ModuleID);
@@ -339,6 +342,7 @@ private:
     // The pairs of a requiring and a required module that recordRequire() has seen, and whether a require() of the pair has returned.
     UncheckedKeyHashMap<uint64_t, bool> m_recordedRequires;
     BitVector m_modulesWithMarkOfRequire;
+    BitVector m_modulesWithEarlierNamespaceInValue;
     BitVector m_modulesEvaluatedUnderAnotherEvaluation;
     std::optional<ModuleID> m_firstModuleRequestedByHost;
     bool m_didTakeStepOfMainModule { false };
@@ -352,6 +356,7 @@ private:
         Strong<JSPromise> promise;
         ModuleID root;
         bool isWalked { false };
+        bool isLoaded { false };
     };
     Vector<LoadInFlight, 2> m_loadsInFlight;
     // `bun run` loads a graph level by level, and the steps of one level follow each other with no other job between them. So the loader need only go down one way to the lowest level:

@@ -331,6 +331,35 @@ static BitVector findReceiversAskedOnlyForNamesDefinedWithoutLayout(FunctionPass
     return receivers;
 }
 
+bool paysToTestMembersUnderSymbolsOfProgram(FunctionPassContext& context, BlockID block)
+{
+    HeatClass heatClass = heatClassOf(context, block);
+    return isHot(heatClass) || heatClass == HeatClass::Unknown || context.analyses.blockFrequencies().frequencyOf(block) >= HeatModel::minWeightOfCallInLoop;
+}
+
+static bool holdsMemberUnderSymbolOfProgram(const Program& program, std::span<const Value> tests)
+{
+    return std::ranges::any_of(tests, [&](const Value& test) {
+        return test.opcode == Opcode::AreMembersUnchanged && holdMemberUnderSymbolOfProgram(program, test.conditions());
+    });
+}
+
+// One of the objects that may arrive finds such a member under the name that is read.
+static bool readsMemberUnderSymbolOfProgram(FunctionPassContext& context, const Value& use)
+{
+    if (use.opcode != Opcode::PropGet || !isSymbolOfProgram(context.program.at(use.key()).kind))
+        return false;
+    const Program& program = context.program;
+    ReceiverCandidates candidates = receiverCandidates(program, context.function, use.objectOperand(), use.receivers());
+    for (const LayoutList* layouts : { &candidates.proven, &candidates.predicted }) {
+        for (LayoutID layout : *layouts) {
+            if (findMemberOfClass(program, layout, ClassSide::Prototype, use.key()))
+                return true;
+        }
+    }
+    return false;
+}
+
 static TestSites collectTestSites(FunctionPassContext& context)
 {
     if (!context.build.recordedOptions().usesExpectedTypes())
@@ -360,6 +389,9 @@ static TestSites collectTestSites(FunctionPassContext& context)
         // What a plain function without a layout constructs arrives as the receiver. A test for a layout would turn it away, and what stands behind the test would run in the copy.
         const Value& use = context.function.at(site.use);
         if (PayloadWord::accessSite(use.opcode) && use.accessSite() && context.inputs.flow.lossOf(use.accessSite()).seesConstructedObject && asksOnlyForLayouts(context, sites, site))
+            return true;
+        // Tests that say nothing of the member pass for the objects that lack it alone, and whoever reads a name expects an object that has it.
+        if (holdsMemberUnderSymbolOfProgram(context.program, sites.testsOf(site)) ? !paysToTestMembersUnderSymbolsOfProgram(context, site.point.block) : readsMemberUnderSymbolOfProgram(context, use))
             return true;
         HeatClass heatClass = heatClassOf(context, site.point.block);
         // What a test buys in the cold code of a cold function, against the copy that it costs. The general form of these is one call.
@@ -1698,9 +1730,10 @@ static bool resolvesSomeUse(FunctionPassContext& context, std::span<const NamedU
         query->receivers.level = KnowledgeLevel::Expected;
         query->receivers.predicted = layouts;
         PropertyAccessPlan plan = planPropertyAccess({ context.program, &context.inputs.flow }, *query);
-        // `events.removeListener === undefined`, `if (value.then)`: whoever reads a name and does not call what he got asks whether it is there. `target.get.apply(..)` does not ask.
+        // `events.removeListener === undefined`, `if (value.then)`: whoever reads a name and does not call what he got asks whether it is there, as `"then" in value` and `Object.hasOwn(value, "then")` do. `target.get.apply(..)` does not ask.
         bool asksWhetherMethodIsThere = plan.form == AccessForm::Method && !query->isOnlyCalled && use.demand != NameDemand::Required;
-        return plan.isResolved() && !asksWhetherMethodIsThere;
+        bool asksWhetherNameIsThere = query->access == Access::Has && !query->isPrivate;
+        return plan.isResolved() && !asksWhetherMethodIsThere && !asksWhetherNameIsThere;
     });
 }
 

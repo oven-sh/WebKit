@@ -60,6 +60,7 @@ public:
     void generateDeferredSyntheticModules(JSGlobalObject*, VisitedModuleRecords&);
     void willLoadRequests();
     void didLoad();
+    void didReplaceRecordInRegistry();
     bool takeStepOfMainModule();
     void takeStatus();
     bool isRunningCommonJSFile();

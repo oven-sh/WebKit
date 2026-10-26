@@ -311,6 +311,10 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
         return true;
     }, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
+            if (module != walk.root()) {
+                bindLatestCapture(module);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
             if (data(module).capturesExportsBehindEvaluation() && !resolvesNames)
                 captureExportsBehindEvaluation(module);
             else
@@ -351,18 +355,12 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
         return status(module) == ModuleStatus::Unlinked;
     };
 
-    std::optional<std::pair<ModuleID, uint32_t>> firstAbsentExport;
     Vector<ModuleID, 16> modulesThatResolveNames;
     bool didEnterRoot = walk.replay(scope, isUnlinked, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
             // Every CommonJS file of a graph runs before the graph fails for a name that one of them lacks: a module of the graph checks the names behind them.
-            if (data(module).capturesExportsBehindEvaluation())
-                return;
-            captureExports(module);
-            RETURN_IF_EXCEPTION(scope, void());
-            std::optional<uint32_t> absentName = ensureLoaded(module).firstAbsentExport;
-            if (absentName && !firstAbsentExport)
-                firstAbsentExport = std::pair { module, *absentName };
+            if (!data(module).capturesExportsBehindEvaluation())
+                captureExports(module);
             return;
         }
         AbstractModuleRecord* record = uncompiledRecord(module);
@@ -382,9 +380,6 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
     RETURN_IF_EXCEPTION(scope, void());
     if (!didEnterRoot)
         return;
-
-    if (firstAbsentExport)
-        RELEASE_AND_RETURN(scope, throwExportNotFound(firstAbsentExport->first, firstAbsentExport->second));
 
     checkRequiredNames(modulesThatResolveNames.span());
     RETURN_IF_EXCEPTION(scope, void());
@@ -507,6 +502,45 @@ void Modules::captureExports(ModuleID module)
     RELEASE_AND_RETURN(scope, fillCapturedExports(module));
 }
 
+// `bun run` makes a record of a file each time its loader comes to the file, with what the file exports at that moment, and the registry has the last one. The modules that are linked keep the bindings they have.
+void Modules::captureExportsAgain(ModuleID fileOrFace)
+{
+    ModuleID module = m_table.faceOfFile(fileOrFace).value_or(fileOrFace);
+    if (!isCommonJSFileOrFace(module) || !didCaptureExports(module))
+        return;
+    LoadedModule& loaded = ensureLoaded(module);
+    loaded.capturedExports.set(*this, nullptr);
+    loaded.deferredExportsSource.set(*this, nullptr);
+    loaded.capturedFields.set(*this, nullptr);
+    loaded.capturedStars.set(*this, nullptr);
+    loaded.sourceOfCapturedFields.set(*this, nullptr);
+    loaded.bindsEarlierCapture = true;
+    if (namespaceIfCreated(module, ModulePhase::Evaluation)) {
+        if (data(module).holdsNamespaceInValue())
+            m_modulesWithEarlierNamespaceInValue.set(module.index());
+        loaded.namespaceObject.set(*this, nullptr);
+    }
+    captureExports(module);
+}
+
+// All importers of a file read one variable for a name. A module that is linked now finds what the registry has.
+void Modules::bindLatestCapture(ModuleID module)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    LoadedModule* loaded = loadedIfExists(module);
+    if (!loaded || !loaded->bindsEarlierCapture) [[likely]]
+        return;
+    loaded->bindsEarlierCapture = false;
+    if (m_modulesWithEarlierNamespaceInValue.get(module.index())) {
+        JSObject* namespaceObject = moduleNamespace(module, ModulePhase::Evaluation);
+        RETURN_IF_EXCEPTION(scope, void());
+        m_modulesWithEarlierNamespaceInValue.clear(module.index());
+        setNamespace(module, ModulePhase::Evaluation, namespaceObject);
+        loaded->namespaceObject.set(*this, nullptr);
+    }
+    RELEASE_AND_RETURN(scope, fillCapturedExports(module));
+}
+
 // The host lists the own properties of what a CommonJS module exports and reads each of them: Bun's populateESMExports().
 bool Modules::tryCaptureFields(ModuleID module, JSValue value)
 {
@@ -618,36 +652,25 @@ void Modules::makeTableOfCapturedFields(LoadedModule& loaded)
     loaded.capturedExports.set(*this, captured);
 }
 
+// A name that the module turns out to lack fails the link of each module that binds it, and of no other: it stands among the names that such a module requires, or the module checks it behind the file.
 void Modules::fillCapturedExports(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     LoadedModule& loaded = ensureLoaded(module);
+    if (loaded.bindsEarlierCapture) [[unlikely]]
+        return;
 
     for (const SyntheticExportData& syntheticExport : m_table.syntheticExports(module)) {
-        const Identifier& name = identifier(syntheticExport.name);
         // Only a variable binds the name. Without one, a deferred export stays unread.
-        if (syntheticExport.hasVariable) {
-            if (syntheticExport.isBoundByRequiredName && isDeferredExport(loaded, name))
-                continue;
-            JSValue found = capturedValue(module, name);
-            RETURN_IF_EXCEPTION(scope, void());
-            if (found) {
-                ProgramStatics::writeVariable(m_instance, syntheticExport.variable, found);
-                continue;
-            }
-        } else {
-            bool hasExport = hasCapturedExport(module, name);
-            RETURN_IF_EXCEPTION(scope, void());
-            if (hasExport)
-                continue;
-        }
-        if (syntheticExport.absentIsUndefined) {
-            if (syntheticExport.hasVariable)
-                ProgramStatics::writeVariable(m_instance, syntheticExport.variable, jsUndefined());
+        if (!syntheticExport.hasVariable)
             continue;
-        }
-        if (!loaded.firstAbsentExport)
-            loaded.firstAbsentExport = static_cast<uint32_t>(syntheticExport.name);
+        const Identifier& name = identifier(syntheticExport.name);
+        if (syntheticExport.isBoundByRequiredName && isDeferredExport(loaded, name))
+            continue;
+        JSValue found = capturedValue(module, name);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (found || syntheticExport.absentIsUndefined)
+            ProgramStatics::writeVariable(m_instance, syntheticExport.variable, found ? found : jsUndefined());
     }
 }
 

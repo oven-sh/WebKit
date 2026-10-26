@@ -421,11 +421,28 @@ static void applyResultUpdates(Function& function, std::span<const FlowPositionU
         applyPosition(function.results[index], updates[index]);
 }
 
+static StringID internNameOfFunctionUnder(Program& program, const PropertyKey& key)
+{
+    if (key.kind == PropertyKeyKind::Text)
+        return key.text;
+    Vector<uint8_t, 64> name;
+    name.append('[');
+    name.append(program.strings[key.text]);
+    name.append(']');
+    return program.strings.intern(name.span());
+}
+
 static void applySignatureUpdates(const FlowApplyContext& context)
 {
     const Vector<FlowSignatureUpdate>& updates = context.application.signatures;
     RELEASE_ASSERT(updates.size() == context.application.functionCountAsRead);
 
+    for (unsigned index = 0; index < updates.size(); ++index) {
+        if (PropertyKeyID key = updates[index].keyThatNamesFunction) {
+            context.program.functions[index].name = internNameOfFunctionUnder(context.program, context.program.at(key));
+            context.program.functions[index].flags.add(FunctionFlags::IsNamedByComputedKey);
+        }
+    }
     forEachIndexInParallel(context.build.parallelLoops(), updates.size(), [&](unsigned index) {
         Function& function = context.program.functions[index];
         const FlowSignatureUpdate& update = updates[index];

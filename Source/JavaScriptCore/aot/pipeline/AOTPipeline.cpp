@@ -332,6 +332,9 @@ constexpr std::array optimizeSteps {
     ScheduleStep::run(ResolveBuiltins),
     ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
     ScheduleStep::run(RestartInGenericVersion),
+    // Where generic code has gone, what it joined stands in one block with the test behind it.
+    ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
+    ScheduleStep::run(RestartInGenericVersion),
     ScheduleStep::run(StartGeneratorsAtFirstStep),
     ScheduleStep::run(SeparateUnlikelyLoopPaths),
     ScheduleStep::run(ConvertCountersToIntegers),

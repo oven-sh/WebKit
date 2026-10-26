@@ -234,21 +234,17 @@ struct RealmWords {
 
 // A function object, and what the stack pointer is once its call has returned.
 struct RecordedCallee {
-    const void* stackPointerOfCaller;
+    uintptr_t stackPointerOfCaller;
     JSObject* closure;
-};
-
-// Outermost first. In front of the first lies an entry that every call lies above.
-struct RecordedCalleeList {
-    RecordedCallee* top;
-    RecordedCallee* end;
 };
 
 struct HeapWords {
     StoredCellLog* storedCellLog;
     MarkStackArray* mutatorMarkStack;
     uintptr_t* barriersExecuted;
-    RecordedCalleeList* recordedCallees;
+    // The stack pointer of an entry says where the entry lies. A call writes over the entry of a call that was made from no further out, which has returned.
+    // In front of the first entry lies one that holds, in place of a stack pointer, the mask that leaves of a stack pointer the offset of its entry.
+    const RecordedCallee* recordedCallees;
 };
 
 struct IterationWords {

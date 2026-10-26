@@ -300,12 +300,27 @@ ForgottenProofs forgetProofsBehind(Function& function, const CFG& cfg, TypeArena
     return forgetProofsOf(function, types, valuesBehind(function, cfg, values), checksThatGo, expectedTypes);
 }
 
-ForgottenProofs forgetProofsOf(Function& function, TypeArena& types, const BitVector& isBehind, const BitVector& checksThatGo, ExpectedTypes expectedTypes)
+void UndoLog::undo(Function& function)
+{
+    for (auto& [id, value] : m_values | std::views::reverse)
+        function.edit(id) = WTF::move(value);
+    for (auto& [id, terminator] : m_terminators | std::views::reverse)
+        function.edit(id, BlockEdit::Terminator).terminator = WTF::move(terminator);
+    m_values.clear();
+    m_terminators.clear();
+}
+
+ForgottenProofs forgetProofsOf(Function& function, TypeArena& types, const BitVector& isBehind, const BitVector& checksThatGo, ExpectedTypes expectedTypes, UndoLog* undoLog)
 {
     ForgottenProofs forgotten;
     ExpectedType nothing { types.withPrimitives(TypeTable::anything, Primitive::Absent) };
+    auto edit = [&](ValueID id, OptionSet<ValueEdit> edits = anyValueEdit) -> Value& {
+        if (undoLog)
+            undoLog->willEdit(function, id);
+        return function.edit(id, edits);
+    };
     auto expect = [&](ValueID id, TypeID type) {
-        Value& value = function.edit(id);
+        Value& value = edit(id);
         if (expectedTypes == ExpectedTypes::Dropped)
             return becomeExpect(value, value.valueOperand(), nothing);
         ExpectedType expected { types.intern(types.at(type).withoutClassProofs()) };
@@ -336,6 +351,8 @@ ForgottenProofs forgetProofsOf(Function& function, TypeArena& types, const BitVe
         if (value.opcode == Opcode::ValidateType || value.opcode == Opcode::ValidateCallee) {
             if (value.opcode == Opcode::ValidateType && testsClaimThatStays(value))
                 continue;
+            if (undoLog)
+                undoLog->willEdit(function, id);
             becomeUndefined(function, id);
             forgotten.hasErasedValidation = true;
         } else if (value.opcode == Opcode::Check) {
@@ -349,7 +366,7 @@ ForgottenProofs forgetProofsOf(Function& function, TypeArena& types, const BitVe
             if (expectedTypes == ExpectedTypes::Kept)
                 expect(id, value.castType());
             else
-                function.edit(id).setCastType(nothing.predicted());
+                edit(id).setCastType(nothing.predicted());
         }
     }
 
@@ -362,6 +379,8 @@ ForgottenProofs forgetProofsOf(Function& function, TypeArena& types, const BitVe
                 if (isClaimOfResult(function, cast))
                     claims.append(cast);
             }
+            if (undoLog)
+                undoLog->willEditTerminator(function, BlockID(index));
             function.edit(BlockID(index), BlockEdit::Terminator).terminator.setCasts(claims.span());
         }
         for (ValueID id : block.values) {
@@ -372,11 +391,11 @@ ForgottenProofs forgetProofsOf(Function& function, TypeArena& types, const BitVe
                 continue;
             // Where the type of the check is expected no longer, what flow has seen is what is left to expect.
             if (hasReceivers)
-                function.edit(id, ValueEdit::Definition).setReceivers(expectedTypes == ExpectedTypes::Dropped ? withReceiversNobodyHasSeen(types, value.receivers()) : LayoutSetID());
+                edit(id, ValueEdit::Definition).setReceivers(expectedTypes == ExpectedTypes::Dropped ? withReceiversNobodyHasSeen(types, value.receivers()) : LayoutSetID());
             if (!hasCallees)
                 continue;
             if (CalleeSetID callees = withCalleesNobodyHasSeen(types, value.callees()); callees != value.callees())
-                function.edit(id, ValueEdit::Definition).setCallees(callees);
+                edit(id, ValueEdit::Definition).setCallees(callees);
         }
     }
     return forgotten;

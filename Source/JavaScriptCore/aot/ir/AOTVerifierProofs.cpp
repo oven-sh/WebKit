@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAddGenericVersion.h"
 #include "AOTFlowApply.h"
 #include "AOTPredictedValues.h"
 #include "AOTTypePropagation.h"
@@ -92,12 +93,13 @@ void FunctionVerifier::verifyOperandKindsWithoutChecks()
 
 // The check of a type may go at any time, so nothing that outlives it is owed to it. A position that every store is held to outlives the checks of whoever stores into it:
 // what is stored there has the type of the position also in the body in which each check lets everything through. As read, the positions that take what a check turns away are not yet marked.
+// A check that turns nothing away and stands behind none that does lets everything through as it is: what is proven behind it alone holds in that body too.
 void FunctionVerifier::verifyStoredTypesWithoutChecks()
 {
     Vector<ValueID, 16> checks;
     for (BlockID block : analyses().cfg().reversePostOrder()) {
         for (ValueID id : m_function.at(block).values) {
-            if (m_function.at(id).opcode == Opcode::Check)
+            if (m_function.at(id).opcode == Opcode::Check && mayTurnValueAway(m_program, m_function, m_function.at(id)))
                 checks.append(id);
         }
     }
@@ -106,7 +108,8 @@ void FunctionVerifier::verifyStoredTypesWithoutChecks()
 
     TypeArena& types = typing().types;
     Function withoutChecks(m_function);
-    expectInsteadOfChecking(withoutChecks, analyses().cfg(), types, checks.span(), ExpectedTypes::Dropped);
+    BitVector isBehindCheck = valuesBehind(m_function, analyses().cfg(), checks.span());
+    forgetProofsOf(withoutChecks, types, isBehindCheck, isBehindCheck, ExpectedTypes::Dropped);
     FunctionAnalyses analysesWithoutChecks(analyses().context(), withoutChecks);
     typeValuesWithoutCutting({ m_program, m_id, withoutChecks, analysesWithoutChecks, types, m_build });
     TypingContext typingWithoutChecks { m_program, withoutChecks, types };

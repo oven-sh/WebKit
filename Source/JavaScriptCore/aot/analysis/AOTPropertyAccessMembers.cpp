@@ -547,7 +547,9 @@ MemberAnswer findInstanceMember(const PropertyAccessContext& context, const Memb
     bool mayGainOwnProperty = ownPropertyGainOf(program, query.layout, key) != OwnPropertyGain::Impossible;
     MemberAnswer walked;
     if (query.isOwnLookup || query.access == Access::Define || keyKind == PropertyKeyKind::PrivateName) {
-        if (mayGainOwnProperty)
+        if (mayGainOwnProperty && query.isOwnLookup)
+            requireLookupPastObject(program, walked, findInheritedMember(context, query), query, Proof::NoExtraProperties, UnprovenCause::OwnPropertyHidesMember);
+        else if (mayGainOwnProperty)
             addReceiverProof(walked, Proof::NoExtraProperties, UnprovenCause::OwnPropertyHidesMember);
         walked.kind = MemberKind::Absent;
         setLevel(walked);

@@ -632,8 +632,20 @@ BuiltinID entryNamedByOperations(const Program& program, const Function& functio
     return entry;
 }
 
+static bool mayRefuseDefinition(ValueFlowRuleContext& context, ClimbingSet objects)
+{
+    constexpr OptionSet<ObjectMutation> mutations { ObjectMutation::RedefineProperty, ObjectMutation::ChangeIntegrity };
+    const ValueFlowUniverse& universe = context.universe();
+    if (context.meet(objects, universe.placeholdersAlone()) || context.meet(context.markedAmong(objects, mutations), ValueSets::anything) || context.holdsAnyOf(objects, ValueFlowProgramNodes::lost()))
+        return true;
+    if (!context.holdsAnyOf(objects, ValueFlowProgramNodes::escaped()))
+        return false;
+    return isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns) || context.meet(context.markedAmong(ClimbingSet(universe.unknownObjectAlone()), mutations), ValueSets::anything);
+}
+
 // A field that is declared without a value is defined as undefined. Nobody sees that value as long as super() calls the constructors that the classes name.
-static void observeDefinitionsBehindOtherConstructor(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ClimbingSet callees)
+// Where the constructors above show the object to other code, a definition that throws leaves the ones in front of it to be seen.
+static void observeDefinitionsBehindSuper(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ClimbingSet callees)
 {
     const Program& program = context.program();
     LayoutID classLayout = program.at(statement.function).constructedClass;
@@ -648,10 +660,13 @@ static void observeDefinitionsBehindOtherConstructor(const ValueFlowStatement& s
     context.forEachMember(callees, [&](ValueFlowObjectID callee) {
         callsOtherConstructor |= context.universe().closureFunction(callee) != named;
     });
-    if (!callsOtherConstructor)
-        return;
-    for (const auto& entry : definitions)
-        context.add(entry.value, context.universe().undefinedValue());
+    for (const auto& entry : definitions) {
+        auto definesOnObjectThatMayRefuse = [&] {
+            return entry.areObservedWhereObjectRefusesDefinition && mayRefuseDefinition(context, context.valueOf(context.nodes().entryParameter(entry.initializer, *program.at(entry.initializer).thisParameterIndex())));
+        };
+        if (callsOtherConstructor || definesOnObjectThatMayRefuse())
+            context.add(entry.value, context.universe().undefinedValue());
+    }
 }
 
 void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
@@ -713,7 +728,7 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 
     bool isSuperConstruct = statement.opcode == Opcode::SuperConstruct || statement.opcode == Opcode::SuperConstructList;
     if (isSuperConstruct)
-        observeDefinitionsBehindOtherConstructor(statement, context, callees);
+        observeDefinitionsBehindSuper(statement, context, callees);
     if (isSuperConstruct && context.contains(callees, ValueFlowUniverse::unknownObject())) {
         ClimbingSet made = only(context, universe.siteObject(statement));
         context.connect(context.lookup(context.valueOf(context.operandsOf(statement)[1]), prototypeProperty(context)), context.written(made, prototypeLinkName));

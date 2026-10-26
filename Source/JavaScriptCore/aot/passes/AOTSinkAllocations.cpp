@@ -889,6 +889,13 @@ bool AllocationSinking::testElementsOfLists(IRBuilder& builder)
             continue;
         if (list.elementsOperands().empty() || !list.holes().empty() || list.capacityOperand())
             continue;
+        // Nothing is left to ask where every element is such a number and the list says so: the same list would be written again.
+        Type numbers = typeOfNumbersIn(arrayStorageAtAllocation(m_program, m_program.at(list.type)));
+        bool isListOfNumbersAlready = m_program.at(list.contents()).isSubsetOf(numbers, m_program) && std::ranges::all_of(list.elementsOperands(), [&](ValueID element) {
+            return m_program.typeOf(m_function, element).isSubsetOf(numbers, m_program);
+        });
+        if (isListOfNumbersAlready)
+            continue;
         // Only an allocation is a guard of what it makes.
         bool isGuard = std::ranges::any_of(m_analyses.useLists().usesOf(literal), [&](const Use& use) {
             return use.kind == Use::Kind::Operand && m_function.at(use.user).operandKind(use.operandIndex) == OperandKind::Guard;

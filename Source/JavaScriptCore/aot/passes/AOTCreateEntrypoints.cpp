@@ -142,6 +142,14 @@ static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const Flow
         if (auto key = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = text }))
             keysOfNames.append(*key);
     }
+    // What stands behind the tests at the head of a function runs under the function object of the tests.
+    BitVector standsBehindEntryChecks(program.functions.size());
+    for (const Function& function : program.functions) {
+        if (const auto* record = function.creator.tryAs<CreatorRecord::EntryChecks>()) {
+            standsBehindEntryChecks.quickSet(record->body.index());
+            standsBehindEntryChecks.quickSet(record->fallback.index());
+        }
+    }
     BitVector hasBody(program.functions.size());
     BitVector hasForm(program.functions.size());
     BitVector hasSeveralForms(program.functions.size());
@@ -150,7 +158,7 @@ static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const Flow
             continue;
         uint32_t written = writtenFunctionOf(FunctionID(index)).index();
         hasBody.quickSet(written);
-        if (hasClosures(program.functions[index]) && hasForm.set(written))
+        if (hasClosures(program.functions[index]) && !standsBehindEntryChecks.quickGet(index) && hasForm.set(written))
             hasSeveralForms.quickSet(written);
     }
     for (unsigned index = 0; index < program.functions.size(); ++index) {
@@ -255,7 +263,7 @@ static constexpr OptionSet<FunctionFlags> flagsOfUnboundTargets { FunctionFlags:
 bool canCreateBoundFunction(const Program& program, FunctionID targetID)
 {
     const Function& target = program.at(targetID);
-    return canBeBoundOf(target.kind) && !target.hasAny(flagsOfUnboundTargets) && mayBeCalledDirectly(program, targetID);
+    return canBeBoundOf(target.kind) && !target.hasAny(flagsOfUnboundTargets) && mayBeCalledDirectlyOrThroughEntrypoint(program, targetID);
 }
 
 // instanceof asks the target of a bound function.
@@ -275,17 +283,21 @@ Function buildBoundFunction(const DerivedFunctionKey& key, DerivedFunctionInputs
     uint32_t numberOfBoundArguments = key.parameter;
     const Function& target = program.at(targetID);
     RELEASE_ASSERT(!target.hasAny(flagsOfUnboundTargets));
+    bool callsTargetByValue = !mayBeCalledDirectly(program, targetID);
 
     CreatorRecord::BoundFunction record {
         .target = targetID,
         .numberOfBoundArguments = numberOfBoundArguments,
         .numberOfCapturedArguments = std::min<uint32_t>(numberOfBoundArguments, target.numberOfPositionalParameters()),
-        .capturesTargetClosure = !answersInstanceOfWithAnyClosure(program, inputs.flow, targetID),
+        .capturesTargetClosure = callsTargetByValue || !answersInstanceOfWithAnyClosure(program, inputs.flow, targetID),
     };
     Function bound = createDerivedHeader(target, targetID, FunctionRole::BoundFunction, numberOfBoundArguments);
     bound.length = target.length > numberOfBoundArguments ? target.length - numberOfBoundArguments : 0;
     bound.flags = target.flags & OptionSet<FunctionFlags> { FunctionFlags::IsAsync, FunctionFlags::IsChecked };
-    bound.results = target.results;
+    if (callsTargetByValue)
+        bound.results.append(DeclaredType(Proven::byPosition(TypeTable::anything)));
+    else
+        bound.results = target.results;
     bound.creator = record;
 
     IRBuilder builder({ inputs.build, program, &inputs.flow, nullptr }, bound, inputs.types);
@@ -334,6 +346,17 @@ Function buildBoundFunction(const DerivedFunctionKey& key, DerivedFunctionInputs
     }
 
     builder.moveToEndOf(block);
+    if (callsTargetByValue) {
+        Value call = IRBuilder::make(Opcode::Call);
+        call.setCalleeOperand(targetClosure);
+        call.setThisValueOperand(boundThis ? boundThis : builder.appendUndefined());
+        call.setArgumentsOperands(arguments.span());
+        // The entrypoint takes the place of this frame, so what it records stands for the call of the bound function.
+        Terminator terminator = IRBuilder::makeTerminator(TerminatorKind::ReturnCall, { builder.append(WTF::move(call)) });
+        terminator.setRequirement(TailCallRequirement::Required);
+        builder.emitTerminator(WTF::move(terminator));
+        return bound;
+    }
     if (targetClosure)
         targetCaptures = appendCaptures(builder, targetID, targetClosure);
     for (uint32_t i : argumentsHeldAsValues)

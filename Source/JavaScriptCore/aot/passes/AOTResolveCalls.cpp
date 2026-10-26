@@ -108,6 +108,28 @@ static CalleeCandidates calleeCandidatesOf(const Program& program, const Functio
     return result;
 }
 
+// `object.method(..)` where some objects have a property of their own under the name: the ways meet in front of the arguments, one with the closure of the method, the other with what the property holds.
+static FunctionList findClosuresArrivingOnWaysOfTheirOwn(FunctionPassContext& context, ValueID callee)
+{
+    const Function& function = context.function;
+    FunctionList closures;
+    ValueID joined = sameObjectThroughCasts(function, callee);
+    if (function.at(joined).opcode != Opcode::Parameter)
+        return closures;
+    ValueLocation location = context.analyses.useLists().locationOf(joined);
+    if (location.placement != ValuePlacement::Parameter || location.block == entryBlock)
+        return closures;
+    for (Edge edge : context.analyses.cfg().incomingEdges(location.block)) {
+        const Target& target = targetOf(function, edge);
+        if (edge.isHandlerEdge() || location.index >= target.arguments.size())
+            return { };
+        const Value& arriving = function.at(sameObjectThroughCasts(function, target.arguments[location.index]));
+        if (arriving.opcode == Opcode::NewClosure && function.at(edge.from).frequency == BlockFrequency::Normal)
+            closures.add(arriving.function());
+    }
+    return closures;
+}
+
 // Also expects the bound function where flow saw the result of one kind of bind reach the call.
 // It stops expecting the bind's target and every function that an earlier test has ruled out: `this.m = this.m.bind(this)` hides the method behind the result.
 static CalleeCandidates calleeCandidatesOf(FunctionPassContext& context, const Value& operation, ValueID callee, BlockID block)
@@ -119,6 +141,16 @@ static CalleeCandidates calleeCandidatesOf(FunctionPassContext& context, const V
         return result;
     if (result.isProven() || !admitsUnlistedFunctions(program, program.typeOf(context.function, result.value)))
         return result;
+    if (context.function.at(block).frequency == BlockFrequency::Normal && !context.function.runsOnlyBehindFailedTest()) {
+        FunctionList closures = findClosuresArrivingOnWaysOfTheirOwn(context, result.value);
+        // The arms cost bytes. Code that seldom runs keeps the one call of the value.
+        if (closures.size() == 1 && !isCold(heatClassOf(context, block))) {
+            context.planAsksAboutPlace = true;
+            expectFunctions(result, closures.span());
+            result.arriveOnWaysOfTheirOwn = true;
+            return result;
+        }
+    }
     std::span<const FlowBoundFunctionAtSite> seen = flow.boundFunctionsSeenAt(operation.accessSite(), FlowBoundFunctionUseAtSite::Called);
     if (seen.size() != 1 || !canCreateBoundFunction(program, seen[0].target))
         return result;
@@ -369,9 +401,14 @@ static bool canPassRestArguments(const Program& program, const Function& callee)
 
 bool mayBeCalledDirectly(const Program& program, FunctionID id)
 {
+    return !program.at(id).capabilities.contains(FunctionCapabilities::RecordsCallee) && mayBeCalledDirectlyOrThroughEntrypoint(program, id);
+}
+
+bool mayBeCalledDirectlyOrThroughEntrypoint(const Program& program, FunctionID id)
+{
     const Function& callee = program.at(id);
     FunctionKind kind = callee.kind;
-    if (!callee.hasBody() || !canBeCalledByValueOf(callee.role) || callee.capabilities.contains(FunctionCapabilities::RecordsCallee) || !(kind == FunctionKind::Plain || kind == FunctionKind::Arrow || kind == FunctionKind::Method || kind == FunctionKind::Getter || kind == FunctionKind::Setter))
+    if (!callee.hasBody() || !canBeCalledByValueOf(callee.role) || !(kind == FunctionKind::Plain || kind == FunctionKind::Arrow || kind == FunctionKind::Method || kind == FunctionKind::Getter || kind == FunctionKind::Setter))
         return false;
     return !callee.isUnsplitCoroutine() && callee.results.size() == 1 && canPassRestArguments(program, callee);
 }
@@ -1299,6 +1336,9 @@ struct CallResolver {
                     content.add(bound.numberOfBoundArguments);
                 }
             }
+            // The plan follows from what the ways to the call bring.
+            if (!findClosuresArrivingOnWaysOfTheirOwn(context, value.calleeOperand()).isEmpty())
+                return std::nullopt;
             unsigned numberOfLinks = 0;
             for (ValueID link : CastChain(function, value.calleeOperand())) {
                 if (++numberOfLinks > maxLinks)
@@ -1577,6 +1617,8 @@ struct CallResolver {
             return false;
         // A bit that was cleared stays cleared, so the operations behind a failed test stay as they are.
         context.planAsksAboutPlace = true;
+        if (holdMemberUnderSymbolOfProgram(program, answer.conditions) && !paysToTestMembersUnderSymbolsOfProgram(context, site.position.block))
+            return false;
         return !hasFailedEarlier(makeConditionsTest(context.types, answer.conditions.span()), site);
     }
 
@@ -1938,7 +1980,7 @@ struct CallResolver {
         // What bind returned is no closure of a function that the type lists.
         const Value& operation = function.at(site.position.value);
         bool restWasSeen = operation.opcode == Opcode::Call && operation.accessSite() && flow.hasResults() && !flow.boundFunctionsSeenAt(operation.accessSite(), FlowBoundFunctionUseAtSite::Called).empty();
-        split.restFrequency = leavesOutListedCallee || restWasSeen ? frequency : rarerOf(frequency, BlockFrequency::Unlikely);
+        split.restFrequency = leavesOutListedCallee || restWasSeen || candidates.arriveOnWaysOfTheirOwn ? frequency : rarerOf(frequency, BlockFrequency::Unlikely);
         return split;
     }
 

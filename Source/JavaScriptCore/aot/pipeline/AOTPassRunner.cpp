@@ -93,6 +93,7 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::ExpandOwnKeys, { .opcodes = ownKeyExpansionOpcodes } },
     { PassID::SelectTypedResults, { .opcodes = typedResultCallOpcodes } },
     { PassID::InlineCalls, { .opcodes = { Opcode::CallDirect } } },
+    { PassID::SimplifyCasts, { .opcodes = simplifiableCasts } },
     { PassID::SinkAllocations, { .opcodes = opcodesInterpretedAs(Interpretation::Allocation) } },
     { PassID::EliminateRedundantReads, { .opcodes = opcodesOfRedundantReadElimination } },
     { PassID::EliminateGuards, { .opcodes = opcodesOfGuardElimination } },
@@ -157,6 +158,8 @@ static constexpr PassesByContent passesByContent = [] {
     }
     return result;
 }();
+
+static_assert(!passesByContent.always.contains(PassID::SimplifyCasts));
 
 bool hasTriggers(PassID id)
 {

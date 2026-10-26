@@ -246,6 +246,10 @@ public:
     void setFrameWordsDeadAcrossSuspension(BitVector&& words) { m_frameWordsDeadAcrossSuspension = WTF::move(words); }
     const std::optional<BitVector>& frameWordsDeadAcrossSuspension() const { return m_frameWordsDeadAcrossSuspension; }
 
+    // Of a suspension: how many of the lowest words that suspensions keep have to be cleared, if the function is suspended here for the first time. They are dead across it, and not every path to it has stored to them.
+    void setNumberOfFrameWordsToClearAtFirstSuspension(unsigned numberOfWords) { m_numberOfFrameWordsToClearAtFirstSuspension = numberOfWords; }
+    unsigned numberOfFrameWordsToClearAtFirstSuspension() const { return m_numberOfFrameWordsToClearAtFirstSuspension; }
+
     // Checks with one generator, the same operand locations and the same frame state get one late path. The code that the generator emits may depend on nothing else.
     void setSharesLatePath(bool sharesLatePath) { m_sharesLatePath = sharesLatePath; }
     bool sharesLatePath() const { return m_sharesLatePath; }
@@ -337,6 +341,7 @@ private:
     RegisterSet m_earlyClobbered;
     RegisterSet m_lateClobbered;
     std::optional<BitVector> m_frameWordsDeadAcrossSuspension;
+    unsigned m_numberOfFrameWordsToClearAtFirstSuspension { 0 };
     RegisterSet m_usedRegisters; // Stackmaps could be further duplicated by Air, but that's unlikely, so we just merge the used registers sets if that were to happen.
     bool m_areConstraintsFrozen { false };
     bool m_runsWithoutFrame { false };

@@ -85,7 +85,7 @@ public:
     static constexpr uint32_t locationHolding(uint32_t narrowLocation) { return (narrowLocation + 1) / 2; }
     static constexpr bool isInUpperHalf(uint32_t narrowLocation) { return narrowLocation % 2; }
 
-    // The site word, from bit 0: the offset of the live slot map, the saved registers or pairs, the pairs of words skipped at the bottom, the promise location.
+    // The site word, from bit 0: the offset of the live slot map, the saved registers or pairs, the pairs of words skipped at the bottom, the words cleared at the first save, the promise location.
     // A number of pairs that does not fit its field lies above the promise location, and the field holds manySkippedPairs.
     // A promise near the frame pointer and few skipped pairs leave the upper half zero, which makes the word a short immediate.
     static constexpr unsigned liveSlotMapOffsetBits = 18;
@@ -93,21 +93,25 @@ public:
     static constexpr uint32_t functionSavesR15 = 2u << liveSlotMapOffsetBits;
     static constexpr unsigned savedRegisterBits = 2;
     static constexpr unsigned skippedPairsShift = liveSlotMapOffsetBits + savedRegisterBits;
-    static constexpr unsigned skippedPairsBits = 7;
+    static constexpr unsigned skippedPairsBits = 4;
     static constexpr uint32_t manySkippedPairs = (1u << skippedPairsBits) - 1;
-    static constexpr unsigned promiseLocationShift = skippedPairsShift + skippedPairsBits;
+    static constexpr unsigned clearedWordsShift = skippedPairsShift + skippedPairsBits;
+    static constexpr unsigned clearedWordsBits = 4;
+    static constexpr uint32_t maxClearedWords = (1u << clearedWordsBits) - 1;
+    static constexpr unsigned promiseLocationShift = clearedWordsShift + clearedWordsBits;
     static constexpr unsigned promiseLocationBits = 16;
     static constexpr unsigned manySkippedPairsShift = promiseLocationShift + promiseLocationBits;
     static constexpr size_t maxNumberOfWords = UINT16_MAX;
     static_assert(manySkippedPairsShift + 16 <= 64 && !(maxNumberOfWords >> promiseLocationBits));
     static constexpr uint32_t numberOfWordsSkippedFor(uint32_t deadWordsAtBottom) { return deadWordsAtBottom & ~1u; }
     // deadWordsAtBottom counts the outgoing arguments of the function and the stack slots that are live across no suspension.
-    static std::optional<uint64_t> siteWord(uint32_t liveSlotMapOffset, uint32_t promiseLocation, uint32_t savedRegistersOrPairs, uint32_t deadWordsAtBottom = 0, size_t numberOfWordsInFrame = 0)
+    // clearedWords counts the lowest of the words kept. They are dead here, and the function may not have stored to them yet.
+    static std::optional<uint64_t> siteWord(uint32_t liveSlotMapOffset, uint32_t promiseLocation, uint32_t savedRegistersOrPairs, uint32_t deadWordsAtBottom = 0, size_t numberOfWordsInFrame = 0, uint32_t clearedWords = 0)
     {
-        if (liveSlotMapOffset >> liveSlotMapOffsetBits || savedRegistersOrPairs >> savedRegisterBits || promiseLocation >> promiseLocationBits || numberOfWordsInFrame > maxNumberOfWords || deadWordsAtBottom > maxNumberOfWords)
+        if (liveSlotMapOffset >> liveSlotMapOffsetBits || savedRegistersOrPairs >> savedRegisterBits || promiseLocation >> promiseLocationBits || numberOfWordsInFrame > maxNumberOfWords || deadWordsAtBottom > maxNumberOfWords || clearedWords > maxClearedWords)
             return std::nullopt;
         uint64_t skippedPairs = numberOfWordsSkippedFor(deadWordsAtBottom) / 2;
-        uint64_t word = liveSlotMapOffset | savedRegistersOrPairs << liveSlotMapOffsetBits | static_cast<uint64_t>(promiseLocation) << promiseLocationShift;
+        uint64_t word = liveSlotMapOffset | savedRegistersOrPairs << liveSlotMapOffsetBits | clearedWords << clearedWordsShift | static_cast<uint64_t>(promiseLocation) << promiseLocationShift;
         if (skippedPairs < manySkippedPairs)
             return word | skippedPairs << skippedPairsShift;
         return word | static_cast<uint64_t>(manySkippedPairs) << skippedPairsShift | skippedPairs << manySkippedPairsShift;
@@ -130,6 +134,7 @@ public:
         uint32_t skippedPairs = static_cast<uint32_t>(siteWord >> skippedPairsShift) & manySkippedPairs;
         return 2 * (skippedPairs == manySkippedPairs ? static_cast<uint32_t>(siteWord >> manySkippedPairsShift) : skippedPairs);
     }
+    static constexpr uint32_t clearedWordsOf(uint64_t siteWord) { return static_cast<uint32_t>(siteWord >> clearedWordsShift) & maxClearedWords; }
 
     // It decodes as a cell and is mapped nowhere, so the first use traps.
     static constexpr uint64_t poisonedWord = 0x0000dead00000000ULL;

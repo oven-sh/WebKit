@@ -28,6 +28,23 @@ std::optional<PropertyKey> keyOfSymbolRegisteredBy(const BuiltinTable&, const Fu
 
 void nameCreatedSymbols(Program&, BuildContext&);
 
+// The key alone tells the name that a function takes from it: its text, or the description of the symbol in brackets.
+constexpr bool tellsNameOfFunction(const PropertyKey& key)
+{
+    switch (key.kind) {
+    case PropertyKeyKind::Text:
+    case PropertyKeyKind::RegisteredSymbol:
+    case PropertyKeyKind::CreatedSymbol:
+        return !!key.text;
+    case PropertyKeyKind::WellKnownSymbol:
+    case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
+    case PropertyKeyKind::PrivateName:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+}
+
 // The symbols that a module of the library creates, holds in one variable that is stored to once and is not exported, and uses only as keys of accesses. By the index of their keys.
 BitVector findLibrarySymbolsUsedOnlyAsKeys(const Program&);
 

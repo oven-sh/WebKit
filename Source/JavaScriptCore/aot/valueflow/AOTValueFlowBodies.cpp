@@ -1715,26 +1715,29 @@ private:
         return form;
     }
 
-    bool isNeverObserved(ValueID operation, uint32_t operandIndex) const
+    const UnobservedFieldDefinition* findUnobservedDefinition(ValueID operation, uint32_t operandIndex) const
     {
         Opcode opcode = m_function.at(operation).opcode;
         bool isDefinedValue = (opcode == Opcode::PropDefine && operandIndex == OperandIndex::PropDefine::value) || (opcode == Opcode::PrivateDefine && operandIndex == OperandIndex::PrivateDefine::value);
-        return m_unobservedDefinitions && isDefinedValue && m_unobservedDefinitions->contains(m_id, operation);
+        return m_unobservedDefinitions && isDefinedValue ? m_unobservedDefinitions->find(m_id, operation) : nullptr;
     }
 
-    OperandForm valueOfUnobservedDefinitions()
+    OperandForm valueOf(const UnobservedFieldDefinition& definition)
     {
-        if (m_body.valueOfUnobservedDefinitions == Body::none)
-            m_body.valueOfUnobservedDefinitions = addNode(ValueFlowBodyNodeKind::Merge, ValueID()).owner;
-        return { NodeName::ofBody(m_body.valueOfUnobservedDefinitions), 0, 0 };
+        uint32_t& value = m_body.valueOfUnobservedDefinitions[definition.isObservedWhereObjectRefusesDefinition];
+        if (value == Body::none)
+            value = addNode(ValueFlowBodyNodeKind::Merge, ValueID()).owner;
+        return { NodeName::ofBody(value), 0, 0 };
     }
 
     void emitStatement(const PendingStatement& pending)
     {
         const Value& value = m_function.at(pending.site);
         Body::Statement statement { value.opcode, pending.site, static_cast<uint32_t>(m_body.operands.size()), pending.operandCount, { }, { } };
-        for (uint32_t index = 0; index < pending.operandCount; ++index)
-            m_body.operands.append(isNeverObserved(pending.site, index) ? valueOfUnobservedDefinitions() : operandFormOf(value, index, m_statementOperands[pending.firstOperand + index]));
+        for (uint32_t index = 0; index < pending.operandCount; ++index) {
+            const UnobservedFieldDefinition* unobserved = findUnobservedDefinition(pending.site, index);
+            m_body.operands.append(unobserved ? valueOf(*unobserved) : operandFormOf(value, index, m_statementOperands[pending.firstOperand + index]));
+        }
         if (at(pending.site).role == Role::Result && at(pending.site).isLive)
             statement.result = at(pending.site).name;
         if (mayThrowValue(value.opcode))

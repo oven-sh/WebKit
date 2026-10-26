@@ -22,6 +22,7 @@
 #include "AOTGuardAvailability.h"
 #include "AOTIRBuilder.h"
 #include "AOTInt32Conversions.h"
+#include "AOTKnownClosures.h"
 #include "AOTKnownValue.h"
 #include "AOTProgramPasses.h"
 #include "AOTPropertyAccessElements.h"
@@ -30,6 +31,7 @@
 #include "AOTResultRules.h"
 #include "AOTRewrite.h"
 #include "AOTRuleSupport.h"
+#include "AOTSchemaOperandIndexes.h"
 #include "AOTScratchRealm.h"
 #include "AOTSort.h"
 #include "AOTStringArena.h"
@@ -1553,7 +1555,28 @@ struct ConstantFolder {
         // An intersection may keep a part of one side that the subset test does not find in the other.
         bool saysMoreThanType = narrowed != TypeTable::never && narrowed != access.type && types.at(narrowed).isSubsetOf(types.at(access.type), program);
         access.setExpected(ExpectedType(saysMoreThanType ? narrowed : TypeID()));
+        if (access.opcode == Opcode::PropGet)
+            nameCalleeOfMemberCalls(id, key);
         return true;
+    }
+
+    // A call of what was read under a name, on the object that it was read from, is a call of the member of that name.
+    void nameCalleeOfMemberCalls(ValueID read, PropertyKeyID key)
+    {
+        ValueID object = definitionThroughSameValues(function, function.at(read).objectOperand());
+        Vector<ValueID, 4> worklist { read };
+        while (!worklist.isEmpty()) {
+            ValueID callee = worklist.takeLast();
+            for (const Use& use : useLists().usesOf(callee)) {
+                if (use.kind != Use::Kind::Operand)
+                    continue;
+                const Value& user = function.at(use.user);
+                if (sameValueOperandOf(user) == callee)
+                    worklist.append(use.user);
+                else if (user.opcode == Opcode::Call && use.operandIndex == OperandIndex::Call::callee && !user.calleeKey() && user.thisValueOperand() && definitionThroughSameValues(function, user.thisValueOperand()) == object)
+                    function.edit(use.user).setCalleeKey(key);
+            }
+        }
     }
 };
 

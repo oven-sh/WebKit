@@ -2094,6 +2094,14 @@ bool JSObject::setPrototype(VM&, JSGlobalObject* globalObject, JSValue prototype
     return methodTable()->setPrototype(this, globalObject, prototype, shouldThrowIfCantSet);
 }
 
+// llint_aot_op_new_object may have made a compiled object of the literal's first members.
+static bool defineAccessorOfLiteral(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor)
+{
+    if (object->structure()->isCompiledStructure()) [[unlikely]]
+        return object->methodTable()->defineOwnProperty(object, globalObject, propertyName, descriptor, true);
+    return JSObject::defineOwnProperty(object, globalObject, propertyName, descriptor, true);
+}
+
 bool JSObject::putGetter(JSGlobalObject* globalObject, PropertyName propertyName, JSValue getter, unsigned attributes)
 {
     PropertyDescriptor descriptor;
@@ -2105,7 +2113,7 @@ bool JSObject::putGetter(JSGlobalObject* globalObject, PropertyName propertyName
     if (!(attributes & PropertyAttribute::DontEnum))
         descriptor.setEnumerable(true);
 
-    return defineOwnProperty(this, globalObject, propertyName, descriptor, true);
+    return defineAccessorOfLiteral(this, globalObject, propertyName, descriptor);
 }
 
 bool JSObject::putSetter(JSGlobalObject* globalObject, PropertyName propertyName, JSValue setter, unsigned attributes)
@@ -2119,7 +2127,7 @@ bool JSObject::putSetter(JSGlobalObject* globalObject, PropertyName propertyName
     if (!(attributes & PropertyAttribute::DontEnum))
         descriptor.setEnumerable(true);
 
-    return defineOwnProperty(this, globalObject, propertyName, descriptor, true);
+    return defineAccessorOfLiteral(this, globalObject, propertyName, descriptor);
 }
 
 bool JSObject::putDirectAccessor(JSGlobalObject* globalObject, PropertyName propertyName, GetterSetter* accessor, unsigned attributes)

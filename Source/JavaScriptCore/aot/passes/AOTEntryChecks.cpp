@@ -691,7 +691,7 @@ void splitBehindEntryChecks(ProgramEditor& editor, const Heat* heat, BuildContex
         if (!headers[index].result().isExpected())
             return;
         // What a coroutine returns is the value inside its promise or generator. A call of it gives the promise or the generator, of which the body proves nothing.
-        if (headers[index].isUnsplitCoroutine() || mayReturnTaintedValue(program, added[index], build))
+        if (headers[index].isUnsplitCoroutine() || mayReturnTaintedValue(program, added[index], editor.at(added[index]), build))
             editor.at(added[index]).results[0].expect(program.at(added[index]).results[0].expected());
         else
             numberOfProvenResults.fetch_add(1, std::memory_order_relaxed);

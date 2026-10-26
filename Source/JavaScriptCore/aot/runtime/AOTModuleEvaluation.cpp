@@ -747,9 +747,8 @@ void Modules::didLoadGraph(ModuleID root)
 {
     if (m_rootWhoseFilesRanAhead == root) [[unlikely]]
         m_rootWhoseFilesRanAhead = std::nullopt;
-    m_loadsInFlight.removeAllMatching([&](const LoadInFlight& load) {
-        return load.root == root;
-    });
+    for (LoadInFlight& load : m_loadsInFlight)
+        load.isLoaded |= load.root == root;
 }
 
 unsigned Modules::numberOfGraphsBeingLoaded()
@@ -764,7 +763,9 @@ unsigned Modules::numberOfGraphsBeingLoaded()
     bool hostLoadsGraph = m_rootWhoseFilesRanAhead && !m_loadsInFlight.containsIf([&](const LoadInFlight& load) {
         return load.root == m_rootWhoseFilesRanAhead;
     });
-    return m_loadsInFlight.size() + hostLoadsGraph;
+    return hostLoadsGraph + std::ranges::count_if(m_loadsInFlight, [](const LoadInFlight& load) {
+        return !load.isLoaded;
+    });
 }
 
 bool Modules::loaderGoesThroughGraph()
@@ -772,8 +773,36 @@ bool Modules::loaderGoesThroughGraph()
     if (!numberOfGraphsBeingLoaded())
         return false;
     return m_rootWhoseFilesRanAhead || m_loadsInFlight.containsIf([](const LoadInFlight& load) {
-        return load.isWalked;
+        return load.isWalked && !load.isLoaded;
     });
+}
+
+// A synchronous load takes over the steps of an import() whose root it comes to: the promise of that import() is settled before require() returns.
+bool Modules::comesToRootOfLoadInFlight(ModuleID required)
+{
+    auto isRootThatWaits = [&](ModuleID module) {
+        return m_loadsInFlight.containsIf([&](const LoadInFlight& load) {
+            return load.root == module && !load.isLoaded && status(module) != ModuleStatus::Evaluating;
+        });
+    };
+    if (!std::ranges::any_of(m_loadsInFlight, [&](const LoadInFlight& load) { return isRootThatWaits(load.root); }))
+        return false;
+    BitVector seen(m_table.size());
+    seen.quickSet(required.index());
+    Vector<ModuleID, 16> modules { required };
+    while (!modules.isEmpty()) {
+        ModuleID module = modules.takeLast();
+        if (isRootThatWaits(module))
+            return true;
+        if (!isLoadedWithRequests(module))
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(module)) {
+            ModuleID target = request.targetModule();
+            if (!request.isHoisted && !seen.quickSet(target.index()))
+                modules.append(target);
+        }
+    }
+    return false;
 }
 
 void Modules::didStartLoad(JSPromise* load, ModuleID root)
@@ -787,7 +816,7 @@ bool Modules::needsLoaderForRequire(ModuleID module)
 {
     if (!isLoadedWithRequests(module))
         return false;
-    return data(module).isLoadedByLoader() || loaderGoesThroughGraph();
+    return data(module).isLoadedByLoader() || loaderGoesThroughGraph() || comesToRootOfLoadInFlight(module);
 }
 
 // The loader has not linked the module, so it may not have walked what the module imports.

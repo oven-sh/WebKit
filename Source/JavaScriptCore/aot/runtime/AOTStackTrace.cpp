@@ -549,7 +549,7 @@ ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackS
         framesAbove = { results.size(), true };
     }
     // A return address does not say which function object runs in the frame.
-    bool hasRecordedCallees = FunctionTables::of(vm).hasRecordedCalleesAbove(start->stackPointer);
+    bool hasRecordedCallees = FunctionTables::of(vm).hasRecordedCallees();
     Instance* instance = findInstance(vm, *start);
     if (!instance)
         return nullptr;

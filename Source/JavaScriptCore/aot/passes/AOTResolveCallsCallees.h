@@ -23,11 +23,13 @@ struct CalleeCandidates {
     ValueID value;
     bool hasOtherCallees { false };
     bool mayBeNullish { false };
+    // The function itself makes the closures that are expected, each on a way of its own to the operation.
+    bool arriveOnWaysOfTheirOwn { false };
 
     bool isProven() const { return proof == CalleeProof::Type; }
     const FunctionList& listed() const LIFETIME_BOUND { return isProven() ? proven : expected; }
     // PlaceTypeTests puts the test for one expected callee. Several that are only expected get neither a test nor arms: chooseDispatchedCallees() says why.
-    bool hasOneExpectedCallee() const { return proof == CalleeProof::Test && expected.size() == 1; }
+    bool hasOneExpectedCallee() const { return proof == CalleeProof::Test && expected.size() == 1 && !arriveOnWaysOfTheirOwn; }
     bool isDispatchedAtOperation() const { return proof != CalleeProof::Unknown && !hasOneExpectedCallee(); }
 };
 

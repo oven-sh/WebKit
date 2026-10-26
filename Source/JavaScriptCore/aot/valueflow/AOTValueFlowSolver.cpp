@@ -194,16 +194,6 @@ static Vector<std::unique_ptr<ValueSetMaker>> makeMakers(ValueSets& sets, const 
     return makers;
 }
 
-// createRequire() returns a require function. A call has to see createRequire among its callees for the call of the result to be seen as a load.
-static bool returnsBuiltinThatLetsInUnseenCode(const BuiltinTable& builtins, BuiltinID function)
-{
-    return std::ranges::any_of(builtins.overloadsOf(function), [&](const BuiltinOverload& overload) {
-        return std::ranges::any_of(builtins.at(overload.result.type).parts, [&](const BuiltinTypePart& part) {
-            return part.kind == BuiltinTypePartKind::Builtin && builtins.letsInUnseenCode(builtins.canonicalID(part.builtin));
-        });
-    });
-}
-
 ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& sets, ValueFlowRule rule, const ParallelLoops& loops, Rounds rounds)
     : m_input(input)
     , m_sets(sets)
@@ -235,7 +225,7 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
         const BuiltinTable& builtins = m_input.program->builtins();
         Vector<ValueFlowObjectID, 32> objects;
         for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-            if (builtins.canonicalID(BuiltinID(index)) == BuiltinID(index) && (builtins.letsInUnseenCode(BuiltinID(index)) || returnsBuiltinThatLetsInUnseenCode(builtins, BuiltinID(index))))
+            if (builtins.canonicalID(BuiltinID(index)) == BuiltinID(index) && builtins.letsInUnseenCode(BuiltinID(index)))
                 m_input.universe->appendObjectsOf(BuiltinID(index), objects);
         }
         // A read of `.default` must find the path even where the receiver may also be an unknown object.

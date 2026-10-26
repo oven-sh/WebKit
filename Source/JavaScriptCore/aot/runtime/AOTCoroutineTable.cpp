@@ -182,7 +182,11 @@ SavedFrame* SavedFrame::create(VM& vm, Instance& instance, CoroutineKind kind, s
 SavedFrame* SavedFrame::create(VM& vm, Instance& instance, CoroutineKind kind, const SuspendedMachineFrame& machineFrame)
 {
     uint64_t siteWord = machineFrame.words->siteWord;
-    return create(vm, instance, kind, machineFrame.numberOfWords(), savedRegistersOrPairsOf(siteWord), skippedAtBottomOf(siteWord));
+    size_t numberOfWords = machineFrame.numberOfWords();
+    RELEASE_ASSERT(clearedWordsOf(siteWord) <= numberOfWords);
+    // What an earlier call left at their addresses would be kept, and every resumption would put it back on the stack.
+    std::ranges::fill(std::span { const_cast<uint64_t*>(machineFrame.firstSavedWord()), clearedWordsOf(siteWord) }, 0);
+    return create(vm, instance, kind, numberOfWords, savedRegistersOrPairsOf(siteWord), skippedAtBottomOf(siteWord));
 }
 
 SavedFrame* SavedFrame::createForAsyncFunction(VM& vm, Instance& instance, const SuspendedMachineFrame& machineFrame)

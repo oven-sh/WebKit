@@ -433,8 +433,11 @@ void FunctionAnalyses::verifyCached()
         checkEqual(m_controlFlow.edgesFromUnreachableBlocks->span(), fresh.edgesFromUnreachableBlocks());
     if (cached.contains(FunctionAnalysis::Dominators)) {
         bool selfCheck = m_function.blocks.size() <= m_context.build.limit(LimitID::MaxBlocksForDominatorSelfCheck);
-        Dominators freshDominators(graph, selfCheck);
-        checkDominators(graph, *m_controlFlow.dominators, freshDominators, selfCheck);
+        bool comparesWithNaiveSolution = selfCheck && !m_controlFlow.dominators->wasComparedWithNaiveSolution();
+        Dominators freshDominators(graph, comparesWithNaiveSolution);
+        checkDominators(graph, *m_controlFlow.dominators, freshDominators, comparesWithNaiveSolution);
+        if (comparesWithNaiveSolution)
+            m_controlFlow.dominators->didCompareWithNaiveSolution();
         if (cached.contains(FunctionAnalysis::NaturalLoops)) {
             NaturalLoops freshNaturalLoops(graph, freshDominators, selfCheck);
             checkNaturalLoops(graph, *m_controlFlow.naturalLoops, freshNaturalLoops);

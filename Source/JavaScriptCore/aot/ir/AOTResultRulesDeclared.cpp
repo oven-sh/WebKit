@@ -13,6 +13,7 @@
 #include "AOTHeldOperands.h"
 #include "AOTIRProgram.h"
 #include "AOTNarrowFieldTypes.h"
+#include "AOTPropertyAccessMembers.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -46,7 +47,15 @@ FieldTypeState fieldTypeStateOf(const Program& program, FieldReference reference
     return hasProvenType(flowOf(program, reference)) ? FieldTypeState::Proven : FieldTypeState::Unknown;
 }
 
-static std::optional<Type> tryTypeOfField(const TypingContext& context, FieldReference reference)
+static FunctionID findMethodBehindField(const Program& program, LayoutID receiver, PropertyKeyID key)
+{
+    if (program.at(receiver).kind != LayoutKind::Instance)
+        return { };
+    MemberAnswer above = findMemberOnPrototypes({ program }, { MemberStart::Instance, receiver, key, Access::Read, false });
+    return above.kind == MemberKind::Method ? above.method : FunctionID();
+}
+
+static std::optional<Type> tryTypeOfField(const TypingContext& context, LayoutID receiver, FieldReference reference)
 {
     const Field& field = fieldAt(context.program, reference);
     if (field.form.contains(FieldForm::IsAccessor)) {
@@ -55,8 +64,14 @@ static std::optional<Type> tryTypeOfField(const TypingContext& context, FieldRef
         return context.typeOf(field.declared);
     }
     const Type& declared = typeOfField(context, field);
-    if (context.level == TypeLevel::Expected)
-        return field.flags.contains(FieldFlags::IsRequired) ? declared : declared.withPrimitives(Primitive::Undefined);
+    if (context.level == TypeLevel::Expected) {
+        if (field.flags.contains(FieldFlags::IsRequired))
+            return declared;
+        // An object that has no property of its own under the name answers with the method of its class.
+        if (FunctionID method = field.flags.contains(FieldFlags::IsFilledByCreator) ? FunctionID() : findMethodBehindField(context.program, receiver, field.key))
+            return declared.unionWith(Type::forFunction(method), context.types);
+        return declared.withPrimitives(Primitive::Undefined);
+    }
 
     const FieldFlow& flow = flowOf(context.program, reference);
     if (!hasProvenType(flow))
@@ -83,7 +98,7 @@ std::optional<Type> tryTypeOfFieldRead(const TypingContext& context, std::span<c
             continue;
         }
         isMissingInEveryReceiver = false;
-        std::optional<Type> part = tryTypeOfField(context, *field);
+        std::optional<Type> part = tryTypeOfField(context, receiver, *field);
         if (!part)
             return std::nullopt;
         result = result.unionWith(*part, context.types);

@@ -651,10 +651,12 @@ ValueFlowPositionResult ValueFlowPositions::decide(KindOfType kindOfFamily, Valu
 
     if (holdsUntrackedObject)
         held = held.unionWith(family.withOnlyObjects(), m_types);
-    Type narrowed = withinLimits(WTF::move(held)).intersectWith(family, m_types);
+    held = withinLimits(WTF::move(held));
+    Type narrowed = held.intersectWith(family, m_types);
     if (narrowed.isNever() || (narrowed == family && !familyBehind))
         return { .proof = ValueFlowProof::Proven };
-    return { .proof = ValueFlowProof::Proven, .narrowed = WTF::move(narrowed) };
+    bool isWhatFlowHolds = !holdsUntrackedObject && narrowed == held;
+    return { .proof = ValueFlowProof::Proven, .narrowed = WTF::move(narrowed), .isWhatFlowHolds = isWhatFlowHolds };
 }
 
 ValueFlowPositionResult ValueFlowPositions::resultAt(ProvenType family, ValueSetID set, DeadZone deadZone, const ValueFlowNumbers* numbers)

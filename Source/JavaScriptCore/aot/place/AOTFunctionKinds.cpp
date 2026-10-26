@@ -117,8 +117,8 @@ ClosureForm closureFormOf(const Program& program, const FlowResults& flow, Funct
         return ClosureForm::Full;
     if (function.captures.size() > ClosureRequest::maxSlimClosureCaptures)
         return ClosureForm::Full;
-    // A full closure has the property `name` from the first look for it on, which is what a stack frame asks it.
-    if (function.has(FunctionCapabilities::NotesLooksForName))
+    // A full closure has the property `name` from the first look for it on, which is what a stack frame asks a function object that has a displayName.
+    if (function.has(FunctionCapabilities::NotesLooksForName) && flow.closuresAreGivenDisplayName(id))
         return ClosureForm::Full;
     return isExpectedToHaveNoProperties(program, flow, id) ? ClosureForm::Slim : ClosureForm::Full;
 }

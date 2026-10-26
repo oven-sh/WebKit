@@ -160,6 +160,7 @@ struct FlowFunctionTables {
     BitVector functionsWhoseClosuresAreNeverCompared;
     BitVector functionsWithOneClosure;
     BitVector functionsWhoseClosuresMayBeRenamed;
+    BitVector functionsWhoseClosuresAreGivenDisplayName;
     BitVector functionsWhoseClosuresAreMadeOnce;
 };
 
@@ -317,6 +318,8 @@ public:
     bool areClosuresAsCreated(FunctionID closureFunction, std::span<const PropertyKeyID> ownKeys) const;
     // By code that flow has seen.
     bool closuresMayBeRenamed(FunctionID closureFunction) const;
+    // By a statement that is seen to reach the closure and writes that key or a key nobody knows.
+    bool closuresAreGivenDisplayName(FunctionID closureFunction) const;
     // By one operation that runs once, or by the first read of the variable that starts with the function.
     bool closureIsMadeOnce(FunctionID closureFunction) const;
     bool closuresInheritFromFunctionPrototype(FunctionID closureFunction, PropertyKeyID) const;

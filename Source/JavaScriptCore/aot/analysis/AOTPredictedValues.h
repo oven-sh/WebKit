@@ -57,11 +57,23 @@ struct ForgottenProofs {
     bool hasErasedValidation { false };
 };
 
+// Keeps what the edits of a body replace, for whoever only asks what the body would be like.
+class UndoLog {
+public:
+    void willEdit(const Function& function, ValueID id) { m_values.append({ id, function.at(id) }); }
+    void willEditTerminator(const Function& function, BlockID id) { m_terminators.append({ id, function.at(id).terminator }); }
+    void undo(Function&);
+
+private:
+    Vector<std::pair<ValueID, Value>, 16> m_values;
+    Vector<std::pair<BlockID, Terminator>, 1> m_terminators;
+};
+
 // A claim that has lost its test is a prediction. In what is made from the given values: a claim that holds behind checks and an Upcast become an Expect, a validation becomes nothing,
 // the receivers and callees of an operation are no longer all there are, and a tail call keeps the claim of the result alone. Checks stay unless they are listed.
 ForgottenProofs forgetProofsBehind(Function&, const CFG&, TypeArena&, std::span<const ValueID> values, const BitVector& checksThatGo, ExpectedTypes);
 // The same for whoever has those values at hand: the copies of what is made from a check that has failed.
-ForgottenProofs forgetProofsOf(Function&, TypeArena&, const BitVector& values, const BitVector& checksThatGo, ExpectedTypes);
+ForgottenProofs forgetProofsOf(Function&, TypeArena&, const BitVector& values, const BitVector& checksThatGo, ExpectedTypes, UndoLog* = nullptr);
 
 // The only way to take a test away without a proof.
 ForgottenProofs expectInsteadOfChecking(Function&, const CFG&, TypeArena&, std::span<const ValueID> checks, ExpectedTypes);

@@ -881,6 +881,13 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                     JSPromise* makePromise = makeModule(globalObject, resolved, fetchPromise->result());
                     RETURN_IF_EXCEPTION(scope, nullptr);
                     if (makePromise->status() == JSPromise::Status::Fulfilled) {
+#if ENABLE(AOT)
+                        // A load that came to the module while this record was made has left its own in the entry.
+                        if (auto* compiled = mapEntry->record() ? dynamicDowncast<AOT::ModuleRecord>(makePromise->result()) : nullptr) {
+                            compiled->didReplaceRecordInRegistry();
+                            RETURN_IF_EXCEPTION(scope, nullptr);
+                        }
+#endif
                         mapEntry->fetchComplete(globalObject, uncheckedDowncast<AbstractModuleRecord>(makePromise->result()));
                         modulePromise->fulfillPromise(vm, makePromise->result());
                     } else if (makePromise->status() == JSPromise::Status::Rejected)

@@ -14,6 +14,7 @@
 #include "AOTBuiltinUses.h"
 #include "AOTCodeShapes.h"
 #include "AOTIRBuilder.h"
+#include "AOTResolveAccesses.h"
 #include "AOTResultRules.h"
 #include "AOTSelectionContext.h"
 #include "AOTTypePropagation.h"
@@ -188,6 +189,7 @@ PassOutcome select(FunctionPassContext& pass)
     outcome |= callWithAnyReceiverWhereTypesAreLost(pass);
     outcome |= chooseCodeShapes(pass, ChosenShapes::ChooseAgain);
     outcome |= makeDescriptorLiteralsBehindJoins(pass);
+    outcome |= addCasesOfFieldsWithoutStorage(pass);
 
     SelectionContext context(pass);
     for (const SelectionRule& rule : selectionRules()) {

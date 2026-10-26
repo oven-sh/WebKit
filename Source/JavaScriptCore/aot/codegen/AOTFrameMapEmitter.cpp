@@ -13,6 +13,7 @@
 #include "AOTSavedFrameMap.h"
 #include "AOTStubRegisters.h"
 #include "AirCode.h"
+#include "AirLimits.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "GPRInfo.h"
@@ -22,6 +23,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 // A root lies in a word of the frame, or two narrow ones in one. Nothing else about a map depends on how many there are.
 static_assert(defaultLimitValue(LimitID::MaxFrameMapRoots, hostArchitecture()) == SavedFrame::maxNumberOfWords);
+static_assert(B3::AirLimits::maxWordsClearedAtFirstSuspension == SavedFrame::maxClearedWords);
 
 static RegisterSet registersClobberedBySuspension(const B3::Air::Code& code)
 {
@@ -176,7 +178,7 @@ std::optional<uint64_t> FrameMapEmitter::siteWordFor(FrameMapRecords& records, c
                 builder.addOtherLiveWord(SavedFrame::locationInRegister);
         }
     }
-    return SavedFrame::siteWord(records.addMap(builder.finish().span()), *promiseLocation, *savedRegisters, deadWordsAtBottom, numberOfWordsInFrame);
+    return SavedFrame::siteWord(records.addMap(builder.finish().span()), *promiseLocation, *savedRegisters, deadWordsAtBottom, numberOfWordsInFrame, params.value()->numberOfFrameWordsToClearAtFirstSuspension());
 }
 
 } } } // namespace JSC::AOT::Typed

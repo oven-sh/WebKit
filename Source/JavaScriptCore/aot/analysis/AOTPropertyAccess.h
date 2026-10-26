@@ -111,6 +111,7 @@ struct TestsOfEmptySlot {
 enum class OptionKind : uint8_t {
     RecordOption = 1 << 0,
     LazilyInitializedField = 1 << 1,
+    FieldWithoutStorage = 1 << 2,
 };
 std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const PropertyAccessContext&, std::span<const LayoutID> receivers, PropertyKeyID, OptionSet<OptionKind>);
 

@@ -2756,14 +2756,23 @@ static JSString* createHTML(JSGlobalObject* globalObject, JSValue thisValue, ASC
     JSString* string = thisValue.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
+    JSString* attrValueString = nullptr;
+    uint64_t shortestLength = "<></>"_s.length() + 2 * tagName.length() + string->length();
+    if (!attributeName.isEmpty()) {
+        attrValueString = attributeValue.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        shortestLength += " =\"\""_s.length() + attributeName.length() + attrValueString->length();
+    }
+    if (shortestLength > String::MaxLength) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+
     StringBuilder result(OverflowPolicy::RecordOverflow);
     result.append('<');
     result.append(tagName);
 
-    if (!attributeName.isEmpty()) {
-        auto* attrValueString= attributeValue.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-
+    if (attrValueString) {
         auto attrValueView = attrValueString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
 

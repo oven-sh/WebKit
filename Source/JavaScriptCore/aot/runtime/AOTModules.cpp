@@ -437,7 +437,7 @@ JSObject* Modules::createTableOfExports()
 
 JSObject* Modules::namespaceIfCreated(ModuleID module, ModulePhase phase) const
 {
-    if (phase == ModulePhase::Evaluation && data(module).holdsNamespaceInValue()) {
+    if (phase == ModulePhase::Evaluation && data(module).holdsNamespaceInValue() && !m_modulesWithEarlierNamespaceInValue.get(module.index())) {
         JSValue held = value(module);
         return held ? asObject(held) : nullptr;
     }
@@ -447,7 +447,7 @@ JSObject* Modules::namespaceIfCreated(ModuleID module, ModulePhase phase) const
 
 void Modules::setNamespace(ModuleID module, ModulePhase phase, JSObject* namespaceObject)
 {
-    if (phase == ModulePhase::Evaluation && data(module).holdsNamespaceInValue())
+    if (phase == ModulePhase::Evaluation && data(module).holdsNamespaceInValue() && !m_modulesWithEarlierNamespaceInValue.get(module.index()))
         setValue(module, namespaceObject);
     else
         ensureLoaded(module).namespaceObjectFor(phase).set(*this, namespaceObject);
@@ -897,7 +897,7 @@ ModuleRecord* Modules::exposeRecord(ModuleID module)
     RELEASE_AND_RETURN(scope, appendRequestsOfUncompiledCode(module, record));
 }
 
-// `bun run` loads a graph module by module, in jobs. A program can tell how many they are only if other jobs wait, if its own code runs between them, or if another graph is being loaded.
+// `bun run` loads a graph module by module, in jobs. A program can tell how many they are only if other jobs wait, if its own code runs between them, if another graph is being loaded, or if one is loaded and the promise of its import() is not settled yet.
 bool Modules::canTellHowGraphIsLoaded(ModuleID root)
 {
     VM& vm = *m_instance.vm;
@@ -906,6 +906,8 @@ bool Modules::canTellHowGraphIsLoaded(ModuleID root)
     if (data(root).isEntryPoint())
         return false;
     if (vm.m_synchronousModuleQueue || numberOfGraphsBeingLoaded() > 1)
+        return true;
+    if (m_loadsInFlight.containsIf([](const LoadInFlight& load) { return load.isLoaded; }))
         return true;
     // With one load in flight the steps of the loader that wait are its own, or come behind the evaluation of an entry point. None of them runs code of the program before the graph is loaded.
     return !vm.defaultMicrotaskQueue().allOf([&](const QueuedTask& task) {
@@ -1495,6 +1497,11 @@ void ModuleRecord::willLoadRequests()
 void ModuleRecord::didLoad()
 {
     modules().evaluateFilesOfLevel(m_module, m_runsWhenLoaded);
+}
+
+void ModuleRecord::didReplaceRecordInRegistry()
+{
+    modules().captureExportsAgain(m_module);
 }
 
 bool ModuleRecord::takeStepOfMainModule()

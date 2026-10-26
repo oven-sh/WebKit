@@ -449,6 +449,9 @@ bool describeByRole(const Program& program, const Function& function, EffectDesc
         description.addOwn(declaredBoundOf(Opcode::NewArray));
         return true;
     case FunctionRole::BoundFunction:
+        // One whose target records its callee calls the closure by value.
+        if (program.at(function.creator.as<CreatorRecord::BoundFunction>().target).capabilities.contains(FunctionCapabilities::RecordsCallee))
+            return false;
         description.addFunction(function.creator.as<CreatorRecord::BoundFunction>().target);
         return true;
     case FunctionRole::AllocatedThisVersion:

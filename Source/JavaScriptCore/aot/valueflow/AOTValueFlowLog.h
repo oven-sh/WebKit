@@ -74,6 +74,7 @@ struct ValueFlowNodeKey {
     static ValueFlowNodeKey objectsThatAreNotPlain() { return { ValueFlowMadeNodeKind::Marked, 0, 1u << 16, { } }; }
     static ValueFlowNodeKey objectsWrittenUnderUnknownKey() { return { ValueFlowMadeNodeKind::Marked, 0, (1u << 16) + 1, { } }; }
     static ValueFlowNodeKey objectsWithRareWrite(ValueFlowRareWrite write) { return { ValueFlowMadeNodeKind::Marked, 0, (1u << 16) + 2 + static_cast<uint32_t>(write), { } }; }
+    static ValueFlowNodeKey holdersOfLibraryExportsWrittenUnder(PropertyKeyID key) { return { ValueFlowMadeNodeKind::Marked, 1, key.index(), { } }; }
 
     ValueFlowName name() const { return { static_cast<ValueFlowNameKind>(detail), payload }; }
     ValueFlowCallKind callKind() const { return static_cast<ValueFlowCallKind>(detail); }

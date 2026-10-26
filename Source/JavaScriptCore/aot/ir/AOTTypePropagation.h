@@ -93,6 +93,10 @@ public:
 
     void restartAllValues();
     void restartDependentsOf(std::span<const ValueID>);
+    // Among the listed values: the given ones and whatever they are typed from. Nothing else is typed.
+    void restartSourcesOf(std::span<const ValueID>, const BitVector& listed);
+    const BitVector& restartedValues() const LIFETIME_BOUND { return m_isRestarted; }
+    void restoreTypes();
 
     void solveTypes() { solve(TypeLevel::Proven); }
     void solveExpectedTypes();
@@ -105,9 +109,11 @@ private:
 
     struct StateBeforeRestart {
         TypeID type;
-        TypeID expected;
+        TypeID expectedForTyping;
         TypeID expectedOrType;
         uint32_t numberOfUpdates { 0 };
+
+        TypeID expected() const { return expectedForTyping.index() ? expectedForTyping : TypeID(); }
     };
 
     enum class SweepFlag : uint8_t {

@@ -39,6 +39,8 @@ struct ValueFlowPositionResult {
     ValueFlowProof proof { ValueFlowProof::NothingArrives };
     std::optional<Type> narrowed;
     ValueFlowObjectID stranger;
+    // The narrowed type is what flow holds: the family has neither taken anything out of it nor put anything in.
+    bool isWhatFlowHolds { false };
 };
 
 struct ValueFlowLayoutsOfSite {

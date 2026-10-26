@@ -387,7 +387,7 @@ static void testSkippedWordsInSiteWord()
         uint32_t skippedAtBottom;
     };
     // The number of words kept stays even.
-    static constexpr Case cases[] = { { 0, 0 }, { 1, 0 }, { 2, 2 }, { 5, 4 }, { 126, 126 }, { 127, 126 }, { 128, 128 }, { 252, 252 }, { 253, 252 }, { 254, 254 }, { 255, 254 }, { 256, 256 }, { 4098, 4098 }, { maxLocation, maxLocation - 1 } };
+    static constexpr Case cases[] = { { 0, 0 }, { 1, 0 }, { 2, 2 }, { 5, 4 }, { 28, 28 }, { 29, 28 }, { 30, 30 }, { 31, 30 }, { 32, 32 }, { 126, 126 }, { 127, 126 }, { 128, 128 }, { 252, 252 }, { 253, 252 }, { 254, 254 }, { 255, 254 }, { 256, 256 }, { 4098, 4098 }, { maxLocation, maxLocation - 1 } };
     for (const Case& testCase : cases) {
         for (uint32_t promiseLocation : { 0u, 1u, maxLocation }) {
             uint64_t word = *SavedFrame::siteWord(maxOffset, promiseLocation, 3, testCase.deadWordsAtBottom);
@@ -396,7 +396,7 @@ static void testSkippedWordsInSiteWord()
         }
     }
     AOT_TEST_CHECK(!SavedFrame::siteWord(0, 0, 0, maxLocation + 1));
-    AOT_TEST_CHECK(!(*SavedFrame::siteWord(maxOffset, 31, 3, 252) >> 32) && *SavedFrame::siteWord(maxOffset, 31, 3, 254) >> 32);
+    AOT_TEST_CHECK(!(*SavedFrame::siteWord(maxOffset, 15, 3, 28, 0, SavedFrame::maxClearedWords) >> 32) && *SavedFrame::siteWord(maxOffset, 15, 3, 30) >> 32 && *SavedFrame::siteWord(maxOffset, 16, 3, 28) >> 32);
 
     for (uint32_t savedRegistersOrPairs : { 0u, 1u, 2u, 3u }) {
         uint32_t skippedAtTop = SavedFrame::skippedAtTopOf(*SavedFrame::siteWord(maxOffset, maxLocation, savedRegistersOrPairs, 126));
@@ -409,6 +409,22 @@ static void testSkippedWordsInSiteWord()
 
     AOT_TEST_CHECK(SavedFrame::siteWord(0, 0, 0, 0, SavedFrame::maxNumberOfWords));
     AOT_TEST_CHECK(!SavedFrame::siteWord(0, 0, 0, 0, SavedFrame::maxNumberOfWords + 1));
+}
+
+static void testClearedWordsInSiteWord()
+{
+    constexpr uint32_t maxOffset = (1u << SavedFrame::liveSlotMapOffsetBits) - 1;
+    constexpr uint32_t maxLocation = SavedFrame::maxNumberOfWords;
+    for (uint32_t clearedWords : { 0u, 1u, 6u, SavedFrame::maxClearedWords }) {
+        for (uint32_t deadWordsAtBottom : { 0u, 30u, 32u, maxLocation - 1 }) {
+            for (uint32_t promiseLocation : { 0u, 15u, maxLocation }) {
+                uint64_t word = *SavedFrame::siteWord(maxOffset, promiseLocation, 3, deadWordsAtBottom, 0, clearedWords);
+                AOT_TEST_CHECK(SavedFrame::clearedWordsOf(word) == clearedWords && SavedFrame::skippedAtBottomOf(word) == deadWordsAtBottom);
+                AOT_TEST_CHECK(SavedFrame::liveSlotMapOffsetOf(word) == maxOffset && SavedFrame::promiseLocationOf(word) == promiseLocation && SavedFrame::savedRegistersOrPairsOf(word) == 3);
+            }
+        }
+    }
+    AOT_TEST_CHECK(!SavedFrame::siteWord(0, 0, 0, 0, 0, SavedFrame::maxClearedWords + 1));
 }
 
 static void testNarrowLocations()
@@ -655,6 +671,28 @@ static void checkSkippedWords(LoadedProgram& program)
             AOT_TEST_CHECK(*reinterpret_cast<const uint64_t*>(reinterpret_cast<const uint8_t*>(saved) + SavedFrame::offsetOfWords()) == frame.wordAt(frame.lastKeptLocation()));
 
             // The next round changes the map, and a word that it lists may be poisoned in this frame.
+            saved->willBeRestoredToStack();
+        }
+    }
+}
+
+static void checkLowestWordsAreClearedAtTheFirstSave(LoadedProgram& program)
+{
+    uint32_t function = findFunctionWithMap(*Image::current()).function;
+    for (uint32_t skippedAtBottom : { 0u, 4u, 40u }) {
+        for (uint32_t clearedWords : { 0u, 1u, 3u, SavedFrame::maxClearedWords }) {
+            uint64_t siteWord = *SavedFrame::siteWord(0, 1, 0, skippedAtBottom, 0, clearedWords);
+            Vector<uint32_t> listedLocations { 1, 2 };
+            listValuesInMapOf(function, listedLocations);
+            HandMadeFrame frame = fillFrameWithUnreferencedObjects(program, listedLocations, siteWord);
+            Vector<uint64_t> stackBefore = frame.stack;
+            SavedFrame* saved = saveHandMadeFrame(program, frame, function);
+            for (uint32_t location = 1; location <= frame.numberOfWords; ++location) {
+                bool isCleared = location <= frame.lastKeptLocation() && location + clearedWords > frame.lastKeptLocation();
+                AOT_TEST_CHECK(frame.wordAt(location) == (isCleared ? 0 : stackBefore[frame.numberOfWords - location]));
+                if (location <= frame.lastKeptLocation())
+                    AOT_TEST_CHECK(saved->wordAt(location) == frame.wordAt(location));
+            }
             saved->willBeRestoredToStack();
         }
     }
@@ -933,6 +971,7 @@ std::span<const NativeTest> savedFrameTests()
         { "saved-frame/map-with-long-header"_s, testMapWithLongHeader },
         { "saved-frame/site-word"_s, testSiteWord },
         { "saved-frame/skipped-words-in-site-word"_s, testSkippedWordsInSiteWord },
+        { "saved-frame/cleared-words-in-site-word"_s, testClearedWordsInSiteWord },
         { "saved-frame/narrow-locations"_s, testNarrowLocations },
         { "saved-frame/resume-modes"_s, testResumeModes },
         { "saved-frame/root-limit"_s, testRootLimit },
@@ -940,6 +979,7 @@ std::span<const NativeTest> savedFrameTests()
         { "saved-frame/unlisted-dead-word-is-poisoned"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkUnlistedDeadWordIsPoisoned> },
         { "saved-frame/frame-on-the-stack-is-left-alone"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkFrameOnTheStackIsLeftAlone> },
         { "saved-frame/skipped-words"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkSkippedWords> },
+        { "saved-frame/lowest-words-are-cleared-at-the-first-save"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkLowestWordsAreClearedAtTheFirstSave> },
         { "saved-frame/dead-words-are-overwritten-at-a-collection"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkDeadWordsAreOverwrittenAtACollection> },
         { "saved-frame/adapter-above-a-resumed-frame-writes-its-save-area"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkAdapterAboveResumedFrameWritesItsSaveArea> },
         { "saved-frame/listed-words-survive-a-collection"_s, testListedWordsSurviveACollection },

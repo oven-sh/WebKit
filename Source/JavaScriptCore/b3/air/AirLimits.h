@@ -50,6 +50,7 @@ inline constexpr unsigned maxBytesBelowFrameRecord = 240;
 inline constexpr unsigned maxFrameSizeWithPushedRegisters = 496;
 inline constexpr unsigned maxInstsScannedForSpillsAtFrameSetup = 16;
 inline constexpr unsigned maxRegistersPushedAtFrameSetup = 6;
+inline constexpr unsigned maxWordsClearedAtFirstSuspension = 15;
 
 inline constexpr unsigned maxBytesFromGuardToRareBlock = 24 * estimatedBytesPerInst;
 inline constexpr unsigned maxBytesOfRareBlockNearGuard = 16 * estimatedBytesPerInst;

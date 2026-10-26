@@ -522,8 +522,8 @@ bool CompiledFrameIterator::isConstructCall()
 
 JSObject* CompiledFrameIterator::recordedCallee()
 {
-    std::span recordedCallees = FunctionTables::of(*m_vm).recordedCallees();
-    if (recordedCallees.empty()) [[likely]]
+    FunctionTables& tables = FunctionTables::of(*m_vm);
+    if (!tables.hasRecordedCallees()) [[likely]]
         return nullptr;
 
     // The entrypoint records the callee. Its frame, or the one that took its place in a tail call, is the outermost of the hidden frames of the function.
@@ -551,13 +551,8 @@ JSObject* CompiledFrameIterator::recordedCallee()
     if (runEnd.resumesSavedFrame)
         return nullptr;
 
-    for (size_t index = recordedCallees.size(); index--;) {
-        if (recordedCallees[index].stackPointerOfCaller < stackPointer)
-            continue;
-        JSObject* closure = recordedCallees[index].closure;
-        return recordedCallees[index].stackPointerOfCaller == stackPointer && sourceFunctionOf(*functionOf(closure)) == source ? closure : nullptr;
-    }
-    return nullptr;
+    JSObject* closure = tables.recordedCalleeOfCallFrom(stackPointer);
+    return closure && sourceFunctionOf(*functionOf(closure)) == source ? closure : nullptr;
 }
 
 bool isOperationFrameRecord(VM& vm, const CallFrame* frameRecord)

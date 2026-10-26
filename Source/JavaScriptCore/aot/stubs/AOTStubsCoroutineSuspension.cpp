@@ -319,31 +319,28 @@ static void emitSaveFrame(StubAssembler& jit, const FrameCopyRegisters& register
     jit.add32(TrustedImm32(1), version);
 }
 
-// SavedFrame::skippedAtTopOf as code.
-static void emitLoadNumberOfWordsSkippedAtTop(StubAssembler& jit, GPRReg siteWord, GPRReg result, GPRReg scratch)
+// Takes SavedFrame::skippedAtTopOf off the number.
+static void emitSubtractNumberOfWordsSkippedAtTop(StubAssembler& jit, GPRReg siteWord, GPRReg number, GPRReg scratch)
 {
 #if CPU(X86_64)
     constexpr uint32_t bothRegisters = SavedFrame::functionSavesPreservedRegister | SavedFrame::functionSavesR15;
     static_assert(SavedFrame::skippedAtTopOf(bothRegisters) == 2 && !SavedFrame::skippedAtTopOf(SavedFrame::functionSavesPreservedRegister) && !SavedFrame::skippedAtTopOf(SavedFrame::functionSavesR15) && !SavedFrame::skippedAtTopOf(0));
     jit.and32(TrustedImm32(bothRegisters), siteWord, scratch);
-    jit.move(TrustedImm32(0), result);
     Jump savesFewer = jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(bothRegisters));
-    jit.move(TrustedImm32(2), result);
+    jit.sub32(TrustedImm32(2), number);
     savesFewer.link(&jit);
 #elif CPU(ARM64)
     static_assert(SavedFrame::skippedAtTopOf(3u << SavedFrame::liveSlotMapOffsetBits) == 6 && SavedFrame::skippedAtTopOf(1u << SavedFrame::liveSlotMapOffsetBits) == 2);
-    UNUSED_PARAM(scratch);
-    extractBits(jit, siteWord, SavedFrame::liveSlotMapOffsetBits, SavedFrame::savedRegisterBits, result);
-    jit.lshift32(TrustedImm32(1), result);
+    extractBits(jit, siteWord, SavedFrame::liveSlotMapOffsetBits, SavedFrame::savedRegisterBits, scratch);
+    jit.lshift32(TrustedImm32(1), scratch);
+    jit.sub32(scratch, number);
 #endif
 }
 
 AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler& jit, CoroutineKind kind, GPRReg siteWord, const NewSavedFrameRegisters& registers, JumpList& needsOperation)
 {
     using Continuation = SavedFrame::Continuation;
-    constexpr unsigned sizeStepShift = getLSBSet(MarkedSpace::sizeStep);
     const auto [saved, count, allocator, scratch] = registers;
-    const GPRReg skippedAtTop = allocator;
     const GPRReg skippedAtBottom = scratch;
     static_assert(hasOneBitSet(MarkedSpace::sizeStep) && sizeof(Allocator) == sizeof(void*));
     static_assert(JSObject::butterflyOffset() == sizeof(uint64_t));
@@ -358,28 +355,55 @@ AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler& jit, Corou
     needsOperation.append(jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.savedFramesAreListed))));
 
 #if CPU(X86_64)
-    jit.addPtr(TrustedImm32(sizeof(void*)), sp, scratch);
+    jit.addPtr(TrustedImm32(-static_cast<int32_t>(sizeof(void*))), fp, count);
+    jit.sub64(sp, count);
 #else
     jit.move(sp, scratch);
-#endif
     jit.sub64(fp, scratch, count);
+#endif
     jit.urshift64(TrustedImm32(3), count);
-    emitLoadNumberOfWordsSkippedAtTop(jit, siteWord, skippedAtTop, saved);
+    emitSubtractNumberOfWordsSkippedAtTop(jit, siteWord, count, saved);
     extractBits(jit, siteWord, SavedFrame::skippedPairsShift, SavedFrame::skippedPairsBits, skippedAtBottom);
-    needsOperation.append(jit.branch32(CCallHelpers::Equal, skippedAtBottom, TrustedImm32(SavedFrame::manySkippedPairs)));
+    Jump skipsManyPairs = jit.branch32(CCallHelpers::Equal, skippedAtBottom, TrustedImm32(SavedFrame::manySkippedPairs));
+    Label hasSkippedPairs = jit.label();
+    jit.addOutOfLinePart([skipsManyPairs, hasSkippedPairs, siteWord, skippedAtBottom](StubAssembler& jit) {
+        skipsManyPairs.link(&jit);
+        jit.urshift64(siteWord, TrustedImm32(SavedFrame::manySkippedPairsShift), skippedAtBottom);
+        jit.jump().linkTo(hasSkippedPairs, &jit);
+    });
     jit.lshift32(TrustedImm32(1), skippedAtBottom);
-    jit.sub32(skippedAtTop, count);
     jit.sub32(skippedAtBottom, count);
     needsOperation.append(jit.branch32(CCallHelpers::Above, count, TrustedImm32(SavedFrame::maxWordsAllocatedInStub)));
 
+    // What SavedFrame::create does to the lowest of the words kept.
+    Jump clearsNothing = jit.branchTest32(CCallHelpers::Zero, siteWord, TrustedImm32(SavedFrame::maxClearedWords << SavedFrame::clearedWordsShift));
+    const GPRReg belowWordsKept = saved;
+    const GPRReg wordsToClear = allocator;
+#if CPU(X86_64)
+    jit.getEffectiveAddress(BaseIndex(sp, skippedAtBottom, CCallHelpers::TimesEight), belowWordsKept);
+#else
+    jit.move(sp, belowWordsKept);
+    jit.addLeftShift64(belowWordsKept, skippedAtBottom, TrustedImm32(3), belowWordsKept);
+    jit.subPtr(TrustedImm32(sizeof(uint64_t)), belowWordsKept);
+#endif
+    extractBits(jit, siteWord, SavedFrame::clearedWordsShift, SavedFrame::clearedWordsBits, wordsToClear);
+    Label clearsNext = jit.label();
+#if CPU(ARM64)
+    jit.store64(ARM64Registers::zr, BaseIndex(belowWordsKept, wordsToClear, CCallHelpers::TimesEight));
+#else
+    jit.store64(TrustedImm32(0), BaseIndex(belowWordsKept, wordsToClear, CCallHelpers::TimesEight));
+#endif
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), wordsToClear).linkTo(clearsNext, &jit);
+    clearsNothing.link(&jit);
+
+    // A pair of words is a size step, and the number of words is even.
+    static_assert(MarkedSpace::sizeStep == 2 * sizeof(uint64_t) && !(sizeof(SavedFrame) % MarkedSpace::sizeStep));
+    constexpr ptrdiff_t offsetOfAllocatorWithoutWords = CompleteSubspace::offsetOfAllocatorForSizeStep() + sizeof(SavedFrame) / MarkedSpace::sizeStep * sizeof(Allocator);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), allocator);
+    jit.loadPtr(BaseIndex(allocator, count, CCallHelpers::TimesFour, offsetOfAllocatorWithoutWords), allocator);
     // From here on count has the two counts as the cell has them.
     jit.lshift32(TrustedImm32(16), skippedAtBottom);
-    jit.lshift32(count, TrustedImm32(3), allocator);
-    jit.add32(TrustedImm32(sizeof(SavedFrame) + MarkedSpace::sizeStep - 1), allocator);
-    jit.urshift32(TrustedImm32(sizeStepShift), allocator);
     jit.or32(skippedAtBottom, count);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.cellSpace)), scratch);
-    jit.loadPtr(BaseIndex(scratch, allocator, CCallHelpers::ScalePtr, CompleteSubspace::offsetOfAllocatorForSizeStep()), allocator);
     needsOperation.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
     const AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, saved, allocator, scratch, needsOperation);
 
@@ -393,27 +417,31 @@ AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler& jit, Corou
     jit.store64(TrustedImm32(0), Address(saved, JSObject::butterflyOffset()));
     jit.store64(TrustedImm32(0), Address(saved, SavedFrame::offsetOfResumeAddress()));
     jit.store64(saved, Address(saved, SavedFrame::offsetOfPromiseOrWaiter()));
-    jit.store64(TrustedImm32(0), Address(saved, SavedFrame::offsetOfPreservedRegister()));
+    // Nobody reads the word of the preserved register before a save has written it.
     jit.store64(TrustedImm32(0), Address(saved, SavedFrame::offsetOfAsyncContext()));
 #endif
     // The upper half of the register is zero, and so is the version.
     jit.store64(count, Address(saved, SavedFrame::offsetOfNumberOfWords()));
-    jit.store32(TrustedImm32(0), Address(saved, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
-    extractBits(jit, siteWord, SavedFrame::liveSlotMapOffsetBits, SavedFrame::savedRegisterBits, scratch);
-    jit.lshift32(TrustedImm32(16), scratch);
-    if (static_cast<int32_t>(kind))
+    // One word: no offset of a map, the kind, no continuation, the saved registers or pairs, no flags.
+    static_assert(SavedFrame::offsetOfKind() == SavedFrame::offsetOfLiveSlotMapOffsetPlusOne() + 4 && !(SavedFrame::offsetOfLiveSlotMapOffsetPlusOne() % sizeof(uint64_t)) && SavedFrame::liveSlotMapOffsetBits >= 16);
+    jit.and32(TrustedImm32(((1 << SavedFrame::savedRegisterBits) - 1) << SavedFrame::liveSlotMapOffsetBits), siteWord, scratch);
+    if (static_cast<int32_t>(kind)) {
+        jit.urshift32(TrustedImm32(SavedFrame::liveSlotMapOffsetBits - 16), scratch);
         jit.or32(TrustedImm32(static_cast<int32_t>(kind)), scratch);
-    jit.store32(scratch, Address(saved, SavedFrame::offsetOfKind()));
+        jit.lshift64(TrustedImm32(32), scratch);
+    } else
+        jit.lshift64(TrustedImm32(32 + 16 - SavedFrame::liveSlotMapOffsetBits), scratch);
+    jit.store64(scratch, Address(saved, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
 
     if (kind == CoroutineKind::AsyncFunction) {
         const GPRReg promise = scratch;
-        jit.urshift64(siteWord, TrustedImm32(SavedFrame::promiseLocationShift), promise);
-        jit.zeroExtend32ToWord(promise, promise);
+        extractBits(jit, siteWord, SavedFrame::promiseLocationShift, SavedFrame::promiseLocationBits, promise);
 #if CPU(X86_64)
         static_assert(!SavedFrame::locationInRegister);
-        Jump isInRegister = jit.branchTest32(CCallHelpers::Zero, promise);
-#endif
+        Jump isInRegister = jit.branchNeg64(CCallHelpers::Zero, promise);
+#else
         jit.neg64(promise);
+#endif
         jit.load64(BaseIndex(fp, promise, CCallHelpers::TimesEight), promise);
 #if CPU(X86_64)
         Jump isLoaded = jit.jump();

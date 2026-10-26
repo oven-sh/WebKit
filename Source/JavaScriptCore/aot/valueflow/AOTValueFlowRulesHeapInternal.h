@@ -214,6 +214,7 @@ private:
     void collectChain();
     void collectAccessors(BuiltinCallMode);
     void noteUseOfMembers(const HeapKey&, BuiltinUse);
+    ClimbingSet letMembersOfHeldPrototypeObjectsEscape(PropertyKeyID, std::initializer_list<ValueFlowName>);
     void readThroughChain(ClimbingSet start, const HeapKey&, const HeapReceiver&, ValueFlowNodeID result);
     void letNativeCodeRead(ClimbingSet entries, const ValueFlowNameReadByNativeCode&);
     void readMember(BuiltinID member, ModuleID, ValueFlowNodeID result, Members& getters);
@@ -250,7 +251,7 @@ private:
     ValueSetID objectsThatListingNamesUnder(const HeapKey& key) { return key.keyClass == HeapKeyClass::Name ? ValueSets::anything : ValueSets::complement(m_tables.prototypeObjectsThatListingDoesNotName()); }
     ClimbingSet builtinObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     ClimbingSet unlockedObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
-    ClimbingSet holdersOfReplaceableMemberListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
+    ClimbingSet holdersOfReplaceableMemberThatUnknownObjectMayBe(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     // Bun stays listed beside the unknown object wherever it goes, so that a name read on it or on a copy of it is found. Anything else counts as done to Bun only where Bun is followed from a read under its name.
     ClimbingSet findListedBun(const ValueFlowOperand& object, ClimbingSet receivers) { return object.node && mayBeUnknownObject(receivers) ? m_context.valueWithin(ClimbingSet(only(m_universe.objectOf(Builtins::Bun))), object.node) : ClimbingSet(); }
     bool holdsNamedBun(const ValueFlowOperand& object) { return object.node && m_context.holdsAnyOf(ClimbingSet(only(ValueFlowUniverse::markOfNamedBun())), object.node); }
@@ -261,7 +262,7 @@ private:
     void readExportsOfListedHolders(const ValueFlowOperand& object, ClimbingSet receivers);
     bool m_keepsHoldersOfExportsItStartsFrom { false };
     void noteClosuresThatMayBeRenamed(const ValueFlowOperand& object, const HeapKey&, ClimbingSet receivers);
-    void notePrototypeObjectsListedAtWrite(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
+    void notePrototypeObjectsThatWriteMayReach(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     void store(const ValueFlowOperand& object, const HeapKey&, const ValueFlowOperand& value);
     void callSettersOfReceivers(ClimbingSet start, const HeapKey&, const ValueFlowOperand& value);
     void remove(const ValueFlowOperand& object, const HeapKey&);

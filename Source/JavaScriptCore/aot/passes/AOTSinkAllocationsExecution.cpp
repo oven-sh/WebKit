@@ -1116,8 +1116,24 @@ void ObjectInterpreter::assumeTypeOfAlias(VirtualObjectID object, TypeID type)
 void ObjectInterpreter::executeDynamicElementRead(ValueID read, VirtualObjectID object, ValueID index)
 {
     TypeID type = function().at(read).type;
+    // A position that by its type lies inside a list without holes finds an element.
+    auto findsElementAtEveryPosition = [&] {
+        uint32_t length = singleShapeOf(object).length;
+        const Type& position = program().typeOf(function(), index);
+        if (!position.isInteger() || !position.integers.isSubsetOf(Range { 0, static_cast<int64_t>(length) - 1 }))
+            return false;
+        for (uint32_t listed = 0; listed < length; ++listed) {
+            if (!findListedElement(object, listed))
+                return false;
+        }
+        return true;
+    };
+    bool findsElement = false;
     auto takesEveryElement = [&] {
-        if (!hasListedElements(object) || !mayBeUndefined(program().at(type)))
+        if (!hasListedElements(object))
+            return false;
+        findsElement = findsElementAtEveryPosition();
+        if (!findsElement && !mayBeUndefined(program().at(type)))
             return false;
         const VirtualShape& shape = shapeOf(object, stateOf(object)->variants[0]);
         return isWithin(program(), m_sinking.familyOf(object).descriptionOf(shape).elementType, type);
@@ -1129,10 +1145,11 @@ void ObjectInterpreter::executeDynamicElementRead(ValueID read, VirtualObjectID 
     if (!isRewriting())
         return;
 
-    ValueID none = emitUndefined();
+    ValueID none = findsElement ? ValueID() : emitUndefined();
     Vector<ValueID, 8> elements = listedElementsOf(object);
+    ValueID otherwise = findsElement ? elements.takeLast() : none;
     if (elements.isEmpty()) {
-        replaceRead(read, none);
+        replaceRead(read, otherwise);
         return;
     }
 
@@ -1143,7 +1160,7 @@ void ObjectInterpreter::executeDynamicElementRead(ValueID read, VirtualObjectID 
     cases.reserveInitialCapacity(elements.size());
     for (size_t position = 0; position < elements.size(); ++position)
         cases.append({ static_cast<int64_t>(position), Target { continuation, { elements[position] }, { } } });
-    builder.emitSwitch(resolve(index), WTF::move(cases), Target { continuation, { none }, { } });
+    builder.emitSwitch(resolve(index), WTF::move(cases), Target { continuation, { otherwise }, { } });
     cursor().moveTo(continuation);
     replaceRead(read, result);
 }

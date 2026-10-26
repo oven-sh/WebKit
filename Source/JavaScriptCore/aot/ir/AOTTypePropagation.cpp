@@ -100,13 +100,13 @@ void TypePropagation::reportRetypedValues(bool countsThem)
         const Value& value = m_inputs.function.at(id);
         const StateBeforeRestart& previous = m_statesBeforeRestart[id.index()];
         bool isRetyped = value.type != previous.type;
-        bool isExpectedToBeOther = value.expected().predicted() != previous.expected;
+        bool isExpectedToBeOther = value.expected().predicted() != previous.expected();
         if (countsThem) {
             m_outcome.retypedValues += isRetyped;
             m_outcome.changedExpectedTypes += isExpectedToBeOther;
         }
         if (isRetyped || isExpectedToBeOther)
-            m_inputs.function.didEdit(id, ValueEdit::Type, previous.type, previous.expected);
+            m_inputs.function.didEdit(id, ValueEdit::Type, previous.type, previous.expected());
     }
     m_numberOfReportedValues = m_rememberedValues.size();
 }
@@ -116,7 +116,7 @@ void TypePropagation::rememberState(ValueID id)
     if (m_isRemembered.quickSet(id.index()))
         return;
     const Value& value = m_inputs.function.at(id);
-    m_statesBeforeRestart[id.index()] = { value.type, value.expected().predicted(), value.expectedOrTypeForTyping().predicted(), 0 };
+    m_statesBeforeRestart[id.index()] = { value.type, value.expectedForTyping().predicted(), value.expectedOrTypeForTyping().predicted(), 0 };
     m_rememberedValues.append(id);
 }
 
@@ -285,6 +285,37 @@ void TypePropagation::restartDependentsOf(std::span<const ValueID> values)
         restart(id);
     }
     m_worklist.shrink(0);
+}
+
+void TypePropagation::restartSourcesOf(std::span<const ValueID> values, const BitVector& listed)
+{
+    willRestartValues();
+    m_queuedValues = QueuedValues::OnlyListed;
+    m_listedValues = &m_isRestarted;
+    auto visit = [&](ValueID id) {
+        if (!id || !listed.get(id.index()) || m_isRestarted.quickGet(id.index()))
+            return;
+        restart(id);
+        m_worklist.append(id);
+    };
+    std::ranges::for_each(values, visit);
+    while (!m_worklist.isEmpty()) {
+        ValueID id = m_worklist.takeLast();
+        ValueLocation location = m_uses->locationOf(id);
+        if (location.placement == ValuePlacement::Parameter)
+            forEachSourceOfParameter(location.block, location.index, visit);
+        else
+            forEachSourceOf(id, visit);
+    }
+}
+
+void TypePropagation::restoreTypes()
+{
+    for (ValueID id : m_rememberedValues) {
+        Value& value = m_inputs.function.editAndReportLater(id);
+        value.type = m_statesBeforeRestart[id.index()].type;
+        value.setExpected(ExpectedType(m_statesBeforeRestart[id.index()].expectedForTyping));
+    }
 }
 
 void TypePropagation::listFromLastToFirst(std::span<const ValueID> values)
@@ -487,7 +518,7 @@ void TypePropagation::solveExpectedTypes()
 
 TypeID TypePropagation::meetWithPreviousExpectation(ValueID id, TypeID computed)
 {
-    TypeID previous = m_statesBeforeRestart[id.index()].expected;
+    TypeID previous = m_statesBeforeRestart[id.index()].expected();
     if (!previous || previous == computed || computed == TypeTable::never)
         return computed;
     const TypeArena& types = m_inputs.types;
@@ -673,7 +704,7 @@ void TypePropagation::giveUpOnRounds(TypeLevel level, Direction direction)
     if (level == TypeLevel::Expected) {
         auto expectAsBefore = [&](ValueID id) {
             Value& value = editTypeOf(id);
-            TypeID previous = m_statesBeforeRestart[id.index()].expected;
+            TypeID previous = m_statesBeforeRestart[id.index()].expected();
             value.setExpected(ExpectedType(previous ? types.intersectionOf(value.type, previous) : TypeID()));
         };
         if (direction == Direction::Ascending)

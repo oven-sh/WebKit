@@ -10,6 +10,7 @@
 
 #include "AOTAddGenericVersion.h"
 #include "AOTAnalysisContext.h"
+#include "AOTArrayStorageForms.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
@@ -104,7 +105,8 @@ static uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBod
         Value& check = body.function.edit(entry.claim);
         if (entry.isRedundant) {
             assumeInPlaceOfChecking(check, check.expectedType().predicted());
-            answeredChecks.append(entry.claim);
+            if (!entry.holdsInEveryVersion)
+                answeredChecks.append(entry.claim);
             ++numberOfRemovedChecks;
             continue;
         }
@@ -115,7 +117,8 @@ static uint64_t applyCheckUpdates(const FlowBodyApplication& body, const FlowBod
         // Nothing that arrives passes. What does arrive goes on, and the type that was declared says nothing of what is made from it.
         RELEASE_ASSERT(entry.arriving);
         assumeInPlaceOfChecking(check, entry.arriving);
-        answeredChecks.append(entry.claim);
+        if (!entry.holdsInEveryVersion)
+            answeredChecks.append(entry.claim);
         refutedChecks.append(entry.claim);
         ++numberOfRemovedChecks;
     }
@@ -594,6 +597,12 @@ static void applyStamps(const FlowBodyApplication& body, const FlowBodyUpdate& u
     for (const FlowCallStamp& stamp : update.calls)
         function.edit(stamp.value).setCallees(stamp.callees);
 
+    for (const FlowMemberKey& member : update.keysOfMembers) {
+        Value& definition = function.edit(member.definition, ValueEdit::Definition);
+        definition.setComputedKeyOperand({ });
+        definition.setKey(member.key);
+    }
+
     for (const FlowAllocationStamp& stamp : update.allocations) {
         Value& allocation = function.edit(stamp.value);
         allocation.setAllocationSite(stamp.site);
@@ -838,6 +847,23 @@ static void eraseBuiltinConstantsWithoutUse(const FlowCastInsertion& insertion)
     }
 }
 
+static void eraseNamesTakenFromOneKey(const FlowCastInsertion& insertion, std::span<const ValueID> ascendingOperations)
+{
+    if (ascendingOperations.empty())
+        return;
+    const Function& function = insertion.body.function;
+    for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        const Block& block = function.blocks[blockIndex];
+        BitVector indexes;
+        for (uint32_t index = 0; index < block.values.size(); ++index) {
+            if (std::ranges::binary_search(ascendingOperations, block.values[index]))
+                indexes.set(index);
+        }
+        if (!indexes.isEmpty())
+            insertion.builder.eraseValues(BlockID(blockIndex), indexes);
+    }
+}
+
 bool takesOnlyWhatFlowHolds(const Program& program, const Value& store, uint32_t operandIndex)
 {
     switch (holderOfRequiredTypes(program, store)) {
@@ -910,7 +936,11 @@ static void assumeTypesOfPositionsAtStores(const Program& program, Function& fun
     BitVector literalsSeen;
     auto visitElementsOfLiteral = [&](ValueID array, TypeID claimed) {
         const ClassPart* part = types.at(claimed).singleBuiltinClass();
-        if (!part || !part->contentsAreProven || (part->arrayStorage != ArrayStorage::Int32 && part->arrayStorage != ArrayStorage::Double))
+        if (!part || !part->contentsAreProven)
+            return;
+        // A claim that names no storage leaves its readers to expect the storage that holds its contents.
+        ArrayStorage storage = arrayStorageDeclaredBy(program, *part);
+        if (storage != ArrayStorage::Int32 && storage != ArrayStorage::Double)
             return;
         ValueID literal = sameObjectThroughCasts(function, array);
         if (function.at(literal).opcode != Opcode::NewArray || literalsSeen.set(literal.index()))
@@ -1013,7 +1043,7 @@ FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
     insertBehindDefinitions(insertion, update.proofs, &FlowValueProof::value, [](const FlowValueProof& proof) {
         return proof.type == TypeTable::never;
     }, [&](const FlowValueProof& proof) {
-        return makeAssumeType(proof.value, insertion.provenOfValue(proof.value, proof.type));
+        return makeAssumeType(proof.value, proof.holdsInEveryVersion ? Proven::byFlow(proof.type, ProofScope::EveryVersion) : insertion.provenOfValue(proof.value, proof.type));
     });
     insertBehindDefinitions(insertion, update.symbolConstants, &FlowSymbolConstant::call, [](const FlowSymbolConstant&) {
         return false;
@@ -1026,6 +1056,7 @@ FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
     initializeMembersOfListedHolders(insertion);
     builder.applyInsertions();
     eraseBuiltinConstantsWithoutUse(insertion);
+    eraseNamesTakenFromOneKey(insertion, update.namesTakenFromOneKey.span());
 
     TypePropagationInputs inputs { body.program, body.id, body.function, analyses, body.types, body.build };
     TypePropagationOutcome typing = typeValuesFromNever(inputs);

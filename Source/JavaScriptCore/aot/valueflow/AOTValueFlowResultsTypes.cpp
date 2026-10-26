@@ -1340,7 +1340,7 @@ static void replaceUnobservedDefinitions(const ValueFlowResultInputs& inputs, co
         const UnobservedFieldDefinition& definition = definitions[index];
         if (!inputs.isReached(definition.initializer) || std::ranges::all_of(fieldsDefined[index], holdsUndefined))
             continue;
-        ValueFlowNodeID defined = inputs.bodies().nodes().valueOfUnobservedDefinitions(definition.initializer);
+        ValueFlowNodeID defined = inputs.bodies().nodes().valueOf(definition);
         if (defined && !inputs.sets().isEmpty(inputs.solver().possibleValuesOf(defined)))
             continue;
         ScratchTypeArena scratch(types);
@@ -1643,13 +1643,22 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
         const Vector<FlowPositionUpdate>& parameters = application.signatures[id.index()].entryParameters;
         bool isSaidByPosition = parameter != notFound && parameter < parameters.size() && parameters[parameter].type && !parameters[parameter].replacesExpectation && types.at(parameters[parameter].type).isSubsetOf(*narrowed, program);
         if (!isSaidByPosition || inputs.build.validates())
-            update.proofs.append(FlowValueProof { value, types.intern(*narrowed) });
+            update.proofs.append(FlowValueProof { value, types.intern(*narrowed), result.isWhatFlowHolds });
+    };
+    // One thing flow does take from the types as read: an object that it does not follow counts as one of the objects of the type, behind a check and where an operation looks through it.
+    Vector<ValueID, 8> valuesTakenForTheirTypes;
+    auto holdsObjectThatIsNotFollowed = [&](ValueSetID held) {
+        return ValueSets::isComplement(held) || inputs.sets().contains(held, ValueFlowUniverse::untrackedObject());
     };
     auto proveValuesOfStatements = [&] {
         for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(id.index())) {
             if (statement.kind != ValueFlowStatementKind::Operation)
                 continue;
             const Value& operation = function.at(statement.site);
+            for (const ValueFlowOperand& operand : inputs.bodies().operandsOf(statement)) {
+                if (operand.mask && operand.maskKind == ValueFlowMaskKind::Expected && operand.node && holdsObjectThatIsNotFollowed(inputs.solver().possibleValuesOf(operand.node)))
+                    valuesTakenForTheirTypes.append(statement.site);
+            }
             if (statement.result && !numberOfResultsOf(program, function, operation))
                 prove(statement.site, [&] { return inputs.solver().possibleValuesOf(statement.result); });
             if (!statement.result && PayloadWord::allocationSite(statement.opcode)) {
@@ -1672,21 +1681,24 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
 
     auto observedValues = std::ranges::equal_range(inputs.bodies().observedValues(), id, { }, &ValueFlowObservedValue::function);
     Vector<ValueID, 4> replacedChecks;
+    BitVector checksThatLetAllPass(function.values.size());
     for (const ValueFlowObservedValue& observed : observedValues) {
         if (!observed.test)
             continue;
         const Value& test = function.at(observed.test);
         ValueSetID held = inputs.possibleValuesOf(maker, observed.operand);
         prove(test.operand(0), [&] { return held; });
+        if (test.opcode == Opcode::Check && !holdsObjectThatIsNotFollowed(held))
+            checksThatLetAllPass.quickSet(observed.test.index());
         if (test.opcode != Opcode::Check || !inputs.build.isEnabled(FlowResultKind::NarrowedTypes, id.index()) || inputs.sets().isEmpty(held))
             continue;
         size_t numberOfClaimsBefore = update.claims.size();
         if (mayComeFromUnseenCaller(test.operand(0))) {
         } else if (positions.isSurelyInside(held, program.at(test.expectedType().predicted()), test.expectedType().predicted()))
-            update.claims.append(FlowClaimUpdate { .claim = observed.test, .isRedundant = true });
+            update.claims.append(FlowClaimUpdate { .claim = observed.test, .isRedundant = true, .holdsInEveryVersion = true });
         else if (hasTypeOfNarrowedLocation(application, function.at(test.operand(0)))) {
             if (std::optional<Type> arriving = positions.typeWhereNothingPasses(held, program.at(test.expectedType().predicted()))) {
-                update.claims.append(FlowClaimUpdate { .claim = observed.test, .arriving = types.intern(*arriving) });
+                update.claims.append(FlowClaimUpdate { .claim = observed.test, .arriving = types.intern(*arriving), .holdsInEveryVersion = true });
                 replacedChecks.append(observed.test);
             }
         }
@@ -1710,6 +1722,19 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
                 if (observed.test)
                     prove(function.at(observed.test).operand(0), [&] { return inputs.possibleValuesOf(maker, observed.operand); });
             }
+        }
+    }
+    if (std::ranges::any_of(update.proofs, &FlowValueProof::holdsInEveryVersion) || std::ranges::any_of(update.claims, &FlowClaimUpdate::holdsInEveryVersion)) {
+        for (uint32_t index = 0; index < function.values.size(); ++index) {
+            if (function.values[index].opcode == Opcode::Check && !checksThatLetAllPass.quickGet(index))
+                valuesTakenForTheirTypes.append(ValueID(index));
+        }
+        if (!valuesTakenForTheirTypes.isEmpty()) {
+            BitVector isMadeFromSuchValue = valuesBehind(function, CFG(function), valuesTakenForTheirTypes.span());
+            for (FlowValueProof& proof : update.proofs)
+                proof.holdsInEveryVersion &= !isMadeFromSuchValue.get(proof.value.index());
+            for (FlowClaimUpdate& claim : update.claims)
+                claim.holdsInEveryVersion &= !isMadeFromSuchValue.get(function.at(claim.claim).valueOperand().index());
         }
     }
     AOT::sort(update.proofs, { }, &FlowValueProof::value);

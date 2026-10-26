@@ -23,13 +23,17 @@
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
+#include "AOTThreshold.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "JSCInlines.h"
 #include "NativeExecutable.h"
 #include "Options.h"
 #include "SlotVisitorInlines.h"
 #include <algorithm>
+#include <limits>
 #include <optional>
+#include <wtf/MathExtras.h>
+#include <wtf/Threading.h>
 #include <wtf/text/ASCIIFastPath.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/SymbolImpl.h>
@@ -210,92 +214,108 @@ static String nameLookedFor(VM& vm, FunctionID function)
     FunctionID sourceFunction = sourceFunctionOf(function);
     {
         Locker locker { tables.namesLock };
-        if (!tables.namesLookedFor.get(sourceFunction.index()))
+        if (!tables.namesLookedFor.contains(sourceFunction.index()))
             return String();
     }
     String name = initialNameProperty(sourceFunction);
     return name.isEmpty() ? String() : name;
 }
 
-static constinit RecordedCallee entryOfEmptyList[1] { { nullptr, nullptr } };
-static constinit RecordedCalleeList emptyList { entryOfEmptyList + 1, entryOfEmptyList + 1 };
+// Every call is made from further in than its one entry says.
+static constexpr RecordedCallee emptyTable[2] { { 0, nullptr }, { std::numeric_limits<uintptr_t>::max(), nullptr } };
+AOT_THRESHOLD(size_t, leastNumberOfRecordedCallees, 256);
 
-RecordedCalleeList* FunctionTables::emptyRecordedCalleeList()
+const RecordedCallee* FunctionTables::recordedCalleesOf(const FunctionTables* tables)
 {
-    return &emptyList;
+    return (tables && tables->hasRecordedCallees() ? tables->recordedCalleeStorage.span() : std::span { emptyTable }).subspan(1).data();
 }
 
-static size_t numberOfCalleesAbove(std::span<const RecordedCallee> storage, size_t number, const void* stackPointer)
+static RecordedCallee& entryOfCallFrom(std::span<RecordedCallee> storage, uintptr_t stackPointerOfCaller)
 {
-    while (number && storage[number].stackPointerOfCaller <= stackPointer)
-        --number;
-    return number;
+    return storage[1 + (stackPointerOfCaller & storage[0].stackPointerOfCaller) / sizeof(RecordedCallee)];
 }
 
-bool FunctionTables::hasRecordedCalleesAbove(const void* stackPointer)
+static void setRecordedCalleeStorage(VM& vm, FunctionTables& tables, Vector<RecordedCallee>&& storage)
 {
-    size_t number = numberOfRecordedCallees();
-    if (!number) [[likely]]
-        return false;
+    tables.recordedCalleeStorage = WTF::move(storage);
+    VMState& state = vm.aotState();
+    Locker locker { state.instancesLock };
+    for (Instance* instance : state.instances)
+        instance->heap.recordedCallees = FunctionTables::recordedCalleesOf(&tables);
+}
+
+void FunctionTables::recordCallee(VM& vm, const void* stackPointer, JSObject* closure)
+{
     Locker locker { recordedCalleesLock };
-    number = numberOfCalleesAbove(recordedCalleeStorage.span(), number, stackPointer);
-    setNumberOfRecordedCallees(number);
-    return number;
+    RecordedCallee added { std::bit_cast<uintptr_t>(stackPointer), closure };
+    if (hasRecordedCallees()) {
+        RecordedCallee& entry = entryOfCallFrom(recordedCalleeStorage.mutableSpan(), added.stackPointerOfCaller);
+        if (entry.stackPointerOfCaller <= added.stackPointerOfCaller) {
+            entry = added;
+            return;
+        }
+    }
+
+    const StackBounds& stack = Thread::currentSingleton().stack();
+    Vector<RecordedCallee, 16> recorded { added };
+    for (const RecordedCallee& entry : recordedCallees()) {
+        if (entry.stackPointerOfCaller > added.stackPointerOfCaller && stack.contains(std::bit_cast<void*>(entry.stackPointerOfCaller)))
+            recorded.append(entry);
+    }
+    for (size_t numberOfEntries = std::max(leastNumberOfRecordedCallees, recordedCallees().size());; numberOfEntries *= 2) {
+        // Two places on one stack are less than the stack apart.
+        RELEASE_ASSERT(numberOfEntries * sizeof(RecordedCallee) <= 2 * roundUpToPowerOfTwo(stack.size()));
+        Vector<RecordedCallee> storage;
+        storage.fill({ 0, nullptr }, 1 + numberOfEntries);
+        storage[0].stackPointerOfCaller = (numberOfEntries - 1) * sizeof(RecordedCallee);
+        bool eachHasItsPlace = std::ranges::all_of(recorded, [&](const RecordedCallee& entry) {
+            return !std::exchange(entryOfCallFrom(storage.mutableSpan(), entry.stackPointerOfCaller), entry).closure;
+        });
+        if (eachHasItsPlace) {
+            setRecordedCalleeStorage(vm, *this, WTF::move(storage));
+            return;
+        }
+    }
 }
 
-void FunctionTables::recordCallee(VM& vm, const void* stackPointerOfCaller, JSObject* closure)
+JSObject* FunctionTables::recordedCalleeOfCallFrom(const void* stackPointer)
 {
-    {
-        Locker locker { recordedCalleesLock };
-        size_t number = numberOfCalleesAbove(recordedCalleeStorage.span(), numberOfRecordedCallees(), stackPointerOfCaller);
-        if (number + 1 >= recordedCalleeStorage.size()) {
-            recordedCalleeStorage.grow(std::max<size_t>(64, recordedCalleeStorage.size() * 2));
-            recordedCalleeStorage[0] = { nullptr, nullptr };
-            for (size_t index = number + 1; index < recordedCalleeStorage.size(); ++index)
-                recordedCalleeStorage[index] = { nullptr, nullptr };
-            recordedCalleeList.end = recordedCalleeStorage.mutableSpan().subspan(recordedCalleeStorage.size()).data();
-        }
-        recordedCalleeStorage[number + 1] = { stackPointerOfCaller, closure };
-        setNumberOfRecordedCallees(number + 1);
-    }
-    if (dropsRecordedCalleesWhenIdle || !vm.entryScope)
-        return;
-    dropsRecordedCalleesWhenIdle = true;
-    vm.whenIdle([this] {
-        dropsRecordedCalleesWhenIdle = false;
-        Locker locker { recordedCalleesLock };
-        setNumberOfRecordedCallees(0);
-    });
+    if (!hasRecordedCallees())
+        return nullptr;
+    uintptr_t stackPointerOfCaller = std::bit_cast<uintptr_t>(stackPointer);
+    const RecordedCallee& entry = entryOfCallFrom(recordedCalleeStorage.mutableSpan(), stackPointerOfCaller);
+    return entry.stackPointerOfCaller == stackPointerOfCaller ? entry.closure : nullptr;
 }
 
 template<typename Visitor>
 void FunctionTables::visitRecordedCallees(Visitor& visitor, const void* stackPointer)
 {
     Locker locker { recordedCalleesLock };
-    for (const RecordedCallee& recorded : recordedCallees()) {
-        if (recorded.stackPointerOfCaller <= stackPointer)
-            break;
-        visitor.appendUnbarriered(recorded.closure);
+    for (const RecordedCallee& entry : recordedCallees()) {
+        if (JSObject* closure = entry.closure; closure && entry.stackPointerOfCaller > std::bit_cast<uintptr_t>(stackPointer))
+            visitor.appendUnbarriered(closure);
     }
 }
 template void FunctionTables::visitRecordedCallees(AbstractSlotVisitor&, const void*);
 template void FunctionTables::visitRecordedCallees(SlotVisitor&, const void*);
 
+// No entry is older than one collection unless its function object was marked.
 void FunctionTables::finalizeRecordedCallees(VM& vm, const void* stackPointer)
 {
-    if (recordedCalleeStorage.isEmpty())
+    if (!hasRecordedCallees())
         return;
     Locker locker { recordedCalleesLock };
-    size_t number = numberOfCalleesAbove(recordedCalleeStorage.span(), numberOfRecordedCallees(), stackPointer);
-    size_t numberKept = 0;
-    for (size_t index = 1; index <= number; ++index) {
-        if (vm.heap.isMarked(recordedCalleeStorage[index].closure))
-            recordedCalleeStorage[++numberKept] = recordedCalleeStorage[index];
+    bool isInUse = false;
+    for (RecordedCallee& entry : recordedCallees()) {
+        if (!entry.closure)
+            continue;
+        if (entry.stackPointerOfCaller > std::bit_cast<uintptr_t>(stackPointer) && vm.heap.isMarked(entry.closure))
+            isInUse = true;
+        else
+            entry = { 0, nullptr };
     }
-    setNumberOfRecordedCallees(numberKept);
-    // What lies behind the last entry is never older than one collection.
-    for (size_t index = numberKept + 1; index < recordedCalleeStorage.size(); ++index)
-        recordedCalleeStorage[index] = { nullptr, nullptr };
+    if (!isInUse && recordedCallees().size() > leastNumberOfRecordedCallees)
+        setRecordedCalleeStorage(vm, *this, { });
 }
 
 static JSValue ownDataProperty(JSObject* closure, UniquedStringImpl* uid)
@@ -390,8 +410,8 @@ static String nameInFramesOfFunctionNamedByComputedKey(FunctionID function)
 static String nameGivenTo(VM& vm, JSObject* callee)
 {
     FunctionID function = *functionOf(callee);
-    // Such a closure has the property from the first look for it on. A slim closure has it from its first property on, whichever that is.
-    bool hasNameOnceLookedFor = isCompiledClosure(callee) && functionKindData(function).notesLooksForName();
+    // Such a closure has the property from the first look for it on. A slim closure of any other kind has it from its first property on, whichever that is.
+    bool hasNameOnceLookedFor = functionKindData(function).notesLooksForName();
     String name = ownTextProperty(callee, vm.propertyNames->name);
     if (!name.isNull() && (hasNameOnceLookedFor || name != initialNameProperty(function)))
         return name;
@@ -476,12 +496,9 @@ void didLookForNameProperty(VM& vm, JSObject* closure)
     if (functionKindData(function).isBound() || functionKindData(sourceFunction).isGenerator || FunctionDescription(function).isAsync())
         return;
     FunctionTables& tables = FunctionTables::of(vm);
-    unsigned index = sourceFunction.index();
     Locker locker { tables.namesLock };
-    if (tables.namesLookedFor.get(index))
-        return;
-    tables.namesLookedFor.set(index);
-    tables.hasNamesLookedFor.store(true, std::memory_order_release);
+    if (tables.namesLookedFor.add(sourceFunction.index()))
+        tables.hasNamesLookedFor.store(true, std::memory_order_release);
 }
 
 void setComputedFunctionName(VM& vm, JSObject* closure, const Identifier& key, MethodKind kind)

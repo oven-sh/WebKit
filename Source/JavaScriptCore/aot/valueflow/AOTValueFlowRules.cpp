@@ -187,17 +187,34 @@ static bool mayCodeOutsideImageRun(ValueFlowRuleContext& context)
     });
 }
 
+static ClimbingSet leaveHoldersOfExportsUnsearched(ValueFlowRuleContext& context, ClimbingSet objects)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    ClimbingSet holdersOfExports = context.restrict(objects, universe.objectsOfLibraryFoundByNameAlone());
+    if (!holdsSomething(context, holdersOfExports) || mayCodeOutsideImageRun(context))
+        return objects;
+    context.add(context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode), holdersOfExports);
+    context.add(context.nodes().ofHost(ValueFlowHostNode::HoldersOfExportsInEscapedObjects), holdersOfExports);
+    ClimbingSet prototypeObjects = context.restrict(holdersOfExports, universe.prototypeObjectsOfLibraryClasses());
+    ClimbingSet others = context.restrict(holdersOfExports, ValueSets::complement(universe.prototypeObjectsOfLibraryClasses()));
+    constexpr std::pair<ValueFlowNameKind, ValueFlowHostNode> membersUnderUnknownKey[] {
+        { ValueFlowNameKind::UnknownKey, ValueFlowHostNode::ValuesUnderUnknownKeyInHeldHoldersOfExports },
+        { ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowHostNode::GettersUnderUnknownKeyInHeldHoldersOfExports },
+        { ValueFlowNameKind::SetterUnderUnknownKey, ValueFlowHostNode::SettersUnderUnknownKeyInHeldHoldersOfExports },
+    };
+    for (auto [kind, node] : membersUnderUnknownKey) {
+        context.connect(context.read(others, ValueFlowName::of(kind)), context.nodes().ofHost(node));
+        context.connect(context.read(prototypeObjects, ValueFlowName::of(kind)), context.nodes().ofHost(ValueFlowHostNode::MembersUnderUnknownKeyInHeldPrototypeObjectsOfLibraryClasses));
+    }
+    return context.restrict(objects, ValueSets::complement(universe.objectsOfLibraryFoundByNameAlone()));
+}
+
 static void followWhatHasArrived(ValueFlowRuleContext& context, ClimbingSet arrived)
 {
     const ValueFlowUniverse& universe = context.universe();
     ValueFlowNodeID escapedNode = ValueFlowProgramNodes::escaped();
 
-    ClimbingSet holdersOfExports = context.restrict(arrived, universe.holdersOfLibraryExports());
-    if (holdsSomething(context, holdersOfExports) && !mayCodeOutsideImageRun(context)) {
-        context.add(context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode), holdersOfExports);
-        context.add(context.nodes().ofHost(ValueFlowHostNode::HoldersOfExportsInEscapedObjects), holdersOfExports);
-        arrived = context.restrict(arrived, ValueSets::complement(universe.holdersOfLibraryExports()));
-    }
+    arrived = leaveHoldersOfExportsUnsearched(context, arrived);
 
     Vector<ValueFlowObjectID, 64> instances;
     context.forEachMember(known(context, arrived), [&](ValueFlowObjectID object) {
@@ -263,6 +280,7 @@ static void lookUpThroughInstances(ValueFlowRuleContext& context, ValueFlowObjec
     ClimbingSet objectsOfProgram = context.restrict(known(context, chain), ValueSets::complement(universe.builtinObjects()));
     ClimbingSet above = context.restrict(objectsOfProgram, ValueSets::complement(instances));
     above = context.unite(above, context.restrict(context.valueOf(context.read(ClimbingSet(instances), prototypeLinkName)), instances));
+    above = leaveHoldersOfExportsUnsearched(context, above);
     if (!holdsSomething(context, above))
         return;
     if (unseenCodeRuns)
@@ -390,7 +408,7 @@ static void runEscape(const ValueFlowStatement&, ValueFlowRuleContext& context)
     bool writesSinceLastRun = isRaisedSinceLastRun(context, ValueFlowHostNode::UnknownCodeWrites);
     bool unseenCodeRunsSinceLastRun = isRaisedSinceLastRun(context, ValueFlowHostNode::UnseenCodeRuns);
     if (isRaisedSinceLastRun(context, ValueFlowHostNode::CodeOutsideImageIsLoaded))
-        arrived = context.unite(arrived, context.restrict(escaped, universe.holdersOfLibraryExports()));
+        arrived = context.unite(arrived, context.restrict(escaped, universe.objectsOfLibraryFoundByNameAlone()));
 
     if (holdsSomething(context, arrived))
         followWhatHasArrived(context, arrived);

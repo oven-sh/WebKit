@@ -53,6 +53,8 @@ void emitReturnOfCall(IRBuilder&, ValueID result);
 TailCallRequirement tailCallRequirementOf(const Function& body);
 
 bool mayBeCalledDirectly(const Program&, FunctionID callee);
+// A function that records its callee for stack frames does so in its entrypoint, which a call by value enters.
+bool mayBeCalledDirectlyOrThroughEntrypoint(const Program&, FunctionID callee);
 bool canCallWithoutClosure(const Program&, FunctionID callee);
 bool canConstructDirectly(const Program&, FunctionID constructor);
 // The constructor makes what it returns itself, from new.target alone.

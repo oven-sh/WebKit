@@ -13,6 +13,7 @@
 #include "AOTValueFlowBuiltinTables.h"
 #include "AOTValueFlowUnobservedDefinitions.h"
 #include "AOTVector.h"
+#include <array>
 #include <memory>
 #include <span>
 #include <utility>
@@ -139,6 +140,8 @@ public:
     ValueSetID objectsWithLockedPrototypeLink() const { return m_objectsWithLockedPrototypeLink; }
     ValueSetID objectsBornWithoutPrototype() const { return m_objectsBornWithoutPrototype; }
     ValueSetID holdersOfLibraryExports() const { return m_holdersOfLibraryExports; }
+    ValueSetID prototypeObjectsOfLibraryClasses() const { return m_prototypeObjectsOfLibraryClasses; }
+    ValueSetID objectsOfLibraryFoundByNameAlone() const { return m_objectsOfLibraryFoundByNameAlone; }
     ValueSetID callables() const { return m_callables; }
     ValueSetID closures() const { return m_closures; }
     ValueSetID builtinFunctions() const { return m_builtinFunctions; }
@@ -255,6 +258,8 @@ private:
     ValueSetID m_objectsWithLockedPrototypeLink;
     ValueSetID m_objectsBornWithoutPrototype;
     ValueSetID m_holdersOfLibraryExports;
+    ValueSetID m_prototypeObjectsOfLibraryClasses;
+    ValueSetID m_objectsOfLibraryFoundByNameAlone;
     ValueSetID m_primitives;
     ValueSetID m_anyPrimitive;
     ValueSetID m_undefinedValue;
@@ -319,9 +324,14 @@ enum class ValueFlowHostNode : uint8_t {
     ObjectsHoldingSymbolsUsedOnlyAsKeys,
     ClosuresThatStatementsMayRename,
     ClosuresThatStatementsName,
+    ClosuresThatStatementsGiveDisplayName,
+    ValuesUnderUnknownKeyInHeldHoldersOfExports,
+    GettersUnderUnknownKeyInHeldHoldersOfExports,
+    SettersUnderUnknownKeyInHeldHoldersOfExports,
+    MembersUnderUnknownKeyInHeldPrototypeObjectsOfLibraryClasses,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 45;
+inline constexpr unsigned numberOfValueFlowHostNodes = 50;
 
 class ValueFlowProgramNodes {
 public:
@@ -342,13 +352,15 @@ public:
     ValueFlowNodeID hub(ValueFlowBehaviorID behavior) const { return ValueFlowNodeID(m_thrownOfFunction.last() + 1 + numberOfValueFlowHostNodes + behavior.index()); }
     ValueFlowBehaviorID behaviorOf(ValueFlowNodeID hub) const { return ValueFlowBehaviorID(hub.index() - m_thrownOfFunction.last() - 1 - numberOfValueFlowHostNodes); }
 
-    // What the unobserved definitions of an initializer define. It holds nothing until super() may call a constructor that the class does not name.
+    // What the unobserved definitions of an initializer define. It holds nothing until super() may call a constructor that the class does not name,
+    // or, where the definitions ask for it, may answer an object that refuses a definition.
     struct UnobservedDefinitions {
         LayoutID classCallingSuper;
         FunctionID initializer;
         ValueFlowNodeID value;
+        bool areObservedWhereObjectRefusesDefinition { false };
     };
-    ValueFlowNodeID valueOfUnobservedDefinitions(FunctionID initializer) const;
+    ValueFlowNodeID valueOf(const UnobservedFieldDefinition&) const;
     std::span<const UnobservedDefinitions> unobservedDefinitionsBehindSuperOf(LayoutID classCallingSuper) const LIFETIME_BOUND;
 
     struct PassedParameter {
@@ -497,7 +509,7 @@ struct ValueFlowBody {
     uint32_t numberOfResults { 0 };
     bool hasYieldedAndSent { false };
     uint32_t ownResult { none };
-    uint32_t valueOfUnobservedDefinitions { none };
+    std::array<uint32_t, 2> valueOfUnobservedDefinitions { none, none };
     Vector<PassedParameter> passedParameters;
     bool answersOnlyWhatItConstructs { false };
     Vector<Node> nodes;

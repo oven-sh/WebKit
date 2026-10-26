@@ -8,6 +8,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "AirBitMatrixLiveness.h"
 #include "AirCode.h"
 #include "AirCustom.h"
 #include "AirFrameEmission.h"
@@ -111,6 +112,7 @@ private:
     unsigned wordOf(const FrameSite&, const MoveAtFrameSite&) const;
     WordsAtFrameSite chooseWords(const FrameSite&) const;
     void rewriteFrameSites();
+    void orderByFirstSuspensionThatKeeps(std::span<unsigned> itemIndexes) const;
     void reportWordsDeadAcrossSuspensions() const;
     void clearWordsNotStoredToBeforeSuspensions();
 
@@ -208,26 +210,40 @@ void FramePlanner::reportWordsDeadAcrossSuspensions() const
 
 // A word that nothing has stored to since the frame was set up holds what an earlier call left at its address.
 // A suspension would keep that word, and every resumption would put it back on the stack.
+// Whoever suspends the function for the first time clears the lowest words kept, as many as the suspension says. A store in front of the suspension clears any other.
 void FramePlanner::clearWordsNotStoredToBeforeSuspensions()
 {
     if (m_coloring.spillSlotsLiveAcrossEachSuspension.isEmpty() || !m_layout.hasFrameRecord || m_layout.slotArea != SlotArea::BelowFrameRecord)
         return;
 
-    constexpr unsigned unitsPerWord = StackColoring::unitsPerWord;
     constexpr unsigned bytesPerUnit = StackColoring::bytesPerUnit;
+    static_assert(StackColoring::unitsPerWord == 2);
     // A suspension keeps whole pairs of words.
     const unsigned numberOfWordsKept = (m_code.frameSize() - m_layout.bytesDeadAtSuspensions / stackAlignmentBytes() * stackAlignmentBytes()) / wordSize;
-    const unsigned numberOfUnits = numberOfWordsKept * unitsPerWord;
+    const unsigned numberOfUnits = numberOfWordsKept * StackColoring::unitsPerWord;
     if (!numberOfUnits)
         return;
 
-    auto wordsDeadAcross = [](const Inst& inst) -> const BitVector* {
-        if (inst.kind.opcode != Patch || !inst.origin)
-            return nullptr;
-        auto* stackmap = inst.origin->as<StackmapValue>();
-        if (!stackmap || !stackmap->isSuspension() || !stackmap->frameWordsDeadAcrossSuspension())
-            return nullptr;
-        return &*stackmap->frameWordsDeadAcrossSuspension();
+    // Sets of words are by the number of the word, counted down from the frame pointer, first word 1.
+    struct StoredHalves {
+        void set(unsigned unit) { halves[unit % 2].quickSet(unit / 2 + 1); }
+        void merge(const BitVector& words)
+        {
+            halves[0].merge(words);
+            halves[1].merge(words);
+        }
+        void merge(const StoredHalves& other)
+        {
+            halves[0].merge(other.halves[0]);
+            halves[1].merge(other.halves[1]);
+        }
+        void clearAll()
+        {
+            halves[0].clearAll();
+            halves[1].clearAll();
+        }
+
+        std::array<BitVector, 2> halves;
     };
     struct BytesBelowFramePointer {
         unsigned begin;
@@ -239,79 +255,125 @@ void FramePlanner::clearWordsNotStoredToBeforeSuspensions()
         intptr_t top = offsetFromFramePointer + static_cast<intptr_t>(numberOfBytes);
         return { top < 0 ? static_cast<unsigned>(-top) : 0, static_cast<unsigned>(-offsetFromFramePointer) };
     };
-    auto addStoresOf = [&](Inst& inst, BitVector& storedUnits) {
-        if (inst.kind.opcode == EnterFrame) {
-            storedUnits.clearAll();
-            for (unsigned i = 1; i < inst.args().size(); ++i) {
-                if (!inst.args()[i].isImm())
-                    continue;
-                unsigned firstUnit = static_cast<unsigned>(inst.args()[i].value()) * unitsPerWord;
-                for (unsigned unit = firstUnit; unit < std::min(firstUnit + unitsPerWord, numberOfUnits); ++unit)
-                    storedUnits.quickSet(unit);
-            }
-            return;
-        }
-        inst.forEachArg([&](Arg& arg, Arg::Role role, Bank, Width width) {
-            if (!arg.isStack() || !Arg::isAnyDef(role) || role == Arg::Scratch)
-                return;
-            const StackSlot* slot = arg.stackSlot();
-            unsigned numberOfBytes = bytesForWidth(width);
-            // lowerStackArgs() clears the rest of the slot.
-            if (Arg::isZDef(role) && slot->isSpill() && arg.offset() >= 0 && static_cast<unsigned>(arg.offset()) < slot->byteSize())
-                numberOfBytes = std::max(numberOfBytes, slot->byteSize() - static_cast<unsigned>(arg.offset()));
-            BytesBelowFramePointer bytes = bytesOf(slot->offsetFromFP() + arg.offset(), numberOfBytes);
-            for (unsigned unit = (bytes.begin + bytesPerUnit - 1) / bytesPerUnit; unit < std::min(bytes.end / bytesPerUnit, numberOfUnits); ++unit)
-                storedUnits.quickSet(unit);
-        });
+    auto removeWordsOf = [&](BitVector& words, const StackSlot* slot) {
+        BytesBelowFramePointer bytes = bytesOf(slot->offsetFromFP(), slot->byteSize());
+        for (unsigned word = bytes.begin / wordSize + 1; word <= std::min((bytes.end + wordSize - 1) / wordSize, numberOfWordsKept); ++word)
+            words.quickClear(word);
     };
 
-    BitVector everyUnit(numberOfUnits);
-    for (unsigned unit = 0; unit < numberOfUnits; ++unit)
-        everyUnit.quickSet(unit);
+    BitVector everyWordKept(numberOfWordsKept + 1);
+    for (unsigned word = 1; word <= numberOfWordsKept; ++word)
+        everyWordKept.quickSet(word);
+    BitVector wordsKeptOutsideSaves = everyWordKept;
+    if (const StackSlot* saveSlot = m_code.calleeSaveStackSlot())
+        removeWordsOf(wordsKeptOutsideSaves, saveSlot);
 
+    struct Suspension {
+        BasicBlock* block;
+        unsigned instIndex;
+        // Of the words kept that are dead across the suspension and that it does not name itself: the lowest ones are left to whoever suspends the function, stores clear the others.
+        unsigned firstWordLeftToSuspension;
+        BitVector wordsLeftToStores;
+        StoredHalves storedInBlock;
+        bool isBehindFrameSetupInBlock;
+    };
     struct StoresOfBlock {
-        BitVector units;
+        StoredHalves stored;
         bool setsUpFrame { false };
-        bool hasSuspension { false };
     };
+    Vector<Suspension> suspensions;
     Vector<StoresOfBlock> storesOfBlock(m_code.size());
-    bool isSomeWordDead = false;
     for (BasicBlock* block : m_code) {
         StoresOfBlock& stores = storesOfBlock[block->index()];
-        stores.units.ensureSize(numberOfUnits);
-        for (Inst& inst : *block) {
-            if (const BitVector* deadWords = wordsDeadAcross(inst)) {
-                for (unsigned word = 1; word <= numberOfWordsKept && !isSomeWordDead; ++word)
-                    isSomeWordDead = deadWords->get(word);
-                stores.hasSuspension = true;
-                stores.units = everyUnit;
+        stores.stored.halves[0].ensureSize(numberOfWordsKept + 1);
+        stores.stored.halves[1].ensureSize(numberOfWordsKept + 1);
+        for (unsigned instIndex = 0; instIndex < block->size(); ++instIndex) {
+            Inst& inst = block->at(instIndex);
+            if (inst.kind.opcode == EnterFrame) {
+                stores.setsUpFrame = true;
+                stores.stored.clearAll();
+                for (unsigned i = 1; i < inst.args().size(); ++i) {
+                    if (!inst.args()[i].isImm())
+                        continue;
+                    unsigned firstUnit = static_cast<unsigned>(inst.args()[i].value()) * StackColoring::unitsPerWord;
+                    for (unsigned unit = firstUnit; unit < std::min(firstUnit + StackColoring::unitsPerWord, numberOfUnits); ++unit)
+                        stores.stored.set(unit);
+                }
                 continue;
             }
-            stores.setsUpFrame |= inst.kind.opcode == EnterFrame;
-            addStoresOf(inst, stores.units);
+            if (inst.kind.opcode == Patch && inst.origin) {
+                auto* stackmap = inst.origin->as<StackmapValue>();
+                if (stackmap && stackmap->isSuspension() && stackmap->frameWordsDeadAcrossSuspension()) {
+                    Suspension suspension { block, instIndex, numberOfWordsKept + 1, *stackmap->frameWordsDeadAcrossSuspension(), stores.stored, stores.setsUpFrame };
+                    BitVector& words = suspension.wordsLeftToStores;
+                    words.filter(wordsKeptOutsideSaves);
+                    for (const Arg& arg : inst.args()) {
+                        if (arg.isStack())
+                            removeWordsOf(words, arg.stackSlot());
+                    }
+                    unsigned& first = suspension.firstWordLeftToSuspension;
+                    while (first > 1 && numberOfWordsKept + 1 - first < AirLimits::maxWordsClearedAtFirstSuspension && words.quickGet(first - 1))
+                        words.quickClear(--first);
+                    stores.stored.merge(words);
+                    suspensions.append(WTF::move(suspension));
+                    continue;
+                }
+            }
+            bool namesStack = false;
+            for (const Arg& arg : inst.args())
+                namesStack |= arg.isStack();
+            if (!namesStack)
+                continue;
+            inst.forEachArg([&](Arg& arg, Arg::Role role, Bank, Width width) {
+                if (!arg.isStack() || !Arg::isAnyDef(role) || role == Arg::Scratch)
+                    return;
+                const StackSlot* slot = arg.stackSlot();
+                unsigned numberOfBytes = bytesForWidth(width);
+                // lowerStackArgs() clears the rest of the slot.
+                if (Arg::isZDef(role) && slot->isSpill() && arg.offset() >= 0 && static_cast<unsigned>(arg.offset()) < slot->byteSize())
+                    numberOfBytes = std::max(numberOfBytes, slot->byteSize() - static_cast<unsigned>(arg.offset()));
+                BytesBelowFramePointer bytes = bytesOf(slot->offsetFromFP() + arg.offset(), numberOfBytes);
+                for (unsigned unit = (bytes.begin + bytesPerUnit - 1) / bytesPerUnit; unit < std::min(bytes.end / bytesPerUnit, numberOfUnits); ++unit)
+                    stores.stored.set(unit);
+            });
         }
     }
-    if (!isSomeWordDead)
+    if (suspensions.isEmpty())
         return;
 
-    Vector<BitVector> unitsStoredAtHead;
-    unitsStoredAtHead.fill(everyUnit, m_code.size());
-    unitsStoredAtHead[m_code[0]->index()].clearAll();
+    Vector<StoredHalves> storedAtHead;
+    storedAtHead.fill(StoredHalves { { everyWordKept, everyWordKept } }, m_code.size());
+    storedAtHead[m_code[0]->index()].clearAll();
     for (unsigned i = 0; i < m_code.numEntrypoints(); ++i)
-        unitsStoredAtHead[m_code.entrypoint(i).block()->index()].clearAll();
-    for (bool didChange = true; didChange;) {
-        didChange = false;
-        for (BasicBlock* block : m_code) {
-            const StoresOfBlock& stores = storesOfBlock[block->index()];
-            BitVector unitsStoredAtTail = stores.units;
-            if (!stores.setsUpFrame)
-                unitsStoredAtTail.merge(unitsStoredAtHead[block->index()]);
-            for (BasicBlock* successor : block->successorBlocks()) {
-                BitVector& atHead = unitsStoredAtHead[successor->index()];
+        storedAtHead[m_code.entrypoint(i).block()->index()].clearAll();
+    // Behind all its predecessors a block is visited once, but for what comes round a loop.
+    Vector<unsigned> blocksInPostOrder;
+    BitVector isInOrder(m_code.size());
+    appendNodeIndicesInOrder(m_code.cfg(), GraphOrder::PostOrder, isInOrder, blocksInPostOrder);
+    const unsigned numberOfBlocksInOrder = blocksInPostOrder.size();
+    Vector<unsigned> positionOfBlock;
+    positionOfBlock.fill(0, m_code.size());
+    LowestFirstWorklist blocksToVisit(numberOfBlocksInOrder);
+    for (unsigned position = 0; position < numberOfBlocksInOrder; ++position) {
+        positionOfBlock[blocksInPostOrder[numberOfBlocksInOrder - 1 - position]] = position;
+        blocksToVisit.add(position);
+    }
+    while (std::optional<unsigned> position = blocksToVisit.takeLowest()) {
+        BasicBlock* block = m_code[blocksInPostOrder[numberOfBlocksInOrder - 1 - *position]];
+        const StoresOfBlock& stores = storesOfBlock[block->index()];
+        StoredHalves storedAtTail = stores.stored;
+        if (!stores.setsUpFrame)
+            storedAtTail.merge(storedAtHead[block->index()]);
+        for (BasicBlock* successor : block->successorBlocks()) {
+            bool didChange = false;
+            for (unsigned half = 0; half < 2; ++half) {
+                BitVector& atHead = storedAtHead[successor->index()].halves[half];
                 size_t numberBefore = atHead.bitCount();
-                atHead.filter(unitsStoredAtTail);
+                atHead.filter(storedAtTail.halves[half]);
                 didChange |= atHead.bitCount() != numberBefore;
             }
+            if (didChange)
+                blocksToVisit.add(positionOfBlock[successor->index()]);
         }
     }
 
@@ -329,49 +391,37 @@ void FramePlanner::clearWordsNotStoredToBeforeSuspensions()
         return (inst.kind.opcode == Move || inst.kind.opcode == MoveDouble) && inst.args().size() == 2 && inst.args()[1].isReg()
             && (inst.args()[0].isReg() || inst.args()[0].isSomeImm() || inst.args()[0].isZeroReg());
     };
-    auto removeWordsOf = [&](BitVector& words, const StackSlot* slot) {
-        BytesBelowFramePointer bytes = bytesOf(slot->offsetFromFP(), slot->byteSize());
-        for (unsigned word = bytes.begin / wordSize + 1; word <= std::min((bytes.end + wordSize - 1) / wordSize, numberOfWordsKept); ++word)
-            words.quickClear(word);
-    };
 
     const Arg zero = isX86_64() ? Arg::imm(0) : Arg::zeroReg();
     InsertionSet insertionSet(m_code);
-    for (BasicBlock* block : m_code) {
-        if (!storesOfBlock[block->index()].hasSuspension)
-            continue;
-        BitVector storedUnits = unitsStoredAtHead[block->index()];
-        for (unsigned instIndex = 0; instIndex < block->size(); ++instIndex) {
-            Inst& inst = block->at(instIndex);
-            const BitVector* deadWords = wordsDeadAcross(inst);
-            if (!deadWords) {
-                addStoresOf(inst, storedUnits);
-                continue;
-            }
-            BitVector wordsToClear(numberOfWordsKept + 1);
-            for (unsigned word = 1; word <= numberOfWordsKept; ++word) {
-                unsigned firstUnit = (word - 1) * unitsPerWord;
-                if (deadWords->get(word) && !(storedUnits.quickGet(firstUnit) && storedUnits.quickGet(firstUnit + 1)))
-                    wordsToClear.quickSet(word);
-            }
-            if (const StackSlot* saveSlot = m_code.calleeSaveStackSlot())
-                removeWordsOf(wordsToClear, saveSlot);
-            for (const Arg& arg : inst.args()) {
-                if (arg.isStack())
-                    removeWordsOf(wordsToClear, arg.stackSlot());
-            }
+    for (size_t index = 0; index < suspensions.size(); ++index) {
+        Suspension& suspension = suspensions[index];
+        BasicBlock* block = suspension.block;
+        if (!suspension.isBehindFrameSetupInBlock)
+            suspension.storedInBlock.merge(storedAtHead[block->index()]);
+        BitVector& storedWords = suspension.storedInBlock.halves[0];
+        storedWords.filter(suspension.storedInBlock.halves[1]);
+
+        unsigned firstWordToClear = suspension.firstWordLeftToSuspension;
+        while (firstWordToClear <= numberOfWordsKept && storedWords.quickGet(firstWordToClear))
+            ++firstWordToClear;
+        Value* origin = block->at(suspension.instIndex).origin;
+        auto* stackmap = origin->as<StackmapValue>();
+        stackmap->setNumberOfFrameWordsToClearAtFirstSuspension(std::max(stackmap->numberOfFrameWordsToClearAtFirstSuspension(), numberOfWordsKept + 1 - firstWordToClear));
+
+        suspension.wordsLeftToStores.exclude(storedWords);
+        if (!suspension.wordsLeftToStores.isEmpty()) {
             // resequenceMovesBeforePatches() looks at the moves that stand right in front of a Patch.
-            unsigned insertionIndex = instIndex;
+            unsigned insertionIndex = suspension.instIndex;
             while (insertionIndex && movesIntoRegister(block->at(insertionIndex - 1)))
                 --insertionIndex;
-            wordsToClear.forEachSetBit([&](size_t word) {
+            suspension.wordsLeftToStores.forEachSetBit([&](size_t word) {
                 if (std::optional<Arg> address = addressOf(static_cast<unsigned>(word)))
-                    insertionSet.insert(insertionIndex, Move, inst.origin, zero, *address);
+                    insertionSet.insert(insertionIndex, Move, origin, zero, *address);
             });
-            // Behind a suspension every word kept is one that the function stored or that was cleared here.
-            break;
         }
-        insertionSet.execute(block);
+        if (index + 1 == suspensions.size() || suspensions[index + 1].block != block)
+            insertionSet.execute(block);
     }
 }
 
@@ -835,6 +885,7 @@ void FramePlanner::placeItems()
     auto firstDeadItem = std::stable_partition(order.begin(), order.end(), [&](unsigned itemIndex) {
         return !m_items[itemIndex].isDeadAtSuspensions;
     });
+    orderByFirstSuspensionThatKeeps(std::span { order.begin(), firstDeadItem });
     for (auto it = order.begin(); it != firstDeadItem; ++it)
         place(m_items[*it]);
     // A suspension keeps whole pairs of words.
@@ -843,6 +894,58 @@ void FramePlanner::placeItems()
     m_bytesKeptAtSuspensions = m_cursor;
     for (auto it = firstDeadItem; it != order.end(); ++it)
         place(m_items[*it]);
+}
+
+// A word that only later suspensions keep is dead across the earlier ones, and most often nothing has stored to it there. With such words at the bottom, a number says which words they are.
+// Among the words that a short displacement reaches, and among the others, the order costs no bytes.
+void FramePlanner::orderByFirstSuspensionThatKeeps(std::span<unsigned> itemIndexes) const
+{
+    if (m_coloring.spillSlotsLiveAcrossEachSuspension.isEmpty() || itemIndexes.size() < 2)
+        return;
+
+    constexpr unsigned keptByNone = std::numeric_limits<unsigned>::max();
+    Vector<unsigned> firstSuspensionOfItem;
+    firstSuspensionOfItem.fill(keptByNone, m_items.size());
+    for (unsigned itemIndex : itemIndexes) {
+        if (m_items[itemIndex].lockedSlot)
+            firstSuspensionOfItem[itemIndex] = 0;
+    }
+    unsigned numberOfSuspensions = 0;
+    BitVector slotsKeptEarlier;
+    for (BasicBlock* block : m_code) {
+        for (Inst& inst : *block) {
+            if (inst.kind.opcode != Patch || !inst.origin)
+                continue;
+            auto* stackmap = inst.origin->as<StackmapValue>();
+            if (!stackmap || !stackmap->isSuspension())
+                continue;
+            auto liveSlots = m_coloring.spillSlotsLiveAcrossEachSuspension.find(inst.origin);
+            if (liveSlots == m_coloring.spillSlotsLiveAcrossEachSuspension.end())
+                continue;
+            ++numberOfSuspensions;
+            BitVector slotsKeptFirstHere = liveSlots->value;
+            slotsKeptFirstHere.exclude(slotsKeptEarlier);
+            if (slotsKeptFirstHere.isEmpty())
+                continue;
+            slotsKeptEarlier.merge(slotsKeptFirstHere);
+            for (size_t slotIndex : slotsKeptFirstHere) {
+                if (const auto& units = m_coloring.unitsOfSlot[slotIndex]) {
+                    unsigned& first = firstSuspensionOfItem[m_itemOfSpillWord[units->first / StackColoring::unitsPerWord]];
+                    first = std::min(first, numberOfSuspensions);
+                }
+            }
+        }
+    }
+
+    unsigned wordsLeftWithinReach = isX86() && m_layout.hasFrameRecord ? wordsWithinReach(m_cursor) : std::numeric_limits<unsigned>::max();
+    size_t numberOfItemsWithinReach = 0;
+    for (; numberOfItemsWithinReach < itemIndexes.size() && m_items[itemIndexes[numberOfItemsWithinReach]].numberOfWords <= wordsLeftWithinReach; ++numberOfItemsWithinReach)
+        wordsLeftWithinReach -= m_items[itemIndexes[numberOfItemsWithinReach]].numberOfWords;
+    auto isKeptEarlier = [&](unsigned a, unsigned b) {
+        return firstSuspensionOfItem[a] < firstSuspensionOfItem[b];
+    };
+    std::stable_sort(itemIndexes.begin(), itemIndexes.begin() + numberOfItemsWithinReach, isKeptEarlier);
+    std::stable_sort(itemIndexes.begin() + numberOfItemsWithinReach, itemIndexes.end(), isKeptEarlier);
 }
 
 void FramePlanner::assignOffsets()

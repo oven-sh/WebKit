@@ -31,6 +31,8 @@ public:
     ~Dominators();
 
     Tree& treeForChecking() const LIFETIME_BOUND;
+    bool wasComparedWithNaiveSolution() const { return m_wasComparedWithNaiveSolution; }
+    void didCompareWithNaiveSolution() const { m_wasComparedWithNaiveSolution = true; }
 
     BlockID idom(BlockID block) const { return placeOf(block).idom; }
 
@@ -125,6 +127,7 @@ private:
     mutable Vector<uint32_t> m_depth;
     mutable Vector<BlockID> m_jump;
     bool m_selfCheck;
+    mutable bool m_wasComparedWithNaiveSolution { false };
     mutable std::optional<BitVector> m_blocksReachedFromHandlerOfDominator;
     mutable std::unique_ptr<SplitBlockDominators> m_splitBlockDominators;
 };

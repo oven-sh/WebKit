@@ -31,6 +31,7 @@ public:
     Structure* slimClosureStructure(VM&, FunctionID function) { return m_slimClosureStructures[functionKindData(function).slimClosureKind()]; }
     Structure* reifiedSlimClosureStructure(VM&, FunctionID);
     JSCell* uncreatedPrototypeProperty() const { return m_uncreatedPrototypeProperty; }
+    JSCell* untakenNameProperty() const { return m_untakenNameProperty; }
     Structure* boundClosureStructure(VM&, FunctionID);
     Structure* asyncBoundFunctionStructure() const { return m_asyncBoundFunctionStructure; }
     void setAsyncBoundFunctionStructure(Structure*);
@@ -65,11 +66,12 @@ private:
     RememberedSlotSet m_writtenRegions;
     Structure* m_closureStructures[numberOfClosureStructures] { };
     Structure* m_slimClosureStructures[numberOfSlimClosureKinds] { };
-    Structure* m_reifiedSlimClosureStructures[2][3] { };
+    Structure* m_reifiedSlimClosureStructures[2][3][2] { };
     Structure* m_boundClosureStructures[2] { };
     Structure* m_asyncBoundFunctionStructure { nullptr };
     RefPtr<PrivateSymbolImpl> m_functionIndexPrivateName;
     JSCell* m_uncreatedPrototypeProperty { nullptr };
+    JSCell* m_untakenNameProperty { nullptr };
     JSObject* m_calleeOfModuleBodies { nullptr };
 };
 

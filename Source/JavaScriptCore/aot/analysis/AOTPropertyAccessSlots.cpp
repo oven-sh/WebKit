@@ -264,6 +264,7 @@ std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const Pro
             continue;
         layoutsWithEmptySlots.add(layout);
         hasOption |= kinds.contains(OptionKind::LazilyInitializedField) && isLazilyInitialized(state);
+        hasOption |= kinds.contains(OptionKind::FieldWithoutStorage);
         if (kinds.contains(OptionKind::RecordOption)) {
             hasOption |= !state.isRequired && state.isLeftOutAtConstruction && !state.hasConstructor;
             hasOption |= isStoredLateOrNever(state);

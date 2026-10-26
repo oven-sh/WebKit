@@ -10,6 +10,7 @@
 
 #include "AOTCFG.h"
 #include "AOTKnownClosures.h"
+#include "AOTNameCreatedSymbols.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTValueFlowBuiltins.h"
@@ -380,11 +381,11 @@ void HeapRule::define(const ValueFlowOperand& object, const HeapKey& key, HeapPr
         noteWrittenMembers(listed, key);
         noteMembersLookedForBeforeChange(listed, key);
     }
-    if (ClimbingSet holders = holdersOfReplaceableMemberListedBesideUnknownObject(object, receivers, key); holdsAnything(holders)) {
+    if (ClimbingSet holders = holdersOfReplaceableMemberThatUnknownObjectMayBe(object, receivers, key); holdsAnything(holders)) {
         write(holders, writtenName(key, part), value);
         noteWrittenMembers(holders, key, true);
     }
-    notePrototypeObjectsListedAtWrite(object, receivers, key);
+    notePrototypeObjectsThatWriteMayReach(object, receivers, key);
     noteClosuresThatMayBeRenamed(object, key, receivers);
     markDefinition(receivers, key, part);
     mayThrow();
@@ -481,15 +482,19 @@ void HeapRule::noteClosuresThatMayBeRenamed(const ValueFlowOperand& object, cons
     // The modules of the run time name a function of the program only under the key as it is written.
     if (object.node && (key.keyClass == HeapKeyClass::Name || isInProgramCode()) && m_context.meet(receivers, m_universe.placeholdersAlone()))
         connect(object.node, m_context.nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename));
-    if (holdsAnything(closures))
+    if (holdsAnything(closures)) {
         add(m_context.nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename), closures);
+        add(m_context.nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsGiveDisplayName), closures);
+    }
 }
 
-void HeapRule::notePrototypeObjectsListedAtWrite(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
+void HeapRule::notePrototypeObjectsThatWriteMayReach(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
 {
     if (!object.node || key.keyClass != HeapKeyClass::Unknown || !mayBeUnknownObject(receivers) || key.receivers == HeapKeyReceivers::AllButBuiltinObjects)
         return;
     add(m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), m_context.valueWithin(ClimbingSet(m_tables.prototypeObjectsThatListingDoesNotName()), object.node));
+    if (isInProgramCode())
+        add(m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), escapedAmong(ClimbingSet(m_tables.prototypeObjectsThatListingDoesNotName())));
 }
 
 ClimbingSet HeapRule::unlockedObjectsListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
@@ -498,12 +503,16 @@ ClimbingSet HeapRule::unlockedObjectsListedBesideUnknownObject(const ValueFlowOp
     return holdsAnything(listed) ? m_context.valueWithin(listed, m_context.nodes().ofHost(ValueFlowHostNode::BuiltinObjectsThatStatementsWrite)) : ClimbingSet();
 }
 
-ClimbingSet HeapRule::holdersOfReplaceableMemberListedBesideUnknownObject(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
+ClimbingSet HeapRule::holdersOfReplaceableMemberThatUnknownObjectMayBe(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
 {
     if (key.keyClass != HeapKeyClass::Name || !isInProgramCode())
         return { };
+    ClimbingSet candidates = builtinObjectsListedBesideUnknownObject(object, receivers, key);
+    // No listing names a prototype object of the language that came back from code nobody sees.
+    if (mayBeUnknownObject(receivers) && key.receivers != HeapKeyReceivers::AllButBuiltinObjects)
+        candidates = m_context.unite(candidates, escapedAmong(ClimbingSet(m_tables.prototypeObjectsThatListingDoesNotName())));
     Members holders;
-    forEachMemberUnder(builtinObjectsListedBesideUnknownObject(object, receivers, key), key, [&](BuiltinID member, ModuleID module) {
+    forEachMemberUnder(candidates, key, [&](BuiltinID member, ModuleID module) {
         if (!module && m_builtins.at(member).mutability == BuiltinMutability::ConstantUnlessWritten && !m_builtins.isLocationOfLockedObject(member))
             holders.append(m_universe.objectOf(m_builtins.at(member).holder));
     });
@@ -556,7 +565,11 @@ void HeapRule::store(const ValueFlowOperand& object, const HeapKey& key, const V
         write(listed, writtenName(key, HeapPropertyPart::Value), value);
         noteWrittenMembers(listed, key, true);
     }
-    notePrototypeObjectsListedAtWrite(object, receivers, key);
+    if (ClimbingSet holders = holdersOfReplaceableMemberThatUnknownObjectMayBe(object, receivers, key); holdsAnything(holders)) {
+        write(holders, writtenName(key, HeapPropertyPart::Value), value);
+        noteWrittenMembers(holders, key, true);
+    }
+    notePrototypeObjectsThatWriteMayReach(object, receivers, key);
     noteClosuresThatMayBeRenamed(object, key, receivers);
     markStore(receivers, key);
     forEachStartOfLookup(receivers, [&](ClimbingSet start) {
@@ -594,11 +607,11 @@ void HeapRule::remove(const ValueFlowOperand& object, const HeapKey& key)
         noteMembersLookedForBeforeChange(listed, key, true);
         noteDeletedMembers(listed, key);
     }
-    if (ClimbingSet holders = holdersOfReplaceableMemberListedBesideUnknownObject(object, receivers, key); holdsAnything(holders)) {
+    if (ClimbingSet holders = holdersOfReplaceableMemberThatUnknownObjectMayBe(object, receivers, key); holdsAnything(holders)) {
         noteWrittenMembers(holders, key, true);
         noteDeletedMembers(holders, key);
     }
-    notePrototypeObjectsListedAtWrite(object, receivers, key);
+    notePrototypeObjectsThatWriteMayReach(object, receivers, key);
     m_context.mark(m_context.restrict(receivers, m_universe.objects()), ObjectMutation::DeleteField);
     answerBoolean();
     mayThrow();
@@ -765,6 +778,22 @@ void HeapRule::runOperation()
         return;
     case Opcode::SetFunctionName: {
         ValueFlowOperand text { { }, m_universe.strings(), { } };
+        // One key names a function that is no class from the start, as a name that is written does.
+        ClimbingSet keys = m_context.valueOf(operand(At::SetFunctionName::computedKey));
+        ClimbingSet named = m_context.valueOf(operand(At::SetFunctionName::function));
+        bool isNamedByOneKey = (!holdsAnything(keys) || m_context.holdsOneMember(keys)) && (!holdsAnything(named) || m_context.holdsOneMember(named));
+        m_context.forEachMember(isNamedByOneKey ? keys : ClimbingSet(), [&](ValueFlowObjectID member) {
+            PropertyKeyID key = m_universe.keyOf(member);
+            isNamedByOneKey = key && tellsNameOfFunction(m_program.at(key));
+        });
+        m_context.forEachMember(isNamedByOneKey ? named : ClimbingSet(), [&](ValueFlowObjectID member) {
+            FunctionID function = m_universe.closureFunction(member);
+            isNamedByOneKey = function && !m_program.at(function).constructedClass;
+        });
+        if (isNamedByOneKey) {
+            write(named, writtenName(keyNamed(m_program.keyOf(BuiltinNames::name)), HeapPropertyPart::Value), text);
+            return;
+        }
         m_namesFunctionWhereItIsMade = true;
         define(operand(At::SetFunctionName::function), keyNamed(m_program.keyOf(BuiltinNames::name)), HeapPropertyPart::Value, text);
         m_namesFunctionWhereItIsMade = false;

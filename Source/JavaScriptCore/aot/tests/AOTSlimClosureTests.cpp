@@ -372,12 +372,6 @@ static void testPut(LoadedProgram& program)
     AOT_TEST_CHECK(isReifiedClosureOf(closure, function));
     AOT_TEST_CHECK(closure->getDirect(vm, label) == jsNumber(7));
 
-    JSObject* closureWithReadOnlyName = createSlimClosure(program, function);
-    PutPropertySlot sloppySlot(closureWithReadOnlyName, false);
-    AOT_TEST_CHECK(!put(program, closureWithReadOnlyName, vm.propertyNames->name, jsNumber(7), sloppySlot));
-    AOT_TEST_CHECK(isReifiedClosureOf(closureWithReadOnlyName, function));
-    AOT_TEST_CHECK(hasOwnStringProperty(program, closureWithReadOnlyName, vm.propertyNames->name, "arrow"_s, readOnlyDontEnum));
-
     JSObject* closureWithElement = createSlimClosure(program, function);
     AOT_TEST_CHECK(closureWithElement->methodTable()->putByIndex(closureWithElement, program.realm(), 3, jsNumber(9), true));
     AOT_TEST_CHECK(isReifiedClosureOf(closureWithElement, function));
@@ -391,6 +385,13 @@ static void testPut(LoadedProgram& program)
     // The frames of this function do not record the function object that runs in them: the name stands for all of them.
     AOT_TEST_CHECK(captureCountsOf(function).captures && FunctionTables::of(vm).hasDisplayNames.load());
     AOT_TEST_CHECK(functionName(vm, function, NameForm::InFrames) == "shown"_s);
+
+    // A store to `name` looks for it, also one that is refused.
+    JSObject* closureWithReadOnlyName = createSlimClosure(program, function);
+    PutPropertySlot sloppySlot(closureWithReadOnlyName, false);
+    AOT_TEST_CHECK(!put(program, closureWithReadOnlyName, vm.propertyNames->name, jsNumber(7), sloppySlot));
+    AOT_TEST_CHECK(isReifiedClosureOf(closureWithReadOnlyName, function));
+    AOT_TEST_CHECK(hasOwnStringProperty(program, closureWithReadOnlyName, vm.propertyNames->name, "arrow"_s, readOnlyDontEnum));
 }
 
 static void storeDisplayName(LoadedProgram& program, JSObject* closure, ASCIILiteral displayName)

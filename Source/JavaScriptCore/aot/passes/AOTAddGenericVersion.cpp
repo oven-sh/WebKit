@@ -384,6 +384,9 @@ struct GenericVersionBuilder {
             const Value& check = function.at(site.check);
             Opcode source = function.at(sameObjectThroughCasts(function, check.valueOperand())).opcode;
             std::span<const Use> uses = analyses.useLists().usesOf(site.check);
+            // A cast hands the value on to whoever takes it.
+            while (uses.size() == 1 && uses[0].kind == Use::Kind::Operand && castsBehindChecks.contains(function.at(uses[0].user).opcode))
+                uses = analyses.useLists().usesOf(uses[0].user);
             if ((source != Opcode::ElemGet && source != Opcode::ResultAt) || uses.size() != 1)
                 continue;
             // A switch over texts tells them apart itself.
@@ -1768,10 +1771,10 @@ static void appendFieldsGivenObjectsThatChecksTurnAway(const Program& program, c
     }
 }
 
-// After flow only the very value that a check has turned away counts.
-static void collectTaintedStores(const Program& program, FunctionID id, BuildContext& build, TaintedPositionsRun run, const PositionsProvenByTypes* proofs, Vector<Position>& positions)
+// After flow only the very value that a check has turned away counts. The body is left as it was.
+static void collectTaintedStores(const Program& program, FunctionID id, Function& body, BuildContext& build, TaintedPositionsRun run, const PositionsProvenByTypes* proofs, Vector<Position>& positions)
 {
-    const Function& function = program.at(id);
+    const Function& function = body;
     ScratchTypeArena scratch(program.types);
     TypeArena& types = scratch.arena();
     AnalysisContext context { build, program, nullptr, nullptr, id };
@@ -1794,10 +1797,12 @@ static void collectTaintedStores(const Program& program, FunctionID id, BuildCon
 
     // Past form AsRead the type of a value need not be what its rule gives.
     bool isAsRead = program.form() == IRForm::AsRead;
-    bool mayStoreOtherTypeWithoutChecks = std::ranges::any_of(stores, [&](const TypedStore& store) {
-        return storedValuesThatCount.get(store.stored.index()) && (!isAsRead || (!isTypedWithoutOperands(function, function.at(store.stored)) && storedPosition(program, id, store)));
-    });
-    if (!mayStoreOtherTypeWithoutChecks) {
+    Vector<ValueID, 16> valuesThatMayHaveOtherTypeWithoutChecks;
+    for (const TypedStore& store : stores) {
+        if (storedValuesThatCount.get(store.stored.index()) && (!isAsRead || (!isTypedWithoutOperands(function, function.at(store.stored)) && storedPosition(program, id, store))))
+            valuesThatMayHaveOtherTypeWithoutChecks.append(store.stored);
+    }
+    if (valuesThatMayHaveOtherTypeWithoutChecks.isEmpty()) {
         if (!isAfterFlow)
             appendIllTypedStores(typing, id, stores.span(), nullptr, positions);
         return;
@@ -1807,25 +1812,36 @@ static void collectTaintedStores(const Program& program, FunctionID id, BuildCon
     if (isAfterFlow)
         valuesBehindChecksAfterFlow = valuesBehind(function, analyses.cfg(), checks.span());
     const BitVector& isBehindCheck = isAfterFlow ? valuesBehindChecksAfterFlow : storedValuesThatCount;
-    // A check that has nothing left to test in the typed code is dropped in front of the copy, so it holds nothing back there.
-    Function withoutChecks(function);
-    // A check answers a claim of flow that says no more than the check does, whatever the claim rests on, and the claim is gone when the check goes.
-    for (size_t index : isBehindCheck) {
-        if (function.values[index].opcode == Opcode::AssumeType && !function.values[index].isWordOfFrontEnd())
-            withoutChecks.edit(ValueID(index)).setIsBehindChecks(true);
+    bool valuesAreTypedAsDefined = function.valuesAreTypedAsDefined();
+    UndoLog undoLog;
+    {
+        // A cast becomes another cast of the same operand: the graph and the use lists of the body are those of the body without its checks.
+        TypePropagation propagation(TypePropagationInputs { program, id, body, analyses, types, build });
+        propagation.restartSourcesOf(valuesThatMayHaveOtherTypeWithoutChecks.span(), isBehindCheck);
+        const BitVector& isTypedAnew = propagation.restartedValues();
+        // A check answers a claim of flow that says no more than the check does, whatever the claim rests on, and the claim is gone when the check goes.
+        for (size_t index : isTypedAnew) {
+            const Value& claim = function.values[index];
+            if (claim.opcode != Opcode::AssumeType || claim.isWordOfFrontEnd() || claim.isBehindChecks())
+                continue;
+            undoLog.willEdit(function, ValueID(index));
+            body.edit(ValueID(index)).setIsBehindChecks(true);
+        }
+        // A check that has nothing left to test in the typed code is dropped in front of the generic version, so it holds nothing back there.
+        forgetProofsOf(body, types, isTypedAnew, isTypedAnew, ExpectedTypes::Dropped, &undoLog);
+        propagation.solveTypes();
+        appendIllTypedStores(typing, id, stores.span(), isAfterFlow ? &storedValuesThatCount : nullptr, positions);
+        undoLog.undo(body);
+        propagation.restoreTypes();
     }
-    forgetProofsOf(withoutChecks, types, isBehindCheck, isBehindCheck, ExpectedTypes::Dropped);
-    // A cast has become another cast of the same operand: the graph and the use lists of the body are those of the body without its checks.
-    TypePropagation propagation(TypePropagationInputs { program, id, withoutChecks, analyses, types, build });
-    propagation.restartDependentsOf(checks.span());
-    propagation.solveTypes();
-    appendIllTypedStores(TypingContext { program, withoutChecks, types }, id, stores.span(), isAfterFlow ? &storedValuesThatCount : nullptr, positions);
+    if (valuesAreTypedAsDefined)
+        body.setValuesAreTypedAsDefined();
 }
 
-bool mayReturnTaintedValue(const Program& program, FunctionID id, BuildContext& build)
+bool mayReturnTaintedValue(const Program& program, FunctionID id, Function& body, BuildContext& build)
 {
     Vector<Position> positions;
-    collectTaintedStores(program, id, build, TaintedPositionsRun::BeforeFlow, nullptr, positions);
+    collectTaintedStores(program, id, body, build, TaintedPositionsRun::BeforeFlow, nullptr, positions);
     return std::ranges::any_of(positions, [&](Position position) { return position.kind == Position::Kind::Result && position.owner == id.index(); });
 }
 
@@ -2110,7 +2126,7 @@ static uint64_t guardTaintedPositions(Program& program, BuildContext& build, Tai
             ProgramCaches caches(program, build);
             // No task reads the values of another task's body: typing a call reads the record of the callee.
             forEachIndexInParallel(loops, worklist.size(), [&](unsigned index) {
-                collectTaintedStores(program, worklist[index], build, run, proofs, storesByFunction[index]);
+                collectTaintedStores(program, worklist[index], program.at(worklist[index]), build, run, proofs, storesByFunction[index]);
                 listReadsOf(worklist[index]);
             });
         }
@@ -2295,8 +2311,8 @@ static Vector<Edge, 16> findFailingEdgesBeforeAnyEffect(FunctionPassContext& pas
         const Value& test = function.at(branch.conditionOperand());
         // A test of a type may be a guess, or tell the members of a union apart: the side on which it fails is then an ordinary way through the function, which is worth its own code.
         bool testsState = provesForStretch(provesOf(test.opcode)) && provesOf(test.opcode) != Proof::ExactFunction;
-        // What fails such a test is undefined or null where the program goes on as if it had an object: it is about to throw.
-        if (!testsState && (test.opcode != Opcode::TypeTest || !pass.program.typeOf(function, test.valueOperand()).without(pass.program.at(test.testedType()), pass.types).isUndefinedOrNull()))
+        // What fails such a test is not what its annotation says, as what fails a test at the entrance, or it is undefined or null where the program goes on as if it had an object: it is about to throw.
+        if (!testsState && (test.opcode != Opcode::TypeTest || !pass.program.expectedOrTypeOf(function, test.valueOperand()).without(pass.program.at(test.testedType()), pass.types).hasOnlyPrimitives(Primitive::UndefinedOrNull)))
             continue;
         for (uint32_t index = 0; index < block.terminator.targets.size(); ++index) {
             BlockID target = block.terminator.targets[index].block;
@@ -2306,6 +2322,68 @@ static Vector<Edge, 16> findFailingEdgesBeforeAnyEffect(FunctionPassContext& pas
         }
     }
     return failingEdges;
+}
+
+// What a call that begins again has made is made a second time. So it is made behind the test: from the first value of the block that allocates on, whatever the test does not ask for.
+// Nothing that may throw is passed on the way, and a result stays with the operation that it is a result of.
+static bool moveAllocationsBehindTestsThatRestart(FunctionPassContext& pass, BlockID restart)
+{
+    Function& function = pass.function;
+    const CFG& cfg = pass.analyses.cfg();
+    BitVector endsBeforeAnyEffect = findBlocksThatEndBeforeAnyEffect(pass);
+    BitVector isAskedFor(function.values.size());
+    BitVector isMoved(function.values.size());
+    Vector<ValueID, 16> moved;
+    bool hasMoved = false;
+    for (BlockID id : cfg.reversePostOrder()) {
+        const Block& block = function.at(id);
+        if (!endsBeforeAnyEffect.quickGet(id.index()) || block.handler || !block.terminator.isConditionalBranch())
+            continue;
+        const Target& taken = block.terminator.taken();
+        const Target& notTaken = block.terminator.notTaken();
+        if ((taken.block == restart) == (notTaken.block == restart))
+            continue;
+        BlockID passing = taken.block == restart ? notTaken.block : taken.block;
+        if (cfg.incomingEdges(passing).size() != 1 || function.at(passing).handler || function.at(passing).isHandlerBlock())
+            continue;
+
+        block.terminator.forEachChild([&](ValueID operand) { isAskedFor.quickSet(operand.index()); });
+        for (const Target& target : block.terminator.targets) {
+            for (ValueID argument : target.arguments)
+                isAskedFor.quickSet(argument.index());
+        }
+        uint32_t firstThatMayMove = 0;
+        for (uint32_t index = block.values.size(); index--;) {
+            ValueID value = block.values[index];
+            if (!isAskedFor.quickGet(value.index()))
+                continue;
+            function.at(value).forEachChild([&](ValueID operand) { isAskedFor.quickSet(operand.index()); });
+            if (!firstThatMayMove && pass.analyses.effectsOf(value).normal.mayExitSideways())
+                firstThatMayMove = index + 1;
+        }
+        for (ValueID value : std::exchange(moved, { }))
+            isMoved.quickClear(value.index());
+        bool everyValueCompletes = true;
+        for (uint32_t index = firstThatMayMove; index < block.values.size() && everyValueCompletes; ++index) {
+            ValueID value = block.values[index];
+            if (isAskedFor.quickGet(value.index()))
+                continue;
+            const Effects& effects = pass.analyses.effectsOf(value).normal;
+            everyValueCompletes = effects.alwaysCompletes();
+            if (moved.isEmpty() && !effects.mayCollect)
+                continue;
+            if (function.at(value).opcode == Opcode::ResultAt && !isMoved.quickGet(function.at(value).resultsOperand().index()))
+                continue;
+            isMoved.quickSet(value.index());
+            moved.append(value);
+        }
+        if (moved.isEmpty() || !everyValueCompletes)
+            continue;
+        function.edit(id, BlockEdit::Values).values.removeAllMatching([&](ValueID value) { return isMoved.quickGet(value.index()); });
+        function.edit(passing, BlockEdit::Values).values.insertVector(0, moved);
+        hasMoved = true;
+    }
+    return hasMoved;
 }
 
 // A test of the state of an object that fails leads into generic code for what follows it, which the function holds for itself.
@@ -2341,7 +2419,8 @@ PassOutcome restartInGenericVersion(FunctionPassContext& pass)
         builder.emptyUnreachableBlocks();
         numberOfRestarts += failingEdges.size();
     }
-    if (!numberOfRestarts)
+    bool hasMoved = restart && moveAllocationsBehindTestsThatRestart(pass, restart);
+    if (!numberOfRestarts && !hasMoved)
         return PassOutcome::Unchanged;
     pass.build.statistics().count(StatisticID::RestartsInGenericVersion, numberOfRestarts);
     // The graph is that of the last search, which has edited nothing.

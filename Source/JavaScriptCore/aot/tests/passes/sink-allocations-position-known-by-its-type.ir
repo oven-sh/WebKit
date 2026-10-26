@@ -1,4 +1,4 @@
-# A test of a position is answered on a virtual array where the position is one known integer. A read that is kept on the cell has the allocation for its guard, which proves nothing about a position, so the array is not sunk
+# A test of a position is answered on a virtual array where the type of the position says on which side of the end it lies. A read that is kept on the cell has the allocation for its guard, which proves nothing about a position, so the array is not sunk
 # FORM: Prepared optimizing
 # OPTIONS: check=VerifyEachPass
 # RUN: pass SinkAllocations
@@ -54,10 +54,9 @@ function f1 name="oneLiteral" parameters=[{type=string}, {type=string}, {type=in
     Return v11
   b4():
     Return
-# CHECK: [[test1]]: boolean = IsInBounds [[array1]], [[position1]]
-# CHECK-NEXT: Branch [[test1]] -> taken [[inside1]](| 0), notTaken
-# CHECK: [[inside1]]([[guard1]]: guard):
-# CHECK-NEXT: = GetArrayElement [[array1]], [[position1]], [[guard1]] arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NOT: NewArray
+# CHECK-NOT: IsInBounds
+# CHECK: Switch v7 cases=[0] -> case [[join1]](v0), otherwise [[join1]](v1)
 }
 
 # The position is inside one of the two literals alone, so the answer is a test of the tag and the way of the read has one variant.
@@ -86,8 +85,33 @@ function f2 name="insideTheLongerLiteralAlone" parameters=[{type=boolean}, {type
     Return v14
   b7():
     Return
-# CHECK: [[test2]]: boolean = IsInBounds [[array2]], [[position2]]
-# CHECK-NEXT: Branch [[test2]] -> taken [[inside2]](| 0), notTaken
-# CHECK: [[inside2]]([[guard2]]: guard):
-# CHECK-NEXT: = GetArrayElement [[array2]], [[position2]], [[guard2]] arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
+# CHECK-NOT: NewArray
+# CHECK-NOT: IsInBounds
+# CHECK: [[bit2]]:{{*}}= BitAnd
+# CHECK-NEXT: [[isLonger2]]: boolean = ToBoolean [[bit2]]
+# CHECK: Switch v10 cases=[0] -> case [[join2]]([[first2]]), otherwise [[join2]]([[second2]])
+}
+
+# The read says more of its answer than is known of the elements, so it is kept on the cell.
+function f3 name="oneLiteralOfElementsThatMayBeAnything" parameters=[{type=anything}, {type=anything}, {type=int[1, 9]}] results=[{type=anything}] {
+    v3 = NewArray v0, v1 contents=string
+    v4 = AssumeType v3 provenType=Array<string, proven, Contiguous, pristine[Storage, Names, Dense]>
+    v5 = Integer
+    v6 = Less v5, v2
+    Branch v6 -> taken b1(| 0), notTaken b4()
+  b1(v7):
+    v8 = IsInBounds v4, v7
+    Branch v8 -> taken b2(| 0), notTaken b3()
+  b2(v9):
+    v10 = GetArrayElement v4, v7, v9 arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
+    Return v10
+  b3() frequency=Unlikely:
+    v11 = GetArrayElement v4, v7 arrayStorage=Contiguous level=Proven [keyIsIntegral]
+    Return v11
+  b4():
+    Return
+# CHECK: [[test3]]: boolean = IsInBounds [[array3]], [[position3]]
+# CHECK-NEXT: Branch [[test3]] -> taken [[inside3]](| 0), notTaken
+# CHECK: [[inside3]]([[guard3]]: guard):
+# CHECK-NEXT: = GetArrayElement [[array3]], [[position3]], [[guard3]] arrayStorage=Contiguous level=Proven [keyIsIntegral, isInBounds]
 }

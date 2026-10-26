@@ -776,9 +776,11 @@ Structure* SlimClosure::createStructure(VM& vm, JSGlobalObject* realm, JSValue p
     return Structure::create(vm, realm, prototype, TypeInfo(SlimClosureType, StructureFlags), info(), NonArray, 0);
 }
 
-Structure* ReifiedSlimClosure::createStructure(VM& vm, JSGlobalObject* realm, JSValue prototype, Variant variant)
+Structure* ReifiedSlimClosure::createStructure(VM& vm, JSGlobalObject* realm, JSValue prototype, Variant variant, NameProperty nameProperty)
 {
     unsigned flags = variant == Variant::Bound ? StructureFlags & ~ImplementsDefaultHasInstance : StructureFlags;
+    if (nameProperty == NameProperty::TakenAtFirstLook)
+        flags |= flagsThatSeeLooksForName;
     return Structure::create(vm, realm, prototype, TypeInfo(SlimClosureWithPropertiesType, flags), info(), NonArray, 0);
 }
 
@@ -883,7 +885,7 @@ Structure* SlimClosure::fillInitialProperties(VM& vm, std::span<JSValue, numberO
     Structure* structure = state.objects->closures.reifiedSlimClosureStructure(vm, function);
     values[0] = jsNumber(function.index());
     values[1] = jsNumber(functionLengthOf(function));
-    values[2] = initialNamePropertyString(vm, state, function);
+    values[2] = kind().notesLooksForName() ? JSValue(state.objects->closures.untakenNameProperty()) : JSValue(initialNamePropertyString(vm, state, function));
     values[3] = FunctionTables::hasPrototypePropertyAtCreation(kind()) ? JSValue(state.objects->closures.uncreatedPrototypeProperty()) : JSValue();
     return structure;
 }
@@ -940,6 +942,24 @@ JSC_DEFINE_CUSTOM_GETTER(createPrototypeProperty, (JSGlobalObject*, EncodedJSVal
     return JSValue::encode(prototype);
 }
 
+JSValue ReifiedSlimClosure::lookForNameProperty(VM& vm)
+{
+    didLookForNameProperty(vm, this);
+    unsigned attributes = 0;
+    JSValue name = getDirect(vm, vm.propertyNames->name, attributes);
+    if (!name || !(attributes & PropertyAttribute::CustomValue))
+        return name;
+    name = initialNamePropertyString(vm, state(), function());
+    putDirect(vm, vm.propertyNames->name, name, attributes & ~PropertyAttribute::CustomValue);
+    return name;
+}
+
+JSC_DEFINE_CUSTOM_GETTER(takeNameProperty, (JSGlobalObject*, EncodedJSValue encodedClosure, PropertyName))
+{
+    ReifiedSlimClosure* closure = uncheckedDowncast<ReifiedSlimClosure>(asObject(JSValue::decode(encodedClosure)));
+    return JSValue::encode(closure->lookForNameProperty(closure->vm()));
+}
+
 bool SlimClosure::customHasInstance(JSObject* object, JSGlobalObject* globalObject, JSValue value)
 {
     SlimClosure* closure = uncheckedDowncast<SlimClosure>(object);
@@ -961,6 +981,10 @@ bool SlimClosure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObj
         return true;
     }
     if (name == vm.propertyNames->name) {
+        if (closure->kind().notesLooksForName()) {
+            closure->reify(vm);
+            return ReifiedSlimClosure::getOwnPropertySlot(object, globalObject, name, slot);
+        }
         didLookForNameProperty(vm, closure);
         slot.setValue(object, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum, initialNamePropertyString(vm, closure->state(), closure->function()));
         return true;
@@ -973,11 +997,23 @@ bool SlimClosure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObj
     return JSObject::getOwnPropertySlot(object, globalObject, name, slot);
 }
 
+bool ReifiedSlimClosure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    if (name == vm.propertyNames->name) [[unlikely]]
+        uncheckedDowncast<ReifiedSlimClosure>(object)->lookForNameProperty(vm);
+    return Base::getOwnPropertySlot(object, globalObject, name, slot);
+}
+
 void SlimClosure::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& names, DontEnumPropertiesMode mode)
 {
-    didLookForNameProperty(globalObject->vm(), object);
     uncheckedDowncast<SlimClosure>(object)->reify(globalObject->vm());
     JSObject::getOwnPropertyNames(object, globalObject, names, mode);
+}
+
+void ReifiedSlimClosure::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder&, DontEnumPropertiesMode)
+{
+    uncheckedDowncast<ReifiedSlimClosure>(object)->lookForNameProperty(globalObject->vm());
 }
 
 bool SlimClosure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
@@ -992,6 +1028,8 @@ bool ReifiedSlimClosure::put(JSCell* cell, JSGlobalObject* globalObject, Propert
 {
     VM& vm = globalObject->vm();
     ReifiedSlimClosure* closure = uncheckedDowncast<ReifiedSlimClosure>(cell);
+    if (name == vm.propertyNames->name) [[unlikely]]
+        closure->lookForNameProperty(vm);
     bool result = Base::put(cell, globalObject, name, value, slot);
     if (name == vm.propertyNames->displayName) [[unlikely]] {
         slot.disableCaching();

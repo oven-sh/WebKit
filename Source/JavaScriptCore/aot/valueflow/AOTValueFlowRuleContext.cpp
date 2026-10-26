@@ -549,6 +549,13 @@ bool ValueFlowRuleContext::mayFindSomethingWritten(ClimbingSet objects, ValueFlo
     return holdsAnyOf(objects, rareWriteNode(*write));
 }
 
+ClimbingSet ValueFlowRuleContext::holdersOfLibraryExportsWrittenUnder(PropertyKeyID key)
+{
+    return valueWithin(ClimbingSet(universe().objectsOfLibraryFoundByNameAlone()), nodeFor(ValueFlowNodeKey::holdersOfLibraryExportsWrittenUnder(key)));
+}
+
+bool ValueFlowRuleContext::mayFindWhatIsWrittenUnderUnknownKey(ValueFlowName name) const { return m_solver.mayBeComputedKey(name); }
+
 bool ValueFlowRuleContext::usesGeneralRulesOnly() const { return m_solver.m_usesGeneralRulesOnly; }
 
 ValueFlowNodeID ValueFlowRuleContext::written(ClimbingSet objects, ValueFlowName name)
@@ -561,6 +568,8 @@ ValueFlowNodeID ValueFlowRuleContext::written(ClimbingSet objects, ValueFlowName
             addObjectsOfProgram(notPlain(), objects);
         else if (name.kind == ValueFlowNameKind::UnknownKey)
             addObjectsOfProgram(writtenUnderUnknownKey(), objects);
+        if (shape.reach == ValueFlowNameReach::OneKey && shape.isValueOrAccessor() && meet(objects, universe().objectsOfLibraryFoundByNameAlone()))
+            add(nodeFor(ValueFlowNodeKey::holdersOfLibraryExportsWrittenUnder(PropertyKeyID(name.payload))), restrict(objects, universe().objectsOfLibraryFoundByNameAlone()));
     }
     ValueFlowNodeID written = nodeFor(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Written, objects.m_set, name));
     if (name.kind == ValueFlowNameKind::Property && m_solver.m_input.nodes) {

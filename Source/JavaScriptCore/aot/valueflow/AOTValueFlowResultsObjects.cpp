@@ -116,8 +116,10 @@ PrototypeLinks::PrototypeLinks(const ValueFlowResultInputs& inputs, const ValueF
             prototypesOfClasses.append(universe.prototypeOf(LayoutID(index)));
     }
     classPrototypes = maker.of(prototypesOfClasses.span());
-    for (ValueFlowNodeID node : heapIndex.nodesOfMarks())
-        markNodes.add(inputs.solver().keyOfMadeNode(node)->payload, node);
+    for (ValueFlowNodeID node : heapIndex.nodesOfMarks()) {
+        if (!inputs.solver().keyOfMadeNode(node)->detail)
+            markNodes.add(inputs.solver().keyOfMadeNode(node)->payload, node);
+    }
 
     Vector<WrittenNode> storesToPrototypePropertyOfOtherObjects;
     Vector<WrittenNode> copies;
@@ -607,6 +609,16 @@ static BitVector findFunctionsWhoseClosuresMayBeRenamed(const ValueFlowResultInp
     return functions;
 }
 
+static BitVector findFunctionsWhoseClosuresAreGivenDisplayName(const ValueFlowResultInputs& inputs)
+{
+    BitVector functions(inputs.program.functions.size());
+    inputs.sets().forEachMember(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsGiveDisplayName)), [&](ValueFlowObjectID object) {
+        if (FunctionID function = inputs.universe().closureFunction(object); function && function.index() < inputs.program.functions.size())
+            functions.quickSet(function.index());
+    });
+    return functions;
+}
+
 static void noteClosuresBelowFunctions(const ValueFlowResultInputs& inputs, const PrototypeLinks& links, std::span<AllocationClass> classes)
 {
     const Program& program = inputs.program;
@@ -699,6 +711,7 @@ static void createClassesOfClosures(const ValueFlowResultInputs& inputs, const V
     });
     noteClosuresBelowFunctions(inputs, links, classesOfClosures.mutableSpan());
     tables.functions.functionsWhoseClosuresMayBeRenamed = findFunctionsWhoseClosuresMayBeRenamed(inputs, added, classesOfClosures.span());
+    tables.functions.functionsWhoseClosuresAreGivenDisplayName = findFunctionsWhoseClosuresAreGivenDisplayName(inputs);
     tables.sites.allocationClasses.appendVector(WTF::move(classesOfClosures));
 }
 

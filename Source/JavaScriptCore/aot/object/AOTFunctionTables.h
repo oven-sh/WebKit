@@ -16,9 +16,9 @@
 #include "Weak.h"
 #include <array>
 #include <atomic>
-#include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
+#include <wtf/SparseBitVector.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
@@ -120,28 +120,26 @@ struct FunctionTables {
     NamesByFunction namesSetAtRunTime WTF_GUARDED_BY_LOCK(namesLock);
     DisplayNamesByFunction displayNames WTF_GUARDED_BY_LOCK(namesLock);
     // By the function as it is written.
-    BitVector namesLookedFor WTF_GUARDED_BY_LOCK(namesLock);
+    SparseBitVector<> namesLookedFor WTF_GUARDED_BY_LOCK(namesLock);
     std::atomic<bool> hasNamesSetAtRunTime { false };
     std::atomic<bool> hasNamesLookedFor { false };
     std::atomic<bool> hasDisplayNames { false };
 
-    // For an instance that has recorded nothing yet. It has no room.
-    static RecordedCalleeList* emptyRecordedCalleeList();
+    // HeapWords::recordedCallees. Compiled code writes nothing into the table that stands for no table.
+    static const RecordedCallee* recordedCalleesOf(const FunctionTables*);
+    // Where compiled code finds an entry from further out. The table grows until every call that may not have returned has a place of its own.
     void recordCallee(VM&, const void* stackPointerOfCaller, JSObject* closure);
-    // False once every function that recorded its callee has returned.
-    bool hasRecordedCalleesAbove(const void* stackPointer);
-    // Those of functions that have not returned yet.
+    bool hasRecordedCallees() const { return !recordedCalleeStorage.isEmpty(); }
+    std::span<RecordedCallee> recordedCallees() { return recordedCalleeStorage.mutableSpan().subspan(hasRecordedCallees() ? 1 : 0); }
+    // Null unless the last call made from there recorded its callee.
+    JSObject* recordedCalleeOfCallFrom(const void* stackPointerOfCaller);
+    // Those of calls made from further out than the stack pointer.
     template<typename Visitor> void visitRecordedCallees(Visitor&, const void* stackPointer);
     void finalizeRecordedCallees(VM&, const void* stackPointer);
-    std::span<const RecordedCallee> recordedCallees() const { return recordedCalleeStorage.span().subspan(recordedCalleeStorage.isEmpty() ? 0 : 1, numberOfRecordedCallees()); }
-    size_t numberOfRecordedCallees() const { return recordedCalleeStorage.isEmpty() ? 0 : recordedCalleeList.top - recordedCalleeStorage.span().data() - 1; }
-    void setNumberOfRecordedCallees(size_t number) { recordedCalleeList.top = recordedCalleeStorage.mutableSpan().subspan(number + 1).data(); }
 
-    // Only the thread of the VM changes them: compiled code adds an entry where there is room and nothing to drop.
+    // Only the thread of the VM changes them: compiled code writes an entry, the run time moves the table.
     Lock recordedCalleesLock;
-    RecordedCalleeList recordedCalleeList { };
     Vector<RecordedCallee> recordedCalleeStorage;
-    bool dropsRecordedCalleesWhenIdle { false };
     TextsByFunction sourceTexts;
 };
 

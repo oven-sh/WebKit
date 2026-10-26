@@ -103,7 +103,7 @@ void initializeCollectorWords(VM& vm, Instance& instance)
     instance.heap.storedCellLog = &vm.heap.storedCellLog();
     instance.heap.mutatorMarkStack = &HeapUtil::mutatorMarkStack(vm.heap);
     instance.heap.barriersExecuted = &HeapUtil::barriersExecuted(vm.heap);
-    instance.heap.recordedCallees = FunctionTables::emptyRecordedCalleeList();
+    instance.heap.recordedCallees = FunctionTables::recordedCalleesOf(vm.aotState().functionTables.get());
     auto* headSegmentWord = std::bit_cast<MutatorMarkStackLayout::Segment**>(std::bit_cast<uint8_t*>(instance.heap.mutatorMarkStack) + MutatorMarkStackLayout::offsetOfHeadSegment());
     RELEASE_ASSERT(*headSegmentWord == MutatorMarkStackLayout::headSegmentOf(*instance.heap.mutatorMarkStack));
 }

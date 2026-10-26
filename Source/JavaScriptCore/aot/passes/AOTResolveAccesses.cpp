@@ -29,6 +29,7 @@
 #include "AOTPropertyAccessMembers.h"
 #include "AOTRegionCloner.h"
 #include "AOTResultRules.h"
+#include "AOTSlotPlan.h"
 #include "AOTSort.h"
 #include "AOTSplitUnions.h"
 #include "AOTThreshold.h"
@@ -848,6 +849,29 @@ static void expandStoresUnderPrototypesThatMayBeReplaced(FunctionPassContext& co
     context.analyses.didChangeValues();
 }
 
+// Every receiver finds one and the same method of its class where it has no property of its own under the name.
+static std::optional<PropertyAccessPlan> planMethodAboveEmptySlot(FunctionPassContext& context, const SlotStamp& stamp, const Type& typeOfRead)
+{
+    std::span<const LayoutID> receivers = context.program.at(stamp.receivers).members;
+    // Whoever makes such an object fills the field: only the code in front of that store finds the slot empty.
+    bool isFilledByCreator = std::ranges::any_of(receivers, [&](LayoutID receiver) {
+        std::optional<FieldReference> field = findField(context.program, receiver, stamp.key, BaseChain::Proven);
+        return field && fieldAt(context.program, *field).flags.contains(FieldFlags::IsFilledByCreator);
+    });
+    if (isFilledByCreator)
+        return std::nullopt;
+    MethodsAboveEmptySlot above = findMethodsAboveEmptySlot({ context.program, &context.inputs.flow }, receivers, stamp.key);
+    if (!above.areAllReceivers || above.methods.size() != 1 || !Type::forFunction(above.methods[0].method).isSubsetOf(typeOfRead, context.program))
+        return std::nullopt;
+    PropertyAccessPlan plan;
+    plan.form = AccessForm::Method;
+    plan.member.method = above.methods[0].method;
+    plan.receivers = WTF::move(above.methods[0].layouts);
+    plan.requiredProofs = above.methods[0].proofs;
+    plan.conditions = WTF::move(above.methods[0].conditions);
+    return plan;
+}
+
 static void expandReadsOfFieldsThatMayBeEmpty(FunctionPassContext& context, IRBuilder& builder, Vector<NamedAccessSite>& reads)
 {
     if (reads.isEmpty())
@@ -860,8 +884,11 @@ static void expandReadsOfFieldsThatMayBeEmpty(FunctionPassContext& context, IRBu
         bool testsDeclaredType = read.plan.testsDeclaredType;
         expansion.begin(read.site);
         ValueID object = expansion.original().objectOperand();
+        std::optional<PropertyAccessPlan> methodAbove = read.plan.form == AccessForm::Slot && !testsDeclaredType ? planMethodAboveEmptySlot(context, stamp, context.program.at(expansion.original().type)) : std::nullopt;
         Value test = makeObjectTest(Proof::SlotFilled, object, stamp);
         test.setHoldsDeclaredType(testsDeclaredType);
+        // A field that is listed and holds undefined without storage hides the method.
+        test.setCountsFieldsWithoutStorage(!!methodAbove);
         BlockID failedUnasked = builder.beginPrediction();
         ValueID isFilled = builder.append(WTF::move(test));
         BlockFrequency frequencyOfFailure = testsDeclaredType ? rarerOf(expansion.frequency(), BlockFrequency::Unlikely) : expansion.frequency();
@@ -879,10 +906,29 @@ static void expandReadsOfFieldsThatMayBeEmpty(FunctionPassContext& context, IRBu
         }
 
         builder.moveToEndOf(branch.notTaken);
-        // The lookup starts over at the object.
-        Value lookup = IRBuilder::make(Opcode::SuperGet, { object, object });
-        lookup.setKey(stamp.key);
-        expansion.finishArm(expansion.append(WTF::move(lookup)));
+        BlockID byName;
+        if (methodAbove) {
+            for (Value& testOfMethod : createAccessTests(context, *methodAbove, { object, { }, { stamp.key, stamp.receivers, stamp.level, { } } }).tests) {
+                if (!byName)
+                    byName = builder.addBlock(rarerOf(frequencyOfFailure, BlockFrequency::Unlikely));
+                BlockID next = builder.addBlock(frequencyOfFailure);
+                builder.emitBranch(builder.append(WTF::move(testOfMethod)), Target { next, { }, { } }, Target { byName, { }, { } });
+                builder.moveToEndOf(next);
+            }
+            // Whoever compares it with another read of the member finds the same closure.
+            Value closure = IRBuilder::make(Opcode::NewClosure);
+            closure.setFunction(methodAbove->member.method);
+            closure.setIsHeldByClosureTable(true);
+            expansion.finishArm(expansion.append(WTF::move(closure)));
+            if (byName)
+                builder.moveToEndOf(byName);
+        }
+        if (!methodAbove || byName) {
+            // The lookup starts over at the object.
+            Value lookup = IRBuilder::make(Opcode::SuperGet, { object, object });
+            lookup.setKey(stamp.key);
+            expansion.finishArm(expansion.append(WTF::move(lookup)));
+        }
         expansion.end();
     }
     context.analyses.didChangeValues();
@@ -1433,6 +1479,28 @@ struct EmptySlotCases {
 
 } // anonymous namespace
 
+// Outside the cell a field takes no room while it holds undefined, so the test of its slot finds nothing.
+static bool mayHoldUndefinedWithoutStorage(const Program& program, const SlotPlan& slots, const Value& slotTest)
+{
+    return std::ranges::any_of(program.at(slotTest.receivers()).members, [&](LayoutID member) {
+        std::optional<uint32_t> field = program.at(member).findField(slotTest.key());
+        return field && slots.slot(member, *field).isOutOfLine() && slots.slot(member, *field).mayExistWithoutStorage;
+    });
+}
+
+static EmptySlotCases planCaseOfFieldWithoutStorage(FunctionPassContext& context, const Value& slotTest, const Type& typeOfRead)
+{
+    if (!(typeOfRead.primitives & Primitive::Undefined) || !mayHoldUndefinedWithoutStorage(context.program, *context.inputs.slots, slotTest))
+        return { };
+    std::optional<TestsOfEmptySlot> needed = testsThatOptionLeftOutReadsAsUndefined({ context.program, &context.inputs.flow }, context.program.at(slotTest.receivers()).members, slotTest.key(), OptionKind::FieldWithoutStorage);
+    if (!needed)
+        return { };
+    PropertyAccessPlan plan;
+    plan.requiredProofs = needed->proofs;
+    plan.conditions = WTF::move(needed->conditions);
+    return { { WTF::move(plan) }, true };
+}
+
 static EmptySlotCases planEmptySlotCases(FunctionPassContext& context, const Value& slotTest, const Type& typeOfRead, bool isStore, bool functionStoresField)
 {
     PropertyAccessContext accessContext { context.program, &context.inputs.flow };
@@ -1584,6 +1652,31 @@ PassOutcome addEmptySlotCases(FunctionPassContext& context)
         if (cases.plans.isEmpty())
             continue;
         addEmptySlotCase(context, builder, expansion, site, slotTest, cases, isStore);
+        outcome = PassOutcome::Changed;
+    }
+    return outcome;
+}
+
+// Only the plan of the slots says which fields these are.
+PassOutcome addCasesOfFieldsWithoutStorage(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    Vector<AccessBehindSlotTest> sites = findAccessesBehindSlotTests(context);
+    sites.removeAllMatching([&](const AccessBehindSlotTest& site) {
+        return function.at(site.access.value).opcode != Opcode::GetSlot;
+    });
+    if (sites.isEmpty())
+        return PassOutcome::Unchanged;
+
+    IRBuilder builder({ context.build, context.program, &context.inputs.flow, &context.inputs.effects, context.id }, function, context.types, &context.analyses);
+    SiteExpansion expansion(context, builder);
+    PassOutcome outcome = PassOutcome::Unchanged;
+    for (const AccessBehindSlotTest& site : sites | std::views::reverse) {
+        Value slotTest = function.at(function.at(site.test).values.last());
+        EmptySlotCases cases = planCaseOfFieldWithoutStorage(context, slotTest, context.program.typeOf(function, site.access.value));
+        if (cases.plans.isEmpty())
+            continue;
+        addEmptySlotCase(context, builder, expansion, site, slotTest, cases, false);
         outcome = PassOutcome::Changed;
     }
     return outcome;
@@ -2589,6 +2682,13 @@ static std::optional<PlannedSplit> planSplitByArms(FunctionPassContext& context,
         return isAccessArmForm(plan.form) || comparesMethod;
     });
     if (dispatch.arms.isEmpty())
+        return std::nullopt;
+    // Arms for the objects that lack a member alone, where the read stays as it is for those that have it: whoever reads a name expects an object that has it.
+    bool restFindsMember = isSymbolOfProgram(context.program.at(query.key).kind) && std::ranges::any_of(dispatch.rest, [&](LayoutID layout) {
+        const ClassMember* member = findMemberOfClass(context.program, layout, ClassSide::Prototype, query.key);
+        return member && member->mutability != MemberMutability::Fixed;
+    });
+    if (restFindsMember)
         return std::nullopt;
 
     PlannedSplit plan { .site = site, .operandIndex = *receiverOf(value.opcode) };

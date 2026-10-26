@@ -104,6 +104,8 @@ public:
     ValueFlowNodeID read(ClimbingSet objects, ValueFlowName);
     ValueFlowNodeID written(ClimbingSet objects, ValueFlowName);
     bool mayFindSomethingWritten(ClimbingSet objects, ValueFlowNameKind);
+    ClimbingSet holdersOfLibraryExportsWrittenUnder(PropertyKeyID);
+    bool mayFindWhatIsWrittenUnderUnknownKey(ValueFlowName) const;
     bool usesGeneralRulesOnly() const;
     ValueFlowNodeID lookup(ClimbingSet receivers, ValueFlowName);
     bool runsCodeThatRecordsDescribe() const;

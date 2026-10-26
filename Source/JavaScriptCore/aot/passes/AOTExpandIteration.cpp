@@ -2170,8 +2170,13 @@ struct ArmDispatcher {
         case IterationForm::TypedArray:
         case IterationForm::String:
         case IterationForm::SplitString:
-        case IterationForm::OwnEntries:
             emitIndexedOpen(expansion, state);
+            break;
+        case IterationForm::OwnEntries:
+            // What the call of Object.entries throws is reported where the call stands.
+            builder.setOrigin(function.at(plan.replacedValues.first()).origin());
+            emitIndexedOpen(expansion, state);
+            builder.setOrigin(function.at(iteration.open).origin());
             break;
         case IterationForm::Map:
         case IterationForm::Set:

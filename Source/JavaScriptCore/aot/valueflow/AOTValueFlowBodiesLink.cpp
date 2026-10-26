@@ -503,10 +503,13 @@ FunctionID ValueFlowProgramNodes::functionOf(ValueFlowNodeID node) const
     return FunctionID(static_cast<uint32_t>(next - m_firstNodeOfFunction.begin()) - 1);
 }
 
-ValueFlowNodeID ValueFlowProgramNodes::valueOfUnobservedDefinitions(FunctionID initializer) const
+ValueFlowNodeID ValueFlowProgramNodes::valueOf(const UnobservedFieldDefinition& definition) const
 {
-    auto found = std::ranges::lower_bound(m_unobservedDefinitionsByInitializer, initializer, { }, &UnobservedDefinitions::initializer);
-    return found != m_unobservedDefinitionsByInitializer.end() && found->initializer == initializer ? found->value : ValueFlowNodeID();
+    for (const UnobservedDefinitions& entry : std::ranges::equal_range(m_unobservedDefinitionsByInitializer, definition.initializer, { }, &UnobservedDefinitions::initializer)) {
+        if (entry.areObservedWhereObjectRefusesDefinition == definition.isObservedWhereObjectRefusesDefinition)
+            return entry.value;
+    }
+    return { };
 }
 
 std::span<const ValueFlowProgramNodes::UnobservedDefinitions> ValueFlowProgramNodes::unobservedDefinitionsBehindSuperOf(LayoutID classCallingSuper) const
@@ -873,15 +876,14 @@ private:
         nodes.m_resultSummaries.grow(m_bodies.size());
 
         for (const UnobservedFieldDefinition& definition : m_result.m_unobservedDefinitions.all()) {
-            uint32_t value = m_bodies[definition.initializer.index()].valueOfUnobservedDefinitions;
-            bool isListed = !nodes.m_unobservedDefinitionsByInitializer.isEmpty() && nodes.m_unobservedDefinitionsByInitializer.last().initializer == definition.initializer;
-            if (value == Body::none || isListed)
+            uint32_t value = m_bodies[definition.initializer.index()].valueOfUnobservedDefinitions[definition.isObservedWhereObjectRefusesDefinition];
+            if (value == Body::none || nodes.valueOf(definition))
                 continue;
             ValueFlowNodeID node(nodes.m_firstNodeOfFunction[definition.initializer.index()] + value);
-            nodes.m_unobservedDefinitionsByInitializer.append({ definition.classLayout, definition.initializer, node });
+            nodes.m_unobservedDefinitionsByInitializer.append({ definition.classLayout, definition.initializer, node, definition.isObservedWhereObjectRefusesDefinition });
             LayoutID current = definition.classLayout;
             for (size_t steps = 0; current && m_program.at(current).has(LayoutFlags::HasHeritage) && steps < m_program.layouts.size(); ++steps) {
-                nodes.m_unobservedDefinitionsByClass.append({ current, definition.initializer, node });
+                nodes.m_unobservedDefinitionsByClass.append({ current, definition.initializer, node, definition.isObservedWhereObjectRefusesDefinition && current == definition.classLayout });
                 current = predictedHeritageOf(m_program.at(current));
             }
         }
@@ -1100,8 +1102,15 @@ private:
             return builtins.at(builtin).prototypeLink != BuiltinPrototypeLink::Builtin && builtins.canonicalID(builtin) != Builtins::ObjectPrototype;
         });
 
+        for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
+            const Layout& layout = m_program.layouts[index];
+            if (layoutIsDefinedByClass(layout) && layout.module && m_program.at(layout.module).kind == ModuleKind::RuntimeSource)
+                list.append(universe.prototypeOf(LayoutID(index)));
+        }
+        universe.m_prototypeObjectsOfLibraryClasses = take();
         appendHoldersOfLibraryExports(list);
         universe.m_holdersOfLibraryExports = take();
+        universe.m_objectsOfLibraryFoundByNameAlone = maker.unite(universe.m_holdersOfLibraryExports, universe.m_prototypeObjectsOfLibraryClasses);
 
         list.append(ValueFlowUniverse::primitive(PrimitiveSet::String));
         universe.m_strings = maker.unite(take(), universe.m_textKeys);
