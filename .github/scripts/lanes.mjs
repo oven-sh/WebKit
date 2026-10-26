@@ -146,8 +146,8 @@ const platforms = [
     packageOS: "linux",
     lanes: {
       amd64: [...ALL, ...FUZZING, ...HARDENED],
-      // Nothing asks for "coverage-aot" or "hardened-aot" here.
-      arm64: [...ALL, "assertions-aot", "assertions-coverage-aot", "lto-hardened", "lto-hardened-aot", "lto-hardened-aot-no-webassembly"],
+      // Nothing asks for the others of FUZZING and HARDENED here.
+      arm64: [...ALL, "assertions-aot", "assertions-coverage-aot", "lto-hardened", "lto-hardened-aot"],
     },
     tested: {
       amd64: { on: "linux-x64-gh", variants: ["lto", "lto-aot", "lto-hardened-aot"] },
