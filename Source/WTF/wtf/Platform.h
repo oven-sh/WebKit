@@ -92,7 +92,7 @@
 
 #if USE(GLIB)
 #define GLIB_VERSION_MIN_REQUIRED GLIB_VERSION_2_56
-#define GLIB_VERSION_MAX_ALLOWED GLIB_VERSION_2_70
+#define GLIB_VERSION_MAX_ALLOWED GLIB_VERSION_2_74
 #endif
 
 #if PLATFORM(GTK)
@@ -155,6 +155,10 @@
 /* FIXME: The availability of RSA_PSS should not depend on the policy decision to USE(GCRYPT). */
 #if PLATFORM(MAC) || PLATFORM(IOS) || PLATFORM(MACCATALYST) || PLATFORM(VISION) || USE(GCRYPT) || USE(OPENSSL)
 #define HAVE_RSA_PSS 1
+#endif
+
+#if USE(OPENSSL) && !PLATFORM(PLAYSTATION)
+#define HAVE_OPENSSL_OKP 1
 #endif
 
 /* FIXME: Remove dependence on ENABLE(WEB_RTC). */

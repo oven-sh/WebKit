@@ -31,6 +31,7 @@
 #include <WebCore/PageIdentifier.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
+#include <wtf/TypeCasts.h>
 #include <wtf/UniqueRef.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/WeakPtr.h>
@@ -82,7 +83,7 @@ public:
 
     DOMWindow* window() const { return virtualWindow(); }
     FrameTree& tree() const LIFETIME_BOUND { return m_treeNode; }
-    WEBCORE_EXPORT std::optional<uint64_t> NODELETE indexInFrameTreeSiblings() const;
+    WEBCORE_EXPORT std::optional<uint64_t> LEGACY_NODELETE indexInFrameTreeSiblings() const;
     WEBCORE_EXPORT Vector<uint64_t> pathToFrame() const;
     FrameIdentifier frameID() const { return m_frameID; }
     WEBCORE_EXPORT SecurityOrigin& topOrigin() const;
@@ -97,7 +98,7 @@ public:
     WEBCORE_EXPORT void setOpenerForWebKitLegacy(Frame*);
     const Frame* opener() const { return m_opener.get(); }
     Frame* opener() { return m_opener.get(); }
-    bool NODELETE hasOpenedFrames() const;
+    bool LEGACY_NODELETE hasOpenedFrames() const;
     WEBCORE_EXPORT void detachFromAllOpenedFrames();
     virtual bool isRootFrame() const = 0;
 #if ASSERT_ENABLED
@@ -135,7 +136,7 @@ public:
     virtual void updateSandboxFlags(SandboxFlags, NotifyUIProcess);
     virtual void updateReferrerPolicy(ReferrerPolicy) { }
 
-    WEBCORE_EXPORT RenderWidget* NODELETE ownerRenderer() const; // Renderer for the element that contains this frame.
+    WEBCORE_EXPORT RenderWidget* LEGACY_NODELETE ownerRenderer() const; // Renderer for the element that contains this frame.
 
     WEBCORE_EXPORT void setOwnerPermissionsPolicy(OwnerPermissionsPolicyData&&);
     WEBCORE_EXPORT std::optional<OwnerPermissionsPolicyData> ownerPermissionsPolicy() const;
@@ -155,6 +156,7 @@ public:
     FrameTreeSyncData& frameTreeSyncData() const { return m_frameTreeSyncData.get(); }
     WEBCORE_EXPORT virtual SecurityOrigin* frameDocumentSecurityOrigin() const = 0;
     WEBCORE_EXPORT virtual std::optional<DocumentSecurityPolicy> frameDocumentSecurityPolicy() const = 0;
+    virtual std::optional<AgentClusterIdentifier> frameAgentClusterIdentifier() const = 0;
     WEBCORE_EXPORT virtual String frameURLProtocol() const = 0;
 
     // The scale factor of this frame with respect to its container.
@@ -169,8 +171,8 @@ public:
 
     WEBCORE_EXPORT virtual void setPrinting(bool printing, FloatSize pageSize, FloatSize originalPageSize, float maximumShrinkRatio, AdjustViewSize, NotifyUIProcess = NotifyUIProcess::Yes);
 
-    bool NODELETE isPrinting() const { return m_isPrinting; }
-    WEBCORE_EXPORT RefPtr<Frame> NODELETE parent() const;
+    bool LEGACY_NODELETE isPrinting() const { return m_isPrinting; }
+    WEBCORE_EXPORT RefPtr<Frame> LEGACY_NODELETE parent() const;
 
 protected:
     Frame(Page&, FrameIdentifier, FrameType, HTMLFrameOwnerElement*, Frame* parent, Frame* opener, Ref<FrameTreeSyncData>&&, AddToFrameTree = AddToFrameTree::Yes);
@@ -200,5 +202,151 @@ private:
 };
 
 WTF::TextStream& operator<<(WTF::TextStream&, const Frame&);
+
+template<typename FrameType>
+class FrameAncestorIterator {
+public:
+    using difference_type = std::ptrdiff_t;
+    using value_type = FrameType;
+
+    explicit FrameAncestorIterator(Frame* first)
+        : m_current(firstOfType(first))
+    {
+    }
+
+    FrameType& operator*() const { return *m_current; }
+    FrameType* operator->() const { return m_current.get(); }
+    bool operator==(std::nullptr_t) const { return !m_current; }
+
+    FrameAncestorIterator& operator++()
+    {
+        RefPtr<Frame> parent = m_current->tree().parent();
+        m_current = firstOfType(parent);
+        return *this;
+    }
+
+    void operator++(int) { ++*this; }
+
+private:
+    static FrameType* firstOfType(Frame* frame)
+    {
+        if constexpr (std::is_same_v<FrameType, Frame>)
+            return frame;
+        else {
+            for (RefPtr current = frame; current; current = current->tree().parent()) {
+                if (auto* typedFrame = dynamicDowncast<FrameType>(*current))
+                    return typedFrame;
+            }
+            return nullptr;
+        }
+    }
+
+    RefPtr<FrameType> m_current;
+};
+
+template<typename FrameType>
+class FrameAncestorRange {
+public:
+    explicit FrameAncestorRange(Frame* first)
+        : m_first(first)
+    {
+    }
+
+    FrameAncestorIterator<FrameType> begin() const { return FrameAncestorIterator<FrameType>(m_first.get()); }
+    static constexpr std::nullptr_t end() { return nullptr; }
+
+private:
+    RefPtr<Frame> m_first;
+};
+
+template<typename FrameType>
+class FrameDescendantIterator {
+public:
+    using difference_type = std::ptrdiff_t;
+    using value_type = FrameType;
+
+    FrameDescendantIterator(Frame* first, Frame* root)
+        : m_root(root)
+        , m_current(firstOfType(first, root))
+    {
+    }
+
+    FrameType& operator*() const { return *m_current; }
+    FrameType* operator->() const { return m_current.get(); }
+    bool operator==(std::nullptr_t) const { return !m_current; }
+
+    FrameDescendantIterator& operator++()
+    {
+        RefPtr<Frame> next = m_current->tree().traverseNext(m_root.get());
+        m_current = firstOfType(next, m_root.get());
+        return *this;
+    }
+
+    void operator++(int) { ++*this; }
+
+private:
+    static FrameType* firstOfType(Frame* frame, Frame* root)
+    {
+        if constexpr (std::is_same_v<FrameType, Frame>)
+            return frame;
+        else {
+            for (RefPtr current = frame; current; current = current->tree().traverseNext(root)) {
+                if (auto* typedFrame = dynamicDowncast<FrameType>(*current))
+                    return typedFrame;
+            }
+            return nullptr;
+        }
+    }
+
+    RefPtr<Frame> m_root;
+    RefPtr<FrameType> m_current;
+};
+
+template<typename FrameType>
+class FrameDescendantRange {
+public:
+    FrameDescendantRange(Frame* first, Frame* root)
+        : m_root(root)
+        , m_first(first)
+    {
+    }
+
+    FrameDescendantIterator<FrameType> begin() const { return FrameDescendantIterator<FrameType>(m_first.get(), m_root.get()); }
+    static constexpr std::nullptr_t end() { return nullptr; }
+
+private:
+    RefPtr<Frame> m_root;
+    RefPtr<Frame> m_first;
+};
+
+template<typename FrameType = Frame>
+FrameAncestorRange<FrameType> ancestorFrames(const Frame* frame)
+{
+    return FrameAncestorRange<FrameType>(frame ? frame->tree().parent() : nullptr);
+}
+
+template<typename FrameType = Frame>
+FrameAncestorRange<FrameType> ancestorFrames(const Frame& frame) { return ancestorFrames<FrameType>(&frame); }
+
+template<typename FrameType = Frame>
+FrameAncestorRange<FrameType> inclusiveAncestorFrames(Frame* frame) { return FrameAncestorRange<FrameType>(frame); }
+
+template<typename FrameType = Frame>
+FrameAncestorRange<FrameType> inclusiveAncestorFrames(Frame& frame) { return inclusiveAncestorFrames<FrameType>(&frame); }
+
+template<typename FrameType = Frame>
+FrameDescendantRange<FrameType> descendantFrames(Frame* root)
+{
+    return FrameDescendantRange<FrameType>(root ? root->tree().traverseNext(root) : nullptr, root);
+}
+
+template<typename FrameType = Frame>
+FrameDescendantRange<FrameType> descendantFrames(Frame& root) { return descendantFrames<FrameType>(&root); }
+
+template<typename FrameType = Frame>
+FrameDescendantRange<FrameType> inclusiveDescendantFrames(Frame* root) { return FrameDescendantRange<FrameType>(root, root); }
+
+template<typename FrameType = Frame>
+FrameDescendantRange<FrameType> inclusiveDescendantFrames(Frame& root) { return inclusiveDescendantFrames<FrameType>(&root); }
 
 } // namespace WebCore

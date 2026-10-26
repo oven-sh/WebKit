@@ -61,7 +61,7 @@ static const ASCIILiteral originCannotRequestGeolocationErrorMessage { "Origin d
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Geolocation);
 
-static RefPtr<GeolocationPosition> NODELETE createGeolocationPosition(std::optional<GeolocationPositionData>&& position)
+static RefPtr<GeolocationPosition> createGeolocationPosition(std::optional<GeolocationPositionData>&& position)
 {
     if (!position)
         return nullptr;
@@ -70,7 +70,7 @@ static RefPtr<GeolocationPosition> NODELETE createGeolocationPosition(std::optio
     return GeolocationPosition::create(GeolocationCoordinates::create(WTF::move(position.value())), timestamp);
 }
 
-static Ref<GeolocationPositionError> createGeolocationPositionError(GeolocationError& error)
+static Ref<GeolocationPositionError> LEGACY_NODELETE createGeolocationPositionError(GeolocationError& error)
 {
     auto code = GeolocationPositionError::POSITION_UNAVAILABLE;
     switch (error.code()) {
@@ -142,7 +142,7 @@ Ref<Geolocation> Geolocation::create(Navigator& navigator)
 }
 
 Geolocation::Geolocation(Navigator& navigator)
-    : ActiveDOMObject(navigator.scriptExecutionContext())
+    : ActiveDOMObject(protect(navigator.scriptExecutionContext()))
     , m_navigator(navigator)
     , m_resumeTimer(*this, &Geolocation::resumeTimerFired)
 {
@@ -345,32 +345,18 @@ int Geolocation::watchPosition(Ref<PositionCallback>&& successCallback, RefPtr<P
     return watchID;
 }
 
-static void logError(const String& target, const bool isSecure, Document* document)
-{
-    if (isSecure)
-        return;
-
-    auto message = makeString("[blocked] Access to geolocation was blocked over"_s,
-        isSecure ? " secure connection with mixed content to "_s : " insecure connection to "_s,
-        target, ".\n"_s);
-    document->addConsoleMessage(MessageSource::Security, MessageLevel::Error, WTF::move(message));
-}
-    
 bool Geolocation::shouldBlockGeolocationRequests()
 {
     RefPtr document = this->document();
     if (!PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::Geolocation, *document))
         return true;
 
-    bool isSecure = SecurityOrigin::isSecure(document->url()) || document->isSecureContext();
-    bool isLocalOrigin = securityOrigin()->isLocal();
-    if (document->canAccessResource(ScriptExecutionContext::ResourceType::Geolocation) != ScriptExecutionContext::HasResourceAccess::No) {
-        if (isLocalOrigin || isSecure)
-            return false;
+    if (!document->isSecureContext()) {
+        document->addConsoleMessage(MessageSource::Security, MessageLevel::Error, makeString("[blocked] Access to geolocation was blocked in a non-secure context with origin "_s, protect(securityOrigin())->toString(), '.'));
+        return true;
     }
 
-    logError(protect(securityOrigin())->toString(), isSecure, document.get());
-    return true;
+    return document->canAccessResource(ScriptExecutionContext::ResourceType::Geolocation) == ScriptExecutionContext::HasResourceAccess::No;
 }
 
 void Geolocation::startRequest(GeoNotifier& notifier)

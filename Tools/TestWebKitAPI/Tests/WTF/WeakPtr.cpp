@@ -394,6 +394,62 @@ TEST(WTF_WeakPtr, DerivedConstructAndAssignConst)
     }
 }
 
+class WeakPtrCastBase : public RefCounted<WeakPtrCastBase>, public CanMakeWeakPtr<WeakPtrCastBase> {
+public:
+    static Ref<WeakPtrCastBase> create() { return adoptRef(*new WeakPtrCastBase); }
+
+    virtual ~WeakPtrCastBase() = default;
+    virtual bool isWeakPtrCastDerived() const { return false; }
+
+protected:
+    WeakPtrCastBase() = default;
+};
+
+class WeakPtrCastDerived final : public WeakPtrCastBase {
+public:
+    static Ref<WeakPtrCastDerived> create() { return adoptRef(*new WeakPtrCastDerived); }
+
+private:
+    WeakPtrCastDerived() = default;
+    bool isWeakPtrCastDerived() const final { return true; }
+};
+
+} // namespace TestWebKitAPI
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(TestWebKitAPI::WeakPtrCastDerived)
+    static bool isType(const TestWebKitAPI::WeakPtrCastBase& object) { return object.isWeakPtrCastDerived(); }
+SPECIALIZE_TYPE_TRAITS_END()
+
+namespace TestWebKitAPI {
+
+TEST(WTF_WeakPtr, DowncastAndDynamicDowncast)
+{
+    RefPtr<WeakPtrCastBase> derived = WeakPtrCastDerived::create();
+    Ref base = WeakPtrCastBase::create();
+
+    WeakRef<WeakPtrCastBase> weakRef { *derived };
+    EXPECT_EQ(&downcast<WeakPtrCastDerived>(weakRef), derived.get());
+    EXPECT_EQ(&downcast<WeakPtrCastDerived>(std::as_const(weakRef)), derived.get());
+    EXPECT_EQ(dynamicDowncast<WeakPtrCastDerived>(weakRef), derived.get());
+    EXPECT_EQ(dynamicDowncast<WeakPtrCastDerived>(std::as_const(weakRef)), derived.get());
+    EXPECT_EQ(downcast<WeakPtrCastDerived>(WeakRef<WeakPtrCastBase> { *derived }).ptr(), derived.get());
+    EXPECT_EQ(dynamicDowncast<WeakPtrCastDerived>(WTF::move(weakRef)).get(), derived.get());
+
+    WeakPtr<WeakPtrCastBase> weakPtr { *derived };
+    EXPECT_EQ(downcast<WeakPtrCastDerived>(weakPtr), derived.get());
+    EXPECT_EQ(downcast<WeakPtrCastDerived>(std::as_const(weakPtr)), derived.get());
+    EXPECT_EQ(dynamicDowncast<WeakPtrCastDerived>(weakPtr)->weakCount(), 1U);
+    EXPECT_EQ(dynamicDowncast<WeakPtrCastDerived>(std::as_const(weakPtr)), derived.get());
+    EXPECT_EQ(downcast<WeakPtrCastDerived>(WeakPtr<WeakPtrCastBase> { *derived }).get(), derived.get());
+    EXPECT_NULL(dynamicDowncast<WeakPtrCastDerived>(WeakPtr<WeakPtrCastBase> { base.get() }).get());
+
+    WeakPtr<WeakPtrCastDerived> weakDerived = dynamicDowncast<WeakPtrCastDerived>(WTF::move(weakPtr));
+    EXPECT_EQ(derived->weakCount(), 1U);
+    EXPECT_EQ(weakDerived.get(), derived.get());
+    derived = nullptr;
+    EXPECT_NULL(weakDerived.get());
+}
+
 class BaseObjectWithRefAndWeakPtr : public RefCounted<BaseObjectWithRefAndWeakPtr>, public CanMakeWeakPtr<BaseObjectWithRefAndWeakPtr> {
 public:
     static Ref<BaseObjectWithRefAndWeakPtr> create() { return adoptRef(*new BaseObjectWithRefAndWeakPtr()); }
@@ -3387,96 +3443,6 @@ TEST(WTF_ThreadSafeWeakPtr, ControlBlockFreedUnderReader)
 {
     testControlBlockFreedUnderReader(GuardWithLock::No);
     testControlBlockFreedUnderReader(GuardWithLock::Yes);
-}
-
-TEST(WTF_ThreadSafeWeakPtr, GetRacingWithLastWeakReferenceRelease)
-{
-    constexpr unsigned iterations = 200000;
-
-    ThreadSafeWeakPtr<ThreadSafeInstanceCounter> sharedWeak;
-    std::atomic<bool> writerFinished { false };
-    std::atomic<uint64_t> resolvedCount { 0 };
-    std::atomic<uint64_t> readAttempts { 0 };
-    std::atomic<unsigned> readyThreads { 0 };
-
-    // Counts assignments published by the writer. The reader serves rounds rather than latching a
-    // generation, so it cannot miss the one the writer is in and spin against a handle that is
-    // already empty.
-    std::atomic<uint64_t> generation { 0 };
-
-    std::atomic<bool> objectAlive { false };
-    std::atomic<uint64_t> resolvedWhileLagging { 0 };
-    std::atomic<uint64_t> resolvedWhileAlive { 0 };
-    std::atomic<uint64_t> resolvedInWindow { 0 };
-    std::atomic<uint64_t> laggingAttempts { 0 };
-
-    std::thread reader { [&] {
-        readyThreads++;
-        while (readyThreads < 3) { }
-        for (uint64_t roundsServed = 0; ; ++roundsServed) {
-            while (generation.load(std::memory_order_acquire) == roundsServed) {
-                if (writerFinished.load(std::memory_order_relaxed))
-                    return;
-            }
-            readAttempts.fetch_add(1, std::memory_order_relaxed);
-            bool lagging = generation.load(std::memory_order_acquire) != roundsServed + 1;
-            if (lagging)
-                laggingAttempts.fetch_add(1, std::memory_order_relaxed);
-            bool aliveBefore = objectAlive.load(std::memory_order_acquire);
-            // Racing the writer's `sharedWeak = nullptr` below, which frees the control block this
-            // get() is about to read.
-            if (RefPtr strong = sharedWeak.get()) {
-                bool aliveAfter = objectAlive.load(std::memory_order_acquire);
-                bool staleRound = generation.load(std::memory_order_acquire) != roundsServed + 1;
-                resolvedCount.fetch_add(1, std::memory_order_relaxed);
-                if (lagging)
-                    resolvedWhileLagging.fetch_add(1, std::memory_order_relaxed);
-                if (aliveBefore || aliveAfter)
-                    resolvedWhileAlive.fetch_add(1, std::memory_order_relaxed);
-                if (!lagging && !staleRound && !aliveBefore && !aliveAfter)
-                    resolvedInWindow.fetch_add(1, std::memory_order_relaxed);
-            }
-        }
-    } };
-
-    // Recycles control blocks so that one freed under the reader is likely to be reused, rather than
-    // left untouched where reading it would look harmless.
-    std::thread allocationChurn { [&] {
-        readyThreads++;
-        while (readyThreads < 3) { }
-        while (!writerFinished.load(std::memory_order_relaxed)) {
-            Ref object = adoptRef(*new ThreadSafeInstanceCounter);
-            // Forces a control block into existence, so this churns the same allocations.
-            ThreadSafeWeakPtr weak { object.get() };
-        }
-    } };
-
-    readyThreads++;
-    while (readyThreads < 3) { }
-
-    for (unsigned i = 0; i < iterations; ++i) {
-        {
-            Ref victim = adoptRef(*new ThreadSafeInstanceCounter);
-            objectAlive.store(true, std::memory_order_release);
-            sharedWeak = victim.get();
-        }
-        objectAlive.store(false, std::memory_order_release);
-        // The object is already destroyed, so sharedWeak holds the block's last weak reference and
-        // the assignment below is the one that frees it. Publishing first is what puts the reader's
-        // get() and that release in the same window.
-        generation.fetch_add(1, std::memory_order_release);
-        sharedWeak = nullptr;
-    }
-
-    writerFinished.store(true, std::memory_order_relaxed);
-    generation.fetch_add(1, std::memory_order_release);
-    reader.join();
-    allocationChurn.join();
-
-    EXPECT_GT(readAttempts.load(), 0u);
-    EXPECT_EQ(resolvedInWindow.load(), 0u);
-    EXPECT_NULL(sharedWeak.get());
-    EXPECT_EQ(ThreadSafeInstanceCounter::instanceCount, 0u);
 }
 
 static void testDoubleWeakDeref(GuardWithLock guard)

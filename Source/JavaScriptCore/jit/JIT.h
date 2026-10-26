@@ -184,13 +184,13 @@ namespace JSC {
         
         static CompilationResult compileSync(VM&, CodeBlock*, JITCompilationEffort);
 
-        static unsigned NODELETE frameRegisterCountFor(UnlinkedCodeBlock*);
+        static unsigned LEGACY_NODELETE frameRegisterCountFor(UnlinkedCodeBlock*);
         static unsigned frameRegisterCountFor(CodeBlock*);
-        static int NODELETE stackPointerOffsetFor(UnlinkedCodeBlock*);
+        static int LEGACY_NODELETE stackPointerOffsetFor(UnlinkedCodeBlock*);
         static int stackPointerOffsetFor(CodeBlock*);
 
         JS_EXPORT_PRIVATE static UncheckedKeyHashMap<ASCIICString, Seconds> compileTimeStats();
-        JS_EXPORT_PRIVATE static Seconds NODELETE totalCompileTime();
+        JS_EXPORT_PRIVATE static Seconds LEGACY_NODELETE totalCompileTime();
 
     private:
         void privateCompileMainPass();
@@ -338,7 +338,7 @@ namespace JSC {
         template<typename Op>
         void emit_compare(const JSInstruction*, RelationalCondition);
         template <typename EmitCompareFunctor>
-        void emit_compareImpl(VirtualRegister op1, VirtualRegister op2, RelationalCondition, const EmitCompareFunctor&);
+        void emit_compareImpl(VirtualRegister op1, VirtualRegister op2, RelationalCondition, NOESCAPE const EmitCompareFunctor&);
         template<typename Op>
         void emit_compareAndJump(const JSInstruction*, RelationalCondition);
         template<typename Op>
@@ -350,7 +350,7 @@ namespace JSC {
         template<typename Op, typename SlowOperation>
         void emit_compareSlow(const JSInstruction*, DoubleCondition, SlowOperation, Vector<SlowCaseEntry>::iterator&);
         template<typename SlowOperation, typename HanldeReturnValueGPRFunctor, typename EmitDoubleCompareFunctor>
-        void emit_compareSlowImpl(VirtualRegister op1, VirtualRegister op2, size_t instructionSize, SlowOperation, Vector<SlowCaseEntry>::iterator&, const HanldeReturnValueGPRFunctor&, const EmitDoubleCompareFunctor&);
+        void emit_compareSlowImpl(VirtualRegister op1, VirtualRegister op2, size_t instructionSize, SlowOperation, Vector<SlowCaseEntry>::iterator&, NOESCAPE const HanldeReturnValueGPRFunctor&, NOESCAPE const EmitDoubleCompareFunctor&);
         template<typename Op, typename SlowOperation>
         void emit_compareAndJumpSlow(const JSInstruction*, DoubleCondition, SlowOperation, bool invert, Vector<SlowCaseEntry>::iterator&);
 
@@ -375,7 +375,7 @@ namespace JSC {
         void emit_op_get_argument(const JSInstruction*);
         void emit_op_argument_count(const JSInstruction*);
         void emit_op_check_tdz(const JSInstruction*);
-        void NODELETE emit_op_identity_with_profile(const JSInstruction*);
+        void LEGACY_NODELETE emit_op_identity_with_profile(const JSInstruction*);
         void emit_op_debug(const JSInstruction*);
         void emit_op_del_by_id(const JSInstruction*);
         void emitSlow_op_del_by_id(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
@@ -411,11 +411,6 @@ namespace JSC {
         void emit_op_is_undefined_or_null(const JSInstruction*);
         void emit_op_is_boolean(const JSInstruction*);
         void emit_op_is_number(const JSInstruction*);
-#if USE(BIGINT32)
-        void emit_op_is_big_int(const JSInstruction*);
-#else
-        [[noreturn]] void NODELETE emit_op_is_big_int(const JSInstruction*);
-#endif
         void emit_op_is_object(const JSInstruction*);
         void emit_op_is_cell_with_type(const JSInstruction*);
         void emit_op_has_structure_with_flags(const JSInstruction*);
@@ -448,7 +443,7 @@ namespace JSC {
         void emit_op_jtrue(const JSInstruction*);
         void emit_op_loop_hint(const JSInstruction*);
         void emit_op_check_traps(const JSInstruction*);
-        void NODELETE emit_op_nop(const JSInstruction*);
+        void LEGACY_NODELETE emit_op_nop(const JSInstruction*);
         void emit_op_super_sampler_begin(const JSInstruction*);
         void emit_op_super_sampler_end(const JSInstruction*);
         void emit_op_lshift(const JSInstruction*);
@@ -786,6 +781,8 @@ namespace JSC {
 
         template<typename Op>
         void emitRightShiftFastPath(const JSInstruction* currentInstruction, JITRightShiftGenerator::ShiftType);
+
+        bool emitModByPowerOfTwoConstant(VirtualRegister result, VirtualRegister op1, VirtualRegister op2);
 
         void updateTopCallFrame();
 

@@ -54,14 +54,14 @@ private:
     void layoutBlock(RelayoutChildren, LayoutUnit pageLogicalHeight = 0_lu) final;
     std::optional<LayoutUnit> firstLineBaseline() const final;
     void paint(PaintInfo&, const LayoutPoint&) final;
-    RenderMathMLOperator* unembellishedOperator() const final;
+    CheckedPtr<RenderMathMLOperator> unembellishedOperator() const final;
     bool isMathContentCentered() const final { return true; }
 
-    MathMLFractionElement& NODELETE element() const;
+    MathMLFractionElement& LEGACY_NODELETE element() const;
 
-    bool isValid() const;
-    RenderBox& numerator() const;
-    RenderBox& denominator() const;
+    bool LEGACY_NODELETE isValid() const;
+    RenderBox& LEGACY_NODELETE numerator() const;
+    RenderBox& LEGACY_NODELETE denominator() const;
     LayoutUnit horizontalOffset(RenderBox&, MathMLFractionElement::FractionAlignment) const;
     struct FractionParameters {
         LayoutUnit numeratorShiftUp;

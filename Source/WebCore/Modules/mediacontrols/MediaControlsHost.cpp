@@ -188,7 +188,7 @@ String MediaControlsHost::displayNameForTrack(const std::optional<TextOrAudioTra
         return emptyString();
 
     return WTF::visit([page](auto& track) {
-        return protect(page->group())->ensureCaptionPreferences().displayNameForTrack(track);
+        return protect(protect(page->group())->ensureCaptionPreferences())->displayNameForTrack(track);
     }, track.value());
 }
 
@@ -237,7 +237,7 @@ MediaControlTextTrackContainerElement* MediaControlsHost::ensureTextTrackContain
 {
     if (!m_textTrackContainer) {
         Ref mediaElement = m_mediaElement.get();
-        m_textTrackContainer = MediaControlTextTrackContainerElement::create(protect(mediaElement->document()).get(), mediaElement);
+        lazyInitialize(m_textTrackContainer, MediaControlTextTrackContainerElement::create(protect(mediaElement->document()).get(), mediaElement));
     }
 
     return m_textTrackContainer.get();
@@ -404,6 +404,12 @@ std::optional<int32_t> MediaControlsHost::spatialVideoHorizontalFieldOfView() co
     return metadata->horizontalFieldOfView;
 }
 
+void MediaControlsHost::spatialCameraDidMove(double yaw, double pitch, double fieldOfView)
+{
+    if (RefPtr videoElement = dynamicDowncast<HTMLVideoElement>(m_mediaElement.get()))
+        videoElement->spatialCameraDidMove(yaw, pitch, fieldOfView);
+}
+
 bool MediaControlsHost::isAVExperienceControllerFullscreenEnabled() const
 {
 #if HAVE(AVEXPERIENCECONTROLLER)
@@ -542,12 +548,12 @@ private:
         m_items.clear();
     }
 
-    ContextMenuContext::Type NODELETE contextMenuContextType() override
+    ContextMenuContext::Type LEGACY_NODELETE contextMenuContextType() override
     {
         return ContextMenuContext::Type::MediaControls;
     }
 
-    void NODELETE prepareContext(ContextMenuContext& context) override
+    void LEGACY_NODELETE prepareContext(ContextMenuContext& context) override
     {
         context.setMediaElementIdentifier(m_identifier);
     }
@@ -560,7 +566,7 @@ private:
 
 class MediaControlsContextMenuEventListener final : public EventListener {
 public:
-    static Ref<MediaControlsContextMenuEventListener> create(Ref<MediaControlsContextMenuProvider>&& contextMenuProvider)
+    static Ref<MediaControlsContextMenuEventListener> LEGACY_NODELETE create(Ref<MediaControlsContextMenuProvider>&& contextMenuProvider)
     {
         return adoptRef(*new MediaControlsContextMenuEventListener(WTF::move(contextMenuProvider)));
     }
@@ -682,7 +688,7 @@ auto MediaControlsHost::mediaControlsContextMenuItems(String&& optionsJSONString
 #if ENABLE(VIDEO_PRESENTATION_MODE)
     if (optionsJSONObject->getBoolean("includePictureInPicture"_s).value_or(false)) {
         ASSERT(is<HTMLVideoElement>(mediaElement));
-        ASSERT(downcast<HTMLVideoElement>(mediaElement)->webkitSupportsPresentationMode(HTMLVideoElement::VideoPresentationMode::PictureInPicture));
+        ASSERT(downcast<HTMLVideoElement>(mediaElement).webkitSupportsPresentationMode(HTMLVideoElement::VideoPresentationMode::PictureInPicture));
         items.append(createMenuItem(PictureInPictureTag::IncludePictureInPicture, WEB_UI_STRING_KEY("Picture in Picture", "Picture in Picture (Media Controls Menu)", "Picture in Picture media controls context menu title"), false, "pip.enter"_s));
     }
 #endif // ENABLE(VIDEO_PRESENTATION_MODE)
@@ -863,7 +869,7 @@ bool MediaControlsHost::showMediaControlsContextMenu(HTMLElement& target, String
             return;
 
         Ref mediaElement = protectedThis->m_mediaElement.get();
-        UserGestureIndicator gestureIndicator(IsProcessingUserGesture::Yes, &mediaElement->document());
+        UserGestureIndicator gestureIndicator(IsProcessingUserGesture::Yes, protect(mediaElement->document()).ptr());
 
         auto selectedItem = idMap.get(selectedItemID);
         WTF::switchOn(selectedItem,
@@ -873,7 +879,7 @@ bool MediaControlsHost::showMediaControlsContextMenu(HTMLElement& target, String
 #if ENABLE(VIDEO_PRESENTATION_MODE)
             [&] (PictureInPictureTag) {
                 // Media controls are not shown when in PiP so we can assume that we're not in PiP.
-                downcast<HTMLVideoElement>(mediaElement)->webkitSetPresentationMode(HTMLVideoElement::VideoPresentationMode::PictureInPicture);
+                downcast<HTMLVideoElement>(mediaElement).webkitSetPresentationMode(HTMLVideoElement::VideoPresentationMode::PictureInPicture);
             },
 #endif // ENABLE(VIDEO_PRESENTATION_MODE)
             [&] (Ref<AudioTrack>& selectedAudioTrack) {
@@ -1000,9 +1006,9 @@ void MediaControlsHost::handleCaptionVisibilityInFullscreenAndPictureInPictureQu
         return;
 
     if (protect(m_mediaElement)->isInFullscreenOrPictureInPicture())
-        textTrackContainer->setInlineStyleProperty(CSSPropertyVisibility, CSSValueVisible);
+        textTrackContainer->setInlineStyleProperty(CSSPropertyID::Visibility, CSSValueID::Visible);
     else
-        textTrackContainer->setInlineStyleProperty(CSSPropertyVisibility, CSSValueInherit);
+        textTrackContainer->setInlineStyleProperty(CSSPropertyID::Visibility, CSSValueID::Inherit);
 #endif
 }
 

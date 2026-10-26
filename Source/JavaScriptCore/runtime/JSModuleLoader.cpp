@@ -355,11 +355,11 @@ void JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier
         entry->provideFetch(globalObject, WTF::move(sourceCode)); // can throw
 }
 
-void JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier& key, ScriptFetchParameters::Type type, JSSourceCode* jsSourceCode)
+void JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier& key, ScriptFetchParameters::Type type, JSValue moduleData)
 {
     ModuleRegistryEntry* entry = ensureRegistered(globalObject, key, type);
     if (entry->status() == ModuleRegistryEntry::Status::New)
-        entry->provideFetch(globalObject, jsSourceCode); // can throw
+        entry->provideFetch(globalObject, moduleData); // can throw
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -727,10 +727,10 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         auto error = createTypeError(globalObject, "Module type not supported by environment"_s);
         promise->reject(vm, error);
 
+        scope.release();
         auto exception = Exception::create(vm, error);
         finishLoadingImportedModule(globalObject, referrer, moduleRequest, payload, exception, scriptFetcher);
-
-        RELEASE_AND_RETURN(scope, promise);
+        return promise;
     }
 
     ModuleMapKey moduleMapKey { specifier.impl(), type };
@@ -848,7 +848,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                     // mode). Replay that step inline. The queued
                     // normal-microtask copy will see modulePromise already
                     // settled and bail in moduleRegistryFetchSettled's handler.
-                    JSPromise* makePromise = makeModule(globalObject, resolved, uncheckedDowncast<JSSourceCode>(fetchPromise->result()));
+                    JSPromise* makePromise = makeModule(globalObject, resolved, fetchPromise->result());
                     RETURN_IF_EXCEPTION(scope, nullptr);
                     if (makePromise->status() == JSPromise::Status::Fulfilled) {
                         mapEntry->fetchComplete(globalObject, uncheckedDowncast<AbstractModuleRecord>(makePromise->result()));
@@ -1409,8 +1409,7 @@ void JSModuleLoader::drainSynchronousModuleQueue(JSGlobalObject* globalObject)
     size_t i = 0;
     while (i < tasks.size()) {
         auto t = tasks[i++];
-        std::array<const JSValue, maxMicrotaskArguments> args { { t.arg0, t.arg1, t.arg2, t.arg3 } };
-        runInternalMicrotask(globalObject, vm, t.task, t.payload, args);
+        runInternalMicrotask(globalObject, vm, t.task, t.payload, t.arg0, t.arg1, t.arg2, t.arg3);
         if (scope.exception()) [[unlikely]] {
             // The remaining entries are reactions that performPromiseThen…/
             // triggerPromiseReactions diverted off the global microtask queue.
@@ -1460,10 +1459,20 @@ extern "C" __attribute__((weak)) EncodedJSValue Bun__analyzeTranspiledModule(JSG
 }
 #endif
 
-JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identifier& moduleKey, JSSourceCode* jsSourceCode)
+JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identifier& moduleKey, JSValue moduleData)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSSourceCode* jsSourceCode = dynamicDowncast<JSSourceCode>(moduleData);
+    if (!jsSourceCode) {
+        JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
+        promise->markAsHandled();
+        auto* moduleRecord = SyntheticModuleRecord::tryCreateDefaultExportSyntheticModule(globalObject, this, moduleKey, moduleData, SourceProviderSourceType::CSS);
+        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
+        promise->fulfill(vm, moduleRecord);
+        RELEASE_AND_RETURN(scope, promise);
+    }
 
     const SourceCode& sourceCode = jsSourceCode->sourceCode();
 
@@ -1471,6 +1480,16 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
     promise->markAsHandled();
 
     SourceProviderSourceType sourceType = sourceCode.provider()->sourceType();
+#if USE(BUN_JSC_ADDITIONS)
+    if (Options::disallowNonStaticCode()) [[unlikely]] {
+        // Earlier than ScriptExecutable::prepareForExecutionImpl: what a module imports is loaded and evaluated before the module is. Every type but these four is parsed as JavaScript below.
+        bool isParsedAsJavaScript = sourceType != SourceProviderSourceType::WebAssembly && sourceType != SourceProviderSourceType::JSON && sourceType != SourceProviderSourceType::Text && sourceType != SourceProviderSourceType::Synthetic;
+        if (isParsedAsJavaScript && sourceCode.provider()->provenance() != SourceProvenance::Static) {
+            throwNonStaticCodeError(globalObject, scope);
+            return promise->rejectWithCaughtException(vm, scope);
+        }
+    }
+#endif
     switch (sourceType) {
 #if ENABLE(WEBASSEMBLY)
     case SourceProviderSourceType::WebAssembly:

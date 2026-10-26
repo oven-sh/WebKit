@@ -30,7 +30,6 @@
 #include "CSSKeywordValue.h"
 #include "StyleBuilderChecking.h"
 #include "StyleComputedStyle+GettersInlines.h"
-#include "StyleComputedStyle+SettersInlines.h"
 #include "StyleInvalidImage.h"
 #include "StyleValueTypes+CSSValueConversion.h"
 
@@ -121,36 +120,11 @@ auto ToCSS<Content::Data>::operator()(const Content::Data& value, const Style::C
 
 auto ToStyle<CSS::Content::Data>::operator()(const CSS::Content::Data& value, const BuilderState& state) -> Content::Data
 {
-    auto processAttrContent = [&](const CSS::Content::LegacyAttrFunction& value) -> String {
-        if (!state.style().pseudoElementType())
-            const_cast<BuilderState&>(state).style().setHasAttrContent();
-        else
-            const_cast<ComputedStyle&>(state.parentStyle()).setHasAttrContent();
-
-        auto attrName = toStyle(value->name, state);
-        QualifiedName attr(nullAtom(), attrName.value.impl(), nullAtom());
-        RefPtr element = state.element();
-        const AtomString& attributeValue = element ? element->getAttribute(attr) : nullAtom();
-
-        // Register the fact that the attribute value affects the style.
-        const_cast<BuilderState&>(state).registerSubstitutionAttribute(attr.localName());
-
-        if (attributeValue.isNull()) {
-            if (auto fallback = value->fallback)
-                return toStyle(*fallback, state);
-            return String { emptyString() };
-        }
-        return String { attributeValue.string() };
-    };
-
     auto computeVisibleContentList = [&] -> Content::VisibleContentList {
         return Content::VisibleContentList::map(value.visible, [&](const auto& item) -> Content::VisibleContentListItem {
             return WTF::switchOn(item,
                 [&](const CSS::Content::Text& text) -> Content::VisibleContentListItem {
                     return Content::Text { toStyle(text.text, state) };
-                },
-                [&](const CSS::Content::LegacyAttrFunction& attr) -> Content::VisibleContentListItem {
-                    return Content::Text { processAttrContent(attr) };
                 },
                 [&](const CSS::Content::Image& image) -> Content::VisibleContentListItem {
                     return Content::Image { toStyle(image.image, state) };
@@ -196,9 +170,6 @@ auto ToStyle<CSS::Content::Data>::operator()(const CSS::Content::Data& value, co
             WTF::switchOn(item,
                 [&](const CSS::Content::Text& text) {
                     altTextBuilder.append(toStyle(text.text, state).value);
-                },
-                [&](const CSS::Content::LegacyAttrFunction& attr) {
-                    altTextBuilder.append(processAttrContent(attr).value);
                 }
             );
         }
@@ -225,9 +196,9 @@ auto CSSValueConversion<Content>::operator()(BuilderState& state, const CSSValue
 {
     if (RefPtr keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
         switch (keywordValue->valueID()) {
-        case CSSValueNormal:
+        case CSSValueID::Normal:
             return CSS::Keyword::Normal { };
-        case CSSValueNone:
+        case CSSValueID::None:
             return CSS::Keyword::None { };
         default:
             break;

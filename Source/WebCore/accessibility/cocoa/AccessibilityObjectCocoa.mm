@@ -30,6 +30,7 @@
 #if PLATFORM(COCOA)
 
 #import "AXObjectCacheInlines.h"
+#import "ChromeClient.h"
 #import "FontCascadeInlines.h"
 #import "StyleComputedStyle.h"
 #import "StyleShadow.h"
@@ -44,10 +45,16 @@
 #import <AppKit/NSAccessibilityConstants.h>
 #else
 #import "StyleSpeakAs.h"
+#import "WAKResponder.h"
 #import "WebAccessibilityObjectWrapperIOS.h"
 #endif
 
 namespace WebCore {
+
+void AccessibilityObject::makeFirstResponderForPlatformWidget(ChromeClient& client, Widget& widget)
+{
+    client.makeFirstResponder((NSResponder *)protect(widget.platformWidget()).get());
+}
 
 Style::SpeakAs AccessibilityObject::speakAs() const
 {
@@ -99,7 +106,7 @@ static constexpr UniChar attachmentCharacterValue = 0xfffc;
 
 static void addObjectWrapperToArray(const AccessibilityObject& object, NSMutableArray *array)
 {
-    auto* wrapper = object.wrapper();
+    RetainPtr wrapper = object.wrapper();
     if (!wrapper)
         return;
 
@@ -178,17 +185,15 @@ RetainPtr<NSAttributedString> AccessibilityObject::attributedStringForRange(cons
     auto result = adoptNS([[NSMutableAttributedString alloc] init]);
 
     auto contents = contentForRange(range, spellCheck);
-    for (id content in contents.get()) {
-        auto item = retainPtr(content);
-        if ([item isKindOfClass:[WebAccessibilityObjectWrapper class]]) {
-            attributedStringAppendWrapper(result.get(), item.get());
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id content in contents.get()) {
+        if (RetainPtr wrapper = dynamic_objc_cast<WebAccessibilityObjectWrapper>(content)) {
+            attributedStringAppendWrapper(result.get(), wrapper);
             continue;
         }
 
-        if (![item isKindOfClass:[NSAttributedString class]])
-            continue;
-
-        [result appendAttributedString:item.get()];
+        if (RetainPtr attributedString = dynamic_objc_cast<NSAttributedString>(content))
+            [result appendAttributedString:attributedString];
     }
 
     return result;
@@ -218,8 +223,10 @@ RetainPtr<CTFontRef> AccessibilityObject::font() const
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 FontOrientation AccessibilityObject::fontOrientation() const
 {
-    if (CheckedPtr style = this->style())
-        return const_cast<Style::ComputedStyle*>(style.get())->fontAndGlyphOrientation().first;
+    if (CheckedPtr style = this->style()) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Style::ComputedStyle*>(style.get())->fontAndGlyphOrientation().first;
+    }
     return FontOrientation::Horizontal;
 }
 #endif

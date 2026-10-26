@@ -21,12 +21,11 @@ endif ()
 if (USE_EXTERNAL_MIMALLOC)
     # The shipped static archives intentionally leave mi_* unresolved so the
     # consumer links its own mimalloc. The jsc shell still needs a working
-    # allocator, so link the vendored mimalloc object library here only.
+    # allocator, so link the vendored mimalloc object library here only, plus
+    # the entry points the archives expect from the consumer's mimalloc that
+    # the vendored one does not have (ExternalMimallocShims.cpp).
+    list(APPEND jsc_SOURCES ExternalMimallocShims.cpp)
     list(APPEND jsc_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
-endif ()
-
-if (ENABLE_FUZZILLI)
-  list(APPEND jsc_SOURCES ../fuzzilli/Fuzzilli.cpp)
 endif ()
 
 # mya analyzes process corpses through Mach task APIs, so it only builds on
@@ -75,6 +74,7 @@ if (USE_BUN_JSC_ADDITIONS)
         # Same as jsc above: the shipped static archives leave mi_* unresolved
         # under USE_EXTERNAL_MIMALLOC, so any executable that links the
         # framework must supply the vendored mimalloc objects itself.
+        list(APPEND testFFI_SOURCES ExternalMimallocShims.cpp)
         list(APPEND testFFI_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
     endif ()
 
@@ -151,6 +151,7 @@ if (DEVELOPER_MODE)
             ../corpse/tests/CorpseAddressTest.cpp
             ../corpse/tests/CorpseByteParserTest.cpp
             ../corpse/tests/CorpseExportsTrieTest.cpp
+            ../corpse/tests/CorpseMemoryTest.cpp
             ../corpse/tests/CorpseProcessTest.cpp
             ../corpse/tests/CorpseRegionTest.cpp
             ../corpse/tests/CorpseSnapshotTest.cpp

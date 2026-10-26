@@ -54,7 +54,7 @@ public:
         : m_playerLayer(playerLayer)
     {
     }
-private:
+
     // CheckedPtr interface
     uint32_t checkedPtrCount() const final { return CanMakeCheckedPtr::checkedPtrCount(); }
     uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
@@ -62,6 +62,7 @@ private:
     void decrementCheckedPtrCount() const final { CanMakeCheckedPtr::decrementCheckedPtrCount(); }
     void setDidBeginCheckedPtrDeletion() final { CanMakeCheckedPtr::setDidBeginCheckedPtrDeletion(); }
 
+private:
     void videoDimensionsChanged(const FloatSize& videoDimensions)
     {
         [m_playerLayer.get() setVideoDimensions:videoDimensions];
@@ -80,6 +81,7 @@ private:
     CGSize _videoDimensions;
     RetainPtr<NSString> _videoGravity;
     RetainPtr<NSString> _previousVideoGravity;
+    RetainPtr<NSDictionary> _pixelBufferAttributes;
     std::unique_ptr<WebCore::WebAVPlayerLayerPresentationModelClient> _presentationModelClient;
     NSEdgeInsets _legibleContentInsets;
     BOOL _showingCaptionPreview;
@@ -106,9 +108,8 @@ private:
 - (void)dealloc
 {
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(resolveBounds) object:nil];
-    [_pixelBufferAttributes release];
     if (auto model = _presentationModel.get())
-        model->removeClient(*_presentationModelClient);
+        model->removeClient(protect(*_presentationModelClient));
     [super dealloc];
 }
 
@@ -124,7 +125,7 @@ private:
         return;
 
     if (model)
-        model->removeClient(*_presentationModelClient);
+        model->removeClient(protect(*_presentationModelClient));
 
     _presentationModel = presentationModel;
 #if !RELEASE_LOG_DISABLED
@@ -132,7 +133,7 @@ private:
 #endif
 
     if (presentationModel)
-        presentationModel->addClient(*_presentationModelClient);
+        presentationModel->addClient(protect(*_presentationModelClient));
 
     self.videoDimensions = presentationModel ? presentationModel->videoDimensions() : CGSizeZero;
 }
@@ -176,6 +177,16 @@ private:
     return _captionsLayer.get();
 }
 
+- (NSDictionary *)pixelBufferAttributes
+{
+    return _pixelBufferAttributes.get();
+}
+
+- (void)setPixelBufferAttributes:(NSDictionary *)pixelBufferAttributes
+{
+    _pixelBufferAttributes = adoptNS([pixelBufferAttributes copy]);
+}
+
 - (CGSize)videoDimensions
 {
     return _videoDimensions;
@@ -216,7 +227,7 @@ private:
 // constant value to use for a custom `areEssentiallyEqual` where we will
 // bail out of -resolveBounds if the _targetVideoFrame is essentially equal
 // to the current video frame.
-static bool NODELETE areFramesEssentiallyEqualWithTolerance(const WebCore::FloatRect& a, const WebCore::FloatRect& b)
+static bool LEGACY_NODELETE areFramesEssentiallyEqualWithTolerance(const WebCore::FloatRect& a, const WebCore::FloatRect& b)
 {
     static constexpr double frameValueDeltaTolerance { 0.01 };
     WebCore::FloatRect delta { WebCore::FloatPoint { a.location() - b.location() }, a.size() - b.size() };

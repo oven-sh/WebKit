@@ -28,6 +28,7 @@
 
 #include "BitmapImage.h"
 #include "ColorSpaceCG.h"
+#include "DefaultSizing.h"
 #include "FloatRect.h"
 #include "GraphicsContext.h"
 #include "ImageBuffer.h"
@@ -37,7 +38,6 @@
 #include "NativeImage.h"
 #include "PixelBuffer.h"
 #include "SVGImage.h"
-#include "SVGImageForContainer.h"
 #include "UTIRegistry.h"
 #include "UTIUtilities.h"
 #include <CoreFoundation/CoreFoundation.h>
@@ -263,12 +263,12 @@ static void tryCreateNativeImageFromData(std::span<const uint8_t> data, std::opt
         completionHandler(WTF::move(nativeImage));
         return;
     }
-    SVGImage::tryCreateFromData(data, [completionHandler = WTF::move(completionHandler)](auto svgImage) mutable {
+    SVGImage::tryCreateFromData(data, [preferredSize, completionHandler = WTF::move(completionHandler)](auto svgImage) mutable {
         if (!svgImage) {
             completionHandler(nullptr);
             return;
         }
-        completionHandler(svgImage->nativeImage(svgImage->size()));
+        completionHandler(svgImage->nativeImage(DefaultSizing { preferredSize }.resolve(svgImage->naturalDimensions()).size()));
     });
 }
 
@@ -295,8 +295,7 @@ static RefPtr<NativeImage> createNativeImageFromSVGImage(SVGImage& image, const 
     if (!buffer)
         return nullptr;
 
-    Ref svgImageContainer = SVGImageForContainer::create(&image, { .containerSize = size });
-    buffer->context().drawImage(svgImageContainer.get(), FloatPoint::zero());
+    buffer->context().drawImage(image, ConcreteObjectSize::fixed(size), FloatPoint::zero());
 
     return ImageBuffer::sinkIntoNativeImage(WTF::move(buffer));
 }
@@ -363,7 +362,6 @@ RefPtr<SharedBuffer> createIconDataFromBitmaps(Vector<Ref<ShareableBitmap>>&& bi
     return SharedBuffer::create(destinationData.get());
 }
 
-// FIXME: This does not implement preferredSize for SVG at the moment as there are no callers that pass preferredSize.
 void decodeImageWithSize(std::span<const uint8_t> data, std::optional<FloatSize> preferredSize, CompletionHandler<void(RefPtr<ShareableBitmap>&&)>&& completionHandler)
 {
     tryCreateNativeImageFromData(data, preferredSize, [completionHandler = WTF::move(completionHandler)](auto nativeImage) mutable {
@@ -461,7 +459,7 @@ static RetainPtr<CFDictionaryRef> imagePropertiesForDestinationUTIAndQuality(CFS
     // in the calling functions, but it doesn't seem to work.
 }
 
-static bool encode(CGImageRef image, const String& mimeType, std::optional<double> quality, const ScopedLambda<PutBytesCallback>& function)
+static bool encode(CGImageRef image, const String& mimeType, std::optional<double> quality, NOESCAPE const ScopedLambda<PutBytesCallback>& function)
 {
     if (!image)
         return false;
@@ -487,7 +485,7 @@ static bool encode(CGImageRef image, const String& mimeType, std::optional<doubl
     return CGImageDestinationFinalize(destination.get());
 }
 
-static bool encode(const PixelBuffer& source, const String& mimeType, std::optional<double> quality, const ScopedLambda<PutBytesCallback>& function)
+static bool encode(const PixelBuffer& source, const String& mimeType, std::optional<double> quality, NOESCAPE const ScopedLambda<PutBytesCallback>& function)
 {
     ASSERT(MIMETypeRegistry::isSupportedImageMIMETypeForEncoding(mimeType));
 

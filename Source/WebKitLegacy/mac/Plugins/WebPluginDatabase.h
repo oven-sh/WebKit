@@ -36,15 +36,6 @@
 @class WebFrame;
 
 @interface WebPluginDatabase : NSObject
-{
-@private
-    NSMutableDictionary *plugins;
-    NSMutableSet *registeredMIMETypes;
-    NSArray *plugInPaths;
-    
-    // Set of views with plugins attached
-    NSMutableSet *pluginInstanceViews;
-}
 
 + (WebPluginDatabase *)sharedDatabase;
 + (WebPluginDatabase *)sharedDatabaseIfExists;

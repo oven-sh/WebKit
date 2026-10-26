@@ -83,8 +83,8 @@ public:
     // Returns true if the position changed. In that case, the flexItem will have to be laid out again.
     bool setStaticPositionForPositionedLayout(const RenderBox&);
 
-    bool NODELETE isComputingFlexBaseSizes() const;
-    bool NODELETE isInCrossAxisStretchLayout() const;
+    bool LEGACY_NODELETE isComputingFlexBaseSizes() const;
+    bool LEGACY_NODELETE isInCrossAxisStretchLayout() const;
 
 protected:
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const override;
@@ -93,7 +93,7 @@ private:
     friend class LayoutIntegration::FlexLayout;
     friend class LayoutIntegration::FlexItemIntrinsicWidthComputationScope;
 
-    void clearFlexItemOverridingSizes();
+    void LEGACY_NODELETE clearFlexItemOverridingSizes();
 
     // The flex items' border box rects as they were before the flex algorithm ran, so layoutBlock can repaint the
     // ones it moved. Both walk the in-flow children directly (the flex item list is built inside FlexLayout::layout).

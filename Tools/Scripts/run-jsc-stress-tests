@@ -799,7 +799,7 @@ def shouldCollectContinuously?
     $buildType == "release" or $forceCollectContinuously
 end
 
-COLLECT_CONTINUOUSLY_OPTIONS = shouldCollectContinuously? ? ["--collectContinuously=true", "--useGenerationalGC=false", "--verifyGC=true"] : []
+COLLECT_CONTINUOUSLY_OPTIONS = shouldCollectContinuously? ? ["--collectContinuously=true", "--useGenerationalGC=false", "--verifyGC=true", "--initialHeapVersion=#{2**32 - 1 - rand(32)}"] : []
 
 $serialPlans = Set.new
 $exclusivePlans = Set.new
@@ -838,15 +838,39 @@ def pathToVM
     pathToBundleResourceFromBenchmarkDirectory($jscPath)
 end
 
+def vmInvocationPrefix
+    prefix = []
+    prefix.unshift($artifact_exec_wrapper) if not $artifact_exec_wrapper.nil?
+    prefix = ["/usr/bin/arch", "-" + $forceArchitecture] + prefix if $forceArchitecture
+    return prefix
+end
+
 def vmCommand
-    cmd = [pathToVM.to_s]
-    if not $artifact_exec_wrapper.nil?
-        cmd.unshift($artifact_exec_wrapper)
+    vmInvocationPrefix + [pathToVM.to_s]
+end
+
+def determineAssertionsEnabled
+    # A tarball's jsc runs on another machine and may not be runnable here.
+    return $buildType == "debug" if $tarball
+
+    begin
+        command = vmInvocationPrefix + [$jscPath.to_s, "--useDollarVM=true", "-e", 'print($vm.assertEnabled())']
+        output = IO.popen(command, :err => File::NULL) { |io| io.read }
+        raise "VM exited with #{$?.exitstatus}" unless $?.success?
+        answer = output.split("\n").map(&:strip).reject(&:empty?).last
+        raise "unexpected answer #{answer.inspect}" unless ["true", "false"].include?(answer)
+        return answer == "true"
+    rescue => e
+        $stderr.puts "Warning: determineAssertionsEnabled failed (#{e.message}), assuming assertions are #{$buildType == "debug" ? "enabled" : "disabled"}"
+        return $buildType == "debug"
     end
-    if ($forceArchitecture)
-        cmd = ["/usr/bin/arch", "-" + $forceArchitecture] + cmd
-    end
-    return cmd
+end
+
+$assertionsEnabled = determineAssertionsEnabled
+
+# Assertions artificially increase the jit code size.
+def smallPoolJITMemoryReservationSize
+    $assertionsEnabled ? 4194304 : 1048576
 end
 
 def pathToHelpers
@@ -1320,7 +1344,7 @@ BASE_MODES = [
         "FTLNoCJITSmallPool",
         "ftl-no-cjit-small-pool",
         [
-            $buildType == "debug" ? "--jitMemoryReservationSize=4194304" : "--jitMemoryReservationSize=1048576",
+            "--jitMemoryReservationSize=#{smallPoolJITMemoryReservationSize}",
             "--maxDFGNodesInBasicBlockForPreciseAnalysis=100",
             "--useArrayAllocationProfiling=false",
         ] +
@@ -1405,6 +1429,9 @@ BASE_MODES = [
             "--useSourceProviderCache=false",
             "--useRandomizingExecutableIslandAllocation=true",
             "--useLLIntICs=false",
+            # Wrap on the second collection, so the first has populated the marks and newly
+            # allocated bits.
+            "--initialHeapVersion=#{2**32 - 2}",
         ] +
         NO_CJIT_OPTIONS
     ],
@@ -1803,7 +1830,7 @@ def defaultRunModules(noLLInt: true)
     run("ftl-no-cjit-no-inline-validate-modules", "-m", "--validateGraph=true", "--maximumInliningDepth=1", *(FTL_OPTIONS + NO_CJIT_OPTIONS))
     run("ftl-eager-modules", "-m", *(FTL_OPTIONS + EAGER_OPTIONS))
     run("ftl-eager-no-cjit-modules", "-m", "--validateGraph=true", *(FTL_OPTIONS + NO_CJIT_OPTIONS + EAGER_OPTIONS))
-    run("ftl-no-cjit-small-pool-modules", "-m", "--jitMemoryReservationSize=1048576", *(FTL_OPTIONS + NO_CJIT_OPTIONS))
+    run("ftl-no-cjit-small-pool-modules", "-m", "--jitMemoryReservationSize=#{smallPoolJITMemoryReservationSize}", *(FTL_OPTIONS + NO_CJIT_OPTIONS))
 end
 
 def noNoLLIntRunModules

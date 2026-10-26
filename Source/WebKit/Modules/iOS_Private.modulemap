@@ -1306,8 +1306,8 @@ framework module WebKit_Private [system] {
     export *
   }
 
-  explicit module WKHitTestResult {
-    header "WKHitTestResult.h"
+  explicit module WKHitTestResultRef {
+    header "WKHitTestResultRef.h"
     export *
   }
 
@@ -1868,11 +1868,6 @@ framework module WebKit_Private [system] {
 
   explicit module WKWebProcessPlugInEditingDelegate {
     header "WKWebProcessPlugInEditingDelegate.h"
-    export *
-  }
-
-  explicit module WKWebProcessPlugInFormDelegatePrivate {
-    header "WKWebProcessPlugInFormDelegatePrivate.h"
     export *
   }
 

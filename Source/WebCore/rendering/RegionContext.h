@@ -42,11 +42,11 @@ public:
     virtual ~RegionContext() = default;
 
     void pushTransform(const AffineTransform&);
-    void NODELETE popTransform();
+    void LEGACY_NODELETE popTransform();
 
     void pushClip(const IntRect&);
     void pushClip(const Path&);
-    void NODELETE popClip();
+    void LEGACY_NODELETE popClip();
 
     virtual bool isEventRegionContext() const { return false; }
     virtual bool isAccessibilityRegionContext() const { return false; }
@@ -92,7 +92,8 @@ public:
         m_pushedClip = true;
     }
 
-    RegionContext* context() const { return const_cast<RegionContext*>(m_context.get()); }
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    RegionContext* context() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<RegionContext*>(m_context.get()); }
 
 private:
     CheckedPtr<RegionContext> m_context;

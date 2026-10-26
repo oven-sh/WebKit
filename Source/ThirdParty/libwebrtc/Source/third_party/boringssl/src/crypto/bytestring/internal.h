@@ -124,6 +124,11 @@ inline int I2DFromCBB(size_t initial_capacity, uint8_t **outp, CBBFunc func) {
   return CBB_finish_i2d(cbb.get(), outp);
 }
 
+// cbb_add_decimal_ascii adds the characters of an ASCII string representation
+// of `v` as a decimal value to `out` (without a terminating NUL byte). It
+// returns one on success and zero on error.
+int cbb_add_decimal_ascii(CBB *out, uint64_t v);
+
 BSSL_NAMESPACE_END
 
 #endif  // OPENSSL_HEADER_CRYPTO_BYTESTRING_INTERNAL_H

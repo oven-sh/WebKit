@@ -48,7 +48,7 @@ class Image;
 class SourceImage;
 class VideoFrame;
 
-struct ImagePaintingOptions;
+struct ImageDrawingOptions;
 
 namespace DisplayList {
 
@@ -74,7 +74,7 @@ public:
 
     WEBCORE_EXPORT void appendDisplayList(const DisplayList&);
 
-    WEBCORE_EXPORT FloatRect initialClip() const;
+    WEBCORE_EXPORT FloatRect LEGACY_NODELETE initialClip() const;
 
 protected:
     WEBCORE_EXPORT Recorder(IsDeferred, const GraphicsContextState&, const FloatRect& initialClip, const AffineTransform&, const ColorSpace&, DrawGlyphsMode);
@@ -85,11 +85,11 @@ protected:
         // GraphicsContextState properties to sync after restore().
         GraphicsContextState::ChangeFlags committedChanges;
 
-        void NODELETE translate(float x, float y);
+        void LEGACY_NODELETE translate(float x, float y);
         void rotate(float angleInRadians);
-        void scale(const FloatSize&);
-        void NODELETE concatCTM(const AffineTransform&);
-        void NODELETE setCTM(const AffineTransform&);
+        void LEGACY_NODELETE scale(const FloatSize&);
+        void LEGACY_NODELETE concatCTM(const AffineTransform&);
+        void LEGACY_NODELETE setCTM(const AffineTransform&);
     };
 
     const Vector<ContextState, 4>& stateStack() const LIFETIME_BOUND { return m_stateStack; }
@@ -100,15 +100,15 @@ protected:
 protected:
     WEBCORE_EXPORT void updateStateForSave(GraphicsContextState::Purpose);
     [[nodiscard]] WEBCORE_EXPORT bool updateStateForRestore(GraphicsContextState::Purpose);
-    [[nodiscard]] WEBCORE_EXPORT bool NODELETE updateStateForTranslate(float x, float y);
+    [[nodiscard]] WEBCORE_EXPORT bool LEGACY_NODELETE updateStateForTranslate(float x, float y);
     [[nodiscard]] WEBCORE_EXPORT bool updateStateForRotate(float angleInRadians);
-    [[nodiscard]] WEBCORE_EXPORT bool updateStateForScale(const FloatSize&);
-    [[nodiscard]] WEBCORE_EXPORT bool NODELETE updateStateForConcatCTM(const AffineTransform&);
-    WEBCORE_EXPORT void NODELETE updateStateForSetCTM(const AffineTransform&);
+    [[nodiscard]] WEBCORE_EXPORT bool LEGACY_NODELETE updateStateForScale(const FloatSize&);
+    [[nodiscard]] WEBCORE_EXPORT bool LEGACY_NODELETE updateStateForConcatCTM(const AffineTransform&);
+    WEBCORE_EXPORT void LEGACY_NODELETE updateStateForSetCTM(const AffineTransform&);
     WEBCORE_EXPORT void updateStateForBeginTransparencyLayer(float opacity);
     WEBCORE_EXPORT void updateStateForBeginTransparencyLayer(CompositeOperator, BlendMode);
     [[nodiscard]] WEBCORE_EXPORT bool updateStateForEndTransparencyLayer();
-    WEBCORE_EXPORT void updateStateForResetClip();
+    WEBCORE_EXPORT void LEGACY_NODELETE updateStateForResetClip();
     WEBCORE_EXPORT void updateStateForClip(const FloatRect&);
     WEBCORE_EXPORT void updateStateForClipRoundedRect(const FloatRoundedRect&);
     WEBCORE_EXPORT void updateStateForClipPath(const Path&);
@@ -116,7 +116,8 @@ protected:
     WEBCORE_EXPORT void updateStateForClipOut(const Path&);
     WEBCORE_EXPORT void updateStateForClipOutRoundedRect(const FloatRoundedRect&);
     WEBCORE_EXPORT void updateStateForClipToImageBuffer(const FloatRect&);
-    WEBCORE_EXPORT void updateStateForApplyDeviceScaleFactor(float);
+    WEBCORE_EXPORT void LEGACY_NODELETE updateStateForApplyDeviceScaleFactor(float);
+    WEBCORE_EXPORT void updateStateForBeginPage();
     WEBCORE_EXPORT bool decomposeDrawGlyphsIfNeeded(const Font&, std::span<const GlyphBufferGlyph>, std::span<const GlyphBufferAdvance>, const FloatPoint& anchorPoint, FontSmoothingMode);
     DrawGlyphsMode drawGlyphsMode() const { return m_drawGlyphsMode; }
 
@@ -139,7 +140,7 @@ private:
 
     WEBCORE_EXPORT void didUpdateState(GraphicsContextState&) final;
 
-    WEBCORE_EXPORT void drawConsumingImageBuffer(RefPtr<ImageBuffer>, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions) final;
+    WEBCORE_EXPORT void drawConsumingImageBuffer(RefPtr<ImageBuffer>, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions) final;
     WEBCORE_EXPORT AffineTransform getCTM(GraphicsContext::IncludeDeviceScale = PossiblyIncludeDeviceScale) const final;
     WEBCORE_EXPORT IntRect clipBounds() const final;
 
@@ -147,16 +148,18 @@ private:
 
     void pushStateForTransparencyLayer();
 
-    const AffineTransform& NODELETE ctm() const;
+    const AffineTransform& LEGACY_NODELETE ctm() const;
 
     Vector<ContextState, 4> m_stateStack;
     // The state the committed to the recording.
     GraphicsContextState m_committedState;
+    const GraphicsContextState m_initialState;
     ColorSpace m_colorSpace;
+    const AffineTransform m_initialCTM;
     const FloatRect m_initialClip;
     const DrawGlyphsMode m_drawGlyphsMode { DrawGlyphsMode::Normal };
 #if USE(CORE_TEXT)
-    std::unique_ptr<DrawGlyphsRecorder> m_drawGlyphsRecorder;
+    const std::unique_ptr<DrawGlyphsRecorder> m_drawGlyphsRecorder;
     float m_initialScale { 1 };
 #endif
 };

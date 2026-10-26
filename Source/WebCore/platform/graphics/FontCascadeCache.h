@@ -208,14 +208,14 @@ class FontFamilyName {
 public:
     FontFamilyName();
     FontFamilyName(const AtomString&);
-    const AtomString& NODELETE string() const;
+    const AtomString& LEGACY_NODELETE string() const;
     friend void add(Hasher&, const FontFamilyName&);
 
 private:
     AtomString m_name;
 };
 
-bool NODELETE operator==(const FontFamilyName&, const FontFamilyName&);
+bool LEGACY_NODELETE operator==(const FontFamilyName&, const FontFamilyName&);
 
 struct FontCascadeCacheKey {
     FontDescriptionKey fontDescriptionKey; // Shared with the lower level FontCache (caching Font objects)
@@ -223,14 +223,15 @@ struct FontCascadeCacheKey {
     unsigned fontSelectorId { 0 };
     unsigned fontSelectorVersion { 0 };
     bool hasComplexFontSelector { true };
-
+    Kerning kerning { Kerning::Auto };
+    TextSpacingTrim textSpacingTrim { TextSpacingTrim::TrimType::SpaceAll };
 
     friend bool operator==(const FontCascadeCacheKey&, const FontCascadeCacheKey&) = default;
 };
 
 inline void add(Hasher& hasher, const FontCascadeCacheKey& key)
 {
-    add(hasher, key.fontDescriptionKey, key.families, key.fontSelectorId, key.fontSelectorVersion);
+    add(hasher, key.fontDescriptionKey, key.families, key.fontSelectorId, key.fontSelectorVersion, key.kerning, key.textSpacingTrim);
 }
 
 FontCascadeCacheKey makeFontCascadeCacheKey(const FontCascadeDescription&, FontSelector*);

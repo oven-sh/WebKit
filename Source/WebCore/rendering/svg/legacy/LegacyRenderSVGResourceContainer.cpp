@@ -242,7 +242,7 @@ float LegacyRenderSVGResourceContainer::computeTextPaintingScale(const RenderEle
     // This method should only be called for RenderObjects that deal with text rendering. Cmp. RenderObject.h's is*() methods.
     ASSERT(renderer.isRenderSVGText() || renderer.isRenderSVGTextPath() || renderer.isRenderSVGInline());
 
-    // In text drawing, the scaling part of the graphics context CTM is removed, compare SVGInlineTextBox::paintTextWithShadows.
+    // In text drawing, the scaling part of the graphics context CTM is removed, compare SVGTextBoxPainter::paintTextWithShadows.
     // So, we use that scaling factor here, too, and then push it down to pattern or gradient space
     // in order to keep the pattern or gradient correctly scaled.
     return SVGRenderingContext::calculateScreenFontSizeScalingFactor(renderer);

@@ -381,6 +381,8 @@ static void webKitFindControllerPerform(WebKitFindController* findController, We
     }
 
     OptionSet<WebKit::FindOptions> findOptions = priv->findOptions;
+    findOptions.add(WebKit::FindOptions::DetermineMatchIndex);
+
     if (operation == FindOperation)
         // Unconditionally highlight text matches when the search
         // starts. WK1 API was forcing clients to enable/disable
@@ -396,7 +398,7 @@ static void webKitFindControllerPerform(WebKitFindController* findController, We
 
 static inline void webKitFindControllerSetSearchData(WebKitFindController* findController, const gchar* searchText, guint32 findOptions, guint maxMatchCount)
 {
-    findController->priv->searchText = UTF8CString { byteCast<char8_t>(searchText) };
+    findController->priv->searchText = UTF8CString::unsafeFromUTF8(searchText);
     findController->priv->findOptions = toWebFindOptions(findOptions);
     findController->priv->maxMatchCount = maxMatchCount;
 }

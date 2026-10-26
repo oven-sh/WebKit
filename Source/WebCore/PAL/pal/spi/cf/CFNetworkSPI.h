@@ -123,7 +123,6 @@ struct nw_path_evaluator;
 typedef struct nw_path_evaluator *nw_path_evaluator_t;
 #endif // OS_OBJECT_USE_OBJC
 
-#if HAVE(NW_PROXY_CONFIG) || HAVE(SYSTEM_SUPPORT_FOR_ADVANCED_PRIVACY_PROTECTIONS)
 typedef void (^nw_context_tracker_lookup_callback_t)(nw_endpoint_t endpoint, const char **tracker_name, const char **tracker_owner, bool *can_block);
 
 #ifdef __cplusplus
@@ -131,10 +130,11 @@ extern "C" {
 #endif
 DISPATCH_RETURNS_RETAINED dispatch_data_t nw_proxy_config_copy_agent_data(nw_proxy_config_t);
 void nw_proxy_config_get_identifier(nw_proxy_config_t, uuid_t out_identifier);
+OS_OBJECT_RETURNS_RETAINED nw_proxy_config_t nw_proxy_config_create_with_agent_data(const uint8_t* bytes, size_t length, const uuid_t identifier);
+void nw_context_set_tracker_lookup_callback(nw_context_t, nw_context_tracker_lookup_callback_t);
 #ifdef __cplusplus
 }
 #endif
-#endif // HAVE(NW_PROXY_CONFIG) || HAVE(SYSTEM_SUPPORT_FOR_ADVANCED_PRIVACY_PROTECTIONS)
 
 #ifdef __cplusplus
 extern "C" {

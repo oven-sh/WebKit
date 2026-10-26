@@ -28,11 +28,10 @@
 #import "CommandEncoder.h"
 #import "CommandsMixin.h"
 #import <WebGPU/WebGPU.h>
-#import <WebGPU/WebGPUExt.h>
+#import <WebGPU/WebGPUCpp.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/HashMap.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCounted.h>
 #import <wtf/SwiftBridging.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/Vector.h>
@@ -41,7 +40,7 @@
 struct WGPUComputePassEncoderImpl {
 };
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class BindGroup;
 class Buffer;
@@ -52,10 +51,10 @@ class QuerySet;
 struct BindableResources;
 
 // https://gpuweb.github.io/gpuweb/#gpucomputepassencoder
-class ComputePassEncoder : public WGPUComputePassEncoderImpl, public RefCounted<ComputePassEncoder>, public CommandsMixin {
+class ComputePassEncoder final : public WebGPU::ComputePassEncoder, public WGPUComputePassEncoderImpl, public CommandsMixin {
     WTF_MAKE_TZONE_ALLOCATED(ComputePassEncoder);
 public:
-    static Ref<ComputePassEncoder> create(id<MTLComputeCommandEncoder> computeCommandEncoder, const WGPUComputePassDescriptor& descriptor, CommandEncoder& parentEncoder, Device& device)
+    static Ref<ComputePassEncoder> create(id<MTLComputeCommandEncoder> computeCommandEncoder, const WebGPU::ComputePassDescriptor& descriptor, CommandEncoder& parentEncoder, Device& device)
     {
         return adoptRef(*new ComputePassEncoder(computeCommandEncoder, descriptor, parentEncoder, device));
     }
@@ -72,31 +71,39 @@ public:
 
     ~ComputePassEncoder();
 
-    void dispatch(uint32_t x, uint32_t y, uint32_t z);
+    void dispatch(uint32_t x, uint32_t y, uint32_t z) final;
     void dispatchIndirect(const Buffer& indirectBuffer, uint64_t indirectOffset);
     void endPass();
-    void insertDebugMarker(String&& markerLabel);
-    void popDebugGroup();
-    void pushDebugGroup(String&& groupLabel);
+    void insertDebugMarker(String&& markerLabel) final;
+    void popDebugGroup() final;
+    void pushDebugGroup(String&& groupLabel) final;
 
-    void setBindGroup(uint32_t groupIndex, const BindGroup*, std::optional<Vector<uint32_t>>&& dynamicOffsets);
+    // std::nullopt dynamic offsets are not validated against the bind group layout.
+    void setBindGroup(uint32_t groupIndex, const BindGroup*, std::optional<std::span<const uint32_t>> dynamicOffsets);
     void setPipeline(const ComputePipeline&);
-    void setLabel(String&&);
+
+    // The WebGPU::ComputePassEncoder methods. Every object they take was created by this
+    // implementation, so they cast it to its WebGPU::Metal type.
+    void setPipeline(const WebGPU::ComputePipeline&) final;
+    void dispatchIndirect(const WebGPU::Buffer& indirectBuffer, uint64_t indirectOffset) final;
+    void end() final { endPass(); }
+    void setBindGroup(uint32_t groupIndex, const WebGPU::BindGroup*, std::optional<std::span<const uint32_t>> dynamicOffsets) final;
+    void setLabel(String&&) final;
 
     Device& device() const { return m_device; }
 
-    bool NODELETE isValid() const;
-    id<MTLComputeCommandEncoder> NODELETE computeCommandEncoder() const;
+    bool LEGACY_NODELETE isValid() const final;
+    id<MTLComputeCommandEncoder> LEGACY_NODELETE computeCommandEncoder() const;
 
     // A pass begun while its command encoder was not open never took the encoder over, so it can
     // never be ended. https://gpuweb.github.io/gpuweb/#dom-gpucomputepassencoder-end
     void markEncoderStateWasNotOpen() { m_encoderStateWasNotOpen = true; }
 
 private:
-    ComputePassEncoder(id<MTLComputeCommandEncoder>, const WGPUComputePassDescriptor&, CommandEncoder&, Device&);
+    ComputePassEncoder(id<MTLComputeCommandEncoder>, const WebGPU::ComputePassDescriptor&, CommandEncoder&, Device&);
     ComputePassEncoder(CommandEncoder&, Device&, NSString*);
 
-    bool NODELETE validatePopDebugGroup() const;
+    bool LEGACY_NODELETE validatePopDebugGroup() const;
 
     void makeInvalid(NSString* = nil);
     void executePreDispatchCommands(const Buffer* = nullptr);
@@ -119,17 +126,19 @@ private:
     NSString *m_lastErrorString { nil };
     bool m_passEnded { false };
     bool m_encoderStateWasNotOpen { false };
-} SWIFT_SHARED_REFERENCE(refComputePassEncoder, derefComputePassEncoder) SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT;
+} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(refComputePassEncoder, derefComputePassEncoder);
 
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
-inline void refComputePassEncoder(WebGPU::ComputePassEncoder* obj)
+#if !ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
+inline void refComputePassEncoder(WebGPU::Metal::ComputePassEncoder* obj)
 {
     obj->ref();
 }
 
-inline void derefComputePassEncoder(WebGPU::ComputePassEncoder* obj)
+inline void derefComputePassEncoder(WebGPU::Metal::ComputePassEncoder* obj)
 {
     obj->deref();
 }
+#endif

@@ -22,10 +22,11 @@ use core::{
     }, //
 };
 
+use bssl_crypto::FromFfiSlice;
 use once_cell::sync::Lazy;
 
 use crate::{
-    Methods,
+    MethodsRef,
     PrivateKeyMethods,
     abort_on_panic,
     connection::methods::private_key_op_from_ssl,
@@ -35,10 +36,6 @@ use crate::{
         PrivateKeyOperationResult,
         SignatureOperation,
         waker_data_from_ssl, //
-    },
-    ffi::{
-        sanitise_mut_byteslice,
-        sanitize_slice, //
     },
     methods::drop_box_rust_methods, //
 };
@@ -64,7 +61,7 @@ pub(crate) struct RustCredentialMethods {
     pub(crate) private_key_methods: Option<Box<dyn PrivateKeyDelegate>>,
 }
 
-impl Methods for RustCredentialMethods {
+impl MethodsRef for RustCredentialMethods {
     unsafe extern "C" fn from_ssl<'a>(ssl: *mut bssl_sys::SSL) -> Option<&'a Self> {
         unsafe {
             // Safety: `ssl` is valid per BoringSSL invariant.
@@ -77,8 +74,8 @@ impl Methods for RustCredentialMethods {
             if methods.is_null() {
                 return None;
             }
-            // Safety: `cred` is originated from `Box::into_raw`.
-            Some(&*(methods as *mut RustCredentialMethods))
+            // Safety: `methods` is originated from `Box::into_raw`.
+            Some(&*(methods as *const RustCredentialMethods))
         }
     }
 }
@@ -144,20 +141,16 @@ pub(crate) unsafe extern "C" fn sign<Method: PrivateKeyMethods>(
         // TODO(@xfding) maybe we should log this error?
         Err(_) => return bssl_sys::ssl_private_key_result_t_ssl_private_key_failure,
     };
-    let Some(output) = (unsafe {
-        // Safety: the slice will only be used within this callback.
-        sanitise_mut_byteslice(out, max_out)
-    }) else {
-        return bssl_sys::ssl_private_key_result_t_ssl_private_key_failure;
+    let output = unsafe {
+        // Safety: the slice comes from BoringSSL and it will only be used within this callback.
+        bssl_crypto::zeroize_mut_byteslice(out, max_out)
     };
     if output.is_empty() {
         return bssl_sys::ssl_private_key_result_t_ssl_private_key_failure;
     }
-    let Some(message) = (unsafe {
+    let message = unsafe {
         // Safety: `msg` outlives `message` because it is owned by BoringSSL.
-        sanitize_slice(msg, msg_len)
-    }) else {
-        return bssl_sys::ssl_private_key_result_t_ssl_private_key_failure;
+        u8::from_ffi_ptr(msg, msg_len)
     };
     // Unwind-safety: when panic happens, we will not inspect the `output` buffer.
     abort_on_panic(move || {
@@ -204,20 +197,16 @@ pub(crate) unsafe extern "C" fn decrypt<Method: PrivateKeyMethods>(
 
     // Unwind-safety: later when panic happens, we detach the poisoned private key method
     // without calling destructor.
-    let Some(output) = (unsafe {
-        // Safety: the slice will only be used within this callback.
-        sanitise_mut_byteslice(out, max_out)
-    }) else {
-        return bssl_sys::ssl_private_key_result_t_ssl_private_key_failure;
+    let output = unsafe {
+        // Safety: the slice comes from BoringSSL and it will only be used within this callback.
+        bssl_crypto::zeroize_mut_byteslice(out, max_out)
     };
     if output.is_empty() {
         return bssl_sys::ssl_private_key_result_t_ssl_private_key_failure;
     }
-    let Some(ciphertext) = (unsafe {
+    let ciphertext = unsafe {
         // Safety: `ciphertext` is now owned by BoringSSL and outlives the slice.
-        sanitize_slice(ciphertext, ciphertext_len)
-    }) else {
-        return bssl_sys::ssl_private_key_result_t_ssl_private_key_failure;
+        u8::from_ffi_ptr(ciphertext, ciphertext_len)
     };
     // Unwind-safety: when panic happens, we will not inspect the `output` buffer.
     abort_on_panic(move || {
@@ -252,11 +241,9 @@ pub(crate) unsafe extern "C" fn complete<Method: PrivateKeyMethods>(
 
     // Unwind-safety: later when panic happens, we detach the poisoned private key method
     // without calling destructor.
-    let Some(output) = (unsafe {
-        // Safety: the slice will only be used within this callback.
-        sanitise_mut_byteslice(out, max_out)
-    }) else {
-        return bssl_sys::ssl_private_key_result_t_ssl_private_key_failure;
+    let output = unsafe {
+        // Safety: the slice comes from BoringSSL and it will only be used within this callback.
+        bssl_crypto::zeroize_mut_byteslice(out, max_out)
     };
     if output.is_empty() {
         return bssl_sys::ssl_private_key_result_t_ssl_private_key_failure;
@@ -272,12 +259,14 @@ pub(crate) unsafe extern "C" fn complete<Method: PrivateKeyMethods>(
                     // Safety: `out_len` is a valid pointer by BoringSSL invariant.
                     *out_len = len;
                 }
+                task.take();
                 bssl_sys::ssl_private_key_result_t_ssl_private_key_success
             }
             PrivateKeyOperationResult::Pending => {
                 bssl_sys::ssl_private_key_result_t_ssl_private_key_retry
             }
             PrivateKeyOperationResult::Error => {
+                task.take();
                 bssl_sys::ssl_private_key_result_t_ssl_private_key_failure
             }
         }

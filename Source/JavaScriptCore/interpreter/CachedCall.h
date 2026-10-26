@@ -78,7 +78,6 @@ public:
             remove();
 
         if (newCodeBlock && m_protoCallFrame.codeBlock() == oldCodeBlock) {
-            newCodeBlock->m_shouldAlwaysBeInlined = false;
             m_addressForCall = newCodeBlock->jitCode()->addressForCall();
             m_protoCallFrame.setCodeBlock(newCodeBlock);
             newCodeBlock->linkIncomingCall(nullptr, this);

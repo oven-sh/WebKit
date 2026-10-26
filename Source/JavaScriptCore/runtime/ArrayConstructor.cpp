@@ -29,6 +29,7 @@
 #include "BuiltinNames.h"
 #include "ClonedArguments.h"
 #include "ExecutableBaseInlines.h"
+#include "IndexingTypeInlines.h"
 #include "JSCInlines.h"
 #include "JSMapIterator.h"
 #include "JSSet.h"
@@ -87,6 +88,15 @@ JSArray* constructArrayWithSizeQuirk(JSGlobalObject* globalObject, ArrayAllocati
     
     uint32_t n = length.toUInt32(globalObject);
     if (n != length.toNumber(globalObject)) {
+        if (newTarget && newTarget != globalObject->arrayConstructor()) {
+            JSObject* target = asObject(newTarget);
+            JSValue prototype = target->get(globalObject, vm.propertyNames->prototype);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (!prototype.isObject()) {
+                getFunctionRealm(globalObject, target);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+            }
+        }
         throwException(globalObject, scope, createRangeError(globalObject, ArrayInvalidLengthError));
         return nullptr;
     }
@@ -251,17 +261,17 @@ JSC_DEFINE_HOST_FUNCTION(arrayConstructorOf, (JSGlobalObject* globalObject, Call
     return JSValue::encode(result);
 }
 
-static ALWAYS_INLINE unsigned NODELETE getArgumentsLength(ScopedArguments* arguments)
+static ALWAYS_INLINE unsigned LEGACY_NODELETE getArgumentsLength(ScopedArguments* arguments)
 {
     return arguments->internalLength();
 }
 
-static ALWAYS_INLINE unsigned NODELETE getArgumentsLength(DirectArguments* arguments)
+static ALWAYS_INLINE unsigned LEGACY_NODELETE getArgumentsLength(DirectArguments* arguments)
 {
     return arguments->internalLength();
 }
 
-static ALWAYS_INLINE unsigned NODELETE getArgumentsLength(ClonedArguments* arguments)
+static ALWAYS_INLINE unsigned LEGACY_NODELETE getArgumentsLength(ClonedArguments* arguments)
 {
     ASSERT(arguments->isIteratorProtocolFastAndNonObservable());
     JSValue lengthValue = arguments->getDirect(clonedArgumentsLengthPropertyOffset);
@@ -270,7 +280,7 @@ static ALWAYS_INLINE unsigned NODELETE getArgumentsLength(ClonedArguments* argum
 }
 
 template<typename Arguments>
-static ALWAYS_INLINE void forEachArgumentsElement(JSGlobalObject* globalObject, Arguments* arguments, unsigned length, const Invocable<void(JSValue, unsigned)> auto& func)
+static ALWAYS_INLINE void forEachArgumentsElement(JSGlobalObject* globalObject, Arguments* arguments, unsigned length, NOESCAPE const Invocable<void(JSValue, unsigned)> auto& func)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     unsigned i;

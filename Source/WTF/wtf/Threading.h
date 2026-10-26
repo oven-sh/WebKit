@@ -86,7 +86,7 @@ class PrintStream;
 
 WTF_EXPORT_PRIVATE void initialize();
 
-WTF_EXPORT_PRIVATE bool processIsShuttingDown();
+WTF_EXPORT_PRIVATE bool LEGACY_NODELETE processIsShuttingDown();
 
 class ThreadSuspendLocker {
     WTF_MAKE_NONCOPYABLE(ThreadSuspendLocker);
@@ -135,7 +135,7 @@ public:
     static constexpr SchedulingPolicy defaultSchedulingPolicy = defaultThreadSchedulingPolicy;
 
 #if HAVE(QOS_CLASSES)
-    static dispatch_qos_class_t dispatchQOSClass(QOS);
+    static dispatch_qos_class_t LEGACY_NODELETE dispatchQOSClass(QOS);
 #endif
 
     // Returns nullptr if thread creation failed.
@@ -146,7 +146,7 @@ public:
     static Thread& currentSingleton();
 
     // Set of all WTF::Thread created threads.
-    WTF_EXPORT_PRIVATE static ThreadSafeWeakHashSet<Thread>& NODELETE allThreads();
+    WTF_EXPORT_PRIVATE static ThreadSafeWeakHashSet<Thread>& LEGACY_NODELETE allThreads();
 
     WTF_EXPORT_PRIVATE unsigned numberOfThreadGroups();
 
@@ -234,7 +234,7 @@ public:
     // Called in the thread during initialization.
     // Helpful for platforms where the thread name must be set from within the thread.
     static void initializeCurrentThreadInternal(const char* threadName);
-    static void NODELETE initializeCurrentThreadEvenIfNonWTFCreated();
+    static void LEGACY_NODELETE initializeCurrentThreadEvenIfNonWTFCreated();
 
     WTF_EXPORT_PRIVATE static void yield();
 
@@ -242,7 +242,7 @@ public:
     WTF_EXPORT_PRIVATE static void registerGCThread(GCThreadType);
     WTF_EXPORT_PRIVATE static bool mayBeGCThread();
 
-    WTF_EXPORT_PRIVATE static void NODELETE registerJSThread(Thread&);
+    WTF_EXPORT_PRIVATE static void LEGACY_NODELETE registerJSThread(Thread&);
 
     WTF_EXPORT_PRIVATE void dump(PrintStream& out) const;
 
@@ -312,9 +312,9 @@ public:
 #endif
 
 private:
-    void updateSchedulingAttributes(SchedulingState) const;
+    void LEGACY_NODELETE updateSchedulingAttributes(SchedulingState) const;
     // updateSchedulingAttributes for the first time + initialization bookkeeping
-    void initializeSchedulingAttributes();
+    void LEGACY_NODELETE initializeSchedulingAttributes();
 
     static void setCurrentThreadQOS(QOS);
 
@@ -344,10 +344,10 @@ protected:
 #endif
 
 #if HAVE(QOS_CLASSES)
-    static qos_class_t adjustedQOSClass(qos_class_t);
+    static qos_class_t LEGACY_NODELETE adjustedQOSClass(qos_class_t);
 #endif
 
-    static const char* NODELETE normalizeThreadName(const char* threadName);
+    static const char* LEGACY_NODELETE normalizeThreadName(const char* threadName);
 
     enum JoinableState : uint8_t {
         // The default thread state. The thread can be joined on.

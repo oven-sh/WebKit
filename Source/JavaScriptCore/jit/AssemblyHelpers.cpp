@@ -38,6 +38,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "JSCJSValueInlines.h"
 #include "JSDataView.h"
 #include "LinkBuffer.h"
+#include "MathCommon.h"
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "MegamorphicCache.h"
 #include "SuperSampler.h"
@@ -87,6 +88,34 @@ void AssemblyHelpers::purifyNaN(FPRReg inputFPR, FPRReg resultFPR)
     ASSERT(inputFPR != fpTempRegister);
     move64ToDouble(TrustedImm64(std::bit_cast<uint64_t>(PNaN)), fpTempRegister);
     moveDoubleConditionallyDouble(DoubleEqualAndOrdered, inputFPR, inputFPR, inputFPR, fpTempRegister, resultFPR);
+}
+
+void AssemblyHelpers::emitDoubleModByPowerOfTwoIgnoringSignOfZero(FPRReg dividendFPR, double divisor, FPRReg resultFPR, FPRReg scratchFPR)
+{
+    ASSERT(supportsFloatingPointRounding());
+    ASSERT(powerOfTwoDivisorForDoubleMod(divisor) == divisor);
+    ASSERT(noOverlap(dividendFPR, resultFPR, scratchFPR));
+
+    if (divisor == 1) {
+        roundTowardZeroDouble(dividendFPR, resultFPR);
+        subDouble(dividendFPR, resultFPR, resultFPR);
+        return;
+    }
+
+    move64ToDouble(TrustedImm64(std::bit_cast<int64_t>(1 / divisor)), scratchFPR);
+    mulDouble(dividendFPR, scratchFPR, resultFPR);
+    roundTowardZeroDouble(resultFPR, resultFPR);
+    move64ToDouble(TrustedImm64(std::bit_cast<int64_t>(divisor)), scratchFPR);
+    mulDouble(resultFPR, scratchFPR, resultFPR);
+    subDouble(dividendFPR, resultFPR, resultFPR);
+}
+
+void AssemblyHelpers::emitDoubleModByPowerOfTwo(FPRReg dividendFPR, double divisor, FPRReg resultFPR, FPRReg scratchFPR)
+{
+    emitDoubleModByPowerOfTwoIgnoringSignOfZero(dividendFPR, divisor, resultFPR, scratchFPR);
+    move64ToDouble(TrustedImm64(std::numeric_limits<int64_t>::min()), scratchFPR);
+    andDouble(dividendFPR, scratchFPR, scratchFPR);
+    orDouble(resultFPR, scratchFPR, resultFPR);
 }
 
 #if ENABLE(SAMPLING_FLAGS)
@@ -813,7 +842,7 @@ void AssemblyHelpers::reclaimSpaceOnStackForCCall()
 }
 
 template<typename LoadFromHigh, typename StoreToHigh, typename LoadFromLow, typename StoreToLow>
-void emitRandomThunkImpl(AssemblyHelpers& jit, GPRReg scratch0, GPRReg scratch1, GPRReg scratch2, FPRReg result, const LoadFromHigh& loadFromHigh, const StoreToHigh& storeToHigh, const LoadFromLow& loadFromLow, const StoreToLow& storeToLow)
+void emitRandomThunkImpl(AssemblyHelpers& jit, GPRReg scratch0, GPRReg scratch1, GPRReg scratch2, FPRReg result, NOESCAPE const LoadFromHigh& loadFromHigh, NOESCAPE const StoreToHigh& storeToHigh, NOESCAPE const LoadFromLow& loadFromLow, NOESCAPE const StoreToLow& storeToLow)
 {
     // Inlined WeakRandom::advance().
     // uint64_t x = m_low;
@@ -1326,8 +1355,6 @@ void AssemblyHelpers::emitConvertValueToBoolean(VM& vm, GPRReg value, GPRReg res
     //     result = !!unboxInt32(value)
     // } else if (value is number) {
     //     result = !!unboxDouble(value)
-    // } else if (value is BigInt32) {
-    //     result = !!unboxBigInt32(value)
     // } else {
     //     result = value == jsTrue
     // }
@@ -1377,15 +1404,6 @@ void AssemblyHelpers::emitConvertValueToBoolean(VM& vm, GPRReg value, GPRReg res
     done.append(jump());
 
     notDouble.link(this);
-#if USE(BIGINT32)
-    auto isNotBigInt32 = branchIfNotBigInt32(value.gpr(), result);
-    move(value.gpr(), result);
-    urshift64(TrustedImm32(16), result);
-    compare32(invert ? Equal : NotEqual, result, TrustedImm32(0), result);
-    done.append(jump());
-
-    isNotBigInt32.link(this);
-#endif // USE(BIGINT32)
     compare64(invert ? NotEqual : Equal, value, TrustedImm32(JSValue::ValueTrue), result);
 
     done.link(this);
@@ -1405,8 +1423,6 @@ AssemblyHelpers::JumpList AssemblyHelpers::branchIfValue(VM& vm, GPRReg value, G
     //     result = !!unboxInt32(value)
     // } else if (value is number) {
     //     result = !!unboxDouble(value)
-    // } else if (value is BigInt32) {
-    //     result = !!unboxBigInt32(value)
     // } else {
     //     result = value == jsTrue
     // }
@@ -1473,15 +1489,6 @@ AssemblyHelpers::JumpList AssemblyHelpers::branchIfValue(VM& vm, GPRReg value, G
     }
 
     notDouble.link(this);
-#if USE(BIGINT32)
-    auto isNotBigInt32 = branchIfNotBigInt32(value.gpr(), scratch);
-    move(value.gpr(), scratch);
-    urshift64(TrustedImm32(16), scratch);
-    truthy.append(branchTest32(invert ? Zero : NonZero, scratch));
-    done.append(jump());
-
-    isNotBigInt32.link(this);
-#endif // USE(BIGINT32)
     truthy.append(branch64(invert ? NotEqual : Equal, value, TrustedImm64(JSValue::encode(jsBoolean(true)))));
 
     done.link(this);

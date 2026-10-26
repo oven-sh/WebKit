@@ -55,7 +55,7 @@ typedef void (*BP_CreatePluginMIMETypesPreferencesFuncPtr)(void);
 
 @interface WebBasePluginPackage : NSObject
 {
-    NSMutableSet *pluginDatabases;
+    RetainPtr<NSMutableSet> pluginDatabases;
     
     WTF::String path;
     WebCore::PluginInfo pluginInfo;

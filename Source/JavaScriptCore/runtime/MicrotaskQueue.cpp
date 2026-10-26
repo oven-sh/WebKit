@@ -55,9 +55,19 @@ bool QueuedTask::isRunnable() const
     return uncheckedDowncast<JSGlobalObject>(dispatcher())->microtaskRunnability() == QueuedTaskResult::Executed;
 }
 
-static bool runMicrotask(JSGlobalObject* globalObject, TopExceptionScope& catchScope, VM& vm, QueuedTask& task, MicrotaskCallCache* microtaskCallCache)
+#if USE(BUN_JSC_ADDITIONS)
+#define BUN_MICROTASK_ARGUMENT3_PARAMETER , JSValue argument3
+#define BUN_MICROTASK_ARGUMENT3 , argument3
+#define BUN_MICROTASK_ARGUMENT3_OF(arguments) , arguments[3]
+#else
+#define BUN_MICROTASK_ARGUMENT3_PARAMETER
+#define BUN_MICROTASK_ARGUMENT3
+#define BUN_MICROTASK_ARGUMENT3_OF(arguments)
+#endif
+
+static bool runMicrotask(JSGlobalObject* globalObject, TopExceptionScope& catchScope, VM& vm, InternalMicrotask job, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2 BUN_MICROTASK_ARGUMENT3_PARAMETER, MicrotaskCallCache* microtaskCallCache)
 {
-    runInternalMicrotask(globalObject, vm, task.job(), task.payload(), task.arguments(), microtaskCallCache);
+    runInternalMicrotask(globalObject, vm, job, payload, argument0, argument1, argument2 BUN_MICROTASK_ARGUMENT3, microtaskCallCache);
     if (auto* exception = catchScope.exception()) [[unlikely]] {
         if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
             return false;
@@ -79,7 +89,8 @@ void runMicrotaskWithDebugger(JSGlobalObject* globalObject, VM& vm, QueuedTask& 
             return;
     }
 
-    if (!runMicrotask(globalObject, catchScope, vm, task, nullptr)) [[unlikely]]
+    auto arguments = task.arguments();
+    if (!runMicrotask(globalObject, catchScope, vm, task.job(), task.payload(), arguments[0], arguments[1], arguments[2] BUN_MICROTASK_ARGUMENT3_OF(arguments), nullptr)) [[unlikely]]
         return;
 
     if (auto* debugger = globalObject->debugger(); debugger && identifier) [[unlikely]] {
@@ -192,7 +203,8 @@ ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGloba
                 return { globalObject, false };
 
             auto task = m_queue.dequeue();
-            if (!runMicrotask(globalObject, catchScope, vm, task, &microtaskCallCache)) [[unlikely]] {
+            auto arguments = task.arguments();
+            if (!runMicrotask(globalObject, catchScope, vm, task.job(), task.payload(), arguments[0], arguments[1], arguments[2] BUN_MICROTASK_ARGUMENT3_OF(arguments), &microtaskCallCache)) [[unlikely]] {
                 clear();
                 return { nullptr, true };
             }

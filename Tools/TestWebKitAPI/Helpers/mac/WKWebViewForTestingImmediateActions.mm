@@ -86,7 +86,32 @@ static NSPoint swizzledImmediateActionLocationInView(id, SEL, NSView *)
     gSwizzledImmediateActionLocation = location;
     [immediateActionGesture.delegate immediateActionRecognizerWillPrepare:immediateActionGesture];
 
-    TestWebKitAPI::Util::run(&_hasReturnedImmediateActionController);
+    // Bounded, so a hit test that's never answered fails the test instead of hanging it.
+    TestWebKitAPI::Util::waitFor([&] {
+        return _hasReturnedImmediateActionController;
+    });
+
+    _hasReturnedImmediateActionController = false;
+    return { std::exchange(_hitTestResult, nil), std::exchange(_actionType, _WKImmediateActionNone) };
+}
+
+- (ImmediateActionHitTestResult)simulateImmediateActionBeginningAnimationImmediately:(NSPoint)location
+{
+    auto immediateActionGesture = self.immediateActionGesture;
+    if (!immediateActionGesture.delegate)
+        return { nil, _WKImmediateActionNone };
+
+    _hasReturnedImmediateActionController = false;
+
+    InstanceMethodSwizzler swizzleLocationInView {
+        NSImmediateActionGestureRecognizer.class,
+        @selector(locationInView:),
+        reinterpret_cast<IMP>(swizzledImmediateActionLocationInView),
+    };
+
+    gSwizzledImmediateActionLocation = location;
+    [immediateActionGesture.delegate immediateActionRecognizerWillPrepare:immediateActionGesture];
+    [immediateActionGesture.delegate immediateActionRecognizerWillBeginAnimation:immediateActionGesture];
 
     _hasReturnedImmediateActionController = false;
     return { std::exchange(_hitTestResult, nil), std::exchange(_actionType, _WKImmediateActionNone) };

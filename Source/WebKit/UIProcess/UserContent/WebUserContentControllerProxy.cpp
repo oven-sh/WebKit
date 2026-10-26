@@ -60,7 +60,7 @@ namespace WebKit {
 
 using namespace WebCore;
 
-static HashMap<UserContentControllerIdentifier, WeakRef<WebUserContentControllerProxy>>& NODELETE webUserContentControllerProxies()
+static HashMap<UserContentControllerIdentifier, WeakRef<WebUserContentControllerProxy>>& LEGACY_NODELETE webUserContentControllerProxies()
 {
     static NeverDestroyed<HashMap<UserContentControllerIdentifier, WeakRef<WebUserContentControllerProxy>>> proxies;
     return proxies;
@@ -167,7 +167,7 @@ UserContentControllerParameters WebUserContentControllerProxy::parametersForProc
     }
 
     auto messageHandlers = WTF::map(m_scriptMessageHandlers, [&](auto entry) {
-        return WebScriptMessageHandlerData { entry.value->identifier(), entry.value->world().worldDataForProcess(process), entry.value->name() };
+        return WebScriptMessageHandlerData { entry.value->identifier(), protect(entry.value->world())->worldDataForProcess(process), entry.value->name() };
     });
 
     return {
@@ -235,7 +235,7 @@ void WebUserContentControllerProxy::removeAllUserScripts()
     {
         HashCountedSet<RefPtr<API::ContentWorld>> worlds;
         for (RefPtr userScript : m_userScripts->elementsOfType<API::UserScript>())
-            worlds.add(const_cast<API::ContentWorld*>(&userScript->contentWorld()));
+            worlds.add(&userScript->contentWorld());
 
         auto worldIdentifiers = WTF::map(worlds, [](auto& entry) {
             return entry.key->identifier();
@@ -253,12 +253,15 @@ void WebUserContentControllerProxy::removeAllUserScripts()
 #if ENABLE(WK_WEB_EXTENSIONS)
     ASSERT(removeWebExtensions == RemoveWebExtensions::No);
 
-    Vector<Ref<API::UserScript>> scriptsToRemove;
-    for (RefPtr userScript : m_userScripts->elementsOfType<API::UserScript>()) {
-        if (WebExtensionMatchPattern::isWebExtensionURL(userScript->userScript().url()))
-            continue;
-        scriptsToRemove.append(const_cast<API::UserScript&>(*userScript));
-    }
+    const Vector scriptsToRemove = [&] {
+        Vector<Ref<API::UserScript>> scriptsToRemove;
+        for (RefPtr userScript : m_userScripts->elementsOfType<API::UserScript>()) {
+            if (WebExtensionMatchPattern::isWebExtensionURL(userScript->userScript().url()))
+                continue;
+            scriptsToRemove.append(*userScript);
+        }
+        return scriptsToRemove;
+    }();
 
     for (auto& userScript : scriptsToRemove)
         removeUserScript(userScript.get());
@@ -312,7 +315,7 @@ void WebUserContentControllerProxy::removeAllUserStyleSheets()
     {
         HashCountedSet<RefPtr<API::ContentWorld>> worlds;
         for (RefPtr userStyleSheet : m_userStyleSheets->elementsOfType<API::UserStyleSheet>())
-            worlds.add(const_cast<API::ContentWorld*>(&userStyleSheet->contentWorld()));
+            worlds.add(&userStyleSheet->contentWorld());
 
         auto worldIdentifiers = WTF::map(worlds, [](auto& entry) {
             return entry.key->identifier();
@@ -330,12 +333,15 @@ void WebUserContentControllerProxy::removeAllUserStyleSheets()
 #if ENABLE(WK_WEB_EXTENSIONS)
     ASSERT(removeWebExtensions == RemoveWebExtensions::No);
 
-    Vector<Ref<API::UserStyleSheet>> styleSheetsToRemove;
-    for (RefPtr userStyleSheet : m_userStyleSheets->elementsOfType<API::UserStyleSheet>()) {
-        if (WebExtensionMatchPattern::isWebExtensionURL(userStyleSheet->userStyleSheet().url()))
-            continue;
-        styleSheetsToRemove.append(const_cast<API::UserStyleSheet&>(*userStyleSheet));
-    }
+    const Vector styleSheetsToRemove = [&] {
+        Vector<Ref<API::UserStyleSheet>> styleSheetsToRemove;
+        for (RefPtr userStyleSheet : m_userStyleSheets->elementsOfType<API::UserStyleSheet>()) {
+            if (WebExtensionMatchPattern::isWebExtensionURL(userStyleSheet->userStyleSheet().url()))
+                continue;
+            styleSheetsToRemove.append(*userStyleSheet);
+        }
+        return styleSheetsToRemove;
+    }();
 
     for (auto& userStyleSheet : styleSheetsToRemove)
         removeUserStyleSheet(userStyleSheet.get());
@@ -448,14 +454,17 @@ void WebUserContentControllerProxy::removeAllContentRuleLists()
 #if ENABLE(WK_WEB_EXTENSIONS)
     ASSERT(removeWebExtensions == RemoveWebExtensions::No);
 
-    Vector<String> ruleListsToRemove;
-    for (auto& entry : m_contentRuleLists) {
-        const auto& contentRuleListName = entry.key;
-        const auto& extensionBaseURL = std::get<URL>(entry.value);
+    const Vector ruleListsToRemove = [&] {
+        Vector<String> ruleListsToRemove;
+        for (auto& entry : m_contentRuleLists) {
+            const auto& contentRuleListName = entry.key;
+            const auto& extensionBaseURL = std::get<URL>(entry.value);
 
-        if (!WebExtensionMatchPattern::isWebExtensionURL(extensionBaseURL))
-            ruleListsToRemove.append(contentRuleListName);
-    }
+            if (!WebExtensionMatchPattern::isWebExtensionURL(extensionBaseURL))
+                ruleListsToRemove.append(contentRuleListName);
+        }
+        return ruleListsToRemove;
+    }();
 
     for (auto& name : ruleListsToRemove)
         removeContentRuleList(name);

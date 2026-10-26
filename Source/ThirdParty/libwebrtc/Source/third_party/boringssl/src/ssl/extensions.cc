@@ -107,14 +107,7 @@ static bool tls1_check_duplicate_extensions(const CBS *cbs) {
 }
 
 static bool is_post_quantum_group(uint16_t id) {
-  switch (id) {
-    case SSL_GROUP_X25519_KYBER768_DRAFT00:
-    case SSL_GROUP_X25519_MLKEM768:
-    case SSL_GROUP_MLKEM1024:
-      return true;
-    default:
-      return false;
-  }
+  return id == SSL_GROUP_X25519_MLKEM768 || id == SSL_GROUP_MLKEM1024;
 }
 
 bool ssl_parse_client_hello_with_trailing_data(const SSLImpl *ssl, CBS *cbs,
@@ -1945,7 +1938,7 @@ bool ssl_setup_pre_shared_keys(SSL_HANDSHAKE *hs) {
     return true;
   }
 
-  if (SSL_SESSION *session = ssl->session.get();
+  if (SSLSession *session = ssl->session.get();
       session != nullptr &&
       ssl_session_get_type(session) == SSLSessionType::kPreSharedKey &&
       !hs->pre_shared_keys.Push(UpRef(session))) {
@@ -1982,25 +1975,6 @@ static bool should_offer_psk(const SSL_HANDSHAKE *hs,
   // potentially break the recovery flow.
   return hs->max_version >= TLS1_3_VERSION && !hs->pre_shared_keys.empty() &&
          type != ssl_client_hello_outer;
-}
-
-static size_t ext_pre_shared_key_clienthello_length(
-    const SSL_HANDSHAKE *hs, ssl_client_hello_type_t type) {
-  if (!should_offer_psk(hs, type)) {
-    return 0;
-  }
-
-  // extension value, extension length, identities length, binders length.
-  size_t ret = 2 + 2 + 2 + 2;
-  for (const auto &psk : hs->pre_shared_keys) {
-    // identity
-    ret += 2 + ssl_pre_shared_key_identity(psk).size();
-    // obfuscated_ticket_age
-    ret += 4;
-    // binder
-    ret += 1 + EVP_MD_size(ssl_pre_shared_key_hash(psk));
-  }
-  return ret;
 }
 
 // ext_pre_shared_key_add_clienthello writes a pre_shared_key extension to
@@ -2044,7 +2018,7 @@ static bool ext_pre_shared_key_add_clienthello(const SSL_HANDSHAKE *hs,
         return false;
       }
     } else {
-      const SSL_SESSION *session = std::get<UniquePtr<SSL_SESSION>>(psk).get();
+      const SSLSession *session = std::get<UniquePtr<SSLSession>>(psk).get();
       // At most one PSK will be a session.
       assert(session == ssl->session.get());
       OPENSSL_timeval now = ssl_ctx_get_current_time(ssl->ctx.get());
@@ -4516,9 +4490,6 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
     return ssl_add_clienthello_tlsext_inner(hs, out, out_encoded);
   }
 
-  // Sample the length of the ClientHello thus far, including the message
-  // header.
-  size_t msg_len = SSL3_HM_HEADER_LENGTH + CBB_len(out);
   assert(out_encoded == nullptr);  // Only ClientHelloInner needs two outputs.
   SSLImpl *const ssl = hs->ssl;
   CBB extensions;
@@ -4569,61 +4540,24 @@ bool ssl_add_clienthello_tlsext(SSL_HANDSHAKE *hs, CBB *out, CBB *out_encoded,
     last_was_empty = false;
   }
 
-  // In cleartext ClientHellos, we add the padding extension to work around
-  // bugs. We also apply this padding to ClientHelloOuter, to keep the wire
-  // images aligned.
-  size_t psk_len = ext_pre_shared_key_clienthello_length(hs, type);
-  if (!SSL_is_dtls(ssl) && !SSL_is_quic(ssl) &&
-      !ssl->s3->used_hello_retry_request) {
-    msg_len += 2 /* length prefix */ + CBB_len(&extensions) + psk_len;
-    // The length of the padding extension, excluding the four-byte extension
-    // header.
-    size_t padding_len = 0;
-
-    // The final extension must be non-empty. WebSphere Application
-    // Server 7.0 is intolerant to the last extension being zero-length. See
-    // https://crbug.com/363583.
-    if (last_was_empty && psk_len == 0) {
-      padding_len = 1;
-      // The addition of the padding extension may push us into the F5 bug.
-      msg_len += 4 + padding_len;
-    }
-
-    // Add padding to workaround bugs in F5 terminators. See RFC 7685.
-    //
-    // NB: because this code works out the length of all existing extensions
-    // it MUST always appear last (save for any PSK extension).
-    if (msg_len > 0xff && msg_len < 0x200) {
-      // If our calculations already included a padding extension, remove that
-      // factor because we're about to change its length.
-      if (padding_len != 0) {
-        msg_len -= 4 + padding_len;
-      }
-      padding_len = 0x200 - msg_len;
-      // Extensions take at least four bytes to encode. WebSphere Application
-      // Server 7.0 is intolerant to the last extension being zero-length, so
-      // always include at least one byte of data if including the extension.
-      // See https://crbug.com/363583.
-      if (padding_len >= 4 + 1) {
-        padding_len -= 4;
-      } else {
-        padding_len = 1;
-      }
-    }
-
-    if (padding_len != 0 &&
-        !add_padding_extension(&extensions, TLSEXT_TYPE_padding, padding_len)) {
+  // The final extension must be non-empty. WebSphere Application Server 7.0 is
+  // intolerant to the last extension being zero-length. See
+  // https://crbug.com/363583.
+  bool offering_psk = should_offer_psk(hs, type);
+  if (!offering_psk && last_was_empty && !SSL_is_dtls(ssl) &&
+      !SSL_is_quic(ssl) && !ssl->s3->used_hello_retry_request) {
+    if (!add_padding_extension(&extensions, TLSEXT_TYPE_padding, 1)) {
       return false;
     }
   }
 
   // The PSK extension must be last, including after the padding.
-  size_t psk_len_actual;
-  if (!ext_pre_shared_key_add_clienthello(hs, out, &extensions, &psk_len_actual,
+  size_t psk_len;
+  if (!ext_pre_shared_key_add_clienthello(hs, out, &extensions, &psk_len,
                                           type)) {
     return false;
   }
-  assert(psk_len_actual == psk_len);
+  assert(offering_psk == (psk_len != 0));
   return true;
 }
 
@@ -5030,7 +4964,7 @@ static enum ssl_ticket_aead_result_t ssl_decrypt_ticket_with_method(
 }
 
 enum ssl_ticket_aead_result_t ssl_process_ticket(
-    SSL_HANDSHAKE *hs, UniquePtr<SSL_SESSION> *out_session,
+    SSL_HANDSHAKE *hs, UniquePtr<SSLSession> *out_session,
     bool *out_renew_ticket, Span<const uint8_t> ticket,
     Span<const uint8_t> session_id, bool save_ticket) {
   SSLImpl *const ssl = hs->ssl;
@@ -5112,8 +5046,8 @@ enum ssl_ticket_aead_result_t ssl_process_ticket(
   }
 
   // Decode the session.
-  UniquePtr<SSL_SESSION> session(SSL_SESSION_from_bytes(
-      plaintext.data(), plaintext.size(), ssl->ctx.get()));
+  UniquePtr<SSLSession> session(FromOpaque(SSL_SESSION_from_bytes(
+      plaintext.data(), plaintext.size(), ssl->ctx.get())));
   if (!session) {
     ERR_clear_error();  // Don't leave an error on the queue.
     return ssl_ticket_aead_ignore_ticket;

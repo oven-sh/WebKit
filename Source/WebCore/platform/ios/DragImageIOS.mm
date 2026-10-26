@@ -75,12 +75,9 @@ DragImageRef scaleDragImage(DragImageRef image, FloatSize)
 
 static float maximumAllowedDragImageArea = 600 * 1024;
 
-DragImageRef createDragImageFromImage(Image* image, ImageOrientation orientation, GraphicsClient* client, float scale)
+DragImageRef createDragImageFromImage(NativeImage& image, GraphicsClient* client, float scale)
 {
-    if (!image)
-        return nil;
-
-    auto imageSize = image->size();
+    auto imageSize = FloatSize(image.size());
     if (imageSize.isEmpty())
         return nil;
 
@@ -97,7 +94,7 @@ DragImageRef createDragImageFromImage(Image* image, ImageOrientation orientation
 
     buffer->context().translate(0, imageSize.height());
     buffer->context().scale({ adjustedImageScale, -adjustedImageScale });
-    buffer->context().drawImage(*image, FloatPoint { }, { orientation });
+    buffer->context().drawNativeImage(image, FloatRect { { }, image.size() }, FloatRect { { }, image.size() });
 
     RefPtr nativeImage = ImageBuffer::sinkIntoNativeImage(WTF::move(buffer));
     if (!nativeImage)
@@ -199,12 +196,12 @@ DragImageRef createDragImageForRange(LocalFrame& frame, const SimpleRange& range
 
     Ref image = *textIndicator->contentImage();
     RetainPtr render = adoptNS([PAL::allocUIGraphicsImageRendererInstance() initWithSize:image->size()]);
-    UIImage *finalImage = [render imageWithActions:[&image](UIGraphicsImageRendererContext *rendererContext) {
+    RetainPtr finalImage = [render imageWithActions:[&image](UIGraphicsImageRendererContext *rendererContext) {
         GraphicsContextCG context(rendererContext.CGContext);
-        context.drawImage(image, FloatPoint());
+        context.drawBitmapImage(image, FloatPoint());
     }];
 
-    return finalImage.CGImage;
+    return [finalImage CGImage];
 }
 
 DragImageRef createDragImageForColor(const Color& color, const FloatRect& elementRect, float pageScaleFactor, Path& visiblePath)
@@ -213,7 +210,7 @@ DragImageRef createDragImageForColor(const Color& color, const FloatRect& elemen
     FloatRoundedRect swatch { imageRect, CornerRadii(ColorSwatchCornerRadius * pageScaleFactor) };
 
     auto render = adoptNS([PAL::allocUIGraphicsImageRendererInstance() initWithSize:imageRect.size()]);
-    UIImage *image = [render imageWithActions:^(UIGraphicsImageRendererContext *rendererContext) {
+    RetainPtr image = [render imageWithActions:^(UIGraphicsImageRendererContext *rendererContext) {
         GraphicsContextCG context { rendererContext.CGContext };
         context.translate(0, CGRectGetHeight(imageRect));
         context.scale({ 1, -1 });
@@ -221,7 +218,7 @@ DragImageRef createDragImageForColor(const Color& color, const FloatRect& elemen
     }];
 
     visiblePath.addRoundedRect(swatch);
-    return image.CGImage;
+    return [image CGImage];
 }
 
 #else
@@ -243,7 +240,7 @@ RetainPtr<CGImageRef> scaleDragImage(RetainPtr<CGImageRef>, FloatSize)
     return nullptr;
 }
 
-RetainPtr<CGImageRef> createDragImageFromImage(Image*, ImageOrientation, GraphicsClient*, float)
+RetainPtr<CGImageRef> createDragImageFromImage(NativeImage&, GraphicsClient*, float)
 {
     return nullptr;
 }

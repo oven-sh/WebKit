@@ -33,7 +33,7 @@ namespace WebCore {
 
 bool SVGPointList::parse(StringView value)
 {
-    clearItems();
+    Vector<FloatPoint> points;
 
     bool parsingSucceeded = readCharactersForParsing(value, [&](auto buffer) {
         skipOptionalSVGSpaces(buffer);
@@ -61,14 +61,18 @@ bool SVGPointList::parse(StringView value)
 
             skipOptionalSVGSpaces(buffer);
 
-            append(SVGPoint::create({ *xPos, *yPos }));
+            points.append(FloatPoint { *xPos, *yPos });
         }
 
         return !delimParsed;
     });
-    if (!parsingSucceeded)
+    if (!parsingSucceeded) {
         clearItems();
-    return parsingSucceeded;
+        return false;
+    }
+
+    updateItems(points);
+    return true;
 }
 
 String SVGPointList::valueAsString() const

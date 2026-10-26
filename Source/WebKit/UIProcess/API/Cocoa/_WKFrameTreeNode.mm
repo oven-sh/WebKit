@@ -62,6 +62,11 @@
     return _node->topDocumentURLForTesting().createNSURL().autorelease();
 }
 
+- (pid_t)_processIdentifierForTesting
+{
+    return _node->processIDForTesting();
+}
+
 - (API::Object&)_apiObject
 {
     return *_node;

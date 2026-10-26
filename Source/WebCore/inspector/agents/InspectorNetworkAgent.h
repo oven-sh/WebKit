@@ -110,7 +110,7 @@ public:
 #endif
 
     // InspectorInstrumentation
-    void NODELETE willRecalculateStyle();
+    void LEGACY_NODELETE willRecalculateStyle();
     void didRecalculateStyle();
     void willSendRequest(ResourceLoaderIdentifier, DocumentLoader*, ResourceRequest&, const ResourceResponse& redirectResponse, const CachedResource*, ResourceLoader*) override;
     void willSendRequestOfType(ResourceLoaderIdentifier, DocumentLoader*, ResourceRequest&, Inspector::UncachedLoadType) override;
@@ -120,8 +120,8 @@ public:
     void didFailLoading(ResourceLoaderIdentifier, DocumentLoader*, const ResourceError&) override;
     void didLoadResourceFromMemoryCache(DocumentLoader*, CachedResource&) override;
     void didReceiveThreadableLoaderResponse(ResourceLoaderIdentifier, DocumentThreadableLoader&) override;
-    void NODELETE willLoadXHRSynchronously();
-    void NODELETE didLoadXHRSynchronously();
+    void LEGACY_NODELETE willLoadXHRSynchronously();
+    void LEGACY_NODELETE didLoadXHRSynchronously();
     void didReceiveScriptResponse(ResourceLoaderIdentifier) override;
     void willDestroyCachedResource(CachedResource&) override;
     void didCreateWebSocket(WebSocketChannelIdentifier, const URL& requestURL);
@@ -135,11 +135,11 @@ public:
     void mainFrameNavigated(DocumentLoader&) override;
     void setInitialScriptContent(ResourceLoaderIdentifier, const String& sourceString) override;
     void didScheduleStyleRecalculation(Document&);
-    bool willIntercept(const ResourceRequest&);
-    bool shouldInterceptRequest(const ResourceLoader&);
-    bool shouldInterceptResponse(const ResourceResponse&);
-    void interceptResponse(const ResourceResponse&, ResourceLoaderIdentifier, CompletionHandler<void(const ResourceResponse&, RefPtr<FragmentedSharedBuffer>)>&&);
-    void interceptRequest(ResourceLoader&, Function<void(const ResourceRequest&)>&&);
+    bool willIntercept(const ResourceRequest&) override;
+    bool shouldInterceptRequest(const ResourceLoader&) override;
+    bool shouldInterceptResponse(const ResourceResponse&) override;
+    void interceptResponse(const ResourceResponse&, ResourceLoaderIdentifier, CompletionHandler<void(const ResourceResponse&, RefPtr<FragmentedSharedBuffer>)>&&) override;
+    void interceptRequest(ResourceLoader&, Function<void(const ResourceRequest&)>&&) override;
 
     void searchOtherRequests(const JSC::Yarr::RegularExpression&, Ref<JSON::ArrayOf<Inspector::Protocol::Page::SearchResult>>&, const HashSet<String>& alreadySearchedURLs);
     void searchInRequest(Inspector::Protocol::ErrorString&, const Inspector::Protocol::Network::RequestId&, const String& query, bool caseSensitive, bool isRegex, RefPtr<JSON::ArrayOf<Inspector::Protocol::GenericTypes::SearchMatch>>&);

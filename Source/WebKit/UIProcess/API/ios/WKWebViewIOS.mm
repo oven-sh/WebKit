@@ -29,12 +29,14 @@
 #if PLATFORM(IOS_FAMILY)
 
 #import "APIFindClient.h"
+#import "ContentInversion.h"
 #import "DataDetectionResult.h"
 #import "FrontBoardServicesSPI.h"
 #import "ImageOptions.h"
 #import "LayerProperties.h"
 #import "NativeWebWheelEvent.h"
 #import "NavigationState.h"
+#import "PDFDisplayMode.h"
 #import "PointerTouchCompatibilitySimulator.h"
 #import "RemoteLayerTreeCommitBundle.h"
 #import "RemoteLayerTreeDrawingAreaProxy.h"
@@ -214,6 +216,10 @@ static WebCore::IntDegrees deviceOrientationForUIInterfaceOrientation(UIInterfac
     [_warningView setFrame:self.bounds];
     [super layoutSubviews];
     [self _frameOrBoundsMayHaveChanged];
+
+#if ENABLE(UNIFIED_PDF) && HAVE(UIVIEW_RESERVED_REGION)
+    [self _updatePDFDisplayModeIfNeeded];
+#endif
 }
 
 #pragma mark - iOS implementation methods
@@ -885,6 +891,53 @@ static WebCore::Color scrollViewBackgroundColor(WKWebView *webView, AllowPageBac
 
     return UIEdgeInsetsZero;
 }
+
+#if ENABLE(UNIFIED_PDF) && HAVE(UIVIEW_RESERVED_REGION)
+
+- (void)_updatePDFDisplayModeIfNeeded
+{
+    RefPtr page = _page;
+    if (!page)
+        return;
+
+    if (!protect(page->preferences())->twoUpPDFDisplayModeSupportEnabled())
+        return;
+
+    BOOL shouldUseTwoUp = [&] {
+        RetainPtr regions = [self reservedRegionsOfKind:[UIViewReservedRegionKind divisionRegionKind]];
+        if ([regions count] != 1)
+            return NO;
+
+        CGRect unobscuredBounds = UIEdgeInsetsInsetRect(self.bounds, [self _computedObscuredInset]);
+        CGRect divisionFrame = [regions firstObject].frame;
+
+        if (CGRectGetMinX(divisionFrame) <= CGRectGetMinX(unobscuredBounds) || CGRectGetMaxX(divisionFrame) >= CGRectGetMaxX(unobscuredBounds))
+            return NO;
+
+        if (!WTF::areEssentiallyEqual<CGFloat>(CGRectGetMidX(divisionFrame), CGRectGetMidX(unobscuredBounds)))
+            return NO;
+
+        return YES;
+    }();
+
+    page->setInitialPDFDisplayMode(shouldUseTwoUp ? WebKit::PDFPluginDisplayMode::TwoUpContinuous : WebKit::PDFPluginDisplayMode::SinglePageContinuous);
+
+    if (shouldUseTwoUp == _shouldUseTwoUpPDFDisplayModeWithDivisionRegion)
+        return;
+
+    _shouldUseTwoUpPDFDisplayModeWithDivisionRegion = shouldUseTwoUp;
+
+    if (![self _isDisplayingPDF])
+        return;
+
+    BOOL isSinglePage = WebKit::isSinglePagePDFDisplayMode(page->pdfDisplayMode());
+    if (shouldUseTwoUp && isSinglePage)
+        page->requestPDFDisplayMode(WebKit::PDFPluginDisplayMode::TwoUpContinuous);
+    else if (!shouldUseTwoUp && !isSinglePage)
+        page->requestPDFDisplayMode(WebKit::PDFPluginDisplayMode::SinglePageContinuous);
+}
+
+#endif
 
 - (void)_processWillSwapOrDidExit
 {
@@ -3069,7 +3122,7 @@ static CGFloat liveResizeMinimumWidthDifference()
         return;
 
     _perProcessState.didDeferUpdateVisibleContentRectsForAnyReason = YES;
-    _pendingInteractiveObscuredInsetsChangeTimer = RunLoop::mainSingleton().dispatchAfter(delay, [retainedSelf = retainPtr(self)] {
+    _pendingInteractiveObscuredInsetsChangeTimer = RunLoop::mainSingleton().scheduleTimer(delay, [retainedSelf = retainPtr(self)] {
         retainedSelf->_pendingInteractiveObscuredInsetsChangeTimer = nullptr;
         [retainedSelf _scheduleVisibleContentRectUpdate];
     });
@@ -3585,6 +3638,60 @@ static WebCore::IntDegrees activeOrientation(WKWebView *webView)
         protect(_gestureController)->didSameDocumentNavigationForMainFrame(navigationType);
 }
 
+- (void)_adjustScrollViewForKeyboardCoalescingAdjustmentsIfNeeded:(NSDictionary *)keyboardInfo
+{
+    auto adjustScrollViewForKeyboardInfo = [](WKWebView *webView, NSDictionary *info) {
+        CGFloat bottomInsetBeforeAdjustment = [webView->_scrollView contentInset].bottom;
+        SetForScope insetAdjustmentGuard(webView->_perProcessState.currentlyAdjustingScrollViewInsetsForKeyboard, YES);
+        [webView->_scrollView _adjustForAutomaticKeyboardInfo:info animated:YES lastAdjustment:&webView->_lastAdjustmentForScroller];
+        CGFloat bottomInsetAfterAdjustment = [webView->_scrollView contentInset].bottom;
+        // FIXME: This "total bottom content inset adjustment" mechanism hasn't worked since iOS 11, since -_adjustForAutomaticKeyboardInfo:animated:lastAdjustment:
+        // no longer sets -[UIScrollView contentInset] for apps linked on or after iOS 11. We should consider removing this logic, since the original bug this was
+        // intended to fix, <rdar://problem/23202254>, remains fixed through other means.
+        if (bottomInsetBeforeAdjustment != bottomInsetAfterAdjustment)
+            webView->_totalScrollViewBottomInsetAdjustmentForKeyboard += bottomInsetAfterAdjustment - bottomInsetBeforeAdjustment;
+    };
+
+    bool shouldCoalesceAdjustments = [&] {
+        // FIXME: Remove this once rdar://189235007 is addressed.
+        if (!WTF::IOSApplication::isNews() || !UIKeyboard.isInHardwareKeyboardMode)
+            return false;
+
+        RetainPtr accessoryView = [self inputAccessoryView];
+        if (!accessoryView)
+            return false;
+
+        return [_contentView _formInputSession].customInputAccessoryView || accessoryView != [_contentView inputAccessoryViewForWebView];
+    }();
+
+    if (!shouldCoalesceAdjustments) {
+        _pendingKeyboardInfoForScrollViewAdjustment = nullptr;
+        adjustScrollViewForKeyboardInfo(self, keyboardInfo);
+        return;
+    }
+
+    if (_didAdjustScrollViewForKeyboardInCurrentRunLoopIteration) {
+        _pendingKeyboardInfoForScrollViewAdjustment = keyboardInfo;
+        return;
+    }
+
+    _didAdjustScrollViewForKeyboardInCurrentRunLoopIteration = YES;
+    RunLoop::mainSingleton().dispatch([weakSelf = WeakObjCPtr<WKWebView>(self), adjustScrollViewForKeyboardInfo] {
+        RetainPtr strongSelf = weakSelf.get();
+        if (!strongSelf)
+            return;
+
+        strongSelf->_didAdjustScrollViewForKeyboardInCurrentRunLoopIteration = NO;
+        RetainPtr pendingInfo = std::exchange(strongSelf->_pendingKeyboardInfoForScrollViewAdjustment, nullptr);
+        if (!pendingInfo)
+            return;
+
+        adjustScrollViewForKeyboardInfo(strongSelf, pendingInfo);
+        [strongSelf _scheduleVisibleContentRectUpdate];
+    });
+    adjustScrollViewForKeyboardInfo(self, keyboardInfo);
+}
+
 - (void)_keyboardChangedWithInfo:(NSDictionary *)keyboardInfo adjustScrollView:(BOOL)adjustScrollView
 {
     NSValue *endFrameValue = [keyboardInfo objectForKey:UIKeyboardFrameEndUserInfoKey];
@@ -3611,17 +3718,8 @@ static WebCore::IntDegrees activeOrientation(WKWebView *webView)
     BOOL keyboardShouldOverlayContent = _perProcessState.viewportMetaTagInteractiveWidget == WebCore::InteractiveWidgetValue::OverlaysContent;
     BOOL keyboardShouldResizeContent = _perProcessState.viewportMetaTagInteractiveWidget == WebCore::InteractiveWidgetValue::ResizesContent;
 
-    if (adjustScrollView && !keyboardShouldOverlayContent) {
-        CGFloat bottomInsetBeforeAdjustment = [_scrollView contentInset].bottom;
-        SetForScope insetAdjustmentGuard(_perProcessState.currentlyAdjustingScrollViewInsetsForKeyboard, YES);
-        [_scrollView _adjustForAutomaticKeyboardInfo:keyboardInfo animated:YES lastAdjustment:&_lastAdjustmentForScroller];
-        CGFloat bottomInsetAfterAdjustment = [_scrollView contentInset].bottom;
-        // FIXME: This "total bottom content inset adjustment" mechanism hasn't worked since iOS 11, since -_adjustForAutomaticKeyboardInfo:animated:lastAdjustment:
-        // no longer sets -[UIScrollView contentInset] for apps linked on or after iOS 11. We should consider removing this logic, since the original bug this was
-        // intended to fix, <rdar://problem/23202254>, remains fixed through other means.
-        if (bottomInsetBeforeAdjustment != bottomInsetAfterAdjustment)
-            _totalScrollViewBottomInsetAdjustmentForKeyboard += bottomInsetAfterAdjustment - bottomInsetBeforeAdjustment;
-    }
+    if (adjustScrollView && !keyboardShouldOverlayContent)
+        [self _adjustScrollViewForKeyboardCoalescingAdjustmentsIfNeeded:keyboardInfo];
 
     if (selectionWasVisible && [_contentView _hasFocusedElement] && !CGRectIsEmpty(previousInputViewBounds) && !CGRectIsEmpty(_inputViewBoundsInWindow) && !CGRectEqualToRect(previousInputViewBounds, _inputViewBoundsInWindow))
         [self _scrollToAndRevealSelectionIfNeeded];
@@ -5228,7 +5326,7 @@ static std::optional<WebCore::ViewportArguments> viewportArgumentsFromDictionary
 - (id)_snapshotLayerContentsForBackForwardListItem:(WKBackForwardListItem *)item
 {
     if (_page->backForwardList().currentItem() == &item._item)
-        _page->recordNavigationSnapshot(*protect(_page->backForwardList().currentItem()));
+        _page->recordNavigationSnapshot(*_page->backForwardList().currentItem());
 
     if (RefPtr viewSnapshot = item._item.snapshot())
         return viewSnapshot->asLayerContents();
@@ -5275,6 +5373,50 @@ static std::optional<WebCore::ViewportArguments> viewportArgumentsFromDictionary
 // Currently it's only in TestRunnerWKWebView.
 - (void)_accessibilityDidGetSpeakSelectionContent:(NSString *)content
 {
+}
+
+- (_WKEffectivePageAppearance)_effectivePageAppearance
+{
+    switch (_page->effectivePageAppearance()) {
+    case WebKit::WebPageProxy::EffectivePageAppearance::Unknown:
+        return _WKEffectivePageAppearanceUnknown;
+    case WebKit::WebPageProxy::EffectivePageAppearance::Light:
+        return _WKEffectivePageAppearanceLight;
+    case WebKit::WebPageProxy::EffectivePageAppearance::Dark:
+        return _WKEffectivePageAppearanceDark;
+    }
+    ASSERT_NOT_REACHED();
+    return _WKEffectivePageAppearanceUnknown;
+}
+
+- (_WKContentInversion)_contentInversionForAccessibility
+{
+    switch (_page->contentInversion()) {
+    case WebKit::ContentInversion::System:
+        return _WKContentInversionSystem;
+    case WebKit::ContentInversion::Inverted:
+        return _WKContentInversionInverted;
+    case WebKit::ContentInversion::NotInverted:
+        return _WKContentInversionNotInverted;
+    }
+    ASSERT_NOT_REACHED();
+    return _WKContentInversionSystem;
+}
+
+- (void)_setContentInversionForAccessibility:(_WKContentInversion)contentInversion
+{
+    _page->setContentInversion([&] {
+        switch (contentInversion) {
+        case _WKContentInversionSystem:
+            return WebKit::ContentInversion::System;
+        case _WKContentInversionInverted:
+            return WebKit::ContentInversion::Inverted;
+        case _WKContentInversionNotInverted:
+            return WebKit::ContentInversion::NotInverted;
+        }
+        ASSERT_NOT_REACHED();
+        return WebKit::ContentInversion::System;
+    }());
 }
 
 - (UIView *)_fullScreenPlaceholderView
@@ -5617,9 +5759,9 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     [_contentView _commitPotentialTapFailed];
 }
 
-- (void)_didGetTapHighlightGeometries:(WebKit::TapIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads topLeftRadius:(const WebCore::IntSize&)topLeftRadius topRightRadius:(const WebCore::IntSize&)topRightRadius bottomLeftRadius:(const WebCore::IntSize&)bottomLeftRadius bottomRightRadius:(const WebCore::IntSize&)bottomRightRadius nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling
+- (void)_didGetTapHighlightGeometries:(WebKit::TapIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads cornerRadii:(WebCore::CornerRadii&&)cornerRadii nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling
 {
-    [_contentView _didGetTapHighlightForRequest:requestID color:color quads:highlightedQuads topLeftRadius:topLeftRadius topRightRadius:topRightRadius bottomLeftRadius:bottomLeftRadius bottomRightRadius:bottomRightRadius nodeHasBuiltInClickHandling:nodeHasBuiltInClickHandling];
+    [_contentView _didGetTapHighlightForRequest:requestID color:color quads:highlightedQuads cornerRadii:WTF::move(cornerRadii) nodeHasBuiltInClickHandling:nodeHasBuiltInClickHandling];
 }
 
 - (BOOL)_isPotentialTapInProgress

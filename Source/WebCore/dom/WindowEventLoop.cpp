@@ -49,7 +49,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WindowEventLoop);
 
-static MemoryCompactRobinHoodHashMap<String, CheckedPtr<WindowEventLoop>>& NODELETE windowEventLoopMap()
+static MemoryCompactRobinHoodHashMap<String, CheckedPtr<WindowEventLoop>>& LEGACY_NODELETE windowEventLoopMap()
 {
     RELEASE_ASSERT(isMainThread());
     static NeverDestroyed<MemoryCompactRobinHoodHashMap<String, CheckedPtr<WindowEventLoop>>> map;
@@ -122,7 +122,7 @@ bool WindowEventLoop::isContextThread() const
 MicrotaskQueue& WindowEventLoop::microtaskQueue()
 {
     if (!m_microtaskQueue)
-        m_microtaskQueue = MicrotaskQueue::create(commonVM(), *this);
+        lazyInitialize(m_microtaskQueue, MicrotaskQueue::create(commonVM(), *this));
     return *m_microtaskQueue;
 }
 
@@ -211,10 +211,30 @@ std::optional<MonotonicTime> WindowEventLoop::nextScheduledWorkTime() const
     return *timerTime < *renderingTime ? *timerTime : *renderingTime;
 }
 
+void WindowEventLoop::addAssociatedContext(ScriptExecutionContext& context)
+{
+    EventLoop::addAssociatedContext(context);
+    m_nextRenderingTimeCache = std::nullopt;
+}
+
+void WindowEventLoop::removeAssociatedContext(ScriptExecutionContext& context)
+{
+    EventLoop::removeAssociatedContext(context);
+    m_nextRenderingTimeCache = std::nullopt;
+}
+
 std::optional<MonotonicTime> WindowEventLoop::nextRenderingTime() const
 {
+    // Page::nextRenderingUpdateTimestamp() always returns the next update tick strictly
+    // after "now", so a previously computed tick remains correct for as long as "now"
+    // hasn't reached it yet, and self-invalidates the moment it does. The cache is also
+    // invalidated whenever a context is associated with or disassociated from this loop.
+    if (m_nextRenderingTimeCache && MonotonicTime::now() < *m_nextRenderingTimeCache)
+        return *m_nextRenderingTimeCache;
+
     std::optional<MonotonicTime> nextRenderingTime;
-    const_cast<WindowEventLoop*>(this)->forEachAssociatedContext([&](ScriptExecutionContext& context) {
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<WindowEventLoop*>(this)->forEachAssociatedContext([&](ScriptExecutionContext& context) {
         RefPtr document = dynamicDowncast<Document>(context);
         if (!document)
             return;
@@ -227,6 +247,7 @@ std::optional<MonotonicTime> WindowEventLoop::nextRenderingTime() const
         if (!nextRenderingTime || *renderingUpdateTimeForPage < *nextRenderingTime)
             nextRenderingTime = *renderingUpdateTimeForPage;
     });
+    m_nextRenderingTimeCache = nextRenderingTime;
     return nextRenderingTime;
 }
 
@@ -273,7 +294,7 @@ void WindowEventLoop::removeMutationObserversForContext(ScriptExecutionContext& 
 
     auto disconnectMatching = [&](HashSet<Ref<MutationObserver>>& observers) {
         observers.removeIf([&](auto& observer) {
-            auto* observerContext = observer->callback().scriptExecutionContext();
+            RefPtr observerContext = observer->callback().scriptExecutionContext();
             if (observerContext && observerContext != &context)
                 return false;
             observer->disconnect();
@@ -307,7 +328,7 @@ CustomElementQueue& WindowEventLoop::backupElementQueue()
         });
     }
     if (!m_customElementQueue)
-        m_customElementQueue = makeUnique<CustomElementQueue>();
+        lazyInitialize(m_customElementQueue, makeUnique<CustomElementQueue>());
     return *m_customElementQueue;
 }
 

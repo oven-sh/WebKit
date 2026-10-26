@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2022, 2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -67,30 +67,27 @@ inline MarkedSpace* MarkedBlock::Handle::space() const
     return &heap()->objectSpace();
 }
 
-inline bool MarkedBlock::marksConveyLivenessDuringMarking(HeapVersion markingVersion)
+inline bool MarkedBlock::staleMarksStillRecordSurvivors(HeapVersion markingVersion)
 {
-    return marksConveyLivenessDuringMarking(header().m_markingVersion, markingVersion);
+    return staleMarksStillRecordSurvivors(header().m_markingVersion, markingVersion);
 }
 
-inline bool MarkedBlock::marksConveyLivenessDuringMarking(HeapVersion myMarkingVersion, HeapVersion markingVersion)
+inline bool MarkedBlock::staleMarksStillRecordSurvivors(HeapVersion myMarkingVersion, HeapVersion markingVersion)
 {
-    // This returns true if any of these is true:
-    // - We just created the block and so the bits are clear already.
-    // - This block has objects marked during the last GC, and so its version was up-to-date just
-    //   before the current collection did beginMarking(). This means that any objects that have
-    //   their mark bit set are valid objects that were never deleted, and so are candidates for
-    //   marking in any conservative scan. Using our jargon, they are "live".
-    // - We did ~2^32 collections and rotated the version back to null, so we needed to hard-reset
-    //   everything. If the marks had been stale, we would have cleared them. So, we can be sure that
-    //   any set mark bit reflects objects marked during last GC, i.e. "live" objects.
-    // It would be absurd to use this method when not collecting, since this special "one version
-    // back" state only makes sense when we're in a concurrent collection and have to be
-    // conservative.
+    // Whether this block's stale marks still record the survivors. Only during a Full
+    // collection, whose Begin made them stale:
+    // - Exactly one version behind: yes. These are the marks made since the previous Full
+    //   collection began, which are the survivors. That includes a block this collection's
+    //   version wrap reset to nullVersion, one behind initialVersion; a new block counts
+    //   too in that collection, which is harmless, since its marks are clear.
+    // - Anything older: no. The block has no survivors.
+    // An Eden collection does not advance the marking version, so marks stale then
+    // predate the last Full collection. Between collections, marks one version behind
+    // mean the last Full collection did not mark that block. Neither records survivors.
     ASSERT(space()->isMarking());
     if (heap()->collectionScope() != CollectionScope::Full)
         return false;
-    return myMarkingVersion == MarkedSpace::nullVersion
-        || MarkedSpace::nextVersion(myMarkingVersion) == markingVersion;
+    return MarkedSpace::nextVersion(myMarkingVersion) == markingVersion;
 }
 
 inline bool MarkedBlock::Handle::isAllocated()
@@ -99,6 +96,9 @@ inline bool MarkedBlock::Handle::isAllocated()
     return m_directory->isAllocated(this);
 }
 
+// Whether the cell survived the last collection or was allocated after it. Cells the last
+// collection found unreachable are dead: not live, even though their memory is not freed
+// until the block is swept. Must not be called while the block is free-listed.
 ALWAYS_INLINE bool MarkedBlock::Handle::isLive(HeapVersion markingVersion, HeapVersion newlyAllocatedVersion, bool isMarking, const HeapCell* cell)
 {
     m_directory->assertIsMutatorOrMutatorIsStopped();
@@ -119,12 +119,12 @@ ALWAYS_INLINE bool MarkedBlock::Handle::isLive(HeapVersion markingVersion, HeapV
     //
     // Another thread is doing:
     //
-    // 1) AboutToMarkSlow: This is the entire aboutToMarkSlow function, and let's say it's atomic. It
+    // 1) ResetStaleMarks: This is the entire resetStaleMarks function, and let's say it's atomic. It
     //    sorta is since it holds a lock, but that doesn't actually make it atomic with respect to
     //    IsLiveChecksNewlyAllocated, since that does not hold a lock in our scenario.
     //
     // The harmful interleaving happens if we start out with a block that has stale mark bits that
-    // nonetheless convey liveness during marking (the off-by-one version trick). The interleaving is
+    // nonetheless still record survivors (staleMarksStillRecordSurvivors()). The interleaving is
     // just:
     //
     // IsLiveChecksNewlyAllocated AboutToMarkSlow IsLiveChecksMarks
@@ -161,7 +161,7 @@ ALWAYS_INLINE bool MarkedBlock::Handle::isLive(HeapVersion markingVersion, HeapV
         } else {
             HeapVersion myMarkingVersion = fencedHeader.m_markingVersion;
             if (myMarkingVersion != markingVersion
-                && (!isMarking || !fencedBlock.marksConveyLivenessDuringMarking(myMarkingVersion, markingVersion))) {
+                && (!isMarking || !fencedBlock.staleMarksStillRecordSurvivors(myMarkingVersion, markingVersion))) {
                 if (header.m_lock.fencelessValidate(count.value, Dependency::fence(myMarkingVersion)))
                     return false;
             } else {
@@ -181,9 +181,12 @@ ALWAYS_INLINE bool MarkedBlock::Handle::isLive(HeapVersion markingVersion, HeapV
         return block.isNewlyAllocated(cell);
 
     if (block.areMarksStale(markingVersion)) {
+        // Both of these cases mean nothing survived the last collection, and since
+        // m_newlyAllocated is not current, nothing has been allocated in the block since
+        // either: the cell is not live.
         if (!isMarking)
             return false;
-        if (!block.marksConveyLivenessDuringMarking(markingVersion))
+        if (!block.staleMarksStillRecordSurvivors(markingVersion))
             return false;
     }
 
@@ -233,7 +236,7 @@ inline bool MarkedBlock::Handle::areMarksStaleForSweep()
 // Only the DoesNotNeedDestruction one should be specialized by MarkedBlock.
 
 template<bool specialize, MarkedBlock::Handle::EmptyMode specializedEmptyMode, MarkedBlock::Handle::SweepMode specializedSweepMode, MarkedBlock::Handle::SweepDestructionMode specializedDestructionMode, MarkedBlock::Handle::ScribbleMode specializedScribbleMode, MarkedBlock::Handle::NewlyAllocatedMode specializedNewlyAllocatedMode, MarkedBlock::Handle::MarksMode specializedMarksMode, typename DestroyFunc>
-void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Handle::EmptyMode emptyMode, MarkedBlock::Handle::SweepMode sweepMode, MarkedBlock::Handle::SweepDestructionMode destructionMode, MarkedBlock::Handle::ScribbleMode scribbleMode, MarkedBlock::Handle::NewlyAllocatedMode newlyAllocatedMode, MarkedBlock::Handle::MarksMode marksMode, const DestroyFunc& destroyFunc)
+void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Handle::EmptyMode emptyMode, MarkedBlock::Handle::SweepMode sweepMode, MarkedBlock::Handle::SweepDestructionMode destructionMode, MarkedBlock::Handle::ScribbleMode scribbleMode, MarkedBlock::Handle::NewlyAllocatedMode newlyAllocatedMode, MarkedBlock::Handle::MarksMode marksMode, NOESCAPE const DestroyFunc& destroyFunc)
 {
     constexpr bool verbose = false;
     if (specialize) {
@@ -283,15 +286,20 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
     };
 
     auto setBits = [&] (bool isEmpty) ALWAYS_INLINE_LAMBDA {
-        Locker locker { m_directory->bitvectorLock() };
-        bool wasUnswept = m_directory->isUnswept(this);
-        m_directory->setIsUnswept(this, false);
-        m_directory->setIsDestructible(this, m_attributes.destruction == DestructionMode::MayNeedDestruction && destructionMode != BlockHasNoDestructors && !isEmpty && m_directory->isDestructible(this));
-        m_directory->setIsEmpty(this, false);
-        if (sweepMode == SweepToFreeList)
+        Locker locker { m_directory->bitvectorLock().mutate() };
+        m_directory->assertInUse(index());
+        m_directory->setIsEmpty(index(), sweepMode != SweepToFreeList && isEmpty);
+        ASSERT_IMPLIES(destructionMode == BlockHasDestructors, m_directory->isDestructible(index()));
+        if (destructionMode == BlockHasDestructors) {
+            bool mayStillNeedDestruction = m_attributes.destruction == DestructionMode::MayNeedDestruction && !isEmpty;
+            if (!mayStillNeedDestruction)
+                m_directory->setIsDestructible(index(), false);
+        }
+        bool wasUnswept = m_directory->testAndClearIsUnswept(index());
+        if (sweepMode == SweepToFreeList) {
             m_isFreeListed = true;
-        else if (isEmpty)
-            m_directory->setIsEmpty(this, true);
+            m_directory->setIsEden(index(), true);
+        }
         return wasUnswept;
     };
 
@@ -411,7 +419,7 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
 }
 
 template<typename DestroyFunc>
-void MarkedBlock::Handle::finishSweepKnowingHeapCellType(FreeList* freeList, const DestroyFunc& destroyFunc)
+void MarkedBlock::Handle::finishSweepKnowingHeapCellType(FreeList* freeList, NOESCAPE const DestroyFunc& destroyFunc)
 {
     SweepMode sweepMode = freeList ? SweepToFreeList : SweepOnly;
     SweepDestructionMode destructionMode = this->sweepDestructionMode();
@@ -499,14 +507,14 @@ inline MarkedBlock::Handle::SweepDestructionMode MarkedBlock::Handle::sweepDestr
 inline bool MarkedBlock::Handle::isEmpty()
 {
     m_directory->assertIsMutatorOrMutatorIsStopped();
-    return m_directory->isEmpty(this);
+    return m_directory->isEmpty(index());
 }
 
-inline void MarkedBlock::Handle::setIsDestructible(bool value)
+inline void MarkedBlock::Handle::noteNeedsDestruction()
 {
-    Locker locker { m_directory->bitvectorLock() };
-    m_directory->assertIsMutatorOrMutatorIsStopped();
-    return m_directory->setIsDestructible(this, value);
+    Locker locker { m_directory->bitvectorLock().mutate() };
+    m_directory->assertMayNotifyNeedsDestruction();
+    m_directory->setIsDestructible(index(), true);
 }
 
 inline MarkedBlock::Handle::EmptyMode MarkedBlock::Handle::emptyMode()
@@ -534,18 +542,18 @@ inline MarkedBlock::Handle::MarksMode MarkedBlock::Handle::marksMode()
     HeapVersion markingVersion = space()->markingVersion();
     bool marksAreUseful = !block().areMarksStale(markingVersion);
     if (space()->isMarking())
-        marksAreUseful |= block().marksConveyLivenessDuringMarking(markingVersion);
+        marksAreUseful |= block().staleMarksStillRecordSurvivors(markingVersion);
     return marksAreUseful ? MarksNotStale : MarksStale;
 }
 
 template <typename Functor>
-inline IterationStatus MarkedBlock::Handle::forEachLiveCell(const Functor& functor)
+inline IterationStatus MarkedBlock::Handle::forEachLiveCell(NOESCAPE const Functor& functor)
 {
     // FIXME: This is not currently efficient to use in the constraint solver because isLive() grabs a
-    // lock to protect itself from concurrent calls to aboutToMarkSlow(). But we could get around this by
+    // lock to protect itself from concurrent calls to resetStaleMarks(). But we could get around this by
     // having this function grab the lock before and after the iteration, and check if the marking version
     // changed. If it did, just run again. Inside the loop, we only need to ensure that if a race were to
-    // happen, we will just overlook objects. I think that because of how aboutToMarkSlow() does things,
+    // happen, we will just overlook objects. I think that because of how resetStaleMarks() does things,
     // a race ought to mean that it just returns false when it should have returned true - but this is
     // something that would have to be verified carefully.
     //
@@ -569,7 +577,7 @@ inline IterationStatus MarkedBlock::Handle::forEachLiveCell(const Functor& funct
 }
 
 template <typename Functor>
-inline IterationStatus MarkedBlock::Handle::forEachDeadCell(const Functor& functor)
+inline IterationStatus MarkedBlock::Handle::forEachDeadCell(NOESCAPE const Functor& functor)
 {
     HeapCell::Kind kind = m_attributes.cellKind;
     for (size_t i = m_startAtom; i < endAtom; i += m_atomsPerCell) {
@@ -584,7 +592,7 @@ inline IterationStatus MarkedBlock::Handle::forEachDeadCell(const Functor& funct
 }
 
 template <typename Functor>
-inline IterationStatus MarkedBlock::Handle::forEachMarkedCell(const Functor& functor)
+inline IterationStatus MarkedBlock::Handle::forEachMarkedCell(NOESCAPE const Functor& functor)
 {
     HeapCell::Kind kind = m_attributes.cellKind;
     MarkedBlock& block = this->block();

@@ -137,7 +137,7 @@ ThreadSuspendLocker::~ThreadSuspendLocker()
 }
 #endif
 
-static std::optional<size_t> NODELETE stackSize(ThreadType threadType)
+static std::optional<size_t> LEGACY_NODELETE stackSize(ThreadType threadType)
 {
     // Return the stack size for the created thread based on its type.
     // If the stack size is not specified, then use the system default. Platforms can tune the values here.
@@ -453,12 +453,16 @@ void Thread::setCurrentThreadIsUserInitiated(int relativePriority)
 void Thread::setCurrentThreadQOS(QOS qos)
 {
     Thread& thread = currentSingleton();
+#if OS(LINUX)
+    // Only secondary helper threads can run with non-default priority.
+    qos = defaultQOS;
+#endif
     thread.m_qos = qos;
     thread.initializeSchedulingAttributes();
 }
 
 #if HAVE(QOS_CLASSES)
-static Thread::QOS NODELETE toQOS(qos_class_t qosClass)
+static Thread::QOS LEGACY_NODELETE toQOS(qos_class_t qosClass)
 {
     switch (qosClass) {
     case QOS_CLASS_USER_INTERACTIVE:

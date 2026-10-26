@@ -172,7 +172,7 @@ String CSSKeyframesRule::cssText() const
     result.append(" { \n"_s);
 
     for (unsigned i = 0, size = length(); i < size; ++i)
-        result.append("  "_s, protect(m_keyframesRule)->keyframes()[i]->cssText(), '\n');
+        result.append("  "_s, protect(protect(m_keyframesRule)->keyframes()[i])->cssText(), '\n');
     result.append('}');
     return result.toString();
 }
@@ -188,8 +188,10 @@ CSSKeyframeRule* CSSKeyframesRule::item(unsigned index) const
         return nullptr;
     ASSERT(m_childRuleCSSOMWrappers.size() == m_keyframesRule->keyframes().size());
     auto& rule = m_childRuleCSSOMWrappers[index];
-    if (!rule)
-        rule = adoptRef(*new CSSKeyframeRule(m_keyframesRule->keyframes()[index], const_cast<CSSKeyframesRule*>(this)));
+    if (!rule) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST rule = adoptRef(*new CSSKeyframeRule(m_keyframesRule->keyframes()[index], const_cast<CSSKeyframesRule*>(this)));
+    }
     return rule.get(); 
 }
 

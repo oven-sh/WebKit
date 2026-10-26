@@ -345,7 +345,12 @@ bool WorkerOrWorkletScriptController::loadModuleSynchronously(WorkerScriptFetche
 
     Ref protector { scriptFetcher };
     {
-        auto* promise = JSExecState::loadModule(globalObject, sourceCode.jsSourceCode(), protector.ptr());
+        JSC::JSPromise* promise;
+        if (sourceCode.url().isValid()) {
+            Identifier key = Identifier::fromString(vm, sourceCode.url().string());
+            promise = JSExecState::loadModule(globalObject, key, sourceCode.jsSourceCode(), protector.ptr());
+        } else
+            promise = JSExecState::loadModule(globalObject, sourceCode.jsSourceCode(), protector.ptr());
         scope.assertNoExceptionExceptTermination();
         RETURN_IF_EXCEPTION(scope, false);
 
@@ -672,7 +677,7 @@ void WorkerOrWorkletScriptController::initScriptWithSubclass()
     ASSERT(m_globalScopeWrapper->realmMayBeNull() == m_globalScopeWrapper);
     ASSERT(asObject(m_globalScopeWrapper->getPrototypeDirect())->realmMayBeNull() == m_globalScopeWrapper);
 
-    m_consoleClient = makeUnique<WorkerConsoleClient>(*globalScope);
+    lazyInitialize(m_consoleClient, makeUnique<WorkerConsoleClient>(*globalScope));
     m_globalScopeWrapper->setConsoleClient(*m_consoleClient);
     // Worklet global scopes previously routed microtasks to the VM's default queue
     // We preserve this behavior because AudioWorkletGlobalScope relies on DrainMicrotaskDelayScope to batch

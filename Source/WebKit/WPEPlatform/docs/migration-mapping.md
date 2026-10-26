@@ -2,7 +2,7 @@ Title: Migration mapping table
 Slug: migration-mapping
 
 This page is a symbol-by-symbol reference for migrating code written
-against [libwpe](https://github.com/WebKit/libwpe) and
+against [libwpe](https://github.com/WebPlatformForEmbedded/libwpe) and
 [WPEBackend-fdo](https://github.com/Igalia/WPEBackend-fdo) to
 WPEPlatform. For prose, before/after code, and discussion of the
 conceptual shifts, see [Migrating from libwpe](migrating-from-libwpe.html).

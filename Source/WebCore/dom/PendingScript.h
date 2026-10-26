@@ -43,7 +43,7 @@ class ScriptElement;
 class PendingScript final : public RefCounted<PendingScript>, public LoadableScriptClient {
 public:
     static Ref<PendingScript> create(ScriptElement&, LoadableScript&);
-    static Ref<PendingScript> create(ScriptElement&, TextPosition scriptStartPosition);
+    static Ref<PendingScript> LEGACY_NODELETE create(ScriptElement&, TextPosition scriptStartPosition);
 
     virtual ~PendingScript();
 
@@ -78,7 +78,7 @@ private:
 
     const Ref<ScriptElement> m_element;
     TextPosition m_startingPosition; // Only used for inline script tags.
-    RefPtr<LoadableScript> m_loadableScript;
+    const RefPtr<LoadableScript> m_loadableScript;
     CheckedPtr<PendingScriptClient> m_client;
 };
 

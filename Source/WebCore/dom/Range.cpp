@@ -94,7 +94,7 @@ Range::~Range()
 
 Node* Range::commonAncestorContainer() const
 {
-    return commonInclusiveAncestor(protect(startContainer()), protect(endContainer()));
+    return commonInclusiveAncestor(startContainer(), endContainer());
 }
 
 void Range::updateAssociatedSelection()
@@ -293,7 +293,7 @@ bool Range::intersectsNode(Node& node) const
     return intersects(makeSimpleRange(*this), node);
 }
 
-static inline Node* NODELETE highestAncestorUnderCommonRoot(Node* node, Node* commonRoot)
+static inline Node* LEGACY_NODELETE highestAncestorUnderCommonRoot(Node* node, Node* commonRoot)
 {
     if (node == commonRoot)
         return 0;
@@ -306,7 +306,7 @@ static inline Node* NODELETE highestAncestorUnderCommonRoot(Node* node, Node* co
     return node;
 }
 
-static inline Node* NODELETE childOfCommonRootBeforeOffset(Node* container, unsigned offset, Node* commonRoot)
+static inline Node* LEGACY_NODELETE childOfCommonRootBeforeOffset(Node* container, unsigned offset, Node* commonRoot)
 {
     ASSERT(container);
     ASSERT(commonRoot);
@@ -395,7 +395,7 @@ ExceptionOr<RefPtr<DocumentFragment>> Range::processContents(ActionType action)
         }
 
         RefPtr<Node> rightContents;
-        if (&endContainer() != commonRoot && commonRoot->contains(originalEnd.container())) {
+        if (&originalEnd.container() != commonRoot && commonRoot->contains(originalEnd.container())) {
             auto firstResult = processContentsBetweenOffsets(action, nullptr, protect(originalEnd.container()).ptr(), 0, originalEnd.offset());
             auto secondResult = processAncestorsAndTheirSiblings(action, protect(originalEnd.container()).ptr(), ProcessContentsBackward, WTF::move(firstResult), commonRoot.get());
             // FIXME: A bit peculiar that we silently ignore the exception here, but we do have at least some regression tests that rely on this behavior.
@@ -491,11 +491,11 @@ static ExceptionOr<RefPtr<Node>> processContentsBetweenOffsets(Range::ActionType
     case NodeType::Text:
     case NodeType::CDATASection:
     case NodeType::Comment: {
-        auto& dataNode = uncheckedDowncast<CharacterData>(*container);
-        endOffset = std::min(endOffset, dataNode.length());
+        Ref dataNode = uncheckedDowncast<CharacterData>(*container);
+        endOffset = std::min(endOffset, dataNode->length());
         startOffset = std::min(startOffset, endOffset);
         if (action == Range::Extract || action == Range::Clone) {
-            Ref characters = uncheckedDowncast<CharacterData>(dataNode.cloneNode(true));
+            Ref characters = uncheckedDowncast<CharacterData>(dataNode->cloneNode(CloneSubtree::Yes));
             auto deleteResult = deleteCharacterData(characters, startOffset, endOffset);
             if (deleteResult.hasException())
                 return deleteResult.releaseException();
@@ -508,18 +508,18 @@ static ExceptionOr<RefPtr<Node>> processContentsBetweenOffsets(Range::ActionType
                 result = WTF::move(characters);
         }
         if (action == Range::Extract || action == Range::Delete) {
-            auto deleteResult = dataNode.deleteData(startOffset, endOffset - startOffset);
+            auto deleteResult = dataNode->deleteData(startOffset, endOffset - startOffset);
             if (deleteResult.hasException())
                 return deleteResult.releaseException();
         }
         break;
     }
     case NodeType::ProcessingInstruction: {
-        auto& instruction = uncheckedDowncast<ProcessingInstruction>(*container);
-        endOffset = std::min(endOffset, instruction.data().length());
+        Ref instruction = uncheckedDowncast<ProcessingInstruction>(*container);
+        endOffset = std::min(endOffset, instruction->data().length());
         startOffset = std::min(startOffset, endOffset);
         if (action == Range::Extract || action == Range::Clone) {
-            Ref processingInstruction = uncheckedDowncast<ProcessingInstruction>(instruction.cloneNode(true));
+            Ref processingInstruction = uncheckedDowncast<ProcessingInstruction>(instruction->cloneNode(CloneSubtree::Yes));
             processingInstruction->setData(processingInstruction->data().substring(startOffset, endOffset - startOffset));
             if (fragment) {
                 result = fragment;
@@ -530,8 +530,8 @@ static ExceptionOr<RefPtr<Node>> processContentsBetweenOffsets(Range::ActionType
                 result = WTF::move(processingInstruction);
         }
         if (action == Range::Extract || action == Range::Delete) {
-            auto data = makeStringByRemoving(instruction.data(), startOffset, endOffset - startOffset);
-            instruction.setData(WTF::move(data));
+            auto data = makeStringByRemoving(instruction->data(), startOffset, endOffset - startOffset);
+            instruction->setData(WTF::move(data));
         }
         break;
     }
@@ -545,7 +545,7 @@ static ExceptionOr<RefPtr<Node>> processContentsBetweenOffsets(Range::ActionType
             if (fragment)
                 result = fragment;
             else
-                result = container->cloneNode(false);
+                result = container->cloneNode(CloneSubtree::No);
         }
         Vector<Ref<Node>> nodes;
         {
@@ -584,7 +584,7 @@ static ExceptionOr<void> processNodes(Range::ActionType action, Vector<Ref<Node>
             break;
         }
         case Range::Clone: {
-            auto result = newContainer->appendChild(node->cloneNode(true));
+            auto result = newContainer->appendChild(node->cloneNode(CloneSubtree::Yes));
             if (result.hasException())
                 return result.releaseException();
             break;
@@ -612,7 +612,7 @@ ExceptionOr<RefPtr<Node>> processAncestorsAndTheirSiblings(Range::ActionType act
                 if (!shadowRoot->isClonable())
                     continue;
             }
-            Ref clonedAncestor = ancestor->cloneNode(false); // Might have been removed already during mutation event.
+            Ref clonedAncestor = ancestor->cloneNode(CloneSubtree::No); // Might have been removed already during mutation event.
             if (clonedContainer) {
                 auto result = clonedAncestor->appendChild(*clonedContainer);
                 if (result.hasException())
@@ -652,11 +652,11 @@ ExceptionOr<RefPtr<Node>> processAncestorsAndTheirSiblings(Range::ActionType act
                 break;
             case Range::Clone:
                 if (direction == ProcessContentsForward) {
-                    auto result = clonedContainer->appendChild(child->cloneNode(true));
+                    auto result = clonedContainer->appendChild(child->cloneNode(CloneSubtree::Yes));
                     if (result.hasException())
                         return result.releaseException();
                 } else {
-                    auto result = clonedContainer->insertBefore(child->cloneNode(true), protect(clonedContainer->firstChild()));
+                    auto result = clonedContainer->insertBefore(child->cloneNode(CloneSubtree::Yes), protect(clonedContainer->firstChild()));
                     if (result.hasException())
                         return result.releaseException();
                 }
@@ -926,7 +926,7 @@ String Range::debugDescription() const
 }
 #endif
 
-static inline void NODELETE boundaryNodeChildrenChanged(Locker<Lock>&, RangeBoundaryPoint& boundary, ContainerNode& container)
+static inline void LEGACY_NODELETE boundaryNodeChildrenChanged(Locker<Lock>&, RangeBoundaryPoint& boundary, ContainerNode& container)
 {
     if (boundary.childBefore() && &boundary.container() == &container)
         boundary.invalidateOffset();
@@ -989,7 +989,7 @@ void Range::updateRangeForParentlessNodeMovedToNewDocument(Node& node)
     protect(m_ownerDocument)->attachRange(*this);
 }
 
-static inline void NODELETE boundaryTextInserted(Locker<Lock>&, RangeBoundaryPoint& boundary, Node& text, unsigned offset, unsigned length)
+static inline void LEGACY_NODELETE boundaryTextInserted(Locker<Lock>&, RangeBoundaryPoint& boundary, Node& text, unsigned offset, unsigned length)
 {
     if (&boundary.container() != &text)
         return;
@@ -1008,7 +1008,7 @@ void Range::textInserted(Node& text, unsigned offset, unsigned length)
     m_didChangeForHighlight = true;
 }
 
-static inline void NODELETE boundaryTextRemoved(Locker<Lock>&, RangeBoundaryPoint& boundary, Node& text, unsigned offset, unsigned length)
+static inline void LEGACY_NODELETE boundaryTextRemoved(Locker<Lock>&, RangeBoundaryPoint& boundary, Node& text, unsigned offset, unsigned length)
 {
     if (&boundary.container() != &text)
         return;
@@ -1117,10 +1117,25 @@ ExceptionOr<void> Range::expand(const String& unit)
     return setEnd(endContainer.releaseNonNull(), end.deepEquivalent().computeOffsetInContainerNode());
 }
 
+static void updateLayoutForRangeBoundingRect(const SimpleRange& simpleRange)
+{
+    OptionSet<LayoutOptions> layoutOptions;
+    RefPtr<const Element> context;
+    if (RefPtr commonAncestor = commonInclusiveAncestor<ComposedTree>(simpleRange)) {
+        context = dynamicDowncast<Element>(commonAncestor.get());
+        if (!context)
+            context = commonAncestor->parentElementInComposedTree();
+        if (context)
+            layoutOptions = { LayoutOptions::TreatContentVisibilityHiddenAsVisible, LayoutOptions::TreatContentVisibilityAutoAsVisible };
+    }
+    protect(simpleRange.start.document())->updateLayoutIgnorePendingStylesheets(layoutOptions, context.get());
+}
+
 Ref<DOMRectList> Range::getClientRects() const
 {
-    protect(startContainer().document())->updateLayout();
-    return DOMRectList::create(RenderObject::clientBorderAndTextRects(makeSimpleRange(*this)));
+    auto simpleRange = makeSimpleRange(*this);
+    updateLayoutForRangeBoundingRect(simpleRange);
+    return DOMRectList::create(RenderObject::clientBorderAndTextRects(simpleRange));
 }
 
 Ref<DOMRect> Range::getBoundingClientRect() const
@@ -1130,7 +1145,7 @@ Ref<DOMRect> Range::getBoundingClientRect() const
 
 Ref<DOMRect> Range::boundingClientRect(const SimpleRange& simpleRange)
 {
-    protect(simpleRange.startContainer().document())->updateLayout();
+    updateLayoutForRangeBoundingRect(simpleRange);
     return DOMRect::create(unionRectIgnoringZeroRects(RenderObject::clientBorderAndTextRects(simpleRange)));
 }
 
@@ -1194,8 +1209,9 @@ RefPtr<Range> createLiveRange(const std::optional<SimpleRange>& range)
 void Range::visitNodesInGCThread(JSC::AbstractSlotVisitor& visitor) const
 {
     Locker locker { m_boundaryPointLock };
-    addWebCoreOpaqueRoot(visitor, m_start.container());
-    addWebCoreOpaqueRoot(visitor, m_end.container());
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_ARG addWebCoreOpaqueRoot(visitor, m_start.container());
+    SUPPRESS_UNCOUNTED_ARG addWebCoreOpaqueRoot(visitor, m_end.container());
 }
 
 } // namespace WebCore

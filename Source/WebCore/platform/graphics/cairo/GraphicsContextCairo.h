@@ -69,8 +69,8 @@ public:
     void strokePath(const Path&) final;
     void clearRect(const FloatRect&) final;
 
-    void drawNativeImage(const NativeImage&, const FloatRect&, const FloatRect&, ImagePaintingOptions) final;
-    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions) final;
+    void drawNativeImage(const NativeImage&, const FloatRect&, const FloatRect&, ImageDrawingOptions) final;
+    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions) final;
 
     void drawRect(const FloatRect&, float) final;
     void drawLine(const FloatPoint&, const FloatPoint&) final;
@@ -105,14 +105,14 @@ public:
     
     RenderingMode renderingMode() const final;
 
-    cairo_t* NODELETE cr() const;
+    cairo_t* LEGACY_NODELETE cr() const;
     Vector<float>& layers();
     void pushImageMask(cairo_surface_t*, const FloatRect&);
 
     // Exposed as public because freestanding functions use this.
     using GraphicsContext::nativeImageForDrawing;
 private:
-    RefPtr<cairo_t> m_cr;
+    const RefPtr<cairo_t> m_cr;
 
     class CairoState;
     CairoState* m_cairoState;

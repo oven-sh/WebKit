@@ -41,6 +41,7 @@
 #include "RenderBlockFlow.h"
 #include "RenderBlockInlines.h"
 #include "RenderBoxInlines.h"
+#include "RenderElementInlines.h"
 #include "RenderImage.h"
 #include "RenderLayer.h"
 #include "RenderListItem.h"
@@ -53,6 +54,7 @@
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleComputedStyle+SettersInlines.h"
 #include "StyleContent.h"
+#include "StyleListStyleImageSizing.h"
 #include "StyleListStyleType.h"
 #include "StyleScope.h"
 #include "TextUtil.h"
@@ -65,7 +67,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderListOutsideMarker);
 
 RenderListOutsideMarker::RenderListOutsideMarker(RenderListItem& listItem, Style::ComputedStyle&& style)
-    : RenderBox(Type::ListOutsideMarker, listItem.document(), WTF::move(style))
+    : RenderBox(Type::ListOutsideMarker, protect(listItem.document()), WTF::move(style))
     , m_listItem(listItem)
 {
     setInline(true);
@@ -143,7 +145,7 @@ LayoutRect RenderListOutsideMarker::localSelectionRect()
 
 void RenderListOutsideMarker::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
-    if (style().usedVisibility() != Visibility::Visible)
+    if (usedStyle().visibility() != UsedVisibility::Visible)
         return;
 
     LayoutPoint boxOrigin(paintOffset + location());
@@ -217,9 +219,6 @@ void RenderListOutsideMarker::layoutContentContainer(RenderBlockFlow& container)
         // content box along the block axis so its own first-line baseline lands on that font baseline —
         // otherwise the content's line-box half-leading shifts it off the list item's baseline. Logical
         // setters keep this correct in vertical writing modes.
-        auto markerAscent = LayoutUnit { style().metricsOfPrimaryFont().ascent(BaselineAlignment::dominantBaseline(writingMode())) };
-        container.setLogicalTop(markerAscent - contentBaseline);
-
         if (hasContentProperty()) {
             setLogicalHeight(container.logicalHeight());
             m_layoutBounds = { contentBaseline, container.logicalHeight() - contentBaseline };
@@ -227,6 +226,9 @@ void RenderListOutsideMarker::layoutContentContainer(RenderBlockFlow& container)
             setLogicalHeight(style().metricsOfPrimaryFont().intHeight());
             m_layoutBounds = layoutBoundForTextContent(m_listItem->markerText());
         }
+
+        auto baselineOffset = writingMode().prefersCentralBaseline() ? logicalHeight() / 2 : LayoutUnit { style().metricsOfPrimaryFont().ascent(BaselineAlignment::dominantBaseline(writingMode())) };
+        container.setLogicalTop(baselineOffset - contentBaseline);
     }
 
     // The content box can extend outside the marker's border box (its baseline offset may be
@@ -252,7 +254,7 @@ void RenderListOutsideMarker::imageChanged(WrappedImagePtr o, const IntRect* rec
                 if (element)
                     element->invalidateStyleAndRenderersForSubtree();
                 setNeedsLayoutAndInvalidateContentLogicalWidths();
-            } else if (borderBoxSize() != LayoutSize(image->imageSize(this, style().usedZoom()))) {
+            } else if (borderBoxSize() != markerImageSize(*image)) {
                 updateInlineMarginsAndContent();
                 setNeedsLayoutAndInvalidateContentLogicalWidths();
             } else
@@ -268,6 +270,13 @@ void RenderListOutsideMarker::updateInlineMarginsAndContent()
     updateInlineMargins();
 }
 
+LayoutSize RenderListOutsideMarker::markerImageSize(const Style::Image& image) const
+{
+    // FIXME: The spec says this should be 1em - https://drafts.csswg.org/css-lists-3/#valdef-list-style-image-image
+    LayoutUnit bulletWidth = style().metricsOfPrimaryFont().intAscent() / 2_lu;
+    return calculateImageIntrinsicDimensions(image, Style::ListStyleImageSizing { bulletWidth }, ScaleByUsedZoom::Yes);
+}
+
 void RenderListOutsideMarker::updateContent()
 {
     if (hasContentProperty()) {
@@ -276,11 +285,8 @@ void RenderListOutsideMarker::updateContent()
         return;
     }
 
-    if (isImage()) {
-        // FIXME: This is a somewhat arbitrary width.
-        LayoutUnit bulletWidth = style().metricsOfPrimaryFont().intAscent() / 2_lu;
-        LayoutSize defaultBulletSize(bulletWidth, bulletWidth);
-        setContentContainerImageSize(calculateImageIntrinsicDimensions(listMarkerImage(style()).get(), defaultBulletSize, ScaleByUsedZoom::Yes));
+    if (RefPtr image = listMarkerImage(style())) {
+        setContentContainerImageSize(markerImageSize(*image));
         return;
     }
 

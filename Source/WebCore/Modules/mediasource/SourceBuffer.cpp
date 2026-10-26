@@ -60,6 +60,7 @@
 #include "SourceBufferPrivate.h"
 #include "TextTrackList.h"
 #include "TimeRanges.h"
+#include "TrackOpaqueRoot.h"
 #include "VideoTrack.h"
 #include "VideoTrackList.h"
 #include "VideoTrackPrivate.h"
@@ -81,7 +82,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(SourceBuffer);
 
 class SourceBufferClientImpl final : public SourceBufferPrivateClient {
 public:
-    static Ref<SourceBufferClientImpl> create(SourceBuffer& parent) { return adoptRef(*new SourceBufferClientImpl(parent)); }
+    static Ref<SourceBufferClientImpl> LEGACY_NODELETE create(SourceBuffer& parent) { return adoptRef(*new SourceBufferClientImpl(parent)); }
     Ref<MediaPromise> sourceBufferPrivateDidReceiveInitializationSegment(InitializationSegment&& segment) final
     {
         MediaPromise::AutoRejectProducer producer(PlatformMediaError::BufferRemoved);
@@ -177,11 +178,11 @@ Ref<SourceBuffer> SourceBuffer::create(Ref<SourceBufferPrivate>&& sourceBufferPr
 }
 
 SourceBuffer::SourceBuffer(Ref<SourceBufferPrivate>&& sourceBufferPrivate, MediaSource& source)
-    : ActiveDOMObject(source.scriptExecutionContext())
+    : ActiveDOMObject(protect(source.scriptExecutionContext()))
     , m_private(WTF::move(sourceBufferPrivate))
     , m_client(SourceBufferClientImpl::create(*this))
     , m_source(&source)
-    , m_opaqueRootProvider(Observer<WebCoreOpaqueRoot()>::create([opaqueRoot = WebCoreOpaqueRoot { this }] { return opaqueRoot; }))
+    , m_trackOpaqueRoot(TrackOpaqueRoot::create(opaqueRoot()))
     , m_appendWindowStart(MediaTime::zeroTime())
     , m_appendWindowEnd(MediaTime::positiveInfiniteTime())
     , m_appendState(WaitingForSegment)
@@ -201,6 +202,7 @@ SourceBuffer::~SourceBuffer()
 {
     ASSERT(isRemoved());
     ALWAYS_LOG(LOGIDENTIFIER);
+    m_trackOpaqueRoot->clear();
 }
 
 ExceptionOr<Ref<TimeRanges>> SourceBuffer::buffered()
@@ -733,8 +735,8 @@ VideoTrackList& SourceBuffer::videoTracks()
 {
     if (!m_videoTracks) {
         Ref videoTracks = VideoTrackList::create(protect(scriptExecutionContext()).get());
-        m_videoTracks = videoTracks.copyRef();
-        videoTracks->setOpaqueRootObserver(m_opaqueRootProvider);
+        lazyInitialize(m_videoTracks, videoTracks.copyRef());
+        videoTracks->setOpaqueRoot(m_trackOpaqueRoot);
     }
     return *m_videoTracks;
 }
@@ -743,8 +745,8 @@ AudioTrackList& SourceBuffer::audioTracks()
 {
     if (!m_audioTracks) {
         Ref audioTracks = AudioTrackList::create(protect(scriptExecutionContext()).get());
-        m_audioTracks = audioTracks.copyRef();
-        audioTracks->setOpaqueRootObserver(m_opaqueRootProvider);
+        lazyInitialize(m_audioTracks, audioTracks.copyRef());
+        audioTracks->setOpaqueRoot(m_trackOpaqueRoot);
     }
     return *m_audioTracks;
 }
@@ -753,8 +755,8 @@ TextTrackList& SourceBuffer::textTracks()
 {
     if (!m_textTracks) {
         Ref textTracks = TextTrackList::create(protect(scriptExecutionContext()).get());
-        m_textTracks = textTracks.copyRef();
-        textTracks->setOpaqueRootObserver(m_opaqueRootProvider);
+        lazyInitialize(m_textTracks, textTracks.copyRef());
+        textTracks->setOpaqueRoot(m_trackOpaqueRoot);
     }
     return *m_textTracks;
 }
@@ -1210,7 +1212,7 @@ void SourceBuffer::audioTrackLanguageChanged(AudioTrack& track)
         audioTracks->scheduleChangeEvent();
 }
 
-void SourceBuffer::textTrackModeChanged(TextTrack& track)
+void SourceBuffer::textTrackModeChanged(TextTrack& track, TextTrack::ModeChangeType)
 {
     // 2.4.5 Changes to selected/enabled track state
     // If a text track mode becomes "disabled" and the SourceBuffer associated with this track is not
@@ -1441,7 +1443,8 @@ size_t SourceBuffer::memoryCost() const
 
 WebCoreOpaqueRoot SourceBuffer::opaqueRoot() const
 {
-    return WebCoreOpaqueRoot { const_cast<SourceBuffer*>(this) };
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return WebCoreOpaqueRoot { const_cast<SourceBuffer*>(this) };
 }
 
 void SourceBuffer::memoryPressure()

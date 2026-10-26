@@ -36,6 +36,7 @@
 #import "Logging.h"
 #import "PageClient.h"
 #import "RelatedOriginsValidator.h"
+#import "ValidationProcedures.h"
 #import "WKError.h"
 #import "WKWebView.h"
 #import "WebAuthenticationRequestData.h"
@@ -58,8 +59,10 @@
 #import <WebCore/WellKnownOriginList.h>
 #import <ranges>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/CompletionHandler.h>
 #import <wtf/StdLibExtras.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/text/Base64.h>
 #import "AuthenticationServicesCoreSoftLink.h"
@@ -115,6 +118,10 @@
 
 #endif // HAVE(WEB_AUTHN_AS_MODERN)
 
+// FIXME: https://bugs.webkit.org/show_bug.cgi?id=325600 Compare against the calling frame's committed origin, not the sender's domain authority.
+#define EXTRACT_WITH_MESSAGE_CHECK_COMPLETION(name, untrusted, completion, ...) \
+    EXTRACT_WITH_MESSAGE_CHECK_BASE(connection, name, untrusted, completion, __VA_ARGS__)
+
 namespace WebKit {
 using namespace WebCore;
 
@@ -130,7 +137,7 @@ static inline RefPtr<ArrayBuffer> toArrayBufferNilIfEmpty(NSData *data)
     return ArrayBuffer::create(span(data));
 }
 
-static inline ExceptionCode NODELETE toExceptionCode(NSInteger nsErrorCode)
+static inline ExceptionCode LEGACY_NODELETE toExceptionCode(NSInteger nsErrorCode)
 {
     ExceptionCode exceptionCode = (ExceptionCode)nsErrorCode;
 
@@ -464,11 +471,11 @@ RetainPtr<NSArray> WebAuthenticatorCoordinatorProxy::requestsForAssertion(const 
             RetainPtr<NSMutableDictionary> perCredentialInputValues = nullptr;
             if (prf->evalByCredential) {
                 perCredentialInputValues = adoptNS([[NSMutableDictionary alloc] init]);
-                for (auto& credentialIDAndInputValues : *prf->evalByCredential) {
+                for (auto& credentialIDAndInputValues : borrow(*prf->evalByCredential)) {
                     auto key = base64URLDecode(credentialIDAndInputValues.key);
                     if (!key)
                         continue;
-                    [perCredentialInputValues setObject:toASAssertionPRFInputValue(credentialIDAndInputValues.value).get() forKey: toNSData(*key).get()];
+                    [perCredentialInputValues setObject:toASAssertionPRFInputValue(credentialIDAndInputValues.value).get() forKey: toNSData(borrow(*key)->span()).get()];
                 }
             }
             request.get().prf = adoptNS([allocASAuthorizationPublicKeyCredentialPRFAssertionInputInstance() initWithInputValues:inputValues.get() perCredentialInputValues:perCredentialInputValues.get()]).get();
@@ -500,11 +507,11 @@ RetainPtr<NSArray> WebAuthenticatorCoordinatorProxy::requestsForAssertion(const 
             RetainPtr<NSMutableDictionary> perCredentialInputValues = nullptr;
             if (prf->evalByCredential) {
                 perCredentialInputValues = adoptNS([[NSMutableDictionary alloc] init]);
-                for (auto& credentialIDAndInputValues : *prf->evalByCredential) {
+                for (auto& credentialIDAndInputValues : borrow(*prf->evalByCredential)) {
                     auto key = base64URLDecode(credentialIDAndInputValues.key);
                     if (!key)
                         continue;
-                    [perCredentialInputValues setObject:toASAssertionPRFInputValue(credentialIDAndInputValues.value).get() forKey: toNSData(*key).get()];
+                    [perCredentialInputValues setObject:toASAssertionPRFInputValue(credentialIDAndInputValues.value).get() forKey: toNSData(borrow(*key)->span()).get()];
                 }
             }
             request.get().prf = adoptNS([allocASAuthorizationPublicKeyCredentialPRFAssertionInputInstance() initWithInputValues:inputValues.get() perCredentialInputValues:perCredentialInputValues.get()]).get();
@@ -567,14 +574,15 @@ void WebAuthenticatorCoordinatorProxy::makeActiveConditionalAssertion()
 inline static Vector<AuthenticatorTransport> toTransports(NSArray<ASAuthorizationSecurityKeyPublicKeyCredentialDescriptorTransport> *asTransports)
 {
     Vector<AuthenticatorTransport> transports;
-    for (ASAuthorizationSecurityKeyPublicKeyCredentialDescriptorTransport asTransport : asTransports) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL ASAuthorizationSecurityKeyPublicKeyCredentialDescriptorTransport asTransport : asTransports) {
         if (auto transport = convertStringToAuthenticatorTransport(asTransport))
             transports.append(*transport);
     }
     return transports;
 }
 
-static inline AuthenticatorAttachment NODELETE fromASAuthorizationPublicKeyCredentialAttachment(ASAuthorizationPublicKeyCredentialAttachment attachment)
+static inline AuthenticatorAttachment LEGACY_NODELETE fromASAuthorizationPublicKeyCredentialAttachment(ASAuthorizationPublicKeyCredentialAttachment attachment)
 {
     if (attachment == ASAuthorizationPublicKeyCredentialAttachmentPlatform)
         return AuthenticatorAttachment::Platform;
@@ -676,15 +684,15 @@ void WebAuthenticatorCoordinatorProxy::performRequestWithValidatedRelyingPartyId
             WebCore::ExceptionData exceptionData = { ExceptionCode::NotAllowedError, @"" };
             WebCore::AuthenticatorAttachment attachment = AuthenticatorAttachment::Platform;
             if ([error.get().domain isEqualToString:WKErrorDomain])
-                exceptionData = { toExceptionCode(error.get().code), error.get().userInfo[NSLocalizedDescriptionKey] };
+                exceptionData = { toExceptionCode(error.get().code), dynamic_objc_cast<NSString>(error.get().userInfo[NSLocalizedDescriptionKey]) };
             else if ([error.get().domain isEqualToString:ASAuthorizationErrorDomain]) {
                 switch (error.get().code) {
                 case ASAuthorizationErrorFailed: {
                     RetainPtr<NSError> underlyingError = retainPtr(error.get().userInfo[NSUnderlyingErrorKey]);
                     if ([underlyingError.get().domain isEqualToString:ASCAuthorizationErrorDomain] && underlyingError.get().code == ASCAuthorizationErrorSecurityError)
-                        exceptionData = { ExceptionCode::SecurityError, underlyingError.get().userInfo[NSLocalizedFailureReasonErrorKey] };
+                        exceptionData = { ExceptionCode::SecurityError, dynamic_objc_cast<NSString>(underlyingError.get().userInfo[NSLocalizedFailureReasonErrorKey]) };
                     else if ([underlyingError.get().domain isEqualToString:WKErrorDomain])
-                        exceptionData = { toExceptionCode(underlyingError.get().code), underlyingError.get().userInfo[NSLocalizedDescriptionKey] };
+                        exceptionData = { toExceptionCode(underlyingError.get().code), dynamic_objc_cast<NSString>(underlyingError.get().userInfo[NSLocalizedDescriptionKey]) };
                     break;
                 }
                 case ASAuthorizationErrorMatchedExcludedCredential:
@@ -943,7 +951,7 @@ static inline void setGlobalFrameIDForContext(RetainPtr<ASCCredentialRequestCont
     }
 }
 
-static inline ASPublicKeyCredentialResidentKeyPreference NODELETE toASCResidentKeyPreference(std::optional<ResidentKeyRequirement> requirement, bool requireResidentKey)
+static inline ASPublicKeyCredentialResidentKeyPreference LEGACY_NODELETE toASCResidentKeyPreference(std::optional<ResidentKeyRequirement> requirement, bool requireResidentKey)
 {
     if (!requirement)
         return requireResidentKey ? ASPublicKeyCredentialResidentKeyPreferenceRequired : ASPublicKeyCredentialResidentKeyPreferenceNotPresent;
@@ -1121,7 +1129,8 @@ static Vector<WebCore::AuthenticatorTransport> toAuthenticatorTransports(NSArray
 {
     Vector<WebCore::AuthenticatorTransport> transports;
     transports.reserveInitialCapacity(ascTransports.count);
-    for (NSString *ascTransport : ascTransports) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *ascTransport : ascTransports) {
         if ([ascTransport isEqualToString:@"usb"])
             transports.append(WebCore::AuthenticatorTransport::Usb);
         else if ([ascTransport isEqualToString:@"nfc"])
@@ -1175,51 +1184,51 @@ static inline void continueAfterRequest(RetainPtr<id <ASCCredentialProtocol>> cr
     if ([credential isKindOfClass:getASCPlatformPublicKeyCredentialRegistrationClassSingleton()]) {
         response.isAuthenticatorAttestationResponse = true;
 
-        ASCPlatformPublicKeyCredentialRegistration *registrationCredential = credential.get();
-        response.rawId = toArrayBuffer(retainPtr(registrationCredential.credentialID).get());
-        response.attestationObject = toArrayBuffer(retainPtr(registrationCredential.attestationObject).get());
-        response.clientDataJSON = toArrayBuffer(retainPtr(registrationCredential.rawClientDataJSON).get());
-        rawAttachment = registrationCredential.attachment;
+        RetainPtr<ASCPlatformPublicKeyCredentialRegistration> registrationCredential = credential.get();
+        response.rawId = toArrayBuffer(retainPtr([registrationCredential credentialID]).get());
+        response.attestationObject = toArrayBuffer(retainPtr([registrationCredential attestationObject]).get());
+        response.clientDataJSON = toArrayBuffer(retainPtr([registrationCredential rawClientDataJSON]).get());
+        rawAttachment = [registrationCredential attachment];
         if ([registrationCredential respondsToSelector:@selector(transports)])
-            response.transports = toAuthenticatorTransports(retainPtr(registrationCredential.transports).get());
+            response.transports = toAuthenticatorTransports(retainPtr([registrationCredential transports]).get());
         if ([registrationCredential respondsToSelector:@selector(extensionOutputsCBOR)])
-            response.extensionOutputs = toExtensionOutputs(retainPtr(registrationCredential.extensionOutputsCBOR).get());
+            response.extensionOutputs = toExtensionOutputs(retainPtr([registrationCredential extensionOutputsCBOR]).get());
     } else if ([credential isKindOfClass:getASCSecurityKeyPublicKeyCredentialRegistrationClassSingleton()]) {
         response.isAuthenticatorAttestationResponse = true;
 
-        ASCSecurityKeyPublicKeyCredentialRegistration *registrationCredential = credential.get();
-        response.rawId = toArrayBuffer(registrationCredential.credentialID);
-        response.attestationObject = toArrayBuffer(registrationCredential.attestationObject);
-        response.clientDataJSON = toArrayBuffer(registrationCredential.rawClientDataJSON);
-        rawAttachment = registrationCredential.attachment;
+        RetainPtr<ASCSecurityKeyPublicKeyCredentialRegistration> registrationCredential = credential.get();
+        response.rawId = toArrayBuffer([registrationCredential credentialID]);
+        response.attestationObject = toArrayBuffer([registrationCredential attestationObject]);
+        response.clientDataJSON = toArrayBuffer([registrationCredential rawClientDataJSON]);
+        rawAttachment = [registrationCredential attachment];
         if ([registrationCredential respondsToSelector:@selector(transports)])
-            response.transports = toAuthenticatorTransports(registrationCredential.transports);
+            response.transports = toAuthenticatorTransports([registrationCredential transports]);
         if ([registrationCredential respondsToSelector:@selector(extensionOutputsCBOR)])
-            response.extensionOutputs = toExtensionOutputs(registrationCredential.extensionOutputsCBOR);
+            response.extensionOutputs = toExtensionOutputs([registrationCredential extensionOutputsCBOR]);
     } else if ([credential isKindOfClass:getASCPlatformPublicKeyCredentialAssertionClassSingleton()]) {
         response.isAuthenticatorAttestationResponse = false;
 
-        ASCPlatformPublicKeyCredentialAssertion *assertionCredential = credential.get();
-        response.rawId = toArrayBuffer(retainPtr(assertionCredential.credentialID).get());
-        response.authenticatorData = toArrayBuffer(retainPtr(assertionCredential.authenticatorData).get());
-        response.signature = toArrayBuffer(retainPtr(assertionCredential.signature).get());
-        response.userHandle = toArrayBufferNilIfEmpty(retainPtr(assertionCredential.userHandle).get());
-        response.clientDataJSON = toArrayBuffer(retainPtr(assertionCredential.rawClientDataJSON).get());
-        rawAttachment = assertionCredential.attachment;
+        RetainPtr<ASCPlatformPublicKeyCredentialAssertion> assertionCredential = credential.get();
+        response.rawId = toArrayBuffer(retainPtr([assertionCredential credentialID]).get());
+        response.authenticatorData = toArrayBuffer(retainPtr([assertionCredential authenticatorData]).get());
+        response.signature = toArrayBuffer(retainPtr([assertionCredential signature]).get());
+        response.userHandle = toArrayBufferNilIfEmpty(retainPtr([assertionCredential userHandle]).get());
+        response.clientDataJSON = toArrayBuffer(retainPtr([assertionCredential rawClientDataJSON]).get());
+        rawAttachment = [assertionCredential attachment];
         if ([assertionCredential respondsToSelector:@selector(extensionOutputsCBOR)])
-            response.extensionOutputs = toExtensionOutputs(retainPtr(assertionCredential.extensionOutputsCBOR).get());
+            response.extensionOutputs = toExtensionOutputs(retainPtr([assertionCredential extensionOutputsCBOR]).get());
     } else if ([credential isKindOfClass:getASCSecurityKeyPublicKeyCredentialAssertionClassSingleton()]) {
         response.isAuthenticatorAttestationResponse = false;
 
-        ASCSecurityKeyPublicKeyCredentialAssertion *assertionCredential = credential.get();
-        response.rawId = toArrayBuffer(assertionCredential.credentialID);
-        response.authenticatorData = toArrayBuffer(assertionCredential.authenticatorData);
-        response.signature = toArrayBuffer(assertionCredential.signature);
-        response.userHandle = toArrayBufferNilIfEmpty(assertionCredential.userHandle);
-        response.clientDataJSON = toArrayBuffer(assertionCredential.rawClientDataJSON);
-        rawAttachment = assertionCredential.attachment;
+        RetainPtr<ASCSecurityKeyPublicKeyCredentialAssertion> assertionCredential = credential.get();
+        response.rawId = toArrayBuffer([assertionCredential credentialID]);
+        response.authenticatorData = toArrayBuffer([assertionCredential authenticatorData]);
+        response.signature = toArrayBuffer([assertionCredential signature]);
+        response.userHandle = toArrayBufferNilIfEmpty([assertionCredential userHandle]);
+        response.clientDataJSON = toArrayBuffer([assertionCredential rawClientDataJSON]);
+        rawAttachment = [assertionCredential attachment];
         if ([assertionCredential respondsToSelector:@selector(extensionOutputsCBOR)])
-            response.extensionOutputs = toExtensionOutputs(assertionCredential.extensionOutputsCBOR);
+            response.extensionOutputs = toExtensionOutputs([assertionCredential extensionOutputsCBOR]);
     } else {
         ExceptionCode exceptionCode;
         RetainPtr<NSString> errorMessage;
@@ -1360,9 +1369,9 @@ static inline void getArePasskeysDisallowedForRelyingParty(const WebCore::Securi
     handler(false);
 }
 
-void WebAuthenticatorCoordinatorProxy::isConditionalMediationAvailable(IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedOrigin, QueryCompletionHandler&& handler)
+void WebAuthenticatorCoordinatorProxy::isConditionalMediationAvailable(IPC::Connection& connection, IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedOrigin, QueryCompletionHandler&& handler)
 {
-    auto data = WTF::move(untrustedOrigin).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NeedsReview);
+    EXTRACT_WITH_MESSAGE_CHECK_COMPLETION(data, untrustedOrigin, handler(false), ProcessSpeaksForDomain { connection });
     getCanCurrentProcessAccessPasskeyForRelyingParty(data, [handler = WTF::move(handler)](bool canAccessPasskeyData) mutable {
         handler(canAccessPasskeyData && [getASCWebKitSPISupportClassSingleton() shouldUseAlternateCredentialStore]);
     });
@@ -1383,10 +1392,9 @@ static void setRelatedOriginsCapability(Vector<KeyValuePair<String, bool>>& capa
     capabilities.append({ relatedOriginsCapability, true });
 }
 
-void WebAuthenticatorCoordinatorProxy::getClientCapabilities(IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedOrigin, CapabilitiesCompletionHandler&& handler)
+void WebAuthenticatorCoordinatorProxy::getClientCapabilities(IPC::Connection& connection, IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedOrigin, CapabilitiesCompletionHandler&& handler)
 {
-    auto originData = WTF::move(untrustedOrigin).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NeedsReview);
-
+    EXTRACT_WITH_MESSAGE_CHECK_COMPLETION(originData, untrustedOrigin, handler({ }), ProcessSpeaksForDomain { connection });
     if (![getASCWebKitSPISupportClassSingleton() respondsToSelector:@selector(getClientCapabilitiesForRelyingParty:withCompletionHandler:)]) {
         Vector<KeyValuePair<String, bool>> capabilities;
         setRelatedOriginsCapability(capabilities);
@@ -1396,7 +1404,8 @@ void WebAuthenticatorCoordinatorProxy::getClientCapabilities(IPC::Untrusted<WebC
 
     [getASCWebKitSPISupportClassSingleton() getClientCapabilitiesForRelyingParty:originData.securityOrigin()->domain().createNSString().get() withCompletionHandler:makeBlockPtr([handler = WTF::move(handler)](NSDictionary<NSString *, NSNumber *> *result) mutable {
         Vector<KeyValuePair<String, bool>> capabilities;
-        for (NSString *key in result)
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSString *key in result)
             capabilities.append({ key, result[key].boolValue });
         setRelatedOriginsCapability(capabilities);
         std::ranges::sort(capabilities, codePointCompareLessThan, &KeyValuePair<String, bool>::key);
@@ -1407,9 +1416,9 @@ void WebAuthenticatorCoordinatorProxy::getClientCapabilities(IPC::Untrusted<WebC
     }).get()];
 }
 
-void WebAuthenticatorCoordinatorProxy::isUserVerifyingPlatformAuthenticatorAvailable(IPC::Untrusted<SecurityOriginData>&& untrustedOrigin, QueryCompletionHandler&& handler)
+void WebAuthenticatorCoordinatorProxy::isUserVerifyingPlatformAuthenticatorAvailable(IPC::Connection& connection, IPC::Untrusted<SecurityOriginData>&& untrustedOrigin, QueryCompletionHandler&& handler)
 {
-    auto data = WTF::move(untrustedOrigin).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NeedsReview);
+    EXTRACT_WITH_MESSAGE_CHECK_COMPLETION(data, untrustedOrigin, handler(false), ProcessSpeaksForDomain { connection });
     if (m_webPageProxy->configuration().backgroundTextExtractionEnabled()) {
         handler(false);
         return;
@@ -1472,10 +1481,12 @@ void WebAuthenticatorCoordinatorProxy::cancel(CompletionHandler<void()>&& handle
 #endif
 }
 
-void WebAuthenticatorCoordinatorProxy::signalUnknownCredential(IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedOrigin, WebCore::UnknownCredentialOptions&& options, CompletionHandler<void(std::optional<ExceptionData>)>&& completionHandler)
+void WebAuthenticatorCoordinatorProxy::signalUnknownCredential(IPC::Connection& connection, IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedOrigin, WebCore::UnknownCredentialOptions&& options, CompletionHandler<void(std::optional<ExceptionData>)>&& completionHandler)
 {
-    auto originData = WTF::move(untrustedOrigin).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NeedsReview);
-
+    EXTRACT_WITH_MESSAGE_CHECK_COMPLETION(origin, untrustedOrigin,
+        completionHandler(ExceptionData { ExceptionCode::SecurityError, "Not authorized for this relying party"_s }), ProcessSpeaksForDomain { connection });
+    MESSAGE_CHECK_COMPLETION_BASE(WebCore::RegistrableDomain::uncheckedCreateFromHost(options.rpId) == WebCore::RegistrableDomain { origin }, connection,
+        completionHandler(ExceptionData { ExceptionCode::SecurityError, "Not authorized for this relying party"_s }));
     auto decodedCredentialId = base64URLDecode(options.credentialId);
     if (!decodedCredentialId) {
         RELEASE_LOG_ERROR(WebAuthn, "Failed to parse credentialId for signalUnknownCredential.");
@@ -1484,7 +1495,7 @@ void WebAuthenticatorCoordinatorProxy::signalUnknownCredential(IPC::Untrusted<We
     }
 
 #if USE(APPLE_INTERNAL_SDK)
-    [getCredentialUpdaterShimClassSingleton() signalUnknownCredentialWithRelyingPartyIdentifier:options.rpId.createNSString().get() credentialID:WTF::toNSData(*decodedCredentialId).get() completionHandler:makeBlockPtr([completionHandler = WTF::move(completionHandler)](NSError *error) mutable {
+    [getCredentialUpdaterShimClassSingleton() signalUnknownCredentialWithRelyingPartyIdentifier:options.rpId.createNSString().get() credentialID:WTF::toNSData(borrow(*decodedCredentialId)->span()).get() completionHandler:makeBlockPtr([completionHandler = WTF::move(completionHandler)](NSError *error) mutable {
         ensureOnMainRunLoop([error = protect(error), completionHandler = WTF::move(completionHandler)] mutable {
             if (error) {
                 RELEASE_LOG_ERROR(WebAuthn, "Error signaling unknown credential: %@.", error.get().localizedDescription);
@@ -1499,10 +1510,12 @@ void WebAuthenticatorCoordinatorProxy::signalUnknownCredential(IPC::Untrusted<We
 #endif
 }
 
-void WebAuthenticatorCoordinatorProxy::signalAllAcceptedCredentials(IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedOrigin, WebCore::AllAcceptedCredentialsOptions&& options, CompletionHandler<void(std::optional<ExceptionData>)>&& completionHandler)
+void WebAuthenticatorCoordinatorProxy::signalAllAcceptedCredentials(IPC::Connection& connection, IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedOrigin, WebCore::AllAcceptedCredentialsOptions&& options, CompletionHandler<void(std::optional<ExceptionData>)>&& completionHandler)
 {
-    auto originData = WTF::move(untrustedOrigin).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NeedsReview);
-
+    EXTRACT_WITH_MESSAGE_CHECK_COMPLETION(origin, untrustedOrigin,
+        completionHandler(ExceptionData { ExceptionCode::SecurityError, "Not authorized for this relying party"_s }), ProcessSpeaksForDomain { connection });
+    MESSAGE_CHECK_COMPLETION_BASE(WebCore::RegistrableDomain::uncheckedCreateFromHost(options.rpId) == WebCore::RegistrableDomain { origin }, connection,
+        completionHandler(ExceptionData { ExceptionCode::SecurityError, "Not authorized for this relying party"_s }));
     auto userHandle = base64URLDecode(options.userId);
     if (!userHandle) {
         RELEASE_LOG_ERROR(WebAuthn, "Failed to parse userHandle for signalAllAcceptedCredentials.");
@@ -1510,18 +1523,18 @@ void WebAuthenticatorCoordinatorProxy::signalAllAcceptedCredentials(IPC::Untrust
         return;
     }
     RetainPtr<NSMutableArray<NSData *>> credentialIds = adoptNS([[NSMutableArray alloc] init]);
-    for (auto& credential : options.allAcceptedCredentialIds) {
+    for (auto& credential : borrow(options.allAcceptedCredentialIds)) {
         auto decodedCredentialId = base64URLDecode(credential);
         if (!decodedCredentialId) {
             RELEASE_LOG_ERROR(WebAuthn, "Failed to parse credentialId for signalAllAcceptedCredentials.");
             completionHandler(ExceptionData { ExceptionCode::UnknownError, "Unable to parse credential ID."_s });
             return;
         }
-        [credentialIds addObject:toNSData(*decodedCredentialId).get()];
+        [credentialIds addObject:toNSData(borrow(*decodedCredentialId)->span()).get()];
     }
 
 #if USE(APPLE_INTERNAL_SDK)
-    [getCredentialUpdaterShimClassSingleton() signalAllAcceptedCredentialsWithRelyingPartyIdentifier:options.rpId.createNSString().get() userHandle:WTF::toNSData(*userHandle).get() acceptedCredentialIDs:credentialIds.get() completionHandler:makeBlockPtr([completionHandler = WTF::move(completionHandler)](NSError *error) mutable {
+    [getCredentialUpdaterShimClassSingleton() signalAllAcceptedCredentialsWithRelyingPartyIdentifier:options.rpId.createNSString().get() userHandle:WTF::toNSData(borrow(*userHandle)->span()).get() acceptedCredentialIDs:credentialIds.get() completionHandler:makeBlockPtr([completionHandler = WTF::move(completionHandler)](NSError *error) mutable {
         ensureOnMainRunLoop([completionHandler = WTF::move(completionHandler), error = retainPtr(error)]() mutable {
             if (error) {
                 RELEASE_LOG_ERROR(WebAuthn, "Error signaling all accepted credentials: %@.", error.get().localizedDescription);
@@ -1536,10 +1549,12 @@ void WebAuthenticatorCoordinatorProxy::signalAllAcceptedCredentials(IPC::Untrust
 #endif
 }
 
-void WebAuthenticatorCoordinatorProxy::signalCurrentUserDetails(IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedOrigin, WebCore::CurrentUserDetailsOptions&& options, CompletionHandler<void(std::optional<ExceptionData>)>&& completionHandler)
+void WebAuthenticatorCoordinatorProxy::signalCurrentUserDetails(IPC::Connection& connection, IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedOrigin, WebCore::CurrentUserDetailsOptions&& options, CompletionHandler<void(std::optional<ExceptionData>)>&& completionHandler)
 {
-    auto originData = WTF::move(untrustedOrigin).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NeedsReview);
-
+    EXTRACT_WITH_MESSAGE_CHECK_COMPLETION(origin, untrustedOrigin,
+        completionHandler(ExceptionData { ExceptionCode::SecurityError, "Not authorized for this relying party"_s }), ProcessSpeaksForDomain { connection });
+    MESSAGE_CHECK_COMPLETION_BASE(WebCore::RegistrableDomain::uncheckedCreateFromHost(options.rpId) == WebCore::RegistrableDomain { origin }, connection,
+        completionHandler(ExceptionData { ExceptionCode::SecurityError, "Not authorized for this relying party"_s }));
     auto userHandle = base64URLDecode(options.userId);
     if (!userHandle) {
         RELEASE_LOG_ERROR(WebAuthn, "Failed to parse userHandle for signalAllAcceptedCredentials.");
@@ -1548,7 +1563,7 @@ void WebAuthenticatorCoordinatorProxy::signalCurrentUserDetails(IPC::Untrusted<W
     }
 
 #if USE(APPLE_INTERNAL_SDK)
-    [getCredentialUpdaterShimClassSingleton() signalCurrentUserDetailsWithRelyingPartyIdentifier:options.rpId.createNSString().get() userHandle:WTF::toNSData(*userHandle).get() newName:options.name.createNSString().get() completionHandler:makeBlockPtr([completionHandler = WTF::move(completionHandler)](NSError *error) mutable {
+    [getCredentialUpdaterShimClassSingleton() signalCurrentUserDetailsWithRelyingPartyIdentifier:options.rpId.createNSString().get() userHandle:WTF::toNSData(borrow(*userHandle)->span()).get() newName:options.name.createNSString().get() completionHandler:makeBlockPtr([completionHandler = WTF::move(completionHandler)](NSError *error) mutable {
         ensureOnMainRunLoop([completionHandler = WTF::move(completionHandler), error = retainPtr(error)]() mutable {
             if (error) {
                 RELEASE_LOG_ERROR(WebAuthn, "Error signaling current user details: %@.", error.get().localizedDescription);
@@ -1566,3 +1581,5 @@ void WebAuthenticatorCoordinatorProxy::signalCurrentUserDetails(IPC::Untrusted<W
 } // namespace WebKit
 
 #endif // HAVE(UNIFIED_ASC_AUTH_UI) || HAVE(WEB_AUTHN_AS_MODERN)
+
+#undef EXTRACT_WITH_MESSAGE_CHECK_COMPLETION

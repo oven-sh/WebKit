@@ -58,20 +58,22 @@ using BackForwardListMap = HashMap<WeakRef<BackForwardList>, WebBackForwardList*
 
 // FIXME: Instead of this we could just create a class derived from BackForwardList
 // with a pointer to a WebBackForwardList in it.
-static BackForwardListMap& NODELETE backForwardLists()
+static BackForwardListMap& LEGACY_NODELETE backForwardLists()
 {
     static NeverDestroyed<BackForwardListMap> staticBackForwardLists;
     return staticBackForwardLists;
 }
 
-@implementation WebBackForwardList
+@implementation WebBackForwardList {
+    RefPtr<BackForwardList> _backForwardList;
+}
 
 BackForwardList* core(WebBackForwardList *webBackForwardList)
 {
     if (!webBackForwardList)
         return 0;
 
-    return reinterpret_cast<BackForwardList*>(webBackForwardList->_private);
+    return webBackForwardList->_backForwardList.get();
 }
 
 WebBackForwardList *kit(BackForwardList* backForwardList)
@@ -92,7 +94,7 @@ WebBackForwardList *kit(BackForwardList* backForwardList)
     if (!self)
         return nil;
 
-    _private = reinterpret_cast<WebBackForwardListPrivate*>(&backForwardList.leakRef());
+    _backForwardList = WTF::move(backForwardList);
     backForwardLists().set(*core(self), self);
     return self;
 }
@@ -112,7 +114,7 @@ WebBackForwardList *kit(BackForwardList* backForwardList)
     if (WebCoreObjCScheduleDeallocateOnMainThread([WebBackForwardList class], self))
         return;
 
-    RefPtr backForwardList = adoptRef(core(self));
+    RefPtr backForwardList = core(self);
     ASSERT(backForwardList);
     if (backForwardList) {
         ASSERT(backForwardList->closed());
@@ -156,30 +158,30 @@ constexpr auto WebBackForwardListDictionaryCurrentKey = @"current";
 
 - (NSDictionary *)dictionaryRepresentation
 {
-    auto& list = *core(self);
-    auto entries = createNSArray(list.entries(), [] (auto& item) {
-        return [kit(protect(const_cast<WebCore::HistoryItem*>(item.ptr()))) dictionaryRepresentationIncludingChildren:NO];
+    Ref list = *core(self);
+    auto entries = createNSArray(list->entries(), [] (auto& item) {
+        return [protect(kit(protect(const_cast<WebCore::HistoryItem*>(item.ptr())))) dictionaryRepresentationIncludingChildren:NO];
     });
     return @{
         WebBackForwardListDictionaryEntriesKey: entries.get(),
-        WebBackForwardListDictionaryCurrentKey: @(list.current()),
-        WebBackForwardListDictionaryCapacityKey: @(list.capacity()),
+        WebBackForwardListDictionaryCurrentKey: @(list->current()),
+        WebBackForwardListDictionaryCapacityKey: @(list->capacity()),
     };
 }
 
 - (void)setToMatchDictionaryRepresentation:(NSDictionary *)dictionary
 {
-    auto& list = *core(self);
+    Ref list = *core(self);
 
-    list.setCapacity([[dictionary objectForKey:WebBackForwardListDictionaryCapacityKey] unsignedIntValue]);
+    list->setCapacity([[dictionary objectForKey:WebBackForwardListDictionaryCapacityKey] unsignedIntValue]);
     for (NSDictionary *itemDictionary in [dictionary objectForKey:WebBackForwardListDictionaryEntriesKey])
-        list.addItem(*core(adoptNS([[WebHistoryItem alloc] initFromDictionaryRepresentation:itemDictionary]).get()));
+        list->addItem(*core(adoptNS([[WebHistoryItem alloc] initFromDictionaryRepresentation:itemDictionary]).get()));
 
     unsigned currentIndex = [[dictionary objectForKey:WebBackForwardListDictionaryCurrentKey] unsignedIntValue];
-    size_t listSize = list.entries().size();
+    size_t listSize = list->entries().size();
     if (currentIndex >= listSize)
         currentIndex = listSize - 1;
-    list.setCurrent(currentIndex);
+    list->setCurrent(currentIndex);
 }
 
 #endif // PLATFORM(IOS_FAMILY)
@@ -275,9 +277,7 @@ static bool bumperCarBackForwardHackNeeded()
 
 -(NSString *)description
 {
-    NSMutableString *result;
-    
-    result = [NSMutableString stringWithCapacity:512];
+    RetainPtr result = [NSMutableString stringWithCapacity:512];
     
     [result appendString:@"\n--------------------------------------------\n"];    
     [result appendString:@"WebBackForwardList:\n"];
@@ -293,7 +293,7 @@ static bool bumperCarBackForwardHackNeeded()
         }   
         [result appendFormat:@"%2d) ", i];
         int currPos = [result length];
-        [result appendString:[kit(const_cast<WebCore::HistoryItem*>(entries[i].ptr())) description]];
+        [result appendString:[protect(kit(entries[i].ptr())) description]];
 
         // shift all the contents over.  a bit slow, but this is for debugging
         NSRange replRange = { static_cast<NSUInteger>(currPos), [result length] - currPos };
@@ -304,17 +304,17 @@ static bool bumperCarBackForwardHackNeeded()
 
     [result appendString:@"\n--------------------------------------------\n"];    
 
-    return result;
+    return result.autorelease();
 }
 
 - (void)setPageCacheSize:(NSUInteger)size
 {
-    [core(self)->webView() setUsesPageCache:size != 0];
+    [protect(core(self)->webView()) setUsesPageCache:!!size];
 }
 
 - (NSUInteger)pageCacheSize
 {
-    return [core(self)->webView() usesPageCache] ? WebCore::BackForwardCache::singleton().maxSize() : 0;
+    return [protect(core(self)->webView()) usesPageCache] ? WebCore::BackForwardCache::singleton().maxSize() : 0;
 }
 
 - (int)backListCount
@@ -329,7 +329,7 @@ static bool bumperCarBackForwardHackNeeded()
 
 - (WebHistoryItem *)itemAtIndex:(int)index
 {
-    if (RefPtr mainFrame = core([core(self)->webView() mainFrame]))
+    if (RefPtr mainFrame = core([protect(core(self)->webView()) mainFrame]))
         return retainPtr(kit(protect(core(self))->itemAtIndex(index, mainFrame->frameID()).get())).autorelease();
     ASSERT_NOT_REACHED();
     return nullptr;

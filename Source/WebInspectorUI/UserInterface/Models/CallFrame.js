@@ -233,7 +233,7 @@ WI.CallFrame = class CallFrame
         });
     }
 
-    static fromPayload(target, payload)
+    static fromPayload(target, payload, options = {})
     {
         console.assert(payload);
 
@@ -246,7 +246,7 @@ WI.CallFrame = class CallFrame
         else if (url || scriptId) {
             let sourceCode = null;
             if (scriptId) {
-                sourceCode = WI.debuggerManager.scriptForIdentifier(scriptId, target);
+                sourceCode = WI.debuggerManager.scriptForStackTraceIdentifier(scriptId, target, options);
                 if (sourceCode && sourceCode.resource)
                     sourceCode = sourceCode.resource;
             }

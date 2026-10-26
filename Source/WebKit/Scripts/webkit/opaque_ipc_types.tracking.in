@@ -340,6 +340,7 @@
 
     [NotSentFromWebContent] MessageParam WebPage.SetObscuredContentInsetsFenced machSendRight
     [NotSentFromWebContent] MessageParamReply RemoteGraphicsContextGL.PrepareForDisplay displayBuffer
+    [NotSentFromWebContent] MessageParamReply RemoteImageBuffer.PrepareForDisplay displayBuffer
 
     [NeedsReview] MessageParam WebProcessProxy.SetTaskNamePort taskNamePort
 }
@@ -518,6 +519,8 @@
 }
 
 [UnsafeWrapper] std::optional<WebKit::ImageBufferBackendHandle> {
+    [NeedsReview] MessageParam WebProcessProxy.CommitOffscreenCanvasPlaceholderFrame layerContentsHandle
+    [NeedsReview] MessageParamReply GPUProcess.SinkCompletedSnapshotToIOSurface handle
     [Legacy] MessageParamReply RemoteImageBuffer.GetBackendHandle handle
     [Legacy] MessageParamReply WebPage.TakeSnapshot image
     [Legacy] StructureParam WebKit::RemoteLayerBackingStoreProperties.m_bufferHandle

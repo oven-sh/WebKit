@@ -63,6 +63,7 @@ AudioSessionType : WebCore::DOMAudioSessionType [Conditional=ENABLE(DOM_AUDIO_SE
 AudioSessionState : WebCore::DOMAudioSessionState [Conditional=ENABLE(DOM_AUDIO_SESSION) Headers=<WebCore/DOMAudioSession.h>]
 IsAutofocusProcessed : bool
 UserDidInteractWithPage : bool
+HasHadUserInteraction : bool
 IsClosing : bool
 DocumentURL : URL [Headers=<wtf/URL.h>]
 DocumentSecurityOrigin : RefPtr<WebCore::SecurityOrigin> [Headers=<WebCore/SecurityOrigin.h>]

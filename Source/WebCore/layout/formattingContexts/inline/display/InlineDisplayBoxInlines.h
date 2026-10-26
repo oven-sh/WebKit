@@ -26,6 +26,7 @@
 #pragma once
 
 #include "InlineDisplayBox.h"
+#include "RenderElementInlines.h"
 #include "StyleComputedStyle+GettersInlines.h"
 
 namespace WebCore {
@@ -35,7 +36,13 @@ inline bool Box::isHorizontal() const { return writingMode().isHorizontal(); }
 
 inline bool Box::isVisible() const
 {
-    return !isFullyTruncated() && style().usedVisibility() == Visibility::Visible;
+    if (isFullyTruncated())
+        return false;
+    // FIXME: Display boxes should carry the used values they paint and hit test with instead of asking the renderer.
+    if (CheckedPtr renderer = layoutBox().rendererForIntegration())
+        return renderer->usedStyle().visibility() == UsedVisibility::Visible;
+    ASSERT_NOT_REACHED();
+    return style().visibility() == Visibility::Visible && !style().isForceHidden();
 }
 
 inline bool Box::isVisibleIgnoringUsedVisibility() const

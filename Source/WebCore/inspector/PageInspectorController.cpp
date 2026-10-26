@@ -35,6 +35,11 @@
 #include "CommandLineAPIHost.h"
 #include "CommonVM.h"
 #include "DOMWrapperWorld.h"
+#include "DebuggerSuspensionController.h"
+#include "Document.h"
+#include "Frame.h"
+#include "FrameInspectorController.h"
+#include "FrameTree.h"
 #include "GraphicsContext.h"
 #include "InspectorAnimationAgent.h"
 #include "InspectorBackendClient.h"
@@ -44,7 +49,6 @@
 #include "InspectorDOMStorageAgent.h"
 #include "InspectorFrontendClient.h"
 #include "InspectorIdentifierRegistry.h"
-#include "InspectorIndexedDBAgent.h"
 #include "InspectorInstrumentation.h"
 #include "InspectorLayerTreeAgent.h"
 #include "InspectorMemoryAgent.h"
@@ -55,6 +59,7 @@
 #include "JSExecState.h"
 #include "LocalDOMWindow.h"
 #include "LocalFrame.h"
+#include "NodeDocument.h"
 #include "Page.h"
 #include "PageAuditAgent.h"
 #include "PageCanvasAgent.h"
@@ -63,6 +68,7 @@
 #include "PageDebugger.h"
 #include "PageDebuggerAgent.h"
 #include "PageHeapAgent.h"
+#include "PageIndexedDBAgent.h"
 #include "PageNetworkAgent.h"
 #include "PageRuntimeAgent.h"
 #include "PageTimelineAgent.h"
@@ -96,8 +102,9 @@ PageInspectorController::PageInspectorController(Page& page, std::unique_ptr<Ins
     , m_injectedScriptManager(WebInjectedScriptManager::create(*this, WebInjectedScriptHost::create()))
     , m_frontendRouter(FrontendRouter::create())
     , m_backendDispatcher(BackendDispatcher::create(m_frontendRouter.copyRef()))
-    , m_overlay(makeUniqueRefWithoutRefCountedCheck<InspectorOverlay>(*this, inspectorBackendClient.get()))
+    , m_overlay(makeUniqueRefWithoutRefCountedCheck<InspectorOverlay>(*this))
     , m_executionStopwatch(Stopwatch::create())
+    , m_debuggerSuspensionController(makeUniqueRef<DebuggerSuspensionController>(page))
     , m_inspectorBackendClient(WTF::move(inspectorBackendClient))
     , m_identifierRegistry(Inspector::LegacyIdentifierRegistry::create())
 {
@@ -108,6 +115,16 @@ PageInspectorController::PageInspectorController(Page& page, std::unique_ptr<Ins
     auto consoleAgent = makeUniqueRef<PageConsoleAgent>(pageContext);
     m_instrumentingAgents->setWebConsoleAgent(protect(consoleAgent).ptr());
     m_agents.append(WTF::move(consoleAgent));
+}
+
+void PageInspectorController::suspendForDebuggerSession(DebuggerPauseSessionIdentifier sessionID)
+{
+    CheckedRef { m_debuggerSuspensionController.get() }->addSessionHold(sessionID);
+}
+
+void PageInspectorController::resumeFromDebuggerSession(DebuggerPauseSessionIdentifier sessionID)
+{
+    CheckedRef { m_debuggerSuspensionController.get() }->removeSessionHold(sessionID);
 }
 
 PageInspectorController::~PageInspectorController()
@@ -179,7 +196,7 @@ void PageInspectorController::createLazyAgents()
     m_agents.append(makeUniqueRef<InspectorLayerTreeAgent>(pageContext));
     m_agents.append(makeUniqueRef<PageWorkerAgent>(pageContext));
     m_agents.append(makeUniqueRef<InspectorDOMStorageAgent>(pageContext));
-    m_agents.append(makeUniqueRef<InspectorIndexedDBAgent>(pageContext));
+    m_agents.append(makeUniqueRef<PageIndexedDBAgent>(pageContext));
 
     auto scriptProfilerAgent = makeUniqueRef<InspectorScriptProfilerAgent>(pageContext);
     m_instrumentingAgents->setPersistentScriptProfilerAgent(protect(scriptProfilerAgent).ptr());
@@ -400,6 +417,17 @@ bool PageInspectorController::shouldShowOverlay() const
     return m_overlay->shouldShowOverlay();
 }
 
+// The page DOM agent covers the main frame's document and the documents of the frames below it that live in
+// this process. A frame with a RemoteFrame ancestor is only reachable through its own FrameDOMAgent.
+static bool isCoveredByPageDOMAgent(const LocalFrame& frame)
+{
+    for (RefPtr<const Frame> ancestor = &frame; ancestor; ancestor = ancestor->tree().parent()) {
+        if (!is<LocalFrame>(*ancestor))
+            return false;
+    }
+    return true;
+}
+
 void PageInspectorController::inspect(Node* node)
 {
     if (!enabled())
@@ -407,6 +435,13 @@ void PageInspectorController::inspect(Node* node)
 
     if (!hasRemoteFrontend())
         show();
+
+    if (node) {
+        if (RefPtr frame = node->document().frame(); frame && !isCoveredByPageDOMAgent(*frame)) {
+            frame->inspectorController().inspect(*node);
+            return;
+        }
+    }
 
     CheckedRef { ensureDOMAgent() }->inspect(node);
 }
@@ -420,6 +455,21 @@ bool PageInspectorController::enabled() const
 Page& PageInspectorController::inspectedPage() const
 {
     return m_page;
+}
+
+Page* PageInspectorController::overlayOwnerPage() const
+{
+    // Always non-null: this controller is owned by the page.
+    return m_page.ptr();
+}
+
+Vector<size_t> PageInspectorController::overlayOwnerFlexLineStarts(const RenderObject& renderer) const
+{
+    // Deliberately does not create the DOM agent: with no agent there is nothing cached to report.
+    CheckedPtr domAgent = m_domAgent;
+    if (!domAgent)
+        return { };
+    return domAgent->flexibleBoxRendererCachedItemsAtStartOfLine(renderer);
 }
 
 void PageInspectorController::dispatchMessageFromFrontend(const String& message)
@@ -527,6 +577,17 @@ JSC::Debugger* PageInspectorController::debugger()
 {
     ASSERT_IMPLIES(m_didCreateLazyAgents, m_debugger);
     return m_debugger.get();
+}
+
+void PageInspectorController::forEachDebugger(NOESCAPE const Function<void(JSC::Debugger&)>& functor)
+{
+    if (m_debugger)
+        functor(*m_debugger);
+
+    protect(m_page)->forEachLocalFrame([&](LocalFrame& frame) {
+        if (auto* frameDebugger = protect(frame.inspectorController())->debugger())
+            functor(*frameDebugger);
+    });
 }
 
 JSC::VM& PageInspectorController::vm()

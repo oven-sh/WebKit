@@ -56,7 +56,7 @@ bool CSSSubstitutionParser::isValidCustomPropertyName(const CSSParserToken& toke
     return isCustomPropertyName(token.value());
 }
 
-static bool NODELETE isValidEnvVariableName(const CSSParserToken& token)
+static bool LEGACY_NODELETE isValidEnvVariableName(const CSSParserToken& token)
 {
     return token.type() == IdentToken;
 }
@@ -125,50 +125,50 @@ static std::optional<ClassifyBlockResult> classifyBlock(CSSParserTokenRange rang
             if (token.type() == LeftBraceToken && current.isTopLevelBlock && block.atEnd())
                 result.hasEmptyTopLevelBraceBlock = true;
 
-            if (token.functionId() == CSSValueVar) {
+            if (token.functionId() == CSSValueID::Var) {
                 if (!isValidVariableReference(block, parserContext))
                     return { };
                 result.hasSubstitutionFunctions = true;
                 continue;
             }
-            if (token.functionId() == CSSValueEnv) {
+            if (token.functionId() == CSSValueID::Env) {
                 if (!isValidEnvReference(block, parserContext))
                     return { };
                 result.hasSubstitutionFunctions = true;
                 continue;
             }
-            if (token.functionId() == CSSValueInherit && parserContext.cssInheritFunctionEnabled) {
+            if (token.functionId() == CSSValueID::Inherit && parserContext.cssInheritFunctionEnabled) {
                 // <inherit-args> is the same argument grammar as var()'s.
                 if (!isValidVariableReference(block, parserContext))
                     return { };
                 result.hasSubstitutionFunctions = true;
                 continue;
             }
-            if (token.functionId() == CSSValueAttr && parserContext.cssAttrSubstitutionFunctionEnabled) {
+            if (token.functionId() == CSSValueID::Attr) {
                 if (!isValidAttrReference(block, parserContext))
                     return { };
                 result.hasSubstitutionFunctions = true;
                 continue;
             }
-            if (token.functionId() == CSSValueRandomItem && parserContext.cssRandomItemFunctionEnabled) {
+            if (token.functionId() == CSSValueID::RandomItem && parserContext.cssRandomItemFunctionEnabled) {
                 if (!isValidRandomItemReference(block, parserContext))
                     return { };
                 result.hasSubstitutionFunctions = true;
                 continue;
             }
-            if (token.functionId() == CSSValueIf && parserContext.cssIfFunctionEnabled) {
+            if (token.functionId() == CSSValueID::If && parserContext.cssIfFunctionEnabled) {
                 if (!isValidIfReference(block, parserContext))
                     return { };
                 result.hasSubstitutionFunctions = true;
                 continue;
             }
-            if (token.functionId() == CSSValueIdent && parserContext.cssIdentFunctionEnabled) {
+            if (token.functionId() == CSSValueID::Ident && parserContext.cssIdentFunctionEnabled) {
                 if (!isValidIdentReference(block, parserContext))
                     return { };
                 result.hasSubstitutionFunctions = true;
                 continue;
             }
-            if (token.functionId() == CSSValueInternalAutoBase && parserContext.cssInternalAutoBaseParsingEnabled) {
+            if (token.functionId() == CSSValueID::InternalAutoBase && parserContext.cssInternalAutoBaseParsingEnabled) {
                 result.hasSubstitutionFunctions = true;
                 continue;
             }
@@ -262,8 +262,20 @@ bool isValidVariableReference(CSSParserTokenRange range, const CSSParserContext&
 bool isValidEnvReference(CSSParserTokenRange range, const CSSParserContext& parserContext)
 {
     range.consumeWhitespace();
-    if (!isValidEnvVariableName(range.consumeIncludingWhitespace()))
+    auto nameToken = range.consumeIncludingWhitespace();
+    if (!isValidEnvVariableName(nameToken))
         return false;
+
+    // viewport-segment-* env() variables require two space-separated integer indices (column, row).
+    if (parserContext.viewportSegmentsAPIEnabled && nameToken.value().startsWith("viewport-segment-"_s)) {
+        if (range.atEnd() || range.peek().type() != NumberToken)
+            return false;
+        range.consumeIncludingWhitespace();
+        if (range.atEnd() || range.peek().type() != NumberToken)
+            return false;
+        range.consumeIncludingWhitespace();
+    }
+
     if (range.atEnd())
         return true;
 
@@ -278,7 +290,7 @@ bool isValidEnvReference(CSSParserTokenRange range, const CSSParserContext& pars
 // An argument may not begin with <dashed-ident> <colon>, which is reserved for named arguments.
 // A brace block starts with a brace rather than the ident, so wrapping the value in {} allows it.
 // https://github.com/w3c/csswg-drafts/issues/11749
-static bool startsWithReservedNamedArgument(CSSParserTokenRange range)
+static bool LEGACY_NODELETE startsWithReservedNamedArgument(CSSParserTokenRange range)
 {
     range.consumeWhitespace();
     if (!CSSSubstitutionParser::isValidCustomPropertyName(range.peek()))

@@ -57,7 +57,7 @@
 
 namespace WebCore {
 
-static Document* NODELETE documentFromClipboard(const Clipboard* clipboard)
+static Document* LEGACY_NODELETE documentFromClipboard(const Clipboard* clipboard)
 {
     if (!clipboard)
         return nullptr;
@@ -193,7 +193,7 @@ void ClipboardItemBindingsDataSource::collectDataForWriting(Clipboard& destinati
             }
 
             if (RefPtr blob = JSBlob::toWrapped(result.getObject()->vm(), result.getObject()))
-                itemTypeLoader->didResolveToBlob(*clipboard->scriptExecutionContext(), blob.releaseNonNull());
+                itemTypeLoader->didResolveToBlob(*protect(clipboard->scriptExecutionContext()), blob.releaseNonNull());
             else
                 itemTypeLoader->didFailToResolve();
         });

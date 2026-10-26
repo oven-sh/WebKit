@@ -25,27 +25,27 @@
 
 #pragma once
 
+#import <WebGPU/WebGPUCpp.h>
 #import <utility>
 #import <wtf/CompletionHandler.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCountedAndCanMakeWeakPtr.h>
 #import <wtf/WeakPtr.h>
 
 struct WGPUXRProjectionLayerImpl {
 };
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class CommandEncoder;
 class Device;
 
-class XRProjectionLayer : public RefCountedAndCanMakeWeakPtr<XRProjectionLayer>, public WGPUXRProjectionLayerImpl {
+class XRProjectionLayer final : public WebGPU::XRProjectionLayer, public WGPUXRProjectionLayerImpl {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(XRProjectionLayer);
 public:
-    static Ref<XRProjectionLayer> create(WGPUTextureFormat colorFormat, WGPUTextureFormat* optionalDepthStencilFormat, WGPUTextureUsage flags, double scale, Device& device)
+    static Ref<XRProjectionLayer> create(const WebGPU::XRProjectionLayerDescriptor& descriptor, Device& device)
     {
-        return adoptRef(*new XRProjectionLayer(colorFormat, optionalDepthStencilFormat, flags, scale, device));
+        return adoptRef(*new XRProjectionLayer(descriptor, device));
     }
     static Ref<XRProjectionLayer> createInvalid(Device& device)
     {
@@ -54,23 +54,24 @@ public:
 
     ~XRProjectionLayer();
 
-    void NODELETE setLabel(String&&);
+    void LEGACY_NODELETE setLabel(String&&) final;
 
-    bool NODELETE isValid() const;
-    void NODELETE startFrame(size_t frameIndex, MachSendRight&& colorBuffer, MachSendRight&& depthBuffer, MachSendRight&& completionSyncEvent, size_t reusableTextureIndex, unsigned screenWidth, unsigned screenHeight, Vector<float>&& horizontalSamplesLeft, Vector<float>&& horizontalSamplesRight, Vector<float>&& verticalSamples);
+    bool LEGACY_NODELETE isValid() const final;
+    void LEGACY_NODELETE startFrame(size_t frameIndex, MachSendRight&& colorBuffer, MachSendRight&& depthBuffer, MachSendRight&& completionSyncEvent, size_t reusableTextureIndex, unsigned screenWidth, unsigned screenHeight, Vector<float>&& horizontalSamplesLeft, Vector<float>&& horizontalSamplesRight, Vector<float>&& verticalSamples) final;
+    void endFrame() final { }
 
-    id<MTLTexture> NODELETE colorTexture() const;
-    id<MTLTexture> NODELETE depthTexture() const;
-    const std::pair<id<MTLSharedEvent>, uint64_t>& NODELETE completionEvent() const;
-    size_t NODELETE reusableTextureIndex() const;
-    WGPUTextureFormat colorFormat() const { return m_colorFormat; }
-    std::optional<WGPUTextureFormat> optionalDepthStencilFormat() const { return m_optionalDepthStencilFormat; }
-    WGPUTextureUsage flags() const { return m_flags; }
+    id<MTLTexture> LEGACY_NODELETE colorTexture() const;
+    id<MTLTexture> LEGACY_NODELETE depthTexture() const;
+    const std::pair<id<MTLSharedEvent>, uint64_t>& LEGACY_NODELETE completionEvent() const;
+    size_t LEGACY_NODELETE reusableTextureIndex() const;
+    WebGPU::TextureFormat colorFormat() const { return m_colorFormat; }
+    std::optional<WebGPU::TextureFormat> optionalDepthStencilFormat() const { return m_optionalDepthStencilFormat; }
+    OptionSet<WebGPU::TextureUsage> flags() const { return m_flags; }
     double scale() const { return m_scale; }
 
     std::pair<id<MTLRasterizationRateMap>, id<MTLRasterizationRateMap>> rasterizationRateMaps() const { return std::make_pair(m_rasterizationMapLeft, m_rasterizationMapRight); }
 private:
-    XRProjectionLayer(WGPUTextureFormat, WGPUTextureFormat*, WGPUTextureUsage, double scale, Device&);
+    XRProjectionLayer(const WebGPU::XRProjectionLayerDescriptor&, Device&);
     XRProjectionLayer(Device&);
 
     NSMutableDictionary<NSNumber*, id<MTLTexture>>* m_colorTextures { nil };
@@ -79,9 +80,9 @@ private:
     id<MTLTexture> m_depthTexture { nil };
     std::pair<id<MTLSharedEvent>, uint64_t> m_sharedEvent;
     size_t m_reusableTextureIndex { 0 };
-    WGPUTextureFormat m_colorFormat { WGPUTextureFormat_Undefined };
-    std::optional<WGPUTextureFormat> m_optionalDepthStencilFormat;
-    WGPUTextureUsage m_flags { WGPUTextureUsage_None };
+    WebGPU::TextureFormat m_colorFormat { WebGPU::TextureFormat::Bgra8unorm };
+    std::optional<WebGPU::TextureFormat> m_optionalDepthStencilFormat;
+    OptionSet<WebGPU::TextureUsage> m_flags;
     id<MTLRasterizationRateMap> m_rasterizationMapLeft { nil };
     id<MTLRasterizationRateMap> m_rasterizationMapRight { nil };
     double m_scale { 1.f };
@@ -89,4 +90,4 @@ private:
     const Ref<Device> m_device;
 };
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal

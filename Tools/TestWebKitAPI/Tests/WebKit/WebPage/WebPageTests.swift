@@ -69,15 +69,6 @@ private class TestNavigationDecider: WebPage.NavigationDeciding {
     }
 }
 
-@MainActor
-private struct TrustingNavigationDecider: WebPage.NavigationDeciding {
-    mutating func decideAuthenticationChallengeDisposition(
-        for challenge: URLAuthenticationChallenge
-    ) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
-        (.useCredential, challenge.protectionSpace.serverTrust.map(URLCredential.init(trust:)))
-    }
-}
-
 extension WebPage.Configuration {
     fileprivate init(_ serverConfiguration: HTTPServer.Configuration, qualifiedServerTrustDebugEnabled: Bool = false) {
         self.init()
@@ -129,7 +120,7 @@ struct WebPageTests {
 
         try await server.run { serverConfiguration in
             let configuration = WebPage.Configuration(serverConfiguration, qualifiedServerTrustDebugEnabled: true)
-            let page = WebPage(configuration: configuration, navigationDecider: TrustingNavigationDecider())
+            let page = WebPage(configuration: configuration, navigationDecider: NavigationDeciderAllowingAnyTLSCertificate())
 
             #expect(page.qualifiedServerTrust == nil)
 

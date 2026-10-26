@@ -67,7 +67,7 @@ public:
 
 private:
     template<typename Filter>
-    void hoistConstants(const Filter& filter)
+    void hoistConstants(NOESCAPE const Filter& filter)
     {
         Dominators& dominators = m_proc.dominators();
         UncheckedKeyHashMap<ValueKey, Value*> valueForConstant;
@@ -367,7 +367,7 @@ private:
         }
     }
 
-    static bool NODELETE goesInTable(const Value* value)
+    static bool LEGACY_NODELETE goesInTable(const Value* value)
     {
         switch (value->opcode()) {
         case ConstDouble: {

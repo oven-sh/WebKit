@@ -69,12 +69,12 @@ public:
     void invalidate();
     void clearEntriesAffectedByViewportUnits();
 
-    void NODELETE ref() const;
+    void LEGACY_NODELETE ref() const;
     void deref() const;
 
 private:
     template<typename Callback>
-    void removeAllMatching(const Callback& matches);
+    void removeAllMatching(NOESCAPE const Callback&);
 
     void sweep();
 

@@ -71,8 +71,8 @@ public:
 #endif
     WEBCORE_EXPORT virtual ~CookieStorageSession();
 
-    WEBCORE_EXPORT static void NODELETE permitProcessToUseCookieAPI(bool);
-    WEBCORE_EXPORT static bool NODELETE processMayUseCookieAPI();
+    WEBCORE_EXPORT static void LEGACY_NODELETE permitProcessToUseCookieAPI(bool);
+    WEBCORE_EXPORT static bool LEGACY_NODELETE processMayUseCookieAPI();
 
     PAL::SessionID sessionID() const { return m_sessionID; }
     CredentialStorage& credentialStorage() LIFETIME_BOUND { return m_credentialStorage; }
@@ -126,8 +126,8 @@ private:
     const PAL::SessionID m_sessionID;
     const bool m_isInMemoryCookieStore { false };
 #if PLATFORM(COCOA)
-    RetainPtr<CFURLStorageSessionRef> m_platformSession;
-    RetainPtr<CFHTTPCookieStorageRef> m_platformCookieStorage;
+    const RetainPtr<CFURLStorageSessionRef> m_platformSession;
+    const RetainPtr<CFHTTPCookieStorageRef> m_platformCookieStorage;
 #endif
     CredentialStorage m_credentialStorage;
 

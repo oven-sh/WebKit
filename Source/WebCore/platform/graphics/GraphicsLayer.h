@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <WebCore/BoxExtents.h>
 #include <WebCore/Color.h>
 #include <WebCore/EventRegion.h>
 #include <WebCore/FilterOperations.h>
@@ -79,6 +80,7 @@ class GraphicsLayerKeyframeValueList;
 class HTMLVideoElement;
 class Image;
 class ImageBuffer;
+class NativeImage;
 class MediaPlayer;
 class Model;
 class Settings;
@@ -132,8 +134,8 @@ public:
     // Clear the client, and clear the RefPtr, but leave parented.
     WEBCORE_EXPORT static void clear(RefPtr<GraphicsLayer>&);
 
-    WEBCORE_EXPORT void NODELETE clearClient();
-    WEBCORE_EXPORT void NODELETE setClient(GraphicsLayerClient&);
+    WEBCORE_EXPORT void LEGACY_NODELETE clearClient();
+    WEBCORE_EXPORT void LEGACY_NODELETE setClient(GraphicsLayerClient&);
 
     Type type() const { return m_type; }
 
@@ -150,10 +152,10 @@ public:
     WEBCORE_EXPORT virtual String debugName() const;
 
     GraphicsLayer* parent() const { return m_parent; }
-    void NODELETE setParent(GraphicsLayer*); // Internal use only.
+    void LEGACY_NODELETE setParent(GraphicsLayer*); // Internal use only.
     
     // Returns true if the layer has the given layer as an ancestor (excluding self).
-    bool NODELETE hasAncestor(GraphicsLayer*) const;
+    bool LEGACY_NODELETE hasAncestor(GraphicsLayer*) const;
     
     const Vector<Ref<GraphicsLayer>>& children() const LIFETIME_BOUND { return m_children; }
     Vector<Ref<GraphicsLayer>>& children() LIFETIME_BOUND { return m_children; }
@@ -231,11 +233,11 @@ public:
     // For platforms that move underlying platform layers on a different thread for scrolling; just update the GraphicsLayer state.
     virtual void syncBoundsOrigin(const FloatPoint& origin) { m_boundsOrigin = origin; }
 
-    WEBCORE_EXPORT const TransformationMatrix& NODELETE transform() const;
+    WEBCORE_EXPORT const TransformationMatrix& LEGACY_NODELETE transform() const;
     WEBCORE_EXPORT virtual void setTransform(const TransformationMatrix&);
     bool hasNonIdentityTransform() const { return m_transform && !m_transform->isIdentity(); }
 
-    WEBCORE_EXPORT const TransformationMatrix& NODELETE childrenTransform() const;
+    WEBCORE_EXPORT const TransformationMatrix& LEGACY_NODELETE childrenTransform() const;
     WEBCORE_EXPORT virtual void setChildrenTransform(const TransformationMatrix&);
     bool hasNonIdentityChildrenTransform() const { return m_childrenTransform && !m_childrenTransform->isIdentity(); }
 
@@ -288,7 +290,7 @@ public:
     virtual void setAppleVisualEffectData(AppleVisualEffectData effectData) { m_appleVisualEffectData = effectData; }
 #endif
 
-    bool NODELETE needsBackdrop() const;
+    bool LEGACY_NODELETE needsBackdrop() const;
 
     // The color used to paint the layer background. Pass an invalid color to remove it.
     // Note that this covers the entire layer. Use setContentsToSolidColor() if the color should
@@ -357,13 +359,13 @@ public:
     virtual void setContentsRectClipsDescendants(bool b) { m_contentsRectClipsDescendants = b; }
 
     // Used to lay out video contents within a video layer.
-    MediaPlayerVideoGravity NODELETE videoGravity() const;
+    MediaPlayerVideoGravity LEGACY_NODELETE videoGravity() const;
     WEBCORE_EXPORT virtual void setVideoGravity(MediaPlayerVideoGravity);
 
     Path shapeLayerPath() const;
     WEBCORE_EXPORT virtual void setShapeLayerPath(const Path&);
 
-    WindRule NODELETE shapeLayerWindRule() const;
+    WindRule LEGACY_NODELETE shapeLayerWindRule() const;
     WEBCORE_EXPORT virtual void setShapeLayerWindRule(WindRule);
 
     const EventRegion& eventRegion() const LIFETIME_BOUND { return m_eventRegion; }
@@ -387,10 +389,10 @@ public:
     virtual Vector<AcceleratedAnimationForTesting> acceleratedAnimationsForTesting() const { return { }; }
 
     // Layer contents
-    virtual void setContentsToImage(Image*) { }
-    virtual bool shouldDirectlyCompositeImage(Image*) const { return true; }
+    virtual void setContentsToNativeImage(NativeImage*) { }
+    virtual bool canDirectlyCompositeNativeImage() const { return true; }
 
-    // FIXME: Merge this with setContentsToImage once we can efficiently convert an
+    // FIXME: Merge this with setContentsToNativeImage once we can efficiently convert an
     // ImageBuffer to NativeImage without GPUP readback.
     virtual void setContentsToImageBuffer(ImageBuffer*) { }
     virtual bool shouldDirectlyCompositeImageBuffer(ImageBuffer*) const { return false; }
@@ -420,6 +422,7 @@ public:
     virtual std::optional<PlatformLayerIdentifier> contentsLayerIDForModel() const { return std::nullopt; }
 #endif
     virtual bool usesContentsLayer() const { return false; }
+    virtual bool hasContentsDisplayDelegate() const { return false; }
 
     // Callback from the underlying graphics system to draw layer contents.
     WEBCORE_EXPORT void paintGraphicsLayerContents(GraphicsContext&, const FloatRect& clip, OptionSet<GraphicsLayerPaintBehavior> = { }) const;
@@ -444,9 +447,10 @@ public:
     virtual void setShowRepaintCounter(bool show) { m_showRepaintCounter = show; }
     bool isShowingRepaintCounter() const { return m_showRepaintCounter; }
 
-    virtual void setShowFrameProcessBorders(bool show, unsigned frameDepth = 0) { m_showFrameProcessBorders = show; m_frameProcessIndicatorDepth = frameDepth; }
+    virtual void setShowFrameProcessBorders(bool show, unsigned frameDepth, FrameIdentifier frameID) { m_showFrameProcessBorders = show; m_frameProcessIndicatorDepth = frameDepth; m_frameID = frameID; }
     bool isShowingFrameProcessBorders() const { return m_showFrameProcessBorders; }
     unsigned frameProcessIndicatorDepth() const { return m_frameProcessIndicatorDepth; }
+    Markable<FrameIdentifier> frameID() const { return m_frameID; }
 
     // FIXME: this is really a paint count.
     int repaintCount() const { return m_repaintCount; }
@@ -497,7 +501,7 @@ public:
     // for example to allocate new tiles.
     virtual bool visibleRectChangeRequiresFlush(const FloatRect& /* clipRect */) const { return false; }
 
-    static FloatRect adjustCoverageRectForMovement(const FloatRect& coverageRect, const FloatRect& previousVisibleRect, const FloatRect& currentVisibleRect);
+    static FloatRect LEGACY_NODELETE adjustCoverageRectForMovement(const FloatRect& coverageRect, const FloatRect& previousVisibleRect, const FloatRect& currentVisibleRect);
 
     // Return a string with a human readable form of the layer tree, If debug is true
     // pointers for the layers and timing data will be included in the returned string.
@@ -524,8 +528,8 @@ public:
     void resetTrackedRepaints();
     WEBCORE_EXPORT void addRepaintRect(const FloatRect&);
 
-    static bool NODELETE supportsLayerType(Type);
-    static bool NODELETE supportsContentsTiling();
+    static bool LEGACY_NODELETE supportsLayerType(Type);
+    static bool LEGACY_NODELETE supportsContentsTiling();
 
     WEBCORE_EXPORT void updateDebugIndicators();
 
@@ -541,7 +545,10 @@ public:
     void setRenderingIsSuppressedIncludingDescendants(bool suppressed) { m_renderingIsSuppressedIncludingDescendants = suppressed; }
 
     const std::optional<FloatRect>& animationExtent() const LIFETIME_BOUND { return m_animationExtent; }
-    void setAnimationExtent(std::optional<FloatRect> animationExtent) { m_animationExtent = animationExtent; }
+    virtual void setAnimationExtent(std::optional<FloatRect> animationExtent) { m_animationExtent = animationExtent; }
+
+    const IntOutsets& filterSamplingOutsets() const LIFETIME_BOUND { return m_filterSamplingOutsets; }
+    virtual void setFilterSamplingOutsets(const IntOutsets& outsets) { m_filterSamplingOutsets = outsets; }
 
     static void traverse(GraphicsLayer&, NOESCAPE const Function<void(GraphicsLayer&)>&);
 
@@ -618,8 +625,8 @@ protected:
     FloatSize m_size;
     FloatPoint m_boundsOrigin;
 
-    std::unique_ptr<TransformationMatrix> m_transform;
-    std::unique_ptr<TransformationMatrix> m_childrenTransform;
+    const std::unique_ptr<TransformationMatrix> m_transform;
+    const std::unique_ptr<TransformationMatrix> m_childrenTransform;
 
     Color m_backgroundColor;
     float m_opacity { 1 };
@@ -682,6 +689,7 @@ protected:
 
     int m_repaintCount { 0 };
     unsigned m_frameProcessIndicatorDepth { 0 };
+    Markable<FrameIdentifier> m_frameID;
     Vector<Ref<GraphicsLayer>> m_children;
     WeakPtr<GraphicsLayer> m_parent;
 
@@ -702,6 +710,7 @@ protected:
     FloatRoundedRect m_backdropFiltersRect;
     Path m_backdropFiltersShapePath;
     std::optional<FloatRect> m_animationExtent;
+    IntOutsets m_filterSamplingOutsets;
 
     EventRegion m_eventRegion;
 #if USE(CA)

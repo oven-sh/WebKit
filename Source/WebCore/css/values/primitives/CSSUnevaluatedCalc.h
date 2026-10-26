@@ -60,7 +60,7 @@ enum class Category : uint8_t;
 
 // Type-erased helpers to allow for shared code.
 
-void NODELETE unevaluatedCalcRef(CSSCalc::Value*);
+void LEGACY_NODELETE unevaluatedCalcRef(CSSCalc::Value*);
 void unevaluatedCalcDeref(CSSCalc::Value*);
 
 // `UnevaluatedCalc` annotates a `CSSCalc::Value` with the raw value type that it
@@ -74,7 +74,7 @@ public:
     UnevaluatedCalcBase(Category, Range, const Style::UnevaluatedCalculationBase&);
 
     UnevaluatedCalcBase(const UnevaluatedCalcBase&);
-    UnevaluatedCalcBase(UnevaluatedCalcBase&&);
+    WEBCORE_EXPORT UnevaluatedCalcBase(UnevaluatedCalcBase&&);
     UnevaluatedCalcBase& operator=(const UnevaluatedCalcBase&);
     UnevaluatedCalcBase& operator=(UnevaluatedCalcBase&&);
 
@@ -83,14 +83,14 @@ public:
     static std::optional<UnevaluatedCalcBase> parseBase(CSSParserTokenRange&, PropertyParserState&, Category, Range, CSSCalcSymbolsAllowed&&, const CSSPropertyParserOptions&);
 
     CSSCalc::Value& calcValue() const { return m_calc; }
-    [[nodiscard]] CSSCalc::Value& NODELETE leakRef();
+    [[nodiscard]] CSSCalc::Value& LEGACY_NODELETE leakRef();
 
-    Category NODELETE runtimeCategory() const;
-    CSSUnitType NODELETE primitiveType() const;
-    bool NODELETE rootNodeIsPercentage() const;
-    bool NODELETE requiresConversionData() const;
+    Category LEGACY_NODELETE runtimeCategory() const;
+    CSSUnitType LEGACY_NODELETE primitiveType() const;
+    bool LEGACY_NODELETE rootNodeIsPercentage() const;
+    bool LEGACY_NODELETE requiresConversionData() const;
 
-    bool canBeCastedTo(Category) const;
+    bool LEGACY_NODELETE canBeCastedTo(Category) const;
 
     WTF::String serializationForCSS(const SerializationContext&) const;
     void serializationForCSS(StringBuilder&, const SerializationContext&) const;

@@ -52,7 +52,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGAElement);
 
 inline SVGAElement::SVGAElement(const QualifiedName& tagName, Document& document)
-    : SVGGraphicsElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGGraphicsElement(tagName, document, PropertyRegistry::singleton())
     , SVGURIReference(this)
 {
     ASSERT(hasTagName(SVGNames::aTag));
@@ -86,7 +86,6 @@ void SVGAElement::attributeChanged(const QualifiedName& name, const AtomString& 
 {
     if (name == SVGNames::targetAttr) {
         Ref { m_target }->setBaseValInternal(newValue);
-        return;
     } else if (name == SVGNames::relAttr) {
         m_linkRelations = relationsForRelAttribute(newValue);
         if (m_relList)
@@ -102,6 +101,11 @@ void SVGAElement::svgAttributeChanged(const QualifiedName& attrName)
     if (SVGURIReference::isKnownAttribute(attrName)) {
         InstanceInvalidationGuard guard(*this);
         setIsLink(!href().isNull() && !shouldProhibitLinks(this));
+        return;
+    }
+
+    if (attrName == SVGNames::targetAttr) {
+        InstanceInvalidationGuard guard(*this);
         return;
     }
 
@@ -148,7 +152,7 @@ void SVGAElement::defaultEventHandler(Event& event)
                 target = blankTargetFrameName();
             event.setDefaultHandled();
 
-            auto referrerPolicy = hasRel(Relation::NoReferrer) ? ReferrerPolicy::NoReferrer : ReferrerPolicy::EmptyString;
+            auto referrerPolicy = effectiveReferrerPolicy(m_linkRelations, this->referrerPolicy());
             navigateHyperlink(*this, event, completedURL, target, m_linkRelations, referrerPolicy);
             return;
         }
@@ -251,9 +255,14 @@ DOMTokenList& SVGAElement::relList()
     return *m_relList;
 }
 
-bool SVGAElement::hasRel(Relation relation) const
+String SVGAElement::referrerPolicyForBindings() const
 {
-    return m_linkRelations.contains(relation);
+    return referrerPolicyToString(referrerPolicy());
+}
+
+ReferrerPolicy SVGAElement::referrerPolicy() const
+{
+    return parseReferrerPolicy(attributeWithoutSynchronization(SVGNames::referrerpolicyAttr), ReferrerPolicySource::ReferrerPolicyAttribute).value_or(ReferrerPolicy::EmptyString);
 }
 
 } // namespace WebCore

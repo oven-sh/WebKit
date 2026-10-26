@@ -168,7 +168,7 @@ auto ContentExtensionsBackend::actionsFromContentRuleList(const ContentExtension
     return actionsStruct;
 }
 
-auto ContentExtensionsBackend::actionsForResourceLoad(const ResourceLoadInfo& resourceLoadInfo, const RuleListFilter& ruleListFilter) const -> Vector<ActionsFromContentRuleList>
+auto ContentExtensionsBackend::actionsForResourceLoad(const ResourceLoadInfo& resourceLoadInfo, NOESCAPE const RuleListFilter& ruleListFilter) const -> Vector<ActionsFromContentRuleList>
 {
 #if CONTENT_EXTENSIONS_PERFORMANCE_REPORTING
     MonotonicTime addedTimeStart = MonotonicTime::now();
@@ -239,7 +239,7 @@ std::optional<String> customTrackerBlockingMessageForConsole(const ContentRuleLi
 #endif
 }
 
-ContentRuleListResults ContentExtensionsBackend::processContentRuleListsForLoad(Page& page, const URL& url, OptionSet<ResourceType> resourceType, DocumentLoader& initiatingDocumentLoader, const URL& redirectFrom, const RuleListFilter& ruleListFilter) const
+ContentRuleListResults ContentExtensionsBackend::processContentRuleListsForLoad(Page& page, const URL& url, OptionSet<ResourceType> resourceType, DocumentLoader& initiatingDocumentLoader, const URL& redirectFrom, NOESCAPE const RuleListFilter& ruleListFilter) const
 {
     RefPtr<Document> currentDocument;
     URL mainDocumentURL;
@@ -293,7 +293,7 @@ ContentRuleListResults ContentExtensionsBackend::processContentRuleListsForLoad(
                 if (resourceType.containsAny({ ResourceType::TopDocument, ResourceType::ChildDocument }))
                     initiatingDocumentLoader.addPendingContentExtensionDisplayNoneSelector(contentRuleListIdentifier, actionData.string, action.actionID());
                 else if (currentDocument)
-                    currentDocument->extensionStyleSheets().addDisplayNoneSelector(contentRuleListIdentifier, actionData.string, action.actionID());
+                    protect(currentDocument->extensionStyleSheets())->addDisplayNoneSelector(contentRuleListIdentifier, actionData.string, action.actionID());
             }, [&](const NotifyAction& actionData) {
                 results.summary.hasNotifications = true;
                 result.notifications.append(actionData.string);
@@ -357,7 +357,7 @@ ContentRuleListResults ContentExtensionsBackend::processContentRuleListsForLoad(
                 if (resourceType.containsAny({ ResourceType::TopDocument, ResourceType::ChildDocument }))
                     initiatingDocumentLoader.addPendingContentExtensionSheet(contentRuleListIdentifier, *styleSheetContents);
                 else if (currentDocument)
-                    currentDocument->extensionStyleSheets().maybeAddContentExtensionSheet(contentRuleListIdentifier, *styleSheetContents);
+                    protect(currentDocument->extensionStyleSheets())->maybeAddContentExtensionSheet(contentRuleListIdentifier, *styleSheetContents);
             }
         }
 
@@ -378,14 +378,14 @@ ContentRuleListResults ContentExtensionsBackend::processContentRuleListsForLoad(
             else
                 consoleMessage = makeString("Content blocker prevented frame displaying "_s, mainDocumentURL.string(), " from loading a resource from "_s, url.string());
             currentDocument->addConsoleMessage(MessageSource::ContentBlocker, MessageLevel::Info, WTF::move(consoleMessage));
-        
+
             // Quirk for content-blocker interference with Google's anti-flicker optimization (rdar://problem/45968770).
             // https://developers.google.com/optimize/
             if (currentDocument->settings().googleAntiFlickerOptimizationQuirkEnabled()
                 && ((equalLettersIgnoringASCIICase(url.host(), "www.google-analytics.com"_s) && equalLettersIgnoringASCIICase(url.path(), "/analytics.js"_s))
                     || (equalLettersIgnoringASCIICase(url.host(), "www.googletagmanager.com"_s) && equalLettersIgnoringASCIICase(url.path(), "/gtm.js"_s)))) {
                 if (RefPtr frame = currentDocument->frame())
-                    frame->script().evaluateIgnoringException(ScriptSourceCode { "try { window.dataLayer.hide.end(); console.log('Called window.dataLayer.hide.end() in frame ' + document.URL + ' because the content blocker blocked the load of the https://www.google-analytics.com/analytics.js script'); } catch (e) { }"_s, JSC::SourceTaintedOrigin::Untainted });
+                    protect(frame->script())->evaluateIgnoringException(ScriptSourceCode { "try { window.dataLayer.hide.end(); console.log('Called window.dataLayer.hide.end() in frame ' + document.URL + ' because the content blocker blocked the load of the https://www.google-analytics.com/analytics.js script'); } catch (e) { }"_s, JSC::SourceTaintedOrigin::Untainted });
             }
         }
     }
@@ -430,32 +430,26 @@ ContentRuleListResults ContentExtensionsBackend::processContentRuleListsForPingL
     return results;
 }
 
+bool ContentExtensionsBackend::shouldBlockLoad(const ResourceLoadInfo& resourceLoadInfo) const
+{
+    return std::ranges::any_of(actionsForResourceLoad(resourceLoadInfo), [](const auto& actionsFromContentRuleList) {
+        return std::ranges::any_of(actionsFromContentRuleList.actions, [](const auto& action) {
+            return WTF::switchOn(action.data(), [](const BlockLoadAction&) {
+                return true;
+            }, [](const IgnorePreviousRulesAction&) -> bool {
+                RELEASE_ASSERT_NOT_REACHED();
+            }, [](const IgnoreFollowingRulesAction&) -> bool {
+                RELEASE_ASSERT_NOT_REACHED();
+            }, [](const auto&) {
+                return false;
+            });
+        });
+    });
+}
+
 bool ContentExtensionsBackend::processContentRuleListsForResourceMonitoring(const URL& url, const URL& mainDocumentURL, const URL& frameURL, OptionSet<ResourceType> resourceType)
 {
-    ResourceLoadInfo resourceLoadInfo { url, mainDocumentURL, frameURL, resourceType };
-    auto actions = actionsForResourceLoad(resourceLoadInfo);
-
-    bool matched = false;
-    for (const auto& actionsFromContentRuleList : actions) {
-        for (const auto& action : actionsFromContentRuleList.actions) {
-            WTF::visit(WTF::makeVisitor([&](const BlockLoadAction&) {
-                matched = true;
-            }, [&](const BlockCookiesAction&) {
-            }, [&](const CSSDisplayNoneSelectorAction&) {
-            }, [&](const NotifyAction&) {
-            }, [&](const MakeHTTPSAction&) {
-            }, [&](const IgnorePreviousRulesAction&) {
-                RELEASE_ASSERT_NOT_REACHED();
-            }, [&](const IgnoreFollowingRulesAction&) {
-                RELEASE_ASSERT_NOT_REACHED();
-            }, [&] (const ModifyHeadersAction&) {
-            }, [&] (const RedirectAction&) {
-            }, [&] (const ReportIdentifierAction&) {
-            }), action.data());
-        }
-    }
-
-    return matched;
+    return shouldBlockLoad({ url, mainDocumentURL, frameURL, resourceType });
 }
 
 const String& ContentExtensionsBackend::displayNoneCSSRule()

@@ -45,6 +45,8 @@ public:
 
     void layout(RelayoutChildren);
 
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const;
+
     // The container's in-flow children in order-modified document order, rebuilt every layout. Weak pointers because
     // painting/hit-testing/baseline queries read the list after layout, when a child may have been removed.
     using FlexItemList = Vector<SingleThreadWeakPtr<RenderBox>>;
@@ -54,7 +56,7 @@ public:
 
     // Widens the container's allowed layout overflow by how far content-alignment pushed the items past the
     // content-box start edges. Takes RenderBox's writing-mode-only allowance, which only the renderer can compute.
-    LayoutOptionalOutsets adjustAllowedLayoutOverflow(LayoutOptionalOutsets) const;
+    LayoutOptionalOutsets LEGACY_NODELETE adjustAllowedLayoutOverflow(LayoutOptionalOutsets) const;
 
     std::optional<LayoutUnit> firstLineBaseline() const;
     std::optional<LayoutUnit> lastLineBaseline() const;
@@ -69,7 +71,7 @@ public:
     // Whether the item's height is definite by the phase the flex algorithm is in (9.8: the used sizes become
     // definite as the steps that produce them run). Absent when the algorithm is not running -- only
     // RenderFlexibleBox knows which of its own layout passes is then in play.
-    std::optional<bool> isFlexItemHeightDefiniteInLayoutPhase(const RenderBox& flexItem) const;
+    std::optional<bool> LEGACY_NODELETE isFlexItemHeightDefiniteInLayoutPhase(const RenderBox& flexItem) const;
 
     // CSS Flexbox 9.8: whether the item's post-flexing size is definite, which is what makes a percentage
     // resolved against it meaningful.
@@ -87,6 +89,7 @@ private:
     void prepareOutOfFlowBoxForPositionedLayout(RenderBox&);
     CheckedPtr<const RenderBox> flexItemForFirstBaseline() const;
     CheckedPtr<const RenderBox> flexItemForLastBaseline() const;
+    LayoutUnit baselineFromFlexItem(const RenderBox&, ItemPosition baselinePreference) const;
     CheckedPtr<const RenderBox> baselineFlexItemInLine(size_t lineStart, size_t itemCount, bool reverse) const;
     LayoutUnit staticMainAxisPositionForPositionedFlexItem(const RenderBox&);
     LayoutUnit staticCrossAxisPositionForPositionedFlexItem(const RenderBox&);

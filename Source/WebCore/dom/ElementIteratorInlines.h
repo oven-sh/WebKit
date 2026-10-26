@@ -104,7 +104,7 @@ inline ElementIterator<ElementType>& ElementIterator<ElementType>::traverseNextS
 template <typename ElementType>
 inline ElementType* findElementAncestorOfType(const Node& current)
 {
-    for (RefPtr ancestor = current.parentElement(); ancestor; ancestor = ancestor->parentElement()) {
+    for (auto* ancestor = current.parentElement(); ancestor; ancestor = ancestor->parentElement()) {
         if (auto* element = dynamicDowncast<ElementType>(*ancestor))
             return element;
     }

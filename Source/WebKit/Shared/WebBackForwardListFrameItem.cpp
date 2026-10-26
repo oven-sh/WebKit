@@ -28,6 +28,8 @@
 
 #include "SessionState.h"
 #include "WebBackForwardListItem.h"
+#include "WebFrameProxy.h"
+#include <wtf/Borrow.h>
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/text/StringBuilder.h>
@@ -91,6 +93,28 @@ WebBackForwardListFrameItem* WebBackForwardListFrameItem::childItemForFrameID(Fr
     return nullptr;
 }
 
+WebBackForwardListFrameItem* WebBackForwardListFrameItem::childItemForFrameItemID(BackForwardFrameItemIdentifier frameItemID)
+{
+    if (m_identifier == frameItemID)
+        return this;
+    for (auto& child : m_children) {
+        if (auto* childFrameItem = child->childItemForFrameItemID(frameItemID))
+            return childFrameItem;
+    }
+    return nullptr;
+}
+
+bool WebBackForwardListFrameItem::containsItemSequenceNumber(int64_t itemSequenceNumber) const
+{
+    if (m_frameState->itemSequenceNumber == itemSequenceNumber)
+        return true;
+    for (auto& child : m_children) {
+        if (child->containsItemSequenceNumber(itemSequenceNumber))
+            return true;
+    }
+    return false;
+}
+
 WebBackForwardListFrameItem* WebBackForwardListFrameItem::childItemAtIndex(uint64_t index)
 {
     if (index >= m_children.size())
@@ -120,11 +144,38 @@ void WebBackForwardListFrameItem::setChild(Ref<FrameState>&& frameState)
     Ref childItem = WebBackForwardListFrameItem::create(*protect(backForwardListItem()), this, WTF::move(frameState));
     for (size_t i = 0; i < m_children.size(); i++) {
         if (m_children[i]->frameID() == childItem->m_frameState->frameID) {
-            m_children[i] = WTF::move(childItem);
+            borrow(m_children)[i] = WTF::move(childItem);
             return;
         }
     }
-    m_children.append(WTF::move(childItem));
+    m_children.insert(insertionIndexForChild(childItem->frameID()), WTF::move(childItem));
+}
+
+size_t WebBackForwardListFrameItem::insertionIndexForChild(std::optional<WebCore::FrameIdentifier> frameID) const
+{
+    RefPtr frame = WebFrameProxy::webFrame(frameID);
+    RefPtr parentFrame = frame ? frame->parentFrame() : nullptr;
+    if (!parentFrame)
+        return m_children.size();
+
+    auto& siblingFrames = parentFrame->childFrames();
+    auto iterator = siblingFrames.find(frame.get());
+    if (iterator == siblingFrames.end()) {
+        ASSERT_NOT_REACHED("This frame should be in its parent's child frames");
+        return m_children.size();
+    }
+
+    HashSet<WebCore::FrameIdentifier> laterSiblingFrameIDs;
+    for (++iterator; iterator != siblingFrames.end(); ++iterator)
+        laterSiblingFrameIDs.add((*iterator)->frameID());
+    if (laterSiblingFrameIDs.isEmpty())
+        return m_children.size();
+
+    for (size_t i = 0; i < m_children.size(); ++i) {
+        if (auto childFrameID = m_children[i]->frameID(); childFrameID && laterSiblingFrameIDs.contains(*childFrameID))
+            return i;
+    }
+    return m_children.size();
 }
 
 Ref<WebBackForwardListFrameItem> WebBackForwardListFrameItem::rootFrame()
@@ -170,7 +221,7 @@ Ref<FrameState> WebBackForwardListFrameItem::copyFrameState()
 Ref<FrameState> WebBackForwardListFrameItem::copyFrameStateWithChildren()
 {
     Ref frameState = copyFrameState();
-    for (auto& child : m_children)
+    for (auto& child : borrow(m_children))
         frameState->children.append(child->copyFrameStateWithChildren());
     return frameState;
 }

@@ -27,6 +27,7 @@
 #define PAS_BOOTSTRAP_HEAP_PAGE_PROVIDER_H
 
 #include "pas_heap_page_provider.h"
+#include "pas_memory_flavor.h"
 
 PAS_BEGIN_EXTERN_C;
 
@@ -37,6 +38,24 @@ PAS_API pas_allocation_result pas_bootstrap_heap_page_provider(
     pas_heap* heap,
     pas_physical_memory_transaction* transaction,
     void *arg);
+
+PAS_API pas_allocation_result pas_mte_bootstrap_heap_page_provider(
+    size_t size,
+    pas_alignment alignment,
+    const char* name,
+    pas_heap* heap,
+    pas_physical_memory_transaction* transaction,
+    void *arg);
+
+/* The bootstrap page provider for memory of the given flavor, or NULL if libpas cannot map memory of
+   that flavor itself. This is a constant expression when flavor is, so it can be used in static
+   initializers.
+   FIXME: This still enumerates each flavor's bootstrap page provider by hand; generate it from the
+   list of flavors that libpas can map. */
+#define PAS_BOOTSTRAP_HEAP_PAGE_PROVIDER_FOR_FLAVOR(flavor) \
+    ((flavor) == pas_memory_flavor_plain ? pas_bootstrap_heap_page_provider \
+     : (flavor) == pas_memory_flavor_mte ? pas_mte_bootstrap_heap_page_provider \
+     : (pas_heap_page_provider)NULL)
 
 PAS_END_EXTERN_C;
 

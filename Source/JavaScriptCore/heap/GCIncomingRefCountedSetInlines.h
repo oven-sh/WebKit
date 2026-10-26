@@ -49,8 +49,13 @@ bool GCIncomingRefCountedSet<T>::addReference(JSCell* cell, T* object)
     if (!object->addIncomingReference(cell)) {
         ASSERT(object->isDeferred());
         ASSERT(object->numberOfIncomingReferences());
+        if (!object->m_needsFilteringIncomingReferences) {
+            object->m_needsFilteringIncomingReferences = true;
+            m_markedObjectsWithNewIncomingReferences.append(object);
+        }
         return false;
     }
+    object->m_needsFilteringIncomingReferences = true;
     m_vector.append(object);
     m_bytes += object->gcSizeEstimateInBytes();
     ASSERT(object->isDeferred());
@@ -61,33 +66,45 @@ bool GCIncomingRefCountedSet<T>::addReference(JSCell* cell, T* object)
 template<typename T>
 void GCIncomingRefCountedSet<T>::sweep(VM& vm, CollectionScope collectionScope)
 {
+    auto filter = [&](T* object) {
+        object->m_needsFilteringIncomingReferences = false;
+        return object->filterIncomingReferences([&](JSCell* cell) {
+            return vm.heap.isMarked(cell);
+        });
+    };
+    size_t startIndex = 0;
+    if (collectionScope == CollectionScope::Eden) {
+        for (size_t i = 0; i < m_markedObjectsWithNewIncomingReferences.size(); ++i) {
+            bool isRemoved = filter(m_markedObjectsWithNewIncomingReferences[i]);
+            RELEASE_ASSERT(!isRemoved);
+        }
+        startIndex = m_oldCount;
+    }
+    m_markedObjectsWithNewIncomingReferences.shrink(0);
+
     size_t preciseBytes = 0;
-    size_t preciseBytesAddedSinceLastSweep = 0;
-    size_t destination = 0;
-    for (size_t source = 0; source < m_vector.size(); ++source) {
-        T* object = m_vector[source];
+    m_vector.removeAllMatching([&](T* object) {
         size_t size = object->gcSizeEstimateInBytes();
         ASSERT(object->isDeferred());
         ASSERT(object->numberOfIncomingReferences());
-        if (object->filterIncomingReferences([&] (JSCell* cell) { return vm.heap.isMarked(cell); }))
-            continue;
-        preciseBytes += size;
-        if (source >= m_sizeAfterLastSweep)
-            preciseBytesAddedSinceLastSweep += size;
-        m_vector[destination++] = object;
-    }
-    m_vector.shrink(destination);
+        if (!filter(object)) {
+            preciseBytes += size;
+            return false;
+        }
+        return true;
+    }, startIndex);
+    m_oldCount = m_vector.size();
 
     // A full collection makes m_bytes precise. An eden collection only collects what was allocated since the last
     // collection, and the heap expects its size not to go below what the last collection left (see
     // Heap::updateAllocationLimits()). So an eden collection keeps the bytes the last sweep left, whatever happened to
-    // those objects since, and is precise about the objects added after it: the dead ones among them stop counting.
+    // those objects since, and is precise about the objects added after it (the only ones it visited, so preciseBytes
+    // is theirs): the dead ones among them stop counting.
     if (collectionScope == CollectionScope::Full)
         m_bytes = preciseBytes;
     else
-        m_bytes = m_bytesAfterLastSweep + preciseBytesAddedSinceLastSweep;
+        m_bytes = m_bytesAfterLastSweep + preciseBytes;
     m_bytesAfterLastSweep = m_bytes;
-    m_sizeAfterLastSweep = m_vector.size();
 }
 
 } // namespace JSC

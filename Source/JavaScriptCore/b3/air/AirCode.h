@@ -68,11 +68,12 @@ class CCallSpecial;
 class CFG;
 class Code;
 class Disassembler;
+struct GenerationContext;
 
 typedef void WasmBoundsCheckGeneratorFunction(CCallHelpers&, WasmBoundsCheckValue*, GPRReg);
 typedef SharedTask<WasmBoundsCheckGeneratorFunction> WasmBoundsCheckGenerator;
 
-typedef void PrologueGeneratorFunction(CCallHelpers&, Code&);
+typedef void PrologueGeneratorFunction(CCallHelpers&, Code&, GenerationContext&);
 typedef SharedTask<PrologueGeneratorFunction> PrologueGenerator;
 
 inline constexpr ASCIILiteral tierName { "Air "_s };
@@ -110,7 +111,7 @@ public:
     void setOptLevel(unsigned optLevel) { m_optLevel = optLevel; }
     unsigned optLevel() const { return m_optLevel; }
     
-    bool NODELETE needsUsedRegisters() const;
+    bool LEGACY_NODELETE needsUsedRegisters() const;
 
     JS_EXPORT_PRIVATE BasicBlock* addBlock(double frequency = 1);
 
@@ -147,7 +148,7 @@ public:
     }
 
     template<Bank bank, typename Func>
-    void forEachTmp(const Func& func)
+    void forEachTmp(NOESCAPE const Func& func)
     {
         unsigned numTmps = this->numTmps(bank);
         for (unsigned i = 0; i < numTmps; ++i)
@@ -155,7 +156,7 @@ public:
     }
 
     template<typename Func>
-    void forEachTmp(const Func& func)
+    void forEachTmp(NOESCAPE const Func& func)
     {
         static_assert(numBanks == 2);
         forEachTmp<GP>(func);
@@ -192,9 +193,9 @@ public:
     unsigned numEntrypoints() const { return m_entrypoints.size(); }
     const Vector<FrequentedBlock>& entrypoints() const LIFETIME_BOUND { return m_entrypoints; }
     const FrequentedBlock& entrypoint(unsigned index) const { return m_entrypoints[index]; }
-    bool NODELETE isEntrypoint(BasicBlock*) const;
+    bool LEGACY_NODELETE isEntrypoint(BasicBlock*) const;
     // Note: It is only valid to call this function after LowerEntrySwitch.
-    std::optional<unsigned> NODELETE entrypointIndex(BasicBlock*) const;
+    std::optional<unsigned> LEGACY_NODELETE entrypointIndex(BasicBlock*) const;
 
     // Note: We allow this to be called even before we set m_entrypoints just for convenience to users of this API.
     // However, if you call this before setNumEntrypoints, setNumEntrypoints will overwrite this value.
@@ -260,12 +261,12 @@ public:
     Vector<std::unique_ptr<BasicBlock>>& blockList() LIFETIME_BOUND { return m_blocks; }
 
     // Finds the smallest index' such that at(index') != null and index' >= index.
-    JS_EXPORT_PRIVATE unsigned NODELETE findFirstBlockIndex(unsigned index) const;
+    JS_EXPORT_PRIVATE unsigned LEGACY_NODELETE findFirstBlockIndex(unsigned index) const;
 
     // Finds the smallest index' such that at(index') != null and index' > index.
-    unsigned NODELETE findNextBlockIndex(unsigned index) const;
+    unsigned LEGACY_NODELETE findNextBlockIndex(unsigned index) const;
 
-    BasicBlock* NODELETE findNextBlock(BasicBlock*) const;
+    BasicBlock* LEGACY_NODELETE findNextBlock(BasicBlock*) const;
 
     class iterator {
     public:
@@ -314,7 +315,7 @@ public:
     JS_EXPORT_PRIVATE void addFastTmp(Tmp);
 
     template<typename Functor>
-    void forEachFastTmp(const Functor& functor) const
+    void forEachFastTmp(NOESCAPE const Functor& functor) const
     {
         for (Tmp tmp : m_fastTmps)
             functor(tmp);
@@ -346,7 +347,7 @@ public:
     bool shouldPreserveB3Origins() const { return m_preserveB3Origins; }
     void forcePreservationOfB3Origins() { m_preserveB3Origins = true; }
 
-    bool NODELETE usesSIMD() const;
+    bool LEGACY_NODELETE usesSIMD() const;
 
     void setDisassembler(std::unique_ptr<Disassembler>&& disassembler)
     {
@@ -358,7 +359,7 @@ public:
     RegisterSet mutableGPRs();
     ScalarRegisterSet pinnedRegisters() const { return m_pinnedRegs; }
     
-    void emitDefaultPrologue(CCallHelpers&);
+    void emitDefaultPrologue(CCallHelpers&, GenerationContext&);
     void emitEpilogue(CCallHelpers&);
 
     std::unique_ptr<GenerateAndAllocateRegisters> m_generateAndAllocateRegisters;

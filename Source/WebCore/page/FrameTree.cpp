@@ -81,7 +81,7 @@ void FrameTree::adjustRemoteFrameDescendantCountForSelfAndAncestors(int delta)
     if (!delta)
         return;
 
-    for (RefPtr frame = m_thisFrame.ptr(); frame; frame = frame->tree().parent()) {
+    for (Ref frame : inclusiveAncestorFrames(m_thisFrame.get())) {
         auto& count = frame->tree().m_remoteFrameDescendantCount;
         count += delta;
     }
@@ -194,7 +194,7 @@ void FrameTree::replaceChild(Frame& oldChild, Frame& newChild)
     ASSERT(m_remoteFrameDescendantCount == remoteFrameDescendantCountSlow());
 }
 
-static bool NODELETE inScope(Frame& frame, TreeScope& scope)
+static bool LEGACY_NODELETE inScope(Frame& frame, TreeScope& scope)
 {
     auto* localFrame = dynamicDowncast<LocalFrame>(frame);
     if (!localFrame)
@@ -286,7 +286,7 @@ unsigned FrameTree::scopedChildCount() const
     return m_scopedChildCount;
 }
 
-unsigned NODELETE FrameTree::childCount() const
+unsigned LEGACY_NODELETE FrameTree::childCount() const
 {
     unsigned count = 0;
     for (auto* child = firstChild(); child; child = child->tree().nextSibling())
@@ -330,7 +330,7 @@ Frame* FrameTree::childBySpecifiedName(const AtomString& name) const
 
 // FrameTree::find() only returns frames in pages that are related to the active
 // page by an opener <-> openee relationship.
-static bool NODELETE isFrameFamiliarWith(Frame& frameA, Frame& frameB)
+static bool LEGACY_NODELETE isFrameFamiliarWith(Frame& frameA, Frame& frameB)
 {
     if (frameA.page() == frameB.page())
         return true;
@@ -343,7 +343,7 @@ static bool NODELETE isFrameFamiliarWith(Frame& frameA, Frame& frameB)
 }
 
 template<typename F>
-inline RefPtr<Frame> FrameTree::find(const AtomString& name, F&& nameGetter, Frame& activeFrame) const
+inline RefPtr<Frame> FrameTree::find(const AtomString& name, NOESCAPE const F& nameGetter, Frame& activeFrame) const
 {
     if (isSelfTargetFrameName(name))
         return m_thisFrame.ptr();
@@ -360,13 +360,13 @@ inline RefPtr<Frame> FrameTree::find(const AtomString& name, F&& nameGetter, Fra
 
     // Search subtree starting with this frame first.
     Ref thisFrame = m_thisFrame.get();
-    for (RefPtr frame = thisFrame.ptr(); frame; frame = frame->tree().traverseNext(thisFrame.ptr())) {
+    for (Ref frame : inclusiveDescendantFrames(thisFrame)) {
         if (nameGetter(frame->tree()) == name)
             return frame;
     }
 
     // Then the rest of the tree.
-    for (RefPtr frame = &thisFrame->mainFrame(); frame; frame = frame->tree().traverseNext()) {
+    for (Ref frame : inclusiveDescendantFrames(thisFrame->mainFrame())) {
         if (nameGetter(frame->tree()) == name)
             return frame;
     }
@@ -403,7 +403,7 @@ RefPtr<Frame> FrameTree::findBySpecifiedName(const AtomString& specifiedName, Fr
     }, activeFrame);
 }
 
-bool NODELETE FrameTree::isDescendantOf(const Frame* ancestor) const
+bool LEGACY_NODELETE FrameTree::isDescendantOf(const Frame* ancestor) const
 {
     if (!ancestor)
         return false;
@@ -434,8 +434,8 @@ bool FrameTree::containsLocalFrame() const
 
 bool FrameTree::hasRemoteFrameAncestor() const
 {
-    for (RefPtr ancestor = parent(); ancestor; ancestor = ancestor->tree().parent()) {
-        if (is<RemoteFrame>(*ancestor))
+    for (Ref ancestor : ancestorFrames(m_thisFrame.get())) {
+        if (is<RemoteFrame>(ancestor))
             return true;
     }
     return false;
@@ -657,7 +657,7 @@ AtomString FrameTree::uniqueName() const
         return m_specifiedName;
 
     auto frameIndex { 0u };
-    for (RefPtr frame = top().tree().firstChild(); frame; frame = frame->tree().traverseNext()) {
+    for (Ref frame : descendantFrames(top())) {
         bool frameMatch = frame->frameID() == m_thisFrame->frameID();
         auto frameName = frame->tree().specifiedName();
         if (frameName.isEmpty() || isBlankTargetFrameName(frameName) || frame->tree().childBySpecifiedName(frameName)) {

@@ -31,6 +31,8 @@
 
 namespace WebCore {
 
+class RegistrableDomain;
+
 class UserContentURLPattern {
 public:
     UserContentURLPattern() = default;
@@ -80,16 +82,18 @@ public:
     bool matchesHost(const UserContentURLPattern& other) const { return matchesHost(other.host()); }
     bool matchesPath(const UserContentURLPattern& other) const { return matchesPath(other.path()); }
 
-    WEBCORE_EXPORT bool NODELETE operator==(const UserContentURLPattern& other) const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE operator==(const UserContentURLPattern& other) const;
 
     static bool matchesPatterns(const URL&, const Vector<String>& allowlist, const Vector<String>& blocklist);
+
+    WEBCORE_EXPORT static std::optional<RegistrableDomain> siteMatchedByPatterns(const Vector<UserContentURLPattern>&);
 
 private:
     WEBCORE_EXPORT Error parse(StringView pattern);
     void normalizeHostAndSetMatchSubdomains();
 
-    WEBCORE_EXPORT bool NODELETE matchesHost(const String&) const;
-    WEBCORE_EXPORT bool NODELETE matchesPath(const String&) const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE matchesHost(const String&) const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE matchesPath(const String&) const;
 
     String m_scheme;
     String m_host;
@@ -99,6 +103,6 @@ private:
     bool m_matchSubdomains { false };
 };
 
-WEBCORE_EXPORT bool NODELETE matchesWildcardPattern(const String& pattern, const String& testString);
+WEBCORE_EXPORT bool LEGACY_NODELETE matchesWildcardPattern(const String& pattern, const String& testString);
 
 } // namespace WebCore

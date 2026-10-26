@@ -102,14 +102,14 @@ public:
     enum CompareResults : uint8_t { NODE_BEFORE, NODE_AFTER, NODE_BEFORE_AND_AFTER, NODE_INSIDE };
     WEBCORE_EXPORT ExceptionOr<CompareResults> compareNode(Node&) const;
 
-    void nodeChildrenChanged(ContainerNode&);
+    void LEGACY_NODELETE nodeChildrenChanged(ContainerNode&);
     void nodeChildrenWillBeRemoved(ContainerNode&);
     void nodeWillBeRemoved(Node&);
-    bool NODELETE parentlessNodeMovedToNewDocumentAffectsRange(Node&);
+    bool LEGACY_NODELETE parentlessNodeMovedToNewDocumentAffectsRange(Node&);
     void updateRangeForParentlessNodeMovedToNewDocument(Node&);
 
-    void textInserted(Node&, unsigned offset, unsigned length);
-    void textRemoved(Node&, unsigned offset, unsigned length);
+    void LEGACY_NODELETE textInserted(Node&, unsigned offset, unsigned length);
+    void LEGACY_NODELETE textRemoved(Node&, unsigned offset, unsigned length);
     void textNodesMerged(NodeWithIndex& oldNode, unsigned offset);
     void textNodeSplit(Text& oldNode);
 
@@ -124,7 +124,7 @@ public:
     }
 
     // For use by garbage collection. Returns nullptr for ranges not assocated with selection.
-    LocalDOMWindow* NODELETE window() const;
+    LocalDOMWindow* LEGACY_NODELETE window() const;
 
     static ExceptionOr<RefPtr<Node>> checkNodeOffsetPair(Node&, unsigned offset);
 

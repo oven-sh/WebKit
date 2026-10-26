@@ -1,10 +1,8 @@
 //@ runDefault
-//@ runDefault("--useUnboxedFastArrayIteration=0")
-//@ runDefault("--useUnboxedFastArrayIteration=1")
-//@ runDefault("--useUnboxedFastArrayIteration=1", "--useJIT=0")
-//@ runDefault("--useUnboxedFastArrayIteration=1", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForJITSoon=10")
-//@ runDefault("--useUnboxedFastArrayIteration=1", "--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForJITSoon=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForOptimizeAfterLongWarmUp=20", "--thresholdForOptimizeSoon=20", "--thresholdForFTLOptimizeAfterWarmUp=50", "--thresholdForFTLOptimizeSoon=50")
-//@ runDefault("--useUnboxedFastArrayIteration=1", "--useBytecodeOptimizer=1")
+//@ runDefault("--useJIT=0")
+//@ runDefault("--useDFGJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForJITSoon=10")
+//@ runDefault("--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForJITSoon=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForOptimizeAfterLongWarmUp=20", "--thresholdForOptimizeSoon=20", "--thresholdForFTLOptimizeAfterWarmUp=50", "--thresholdForFTLOptimizeSoon=50")
+//@ runDefault("--useBytecodeOptimizer=1")
 
 // While an Array is destructured or looped over without an iterator object, the Array is read back from a register at
 // every step. Nothing the program does to the binding the Array came from (parameters through `arguments`, eval, with,

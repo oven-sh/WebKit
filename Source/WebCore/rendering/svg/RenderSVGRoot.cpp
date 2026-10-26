@@ -30,12 +30,13 @@
 #include "HitTestResult.h"
 #include "LayoutRepainter.h"
 #include "LocalFrame.h"
+#include "NaturalDimensions.h"
 #include "Page.h"
 #include "RenderBoxInlines.h"
 #include "RenderChildIterator.h"
+#include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderFragmentedFlow.h"
-#include "RenderInline.h"
 #include "RenderIterator.h"
 #include "RenderLayerScrollableArea.h"
 #include "RenderLayoutState.h"
@@ -47,8 +48,8 @@
 #include "SVGContainerLayout.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGImage.h"
-#include "SVGLayerTransformUpdater.h"
 #include "SVGSVGElement.h"
+#include "SVGTransformLayoutScope.h"
 #include "SVGViewSpec.h"
 #include "ScrollbarUpdateScope.h"
 #include "TransformState.h"
@@ -69,9 +70,10 @@ RenderSVGRoot::RenderSVGRoot(SVGSVGElement& element, Style::ComputedStyle&& styl
 {
     ASSERT(isRenderSVGRoot());
     LayoutSize intrinsicSize(computeIntrinsicSize());
-    if (!svgSVGElement().hasIntrinsicWidth())
+    Ref svgElement = svgSVGElement();
+    if (!svgElement->hasIntrinsicWidth())
         intrinsicSize.setWidth(defaultWidth);
-    if (!svgSVGElement().hasIntrinsicHeight())
+    if (!svgElement->hasIntrinsicHeight())
         intrinsicSize.setHeight(defaultHeight);
     setIntrinsicSize(intrinsicSize);
 }
@@ -166,7 +168,7 @@ LayoutUnit RenderSVGRoot::computeReplacedLogicalWidth(IsComputingIntrinsicSize i
         return m_containerSize.width();
 
     if (isEmbeddedThroughFrameContainingSVGDocument())
-        return containingBlock()->contentBoxLogicalWidth();
+        return protect(containingBlock())->contentBoxLogicalWidth();
 
     // For intrinsic sizing keywords (e.g. max-content), when the SVG has no intrinsic width
     // but has an intrinsic ratio (from viewBox), compute the width using the default height
@@ -202,7 +204,7 @@ LayoutUnit RenderSVGRoot::computeReplacedLogicalHeight(std::optional<LayoutUnit>
         return m_containerSize.height();
 
     if (isEmbeddedThroughFrameContainingSVGDocument())
-        return containingBlock()->availableLogicalHeight(AvailableLogicalHeightType::IncludeMarginBorderPadding);
+        return protect(containingBlock())->availableLogicalHeight(AvailableLogicalHeightType::IncludeMarginBorderPadding);
 
     // For intrinsic sizing keywords (e.g. max-content), when the SVG has no intrinsic height
     // but has an intrinsic ratio (from viewBox), compute the height from the used width and the
@@ -248,7 +250,7 @@ void RenderSVGRoot::layout()
     svgSVGElement().invalidateCachedViewportSizes();
 
     // Arbitrary affine transforms are incompatible with RenderLayoutState.
-    LayoutStateDisabler layoutStateDisabler(view().frameView().layoutContext());
+    LayoutStateDisabler layoutStateDisabler(protect(view().frameView().layoutContext()));
 
     LayoutRepainter repainter(*this);
 
@@ -261,8 +263,8 @@ void RenderSVGRoot::layout()
         SetForScope trackLayoutSizeChanges(m_isLayoutSizeChanged, updateLayoutSizeIfNeeded());
 
         ASSERT(!m_didTransformToRootUpdate);
-        SVGLayerTransformUpdater transformUpdater(*this);
-        SetForScope trackTransformChanges(m_didTransformToRootUpdate, transformUpdater.layerTransformChanged());
+        SVGTransformLayoutScope transformScope(*this);
+        SetForScope trackTransformChanges(m_didTransformToRootUpdate, transformScope.layerTransformChanged());
         layoutChildren();
     }
 
@@ -364,24 +366,24 @@ void RenderSVGRoot::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
     // z-index. We paint after we painted the background/border, so that the scrollbars will
     // sit above the background/border.
     if ((paintInfo.phase == PaintPhase::BlockBackground || paintInfo.phase == PaintPhase::ChildBlockBackground) && hasNonVisibleOverflow() && layer() && layer()->scrollableArea()
-        && style().usedVisibility() == Visibility::Visible && paintInfo.shouldPaintWithinRoot(*this) && !paintInfo.paintRootBackgroundOnly())
-        layer()->scrollableArea()->paintOverflowControls(paintInfo.context(), paintInfo.paintBehavior, roundedIntPoint(adjustedPaintOffset), snappedIntRect(paintInfo.rect));
+        && usedStyle().visibility() == UsedVisibility::Visible && paintInfo.shouldPaintWithinRoot(*this) && !paintInfo.paintRootBackgroundOnly())
+        protect(layer()->scrollableArea())->paintOverflowControls(paintInfo.context(), paintInfo.paintBehavior, roundedIntPoint(adjustedPaintOffset), snappedIntRect(paintInfo.rect));
 }
 
 void RenderSVGRoot::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
-    if ((paintInfo.phase == PaintPhase::BlockBackground || paintInfo.phase == PaintPhase::ChildBlockBackground) && style().usedVisibility() == Visibility::Visible) {
+    if ((paintInfo.phase == PaintPhase::BlockBackground || paintInfo.phase == PaintPhase::ChildBlockBackground) && usedStyle().visibility() == UsedVisibility::Visible) {
         if (hasVisibleBoxDecorations())
             paintBoxDecorations(paintInfo, paintOffset);
     }
 
     auto adjustedPaintOffset = paintOffset + location();
-    if (paintInfo.phase == PaintPhase::Mask && style().usedVisibility() == Visibility::Visible) {
+    if (paintInfo.phase == PaintPhase::Mask && usedStyle().visibility() == UsedVisibility::Visible) {
         paintSVGMask(paintInfo, adjustedPaintOffset);
         return;
     }
 
-    if (paintInfo.phase == PaintPhase::ClippingMask && style().usedVisibility() == Visibility::Visible) {
+    if (paintInfo.phase == PaintPhase::ClippingMask && usedStyle().visibility() == UsedVisibility::Visible) {
         paintSVGClippingMask(paintInfo, objectBoundingBox());
         return;
     }
@@ -393,8 +395,9 @@ void RenderSVGRoot::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOf
         // SVG root's border rect doesn't change the interaction-region shape — only the
         // children should contribute to interaction regions.
         auto borderRect = LayoutRect(adjustedPaintOffset, borderBoxSize());
-        auto borderShape = BorderShape::shapeForBorderRect(style(), borderRect);
-        paintInfo.eventRegionContext()->unite(borderShape.deprecatedPixelSnappedRoundedRect(document().deviceScaleFactor()), *this, style(), false, EventRegionContext::ContributeToInteractionRegions::No);
+        auto usedStyle = this->usedStyle();
+        auto borderShape = BorderShape::shapeForBorderRect(usedStyle, borderRect);
+        protect(paintInfo.eventRegionContext())->unite(borderShape.deprecatedPixelSnappedRoundedRect(document().deviceScaleFactor()), *this, usedStyle.computedStyle(), false, EventRegionContext::ContributeToInteractionRegions::No);
     }
 
     if (paintInfo.paintRootBackgroundOnly())
@@ -428,7 +431,7 @@ void RenderSVGRoot::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOf
     if (paintInfo.phase != PaintPhase::SelfOutline)
         paintContents(paintInfo, scrolledOffset);
 
-    if ((paintInfo.phase == PaintPhase::Outline || paintInfo.phase == PaintPhase::SelfOutline) && hasOutline() && style().usedVisibility() == Visibility::Visible)
+    if ((paintInfo.phase == PaintPhase::Outline || paintInfo.phase == PaintPhase::SelfOutline) && hasOutline() && usedStyle().visibility() == UsedVisibility::Visible)
         paintOutline(paintInfo, LayoutRect(adjustedPaintOffset, borderBoxSize()));
 }
 
@@ -448,9 +451,9 @@ void RenderSVGRoot::paintContents(PaintInfo& paintInfo, const LayoutPoint& paint
         return;
 
     paintInfoForChild.updateSubtreePaintRootForChildren(this);
-    for (auto& child : childrenOfType<RenderElement>(*this)) {
-        if (!child.hasSelfPaintingLayer())
-            child.paint(paintInfoForChild, paintOffset);
+    for (CheckedRef child : childrenOfType<RenderElement>(*this)) {
+        if (!child->hasSelfPaintingLayer())
+            child->paint(paintInfoForChild, paintOffset);
     }
 }
 
@@ -519,7 +522,8 @@ void RenderSVGRoot::updateLayerTransform()
         return;
 
     // An empty viewBox disables the rendering -- dirty the visible descendant status!
-    if (svgSVGElement().hasAttribute(SVGNames::viewBoxAttr) && svgSVGElement().hasEmptyViewBox())
+    Ref svgElement = svgSVGElement();
+    if (svgElement->hasAttribute(SVGNames::viewBoxAttr) && svgElement->hasEmptyViewBox())
         layer()->dirtyVisibleContentStatus();
 }
 
@@ -669,4 +673,9 @@ void RenderSVGRoot::absoluteQuads(Vector<FloatQuad>& quads, bool* wasFixed) cons
     quads.append(localToAbsoluteQuad(FloatRect { borderBoxRect() }, MapCoordinatesMode::UseTransforms, wasFixed));
 }
 
+NaturalDimensions RenderSVGRoot::zoomedNaturalDimensions() const
+{
+    return protect(svgSVGElement())->naturalDimensions().zoomed(style().usedZoom());
 }
+
+} // namespace WebCore

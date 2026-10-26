@@ -60,7 +60,7 @@ class TextTrackCueBox : public HTMLElement {
 public:
     static Ref<TextTrackCueBox> create(Document&, TextTrackCue&);
 
-    TextTrackCue* NODELETE getCue() const;
+    TextTrackCue* LEGACY_NODELETE getCue() const;
     virtual void applyCSSProperties() { }
 
 protected:
@@ -74,8 +74,9 @@ private:
     WeakPtr<TextTrackCue, WeakPtrImplWithEventTargetData> m_cue;
 };
 
-class TextTrackCue : public RefCounted<TextTrackCue>, public EventTarget, public ActiveDOMObject {
+class TextTrackCue : public RefCounted<TextTrackCue>, public EventTarget, public ActiveDOMObject, public CanMakeCheckedPtr<TextTrackCue> {
     WTF_MAKE_TZONE_ALLOCATED(TextTrackCue);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(TextTrackCue);
 public:
     static ExceptionOr<Ref<TextTrackCue>> create(Document&, double start, double end, DocumentFragment&);
     ~TextTrackCue();
@@ -87,9 +88,9 @@ public:
 
     void didMoveToNewDocument(Document&);
 
-    TextTrack* NODELETE track() const;
+    TextTrack* LEGACY_NODELETE track() const;
     bool containsTrackAsOpaqueRootInGCThread(JSC::AbstractSlotVisitor&) const;
-    void setTrack(TextTrack*);
+    void LEGACY_NODELETE setTrack(TextTrack*);
 
     template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
 
@@ -103,7 +104,7 @@ public:
     ExceptionOr<void> setEndTime(double);
 
     bool pauseOnExit() const { return m_pauseOnExit; }
-    void NODELETE setPauseOnExit(bool);
+    void LEGACY_NODELETE setPauseOnExit(bool);
 
     MediaTime startMediaTime() const { return m_startTime; }
     void setStartTime(const MediaTime&);
@@ -111,7 +112,7 @@ public:
     MediaTime endMediaTime() const { return m_endTime; }
     void setEndTime(const MediaTime&);
 
-    bool NODELETE isActive() const;
+    bool LEGACY_NODELETE isActive() const;
     virtual void setIsActive(bool);
 
     virtual bool isOrderedBefore(const TextTrackCue*) const;
@@ -121,7 +122,7 @@ public:
 
     enum CueType { Generic, Data, ConvertedToWebVTT, WebVTT };
     virtual CueType cueType() const { return CueType::Generic; }
-    virtual bool NODELETE isRenderable() const;
+    virtual bool LEGACY_NODELETE isRenderable() const;
 
     enum CueMatchRules { MatchAllFields, IgnoreDuration };
     bool isEqual(const TextTrackCue&, CueMatchRules) const;
@@ -138,7 +139,7 @@ public:
     String toJSONString() const;
 
     virtual void recalculateStyles() { m_displayTreeNeedsUpdate = true; }
-    virtual void NODELETE setFontSize(int fontSize, bool important);
+    virtual void LEGACY_NODELETE setFontSize(int fontSize, bool important);
     virtual void updateDisplayTree(const MediaTime&) { }
 
     unsigned cueIndex() const;

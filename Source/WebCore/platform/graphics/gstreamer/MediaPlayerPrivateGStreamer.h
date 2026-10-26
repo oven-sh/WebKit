@@ -189,7 +189,7 @@ public:
     GstElement* pipeline() const { return m_pipeline.get(); }
 
 #if USE(COORDINATED_GRAPHICS)
-    PlatformLayer* NODELETE platformLayer() const override { return nullptr; }
+    PlatformLayer* LEGACY_NODELETE platformLayer() override { return nullptr; }
     bool supportsAcceleratedRendering() const override { return true; }
     void setPlatformLayerBufferProxy(Ref<CoordinatedPlatformLayerBufferProxy>&&) override;
     RefPtr<CoordinatedPlatformLayerBufferProxy> platformLayerBufferProxy() const override;
@@ -366,7 +366,7 @@ protected:
     void tearDown(bool clearMediaPlayer);
 
     URL m_url;
-    Ref<MainThreadNotifier<MainThreadNotification>> m_notifier;
+    const Ref<MainThreadNotifier<MainThreadNotification>> m_notifier;
     ThreadSafeWeakPtr<MediaPlayer> m_player;
     String m_referrer;
     mutable MediaTime m_cachedPosition;
@@ -500,6 +500,8 @@ private:
 
     ImageOrientation getVideoOrientation(const GstTagList*);
 
+    void maybeNotifyClientOfReadyAndNetworkChanges(MediaPlayerEnums::NetworkState, MediaPlayerEnums::ReadyState);
+
     GstElement* createVideoSink();
     GstElement* createAudioSink();
     GstElement* audioSink() const { return m_audioSink.get(); }
@@ -557,8 +559,10 @@ private:
 
     void setPlaybinURL(const URL& urlString);
 
-    void updateTracks(const GRefPtr<GstObject>& collectionOwner);
-    void updateVideoSizeAndOrientationFromCaps(const GstCaps*);
+    void updateTracks(const GRefPtr<GstObject>& collectionOwner, const GRefPtr<GstStreamCollection>&);
+    bool updateVideoSizeAndOrientationFromCaps(GstCaps*);
+    bool updateVideoSizeAndOrientationFromCapsAndTags(const GRefPtr<GstCaps>&, const GRefPtr<GstTagList>&);
+    bool updateVideoSizeAndOrientationFromStream(GstStream*);
     bool hasFirstVideoSampleReachedSink() const;
 
 #if ENABLE(ENCRYPTED_MEDIA)
@@ -639,7 +643,7 @@ private:
     std::optional<TrackID> m_requestedTextStreamId;
 
 #if ENABLE(WEB_AUDIO)
-    RefPtr<AudioSourceProviderGStreamer> m_audioSourceProvider;
+    const RefPtr<AudioSourceProviderGStreamer> m_audioSourceProvider;
 #endif
     GRefPtr<GstElement> m_downloadBuffer;
 
@@ -673,8 +677,6 @@ private:
 
     String m_errorMessage;
 
-    GRefPtr<GstStreamCollection> m_streamCollection;
-
     AbortableTaskQueue m_sinkTaskQueue;
 
     bool m_didTryToRecoverPlayingState { false };
@@ -696,9 +698,9 @@ private:
     Lock m_codecsLock;
     TrackIDHashMap<String> m_codecs WTF_GUARDED_BY_LOCK(m_codecsLock);
 
-    Ref<PlatformMediaResourceLoader> m_loader;
+    const Ref<PlatformMediaResourceLoader> m_loader;
 
-    RefPtr<GStreamerQuirksManager> m_quirksManagerForTesting;
+    const RefPtr<GStreamerQuirksManager> m_quirksManagerForTesting;
     HashMap<const GStreamerQuirk*, std::unique_ptr<GStreamerQuirkBase::GStreamerQuirkState>> m_quirkStates;
 
     std::optional<VideoFrameGStreamer::Info> m_videoInfo;
@@ -708,9 +710,12 @@ private:
     void determineContainerTypeFromCaps(const GstCaps*);
     enum ContainerType {
         Ogg,
+        WebM,
         Other
     };
     ContainerType m_containerType { ContainerType::Other };
+
+    GRefPtr<GstElement> m_urisourceBin;
 };
 
 } // namespace WebCore

@@ -1104,13 +1104,7 @@ void JSPromise::resolveWithInternalMicrotaskForAsyncAwait(JSGlobalObject* global
             }
         }
         if (error) [[unlikely]] {
-            std::array<JSValue, maxMicrotaskArguments> arguments { {
-                jsUndefined(),
-                error,
-                context
-                BUN_ASYNC_CONTEXT
-            } };
-            runInternalMicrotask(globalObject, vm, task, static_cast<uint8_t>(JSPromise::Status::Rejected), arguments);
+            runInternalMicrotask(globalObject, vm, task, static_cast<uint8_t>(JSPromise::Status::Rejected), jsUndefined(), error, context BUN_ASYNC_CONTEXT);
             return;
         }
 
@@ -1219,7 +1213,7 @@ JSObject* promiseSpeciesConstructor(JSGlobalObject* globalObject, JSObject* this
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* promise = dynamicDowncast<JSPromise>(thisObject)) [[likely]] {
-        if (promiseSpeciesWatchpointIsValid(vm, promise)) [[likely]]
+        if (promise->realm() == globalObject && promiseSpeciesWatchpointIsValid(vm, promise)) [[likely]]
             return globalObject->promiseConstructor();
     }
 
@@ -1267,7 +1261,7 @@ JSObject* JSPromise::then(JSGlobalObject* globalObject, JSValue onFulfilled, JSV
 
     JSObject* resultPromise;
     JSValue resultPromiseCapability;
-    if (promiseSpeciesWatchpointIsValid(vm, this)) [[likely]] {
+    if (realm() == globalObject && promiseSpeciesWatchpointIsValid(vm, this)) [[likely]] {
         resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
         resultPromiseCapability = resultPromise;
     } else {

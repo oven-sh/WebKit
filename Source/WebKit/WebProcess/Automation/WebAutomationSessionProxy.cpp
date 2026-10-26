@@ -44,10 +44,9 @@
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSObjectRef.h>
-#include <JavaScriptCore/JSRetainPtr.h>
 #include <JavaScriptCore/JSStringRefPrivate.h>
 #include <JavaScriptCore/OpaqueJSString.h>
-#include <JavaScriptCore/SourceTaintedOrigin.h>
+#include <JavaScriptCore/SourceTaintedness.h>
 #include <WebCore/AXObjectCache.h>
 #include <WebCore/AccessibilityObject.h>
 #include <WebCore/ContainerNodeInlines.h>
@@ -97,7 +96,7 @@ static JSObjectRef toJSArray(JSContextRef context, const Vector<T>& data, JSValu
     if (data.isEmpty())
         return JSObjectMakeArray(context, 0, nullptr, exception);
 
-    auto convertedData = WTF::map<8>(data, [&](auto& originalValue) {
+    const Vector convertedData = WTF::map<8>(data, [&](auto& originalValue) {
         JSValueRef convertedValue = converter(context, originalValue);
         JSValueProtect(context, convertedValue);
         return convertedValue;
@@ -154,7 +153,7 @@ WebAutomationSessionProxy::~WebAutomationSessionProxy()
 #endif
 }
 
-static bool NODELETE isValidNodeHandle(const String& nodeHandle)
+static bool LEGACY_NODELETE isValidNodeHandle(const String& nodeHandle)
 {
     // Node identifier has the following format:
     // node-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
@@ -194,7 +193,7 @@ static JSValueRef isValidNodeIdentifier(JSContextRef context, JSObjectRef functi
     if (argumentCount != 1)
         return JSValueMakeUndefined(context);
 
-    auto nodeIdentifier = adoptRef(JSValueToStringCopy(context, arguments[0], exception));
+    RefPtr nodeIdentifier = adoptRef(JSValueToStringCopy(context, arguments[0], exception));
     return JSValueMakeBoolean(context, isValidNodeHandle(nodeIdentifier->string()));
 }
 
@@ -282,7 +281,7 @@ static JSValueRef evaluate(JSContextRef context, JSObjectRef function, JSObjectR
     if (argumentCount != 1)
         return JSValueMakeUndefined(context);
 
-    auto script = adoptRef(JSValueToStringCopy(context, arguments[0], exception));
+    RefPtr script = adoptRef(JSValueToStringCopy(context, arguments[0], exception));
     return JSEvaluateScript(context, script.get(), nullptr, nullptr, 0, exception);
 }
 
@@ -323,7 +322,7 @@ static JSValueRef evaluateJavaScriptCallback(JSContextRef context, JSObjectRef f
     WebAutomationSessionProxy::JSCallbackIdentifier callbackID(rawCallbackID);
 
     if (JSValueIsString(context, arguments[2])) {
-        auto result = adoptRef(JSValueToStringCopy(context, arguments[2], exception));
+        RefPtr result = adoptRef(JSValueToStringCopy(context, arguments[2], exception));
         automationSessionProxy->didEvaluateJavaScriptFunction(frameID, callbackID, result->string(), { });
     } else if (JSValueIsObject(context, arguments[2])) {
         JSObjectRef error = JSValueToObject(context, arguments[2], exception);
@@ -387,7 +386,7 @@ JSObjectRef WebAutomationSessionProxy::scriptObjectForFrame(WebFrame& frame)
         return scriptObject;
 
     JSValueRef exception = nullptr;
-    String script = StringImpl::createWithoutCopying(WebAutomationSessionProxyScriptSource);
+    String script = StringImpl::createWithoutCopying(byteCast<Latin1Character>(std::span { WebAutomationSessionProxyScriptSource }));
     JSObjectRef scriptObjectFunction = const_cast<JSObjectRef>(JSEvaluateScript(context, OpaqueJSString::tryCreate(script).get(), nullptr, nullptr, 0, &exception));
     ASSERT(JSValueIsObject(context, scriptObjectFunction));
 
@@ -433,8 +432,8 @@ std::expected<Ref<WebCore::Element>, String> WebAutomationSessionProxy::elementF
             JSObjectRef exceptionObject = JSValueToObject(context, exception, nullptr);
             JSValueRef nameValue = JSObjectGetProperty(context, exceptionObject, OpaqueJSString::tryCreate("name"_s).get(), nullptr);
             String exceptionName;
-            if (JSRetainPtr nameString = JSValueToStringCopy(context, nameValue, nullptr))
-                SUPPRESS_UNCOUNTED_ARG exceptionName = nameString->string();
+            if (RefPtr nameString = adoptRef(JSValueToStringCopy(context, nameValue, nullptr)))
+                exceptionName = nameString->string();
             errorType = errorTypeFromJavaScriptExceptionName(exceptionName);
         }
         return makeUnexpected(errorType);
@@ -864,28 +863,28 @@ static WebCore::Element* containerElementForElement(WebCore::Element& element)
     return &element;
 }
 
-static WebCore::FloatRect convertRectFromFrameClientToRootView(WebCore::LocalFrameView* frameView, WebCore::FloatRect clientRect)
+static WebCore::FloatRect convertRectFromFrameClientToMainFrameView(WebCore::LocalFrameView* frameView, WebCore::FloatRect clientRect)
 {
     if (!frameView->delegatesScrollingToNativeView())
-        return frameView->contentsToRootView(frameView->clientToDocumentRect(clientRect));
+        return frameView->contentsToMainFrameView(frameView->clientToDocumentRect(clientRect));
 
-    // If the frame delegates scrolling, contentsToRootView doesn't take into account scroll/zoom/scale.
+    // If the frame delegates scrolling, contentsToMainFrameView doesn't take into account scroll/zoom/scale.
     Ref frame = frameView->frame();
     clientRect.scale(frame->pageZoomFactor() * frame->frameScaleFactor());
     clientRect.moveBy(frameView->contentsScrollPosition());
-    return clientRect;
+    return frameView->convertToRootViewAcrossIsolatedFrames(clientRect);
 }
 
-static WebCore::FloatPoint convertPointFromFrameClientToRootView(WebCore::LocalFrameView* frameView, WebCore::FloatPoint clientPoint)
+static WebCore::FloatPoint convertPointFromFrameClientToMainFrameView(WebCore::LocalFrameView* frameView, WebCore::FloatPoint clientPoint)
 {
     if (!frameView->delegatesScrollingToNativeView())
-        return frameView->contentsToRootView(frameView->clientToDocumentPoint(clientPoint));
+        return frameView->contentsToMainFrameView(frameView->clientToDocumentPoint(clientPoint));
 
-    // If the frame delegates scrolling, contentsToRootView doesn't take into account scroll/zoom/scale.
+    // If the frame delegates scrolling, contentsToMainFrameView doesn't take into account scroll/zoom/scale.
     Ref frame = frameView->frame();
     clientPoint.scale(frame->pageZoomFactor() * frame->frameScaleFactor());
     clientPoint.moveBy(frameView->contentsScrollPosition());
-    return clientPoint;
+    return frameView->convertToRootViewAcrossIsolatedFrames(clientPoint);
 }
 
 void WebAutomationSessionProxy::computeElementLayout(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, String nodeHandle, bool scrollIntoViewIfNeeded, CoordinateSystem coordinateSystem, CompletionHandler<void(std::optional<String>, WebCore::FloatRect, std::optional<WebCore::IntPoint>, bool)>&& completionHandler)
@@ -927,23 +926,13 @@ void WebAutomationSessionProxy::computeElementLayout(WebCore::PageIdentifier pag
         // FIXME: Wait in an implementation-specific way up to the session implicit wait timeout for the element to become in view.
     }
 
-    // Convert through this frame's local root rather than the page's main frame.
-    // Under site isolation, an out-of-process iframe's main frame is a RemoteFrame in this process
-    // and has no LocalFrameView, so the local root is the deepest frame reachable here.
-    // Without site isolation the local root is the main frame, so this preserves behavior.
-    Ref localRootFrame = coreLocalFrame->rootFrame();
-    RefPtr rootView = localRootFrame->view();
-    if (!rootView) {
+    Ref mainFrame = coreLocalFrame->mainFrame();
+    RefPtr mainFrameView = mainFrame->virtualView();
+    if (!mainFrameView) {
         String windowNotFoundErrorType = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::WindowNotFound);
         completionHandler(windowNotFoundErrorType, { }, std::nullopt, false);
         return;
     }
-
-    // When the local root is not the page's main frame, this process doesn't know where the frame
-    // sits within the page, so it cannot produce main-frame-relative coordinates. Stop at local
-    // root contents coordinates and let WebAutomationSession::computeElementLayout() finish the
-    // conversion in the UI process, which can walk the frame tree across processes.
-    bool localRootIsMainFrame = localRootFrame->isMainFrame();
 
     WebCore::FloatRect resultElementBounds;
     std::optional<WebCore::IntPoint> resultInViewCenterPoint;
@@ -954,9 +943,8 @@ void WebAutomationSessionProxy::computeElementLayout(WebCore::PageIdentifier pag
         resultElementBounds = coreElement->boundingClientRect();
         break;
     case CoordinateSystem::LayoutViewport: {
-        auto elementBoundsInRootCoordinates = convertRectFromFrameClientToRootView(frameView.get(), coreElement->boundingClientRect());
-        auto elementBoundsInLocalRootContents = rootView->rootViewToContents(elementBoundsInRootCoordinates);
-        resultElementBounds = localRootIsMainFrame ? rootView->absoluteToLayoutViewportRect(elementBoundsInLocalRootContents) : elementBoundsInLocalRootContents;
+        auto elementBoundsInMainFrameView = convertRectFromFrameClientToMainFrameView(frameView.get(), coreElement->boundingClientRect());
+        resultElementBounds = mainFrameView->absoluteToLayoutViewportRect(mainFrameView->rootViewToContents(elementBoundsInMainFrameView));
         break;
     }
     }
@@ -1015,9 +1003,8 @@ void WebAutomationSessionProxy::computeElementLayout(WebCore::PageIdentifier pag
         resultInViewCenterPoint = flooredIntPoint(elementInViewCenterPoint);
         break;
     case CoordinateSystem::LayoutViewport: {
-        auto inViewCenterPointInRootCoordinates = convertPointFromFrameClientToRootView(frameView.get(), elementInViewCenterPoint);
-        auto inViewCenterPointInLocalRootContents = rootView->rootViewToContents(inViewCenterPointInRootCoordinates);
-        resultInViewCenterPoint = flooredIntPoint(localRootIsMainFrame ? rootView->absoluteToLayoutViewportPoint(inViewCenterPointInLocalRootContents) : inViewCenterPointInLocalRootContents);
+        auto inViewCenterPointInMainFrameView = convertPointFromFrameClientToMainFrameView(frameView.get(), elementInViewCenterPoint);
+        resultInViewCenterPoint = flooredIntPoint(mainFrameView->absoluteToLayoutViewportPoint(mainFrameView->rootViewToContents(inViewCenterPointInMainFrameView)));
         break;
     }
     }
@@ -1157,7 +1144,7 @@ void WebAutomationSessionProxy::setFilesForInputFileUpload(WebCore::PageIdentifi
             fileObjects.appendVector(files->files());
     }
     fileObjects.appendContainerWithMapping(filenames, [&](auto& path) {
-        return WebCore::File::create(&inputElement->document(), path);
+        return WebCore::File::create(protect(inputElement->document()).ptr(), path);
     });
     inputElement->setFiles(WebCore::FileList::create(WTF::move(fileObjects)));
 

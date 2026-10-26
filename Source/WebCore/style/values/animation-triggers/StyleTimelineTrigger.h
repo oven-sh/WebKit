@@ -99,7 +99,7 @@ struct TimelineTrigger {
 
     // CoordinatedValueList interface.
 
-    static constexpr auto baseProperty = PropertyNameConstant<CSSPropertyTimelineTriggerName> { };
+    static constexpr auto baseProperty = PropertyNameConstant<CSSPropertyID::TimelineTriggerName> { };
     static constexpr auto properties = std::tuple { FOR_EACH_TIMELINE_TRIGGER_PROPERTY(DECLARE_COORDINATED_VALUE_LIST_PROPERTY) };
     static TimelineTrigger clone(const TimelineTrigger& other) { return TimelineTrigger { Data { other.m_data } }; }
     bool isInitial() const { return name().isNone(); }

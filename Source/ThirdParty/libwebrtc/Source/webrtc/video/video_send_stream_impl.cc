@@ -38,8 +38,6 @@
 #include "api/units/data_rate.h"
 #include "api/units/time_delta.h"
 #include "api/video/encoded_image.h"
-#include "api/video/video_bitrate_allocation.h"
-#include "api/video/video_codec_constants.h"
 #include "api/video/video_codec_type.h"
 #include "api/video/video_frame.h"
 #include "api/video/video_frame_type.h"
@@ -70,7 +68,6 @@
 #include "rtc_base/numerics/safe_conversions.h"
 #include "rtc_base/task_utils/repeating_task.h"
 #include "rtc_base/trace_event.h"
-#include "system_wrappers/include/clock.h"
 #include "video/adaptation/overuse_frame_detector.h"
 #include "video/config/video_encoder_config.h"
 #include "video/encoder_rtcp_feedback.h"
@@ -83,11 +80,6 @@
 namespace webrtc {
 namespace internal {
 namespace {
-
-// Max positive size difference to treat allocations as "similar".
-constexpr int kMaxVbaSizeDifferencePercent = 10;
-// Max time we will throttle similar video bitrate allocations.
-constexpr int64_t kMaxVbaThrottleTimeMs = 500;
 
 constexpr TimeDelta kEncoderTimeOut = TimeDelta::Seconds(2);
 
@@ -193,18 +185,6 @@ std::optional<AlrExperimentSettings> GetAlrSettings(
       AlrExperimentSettings::kStrictPacingAndProbingExperimentName);
 }
 
-bool SameStreamsEnabled(const VideoBitrateAllocation& lhs,
-                        const VideoBitrateAllocation& rhs) {
-  for (size_t si = 0; si < kMaxSpatialLayers; ++si) {
-    for (size_t ti = 0; ti < kMaxTemporalStreams; ++ti) {
-      if (lhs.HasBitrate(si, ti) != rhs.HasBitrate(si, ti)) {
-        return false;
-      }
-    }
-  }
-  return true;
-}
-
 // Calculates the maximum bitrate across a set of layers (spatial or simulcast).
 // If there are active layers but they lack individual bitrate caps, falls back
 // to the provided global maximum bitrate. Returns std::nullopt if there are no
@@ -253,18 +233,6 @@ std::optional<float> GetConfiguredPacingFactor(
   return RateControlSettings(field_trials)
       .GetPacingFactor()
       .value_or(default_pacing_config.pacing_factor);
-}
-
-int GetEncoderPriorityBitrate(std::string codec_name,
-                              const FieldTrialsView& field_trials) {
-  int priority_bitrate = 0;
-  if (PayloadStringToCodecType(codec_name) == VideoCodecType::kVideoCodecAV1) {
-    FieldTrialParameter<int> av1_priority_bitrate("bitrate", 0);
-    ParseFieldTrial({&av1_priority_bitrate},
-                    field_trials.Lookup("WebRTC-AV1-OverridePriorityBitrate"));
-    priority_bitrate = av1_priority_bitrate;
-  }
-  return priority_bitrate;
 }
 
 DataRate GetDefaultMinVideoBitrate(VideoCodecType codec_type) {
@@ -350,12 +318,7 @@ GetBitrateAllocationCallbackType(const VideoSendStream::Config& config,
     return VideoStreamEncoder::BitrateAllocationCallbackType::
         kVideoLayersAllocation;
   }
-  if (field_trials.IsEnabled("WebRTC-Target-Bitrate-Rtcp")) {
-    return VideoStreamEncoder::BitrateAllocationCallbackType::
-        kVideoBitrateAllocation;
-  }
-  return VideoStreamEncoder::BitrateAllocationCallbackType::
-      kVideoBitrateAllocationWhenScreenSharing;
+  return VideoStreamEncoder::BitrateAllocationCallbackType::kNone;
 }
 
 RtpSenderFrameEncryptionConfig CreateFrameEncryptionConfig(
@@ -397,7 +360,7 @@ std::unique_ptr<VideoStreamEncoderInterface> CreateVideoStreamEncoder(
   std::unique_ptr<TaskQueueBase, TaskQueueDeleter> encoder_queue =
       env.task_queue_factory().CreateTaskQueue(
           "VideoEncoderQueue",
-          env.field_trials().IsEnabled("WebRTC-MediaTaskQueuePriorities")
+          !env.field_trials().IsDisabled("WebRTC-MediaTaskQueuePriorities")
               ? TaskQueueFactory::Priority::kVideo
               : TaskQueueFactory::Priority::kNormal);
   TaskQueueBase* encoder_queue_ptr = encoder_queue.get();
@@ -456,10 +419,7 @@ VideoSendStreamImpl::VideoSendStreamImpl(
     std::unique_ptr<VideoStreamEncoderInterface> video_stream_encoder_for_test)
     : env_(env),
       transport_(transport),
-      stats_proxy_(&env_.clock(),
-                   config,
-                   encoder_config.content_type,
-                   env_.field_trials()),
+      stats_proxy_(env_, config, encoder_config.content_type),
       send_packet_observer_(&stats_proxy_, send_delay_stats),
       config_(std::move(config)),
       content_type_(encoder_config.content_type),
@@ -514,10 +474,7 @@ VideoSendStreamImpl::VideoSendStreamImpl(
       configured_max_bitrate_(
           DataRate::BitsPerSec(std::max(0, encoder_config.max_bitrate_bps))),
       encoder_target_rate_(DataRate::Zero()),
-      encoder_bitrate_priority_(encoder_config.bitrate_priority),
-      encoder_av1_priority_bitrate_override_bps_(
-          GetEncoderPriorityBitrate(config_.rtp.payload_name,
-                                    env_.field_trials())) {
+      encoder_bitrate_priority_(encoder_config.bitrate_priority) {
   RTC_DCHECK_GE(config_.rtp.payload_type, 0);
   RTC_DCHECK_LE(config_.rtp.payload_type, 127);
   RTC_DCHECK(!config_.rtp.ssrcs.empty());
@@ -592,13 +549,14 @@ VideoSendStreamImpl::~VideoSendStreamImpl() {
 void VideoSendStreamImpl::AddAdaptationResource(
     scoped_refptr<Resource> resource) {
   RTC_DCHECK_RUN_ON(&thread_checker_);
-  video_stream_encoder_->AddAdaptationResource(resource);
+  adaptation_resources_.push_back(resource);
+  video_stream_encoder_->AddAdaptationResource(std::move(resource));
 }
 
 std::vector<scoped_refptr<Resource>>
 VideoSendStreamImpl::GetAdaptationResources() {
   RTC_DCHECK_RUN_ON(&thread_checker_);
-  return video_stream_encoder_->GetAdaptationResources();
+  return adaptation_resources_;
 }
 
 void VideoSendStreamImpl::SetSource(
@@ -783,55 +741,6 @@ void VideoSendStreamImpl::SignalEncoderTimedOut() {
   }
 }
 
-void VideoSendStreamImpl::OnBitrateAllocationUpdated(
-    const VideoBitrateAllocation& allocation) {
-  // OnBitrateAllocationUpdated is invoked from  the encoder task queue or
-  // the worker_queue_.
-  auto task = [this, allocation] {
-    RTC_DCHECK_RUN_ON(&thread_checker_);
-    if (encoder_target_rate_.IsZero()) {
-      return;
-    }
-    int64_t now_ms = env_.clock().TimeInMilliseconds();
-    if (video_bitrate_allocation_context_) {
-      // If new allocation is within kMaxVbaSizeDifferencePercent larger
-      // than the previously sent allocation and the same streams are still
-      // enabled, it is considered "similar". We do not want send similar
-      // allocations more once per kMaxVbaThrottleTimeMs.
-      const VideoBitrateAllocation& last =
-          video_bitrate_allocation_context_->last_sent_allocation;
-      const bool is_similar =
-          allocation.get_sum_bps() >= last.get_sum_bps() &&
-          allocation.get_sum_bps() <
-              (last.get_sum_bps() * (100 + kMaxVbaSizeDifferencePercent)) /
-                  100 &&
-          SameStreamsEnabled(allocation, last);
-      if (is_similar &&
-          (now_ms - video_bitrate_allocation_context_->last_send_time_ms) <
-              kMaxVbaThrottleTimeMs) {
-        // This allocation is too similar, cache it and return.
-        video_bitrate_allocation_context_->throttled_allocation = allocation;
-        return;
-      }
-    } else {
-      video_bitrate_allocation_context_.emplace();
-    }
-
-    video_bitrate_allocation_context_->last_sent_allocation = allocation;
-    video_bitrate_allocation_context_->throttled_allocation.reset();
-    video_bitrate_allocation_context_->last_send_time_ms = now_ms;
-
-    // Send bitrate allocation metadata only if encoder is not paused.
-    rtp_video_sender_->OnBitrateAllocationUpdated(allocation);
-  };
-  if (!worker_queue_->IsCurrent()) {
-    worker_queue_->PostTask(
-        SafeTask(worker_queue_safety_.flag(), std::move(task)));
-  } else {
-    task();
-  }
-}
-
 void VideoSendStreamImpl::OnVideoLayersAllocationUpdated(
     VideoLayersAllocation allocation) {
   // OnVideoLayersAllocationUpdated is handled on the encoder task queue in
@@ -854,7 +763,7 @@ MediaStreamAllocationConfig VideoSendStreamImpl::GetAllocationConfig() const {
           encoder_max_bitrate_.value_or(DataRate::Zero()).bps<uint32_t>(),
       .pad_up_bitrate_bps =
           static_cast<uint32_t>(disable_padding_ ? 0 : max_padding_bitrate_),
-      .priority_bitrate_bps = encoder_av1_priority_bitrate_override_bps_,
+      .priority_bitrate_bps = 0,
       .enforce_min_bitrate = !config_.suspend_below_min_bitrate,
       .bitrate_priority = encoder_bitrate_priority_,
       .rate_elasticity =
@@ -961,12 +870,6 @@ EncodedImageCallback::Result VideoSendStreamImpl::OnEncodedImage(
       disable_padding_ = false;
       // To ensure that padding bitrate is propagated to the bitrate allocator.
       SignalEncoderActive();
-    }
-    // Check if there's a throttled VideoBitrateAllocation that we should try
-    // sending.
-    auto& context = video_bitrate_allocation_context_;
-    if (context && context->throttled_allocation) {
-      OnBitrateAllocationUpdated(*context->throttled_allocation);
     }
   };
   worker_queue_->PostTask(

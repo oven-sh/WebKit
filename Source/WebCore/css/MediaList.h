@@ -50,7 +50,7 @@ public:
     WEBCORE_EXPORT ~MediaList();
 
     bool isSupportedPropertyIndex(unsigned index) const { return index < length(); }
-    WEBCORE_EXPORT unsigned length() const;
+    WEBCORE_EXPORT unsigned LEGACY_NODELETE length() const;
     WEBCORE_EXPORT String item(unsigned index) const;
     WEBCORE_EXPORT ExceptionOr<void> deleteMedium(const String& oldMedium);
     WEBCORE_EXPORT void appendMedium(const String& newMedium);
@@ -58,11 +58,11 @@ public:
     WEBCORE_EXPORT String mediaText() const;
     WEBCORE_EXPORT void setMediaText(const String&);
 
-    CSSRule* NODELETE parentRule() const;
-    CSSStyleSheet* NODELETE parentStyleSheet() const;
+    CSSRule* LEGACY_NODELETE parentRule() const;
+    CSSStyleSheet* LEGACY_NODELETE parentStyleSheet() const;
     void detachFromParent();
 
-    const MQ::MediaQueryList& NODELETE mediaQueries() const;
+    const MQ::MediaQueryList& LEGACY_NODELETE mediaQueries() const;
 
 private:
     MediaList(CSSStyleSheet* parentSheet);

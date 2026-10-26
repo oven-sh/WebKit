@@ -188,8 +188,10 @@ Element* editableRootForPosition(const Position& position, EditableType editable
 
     switch (editableType) {
     case HasEditableAXRole:
-        if (CheckedPtr cache = protect(node->document())->existingAXObjectCache())
-            return const_cast<Element*>(cache->rootAXEditableElement(node.get()));
+        if (CheckedPtr cache = protect(node->document())->existingAXObjectCache()) {
+            // FIXME: Remove suppression once rdar://189998365 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<Element*>(cache->rootAXEditableElement(node.get()));
+        }
         [[fallthrough]];
     case ContentIsEditable:
         return node->rootEditableElement();
@@ -231,7 +233,7 @@ Position nextVisuallyDistinctCandidate(const Position& position, SkipDisplayCont
         if (RefPtr node = nextPosition.containerNode()) {
             if (!node->renderer()) {
                 if (skipDisplayContents == SkipDisplayContents::No) {
-                    if (auto element = dynamicDowncast<Element>(node); element && element->hasDisplayContents())
+                    if (auto* element = dynamicDowncast<Element>(node); element && element->hasDisplayContents())
                         continue;
                 }
                 nextPosition = lastPositionInOrAfterNode(node.get());
@@ -505,13 +507,13 @@ bool isListItem(const Node& node)
     return isListHTMLElement(node.parentNode()) || (node.renderer() && node.renderer()->isRenderListItem());
 }
 
-Element* enclosingElementWithTag(const Position& position, const QualifiedName& tagName)
+RefPtr<Element> enclosingElementWithTag(const Position& position, const QualifiedName& tagName)
 {
     auto root = highestEditableRoot(position);
     for (RefPtr node = position.deprecatedNode(); node; node = node->parentNode()) {
         if (root && !node->hasEditableStyle())
             continue;
-        auto* element = dynamicDowncast<Element>(*node);
+        RefPtr element = dynamicDowncast<Element>(*node);
         if (!element)
             continue;
         if (element->hasTagName(tagName))
@@ -555,7 +557,7 @@ RefPtr<Node> highestEnclosingNodeOfType(const Position& position, bool (*nodeIsO
     return highest;
 }
 
-static bool NODELETE hasARenderedDescendant(Node* node, Node* excludedNode)
+static bool LEGACY_NODELETE hasARenderedDescendant(Node* node, Node* excludedNode)
 {
     for (auto* n = node->firstChild(); n;) {
         if (n == excludedNode) {
@@ -1139,7 +1141,7 @@ Position adjustedSelectionStartForStyleComputation(const VisibleSelection& selec
 }
 
 // FIXME: Should this be deprecated like deprecatedEnclosingBlockFlowElement is?
-static Element* NODELETE elementIfBlockFlow(Node& node)
+static Element* LEGACY_NODELETE elementIfBlockFlow(Node& node)
 {
     auto* element = dynamicDowncast<Element>(node);
     if (!element)
@@ -1153,7 +1155,7 @@ bool isBlockFlowElement(const Node& node)
     return elementIfBlockFlow(const_cast<Node&>(node));
 }
 
-Element* NODELETE deprecatedEnclosingBlockFlowElement(Node* node)
+Element* LEGACY_NODELETE deprecatedEnclosingBlockFlowElement(Node* node)
 {
     if (!node)
         return nullptr;
@@ -1228,7 +1230,8 @@ IntRect absoluteBoundsForLocalCaretRect(RenderBlock* rendererForCaretPainting, c
 
     LayoutRect localRect(rect);
     rendererForCaretPainting->flipForWritingMode(localRect);
-    return rendererForCaretPainting->localToAbsoluteQuad(FloatRect(localRect), MapCoordinatesMode::UseTransforms, insideFixed).enclosingBoundingBox();
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return rendererForCaretPainting->localToAbsoluteQuad(FloatRect(localRect), MapCoordinatesMode::UseTransforms, insideFixed).enclosingBoundingBox();
 }
 
 HashSet<Ref<HTMLImageElement>> visibleImageElementsInRangeWithNonLoadedImages(const SimpleRange& range)
@@ -1320,7 +1323,7 @@ static std::optional<BoundaryPoint> findBidiBoundary(const RenderedPosition& pos
 }
 
 enum class BoxIterationDirection : bool { SameAsLine, OppositeOfLine };
-static InlineIterator::LeafBoxIterator advanceInDirection(InlineIterator::LeafBoxIterator box, TextDirection direction, BoxIterationDirection iterationDirection)
+static InlineIterator::LeafBoxIterator LEGACY_NODELETE advanceInDirection(InlineIterator::LeafBoxIterator box, TextDirection direction, BoxIterationDirection iterationDirection)
 {
     bool shouldMoveRight = (iterationDirection == BoxIterationDirection::SameAsLine) == (direction == TextDirection::LTR);
     return shouldMoveRight ? box->nextLineRightwardOnLine() : box->nextLineLeftwardOnLine();
@@ -1338,7 +1341,7 @@ static void forEachRenderedBoxBetween(const RenderedPosition& first, const Rende
         return;
     }
 
-    if (first.lineBox().atEnd()) {
+    if (!first.lineBox()) {
         ASSERT_NOT_REACHED();
         return;
     }
@@ -1422,12 +1425,12 @@ static std::optional<SimpleRange> makeVisuallyContiguousIfNeeded(const SimpleRan
     auto [start, end] = positionsForRange(range);
     auto firstLineDirection = TextDirection::LTR;
     RenderedPosition renderedStart { start };
-    if (renderedStart.isNull() || renderedStart.lineBox().atEnd())
+    if (renderedStart.isNull() || !renderedStart.lineBox())
         return std::nullopt;
 
     auto lastLineDirection = TextDirection::LTR;
     RenderedPosition renderedEnd { end };
-    if (renderedEnd.isNull() || renderedEnd.lineBox().atEnd())
+    if (renderedEnd.isNull() || !renderedEnd.lineBox())
         return std::nullopt;
 
     if (renderedStart.box() == renderedEnd.box())

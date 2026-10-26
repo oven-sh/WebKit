@@ -62,6 +62,10 @@ ASCIILiteral description(WKTextExtractionContainer container)
         return "BUTTON"_s;
     case WKTextExtractionContainerCanvas:
         return "CANVAS"_s;
+    case WKTextExtractionContainerVideo:
+        return "VIDEO"_s;
+    case WKTextExtractionContainerAudio:
+        return "AUDIO"_s;
     case WKTextExtractionContainerSubscript:
         return "SUBSCRIPT"_s;
     case WKTextExtractionContainerSuperscript:

@@ -80,7 +80,7 @@ struct VideoFrameAdaptor {
 #endif
 };
 
-static RealtimeMediaSource::Type NODELETE toSourceType(CaptureDevice::DeviceType type)
+static RealtimeMediaSource::Type LEGACY_NODELETE toSourceType(CaptureDevice::DeviceType type)
 {
     switch (type) {
     case CaptureDevice::DeviceType::Microphone:
@@ -349,7 +349,7 @@ void RealtimeMediaSource::videoFrameAvailable(VideoFrame& videoFrame, VideoFrame
             return videoFrame;
 
         if (!m_rotationSession)
-            m_rotationSession = makeUnique<ImageRotationSessionVT>(m_canUseIOSurface ? ImageRotationSessionVT::ShouldUseIOSurface::Yes : ImageRotationSessionVT::ShouldUseIOSurface::No);
+            lazyInitialize(m_rotationSession, makeUnique<ImageRotationSessionVT>(m_canUseIOSurface ? ImageRotationSessionVT::ShouldUseIOSurface::Yes : ImageRotationSessionVT::ShouldUseIOSurface::No));
 
         RefPtr rotatedVideoFrame = m_rotationSession->applyRotation(videoFrame);
         if (!rotatedVideoFrame)
@@ -860,7 +860,7 @@ void RealtimeMediaSource::setSizeFrameRateAndZoom(const VideoPresetConstraints& 
         setZoom(*constraints.zoom);
 }
 
-static bool NODELETE booleanSettingFromConstraint(const BooleanConstraint& boolConstraint)
+static bool LEGACY_NODELETE booleanSettingFromConstraint(const BooleanConstraint& boolConstraint)
 {
     bool setting = true;
     boolConstraint.getExact(setting) || boolConstraint.getIdeal(setting);
@@ -1020,12 +1020,12 @@ void RealtimeMediaSource::applyConstraint(MediaConstraintType constraintType, co
     }
 
     case MediaConstraintType::DeviceId:
+    case MediaConstraintType::DisplaySurface:
     case MediaConstraintType::GroupId:
         ASSERT(constraint.isString());
         // There is nothing to do here, neither can be changed.
         break;
 
-    case MediaConstraintType::DisplaySurface:
     case MediaConstraintType::LogicalSurface:
         ASSERT(constraint.isBoolean());
         break;

@@ -11,6 +11,7 @@ PASS: Cross-origin child's name attribute should be reported.
 PASS: Cross-origin child should have a non-empty loaderIdentifier.
 PASS: Cross-origin child's loaderIdentifier should differ from the main frame's.
 PASS: Cross-origin child's stylesheet subresource should be in the frame model.
+PASS: Cross-origin child's subresources should have the child's loaderIdentifier.
 PASS: There should be exactly one frame for the iframe document.
 PASS: The stylesheet subresource should not be duplicated.
 

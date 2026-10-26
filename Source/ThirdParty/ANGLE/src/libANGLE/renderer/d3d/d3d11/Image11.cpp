@@ -345,7 +345,8 @@ angle::Result Image11::loadCompressedData(const gl::Context *context,
         d3dFormatInfo.getLoadFunctions()(GL_UNSIGNED_BYTE).loadFunction;
 
     D3D11_MAPPED_SUBRESOURCE mappedImage;
-    ANGLE_TRY(map(context, D3D11_MAP_WRITE, &mappedImage));
+    // Map as read-write to preserve zero-initialization on unwritten blocks.
+    ANGLE_TRY(map(context, D3D11_MAP_READ_WRITE, &mappedImage));
 
     uint8_t *offsetMappedData = ANGLE_UNSAFE_TODO(
         static_cast<uint8_t *>(mappedImage.pData) +
@@ -420,8 +421,12 @@ angle::Result Image11::copyFromTexStorage(const gl::Context *context,
     ANGLE_TRY(storage11->getSubresourceIndex(context, imageIndex, &subresourceIndex));
 
     gl::Box sourceBox(0, 0, 0, mWidth, mHeight, mDepth);
-    return copyWithoutConversion(context, gl::Offset(), sourceBox, *textureHelper,
-                                 subresourceIndex);
+    ANGLE_TRY(
+        copyWithoutConversion(context, gl::Offset(), sourceBox, *textureHelper, subresourceIndex));
+
+    disassociateStorage();
+
+    return angle::Result::Continue;
 }
 
 angle::Result Image11::copyFromFramebuffer(const gl::Context *context,
@@ -457,7 +462,8 @@ angle::Result Image11::copyFromFramebuffer(const gl::Context *context,
     // This format requires conversion, so we must copy the texture to staging and manually convert
     // via readPixels
     D3D11_MAPPED_SUBRESOURCE mappedImage;
-    ANGLE_TRY(map(context, D3D11_MAP_WRITE, &mappedImage));
+    // Map as read-write to preserve zero-initialization on unwritten pixels.
+    ANGLE_TRY(map(context, D3D11_MAP_READ_WRITE, &mappedImage));
 
     // determine the offset coordinate into the destination buffer
     const auto &dxgiFormatInfo = d3d11::GetDXGIFormatSizeInfo(mDXGIFormat);
@@ -604,9 +610,10 @@ angle::Result Image11::createStagingTexture(const gl::Context *context)
     int lodOffset  = 1;
     GLsizei width  = mWidth;
     GLsizei height = mHeight;
+    GLsizei depth  = mDepth;
 
     // adjust size if needed for compressed textures
-    d3d11::MakeValidSize(false, dxgiFormat, &width, &height, &lodOffset);
+    d3d11::MakeValidSize(false, dxgiFormat, mType, width, height, depth, lodOffset);
 
     Context11 *context11 = GetImplAs<Context11>(context);
 
@@ -617,7 +624,7 @@ angle::Result Image11::createStagingTexture(const gl::Context *context)
             D3D11_TEXTURE3D_DESC desc;
             desc.Width          = width;
             desc.Height         = height;
-            desc.Depth          = mDepth;
+            desc.Depth          = depth;
             desc.MipLevels      = lodOffset + 1;
             desc.Format         = dxgiFormat;
             desc.Usage          = D3D11_USAGE_STAGING;
@@ -630,7 +637,7 @@ angle::Result Image11::createStagingTexture(const gl::Context *context)
                 gl::TexLevelArray<D3D11_SUBRESOURCE_DATA> initialData;
                 ANGLE_TRY(d3d11::GenerateInitialTextureData(
                     context, mInternalFormat, mRenderer->getRenderer11DeviceCaps(), width, height,
-                    mDepth, lodOffset + 1, &initialData));
+                    depth, lodOffset + 1, &initialData));
 
                 ANGLE_TRY(mRenderer->allocateTexture(context11, desc, formatInfo,
                                                      initialData.data(), &mStagingTexture));

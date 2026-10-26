@@ -52,6 +52,9 @@ public:
     LockBackForwardList lockBackForwardList() const { return m_lockBackForwardList; }
     void setLockBackForwardList(LockBackForwardList lockBackForwardList) { m_lockBackForwardList = lockBackForwardList; }
 
+    ReplaceIfNotCompletelyLoaded replaceIfNotCompletelyLoaded() const { return m_replaceIfNotCompletelyLoaded; }
+    void setReplaceIfNotCompletelyLoaded(ReplaceIfNotCompletelyLoaded replaceIfNotCompletelyLoaded) { m_replaceIfNotCompletelyLoaded = replaceIfNotCompletelyLoaded; }
+
     NewFrameOpenerPolicy newFrameOpenerPolicy() const { return m_newFrameOpenerPolicy; }
     void setNewFrameOpenerPolicy(NewFrameOpenerPolicy newFrameOpenerPolicy) { m_newFrameOpenerPolicy = newFrameOpenerPolicy; }
 
@@ -102,6 +105,7 @@ protected:
 private:
     LockHistory m_lockHistory { LockHistory::No };
     LockBackForwardList m_lockBackForwardList { LockBackForwardList::No };
+    ReplaceIfNotCompletelyLoaded m_replaceIfNotCompletelyLoaded { ReplaceIfNotCompletelyLoaded::No };
     NewFrameOpenerPolicy m_newFrameOpenerPolicy { NewFrameOpenerPolicy::Allow };
     ShouldReplaceDocumentIfJavaScriptURL m_shouldReplaceDocumentIfJavaScriptURL { ReplaceDocumentIfJavaScriptURL };
     ShouldOpenExternalURLsPolicy m_shouldOpenExternalURLsPolicy { ShouldOpenExternalURLsPolicy::ShouldNotAllow };
@@ -130,8 +134,8 @@ public:
 
     bool isEmpty() const { return m_resourceRequest.isEmpty(); }
 
-    WEBCORE_EXPORT Document& NODELETE requester() const;
-    const SecurityOrigin& NODELETE requesterSecurityOrigin() const;
+    WEBCORE_EXPORT Document& LEGACY_NODELETE requester() const;
+    const SecurityOrigin& LEGACY_NODELETE requesterSecurityOrigin() const;
 
     ResourceRequest& resourceRequest() LIFETIME_BOUND { return m_resourceRequest; }
     const ResourceRequest& resourceRequest() const LIFETIME_BOUND { return m_resourceRequest; }

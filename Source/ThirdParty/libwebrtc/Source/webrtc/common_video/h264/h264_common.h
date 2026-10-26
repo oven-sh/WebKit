@@ -25,17 +25,43 @@ namespace webrtc {
 namespace H264 {
 // The size of a full NALU start sequence {0 0 0 1}, used for the first NALU
 // of an access unit, and for SPS and PPS blocks.
-const size_t kNaluLongStartSequenceSize = 4;
+inline constexpr size_t kNaluLongStartSequenceSize = 4;
 
 // The size of a shortened NALU start sequence {0 0 1}, that may be used if
 // not the first NALU of an access unit or an SPS or PPS block.
-const size_t kNaluShortStartSequenceSize = 3;
+inline constexpr size_t kNaluShortStartSequenceSize = 3;
 
 // The size of the NALU type byte (1).
-const size_t kNaluTypeSize = 1;
+inline constexpr size_t kNaluTypeSize = 1;
 
 // Maximum reference index for reference pictures.
-constexpr int kMaxReferenceIndex = 31;
+inline constexpr int kMaxReferenceIndex = 31;
+
+// Maximum SPS ID allowed by H.264 spec (Table 7-1 / 7.4.2.1.1).
+inline constexpr int kMaxSpsId = 31;
+
+// Maximum PPS ID allowed by H.264 spec (Table 7-1 / 7.4.2.2).
+inline constexpr int kMaxPpsId = 255;
+
+// H.264 Level 5.2 limits (Table A-1 and Section A.3.1):
+// Max macroblocks per frame (MaxFS) = 36864.
+// Max width/height in macroblocks = Sqrt(MaxFS * 8) = 543.
+// A macroblock is 16x16 pixels.
+inline constexpr int kMaxMacroblockFrameSizeLevel52 = 36864;
+inline constexpr int kMaxMacroblockDimensionLevel52 = 543;
+inline constexpr int kMaxPixelDimensionLevel52 =
+    kMaxMacroblockDimensionLevel52 * 16;
+
+// Returns true if the resolution complies with H.264 Level 5.2 limits.
+inline bool IsValidResolution(int64_t width, int64_t height) {
+  if (width <= 0 || height <= 0 || width > kMaxPixelDimensionLevel52 ||
+      height > kMaxPixelDimensionLevel52) {
+    return false;
+  }
+  const int64_t width_in_mbs = (width + 15) / 16;
+  const int64_t height_in_mbs = (height + 15) / 16;
+  return width_in_mbs * height_in_mbs <= kMaxMacroblockFrameSizeLevel52;
+}
 
 enum NaluType : uint8_t {
   kSlice = 1,

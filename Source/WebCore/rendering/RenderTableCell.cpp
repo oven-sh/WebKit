@@ -40,6 +40,7 @@
 #include "PaintInfo.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
+#include "RenderElementInlines.h"
 #include "RenderFlexibleBox.h"
 #include "RenderObjectInlines.h"
 #include "RenderTableCellInlines.h"
@@ -536,7 +537,7 @@ auto RenderTableCell::localRectsForRepaint(RepaintOutlineBounds repaintOutlineBo
         return RenderBlockFlow::localRectsForRepaint(repaintOutlineBounds);
 
     bool flippedInline = tableWritingMode().isInlineFlipped();
-    LayoutUnit outlineSize { style().usedOutlineSize(style().usedZoomForLength(), style().deviceScaleFactor()) };
+    LayoutUnit outlineSize { usedStyle().outlineSize() };
     LayoutUnit left = std::max(borderHalfLeft(true), outlineSize);
     LayoutUnit right = std::max(borderHalfRight(true), outlineSize);
     LayoutUnit top = std::max(borderHalfTop(true), outlineSize);
@@ -638,8 +639,11 @@ void RenderTableCell::styleDidChange(Style::Difference diff, const Style::Comput
 
     RenderBlockFlow::styleDidChange(diff, oldStyle);
 
-    if (parent() && section() && oldStyle && style().height() != oldStyle->height())
-        section()->rowLogicalHeightChanged(rowIndex());
+    if (parent() && section() && oldStyle) {
+        auto rowWritingMode = row()->writingMode();
+        if (style().logicalHeight(rowWritingMode) != oldStyle->logicalHeight(rowWritingMode))
+            section()->rowLogicalHeightChanged(rowIndex());
+    }
 
     // Our intrinsic padding pushes us down to align with the baseline of other cells on the row. If our vertical-align
     // has changed then so will the padding needed to align with other cells - clear it so we can recalculate it from scratch.
@@ -670,7 +674,7 @@ void RenderTableCell::styleDidChange(Style::Difference diff, const Style::Comput
 // (4) If border styles differ only in color, then a style set on a cell wins over one on a row, 
 // which wins over a row group, column, column group and, lastly, table. It is undefined which color 
 // is used when two elements of the same type disagree.
-static bool NODELETE compareBorders(const CollapsedBorderValue& border1, const CollapsedBorderValue& border2)
+static bool LEGACY_NODELETE compareBorders(const CollapsedBorderValue& border1, const CollapsedBorderValue& border2)
 {
     // Sanity check the values passed in. The null border have lowest priority.
     if (!border2.exists())
@@ -702,7 +706,7 @@ static bool NODELETE compareBorders(const CollapsedBorderValue& border1, const C
     return border1.precedence() < border2.precedence();
 }
 
-static CollapsedBorderValue NODELETE chooseBorder(const CollapsedBorderValue& border1, const CollapsedBorderValue& border2)
+static CollapsedBorderValue LEGACY_NODELETE chooseBorder(const CollapsedBorderValue& border1, const CollapsedBorderValue& border2)
 {
     const CollapsedBorderValue& border = compareBorders(border1, border2) ? border2 : border1;
     return border.style() == BorderStyle::Hidden ? CollapsedBorderValue() : border;
@@ -744,13 +748,13 @@ CollapsedBorderValue RenderTableCell::collapsedStartBorder(IncludeBorderColorOrN
 static Color resolvedBorderColor(const Style::ComputedStyle& style, CSSPropertyID borderColor)
 {
     switch (borderColor) {
-    case CSSPropertyBorderTopColor:
+    case CSSPropertyID::BorderTopColor:
         return style.visitedDependentBorderTopColorApplyingColorFilter();
-    case CSSPropertyBorderRightColor:
+    case CSSPropertyID::BorderRightColor:
         return style.visitedDependentBorderRightColorApplyingColorFilter();
-    case CSSPropertyBorderBottomColor:
+    case CSSPropertyID::BorderBottomColor:
         return style.visitedDependentBorderBottomColorApplyingColorFilter();
-    case CSSPropertyBorderLeftColor:
+    case CSSPropertyID::BorderLeftColor:
         return style.visitedDependentBorderLeftColorApplyingColorFilter();
     default:
         ASSERT_NOT_REACHED();
@@ -762,8 +766,8 @@ CollapsedBorderValue RenderTableCell::computeCollapsedStartBorder(IncludeBorderC
 {
     // For the start border, we need to check, in order of precedence:
     // (1) Our start border.
-    CSSPropertyID startColorProperty = includeColor ? CSSProperty::resolveDirectionAwareProperty(CSSPropertyBorderInlineStartColor, tableWritingMode()) : CSSPropertyInvalid;
-    CSSPropertyID endColorProperty = includeColor ? CSSProperty::resolveDirectionAwareProperty(CSSPropertyBorderInlineEndColor, tableWritingMode()) : CSSPropertyInvalid;
+    CSSPropertyID startColorProperty = includeColor ? CSSProperty::resolveDirectionAwareProperty(CSSPropertyID::BorderInlineStartColor, tableWritingMode()) : CSSPropertyID::Invalid;
+    CSSPropertyID endColorProperty = includeColor ? CSSProperty::resolveDirectionAwareProperty(CSSPropertyID::BorderInlineEndColor, tableWritingMode()) : CSSPropertyID::Invalid;
     auto deviceScaleFactor = style().deviceScaleFactor();
     CollapsedBorderValue result(style().borderStart(tableWritingMode()), includeColor ? resolvedBorderColor(style(), startColorProperty) : Color(), BorderPrecedence::Cell, style().usedZoomForLength(), deviceScaleFactor);
 
@@ -875,8 +879,8 @@ CollapsedBorderValue RenderTableCell::computeCollapsedEndBorder(IncludeBorderCol
     // For end border, we need to check, in order of precedence:
     // (1) Our end border.
     CSSPropertyID startColorProperty = includeColor
-        ? CSSProperty::resolveDirectionAwareProperty(CSSPropertyBorderInlineStartColor, tableWritingMode()) : CSSPropertyInvalid;
-    CSSPropertyID endColorProperty = includeColor ? CSSProperty::resolveDirectionAwareProperty(CSSPropertyBorderInlineEndColor, tableWritingMode()) : CSSPropertyInvalid;
+        ? CSSProperty::resolveDirectionAwareProperty(CSSPropertyID::BorderInlineStartColor, tableWritingMode()) : CSSPropertyID::Invalid;
+    CSSPropertyID endColorProperty = includeColor ? CSSProperty::resolveDirectionAwareProperty(CSSPropertyID::BorderInlineEndColor, tableWritingMode()) : CSSPropertyID::Invalid;
     auto deviceScaleFactor = style().deviceScaleFactor();
     CollapsedBorderValue result = CollapsedBorderValue(style().borderEnd(tableWritingMode()), includeColor ? resolvedBorderColor(style(), endColorProperty) : Color(), BorderPrecedence::Cell, style().usedZoomForLength(), deviceScaleFactor);
 
@@ -989,8 +993,8 @@ CollapsedBorderValue RenderTableCell::computeCollapsedBeforeBorder(IncludeBorder
 {
     // For before border, we need to check, in order of precedence:
     // (1) Our before border.
-    CSSPropertyID beforeColorProperty = includeColor ? CSSProperty::resolveDirectionAwareProperty(CSSPropertyBorderBlockStartColor, tableWritingMode()) : CSSPropertyInvalid;
-    CSSPropertyID afterColorProperty = includeColor ? CSSProperty::resolveDirectionAwareProperty(CSSPropertyBorderBlockEndColor, tableWritingMode()) : CSSPropertyInvalid;
+    CSSPropertyID beforeColorProperty = includeColor ? CSSProperty::resolveDirectionAwareProperty(CSSPropertyID::BorderBlockStartColor, tableWritingMode()) : CSSPropertyID::Invalid;
+    CSSPropertyID afterColorProperty = includeColor ? CSSProperty::resolveDirectionAwareProperty(CSSPropertyID::BorderBlockEndColor, tableWritingMode()) : CSSPropertyID::Invalid;
     auto deviceScaleFactor = style().deviceScaleFactor();
     CollapsedBorderValue result = CollapsedBorderValue(style().borderBefore(tableWritingMode()), includeColor ? resolvedBorderColor(style(), beforeColorProperty) : Color(), BorderPrecedence::Cell, style().usedZoomForLength(), deviceScaleFactor);
 
@@ -1087,8 +1091,8 @@ CollapsedBorderValue RenderTableCell::computeCollapsedAfterBorder(IncludeBorderC
 {
     // For after border, we need to check, in order of precedence:
     // (1) Our after border.
-    CSSPropertyID beforeColorProperty = includeColor ? CSSProperty::resolveDirectionAwareProperty(CSSPropertyBorderBlockStartColor, tableWritingMode()) : CSSPropertyInvalid;
-    CSSPropertyID afterColorProperty = includeColor ? CSSProperty::resolveDirectionAwareProperty(CSSPropertyBorderBlockEndColor, tableWritingMode()) : CSSPropertyInvalid;
+    CSSPropertyID beforeColorProperty = includeColor ? CSSProperty::resolveDirectionAwareProperty(CSSPropertyID::BorderBlockStartColor, tableWritingMode()) : CSSPropertyID::Invalid;
+    CSSPropertyID afterColorProperty = includeColor ? CSSProperty::resolveDirectionAwareProperty(CSSPropertyID::BorderBlockEndColor, tableWritingMode()) : CSSPropertyID::Invalid;
     auto deviceScaleFactor = style().deviceScaleFactor();
     CollapsedBorderValue result = CollapsedBorderValue(style().borderAfter(tableWritingMode()), includeColor ? resolvedBorderColor(style(), afterColorProperty) : Color(), BorderPrecedence::Cell, style().usedZoomForLength(), deviceScaleFactor);
 
@@ -1358,7 +1362,7 @@ public:
     {
     }
     
-    void NODELETE addBorder(const CollapsedBorderValue& borderValue, BoxSide borderSide, bool shouldPaint,
+    void addBorder(const CollapsedBorderValue& borderValue, BoxSide borderSide, bool shouldPaint,
         LayoutUnit x1, LayoutUnit y1, LayoutUnit x2, LayoutUnit y2, BorderStyle borderStyle)
     {
         if (borderValue.exists() && shouldPaint) {
@@ -1374,7 +1378,7 @@ public:
         }
     }
 
-    CollapsedBorder* NODELETE nextBorder()
+    CollapsedBorder* LEGACY_NODELETE nextBorder()
     {
         for (unsigned i = 0; i < m_count; i++) {
             if (m_borders[i].borderValue.exists() && m_borders[i].shouldPaint) {
@@ -1419,7 +1423,7 @@ void RenderTableCell::paintCollapsedBorders(PaintInfo& paintInfo, const LayoutPo
 {
     ASSERT(paintInfo.phase == PaintPhase::CollapsedTableBorders);
 
-    if (!paintInfo.shouldPaintWithinRoot(*this) || style().usedVisibility() != Visibility::Visible)
+    if (!paintInfo.shouldPaintWithinRoot(*this) || usedStyle().visibility() != UsedVisibility::Visible)
         return;
 
     LayoutRect localRepaintRect = paintInfo.rect;
@@ -1484,7 +1488,7 @@ void RenderTableCell::paintCollapsedBorders(PaintInfo& paintInfo, const LayoutPo
     }
 }
 
-static LayoutRect NODELETE backgroundRectForRow(const RenderBox& tableRow, const RenderTable& table)
+static LayoutRect LEGACY_NODELETE backgroundRectForRow(const RenderBox& tableRow, const RenderTable& table)
 {
     LayoutRect rect = { tableRow.location(), tableRow.borderBoxSize() };
     if (!table.collapseBorders()) {
@@ -1499,7 +1503,7 @@ static LayoutRect NODELETE backgroundRectForRow(const RenderBox& tableRow, const
     return rect;
 }
 
-static LayoutRect NODELETE backgroundRectForSection(const RenderTableSection& tableSection, const RenderTable& table)
+static LayoutRect LEGACY_NODELETE backgroundRectForSection(const RenderTableSection& tableSection, const RenderTable& table)
 {
     LayoutRect rect = { { }, tableSection.borderBoxSize() };
     if (!table.collapseBorders()) {
@@ -1527,7 +1531,7 @@ void RenderTableCell::paintBackgroundsBehindCell(PaintInfo& paintInfo, LayoutPoi
     if (!paintInfo.shouldPaintWithinRoot(*this))
         return;
 
-    if (style().usedVisibility() != Visibility::Visible)
+    if (usedStyle().visibility() != UsedVisibility::Visible)
         return;
 
     RenderTable* tableElt = table();
@@ -1537,7 +1541,7 @@ void RenderTableCell::paintBackgroundsBehindCell(PaintInfo& paintInfo, LayoutPoi
     const auto& style = backgroundObject->style();
     auto& bgLayers = style.backgroundLayers();
 
-    auto color = style.visitedDependentBackgroundColor();
+    auto color = style.visitedDependentUsedBackgroundColor();
     if (!Style::hasImageInAnyLayer(bgLayers) && !color.isVisible())
         return;
 
@@ -1647,7 +1651,7 @@ void RenderTableCell::paintBoxDecorations(PaintInfo& paintInfo, const LayoutPoin
     adjustBorderBoxRectForPainting(paintRect);
 
     BackgroundPainter backgroundPainter { *this, paintInfo };
-    backgroundPainter.paintBoxShadow(paintRect, style(), Style::ShadowStyle::Normal);
+    backgroundPainter.paintBoxShadow(paintRect, usedStyle(), Style::ShadowStyle::Normal);
 
     // Paint our cell background.
     paintBackgroundsBehindCell(paintInfo, paintOffset, this, paintOffset);
@@ -1657,18 +1661,18 @@ void RenderTableCell::paintBoxDecorations(PaintInfo& paintInfo, const LayoutPoin
     if (table->collapseBorders())
         insetShadowRect.expand(RectEdges<LayoutUnit> { borderTop(), borderRight(), borderBottom(), borderLeft() });
 
-    backgroundPainter.paintBoxShadow(insetShadowRect, style(), Style::ShadowStyle::Inset);
+    backgroundPainter.paintBoxShadow(insetShadowRect, usedStyle(), Style::ShadowStyle::Inset);
 
     if (!style().border().hasBorder() || table->collapseBorders())
         return;
 
     BorderPainter borderPainter { *this, paintInfo };
-    borderPainter.paintBorder(paintRect, style());
+    borderPainter.paintBorder(paintRect, usedStyle());
 }
 
 void RenderTableCell::paintMask(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
-    if (style().usedVisibility() != Visibility::Visible || paintInfo.phase != PaintPhase::Mask)
+    if (usedStyle().visibility() != UsedVisibility::Visible || paintInfo.phase != PaintPhase::Mask)
         return;
 
     RenderTable* tableElt = table();

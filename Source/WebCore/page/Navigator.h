@@ -64,17 +64,17 @@ public:
     NavigatorUAData& userAgentData() const;
     
 #if ENABLE(NAVIGATOR_STANDALONE)
-    bool NODELETE standalone() const;
+    bool LEGACY_NODELETE standalone() const;
 #endif
 
-    int NODELETE maxTouchPoints() const;
+    int LEGACY_NODELETE maxTouchPoints() const;
 
     WEBCORE_EXPORT GPU* gpu();
 
-    Page* NODELETE page();
+    Page* LEGACY_NODELETE page();
 
-    const Document* NODELETE document() const;
-    Document* document();
+    const Document* LEGACY_NODELETE document() const;
+    Document* LEGACY_NODELETE document();
 
     void setAppBadge(ScriptExecutionContext&, std::optional<unsigned long long>, Ref<DeferredPromise>&&);
     void clearAppBadge(ScriptExecutionContext&, Ref<DeferredPromise>&&);
@@ -93,6 +93,6 @@ private:
     mutable String m_userAgent;
     mutable String m_platform;
     mutable RefPtr<NavigatorUAData> m_navigatorUAData;
-    RefPtr<GPU> m_gpuForWebGPU;
+    const RefPtr<GPU> m_gpuForWebGPU;
 };
 }

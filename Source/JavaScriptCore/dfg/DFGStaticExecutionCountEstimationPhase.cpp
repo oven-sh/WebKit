@@ -81,7 +81,7 @@ public:
             }
             
             case EntrySwitch: {
-                DFG_CRASH(m_graph, terminal, "Unexpected EntrySwitch in CPS form.");
+                DFG_CRASH(m_graph, terminal, "Unexpected EntrySwitch in CPS form."_s);
                 break;
             }
 
@@ -94,7 +94,7 @@ public:
     }
 
 private:
-    void NODELETE applyCounts(BranchTarget& target)
+    void LEGACY_NODELETE applyCounts(BranchTarget& target)
     {
         target.count = target.block->executionCount;
     }

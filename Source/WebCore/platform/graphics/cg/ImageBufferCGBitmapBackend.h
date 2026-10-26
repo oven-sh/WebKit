@@ -43,7 +43,7 @@ public:
     static std::unique_ptr<ImageBufferCGBitmapBackend> create(const ImageBufferParameters&, const ImageBufferCreationContext&);
     size_t memoryCost() const final { return ImageBufferBackend::calculateMemoryCost(size(), calculateBytesPerRow(size(), pixelFormat())); }
     bool canMapBackingStore() const final;
-    GraphicsContext& NODELETE context() final;
+    GraphicsContext& LEGACY_NODELETE context() final;
 
 private:
     ImageBufferCGBitmapBackend(const ImageBufferParameters&, std::span<uint8_t> data, RetainPtr<CGDataProviderRef>&&, std::unique_ptr<GraphicsContextCG>&&);
@@ -57,7 +57,7 @@ private:
     void putPixelBuffer(const PixelBufferSourceView&, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat) final;
 
     std::span<uint8_t> m_data;
-    RetainPtr<CGDataProviderRef> m_dataProvider;
+    const RetainPtr<CGDataProviderRef> m_dataProvider;
 };
 
 } // namespace WebCore

@@ -23,3 +23,11 @@
 from webkitcorepy.skill_testing.skill_file import SkillFile
 from webkitcorepy.skill_testing.skill_test import SkillTest
 from webkitcorepy.skill_testing.validators import DirectoryValidator, SkillValidator, ValidationResult
+
+__all__ = [
+    'DirectoryValidator',
+    'SkillFile',
+    'SkillTest',
+    'SkillValidator',
+    'ValidationResult',
+]

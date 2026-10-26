@@ -32,6 +32,7 @@
 #include "RenderObject.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
+#include "UsedStyle.h"
 
 namespace WebCore {
 
@@ -48,28 +49,28 @@ BorderEdge::BorderEdge(float edgeWidth, Color edgeColor, BorderStyle edgeStyle, 
     m_flooredToDevicePixelWidth = floorf(edgeWidth * devicePixelRatio) / devicePixelRatio;
 }
 
-BorderEdges borderEdges(const Style::ComputedStyle& style, float deviceScaleFactor, RectEdges<bool> closedEdges, LayoutSize inflation, bool setColorsToBlack)
+BorderEdges borderEdges(const UsedStyle& usedStyle, float deviceScaleFactor, RectEdges<bool> closedEdges, LayoutSize inflation, bool setColorsToBlack)
 {
-    auto constructBorderEdge = [&]<CSSPropertyID borderColorProperty>(const Style::ComputedStyle& style, Style::LineWidth width, float inflation, BorderStyle borderStyle, bool isTransparent, bool isPresent) {
+    auto& style = usedStyle.computedStyle();
+    auto borderWidths = usedStyle.borderWidths<float>();
+    auto constructBorderEdge = [&]<CSSPropertyID borderColorProperty>(const Style::ComputedStyle& style, float evaluatedWidth, float inflation, BorderStyle borderStyle, bool isTransparent, bool isPresent) {
         auto color = setColorsToBlack ? Color::black : Style::ColorPropertyResolver<Style::ColorPropertyTraits<PropertyNameConstant<borderColorProperty>>> { style }.visitedDependentColorApplyingColorFilter();
-        auto evaluatedWidth = Style::evaluate<float>(width, style.usedZoomForLength(), deviceScaleFactor);
         auto inflatedWidth = evaluatedWidth ? evaluatedWidth + inflation : evaluatedWidth;
         return BorderEdge(inflatedWidth, color, borderStyle, !setColorsToBlack && isTransparent, isPresent, deviceScaleFactor);
     };
 
     return {
-        constructBorderEdge.template operator()<CSSPropertyBorderTopColor>(style, style.usedBorderTopWidth(), inflation.height().toFloat(), style.borderTopStyle(), style.borderTopColor().isKnownTransparent(), closedEdges.top()),
-        constructBorderEdge.template operator()<CSSPropertyBorderRightColor>(style, style.usedBorderRightWidth(), inflation.width().toFloat(), style.borderRightStyle(), style.borderRightColor().isKnownTransparent(), closedEdges.right()),
-        constructBorderEdge.template operator()<CSSPropertyBorderBottomColor>(style, style.usedBorderBottomWidth(), inflation.height().toFloat(), style.borderBottomStyle(), style.borderBottomColor().isKnownTransparent(), closedEdges.bottom()),
-        constructBorderEdge.template operator()<CSSPropertyBorderLeftColor>(style, style.usedBorderLeftWidth(), inflation.width().toFloat(), style.borderLeftStyle(), style.borderLeftColor().isKnownTransparent(), closedEdges.left())
+        constructBorderEdge.template operator()<CSSPropertyID::BorderTopColor>(style, borderWidths.top(), inflation.height().toFloat(), style.borderTopStyle(), style.borderTopColor().isKnownTransparent(), closedEdges.top()),
+        constructBorderEdge.template operator()<CSSPropertyID::BorderRightColor>(style, borderWidths.right(), inflation.width().toFloat(), style.borderRightStyle(), style.borderRightColor().isKnownTransparent(), closedEdges.right()),
+        constructBorderEdge.template operator()<CSSPropertyID::BorderBottomColor>(style, borderWidths.bottom(), inflation.height().toFloat(), style.borderBottomStyle(), style.borderBottomColor().isKnownTransparent(), closedEdges.bottom()),
+        constructBorderEdge.template operator()<CSSPropertyID::BorderLeftColor>(style, borderWidths.left(), inflation.width().toFloat(), style.borderLeftStyle(), style.borderLeftColor().isKnownTransparent(), closedEdges.left())
     };
 }
 
-BorderEdges borderEdgesForOutline(const Style::ComputedStyle& style, BorderStyle borderStyle, float deviceScaleFactor)
+BorderEdges borderEdgesForOutline(const UsedStyle& usedStyle, const Color& color, BorderStyle borderStyle, float deviceScaleFactor)
 {
-    auto color = style.visitedDependentOutlineColorApplyingColorFilter();
     auto isTransparent = color.isValid() && !color.isVisible();
-    auto size = Style::evaluate<float>(style.usedOutlineWidth(), style.usedZoomForLength(), deviceScaleFactor);
+    auto size = usedStyle.outlineWidth<float>();
     return {
         BorderEdge { size, color, borderStyle, isTransparent, true, deviceScaleFactor },
         BorderEdge { size, color, borderStyle, isTransparent, true, deviceScaleFactor },

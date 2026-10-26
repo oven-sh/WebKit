@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include <wtf/Lock.h>
+#include <wtf/LockAlgorithmInlines.h>
 #include <wtf/Threading.h>
 #include <wtf/ThreadingPrimitives.h>
 #include <wtf/UniqueArray.h>
@@ -202,11 +203,13 @@ public:
         Locker holdLock { AdoptLock, m_otherLock };
         m_otherValue = value;
     }
+IGNORE_CLANG_WARNINGS_BEGIN("unused-template")
     // This function can be used to manually check that compile fails.
     template<typename T> void shouldFailCompile(T t)
     {
         m_value = t;
     }
+IGNORE_CLANG_WARNINGS_END
     private:
     Lock m_lock;
     int m_value WTF_GUARDED_BY_LOCK(m_lock) { 77 };
@@ -221,6 +224,19 @@ TEST(WTF_Lock, Basic)
     MyValue v;
     v.setValue(7);
     v.maybeSetOtherValue(34);
+}
+
+TEST(WTF_Lock, UnlockSlowPreservesBitsAboveLowByte)
+{
+    using Algorithm = LockAlgorithm<uint32_t, 1, 2>;
+    constexpr uint32_t otherBits = 0x12345600;
+
+    Atomic<uint32_t> word { otherBits };
+    Algorithm::lock(word);
+    EXPECT_EQ(otherBits | 1, word.load());
+
+    Algorithm::unlockSlow(word);
+    EXPECT_EQ(otherBits, word.load());
 }
 
 } // namespace TestWebKitAPI

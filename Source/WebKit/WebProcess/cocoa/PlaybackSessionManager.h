@@ -141,8 +141,8 @@ public:
     void mediaEngineChanged(WebCore::HTMLMediaElement&);
     WebCore::HTMLMediaElementIdentifier contextIdForMediaElement(WebCore::HTMLMediaElement&);
 
-    WebCore::HTMLMediaElement* NODELETE mediaElementWithContextId(WebCore::HTMLMediaElementIdentifier) const;
-    WebCore::HTMLMediaElement* NODELETE currentPlaybackControlsElement() const;
+    WebCore::HTMLMediaElement* LEGACY_NODELETE mediaElementWithContextId(WebCore::HTMLMediaElementIdentifier) const;
+    WebCore::HTMLMediaElement* LEGACY_NODELETE currentPlaybackControlsElement() const;
 
 #if ENABLE(IMAGE_ANALYSIS)
     void cancelTextRecognition();
@@ -233,7 +233,7 @@ private:
     void setSpatialTrackingLabel(WebCore::MediaPlayerClientIdentifier, const String&);
 #endif
 
-    void forEachModel(Function<void(WebCore::PlaybackSessionModel&)>&&);
+    void forEachModel(NOESCAPE const Function<void(WebCore::PlaybackSessionModel&)>&);
 
 #if ENABLE(IMAGE_ANALYSIS)
     TextRecognitionRequest& textRecognitionRequest() { return m_textRecognitionRequest.get(); }
@@ -243,7 +243,7 @@ private:
     const Logger& logger() const { return m_logger; }
     uint64_t logIdentifier() const { return m_logIdentifier; }
     ASCIILiteral logClassName() const { return "VideoPresentationManager"_s; }
-    WTFLogChannel& NODELETE logChannel() const;
+    WTFLogChannel& LEGACY_NODELETE logChannel() const;
 #endif
 
     WeakPtr<WebPage> m_page;

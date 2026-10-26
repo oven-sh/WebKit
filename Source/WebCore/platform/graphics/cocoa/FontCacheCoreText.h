@@ -91,16 +91,19 @@ RetainPtr<CTFontRef> createFontForInstalledFonts(CTFontDescriptorRef, CGFloat si
 RetainPtr<CTFontRef> createFontForInstalledFonts(CTFontRef, AllowUserInstalledFonts);
 void addAttributesForWebFonts(CFMutableDictionaryRef attributes, AllowUserInstalledFonts);
 RetainPtr<CFSetRef> installedFontMandatoryAttributes(AllowUserInstalledFonts);
-WEBCORE_EXPORT void NODELETE setOverrideEnhanceTextLegibility(bool);
+WEBCORE_EXPORT void LEGACY_NODELETE setOverrideEnhanceTextLegibility(bool);
 bool fontNameIsSystemFont(CFStringRef);
 
 CFStringRef getUIContentSizeCategoryDidChangeNotificationName();
 WEBCORE_EXPORT void setContentSizeCategory(const String&);
 WEBCORE_EXPORT CFStringRef contentSizeCategory();
+#if PLATFORM(IOS) || PLATFORM(VISION)
+float textScaleFactorForContentSizeCategory();
+#endif
 
 VariationDefaultsMap defaultVariationValues(CTFontRef, ShouldLocalizeAxisNames);
 
-WEBCORE_EXPORT Lock& NODELETE userInstalledFontMapLock();
-WEBCORE_EXPORT HashMap<String, URL>& NODELETE userInstalledFontMap() WTF_REQUIRES_LOCK(userInstalledFontMapLock());
-WEBCORE_EXPORT HashMap<String, Vector<String>>& NODELETE userInstalledFontFamilyMap() WTF_REQUIRES_LOCK(userInstalledFontMapLock());
+WEBCORE_EXPORT Lock& LEGACY_NODELETE userInstalledFontMapLock();
+WEBCORE_EXPORT HashMap<String, URL>& LEGACY_NODELETE userInstalledFontMap() WTF_REQUIRES_LOCK(userInstalledFontMapLock());
+WEBCORE_EXPORT HashMap<String, Vector<String>>& LEGACY_NODELETE userInstalledFontFamilyMap() WTF_REQUIRES_LOCK(userInstalledFontMapLock());
 } // namespace WebCore

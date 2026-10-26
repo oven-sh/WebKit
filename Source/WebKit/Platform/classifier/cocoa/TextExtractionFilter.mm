@@ -28,6 +28,7 @@
 
 #if ENABLE(TEXT_EXTRACTION_FILTER)
 
+#import "Logging.h"
 #import <CoreML/CoreML.h>
 #import <NaturalLanguage/NaturalLanguage.h>
 #import <wtf/ApproximateTime.h>
@@ -70,43 +71,22 @@ void TextExtractionFilter::initializeModelIfNeeded()
 
     m_failedInitialization = true;
 
-    RetainPtr modelURL = [[NSBundle bundleWithIdentifier:@"com.apple.WebKit"] URLForResource:@"TextExtractionFilter" withExtension:@"mlmodel"];
-    if (!modelURL)
+    RetainPtr compiledModelURL = [[NSBundle bundleWithIdentifier:@"com.apple.WebKit"] URLForResource:@"TextExtractionFilter" withExtension:@"mlmodelc"];
+    if (!compiledModelURL) {
+        RELEASE_LOG_ERROR(TextExtraction, "Classifier failed to load: missing resource");
         return;
-
-    RetainPtr compiledModelName = [[[modelURL lastPathComponent] stringByDeletingPathExtension] stringByAppendingPathExtension:@"mlmodelc"];
-    RetainPtr compiledModelURL = [[NSURL fileURLWithPath:protect(NSTemporaryDirectory())] URLByAppendingPathComponent:compiledModelName.get()];
-
-    auto needsRecompile = [&] -> bool {
-        if (![[NSFileManager defaultManager] fileExistsAtPath:[compiledModelURL path]])
-            return true;
-
-        RetainPtr modelAttributes = [[NSFileManager defaultManager] attributesOfItemAtPath:[modelURL path] error:nil];
-        RetainPtr compiledAttributes = [[NSFileManager defaultManager] attributesOfItemAtPath:[compiledModelURL path] error:nil];
-        RetainPtr modelTimestamp = [modelAttributes fileModificationDate];
-        RetainPtr compiledTimestamp = [compiledAttributes fileModificationDate];
-        return !compiledTimestamp || [modelTimestamp compare:compiledTimestamp.get()] == NSOrderedDescending;
-    }();
-
-    NSError *error = nil;
-    if (needsRecompile) {
-        RetainPtr compiledURL = [MLModel compileModelAtURL:modelURL.get() error:&error];
-        if (error || !compiledURL)
-            return;
-
-        if (![compiledURL isEqual:compiledModelURL.get()]) {
-            [[NSFileManager defaultManager] removeItemAtURL:compiledModelURL.get() error:nil];
-            if (![[NSFileManager defaultManager] moveItemAtURL:compiledURL.get() toURL:compiledModelURL.get() error:&error])
-                return;
-        }
     }
 
     RetainPtr configuration = adoptNS([[MLModelConfiguration alloc] init]);
     [configuration setComputeUnits:MLComputeUnitsAll];
 
+    NSError *error = nil;
     m_model = [MLModel modelWithContentsOfURL:compiledModelURL.get() configuration:configuration.get() error:&error];
-    m_tokenizer = adoptNS([[NLTokenizer alloc] initWithUnit:NLTokenUnitWord]);
+    lazyInitialize(m_tokenizer, adoptNS([[NLTokenizer alloc] initWithUnit:NLTokenUnitWord]));
     m_failedInitialization = !m_model || !m_tokenizer;
+
+    if (m_failedInitialization)
+        RELEASE_LOG_ERROR(TextExtraction, "Classifier failed to load with error: %@", [error localizedDescription]);
 }
 
 void TextExtractionFilter::prewarm()
@@ -124,11 +104,15 @@ void TextExtractionFilter::resetCache()
 
 void TextExtractionFilter::shouldFilter(const String& text, CompletionHandler<void(bool)>&& completionHandler)
 {
-    if (text.length() <= chunkSize)
+    auto textLength = text.length();
+    if (textLength <= chunkSize)
         return completionHandler(false);
 
-    m_modelQueue->dispatch([protectedThis = Ref { *this }, text = text.isolatedCopy(), completionHandler = WTF::move(completionHandler)] mutable {
-        RunLoop::mainSingleton().dispatch([completionHandler = WTF::move(completionHandler), result = protectedThis->shouldFilter(text)] mutable {
+    m_modelQueue->dispatch([protectedThis = Ref { *this }, text = text.isolatedCopy(), completionHandler = WTF::move(completionHandler), textLength] mutable {
+        RunLoop::mainSingleton().dispatch([completionHandler = WTF::move(completionHandler), result = protectedThis->shouldFilter(text), textLength] mutable {
+            if (result)
+                RELEASE_LOG_INFO(TextExtraction, "Classifier filtered out %{public}u characters", textLength);
+
             completionHandler(result);
         });
     });
@@ -153,7 +137,7 @@ bool TextExtractionFilter::shouldFilter(const String& text)
             return cachedEntry->value;
     }
 
-    auto allLines = text.split('\n');
+    const auto allLines = text.split('\n');
     for (auto& line : allLines) {
         if (line.length() <= chunkSize)
             continue;

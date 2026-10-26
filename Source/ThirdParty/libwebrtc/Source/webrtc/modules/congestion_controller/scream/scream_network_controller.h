@@ -52,6 +52,7 @@ class ScreamNetworkController : public NetworkControllerInterface {
   NetworkControlUpdate CreateFirstUpdate(Timestamp now);
   NetworkControlUpdate CreateUpdate(Timestamp now);
   std::optional<PacerConfig> MaybeCreatePacerConfig(Timestamp now);
+  DataRate GetPacingRate() const;
   // Calculates a ratio in [0.0, 1.0] indicating how much the video encoder
   // should reduce its target bitrate (pushback) due to network or pacer queue
   // build-up. Returns 1.0 if data in flight exceeds max_data_in_flight.
@@ -85,6 +86,7 @@ class ScreamNetworkController : public NetworkControllerInterface {
   DataRate reported_pacing_rate_;
   bool reported_is_bandwidth_limited_ = true;
   double reported_cwnd_reduce_ratio_ = 0.0;
+  bool encoder_paused_due_to_congestion_ = false;
 };
 
 }  // namespace webrtc

@@ -77,6 +77,8 @@ struct BasicBlockRange {
     int m_startOffset;
     int m_endOffset;
     bool m_hasExecuted;
+    // The condition, the increment or the left side of a loop. Not a basic block inside one, as the right side of `&&`.
+    bool m_isInLoopHeader { false };
     size_t m_executionCount;
 };
 
@@ -88,8 +90,9 @@ public:
     BasicBlockLocation* getBasicBlockLocation(SourceID, int startOffset, int endOffset);
     JS_EXPORT_PRIVATE void dumpData() const;
     JS_EXPORT_PRIVATE Vector<BasicBlockRange> getBasicBlocksForSourceID(SourceID, VM&) const;
-    JS_EXPORT_PRIVATE Vector<BasicBlockRange> getBasicBlocksForSourceIDWithoutFunctionRange(SourceID, VM&) const;
-    BasicBlockLocation* dummyBasicBlock() LIFETIME_BOUND { return &m_dummyBasicBlock; }
+    // With its gaps, a basic block has the text of the basic blocks and of the functions that are in it.
+    enum class Gaps : bool { Without, With };
+    JS_EXPORT_PRIVATE Vector<BasicBlockRange> getBasicBlocksForSourceIDWithoutFunctionRange(SourceID, VM&, Gaps = Gaps::Without) const;
     JS_EXPORT_PRIVATE bool hasBasicBlockAtTextOffsetBeenExecuted(int, SourceID, VM&); // This function exists for testing.
     JS_EXPORT_PRIVATE size_t basicBlockExecutionCountAtTextOffset(int, SourceID, VM&); // This function exists for testing.
 
@@ -98,7 +101,6 @@ private:
     typedef UncheckedKeyHashMap<SourceID, BlockLocationCache> SourceIDBuckets;
 
     SourceIDBuckets m_sourceIDBuckets;
-    BasicBlockLocation m_dummyBasicBlock;
 };
 
 } // namespace JSC

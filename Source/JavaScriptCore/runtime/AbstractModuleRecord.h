@@ -91,9 +91,9 @@ public:
             Namespace,
         };
 
-        static ExportEntry NODELETE createLocal(const Identifier& exportName, const Identifier& localName);
-        static ExportEntry NODELETE createIndirect(const Identifier& exportName, const Identifier& importName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
-        static ExportEntry NODELETE createNamespace(const Identifier& exportName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
+        static ExportEntry LEGACY_NODELETE createLocal(const Identifier& exportName, const Identifier& localName);
+        static ExportEntry LEGACY_NODELETE createIndirect(const Identifier& exportName, const Identifier& importName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
+        static ExportEntry LEGACY_NODELETE createNamespace(const Identifier& exportName, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
 
         Type type;
         ScriptFetchParameters::Type moduleRequestType { ScriptFetchParameters::Type::JavaScript };
@@ -237,9 +237,9 @@ public:
     struct Resolution {
         enum class Type { Resolved, NotFound, Ambiguous, Error };
 
-        static Resolution NODELETE notFound();
-        static Resolution NODELETE error();
-        static Resolution NODELETE ambiguous();
+        static Resolution LEGACY_NODELETE notFound();
+        static Resolution LEGACY_NODELETE error();
+        static Resolution LEGACY_NODELETE ambiguous();
 
         bool isSameBinding(const Resolution& other) const { return moduleRecord == other.moduleRecord && localName == other.localName; }
         bool isEquivalentTo(const Resolution& other) const { return type == other.type && (type != Type::Resolved || isSameBinding(other)); }
@@ -348,7 +348,7 @@ protected:
 private:
     struct ResolveQuery;
     static Resolution resolveExportImpl(JSGlobalObject*, const ResolveQuery&);
-    std::optional<Resolution> NODELETE tryGetCachedResolution(UniquedStringImpl* exportName);
+    std::optional<Resolution> LEGACY_NODELETE tryGetCachedResolution(UniquedStringImpl* exportName);
     void cacheResolution(UniquedStringImpl* exportName, const Resolution&);
 #if USE(BUN_JSC_ADDITIONS)
     void ensurePrelinkedEntriesMaterialized() const

@@ -53,7 +53,7 @@ public:
     }
 
     // Deleting ThreadSafeWeakPtrControlBlock does not delete a user object.
-    SUPPRESS_NODELETE void NODELETE weakDeref()
+    SUPPRESS_NODELETE void LEGACY_NODELETE weakDeref()
     {
         bool shouldDeleteControlBlock { false };
         {
@@ -396,7 +396,7 @@ public:
 protected:
     ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr() = default;
     // Creating & destroying ThreadSafeWeakPtrControlBlock does not delete an user object.
-    SUPPRESS_NODELETE ThreadSafeWeakPtrControlBlock& NODELETE controlBlock() const
+    SUPPRESS_NODELETE ThreadSafeWeakPtrControlBlock& LEGACY_NODELETE controlBlock() const
     {
         // If we ever decided there was a lot of contention here we could have some lock bits in m_bits but
         // that seems unlikely since this is a one-way street. Once we add a controlBlock we don't go back
@@ -452,7 +452,7 @@ private:
     template<typename> friend class ThreadSafeWeakHashSet;
 
     mutable Atomic<uintptr_t> m_bits { refIncrement + strongOnlyFlag };
-} SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT;
+} SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT BASE_CLASS_SWIFT_SHARED_REFERENCE(.ref, .deref);
 
 template<typename T>
 class ThreadSafeWeakPtr {
@@ -565,7 +565,7 @@ private:
     template<typename> friend class ThreadSafeWeakHashSet;
 
     ThreadSafeWeakPtrStorage m_storage;
-} SWIFT_ESCAPABLE;
+} SWIFT_SELF_CONTAINED;
 
 template<class T> ThreadSafeWeakPtr(const T&) -> ThreadSafeWeakPtr<T>;
 template<class T> ThreadSafeWeakPtr(const T*) -> ThreadSafeWeakPtr<T>;
@@ -648,7 +648,7 @@ private:
     template<typename> friend class ThreadSafeWeakHashSet;
 
     ThreadSafeWeakPtrStorage m_storage;
-} SWIFT_ESCAPABLE;
+} SWIFT_SELF_CONTAINED;
 
 template<class T> ThreadSafeWeakRef(const T&) -> ThreadSafeWeakRef<T>;
 

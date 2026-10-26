@@ -88,6 +88,11 @@ inline const AtomString& Element::attributeWithDefaultARIA(const QualifiedName& 
     return defaultARIA ? defaultARIA->valueForAttribute(*this, name) : nullAtom();
 }
 
+inline bool Element::isDrawable() const
+{
+    return hasAttributeWithoutSynchronization(HTMLNames::drawableAttr);
+}
+
 inline String Element::attributeTrimmedWithDefaultARIA(const QualifiedName& name) const
 {
     const auto& originalValue = attributeWithDefaultARIA(name);
@@ -220,7 +225,8 @@ inline UniqueElementData& Element::ensureUniqueElementData()
 {
     if (!elementData() || !elementData()->isUnique())
         createUniqueElementData();
-    return static_cast<UniqueElementData&>(*m_elementData);
+    // The element data was just made unique above.
+    return uncheckedDowncast<UniqueElementData>(*m_elementData);
 }
 
 inline bool shouldIgnoreAttributeCase(const Element& element)

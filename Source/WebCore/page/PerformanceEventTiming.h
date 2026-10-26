@@ -40,16 +40,16 @@ struct PerformanceEventTimingCandidate;
 
 class PerformanceEventTiming final : public PerformanceEntry {
 public:
-    static Ref<PerformanceEventTiming> create(const PerformanceEventTimingCandidate&, bool isFirst = false);
+    static Ref<PerformanceEventTiming> LEGACY_NODELETE create(const PerformanceEventTimingCandidate&, bool isFirst = false);
     ~PerformanceEventTiming();
 
     DOMHighResTimeStamp processingStart() const { return m_processingStart.milliseconds(); }
     DOMHighResTimeStamp processingEnd() const { return m_processingEnd.milliseconds(); }
     bool cancelable() const { return m_cancelable; }
     RefPtr<Node> target() const;
-    uint64_t NODELETE interactionId() const;
+    uint64_t LEGACY_NODELETE interactionId() const;
 
-    Type NODELETE performanceEntryType() const final;
+    Type LEGACY_NODELETE performanceEntryType() const final;
     ASCIILiteral entryType() const final;
 
     static constexpr DOMHighResTimeStamp durationResolutionInMilliseconds = 8;

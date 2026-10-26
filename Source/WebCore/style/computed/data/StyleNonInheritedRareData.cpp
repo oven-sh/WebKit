@@ -38,7 +38,6 @@ NonInheritedRareData::NonInheritedRareData()
     : touchAction(ComputedStyle::initialTouchAction())
     , zoom(ComputedStyle::initialZoom())
     , initialLetter(ComputedStyle::initialInitialLetter())
-    , lineClamp(ComputedStyle::initialLineClamp())
     , maxLines(ComputedStyle::initialMaxLines())
     , marquee(MarqueeData::create())
     , backdropFilter(BackdropFilterData::create())
@@ -105,6 +104,8 @@ NonInheritedRareData::NonInheritedRareData()
     , positionArea(ComputedStyle::initialPositionArea())
     , positionTryFallbacks(ComputedStyle::initialPositionTryFallbacks())
     , usedPositionOptionIndex()
+    , overrideBlendMode()
+    , overrideBackgroundColor()
     , blockStepSize(ComputedStyle::initialBlockStepSize())
     , blockStepAlign(static_cast<unsigned>(ComputedStyle::initialBlockStepAlign()))
     , blockStepInsert(static_cast<unsigned>(ComputedStyle::initialBlockStepInsert()))
@@ -123,7 +124,7 @@ NonInheritedRareData::NonInheritedRareData()
     , transformStyle3D(static_cast<unsigned>(ComputedStyle::initialTransformStyle3D()))
     , transformStyleForcedToFlat(false)
     , backfaceVisibility(static_cast<unsigned>(ComputedStyle::initialBackfaceVisibility()))
-    , effectiveBlendMode(static_cast<unsigned>(ComputedStyle::initialBlendMode()))
+    , blendMode(static_cast<unsigned>(ComputedStyle::initialBlendMode()))
     , textDecorationStyle(static_cast<unsigned>(ComputedStyle::initialTextDecorationStyle()))
     , textGroupAlign(static_cast<unsigned>(ComputedStyle::initialTextGroupAlign()))
     , isolation(static_cast<unsigned>(ComputedStyle::initialIsolation()))
@@ -150,7 +151,7 @@ NonInheritedRareData::NonInheritedRareData()
     , usesAnchorFunctions(false)
     , anchorFunctionScrollCompensatedAxes(0)
     , isPopoverInvoker(false)
-    , useSVGZoomRulesForLength(false)
+    , scrollAxisLock(static_cast<unsigned>(ComputedStyle::initialScrollAxisLock()))
 {
 }
 
@@ -159,7 +160,6 @@ inline NonInheritedRareData::NonInheritedRareData(const NonInheritedRareData& o)
     , touchAction(o.touchAction)
     , zoom(o.zoom)
     , initialLetter(o.initialLetter)
-    , lineClamp(o.lineClamp)
     , maxLines(o.maxLines)
     , marquee(o.marquee)
     , backdropFilter(o.backdropFilter)
@@ -224,6 +224,8 @@ inline NonInheritedRareData::NonInheritedRareData(const NonInheritedRareData& o)
     , positionArea(o.positionArea)
     , positionTryFallbacks(o.positionTryFallbacks)
     , usedPositionOptionIndex(o.usedPositionOptionIndex)
+    , overrideBlendMode(o.overrideBlendMode)
+    , overrideBackgroundColor(o.overrideBackgroundColor)
     , blockStepSize(o.blockStepSize)
     , blockStepAlign(o.blockStepAlign)
     , blockStepInsert(o.blockStepInsert)
@@ -242,7 +244,7 @@ inline NonInheritedRareData::NonInheritedRareData(const NonInheritedRareData& o)
     , transformStyle3D(o.transformStyle3D)
     , transformStyleForcedToFlat(o.transformStyleForcedToFlat)
     , backfaceVisibility(o.backfaceVisibility)
-    , effectiveBlendMode(o.effectiveBlendMode)
+    , blendMode(o.blendMode)
     , textDecorationStyle(o.textDecorationStyle)
     , textGroupAlign(o.textGroupAlign)
     , isolation(o.isolation)
@@ -269,7 +271,7 @@ inline NonInheritedRareData::NonInheritedRareData(const NonInheritedRareData& o)
     , usesAnchorFunctions(o.usesAnchorFunctions)
     , anchorFunctionScrollCompensatedAxes(o.anchorFunctionScrollCompensatedAxes)
     , isPopoverInvoker(o.isPopoverInvoker)
-    , useSVGZoomRulesForLength(o.useSVGZoomRulesForLength)
+    , scrollAxisLock(o.scrollAxisLock)
 {
 }
 
@@ -285,7 +287,6 @@ bool NonInheritedRareData::operator==(const NonInheritedRareData& o) const
     return touchAction == o.touchAction
         && zoom == o.zoom
         && initialLetter == o.initialLetter
-        && lineClamp == o.lineClamp
         && maxLines == o.maxLines
         && marquee == o.marquee
         && backdropFilter == o.backdropFilter
@@ -350,6 +351,8 @@ bool NonInheritedRareData::operator==(const NonInheritedRareData& o) const
         && positionArea == o.positionArea
         && positionTryFallbacks == o.positionTryFallbacks
         && usedPositionOptionIndex == o.usedPositionOptionIndex
+        && overrideBlendMode == o.overrideBlendMode
+        && overrideBackgroundColor == o.overrideBackgroundColor
         && blockStepSize == o.blockStepSize
         && blockStepAlign == o.blockStepAlign
         && blockStepInsert == o.blockStepInsert
@@ -368,7 +371,7 @@ bool NonInheritedRareData::operator==(const NonInheritedRareData& o) const
         && transformStyle3D == o.transformStyle3D
         && transformStyleForcedToFlat == o.transformStyleForcedToFlat
         && backfaceVisibility == o.backfaceVisibility
-        && effectiveBlendMode == o.effectiveBlendMode
+        && blendMode == o.blendMode
         && textDecorationStyle == o.textDecorationStyle
         && textGroupAlign == o.textGroupAlign
         && isolation == o.isolation
@@ -395,7 +398,7 @@ bool NonInheritedRareData::operator==(const NonInheritedRareData& o) const
         && usesAnchorFunctions == o.usesAnchorFunctions
         && anchorFunctionScrollCompensatedAxes == o.anchorFunctionScrollCompensatedAxes
         && isPopoverInvoker == o.isPopoverInvoker
-        && useSVGZoomRulesForLength == o.useSVGZoomRulesForLength;
+        && scrollAxisLock == o.scrollAxisLock;
 }
 
 Contain NonInheritedRareData::usedContain() const
@@ -418,7 +421,6 @@ void NonInheritedRareData::dumpDifferences(TextStream& ts, const NonInheritedRar
     LOG_IF_DIFFERENT(zoom);
 
     LOG_IF_DIFFERENT(initialLetter);
-    LOG_IF_DIFFERENT(lineClamp);
     LOG_IF_DIFFERENT(maxLines);
 
     marquee->dumpDifferences(ts, other.marquee);
@@ -503,6 +505,9 @@ void NonInheritedRareData::dumpDifferences(TextStream& ts, const NonInheritedRar
     LOG_IF_DIFFERENT(positionTryFallbacks);
     LOG_IF_DIFFERENT(usedPositionOptionIndex);
 
+    LOG_IF_DIFFERENT(overrideBlendMode);
+    LOG_IF_DIFFERENT(overrideBackgroundColor);
+
     LOG_IF_DIFFERENT(blockStepSize);
 
     LOG_IF_DIFFERENT_WITH_CAST(BlockStepAlign, blockStepAlign);
@@ -526,7 +531,7 @@ void NonInheritedRareData::dumpDifferences(TextStream& ts, const NonInheritedRar
     LOG_IF_DIFFERENT_WITH_CAST(bool, transformStyleForcedToFlat);
     LOG_IF_DIFFERENT_WITH_CAST(BackfaceVisibility, backfaceVisibility);
 
-    LOG_IF_DIFFERENT_WITH_CAST(BlendMode, effectiveBlendMode);
+    LOG_IF_DIFFERENT_WITH_CAST(BlendMode, blendMode);
 
     LOG_IF_DIFFERENT_WITH_CAST(TextDecorationStyle, textDecorationStyle);
     LOG_IF_DIFFERENT_WITH_CAST(TextGroupAlign, textGroupAlign);
@@ -563,7 +568,7 @@ void NonInheritedRareData::dumpDifferences(TextStream& ts, const NonInheritedRar
     LOG_IF_DIFFERENT_WITH_CAST(bool, anchorFunctionScrollCompensatedAxes);
     LOG_IF_DIFFERENT_WITH_CAST(bool, isPopoverInvoker);
 
-    LOG_IF_DIFFERENT_WITH_CAST(bool, useSVGZoomRulesForLength);
+    LOG_IF_DIFFERENT_WITH_CAST(ScrollAxisLock, scrollAxisLock);
 }
 #endif // !LOG_DISABLED
 

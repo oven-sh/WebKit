@@ -84,11 +84,11 @@ GStreamerQuirksManager::GStreamerQuirksManager(bool isForTesting, bool loadQuirk
     if (!loadQuirksFromEnvironment)
         return;
 
-    auto quirksString = CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_QUIRKS"));
+    auto quirksString = UTF8CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_QUIRKS"));
     GST_DEBUG("Attempting to parse requested quirks: %s", GST_STR_NULL(quirksString.utf8()));
     if (quirksString) {
         if (WTF::equalLettersIgnoringASCIICase(quirksString.span(), "help"_s)) {
-            gst_printerrln("Supported quirks for WEBKIT_GST_QUIRKS are: amlogic, broadcom, bcmnexus, openmax, qualcomm, realtek, rialto, westeros");
+            SAFE_GST_PRINTERRLN("Supported quirks for WEBKIT_GST_QUIRKS are: amlogic, broadcom, bcmnexus, openmax, qualcomm, realtek, rialto, westeros");
             return;
         }
 
@@ -144,13 +144,13 @@ GStreamerQuirksManager::GStreamerQuirksManager(bool isForTesting, bool loadQuirk
 
     GST_DEBUG("%zu quirks enabled", m_quirks.size());
 
-    auto identifierString = CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_HOLE_PUNCH_QUIRK"));
+    auto identifierString = UTF8CStringView::unsafeFromUTF8(g_getenv("WEBKIT_GST_HOLE_PUNCH_QUIRK"));
     GST_DEBUG("Attempting to parse requested hole-punch quirk: %s", GST_STR_NULL(identifierString.utf8()));
     if (!identifierString)
         return;
 
     if (WTF::equalLettersIgnoringASCIICase(identifierString.span(), "help"_s)) {
-        gst_printerrln("Supported quirks for WEBKIT_GST_HOLE_PUNCH_QUIRK are: fake, bcmnexus, rialto, westeros");
+        SAFE_GST_PRINTERRLN("Supported quirks for WEBKIT_GST_HOLE_PUNCH_QUIRK are: fake, bcmnexus, rialto, westeros");
         return;
     }
 
@@ -250,7 +250,7 @@ std::optional<bool> GStreamerQuirksManager::isHardwareAccelerated(GstElementFact
         return *result;
     }
 
-    auto klassStr = CStringView::unsafeFromUTF8(gst_element_factory_get_klass(factory));
+    auto klassStr = UTF8CStringView::unsafeFromUTF8(gst_element_factory_get_klass(factory));
     return contains(klassStr.span(), "Hardware"_s);
 }
 
@@ -399,14 +399,6 @@ void GStreamerQuirksManager::setupBufferingPercentageCorrection(MediaPlayerPriva
             quirk->setupBufferingPercentageCorrection(playerPrivate, currentState, newState, WTF::move(element));
             return;
         }
-    }
-}
-
-void GStreamerQuirksManager::processWebAudioSilentBuffer(GstBuffer* buffer) const
-{
-    for (const auto& quirk : m_quirks) {
-        if (quirk->processWebAudioSilentBuffer(buffer))
-            break;
     }
 }
 

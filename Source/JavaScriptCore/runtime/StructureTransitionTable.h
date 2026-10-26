@@ -65,6 +65,9 @@ enum class TransitionKind : uint8_t {
 
     // Support for transitions related with private brand
     SetBrand = 17,
+
+    // The object becomes non-extensible and its own properties and prototype can no longer change. Property attributes do not change.
+    MakePropertiesImmutable = 18,
 };
 
 static constexpr auto FirstNonPropertyTransitionKind = TransitionKind::AllocateUndecided;
@@ -113,6 +116,12 @@ inline IndexingType newIndexingType(IndexingType oldType, TransitionKind transit
         return (oldType & ~IndexingShapeAndWritabilityMask) | SlowPutArrayStorageShape;
     case TransitionKind::AddIndexedAccessors:
         return oldType | MayHaveIndexedAccessors;
+    case TransitionKind::MakePropertiesImmutable:
+        // A JSArray that still has Int32, Double or Contiguous elements here keeps its shape and becomes copy-on-write:
+        // JSObject::makePropertiesImmutable() has moved them to such storage. Every other object with elements has been given dictionary indexing first.
+        if ((oldType & IsArray) && (hasInt32(oldType) || hasDouble(oldType) || hasContiguous(oldType)))
+            return oldType | CopyOnWrite;
+        return oldType;
     default:
         return oldType;
     }
@@ -124,6 +133,7 @@ inline bool preventsExtensions(TransitionKind transition)
     case TransitionKind::PreventExtensions:
     case TransitionKind::Seal:
     case TransitionKind::Freeze:
+    case TransitionKind::MakePropertiesImmutable:
         return true;
     default:
         return false;

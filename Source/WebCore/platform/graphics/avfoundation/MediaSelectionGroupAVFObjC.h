@@ -47,7 +47,7 @@ class MediaSelectionGroupAVFObjC;
 
 class MediaSelectionOptionAVFObjC : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<MediaSelectionOptionAVFObjC, WTF::DestructionThread::Main> {
 public:
-    static Ref<MediaSelectionOptionAVFObjC> create(MediaSelectionGroupAVFObjC&, AVMediaSelectionOption *);
+    static Ref<MediaSelectionOptionAVFObjC> LEGACY_NODELETE create(MediaSelectionGroupAVFObjC&, AVMediaSelectionOption *);
 
     void setSelected(bool);
     bool selected() const;
@@ -65,7 +65,7 @@ private:
     void clearGroup() { m_group = nullptr; }
 
     ThreadSafeWeakPtr<MediaSelectionGroupAVFObjC> m_group;
-    RetainPtr<AVMediaSelectionOption> m_mediaSelectionOption;
+    const RetainPtr<AVMediaSelectionOption> m_mediaSelectionOption;
 };
 
 class MediaSelectionGroupAVFObjC : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<MediaSelectionGroupAVFObjC, WTF::DestructionThread::Main> {
@@ -89,8 +89,8 @@ private:
 
     void selectionTimerFired();
 
-    RetainPtr<AVPlayerItem> m_playerItem;
-    RetainPtr<AVMediaSelectionGroup> m_mediaSelectionGroup;
+    const RetainPtr<AVPlayerItem> m_playerItem;
+    const RetainPtr<AVMediaSelectionGroup> m_mediaSelectionGroup;
     OptionContainer m_options;
     ThreadSafeWeakPtr<MediaSelectionOptionAVFObjC> m_selectedOption;
     Timer m_selectionTimer;

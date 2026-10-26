@@ -36,6 +36,7 @@ namespace WebCore {
 enum class LogicalBoxAxis : uint8_t;
 
 namespace Style {
+class UnevaluatedCalcSize;
 struct FlexBasis;
 struct MaximumSize;
 struct MinimumSize;
@@ -60,16 +61,16 @@ public:
     void layoutFlexItemForStretchedCrossSize(const FlexLayoutItem&, LayoutUnit crossSize, LogicalBoxAxis crossAxis);
     void layoutFlexItemWithMainSize(FlexLayoutItem&, LayoutUnit mainSize);
     FlexContainerUsedExtents updateFlexContainerLogicalHeight(LayoutUnit flexContentBlockExtent);
-    void setFlexItemGeometry(const FlexLayoutItem&, const LayoutPoint& location, bool isHorizontalFlow);
-    void updateAutoMarginsInMainAxis(const FlexLayoutItem&, LayoutUnit autoMarginOffset);
-    bool updateAutoMarginsInCrossAxis(const FlexLayoutItem&, LayoutUnit& crossOffset, LayoutUnit availableAlignmentSpace);
+    void LEGACY_NODELETE setFlexItemGeometry(const FlexLayoutItem&, const LayoutPoint& location, bool isHorizontalFlow);
+    void LEGACY_NODELETE updateAutoMarginsInMainAxis(FlexLayoutItem&, LayoutUnit autoMarginOffset);
+    bool LEGACY_NODELETE updateAutoMarginsInCrossAxis(FlexLayoutItem&, LayoutUnit& crossOffset, LayoutUnit availableAlignmentSpace);
     void setFlexItemOverridingBorderBoxLogicalHeight(const FlexLayoutItem&, LayoutUnit);
 
     LayoutUnit adjustBorderBoxLogicalWidthForBoxSizing(LayoutUnit computedLogicalWidth) const;
 
     bool flexItemHasPercentHeightDescendants(const RenderBox&) const;
     bool flexItemHasPercentHeightDescendants(const FlexLayoutItem&) const;
-    bool hasFlexItemCompletedLayout(const FlexLayoutItem&) const;
+    bool LEGACY_NODELETE hasFlexItemCompletedLayout(const FlexLayoutItem&) const;
 
     LayoutUnit flexItemContentLogicalHeight(const FlexLayoutItem&) const;
     LayoutUnit computeBlockAxisContentSizeForFlexItem(const FlexLayoutItem&);
@@ -82,10 +83,11 @@ public:
     template<typename SizeType> static bool flexItemMainSizeIsDefinite(const RenderBox&, const SizeType&, const FlexLayoutState*);
     template<typename SizeType> static bool canResolvePercentAgainstContainerBlockSize(const RenderBox&, const SizeType&, RenderBox::UpdatePercentageHeightDescendants, const FlexLayoutState*);
     static bool canResolvePercentAgainstContainerBlockSize(const RenderBox&, RenderBox::UpdatePercentageHeightDescendants, const FlexLayoutState*);
-    static std::optional<bool> isFlexBoxBlockSizeDefiniteForFlexItem(const RenderBox&, const FlexLayoutState*);
+    static std::optional<bool> LEGACY_NODELETE isFlexBoxBlockSizeDefiniteForFlexItem(const RenderBox&, const FlexLayoutState*);
     template<typename SizeType> std::optional<LayoutUnit> computeMainAxisExtentForFlexItem(const FlexLayoutItem&, const SizeType&, LayoutUnit mainAxisSizeForLengthResolution);
+    LayoutUnit resolveCalcSizeMainAxisExtentForFlexItem(const FlexLayoutItem&, const Style::UnevaluatedCalcSize&, LayoutUnit keywordMainAxisExtent, LayoutUnit mainAxisSizeForLengthResolution);
     LayoutUnit maxContentMainAxisExtentForFlexItem(const FlexLayoutItem&);
-    LayoutUnit minContentMainAxisContributionForFlexItem(const FlexLayoutItem&);
+    LayoutUnit minContentMainAxisExtentForFlexItem(const FlexLayoutItem&);
     LayoutUnit flexItemIntrinsicLogicalHeight(const FlexLayoutItem&, bool needToStretchLogicalHeight) const;
     LayoutUnit flexItemIntrinsicLogicalWidth(const FlexLayoutItem&, bool crossSizeIsDefinite);
     LayoutUnit constrainFlexItemLogicalHeightByMinMax(const FlexLayoutItem&, LayoutUnit logicalHeight, std::optional<LayoutUnit> intrinsicContentHeight) const;
@@ -93,13 +95,13 @@ public:
     template<typename SizeType> std::optional<LayoutUnit> computePercentageLogicalHeightForFlexItem(const FlexLayoutItem&, const SizeType&) const;
     // Whether the container's block size is definite as it applies to this item; absent when the item is one the
     // container cannot answer for and the renderer has to be asked instead.
-    std::optional<bool> isFlexBoxBlockSizeDefiniteForFlexItem(const FlexLayoutItem&) const;
+    std::optional<bool> LEGACY_NODELETE isFlexBoxBlockSizeDefiniteForFlexItem(const FlexLayoutItem&) const;
     template<typename SizeType> std::optional<LayoutUnit> computeLogicalHeightUsingForFlexItem(const FlexLayoutItem&, const SizeType&) const;
     template<typename SizeType> LayoutUnit computeLogicalWidthUsingForFlexItem(const FlexLayoutItem&, const SizeType&, LayoutUnit availableWidth) const;
 
 private:
     RenderFlexibleBox& flexBox() const LIFETIME_BOUND { return m_flexBox; }
-    FlexLayoutState& flexLayoutState() const LIFETIME_BOUND;
+    FlexLayoutState& LEGACY_NODELETE flexLayoutState() const LIFETIME_BOUND;
 
     void invalidateFlexItemContentLogicalWidthsIfNeeded(const FlexLayoutItem&);
     void resetAutoMarginsAndLogicalTopInCrossAxis(RenderBox& flexItem);
@@ -120,7 +122,6 @@ public:
 private:
     const CheckedRef<RenderBox> m_flexItem;
     bool m_mainAxisIsInlineAxis { false };
-    bool m_didOverride { false };
 };
 
 // RAII for measuring a flex item before it is stretched. When the item is going to be stretched to a definite cross
@@ -138,8 +139,6 @@ private:
     const CheckedRef<RenderBox> m_flexItem;
     std::optional<LayoutUnit> m_previousOverridingBorderBoxLogicalWidth;
     std::optional<LayoutUnit> m_previousOverridingBorderBoxLogicalHeight;
-    bool m_shouldRestoreInlineSize { false };
-    bool m_shouldRestoreBlockSize { false };
 #if ASSERT_ENABLED
     bool m_didInvalidateContentLogicalWidths { false };
 #endif

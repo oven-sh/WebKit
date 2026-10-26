@@ -3,7 +3,10 @@ ARG WEBKIT_RELEASE_TYPE=Release
 ARG LTO_FLAG=""
 ARG LLVM_VERSION="23"
 ARG LLVM_DEBS_SHA256="993eba8b8ca23ea4d6074643d52ff9397b411e6ac5af6b7b2ca09dca2b351011"
-ARG FREEBSD_VERSION="14.3"
+ARG FREEBSD_VERSION="14.4"
+# base.txz in the MANIFEST beside it.
+ARG FREEBSD_BASE_SHA256_amd64="769f60a6eea2938ad6b7943cfbcc17dfaf7d1f7ba59a32b869a00349302df853"
+ARG FREEBSD_BASE_SHA256_arm64="c456bf75ee3d0b4da0b0b527402b0a9e61497f02756b2cc5801b51e80b3f90c4"
 ARG FREEBSD_ARCH="x86_64"
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG USE_MIMALLOC="OFF"
@@ -13,12 +16,14 @@ ARG USE_EXTERNAL_MIMALLOC="OFF"
 # but FreeBSD's libc++ headers generate notably more DWARF).
 ARG DEBUG_CFLAGS="-g"
 
-FROM ubuntu:24.04 AS base
+FROM ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac AS base
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG LLVM_VERSION
 ARG LLVM_DEBS_SHA256
 ARG FREEBSD_VERSION
+ARG FREEBSD_BASE_SHA256_amd64
+ARG FREEBSD_BASE_SHA256_arm64
 ARG FREEBSD_ARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -51,13 +56,14 @@ ENV LD=lld-${LLVM_VERSION}
 # and /usr/lib/libc++.* come from here.
 RUN set -eux; \
     case "${FREEBSD_ARCH}" in \
-      x86_64)  FBSD_DL_ARCH="amd64" ;; \
-      aarch64) FBSD_DL_ARCH="arm64" ;; \
+      x86_64)  FBSD_DL_ARCH="amd64"; FBSD_BASE_SHA256="${FREEBSD_BASE_SHA256_amd64}" ;; \
+      aarch64) FBSD_DL_ARCH="arm64"; FBSD_BASE_SHA256="${FREEBSD_BASE_SHA256_arm64}" ;; \
       *) echo "unsupported FREEBSD_ARCH ${FREEBSD_ARCH}" >&2; exit 1 ;; \
     esac; \
     mkdir -p /opt/freebsd-sysroot; \
     wget -q "https://download.freebsd.org/releases/${FBSD_DL_ARCH}/${FREEBSD_VERSION}-RELEASE/base.txz" -O /tmp/base.txz || \
       wget -q "https://archive.freebsd.org/old-releases/${FBSD_DL_ARCH}/${FREEBSD_VERSION}-RELEASE/base.txz" -O /tmp/base.txz; \
+    echo "${FBSD_BASE_SHA256}  /tmp/base.txz" | sha256sum -c -; \
     tar -C /opt/freebsd-sysroot -xJf /tmp/base.txz ./usr/include ./usr/lib ./lib; \
     rm /tmp/base.txz
 ENV FREEBSD_SYSROOT=/opt/freebsd-sysroot
@@ -70,8 +76,8 @@ RUN echo 'int main(){return 0;}' | $CC --target=${FREEBSD_ARCH}-unknown-freebsd$
 RUN mkdir -p /output/lib /output/include /output/include/JavaScriptCore /output/include/wtf /output/include/bmalloc /output/include/unicode
 
 # Node, for ICU's data (bun/data/icu-data.ts there; >= 22.6 for type stripping).
-ARG NODE_VERSION=24.16.0
-ARG NODE_SHA256=d804845d34eddc21dc1092b519d643ef40b1f58ec5dec5c22b1f4bd8fabde6c9
+ARG NODE_VERSION=24.22.1
+ARG NODE_SHA256=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
 ADD --checksum=sha256:${NODE_SHA256} https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz /tmp/node.tar.xz
 RUN tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && rm /tmp/node.tar.xz && node --version
 
@@ -190,7 +196,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \
     cp $WEBKIT_OUT_DIR/*.json /output && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/ -name "*.h" -exec sh -c 'cp "$1" "/output/include/JavaScriptCore/$(basename "$1")"' sh {} \; && \
-    find $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/ -name "*.json" -exec sh -c 'cp "$1" "/output/$(basename "$1")"' sh {} \; && \
+    cp $WEBKIT_OUT_DIR/JavaScriptCore/Scripts/CombinedDomains.json /output && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} /output/include/JavaScriptCore/ \; && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/PrivateHeaders/JavaScriptCore/ -name "*.h" -exec cp {} /output/include/JavaScriptCore/ \; && \
     cp -r $WEBKIT_OUT_DIR/WTF/Headers/wtf/ /output/include && \

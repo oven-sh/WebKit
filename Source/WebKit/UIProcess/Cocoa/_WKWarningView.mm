@@ -35,6 +35,7 @@
 #import <wtf/Language.h>
 #import <wtf/MainThread.h>
 #import <wtf/URL.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 #if PLATFORM(WATCHOS)
 #import "PepperUICoreSPI.h"
@@ -207,7 +208,7 @@ static RetainPtr<WebCore::CocoaColor> colorForItem(WarningItem item, ViewType *w
 
 static RetainPtr<ViewType> viewForIconImage(_WKWarningView *warningView)
 {
-    NSString *symbolName;
+    RetainPtr<NSString> symbolName;
     RetainPtr color = colorForItem(WarningItem::WarningSymbol, warningView);
     BOOL shouldSetTint = NO;
     CGFloat imagePointSize = fontOfSize(WarningTextSize::Title).get().pointSize * imageIconPointSizeMultiplier;
@@ -218,12 +219,12 @@ static RetainPtr<ViewType> viewForIconImage(_WKWarningView *warningView)
         shouldSetTint = YES;
     });
 #if PLATFORM(MAC)
-    RetainPtr view = [NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:symbolName accessibilityDescription:nil]];
+    RetainPtr view = [NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:symbolName.get() accessibilityDescription:nil]];
     [view setSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:imagePointSize weight:NSFontWeightRegular scale:NSImageSymbolScaleLarge]];
     if (shouldSetTint)
         [view setContentTintColor:color.get()];
 #else
-    RetainPtr view = adoptNS([[UIImageView alloc] initWithImage:[UIImage systemImageNamed:symbolName]]);
+    RetainPtr view = adoptNS([[UIImageView alloc] initWithImage:[UIImage systemImageNamed:symbolName.get()]]);
     [view setTintColor:color.get()];
     [view setPreferredSymbolConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:imagePointSize]];
     [view setContentMode:UIViewContentModeScaleAspectFit];
@@ -367,7 +368,8 @@ static RetainPtr<ViewType> makeLabel(NSAttributedString *attributedString)
     [box setWarningViewBackgroundColor:colorForItem(WarningItem::BoxBackground, self).get()];
     [box layer].cornerRadius = boxCornerRadius;
 
-    for (ViewType *view in @[ warningViewIcon.get(), title.get(), warning.get(), goBack.get(), primaryButton.get() ]) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL ViewType *view in @[ warningViewIcon.get(), title.get(), warning.get(), goBack.get(), primaryButton.get() ]) {
         view.translatesAutoresizingMaskIntoConstraints = NO;
         [box addSubview:view];
     }
@@ -439,7 +441,7 @@ static RetainPtr<ViewType> makeLabel(NSAttributedString *attributedString)
     RetainPtr<ButtonType> showDetails = box.get().subviews.lastObject;
     [showDetails removeFromSuperview];
 
-    auto text = adoptNS([protect(_warning)->details() mutableCopy]);
+    RetainPtr text = checked_objc_cast<NSMutableAttributedString>(adoptNS([protect(_warning)->details() mutableCopy]));
     [text addAttributes:@{ NSFontAttributeName:fontOfSize(WarningTextSize::Body).get() } range:NSMakeRange(0, [text length])];
     auto details = adoptNS([[_WKWarningViewTextView alloc] initWithAttributedString:text.get() forWarning:self]);
     _details = details.get();
@@ -461,7 +463,8 @@ static RetainPtr<ViewType> makeLabel(NSAttributedString *attributedString)
 
     auto line = adoptNS([_WKWarningViewBox new]);
     [line setWarningViewBackgroundColor:[WebCore::CocoaColor lightGrayColor]];
-    for (ViewType *view in @[details.get(), bottom.get(), line.get()])
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL ViewType *view in @[details.get(), bottom.get(), line.get()])
         view.translatesAutoresizingMaskIntoConstraints = NO;
 
     [self addSubview:bottom.get()];
@@ -507,7 +510,7 @@ static RetainPtr<ViewType> makeLabel(NSAttributedString *attributedString)
 #if PLATFORM(MAC)
 - (BOOL)textView:(NSTextView *)textView clickedOnLink:(id)link atIndex:(NSUInteger)charIndex
 {
-    [self clickedOnLink:link];
+    [self clickedOnLink:checked_objc_cast<NSURL>(link)];
     return YES;
 }
 
@@ -614,7 +617,7 @@ static RetainPtr<ViewType> makeLabel(NSAttributedString *attributedString)
     self.delegate = warning;
 
     RetainPtr foregroundColor = colorForItem(WarningItem::MessageText, warning);
-    RetainPtr string = adoptNS([attributedString mutableCopy]);
+    RetainPtr string = checked_objc_cast<NSMutableAttributedString>(adoptNS([attributedString mutableCopy]));
     [string addAttributes:@{ NSForegroundColorAttributeName : foregroundColor.get() } range:NSMakeRange(0, [string length])];
     [self setBackgroundColor:colorForItem(WarningItem::BoxBackground, warning).get()];
     [self setLinkTextAttributes:@{ NSForegroundColorAttributeName : foregroundColor.get() }];

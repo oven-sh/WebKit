@@ -31,21 +31,27 @@
 
 namespace JSC {
 
+ALWAYS_INLINE std::optional<uint32_t> JSArrayIterator::nextWithAdvance(JSArray* array, int64_t& index)
+{
+    ASSERT(index == doneIndex || (0 <= index && index <= maxSafeInteger()));
+    if (index == doneIndex || index >= array->length()) {
+        index = doneIndex;
+        return std::nullopt;
+    }
+
+    ASSERT(index == static_cast<uint32_t>(index));
+    return static_cast<uint32_t>(index++);
+}
+
 ALWAYS_INLINE std::optional<uint32_t> JSArrayIterator::nextWithAdvance()
 {
     auto* array = downcast<JSArray>(iteratedObject());
     ASSERT(isJSArray(array));
 
     int64_t index = this->index();
-    ASSERT(index == doneIndex || (0 <= index && index <= maxSafeInteger()));
-    if (index == doneIndex || index >= array->length()) {
-        setIndex(doneIndex);
-        return std::nullopt;
-    }
-
-    setIndex(index + 1);
-    ASSERT(index == static_cast<uint32_t>(index));
-    return static_cast<uint32_t>(index);
+    auto indexToLoad = nextWithAdvance(array, index);
+    setIndex(index);
+    return indexToLoad;
 }
 
 ALWAYS_INLINE bool JSArrayIterator::next(JSGlobalObject* globalObject, JSValue& value)
@@ -73,30 +79,6 @@ ALWAYS_INLINE bool JSArrayIterator::next(JSGlobalObject* globalObject, JSValue& 
 
     value = constructArrayPair(globalObject, jsNumber(*index), element);
     RETURN_IF_EXCEPTION(scope, false);
-    return true;
-}
-
-ALWAYS_INLINE int64_t JSArrayIterator::validatedIndexInFrame(JSValue indexValue)
-{
-    RELEASE_ASSERT(indexValue.isAnyInt());
-    int64_t index = indexValue.asAnyInt();
-    RELEASE_ASSERT(index >= doneIndex && index <= static_cast<int64_t>(std::numeric_limits<uint32_t>::max()));
-    return index;
-}
-
-ALWAYS_INLINE bool JSArrayIterator::nextValueWithIndexInFrame(JSGlobalObject* globalObject, JSValue iterable, JSValue& indexValue, JSValue& value)
-{
-    // The steps of nextWithAdvance() and of next() for kind "value", on state that is not in an iterator object.
-    RELEASE_ASSERT(isJSArray(iterable));
-    auto* array = asArray(iterable);
-    int64_t index = validatedIndexInFrame(indexValue);
-    if (index == doneIndex || index >= array->length()) {
-        indexValue = jsNumber(doneIndex);
-        return false;
-    }
-
-    indexValue = jsNumber(index + 1);
-    value = array->getIndex(globalObject, static_cast<uint32_t>(index));
     return true;
 }
 

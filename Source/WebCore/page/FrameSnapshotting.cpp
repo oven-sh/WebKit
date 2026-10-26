@@ -177,7 +177,7 @@ RefPtr<ImageBuffer> snapshotNode(LocalFrame& frame, Node& node, SnapshotOptions&
     protect(frame.view())->setBaseBackgroundColor(Color::transparentBlack);
 
     LayoutRect elementRect;
-    auto paintingRect = snappedIntRect(node.renderer()->subtreePaintRootRect(elementRect, RenderObject::RespectTransforms::Yes));
+    auto paintingRect = snappedIntRect(protect(node.renderer())->subtreePaintRootRect(elementRect, RenderObject::RespectTransforms::Yes));
     if (outPaintingRect)
         *outPaintingRect = paintingRect;
     if (outElementRect)
@@ -188,7 +188,7 @@ RefPtr<ImageBuffer> snapshotNode(LocalFrame& frame, Node& node, SnapshotOptions&
 
 static bool styleContainsComplexBackground(const Style::ComputedStyle& style)
 {
-    return style.blendMode() != BlendMode::Normal
+    return style.usedBlendMode() != BlendMode::Normal
         || Style::hasImageInAnyLayer(style.backgroundLayers())
 #if HAVE(CORE_MATERIAL)
         || appleVisualEffectNeedsBackdrop(style.appleVisualEffect())
@@ -226,7 +226,7 @@ Color estimatedBackgroundColorForRange(const SimpleRange& range, const LocalFram
         if (styleContainsComplexBackground(style))
             return estimatedBackgroundColor;
 
-        auto visitedDependentBackgroundColor = style->visitedDependentBackgroundColor();
+        auto visitedDependentBackgroundColor = style->visitedDependentUsedBackgroundColor();
         if (visitedDependentBackgroundColor != Color::transparentBlack)
             parentRendererBackgroundColors.append(visitedDependentBackgroundColor);
     }

@@ -39,6 +39,7 @@
 #include "libANGLE/renderer/metal/mtl_context_device.h"
 #include "libANGLE/renderer/metal/mtl_format_utils.h"
 #include "libANGLE/renderer/metal/mtl_utils.h"
+#include "libANGLE/trace.h"
 
 namespace rx
 {
@@ -115,23 +116,24 @@ bool IsTransformFeedbackOnly(const gl::State &glState)
     return glState.isTransformFeedbackActiveUnpaused() && glState.isRasterizerDiscardEnabled();
 }
 
-// This class constructs line loop's last segment buffer inside begin() method
-// and perform the draw of the line loop's last segment inside destructor
+// This class constructs line loop's last segment buffer inside begin() method. The last segment
+// is drawn by drawLastSegment(), which must only be called if the main draw was issued: when the
+// main draw is skipped, no render pipeline state is set on the render command encoder.
 class LineLoopLastSegmentHelper
 {
   public:
     LineLoopLastSegmentHelper() {}
 
-    ~LineLoopLastSegmentHelper()
+    void drawLastSegment()
     {
-        if (mLineLoopIndexBuffer.empty())
+        ASSERT(!mLineLoopIndexBuffer.empty());
+
+        mtl::RenderCommandEncoder *encoder = mContextMtl->getRenderCommandEncoder();
+        ASSERT(encoder && encoder->hasPipelineState());
+        if (!encoder || !encoder->hasPipelineState())
         {
             return;
         }
-
-        // Draw last segment of line loop here
-        mtl::RenderCommandEncoder *encoder = mContextMtl->getRenderCommandEncoder();
-        ASSERT(encoder);
         encoder->drawIndexed(MTLPrimitiveTypeLine, 2, MTLIndexTypeUInt32,
                              mLineLoopIndexBuffer.buffer(), mLineLoopIndexBuffer.offset());
     }
@@ -201,7 +203,23 @@ ContextMtl::ContextMtl(const gl::State &state,
       mContextDevice(GetOwnershipIdentity(attribs))
 {}
 
-ContextMtl::~ContextMtl() {}
+ContextMtl::~ContextMtl()
+{
+    while (!mBufferPools.empty())
+    {
+        (*mBufferPools.begin())->destroy(this);
+    }
+}
+
+void ContextMtl::registerBufferPool(mtl::BufferPool *pool)
+{
+    mBufferPools.insert(pool);
+}
+
+void ContextMtl::unregisterBufferPool(mtl::BufferPool *pool)
+{
+    mBufferPools.erase(pool);
+}
 
 angle::Result ContextMtl::initialize(const angle::ImageLoadContext &imageLoadContext)
 {
@@ -215,12 +233,14 @@ angle::Result ContextMtl::initialize(const angle::ImageLoadContext &imageLoadCon
     mDepthStencilDesc = {};
 
     mTriFanIndexBuffer.initialize(this, 0, mtl::kIndexBufferOffsetAlignment,
-                                  kMaxTriFanLineLoopBuffersPerFrame);
+                                  kMaxTriFanLineLoopBuffersPerFrame,
+                                  mtl::TrackBufferInContext::Yes);
     mLineLoopIndexBuffer.initialize(this, 0, mtl::kIndexBufferOffsetAlignment,
-                                    kMaxTriFanLineLoopBuffersPerFrame);
-    mLineLoopLastSegmentIndexBuffer.initialize(this, 2 * sizeof(uint32_t),
-                                               mtl::kIndexBufferOffsetAlignment,
-                                               kMaxTriFanLineLoopBuffersPerFrame);
+                                    kMaxTriFanLineLoopBuffersPerFrame,
+                                    mtl::TrackBufferInContext::Yes);
+    mLineLoopLastSegmentIndexBuffer.initialize(
+        this, 2 * sizeof(uint32_t), mtl::kIndexBufferOffsetAlignment,
+        kMaxTriFanLineLoopBuffersPerFrame, mtl::TrackBufferInContext::Yes);
 
     mContextDevice.set(mDisplay->getMetalDevice());
 
@@ -238,6 +258,7 @@ void ContextMtl::onDestroy(const gl::Context *context)
 
     mIncompleteTextures.onDestroy(context);
     mProvokingVertexHelper.onDestroy(this);
+    ASSERT(mBufferPools.empty());
     mDummyXFBRenderTexture = nullptr;
     mRasterizationRateMap.reset();
     mRasterizationRateMapTexture = nil;
@@ -260,6 +281,15 @@ angle::Result ContextMtl::finish(const gl::Context *context)
 {
     ANGLE_TRY(finishCommandBuffer());
     return checkCommandBufferError();
+}
+
+void ContextMtl::trimMemory(const gl::Context *context, gl::MemoryTrimLevel trimLevel)
+{
+    ANGLE_TRACE_EVENT("gpu.angle", __PRETTY_FUNCTION__);
+    for (mtl::BufferPool *pool : mBufferPools)
+    {
+        pool->trim(this);
+    }
 }
 
 ANGLE_INLINE angle::Result ContextMtl::resyncDrawFramebufferIfNeeded(const gl::Context *context)
@@ -375,14 +405,21 @@ angle::Result ContextMtl::drawLineLoopArraysNonInstanced(const gl::Context *cont
                                                          GLint first,
                                                          GLsizei count)
 {
-    // Generate line loop's last segment. It will be rendered when this function exits.
+    // Generate line loop's last segment. It will be rendered after the line strip below.
     LineLoopLastSegmentHelper lineloopHelper;
     // Line loop helper needs to generate last segment indices before rendering command encoder
     // starts.
     ANGLE_TRY(lineloopHelper.begin(context, &mLineLoopLastSegmentIndexBuffer, first, count,
                                    gl::DrawElementsType::InvalidEnum, nullptr));
 
-    return drawArraysImpl(context, gl::PrimitiveMode::LineStrip, first, count, 0, 0);
+    bool isNoOp = false;
+    ANGLE_TRY(drawArraysImpl(context, gl::PrimitiveMode::LineStrip, first, count, 0, 0, &isNoOp));
+    if (!isNoOp)
+    {
+        lineloopHelper.drawLastSegment();
+    }
+
+    return angle::Result::Continue;
 }
 
 angle::Result ContextMtl::drawLineLoopArrays(const gl::Context *context,
@@ -434,8 +471,16 @@ angle::Result ContextMtl::drawArraysImpl(const gl::Context *context,
                                          GLint first,
                                          GLsizei count,
                                          GLsizei instances,
-                                         GLuint baseInstance)
+                                         GLuint baseInstance,
+                                         bool *isNoOpOut)
 {
+    // Assume no draw call is issued until one is. Callers use this to tell whether the render
+    // command encoder has been set up for drawing.
+    if (isNoOpOut)
+    {
+        *isNoOpOut = true;
+    }
+
     // Real instances count. Zero means this is not instanced draw.
     GLsizei instanceCount = instances ? instances : 1;
 
@@ -480,6 +525,10 @@ angle::Result ContextMtl::drawArraysImpl(const gl::Context *context,
         bool isNoOp = false;                                                                       \
         ANGLE_TRY(setupDraw(context, first, count, instances, baseInstance,                        \
                             gl::DrawElementsType::InvalidEnum, nullptr, xfbPass, &isNoOp));        \
+        if (isNoOpOut)                                                                             \
+        {                                                                                          \
+            *isNoOpOut = isNoOp;                                                                   \
+        }                                                                                          \
         if (!isNoOp)                                                                               \
         {                                                                                          \
                                                                                                    \
@@ -599,13 +648,21 @@ angle::Result ContextMtl::drawLineLoopElementsNonInstancedNoPrimitiveRestart(
     gl::DrawElementsType type,
     const void *indices)
 {
-    // Generate line loop's last segment. It will be rendered when this function exits.
+    // Generate line loop's last segment. It will be rendered after the line strip below.
     LineLoopLastSegmentHelper lineloopHelper;
     // Line loop helper needs to generate index before rendering command encoder starts.
     ANGLE_TRY(
         lineloopHelper.begin(context, &mLineLoopLastSegmentIndexBuffer, 0, count, type, indices));
 
-    return drawElementsImpl(context, gl::PrimitiveMode::LineStrip, count, type, indices, 0, 0, 0);
+    bool isNoOp = false;
+    ANGLE_TRY(drawElementsImpl(context, gl::PrimitiveMode::LineStrip, count, type, indices, 0, 0, 0,
+                               &isNoOp));
+    if (!isNoOp)
+    {
+        lineloopHelper.drawLastSegment();
+    }
+
+    return angle::Result::Continue;
 }
 
 angle::Result ContextMtl::drawLineLoopElements(const gl::Context *context,
@@ -759,8 +816,16 @@ angle::Result ContextMtl::drawElementsImpl(const gl::Context *context,
                                            const void *indices,
                                            GLsizei instances,
                                            GLint baseVertex,
-                                           GLuint baseInstance)
+                                           GLuint baseInstance,
+                                           bool *isNoOpOut)
 {
+    // Assume no draw call is issued until one is. Callers use this to tell whether the render
+    // command encoder has been set up for drawing.
+    if (isNoOpOut)
+    {
+        *isNoOpOut = true;
+    }
+
     // Real instances count. Zero means this is not instanced draw.
     GLsizei instanceCount = instances ? instances : 1;
 
@@ -792,6 +857,10 @@ angle::Result ContextMtl::drawElementsImpl(const gl::Context *context,
     bool isNoOp = false;
     ANGLE_TRY(
         setupDraw(context, 0, count, instances, baseInstance, type, indices, false, &isNoOp));
+    if (isNoOpOut)
+    {
+        *isNoOpOut = isNoOp;
+    }
     if (!isNoOp)
     {
         MTLPrimitiveType mtlType = mtl::GetPrimitiveType(newMode);

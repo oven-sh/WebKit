@@ -62,8 +62,8 @@ WI.DOMDebuggerManager = class DOMDebuggerManager extends WI.Object
         WI.URLBreakpoint.addEventListener(WI.Breakpoint.Event.AutoContinueDidChange, this._handleURLBreakpointEditablePropertyChanged, this);
         WI.URLBreakpoint.addEventListener(WI.Breakpoint.Event.ActionsDidChange, this._handleURLBreakpointActionsChanged, this);
 
-        WI.domManager.addEventListener(WI.DOMManager.Event.NodeRemoved, this._nodeRemoved, this);
-        WI.domManager.addEventListener(WI.DOMManager.Event.NodeInserted, this._nodeInserted, this);
+        WI.DOMNode.addEventListener(WI.DOMNode.Event.Removed, this._nodeRemoved, this);
+        WI.DOMNode.addEventListener(WI.DOMNode.Event.Inserted, this._nodeInserted, this);
 
         WI.networkManager.addEventListener(WI.NetworkManager.Event.MainFrameDidChange, this._mainFrameDidChange, this);
 
@@ -122,7 +122,7 @@ WI.DOMDebuggerManager = class DOMDebuggerManager extends WI.Object
             if (this._allTimeoutsBreakpoint && !this._allTimeoutsBreakpoint.disabled)
                 this._setEventBreakpoint(this._allTimeoutsBreakpoint, target);
 
-            if (this._allRequestsBreakpoint)
+            if (this._allRequestsBreakpoint && !this._allRequestsBreakpoint.disabled)
                 this._setURLBreakpoint(this._allRequestsBreakpoint, target);
 
             for (let breakpoint of this._listenerBreakpoints) {
@@ -572,7 +572,7 @@ WI.DOMDebuggerManager = class DOMDebuggerManager extends WI.Object
     {
         console.assert(!breakpoint.disabled, breakpoint);
         console.assert(breakpoint.domNode instanceof WI.DOMNode, breakpoint);
-        console.assert(target.type !== WI.TargetType.Worker, "Worker targets do not support DOM breakpoints", target);
+        console.assert(target.hasCommand("DOMDebugger.setDOMBreakpoint"), "Target does not support DOM breakpoints", target);
 
         if (!this._restoringBreakpoints && !WI.debuggerManager.breakpointsDisabledTemporarily)
             WI.debuggerManager.breakpointsEnabled = true;
@@ -587,7 +587,7 @@ WI.DOMDebuggerManager = class DOMDebuggerManager extends WI.Object
     _removeDOMBreakpoint(breakpoint, target)
     {
         console.assert(breakpoint.domNode instanceof WI.DOMNode, breakpoint);
-        console.assert(target.type !== WI.TargetType.Worker, "Worker targets do not support DOM breakpoints", target);
+        console.assert(target.hasCommand("DOMDebugger.removeDOMBreakpoint"), "Target does not support DOM breakpoints", target);
 
         target.DOMDebuggerAgent.removeDOMBreakpoint(breakpoint.domNode.id, breakpoint.type);
     }
@@ -921,7 +921,7 @@ WI.DOMDebuggerManager = class DOMDebuggerManager extends WI.Object
 
     _nodeInserted(event)
     {
-        let node = event.data.node;
+        let node = event.target;
         if (node.nodeType() !== Node.ELEMENT_NODE || !node.frame)
             return;
 
@@ -964,7 +964,7 @@ WI.DOMDebuggerManager = class DOMDebuggerManager extends WI.Object
 
     _nodeRemoved(event)
     {
-        let node = event.data.node;
+        let node = event.target;
         if (node.nodeType() !== Node.ELEMENT_NODE || !node.frame)
             return;
 
@@ -988,10 +988,9 @@ WI.DOMDebuggerManager = class DOMDebuggerManager extends WI.Object
         }
     }
 
-    // FIXME: <https://webkit.org/b/298981> Add DOMDebugger support for FrameTarget.
     *#allSupportedTargets() {
         for (let target of WI.targets) {
-            if (!(target instanceof WI.FrameTarget))
+            if (target.hasDomain("DOMDebugger"))
                 yield target;
         }
     }

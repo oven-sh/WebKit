@@ -45,19 +45,19 @@ namespace WebCore {
 class ResourceResponse;
 class ResourceRequest;
 struct ClientOrigin;
-enum class IsInitiatedByDedicatedWorker : bool;
+enum class IsInitiatedByWorker : bool;
 }
 
 namespace WebKit {
 class NetworkSession;
 class NetworkSessionCocoa;
 class NetworkSocketChannel;
-struct SessionSet;
+struct SessionWrapper;
 
 class WebSocketTask : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<WebSocketTask>, public NetworkTaskCocoa {
     WTF_MAKE_TZONE_ALLOCATED(WebSocketTask);
 public:
-    static Ref<WebSocketTask> create(NetworkSocketChannel&, WebPageProxyIdentifier, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, WeakPtr<SessionSet>&&, const WebCore::ResourceRequest&, const WebCore::ClientOrigin&, RetainPtr<NSURLSessionWebSocketTask>&&, WebCore::StoredCredentialsPolicy, WebCore::IsInitiatedByDedicatedWorker);
+    static Ref<WebSocketTask> create(NetworkSocketChannel&, WebPageProxyIdentifier, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, WeakPtr<SessionWrapper>&&, const WebCore::ResourceRequest&, const WebCore::ClientOrigin&, RetainPtr<NSURLSessionWebSocketTask>&&, WebCore::StoredCredentialsPolicy, WebCore::IsInitiatedByWorker);
     ~WebSocketTask();
 
     void sendString(std::span<const uint8_t>, CompletionHandler<void()>&&);
@@ -73,8 +73,8 @@ public:
     typedef uint64_t TaskIdentifier;
     TaskIdentifier identifier() const;
 
-    NetworkSessionCocoa* NODELETE networkSession();
-    SessionSet* sessionSet() { return m_sessionSet.get(); }
+    NetworkSessionCocoa* LEGACY_NODELETE networkSession();
+    SessionWrapper* sessionWrapper() { return m_sessionWrapper.get(); }
 
     std::optional<WebCore::FrameIdentifier> frameID() const final { return m_frameID; }
     std::optional<WebCore::PageIdentifier> pageID() const final { return m_pageID; }
@@ -83,7 +83,7 @@ public:
     const WebCore::SecurityOriginData& topOrigin() const LIFETIME_BOUND { return m_topOrigin; }
 
 private:
-    WebSocketTask(NetworkSocketChannel&, WebPageProxyIdentifier, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, WeakPtr<SessionSet>&&, const WebCore::ResourceRequest&, const WebCore::ClientOrigin&, RetainPtr<NSURLSessionWebSocketTask>&&, WebCore::StoredCredentialsPolicy, WebCore::IsInitiatedByDedicatedWorker);
+    WebSocketTask(NetworkSocketChannel&, WebPageProxyIdentifier, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, WeakPtr<SessionWrapper>&&, const WebCore::ResourceRequest&, const WebCore::ClientOrigin&, RetainPtr<NSURLSessionWebSocketTask>&&, WebCore::StoredCredentialsPolicy, WebCore::IsInitiatedByWorker);
 
     void readNextMessage();
     void reportHandshakeRequest();
@@ -92,18 +92,18 @@ private:
     WebCore::StoredCredentialsPolicy storedCredentialsPolicy() const final { return m_storedCredentialsPolicy; }
 
     WeakPtr<NetworkSocketChannel> m_channel;
-    RetainPtr<NSURLSessionWebSocketTask> m_task;
+    const RetainPtr<NSURLSessionWebSocketTask> m_task;
     bool m_didReportHandshakeRequest { false };
     bool m_receivedDidClose { false };
     bool m_receivedDidConnect { false };
     Markable<WebPageProxyIdentifier> m_webProxyPageID;
     std::optional<WebCore::FrameIdentifier> m_frameID;
     std::optional<WebCore::PageIdentifier> m_pageID;
-    WeakPtr<SessionSet> m_sessionSet;
+    WeakPtr<SessionWrapper> m_sessionWrapper;
     String m_partition;
     WebCore::StoredCredentialsPolicy m_storedCredentialsPolicy { WebCore::StoredCredentialsPolicy::DoNotUse };
     WebCore::SecurityOriginData m_topOrigin;
-    WebCore::IsInitiatedByDedicatedWorker m_isInitiatedByDedicatedWorker;
+    WebCore::IsInitiatedByWorker m_isInitiatedByWorker;
 };
 
 } // namespace WebKit

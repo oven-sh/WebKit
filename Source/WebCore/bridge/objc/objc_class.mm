@@ -42,7 +42,7 @@ ObjcClass::ObjcClass(ClassStructPtr aClass)
 {
 }
 
-static RetainPtr<CFMutableDictionaryRef>& NODELETE classesByIsA()
+static RetainPtr<CFMutableDictionaryRef>& LEGACY_NODELETE classesByIsA()
 {
     static NeverDestroyed<RetainPtr<CFMutableDictionaryRef>> classesByIsA;
     return classesByIsA;
@@ -170,7 +170,8 @@ Field* ObjcClass::fieldNamed(PropertyName propertyName, Instance* instance) cons
 #endif
     if (attributes) {
         // Class overrides attributeKeys, use that array of key names.
-        for (NSString* keyName in attributes) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSString* keyName in attributes) {
             const char* UTF8KeyName = [keyName UTF8String]; // ObjC actually only supports ASCII names.
 
             // See if the class wants to exclude the selector from visibility in JavaScript.
@@ -231,9 +232,7 @@ Field* ObjcClass::fieldNamed(PropertyName propertyName, Instance* instance) cons
 JSValue ObjcClass::fallbackObject(JSGlobalObject* lexicalGlobalObject, Instance* instance, PropertyName propertyName)
 {
     auto* objcInstance = downcast<ObjcInstance>(instance);
-    id targetObject = objcInstance->getObject();
-    
-    if (![targetObject respondsToSelector:@selector(invokeUndefinedMethodFromWebScript:withArguments:)])
+    if (![protect(objcInstance->getObject()) respondsToSelector:@selector(invokeUndefinedMethodFromWebScript:withArguments:)])
         return jsUndefined();
 
     if (!propertyName.publicName())

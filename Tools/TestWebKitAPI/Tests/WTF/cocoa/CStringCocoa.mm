@@ -43,7 +43,7 @@ template<typename StringType> concept HasNSStringConstructor = requires(NSString
     StringType { string };
 };
 
-TEST(WTF, CStringWithEncodingFromNSString)
+TEST(WTF, CStringFromNSString)
 {
     UTF8CString utf8String { @"Water🍉Melon" };
     EXPECT_TRUE(utf8String == UTF8CString { u8"Water🍉Melon"_span });
@@ -62,7 +62,7 @@ TEST(WTF, CStringWithEncodingFromNSString)
     static_assert(!HasNSStringConstructor<ASCIICString>);
 }
 
-TEST(WTF, CStringWithEncodingCreateNSString)
+TEST(WTF, CStringCreateNSString)
 {
     // The encoding is in the type, so each alias picks the right NSStringEncoding.
     UTF8CString utf8String { u8"Water🍉Melon"_span };
@@ -81,11 +81,11 @@ TEST(WTF, CStringWithEncodingCreateNSString)
     UTF8CString emptyString { u8""_span };
     EXPECT_TRUE([emptyString.createNSString().get() isEqualToString:@""]);
 
-    // An untyped CString has no encoding to convert from, so it has no createNSString().
+    // An untyped CStringBase has no encoding to convert from, so it has no createNSString().
     static_assert(HasCreateNSString<UTF8CString>);
     static_assert(HasCreateNSString<Latin1CString>);
     static_assert(HasCreateNSString<ASCIICString>);
-    static_assert(!HasCreateNSString<CString>);
+    static_assert(!HasCreateNSString<CStringBase>);
 }
 
 } // namespace TestWebKitAPI

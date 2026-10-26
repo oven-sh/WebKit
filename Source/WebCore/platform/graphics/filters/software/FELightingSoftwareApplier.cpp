@@ -109,7 +109,7 @@ void FELightingSoftwareApplier::applyPlatform(const LightingData& data) const
     auto [r, g, b, a] = data.lightingColor.toResolvedColorComponentsInColorSpace(*data.operatingColorSpace);
     paintingData.initialLightingData.colorVector = FloatPoint3D(r, g, b);
 
-    data.lightSource->initPaintingData(Ref { *data.filter }, Ref { *data.result }, paintingData);
+    data.lightSource->initPaintingData(*data.filter, *data.result, paintingData);
 
     // Top left.
     int offset = 0;
@@ -187,29 +187,30 @@ bool FELightingSoftwareApplier::apply(const Filter& filter, std::span<const Ref<
     // output for various kernelUnitLengths, and I am not sure they are reliable.
     // Anyway, feConvolveMatrix should also use the implementation
 
-    auto size = IntSize(result.absoluteImageRect().size());
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST auto size = IntSize(result.absoluteImageRect().size());
 
     // FIXME: do something if width or height (or both) is 1 pixel.
     // The W3 spec does not define this case. Now the filter just returns.
     if (size.width() <= 2 || size.height() <= 2)
         return true;
 
-    LightingData data;
-    data.filter = &filter;
-    data.result = &result;
-    data.filterType = m_effect->filterType();
-    data.lightingColor = m_effect->lightingColor();
-    data.surfaceScale = m_effect->surfaceScale() / 255.0f;
-    data.diffuseConstant = m_effect->diffuseConstant();
-    data.specularConstant = m_effect->specularConstant();
-    data.specularExponent = m_effect->specularExponent();
-    data.lightSource = &m_effect->lightSource();
-    data.operatingColorSpace = &m_effect->operatingColorSpace();
-
-    data.pixels = destinationPixelBuffer.get();
-    data.widthMultipliedByPixelSize = size.width() * cPixelSize;
-    data.width = size.width();
-    data.height = size.height();
+    LightingData data {
+        .filter = &filter,
+        .result = &result,
+        .filterType = m_effect->filterType(),
+        .lightingColor = m_effect->lightingColor(),
+        .surfaceScale = m_effect->surfaceScale() / 255.0f,
+        .diffuseConstant = m_effect->diffuseConstant(),
+        .specularConstant = m_effect->specularConstant(),
+        .specularExponent = m_effect->specularExponent(),
+        .lightSource = &m_effect->lightSource(),
+        .operatingColorSpace = &m_effect->operatingColorSpace(),
+        .pixels = destinationPixelBuffer.get(),
+        .widthMultipliedByPixelSize = size.width() * cPixelSize,
+        .width = size.width(),
+        .height = size.height(),
+    };
 
     applyPlatform(data);
     return true;

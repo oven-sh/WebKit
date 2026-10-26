@@ -34,6 +34,7 @@
 #import <wtf/NeverDestroyed.h>
 #import <wtf/OSObjectPtr.h>
 #import <wtf/TZoneMallocInlines.h>
+#import <wtf/darwin/DarwinExtras.h>
 
 #if HAVE(OS_SIGNPOST)
 #import <wtf/SystemTracing.h>
@@ -47,16 +48,14 @@ static std::atomic<unsigned> globalLogCountForTesting { 0 };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LogStream);
 
-void logWithProcessNamePrefix(os_log_t log, os_log_type_t type, ASCIILiteral processName, int pid, CStringView message)
+void logWithProcessNamePrefix(os_log_t log, os_log_type_t type, ASCIILiteral processName, int pid, UTF8CStringView message)
 {
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     if (processName == "WebContent"_s)
-        os_log_with_type(log, type, "WebContent[%d] %{public}s", pid, message.utf8()); // NOLINT
+        SAFE_OS_LOG_WITH_TYPE(log, type, "WebContent[%d] %{public}s", pid, message);
     else if (processName == "Model"_s)
-        os_log_with_type(log, type, "Model[%d] %{public}s", pid, message.utf8()); // NOLINT
+        SAFE_OS_LOG_WITH_TYPE(log, type, "Model[%d] %{public}s", pid, message);
     else
-        os_log_with_type(log, type, "%{public}s[%d] %{public}s", processName.characters(), pid, message.utf8()); // NOLINT
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+        SAFE_OS_LOG_WITH_TYPE(log, type, "%{public}s[%d] %{public}s", processName, pid, message);
 }
 
 #if ENABLE(STREAMING_IPC_IN_LOG_FORWARDING)
@@ -134,7 +133,7 @@ void LogStream::logOnBehalfOfWebContent(std::span<const char8_t> subsystemSpan, 
     if (!subsystem.isEmpty() && !category.isEmpty()) {
         if (category == "Testing"_s)
             globalLogCountForTesting++;
-        osLog = adoptOSObject(os_log_create(subsystem.legacyCStringPointer(), category.legacyCStringPointer()));
+        osLog = adoptOSObject(osLogCreate(subsystem, category));
     }
     if (!osLog)
         osLog = OS_LOG_DEFAULT;
@@ -146,7 +145,7 @@ void LogStream::logOnBehalfOfWebContent(std::span<const char8_t> subsystemSpan, 
 
     // Use '%{public}s' in the format string for the preprocessed string from the WebContent process.
     // This should not reveal any redacted information in the string, since it has already been composed in the WebContent process.
-    SUPPRESS_UNCOUNTED_LOCAL logWithProcessNamePrefix(osLog.get(), static_cast<os_log_type_t>(logType), m_processName, m_pid, CStringView::fromUTF8(string.spanIncludingNullTerminator()));
+    SUPPRESS_UNCOUNTED_LOCAL logWithProcessNamePrefix(osLog.get(), static_cast<os_log_type_t>(logType), m_processName, m_pid, UTF8CStringView::fromUTF8(string.spanIncludingNullTerminator()));
 }
 
 #if ENABLE(STREAMING_IPC_IN_LOG_FORWARDING)

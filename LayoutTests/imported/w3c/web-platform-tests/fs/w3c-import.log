@@ -25,6 +25,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/fs/FileSystemBaseHandle-postMessage-MessagePort-windows.https.window.js
 /LayoutTests/imported/w3c/web-platform-tests/fs/FileSystemBaseHandle-postMessage-MessagePort-workers.https.window.js
 /LayoutTests/imported/w3c/web-platform-tests/fs/FileSystemBaseHandle-postMessage-frames.https.window.js
+/LayoutTests/imported/w3c/web-platform-tests/fs/FileSystemBaseHandle-postMessage-insecure-context.https.window.js
 /LayoutTests/imported/w3c/web-platform-tests/fs/FileSystemBaseHandle-postMessage-windows.https.window.js
 /LayoutTests/imported/w3c/web-platform-tests/fs/FileSystemBaseHandle-postMessage-workers.https.window.js
 /LayoutTests/imported/w3c/web-platform-tests/fs/FileSystemBaseHandle-remove.https.any.js

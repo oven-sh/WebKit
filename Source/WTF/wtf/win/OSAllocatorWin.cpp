@@ -131,19 +131,60 @@ void OSAllocator::hintMemoryNotNeededSoon(void*, size_t)
 {
 }
 
+static bool tryCommitWithRetry(void* address, size_t bytes, DWORD protection)
+{
+    // A commit that hits the commit limit is retried the way libpas does it, with the same numbers
+    // (virtual_alloc_with_retry in pas_page_malloc.c).
+    constexpr unsigned maxRetries = 10;
+    constexpr DWORD retryDelayMS = 50;
+    for (unsigned retry = 0; ; ++retry) {
+        if (VirtualAlloc(address, bytes, MEM_COMMIT, protection))
+            return true;
+        DWORD error = GetLastError();
+        if (error != ERROR_COMMITMENT_LIMIT && error != ERROR_NOT_ENOUGH_MEMORY)
+            return false;
+        if (retry == maxRetries)
+            return false;
+        Sleep(retryDelayMS);
+    }
+}
+
 bool OSAllocator::tryProtect(void* address, size_t bytes, bool readable, bool writable)
 {
     if (!bytes)
         return true;
+    if (!readable && !writable) {
+        MEMORY_BASIC_INFORMATION pageInfo;
+        SIZE_T queried = VirtualQuery(address, &pageInfo, sizeof(pageInfo));
+        if (!queried)
+            return false;
+        // Assert that the region size is at least the size we're trying to protect.
+        ASSERT(pageInfo.RegionSize >= bytes);
+        if (pageInfo.RegionSize < bytes) {
+            // if the region size is less than the size we're trying to protect, return false.
+            return false;
+        }
+        if (pageInfo.State == MEM_FREE) {
+            // Memory is not reserved, so its reserved as noaccess.
+            return VirtualAlloc(address, bytes, MEM_RESERVE, PAGE_NOACCESS);
+        }
+        if (pageInfo.State == MEM_RESERVE) {
+            // Memory is reserved, so its already noaccess.
+            return true;
+        }
+        if (pageInfo.State == MEM_COMMIT) {
+            // Memory is committed, so its protection is flipped to noaccess.
+            DWORD oldProtection;
+            return VirtualProtect(address, bytes, PAGE_NOACCESS, &oldProtection);
+        }
+        return false;
+    }
     DWORD protection = 0;
     if (readable) {
         if (writable)
             protection = PAGE_READWRITE;
         else
             protection = PAGE_READONLY;
-    } else {
-        ASSERT(!readable && !writable);
-        protection = PAGE_NOACCESS;
     }
 
     // VirtualAlloc(MEM_COMMIT) cannot span multiple MEM_RESERVE regions, so walk
@@ -157,7 +198,7 @@ bool OSAllocator::tryProtect(void* address, size_t bytes, bool readable, bool wr
         ASSERT(memInfo.RegionSize > 0);
         ASSERT(static_cast<char*>(memInfo.BaseAddress) == currentPtr);
         size_t chunkSize = std::min(static_cast<size_t>(memInfo.RegionSize), bytes - totalSeen);
-        if (!VirtualAlloc(currentPtr, chunkSize, MEM_COMMIT, protection))
+        if (!tryCommitWithRetry(currentPtr, chunkSize, protection))
             return false;
         currentPtr += chunkSize;
         totalSeen += chunkSize;

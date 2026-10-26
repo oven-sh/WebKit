@@ -47,7 +47,7 @@ public:
         return &vm.nativeExecutableSpace();
     }
 
-    CodeBlockHash NODELETE hashFor(CodeSpecializationKind) const;
+    CodeBlockHash LEGACY_NODELETE hashFor(CodeSpecializationKind) const;
 
     TaggedNativeFunction function() const { return m_function; }
     TaggedNativeFunction constructor() const { return m_constructor; }
@@ -59,6 +59,10 @@ public:
         ASSERT(kind == CodeSpecializationKind::CodeForConstruct);
         return constructor();
     }
+
+    RefPtr<JSC::JITCode> swapGeneratedJITCodeForDebugger(CodeSpecializationKind, RefPtr<JSC::JITCode>);
+    RefPtr<JSC::JITCode> swapGeneratedJITCodeForCallForDebugger(RefPtr<JSC::JITCode>);
+    RefPtr<JSC::JITCode> swapGeneratedJITCodeForConstructForDebugger(RefPtr<JSC::JITCode>);
         
     static constexpr ptrdiff_t offsetOfNativeFunctionFor(CodeSpecializationKind kind)
     {

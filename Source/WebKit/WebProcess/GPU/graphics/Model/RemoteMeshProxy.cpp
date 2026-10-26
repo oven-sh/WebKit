@@ -30,6 +30,7 @@
 
 #include "ModelConvertToBackingContext.h"
 #include "RemoteMeshMessages.h"
+#include <WebCore/CSSUnits.h>
 #include <WebCore/StageModeOperations.h>
 #include <WebCore/TransformationMatrix.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -122,16 +123,54 @@ static std::pair<simd_float4, simd_float4> computeMinAndMaxCorners(const Vector<
 
     return std::make_pair(minCorner4, maxCorner4);
 }
+
+static constexpr float kCSSPixelsPerMeter = WebCore::CSS::pixelsPerCm * 100.f;
+
+#if ENABLE(SPATIAL_PORTAL)
+enum class TranslationUnits : bool { Rendering, Reporting };
+
+static simd_float4x4 applyContentTransform(const WebCore::UsedPortalTransform& portalTransform, const simd_float4x4& fittedTransform, TranslationUnits translationUnits)
+{
+    if (!portalTransform.hasContentTransform())
+        return fittedTransform;
+
+    auto beforeAuto = static_cast<simd_float4x4>(portalTransform.transformBeforeAuto);
+    auto afterAuto = static_cast<simd_float4x4>(portalTransform.transformAfterAuto);
+
+    simd_float4x4 enclosing = simd_mul(fittedTransform, beforeAuto);
+    simd_float3x3 enclosingLinear = simd_matrix(simd_make_float3(enclosing.columns[0]), simd_make_float3(enclosing.columns[1]), simd_make_float3(enclosing.columns[2]));
+
+    float cssPixelsPerUnit = translationUnits == TranslationUnits::Rendering ? kCSSPixelsPerMeter : 1;
+    simd_float3 translation = simd_mul(simd_inverse(enclosingLinear), simd_make_float3(afterAuto.columns[3]) / cssPixelsPerUnit);
+    if (std::isfinite(translation.x) && std::isfinite(translation.y) && std::isfinite(translation.z))
+        afterAuto.columns[3] = simd_make_float4(translation, afterAuto.columns[3].w);
+
+    return simd_mul(fittedTransform, simd_mul(beforeAuto, afterAuto));
+}
+
+static void transformBoundingBox(simd_float3 extents, simd_float3 center, const simd_float4x4& matrix, simd_float3& minimum, simd_float3& maximum)
+{
+    simd_float3 halfExtents = extents / 2;
+
+    for (int corner = 0; corner < 8; ++corner) {
+        simd_float3 offset = simd_make_float3(
+            (corner & 1) ? halfExtents.x : -halfExtents.x,
+            (corner & 2) ? halfExtents.y : -halfExtents.y,
+            (corner & 4) ? halfExtents.z : -halfExtents.z
+        );
+        simd_float3 point = simd_make_float3(simd_mul(matrix, simd_make_float4(center + offset, 1.0f)));
+
+        minimum = corner ? simd_min(minimum, point) : point;
+        maximum = corner ? simd_max(maximum, point) : point;
+    }
+}
+#endif
 #endif
 
 RemoteMeshProxy::RemoteMeshProxy(Ref<RemoteGPUProxy>&& root, ModelConvertToBackingContext& convertToBackingContext, WebModelIdentifier identifier)
     : m_backing(identifier)
     , m_convertToBackingContext(convertToBackingContext)
     , m_root(WTF::move(root))
-#if PLATFORM(COCOA)
-    , m_minCorner(simd_make_float4(FLT_MAX, FLT_MAX, FLT_MAX, 1.f))
-    , m_maxCorner(simd_make_float4(-FLT_MAX, -FLT_MAX, -FLT_MAX, 1.f))
-#endif
 {
 }
 
@@ -146,21 +185,9 @@ RemoteMeshProxy::~RemoteMeshProxy()
 void RemoteMeshProxy::update(Vector<WebModel::UpdateMeshDescriptor>&& descriptorArray)
 {
 #if ENABLE(GPU_PROCESS_MODEL)
-    bool needBoundingBoxUpdate = m_minCorner.x > m_maxCorner.x;
-    if (needBoundingBoxUpdate) {
-        for (auto& descriptor : descriptorArray) {
-            auto [minCorner, maxCorner] = computeMinAndMaxCorners(descriptor.parts, descriptor.instanceTransforms, descriptor.deformationData);
-            m_minCorner = simd_min(m_minCorner, minCorner);
-            m_maxCorner = simd_max(m_maxCorner, maxCorner);
-        }
-    }
-
     auto sendResult = sendWithAsyncReply(Messages::RemoteMesh::Update(WTF::move(descriptorArray)), [](auto) mutable {
     });
     UNUSED_VARIABLE(sendResult);
-
-    if (needBoundingBoxUpdate)
-        computeTransform();
 #else
     UNUSED_PARAM(descriptorArray);
 #endif
@@ -209,11 +236,69 @@ void RemoteMeshProxy::updateMaterial(Vector<WebModel::UpdateMaterialDescriptor>&
 }
 
 #if PLATFORM(COCOA)
-std::pair<simd_float4, simd_float4> RemoteMeshProxy::getCenterAndExtents() const
+void RemoteMeshProxy::updateModel(WebCore::NodeIdentifier nodeID, Vector<WebModel::UpdateMeshDescriptor>&& descriptorArray)
 {
-    auto center = .5f * (m_minCorner + m_maxCorner);
-    auto extents = m_maxCorner - m_minCorner;
+#if ENABLE(GPU_PROCESS_MODEL)
+    bool needBoundingBoxUpdate = false;
+
+    auto& bounds = m_modelBounds.add(nodeID, ModelBounds { }).iterator->value;
+    if (bounds.boundsAreEmpty()) {
+        for (auto& descriptor : descriptorArray) {
+            auto [minCorner, maxCorner] = computeMinAndMaxCorners(descriptor.parts, descriptor.instanceTransforms, descriptor.deformationData);
+            bounds.minCorner = simd_min(bounds.minCorner, minCorner);
+            bounds.maxCorner = simd_max(bounds.maxCorner, maxCorner);
+        }
+        needBoundingBoxUpdate = !bounds.boundsAreEmpty();
+    }
+
+    update(WTF::move(descriptorArray));
+
+    if (needBoundingBoxUpdate)
+        computeTransform();
+#else
+    UNUSED_PARAM(nodeID);
+    UNUSED_PARAM(descriptorArray);
+#endif
+}
+
+static std::pair<simd_float4, simd_float4> makeCenterAndExtents(simd_float4 minCorner, simd_float4 maxCorner)
+{
+    auto center = .5f * (minCorner + maxCorner);
+    auto extents = maxCorner - minCorner;
     return std::make_pair(center, extents);
+}
+
+std::pair<simd_float4, simd_float4> RemoteMeshProxy::mergedCenterAndExtents() const
+{
+    ModelBounds merged;
+    for (auto& bounds : m_modelBounds.values()) {
+        merged.minCorner = simd_min(merged.minCorner, bounds.minCorner);
+        merged.maxCorner = simd_max(merged.maxCorner, bounds.maxCorner);
+    }
+
+    if (merged.boundsAreEmpty())
+        return { simd_make_float4(0.f), simd_make_float4(0.f) };
+
+    return makeCenterAndExtents(merged.minCorner, merged.maxCorner);
+}
+
+std::optional<std::pair<simd_float4, simd_float4>> RemoteMeshProxy::centerAndExtents(WebCore::NodeIdentifier nodeID) const
+{
+    auto it = m_modelBounds.find(nodeID);
+    if (it == m_modelBounds.end() || it->value.boundsAreEmpty())
+        return std::nullopt;
+
+    return makeCenterAndExtents(it->value.minCorner, it->value.maxCorner);
+}
+
+void RemoteMeshProxy::removeModel(WebCore::NodeIdentifier nodeID)
+{
+    if (!m_modelBounds.remove(nodeID))
+        return;
+
+#if ENABLE(GPU_PROCESS_MODEL)
+    computeTransform();
+#endif
 }
 #endif
 
@@ -370,6 +455,15 @@ void RemoteMeshProxy::setStageMode(WebCore::StageModeOperation stageMode)
     if (m_stageMode == WebCore::StageModeOperation::Orbit)
         m_entityTransformSetByScript = false;
     bool returningToNoneFromOrbit = m_stageMode == WebCore::StageModeOperation::None && previousStageMode != WebCore::StageModeOperation::None;
+
+#if ENABLE(SPATIAL_PORTAL)
+    if (m_portalTransform && returningToNoneFromOrbit) {
+        m_transform = std::nullopt;
+        computeTransform();
+        return;
+    }
+#endif
+
     if (!returningToNoneFromOrbit)
         computeTransform();
 #else
@@ -398,11 +492,16 @@ void RemoteMeshProxy::computeTransform()
     if (m_entityTransformSetByScript)
         return;
 
-    static constexpr float kCSSPixelsPerMeter = 96 / 2.54 * 100;
     // Fixed camera distance matching the ModelRenderer
     static constexpr float kCameraDistance = 0.5;
 
-    auto [center, extents] = getCenterAndExtents();
+#if ENABLE(SPATIAL_PORTAL)
+    auto [center, extents] = m_portalTransform ? portalContentCenterAndExtents(static_cast<simd_float4x4>(m_portalTransform->transformBeforeAuto)) : mergedCenterAndExtents();
+    bool fitsContent = !m_portalTransform || m_portalTransform->fitsContent;
+#else
+    auto [center, extents] = mergedCenterAndExtents();
+    constexpr bool fitsContent = true;
+#endif
 
     float viewportWidth = m_viewportWidth / kCSSPixelsPerMeter;
     float viewportHeight = m_viewportHeight / kCSSPixelsPerMeter;
@@ -410,7 +509,10 @@ void RemoteMeshProxy::computeTransform()
     float scale = 0;
     float depth = 0;
 
-    if (m_stageMode == WebCore::StageModeOperation::None) {
+    if (!fitsContent) {
+        scale = 1.f / kCSSPixelsPerMeter;
+        depth = extents.z;
+    } else if (m_stageMode == WebCore::StageModeOperation::None) {
         if (std::fmin(extents.x, extents.y) > FLT_EPSILON)
             scale = std::fmin(viewportWidth / extents.x, viewportHeight / extents.y);
         depth = extents.z;
@@ -436,8 +538,76 @@ void RemoteMeshProxy::computeTransform()
 
     setFOV(2 * std::atan(viewportHeight / (2 * kCameraDistance)));
 
-    setEntityTransformInternal(result);
     m_computedTransform = result;
+
+#if ENABLE(SPATIAL_PORTAL)
+    if (m_portalTransform) {
+        m_fittedPortalTransform = result;
+        result = applyContentTransform(*m_portalTransform, result, TranslationUnits::Rendering);
+    }
+#endif
+
+    setEntityTransformInternal(result);
+}
+#endif
+
+#if ENABLE(SPATIAL_PORTAL) && PLATFORM(COCOA)
+void RemoteMeshProxy::setPortalTransform(const WebCore::UsedPortalTransform& portalTransform)
+{
+#if ENABLE(GPU_PROCESS_MODEL)
+    if (m_portalTransform == portalTransform)
+        return;
+
+    m_portalTransform = portalTransform;
+    m_entityTransformSetByScript = false;
+    computeTransform();
+#else
+    UNUSED_PARAM(portalTransform);
+#endif
+}
+
+std::optional<WebModel::Float4x4> RemoteMeshProxy::resolvedPortalTransform() const
+{
+#if ENABLE(GPU_PROCESS_MODEL)
+    if (!m_portalTransform || !m_fittedPortalTransform)
+        return std::nullopt;
+
+    WebModel::Float4x4 fittedTransform = *m_fittedPortalTransform;
+    if (m_portalTransform->fitsContent)
+        return applyContentTransform(*m_portalTransform, fittedTransform, TranslationUnits::Reporting);
+
+    WebModel::Float4x4 matrix = applyContentTransform(*m_portalTransform, fittedTransform, TranslationUnits::Rendering);
+    matrix.column0 = simd_make_float4(simd_make_float3(matrix.column0) * kCSSPixelsPerMeter, 0.f);
+    matrix.column1 = simd_make_float4(simd_make_float3(matrix.column1) * kCSSPixelsPerMeter, 0.f);
+    matrix.column2 = simd_make_float4(simd_make_float3(matrix.column2) * kCSSPixelsPerMeter, 0.f);
+    matrix.column3 = simd_make_float4(simd_make_float3(matrix.column3) * kCSSPixelsPerMeter, 1.f);
+
+    return matrix;
+#else
+    return std::nullopt;
+#endif
+}
+#endif
+
+#if ENABLE(SPATIAL_PORTAL) && ENABLE(GPU_PROCESS_MODEL)
+std::pair<simd_float4, simd_float4> RemoteMeshProxy::portalContentCenterAndExtents(const simd_float4x4& transformBeforeAuto) const
+{
+    ModelBounds merged;
+    for (auto& bounds : m_modelBounds.values()) {
+        if (bounds.boundsAreEmpty())
+            continue;
+
+        simd_float3 minimum;
+        simd_float3 maximum;
+        transformBoundingBox(simd_make_float3(bounds.maxCorner - bounds.minCorner), simd_make_float3(.5f * (bounds.minCorner + bounds.maxCorner)), transformBeforeAuto, minimum, maximum);
+        merged.minCorner = simd_min(merged.minCorner, simd_make_float4(minimum, 1.f));
+        merged.maxCorner = simd_max(merged.maxCorner, simd_make_float4(maximum, 1.f));
+    }
+
+    if (merged.boundsAreEmpty())
+        return { simd_make_float4(0.f), simd_make_float4(0.f) };
+
+    return makeCenterAndExtents(merged.minCorner, merged.maxCorner);
 }
 #endif
 

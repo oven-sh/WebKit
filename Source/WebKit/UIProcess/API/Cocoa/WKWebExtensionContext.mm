@@ -389,7 +389,7 @@ static inline NSSet<WKWebExtensionMatchPattern *> *toAPI(const WebKit::WebExtens
     return extensionContext->hasPermission(url, toImplNullable(tab, extensionContext.get()).get());
 }
 
-static inline WKWebExtensionContextPermissionStatus NODELETE toAPI(WebKit::WebExtensionContext::PermissionState status)
+static inline WKWebExtensionContextPermissionStatus LEGACY_NODELETE toAPI(WebKit::WebExtensionContext::PermissionState status)
 {
     switch (status) {
     case WebKit::WebExtensionContext::PermissionState::DeniedExplicitly:
@@ -409,7 +409,7 @@ static inline WKWebExtensionContextPermissionStatus NODELETE toAPI(WebKit::WebEx
     }
 }
 
-static inline WebKit::WebExtensionContext::PermissionState NODELETE toImpl(WKWebExtensionContextPermissionStatus status)
+static inline WebKit::WebExtensionContext::PermissionState LEGACY_NODELETE toImpl(WKWebExtensionContextPermissionStatus status)
 {
     switch (status) {
     case WKWebExtensionContextPermissionStatusDeniedExplicitly:
@@ -652,7 +652,7 @@ static inline WebKit::WebExtensionContext::PermissionState NODELETE toImpl(WKWeb
     extensionContext->clearUserGesture(toImpl(tab, extensionContext.get()));
 }
 
-static inline id<WKWebExtensionWindow> NODELETE toAPI(const RefPtr<WebKit::WebExtensionWindow>& window)
+static inline id<WKWebExtensionWindow> LEGACY_NODELETE toAPI(const RefPtr<WebKit::WebExtensionWindow>& window)
 {
     return window ? window->delegate() : nil;
 }
@@ -744,7 +744,7 @@ static inline WebKit::WebExtensionContext::TabSet toImpl(NSArray<id<WKWebExtensi
     WebKit::WebExtensionContext::TabSet result;
     result.reserveInitialCapacity(tabs.count);
 
-    for (id tab in tabs)
+    for (id<WKWebExtensionTab> tab in tabs)
         result.addVoid(context.getOrCreateTab(tab));
 
     return result;
@@ -807,7 +807,7 @@ static inline WebKit::WebExtensionContext::TabSet toImpl(NSArray<id<WKWebExtensi
     extensionContext->didReplaceTab(toImpl(oldTab, extensionContext.get()), toImpl(newTab, extensionContext.get()));
 }
 
-static inline OptionSet<WebKit::WebExtensionTab::ChangedProperties> NODELETE toImpl(WKWebExtensionTabChangedProperties properties)
+static inline OptionSet<WebKit::WebExtensionTab::ChangedProperties> LEGACY_NODELETE toImpl(WKWebExtensionTabChangedProperties properties)
 {
     if (properties == WKWebExtensionTabChangedPropertiesNone)
         return { };
@@ -909,6 +909,41 @@ static inline OptionSet<WebKit::WebExtensionTab::ChangedProperties> NODELETE toI
     return nil;
 }
 #endif // ENABLE(WK_WEB_EXTENSIONS_SIDEBAR)
+
+#if ENABLE(WK_WEB_EXTENSIONS_NOTIFICATIONS)
+- (void)_didClickNotificationWithIdentifier:(NSString *)identifier
+{
+    NSParameterAssert([identifier isKindOfClass:NSString.class]);
+
+    protect(*_webExtensionContext)->fireNotificationsClickedEventIfNeeded(identifier);
+}
+
+- (void)_didClickButtonAtIndex:(NSUInteger)buttonIndex forNotificationWithIdentifier:(NSString *)identifier
+{
+    NSParameterAssert([identifier isKindOfClass:NSString.class]);
+
+    protect(*_webExtensionContext)->fireNotificationsButtonClickedEventIfNeeded(identifier, buttonIndex);
+}
+
+- (void)_didCloseNotificationWithIdentifier:(NSString *)identifier byUser:(BOOL)byUser
+{
+    NSParameterAssert([identifier isKindOfClass:NSString.class]);
+
+    protect(*_webExtensionContext)->fireNotificationsClosedEventIfNeeded(identifier, byUser ? WebKit::WebExtensionContext::UserTriggered::Yes : WebKit::WebExtensionContext::UserTriggered::No);
+}
+#else
+- (void)_didClickNotificationWithIdentifier:(NSString *)identifier
+{
+}
+
+- (void)_didClickButtonAtIndex:(NSUInteger)buttonIndex forNotificationWithIdentifier:(NSString *)identifier
+{
+}
+
+- (void)_didCloseNotificationWithIdentifier:(NSString *)identifier byUser:(BOOL)byUser
+{
+}
+#endif
 
 #pragma mark WKObject protocol implementation
 
@@ -1333,6 +1368,18 @@ static inline OptionSet<WebKit::WebExtensionTab::ChangedProperties> NODELETE toI
 - (_WKWebExtensionSidebar *)sidebarForTab:(id<WKWebExtensionTab>)tab
 {
     return nil;
+}
+
+- (void)_didClickNotificationWithIdentifier:(NSString *)identifier
+{
+}
+
+- (void)_didClickButtonAtIndex:(NSUInteger)buttonIndex forNotificationWithIdentifier:(NSString *)identifier
+{
+}
+
+- (void)_didCloseNotificationWithIdentifier:(NSString *)identifier byUser:(BOOL)byUser
+{
 }
 
 #endif // ENABLE(WK_WEB_EXTENSIONS)

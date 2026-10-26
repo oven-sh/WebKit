@@ -23,9 +23,7 @@
 #include "compiler/translator/tree_ops/MonomorphizeUnsupportedFunctions.h"
 #include "compiler/translator/tree_ops/PreTransformTextureCubeGradDerivatives.h"
 #include "compiler/translator/tree_ops/ReduceInterfaceBlocks.h"
-#include "compiler/translator/tree_ops/RemoveAtomicCounterBuiltins.h"
 #include "compiler/translator/tree_ops/RewriteArrayOfArrayOfOpaqueUniforms.h"
-#include "compiler/translator/tree_ops/RewriteAtomicCounters.h"
 #include "compiler/translator/tree_ops/RewriteDfdy.h"
 #include "compiler/translator/tree_ops/RewriteStructSamplers.h"
 #include "compiler/translator/tree_ops/UseGeneratedNamesForAnonymousStructs.h"
@@ -343,6 +341,113 @@ void AddFragDepthEXTDeclaration(TCompiler &compiler, TIntermBlock &root, TSymbol
         new TIntermIfElse(new TIntermSymbol(sampleMaskEnabledVar), coverageBlock, nullptr));
 
     return RunAtTheBeginningOfShader(&compiler, &root, block);
+}
+
+// Finds a scalar or vector float, int or uint fragment output that is not an inout, or an array of
+// them, and returns an lvalue for its last component (or its first element's last component).
+TIntermTyped *CreateFragmentOutputLastComponent(TIntermBlock &root)
+{
+    for (TIntermNode *node : *root.getSequence())
+    {
+        TIntermDeclaration *declaration = node->getAsDeclarationNode();
+        if (!declaration)
+        {
+            continue;
+        }
+        TIntermNode *declarator = declaration->getSequence()->front();
+        if (TIntermBinary *init = declarator->getAsBinaryNode())
+        {
+            declarator = init->getLeft();
+        }
+        TIntermSymbol *symbol = declarator->getAsSymbolNode();
+        if (!symbol)
+        {
+            continue;
+        }
+        const TType &type = symbol->variable().getType();
+        switch (type.getQualifier())
+        {
+            case EvqFragmentOut:
+            case EvqFragColor:
+            case EvqFragData:
+                break;
+            default:
+                continue;
+        }
+        const TBasicType basicType = type.getBasicType();
+        if ((basicType != EbtFloat && basicType != EbtInt && basicType != EbtUInt) ||
+            type.isMatrix() || type.isArrayOfArrays())
+        {
+            continue;
+        }
+        TIntermTyped *output = new TIntermSymbol(&symbol->variable());
+        if (type.isArray())
+        {
+            output = new TIntermBinary(EOpIndexDirect, output, CreateIndexNode(0));
+        }
+        if (type.isVector())
+        {
+            output = new TIntermSwizzle(output, {type.getNominalSize() - 1u});
+        }
+        return output;
+    }
+    return nullptr;
+}
+
+// Work around the driver not running helper invocations on shared triangle edges, which gives wrong
+// derivatives, by reading [[barycentric_coord]] in the shader such that the result depends on it:
+//
+//     if (ANGLEUseBarycentricCoordinatesForHelperInvocations)
+//         output.a += ANGLE_metal_BaryCoord.x < -1e30 ? 0.1 : 0.0;
+//
+// The condition is never true since barycentric coordinates of a covered pixel are finite and
+// close to [0, 1]. Unlike a [[sample_mask]] output, reading the coordinate does not disable the
+// hidden surface removal.
+[[nodiscard]] bool AddHelperBaryCoordRead(TCompiler &compiler,
+                                          TIntermBlock &root,
+                                          TSymbolTable &symbolTable)
+{
+    TIntermTyped *output = CreateFragmentOutputLastComponent(root);
+    if (!output)
+    {
+        return true;
+    }
+
+    // float3 ANGLE_metal_BaryCoord [[barycentric_coord]]
+    TVariable *angleBaryCoord =
+        new TVariable(&symbolTable, ImmutableString("metal_BaryCoord"),
+                      new TType(EbtFloat, EbpHigh, EvqBaryCoordInternal, 3), SymbolType::AngleInternal);
+    DeclareRightBeforeMain(root, *angleBaryCoord);
+
+    TIntermTyped *isFarOutside =
+        new TIntermBinary(EOpLessThan, new TIntermSwizzle(new TIntermSymbol(angleBaryCoord), {0}),
+                          CreateFloatNode(-1e30f, EbpHigh));
+    TIntermTyped *increment = nullptr;
+    switch (output->getBasicType())
+    {
+        case EbtInt:
+            increment = new TIntermTernary(isFarOutside, CreateIndexNode(1), CreateIndexNode(0));
+            break;
+        case EbtUInt:
+            increment = new TIntermTernary(isFarOutside, CreateUIntNode(1), CreateUIntNode(0));
+            break;
+        default:
+            increment = new TIntermTernary(isFarOutside, CreateFloatNode(0.1f, EbpHigh),
+                                           CreateFloatNode(0.0f, EbpHigh));
+            break;
+    }
+
+    TIntermBlock *addBlock = new TIntermBlock;
+    addBlock->appendStatement(new TIntermBinary(EOpAddAssign, output, increment));
+
+    TVariable *useBarycentricCoordinatesVar = new TVariable(
+        &symbolTable,
+        sh::ImmutableString(mtl::kUseBarycentricCoordinatesForHelperInvocationsConstName),
+        StaticType::Get<EbtBool, EbpUndefined, EvqSpecConst, 1, 1>(), SymbolType::AngleInternal);
+    TIntermBlock *block = new TIntermBlock;
+    block->appendStatement(
+        new TIntermIfElse(new TIntermSymbol(useBarycentricCoordinatesVar), addBlock, nullptr));
+    return RunAtTheEndOfShader(&compiler, &root, block, &symbolTable);
 }
 
 [[nodiscard]] bool AddSampleMaskDeclaration(TCompiler &compiler,
@@ -899,17 +1004,11 @@ bool TranslatorMSL::translateImpl(TInfoSinkBase &sink,
 
     // Write out default uniforms into a uniform block assigned to a specific set/binding.
     int aggregateTypesUsedForUniforms = 0;
-    int atomicCounterCount            = 0;
     for (const auto &uniform : getUniforms())
     {
         if (uniform.isStruct() || uniform.isArrayOfArrays())
         {
             ++aggregateTypesUsedForUniforms;
-        }
-
-        if (uniform.active && gl::IsAtomicCounterType(uniform.type))
-        {
-            ++atomicCounterCount;
         }
     }
 
@@ -929,13 +1028,12 @@ bool TranslatorMSL::translateImpl(TInfoSinkBase &sink,
     // This has a few benefits:
     //
     // - It dramatically simplifies future transformations w.r.t to samplers in structs, array of
-    //   arrays of opaque types, atomic counters etc.
+    //   arrays of opaque types etc.
     // - Avoids the need for shader*ArrayDynamicIndexing Vulkan features.
     if (!compileOptions.useIR)
     {
         UnsupportedFunctionArgsBitSet args{UnsupportedFunctionArgs::StructContainingSamplers,
                                            UnsupportedFunctionArgs::ArrayOfArrayOfSamplerOrImage,
-                                           UnsupportedFunctionArgs::AtomicCounter,
                                            UnsupportedFunctionArgs::Image};
         if (!MonomorphizeUnsupportedFunctions(this, root, &getSymbolTable(), args))
         {
@@ -972,40 +1070,20 @@ bool TranslatorMSL::translateImpl(TInfoSinkBase &sink,
         }
     }
 
-    if (getShaderType() == GL_COMPUTE_SHADER)
+    ASSERT(getShaderType() != GL_COMPUTE_SHADER && "compute shaders not currently supported");
+
+    if (compileOptions.useIR)
     {
-        driverUniforms->addComputeDriverUniformsToShader(root, &getSymbolTable());
+        driverUniforms->findDeclarationAddedByIR(root);
     }
     else
     {
         driverUniforms->addGraphicsDriverUniformsToShader(root, &getSymbolTable());
     }
 
-    if (atomicCounterCount > 0)
+    if (!ReplaceGLDepthRangeWithDriverUniform(this, root, driverUniforms, &getSymbolTable()))
     {
-        const TIntermTyped *acbBufferOffsets = driverUniforms->getAcbBufferOffsets();
-        if (!RewriteAtomicCounters(this, root, &symbolTable, acbBufferOffsets, nullptr))
-        {
-            return false;
-        }
-    }
-    else if (getShaderVersion() >= 310)
-    {
-        // Vulkan doesn't support Atomic Storage as a Storage Class, but we've seen
-        // cases where builtins are using it even with no active atomic counters.
-        // This pass simply removes those builtins in that scenario.
-        if (!RemoveAtomicCounterBuiltins(this, root))
-        {
-            return false;
-        }
-    }
-
-    if (getShaderType() != GL_COMPUTE_SHADER)
-    {
-        if (!ReplaceGLDepthRangeWithDriverUniform(this, root, driverUniforms, &getSymbolTable()))
-        {
-            return false;
-        }
+        return false;
     }
 
     {
@@ -1203,8 +1281,7 @@ bool TranslatorMSL::translateImpl(TInfoSinkBase &sink,
             DeclareRightBeforeMain(*root, *BuiltInVariable::gl_PointCoord());
         }
 
-        if (usesFragCoord || compileOptions.emulateAlphaToCoverage ||
-            compileOptions.metal.generateShareableShaders)
+        if (usesFragCoord || compileOptions.emulateAlphaToCoverage)
         {
             if (!InsertFragCoordCorrection(this, compileOptions, root, GetMainSequence(root),
                                            &getSymbolTable(), driverUniforms))
@@ -1323,9 +1400,11 @@ bool TranslatorMSL::translateImpl(TInfoSinkBase &sink,
     {
         mValidateASTOptions.validateVariableReferences = false;
         if (!AddSampleMaskDeclaration(*this, *root, symbolTable, driverUniforms,
-                                      compileOptions.emulateAlphaToCoverage ||
-                                          compileOptions.metal.generateShareableShaders,
-                                      usesSampleMask))
+                                      compileOptions.emulateAlphaToCoverage, usesSampleMask))
+        {
+            return false;
+        }
+        if (usesDerivatives() && !AddHelperBaryCoordRead(*this, *root, symbolTable))
         {
             return false;
         }

@@ -29,11 +29,12 @@
 #import <Foundation/Foundation.h>
 
 #import <WebKitLegacy/WebBasePluginPackage.h>
+#import <wtf/RetainPtr.h>
 
 @protocol WebPluginViewFactory;
 
 @interface WebPluginPackage : WebBasePluginPackage {
-    NSBundle *nsBundle;
+    RetainPtr<NSBundle> nsBundle;
 }
 
 - (Class)viewFactory;

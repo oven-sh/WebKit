@@ -108,7 +108,7 @@ public:
     }
 
     template<typename Op, typename Functor>
-    ALWAYS_INLINE void forEach(const Functor& func)
+    ALWAYS_INLINE void forEach(NOESCAPE const Functor& func)
     {
         auto* metadata = get<typename Op::Metadata>();
         auto* end = std::bit_cast<typename Op::Metadata*>(getWithoutAligning(Op::opcodeID + 1));
@@ -117,7 +117,7 @@ public:
     }
 
     template<typename Functor>
-    ALWAYS_INLINE void forEachValueProfile(const Functor& func)
+    ALWAYS_INLINE void forEachValueProfile(NOESCAPE const Functor& func)
     {
         unsigned numValueProfiles = unlinkedMetadata()->m_numValueProfiles;
         // One look at the predictions for all of them. A profile that gives the table its predictions in the meantime finds

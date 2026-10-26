@@ -39,14 +39,6 @@ inline constexpr int kExitCodeUnimplemented = 89;
 inline constexpr int kExitCodeMustFail = 90;
 
 #if defined(HANDSHAKER_SUPPORTED)
-// DoSplitHandshake delegates the SSL handshake to a separate process, called
-// the handshaker.  This process proxies I/O between the handshaker and the
-// client, using the `BIO` from `ssl`.  After a successful handshake, `ssl` is
-// replaced with a new `SSL` object, in a way that is intended to be invisible
-// to the caller.
-bool DoSplitHandshake(bssl::UniquePtr<SSL> *ssl, SettingsWriter *writer,
-                      bool is_resume);
-
 // GetHandshakeHint requests a handshake hint from the handshaker process and
 // configures the result on `ssl`. It returns true on success and false on
 // error.

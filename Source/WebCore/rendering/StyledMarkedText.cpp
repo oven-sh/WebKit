@@ -72,7 +72,7 @@ static void computeStyleForPseudoElementStyle(StyledMarkedText::Style& style, co
         return;
 
     CheckedRef checkedPseudoElementStyle = *pseudoElementStyle;
-    style.backgroundColor = checkedPseudoElementStyle->visitedDependentBackgroundColorApplyingColorFilter(paintInfo.paintBehavior);
+    style.backgroundColor = checkedPseudoElementStyle->visitedDependentUsedBackgroundColorApplyingColorFilter(paintInfo.paintBehavior);
     style.textStyles.fillColor = checkedPseudoElementStyle->visitedDependentTextFillColorApplyingColorFilter(paintInfo.paintBehavior);
     // Highlight pseudos apply only the unprefixed stroke properties; the legacy -webkit-text-stroke pair does not apply, so don't inherit the originating element's text stroke.
     if (checkedPseudoElementStyle->hasExplicitlySetStrokeColor()) {
@@ -110,7 +110,7 @@ static StyledMarkedText resolveStyleForMarkedText(const MarkedText& markedText, 
         break;
     }
     case MarkedText::Type::Highlight: {
-        auto* renderStyle = renderer.parent()->lazyPseudoElementStyle({ PseudoElementType::Highlight, markedText.highlightName });
+        auto* renderStyle = renderer.lazyPseudoElementStyle({ PseudoElementType::Highlight, markedText.highlightName });
         computeStyleForPseudoElementStyle(style, renderStyle, viewportSize, paintInfo);
         break;
     }
@@ -168,7 +168,7 @@ static StyledMarkedText resolveStyleForMarkedText(const MarkedText& markedText, 
     case MarkedText::Type::TextMatch: {
         // Text matches always use the light system appearance.
 #if PLATFORM(MAC)
-        style.textStyles.fillColor = renderer.theme().systemColor(CSSValueAppleSystemLabel, systemAppearanceOptions);
+        style.textStyles.fillColor = renderer.theme().systemColor(CSSValueID::AppleSystemLabel, systemAppearanceOptions);
 #endif
         style.backgroundColor = renderer.theme().textSearchHighlightColor(systemAppearanceOptions);
         break;
@@ -188,7 +188,7 @@ StyledMarkedText::Style StyledMarkedText::computeStyleForUnmarkedMarkedText(cons
     return style;
 }
 
-static TextDecorationPainter::Styles NODELETE computeStylesForTextDecorations(const TextDecorationPainter::Styles& previousTextDecorationStyles, const TextDecorationPainter::Styles& currentTextDecorationStyles)
+static TextDecorationPainter::Styles computeStylesForTextDecorations(const TextDecorationPainter::Styles& previousTextDecorationStyles, const TextDecorationPainter::Styles& currentTextDecorationStyles)
 {
     auto textDecorations = TextDecorationPainter::textDecorationsInEffectForStyle(currentTextDecorationStyles);
 
@@ -309,7 +309,7 @@ Vector<StyledMarkedText> StyledMarkedText::subdivideAndResolve(const Vector<Mark
         return { styledMarkedText };
     }
 
-    auto viewportSize = renderer.view().frameView().size();
+    auto viewportSize = protect(renderer.view().frameView())->size();
 
     auto markedTexts = MarkedText::subdivide(textsToSubdivide, OverlapStrategy::None);
     ASSERT(!markedTexts.isEmpty());
@@ -353,7 +353,7 @@ Vector<StyledMarkedText> StyledMarkedText::subdivideAndResolve(const Vector<Mark
 }
 
 template<typename EqualityFunction>
-static Vector<StyledMarkedText> coalesceAdjacent(const Vector<StyledMarkedText>& textsToCoalesce, EqualityFunction&& equalityFunction)
+static Vector<StyledMarkedText> coalesceAdjacent(const Vector<StyledMarkedText>& textsToCoalesce, NOESCAPE const EqualityFunction& equalityFunction)
 {
     if (textsToCoalesce.size() <= 1)
         return textsToCoalesce;

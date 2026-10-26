@@ -31,6 +31,7 @@
 import json
 import logging
 import os
+from collections import defaultdict
 from pathlib import PurePath
 
 from webkitcorepy import Terminal, run
@@ -41,6 +42,15 @@ WPT_GH_REPO_NAME = os.environ.get('WPT_GH_REPO_NAME', 'wpt')
 WPT_GH_URL = 'https://github.com/%s/%s' % (WPT_GH_ORG, WPT_GH_REPO_NAME)
 
 TEMPLATED_TEST_HEADER = '<!-- This file is required for WebKit test infrastructure to run the templated test -->'
+TEMPLATED_TEST_GLOBAL_SUFFIXES = {
+    'window': ('html',),
+    'worker': ('worker.html', 'serviceworker.html', 'sharedworker.html'),
+    'dedicatedworker': ('worker.html',),
+    'serviceworker': ('serviceworker.html',),
+    'serviceworker-module': ('serviceworker-module.html',),
+    'sharedworker': ('sharedworker.html',),
+}
+TEMPLATED_TEST_WRAPPER_SUFFIXES = ('.window.html', '.worker.html') + tuple(sorted({'.any.' + suffix for suffixes in TEMPLATED_TEST_GLOBAL_SUFFIXES.values() for suffix in suffixes}))
 
 _log = logging.getLogger(__name__)
 
@@ -58,6 +68,29 @@ def read_credentials(host, credentials_json):
         if key in contents:
             credentials[key] = contents[key]
     return credentials
+
+
+def case_mismatches(filesystem, root, paths):
+    """Maps each prefix of paths to the entry under root that differs from it only in case."""
+    names = defaultdict(set)
+    for path in paths:
+        parts = PurePath(path).parts
+        for index, part in enumerate(parts):
+            names[parts[:index]].add(part)
+
+    mismatches = {}
+    for parent, children in names.items():
+        directory = filesystem.join(root, *parent)
+        if not filesystem.isdir(directory):
+            continue
+        entries = defaultdict(list)
+        for entry in filesystem.listdir(directory):
+            entries[entry.lower()].append(entry)
+        for child in children:
+            for entry in entries.get(child.lower(), []):
+                if entry != child:
+                    mismatches[filesystem.join(*parent, child)] = filesystem.join(*parent, entry)
+    return mismatches
 
 
 class WPTPaths:

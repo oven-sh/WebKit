@@ -19,6 +19,9 @@
 #ifndef __ULOCDATA_H__
 #define __ULOCDATA_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 #include "unicode/ures.h"
 #include "unicode/uloc.h"
 #include "unicode/uset.h"

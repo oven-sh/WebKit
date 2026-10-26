@@ -39,7 +39,7 @@ public:
     LegacyRenderSVGImage(SVGImageElement&, Style::ComputedStyle&&);
     virtual ~LegacyRenderSVGImage();
 
-    SVGImageElement& NODELETE imageElement() const;
+    SVGImageElement& LEGACY_NODELETE imageElement() const;
 
     bool updateImageViewport();
     void setNeedsBoundariesUpdate() override { m_needsBoundariesUpdate = true; }

@@ -84,11 +84,11 @@ void TextTrackCueGenericBoxElement::applyCSSProperties()
 
     Ref cueElement = cue->element();
     if (cue->foregroundColor().isValid())
-        cueElement->setInlineStyleProperty(CSSPropertyColor, serializationForHTML(cue->foregroundColor()));
+        cueElement->setInlineStyleProperty(CSSPropertyID::Color, serializationForHTML(cue->foregroundColor()));
     if (cue->highlightColor().isValid())
-        cueElement->setInlineStyleProperty(CSSPropertyBackgroundColor, serializationForHTML(cue->highlightColor()));
+        cueElement->setInlineStyleProperty(CSSPropertyID::BackgroundColor, serializationForHTML(cue->highlightColor()));
     if (cue->backgroundColor().isValid())
-        setInlineStyleProperty(CSSPropertyBackgroundColor, serializationForHTML(cue->backgroundColor()));
+        setInlineStyleProperty(CSSPropertyID::BackgroundColor, serializationForHTML(cue->backgroundColor()));
 }
 
 Ref<TextTrackCueGeneric> TextTrackCueGeneric::create(ScriptExecutionContext& context, const MediaTime& start, const MediaTime& end, const String& content)

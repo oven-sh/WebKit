@@ -31,7 +31,6 @@
 #include "Uint16WithFraction.h"
 #include <wtf/Assertions.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/dragonbox/dragonbox_to_chars.h>
 #include <wtf/dtoa.h>
 #include <wtf/dtoa/double-conversion.h>
 #include <wtf/text/MakeString.h>
@@ -89,7 +88,7 @@ void NumberPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 
 // ------------------------------ Functions ---------------------------
 
-static ALWAYS_INLINE bool NODELETE toThisNumber(JSValue thisValue, double& x)
+static ALWAYS_INLINE bool LEGACY_NODELETE toThisNumber(JSValue thisValue, double& x)
 {
     if (thisValue.isInt32()) {
         x = thisValue.asInt32();
@@ -129,7 +128,7 @@ static ALWAYS_INLINE EncodedJSValue throwVMToThisNumberError(JSGlobalObject* glo
 // fo any number of digits an IEEE number may require to represent.
 typedef char RadixBuffer[2180];
 
-static inline char* NODELETE int52ToStringWithRadix(char* startOfResultString, int64_t int52Value, unsigned radix)
+static inline char* LEGACY_NODELETE int52ToStringWithRadix(char* startOfResultString, int64_t int52Value, unsigned radix)
 {
     bool negative = false;
     uint64_t positiveNumber = int52Value;
@@ -414,14 +413,13 @@ JSC_DEFINE_HOST_FUNCTION(numberProtoFuncToExponential, (JSGlobalObject* globalOb
 
     // Round if the argument is not undefined, always format as exponential.
     NumberToStringBuffer buffer;
+    if (arg.isUndefined())
+        return JSValue::encode(jsString(vm, String::fromLatin1(WTF::numberToShortestExponentialString(x, buffer))));
+
     DoubleConversionStringBuilder builder { std::span<char> { buffer } };
     builder.Reset();
-    if (arg.isUndefined())
-        WTF::dragonbox::ToExponential(x, &builder);
-    else {
-        const DoubleToStringConverter& converter = DoubleToStringConverter::EcmaScriptConverter();
-        converter.ToExponential(x, decimalPlaces, &builder);
-    }
+    const DoubleToStringConverter& converter = DoubleToStringConverter::EcmaScriptConverter();
+    converter.ToExponential(x, decimalPlaces, &builder);
     return JSValue::encode(jsString(vm, String::fromLatin1(builder.Finalize())));
 }
 
@@ -642,6 +640,8 @@ JSC_DEFINE_HOST_FUNCTION(numberProtoFuncToLocaleString, (JSGlobalObject* globalO
     IntlNumberFormat* numberFormat = nullptr;
     if (locales.isUndefined() && options.isUndefined())
         numberFormat = globalObject->defaultNumberFormat();
+    else if (locales.isString() && options.isUndefined())
+        numberFormat = globalObject->cachedToLocaleStringNumberFormat(asString(locales));
     else {
         numberFormat = IntlNumberFormat::create(vm, globalObject->numberFormatStructure());
         numberFormat->initializeNumberFormat(globalObject, locales, options);

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # Thin wrapper around swiftc that:
-#   - filters one benign diagnostic out of stderr
 #   - relays the command line through a response file on Windows
 #   - forwards the MSVC-style linker switches that CMake's own defaults inject
 #   - merges per-frontend depfiles into one depfile for the whole module
 #   - records when the module last compiled, for rebuild_trigger.py
 #   - optionally runs another wrapper in the compiler's place, so a tool that
 #     needs to spawn swiftc itself can be nested below this one
+#   - with --dry-run prints the command line it would run and exits without
+#     compiling, writing a depfile, or touching the stamp
 #
 # Flags that swiftc cannot accept are kept off the Swift command line by the
 # CMake configuration, using $<COMPILE_LANGUAGE:Swift> / $<LINK_LANGUAGE:Swift>
@@ -21,6 +22,7 @@
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -28,31 +30,6 @@ from collections import namedtuple
 from pathlib import Path
 
 import depfile
-
-# Swift's C++ interop changes which imported members are @unsafe between
-# toolchain versions, so an `unsafe` that is required on one toolchain emits
-# "no unsafe operations occur within 'unsafe' expression" on another. The
-# diagnostic is in the UnnecessaryUnsafe group, but Swift's group flags only
-# escalate severity (-Werror/-Wwarning <group>) -- there is no per-group
-# suppression, and -suppress-warnings would hide everything -- so filter this
-# one diagnostic (and its multi-line source snippet) out of stderr instead.
-_BENIGN_WARNING = re.compile(r": warning: no unsafe operations occur within .unsafe. expression")
-_SOURCE_SNIPPET = re.compile(r"^[ \t]*[0-9]*[ \t]*\|")
-
-
-def filter_benign_warnings(lines):
-    skip = False
-    for line in lines:
-        if _BENIGN_WARNING.search(line):
-            skip = True
-            continue
-        if skip and _SOURCE_SNIPPET.match(line):
-            continue
-        if skip and line.strip() == "":
-            skip = False
-            continue
-        skip = False
-        yield line
 
 
 def quote_response_file_token(arg):
@@ -112,15 +89,21 @@ def write_ninja_depfile(request, output_file_map):
         )
 
     excludes = excluded_paths(request)
+    # Every frontend job reports (nearly) the same ~16-25K module dependencies,
+    # so collect the distinct spellings first and only canonicalize those: the
+    # per-token normpath over ~1M tokens used to take >10s for WebKit.
+    raw = set()
+    for source in sources:
+        raw |= depfile.dependency_set(source)
     # Sorted: swiftc reports a dependency once per frontend job that saw it, so
     # discovery order follows job scheduling and would rewrite this file, and
     # cost a build, for a dependency set that did not change.
-    deps = sorted({
-        dep
-        for source in sources
-        for dep in depfile.parse(source)
-        if _canonical(dep) not in excludes
-    })
+    # Drop dependencies that are not on disk. On Linux, swiftc overlays its
+    # libstdcxx.modulemap onto the libstdc++ include directory through a virtual
+    # file system and reports that virtual module.modulemap as a dependency.
+    # ninja considers a missing dependency always dirty, so it would recompile
+    # the module on every build.
+    deps = sorted(dep for dep in raw if _canonical(dep) not in excludes and os.path.exists(dep))
 
     lines = [f"{depfile.escape(request.target)}:"]
     lines += (f"  {depfile.escape(dep)}" for dep in deps)
@@ -158,6 +141,7 @@ def main(argv):
     depfile_excludes = []
     stamp_path = None
     inner_wrapper = None
+    dry_run = False
     for arg in argv:
         if arg.startswith("--original-swift-compiler="):
             real_swiftc = arg[len("--original-swift-compiler="):]
@@ -176,6 +160,8 @@ def main(argv):
             # (Platform/Windows-MSVC.cmake) put raw linker switches like
             # /machine:x64 and /INCREMENTAL:NO into CMAKE_*_LINKER_FLAGS.
             args.extend(["-Xlinker", arg])
+        elif arg == "--dry-run":
+            dry_run = True
         else:
             args.append(arg)
 
@@ -187,6 +173,13 @@ def main(argv):
         flat_command = [inner_wrapper, f"--original-swift-compiler={real_swiftc}"] + args
     else:
         flat_command = [real_swiftc] + args
+
+    if dry_run:
+        if os.name == "nt":
+            print(subprocess.list2cmdline(flat_command))
+        else:
+            print(shlex.join(flat_command))
+        return 0
 
     if os.name == "nt" and "-explicit-module-build" not in args and not inner_wrapper:
         # WebKit's swiftc invocations run tens of thousands of characters long
@@ -209,19 +202,8 @@ def main(argv):
 
     rc = None
     try:
-        # Relay stderr line by line while the compiler runs.
-        with subprocess.Popen(
-            command,
-            stdout=sys.stdout,
-            stderr=subprocess.PIPE,
-            encoding="utf-8",
-            errors="replace",
-        ) as process:
-            for line in filter_benign_warnings(process.stderr):
-                sys.stderr.write(line)
-                sys.stderr.flush()
-            rc = process.wait()
-            return rc
+        rc = subprocess.call(command)
+        return rc
     finally:
         if response_file:
             os.remove(response_file)

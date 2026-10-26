@@ -29,9 +29,9 @@
 #include "FontCascade.h"
 #include "FontCascadeInlines.h"
 #include "GraphicsContext.h"
+#include "InlineDisplayBox.h"
 #include "InlineIteratorTextBox.h"
 #include "LayoutIntegrationInlineContent.h"
-#include "LegacyInlineTextBox.h"
 #include "RenderCombineText.h"
 #include "RenderLayer.h"
 #include "StyleAppleColorFilter.h"
@@ -244,6 +244,15 @@ void TextPainter::paintRange(const TextRun& textRun, const FloatRect& boxRect, c
     paintTextAndEmphasisMarksIfNeeded(textRun, boxRect, textOrigin, start, end, m_style, m_shadow, m_shadowColorFilter);
 }
 
+void TextPainter::setGlyphDisplayListIfNeeded(const InlineDisplay::Box& box, const PaintInfo& paintInfo, const Style::ComputedStyle& style, const TextRun& textRun)
+{
+    if (!shouldUseGlyphDisplayList(paintInfo, style)) {
+        const_cast<InlineDisplay::Box&>(box).removeFromGlyphDisplayListCache();
+        return;
+    }
+    m_glyphDisplayList = GlyphDisplayListCache::singleton().get(box, m_font, m_context, textRun, paintInfo);
+}
+
 bool TextPainter::shouldUseGlyphDisplayList(const PaintInfo& paintInfo, const Style::ComputedStyle& style)
 {
     return !paintInfo.context().paintingDisabled() && paintInfo.enclosingSelfPaintingLayer() && FontCascade::canUseGlyphDisplayList(style);
@@ -267,12 +276,7 @@ String TextPainter::cachedGlyphDisplayListsForTextNodeAsText(Text& textNode, Opt
     StringBuilder builder;
 
     for (auto textBox : InlineIterator::textBoxesFor(*protect(textNode.renderer()))) {
-        RefPtr<const DisplayList::DisplayList> displayList;
-        if (auto* legacyInlineBox = textBox.legacyInlineBox())
-            displayList = TextPainter::glyphDisplayListIfExists(*legacyInlineBox);
-        else
-            displayList = TextPainter::glyphDisplayListIfExists(*textBox.inlineBox());
-        if (displayList) {
+        if (RefPtr displayList = GlyphDisplayListCache::singleton().getIfExists(textBox.displayBox())) {
             builder.append(displayList->asText(flags));
             builder.append('\n');
         }

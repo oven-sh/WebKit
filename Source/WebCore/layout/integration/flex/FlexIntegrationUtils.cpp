@@ -66,16 +66,11 @@ void FlexIntegrationUtils::applyStretchedLogicalHeightToFlexItem(const FlexLayou
     // FIXME: This is fragile. RenderBoxes should be smart enough to determine their content logical height
     // correctly even when there's an overrideHeight.
     auto canSetFlexItemContentLogicalHeight = !is<RenderReplaced>(renderer) && !renderer->shouldComputeLogicalHeightFromAspectRatio();
-    if (!canSetFlexItemContentLogicalHeight) {
-        dirtyPercentHeightDescendantsWithinFlexItem(renderer);
-        layoutFlexItemForStretchedCrossSize(flexLayoutItem, blockSize, LogicalBoxAxis::Block);
-        return;
-    }
-
-    auto contentLogicalHeight = flexItemContentLogicalHeight(flexLayoutItem);
+    auto contentLogicalHeight = canSetFlexItemContentLogicalHeight ? std::make_optional(flexItemContentLogicalHeight(flexLayoutItem)) : std::nullopt;
     dirtyPercentHeightDescendantsWithinFlexItem(renderer);
     layoutFlexItemForStretchedCrossSize(flexLayoutItem, blockSize, LogicalBoxAxis::Block);
-    m_flexItemContentCache.setContentLogicalHeight(renderer, contentLogicalHeight);
+    if (contentLogicalHeight)
+        m_flexItemContentCache.setContentLogicalHeight(renderer, *contentLogicalHeight);
 }
 
 void FlexIntegrationUtils::layoutFlexItemForStretchedCrossSize(const FlexLayoutItem& flexLayoutItem, LayoutUnit crossSize, LogicalBoxAxis crossAxis)
@@ -113,7 +108,7 @@ void FlexIntegrationUtils::layoutFlexItemWithMainSize(FlexLayoutItem& flexLayout
 {
     CheckedRef flexItem = flexLayoutItem.renderer;
 
-    FlexFormattingUtils::mainAxisIsFlexItemInlineAxis(flexItem) ? flexItem->setOverridingBorderBoxLogicalWidth(mainSize + flexItem->borderAndPaddingLogicalWidth())
+    flexLayoutItem.mainAxisIsInlineAxis ? flexItem->setOverridingBorderBoxLogicalWidth(mainSize + flexItem->borderAndPaddingLogicalWidth())
         : flexItem->setOverridingBorderBoxLogicalHeight(mainSize + flexItem->borderAndPaddingLogicalHeight());
     auto mainAxisContentExtentIncludingScrollbar = FlexFormattingUtils::isHorizontalFlow(flexBox()) ? flexItem->contentBoxWidth() + flexItem->verticalScrollbarWidth() : flexItem->contentBoxHeight() + flexItem->horizontalScrollbarHeight();
     auto mainSizeIsUnchanged = mainSize == mainAxisContentExtentIncludingScrollbar;
@@ -179,35 +174,43 @@ FlexContainerUsedExtents FlexIntegrationUtils::updateFlexContainerLogicalHeight(
 
 void FlexIntegrationUtils::setFlexItemGeometry(const FlexLayoutItem& flexLayoutItem, const LayoutPoint& location, bool isHorizontalFlow)
 {
+    CheckedRef flexItem = flexLayoutItem.renderer;
     // For vertical flows the flex algorithm works in flow-relative coordinates, so transpose back to physical here.
-    flexLayoutItem.renderer->setLocation(isHorizontalFlow ? location : location.transposedPoint());
+    flexItem->setLocation(isHorizontalFlow ? location : location.transposedPoint());
+    auto& margins = flexLayoutItem.margins;
+    flexItem->setMarginTop(margins.top());
+    flexItem->setMarginRight(margins.right());
+    flexItem->setMarginBottom(margins.bottom());
+    flexItem->setMarginLeft(margins.left());
 }
 
-void FlexIntegrationUtils::updateAutoMarginsInMainAxis(const FlexLayoutItem& flexLayoutItem, LayoutUnit autoMarginOffset)
+void FlexIntegrationUtils::updateAutoMarginsInMainAxis(FlexLayoutItem& flexLayoutItem, LayoutUnit autoMarginOffset)
 {
-    CheckedRef flexItem = flexLayoutItem.renderer;
     ASSERT(autoMarginOffset >= 0_lu);
 
+    CheckedRef style = flexLayoutItem.style();
+    auto& margins = flexLayoutItem.margins;
     if (FlexFormattingUtils::isHorizontalFlow(flexBox())) {
-        if (flexItem->style().marginLeft().isAuto())
-            flexItem->setMarginLeft(autoMarginOffset);
-        if (flexItem->style().marginRight().isAuto())
-            flexItem->setMarginRight(autoMarginOffset);
+        if (style->marginLeft().isAuto())
+            margins.setLeft(autoMarginOffset);
+        if (style->marginRight().isAuto())
+            margins.setRight(autoMarginOffset);
     } else {
-        if (flexItem->style().marginTop().isAuto())
-            flexItem->setMarginTop(autoMarginOffset);
-        if (flexItem->style().marginBottom().isAuto())
-            flexItem->setMarginBottom(autoMarginOffset);
+        if (style->marginTop().isAuto())
+            margins.setTop(autoMarginOffset);
+        if (style->marginBottom().isAuto())
+            margins.setBottom(autoMarginOffset);
     }
 }
 
-bool FlexIntegrationUtils::updateAutoMarginsInCrossAxis(const FlexLayoutItem& flexLayoutItem, LayoutUnit& crossOffset, LayoutUnit availableAlignmentSpace)
+bool FlexIntegrationUtils::updateAutoMarginsInCrossAxis(FlexLayoutItem& flexLayoutItem, LayoutUnit& crossOffset, LayoutUnit availableAlignmentSpace)
 {
     // 9.6. (#13) Resolve cross-axis auto margins: if both cross-axis margins are auto, split the free space
     // between them; if only one is auto, give it all the free space so the item's outer cross size fills the line.
     CheckedRef flexItem = flexLayoutItem.renderer;
     ASSERT(!flexItem->isOutOfFlowPositioned());
     ASSERT(availableAlignmentSpace >= 0_lu);
+    auto& margins = flexLayoutItem.margins;
 
     bool isHorizontal = FlexFormattingUtils::isHorizontalFlow(flexBox());
     CheckedRef style = flexLayoutItem.style();
@@ -216,11 +219,11 @@ bool FlexIntegrationUtils::updateAutoMarginsInCrossAxis(const FlexLayoutItem& fl
     if (topOrLeft.isAuto() && bottomOrRight.isAuto()) {
         crossOffset += availableAlignmentSpace / 2;
         if (isHorizontal) {
-            flexItem->setMarginTop(availableAlignmentSpace / 2);
-            flexItem->setMarginBottom(availableAlignmentSpace / 2);
+            margins.setTop(availableAlignmentSpace / 2);
+            margins.setBottom(availableAlignmentSpace / 2);
         } else {
-            flexItem->setMarginLeft(availableAlignmentSpace / 2);
-            flexItem->setMarginRight(availableAlignmentSpace / 2);
+            margins.setLeft(availableAlignmentSpace / 2);
+            margins.setRight(availableAlignmentSpace / 2);
         }
         return true;
     }
@@ -243,9 +246,9 @@ bool FlexIntegrationUtils::updateAutoMarginsInCrossAxis(const FlexLayoutItem& fl
             crossOffset += availableAlignmentSpace;
 
         if (isHorizontal)
-            flexItem->setMarginTop(availableAlignmentSpace);
+            margins.setTop(availableAlignmentSpace);
         else
-            flexItem->setMarginLeft(availableAlignmentSpace);
+            margins.setLeft(availableAlignmentSpace);
         return true;
     }
 
@@ -254,9 +257,9 @@ bool FlexIntegrationUtils::updateAutoMarginsInCrossAxis(const FlexLayoutItem& fl
             crossOffset += availableAlignmentSpace;
 
         if (isHorizontal)
-            flexItem->setMarginBottom(availableAlignmentSpace);
+            margins.setBottom(availableAlignmentSpace);
         else
-            flexItem->setMarginRight(availableAlignmentSpace);
+            margins.setRight(availableAlignmentSpace);
         return true;
     }
     return false;
@@ -373,7 +376,7 @@ LayoutUnit FlexIntegrationUtils::computeBlockAxisContentSizeForFlexItem(const Fl
     // Don't resolve percentages in children. This is especially important for the min-height calculation,
     // where we want percentages to be treated as auto. For flex-basis itself, this is not a problem because
     // by definition we have an indefinite flex basis here and thus percentages should not resolve.
-    auto percentResolveDisableScope = FlexPercentResolveDisabler { flexBox().view().frameView().layoutContext(), renderer };
+    auto percentResolveDisableScope = FlexPercentResolveDisabler { protect(flexBox().view().frameView().layoutContext()), renderer };
     renderer->setChildNeedsLayout(MarkingBehavior::MarkOnlyThis);
     renderer->layoutIfNeeded();
     flexLayoutState().setFlexItemHasCompletedLayout(renderer);
@@ -551,6 +554,16 @@ template std::optional<LayoutUnit> FlexIntegrationUtils::computeMainAxisExtentFo
 template std::optional<LayoutUnit> FlexIntegrationUtils::computeMainAxisExtentForFlexItem<Style::MaximumSize>(const FlexLayoutItem&, const Style::MaximumSize&, LayoutUnit);
 template std::optional<LayoutUnit> FlexIntegrationUtils::computeMainAxisExtentForFlexItem<Style::PreferredSize>(const FlexLayoutItem&, const Style::PreferredSize&, LayoutUnit);
 
+// The automatic minimum a calc-size() over an auto basis stands for, run through its calculation. The
+// extents here are content sizes, and box-sizing decides which box `size` is measured in.
+LayoutUnit FlexIntegrationUtils::resolveCalcSizeMainAxisExtentForFlexItem(const FlexLayoutItem& flexLayoutItem, const Style::UnevaluatedCalcSize& calcSize, LayoutUnit keywordMainAxisExtent, LayoutUnit mainAxisSizeForLengthResolution)
+{
+    CheckedRef flexItem = flexLayoutItem.renderer;
+    return flexLayoutItem.mainAxisIsInlineAxis
+        ? flexItem->resolveCalcSizeLogicalWidth(calcSize, keywordMainAxisExtent, mainAxisSizeForLengthResolution)
+        : flexItem->resolveCalcSizeLogicalHeight(calcSize, keywordMainAxisExtent, mainAxisSizeForLengthResolution);
+}
+
 // The item's max-content main-axis extent with its own main-axis border/padding removed — the flex base size for the
 // case that sizes the item under a content/max-content used flex basis. Measured with the content laid out under the
 // cross-size override (the scope invalidates the item's preferred widths so they recompute with it in place).
@@ -563,14 +576,15 @@ LayoutUnit FlexIntegrationUtils::maxContentMainAxisExtentForFlexItem(const FlexL
     return flexItem->maxContentLogicalWidthContribution() - mainAxisBorderAndPadding;
 }
 
-// The item's raw min-content main-axis contribution (border/padding included), measured under the cross-size override
-// — used to floor a table flex item's min main size.
-LayoutUnit FlexIntegrationUtils::minContentMainAxisContributionForFlexItem(const FlexLayoutItem& flexLayoutItem)
+// The item's min-content main size (border and padding excluded, like the flex algorithm's other main sizes), measured
+// under the cross-size override. Used to floor a table flex item's min main size.
+LayoutUnit FlexIntegrationUtils::minContentMainAxisExtentForFlexItem(const FlexLayoutItem& flexLayoutItem)
 {
     auto definiteCrossSizeScope = FlexItemDefiniteCrossSizeScope { flexLayoutItem.renderer.get(), FlexItemDefiniteCrossSizeScope::InvalidateContentWidths::Yes };
     auto intrinsicWidthComputationScope = FlexItemIntrinsicWidthComputationScope { flexLayoutItem.renderer.get() };
     CheckedRef flexItem = flexLayoutItem.renderer;
-    return flexItem->minContentLogicalWidthContribution();
+    auto minContentContribution = flexItem->minContentLogicalWidthContribution();
+    return minContentContribution - flexItem->borderAndPaddingLogicalWidth();
 }
 
 LayoutUnit FlexIntegrationUtils::flexItemIntrinsicLogicalHeight(const FlexLayoutItem& flexLayoutItem, bool needToStretchLogicalHeight) const
@@ -604,7 +618,7 @@ LayoutUnit FlexIntegrationUtils::flexItemIntrinsicLogicalWidth(const FlexLayoutI
     RenderBox::LogicalExtentComputedValues values;
     {
         // This is an intrinsic width measurement like the ones in maxContentMainAxisExtentForFlexItem and
-        // minContentMainAxisContributionForFlexItem: a percentage resolved against this item while measuring it
+        // minContentMainAxisExtentForFlexItem: a percentage resolved against this item while measuring it
         // answers from the item's cross-size definiteness, not from how far the flex algorithm has got.
         auto intrinsicWidthComputationScope = FlexItemIntrinsicWidthComputationScope { flexItem };
         flexItem->computeLogicalWidth(values);
@@ -637,7 +651,6 @@ template<typename SizeType> std::optional<LayoutUnit> FlexIntegrationUtils::comp
 template std::optional<LayoutUnit> FlexIntegrationUtils::computePercentageLogicalHeightForFlexItem<Style::PreferredSize>(const FlexLayoutItem&, const Style::PreferredSize&) const;
 template std::optional<LayoutUnit> FlexIntegrationUtils::computePercentageLogicalHeightForFlexItem<Style::MinimumSize>(const FlexLayoutItem&, const Style::MinimumSize&) const;
 template std::optional<LayoutUnit> FlexIntegrationUtils::computePercentageLogicalHeightForFlexItem<Style::MaximumSize>(const FlexLayoutItem&, const Style::MaximumSize&) const;
-template std::optional<LayoutUnit> FlexIntegrationUtils::computePercentageLogicalHeightForFlexItem<Style::PreferredSize::Calc>(const FlexLayoutItem&, const Style::PreferredSize::Calc&) const;
 
 std::optional<bool> FlexIntegrationUtils::isFlexBoxBlockSizeDefiniteForFlexItem(const FlexLayoutItem& flexLayoutItem) const
 {
@@ -668,21 +681,14 @@ ScopedFlexBasisAsFlexItemMainSize::ScopedFlexBasisAsFlexItemMainSize(const FlexL
     : m_flexItem(flexLayoutItem.renderer)
     , m_mainAxisIsInlineAxis(flexLayoutItem.mainAxisIsInlineAxis)
 {
-    if (flexBasis.isAuto())
-        return;
-
     if (m_mainAxisIsInlineAxis)
         m_flexItem->setOverridingBorderBoxLogicalWidthForFlexBasisComputation(WTF::move(flexBasis));
     else
         m_flexItem->setOverridingBorderBoxLogicalHeightForFlexBasisComputation(WTF::move(flexBasis));
-    m_didOverride = true;
 }
 
 ScopedFlexBasisAsFlexItemMainSize::~ScopedFlexBasisAsFlexItemMainSize()
 {
-    if (!m_didOverride)
-        return;
-
     if (m_mainAxisIsInlineAxis)
         m_flexItem->clearOverridingLogicalWidthForFlexBasisComputation();
     else
@@ -707,27 +713,24 @@ static void setOrClearOverridingBorderBoxLogicalHeight(RenderBox& box, std::opti
 
 FlexItemDefiniteCrossSizeScope::FlexItemDefiniteCrossSizeScope(RenderBox& flexItem, InvalidateContentWidths invalidateContentWidths)
     : m_flexItem(flexItem)
+    , m_previousOverridingBorderBoxLogicalWidth(flexItem.overridingBorderBoxLogicalWidth())
+    , m_previousOverridingBorderBoxLogicalHeight(flexItem.overridingBorderBoxLogicalHeight())
 {
-    auto saveAndSetInlineSize = [&](std::optional<LayoutUnit> size) {
-        m_previousOverridingBorderBoxLogicalWidth = flexItem.overridingBorderBoxLogicalWidth();
-        m_shouldRestoreInlineSize = true;
-        setOrClearOverridingBorderBoxLogicalWidth(flexItem, size);
-    };
-    auto saveAndSetBlockSize = [&](std::optional<LayoutUnit> size) {
-        m_previousOverridingBorderBoxLogicalHeight = flexItem.overridingBorderBoxLogicalHeight();
-        m_shouldRestoreBlockSize = true;
-        setOrClearOverridingBorderBoxLogicalHeight(flexItem, size);
-    };
-
     if (!FlexFormattingUtils::hasDefiniteCrossSizeForFlexItem(flexItem)) {
         // No definite cross size to measure against, so make sure no stale overriding size is left in either axis.
-        saveAndSetInlineSize({ });
-        saveAndSetBlockSize({ });
+        flexItem.clearOverridingBorderBoxLogicalWidth();
+        flexItem.clearOverridingBorderBoxLogicalHeight();
         return;
     }
 
     auto crossSize = FlexFormattingUtils::innerCrossSizeForFlexItem(flexItem);
-    FlexFormattingUtils::mainAxisIsFlexItemInlineAxis(flexItem) ? saveAndSetBlockSize(crossSize) : saveAndSetInlineSize(crossSize);
+    if (FlexFormattingUtils::mainAxisIsFlexItemInlineAxis(flexItem)) {
+        flexItem.clearOverridingBorderBoxLogicalWidth();
+        flexItem.setOverridingBorderBoxLogicalHeight(crossSize);
+    } else {
+        flexItem.setOverridingBorderBoxLogicalWidth(crossSize);
+        flexItem.clearOverridingBorderBoxLogicalHeight();
+    }
 
     if (invalidateContentWidths == InvalidateContentWidths::Yes) {
         flexItem.invalidateContentLogicalWidths(MarkingBehavior::MarkOnlyThis);
@@ -743,10 +746,8 @@ FlexItemDefiniteCrossSizeScope::~FlexItemDefiniteCrossSizeScope()
     if (m_didInvalidateContentLogicalWidths)
         ASSERT(!m_flexItem->hasInvalidContentLogicalWidths());
 #endif
-    if (m_shouldRestoreInlineSize)
-        setOrClearOverridingBorderBoxLogicalWidth(m_flexItem.get(), m_previousOverridingBorderBoxLogicalWidth);
-    if (m_shouldRestoreBlockSize)
-        setOrClearOverridingBorderBoxLogicalHeight(m_flexItem.get(), m_previousOverridingBorderBoxLogicalHeight);
+    setOrClearOverridingBorderBoxLogicalWidth(m_flexItem.get(), m_previousOverridingBorderBoxLogicalWidth);
+    setOrClearOverridingBorderBoxLogicalHeight(m_flexItem.get(), m_previousOverridingBorderBoxLogicalHeight);
 }
 
 FlexItemIntrinsicWidthComputationScope::FlexItemIntrinsicWidthComputationScope(RenderBox& flexItem)

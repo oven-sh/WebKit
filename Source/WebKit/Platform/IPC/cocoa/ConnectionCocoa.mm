@@ -42,6 +42,7 @@
 #import <mach/mach_traps.h>
 #import <mach/vm_map.h>
 #import <sys/mman.h>
+#import <wtf/Borrow.h>
 #import <wtf/CheckedArithmetic.h>
 #import <wtf/HexNumber.h>
 #import <wtf/MachSendRight.h>
@@ -287,12 +288,12 @@ bool Connection::platformCanSendOutgoingMessages() const
 }
 
 template<typename descriptorType>
-static descriptorType& NODELETE popDescriptorAndAdvance(std::span<uint8_t>& data)
+static descriptorType& LEGACY_NODELETE popDescriptorAndAdvance(std::span<uint8_t>& data)
 {
     return consumeAndReinterpretCastTo<descriptorType>(data);
 }
 
-static void NODELETE setPortDescriptor(std::span<uint8_t>& messageSpan, mach_port_t sendRight)
+static void LEGACY_NODELETE setPortDescriptor(std::span<uint8_t>& messageSpan, mach_port_t sendRight)
 {
     auto& descriptor = popDescriptorAndAdvance<mach_msg_port_descriptor_t>(messageSpan);
     descriptor.name = sendRight;
@@ -544,7 +545,7 @@ static std::unique_ptr<Decoder> createMessageDecoder(mach_msg_header_t* header, 
         ASSERT(descriptor.disposition == MACH_MSG_TYPE_PORT_SEND);
         MachSendRight right = MachSendRight::adopt(descriptor.name);
 
-        attachments[numberOfAttachments - i - 1] = Attachment { WTF::move(right) };
+        borrow(attachments)[numberOfAttachments - i - 1] = Attachment { WTF::move(right) };
     }
 
     if (messageBodyIsOOL) {
@@ -670,7 +671,7 @@ void Connection::receiveSourceEventHandler()
         return;
     }
 
-    std::unique_ptr<Decoder> decoder = createMessageDecoder(header, buffer.mutableSpan());
+    std::unique_ptr<Decoder> decoder = createMessageDecoder(header, borrow(buffer)->mutableSpan());
     if (!decoder)
         return;
 
@@ -739,8 +740,8 @@ std::optional<audit_token_t> Connection::getAuditToken()
 bool Connection::kill(std::optional<MessageName> invalidMessageName)
 {
     if (OSObjectPtr xpcConnection = m_xpcConnection) {
-        auto reasonCode = invalidMessageName ? WebKit::ReasonCode::MessageCheckKilled : WebKit::ReasonCode::ConnectionKilled;
-        terminateWithReason(xpcConnection, reasonCode, "Connection::kill", invalidMessageName);
+        auto reasonCode = invalidMessageName ? WebKitReasonCode::MessageCheckKilled : WebKitReasonCode::ConnectionKilled;
+        WebKit::terminateWithReason(xpcConnection, reasonCode, "Connection::kill", invalidMessageName);
         m_didRequestProcessTermination = true;
         return true;
     }

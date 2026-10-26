@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include "CanBeCrossOriginIsolated.h"
 #include "Document.h"
 #include "EventTargetInterfaces.h"
 #include "FetchRequestCredentials.h"
@@ -60,11 +61,9 @@ public:
     virtual ~WorkletGlobalScope();
 
     virtual bool isPaintWorkletGlobalScope() const { return false; }
-#if ENABLE(WEB_AUDIO)
     virtual bool isAudioWorkletGlobalScope() const { return false; }
-#endif
 
-    WEBCORE_EXPORT static unsigned NODELETE numberOfWorkletGlobalScopes();
+    WEBCORE_EXPORT static unsigned LEGACY_NODELETE numberOfWorkletGlobalScopes();
 
     MessagePortChannelProvider& messagePortChannelProvider();
 
@@ -79,9 +78,10 @@ public:
 
     SocketProvider* socketProvider() final { return nullptr; }
 
-    bool isSecureContext() const final { return false; }
+    bool isSecureContext() const final { return true; }
 
     String agentClusterID() const final { return m_agentClusterID; }
+    bool crossOriginIsolated() const final { return m_canBeCrossOriginIsolated == CanBeCrossOriginIsolated::Yes; }
 
     JSC::RuntimeFlags jsRuntimeFlags() const { return m_jsRuntimeFlags; }
 
@@ -114,7 +114,7 @@ private:
     std::optional<Vector<uint8_t>> unwrapCryptoKey(const Vector<uint8_t>&) final { RELEASE_ASSERT_NOT_REACHED(); return std::nullopt; }
     URL parseURL(const String&) const final;
     String userAgent(const URL&) const final;
-    const SettingsValues& settingsValues() const LIFETIME_BOUND final { return m_settingsValues; }
+    const SettingsValues& LEGACY_NODELETE settingsValues() const LIFETIME_BOUND final { return m_settingsValues; }
     const NetworkLoadPolicy& networkLoadPolicy() const LIFETIME_BOUND final { return m_networkLoadPolicy; }
 
     WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;
@@ -129,6 +129,7 @@ private:
 
     SettingsValues m_settingsValues;
     String m_agentClusterID;
+    const CanBeCrossOriginIsolated m_canBeCrossOriginIsolated;
     const NetworkLoadPolicy m_networkLoadPolicy;
 };
 

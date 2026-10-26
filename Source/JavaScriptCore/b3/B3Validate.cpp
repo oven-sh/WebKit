@@ -53,7 +53,7 @@ namespace {
 
 class Validater {
 public:
-    Validater(Procedure& procedure, const char* dumpBefore)
+    Validater(Procedure& procedure, UTF8CStringView dumpBefore)
         : m_procedure(procedure)
         , m_dumpBefore(dumpBefore)
     {
@@ -414,7 +414,7 @@ public:
                 validateFence(value);
                 validateStackAccess(value);
                 break;
-            case MemoryCopy:
+            case MemoryMove:
                 VALIDATE(!value->kind().isChill(), ("At ", *value));
                 VALIDATE(value->numChildren() == 3, ("At ", *value));
                 VALIDATE(value->child(0)->type() == pointerType(), ("At ", *value));
@@ -1160,12 +1160,12 @@ private:
     }
     
     Procedure& m_procedure;
-    const char* m_dumpBefore;
+    UTF8CStringView m_dumpBefore;
 };
 
 } // anonymous namespace
 
-void validate(Procedure& procedure, const char* dumpBefore)
+void validate(Procedure& procedure, UTF8CStringView dumpBefore)
 {
     Validater validater(procedure, dumpBefore);
     validater.run();

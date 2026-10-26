@@ -39,12 +39,12 @@ namespace WebCore {
 
 class MediaPlaybackTargetCocoa final : public MediaPlaybackTarget {
 public:
-    WEBCORE_EXPORT static Ref<MediaPlaybackTargetCocoa> create(RetainPtr<AVOutputContext>&&);
+    WEBCORE_EXPORT static Ref<MediaPlaybackTargetCocoa> LEGACY_NODELETE create(RetainPtr<AVOutputContext>&&);
     WEBCORE_EXPORT static Ref<MediaPlaybackTargetCocoa> create();
 
     ~MediaPlaybackTargetCocoa();
 
-    RetainPtr<AVOutputContext> outputContext() const { return m_outputContext.get(); }
+    RetainPtr<AVOutputContext> outputContext() const { return m_outputContext; }
 
     // MediaPlaybackTarget
     bool supportsRemoteVideoPlayback() const final;
@@ -57,7 +57,7 @@ private:
     String routeName() const final;
     bool hasActiveRoute() const final;
 
-    RetainPtr<AVOutputContext> m_outputContext;
+    const RetainPtr<AVOutputContext> m_outputContext;
 };
 
 } // namespace WebCore

@@ -46,12 +46,12 @@ public:
 private:
     FontPlatformData platformDataFromCustomData(const FontDescription&, const FontCreationContext&);
 
-    SVGFontElement* NODELETE getSVGFontById(const AtomString&) const;
+    SVGFontElement* LEGACY_NODELETE getSVGFontById(const AtomString&) const;
 
     SVGFontElement* maybeInitializeExternalSVGFontElement();
     SVGFontFaceElement* firstFontFace();
 
-    RefPtr<SharedBuffer> m_convertedFont;
+    const RefPtr<SharedBuffer> m_convertedFont;
     RefPtr<SVGDocument> m_externalSVGDocument;
     WeakPtr<SVGFontElement, WeakPtrImplWithEventTargetData> m_externalSVGFontElement;
     const Ref<const Settings> m_settings;

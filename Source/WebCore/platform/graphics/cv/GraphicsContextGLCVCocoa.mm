@@ -107,7 +107,7 @@ enum class TransferFunctionCV {
     kITU_R_2020,
 };
 
-static PixelRange NODELETE pixelRangeFromPixelFormat(OSType pixelFormat)
+static PixelRange LEGACY_NODELETE pixelRangeFromPixelFormat(OSType pixelFormat)
 {
     switch (pixelFormat) {
     case kCVPixelFormatType_4444AYpCbCr8:
@@ -180,12 +180,12 @@ struct GLfloatColor {
     {
     }
 
-    static constexpr GLfloat NODELETE abs(GLfloat value)
+    static constexpr GLfloat LEGACY_NODELETE abs(GLfloat value)
     {
         return value >= 0 ? value : -value;
     }
 
-    constexpr bool NODELETE isApproximatelyEqualTo(const GLfloatColor& color, GLfloat maxDelta) const
+    constexpr bool LEGACY_NODELETE isApproximatelyEqualTo(const GLfloatColor& color, GLfloat maxDelta) const
     {
         return abs(rgb.r - color.rgb.r) < abs(maxDelta)
             && abs(rgb.g - color.rgb.g) < abs(maxDelta)
@@ -209,12 +209,12 @@ struct YCbCrMatrix {
 
     constexpr YCbCrMatrix(PixelRange, GLfloat cbCoefficient, GLfloat crCoefficient);
 
-    operator const GLfloat*() const
+    operator const GLfloat* LEGACY_NODELETE () const
     {
         return &rows[0][0];
     }
 
-    constexpr GLfloatColor operator*(const GLfloatColor&) const;
+    constexpr GLfloatColor LEGACY_NODELETE operator*(const GLfloatColor&) const;
 };
 
 constexpr YCbCrMatrix::YCbCrMatrix(PixelRange range, GLfloat cbCoefficient, GLfloat crCoefficient)
@@ -430,12 +430,14 @@ GraphicsContextGLCVCocoa::GraphicsContextGLCVCocoa(GraphicsContextGLCocoa& owner
     : m_owner(owner)
 {
     // Create compatible context that shares state with owner, but one that does not
-    // have robustness or WebGL compatibility.
+    // have robustness or WebGL compatibility. The reset notification strategy must match the owner's.
     const EGLint contextAttributes[] = {
         EGL_CONTEXT_CLIENT_VERSION,
         owner.m_isForWebGL2 ? 3 : 2,
         EGL_CONTEXT_OPENGL_BACKWARDS_COMPATIBLE_ANGLE,
         EGL_FALSE,
+        EGL_CONTEXT_OPENGL_RESET_NOTIFICATION_STRATEGY_EXT,
+        EGL_LOSE_CONTEXT_ON_RESET_EXT,
         EGL_CONTEXT_CLIENT_ARRAYS_ENABLED_ANGLE,
         EGL_FALSE,
         EGL_CONTEXT_BIND_GENERATES_RESOURCE_CHROMIUM,

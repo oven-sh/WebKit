@@ -40,6 +40,7 @@
 #import "WebExtensionWindowIdentifier.h"
 #import "WebProcess/Extensions/API/WebExtensionAPIKeys.h"
 #import "_WKResourceLoadInfo.h"
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/text/MakeString.h>
 
 using namespace WebKit;
@@ -47,7 +48,7 @@ using namespace WebKit;
 static NSString * const urlsKey = @"urls";
 static NSString * const typesKey = @"types";
 
-_WKWebExtensionWebRequestResourceType NODELETE toWebExtensionWebRequestResourceType(const ResourceLoadInfo& resourceLoadInfo)
+_WKWebExtensionWebRequestResourceType LEGACY_NODELETE toWebExtensionWebRequestResourceType(const ResourceLoadInfo& resourceLoadInfo)
 {
     switch (resourceLoadInfo.type) {
     case ResourceLoadInfo::Type::Document:
@@ -206,16 +207,16 @@ static std::optional<WebExtensionWindowIdentifier> toWindowID(NSNumber *rawValue
 - (NSString *)_initializeWithDictionary:(NSDictionary<NSString *, id> *)dictionary
 {
     NSString *errorMessage;
-    _urlPatterns = toMatchPatterns(dictionary[urlsKey], &errorMessage);
+    _urlPatterns = toMatchPatterns(checked_objc_cast<NSArray>(dictionary[urlsKey]), &errorMessage);
     if (errorMessage)
         return errorMessage;
 
-    _types = toResourceTypes(dictionary[typesKey], &errorMessage);
+    _types = toResourceTypes(checked_objc_cast<NSArray>(dictionary[typesKey]), &errorMessage);
     if (errorMessage)
         return errorMessage;
 
-    _tabID = toTabID(dictionary[@"tabId"]);
-    _windowID = toWindowID(dictionary[windowIdKey]);
+    _tabID = toTabID(checked_objc_cast<NSNumber>(dictionary[@"tabId"]));
+    _windowID = toWindowID(checked_objc_cast<NSNumber>(dictionary[windowIdKey]));
 
     return nil;
 }

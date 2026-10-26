@@ -75,7 +75,7 @@ static void removeContextMessageReceivers(WebProcessPool& processPool, WebExtens
 #endif
 }
 
-static HashMap<WebExtensionControllerIdentifier, WeakPtr<WebExtensionController>>& NODELETE webExtensionControllers()
+static HashMap<WebExtensionControllerIdentifier, WeakPtr<WebExtensionController>>& LEGACY_NODELETE webExtensionControllers()
 {
     static MainRunLoopNeverDestroyed<HashMap<WebExtensionControllerIdentifier, WeakPtr<WebExtensionController>>> controllers;
     return controllers;
@@ -112,10 +112,12 @@ WebExtensionController::~WebExtensionController()
 {
     webExtensionControllers().remove(identifier());
 
+    // Unload first, since closing extension pages can call removePage(), which removes the message
+    // receiver and process pool when no other pages use the same process pool.
+    unloadAll();
+
     for (Ref pool : m_processPools)
         pool->removeMessageReceiver(Messages::WebExtensionController::messageReceiverName(), identifier());
-
-    unloadAll();
 }
 
 WebExtensionControllerParameters WebExtensionController::parameters(const API::PageConfiguration& pageConfiguration, WebProcessProxy& destinationProcess) const

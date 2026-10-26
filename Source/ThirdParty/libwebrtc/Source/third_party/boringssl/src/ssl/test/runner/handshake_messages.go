@@ -1241,7 +1241,7 @@ func (m *clientHelloMsg) unmarshal(data []byte) bool {
 			if !body.ReadUint16(&serverPaddingRequest) || len(body) != 0 {
 				return false
 			}
-			m.serverPaddingRequest = ptrTo(serverPaddingRequest)
+			m.serverPaddingRequest = new(serverPaddingRequest)
 		case extensionClientCertificateType:
 			var certTypes cryptobyte.String
 			if !body.ReadUint8LengthPrefixed(&certTypes) || len(body) != 0 {
@@ -1997,15 +1997,15 @@ func (m *serverExtensions) unmarshal(data cryptobyte.String, version version) bo
 			if !body.ReadUint8(&certType) || len(body) != 0 {
 				return false
 			}
-			m.clientCertificateType = ptrTo(CertificateType(certType))
+			m.clientCertificateType = new(CertificateType(certType))
 		case extensionServerCertificateType:
 			var certType uint8
 			if !body.ReadUint8(&certType) || len(body) != 0 {
 				return false
 			}
-			m.serverCertificateType = ptrTo(CertificateType(certType))
+			m.serverCertificateType = new(CertificateType(certType))
 		case extensionServerPaddingRequest:
-			m.serverPadding = ptrTo(uint16(len(body)))
+			m.serverPadding = new(uint16(len(body)))
 			if !isAllZero(body) {
 				return false
 			}

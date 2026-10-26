@@ -33,7 +33,7 @@ namespace WebCore {
 
 bool SVGNumberList::parse(StringView value)
 {
-    clearItems();
+    Vector<float> numbers;
 
     bool parsingSucceeded = readCharactersForParsing(value, [&](auto buffer) {
         skipOptionalSVGSpaces(buffer);
@@ -42,14 +42,18 @@ bool SVGNumberList::parse(StringView value)
             auto number = parseNumber(buffer);
             if (!number)
                 break;
-            append(SVGNumber::create(*number));
+            numbers.append(*number);
         }
 
         return buffer.atEnd();
     });
-    if (!parsingSucceeded)
+    if (!parsingSucceeded) {
         clearItems();
-    return parsingSucceeded;
+        return false;
+    }
+
+    updateItems(numbers);
+    return true;
 }
 
 String SVGNumberList::valueAsString() const

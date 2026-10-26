@@ -488,8 +488,10 @@ static void runOriginTest(NSString *mainURL, NSString *expectedMessage)
     RetainPtr testMessageHandler = adoptNS([[TestMessageHandler alloc] init]);
     [[configuration userContentController] addScriptMessageHandler:testMessageHandler.get() name:@"testHandler"];
 
-    static bool gotMessage = false;
+    static bool gotMessage;
     static RetainPtr<NSString> storedMessage;
+    gotMessage = false;
+    storedMessage = nil;
     testMessageHandler.get().didReceiveScriptMessage = ^(NSString *message) {
         storedMessage = message;
         gotMessage = true;
@@ -531,6 +533,7 @@ TEST(Badging, ServiceWorkerOverride)
     });
 
     RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    configuration.get().websiteDataStore = WKWebsiteDataStore.nonPersistentDataStore;
 
     static bool workerRunning = false;
     static bool badgingDone = false;

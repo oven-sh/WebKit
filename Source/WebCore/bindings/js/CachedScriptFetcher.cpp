@@ -27,6 +27,7 @@
 #include "config.h"
 #include "CachedScriptFetcher.h"
 
+#include "CachedCSSStyleSheet.h"
 #include "CachedScript.h"
 #include "ContentSecurityPolicy.h"
 #include "CrossOriginAccessControl.h"
@@ -43,7 +44,7 @@ Ref<CachedScriptFetcher> CachedScriptFetcher::create(const AtomString& charset)
 
 CachedResourceHandle<CachedResource> CachedScriptFetcher::requestModuleResource(Document& document, const URL& sourceURL, FetchOptionsDestination destination, String&& integrity, std::optional<ServiceWorkersMode> serviceWorkersMode, const URL& referrer) const
 {
-    return requestResourceWithCache(document, sourceURL, destination, String { }, WTF::move(integrity), { }, serviceWorkersMode, referrer);
+    return requestResourceWithCache(document, sourceURL, destination, defaultCrossOriginModeForModule, WTF::move(integrity), { }, serviceWorkersMode, referrer);
 }
 
 RefPtr<CachedResource> CachedScriptFetcher::requestResourceWithCache(Document& document, const URL& sourceURL, FetchOptionsDestination destination, const String& crossOriginMode, String&& integrity, std::optional<ResourceLoadPriority> resourceLoadPriority, std::optional<ServiceWorkersMode> serviceWorkersMode, const URL& referrer) const
@@ -80,6 +81,11 @@ RefPtr<CachedResource> CachedScriptFetcher::requestResourceWithCache(Document& d
     case FetchOptionsDestination::Json:
     case FetchOptionsDestination::Text: {
         auto result = protect(document.cachedResourceLoader())->requestScript(WTF::move(request));
+        return result ? RefPtr { WTF::move(result.value()) } : nullptr;
+    }
+
+    case FetchOptionsDestination::Style: {
+        auto result = protect(document.cachedResourceLoader())->requestCSSStyleSheet(WTF::move(request));
         return result ? RefPtr { WTF::move(result.value()) } : nullptr;
     }
 

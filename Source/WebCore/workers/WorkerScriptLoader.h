@@ -84,7 +84,7 @@ public:
     const String& referrerPolicy() const LIFETIME_BOUND { return m_referrerPolicy; }
     const CrossOriginEmbedderPolicy& crossOriginEmbedderPolicy() const LIFETIME_BOUND { return m_crossOriginEmbedderPolicy; }
     const URL& url() const LIFETIME_BOUND { return m_url; }
-    const URL& NODELETE responseURL() const;
+    const URL& LEGACY_NODELETE responseURL() const;
     ResourceResponse::Source responseSource() const { return m_responseSource; }
     bool isRedirected() const { return m_isRedirected; }
     const CertificateInfo& certificateInfo() const LIFETIME_BOUND { return m_certificateInfo; }
@@ -159,6 +159,7 @@ private:
     bool m_finishing { false };
     bool m_isRedirected { false };
     bool m_isCOEPEnabled { false };
+    IsSecureContext m_isSecureContext { IsSecureContext::No };
     ResourceResponse::Source m_responseSource { ResourceResponse::Source::Unknown };
     ResourceResponse::Tainting m_responseTainting { ResourceResponse::Tainting::Basic };
     ResourceError m_error;
@@ -166,7 +167,7 @@ private:
     bool m_didAddToWorkerScriptLoaderMap { false };
     bool m_isMatchingServiceWorkerRegistration { false };
     std::optional<SecurityOriginData> m_topOriginForServiceWorkerRegistration;
-    RefPtr<ServiceWorkerDataManager> m_serviceWorkerDataManager;
+    const RefPtr<ServiceWorkerDataManager> m_serviceWorkerDataManager;
     WeakPtr<ScriptExecutionContext> m_context;
     String m_userAgentForSharedWorker;
     OptionSet<AdvancedPrivacyProtections> m_advancedPrivacyProtections;

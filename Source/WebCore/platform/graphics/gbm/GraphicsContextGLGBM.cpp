@@ -28,6 +28,7 @@
 
 #if ENABLE(WEBGL) && USE(COORDINATED_GRAPHICS) && USE(GBM)
 #include "ANGLEHeaders.h"
+#include "ANGLEUtilities.h"
 #include "CoordinatedPlatformLayerBufferDMABuf.h"
 #include "DMABufBuffer.h"
 #include "DRMDeviceManager.h"
@@ -35,6 +36,7 @@
 #include "GBMVersioning.h"
 #include "GLFence.h"
 #include "Logging.h"
+#include "PixelBuffer.h"
 #include "PlatformDisplay.h"
 #include <drm_fourcc.h>
 #include <wtf/unix/UnixFileDescriptor.h>
@@ -124,6 +126,52 @@ bool GraphicsContextGLGBM::platformInitializeExtensions()
     return eglExtensions.KHR_image_base && eglExtensions.EXT_image_dma_buf_import;
 }
 
+GraphicsContextGLGBM::DrawingBuffer::DrawingBuffer(Ref<DMABufBuffer>&& dmabuf, EGLImageKHR image)
+    : m_dmabuf(WTF::move(dmabuf))
+    , m_image(image)
+{
+}
+
+GraphicsContextGLGBM::DrawingBuffer::~DrawingBuffer() = default;
+
+GraphicsContextGLGBM::DrawingBuffer::DrawingBuffer(GraphicsContextGLGBM::DrawingBuffer&& other)
+    : m_dmabuf(WTF::move(other.m_dmabuf))
+    , m_image(std::exchange(other.m_image, nullptr))
+{
+}
+
+GraphicsContextGLGBM::DrawingBuffer& GraphicsContextGLGBM::DrawingBuffer::operator=(GraphicsContextGLGBM::DrawingBuffer&& other)
+{
+    m_dmabuf = WTF::move(other.m_dmabuf);
+    m_image = std::exchange(other.m_image, nullptr);
+    return *this;
+}
+
+bool GraphicsContextGLGBM::DrawingBuffer::isInUse() const
+{
+    if (!m_dmabuf)
+        return false;
+
+    return !m_dmabuf->hasOneRef();
+}
+
+EGLImageKHR GraphicsContextGLGBM::DrawingBuffer::release()
+{
+    m_dmabuf = nullptr;
+    return std::exchange(m_image, nullptr);
+}
+
+Vector<uint64_t> GraphicsContextGLGBM::drawingBufferIDs() const
+{
+    Vector<uint64_t> buffers;
+    for (const auto& buffer : m_drawingBuffers) {
+        if (buffer)
+            buffers.append(buffer.dmabuf()->id());
+    }
+
+    return buffers;
+}
+
 GraphicsContextGLGBM::DrawingBuffer GraphicsContextGLGBM::createDrawingBuffer() const
 {
     auto gbmDevice = DRMDeviceManager::singleton().mainGBMDevice(DRMDeviceManager::NodeType::Render);
@@ -161,35 +209,39 @@ GraphicsContextGLGBM::DrawingBuffer GraphicsContextGLGBM::createDrawingBuffer() 
     return { WTF::move(dmaBuf), image };
 }
 
+void GraphicsContextGLGBM::destroyDrawingBuffer(DrawingBuffer& buffer) const
+{
+    if (!buffer)
+        return;
+
+    EGL_DestroyImageKHR(m_displayObj, buffer.release());
+}
+
 void GraphicsContextGLGBM::freeDrawingBuffers()
 {
-    auto destroyBuffer = [this](DrawingBuffer& buffer) {
-        if (!buffer.image)
-            return;
-
-        EGL_DestroyImageKHR(m_displayObj, buffer.image);
-        buffer.image = nullptr;
-        buffer.dmabuf = nullptr;
-    };
-    destroyBuffer(m_drawingBuffer);
-    destroyBuffer(m_displayBuffer);
+    for (auto& buffer : m_drawingBuffers)
+        destroyDrawingBuffer(buffer);
 }
 
 bool GraphicsContextGLGBM::bindNextDrawingBuffer()
 {
-    std::swap(m_drawingBuffer, m_displayBuffer);
+    m_currentDrawingBufferIndex++;
+    auto& buffer = drawingBuffer();
+    if (buffer && (buffer.isInUse() || m_failNextDrawingBufferAllocation))
+        destroyDrawingBuffer(buffer);
 
-    if (!m_drawingBuffer.dmabuf) {
-        auto buffer = createDrawingBuffer();
-        if (!buffer.dmabuf)
+    if (std::exchange(m_failNextDrawingBufferAllocation, false))
+        return false;
+
+    if (!buffer) {
+        buffer = createDrawingBuffer();
+        if (!buffer)
             return false;
-
-        m_drawingBuffer = WTF::move(buffer);
     }
 
     ScopedRestoreTextureBinding restoreBinding(TEXTURE_BINDING_2D, TEXTURE_2D);
     GL_BindTexture(GL_TEXTURE_2D, m_texture);
-    GL_EGLImageTargetTexture2DOES(GL_TEXTURE_2D, m_drawingBuffer.image);
+    GL_EGLImageTargetTexture2DOES(GL_TEXTURE_2D, buffer.image());
     return true;
 }
 
@@ -227,7 +279,8 @@ void GraphicsContextGLGBM::prepareForDisplay()
         }
     });
 
-    if (!m_displayBuffer.dmabuf)
+    auto& displayBuffer = this->displayBuffer();
+    if (!displayBuffer)
         return;
 
     RELEASE_ASSERT(m_layerContentsDisplayDelegate);
@@ -237,26 +290,26 @@ void GraphicsContextGLGBM::prepareForDisplay()
     if (contextAttributes().alpha)
         flags.add(TextureMapperFlags::ShouldBlend);
     if (fenceFD)
-        buffer = CoordinatedPlatformLayerBufferDMABuf::create(protect(*m_displayBuffer.dmabuf), flags, WTF::move(fenceFD));
+        buffer = CoordinatedPlatformLayerBufferDMABuf::create(protect(*displayBuffer.dmabuf()), flags, WTF::move(fenceFD));
     else
-        buffer = CoordinatedPlatformLayerBufferDMABuf::create(protect(*m_displayBuffer.dmabuf), flags, WTF::move(fence));
+        buffer = CoordinatedPlatformLayerBufferDMABuf::create(protect(*displayBuffer.dmabuf()), flags, WTF::move(fence));
 #else
     auto alphaMode = contextAttributes().alpha ? CoordinatedPlatformLayerBuffer::AlphaMode::Premultiplied : CoordinatedPlatformLayerBuffer::AlphaMode::Opaque;
     auto origin = CoordinatedPlatformLayerBuffer::Origin::BottomLeft;
     if (fenceFD)
-        buffer = CoordinatedPlatformLayerBufferDMABuf::create(protect(*m_displayBuffer.dmabuf), alphaMode, origin, WTF::move(fenceFD), m_layerContentsDisplayDelegate->threadSafeGrContext());
+        buffer = CoordinatedPlatformLayerBufferDMABuf::create(protect(*displayBuffer.dmabuf()), alphaMode, origin, WTF::move(fenceFD), m_layerContentsDisplayDelegate->threadSafeGrContext());
     else
-        buffer = CoordinatedPlatformLayerBufferDMABuf::create(protect(*m_displayBuffer.dmabuf), alphaMode, origin, WTF::move(fence), m_layerContentsDisplayDelegate->threadSafeGrContext());
+        buffer = CoordinatedPlatformLayerBufferDMABuf::create(protect(*displayBuffer.dmabuf()), alphaMode, origin, WTF::move(fence), m_layerContentsDisplayDelegate->threadSafeGrContext());
 #endif
     m_layerContentsDisplayDelegate->setDisplayBuffer(WTF::move(buffer));
 }
 
-void GraphicsContextGLGBM::prepareForDisplayWithFinishedSignal(Function<void()>&& finishedSignalCreator)
+void GraphicsContextGLGBM::prepareForDisplayWithFinishedSignal(NOESCAPE const Function<void()>& finishedSignalCreator)
 {
     if (!makeContextCurrent())
         return;
 
-    if (!m_drawingBuffer.dmabuf)
+    if (!drawingBuffer())
         return;
 
     prepareTexture();
@@ -266,6 +319,27 @@ void GraphicsContextGLGBM::prepareForDisplayWithFinishedSignal(Function<void()>&
         forceContextLost();
         return;
     }
+}
+
+RefPtr<PixelBuffer> GraphicsContextGLGBM::readCompositedResults()
+{
+    auto& displayBuffer = this->displayBuffer();
+    if (!displayBuffer)
+        return nullptr;
+    if (!makeContextCurrent())
+        return nullptr;
+    if (getInternalFramebufferSize().isEmpty())
+        return nullptr;
+    // bindNextDrawingBuffer() leaves m_texture bound to the buffer that will be rendered into next,
+    // so the presented frame is only available as the displayBuffer image.
+    ScopedTexture displayTexture;
+    {
+        ScopedRestoreTextureBinding restoreBinding(TEXTURE_BINDING_2D, TEXTURE_2D);
+        GL_BindTexture(GL_TEXTURE_2D, displayTexture);
+        GL_EGLImageTargetTexture2DOES(GL_TEXTURE_2D, displayBuffer.image());
+    }
+    ScopedScratchReadFramebufferBinding fboBinding(m_isForWebGL2, m_state.boundReadFBO, displayTexture);
+    return readPixelsForPaintResults();
 }
 
 #if ENABLE(WEBXR)
@@ -328,7 +402,8 @@ bool GraphicsContextGLGBM::enableRequiredWebXRExtensionsImpl()
 {
     return enableExtensionsImpl({
         "GL_OES_EGL_image"_s,
-        "GL_OES_EGL_image_external"_s
+        "GL_OES_EGL_image_external"_s,
+        "GL_EXT_discard_framebuffer"_s
     });
 }
 #endif // ENABLE(WEBXR)

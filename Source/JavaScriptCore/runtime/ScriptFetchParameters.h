@@ -45,8 +45,9 @@ public:
         JSON,
         Text,
 #if USE(BUN_JSC_ADDITIONS)
-        HostDefined,
+        HostDefined, // Stays 5: Bun's transpiler writes the number into the module info it serializes.
 #endif
+        CSS,
     };
 
     ScriptFetchParameters(Type type)
@@ -98,9 +99,11 @@ public:
         if (string == "json"_s)
             return Type::JSON;
 #if !USE(BUN_JSC_ADDITIONS)
-        // Bun loads `with { type: "text" }` itself, so there it stays a HostDefined type below.
+        // Bun loads `with { type: "text" }` and `with { type: "css" }` itself, so there they stay a HostDefined type below.
         if (string == "text"_s)
             return Type::Text;
+        if (string == "css"_s)
+            return Type::CSS;
 #endif
         if (string == "webassembly"_s)
             return Type::WebAssembly;

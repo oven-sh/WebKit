@@ -34,16 +34,18 @@
 #import <WebCore/WrappedCryptoKey.h>
 #import <optional>
 #import <wtf/TZoneMallocInlines.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebCryptoClient);
 
 std::optional<Vector<uint8_t>> WebCryptoClient::wrapCryptoKey(const Vector<uint8_t>& key) const
 {
+    RetainPtr webView = m_webView;
     SEL selector = @selector(webCryptoMasterKeyForWebView:);
     Vector<uint8_t> wrappedKey;
-    if ([[m_webView UIDelegate] respondsToSelector:selector]) {
-        auto masterKey = makeVector(CallUIDelegate(m_webView, selector));
+    if ([[webView UIDelegate] respondsToSelector:selector]) {
+        auto masterKey = makeVector(dynamic_objc_cast<NSData>(protect(CallUIDelegate(webView, selector))));
         if (!WebCore::wrapSerializedCryptoKey(masterKey, key, wrappedKey))
             return std::nullopt;
         return wrappedKey;
@@ -69,12 +71,13 @@ std::optional<Vector<uint8_t>> WebCryptoClient::serializeAndWrapCryptoKey(WebCor
 
 std::optional<Vector<uint8_t>> WebCryptoClient::unwrapCryptoKey(const Vector<uint8_t>& serializedKey) const
 {
+    RetainPtr webView = m_webView;
     auto wrappedKey = WebCore::readSerializedCryptoKey(serializedKey);
     if (!wrappedKey)
         return std::nullopt;
     SEL selector = @selector(webCryptoMasterKeyForWebView:);
-    if ([[m_webView UIDelegate] respondsToSelector:selector]) {
-        auto masterKey = makeVector(CallUIDelegate(m_webView, selector));
+    if ([[webView UIDelegate] respondsToSelector:selector]) {
+        auto masterKey = makeVector(dynamic_objc_cast<NSData>(protect(CallUIDelegate(webView, selector))));
         return WebCore::unwrapCryptoKey(masterKey, *wrappedKey);
     }
     if (auto masterKey = WebCore::defaultWebCryptoMasterKey())

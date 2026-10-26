@@ -34,7 +34,7 @@
 
 
 // Any named groups will live for the lifetime of the process, thanks to the reference held by the RefPtr.
-static HashMap<String, RefPtr<WebViewGroup>>& NODELETE webViewGroups()
+static HashMap<String, RefPtr<WebViewGroup>>& LEGACY_NODELETE webViewGroups()
 {
     static NeverDestroyed<HashMap<String, RefPtr<WebViewGroup>>> webViewGroups;
 
@@ -97,7 +97,7 @@ void WebViewGroup::removeWebView(WebView *webView)
 WebCore::StorageNamespaceProvider& WebViewGroup::storageNamespaceProvider()
 {
     if (!m_storageNamespaceProvider)
-        m_storageNamespaceProvider = WebKit::WebStorageNamespaceProvider::create(m_localStorageDatabasePath);
+        lazyInitialize(m_storageNamespaceProvider, WebKit::WebStorageNamespaceProvider::create(m_localStorageDatabasePath));
 
     return *m_storageNamespaceProvider;
 }

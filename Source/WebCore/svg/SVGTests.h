@@ -33,7 +33,7 @@ class SVGStringList;
 class WeakPtrImplWithEventTargetData;
 
 template<typename OwnerType, typename... BaseTypes>
-class SVGPropertyOwnerRegistry;
+class SVGPropertyOwnerRegistryBase;
 
 class SVGTests;
 
@@ -54,13 +54,13 @@ private:
 class SVGTests {
     WTF_MAKE_NONCOPYABLE(SVGTests);
 public:
-    static bool NODELETE hasExtension(const String&);
-    using PropertyRegistry = SVGPropertyOwnerRegistry<SVGTests>;
+    static bool LEGACY_NODELETE hasExtension(const String&);
+    using PropertyRegistry = SVGPropertyOwnerRegistryBase<SVGTests>;
 
     static void addSupportedAttributes(MemoryCompactLookupOnlyRobinHoodHashSet<QualifiedName>&);
 
     SVGConditionalProcessingAttributes& conditionalProcessingAttributes();
-    SVGConditionalProcessingAttributes* NODELETE conditionalProcessingAttributesIfExists() const;
+    SVGConditionalProcessingAttributes* LEGACY_NODELETE conditionalProcessingAttributesIfExists() const;
 
     // These methods are called from DOM through the super classes.
     SVGStringList& requiredExtensions() { return conditionalProcessingAttributes().requiredExtensions(); }

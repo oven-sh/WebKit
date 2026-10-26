@@ -19,7 +19,7 @@
 
 #pragma once
 
-#include <JavaScriptCore/SourceTaintedOrigin.h>
+#include <JavaScriptCore/SourceTaintedness.h>
 #include <JavaScriptCore/Strong.h>
 #include <memory>
 #include <wtf/FixedVector.h>
@@ -47,7 +47,7 @@ public:
     void addArguments(FixedVector<JSC::Strong<JSC::Unknown>>&&);
 
     enum class Type { Code, Function };
-    Type NODELETE type() const;
+    Type LEGACY_NODELETE type() const;
 
     StringView code() const { return m_code; }
 
@@ -65,7 +65,7 @@ private:
     JSC::Strong<JSC::JSObject> m_function;
     FixedVector<JSC::Strong<JSC::Unknown>> m_arguments;
     String m_code;
-    JSC::SourceTaintedOrigin m_sourceTaintedOrigin;
+    JSC::SourceTaintedness m_sourceTaintedOrigin;
 };
 
 } // namespace WebCore

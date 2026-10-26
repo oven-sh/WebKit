@@ -27,15 +27,15 @@
 
 #include <Metal/Metal.h>
 #include <WebGPU/WebGPU.h>
-#include <WebGPU/WebGPUExt.h>
+#include <WebGPU/WebGPUCpp.h>
 #include <optional>
 #include <wtf/Vector.h>
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 struct HardwareCapabilities {
-    WGPULimits limits { };
-    Vector<WGPUFeatureName> features;
+    Limits limits { };
+    Vector<WebGPU::FeatureName> features;
 
     struct BaseCapabilities {
         MTLArgumentBuffersTier argumentBuffersTier { MTLArgumentBuffersTier1 };
@@ -43,17 +43,18 @@ struct HardwareCapabilities {
         id<MTLCounterSet> statisticCounterSet { nil };
         uint32_t memoryBarrierLimit { 0 };
         bool supportsNonPrivateDepthStencilTextures { false };
+        bool supportsMemorylessTextures { false };
         bool canPresentRGB10A2PixelFormats { false };
         bool supportsResidencySets { false };
     } baseCapabilities;
 };
 
 std::optional<HardwareCapabilities> hardwareCapabilities(id<MTLDevice>);
-bool NODELETE isValid(const WGPULimits&);
-WGPULimits NODELETE defaultLimits();
-bool NODELETE anyLimitIsBetterThan(const WGPULimits& target, const WGPULimits& reference);
-bool includesUnsupportedFeatures(const Vector<WGPUFeatureName>& target, const Vector<WGPUFeatureName>& reference);
+bool LEGACY_NODELETE isValid(const Limits&);
+Limits LEGACY_NODELETE defaultLimits();
+bool LEGACY_NODELETE anyLimitIsBetterThan(const Limits& target, const Limits& reference);
+bool includesUnsupportedFeatures(const Vector<WebGPU::FeatureName>& target, const Vector<WebGPU::FeatureName>& reference);
 bool isShaderValidationEnabled(id<MTLDevice>);
-bool NODELETE isWebGPUSwiftEnabled();
+bool isWebGPUSwiftEnabled();
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal

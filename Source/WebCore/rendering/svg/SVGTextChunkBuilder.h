@@ -20,19 +20,26 @@
 
 #pragma once
 
+#include "RenderSVGInlineText.h"
 #include "SVGTextChunk.h"
+#include "SVGTextFragment.h"
+#include <wtf/CheckedRef.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
 
-class RenderSVGInlineText;
-class SVGInlineTextBox;
-struct SVGTextFragment;
+// The laid out fragments of one text box, in line order.
+struct SVGTextChunkBox {
+    CheckedRef<const RenderSVGInlineText> text;
+    std::span<SVGTextFragment> fragments;
+    // Number of entries this box contributes to the chunk start list, each the index of a fragment that starts a new chunk.
+    unsigned chunkStartCount { 0 };
+};
 
 // SVGTextChunkBuilder performs the third layout phase for SVG text.
 //
 // Phase one built the layout information from the SVG DOM stored in the RenderSVGInlineText objects (SVGTextLayoutAttributes).
-// Phase two performed the actual per-character layout, computing the final positions for each character, stored in the SVGInlineTextBox objects (SVGTextFragment).
+// Phase two performed the actual per-character layout, computing the final positions for each character, stored as SVGTextFragments of the text boxes.
 // Phase three performs all modifications that have to be applied to each individual text chunk (text-anchor & textLength).
 
 class SVGTextChunkBuilder {
@@ -42,13 +49,12 @@ public:
     SVGTextChunkBuilder(const SVGTextChunkBuilder&) = delete;
 
     const Vector<SVGTextChunk>& textChunks() const LIFETIME_BOUND { return m_textChunks; }
-    unsigned NODELETE totalCharacters() const;
-    float totalLength() const;
-    float totalAnchorShift() const;
-    AffineTransform transformationForTextBox(InlineIterator::SVGTextBoxIterator) const;
+    unsigned LEGACY_NODELETE totalCharacters() const;
+    float LEGACY_NODELETE totalLength() const;
+    float LEGACY_NODELETE totalAnchorShift() const;
 
-    void buildTextChunks(const Vector<InlineIterator::SVGTextBoxIterator>& lineLayoutBoxes, const HashSet<InlineIterator::SVGTextBox::Key>& chunkStarts, SVGTextFragmentMap&);
-    void layoutTextChunks(const Vector<InlineIterator::SVGTextBoxIterator>& lineLayoutBoxes, const HashSet<InlineIterator::SVGTextBox::Key>& chunkStarts, SVGTextFragmentMap&);
+    void buildTextChunks(std::span<const SVGTextChunkBox>, std::span<const unsigned> chunkStarts);
+    void layoutTextChunks(std::span<const SVGTextChunkBox>, std::span<const unsigned> chunkStarts);
 
 private:
     // SVG2 §11.10: applies 'textLength' across all chunks of an owning element when
@@ -58,7 +64,6 @@ private:
     void applyElementLevelTextLength();
 
     Vector<SVGTextChunk> m_textChunks;
-    SVGChunkTransformMap m_textBoxTransformations;
 };
 
 } // namespace WebCore

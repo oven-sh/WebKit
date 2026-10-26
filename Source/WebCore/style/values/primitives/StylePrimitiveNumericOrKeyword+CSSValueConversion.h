@@ -40,7 +40,7 @@ namespace Style {
 // MARK: Keyword conversion
 
 template<PrimitiveNumericOrKeywordDerived StyleType, typename K>
-static auto processKeywordForCSSValueConversion(const K& keyword, CSSValueID valueID, std::optional<StyleType>& result) -> bool
+auto processKeywordForCSSValueConversion(const K& keyword, CSSValueID valueID, std::optional<StyleType>& result) -> bool
 {
     if (valueID == keyword.value) {
         result = StyleType { keyword };
@@ -50,17 +50,17 @@ static auto processKeywordForCSSValueConversion(const K& keyword, CSSValueID val
     // A few keywords have alternative spellings.
     // FIXME: Find a generic solution to this problem.
     if constexpr (std::same_as<K, CSS::Keyword::MinContent>) {
-        if (valueID == CSSValueWebkitMinContent) {
+        if (valueID == CSSValueID::WebkitMinContent) {
             result = StyleType { keyword };
             return true;
         }
     } else if constexpr (std::same_as<K, CSS::Keyword::MaxContent>) {
-        if (valueID == CSSValueWebkitMaxContent) {
+        if (valueID == CSSValueID::WebkitMaxContent) {
             result = StyleType { keyword };
             return true;
         }
     } else if constexpr (std::same_as<K, CSS::Keyword::FitContent>) {
-        if (valueID == CSSValueWebkitFitContent) {
+        if (valueID == CSSValueID::WebkitFitContent) {
             result = StyleType { keyword };
             return true;
         }
@@ -70,7 +70,7 @@ static auto processKeywordForCSSValueConversion(const K& keyword, CSSValueID val
 }
 
 template<PrimitiveNumericOrKeywordDerived StyleType>
-static auto convertKeywordIDForCSSValueConversion(CSSValueID valueID) -> std::optional<StyleType>
+auto convertKeywordIDForCSSValueConversion(CSSValueID valueID) -> std::optional<StyleType>
 {
     constexpr auto keywordsTuple = StyleType::Keywords::tuple;
 

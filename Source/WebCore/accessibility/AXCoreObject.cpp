@@ -263,7 +263,8 @@ ListBoxInterpretation AXCoreObject::listBoxInterpretation() const
         return ListBoxInterpretation::NotListBox;
 
     Deque<Ref<AXCoreObject>, /* inlineCapacity */ 100> queue;
-    for (Ref child : const_cast<AXCoreObject*>(this)->childrenIncludingIgnored())
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST for (Ref child : const_cast<AXCoreObject*>(this)->childrenIncludingIgnored())
         queue.append(WTF::move(child));
 
     unsigned iterations = 0;
@@ -310,7 +311,7 @@ AXCoreObject::AccessibilityChildrenVector AXCoreObject::tabChildren()
 }
 
 #if ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
-static bool NODELETE isValidChildForTable(AXCoreObject& object)
+static bool LEGACY_NODELETE isValidChildForTable(AXCoreObject& object)
 {
     auto role = object.role();
     // Tables can only have these roles as exposed-to-AT children.
@@ -492,23 +493,33 @@ std::optional<AXStitchGroup> AXCoreObject::stitchGroupFromGroups(const Vector<AX
     return { };
 }
 
+#if ENABLE_ACCESSIBILITY_LOCAL_FRAME
+// When a cross-frame child (i.e. a local frame's root) is ignored, e.g. via
+// role="presentation", hoist its content rather than returning the ignored root,
+// which would cause parent-child mismatches in the AT-exposed accessibility tree.
+static void appendCrossFrameContent(AXCoreObject::AccessibilityChildrenVector& out, AXCoreObject& crossFrameChild)
+{
+    if (!crossFrameChild.isIgnored()) {
+        out.append(crossFrameChild);
+        return;
+    }
+
+    for (auto& grandchild : crossFrameChild.stitchedUnignoredChildren()) {
+        // The hoisted content can itself contain a cross-frame child, e.g. when the presentational
+        // iframe's document contains another iframe, so resolve it rather than exposing the local frame.
+        if (RefPtr nestedCrossFrameChild = grandchild->crossFrameChildObject())
+            appendCrossFrameContent(out, *nestedCrossFrameChild);
+        else
+            out.append(grandchild);
+    }
+}
+#endif // ENABLE_ACCESSIBILITY_LOCAL_FRAME
+
 AXCoreObject::AccessibilityChildrenVector AXCoreObject::crossFrameUnignoredChildren()
 {
     AXCoreObject::AccessibilityChildrenVector result = stitchedUnignoredChildren();
 
 #if ENABLE_ACCESSIBILITY_LOCAL_FRAME
-    // When a cross-frame child (i.e. a local frame's root) is ignored, e.g. via
-    // role="presentation", hoist its content rather than returning the ignored root,
-    // which would cause parent-child mismatches in the AT-exposed accessibility tree.
-    // crossFrameParentObjectUnignored() is the matching parent-side hoist that keeps the
-    // hoisted content reciprocal.
-    auto appendCrossFrameContent = [](AccessibilityChildrenVector& out, AXCoreObject& crossFrameChild) {
-        if (crossFrameChild.isIgnored()) {
-            for (auto& grandchild : crossFrameChild.stitchedUnignoredChildren())
-                out.append(grandchild);
-        } else
-            out.append(crossFrameChild);
-    };
 
     if (result.isEmpty()) {
         if (RefPtr crossFrameChild = crossFrameChildObject())
@@ -872,13 +883,6 @@ String AXCoreObject::autoCompleteValue() const
     return explicitValue.isEmpty() ? "none"_s : explicitValue;
 }
 
-String AXCoreObject::invalidStatus() const
-{
-    auto explicitValue = explicitInvalidStatus();
-    // "false" is the default if no invalid status is explicitly provided (e.g. via aria-invalid).
-    return explicitValue.isEmpty() ? "false"_s : explicitValue;
-}
-
 AXCoreObject::AccessibilityChildrenVector AXCoreObject::contents()
 {
     if (isTabList())
@@ -1010,9 +1014,9 @@ bool AXCoreObject::canHaveSelectedChildren() const
     case AccessibilityRole::Tree:
     case AccessibilityRole::TreeGrid:
     case AccessibilityRole::List:
-    // These roles are containers whose children are treated as selected by assistive
-    // technologies. We can get the "selected" item via aria-activedescendant or the
-    // focused element.
+    // A combobox's selected child is its aria-activedescendant. Menus can have selected children
+    // too (e.g. a base-appearance select's picker), and ATSPI treats their focused or active menu
+    // item as selected.
     case AccessibilityRole::Menu:
     case AccessibilityRole::MenuBar:
     case AccessibilityRole::ComboBox:
@@ -1049,19 +1053,23 @@ AXCoreObject::AccessibilityChildrenVector AXCoreObject::selectedChildren()
         return selectedListItems();
     case AccessibilityRole::Menu:
     case AccessibilityRole::MenuBar:
-        if (Accessibility::findAncestor(*this, /* includeSelf */ false, [] (const auto& ancestor) {
+#if USE(ATSPI)
+        // Outside of a pop-up button's menu (e.g. a base-appearance select's picker), ATSPI treats the focused
+        // or active menu item as the selected one, matching AccessibilityObject::isSelected().
+        if (!Accessibility::findAncestor(*this, /* includeSelf */ false, [] (const auto& ancestor) {
             return ancestor.isPopUpButton();
         })) {
-            for (const auto& child : unignoredChildren()) {
-                if (child->isSelected())
-                    return { { child } };
-            }
+            if (RefPtr descendant = activeDescendant())
+                return { { descendant.releaseNonNull() } };
+            if (RefPtr focusedElement = focusedUIElement())
+                return { { focusedElement.releaseNonNull() } };
             break;
         }
-        if (RefPtr descendant = activeDescendant())
-            return { { descendant.releaseNonNull() } };
-        if (RefPtr focusedElement = focusedUIElement())
-            return { { focusedElement.releaseNonNull() } };
+#endif // USE(ATSPI)
+        for (const auto& child : unignoredChildren()) {
+            if (child->isSelected())
+                return { { child } };
+        }
         break;
     case AccessibilityRole::MenuListPopup: {
         AccessibilityChildrenVector selectedItems;
@@ -1078,20 +1086,32 @@ AXCoreObject::AccessibilityChildrenVector AXCoreObject::selectedChildren()
     return { };
 }
 
+// Returns true once the selected option of a single-selection list box is found.
+static bool appendSelectedOptions(AXCoreObject& container, bool isMultiSelectable, AXCoreObject::AccessibilityChildrenVector& result)
+{
+    for (const auto& child : container.unignoredChildren()) {
+        if (child->isGroup()) {
+            if (appendSelectedOptions(child, isMultiSelectable, result))
+                return true;
+            continue;
+        }
+
+        if (!child->isListBoxOption() || !child->isSelected())
+            continue;
+
+        result.append(child);
+        if (!isMultiSelectable)
+            return true;
+    }
+    return false;
+}
+
 AXCoreObject::AccessibilityChildrenVector AXCoreObject::listboxSelectedChildren()
 {
     AX_ASSERT(role() == AccessibilityRole::ListBox);
 
     AccessibilityChildrenVector result;
-    bool isMulti = isMultiSelectable();
-    for (const auto& child : unignoredChildren()) {
-        if (!child->isListBoxOption() || !child->isSelected())
-            continue;
-
-        result.append(child);
-        if (!isMulti)
-            return result;
-    }
+    appendSelectedOptions(*this, isMultiSelectable(), result);
     return result;
 }
 
@@ -1516,7 +1536,8 @@ AXCoreObject::AccessibilityChildrenVector AXCoreObject::revealableContainers()
 bool AXCoreObject::containsOnlyStaticText() const
 {
     bool hasText = false;
-    RefPtr nonTextDescendant = Accessibility::findUnignoredDescendant(const_cast<AXCoreObject&>(*this), /* includeSelf */ false, [&] (auto& descendant) {
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST RefPtr nonTextDescendant = Accessibility::findUnignoredDescendant(const_cast<AXCoreObject&>(*this), /* includeSelf */ false, [&](auto& descendant) {
         if (descendant.isGroup()) {
             // Skip through groups to keep looking for text.
             return false;
@@ -1672,10 +1693,19 @@ unsigned AXCoreObject::hierarchicalLevel() const
 
 bool AXCoreObject::supportsPressAction() const
 {
-    if (role() == AccessibilityRole::Presentational || hasPointerEventsNone())
+    if (role() == AccessibilityRole::Presentational)
         return false;
 
-    if (isImplicitlyInteractive() || hasClickHandler())
+    // pointer-events:none only stops pointer input. Implicitly interactive elements, like buttons, can still be
+    // activated without a pointer (e.g. with the keyboard), so they're still pressable.
+    if (isImplicitlyInteractive())
+        return true;
+
+    // But for anything else, pointer-events:none is an explicit signal that it isn't meant to be clicked.
+    if (hasPointerEventsNone())
+        return false;
+
+    if (hasClickHandler())
         return true;
 
     if ((isStaticText() || isImage()) && !isIgnored()) {
@@ -1808,7 +1838,7 @@ String AXCoreObject::languageIncludingAncestors() const
 }
 
 #if PLATFORM(COCOA)
-static bool NODELETE isVisibleText(AccessibilityTextSource textSource)
+static bool LEGACY_NODELETE isVisibleText(AccessibilityTextSource textSource)
 {
     switch (textSource) {
     case AccessibilityTextSource::Visible:
@@ -1828,7 +1858,7 @@ static bool NODELETE isVisibleText(AccessibilityTextSource textSource)
     }
 }
 
-static bool NODELETE isDescriptiveText(AccessibilityTextSource textSource)
+static bool LEGACY_NODELETE isDescriptiveText(AccessibilityTextSource textSource)
 {
     switch (textSource) {
     case AccessibilityTextSource::Alternative:
@@ -1938,9 +1968,9 @@ String AXCoreObject::title(Vector<AccessibilityText>* computedText) const
             return title;
     }
 
-    // Static text should communicate its content through AXValue.
+    // Static text and the options of a list box should communicate their content through AXValue.
     // Meter elements should communicate their content via AXValueDescription.
-    if (isStaticText() || isMeter())
+    if (isStaticText() || isMeter() || (isListBoxOption() && elementName() == ElementName::HTML_option))
         return { };
 
     // A file upload button presents a challenge because it has button text and a value, but the
@@ -2322,7 +2352,7 @@ bool performCustomActionPress(AXTreeID treeID, AXID targetID)
 {
     return retrieveValueFromMainThreadWithTimeoutAndDefault([treeID, targetID] () -> bool {
         if (WeakPtr<AXObjectCache> cache = AXTreeStore<AXObjectCache>::axObjectCacheForID(treeID)) {
-            if (RefPtr object = cache->objectForID(targetID))
+            if (RefPtr object = protect(cache)->objectForID(targetID))
                 return object->pressPreservingFocus();
         }
         return false;

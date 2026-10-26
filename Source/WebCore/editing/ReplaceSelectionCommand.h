@@ -75,7 +75,7 @@ private:
         void willRemoveNode(Node*);
         void didReplaceNode(Node*, Node* newNode);
 
-        bool NODELETE isEmpty() { return !m_firstNodeInserted; }
+        bool LEGACY_NODELETE isEmpty() { return !m_firstNodeInserted; }
         Node* firstNodeInserted() const { return m_firstNodeInserted.get(); }
         Node* lastLeafInserted() const
         {
@@ -116,7 +116,7 @@ private:
     VisiblePosition positionAtEndOfInsertedContent() const;
 
     bool shouldPerformSmartReplace() const;
-    bool NODELETE shouldPerformSmartParagraphReplace() const;
+    bool LEGACY_NODELETE shouldPerformSmartParagraphReplace() const;
     void addSpacesForSmartReplace();
     void addNewLinesForSmartReplace();
     void completeHTMLReplacement(const Position& lastPositionToSelect);
@@ -132,12 +132,12 @@ private:
     VisibleSelection m_visibleSelectionForInsertedText;
     Position m_startOfInsertedContent;
     Position m_endOfInsertedContent;
-    RefPtr<EditingStyle> m_insertionStyle;
+    const RefPtr<EditingStyle> m_insertionStyle;
     bool m_selectReplacement;
     bool m_smartReplace;
     bool m_matchStyle;
     const RefPtr<DocumentFragment> m_documentFragment;
-    std::unique_ptr<ReplacementFragment> m_replacementFragment;
+    const std::unique_ptr<ReplacementFragment> m_replacementFragment;
     String m_documentFragmentHTMLMarkup;
     String m_documentFragmentPlainText;
     bool m_preventNesting;

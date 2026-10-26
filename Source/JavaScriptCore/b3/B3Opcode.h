@@ -290,8 +290,9 @@ enum Opcode : uint8_t {
     // We do WasmAddress(ZExt32(ptr), ...) so that we can avoid generating extraneous moves in Air.
     WasmAddress,
 
-    // This is used for Wasm bulk memory operation `memory.copy`
-    MemoryCopy,
+    // This is used for Wasm bulk memory operation `memory.copy`. The ranges may overlap and the
+    // result is as if the source were copied to a temporary first, as with memmove.
+    MemoryMove,
 
     // This is used for Wasm bulk memory operation `memory.fill`
     MemoryFill,
@@ -506,7 +507,7 @@ inline bool isCheckMath(Opcode opcode)
     }
 }
 
-std::optional<Opcode> NODELETE invertedCompare(Opcode, Type);
+std::optional<Opcode> LEGACY_NODELETE invertedCompare(Opcode, Type);
 
 inline Opcode constPtrOpcode()
 {
@@ -658,7 +659,7 @@ inline Opcode signExtendOpcode(Width width)
     }
 }
 
-JS_EXPORT_PRIVATE Opcode NODELETE storeOpcode(Bank bank, Width width);
+JS_EXPORT_PRIVATE Opcode LEGACY_NODELETE storeOpcode(Bank bank, Width width);
 
 } } // namespace JSC::B3
 #endif // ENABLE(B3_JIT)

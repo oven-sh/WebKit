@@ -27,7 +27,6 @@
 #include "RenderBlockFlow.h"
 #include "RenderChildIterator.h"
 #include "RenderElementInlines.h"
-#include "RenderInline.h"
 #include "RenderListOutsideMarker.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderMultiColumnSet.h"
@@ -58,7 +57,7 @@ static RenderMultiColumnSet* findSetRendering(const RenderMultiColumnFlow& fragm
     return nullptr;
 }
 
-static RenderObject* spannerPlacehoderCandidate(const RenderObject& renderer, const RenderMultiColumnFlow& stayWithin)
+static RenderObject* LEGACY_NODELETE spannerPlacehoderCandidate(const RenderObject& renderer, const RenderMultiColumnFlow& stayWithin)
 {
     // Spanner candidate is a next sibling/ancestor's next child within the flow thread and
     // it is in the same inflow/out-of-flow layout context.

@@ -60,6 +60,7 @@
 #import <pal/spi/mac/NSViewSPI.h>
 #import <wtf/StdLibExtras.h>
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 #if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WKWebViewMacAdditionsBefore.mm>)
 #import <WebKitAdditions/WKWebViewMacAdditionsBefore.mm>
@@ -97,7 +98,7 @@ std::optional<WebCore::ScrollbarOverlayStyle> toCoreScrollbarStyle(_WKOverlayScr
     return std::nullopt;
 }
 
-static WebCore::FloatBoxExtent NODELETE coreBoxExtentsFromEdgeInsets(NSEdgeInsets insets)
+static WebCore::FloatBoxExtent LEGACY_NODELETE coreBoxExtentsFromEdgeInsets(NSEdgeInsets insets)
 {
     return {
         static_cast<float>(insets.top),
@@ -906,7 +907,8 @@ ALLOW_NEW_API_WITHOUT_GUARDS_BEGIN
     if (self.enclosingScrollView)
         return [super _cornerConfiguration];
 
-    return [NSViewCornerConfiguration configurationWithRadius:(id)_NSCornerRadius.containerConcentricRadius];
+    // Newer SDKs type this parameter as NSViewCornerRadius, but it must receive an _NSCornerRadius.
+    SUPPRESS_MEMORY_UNSAFE_CAST return [NSViewCornerConfiguration configurationWithRadius:(id)_NSCornerRadius.containerConcentricRadius];
 }
 ALLOW_NEW_API_WITHOUT_GUARDS_END
 
@@ -1617,7 +1619,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         if (!receiver)
             return;
 
-        for (NSString *typeIdentifier in [receiver fileTypes]) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSString *typeIdentifier in [receiver fileTypes]) {
             RetainPtr type = [UTType typeWithIdentifier:typeIdentifier];
             if (!type)
                 continue;
@@ -1632,7 +1635,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         if (!filenames)
             return { };
 
-        for (id name in filenames.get()) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL id name in filenames.get()) {
             RetainPtr pathExtension = [dynamic_objc_cast<NSString>(name) pathExtension];
             if (![pathExtension length])
                 continue;

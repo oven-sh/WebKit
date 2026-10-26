@@ -41,6 +41,7 @@
 #include "Logging.h"
 #include "MediaPlayerPrivateGStreamer.h"
 #include "MediaPlayerPrivateGStreamerMSE.h"
+#include "MediaSourceConfiguration.h"
 #include "MediaSourcePrivateClient.h"
 #include "MediaSourceTrackGStreamer.h"
 #include "NotImplemented.h"
@@ -141,14 +142,14 @@ void MediaSourcePrivateGStreamer::handleLogMessage(const WTFLogChannel& channel,
     const char* file = location ? location->file : __FILE__;
     int line = location ? location->line : __LINE__;
 #if GST_CHECK_VERSION(1, 22, 0)
-    gst_debug_log_id_literal(GST_CAT_DEFAULT, gstDebugLevel, file, methodName.utf8().legacyCStringPointer(), line, identifierString.utf8().legacyCStringPointer(), message.utf8().legacyCStringPointer());
+    SAFE_GST_DEBUG_LOG_ID_LITERAL(GST_CAT_DEFAULT, gstDebugLevel, file, methodName.utf8(), line, identifierString.utf8(), message.utf8());
 #else
-    gst_debug_log(GST_CAT_DEFAULT, gstDebugLevel, file, methodName.utf8().legacyCStringPointer(), line, nullptr, "%s: %s", identifierString.utf8().legacyCStringPointer(), message.utf8().legacyCStringPointer());
+    SAFE_GST_DEBUG_LOG(GST_CAT_DEFAULT, gstDebugLevel, file, methodName.utf8(), line, nullptr, "%s: %s", identifierString.utf8(), message.utf8());
 #endif
 }
 #endif // !RELEASE_LOG_DISABLED && !defined(GST_DISABLE_GST_DEBUG)
 
-MediaSourcePrivateGStreamer::AddStatus MediaSourcePrivateGStreamer::addSourceBuffer(const ContentType& contentType, const MediaSourceConfiguration&, RefPtr<SourceBufferPrivate>& sourceBufferPrivate)
+MediaSourcePrivateGStreamer::AddStatus MediaSourcePrivateGStreamer::addSourceBuffer(const ContentType& contentType, const MediaSourceConfiguration& configuration, RefPtr<SourceBufferPrivate>& sourceBufferPrivate)
 {
     DEBUG_LOG(LOGIDENTIFIER, contentType);
 
@@ -161,7 +162,7 @@ MediaSourcePrivateGStreamer::AddStatus MediaSourcePrivateGStreamer::addSourceBuf
 
     {
         Locker locker { m_lock };
-        m_sourceBuffers.append(SourceBufferPrivateGStreamer::create(*this, contentType));
+        m_sourceBuffers.append(SourceBufferPrivateGStreamer::create(*this, contentType, configuration.textTracksEnabled));
         sourceBufferPrivate = m_sourceBuffers.last();
     }
     sourceBufferPrivate->setMediaSourceDuration(duration());
@@ -264,7 +265,7 @@ void MediaSourcePrivateGStreamer::startPlaybackIfHasAllTracks()
     {
         Locker locker { m_lock };
         for (auto& privateSourceBuffer : m_sourceBuffers) {
-            auto sourceBuffer = downcast<SourceBufferPrivateGStreamer>(privateSourceBuffer);
+            auto* sourceBuffer = downcast<SourceBufferPrivateGStreamer>(privateSourceBuffer);
             for (auto& [_, track] : sourceBuffer->tracks())
                 tracks.append(track);
         }

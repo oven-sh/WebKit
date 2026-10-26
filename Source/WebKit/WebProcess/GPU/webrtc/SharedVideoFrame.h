@@ -65,6 +65,7 @@ struct SharedVideoFrame {
     bool mirrored { false };
     WebCore::VideoFrameRotation rotation { };
     WebCore::PlatformVideoColorSpace colorSpace;
+    bool shouldIgnoreAlpha { false };
     using Buffer = Variant<std::nullptr_t, RemoteVideoFrameReadReference, MachSendRight, WebCore::IntSize>;
     Buffer buffer;
 };
@@ -87,7 +88,7 @@ public:
 private:
     static constexpr Seconds defaultTimeout = 3_s;
 
-    bool wait(const Function<void(IPC::Semaphore&)>&);
+    bool wait(NOESCAPE const Function<void(IPC::Semaphore&)>&);
     bool allocateStorage(size_t, NOESCAPE const Function<void(WebCore::SharedMemory::Handle&&)>&);
     bool prepareWriting(const WebCore::SharedVideoFrameInfo&, NOESCAPE const Function<void(IPC::Semaphore&)>&, NOESCAPE const Function<void(WebCore::SharedMemory::Handle&&)>&);
 

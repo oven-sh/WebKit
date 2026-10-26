@@ -33,6 +33,7 @@
 #include "FloatRoundedRect.h"
 #include "FrameSelection.h"
 #include "HTMLAttachmentElement.h"
+#include "NaturalDimensions.h"
 #include "RenderBoxInlines.h"
 #include "RenderChildIterator.h"
 #include "RenderObjectInlines.h"
@@ -59,7 +60,7 @@ RenderAttachment::RenderAttachment(HTMLAttachmentElement& element, Style::Comput
 
 RenderAttachment::~RenderAttachment() = default;
 
-HTMLAttachmentElement& NODELETE RenderAttachment::attachmentElement() const
+HTMLAttachmentElement& LEGACY_NODELETE RenderAttachment::attachmentElement() const
 {
     return downcast<HTMLAttachmentElement>(nodeForNonAnonymous());
 }
@@ -67,7 +68,7 @@ HTMLAttachmentElement& NODELETE RenderAttachment::attachmentElement() const
 LayoutSize RenderAttachment::layoutWideLayoutAttachmentOnly()
 {
     if (auto* wideLayoutShadowElement = attachmentElement().wideLayoutShadowContainer()) {
-        if (auto* wideLayoutShadowRenderer = downcast<RenderBox>(wideLayoutShadowElement->renderer())) {
+        if (CheckedPtr wideLayoutShadowRenderer = downcast<RenderBox>(wideLayoutShadowElement->renderer())) {
             if (wideLayoutShadowRenderer->needsLayout())
                 wideLayoutShadowRenderer->layout();
             ASSERT(!wideLayoutShadowRenderer->needsLayout());
@@ -137,11 +138,12 @@ void RenderAttachment::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& of
 
 void RenderAttachment::layoutShadowContent(const LayoutSize& size)
 {
-    for (auto& renderBox : childrenOfType<RenderBox>(*this)) {
-        renderBox.mutableStyle().setHeight(Style::PreferredSize::Fixed { size.height() });
-        renderBox.mutableStyle().setWidth(Style::PreferredSize::Fixed { size.width() });
-        renderBox.setNeedsLayout(MarkingBehavior::MarkOnlyThis);
-        renderBox.layout();
+    for (CheckedRef renderBox : childrenOfType<RenderBox>(*this)) {
+        CheckedRef style = renderBox->mutableStyle();
+        style->setHeight(Style::PreferredSize::Fixed { size.height() });
+        style->setWidth(Style::PreferredSize::Fixed { size.width() });
+        renderBox->setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+        renderBox->layout();
     }
 }
 
@@ -151,8 +153,9 @@ bool RenderAttachment::paintWideLayoutAttachmentOnly(const PaintInfo& paintInfo,
         return false;
 
     if (auto* wideLayoutShadowElement = attachmentElement().wideLayoutShadowContainer()) {
-        if (auto* wideLayoutShadowRenderer = wideLayoutShadowElement->renderer()) {
+        if (CheckedPtr wideLayoutShadowRenderer = wideLayoutShadowElement->renderer()) {
             auto shadowPaintInfo = paintInfo;
+            shadowPaintInfo.updateSubtreePaintRootForChildren(this);
             for (PaintPhase phase : { PaintPhase::BlockBackground, PaintPhase::ChildBlockBackgrounds, PaintPhase::Float, PaintPhase::Foreground, PaintPhase::Outline }) {
                 shadowPaintInfo.phase = phase;
                 wideLayoutShadowRenderer->paint(shadowPaintInfo, offset);
@@ -163,6 +166,11 @@ bool RenderAttachment::paintWideLayoutAttachmentOnly(const PaintInfo& paintInfo,
         return true;
     }
     return false;
+}
+
+NaturalDimensions RenderAttachment::zoomedNaturalDimensions() const
+{
+    return NaturalDimensions::fixed(FloatSize { intrinsicSize() });
 }
 
 } // namespace WebCore

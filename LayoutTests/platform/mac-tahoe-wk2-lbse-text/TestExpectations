@@ -58,13 +58,7 @@ svg/zoom/zoomed-inline-svg-getscreenctm.html [ Failure ]
 svg/custom/pattern-content-inheritance-cycle.svg  [ ImageOnlyFailure ]
 
 # Clipping problems
-css3/masking/reference-clip-path-change-repaint.html          [ Failure ]
 svg/batik/text/textProperties.svg                             [ ImageOnlyFailure ]
-svg/clip-path/hittest-transformed-clip-objectboundingbox.html [ Failure ]
-svg/clip-path/transformed-clip.svg                            [ ImageOnlyFailure ]
-
-# Bounding box issues
-imported/w3c/web-platform-tests/svg/interact/scripted/svg-pointer-events-bbox.html [ Failure ]
 
 # Failing WPT reftests
 imported/w3c/web-platform-tests/svg/painting/marker-009.svg                                                    [ ImageOnlyFailure ]
@@ -77,34 +71,9 @@ imported/w3c/web-platform-tests/svg/text/reftests/text-path-transformed-002.html
 # <foreignObject> issues
 svg/foreignObject/vertical-foreignObject.html                  [ ImageOnlyFailure ]
 
-# Text rendering has issues with CSS 'visibility'
-svg/batik/text/textProperties2.svg [ ImageOnlyFailure ]
-
 # Overflow/scrollbar handling issues
 svg/in-html/overflow-svg-root-attr.html  [ ImageOnlyFailure ]
 svg/in-html/overflow-svg-root-style.html [ ImageOnlyFailure ]
-
-# CSS 'mix-blend-mode' broken
-svg/css/mix-blend-mode-background-root.svg [ ImageOnlyFailure ]
-svg/css/mix-blend-mode-opacity-root.svg    [ ImageOnlyFailure ]
-
-# Non-scaling stroke issues
-svg/repaint/non-scaling-stroke-transform-animation.html               [ ImageOnlyFailure ]
-
-# SMIL animation issues
-svg/stroke/animated-non-scaling-stroke.html [ ImageOnlyFailure ]
-
-# SVG <image> (buffered-rendering) issues
-svg/repaint/buffered-rendering-static-image.html [ ImageOnlyFailure ]
-
-# Unknown error (nothing rendered)
-svg/text/adding-id-on-pending-path.html            [ ImageOnlyFailure ]
-
-# Hit testing
-svg/custom/image-clipped-hit.svg               [ Failure ]
-svg/hittest/svg-ellipse-non-scale-stroke.xhtml [ Failure ]
-svg/hittest/svg-ellipse-rect-stroke.xhtml      [ Failure ]
-svg/hittest/svg-shapes-non-scale-stroke.html   [ Failure ]
 
 ###############
 # Buggy tests #
@@ -118,7 +87,6 @@ svg/outermost-svg-root.html [ Failure ]
 ###############
 
 # 1) Text rendering flakines issue with SVG Fonts (also in legacy engine)
-svg/W3C-SVG-1.1/fonts-desc-02-t.svg [ Pass ImageOnlyFailure ]
 svg/W3C-SVG-1.1/fonts-elem-04-b.svg [ Pass ImageOnlyFailure ]
 
 # 2) SVG <image> flakiness
@@ -127,31 +95,7 @@ svg/as-image/image-preserveAspectRatio-all.svg                           [ Pass 
 svg/as-image/svg-as-image-pattern-scale.html                             [ Pass ImageOnlyFailure ]
 svg/dynamic-updates/SVGImageElement-svgdom-preserveAspectRatio-prop.html [ Pass ImageOnlyFailure ]
 
-# 3) Historical flakiness of SMIL animations, we don't pause them in these tests, that should
-# finally be fixed to avoid this falkniess, even if it means adapting the SVG testsuite manually.
-svg/W3C-SVG-1.1/animate-elem-03-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-04-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-05-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-06-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-07-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-08-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-10-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-11-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-12-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-15-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-16-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-17-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-19-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-30-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-32-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-33-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-36-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-37-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-40-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-41-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-46-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-81-t.svg                            [ Pass ImageOnlyFailure ]
-svg/W3C-SVG-1.1/animate-elem-82-t.svg                            [ Pass ImageOnlyFailure ]
+# 3) Other flakiness (SMIL animations, filters, SVG <image> in webarchive)
 svg/W3C-SVG-1.1/filters-light-04-f.svg                           [ Pass ImageOnlyFailure ]
 svg/animations/attributeNameAndAttributeTypeMismatch.html        [ Pass ImageOnlyFailure ]
 svg/animations/avoid-calculating-for-non-animating-elements.html [ Pass ImageOnlyFailure ]
@@ -223,7 +167,6 @@ imported/w3c/web-platform-tests/svg/struct/reftests/inner-svg-css-transform.svg 
 imported/w3c/web-platform-tests/svg/struct/reftests/inner-svg-rotate-transform.svg                                [ Pass ]
 imported/w3c/web-platform-tests/svg/struct/reftests/inner-svg-transform.svg                                       [ Pass ]
 svg/W3C-SVG-1.1/paths-data-03-f.svg                                                                               [ Pass ]
-svg/W3C-SVG-1.1/text-altglyph-01-b.svg                                                                            [ Pass ]
 svg/W3C-SVG-1.1/text-intro-01-t.svg                                                                               [ Pass ]
 svg/W3C-SVG-1.1/text-intro-02-b.svg                                                                               [ Pass ]
 svg/W3C-SVG-1.1/text-intro-03-b.svg                                                                               [ Pass ]

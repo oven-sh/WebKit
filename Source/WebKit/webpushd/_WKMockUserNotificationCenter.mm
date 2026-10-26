@@ -107,7 +107,8 @@ static _WKMockUserNotificationCenter *centersByBundleIdentifier(NSString *bundle
 - (void)removePendingNotificationRequestsWithIdentifiers:(NSArray<NSString *> *) identifiers
 {
     RetainPtr toRemove = adoptNS([NSMutableArray new]);
-    for (UNNotification *notification in m_notifications.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL UNNotification *notification in m_notifications.get()) {
         if ([identifiers containsObject:retainPtr(notification.request.identifier).get()])
             [toRemove addObject:notification];
     }
@@ -125,8 +126,10 @@ static _WKMockUserNotificationCenter *centersByBundleIdentifier(NSString *bundle
 {
     BOOL hasPermission = m_hasPermission;
     dispatch_async(m_queue.get(), ^{
+ALLOW_DEPRECATED_DECLARATIONS_BEGIN
         UNMutableNotificationSettings *settings = [UNMutableNotificationSettings emptySettings];
         settings.authorizationStatus = hasPermission ? UNAuthorizationStatusAuthorized : UNAuthorizationStatusNotDetermined;
+ALLOW_DEPRECATED_DECLARATIONS_END
         completionHandler(settings);
     });
 }
@@ -146,8 +149,10 @@ static _WKMockUserNotificationCenter *centersByBundleIdentifier(NSString *bundle
 
 - (UNNotificationSettings *)notificationSettings
 {
+ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     RetainPtr settings = [UNMutableNotificationSettings emptySettings];
     [settings setAuthorizationStatus:m_hasPermission ? UNAuthorizationStatusAuthorized : UNAuthorizationStatusNotDetermined];
+ALLOW_DEPRECATED_DECLARATIONS_END
     return settings.autorelease();
 }
 

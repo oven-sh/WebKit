@@ -27,12 +27,12 @@
 
 #include <WebCore/PlatformVideoColorSpace.h>
 #include <WebCore/ProcessIdentity.h>
+#include <WebCore/VideoEncodedData.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/NativePromise.h>
 
 namespace WebCore {
 
-class SharedBuffer;
 class VideoFrame;
 
 class VideoDecoder : public ThreadSafeRefCounted<VideoDecoder> {
@@ -53,21 +53,13 @@ public:
         ProcessIdentity resourceOwner { };
     };
 
-    struct EncodedFrame {
-        Ref<SharedBuffer> data;
-        bool isKeyFrame { false };
-        int64_t timestamp { 0 };
-        std::optional<uint64_t> duration;
-
-        WEBCORE_EXPORT ~EncodedFrame();
-    };
     struct DecodedFrame {
         Ref<VideoFrame> frame;
         int64_t timestamp { 0 };
         std::optional<uint64_t> duration;
     };
 
-    static bool isVPXSupported();
+    static bool LEGACY_NODELETE isVPXSupported();
 
     using OutputCallback = Function<void(std::expected<DecodedFrame, String>&&)>;
     using CreateResult = std::expected<Ref<VideoDecoder>, String>;
@@ -75,13 +67,13 @@ public:
     using CreateCallback = Function<void(CreateResult&&)>;
 
     using CreatorFunction = void(*)(const String&, const Config&, CreateCallback&&, OutputCallback&&);
-    WEBCORE_EXPORT static void NODELETE setCreatorCallback(CreatorFunction&&);
+    WEBCORE_EXPORT static void LEGACY_NODELETE setCreatorCallback(CreatorFunction&&);
 
     static Ref<CreatePromise> create(const String&, const Config&, OutputCallback&&);
     WEBCORE_EXPORT static void createLocalDecoder(const String&, const Config&, CreateCallback&&, OutputCallback&&);
 
     using DecodePromise = NativePromise<void, String>;
-    virtual Ref<DecodePromise> decode(EncodedFrame&&) = 0;
+    virtual Ref<DecodePromise> decode(VideoEncodedData&&) = 0;
 
     virtual Ref<GenericPromise> flush() = 0;
     virtual void reset() = 0;

@@ -69,6 +69,27 @@ std::optional<MediaQuery> MediaQueryParser::parseCondition(CSSParserTokenRange r
     return MediaQuery { { }, { }, condition };
 }
 
+static size_t LEGACY_NODELETE mediaQueryCount(const CSSParserTokenRange& range)
+{
+    size_t commaCount = 0;
+    unsigned nestingLevel = 0;
+    for (auto& token : range.span()) {
+        switch (token.getBlockType()) {
+        case CSSParserToken::BlockStart:
+            ++nestingLevel;
+            break;
+        case CSSParserToken::BlockEnd:
+            --nestingLevel;
+            break;
+        case CSSParserToken::NotBlock:
+            if (!nestingLevel && token.type() == CommaToken)
+                ++commaCount;
+            break;
+        }
+    }
+    return commaCount + 1;
+}
+
 MediaQueryList MediaQueryParser::consumeMediaQueryList(CSSParserTokenRange& range, const CSSParserContext& context)
 {
     range.consumeWhitespace();
@@ -77,6 +98,8 @@ MediaQueryList MediaQueryParser::consumeMediaQueryList(CSSParserTokenRange& rang
         return { };
 
     MediaQueryList list;
+
+    list.reserveInitialCapacity(mediaQueryCount(range));
 
     while (true) {
         auto begin = range;
@@ -121,11 +144,11 @@ std::optional<MediaQuery> MediaQueryParser::consumeMediaQuery(CSSParserTokenRang
         if (range.peek().type() != IdentToken)
             return { };
 
-        if (range.peek().id() == CSSValueNot) {
+        if (range.peek().id() == CSSValueID::Not) {
             range.consumeIncludingWhitespace();
             return Prefix::Not;
         }
-        if (range.peek().id() == CSSValueOnly) {
+        if (range.peek().id() == CSSValueID::Only) {
             // 'only' doesn't do anything. It exists to hide the rule from legacy agents.
             range.consumeIncludingWhitespace();
             return Prefix::Only;
@@ -138,7 +161,7 @@ std::optional<MediaQuery> MediaQueryParser::consumeMediaQuery(CSSParserTokenRang
             return { };
 
         auto identifier = range.peek().id();
-        if (identifier == CSSValueOnly || identifier == CSSValueNot || identifier == CSSValueAnd || identifier == CSSValueOr)
+        if (identifier == CSSValueID::Only || identifier == CSSValueID::Not || identifier == CSSValueID::And || identifier == CSSValueID::Or)
             return { };
 
         auto mediaType = range.consumeIncludingWhitespace().value().convertToASCIILowercaseAtom();
@@ -157,7 +180,7 @@ std::optional<MediaQuery> MediaQueryParser::consumeMediaQuery(CSSParserTokenRang
     if (range.atEnd())
         return MediaQuery { prefix, mediaType, { } };
 
-    if (range.peek().type() != IdentToken || range.peek().id() != CSSValueAnd)
+    if (range.peek().type() != IdentToken || range.peek().id() != CSSValueID::And)
         return { };
 
     range.consumeIncludingWhitespace();
@@ -183,7 +206,15 @@ const FeatureSchema* MediaQueryParser::schemaForFeatureName(const AtomString& na
         if (!context.useSystemAppearance && !isUASheetBehavior(context.mode))
             return nullptr;
     }
-    
+
+    if (!context.viewportSegmentsAPIEnabled) {
+        if (schema == &Features::horizontalViewportSegments())
+            return nullptr;
+
+        if (schema == &Features::verticalViewportSegments())
+            return nullptr;
+    }
+
     return schema;
 }
 

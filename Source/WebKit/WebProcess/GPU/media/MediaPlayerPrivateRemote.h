@@ -125,7 +125,7 @@ public:
     void playbackStateChanged(bool, MediaTimeUpdateData&&);
     void engineFailedToLoad(int64_t);
     void updateCachedState(RemoteMediaPlayerState&&);
-    void NODELETE updatePlaybackQualityMetrics(WebCore::VideoPlaybackQualityMetrics&&);
+    void LEGACY_NODELETE updatePlaybackQualityMetrics(WebCore::VideoPlaybackQualityMetrics&&);
     void characteristicChanged(RemoteMediaPlayerState&&);
     void sizeChanged(WebCore::FloatSize);
     void firstVideoFrameAvailable();
@@ -219,13 +219,13 @@ private:
         explicit TimeProgressEstimator(const MediaPlayerPrivateRemote& parent);
         MediaTime currentTime() const;
         MediaTime cachedTime() const;
-        bool NODELETE timeIsProgressing() const;
+        bool LEGACY_NODELETE timeIsProgressing() const;
         void pause();
         void setTime(const MediaTimeUpdateData&);
         void setRate(double);
         Lock& lock() const { return m_lock; };
         MediaTime currentTimeWithLockHeld() const;
-        MediaTime NODELETE cachedTimeWithLockHeld() const;
+        MediaTime LEGACY_NODELETE cachedTimeWithLockHeld() const;
         void forceUseOfCachedTimeUntilNextSetTime();
 
     private:
@@ -276,7 +276,7 @@ private:
 
     bool shouldIgnoreIntrinsicSize() final;
 
-    PlatformLayer* platformLayer() const final;
+    PlatformLayer* platformLayer() final;
 
 #if ENABLE(VIDEO_PRESENTATION_MODE)
     PlatformLayerContainer createVideoFullscreenLayer() final;
@@ -513,7 +513,7 @@ private:
     WebCore::PlatformTimeRanges m_cachedBufferedTimeRanges;
 
 #if ENABLE(WEB_AUDIO) && PLATFORM(COCOA)
-    RefPtr<RemoteAudioSourceProvider> m_audioSourceProvider;
+    const RefPtr<RemoteAudioSourceProvider> m_audioSourceProvider;
 #endif
 
     mutable Lock m_lock;

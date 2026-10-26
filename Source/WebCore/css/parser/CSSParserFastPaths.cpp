@@ -58,48 +58,48 @@ namespace WebCore {
 std::optional<CSS::Range> CSSParserFastPaths::lengthValueRangeForPropertiesSupportingSimpleLengths(CSSPropertyID propertyId)
 {
     switch (propertyId) {
-    case CSSPropertyFontSize:
-    case CSSPropertyHeight:
-    case CSSPropertyWidth:
-    case CSSPropertyMinHeight:
-    case CSSPropertyMinWidth:
-    case CSSPropertyPaddingBottom:
-    case CSSPropertyPaddingLeft:
-    case CSSPropertyPaddingRight:
-    case CSSPropertyPaddingTop:
-    case CSSPropertyInlineSize:
-    case CSSPropertyBlockSize:
-    case CSSPropertyMinInlineSize:
-    case CSSPropertyMinBlockSize:
-    case CSSPropertyPaddingBlockEnd:
-    case CSSPropertyPaddingBlockStart:
-    case CSSPropertyPaddingInlineEnd:
-    case CSSPropertyPaddingInlineStart:
-    case CSSPropertyR:
-    case CSSPropertyRx:
-    case CSSPropertyRy:
-    case CSSPropertyShapeMargin:
+    case CSSPropertyID::FontSize:
+    case CSSPropertyID::Height:
+    case CSSPropertyID::Width:
+    case CSSPropertyID::MinHeight:
+    case CSSPropertyID::MinWidth:
+    case CSSPropertyID::PaddingBottom:
+    case CSSPropertyID::PaddingLeft:
+    case CSSPropertyID::PaddingRight:
+    case CSSPropertyID::PaddingTop:
+    case CSSPropertyID::InlineSize:
+    case CSSPropertyID::BlockSize:
+    case CSSPropertyID::MinInlineSize:
+    case CSSPropertyID::MinBlockSize:
+    case CSSPropertyID::PaddingBlockEnd:
+    case CSSPropertyID::PaddingBlockStart:
+    case CSSPropertyID::PaddingInlineEnd:
+    case CSSPropertyID::PaddingInlineStart:
+    case CSSPropertyID::R:
+    case CSSPropertyID::Rx:
+    case CSSPropertyID::Ry:
+    case CSSPropertyID::ShapeMargin:
         return CSS::Nonnegative;
-    case CSSPropertyBottom:
-    case CSSPropertyCx:
-    case CSSPropertyCy:
-    case CSSPropertyLeft:
-    case CSSPropertyInsetBlockEnd:
-    case CSSPropertyInsetBlockStart:
-    case CSSPropertyInsetInlineEnd:
-    case CSSPropertyInsetInlineStart:
-    case CSSPropertyMarginBottom:
-    case CSSPropertyMarginLeft:
-    case CSSPropertyMarginRight:
-    case CSSPropertyMarginTop:
-    case CSSPropertyRight:
-    case CSSPropertyTop:
-    case CSSPropertyMarginBlockEnd:
-    case CSSPropertyMarginBlockStart:
-    case CSSPropertyMarginInlineEnd:
-    case CSSPropertyMarginInlineStart:
-    case CSSPropertyX:
-    case CSSPropertyY:
+    case CSSPropertyID::Bottom:
+    case CSSPropertyID::Cx:
+    case CSSPropertyID::Cy:
+    case CSSPropertyID::Left:
+    case CSSPropertyID::InsetBlockEnd:
+    case CSSPropertyID::InsetBlockStart:
+    case CSSPropertyID::InsetInlineEnd:
+    case CSSPropertyID::InsetInlineStart:
+    case CSSPropertyID::MarginBottom:
+    case CSSPropertyID::MarginLeft:
+    case CSSPropertyID::MarginRight:
+    case CSSPropertyID::MarginTop:
+    case CSSPropertyID::Right:
+    case CSSPropertyID::Top:
+    case CSSPropertyID::MarginBlockEnd:
+    case CSSPropertyID::MarginBlockStart:
+    case CSSPropertyID::MarginInlineEnd:
+    case CSSPropertyID::MarginInlineStart:
+    case CSSPropertyID::X:
+    case CSSPropertyID::Y:
         return CSS::All;
     default:
         return { };
@@ -218,7 +218,7 @@ static RefPtr<CSSValue> parseSimpleLengthValue(StringView string, CSSParserMode 
 // Returns the number of characters which form a valid double
 // and are terminated by the given terminator character
 template <typename CharacterType>
-static size_t NODELETE checkForValidDouble(std::span<const CharacterType> string, char terminator)
+static size_t LEGACY_NODELETE checkForValidDouble(std::span<const CharacterType> string, char terminator)
 {
     size_t length = string.size();
     if (length < 1)
@@ -250,7 +250,7 @@ static size_t NODELETE checkForValidDouble(std::span<const CharacterType> string
 // Returns the number of characters consumed for parsing a valid double
 // terminated by the given terminator character
 template <typename CharacterType>
-static size_t NODELETE parseDouble(std::span<const CharacterType> string, char terminator, double& value)
+static size_t LEGACY_NODELETE parseDouble(std::span<const CharacterType> string, char terminator, double& value)
 {
     size_t length = checkForValidDouble(string, terminator);
     if (!length)
@@ -286,7 +286,7 @@ static size_t NODELETE parseDouble(std::span<const CharacterType> string, char t
 }
 
 template <typename CharacterType>
-static std::optional<uint8_t> parseColorIntOrPercentage(std::span<const CharacterType>& string, std::optional<char> consumableTerminator, CSSUnitType& expectedUnitType)
+static std::optional<uint8_t> LEGACY_NODELETE parseColorIntOrPercentage(std::span<const CharacterType>& string, std::optional<char> consumableTerminator, CSSUnitType& expectedUnitType)
 {
     auto current = string;
     double localValue = 0;
@@ -354,7 +354,7 @@ static std::optional<uint8_t> parseColorIntOrPercentage(std::span<const Characte
 }
 
 template <typename CharacterType>
-static inline bool NODELETE isTenthAlpha(std::span<const CharacterType> string)
+static inline bool LEGACY_NODELETE isTenthAlpha(std::span<const CharacterType> string)
 {
     // "0.X"
     if (string.size() == 3 && string[0] == '0' && string[1] == '.' && isASCIIDigit(string[2]))
@@ -368,7 +368,7 @@ static inline bool NODELETE isTenthAlpha(std::span<const CharacterType> string)
 }
 
 template <typename CharacterType>
-static inline std::optional<uint8_t> parseRGBAlphaValue(std::span<const CharacterType>& string, char terminator)
+static inline std::optional<uint8_t> LEGACY_NODELETE parseRGBAlphaValue(std::span<const CharacterType>& string, char terminator)
 {
     skipWhile<isASCIIWhitespace>(string);
 
@@ -414,7 +414,7 @@ static inline std::optional<uint8_t> parseRGBAlphaValue(std::span<const Characte
 }
 
 template <typename CharacterType>
-static inline bool NODELETE mightBeRGBA(std::span<const CharacterType> characters)
+static inline bool LEGACY_NODELETE mightBeRGBA(std::span<const CharacterType> characters)
 {
     if (characters.size() < 5)
         return false;
@@ -426,7 +426,7 @@ static inline bool NODELETE mightBeRGBA(std::span<const CharacterType> character
 }
 
 template <typename CharacterType>
-static inline bool NODELETE mightBeRGB(std::span<const CharacterType> characters)
+static inline bool LEGACY_NODELETE mightBeRGB(std::span<const CharacterType> characters)
 {
     if (characters.size() < 4)
         return false;
@@ -437,7 +437,7 @@ static inline bool NODELETE mightBeRGB(std::span<const CharacterType> characters
 }
 
 template <typename CharacterType>
-static inline bool NODELETE mightBeHSLA(std::span<const CharacterType> characters)
+static inline bool LEGACY_NODELETE mightBeHSLA(std::span<const CharacterType> characters)
 {
     if (characters.size() < 5)
         return false;
@@ -449,7 +449,7 @@ static inline bool NODELETE mightBeHSLA(std::span<const CharacterType> character
 }
 
 template <typename CharacterType>
-static inline bool NODELETE mightBeHSL(std::span<const CharacterType> characters)
+static inline bool LEGACY_NODELETE mightBeHSL(std::span<const CharacterType> characters)
 {
     if (characters.size() < 4)
         return false;
@@ -459,7 +459,7 @@ static inline bool NODELETE mightBeHSL(std::span<const CharacterType> characters
         && isASCIIAlphaCaselessEqual(characters[2], 'l');
 }
 
-static std::optional<SRGBA<uint8_t>> NODELETE finishParsingHexColor(uint32_t value, unsigned length)
+static std::optional<SRGBA<uint8_t>> LEGACY_NODELETE finishParsingHexColor(uint32_t value, unsigned length)
 {
     switch (length) {
     case 3: {
@@ -486,7 +486,7 @@ static std::optional<SRGBA<uint8_t>> NODELETE finishParsingHexColor(uint32_t val
 }
 
 template<typename CharacterType>
-static std::optional<SRGBA<uint8_t>> NODELETE parseHexColorInternal(std::span<const CharacterType> characters)
+static std::optional<SRGBA<uint8_t>> LEGACY_NODELETE parseHexColorInternal(std::span<const CharacterType> characters)
 {
     if (characters.size() != 3 && characters.size() != 4 && characters.size() != 6 && characters.size() != 8)
         return std::nullopt;
@@ -758,7 +758,7 @@ static RefPtr<CSSValue> parseKeywordValue(CSSPropertyID property, StringView str
     }
 
     auto valueID = cssValueKeywordID(string);
-    if (!valueID)
+    if (valueID == CSSValueID::Invalid)
         return nullptr;
 
     if (isCSSWideKeyword(valueID))
@@ -783,7 +783,7 @@ static bool parseTransformTranslateArguments(StringParsingBuffer<CharType>& buff
             return false;
         if (!number && unit == CSSUnitType::Number)
             unit = CSSUnitType::Px;
-        if (unit == CSSUnitType::Number || (unit == CSSUnitType::Percentage && (transformType == CSSValueTranslateZ || (transformType == CSSValueTranslate3d && expectedCount == 1))))
+        if (unit == CSSUnitType::Number || (unit == CSSUnitType::Percentage && (transformType == CSSValueID::TranslateZ || (transformType == CSSValueID::Translate3d && expectedCount == 1))))
             return false;
         arguments.append(CSSPrimitiveValue::create(number, unit));
         buffer.advanceBy(argumentLength + 1);
@@ -857,17 +857,17 @@ static RefPtr<CSSFunctionValue> parseSimpleTransformValue(StringParsingBuffer<Ch
         unsigned argumentStart = 11;
         CharType c9 = toASCIILower(buffer[9]);
         if (c9 == 'x' && buffer[10] == '(') {
-            transformType = CSSValueTranslateX;
+            transformType = CSSValueID::TranslateX;
         } else if (c9 == 'y' && buffer[10] == '(') {
-            transformType = CSSValueTranslateY;
+            transformType = CSSValueID::TranslateY;
         } else if (c9 == 'z' && buffer[10] == '(') {
-            transformType = CSSValueTranslateZ;
+            transformType = CSSValueID::TranslateZ;
         } else if (c9 == '(') {
-            transformType = CSSValueTranslate;
+            transformType = CSSValueID::Translate;
             expectedArgumentCount = 2;
             argumentStart = 10;
         } else if (c9 == '3' && toASCIILower(buffer[10]) == 'd' && buffer[11] == '(') {
-            transformType = CSSValueTranslate3d;
+            transformType = CSSValueID::Translate3d;
             expectedArgumentCount = 3;
             argumentStart = 12;
         } else
@@ -895,7 +895,7 @@ static RefPtr<CSSFunctionValue> parseSimpleTransformValue(StringParsingBuffer<Ch
         CSSValueListBuilder arguments;
         if (!parseTransformNumberArguments(buffer, 16, arguments))
             return nullptr;
-        return CSSFunctionValue::create(CSSValueMatrix3d, WTF::move(arguments));
+        return CSSFunctionValue::create(CSSValueID::Matrix3d, WTF::move(arguments));
     }
 
     bool isScale3d = toASCIILower(buffer[0]) == 's'
@@ -912,7 +912,7 @@ static RefPtr<CSSFunctionValue> parseSimpleTransformValue(StringParsingBuffer<Ch
         CSSValueListBuilder arguments;
         if (!parseTransformNumberArguments(buffer, 3, arguments))
             return nullptr;
-        return CSSFunctionValue::create(CSSValueScale3d, WTF::move(arguments));
+        return CSSFunctionValue::create(CSSValueID::Scale3d, WTF::move(arguments));
     }
 
     bool isRotate = toASCIILower(buffer[0]) == 'r'
@@ -927,9 +927,9 @@ static RefPtr<CSSFunctionValue> parseSimpleTransformValue(StringParsingBuffer<Ch
         unsigned argumentStart = 7;
         CharType c6 = toASCIILower(buffer[6]);
         if (c6 == '(') {
-            transformType = CSSValueRotate;
+            transformType = CSSValueID::Rotate;
         } else if (c6 == 'z' && buffer[7] == '(') {
-            transformType = CSSValueRotateZ;
+            transformType = CSSValueID::RotateZ;
             argumentStart = 8;
         } else
             return nullptr;
@@ -978,34 +978,34 @@ static RefPtr<CSSValue> parseDisplay(StringView string)
     auto valueID = cssValueKeywordID(string);
 
     switch (valueID) {
-    case CSSValueNone:
+    case CSSValueID::None:
     // <display-outside>
-    case CSSValueBlock:
-    case CSSValueInline:
-    // <display-inside> (except for CSSValueFlow since it becomes "block")
-    case CSSValueFlex:
-    case CSSValueFlowRoot:
-    case CSSValueGrid:
-    case CSSValueTable:
+    case CSSValueID::Block:
+    case CSSValueID::Inline:
+    // <display-inside> (except for CSSValueID::Flow since it becomes "block")
+    case CSSValueID::Flex:
+    case CSSValueID::FlowRoot:
+    case CSSValueID::Grid:
+    case CSSValueID::Table:
     // <display-internal>
-    case CSSValueTableCaption:
-    case CSSValueTableCell:
-    case CSSValueTableColumnGroup:
-    case CSSValueTableColumn:
-    case CSSValueTableHeaderGroup:
-    case CSSValueTableFooterGroup:
-    case CSSValueTableRow:
-    case CSSValueTableRowGroup:
+    case CSSValueID::TableCaption:
+    case CSSValueID::TableCell:
+    case CSSValueID::TableColumnGroup:
+    case CSSValueID::TableColumn:
+    case CSSValueID::TableHeaderGroup:
+    case CSSValueID::TableFooterGroup:
+    case CSSValueID::TableRow:
+    case CSSValueID::TableRowGroup:
     // <display-legacy>
-    case CSSValueInlineBlock:
-    case CSSValueInlineFlex:
-    case CSSValueInlineGrid:
-    case CSSValueInlineTable:
+    case CSSValueID::InlineBlock:
+    case CSSValueID::InlineFlex:
+    case CSSValueID::InlineGrid:
+    case CSSValueID::InlineTable:
     // Prefixed values
-    case CSSValueWebkitInlineBox:
-    case CSSValueWebkitBox:
+    case CSSValueID::WebkitInlineBox:
+    case CSSValueID::WebkitBox:
     // No layout support for the full <display-listitem> syntax, so treat it as <display-legacy>
-    case CSSValueListItem:
+    case CSSValueID::ListItem:
         return CSSKeywordValue::create(valueID);
     default:
         if (isCSSWideKeyword(valueID))
@@ -1032,8 +1032,8 @@ static RefPtr<CSSValue> parseOpacity(StringView string)
 static RefPtr<CSSValue> parseColorWithAuto(StringView string, const CSSParserContext& context)
 {
     ASSERT(!string.isEmpty());
-    if (cssValueKeywordID(string) == CSSValueAuto)
-        return CSSKeywordValue::create(CSSValueAuto);
+    if (cssValueKeywordID(string) == CSSValueID::Auto)
+        return CSSKeywordValue::create(CSSValueID::Auto);
     return parseColor(string, context);
 }
 
@@ -1046,14 +1046,14 @@ RefPtr<CSSValue> CSSParserFastPaths::maybeParseValue(CSSPropertyID property, Str
         return nullptr;
 
     switch (property) {
-    case CSSPropertyDisplay:
+    case CSSPropertyID::Display:
         return parseDisplay(string);
-    case CSSPropertyOpacity:
+    case CSSPropertyID::Opacity:
         return parseOpacity(string);
-    case CSSPropertyTransform:
+    case CSSPropertyID::Transform:
         return parseSimpleTransform(string);
-    case CSSPropertyCaretColor:
-    case CSSPropertyAccentColor:
+    case CSSPropertyID::CaretColor:
+    case CSSPropertyID::AccentColor:
         if (isExposed(property, &state.context.propertySettings))
             return parseColorWithAuto(string, state.context);
         break;

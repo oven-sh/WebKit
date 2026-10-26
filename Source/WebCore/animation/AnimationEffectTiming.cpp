@@ -424,4 +424,18 @@ ResolvedEffectTiming AnimationEffectTiming::resolve(const ResolutionData& data) 
     return { currentIteration, phase, transformedProgress, simpleIterationProgress, before };
 }
 
+TextStream& operator<<(TextStream& ts, const AnimationEffectTiming& timing)
+{
+    ts << "iteration duration: " << timing.iterationDuration;
+    if (timing.iterations > 1) {
+        ts << ", iterations: " << timing.iterations;
+        ts << ", active duration: " << timing.activeDuration;
+    }
+    if (timing.startDelay != 0_s)
+        ts << ", start delay: " << timing.startDelay;
+    if (timing.endDelay != 0_s)
+        ts << ", end delay: " << timing.endDelay;
+    return ts;
+}
+
 } // namespace WebCore

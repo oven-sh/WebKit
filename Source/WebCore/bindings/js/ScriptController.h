@@ -103,8 +103,8 @@ public:
 
     using ResolveFunction = CompletionHandler<void(ValueOrException)>;
 
-    WEBCORE_EXPORT JSC::JSValue executeScriptIgnoringException(const String& script, JSC::SourceTaintedOrigin, bool forceUserGesture = false);
-    WEBCORE_EXPORT JSC::JSValue executeScriptInWorldIgnoringException(DOMWrapperWorld&, const String& script, JSC::SourceTaintedOrigin, bool forceUserGesture = false);
+    WEBCORE_EXPORT JSC::JSValue executeScriptIgnoringException(const String& script, JSC::SourceTaintedness, bool forceUserGesture = false);
+    WEBCORE_EXPORT JSC::JSValue executeScriptInWorldIgnoringException(DOMWrapperWorld&, const String& script, JSC::SourceTaintedness, bool forceUserGesture = false);
     WEBCORE_EXPORT JSC::JSValue executeUserAgentScriptInWorldIgnoringException(DOMWrapperWorld&, const String& script, bool forceUserGesture);
     WEBCORE_EXPORT ValueOrException executeUserAgentScriptInWorld(DOMWrapperWorld&, const String& script, bool forceUserGesture);
     WEBCORE_EXPORT void executeAsynchronousUserAgentScriptInWorld(DOMWrapperWorld&, RunJavaScriptParameters&&, ResolveFunction&&);
@@ -115,7 +115,7 @@ public:
     // This asserts that URL argument is a JavaScript URL.
     void executeJavaScriptURL(const URL&, const NavigationAction&, bool& didReplaceDocument);
 
-    static uint64_t NODELETE scriptExecutionCount();
+    static uint64_t LEGACY_NODELETE scriptExecutionCount();
 
     static void initializeMainThread();
 
@@ -145,6 +145,10 @@ public:
     const URL* sourceURL() const { return m_sourceURL; } // nullptr if we are not evaluating any script
 
     void updateDocument();
+
+    // Re-runs the runtime-enable conditions for interface members whose controlling quirk is resolved
+    // after the prototype may already have been created, and removes any that are no longer enabled.
+    void reevaluateQuirkDependentProperties();
 
     void namedItemAdded(HTMLDocument*, const AtomString&) { }
     void namedItemRemoved(HTMLDocument*, const AtomString&) { }
@@ -187,7 +191,7 @@ private:
 
     void disconnectPlatformScriptObjects();
 
-    WEBCORE_EXPORT WindowProxy& NODELETE windowProxy();
+    WEBCORE_EXPORT WindowProxy& LEGACY_NODELETE windowProxy();
     WEBCORE_EXPORT JSWindowProxy& jsWindowProxy(DOMWrapperWorld&);
 
     WeakRef<LocalFrame> m_frame;
@@ -205,7 +209,7 @@ private:
     RefPtr<JSC::Bindings::RootObject> m_cacheableBindingRootObject;
     RootObjectMap m_rootObjects;
 #if PLATFORM(COCOA)
-    RetainPtr<WebScriptObject> m_windowScriptObject;
+    const RetainPtr<WebScriptObject> m_windowScriptObject;
 #endif
 
 };

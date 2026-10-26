@@ -193,7 +193,7 @@ static Ref<CSSNumericValue> negate(Ref<CSSNumericValue>&& value)
     // https://drafts.css-houdini.org/css-typed-om/#cssmath-negate-a-cssnumericvalue
     if (auto* mathNegate = dynamicDowncast<CSSMathNegate>(value.get()))
         return mathNegate->value();
-    if (auto* unitValue = dynamicDowncast<CSSUnitValue>(value.get()))
+    if (RefPtr unitValue = dynamicDowncast<CSSUnitValue>(value))
         return CSSUnitValue::create(-unitValue->value(), unitValue->unitEnum());
     return CSSMathNegate::create(WTF::move(value));
 }
@@ -201,10 +201,10 @@ static Ref<CSSNumericValue> negate(Ref<CSSNumericValue>&& value)
 static ExceptionOr<Ref<CSSNumericValue>> invert(Ref<CSSNumericValue>&& value)
 {
     // https://drafts.css-houdini.org/css-typed-om/#cssmath-invert-a-cssnumericvalue
-    if (auto* mathInvert = dynamicDowncast<CSSMathInvert>(value.get()))
+    if (RefPtr mathInvert = dynamicDowncast<CSSMathInvert>(value))
         return protect(mathInvert->value());
 
-    if (auto* unitValue = dynamicDowncast<CSSUnitValue>(value.get())) {
+    if (RefPtr unitValue = dynamicDowncast<CSSUnitValue>(value)) {
         if (unitValue->unitEnum() == CSSUnitType::Number) {
             if (unitValue->value() == 0.0 || unitValue->value() == -0.0)
                 return Exception { ExceptionCode::RangeError };
@@ -216,7 +216,7 @@ static ExceptionOr<Ref<CSSNumericValue>> invert(Ref<CSSNumericValue>&& value)
 }
 
 template<typename T>
-static RefPtr<CSSNumericValue> operationOnValuesOfSameUnit(T&& operation, const Vector<Ref<CSSNumericValue>>& values)
+static RefPtr<CSSNumericValue> operationOnValuesOfSameUnit(NOESCAPE const T& operation, const Vector<Ref<CSSNumericValue>>& values)
 {
     bool allValuesHaveSameUnit = values.size() && std::ranges::all_of(values, [&](auto& value) {
         auto* unitValue = dynamicDowncast<CSSUnitValue>(value.get());
@@ -453,7 +453,7 @@ ExceptionOr<Ref<CSSMathSum>> CSSNumericValue::toSum(FixedVector<String>&& units)
 
     if (parsedUnits.isEmpty()) {
         std::ranges::sort(values, [](auto& a, auto& b) {
-            return is_lt(compareSpans(downcast<CSSUnitValue>(a)->unitSerialization().span(), downcast<CSSUnitValue>(b)->unitSerialization().span()));
+            return is_lt(compareSpans(downcast<CSSUnitValue>(a).unitSerialization().span(), downcast<CSSUnitValue>(b).unitSerialization().span()));
         });
         return CSSMathSum::create(WTF::move(values));
     }
@@ -462,7 +462,7 @@ ExceptionOr<Ref<CSSMathSum>> CSSNumericValue::toSum(FixedVector<String>&& units)
     for (auto& parsedUnit : parsedUnits) {
         auto temp = CSSUnitValue::create(0, parsedUnit);
         for (size_t i = 0; i < values.size();) {
-            auto value = downcast<CSSUnitValue>(values[i]);
+            Ref value = downcast<CSSUnitValue>(values[i]);
             if (auto convertedValue = value->convertTo(parsedUnit)) {
                 temp->setValue(temp->value() + convertedValue->value());
                 values.removeAt(i);
@@ -506,7 +506,7 @@ ExceptionOr<Ref<CSSNumericValue>> CSSNumericValue::parse(Document& document, Str
     }
     case CSSParserTokenType::FunctionToken: {
         auto functionID = componentValueRange.peek().functionId();
-        if (functionID == CSSValueCalc || functionID == CSSValueMin || functionID == CSSValueMax || functionID == CSSValueClamp) {
+        if (functionID == CSSValueID::Calc || functionID == CSSValueID::Min || functionID == CSSValueID::Max || functionID == CSSValueID::Clamp) {
             // FIXME: The spec is unclear on what context to use when parsing in CSSNumericValue so for the time-being, we use `Category::LengthPercentage`, as it is the most permissive.
             // See https://github.com/w3c/csswg-drafts/issues/10753
 

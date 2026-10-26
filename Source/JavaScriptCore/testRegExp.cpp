@@ -30,6 +30,7 @@
 #include <string.h>
 #include <wtf/Vector.h>
 #include <wtf/WTFProcess.h>
+#include <wtf/posix/POSIXExtras.h>
 #include <wtf/text/StringBuilder.h>
 
 #if OS(WINDOWS)
@@ -78,7 +79,7 @@ void StopWatch::stop()
     m_stopTime = MonotonicTime::now();
 }
 
-long NODELETE StopWatch::getElapsedMS()
+long LEGACY_NODELETE StopWatch::getElapsedMS()
 {
     return (m_stopTime - m_startTime).millisecondsAs<long>();
 }
@@ -393,7 +394,7 @@ static bool runFromFiles(GlobalObject* globalObject, const Vector<String>& files
 
     bool success = true;
     for (size_t i = 0; i < files.size(); i++) {
-        FILE* testCasesFile = fopen(files[i].utf8().legacyCStringPointer(), "rb");
+        FILE* testCasesFile = posixFopen(files[i].utf8(), "rb"_s);
 
         if (!testCasesFile) {
             SAFE_PRINTF("Unable to open test data file \"%s\"\n", files[i].utf8());

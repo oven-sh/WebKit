@@ -32,12 +32,13 @@
 #import "NativeWebWheelEvent.h"
 #import <pal/spi/cg/CoreGraphicsSPI.h>
 #import <pal/spi/cocoa/IOKitSPI.h>
+#import <wtf/Borrow.h>
 #import <wtf/cf/TypeCastsCF.h>
 #import <wtf/darwin/DispatchExtras.h>
 
 namespace WebKit {
 
-static float NODELETE fromFixedPoint(float value)
+static float LEGACY_NODELETE fromFixedPoint(float value)
 {
     return value / 65536.0f;
 }
@@ -82,15 +83,17 @@ static ScrollingAccelerationCurve fromIOHIDCurveArrayWithAcceleration(NSArray<NS
         curves.append({ curveAcceleration, curve });
     }];
 
+    Borrow borrowedCurves = curves;
+
     // Interpolation if desiredAcceleration is in between two curves.
-    if (curves[currentIndex].first < desiredAcceleration && (currentIndex + 1) < curves.size()) {
-        const auto& lowCurve = curves[currentIndex];
-        const auto& highCurve = curves[currentIndex + 1];
+    if (borrowedCurves[currentIndex].first < desiredAcceleration && (currentIndex + 1) < borrowedCurves->size()) {
+        const auto& lowCurve = borrowedCurves[currentIndex];
+        const auto& highCurve = borrowedCurves[currentIndex + 1];
         float ratio = (desiredAcceleration - lowCurve.first) / (highCurve.first - lowCurve.first);
         return ScrollingAccelerationCurve::interpolate(lowCurve.second, highCurve.second, ratio);
     }
 
-    return curves[currentIndex].second;
+    return borrowedCurves[currentIndex].second;
 }
 
 static RetainPtr<IOHIDEventSystemClientRef> createHIDClient()

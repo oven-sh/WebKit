@@ -88,9 +88,9 @@ private:
         bool hasCuePseudoElementRules { false };
         bool hasPartPseudoElementRules { false };
     };
-    RuleInformation NODELETE collectRuleInformation();
+    RuleInformation LEGACY_NODELETE collectRuleInformation();
 
-    RefPtr<RuleSet> m_ownedRuleSet;
+    const RefPtr<RuleSet> m_ownedRuleSet;
     const InvalidationRuleSetVector m_ruleSets;
 
     RuleInformation m_ruleInformation;

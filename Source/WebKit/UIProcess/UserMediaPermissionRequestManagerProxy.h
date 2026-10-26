@@ -78,7 +78,7 @@ public:
     static Ref<UserMediaPermissionRequestManagerProxy> create(WebPageProxy&);
     ~UserMediaPermissionRequestManagerProxy();
 
-    WebPageProxy* NODELETE page() const;
+    WebPageProxy* LEGACY_NODELETE page() const;
 
     void disconnectFromPage();
 
@@ -130,6 +130,9 @@ public:
 
     void checkUserMediaPermissionForSpeechRecognition(WebCore::FrameIdentifier mainFrameIdentifier, FrameInfoData&&, const WebCore::SecurityOrigin&, const WebCore::SecurityOrigin&, const WebCore::CaptureDevice&, CompletionHandler<void(bool)>&&);
 
+    void askDelegateToDecide(UserMediaPermissionRequestProxy&);
+    void delegateDecisionEnded(UserMediaPermissionRequestProxy&);
+
     struct DeniedRequest {
         WebCore::FrameIdentifier mainFrameID;
         Ref<WebCore::SecurityOrigin> userMediaDocumentOrigin;
@@ -172,9 +175,9 @@ private:
 
     RequestAction getRequestAction(const UserMediaPermissionRequestProxy&);
 
-    bool NODELETE wasGrantedVideoOrAudioAccess(WebCore::FrameIdentifier);
-    bool NODELETE wasGrantedAudioAccess(WebCore::FrameIdentifier);
-    bool NODELETE wasGrantedVideoAccess(WebCore::FrameIdentifier);
+    bool LEGACY_NODELETE wasGrantedVideoOrAudioAccess(WebCore::FrameIdentifier);
+    bool LEGACY_NODELETE wasGrantedAudioAccess(WebCore::FrameIdentifier);
+    bool LEGACY_NODELETE wasGrantedVideoAccess(WebCore::FrameIdentifier);
 
     void computeFilteredDeviceList(WebCore::FrameIdentifier, WebCore::PermissionState, WebCore::PermissionState, CompletionHandler<void(Vector<WebCore::CaptureDeviceWithCapabilities>&&)>&&);
     void platformGetMediaStreamDevices(bool revealIdsAndLabels, CompletionHandler<void(Vector<WebCore::CaptureDeviceWithCapabilities>&&)>&&);
@@ -195,6 +198,7 @@ private:
 
     void processNextUserMediaRequestIfNeeded();
     void decidePolicyForUserMediaPermissionRequest();
+    void askDelegateAboutNextWaitingRequest();
     void updateStoredRequests(UserMediaPermissionRequestProxy&);
 
     String ephemeralDeviceHashSaltForFrame(WebCore::FrameIdentifier);
@@ -203,6 +207,8 @@ private:
 
     RefPtr<UserMediaPermissionRequestProxy> m_currentUserMediaRequest;
     Deque<Ref<UserMediaPermissionRequestProxy>> m_pendingUserMediaRequests;
+    WeakPtr<UserMediaPermissionRequestProxy> m_requestAwaitingDelegateDecision;
+    Deque<Ref<UserMediaPermissionRequestProxy>> m_requestsWaitingForDelegate;
     HashSet<MediaDevicePermissionRequestIdentifier> m_pendingDeviceRequests;
 
     WeakPtr<WebPageProxy> m_page;
@@ -231,7 +237,7 @@ private:
     HashSet<WebCore::FrameIdentifier> m_grantedAudioFrames;
     HashSet<WebCore::FrameIdentifier> m_grantedVideoFrames;
 #if PLATFORM(COCOA)
-    RetainPtr<WKRotationCoordinatorObserver> m_objcObserver;
+    const RetainPtr<WKRotationCoordinatorObserver> m_objcObserver;
 #endif
     std::optional<MonotonicTime> m_lastCaptureTime;
 };

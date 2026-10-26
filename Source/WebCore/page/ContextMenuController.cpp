@@ -61,6 +61,7 @@
 #include "HTMLTableElement.h"
 #include "HandleUserInputEventResult.h"
 #include "HitTestResult.h"
+#include "HitTestSource.h"
 #include "ImageBuffer.h"
 #include "ImageOverlay.h"
 #include "LocalFrame.h"
@@ -74,16 +75,21 @@
 #include "PageInspectorController.h"
 #include "PlatformEvent.h"
 #include "PlatformMouseEvent.h"
+#include "Range.h"
 #include "RenderImage.h"
 #include "ReplaceSelectionCommand.h"
 #include "ResourceRequest.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGSVGElement.h"
 #include "Settings.h"
+#include "SimpleRange.h"
+#include "TextChecking.h"
 #include "TextIterator.h"
 #include "TranslationContextMenuInfo.h"
 #include "TypingCommand.h"
 #include "UserTypingGestureIndicator.h"
+#include "VisiblePosition.h"
+#include "VisibleUnits.h"
 #include "WindowFeatures.h"
 #include "markup.h"
 #include <wtf/SetForScope.h>
@@ -246,6 +252,7 @@ std::unique_ptr<ContextMenu> ContextMenuController::maybeCreateContextMenu(Event
         return nullptr;
 
     m_context = { contextType, result, &event };
+    m_spellingAndGrammarTarget.reset();
 #if ENABLE(CONTEXT_MENU_QR_CODE_DETECTION)
     prepareContextForQRCode(m_context);
 #endif
@@ -301,6 +308,14 @@ static void insertUnicodeCharacter(char16_t character, LocalFrame& frame)
 }
 
 #endif
+
+static std::optional<SimpleRange> rangeIfTextUnchanged(Range& range, const String& text)
+{
+    auto simpleRange = makeSimpleRange(range);
+    if (plainText(simpleRange) != text)
+        return std::nullopt;
+    return simpleRange;
+}
 
 void ContextMenuController::contextMenuItemSelected(ContextMenuAction action, const String& title)
 {
@@ -492,6 +507,13 @@ void ContextMenuController::contextMenuItemSelected(ContextMenuAction action, co
         break;
 #endif
     case ContextMenuItemTagSpellingGuess: {
+        if (auto target = m_spellingAndGrammarTarget) {
+            auto wordRange = rangeIfTextUnchanged(target->range, target->text);
+            if (wordRange && protect(frame->editor())->shouldInsertText(title, *wordRange, EditorInsertAction::Pasted))
+                protect(frame->editor())->replaceRangeForSpellChecking(*wordRange, title);
+            break;
+        }
+
         VisibleSelection selection = frame->selection().selection();
         if (protect(frame->editor())->shouldInsertText(title, selection.toNormalizedRange(), EditorInsertAction::Pasted)) {
             OptionSet<ReplaceSelectionCommand::CommandOption> replaceOptions { ReplaceSelectionCommand::MatchStyle, ReplaceSelectionCommand::PreventNesting };
@@ -515,10 +537,18 @@ void ContextMenuController::contextMenuItemSelected(ContextMenuAction action, co
         break;
     }
     case ContextMenuItemTagIgnoreSpelling:
-        protect(frame->editor())->ignoreSpelling();
+        if (auto target = m_spellingAndGrammarTarget) {
+            if (auto wordRange = rangeIfTextUnchanged(target->range, target->text))
+                protect(frame->editor())->ignoreSpelling(WTF::move(wordRange));
+        } else
+            protect(frame->editor())->ignoreSpelling();
         break;
     case ContextMenuItemTagLearnSpelling:
-        protect(frame->editor())->learnSpelling();
+        if (auto target = m_spellingAndGrammarTarget) {
+            if (auto wordRange = rangeIfTextUnchanged(target->range, target->text))
+                protect(frame->editor())->learnSpelling(WTF::move(wordRange));
+        } else
+            protect(frame->editor())->learnSpelling();
         break;
     case ContextMenuItemTagSearchWeb:
         m_client->searchWithGoogle(frame.get());
@@ -530,7 +560,8 @@ void ContextMenuController::contextMenuItemSelected(ContextMenuAction action, co
     case ContextMenuItemTagOpenLink:
         if (RefPtr targetFrame = m_context.hitTestResult().targetFrame()) {
             ResourceRequest resourceRequest { m_context.hitTestResult().absoluteLinkURL(), frame->loader().outgoingReferrer() };
-            FrameLoadRequest frameLoadRequest { protect(frame->document()).releaseNonNull(), protect(frame->document())->securityOrigin(), WTF::move(resourceRequest), { }, InitiatedByMainFrame::Unknown };
+            Ref document = *frame->document();
+            FrameLoadRequest frameLoadRequest { document.copyRef(), protect(document->securityOrigin()), WTF::move(resourceRequest), { }, InitiatedByMainFrame::Unknown };
             frameLoadRequest.setNewFrameOpenerPolicy(NewFrameOpenerPolicy::Suppress);
             if (targetFrame->isMainFrame())
                 frameLoadRequest.setShouldOpenExternalURLsPolicy(ShouldOpenExternalURLsPolicy::ShouldAllow);
@@ -958,6 +989,62 @@ void ContextMenuController::createAndAppendUnicodeSubMenu(ContextMenuItem& unico
 #define SUPPORTS_TOGGLE_SHOW_HIDE_MEDIA_CONTROLS 0
 #endif
 
+static bool contextualClickSkippedWordSelection(const Event* event, const Editor& editor)
+{
+    RefPtr mouseEvent = dynamicDowncast<MouseEvent>(event);
+    return mouseEvent && editor.behavior().shouldSelectOnContextualMenuClick() && mouseEvent->inputSource() == MouseEventInputSource::Automation && !mouseEvent->ctrlKey();
+}
+
+static Vector<SimpleRange, 2> wordRangesForContextualClick(const HitTestResult& result)
+{
+    RefPtr targetNode = result.targetNode();
+    if (!targetNode || !targetNode->renderer())
+        return { };
+
+    VisiblePosition position = protect(targetNode->renderer())->visiblePositionForPoint(result.localPoint(), HitTestSource::User);
+    if (position.isNull())
+        return { };
+
+    Vector<SimpleRange, 2> wordRanges;
+    for (auto side : { WordSide::RightWordIfOnBoundary, WordSide::LeftWordIfOnBoundary }) {
+        auto wordRange = makeSimpleRange(VisiblePositionRange { startOfWord(position, side), endOfWord(position, side) });
+        if (wordRange && !wordRange->collapsed() && !wordRanges.contains(*wordRange))
+            wordRanges.append(WTF::move(*wordRange));
+    }
+    return wordRanges;
+}
+
+TextCheckingGuesses ContextMenuController::guessesForSpellingAndGrammarItems(LocalFrame& frame)
+{
+    Ref editor = frame.editor();
+    auto guesses = editor->guessesForMisspelledOrUngrammatical();
+
+    if (guesses.misspelled || guesses.ungrammatical || !frame.selection().isCaret())
+        return guesses;
+
+    if (!contextualClickSkippedWordSelection(protect(m_context.event()), editor))
+        return guesses;
+
+    auto caret = makeBoundaryPoint(frame.selection().selection().visibleStart());
+    if (!caret)
+        return guesses;
+
+    // Offer the items for the word that a user-driven contextual click would have selected.
+    for (auto&& wordRange : wordRangesForContextualClick(m_context.hitTestResult())) {
+        if (!contains(ComposedTree, wordRange, *caret))
+            continue;
+
+        auto wordGuesses = editor->guessesForMisspelledOrUngrammatical(wordRange);
+        if (!wordGuesses.misspelled && !wordGuesses.ungrammatical)
+            continue;
+
+        m_spellingAndGrammarTarget.emplace(createLiveRange(wordRange), plainText(wordRange));
+        return wordGuesses;
+    }
+
+    return guesses;
+}
+
 void ContextMenuController::populate()
 {
     ContextMenuItem OpenLinkItem(ContextMenuItemType::Action, ContextMenuItemTagOpenLink, contextMenuItemTagOpenLink());
@@ -1078,12 +1165,6 @@ void ContextMenuController::populate()
     RefPtr frame = node->document().frame();
     if (!frame)
         return;
-
-#if ENABLE(SERVICE_CONTROLS)
-    // The default image control menu gets populated solely by the platform.
-    if (m_context.controlledImage())
-        return;
-#endif
 
     auto addSelectedTextActionsIfNeeded = [&] (const String& selectedText) {
         if (selectedText.isEmpty())
@@ -1328,7 +1409,7 @@ void ContextMenuController::populate()
             if (spellCheckingEnabled) {
                 // Consider adding spelling-related or grammar-related context menu items (never both, since a single selected range
                 // is never considered a misspelling and bad grammar at the same time)
-                auto [guesses, misspelling, badGrammar] = protect(frame->editor())->guessesForMisspelledOrUngrammatical();
+                auto [guesses, misspelling, badGrammar] = guessesForSpellingAndGrammarItems(*frame);
                 if (misspelling || badGrammar) {
                     if (guesses.isEmpty()) {
                         // If there's bad grammar but no suggestions (e.g., repeated word), just leave off the suggestions
@@ -1414,7 +1495,7 @@ void ContextMenuController::populate()
             appendItem(writingToolsItem, m_contextMenu.get());
 #if ENABLE(TOP_LEVEL_WRITING_TOOLS_CONTEXT_MENU_ITEMS)
             bool editorHasText = [&] {
-                if (auto range = frame->editor().contextRangeForCandidateRequest())
+                if (auto range = protect(frame->editor())->contextRangeForCandidateRequest())
                     return !plainText(*range).isEmpty();
 
                 return false;
@@ -1585,7 +1666,7 @@ void ContextMenuController::checkOrEnableIfNeeded(ContextMenuItem& item) const
         case ContextMenuItemTagLeftToRight:
         case ContextMenuItemTagRightToLeft: {
             String direction = item.action() == ContextMenuItemTagLeftToRight ? "ltr"_s : "rtl"_s;
-            shouldCheck = frameEditor->selectionHasStyle(CSSPropertyDirection, direction) != TriState::False;
+            shouldCheck = frameEditor->selectionHasStyle(CSSPropertyID::Direction, direction) != TriState::False;
             shouldEnable = true;
             break;
         }
@@ -1615,7 +1696,7 @@ void ContextMenuController::checkOrEnableIfNeeded(ContextMenuItem& item) const
             break;
         case ContextMenuItemTagIgnoreSpelling:
         case ContextMenuItemTagLearnSpelling:
-            shouldEnable = frame->selection().isRange();
+            shouldEnable = frame->selection().isRange() || m_spellingAndGrammarTarget;
             break;
         case ContextMenuItemTagPaste:
             shouldEnable = frameEditor->canDHTMLPaste() || frameEditor->canEdit();
@@ -1650,7 +1731,7 @@ void ContextMenuController::checkOrEnableIfNeeded(ContextMenuItem& item) const
             break;
 #endif
         case ContextMenuItemTagUnderline: {
-            shouldCheck = frameEditor->selectionHasStyle(CSSPropertyWebkitTextDecorationsInEffect, "underline"_s) != TriState::False;
+            shouldCheck = frameEditor->selectionHasStyle(CSSPropertyID::WebkitTextDecorationsInEffect, "underline"_s) != TriState::False;
             shouldEnable = frameEditor->canEditRichly();
             break;
         }
@@ -1663,12 +1744,12 @@ void ContextMenuController::checkOrEnableIfNeeded(ContextMenuItem& item) const
             shouldEnable = true;
             break;
         case ContextMenuItemTagItalic: {
-            shouldCheck = frameEditor->selectionHasStyle(CSSPropertyFontStyle, "italic"_s) != TriState::False;
+            shouldCheck = frameEditor->selectionHasStyle(CSSPropertyID::FontStyle, "italic"_s) != TriState::False;
             shouldEnable = frameEditor->canEditRichly();
             break;
         }
         case ContextMenuItemTagBold: {
-            shouldCheck = frameEditor->selectionHasStyle(CSSPropertyFontWeight, "bold"_s) != TriState::False;
+            shouldCheck = frameEditor->selectionHasStyle(CSSPropertyID::FontWeight, "bold"_s) != TriState::False;
             shouldEnable = frameEditor->canEditRichly();
             break;
         }

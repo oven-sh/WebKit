@@ -30,6 +30,7 @@
 #include <JavaScriptCore/JSCJSValue.h>
 #include <WebCore/ActiveDOMObject.h>
 #include <WebCore/CanvasBase.h>
+#include <WebCore/CanvasContent.h>
 #include <WebCore/CanvasElementImage.h>
 #include <WebCore/Document.h>
 #include <WebCore/FloatRect.h>
@@ -45,6 +46,7 @@
 
 namespace WebCore {
 
+class BitmapImage;
 class BlobCallback;
 class CanvasRenderingContext;
 class CanvasRenderingContext2D;
@@ -64,6 +66,7 @@ class WebCoreOpaqueRoot;
 struct CanvasRenderingContext2DSettings;
 struct ImageBitmapRenderingContextSettings;
 struct UncachedString;
+struct UpdateElementGeometryOptions;
 
 class HTMLCanvasElement final : public HTMLElement, public ActiveDOMObject, public CanvasBase {
     WTF_MAKE_TZONE_ALLOCATED(HTMLCanvasElement);
@@ -78,21 +81,19 @@ public:
     WEBCORE_EXPORT ExceptionOr<void> setWidth(unsigned);
     WEBCORE_EXPORT ExceptionOr<void> setHeight(unsigned);
 
-    // `layoutSubtree` attribute opts in canvas descendants to layout and participate in hit testing.
-    // It causes the direct children of the <canvas> to have a stacking context, become a containing
-    // block for all descendants, and create RenderElements. These RenderElements behave as if they
-    // are visible, but their drawing is not visible to the user. They are recorded in DisplayLists
-    // and these DisplayLists are replayed back into the canvas only via calls to drawElementImage().
-    void setLayoutSubtree(bool);
-    bool layoutSubtree() const;
+    const AtomString& LEGACY_NODELETE canvasContentForBindings() const;
+    CanvasContent canvasContent() const;
+    bool hasDrawableContent() const;
 
     void requestPaint();
     void dispatchPaintEvent();
 
-    ExceptionOr<Ref<DOMMatrix>> getElementTransform(const CanvasElementImageSource&, DOMMatrix& drawTransform);
-    ExceptionOr<Ref<CanvasElementImage>> captureElementImage(Element&);
+    std::optional<CanvasElementSnapshot> canvasDrawableSnapshot(Element&) const;
+    ExceptionOr<Ref<CanvasElementImage>> captureElementImage(Element&) const;
 
-    std::optional<CanvasElementSnapshot> drawableElementSnapshot(Element&) const;
+    ExceptionOr<void> updateElementGeometry(const CanvasElementImageSource&, std::optional<UpdateElementGeometryOptions>);
+    ExceptionOr<void> clearElementGeometry(const CanvasElementImageSource&);
+    ExceptionOr<Ref<DOMMatrix>> getElementTransform(const Element&);
 
     CanvasRenderingContext* renderingContext() const final { return m_context.get(); }
     ExceptionOr<std::optional<RenderingContext>> getContext(JSC::JSGlobalObject&, const String& contextId, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments);
@@ -140,20 +141,21 @@ public:
 
     std::unique_ptr<CSSParserContext> createCSSParserContext() const final;
 
-    Image* copiedImage() const;
+    BitmapImage* copiedImage() const;
     RefPtr<ImageData> getImageData();
 
     SecurityOrigin* securityOrigin() const final;
 
     bool needsPreparationForDisplay();
     void prepareForDisplay();
+    bool usesContentsAsLayerContents() const;
     void dynamicRangeLimitDidChange(PlatformDynamicRangeLimit);
     WEBCORE_EXPORT std::optional<double> getContextEffectiveDynamicRangeLimitValue() const;
 
     void setIsSnapshotting(bool isSnapshotting) { m_isSnapshotting = isSnapshotting; }
     bool isSnapshotting() const { return m_isSnapshotting; }
 
-    bool NODELETE isControlledByOffscreen() const;
+    bool LEGACY_NODELETE isControlledByOffscreen() const;
 
     void queueTaskKeepingObjectAlive(TaskSource, Function<void(CanvasBase&)>&&) final;
     void dispatchEvent(Event&) final;
@@ -188,13 +190,9 @@ private:
 
     void didUpdateSizeProperties();
 
-    bool usesContentsAsLayerContents() const;
-
     ScriptExecutionContext* canvasBaseScriptExecutionContext() const final { return HTMLElement::scriptExecutionContext(); }
 
     void didMoveToNewDocument(Document& oldDocument, Document& newDocument) final;
-
-    std::optional<FloatRect> computeDirtyRectangleIfNeeded(const std::optional<FloatRect>&) const;
 
     bool m_ignoreDidUpdateSizeProperties { false };
 #if ENABLE(WEBGL)
@@ -204,10 +202,10 @@ private:
 
     std::unique_ptr<CanvasRenderingContext> m_context;
     PlatformDynamicRangeLimit m_dynamicRangeLimit { PlatformDynamicRangeLimit::initialValue() };
-    mutable RefPtr<Image> m_copiedImage; // For CSSCanvasValue.
+    mutable RefPtr<BitmapImage> m_copiedImage; // For CSSCanvasValue.
 };
 
-WebCoreOpaqueRoot root(HTMLCanvasElement*);
+WebCoreOpaqueRoot LEGACY_NODELETE root(HTMLCanvasElement*);
 
 } // namespace WebCore
 

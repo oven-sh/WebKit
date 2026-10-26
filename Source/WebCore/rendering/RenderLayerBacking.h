@@ -99,6 +99,7 @@ public:
 
     // Update graphics layer position and bounds.
     void updateGeometry(const RenderLayer* compositingAncestor);
+    void updateAnimationExtent();
 
     // Update state the requires that descendant layers have been updated.
     void updateAfterDescendants();
@@ -109,6 +110,7 @@ public:
     void updateAfterLayout(bool needsClippingUpdate, bool needsFullRepaint);
     
     GraphicsLayer* graphicsLayer() const { return m_graphicsLayer.get(); }
+    bool hasContentsDisplayDelegate() const;
 
     // Layer to clip children
     bool hasClippingLayer() const { return (m_childContainmentLayer && !m_isFrameLayerWithTiledBacking); }
@@ -130,8 +132,8 @@ public:
     bool backgroundLayerPaintsFixedRootBackground() const { return m_backgroundLayerPaintsFixedRootBackground; }
 
     bool hasSVGPaintOrderSegments() const { return !m_svgPaintOrderSegments.isEmpty(); }
-    GraphicsLayer* svgSegmentLayerAfterCompositedChild(const RenderLayer&) const;
-    std::optional<WTF::Range<unsigned>> svgSegmentRangeForGraphicsLayer(const GraphicsLayer&) const;
+    GraphicsLayer* LEGACY_NODELETE svgSegmentLayerAfterCompositedChild(const RenderLayer&) const;
+    std::optional<WTF::Range<unsigned>> LEGACY_NODELETE svgSegmentRangeForGraphicsLayer(const GraphicsLayer&) const;
 
 #if USE(SYSTEM_PREVIEW) && ENABLE(MODEL_PROCESS)
     GraphicsLayer* systemPreviewBadgeLayer() const { return m_systemPreviewBadgeLayer.get(); }
@@ -140,7 +142,7 @@ public:
     bool needsRepaintOnCompositedScroll() const;
 
     bool requiresBackgroundLayer() const { return m_requiresBackgroundLayer; }
-    void NODELETE setRequiresBackgroundLayer(bool);
+    void LEGACY_NODELETE setRequiresBackgroundLayer(bool);
 
     bool hasScrollingLayer() const { return m_scrollContainerLayer != nullptr; }
     GraphicsLayer* scrollContainerLayer() const { return m_scrollContainerLayer.get(); }
@@ -179,7 +181,7 @@ public:
 
     bool hasMaskLayer() const { return m_maskLayer; }
 
-    WEBCORE_EXPORT GraphicsLayer* NODELETE parentForSublayers() const;
+    WEBCORE_EXPORT GraphicsLayer* LEGACY_NODELETE parentForSublayers() const;
     GraphicsLayer* childForSuperlayers() const;
     GraphicsLayer* childForSuperlayersExcludingViewTransitions() const;
 
@@ -211,13 +213,13 @@ public:
     void transformRelatedPropertyDidChange();
 
 #if ENABLE(THREADED_ANIMATIONS)
-    const AcceleratedEffectStack* NODELETE acceleratedEffectStack() const;
+    const AcceleratedEffectStack* LEGACY_NODELETE acceleratedEffectStack() const;
     void updateAcceleratedEffectsAndBaseValues(HashSet<Ref<AcceleratedTimeline>>&);
 #endif
 
-    WEBCORE_EXPORT LayoutRect NODELETE compositedBounds() const;
+    WEBCORE_EXPORT LayoutRect LEGACY_NODELETE compositedBounds() const;
     // Returns true if changed.
-    bool NODELETE setCompositedBounds(const LayoutRect&);
+    bool LEGACY_NODELETE setCompositedBounds(const LayoutRect&);
     // Returns true if changed.
     bool updateCompositedBounds();
     
@@ -228,7 +230,7 @@ public:
     void updateEventRegion();
     
     bool needsEventRegionUpdate() const { return m_needsEventRegionUpdate; }
-    void NODELETE setNeedsEventRegionUpdate(bool needsUpdate = true);
+    void LEGACY_NODELETE setNeedsEventRegionUpdate(bool needsUpdate = true);
 #endif
 
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
@@ -269,6 +271,7 @@ public:
 
     float pageScaleFactor() const override;
     float zoomedOutPageScaleFactor() const override;
+    bool delegatesScaling() const override;
 
     FloatSize enclosingFrameViewVisibleSize() const override;
 
@@ -347,6 +350,8 @@ private:
 
     void createPrimaryGraphicsLayer();
     void destroyGraphicsLayers();
+
+    void updateAppliesPageScale();
     
     void willDestroyLayer(const GraphicsLayer*);
 
@@ -414,7 +419,7 @@ private:
 
     void setBackgroundLayerPaintsFixedRootBackground(bool);
 
-    LayoutSize NODELETE contentOffsetInCompositingLayer() const;
+    LayoutSize LEGACY_NODELETE contentOffsetInCompositingLayer() const;
     LayoutSize offsetRelativeToRendererOriginForDescendantLayers() const;
     
     void ensureClippingStackLayers(LayerAncestorClippingStack&);
@@ -441,7 +446,7 @@ private:
 #endif
 
     // Return the opacity value that this layer should use for compositing.
-    float NODELETE compositingOpacity(float rendererOpacity) const;
+    float LEGACY_NODELETE compositingOpacity(float rendererOpacity) const;
     Color rendererBackgroundColor() const;
 
     bool isMainFrameRenderViewLayer() const;
@@ -475,6 +480,7 @@ private:
     bool hasVisibleNonCompositedDescendants() const;
 
     bool shouldClipCompositedBounds() const;
+    static IntOutsets intersectClipsSampledByFilters(const RenderLayer&, const RenderLayer& rootLayer, LayoutRect& clipRect);
 
     bool hasTiledBackingFlatteningLayer() const { return (m_childContainmentLayer && m_isFrameLayerWithTiledBacking); }
     GraphicsLayer* tileCacheFlatteningLayer() const { return m_isFrameLayerWithTiledBacking ? m_childContainmentLayer.get() : nullptr; }
@@ -484,10 +490,11 @@ private:
     
     void paintDebugOverlays(const GraphicsLayer*, GraphicsContext&);
 
-    static CSSPropertyID NODELETE graphicsLayerToCSSProperty(AnimatedProperty);
-    static AnimatedProperty NODELETE cssToGraphicsLayerProperty(CSSPropertyID);
+    static CSSPropertyID LEGACY_NODELETE graphicsLayerToCSSProperty(AnimatedProperty);
+    static AnimatedProperty LEGACY_NODELETE cssToGraphicsLayerProperty(CSSPropertyID);
 
     bool canIssueSetNeedsDisplay() const { return !paintsIntoWindow() && !paintsIntoCompositedAncestor(); }
+    float LEGACY_NODELETE pixelSnappingScaleFactor() const;
     LayoutRect computeParentGraphicsLayerRect(const RenderLayer* compositedAncestor) const;
     LayoutRect computePrimaryGraphicsLayerRect(const RenderLayer* compositedAncestor, const LayoutRect& parentGraphicsLayerRect) const;
 

@@ -50,7 +50,7 @@ void HTMLTableCaptionElement::collectPresentationalHintsForAttribute(const Quali
 {
     if (name == alignAttr) {
         if (!value.isEmpty())
-            addPropertyToPresentationalHintStyle(style, CSSPropertyCaptionSide, value);
+            addPropertyToPresentationalHintStyle(style, CSSPropertyID::CaptionSide, value);
     } else
         HTMLElement::collectPresentationalHintsForAttribute(name, value, style);
 }

@@ -148,15 +148,6 @@ test/language/statements/class/elements/private-class-field-on-nonextensible-obj
   strict mode: 3
 test/language/statements/class/subclass/private-class-field-on-nonextensible-return-override.js:
   strict mode: 3
-test/language/statements/for-await-of/head-lhs-async.js:
-  default: 3
-  strict mode: 3
-test/language/statements/for-in/head-lhs-let.js:
-  default: 3
-test/language/statements/for-in/identifier-let-allowed-as-lefthandside-expression-not-strict.js:
-  default: 3
-test/language/statements/for/head-lhs-let.js:
-  default: 3
 test/language/statements/with/get-binding-value-call-with-proxy-env.js:
   default: 3
 test/language/statements/with/get-binding-value-idref-with-proxy-env.js:
@@ -180,9 +171,6 @@ test/staging/sm/Function/function-toString-builtin-name.js:
   strict mode: 3
 test/staging/sm/PrivateName/modify-non-extensible.js:
   default: 3
-test/staging/sm/Proxy/revoked-get-function-realm-typeerror.js:
-  default: 3
-  strict mode: 3
 test/staging/sm/RegExp/replace-sticky-lastIndex.js:
   default: 3
   strict mode: 3
@@ -203,9 +191,6 @@ test/staging/sm/class/superPropOrdering.js:
   strict mode: 3
 test/staging/sm/eval/redeclared-arguments-in-param-expression-eval.js:
   default: 3
-test/staging/sm/expressions/exponentiation-unparenthesised-unary.js:
-  default: 3
-  strict mode: 3
 test/staging/sm/expressions/object-literal-computed-property-evaluation.js:
   default: 3
   strict mode: 3
@@ -217,8 +202,6 @@ test/staging/sm/extensions/function-caller-skips-eval-frames.js:
 test/staging/sm/extensions/new-cross-compartment.js:
   default: 3
   strict mode: 3
-test/staging/sm/fields/await-identifier-module-2.js:
-  module: 3
 test/staging/sm/generators/delegating-yield-1.js:
   default: 3
   strict mode: 3
@@ -234,14 +217,3 @@ test/staging/sm/generators/delegating-yield-6.js:
 test/staging/sm/generators/delegating-yield-7.js:
   default: 3
   strict mode: 3
-test/staging/sm/lexical-environment/block-scoped-functions-annex-b-label.js:
-  default: 3
-test/staging/sm/lexical-environment/block-scoped-functions-deprecated-redecl.js:
-  default: 3
-test/staging/sm/lexical-environment/for-loop.js:
-  default: 3
-  strict mode: 3
-test/staging/sm/misc/future-reserved-words.js:
-  default: 3
-test/staging/sm/module/await-restricted-nested.js:
-  module: 3

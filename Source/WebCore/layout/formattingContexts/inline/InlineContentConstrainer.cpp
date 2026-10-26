@@ -57,19 +57,19 @@ static const float textWrapPrettyMaxShrink = 3;
 // We would like 2 or more items on the last line for text-wrap-style:pretty to avoid orphans.
 static const size_t lastLinePreferredInlineItemCount = 2;
 
-static size_t NODELETE lastLineBreakingPointOffset()
+static size_t LEGACY_NODELETE lastLineBreakingPointOffset()
 {
     return 2 * lastLinePreferredInlineItemCount + 1;
 }
 
 // Use auto layout if ideal line width is too short relative to the largest inline item.
 // In these situations, text-wrap-pretty does very little of note other than take up time.
-static bool NODELETE validIdealLineWidth(InlineLayoutUnit maxItemWidth, InlineLayoutUnit idealLineWidth, InlineLayoutUnit maxTextIndent)
+static bool LEGACY_NODELETE validIdealLineWidth(InlineLayoutUnit maxItemWidth, InlineLayoutUnit idealLineWidth, InlineLayoutUnit maxTextIndent)
 {
     return idealLineWidth >= maxItemWidth + maxTextIndent;
 }
 
-static bool NODELETE validLineWidthPretty(InlineLayoutUnit candidateLineWidth, InlineLayoutUnit idealLineWidth)
+static bool LEGACY_NODELETE validLineWidthPretty(InlineLayoutUnit candidateLineWidth, InlineLayoutUnit idealLineWidth)
 {
     auto difference = candidateLineWidth - idealLineWidth;
     if (difference > 0)
@@ -79,19 +79,19 @@ static bool NODELETE validLineWidthPretty(InlineLayoutUnit candidateLineWidth, I
 
 // Full implementation of the raggedness function defined in:
 // http://www.eprg.org/G53DOC/pdfs/knuth-plass-breaking.pdf
-static float NODELETE computeRaggedness(InlineLayoutUnit candidateLineWidth, InlineLayoutUnit idealLineWidth)
+static float LEGACY_NODELETE computeRaggedness(InlineLayoutUnit candidateLineWidth, InlineLayoutUnit idealLineWidth)
 {
     auto difference = candidateLineWidth - idealLineWidth;
     auto intermediate = difference / (difference > 0 ? textWrapPrettyStretchability : textWrapPrettyShrinkability);
     return 100 * abs(pow(intermediate, 3));
 };
 
-static float NODELETE computeCostBalance(InlineLayoutUnit candidateLineWidth, InlineLayoutUnit idealLineWidth)
+static float LEGACY_NODELETE computeCostBalance(InlineLayoutUnit candidateLineWidth, InlineLayoutUnit idealLineWidth)
 {
     return computeRaggedness(candidateLineWidth, idealLineWidth);
 };
 
-static float NODELETE computeCostPretty(InlineLayoutUnit candidateLineWidth, InlineLayoutUnit idealLineWidth, size_t breakIndex, size_t numberOfBreakOpportunities, InlineLayoutUnit)
+static float LEGACY_NODELETE computeCostPretty(InlineLayoutUnit candidateLineWidth, InlineLayoutUnit idealLineWidth, size_t breakIndex, size_t numberOfBreakOpportunities, InlineLayoutUnit)
 {
     // FIXME: add support for river minimization.
     // Force max/minimum line width bounds if there are more then lastLinePreferredInlineItemCount items to be laid out after the candidate line.
@@ -107,7 +107,7 @@ static LayoutUnit computeLineWidthFromSlidingWidth(InlineLayoutUnit indentWidth,
     return LayoutUnit::fromFloatCeil(indentWidth + slidingWidth.width() + LayoutUnit::epsilon());
 }
 
-static bool NODELETE containsTrailingSoftHyphen(const InlineItem& inlineItem)
+static bool LEGACY_NODELETE containsTrailingSoftHyphen(const InlineItem& inlineItem)
 {
     if (inlineItem.style().hyphens() == Hyphens::None)
         return false;
@@ -117,7 +117,7 @@ static bool NODELETE containsTrailingSoftHyphen(const InlineItem& inlineItem)
     return textItem->hasTrailingSoftHyphen();
 }
 
-static bool NODELETE containsPreservedTab(const InlineItem& inlineItem)
+static bool LEGACY_NODELETE containsPreservedTab(const InlineItem& inlineItem)
 {
     auto* textItem = dynamicDowncast<InlineTextItem>(inlineItem);
     if (!textItem)
@@ -137,7 +137,7 @@ static bool NODELETE containsPreservedTab(const InlineItem& inlineItem)
     return false;
 }
 
-static bool NODELETE cannotConstrainInlineItem(const InlineItem& inlineItem)
+static bool LEGACY_NODELETE cannotConstrainInlineItem(const InlineItem& inlineItem)
 {
     // Out-of-flow items are ignored by inline layout and do not affect constraint calculations.
     if (inlineItem.isOutOfFlow())
@@ -208,7 +208,7 @@ InlineContentConstrainer::EntryPretty InlineContentConstrainer::layoutSingleLine
     // Hyphenation occurs when we require more space than is available. In this case, we should apply max stretch to idealLineWidth.
     InlineRect lineInitialRect = InlineRect { 0.f, m_horizontalConstraints.logicalLeft, idealLineWidth + textWrapPrettyStretchability * textWrapPrettyMaxStretch, 0.f };
     LineLayoutResult lineLayoutResult = lineBuilder.layoutInlineContent({ layoutRange, lineInitialRect }, lastValidEntry.previousLine, !lastValidEntry.previousLine);
-    InlineItemPosition lineEnd = InlineFormattingUtils::leadingInlineItemPositionForNextLine(lineLayoutResult.inlineItemRange.end, lastValidEntry.lineEnd, !lineLayoutResult.floatContent.hasIntrusiveFloat.isEmpty() || !lineLayoutResult.floatContent.placedFloats.isEmpty(), layoutRange.end);
+    InlineItemPosition lineEnd = InlineFormattingUtils::leadingInlineItemPositionForNextLine(lineLayoutResult, lastValidEntry.lineEnd, layoutRange.end);
     bool didLayoutAllItems = lineEnd.index == layoutRange.endIndex();
     bool hasEnoughItemsForCurrentLine = layoutRange.endIndex() - layoutRange.startIndex() > lastLineBreakingPointOffset();
     bool hasEnoughItemsForNextLine = lineEnd.index + lastLineBreakingPointOffset() < layoutRange.endIndex();
@@ -216,9 +216,9 @@ InlineContentConstrainer::EntryPretty InlineContentConstrainer::layoutSingleLine
         return { lastValidEntry.accumulatedCost,
             // This function is only called when there are no more viable break points for PrettifyRange.
             // Use the last valid entry's accumulated cost as we must use this breakpoint no matter what.
+            lineLayoutResult.contentGeometry.logicalWidth,
             previousBreakIndex,
             lastValidEntry.lineIndex + 1,
-            lineLayoutResult.contentGeometry.logicalWidth,
             lineEnd,
             buildPreviousLine(lastValidEntry.lineIndex + 1, lineLayoutResult)
         };
@@ -228,16 +228,22 @@ InlineContentConstrainer::EntryPretty InlineContentConstrainer::layoutSingleLine
     auto shortenedLayoutRange = layoutRange;
     shortenedLayoutRange.end.index -= lastLineBreakingPointOffset();
     LineLayoutResult shortenedLineLayoutResult = lineBuilder.layoutInlineContent({ shortenedLayoutRange, lineInitialRect }, lastValidEntry.previousLine, !lastValidEntry.previousLine);
-    InlineItemPosition shortenedLineEnd = InlineFormattingUtils::leadingInlineItemPositionForNextLine(shortenedLineLayoutResult.inlineItemRange.end, lastValidEntry.lineEnd, !shortenedLineLayoutResult.floatContent.hasIntrusiveFloat.isEmpty() || !shortenedLineLayoutResult.floatContent.placedFloats.isEmpty(), shortenedLayoutRange.end);
+    InlineItemPosition shortenedLineEnd = InlineFormattingUtils::leadingInlineItemPositionForNextLine(shortenedLineLayoutResult, lastValidEntry.lineEnd, shortenedLayoutRange.end);
     return { lastValidEntry.accumulatedCost,
         // This function is only called when there are no more viable break points for PrettifyRange.
         // Use the last valid entry's accumulated cost as we must use this breakpoint no matter what.
+        shortenedLineLayoutResult.contentGeometry.logicalWidth,
         previousBreakIndex,
         lastValidEntry.lineIndex + 1,
-        shortenedLineLayoutResult.contentGeometry.logicalWidth,
         shortenedLineEnd,
         buildPreviousLine(lastValidEntry.lineIndex + 1, shortenedLineLayoutResult)
     };
+}
+
+bool InlineContentConstrainer::constrainsContent(const Style::ComputedStyle& style)
+{
+    auto textWrapStyle = style.textWrapStyle();
+    return style.textWrapMode() == TextWrapMode::Wrap && (textWrapStyle == TextWrapStyle::Balance || textWrapStyle == TextWrapStyle::Pretty);
 }
 
 void InlineContentConstrainer::initialize()
@@ -292,7 +298,7 @@ void InlineContentConstrainer::initialize()
         if (numberOfVisibleLinesAllowed && (lineIndex + 1 >= numberOfVisibleLinesAllowed))
             break;
 
-        layoutRange.start = InlineFormattingUtils::leadingInlineItemPositionForNextLine(lineLayoutResult.inlineItemRange.end, previousLineEnd, !lineLayoutResult.floatContent.hasIntrusiveFloat.isEmpty() || !lineLayoutResult.floatContent.placedFloats.isEmpty(), layoutRange.end);
+        layoutRange.start = InlineFormattingUtils::leadingInlineItemPositionForNextLine(lineLayoutResult, previousLineEnd, layoutRange.end);
         previousLineEnd = layoutRange.start;
         isFirstFormattedLineCandidate &= !lineLayoutResult.hasContentfulInFlowContent();
         previousLine = buildPreviousLine(lineIndex, lineLayoutResult);

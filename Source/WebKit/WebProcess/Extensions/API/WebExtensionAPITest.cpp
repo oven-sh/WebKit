@@ -72,8 +72,7 @@ JSValueRef WebExtensionAPITest::invokeMethod(JSContextRef context, JSValueRef va
     if (!thisObject || (exception && *exception))
         return JSValueMakeUndefined(context);
 
-    // This is a safer cpp false positive (rdar://163760990).
-    SUPPRESS_UNCOUNTED_ARG JSValueRef function = JSObjectGetProperty(context, thisObject, toJSString(method).get(), exception);
+    JSValueRef function = JSObjectGetProperty(context, thisObject, toJSString(method).get(), exception);
     if (!function || (exception && *exception))
         return JSValueMakeUndefined(context);
 
@@ -132,7 +131,7 @@ void WebExtensionAPITest::sendMessage(JSContextRef context, const String& messag
 WebExtensionAPIEvent& WebExtensionAPITest::onMessage()
 {
     if (!m_onMessage)
-        m_onMessage = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::TestOnMessage);
+        lazyInitialize(m_onMessage, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::TestOnMessage));
 
     return *m_onMessage;
 }
@@ -140,7 +139,7 @@ WebExtensionAPIEvent& WebExtensionAPITest::onMessage()
 WebExtensionAPIEvent& WebExtensionAPITest::onTestStarted()
 {
     if (!m_onTestStarted)
-        m_onTestStarted = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::TestOnTestStarted);
+        lazyInitialize(m_onTestStarted, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::TestOnTestStarted));
 
     return *m_onTestStarted;
 }
@@ -148,7 +147,7 @@ WebExtensionAPIEvent& WebExtensionAPITest::onTestStarted()
 WebExtensionAPIEvent& WebExtensionAPITest::onTestFinished()
 {
     if (!m_onTestFinished)
-        m_onTestFinished = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::TestOnTestFinished);
+        lazyInitialize(m_onTestFinished, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::TestOnTestFinished));
 
     return *m_onTestFinished;
 }
@@ -253,7 +252,7 @@ void WebExtensionAPITest::assertDeepEq(JSContextRef context, JSValueRef actualVa
 String WebExtensionAPITest::combineMessages(const String& messageOne, const String& messageTwo)
 {
     if (!messageOne.isEmpty() && !messageTwo.isEmpty()) {
-        Vector<String> stringList = { messageOne, messageTwo };
+        const Vector<String> stringList = { messageOne, messageTwo };
         return makeStringByJoining(stringList, "\n"_s);
     }
 
@@ -305,9 +304,8 @@ void WebExtensionAPITest::assertThrows(JSContextRef context, JSValueRef function
     if (JSValueIsObject(context, exceptionValue)) {
         JSObjectRef object = JSValueToObject(context, exceptionValue, nullptr);
 
-        // This is a safer cpp false positive (rdar://163760990).
-        SUPPRESS_UNCOUNTED_ARG if (JSObjectHasProperty(context, object, toJSString("message"_s).get()))
-            SUPPRESS_UNCOUNTED_ARG exceptionMessageValue = JSObjectGetProperty(context, object, toJSString("message"_s).get(), 0);
+        if (JSObjectHasProperty(context, object, toJSString("message"_s).get()))
+            exceptionMessageValue = JSObjectGetProperty(context, object, toJSString("message"_s).get(), 0);
     }
 
     // Clear the exception since it was caught.
@@ -341,9 +339,8 @@ JSValueRef WebExtensionAPITest::assertSafe(JSContextRef context, JSValueRef func
     if (JSValueIsObject(context, exceptionValue)) {
         JSObjectRef object = JSValueToObject(context, exceptionValue, nullptr);
 
-        // This is a safer cpp false positive (rdar://163760990).
-        SUPPRESS_UNCOUNTED_ARG if (JSObjectHasProperty(context, object, toJSString("message"_s).get()))
-            SUPPRESS_UNCOUNTED_ARG exceptionMessageValue = JSObjectGetProperty(context, object, toJSString("message"_s).get(), 0);
+        if (JSObjectHasProperty(context, object, toJSString("message"_s).get()))
+            exceptionMessageValue = JSObjectGetProperty(context, object, toJSString("message"_s).get(), 0);
     }
 
     // Clear the exception since it was caught.
@@ -357,7 +354,7 @@ JSValueRef WebExtensionAPITest::assertSafe(JSContextRef context, JSValueRef func
 JSValueRef WebExtensionAPITest::assertSafeResolve(JSContextRef context, JSValueRef function, const String& message)
 {
     JSValueRef result = assertSafe(context, function, message);
-    if (!isThenable(context, function))
+    if (!isThenable(context, result))
         return result;
 
     return assertResolves(context, result, message);
@@ -375,8 +372,7 @@ JSValueRef WebExtensionAPITest::runTests(JSContextRef context, Vector<Protected<
     for (Protected<JSValueRef> testFunction : testFunctions)
         invokeMethod<1>(context, testResultPromises, "push"_s, { addTest(context, testFunction.get(), "test.runTests()"_s) });
 
-    // This is a safer cpp false positive (rdar://163760990).
-    SUPPRESS_UNCOUNTED_ARG return invokeMethod<1>(context, JSObjectGetProperty(context, JSContextGetGlobalObject(context), toJSString("Promise"_s).get(), nullptr), "all"_s, { testResultPromises });
+    return invokeMethod<1>(context, JSObjectGetProperty(context, JSContextGetGlobalObject(context), toJSString("Promise"_s).get(), nullptr), "all"_s, { testResultPromises });
 }
 
 void WebExtensionAPITest::recordAssertionIfNeeded(bool result, const String& message, std::pair<String, unsigned> location, String& outExceptionString)
@@ -387,7 +383,7 @@ void WebExtensionAPITest::recordAssertionIfNeeded(bool result, const String& mes
     m_hitAssertion = true;
     m_assertionMessage = message;
 
-    Vector<String> locationVector = { location.first, String::number(location.second) };
+    const Vector<String> locationVector = { location.first, String::number(location.second) };
     auto locationString = makeStringByJoining(locationVector, ":"_s);
     outExceptionString = message.isNull()
         ? makeString("Assertion Failed: "_s, locationString)
@@ -405,7 +401,7 @@ void WebExtensionContextProxy::dispatchTestMessageEvent(const String& message, c
     }
 
     enumerateFramesAndNamespaceObjects([&](auto&, auto& namespaceObject) {
-        namespaceObject.test().onMessage().invokeListenersWithJSONArgument(message, argumentJSON);
+        protect(protect(namespaceObject.test())->onMessage())->invokeListenersWithJSONArgument(message, argumentJSON);
     }, toDOMWrapperWorld(contentWorldType));
 }
 
@@ -420,7 +416,7 @@ void WebExtensionContextProxy::dispatchTestStartedEvent(const String& argumentJS
     }
 
     enumerateFramesAndNamespaceObjects([&](auto&, auto& namespaceObject) {
-        namespaceObject.test().onTestStarted().invokeListenersWithJSONArgument(argumentJSON);
+        protect(protect(namespaceObject.test())->onTestStarted())->invokeListenersWithJSONArgument(argumentJSON);
     }, toDOMWrapperWorld(contentWorldType));
 }
 
@@ -435,7 +431,7 @@ void WebExtensionContextProxy::dispatchTestFinishedEvent(const String& argumentJ
     }
 
     enumerateFramesAndNamespaceObjects([&](auto&, auto& namespaceObject) {
-        namespaceObject.test().onTestFinished().invokeListenersWithJSONArgument(argumentJSON);
+        protect(protect(namespaceObject.test())->onTestFinished())->invokeListenersWithJSONArgument(argumentJSON);
     }, toDOMWrapperWorld(contentWorldType));
 }
 

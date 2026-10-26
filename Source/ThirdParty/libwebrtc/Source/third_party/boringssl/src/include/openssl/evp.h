@@ -56,8 +56,9 @@ OPENSSL_EXPORT void EVP_PKEY_free(EVP_PKEY *pkey);
 // concurrently.
 OPENSSL_EXPORT int EVP_PKEY_up_ref(EVP_PKEY *pkey);
 
-// EVP_PKEY_dup_ref increments the reference count of `pkey` and returns `pkey`.
-// The caller must call `EVP_PKEY_free` on the result to release the reference.
+// EVP_PKEY_dup_ref increments the reference count of `pkey`, if non-null, and
+// returns `pkey`. The caller must call `EVP_PKEY_free` on the result to
+// release the reference.
 //
 // WARNING: Although the result is non-const for use with `EVP_PKEY_free`, it is
 // still shared with other parts of the application that share the same object.
@@ -190,6 +191,10 @@ OPENSSL_EXPORT const EVP_PKEY_ALG *EVP_pkey_ed25519(void);
 // can be done programmatically with OpenSSL's
 // `OSSL_PROVIDER_add_conf_parameter` function, or by passing "-provparam" to
 // the command-line tool.
+//
+// In OpenSSL 4.0, the defaults can also be fixed on a per-encoder basis by
+// setting the "output_formats" parameter to "seed-only" with
+// `OSSL_ENCODER_CTX_set_params`.
 OPENSSL_EXPORT const EVP_PKEY_ALG *EVP_pkey_ml_dsa_44(void);
 OPENSSL_EXPORT const EVP_PKEY_ALG *EVP_pkey_ml_dsa_65(void);
 OPENSSL_EXPORT const EVP_PKEY_ALG *EVP_pkey_ml_dsa_87(void);
@@ -203,6 +208,10 @@ OPENSSL_EXPORT const EVP_PKEY_ALG *EVP_pkey_ml_dsa_87(void);
 // can be done programmatically with OpenSSL's
 // `OSSL_PROVIDER_add_conf_parameter` function, or by passing "-provparam" to
 // the command-line tool.
+//
+// In OpenSSL 4.0, the defaults can also be fixed on a per-encoder basis by
+// setting the "output_formats" parameter to "seed-only" with
+// `OSSL_ENCODER_CTX_set_params`.
 OPENSSL_EXPORT const EVP_PKEY_ALG *EVP_pkey_ml_kem_768(void);
 OPENSSL_EXPORT const EVP_PKEY_ALG *EVP_pkey_ml_kem_1024(void);
 
@@ -1272,6 +1281,12 @@ OPENSSL_EXPORT size_t EVP_KEM_ciphertext_len(const EVP_KEM *kem);
 // secret produced and consumed by `kem`.
 OPENSSL_EXPORT size_t EVP_KEM_secret_len(const EVP_KEM *kem);
 
+// EVP_KEM_entropy_len_for_testing returns the fixed length, in bytes, of the
+// external entropy to provide to `EVP_KEM_encap_external_entropy_for_testing`.
+//
+// WARNING: There should be no reason to use this function in production.
+OPENSSL_EXPORT size_t EVP_KEM_entropy_len_for_testing(const EVP_KEM *kem);
+
 // EVP_KEM_encap uses `kem` to encapsulate a `peer_key`. It outputs a
 // ciphertext of length `ciphertext_len` into `*out_ciphertext` and outputs a
 // shared secret of length `secret_len` into `*out_secret`. `peer_key` must be
@@ -1282,6 +1297,20 @@ OPENSSL_EXPORT size_t EVP_KEM_secret_len(const EVP_KEM *kem);
 OPENSSL_EXPORT int EVP_KEM_encap(const EVP_KEM *kem, uint8_t *out_ciphertext,
                                  size_t ciphertext_len, uint8_t *out_secret,
                                  size_t secret_len, const EVP_PKEY *peer_key);
+
+// EVP_KEM_encap_external_entropy_for_testing behaves like `EVP_KEM_encap`, but
+// takes `entropy_len` bytes of external `entropy` to behave deterministically
+// for testing. The format of `entropy` depends on `kem`. `entropy_len` must
+// match the output of `EVP_KEM_entropy_len_for_testing` when called with `kem`.
+//
+// WARNING: This function is only exported to help callers in testing systems
+// against fixed test vectors. It must only be used for this purpose, and not in
+// production. If `entropy` is predictable or known to an attacker, security
+// properties of the KEM will not hold.
+OPENSSL_EXPORT int EVP_KEM_encap_external_entropy_for_testing(
+    const EVP_KEM *kem, uint8_t *out_ciphertext, size_t ciphertext_len,
+    uint8_t *out_secret, size_t secret_len, const EVP_PKEY *peer_key,
+    const uint8_t *entropy, size_t entropy_len);
 
 // EVP_KEM_decap uses `kem` to decapsulate a `ciphertext` of length
 // `ciphertext_len`, using `key` as a decapsulation key. It outputs a shared

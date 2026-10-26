@@ -29,25 +29,25 @@
 #import "Pipeline.h"
 #import "PipelineLayout.h"
 
+#import <WebGPU/WebGPUCpp.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/HashMap.h>
 #import <wtf/HashTraits.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCountedAndCanMakeWeakPtr.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/WeakPtr.h>
 
 struct WGPUComputePipelineImpl {
 };
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class BindGroupLayout;
 class Device;
 class PipelineLayout;
 
 // https://gpuweb.github.io/gpuweb/#gpucomputepipeline
-class ComputePipeline : public RefCountedAndCanMakeWeakPtr<ComputePipeline>, public WGPUComputePipelineImpl {
+class ComputePipeline final : public WebGPU::ComputePipeline, public WGPUComputePipelineImpl {
     WTF_MAKE_TZONE_ALLOCATED(ComputePipeline);
 public:
     static Ref<ComputePipeline> create(id<MTLComputePipelineState> computePipelineState, Ref<PipelineLayout>&& pipelineLayout, MTLSize threadsPerThreadgroup, BufferBindingSizesForPipeline&& minimumBufferSizes, uint64_t uniqueId, Device& device)
@@ -61,10 +61,10 @@ public:
 
     ~ComputePipeline();
 
-    Ref<BindGroupLayout> getBindGroupLayout(uint32_t groupIndex);
-    void NODELETE setLabel(String&&);
+    Ref<WebGPU::BindGroupLayout> getBindGroupLayout(uint32_t groupIndex) final;
+    void LEGACY_NODELETE setLabel(String&&) final;
 
-    bool isValid() const { return m_computePipelineState && m_pipelineLayout->isValid(); }
+    bool isValid() const final { return m_computePipelineState && m_pipelineLayout->isValid(); }
 
     id<MTLComputePipelineState> computePipelineState() const { return m_computePipelineState; }
 
@@ -73,7 +73,7 @@ public:
 
     PipelineLayout& pipelineLayout() const { return m_pipelineLayout; }
 
-    const BufferBindingSizesForBindGroup* NODELETE minimumBufferSizes(uint32_t) const;
+    const BufferBindingSizesForBindGroup* LEGACY_NODELETE minimumBufferSizes(uint32_t) const;
     uint64_t uniqueId() const { return m_uniqueId; }
 private:
     ComputePipeline(id<MTLComputePipelineState>, Ref<PipelineLayout>&&, MTLSize, BufferBindingSizesForPipeline&&, uint64_t uniqueId, Device&);
@@ -88,4 +88,4 @@ private:
     const uint64_t m_uniqueId { 0 };
 };
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal

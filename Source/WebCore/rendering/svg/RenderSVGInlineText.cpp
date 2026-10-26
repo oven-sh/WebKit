@@ -38,10 +38,9 @@
 #include "RenderObjectInlines.h"
 #include "RenderSVGText.h"
 #include "SVGElementTypeHelpers.h"
-#include "SVGInlineTextBoxInlines.h"
 #include "SVGRenderingContext.h"
-#include "SVGRootInlineBox.h"
 #include "SVGTextBoxPainter.h"
+#include "SVGTextFragment.h"
 #include "SVGTransformComputation.h"
 #include "StyleFontSizeFunctions.h"
 #include "StyleResolver.h"
@@ -87,12 +86,6 @@ RenderSVGInlineText::RenderSVGInlineText(Text& textNode, const String& string)
 
 RenderSVGInlineText::~RenderSVGInlineText() = default;
 
-void RenderSVGInlineText::willBeDestroyed()
-{
-    removeAndDestroyLegacyTextBoxes();
-    RenderText::willBeDestroyed();
-}
-
 String RenderSVGInlineText::originalText() const
 {
     return textNode().data();
@@ -101,7 +94,7 @@ String RenderSVGInlineText::originalText() const
 void RenderSVGInlineText::setTextInternal(const String& newText, bool force)
 {
     RenderText::setTextInternal(newText, force);
-    m_legacyLineBoxes.dirtyForTextChange(*this);
+    m_hasValidTextMetrics = false;
     if (!force)
         setRenderedText(newText);
     if (auto* textAncestor = RenderSVGText::locateRenderSVGTextAncestor(*this))
@@ -112,6 +105,8 @@ void RenderSVGInlineText::styleDidChange(Style::Difference diff, const Style::Co
 {
     RenderText::styleDidChange(diff, oldStyle);
     updateScaledFont();
+    if (oldStyle && (oldStyle->writingMode() != style().writingMode() || oldStyle->unicodeBidi() != style().unicodeBidi()))
+        m_hasValidTextMetrics = false;
 
     bool newPreserves = style().whiteSpaceCollapse() == WhiteSpaceCollapse::Preserve;
     bool oldPreserves = oldStyle && oldStyle->whiteSpaceCollapse() == WhiteSpaceCollapse::Preserve;
@@ -131,13 +126,6 @@ void RenderSVGInlineText::styleDidChange(Style::Difference diff, const Style::Co
     // The text metrics may be influenced by style changes.
     if (auto* textAncestor = RenderSVGText::locateRenderSVGTextAncestor(*this))
         textAncestor->setNeedsLayout();
-}
-
-std::unique_ptr<LegacyInlineTextBox> RenderSVGInlineText::createTextBox()
-{
-    auto box = makeUnique<SVGInlineTextBox>(*this);
-    box->setHasVirtualLogicalHeight();
-    return box; 
 }
 
 FloatRect RenderSVGInlineText::floatLinesBoundingBox() const
@@ -240,8 +228,16 @@ PositionWithAffinity RenderSVGInlineText::positionForPoint(const LayoutPoint& po
 
 void RenderSVGInlineText::updateScaledFont()
 {
-    if (computeNewScaledFontForStyle(*this, style(), m_scalingFactor, m_scaledFont))
+    // FIXME: FontCascade comparison also compares the font list, which FontCascadeCache::invalidate() replaces,
+    // so the text metrics are dropped after complex text measurement even if the font did not change.
+    float scalingFactor = 1;
+    FontCascade scaledFont;
+    if (computeNewScaledFontForStyle(*this, style(), scalingFactor, scaledFont))
         m_canUseSimplifiedTextMeasuring = { };
+    if (scalingFactor != m_scalingFactor || scaledFont != m_scaledFont)
+        m_hasValidTextMetrics = false;
+    m_scalingFactor = scalingFactor;
+    m_scaledFont = WTF::move(scaledFont);
 }
 
 float RenderSVGInlineText::computeScalingFactorForRenderer(const RenderObject& renderer)
@@ -279,22 +275,6 @@ bool RenderSVGInlineText::computeNewScaledFontForStyle(const RenderObject& rende
     scaledFont = FontCascade(WTF::move(fontDescription));
     scaledFont.update(protect(protect(renderer.document())->fontSelector()).ptr());
     return true;
-}
-
-void RenderSVGInlineText::deleteLegacyLineBoxes()
-{
-    m_legacyLineBoxes.deleteAll();
-}
-
-void RenderSVGInlineText::removeAndDestroyLegacyTextBoxes()
-{
-    if (!renderTreeBeingDestroyed())
-        m_legacyLineBoxes.removeAllFromParent(*this);
-#if !ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
-    else
-        m_legacyLineBoxes.invalidateParentChildLists();
-#endif
-    deleteLegacyLineBoxes();
 }
 
 }

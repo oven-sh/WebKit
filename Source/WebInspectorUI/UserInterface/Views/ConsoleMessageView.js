@@ -355,16 +355,18 @@ WI.ConsoleMessageView = class ConsoleMessageView extends WI.Object
                 if (this._message.level === WI.ConsoleMessage.MessageLevel.Log) {
                     let divider = null;
 
-                    if (this._message.parameters.length > 1) {
+                    if (this._message.parameters?.length > 1) {
                         this._appendFormattedArguments(element, this._message.parameters.slice(1));
 
                         divider = element.appendChild(document.createElement("hr"));
                     }
 
-                    let target = this._message.parameters[0];
-                    if (target === "Viewport")
-                        target = WI.UIString("Viewport");
-                    this._appendFormattedArguments(element, [target]);
+                    let target = this._message.parameters?.[0];
+                    if (target) {
+                        if (target === "Viewport")
+                            target = WI.UIString("Viewport");
+                        this._appendFormattedArguments(element, [target]);
+                    }
 
                     if (this._message.messageText) {
                         let img = document.createElement("img");
@@ -476,7 +478,10 @@ WI.ConsoleMessageView = class ConsoleMessageView extends WI.Object
         if (callFrame && (!callFrame.isConsoleEvaluation || WI.settings.debugShowConsoleEvaluations.value)) {
             let existingCallFrameView = this._callFrameView;
 
-            this._callFrameView = new WI.CallFrameView(callFrame, {showFunctionName: !!callFrame.functionName});
+            this._callFrameView = new WI.CallFrameView(callFrame, {
+                showFunctionName: !!callFrame.functionName,
+                stackTrace: this._message.stackTrace,
+            });
             this._callFrameView.classList.add("console-message-location");
 
             if (existingCallFrameView)
@@ -931,8 +936,9 @@ WI.ConsoleMessageView = class ConsoleMessageView extends WI.Object
     _formatParameterAsTable(parameters)
     {
         var element = document.createElement("span");
-        var table = parameters[0];
-        if (!table || !table.preview)
+
+        let table = parameters?.[0];
+        if (!table?.preview)
             return element;
 
         var rows = [];

@@ -49,6 +49,11 @@ const LTO_WINDOWS = "/clang:-flto=thin /clang:-fno-split-lto-unit";
 
 const SANITIZERS = "address,undefined";
 
+// All of it is decided when a function is compiled to IR (a function attribute, a store, a call to a checked libc
+// function), so it means the same with and without LTO. _FORTIFY_SOURCE is 2 because glibc 2.31 has nothing above it.
+const HARDENING =
+  "-fstack-protector-strong -D_FORTIFY_SOURCE=2 -fstack-clash-protection -ftrivial-auto-var-init=zero -ftrivial-auto-var-init-max-size=4096";
+
 // Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
 // It is a commit of the branch bun-release-<version> of oven-sh/icu, by the tarball GitHub makes of it.
 // data_sha256 is of the data that commit's bun/data/icu-data.ts makes, which is the same on every platform.
@@ -82,9 +87,25 @@ const variants = {
   "debug": { buildType: "Debug" },
   "asan": { buildType: "Release", sanitizers: SANITIZERS },
   "debug-asan": { buildType: "Debug", sanitizers: SANITIZERS },
+  // For fuzzing. Each is "release" with assertions, coverage or both added and nothing else changed, so that what is
+  // fuzzed is as close as it can be to what ships. `assertions` is the assertions of the asan variants without the
+  // sanitizers. `coverage` is ENABLE_FUZZILLI: JavaScriptCore (not WTF or bmalloc) calls
+  // __sanitizer_cov_trace_pc_guard on every edge. The libraries leave that for bun to define, and jsc takes --reprl.
+  //
+  // Not "lto": coverage does not link with ThinLTO ("undefined symbol: __sancov_gen_.1"). Of an inline function that
+  // several modules have, ThinLTO keeps one copy and makes the others available_externally, their guards included,
+  // which are private to the module. Inlining such a copy leaves a reference to guards that nothing defines.
+  "assertions": { buildType: "Release", mimalloc: true, assertions: true },
+  "coverage": { buildType: "Release", mimalloc: true, coverage: true },
+  "assertions-coverage": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
+  // "release" and "lto" with ICU and WebKit compiled with HARDENING, and nothing else changed. Same ABI as those two.
+  "hardened": { buildType: "Release", mimalloc: true, hardened: true },
+  "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
 };
-const ALL = Object.keys(variants);
 const NO_ASAN = ["release", "lto", "debug"];
+const ALL = [...NO_ASAN, "asan", "debug-asan"];
+const FUZZING = ["assertions", "coverage", "assertions-coverage"];
+const HARDENED = ["hardened", "lto-hardened"];
 
 // Each platform:
 //   label(arch)     the label of the release variant; the other variants append -<variant>
@@ -97,9 +118,9 @@ const NO_ASAN = ["release", "lto", "debug"];
 //   imageInputs     files and directories the `base` stage copies in, besides the Dockerfile
 //   tested          per architecture, the variants whose jsc shell the `test` job runs the JavaScriptCore tests with, and
 //                   the runner it does that on: a machine of the lane's own platform and architecture. "lto" ("release"
-//                   where there is no lto lane) is what bun ships. The asan lanes are not tested: the tests take 65 to
-//                   100 minutes there on Linux and macOS and do not finish in 275 on Windows. `quick` is --quick, for
-//                   a runner with few cores.
+//                   where there is no lto lane) is what bun ships, and nothing else runs "lto-hardened". The asan lanes
+//                   are not tested: the tests take 65 to 100 minutes there on Linux and macOS and do not finish in 275
+//                   on Windows. `quick` is --quick, for a runner with few cores.
 const platforms = [
   {
     label: arch => `bun-webkit-linux-${arch}`,
@@ -107,9 +128,9 @@ const platforms = [
     // arm64 sysroot in the same container.
     dockerfile: "Dockerfile",
     packageOS: "linux",
-    lanes: { amd64: ALL, arm64: ALL },
+    lanes: { amd64: [...ALL, ...FUZZING, ...HARDENED], arm64: ALL },
     tested: {
-      amd64: { on: "linux-x64-gh", variants: ["lto"] },
+      amd64: { on: "linux-x64-gh", variants: ["lto", "lto-hardened"] },
       arm64: { on: "linux-arm64-gh", variants: ["lto"] },
     },
     image: () => "linux-glibc",
@@ -119,6 +140,9 @@ const platforms = [
       LINUX_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
       RELEASE_FLAGS: "-O3 -DNDEBUG=1",
       ENABLE_SANITIZERS: v.sanitizers ?? "",
+      ENABLE_ASSERTS: v.assertions ? "ON" : "AUTO",
+      ENABLE_FUZZILLI: v.coverage ? "ON" : "OFF",
+      HARDENING_FLAGS: v.hardened ? HARDENING : "",
       // Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own objects and its Rust code
       // are <arch>-unknown-linux-gnu; with LTO, lld warns about the vendor mismatch once per JavaScriptCore object.
       MARCH_FLAG:
@@ -200,7 +224,7 @@ const platforms = [
     args: arch => ({
       ...ICU,
       FREEBSD_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
-      FREEBSD_VERSION: "14.3",
+      FREEBSD_VERSION: "14.4",
       MARCH_FLAG: arch === "arm64" ? `${ARMV8} -mtune=ampere1` : NEHALEM,
     }),
   },

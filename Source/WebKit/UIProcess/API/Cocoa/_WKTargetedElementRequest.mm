@@ -79,10 +79,12 @@
 
     WebCore::TargetedElementSelectors selectorsForElement;
     selectorsForElement.reserveInitialCapacity(nsSelectorsForElement.count);
-    for (NSSet<NSString *> *nsSelectors in nsSelectorsForElement) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSSet<NSString *> *nsSelectors in nsSelectorsForElement) {
         HashSet<String> selectors;
         selectors.reserveInitialCapacity(nsSelectors.count);
-        for (NSString *selector in nsSelectors)
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSString *selector in nsSelectors)
             selectors.add(selector);
         selectorsForElement.append(WTF::move(selectors));
     }

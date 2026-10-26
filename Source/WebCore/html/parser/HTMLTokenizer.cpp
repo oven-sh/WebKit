@@ -44,7 +44,7 @@ using namespace HTMLNames;
 // reference, and '\0' is a parse error. '\r' and '\n' require special handling
 // for line counting and newline normalization in the input stream preprocessor.
 // Everything else is plain text that can be emitted as-is.
-static bool isDataStateSpecialCharacter(Latin1Character c)
+static bool LEGACY_NODELETE isDataStateSpecialCharacter(Latin1Character c)
 {
     return c == '<' || c == '&' || c == '\r' || c == '\n' || c == '\0';
 }
@@ -64,7 +64,7 @@ static std::span<const Latin1Character> findPlainTextInDataState(std::span<const
 // handling for line counting and newline normalization. Everything else is plain
 // text that can be appended to the attribute value as-is.
 template<Latin1Character quoteCharacter>
-static bool isQuotedAttributeValueSpecialCharacter(Latin1Character c)
+static bool LEGACY_NODELETE isQuotedAttributeValueSpecialCharacter(Latin1Character c)
 {
     return c == quoteCharacter || c == '&' || c == '\r' || c == '\n' || c == '\0';
 }
@@ -76,7 +76,7 @@ static std::span<const Latin1Character> findPlainTextInQuotedAttributeValue(std:
     return span.first(it - span.begin());
 }
 
-static inline Latin1Character NODELETE convertASCIIAlphaToLower(char16_t character)
+static inline Latin1Character LEGACY_NODELETE convertASCIIAlphaToLower(char16_t character)
 {
     ASSERT(isASCIIAlpha(character));
     return toASCIILowerUnchecked(character);
@@ -136,6 +136,25 @@ inline bool HTMLTokenizer::emitAndResumeInDataState(SegmentedString& source)
     return true;
 }
 
+inline bool HTMLTokenizer::emitProcessingInstruction(SegmentedString& source)
+{
+    m_state = DataState;
+    source.advancePastNonNewline();
+    return true;
+}
+
+// Turns the processing instruction being tokenized back into the bogus comment that
+// this input produced before processing instructions were parsed, reusing the target
+// characters already collected in the token.
+inline void HTMLTokenizer::rewindToBogusCommentForProcessingInstructionTarget()
+{
+    auto target = m_token.processingInstructionTarget();
+    m_token.clear();
+    m_token.beginComment();
+    m_token.appendToComment('?');
+    m_token.appendToComment(target.span());
+}
+
 inline bool HTMLTokenizer::emitAndReconsumeInDataState()
 {
     saveEndTagNameIfNeeded();
@@ -151,6 +170,21 @@ inline bool HTMLTokenizer::emitEndOfFile(SegmentedString& source)
     source.advance();
     m_token.clear();
     m_token.makeEndOfFile();
+    return true;
+}
+
+static bool LEGACY_NODELETE isReplacedNullCharacter(const SegmentedString& source, char16_t character)
+{
+    return character == replacementCharacter && !source.currentCharacter();
+}
+
+inline bool HTMLTokenizer::emitReplacedNullCharacter(SegmentedString& source, State state)
+{
+    m_state = state;
+    if (haveBufferedCharacterToken())
+        return true;
+    m_token.makeReplacedNullCharacter();
+    source.advancePastNonNewline();
     return true;
 }
 
@@ -251,6 +285,8 @@ bool HTMLTokenizer::processToken(SegmentedString& source)
         }
         if (character == kEndOfFileMarker)
             return emitEndOfFile(source);
+        if (isReplacedNullCharacter(source, character)) [[unlikely]]
+            return emitReplacedNullCharacter(source, DataState);
         bufferCharacter(character);
         // Optimization: scan ahead for a run of plain-text characters in the
         // current 8-bit substring and buffer them all at once, avoiding the
@@ -337,6 +373,8 @@ bool HTMLTokenizer::processToken(SegmentedString& source)
             ADVANCE_PAST_NON_NEWLINE_TO(TagNameState);
         }
         if (character == '?') {
+            if (m_options.processingInstruction)
+                ADVANCE_PAST_NON_NEWLINE_TO(ProcessingInstructionOpenState);
             parseError();
             // The spec consumes the current character before switching
             // to the bogus comment state, but it's easier to implement
@@ -986,6 +1024,89 @@ bool HTMLTokenizer::processToken(SegmentedString& source)
         RECONSUME_IN(BeforeAttributeNameState);
     END_STATE()
 
+    BEGIN_STATE(ProcessingInstructionOpenState)
+        ASSERT(m_options.processingInstruction);
+        if (character == '_' || isASCIIAlpha(character)) {
+            m_token.beginProcessingInstruction();
+            RECONSUME_IN(ProcessingInstructionTargetState);
+        }
+        if (character == kEndOfFileMarker) {
+            parseError();
+            return emitEndOfFile(source);
+        }
+        parseError();
+        m_token.beginComment();
+        m_token.appendToComment('?');
+        RECONSUME_IN(ContinueBogusCommentState);
+    END_STATE()
+
+    BEGIN_STATE(ProcessingInstructionTargetState)
+        ASSERT(m_options.processingInstruction);
+        if (character == kEndOfFileMarker) {
+            parseError();
+            return emitEndOfFile(source);
+        }
+        if (character == '-' || character == '_' || isASCIIAlphanumeric(character)) {
+            m_token.appendToProcessingInstructionTarget(character);
+            ADVANCE_TO(ProcessingInstructionTargetState);
+        }
+        if (!(isTokenizerWhitespace(character) || character == '>' || character == '?')) {
+            parseError();
+            rewindToBogusCommentForProcessingInstructionTarget();
+            RECONSUME_IN(ContinueBogusCommentState);
+        }
+        // `<?xml` and `<?xml-stylesheet` stay bogus comments, as they were before
+        // processing instructions were parsed at all.
+        if (equalLettersIgnoringASCIICase(m_token.processingInstructionTarget().span(), "xml"_s)
+            || equalLettersIgnoringASCIICase(m_token.processingInstructionTarget().span(), "xml-stylesheet"_s)) {
+            parseError();
+            rewindToBogusCommentForProcessingInstructionTarget();
+            RECONSUME_IN(ContinueBogusCommentState);
+        }
+        RECONSUME_IN(AfterProcessingInstructionTargetState);
+    END_STATE()
+
+    BEGIN_STATE(AfterProcessingInstructionTargetState)
+        ASSERT(m_options.processingInstruction);
+        if (isTokenizerWhitespace(character))
+            ADVANCE_TO(AfterProcessingInstructionTargetState);
+        if (character == '?')
+            ADVANCE_PAST_NON_NEWLINE_TO(ProcessingInstructionQuestionMarkState);
+        if (character == '>')
+            return emitProcessingInstruction(source);
+        if (character == kEndOfFileMarker) {
+            parseError();
+            return emitEndOfFile(source);
+        }
+        RECONSUME_IN(ProcessingInstructionDataState);
+    END_STATE()
+
+    BEGIN_STATE(ProcessingInstructionDataState)
+        ASSERT(m_options.processingInstruction);
+        if (character == '?')
+            ADVANCE_PAST_NON_NEWLINE_TO(ProcessingInstructionQuestionMarkState);
+        if (character == '>')
+            return emitProcessingInstruction(source);
+        if (character == kEndOfFileMarker) {
+            parseError();
+            return emitEndOfFile(source);
+        }
+        m_token.appendToProcessingInstructionData(character);
+        ADVANCE_TO(ProcessingInstructionDataState);
+    END_STATE()
+
+    BEGIN_STATE(ProcessingInstructionQuestionMarkState)
+        ASSERT(m_options.processingInstruction);
+        if (character == '>')
+            return emitProcessingInstruction(source);
+        if (character == kEndOfFileMarker) {
+            parseError();
+            return emitEndOfFile(source);
+        }
+        m_token.appendToProcessingInstructionData('?');
+        RECONSUME_IN(ProcessingInstructionDataState);
+    END_STATE()
+
     BEGIN_STATE(BogusCommentState)
         m_token.beginComment();
         RECONSUME_IN(ContinueBogusCommentState);
@@ -1443,6 +1564,8 @@ bool HTMLTokenizer::processToken(SegmentedString& source)
             ADVANCE_PAST_NON_NEWLINE_TO(CDATASectionRightSquareBracketState);
         if (character == kEndOfFileMarker)
             RECONSUME_IN(DataState);
+        if (isReplacedNullCharacter(source, character)) [[unlikely]]
+            return emitReplacedNullCharacter(source, CDATASectionState);
         bufferCharacter(character);
         ADVANCE_TO(CDATASectionState);
     END_STATE()

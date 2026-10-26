@@ -156,3 +156,13 @@ class TerminalTests(unittest.TestCase):
                 self.assertTrue(Terminal.isatty(file_like))
 
             self.assertEqual(original, Terminal.isatty(file_like))
+
+    def test_background_colors(self):
+        self.assertEqual(Terminal.Text.red, '\033[31m')
+        self.assertEqual(Terminal.Text.redBackground, '\033[41m')
+        self.assertEqual(Terminal.Text.backgroundColors, [
+            Terminal.Text.blackBackground, Terminal.Text.redBackground,
+            Terminal.Text.greenBackground, Terminal.Text.yellowBackground,
+            Terminal.Text.blueBackground, Terminal.Text.magentaBackground,
+            Terminal.Text.cyanBackground, Terminal.Text.whiteBackground,
+        ])

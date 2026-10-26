@@ -144,26 +144,6 @@ typedef void (^WPStorageAccessUserAgentStringQuirksDataCompletionHandler)(WPStor
 @end
 #endif
 
-#if !defined(HAS_WEB_PRIVACY_RESTRICTED_OPENER_DOMAIN_CLASS)
-constexpr NSInteger WPResourceTypeRestrictedOpenerDomains = 8;
-
-typedef NS_ENUM(NSInteger, WPRestrictedOpenerType) {
-    WPRestrictedOpenerTypeNoOpener = 1,
-    WPRestrictedOpenerTypePostMessageAndClose,
-};
-
-@interface WPRestrictedOpenerDomain : NSObject
-@property (nonatomic, readonly) NSString *domain;
-@property (nonatomic, readonly) WPRestrictedOpenerType openerType;
-@end
-
-typedef void (^WPRestrictedOpenerDomainsCompletionHandler)(NSArray<WPRestrictedOpenerDomain *> *, NSError *);
-
-@interface WPResources (Staging_118208263)
-- (void)requestRestrictedOpenerDomains:(WPResourceRequestOptions *)options completionHandler:(WPRestrictedOpenerDomainsCompletionHandler)completion;
-@end
-#endif
-
 #if !defined(HAS_WEB_PRIVACY_HIGH_VALUE_FRAUD_TARGET_DOMAIN_CLASS)
 constexpr NSInteger WPResourceTypeHighValueFraudTargetDomains = 11;
 
@@ -198,6 +178,18 @@ typedef void (^WKWPResourcesGetSourceCompletionHandler)(NSString *, NSError *);
 
 @interface WPResources (Staging_146076707)
 - (void)requestResourceMonitorRulesSource:(WPResourceRequestOptions *)options completionHandler:(WKWPResourcesGetSourceCompletionHandler)completion;
+@end
+
+typedef void (^WKWPResourcesRuleListCompletionHandler)(WKContentRuleList *, NSError *);
+
+#if !defined(HAS_WEB_PRIVACY_DEFAULT_CONTENT_RULE_LIST_API)
+
+#define WPResourceTypeDefaultTrackerBlockRules ((WPResourceType)12)
+
+#endif
+
+@interface WPResources (Staging_DefaultContentRuleList)
+- (void)loadDefaultContentRuleListForStore:(WKContentRuleListStore *)store completionHandler:(WKWPResourcesRuleListCompletionHandler)completionHandler;
 @end
 
 #if !__has_include(<WebPrivacy/WPFingerprintingScript.h>) || __has_feature(modules)

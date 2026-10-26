@@ -71,7 +71,7 @@ static bool isDeclarablePageCount(PageCount pageCount, AddressType addressType)
 }
 
 template<typename Func>
-static bool tryAllocate(VM& vm, const Func& allocate)
+static bool tryAllocate(VM& vm, NOESCAPE const Func& allocate)
 {
     unsigned numTries = 2;
     bool done = false;
@@ -198,6 +198,14 @@ RefPtr<Memory> Memory::tryCreate(VM& vm, PageCount initial, PageCount maximum, M
     }
     
     if (fastMemory) {
+#if OS(WINDOWS)
+        // The region is only reserved; commit the in-use bytes before the no-access guard below.
+        if (!BufferMemoryManager::tryMakeReadableAndWritable(fastMemory, initialBytes)) {
+            BufferMemoryManager::singleton().freeFastMemory(fastMemory);
+            BufferMemoryManager::singleton().freePhysicalBytes(initialBytes);
+            return nullptr;
+        }
+#endif
         constexpr bool readable = false;
         constexpr bool writable = false;
         OSAllocator::protect(fastMemory + initialBytes, BufferMemoryHandle::fastMappedBytes() - initialBytes, readable, writable);
@@ -249,6 +257,13 @@ RefPtr<Memory> Memory::tryCreate(VM& vm, PageCount initial, PageCount maximum, M
             return nullptr;
         }
 
+#if OS(WINDOWS)
+        if (!BufferMemoryManager::tryMakeReadableAndWritable(slowMemory, initialBytes)) {
+            BufferMemoryManager::singleton().freeGrowableBoundsCheckingMemory(slowMemory, reservedMaximumBytes);
+            BufferMemoryManager::singleton().freePhysicalBytes(initialBytes);
+            return nullptr;
+        }
+#endif
         constexpr bool readable = false;
         constexpr bool writable = false;
         OSAllocator::protect(slowMemory + initialBytes, reservedMaximumBytes - initialBytes, readable, writable);
@@ -412,9 +427,10 @@ std::expected<PageCount, GrowFailReason> Memory::grow(VM& vm, PageCount delta)
         uint8_t* startAddress = static_cast<uint8_t*>(memory) + size();
         
         dataLogLnIf(verbose, "Marking WebAssembly memory's ", RawPointer(memory), " as read+write in range [", RawPointer(startAddress), ", ", RawPointer(startAddress + extraBytes), ")");
-        constexpr bool readable = true;
-        constexpr bool writable = true;
-        OSAllocator::protect(startAddress, extraBytes, readable, writable);
+        if (!BufferMemoryManager::tryMakeReadableAndWritable(startAddress, extraBytes)) {
+            BufferMemoryManager::singleton().freePhysicalBytes(extraBytes);
+            return makeUnexpected(GrowFailReason::OutOfMemory);
+        }
         m_handle->updateSize(desiredSize);
         return success();
     }

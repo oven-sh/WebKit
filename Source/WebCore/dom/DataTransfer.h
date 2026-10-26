@@ -58,7 +58,7 @@ public:
     String dropEffect() const;
     void setDropEffect(const String&);
 
-    String NODELETE effectAllowed() const;
+    String LEGACY_NODELETE effectAllowed() const;
     void setEffectAllowed(const String&);
 
     DataTransferItemList& items(Document&);
@@ -80,9 +80,9 @@ public:
 
     void makeInvalidForSecurity() { m_storeMode = StoreMode::Invalid; }
 
-    bool NODELETE canReadTypes() const;
-    bool NODELETE canReadData() const;
-    bool NODELETE canWriteData() const;
+    bool LEGACY_NODELETE canReadTypes() const;
+    bool LEGACY_NODELETE canReadData() const;
+    bool LEGACY_NODELETE canWriteData() const;
 
     bool hasFileOfType(const String&);
     bool hasStringOfType(Document&, const String&);
@@ -106,10 +106,10 @@ public:
     void setDragHasStarted() { m_shouldUpdateDragImage = true; }
     DragImageRef createDragImage(const Document*, IntPoint& dragLocation) const;
     void updateDragImage(const Document*);
-    RefPtr<Element> NODELETE dragImageElement() const;
+    RefPtr<Element> LEGACY_NODELETE dragImageElement() const;
 
     void moveDragState(Ref<DataTransfer>&&);
-    bool NODELETE hasDragImage() const;
+    bool LEGACY_NODELETE hasDragImage() const;
 
     IntPoint dragLocation() const { return m_dragLocation; }
 #endif
@@ -121,15 +121,7 @@ private:
     enum class Type { CopyAndPaste, DragAndDropData, DragAndDropFiles, InputEvent };
     DataTransfer(StoreMode, std::unique_ptr<Pasteboard>, Type = Type::CopyAndPaste, String&& effectAllowed = "uninitialized"_s);
 
-    bool allowsFileAccess() const
-    {
-#if PLATFORM(COCOA)
-        return !forDrag() || forFileDrag();
-#else
-        // Check https://webkit.org/b/271957 before allowing file access for your port.
-        return false;
-#endif
-    }
+    bool LEGACY_NODELETE allowsFileAccess() const;
 
 #if ENABLE(DRAG_SUPPORT)
     bool forDrag() const { return m_type == Type::DragAndDropData || m_type == Type::DragAndDropFiles; }
@@ -146,22 +138,23 @@ private:
     Vector<String> types(Document&, AddFilesType) const;
     Vector<Ref<File>> filesFromPasteboardAndItemList(ScriptExecutionContext*) const;
 
-    String m_originIdentifier;
     StoreMode m_storeMode;
-    std::unique_ptr<Pasteboard> m_pasteboard;
+    String m_originIdentifier;
+    const std::unique_ptr<Pasteboard> m_pasteboard;
     const std::unique_ptr<DataTransferItemList> m_itemList;
 
     mutable RefPtr<FileList> m_fileList;
 
 #if ENABLE(DRAG_SUPPORT)
-    Type m_type;
     String m_dropEffect;
     String m_effectAllowed;
-    bool m_shouldUpdateDragImage;
-    IntPoint m_dragLocation;
     CachedResourceHandle<CachedImage> m_dragImage;
+    float m_dragImageDensity { 1 };
     RefPtr<Element> m_dragImageElement;
     RefPtr<DragImageLoader> m_dragImageLoader;
+    IntPoint m_dragLocation;
+    Type m_type;
+    bool m_shouldUpdateDragImage;
 #endif
 };
 

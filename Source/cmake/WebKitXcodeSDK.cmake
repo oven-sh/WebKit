@@ -71,7 +71,7 @@ function(WEBKIT_RESOLVE_SDK)
                 endif ()
             endif ()
 
-            return()
+            return ()
         endif ()
     endforeach ()
     message(FATAL_ERROR "xcrun could not locate any SDK in: ${ARGN}")
@@ -92,7 +92,7 @@ endfunction()
 
 function(WEBKIT_RESOLVE_TOOL OUTPUT_VAR _tool)
     if (DEFINED ${OUTPUT_VAR} AND EXISTS "${${OUTPUT_VAR}}")
-        return()
+        return ()
     endif ()
     WEBKIT_XCRUN(_path -f ${_tool})
     if (NOT EXISTS "${_path}")
@@ -161,6 +161,8 @@ unset(_wk_sdk_entry)
 set(WEBKIT_SDK_IS_MACOS OFF)
 set(WEBKIT_SDK_IS_IOS_FAMILY OFF)
 set(WEBKIT_SDK_IS_IOS OFF)
+set(WEBKIT_SDK_IS_TVOS OFF)
+set(WEBKIT_SDK_IS_WATCHOS OFF)
 set(WEBKIT_SDK_IS_XROS OFF)
 set(WEBKIT_SDK_IS_SIMULATOR OFF)
 if (WEBKIT_SDK_NAME STREQUAL "macosx")
@@ -170,6 +172,10 @@ else ()
 endif ()
 if (WEBKIT_SDK_TARGET_OS STREQUAL "ios")
     set(WEBKIT_SDK_IS_IOS ON)
+elseif (WEBKIT_SDK_TARGET_OS STREQUAL "tvos")
+    set(WEBKIT_SDK_IS_TVOS ON)
+elseif (WEBKIT_SDK_TARGET_OS STREQUAL "watchos")
+    set(WEBKIT_SDK_IS_WATCHOS ON)
 elseif (WEBKIT_SDK_TARGET_OS STREQUAL "xros")
     set(WEBKIT_SDK_IS_XROS ON)
 endif ()
@@ -177,28 +183,67 @@ if (WEBKIT_SDK_NAME MATCHES "simulator$")
     set(WEBKIT_SDK_IS_SIMULATOR ON)
 endif ()
 
+# The UIDeviceFamily values the SDK supports, most significant first:
+# 1=iPhone, 2=iPad, 3=Apple TV, 4=Apple Watch, 7=Apple Vision.
+function(_WEBKIT_SDK_DEVICE_FAMILIES _result)
+    if (WEBKIT_SDK_IS_XROS)
+        set(${_result} 7 PARENT_SCOPE)
+    elseif (WEBKIT_SDK_IS_TVOS)
+        set(${_result} 3 PARENT_SCOPE)
+    elseif (WEBKIT_SDK_IS_WATCHOS)
+        set(${_result} 4 PARENT_SCOPE)
+    else ()
+        set(${_result} 1 2 PARENT_SCOPE)
+    endif ()
+endfunction()
+
+# UIDeviceFamily as Xcode emits it: TARGETED_DEVICE_FAMILY narrowed to the SDK, or the
+# SDK's primary family when none is given.
+function(WEBKIT_GET_DEVICE_FAMILY _result)
+    _WEBKIT_SDK_DEVICE_FAMILIES(_supported)
+    if (NOT ARGN)
+        list(GET _supported 0 _narrowed)
+    else ()
+        set(_narrowed "")
+        foreach (_family IN LISTS ARGN)
+            if (_family IN_LIST _supported)
+                list(APPEND _narrowed ${_family})
+            endif ()
+        endforeach ()
+    endif ()
+    list(JOIN _narrowed ", " _joined)
+    set(${_result} "${_joined}" PARENT_SCOPE)
+endfunction()
+
+# The Info.plist keys Xcode fills in from build settings rather than from the plist itself.
+function(WEBKIT_ADD_EMBEDDED_BUNDLE_PLIST_KEYS _plist _device_family)
+    execute_process(COMMAND plutil -replace UIDeviceFamily -json "[${_device_family}]" ${_plist})
+    execute_process(COMMAND plutil -replace CFBundleSupportedPlatforms -json "[\"${WEBKIT_PLATFORM_NAME}\"]" ${_plist})
+    execute_process(COMMAND plutil -replace MinimumOSVersion -string "${CMAKE_OSX_DEPLOYMENT_TARGET}" ${_plist})
+    execute_process(COMMAND plutil -replace DTPlatformName -string "${WEBKIT_SDK_NAME}" ${_plist})
+endfunction()
+
 # Building for macOS defaults uses the host system's deployment target. Other
 # platforms deploy to the SDK version.
-# FIXME: macOS should use the host version OR SDK version, whichever is
-# smaller.
 if (NOT CMAKE_OSX_DEPLOYMENT_TARGET)
-    if (WEBKIT_SDK_IS_MACOS)
-        execute_process(COMMAND sw_vers -productVersion
-            OUTPUT_VARIABLE _host_os_version
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-            RESULT_VARIABLE _host_os_result)
-        if (_host_os_result EQUAL 0)
-            string(REGEX MATCH "^[0-9]+\\.[0-9]+" _deployment_target "${_host_os_version}")
-        endif ()
-        unset(_host_os_version)
-        unset(_host_os_result)
+    execute_process(COMMAND sw_vers -productVersion
+        OUTPUT_VARIABLE _host_version
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        COMMAND_ERROR_IS_FATAL ANY)
+    if (WEBKIT_SDK_IS_MACOS AND (_host_version VERSION_LESS WEBKIT_SDK_VERSION))
+        set(_deployment_target ${_host_version})
     else ()
-        string(REGEX MATCH "^[0-9]+\\.[0-9]+" _deployment_target "${WEBKIT_SDK_VERSION}")
+        set(_deployment_target ${WEBKIT_SDK_VERSION})
     endif ()
-    if (_deployment_target)
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "${_deployment_target}" CACHE STRING "Deployment target" FORCE)
-    endif ()
+
+    # Host OS version could be three components, but deployment target is
+    # always a two-component X.Y string.
+    string(REGEX MATCH "^[0-9]+\\.[0-9]+" _deployment_target "${_deployment_target}")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "${_deployment_target}" CACHE STRING "Deployment target" FORCE)
+
+    unset(_host_version)
     unset(_deployment_target)
+    message(STATUS "Deployment target: ${WEBKIT_SDK_NAME}${CMAKE_OSX_DEPLOYMENT_TARGET}")
 endif ()
 
 if (CMAKE_OSX_DEPLOYMENT_TARGET)

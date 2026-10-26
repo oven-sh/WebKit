@@ -31,6 +31,10 @@
 #include "StyleComputedStyle+InitialInlines.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/AXCustomColorModeController.h>
+#endif
+
 namespace WebCore {
 
 template<SVGPaintServerHandling::Operation op>
@@ -41,13 +45,13 @@ bool SVGPaintServerHandling::preparePaintOperation(const RenderLayerModelObject&
         return false;
 
     if (std::holds_alternative<RenderSVGResourcePaintServer*>(paintServerResult)) {
-        auto& paintServer = *std::get<RenderSVGResourcePaintServer*>(paintServerResult);
+        CheckedRef paintServer = *std::get<RenderSVGResourcePaintServer*>(paintServerResult);
 
         if constexpr (op == Operation::Fill) {
-            if (paintServer.prepareFillOperation(m_context, renderer, style))
+            if (paintServer->prepareFillOperation(m_context, renderer, style))
                 return true;
         } else if constexpr (op == Operation::Stroke) {
-            if (paintServer.prepareStrokeOperation(m_context, renderer, style))
+            if (paintServer->prepareStrokeOperation(m_context, renderer, style))
                 return true;
         }
 
@@ -107,7 +111,7 @@ SVGPaintServerOrColor SVGPaintServerHandling::requestPaintServer(const RenderLay
             };
 
             // Try resolving URI first.
-            if (auto* paintServer = paintServerForOperation())
+            if (CheckedPtr paintServer = paintServerForOperation())
                 return paintServer;
 
             // If we found no paint server, and no fallback is desired, stop here.
@@ -134,7 +138,11 @@ inline void SVGPaintServerHandling::prepareFillOperation(const RenderLayerModelO
     }
 
     Style::ColorResolver colorResolver { style };
-    m_context.setFillColor(colorResolver.colorApplyingColorFilter(fillColor));
+    auto paintColor = colorResolver.colorApplyingColorFilter(fillColor);
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    paintColor = AXCustomColorModeController::adjustedSVGPaintColor(renderer, style, AXCustomColorModeController::SVGPaintTarget::Fill, paintColor, fillColor);
+#endif
+    m_context.setFillColor(paintColor);
 }
 
 inline void SVGPaintServerHandling::prepareStrokeOperation(const RenderLayerModelObject& renderer, const Style::ComputedStyle& style, const Color& strokeColor) const
@@ -142,7 +150,11 @@ inline void SVGPaintServerHandling::prepareStrokeOperation(const RenderLayerMode
     m_context.setAlpha(Style::evaluate<float>(style.strokeOpacity()));
 
     Style::ColorResolver colorResolver { style };
-    m_context.setStrokeColor(colorResolver.colorApplyingColorFilter(strokeColor));
+    auto paintColor = colorResolver.colorApplyingColorFilter(strokeColor);
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    paintColor = AXCustomColorModeController::adjustedSVGPaintColor(renderer, style, AXCustomColorModeController::SVGPaintTarget::Stroke, paintColor, strokeColor);
+#endif
+    m_context.setStrokeColor(paintColor);
     SVGRenderSupport::applyStrokeStyleToContext(m_context, style, renderer);
 }
 
@@ -189,12 +201,12 @@ bool SVGPaintServerHandling::inheritColorFromParentStyleIfNeeded(const RenderLay
     // FIXME: If this is intentionally using the `renderer` currentColor to resolve colors from `renderer.parent()`, we should document that, otherwise, this should probably use the corresponding style's current color.
 
     Style::ColorResolver colorResolver { renderer.style() };
-    auto& parentStyle = renderer.parent()->style();
+    CheckedRef parentStyle = renderer.parent()->style();
 
     if constexpr (op == Operation::Fill)
-        color = colorResolver.colorResolvingCurrentColor(parentStyle.fill().colorDisregardingType());
+        color = colorResolver.colorResolvingCurrentColor(parentStyle->fill().colorDisregardingType());
     else
-        color = colorResolver.colorResolvingCurrentColor(parentStyle.stroke().colorDisregardingType());
+        color = colorResolver.colorResolvingCurrentColor(parentStyle->stroke().colorDisregardingType());
 
     return true;
 }

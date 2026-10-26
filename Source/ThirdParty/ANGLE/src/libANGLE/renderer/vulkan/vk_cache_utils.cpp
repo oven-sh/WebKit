@@ -3554,7 +3554,9 @@ VkResult GraphicsPipelineDesc::initializePipeline(ErrorContext *context,
 
             createInfo.stageCount         = static_cast<uint32_t>(shadersState.shaderStages.size());
             createInfo.pStages            = shadersState.shaderStages.data();
-            createInfo.pTessellationState = &shadersState.tessellationState;
+            createInfo.pTessellationState  = (shadersState.tessellationState.sType != 0)
+                                                 ? &shadersState.tessellationState
+                                                 : nullptr;
             createInfo.pViewportState     = &shadersState.viewportState;
             createInfo.pRasterizationState = &shadersState.rasterState;
             createInfo.pDepthStencilState  = &shadersState.depthStencilState;
@@ -6181,9 +6183,8 @@ void WriteDescriptorDescs::updateTransformFeedbackWrite(
 void WriteDescriptorDescs::updateDynamicDescriptorsCount()
 {
     mDynamicDescriptorSetCount = 0;
-    for (uint32_t index = 0; index < mDescs.size(); ++index)
+    for (const WriteDescriptorDesc &writeDesc : mDescs)
     {
-        const WriteDescriptorDesc &writeDesc = mDescs[index];
         if (IsDynamicDescriptor(static_cast<VkDescriptorType>(writeDesc.descriptorType)))
         {
             mDynamicDescriptorSetCount += writeDesc.descriptorCount;
@@ -7261,40 +7262,11 @@ UpdateDescriptorSetsBuilder::UpdateDescriptorSetsBuilder()
 
 UpdateDescriptorSetsBuilder::~UpdateDescriptorSetsBuilder() = default;
 
-template <typename T>
-T *UpdateDescriptorSetsBuilder::DescriptorInfoAllocator<T>::allocate(uint32_t count)
-{
-    size_t oldSize = mCurrentVector->size();
-    size_t newSize = oldSize + count;
-    if (newSize <= mCurrentVector->capacity())
-    {
-        (*mCurrentVector).resize(newSize);
-        mTotalSize += count;
-        return &(*mCurrentVector)[oldSize];
-    }
-
-    ++mCurrentVector;
-    // clear() always ensures we have a single element left.
-    ASSERT(mCurrentVector == mDescriptorInfos.end());
-
-    // We have reached capacity, grow the storage
-    mVectorCapacity = std::max(count, mVectorCapacity);
-    mDescriptorInfos.emplace_back();
-    mDescriptorInfos.back().reserve(mVectorCapacity);
-    mCurrentVector = mDescriptorInfos.end() - 1;
-
-    mCurrentVector->resize(count);
-    mTotalSize += count;
-
-    return &mCurrentVector->front();
-}
-
 uint32_t UpdateDescriptorSetsBuilder::WriteDescriptorSetAllocator::updateDescriptorSets(
     VkDevice device) const
 {
     // Track time of all Vulkan calls with a single scope to reduce CPU overhead.
-    vk::ScopedVulkanApiPerfTimer timer(
-        GetPerfCounterGroup(vk::VulkanApiFunction::vkUpdateDescriptorSets));
+    vk::ScopedVulkanApiPerfTimer timer(vk::VulkanApiFunction::vkUpdateDescriptorSets);
     for (const std::vector<VkWriteDescriptorSet> &vector : mDescriptorInfos)
     {
         if (!vector.empty())

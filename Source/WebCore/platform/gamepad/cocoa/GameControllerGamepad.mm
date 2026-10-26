@@ -71,10 +71,11 @@ void GameControllerGamepad::setupElements()
     // Examples include pressing a button, or wiggling the joystick with intent.
     if ([profile respondsToSelector:@selector(setThumbstickUserIntentHandler:)]) {
         [profile setThumbstickUserIntentHandler:^(__kindof GCPhysicalInputProfile*, GCControllerElement*) {
-            if (!weakThis)
+            CheckedPtr checkedThis = weakThis;
+            if (!checkedThis)
                 return;
-            weakThis->m_lastUpdateTime = MonotonicTime::now();
-            GameControllerGamepadProvider::singleton().gamepadHadInput(*weakThis, true);
+            checkedThis->m_lastUpdateTime = MonotonicTime::now();
+            GameControllerGamepadProvider::singleton().gamepadHadInput(*checkedThis, true);
         }];
     }
 
@@ -113,11 +114,12 @@ void GameControllerGamepad::setupElements()
             // Ignoring them is preferable to surfacing NaN to javascript.
             if (std::isnan(value))
                 return;
-            if (!weakThis)
+            CheckedPtr checkedThis = weakThis;
+            if (!checkedThis)
                 return;
-            weakThis->m_buttonValues[(size_t)index].setValue(value);
-            weakThis->m_lastUpdateTime = MonotonicTime::now();
-            GameControllerGamepadProvider::singleton().gamepadHadInput(*weakThis, pressed);
+            checkedThis->m_buttonValues[(size_t)index].setValue(value);
+            checkedThis->m_lastUpdateTime = MonotonicTime::now();
+            GameControllerGamepadProvider::singleton().gamepadHadInput(*checkedThis, pressed);
         };
     };
 
@@ -202,7 +204,8 @@ void GameControllerGamepad::teardownElements()
         [profile setThumbstickUserIntentHandler:nil];
 
     // Clear all button handlers.
-    for (GCControllerButtonInput *button in [profile allButtons])
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL GCControllerButtonInput *button in [profile allButtons])
         button.valueChangedHandler = nil;
 
     // Clear axis handlers for thumbsticks.

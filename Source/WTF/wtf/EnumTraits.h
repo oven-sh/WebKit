@@ -82,7 +82,7 @@ public:
     static constexpr size_t count = sizeof...(values);
 
     template <typename Callable>
-    static void forEach(Callable&& c)
+    static void forEach(NOESCAPE const Callable& c)
     {
         for (auto value : { values... })
             c(value);
@@ -182,7 +182,7 @@ constexpr ASCIILiteral nullTerminatedName()
     if constexpr (nameFunction().empty())
         return { };
     else
-        return ASCIILiteral::fromLiteralUnsafe(nullTerminatedNameStorage<nameFunction>.data());
+        return ASCIILiteral { nullTerminatedNameStorage<nameFunction> };
 }
 
 template<typename E>

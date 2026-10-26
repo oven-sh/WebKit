@@ -73,7 +73,7 @@ void FELightingSoftwareParallelApplier::applyPlatformPaint(const LightingData& d
 
 void FELightingSoftwareParallelApplier::applyPlatformWorker(ApplyParameters* parameters)
 {
-    applyPlatformPaint(parameters->data, parameters->paintingData, parameters->yStart, parameters->yEnd);
+    applyPlatformPaint(*parameters->data, parameters->paintingData, parameters->yStart, parameters->yEnd);
 }
 
 void FELightingSoftwareParallelApplier::applyPlatformParallel(const LightingData& data, const LightSource::PaintingData& paintingData) const
@@ -97,7 +97,7 @@ void FELightingSoftwareParallelApplier::applyPlatformParallel(const LightingData
             int yStart = 1;
             for (--job; job >= 0; --job) {
                 ApplyParameters& params = parallelJobs.parameter(job);
-                params.data = data;
+                params.data.emplace(data);
                 params.paintingData = paintingData;
                 params.yStart = yStart;
                 yStart += job < jobsWithExtra ? yStep + 1 : yStep;

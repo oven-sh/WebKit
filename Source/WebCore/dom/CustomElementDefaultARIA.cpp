@@ -46,7 +46,7 @@ void CustomElementDefaultARIA::setValueForAttribute(const QualifiedName& name, c
     m_map.set(name, value);
 }
 
-static bool NODELETE isElementVisible(const Element& element, const Element& thisElement)
+static bool LEGACY_NODELETE isElementVisible(const Element& element, const Element& thisElement)
 {
     return !element.isConnected() || element.isInDocumentTree() || thisElement.isShadowIncludingDescendantOf(element.rootNode());
 }
@@ -119,7 +119,7 @@ std::optional<Vector<Ref<Element>>> CustomElementDefaultARIA::elementsForAttribu
         if (thisElement.isInTreeScope()) {
             SpaceSplitString idList { stringValue, SpaceSplitString::ShouldFoldCase::No };
             result = WTF::compactMap(idList, [&](auto& id) {
-                RefPtr elementForId = thisElement.treeScope().getElementById(id);
+                RefPtr elementForId = protect(thisElement.treeScope())->getElementById(id);
                 return elementForId ? elementForId->resolveReferenceTarget() : nullptr;
             });
         }

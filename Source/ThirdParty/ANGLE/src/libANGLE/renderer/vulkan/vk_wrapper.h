@@ -365,7 +365,7 @@ class CommandBuffer : public WrappedObject<CommandBuffer, VkCommandBuffer>
                        uint32_t size,
                        const void *data);
 
-    void setBlendConstants(const float blendConstants[4]);
+    void setBlendConstants(const gl::ColorF &blendConstants);
     void setCullMode(VkCullModeFlags cullMode);
     void setDepthBias(float depthBiasConstantFactor,
                       float depthBiasClamp,
@@ -579,6 +579,17 @@ class Allocation final : public WrappedObject<Allocation, VmaAllocation>
   private:
     friend class Allocator;
     friend class ImageMemorySuballocator;
+};
+
+class Pool final : public WrappedObject<Pool, VmaPool>
+{
+  public:
+    Pool() = default;
+    void destroy(const Allocator &allocator);
+    VkResult init(const Allocator &allocator,
+                  uint32_t memoryTypeIndex,
+                  size_t maxBlockCount,
+                  VkDeviceSize blockSize);
 };
 
 class RenderPass final : public WrappedObject<RenderPass, VkRenderPass>
@@ -1126,10 +1137,10 @@ ANGLE_INLINE void CommandBuffer::pushConstants(const PipelineLayout &layout,
     VK_CALL(vkCmdPushConstants, mHandle, layout.getHandle(), flag, offset, size, data);
 }
 
-ANGLE_INLINE void CommandBuffer::setBlendConstants(const float blendConstants[4])
+ANGLE_INLINE void CommandBuffer::setBlendConstants(const gl::ColorF &blendConstants)
 {
     ASSERT(valid());
-    VK_SECONDARY_CMD_CALL(vkCmdSetBlendConstants(mHandle, blendConstants));
+    VK_SECONDARY_CMD_CALL(vkCmdSetBlendConstants(mHandle, blendConstants.data()));
 }
 
 ANGLE_INLINE void CommandBuffer::setCullMode(VkCullModeFlags cullMode)
@@ -1869,6 +1880,26 @@ ANGLE_INLINE void Allocation::invalidate(const Allocator &allocator,
     vma::InvalidateAllocation(allocator.getHandle(), mHandle, offset, size);
 }
 
+// Pool implementation.
+ANGLE_INLINE void Pool::destroy(const Allocator &allocator)
+{
+    if (valid())
+    {
+        vma::DestroyPool(allocator.getHandle(), mHandle);
+        mHandle = VK_NULL_HANDLE;
+    }
+}
+
+ANGLE_INLINE VkResult Pool::init(const Allocator &allocator,
+                                 uint32_t memoryTypeIndex,
+                                 size_t maxBlockCount,
+                                 VkDeviceSize blockSize)
+{
+    ASSERT(!valid());
+    return vma::CreatePool(allocator.getHandle(), memoryTypeIndex, maxBlockCount, blockSize,
+                           &mHandle);
+}
+
 // RenderPass implementation.
 ANGLE_INLINE void RenderPass::destroy(VkDevice device)
 {
@@ -2235,6 +2266,8 @@ ANGLE_INLINE VkResult QueryPool::getResults(VkDevice device,
                                             VkQueryResultFlags flags) const
 {
     ASSERT(valid());
+    // The vkGetQueryPoolResults() does not have corresponding VulkanApiFunction enumeration since
+    // it belongs to multiple groups and can't be used in GetPerfCounterGroup().
     return VK_CALL_WITH_GROUP((flags & VK_QUERY_RESULT_WAIT_BIT)
                                   ? angle::VulkanApiPerfCounterGroup::Wait
                                   : angle::VulkanApiPerfCounterGroup::Other,

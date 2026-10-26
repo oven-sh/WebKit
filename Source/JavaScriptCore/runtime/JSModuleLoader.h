@@ -101,7 +101,7 @@ public:
 
     // APIs to control the module loader.
     void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, SourceCode&&);
-    void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, JSSourceCode*);
+    void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, JSValue);
     JSPromise* loadModule(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1, const String& referrer = { });
     JSPromise* linkAndEvaluateModule(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
     JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
@@ -174,7 +174,10 @@ public:
     void continueDynamicImport(JSGlobalObject*, ModuleLoaderPayload*, ModuleCompletion, RefPtr<ScriptFetcher>);
     JSPromise* loadRequestedModules(JSGlobalObject*, AbstractModuleRecord*, RefPtr<ScriptFetcher>);
 
-    JSPromise* makeModule(JSGlobalObject*, const Identifier& moduleKey, JSSourceCode*);
+    // If moduleData is a JSSourceCode, then it's a JavaScript/WebAssembly/JSON/text source code,
+    // and JSC is responsible for turning it into a usable module. Otherwise, the host has already
+    // turned it into a module, and JSC should take that as the module's default export value.
+    JSPromise* makeModule(JSGlobalObject*, const Identifier& moduleKey, JSValue moduleData);
 #if USE(BUN_JSC_ADDITIONS)
     void fetchSynchronously(JSGlobalObject*, JSPromise* fetchPromise, const Identifier& key, const String& referrer, RefPtr<ScriptFetchParameters>&&, RefPtr<ScriptFetcher>&&);
 #endif
@@ -202,8 +205,8 @@ public:
         if (!m_nonJavaScriptEntryCount) [[likely]]
             return nullptr; // a miss is common (require(esm), "is it registered yet?")
         using Type = ScriptFetchParameters::Type;
-        static_assert(static_cast<unsigned>(Type::HostDefined) == 5, "every Type but JavaScript is listed below");
-        for (Type type : { Type::HostDefined, Type::JSON, Type::Text, Type::WebAssembly, Type::None }) {
+        static_assert(static_cast<unsigned>(Type::CSS) == 6, "every Type but JavaScript is listed below");
+        for (Type type : { Type::HostDefined, Type::JSON, Type::Text, Type::WebAssembly, Type::CSS, Type::None }) {
             if (auto entry = m_moduleMap.get({ impl, type }))
                 return entry.get();
         }

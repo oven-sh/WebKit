@@ -712,6 +712,337 @@ TEST(TextManipulation, StartTextManipulationFindsInsertedClippedText)
     EXPECT_WK_STREQ("after", items[2].tokens[0].content);
 }
 
+static NSString * const subscrollerHTML = @"<!DOCTYPE html>"
+    "<meta name='viewport' content='width=800, initial-scale=1'>"
+    "<body style='margin: 0; font: 20px/20px monospace'>"
+    "<div id='scroller' style='overflow: scroll; width: 400px; height: 60px'>"
+    "<p style='margin: 0; height: 200px'>First paragraph</p>"
+    "<p style='margin: 0; height: 200px'>Second paragraph</p>"
+    "</div>"
+    "<div style='height: 2000px'></div>"
+    "<div>Offscreen text</div>"
+    "</body>";
+
+static RetainPtr<NSArray<_WKTextManipulationItem *>> findTextManipulationItems(TestWKWebView *webView, TextManipulationDelegate *delegate)
+{
+    done = false;
+    [webView _startTextManipulationsWithConfiguration:nil completion:^{
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+    return [delegate items];
+}
+
+static RetainPtr<_WKTextManipulationViewportProximityInfo> proximityForItemContaining(NSArray<_WKTextManipulationItem *> *items, NSString *text)
+{
+    for (_WKTextManipulationItem *item in items) {
+        for (_WKTextManipulationToken *token in item.tokens) {
+            if ([token.content containsString:text])
+                return item.viewportProximityInfo;
+        }
+    }
+    return nil;
+}
+
+TEST(TextManipulation, ViewportProximity)
+{
+    RetainPtr delegate = adoptNS([[TextManipulationDelegate alloc] init]);
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
+    [webView _setTextManipulationDelegate:delegate];
+
+    [webView synchronouslyLoadHTMLString:@"<!DOCTYPE html>"
+        "<meta name='viewport' content='width=800, initial-scale=1'>"
+        "<body style='margin: 0'>"
+        "<div>Onscreen text</div>"
+        "<div style='height: 2000px'></div>"
+        "<div>Offscreen text</div>"
+        "</body>"];
+
+    RetainPtr items = findTextManipulationItems(webView, delegate);
+
+    RetainPtr onscreen = proximityForItemContaining(items, @"Onscreen text");
+    EXPECT_EQ([onscreen relation], _WKTextManipulationViewportRelationIntersecting);
+    EXPECT_DOUBLE_EQ([onscreen viewportSizedDistance], 0.0);
+    EXPECT_GT([onscreen viewportCoverage], 0.0);
+
+    RetainPtr offscreen = proximityForItemContaining(items, @"Offscreen text");
+    EXPECT_EQ([offscreen relation], _WKTextManipulationViewportRelationOffscreen);
+    EXPECT_GT([offscreen viewportSizedDistance], 0.0);
+}
+
+TEST(TextManipulation, ViewportProximityHorizontalDistance)
+{
+    RetainPtr delegate = adoptNS([[TextManipulationDelegate alloc] init]);
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
+    [webView _setTextManipulationDelegate:delegate];
+
+    [webView synchronouslyLoadHTMLString:@"<!DOCTYPE html>"
+        "<meta name='viewport' content='width=800, initial-scale=1'>"
+        "<body style='margin: 0'>"
+        "<div>Onscreen text</div>"
+        "<div style='position: absolute; top: 0; left: 2000px; white-space: nowrap'>Right of viewport</div>"
+        "</body>"];
+
+    RetainPtr items = findTextManipulationItems(webView, delegate);
+
+    RetainPtr onscreen = proximityForItemContaining(items, @"Onscreen text");
+    EXPECT_EQ([onscreen relation], _WKTextManipulationViewportRelationIntersecting);
+    EXPECT_GT([onscreen viewportCoverage], 0.0);
+
+    RetainPtr toTheRight = proximityForItemContaining(items, @"Right of viewport");
+    EXPECT_EQ([toTheRight relation], _WKTextManipulationViewportRelationOffscreen);
+    EXPECT_NEAR([toTheRight viewportSizedDistance], 1.5, 0.1);
+    EXPECT_DOUBLE_EQ([toTheRight viewportCoverage], 0.0);
+}
+
+TEST(TextManipulation, ViewportProximityCoverageBounds)
+{
+    {
+        RetainPtr delegate = adoptNS([[TextManipulationDelegate alloc] init]);
+        RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
+        [webView _setTextManipulationDelegate:delegate];
+
+        [webView synchronouslyLoadHTMLString:@"<!DOCTYPE html>"
+            "<meta name='viewport' content='width=800, initial-scale=1'>"
+            "<body style='margin: 0'>"
+            "<div style='font: 1000px/1000px monospace'>WWWW</div>"
+            "</body>"];
+
+        RetainPtr items = findTextManipulationItems(webView, delegate);
+
+        RetainPtr largerThanViewport = proximityForItemContaining(items, @"WWWW");
+        EXPECT_EQ([largerThanViewport relation], _WKTextManipulationViewportRelationIntersecting);
+        EXPECT_DOUBLE_EQ([largerThanViewport viewportCoverage], 1.0);
+    }
+
+    {
+        RetainPtr delegate = adoptNS([[TextManipulationDelegate alloc] init]);
+        RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
+        [webView _setTextManipulationDelegate:delegate];
+
+        [webView synchronouslyLoadHTMLString:@"<!DOCTYPE html>"
+            "<meta name='viewport' content='width=800, initial-scale=1'>"
+            "<body style='margin: 0; font: 100px/100px monospace'>"
+            "<div>AAAA</div>"
+            "<div style='height: 470px'></div>"
+            "<div>BBBB</div>"
+            "</body>"];
+
+        RetainPtr items = findTextManipulationItems(webView, delegate);
+
+        RetainPtr fullyVisible = proximityForItemContaining(items, @"AAAA");
+        EXPECT_EQ([fullyVisible relation], _WKTextManipulationViewportRelationIntersecting);
+        EXPECT_GT([fullyVisible viewportCoverage], 0.0);
+        EXPECT_LT([fullyVisible viewportCoverage], 1.0);
+
+        RetainPtr straddlingBottomEdge = proximityForItemContaining(items, @"BBBB");
+        EXPECT_EQ([straddlingBottomEdge relation], _WKTextManipulationViewportRelationIntersecting);
+        EXPECT_GT([straddlingBottomEdge viewportCoverage], 0.0);
+        EXPECT_LT([straddlingBottomEdge viewportCoverage], [fullyVisible viewportCoverage] / 2);
+    }
+}
+
+TEST(TextManipulation, ViewportProximityWithSubscroller)
+{
+    RetainPtr delegate = adoptNS([[TextManipulationDelegate alloc] init]);
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
+    [webView _setTextManipulationDelegate:delegate];
+
+    [webView synchronouslyLoadHTMLString:subscrollerHTML];
+
+    RetainPtr items = findTextManipulationItems(webView, delegate);
+
+    RetainPtr first = proximityForItemContaining(items, @"First paragraph");
+    EXPECT_EQ([first relation], _WKTextManipulationViewportRelationIntersecting);
+    EXPECT_DOUBLE_EQ([first viewportSizedDistance], 0.0);
+    EXPECT_GT([first viewportCoverage], 0.0);
+
+    RetainPtr second = proximityForItemContaining(items, @"Second paragraph");
+    EXPECT_EQ([second relation], _WKTextManipulationViewportRelationClippedByAncestor);
+    EXPECT_DOUBLE_EQ([second viewportCoverage], 0.0);
+
+    RetainPtr offscreen = proximityForItemContaining(items, @"Offscreen text");
+    EXPECT_EQ([offscreen relation], _WKTextManipulationViewportRelationOffscreen);
+    EXPECT_GT([offscreen viewportSizedDistance], 0.0);
+    EXPECT_DOUBLE_EQ([offscreen viewportCoverage], 0.0);
+}
+
+TEST(TextManipulation, ViewportProximityAfterScrollingSubscroller)
+{
+    RetainPtr delegate = adoptNS([[TextManipulationDelegate alloc] init]);
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
+    [webView _setTextManipulationDelegate:delegate];
+
+    [webView synchronouslyLoadHTMLString:subscrollerHTML];
+    [webView stringByEvaluatingJavaScript:@"document.getElementById('scroller').scrollTop = 200; document.body.offsetHeight"];
+
+    RetainPtr items = findTextManipulationItems(webView, delegate);
+
+    RetainPtr first = proximityForItemContaining(items, @"First paragraph");
+    EXPECT_EQ([first relation], _WKTextManipulationViewportRelationClippedByAncestor);
+    EXPECT_DOUBLE_EQ([first viewportCoverage], 0.0);
+
+    RetainPtr second = proximityForItemContaining(items, @"Second paragraph");
+    EXPECT_EQ([second relation], _WKTextManipulationViewportRelationIntersecting);
+    EXPECT_DOUBLE_EQ([second viewportSizedDistance], 0.0);
+    EXPECT_GT([second viewportCoverage], 0.0);
+}
+
+TEST(TextManipulation, ViewportProximityWithClippingAncestor)
+{
+    RetainPtr delegate = adoptNS([[TextManipulationDelegate alloc] init]);
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
+    [webView _setTextManipulationDelegate:delegate];
+
+    [webView synchronouslyLoadHTMLString:@"<!DOCTYPE html>"
+        "<meta name='viewport' content='width=800, initial-scale=1'>"
+        "<body style='margin: 0'>"
+        "<div style='overflow: hidden; width: 200px; height: 0'><p style='margin: 0'>Clipped text</p></div>"
+        "<div>Onscreen text</div>"
+        "</body>"];
+
+    RetainPtr items = findTextManipulationItems(webView, delegate);
+
+    RetainPtr clipped = proximityForItemContaining(items, @"Clipped text");
+    EXPECT_EQ([clipped relation], _WKTextManipulationViewportRelationClippedByAncestor);
+    EXPECT_DOUBLE_EQ([clipped viewportCoverage], 0.0);
+    EXPECT_DOUBLE_EQ([clipped viewportSizedDistance], 0.0);
+
+    RetainPtr onscreen = proximityForItemContaining(items, @"Onscreen text");
+    EXPECT_EQ([onscreen relation], _WKTextManipulationViewportRelationIntersecting);
+    EXPECT_GT([onscreen viewportCoverage], 0.0);
+}
+
+static NSString * const boundingRectHTML = @"<!DOCTYPE html>"
+    "<meta name='viewport' content='width=800, initial-scale=1'>"
+    "<body style='margin: 0'>"
+    "<div style='height: 100px'></div>"
+    "<p style='margin: 0 0 0 50px'>First text</p>"
+    "<div style='height: 1100px'></div>"
+    "<p style='margin: 0 0 0 50px'>Second text</p>"
+    "<div style='height: 3000px'></div>"
+    "</body>";
+
+static RetainPtr<_WKTextManipulationItem> itemContaining(NSArray<_WKTextManipulationItem *> *items, NSString *text)
+{
+    for (_WKTextManipulationItem *item in items) {
+        for (_WKTextManipulationToken *token in item.tokens) {
+            if ([token.content containsString:text])
+                return item;
+        }
+    }
+    return nil;
+}
+
+static RetainPtr<NSArray<_WKTextManipulationItem *>> findTextManipulationItemsWithNewDelegate(TestWKWebView *webView)
+{
+    RetainPtr delegate = adoptNS([[TextManipulationDelegate alloc] init]);
+    [webView _setTextManipulationDelegate:delegate];
+    return findTextManipulationItems(webView, delegate);
+}
+
+static void scrollMainFrameTo(TestWKWebView *webView, CGFloat y)
+{
+    [webView stringByEvaluatingJavaScript:[NSString stringWithFormat:@"scrollTo(0, %f)", y]];
+    [webView waitForNextPresentationUpdate];
+}
+
+static CGRect webViewBoundingRectForItemContaining(NSArray<_WKTextManipulationItem *> *items, NSString *text)
+{
+    RetainPtr item = itemContaining(items, text);
+    EXPECT_TRUE(item);
+    return item ? [item webViewBoundingRect] : CGRectNull;
+}
+
+static void expectRectIsOffsetBy(CGRect rect, CGRect referenceRect, CGFloat dx, CGFloat dy)
+{
+    EXPECT_FALSE(CGRectIsNull(rect));
+    EXPECT_FALSE(CGRectIsNull(referenceRect));
+
+    EXPECT_EQ(rect.origin.x, referenceRect.origin.x + dx);
+    EXPECT_EQ(rect.origin.y, referenceRect.origin.y + dy);
+    EXPECT_EQ(rect.size.width, referenceRect.size.width);
+    EXPECT_EQ(rect.size.height, referenceRect.size.height);
+}
+
+TEST(TextManipulation, WebViewBoundingRect)
+{
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
+    [webView synchronouslyLoadHTMLString:boundingRectHTML];
+
+    RetainPtr items = findTextManipulationItemsWithNewDelegate(webView);
+    RetainPtr first = itemContaining(items, @"First text");
+    RetainPtr second = itemContaining(items, @"Second text");
+    EXPECT_TRUE(first);
+    EXPECT_TRUE(second);
+    EXPECT_NE(first, second);
+
+    CGRect firstRect = [first webViewBoundingRect];
+    EXPECT_NEAR(firstRect.origin.x, 50, 1);
+    EXPECT_NEAR(firstRect.origin.y, 100, 2);
+    EXPECT_GT(firstRect.size.width, 0);
+    EXPECT_GT(firstRect.size.height, 0);
+
+    CGRect secondRect = [second webViewBoundingRect];
+    EXPECT_NEAR(secondRect.origin.x, 50, 1);
+    EXPECT_NEAR(secondRect.origin.y, CGRectGetMaxY(firstRect) + 1100, 2);
+}
+
+TEST(TextManipulation, WebViewBoundingRectAfterScrolling)
+{
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
+    [webView synchronouslyLoadHTMLString:boundingRectHTML];
+
+    RetainPtr items = findTextManipulationItemsWithNewDelegate(webView);
+    CGRect firstBeforeScrolling = webViewBoundingRectForItemContaining(items, @"First text");
+    CGRect secondBeforeScrolling = webViewBoundingRectForItemContaining(items, @"Second text");
+
+    scrollMainFrameTo(webView, 1000);
+    expectRectIsOffsetBy(webViewBoundingRectForItemContaining(items, @"First text"), firstBeforeScrolling, 0, -1000);
+    expectRectIsOffsetBy(webViewBoundingRectForItemContaining(items, @"Second text"), secondBeforeScrolling, 0, -1000);
+
+    scrollMainFrameTo(webView, 0);
+    expectRectIsOffsetBy(webViewBoundingRectForItemContaining(items, @"First text"), firstBeforeScrolling, 0, 0);
+    expectRectIsOffsetBy(webViewBoundingRectForItemContaining(items, @"Second text"), secondBeforeScrolling, 0, 0);
+}
+
+#if PLATFORM(MAC)
+
+TEST(TextManipulation, WebViewBoundingRectWithObscuredContentInsets)
+{
+    RetainPtr referenceWebView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
+    [referenceWebView synchronouslyLoadHTMLString:boundingRectHTML];
+    RetainPtr referenceItems = findTextManipulationItemsWithNewDelegate(referenceWebView);
+    CGRect firstReference = webViewBoundingRectForItemContaining(referenceItems, @"First text");
+    CGRect secondReference = webViewBoundingRectForItemContaining(referenceItems, @"Second text");
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
+    [webView setObscuredContentInsets:NSEdgeInsetsMake(75, 0, 0, 0)];
+    [webView waitForNextPresentationUpdate];
+    [webView synchronouslyLoadHTMLString:boundingRectHTML];
+
+    RetainPtr items = findTextManipulationItemsWithNewDelegate(webView);
+    expectRectIsOffsetBy(webViewBoundingRectForItemContaining(items, @"First text"), firstReference, 0, 75);
+    expectRectIsOffsetBy(webViewBoundingRectForItemContaining(items, @"Second text"), secondReference, 0, 75);
+
+    scrollMainFrameTo(webView, 1000);
+    expectRectIsOffsetBy(webViewBoundingRectForItemContaining(items, @"First text"), firstReference, 0, 75 - 1000);
+    expectRectIsOffsetBy(webViewBoundingRectForItemContaining(items, @"Second text"), secondReference, 0, 75 - 1000);
+}
+
+#endif // PLATFORM(MAC)
+
+TEST(TextManipulation, WebViewBoundingRectWithoutRect)
+{
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
+    [webView synchronouslyLoadHTMLString:@"<!DOCTYPE html><title>Title text</title><body>Body text</body>"];
+
+    RetainPtr items = findTextManipulationItemsWithNewDelegate(webView);
+    RetainPtr title = itemContaining(items, @"Title text");
+    EXPECT_TRUE(title);
+    EXPECT_TRUE(CGRectIsNull([title webViewBoundingRect]));
+}
+
 TEST(TextManipulation, StartTextManipulationTreatsInlineBlockLinksAndButtonsAndSpansAsParagraphs)
 {
     RetainPtr delegate = adoptNS([[TextManipulationDelegate alloc] init]);

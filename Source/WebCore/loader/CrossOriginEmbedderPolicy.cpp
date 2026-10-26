@@ -38,7 +38,6 @@
 #include "ReportingClient.h"
 #include "ResourceResponse.h"
 #include "ScriptExecutionContext.h"
-#include "SecurityOrigin.h"
 #include "Settings.h"
 #include "ViolationReportType.h"
 #include <wtf/persistence/PersistentCoders.h>
@@ -46,15 +45,30 @@
 
 namespace WebCore {
 
+static constexpr auto coepUnsafeNoneToken { "unsafe-none"_s };
+static constexpr auto coepRequireCORPToken { "require-corp"_s };
+static constexpr auto coepCredentiallessToken { "credentialless"_s };
+
+bool isRecognizedCrossOriginEmbedderPolicyToken(StringView token)
+{
+    return token == coepRequireCORPToken || token == coepUnsafeNoneToken;
+}
+
+bool isUnsupportedCrossOriginEmbedderPolicyToken(StringView token)
+{
+    // FIXME: Support credentialless, then treat it as recognized.
+    return token == coepCredentiallessToken;
+}
+
 // https://html.spec.whatwg.org/multipage/origin.html#obtain-an-embedder-policy
-CrossOriginEmbedderPolicy obtainCrossOriginEmbedderPolicy(const ResourceResponse& response, const ScriptExecutionContext* context)
+CrossOriginEmbedderPolicy obtainCrossOriginEmbedderPolicy(const ResourceResponse& response, IsSecureContext isSecureContext, const ScriptExecutionContext* context)
 {
     auto parseCOEPHeader = [&response](HTTPHeaderName headerName, auto& value, auto& reportingEndpoint) {
         auto coepParsingResult = RFC8941::parseItemStructuredFieldValue(response.httpHeaderField(headerName));
         if (!coepParsingResult)
             return;
         auto* policyString = std::get_if<RFC8941::Token>(&coepParsingResult->first);
-        if (!policyString || policyString->string() != "require-corp"_s)
+        if (!policyString || policyString->string() != coepRequireCORPToken)
             return;
 
         value = CrossOriginEmbedderPolicyValue::RequireCORP;
@@ -65,7 +79,7 @@ CrossOriginEmbedderPolicy obtainCrossOriginEmbedderPolicy(const ResourceResponse
     CrossOriginEmbedderPolicy policy;
     if (context && !context->settingsValues().crossOriginEmbedderPolicyEnabled)
         return policy;
-    if (!SecurityOrigin::create(response.url())->isPotentiallyTrustworthy())
+    if (isSecureContext == IsSecureContext::No)
         return policy;
 
     parseCOEPHeader(HTTPHeaderName::CrossOriginEmbedderPolicy, policy.value, policy.reportingEndpoint);

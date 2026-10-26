@@ -88,10 +88,10 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGElement);
 
-SVGElement::SVGElement(const QualifiedName& tagName, Document& document, UniqueRef<SVGPropertyRegistry>&& propertyRegistry, OptionSet<TypeFlag> typeFlags)
+SVGElement::SVGElement(const QualifiedName& tagName, Document& document, const SVGPropertyRegistry& propertyRegistry, OptionSet<TypeFlag> typeFlags)
     : StyledElement(tagName, document, typeFlags | TypeFlag::IsSVGElement | TypeFlag::HasCustomStyleResolveCallbacks)
     , m_propertyAnimatorFactory(makeUniqueRef<SVGPropertyAnimatorFactory>())
-    , m_propertyRegistry(WTF::move(propertyRegistry))
+    , m_propertyRegistry(propertyRegistry)
     , m_className(SVGAnimatedString::create(this))
 {
     static bool didRegistration = false;
@@ -338,7 +338,7 @@ Vector<WeakPtr<SVGResourceElementClient>> SVGElement::referencingCSSClients() co
 void SVGElement::addReferencingCSSClient(SVGResourceElementClient& client)
 {
     if (CheckedPtr container = dynamicDowncast<RenderSVGResourceContainer>(this->renderer()))
-        container->addReferencingCSSClient(client.renderer());
+        container->addReferencingCSSClient(protect(client.renderer()));
     ensureSVGRareData().addReferencingCSSClient(client);
 }
 
@@ -347,7 +347,7 @@ void SVGElement::removeReferencingCSSClient(SVGResourceElementClient& client)
     if (!m_svgRareData)
         return;
     if (CheckedPtr container = dynamicDowncast<RenderSVGResourceContainer>(this->renderer()))
-        container->removeReferencingCSSClient(client.renderer());
+        container->removeReferencingCSSClient(protect(client.renderer()));
     ensureSVGRareData().removeReferencingCSSClient(client);
 }
 
@@ -485,13 +485,12 @@ void SVGElement::finishParsingChildren()
     invalidateInstances();
 }
 
-static inline bool NODELETE isSVGLayerAwareElement(const SVGElement& element)
+static inline bool LEGACY_NODELETE isSVGLayerAwareElement(const SVGElement& element)
 {
     using namespace ElementNames;
 
     switch (element.elementName()) {
     case SVG::a:
-    case SVG::altGlyph:
     case SVG::circle:
     case SVG::clipPath:
     case SVG::defs:
@@ -539,7 +538,6 @@ bool SVGElement::childShouldCreateRenderer(const Node& child) const
         return false;
 
     switch (svgChild->elementName()) {
-    case ElementNames::SVG::altGlyph:
     case ElementNames::SVG::textPath:
     case ElementNames::SVG::tref:
     case ElementNames::SVG::tspan:
@@ -584,7 +582,7 @@ void SVGElement::attributeChanged(const QualifiedName& name, const AtomString& o
 void SVGElement::synchronizeAttribute(const QualifiedName& name)
 {
     // If the value of the property has changed, serialize the new value to the attribute.
-    if (auto value = propertyRegistry().synchronize(name)) {
+    if (auto value = propertyRegistry().synchronize(*this, name)) {
         // If the serialized value is empty and the attribute doesn't exist,
         // don't recreate it. This handles the case where the attribute was
         // explicitly removed after the list was emptied.
@@ -599,7 +597,7 @@ void SVGElement::synchronizeAllAttributes()
 {
     // SVGPropertyRegistry::synchronizeAllAttributes() returns the new values of
     // the properties which have changed but not committed yet.
-    auto map = propertyRegistry().synchronizeAllAttributes();
+    auto map = propertyRegistry().synchronizeAllAttributes(*this);
     for (const auto& entry : map)
         setSynchronizedLazyAttribute(entry.key, AtomString { entry.value });
 }
@@ -612,18 +610,18 @@ void SVGElement::commitPropertyChange(SVGProperty* property)
     property->setDirty();
 
     setAnimatedSVGAttributesAreDirty();
-    svgAttributeChanged(propertyRegistry().propertyAttributeName(*property));
+    svgAttributeChanged(propertyRegistry().propertyAttributeName(*this, *property));
 }
 
 void SVGElement::commitPropertyChange(SVGAnimatedPropertyBase& animatedProperty)
 {
-    QualifiedName attributeName = propertyRegistry().animatedPropertyAttributeName(animatedProperty);
+    QualifiedName attributeName = propertyRegistry().animatedPropertyAttributeName(*this, animatedProperty);
     ASSERT(attributeName != nullQName());
 
     // A change in a style property, e.g SVGRectElement::x should be serialized to
     // the attribute immediately. Otherwise it is okay to be lazy in this regard.
     if (!propertyRegistry().isAnimatedStylePropertyAttribute(attributeName))
-        propertyRegistry().setAnimatedPropertyDirty(attributeName, animatedProperty);
+        propertyRegistry().setAnimatedPropertyDirty(*this, attributeName, animatedProperty);
     else
         setSynchronizedLazyAttribute(attributeName, AtomString { animatedProperty.baseValAsString() });
 
@@ -633,7 +631,7 @@ void SVGElement::commitPropertyChange(SVGAnimatedPropertyBase& animatedProperty)
 
 bool SVGElement::isAnimatedPropertyAttribute(const QualifiedName& attributeName) const
 {
-    return propertyRegistry().isAnimatedPropertyAttribute(attributeName);
+    return propertyRegistry().isAnimatedPropertyAttribute(*this, attributeName);
 }
 
 bool SVGElement::isAnimatedAttribute(const QualifiedName& attributeName) const
@@ -653,11 +651,11 @@ RefPtr<SVGAttributeAnimator> SVGElement::createAnimator(const QualifiedName& att
         return animator;
 
     // Animated property animator.
-    RefPtr animator = propertyRegistry().createAnimator(attributeName, animationMode, calcMode, isAccumulated, isAdditive);
+    RefPtr animator = propertyRegistry().createAnimator(*this, attributeName, animationMode, calcMode, isAccumulated, isAdditive);
     if (!animator)
         return animator;
     for (auto& instance : copyToVectorOf<Ref<SVGElement>>(instances()))
-        instance->propertyRegistry().appendAnimatedInstance(attributeName, *animator);
+        instance->propertyRegistry().appendAnimatedInstance(instance, attributeName, *animator);
     return animator;
 }
 
@@ -731,7 +729,8 @@ ColorInterpolation SVGElement::colorInterpolation() const
         return renderer->style().colorInterpolationFilters();
 
     // Try to determine the property value from the computed style.
-    if (auto value = Style::Extractor(const_cast<SVGElement*>(this)).propertyValue(CSSPropertyColorInterpolationFilters, Style::Extractor::UpdateLayout::No))
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST if (auto value = Style::Extractor(const_cast<SVGElement*>(this)).propertyValue(CSSPropertyID::ColorInterpolationFilters, Style::Extractor::UpdateLayout::No))
         return fromCSSValue<ColorInterpolation>(*value);
 
     return ColorInterpolation::Auto;
@@ -872,7 +871,8 @@ String SVGElement::title() const
     if (isOutermostSVGSVGElement() && page->topDocumentHasDocumentClass(DocumentClass::SVG))
         return String();
     RefPtr firstTitle = childrenOfType<SVGTitleElement>(*this).first();
-    return firstTitle ? const_cast<SVGTitleElement&>(*firstTitle).innerText() : String();
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return firstTitle ? const_cast<SVGTitleElement&>(*firstTitle).innerText() : String();
 }
 
 bool SVGElement::rendererIsNeeded(const Style::ComputedStyle& style)
@@ -894,10 +894,10 @@ CSSPropertyID SVGElement::cssPropertyIdForSVGAttributeName(const QualifiedName& 
     // are element-restricted per https://w3c.github.io/svgwg/svg2-draft/geometry.html. The
     // applicability check is folded into the switch below: each geometry case returns its
     // CSS property only when *this is one of the owning element types, otherwise
-    // CSSPropertyInvalid. Doing this inline rather than via a virtual override keeps this
+    // CSSPropertyID::Invalid. Doing this inline rather than via a virtual override keeps this
     // mapping non-virtual on the attribute fast path; bug 313380.
     if (!attrName.namespaceURI().isNull())
-        return CSSPropertyInvalid;
+        return CSSPropertyID::Invalid;
 
     auto supportsXY = [&] {
         return is<SVGForeignObjectElement>(*this) || is<SVGImageElement>(*this) || is<SVGRectElement>(*this)
@@ -912,156 +912,156 @@ CSSPropertyID SVGElement::cssPropertyIdForSVGAttributeName(const QualifiedName& 
 
     switch (attrName.nodeName()) {
     case AttributeNames::alignment_baselineAttr:
-        return CSSPropertyAlignmentBaseline;
+        return CSSPropertyID::AlignmentBaseline;
     case AttributeNames::baseline_shiftAttr:
-        return CSSPropertyBaselineShift;
+        return CSSPropertyID::BaselineShift;
     case AttributeNames::buffered_renderingAttr:
-        return CSSPropertyBufferedRendering;
+        return CSSPropertyID::BufferedRendering;
     case AttributeNames::clipAttr:
-        return CSSPropertyClip;
+        return CSSPropertyID::Clip;
     case AttributeNames::clip_pathAttr:
-        return CSSPropertyClipPath;
+        return CSSPropertyID::ClipPath;
     case AttributeNames::clip_ruleAttr:
-        return CSSPropertyClipRule;
+        return CSSPropertyID::ClipRule;
     case AttributeNames::colorAttr:
-        return CSSPropertyColor;
+        return CSSPropertyID::Color;
     case AttributeNames::color_interpolationAttr:
-        return CSSPropertyColorInterpolation;
+        return CSSPropertyID::ColorInterpolation;
     case AttributeNames::color_interpolation_filtersAttr:
-        return CSSPropertyColorInterpolationFilters;
+        return CSSPropertyID::ColorInterpolationFilters;
     case AttributeNames::cursorAttr:
-        return CSSPropertyCursor;
+        return CSSPropertyID::Cursor;
     case AttributeNames::cxAttr:
-        return is<SVGCircleElement>(*this) || is<SVGEllipseElement>(*this) ? CSSPropertyCx : CSSPropertyInvalid;
+        return is<SVGCircleElement>(*this) || is<SVGEllipseElement>(*this) ? CSSPropertyID::Cx : CSSPropertyID::Invalid;
     case AttributeNames::cyAttr:
-        return is<SVGCircleElement>(*this) || is<SVGEllipseElement>(*this) ? CSSPropertyCy : CSSPropertyInvalid;
+        return is<SVGCircleElement>(*this) || is<SVGEllipseElement>(*this) ? CSSPropertyID::Cy : CSSPropertyID::Invalid;
     case AttributeNames::dAttr:
-        return is<SVGPathElement>(*this) && document().settings().cssDPropertyEnabled() ? CSSPropertyD : CSSPropertyInvalid;
+        return is<SVGPathElement>(*this) && document().settings().cssDPropertyEnabled() ? CSSPropertyID::D : CSSPropertyID::Invalid;
     case AttributeNames::directionAttr:
-        return CSSPropertyDirection;
+        return CSSPropertyID::Direction;
     case AttributeNames::displayAttr:
-        return CSSPropertyDisplay;
+        return CSSPropertyID::Display;
     case AttributeNames::dominant_baselineAttr:
-        return CSSPropertyDominantBaseline;
+        return CSSPropertyID::DominantBaseline;
     case AttributeNames::fillAttr:
-        return CSSPropertyFill;
+        return CSSPropertyID::Fill;
     case AttributeNames::fill_opacityAttr:
-        return CSSPropertyFillOpacity;
+        return CSSPropertyID::FillOpacity;
     case AttributeNames::fill_ruleAttr:
-        return CSSPropertyFillRule;
+        return CSSPropertyID::FillRule;
     case AttributeNames::filterAttr:
-        return CSSPropertyFilter;
+        return CSSPropertyID::Filter;
     case AttributeNames::flood_colorAttr:
-        return CSSPropertyFloodColor;
+        return CSSPropertyID::FloodColor;
     case AttributeNames::flood_opacityAttr:
-        return CSSPropertyFloodOpacity;
+        return CSSPropertyID::FloodOpacity;
     case AttributeNames::font_familyAttr:
-        return CSSPropertyFontFamily;
+        return CSSPropertyID::FontFamily;
     case AttributeNames::font_sizeAttr:
-        return CSSPropertyFontSize;
+        return CSSPropertyID::FontSize;
     case AttributeNames::font_size_adjustAttr:
-        return CSSPropertyFontSizeAdjust;
+        return CSSPropertyID::FontSizeAdjust;
     case AttributeNames::font_stretchAttr:
     case AttributeNames::font_widthAttr:
-        return CSSPropertyFontWidth;
+        return CSSPropertyID::FontWidth;
     case AttributeNames::font_styleAttr:
-        return CSSPropertyFontStyle;
+        return CSSPropertyID::FontStyle;
     case AttributeNames::font_variantAttr:
-        return CSSPropertyFontVariant;
+        return CSSPropertyID::FontVariant;
     case AttributeNames::font_weightAttr:
-        return CSSPropertyFontWeight;
+        return CSSPropertyID::FontWeight;
     case AttributeNames::glyph_orientation_verticalAttr:
-        return CSSPropertyGlyphOrientationVertical;
+        return CSSPropertyID::GlyphOrientationVertical;
     case AttributeNames::heightAttr:
-        return supportsWidthHeight() ? CSSPropertyHeight : CSSPropertyInvalid;
+        return supportsWidthHeight() ? CSSPropertyID::Height : CSSPropertyID::Invalid;
     case AttributeNames::image_renderingAttr:
-        return CSSPropertyImageRendering;
+        return CSSPropertyID::ImageRendering;
     case AttributeNames::letter_spacingAttr:
-        return CSSPropertyLetterSpacing;
+        return CSSPropertyID::LetterSpacing;
     case AttributeNames::lighting_colorAttr:
-        return CSSPropertyLightingColor;
+        return CSSPropertyID::LightingColor;
     case AttributeNames::marker_endAttr:
-        return CSSPropertyMarkerEnd;
+        return CSSPropertyID::MarkerEnd;
     case AttributeNames::marker_midAttr:
-        return CSSPropertyMarkerMid;
+        return CSSPropertyID::MarkerMid;
     case AttributeNames::marker_startAttr:
-        return CSSPropertyMarkerStart;
+        return CSSPropertyID::MarkerStart;
     case AttributeNames::maskAttr:
-        return CSSPropertyMask;
+        return CSSPropertyID::Mask;
     case AttributeNames::mask_typeAttr:
-        return CSSPropertyMaskType;
+        return CSSPropertyID::MaskType;
     case AttributeNames::opacityAttr:
-        return CSSPropertyOpacity;
+        return CSSPropertyID::Opacity;
     case AttributeNames::overflowAttr:
-        return CSSPropertyOverflow;
+        return CSSPropertyID::Overflow;
     case AttributeNames::paint_orderAttr:
-        return CSSPropertyPaintOrder;
+        return CSSPropertyID::PaintOrder;
     case AttributeNames::pointer_eventsAttr:
-        return CSSPropertyPointerEvents;
+        return CSSPropertyID::PointerEvents;
     case AttributeNames::rAttr:
-        return is<SVGCircleElement>(*this) ? CSSPropertyR : CSSPropertyInvalid;
+        return is<SVGCircleElement>(*this) ? CSSPropertyID::R : CSSPropertyID::Invalid;
     case AttributeNames::rxAttr:
-        return is<SVGEllipseElement>(*this) || is<SVGRectElement>(*this) ? CSSPropertyRx : CSSPropertyInvalid;
+        return is<SVGEllipseElement>(*this) || is<SVGRectElement>(*this) ? CSSPropertyID::Rx : CSSPropertyID::Invalid;
     case AttributeNames::ryAttr:
-        return is<SVGEllipseElement>(*this) || is<SVGRectElement>(*this) ? CSSPropertyRy : CSSPropertyInvalid;
+        return is<SVGEllipseElement>(*this) || is<SVGRectElement>(*this) ? CSSPropertyID::Ry : CSSPropertyID::Invalid;
     case AttributeNames::shape_renderingAttr:
-        return CSSPropertyShapeRendering;
+        return CSSPropertyID::ShapeRendering;
     case AttributeNames::stop_colorAttr:
-        return CSSPropertyStopColor;
+        return CSSPropertyID::StopColor;
     case AttributeNames::stop_opacityAttr:
-        return CSSPropertyStopOpacity;
+        return CSSPropertyID::StopOpacity;
     case AttributeNames::strokeAttr:
-        return CSSPropertyStroke;
+        return CSSPropertyID::Stroke;
     case AttributeNames::stroke_dasharrayAttr:
-        return CSSPropertyStrokeDasharray;
+        return CSSPropertyID::StrokeDasharray;
     case AttributeNames::stroke_dashoffsetAttr:
-        return CSSPropertyStrokeDashoffset;
+        return CSSPropertyID::StrokeDashoffset;
     case AttributeNames::stroke_linecapAttr:
-        return CSSPropertyStrokeLinecap;
+        return CSSPropertyID::StrokeLinecap;
     case AttributeNames::stroke_linejoinAttr:
-        return CSSPropertyStrokeLinejoin;
+        return CSSPropertyID::StrokeLinejoin;
     case AttributeNames::stroke_miterlimitAttr:
-        return CSSPropertyStrokeMiterlimit;
+        return CSSPropertyID::StrokeMiterlimit;
     case AttributeNames::stroke_opacityAttr:
-        return CSSPropertyStrokeOpacity;
+        return CSSPropertyID::StrokeOpacity;
     case AttributeNames::stroke_widthAttr:
-        return CSSPropertyStrokeWidth;
+        return CSSPropertyID::StrokeWidth;
     case AttributeNames::text_anchorAttr:
-        return CSSPropertyTextAnchor;
+        return CSSPropertyID::TextAnchor;
     case AttributeNames::text_decorationAttr:
-        return CSSPropertyTextDecoration;
+        return CSSPropertyID::TextDecoration;
     case AttributeNames::text_overflowAttr:
-        return CSSPropertyTextOverflow;
+        return CSSPropertyID::TextOverflow;
     case AttributeNames::text_renderingAttr:
-        return CSSPropertyTextRendering;
+        return CSSPropertyID::TextRendering;
     case AttributeNames::unicode_bidiAttr:
-        return CSSPropertyUnicodeBidi;
+        return CSSPropertyID::UnicodeBidi;
     case AttributeNames::vector_effectAttr:
-        return CSSPropertyVectorEffect;
+        return CSSPropertyID::VectorEffect;
     case AttributeNames::visibilityAttr:
-        return CSSPropertyVisibility;
+        return CSSPropertyID::Visibility;
     case AttributeNames::widthAttr:
-        return supportsWidthHeight() ? CSSPropertyWidth : CSSPropertyInvalid;
+        return supportsWidthHeight() ? CSSPropertyID::Width : CSSPropertyID::Invalid;
     case AttributeNames::word_spacingAttr:
-        return CSSPropertyWordSpacing;
+        return CSSPropertyID::WordSpacing;
     case AttributeNames::writing_modeAttr:
-        return CSSPropertyWritingMode;
+        return CSSPropertyID::WritingMode;
     case AttributeNames::xAttr:
-        return supportsXY() ? CSSPropertyX : CSSPropertyInvalid;
+        return supportsXY() ? CSSPropertyID::X : CSSPropertyID::Invalid;
     case AttributeNames::yAttr:
-        return supportsXY() ? CSSPropertyY : CSSPropertyInvalid;
+        return supportsXY() ? CSSPropertyID::Y : CSSPropertyID::Invalid;
     case AttributeNames::transform_originAttr:
-        return CSSPropertyTransformOrigin;
+        return CSSPropertyID::TransformOrigin;
     default:
         break;
     }
 
-    return CSSPropertyInvalid;
+    return CSSPropertyID::Invalid;
 }
 
 bool SVGElement::hasPresentationalHintsForAttribute(const QualifiedName& name) const
 {
-    if (cssPropertyIdForSVGAttributeName(name) != CSSPropertyInvalid)
+    if (cssPropertyIdForSVGAttributeName(name) != CSSPropertyID::Invalid)
         return true;
     if (name.matches(XMLNames::langAttr) || name.matches(HTMLNames::langAttr))
         return true;
@@ -1071,7 +1071,7 @@ bool SVGElement::hasPresentationalHintsForAttribute(const QualifiedName& name) c
 void SVGElement::collectPresentationalHintsForAttribute(const QualifiedName& name, const AtomString& value, MutableStyleProperties& style)
 {
     CSSPropertyID propertyID = cssPropertyIdForSVGAttributeName(name);
-    if (propertyID != CSSPropertyInvalid)
+    if (propertyID != CSSPropertyID::Invalid)
         addPropertyToPresentationalHintStyle(style, propertyID, value);
     else if (name.matches(XMLNames::langAttr) || (name.matches(HTMLNames::langAttr) && !hasAttributeWithoutSynchronization(XMLNames::langAttr)))
         mapLanguageAttributeToLocale(value, style);
@@ -1086,7 +1086,7 @@ void SVGElement::updateSVGRendererForElementChange(Style::SVGRendererUpdateType 
 void SVGElement::svgAttributeChanged(const QualifiedName& attrName)
 {
     CSSPropertyID propertyID = cssPropertyIdForSVGAttributeName(attrName);
-    if (propertyID != CSSPropertyInvalid) {
+    if (propertyID != CSSPropertyID::Invalid) {
         invalidateInstances();
         return;
     }

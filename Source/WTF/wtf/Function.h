@@ -56,7 +56,8 @@ public:
         : m_callable(WTF::move(callable)) { }
     CallableWrapper(const CallableWrapper&) = delete;
     CallableWrapper& operator=(const CallableWrapper&) = delete;
-    Out call(In... in) final { return m_callable(std::forward<In>(in)...); }
+    // FIXME: Remove this suppression once rdar://190195858 is fixed.
+    Out call(In... in) final { SUPPRESS_FORWARD_DECL_ARG return m_callable(std::forward<In>(in)...); }
 private:
     CallableType m_callable;
 };
@@ -100,7 +101,8 @@ public:
     Out operator()(In... in) const
     {
         ASSERT(m_callableWrapper);
-        return m_callableWrapper->call(std::forward<In>(in)...);
+        // FIXME: Remove this suppression once rdar://190195858 is fixed.
+        SUPPRESS_FORWARD_DECL_ARG return m_callableWrapper->call(std::forward<In>(in)...);
     }
 
     explicit operator bool() const { return !!m_callableWrapper; }
@@ -142,7 +144,7 @@ private:
     friend Function adopt<Out, In...>(Impl*);
 
     std::unique_ptr<Impl> m_callableWrapper;
-} SWIFT_ESCAPABLE;
+} SWIFT_SELF_CONTAINED;
 
 template<typename Out, typename... In> Function<Out(In...)> adopt(Detail::CallableWrapperBase<Out, In...>* impl)
 {

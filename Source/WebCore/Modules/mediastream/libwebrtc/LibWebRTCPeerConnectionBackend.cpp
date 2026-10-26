@@ -112,7 +112,7 @@ bool LibWebRTCPeerConnectionBackend::isNegotiationNeeded(uint32_t eventId) const
     return m_endpoint->isNegotiationNeeded(eventId);
 }
 
-static inline webrtc::PeerConnectionInterface::BundlePolicy NODELETE bundlePolicyfromConfiguration(const MediaEndpointConfiguration& configuration)
+static inline webrtc::PeerConnectionInterface::BundlePolicy LEGACY_NODELETE bundlePolicyfromConfiguration(const MediaEndpointConfiguration& configuration)
 {
     switch (configuration.bundlePolicy) {
     case RTCBundlePolicy::MaxCompat:
@@ -127,7 +127,7 @@ static inline webrtc::PeerConnectionInterface::BundlePolicy NODELETE bundlePolic
     return webrtc::PeerConnectionInterface::kBundlePolicyMaxCompat;
 }
 
-static inline webrtc::PeerConnectionInterface::RtcpMuxPolicy NODELETE rtcpMuxPolicyfromConfiguration(const MediaEndpointConfiguration& configuration)
+static inline webrtc::PeerConnectionInterface::RtcpMuxPolicy LEGACY_NODELETE rtcpMuxPolicyfromConfiguration(const MediaEndpointConfiguration& configuration)
 {
     switch (configuration.rtcpMuxPolicy) {
     case RTCPMuxPolicy::Negotiate:
@@ -140,7 +140,7 @@ static inline webrtc::PeerConnectionInterface::RtcpMuxPolicy NODELETE rtcpMuxPol
     return webrtc::PeerConnectionInterface::kRtcpMuxPolicyRequire;
 }
 
-static inline webrtc::PeerConnectionInterface::IceTransportsType NODELETE iceTransportPolicyfromConfiguration(const MediaEndpointConfiguration& configuration)
+static inline webrtc::PeerConnectionInterface::IceTransportsType LEGACY_NODELETE iceTransportPolicyfromConfiguration(const MediaEndpointConfiguration& configuration)
 {
     switch (configuration.iceTransportPolicy) {
     case RTCIceTransportPolicy::Relay:
@@ -163,10 +163,10 @@ webrtc::PeerConnectionInterface::RTCConfiguration configurationFromMediaEndpoint
 
     for (auto& server : configuration.iceServers) {
         webrtc::PeerConnectionInterface::IceServer iceServer;
-        iceServer.username = server.username.utf8().legacyCStringPointer();
-        iceServer.password = server.credential.utf8().legacyCStringPointer();
+        iceServer.username = server.username.utf8().toStdString();
+        iceServer.password = server.credential.utf8().toStdString();
         for (auto& url : server.urls)
-            iceServer.urls.push_back({ url.string().utf8().legacyCStringPointer() });
+            iceServer.urls.push_back(url.string().utf8().toStdString());
         rtcConfiguration.servers.push_back(WTF::move(iceServer));
     }
 
@@ -175,7 +175,7 @@ webrtc::PeerConnectionInterface::RTCConfiguration configurationFromMediaEndpoint
 
     for (auto& pem : configuration.certificates) {
         rtcConfiguration.certificates.push_back(webrtc::RTCCertificate::FromPEM(webrtc::RTCCertificatePEM {
-            pem.privateKey.utf8().legacyCStringPointer(), pem.certificate.utf8().legacyCStringPointer()
+            std::string_view { byteCast<char>(pem.privateKey.utf8().span()) }, std::string_view { byteCast<char>(pem.certificate.utf8().span()) }
         }));
     }
 
@@ -203,7 +203,7 @@ void LibWebRTCPeerConnectionBackend::getStats(Ref<DeferredPromise>&& promise)
     m_endpoint->getStats(WTF::move(promise));
 }
 
-static inline LibWebRTCRtpSenderBackend& NODELETE backendFromRTPSender(RTCRtpSender& sender)
+static inline LibWebRTCRtpSenderBackend& LEGACY_NODELETE backendFromRTPSender(RTCRtpSender& sender)
 {
     return downcast<LibWebRTCRtpSenderBackend>(sender.backend());
 }
@@ -272,7 +272,7 @@ void LibWebRTCPeerConnectionBackend::doAddIceCandidate(RTCIceCandidate& candidat
 {
     webrtc::SdpParseError error;
     int sdpMLineIndex = candidate.sdpMLineIndex() ? candidate.sdpMLineIndex().value() : 0;
-    std::unique_ptr<webrtc::IceCandidate> rtcCandidate(webrtc::CreateIceCandidate(candidate.sdpMid().utf8().legacyCStringPointer(), sdpMLineIndex, candidate.candidate().utf8().legacyCStringPointer(), &error));
+    std::unique_ptr<webrtc::IceCandidate> rtcCandidate(webrtc::CreateIceCandidate(std::string_view { byteCast<char>(candidate.sdpMid().utf8().span()) }, sdpMLineIndex, candidate.candidate().utf8().toStdString(), &error));
 
     if (!rtcCandidate) {
         callback(Exception { ExceptionCode::OperationError, String::fromUTF8(error.description) });
@@ -301,7 +301,7 @@ std::unique_ptr<RTCDataChannelHandler> LibWebRTCPeerConnectionBackend::createDat
     return m_endpoint->createDataChannel(label, options);
 }
 
-static inline RefPtr<RTCRtpSender> findExistingSender(const Vector<Ref<RTCRtpTransceiver>>& transceivers, LibWebRTCRtpSenderBackend& senderBackend)
+static inline RefPtr<RTCRtpSender> LEGACY_NODELETE findExistingSender(const Vector<Ref<RTCRtpTransceiver>>& transceivers, LibWebRTCRtpSenderBackend& senderBackend)
 {
     ASSERT(senderBackend.rtcSender());
     for (auto& transceiver : transceivers) {

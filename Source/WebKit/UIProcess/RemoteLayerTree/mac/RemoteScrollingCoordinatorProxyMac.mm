@@ -29,6 +29,7 @@
 #if PLATFORM(MAC) && ENABLE(UI_SIDE_COMPOSITING)
 
 #import "RemoteLayerTreeDrawingAreaProxy.h"
+#import "RemoteLayerTreeDrawingAreaProxyMac.h"
 #import "RemoteLayerTreeEventDispatcher.h"
 #import "WebPageProxy.h"
 #import <WebCore/PerformanceLoggingClient.h>
@@ -129,6 +130,21 @@ void RemoteScrollingCoordinatorProxyMac::scrollingTreeNodeDidEndScroll(Scrolling
 {
     m_uiState.removeNodeWithActiveUserScroll(nodeID);
     sendUIStateChangedIfNecessary();
+
+    // Updates sent during the scroll were unstable, so the web process deferred layout. Send a stable one now
+    // that the gesture is over.
+    if (rootScrollingNodeID() == nodeID) {
+        if (RefPtr drawingArea = dynamicDowncast<RemoteLayerTreeDrawingAreaProxyMac>(protect(webPageProxy())->drawingArea()))
+            drawingArea->updateLayoutViewportForScroll(RemoteLayerTreeDrawingAreaProxyMac::IsStableState::Yes);
+    }
+}
+
+void RemoteScrollingCoordinatorProxyMac::mainFrameScrollPositionDidChange()
+{
+    // We own the scroll position the layout viewport comes from, so push the new viewport ourselves.
+    // scrollingTreeNodeDidEndScroll() sends the stable update once the scroll is done.
+    if (RefPtr drawingArea = dynamicDowncast<RemoteLayerTreeDrawingAreaProxyMac>(protect(webPageProxy())->drawingArea()))
+        drawingArea->updateLayoutViewportForScroll(RemoteLayerTreeDrawingAreaProxyMac::IsStableState::No);
 }
 
 void RemoteScrollingCoordinatorProxyMac::scrollingTreeNodeDidBeginScrollSnapping(ScrollingNodeID nodeID)
@@ -296,12 +312,14 @@ RefPtr<const RemoteAnimationTimeline> RemoteScrollingCoordinatorProxyMac::timeli
     return m_eventDispatcher->timeline(timelineID);
 }
 
-RefPtr<const RemoteAnimationStack> RemoteScrollingCoordinatorProxyMac::animationStackForNodeWithIDForTesting(WebCore::PlatformLayerIdentifier layerID) const
+String RemoteScrollingCoordinatorProxyMac::animationStackJSONForNodeWithIDForTesting(WebCore::PlatformLayerIdentifier layerID) const
 {
+    String json = emptyString();
     m_eventDispatcher->lockForAnimationChanges();
-    RefPtr animationStack = m_eventDispatcher->animationStackForNodeWithIDForTesting(layerID);
+    if (RefPtr animationStack = m_eventDispatcher->animationStackForNodeWithIDForTesting(layerID))
+        json = animationStack->toJSONForTesting()->toJSONString();
     m_eventDispatcher->unlockForAnimationChanges();
-    return animationStack;
+    return json;
 }
 
 HashSet<Ref<RemoteProgressBasedTimeline>> RemoteScrollingCoordinatorProxyMac::timelinesForScrollingNodeIDForTesting(WebCore::ScrollingNodeID scrollingNodeID) const

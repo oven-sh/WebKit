@@ -193,6 +193,8 @@ option(CLANG_TIME_TRACE "Generate Clang time trace profiling output" OFF)
 if (CLANG_TIME_TRACE AND COMPILER_IS_CLANG)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -ftime-trace")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ftime-trace")
+    set(CMAKE_OBJC_FLAGS "${CMAKE_OBJC_FLAGS} -ftime-trace")
+    set(CMAKE_OBJCXX_FLAGS "${CMAKE_OBJCXX_FLAGS} -ftime-trace")
 endif ()
 
 option(SWIFT_NINJA_TRACE "Collect ninja and swift driver execution data and produce a Perfetto-style trace" OFF)

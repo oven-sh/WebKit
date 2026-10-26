@@ -138,13 +138,6 @@ inline TransformStyle3D ComputedStyle::usedTransformStyle3D() const
     return transformStyleForcedToFlat() ? TransformStyle3D::Flat : transformStyle3D();
 }
 
-inline Visibility ComputedStyle::usedVisibility() const
-{
-    if (isForceHidden()) [[unlikely]]
-        return Visibility::Hidden;
-    return visibility();
-}
-
 template<BoxSide side> struct UsedBorderWidthsAccessor {
     static Style::LineWidth get(const BorderData& data)
     {
@@ -160,91 +153,14 @@ template<BoxSide side> struct UsedBorderWidthsAccessor {
     }
 };
 
-inline decltype(auto) ComputedStyle::usedBorderWidths() const
+// The border widths after the used-value rules: zero for border style none or hidden (css-backgrounds-3),
+// and the fixed -webkit-border-image width when it overrides the border width. Unzoomed style values.
+// Code with a renderer reads the resolved widths through UsedStyle.
+inline decltype(auto) effectiveBorderWidths(const ComputedStyle& style)
 {
-    return RectEdgesView<true, BorderData, UsedBorderWidthsAccessor, Style::LineWidth> {
-        .data = border()
+    return RectEdgesView<true, BorderData, UsedBorderWidthsAccessor, LineWidth> {
+        .data = style.border()
     };
-}
-
-inline Style::LineWidth ComputedStyle::usedBorderBottomWidth() const
-{
-    return usedBorderWidths().bottom();
-}
-
-inline Style::LineWidth ComputedStyle::usedBorderLeftWidth() const
-{
-    return usedBorderWidths().left();
-}
-
-inline Style::LineWidth ComputedStyle::usedBorderRightWidth() const
-{
-    return usedBorderWidths().right();
-}
-
-inline Style::LineWidth ComputedStyle::usedBorderTopWidth() const
-{
-    return usedBorderWidths().top();
-}
-
-inline Style::LineWidth ComputedStyle::usedBorderWidthStart(WritingMode writingMode) const
-{
-    return usedBorderWidths().start(writingMode);
-}
-
-inline Style::LineWidth ComputedStyle::usedBorderWidthStart() const
-{
-    return usedBorderWidthStart(writingMode());
-}
-
-inline Style::LineWidth ComputedStyle::usedBorderWidthEnd(WritingMode writingMode) const
-{
-    return usedBorderWidths().end(writingMode);
-}
-
-inline Style::LineWidth ComputedStyle::usedBorderWidthEnd() const
-{
-    return usedBorderWidthEnd(writingMode());
-}
-
-inline Style::LineWidth ComputedStyle::usedBorderWidthBefore(WritingMode writingMode) const
-{
-    return usedBorderWidths().before(writingMode);
-}
-
-inline Style::LineWidth ComputedStyle::usedBorderWidthBefore() const
-{
-    return usedBorderWidthBefore(writingMode());
-}
-
-inline Style::LineWidth ComputedStyle::usedBorderWidthAfter(WritingMode writingMode) const
-{
-    return usedBorderWidths().after(writingMode);
-}
-
-inline Style::LineWidth ComputedStyle::usedBorderWidthAfter() const
-{
-    return usedBorderWidthAfter(writingMode());
-}
-
-inline Style::LineWidth ComputedStyle::usedBorderWidthLogicalLeft(WritingMode writingMode) const
-{
-    return usedBorderWidths().logicalLeft(writingMode);
-}
-
-inline Style::LineWidth ComputedStyle::usedBorderWidthLogicalLeft() const
-{
-    return usedBorderWidthLogicalLeft(writingMode());
-}
-
-inline Style::LineWidth ComputedStyle::usedBorderWidthLogicalRight(WritingMode writingMode) const
-{
-    return usedBorderWidths().logicalRight(writingMode);
-}
-
-inline Style::LineWidth ComputedStyle::usedBorderWidthLogicalRight() const
-{
-    return usedBorderWidthLogicalRight(writingMode());
 }
 
 // MARK: - Other Predicates
@@ -299,7 +215,7 @@ inline bool ComputedStyle::isInterCharacterRubyPosition() const
 
 inline bool ComputedStyle::hasBackground() const
 {
-    return visitedDependentBackgroundColor().isVisible()
+    return visitedDependentUsedBackgroundColor().isVisible()
         || Style::hasImageInAnyLayer(backgroundLayers());
 }
 
@@ -325,12 +241,13 @@ inline bool ComputedStyle::hasMask() const
 
 inline bool ComputedStyle::hasOutline() const
 {
-    return !usedOutlineWidth().isZero();
+    return !effectiveOutlineWidth(*this).isZero();
 }
 
 inline bool ComputedStyle::hasOutlineInVisualOverflow() const
 {
-    return !usedOutlineWidth().isZero() && (usedOutlineWidth().unresolvedValue() + usedOutlineOffset().unresolvedValue()) > 0;
+    auto outlineWidth = effectiveOutlineWidth(*this);
+    return !outlineWidth.isZero() && (outlineWidth.unresolvedValue() + effectiveOutlineOffset(*this).unresolvedValue()) > 0;
 }
 
 inline bool ComputedStyle::hasOutOfFlowPosition() const
@@ -423,11 +340,15 @@ inline FlowMode ComputedStyle::flexFlowMode() const
 
 inline bool ComputedStyle::isFixedTableLayout() const
 {
-    return tableLayout() == TableLayoutType::Fixed
-        && (logicalWidth().isSpecified()
-            || logicalWidth().isFitContent()
-            || logicalWidth().isStretch()
-            || logicalWidth().isMinContent());
+    if (tableLayout() != TableLayoutType::Fixed)
+        return false;
+
+    // A table is in fixed mode unless its inline size is auto or max-content (https://drafts.csswg.org/css-tables-3/#in-fixed-mode).
+    // A calc-size() over either keyword is not the keyword itself, so it is in fixed mode too.
+    auto& logicalWidth = this->logicalWidth();
+    if (logicalWidth.isCalcSize())
+        return true;
+    return !logicalWidth.isAuto() && !logicalWidth.isMaxContent();
 }
 
 inline bool ComputedStyle::isOverflowVisible() const

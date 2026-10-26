@@ -46,10 +46,11 @@ AudioDestinationResampler::AudioDestinationResampler(const CreationOptions& opti
 {
     if (options.sampleRate != outputSampleRate) {
         double scaleFactor = static_cast<double>(options.sampleRate) / outputSampleRate;
-        m_resampler = makeUnique<MultiChannelResampler>(scaleFactor, options.numberOfOutputChannels, AudioUtilities::renderQuantumSize, [this](AudioBus& bus, size_t framesToProcess) {
+        // m_resampler is owned by this object and only invokes the provider synchronously so capturing this is safe.
+        SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE lazyInitialize(m_resampler, makeUnique<MultiChannelResampler>(scaleFactor, options.numberOfOutputChannels, AudioUtilities::renderQuantumSize, [this](AudioBus& bus, size_t framesToProcess) {
             ASSERT_UNUSED(framesToProcess, framesToProcess == AudioUtilities::renderQuantumSize);
             callRenderCallback(bus, AudioUtilities::renderQuantumSize, m_outputTimestamp);
-        });
+        }));
     }
 }
 

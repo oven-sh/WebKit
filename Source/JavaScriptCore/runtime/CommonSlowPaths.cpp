@@ -289,7 +289,8 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_to_this)
     auto bytecode = pc->as<OpToThis>();
     auto& metadata = bytecode.metadata(codeBlock);
     JSValue v1 = GET(bytecode.m_srcDst).jsValue();
-    if (v1.isCell()) {
+    auto value = v1.toThis(globalObject, bytecode.m_ecmaMode);
+    if (v1.isObject() && value == v1) {
         StructureID myStructureID = v1.asCell()->structureID();
         StructureID otherStructureID = metadata.m_cachedStructureID;
         if (myStructureID != otherStructureID) {
@@ -308,7 +309,6 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_to_this)
     // different object that still has the same structure on the fast path since it'll produce
     // the same SpeculatedType. Therefore, we don't need to worry about value profiling on the
     // fast path.
-    auto value = v1.toThis(globalObject, bytecode.m_ecmaMode);
     RETURN_WITH_PROFILING_CUSTOM(bytecode.m_srcDst, value, PROFILE_VALUE(value));
 }
 
@@ -399,17 +399,13 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_to_string)
 }
 
 #if ENABLE(JIT)
-static void NODELETE updateArithProfileForUnaryArithOp(UnaryArithProfile& profile, JSValue result, JSValue operand)
+static void LEGACY_NODELETE updateArithProfileForUnaryArithOp(UnaryArithProfile& profile, JSValue result, JSValue operand)
 {
     profile.observeArg(operand);
     ASSERT(result.isNumber() || result.isBigInt());
 
     if (result.isHeapBigInt())
         profile.setObservedHeapBigInt();
-#if USE(BIGINT32)
-    else if (result.isBigInt32())
-        profile.setObservedBigInt32();
-#endif
     else {
         ASSERT(result.isNumber());
         if (!result.isInt32()) {
@@ -421,13 +417,8 @@ static void NODELETE updateArithProfileForUnaryArithOp(UnaryArithProfile& profil
                 profile.setObservedNegZeroDouble();
             else {
                 profile.setObservedNonNegZeroDouble();
-                
-                // The Int52 overflow check here intentionally omits 1ll << 51 as a valid negative Int52 value.
-                // Therefore, we will get a false positive if the result is that value. This is intentionally
-                // done to simplify the checking algorithm.
-                static const int64_t int52OverflowPoint = (1ll << 51);
-                int64_t int64Val = truncateDoubleToInt64(std::abs(doubleVal));
-                if (int64Val >= int52OverflowPoint)
+
+                if (ObservedResults::isInt52Overflow(doubleVal))
                     profile.setObservedInt52Overflow();
             }
         }
@@ -446,16 +437,6 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_negate)
     CHECK_EXCEPTION();
 
     auto& profile = codeBlock->unlinkedCodeBlock()->unaryArithProfile(bytecode.m_profileIndex);
-
-#if USE(BIGINT32)
-    if (primValue.isBigInt32()) {
-        JSValue result = JSBigInt::unaryMinus(globalObject, primValue.bigInt32AsInt32());
-        CHECK_EXCEPTION();
-        RETURN_WITH_PROFILING(result, {
-            updateArithProfileForUnaryArithOp(profile, result, operand);
-        });
-    }
-#endif
 
     if (primValue.isHeapBigInt()) {
         JSValue result = JSBigInt::unaryMinus(globalObject, primValue.asHeapBigInt());
@@ -488,21 +469,12 @@ static void updateArithProfileForBinaryArithOp(JSGlobalObject*, CodeBlock* codeB
             else {
                 profile.setObservedNonNegZeroDouble();
 
-                // The Int52 overflow check here intentionally omits 1ll << 51 as a valid negative Int52 value.
-                // Therefore, we will get a false positive if the result is that value. This is intentionally
-                // done to simplify the checking algorithm.
-                static const int64_t int52OverflowPoint = (1ll << 51);
-                int64_t int64Val = truncateDoubleToInt64(std::abs(doubleVal));
-                if (int64Val >= int52OverflowPoint)
+                if (ObservedResults::isInt52Overflow(doubleVal))
                     profile.setObservedInt52Overflow();
             }
         }
     } else if (result.isHeapBigInt())
         profile.setObservedHeapBigInt();
-#if USE(BIGINT32)
-    else if (result.isBigInt32())
-        profile.setObservedBigInt32();
-#endif
     else 
         profile.setObservedNonNumeric();
 }
@@ -830,17 +802,8 @@ ALWAYS_INLINE UGPRPair iteratorOpenTryFastImpl(VM& vm, JSGlobalObject* globalObj
     case IterationMode::FastArray: {
         // We should be good to go.
         metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | IterationMode::FastArray;
-        if (Options::useUnboxedFastArrayIteration()) {
-            // No iterator object: op_iterator_next finds the array in its iterable operand and keeps the next index in m_next.
-            // op_iterator_close_check makes a real iterator from these should IteratorClose ever become observable.
-            GET(bytecode.m_next) = jsNumber(0);
-            iterator = vm.fastArrayUnboxedSentinel();
-            PROFILE_VALUE_IN(iterator.jsValue(), m_iteratorValueProfile);
-            return encodeResult(pc, reinterpret_cast<void*>(static_cast<uintptr_t>(IterationMode::FastArray)));
-        }
-        GET(bytecode.m_next) = vm.fastArrayValuesSentinel();
-        auto* iteratedObject = uncheckedDowncast<JSObject>(iterable);
-        iterator = JSArrayIterator::create(vm, globalObject->arrayIteratorStructure(), iteratedObject, IterationKind::Values);
+        GET(bytecode.m_next) = jsNumber(0);
+        iterator = vm.fastArraySentinel();
         PROFILE_VALUE_IN(iterator.jsValue(), m_iteratorValueProfile);
         return encodeResult(pc, reinterpret_cast<void*>(static_cast<uintptr_t>(IterationMode::FastArray)));
     }
@@ -919,9 +882,8 @@ ALWAYS_INLINE UGPRPair iteratorOpenTryFastImpl(VM& vm, JSGlobalObject* globalObj
 
     case IterationMode::FastString: {
         metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | IterationMode::FastString;
-        GET(bytecode.m_next) = vm.fastStringValuesSentinel();
-        auto* string = asString(iterable);
-        iterator = JSStringIterator::create(vm, globalObject->stringIteratorStructure(), string);
+        GET(bytecode.m_next) = jsNumber(0);
+        iterator = vm.fastStringSentinel();
         PROFILE_VALUE_IN(iterator.jsValue(), m_iteratorValueProfile);
         return encodeResult(pc, reinterpret_cast<void*>(static_cast<uintptr_t>(IterationMode::FastString)));
     }
@@ -1158,60 +1120,7 @@ ALWAYS_INLINE UGPRPair iteratorNextTryFastImpl(VM& vm, JSGlobalObject* globalObj
         return encodeResult(pc, reinterpret_cast<void*>(mode));
     }
 
-    if (auto stringIterator = dynamicDowncast<JSStringIterator>(iterator)) {
-        metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | IterationMode::FastString;
-        JSString* value = stringIterator->nextWithAdvance(globalObject, vm);
-        CHECK_EXCEPTION();
-        bool done = !value;
-        GET(bytecode.m_done) = jsBoolean(done);
-        if (!done) {
-            PROFILE_VALUE_IN(value, m_valueValueProfile);
-            GET(bytecode.m_value) = value;
-        } else
-            GET(bytecode.m_value) = JSValue();
-        return encodeResult(pc, reinterpret_cast<void*>(IterationMode::FastString));
-    }
-
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-template<OpcodeSize width>
-ALWAYS_INLINE UGPRPair iteratorNextIndexInFrameImpl(VM& vm, JSGlobalObject* globalObject, CodeBlock* codeBlock, CallFrame* callFrame, ThrowScope& throwScope, const JSInstruction* pc)
-{
-    // op_iterator_open made no iterator object for an Array: it is still in m_iterable, and m_next is the index of the next element.
-    auto bytecode = pc->asKnownWidth<OpIteratorNext, width>();
-    auto& metadata = bytecode.metadata(codeBlock);
-    RELEASE_ASSERT(GET(bytecode.m_iterator).jsValue() == vm.fastArrayUnboxedSentinel());
-
-    JSValue index = GET(bytecode.m_next).jsValue();
-    JSValue value;
-    bool hasNext = iteratorNextWithIndexInFrame(globalObject, metadata, GET(bytecode.m_iterable).jsValue(), index, value);
-    GET(bytecode.m_next) = index;
-    CHECK_EXCEPTION();
-    GET(bytecode.m_done) = jsBoolean(!hasNext);
-    if (hasNext)
-        PROFILE_VALUE_IN(value, m_valueValueProfile);
-
-    GET(bytecode.m_value) = value;
-    return encodeResult(pc, reinterpret_cast<void*>(static_cast<uintptr_t>(IterationMode::FastArray)));
-}
-
-JSC_DEFINE_COMMON_SLOW_PATH(iterator_next_index_in_frame_narrow)
-{
-    BEGIN();
-    return iteratorNextIndexInFrameImpl<Narrow>(vm, globalObject, codeBlock, callFrame, throwScope, pc);
-}
-
-JSC_DEFINE_COMMON_SLOW_PATH(iterator_next_index_in_frame_wide16)
-{
-    BEGIN();
-    return iteratorNextIndexInFrameImpl<Wide16>(vm, globalObject, codeBlock, callFrame, throwScope, pc);
-}
-
-JSC_DEFINE_COMMON_SLOW_PATH(iterator_next_index_in_frame_wide32)
-{
-    BEGIN();
-    return iteratorNextIndexInFrameImpl<Wide32>(vm, globalObject, codeBlock, callFrame, throwScope, pc);
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(iterator_next_try_fast_narrow)
@@ -1232,16 +1141,105 @@ JSC_DEFINE_COMMON_SLOW_PATH(iterator_next_try_fast_wide32)
     return iteratorNextTryFastImpl<Wide32>(vm, globalObject, codeBlock, callFrame, throwScope, pc);
 }
 
+template<OpcodeSize width>
+ALWAYS_INLINE UGPRPair iteratorNextFastArrayImpl(VM& vm, JSGlobalObject* globalObject, CodeBlock* codeBlock, CallFrame* callFrame, ThrowScope& throwScope, const JSInstruction* pc)
+{
+    auto bytecode = pc->asKnownWidth<OpIteratorNext, width>();
+    auto& metadata = bytecode.metadata(codeBlock);
+    ASSERT(GET(bytecode.m_iterator).jsValue() == vm.fastArraySentinel());
+
+    JSValue iterable = GET(bytecode.m_iterable).jsValue();
+    RELEASE_ASSERT(isJSArray(iterable));
+    auto* array = asArray(iterable);
+    metadata.m_iterableProfile.observeStructureID(array->structureID());
+    metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | IterationMode::FastArray;
+
+    JSValue index = GET(bytecode.m_next).jsValue();
+    JSValue value;
+    bool hasNext = iteratorNextFastArray(globalObject, array, index, value);
+    GET(bytecode.m_next) = index;
+    CHECK_EXCEPTION();
+    GET(bytecode.m_done) = jsBoolean(!hasNext);
+    if (hasNext)
+        PROFILE_VALUE_IN(value, m_valueValueProfile);
+    GET(bytecode.m_value) = value;
+    END_IMPL();
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(iterator_next_fast_array_narrow)
+{
+    BEGIN();
+    return iteratorNextFastArrayImpl<Narrow>(vm, globalObject, codeBlock, callFrame, throwScope, pc);
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(iterator_next_fast_array_wide16)
+{
+    BEGIN();
+    return iteratorNextFastArrayImpl<Wide16>(vm, globalObject, codeBlock, callFrame, throwScope, pc);
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(iterator_next_fast_array_wide32)
+{
+    BEGIN();
+    return iteratorNextFastArrayImpl<Wide32>(vm, globalObject, codeBlock, callFrame, throwScope, pc);
+}
+
+template<OpcodeSize width>
+ALWAYS_INLINE UGPRPair iteratorNextFastStringImpl(VM& vm, JSGlobalObject* globalObject, CodeBlock* codeBlock, CallFrame* callFrame, ThrowScope& throwScope, const JSInstruction* pc)
+{
+    auto bytecode = pc->asKnownWidth<OpIteratorNext, width>();
+    auto& metadata = bytecode.metadata(codeBlock);
+    ASSERT(GET(bytecode.m_iterator).jsValue() == vm.fastStringSentinel());
+    metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | IterationMode::FastString;
+
+    auto* string = asString(GET(bytecode.m_iterable).jsValue());
+    auto [value, nextPosition] = JSStringIterator::advance(globalObject, vm, string, GET(bytecode.m_next).jsValue().asInt32());
+    CHECK_EXCEPTION();
+    GET(bytecode.m_next) = jsNumber(nextPosition);
+    GET(bytecode.m_done) = jsBoolean(!value);
+    if (value)
+        PROFILE_VALUE_IN(value, m_valueValueProfile);
+    GET(bytecode.m_value) = value;
+    END_IMPL();
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(iterator_next_fast_string_narrow)
+{
+    BEGIN();
+    return iteratorNextFastStringImpl<Narrow>(vm, globalObject, codeBlock, callFrame, throwScope, pc);
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(iterator_next_fast_string_wide16)
+{
+    BEGIN();
+    return iteratorNextFastStringImpl<Wide16>(vm, globalObject, codeBlock, callFrame, throwScope, pc);
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(iterator_next_fast_string_wide32)
+{
+    BEGIN();
+    return iteratorNextFastStringImpl<Wide32>(vm, globalObject, codeBlock, callFrame, throwScope, pc);
+}
+
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_iterator_close_check)
 {
     BEGIN();
     auto bytecode = pc->as<OpIteratorCloseCheck>();
-    // The interpreter and the Baseline JIT get here when they have to fall through with no iterator object in hand: the watchpoint set, which
-    // covers a "return" property showing up anywhere on the prototype chain of this realm's Array Iterator objects, has fired.
-    auto& iterator = GET(bytecode.m_iterator);
-    RELEASE_ASSERT(iterator.jsValue() == vm.fastArrayUnboxedSentinel());
-    iterator = materializeUnboxedFastArrayIterator(globalObject, GET(bytecode.m_iterable).jsValue(), GET(bytecode.m_next).jsValue());
-    END();
+    JSValue iterable = GET(bytecode.m_iterable).jsValue();
+    if (GET(bytecode.m_iterator).jsValue() == vm.fastStringSentinel()) {
+        RELEASE_ASSERT(iterable.isString());
+        auto* iterator = JSStringIterator::create(vm, globalObject->stringIteratorStructure(), asString(iterable));
+        iterator->setIndex(GET(bytecode.m_next).jsValue().asInt32());
+        GET(bytecode.m_iterator) = iterator;
+        END_IMPL();
+    }
+
+    ASSERT(GET(bytecode.m_iterator).jsValue() == vm.fastArraySentinel());
+    RELEASE_ASSERT(isJSArray(iterable));
+    auto* iterator = JSArrayIterator::create(vm, globalObject->arrayIteratorStructure(), asArray(iterable), IterationKind::Values);
+    iterator->setIndex(GET(bytecode.m_next).jsValue().asAnyInt());
+    GET(bytecode.m_iterator) = iterator;
+    END_IMPL();
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_strcat)

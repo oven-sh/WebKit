@@ -438,7 +438,7 @@ bool styleHasDisplayTransition(const Style::ComputedStyle& style, const Element&
                 return false;
             },
             [&](const Style::SingleTransitionProperty::SingleProperty& property) {
-                if (property.propertyID == CSSPropertyDisplay)
+                if (property.propertyID == CSSPropertyID::Display)
                     return transition.behavior() == TransitionBehavior::AllowDiscrete;
                 return false;
             }
@@ -453,10 +453,10 @@ bool styleHasDisplayTransition(const Style::ComputedStyle& style, const Element&
 
 bool animatablePropertiesContainTransformRelatedProperty(const HashSet<AnimatableCSSProperty>& properties)
 {
-    return properties.contains(CSSPropertyTranslate)
-        || properties.contains(CSSPropertyScale)
-        || properties.contains(CSSPropertyRotate)
-        || properties.contains(CSSPropertyTransform);
+    return properties.contains(CSSPropertyID::Translate)
+        || properties.contains(CSSPropertyID::Scale)
+        || properties.contains(CSSPropertyID::Rotate)
+        || properties.contains(CSSPropertyID::Transform);
 }
 
 } // namespace WebCore

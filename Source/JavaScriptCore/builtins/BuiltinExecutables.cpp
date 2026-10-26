@@ -55,11 +55,19 @@ SourceCode BuiltinExecutables::defaultConstructorSourceCode(ConstructorKind cons
         break;
     case ConstructorKind::Base: {
         static NeverDestroyed<const String> baseConstructorCode(MAKE_STATIC_STRING_IMPL("(function () { })"));
+#if USE(BUN_JSC_ADDITIONS)
+        return makeSource(baseConstructorCode, { }, SourceTaintedOrigin::Untainted, String(), TextPosition(), SourceProviderSourceType::Program, SourceProvenance::Static);
+#else
         return makeSource(baseConstructorCode, { }, SourceTaintedOrigin::Untainted);
+#endif
     }
     case ConstructorKind::Extends: {
         static NeverDestroyed<const String> derivedConstructorCode(MAKE_STATIC_STRING_IMPL("(function (...args) { super(...args); })"));
+#if USE(BUN_JSC_ADDITIONS)
+        return makeSource(derivedConstructorCode, { }, SourceTaintedOrigin::Untainted, String(), TextPosition(), SourceProviderSourceType::Program, SourceProvenance::Static);
+#else
         return makeSource(derivedConstructorCode, { }, SourceTaintedOrigin::Untainted);
+#endif
     }
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -128,7 +128,7 @@ ExceptionOr<Vector<Ref<CSSStyleValue>>> CSSStyleValueFactory::parseStyleValue(Do
          return parseStyleValueForCustomProperty(document, property, cssText, parseMultiple);
 
     auto propertyID = cssPropertyID(property.convertToASCIILowercase());
-    if (propertyID == CSSPropertyInvalid)
+    if (propertyID == CSSPropertyID::Invalid)
         return Exception { ExceptionCode::TypeError, "Property String is not a valid CSS property."_s };
     return parseStyleValueForKnownProperty(document, propertyID, cssText, parseMultiple);
 }
@@ -148,7 +148,7 @@ ExceptionOr<Vector<Ref<CSSStyleValue>>> CSSStyleValueFactory::parseStyleValueFor
 
 ExceptionOr<Vector<Ref<CSSStyleValue>>> CSSStyleValueFactory::parseStyleValueForKnownProperty(Document& document, CSSPropertyID propertyID, const String& cssText, bool parseMultiple)
 {
-    ASSERT(propertyID != CSSPropertyInvalid);
+    ASSERT(propertyID != CSSPropertyID::Invalid);
 
     if (cssText.isEmpty())
         return Exception { ExceptionCode::TypeError, "Value cannot be parsed."_s };
@@ -172,8 +172,10 @@ ExceptionOr<Vector<Ref<CSSStyleValue>>> CSSStyleValueFactory::parseStyleValueFor
         // https://drafts.css-houdini.org/css-typed-om/#subdivide-into-iterations
         if (CSSProperty::isListValuedProperty(propertyID)) {
             if (auto* values = dynamicDowncast<CSSValueContainingVector>(*cssValue)) {
-                for (Ref value : *values)
-                    cssValues.append(protect(const_cast<CSSValue&>(value.get())));
+                for (Ref value : *values) {
+                    // FIXME: Remove suppression once rdar://189998365 is fixed.
+                    SUPPRESS_MEMORY_UNSAFE_CAST cssValues.append(protect(const_cast<CSSValue&>(value.get())));
+                }
             }
         }
         if (cssValues.isEmpty())
@@ -196,7 +198,7 @@ ExceptionOr<Vector<Ref<CSSStyleValue>>> CSSStyleValueFactory::parseStyleValueFor
     return results;
 }
 
-static bool mayConvertCSSValueListToSingleValue(const AssociatedProperty& property)
+static bool LEGACY_NODELETE mayConvertCSSValueListToSingleValue(const AssociatedProperty& property)
 {
     auto propertyID = property.propertyID();
     if (!propertyID)
@@ -204,10 +206,10 @@ static bool mayConvertCSSValueListToSingleValue(const AssociatedProperty& proper
 
     // Even though the CSS Parser uses a CSSValueList to represent these, they are not
     // really lists and CSS-Typed-OM does not expect them to treat them as such.
-    return *propertyID != CSSPropertyGridRowStart
-        && *propertyID != CSSPropertyGridRowEnd
-        && *propertyID != CSSPropertyGridColumnStart
-        && *propertyID != CSSPropertyGridColumnEnd;
+    return *propertyID != CSSPropertyID::GridRowStart
+        && *propertyID != CSSPropertyID::GridRowEnd
+        && *propertyID != CSSPropertyID::GridColumnStart
+        && *propertyID != CSSPropertyID::GridColumnEnd;
 }
 
 static bool mayTreatAsListValuedProperty(const AssociatedProperty& property)
@@ -285,19 +287,19 @@ static ExceptionOr<Ref<CSSStyleValue>> reifyValue(const CSS::CustomIdent& custom
 
 ExceptionOr<Ref<CSSStyleValue>> CSSStyleValueFactory::reifyValue(Document& document, const CSSValue& cssValue, AssociatedProperty&& associatedProperty)
 {
-    if (auto* primitiveValue = dynamicDowncast<CSSPrimitiveValue>(cssValue))
+    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(cssValue))
         return WebCore::reifyValue(*primitiveValue);
-    else if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(cssValue))
+    else if (RefPtr keywordValue = dynamicDowncast<CSSKeywordValue>(cssValue))
         return WebCore::reifyValue(keywordValue->keyword());
-    else if (auto* customIdentValue = dynamicDowncast<CSSCustomIdentValue>(cssValue))
+    else if (RefPtr customIdentValue = dynamicDowncast<CSSCustomIdentValue>(cssValue))
         return WebCore::reifyValue(customIdentValue->customIdent());
-    else if (auto* imageValue = dynamicDowncast<CSSImageValue>(cssValue))
+    else if (RefPtr imageValue = dynamicDowncast<CSSImageValue>(cssValue))
         return Ref<CSSStyleValue> { CSSStyleImageValue::create(const_cast<CSSImageValue&>(*imageValue), document) };
-    else if (auto* referenceValue = dynamicDowncast<CSSSubstitutionValue>(cssValue))
+    else if (RefPtr referenceValue = dynamicDowncast<CSSSubstitutionValue>(cssValue))
         return Ref<CSSStyleValue> { CSSUnparsedValue::create(referenceValue->data().tokenRange()) };
-    else if (auto* substitutionValue = dynamicDowncast<CSSShorthandSubstitutionValue>(cssValue))
+    else if (RefPtr substitutionValue = dynamicDowncast<CSSShorthandSubstitutionValue>(cssValue))
         return Ref<CSSStyleValue> { CSSUnparsedValue::create(substitutionValue->shorthandValue().data().tokenRange()) };
-    else if (auto* customPropertyValue = dynamicDowncast<CSSCustomPropertyValue>(cssValue)) {
+    else if (RefPtr customPropertyValue = dynamicDowncast<CSSCustomPropertyValue>(cssValue)) {
         // FIXME: remove CSSStyleValue::create(WTF::move(cssValue)), add reification control flow
         return WTF::switchOn(customPropertyValue->value(),
             [&](const Ref<CSSSubstitutionValue>& value) {
@@ -487,7 +489,7 @@ ExceptionOr<Ref<CSSStyleValue>> CSSStyleValueFactory::reifyValue(Document& docum
                 return CSSStyleValue::create(Ref(const_cast<CSSValue&>(cssValue)), WTF::move(associatedProperty));
             }
         );
-    } else if (auto* valueList = dynamicDowncast<CSSValueList>(cssValue)) {
+    } else if (RefPtr valueList = dynamicDowncast<CSSValueList>(cssValue)) {
         // Reifying the first value in value list.
         // FIXME: Verify this is the expected behavior.
         // Refer to LayoutTests/imported/w3c/web-platform-tests/css/css-typed-om/the-stylepropertymap/inline/get.html

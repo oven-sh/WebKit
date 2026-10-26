@@ -48,7 +48,7 @@
 
 namespace WebCore {
 
-static bool& NODELETE mockEnabled()
+static bool& LEGACY_NODELETE mockEnabled()
 {
     static bool enabled;
     return enabled;
@@ -170,7 +170,7 @@ void PlatformMediaEngineConfigurationFactory::disableMock()
     mockEnabled() = false;
 }
 
-static PlatformMediaEngineConfigurationFactory::MediaSessionManagerProvider& mediaSessionManagerProvider()
+static PlatformMediaEngineConfigurationFactory::MediaSessionManagerProvider& LEGACY_NODELETE mediaSessionManagerProvider()
 {
     static NeverDestroyed<PlatformMediaEngineConfigurationFactory::MediaSessionManagerProvider> provider;
     return provider.get();

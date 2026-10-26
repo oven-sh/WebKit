@@ -39,20 +39,20 @@ public:
     public:
         CounterBlockHelper(const Vector<uint8_t>& counterVector, size_t counterLength);
 
-        size_t NODELETE countToOverflowSaturating() const;
+        size_t LEGACY_NODELETE countToOverflowSaturating() const;
         Vector<uint8_t> counterVectorAfterOverflow() const;
 
     private:
         // 128 bits integer with miminum required operators.
         struct CounterBlockBits {
-            void NODELETE set();
-            bool NODELETE all() const;
-            bool NODELETE any() const;
+            void LEGACY_NODELETE set();
+            bool LEGACY_NODELETE all() const;
+            bool LEGACY_NODELETE any() const;
 
-            CounterBlockBits NODELETE operator&(const CounterBlockBits&) const;
-            CounterBlockBits NODELETE operator~() const;
-            CounterBlockBits& NODELETE operator <<=(unsigned);
-            CounterBlockBits& NODELETE operator &=(const CounterBlockBits&);
+            CounterBlockBits LEGACY_NODELETE operator&(const CounterBlockBits&) const;
+            CounterBlockBits LEGACY_NODELETE operator~() const;
+            CounterBlockBits& LEGACY_NODELETE operator <<=(unsigned);
+            CounterBlockBits& LEGACY_NODELETE operator &=(const CounterBlockBits&);
 
             uint64_t m_hi { 0 };
             uint64_t m_lo { 0 };
@@ -64,7 +64,7 @@ public:
 
     static constexpr ASCIILiteral s_name = "AES-CTR"_s;
     static constexpr CryptoAlgorithmIdentifier s_identifier = CryptoAlgorithmIdentifier::AES_CTR;
-    static Ref<CryptoAlgorithm> create();
+    static Ref<CryptoAlgorithm> LEGACY_NODELETE create();
 
 private:
     CryptoAlgorithmAESCTR() = default;

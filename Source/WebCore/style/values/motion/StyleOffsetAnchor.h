@@ -48,13 +48,13 @@ struct OffsetAnchor {
     std::optional<Position> tryPosition() const { return isPosition() ? std::make_optional(std::get<Position>(m_value)) : std::nullopt; }
 
     template<typename> bool holdsAlternative() const;
-    template<typename... F> decltype(auto) switchOn(F&&...) const;
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&...) const;
 
     bool operator==(const OffsetAnchor&) const = default;
 
 private:
 #if ENABLE(THREADED_ANIMATIONS)
-    static auto convert(const AcceleratedEffectOffsetAnchor&) -> Variant<CSS::Keyword::Auto, Position>;
+    static Variant<CSS::Keyword::Auto, Position> LEGACY_NODELETE convert(const AcceleratedEffectOffsetAnchor&);
 #endif
 
     Variant<CSS::Keyword::Auto, Position> m_value;
@@ -65,7 +65,7 @@ template<typename T> bool OffsetAnchor::holdsAlternative() const
     return std::holds_alternative<T>(m_value);
 }
 
-template<typename... F> decltype(auto) OffsetAnchor::switchOn(F&&... f) const
+template<typename... F> decltype(auto) OffsetAnchor::switchOn(NOESCAPE F&&... f) const
 {
     return WTF::switchOn(m_value, std::forward<F>(f)...);
 }
@@ -77,7 +77,7 @@ template<> struct CSSValueConversion<OffsetAnchor> { auto operator()(BuilderStat
 // MARK: - Blending
 
 template<> struct Blending<OffsetAnchor> {
-    bool NODELETE canBlend(const OffsetAnchor&, const OffsetAnchor&);
+    bool LEGACY_NODELETE canBlend(const OffsetAnchor&, const OffsetAnchor&);
     auto requiresInterpolationForAccumulativeIteration(const OffsetAnchor&, const OffsetAnchor&) -> bool;
     auto blend(const OffsetAnchor&, const OffsetAnchor&, const BlendingContext&) -> OffsetAnchor;
 };

@@ -26,6 +26,7 @@
 #pragma once
 
 #include <WebCore/AlphaPremultiplication.h>
+#include <WebCore/FloatSize.h>
 #include <WebCore/IDLTypes.h>
 #include <WebCore/ImageBuffer.h>
 #include <WebCore/ImageTypes.h>
@@ -48,10 +49,10 @@ class CachedImage;
 class CanvasBase;
 class CSSStyleImageValue;
 class ColorSpace;
-class FloatSize;
 class HTMLCanvasElement;
 class HTMLImageElement;
 class HTMLVideoElement;
+class Image;
 class ImageBitmapImageObserver;
 class ImageData;
 class ImageBuffer;
@@ -61,7 +62,6 @@ class IntSize;
 class OffscreenCanvas;
 #endif
 class PendingImageBitmap;
-class RenderElement;
 class ScriptExecutionContext;
 class SerializedImageBuffer;
 class SVGImageElement;
@@ -141,13 +141,15 @@ public:
     static RefPtr<ImageBuffer> createImageBuffer(ScriptExecutionContext&, const FloatSize&, RenderingMode, ColorSpace, float resolutionScale = 1, DrawsHDRContent = DrawsHDRContent::No, std::optional<PixelFormat> = std::nullopt);
     static RefPtr<ImageBuffer> createImageBuffer(ScriptExecutionContext&, const FloatSize&, ColorSpace, float resolutionScale = 1);
 
+    static RefPtr<ImageBuffer> unpremultipliedImageBuffer(ScriptExecutionContext&, Image&, const IntRect& sourceRectangle, const FloatSize& outputSize, const ImageBitmapOptions&, DrawsHDRContent);
+
     static RefPtr<ImageBitmap> create(ScriptExecutionContext&, const IntSize&, ColorSpace);
     static RefPtr<ImageBitmap> create(ScriptExecutionContext&, DetachedImageBitmap);
     static Ref<ImageBitmap> create(Ref<ImageBuffer>, bool originClean, bool premultiplyAlpha = false, bool forciblyPremultiplyAlpha = false, AlphaPremultiplication bufferAlphaFormat = AlphaPremultiplication::Premultiplied);
 
     ~ImageBitmap();
 
-    ImageBuffer* NODELETE buffer() const;
+    ImageBuffer* LEGACY_NODELETE buffer() const;
 
     RefPtr<ImageBuffer> takeImageBuffer();
 
@@ -165,7 +167,7 @@ public:
     bool isDetached() const { return !m_bitmap; }
     void close();
 
-    size_t NODELETE memoryCost() const;
+    size_t LEGACY_NODELETE memoryCost() const;
 private:
     friend class ImageBitmapImageObserver;
     friend class PendingImageBitmap;
@@ -174,7 +176,7 @@ private:
 
     static void createCompletionHandler(ScriptExecutionContext&, Ref<HTMLImageElement>&&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
     static void createCompletionHandler(ScriptExecutionContext&, Ref<SVGImageElement>&&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
-    static void createCompletionHandler(ScriptExecutionContext&, CachedImage*, RenderElement*, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
+    static void createCompletionHandler(ScriptExecutionContext&, CachedImage*, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
 #if ENABLE(VIDEO)
     static void createCompletionHandler(ScriptExecutionContext&, Ref<HTMLVideoElement>&&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmapCompletionHandler&&);
 #endif

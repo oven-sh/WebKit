@@ -106,8 +106,8 @@ namespace JSC { namespace LLInt {
     LLINT_BEGIN_NO_SET_PC();                    \
     LLINT_SET_PC_FOR_STUBS()
 
-static inline JSValue NODELETE getNonConstantOperand(CallFrame* callFrame, VirtualRegister operand) { return callFrame->uncheckedR(operand).jsValue(); }
-static inline JSValue NODELETE getOperand(CallFrame* callFrame, VirtualRegister operand) { return callFrame->r(operand).jsValue(); }
+static inline JSValue LEGACY_NODELETE getNonConstantOperand(CallFrame* callFrame, VirtualRegister operand) { return callFrame->uncheckedR(operand).jsValue(); }
+static inline JSValue LEGACY_NODELETE getOperand(CallFrame* callFrame, VirtualRegister operand) { return callFrame->r(operand).jsValue(); }
 
 #define LLINT_RETURN_TWO(first, second) do {       \
         return encodeResult(first, second);        \
@@ -228,9 +228,9 @@ ALLOW_NONLITERAL_FORMAT_END
 
 #else // not LLINT_TRACING
 
-template<typename... Types> void NODELETE slowPathLog(const Types&...) { }
+template<typename... Types> void LEGACY_NODELETE slowPathLog(const Types&...) { }
 template<typename... Types> void slowPathLogLn(const Types&...) { }
-template<typename... Types> void NODELETE slowPathLogF(const char*, const Types&...) { }
+template<typename... Types> void LEGACY_NODELETE slowPathLogF(const char*, const Types&...) { }
 
 #endif // LLINT_TRACING
 
@@ -266,18 +266,18 @@ extern "C" UGPRPair SYSV_ABI llint_trace_value(CallFrame* callFrame, const JSIns
         EncodedJSValue asValue;
     } u;
     u.asValue = JSValue::encode(value);
-    dataLogF(
+    SAFE_DATALOGF(
         "<%p> %p / %p: executing bc#%zu, op#%u: Trace(%d): %d: %08x:%08x: %s\n",
         &Thread::currentSingleton(),
         callFrame->codeBlock(),
         callFrame,
         static_cast<intptr_t>(callFrame->codeBlock()->bytecodeOffset(pc)),
-        pc->opcodeID(),
+        std::to_underlying(pc->opcodeID()),
         fromWhere,
         operand.offset(),
         u.bits.tag,
         u.bits.payload,
-        toUTF8CString(value).legacyCStringPointer());
+        toUTF8CString(value));
     LLINT_END_IMPL();
 }
 
@@ -384,14 +384,18 @@ static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)
     DeferGCForAWhile deferGC(vm); // My callers don't set top callframe, so we don't want to GC here at all.
     ASSERT(Options::useJIT());
 
-    if (codeBlock->jitType() != JITType::BaselineJIT) {
-        if (RefPtr<BaselineJITCode> baselineRef = codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode) {
-            codeBlock->setupWithUnlinkedBaselineCode(baselineRef.releaseNonNull());
-            codeBlock->ownerExecutable()->installCode(codeBlock);
-            codeBlock->jitNextInvocation();
-            return true;
-        }
-    }
+    auto installSharedBaselineCode = [&] {
+        RefPtr<BaselineJITCode> baselineRef = codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode;
+        if (!baselineRef)
+            return false;
+        codeBlock->setupWithUnlinkedBaselineCode(baselineRef.releaseNonNull());
+        codeBlock->ownerExecutable()->installCode(codeBlock);
+        codeBlock->jitNextInvocation();
+        return true;
+    };
+
+    if (codeBlock->jitType() != JITType::BaselineJIT && installSharedBaselineCode())
+        return true;
 
     if (!codeBlock->checkIfJITThresholdReached()) {
         CODEBLOCK_LOG_EVENT(codeBlock, "delayJITCompile", ("threshold not reached, counter = ", codeBlock->llintExecuteCounter()));
@@ -399,20 +403,30 @@ static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)
         return false;
     }
 
+    // Must precede the worklist query so that a plan becoming ready afterwards can still force the slow path. finalize() overrides it.
+    codeBlock->jitSoon();
+
     JITWorklist::State worklistState = JITWorklist::ensureGlobalWorklist().completeAllReadyPlansForVM(vm, JITCompilationKey(codeBlock->unlinkedCodeBlock(), JITCompilationMode::Baseline));
 
     if (codeBlock->jitType() == JITType::BaselineJIT) {
         dataLogLnIf(Options::verboseOSR(), "    Code was already compiled.");
-        codeBlock->jitSoon();
+        codeBlock->jitNextInvocation();
         return true;
     }
 
-    if (worklistState == JITWorklist::NotKnown) {
+    switch (worklistState) {
+    case JITWorklist::NotKnown: {
         Ref<BaselineJITPlan> plan = adoptRef(*new BaselineJITPlan(codeBlock));
         JITWorklist::ensureGlobalWorklist().enqueue(WTF::move(plan));
         return codeBlock->jitType() == JITType::BaselineJIT;
     }
-
+    case JITWorklist::Compiled:
+        // Either our compile failed, or the plan belonged to another CodeBlock sharing this UnlinkedCodeBlock.
+        return installSharedBaselineCode();
+    case JITWorklist::Compiling:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
     return false;
 }
 
@@ -2605,7 +2619,7 @@ LLINT_SLOW_PATH_DECL(slow_path_profile_catch)
     if (!buffer)
         LLINT_END();
     buffer->forEach([&] (ValueProfileAndVirtualRegister& profile) {
-        profile.m_buckets[0] = JSValue::encode(callFrame->uncheckedR(profile.m_operand).jsValue());
+        profile.sample(callFrame->uncheckedR(profile.m_operand).jsValue());
     });
 
     LLINT_END();
@@ -2627,21 +2641,21 @@ static void throwArityCheckStackOverflowError(JSGlobalObject* globalObject, Thro
 #endif
 }
 
-static ALWAYS_INLINE int NODELETE numberOfExtraSlots(int argumentCountIncludingThis)
+static ALWAYS_INLINE int LEGACY_NODELETE numberOfExtraSlots(int argumentCountIncludingThis)
 {
     int frameSize = argumentCountIncludingThis + CallFrame::headerSizeInRegisters;
     int alignedFrameSize = WTF::roundUpToMultipleOf(stackAlignmentRegisters(), frameSize);
     return alignedFrameSize - frameSize;
 }
 
-static ALWAYS_INLINE int NODELETE numberOfStackPaddingSlotsWithExtraSlots(CodeBlock* codeBlock, int argumentCountIncludingThis)
+static ALWAYS_INLINE int LEGACY_NODELETE numberOfStackPaddingSlotsWithExtraSlots(CodeBlock* codeBlock, int argumentCountIncludingThis)
 {
     if (static_cast<unsigned>(argumentCountIncludingThis) >= codeBlock->numParameters())
         return 0;
     return CommonSlowPaths::numberOfStackPaddingSlots(codeBlock, argumentCountIncludingThis) + numberOfExtraSlots(argumentCountIncludingThis);
 }
 
-static ALWAYS_INLINE int NODELETE arityCheckFor(VM& vm, CallFrame* callFrame, CodeBlock* newCodeBlock)
+static ALWAYS_INLINE int LEGACY_NODELETE arityCheckFor(VM& vm, CallFrame* callFrame, CodeBlock* newCodeBlock)
 {
     ASSERT(callFrame->argumentCountIncludingThis() < static_cast<unsigned>(newCodeBlock->numParameters()));
     int slotsToAdd = numberOfStackPaddingSlotsWithExtraSlots(newCodeBlock, callFrame->argumentCountIncludingThis());

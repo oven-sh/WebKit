@@ -203,8 +203,9 @@ op :super_construct_varargs,
 
 # Semantically, this is iterator = symbolIterator.@call(iterable); next = iterator.next;
 # where symbolIterator the result of iterable[Symbol.iterator] (which is done in a different bytecode).
-# For builtin iterators, however, this has special behavior where next becomes the empty value, which
-# indicates that we are in a known iteration mode to op_iterator_next.
+# For builtin iterators, however, this has special behavior where next becomes a sentinel, which
+# indicates that we are in a known iteration mode to op_iterator_next. In IterationMode::FastArray
+# and IterationMode::FastString iterator becomes the sentinel instead, and next is the index into iterable.
 op :iterator_open,
     args: {
         iterator: VirtualRegister,
@@ -458,6 +459,8 @@ op :profile_type,
 op :profile_control_flow,
     args: {
         textOffset: int,
+        textEndOffset: int,
+        isInLoopHeader: bool,
     },
     metadata: {
         basicBlockLocation: BasicBlockLocation.*,
@@ -812,6 +815,17 @@ op :jneq_ptr,
     },
     metadata: {
         hasJumped: bool,
+    }
+
+op :iterator_close_check,
+    args: {
+        iterator: VirtualRegister,
+        next: VirtualRegister,
+        iterable: VirtualRegister,
+        targetLabel: BoundLabel,
+    },
+    metadata: {
+        seenModes: uint8_t,
     }
 
 # Opcodes without metadata are last
@@ -1361,7 +1375,6 @@ op_group :UnaryOp,
         :is_undefined_or_null,
         :is_boolean,
         :is_number,
-        :is_big_int,
         :is_object,
         :is_callable,
         :is_constructor,
@@ -1407,18 +1420,6 @@ op :typeof,
     args: {
         dst: VirtualRegister,
         value: VirtualRegister,
-    }
-
-# Precedes the IteratorClose sequence of an iterator made by op_iterator_open. When op_iterator_open found an Array it may
-# not have made an iterator object: iterator is then a marker cell, next the index and iterable the Array. Jumps to targetLabel,
-# over the IteratorClose sequence, when iterator is that marker and IteratorClose cannot be observed (nothing to do); otherwise
-# falls through, after replacing a marker by the Array Iterator object it stands for.
-op :iterator_close_check,
-    args: {
-        iterator: VirtualRegister,
-        next: VirtualRegister,
-        iterable: VirtualRegister,
-        targetLabel: BoundLabel,
     }
 
 op :is_cell_with_type,

@@ -33,7 +33,6 @@
 #import "BaseBoardSPI.h"
 #import "CompletionHandlerCallChecker.h"
 #import "NetworkProcessProxy.h"
-#import "RestrictedOpenerType.h"
 #import "SecurityFlagsController.h"
 #import "ShouldGrandfatherStatistics.h"
 #import "UserNotificationsSPI.h"
@@ -58,6 +57,7 @@
 #import "_WKWebPushActionInternal.h"
 #import "_WKWebsiteDataStoreConfigurationInternal.h"
 #import "_WKWebsiteDataStoreDelegate.h"
+#import <Network/Network.h>
 #import <WebCore/Credential.h>
 #import <WebCore/RegistrableDomain.h>
 #import <WebCore/ResourceResponse.h>
@@ -66,6 +66,7 @@
 #import <WebCore/WebCoreObjCExtras.h>
 #import <WebCore/WebCorePersistentCoders.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/CallbackAggregator.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/URL.h>
@@ -73,15 +74,12 @@
 #import <wtf/WeakObjCPtr.h>
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #import <wtf/cocoa/SpanCocoa.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/darwin/DispatchExtras.h>
 #import <wtf/persistence/PersistentDecoder.h>
 #import <wtf/persistence/PersistentEncoder.h>
 #import <wtf/text/CString.h>
-
-#if HAVE(NW_PROXY_CONFIG)
-#import <Network/Network.h>
-#endif
 
 #if PLATFORM(IOS_FAMILY)
 #import "UIKitSPI.h"
@@ -232,7 +230,8 @@ private:
 
         HashMap<WTF::String, bool> result;
         RetainPtr permissions = [m_delegate.get() notificationPermissionsForWebsiteDataStore:m_dataStore.get().get()];
-        for (NSString *key in permissions.get()) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSString *key in permissions.get()) {
             RetainPtr<NSNumber> value = permissions.get()[key];
             auto originString = WebCore::SecurityOriginData::fromURL(URL(key)).toString();
             if (originString.isEmpty()) {
@@ -260,8 +259,9 @@ private:
         auto apiOrigin = API::SecurityOrigin::create(origin);
         auto delegateCompletionHandler = makeBlockPtr([completionHandler = WTF::move(completionHandler)] (NSArray<NSDictionary *> *notifications) mutable {
             Vector<WebCore::NotificationData> notificationDatas;
-            for (id notificationDictionary in notifications) {
-                auto notification = WebCore::NotificationData::fromDictionary(notificationDictionary);
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL id notificationDictionary in notifications) {
+                auto notification = WebCore::NotificationData::fromDictionary(dynamic_objc_cast<NSDictionary>(notificationDictionary));
                 RELEASE_ASSERT_WITH_MESSAGE(notification, "getDisplayedNotificationsForWorkerOrigin: Invalid notification dictionary passed back to WebKit");
                 notificationDatas.append(*notification);
             }
@@ -516,7 +516,8 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
 {
     Vector<WebKit::WebsiteDataRecord> result;
 
-    for (WKWebsiteDataRecord *dataRecord in dataRecords)
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL WKWebsiteDataRecord *dataRecord in dataRecords)
         result.append(dataRecord->_websiteDataRecord->websiteDataRecord());
 
     return result;
@@ -543,7 +544,7 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
 
     auto uuid = WTF::UUID::fromNSUUID(identifier);
     if (!uuid || !uuid->isValid())
-        [NSException raise:NSInvalidArgumentException format:@"Identifier (%s) is invalid for data store", UTF8CString { identifier.UUIDString }.legacyCStringPointer()];
+        [NSException raise:NSInvalidArgumentException format:@"Identifier (%@) is invalid for data store", identifier.UUIDString];
 
     return wrapper(WebKit::WebsiteDataStore::dataStoreForIdentifier(*uuid)).autorelease();
 }
@@ -558,7 +559,6 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
     [self _fetchAllIdentifiers:completionHandler];
 }
 
-#if HAVE(NW_PROXY_CONFIG)
 - (void)setProxyConfigurations:(NSArray<nw_proxy_config_t> *)proxyConfigurations
 {
     _proxyConfigurations = adoptNS([proxyConfigurations copy]);
@@ -568,7 +568,8 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
     }
 
     Vector<std::pair<Vector<uint8_t>, std::optional<WTF::UUID>>> configDataVector;
-    for (nw_proxy_config_t proxyConfig in proxyConfigurations) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL nw_proxy_config_t proxyConfig in _proxyConfigurations.get()) {
         RetainPtr<NSData> agentData = adoptNS((NSData *)nw_proxy_config_copy_agent_data(proxyConfig));
 
         uuid_t proxyIdentifier;
@@ -585,8 +586,6 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
     return _proxyConfigurations.get();
 }
 
-#endif // HAVE(NW_PROXY_CONFIG)
-
 #pragma mark WKObject protocol implementation
 
 - (API::Object&)_apiObject
@@ -601,7 +600,8 @@ struct WKWebsiteData {
 - (void)fetchDataOfTypes:(NSSet<NSString *> *)dataTypes completionHandler:(void(^)(NSData *, NSError *))completionHandler
 {
     Vector<WebKit::WebsiteDataType> dataTypesToEncode;
-    for (NSString *dataType in dataTypes) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *dataType in dataTypes) {
         if ([dataType isEqualToString:WKWebsiteDataTypeLocalStorage]) {
             dataTypesToEncode.append(WebKit::WebsiteDataType::LocalStorage);
             continue;
@@ -624,7 +624,7 @@ struct WKWebsiteData {
         encoder << currentWKWebsiteDataSerializationVersion;
         encoder << dataTypesToEncode;
 
-        for (auto& dataTypeToEncode : dataTypesToEncode) {
+        for (auto& dataTypeToEncode : borrow(dataTypesToEncode)) {
             switch (dataTypeToEncode) {
             case WebKit::WebsiteDataType::LocalStorage:
                 if (!data->localStorage) {
@@ -685,7 +685,7 @@ struct WKWebsiteData {
             completionHandler(nullptr);
     });
 
-    for (auto& encodedDataType : *encodedDataTypes) {
+    for (auto& encodedDataType : borrow(*encodedDataTypes)) {
         switch (encodedDataType) {
         case WebKit::WebsiteDataType::LocalStorage: {
             std::optional<HashMap<WebCore::ClientOrigin, HashMap<String, String>>> localStorage;
@@ -758,7 +758,7 @@ struct WKWebsiteData {
         for (auto identifier : identifiers)
             [result addObject:identifier.createNSUUID().get()];
 
-        completionHandlerCopy(result.autorelease());
+        completionHandlerCopy(result.get());
     });
 }
 
@@ -839,6 +839,11 @@ struct WKWebsiteData {
     protect(*_websiteDataStore)->setPrivateClickMeasurementDebugMode(enabled);
 }
 
+- (void)_setPrivateClickMeasurementPrivateRelayEnforcementEnabled:(BOOL)enabled
+{
+    protect(*_websiteDataStore)->setPrivateClickMeasurementPrivateRelayEnforcement(enabled);
+}
+
 - (BOOL)_storageSiteValidationEnabled
 {
     return _websiteDataStore->storageSiteValidationEnabled();
@@ -862,7 +867,8 @@ struct WKWebsiteData {
 - (void)_setPersistedSites:(NSArray<NSURL *> *)persistedSites
 {
     HashSet<URL> urls;
-    for (NSURL *site in persistedSites) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSURL *site in persistedSites) {
         URL url { site };
         if (url.isValid())
             urls.add(WTF::move(url));
@@ -1171,7 +1177,7 @@ struct WKWebsiteData {
         completionHandler(wrapper(API::Array::create(WTF::move(apiDomains))).get());
     });
 #else
-    completionHandler({ });
+    completionHandler(nil);
 #endif
 }
 
@@ -1185,7 +1191,7 @@ struct WKWebsiteData {
         completionHandler(wrapper(API::Array::create(WTF::move(apiSchemes))).get());
     });
 #else
-    completionHandler({ });
+    completionHandler(nil);
 #endif
 }
 
@@ -1298,7 +1304,7 @@ struct WKWebsiteData {
 
     protect(protect(*_websiteDataStore)->networkProcess())->getPendingPushMessages(_websiteDataStore->sessionID(), [completionHandler = makeBlockPtr(completionHandler)] (const Vector<WebKit::WebPushMessage>& messages) {
         auto result = adoptNS([[NSMutableArray alloc] initWithCapacity:messages.size()]);
-        for (auto& message : messages)
+        for (auto& message : borrow(messages))
             [result addObject:message.toDictionary().get()];
 
         RELEASE_LOG(Push, "Giving application %zu pending push messages", messages.size());
@@ -1384,14 +1390,15 @@ struct WKWebsiteData {
         auto result = adoptNS([[NSMutableArray alloc] initWithCapacity:identifiers.size()]);
         for (auto identifier : identifiers)
             [result addObject:identifier.createNSString().get()];
-        completionHandler(result.autorelease());
+        completionHandler(result.get());
     });
 }
 
 -(void)_getBackgroundFetchState:(NSString *) identifier completionHandler:(void(^)(NSDictionary *state))completionHandler
 {
     protect(protect(*_websiteDataStore)->networkProcess())->getBackgroundFetchState(_websiteDataStore->sessionID(), identifier, [completionHandler = makeBlockPtr(completionHandler)] (auto state) {
-        completionHandler(state ? state->toDictionary() : nil);
+        RetainPtr dictionary = state ? state->toDictionary() : nil;
+        completionHandler(dictionary.get());
     });
 }
 
@@ -1504,11 +1511,6 @@ struct WKWebsiteData {
 
         return completionHandlerCopy(nil);
     });
-}
-
-- (void)_setRestrictedOpenerTypeForTesting:(_WKRestrictedOpenerType)openerType forDomain:(NSString *)domain
-{
-    protect(*_websiteDataStore)->setRestrictedOpenerTypeForDomainForTesting(WebCore::RegistrableDomain::fromRawString(domain), static_cast<WebKit::RestrictedOpenerType>(openerType));
 }
 
 -(void)_getAppBadgeForTesting:(void(^)(NSNumber *))completionHandler

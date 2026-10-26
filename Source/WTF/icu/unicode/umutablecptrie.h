@@ -7,6 +7,9 @@
 #ifndef __UMUTABLECPTRIE_H__
 #define __UMUTABLECPTRIE_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 #include "unicode/utypes.h"
 
 #include "unicode/ucpmap.h"

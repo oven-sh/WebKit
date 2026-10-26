@@ -692,6 +692,19 @@ mtl::TextureRef &GetLayerLevelTextureView(
     return levelTextureViews[level];
 }
 
+// Returns the texture extents in GL terms, substituting arrayLength into depth for array textures
+// since MTLTexture stores layer count in arrayLength with depth == 1.
+gl::Extents GetTextureGLSize(const mtl::TextureRef &texture,
+                             const mtl::MipmapNativeLevel &nativeLevel)
+{
+    gl::Extents size = texture->size(nativeLevel);
+    if (texture->textureType() == MTLTextureType2DArray)
+    {
+        size.depth = static_cast<int>(texture->arrayLength());
+    }
+    return size;
+}
+
 }  // namespace
 
 // TextureMtl::NativeTextureWrapper implementation.
@@ -778,6 +791,10 @@ class TextureMtl::NativeTextureWrapper : angle::NonCopyable
     uint32_t depth(GLuint glLevel) const { return mNativeTexture->depth(getNativeLevel(glLevel)); }
 
     gl::Extents size(GLuint glLevel) const { return mNativeTexture->size(getNativeLevel(glLevel)); }
+    gl::Extents getGLSize(GLuint glLevel) const
+    {
+        return GetTextureGLSize(mNativeTexture, getNativeLevel(glLevel));
+    }
 
     // Get width, height, depth, size at base level.
     uint32_t widthAt0() const { return width(mBaseGLLevel); }
@@ -2048,11 +2065,30 @@ angle::Result TextureMtl::redefineImage(const gl::Context *context,
     GLuint glLevel               = index.getLevelIndex();
     ImageDefinitionMtl &imageDef = mTexImageDefs[cubeFaceOrZero][glLevel];
 
+    // Discarding the image below leaves the render targets that point at it holding an expired
+    // weak reference. A framebuffer can also keep the discarded image alive through its cached
+    // render pass, which hides the expiry. Clear those render targets so that the next use
+    // recreates them from the new image.
+    for (auto &samplesMapRenderTargets : mRenderTargets)
+    {
+        const gl::ImageIndex &rttIndex = samplesMapRenderTargets.first;
+        if (rttIndex.getLevelIndex() != static_cast<GLint>(glLevel) ||
+            GetImageCubeFaceIndexOrZeroFrom(rttIndex) != cubeFaceOrZero)
+        {
+            continue;
+        }
+        for (RenderTargetMtl &perSampleCountRenderTarget : samplesMapRenderTargets.second)
+        {
+            perSampleCountRenderTarget.reset();
+        }
+    }
+
     if (mNativeTextureStorage && mNativeTextureStorage->isGLLevelSupported(glLevel))
     {
         // mNativeTextureStorage stores the complete mipmap chain when present.
         ASSERT(mNativeTextureStorage->textureType() == mtl::GetTextureType(index.getType()));
-        if (mNativeTextureStorage->getFormat() == mtlFormat && size == mNativeTextureStorage->size(glLevel))
+        if (mNativeTextureStorage->getFormat() == mtlFormat &&
+            size == mNativeTextureStorage->getGLSize(glLevel))
         {
             // The view might be from mNativeTextureStorage, but it might also be from previous
             // storages. Always discard.

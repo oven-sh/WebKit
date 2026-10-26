@@ -46,7 +46,7 @@ typedef Function<void(ViewportErrorCode, StringView, StringView)> InternalViewpo
 const float ViewportArguments::deprecatedTargetDPI = 160;
 #endif
 
-static inline float clampLengthValue(float value)
+static inline float LEGACY_NODELETE clampLengthValue(float value)
 {
     ASSERT(value != ViewportArguments::ValueDeviceWidth);
     ASSERT(value != ViewportArguments::ValueDeviceHeight);
@@ -57,7 +57,7 @@ static inline float clampLengthValue(float value)
     return value;
 }
 
-static inline float clampScaleValue(float value)
+static inline float LEGACY_NODELETE clampScaleValue(float value)
 {
     ASSERT(value != ViewportArguments::ValueDeviceWidth);
     ASSERT(value != ViewportArguments::ValueDeviceHeight);
@@ -170,7 +170,7 @@ ViewportAttributes ViewportArguments::resolve(const FloatSize& initialViewportSi
     return result;
 }
 
-static FloatSize NODELETE convertToUserSpace(const FloatSize& deviceSize, float devicePixelRatio)
+static FloatSize LEGACY_NODELETE convertToUserSpace(const FloatSize& deviceSize, float devicePixelRatio)
 {
     FloatSize result = deviceSize;
     if (devicePixelRatio != 1)
@@ -342,7 +342,7 @@ static ASCIILiteral viewportErrorMessageTemplate(ViewportErrorCode errorCode)
     return "Unknown viewport error."_s;
 }
 
-static MessageLevel NODELETE viewportErrorMessageLevel(ViewportErrorCode errorCode)
+static MessageLevel LEGACY_NODELETE viewportErrorMessageLevel(ViewportErrorCode errorCode)
 {
     switch (errorCode) {
     case ViewportErrorCode::TruncatedViewportArgumentValue:

@@ -14,9 +14,9 @@
 #include <stdint.h>
 
 #include <optional>
+#include <span>
 #include <vector>
 
-#include "absl/base/attributes.h"
 #include "api/field_trials_view.h"
 #include "api/rtc_event_log/rtc_event_log.h"
 #include "api/transport/network_types.h"
@@ -75,6 +75,7 @@ struct ProbeControllerConfig {
 
   // Configures the probes emitted by changed to the allocated bitrate.
   FieldTrialParameter<bool> probe_on_max_allocated_bitrate_change;
+  FieldTrialParameter<bool> probe_on_max_allocated_bitrate_change_without_alr;
   FieldTrialOptional<double> first_allocation_probe_scale;
   FieldTrialOptional<double> second_allocation_probe_scale;
   FieldTrialParameter<double> allocation_probe_limit_by_current_scale;
@@ -117,7 +118,7 @@ class ProbeController {
   ProbeController(const ProbeController&) = delete;
   ProbeController& operator=(const ProbeController&) = delete;
 
-  ABSL_MUST_USE_RESULT std::vector<ProbeClusterConfig> SetBitrates(
+  [[nodiscard]] std::vector<ProbeClusterConfig> SetBitrates(
       DataRate min_bitrate,
       DataRate start_bitrate,
       DataRate max_bitrate,
@@ -125,14 +126,14 @@ class ProbeController {
 
   // The total bitrate, as opposed to the max bitrate, is the sum of the
   // configured bitrates for all active streams.
-  ABSL_MUST_USE_RESULT std::vector<ProbeClusterConfig>
-  OnMaxTotalAllocatedBitrate(DataRate max_total_allocated_bitrate,
-                             Timestamp at_time);
+  [[nodiscard]] std::vector<ProbeClusterConfig> OnMaxTotalAllocatedBitrate(
+      DataRate max_total_allocated_bitrate,
+      Timestamp at_time);
 
-  ABSL_MUST_USE_RESULT std::vector<ProbeClusterConfig> OnNetworkAvailability(
+  [[nodiscard]] std::vector<ProbeClusterConfig> OnNetworkAvailability(
       NetworkAvailability msg);
 
-  ABSL_MUST_USE_RESULT std::vector<ProbeClusterConfig> SetEstimatedBitrate(
+  [[nodiscard]] std::vector<ProbeClusterConfig> SetEstimatedBitrate(
       DataRate bitrate,
       BandwidthLimitedCause bandwidth_limited_cause,
       Timestamp at_time);
@@ -149,8 +150,7 @@ class ProbeController {
   void SetAlrStartTime(std::optional<Timestamp> alr_start_time);
   void SetAlrEndedTime(Timestamp alr_end_time);
 
-  ABSL_MUST_USE_RESULT std::vector<ProbeClusterConfig> RequestProbe(
-      Timestamp at_time);
+  [[nodiscard]] std::vector<ProbeClusterConfig> RequestProbe(Timestamp at_time);
 
   void SetNetworkStateEstimate(NetworkStateEstimate estimate);
 
@@ -160,8 +160,7 @@ class ProbeController {
   // `max_total_allocated_bitrate_`.
   void Reset(Timestamp at_time);
 
-  ABSL_MUST_USE_RESULT std::vector<ProbeClusterConfig> Process(
-      Timestamp at_time);
+  [[nodiscard]] std::vector<ProbeClusterConfig> Process(Timestamp at_time);
 
  private:
   enum class State {
@@ -174,11 +173,11 @@ class ProbeController {
   };
 
   void UpdateState(State new_state);
-  ABSL_MUST_USE_RESULT std::vector<ProbeClusterConfig>
-  InitiateExponentialProbing(Timestamp at_time);
-  ABSL_MUST_USE_RESULT std::vector<ProbeClusterConfig> InitiateProbing(
+  [[nodiscard]] std::vector<ProbeClusterConfig> InitiateExponentialProbing(
+      Timestamp at_time);
+  [[nodiscard]] std::vector<ProbeClusterConfig> InitiateProbing(
       Timestamp now,
-      std::vector<DataRate> bitrates_to_probe,
+      std::span<const DataRate> bitrates_to_probe,
       bool probe_further);
   bool TimeForAlrProbe(Timestamp at_time) const;
   bool TimeForNetworkStateProbe(Timestamp at_time) const;

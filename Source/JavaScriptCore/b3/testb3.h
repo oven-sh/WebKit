@@ -84,6 +84,7 @@
 #include <wtf/Threading.h>
 #include <wtf/WTFProcess.h>
 #include <wtf/text/StringCommon.h>
+#include <wtf/text/UTF8CStringView.h>
 
 // We don't have a NO_RETURN_DUE_TO_EXIT, nor should we. That's ridiculous.
 inline bool hiddenTruthBecauseNoReturnIsStupid() { return true; }
@@ -133,7 +134,7 @@ extern Lock crashLock;
 #define RUN(test)                                           \
     do {                                                    \
         auto testStr = toUTF8CString(PREFIX #test);          \
-        if (!shouldRun(config, testStr.legacyCStringPointer()))             \
+        if (!shouldRun(config, testStr))                    \
             break;                                          \
         tasks.append(                                       \
             createSharedTask<void()>(                       \
@@ -147,7 +148,7 @@ extern Lock crashLock;
 #define RUN_UNARY(test, values) \
     for (auto a : values) {                             \
         auto testStr = toUTF8CString(PREFIX #test, "(", a.name, ")"); \
-        if (!shouldRun(config, testStr.legacyCStringPointer()))         \
+        if (!shouldRun(config, testStr))                \
             continue;                                   \
         tasks.append(createSharedTask<void()>(          \
             [=] () {                                    \
@@ -165,7 +166,7 @@ extern Lock crashLock;
 #endif
 
 #define RUN_NOW(test) do {                      \
-        if (!shouldRun(config, #test))          \
+        if (!shouldRun(config, #test ""_s))     \
             break;                              \
         dataLog(PREFIX #test "...\n");          \
         {                                       \
@@ -179,7 +180,7 @@ extern Lock crashLock;
     for (auto a : valuesA) {                                \
         for (auto b : valuesB) {                            \
             auto testStr = toUTF8CString(PREFIX #test, "(", a.name, ", ", b.name, ")"); \
-            if (!shouldRun(config, testStr.legacyCStringPointer()))         \
+            if (!shouldRun(config, testStr))                \
                 continue;                                   \
             tasks.append(createSharedTask<void()>(          \
                 [=] () {                                    \
@@ -194,7 +195,7 @@ extern Lock crashLock;
         for (auto b : valuesB) {                                \
             for (auto c : valuesC) {                            \
                 auto testStr = toUTF8CString(PREFIX #test, "(", a.name, ", ", b.name, ",", c.name, ")"); \
-                if (!shouldRun(config, testStr.legacyCStringPointer()))         \
+                if (!shouldRun(config, testStr))                \
                     continue;                                   \
                 tasks.append(createSharedTask<void()>(          \
                     [=] () {                                    \
@@ -266,10 +267,10 @@ inline void lowerToAirForTesting(Procedure& proc)
 }
 
 template<typename Func>
-void checkDisassembly(Compilation& compilation, const Func& func, const UTF8CString& failText)
+void checkDisassembly(Compilation& compilation, NOESCAPE const Func& func, const UTF8CString& failText)
 {
     auto disassembly = compilation.disassembly();
-    if (func(disassembly.legacyCStringPointer()))
+    if (func(disassembly))
         return;
     
     crashLock.lock();
@@ -284,10 +285,10 @@ inline void checkUsesInstruction(Compilation& compilation, const char* text, boo
 {
     checkDisassembly(
         compilation,
-        [&] (const char* disassembly) -> bool {
+        [&] (UTF8CStringView disassembly) -> bool {
             if (regex)
-                return std::regex_match(disassembly, std::regex(text, std::regex::extended));
-            return strstr(disassembly, text);
+                return std::regex_match(disassembly.utf8(), std::regex(text, std::regex::extended));
+            return contains(disassembly.span(), byteCast<char8_t>(unsafeSpan(text)));
         },
         toUTF8CString("Expected to find ", text, " but didnt!"));
 }
@@ -296,8 +297,8 @@ inline void checkDoesNotUseInstruction(Compilation& compilation, const char* tex
 {
     checkDisassembly(
         compilation,
-        [&] (const char* disassembly) -> bool {
-            return !strstr(disassembly, text);
+        [&] (UTF8CStringView disassembly) -> bool {
+            return !contains(disassembly.span(), byteCast<char8_t>(unsafeSpan(text)));
         },
         toUTF8CString("Did not expected to find ", text, " but it's there!"));
 }
@@ -608,6 +609,7 @@ void testBitAndZeroShiftRightArgImmMask32();
 void testBitAndZeroShiftRightArgImmMask64();
 void testBasicSelect();
 void testSelectTest();
+void testSelectTestHighBits();
 void testAddWithLeftShift32();
 void testAddWithRightShift32();
 void testAddWithUnsignedRightShift32();
@@ -664,6 +666,8 @@ void testCheckSelect();
 void testCheckSelectCheckSelect();
 void testCheckSelectAndCSE();
 void testCheckSelectAndDeadCheckCSE();
+void testCheckSelectWithPhiBeforeCheck();
+void testCheckSelectWithUpsilonBeforeCheck();
 void testPowDoubleByIntegerLoop(double xOperand, int32_t yOperand);
 double b3Pow(double x, int y);
 void testTruncOrHigh();
@@ -702,6 +706,7 @@ void testBranchBitAndImmFusion(B3::Opcode valueModifier, Type valueType, int64_t
 void testTerminalPatchpointThatNeedsToBeSpilled();
 void testTerminalPatchpointThatNeedsToBeSpilled2();
 void testPatchpointTerminalReturnValue(bool successIsRare);
+void testPrologueGeneratorLatePath();
 void testMemoryFence();
 void testStoreFence();
 void testLoadFence();
@@ -960,6 +965,21 @@ void testBranchEqualOrUnorderedFloatImms(float, float);
 void testBranchEqualOrUnorderedFloatWithUselessDoubleConversion(float, float);
 void testBranchFold(int value);
 void testDiamondFold(int value);
+void testPhiFoldChain();
+void testPhiFoldKeepsUpsilonBeforeFoldedBranch();
+void testPhiFoldUpsilonAwayFromJoin();
+void testPhiFoldLoopUnderConstantBranch(bool enterLoop);
+void testPhiFoldLoopInvariantPhis();
+void testPhiFoldDeadLoopSelfReference(bool useBitXor);
+void testPhiFoldDeadIrreducibleCycle();
+void testPhiFoldDeadLoopFeedingBranch();
+void testPhiFoldCheckAlwaysExitsBeforePhi();
+void testPhiFoldEqualConstantFromBackEdge();
+void testPhiFoldDeadLoopWithStalePredecessor();
+void testPhiFoldInBlockReachedOnlyByRetreatingEdge(bool swapArms);
+void testPhiFoldConstantInBlockReachedOnlyByRetreatingEdge(bool swapArms);
+void testPhiFoldDeadLoopHeaderEnteredFromRoot();
+void testPhiFoldLoopPhiTrivialAfterLatch();
 void testBranchNotEqualFoldPtr(intptr_t value);
 void testBranchEqualFoldPtr(intptr_t value);
 void testBranchLoadPtr();
@@ -998,6 +1018,7 @@ void testPatchpointWithAnyResult();
 void testSimpleCheck();
 void testCheckFalse();
 void testCheckTrue();
+void testCheckTrueBeforeTerminalWithResult();
 void testCheckLessThan();
 void testCheckMegaCombo();
 void testCheckTrickyMegaCombo();
@@ -1202,6 +1223,8 @@ void testSwitchSameCaseAsDefault();
 void testSwitchChillDiv(unsigned degree, unsigned gap);
 void testSwitchTargettingSameBlock();
 void testSwitchTargettingSameBlockFoldPathConstant();
+void testBranchOnPhiOfTakenComparesFoldPathConstant();
+void testSwitchOnConstant(int64_t key, bool is64Bit);
 void testSwitchSparseI64RangeOverflow();
 void testTruncFold(int64_t value);
 void testZExt32(int32_t value);
@@ -1390,7 +1413,14 @@ void testCSELoadAfterStoreDiamond(bool flag);
 void testCSELoadAcrossLoopBackEdge(unsigned count);
 void testCSELoopHeaderLoadFromBackEdgeStore(unsigned count);
 
-bool shouldRun(const TestConfig*, const char* testName);
+void testFixSSALocalOnly();
+void testFixSSADiamondSetInOneArm(bool flag);
+void testFixSSADiamondJoinPhi(bool flag);
+void testFixSSADominatorChain(bool flag);
+void testFixSSAGetBeforeSet(bool flag);
+void testFixSSASetFromGetInSameBlock(bool flag);
+
+bool shouldRun(const TestConfig*, UTF8CStringView testName);
 
 void testLoadPreIndex32();
 void testLoadPreIndex64();
@@ -1470,16 +1500,18 @@ void testSShrCompare64(int64_t);
 void testInt52RoundTripUnary(int32_t);
 void testInt52RoundTripBinary();
 void testTruncSShrAddUnalignedConstant();
+void testTruncSShrShlSExt32(int32_t);
 
 void testMulHigh32();
 void testMulHigh64();
 void testUMulHigh32();
 void testUMulHigh64();
 
-void testMemoryCopy();
-void testMemoryCopyConstant();
+void testMemoryMove();
+void testMemoryMoveConstant();
 void testMemoryFill();
 void testMemoryFillConstant();
+void testGCSafeMemoryMove();
 
 void testLoadImmutable();
 
@@ -1512,6 +1544,14 @@ void testCCmpNegatedOr32(int32_t, int32_t);
 void testCCmpMixedWidth32And64(int32_t, int64_t, int32_t);
 void testCCmpMixedWidth64And32(int64_t, int32_t);
 void testCCmpChainRollback(int32_t, int32_t, int32_t, int32_t, int32_t, int32_t);
+void testXorOrCompareChain32(B3::Opcode, int32_t, int32_t, int32_t, int32_t);
+void testXorOrCompareChain64(B3::Opcode, int64_t, int64_t, int64_t);
+void testXorOrCompareChainZExt64(int64_t, int32_t);
+void testXorOrCompareChainBitImmediate32(int32_t, int32_t);
+void testXorOrCompareChainBranch64(int64_t, int64_t, int64_t, int64_t);
+void testXorOrCompareChainBranchEqualZero32(int32_t, int32_t, int32_t, int32_t);
+void testXorOrCompareChainSharedLeaf32(int32_t, int32_t, int32_t, int32_t);
+void testXorOrCompareChainLoads64(unsigned, unsigned);
 
 // ARM64 fccmp tests (floating-point conditional compare)
 void testFCCmpAndDouble(double, double, double, double);
@@ -1528,11 +1568,13 @@ void testFCCmpNegatedAndDouble(double, double, double, double);
 
 // SIMD XOR+rotate pattern matching
 void testVectorXorRotateRight64();
+void testVectorXorRotateRight64ShiftKindAndAmount();
 void testVectorXor3();
 void testVectorDotProductSplatOne();
 void testVectorShrZipToExtend();
 void testVectorShrZipToExtendI32();
 void testVectorShrZipToExtendI64();
+void testVectorShrZipWithMismatchedLane();
 
 // SIMD VectorUnzip/Zip/Transpose/Reverse B3 opcodes
 void testVectorUnzipEven();

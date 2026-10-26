@@ -72,7 +72,7 @@ protected:
 
     virtual unsigned numberOfEffectInputs() const { return 1; }
 
-    FloatRect calculatePrimitiveSubregion(const Filter&, std::span<const FloatRect> inputPrimitiveSubregions, const std::optional<FilterEffectGeometry>&) const;
+    FloatRect LEGACY_NODELETE calculatePrimitiveSubregion(const Filter&, std::span<const FloatRect> inputPrimitiveSubregions, const std::optional<FilterEffectGeometry>&) const;
 
     virtual FloatRect calculateImageRect(const Filter&, std::span<const FloatRect> inputImageRects, const FloatRect& primitiveSubregion) const;
 
@@ -85,7 +85,7 @@ protected:
 
     virtual void transformInputsColorSpace(std::span<const Ref<FilterImage>> inputs) const;
     
-    void NODELETE correctPremultipliedInputs(std::span<const Ref<FilterImage>> inputs) const;
+    void LEGACY_NODELETE correctPremultipliedInputs(std::span<const Ref<FilterImage>> inputs) const;
 
     std::unique_ptr<FilterEffectApplier> createApplier(const Filter&) const;
 

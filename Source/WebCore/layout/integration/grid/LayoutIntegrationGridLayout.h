@@ -54,10 +54,6 @@ public:
 
     void layout();
 
-    // A GFC layout marks the legacy grid as placed and sets the grid area of each item, but
-    // leaves the rest of the legacy grid state (e.g. its grid matrix) untouched. Reverts that
-    // partial state so a subsequent legacy (non-GFC) layout treats the grid as needing a fresh
-    // layout, for example re-placing items to rebuild its tracks.
     static void invalidateFormattingContextRootRenderer(RenderGrid&);
 
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicWidths();
@@ -69,7 +65,7 @@ private:
     GridItemBorderBoxRects gridItemBorderBoxRects() const;
 
     void updateGridItemRenderers(const GridItemBorderBoxRects& previousGridItemRects);
-    void updateFormattingContextRootRenderer(const Layout::GridLayoutConstraints&, const Layout::UsedTrackSizes&, const Layout::GridItemRects&);
+    void updateFormattingContextRootRenderer(LayoutUnit usedBlockContentSize, const Layout::GridItemRects&, size_t autoRepeatColumnsCount, size_t autoRepeatRowsCount, size_t leadingImplicitColumnsCount, size_t leadingImplicitRowsCount);
     void layoutOutOfFlowBoxes(const Layout::UsedTrackSizes&);
     void updateOverflow(RenderGrid&);
     void populateGridPositionsForOutOfFlowLayout(const Layout::UsedTrackSizes&);

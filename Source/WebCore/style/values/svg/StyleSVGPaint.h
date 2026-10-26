@@ -113,7 +113,7 @@ struct SVGPaint {
     const Color& colorDisregardingType() const LIFETIME_BOUND { return m_color; }
     const URL& urlDisregardingType() const LIFETIME_BOUND { return m_url; }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -176,7 +176,7 @@ template<> struct CSSValueConversion<SVGPaint> { auto operator()(BuilderState&, 
 
 template<> struct Blending<SVGPaint> {
     auto equals(const SVGPaint&, const SVGPaint&, const Style::ComputedStyle&, const Style::ComputedStyle&) -> bool;
-    auto canBlend(const SVGPaint&, const SVGPaint&) -> bool;
+    bool LEGACY_NODELETE canBlend(const SVGPaint&, const SVGPaint&);
     auto blend(const SVGPaint&, const SVGPaint&, const Style::ComputedStyle&, const Style::ComputedStyle&, const BlendingContext&) -> SVGPaint;
 };
 

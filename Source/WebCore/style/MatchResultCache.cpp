@@ -130,13 +130,13 @@ PropertyCascade::IncludedProperties MatchResultCache::computeAndUpdateChangedPro
         originalProperties[index].valueIfUnchanged = nullptr;
 
         // FIXME: Support custom properties.
-        if (propertyID == CSSPropertyCustom)
+        if (propertyID == CSSPropertyID::Custom)
             return PropertyCascade::normalProperties();
 
         // Only use partial applying with low-priority properties since we know changes to them can't
         // affect values of other properties.
-        // FIXME: CSSPropertyLineHeight shouldn't be a low-priority property as others can depend on it via `lh` unit.
-        if (propertyID < firstLowPriorityProperty || propertyID == CSSPropertyLineHeight)
+        // FIXME: CSSPropertyID::LineHeight shouldn't be a low-priority property as others can depend on it via `lh` unit.
+        if (propertyID < firstLowPriorityProperty || propertyID == CSSPropertyID::LineHeight)
             return PropertyCascade::normalProperties();
 
         result.ids.append(cascadeAliasProperty(propertyID));

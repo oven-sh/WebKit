@@ -49,6 +49,7 @@
 #include <WebCore/SecurityOriginData.h>
 #include <WebCore/UserMediaRequest.h>
 #include <algorithm>
+#include <wtf/Borrow.h>
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/HexNumber.h>
 #include <wtf/LoggerHelper.h>
@@ -74,7 +75,7 @@ static const MediaProducerMediaStateFlags activeCaptureMask { MediaProducerMedia
 #endif
 
 #if ENABLE(MEDIA_STREAM)
-static WeakHashSet<UserMediaPermissionRequestManagerProxy>& NODELETE proxies()
+static WeakHashSet<UserMediaPermissionRequestManagerProxy>& LEGACY_NODELETE proxies()
 {
     static NeverDestroyed<WeakHashSet<UserMediaPermissionRequestManagerProxy>> set;
     return set;
@@ -165,9 +166,16 @@ void UserMediaPermissionRequestManagerProxy::invalidatePendingRequests()
     for (auto& request : pendingUserMediaRequests)
         request->invalidate();
 
-    auto pregrantedRequests = WTF::move(m_pregrantedRequests);
+    const Vector pregrantedRequests = WTF::move(m_pregrantedRequests);
     for (auto& request : pregrantedRequests)
         request->invalidate();
+
+    // Speech recognition and capture state requests are never the current request.
+    auto requestsWaitingForDelegate = WTF::move(m_requestsWaitingForDelegate);
+    for (auto& request : requestsWaitingForDelegate)
+        request->invalidate();
+    if (RefPtr requestAwaitingDelegateDecision = m_requestAwaitingDelegateDecision)
+        requestAwaitingDelegateDecision->invalidate();
 
     m_pendingDeviceRequests.clear();
 }
@@ -221,7 +229,7 @@ void UserMediaPermissionRequestManagerProxy::clearCachedState()
 }
 
 #if ENABLE(MEDIA_STREAM)
-static uint64_t NODELETE toWebCore(UserMediaPermissionRequestProxy::UserMediaAccessDenialReason reason)
+static uint64_t LEGACY_NODELETE toWebCore(UserMediaPermissionRequestProxy::UserMediaAccessDenialReason reason)
 {
     switch (reason) {
     case UserMediaPermissionRequestProxy::UserMediaAccessDenialReason::NoConstraints:
@@ -488,7 +496,7 @@ static bool isMatchingDeniedRequest(const UserMediaPermissionRequestProxy& reque
 
 bool UserMediaPermissionRequestManagerProxy::wasRequestDenied(const UserMediaPermissionRequestProxy& request, bool needsAudio, bool needsVideo, bool needsScreenCapture)
 {
-    for (const auto& deniedRequest : m_deniedRequests) {
+    for (const auto& deniedRequest : borrow(m_deniedRequests)) {
         if (!isMatchingDeniedRequest(request, deniedRequest))
             continue;
 
@@ -808,18 +816,52 @@ void UserMediaPermissionRequestManagerProxy::decidePolicyForUserMediaPermissionR
     if (!currentUserMediaRequest)
         return;
 
+    askDelegateToDecide(*currentUserMediaRequest);
+}
+
+void UserMediaPermissionRequestManagerProxy::askDelegateToDecide(UserMediaPermissionRequestProxy& request)
+{
+#if PLATFORM(COCOA)
+    if (m_requestAwaitingDelegateDecision) {
+        m_requestsWaitingForDelegate.append(request);
+        return;
+    }
+    m_requestAwaitingDelegateDecision = request;
+#endif
+
     // If page navigated, there is no need to call the page client for authorization.
-    RefPtr webFrame = WebFrameProxy::webFrame(currentUserMediaRequest->frameID());
+    RefPtr webFrame = WebFrameProxy::webFrame(request.frameID());
     RefPtr page = m_page.get();
-    if (!webFrame || !page || !protocolHostAndPortAreEqual(page->pageLoadState().activeURL(), currentUserMediaRequest->topLevelDocumentSecurityOrigin().data().toURL())) {
-        denyRequest(*currentUserMediaRequest, UserMediaPermissionRequestProxy::UserMediaAccessDenialReason::NoConstraints);
+    if (!webFrame || !page || !protocolHostAndPortAreEqual(page->pageLoadState().activeURL(), request.topLevelDocumentSecurityOrigin().data().toURL())) {
+        request.deny(UserMediaPermissionRequestProxy::UserMediaAccessDenialReason::NoConstraints);
         return;
     }
 
     // FIXME: Remove webFrame, userMediaOrigin and topLevelOrigin from this uiClient API call.
-    Ref userMediaOrigin = API::SecurityOrigin::create(currentUserMediaRequest->userMediaDocumentSecurityOrigin());
-    Ref topLevelOrigin = API::SecurityOrigin::create(currentUserMediaRequest->topLevelDocumentSecurityOrigin());
-    page->uiClient().decidePolicyForUserMediaPermissionRequest(*page, *webFrame, WTF::move(userMediaOrigin), WTF::move(topLevelOrigin), *currentUserMediaRequest);
+    Ref userMediaOrigin = API::SecurityOrigin::create(request.userMediaDocumentSecurityOrigin());
+    Ref topLevelOrigin = API::SecurityOrigin::create(request.topLevelDocumentSecurityOrigin());
+    page->uiClient().decidePolicyForUserMediaPermissionRequest(*page, *webFrame, WTF::move(userMediaOrigin), WTF::move(topLevelOrigin), request);
+}
+
+void UserMediaPermissionRequestManagerProxy::delegateDecisionEnded(UserMediaPermissionRequestProxy& request)
+{
+    if (m_requestAwaitingDelegateDecision.get() != &request)
+        return;
+    m_requestAwaitingDelegateDecision = nullptr;
+
+    RunLoop::mainSingleton().dispatch([weakThis = WeakPtr { *this }] {
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->askDelegateAboutNextWaitingRequest();
+    });
+}
+
+void UserMediaPermissionRequestManagerProxy::askDelegateAboutNextWaitingRequest()
+{
+    while (!m_requestAwaitingDelegateDecision && !m_requestsWaitingForDelegate.isEmpty()) {
+        Ref request = m_requestsWaitingForDelegate.takeFirst();
+        if (request->isPending())
+            askDelegateToDecide(request);
+    }
 }
 
 void UserMediaPermissionRequestManagerProxy::checkUserMediaPermissionForSpeechRecognition(WebCore::FrameIdentifier mainFrameIdentifier, FrameInfoData&& frameInfo, const WebCore::SecurityOrigin& requestingOrigin, const WebCore::SecurityOrigin& topOrigin, const WebCore::CaptureDevice& device, CompletionHandler<void(bool)>&& completionHandler)
@@ -847,9 +889,7 @@ void UserMediaPermissionRequestManagerProxy::checkUserMediaPermissionForSpeechRe
         return;
     }
 
-    Ref apiRequestingOrigin = API::SecurityOrigin::create(requestingOrigin);
-    Ref apiTopOrigin = API::SecurityOrigin::create(topOrigin);
-    page->uiClient().decidePolicyForUserMediaPermissionRequest(*page, *frame, WTF::move(apiRequestingOrigin), WTF::move(apiTopOrigin), request.get());
+    askDelegateToDecide(request);
 }
 
 bool UserMediaPermissionRequestManagerProxy::shouldChangeDeniedToPromptForCamera(const ClientOrigin& origin) const
@@ -915,8 +955,8 @@ public:
         m_handler(m_cameraPermission, m_microphonePermission);
     }
 
-    void NODELETE setCameraPermission(PermissionState state) { m_cameraPermission = state; }
-    void NODELETE setMicrophonePermission(PermissionState state) { m_microphonePermission = state; }
+    void LEGACY_NODELETE setCameraPermission(PermissionState state) { m_cameraPermission = state; }
+    void LEGACY_NODELETE setMicrophonePermission(PermissionState state) { m_microphonePermission = state; }
 
 private:
     explicit UserMediaPermissionInfoGatherer(CompletionHandler<void(PermissionState, PermissionState)>&& handler)
@@ -1018,7 +1058,7 @@ void UserMediaPermissionRequestManagerProxy::computeFilteredDeviceList(FrameIden
 
         bool shouldRestrictSpeaker = !protectedThis->wasGrantedAudioAccess(frameID);
         Vector<CaptureDeviceWithCapabilities> filteredDevices;
-        for (auto& deviceWithCapabilities : devicesWithCapabilities) {
+        for (auto& deviceWithCapabilities : borrow(devicesWithCapabilities)) {
             auto& device = deviceWithCapabilities.device;
             if (!device.enabled())
                 continue;
@@ -1205,7 +1245,7 @@ void UserMediaPermissionRequestManagerProxy::captureStateChanged(MediaProducerMe
 
 void UserMediaPermissionRequestManagerProxy::viewIsBecomingVisible()
 {
-    auto pregrantedRequests = WTF::move(m_pregrantedRequests);
+    const Vector pregrantedRequests = WTF::move(m_pregrantedRequests);
     for (auto& request : pregrantedRequests)
         grantRequest(request);
 }

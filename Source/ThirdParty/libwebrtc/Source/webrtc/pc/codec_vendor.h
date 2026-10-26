@@ -11,6 +11,7 @@
 #ifndef PC_CODEC_VENDOR_H_
 #define PC_CODEC_VENDOR_H_
 
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -19,6 +20,7 @@
 #include "api/field_trials_view.h"
 #include "api/media_types.h"
 #include "api/rtc_error.h"
+#include "api/rtp_parameters.h"
 #include "api/rtp_transceiver_direction.h"
 #include "api/sequence_checker.h"
 #include "call/payload_type.h"
@@ -75,7 +77,7 @@ class CodecVendor {
       RtpTransceiverDirection offer_rtd,
       RtpTransceiverDirection answer_rtd,
       const ContentInfo* current_content,
-      std::vector<Codec> codecs_from_offer,
+      std::span<const Codec> codecs_from_offer,
       PayloadTypeSuggester& pt_suggester);
 
   // Function exposed for issues.webrtc.org/412904801
@@ -115,12 +117,15 @@ class CodecVendor {
       const RtpTransceiverDirection& offer,
       const RtpTransceiverDirection& answer) const;
 
-  RTCError MergeCodecsByDirection(MediaType type,
-                                  RtpTransceiverDirection direction,
-                                  absl::string_view mid,
-                                  CodecList& codecs_out,
-                                  PayloadTypeSuggester& pt_suggester,
-                                  bool pick_from_top_of_range);
+  RTCError MergeAndAssignConfiguredCodecs(
+      MediaType type,
+      RtpTransceiverDirection direction,
+      absl::string_view mid,
+      CodecList& codecs_out,
+      PayloadTypeSuggester& pt_suggester,
+      bool pick_from_top_of_range,
+      std::span<const RtpCodecCapability> codec_preferences = {},
+      bool vad_enabled = true);
 
   // Makes sure that modifications and reading data is done on the same thread
   // and to makessure we consistently make calls to GetNegotiatedCodecsForOffer

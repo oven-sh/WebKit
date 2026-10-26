@@ -157,6 +157,8 @@ public:
 
     unsigned unlinkedFunctionStart() const { return m_unlinkedFunctionStart; }
     unsigned unlinkedFunctionEnd() const { materializeDeferredScalarsIfNeeded(); return m_unlinkedFunctionEnd; }
+    // The builtin default constructor has a source of its own, and the function that initializes the fields of a class has all of its parent's.
+    bool hasFunctionRangeInParentSource() const { return !isBuiltinDefaultClassConstructor() && parseMode() != SourceParseMode::ClassFieldInitializerMode; }
     unsigned startOffset() const { return m_startOffset; }
     unsigned sourceLength() { return m_sourceLength; }
     unsigned parametersStartOffset() const { materializeDeferredScalarsIfNeeded(); return m_parametersStartOffset; }

@@ -23,6 +23,7 @@
 #include "NestingLevelIncrementer.h"
 #include "ReferencedSVGResources.h"
 #include "RenderChildIterator.h"
+#include "RenderElementInlines.h"
 #include "RenderObjectInlines.h"
 #include "RenderSVGContainer.h"
 #include "RenderSVGForeignObject.h"
@@ -220,7 +221,7 @@ FloatRect SVGBoundingBoxComputation::handleRootOrContainer(const SVGBoundingBoxC
     for (CheckedRef child : childrenOfType<RenderLayerModelObject>(m_renderer)) {
         if (is<RenderSVGHiddenContainer>(child))
             continue;
-        if (auto* shape = dynamicDowncast<RenderSVGShape>(child.get()); shape && shape->isRenderingDisabled())
+        if (CheckedPtr shape = dynamicDowncast<RenderSVGShape>(child.get()); shape && shape->isRenderingDisabled())
             continue;
 
         SVGBoundingBoxComputation childBoundingBoxComputation(child);
@@ -334,7 +335,7 @@ void SVGBoundingBoxComputation::adjustBoxForClippingAndEffects(const SVGBounding
     }
 
     if (options.contains(DecorationOption::IncludeOutline))
-        box.inflate(m_renderer->outlineStyleForRepaint().usedOutlineSize(m_renderer->outlineStyleForRepaint().usedZoomForLength(), m_renderer->outlineStyleForRepaint().deviceScaleFactor()));
+        box.inflate(m_renderer->usedStyle().outlineSize());
 }
 
 static LayoutRect computeVisualOverflowRectWithOptions(const RenderLayerModelObject& renderer, SVGBoundingBoxComputation::DecorationOptions extraOptions)

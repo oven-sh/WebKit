@@ -59,6 +59,7 @@
 #import <WebCore/WebCoreCALayerExtras.h>
 #import <WebCore/WebLayer.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
+#import <wtf/Borrow.h>
 #import <wtf/Noncopyable.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
@@ -173,7 +174,7 @@ void RemoteLayerBackingStore::encode(IPC::Encoder& encoder) const
 
     encoder << bufferSetIdentifier();
 
-    encoder << m_contentsRenderingResourceIdentifier;
+    encoder << m_contentsFrameIdentifier;
     encoder << m_previouslyPaintedRect;
 
 #if ENABLE(RE_DYNAMIC_CONTENT_SCALING)
@@ -321,10 +322,7 @@ void RemoteLayerBackingStore::setDelegatedContents(const PlatformCALayerRemoteDe
     m_contentsBufferHandle = ImageBufferBackendHandle { contents.surface };
     if (contents.finishedFence)
         m_frontBufferFlushers.append(DelegatedContentsFenceFlusher::create(Ref { *contents.finishedFence }));
-    if (contents.surfaceIdentifier)
-        m_contentsRenderingResourceIdentifier = *contents.surfaceIdentifier;
-    else
-        m_contentsRenderingResourceIdentifier = std::nullopt;
+    m_contentsFrameIdentifier = contents.frameIdentifier;
     m_dirtyRegion = { };
     m_paintingRects.clear();
 #if HAVE(SUPPORT_HDR_DISPLAY)
@@ -502,15 +500,15 @@ void RemoteLayerBackingStore::enumerateRectsBeingDrawn(GraphicsContext& context,
     inverseTransform = CGAffineTransformScale(inverseTransform, m_parameters.scale, -m_parameters.scale);
     inverseTransform = CGAffineTransformTranslate(inverseTransform, 0, -m_parameters.size.height());
 
-    for (const auto& rect : m_paintingRects) {
+    for (const auto& rect : borrow(m_paintingRects)) {
         CGRect rectToDraw = CGRectApplyAffineTransform(rect, inverseTransform);
         block(rectToDraw);
     }
 }
 
-RemoteLayerBackingStoreProperties::RemoteLayerBackingStoreProperties(ImageBufferBackendHandle&& handle, WebCore::RenderingResourceIdentifier identifier, bool opaque)
+RemoteLayerBackingStoreProperties::RemoteLayerBackingStoreProperties(ImageBufferBackendHandle&& handle, WebCore::PlaceholderFrameIdentifier frameIdentifier, bool opaque)
     : m_bufferHandle(WTF::move(handle))
-    , m_contentsRenderingResourceIdentifier(identifier)
+    , m_contentsFrameIdentifier(frameIdentifier)
     , m_isOpaque(opaque)
     , m_type(RemoteLayerBackingStore::Type::IOSurface)
 {
@@ -553,7 +551,7 @@ RemoteLayerBackingStoreProperties::LayerContentsBufferInfo RemoteLayerBackingSto
     return { contents, hasExtendedDynamicRange };
 }
 
-void RemoteLayerBackingStoreProperties::applyBackingStoreToNode(RemoteLayerTreeNode& node, bool replayDynamicContentScalingDisplayListsIntoBackingStore, UIView* hostingView)
+bool RemoteLayerBackingStoreProperties::applyBackingStoreToNode(RemoteLayerTreeNode& node, bool replayDynamicContentScalingDisplayListsIntoBackingStore, UIView* hostingView)
 {
     RetainPtr layer = node.layer();
     bool isDelegatedDisplay = !m_frontBufferInfo;
@@ -569,11 +567,11 @@ void RemoteLayerBackingStoreProperties::applyBackingStoreToNode(RemoteLayerTreeN
             auto surface = WebCore::IOSurface::createFromSendRight(WTF::move(machSendRight));
             if (surface) {
                 [(WKSeparatedImageView *)hostingView setSurface:surface->surface()];
-                return;
+                return true;
             }
         }
         [(WKSeparatedImageView *)hostingView setSurface:nil];
-        return;
+        return false;
     }
 #endif
 
@@ -584,7 +582,7 @@ void RemoteLayerBackingStoreProperties::applyBackingStoreToNode(RemoteLayerTreeN
 
     if (!bufferInfo.buffer) {
         [layer _web_clearContents];
-        return;
+        return false;
     }
 
 #if HAVE(SUPPORT_HDR_DISPLAY_APIS)
@@ -607,7 +605,7 @@ void RemoteLayerBackingStoreProperties::applyBackingStoreToNode(RemoteLayerTreeN
     if (m_displayListBufferHandle) {
         ASSERT([layer isKindOfClass:[WKCompositingLayer class]]);
         if (![layer isKindOfClass:[WKCompositingLayer class]])
-            return;
+            return false;
 
         [layer setDrawsAsynchronously:(m_type == RemoteLayerBackingStore::Type::IOSurface)];
 
@@ -617,7 +615,7 @@ void RemoteLayerBackingStoreProperties::applyBackingStoreToNode(RemoteLayerTreeN
             [layer setValue:@([layer contentsScale]) forKeyPath:WKDynamicContentScalingBifurcationScaleKey];
         }
         [(WKCompositingLayer *)layer.get() _setWKContents:bufferInfo.buffer.get() withDisplayList:WTF::move(*m_displayListBufferHandle) replayForTesting:replayDynamicContentScalingDisplayListsIntoBackingStore];
-        return;
+        return true;
     } else
         [layer _web_clearDynamicContentScalingDisplayListIfNeeded];
 #else
@@ -639,6 +637,7 @@ void RemoteLayerBackingStoreProperties::applyBackingStoreToNode(RemoteLayerTreeN
                 [layer setContentsDirtyRect:CGRectUnion(existingDirtyRect, painted)];
         }
     }
+    return true;
 }
 
 RemoteLayerBackingStoreProperties::LayerContentsBufferInfo RemoteLayerBackingStoreProperties::lookupCachedBuffer(RemoteLayerTreeNode& node)
@@ -667,7 +666,7 @@ RemoteLayerBackingStoreProperties::LayerContentsBufferInfo RemoteLayerBackingSto
     });
 
     LayerContentsBufferInfo result = { { }, false };
-    for (auto& current : cachedBuffers) {
+    for (auto& current : borrow(cachedBuffers)) {
         if (m_frontBufferInfo->resourceIdentifier == current.imageBufferInfo.resourceIdentifier) {
             result.buffer = current.buffer;
 #if ENABLE(PIXEL_FORMAT_RGBA16F)

@@ -27,8 +27,6 @@
 #include "config.h"
 #include "AudioDecoder.h"
 
-#if ENABLE(WEB_CODECS)
-
 #if USE(AVFOUNDATION)
 #include "AudioDecoderCocoa.h"
 #endif
@@ -37,8 +35,6 @@
 #include "AudioDecoderGStreamer.h"
 #include "GStreamerRegistryScanner.h"
 #endif
-
-#include "SharedBuffer.h"
 
 #include <wtf/UniqueRef.h>
 #include <wtf/text/WTFString.h>
@@ -84,15 +80,11 @@ Ref<AudioDecoder::CreatePromise> AudioDecoder::create(const String& codecName, c
     UNUSED_PARAM(config);
     UNUSED_PARAM(outputCallback);
 
-    return CreatePromise::createAndReject("Not supported"_s));
+    return CreatePromise::createAndReject("Not supported"_s);
 #endif
 }
-
-AudioDecoder::EncodedData::~EncodedData() = default;
 
 AudioDecoder::AudioDecoder() = default;
 AudioDecoder::~AudioDecoder() = default;
 
 }
-
-#endif // ENABLE(WEB_CODECS)

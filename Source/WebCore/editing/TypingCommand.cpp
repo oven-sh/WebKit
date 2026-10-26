@@ -87,7 +87,7 @@ private:
     const String& m_text;
 };
 
-static inline EditAction NODELETE editActionForTypingCommand(TypingCommand::Type command, TextGranularity granularity, TypingCommand::TextCompositionType compositionType, bool isAutocompletion)
+static inline EditAction LEGACY_NODELETE editActionForTypingCommand(TypingCommand::Type command, TextGranularity granularity, TypingCommand::TextCompositionType compositionType, bool isAutocompletion)
 {
     if (compositionType == TypingCommand::TextCompositionType::Pending) {
         if (command == TypingCommand::Type::InsertText)
@@ -133,7 +133,7 @@ static inline EditAction NODELETE editActionForTypingCommand(TypingCommand::Type
     }
 }
 
-static inline bool NODELETE editActionIsDeleteByTyping(EditAction action)
+static inline bool LEGACY_NODELETE editActionIsDeleteByTyping(EditAction action)
 {
     switch (action) {
     case EditAction::TypingDeleteSelection:
@@ -951,20 +951,11 @@ void TypingCommand::deleteSelection(bool smartDelete)
 }
 
 #if PLATFORM(IOS_FAMILY)
-class FriendlyEditCommand : public EditCommand {
-public:
-    void setEndingSelection(const VisibleSelection& selection)
-    {
-        EditCommand::setEndingSelection(selection);
-    }
-};
-
 void TypingCommand::setEndingSelectionOnLastInsertCommand(const VisibleSelection& selection)
 {
     if (!m_commands.isEmpty()) {
-        RefPtr lastCommand = m_commands.last().get();
-        if (lastCommand->isInsertTextCommand())
-            static_cast<FriendlyEditCommand*>(lastCommand.get())->setEndingSelection(selection);
+        if (RefPtr lastCommand = dynamicDowncast<InsertTextCommand>(m_commands.last()))
+            lastCommand->setEndingSelection(selection);
     }
 }
 #endif

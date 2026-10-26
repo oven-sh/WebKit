@@ -59,6 +59,7 @@
 #import <WebCore/TextExtractionTypes.h>
 #import <WebCore/TextIndicator.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/Box.h>
 #import <wtf/CallbackAggregator.h>
 #import <wtf/Scope.h>
@@ -89,7 +90,7 @@ static void findFirstConnectedRemapCandidate(WebKit::WebPageProxy& page, const V
 {
     RefPtr<WebKit::WebFrameProxy> frameToQuery;
     Vector<WebCore::NodeIdentifier> nodeIdentifiers;
-    for (auto& candidateIdentifier : candidateIdentifiers) {
+    for (auto& candidateIdentifier : borrow(candidateIdentifiers)) {
         auto candidate = WebKit::parseExtractedNodeInfo(candidateIdentifier);
         if (!candidate)
             continue;
@@ -160,16 +161,16 @@ static std::optional<WebCore::NodeIdentifier> activeContextMenuTargetNodeIdentif
         return completionHandler(nil, [NSError errorWithDomain:WKErrorDomain code:WKErrorWebViewInvalidated userInfo:nil]);
 
     webFrame->takeSnapshotOfNode(info.identifier, [completionHandler = makeBlockPtr(completionHandler)](auto&& handle) {
-        auto makeUnknownError = [] {
+        auto makeUnknownError = []() -> RetainPtr<NSError> {
             return [NSError errorWithDomain:WKErrorDomain code:WKErrorUnknown userInfo:nil];
         };
 
         if (!handle)
-            return completionHandler(nil, makeUnknownError());
+            return completionHandler(nil, makeUnknownError().get());
 
         RefPtr bitmap = WebCore::ShareableBitmap::create(WTF::move(*handle), WebCore::SharedMemory::Protection::ReadOnly);
         if (!bitmap)
-            return completionHandler(nil, makeUnknownError());
+            return completionHandler(nil, makeUnknownError().get());
 
         RetainPtr cgImage = bitmap->createPlatformImage();
 #if PLATFORM(MAC)
@@ -240,7 +241,8 @@ static Vector<std::pair<String, String>> extractReplacementStrings(_WKTextExtrac
 {
     Vector<std::pair<String, String>> result;
     RetainPtr replacementStrings = [configuration replacementStrings];
-    for (NSString *replacement in replacementStrings.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *replacement in replacementStrings.get()) {
         if (!replacement.length)
             continue;
 
@@ -265,7 +267,7 @@ static String applyReplacementsToDescription(const String& description, const Ve
         return description;
 
     auto result = description;
-    for (auto& string : stringsToValidate) {
+    for (auto& string : borrow(stringsToValidate)) {
         if (auto replaced = WebKit::applyReplacements(string, replacementStrings); replaced != string)
             result = makeStringByReplacingAll(result, string, WTF::move(replaced));
     }
@@ -482,7 +484,7 @@ static WebKit::TextExtractionOutputFormat textExtractionOutputFormat(_WKTextExtr
                 strongSelf->_page->textExtractionCache().add(strongSelf->_page->currentURL(), WTF::move(lineContents));
 
             RetainPtr shortenedURLs = adoptNS([[NSMutableDictionary alloc] initWithCapacity:shortenedURLStrings.size()]);
-            for (auto& string : shortenedURLStrings) {
+            for (auto& string : borrow(shortenedURLStrings)) {
                 if (auto url = urlCache->urlForShortenedString(string); url.isValid()) {
                     if (RetainPtr nsURL = url.createNSURL())
                         [shortenedURLs setObject:nsURL.get() forKey:string.createNSString().get()];
@@ -710,7 +712,7 @@ static WebKit::TextExtractionOutputFormat textExtractionOutputFormat(_WKTextExtr
                 return;
             }
 
-            Ref promise = callbacks[index](text, std::nullopt, std::nullopt);
+            Ref promise = borrow(callbacks)[index](text, std::nullopt, std::nullopt);
             promise->whenSettled(RunLoop::mainSingleton(), [text, protectedThis = Ref { *this }, index](auto&& result) mutable {
                 if (!result)
                     protectedThis->completion(@"");
@@ -763,7 +765,8 @@ static Vector<WebCore::JSHandleIdentifier> extractHandleIdentifiersOfNodesToSkip
     Vector<WebCore::JSHandleIdentifier> nodes;
     RetainPtr nodesToSkip = [configuration nodesToSkip];
     nodes.reserveInitialCapacity([nodesToSkip count]);
-    for (_WKJSHandle *handle in nodesToSkip.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL _WKJSHandle *handle in nodesToSkip.get()) {
         if (auto identifier = WebKit::jsHandleIdentifierInFrame(frame, handle))
             nodes.append(WTF::move(*identifier));
     }
@@ -787,7 +790,7 @@ static HashMap<String, HashMap<WebCore::JSHandleIdentifier, String>> extractClie
     return result;
 }
 
-static OptionSet<WebCore::TextExtraction::EventListenerCategory> NODELETE coreEventListenerCategories(_WKTextExtractionEventListenerCategory categories)
+static OptionSet<WebCore::TextExtraction::EventListenerCategory> LEGACY_NODELETE coreEventListenerCategories(_WKTextExtractionEventListenerCategory categories)
 {
     OptionSet<WebCore::TextExtraction::EventListenerCategory> coreCategories;
     if (categories & _WKTextExtractionEventListenerCategoryClick)
@@ -805,7 +808,7 @@ static OptionSet<WebCore::TextExtraction::EventListenerCategory> NODELETE coreEv
 
 #if ENABLE(DATA_DETECTION)
 
-static OptionSet<WebCore::DataDetectorType> NODELETE coreDataDetectorTypes(_WKTextExtractionDataDetectorTypes types)
+static OptionSet<WebCore::DataDetectorType> LEGACY_NODELETE coreDataDetectorTypes(_WKTextExtractionDataDetectorTypes types)
 {
     OptionSet<WebCore::DataDetectorType> coreTypes;
     if (types & _WKTextExtractionDataDetectorMoney)
@@ -824,12 +827,21 @@ static OptionSet<WebCore::DataDetectorType> NODELETE coreDataDetectorTypes(_WKTe
 - (void)_requestTextExtractionInternal:(_WKTextExtractionConfiguration *)configuration completion:(CompletionHandler<void(std::optional<WebCore::TextExtraction::Result>&&)>&&)completion
 {
     Ref preferences = _page->preferences();
-    if (!self._isValid || !preferences->textExtractionEnabled())
+    if (!self._isValid) {
+        RELEASE_LOG_ERROR(TextExtraction, "<%@: %p> Text extraction failed (web view invalid)", [self class], self);
         return completion({ });
+    }
+
+    if (!preferences->textExtractionEnabled()) {
+        RELEASE_LOG_ERROR(TextExtraction, "<%@: %p> Text extraction failed (not enabled)", [self class], self);
+        return completion({ });
+    }
 
     RefPtr mainFrame = _page->mainFrame();
-    if (!mainFrame)
+    if (!mainFrame) {
+        RELEASE_LOG_ERROR(TextExtraction, "<%@: %p> Text extraction failed (no main frame)", [self class], self);
         return completion({ });
+    }
 
     auto rectInWebView = configuration.targetRect;
     bool mergeParagraphs = configuration.mergeParagraphs;
@@ -864,11 +876,21 @@ static OptionSet<WebCore::DataDetectorType> NODELETE coreDataDetectorTypes(_WKTe
     std::optional<WebCore::NodeIdentifier> contextMenuTargetNodeIdentifier;
 #endif
 
+    auto targetNodeHandleIdentifierForFrame = [&](const WebKit::WebFrameProxy& frame) -> std::optional<WebCore::JSHandleIdentifier> {
+        if (!configuration.targetNode)
+            return std::nullopt;
+
+        if (!frame.isMainFrame() && configuration.targetNode->_ref->info().frameInfo.frameID != frame.frameID())
+            return std::nullopt;
+
+        return WebKit::jsHandleIdentifierInFrame(frame, configuration.targetNode);
+    };
+
     auto makeRequest = [&](Ref<WebKit::WebFrameProxy>&& frame) {
         return WebCore::TextExtraction::Request {
             .clientNodeAttributes = extractClientNodeAttributes(frame.copyRef(), configuration),
             .collectionRectInRootView = rectInRootView,
-            .targetNodeHandleIdentifier = WebKit::jsHandleIdentifierInFrame(frame, configuration.targetNode),
+            .targetNodeHandleIdentifier = targetNodeHandleIdentifierForFrame(frame),
             .handleIdentifiersOfNodesToSkip = extractHandleIdentifiersOfNodesToSkip(frame.copyRef(), configuration),
             .contextMenuTargetNodeIdentifier = contextMenuTargetNodeIdentifier,
             .mergeParagraphs = mergeParagraphs,
@@ -879,6 +901,8 @@ static OptionSet<WebCore::DataDetectorType> NODELETE coreDataDetectorTypes(_WKTe
             .includeTextInAutoFilledControls = !!configuration.includeTextInAutoFilledControls,
             .includeOffscreenPasswordFields = !!configuration.includeOffscreenPasswordFields,
             .includeTagName = !!configuration.includeTagName,
+            .includeSameOriginSubframes = !!configuration.includeSameOriginSubframes,
+            .includeClippedContent = !!configuration.includeClippedContent,
 #if ENABLE(DATA_DETECTION)
             .dataDetectorTypes = coreDataDetectorTypes(configuration.dataDetectorTypes),
 #endif
@@ -886,7 +910,8 @@ static OptionSet<WebCore::DataDetectorType> NODELETE coreDataDetectorTypes(_WKTe
     };
 
     HashSet<Ref<WebKit::WebFrameProxy>> additionalFrames;
-    for (WKFrameInfo *info in [configuration additionalFrames]) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL WKFrameInfo *info in [configuration additionalFrames]) {
         RefPtr frame = WebKit::WebFrameProxy::webFrame(info->_frameInfo->frameInfoData().frameID);
         if (!frame)
             continue;
@@ -895,7 +920,7 @@ static OptionSet<WebCore::DataDetectorType> NODELETE coreDataDetectorTypes(_WKTe
         if (!parentFrame)
             continue;
 
-        if (frame->isSameOriginAs(*parentFrame))
+        if (configuration.includeSameOriginSubframes && frame->isSameOriginAs(*parentFrame))
             continue;
 
         additionalFrames.add(frame.releaseNonNull());
@@ -905,31 +930,40 @@ static OptionSet<WebCore::DataDetectorType> NODELETE coreDataDetectorTypes(_WKTe
     auto startTime = MonotonicTime::now();
     RELEASE_LOG(TextExtraction, "<%@: %p> Starting text extraction", [self class], self);
     auto results = Box<WebCore::TextExtraction::PageResults>::create();
-    auto aggregator = MainRunLoopCallbackAggregator::create([results, completion = WTF::move(completion)] mutable {
+    auto aggregator = MainRunLoopCallbackAggregator::create([results, strongSelf = protect(self), completion = WTF::move(completion)] mutable {
         auto result = WebCore::TextExtraction::collatePageResults(WTF::move(*results));
         auto rootData = result.rootItem.dataAs<WebCore::TextExtraction::ScrollableItemData>();
-        if (!rootData || !rootData->isRoot)
+        if (!rootData) {
+            RELEASE_LOG_ERROR(TextExtraction, "<%@: %p> Text extraction failed (missing root item)", [strongSelf class], strongSelf.get());
             return completion(std::nullopt);
+        }
+
+        if (!rootData->isRoot) {
+            RELEASE_LOG_ERROR(TextExtraction, "<%@: %p> Text extraction failed (invalid root item)", [strongSelf class], strongSelf.get());
+            return completion(std::nullopt);
+        }
 
         completion(WTF::move(result));
     });
 
+    RELEASE_LOG(TextExtraction, "<%@: %p> • Requesting mainframe items", [self class], self);
     mainFrame->requestTextExtraction(makeRequest({ *mainFrame }), [weakSelf, startTime, aggregator, results](auto&& result) {
         RetainPtr strongSelf = weakSelf.get();
         if (!strongSelf)
             return;
 
-        RELEASE_LOG(TextExtraction, "<%@: %p> • Mainframe items received (%.0f ms)", [strongSelf class], strongSelf.get(), (MonotonicTime::now() - startTime).milliseconds());
+        RELEASE_LOG(TextExtraction, "<%@: %p> • Mainframe items received (%.0f ms) - total visible text: %u", [strongSelf class], strongSelf.get(), (MonotonicTime::now() - startTime).milliseconds(), result.visibleTextLength);
         results->mainFrameResult = WTF::move(result);
     });
 
     for (auto& frame : additionalFrames) {
+        RELEASE_LOG(TextExtraction, "<%@: %p> • Requesting subframe items for frame %" PRIu64, [self class], self, frame->frameID().toUInt64());
         frame->requestTextExtraction(makeRequest(frame.copyRef()), [weakSelf, startTime, frameID = frame->frameID(), aggregator, results](auto&& result) {
             RetainPtr strongSelf = weakSelf.get();
             if (!strongSelf)
                 return;
 
-            RELEASE_LOG(TextExtraction, "<%@: %p> • Subframe items received (%.0f ms)", [strongSelf class], strongSelf.get(), (MonotonicTime::now() - startTime).milliseconds());
+            RELEASE_LOG(TextExtraction, "<%@: %p> • Subframe items received for frame %" PRIu64 " (%.0f ms) - total visible text: %u", [strongSelf class], strongSelf.get(), frameID.toUInt64(), (MonotonicTime::now() - startTime).milliseconds(), result.visibleTextLength);
             auto addResult = results->subFrameResults.add(frameID, makeUniqueRef<WebCore::TextExtraction::Result>(WTF::move(result)));
             ASSERT_UNUSED(addResult, addResult.isNewEntry);
         });
@@ -1006,8 +1040,10 @@ static OptionSet<WebCore::DataDetectorType> NODELETE coreDataDetectorTypes(_WKTe
         if (!strongSelf)
             return completionHandler(nil);
 
-        if (!result)
+        if (!result) {
+            RELEASE_LOG_ERROR(TextExtraction, "<%@: %p> Failed to extract text (missing result)", [strongSelf class], strongSelf.get());
             return completionHandler(nil);
+        }
 
         RetainPtr rootItem = WebKit::createItem(WTF::move(result->rootItem), [strongSelf](auto& rectInRootView) -> WebCore::FloatRect {
 #if PLATFORM(IOS_FAMILY)
@@ -1040,7 +1076,7 @@ static OptionSet<WebCore::DataDetectorType> NODELETE coreDataDetectorTypes(_WKTe
 
 #if PLATFORM(MAC)
     if ([self _activePopupButtonCell] && interaction.action == WebCore::TextExtraction::Action::SelectMenuItem && !interaction.text.isEmpty())
-        return completionHandler([NSString stringWithFormat:@"Select popup menu item labeled '%s'", interaction.text.utf8().legacyCStringPointer()], nil);
+        return completionHandler([NSString stringWithFormat:@"Select popup menu item labeled '%@'", interaction.text.createNSString().get()], nil);
 #endif
 
     [self _describeInteraction:WTF::move(interaction) inFrame:targetFrame staleNodeResolution:WebKit::StaleNodeResolutionState { .requestedIdentifier = nodeIdentifierString } completionHandler:completionHandler];
@@ -1084,7 +1120,7 @@ static OptionSet<WebCore::DataDetectorType> NODELETE coreDataDetectorTypes(_WKTe
         }
 
         auto description = WTF::move(result.description);
-        auto stringsToValidate = WTF::move(result.stringsToValidate);
+        const Vector stringsToValidate = WTF::move(result.stringsToValidate);
         auto valid = Box<bool>::create(true);
         Ref aggregator = MainRunLoopCallbackAggregator::create([completionHandler = WTF::move(completionHandler), description, valid, staleNodeResolution, weakSelf, stringsToValidate] {
             if (!valid.get()) {

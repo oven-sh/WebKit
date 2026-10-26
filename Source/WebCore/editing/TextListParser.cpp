@@ -58,7 +58,7 @@ namespace WebCore {
 // MARK: Helpers
 
 template<typename Character>
-constexpr std::optional<int> NODELETE consumeNumber(StringParsingBuffer<Character>& input)
+constexpr std::optional<int> LEGACY_NODELETE consumeNumber(StringParsingBuffer<Character>& input)
 {
     static constexpr size_t maximumNumberOfDigits = 3;
 
@@ -76,7 +76,7 @@ constexpr std::optional<int> NODELETE consumeNumber(StringParsingBuffer<Characte
 }
 
 template<typename Character>
-void NODELETE skipToEnd(StringParsingBuffer<Character>& input)
+void LEGACY_NODELETE skipToEnd(StringParsingBuffer<Character>& input)
 {
     input.advanceBy(input.lengthRemaining());
 }
@@ -180,7 +180,7 @@ static AtomString inlineStyleForListStyleType(const StyledElement& element, Styl
     if (RefPtr existingInlineStyle = element.inlineStyle())
         inlineStyle = existingInlineStyle->mutableCopy();
 
-    inlineStyle->setProperty(CSSPropertyListStyleType, WTF::move(value));
+    inlineStyle->setProperty(CSSPropertyID::ListStyleType, WTF::move(value));
 
     return inlineStyle->asTextAtom(CSS::defaultSerializationContext());
 }

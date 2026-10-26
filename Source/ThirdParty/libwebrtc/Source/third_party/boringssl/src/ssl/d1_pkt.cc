@@ -189,7 +189,7 @@ ssl_open_record_t dtls1_open_app_data(SSLImpl *ssl, Span<uint8_t> *out,
     // `dtls1_process_handshake_fragments` and integrate it into DTLS 1.3
     // retransmit conditions.
     CBS cbs, body;
-    struct hm_header_st msg_hdr;
+    DTLSHandshakeHeader msg_hdr;
     CBS_init(&cbs, record.data(), record.size());
     if (!dtls1_parse_fragment(&cbs, &msg_hdr, &body)) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_HANDSHAKE_RECORD);

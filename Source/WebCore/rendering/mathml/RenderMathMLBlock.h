@@ -57,7 +57,7 @@ public:
     // embellished operator, and omits any embellishments.
     // FIXME: We don't yet handle all the cases in the MathML spec. See
     // https://bugs.webkit.org/show_bug.cgi?id=78617.
-    virtual RenderMathMLOperator* unembellishedOperator() const { return nullptr; }
+    virtual CheckedPtr<RenderMathMLOperator> unembellishedOperator() const;
 
 protected:
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) override;
@@ -65,7 +65,7 @@ protected:
     inline LayoutUnit ruleThicknessFallback() const;
 
     LayoutUnit mathAxisHeight() const;
-    LayoutUnit NODELETE mirrorIfNeeded(LayoutUnit horizontalOffset, LayoutUnit boxWidth = 0_lu) const;
+    LayoutUnit LEGACY_NODELETE mirrorIfNeeded(LayoutUnit horizontalOffset, LayoutUnit boxWidth = 0_lu) const;
     inline LayoutUnit mirrorIfNeeded(LayoutUnit horizontalOffset, const RenderBox& child) const;
 
     static inline LayoutUnit ascentForChild(const RenderBox& child);
@@ -75,7 +75,7 @@ protected:
     void insertPositionedChildrenIntoContainingBlock();
     void layoutFloatingChildren();
 
-    void shiftInFlowChildren(LayoutUnit left, LayoutUnit top);
+    void LEGACY_NODELETE shiftInFlowChildren(LayoutUnit left, LayoutUnit top);
     void adjustContentLogicalWidthsForBorderAndPadding();
     void adjustLayoutForBorderAndPadding();
 
@@ -96,7 +96,7 @@ protected:
     LayoutUnit applySizeToMathContent(LayoutPhase, const SizeAppliedToMathContent&);
 
 private:
-    bool isRenderMathMLBlock() const final { return true; }
+    bool LEGACY_NODELETE isRenderMathMLBlock() const final { return true; }
     ASCIILiteral renderName() const override { return "RenderMathMLBlock"_s; }
     bool canDropAnonymousBlockChild() const final { return false; }
     void layoutItems(RelayoutChildren);

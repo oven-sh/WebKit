@@ -40,7 +40,7 @@ namespace WebCore {
 
 class AccessibilityRegionContext;
 class OverlapTestRequestClient;
-class RenderInline;
+class RenderBoxModelObject;
 class RenderLayer;
 class RenderLayerModelObject;
 class RenderObject;
@@ -51,23 +51,25 @@ class AXCustomColorBackdropContext;
 
 typedef HashMap<OverlapTestRequestClient*, IntRect> OverlapTestRequestMap;
 
+enum class StateSavedByCaller : bool { No, Yes };
+
 /*
  * Paint the object and its children, clipped by (x|y|w|h).
  * (tx|ty) is the calculated position of the parent
  */
 struct PaintInfo {
     PaintInfo(GraphicsContext& newContext, const LayoutRect& newRect, PaintPhase newPhase, OptionSet<PaintBehavior> newPaintBehavior,
-        RenderObject* newSubtreePaintRoot = nullptr, SingleThreadWeakListHashSet<RenderInline>* newOutlineObjects = nullptr,
+        RenderObject* newSubtreePaintRoot = nullptr, SingleThreadWeakListHashSet<RenderBoxModelObject>* newOutlineObjects = nullptr,
         OverlapTestRequestMap* overlapTestRequests = nullptr, const RenderLayerModelObject* newPaintContainer = nullptr,
         const RenderLayer* enclosingSelfPaintingLayer = nullptr, bool newRequireSecurityOriginAccessForWidgets = false)
             : rect(newRect)
             , phase(newPhase)
+            , requireSecurityOriginAccessForWidgets(newRequireSecurityOriginAccessForWidgets)
             , paintBehavior(newPaintBehavior)
             , subtreePaintRoot(newSubtreePaintRoot)
             , outlineObjects(newOutlineObjects)
             , overlapTestRequests(overlapTestRequests)
             , paintContainer(newPaintContainer)
-            , requireSecurityOriginAccessForWidgets(newRequireSecurityOriginAccessForWidgets)
             , m_enclosingSelfPaintingLayer(enclosingSelfPaintingLayer)
             , m_context(&newContext)
     {
@@ -134,12 +136,13 @@ struct PaintInfo {
 
     LayoutRect rect;
     PaintPhase phase;
+    bool requireSecurityOriginAccessForWidgets { false };
+    StateSavedByCaller stateSavedByCaller { StateSavedByCaller::No };
     OptionSet<PaintBehavior> paintBehavior;
     SUPPRESS_FORWARD_DECL_MEMBER RenderObject* subtreePaintRoot; // used to draw just one element and its visual children
-    SingleThreadWeakListHashSet<RenderInline>* outlineObjects; // used to list outlines that should be painted by a block with inline children
+    SingleThreadWeakListHashSet<RenderBoxModelObject>* outlineObjects; // used to list outlines that should be painted by a block with inline children
     OverlapTestRequestMap* overlapTestRequests;
     SUPPRESS_FORWARD_DECL_MEMBER const RenderLayerModelObject* paintContainer; // the layer object that originates the current painting
-    bool requireSecurityOriginAccessForWidgets { false };
     SUPPRESS_FORWARD_DECL_MEMBER const RenderLayer* m_enclosingSelfPaintingLayer { nullptr };
     RegionContext* regionContext { nullptr }; // For PaintPhase::EventRegion and PaintPhase::Accessibility.
 

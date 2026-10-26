@@ -104,3 +104,15 @@ class OutputDuplicateTest(unittest.TestCase):
 
         self.assertEqual(captuered.webkitcorepy.log.getvalue(), 'Log 1\nLog 2\n')
         self.assertEqual(captuered.stdout.getvalue(), 'Level 1\nLevel 2\n')
+
+    def test_loggers(self):
+        logger = logging.getLogger('webkitcorepy.tests.output_duplicate')
+        logger.propagate = False
+        logger.setLevel(logging.INFO)
+        self.addCleanup(setattr, logger, 'propagate', True)
+
+        with OutputCapture():
+            with OutputDuplicate(loggers=[logger]) as duplicator:
+                logger.info('Log 1')
+
+        self.assertEqual(duplicator.output.getvalue(), 'Log 1\n')

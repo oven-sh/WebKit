@@ -29,6 +29,7 @@
 #include <WebCore/CachedResource.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/InspectorResourceType.h>
+#include <WebCore/ReferrerPolicy.h>
 #include <WebCore/ResourceLoaderIdentifier.h>
 #include <WebCore/ScriptExecutionContextIdentifier.h>
 #include <cstdint>
@@ -42,6 +43,7 @@
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
+class CertificateInfo;
 class DocumentLoader;
 class FragmentedSharedBuffer;
 class HTTPHeaderMap;
@@ -49,6 +51,7 @@ class InstrumentingAgents;
 class LocalFrame;
 class NetworkLoadMetrics;
 class Page;
+class ResourceLoader;
 class ScriptExecutionContext;
 class TextResourceDecoder;
 }
@@ -162,6 +165,13 @@ struct InitiatorData {
     bool isAttributed() const { return type != InitiatorType::Other || nodeId.has_value(); }
 };
 
+// Request data the inspector needs that doesn't travel with ResourceRequest over IPC.
+struct RequestExtras {
+    String postData; // Null when the request has no body.
+    std::optional<WebCore::ReferrerPolicy> referrerPolicy;
+    String integrity;
+};
+
 namespace ResourceUtilities {
 
 WEBCORE_EXPORT bool sharedBufferContent(RefPtr<WebCore::FragmentedSharedBuffer>&&, const String& textEncodingName, bool withBase64Encode, String* result);
@@ -174,10 +184,10 @@ WEBCORE_EXPORT bool mainResourceContent(WebCore::LocalFrame*, bool withBase64Enc
 
 WEBCORE_EXPORT String sourceMapURLForResource(WebCore::CachedResource*);
 RefPtr<WebCore::CachedResource> WEBCORE_EXPORT cachedResource(const WebCore::LocalFrame*, const URL&);
-Inspector::ResourceType WEBCORE_EXPORT inspectorResourceType(WebCore::CachedResource::Type);
+Inspector::ResourceType WEBCORE_EXPORT LEGACY_NODELETE inspectorResourceType(WebCore::CachedResource::Type);
 Inspector::ResourceType WEBCORE_EXPORT inspectorResourceType(const WebCore::CachedResource&);
 
-Inspector::Protocol::Page::ResourceType NODELETE resourceTypeToProtocol(Inspector::ResourceType);
+Inspector::Protocol::Page::ResourceType LEGACY_NODELETE resourceTypeToProtocol(Inspector::ResourceType);
 Inspector::Protocol::Page::ResourceType cachedResourceTypeToProtocol(const WebCore::CachedResource&);
 WebCore::LocalFrame* findFrameWithSecurityOrigin(WebCore::Page&, const String& originRawString);
 WebCore::DocumentLoader* assertDocumentLoader(Inspector::Protocol::ErrorString&, WebCore::LocalFrame*);
@@ -197,6 +207,8 @@ WEBCORE_EXPORT Ref<Inspector::Protocol::Network::Metrics> buildObjectForMetrics(
 // remaining fields are milliseconds relative to fetchStart and need no conversion.
 WEBCORE_EXPORT Ref<Inspector::Protocol::Network::ResourceTiming> buildObjectForTiming(const WebCore::NetworkLoadMetrics&, MonotonicTime loadStartTime, NOESCAPE const Function<double(MonotonicTime)>& monotonicToProtocolSeconds);
 
+WEBCORE_EXPORT Ref<Inspector::Protocol::Security::Security> buildObjectForSecurity(const WebCore::CertificateInfo&);
+
 // Captures what caused the load being started right now. Must be called synchronously from the
 // load-initiating instrumentation hook, since it reads the live JS stack to decide whether a script
 // is responsible.
@@ -210,6 +222,9 @@ WEBCORE_EXPORT Ref<Inspector::Protocol::Network::ResourceTiming> buildObjectForT
 WEBCORE_EXPORT InitiatorData copyInitiatorData(WebCore::Document*, const WebCore::ResourceRequest*, const WebCore::InstrumentingAgents&);
 
 WEBCORE_EXPORT Ref<Inspector::Protocol::Network::Initiator> buildInitiatorObject(const InitiatorData&);
+
+WEBCORE_EXPORT RequestExtras copyRequestExtras(const WebCore::ResourceRequest&, const WebCore::ResourceLoader*);
+WEBCORE_EXPORT Ref<Inspector::Protocol::Network::Request> buildObjectForResourceRequest(const WebCore::ResourceRequest&, const RequestExtras&);
 
 // Loads url in the given context on behalf of the inspector, bypassing cross-origin checks (Network.loadResource).
 WEBCORE_EXPORT void loadResource(WebCore::ScriptExecutionContext&, const String& url, LoadResourceCompletionHandler&&);

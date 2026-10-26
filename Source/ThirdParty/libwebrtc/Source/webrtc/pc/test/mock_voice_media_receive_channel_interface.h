@@ -24,7 +24,6 @@
 #include "api/rtp_headers.h"
 #include "api/rtp_parameters.h"
 #include "api/scoped_refptr.h"
-#include "api/transport/rtp/rtp_source.h"
 #include "media/base/media_channel.h"
 #include "media/base/stream_params.h"
 #include "modules/rtp_rtcp/source/rtp_packet_received.h"
@@ -48,15 +47,12 @@ class MockVoiceMediaReceiveChannelInterface
               GetRtpReceiverParameters,
               (uint32_t ssrc),
               (const, override));
-  MOCK_METHOD(std::vector<RtpSource>,
-              GetSources,
-              (uint32_t ssrc),
-              (const, override));
   MOCK_METHOD(RtpParameters,
               GetDefaultRtpReceiveParameters,
               (),
               (const, override));
   MOCK_METHOD(void, SetReceive, (bool receive), (override));
+  MOCK_METHOD(void, EnableSframe, (), (override));
   MOCK_METHOD(bool,
               SetOutputVolume,
               (uint32_t ssrc, double volume),

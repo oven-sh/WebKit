@@ -33,12 +33,17 @@ struct BlendingContext;
 
 class ScaleTransformOperation final : public TransformOperation {
 public:
+    static Ref<ScaleTransformOperation> create()
+    {
+        return adoptRef(*new ScaleTransformOperation(1, 1, 1, TransformOperation::Type::Scale));
+    }
+
     static Ref<ScaleTransformOperation> create(double sx, double sy, TransformOperation::Type type)
     {
         return adoptRef(*new ScaleTransformOperation(sx, sy, 1, type));
     }
 
-    WEBCORE_EXPORT static Ref<ScaleTransformOperation> create(double, double, double, TransformOperation::Type);
+    WEBCORE_EXPORT static Ref<ScaleTransformOperation> LEGACY_NODELETE create(double, double, double, TransformOperation::Type);
 
     Ref<TransformOperation> clone() const final
     {

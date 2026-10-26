@@ -91,6 +91,9 @@ private:
 #if ENABLE(SPATIAL_PORTAL)
     void didUpdatePortalTransform(const WebCore::TransformationMatrix&);
 #endif
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    void didUpdateVolumetricHitSphere(const WebCore::FloatPoint3D& center, float radius);
+#endif
     void didUpdateAnimationPlaybackState(WebCore::NodeIdentifier, bool isPaused, double playbackRate, Seconds duration, Seconds currentTime, MonotonicTime clockTimestamp);
     void didFinishEnvironmentMapLoading(bool succeeded);
 
@@ -154,6 +157,14 @@ private:
     void ensureImmersivePresentation(CompletionHandler<void(std::optional<WebCore::LayerHostingContextIdentifier>)>&&) final;
     void exitImmersivePresentation(CompletionHandler<void()>&&) final;
 #endif
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    void enterVolumetricPresentation(CompletionHandler<void(std::optional<WebCore::LayerHostingContextIdentifier>)>&&) final;
+    void exitVolumetricPresentation() final;
+    void updateVolumetricPresentationSize(const WebCore::FloatSize&) final;
+#endif
+
+    void sceneGraphAsTextForTesting(std::optional<WebCore::NodeIdentifier> rootNode, Vector<std::pair<WebCore::NodeIdentifier, String>>&& modelLabels, const WebCore::ModelSceneGraphAsTextOptions&, CompletionHandler<void(String&&)>&&) final;
 
     WebCore::ModelPlayerIdentifier m_id;
     WeakPtr<WebPage> m_page;

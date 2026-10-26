@@ -331,7 +331,7 @@ void RemoteGraphicsContextProxy::drawDisplayList(const DisplayList::DisplayList&
     send(Messages::RemoteGraphicsContext::DrawDisplayList(*identifier));
 }
 
-void RemoteGraphicsContextProxy::drawImageBuffer(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+void RemoteGraphicsContextProxy::drawImageBuffer(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions options)
 {
     sendPendingDrawsIfNecessary();
     appendStateChangeItemIfNecessary();
@@ -344,7 +344,7 @@ void RemoteGraphicsContextProxy::drawImageBuffer(ImageBuffer& imageBuffer, const
     send(Messages::RemoteGraphicsContext::DrawImageBuffer(imageBuffer.renderingResourceIdentifier(), destRect, srcRect, options));
 }
 
-void RemoteGraphicsContextProxy::drawNativeImage(const NativeImage& image, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions options)
+void RemoteGraphicsContextProxy::drawNativeImage(const NativeImage& image, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions options)
 {
 #if HAVE(SUPPORT_HDR_DISPLAY_APIS)
     auto headroom = options.headroom();
@@ -356,7 +356,7 @@ void RemoteGraphicsContextProxy::drawNativeImage(const NativeImage& image, const
     }
     m_maxPaintedEDRHeadroom = std::max(m_maxPaintedEDRHeadroom, headroom.headroom);
     m_maxRequestedEDRHeadroom = std::max(m_maxRequestedEDRHeadroom, image.headroom().headroom);
-    ImagePaintingOptions clampedOptions(options, headroom);
+    ImageDrawingOptions clampedOptions(options, headroom);
 #endif
     sendPendingDrawsIfNecessary();
     appendStateChangeItemIfNecessary();
@@ -375,19 +375,22 @@ void RemoteGraphicsContextProxy::drawSystemImage(SystemImage& systemImage, const
     appendStateChangeItemIfNecessary();
 #if USE(SYSTEM_PREVIEW)
     if (RefPtr badgeSystemImage = dynamicDowncast<ARKitBadgeSystemImage>(systemImage)) {
-        if (RefPtr image = badgeSystemImage->image()) {
-            auto nativeImage = image->nativeImage();
-            if (!nativeImage)
-                return;
+        std::optional<RenderingResourceIdentifier> renderingResourceIdentifier;
+
+        if (RefPtr nativeImage = badgeSystemImage->nativeImage()) {
             if (!recordResourceUse(*nativeImage))
                 return;
+            renderingResourceIdentifier = nativeImage->renderingResourceIdentifier();
         }
+
+        send(Messages::RemoteGraphicsContext::DrawBadgeSystemImage(renderingResourceIdentifier, destinationRect));
+        return;
     }
 #endif
     send(Messages::RemoteGraphicsContext::DrawSystemImage(systemImage, destinationRect));
 }
 
-void RemoteGraphicsContextProxy::drawPattern(const NativeImage& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+void RemoteGraphicsContextProxy::drawPattern(const NativeImage& image, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
 {
     sendPendingDrawsIfNecessary();
     appendStateChangeItemIfNecessary();
@@ -396,7 +399,7 @@ void RemoteGraphicsContextProxy::drawPattern(const NativeImage& image, const Flo
     send(Messages::RemoteGraphicsContext::DrawPatternNativeImage(image.renderingResourceIdentifier(), destRect, tileRect, patternTransform, phase, spacing, options));
 }
 
-void RemoteGraphicsContextProxy::drawPattern(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options)
+void RemoteGraphicsContextProxy::drawPattern(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions options)
 {
     sendPendingDrawsIfNecessary();
     appendStateChangeItemIfNecessary();
@@ -580,7 +583,7 @@ void RemoteGraphicsContextProxy::fillEllipse(const FloatRect& rect)
 }
 
 #if ENABLE(VIDEO)
-void RemoteGraphicsContextProxy::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImagePaintingOptions options)
+void RemoteGraphicsContextProxy::drawVideoFrame(const VideoFrame& frame, const FloatRect& destination, ShouldDiscardAlpha shouldDiscardAlpha, ImageDrawingOptions options)
 {
     sendPendingDrawsIfNecessary();
     appendStateChangeItemIfNecessary();
@@ -723,6 +726,7 @@ void RemoteGraphicsContextProxy::beginPage(const FloatRect& pageRect)
     sendPendingDrawsIfNecessary();
     appendStateChangeItemIfNecessary();
     send(Messages::RemoteGraphicsContext::BeginPage(pageRect));
+    updateStateForBeginPage();
 }
 
 void RemoteGraphicsContextProxy::endPage()
@@ -961,8 +965,6 @@ void RemoteGraphicsContextProxy::appendStateChangeItemIfNecessary()
         send(Messages::RemoteGraphicsContext::SetShouldSmoothFonts(state.shouldSmoothFonts()));
     if (changes.contains(GraphicsContextState::Change::ShouldSubpixelQuantizeFonts))
         send(Messages::RemoteGraphicsContext::SetShouldSubpixelQuantizeFonts(state.shouldSubpixelQuantizeFonts()));
-    if (changes.contains(GraphicsContextState::Change::DrawLuminanceMask))
-        send(Messages::RemoteGraphicsContext::SetDrawLuminanceMask(state.drawLuminanceMask()));
 
     commitStateChanges(pendingChanges);
 }

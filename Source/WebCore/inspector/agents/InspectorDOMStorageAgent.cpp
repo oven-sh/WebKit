@@ -103,7 +103,7 @@ Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::DOMSto
 {
     Inspector::Protocol::ErrorString errorString;
 
-    LocalFrame* frame;
+    RefPtr<LocalFrame> frame;
     RefPtr<StorageArea> storageArea = findStorageArea(errorString, WTF::move(storageId), frame);
     if (!storageArea)
         return makeUnexpected(errorString);
@@ -125,7 +125,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMStorageAgent::setDOMStorage
 {
     Inspector::Protocol::ErrorString errorString;
 
-    LocalFrame* frame;
+    RefPtr<LocalFrame> frame;
     RefPtr<StorageArea> storageArea = findStorageArea(errorString, WTF::move(storageId), frame);
     if (!storageArea)
         return makeUnexpected(errorString);
@@ -142,7 +142,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMStorageAgent::removeDOMStor
 {
     Inspector::Protocol::ErrorString errorString;
 
-    LocalFrame* frame;
+    RefPtr<LocalFrame> frame;
     RefPtr<StorageArea> storageArea = findStorageArea(errorString, WTF::move(storageId), frame);
     if (!storageArea)
         return makeUnexpected(errorString);
@@ -156,7 +156,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMStorageAgent::clearDOMStora
 {
     Inspector::Protocol::ErrorString errorString;
 
-    LocalFrame* frame;
+    RefPtr<LocalFrame> frame;
     auto storageArea = findStorageArea(errorString, WTF::move(storageId), frame);
     if (!storageArea)
         return makeUnexpected(errorString);
@@ -199,7 +199,7 @@ void InspectorDOMStorageAgent::didDispatchDOMStorageEvent(const String& key, con
         m_frontendDispatcher->domStorageItemUpdated(WTF::move(id), key, oldValue, newValue);
 }
 
-RefPtr<StorageArea> InspectorDOMStorageAgent::findStorageArea(Inspector::Protocol::ErrorString& errorString, Ref<JSON::Object>&& storageId, LocalFrame*& targetFrame)
+RefPtr<StorageArea> InspectorDOMStorageAgent::findStorageArea(Inspector::Protocol::ErrorString& errorString, Ref<JSON::Object>&& storageId, RefPtr<LocalFrame>& targetFrame)
 {
     auto securityOrigin = storageId->getString("securityOrigin"_s);
     if (!securityOrigin) {
@@ -221,8 +221,8 @@ RefPtr<StorageArea> InspectorDOMStorageAgent::findStorageArea(Inspector::Protoco
 
     Ref document = *targetFrame->document();
     if (!*isLocalStorage)
-        return m_inspectedPage->storageNamespaceProvider().sessionStorageArea(document);
-    return m_inspectedPage->storageNamespaceProvider().localStorageArea(document);
+        return protect(m_inspectedPage->storageNamespaceProvider())->sessionStorageArea(document);
+    return protect(m_inspectedPage->storageNamespaceProvider())->localStorageArea(document);
 }
 
 } // namespace WebCore

@@ -66,7 +66,7 @@ public:
         return !equalIgnoringFragmentIdentifier(url, document.url());
     }
 
-    using PropertyRegistry = SVGPropertyOwnerRegistry<SVGURIReference>;
+    using PropertyRegistry = SVGPropertyOwnerRegistryBase<SVGURIReference>;
 
     String href() const { return m_href->currentValue(); }
     SVGAnimatedString& hrefAnimated() { return m_href; }
@@ -74,7 +74,7 @@ public:
 protected:
     SVGURIReference(SVGElement* contextElement);
 
-    static bool NODELETE isKnownAttribute(const QualifiedName& attributeName);
+    static bool LEGACY_NODELETE isKnownAttribute(const QualifiedName& attributeName);
 
     virtual bool haveFiredLoadEvent() const { return false; }
     virtual void setHaveFiredLoadEvent(bool) { }
@@ -85,7 +85,7 @@ protected:
     void dispatchLoadEvent();
 
 private:
-    SVGElement& NODELETE contextElement() const;
+    SVGElement& LEGACY_NODELETE contextElement() const;
 
     const Ref<SVGAnimatedString> m_href;
 };

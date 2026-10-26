@@ -71,7 +71,7 @@ struct ContentCounterFunctionParameters {
 
     bool operator==(const ContentCounterFunctionParameters&) const = default;
 };
-using ContentCounterFunction = FunctionNotation<CSSValueCounter, ContentCounterFunctionParameters>;
+using ContentCounterFunction = FunctionNotation<CSSValueID::Counter, ContentCounterFunctionParameters>;
 
 // `ContentCounterFunctionWrapper` exists to allow easily forward declaring `ContentCounterFunction`.
 struct ContentCounterFunctionWrapper {
@@ -87,7 +87,7 @@ struct ContentCountersFunctionParameters {
 
     bool operator==(const ContentCountersFunctionParameters&) const = default;
 };
-using ContentCountersFunction = FunctionNotation<CSSValueCounters, ContentCountersFunctionParameters>;
+using ContentCountersFunction = FunctionNotation<CSSValueID::Counters, ContentCountersFunctionParameters>;
 
 // `ContentCountersFunctionWrapper` exists to allow easily forward declaring `ContentCountersFunction`.
 struct ContentCountersFunctionWrapper {
@@ -100,7 +100,7 @@ struct ContentQuote {
     using Type = Variant<Keyword::OpenQuote, Keyword::CloseQuote, Keyword::NoOpenQuote, Keyword::NoCloseQuote>;
     Type quote;
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         return WTF::switchOn(quote, std::forward<F>(f)...);
     }
@@ -113,7 +113,7 @@ struct ContentGlyph {
     using Type = Variant<Keyword::PickerUp, Keyword::PickerDown>;
     Type glyph;
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         return WTF::switchOn(glyph, std::forward<F>(f)...);
     }
@@ -122,21 +122,6 @@ struct ContentGlyph {
 };
 DEFINE_TYPE_WRAPPER_GET(ContentGlyph, glyph);
 
-struct ContentLegacyAttrFunctionParameters {
-    CustomIdent name;
-    std::optional<String> fallback;
-
-    bool operator==(const ContentLegacyAttrFunctionParameters&) const = default;
-};
-using ContentLegacyAttrFunction = FunctionNotation<CSSValueAttr, ContentLegacyAttrFunctionParameters>;
-
-// `ContentLegacyAttrFunctionWrapper` exists to allow easily forward declaring `ContentLegacyAttrFunction`.
-struct ContentLegacyAttrFunctionWrapper {
-    ContentLegacyAttrFunction value;
-
-    bool operator==(const ContentLegacyAttrFunctionWrapper&) const = default;
-};
-
 struct Content {
     using Text = ContentText;
     using Image = ContentImage;
@@ -144,10 +129,10 @@ struct Content {
     using CountersFunction = ContentCountersFunction;
     using Quote = ContentQuote;
     using Glyph = ContentGlyph;
-    using LegacyAttrFunction = ContentLegacyAttrFunction;
-    using VisibleContentListItem = Variant<Text, LegacyAttrFunction, Image, CounterFunction, CountersFunction, Quote, Glyph>;
+    using VisibleContentListItem = Variant<Text, Image, CounterFunction, CountersFunction, Quote, Glyph>;
     using VisibleContentList = SpaceSeparatedVector<VisibleContentListItem>;
-    using AltContentListItem = Variant<Text, LegacyAttrFunction>;
+    // Alt text is [ <string> | <counter> | <attr()> ]+. attr() is resolved by substitution and <counter> is not supported yet.
+    using AltContentListItem = Variant<Text>;
     using AltContentList = SpaceSeparatedVector<AltContentListItem>;
 
     struct Data {
@@ -164,7 +149,7 @@ struct Content {
     bool isNone() const { return WTF::holdsAlternative<Keyword::None>(m_value); }
     bool isNormal() const { return WTF::holdsAlternative<Keyword::Normal>(m_value); }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         return WTF::switchOn(m_value, std::forward<F>(f)...);
     }
@@ -193,14 +178,6 @@ template<size_t I> const auto& get(const ContentCountersFunctionParameters& valu
         return value.style;
 }
 
-template<size_t I> const auto& get(const ContentLegacyAttrFunctionParameters& value)
-{
-    if constexpr (!I)
-        return value.name;
-    else if constexpr (I == 1)
-        return value.fallback;
-}
-
 template<size_t I> const auto& get(const Content::Data& value)
 {
     if constexpr (!I)
@@ -219,7 +196,6 @@ template<> struct Serialize<ContentCountersFunctionParameters> { void operator()
 // Specialized to return a `DeprecatedCSSOMPrimitiveValue`.
 template<> struct DeprecatedCSSOMValueCreation<ContentCounterFunction> { Ref<DeprecatedCSSOMValue> operator()(CSSValuePool&, CSSStyleDeclaration&, const ContentCounterFunction&); };
 template<> struct DeprecatedCSSOMValueCreation<ContentCountersFunction> { Ref<DeprecatedCSSOMValue> operator()(CSSValuePool&, CSSStyleDeclaration&, const ContentCountersFunction&); };
-template<> struct DeprecatedCSSOMValueCreation<ContentLegacyAttrFunction> { Ref<DeprecatedCSSOMValue> operator()(CSSValuePool&, CSSStyleDeclaration&, const ContentLegacyAttrFunction&); };
 
 // Specialized to return a `DeprecatedCSSOMValueList` only when both `visible` and `alt` are present.
 template<> struct DeprecatedCSSOMValueCreation<Content::Data> { Ref<DeprecatedCSSOMValue> operator()(CSSValuePool&, CSSStyleDeclaration&, const Content::Data&); };
@@ -229,7 +205,6 @@ template<> struct DeprecatedCSSOMValueCreation<Content::Data> { Ref<DeprecatedCS
 
 DEFINE_COMMA_SEPARATED_TUPLE_LIKE_CONFORMANCE(WebCore::CSS::ContentCounterFunctionParameters, 2)
 DEFINE_COMMA_SEPARATED_TUPLE_LIKE_CONFORMANCE(WebCore::CSS::ContentCountersFunctionParameters, 3)
-DEFINE_COMMA_SEPARATED_TUPLE_LIKE_CONFORMANCE(WebCore::CSS::ContentLegacyAttrFunctionParameters, 2)
 DEFINE_SLASH_SEPARATED_TUPLE_LIKE_CONFORMANCE(WebCore::CSS::Content::Data, 2)
 DEFINE_TUPLE_LIKE_CONFORMANCE_FOR_TYPE_WRAPPER(WebCore::CSS::ContentText)
 DEFINE_TUPLE_LIKE_CONFORMANCE_FOR_TYPE_WRAPPER(WebCore::CSS::ContentImage)

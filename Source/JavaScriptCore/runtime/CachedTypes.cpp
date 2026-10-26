@@ -247,7 +247,7 @@ static std::span<const Latin1Character> inlineStringCharacters(std::span<const u
 {
     static_assert(std::endian::native == std::endian::little, "inline string slots are written as a little-endian word");
     unsigned length = (slot[0] >> 2) & 3;
-    return slot.subspan(1).first(length);
+    return byteCast<Latin1Character>(slot.subspan(1).first(length));
 }
 
 // $ 0-9 A-Z _ a-z, in that order; 0xff for every other character.
@@ -676,7 +676,7 @@ std::optional<uint32_t> DecoderStringTable::hashForSlot(uint32_t slot) const
         if (!length)
             return std::nullopt;
         auto bytes = asByteSpan<uint32_t, sizeof(uint32_t)>(slot);
-        return StringHasher::computeHashAndMaskTop8Bits(std::span<const Latin1Character> { bytes.subspan(1).first(length) });
+        return StringHasher::computeHashAndMaskTop8Bits(byteCast<Latin1Character>(bytes.subspan(1).first(length)));
     }
     case VariableLengthObjectBase::externalStringTag:
         if (slot >> 2 >= m_count)
@@ -700,7 +700,7 @@ bool DecoderStringTable::slotEquals(uint32_t slot, const StringImpl& string) con
         if (!length || string.length() != length)
             return false;
         auto bytes = asByteSpan<uint32_t, sizeof(uint32_t)>(slot);
-        return equal(&string, std::span<const Latin1Character> { bytes.subspan(1).first(length) });
+        return equal(&string, byteCast<Latin1Character>(bytes.subspan(1).first(length)));
     }
     case VariableLengthObjectBase::externalStringTag: {
         uint32_t ordinal = slot >> 2;
@@ -826,8 +826,8 @@ public:
         friend class Encoder;
 
     public:
-        uint8_t* NODELETE buffer() const { return m_buffer; }
-        ptrdiff_t NODELETE offset() const { return m_offset; }
+        uint8_t* LEGACY_NODELETE buffer() const { return m_buffer; }
+        ptrdiff_t LEGACY_NODELETE offset() const { return m_offset; }
 
     private:
         Allocation(uint8_t* buffer, ptrdiff_t offset)
@@ -855,7 +855,7 @@ public:
         allocateNewPage();
     }
 
-    EncoderStringTable* NODELETE externalStrings() { return m_externalStrings; }
+    EncoderStringTable* LEGACY_NODELETE externalStrings() { return m_externalStrings; }
 
     // Every function nested in a class with private names carries a copy of the class's private-name environment; the
     // encoded entries are written once per distinct environment and shared.
@@ -1327,14 +1327,14 @@ private:
         }
 
         // FIXME: Port call sites for span() / mutableSpan() and remove.
-        const uint8_t* NODELETE buffer() const { return m_buffer.span().data(); }
-        uint8_t* NODELETE buffer() { return m_buffer.mutableSpan().data(); }
+        const uint8_t* LEGACY_NODELETE buffer() const { return m_buffer.span().data(); }
+        uint8_t* LEGACY_NODELETE buffer() { return m_buffer.mutableSpan().data(); }
         size_t size() const { return static_cast<size_t>(m_offset); }
 
         std::span<uint8_t> mutableSpan() LIFETIME_BOUND { return m_buffer.mutableSpan().first(size()); }
         std::span<const uint8_t> span() const LIFETIME_BOUND { return m_buffer.span().first(size()); }
 
-        bool NODELETE getOffset(const void* address, ptrdiff_t& result) const
+        bool LEGACY_NODELETE getOffset(const void* address, ptrdiff_t& result) const
         {
             auto* addr = static_cast<const uint8_t*>(address);
             auto* bufferStart = buffer();
@@ -1345,7 +1345,7 @@ private:
             return false;
         }
 
-        void NODELETE alignEnd()
+        void LEGACY_NODELETE alignEnd()
         {
             ptrdiff_t size = roundUpToMultipleOf(encoderMaxAlignment, m_offset);
             if (size == m_offset)
@@ -1592,7 +1592,7 @@ public:
     {
     }
 
-    bool NODELETE isEmpty() const
+    bool LEGACY_NODELETE isEmpty() const
     {
         return m_offset == s_invalidOffset;
     }
@@ -1614,16 +1614,16 @@ public:
         m_offset = std::bit_cast<Offset>(*packed);
         return true;
     }
-    bool NODELETE hasInlineString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == inlineStringTag; }
+    bool LEGACY_NODELETE hasInlineString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == inlineStringTag; }
     // The slot as a plain value, for owners whose kind byte says it holds one rather than an offset.
-    uint32_t NODELETE rawSlot() const { return std::bit_cast<uint32_t>(m_offset); }
+    uint32_t LEGACY_NODELETE rawSlot() const { return std::bit_cast<uint32_t>(m_offset); }
     void setRawSlot(uint32_t value) { m_offset = std::bit_cast<Offset>(value); }
     Ref<AtomStringImpl> inlineString(Decoder& decoder) const { return decoder.atomForInlineString(asByteSpan<Offset, sizeof(Offset)>(m_offset)); }
     String inlinePlainString() const { return Decoder::stringForInlineString(asByteSpan<Offset, sizeof(Offset)>(m_offset)); }
 
     // A ≥4-char non-symbol string held in the embedder's shared EncoderStringTable/DecoderStringTable: the slot is an ordinal into that one process-wide table, so every chunk's payload carries 4 bytes instead of a full record. Tag 10 is the value low-two-bits neither a 4-aligned record offset (00), an inline string (01), nor the empty sentinel (11) can produce.
-    bool NODELETE hasExternalString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == externalStringTag; }
-    uint32_t NODELETE externalStringOrdinal() const { return static_cast<uint32_t>(std::bit_cast<uint32_t>(m_offset)) >> 2; }
+    bool LEGACY_NODELETE hasExternalString() const { return (static_cast<uint32_t>(m_offset) & inlineStringTagMask) == externalStringTag; }
+    uint32_t LEGACY_NODELETE externalStringOrdinal() const { return static_cast<uint32_t>(std::bit_cast<uint32_t>(m_offset)) >> 2; }
     bool tryEncodeExternalString(Encoder& encoder, const StringImpl& string)
     {
         if (!encoder.externalStrings() || string.isSymbol() || !string.length())
@@ -1636,14 +1636,14 @@ public:
     }
 
 protected:
-    const uint8_t* NODELETE buffer() const
+    const uint8_t* LEGACY_NODELETE buffer() const
     {
         ASSERT(!isEmpty());
         return std::bit_cast<const uint8_t*>(this) + m_offset;
     }
 
     template<typename T>
-    const T* NODELETE buffer() const
+    const T* LEGACY_NODELETE buffer() const
     {
         ASSERT(!(std::bit_cast<uintptr_t>(buffer()) % alignof(T)));
         return std::bit_cast<const T*>(buffer());
@@ -1856,10 +1856,10 @@ public:
         return decode(decoder, unusedIsNewAllocation, std::forward<Args>(args)...);
     }
 
-    const T* NODELETE operator->() const { return get(); }
+    const T* LEGACY_NODELETE operator->() const { return get(); }
 
 private:
-    const T* NODELETE get() const
+    const T* LEGACY_NODELETE get() const
     {
         RELEASE_ASSERT(!this->isEmpty());
         return this->template buffer<T>();
@@ -1951,7 +1951,7 @@ class CachedWriteBarrier : public CachedObject<WriteBarrier<Source>> {
     friend struct CachedWriteBarrierOffsets;
 
 public:
-    bool NODELETE isEmpty() const { return m_ptr.isEmpty(); }
+    bool LEGACY_NODELETE isEmpty() const { return m_ptr.isEmpty(); }
     const CachedPtr<T, Source>& ptr() const { return m_ptr; }
 
     void encode(Encoder& encoder, const WriteBarrier<Source> src)
@@ -2372,8 +2372,8 @@ public:
     }
 
     static constexpr unsigned minimumLengthToAliasPayload = 48; // below this a copy is smaller than pinning part of a page
-    std::span<const Latin1Character> NODELETE span8() const LIFETIME_BOUND { return { std::bit_cast<const Latin1Character*>(tail()), m_length }; }
-    std::span<const char16_t> NODELETE span16() const LIFETIME_BOUND { return { std::bit_cast<const char16_t*>(tail()), m_length }; }
+    std::span<const Latin1Character> LEGACY_NODELETE span8() const LIFETIME_BOUND { return { std::bit_cast<const Latin1Character*>(tail()), m_length }; }
+    std::span<const char16_t> LEGACY_NODELETE span16() const LIFETIME_BOUND { return { std::bit_cast<const char16_t*>(tail()), m_length }; }
 
 private:
     // What is actually stored for a given string: well-known symbols are stored by their description minus "Symbol.",
@@ -3521,14 +3521,14 @@ public:
         m_sourceURLDirective.encode(encoder, sourceProvider.sourceURLDirective());
         m_sourceMappingURLDirective.encode(encoder, sourceProvider.sourceMappingURLDirective());
         m_startPosition.encode(encoder, sourceProvider.startPosition());
-        m_sourceTaintedOrigin = sourceProvider.sourceTaintedOrigin();
+        m_sourceTaintedOrigin = sourceProvider.sourceTaintedOrigin(SourceTaintKind::ScriptTrackingPrivacy);
     }
 
     void decode(Decoder& decoder, SourceProvider& sourceProvider) const
     {
         sourceProvider.setSourceURLDirective(m_sourceURLDirective.decode(decoder));
         sourceProvider.setSourceMappingURLDirective(m_sourceMappingURLDirective.decode(decoder));
-        sourceProvider.setSourceTaintedOrigin(m_sourceTaintedOrigin);
+        sourceProvider.setSourceTaintedOrigin(SourceTaintKind::ScriptTrackingPrivacy, m_sourceTaintedOrigin);
     }
 
 protected:
@@ -4395,7 +4395,7 @@ enum class CachedCodeBlockTag {
     CachedBuiltinFunctionTag, // a root UnlinkedFunctionExecutable created by BuiltinExecutables (an embedder's JS builtins)
 };
 
-static CachedCodeBlockTag NODELETE tagFromSourceCodeType(SourceCodeType type)
+static CachedCodeBlockTag LEGACY_NODELETE tagFromSourceCodeType(SourceCodeType type)
 {
     switch (type) {
     case SourceCodeType::ProgramType:
@@ -5318,7 +5318,10 @@ protected:
     // 11: source positions are offsets only (321541@main): no lines or columns in ExpressionInfo, a function executable's
     // scalars, a global code block, a class source or a JSTextPosition.
     // 12: a global code block and the entry of a builtin function have the line starts of their source.
-    static constexpr uint32_t cachedTypesFormatRevision = 12;
+    // 13: upstream's op_iterator_close_check (with metadata) replaces the fork's, and op_iterator_open / op_iterator_next
+    // keep a String's iteration state in their registers too (321765@main, 322172@main; opcode numbering).
+    // 14: op_profile_control_flow says whether its basic block is in a loop header.
+    static constexpr uint32_t cachedTypesFormatRevision = 14;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
@@ -5329,7 +5332,7 @@ protected:
         UNUSED_PARAM(encoder);
     }
 
-    CachedCodeBlockTag NODELETE tag() const { return m_tag; }
+    CachedCodeBlockTag LEGACY_NODELETE tag() const { return m_tag; }
 
     bool isUpToDate(Decoder& decoder) const
     {

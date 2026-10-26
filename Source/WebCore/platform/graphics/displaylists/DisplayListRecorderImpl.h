@@ -26,20 +26,25 @@
 #pragma once
 
 #include <WebCore/DisplayListRecorder.h>
+#include <wtf/RefCounted.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 namespace DisplayList {
 
-class RecorderImpl : public Recorder {
+class RecorderImpl : public Recorder, public RefCounted<RecorderImpl> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(RecorderImpl, WEBCORE_EXPORT);
     WTF_MAKE_NONCOPYABLE(RecorderImpl);
 public:
-    WEBCORE_EXPORT RecorderImpl(const GraphicsContextState&, const FloatRect& initialClip, const AffineTransform&, const ColorSpace& = ColorSpace::SRGB(), DrawGlyphsMode = DrawGlyphsMode::Normal);
-    RecorderImpl(const FloatRect& initialClip)
-        : RecorderImpl(GraphicsContextState::initialIndeterminate(), initialClip, { }, ColorSpace::SRGB(), DrawGlyphsMode::Normal)
+    static Ref<RecorderImpl> create(const GraphicsContextState& state, const FloatRect& initialClip, const AffineTransform& transform, const ColorSpace& colorSpace = ColorSpace::SRGB(), DrawGlyphsMode drawGlyphsMode = DrawGlyphsMode::Normal)
     {
+        return adoptRef(*new RecorderImpl(state, initialClip, transform, colorSpace, drawGlyphsMode));
+    }
+
+    static Ref<RecorderImpl> create(const FloatRect& initialClip)
+    {
+        return create(GraphicsContextState::initialIndeterminate(), initialClip, { });
     }
 
     WEBCORE_EXPORT virtual ~RecorderImpl();
@@ -72,8 +77,8 @@ public:
     void beginTransparencyLayer(CompositeOperator, BlendMode) final;
     void endTransparencyLayer() final;
     void drawFilteredImageBuffer(ImageBuffer*, const FloatRect&, Filter&, FilterResults&) final;
-    void drawImageBuffer(ImageBuffer&, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions) final;
-    void drawNativeImage(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions) final;
+    void drawImageBuffer(ImageBuffer&, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions) final;
+    void drawNativeImage(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions) final;
     void drawSystemImage(SystemImage&, const FloatRect&) final;
     void drawRect(const FloatRect&, float) final;
     void drawLine(const FloatPoint& point1, const FloatPoint& point2) final;
@@ -83,8 +88,8 @@ public:
     void drawPath(const Path&) final;
     void drawFocusRing(const Path&, float outlineWidth, const Color&, float zoomFactor) final;
     void drawFocusRing(const Vector<FloatRect>&, float outlineWidth, const Color&, float zoomFactor) final;
-    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions) final;
-    void drawPattern(ImageBuffer&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions) final;
+    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions) final;
+    void drawPattern(ImageBuffer&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions) final;
     void fillEllipse(const FloatRect&) final;
     void fillPath(const Path&) final;
     void fillRect(const FloatRect&, RequiresClipToRect) final;
@@ -98,7 +103,7 @@ public:
     void drawGlyphsImmediate(const FontBase&, std::span<const GlyphBufferGlyph>, std::span<const GlyphBufferAdvance>, const FloatPoint& localAnchor, FontSmoothingMode) final;
     void drawDisplayList(const DisplayList&, ControlFactory&) final;
 #if ENABLE(VIDEO)
-    void drawVideoFrame(const VideoFrame&, const FloatRect& destination, ShouldDiscardAlpha, ImagePaintingOptions) final;
+    void drawVideoFrame(const VideoFrame&, const FloatRect& destination, ShouldDiscardAlpha, ImageDrawingOptions) final;
 #endif
     void strokeRect(const FloatRect&, float) final;
     void strokeEllipse(const FloatRect&) final;
@@ -124,6 +129,8 @@ public:
     WEBCORE_EXPORT void drawPlaceholder(Function<void(GraphicsContext&)>&&);
 
 private:
+    WEBCORE_EXPORT RecorderImpl(const GraphicsContextState&, const FloatRect& initialClip, const AffineTransform&, const ColorSpace&, DrawGlyphsMode);
+
     void appendStateChangeItemIfNecessary() final;
 
     Vector<Item> m_items;

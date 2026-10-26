@@ -36,7 +36,12 @@ class JSAsyncGenerator;
 class JSModuleRecord;
 class ThrowScope;
 
-void runInternalMicrotask(JSGlobalObject*, VM&, InternalMicrotask, uint8_t, std::span<const JSValue, maxMicrotaskArguments>, MicrotaskCallCache* = nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+// maxMicrotaskArguments is 4 here: the last one is the async context, or an argument of Bun's own jobs.
+void runInternalMicrotask(JSGlobalObject*, VM&, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3, MicrotaskCallCache* = nullptr);
+#else
+void runInternalMicrotask(JSGlobalObject*, VM&, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, MicrotaskCallCache* = nullptr);
+#endif
 
 void asyncModuleResolveEvaluation(JSGlobalObject*, VM&, ThrowScope&, JSModuleRecord*, JSValue result);
 

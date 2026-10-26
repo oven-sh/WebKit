@@ -65,7 +65,8 @@ std::optional<String> CoreIPCLocale::canonicalLocaleStringReplacement(const Stri
 {
     static NeverDestroyed<RetainPtr<NSDictionary>> dictionary = [] {
         RetainPtr dictionary = adoptNS([NSMutableDictionary new]);
-        for (NSString *input in [NSLocale availableLocaleIdentifiers]) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL NSString *input in [NSLocale availableLocaleIdentifiers]) {
             RetainPtr<NSString> output = [[NSLocale localeWithLocaleIdentifier:input] localeIdentifier];
             if (![output isEqualToString:input])
                 [dictionary setObject:input forKey:output.get()];

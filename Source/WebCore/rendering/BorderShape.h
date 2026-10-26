@@ -46,6 +46,8 @@ class FloatRect;
 class HitTestLocation;
 class Path;
 
+class UsedStyle;
+
 namespace Style {
 class ComputedStyle;
 }
@@ -55,6 +57,8 @@ class ComputedStyle;
 // are deprecated.
 class BorderShape {
 public:
+    static BorderShape shapeForBorderRect(const UsedStyle&, const LayoutRect& borderRect, RectEdges<bool> closedEdges = { true });
+    // FIXME: Remove once all remaining clients pass a UsedStyle.
     static BorderShape shapeForBorderRect(const Style::ComputedStyle&, const LayoutRect& borderRect, RectEdges<bool> closedEdges = { true });
     // overrideBorderWidths describe custom insets from the border box, used instead of the border widths from the style.
     static BorderShape shapeForBorderRect(const Style::ComputedStyle&, const LayoutRect& borderRect, const RectEdges<LayoutUnit>& overrideBorderWidths, RectEdges<bool> closedEdges = { true });
@@ -78,14 +82,14 @@ public:
     // Takes `closedEdges` into account.
     const RectEdges<LayoutUnit>& borderWidths() const LIFETIME_BOUND { return m_borderWidths; }
 
-    LayoutRoundedRect NODELETE deprecatedRoundedRect() const;
-    LayoutRoundedRect NODELETE deprecatedInnerRoundedRect() const;
+    LayoutRoundedRect LEGACY_NODELETE deprecatedRoundedRect() const;
+    LayoutRoundedRect LEGACY_NODELETE deprecatedInnerRoundedRect() const;
     FloatRoundedRect deprecatedPixelSnappedRoundedRect(float deviceScaleFactor) const;
     FloatRoundedRect deprecatedPixelSnappedInnerRoundedRect(float deviceScaleFactor) const;
 
     // Returns true if the given rect is entirely inside the inner/outer shape.
-    bool innerShapeContains(const LayoutRect&) const;
-    bool outerShapeContains(const LayoutRect&) const;
+    bool LEGACY_NODELETE innerShapeContains(const LayoutRect&) const;
+    bool LEGACY_NODELETE outerShapeContains(const LayoutRect&) const;
 
     bool shapeIntersectsHitTestLocation(const HitTestLocation&, float deviceScaleFactor) const;
 
@@ -102,7 +106,7 @@ public:
 
     // Returns true if no corner regions of the outer border intersect the given rect,
     // meaning border painting can use simpler rectangular paths.
-    bool allCornersClippedOut(const LayoutRect&) const;
+    bool LEGACY_NODELETE allCornersClippedOut(const LayoutRect&) const;
 
     const LayoutRoundedRectRadii& radii() const LIFETIME_BOUND { return m_borderRect.radii(); }
     void setRadii(const LayoutRoundedRectRadii& radii) { m_borderRect.setRadii(radii); }
@@ -117,14 +121,14 @@ public:
 
     bool hasNonZeroRadii() const { return m_borderRect.hasNonZeroRadii(); }
 
-    bool NODELETE outerShapeIsRectangular() const;
-    bool NODELETE innerShapeIsRectangular() const;
+    bool LEGACY_NODELETE outerShapeIsRectangular() const;
+    bool LEGACY_NODELETE innerShapeIsRectangular() const;
 
-    bool NODELETE hasNonRoundCornerShape() const;
+    bool LEGACY_NODELETE hasNonRoundCornerShape() const;
 
     bool isEmpty() const { return m_borderRect.rect().isEmpty(); }
 
-    void NODELETE move(LayoutSize);
+    void LEGACY_NODELETE move(LayoutSize);
 
     // This will inflate the m_borderRect, and scale the radii up accordingly. Note that this changes the meaning of "inner shape" which will no longer correspond to the padding box.
     void inflate(LayoutUnit);

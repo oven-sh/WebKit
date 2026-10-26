@@ -48,6 +48,12 @@ public:
     struct LineClamp {
         size_t maximumLines { 0 };
         bool shouldDiscardOverflow { false };
+        // A clamp point between this block and its next sibling, which no line box precedes (see the auto clamp point).
+        SingleThreadWeakPtr<const RenderBox> clampAfterBox;
+        // While looking for the auto clamp point, "layout must first be computed as if 'text-wrap-style' were set to 'stable'".
+        // https://drafts.csswg.org/css-overflow-4/#line-clamp
+        bool isStableTextWrap { false };
+        bool hasConstrainedTextWrapContent { false };
     };
 
     struct LegacyLineClamp {
@@ -65,7 +71,7 @@ public:
 
     // The page logical offset is the object's offset from the top of the page in the page progression
     // direction (so an x-offset in vertical text and a y-offset for horizontal text).
-    LayoutUnit NODELETE pageLogicalOffset(RenderBox*, LayoutUnit childLogicalOffset) const;
+    LayoutUnit LEGACY_NODELETE pageLogicalOffset(RenderBox*, LayoutUnit childLogicalOffset) const;
     
     LayoutUnit pageLogicalHeight() const { return m_pageLogicalHeight; }
     bool pageLogicalHeightChanged() const { return m_pageLogicalHeightChanged; }
@@ -87,7 +93,7 @@ public:
     LayoutRect clipRect() const { return m_clipRect; }
     bool isClipped() const { return m_clipped; }
 
-    void NODELETE addLayoutDelta(LayoutSize);
+    void LEGACY_NODELETE addLayoutDelta(LayoutSize);
     LayoutSize layoutDelta() const { return m_layoutDeltaForRepaint; }
 #if ASSERT_ENABLED
     bool layoutDeltaMatches(LayoutSize) const;
@@ -108,7 +114,7 @@ private:
     // FIXME: webkit.org/b/179440 these functions should be part of the pagination code/LocalFrameViewLayoutContext.
     void computePaginationInformation(const LocalFrameViewLayoutContext::LayoutStateStack&, RenderBox&, LayoutUnit pageLogicalHeight, bool pageLogicalHeightChanged);
     void propagateLineGridInfo(const RenderLayoutState& ancestor, RenderBox&);
-    void NODELETE establishLineGrid(const LocalFrameViewLayoutContext::LayoutStateStack&, RenderBlockFlow&);
+    void LEGACY_NODELETE establishLineGrid(const LocalFrameViewLayoutContext::LayoutStateStack&, RenderBlockFlow&);
     void computeLineGridPaginationOrigin(const RenderMultiColumnFlow&);
 
     // Do not add anything apart from bitfields. See https://bugs.webkit.org/show_bug.cgi?id=100173
@@ -198,13 +204,23 @@ private:
     const CheckedRef<const RenderBox> m_flexItem;
 };
 
-// Marks a box as being laid out solely to measure its intrinsic block-axis size, so its
-// own cyclic-percentage min/max block-size resolves per CSS Sizing 3 section 5.1.
-// See RenderBox::computeIntrinsicLogicalHeight and RenderBox::computeLogicalHeight.
-class IntrinsicLogicalHeightComputationScope {
+// Marks an orthogonal box that is being laid out only to supply its container's intrinsic inline-size contribution
+// (its own block size), so its own percentage min/max-height follows CSS Sizing 3 "Intrinsic Contributions of
+// Percentage-Sized Boxes". See RenderBox::computeIntrinsicLogicalHeight and RenderBox::computeLogicalHeight.
+class OrthogonalIntrinsicContributionLayoutScope {
 public:
-    IntrinsicLogicalHeightComputationScope(LocalFrameViewLayoutContext&, const RenderBox&);
-    ~IntrinsicLogicalHeightComputationScope();
+    OrthogonalIntrinsicContributionLayoutScope(LocalFrameViewLayoutContext&, const RenderBox&);
+    ~OrthogonalIntrinsicContributionLayoutScope();
+
+private:
+    const CheckedRef<LocalFrameViewLayoutContext> m_layoutContext;
+    const CheckedRef<const RenderBox> m_box;
+};
+
+class IntrinsicLogicalWidthComputationScope {
+public:
+    IntrinsicLogicalWidthComputationScope(LocalFrameViewLayoutContext&, const RenderBox&);
+    ~IntrinsicLogicalWidthComputationScope();
 
 private:
     const CheckedRef<LocalFrameViewLayoutContext> m_layoutContext;

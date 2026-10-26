@@ -20,16 +20,20 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+from __future__ import annotations
+
+from types import TracebackType
+
 
 class NullContext(object):
-    def __bool__(self):
+    def __bool__(self) -> bool:
         return False
 
-    def __nonzero__(self):
+    def __nonzero__(self) -> bool:
         return False
 
-    def __enter__(self):
+    def __enter__(self) -> NullContext:
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None) -> None:
         pass

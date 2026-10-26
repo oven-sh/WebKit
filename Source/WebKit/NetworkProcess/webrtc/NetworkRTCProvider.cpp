@@ -61,13 +61,15 @@ using namespace WebCore;
 #define RTC_RELEASE_LOG(fmt, ...) RELEASE_LOG(Network, "%p - NetworkRTCProvider::" fmt, this, ##__VA_ARGS__)
 #define RTC_RELEASE_LOG_ERROR(fmt, ...) RELEASE_LOG_ERROR(Network, "%p - NetworkRTCProvider::" fmt, this, ##__VA_ARGS__)
 
+#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, this->connection())
+
 NetworkRTCProvider::NetworkRTCProvider(NetworkConnectionToWebProcess& connection)
     : m_connection(&connection)
     , m_ipcConnection(connection.connection())
     , m_rtcMonitor(*this)
     , m_sharedPreferences(connection.sharedPreferencesForWebProcessValue())
 #if PLATFORM(COCOA)
-    , m_sourceApplicationAuditToken(connection.networkProcess().sourceApplicationAuditToken())
+    , m_sourceApplicationAuditToken(NetworkProcess::singleton().sourceApplicationAuditToken())
     , m_rtcNetworkThreadQueue(WorkQueue::create("NetworkRTCProvider Queue"_s, WorkQueue::QOS::UserInitiated))
 #else
     , m_packetSocketFactory(makeUniqueRefWithoutFastMallocCheck<webrtc::BasicPacketSocketFactory>(rtcNetworkThread().socketserver()))
@@ -194,6 +196,8 @@ void NetworkRTCProvider::dispatch(Function<void()>&& callback)
 
 void NetworkRTCProvider::createResolver(LibWebRTCResolverIdentifier identifier, String&& address)
 {
+    MESSAGE_CHECK(!address.isNull());
+
     if (!isMainRunLoop()) {
         callOnMainRunLoop([this, protectedThis = Ref { *this }, identifier, address = WTF::move(address).isolatedCopy()]() mutable {
             if (!m_connection)
@@ -434,6 +438,7 @@ void NetworkRTCProvider::updateSharedPreferencesForWebProcess(const SharedPrefer
 
 #undef RTC_RELEASE_LOG
 #undef RTC_RELEASE_LOG_ERROR
+#undef MESSAGE_CHECK
 
 } // namespace WebKit
 

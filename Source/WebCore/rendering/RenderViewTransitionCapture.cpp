@@ -28,6 +28,7 @@
 
 #include "ImageOverlayController.h"
 #include "ImageQualityController.h"
+#include "NaturalDimensions.h"
 #include "PaintInfo.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderLayer.h"
@@ -70,6 +71,27 @@ void RenderViewTransitionCapture::setImage(RefPtr<ImageBuffer> oldImage)
         repaint();
 }
 
+RefPtr<NativeImage> RenderViewTransitionCapture::displayOnlyImage() const
+{
+    // FIXME: An object-view-box needs a source sub-rect, which GraphicsLayer cannot express, so such
+    // a capture is painted, and shows nothing.
+    if (!style().objectViewBox().isNone())
+        return nullptr;
+    return m_oldDisplayOnlyImage;
+}
+
+void RenderViewTransitionCapture::setDisplayOnlyImage(RefPtr<NativeImage>&& oldImage)
+{
+    if (m_oldDisplayOnlyImage == oldImage)
+        return;
+
+    m_oldDisplayOnlyImage = WTF::move(oldImage);
+    if (hasLayer())
+        layer()->contentChanged(ContentChangeType::Image);
+    if (parent())
+        repaint();
+}
+
 bool RenderViewTransitionCapture::setCapturedSize(const LayoutSize& size, const LayoutRect& overflowRect, const LayoutPoint& layerToLayoutOffset)
 {
     if (m_overflowRect == overflowRect && intrinsicSize() == size && m_layerToLayoutOffset == layerToLayoutOffset)
@@ -103,17 +125,20 @@ void RenderViewTransitionCapture::paintReplaced(PaintInfo& paintInfo, const Layo
     LayoutRect replacedContentRect = this->replacedContentRect();
     replacedContentRect.moveBy(paintOffset);
 
-    auto viewBox = resolvedObjectViewBox(FloatSize(intrinsicSize()));
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST auto viewBox = resolvedObjectViewBox(FloatSize(intrinsicSize()));
 
     // dstRect: where to draw on screen.
     // srcRect: which portion of the snapshot to draw (defaults to the full image).
     FloatRect dstRect = m_localOverflowRect;
-    FloatRect srcRect = FloatRect { { }, FloatSize(oldImage->logicalSize()) };
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST FloatRect srcRect = FloatRect { { }, FloatSize(oldImage->logicalSize()) };
 
     if (viewBox) {
         if (hasNonVisibleOverflow()) {
             // Clipped (e.g. contain: paint): map only the view-box region onto replacedContentRect.
-            dstRect = FloatRect(replacedContentRect);
+            // FIXME: Remove suppression once rdar://189998444 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST dstRect = FloatRect(replacedContentRect);
             srcRect = FloatRect(*viewBox);
         } else {
             // Overflow-visible: scale the full image so the view-box region maps onto replacedContentRect.
@@ -136,7 +161,8 @@ void RenderViewTransitionCapture::layout()
     m_localOverflowRect.scale(m_scale.width(), m_scale.height());
     m_localOverflowRect.moveBy(replacedContentRect().location());
 
-    auto viewBox = resolvedObjectViewBox(FloatSize(intrinsicSize()));
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST auto viewBox = resolvedObjectViewBox(FloatSize(intrinsicSize()));
 
     // For the clipped view-box case, don't expand visual overflow: the element clips to its
     // own border, and expanding would expose stale CA contents outside the painted area.
@@ -169,7 +195,7 @@ void RenderViewTransitionCapture::styleDidChange(Style::Difference diff, const S
 {
     RenderReplaced::styleDidChange(diff, oldStyle);
 
-    if (oldStyle && oldStyle->usedVisibility() != style().usedVisibility() && hasLayer())
+    if (oldStyle && (oldStyle->visibility() != style().visibility() || oldStyle->isForceHidden() != style().isForceHidden()) && hasLayer())
         layer()->setNeedsCompositingLayerConnection();
 }
 
@@ -202,6 +228,11 @@ String RenderViewTransitionCapture::debugDescription() const
     builder.append(" ::view-transition-"_s, style().pseudoElementType() == PseudoElementType::ViewTransitionNew ? "new("_s : "old("_s);
     builder.append(style().pseudoElementNameArgument(), ')');
     return builder.toString();
+}
+
+NaturalDimensions RenderViewTransitionCapture::zoomedNaturalDimensions() const
+{
+    return NaturalDimensions::fixed(FloatSize { intrinsicSize() });
 }
 
 } // namespace WebCore

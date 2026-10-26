@@ -116,7 +116,7 @@ void Callee::reportToVMsForDestruction()
 }
 
 template<typename Func>
-inline void Callee::runWithDowncast(const Func& func)
+inline void Callee::runWithDowncast(NOESCAPE const Func& func)
 {
     switch (m_compilationMode) {
     case CompilationMode::IPIntMode:
@@ -163,7 +163,7 @@ inline void Callee::runWithDowncast(const Func& func)
 }
 
 template<typename Func>
-inline void Callee::runWithDowncast(const Func& func) const
+inline void Callee::runWithDowncast(NOESCAPE const Func& func) const
 {
     const_cast<Callee*>(this)->runWithDowncast(func);
 }
@@ -315,6 +315,7 @@ IPIntCallee::IPIntCallee(FunctionIPIntMetadataGenerator& generator, FunctionSpac
     , m_localInitBytecode(WTF::move(generator.m_localInitBytecode))
     , m_signatureRTT(&signatureRTT)
     , m_callTargets(WTF::move(generator.m_callTargets))
+    , m_hotLocals(generator.hotLocals())
     , m_localSizeToAlloc(roundUpToMultipleOf<2>(generator.m_numLocals))
     , m_numRethrowSlotsToAlloc(generator.m_numAlignedRethrowSlots)
     , m_numLocals(generator.m_numLocals)
@@ -597,11 +598,6 @@ BBQCallee::~BBQCallee()
     if (Options::freeRetiredWasmCode() && m_osrEntryCallee) {
         m_osrEntryCallee->reportToVMsForDestruction();
     }
-}
-
-const RegisterAtOffsetList* BBQCallee::calleeSaveRegistersImpl()
-{
-    return &RegisterAtOffsetList::bbqCalleeSaveRegisters();
 }
 
 #endif

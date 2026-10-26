@@ -31,26 +31,15 @@
 #include "RenderBlockFlow.h"
 #include "RenderElementInlines.h"
 #include "RenderImage.h"
-#include "RenderInline.h"
 #include "RenderLineBreak.h"
 #include "RenderListOutsideMarker.h"
 #include "RenderObjectInlines.h"
-#include "RenderSVGBlock.h"
-#include "RenderSVGForeignObject.h"
 #include "RenderText.h"
-#include "Settings.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleComputedStyle+InitialInlines.h"
 
 namespace WebCore {
 namespace LayoutIntegration {
-
-bool canUseForLineLayout(const RenderBlockFlow& rootContainer)
-{
-    if (is<RenderSVGBlock>(rootContainer) && !rootContainer.isRenderOrLegacyRenderSVGForeignObject())
-        return rootContainer.document().settings().useIFCForSVGText();
-    return true;
-}
 
 bool canUseForIntrinsicWidthComputation(const RenderBlockFlow& blockContainer)
 {
@@ -59,7 +48,7 @@ bool canUseForIntrinsicWidthComputation(const RenderBlockFlow& blockContainer)
         if (!renderer->isInFlow())
             return false;
 
-        auto isFullySupportedInFlowRenderer = isAnyOf<RenderText, RenderLineBreak, RenderInline, RenderListOutsideMarker>(renderer);
+        auto isFullySupportedInFlowRenderer = isAnyOf<RenderText, RenderLineBreak, RenderListOutsideMarker>(renderer) || renderer->isInlineBox();
         if (isFullySupportedInFlowRenderer)
             continue;
 

@@ -22,14 +22,15 @@
 
 import os
 import logging
+import unittest
 from unittest.mock import patch
 
 from webkitpy.common.host_mock import MockHost
 from webkitpy.common.system.filesystem_mock import MockFileSystem
 from webkitpy.common.system.executive_mock import MockExecutive2
-from webkitpy.w3c.test_exporter import WebPlatformTestExporter, parse_args
+from webkitpy.w3c.test_exporter import WebPlatformTestExporter, parse_args, wpt_commit_message
 from webkitbugspy import mocks as bmocks, Tracker, bugzilla
-from webkitcorepy import mocks as wkmocks, testing, OutputCapture
+from webkitcorepy import mocks as wkmocks, run, testing, OutputCapture
 from webkitscmpy import mocks as mocks
 
 
@@ -77,7 +78,9 @@ class TestExporterTest(testing.PathTestCase):
             'webkitbugspy.Tracker._trackers', [bugzilla.Tracker(self.BUGZILLA_URL)],
         ), patch(
             'webkitpy.w3c.test_exporter.WPTLinter', autospec=True, spec_set=True,
-        ) as mock_linter_class:
+        ) as mock_linter_class, patch(
+            'webkitpy.w3c.test_exporter.run', wraps=run,
+        ) as run_mock:
             git_mock.head.message = f'Test\n{self.BUGZILLA_URL}/show_bug.cgi?id=1\n'
             host = TestExporterTest.MyMockHost()
             host.filesystem.maybe_make_directory(self.path)
@@ -92,6 +95,25 @@ class TestExporterTest(testing.PathTestCase):
             issue = Tracker.from_string('{}/show_bug.cgi?id=1'.format(self.BUGZILLA_URL))
             self.assertEqual(issue.comments[-1].content, 'Submitted web-platform-tests pull request: https://github.com/web-platform-tests/wpt/pull/1')
             self.assertEqual(issue.related_links, ['https://github.com/web-platform-tests/wpt/pull/1'])
+
+            self.assertIn(
+                ['log', options.git_commit, '-1', '--no-decorate', '--date=unix', '--format=medium'],
+                [call.args[0][1:] for call in run_mock.call_args_list],
+            )
+            self.assertEqual(
+                [call.args[0][1:] for call in run_mock.call_args_list if call.args[0][1] == 'commit'],
+                [['commit', '-m', 'Test\n\nWebKit-Bug: https://bugs.example.com/show_bug.cgi?id=1', '--author=Jonathan Bedard <jbedard@apple.com>']],
+            )
+            self.assertEqual(wpt_remote.pull_requests[0]['title'], 'WebKit export of https://bugs.example.com/show_bug.cgi?id=1')
+            self.assertEqual(wpt_remote.pull_requests[0]['body'], '\n'.join([
+                'WebKit export from bug: [Example issue 1](https://bugs.example.com/show_bug.cgi?id=1)',
+                '',
+                '<pre>',
+                'Test',
+                '',
+                'WebKit-Bug: <a href="https://bugs.example.com/show_bug.cgi?id=1">https://bugs.example.com/show_bug.cgi?id=1</a>',
+                '</pre>',
+            ]))
 
         mock_linter_class.assert_called_once_with(self.path)
         mock_linter_class.return_value.lint.assert_called_once_with()
@@ -115,6 +137,109 @@ class TestExporterTest(testing.PathTestCase):
                 'Removing local branch wpt-export-for-webkit-1',
                 'WPT Pull Request: https://github.com/web-platform-tests/wpt/pull/1'],
         )
+
+    def test_export_with_message(self):
+        with OutputCapture(level=logging.INFO), bmocks.Bugzilla(self.BUGZILLA_URL.split('://')[1], issues=bmocks.ISSUES, environment=wkmocks.Environment(
+            BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+            BUGS_EXAMPLE_COM_PASSWORD='password',
+        )), mocks.remote.GitHub(remote='github.com/web-platform-tests/wpt', labels={
+            'webkit-export': dict(color='00000', description=''),
+        }) as wpt_remote, mocks.local.Git(
+            self.path,
+            remote='https://{}'.format(wpt_remote.remote)
+        ) as git_mock, patch(
+            'webkitpy.common.webkit_finder.WebKitFinder.webkit_base', return_value=self.path,
+        ), patch(
+            'webkitbugspy.Tracker._trackers', [bugzilla.Tracker(self.BUGZILLA_URL)],
+        ), patch(
+            'webkitpy.w3c.test_exporter.WPTLinter', autospec=True, spec_set=True,
+        ), patch(
+            'webkitpy.w3c.test_exporter.run', wraps=run,
+        ) as run_mock:
+            git_mock.head.message = f'Test\n{self.BUGZILLA_URL}/show_bug.cgi?id=1\n'
+            host = TestExporterTest.MyMockHost()
+            host.filesystem.maybe_make_directory(self.path)
+            host.filesystem.write_binary_file(f'{self.path}/resources/testharness.js', '')
+            host.filesystem.write_binary_file(f'{self.path}/wpt', '')
+            host.web.responses.append({'status_code': 200, 'body': '{"login": "USER"}'})
+            options = parse_args(['test_exporter.py', '-g', 'HEAD', '-c', '-n', 'USER', '-t', 'TOKEN', '-m', 'Custom message', '-d', self.path])
+            WebPlatformTestExporter(host, options).do_export()
+
+            self.assertEqual(
+                [call.args[0][1:4] for call in run_mock.call_args_list if call.args[0][1] == 'commit'],
+                [['commit', '-m', 'Custom message']],
+            )
+            self.assertEqual(wpt_remote.pull_requests[0]['title'], 'WebKit export of https://bugs.example.com/show_bug.cgi?id=1')
+
+    def test_export_dry_run(self):
+        with OutputCapture(level=logging.INFO) as captured, mocks.remote.GitHub(remote='github.com/web-platform-tests/wpt', labels={
+            'webkit-export': dict(color='00000', description=''),
+        }) as wpt_remote, mocks.local.Git(
+            self.path,
+            remote='https://{}'.format(wpt_remote.remote)
+        ) as git_mock, patch(
+            'webkitpy.common.webkit_finder.WebKitFinder.webkit_base', return_value=self.path,
+        ), patch(
+            'webkitbugspy.Tracker._trackers', [bugzilla.Tracker(self.BUGZILLA_URL)],
+        ), patch(
+            'webkitpy.w3c.test_exporter.WPTLinter', autospec=True, spec_set=True,
+        ):
+            git_mock.head.message = f'Test\n{self.BUGZILLA_URL}/show_bug.cgi?id=1\n'
+            host = TestExporterTest.MyMockHost()
+            host.filesystem.maybe_make_directory(self.path)
+            host.filesystem.write_binary_file(f'{self.path}/resources/testharness.js', '')
+            host.filesystem.write_binary_file(f'{self.path}/wpt', '')
+            host.web.responses.append({'status_code': 200, 'body': '{"login": "USER"}'})
+            options = parse_args(['test_exporter.py', '-g', 'HEAD', '-c', '-n', 'USER', '-t', 'TOKEN', '--dry-run', '-d', self.path])
+            self.assertEqual(WebPlatformTestExporter(host, options).do_export(), 0)
+            self.assertEqual(wpt_remote.pull_requests, [])
+
+        log = captured.root.log.getvalue().splitlines()
+        self.assertEqual(
+            [line for line in log if 'Mock process' not in line], [
+                f'Using the WPT repository found at `{self.path}`',
+                'Fetching web-platform-tests repository',
+                'Cleaning web-platform-tests master branch',
+                'Applying patch to web-platform-tests branch wpt-export-for-webkit-1',
+                'Commit message:',
+                '    Test',
+                '',
+                '    WebKit-Bug: https://bugs.example.com/show_bug.cgi?id=1',
+                'Skipping pushing to remote since this is a dry run',
+                'Removing local branch wpt-export-for-webkit-1'],
+        )
+
+    def test_export_escapes_bug_title(self):
+        issues = list(bmocks.ISSUES)
+        issues[0] = dict(bmocks.ISSUES[0], title=r'<select> \ [picker] :a: @user')
+        with OutputCapture(level=logging.INFO), bmocks.Bugzilla(self.BUGZILLA_URL.split('://')[1], issues=issues, environment=wkmocks.Environment(
+            BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
+            BUGS_EXAMPLE_COM_PASSWORD='password',
+        )), mocks.remote.GitHub(remote='github.com/web-platform-tests/wpt', labels={
+            'webkit-export': dict(color='00000', description=''),
+        }) as wpt_remote, mocks.local.Git(
+            self.path,
+            remote='https://{}'.format(wpt_remote.remote)
+        ) as git_mock, patch(
+            'webkitpy.common.webkit_finder.WebKitFinder.webkit_base', return_value=self.path,
+        ), patch(
+            'webkitbugspy.Tracker._trackers', [bugzilla.Tracker(self.BUGZILLA_URL)],
+        ), patch(
+            'webkitpy.w3c.test_exporter.WPTLinter', autospec=True, spec_set=True,
+        ):
+            git_mock.head.message = f'Test\n{self.BUGZILLA_URL}/show_bug.cgi?id=1\n'
+            host = TestExporterTest.MyMockHost()
+            host.filesystem.maybe_make_directory(self.path)
+            host.filesystem.write_binary_file(f'{self.path}/resources/testharness.js', '')
+            host.filesystem.write_binary_file(f'{self.path}/wpt', '')
+            host.web.responses.append({'status_code': 200, 'body': '{"login": "USER"}'})
+            options = parse_args(['test_exporter.py', '-g', 'HEAD', '-c', '-n', 'USER', '-t', 'TOKEN', '-d', self.path])
+            WebPlatformTestExporter(host, options).do_export()
+
+            self.assertEqual(
+                wpt_remote.pull_requests[0]['body'].split('\n')[0],
+                r'WebKit export from bug: [\<<!---->select\><!----> \\<!----> \[<!---->picker\]<!----> \:<!---->a\:<!----> \@<!---->user](https://bugs.example.com/show_bug.cgi?id=1)',
+            )
 
     def test_export_no_git_commit(self):
         with mocks.local.Git(self.path), patch(
@@ -646,6 +771,52 @@ class TestExporterTest(testing.PathTestCase):
         log = captured.root.log.getvalue()
         self.assertIn('Failed to push to WPT fork', log)
 
+    def test_export_case_mismatch(self):
+        with OutputCapture(level=logging.INFO) as captured, mocks.remote.GitHub(remote='github.com/web-platform-tests/wpt', labels={
+            'webkit-export': dict(color='00000', description=''),
+        }) as wpt_remote, mocks.local.Git(
+            self.path,
+            remote='https://{}'.format(wpt_remote.remote)
+        ) as git_mock, patch(
+            'webkitpy.common.webkit_finder.WebKitFinder.webkit_base', return_value=self.path,
+        ), patch(
+            'webkitbugspy.Tracker._trackers', [bugzilla.Tracker(self.BUGZILLA_URL)],
+        ), patch(
+            'webkitpy.w3c.test_exporter.WPTLinter', autospec=True, spec_set=True,
+        ), patch(
+            'webkitpy.w3c.test_exporter.run', wraps=run,
+        ) as run_mock:
+            git_mock.head.message = f'Test\n{self.BUGZILLA_URL}/show_bug.cgi?id=1\n'
+
+            # Like git apply on a case-insensitive file system: the index keeps the case of the patch.
+            def apply(patch=None):
+                git_mock.staged['WebIDL/ecmascript-binding/test.html'] = 'added'
+                return wkmocks.ProcessCompletion(returncode=0)
+            git_mock.apply = apply
+
+            host = TestExporterTest.MyMockHost()
+            host.filesystem.maybe_make_directory(self.path)
+            host.filesystem.write_binary_file(f'{self.path}/resources/testharness.js', '')
+            host.filesystem.write_binary_file(f'{self.path}/wpt', '')
+            host.filesystem.write_binary_file(f'{self.path}/webidl/ecmascript-binding/test.html', '')
+            host.web.responses.append({'status_code': 200, 'body': '{"login": "USER"}'})
+            options = parse_args(['test_exporter.py', '-g', 'HEAD', '-c', '-d', self.path])
+            self.assertEqual(WebPlatformTestExporter(host, options).do_export(), 1)
+            self.assertEqual(wpt_remote.pull_requests, [])
+            self.assertEqual([call for call in run_mock.call_args_list if call.args[0][1] == 'commit'], [])
+
+        log = captured.root.log.getvalue().splitlines()
+        self.assertEqual(
+            [line for line in log if 'Mock process' not in line], [
+                f'Using the WPT repository found at `{self.path}`',
+                'Fetching web-platform-tests repository',
+                'Cleaning web-platform-tests master branch',
+                'Applying patch to web-platform-tests branch wpt-export-for-webkit-1',
+                'LayoutTests/imported/w3c/web-platform-tests/WebIDL differs only in case from webidl in web-platform-tests. Rename it to match before exporting.',
+                "Cannot create web-platform-tests local branch from the patch '/__im_tmp/tmp_0_wpt_export_patch'",
+                'Keeping local branch wpt-export-for-webkit-1'],
+        )
+
     def test_export_open_pr_errors_without_flag(self):
         with OutputCapture(level=logging.INFO) as captured, bmocks.Bugzilla(self.BUGZILLA_URL.split('://')[1], issues=bmocks.ISSUES, environment=wkmocks.Environment(
             BUGS_EXAMPLE_COM_USERNAME='tcontributor@example.com',
@@ -1108,6 +1279,35 @@ diff --git a/LayoutTests/imported/w3c/web-platform-tests/css/css-counter-styles/
             exporter = WebPlatformTestExporter(host, options)
         self.assertFalse(exporter.has_wpt_changes())
 
+    def test_ignore_changes_to_expected_files_with_other_extensions(self):
+        host = TestExporterTest.MyMockHost()
+        host.filesystem.maybe_make_directory(self.path)
+        host._mockSCM.mock_format_patch_result = b"""
+Subversion Revision: 231920
+diff --git a/LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/textpath-side-001-expected.svg b/LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/textpath-side-001-expected.svg
+
++change to expected svg
+
+diff --git a/LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/textpath-side-001-expected-mismatch.svg b/LayoutTests/imported/w3c/web-platform-tests/svg/text/reftests/textpath-side-001-expected-mismatch.svg
+
++change to expected-mismatch svg
+
+diff --git a/LayoutTests/imported/w3c/web-platform-tests/css/css-text/white-space/white-space-001-expected.xhtml b/LayoutTests/imported/w3c/web-platform-tests/css/css-text/white-space/white-space-001-expected.xhtml
+
++change to expected xhtml
+"""
+        options = parse_args(['test_exporter.py', '-g', 'HEAD', '-c', '-n', 'USER', '-t', 'TOKEN', '-d', self.path])
+        with mocks.local.Git(self.path) as git_mock, patch(
+            'webkitpy.common.webkit_finder.WebKitFinder.webkit_base', return_value=self.path,
+        ), patch(
+            'webkitbugspy.Tracker._trackers', [bugzilla.Tracker(self.BUGZILLA_URL)],
+        ), patch(
+            'webkitpy.w3c.test_exporter.WPTLinter', autospec=True, spec_set=True,
+        ):
+            git_mock.head.message = f'Test\n{self.BUGZILLA_URL}/show_bug.cgi?id=1\n'
+            exporter = WebPlatformTestExporter(host, options)
+        self.assertFalse(exporter.has_wpt_changes())
+
     def test_ignore_changes_to_w3c_import_log(self):
         host = TestExporterTest.MyMockHost()
         host.filesystem.maybe_make_directory(self.path)
@@ -1128,3 +1328,204 @@ diff --git a/LayoutTests/imported/w3c/web-platform-tests/fetch/api/headers/w3c-i
             git_mock.head.message = f'Test\n{self.BUGZILLA_URL}/show_bug.cgi?id=1\n'
             exporter = WebPlatformTestExporter(host, options)
         self.assertFalse(exporter.has_wpt_changes())
+
+    def test_ignore_changes_to_templated_test_wrappers(self):
+        host = TestExporterTest.MyMockHost()
+        host.filesystem.maybe_make_directory(self.path)
+        host._mockSCM.mock_format_patch_result = b"""
+Subversion Revision: 231920
+diff --git a/LayoutTests/imported/w3c/web-platform-tests/fs/FileSystemBaseHandle-postMessage-frames.https.window.html b/LayoutTests/imported/w3c/web-platform-tests/fs/FileSystemBaseHandle-postMessage-frames.https.window.html
+
++change to window
+
+diff --git a/LayoutTests/imported/w3c/web-platform-tests/fs/FileSystemBaseHandle-postMessage-workers.https.worker.html b/LayoutTests/imported/w3c/web-platform-tests/fs/FileSystemBaseHandle-postMessage-workers.https.worker.html
+
++change to worker
+
+diff --git a/LayoutTests/imported/w3c/web-platform-tests/fetch/api/headers/header-values.any.html b/LayoutTests/imported/w3c/web-platform-tests/fetch/api/headers/header-values.any.html
+
++change to any
+
+diff --git a/LayoutTests/imported/w3c/web-platform-tests/fetch/api/headers/header-values.any.worker.html b/LayoutTests/imported/w3c/web-platform-tests/fetch/api/headers/header-values.any.worker.html
+
++change to any.worker
+
+diff --git a/LayoutTests/imported/w3c/web-platform-tests/fetch/api/headers/header-values.any.serviceworker-module.html b/LayoutTests/imported/w3c/web-platform-tests/fetch/api/headers/header-values.any.serviceworker-module.html
+
++change to any.serviceworker-module
+"""
+        options = parse_args(['test_exporter.py', '-g', 'HEAD', '-c', '-n', 'USER', '-t', 'TOKEN', '-d', self.path])
+        with mocks.local.Git(self.path) as git_mock, patch(
+            'webkitpy.common.webkit_finder.WebKitFinder.webkit_base', return_value=self.path,
+        ), patch(
+            'webkitbugspy.Tracker._trackers', [bugzilla.Tracker(self.BUGZILLA_URL)],
+        ), patch(
+            'webkitpy.w3c.test_exporter.WPTLinter', autospec=True, spec_set=True,
+        ):
+            git_mock.head.message = f'Test\n{self.BUGZILLA_URL}/show_bug.cgi?id=1\n'
+            exporter = WebPlatformTestExporter(host, options)
+        self.assertFalse(exporter.has_wpt_changes())
+
+
+class WPTCommitMessageTest(unittest.TestCase):
+    BUGZILLA_URL = 'https://bugs.example.com'
+
+    def setUp(self):
+        super().setUp()
+        trackers = patch('webkitbugspy.Tracker._trackers', [bugzilla.Tracker(self.BUGZILLA_URL)])
+        trackers.start()
+        self.addCleanup(trackers.stop)
+
+    def bugs(self, *ids):
+        return [Tracker.from_string(f'{self.BUGZILLA_URL}/show_bug.cgi?id={id}') for id in ids]
+
+    def test_landed_commit(self):
+        message = '\n'.join([
+            'Grid container exports the wrong first baseline',
+            'https://bugs.example.com/show_bug.cgi?id=1',
+            'rdar://187757320',
+            '',
+            'Reviewed by Sammy Gill.',
+            '',
+            'RenderGrid::baselineGridItem() kept looking after finding a participating',
+            'item, so a later column overwrote it. Return the first one instead.',
+            '',
+            'https://drafts.csswg.org/css-grid-2/#grid-baselines',
+            '',
+            'Tests: fast/css-grid-layout/grid-baseline.html',
+            '       imported/w3c/web-platform-tests/css/css-grid/alignment/grid-container-baseline-001.html',
+            '',
+            '* LayoutTests/imported/w3c/web-platform-tests/css/css-grid/alignment/grid-container-baseline-001-expected.txt: Added.',
+            '* LayoutTests/imported/w3c/web-platform-tests/css/css-grid/alignment/grid-container-baseline-001.html: Added.',
+            '* Source/WebCore/rendering/RenderGrid.cpp:',
+            '(WebCore::RenderGrid::baselineGridItem const):',
+            '',
+            'Canonical link: https://commits.webkit.org/321729@main',
+        ])
+        self.assertEqual(wpt_commit_message(message, self.bugs(1)), '\n'.join([
+            'Grid container exports the wrong first baseline',
+            '',
+            'RenderGrid::baselineGridItem() kept looking after finding a participating',
+            'item, so a later column overwrote it. Return the first one instead.',
+            '',
+            'https://drafts.csswg.org/css-grid-2/#grid-baselines',
+            '',
+            'WebKit-Bug: https://bugs.example.com/show_bug.cgi?id=1',
+            'WebKit-Canonical-Link: https://commits.webkit.org/321729@main',
+        ]))
+
+    def test_indented_body(self):
+        message = '\n'.join([
+            'Add parsing support for flex-wrap: balance',
+            '  https://bugs.example.com/show_bug.cgi?id=1',
+            '  rdar://177185140',
+            '',
+            '  Reviewed by Tim Nguyen and Sam Weinig.',
+            '',
+            '  `balance` evens out free space across flex lines instead of',
+            '  greedily filling each one:',
+            '',
+            '      flex-wrap: wrap balance;',
+            '',
+            '  Tests: css3/flexbox/flex-wrap-balance-disabled.html',
+            '  imported/w3c/web-platform-tests/css/css-flexbox/balance/flex-wrap-computed.html',
+            '  imported/w3c/web-platform-tests/css/css-flexbox/balance/flex-wrap-valid.html',
+            '',
+            '  * Source/WebCore/css/CSSProperties.json:',
+            '',
+            'Canonical link: https://commits.webkit.org/320139@main',
+        ])
+        self.assertEqual(wpt_commit_message(message, self.bugs(1)), '\n'.join([
+            'Add parsing support for flex-wrap: balance',
+            '',
+            '`balance` evens out free space across flex lines instead of',
+            'greedily filling each one:',
+            '',
+            '    flex-wrap: wrap balance;',
+            '',
+            'WebKit-Bug: https://bugs.example.com/show_bug.cgi?id=1',
+            'WebKit-Canonical-Link: https://commits.webkit.org/320139@main',
+        ]))
+
+    def test_unusual_layout(self):
+        message = '\n'.join([
+            'Fix imported/w3c/web-platform-tests/webmessaging/message-channels/transfer.html',
+            '',
+            'https://bugs.example.com/show_bug.cgi?id=1',
+            'https://bugs.example.com/show_bug.cgi?id=2 <rdar://problem/176161982>',
+            '',
+            'Follow-up to https://bugs.example.com/show_bug.cgi?id=3, see',
+            'LayoutTests/imported/w3c/web-platform-tests/webmessaging/ and',
+            'https://github.com/WebKit/WebKit/tree/main/LayoutTests/imported/w3c/web-platform-tests/webmessaging.',
+            '',
+            'Reviewed by Anne van Kesteren.',
+            '',
+            'Test: imported/w3c/web-platform-tests/webmessaging/message-channels/transfer.html',
+            '',
+            '* Structured clone: now covers ArrayBuffer.',
+            '',
+            'Upstream: https://github.com/web-platform-tests/wpt/pull/12345',
+            '',
+            '* LayoutTests/imported/w3c/web-platform-tests/webmessaging/message-channels/transfer.html:',
+            '',
+            'Co-authored-by: Sam Sneddon <gsnedders@apple.com>',
+            'Originally-landed-as: 305413.908@safari-7624-branch (526ac3579021). rdar://180436853',
+            'Canonical link: https://commits.webkit.org/312959@main',
+        ])
+        self.assertEqual(wpt_commit_message(message, self.bugs(1, 2)), '\n'.join([
+            'Fix webmessaging/message-channels/transfer.html',
+            '',
+            'Follow-up to https://bugs.example.com/show_bug.cgi?id=3, see',
+            'webmessaging/ and',
+            'https://github.com/WebKit/WebKit/tree/main/LayoutTests/imported/w3c/web-platform-tests/webmessaging.',
+            '',
+            '* Structured clone: now covers ArrayBuffer.',
+            '',
+            'Upstream: https://github.com/web-platform-tests/wpt/pull/12345',
+            '',
+            'WebKit-Bug: https://bugs.example.com/show_bug.cgi?id=1',
+            'WebKit-Bug: https://bugs.example.com/show_bug.cgi?id=2',
+            'WebKit-Canonical-Link: https://commits.webkit.org/312959@main',
+            'Co-authored-by: Sam Sneddon <gsnedders@apple.com>',
+        ]))
+
+    def test_unreviewed(self):
+        message = '\n'.join([
+            '[GLIB] Unskip imported/w3c/web-platform-tests/websockets/constructor/011.html',
+            'https://bugs.example.com/show_bug.cgi?id=1',
+            '',
+            'Unreviewed test gardening.',
+            '',
+            'It passes now that libsoup is at 3.7.3.',
+            '',
+            '* LayoutTests/platform/glib/TestExpectations:',
+            '',
+            'Canonical link: https://commits.webkit.org/321585@main',
+        ])
+        self.assertEqual(wpt_commit_message(message, self.bugs(1)), '\n'.join([
+            '[GLIB] Unskip websockets/constructor/011.html',
+            '',
+            'It passes now that libsoup is at 3.7.3.',
+            '',
+            'WebKit-Bug: https://bugs.example.com/show_bug.cgi?id=1',
+            'WebKit-Canonical-Link: https://commits.webkit.org/321585@main',
+        ]))
+
+    def test_not_yet_reviewed(self):
+        message = '\n'.join([
+            'Pick a select option on mouseup',
+            'https://bugs.example.com/show_bug.cgi?id=1',
+            '',
+            'Reviewed by NOBODY (OOPS!).',
+            '',
+            'mousedown does not allow pressing the select and releasing on an option.',
+            '',
+            '* LayoutTests/imported/w3c/web-platform-tests/html/semantics/forms/the-select-element/select-pick.html: Added.',
+        ])
+        self.assertEqual(wpt_commit_message(message, self.bugs(1)), '\n'.join([
+            'Pick a select option on mouseup',
+            '',
+            'mousedown does not allow pressing the select and releasing on an option.',
+            '',
+            'WebKit-Bug: https://bugs.example.com/show_bug.cgi?id=1',
+        ]))

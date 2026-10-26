@@ -28,6 +28,7 @@
 #include "StyleImageOrNone.h"
 
 #include "AnimationUtilities.h"
+#include "CSSImageOrNone.h"
 #include "CSSKeywordValue.h"
 #include "StyleBuilderState.h"
 
@@ -36,11 +37,35 @@ namespace Style {
 
 // MARK: - Conversion
 
+auto ToCSS<ImageOrNone>::operator()(const ImageOrNone& value, const Style::ComputedStyle& style) -> CSS::ImageOrNone
+{
+    return value.switchOn(
+        [](CSS::Keyword::None keyword) -> CSS::ImageOrNone {
+            return keyword;
+        },
+        [&](const ImageWrapper& image) -> CSS::ImageOrNone {
+            return toCSS(image, style);
+        }
+    );
+}
+
+auto ToStyle<CSS::ImageOrNone>::operator()(const CSS::ImageOrNone& value, const BuilderState& state) -> ImageOrNone
+{
+    return value.switchOn(
+        [](CSS::Keyword::None keyword) -> ImageOrNone {
+            return keyword;
+        },
+        [&](const CSS::ImageWrapper& image) -> ImageOrNone {
+            return toStyle(image, state);
+        }
+    );
+}
+
 auto CSSValueConversion<ImageOrNone>::operator()(BuilderState& state, const CSSValue& value) -> ImageOrNone
 {
     if (auto* keywordValue = dynamicDowncast<CSSKeywordValue>(value)) {
         switch (keywordValue->valueID()) {
-        case CSSValueNone:
+        case CSSValueID::None:
             return CSS::Keyword::None { };
         default:
             state.setCurrentPropertyInvalidAtComputedValueTime();

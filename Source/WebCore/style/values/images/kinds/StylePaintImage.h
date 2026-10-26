@@ -44,8 +44,6 @@ public:
     }
     virtual ~PaintImage();
 
-    static constexpr bool isFixedSize = false;
-
 private:
     explicit PaintImage(CustomIdent&&, Ref<CSSVariableData>&&);
 
@@ -55,11 +53,17 @@ private:
     Ref<DeprecatedCSSOMValue> computedStyleDeprecatedCSSOMValue(CSSValuePool&, const Style::ComputedStyle&, CSSStyleDeclaration&) const final;
     bool isPending() const final;
     void load(CachedResourceLoader&, const ResourceLoaderOptions&) final;
-    RefPtr<WebCore::Image> image(const RenderElement*, const FloatSize&, const GraphicsContext& destinationContext, bool isForFirstLine) const final;
+    ImageDrawResult draw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImageDrawingOptions, bool isForFirstLine) const final;
+    ImageDrawResult drawAsPattern(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions, bool isForFirstLine) const final;
     bool knownToBeOpaque(const RenderElement&) const final;
-    FloatSize fixedSize(const RenderElement&) const final;
+    bool canDraw(const RenderElement&) const final;
+    bool containsCurrentColor() const final { return false; }
+    bool canDrawAtSize(const RenderElement&, const FloatSize&) const final;
     void didAddClient(RenderElement&) final { }
     void didRemoveClient(RenderElement&) final { }
+
+    Vector<WTF::String> paintArguments() const;
+    ImageDrawResult paint(GraphicsContext&, const RenderElement&, FloatSize) const;
 
     CustomIdent m_name;
     const Ref<CSSVariableData> m_arguments;

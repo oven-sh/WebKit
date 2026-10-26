@@ -175,6 +175,44 @@ static SuspendResumeRequest pendingSuspendResumeRequestForCurrentThread()
     }
 }
 
+#if HAVE(MACHINE_CONTEXT)
+// The stack pointer of the code that the signal interrupted, from the registers the kernel saved.
+// The same field selection as JSC::MachineContext::stackPointerImpl(mcontext_t&) in
+// Source/JavaScriptCore/runtime/MachineContext.h, which WTF cannot include. An architecture that
+// is missing here gets nullptr, and the handler falls back to its own stack pointer.
+static inline void* interruptedStackPointer(ucontext_t* ucontext)
+{
+#if (OS(LINUX) || OS(FUCHSIA) || OS(HURD)) && CPU(X86_64)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.gregs[REG_RSP]);
+#elif (OS(LINUX) || OS(FUCHSIA) || OS(HURD)) && CPU(ARM64)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.sp);
+#elif (OS(LINUX) || OS(FUCHSIA) || OS(HURD)) && CPU(ARM)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.arm_sp);
+#elif (OS(LINUX) || OS(FUCHSIA) || OS(HURD)) && CPU(RISCV64)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.__gregs[REG_SP]);
+#elif OS(FREEBSD) && CPU(X86_64)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.mc_rsp);
+#elif OS(FREEBSD) && CPU(ARM)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.__gregs[_REG_SP]);
+#elif OS(FREEBSD) && CPU(ARM64)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.mc_gpregs.gp_sp);
+#elif OS(NETBSD) && CPU(X86_64)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.__gregs[_REG_RSP]);
+#elif OS(NETBSD) && (CPU(ARM) || CPU(ARM64))
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.__gregs[_REG_SP]);
+#elif OS(HAIKU) && CPU(X86_64)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.rsp);
+#elif OS(QNX) && CPU(X86_64)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.cpu.rsp);
+#elif OS(QNX) && CPU(ARM64)
+    return reinterpret_cast<void*>(ucontext->uc_mcontext.cpu.gpr[AARCH64_REG_SP]);
+#else
+    UNUSED_PARAM(ucontext);
+    return nullptr;
+#endif
+}
+#endif
+
 void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
 {
     // sigsuspend() below always sets errno to EINTR, and the interrupted code may be about to read its own.
@@ -195,25 +233,34 @@ void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
     Thread* thread = targetThread.load();
     clearSuspendResumeRequest();
 
-    void* approximateStackPointer = currentStackPointer();
-    if (!thread->m_stack.contains(approximateStackPointer)) {
-        // This happens if we use an alternative signal stack.
-        // 1. A user-defined signal handler is invoked with an alternative signal stack.
-        // 2. In the middle of the execution of the handler, we attempt to suspend the target thread.
-        // 3. A nested signal handler is executed.
-        // 4. The stack pointer saved in the machine context will be pointing to the alternative signal stack.
-        // In this case, we back off the suspension and retry a bit later.
+    // The registers are published only when the signal interrupted code on the thread's own stack.
+    // The interrupted stack pointer comes from the context: the handler's own stack pointer says
+    // nothing about it once the handler runs on an alternate signal stack. This handler is
+    // installed without SA_ONSTACK, but a runtime loaded later can add the flag to every handler
+    // it finds (the Go runtime does, in runtime.setsigstack), and then a thread that has an
+    // alternate stack (the main thread of Bun) never passed the old test of currentStackPointer(),
+    // so suspend() retried forever.
+#if HAVE(MACHINE_CONTEXT)
+    ucontext_t* userContext = static_cast<ucontext_t*>(ucontext);
+    void* interruptedSP = interruptedStackPointer(userContext);
+    void* stackPointerToCheck = interruptedSP ? interruptedSP : currentStackPointer();
+#else
+    void* stackPointerToCheck = currentStackPointer();
+#endif
+    if (!thread->m_stack.contains(stackPointerToCheck)) {
+        // The signal interrupted code on another stack: a signal handler on an alternate stack, or
+        // a stack that is not the thread's own. The registers would not describe this thread's
+        // stack. Back off: suspend() retries once the thread is back on its own stack.
         thread->m_platformRegisters = nullptr;
         globalSemaphoreForSuspendResume->post();
         return;
     }
 
 #if HAVE(MACHINE_CONTEXT)
-    ucontext_t* userContext = static_cast<ucontext_t*>(ucontext);
     thread->m_platformRegisters = &registersFromUContext(userContext);
 #else
     UNUSED_PARAM(ucontext);
-    PlatformRegisters platformRegisters { approximateStackPointer };
+    PlatformRegisters platformRegisters { stackPointerToCheck };
     thread->m_platformRegisters = &platformRegisters;
 #endif
 
@@ -343,7 +390,7 @@ dispatch_qos_class_t Thread::dispatchQOSClass(QOS qos)
 #endif
 
 #if HAVE(SCHEDULING_POLICIES)
-static int NODELETE schedPolicy(Thread::SchedulingPolicy schedulingPolicy)
+static int LEGACY_NODELETE schedPolicy(Thread::SchedulingPolicy schedulingPolicy)
 {
     switch (schedulingPolicy) {
     case Thread::SchedulingPolicy::FIFO:
@@ -705,7 +752,7 @@ struct ThreadStateMetadata {
     thread_state_flavor_t flavor;
 };
 
-static ThreadStateMetadata NODELETE threadStateMetadata()
+static ThreadStateMetadata LEGACY_NODELETE threadStateMetadata()
 {
 #if CPU(X86)
     unsigned userCount = sizeof(PlatformRegisters) / sizeof(int);

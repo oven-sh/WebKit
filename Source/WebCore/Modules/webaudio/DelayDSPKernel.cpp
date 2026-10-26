@@ -46,12 +46,12 @@ static size_t bufferLengthForDelay(double maxDelayTime, double sampleRate)
 }
 
 // Returns (a - b) if a is greater than b, 0 otherwise.
-template<typename T> static inline size_t NODELETE positiveSubtract(T a, T b)
+template<typename T> static inline size_t LEGACY_NODELETE positiveSubtract(T a, T b)
 {
     return a <= b ? 0 : static_cast<size_t>(a - b);
 }
 
-static void copyToCircularBuffer(std::span<float> buffer, size_t writeIndex, std::span<const float> source)
+static void LEGACY_NODELETE copyToCircularBuffer(std::span<float> buffer, size_t writeIndex, std::span<const float> source)
 {
     // The algorithm below depends on this being true because we don't expect to have to fill the entire buffer more than once.
     RELEASE_ASSERT(buffer.size() >= source.size());
@@ -108,8 +108,9 @@ void DelayDSPKernel::process(std::span<const float> source, std::span<float> des
     if (m_buffer.isEmpty() || !source.data() || !destination.data()) [[unlikely]]
         return;
 
-    bool sampleAccurate = delayProcessor() && delayProcessor()->delayTime().hasSampleAccurateValues();
-    bool shouldUseARate = delayProcessor() && delayProcessor()->delayTime().automationRate() == AutomationRate::ARate;
+    RefPtr delayTime = delayProcessor() ? &delayProcessor()->delayTime() : nullptr;
+    bool sampleAccurate = delayTime && delayTime->hasSampleAccurateValues();
+    bool shouldUseARate = delayTime && delayTime->automationRate() == AutomationRate::ARate;
     if (sampleAccurate && shouldUseARate)
         processARate(source, destination);
     else
@@ -121,7 +122,7 @@ void DelayDSPKernel::processARate(std::span<const float> source, std::span<float
     size_t bufferLength = m_buffer.size();
     auto buffer = m_buffer.span();
 
-    delayProcessor()->delayTime().calculateSampleAccurateValues(m_delayTimes.span().first(source.size()));
+    protect(delayProcessor()->delayTime())->calculateSampleAccurateValues(m_delayTimes.span().first(source.size()));
 
     copyToCircularBuffer(buffer, m_writeIndex, source);
 
@@ -157,7 +158,7 @@ void DelayDSPKernel::processKRate(std::span<const float> source, std::span<float
     size_t bufferLength = m_buffer.size();
     auto buffer = m_buffer.span();
 
-    double delayTime = delayProcessor() ? delayProcessor()->delayTime().finalValue() : m_desiredDelayFrames / sampleRate();
+    double delayTime = delayProcessor() ? protect(delayProcessor()->delayTime())->finalValue() : m_desiredDelayFrames / sampleRate();
     // Make sure the delay time is in a valid range.
     delayTime = std::clamp(delayTime, 0.0, maxDelayTime());
     double desiredDelayFrames = delayTime * sampleRate();
@@ -219,7 +220,7 @@ void DelayDSPKernel::processOnlyAudioParams(size_t framesToProcess)
     std::array<float, AudioUtilities::renderQuantumSize> values;
     ASSERT(framesToProcess <= AudioUtilities::renderQuantumSize);
 
-    delayProcessor()->delayTime().calculateSampleAccurateValues(std::span { values }.first(framesToProcess));
+    protect(delayProcessor()->delayTime())->calculateSampleAccurateValues(std::span { values }.first(framesToProcess));
 }
 
 void DelayDSPKernel::reset()

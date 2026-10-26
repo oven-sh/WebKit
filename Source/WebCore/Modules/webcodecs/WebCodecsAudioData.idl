@@ -32,6 +32,9 @@
     Exposed=(Window,DedicatedWorker),
     InterfaceName=AudioData,
     ReportExtraMemoryCost,
+    SameAgentCluster,
+    Serializable,
+    Transferable,
 ] interface WebCodecsAudioData {
     [CallWith=CurrentScriptExecutionContext] constructor(AudioDataInit init);
 

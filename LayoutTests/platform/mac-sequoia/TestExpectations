@@ -30,6 +30,10 @@ fast/forms/datalist/input-appearance-range-with-datalist-rtl.html [ Pass ]
 # Test only passes with AppKit support for scrollbar color, added in Tahoe
 fast/scrolling/scrollbars/scrollbar-color.html [ Skip ]
 fast/scrolling/scrollbars/scrollbar-color-body.html [ Skip ]
+css3/color-filters/color-filter-scrollbar-color.html [ Skip ]
+css3/color-filters/color-filter-scrollbar-color-of-composited-box.html [ Skip ]
+css3/color-filters/ios/color-filter-scrollbar-color.html [ Skip ]
+css3/color-filters/ios/color-filter-scrollbar-color-of-composited-box.html [ Skip ]
 
 imported/w3c/web-platform-tests/mixed-content/gen/top.http-rp/opt-in/sharedworker-import-data.https.html [ Skip ]
 imported/w3c/web-platform-tests/mixed-content/gen/top.meta/opt-in/sharedworker-import-data.https.html [ Skip ]
@@ -46,6 +50,7 @@ accessibility/mac/intersection-with-selection-range.html [ Skip ]
 
 # webkit.org/b/319008 WebTransport-over-HTTP/3 needs Network.framework QUIC SPI only present on Tahoe; skip the suite on Sequoia.
 imported/w3c/web-platform-tests/webtransport [ Skip ]
+imported/w3c/web-platform-tests/fetch/local-network-access/webtransport.tentative.https.html [ Skip ]
 imported/w3c/web-platform-tests/content-security-policy/connect-src/connect-src-webtransport-blocked.sub.https.html [ Skip ]
 
 # The IPC payload hardcodes the HAVE(WK_SECURE_CODING_SECTRUST) shape of WebKit::CoreIPCSecTrust,

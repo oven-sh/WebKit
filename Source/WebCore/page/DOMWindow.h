@@ -43,6 +43,7 @@ class CSSStyleDeclaration;
 class CookieStore;
 class Crypto;
 class CustomElementRegistry;
+class DOMRect;
 class DOMSelection;
 class DOMWrapperWorld;
 class Document;
@@ -73,6 +74,7 @@ class Screen;
 class SecurityOrigin;
 class Storage;
 class StyleMedia;
+class Viewport;
 class VisualViewport;
 class WebCoreOpaqueRoot;
 class WebKitNamespace;
@@ -84,6 +86,7 @@ class DeviceMotionController;
 class DeviceOrientationController;
 #endif
 
+struct DOMRectInit;
 struct IdleRequestOptions;
 struct ImageBitmapOptions;
 struct MessageWithMessagePorts;
@@ -95,6 +98,7 @@ struct WindowPostMessageOptions;
 enum class IncludeTargetOrigin : bool { No, Yes };
 enum class SetLocationLocking : bool { LockHistoryBasedOnGestureState, LockHistoryAndBackForwardList };
 enum class NavigationHistoryBehavior : uint8_t;
+enum class ReplaceIfNotCompletelyLoaded : bool;
 
 using IntDegrees = int32_t;
 
@@ -104,7 +108,7 @@ public:
     virtual ~DOMWindow();
 
     const GlobalWindowIdentifier& identifier() const LIFETIME_BOUND { return m_identifier; }
-    virtual Frame* NODELETE frame() const = 0;
+    virtual Frame* LEGACY_NODELETE frame() const = 0;
 
     enum class DOMWindowType : bool { Local, Remote };
     bool isLocalDOMWindow() const { return m_type == DOMWindowType::Local; }
@@ -114,20 +118,20 @@ public:
     using RefCounted::deref;
 
     WEBCORE_EXPORT Location& location();
-    virtual void setLocation(LocalDOMWindow& activeWindow, const URL& completedURL, NavigationHistoryBehavior, SetLocationLocking = SetLocationLocking::LockHistoryBasedOnGestureState, CanNavigateState = CanNavigateState::Unchecked) = 0;
+    virtual void setLocation(LocalDOMWindow& activeWindow, const URL& completedURL, NavigationHistoryBehavior, ReplaceIfNotCompletelyLoaded, SetLocationLocking = SetLocationLocking::LockHistoryBasedOnGestureState, CanNavigateState = CanNavigateState::Unchecked) = 0;
 
-    bool NODELETE closed() const;
+    bool LEGACY_NODELETE closed() const;
     WEBCORE_EXPORT void close();
     void close(Document&);
     virtual void closePage() = 0;
 
-    FrameConsoleClient* NODELETE console() const;
+    FrameConsoleClient* LEGACY_NODELETE console() const;
 
     WindowProxy* opener() const;
-    WEBCORE_EXPORT Document* NODELETE documentIfLocal();
+    WEBCORE_EXPORT Document* LEGACY_NODELETE documentIfLocal();
 
-    WindowProxy* NODELETE top() const;
-    WindowProxy* NODELETE parent() const;
+    WindowProxy* LEGACY_NODELETE top() const;
+    WindowProxy* LEGACY_NODELETE parent() const;
     unsigned length() const;
     void focus(LocalDOMWindow& incumbentWindow);
     void blur();
@@ -164,6 +168,7 @@ public:
     ExceptionOr<double> devicePixelRatio() const;
     ExceptionOr<StyleMedia&> styleMedia();
     ExceptionOr<VisualViewport&> visualViewport();
+    ExceptionOr<Viewport&> viewport();
     ExceptionOr<Storage*> localStorage();
     ExceptionOr<Storage*> sessionStorage();
     ExceptionOr<String> origin() const;
@@ -185,11 +190,11 @@ public:
     ExceptionOr<void> captureEvents();
     ExceptionOr<void> releaseEvents();
     ExceptionOr<bool> find(const String&, bool caseSensitive, bool backwards, bool wrap, bool wholeWord, bool searchInFrames, bool showDialog) const;
-    ExceptionOr<int> requestAnimationFrame(Ref<RequestAnimationFrameCallback>&&);
-    ExceptionOr<int> webkitRequestAnimationFrame(Ref<RequestAnimationFrameCallback>&&);
-    ExceptionOr<void> cancelAnimationFrame(int id);
-    ExceptionOr<int> requestIdleCallback(Ref<IdleRequestCallback>&&, const IdleRequestOptions&);
-    ExceptionOr<void> cancelIdleCallback(int id);
+    ExceptionOr<unsigned> requestAnimationFrame(Ref<RequestAnimationFrameCallback>&&);
+    ExceptionOr<unsigned> webkitRequestAnimationFrame(Ref<RequestAnimationFrameCallback>&&);
+    ExceptionOr<void> cancelAnimationFrame(unsigned id);
+    ExceptionOr<unsigned> requestIdleCallback(Ref<IdleRequestCallback>&&, const IdleRequestOptions&);
+    ExceptionOr<void> cancelIdleCallback(unsigned id);
     ExceptionOr<void> createImageBitmap(ImageBitmap::Source&&, ImageBitmapOptions&&, ImageBitmap::Promise&&);
     ExceptionOr<void> createImageBitmap(ImageBitmap::Source&&, int sx, int sy, int sw, int sh, ImageBitmapOptions&&, ImageBitmap::Promise&&);
     ExceptionOr<RefPtr<CSSRuleList>> getMatchedCSSRules(Element*, const String& pseudoElt, bool authorOnly = true) const;
@@ -197,6 +202,7 @@ public:
     ExceptionOr<RefPtr<WebKitPoint>> webkitConvertPointFromNodeToPage(Node*, const WebKitPoint*) const;
     ExceptionOr<Ref<NodeList>> collectMatchingElementsInFlatTree(Node&, const String& selectors);
     ExceptionOr<RefPtr<Element>> matchingElementInFlatTree(Node&, const String& selectors);
+    ExceptionOr<Ref<DOMRect>> convertRectToMainFrameCoordinates(const DOMRectInit&);
     ExceptionOr<void> scrollBy(const ScrollToOptions&) const;
     ExceptionOr<void> scrollBy(double x, double y) const;
     ExceptionOr<void> scrollTo(const ScrollToOptions&, ScrollClamping = ScrollClamping::Clamped, ScrollSnapPointSelectionMethod = ScrollSnapPointSelectionMethod::Closest, std::optional<FloatSize> originalScrollDelta = std::nullopt) const;
@@ -244,11 +250,11 @@ protected:
 
 private:
     GlobalWindowIdentifier m_identifier;
-    RefPtr<Location> m_location;
+    const RefPtr<Location> m_location;
     const DOMWindowType m_type;
 };
 
-WebCoreOpaqueRoot NODELETE root(DOMWindow*);
+WebCoreOpaqueRoot LEGACY_NODELETE root(DOMWindow*);
 
 } // namespace WebCore
 

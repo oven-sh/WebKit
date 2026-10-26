@@ -177,6 +177,8 @@ WTF_EXPORT_PRIVATE size_t fastMallocGoodSize(size_t);
 
 WTF_EXPORT_PRIVATE void releaseFastMallocFreeMemory();
 WTF_EXPORT_PRIVATE void releaseFastMallocFreeMemoryForThisThread();
+// For a thread that is idle and about to block for a while. See bmalloc::api::scavengeThisThreadOnIdle.
+WTF_EXPORT_PRIVATE void releaseFastMallocFreeMemoryForIdleThread();
 
 WTF_EXPORT_PRIVATE void fastCommitAlignedMemory(void*, size_t);
 WTF_EXPORT_PRIVATE void fastDecommitAlignedMemory(void*, size_t);
@@ -199,7 +201,7 @@ struct FastMallocStatistics {
 };
 WTF_EXPORT_PRIVATE FastMallocStatistics fastMallocStatistics();
 
-WTF_EXPORT_PRIVATE void NODELETE fastMallocDumpMallocStats();
+WTF_EXPORT_PRIVATE void LEGACY_NODELETE fastMallocDumpMallocStats();
 
 // This defines a type which holds an unsigned integer and is the same
 // size as the minimally aligned memory allocation.

@@ -28,7 +28,6 @@
 
 #include "AXObjectCache.h"
 #include "BreakablePositions.h"
-#include "BreakingContext.h"
 #include "DocumentMarkerController.h"
 #include "DocumentView.h"
 #include "FloatQuad.h"
@@ -39,7 +38,7 @@
 #include "InlineIteratorLineBoxInlines.h"
 #include "InlineIteratorLogicalOrderTraversal.h"
 #include "InlineIteratorSVGTextBox.h"
-#include "InlineIteratorTextBoxInlines.h"
+#include "InlineIteratorTextBox.h"
 #include "InlineRunAndOffset.h"
 #include "LayoutInlineTextBox.h"
 #include "LayoutIntegrationLineLayout.h"
@@ -49,9 +48,8 @@
 #include "LocalFrameView.h"
 #include "MathVariant.h"
 #include "Range.h"
-#include "RenderBlock.h"
+#include "RenderBlockFlowInlines.h"
 #include "RenderCombineText.h"
-#include "RenderInline.h"
 #include "RenderLayer.h"
 #include "RenderObjectInlines.h"
 #include "RenderTextInlines.h"
@@ -59,7 +57,6 @@
 #include "RenderView.h"
 #include "RenderedDocumentMarker.h"
 #include "SVGElementTypeHelpers.h"
-#include "SVGInlineTextBox.h"
 #include "SelectionGeometry.h"
 #include "Settings.h"
 #include "SurrogatePairAwareTextIterator.h"
@@ -76,6 +73,7 @@
 #include <wtf/text/CharacterProperties.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/TextBreakIterator.h>
+#include <wtf/text/icu/UnicodeExtras.h>
 #include <wtf/unicode/CharacterNames.h>
 
 #if PLATFORM(IOS_FAMILY)
@@ -126,7 +124,7 @@ private:
 
 using SecureTextTimerMap = SingleThreadWeakHashMap<RenderText, std::unique_ptr<SecureTextTimer>>;
 
-static SecureTextTimerMap& NODELETE secureTextTimers()
+static SecureTextTimerMap& LEGACY_NODELETE secureTextTimers()
 {
     static NeverDestroyed<SecureTextTimerMap> map;
     return map.get();
@@ -143,7 +141,7 @@ inline void SecureTextTimer::restart(unsigned offsetAfterLastTypedCharacter)
     startOneShot(1_s * m_renderer.settings().passwordEchoDurationInSeconds());
 }
 
-inline unsigned NODELETE SecureTextTimer::takeOffsetAfterLastTypedCharacter()
+inline unsigned LEGACY_NODELETE SecureTextTimer::takeOffsetAfterLastTypedCharacter()
 {
     unsigned offset = m_offsetAfterLastTypedCharacter;
     m_offsetAfterLastTypedCharacter = 0;
@@ -157,19 +155,19 @@ void SecureTextTimer::fired()
     m_renderer.setText(m_renderer.text(), true /* forcing setting text as it may be masked later */);
 }
 
-static HashMap<SingleThreadWeakRef<const RenderText>, String>& NODELETE originalTextMap()
+static HashMap<SingleThreadWeakRef<const RenderText>, String>& LEGACY_NODELETE originalTextMap()
 {
     static NeverDestroyed<HashMap<SingleThreadWeakRef<const RenderText>, String>> map;
     return map;
 }
 
-static HashMap<SingleThreadWeakRef<const RenderText>, SingleThreadWeakPtr<RenderInline>>& NODELETE inlineWrapperForDisplayContentsMap()
+static HashMap<SingleThreadWeakRef<const RenderText>, SingleThreadWeakPtr<RenderBoxModelObject>>& LEGACY_NODELETE inlineWrapperForDisplayContentsMap()
 {
-    static NeverDestroyed<HashMap<SingleThreadWeakRef<const RenderText>, SingleThreadWeakPtr<RenderInline>>> map;
+    static NeverDestroyed<HashMap<SingleThreadWeakRef<const RenderText>, SingleThreadWeakPtr<RenderBoxModelObject>>> map;
     return map;
 }
 
-static constexpr char16_t NODELETE convertNoBreakSpaceToSpace(char16_t character)
+static constexpr char16_t LEGACY_NODELETE convertNoBreakSpaceToSpace(char16_t character)
 {
     return character == noBreakSpace ? ' ' : character;
 }
@@ -252,13 +250,13 @@ static size_t capitalizeWordWithLocale(StringView textContent, unsigned startOff
 
     Vector<char16_t, 32> titlecased(wordLength + 4);
     UErrorCode status = U_ZERO_ERROR;
-    auto realLength = u_strToTitle(titlecased.mutableSpan().data(), titlecased.size(), wordData, wordLength, nullptr, localeUTF8.legacyCStringPointer(), &status);
+    auto realLength = uStrToTitle(titlecased.mutableSpan().data(), titlecased.size(), wordData, wordLength, nullptr, localeUTF8, &status);
     if (U_FAILURE(status)) {
         if (status != U_BUFFER_OVERFLOW_ERROR)
             return 0;
         titlecased.grow(realLength);
         status = U_ZERO_ERROR;
-        u_strToTitle(titlecased.mutableSpan().data(), titlecased.size(), wordData, wordLength, nullptr, localeUTF8.legacyCStringPointer(), &status);
+        uStrToTitle(titlecased.mutableSpan().data(), titlecased.size(), wordData, wordLength, nullptr, localeUTF8, &status);
         if (U_FAILURE(status))
             return 0;
     }
@@ -295,7 +293,7 @@ String capitalize(const String& string, const AtomString& locale)
 String capitalize(const String& string, char32_t previousCharacter, const AtomString& locale)
 {
     int32_t length = string.length();
-    auto& stringImpl = *string.impl();
+    Ref stringImpl = *string.impl();
 
     static_assert(String::MaxLength < std::numeric_limits<unsigned>::max(), "Must be able to add one without overflowing unsigned");
 
@@ -308,7 +306,7 @@ String capitalize(const String& string, char32_t previousCharacter, const AtomSt
     for (int32_t i = 0; i < previousCharacterLength; ++i)
         stringWithPrevious[i] = convertNoBreakSpaceToSpace(previousCharacterUTF16[i]);
     for (int32_t i = previousCharacterLength; i < length + previousCharacterLength; ++i)
-        stringWithPrevious[i] = convertNoBreakSpaceToSpace(stringImpl[i - previousCharacterLength]);
+        stringWithPrevious[i] = convertNoBreakSpaceToSpace(stringImpl.get()[i - previousCharacterLength]);
 
     auto* breakIterator = WTF::wordBreakIterator(stringWithPrevious.span());
     if (!breakIterator)
@@ -329,22 +327,43 @@ String capitalize(const String& string, char32_t previousCharacter, const AtomSt
             auto startOffset = startOfWord - previousCharacterLength;
             auto endOffset = endOfWord - previousCharacterLength;
             size_t capitalizedContentLength;
-            if (needsLocaleAwareTitlecase(stringImpl[startOffset]))
+            if (needsLocaleAwareTitlecase(stringImpl.get()[startOffset]))
                 capitalizedContentLength = capitalizeWordWithLocale(string, startOffset, endOffset, locale, result);
             else
                 capitalizedContentLength = capitalizeCharacter(string, startOffset, result);
             for (int32_t i = startOfWord + capitalizedContentLength; i < endOfWord; ++i)
-                result.append(stringImpl[i - previousCharacterLength]);
+                result.append(stringImpl.get()[i - previousCharacterLength]);
         } else {
             // This is previous and continous non-titlecased current content. Only append current content.
             for (int32_t i = startOfWord; i < endOfWord; ++i) {
                 if (i < previousCharacterLength)
                     continue;
-                result.append(stringImpl[i - previousCharacterLength]);
+                result.append(stringImpl.get()[i - previousCharacterLength]);
             }
         }
     }
     return result == string ? string : result.toString();
+}
+
+static LayoutRect LEGACY_NODELETE snappedSelectionRect(const LayoutRect& selectionRect, float logicalRight, WritingMode writingMode)
+{
+    auto snappedSelectionRect = enclosingIntRect(selectionRect);
+    LayoutUnit logicalWidth = snappedSelectionRect.width();
+    if (snappedSelectionRect.x() > logicalRight)
+        logicalWidth = 0;
+    else if (snappedSelectionRect.maxX() > logicalRight)
+        logicalWidth = logicalRight - snappedSelectionRect.x();
+
+    if (writingMode.isHorizontal()) {
+        return {
+            snappedSelectionRect.x(), selectionRect.y(),
+            logicalWidth, selectionRect.height(),
+        };
+    }
+    return {
+        selectionRect.y(), snappedSelectionRect.x(),
+        selectionRect.height(), logicalWidth,
+    };
 }
 
 static LayoutRect selectionRectForTextBox(const InlineIterator::TextBox& textBox, unsigned rangeStart, unsigned rangeEnd)
@@ -379,7 +398,7 @@ static LayoutRect selectionRectForTextBox(const InlineIterator::TextBox& textBox
         }
     }
 
-    auto lineSelectionRect = LineSelection::logicalRect(*textBox.lineBox());
+    auto lineSelectionRect = LineSelection::logicalRect(textBox.lineBox());
     auto selectionRect = LayoutRect { 0, lineSelectionRect.y(), textBox.logicalWidth(), lineSelectionRect.height() };
 
     auto textRun = textBox.textRun();
@@ -441,12 +460,12 @@ RenderText::~RenderText()
     ASSERT(!originalTextMap().contains(this));
 }
 
-Layout::InlineTextBox* NODELETE RenderText::layoutBox()
+Layout::InlineTextBox* LEGACY_NODELETE RenderText::layoutBox()
 {
     return downcast<Layout::InlineTextBox>(RenderObject::layoutBox());
 }
 
-const Layout::InlineTextBox* NODELETE RenderText::layoutBox() const
+const Layout::InlineTextBox* LEGACY_NODELETE RenderText::layoutBox() const
 {
     return downcast<Layout::InlineTextBox>(RenderObject::layoutBox());
 }
@@ -456,7 +475,7 @@ ASCIILiteral RenderText::renderName() const
     return "RenderText"_s;
 }
 
-Text* NODELETE RenderText::textNode() const
+Text* LEGACY_NODELETE RenderText::textNode() const
 {
     return downcast<Text>(RenderObject::node());
 }
@@ -618,15 +637,15 @@ void RenderText::collectSelectionGeometries(Vector<SelectionGeometry>& rects, un
         }
 
         bool separateLines = false;
-        if (textBox->lineBox()->isFirstAfterPageBreak()) {
+        if (textBox->lineBox().isFirstAfterPageBreak()) {
             // The top of the second line in a column aligns with the bottom of the first line in adjacent columns,
             // which can cause the geometries united, extending the highlight box into unselected content.
             // To prevent this, use setSeparateFromPreviousLine for each column to ensure the geometries won't be united.
             separateLines = true;
             if (textBox->isHorizontal())
-                rect.shiftYEdgeTo(textBox->lineBox()->logicalTop());
+                rect.shiftYEdgeTo(textBox->lineBox().logicalTop());
             else
-                rect.shiftXEdgeTo(textBox->lineBox()->logicalTop());
+                rect.shiftXEdgeTo(textBox->lineBox().logicalTop());
         }
 
         RenderBlock* containingBlock = this->containingBlock();
@@ -642,7 +661,8 @@ void RenderText::collectSelectionGeometries(Vector<SelectionGeometry>& rects, un
             extentsRect.setY(leftOffset);
             extentsRect.setHeight(rightOffset - leftOffset);
         }
-        extentsRect = localToAbsoluteQuad(FloatRect(extentsRect)).enclosingBoundingBox();
+        // FIXME: Remove suppression once rdar://189998444 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST extentsRect = localToAbsoluteQuad(FloatRect(extentsRect)).enclosingBoundingBox();
         if (!textBox->isHorizontal())
             extentsRect = extentsRect.transposedRect();
         bool isFirstOnLine = !textBox->nextLineLeftwardOnLine();
@@ -652,8 +672,9 @@ void RenderText::collectSelectionGeometries(Vector<SelectionGeometry>& rects, un
         bool containsEnd = textBox->start() <= end && textBox->end() >= end;
 
         bool isFixed = false;
-        auto absoluteQuad = localToAbsoluteQuad(FloatRect(rect), MapCoordinatesMode::UseTransforms, &isFixed);
-        bool boxIsHorizontal = !is<InlineIterator::SVGTextBoxIterator>(textBox) ? textBox->isHorizontal() : !writingMode().isVertical();
+        // FIXME: Remove suppression once rdar://189998444 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST auto absoluteQuad = localToAbsoluteQuad(FloatRect(rect), MapCoordinatesMode::UseTransforms, &isFixed);
+        bool boxIsHorizontal = !textBox->isSVGText() ? textBox->isHorizontal() : !writingMode().isVertical();
 
         auto selectionGeometry = SelectionGeometry(absoluteQuad, HTMLElement::selectionRenderingBehavior(protect(textNode())), textBox->direction(), extentsRect.x(), extentsRect.maxX(), extentsRect.maxY(), 0, textBox->isLineBreak(), isFirstOnLine, isLastOnLine, containsStart, containsEnd, boxIsHorizontal, isFixed, view().pageNumberForBlockProgressionOffset(absoluteQuad.enclosingBoundingBox().x()));
         selectionGeometry.setSeparateFromPreviousLine(separateLines);
@@ -664,7 +685,7 @@ void RenderText::collectSelectionGeometries(Vector<SelectionGeometry>& rects, un
 static std::optional<IntRect> ellipsisRectForTextBox(const InlineIterator::TextBox& textBox, unsigned start, unsigned end)
 {
     auto lineBox = textBox.lineBox();
-    if (!lineBox->hasEllipsis())
+    if (!lineBox.hasEllipsis())
         return { };
 
     auto selectableRange = textBox.selectableRange();
@@ -679,7 +700,7 @@ static std::optional<IntRect> ellipsisRectForTextBox(const InlineIterator::TextB
     if (ellipsisEndPosition < *selectableRange.truncation && ellipsisStartPosition > *selectableRange.truncation)
         return { };
 
-    return IntRect { lineBox->ellipsisVisualRect(InlineIterator::LineBox::AdjustedForSelection::Yes) };
+    return IntRect { lineBox.ellipsisVisualRect(InlineIterator::LineBox::AdjustedForSelection::Yes) };
 }
 
 enum class ClippingOption { NoClipping, ClipToEllipsis };
@@ -749,7 +770,7 @@ static Vector<LayoutRect> characterRects(const InlineIterator::TextBox& run, uns
         });
     }
 
-    auto lineSelectionRect = LineSelection::logicalRect(*run.lineBox());
+    auto lineSelectionRect = LineSelection::logicalRect(run.lineBox());
     auto selectionRect = LayoutRect { run.logicalLeftIgnoringInlineDirection(), lineSelectionRect.y(), run.logicalWidth(), lineSelectionRect.height() };
     return run.fontCascade().characterSelectionRectsForText(run.textRun(), selectionRect, clampedStart, clampedEnd).map([&](auto& characterRect) {
         return snappedSelectionRect(characterRect, run.logicalRightIgnoringInlineDirection(), run.writingMode());
@@ -763,7 +784,7 @@ Vector<FloatQuad> RenderText::absoluteQuadsForRange(unsigned start, unsigned end
     bool computeIndividualCharacterRects = behavior.contains(RenderObject::BoundingRectBehavior::ComputeIndividualCharacterRects);
 
     // Work around signed/unsigned issues. This function takes unsigneds, and is often passed UINT_MAX
-    // to mean "all the way to the end". LegacyInlineTextBox coordinates are unsigneds, so changing this
+    // to mean "all the way to the end". Text box coordinates are unsigneds, so changing this
     // function to take ints causes various internal mismatches. But selectionRect takes ints, and
     // passing UINT_MAX to it causes trouble. Ideally we'd change selectionRect to take unsigneds, but
     // that would cause many ripple effects, so for now we'll just clamp our unsigned parameters to INT_MAX.
@@ -988,10 +1009,10 @@ PositionWithAffinity RenderText::positionForPoint(const LayoutPoint& point, HitT
             run.traverseNextTextBox();
 
         auto lineBox = run->lineBox();
-        auto top = LayoutUnit { std::min(previousLineBoxContentBottomOrBorderAndPadding(*lineBox), lineBox->contentLogicalTop()) };
+        auto top = LayoutUnit { std::min(previousLineBoxContentBottomOrBorderAndPadding(lineBox), lineBox.contentLogicalTop()) };
         if (logicalPoint.y() > top || (!blocksAreFlipped && logicalPoint.y() == top)) {
-            auto bottom = LayoutUnit { LineSelection::logicalBottom(*lineBox) };
-            if (auto nextLineBox = lineBox->next())
+            auto bottom = LayoutUnit { LineSelection::logicalBottom(lineBox) };
+            if (auto nextLineBox = lineBox.next())
                 bottom = std::min(bottom, LayoutUnit { nextLineBox->contentLogicalTop() });
 
             if (logicalPoint.y() < bottom || (blocksAreFlipped && logicalPoint.y() == bottom)) {
@@ -1018,7 +1039,7 @@ PositionWithAffinity RenderText::positionForPoint(const LayoutPoint& point, HitT
     return createPositionWithAffinity(0, Affinity::Downstream);
 }
 
-static inline std::optional<float> NODELETE combineTextWidth(const RenderText& renderer, const FontCascade& fontCascade, const Style::ComputedStyle& style)
+static inline std::optional<float> LEGACY_NODELETE combineTextWidth(const RenderText& renderer, const FontCascade& fontCascade, const Style::ComputedStyle& style)
 {
     if (style.textCombine() == TextCombine::None)
         return { };
@@ -1200,23 +1221,27 @@ RenderText::Widths RenderText::trimmedIntrinsicLogicalWidths(float leadingWidth,
     return widths;
 }
 
-static inline bool NODELETE isSpaceAccordingToStyle(char16_t c, const Style::ComputedStyle& style)
+static inline bool LEGACY_NODELETE isSpaceAccordingToStyle(char16_t c, const Style::ComputedStyle& style)
 {
     return c == ' ' || (c == noBreakSpace && style.nbspMode() == NBSPMode::Space);
 }
 
 float RenderText::minLogicalWidth() const
 {
-    if (hasInvalidContentLogicalWidths() || !m_minWidth)
-        const_cast<RenderText*>(this)->computeMinMaxIntrinsicLogicalWidths(0, !hasInvalidContentLogicalWidths());
+    if (hasInvalidContentLogicalWidths() || !m_minWidth) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<RenderText*>(this)->computeMinMaxIntrinsicLogicalWidths(0, !hasInvalidContentLogicalWidths());
+    }
 
     return *m_minWidth;
 }
 
 float RenderText::maxLogicalWidth() const
 {
-    if (hasInvalidContentLogicalWidths() || !m_maxWidth)
-        const_cast<RenderText*>(this)->computeMinMaxIntrinsicLogicalWidths(0, !hasInvalidContentLogicalWidths());
+    if (hasInvalidContentLogicalWidths() || !m_maxWidth) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<RenderText*>(this)->computeMinMaxIntrinsicLogicalWidths(0, !hasInvalidContentLogicalWidths());
+    }
 
     return *m_maxWidth;
 }
@@ -1549,7 +1574,7 @@ void RenderText::computeMinMaxIntrinsicLogicalWidths(float leadingWidth, SingleT
     clearContentLogicalWidthsInvalidation();
 }
 
-template<typename CharacterType> static inline bool containsOnlyCollapsibleWhitespace(std::span<const CharacterType> characters, const Style::ComputedStyle& style)
+template<typename CharacterType> static inline bool LEGACY_NODELETE containsOnlyCollapsibleWhitespace(std::span<const CharacterType> characters, const Style::ComputedStyle& style)
 {
     for (auto character : characters) {
         if (!style.isCollapsibleWhiteSpace(character))
@@ -1566,7 +1591,7 @@ bool RenderText::containsOnlyCollapsibleWhitespace() const
 }
 
 // FIXME: merge this with isCSSSpace somehow
-template<typename CharacterType> static inline bool NODELETE containsOnlyPossiblyCollapsibleWhitespace(std::span<const CharacterType> characters)
+template<typename CharacterType> static inline bool LEGACY_NODELETE containsOnlyPossiblyCollapsibleWhitespace(std::span<const CharacterType> characters)
 {
     for (auto character : characters) {
         if (!(character == '\n' || character == ' ' || character == '\t'))
@@ -1628,7 +1653,7 @@ void RenderText::setSelectionState(HighlightState state)
         containingBlock->setSelectionState(state);
 }
 
-static inline bool NODELETE isInlineFlowOrEmptyText(const RenderObject& renderer)
+static inline bool LEGACY_NODELETE isInlineFlowOrEmptyText(const RenderObject& renderer)
 {
     if (renderer.isInlineBox())
         return true;
@@ -1995,7 +2020,8 @@ float RenderText::width(unsigned from, unsigned length, const FontCascade& fontC
             if (fallbackFonts) {
                 ASSERT(glyphOverflow);
                 if (hasInvalidContentLogicalWidths() || !m_knownToHaveNoOverflowAndNoFallbackFonts) {
-                    const_cast<RenderText*>(this)->computeMinMaxIntrinsicLogicalWidths(0, *fallbackFonts, *glyphOverflow);
+                    // FIXME: Remove suppression once rdar://189998365 is fixed.
+                    SUPPRESS_MEMORY_UNSAFE_CAST const_cast<RenderText*>(this)->computeMinMaxIntrinsicLogicalWidths(0, *fallbackFonts, *glyphOverflow);
                     if (fallbackFonts->isEmptyIgnoringNullReferences() && !glyphOverflow->left && !glyphOverflow->right && !glyphOverflow->top && !glyphOverflow->bottom)
                         m_knownToHaveNoOverflowAndNoFallbackFonts = true;
                 }
@@ -2083,13 +2109,16 @@ LayoutRect RenderText::collectSelectionGeometriesForLineBoxes(const RenderLayerM
 
         resultRect.unite(rect);
 
-        if (quads)
-            quads->append(localToContainerQuad(FloatRect(rect), repaintContainer));
+        if (quads) {
+            // FIXME: Remove suppression once rdar://189998444 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST quads->append(localToContainerQuad(FloatRect(rect), repaintContainer));
+        }
     }
 
     if (clipToVisibleContent)
         return computeRectForRepaint(resultRect, repaintContainer);
-    return localToContainerQuad(FloatRect(resultRect), repaintContainer).enclosingBoundingBox();
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return localToContainerQuad(FloatRect(resultRect), repaintContainer).enclosingBoundingBox();
 }
 
 LayoutRect RenderText::collectSelectionGeometriesForLineBoxes(const RenderLayerModelObject* repaintContainer, bool clipToVisibleContent, Vector<FloatQuad>& quads)
@@ -2228,7 +2257,7 @@ StringView RenderText::stringView(unsigned start, std::optional<unsigned> stop) 
     return StringView { text() }.substring(start, destination - start);
 }
 
-RenderInline* RenderText::inlineWrapperForDisplayContents()
+RenderBoxModelObject* RenderText::inlineWrapperForDisplayContents()
 {
     ASSERT(m_hasInlineWrapperForDisplayContents == inlineWrapperForDisplayContentsMap().contains(this));
 
@@ -2237,7 +2266,7 @@ RenderInline* RenderText::inlineWrapperForDisplayContents()
     return inlineWrapperForDisplayContentsMap().get(this);
 }
 
-void RenderText::setInlineWrapperForDisplayContents(RenderInline* wrapper)
+void RenderText::setInlineWrapperForDisplayContents(RenderBoxModelObject* wrapper)
 {
     ASSERT(m_hasInlineWrapperForDisplayContents == inlineWrapperForDisplayContentsMap().contains(this));
 

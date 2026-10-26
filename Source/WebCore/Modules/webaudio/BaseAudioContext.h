@@ -106,7 +106,7 @@ public:
     WEBCORE_EXPORT static bool isContextAlive(uint64_t contextID);
     uint64_t contextID() const { return m_contextID; }
 
-    Document* NODELETE document() const;
+    Document* LEGACY_NODELETE document() const;
     bool isInitialized() const { return m_isInitialized; }
     
     virtual bool isOfflineContext() const = 0;
@@ -218,16 +218,16 @@ public:
     void removeMarkedSummingJunction(AudioSummingJunction*);
 
     // EventTarget
-    ScriptExecutionContext* NODELETE scriptExecutionContext() const final;
+    ScriptExecutionContext* LEGACY_NODELETE scriptExecutionContext() const final;
 
     virtual void sourceNodeWillBeginPlayback(AudioNode&);
     // When a source node has no more processing to do (has finished playing), then it tells the context to dereference it.
-    void NODELETE sourceNodeDidFinishPlayback(AudioNode&);
+    void LEGACY_NODELETE sourceNodeDidFinishPlayback(AudioNode&);
 
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const override { return m_logger.get(); }
     uint64_t logIdentifier() const override { return m_logIdentifier; }
-    WTFLogChannel& NODELETE logChannel() const final;
+    WTFLogChannel& LEGACY_NODELETE logChannel() const final;
     uint64_t nextAudioNodeLogIdentifier() { return childLogIdentifier(m_logIdentifier, ++m_nextAudioNodeIdentifier); }
     uint64_t nextAudioParameterLogIdentifier() { return childLogIdentifier(m_logIdentifier, ++m_nextAudioParameterIdentifier); }
 #endif
@@ -239,7 +239,7 @@ public:
 
     virtual void lazyInitialize();
 
-    static bool NODELETE isSupportedSampleRate(float sampleRate);
+    static bool LEGACY_NODELETE isSupportedSampleRate(float sampleRate);
 
     PeriodicWave& periodicWave(OscillatorType);
 
@@ -262,7 +262,7 @@ protected:
 
     void clear();
 
-    RefPtr<MediaSessionManagerInterface> NODELETE mediaSessionManagerIfExists() const;
+    RefPtr<MediaSessionManagerInterface> LEGACY_NODELETE mediaSessionManagerIfExists() const;
     RefPtr<MediaSessionManagerInterface> mediaSessionManager() const;
 
     // ActiveDOMObject.
@@ -374,7 +374,7 @@ private:
 
     mutable RecursiveLock m_graphLock;
 
-    std::unique_ptr<AsyncAudioDecoder> m_audioDecoder;
+    const std::unique_ptr<AsyncAudioDecoder> m_audioDecoder;
 
     AudioIOPosition m_outputPosition;
 
@@ -382,10 +382,10 @@ private:
 
     // These are cached per audio context for performance reasons. They cannot be
     // static because they rely on the sample rate.
-    RefPtr<PeriodicWave> m_cachedPeriodicWaveSine;
-    RefPtr<PeriodicWave> m_cachedPeriodicWaveSquare;
-    RefPtr<PeriodicWave> m_cachedPeriodicWaveSawtooth;
-    RefPtr<PeriodicWave> m_cachedPeriodicWaveTriangle;
+    const RefPtr<PeriodicWave> m_cachedPeriodicWaveSine;
+    const RefPtr<PeriodicWave> m_cachedPeriodicWaveSquare;
+    const RefPtr<PeriodicWave> m_cachedPeriodicWaveSawtooth;
+    const RefPtr<PeriodicWave> m_cachedPeriodicWaveTriangle;
 
     State m_state { State::Suspended };
     bool m_isDeletionScheduled { false };

@@ -80,7 +80,7 @@ public:
     T& access() LIFETIME_BOUND
     {
         if (!m_data->hasOneRef())
-            m_data = m_data->copy();
+            m_data = protect(m_data)->copy();
         return m_data;
     }
 

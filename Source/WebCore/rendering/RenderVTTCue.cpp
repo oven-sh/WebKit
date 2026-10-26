@@ -31,9 +31,9 @@
 
 #include "FrameInlines.h"
 #include "InlineIteratorBoxInlines.h"
+#include "InlineIteratorLineBoxInlines.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
-#include "RenderInline.h"
 #include "RenderLayoutState.h"
 #include "RenderObjectInlines.h"
 #include "RenderView.h"
@@ -86,22 +86,21 @@ bool RenderVTTCue::initializeLayoutParameters(LayoutUnit& step, LayoutUnit& posi
     if (!firstChild())
         return false;
 
-    auto* box = cueBox();
+    CheckedPtr box = cueBox();
     if (!box)
         return false;
 
-    auto firstInlineBox = InlineIterator::lineLeftmostInlineBoxFor(*box) ? : InlineIterator::firstRootInlineBoxFor(*this);
-    if (!firstInlineBox)
+    CheckedPtr backdropBox = this->backdropBox();
+    if (!backdropBox)
         return false;
 
-    auto* backdropBox = this->backdropBox();
-    if (!backdropBox)
+    auto firstLineBox = InlineIterator::firstLineBoxFor(*backdropBox);
+    if (!firstLineBox)
         return false;
 
     // 1. Horizontal: Let step be the height of the first line box in boxes.
     //    Vertical: Let step be the width of the first line box in boxes.
-    auto firstInlineBoxSize = firstInlineBox->visualRectIgnoringBlockDirection().size();
-    step = m_cue->vertical() == VTTCue::DirectionSetting::Horizontal ? firstInlineBoxSize.height() : firstInlineBoxSize.width();
+    step = LayoutUnit { firstLineBox->logicalHeight() };
 
     // Note: the previous rules in initializeLayoutParameters() only account for
     // the height of the line boxes contained within the cue, and not the cue's height
@@ -110,11 +109,11 @@ bool RenderVTTCue::initializeLayoutParameters(LayoutUnit& step, LayoutUnit& posi
     // the cue always being partially outside its containing block, rather than at
     // its initial position. Correct the initial position by subtracting from
     // position the difference between the the logicalHeight of the cue and its
-    // first line box.
-    auto inlineBoxHeights = LayoutUnit { };
-    for (auto inlineBox = firstInlineBox; inlineBox; inlineBox = inlineBox->nextInlineBoxLineRightward())
-        inlineBoxHeights += inlineBox->logicalHeight();
-    auto logicalHeightDelta = backdropBox->logicalHeight() - inlineBoxHeights;
+    // line boxes.
+    float lineBoxHeights = 0;
+    for (auto& lineBox : InlineIterator::lineBoxesFor(*backdropBox))
+        lineBoxHeights += lineBox.logicalHeight();
+    auto logicalHeightDelta = backdropBox->logicalHeight() - LayoutUnit { lineBoxHeights };
     if (logicalHeightDelta > 0)
         step += logicalHeightDelta;
 
@@ -193,14 +192,14 @@ bool RenderVTTCue::isOutside() const
     if (!firstChild())
         return false;
 
-    if (auto* backdropBox = this->backdropBox())
+    if (CheckedPtr backdropBox = this->backdropBox())
         return !rectIsWithinContainer(unroundedAbsoluteBoundingBoxRect(*backdropBox));
     return false;
 }
 
 bool RenderVTTCue::rectIsWithinContainer(const FloatRect& rect) const
 {
-    return unroundedAbsoluteBoundingBoxRect(*containingBlock()).contains(rect);
+    return unroundedAbsoluteBoundingBoxRect(*protect(containingBlock())).contains(rect);
 }
 
 
@@ -212,28 +211,28 @@ bool RenderVTTCue::isOverlapping() const
     return overlappingObject();
 }
 
-RenderVTTCue* RenderVTTCue::overlappingObject() const
+CheckedPtr<RenderVTTCue> RenderVTTCue::overlappingObject() const
 {
     ASSERT(firstChild());
 
-    if (auto* backdropBox = this->backdropBox())
+    if (CheckedPtr backdropBox = this->backdropBox())
         return overlappingObjectForRect(unroundedAbsoluteBoundingBoxRect(*backdropBox));
     return nullptr;
 }
 
-RenderVTTCue* RenderVTTCue::overlappingObjectForRect(const FloatRect& rect) const
+CheckedPtr<RenderVTTCue> RenderVTTCue::overlappingObjectForRect(const FloatRect& rect) const
 {
-    for (RenderObject* sibling = previousSibling(); sibling; sibling = sibling->previousSibling()) {
-        auto* previousCue = downcast<RenderVTTCue>(sibling);
+    for (CheckedPtr sibling = previousSibling(); sibling; sibling = sibling->previousSibling()) {
+        CheckedPtr previousCue = downcast<RenderVTTCue>(sibling);
         if (!previousCue || !previousCue->firstChild())
             continue;
 
-        auto* previousCueBackdropBox = previousCue->backdropBox();
+        CheckedPtr previousCueBackdropBox = previousCue->backdropBox();
         if (previousCueBackdropBox && rect.intersects(unroundedAbsoluteBoundingBoxRect(*previousCueBackdropBox)))
             return previousCue;
     }
 
-    return 0;
+    return nullptr;
 }
 
 bool RenderVTTCue::shouldSwitchDirection(const InlineIterator::InlineBox& firstInlineBox, LayoutUnit step) const
@@ -307,11 +306,11 @@ void RenderVTTCue::moveIfNecessaryToKeepWithinContainer()
     if (!firstChild())
         return;
 
-    auto* backdropBox = this->backdropBox();
+    CheckedPtr backdropBox = this->backdropBox();
     if (!backdropBox)
         return;
 
-    FloatRect containerRect = unroundedAbsoluteBoundingBoxRect(*containingBlock());
+    FloatRect containerRect = unroundedAbsoluteBoundingBoxRect(*protect(containingBlock()));
     FloatRect cueRect = unroundedAbsoluteBoundingBoxRect(*backdropBox);
 
     float topOverflow = cueRect.y() - containerRect.y();
@@ -344,7 +343,7 @@ bool RenderVTTCue::findNonOverlappingPosition(float& newX, float& newY) const
     if (!firstChild())
         return false;
 
-    auto* backdropBox = this->backdropBox();
+    CheckedPtr backdropBox = this->backdropBox();
     if (!backdropBox)
         return false;
 
@@ -355,8 +354,8 @@ bool RenderVTTCue::findNonOverlappingPosition(float& newX, float& newY) const
 
     // Move the box up (or, for vertical writing directions, left), looking for a non-overlapping position.
     FloatRect upRect = srcRect;
-    while (RenderVTTCue* cue = overlappingObjectForRect(upRect)) {
-        auto* cueBackdropBox = cue->backdropBox();
+    while (CheckedPtr cue = overlappingObjectForRect(upRect)) {
+        CheckedPtr cueBackdropBox = cue->backdropBox();
         if (!cueBackdropBox)
             continue;
         if (isHorizontal)
@@ -368,8 +367,8 @@ bool RenderVTTCue::findNonOverlappingPosition(float& newX, float& newY) const
 
     // Move the box down (or, for vertical writing directions, right), looking for a non-overlapping position.
     FloatRect downRect = srcRect;
-    while (RenderVTTCue* cue = overlappingObjectForRect(downRect)) {
-        auto* cueBackdropBox = cue->backdropBox();
+    while (CheckedPtr cue = overlappingObjectForRect(downRect)) {
+        CheckedPtr cueBackdropBox = cue->backdropBox();
         if (!cueBackdropBox)
             continue;
         if (isHorizontal)
@@ -410,7 +409,7 @@ void RenderVTTCue::repositionCueSnapToLinesSet()
     bool switched;
     placeBoxInDefaultPosition(position, switched);
 
-    auto* box = cueBox();
+    CheckedPtr box = cueBox();
     if (!box)
         return;
 
@@ -441,7 +440,7 @@ void RenderVTTCue::repositionGenericCue()
     if (!firstChild())
         return;
 
-    auto* box = cueBox();
+    CheckedPtr box = cueBox();
     if (!box)
         return;
 
@@ -460,7 +459,7 @@ void RenderVTTCue::repositionCueSnapToLinesNotSet()
     if (!firstChild())
         return;
 
-    auto* backdropBox = this->backdropBox();
+    CheckedPtr backdropBox = this->backdropBox();
     if (!backdropBox)
         return;
 
@@ -537,16 +536,18 @@ RenderBlockFlow* RenderVTTCue::backdropBox() const
     return dynamicDowncast<RenderBlockFlow>(firstChild);
 }
 
-RenderInline* RenderVTTCue::cueBox() const
+RenderBoxModelObject* RenderVTTCue::cueBox() const
 {
     auto* backdropBox = this->backdropBox();
     if (!backdropBox)
         return nullptr;
 
     auto* firstChild = backdropBox->firstChild();
-    ASSERT(firstChild);
-    ASSERT(firstChild->isInlineBox());
-    return dynamicDowncast<RenderInline>(firstChild);
+    if (!firstChild || !firstChild->isInlineBox()) {
+        ASSERT_NOT_REACHED();
+        return nullptr;
+    }
+    return downcast<RenderBoxModelObject>(firstChild);
 }
 
 } // namespace WebCore

@@ -108,7 +108,7 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
         if (calleeBits.isNativeCallee()) {
             if (!boxedWasmCalleeFilter.ruleOut(std::bit_cast<uintptr_t>(pointer))) {
                 Wasm::Callee* wasmCallee = static_cast<Wasm::Callee*>(calleeBits.asNativeCallee());
-                if (m_heap.didDiscoverPendingWasmCallee(wasmCallee))
+                if (m_heap.markWasmCalleeIfPending(wasmCallee))
                     return;
             }
             // FIXME: We could probably just return here.
@@ -185,7 +185,7 @@ inline void ConservativeRoots::genericAddPointer(char* pointer, HeapVersion mark
             // Since we're looking for strings we only need to check if we know we're not looking at an allocation with an IndexingHeader.
             // FIXME: If we wanted to make this more performant we could have a JSString HeapCell::Kind or embed the JSType in the MarkedBlock::Handle.
             if (auto* string = dynamicDowncast<const JSString>(std::bit_cast<const JSCell*>(pointer)))
-                m_heap.m_discoveredAccessedStringsFromGCOwnedDataScope.add(string);
+                m_heap.noteStringFoundOnStack(string);
             return true;
         }
         return false;
@@ -252,8 +252,8 @@ void ConservativeRoots::genericAddSpan(void* begin, void* end, MarkHook& markHoo
 
 class DummyMarkHook {
 public:
-    void NODELETE mark(void*) { }
-    void NODELETE markKnownJSCell(JSCell*) { }
+    void LEGACY_NODELETE mark(void*) { }
+    void LEGACY_NODELETE markKnownJSCell(JSCell*) { }
 };
 
 void ConservativeRoots::add(void* begin, void* end)

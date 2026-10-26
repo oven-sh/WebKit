@@ -134,12 +134,14 @@ private:
                         Value* multipliedBack = normalModCase->appendNew<Value>(m_proc, Mul, m_origin, divResult, m_value->child(1));
                         Value* result = normalModCase->appendNew<Value>(m_proc, Sub, m_origin, m_value->child(0), multipliedBack);
                         UpsilonValue* normalResult = normalModCase->appendNew<UpsilonValue>(m_proc, m_origin, result);
-                        normalModCase->appendNewControlValue(m_proc, Jump, m_origin, FrequentedBlock(m_block));
+                        normalModCase->setSuccessors(FrequentedBlock(m_block));
+                        normalModCase->appendNew<Value>(m_proc, Jump, m_origin);
 
                         UpsilonValue* zeroResult = zeroDenCase->appendNew<UpsilonValue>(
                             m_proc, m_origin,
                             zeroDenCase->appendIntConstant(m_proc, m_value, 0));
-                        zeroDenCase->appendNewControlValue(m_proc, Jump, m_origin, FrequentedBlock(m_block));
+                        zeroDenCase->setSuccessors(FrequentedBlock(m_block));
+                        zeroDenCase->appendNew<Value>(m_proc, Jump, m_origin);
 
                         Value* phi = m_insertionSet.insert<Value>(m_index, Phi, m_value->type(), m_origin);
                         normalResult->setPhi(phi);
@@ -153,6 +155,9 @@ private:
                 }
 
                 if (m_value->type() == Double) {
+                    if (lowerDoubleModByPowerOfTwo())
+                        break;
+
                     if constexpr (!isARM64()) {
                         // Non-ARM64: just call fmod directly.
                         Value* functionAddress = m_insertionSet.insert<ConstPtrValue>(m_index, m_origin, tagCFunction<OperationPtrTag>(Math::fmodDouble));
@@ -218,9 +223,10 @@ private:
                     Value* rightOk = before->appendNew<Value>(m_proc, BitAnd, m_origin, rightIsInt, rightIsPositive);
 
                     Value* bothOk = before->appendNew<Value>(m_proc, BitAnd, m_origin, leftOk, rightOk);
-                    before->appendNewControlValue(m_proc, Branch, m_origin, bothOk,
+                    before->setSuccessors(
                         FrequentedBlock(fastCase, FrequencyClass::Normal),
                         FrequentedBlock(slowCase, FrequencyClass::Rare));
+                    before->appendNew<Value>(m_proc, Branch, m_origin, bothOk);
 
                     // Fast case: remainder = left - trunc(left / right) * right
                     Value* divResult = fastCase->appendNew<Value>(m_proc, Div, m_origin, left, right);
@@ -233,9 +239,10 @@ private:
                     Value* remLessThanRight = fastCase->appendNew<Value>(m_proc, LessThan, m_origin, remainder, right);
                     Value* fastValid = fastCase->appendNew<Value>(m_proc, BitAnd, m_origin, remNonNeg, remLessThanRight);
                     UpsilonValue* fastResult = fastCase->appendNew<UpsilonValue>(m_proc, m_origin, remainder);
-                    fastCase->appendNewControlValue(m_proc, Branch, m_origin, fastValid,
+                    fastCase->setSuccessors(
                         FrequentedBlock(m_block, FrequencyClass::Normal),
                         FrequentedBlock(slowCase, FrequencyClass::Rare));
+                    fastCase->appendNew<Value>(m_proc, Branch, m_origin, fastValid);
 
                     // Slow case: call fmod
                     Value* functionAddress = slowCase->appendNew<ConstPtrValue>(m_proc, m_origin, tagCFunction<OperationPtrTag>(Math::fmodDouble));
@@ -245,7 +252,8 @@ private:
                         left,
                         right);
                     UpsilonValue* slowUpsilon = slowCase->appendNew<UpsilonValue>(m_proc, m_origin, slowResult);
-                    slowCase->appendNewControlValue(m_proc, Jump, m_origin, FrequentedBlock(m_block));
+                    slowCase->setSuccessors(FrequentedBlock(m_block));
+                    slowCase->appendNew<Value>(m_proc, Jump, m_origin);
 
                     // Continuation: phi merging fast and slow results
                     Value* phi = m_insertionSet.insert<Value>(m_index, Phi, Double, m_origin);
@@ -318,28 +326,32 @@ private:
                     before->setSuccessors(FrequentedBlock(isEqual), FrequentedBlock(notEqual));
 
                     Value* lessThanValue = notEqual->appendNew<Value>(m_proc, LessThan, m_origin, a, b);
-                    notEqual->appendNewControlValue(m_proc, Branch, m_origin, lessThanValue,
-                        FrequentedBlock(isLessThan), FrequentedBlock(notLessThan));
+                    notEqual->setSuccessors(FrequentedBlock(isLessThan), FrequentedBlock(notLessThan));
+                    notEqual->appendNew<Value>(m_proc, Branch, m_origin, lessThanValue);
 
                     Value* greaterThanValue = notLessThan->appendNew<Value>(m_proc, GreaterThan, m_origin, a, b);
-                    notLessThan->appendNewControlValue(m_proc, Branch, m_origin, greaterThanValue,
-                        FrequentedBlock(isGreaterThan), FrequentedBlock(isNaN));
+                    notLessThan->setSuccessors(FrequentedBlock(isGreaterThan), FrequentedBlock(isNaN));
+                    notLessThan->appendNew<Value>(m_proc, Branch, m_origin, greaterThanValue);
 
                     UpsilonValue* isLessThanResult = isLessThan->appendNew<UpsilonValue>(
                         m_proc, m_origin, isMax ? b : a);
-                    isLessThan->appendNewControlValue(m_proc, Jump, m_origin, FrequentedBlock(m_block));
+                    isLessThan->setSuccessors(FrequentedBlock(m_block));
+                    isLessThan->appendNew<Value>(m_proc, Jump, m_origin);
 
                     UpsilonValue* isGreaterThanResult = isGreaterThan->appendNew<UpsilonValue>(
                         m_proc, m_origin, isMax ? a : b);
-                    isGreaterThan->appendNewControlValue(m_proc, Jump, m_origin, FrequentedBlock(m_block));
+                    isGreaterThan->setSuccessors(FrequentedBlock(m_block));
+                    isGreaterThan->appendNew<Value>(m_proc, Jump, m_origin);
 
                     UpsilonValue* isEqualResult = isEqual->appendNew<UpsilonValue>(
                         m_proc, m_origin, isEqual->appendNew<Value>(m_proc, isMax ? BitAnd : BitOr, m_origin, a, b));
-                    isEqual->appendNewControlValue(m_proc, Jump, m_origin, FrequentedBlock(m_block));
+                    isEqual->setSuccessors(FrequentedBlock(m_block));
+                    isEqual->appendNew<Value>(m_proc, Jump, m_origin);
 
                     UpsilonValue* isNaNResult = isNaN->appendNew<UpsilonValue>(
                         m_proc, m_origin, isNaN->appendNew<Value>(m_proc, Add, m_origin, a, b));
-                    isNaN->appendNewControlValue(m_proc, Jump, m_origin, FrequentedBlock(m_block));
+                    isNaN->setSuccessors(FrequentedBlock(m_block));
+                    isNaN->appendNew<Value>(m_proc, Jump, m_origin);
 
                     Value* phi = m_insertionSet.insert<Value>(
                         m_index, Phi, m_value->type(), m_origin);
@@ -744,7 +756,8 @@ private:
                     emitWasmGCCellInit(fastPathContinuation, cell, structureID, JSWebAssemblyStruct::typeInfoBlob().blob());
 
                     fastUpsilon = fastPathContinuation->appendNew<UpsilonValue>(m_proc, m_origin, cell);
-                    fastPathContinuation->appendNewControlValue(m_proc, Jump, m_origin, FrequentedBlock(m_block));
+                    fastPathContinuation->setSuccessors(FrequentedBlock(m_block));
+                    fastPathContinuation->appendNew<Value>(m_proc, Jump, m_origin);
                 } else {
                     // Just redirect the Jump added by splitForward to slowPath
                     before->setSuccessors(slowPath);
@@ -903,7 +916,8 @@ private:
                 if (isConstantSize) {
                     if (hasFastPath)
                         sizeClassIndex = before->appendNew<ConstPtrValue>(m_proc, m_origin, MarkedSpace::sizeClassToIndex(constantSizeInBytes.value()));
-                    before->appendNewControlValue(m_proc, Jump, m_origin, hasFastPath ? fastAlloc : slowPath);
+                    before->setSuccessors(hasFastPath ? fastAlloc : slowPath);
+                    before->appendNew<Value>(m_proc, Jump, m_origin);
                 } else {
                     auto* extSize = before->appendNew<Value>(m_proc, ZExt32, Int64, m_origin, size);
                     auto* shifted = before->appendNew<Value>(m_proc, Shl, pointerType(), m_origin, extSize, before->appendNew<Const32Value>(m_proc, m_origin, getLSBSet(elementSize)));
@@ -913,8 +927,8 @@ private:
                     sizeClassIndex = before->appendNew<Value>(m_proc, ZShr, pointerType(), m_origin, rounded, before->appendNew<Const32Value>(m_proc, m_origin, stepShift));
 
                     auto* isLarge = before->appendNew<Value>(m_proc, Above, m_origin, sizeClassIndex, before->appendNew<ConstPtrValue>(m_proc, m_origin, largeCutoffClass));
-                    before->appendNewControlValue(m_proc, B3::Branch, m_origin, isLarge,
-                        { slowPath, FrequencyClass::Rare }, { fastAlloc, FrequencyClass::Normal });
+                    before->setSuccessors({ slowPath, FrequencyClass::Rare }, { fastAlloc, FrequencyClass::Normal });
+                    before->appendNew<Value>(m_proc, B3::Branch, m_origin, isLarge);
                 }
 
                 UpsilonValue* fastUpsilon = nullptr;
@@ -933,7 +947,8 @@ private:
                     emitWasmGCCellInit(fastInit, cell, structureID, JSWebAssemblyArray::typeInfoBlob().blob());
 
                     fastUpsilon = fastInit->appendNew<UpsilonValue>(m_proc, m_origin, cell);
-                    fastInit->appendNewControlValue(m_proc, Jump, m_origin, mergeBlock);
+                    fastInit->setSuccessors(mergeBlock);
+                    fastInit->appendNew<Value>(m_proc, Jump, m_origin);
                 }
 
                 auto* slowUpsilon = emitWasmGCSlowPath(slowPath, mergeBlock, instance, typeIndex,
@@ -970,15 +985,16 @@ private:
 
                         auto* extSizeMerge = mergeBlock->appendNew<Value>(m_proc, ZExt32, Int64, m_origin, size);
                         UpsilonValue* initialRemainingUpsilon = mergeBlock->appendNew<UpsilonValue>(m_proc, m_origin, extSizeMerge);
-                        mergeBlock->appendNewControlValue(m_proc, Jump, m_origin, header);
+                        mergeBlock->setSuccessors(header);
+                        mergeBlock->appendNew<Value>(m_proc, Jump, m_origin);
 
                         // loop header
                         auto* remaining = header->appendNew<Value>(m_proc, Phi, pointerType(), m_origin);
                         initialRemainingUpsilon->setPhi(remaining);
 
                         auto* isZero = header->appendNew<Value>(m_proc, Equal, m_origin, remaining, header->appendNew<ConstPtrValue>(m_proc, m_origin, 0));
-                        header->appendNewControlValue(m_proc, Branch, m_origin, isZero,
-                            { m_block, FrequencyClass::Normal }, { body, FrequencyClass::Normal });
+                        header->setSuccessors({ m_block, FrequencyClass::Normal }, { body, FrequencyClass::Normal });
+                        header->appendNew<Value>(m_proc, Branch, m_origin, isZero);
 
                         // loop body
                         auto* decremented = body->appendNew<Value>(m_proc, Sub, pointerType(), m_origin, remaining, body->appendNew<ConstPtrValue>(m_proc, m_origin, 1));
@@ -1000,10 +1016,13 @@ private:
 
                         auto* loopUpsilon = body->appendNew<UpsilonValue>(m_proc, m_origin, decremented);
                         loopUpsilon->setPhi(remaining);
-                        body->appendNewControlValue(m_proc, Jump, m_origin, header);
+                        body->setSuccessors(header);
+                        body->appendNew<Value>(m_proc, Jump, m_origin);
                     }
-                } else
-                    mergeBlock->appendNewControlValue(m_proc, Jump, m_origin, m_block);
+                } else {
+                    mergeBlock->setSuccessors(m_block);
+                    mergeBlock->appendNew<Value>(m_proc, Jump, m_origin);
+                }
 
                 m_value->replaceWithIdentity(phi);
                 before->updatePredecessorsAfter();
@@ -1040,6 +1059,39 @@ private:
         Value* result = m_insertionSet.insert<SIMDValue>(m_index, m_origin, VectorXor, B3::V128, SIMDLane::v128, SIMDSignMode::None, compareResult, allOnesConst);
         m_value->replaceWithIdentity(result);
         m_changed = true;
+    }
+
+    bool lowerDoubleModByPowerOfTwo()
+    {
+        if (!MacroAssembler::supportsFloatingPointRounding())
+            return false;
+
+        Value* right = m_value->child(1);
+        if (!right->hasDouble())
+            return false;
+
+        std::optional<double> divisor = powerOfTwoDivisorForDoubleMod(right->asDouble());
+        if (!divisor)
+            return false;
+
+        Value* left = m_value->child(0);
+        Value* product;
+        if (*divisor == 1)
+            product = m_insertionSet.insert<Value>(m_index, FTrunc, m_origin, left);
+        else {
+            Value* scaled = m_insertionSet.insert<Value>(m_index, Mul, m_origin, left, m_insertionSet.insert<ConstDoubleValue>(m_index, m_origin, 1 / *divisor));
+            Value* quotient = m_insertionSet.insert<Value>(m_index, FTrunc, m_origin, scaled);
+            product = m_insertionSet.insert<Value>(m_index, Mul, m_origin, quotient, m_insertionSet.insert<ConstDoubleValue>(m_index, m_origin, *divisor));
+        }
+        Value* remainder = m_insertionSet.insert<Value>(m_index, Sub, m_origin, left, product);
+        // Masking in the integer domain keeps the sign mask an immediate instead of a constant-pool load.
+        Value* signBit = m_insertionSet.insert<Value>(m_index, BitwiseCast, m_origin,
+            m_insertionSet.insert<Value>(m_index, BitAnd, m_origin,
+                m_insertionSet.insert<Value>(m_index, BitwiseCast, m_origin, left),
+                m_insertionSet.insert<Const64Value>(m_index, m_origin, std::numeric_limits<int64_t>::min())));
+        m_value->replaceWithIdentity(m_insertionSet.insert<Value>(m_index, BitOr, m_origin, remainder, signBit));
+        m_changed = true;
+        return true;
     }
 
     void makeDivisionChill(Opcode nonChillOpcode)
@@ -1092,16 +1144,19 @@ private:
         UpsilonValue* normalResult = normalDivCase->appendNew<UpsilonValue>(
             m_proc, m_origin,
             innerResult);
-        normalDivCase->appendNewControlValue(m_proc, Jump, m_origin, FrequentedBlock(m_block));
+        normalDivCase->setSuccessors(FrequentedBlock(m_block));
+        normalDivCase->appendNew<Value>(m_proc, Jump, m_origin);
 
-        shadyDenCase->appendNewControlValue(m_proc, Branch, m_origin, den,
+        shadyDenCase->setSuccessors(
             FrequentedBlock(neg1DenCase, FrequencyClass::Normal),
             FrequentedBlock(zeroDenCase, FrequencyClass::Rare));
+        shadyDenCase->appendNew<Value>(m_proc, Branch, m_origin, den);
 
         UpsilonValue* zeroResult = zeroDenCase->appendNew<UpsilonValue>(
             m_proc, m_origin,
             zeroDenCase->appendIntConstant(m_proc, m_value, 0));
-        zeroDenCase->appendNewControlValue(m_proc, Jump, m_origin, FrequentedBlock(m_block));
+        zeroDenCase->setSuccessors(FrequentedBlock(m_block));
+        zeroDenCase->appendNew<Value>(m_proc, Jump, m_origin);
 
         int64_t badNumeratorConst = 0;
         switch (m_value->type().kind()) {
@@ -1130,7 +1185,8 @@ private:
         Value* intMinResult = nonChillOpcode == Div ? badNumerator : intMinCase->appendIntConstant(m_proc, m_value, 0);
         UpsilonValue* intMinResultUpsilon = intMinCase->appendNew<UpsilonValue>(
             m_proc, m_origin, intMinResult);
-        intMinCase->appendNewControlValue(m_proc, Jump, m_origin, FrequentedBlock(m_block));
+        intMinCase->setSuccessors(FrequentedBlock(m_block));
+        intMinCase->appendNew<Value>(m_proc, Jump, m_origin);
 
         Value* phi = m_insertionSet.insert<Value>(
             m_index, Phi, m_value->type(), m_origin);
@@ -1261,7 +1317,8 @@ private:
                 before = nextCheck;
             }
 
-            before->appendNewControlValue(m_proc, Jump, m_origin, allConsecutive ? cases[end - 1].target() : fallThrough);
+            before->setSuccessors(allConsecutive ? cases[end - 1].target() : fallThrough);
+            before->appendNew<Value>(m_proc, Jump, m_origin);
             return;
         }
 
@@ -1368,7 +1425,8 @@ private:
             } else {
                 ASSERT(falseBlock);
                 BasicBlock* success = m_proc.addBlock(m_block->frequency());
-                currentBlock->appendNewControlValue(m_proc, B3::Branch, m_origin, condition, FrequentedBlock(falseBlock), FrequentedBlock(success));
+                currentBlock->setSuccessors(FrequentedBlock(falseBlock), FrequentedBlock(success));
+                currentBlock->appendNew<Value>(m_proc, B3::Branch, m_origin, condition);
                 falseBlock->addPredecessor(currentBlock);
                 success->addPredecessor(currentBlock);
                 currentBlock = success;
@@ -1389,7 +1447,8 @@ private:
             } else
                 isNull = constant(Int32, 0);
 
-            currentBlock->appendNewControlValue(m_proc, B3::Branch, m_origin, isNull, FrequentedBlock(nullCase), FrequentedBlock(nonNullCase));
+            currentBlock->setSuccessors(FrequentedBlock(nullCase), FrequentedBlock(nonNullCase));
+            currentBlock->appendNew<Value>(m_proc, B3::Branch, m_origin, isNull);
             nullCase->addPredecessor(currentBlock);
             nonNullCase->addPredecessor(currentBlock);
 
@@ -1399,7 +1458,8 @@ private:
                     B3::PatchpointValue* throwException = currentBlock->appendNew<B3::PatchpointValue>(m_proc, B3::Void, m_origin);
                     throwException->setGenerator(castFailure);
                 }
-                currentBlock->appendNewControlValue(m_proc, Jump, m_origin, continuation);
+                currentBlock->setSuccessors(continuation);
+                currentBlock->appendNew<Value>(m_proc, Jump, m_origin);
                 continuation->addPredecessor(currentBlock);
             } else {
                 BasicBlock* nextBlock;
@@ -1407,7 +1467,8 @@ private:
                     nextBlock = falseBlock;
                 else
                     nextBlock = trueBlock;
-                currentBlock->appendNewControlValue(m_proc, Jump, m_origin, nextBlock);
+                currentBlock->setSuccessors(nextBlock);
+                currentBlock->appendNew<Value>(m_proc, Jump, m_origin);
                 nextBlock->addPredecessor(currentBlock);
             }
 
@@ -1431,7 +1492,8 @@ private:
                     B3::PatchpointValue* throwException = currentBlock->appendNew<B3::PatchpointValue>(m_proc, B3::Void, m_origin);
                     throwException->setGenerator(castFailure);
                 } else {
-                    currentBlock->appendNewControlValue(m_proc, Jump, m_origin, falseBlock);
+                    currentBlock->setSuccessors(falseBlock);
+                    currentBlock->appendNew<Value>(m_proc, Jump, m_origin);
                     falseBlock->addPredecessor(currentBlock);
                     currentBlock = m_proc.addBlock(m_block->frequency());
                 }
@@ -1446,7 +1508,8 @@ private:
                 Value* untagged = currentBlock->appendNew<Value>(m_proc, Trunc, m_origin, value);
                 emitCheckOrBranchForCast(CastKind::Test, currentBlock->appendNew<Value>(m_proc, GreaterThan, m_origin, untagged, constant(Int32, Wasm::maxI31ref)), nop, checkObject);
                 emitCheckOrBranchForCast(CastKind::Test, currentBlock->appendNew<Value>(m_proc, LessThan, m_origin, untagged, constant(Int32, Wasm::minI31ref)), nop, checkObject);
-                currentBlock->appendNewControlValue(m_proc, Jump, m_origin, endBlock);
+                currentBlock->setSuccessors(endBlock);
+                currentBlock->appendNew<Value>(m_proc, Jump, m_origin);
                 checkObject->addPredecessor(currentBlock);
                 endBlock->addPredecessor(currentBlock);
 
@@ -1555,7 +1618,8 @@ private:
                 else
                     equalBlock = trueBlock;
                 BasicBlock* slowPath = m_proc.addBlock(m_block->frequency());
-                currentBlock->appendNewControlValue(m_proc, B3::Branch, m_origin, currentBlock->appendNew<Value>(m_proc, Equal, m_origin, rtt, targetRTTPointer), FrequentedBlock(equalBlock), FrequentedBlock(slowPath));
+                currentBlock->setSuccessors(FrequentedBlock(equalBlock), FrequentedBlock(slowPath));
+                currentBlock->appendNew<Value>(m_proc, B3::Branch, m_origin, currentBlock->appendNew<Value>(m_proc, Equal, m_origin, rtt, targetRTTPointer));
                 equalBlock->addPredecessor(currentBlock);
                 slowPath->addPredecessor(currentBlock);
 
@@ -1581,20 +1645,24 @@ private:
         }
 
         if (isCast) {
-            currentBlock->appendNewControlValue(m_proc, Jump, m_origin, continuation);
+            currentBlock->setSuccessors(continuation);
+            currentBlock->appendNew<Value>(m_proc, Jump, m_origin);
             continuation->addPredecessor(currentBlock);
             currentBlock = continuation;
         } else {
-            currentBlock->appendNewControlValue(m_proc, Jump, m_origin, trueBlock);
+            currentBlock->setSuccessors(trueBlock);
+            currentBlock->appendNew<Value>(m_proc, Jump, m_origin);
             trueBlock->addPredecessor(currentBlock);
             currentBlock = trueBlock;
             UpsilonValue* trueUpsilon = currentBlock->appendNew<UpsilonValue>(m_proc, m_origin, constant(B3::Int32, shouldNegate ? 0 : 1));
-            currentBlock->appendNewControlValue(m_proc, Jump, m_origin, continuation);
+            currentBlock->setSuccessors(continuation);
+            currentBlock->appendNew<Value>(m_proc, Jump, m_origin);
             continuation->addPredecessor(currentBlock);
 
             currentBlock = falseBlock;
             UpsilonValue* falseUpsilon = currentBlock->appendNew<UpsilonValue>(m_proc, m_origin, constant(B3::Int32, shouldNegate ? 1 : 0));
-            currentBlock->appendNewControlValue(m_proc, Jump, m_origin, continuation);
+            currentBlock->setSuccessors(continuation);
+            currentBlock->appendNew<Value>(m_proc, Jump, m_origin);
             continuation->addPredecessor(currentBlock);
 
             currentBlock = continuation;
@@ -1680,7 +1748,8 @@ private:
         });
 
         UpsilonValue* slowUpsilon = slowPathBlock->appendNew<UpsilonValue>(m_proc, m_origin, slowResult);
-        slowPathBlock->appendNewControlValue(m_proc, Jump, m_origin, FrequentedBlock(mergeBlock));
+        slowPathBlock->setSuccessors(FrequentedBlock(mergeBlock));
+        slowPathBlock->appendNew<Value>(m_proc, Jump, m_origin);
         return slowUpsilon;
     }
 

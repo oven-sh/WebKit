@@ -56,9 +56,9 @@ public:
     // is reported to clients) and never reach the lambda.
     using IsAcceptableEnqueueGapFn = Function<bool(const MediaTime& fromTime, const MediaTime& toTime)>;
 
-    static UniqueRef<TrackBuffer> create(RefPtr<MediaDescription>&&, IsAcceptableEnqueueGapFn&& = nullptr);
+    static UniqueRef<TrackBuffer> LEGACY_NODELETE create(RefPtr<MediaDescription>&&, IsAcceptableEnqueueGapFn&& = nullptr);
 
-    MediaTime NODELETE maximumBufferedTime() const;
+    MediaTime LEGACY_NODELETE maximumBufferedTime() const;
     void addBufferedRange(const MediaTime& start, const MediaTime& end, AddTimeRangeOption = AddTimeRangeOption::None);
     void addSample(MediaSample&);
     // Replace an already-buffered sample with a copy whose presentation and
@@ -76,8 +76,8 @@ public:
     RefPtr<MediaSample> nextSample();
     size_t remainingSamples() const { return decodeQueue().size(); }
 
-    void NODELETE resetTimestampOffset();
-    void NODELETE reset();
+    void LEGACY_NODELETE resetTimestampOffset();
+    void LEGACY_NODELETE reset();
     void clearSamples();
 
     const MediaTime& lastDecodeTimestamp() const LIFETIME_BOUND { return m_lastDecodeTimestamp; }
@@ -166,7 +166,7 @@ private:
 
     SampleMap m_samples;
     DecodeOrderSampleMap::MapType m_decodeQueue;
-    RefPtr<MediaDescription> m_description;
+    const RefPtr<MediaDescription> m_description;
     PlatformTimeRanges m_buffered;
 
     MediaTime m_lastDecodeTimestamp { MediaTime::invalidTime() };

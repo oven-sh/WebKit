@@ -211,6 +211,8 @@ void CalleeGroup::releaseBBQCallee(const AbstractLocker& locker, FunctionCodeInd
     // Reported outside m_bbqCalleeLock: this takes the heap's own lock, and nothing in the heap
     // reaches back into CalleeGroup.
     bbqCallee->reportToVMsForDestruction();
+    if (OMGOSREntryCallee* osrEntryCallee = bbqCallee->osrEntryCallee())
+        osrEntryCallee->reportToVMsForDestruction();
 }
 #endif
 
@@ -233,7 +235,7 @@ void CalleeGroup::CallerCallsiteFlushes::flush()
     // This only invalidates the caller's instruction cache; it does not context-synchronize the
     // threads executing those callers. So a core that already prefetched the old branch target may
     // keep calling the previous callee for an architecturally unbounded time after this returns.
-    // That is safe because retired code is not freed until Heap::finalizeWasmCalleeCleanup() runs
+    // That is safe because retired code is not freed until Heap::releaseUnmarkedWasmCallees() runs
     // with the world stopped in every VM that could be running it, and stopping a thread is itself a
     // context-synchronizing event. Anything that shortens a retired callee's lifetime must preserve
     // that property.

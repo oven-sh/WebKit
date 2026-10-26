@@ -52,7 +52,7 @@ bool WebExtensionAPIWebPageNamespace::isPropertyAllowed(const ASCIILiteral& name
 }
 
 #if PLATFORM(COCOA)
-WebExtensionAPIWebPageRuntime& WebExtensionAPIWebPageNamespace::runtime() const
+WebExtensionAPIWebPageRuntime& WebExtensionAPIWebPageNamespace::runtime()
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime
 
@@ -70,7 +70,7 @@ WebExtensionAPITest& WebExtensionAPIWebPageNamespace::test()
     // Documentation: None (Testing Only)
 
     if (!m_test)
-        m_test = WebExtensionAPITest::create(*this);
+        lazyInitialize(m_test, WebExtensionAPITest::create(*this));
 
     return *m_test;
 }

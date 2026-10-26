@@ -245,6 +245,10 @@ class PeerConnection : public PeerConnectionInternal,
   bool AddIceCandidate(const IceCandidate* candidate) override;
   void AddIceCandidate(std::unique_ptr<IceCandidate> candidate,
                        std::function<void(RTCError)> callback) override;
+  void AddIceCandidate(
+      std::unique_ptr<IceCandidate> candidate,
+      absl::AnyInvocable<void(RTCError, absl::AnyInvocable<void() &&>) &&>
+          callback) override;
   bool RemoveIceCandidate(const IceCandidate* candidate) override;
 
   RTCError SetBitrate(const BitrateSettings& bitrate) override;
@@ -382,6 +386,16 @@ class PeerConnection : public PeerConnectionInternal,
   Call* call_ptr() override { return call_ptr_; }
 
   ConnectionContext* context() { return context_.get(); }
+
+  PeerConnectionTracerInterface* tracer() override {
+    RTC_DCHECK_RUN_ON(signaling_thread());
+    return tracer_.get();
+  }
+  const PeerConnectionTracerInterface* tracer() const override {
+    RTC_DCHECK_RUN_ON(signaling_thread());
+    return tracer_.get();
+  }
+
   const PeerConnectionFactoryInterface::Options* options() const override {
     return &options_;
   }
@@ -467,6 +481,7 @@ class PeerConnection : public PeerConnectionInternal,
     RTC_DCHECK_RUN_ON(signaling_thread());
     sdp_handler_->DisableSdpMungingChecksForTesting();
   }
+  bool CanAttemptDtlsStunPiggybacking() const override;
 
  protected:
   // Available for webrtc::scoped_refptr creation
@@ -629,8 +644,6 @@ class PeerConnection : public PeerConnectionInternal,
   absl::AnyInvocable<void(const RtpPacketReceived& parsed_packet) const>
   InitializeUnDemuxablePacketHandler();
 
-  bool CanAttemptDtlsStunPiggybacking();
-
   // Runs a task on the signaling thread. If the current thread is the signaling
   // thread, the task will run immediately. Otherwise it will be posted to the
   // signaling thread and run asynchronously behind the
@@ -733,6 +746,11 @@ class PeerConnection : public PeerConnectionInternal,
       RTC_GUARDED_BY(network_thread());
   JsepTransportController* transport_controller_copy_
       RTC_GUARDED_BY(signaling_thread()) = nullptr;
+
+  // Embedder-supplied tracer; null if none was attached. Declared before
+  // `sdp_handler_` so that it outlives its users.
+  const std::unique_ptr<PeerConnectionTracerInterface> tracer_
+      RTC_GUARDED_BY(signaling_thread()) RTC_PT_GUARDED_BY(signaling_thread());
 
   // The machinery for handling offers and answers. Const after initialization.
   std::unique_ptr<SdpOfferAnswerHandler> sdp_handler_

@@ -9,6 +9,9 @@
 #ifndef _UCURR_H_
 #define _UCURR_H_
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 #include "unicode/utypes.h"
 #include "unicode/uenum.h"
 

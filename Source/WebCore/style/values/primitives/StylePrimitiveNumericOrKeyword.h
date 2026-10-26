@@ -185,7 +185,7 @@ public:
 
     // A calc-size() with a keyword basis behaves as that keyword for everything except resolving the
     // size, so hand it to the keyword visitor.
-    template<typename Visitor> static decltype(auto) visitCalcSizeBasisKeyword(CSSValueID basisKeyword, Visitor&& visitor) requires (Keywords::count > 0)
+    template<typename Visitor> static decltype(auto) visitCalcSizeBasisKeyword(CSSValueID basisKeyword, NOESCAPE const Visitor& visitor) requires (Keywords::count > 0)
     {
         for (size_t offset = 0; offset < Keywords::identifiers.size(); ++offset) {
             if (Keywords::identifiers[offset] == basisKeyword)
@@ -194,7 +194,7 @@ public:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -226,7 +226,29 @@ public:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    template<typename... F> decltype(auto) switchOnUsingNumeric(F&&... f) const
+    // Visits the keyword alternatives only, for callers that have established the value is one of
+    // them. A calc-size() with a keyword basis is handed to that keyword's visitor, as switchOn() does.
+    template<typename... F> decltype(auto) switchOnKeyword(NOESCAPE F&&... f) const requires (Keywords::count > 0)
+    {
+        auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
+
+        auto opaqueType = m_value.type();
+
+        if (isKeyword(opaqueType))
+            return Keywords::visitKeywordAtOffset(toKeywordListOffset(opaqueType), visitor);
+
+        if constexpr (hasCalcSize) {
+            if (opaqueType == indexForCalcSize) {
+                SUPPRESS_FORWARD_DECL_ARG auto basisKeyword = calcSizeBasisKeyword(m_value.calcSizeValue());
+                if (basisKeyword != CSSValueID::Invalid)
+                    return visitCalcSizeBasisKeyword(basisKeyword, visitor);
+            }
+        }
+
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    template<typename... F> decltype(auto) switchOnUsingNumeric(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -317,7 +339,7 @@ public:
 
 protected:
     // For predicates that must not construct a CalcSize, since its Ref would run a destructor in
-    // callers annotated NODELETE.
+    // callers annotated LEGACY_NODELETE.
     ALWAYS_INLINE CalcSizeValue& calcSizeValue() const requires (hasCalcSize) { return m_value.calcSizeValue(); }
 
 private:
@@ -393,7 +415,7 @@ private:
         if constexpr (hasCalcSize) {
             if (opaqueType == indexForCalcSize) {
                 SUPPRESS_FORWARD_DECL_ARG auto basisKeyword = calcSizeBasisKeyword(m_value.calcSizeValue());
-                return basisKeyword != CSSValueInvalid ? PrimitiveDataEvaluationKind::Flag : PrimitiveDataEvaluationKind::CalcSize;
+                return basisKeyword != CSSValueID::Invalid ? PrimitiveDataEvaluationKind::Flag : PrimitiveDataEvaluationKind::CalcSize;
             }
         }
 

@@ -116,7 +116,7 @@ bool CustomPropertyData::operator==(const CustomPropertyData& other) const
 
     bool isEqual = true;
     forEachInternal([&](auto& entry) {
-        auto* otherValue = other.get(entry.key);
+        RefPtr otherValue = other.get(entry.key);
         if (!otherValue || entry.value.get() != *otherValue) {
             isEqual = false;
             return IterationStatus::Done;
@@ -128,7 +128,7 @@ bool CustomPropertyData::operator==(const CustomPropertyData& other) const
 }
 
 template<typename Callback>
-void CustomPropertyData::forEachInternal(Callback&& callback) const
+void CustomPropertyData::forEachInternal(NOESCAPE const Callback& callback) const
 {
     Vector<const CustomPropertyData*, maximumAncestorCount> descendants;
 

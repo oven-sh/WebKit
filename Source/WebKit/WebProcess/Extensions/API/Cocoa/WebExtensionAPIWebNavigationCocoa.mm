@@ -144,7 +144,7 @@ WebExtensionAPIWebNavigationEvent& WebExtensionAPIWebNavigation::onBeforeNavigat
     // Documentation: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/webNavigation/onBeforeNavigate
 
     if (!m_onBeforeNavigateEvent)
-        m_onBeforeNavigateEvent = WebExtensionAPIWebNavigationEvent::create(*this, WebExtensionEventListenerType::WebNavigationOnBeforeNavigate);
+        lazyInitialize(m_onBeforeNavigateEvent, WebExtensionAPIWebNavigationEvent::create(*this, WebExtensionEventListenerType::WebNavigationOnBeforeNavigate));
 
     return *m_onBeforeNavigateEvent;
 }
@@ -154,7 +154,7 @@ WebExtensionAPIWebNavigationEvent& WebExtensionAPIWebNavigation::onCommitted()
     // Documentation: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/webNavigation/onCommitted
 
     if (!m_onCommittedEvent)
-        m_onCommittedEvent = WebExtensionAPIWebNavigationEvent::create(*this, WebExtensionEventListenerType::WebNavigationOnCommitted);
+        lazyInitialize(m_onCommittedEvent, WebExtensionAPIWebNavigationEvent::create(*this, WebExtensionEventListenerType::WebNavigationOnCommitted));
 
     return *m_onCommittedEvent;
 }
@@ -164,7 +164,7 @@ WebExtensionAPIWebNavigationEvent& WebExtensionAPIWebNavigation::onDOMContentLoa
     // Documentation: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/webNavigation/onDOMContentLoaded
 
     if (!m_onDOMContentLoadedEvent)
-        m_onDOMContentLoadedEvent = WebExtensionAPIWebNavigationEvent::create(*this, WebExtensionEventListenerType::WebNavigationOnDOMContentLoaded);
+        lazyInitialize(m_onDOMContentLoadedEvent, WebExtensionAPIWebNavigationEvent::create(*this, WebExtensionEventListenerType::WebNavigationOnDOMContentLoaded));
 
     return *m_onDOMContentLoadedEvent;
 }
@@ -174,7 +174,7 @@ WebExtensionAPIWebNavigationEvent& WebExtensionAPIWebNavigation::onCompleted()
     // Documentation: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/webNavigation/onCompleted
 
     if (!m_onCompletedEvent)
-        m_onCompletedEvent = WebExtensionAPIWebNavigationEvent::create(*this, WebExtensionEventListenerType::WebNavigationOnCompleted);
+        lazyInitialize(m_onCompletedEvent, WebExtensionAPIWebNavigationEvent::create(*this, WebExtensionEventListenerType::WebNavigationOnCompleted));
 
     return *m_onCompletedEvent;
 }
@@ -184,7 +184,7 @@ WebExtensionAPIWebNavigationEvent& WebExtensionAPIWebNavigation::onErrorOccurred
     // Documentation: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/webNavigation/onErrorOccurred
 
     if (!m_onErrorOccurredEvent)
-        m_onErrorOccurredEvent = WebExtensionAPIWebNavigationEvent::create(*this, WebExtensionEventListenerType::WebNavigationOnErrorOccurred);
+        lazyInitialize(m_onErrorOccurredEvent, WebExtensionAPIWebNavigationEvent::create(*this, WebExtensionEventListenerType::WebNavigationOnErrorOccurred));
 
     return *m_onErrorOccurredEvent;
 }
@@ -210,32 +210,32 @@ void WebExtensionContextProxy::dispatchWebNavigationEvent(WebExtensionEventListe
         navigationDetails[documentIdKey] = frameParameters.documentIdentifier.value().toString().createNSString().get();
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        auto& webNavigationObject = namespaceObject.webNavigation();
+        Ref webNavigationObject = namespaceObject.webNavigation();
 
         switch (type) {
         case WebExtensionEventListenerType::WebNavigationOnBeforeNavigate:
             // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/webNavigation/onBeforeNavigate
-            webNavigationObject.onBeforeNavigate().invokeListenersWithArgument(navigationDetails, frameURL.createNSURL().get());
+            protect(webNavigationObject->onBeforeNavigate())->invokeListenersWithArgument(navigationDetails, frameURL.createNSURL().get());
             break;
 
         case WebExtensionEventListenerType::WebNavigationOnCommitted:
             // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/webNavigation/onCommitted
-            webNavigationObject.onCommitted().invokeListenersWithArgument(navigationDetails, frameURL.createNSURL().get());
+            protect(webNavigationObject->onCommitted())->invokeListenersWithArgument(navigationDetails, frameURL.createNSURL().get());
             break;
 
         case WebExtensionEventListenerType::WebNavigationOnDOMContentLoaded:
             // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/webNavigation/onDOMContentLoaded
-            webNavigationObject.onDOMContentLoaded().invokeListenersWithArgument(navigationDetails, frameURL.createNSURL().get());
+            protect(webNavigationObject->onDOMContentLoaded())->invokeListenersWithArgument(navigationDetails, frameURL.createNSURL().get());
             break;
 
         case WebExtensionEventListenerType::WebNavigationOnCompleted:
             // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/webNavigation/onCompleted
-            webNavigationObject.onCompleted().invokeListenersWithArgument(navigationDetails, frameURL.createNSURL().get());
+            protect(webNavigationObject->onCompleted())->invokeListenersWithArgument(navigationDetails, frameURL.createNSURL().get());
             break;
 
         case WebExtensionEventListenerType::WebNavigationOnErrorOccurred:
             // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/webNavigation/onErrorOccurred
-            webNavigationObject.onErrorOccurred().invokeListenersWithArgument(navigationDetails, frameURL.createNSURL().get());
+            protect(webNavigationObject->onErrorOccurred())->invokeListenersWithArgument(navigationDetails, frameURL.createNSURL().get());
             break;
 
         default:

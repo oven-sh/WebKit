@@ -66,7 +66,7 @@ struct VerticalAlign {
         return WTF::holdsAlternative<U>(m_value);
     }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         return WTF::switchOn(m_value, std::forward<F>(f)...);
     }
@@ -86,7 +86,7 @@ template<> struct CSSValueConversion<VerticalAlign> { auto operator()(BuilderSta
 // MARK: - Blending
 
 template<> struct Blending<VerticalAlign> {
-    bool NODELETE canBlend(const VerticalAlign&, const VerticalAlign&);
+    bool LEGACY_NODELETE canBlend(const VerticalAlign&, const VerticalAlign&);
     auto requiresInterpolationForAccumulativeIteration(const VerticalAlign&, const VerticalAlign&) -> bool;
     auto blend(const VerticalAlign&, const VerticalAlign&, const BlendingContext&) -> VerticalAlign;
 };

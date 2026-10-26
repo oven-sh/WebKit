@@ -56,6 +56,7 @@
 #import <WebCore/ScrollView.h>
 #import <WebCore/WebActionDisablingCALayerDelegate.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
+#import <wtf/Borrow.h>
 #import <wtf/CallbackAggregator.h>
 #import <wtf/MachSendRight.h>
 #import <wtf/StdLibExtras.h>
@@ -129,6 +130,10 @@ void RemoteLayerTreeDrawingAreaProxy::removeRemotePageDrawingAreaProxy(RemotePag
 {
     ASSERT(m_remotePageProcessState.contains(proxy.process().coreProcessIdentifier()));
     m_remotePageProcessState.remove(proxy.process().coreProcessIdentifier());
+
+    // The process may outlive its part in this page.
+    if (m_remoteLayerTreeHost)
+        m_remoteLayerTreeHost->removeDisplayOnlyImagesForProcess(proxy.process().coreProcessIdentifier());
 }
 
 ProcessState::ProcessState(WebProcessProxy& webProcess)
@@ -175,6 +180,8 @@ void RemoteLayerTreeDrawingAreaProxy::remotePageProcessDidTerminate(WebCore::Pro
 {
     if (!m_remoteLayerTreeHost)
         return;
+
+    m_remoteLayerTreeHost->removeDisplayOnlyImagesForProcess(processIdentifier);
 
     if (CheckedPtr scrollingCoordinator = page() ? page()->scrollingCoordinatorProxy() : nullptr) {
         scrollingCoordinator->willCommitLayerAndScrollingTrees();
@@ -257,7 +264,7 @@ ProcessState& RemoteLayerTreeDrawingAreaProxy::processStateForConnection(IPC::Co
     return m_webPageProxyProcessState;
 }
 
-void RemoteLayerTreeDrawingAreaProxy::forEachProcessState(NOESCAPE Function<void(ProcessState&, WebProcessProxy&)>&& callback)
+void RemoteLayerTreeDrawingAreaProxy::forEachProcessState(NOESCAPE const Function<void(ProcessState&, WebProcessProxy&)>& callback)
 {
     callback(m_webPageProxyProcessState, webProcessProxy());
     for (auto& [key, value] : m_remotePageProcessState) {
@@ -352,7 +359,8 @@ void RemoteLayerTreeDrawingAreaProxy::commitLayerTree(IPC::Connection& connectio
     // The `sendRights` vector must have __block scope to be captured by
     // the commit handler block below without the need to copy it.
     __block Vector<MachSendRight, 16> sendRights;
-    for (auto& transaction : bundle.transactions) {
+    Borrow borrowedTransactions = bundle.transactions;
+    for (auto& transaction : borrowedTransactions) {
         // commitLayerTreeTransaction consumes the incoming buffers, so we need to grab them first.
         CheckedRef removeLayerTreeTransaction = transaction.first;
         for (auto& [layerID, properties] : removeLayerTreeTransaction->changedLayerProperties()) {
@@ -390,12 +398,14 @@ void RemoteLayerTreeDrawingAreaProxy::commitLayerTree(IPC::Connection& connectio
         }
     }
 
+    Borrow borrowedCallbackIDs = bundle.pageData.callbackIDs;
+
     if (bundle.mainFrameData) {
         m_activityStateChangeID = bundle.mainFrameData->activityStateChangeID;
 
         // Process any callbacks for unhiding content early, so that we
         // set the root node during the same CA transaction.
-        for (auto& callbackID : bundle.pageData.callbackIDs) {
+        for (auto& callbackID : borrowedCallbackIDs) {
             if (callbackID == m_replyForUnhidingContent) {
                 RELEASE_LOG(RemoteLayerTree, "RemoteLayerTreeDrawingAreaProxy(%" PRIu64 ")::hideContentUntilPendingUpdate completed", identifier().toUInt64());
                 m_replyForUnhidingContent = std::nullopt;
@@ -411,7 +421,7 @@ void RemoteLayerTreeDrawingAreaProxy::commitLayerTree(IPC::Connection& connectio
 
     WeakPtr weakThis { *this };
 
-    for (auto& transaction : bundle.transactions) {
+    for (auto& transaction : borrowedTransactions) {
         commitLayerTreeTransaction(connection, CheckedRef { transaction.first }.get(), transaction.second,  transaction.first.remoteContextHostedIdentifier() ? std::nullopt : bundle.mainFrameData, bundle.pageData, bundle.transactionID);
         if (!weakThis)
             return;
@@ -420,7 +430,7 @@ void RemoteLayerTreeDrawingAreaProxy::commitLayerTree(IPC::Connection& connectio
     if (CheckedPtr scrollingCoordinatorProxy = page->scrollingCoordinatorProxy())
         scrollingCoordinatorProxy->establishLayerTreeScrollingRelations(connection);
 
-    for (auto& callbackID : bundle.pageData.callbackIDs) {
+    for (auto& callbackID : borrowedCallbackIDs) {
         removeOutstandingPresentationUpdateCallback(connection, callbackID);
         if (auto callback = connection.takeAsyncReplyHandler(callbackID))
             callback(nullptr, nullptr);
@@ -555,9 +565,31 @@ void RemoteLayerTreeDrawingAreaProxy::commitLayerTreeTransaction(IPC::Connection
     page->layerTreeCommitComplete();
 }
 
-void RemoteLayerTreeDrawingAreaProxy::asyncSetLayerContents(WebCore::PlatformLayerIdentifier layerID, RemoteLayerBackingStoreProperties&& properties)
+void RemoteLayerTreeDrawingAreaProxy::asyncSetLayerContents(IPC::Connection& connection, WebCore::PlatformLayerIdentifier layerID, RemoteLayerBackingStoreProperties&& properties)
+{
+    MESSAGE_CHECK_BASE(layerID.processIdentifier() == WebProcessProxy::fromConnection(connection)->coreProcessIdentifier(), connection);
+    m_remoteLayerTreeHost->asyncSetLayerContents(layerID, WTF::move(properties));
+}
+
+void RemoteLayerTreeDrawingAreaProxy::setLayerContentsFromAnotherProcess(WebCore::PlatformLayerIdentifier layerID, RemoteLayerBackingStoreProperties&& properties)
 {
     m_remoteLayerTreeHost->asyncSetLayerContents(layerID, WTF::move(properties));
+}
+
+bool RemoteLayerTreeDrawingAreaProxy::startDisplayOnlyImage(RemoteSnapshotIdentifier image)
+{
+    return m_remoteLayerTreeHost && m_remoteLayerTreeHost->startDisplayOnlyImage(image);
+}
+
+bool RemoteLayerTreeDrawingAreaProxy::completeDisplayOnlyImage(RemoteSnapshotIdentifier image, ImageBufferBackendHandle&& handle)
+{
+    return m_remoteLayerTreeHost && m_remoteLayerTreeHost->completeDisplayOnlyImage(image, WTF::move(handle));
+}
+
+void RemoteLayerTreeDrawingAreaProxy::releaseDisplayOnlyImage(RemoteSnapshotIdentifier image)
+{
+    if (m_remoteLayerTreeHost)
+        m_remoteLayerTreeHost->releaseDisplayOnlyImage(image);
 }
 
 void RemoteLayerTreeDrawingAreaProxy::acceleratedAnimationDidStart(WebCore::PlatformLayerIdentifier layerID, const String& key, MonotonicTime startTime)
@@ -673,10 +705,10 @@ void RemoteLayerTreeDrawingAreaProxy::updateDebugIndicator(IntSize contentsSize,
 
 void RemoteLayerTreeDrawingAreaProxy::initializeDebugIndicator()
 {
-    m_debugIndicatorLayerTreeHost = makeUnique<RemoteLayerTreeHost>(*this);
+    lazyInitialize(m_debugIndicatorLayerTreeHost, makeUnique<RemoteLayerTreeHost>(*this));
     m_debugIndicatorLayerTreeHost->setIsDebugLayerTreeHost(true);
 
-    m_tileMapHostLayer = adoptNS([[CALayer alloc] init]);
+    lazyInitialize(m_tileMapHostLayer, adoptNS([[CALayer alloc] init]));
     [m_tileMapHostLayer setName:@"Tile map host"];
     [m_tileMapHostLayer setDelegate:[WebActionDisablingCALayerDelegate shared]];
     [m_tileMapHostLayer setAnchorPoint:CGPointZero];
@@ -695,7 +727,7 @@ void RemoteLayerTreeDrawingAreaProxy::initializeDebugIndicator()
         [m_tileMapHostLayer setBorderColor:borderColor.get()];
     }
     
-    m_exposedRectIndicatorLayer = adoptNS([[CALayer alloc] init]);
+    lazyInitialize(m_exposedRectIndicatorLayer, adoptNS([[CALayer alloc] init]));
     [m_exposedRectIndicatorLayer setDelegate:[WebActionDisablingCALayerDelegate shared]];
     [m_exposedRectIndicatorLayer setAnchorPoint:CGPointZero];
 
@@ -708,7 +740,7 @@ void RemoteLayerTreeDrawingAreaProxy::initializeDebugIndicator()
 
 void RemoteLayerTreeDrawingAreaProxy::initializeSlowFrameIndicator()
 {
-    m_slowFrameIndicatorLayer= adoptNS([[_WKSlowFrameHUDLayer alloc] initWithDrawingArea:this]);
+    lazyInitialize(m_slowFrameIndicatorLayer, adoptNS([[_WKSlowFrameHUDLayer alloc] initWithDrawingArea:this]));
     [m_slowFrameIndicatorLayer setName:@"Slow frame indicator"];
     [m_slowFrameIndicatorLayer setDelegate:[WebActionDisablingCALayerDelegate shared]];
     [m_slowFrameIndicatorLayer setAnchorPoint:CGPointZero];

@@ -34,7 +34,29 @@
 #import <wtf/CheckedArithmetic.h>
 #import <wtf/StdLibExtras.h>
 
-namespace WebGPU {
+namespace WebGPU::Metal {
+
+// A texture for an XR layer texture. The texture allows views in viewFormat.
+static Ref<Texture> createXRTexture(id<MTLTexture> texture, ASCIILiteral label, WebGPU::TextureFormat format, WebGPU::TextureFormat viewFormat, Device& device)
+{
+    Vector<WebGPU::TextureFormat> viewFormats { viewFormat };
+
+    WebGPU::TextureDescriptor descriptor {
+        .label = label,
+        .usage = WebGPU::TextureUsage::RenderAttachment,
+        .dimension = WebGPU::TextureDimension::_2d,
+        .size = {
+            .width = static_cast<uint32_t>(texture.width),
+            .height = static_cast<uint32_t>(texture.height),
+            .depthOrArrayLayers = static_cast<uint32_t>(texture.arrayLength),
+        },
+        .format = format,
+        .mipLevelCount = 1,
+        .sampleCount = static_cast<uint32_t>(texture.sampleCount),
+        .viewFormats = singleElementSpan(format),
+    };
+    return Texture::create(texture, descriptor, WTF::move(viewFormats), device);
+}
 
 XRSubImage::XRSubImage(bool, Device& device)
     : m_device(device)
@@ -76,32 +98,19 @@ void XRSubImage::update(const XRProjectionLayer& projectionLayer)
     size_t currentTextureIndex = projectionLayer.reusableTextureIndex();
     const std::pair<id<MTLSharedEvent>, uint64_t>& sharedEvent = projectionLayer.completionEvent();
 
-    WGPUTextureFormat targetColorFormat = projectionLayer.colorFormat();
-    std::optional<WGPUTextureFormat> targetDepthStencilFormat = projectionLayer.optionalDepthStencilFormat();
+    WebGPU::TextureFormat targetColorFormat = projectionLayer.colorFormat();
+    std::optional<WebGPU::TextureFormat> targetDepthStencilFormat = projectionLayer.optionalDepthStencilFormat();
 
     m_currentTextureIndex = currentTextureIndex;
-    RefPtr texture = this->colorTexture();
+    RefPtr texture = this->currentColorTexture();
     if (!texture || texture->texture() != colorTexture) {
         auto colorFormat = Texture::textureFormat(colorTexture.pixelFormat);
-        if (colorFormat != targetColorFormat)
-            colorTexture = [colorTexture newTextureViewWithPixelFormat:Texture::pixelFormat(colorFormat)];
+        if (!colorFormat)
+            return;
+        if (*colorFormat != targetColorFormat)
+            colorTexture = [colorTexture newTextureViewWithPixelFormat:Texture::pixelFormat(*colorFormat)];
 
-        WGPUTextureDescriptor colorTextureDescriptor = {
-            .label = toAPI("color texture"_s),
-            .usage = WGPUTextureUsage_RenderAttachment,
-            .dimension = WGPUTextureDimension_2D,
-            .size = {
-                .width = static_cast<uint32_t>(colorTexture.width),
-                .height = static_cast<uint32_t>(colorTexture.height),
-                .depthOrArrayLayers = static_cast<uint32_t>(colorTexture.arrayLength),
-            },
-            .format = targetColorFormat,
-            .mipLevelCount = 1,
-            .sampleCount = static_cast<uint32_t>(colorTexture.sampleCount),
-            .viewFormatCount = 1,
-            .viewFormats = &targetColorFormat,
-        };
-        Ref newTexture = Texture::create(colorTexture, colorTextureDescriptor, { colorFormat }, *device);
+        Ref newTexture = createXRTexture(colorTexture, "color texture"_s, targetColorFormat, *colorFormat, *device);
         newTexture->updateCompletionEvent(sharedEvent);
         newTexture->setRasterizationRateMaps(projectionLayer.rasterizationRateMaps());
         m_colorTextures.set(currentTextureIndex, WTF::move(newTexture));
@@ -110,33 +119,30 @@ void XRSubImage::update(const XRProjectionLayer& projectionLayer)
 
     if (texture = this->depthTexture(); !texture || texture->texture() != depthTexture) {
         auto depthFormat = Texture::textureFormat(depthTexture.pixelFormat);
-        if (targetDepthStencilFormat && *targetDepthStencilFormat != depthFormat) {
-            depthFormat = *targetDepthStencilFormat;
-            depthTexture = [depthTexture newTextureViewWithPixelFormat:Texture::pixelFormat(depthFormat)];
+        if (targetDepthStencilFormat && targetDepthStencilFormat != depthFormat) {
+            depthFormat = targetDepthStencilFormat;
+            depthTexture = [depthTexture newTextureViewWithPixelFormat:Texture::pixelFormat(*depthFormat)];
         }
+        if (!depthFormat)
+            return;
 
-        WGPUTextureDescriptor depthTextureDescriptor = {
-            .label = toAPI("depth texture"_s),
-            .usage = WGPUTextureUsage_RenderAttachment,
-            .dimension = WGPUTextureDimension_2D,
-            .size = {
-                .width = static_cast<uint32_t>(depthTexture.width),
-                .height = static_cast<uint32_t>(depthTexture.height),
-                .depthOrArrayLayers = static_cast<uint32_t>(depthTexture.arrayLength),
-            },
-            .format = depthFormat,
-            .mipLevelCount = 1,
-            .sampleCount = static_cast<uint32_t>(depthTexture.sampleCount),
-            .viewFormatCount = 1,
-            .viewFormats = &depthFormat,
-        };
-        m_depthTextures.set(currentTextureIndex, Texture::create(depthTexture, depthTextureDescriptor, { depthFormat }, *device));
+        m_depthTextures.set(currentTextureIndex, createXRTexture(depthTexture, "depth texture"_s, *depthFormat, *depthFormat, *device));
     }
 }
 
-Texture* XRSubImage::colorTexture()
+Texture* XRSubImage::currentColorTexture()
 {
     return m_colorTextures.get(m_currentTextureIndex);
+}
+
+RefPtr<WebGPU::Texture> XRSubImage::colorTexture()
+{
+    return currentColorTexture();
+}
+
+RefPtr<WebGPU::Texture> XRSubImage::depthStencilTexture()
+{
+    return depthTexture();
 }
 
 Texture* XRSubImage::depthTexture()
@@ -149,26 +155,11 @@ RefPtr<XRSubImage> XRBinding::getViewSubImage(XRProjectionLayer& projectionLayer
     return device().getXRViewSubImage(projectionLayer);
 }
 
-} // namespace WebGPU
+RefPtr<WebGPU::XRSubImage> XRBinding::getViewSubImage(WebGPU::XRProjectionLayer& projectionLayer)
+{
+    return getViewSubImage(downcast<XRProjectionLayer>(projectionLayer));
+}
+
+} // namespace WebGPU::Metal
 
 #pragma mark WGPU Stubs
-
-void NODELETE wgpuXRSubImageAddRef(WGPUXRSubImage subImage)
-{
-    WebGPU::fromAPI(subImage).ref();
-}
-
-void wgpuXRSubImageRelease(WGPUXRSubImage subImage)
-{
-    WebGPU::fromAPI(subImage).deref();
-}
-
-WGPUTexture wgpuXRSubImageGetColorTexture(WGPUXRSubImage subImage)
-{
-    return protect(WebGPU::fromAPI(subImage))->colorTexture();
-}
-
-WGPUTexture wgpuXRSubImageGetDepthStencilTexture(WGPUXRSubImage subImage)
-{
-    return protect(WebGPU::fromAPI(subImage))->depthTexture();
-}

@@ -74,7 +74,7 @@ struct SingleTransitionProperty {
     bool isCustomProperty() const { return WTF::holdsAlternative<CustomProperty>(m_value); }
     bool isSingleProperty() const { return WTF::holdsAlternative<SingleProperty>(m_value); }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         return WTF::switchOn(m_value, std::forward<F>(f)...);
     }
@@ -88,7 +88,7 @@ private:
     {
         if (isCustomPropertyName(customIdent.value))
             return Kind { CustomProperty { .value = WTF::move(customIdent) } };
-        if (auto propertyID = cssPropertyID(customIdent.value))
+        if (auto propertyID = cssPropertyID(customIdent.value); propertyID != CSSPropertyID::Invalid)
             return Kind { SingleProperty { .value = WTF::move(customIdent), .propertyID = propertyID } };
         return Kind { UnknownProperty { .value = WTF::move(customIdent) } };
     }

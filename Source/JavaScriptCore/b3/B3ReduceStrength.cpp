@@ -33,25 +33,35 @@
 #include "B3BasicBlockInlines.h"
 #include "B3BulkMemoryValue.h"
 #include "B3ComputeDivisionMagic.h"
+#include "B3Dominators.h"
 #include "B3EliminateDeadCode.h"
 #include "B3InsertionSetInlines.h"
 #include "B3MemoryValueInlines.h"
+#include "B3NaturalLoops.h"
 #include "B3PhaseScope.h"
 #include "B3PhiChildren.h"
 #include "B3ProcedureInlines.h"
-#include "B3PureCSE.h"
+#include "B3SwitchValue.h"
 #include "B3ValueKeyInlines.h"
 #include "B3ValueInlines.h"
+#include "B3WasmArrayElementValue.h"
+#include "B3WasmArrayGetValue.h"
 #include "B3WasmArrayLengthValue.h"
 #include "B3WasmArrayNewValue.h"
+#include "B3WasmArraySetValue.h"
 #include "B3WasmRefTypeCheckValue.h"
+#include "B3WasmStructFieldValue.h"
 #include "B3WasmStructGetValue.h"
 #include "B3WasmStructSetValue.h"
 #include "JSCJSValueInlines.h"
 #include "Options.h"
 #include "SIMDShuffle.h"
+#include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
+#include <wtf/Hasher.h>
+#include <wtf/LayeredHashMap.h>
 #include <wtf/MathExtras.h>
+#include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -79,6 +89,37 @@ ALWAYS_INLINE bool areDistinctWasmGCReferences(Value* a, Value* b)
     return false;
 }
 
+// Identifies the contents of one wasm-GC struct field or array element. `heap` is the abstract
+// heap the access goes through: one per struct field of the type that declares it, so a subtype
+// and its supertype agree, and one per array element type. `base` and `index` are the SSA values
+// of the reference and array index (index is null for structs); accesses match only through the
+// same Values. Since different Values may be the same object, a write bumps its slot's epoch
+// rather than retiring entries by base; `slotEpoch` and `allEpoch` record the epochs of the
+// access's slot and its kind's catch-all slot.
+struct WasmGCAccessKey {
+    Value* base { nullptr };
+    Value* index { nullptr };
+    uint64_t heap { 0 };
+    uint32_t slotEpoch { 0 };
+    uint32_t allEpoch { 0 };
+
+    friend bool operator==(const WasmGCAccessKey&, const WasmGCAccessKey&) = default;
+
+    unsigned hash() const { return WTF::computeHash(base, index, heap, slotEpoch, allEpoch); }
+};
+
+struct WasmGCAccessKeyTraits : HashTraits<WasmGCAccessKey> {
+    static constexpr bool hasIsEmptyValueFunction = true;
+    static bool isEmptyValue(const WasmGCAccessKey& key) { return !key.base; }
+};
+
+// What a redundant access at the same key can be replaced with. A value forwarded out of a store
+// to a packed field still has to be narrowed the way the load would have narrowed it.
+struct WasmGCAvailableValue {
+    Value* value { nullptr };
+    uint32_t packedMask { 0 };
+};
+
 // The goal of this phase is to:
 //
 // - Replace operations with less expensive variants. This includes constant folding and classic
@@ -90,17 +131,6 @@ ALWAYS_INLINE bool areDistinctWasmGCReferences(Value* a, Value* b)
 // - Canonicalize operations. There are some cases where it's not at all obvious which kind of
 //   operation is less expensive, but it's useful for subsequent phases - particularly LowerToAir -
 //   to have only one way of representing things.
-//
-// This phase runs to fixpoint. Therefore, the canonicalizations must be designed to be monotonic.
-// For example, if we had a canonicalization that said that Add(x, -c) should be Sub(x, c) and
-// another canonicalization that said that Sub(x, d) should be Add(x, -d), then this phase would end
-// up running forever. We don't want that.
-//
-// Therefore, we need to prioritize certain canonical forms over others. Naively, we want strength
-// reduction to reduce the number of values, and so a form involving fewer total values is more
-// canonical. But we might break this, for example when reducing strength of Mul(x, 9). This could be
-// better written as Add(Shl(x, 3), x), which also happens to be representable using a single
-// instruction on x86.
 //
 // Here are some of the rules we have:
 //
@@ -225,12 +255,12 @@ public:
     }
 
     template<typename T>
-    static IntRange NODELETE top()
+    static IntRange LEGACY_NODELETE top()
     {
         return IntRange(std::numeric_limits<T>::min(), std::numeric_limits<T>::max());
     }
 
-    static IntRange NODELETE top(Type type)
+    static IntRange LEGACY_NODELETE top(Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -244,7 +274,7 @@ public:
     }
 
     template<typename T>
-    static IntRange NODELETE rangeForMask(T mask)
+    static IntRange LEGACY_NODELETE rangeForMask(T mask)
     {
         if (mask == static_cast<T>(-1))
             return top<T>();
@@ -255,7 +285,7 @@ public:
         return IntRange(0, mask);
     }
 
-    static IntRange NODELETE rangeForMask(int64_t mask, Type type)
+    static IntRange LEGACY_NODELETE rangeForMask(int64_t mask, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -269,7 +299,7 @@ public:
     }
 
     template<typename T>
-    static IntRange NODELETE rangeForZShr(int32_t shiftAmount)
+    static IntRange LEGACY_NODELETE rangeForZShr(int32_t shiftAmount)
     {
         std::make_unsigned_t<T> mask = 0;
         mask--;
@@ -277,7 +307,7 @@ public:
         return rangeForMask<T>(static_cast<T>(mask));
     }
 
-    static IntRange NODELETE rangeForZShr(int32_t shiftAmount, Type type)
+    static IntRange LEGACY_NODELETE rangeForZShr(int32_t shiftAmount, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -290,8 +320,8 @@ public:
         }
     }
 
-    int64_t NODELETE min() const { return m_min; }
-    int64_t NODELETE max() const { return m_max; }
+    int64_t LEGACY_NODELETE min() const { return m_min; }
+    int64_t LEGACY_NODELETE max() const { return m_max; }
 
     void dump(PrintStream& out) const
     {
@@ -299,7 +329,7 @@ public:
     }
 
     template<typename T>
-    bool NODELETE couldOverflowAdd(const IntRange& other)
+    bool LEGACY_NODELETE couldOverflowAdd(const IntRange& other)
     {
         return sumOverflows<T>(m_min, other.m_min)
             || sumOverflows<T>(m_min, other.m_max)
@@ -307,7 +337,7 @@ public:
             || sumOverflows<T>(m_max, other.m_max);
     }
 
-    bool NODELETE couldOverflowAdd(const IntRange& other, Type type)
+    bool LEGACY_NODELETE couldOverflowAdd(const IntRange& other, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -320,7 +350,7 @@ public:
     }
 
     template<typename T>
-    bool NODELETE couldOverflowSub(const IntRange& other)
+    bool LEGACY_NODELETE couldOverflowSub(const IntRange& other)
     {
         return differenceOverflows<T>(m_min, other.m_min)
             || differenceOverflows<T>(m_min, other.m_max)
@@ -328,7 +358,7 @@ public:
             || differenceOverflows<T>(m_max, other.m_max);
     }
 
-    bool NODELETE couldOverflowSub(const IntRange& other, Type type)
+    bool LEGACY_NODELETE couldOverflowSub(const IntRange& other, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -341,7 +371,7 @@ public:
     }
 
     template<typename T>
-    bool NODELETE couldOverflowMul(const IntRange& other)
+    bool LEGACY_NODELETE couldOverflowMul(const IntRange& other)
     {
         return productOverflows<T>(m_min, other.m_min)
             || productOverflows<T>(m_min, other.m_max)
@@ -349,7 +379,7 @@ public:
             || productOverflows<T>(m_max, other.m_max);
     }
 
-    bool NODELETE couldOverflowMul(const IntRange& other, Type type)
+    bool LEGACY_NODELETE couldOverflowMul(const IntRange& other, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -362,8 +392,9 @@ public:
     }
 
     template<typename T>
-    IntRange NODELETE shl(int32_t shiftAmount)
+    IntRange LEGACY_NODELETE shl(int32_t shiftAmount)
     {
+        shiftAmount &= static_cast<int32_t>(sizeof(T) * 8 - 1);
         T newMin = static_cast<T>(m_min) << static_cast<T>(shiftAmount);
         T newMax = static_cast<T>(m_max) << static_cast<T>(shiftAmount);
 
@@ -376,7 +407,7 @@ public:
         return IntRange(newMin, newMax);
     }
 
-    IntRange NODELETE shl(int32_t shiftAmount, Type type)
+    IntRange LEGACY_NODELETE shl(int32_t shiftAmount, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -390,15 +421,16 @@ public:
     }
 
     template<typename T>
-    IntRange NODELETE sShr(int32_t shiftAmount)
+    IntRange LEGACY_NODELETE sShr(int32_t shiftAmount)
     {
+        shiftAmount &= static_cast<int32_t>(sizeof(T) * 8 - 1);
         T newMin = static_cast<T>(m_min) >> static_cast<T>(shiftAmount);
         T newMax = static_cast<T>(m_max) >> static_cast<T>(shiftAmount);
 
         return IntRange(newMin, newMax);
     }
 
-    IntRange NODELETE sShr(int32_t shiftAmount, Type type)
+    IntRange LEGACY_NODELETE sShr(int32_t shiftAmount, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -412,8 +444,10 @@ public:
     }
 
     template<typename T>
-    IntRange NODELETE zShr(int32_t shiftAmount)
+    IntRange LEGACY_NODELETE zShr(int32_t shiftAmount)
     {
+        shiftAmount &= static_cast<int32_t>(sizeof(T) * 8 - 1);
+
         // This is an awkward corner case for all of the other logic.
         if (!shiftAmount)
             return *this;
@@ -431,7 +465,7 @@ public:
         return IntRange(newMin, newMax);
     }
 
-    IntRange NODELETE zShr(int32_t shiftAmount, Type type)
+    IntRange LEGACY_NODELETE zShr(int32_t shiftAmount, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -445,14 +479,14 @@ public:
     }
 
     template<typename T>
-    IntRange NODELETE add(const IntRange& other)
+    IntRange LEGACY_NODELETE add(const IntRange& other)
     {
         if (couldOverflowAdd<T>(other))
             return top<T>();
         return IntRange(m_min + other.m_min, m_max + other.m_max);
     }
 
-    IntRange NODELETE add(const IntRange& other, Type type)
+    IntRange LEGACY_NODELETE add(const IntRange& other, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -466,14 +500,14 @@ public:
     }
 
     template<typename T>
-    IntRange NODELETE sub(const IntRange& other)
+    IntRange LEGACY_NODELETE sub(const IntRange& other)
     {
         if (couldOverflowSub<T>(other))
             return top<T>();
         return IntRange(m_min - other.m_max, m_max - other.m_min);
     }
 
-    IntRange NODELETE sub(const IntRange& other, Type type)
+    IntRange LEGACY_NODELETE sub(const IntRange& other, Type type)
     {
         switch (type.kind()) {
         case Int32:
@@ -514,7 +548,7 @@ public:
     }
 
     template<typename T>
-    IntRange NODELETE sExt()
+    IntRange LEGACY_NODELETE sExt()
     {
         ASSERT(m_min >= INT32_MIN);
         ASSERT(m_max <= INT32_MAX);
@@ -568,7 +602,7 @@ public:
         return top<T>();
     }
 
-    IntRange NODELETE zExt32()
+    IntRange LEGACY_NODELETE zExt32()
     {
         ASSERT(m_min >= INT32_MIN);
         ASSERT(m_max <= INT32_MAX);
@@ -600,70 +634,10 @@ public:
 
     bool run()
     {
-        if (Options::useB3ReduceStrengthFixpoint())
-            return runFixpoint();
-        return runSinglePass();
-    }
-
-    bool runFixpoint()
-    {
-        bool result = false;
-        do {
-            result |= runOnePass();
-        } while (m_changed && m_proc.optLevel() >= 2);
-
-        if (m_proc.optLevel() < 2) {
-            m_changedCFG = false;
-            simplifyCFG();
-            handleChangedCFGIfNecessary();
-        }
-
-        return result;
-    }
-
-    bool runSinglePass()
-    {
-        bool result = runOnePass();
-
-        if (m_proc.optLevel() >= 2) {
-            if (result) {
-                m_changed = false;
-                simplifyCFGToFixpoint();
-                simplifySSA();
-
-                // A second value walk is only worthwhile when the CFG/SSA cleanup above exposed
-                // new opportunities: merged blocks enabling Check CSE, or a folded Phi turning
-                // Branch(Phi) into Branch(Identity).
-                if (m_changed) {
-                    m_valueForConstant.clear();
-                    reduceAllBlocksStrength();
-                    simplifyCFGToFixpoint();
-                }
-
-                eliminateDeadCodeImpl(m_proc);
-            }
-        } else {
-            m_changedCFG = false;
-            simplifyCFG();
-            handleChangedCFGIfNecessary();
-            result |= m_changed;
-        }
-
-        return result;
-    }
-
-    bool runOnePass()
-    {
         m_changed = false;
-        m_changedCFG = false;
 
         simplifyCFG();
-
-        if (m_changedCFG) {
-            m_proc.resetReachability();
-            m_proc.invalidateCFG();
-            m_changed = true;
-        }
+        handleChangedCFGIfNecessary();
 
         // We definitely want to do DCE before we do CSE so that we don't hoist things. For
         // example:
@@ -677,49 +651,138 @@ public:
         // keep @thing. That's better, since we usually want things to stay wherever the client
         // put them. We're not actually smart enough to move things around at random.
         m_changed |= eliminateDeadCodeImpl(m_proc);
-        m_valueForConstant.clear();
-
-        simplifySSA();
 
         reduceAllBlocksStrength();
 
+        if (m_proc.optLevel() >= 2 && !m_changed && !m_mayHaveUnfoldedPhis)
+            return false;
+
+        simplifyCFG();
+        handleChangedCFGIfNecessary();
+        if (m_mayHaveUnfoldedPhis)
+            simplifySSA();
+        if (m_proc.optLevel() >= 2)
+            eliminateDeadCodeImpl(m_proc);
         return m_changed;
     }
 
-    // Recompute the per-walk caches (value owners, dominators, pure CSE) then run
-    // reduceBlockStrength over every block.
+    // Recompute the per-walk caches (dominators, value numbering, the Phi-to-Upsilon snapshot, and
+    // block reachability) then walk every block, reducing the ones that may be reachable.
     void reduceAllBlocksStrength()
     {
-        if (m_proc.optLevel() >= 2) {
-            m_proc.resetValueOwners();
-            m_dominators = &m_proc.dominators(); // Recompute if necessary.
-            m_pureCSE.clear();
+        // lowerMacros expands every wasm-GC opcode, so the Final run cannot see one.
+        m_trackWasmGCAccesses = m_pass == ReduceStrengthPass::Initial && m_proc.usesWasmGCAccesses();
+        if (m_trackWasmGCAccesses) {
+            computeWasmGCSpans();
+            m_naturalLoops = &m_proc.naturalLoops();
+            scanWasmGCAccesses();
+            m_wasmGCMap.clear();
+            m_wasmGCEpochs.shrink(0);
+            m_wasmGCEpochs.grow(wasmGCSlotCount());
+            m_wasmGCEpochsAtTail.resize(static_cast<size_t>(m_proc.size()) * wasmGCSlotCount());
         }
 
-        for (BasicBlock* block : m_proc.blocksInPostOrder() | std::views::reverse)
-            reduceBlockStrength(block);
+        {
+            // The walk folds a Phi based on this snapshot of its Upsilons, so it must not create Phis or
+            // Upsilons, nor delete values.
+            PhiChildren phiChildren(m_proc);
+            SetForScope phiChildrenScope(m_phiChildren, &phiChildren);
+            SetForScope phiChildrenValueCountScope(m_phiChildrenValueCount, m_proc.values().size());
+            m_blockStates = IndexMap<BasicBlock*, BlockState>(m_proc.size(), BlockState::Unvisited);
+            m_enteredFromReachableBlock.clearAll();
+            m_enteredFromReachableBlock.ensureSize(m_proc.size());
+            m_valueForConstant.clear();
+
+            m_dominators = &m_proc.dominators(); // Recompute if necessary.
+            m_layeredCSE.clear();
+            reduceAllBlocksStrengthInDominatorPreOrder();
+            m_valueForConstant.clear();
+
+#if ASSERT_ENABLED
+            BitVector snapshotUpsilonIndices;
+            for (Value* phi : phiChildren.phis()) {
+                for (Value* upsilon : phiChildren[phi]) {
+                    ASSERT(upsilon->opcode() == Nop || (phi->opcode() == Phi && upsilon->as<UpsilonValue>()->phi() == phi));
+                    snapshotUpsilonIndices.set(upsilon->index());
+                }
+            }
+            for (Value* value : m_proc.values()) {
+                if (value->opcode() == Upsilon)
+                    ASSERT(snapshotUpsilonIndices.get(value->index()));
+            }
+#endif
+        }
 
         handleChangedCFGIfNecessary();
     }
 
-private:
-    void reduceBlockStrength(BasicBlock* block)
+    // Walks the dominator tree in preorder, visiting each block's dominator children in CFG reverse post-order.
+    // That ordering buys two properties at once, and the value numbering below relies on both:
+    //
+    //  - A block is visited after every block that dominates it, so pairing a layer of
+    //    m_layeredCSE with each step down the tree leaves the map holding exactly the values that
+    //    dominate the current position. No dominance test is needed at lookup time.
+    //  - A block is visited after every predecessor that is not reached by a back edge. The
+    //    immediate dominator of a block also dominates each of its predecessors, so a predecessor
+    //    always sits in the subtree of a sibling that comes earlier in reverse-post-order.
+    //
+    // Plain reverse-post-order gives the second property but not the first, and a dominator walk
+    // in any other child order gives the first but not the second.
+    void reduceAllBlocksStrengthInDominatorPreOrder()
     {
-        m_block = block;
-        for (m_index = 0; m_index < block->size(); ++m_index) {
+        m_dominators->forAllBlocksInDominatorTreePreOrder<DominatorTreeChildOrder::ReversePostOrder>(
+            [&](BasicBlock* block) {
+                m_layeredCSE.startLayer();
+
+                m_block = block;
+                m_blockState = computeBlockReachability();
+
+                if (m_trackWasmGCAccesses) {
+                    m_wasmGCMap.startLayer();
+                    beginWasmGCBlock(block);
+                }
+
+                // Every block an unreachable block dominates is unreachable too, and the whole region is
+                // deleted right after the walk, so only the Upsilons feeding Phis elsewhere matter.
+                if (m_blockState == BlockState::Unreachable)
+                    removeUpsilonsFromUnreachableBlock();
+                else
+                    reduceBlockStrength();
+
+                if (m_trackWasmGCAccesses)
+                    endWasmGCBlock(block);
+
+                finishBlock(block);
+            },
+            [&](BasicBlock*) {
+                m_layeredCSE.dropLastLayer();
+                if (m_trackWasmGCAccesses)
+                    m_wasmGCMap.dropLastLayer();
+            });
+    }
+
+private:
+    void reduceBlockStrength()
+    {
+        for (m_index = 0; m_index < m_block->size(); ++m_index) {
             if (B3ReduceStrengthInternal::verbose) {
                 dataLog(
-                    "Looking at ", *block, " #", m_index, ": ",
-                    deepDump(m_proc, block->at(m_index)), "\n");
+                    "Looking at ", *m_block, " #", m_index, ": ",
+                    deepDump(m_proc, m_block->at(m_index)), "\n");
             }
             m_value = m_block->at(m_index);
             m_value->performSubstitution();
+
+            HeapRange writesBeforeReduction;
+            if (m_trackWasmGCAccesses)
+                writesBeforeReduction = m_value->effects().writes;
 
             // Many rules mutate the current value's children in place (e.g. Add(Add(x, c1), c2)
             // becomes Add(x, c1 + c2)), and the result may match another rule. Without fixpoint
             // iteration we re-run reductions on the same value until it stops changing or gets
             // replaced (Identity) / erased (Nop).
             constexpr unsigned maxReductionAttempts = 8;
+            bool reduced = false;
             for (unsigned attempt = 0; attempt < maxReductionAttempts; ++attempt) {
                 bool savedChanged = std::exchange(m_changed, false);
                 reduceValueStrength();
@@ -727,12 +790,18 @@ private:
                 m_changed |= savedChanged;
                 if (!changedThisAttempt)
                     break;
+                reduced = true;
                 Opcode opcode = m_value->opcode();
                 if (opcode == Identity || opcode == Nop)
                     break;
             }
             if (m_proc.optLevel() >= 2)
                 replaceIfRedundant();
+
+            // Runs after the reduction rules above, so that a cast the rules strip off the base
+            // or a trap bit they drop is already reflected in the access this records.
+            if (m_trackWasmGCAccesses)
+                processWasmGCAccess(writesBeforeReduction, reduced);
         }
         m_insertionSet.execute(m_block);
     }
@@ -740,6 +809,31 @@ private:
     void reduceValueStrength()
     {
         switch (m_value->opcode()) {
+        case Phi: {
+            auto upsilons = upsilonsInSnapshot(m_value);
+            Value* input = uniquePhiInput(m_value, upsilons);
+            if (!input) {
+                // An Upsilon in a block the walk has not reached yet may still reduce to an input
+                // already seen.
+                if (hasUnfinishedPredecessor())
+                    m_mayHaveUnfoldedPhis = true;
+                break;
+            }
+            // Every path into a reachable block runs one of the Phi's Upsilons, and the walk only
+            // removes an Upsilon that can never run or whose Phi is removed too, so the one remaining
+            // input dominates the Phi. A block of unknown reachability may sit in a dead cycle, where
+            // folding can leave a value using itself. An input defined in a block that strictly
+            // dominates this one cannot depend on the Phi, so it is safe either way. A value still
+            // waiting in an insertion set has no owner yet.
+            if (m_blockState == BlockState::Unknown
+                && !(input->owner && m_dominators->strictlyDominates(input->owner, m_block))) {
+                m_mayHaveUnfoldedPhis = true;
+                break;
+            }
+            replacePhi(m_value, input, upsilons);
+            break;
+        }
+
         case Opaque:
             // Turn this: Opaque(Opaque(value))
             // Into this: Opaque(value)
@@ -1870,6 +1964,8 @@ private:
             break;
 
         case Shl:
+            maskConstantShiftAmount();
+
             // Turn this: Shl(constant1, constant2)
             // Into this: constant1 << constant2
             if (Value* constant = m_value->child(0)->shlConstant(m_proc, m_value->child(1))) {
@@ -1894,6 +1990,8 @@ private:
             break;
 
         case SShr:
+            maskConstantShiftAmount();
+
             // Turn this: SShr(constant1, constant2)
             // Into this: constant1 >> constant2
             if (Value* constant = m_value->child(0)->sShrConstant(m_proc, m_value->child(1))) {
@@ -1966,10 +2064,31 @@ private:
                     break;
             }
 
+            // Turn this: SShr(Mul(value, constant << amount), amount)
+            // Into this: Mul(value, constant)
+            // This is exact when the Mul cannot overflow.
+            if (m_value->child(1)->hasInt32()
+                && m_value->child(0)->opcode() == Mul
+                && m_value->child(0)->child(1)->hasInt()) {
+                int32_t amount = m_value->child(1)->asInt32();
+                Value* multiply = m_value->child(0);
+                int64_t multiplier = multiply->child(1)->asInt();
+                if (amount > 0
+                    && static_cast<size_t>(amount) < sizeofType(m_value->type()) * 8
+                    && !(multiplier & ((static_cast<int64_t>(1) << amount) - 1))
+                    && !rangeFor(multiply->child(0)).couldOverflowMul(rangeFor(multiply->child(1)), m_value->type())) {
+                    replaceWithNew<Value>(Mul, m_value->origin(), multiply->child(0),
+                        m_insertionSet.insertIntConstant(m_index, m_value, multiplier >> amount));
+                    break;
+                }
+            }
+
             handleShiftAmount();
             break;
 
         case ZShr:
+            maskConstantShiftAmount();
+
             // Turn this: ZShr(constant1, constant2)
             // Into this: (unsigned)constant1 >> constant2
             if (Value* constant = m_value->child(0)->zShrConstant(m_proc, m_value->child(1))) {
@@ -2040,6 +2159,8 @@ private:
             break;
 
         case RotR:
+            maskConstantShiftAmount();
+
             // Turn this: RotR(constant1, constant2)
             // Into this: (constant1 >> constant2) | (constant1 << sizeof(constant1) * 8 - constant2)
             if (Value* constant = m_value->child(0)->rotRConstant(m_proc, m_value->child(1))) {
@@ -2051,6 +2172,8 @@ private:
             break;
 
         case RotL:
+            maskConstantShiftAmount();
+
             // Turn this: RotL(constant1, constant2)
             // Into this: (constant1 << constant2) | (constant1 >> sizeof(constant1) * 8 - constant2)
             if (Value* constant = m_value->child(0)->rotLConstant(m_proc, m_value->child(1))) {
@@ -2454,13 +2577,18 @@ private:
                 int32_t shiftAmountConstant = m_value->child(0)->child(1)->asInt32();
                 auto sshrArg0 = m_value->child(0)->child(0);
 
-                // Turn this: Trunc(SShr(Shl(SExt32(@a), $12), $12))
+                // Turn this: Trunc(SShr(Shl(SExt32(@a), $c), $c)) where (c & 63) <= 32
                 // Into this: @a
+                // SExt32 makes the top 33 bits copies of the sign bit, so shifting out up to 32 of them
+                // and shifting back in loses nothing.
                 if (sshrArg0->opcode() == Shl && sshrArg0->child(1)->hasInt32()
-                    && sshrArg0->child(1)->asInt32() == shiftAmountConstant && shiftAmountConstant < 31
                     && sshrArg0->child(0)->opcode() == SExt32) {
-                    replaceWithIdentity(sshrArg0->child(0)->child(0));
-                    break;
+                    unsigned shlAmount = sshrArg0->child(1)->asInt32() & 63;
+                    unsigned sshrAmount = shiftAmountConstant & 63;
+                    if (shlAmount == sshrAmount && sshrAmount <= 32) {
+                        replaceWithIdentity(sshrArg0->child(0)->child(0));
+                        break;
+                    }
                 }
 
                 // Shl(SExt32(@a), $12)
@@ -2695,7 +2823,7 @@ private:
             break;
         }
 
-        case MemoryCopy: {
+        case MemoryMove: {
             if (m_value->child(2)->hasInt()) {
                 auto* memoryCopy = m_value->as<BulkMemoryValue>();
                 uint64_t count = m_value->child(2)->asInt();
@@ -2704,7 +2832,11 @@ private:
                     int32_t offset = 0;
                     Vector<MemoryValue*, 16> loads;
 
-                    if (count >= 16 && m_proc.usesSIMD()) {
+                    // Only 64-bit accesses are known to be single-copy atomic per word on every target.
+                    if (memoryCopy->isGCSafe())
+                        RELEASE_ASSERT(!(count % sizeof(uint64_t)));
+
+                    if (count >= 16 && !memoryCopy->isGCSafe() && m_proc.usesSIMD()) {
                         while (count >= 16) {
                             MemoryValue* load = m_insertionSet.insert<MemoryValue>(m_index, Load, V128, m_value->origin(), m_value->child(1), offset);
                             load->setRange(memoryCopy->readRange());
@@ -2782,7 +2914,6 @@ private:
                 constexpr uint64_t threshold = 128;
                 if (count <= threshold) {
                     int32_t offset = 0;
-
                     if (count >= 16 && m_proc.usesSIMD()) {
                         uint64_t mask64 = target << 56 | target << 48 | target << 40 | target << 32 | target << 24 | target << 16 | target << 8 | target << 0;
                         v128_t mask { mask64, mask64 };
@@ -3223,15 +3354,27 @@ private:
 
                 patchpoint->setGenerator(checkValue->generator());
 
-                // Replace the rest of the block with an Oops.
-                for (unsigned i = m_index + 1; i < m_block->size() - 1; ++i)
-                    m_block->at(i)->replaceWithBottom(m_insertionSet, m_index);
-                m_block->last()->replaceWithOops(m_block);
-                m_block->last()->setOrigin(checkValue->origin());
+                // Replace the rest of the block with an Oops. The terminal becomes a Bottom rather
+                // than the Oops itself because it may produce a value (e.g. a Patchpoint with a
+                // slow path successor) that successors, not yet pruned, still use.
+                for (unsigned i = m_index + 1; i < m_block->size(); ++i) {
+                    Value* value = m_block->at(i);
+                    if (value->opcode() == Phi) {
+                        for (Value* upsilon : upsilonsInSnapshot(value))
+                            upsilon->replaceWithNop();
+                    }
+                    value->replaceWithBottom(m_insertionSet, m_index);
+                }
+                m_insertionSet.insert<Value>(m_block->size(), Oops, checkValue->origin());
+                for (BasicBlock* successor : m_block->successorBlocks())
+                    successor->removePredecessor(m_block);
+                m_block->clearSuccessors();
 
                 // Replace ourselves last.
                 checkValue->replaceWithNop();
                 m_changedCFG = true;
+                // The Upsilons just removed may have fed a Phi the walk already visited.
+                m_mayHaveUnfoldedPhis = true;
                 break;
             }
 
@@ -3284,18 +3427,14 @@ private:
             // Turn this: Branch(0, then, else)
             // Into this: Jump(else)
             if (triState == TriState::False) {
-                m_block->taken().block()->removePredecessor(m_block);
-                m_value->replaceWithJump(m_block, m_block->notTaken());
-                m_changedCFG = true;
+                replaceTerminalWithJump(m_block->notTaken());
                 break;
             }
 
             // Turn this: Branch(not 0, then, else)
             // Into this: Jump(then)
             if (triState == TriState::True) {
-                m_block->notTaken().block()->removePredecessor(m_block);
-                m_value->replaceWithJump(m_block, m_block->taken());
-                m_changedCFG = true;
+                replaceTerminalWithJump(m_block->taken());
                 break;
             }
 
@@ -3303,16 +3442,30 @@ private:
                 // If a check for the same property dominates us, we can kill the branch. This sort
                 // of makes sense here because it's cheap, but hacks like this show that we're going
                 // to need SCCP.
-                Value* check = m_pureCSE.findMatch(
-                    ValueKey(Check, Void, m_value->child(0)), m_block, *m_dominators);
-                if (check) {
+                if (m_layeredCSE.find(ValueKey(Check, Void, m_value->child(0)))) {
                     // The Check would have side-exited if child(0) was non-zero. So, it must be
                     // zero here.
-                    m_block->taken().block()->removePredecessor(m_block);
-                    m_value->replaceWithJump(m_block, m_block->notTaken());
-                    m_changedCFG = true;
+                    replaceTerminalWithJump(m_block->notTaken());
                 }
             }
+            break;
+        }
+
+        case Switch: {
+            // Turn this: Switch(constant, ...)
+            // Into this: Jump(the matching case, or the fall-through)
+            if (!m_value->child(0)->hasInt())
+                break;
+            SwitchValue* switchValue = m_value->as<SwitchValue>();
+            int64_t key = m_value->child(0)->asInt();
+            FrequentedBlock target = m_block->fallThrough();
+            for (unsigned i = 0; i < switchValue->numCaseValues(); ++i) {
+                if (switchValue->caseValue(i) == key) {
+                    target = m_block->successor(i);
+                    break;
+                }
+            }
+            replaceTerminalWithJump(target);
             break;
         }
 
@@ -3573,18 +3726,15 @@ private:
             //   shr i32x4 by 16 + zip i16x8  -> i16->i32 sign extension
             //   shr i64x2 by 32 + zip i32x4  -> i32->i64 sign extension
             SIMDValue* shr = m_value->as<SIMDValue>();
-            if (shr->signMode() == SIMDSignMode::Signed) {
-                SIMDLane lane = shr->simdLane();
-                bool matches = (lane == SIMDLane::i16x8 && m_value->child(1)->isInt32(8))
-                    || (lane == SIMDLane::i32x4 && m_value->child(1)->isInt32(16))
-                    || (lane == SIMDLane::i64x2 && m_value->child(1)->isInt32(32));
-                if (matches) {
-                    Value* child0 = m_value->child(0);
-                    if ((child0->opcode() == VectorZipLower || child0->opcode() == VectorZipHigher) && child0->child(0) == child0->child(1)) {
-                        Opcode extendOp = child0->opcode() == VectorZipLower ? VectorExtendLow : VectorExtendHigh;
-                        replaceWithNew<SIMDValue>(m_value->origin(), extendOp, B3::V128, lane, SIMDSignMode::Signed, child0->child(0));
-                        break;
-                    }
+            Value* zip = m_value->child(0);
+            if (shr->signMode() == SIMDSignMode::Signed
+                && (zip->opcode() == VectorZipLower || zip->opcode() == VectorZipHigher)
+                && zip->child(0) == zip->child(1)) {
+                SIMDLane zipLane = zip->as<SIMDValue>()->simdLane();
+                if (wideningLaneFor(zipLane) == shr->simdLane() && m_value->child(1)->isInt32(elementByteSize(zipLane) * 8)) {
+                    Opcode extendOp = zip->opcode() == VectorZipLower ? VectorExtendLow : VectorExtendHigh;
+                    replaceWithNew<SIMDValue>(m_value->origin(), extendOp, B3::V128, shr->simdLane(), SIMDSignMode::Signed, zip->child(0));
+                    break;
                 }
             }
             break;
@@ -4023,29 +4173,21 @@ private:
             break;
         }
 
-        case WasmStructGet: {
-            auto replaceWithNonTrapping = [&] {
-                WasmStructGetValue* structGet = m_value->as<WasmStructGetValue>();
-                Value* newValue = m_insertionSet.insert<WasmStructGetValue>(m_index, WasmStructGet, m_value->origin(), m_value->type(), structGet->child(0), structGet->rtt(), structGet->fieldIndex(), structGet->fieldHeapKey(), structGet->mutability());
-                newValue->as<WasmStructFieldValue>()->setRange(structGet->range());
-                m_value->replaceWithIdentity(newValue);
-                m_changed = true;
-            };
-
+        case WasmStructGet:
+        case WasmStructSet: {
+            // Clearing the trap bit in place rather than inserting a replacement keeps this the
+            // same Value, which the wasm-GC redundancy tracking needs in order to see it at all:
+            // an inserted replacement stays in m_insertionSet, outside the block, until the walk
+            // has finished.
             if (m_value->traps()) {
-                switch (m_value->child(0)->opcode()) {
-                case WasmStructNew:
-                    replaceWithNonTrapping();
-                    break;
-                case WasmRefCast: {
-                    if (!m_value->child(0)->as<WasmRefTypeCheckValue>()->allowNull()) {
-                        replaceWithNonTrapping();
-                        break;
-                    }
-                    break;
-                }
-                default:
-                    break;
+                Value* base = m_value->child(0);
+                bool baseIsNonNull = base->opcode() == WasmStructNew
+                    || (base->opcode() == WasmRefCast && !base->as<WasmRefTypeCheckValue>()->allowNull());
+                if (baseIsNonNull) {
+                    Kind kind = m_value->kind();
+                    kind.setTraps(false);
+                    m_value->setKindUnsafely(kind);
+                    m_changed = true;
                 }
             }
             break;
@@ -4066,34 +4208,6 @@ private:
                         Value* newValue = m_insertionSet.insert<WasmArrayLengthValue>(m_index, WasmArrayLength, Int32, m_value->origin(), m_value->child(0));
                         newValue->as<WasmArrayLengthValue>()->setRange(m_value->as<WasmArrayLengthValue>()->range());
                         replaceWithIdentity(newValue);
-                    }
-                    break;
-                }
-                default:
-                    break;
-                }
-            }
-            break;
-        }
-
-        case WasmStructSet: {
-            auto replaceWithNonTrapping = [&] {
-                WasmStructSetValue* structSet = m_value->as<WasmStructSetValue>();
-                Value* newValue = m_insertionSet.insert<WasmStructSetValue>(m_index, WasmStructSet, m_value->origin(), structSet->child(0), structSet->child(1), structSet->rtt(), structSet->fieldIndex(), structSet->fieldHeapKey());
-                newValue->as<WasmStructFieldValue>()->setRange(structSet->range());
-                m_value->replaceWithIdentity(newValue);
-                m_changed = true;
-            };
-
-            if (m_value->traps()) {
-                switch (m_value->child(0)->opcode()) {
-                case WasmStructNew:
-                    replaceWithNonTrapping();
-                    break;
-                case WasmRefCast: {
-                    if (!m_value->child(0)->as<WasmRefTypeCheckValue>()->allowNull()) {
-                        replaceWithNonTrapping();
-                        break;
                     }
                     break;
                 }
@@ -4567,6 +4681,20 @@ private:
         m_changed = true;
     }
 
+    // Shifts and rotates use their amount modulo the operand width. Reducing a constant amount to
+    // that range up front lets the shift patterns compare and compute with it directly.
+    void maskConstantShiftAmount()
+    {
+        if (!m_value->child(1)->hasInt32())
+            return;
+        int32_t amount = m_value->child(1)->asInt32();
+        int32_t maskedAmount = amount & static_cast<int32_t>(sizeofType(m_value->type()) * 8 - 1);
+        if (amount == maskedAmount)
+            return;
+        m_value->child(1) = m_insertionSet.insert<Const32Value>(m_index, m_value->origin(), maskedAmount);
+        m_changed = true;
+    }
+
     void handleShiftAmount()
     {
         // Shift anything by zero is identity.
@@ -4588,20 +4716,480 @@ private:
         }
     }
 
-    void replaceIfRedundant()
+    enum class BlockState : uint8_t { Unvisited, Reachable, Unknown, Unreachable };
+
+    // A block's successors are final once the walk finishes it, so only then are its state and edges
+    // recorded. Until then the block is Unvisited, including to its own back edge.
+    void finishBlock(BasicBlock* block)
     {
-        m_changed |= m_pureCSE.process(m_value, *m_dominators);
+        m_blockStates[block] = m_blockState;
+        if (m_blockState == BlockState::Reachable) {
+            for (BasicBlock* successor : block->successorBlocks())
+                m_enteredFromReachableBlock.quickSet(successor->index());
+        }
     }
 
-    // simplifyCFG's rules chain: redirecting past a jump can expose a single-predecessor merge,
-    // and merging a block can redirect more successors. Iterate until the CFG stops changing.
-    void simplifyCFGToFixpoint()
+    bool isFinished(BasicBlock* block) { return m_blockStates[block] != BlockState::Unvisited; }
+
+    bool hasUnfinishedPredecessor()
     {
-        do {
-            m_changedCFG = false;
-            simplifyCFG();
-            handleChangedCFGIfNecessary();
-        } while (m_changedCFG);
+        for (BasicBlock* predecessor : m_block->predecessors()) {
+            if (!isFinished(predecessor))
+                return true;
+        }
+        return false;
+    }
+
+    // A block is reachable once a finished reachable block jumps to it. It is unreachable once its
+    // immediate dominator is, or once every predecessor is unreachable or dominated by the block,
+    // since a path to the latter must pass through the block first. Otherwise its reachability is
+    // unknown, as when it is entered over an edge the walk has not seen yet.
+    BlockState computeBlockReachability()
+    {
+        if (m_block == m_root || m_enteredFromReachableBlock.quickGet(m_block->index()))
+            return BlockState::Reachable;
+        if (m_blockStates[m_dominators->idom(m_block)] == BlockState::Unreachable)
+            return BlockState::Unreachable;
+        for (BasicBlock* predecessor : m_block->predecessors()) {
+            if (m_blockStates[predecessor] != BlockState::Unreachable && !m_dominators->dominates(m_block, predecessor))
+                return BlockState::Unknown;
+        }
+        return BlockState::Unreachable;
+    }
+
+    // Predecessor lists may keep stale entries but must never miss a live edge. Dropping the folded
+    // edges is what lets a block entered only through them become unreachable.
+    void replaceTerminalWithJump(FrequentedBlock target)
+    {
+        for (BasicBlock* successor : m_block->successorBlocks()) {
+            if (successor != target.block())
+                successor->removePredecessor(m_block);
+        }
+        m_value->replaceWithJump(m_block, target);
+        m_changedCFG = true;
+    }
+
+    void removeUpsilonsFromUnreachableBlock()
+    {
+        for (Value* value : *m_block) {
+            if (value->opcode() == Upsilon) {
+                value->replaceWithNop();
+                m_changed = true;
+                m_mayHaveUnfoldedPhis = true;
+            }
+        }
+    }
+
+    void replaceIfRedundant()
+    {
+        if (m_value->opcode() == Identity || m_value->isConstant())
+            return;
+
+        ValueKey key = m_value->key();
+        if (!key)
+            return;
+
+        if (std::optional<Value*> match = m_layeredCSE.findOrAdd(key, m_value)) {
+            m_value->replaceWithIdentity(*match);
+            m_changed = true;
+        }
+    }
+
+    // Each slot has an epoch in m_wasmGCEpochs, and a write bumps the epochs of the slots it may touch.
+    // Slot 0 is the struct catch-all, 1..8 one per array element type, 9 the array catch-all, and
+    // the rest one per mutable struct field some WasmStructSet writes. A key carries the epochs of
+    // its own slot and its kind's catch-all, so bumping a catch-all retires everything of that kind.
+    static constexpr unsigned numberOfWasmGCArrayElementTypes = 8;
+    static constexpr unsigned numberOfWasmGCSharedSlots = numberOfWasmGCArrayElementTypes + /* WasmGCStructAll + WasmGCArrayAll */ 2;
+    static constexpr unsigned wasmGCStructAllSlot() { return 0; }
+    static constexpr unsigned wasmGCArraySlot(unsigned elementType) { return 1 + elementType; }
+    static constexpr unsigned wasmGCArrayAllSlot() { return 1 + numberOfWasmGCArrayElementTypes; }
+    unsigned wasmGCSlotCount() const { return numberOfWasmGCSharedSlots + m_wasmGCStructWidth; }
+
+    unsigned wasmGCStructFieldIndex(HeapRange range) const
+    {
+        // An undecorated access carries HeapRange::top(), which would index anywhere at all.
+        RELEASE_ASSERT(range.distance() == 1);
+        RELEASE_ASSERT(m_wasmGCStructSpan.contains(range.begin()));
+        return range.begin() - m_wasmGCStructSpan.begin();
+    }
+
+    unsigned wasmGCStructSlot(HeapRange range) const
+    {
+        return m_wasmGCStructFieldSlots[wasmGCStructFieldIndex(range)];
+    }
+
+    // Mirrors the heap that WasmOMGIRGenerator's arrayElementHeap() picks for this element type.
+    static unsigned wasmGCArrayTypeIndex(Wasm::StorageType type)
+    {
+        if (type.is<Wasm::PackedType>()) {
+            switch (type.as<Wasm::PackedType>()) {
+            case Wasm::PackedType::I8:
+                return 0;
+            case Wasm::PackedType::I16:
+                return 1;
+            }
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        switch (type.unpacked().kind()) {
+        case Wasm::TypeKind::I32:
+            return 2;
+        case Wasm::TypeKind::I64:
+            return 3;
+        case Wasm::TypeKind::F32:
+            return 4;
+        case Wasm::TypeKind::F64:
+            return 5;
+        case Wasm::TypeKind::V128:
+            return 6;
+        default:
+            return 7;
+        }
+    }
+
+    // Where one access reads or writes. `heap` names the location exactly and is what the
+    // availability key is built from. `slot` is the epoch that retires it, which distinct
+    // locations share once the epochs are coarsened, and `allSlot` is the catch-all epoch for
+    // its kind, bumped by writes this phase cannot attribute to a single slot.
+    struct WasmGCLocation {
+        Value* base { nullptr };
+        Value* index { nullptr };
+        uint64_t heap { 0 };
+        unsigned slot { 0 };
+        unsigned allSlot { 0 };
+        Mutability mutability { Mutability::Mutable };
+    };
+
+    WasmGCLocation wasmGCStructLocation(WasmStructFieldValue* value) const
+    {
+        HeapRange range = value->range();
+        return { value->child(0), nullptr, range.begin(), wasmGCStructSlot(range), wasmGCStructAllSlot(), value->mutability() };
+    }
+
+    WasmGCLocation wasmGCArrayLocation(WasmArrayElementValue* value) const
+    {
+        unsigned elementType = wasmGCArrayTypeIndex(value->rtt()->elementType().type);
+        HeapRange elementHeap = m_wasmGCArrayHeaps[elementType];
+        HeapRange range = value->range();
+        RELEASE_ASSERT(range.begin() >= elementHeap.begin() && range.end() <= elementHeap.end());
+        return { value->child(0), value->child(1), elementHeap.begin(), wasmGCArraySlot(elementType), wasmGCArrayAllSlot(), value->mutability() };
+    }
+
+    WasmGCAccessKey wasmGCKeyFor(const WasmGCLocation& location) const
+    {
+        // An immutable field is written only when its object is initialized, so its key carries no
+        // epochs and stays available across anything.
+        if (location.mutability == Mutability::Immutable)
+            return { location.base, location.index, location.heap, 0, 0 };
+        return { location.base, location.index, location.heap, m_wasmGCEpochs[location.slot], m_wasmGCEpochs[location.allSlot] };
+    }
+
+    void forwardWasmGCLoad(const WasmGCLocation& location)
+    {
+        WasmGCAccessKey key = wasmGCKeyFor(location);
+        if (std::optional<WasmGCAvailableValue> available = m_wasmGCMap.findOrAdd(key, WasmGCAvailableValue { m_value, 0 })) {
+            Value* forwarded = available->value;
+            if (available->packedMask) {
+                // A value forwarded out of a store into a packed (i8/i16) field still needs the narrowing the
+                // load would have done; signed reads apply their own sign extension outside the load, so
+                // masking is always the right fixup.
+                Value* mask = m_insertionSet.insert<Const32Value>(m_index, m_value->origin(), available->packedMask);
+                forwarded = m_insertionSet.insert<Value>(m_index, BitAnd, m_value->origin(), forwarded, mask);
+            }
+            replaceWithIdentity(forwarded);
+        }
+    }
+
+    void recordWasmGCStore(const WasmGCLocation& location, Value* stored, uint32_t packedMask)
+    {
+        WasmGCAccessKey key = wasmGCKeyFor(location);
+
+        std::optional<WasmGCAvailableValue> available = m_wasmGCMap.find(key);
+
+        if (location.mutability == Mutability::Immutable) {
+            // Wasm validation only permits a store to an immutable field while a fresh object is being
+            // initialized, so each location is written exactly once. Immutable keys carry no epochs, so
+            // a second store would leave the old value findable.
+            RELEASE_ASSERT(!available);
+        } else {
+            if (available && available->value == stored) {
+                m_value->replaceWithNop();
+                m_changed = true;
+                return;
+            }
+
+            // The bumped epoch gives this store a key that's not present, so the add below inserts.
+            ++m_wasmGCEpochs[location.slot];
+            key = wasmGCKeyFor(location);
+        }
+
+        bool added = m_wasmGCMap.add(key, WasmGCAvailableValue { stored, packedMask });
+        ASSERT_UNUSED(added, added);
+    }
+
+    void processWasmGCAccess(HeapRange writesBeforeReduction, bool reduced)
+    {
+        auto packedMaskFor = [](Wasm::StorageType type) -> uint32_t {
+            if (!type.is<Wasm::PackedType>())
+                return 0;
+            switch (type.as<Wasm::PackedType>()) {
+            case Wasm::PackedType::I8:
+                return 0xff;
+            case Wasm::PackedType::I16:
+                return 0xffff;
+            }
+            return 0;
+        };
+
+        switch (m_value->opcode()) {
+        case WasmStructGet: {
+            forwardWasmGCLoad(wasmGCStructLocation(m_value->as<WasmStructFieldValue>()));
+            return;
+        }
+
+        case WasmStructSet: {
+            auto* set = m_value->as<WasmStructSetValue>();
+            ASSERT(!m_wasmGCStructWidth || set->mutability() == Mutability::Immutable || wasmGCStructSlot(set->range()) != wasmGCStructAllSlot());
+            auto field = set->rtt()->field(set->fieldIndex());
+            recordWasmGCStore(wasmGCStructLocation(set), set->child(1), packedMaskFor(field.type));
+            return;
+        }
+
+        case WasmArrayGet: {
+            forwardWasmGCLoad(wasmGCArrayLocation(m_value->as<WasmArrayElementValue>()));
+            return;
+        }
+
+        case WasmArraySet: {
+            auto* set = m_value->as<WasmArraySetValue>();
+            recordWasmGCStore(wasmGCArrayLocation(set), set->child(2), packedMaskFor(set->rtt()->elementType().type));
+            return;
+        }
+
+        default: {
+            // A write this phase cannot pin to one slot retires everything of that kind. Testing the two
+            // spans is the whole cost, so a write that misses wasm-GC memory entirely, which is nearly all
+            // of them, is rejected in two comparisons.
+            auto bumpWasmGCEpochs = [&](HeapRange writes) {
+                if (!writes)
+                    return;
+                if (writes.overlaps(m_wasmGCStructSpan))
+                    ++m_wasmGCEpochs[wasmGCStructAllSlot()];
+                if (writes.overlaps(m_wasmGCArraySpan))
+                    ++m_wasmGCEpochs[wasmGCArrayAllSlot()];
+            };
+
+            // A rule that rewrites this value may insert values ahead of it that carry the original's
+            // writes, and the walk never visits those, so charge both the original and the rewrite.
+            bumpWasmGCEpochs(writesBeforeReduction);
+            if (!reduced)
+                return;
+            HeapRange writesAfterReduction = m_value->effects().writes;
+            if (writesBeforeReduction != writesAfterReduction)
+                bumpWasmGCEpochs(writesAfterReduction);
+            return;
+        }
+        }
+    }
+
+    void bumpAllWasmGCEpochs()
+    {
+        ++m_wasmGCEpochs[wasmGCStructAllSlot()];
+        ++m_wasmGCEpochs[wasmGCArrayAllSlot()];
+    }
+
+    void beginWasmGCBlock(BasicBlock* block)
+    {
+        // An unreachable block is not reduced, and only the blocks it dominates, which are
+        // unreachable too, seed from its tail.
+        if (m_blockState == BlockState::Unreachable)
+            return;
+
+        unsigned slotCount = wasmGCSlotCount();
+
+        // Seed from the immediate dominator, which the walk has already finished. Entries recorded
+        // in a dominating block stay in the map for the whole of its subtree, so an epoch that
+        // started below one of them would make a stale entry findable again; every path reaching
+        // here runs the dominator first, so its tail is a floor on what has been written.
+        BasicBlock* idom = m_dominators->idom(block);
+        ASSERT(idom != block);
+        if (idom) {
+            ASSERT(isFinished(idom));
+            auto tailSpan = m_wasmGCEpochsAtTail.span().subspan(idom->index() * slotCount, slotCount);
+            memcpySpan(m_wasmGCEpochs.mutableSpan(), tailSpan);
+        } else
+            m_wasmGCEpochs.fill(0);
+
+        // An unvisited predecessor that the block's own natural loop contains is an ordinary back
+        // edge, whose body can be summarized. Anything else is an irreducible retreating edge,
+        // reaching this block over a path the walk has not accounted for.
+        const NaturalLoop* loop = m_naturalLoops->headerOf(block);
+        bool hasBackEdgeIntoLoop = false;
+        bool hasUnaccountedPredecessor = false;
+        for (BasicBlock* predecessor : block->predecessors()) {
+            // Nothing written in a block that never runs reaches this one.
+            if (m_blockStates[predecessor] == BlockState::Unreachable)
+                continue;
+            if (!isFinished(predecessor)) {
+                if (loop && m_naturalLoops->belongsTo(predecessor, *loop))
+                    hasBackEdgeIntoLoop = true;
+                else
+                    hasUnaccountedPredecessor = true;
+                continue;
+            }
+            auto tailSpan = m_wasmGCEpochsAtTail.span().subspan(predecessor->index() * slotCount, slotCount);
+            RELEASE_ASSERT(tailSpan.size() == m_wasmGCEpochs.size());
+            for (unsigned i = 0; i < tailSpan.size(); ++i)
+                m_wasmGCEpochs[i] = std::max(m_wasmGCEpochs[i], tailSpan[i]);
+        }
+
+        if (hasUnaccountedPredecessor) {
+            bumpAllWasmGCEpochs();
+            return;
+        }
+
+        if (!hasBackEdgeIntoLoop)
+            return;
+
+        // The walk has not seen the loop body yet. A value computed before the loop cannot be
+        // reused inside it once the body stores to the same slot, so invalidate exactly the slots
+        // the body writes. Bumping everything instead is sound but throws away every
+        // loop-invariant field read, which is most of them in code like this.
+        for (unsigned slot : writesInLoop(*loop))
+            ++m_wasmGCEpochs[slot];
+    }
+
+    // Give a slot to each mutable struct field the procedure stores to. And summarize what each block inside a loop writes, so
+    // that Value::effects() runs over a block once rather than once per loop enclosing it. Stores that initialize an
+    // immutable field or element are left out: immutable keys carry no epochs, so there is nothing for them to bump.
+    void scanWasmGCAccesses()
+    {
+        constexpr uint32_t unwritten = UINT32_MAX;
+        m_wasmGCStructFieldSlots.shrink(0);
+        m_wasmGCStructFieldSlots.grow(m_wasmGCStructSpan.distance());
+        m_wasmGCStructFieldSlots.fill(unwritten);
+
+        m_wasmGCBlockWrites.shrink(0);
+        if (m_naturalLoops->numLoops())
+            m_wasmGCBlockWrites.grow(m_proc.size());
+
+        unsigned width = 0;
+        for (unsigned index = 0; index < m_proc.size(); ++index) {
+            BasicBlock* block = m_proc.at(index);
+            if (!block)
+                continue;
+            BitVector* writes = m_naturalLoops->innerMostLoopOf(block) ? &m_wasmGCBlockWrites[index] : nullptr;
+
+            for (Value* value : *block) {
+                switch (value->opcode()) {
+                case WasmStructSet: {
+                    auto* set = value->as<WasmStructFieldValue>();
+                    if (set->mutability() == Mutability::Immutable)
+                        break;
+                    uint32_t& slot = m_wasmGCStructFieldSlots[wasmGCStructFieldIndex(set->range())];
+                    if (slot == unwritten)
+                        slot = numberOfWasmGCSharedSlots + width++;
+                    if (writes)
+                        writes->set(slot);
+                    break;
+                }
+
+                case WasmArraySet: {
+                    auto* set = value->as<WasmArrayElementValue>();
+                    if (writes && set->mutability() == Mutability::Mutable)
+                        writes->set(wasmGCArrayLocation(set).slot);
+                    break;
+                }
+
+                default: {
+                    if (!writes)
+                        break;
+                    HeapRange written = value->effects().writes;
+                    if (!written)
+                        break;
+                    if (written.overlaps(m_wasmGCStructSpan))
+                        writes->set(wasmGCStructAllSlot());
+                    if (written.overlaps(m_wasmGCArraySpan))
+                        writes->set(wasmGCArrayAllSlot());
+                    break;
+                }
+                }
+            }
+        }
+
+        // Thousands of written fields across thousands of blocks would make the per-block epoch
+        // snapshots the largest thing in the compile. Past that every field uses the struct catch-all
+        // slot, so a store to any field bumps the one epoch every struct key carries.
+        if (static_cast<uint64_t>(m_proc.size()) * (numberOfWasmGCSharedSlots + width) > Options::maxB3WasmGCEpochSnapshotEntries()) {
+            width = 0;
+
+            auto collapseWasmGCFieldWrites = [](BitVector& writes) {
+                BitVector shared;
+                bool wroteField = false;
+                for (unsigned slot : writes) {
+                    if (slot < numberOfWasmGCSharedSlots)
+                        shared.set(slot);
+                    else
+                        wroteField = true;
+                }
+                if (!wroteField)
+                    return;
+                shared.set(wasmGCStructAllSlot());
+                writes = WTF::move(shared);
+            };
+
+            for (BitVector& writes : m_wasmGCBlockWrites)
+                collapseWasmGCFieldWrites(writes);
+        }
+
+        m_wasmGCStructWidth = width;
+        for (uint32_t& slot : m_wasmGCStructFieldSlots) {
+            if (!width || slot == unwritten)
+                slot = wasmGCStructAllSlot();
+        }
+    }
+
+    BitVector writesInLoop(const NaturalLoop& loop)
+    {
+        BitVector writes;
+        for (unsigned i = 0; i < loop.size(); ++i) {
+            // scanWasmGCAccesses() summarizes exactly the blocks that report an innermost loop. A
+            // body block that reported none would contribute nothing here, quietly understating
+            // what the loop writes.
+            ASSERT(m_naturalLoops->innerMostLoopOf(loop.at(i)));
+            writes.merge(m_wasmGCBlockWrites[loop.at(i)->index()]);
+        }
+        return writes;
+    }
+
+    void endWasmGCBlock(BasicBlock* block)
+    {
+        unsigned slotCount = wasmGCSlotCount();
+        auto tailSpan = m_wasmGCEpochsAtTail.mutableSpan().subspan(block->index() * slotCount, slotCount);
+        memcpySpan(tailSpan, m_wasmGCEpochs.span());
+    }
+
+    void computeWasmGCSpans()
+    {
+        AbstractHeapRepository& heaps = m_proc.heaps();
+
+        m_wasmGCStructSpan = heaps.JSWebAssemblyStruct_fields.atAnyNumber().range();
+
+        std::array<NumberedAbstractHeap*, numberOfWasmGCArrayElementTypes> arrayHeaps { {
+            &heaps.JSWebAssemblyArray_i8, &heaps.JSWebAssemblyArray_i16,
+            &heaps.JSWebAssemblyArray_i32, &heaps.JSWebAssemblyArray_i64,
+            &heaps.JSWebAssemblyArray_f32, &heaps.JSWebAssemblyArray_f64,
+            &heaps.JSWebAssemblyArray_v128, &heaps.JSWebAssemblyArray_ref,
+        } };
+        uint64_t begin = UINT64_MAX;
+        uint64_t end = 0;
+        for (unsigned elementType = 0; elementType < arrayHeaps.size(); ++elementType) {
+            HeapRange range = arrayHeaps[elementType]->atAnyNumber().range();
+            m_wasmGCArrayHeaps[elementType] = range;
+            begin = std::min(begin, range.begin());
+            end = std::max(end, range.end());
+        }
+        m_wasmGCArraySpan = HeapRange(begin, end);
     }
 
     void simplifyCFG()
@@ -4610,7 +5198,7 @@ private:
             dataLog("Before simplifyCFG:\n");
             dataLog(m_proc);
         }
-        
+
         // We have three easy simplification rules:
         //
         // 1) If a successor is a block that just jumps to another block, then jump directly to
@@ -4642,23 +5230,49 @@ private:
 
             // First check if any of the successors of this block can be forwarded over.
             for (BasicBlock*& successor : block->successorBlocks()) {
-                if (successor != block
-                    && successor->size() == 1
-                    && successor->last()->opcode() == Jump) {
-                    BasicBlock* newSuccessor = successor->successorBlock(0);
-                    if (newSuccessor != successor) {
-                        if (B3ReduceStrengthInternal::verbose) {
-                            dataLog(
-                                "Replacing ", pointerDump(block), "->", pointerDump(successor),
-                                " with ", pointerDump(block), "->", pointerDump(newSuccessor),
-                                "\n");
-                        }
-                        // Note that we do not do replacePredecessor() because the block we're
-                        // skipping will still have newSuccessor as its successor.
-                        newSuccessor->addPredecessor(block);
-                        successor = newSuccessor;
-                        m_changedCFG = true;
+                auto isForwardable = [&](BasicBlock* candidate) {
+                    return candidate != block
+                        && candidate->size() == 1
+                        && candidate->last()->opcode() == Jump
+                        && candidate->successorBlock(0) != candidate;
+                };
+
+                // Trace the chain of jump-only blocks with a Floyd tortoise/hare walk. The hare
+                // (fast) moves two hops at a time, so it reaches the end of the chain first. When it
+                // lands on a non-forwardable block, that block is the chain end and there is no cycle.
+                // Orphan basic blocks can instead form a cycle with no end, in which case the hare
+                // laps the tortoise (slow) and we bail. Cycles are extremely rare.
+                bool sawCycle = false;
+                BasicBlock* slow = successor;
+                BasicBlock* fast = successor;
+                while (true) {
+                    if (!isForwardable(fast))
+                        break;
+                    fast = fast->successorBlock(0);
+                    if (!isForwardable(fast))
+                        break;
+                    fast = fast->successorBlock(0);
+
+                    slow = slow->successorBlock(0);
+                    if (slow == fast) {
+                        sawCycle = true;
+                        break;
                     }
+                }
+
+                // When there is no cycle, fast is the end of the chain.
+                if (!sawCycle && fast != successor) {
+                    BasicBlock* newSuccessor = fast;
+                    dataLogLnIf(B3ReduceStrengthInternal::verbose, "Replacing ", pointerDump(block), "->", pointerDump(successor), " with ", pointerDump(block), "->", pointerDump(newSuccessor));
+                    for (BasicBlock* current = successor; current != newSuccessor;) {
+                        BasicBlock* next = current->successorBlock(0);
+                        current->successorBlock(0) = newSuccessor;
+                        newSuccessor->addPredecessor(current);
+                        current = next;
+                    }
+                    newSuccessor->addPredecessor(block);
+                    successor = newSuccessor;
+                    m_changedCFG = true;
                 }
             }
 
@@ -4678,10 +5292,7 @@ private:
                         }
                     }
                     if (allSame) {
-                        if (B3ReduceStrengthInternal::verbose) {
-                            dataLog(
-                                "Changing ", pointerDump(block), "'s terminal to a Jump.\n");
-                        }
+                        dataLogLnIf(B3ReduceStrengthInternal::verbose, "Changing ", pointerDump(block), "'s terminal to a Jump.");
                         block->last()->replaceWithJump(block, FrequentedBlock(firstSuccessor));
                         m_changedCFG = true;
                     }
@@ -4693,35 +5304,31 @@ private:
                 BasicBlock* successor = block->successorBlock(0);
                 if (successor != block && successor->numPredecessors() == 1) {
                     RELEASE_ASSERT(successor->predecessor(0) == block);
-                    
+
                     // We can merge the two blocks, because the predecessor only jumps to the successor
                     // and the successor is only reachable from the predecessor.
-                    
+
                     // Remove the terminal.
                     Value* value = block->values().takeLast();
                     Origin jumpOrigin = value->origin();
                     RELEASE_ASSERT(value->effects().terminal);
                     m_proc.deleteValue(value);
-                    
+
                     // Append the full contents of the successor to the predecessor.
                     block->values().appendVector(successor->values());
                     block->successors() = successor->successors();
-                    
+
                     // Make sure that the successor has nothing left in it. Make sure that the block
                     // has a terminal so that nobody chokes when they look at it.
                     successor->values().shrink(0);
                     successor->appendNew<Value>(m_proc, Oops, jumpOrigin);
                     successor->clearSuccessors();
-                    
+
                     // Ensure that predecessors of block's new successors know what's up.
                     for (BasicBlock* newSuccessor : block->successorBlocks())
                         newSuccessor->replacePredecessor(successor, block);
 
-                    if (B3ReduceStrengthInternal::verbose) {
-                        dataLog(
-                            "Merged ", pointerDump(block), "->", pointerDump(successor), "\n");
-                    }
-                    
+                    dataLogLnIf(B3ReduceStrengthInternal::verbose, "Merged ", pointerDump(block), "->", pointerDump(successor));
                     m_changedCFG = true;
                 }
             }
@@ -4732,13 +5339,16 @@ private:
             dataLog(m_proc);
         }
     }
-    
+
     void handleChangedCFGIfNecessary()
     {
         if (m_changedCFG) {
+            m_changedCFG = false;
             m_proc.resetReachability();
             m_proc.invalidateCFG();
-            m_dominators = nullptr; // Dominators are not valid anymore, and we don't need them yet.
+            // Dominators and natural loops are not valid anymore, and we don't need them yet.
+            m_dominators = nullptr;
+            m_naturalLoops = nullptr;
             m_changed = true;
         }
     }
@@ -4775,44 +5385,61 @@ private:
         // 2) If all of the Phi's children are either the Phi itself or exactly one other child, then
         //    replace all uses of the Phi with the one other child.
         //
-        // Rule (2) subsumes rule (1), so we can just run (2). We only run one fixpoint iteration
-        // here. This premise is that in common cases, this will only find optimization opportunities
-        // as a result of CFG simplification and usually CFG simplification will only do one round
-        // of block merging per ReduceStrength fixpoint iteration, so it's OK for this to only do one
-        // round of Phi merging - since Phis are the value analogue of blocks.
+        // Rule (2) subsumes rule (1), so we can just run (2). Most Phis already fold during the value
+        // walk. One round here catches the rest: Phis the walk skipped, and those whose inputs only
+        // became equal after the walk visited them.
 
         PhiChildren phiChildren(m_proc);
+        for (Value* phi : phiChildren.phis())
+            simplifyPhi(phi, phiChildren[phi]);
+    }
 
-        for (Value* phi : phiChildren.phis()) {
-            Value* otherChild = nullptr;
-            bool ok = true;
-            for (Value* child : phiChildren[phi].values()) {
-                if (child == phi)
-                    continue;
-                if (child == otherChild)
-                    continue;
-                if (!otherChild) {
-                    otherChild = child;
-                    continue;
-                }
-                ok = false;
-                break;
-            }
-            if (!ok)
+    void simplifyPhi(Value* phi, PhiChildren::UpsilonCollection upsilons)
+    {
+        if (Value* input = uniquePhiInput(phi, upsilons))
+            replacePhi(phi, input, upsilons);
+    }
+
+    PhiChildren::UpsilonCollection upsilonsInSnapshot(Value* phi)
+    {
+        RELEASE_ASSERT(m_phiChildren && phi->index() < m_phiChildrenValueCount);
+        return (*m_phiChildren)[phi];
+    }
+
+    // Aycock and Horspool's rule (2), see simplifySSA(): the one input other than the Phi itself, or
+    // null if there is none or more than one. An Upsilon already turned into a Nop no longer feeds
+    // the Phi.
+    Value* uniquePhiInput(Value* phi, PhiChildren::UpsilonCollection upsilons)
+    {
+        Value* otherChild = nullptr;
+        for (Value* upsilon : upsilons) {
+            if (upsilon->opcode() != Upsilon) {
+                ASSERT(upsilon->opcode() == Nop);
                 continue;
-            if (!otherChild) {
-                // Wow, this would be super weird. It probably won't happen, except that things could
-                // get weird as a consequence of stepwise simplifications in the strength reduction
-                // fixpoint.
-                continue;
             }
-            
-            // Turn the Phi into an Identity and turn the Upsilons into Nops.
-            m_changed = true;
-            for (Value* upsilon : phiChildren[phi])
-                upsilon->replaceWithNop();
-            phi->replaceWithIdentity(otherChild);
+            ASSERT(upsilon->as<UpsilonValue>()->phi() == phi);
+            Value* child = upsilon->child(0)->foldIdentity();
+            // A constant the walk has not reached yet still has its own copy, distinct from the one
+            // in root that it will become.
+            if (child->isConstant()) {
+                if (Value* constInRoot = m_valueForConstant.get(child->key()))
+                    child = constInRoot;
+            }
+            if (child == phi || child == otherChild)
+                continue;
+            if (otherChild)
+                return nullptr;
+            otherChild = child;
         }
+        return otherChild;
+    }
+
+    void replacePhi(Value* phi, Value* input, PhiChildren::UpsilonCollection upsilons)
+    {
+        m_changed = true;
+        for (Value* upsilon : upsilons)
+            upsilon->replaceWithNop();
+        phi->replaceWithIdentity(input);
     }
 
     Procedure& m_proc;
@@ -4824,7 +5451,25 @@ private:
     unsigned m_index { 0 };
     Value* m_value { nullptr };
     Dominators* m_dominators { nullptr };
-    PureCSE m_pureCSE;
+    PhiChildren* m_phiChildren { nullptr };
+    unsigned m_phiChildrenValueCount { 0 };
+    IndexMap<BasicBlock*, BlockState> m_blockStates;
+    BlockState m_blockState { BlockState::Unvisited };
+    BitVector m_enteredFromReachableBlock;
+    bool m_mayHaveUnfoldedPhis { false };
+    LayeredHashMap<ValueKey, Value*> m_layeredCSE;
+
+    bool m_trackWasmGCAccesses { false };
+    LayeredHashMap<WasmGCAccessKey, WasmGCAvailableValue, DefaultHash<WasmGCAccessKey>, WasmGCAccessKeyTraits> m_wasmGCMap;
+    HeapRange m_wasmGCStructSpan;
+    HeapRange m_wasmGCArraySpan;
+    std::array<HeapRange, numberOfWasmGCArrayElementTypes> m_wasmGCArrayHeaps;
+    Vector<uint32_t> m_wasmGCStructFieldSlots;
+    unsigned m_wasmGCStructWidth { 0 };
+    Vector<uint32_t> m_wasmGCEpochs;
+    Vector<uint32_t> m_wasmGCEpochsAtTail;
+    NaturalLoops* m_naturalLoops { nullptr };
+    Vector<BitVector> m_wasmGCBlockWrites; // Slots each block inside a loop writes.
     bool m_changed { false };
     bool m_changedCFG { false };
 };

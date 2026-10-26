@@ -17,9 +17,11 @@
 #include "common/unsafe_buffers.h"
 #include "compiler/translator/Compiler.h"
 
+#include <anglebase/sha1.h>
 #include <stdarg.h>
 #include <stdio.h>
 
+#include "common/angleutils.h"
 #include "common/mathutil.h"
 #include "common/utilities.h"
 #include "compiler/preprocessor/SourceLocation.h"
@@ -495,15 +497,30 @@ TIntermDeclaration *RenameAndDeclareStruct(TSymbolTable *symbolTable,
     // always for simplicity.  +1 for the NUL terminator.
     //
     // If appending ID and the name is too long, cut off the end of the name.  The ID makes it
-    // unique.
+    // unique.  Where _0 is used, long names are hashed to avoid collision.
     constexpr uint32_t kAppendExtraChars = 1 + 11;  // underscore + 32-bit number
-    const ImmutableString name(
-        structure->name().data(),
-        std::min<size_t>(structure->name().length(), kESSLMaxIdentifierLength - kAppendExtraChars));
 
     ImmutableStringBuilder builder(structure->name().length() + kAppendExtraChars);
-    builder << name << "_"
-            << (scope == StructureOriginalScope::Global ? 0 : structure->uniqueId().get());
+    if (scope == StructureOriginalScope::Global &&
+        structure->name().length() > kESSLMaxIdentifierLength - kAppendExtraChars)
+    {
+        angle::base::SecureHashAlgorithm hasher;
+        hasher.Init();
+        hasher.Update(structure->name().data(), structure->name().length());
+        hasher.Final();
+        // SAFETY: The SHA1 hasher guarantees that the returned digest is kSHA1Length bytes.
+        const std::string hashed = angle::UintStreamToHexString(
+            ANGLE_UNSAFE_BUFFERS(angle::Span(hasher.Digest(), angle::base::kSHA1Length)));
+        builder << "struct" << ImmutableString(hashed.c_str(), hashed.size()) << "_0";
+    }
+    else
+    {
+        const ImmutableString name(structure->name().data(),
+                                   std::min<size_t>(structure->name().length(),
+                                                    kESSLMaxIdentifierLength - kAppendExtraChars));
+        builder << name << "_"
+                << (scope == StructureOriginalScope::Global ? 0 : structure->uniqueId().get());
+    }
     structure->setName(builder);
 
     return DeclareStruct(symbolTable, structure);
@@ -532,6 +549,175 @@ unsigned int GetTypeComponentCount(const TType &type)
     }
     components *= type.getArraySizeProduct();
     return components;
+}
+
+SamplerAccess GetSamplerAccess(TIntermTyped *node)
+{
+    // Ignore left-hand side of comma
+    while (node->getAsBinaryNode() && node->getAsBinaryNode()->getOp() == EOpComma)
+    {
+        node = node->getAsBinaryNode()->getRight();
+    }
+
+    // Look for |a.b[i].c| and extract |a| as well as the field indices of |b| and |c|.
+    SamplerAccess access = {};
+    TVector<uint32_t> fields;
+    while (true)
+    {
+        TIntermSymbol *asSymbol = node->getAsSymbolNode();
+        if (asSymbol != nullptr)
+        {
+            access.uniform = &asSymbol->variable();
+            break;
+        }
+
+        TIntermBinary *asBinary = node->getAsBinaryNode();
+        // In a correct shader, there should be nothing but EOpIndex* until the symbol is found, but
+        // the code cannot assert that as the shader may have errors.
+        if (asBinary != nullptr)
+        {
+            if (asBinary->getOp() == EOpIndexDirectStruct)
+            {
+                TIntermConstantUnion *field = asBinary->getRight()->getAsConstantUnion();
+                if (field != nullptr)
+                {
+                    fields.push_back(field->getIConst(0));
+                }
+            }
+            node = asBinary->getLeft();
+        }
+        else
+        {
+            // Erroneous shader
+            break;
+        }
+    }
+
+    // The fields are gathered in reverse order, which is fixed here.
+    access.fields.insert(access.fields.end(), fields.rbegin(), fields.rend());
+    return access;
+}
+
+SamplerAccess ConcatSamplerAccess(const SamplerAccess &callerAccess,
+                                  const SamplerAccess &calleeAccess)
+{
+    // If caller has var.field1 and callee has param.field2, the result is var.field1.field2.
+    SamplerAccess result = callerAccess;
+    result.fields.insert(result.fields.end(), calleeAccess.fields.begin(),
+                         calleeAccess.fields.end());
+    return result;
+}
+
+void CombineSamplerAccessToTexelFetch(
+    const SamplerAccess &callerAccess,
+    const TVector<TUnorderedSet<SamplerAccess>> &calleeParamsStaticallyUsedWithTexelFetch,
+    uint32_t calleeArgIndex,
+    TUnorderedSet<SamplerAccess> *samplersStaticallyUsedWithTexelFetch)
+{
+    if (calleeArgIndex >= calleeParamsStaticallyUsedWithTexelFetch.size())
+    {
+        return;
+    }
+
+    for (const SamplerAccess &calleeAccess :
+         calleeParamsStaticallyUsedWithTexelFetch[calleeArgIndex])
+    {
+        // uniform+fields is passed to function argument, which itself applies more fields and then
+        // uses the result in texelFetch.
+        SamplerAccess access = ConcatSamplerAccess(callerAccess, calleeAccess);
+        samplersStaticallyUsedWithTexelFetch->insert(std::move(access));
+    }
+}
+
+void CombineSamplerAccessToFunctionArg(
+    const SamplerAccess &callerAccess,
+    const TVector<TUnorderedSet<SamplerAsFunctionArg>> &calleeParamsPassedToCallee,
+    uint32_t calleeArgIndex,
+    TUnorderedSet<SamplerAsFunctionArg> *uniformsPassedToCallee)
+{
+    if (calleeArgIndex >= calleeParamsPassedToCallee.size())
+    {
+        return;
+    }
+
+    for (const SamplerAsFunctionArg &calleeParamToArg : calleeParamsPassedToCallee[calleeArgIndex])
+    {
+        // uniform+fields is passed to function argument, which itself applies more fields and then
+        // passes it to another function.
+        SamplerAsFunctionArg uniformToArg;
+        uniformToArg.access         = ConcatSamplerAccess(callerAccess, calleeParamToArg.access);
+        uniformToArg.callee         = calleeParamToArg.callee;
+        uniformToArg.calleeArgIndex = calleeParamToArg.calleeArgIndex;
+
+        // Make it such that it looks like the callee is directly passing the uniform to it's own
+        // callees.
+        uniformsPassedToCallee->insert(std::move(uniformToArg));
+    }
+}
+
+TVector<const TFunction *> GetSamplerPassingFunctionsInDAGOrder(
+    const TFunction *main,
+    const TUnorderedMap<const TFunction *, FunctionSamplerAccess> &functionsSamplerAccess)
+{
+    // The call graph is already checked for loops before this function is called.  Additionally,
+    // |main| is already verified to be present.
+    TUnorderedSet<const TFunction *> visited;
+
+    struct StackEntry
+    {
+        const TFunction *function;
+        bool postVisit;
+    };
+    TVector<StackEntry> visitStack;
+    visitStack.reserve(functionsSamplerAccess.size());
+    visitStack.push_back({main, false});
+
+    // Topological sort via DFS.
+    TVector<const TFunction *> sorted;
+    while (!visitStack.empty())
+    {
+        StackEntry &entry         = visitStack.back();
+        const TFunction *function = entry.function;
+
+        if (entry.postVisit)
+        {
+            visited.insert(function);
+            sorted.push_back(function);
+            visitStack.pop_back();
+            continue;
+        }
+
+        // If node is already visited, ignore it.
+        if (visited.find(function) != visited.end())
+        {
+            visitStack.pop_back();
+            continue;
+        }
+
+        // Leave the entry be for post-visit
+        entry.postVisit = true;
+
+        // Add the callees to the stack
+        auto functionSamplerAccess = functionsSamplerAccess.find(function);
+        if (functionSamplerAccess == functionsSamplerAccess.end())
+        {
+            continue;
+        }
+
+        for (const SamplerAsFunctionArg &arg : functionSamplerAccess->second.uniformsPassedToCallee)
+        {
+            visitStack.push_back({arg.callee, false});
+        }
+        for (const auto &paramToArg : functionSamplerAccess->second.paramsPassedToCallee)
+        {
+            for (const SamplerAsFunctionArg &arg : paramToArg)
+            {
+                visitStack.push_back({arg.callee, false});
+            }
+        }
+    }
+
+    return sorted;
 }
 }  // namespace
 
@@ -1435,10 +1621,10 @@ bool TParseContext::checkIsNotReserved(const TSourceLoc &line, const ImmutableSt
 
     // Validate that identifier names won't conflict with the name hashing done later.
     // See https://crbug.com/499176133
-    if (identifier.length() >= kMaxAvailableIdentifierLength && identifier[0] == '_' &&
+    if (identifier.length() > kMaxAvailableIdentifierLength && identifier[0] == '_' &&
         (identifier[1] == kUserVariableNamePrefix || identifier[1] == kUserBlockNamePrefix))
     {
-        std::string err = "identifiers beginning with `_` must be < " +
+        std::string err = "identifiers beginning with `_` must be <= " +
                           std::to_string(kMaxAvailableIdentifierLength) + " characters";
         error(line, err.c_str(), identifier);
         return false;
@@ -1985,7 +2171,7 @@ bool TParseContext::checkVariableSize(const TSourceLoc &line,
         mValidatedVariableTypeSizes[*type] = variableSize;
     }
 
-    if (variableSize > kWebGLMaxVariableSizeInBytes)
+    if (variableSize >= kWebGLMaxVariableSizeInBytes)
     {
         error(line, "Size of declared variable exceeds implementation-defined limit", identifier);
         return false;
@@ -2029,7 +2215,7 @@ bool TParseContext::checkVariableSize(const TSourceLoc &line,
         case EvqPerVertexIn:
         case EvqPerVertexOut:
 
-            if (variableSize > kWebGLMaxPrivateVariableSizeInBytes)
+            if (variableSize >= kWebGLMaxPrivateVariableSizeInBytes)
             {
                 error(line,
                       "Size of declared private variable exceeds implementation-defined limit",
@@ -3404,7 +3590,7 @@ void TParseContext::functionCallFragDataCheck(const TFunction *fnCandidate,
         // Note: ESSL 100 does not allow arrays in ternary operator, so there is no need to check
         // for TIntermTernary here for a whole-array use of gl_FragData, only descending into
         // EOpComma nodes is sufficient.
-        if (RemoveCommaLeftHandSize(argument)->getQualifier() == EvqFragData)
+        if (RemoveCommaLeftHandSide(argument)->getQualifier() == EvqFragData)
         {
             // The whole array is passed to the function.  For validation purposes, assume all
             // indices are accessed in the function.
@@ -6639,7 +6825,6 @@ bool TParseContext::checkUnsizedArrayConstructorArgumentDimensionality(
 TIntermTyped *TParseContext::addConstructor(TFunctionLookup *fnCall, const TSourceLoc &line)
 {
     TType type = fnCall->constructorType();
-    checkVariableSize(line, ImmutableString(""), &type);
 
     TIntermSequence &arguments = fnCall->arguments();
     if (type.isUnsizedArray())
@@ -6664,6 +6849,8 @@ TIntermTyped *TParseContext::addConstructor(TFunctionLookup *fnCall, const TSour
         }
         ASSERT(!type.isUnsizedArray());
     }
+
+    checkVariableSize(line, ImmutableString(""), &type);
 
     if (!checkConstructorArguments(line, arguments, type))
     {
@@ -7314,7 +7501,7 @@ TIntermTyped *TParseContext::addIndexExpression(TIntermTyped *baseExpression,
         return CreateZeroNode(TType(EbtFloat, EbpHigh, EvqConst));
     }
 
-    TIntermTyped *effectivelyIndexedExpression = RemoveCommaLeftHandSize(baseExpression);
+    TIntermTyped *effectivelyIndexedExpression = RemoveCommaLeftHandSide(baseExpression);
     switch (effectivelyIndexedExpression->getQualifier())
     {
         case EvqPerVertexIn:
@@ -8694,9 +8881,9 @@ TTypeSpecifierNonArray TParseContext::addStructure(const TSourceLoc &structLine,
     checkDoesNotHaveDuplicateFieldNames(fieldList, structLine);
 
     // Ensure we do not specify any storage qualifiers on the struct members
-    for (unsigned int typeListIndex = 0; typeListIndex < fieldList->size(); typeListIndex++)
+    for (TField *fieldPtr : *fieldList)
     {
-        TField &field              = *(*fieldList)[typeListIndex];
+        TField &field              = *fieldPtr;
         const TQualifier qualifier = field.type()->getQualifier();
         switch (qualifier)
         {
@@ -8854,9 +9041,9 @@ bool TParseContext::isNestedIn(ControlFlowType type) const
     // Used for validation, we need to know for example that a `continue` statement is nested
     // within a loop, etc.  Search backwards in the nested control flow info to find the closest
     // control flow of given type.
-    for (auto iter = mControlFlow.rbegin(); iter != mControlFlow.rend(); ++iter)
+    for (const ControlFlow &controlFlow : angle::Reversed(mControlFlow))
     {
-        if (iter->type == type)
+        if (controlFlow.type == type)
         {
             return true;
         }
@@ -9886,6 +10073,158 @@ void TParseContext::checkSingleTextureOffset(const TSourceLoc &line,
     }
 }
 
+void TParseContext::checkTexelFetch(TIntermAggregate *functionCall)
+{
+    const TOperator op = functionCall->getOp();
+    if (op != EOpTexelFetch && op != EOpTexelFetchOffset)
+    {
+        return;
+    }
+
+    TIntermTyped *sampler = functionCall->getChildNode(0)->getAsTyped();
+    SamplerAccess access  = GetSamplerAccess(sampler);
+    if (access.uniform == nullptr)
+    {
+        // Erroneous shader
+        return;
+    }
+
+    if (access.uniform->getType().getQualifier() == EvqUniform)
+    {
+        // A uniform is passed to texelFetch directly, directly mark it as statically used with
+        // texelFetch right away.
+        mSamplersStaticallyUsedWithTexelFetch.insert(std::move(access));
+        return;
+    }
+
+    // Otherwise, it must be a function parameter that's passed to texelFetch, find out which one it
+    // is.
+    for (size_t paramIndex = 0; paramIndex < mCurrentFunction->getParamCount(); ++paramIndex)
+    {
+        if (access.uniform == mCurrentFunction->getParam(paramIndex))
+        {
+            // Keep track of how the parameter is accessed; at the end of shader the chain of calls
+            // is followed to know which uniform is statically used with texelFetch.
+            FunctionSamplerAccess &functionSamplerAccess =
+                mFunctionsSamplerAccess[mCurrentFunction];
+            if (functionSamplerAccess.paramsStaticallyUsedWithTexelFetch.empty())
+            {
+                functionSamplerAccess.paramsStaticallyUsedWithTexelFetch.resize(
+                    mCurrentFunction->getParamCount());
+            }
+            functionSamplerAccess.paramsStaticallyUsedWithTexelFetch[paramIndex].insert(
+                std::move(access));
+            break;
+        }
+    }
+}
+
+void TParseContext::trackSamplersPassedToFunction(const TFunction *fnCandidate,
+                                                  TIntermAggregate *fnCall)
+{
+    for (size_t paramIndex = 0; paramIndex < fnCandidate->getParamCount(); ++paramIndex)
+    {
+        TIntermTyped *argument = (*fnCall->getSequence())[paramIndex]->getAsTyped();
+        SamplerAccess access   = GetSamplerAccess(argument);
+        if (access.uniform == nullptr)
+        {
+            continue;
+        }
+
+        const TType &type = access.uniform->getType();
+        if (!IsSampler(type.getBasicType()) && !type.isStructureContainingSamplers())
+        {
+            continue;
+        }
+
+        SamplerAsFunctionArg samplerAsArg;
+        samplerAsArg.access         = std::move(access);
+        samplerAsArg.callee         = fnCandidate;
+        samplerAsArg.calleeArgIndex = static_cast<uint32_t>(paramIndex);
+
+        if (type.getQualifier() == EvqUniform)
+        {
+            // A uniform with samplers is passed to a function.  Track it as it might lead to it
+            // being used with texelFetch.
+            mFunctionsSamplerAccess[mCurrentFunction].uniformsPassedToCallee.insert(
+                std::move(samplerAsArg));
+        }
+        else
+        {
+            // Otherwise, it must be a function parameter that's passed to another function, find
+            // out which one it is.
+            for (size_t callerParamIndex = 0; callerParamIndex < mCurrentFunction->getParamCount();
+                 ++callerParamIndex)
+            {
+                if (access.uniform == mCurrentFunction->getParam(callerParamIndex))
+                {
+                    FunctionSamplerAccess &functionSamplerAccess =
+                        mFunctionsSamplerAccess[mCurrentFunction];
+                    if (functionSamplerAccess.paramsPassedToCallee.empty())
+                    {
+                        functionSamplerAccess.paramsPassedToCallee.resize(
+                            mCurrentFunction->getParamCount());
+                    }
+                    functionSamplerAccess.paramsPassedToCallee[callerParamIndex].insert(
+                        std::move(samplerAsArg));
+                    break;
+                }
+            }
+        }
+    }
+}
+
+void TParseContext::postParseTrackSamplersPassedToFunction()
+{
+    // Calculate the DAG order of calls from |main|.  Functions that are never called don't matter;
+    // if they statically used a sampler in texelFetch, it's already marked in
+    // |mSamplersStaticallyUsedWithTexelFetch|.
+    TVector<const TFunction *> sorted =
+        GetSamplerPassingFunctionsInDAGOrder(mMainFunction, mFunctionsSamplerAccess);
+
+    // Go over the functions, starting from |main|, which is the last entry in |sorted|.
+    //
+    // Assume function F is being visited, which may call function G:
+    //
+    // * uniformsPassedToCallee: That means F calls G(uniform.field1).  For G itself:
+    //   * paramsStaticallyUsedWithTexelFetch: G calls texelFetch(param.field2).
+    //     uniform.field1.field2 is derived by combining these fields, added to the global
+    //     mSamplersStaticallyUsedWithTexelFetch.
+    //   * paramsPassedToCallee: G calls H(param.field2).
+    //     uniform.field1.field2 is derived by combining these fields, added to G's
+    //     uniformsPassedToCallee.
+    // * paramsStaticallyUsedWithTexelFetch is already processed at the time of visit.  Note
+    //   that this is the empty set for |main|.
+    // * paramsPassedToCallee is also already processed at the time of visit.  Also empty for
+    //   |main|.
+    //
+    // When G is later, again only uniformsPassedToCallee need processing.  At the end, all the
+    // texelFetch static use is accumulated in mSamplersStaticallyUsedWithTexelFetch.
+    //
+    for (size_t i = 0; i < sorted.size(); ++i)
+    {
+        const TFunction *function                          = sorted[sorted.size() - i - 1];
+        const FunctionSamplerAccess &functionSamplerAccess = mFunctionsSamplerAccess[function];
+
+        for (const SamplerAsFunctionArg &arg : functionSamplerAccess.uniformsPassedToCallee)
+        {
+            FunctionSamplerAccess *calleeSamplerAccess = &mFunctionsSamplerAccess[arg.callee];
+            CombineSamplerAccessToTexelFetch(
+                arg.access, calleeSamplerAccess->paramsStaticallyUsedWithTexelFetch,
+                arg.calleeArgIndex, &mSamplersStaticallyUsedWithTexelFetch);
+            CombineSamplerAccessToFunctionArg(arg.access, calleeSamplerAccess->paramsPassedToCallee,
+                                              arg.calleeArgIndex,
+                                              &calleeSamplerAccess->uniformsPassedToCallee);
+        }
+    }
+
+    for (const SamplerAccess &access : mSamplersStaticallyUsedWithTexelFetch)
+    {
+        mIRBuilder.markTexelFetchUse(mVariableToId.at(access.uniform).id,
+                                     angle::Span(access.fields));
+    }
+}
+
 void TParseContext::checkInterpolationFS(TIntermAggregate *functionCall)
 {
     const TFunction *func = functionCall->getFunction();
@@ -10155,6 +10494,7 @@ TIntermTyped *TParseContext::addNonConstructorFunctionCallImpl(TFunctionLookup *
             functionCallRValueLValueErrorCheck(fnCandidate, callNode);
             functionCallClipCullDistanceCheck(fnCandidate, callNode);
             functionCallFragDataCheck(fnCandidate, callNode);
+            trackSamplersPassedToFunction(fnCandidate, callNode);
 
             mCallGraph[mCurrentFunction].insert(fnCandidate);
             mIRBuilder.callFunction(mFunctionToId.at(fnCandidate));
@@ -10220,6 +10560,7 @@ TIntermTyped *TParseContext::addNonConstructorFunctionCallImpl(TFunctionLookup *
             checkAtomicMemoryBuiltinFunctions(callNode);
             checkTextureOffset(callNode);
             checkTextureGather(callNode);
+            checkTexelFetch(callNode);
             checkInterpolationFS(callNode);
             checkImageMemoryAccessForBuiltinFunctions(callNode);
 
@@ -10560,18 +10901,18 @@ void TParseContext::checkCallGraph()
 
     // Visit all the functions; even if a function is unreachable, it must still result in a compile
     // error.
-    for (auto iter : mCallGraph)
+    for (const auto &entry : mCallGraph)
     {
-        visitStack.push_back(iter.first);
+        visitStack.push_back(entry.first);
 
         // Check the callees of this function too, if any is undefined, it's an error.
-        for (const TFunction *callee : iter.second)
+        for (const TFunction *callee : entry.second)
         {
             if (mDefinedFunctions.find(callee) == mDefinedFunctions.end())
             {
                 std::stringstream errorStream = sh::InitializeStream<std::stringstream>();
                 errorStream << "Function " << callee->name() << "() called by "
-                            << iter.first->name() << "() is undefined";
+                            << entry.first->name() << "() is undefined";
                 mDiagnostics->globalError(errorStream.str().c_str());
             }
         }
@@ -10586,15 +10927,15 @@ void TParseContext::checkCallGraph()
                         << callee->name();
             if (callee != function)
             {
-                for (auto caller = visitStack.rbegin(); caller != visitStack.rend(); ++caller)
+                for (const TFunction *caller : angle::Reversed(visitStack))
                 {
-                    if (visitState[*caller].state != VisitState::Visiting)
+                    if (visitState[caller].state != VisitState::Visiting)
                     {
                         continue;
                     }
 
-                    errorStream << " <- " << (*caller)->name();
-                    if (*caller == callee)
+                    errorStream << " <- " << caller->name();
+                    if (caller == callee)
                     {
                         break;
                     }
@@ -10971,6 +11312,13 @@ bool TParseContext::postParseChecks()
 
     checkCallGraph();
 
+    if (numErrors() == 0)
+    {
+        // texelFetch static use is determined at the end of parse, so that samplers passed via
+        // functions can be followed.
+        postParseTrackSamplersPassedToFunction();
+    }
+
     return numErrors() == 0;
 }
 
@@ -11001,11 +11349,10 @@ void TParseContext::addAndCheckOutputVaryings(const TVariable &variable, const T
     mNumOutputVaryingComponents =
         checkedNum.ValueOrDefault(std::numeric_limits<unsigned int>::max());
 
-    // The cap to 256 vec4s = 1024 components seems somewhat arbitrary, but this is intended as a
-    // workaround for a specific driver bug, and this limit being much
-    // higher than the device limits (mResources.MaxVertexOutputVectors *
-    // 4), it avoids regressing both tests and applications.
-    if (mNumOutputVaryingComponents > 1024)
+    // The cap to 256 components seems somewhat arbitrary, but this is intended as a workaround for
+    // a specific driver bug, and this limit being much higher than the device limits
+    // (mResources.MaxVertexOutputVectors * 4), it avoids regressing both tests and applications.
+    if (mNumOutputVaryingComponents > 256)
     {
         error(line, "Too many declared shader output varying components for this device",
               variable.name());

@@ -26,6 +26,7 @@
 #import "config.h"
 #import "CoreIPCError.h"
 
+#import <wtf/Borrow.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/URL.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
@@ -69,7 +70,7 @@ RetainPtr<id> CoreIPCError::toID() const
 
     if (m_localizedRecoveryOptionsError) {
         RetainPtr options = [NSMutableArray arrayWithCapacity:m_localizedRecoveryOptionsError->size()];
-        for (const String& entry : *m_localizedRecoveryOptionsError)
+        for (const String& entry : borrow(*m_localizedRecoveryOptionsError))
             [options addObject:entry.createNSString().get()];
         INJECT_VALUE(NSLocalizedRecoveryOptionsErrorKey, options)
     }
@@ -87,6 +88,23 @@ RetainPtr<id> CoreIPCError::toID() const
 
     INJECT_STRING_VALUE(@"networkTaskDescription", m_networkTaskDescription)
     INJECT_STRING_VALUE(@"networkTaskMetricsPrivacyStance", m_networkTaskMetricsPrivacyStance)
+
+    if (m_networkResolutionReport) {
+        RetainPtr interfaces = adoptNS([[NSMutableArray alloc] initWithCapacity:m_networkResolutionReport->interfaces.size()]);
+        for (auto& [type, name] : borrow(m_networkResolutionReport->interfaces)) {
+            [interfaces addObject:@{
+                @"type" : type.createNSString().get() ?: @"",
+                @"name" : name.createNSString().get() ?: @"",
+            }];
+        }
+        RetainPtr report = @{
+            @"provider" : m_networkResolutionReport->provider.createNSString().get() ?: @"",
+            @"dnsFailureReason" : m_networkResolutionReport->dnsFailureReason.createNSString().get() ?: @"",
+            @"extendedDNSErrorExtraText" : m_networkResolutionReport->extendedDNSErrorExtraText.createNSString().get() ?: @"",
+            @"interfaces" : interfaces,
+        };
+        INJECT_VALUE(@"networkResolutionReport", report)
+    }
 
     INJECT_STRING_VALUE(@"NSDescription", m_description)
 
@@ -109,8 +127,7 @@ RetainPtr<id> CoreIPCError::toID() const
 }
 
 #define EXTRACT_STRING_VALUE(key, target) { \
-    RetainPtr<id> extractedValue = [userInfo objectForKey:key];\
-    if ([extractedValue isKindOfClass:[NSString class]])\
+    if (RetainPtr extractedValue = dynamic_objc_cast<NSString>([userInfo objectForKey:key]))\
         target = String(extractedValue.get());\
 }
 
@@ -120,29 +137,28 @@ CoreIPCError::CoreIPCError(NSError *nsError)
 {
     RetainPtr<NSDictionary> userInfo = [nsError userInfo];
 
-    if (RetainPtr<NSArray> clientIdentityAndCertificates = [userInfo objectForKey:@"NSErrorClientCertificateChainKey"]) {
-        if ([clientIdentityAndCertificates isKindOfClass:[NSArray class]]) {
-            m_clientCertificateChain = Vector<RetainPtr<SecCertificateRef>> { };
-            // Turn SecIdentity members into SecCertificate to strip out private key information.
-            for (id object in clientIdentityAndCertificates.get()) {
-                // Only SecIdentity or SecCertificate types are expected in clientIdentityAndCertificates
-                if (CFGetTypeID((__bridge CFTypeRef)object) != SecIdentityGetTypeID() && CFGetTypeID((__bridge CFTypeRef)object) != SecCertificateGetTypeID())
-                    continue;
-                if (CFGetTypeID((__bridge CFTypeRef)object) != SecIdentityGetTypeID()) {
-                    m_clientCertificateChain->append((__bridge SecCertificateRef)object);
-                    continue;
-                }
-                SecCertificateRef certificate = nil;
-                OSStatus status = SecIdentityCopyCertificate((SecIdentityRef)object, &certificate);
-                // The SecIdentity member is the key information of this attribute. Without it, we should nil
-                // the attribute.
-                if (status != errSecSuccess) {
-                    LOG_ERROR("Failed to encode nsError.userInfo[NSErrorClientCertificateChainKey]: %ld", static_cast<long>(status));
-                    m_clientCertificateChain = std::nullopt;
-                    break;
-                }
-                m_clientCertificateChain->append(adoptCF(certificate));
+    if (RetainPtr clientIdentityAndCertificates = dynamic_objc_cast<NSArray>([userInfo objectForKey:@"NSErrorClientCertificateChainKey"])) {
+        m_clientCertificateChain = Vector<RetainPtr<SecCertificateRef>> { };
+        // Turn SecIdentity members into SecCertificate to strip out private key information.
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL id object in clientIdentityAndCertificates.get()) {
+            // Only SecIdentity or SecCertificate types are expected in clientIdentityAndCertificates
+            if (CFGetTypeID((__bridge CFTypeRef)object) != SecIdentityGetTypeID() && CFGetTypeID((__bridge CFTypeRef)object) != SecCertificateGetTypeID())
+                continue;
+            if (CFGetTypeID((__bridge CFTypeRef)object) != SecIdentityGetTypeID()) {
+                m_clientCertificateChain->append((__bridge SecCertificateRef)object);
+                continue;
             }
+            SecCertificateRef certificate = nil;
+            OSStatus status = SecIdentityCopyCertificate((SecIdentityRef)object, &certificate);
+            // The SecIdentity member is the key information of this attribute. Without it, we should nil
+            // the attribute.
+            if (status != errSecSuccess) {
+                LOG_ERROR("Failed to encode nsError.userInfo[NSErrorClientCertificateChainKey]: %ld", static_cast<long>(status));
+                m_clientCertificateChain = std::nullopt;
+                break;
+            }
+            m_clientCertificateChain->append(adoptCF(certificate));
         }
     }
 
@@ -156,7 +172,8 @@ CoreIPCError::CoreIPCError(NSError *nsError)
 
     if (peerCertificateChain && [peerCertificateChain isKindOfClass:[NSArray class]]) {
         m_peerCertificateChain = Vector<RetainPtr<SecCertificateRef>> { };
-        for (id object in peerCertificateChain.get()) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL id object in peerCertificateChain.get()) {
             if (CFGetTypeID((__bridge CFTypeRef)object) != SecCertificateGetTypeID()) {
                 m_peerCertificateChain = std::nullopt;
                 break;
@@ -178,7 +195,8 @@ CoreIPCError::CoreIPCError(NSError *nsError)
     if (RetainPtr<id> extractedValue = [userInfo objectForKey:NSLocalizedRecoveryOptionsErrorKey]) {
         if (RetainPtr array = dynamic_objc_cast<NSArray>(extractedValue)) {
             m_localizedRecoveryOptionsError = Vector<String> { };
-            for (id object in array.get()) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL id object in array.get()) {
                 if (RetainPtr string = dynamic_objc_cast<NSString>(object))
                     m_localizedRecoveryOptionsError->append(string.get());
             }
@@ -202,6 +220,31 @@ CoreIPCError::CoreIPCError(NSError *nsError)
 
     EXTRACT_STRING_VALUE(@"networkTaskDescription", m_networkTaskDescription)
     EXTRACT_STRING_VALUE(@"networkTaskMetricsPrivacyStance", m_networkTaskMetricsPrivacyStance)
+
+    if (RetainPtr resolutionReport = dynamic_objc_cast<NSDictionary>([userInfo objectForKey:@"networkResolutionReport"])) {
+        NetworkResolutionReport report;
+        if (RetainPtr value = dynamic_objc_cast<NSString>([resolutionReport objectForKey:@"provider"]))
+            report.provider = value.get();
+        if (RetainPtr value = dynamic_objc_cast<NSString>([resolutionReport objectForKey:@"dnsFailureReason"]))
+            report.dnsFailureReason = value.get();
+        if (RetainPtr value = dynamic_objc_cast<NSString>([resolutionReport objectForKey:@"extendedDNSErrorExtraText"]))
+            report.extendedDNSErrorExtraText = value.get();
+        if (RetainPtr interfaces = dynamic_objc_cast<NSArray>([resolutionReport objectForKey:@"interfaces"])) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL id entry in interfaces.get()) {
+                RetainPtr interfaceDictionary = dynamic_objc_cast<NSDictionary>(entry);
+                if (!interfaceDictionary)
+                    continue;
+                NetworkResolutionReportInterface interface;
+                if (RetainPtr value = dynamic_objc_cast<NSString>([interfaceDictionary objectForKey:@"type"]))
+                    interface.type = value.get();
+                if (RetainPtr value = dynamic_objc_cast<NSString>([interfaceDictionary objectForKey:@"name"]))
+                    interface.name = value.get();
+                report.interfaces.append(WTF::move(interface));
+            }
+        }
+        m_networkResolutionReport = WTF::move(report);
+    }
 
     EXTRACT_STRING_VALUE(@"NSDescription", m_description)
 }

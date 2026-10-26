@@ -51,13 +51,13 @@ public:
     static enum Type judge(std::span<const uint8_t>);
     static constexpr int ESC = 0x1b;
     static const std::array<uint8_t, 256> sjisMap;
-    static int NODELETE ISkanji(int code)
+    static int LEGACY_NODELETE ISkanji(int code)
     {
         if (code >= 0x100)
             return 0;
         return sjisMap[code & 0xff] & 1;
     }
-    static int NODELETE ISkana(int code)
+    static int LEGACY_NODELETE ISkana(int code)
     {
         if (code >= 0x100)
             return 0;
@@ -272,6 +272,13 @@ inline TextResourceDecoder::TextResourceDecoder(ContentType contentType, const P
 {
 }
 
+inline TextResourceDecoder::TextResourceDecoder()
+    : m_contentType(PlainText)
+    , m_encoding(PAL::UTF8Encoding())
+    , m_alwaysUseUTF8(true)
+{
+}
+
 Ref<TextResourceDecoder> TextResourceDecoder::create(const String& mimeType, const PAL::TextEncoding& encoding, bool usesEncodingDetector)
 {
     auto contentType = determineContentType(mimeType);
@@ -285,15 +292,15 @@ Ref<TextResourceDecoder> TextResourceDecoder::create(ContentType contentType, co
 
 TextResourceDecoder::~TextResourceDecoder() = default;
 
+Ref<TextResourceDecoder> TextResourceDecoder::createUTF8()
+{
+    return adoptRef(*new TextResourceDecoder);
+}
+
 // https://encoding.spec.whatwg.org/#utf-8-decode
 String TextResourceDecoder::textFromUTF8(std::span<const uint8_t> data)
 {
-    constexpr std::array<uint8_t, 3> byteOrderMarkUTF8 = { 0xEF, 0xBB, 0xBF };
-
-    auto decoder = TextResourceDecoder::create("text/plain"_s, "UTF-8"_s);
-    if (!spanHasPrefix(data, std::span { byteOrderMarkUTF8 }))
-        decoder->decode(byteOrderMarkUTF8);
-    return decoder->decodeAndFlush(data);
+    return createUTF8()->decodeAndFlush(data);
 }
 
 void TextResourceDecoder::setEncoding(const PAL::TextEncoding& encoding, EncodingSource source)
@@ -324,7 +331,7 @@ bool TextResourceDecoder::hasEqualEncodingForCharset(const String& charset) cons
 }
 
 // Returns the position of the encoding string.
-static size_t NODELETE findXMLEncoding(std::span<const uint8_t> string, size_t& encodingLength)
+static size_t findXMLEncoding(std::span<const uint8_t> string, size_t& encodingLength)
 {
     size_t position = find(string, byteCast<uint8_t>("encoding"_span));
     if (position == notFound)
@@ -551,8 +558,13 @@ bool TextResourceDecoder::shouldAutoDetect() const
 String TextResourceDecoder::decode(std::span<const uint8_t> data)
 {
     size_t lengthOfBOM = 0;
-    if (!m_checkedForBOM)
+    if (!m_checkedForBOM) {
         lengthOfBOM = checkForBOM(data);
+        if (!m_checkedForBOM) {
+            m_buffer.append(data);
+            return emptyString();
+        }
+    }
 
     bool movedDataToBuffer = false;
 

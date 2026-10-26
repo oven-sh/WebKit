@@ -47,14 +47,14 @@ public:
     bool hasPlatformContext() const final;
 
     // Returns the platform context for any purpose, including draws. Conservative estimate.
-    CGContextRef platformContext() const final { return const_cast<GraphicsContextCG*>(this)->contextForDraw(); }
+    CGContextRef platformContext() const final { return contextForDraw(); }
 
     const ColorSpace& colorSpace() const final;
 
     void save(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final;
     void restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final;
 
-    void drawNativeImage(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImagePaintingOptions = { }) final;
+    void drawNativeImage(const NativeImage&, const FloatRect& destRect, const FloatRect& srcRect, ImageDrawingOptions = { }) final;
     void drawRect(const FloatRect&, float borderThickness = 1) final;
     void drawLine(const FloatPoint&, const FloatPoint&) final;
     void drawEllipse(const FloatRect&) final;
@@ -107,7 +107,7 @@ public:
     void setLineJoin(LineJoin) final;
     void setMiterLimit(float) final;
 
-    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { }) final;
+    void drawPattern(const NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImageDrawingOptions = { }) final;
 
     using GraphicsContext::scale;
     void scale(const FloatSize&) final;
@@ -143,16 +143,16 @@ public:
     FloatRect roundToDevicePixels(const FloatRect&) const;
 
     // Returns the platform context for draws.
-    CGContextRef contextForDraw()
+    const RetainPtr<CGContextRef>& contextForDraw() const
     {
         ASSERT(m_cgContext);
         m_hasDrawn = true;
-        return m_cgContext.get();
+        return m_cgContext;
     }
 
     // Returns false if there has not been any potential draws since last call.
     // Returns true if there has been potential draws since last call.
-    bool NODELETE consumeHasDrawn();
+    bool LEGACY_NODELETE consumeHasDrawn();
 
 #if HAVE(SUPPORT_HDR_DISPLAY)
     void setMaxEDRHeadroom(std::optional<float>) final;
@@ -168,7 +168,7 @@ private:
     void setCGStyle(const std::optional<GraphicsStyle>&, bool shadowsIgnoreTransforms);
 
     // Returns the platform context for purposes of context state change, not draws.
-    CGContextRef NODELETE contextForState() const;
+    const RetainPtr<CGContextRef>& LEGACY_NODELETE contextForState() const;
 
     const RetainPtr<CGContextRef> m_cgContext;
     mutable std::optional<ColorSpace> m_colorSpace;
@@ -179,7 +179,7 @@ private:
     const bool m_isLayerCGContext : 1;
     mutable bool m_userToDeviceTransformKnownToBeIdentity : 1 { false };
     // Flag for pending draws. Start with true because we do not know what commands have been scheduled to the context.
-    bool m_hasDrawn : 1 { true };
+    mutable bool m_hasDrawn : 1 { true };
 };
 
 CGAffineTransform getUserToBaseCTM(CGContextRef);

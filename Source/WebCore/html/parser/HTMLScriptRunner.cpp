@@ -112,8 +112,8 @@ void HTMLScriptRunner::executePendingScriptAndDispatchEvent(PendingScript& pendi
     if (pendingScript.watchingForLoad())
         stopWatchingForLoad(pendingScript);
 
-    if (!isExecutingScript() && m_document)
-        protect(m_document.get())->eventLoop().performMicrotaskCheckpoint(protect(m_document.get())->vm());
+    if (RefPtr document = m_document.get(); document && !isExecutingScript())
+        protect(document->eventLoop())->performMicrotaskCheckpoint(document->vm());
 
     {
         NestingLevelIncrementer nestingLevelIncrementer(m_scriptNestingLevel);
@@ -247,8 +247,8 @@ void HTMLScriptRunner::runScript(ScriptElement& scriptElement, const TextPositio
     // every script element, even if it's not ready to execute yet. There's
     // unfortunately no obvious way to tell if prepareScript is going to
     // execute the script before calling it.
-    if (!isExecutingScript() && m_document)
-        protect(m_document.get())->eventLoop().performMicrotaskCheckpoint(protect(m_document.get())->vm());
+    if (RefPtr document = m_document.get(); document && !isExecutingScript())
+        protect(document->eventLoop())->performMicrotaskCheckpoint(document->vm());
 
     InsertionPointRecord insertionPointRecord(m_host.inputStream());
     NestingLevelIncrementer nestingLevelIncrementer(m_scriptNestingLevel);

@@ -437,7 +437,9 @@ set(LLIntSettingsExtractor_DEPENDENCIES
     WTF_CopyHeaders
     bmalloc_CopyHeaders
 )
+# Only used for local analysis; skip the normal post-link steps.
 set_property(TARGET LLIntSettingsExtractor PROPERTY SKIP_CODESIGN YES)
+set_property(TARGET LLIntSettingsExtractor PROPERTY SKIP_DSYM YES)
 WEBKIT_EXECUTABLE(LLIntSettingsExtractor)
 set_target_properties(LLIntSettingsExtractor PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -466,7 +468,9 @@ set(LLIntOffsetsExtractor_DEPENDENCIES
     WTF_CopyHeaders
     bmalloc_CopyHeaders
 )
+# Only used for local analysis; skip the normal post-link steps.
 set_property(TARGET LLIntOffsetsExtractor PROPERTY SKIP_CODESIGN YES)
+set_property(TARGET LLIntOffsetsExtractor PROPERTY SKIP_DSYM YES)
 WEBKIT_EXECUTABLE(LLIntOffsetsExtractor)
 set_target_properties(LLIntOffsetsExtractor PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -593,6 +597,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     API/JSScriptRefPrivate.h
     API/JSStringRefCPP.h
     API/JSStringRefPrivate.h
+    API/JSStringRefPtr.h
     API/JSValueInternal.h
     API/JSValuePrivate.h
     API/JSVirtualMachineInternal.h
@@ -843,6 +848,8 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/CodeBlockSetInlines.h
     heap/CollectingScope.h
     heap/CollectionScope.h
+    heap/Collector.h
+    heap/CollectorInlines.h
     heap/CollectorPhase.h
     heap/CompleteSubspace.h
     heap/CompleteSubspaceInlines.h
@@ -1108,7 +1115,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     parser/SourceProvider.h
     parser/SourceProviderCache.h
     parser/SourceProviderCacheItem.h
-    parser/SourceTaintedOrigin.h
+    parser/SourceTaintedness.h
     parser/SyntaxChecker.h
     parser/UnlinkedSourceCode.h
     parser/VariableEnvironment.h
@@ -1333,6 +1340,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/GlobalExecutable.h
     runtime/GlobalObjectMethodTable.h
     runtime/HasOwnPropertyCache.h
+    runtime/HasOwnPropertyCacheInlines.h
     runtime/HashMapHelper.h
     runtime/ISO8601.h
     runtime/Identifier.h
@@ -1340,7 +1348,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ImplementationVisibility.h
     runtime/ImportMap.h
     runtime/IndexingHeader.h
-    runtime/IndexingHeaderInlines.h
     runtime/IndexingType.h
     runtime/IndexingTypeInlines.h
     runtime/IndirectEvalExecutable.h
@@ -1512,8 +1519,8 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/JSModuleRecord.h
     runtime/JSNativeStdFunction.h
     runtime/JSNativeStdFunctionInlines.h
-    runtime/JSONAtomStringCache.h
-    runtime/JSONAtomStringCacheInlines.h
+    runtime/JSONCache.h
+    runtime/JSONCacheInlines.h
     runtime/JSONObject.h
     runtime/JSONObjectInlines.h
     runtime/JSObject.h
@@ -2102,6 +2109,9 @@ if (APPLE)
         corpse/CorpseClient.h
         corpse/CorpseError.h
         corpse/CorpseExportsTrie.h
+        corpse/CorpseMemory.h
+        corpse/CorpseMemoryPtr.h
+        corpse/CorpseMemorySpan.h
         corpse/CorpseProcess.h
         corpse/CorpseRegion.h
         corpse/CorpseSnapshot.h
@@ -2218,11 +2228,16 @@ set(JavaScriptCore_INSPECTOR_DOMAINS
     ${JAVASCRIPTCORE_DIR}/inspector/protocol/Process.json
 )
 
+set(_platform_defines_file_arg)
+if (WEBKIT_PLATFORM_FEATURE_DEFINES_FILE)
+    set(_platform_defines_file_arg --defines-file ${WEBKIT_PLATFORM_FEATURE_DEFINES_FILE})
+endif ()
+
 add_custom_command(
-    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+    OUTPUT ${JavaScriptCore_SCRIPTS_DIR}/CombinedDomains.json
     MAIN_DEPENDENCY ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py
-    DEPENDS ${JavaScriptCore_INSPECTOR_DOMAINS}
-    COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py ${JavaScriptCore_INSPECTOR_DOMAINS} "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}" ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+    DEPENDS ${JavaScriptCore_INSPECTOR_DOMAINS} ${WEBKIT_PLATFORM_FEATURE_DEFINES_FILE}
+    COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py ${_platform_defines_file_arg} ${JavaScriptCore_INSPECTOR_DOMAINS} "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}" ${JavaScriptCore_SCRIPTS_DIR}/CombinedDomains.json
     VERBATIM)
 
 # Inspector Backend Dispatchers, Frontend Dispatchers, Type Builders
@@ -2236,9 +2251,9 @@ add_custom_command(
     ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorProtocolObjects.cpp
     ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorProtocolObjects.h
     ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorBackendCommands.js
-    MAIN_DEPENDENCY ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+    MAIN_DEPENDENCY ${JavaScriptCore_SCRIPTS_DIR}/CombinedDomains.json
     DEPENDS ${JavaScriptCore_INSPECTOR_PROTOCOL_SCRIPTS}
-    COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/generate-inspector-protocol-bindings.py --outputDir "${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector" --framework JavaScriptCore ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+    COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/generate-inspector-protocol-bindings.py --outputDir "${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector" --framework JavaScriptCore ${JavaScriptCore_SCRIPTS_DIR}/CombinedDomains.json
     VERBATIM)
 
 set(JavaScriptCore_INTERFACE_LIBRARIES JavaScriptCore)
@@ -2272,6 +2287,23 @@ if (COMPILER_IS_GCC_OR_CLANG)
         WEBKIT_ADD_TARGET_CXX_FLAGS(JavaScriptCore -mno-madd4)
     endif()
 endif()
+
+if (ENABLE_FUZZILLI)
+    # For compiling only. A link that is given this flag takes __sanitizer_cov_trace_pc_guard and
+    # __sanitizer_cov_trace_pc_guard_init from clang's runtime, whose signal handlers turn a crash into exit(1).
+    target_compile_options(JavaScriptCore PRIVATE -fsanitize-coverage=trace-pc-guard)
+
+    # They are in fuzzilli/Fuzzilli.cpp, which every target here that links JavaScriptCore gets. It is not in the
+    # archive: an embedder that links libJavaScriptCore.a defines its own.
+    add_library(FuzzilliLib OBJECT fuzzilli/Fuzzilli.cpp)
+    target_include_directories(FuzzilliLib PRIVATE "$<TARGET_PROPERTY:JavaScriptCore,INCLUDE_DIRECTORIES>")
+    add_dependencies(FuzzilliLib JavaScriptCore)
+    target_link_libraries(JavaScriptCore INTERFACE $<TARGET_OBJECTS:FuzzilliLib>)
+    if (CMAKE_SYSTEM_NAME MATCHES "Linux")
+        # shm_open, before glibc 2.34.
+        target_link_libraries(JavaScriptCore INTERFACE rt)
+    endif ()
+endif ()
 
 WEBKIT_COPY_FILES(JavaScriptCore_CopyHeaders
     DESTINATION ${JavaScriptCore_HEADERS_DIR}

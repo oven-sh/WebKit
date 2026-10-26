@@ -146,7 +146,7 @@ public:
     float opacity() const override;
     void setOpacity(float) override;
     void setFilters(const FilterOperations&) override;
-    WEBCORE_EXPORT static bool NODELETE filtersCanBeComposited(const FilterOperations&);
+    WEBCORE_EXPORT static bool LEGACY_NODELETE filtersCanBeComposited(const FilterOperations&);
     void copyFiltersFrom(const PlatformCALayer&) override;
 
     void setBlendMode(BlendMode) override;
@@ -227,14 +227,14 @@ private:
 
     Type type() const final { return Type::Cocoa; }
 
-    bool NODELETE requiresCustomAppearanceUpdateOnBoundsChange() const;
+    bool LEGACY_NODELETE requiresCustomAppearanceUpdateOnBoundsChange() const;
 
     void updateContentsFormat();
 
     AVPlayerLayer *avPlayerLayer() const;
 
-    RetainPtr<NSObject> m_delegate;
-    std::unique_ptr<PlatformCALayerList> m_customSublayers;
+    const RetainPtr<NSObject> m_delegate;
+    const std::unique_ptr<PlatformCALayerList> m_customSublayers;
     GraphicsLayer::CustomAppearance m_customAppearance { GraphicsLayer::CustomAppearance::None };
     std::unique_ptr<FloatRoundedRect> m_shapeRoundedRect;
 #if ENABLE(SCROLLING_THREAD)

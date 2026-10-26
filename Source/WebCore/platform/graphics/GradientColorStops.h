@@ -78,7 +78,8 @@ public:
 
     const GradientColorStops& sorted() const
     {
-        const_cast<GradientColorStops*>(this)->sort();
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<GradientColorStops*>(this)->sort();
         return *this;
     }
 
@@ -88,7 +89,7 @@ public:
     StopVector::const_iterator begin() const LIFETIME_BOUND { return m_stops.begin(); }
     StopVector::const_iterator end() const LIFETIME_BOUND { return m_stops.end(); }
 
-    template<typename MapFunction> GradientColorStops mapColors(MapFunction&& mapFunction) const
+    template<typename MapFunction> GradientColorStops mapColors(NOESCAPE const MapFunction& mapFunction) const
     {
         return {
             m_stops.map<StopVector>([&] (const GradientColorStop& stop) -> GradientColorStop {

@@ -1,4 +1,4 @@
-<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML//EN">
+<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML//EN"><!-- webkit-test-runner [ jscOptions=--useSharedArrayBuffer=true ] -->
 <html>
 <head>
 <script src="../resources/js-test-pre.js"></script>
@@ -7,6 +7,9 @@
 <canvas id="canvas"></canvas>
 <script>
 description('Test that passing a SharedArrayBuffer to WebGL does not crash.')
+
+if (window.internals)
+    internals.settings.setWebGLErrorsToConsoleEnabled(false);
 
 var canvas = document.getElementById("canvas");
 var gl = canvas.getContext("webgl");

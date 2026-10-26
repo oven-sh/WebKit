@@ -1,3 +1,0 @@
-
-PASS cookieStore.get() in ServiceWorker reads cookie set in cross-origin frame
-

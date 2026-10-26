@@ -42,7 +42,7 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 namespace WebCore {
 
 #if USE(LIBWEBRTC)
-static inline webrtc::VideoRotation toWebRTCVideoRotation(VideoFrame::Rotation rotation)
+static inline webrtc::VideoRotation LEGACY_NODELETE toWebRTCVideoRotation(VideoFrame::Rotation rotation)
 {
     switch (rotation) {
     case VideoFrame::Rotation::None:
@@ -58,7 +58,7 @@ static inline webrtc::VideoRotation toWebRTCVideoRotation(VideoFrame::Rotation r
     return webrtc::kVideoRotation_0;
 }
 
-static inline VideoFrame::Rotation fromWebRTCEncodedVideoRotation(webrtc::WebKitEncodedVideoRotation rotation)
+static inline VideoFrame::Rotation LEGACY_NODELETE fromWebRTCEncodedVideoRotation(webrtc::WebKitEncodedVideoRotation rotation)
 {
     switch (rotation) {
     case webrtc::WebKitEncodedVideoRotation::kVideoRotation_0:
@@ -74,7 +74,7 @@ static inline VideoFrame::Rotation fromWebRTCEncodedVideoRotation(webrtc::WebKit
     return VideoFrame::Rotation::None;
 }
 
-static inline GPUVideoEncoderFrameInfo toGPUVideoEncoderFrameInfo(const webrtc::WebKitEncodedFrameInfo& info)
+static inline GPUVideoEncoderFrameInfo LEGACY_NODELETE toGPUVideoEncoderFrameInfo(const webrtc::WebKitEncodedFrameInfo& info)
 {
     return {
         .width = info.width,
@@ -93,7 +93,7 @@ static inline GPUVideoEncoderFrameInfo toGPUVideoEncoderFrameInfo(const webrtc::
 class GPULocalVideoEncoder final : public GPUVideoEncoder {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(GPULocalVideoEncoder);
 public:
-    static Ref<GPULocalVideoEncoder> create(webrtc::LocalEncoder encoder) { return adoptRef(*new GPULocalVideoEncoder(encoder)); }
+    static Ref<GPULocalVideoEncoder> LEGACY_NODELETE create(webrtc::LocalEncoder encoder) { return adoptRef(*new GPULocalVideoEncoder(encoder)); }
 
     ~GPULocalVideoEncoder()
     {
@@ -139,7 +139,7 @@ RefPtr<GPUVideoEncoder> GPUVideoEncoder::create(CreationInfo&& creationInfo, con
 
     std::map<std::string, std::string> rtcParameters;
     for (auto& parameter : parameters)
-        rtcParameters.emplace(parameter.first.utf8().legacyCStringPointer(), parameter.second.utf8().legacyCStringPointer());
+        rtcParameters.emplace(parameter.first.utf8().toStdString(), parameter.second.utf8().toStdString());
 
     webrtc::LocalEncoderScalabilityMode rtcScalabilityMode;
     switch (creationInfo.scalabilityMode) {
@@ -157,7 +157,14 @@ RefPtr<GPUVideoEncoder> GPUVideoEncoder::create(CreationInfo&& creationInfo, con
         callback(unsafeMakeSpan(buffer, size), toGPUVideoEncoderFrameInfo(info));
     });
     auto newConfigurationBlock = makeBlockPtr([descriptionCallback = WTF::move(descriptionCallback)](const uint8_t* buffer, size_t size) {
-        descriptionCallback(unsafeMakeSpan(buffer, size));
+        // This backend has no way to report the color space it actually encoded with, so we report a fixed default.
+        PlatformVideoColorSpace colorSpace {
+            .primaries = PlatformVideoColorPrimaries::Bt709,
+            .transfer = PlatformVideoTransferCharacteristics::Iec6196621,
+            .matrix = PlatformVideoMatrixCoefficients::Bt709,
+            .fullRange = true
+        };
+        descriptionCallback(unsafeMakeSpan(buffer, size), colorSpace);
     });
     auto errorBlock = makeBlockPtr([errorCallback = WTF::move(errorCallback)](bool isFrameDropped) {
         errorCallback(isFrameDropped);

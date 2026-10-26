@@ -157,7 +157,7 @@ GraphicsLayerWC::GraphicsLayerWC(Type layerType, GraphicsLayerClient& client, Ob
     : GraphicsLayer(layerType, client)
     , m_observer(&observer)
 {
-    m_tiledBacking = makeUnique<WCTiledBacking>(*this);
+    lazyInitialize(m_tiledBacking, makeUnique<WCTiledBacking>(*this));
     if (layerType == Type::Normal)
         client.tiledBackingUsageChanged(this, true);
     m_observer->graphicsLayerAdded(*this);
@@ -424,6 +424,7 @@ void GraphicsLayerWC::setContentsToSolidColor(const Color& color)
 
 void GraphicsLayerWC::setContentsToPlatformLayer(PlatformLayer* platformLayer, ContentsLayerPurpose)
 {
+    m_hasContentsDisplayDelegate = false;
     if (m_platformLayer == platformLayer)
         return;
     m_platformLayer = platformLayer;
@@ -443,6 +444,7 @@ void GraphicsLayerWC::setContentsDisplayDelegate(RefPtr<WebCore::GraphicsLayerCo
 {
     auto platformLayer = displayDelegate ? displayDelegate->platformLayer() : nullptr;
     setContentsToPlatformLayer(platformLayer, purpose);
+    m_hasContentsDisplayDelegate = !!platformLayer;
 }
 
 bool GraphicsLayerWC::usesContentsLayer() const

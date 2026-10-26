@@ -114,7 +114,7 @@ private:
 };
 
 using KeyStoreIDType = unsigned;
-KeyStoreIDType NODELETE keyStoreBaseNextID();
+KeyStoreIDType LEGACY_NODELETE keyStoreBaseNextID();
 
 template<typename T>
 class KeyStoreBase {
@@ -249,7 +249,7 @@ public:
 
     void updateKeyStore(const KeyStore&);
     void unrefAllKeysFrom(const KeyStore&);
-    void setInstance(CDMInstanceProxy*);
+    void LEGACY_NODELETE setInstance(CDMInstanceProxy*);
     void abortWaitingForKey() const;
 
 protected:
@@ -261,7 +261,7 @@ protected:
     std::optional<KeyHandleValueVariant> getOrWaitForKeyValue(const KeyIDType&, WeakPtr<CDMProxyDecryptionClient>&&) const;
     void startedWaitingForKey() const;
     void stoppedWaitingForKey() const;
-    const CDMInstanceProxy* instance() const;
+    const CDMInstanceProxy* LEGACY_NODELETE instance() const;
 
 private:
     mutable Lock m_instanceLock;
@@ -314,9 +314,9 @@ class CDMInstanceProxy : public CDMInstance, public CanMakeWeakPtr<CDMInstancePr
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(CDMInstanceProxy);
 public:
     explicit CDMInstanceProxy(const String& keySystem)
+        : m_cdmProxy(CDMProxyFactory::createCDMProxyForKeySystem(keySystem))
     {
         ASSERT(isMainThread());
-        m_cdmProxy = CDMProxyFactory::createCDMProxyForKeySystem(keySystem);
         if (m_cdmProxy)
             m_cdmProxy->setInstance(this);
     }
@@ -340,7 +340,7 @@ public:
     void stoppedWaitingForKey();
 
 private:
-    RefPtr<CDMProxy> m_cdmProxy;
+    const RefPtr<CDMProxy> m_cdmProxy;
     ThreadSafeWeakPtr<MediaPlayer> m_player;
 
     std::atomic<int> m_numDecryptorsWaitingForKey { 0 };

@@ -389,7 +389,7 @@ public:
     {
     }
 
-    void NODELETE merge(const IntConstraint& other)
+    void LEGACY_NODELETE merge(const IntConstraint& other)
     {
         NumericConstraint::innerMerge(other);
     }
@@ -602,7 +602,7 @@ private:
 class MediaTrackConstraintSetMap {
 public:
     MediaTrackConstraintSetMap() = default;
-    MediaTrackConstraintSetMap(std::optional<IntConstraint> width, std::optional<IntConstraint> height, std::optional<IntConstraint> sampleRate, std::optional<IntConstraint> sampleSize, std::optional<DoubleConstraint> aspectRatio, std::optional<DoubleConstraint> frameRate, std::optional<DoubleConstraint> volume, std::optional<BooleanConstraint> echoCancellation, std::optional<BooleanConstraint> displaySurface, std::optional<BooleanConstraint> logicalSurface, std::optional<StringConstraint>&& facingMode, std::optional<StringConstraint>&& deviceId, std::optional<StringConstraint>&& groupId, std::optional<StringConstraint>&& whiteBalanceMode, std::optional<DoubleConstraint> zoom, std::optional<BooleanConstraint> torch, std::optional<BooleanConstraint> backgroundBlur, std::optional<BooleanConstraint> powerEfficient)
+    MediaTrackConstraintSetMap(std::optional<IntConstraint> width, std::optional<IntConstraint> height, std::optional<IntConstraint> sampleRate, std::optional<IntConstraint> sampleSize, std::optional<DoubleConstraint> aspectRatio, std::optional<DoubleConstraint> frameRate, std::optional<DoubleConstraint> volume, std::optional<BooleanConstraint> echoCancellation, std::optional<StringConstraint> displaySurface, std::optional<BooleanConstraint> logicalSurface, std::optional<StringConstraint>&& facingMode, std::optional<StringConstraint>&& deviceId, std::optional<StringConstraint>&& groupId, std::optional<StringConstraint>&& whiteBalanceMode, std::optional<DoubleConstraint> zoom, std::optional<BooleanConstraint> torch, std::optional<BooleanConstraint> backgroundBlur, std::optional<BooleanConstraint> powerEfficient)
         : m_width(width)
         , m_height(height)
         , m_sampleRate(sampleRate)
@@ -624,7 +624,7 @@ public:
     {
     }
 
-    WEBCORE_EXPORT void forEach(NOESCAPE Function<void(MediaConstraintType, const MediaConstraint&)>&&) const;
+    WEBCORE_EXPORT void forEach(NOESCAPE const Function<void(MediaConstraintType, const MediaConstraint&)>&) const;
     void filter(NOESCAPE const Function<bool(MediaConstraintType, const MediaConstraint&)>&) const;
     bool isEmpty() const;
     WEBCORE_EXPORT bool isValid() const;
@@ -636,9 +636,9 @@ public:
     WEBCORE_EXPORT void set(MediaConstraintType, std::optional<StringConstraint>&&);
     void set(MediaConstraintType, const MediaConstraint&);
 
-    void merge(MediaConstraintType, const IntConstraint&);
-    void merge(MediaConstraintType, const DoubleConstraint&);
-    void merge(MediaConstraintType, const BooleanConstraint&);
+    void LEGACY_NODELETE merge(MediaConstraintType, const IntConstraint&);
+    void LEGACY_NODELETE merge(MediaConstraintType, const DoubleConstraint&);
+    void LEGACY_NODELETE merge(MediaConstraintType, const BooleanConstraint&);
     void merge(MediaConstraintType, const StringConstraint&);
     void merge(MediaConstraintType, const MediaConstraint&);
 
@@ -654,7 +654,7 @@ public:
     const std::optional<DoubleConstraint>& volume() const LIFETIME_BOUND { return m_volume; }
 
     const std::optional<BooleanConstraint>& echoCancellation() const LIFETIME_BOUND { return m_echoCancellation; }
-    const std::optional<BooleanConstraint>& displaySurface() const LIFETIME_BOUND { return m_displaySurface; }
+    const std::optional<StringConstraint>& displaySurface() const LIFETIME_BOUND { return m_displaySurface; }
     const std::optional<BooleanConstraint>& logicalSurface() const LIFETIME_BOUND { return m_logicalSurface; }
 
     const std::optional<StringConstraint>& facingMode() const LIFETIME_BOUND { return m_facingMode; }
@@ -681,7 +681,7 @@ private:
     std::optional<DoubleConstraint> m_volume;
 
     std::optional<BooleanConstraint> m_echoCancellation;
-    std::optional<BooleanConstraint> m_displaySurface;
+    std::optional<StringConstraint> m_displaySurface;
     std::optional<BooleanConstraint> m_logicalSurface;
 
     std::optional<StringConstraint> m_facingMode;

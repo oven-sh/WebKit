@@ -24,10 +24,10 @@
 #include "config.h"
 #include "FloatingObjects.h"
 
-#include "LegacyRootInlineBox.h"
 #include "PODIntervalTree.h"
 #include "RenderBlockFlowInlines.h"
 #include "RenderBox.h"
+#include "RenderElementInlines.h"
 #include "RenderView.h"
 #include <wtf/HexNumber.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -50,13 +50,12 @@ struct SameSizeAsFloatingObject {
 static_assert(sizeof(FloatingObject) == sizeof(SameSizeAsFloatingObject), "FloatingObject should stay small");
 #if !ASSERT_ENABLED && ASSERT_WITH_SECURITY_IMPLICATION_DISABLED
 static_assert(sizeof(SingleThreadWeakPtr<RenderBox>) == sizeof(void*), "WeakPtr should be same size as raw pointer");
-static_assert(sizeof(CheckedPtr<LegacyRootInlineBox>) == sizeof(void*), "WeakPtr should be same size as raw pointer");
 #endif
 
 FloatingObject::FloatingObject(RenderBox& renderer)
     : m_renderer(renderer)
 {
-    UsedFloat type = Style::ComputedStyle::usedFloat(renderer);
+    UsedFloat type = renderer.usedStyle().floating();
     ASSERT(type != UsedFloat::None);
     if (type == UsedFloat::Left)
         m_type = FloatLeft;
@@ -130,7 +129,7 @@ TextStream& operator<<(TextStream& stream, const FloatingObject& object)
 
 #endif
 
-inline static bool NODELETE rangesIntersect(LayoutUnit floatTop, LayoutUnit floatBottom, LayoutUnit objectTop, LayoutUnit objectBottom)
+inline static bool LEGACY_NODELETE rangesIntersect(LayoutUnit floatTop, LayoutUnit floatBottom, LayoutUnit objectTop, LayoutUnit objectBottom)
 {
     if (objectTop >= floatBottom || objectBottom < floatTop)
         return false;
@@ -166,11 +165,11 @@ public:
 
     virtual ~ComputeFloatOffsetAdapter() = default;
 
-    LayoutUnit NODELETE lowValue() const { return m_lineTop; }
-    LayoutUnit NODELETE highValue() const { return m_lineBottom; }
+    LayoutUnit LEGACY_NODELETE lowValue() const { return m_lineTop; }
+    LayoutUnit LEGACY_NODELETE highValue() const { return m_lineBottom; }
     void collectIfNeeded(const IntervalType&);
 
-    LayoutUnit NODELETE offset() const { return m_offset; }
+    LayoutUnit LEGACY_NODELETE offset() const { return m_offset; }
 
 protected:
     virtual bool updateOffsetIfNeeded(const FloatingObject&) = 0;
@@ -192,7 +191,7 @@ public:
 
     virtual ~ComputeFloatOffsetForFloatLayoutAdapter() = default;
 
-    LayoutUnit heightRemaining() const;
+    LayoutUnit LEGACY_NODELETE heightRemaining() const;
 
 protected:
     bool updateOffsetIfNeeded(const FloatingObject&) final;
@@ -222,12 +221,12 @@ public:
     {
     }
 
-    LayoutUnit NODELETE lowValue() const { return m_belowLogicalHeight; }
-    LayoutUnit NODELETE highValue() const { return LayoutUnit::max(); }
+    LayoutUnit LEGACY_NODELETE lowValue() const { return m_belowLogicalHeight; }
+    LayoutUnit LEGACY_NODELETE highValue() const { return LayoutUnit::max(); }
     void collectIfNeeded(const IntervalType&);
 
-    LayoutUnit NODELETE nextLogicalBottom() const { return m_nextLogicalBottom.value_or(0); }
-    LayoutUnit NODELETE nextShapeLogicalBottom() const { return m_nextShapeLogicalBottom.value_or(nextLogicalBottom()); }
+    LayoutUnit LEGACY_NODELETE nextLogicalBottom() const { return m_nextLogicalBottom.value_or(0); }
+    LayoutUnit LEGACY_NODELETE nextShapeLogicalBottom() const { return m_nextShapeLogicalBottom.value_or(nextLogicalBottom()); }
 
 private:
     SingleThreadWeakPtr<const RenderBlockFlow> m_renderer;

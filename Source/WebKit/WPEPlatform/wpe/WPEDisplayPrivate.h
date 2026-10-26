@@ -27,7 +27,8 @@
 
 #include "WPEDisplay.h"
 #include "WPEView.h"
+#include <wtf/text/ASCIILiteral.h>
 
 WPEView* wpeDisplayCreateView(WPEDisplay*);
-bool wpeDisplayCheckEGLExtension(WPEDisplay*, const char*);
+bool wpeDisplayCheckEGLExtension(WPEDisplay*, ASCIILiteral);
 WPEInputMethodContext* wpeDisplayCreateInputMethodContext(WPEDisplay*, WPEView*);

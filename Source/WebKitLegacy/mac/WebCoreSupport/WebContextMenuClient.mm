@@ -61,6 +61,7 @@
 #import <wtf/RuntimeApplicationChecks.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/URL.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 
 @interface NSApplication ()
@@ -90,18 +91,18 @@ WebContextMenuClient::~WebContextMenuClient()
 
 void WebContextMenuClient::downloadURL(const URL& url)
 {
-    [m_webView _downloadURL:url.createNSURL().get()];
+    [protect(m_webView) _downloadURL:url.createNSURL().get()];
 }
 
 void WebContextMenuClient::searchWithGoogle(const WebCore::LocalFrame*)
 {
-    [m_webView _searchWithGoogleFromMenu:nil];
+    [protect(m_webView) _searchWithGoogleFromMenu:nil];
 }
 
 void WebContextMenuClient::lookUpInDictionary(WebCore::LocalFrame* frame)
 {
-    WebHTMLView* htmlView = (WebHTMLView*)[[kit(frame) frameView] documentView];
-    if(![htmlView isKindOfClass:[WebHTMLView class]])
+    RetainPtr htmlView = dynamic_objc_cast<WebHTMLView>([[protect(kit(frame)) frameView] documentView]);
+    if (!htmlView)
         return;
     [htmlView _lookUpInDictionaryFromMenu:nil];
 }
@@ -123,7 +124,7 @@ void WebContextMenuClient::stopSpeaking()
 
 bool WebContextMenuClient::clientFloatRectForNode(WebCore::Node& node, WebCore::FloatRect& rect) const
 {
-    WebCore::RenderObject* renderer = node.renderer();
+    CheckedPtr renderer = node.renderer();
     if (!renderer) {
         // This method shouldn't be called in cases where the controlled node hasn't rendered.
         ASSERT_NOT_REACHED();
@@ -132,10 +133,10 @@ bool WebContextMenuClient::clientFloatRectForNode(WebCore::Node& node, WebCore::
 
     if (!is<WebCore::RenderBox>(*renderer))
         return false;
-    auto& renderBox = downcast<WebCore::RenderBox>(*renderer);
+    CheckedRef renderBox = downcast<WebCore::RenderBox>(*renderer);
 
-    WebCore::LayoutRect layoutRect = WebCore::LayoutRect(renderBox.borderLeft(), renderBox.borderTop(), renderBox.paddingBoxWidth(), renderBox.paddingBoxHeight());
-    WebCore::FloatQuad floatQuad = renderBox.localToAbsoluteQuad(WebCore::FloatQuad(layoutRect));
+    WebCore::LayoutRect layoutRect = WebCore::LayoutRect(renderBox->borderLeft(), renderBox->borderTop(), renderBox->paddingBoxWidth(), renderBox->paddingBoxHeight());
+    WebCore::FloatQuad floatQuad = renderBox->localToAbsoluteQuad(WebCore::FloatQuad(layoutRect));
     rect = floatQuad.boundingBox();
 
     return true;
@@ -145,7 +146,7 @@ bool WebContextMenuClient::clientFloatRectForNode(WebCore::Node& node, WebCore::
 
 void WebContextMenuClient::handleTranslation(const WebCore::TranslationContextMenuInfo& info)
 {
-    [m_webView _handleContextMenuTranslation:info];
+    [protect(m_webView) _handleContextMenuTranslation:info];
 }
 
 #endif
@@ -159,7 +160,7 @@ void WebContextMenuClient::sharingServicePickerWillBeDestroyed(WebSharingService
 
 WebCore::FloatRect WebContextMenuClient::screenRectForCurrentSharingServicePickerItem(WebSharingServicePickerController &)
 {
-    RefPtr page = [m_webView page].get();
+    RefPtr page = [protect(m_webView) page].get();
     if (!page)
         return NSZeroRect;
 
@@ -187,7 +188,7 @@ WebCore::FloatRect WebContextMenuClient::screenRectForCurrentSharingServicePicke
 
 RetainPtr<NSImage> WebContextMenuClient::imageForCurrentSharingServicePickerItem(WebSharingServicePickerController &)
 {
-    auto page = [m_webView page];
+    auto page = [protect(m_webView) page];
     if (!page)
         return nil;
 
@@ -213,8 +214,9 @@ RetainPtr<NSImage> WebContextMenuClient::imageForCurrentSharingServicePickerItem
 
     Ref localFrame = frameView->frame();
 
-    auto oldSelection = localFrame->selection().selection();
-    localFrame->selection().setSelection(*makeRangeSelectingNode(*node), WebCore::FrameSelection::SetSelectionOption::DoNotSetFocus);
+    CheckedRef frameSelection = localFrame->selection();
+    auto oldSelection = frameSelection->selection();
+    frameSelection->setSelection(*makeRangeSelectingNode(*node), WebCore::FrameSelection::SetSelectionOption::DoNotSetFocus);
 
     auto oldPaintBehavior = frameView->paintBehavior();
     frameView->setPaintBehavior(WebCore::PaintBehavior::SelectionOnly);
@@ -222,7 +224,7 @@ RetainPtr<NSImage> WebContextMenuClient::imageForCurrentSharingServicePickerItem
     buffer->context().translate(-toFloatSize(rect.location()));
     frameView->paintContents(buffer->context(), roundedIntRect(rect));
 
-    localFrame->selection().setSelection(oldSelection);
+    frameSelection->setSelection(oldSelection);
     frameView->setPaintBehavior(oldPaintBehavior);
 
     auto image = WebCore::BitmapImage::create(WebCore::ImageBuffer::sinkIntoNativeImage(WTF::move(buffer)));
@@ -238,33 +240,16 @@ NSMenu *WebContextMenuClient::contextMenuForEvent(NSEvent *event, NSView *view, 
 {
     isServicesMenu = false;
 
-    RefPtr page = [m_webView page].get();
+    RefPtr page = [protect(m_webView) page].get();
     if (!page)
         return nil;
-
-#if ENABLE(SERVICE_CONTROLS)
-    if (RefPtr image = page->contextMenuController().context().controlledImage()) {
-        ASSERT(page->contextMenuController().context().hitTestResult().innerNode());
-
-        // FIXME: <rdar://165255055> Migrate from deprecated NSItemProvider APIs
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-        RetainPtr itemProvider = adoptNS([[NSItemProvider alloc] initWithItem:image->adapter().snapshotNSImage().get() typeIdentifier:@"public.image"]);
-ALLOW_DEPRECATED_DECLARATIONS_END
-
-        bool isContentEditable = page->contextMenuController().context().hitTestResult().innerNode()->isContentEditable();
-        m_sharingServicePickerController = adoptNS([[WebSharingServicePickerController alloc] initWithItems:@[ itemProvider.get() ] includeEditorServices:isContentEditable client:this style:NSSharingServicePickerStyleRollover]);
-
-        isServicesMenu = true;
-        return [m_sharingServicePickerController menu];
-    }
-#endif
 
     return [view menuForEvent:event];
 }
 
 void WebContextMenuClient::showContextMenu()
 {
-    auto page = [m_webView page];
+    auto page = [protect(m_webView) page];
     if (!page)
         return;
     RefPtr frame = page->contextMenuController().hitTestResult().innerNodeFrame();

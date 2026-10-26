@@ -149,7 +149,8 @@ SecStaticCodeRef WebExtension::bundleStaticCode() const
     if (m_bundleStaticCode)
         return m_bundleStaticCode.get();
 
-    SecStaticCodeRef staticCodeRef;
+    // This is an out-parameter which is immediately adopted below.
+    SUPPRESS_UNRETAINED_LOCAL SecStaticCodeRef staticCodeRef;
     OSStatus error = SecStaticCodeCreateWithPath(retainPtr(bridge_cast(m_bundle.get().bundleURL)).get(), kSecCSDefaultFlags, &staticCodeRef);
     if (error != noErr || !staticCodeRef) {
         if (staticCodeRef)

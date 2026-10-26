@@ -259,7 +259,7 @@ Ref<Blob> Blob::slice(long long start, long long end, const String& contentType)
             sliceMemoryCost = positiveEnd - positiveStart;
         ASSERT(sliceMemoryCost <= totalMemoryCost);
     }
-    auto blob = adoptRef(*new Blob(scriptExecutionContext(), m_internalURL, start, end, sliceMemoryCost, contentType));
+    Ref blob = adoptRef(*new Blob(protect(scriptExecutionContext()), m_internalURL, start, end, sliceMemoryCost, contentType));
     blob->suspendIfNeeded();
     return blob;
 }
@@ -309,7 +309,7 @@ void Blob::loadBlob(FileReaderLoader::ReadType readType, Function<void(BlobLoade
 
 void Blob::text(Ref<DeferredPromise>&& promise)
 {
-    loadBlob(FileReaderLoader::ReadAsText, [promise = WTF::move(promise)](BlobLoader& blobLoader) mutable {
+    loadBlob(FileReaderLoader::ReadAsUTF8Text, [promise = WTF::move(promise)](BlobLoader& blobLoader) mutable {
         if (auto optionalErrorCode = blobLoader.errorCode()) {
             promise->reject(Exception { *optionalErrorCode });
             return;
@@ -536,7 +536,7 @@ bool Blob::isNormalizedContentType(const String& contentType)
     return true;
 }
 
-bool Blob::isNormalizedContentType(const CString& contentType)
+bool Blob::isNormalizedContentType(const ASCIICString& contentType)
 {
     // FIXME: Do we really want to treat the empty string and null string as valid content types?
     for (auto character : contentType.span()) {

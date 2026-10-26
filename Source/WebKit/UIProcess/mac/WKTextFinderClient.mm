@@ -38,6 +38,7 @@
 #import <algorithm>
 #import <pal/spi/mac/NSTextFinderSPI.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/CheckedPtr.h>
 #import <wtf/Deque.h>
 #import <wtf/NakedPtr.h>
@@ -92,7 +93,7 @@ private:
             allMatches.grow(matchCount);
             // FIXME: Clean this up and figure out why we are getting a -1 index
             if (matchIndex >= 0 && static_cast<uint32_t>(matchIndex) < matchCount)
-                allMatches[matchIndex].appendVector(matchRects);
+                borrow(allMatches)[matchIndex].appendVector(matchRects);
         }
 
         [m_textFinderClient didFindStringMatchesWithRects:allMatches didWrapAround:didWrapAround];
@@ -103,7 +104,7 @@ private:
         [m_textFinderClient didFindStringMatchesWithRects:{ } didWrapAround:NO];
     }
 
-    RetainPtr<WKTextFinderClient> m_textFinderClient;
+    const RetainPtr<WKTextFinderClient> m_textFinderClient;
 };
     
 }
@@ -204,7 +205,8 @@ private:
 {
     Vector<uint32_t> matchIndices;
     matchIndices.reserveInitialCapacity(matches.count);
-    for (id match in matches) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id match in matches) {
         if ([match isKindOfClass:WKTextFinderMatch.class])
             matchIndices.append([(WKTextFinderMatch *)match index]);
     }
@@ -329,7 +331,7 @@ private:
 
     ASSERT([findMatch isKindOfClass:[WKTextFinderMatch class]]);
 
-    WKTextFinderMatch *textFinderMatch = static_cast<WKTextFinderMatch *>(findMatch);
+    RetainPtr textFinderMatch = static_cast<WKTextFinderMatch *>(findMatch);
 
     auto copiedImageCallback = Block_copy(completionHandler);
     _imageReplyCallbacks.append([copiedImageCallback] (NSImage *image) {
@@ -340,7 +342,7 @@ private:
     // FIXME: There is no guarantee that this will ever result in didGetImageForMatchResult
     // being called (and thus us calling our completion handler); we should harden this
     // against all of the early returns in FindController::getImageForFindMatch.
-    protect(_page)->getImageForFindMatch(textFinderMatch.index);
+    protect(_page)->getImageForFindMatch([textFinderMatch index]);
 }
 
 @end

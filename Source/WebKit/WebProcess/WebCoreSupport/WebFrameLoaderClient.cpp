@@ -28,6 +28,7 @@
 
 #include "FormDataReference.h"
 #include "FrameInfoData.h"
+#include "JSHandleInfo.h"
 #include "Logging.h"
 #include "MessageSenderInlines.h"
 #include "NavigationActionData.h"
@@ -37,11 +38,13 @@
 #include "WebPage.h"
 #include "WebPageProxyMessages.h"
 #include "WebProcess.h"
+#include <WebCore/Document.h>
 #include <WebCore/DocumentLoader.h>
 #include <WebCore/FrameLoader.h>
 #include <WebCore/HitTestResult.h>
 #include <WebCore/LocalFrameInlines.h>
 #include <WebCore/PolicyChecker.h>
+#include <WebCore/WebKitJSHandle.h>
 #include <wtf/text/TextStream.h>
 
 #if PLATFORM(COCOA)
@@ -67,6 +70,32 @@ WebFrameLoaderClient::WebFrameLoaderClient(Ref<WebFrame>&& frame, ScopeExit<Func
 }
 
 WebFrameLoaderClient::~WebFrameLoaderClient() = default;
+
+#if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
+std::optional<JSHandleInfo> WebFrameLoaderClient::jsHandleInfoForHitTestResult(const std::optional<HitTestResult>& hitTestResult)
+{
+    if (!hitTestResult)
+        return std::nullopt;
+
+    RefPtr node = hitTestResult->innerNonSharedNode();
+    if (!node)
+        return std::nullopt;
+
+    RefPtr frame = node->document().frame();
+    if (!frame)
+        return std::nullopt;
+
+    RefPtr webFrame = WebFrame::fromCoreFrame(*frame);
+    if (!webFrame)
+        return std::nullopt;
+
+    auto handleAndInfo = webFrame->createAndPrepareToSendJSHandle(*node);
+    if (!handleAndInfo)
+        return std::nullopt;
+
+    return WTF::move(handleAndInfo->second);
+}
+#endif
 
 std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(const NavigationAction& navigationAction, const ResourceRequest& request, const ResourceResponse& redirectResponse, const String& clientRedirectSourceForHistory, std::optional<WebCore::NavigationIdentifier> navigationID, std::optional<WebCore::HitTestResult>&& hitTestResult, bool hasOpener, NavigationUpgradeToHTTPSBehavior navigationUpgradeToHTTPSBehavior, SandboxFlags sandboxFlags) const
 {
@@ -102,30 +131,18 @@ std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(c
     RefPtr coreLocalFrame = m_frame->coreLocalFrame();
     RefPtr document = coreLocalFrame ? coreLocalFrame->document() : nullptr;
 
-    auto originator = webPage->takeMainFrameNavigationInitiator();
-
-    bool originatingFrameIsMain = navigationAction.initiatedByMainFrame() == InitiatedByMainFrame::Yes;
-    if (!originatingFrameIsMain) {
-        if (RefPtr originatingFrame = WebProcess::singleton().webFrame(originatingFrameID))
-            originatingFrameIsMain = originatingFrame->isMainFrame();
-    }
+    auto originator = m_frame->isMainFrame() ? webPage->takeMainFrameNavigationInitiator() : nullptr;
 
     std::optional<WebPageProxyIdentifier> originatingPageID;
     if (RefPtr webPage = requester.pageID ? WebProcess::singleton().webPage(*requester.pageID) : nullptr)
         originatingPageID = webPage->webPageProxyIdentifier();
 
     auto originatingFrameInfoData = originator ? FrameInfoData { WTF::move(*originator) } : FrameInfoData {
-        originatingFrameIsMain,
-        FrameType::Local,
         ResourceRequest { URL { requester.url } },
         requester.securityOrigin->data(),
-        requester.topOrigin->data(),
         { },
         WTF::move(originatingFrameID),
-        originatingPageID,
-        WTF::move(parentFrameID),
         document ? std::optional { document->identifier() } : std::nullopt,
-        getCurrentProcessID(),
         requestingFrame ? requestingFrame->isFocused() : false
     };
 
@@ -144,6 +161,10 @@ std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(c
     std::optional<WebCore::ResourceRequest> originalRequest;
     if (navigationAction.originalRequest() != request)
         originalRequest = navigationAction.originalRequest();
+
+#if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
+    auto hitTestJSHandleInfo = jsHandleInfoForHitTestResult(hitTestResult);
+#endif
 
     return NavigationActionData {
         navigationAction.type(),
@@ -170,6 +191,7 @@ std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(c
         navigationAction.lockHistory(),
         navigationAction.lockBackForwardList(),
         navigationAction.navigationHistoryBehavior(),
+        navigationAction.replaceIfNotCompletelyLoaded(),
         clientRedirectSourceForHistory,
         sandboxFlags,
         ReferrerPolicy::EmptyString,
@@ -179,6 +201,7 @@ std::optional<NavigationActionData> WebFrameLoaderClient::navigationActionData(c
         requestingFrame ? requestingFrame->originatorAdvancedPrivacyProtections() : OptionSet<AdvancedPrivacyProtections> { },
 #if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
         hitTestResult ? std::optional(WebKit::WebHitTestResultData(WTF::move(*hitTestResult), false)) : std::nullopt,
+        WTF::move(hitTestJSHandleInfo),
 #endif
         WTF::move(originatingFrameInfoData),
         originatingPageID,
@@ -281,28 +304,28 @@ void WebFrameLoaderClient::setPrinting(bool printing, FloatSize pageSize, FloatS
         webPage->send(Messages::WebPageProxy::SetFramePrinting(m_frame->frameID(), printing, pageSize, originalPageSize, maximumShrinkRatio, adjustViewSize));
 }
 
-void WebFrameLoaderClient::broadcastAllFrameTreeSyncDataToOtherProcesses(FrameTreeSyncData& data)
-{
-    if (RefPtr webPage = m_frame->page())
-        webPage->send(Messages::WebPageProxy::BroadcastAllFrameTreeSyncData(m_frame->frameID(), data));
-}
-
 void WebFrameLoaderClient::broadcastFrameTreeSyncDataToOtherProcesses(FrameTreeSyncSerializationData&& data)
 {
     if (RefPtr webPage = m_frame->page())
         webPage->send(Messages::WebPageProxy::BroadcastFrameTreeSyncData(m_frame->frameID(), WTF::move(data)));
 }
 
-void WebFrameLoaderClient::didNotifyUserActivation(MonotonicTime activationTime)
+void WebFrameLoaderClient::didNotifyUserActivation(MonotonicTime activationTime, std::optional<WebCore::UserGestureTokenIdentifier> forcedActivationToken)
 {
     if (RefPtr webPage = m_frame->page())
-        webPage->send(Messages::WebPageProxy::DidNotifyUserActivation(m_frame->frameID(), activationTime));
+        webPage->send(Messages::WebPageProxy::DidNotifyUserActivation(m_frame->frameID(), activationTime, forcedActivationToken));
 }
 
 void WebFrameLoaderClient::didConsumeUserActivation()
 {
     if (RefPtr webPage = m_frame->page())
         webPage->send(Messages::WebPageProxy::DidConsumeUserActivation(m_frame->frameID()));
+}
+
+void WebFrameLoaderClient::didRevokeForcedUserActivation(WebCore::UserGestureTokenIdentifier forcedActivationToken)
+{
+    if (RefPtr webPage = m_frame->page())
+        webPage->send(Messages::WebPageProxy::DidRevokeForcedUserActivation(m_frame->frameID(), forcedActivationToken));
 }
 
 void WebFrameLoaderClient::didHandleFirstUserGesture(MonotonicTime gestureTime)

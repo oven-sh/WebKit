@@ -58,9 +58,9 @@ private:
     ChildListMutationAccumulator(ContainerNode&, std::unique_ptr<MutationObserverInterestGroup>);
 
     void enqueueMutationRecord();
-    bool NODELETE isEmpty();
-    bool NODELETE isAddedNodeInOrder(Node&);
-    bool NODELETE isRemovedNodeInOrder(Node&);
+    bool LEGACY_NODELETE isEmpty();
+    bool LEGACY_NODELETE isAddedNodeInOrder(Node&);
+    bool LEGACY_NODELETE isRemovedNodeInOrder(Node&);
 
     const Ref<ContainerNode> m_target;
 
@@ -70,7 +70,7 @@ private:
     RefPtr<Node> m_nextSibling;
     WeakPtr<Node, WeakPtrImplWithEventTargetData> m_lastAdded;
 
-    std::unique_ptr<MutationObserverInterestGroup> m_observers;
+    const std::unique_ptr<MutationObserverInterestGroup> m_observers;
 };
 
 class ChildListMutationScope {
@@ -79,7 +79,7 @@ public:
     explicit ChildListMutationScope(ContainerNode& target)
     {
         if (target.document().hasMutationObserversOfType(MutationObserverOptionType::ChildList))
-            m_accumulator = ChildListMutationAccumulator::getOrCreate(target);
+            lazyInitialize(m_accumulator, ChildListMutationAccumulator::getOrCreate(target));
     }
 
     bool canObserve() const { return m_accumulator; }
@@ -97,7 +97,7 @@ public:
     }
 
 private:
-    RefPtr<ChildListMutationAccumulator> m_accumulator;
+    const RefPtr<ChildListMutationAccumulator> m_accumulator;
 };
 
 } // namespace WebCore

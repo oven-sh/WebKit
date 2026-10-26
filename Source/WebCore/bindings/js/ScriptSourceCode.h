@@ -47,7 +47,7 @@ namespace WebCore {
 // Only the provider is given startPosition; a JSC::SourceCode derives its own from the provider.
 class ScriptSourceCode {
 public:
-    ScriptSourceCode(const String& source, JSC::SourceTaintedOrigin sourceTaintedOrigin, URL&& url = URL(), const TextPosition& startPosition = TextPosition(), JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Program)
+    ScriptSourceCode(const String& source, JSC::SourceTaintedness sourceTaintedOrigin, URL&& url = URL(), const TextPosition& startPosition = TextPosition(), JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Program)
         : m_provider(JSC::StringSourceProvider::create(source, JSC::SourceOrigin { url }, url.string(), sourceTaintedOrigin, startPosition, sourceType))
         , m_code(m_provider.copyRef())
     {
@@ -66,7 +66,7 @@ public:
     {
     }
 
-    ScriptSourceCode(const String& source, JSC::SourceTaintedOrigin sourceTaintedOrigin, URL&& url, const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType, Ref<JSC::ScriptFetcher>&& scriptFetcher)
+    ScriptSourceCode(const String& source, JSC::SourceTaintedness sourceTaintedOrigin, URL&& url, const TextPosition& startPosition, JSC::SourceProviderSourceType sourceType, Ref<JSC::ScriptFetcher>&& scriptFetcher)
         : m_provider(JSC::StringSourceProvider::create(source, JSC::SourceOrigin { url, WTF::move(scriptFetcher) }, url.string(), sourceTaintedOrigin, startPosition, sourceType))
         , m_code(m_provider.copyRef())
     {
@@ -82,7 +82,7 @@ public:
 
     const JSC::SourceCode& jsSourceCode() const LIFETIME_BOUND { return m_code; }
 
-    JSC::SourceProvider& provider() { return m_provider.get(); }
+    JSC::SourceProvider& provider() const { return m_provider.get(); }
     StringView source() const { return m_provider->source(); }
 
     // Read on every script evaluation, so these go to the provider directly: deriving from m_code

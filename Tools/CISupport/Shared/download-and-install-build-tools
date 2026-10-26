@@ -26,7 +26,7 @@ import subprocess
 import argparse
 import sys
 
-CMAKE_VERSION = '3.30.4'
+CMAKE_VERSION = '4.0.3'
 NINJA_VERSION = '1.12.1'
 CMAKE_DOWNLOAD_URL = f'https://github.com/Kitware/CMake/releases/download/v{CMAKE_VERSION}/cmake-{CMAKE_VERSION}-macos-universal.dmg'
 NINJA_DOWNLOAD_URL = f'https://github.com/ninja-build/ninja/releases/download/v{NINJA_VERSION}/ninja-mac.zip'

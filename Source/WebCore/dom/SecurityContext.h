@@ -29,6 +29,7 @@
 
 #include <WebCore/CrossOriginEmbedderPolicy.h>
 #include <WebCore/CrossOriginOpenerPolicy.h>
+#include <WebCore/DocumentIsolationPolicy.h>
 #include <WebCore/IPAddressSpace.h>
 #include <WebCore/ReferrerPolicy.h>
 #include <memory>
@@ -53,7 +54,7 @@ public:
     SandboxFlags creationSandboxFlags() const { return m_creationSandboxFlags; }
 
     SandboxFlags sandboxFlags() const { return m_sandboxFlags; }
-    WEBCORE_EXPORT ContentSecurityPolicy* contentSecurityPolicy();
+    WEBCORE_EXPORT ContentSecurityPolicy* LEGACY_NODELETE contentSecurityPolicy();
 
     bool isSecureTransitionTo(const URL&) const;
 
@@ -85,14 +86,17 @@ public:
     virtual CrossOriginOpenerPolicy crossOriginOpenerPolicy() const { return m_crossOriginOpenerPolicy; }
     void setCrossOriginOpenerPolicy(const CrossOriginOpenerPolicy& crossOriginOpenerPolicy) { m_crossOriginOpenerPolicy = crossOriginOpenerPolicy; }
 
-    const IntegrityPolicy* NODELETE integrityPolicy() const LIFETIME_BOUND;
+    const DocumentIsolationPolicy& documentIsolationPolicy() const LIFETIME_BOUND { return m_documentIsolationPolicy; }
+    void setDocumentIsolationPolicy(const DocumentIsolationPolicy& documentIsolationPolicy) { m_documentIsolationPolicy = documentIsolationPolicy; }
+
+    const IntegrityPolicy* LEGACY_NODELETE integrityPolicy() const LIFETIME_BOUND;
     void setIntegrityPolicy(std::unique_ptr<IntegrityPolicy>&&);
 
-    const IntegrityPolicy* NODELETE integrityPolicyReportOnly() const LIFETIME_BOUND;
+    const IntegrityPolicy* LEGACY_NODELETE integrityPolicyReportOnly() const LIFETIME_BOUND;
     void setIntegrityPolicyReportOnly(std::unique_ptr<IntegrityPolicy>&&);
 
     virtual ReferrerPolicy referrerPolicy() const { return m_referrerPolicy; }
-    void NODELETE setReferrerPolicy(ReferrerPolicy);
+    void LEGACY_NODELETE setReferrerPolicy(ReferrerPolicy);
 
     IPAddressSpace ipAddressSpace() const { return m_ipAddressSpace; }
     void setIPAddressSpace(IPAddressSpace ipAddressSpace) { m_ipAddressSpace = ipAddressSpace; }
@@ -139,6 +143,7 @@ private:
     std::unique_ptr<ContentSecurityPolicy> m_contentSecurityPolicy;
     CrossOriginEmbedderPolicy m_crossOriginEmbedderPolicy;
     CrossOriginOpenerPolicy m_crossOriginOpenerPolicy;
+    DocumentIsolationPolicy m_documentIsolationPolicy;
     std::unique_ptr<IntegrityPolicy> m_integrityPolicy;
     std::unique_ptr<IntegrityPolicy> m_integrityPolicyReportOnly;
     SandboxFlags m_creationSandboxFlags;

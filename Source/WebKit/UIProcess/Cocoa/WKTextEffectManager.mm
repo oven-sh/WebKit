@@ -30,6 +30,7 @@
 
 #import "WKWebViewInternal.h"
 #import "WebPageProxy.h"
+#import <WebCore/CocoaBezierPath.h>
 #import <WebCore/NativeImage.h>
 #import <WebCore/TextAnimationTypes.h>
 #import <WebCore/TextIndicator.h>
@@ -47,7 +48,6 @@ using CocoaWritingToolsCoordinatorTextReplacementReason = NSWritingToolsCoordina
 using CocoaWritingToolsCoordinatorAnimationParameters = NSWritingToolsCoordinatorAnimationParameters;
 using CocoaWritingToolsCoordinatorTextAnimation = NSWritingToolsCoordinatorTextAnimation;
 using CocoaWritingToolsCoordinatorTextDecoration = NSWritingToolsCoordinatorTextDecoration;
-using CocoaBezierPath = NSBezierPath;
 using CocoaTextPreview = NSArray<NSTextPreview *>;
 static constexpr auto cocoaWritingToolsCoordinatorTextAnimationIndicateGrammar = NSWritingToolsCoordinatorTextAnimationIndicateGrammar;
 static constexpr auto cocoaWritingToolsCoordinatorTextDecorationNone = NSWritingToolsCoordinatorTextDecorationNone;
@@ -60,7 +60,6 @@ using CocoaWritingToolsCoordinatorTextReplacementReason = UIWritingToolsCoordina
 using CocoaWritingToolsCoordinatorAnimationParameters = UIWritingToolsCoordinatorAnimationParameters;
 using CocoaWritingToolsCoordinatorTextAnimation = UIWritingToolsCoordinatorTextAnimation;
 using CocoaWritingToolsCoordinatorTextDecoration = UIWritingToolsCoordinatorTextDecoration;
-using CocoaBezierPath = UIBezierPath;
 using CocoaTextPreview = UITargetedPreview;
 static constexpr auto cocoaWritingToolsCoordinatorTextAnimationIndicateGrammar = UIWritingToolsCoordinatorTextAnimationIndicateGrammar;
 static constexpr auto cocoaWritingToolsCoordinatorTextDecorationNone = UIWritingToolsCoordinatorTextDecorationNone;
@@ -77,7 +76,7 @@ static NSWritingDirection toNSWritingDirection(WebCore::WritingDirection editorW
 // The indicator's rects are in root view coordinates, which is also the coordinate space of the coordinator's
 // effect container view, so no conversion is needed.
 template<typename Callback>
-static void forEachTextPreviewImage(const RefPtr<WebCore::TextIndicator>& textIndicator, NOESCAPE Callback&& callback)
+static void forEachTextPreviewImage(const RefPtr<WebCore::TextIndicator>& textIndicator, NOESCAPE const Callback& callback)
 {
     if (!textIndicator)
         return;

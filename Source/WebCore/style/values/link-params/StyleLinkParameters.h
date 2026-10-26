@@ -25,16 +25,13 @@
 
 #pragma once
 
+#include <WebCore/CSSLinkParameter.h>
 #include <WebCore/StyleCustomIdent.h>
 #include <WebCore/StyleDeclarationValue.h>
 #include <WebCore/StyleTypeSpecifier.h>
 #include <WebCore/StyleValueTypes.h>
 
 namespace WebCore {
-
-namespace CSS {
-struct URLModifiers;
-}
 
 namespace Style {
 
@@ -51,7 +48,7 @@ struct ParamSpec {
 
     Variant<CSS::Keyword::Color, CSS::Keyword::AccentColor, Custom> value;
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         return WTF::switchOn(value, std::forward<F>(f)...);
     }
@@ -106,7 +103,7 @@ template<size_t I> const auto& get(const LinkParameter& parameter)
 
 // <param()> = param( <param-spec> , <declaration-value>? )
 // https://drafts.csswg.org/css-link-params/#funcdef-param
-using ParamFunction = FunctionNotation<CSSValueParam, LinkParameter>;
+using ParamFunction = FunctionNotation<CSSValueID::Param, LinkParameter>;
 
 // <param()>#
 using LinkParameterList = CommaSeparatedFixedVector<ParamFunction>;
@@ -120,7 +117,7 @@ struct LinkParameters : ListOrNone<LinkParameterList> {
 // Appends the param() modifiers from a resource's url() to the parameters set by the
 // link-parameters property on the element referencing it.
 // https://drafts.csswg.org/css-link-params/#setting
-LinkParameters linkParametersForResource(const LinkParameters& fromProperty, const CSS::URLModifiers& fromURL);
+LinkParameters linkParametersForResource(const LinkParameters& fromProperty, const Vector<CSS::ParamFunction>& fromURL);
 
 // MARK: - Conversion
 

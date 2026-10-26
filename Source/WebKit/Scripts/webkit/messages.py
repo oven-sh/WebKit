@@ -393,7 +393,6 @@ def atomic_object_identifier(type):
         'WebKit::RemoteMediaResourceIdentifier',
         'WebKit::RemotePathImplIdentifier',
         'WebKit::RemoteSerializedImageBufferIdentifier',
-        'WebKit::RemoteSnapshotIdentifier',
         'WebKit::RemoteSnapshotRecorderIdentifier',
         'WebKit::RemoteVideoFrameIdentifier',
         'WebKit::StorageAreaIdentifier',
@@ -438,6 +437,7 @@ def serialized_identifiers():
     # FIXME: This can be derived from *.serialization.in files.
     return [
         'IPC::AsyncReplyID',
+        'WebCore::AgentClusterIdentifier',
         'WebCore::AttributedStringTextListID',
         'WebCore::AttributedStringTextTableBlockID',
         'WebCore::AttributedStringTextTableID',
@@ -446,6 +446,7 @@ def serialized_identifiers():
         'WebCore::BackgroundFetchRecordIdentifier',
         'WebCore::BrowsingContextGroupIdentifier',
         'WebCore::DOMCacheIdentifierID',
+        'WebCore::DebuggerPauseSessionIdentifier',
         'WebCore::DictationContext',
         'WebCore::NodeIdentifier',
         'WebCore::FetchIdentifier',
@@ -466,11 +467,11 @@ def serialized_identifiers():
         'WebCore::MediaSessionIdentifier',
         'WebCore::ModelPlayerIdentifier',
         'WebCore::MediaUniqueIdentifier',
-        'WebCore::NavigationIdentifier',
+        'WebCore::NavigationIdentifierID',
         'WebCore::OpaqueOriginIdentifier',
         'WebCore::PendingNavigateEventIdentifier',
         'WebCore::PageIdentifier',
-        'WebCore::ImageBufferTransferIdentifierID',
+        'WebCore::PlaceholderFrameIdentifier',
         'WebCore::PlatformLayerIdentifierID',
         'WebCore::PlaybackTargetClientContextID',
         'WebCore::NonSerializedDataIdentifier',
@@ -551,7 +552,6 @@ def serialized_identifiers():
         'WebKit::RemotePathImplIdentifier',
         'WebKit::RemoteRemoteCommandListenerIdentifier',
         'WebKit::RemoteSerializedImageBufferIdentifier',
-        'WebKit::RemoteSnapshotIdentifier',
         'WebKit::RemoteSnapshotRecorderIdentifier',
         'WebKit::RemoteVideoFrameIdentifier',
         'WebKit::RemoteRenderingBackendIdentifier',
@@ -601,6 +601,7 @@ def types_that_cannot_be_forward_declared():
         'Inspector::FrameResource',
         'Inspector::FrameResourceData',
         'Inspector::InitiatorData',
+        'Inspector::RequestExtras',
         'Inspector::ResourceType',
         'Inspector::SearchMatch',
         'Inspector::SearchResult',
@@ -651,6 +652,7 @@ def types_that_cannot_be_forward_declared():
         'WebCore::MediaSessionRestrictions',
         'WebCore::ModalContainerControlType',
         'WebCore::NativeImageReference',
+        'WebCore::NavigationIdentifier',
         'WebCore::NotificationPayload',
         'WebCore::PathArc',
         'WebCore::PathClosedArc',
@@ -660,6 +662,9 @@ def types_that_cannot_be_forward_declared():
         'WebCore::PathDataQuadCurve',
         'WebCore::PatternParameters',
         'WebCore::ImageBufferTransferIdentifier',
+        'WebCore::PlaceholderFrameIdentifier',
+        'WebCore::PlaceholderRenderingContextIdentifier',
+        'WebCore::RemotePlaceholderRenderingContextIdentifier',
         'WebCore::PlatformLayerIdentifier',
         'WebCore::PlatformMediaError',
         'WebCore::PlaybackTargetClientContextIdentifier',
@@ -704,6 +709,7 @@ def types_that_cannot_be_forward_declared():
         'WebKit::RemoteNativeImageReadReference',
         'WebKit::RemoteNativeImageReference',
         'WebKit::RemoteNativeImageWriteReference',
+        'WebKit::RemoteSnapshotIdentifier',
         'WebKit::RemoteVideoFrameReadReference',
         'WebKit::RemoteVideoFrameWriteReference',
         'WebKit::RenderingUpdateID',
@@ -955,7 +961,7 @@ def generate_messages_header(receiver):
         result.append('    ' + forwarder_class + '(' + handler_namespace + '::' + weak_ref_class + '* _Nonnull);\n')
         result.append('    std::unique_ptr<' + handler_namespace + '::' + class_name + '> getMessageTarget();\n')
         result.append('    std::unique_ptr<' + handler_namespace + '::' + weak_ref_class + '> m_handler;\n')
-        result.append('} SWIFT_SHARED_REFERENCE(.ref, .deref);\n\n')
+        result.append('} DERIVED_CLASS_SWIFT_SHARED_REFERENCE(.ref, .deref);\n\n')
         result.append('}\n')
         result.append('\n')
         result.append('using %s = Ref<WebKit::%s>;\n' % (ref_forwarder_class, forwarder_class))
@@ -1113,6 +1119,21 @@ def swift_dispatch_target_and_function(receiver, message):
     if generates_swift_trampoline(receiver, message):
         return ('m_handler.get()', swift_trampoline_function(receiver, message))
     return ('target.get()', handler_function(receiver, message))
+
+
+# How a Swift handler's return value is handed to the C++ completion handler. C++ reply types are
+# moved into the handler; Swift primitives are passed by value.
+def swift_reply_completion_argument(message, reply_variable):
+    reply_parameters = message.reply_parameters or []
+    if not reply_parameters:
+        return ''
+    if len(reply_parameters) > 1:
+        raise UnmappableSwiftType("Cannot derive a Swift reply for '%s': multi-value replies would need "
+                                  "a tuple return, which is not implemented." % message.name)
+    cpp_type = _strip_cpp_type_decorations(reply_parameters[0].type)
+    if _swift_primitive_type_name(cpp_type):
+        return reply_variable
+    return 'consuming: %s' % reply_variable
 
 
 def generates_swift_trampoline(receiver, message):
@@ -1325,6 +1346,7 @@ def headers_for_type(type, for_implementation_file=False):
         'Inspector::FrontendChannel::ConnectionType': ['<JavaScriptCore/InspectorFrontendChannel.h>'],
         'Inspector::InitiatorData': ['<WebCore/InspectorResourceUtilities.h>'],
         'Inspector::InspectorTargetType': ['<JavaScriptCore/InspectorTarget.h>'],
+        'Inspector::RequestExtras': ['<WebCore/InspectorResourceUtilities.h>'],
         'Inspector::ResourceType': ['<WebCore/InspectorResourceType.h>'],
         'Inspector::SearchMatch': ['<WebCore/InspectorResourceUtilities.h>'],
         'Inspector::SearchResult': ['<WebCore/InspectorResourceUtilities.h>'],
@@ -1366,13 +1388,13 @@ def headers_for_type(type, for_implementation_file=False):
         'WTF::GenericPromise::Result': ['<wtf/NativePromise.h>'],
         'WTF::UUID': ['<wtf/UUID.h>'],
         'WallTime': ['<wtf/WallTime.h>'],
-        'WebCore::AXDebugInfo': ['<WebCore/AXObjectCache.h>'],
+        'WebCore::AXDebugInfo': ['<WebCore/AXObjectTypes.h>'],
         'WebCore::ActivityStateForCPUSampling': ['<WebCore/ActivityState.h>'],
-        'WebCore::AccessibilityMode': ['<WebCore/AXObjectCache.h>'],
-        'WebCore::AccessibilityRemoteToken': ['<WebCore/AXObjectCache.h>'],
+        'WebCore::AccessibilityMode': ['<WebCore/AXObjectTypes.h>'],
+        'WebCore::AccessibilityRemoteToken': ['<WebCore/AccessibilityRemoteToken.h>'],
         'WebCore::AccessibilitySearchCriteriaIPC': ['<WebCore/AXSearchManager.h>'],
-        'WebCore::AriaNotifyData': ['<WebCore/AXObjectCache.h>'],
-        'WebCore::LiveRegionAnnouncementData': ['<WebCore/AXObjectCache.h>'],
+        'WebCore::AriaNotifyData': ['<WebCore/AXAnnouncementTypes.h>'],
+        'WebCore::LiveRegionAnnouncementData': ['<WebCore/AXAnnouncementTypes.h>'],
         'WebCore::AlternativeTextType': ['<WebCore/AlternativeTextClient.h>'],
         'WebCore::ApplyTrackingPrevention': ['<WebCore/TrackingPreventionTypes.h>'],
         'WebCore::AttachmentAssociatedElementType': ['<WebCore/AttachmentAssociatedElement.h>'],
@@ -1454,6 +1476,7 @@ def headers_for_type(type, for_implementation_file=False):
         'WebCore::FontInternalAttributes': ['<WebCore/Font.h>'],
         'WebCore::FileChooserSettings': ['<WebCore/FileChooser.h>'],
         'WebCore::FillLightMode': ['<WebCore/FillLightMode.h>'],
+        'WebCore::FindSelectionInFrame': ['<WebCore/Page.h>'],
         'WebCore::FileSystemHandleGlobalIdentifier': ['<WebCore/FileSystemHandleGlobalIdentifier.h>'],
         'WebCore::FirstPartyWebsiteDataRemovalMode': ['<WebCore/TrackingPreventionTypes.h>'],
         'WebCore::FontChanges': ['<WebCore/FontAttributeChanges.h>'],
@@ -1462,7 +1485,9 @@ def headers_for_type(type, for_implementation_file=False):
         'WebCore::FontSmoothingMode': ['<WebCore/GraphicsTypes.h>'],
         'WebCore::FoundElementInRemoteFrame': ['<WebCore/FocusControllerTypes.h>'],
         'WebCore::FragmentedSharedBuffer': ['<WebCore/SharedBuffer.h>'],
-        'WebCore::AXFrameGeometry': ['<WebCore/AXObjectCache.h>'],
+        'WebCore::AXFrameGeometry': ['<WebCore/AXObjectTypes.h>'],
+        'WebCore::FrameGeometryUpdate': ['<WebCore/FrameGeometrySyncData.h>'],
+        'WebCore::AXRemoteFrameSelectedTextChange': ['<WebCore/AXObjectTypes.h>'],
         'WebCore::FrameIdentifierID': ['"GeneratedSerializers.h"'],
         'WebCore::FrameLoadType': ['<WebCore/FrameLoaderTypes.h>'],
         'WebCore::FrameTreeSyncSerializationData': ['<WebCore/FrameTreeSyncData.h>'],
@@ -1501,7 +1526,7 @@ def headers_for_type(type, for_implementation_file=False):
         'WebCore::IncludeSecureCookies': ['<WebCore/CookieJar.h>'],
         'WebCore::IndexIDToIndexKeyMap': ['<WebCore/IndexKey.h>'],
         'WebCore::IndexedDB::ObjectStoreOverwriteMode': ['<WebCore/IndexedDB.h>'],
-        'WebCore::InheritedFrameState': ['<WebCore/AXObjectCache.h>'],
+        'WebCore::InheritedFrameState': ['<WebCore/AXObjectTypes.h>'],
         'WebCore::InputMode': ['<WebCore/InputMode.h>'],
         'WebCore::InspectorBackendClientDeveloperPreference': ['<WebCore/InspectorBackendClient.h>'],
         'WebCore::InspectorFrontendClientAppearance': ['<WebCore/InspectorFrontendClient.h>'],
@@ -1518,7 +1543,9 @@ def headers_for_type(type, for_implementation_file=False):
         'WebCore::LineJoin': ['<WebCore/GraphicsTypes.h>'],
         'WebCore::PackedColor::RGBA': ['<WebCore/ColorTypes.h>'],
         'WebCore::PaginationMode': ['<WebCore/Pagination.h>'],
-        'WebCore::ImageBufferTransferIdentifierID': ['"GeneratedSerializers.h"'],
+        'WebCore::ImageBufferTransferIdentifier': ['<WebCore/ImageBufferTransferIdentifier.h>'],
+        'WebCore::PlaceholderRenderingContextIdentifier': ['<WebCore/PlaceholderRenderingContextIdentifier.h>'],
+        'WebCore::RemotePlaceholderRenderingContextIdentifier': ['<WebCore/PlaceholderRenderingContextIdentifier.h>'],
         'WebCore::PlatformLayerIdentifierID': ['"GeneratedSerializers.h"'],
         'WebCore::PlatformMediaSessionRemoteControlCommandType': ['<WebCore/PlatformMediaSession.h>'],
         'WebCore::PlatformMediaSessionRemoteCommandArgument': ['<WebCore/PlatformMediaSession.h>'],
@@ -1554,7 +1581,10 @@ def headers_for_type(type, for_implementation_file=False):
         'WebCore::MessagePortChannelProvider::HasActivity': ['<WebCore/MessagePortChannelProvider.h>'],
         'WebCore::ModalContainerControlType': ['<WebCore/ModalContainerTypes.h>'],
         'WebCore::ModalContainerDecision': ['<WebCore/ModalContainerTypes.h>'],
+        'WebCore::ModelSceneGraphAsTextOptions': ['<WebCore/ModelPlayer.h>'],
         'WebCore::MouseEventPolicy': ['<WebCore/DocumentLoader.h>'],
+        'WebCore::NavigationIdentifierID': ['"GeneratedSerializers.h"'],
+        'WebCore::NavigationIdentifier': ['<WebCore/ProcessQualified.h>', '<WebCore/NavigationIdentifier.h>', '<wtf/ObjectIdentifier.h>'],
         'WebCore::NetworkTransactionInformation': ['<WebCore/NetworkLoadInformation.h>'],
         'WebCore::NavigationUpgradeToHTTPSBehavior': ['<WebCore/FrameLoaderTypes.h>'],
         'WebCore::NowPlayingMetadata': ['<WebCore/NowPlayingInfo.h>'],
@@ -1700,54 +1730,6 @@ def headers_for_type(type, for_implementation_file=False):
         'WebCore::VideoPlaybackQualityMetrics': ['<WebCore/VideoPlaybackQualityMetrics.h>'],
         'WebCore::VideoPresetData': ['<WebCore/VideoPreset.h>'],
         'WebCore::JSHandleIdentifier': ['<WebCore/WebKitJSHandle.h>'],
-        'WebCore::WebGPU::AddressMode': ['<WebCore/WebGPUAddressMode.h>'],
-        'WebCore::WebGPU::BlendFactor': ['<WebCore/WebGPUBlendFactor.h>'],
-        'WebCore::WebGPU::BlendOperation': ['<WebCore/WebGPUBlendOperation.h>'],
-        'WebCore::WebGPU::BufferBindingType': ['<WebCore/WebGPUBufferBindingType.h>'],
-        'WebCore::WebGPU::BufferDynamicOffset': ['<WebCore/WebGPUIntegralTypes.h>'],
-        'WebCore::WebGPU::BufferUsageFlags': ['<WebCore/WebGPUBufferUsage.h>'],
-        'WebCore::WebGPU::CanvasAlphaMode': ['<WebCore/WebGPUCanvasAlphaMode.h>'],
-        'WebCore::WebGPU::CanvasToneMappingMode': ['<WebCore/WebGPUCanvasToneMappingMode.h>'],
-        'WebCore::WebGPU::ColorWriteFlags': ['<WebCore/WebGPUColorWrite.h>'],
-        'WebCore::WebGPU::CompareFunction': ['<WebCore/WebGPUCompareFunction.h>'],
-        'WebCore::WebGPU::CompilationMessageType': ['<WebCore/WebGPUCompilationMessageType.h>'],
-        'WebCore::WebGPU::CullMode': ['<WebCore/WebGPUCullMode.h>'],
-        'WebCore::WebGPU::DepthBias': ['<WebCore/WebGPUIntegralTypes.h>'],
-        'WebCore::WebGPU::DeviceLostReason': ['<WebCore/WebGPUDeviceLostReason.h>'],
-        'WebCore::WebGPU::ErrorFilter': ['<WebCore/WebGPUErrorFilter.h>'],
-        'WebCore::WebGPU::FeatureName': ['<WebCore/WebGPUFeatureName.h>'],
-        'WebCore::WebGPU::FilterMode': ['<WebCore/WebGPUFilterMode.h>'],
-        'WebCore::WebGPU::FlagsConstant': ['<WebCore/WebGPUIntegralTypes.h>'],
-        'WebCore::WebGPU::FrontFace': ['<WebCore/WebGPUFrontFace.h>'],
-        'WebCore::WebGPU::Index32': ['<WebCore/WebGPUIntegralTypes.h>'],
-        'WebCore::WebGPU::IndexFormat': ['<WebCore/WebGPUIndexFormat.h>'],
-        'WebCore::WebGPU::IntegerCoordinate': ['<WebCore/WebGPUIntegralTypes.h>'],
-        'WebCore::WebGPU::LoadOp': ['<WebCore/WebGPULoadOp.h>'],
-        'WebCore::WebGPU::MapModeFlags': ['<WebCore/WebGPUMapMode.h>'],
-        'WebCore::WebGPU::PipelineStatisticName': ['<WebCore/WebGPUPipelineStatisticName.h>'],
-        'WebCore::WebGPU::PowerPreference': ['<WebCore/WebGPUPowerPreference.h>'],
-        'WebCore::WebGPU::PredefinedColorSpace': ['<WebCore/WebGPUPredefinedColorSpace.h>'],
-        'WebCore::WebGPU::PrimitiveTopology': ['<WebCore/WebGPUPrimitiveTopology.h>'],
-        'WebCore::WebGPU::QueryType': ['<WebCore/WebGPUQueryType.h>'],
-        'WebCore::WebGPU::SampleMask': ['<WebCore/WebGPUIntegralTypes.h>'],
-        'WebCore::WebGPU::SamplerBindingType': ['<WebCore/WebGPUSamplerBindingType.h>'],
-        'WebCore::WebGPU::ShaderStageFlags': ['<WebCore/WebGPUShaderStage.h>'],
-        'WebCore::WebGPU::SignedOffset32': ['<WebCore/WebGPUIntegralTypes.h>'],
-        'WebCore::WebGPU::Size32': ['<WebCore/WebGPUIntegralTypes.h>'],
-        'WebCore::WebGPU::Size64': ['<WebCore/WebGPUIntegralTypes.h>'],
-        'WebCore::WebGPU::StencilOperation': ['<WebCore/WebGPUStencilOperation.h>'],
-        'WebCore::WebGPU::StencilValue': ['<WebCore/WebGPUIntegralTypes.h>'],
-        'WebCore::WebGPU::StorageTextureAccess': ['<WebCore/WebGPUStorageTextureAccess.h>'],
-        'WebCore::WebGPU::StoreOp': ['<WebCore/WebGPUStoreOp.h>'],
-        'WebCore::WebGPU::TextureAspect': ['<WebCore/WebGPUTextureAspect.h>'],
-        'WebCore::WebGPU::TextureDimension': ['<WebCore/WebGPUTextureDimension.h>'],
-        'WebCore::WebGPU::TextureFormat': ['<WebCore/WebGPUTextureFormat.h>'],
-        'WebCore::WebGPU::TextureSampleType': ['<WebCore/WebGPUTextureSampleType.h>'],
-        'WebCore::WebGPU::TextureUsageFlags': ['<WebCore/WebGPUTextureUsage.h>'],
-        'WebCore::WebGPU::TextureViewDimension': ['<WebCore/WebGPUTextureViewDimension.h>'],
-        'WebCore::WebGPU::VertexFormat': ['<WebCore/WebGPUVertexFormat.h>'],
-        'WebCore::WebGPU::VertexStepMode': ['<WebCore/WebGPUVertexStepMode.h>'],
-        'WebCore::WebGPU::XREye': ['<WebCore/WebGPUXREye.h>'],
         'WebCore::WebLockIdentifierID': ['"GeneratedSerializers.h"'],
         'WebCore::WheelEventProcessingSteps': ['<WebCore/ScrollingCoordinatorTypes.h>'],
         'WebCore::WheelEventTestMonitorDeferReason': ['<WebCore/WheelEventTestMonitor.h>'],
@@ -1763,6 +1745,7 @@ def headers_for_type(type, for_implementation_file=False):
         'WebKit::BufferInSetType': ['"BufferIdentifierSet.h"'],
         'WebKit::BufferSetBackendHandle': ['"BufferAndBackendInfo.h"'],
         'WebKit::CallDownloadDidStart': ['"DownloadManager.h"'],
+        'WebKit::CompletesDoubleClick': ['"GestureTypes.h"'],
         'WebKit::ConsumerSharedCARingBufferHandle': ['"SharedCARingBuffer.h"'],
         'WebKit::ContentWorldIdentifier': ['"ContentWorldShared.h"'],
         'WebKit::ContentWorldData': ['"ContentWorldData.h"'],
@@ -1774,6 +1757,7 @@ def headers_for_type(type, for_implementation_file=False):
         'WebKit::FindDecorationStyle': ['"WebFindOptions.h"'],
         'WebKit::FindOptions': ['"WebFindOptions.h"'],
         'WebKit::FrameState': ['"SessionState.h"'],
+        'WebKit::FrameTraversalResult': ['"GoToBackForwardItemParameters.h"'],
         'WebKit::GestureRecognizerState': ['"GestureTypes.h"'],
         'WebKit::GestureType': ['"GestureTypes.h"'],
         'WebKit::InputType': ['"FocusedElementInformation.h"'],
@@ -1782,6 +1766,8 @@ def headers_for_type(type, for_implementation_file=False):
         'WebKit::LastNavigationWasAppInitiated': ['"AppPrivacyReport.h"'],
         'WebKit::LayerHostingContextID': ['"LayerHostingContext.h"'],
         'WebKit::MessageBatchIdentifier': ['"NetworkConnectionToWebProcess.h"'],
+        'WebKit::NavigationResponseForProcessSwap': ['"NavigationResponseProcessSwap.h"'],
+        'WebKit::NavigationResponseWithoutProcessSwap': ['"NavigationResponseProcessSwap.h"'],
         'WebKit::NetworkActivityTracker::CompletionCode': ['"NetworkActivityTracker.h"'],
         'WebKit::PageGroupIdentifier': ['"IdentifierTypes.h"'],
         'WebKit::PDFAccessibilityDisplayModeState': ['"PDFAccessibilityDisplayModeState.h"'],
@@ -1917,6 +1903,11 @@ def headers_for_type(type, for_implementation_file=False):
             type = type[6:]
         if type in special_cases:
             headers += special_cases[type]
+            continue
+
+        # The C++ API of WebGPU, which cannot be forward declared piecemeal.
+        if type.startswith('::WebGPU::'):
+            headers.append('<WebCore/WebGPUCppAPI.h>')
             continue
 
         if not for_implementation_file and type not in types_that_cannot_be_forward_declared():
@@ -2350,7 +2341,9 @@ def generate_swift_message_handler(receiver):
     if receiver.swift_receiver_build_enabled_by:
         result.append('#if ENABLE_%s\n' % (receiver.swift_receiver_build_enabled_by))
 
-    result.append('final class %s {\n' % (weak_ref_class))
+    result.append('// Safety: target is only written in init, assumeIsolated asserts the main thread, and weak loads are atomic in the Swift runtime\n')
+    result.append('@_expose(Cxx)\n')
+    result.append('final class %s: @unchecked Sendable {\n' % (weak_ref_class))
     result.append('    private weak var target: %s?\n' % (class_name))
     result.append('    init(target: %s) {\n' % (class_name))
     result.append('        self.target = target\n')
@@ -2369,39 +2362,84 @@ def generate_swift_message_handler(receiver):
         if not generates_swift_trampoline(receiver, message):
             continue
 
-        parameters = ['connection: IPC.Connection']
+        connection_type = 'IPC.StreamServerConnection' if receiver.has_attribute(STREAM_ATTRIBUTE) else 'IPC.Connection'
+        # `sending` rather than marking these types Sendable: C++ hands each value to dispatch and
+        # does not use it again, which is a far narrower claim than the type being safe to share.
+        parameters = ['connection: sending %s' % connection_type]
         arguments = ['connection: connection']
         for parameter in message.parameters:
-            parameters.append('%s: %s' % (parameter.name, swift_type_name(parameter.type)))
+            parameters.append('%s: sending %s' % (parameter.name, swift_type_name(parameter.type)))
             arguments.append('%s: %s' % (parameter.name, parameter.name))
         completion_handler = None
         if message.reply_parameters is not None:
             completion_handler = 'CompletionHandlers.%s.%sCompletionHandler' % (receiver.name, message.name)
-            parameters.append('completionHandler: %s' % completion_handler)
-            arguments.append('completionHandler: completionHandler')
+            parameters.append('completionHandler: sending %s' % completion_handler)
+
+        # Any handler may be async: .messages.in cannot say, and even a Synchronous reply may be sent
+        # after dispatch returns, since handleMessageSynchronous moves the reply encoder into the
+        # completion handler. Handlers are isolated to the main actor, so dispatch enters it with
+        # assumeIsolated, which also asserts that IPC really did dispatch us on the main thread, and
+        # runs the handler in a Task which starts inline, so it stays in order with C++-handled
+        # messages, and which inherits that isolation, so it stays on the main thread. The work
+        # lives in an async method rather than the Task's closure: a typed `catch` inside the closure
+        # widens to `any Error`, and spelling the type makes the closure throwing, which
+        # -Werror NoUseUnstructuredThrowingTask rejects.
+        # FIXME(rdar://189495426): store arguments in an Invocation class to work around Windows tail
+        # call problem.
+        invocation_class = '%sInvocation' % message.name
+        stored = ['target: %s' % class_name] + [p.replace(': sending ', ': ') for p in parameters]
+        stored_names = [p.split(':')[0] for p in stored]
 
         result.append('\n')
         result.append('    @used\n')
         result.append('    func dispatch%s(\n' % message.name)
         result.append(',\n'.join(['        %s' % parameter for parameter in parameters]))
         result.append('\n    ) {\n')
-        result.append('        guard let target else {\n')
-        result.append('            return\n')
+        result.append('        MainActor.assumeIsolated {\n')
+        result.append('            guard let target else {\n')
+        result.append('                return\n')
+        result.append('            }\n')
+        result.append('            Task.immediateOnMainActor {\n')
+        result.append('                await %s(\n' % invocation_class)
+        result.append(',\n'.join(['                    %s: %s' % (name, name) for name in stored_names]))
+        result.append('\n                )\n')
+        result.append('                .run()\n')
+        result.append('            }\n')
         result.append('        }\n')
-        call = ['try mayThrowInvalidMessage(']
+        result.append('    }\n')
+
+        result.append('\n')
+        result.append('    private final class %s {\n' % invocation_class)
+        for parameter in stored:
+            result.append('        private let %s\n' % parameter)
+        result.append('\n')
+        result.append('        init(\n')
+        result.append(',\n'.join(['            %s' % parameter for parameter in stored]))
+        result.append('\n        ) {\n')
+        for name in stored_names:
+            result.append('            self.%s = %s\n' % (name, name))
+        result.append('        }\n')
+        result.append('\n')
+        result.append('        @MainActor\n')
+        result.append('        func run() async {\n')
+        base = '            '
+        result.append('%sdo {\n' % base)
+        assignment = 'let reply = ' if message.reply_parameters else ''
+        call = ['%stry await mayThrowInvalidMessage(' % assignment]
         call.append('    target.%s(' % handler_function_name(message))
         call.append(',\n'.join(['        %s' % argument for argument in arguments]))
         call.append('    )')
         call.append(')')
-        result.append('        do {\n')
-        indent = '            '
         for line in call:
-            result.append('\n'.join(['%s%s' % (indent, part) for part in line.split('\n')]))
+            result.append('\n'.join(['%s    %s' % (base, part) for part in line.split('\n')]))
             result.append('\n')
-        result.append('        } catch {\n')
-        result.append('            markMessageInvalid(error, on: connection)\n')
         if completion_handler:
-            result.append('            CompletionHandlers.%s.completeWithDefaultReply(completionHandler)\n' % receiver.name)
+            result.append('%s    completionHandler.pointee(%s)\n' % (base, swift_reply_completion_argument(message, 'reply')))
+        result.append('%s} catch {\n' % base)
+        result.append('%s    markMessageInvalid(error, on: connection)\n' % base)
+        if completion_handler:
+            result.append('%s    CompletionHandlers.%s.completeWithDefaultReply(completionHandler)\n' % (base, receiver.name))
+        result.append('%s}\n' % base)
         result.append('        }\n')
         result.append('    }\n')
 

@@ -26,6 +26,7 @@
 #include "CustomFunctionRegistry.h"
 
 #include "StylePropertiesInlines.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 namespace Style {

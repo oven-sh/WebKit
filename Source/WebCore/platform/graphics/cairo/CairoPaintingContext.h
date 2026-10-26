@@ -29,7 +29,6 @@
 #pragma once
 
 #if USE(CAIRO)
-#include "CairoPaintingOperation.h"
 #include "RefPtrCairo.h"
 #include <memory>
 #include <wtf/TZoneMalloc.h>
@@ -46,23 +45,10 @@ class PaintingContext {
     WTF_MAKE_TZONE_ALLOCATED(PaintingContext);
 public:
     template<typename T>
-    static void paint(WebCore::CoordinatedTileBuffer& buffer, const T& paintFunctor)
+    static void paint(WebCore::CoordinatedTileBuffer& buffer, NOESCAPE const T& paintFunctor)
     {
         auto paintingContext = PaintingContext::createForPainting(buffer);
         paintFunctor(paintingContext->graphicsContext());
-    }
-
-    template<typename T>
-    static void record(PaintingOperations& paintingOperations, const T& recordFunctor)
-    {
-        auto recordingContext = PaintingContext::createForRecording(paintingOperations);
-        recordFunctor(recordingContext->graphicsContext());
-    }
-
-    static void replay(WebCore::CoordinatedTileBuffer& buffer, const PaintingOperations& paintingOperations)
-    {
-        auto paintingContext = PaintingContext::createForPainting(buffer);
-        paintingContext->replay(paintingOperations);
     }
 
     ~PaintingContext();
@@ -71,12 +57,8 @@ public:
 
 private:
     static std::unique_ptr<PaintingContext> createForPainting(WebCore::CoordinatedTileBuffer&);
-    static std::unique_ptr<PaintingContext> createForRecording(PaintingOperations&);
 
     explicit PaintingContext(WebCore::CoordinatedTileBuffer&);
-    explicit PaintingContext(PaintingOperations&);
-
-    void replay(const PaintingOperations&);
 
     RefPtr<cairo_surface_t> m_surface;
     std::unique_ptr<WebCore::GraphicsContext> m_graphicsContext;

@@ -66,6 +66,7 @@
 #include <wtf/IndexSet.h>
 #include <wtf/Scope.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/TZoneMallocInlines.h>
 
 // On Windows, there's macros for these which interfere with the opcodes. The
 // undefs have to follow every #include: <windows.h> defines them, so anything
@@ -169,7 +170,6 @@ public:
                     dataLog("Phi tmp for ", *value, ": ", m_phiToTmp[value], "\n");
                 break;
             }
-            case Get:
             case Patchpoint:
             case B3::CCall:
             case BottomTuple: {
@@ -182,12 +182,7 @@ public:
             }
         }
 
-        for (Variable* variable : m_procedure.variables()) {
-            auto addResult = m_variableToTmps.add(variable, Vector<Tmp>(m_procedure.resultCount(variable->type())));
-            ASSERT(addResult.isNewEntry);
-            for (unsigned i = 0; i < m_procedure.resultCount(variable->type()); ++i)
-                addResult.iterator->value[i] = tmpForType(m_procedure.typeAtOffset(variable->type(), i));
-        }
+        RELEASE_ASSERT(m_procedure.variables().isEmpty());
 
         // Figure out which blocks are not rare.
         m_fastWorklist.push(m_procedure[0]);
@@ -245,7 +240,7 @@ public:
     }
 
 private:
-    bool NODELETE shouldCopyPropagate(Value* value)
+    bool LEGACY_NODELETE shouldCopyPropagate(Value* value)
     {
         switch (value->opcode()) {
         case Trunc:
@@ -277,7 +272,7 @@ private:
         {
         }
         
-        void NODELETE swap(ArgPromise& other)
+        void LEGACY_NODELETE swap(ArgPromise& other)
         {
             std::swap(m_arg, other.m_arg);
             std::swap(m_value, other.m_value);
@@ -291,7 +286,7 @@ private:
             swap(other);
         }
         
-        ArgPromise& NODELETE operator=(ArgPromise&& other)
+        ArgPromise& LEGACY_NODELETE operator=(ArgPromise&& other)
         {
             swap(other);
             return *this;
@@ -303,12 +298,12 @@ private:
                 RELEASE_ASSERT(m_wasWrapped);
         }
         
-        void NODELETE setTraps(bool value)
+        void LEGACY_NODELETE setTraps(bool value)
         {
             m_traps = value;
         }
 
-        static ArgPromise NODELETE tmp(Value* value)
+        static ArgPromise LEGACY_NODELETE tmp(Value* value)
         {
             ArgPromise result;
             result.m_value = value;
@@ -317,14 +312,14 @@ private:
 
         explicit operator bool() const { return m_arg || m_value; }
 
-        Arg::Kind NODELETE kind() const
+        Arg::Kind LEGACY_NODELETE kind() const
         {
             if (!m_arg && m_value)
                 return Arg::Tmp;
             return m_arg.kind();
         }
 
-        const Arg& NODELETE peek() const
+        const Arg& LEGACY_NODELETE peek() const
         {
             return m_arg;
         }
@@ -457,12 +452,12 @@ private:
         return tmp;
     }
 
-    ArgPromise NODELETE tmpPromise(Value* value)
+    ArgPromise LEGACY_NODELETE tmpPromise(Value* value)
     {
         return ArgPromise::tmp(value);
     }
 
-    Tmp NODELETE tmpForType(Type type)
+    Tmp LEGACY_NODELETE tmpForType(Type type)
     {
         return m_code.newTmp(bankForType(type));
     }
@@ -478,16 +473,13 @@ private:
         case BottomTuple: {
             return m_tupleValueToTmps.find(tupleValue)->value;
         }
-        case Get:
-        case Set:
-            return m_variableToTmps.find(tupleValue->as<VariableValue>()->variable())->value;
         default:
             break;
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    bool NODELETE canBeInternal(Value* value)
+    bool LEGACY_NODELETE canBeInternal(Value* value)
     {
         // If one of the internal things has already been computed, then we don't want to cause
         // it to be recomputed again.
@@ -537,7 +529,7 @@ private:
         return true;
     }
 
-    bool NODELETE isMergeableValue(Value* v, B3::Opcode b3Opcode)
+    bool LEGACY_NODELETE isMergeableValue(Value* v, B3::Opcode b3Opcode)
     { 
         if (v->opcode() != b3Opcode)
             return false;
@@ -561,7 +553,7 @@ private:
     }
 
     template<IsLegalOffset Int>
-    std::optional<unsigned> NODELETE scaleForShl(Value* shl, Int offset, std::optional<Width> width = std::nullopt)
+    std::optional<unsigned> LEGACY_NODELETE scaleForShl(Value* shl, Int offset, std::optional<Width> width = std::nullopt)
     {
         if (shl->opcode() != Shl)
             return std::nullopt;
@@ -770,7 +762,7 @@ private:
         return Arg();
     }
 
-    Arg NODELETE bitImm64(Value* value)
+    Arg LEGACY_NODELETE bitImm64(Value* value)
     {
         if (value->hasInt()) {
             int64_t intValue = value->asInt();
@@ -790,7 +782,7 @@ private:
         return Arg();
     }
 
-    Arg NODELETE fpImm64(Value* value)
+    Arg LEGACY_NODELETE fpImm64(Value* value)
     {
         if (value->hasInt()) {
             int64_t intValue = value->asInt();
@@ -800,7 +792,7 @@ private:
         return Arg();
     }
 
-    Arg NODELETE fpImm128(Value* value)
+    Arg LEGACY_NODELETE fpImm128(Value* value)
     {
         if (value->hasV128()) {
             auto v128Value = value->asV128();
@@ -810,7 +802,7 @@ private:
         return Arg();
     }
 
-    Arg NODELETE zeroReg()
+    Arg LEGACY_NODELETE zeroReg()
     {
         return Arg::zeroReg();
     }
@@ -835,26 +827,11 @@ private:
     }
 
     template<typename Functor>
-    void forEachImmOrTmp(Value* value, const Functor& func)
+    void forEachImmOrTmp(Value* value, NOESCAPE const Functor& func)
     {
         ASSERT(value->type() != Void);
         if (!value->type().isTuple()) {
             func(immOrTmp(value), value->type(), 0);
-            return;
-        }
-
-        const Vector<Type>& tuple = m_procedure.tupleForType(value->type());
-        const auto& tmps = tmpsForTuple(value);
-        for (unsigned i = 0; i < tuple.size(); ++i)
-            func(tmps[i], tuple[i], i);
-    }
-
-    template<typename Functor>
-    void forEachImmOrTmpOrZeroReg(Value* value, const Functor& func)
-    {
-        ASSERT(value->type() != Void);
-        if (!value->type().isTuple()) {
-            func(immOrTmpOrZeroReg(value), value->type(), 0);
             return;
         }
 
@@ -895,7 +872,7 @@ private:
     }
 
     // By convention, we use Oops to mean "I don't know".
-    Air::Opcode NODELETE tryOpcodeForType(
+    Air::Opcode LEGACY_NODELETE tryOpcodeForType(
         Air::Opcode opcode32, Air::Opcode opcode64, Air::Opcode opcodeDouble, Air::Opcode opcodeFloat, Type type)
     {
         Air::Opcode opcode;
@@ -920,12 +897,12 @@ private:
         return opcode;
     }
 
-    Air::Opcode NODELETE tryOpcodeForType(Air::Opcode opcode32, Air::Opcode opcode64, Type type)
+    Air::Opcode LEGACY_NODELETE tryOpcodeForType(Air::Opcode opcode32, Air::Opcode opcode64, Type type)
     {
         return tryOpcodeForType(opcode32, opcode64, Air::Oops, Air::Oops, type);
     }
 
-    Air::Opcode NODELETE opcodeForType(
+    Air::Opcode LEGACY_NODELETE opcodeForType(
         Air::Opcode opcode32, Air::Opcode opcode64, Air::Opcode opcodeDouble, Air::Opcode opcodeFloat, Type type)
     {
         Air::Opcode opcode = tryOpcodeForType(opcode32, opcode64, opcodeDouble, opcodeFloat, type);
@@ -933,7 +910,7 @@ private:
         return opcode;
     }
 
-    Air::Opcode NODELETE opcodeForType(Air::Opcode opcode32, Air::Opcode opcode64, Type type)
+    Air::Opcode LEGACY_NODELETE opcodeForType(Air::Opcode opcode32, Air::Opcode opcode64, Type type)
     {
         return tryOpcodeForType(opcode32, opcode64, Air::Oops, Air::Oops, type);
     }
@@ -966,7 +943,7 @@ private:
         append(opcode, result);
     }
 
-    Air::Opcode NODELETE opcodeBasedOnShiftKind(B3::Opcode b3Opcode, 
+    Air::Opcode LEGACY_NODELETE opcodeBasedOnShiftKind(B3::Opcode b3Opcode, 
         Air::Opcode shl32, Air::Opcode shl64, 
         Air::Opcode sshr32, Air::Opcode sshr64, 
         Air::Opcode zshr32, Air::Opcode zshr64)
@@ -1304,7 +1281,7 @@ private:
         return Inst(move, m_value, tmp(value), dest);
     }
     
-    Air::Opcode NODELETE storeOpcode(Width width, Bank bank)
+    Air::Opcode LEGACY_NODELETE storeOpcode(Width width, Bank bank)
     {
         using namespace Air;
         switch (width) {
@@ -1367,7 +1344,7 @@ private:
     }
 
     template<Air::Opcode i8, Air::Opcode i16, Air::Opcode i32, Air::Opcode i64, Air::Opcode f32, Air::Opcode f64>
-    constexpr Air::Opcode NODELETE simdOpcode(SIMDLane lane)
+    constexpr Air::Opcode LEGACY_NODELETE simdOpcode(SIMDLane lane)
     {
         if (scalarTypeIsFloatingPoint(lane)) {
             switch (elementByteSize(lane)) {
@@ -1393,7 +1370,7 @@ private:
     }
 
     template<Air::Opcode unsignedI8, Air::Opcode signedI8, Air::Opcode unsignedI16, Air::Opcode signedI16, Air::Opcode i32, Air::Opcode i64, Air::Opcode f32, Air::Opcode f64>
-    constexpr Air::Opcode NODELETE simdOpcode(SIMDLane lane, SIMDSignMode signMode)
+    constexpr Air::Opcode LEGACY_NODELETE simdOpcode(SIMDLane lane, SIMDSignMode signMode)
     {
         if (scalarTypeIsFloatingPoint(lane)) {
             switch (elementByteSize(lane)) {
@@ -1848,12 +1825,12 @@ private:
     template<typename CompareFunctor, typename TestFunctor, typename CompareDoubleFunctor, typename CompareFloatFunctor, typename CompareDoubleWithZeroFunctor, typename CompareFloatWithZeroFunctor>
     Inst createGenericCompare(
         Value* value,
-        const CompareFunctor& compare, // Signature: (Width, Arg relCond, Arg, Arg) -> Inst
-        const TestFunctor& test, // Signature: (Width, Arg resCond, Arg, Arg) -> Inst
-        const CompareDoubleFunctor& compareDouble, // Signature: (Arg doubleCond, Arg, Arg) -> Inst
-        const CompareFloatFunctor& compareFloat, // Signature: (Arg doubleCond, Arg, Arg) -> Inst
-        const CompareDoubleWithZeroFunctor& compareDoubleWithZero, // Signature: (Arg doubleCond, Arg) -> Inst
-        const CompareFloatWithZeroFunctor& compareFloatWithZero, // Signature: (Arg doubleCond, Arg) -> Inst
+        NOESCAPE const CompareFunctor& compare, // Signature: (Width, Arg relCond, Arg, Arg) -> Inst
+        NOESCAPE const TestFunctor& test, // Signature: (Width, Arg resCond, Arg, Arg) -> Inst
+        NOESCAPE const CompareDoubleFunctor& compareDouble, // Signature: (Arg doubleCond, Arg, Arg) -> Inst
+        NOESCAPE const CompareFloatFunctor& compareFloat, // Signature: (Arg doubleCond, Arg, Arg) -> Inst
+        NOESCAPE const CompareDoubleWithZeroFunctor& compareDoubleWithZero, // Signature: (Arg doubleCond, Arg) -> Inst
+        NOESCAPE const CompareFloatWithZeroFunctor& compareFloatWithZero, // Signature: (Arg doubleCond, Arg) -> Inst
         bool inverted = false)
     {
         // NOTE: This is totally happy to match comparisons that have already been computed elsewhere
@@ -2343,14 +2320,14 @@ private:
 
         CompareChainNode() = default;
 
-        bool NODELETE isComparison() const { return type == COMPARE; }
-        bool NODELETE isLogicOp() const { return type == AND || type == OR; }
-        bool NODELETE isLegalFirstCombine() const
+        bool LEGACY_NODELETE isComparison() const { return type == COMPARE; }
+        bool LEGACY_NODELETE isLogicOp() const { return type == AND || type == OR; }
+        bool LEGACY_NODELETE isLegalFirstCombine() const
         {
             return left->isComparison() && right->isComparison();
         }
 
-        void NODELETE setCondition(MacroAssembler::RelationalCondition cond) {
+        void LEGACY_NODELETE setCondition(MacroAssembler::RelationalCondition cond) {
           ASSERT(isLogicOp());
           relCond = cond;
           if (requiresNegation) {
@@ -2359,7 +2336,7 @@ private:
           }
         }
 
-        void NODELETE markRequiresNegation()
+        void LEGACY_NODELETE markRequiresNegation()
         {
             if (isComparison()) {
                 // Immediately negate the condition for leaf nodes
@@ -2389,7 +2366,7 @@ private:
 
     class CompareSequence {
     public:
-        void NODELETE setInitialCompare(Air::Opcode opcode, Value* left, Value* right)
+        void LEGACY_NODELETE setInitialCompare(Air::Opcode opcode, Value* left, Value* right)
         {
             m_initialLeft = left;
             m_initialRight = right;
@@ -2397,22 +2374,22 @@ private:
             m_hasInitialCompare = true;
         }
 
-        bool NODELETE hasInitialCompare() const { return m_hasInitialCompare; }
-        Value* NODELETE initialLeft() const { return m_initialLeft; }
-        Value* NODELETE initialRight() const { return m_initialRight; }
-        Air::Opcode NODELETE initialOpcode() const { return m_initialOpcode; }
+        bool LEGACY_NODELETE hasInitialCompare() const { return m_hasInitialCompare; }
+        Value* LEGACY_NODELETE initialLeft() const { return m_initialLeft; }
+        Value* LEGACY_NODELETE initialRight() const { return m_initialRight; }
+        Air::Opcode LEGACY_NODELETE initialOpcode() const { return m_initialOpcode; }
 
         void addConditionalCompare(Air::Opcode opcode, MacroAssembler::RelationalCondition ccmpCondition, MacroAssembler::RelationalCondition defaultFlags, Value* left, Value* right)
         {
             m_conditionalCompares.append({ ccmpCondition, defaultFlags, left, right, opcode });
         }
 
-        const Vector<ConditionalCompare, 16>& NODELETE conditionalCompares() const
+        const Vector<ConditionalCompare, 16>& LEGACY_NODELETE conditionalCompares() const
         {
             return m_conditionalCompares;
         }
 
-        size_t NODELETE size() const { return m_conditionalCompares.size(); }
+        size_t LEGACY_NODELETE size() const { return m_conditionalCompares.size(); }
 
     private:
         Value* m_initialLeft { nullptr };
@@ -2424,7 +2401,7 @@ private:
 
 #if CPU(ARM64)
 
-    static bool NODELETE isComparisonOpcode(B3::Opcode opcode)
+    static bool LEGACY_NODELETE isComparisonOpcode(B3::Opcode opcode)
     {
         switch (opcode) {
         case Equal:
@@ -2443,7 +2420,7 @@ private:
         }
     }
 
-    static MacroAssembler::RelationalCondition NODELETE relationalConditionForOpcode(B3::Opcode opcode)
+    static MacroAssembler::RelationalCondition LEGACY_NODELETE relationalConditionForOpcode(B3::Opcode opcode)
     {
         switch (opcode) {
         case Equal:
@@ -2486,7 +2463,7 @@ private:
     //     └─────────────────┴─────┴─────┴─────┴─────┘
     // B3 LessThan maps to Below (ConditionLO = C==0) not LessThan (ConditionLT = N!=V)
     // B3 LessEqual maps to BelowOrEqual (ConditionLS = C==0 || Z==1) not LessThanOrEqual (ConditionLE = N!=V || Z==1)
-    static MacroAssembler::RelationalCondition NODELETE floatRelationalConditionForOpcode(B3::Opcode opcode)
+    static MacroAssembler::RelationalCondition LEGACY_NODELETE floatRelationalConditionForOpcode(B3::Opcode opcode)
     {
         switch (opcode) {
         case Equal:
@@ -2507,7 +2484,7 @@ private:
         }
     }
 
-    static Air::Opcode NODELETE compareOnFlagsOpcodeForType(B3::Type type)
+    static Air::Opcode LEGACY_NODELETE compareOnFlagsOpcodeForType(B3::Type type)
     {
         switch (type.kind()) {
         case Float:
@@ -2524,7 +2501,7 @@ private:
         }
     }
 
-    static Air::Opcode NODELETE compareConditionallyOnFlagsOpcodeForType(B3::Type type)
+    static Air::Opcode LEGACY_NODELETE compareConditionallyOnFlagsOpcodeForType(B3::Type type)
     {
         switch (type.kind()) {
         case Float:
@@ -2781,7 +2758,7 @@ private:
 
     // Check if an immediate can be encoded in a ccmp instruction.
     // ccmp supports 5-bit immediates (0-31 for ccmp, -31 to -1 for ccmn).
-    static bool NODELETE isValidConditionalCompareImmediate(int64_t value)
+    static bool LEGACY_NODELETE isValidConditionalCompareImmediate(int64_t value)
     {
         return -31 <= value && value <= 31;
     }
@@ -2789,7 +2766,7 @@ private:
     // Calculate the NZCV default flags for a condition.
     // This is what the flags will be set to if the ccmp predicate is false.
     // Strategy: set the MINIMUM flags needed to make the condition evaluate to true.
-    static unsigned NODELETE nzcvForCondition(MacroAssembler::RelationalCondition cond)
+    static unsigned LEGACY_NODELETE nzcvForCondition(MacroAssembler::RelationalCondition cond)
     {
         // NZCV bits: N=8, Z=4, C=2, V=1
         enum Flag : unsigned {
@@ -2908,6 +2885,141 @@ private:
         append(Air::BranchOnFlags, Arg::relCond(finalCondition));
 
         dataLogLnIf(B3LowerToAirInternal::verbose, "  ccmp optimization successful!");
+        return true;
+    }
+
+    // A BitOr tree of BitXor leaves is zero exactly when every leaf's operands are equal, so it can be
+    // tested as cmp + ccmp chain instead of materializing the eor/orr tree.
+    bool collectXorOrChain(Value* value, Vector<Value*, 8>& leaves, Vector<Value*, 16>& internals)
+    {
+        // Each of the at most maxCompareChainSize + 1 leaves can carry a ZExt32, so this bounds both the
+        // node count and the recursion depth on long left-deep BitOr chains.
+        static constexpr unsigned maxNodes = 3 * (maxCompareChainSize + 1);
+        if (internals.size() >= maxNodes)
+            return false;
+        if (!value->type().isInt() || !canBeInternal(value))
+            return false;
+        internals.append(value);
+        switch (value->opcode()) {
+        case BitXor:
+            if (leaves.size() > maxCompareChainSize)
+                return false;
+            leaves.append(value);
+            return true;
+        case ZExt32:
+            return collectXorOrChain(value->child(0), leaves, internals);
+        case BitOr:
+            return collectXorOrChain(value->child(0), leaves, internals) && collectXorOrChain(value->child(1), leaves, internals);
+        default:
+            return false;
+        }
+    }
+
+    // On success, the flags satisfy Equal if value is zero and NotEqual otherwise.
+    bool tryAppendXorOrChainCompare(Value* value)
+    {
+        if (value->opcode() != BitOr)
+            return false;
+
+        Vector<Value*, 8> leaves;
+        Vector<Value*, 16> internals;
+        if (!collectXorOrChain(value, leaves, internals))
+            return false;
+
+        auto operands = [](Value* leaf) -> std::pair<Value*, Value*> {
+            if (leaf->child(0)->hasInt() && !leaf->child(1)->hasInt())
+                return { leaf->child(1), leaf->child(0) };
+            return { leaf->child(0), leaf->child(1) };
+        };
+
+        // cmp takes a much wider immediate than ccmp, so start with a constant only cmp can encode.
+        auto needsCompareImmediate = [&](Value* leaf) {
+            Value* right = operands(leaf).second;
+            return imm(right) && !isValidConditionalCompareImmediate(right->asInt());
+        };
+        if (!needsCompareImmediate(leaves[0])) {
+            for (unsigned i = 1; i < leaves.size(); ++i) {
+                if (needsCompareImmediate(leaves[i])) {
+                    std::swap(leaves[0], leaves[i]);
+                    break;
+                }
+            }
+        }
+
+        auto compareImmediate = [&](unsigned index) -> Arg {
+            Value* right = operands(leaves[index]).second;
+            Type type = leaves[index]->type();
+            if (!index) {
+                if (Arg rightImm = imm(right); rightImm && isValidForm(compareOnFlagsOpcodeForType(type), Arg::Tmp, Arg::Imm))
+                    return rightImm;
+                return { };
+            }
+            if (right->hasInt() && isValidConditionalCompareImmediate(right->asInt()) && isValidForm(compareConditionallyOnFlagsOpcodeForType(type), Arg::Tmp, Arg::Imm, Arg::Imm, Arg::RelCond))
+                return imm(right);
+            return { };
+        };
+
+        // The cmp/ccmp chain saves one instruction per leaf over eor/orr + tst, but eor also encodes
+        // bitmask immediates, which cmp and ccmp would have to materialize into a register first.
+        unsigned extraMaterializations = 0;
+        for (unsigned i = 0; i < leaves.size(); ++i) {
+            Value* right = operands(leaves[i]).second;
+            if (!right->hasInt() || compareImmediate(i))
+                continue;
+            bool is32Bit = leaves[i]->type() == Int32;
+            uint64_t bits = is32Bit ? static_cast<uint32_t>(right->asInt()) : static_cast<uint64_t>(right->asInt());
+            if (!(is32Bit ? Arg::isValidBitImmForm(right->asInt()) : Arg::isValidBitImm64Form(right->asInt())))
+                continue;
+            unsigned halfwords = is32Bit ? 2 : 4;
+            unsigned zeroHalfwords = 0;
+            unsigned onesHalfwords = 0;
+            for (unsigned j = 0; j < halfwords; ++j) {
+                uint16_t halfword = static_cast<uint16_t>(bits >> (16 * j));
+                zeroHalfwords += !halfword;
+                onesHalfwords += halfword == 0xffff;
+            }
+            extraMaterializations += std::max(1u, halfwords - std::max(zeroHalfwords, onesHalfwords));
+        }
+        if (extraMaterializations >= leaves.size())
+            return false;
+
+        for (Value* internal : internals)
+            commitInternal(internal);
+
+        auto [firstLeft, firstRight] = operands(leaves[0]);
+        if (Arg rightImm = compareImmediate(0))
+            append(compareOnFlagsOpcodeForType(leaves[0]->type()), tmp(firstLeft), rightImm);
+        else
+            append(compareOnFlagsOpcodeForType(leaves[0]->type()), tmp(firstLeft), tmp(firstRight));
+
+        Arg mismatchFlags = imm(nzcvForCondition(MacroAssembler::NotEqual));
+        for (unsigned i = 1; i < leaves.size(); ++i) {
+            auto [left, right] = operands(leaves[i]);
+            Air::Opcode ccmpOpcode = compareConditionallyOnFlagsOpcodeForType(leaves[i]->type());
+            if (Arg rightImm = compareImmediate(i))
+                append(ccmpOpcode, tmp(left), rightImm, mismatchFlags, Arg::relCond(MacroAssembler::Equal));
+            else
+                append(ccmpOpcode, tmp(left), tmp(right), mismatchFlags, Arg::relCond(MacroAssembler::Equal));
+        }
+        return true;
+    }
+
+    bool tryEmitXorOrChainBranch(Value* branchValue)
+    {
+        Value* condition = branchValue->child(0);
+        MacroAssembler::RelationalCondition branchCondition = MacroAssembler::NotEqual;
+        Value* comparison = nullptr;
+        if ((condition->opcode() == Equal || condition->opcode() == NotEqual) && condition->child(1)->isInt(0)) {
+            if (condition->opcode() == Equal)
+                branchCondition = MacroAssembler::Equal;
+            comparison = condition;
+            condition = condition->child(0);
+        }
+
+        if (!tryAppendXorOrChainCompare(condition))
+            return false;
+        commitInternal(comparison);
+        append(Air::BranchOnFlags, Arg::relCond(branchCondition));
         return true;
     }
 #endif // CPU(ARM64)
@@ -3407,12 +3519,12 @@ private:
         append(Move, m_edx, tmp(m_value));
     }
     
-    Air::Opcode NODELETE loadLinkOpcode(Width width, bool fence)
+    Air::Opcode LEGACY_NODELETE loadLinkOpcode(Width width, bool fence)
     {
         return fence ? OPCODE_FOR_WIDTH(LoadLinkAcq, width) : OPCODE_FOR_WIDTH(LoadLink, width);
     }
     
-    Air::Opcode NODELETE storeCondOpcode(Width width, bool fence)
+    Air::Opcode LEGACY_NODELETE storeCondOpcode(Width width, bool fence)
     {
         return fence ? OPCODE_FOR_WIDTH(StoreCondRel, width) : OPCODE_FOR_WIDTH(StoreCond, width);
     }
@@ -5035,7 +5147,7 @@ private:
             return;
         }
 
-        case MemoryCopy:
+        case MemoryMove:
         case MemoryFill: {
             // They should be lowered already.
             RELEASE_ASSERT_NOT_REACHED();
@@ -5435,33 +5547,27 @@ private:
             return;
         case B3::VectorOr: {
 #if CPU(ARM64)
-            // Try to match XAR (XOR-and-rotate-right) pattern for i64x2.
-            // Pattern: VectorOr(VectorShl(x, constK), VectorShr(x, constK))
-            // or VectorOr(VectorAdd(x, x), VectorShr(x, constK)) after strength reduction.
-            // When x = VectorXor(a, b), emit XAR(a, b, rotateRight).
+            // Match XAR (XOR-and-rotate-right) for i64x2: VectorOr of a left shift and an unsigned
+            // right shift of the same x = VectorXor(a, b), with constant amounts summing to 64,
+            // becomes XAR(a, b, rotateRight). Strength reduction turns a left shift by 1 into
+            // VectorAdd(x, x), so that counts as a left shift too.
             if (isARM64_SHA3()) {
                 Value* left = m_value->child(0);
                 Value* right = m_value->child(1);
 
                 auto tryMatchXAR = [&]() -> bool {
-                    // Each child of VectorOr should be either:
-                    // - VectorShl:i64x2(x, constK) — a left shift by constant
-                    // - VectorShr:i64x2(x, constK) — a right shift by constant
-                    // - VectorAdd:i64x2(x, x) — equivalent to shl-by-1 (from strength reduction)
-                    // We need one left-shift and one right-shift on the same value x,
-                    // with shift amounts summing to 64.
-
                     struct ShiftInfo {
                         Value* shiftedValue { nullptr };
                         int8_t amount { 0 }; // positive = left shift, negative = right shift
                     };
 
                     auto extractShift = [&](Value* v) -> std::optional<ShiftInfo> {
+                        // Vector shifts use the shift amount modulo the lane width.
                         if (v->opcode() == B3::VectorShl && v->as<SIMDValue>()->simdLane() == SIMDLane::i64x2 && v->child(1)->hasInt32())
-                            return ShiftInfo { v->child(0), static_cast<int8_t>(v->child(1)->asInt32()) };
+                            return ShiftInfo { v->child(0), static_cast<int8_t>(v->child(1)->asInt32() & 63) };
 
-                        if (v->opcode() == B3::VectorShr && v->as<SIMDValue>()->simdLane() == SIMDLane::i64x2 && v->child(1)->hasInt32())
-                            return ShiftInfo { v->child(0), static_cast<int8_t>(-v->child(1)->asInt32()) };
+                        if (v->opcode() == B3::VectorShr && v->as<SIMDValue>()->simdLane() == SIMDLane::i64x2 && v->as<SIMDValue>()->signMode() == SIMDSignMode::Unsigned && v->child(1)->hasInt32())
+                            return ShiftInfo { v->child(0), static_cast<int8_t>(-(v->child(1)->asInt32() & 63)) };
 
                         // We lowered left-shift by 1 to VectorAdd(x, x)
                         if (v->opcode() == B3::VectorAdd && v->as<SIMDValue>()->simdLane() == SIMDLane::i64x2
@@ -5533,8 +5639,8 @@ private:
         }
         case B3::VectorXor: {
 #if CPU(ARM64)
-            // VectorXor(VectorXor(a, b), c) → EOR3(a, b, c)
-            // VectorXor(a, VectorXor(b, c)) → EOR3(b, c, a)
+            // VectorXor(VectorXor(a, b), c) -> EOR3(a, b, c)
+            // VectorXor(a, VectorXor(b, c)) -> EOR3(b, c, a)
             if (isARM64_SHA3()) {
                 for (unsigned childIdx = 0; childIdx < 2; ++childIdx) {
                     Value* inner = m_value->child(childIdx);
@@ -5966,7 +6072,14 @@ private:
                 appendCAS(m_value->child(0), m_value->opcode() == NotEqual);
                 return;
             }
-                
+
+#if CPU(ARM64)
+            if (m_value->child(1)->isInt(0) && tryAppendXorOrChainCompare(m_value->child(0))) {
+                append(Air::SetOnFlags, Arg::relCond(m_value->opcode() == Equal ? MacroAssembler::Equal : MacroAssembler::NotEqual), tmp(m_value));
+                return;
+            }
+#endif
+
             m_insts.last().append(createCompare(m_value));
             return;
         }
@@ -6492,32 +6605,17 @@ private:
             return;
         }
 
-        case Set: {
-            Value* value = m_value->child(0);
-            const Vector<Tmp>& variableTmps = m_variableToTmps.get(m_value->as<VariableValue>()->variable());
-            forEachImmOrTmpOrZeroReg(value, [&] (Arg immOrTmpOrZeroReg, Type type, unsigned index) {
-                moveToTmp(relaxedMoveForType(type), immOrTmpOrZeroReg, variableTmps[index]);
-            });
+        case Set:
+        case Get:
+            RELEASE_ASSERT_NOT_REACHED();
             return;
-        }
-
-        case Get: {
-            // Snapshot the value of the Get. It may change under us because you could do:
-            // a = Get(var)
-            // Set(@x, var)
-            // @a => this should get the value of the Get before the Set, i.e. not @x.
-
-            const Vector<Tmp>& variableTmps = m_variableToTmps.get(m_value->as<VariableValue>()->variable());
-            forEachImmOrTmp(m_value, [&] (Arg tmp, Type type, unsigned index) {
-                append(relaxedMoveForType(type), variableTmps[index], tmp.tmp());
-            });
-            return;
-        }
 
         case Branch: {
             if (canBeInternal(m_value->child(0))) {
 #if CPU(ARM64)
                 if (tryEmitConditionalCompareChain(m_value))
+                    return;
+                if (tryEmitXorOrChainBranch(m_value))
                     return;
 #endif
 
@@ -6826,7 +6924,6 @@ private:
     UncheckedKeyHashMap<Value*, Vector<Tmp>> m_tupleValueToTmps; // This is the same as m_valueToTmp for Values that are Tuples.
     UncheckedKeyHashMap<Value*, Vector<Tmp>> m_tuplePhiToTmps; // This is the same as m_phiToTmp for Phis that are Tuples.
     IndexMap<B3::BasicBlock*, Air::BasicBlock*> m_blockToBlock;
-    UncheckedKeyHashMap<Variable*, Vector<Tmp>> m_variableToTmps;
 
     UseCounts m_useCounts;
     PhiChildren m_phiChildren;

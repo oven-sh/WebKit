@@ -139,7 +139,7 @@ void SpeculativeJIT::compileCallFFI(Node* node)
             zeroExtend32ToWord(scratchGPR, scratchGPR);
             break;
         default:
-            DFG_CRASH(m_graph, node, "CallFFI: not an integer-class FFI type");
+            DFG_CRASH(m_graph, node, "CallFFI: not an integer-class FFI type"_s);
             return;
         }
         store64(scratchGPR, slot);
@@ -186,7 +186,7 @@ void SpeculativeJIT::compileCallFFI(Node* node)
                 break;
             }
             default:
-                DFG_CRASH(m_graph, node, "CallFFI: DoubleRepUse edge for a non-floating-point FFI type");
+                DFG_CRASH(m_graph, node, "CallFFI: DoubleRepUse edge for a non-floating-point FFI type"_s);
                 break;
             }
             break;
@@ -315,7 +315,7 @@ void SpeculativeJIT::compileCallFFI(Node* node)
 
             case FFI::Type::Void:
             case FFI::Type::RESERVED_WasNapiEnv:
-                DFG_CRASH(m_graph, node, "CallFFI: unexpected JS argument type");
+                DFG_CRASH(m_graph, node, "CallFFI: unexpected JS argument type"_s);
                 break;
             }
 
@@ -345,7 +345,7 @@ void SpeculativeJIT::compileCallFFI(Node* node)
         }
 
         default:
-            DFG_CRASH(m_graph, node, "CallFFI: unexpected use kind on an argument edge");
+            DFG_CRASH(m_graph, node, "CallFFI: unexpected use kind on an argument edge"_s);
             break;
         }
     }
@@ -466,7 +466,7 @@ void SpeculativeJIT::compileCallFFI(Node* node)
 
     case FFI::Type::RESERVED_WasNapiEnv:
     case FFI::Type::BufferLength:
-        DFG_CRASH(m_graph, node, "CallFFI: the reserved tag / buffer_length is never a return type");
+        DFG_CRASH(m_graph, node, "CallFFI: the reserved tag / buffer_length is never a return type"_s);
         break;
     }
 

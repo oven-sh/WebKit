@@ -210,8 +210,9 @@ ALWAYS_INLINE Structure* JSGlobalObject::arrayStructureForIndexingTypeDuringAllo
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!newTarget || newTarget == globalObject->arrayConstructor())
         return globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType);
-    auto* functionGlobalObject = getFunctionRealm(globalObject, asObject(newTarget));
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* functionGlobalObject = tryGetFunctionRealm(asObject(newTarget));
+    if (!functionGlobalObject)
+        functionGlobalObject = globalObject;
     RELEASE_AND_RETURN(scope, InternalFunction::createSubclassStructure(globalObject, asObject(newTarget), functionGlobalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType)));
 }
 
@@ -270,6 +271,14 @@ inline unsigned JSGlobalObject::WeakCustomGetterOrSetterHash<T>::hash(const Prop
     if (!propertyName.isNull())
         return WTF::computeHash(functionPointer, propertyName.uid()->existingSymbolAwareHash(), classInfo);
     return WTF::computeHash(functionPointer, classInfo);
+}
+
+inline bool JSGlobalObject::isOriginalArrayStructureWithImmutableProperties(Structure* structure)
+{
+    if (structure->transitionKind() != TransitionKind::MakePropertiesImmutable)
+        return false;
+    Structure* previous = structure->previousID();
+    return previous && isOriginalArrayStructure(previous);
 }
 
 inline JSArray* constructEmptyArray(JSGlobalObject* globalObject, ArrayAllocationProfile* profile, unsigned initialLength = 0, JSValue newTarget = JSValue())

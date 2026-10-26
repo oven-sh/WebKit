@@ -31,6 +31,7 @@
 #include <WebCore/CachedImageClient.h>
 #include <WebCore/CachedResourceHandle.h>
 #include <WebCore/MediaSession.h>
+#include <WebCore/SizedImage.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/Function.h>
 #include <wtf/TZoneMalloc.h>
@@ -54,7 +55,7 @@ public:
     using ArtworkImageLoaderCallback = Function<void(Image*)>;
     // The callback will only be called upon success or explicit failure to retrieve the image. If the operation is interrupted following the
     // destruction of the ArtworkImageLoader, the callback won't be called.
-    WEBCORE_EXPORT static Ref<ArtworkImageLoader> create(Document&, const String& src, ArtworkImageLoaderCallback&&);
+    WEBCORE_EXPORT static Ref<ArtworkImageLoader> LEGACY_NODELETE create(Document&, const String& src, ArtworkImageLoaderCallback&&);
     WEBCORE_EXPORT ~ArtworkImageLoader();
 
     WEBCORE_EXPORT void requestImageResource();
@@ -97,7 +98,7 @@ public:
     ExceptionOr<void> setArtwork(ScriptExecutionContext&, Vector<MediaImage>&&);
 
     const String& artworkSrc() const LIFETIME_BOUND { return m_artworkImageSrc; }
-    const RefPtr<Image>& artworkImage() const { return m_artworkImage; }
+    const std::optional<SizedImage>& artworkImage() const { return m_artworkImage; }
 
     const MediaSessionMetadata& metadata() const LIFETIME_BOUND { return m_metadata; }
 
@@ -113,19 +114,17 @@ private:
     };
 
     MediaMetadata();
-    void setArtworkImage(Image*);
+    void setArtworkImage(std::optional<SizedImage>&&);
     void metadataUpdated();
     void refreshArtworkImage();
     void tryNextArtworkImage(uint32_t, Vector<Pair>&&);
 
-    static constexpr int s_minimumSize = 128;
-    static constexpr int s_idealSize = 512;
 
     WeakPtr<MediaSession> m_session;
     MediaSessionMetadata m_metadata;
     RefPtr<ArtworkImageLoader> m_artworkLoader;
     String m_artworkImageSrc;
-    RefPtr<Image> m_artworkImage;
+    std::optional<SizedImage> m_artworkImage;
     Vector<URL> m_defaultImages;
 };
 

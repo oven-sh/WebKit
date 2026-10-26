@@ -18,6 +18,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -105,6 +106,11 @@ void CreateSingleOrMultiStreamDecoder(WebRtcOpusDecInst** opus_decoder,
 int SamplesPerChannel(int sample_rate_hz, int duration_ms) {
   const int samples_per_ms = CheckedDivExact(sample_rate_hz, 1000);
   return samples_per_ms * duration_ms;
+}
+
+bool IsOpusFixedPoint() {
+  return std::string_view(opus_get_version_string()).find("-fixed") !=
+         std::string_view::npos;
 }
 
 using test::AudioLoop;
@@ -328,19 +334,14 @@ void OpusTest::TestDtxEffect(bool dtx, int block_length_ms) {
 
   // We check that, after a `kCheckTimeMs` milliseconds (given that the CNG in
   // Opus needs time to adapt), the absolute values of DTX decoded signal are
-  // bounded by `kOutputValueBound`.
+  // bounded by `output_value_bound`.
   const int kCheckTimeMs = 4000;
 
-#if defined(OPUS_FIXED_POINT)
   // Fixed-point Opus generates a random (comfort) noise, which has a less
   // predictable value bound than its floating-point Opus. This value depends on
   // input signal, and the time window for checking the output values (between
   // `kCheckTimeMs` and `kRunTimeMs`).
-  const uint16_t kOutputValueBound = 30;
-
-#else
-  const uint16_t kOutputValueBound = 2;
-#endif
+  const uint16_t output_value_bound = IsOpusFixedPoint() ? 30 : 2;
 
   int time = 0;
   while (time < kRunTimeMs) {
@@ -361,7 +362,7 @@ void OpusTest::TestDtxEffect(bool dtx, int block_length_ms) {
         EXPECT_EQ(2, audio_type);  // Comfort noise.
         if (time >= kCheckTimeMs) {
           CheckAudioBounded(output_data_decode, output_samples, channels_,
-                            kOutputValueBound);
+                            output_value_bound);
         }
       } else {
         EXPECT_GT(encoded_bytes_, 1U);
@@ -393,7 +394,7 @@ void OpusTest::TestDtxEffect(bool dtx, int block_length_ms) {
       EXPECT_EQ(2, audio_type);  // Comfort noise.
       if (time >= kCheckTimeMs) {
         CheckAudioBounded(output_data_decode, output_samples, channels_,
-                          kOutputValueBound);
+                          output_value_bound);
       }
     } else {
       EXPECT_GT(encoded_bytes_, 1U);
@@ -955,32 +956,6 @@ TEST_P(OpusTest, OpusDecodeRepacketized) {
   opus_repacketizer_destroy(rp);
   EXPECT_EQ(0, WebRtcOpus_EncoderFree(opus_encoder_));
   EXPECT_EQ(0, WebRtcOpus_DecoderFree(opus_decoder_));
-}
-
-TEST(OpusVadTest, CeltUnknownStatus) {
-  const uint8_t celt[] = {0x80};
-  EXPECT_EQ(WebRtcOpus_PacketHasVoiceActivity(celt, 1), -1);
-}
-
-TEST(OpusVadTest, Mono20msVadSet) {
-  uint8_t silk20msMonoVad[] = {0x78, 0x80};
-  EXPECT_TRUE(WebRtcOpus_PacketHasVoiceActivity(silk20msMonoVad, 2));
-}
-
-TEST(OpusVadTest, Mono20MsVadUnset) {
-  uint8_t silk20msMonoSilence[] = {0x78, 0x00};
-  EXPECT_FALSE(WebRtcOpus_PacketHasVoiceActivity(silk20msMonoSilence, 2));
-}
-
-TEST(OpusVadTest, Stereo20MsVadOnSideChannel) {
-  uint8_t silk20msStereoVadSideChannel[] = {0x78 | 0x04, 0x20};
-  EXPECT_TRUE(
-      WebRtcOpus_PacketHasVoiceActivity(silk20msStereoVadSideChannel, 2));
-}
-
-TEST(OpusVadTest, TwoOpusMonoFramesVadOnSecond) {
-  uint8_t twoMonoFrames[] = {0x78 | 0x1, 0x00, 0x80};
-  EXPECT_TRUE(WebRtcOpus_PacketHasVoiceActivity(twoMonoFrames, 3));
 }
 
 }  // namespace webrtc

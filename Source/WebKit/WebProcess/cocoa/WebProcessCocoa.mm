@@ -73,6 +73,8 @@
 #import <WebCore/AXObjectCache.h>
 #import <WebCore/CPUMonitor.h>
 #import <WebCore/DisplayRefreshMonitorManager.h>
+#import <WebCore/DocumentView.h>
+#import <WebCore/FocusController.h>
 #import <WebCore/FontCache.h>
 #import <WebCore/FontCacheCoreText.h>
 #import <WebCore/FontCascade.h>
@@ -81,6 +83,7 @@
 #import <WebCore/IOSurface.h>
 #import <WebCore/Image.h>
 #import <WebCore/ImageDecoderCG.h>
+#import <WebCore/LocalFrame.h>
 #import <WebCore/LocalFrameView.h>
 #import <WebCore/LocalizedDeviceModel.h>
 #import <WebCore/LocalizedStrings.h>
@@ -88,6 +91,7 @@
 #import <WebCore/MainThreadSharedTimer.h>
 #import <WebCore/MemoryRelease.h>
 #import <WebCore/NSScrollerImpDetails.h>
+#import <WebCore/Page.h>
 #import <WebCore/PageGroup.h>
 #import <WebCore/PerformanceLogging.h>
 #import <WebCore/PictureInPictureSupport.h>
@@ -117,7 +121,9 @@
 #import <pal/spi/cocoa/pthreadSPI.h>
 #import <pal/spi/mac/NSApplicationSPI.h>
 #import <stdio.h>
+#import <wtf/AvailableMemory.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/FileHandle.h>
 #import <wtf/FileSystem.h>
 #import <wtf/Language.h>
@@ -220,7 +226,7 @@ void WebProcess::platformSetCacheModel(CacheModel)
 void WebProcess::bindAccessibilityFrameWithData(WebCore::FrameIdentifier frameID, std::span<const uint8_t> data)
 {
     if (!m_accessibilityRemoteFrameTokenCache)
-        m_accessibilityRemoteFrameTokenCache = adoptNS([[NSMutableDictionary alloc] init]);
+        lazyInitialize(m_accessibilityRemoteFrameTokenCache, adoptNS([[NSMutableDictionary alloc] init]));
 
     auto frameInt = frameID.toUInt64();
     [m_accessibilityRemoteFrameTokenCache setObject:toNSData(data).get() forKey:@(frameInt)];
@@ -233,6 +239,13 @@ id WebProcess::accessibilityFocusedUIElement()
             RefPtr page = WebProcess::singleton().focusedWebPage();
             if (!page || !page->accessibilityRemoteObject())
                 return nil;
+#if PLATFORM(MAC)
+            RefPtr corePage = page->corePage();
+            if (RefPtr focusedFrame = corePage ? corePage->focusController().localFocusedFrame() : nullptr) {
+                Ref rootFrame = focusedFrame->rootFrame();
+                return [[protect(page->accessibilityRemoteObjectForFrame(*focusedFrame)) accessibilityRootObjectWrapper:rootFrame.ptr()] accessibilityFocusedUIElement];
+            }
+#endif
             return [protect(page->accessibilityRemoteObject()) accessibilityFocusedUIElement];
         }, Accessibility::InteractiveTimeout);
 
@@ -345,23 +358,27 @@ static void setVideoDecoderBehaviors(OptionSet<VideoDecoderBehavior> videoDecode
     if (!(PAL::isVideoToolboxFrameworkAvailable() && PAL::canLoad_VideoToolbox_VTRestrictVideoDecoders()))
         return;
 
-    Vector<CMVideoCodecType> allowedCodecTypeList;
+    const Vector allowedCodecTypeList = [&] {
+        Vector<CMVideoCodecType> allowedCodecTypeList;
 
-    if (videoDecoderBehavior.contains(VideoDecoderBehavior::EnableCommonVideoDecoders)) {
-        allowedCodecTypeList.append(kCMVideoCodecType_H263);
-        allowedCodecTypeList.append(kCMVideoCodecType_H264);
-        allowedCodecTypeList.append(kCMVideoCodecType_MPEG4Video);
-    }
+        if (videoDecoderBehavior.contains(VideoDecoderBehavior::EnableCommonVideoDecoders)) {
+            allowedCodecTypeList.append(kCMVideoCodecType_H263);
+            allowedCodecTypeList.append(kCMVideoCodecType_H264);
+            allowedCodecTypeList.append(kCMVideoCodecType_MPEG4Video);
+        }
 
-    if (videoDecoderBehavior.contains(VideoDecoderBehavior::EnableHEIC)) {
-        allowedCodecTypeList.append(kCMVideoCodecType_HEVC);
-        allowedCodecTypeList.append(kCMVideoCodecType_HEVCWithAlpha);
-    }
+        if (videoDecoderBehavior.contains(VideoDecoderBehavior::EnableHEIC)) {
+            allowedCodecTypeList.append(kCMVideoCodecType_HEVC);
+            allowedCodecTypeList.append(kCMVideoCodecType_HEVCWithAlpha);
+        }
 
 #if HAVE(AVIF)
-    if (videoDecoderBehavior.contains(VideoDecoderBehavior::EnableAVIF))
-        allowedCodecTypeList.append(kCMVideoCodecType_AV1);
+        if (videoDecoderBehavior.contains(VideoDecoderBehavior::EnableAVIF))
+            allowedCodecTypeList.append(kCMVideoCodecType_AV1);
 #endif
+
+        return allowedCodecTypeList;
+    }();
 
     unsigned flags = 0;
 
@@ -394,7 +411,7 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
 #endif
 
 #if ENABLE(NOTIFY_BLOCKING)
-    for (const auto& [name, state] : parameters.notifyState)
+    for (const auto& [name, state] : borrow(parameters.notifyState))
         setNotifyState(name, state);
 #endif
 
@@ -402,6 +419,10 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
 
     if (mach_port_t taskNamePort = MACH_PORT_NULL; task_name_for_pid(mach_task_self(), getpid(), &taskNamePort) == KERN_SUCCESS)
         parentProcessConnection()->send(Messages::WebProcessProxy::SetTaskNamePort(MachSendRight::adopt(taskNamePort)), 0);
+
+#if PLATFORM(IOS_FAMILY) && ENABLE(UIPROCESS_PERIODIC_MEMORY_MONITOR)
+    parentProcessConnection()->send(Messages::WebProcessProxy::DidComputeAvailableMemory(WTF::availableMemory()), 0);
+#endif
 
 #if USE(EXTENSIONKIT)
     // Workaround for crash seen when running tests. See rdar://118186487.
@@ -681,7 +702,7 @@ void WebProcess::platformSetWebsiteDataStoreParameters(WebProcessDataStoreParame
 
     if (!parameters.javaScriptConfigurationDirectory.isEmpty()) {
         auto javaScriptConfigFile = makeString(parameters.javaScriptConfigurationDirectory, "/JSC.config"_s);
-        JSC::processConfigFile(javaScriptConfigFile.utf8().data(), "com.apple.WebKit.WebContent", m_uiProcessBundleIdentifier.utf8().legacyCStringPointer());
+        JSC::processConfigFile(javaScriptConfigFile.utf8().data(), "com.apple.WebKit.WebContent"_s, m_uiProcessBundleIdentifier.utf8());
     }
 }
 
@@ -692,6 +713,21 @@ void WebProcess::initializeProcessName(const AuxiliaryProcessInitializationParam
 #else
     UNUSED_PARAM(parameters);
 #endif
+}
+
+void WebProcess::blockIOKit()
+{
+#if HAVE(SANDBOX_STATE_FLAGS) && !ENABLE(WEBCONTENT_GPU_SANDBOX_EXTENSIONS_BLOCKING)
+    if (auto auditToken = auditTokenForSelf())
+        sandbox_enable_state_flag("BlockIOKitInWebContentSandbox", *auditToken);
+#endif
+    ProcessCapabilities::setHardwareAcceleratedDecodingDisabled(true);
+    ProcessCapabilities::setCanUseAcceleratedBuffers(false);
+    static bool disabled { false };
+    if (!std::exchange(disabled, true)) {
+        OSStatus ok = CGImageSourceDisableHardwareDecoding();
+        ASSERT_UNUSED(ok, ok == noErr);
+    }
 }
 
 std::optional<audit_token_t> WebProcess::auditTokenForSelf()
@@ -1078,7 +1114,7 @@ void WebProcess::updateCPUMonitorState(CPUMonitorUpdateReason reason)
     }
 
     if (!m_cpuMonitor) {
-        m_cpuMonitor = makeUnique<CPUMonitor>(cpuMonitoringInterval, [weakThis = WeakPtr { *this }](double cpuUsage) {
+        lazyInitialize(m_cpuMonitor, makeUnique<CPUMonitor>(cpuMonitoringInterval, [weakThis = WeakPtr { *this }](double cpuUsage) {
             RefPtr protectedThis = weakThis.get();
             if (!protectedThis)
                 return;
@@ -1088,7 +1124,7 @@ void WebProcess::updateCPUMonitorState(CPUMonitorUpdateReason reason)
             else
                 WEBPROCESS_RELEASE_LOG_ERROR_WITH_THIS(protectedThis.get(), ProcessSuspension, "updateCPUMonitorState: WebProcess exceeded CPU limit of %.1f%% (was using %.1f%%) hasVisiblePages? %d", protectedThis->m_cpuLimit.value() * 100, cpuUsage * 100, protectedThis->hasVisibleWebPage());
             protect(protectedThis->parentProcessConnection())->send(Messages::WebProcessProxy::DidExceedCPULimit(), 0);
-        });
+        }));
     } else if (reason == CPUMonitorUpdateReason::VisibilityHasChanged) {
         // If the visibility has changed, stop the CPU monitor before setting its limit. This is needed because the CPU usage can vary wildly based on visibility and we would
         // not want to report that a process has exceeded its background CPU limit even though most of the CPU time was used while the process was visible.
@@ -1180,8 +1216,13 @@ void WebProcess::scrollerStylePreferenceChanged(bool useOverlayScrollbars)
     downcast<ScrollbarThemeMac>(theme).preferencesChanged();
     
     for (auto& page : m_pageMap.values()) {
-        if (RefPtr frameView = page->localMainFrameView())
-            frameView->scrollbarStyleDidChange();
+        RefPtr corePage = page->corePage();
+        if (!corePage)
+            continue;
+        corePage->forEachLocalFrame([](LocalFrame& frame) {
+            if (RefPtr frameView = frame.view())
+                frameView->scrollbarStyleDidChange();
+        });
     }
 
     NSScrollerStyle style = useOverlayScrollbars ? NSScrollerStyleOverlay : NSScrollerStyleLegacy;
@@ -1393,7 +1434,7 @@ void WebProcess::grantAccessToAssetServices(Vector<WebKit::SandboxExtensionHandl
 {
     if (m_assetServicesExtensions.size())
         return;
-    for (auto& handle : assetServicesHandles) {
+    for (auto& handle : borrow(assetServicesHandles)) {
         auto extension = SandboxExtension::create(WTF::move(handle));
         if (!extension)
             continue;
@@ -1472,7 +1513,7 @@ void WebProcess::updatePageScreenProperties()
 
 void WebProcess::unblockServicesRequiredByAccessibility(Vector<SandboxExtension::Handle>&& handles)
 {
-    auto extensions = WTF::compactMap(WTF::move(handles), [](SandboxExtension::Handle&& handle) -> RefPtr<SandboxExtension> {
+    const Vector extensions = WTF::compactMap(WTF::move(handles), [](SandboxExtension::Handle&& handle) -> RefPtr<SandboxExtension> {
         auto extension = SandboxExtension::create(WTF::move(handle));
         if (extension)
             extension->consume();
@@ -1590,7 +1631,7 @@ void WebProcess::setNotifyState(const String& name, uint64_t state)
         m_notifyTokens.set(name, token);
 
     if (token == NOTIFY_TOKEN_INVALID) {
-        WEBPROCESS_RELEASE_LOG_ERROR(Process, "setNotifyState: Couldn't create token for %" PUBLIC_LOG_STRING ": %d", name.ascii().data(), status);
+        WEBPROCESS_RELEASE_LOG_ERROR(Process, "setNotifyState: Couldn't create token for %" PUBLIC_LOG_STRING ": %d", name.utf8(), status);
         return;
     }
 
@@ -1618,7 +1659,7 @@ void WebProcess::getNotifyStateForTesting(const String& name, CompletionHandler<
 void WebProcess::registerAdditionalFonts(AdditionalFonts&& fonts)
 {
     RetainPtr<NSMutableArray> fontURLs = [NSMutableArray array];
-    for (auto& fontData : fonts.fontDataList) {
+    for (auto& fontData : borrow(fonts.fontDataList)) {
         SandboxExtension::consumePermanently(fontData.sandboxExtensionHandle);
 
         RetainPtr<CFURLRef> cfURL = fontData.fontURL.createCFURL();
@@ -1652,7 +1693,7 @@ void WebProcess::initializeAccessibility(Vector<SandboxExtension::Handle>&& hand
 #endif
 
     RELEASE_LOG(Process, "WebProcess::initializeAccessibility, pid = %d", getpid());
-    auto extensions = WTF::compactMap(WTF::move(handles), [](SandboxExtension::Handle&& handle) -> RefPtr<SandboxExtension> {
+    const Vector extensions = WTF::compactMap(WTF::move(handles), [](SandboxExtension::Handle&& handle) -> RefPtr<SandboxExtension> {
         auto extension = SandboxExtension::create(WTF::move(handle));
         if (extension)
             extension->consume();

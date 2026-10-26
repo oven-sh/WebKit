@@ -28,15 +28,13 @@
 
 #if ENABLE(DRAG_SUPPORT) && PLATFORM(MAC)
 
-#import "BitmapImage.h"
 #import "ColorMac.h"
 #import "Element.h"
 #import "FontCascade.h"
 #import "FontDescription.h"
 #import "FontSelector.h"
-#import "Image.h"
-#import "ImageAdapter.h"
 #import "LocalDefaultSystemAppearance.h"
+#import "NativeImage.h"
 #import "NodeDocument.h"
 #import "Page.h"
 #import "StringTruncator.h"
@@ -65,6 +63,12 @@ void deleteDragImage(RetainPtr<NSImage>)
     // delete it. It will be released when it falls out of scope.
 }
 
+IntPoint platformAdjustDragImageHotSpot(const IntPoint& hotSpot, const IntSize& dragImageSize)
+{
+    // The hot spot is relative to the image's lower-left corner.
+    return { hotSpot.x(), dragImageSize.height() - hotSpot.y() };
+}
+
 RetainPtr<NSImage> scaleDragImage(RetainPtr<NSImage> image, FloatSize scale)
 {
     NSSize originalSize = [image size];
@@ -89,46 +93,12 @@ RetainPtr<NSImage> dissolveDragImageToFraction(RetainPtr<NSImage> image, float d
     return dissolvedImage;
 }
 
-RetainPtr<NSImage> createDragImageFromImage(Image* image, ImageOrientation orientation, GraphicsClient*, float)
+RetainPtr<NSImage> createDragImageFromImage(NativeImage& image, GraphicsClient*, float)
 {
-    if (auto* bitmapImage = dynamicDowncast<BitmapImage>(*image)) {
-        if (orientation == ImageOrientation::Orientation::FromImage)
-            orientation = bitmapImage->currentFrameOrientation();
-
-        if (orientation != ImageOrientation::Orientation::None) {
-            // Construct a correctly-rotated copy of the image to use as the drag image.
-            FloatSize imageSize = image->size(orientation);
-            RetainPtr<NSImage> rotatedDragImage = adoptNS([[NSImage alloc] initWithSize:(NSSize)(imageSize)]);
-            [rotatedDragImage lockFocus];
-
-            // ImageOrientation uses top-left coordinates, need to flip to bottom-left, apply...
-            CGAffineTransform transform = CGAffineTransformMakeTranslation(0, imageSize.height());
-            transform = CGAffineTransformScale(transform, 1, -1);
-            transform = CGAffineTransformConcat(orientation.transformFromDefault(imageSize), transform);
-
-            if (orientation.usesWidthAsHeight())
-                imageSize = imageSize.transposedSize();
-
-            // ...and flip back.
-            transform = CGAffineTransformTranslate(transform, 0, imageSize.height());
-            transform = CGAffineTransformScale(transform, 1, -1);
-
-            RetainPtr<NSAffineTransform> cocoaTransform = adoptNS([[NSAffineTransform alloc] init]);
-            [cocoaTransform setTransformStruct:*(NSAffineTransformStruct*)&transform];
-            [cocoaTransform concat];
-
-            FloatRect imageRect(FloatPoint(), imageSize);
-            [image->adapter().snapshotNSImage() drawInRect:imageRect fromRect:imageRect operation:NSCompositingOperationSourceOver fraction:1.0];
-
-            [rotatedDragImage unlockFocus];
-
-            return rotatedDragImage;
-        }
-    }
-
-    FloatSize imageSize = image->size();
-    auto dragImage = image->adapter().snapshotNSImage();
-    [dragImage setSize:(NSSize)imageSize];
+    // An NSBitmapImageRep, unlike the representation -[NSImage initWithCGImage:size:] makes, reports the image's own pixel size.
+    RetainPtr imageRep = adoptNS([[NSBitmapImageRep alloc] initWithCGImage:image.platformImage().get()]);
+    RetainPtr dragImage = adoptNS([[NSImage alloc] initWithSize:image.size()]);
+    [dragImage addRepresentation:imageRep.get()];
     return dragImage;
 }
     
@@ -190,7 +160,7 @@ LinkImageLayout::LinkImageLayout(URL& url, const String& titleString)
     RetainPtr nsURL = url.createNSURL();
     NSString *absoluteURLString = [nsURL absoluteString];
 
-    NSString *domain = absoluteURLString;
+    RetainPtr domain = absoluteURLString;
 #if HAVE(URL_FORMATTING)
     domain = [nsURL _lp_simplifiedDisplayString];
 #else
@@ -237,7 +207,7 @@ LinkImageLayout::LinkImageLayout(URL& url, const String& titleString)
         RetainPtr<CGPathRef> textPath = adoptCF(CGPathCreateWithRect(CGRectMake(0, 0, textSize.width, textSize.height), nullptr));
         RetainPtr<CTFrameRef> textFrame = adoptCF(CTFramesetterCreateFrame(textFramesetter.get(), fitRange, textPath.get(), (CFDictionaryRef)frameAttributes));
 
-        CFArrayRef ctLines = CTFrameGetLines(textFrame.get());
+        RetainPtr ctLines = CTFrameGetLines(textFrame.get());
         CFIndex lineCount = CFArrayGetCount(ctLines);
         if (!lineCount)
             return;
@@ -247,7 +217,7 @@ LinkImageLayout::LinkImageLayout(URL& url, const String& titleString)
         CGFloat height = 0;
         CTFrameGetLineOrigins(textFrame.get(), CFRangeMake(0, 0), origins.mutableSpan().data());
         for (CFIndex lineIndex = 0; lineIndex < lineCount; ++lineIndex) {
-            CTLineRef line = (CTLineRef)CFArrayGetValueAtIndex(ctLines, lineIndex);
+            RetainPtr line = (CTLineRef)CFArrayGetValueAtIndex(ctLines, lineIndex);
 
             lineBounds = CTLineGetBoundsWithOptions(line, 0);
             CGFloat trailingWhitespaceWidth = CTLineGetTrailingWhitespaceWidth(line);
@@ -289,7 +259,7 @@ DragImageData createDragImageForLink(Element& element, URL& url, const String& t
 {
     LinkImageLayout layout(url, title);
 
-    LocalDefaultSystemAppearance localAppearance(element.document().useDarkAppearance(element.computedStyle()));
+    LocalDefaultSystemAppearance localAppearance(protect(element.document())->useDarkAppearance(protect(element.computedStyle())));
 
     auto imageSize = layout.boundingRect.size();
     RetainPtr<NSImage> dragImage = adoptNS([[NSImage alloc] initWithSize:imageSize]);

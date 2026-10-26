@@ -37,6 +37,8 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/FileSystem.h>
 #include <wtf/RefPtr.h>
+#include <wtf/glib/GLibExtras.h>
+#include <wtf/glib/GMallocString.h>
 #include <wtf/glib/GSpanExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/WTFGType.h>
@@ -79,7 +81,7 @@ static inline GError* toGError(WebKitUserContentFilterError code, const std::err
 #endif
 
 struct _WebKitUserContentFilterStorePrivate {
-    GUniquePtr<char> storagePath;
+    GMallocString storagePath;
 #if ENABLE(CONTENT_EXTENSIONS)
     RefPtr<API::ContentRuleListStore> store;
 #endif
@@ -106,7 +108,7 @@ static void webkitUserContentFilterStoreSetProperty(GObject* object, guint propI
 
     switch (propID) {
     case PROP_PATH:
-        store->priv->storagePath.reset(g_value_dup_string(value));
+        store->priv->storagePath = GMallocString::unsafeAdoptFromUTF8(g_value_dup_string(value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propID, paramSpec);
@@ -119,7 +121,7 @@ static void webkitUserContentFilterStoreConstructed(GObject* object)
 
 #if ENABLE(CONTENT_EXTENSIONS)
     WebKitUserContentFilterStore* store = WEBKIT_USER_CONTENT_FILTER_STORE(object);
-    store->priv->store = adoptRef(new API::ContentRuleListStore(FileSystem::stringFromFileSystemRepresentation(store->priv->storagePath.get())));
+    store->priv->store = adoptRef(new API::ContentRuleListStore(FileSystem::stringFromFileSystemRepresentation(store->priv->storagePath.utf8())));
 #endif
 }
 
@@ -182,7 +184,7 @@ WebKitUserContentFilterStore* webkit_user_content_filter_store_new(const gchar* 
 const char* webkit_user_content_filter_store_get_path(WebKitUserContentFilterStore* store)
 {
     g_return_val_if_fail(WEBKIT_IS_USER_CONTENT_FILTER_STORE(store), nullptr);
-    return store->priv->storagePath.get();
+    return store->priv->storagePath.utf8();
 }
 
 #if ENABLE(CONTENT_EXTENSIONS)
@@ -515,7 +517,7 @@ void webkit_user_content_filter_store_fetch_identifiers(WebKitUserContentFilterS
         auto result = GMallocSpan<gchar*>::malloc(bytesToAllocate);
         for (size_t i = 0; i < identifiers.size(); ++i) {
             const auto identifier = identifiers[i].utf8();
-            result[i] = g_strndup(identifier.legacyCStringPointer(), identifier.length());
+            result[i] = gStrdup(identifier);
         }
         result[identifiers.size()] = nullptr;
 

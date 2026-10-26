@@ -58,6 +58,7 @@
 #include "PositionedLayoutConstraints.h"
 #include "RenderBoxInlines.h"
 #include "RenderElement.h"
+#include "RenderText.h"
 #include "RenderView.h"
 #include "ResolvedStyle.h"
 #include "SelectPopoverElement.h"
@@ -104,8 +105,10 @@ TreeResolver::Scope::Scope(Document& document, Update& update)
     document.setIsResolvingTreeStyle(true);
 
     // Ensure all shadow tree resolvers exist so their construction doesn't depend on traversal.
-    for (Ref shadowRoot : document.inDocumentShadowRoots())
-        const_cast<ShadowRoot&>(shadowRoot.get()).styleScope().resolver();
+    for (Ref shadowRoot : document.inDocumentShadowRoots()) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST const_cast<ShadowRoot&>(shadowRoot.get()).styleScope().resolver();
+    }
 
     selectorMatchingState.containerQueryEvaluationState.styleUpdate = &update;
 }
@@ -534,6 +537,10 @@ std::optional<ElementUpdate> TreeResolver::resolvePseudoElement(Element& element
     if (!elementUpdate.style->hasPseudoStyle(pseudoElementIdentifier.type))
         return resolveAncestorPseudoElement(element, pseudoElementIdentifier, elementUpdate);
 
+    // No matching rule can generate a box. Animations still might (e.g. animating 'content'), and running ones need updating.
+    if ((pseudoElementIdentifier.type == PseudoElementType::Before || pseudoElementIdentifier.type == PseudoElementType::After) && elementUpdate.style->pseudoElementBoxGeneration() == PseudoElementBoxGeneration::NotForBeforeOrAfter && !element.hasKeyframeEffects(pseudoElementIdentifier))
+        return { };
+
     if ((pseudoElementIdentifier.type == PseudoElementType::FirstLine || pseudoElementIdentifier.type == PseudoElementType::FirstLetter) && !supportsFirstLineAndLetterPseudoElement(*elementUpdate.style))
         return { };
 
@@ -612,7 +619,7 @@ std::optional<ElementUpdate> TreeResolver::resolveAncestorPseudoElement(Element&
     return createAnimatedElementUpdate(WTF::move(*pseudoElementStyle), { element, pseudoElementIdentifier }, changes, resolutionContext);
 }
 
-static bool NODELETE isChildInBlockFormattingContext(const Style::ComputedStyle& style)
+static bool LEGACY_NODELETE isChildInBlockFormattingContext(const Style::ComputedStyle& style)
 {
     // FIXME: Incomplete. There should be shared code with layout for this.
     if (style.display() != DisplayType::BlockFlow && style.display() != DisplayType::BlockFlowListItem)
@@ -972,7 +979,7 @@ ElementUpdate TreeResolver::createAnimatedElementUpdate(ResolvedStyle&& resolved
             return false;
         if (unanimatedDisplay != animatedDisplay)
             return true;
-        return keyframeEffectStack->containsProperty(CSSPropertyDisplay);
+        return keyframeEffectStack->containsProperty(CSSPropertyID::Display);
     }();
 
     SUPPRESS_UNCOUNTED_ARG if (!affectsRenderedSubtree(styleable.element, *newStyle) && !animationsAffectedDisplay) {
@@ -1113,7 +1120,7 @@ HashSet<AnimatableCSSProperty> TreeResolver::applyCascadeAfterAnimation(Style::C
     return styleBuilder.overriddenAnimatedProperties();
 }
 
-static bool isInlineBox(Style::Display display)
+static bool LEGACY_NODELETE isInlineBox(Style::Display display)
 {
     return display == DisplayType::InlineFlow || display.isRubyContainerOrInternalRubyBox();
 }
@@ -1262,7 +1269,7 @@ auto TreeResolver::determineResolutionType(const Element& element, const Style::
     return { };
 }
 
-static void NODELETE clearNeedsStyleResolution(Element& element)
+static void LEGACY_NODELETE clearNeedsStyleResolution(Element& element)
 {
     element.setHasValidStyle();
     if (auto* before = element.beforePseudoElement())
@@ -1343,7 +1350,7 @@ void TreeResolver::resolveComposedTree()
             auto inheritedDisplayContentsStyle = isDisplayContentsParent ? createInheritedDisplayContentsStyleIfNeeded(parent.style, parentBoxStyle()) : nullptr;
 
             auto needsTextUpdate = [&] {
-                if ((text->hasInvalidRenderer() && parent.changes != Change::Renderer) || inheritedDisplayContentsStyle)
+                if ((text->hasInvalidRenderer() && !parent.changes.contains(Change::Renderer)) || inheritedDisplayContentsStyle)
                     return true;
 
                 auto* textRenderer = text->renderer();
@@ -1771,8 +1778,8 @@ std::unique_ptr<Style::ComputedStyle> TreeResolver::generatePositionOption(const
         // "If an at-rule or property defines a name that other CSS constructs can refer to it by, ... it must be defined as a tree-scoped name."
         // https://drafts.csswg.org/css-scoping-1/#shadow-names
         return Style::resolveTreeScopedReference(protect(styleable.element), *fallback.ruleAndTactics.rule, [](const Style::Scope& scope, const Style::ScopedName& scopedName) -> RefPtr<const StyleProperties> {
-            auto& ruleSet = scope.resolverIfExists()->ruleSets().authorStyle();
-            RefPtr rule = ruleSet.positionTryRuleForName(scopedName.name);
+            Ref ruleSet = scope.resolverIfExists()->ruleSets().authorStyle();
+            RefPtr rule = ruleSet->positionTryRuleForName(scopedName.name);
             if (!rule)
                 return nullptr;
             return rule->properties();
@@ -2068,13 +2075,13 @@ void TreeResolver::collectChangedAnchorNames(const Style::ComputedStyle& newStyl
     }
 }
 
-static Vector<Function<void ()>>& NODELETE postResolutionCallbackQueue()
+static Vector<Function<void ()>>& LEGACY_NODELETE postResolutionCallbackQueue()
 {
     static NeverDestroyed<Vector<Function<void ()>>> vector;
     return vector;
 }
 
-static Vector<Ref<Frame>>& NODELETE memoryCacheClientCallsResumeQueue()
+static Vector<Ref<Frame>>& LEGACY_NODELETE memoryCacheClientCallsResumeQueue()
 {
     static NeverDestroyed<Vector<Ref<Frame>>> vector;
     return vector;

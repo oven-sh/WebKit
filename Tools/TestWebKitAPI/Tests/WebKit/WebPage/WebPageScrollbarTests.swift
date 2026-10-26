@@ -161,7 +161,7 @@ struct ScrollbarTests {
 
         let point = NSPoint(x: Self.subscrollerMaxEdge - 5, y: Self.subscrollerCenter)
 
-        #expect(!page.isPointInScrollbar(locationInView: point))
+        #expect(page.isPointInScrollbar(locationInView: point) == false)
     }
 
     @Test
@@ -174,7 +174,7 @@ struct ScrollbarTests {
 
         let point = NSPoint(x: Self.subscrollerMaxEdge - 5, y: Self.subscrollerCenter)
 
-        #expect(!page.isPointInScrollbar(locationInView: point))
+        #expect(page.isPointInScrollbar(locationInView: point) == false)
     }
 
     @Test
@@ -194,7 +194,7 @@ struct ScrollbarTests {
 
         let point = NSPoint(x: Self.subscrollerMaxEdge - 5, y: Self.subscrollerCenter)
 
-        #expect(!page.isPointInScrollbar(locationInView: point))
+        #expect(page.isPointInScrollbar(locationInView: point) == false)
     }
 }
 

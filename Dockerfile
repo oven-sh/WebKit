@@ -6,6 +6,13 @@ ARG LLVM_VERSION="23"
 # The -lto variants append -g1 (line tables only) after this, see $G below; every other variant keeps full -g.
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
 ARG ENABLE_SANITIZERS=""
+# Assertions in a build type that has none. The sanitizer variants turn them on by themselves.
+ARG ENABLE_ASSERTS="AUTO"
+# JavaScriptCore compiled with -fsanitize-coverage=trace-pc-guard, and a jsc that Fuzzilli can drive. A CMake option and
+# not a flag in CFLAGS: those also build ICU, whose tools run during the build and have no coverage callbacks.
+ARG ENABLE_FUZZILLI="OFF"
+# Added to the flags ICU and WebKit are compiled with.
+ARG HARDENING_FLAGS=""
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
 # What the lane is built for: x86_64, which is what this container is, or aarch64, cross-compiled against the sysroot
@@ -13,13 +20,13 @@ ARG USE_EXTERNAL_MIMALLOC="OFF"
 ARG LINUX_ARCH="x86_64"
 
 # The arm64 ubuntu:20.04, only ever copied from (see the aarch64 sysroot in `base`): nothing of it is run.
-FROM --platform=linux/arm64 ubuntu:20.04 as rootfs-arm64
+FROM --platform=linux/arm64 ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214 as rootfs-arm64
 
 # `base` is the toolchain and ICU's data: it takes no lane setting (LTO_FLAG, MARCH_FLAG, WEBKIT_RELEASE_TYPE, ...), so
 # it is the same for every lane of an architecture. CI builds it once per change, keeps it in ghcr.io, and hands it to
 # the lanes as `--build-context base=docker-image://...`, which replaces this stage (.github/workflows/ci.yml, the
 # `image` job). Without that, it is built here like any other stage. Lane settings belong in `lane` below.
-FROM ubuntu:20.04 as base
+FROM ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214 as base
 
 ARG LLVM_VERSION
 
@@ -51,17 +58,26 @@ RUN ( apt-get update || \
     && rm -rf /var/lib/apt/lists/*
 
 # Node, for ICU's data (bun/data/icu-data.ts there; >= 22.6 for type stripping).
-ARG NODE_VERSION=24.16.0
-ARG NODE_SHA256=d804845d34eddc21dc1092b519d643ef40b1f58ec5dec5c22b1f4bd8fabde6c9
-ADD --checksum=sha256:${NODE_SHA256} https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz /tmp/node.tar.xz
-RUN tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && rm /tmp/node.tar.xz && node --version
+ARG NODE_VERSION=24.22.1
+ARG NODE_SHA256=6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6
+RUN curl -fsSL --retry 5 --retry-connrefused \
+        "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+        -o /tmp/node.tar.xz \
+    && echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
+    && rm /tmp/node.tar.xz \
+    && node --version
 
 # Install modern CMake for Ubuntu
-RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null \
-    && apt-add-repository "deb https://apt.kitware.com/ubuntu/ $(lsb_release -cs) main" \
-    && apt-get update \
-    && apt-get install -y cmake \
-    && rm -rf /var/lib/apt/lists/*
+ARG CMAKE_VERSION=4.4.4
+ARG CMAKE_SHA256=e5bb807f7728cb60cd8b27ebc97a2edb469b68655f21e844a600c3575b76f5bb
+RUN curl -fsSL --retry 5 --retry-connrefused \
+        "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz" \
+        -o /tmp/cmake.tar.gz \
+    && echo "${CMAKE_SHA256}  /tmp/cmake.tar.gz" | sha256sum -c - \
+    && tar xzf /tmp/cmake.tar.gz -C /usr/local --strip-components=1 \
+    && rm /tmp/cmake.tar.gz \
+    && cmake --version
 
 # Install GCC 13 toolchain
 # Mirrored from ppa:ubuntu-toolchain-r/test to a GitHub release so this image
@@ -277,6 +293,9 @@ ARG LTO_FLAG
 ARG RELEASE_FLAGS
 ARG DEFAULT_CFLAGS
 ARG ENABLE_SANITIZERS
+ARG ENABLE_ASSERTS
+ARG ENABLE_FUZZILLI
+ARG HARDENING_FLAGS
 ARG USE_MIMALLOC
 ARG USE_EXTERNAL_MIMALLOC
 ARG LINUX_ARCH
@@ -284,6 +303,8 @@ ARG ICU_VERSION
 ARG ICU_CPPFLAGS
 
 ENV LTO_FLAG="${LTO_FLAG}"
+ENV CFLAGS="$CFLAGS ${HARDENING_FLAGS}"
+ENV CXXFLAGS="$CXXFLAGS ${HARDENING_FLAGS}"
 
 # ICU's libraries, with the lane's flags, and its data, which `base` made, as the third.
 #
@@ -323,6 +344,11 @@ ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 # After linking, the newest glibc symbol version jsc needs is read off it: that is the oldest glibc the artifact runs
 # on, and it must not be past the container's, 2.31.
 #
+# With ENABLE_FUZZILLI the libraries must call the coverage callbacks and leave them undefined: Bun defines its own.
+#
+# With HARDENING_FLAGS jsc must import what the stack protector and _FORTIFY_SOURCE call. It is read off jsc because the
+# archives of an LTO lane are bitcode, which does not name __stack_chk_fail yet.
+#
 # clang searches C_INCLUDE_PATH (gcc-13's builtin-header dir) before its own
 # resource dir, so C TUs including <immintrin.h> (mimalloc static.c, -march=nehalem)
 # pick up gcc's incompatible copy. clang ships its own; drop it for this step.
@@ -331,7 +357,6 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
     export CFLAGS="$CFLAGS $G $LTO_FLAG -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
     export CXXFLAGS="$CXXFLAGS $G $LTO_FLAG -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=. " && \
-    export ENABLE_ASSERTS="AUTO" && \
     export LDFLAGS="-fuse-ld=lld $LDFLAGS " && \
     if [ -n "$ENABLE_SANITIZERS" ]; then \
         export ENABLE_ASSERTS="ON"; \
@@ -364,6 +389,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DICU_ROOT=/output \
     -DENABLE_SANITIZERS="$ENABLE_SANITIZERS" \
     -DENABLE_ASSERTS="$ENABLE_ASSERTS" \
+    -DENABLE_FUZZILLI="$ENABLE_FUZZILLI" \
     -DUSE_MIMALLOC="$USE_MIMALLOC" \
     -DUSE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
     -G Ninja \
@@ -378,12 +404,23 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     glibc=$(llvm-readelf --version-info $WEBKIT_OUT_DIR/bin/jsc | grep -o 'GLIBC_[0-9][0-9.]*' | sort -uV | tail -1) && \
     echo "jsc needs glibc symbols up to $glibc" && \
     { [ -n "$glibc" ] && [ "$(printf '%s\n' GLIBC_2.31 "$glibc" | sort -V | tail -1)" = GLIBC_2.31 ] || { echo "error: that is newer than GLIBC_2.31" >&2; exit 1; }; } && \
+    if [ "$ENABLE_FUZZILLI" = ON ]; then \
+        for callback in __sanitizer_cov_trace_pc_guard __sanitizer_cov_trace_pc_guard_init; do \
+            llvm-nm --undefined-only $WEBKIT_OUT_DIR/lib/libJavaScriptCore.a | grep -qw $callback || { echo "error: libJavaScriptCore.a does not call $callback" >&2; exit 1; }; \
+            ! llvm-nm --defined-only $WEBKIT_OUT_DIR/lib/*.a | grep -w $callback || { echo "error: a library defines $callback, which is for whoever links it to do" >&2; exit 1; }; \
+        done; \
+    fi && \
+    if [ -n "$HARDENING_FLAGS" ]; then \
+        llvm-readelf --dyn-syms $WEBKIT_OUT_DIR/bin/jsc | grep -o '__[a-z_]*_chk[a-z_]*' | sort -u > /tmp/chk && cat /tmp/chk && \
+        grep -qx __stack_chk_fail /tmp/chk || { echo "error: jsc has no stack protector" >&2; exit 1; }; \
+        grep -qv __stack_chk /tmp/chk || { echo "error: jsc calls no checked libc function, _FORTIFY_SOURCE did nothing" >&2; exit 1; }; \
+    fi && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \
     cp $WEBKIT_OUT_DIR/*.json /output && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/ -name "*.h" -exec sh -c 'cp "$1" "/output/include/JavaScriptCore/$(basename "$1")"' sh {} \; && \
-    find $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/ -name "*.json" -exec sh -c 'cp "$1" "/output/$(basename "$1")"' sh {} \; && \
+    cp $WEBKIT_OUT_DIR/JavaScriptCore/Scripts/CombinedDomains.json /output && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} /output/include/JavaScriptCore/ \; && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/PrivateHeaders/JavaScriptCore/ -name "*.h" -exec cp {} /output/include/JavaScriptCore/ \; && \
     cp -r $WEBKIT_OUT_DIR/WTF/Headers/wtf/ /output/include && \

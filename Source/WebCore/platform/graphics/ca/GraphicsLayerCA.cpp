@@ -119,7 +119,7 @@ static const unsigned cMaxScaledTiledLayerMemorySize = 1024 * 1024 * 156;
 // of 250ms. So send a very small value instead.
 static const float cAnimationAlmostZeroDuration = 1e-3f;
 
-static bool NODELETE isTransformTypeTransformationMatrix(TransformOperation::Type transformType)
+static bool LEGACY_NODELETE isTransformTypeTransformationMatrix(TransformOperation::Type transformType)
 {
     switch (transformType) {
     case TransformOperation::Type::SkewX:
@@ -137,7 +137,7 @@ static bool NODELETE isTransformTypeTransformationMatrix(TransformOperation::Typ
     }
 }
 
-static bool NODELETE isTransformTypeFloatPoint3D(TransformOperation::Type transformType)
+static bool LEGACY_NODELETE isTransformTypeFloatPoint3D(TransformOperation::Type transformType)
 {
     switch (transformType) {
     case TransformOperation::Type::Scale:
@@ -150,12 +150,12 @@ static bool NODELETE isTransformTypeFloatPoint3D(TransformOperation::Type transf
     }
 }
 
-static bool NODELETE isTransformTypeNumber(TransformOperation::Type transformType)
+static bool LEGACY_NODELETE isTransformTypeNumber(TransformOperation::Type transformType)
 {
     return !isTransformTypeTransformationMatrix(transformType) && !isTransformTypeFloatPoint3D(transformType);
 }
 
-static void NODELETE getTransformFunctionValue(const TransformOperation* transformOp, TransformOperation::Type transformType, float& value)
+static void LEGACY_NODELETE getTransformFunctionValue(const TransformOperation* transformOp, TransformOperation::Type transformType, float& value)
 {
     switch (transformType) {
     case TransformOperation::Type::Rotate:
@@ -186,7 +186,7 @@ static void NODELETE getTransformFunctionValue(const TransformOperation* transfo
     }
 }
 
-static void NODELETE getTransformFunctionValue(const TransformOperation* transformOp, TransformOperation::Type transformType, FloatPoint3D& value)
+static void LEGACY_NODELETE getTransformFunctionValue(const TransformOperation* transformOp, TransformOperation::Type transformType, FloatPoint3D& value)
 {
     switch (transformType) {
     case TransformOperation::Type::Scale:
@@ -232,7 +232,7 @@ static void getTransformFunctionValue(const TransformOperation* transformOp, Tra
     }
 }
 
-static PlatformCAAnimation::ValueFunctionType NODELETE getValueFunctionNameForTransformOperation(TransformOperation::Type transformType)
+static PlatformCAAnimation::ValueFunctionType LEGACY_NODELETE getValueFunctionNameForTransformOperation(TransformOperation::Type transformType)
 {
     // Use literal strings to avoid link-time dependency on those symbols.
     switch (transformType) {
@@ -265,7 +265,7 @@ static PlatformCAAnimation::ValueFunctionType NODELETE getValueFunctionNameForTr
     }
 }
 
-static bool NODELETE animatedPropertyIsTransformOrRelated(AnimatedProperty property)
+static bool LEGACY_NODELETE animatedPropertyIsTransformOrRelated(AnimatedProperty property)
 {
     return property == AnimatedProperty::Transform || property == AnimatedProperty::Translate || property == AnimatedProperty::Scale || property == AnimatedProperty::Rotate;
 }
@@ -287,12 +287,12 @@ static bool animationHasStepsTimingFunction(const GraphicsLayerKeyframeValueList
     return false;
 }
 
-static inline bool NODELETE supportsAcceleratedFilterAnimations()
+static inline bool LEGACY_NODELETE supportsAcceleratedFilterAnimations()
 {
     return true;
 }
 
-static PlatformCALayer::FilterType NODELETE toPlatformCALayerFilterType(GraphicsLayer::ScalingFilter filter)
+static PlatformCALayer::FilterType LEGACY_NODELETE toPlatformCALayerFilterType(GraphicsLayer::ScalingFilter filter)
 {
     switch (filter) {
     case GraphicsLayer::ScalingFilter::Linear:
@@ -393,7 +393,7 @@ Ref<PlatformCAAnimation> GraphicsLayerCA::createPlatformCAAnimation(PlatformCAAn
 
 using LayerDisplayListHashMap = HashMap<const GraphicsLayerCA*, std::pair<FloatRect, Ref<const DisplayList::DisplayList>>>;
 
-static LayerDisplayListHashMap& NODELETE layerDisplayListMap()
+static LayerDisplayListHashMap& LEGACY_NODELETE layerDisplayListMap()
 {
     static NeverDestroyed<LayerDisplayListHashMap> sharedHashMap;
     return sharedHashMap;
@@ -467,7 +467,7 @@ GraphicsLayerCA::~GraphicsLayerCA()
         protect(m_contentsShapeMaskLayer)->setOwner(nullptr);
 
     if (m_shapeMaskLayer)
-        protect(m_shapeMaskLayer)->setOwner(nullptr);
+        m_shapeMaskLayer->setOwner(nullptr);
 
     if (m_structuralLayer)
         protect(m_structuralLayer)->setOwner(nullptr);
@@ -781,10 +781,14 @@ void GraphicsLayerCA::setTonemappingEnabled(bool tonemappingEnabled)
 
 void GraphicsLayerCA::setNeedsDisplayIfEDRHeadroomExceeds(float headroom)
 {
-    if (protect(m_layer)->setNeedsDisplayIfEDRHeadroomExceeds(headroom)) {
-        if (!!m_uncommittedChanges)
-            client().notifyFlushRequired(this);
-    }
+    if (beingDestroyed())
+        return;
+
+    if (!protect(m_layer)->setNeedsDisplayIfEDRHeadroomExceeds(headroom))
+        return;
+
+    if (!m_uncommittedChanges)
+        client().notifyFlushRequired(this);
 }
 #endif
 
@@ -946,6 +950,15 @@ bool GraphicsLayerCA::setFilters(const FilterOperations& filterOperations)
         noteLayerPropertyChanged(FiltersChanged);
     }
     return canCompositeFilters;
+}
+
+void GraphicsLayerCA::setFilterSamplingOutsets(const IntOutsets& outsets)
+{
+    if (outsets == filterSamplingOutsets())
+        return;
+
+    GraphicsLayer::setFilterSamplingOutsets(outsets);
+    noteLayerPropertyChanged(CoverageRectChanged);
 }
 
 bool GraphicsLayerCA::setBackdropFilters(const FilterOperations& filterOperations)
@@ -1347,17 +1360,13 @@ void GraphicsLayerCA::setContentsToSolidColor(const Color& color)
     noteLayerPropertyChanged(ContentsColorLayerChanged);
 }
 
-void GraphicsLayerCA::setContentsToImage(Image* image)
+void GraphicsLayerCA::setContentsToNativeImage(NativeImage* image)
 {
     if (image) {
-        auto newImage = image->currentNativeImage();
-        if (!newImage)
+        if (m_pendingContentsImage == image)
             return;
 
-        if (m_pendingContentsImage == newImage)
-            return;
-
-        m_pendingContentsImage = WTF::move(newImage);
+        m_pendingContentsImage = image;
         m_contentsLayerPurpose = ContentsLayerPurpose::Image;
         if (!m_contentsLayer)
             noteSublayersChanged();
@@ -1663,7 +1672,7 @@ void GraphicsLayerCA::flushCompositingStateForThisLayerOnly()
         client().didChangePlatformLayerForLayer(this);
 }
 
-static inline bool NODELETE accumulatesTransform(const GraphicsLayerCA& layer)
+static inline bool LEGACY_NODELETE accumulatesTransform(const GraphicsLayerCA& layer)
 {
     return !layer.masksToBounds() && (layer.preserves3D() || (layer.parent() && layer.parent()->preserves3D()));
 }
@@ -1688,7 +1697,7 @@ bool GraphicsLayerCA::recursiveVisibleRectChangeRequiresFlush(const CommitState&
         return true;
 
     if (rects.coverageRect != m_coverageRect) {
-        if (TiledBacking* tiledBacking = this->tiledBacking()) {
+        if (CheckedPtr tiledBacking = this->tiledBacking()) {
             if (tiledBacking->tilesWouldChangeForCoverageRect(rects.coverageRect))
                 return true;
         }
@@ -1844,10 +1853,44 @@ GraphicsLayerCA::VisibleAndCoverageRects GraphicsLayerCA::computeVisibleAndCover
     if (masksToBounds()) {
         ASSERT(accumulation == TransformState::FlattenTransform);
         // Flatten, and replace the quad in the TransformState with one that is clipped to this layer's bounds.
-        if (state.isMappingSecondaryQuad())
+        if (state.isMappingSecondaryQuad()) {
+#if PLATFORM(MAC)
+            bool secondaryMapWasClamped = false;
+            auto secondaryQuad = state.mappedSecondaryQuad(&secondaryMapWasClamped);
+            auto coverageRectForSelf = clipRectForSelf;
+            if (secondaryQuad && !secondaryMapWasClamped && !applyWasClamped)
+                coverageRectForSelf = intersection(secondaryQuad->boundingBox(), FloatRect { { }, m_size });
+            state.reset(clipRectForSelf, coverageRectForSelf);
+#else
             state.reset(clipRectForSelf, clipRectForSelf);
-        else
+#endif
+        } else
             state.reset(clipRectForSelf);
+    }
+
+    // A pixel-moving filter reads pixels beyond the visible rects of this layer, so descendents need backing store there too.
+    // Filters flatten, so this applies even if the parent preserves 3D and the visible rect state is still acumulating.
+    if (auto& samplingOutsets = filterSamplingOutsets(); !samplingOutsets.isZero() && !this->preserves3D()) {
+        bool quadWasClamped = false;
+        bool secondaryQuadWasClamped = false;
+        auto quad = state.mappedQuad(&quadWasClamped);
+        auto secondaryQuad = state.mappedSecondaryQuad(&secondaryQuadWasClamped);
+        if (!quadWasClamped && !secondaryQuadWasClamped) {
+            auto samplingExtent = toFloatBoxExtent(samplingOutsets);
+            auto expandBySamplingExtent = [&](const FloatQuad& mappedQuad) {
+                auto rect = mappedQuad.boundingBox();
+                if (rect.isEmpty())
+                    return FloatQuad { rect };
+                rect.expand(samplingExtent);
+                if (masksToBounds())
+                    rect.intersect({ { }, m_size });
+                return FloatQuad { rect };
+            };
+            if (secondaryQuad)
+                state.reset(expandBySamplingExtent(quad), expandBySamplingExtent(*secondaryQuad));
+            else
+                state.reset(expandBySamplingExtent(quad));
+        }
     }
 
     auto boundsOrigin = m_boundsOrigin;
@@ -1877,11 +1920,11 @@ bool GraphicsLayerCA::adjustCoverageRect(VisibleAndCoverageRects& rects, const F
 
     switch (type()) {
     case Type::PageTiledBacking:
-        coverageRect = tiledBacking()->adjustTileCoverageRectForScrolling(coverageRect, size(), oldVisibleRect, rects.visibleRect, pageScaleFactor() * deviceScaleFactor());
+        coverageRect = protect(tiledBacking())->adjustTileCoverageRectForScrolling(coverageRect, size(), oldVisibleRect, rects.visibleRect, pageScaleFactor() * deviceScaleFactor());
         break;
     case Type::ScrolledContents:
         if (m_layer->usesTiledBackingLayer())
-            coverageRect = tiledBacking()->adjustTileCoverageRectForScrolling(coverageRect, size(), oldVisibleRect, rects.visibleRect, pageScaleFactor() * deviceScaleFactor());
+            coverageRect = protect(tiledBacking())->adjustTileCoverageRectForScrolling(coverageRect, size(), oldVisibleRect, rects.visibleRect, pageScaleFactor() * deviceScaleFactor());
         else {
             // Even if we don't have tiled backing, we want to expand coverage so that contained layers get attached backing store.
             coverageRect = adjustCoverageRectForMovement(coverageRect, oldVisibleRect, rects.visibleRect);
@@ -1890,7 +1933,7 @@ bool GraphicsLayerCA::adjustCoverageRect(VisibleAndCoverageRects& rects, const F
     case Type::Normal:
     case Type::TiledBacking:
         if (m_layer->usesTiledBackingLayer())
-            coverageRect = tiledBacking()->adjustTileCoverageRect(coverageRect, oldVisibleRect, rects.visibleRect, size() != m_sizeAtLastCoverageRectUpdate);
+            coverageRect = protect(tiledBacking())->adjustTileCoverageRect(coverageRect, oldVisibleRect, rects.visibleRect, size() != m_sizeAtLastCoverageRectUpdate);
         break;
     default:
         break;
@@ -1997,7 +2040,7 @@ void GraphicsLayerCA::recursiveCommitChanges(CommitState& commitState, const Tra
         constexpr auto washFillColor = Color::red.colorWithAlphaByte(50);
         constexpr auto washBorderColor = Color::red.colorWithAlphaByte(100);
         
-        m_visibleTileWashLayer = createPlatformCALayer(PlatformCALayer::LayerTypeLayer, this);
+        lazyInitialize(m_visibleTileWashLayer, createPlatformCALayer(PlatformCALayer::LayerTypeLayer, this));
         m_visibleTileWashLayer->setName(makeString("Visible Tile Wash Layer 0x"_s, hex(reinterpret_cast<uintptr_t>(m_visibleTileWashLayer->platformLayer()), Lowercase)));
         m_visibleTileWashLayer->setAnchorPoint(FloatPoint3D(0, 0, 0));
         m_visibleTileWashLayer->setBorderColor(washBorderColor);
@@ -2091,9 +2134,9 @@ void GraphicsLayerCA::recursiveCommitChanges(CommitState& commitState, const Tra
         TraceScope tracingScope(DisplayListRecordStart, DisplayListRecordEnd);
         m_displayList = nullptr;
         FloatRect initialClip(boundsOrigin(), size());
-        DisplayList::RecorderImpl context(initialClip);
+        Ref context = DisplayList::RecorderImpl::create(initialClip);
         paintGraphicsLayerContents(context, FloatRect(FloatPoint(), size()));
-        m_displayList = context.takeDisplayList();
+        m_displayList = context->takeDisplayList();
     }
 }
 
@@ -2344,6 +2387,8 @@ void GraphicsLayerCA::commitLayerChangesBeforeSublayers(CommitState& commitState
     if (m_uncommittedChanges & ContentsRectsChanged) // Needs to happen before ChildrenChanged
         updateContentsRects();
 
+    updateAntialiasesEdges(commitState, pageScaleFactor);
+
     if (m_uncommittedChanges & EventRegionChanged)
         updateEventRegion();
 
@@ -2535,7 +2580,7 @@ void GraphicsLayerCA::updateGeometry(float pageScaleFactor, const FloatPoint& po
 
     // FIXME: figure out if we really need to pixel align the graphics layer here.
     if (client().needsPixelAligment() && !WTF::isIntegral(pageScaleFactor) && m_drawsContent && !m_masksToBounds)
-        computePixelAlignment(pageScaleFactor, positionRelativeToBase, scaledPosition, scaledAnchorPoint, pixelAlignmentOffset);
+        computePixelAlignment(pageScaleFactor, positionRelativeToBase, scaledPosition, scaledSize, scaledAnchorPoint, pixelAlignmentOffset);
 
     // Update position.
     // Position is offset on the layer by the layer anchor point.
@@ -2576,7 +2621,8 @@ void GraphicsLayerCA::updateGeometry(float pageScaleFactor, const FloatPoint& po
     // Push the layer to device pixel boundary (setPosition()), but move the content back to its original position (setBounds())
     RefPtr layer = m_layer;
     layer->setPosition(adjustedPosition);
-    FloatRect adjustedBounds = FloatRect(FloatPoint(m_boundsOrigin - pixelAlignmentOffset), m_size);
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST FloatRect adjustedBounds = FloatRect(FloatPoint(m_boundsOrigin - pixelAlignmentOffset), scaledSize);
     layer->setBounds(adjustedBounds);
     layer->setAnchorPoint(scaledAnchorPoint);
 
@@ -3064,7 +3110,7 @@ void GraphicsLayerCA::updateDrawsContent()
 void GraphicsLayerCA::updateCoverage(const CommitState& commitState)
 {
     // FIXME: Need to set coverage on clone layers too.
-    if (TiledBacking* backing = tiledBacking()) {
+    if (CheckedPtr backing = tiledBacking()) {
         backing->setVisibleRect(m_visibleRect);
         backing->setCoverageRect(m_coverageRect);
     }
@@ -3177,7 +3223,7 @@ void GraphicsLayerCA::updateTiles()
     if (!m_layer->usesTiledBackingLayer())
         return;
 
-    tiledBacking()->revalidateTiles();
+    protect(tiledBacking())->revalidateTiles();
 }
 
 void GraphicsLayerCA::updateBackgroundColor()
@@ -3205,17 +3251,18 @@ void GraphicsLayerCA::updateContentsImage()
         Ref contentsLayer = *m_contentsLayer;
         contentsLayer->setMinificationFilter(PlatformCALayer::FilterType::Trilinear);
 
-        if (RefPtr pendingContentsImage = std::exchange(m_pendingContentsImage, nullptr))
-            contentsLayer->setContents(pendingContentsImage->platformImage().get());
+        RefPtr pendingContentsImage = std::exchange(m_pendingContentsImage, nullptr);
+        if (pendingContentsImage)
+            setLayerContentsToNativeImage(contentsLayer, *pendingContentsImage);
         else
             setLayerContentsToImageBuffer(contentsLayer, m_pendingContentsImageBuffer.get());
 
         if (m_layerClones) {
             for (auto& layer : m_layerClones->contentsLayerClones.values()) {
-                if (m_pendingContentsImageBuffer)
-                    setLayerContentsToImageBuffer(layer, m_pendingContentsImageBuffer.get());
+                if (pendingContentsImage)
+                    setLayerContentsToNativeImage(layer, *pendingContentsImage);
                 else
-                    layer->setContents(contentsLayer->contents());
+                    setLayerContentsToImageBuffer(layer, m_pendingContentsImageBuffer.get());
             }
         }
 
@@ -3227,6 +3274,11 @@ void GraphicsLayerCA::updateContentsImage()
         // m_contentsLayer will be removed via updateSublayerList.
         m_contentsLayer = nullptr;
     }
+}
+
+void GraphicsLayerCA::setLayerContentsToNativeImage(PlatformCALayer& layer, NativeImage& image)
+{
+    layer.setContents(image.platformImage().get());
 }
 
 void GraphicsLayerCA::updateContentsPlatformLayer()
@@ -3407,7 +3459,7 @@ void GraphicsLayerCA::updateEventRegion()
 #if ENABLE(SCROLLING_THREAD)
 void GraphicsLayerCA::updateScrollingNode()
 {
-    m_layer->setScrollingNodeID(scrollingNodeID());
+    protect(m_layer)->setScrollingNodeID(scrollingNodeID());
 }
 #endif
 
@@ -3849,7 +3901,7 @@ void GraphicsLayerCA::updateContentsNeedsDisplay()
         contentsLayer->setNeedsDisplay();
 }
 
-static bool NODELETE isKeyframe(const GraphicsLayerKeyframeValueList& list)
+static bool LEGACY_NODELETE isKeyframe(const GraphicsLayerKeyframeValueList& list)
 {
     return list.size() > 1;
 }
@@ -3906,12 +3958,12 @@ bool GraphicsLayerCA::appendToUncommittedAnimations(const GraphicsLayerKeyframeV
     return true;
 }
 
-static const TransformOperations& NODELETE transformationAnimationValueAt(const GraphicsLayerKeyframeValueList& valueList, unsigned i)
+static const TransformOperations& LEGACY_NODELETE transformationAnimationValueAt(const GraphicsLayerKeyframeValueList& valueList, unsigned i)
 {
     return downcast<GraphicsLayerTransformAnimationValue>(valueList.at(i)).value();
 }
 
-static bool NODELETE hasBig3DRotation(const GraphicsLayerKeyframeValueList& valueList, const TransformOperationsSharedPrimitivesPrefix<TransformOperation::Type>& prefix)
+static bool LEGACY_NODELETE hasBig3DRotation(const GraphicsLayerKeyframeValueList& valueList, const TransformOperationsSharedPrimitivesPrefix<TransformOperation::Type>& prefix)
 {
     // Hardware non-matrix animations are used for every function in the shared primitives prefix.
     // These kind of animations have issues with large rotation angles, so for every function that
@@ -4444,7 +4496,7 @@ void GraphicsLayerCA::updateContentsScale(float pageScaleFactor)
 
     if (isPageTiledBackingLayer() && tiledBacking()) {
         float zoomedOutScale = client().zoomedOutPageScaleFactor() * deviceScaleFactor();
-        tiledBacking()->setZoomedOutContentsScale(zoomedOutScale);
+        protect(tiledBacking())->setZoomedOutContentsScale(zoomedOutScale);
     }
 
     if (auto customScale = client().customContentsScale(*this))
@@ -4469,6 +4521,26 @@ void GraphicsLayerCA::updateContentsScale(float pageScaleFactor)
 
     if (drawsContent())
         layer->setNeedsDisplay();
+}
+
+void GraphicsLayerCA::updateAntialiasesEdges(CommitState& commitState, float pageScaleFactor)
+{
+    bool isAxisAligned = !commitState.ancestorIsNonAxisAligned && !isRunningTransformAnimation()
+        && (!hasNonIdentityTransform() || (transform().isAffine() && transform().toAffineTransform().preservesAxisAlignment()));
+    if (!isAxisAligned || hasNonIdentityChildrenTransform())
+        commitState.ancestorIsNonAxisAligned = true;
+
+    bool antialiasesEdges = !isAxisAligned || pageScaleFactor == 1 || !client().delegatesScaling();
+
+    auto updateLayer = [&](PlatformCALayer& layer) {
+        layer.setAntialiasesEdges(antialiasesEdges || layer.cornerRadius() || layer.layerType() == PlatformCALayer::LayerType::LayerTypeShapeLayer);
+    };
+
+    updateLayer(*protect(m_layer));
+    if (RefPtr contentsLayer = m_contentsLayer)
+        updateLayer(*contentsLayer);
+    if (RefPtr contentsClippingLayer = m_contentsClippingLayer)
+        updateLayer(*contentsClippingLayer);
 }
 
 void GraphicsLayerCA::updateCustomAppearance()
@@ -4498,12 +4570,12 @@ void GraphicsLayerCA::setShowRepaintCounter(bool showCounter)
     noteLayerPropertyChanged(DebugIndicatorsChanged);
 }
 
-void GraphicsLayerCA::setShowFrameProcessBorders(bool showBorders, unsigned frameDepth)
+void GraphicsLayerCA::setShowFrameProcessBorders(bool showBorders, unsigned frameDepth, FrameIdentifier frameID)
 {
     if (showBorders == m_showFrameProcessBorders && frameDepth == m_frameProcessIndicatorDepth)
         return;
 
-    GraphicsLayer::setShowFrameProcessBorders(showBorders, frameDepth);
+    GraphicsLayer::setShowFrameProcessBorders(showBorders, frameDepth, frameID);
     noteLayerPropertyChanged(DebugIndicatorsChanged);
 }
 
@@ -4521,6 +4593,17 @@ void GraphicsLayerCA::setAllowsBackingStoreDetaching(bool allowDetaching)
         return;
 
     m_allowsBackingStoreDetaching = allowDetaching;
+    noteLayerPropertyChanged(CoverageRectChanged);
+}
+
+void GraphicsLayerCA::setAnimationExtent(std::optional<FloatRect> animationExtent)
+{
+    auto oldAnimationExtent = this->animationExtent();
+    GraphicsLayer::setAnimationExtent(animationExtent);
+    if (this->animationExtent() == oldAnimationExtent)
+        return;
+
+    // Whether the layer needs backing store depends on the extent, so re-evaluate it at the next flush.
     noteLayerPropertyChanged(CoverageRectChanged);
 }
 
@@ -4542,7 +4625,7 @@ String GraphicsLayerCA::replayDisplayListAsText(OptionSet<DisplayList::AsTextFla
         
         TextStream::GroupScope scope(stream);
         stream.dumpProperty("clip"_s, it->value.first);
-        stream << it->value.second->asText(flags);
+        stream << protect(it->value.second)->asText(flags);
         return stream.release();
         
     }
@@ -4805,20 +4888,20 @@ void GraphicsLayerCA::dumpAdditionalProperties(TextStream& textStream, OptionSet
             textStream << indent << "(contentsScale limiting factor " << m_contentsScaleLimitingFactor << ")\n";
     }
 
-    if (tiledBacking() && (options & LayerTreeAsTextOptions::IncludeTileCaches)) {
+    if (CheckedPtr tiledBacking = this->tiledBacking(); tiledBacking && (options & LayerTreeAsTextOptions::IncludeTileCaches)) {
         if (options & LayerTreeAsTextOptions::Debug)
-            textStream << indent << "(tiled backing " << tiledBacking() << ")\n";
+            textStream << indent << "(tiled backing " << tiledBacking.get() << ")\n";
 
-        IntRect tileCoverageRect = tiledBacking()->tileCoverageRect();
+        IntRect tileCoverageRect = tiledBacking->tileCoverageRect();
         textStream << indent << "(tile cache coverage " << tileCoverageRect.x() << ", " << tileCoverageRect.y() << " " << tileCoverageRect.width() << " x " << tileCoverageRect.height() << ")\n";
 
-        IntSize tileSize = tiledBacking()->tileSize();
+        IntSize tileSize = tiledBacking->tileSize();
         textStream << indent << "(tile size " << tileSize.width() << " x " << tileSize.height() << ")\n";
         
-        IntRect gridExtent = tiledBacking()->tileGridExtent();
+        IntRect gridExtent = tiledBacking->tileGridExtent();
         textStream << indent << "(top left tile " << gridExtent.x() << ", " << gridExtent.y() << " tiles grid " << gridExtent.width() << " x " << gridExtent.height() << ")\n";
 
-        textStream << indent << "(in window " << tiledBacking()->isInWindow() << ")\n";
+        textStream << indent << "(in window " << tiledBacking->isInWindow() << ")\n";
     }
 
     if (options & LayerTreeAsTextOptions::IncludeDeviceScale)
@@ -4849,6 +4932,11 @@ void GraphicsLayerCA::dumpAdditionalProperties(TextStream& textStream, OptionSet
             dumpLayerChangeFlags(textStream, m_uncommittedChanges);
             textStream << ")\n";
         }
+
+#if ENABLE(THREADED_ANIMATIONS)
+        if (RefPtr effectStack = acceleratedEffectStack())
+            textStream << *effectStack;
+#endif
 
         dumpAnimations(textStream, "animations"_s, m_animations);
         dumpAnimations(textStream, "base value animations"_s, m_baseValueTransformAnimations);
@@ -4913,7 +5001,7 @@ void GraphicsLayerCA::changeLayerTypeTo(PlatformCALayer::LayerType newLayerType)
     Ref newLayer = createPlatformCALayer(newLayerType, this);
     m_layer = newLayer.copyRef();
 
-    if (auto* backing = tiledBacking())
+    if (CheckedPtr backing = tiledBacking())
         backing->setTileCoverage(m_tileCoverage);
 
     newLayer->adoptSublayers(*oldLayer);
@@ -5242,22 +5330,34 @@ void GraphicsLayerCA::noteChangesForScaleSensitiveProperties()
     noteLayerPropertyChanged(GeometryChanged | ContentsScaleChanged | ContentsOpaqueChanged);
 }
 
+static float boundsLengthForStorePixels(float pixels, float contentsScale)
+{
+    float length = pixels / contentsScale;
+    while (length > 0 && std::ceil(contentsScale * length) > pixels)
+        length = std::nextafterf(length, 0);
+    return length;
+}
+
 void GraphicsLayerCA::computePixelAlignment(float pageScale, const FloatPoint& positionRelativeToBase,
-    FloatPoint& position, FloatPoint3D& anchorPoint, FloatSize& alignmentOffset) const
+    FloatPoint& position, FloatSize& size, FloatPoint3D& anchorPoint, FloatSize& alignmentOffset) const
 {
     FloatRect baseRelativeBounds(positionRelativeToBase, m_size);
     FloatRect scaledBounds = baseRelativeBounds;
     float contentsScale = pageScale * deviceScaleFactor();
     // Scale by the page scale factor to compute the screen-relative bounds.
     scaledBounds.scale(contentsScale);
-    // Round to integer boundaries.
-    FloatRect alignedBounds = encloseRectToDevicePixels(LayoutRect(scaledBounds), deviceScaleFactor());
-    
+
+    FloatPoint alignedLocationInPixels { std::round(scaledBounds.x()), std::round(scaledBounds.y()) };
+
+    FloatSize alignedSizeInPixels { std::ceil(scaledBounds.maxX()) - std::floor(scaledBounds.x()), std::ceil(scaledBounds.maxY()) - std::floor(scaledBounds.y()) };
+
     // Convert back to layer coordinates.
-    alignedBounds.scale(1 / contentsScale);
+    FloatRect alignedBounds { alignedLocationInPixels.scaled(1 / contentsScale),
+        FloatSize { boundsLengthForStorePixels(alignedSizeInPixels.width(), contentsScale), boundsLengthForStorePixels(alignedSizeInPixels.height(), contentsScale) } };
 
     alignmentOffset = baseRelativeBounds.location() - alignedBounds.location();
     position = m_position - alignmentOffset;
+    size = alignedBounds.size();
 
     // Now we have to compute a new anchor point which compensates for rounding.
     float anchorPointX = m_anchorPoint.x();
@@ -5323,7 +5423,7 @@ double GraphicsLayerCA::backingStoreMemoryEstimate() const
     // contentsLayer is given to us, so we don't really know anything about its contents.
     // FIXME: ignores layer clones.
     
-    if (TiledBacking* tiledBacking = this->tiledBacking())
+    if (CheckedPtr tiledBacking = this->tiledBacking())
         return tiledBacking->retainedTileBackingStoreMemory();
 
     if (!backingStoreAttached())

@@ -36,7 +36,7 @@ struct Rotate {
     struct Function : TransformFunctionWrapper<RotateTransformFunction> {
         using TransformFunctionWrapper<RotateTransformFunction>::TransformFunctionWrapper;
 
-        template<typename... F> decltype(auto) switchOn(F&&...) const;
+        template<typename... F> decltype(auto) switchOn(NOESCAPE F&&...) const;
     };
 
     Rotate(CSS::Keyword::None) : value { nullptr } { }
@@ -53,7 +53,7 @@ struct Rotate {
     bool isFunction() const { return !!value; }
 
     template<typename> bool holdsAlternative() const;
-    template<typename... F> decltype(auto) switchOn(F&&...) const;
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&...) const;
 
     bool operator==(const Rotate& other) const
     {
@@ -69,17 +69,25 @@ private:
 
 // MARK: Rotate Function
 
-template<typename... F> decltype(auto) Rotate::Function::switchOn(F&&... f) const
+template<typename... F> decltype(auto) Rotate::Function::switchOn(NOESCAPE F&&... f) const
 {
     auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
     Ref protectedValue = value;
+
+    // https://drafts.csswg.org/css-transforms-2/#individual-transform-serialization
+    // If the axis is parallel with a named axis but points in the reverse direction, the axis
+    // serializes as the matching keyword (or is omitted, for z) and the angle is negated.
+    auto angleAlong = [&](const Number<>& axis) {
+        return axis.isNegative() ? Angle<> { -protectedValue->angle().value } : protectedValue->angle();
+    };
+
     if (!protectedValue->is3DOperation() || (protectedValue->x().isZero() && protectedValue->y().isZero() && !protectedValue->z().isZero()))
-        return visitor(protectedValue->angle());
+        return visitor(angleAlong(protectedValue->z()));
     if (!protectedValue->x().isZero() && protectedValue->y().isZero() && protectedValue->z().isZero())
-        return visitor(SpaceSeparatedTuple { CSS::Keyword::X { }, protectedValue->angle() });
+        return visitor(SpaceSeparatedTuple { CSS::Keyword::X { }, angleAlong(protectedValue->x()) });
     if (protectedValue->x().isZero() && !protectedValue->y().isZero() && protectedValue->z().isZero())
-        return visitor(SpaceSeparatedTuple { CSS::Keyword::Y { }, protectedValue->angle() });
+        return visitor(SpaceSeparatedTuple { CSS::Keyword::Y { }, angleAlong(protectedValue->y()) });
     return visitor(
         SpaceSeparatedTuple {
             protectedValue->x(),
@@ -98,7 +106,7 @@ template<typename T> bool Rotate::holdsAlternative() const
     else if constexpr (std::same_as<T, Function>)           return isFunction();
 }
 
-template<typename... F> decltype(auto) Rotate::switchOn(F&&... f) const
+template<typename... F> decltype(auto) Rotate::switchOn(NOESCAPE F&&... f) const
 {
     auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 

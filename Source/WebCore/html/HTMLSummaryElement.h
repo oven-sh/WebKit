@@ -30,7 +30,7 @@ class HTMLSummaryElement final : public HTMLElement {
     WTF_MAKE_TZONE_ALLOCATED(HTMLSummaryElement);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(HTMLSummaryElement);
 public:
-    static Ref<HTMLSummaryElement> create(const QualifiedName&, Document&);
+    static Ref<HTMLSummaryElement> LEGACY_NODELETE create(const QualifiedName&, Document&);
 
     bool isActiveSummary() const;
     bool willRespondToMouseClickEventsWithEditability(Editability) const final;
@@ -41,9 +41,9 @@ private:
 
     void defaultEventHandler(Event&) final;
 
-    bool NODELETE hasCustomFocusLogic() const final { return true; }
+    bool LEGACY_NODELETE hasCustomFocusLogic() const final { return true; }
 
-    RefPtr<HTMLDetailsElement> NODELETE detailsElement() const;
+    RefPtr<HTMLDetailsElement> LEGACY_NODELETE detailsElement() const;
 
     int defaultTabIndex() const final;
     bool supportsFocus() const final;

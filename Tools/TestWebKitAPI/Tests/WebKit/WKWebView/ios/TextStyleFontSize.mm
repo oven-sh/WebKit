@@ -25,8 +25,11 @@
 
 #import "config.h"
 
-#import "InstanceMethodSwizzler.h"
+#import "HTTPServer.h"
+#import "Helpers/cocoa/TestNavigationDelegate.h"
 #import "Helpers/cocoa/TestWKWebView.h"
+#import "InstanceMethodSwizzler.h"
+#import "PlatformUtilities.h"
 #import "UIKitSPIForTesting.h"
 #import <WebCore/FontCacheCoreText.h>
 #import <WebKit/WKPreferencesPrivate.h>
@@ -90,6 +93,49 @@ TEST(TextStyleFontSize, AfterCrash)
     ASSERT_EQ(actual, expected);
 
     WebCore::setContentSizeCategory(String());
+}
+
+TEST(TextStyleFontSize, ChangeDuringProvisionalNavigation)
+{
+    using namespace TestWebKitAPI;
+
+    static NSString *testMarkup = @"<html><head></head><body><div id='target' style='-webkit-text-size-adjust: none; font: -apple-system-body;'>Hello</div></body></html>";
+    HTTPServer server({
+        { "/first"_s, { "first"_s } },
+        { "/second"_s, { testMarkup } },
+    }, HTTPServer::Protocol::HttpsProxy);
+
+    auto originalContentSizeCategory = contentSizeCategory;
+    contentSizeCategory = kCTFontContentSizeCategoryL;
+
+    RetainPtr descriptor = adoptCF(CTFontDescriptorCreateWithTextStyle(kCTUIFontTextStyleBody, kCTFontContentSizeCategoryXXXL, nullptr));
+    RetainPtr sizeNumber = adoptCF(CTFontDescriptorCopyAttribute(descriptor.get(), kCTFontSizeAttribute));
+    auto expected = static_cast<NSNumber *>(sizeNumber.get()).integerValue;
+
+    RetainPtr navigationDelegate = adoptNS([TestNavigationDelegate new]);
+    [navigationDelegate allowAnyTLSCertificate];
+    RetainPtr webView = adoptNS([[TextStyleFontSizeWebView alloc] initWithFrame:CGRectMake(0, 0, 960, 360) configuration:server.httpsProxyConfiguration()]);
+    [webView setNavigationDelegate:navigationDelegate.get()];
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://domain1.com/first"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    auto firstProcessIdentifier = [webView _webProcessIdentifier];
+
+    // Change the content size category after the provisional page for the cross-site navigation has been created but before it commits.
+    navigationDelegate.get().decidePolicyForNavigationResponse = ^(WKNavigationResponse *, void (^decisionHandler)(WKNavigationResponsePolicy)) {
+        contentSizeCategory = kCTFontContentSizeCategoryXXXL;
+        [[NSNotificationCenter defaultCenter] postNotificationName:UIContentSizeCategoryDidChangeNotification object:nil];
+        decisionHandler(WKNavigationResponsePolicyAllow);
+    };
+
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://domain2.com/second"]]];
+    [navigationDelegate waitForDidFinishNavigation];
+    EXPECT_NE([webView _webProcessIdentifier], firstProcessIdentifier);
+
+    auto actual = [webView stringByEvaluatingJavaScript:@"parseInt(window.getComputedStyle(document.getElementById('target')).getPropertyValue('font-size'))"].integerValue;
+    EXPECT_EQ(actual, expected);
+
+    contentSizeCategory = originalContentSizeCategory;
 }
 
 #endif // PLATFORM(IOS_FAMILY)

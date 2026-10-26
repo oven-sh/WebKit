@@ -75,23 +75,30 @@ public:
         Int32Overflow    = 1 << 3,
         Int52Overflow    = 1 << 4,
         HeapBigInt       = 1 << 5,
-        BigInt32         = 1 << 6,
     };
-    static constexpr uint32_t numBitsNeeded = 7;
+    static constexpr uint32_t numBitsNeeded = 6;
+
+    static constexpr int64_t int52OverflowPoint = static_cast<int64_t>(1) << (JSValue::numberOfInt52Bits - 1);
+
+    static constexpr bool isInt52Overflow(double value)
+    {
+        constexpr double overflowPoint = static_cast<double>(int52OverflowPoint);
+        uint64_t bits = std::bit_cast<uint64_t>(value);
+        // Shifting out the sign bit orders the remaining bits by magnitude; NaN and Infinity sort above every finite value.
+        return bits != std::bit_cast<uint64_t>(-overflowPoint) && (bits << 1) >= (std::bit_cast<uint64_t>(overflowPoint) << 1);
+    }
 
     ObservedResults() = default;
     explicit ObservedResults(uint8_t bits)
         : m_bits(bits)
     { }
 
-    bool didObserveNonInt32() { return m_bits & (NonNegZeroDouble | NegZeroDouble | NonNumeric | HeapBigInt | BigInt32); }
+    bool didObserveNonInt32() { return m_bits & (NonNegZeroDouble | NegZeroDouble | NonNumeric | HeapBigInt); }
     bool didObserveDouble() { return m_bits & (NonNegZeroDouble | NegZeroDouble); }
     bool didObserveNonNegZeroDouble() { return m_bits & NonNegZeroDouble; }
     bool didObserveNegZeroDouble() { return m_bits & NegZeroDouble; }
     bool didObserveNonNumeric() { return m_bits & NonNumeric; }
-    bool didObserveBigInt() { return m_bits & (HeapBigInt | BigInt32); }
     bool didObserveHeapBigInt() { return m_bits & HeapBigInt; }
-    bool didObserveBigInt32() { return m_bits & BigInt32; }
     bool didObserveInt32Overflow() { return m_bits & Int32Overflow; }
     bool didObserveInt52Overflow() { return m_bits & Int52Overflow; }
 
@@ -111,9 +118,7 @@ public:
     bool didObserveNonNegZeroDouble() const { return observedResults().didObserveNonNegZeroDouble(); }
     bool didObserveNegZeroDouble() const { return observedResults().didObserveNegZeroDouble(); }
     bool didObserveNonNumeric() const { return observedResults().didObserveNonNumeric(); }
-    bool didObserveBigInt() const { return observedResults().didObserveBigInt(); }
     bool didObserveHeapBigInt() const { return observedResults().didObserveHeapBigInt(); }
-    bool didObserveBigInt32() const { return observedResults().didObserveBigInt32(); }
     bool didObserveInt32Overflow() const { return observedResults().didObserveInt32Overflow(); }
     bool didObserveInt52Overflow() const { return observedResults().didObserveInt52Overflow(); }
 
@@ -121,7 +126,6 @@ public:
     void setObservedNegZeroDouble() { setBit(ObservedResults::NegZeroDouble); }
     void setObservedNonNumeric() { setBit(ObservedResults::NonNumeric); }
     void setObservedHeapBigInt() { setBit(ObservedResults::HeapBigInt); }
-    void setObservedBigInt32() { setBit(ObservedResults::BigInt32); }
     void setObservedInt32Overflow() { setBit(ObservedResults::Int32Overflow); }
     void setObservedInt52Overflow() { setBit(ObservedResults::Int52Overflow); }
 
@@ -130,11 +134,9 @@ public:
         if (value.isInt32())
             return;
         if (value.isNumber()) {
-            m_bits |= ObservedResults::Int32Overflow | ObservedResults::Int52Overflow | ObservedResults::NonNegZeroDouble | ObservedResults::NegZeroDouble;
-            return;
-        }
-        if (value.isBigInt32()) {
-            m_bits |= ObservedResults::BigInt32;
+            m_bits |= ObservedResults::Int32Overflow | ObservedResults::NonNegZeroDouble | ObservedResults::NegZeroDouble;
+            if (ObservedResults::isInt52Overflow(value.asNumber()))
+                m_bits |= ObservedResults::Int52Overflow;
             return;
         }
         if (value && value.isHeapBigInt()) {
@@ -147,24 +149,21 @@ public:
     const void* addressOfBits() const LIFETIME_BOUND { return &m_bits; }
 
 #if ENABLE(JIT)
-    // Sets (Int32Overflow | Int52Overflow | NonNegZeroDouble | NegZeroDouble) if it sees a
-    // double. Sets NonNumeric if it sees a non-numeric.
+    // Records the same bits as observeResult().
     void emitObserveResult(CCallHelpers&, GPRReg, GPRReg tempGPR, TagRegistersMode = HaveTagRegisters);
 
+    // Clobbers doubleBitsGPR, which holds the raw bits of a double result.
+    void emitSetInt52OverflowIfNeeded(CCallHelpers&, GPRReg doubleBitsGPR) const;
+
     // Sets (Int32Overflow | Int52Overflow | NonNegZeroDouble | NegZeroDouble).
-    bool NODELETE shouldEmitSetDouble() const;
+    bool LEGACY_NODELETE shouldEmitSetDouble() const;
     void emitSetDouble(CCallHelpers&, GPRReg scratchGPR) const;
 
     void emitSetNonNumeric(CCallHelpers&) const;
-    bool NODELETE shouldEmitSetNonNumeric() const;
+    bool LEGACY_NODELETE shouldEmitSetNonNumeric() const;
 
-    bool NODELETE shouldEmitSetHeapBigInt() const;
+    bool LEGACY_NODELETE shouldEmitSetHeapBigInt() const;
     void emitSetHeapBigInt(CCallHelpers&) const;
-
-    bool NODELETE shouldEmitSetBigInt32() const;
-#if USE(BIGINT32)
-    void emitSetBigInt32(CCallHelpers&) const;
-#endif
 
     void emitUnconditionalSet(CCallHelpers&, BitfieldType) const;
     void emitUnconditionalSet(CCallHelpers&, GPRReg) const;

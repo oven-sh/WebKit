@@ -63,9 +63,14 @@ CanvasCaptureMediaStreamTrack::CanvasCaptureMediaStreamTrack(Document& document,
 {
 }
 
+void CanvasCaptureMediaStreamTrack::requestFrame()
+{
+    downcast<Source>(source()).requestFrame();
+}
+
 RefPtr<VideoFrame> CanvasCaptureMediaStreamTrack::grabFrame()
 {
-    Ref source = static_cast<Source&>(this->source());
+    Ref source = downcast<Source>(this->source());
     return source->grabFrame();
 }
 
@@ -259,7 +264,7 @@ RefPtr<MediaStreamTrack> CanvasCaptureMediaStreamTrack::clone()
     if (!scriptExecutionContext())
         return nullptr;
     
-    auto track = adoptRef(*new CanvasCaptureMediaStreamTrack(downcast<Document>(*scriptExecutionContext()), m_canvas.copyRef(), privateTrack().clone()));
+    Ref track = adoptRef(*new CanvasCaptureMediaStreamTrack(protect(downcast<Document>(*scriptExecutionContext())), m_canvas.copyRef(), privateTrack().clone()));
     track->suspendIfNeeded();
     return track;
 }

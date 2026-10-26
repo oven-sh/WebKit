@@ -1918,8 +1918,10 @@
    },
    {
       "emails" : [
-         "cbiesinger@chromium.org"
+         "cbiesinger@chromium.org",
+         "cbiesinger@igalia.com"
       ],
+      "github" : "cbiesinger",
       "name" : "Christian Biesinger",
       "nicks" : [
          "cbiesinger"
@@ -3903,8 +3905,8 @@
    },
    {
       "emails" : [
-         "iroy@apple.com",
-         "issacroy05@gmail.com"
+         "issacroy05@gmail.com",
+         "iroy@apple.com"
       ],
       "github" : "TheBoyRoy05",
       "name" : "Issac Roy",
@@ -7624,6 +7626,13 @@
    },
    {
       "emails" : [
+         "sadhika_akula@apple.com"
+      ],
+      "github" : "SadhikaA",
+      "name" : "Sadhika Akula"
+   },
+   {
+      "emails" : [
          "sadrul@chromium.org"
       ],
       "name" : "Sadrul Habib Chowdhury",
@@ -7796,6 +7805,18 @@
    },
    {
       "emails" : [
+         "serge.deh@gitstart.dev",
+         "sergedeh@gmail.com"
+      ],
+      "expertise" : "WebDriver",
+      "github" : "sergedeh",
+      "name" : "Serge Deh",
+      "nicks" : [
+         "sergedeh"
+      ]
+   },
+   {
+      "emails" : [
          "chi187@gmail.com"
       ],
       "expertise" : "WebAssembly",
@@ -7884,7 +7905,7 @@
       "nicks" : [
          "syg"
       ],
-      "status" : "committer"
+      "status" : "reviewer"
    },
    {
       "emails" : [

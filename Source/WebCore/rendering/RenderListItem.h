@@ -51,7 +51,7 @@ public:
 
     RenderBoxModelObject* markerRenderer() const { return m_marker.get(); }
     void setMarkerRenderer(RenderBoxModelObject& marker) { m_marker = marker; }
-    RenderListOutsideMarker* markerBox() const;
+    RenderListOutsideMarker* LEGACY_NODELETE markerBox() const;
 
     // Fills in what the marker shows, in whichever shape it was built.
     void updateMarkerContent();
@@ -78,7 +78,7 @@ private:
     void layoutExcludedChildren(RelayoutChildren) final;
 
     void placeExcludedMarker(RenderListOutsideMarker&);
-    RenderListOutsideMarker* excludedMarker() const;
+    RenderListOutsideMarker* LEGACY_NODELETE excludedMarker() const;
 
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) final;
 
@@ -93,7 +93,7 @@ private:
     mutable std::optional<int> m_value;
 };
 
-bool NODELETE isHTMLListElement(const Node&);
+bool LEGACY_NODELETE isHTMLListElement(const Node&);
 
 inline int RenderListItem::value() const
 {

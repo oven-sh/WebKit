@@ -31,6 +31,7 @@
 #include "Interpreter.h"
 #include "JSFunctionInlines.h"
 #include "ThrowScope.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace JSC {
 
@@ -63,7 +64,6 @@ void MicrotaskCall::unlinkOrUpgradeImpl(VM&, CodeBlock* oldCodeBlock, CodeBlock*
         remove();
 
     if (newCodeBlock && m_codeBlock == oldCodeBlock) {
-        newCodeBlock->m_shouldAlwaysBeInlined = false;
         m_addressForCall = newCodeBlock->jitCode()->addressForCall();
         m_codeBlock = newCodeBlock;
         m_numParameters = newCodeBlock->numParameters();

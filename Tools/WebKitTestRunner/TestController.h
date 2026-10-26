@@ -36,9 +36,11 @@
 #include <vector>
 #include <wtf/CompletionHandler.h>
 #include <wtf/HashMap.h>
+#include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Seconds.h>
 #include <wtf/Vector.h>
+#include <wtf/WorkQueue.h>
 #include <wtf/text/StringHash.h>
 
 #if PLATFORM(COCOA)
@@ -419,6 +421,7 @@ public:
 #if PLATFORM(IOS_FAMILY)
     void setKeyboardInputModeIdentifier(const String&);
     UIKeyboardInputMode *overriddenKeyboardInputMode() const { return m_overriddenKeyboardInputMode.get(); }
+    void restoreDefaultKeyboardInputModeIfNeeded();
     void setIsInHardwareKeyboardMode(bool value) { m_isInHardwareKeyboardMode = value; }
     bool isInHardwareKeyboardMode() const { return m_isInHardwareKeyboardMode; }
     unsigned keyboardUpdateForChangedSelectionCount() const;
@@ -516,6 +519,7 @@ public:
 #if PLATFORM(MAC)
     // Client accessibility testing support
     void initializeWebProcessAccessibility();
+    void axNotificationReceived(CFTypeRef element, CFStringRef notification, CFDictionaryRef userInfo, pid_t observedPid);
 #endif
 
 #if !PLATFORM(COCOA)
@@ -631,6 +635,8 @@ private:
     uint64_t storeAXElement(CFTypeRef);
     CFTypeRef getAXElement(uint64_t token);
     CFDataRef getRemoteAccessibilityToken();
+    std::optional<WKRetainPtr<WKTypeRef>> handleAXRequest(WKStringRef messageName, WKTypeRef messageBody);
+    void handleAXAsyncRequest(WKDictionaryRef);
     WKRetainPtr<WKTypeRef> handleAXGetRoot();
     RetainPtr<CFTypeRef> axCopyAttributeValue(WKDictionaryRef);
     WKRetainPtr<WKTypeRef> handleAXCopyAttributeValueAsString(WKDictionaryRef);
@@ -642,7 +648,13 @@ private:
     WKRetainPtr<WKTypeRef> handleAXCopyAttributeValueAsPoint(WKDictionaryRef);
     WKRetainPtr<WKTypeRef> handleAXCopyAttributeValueAsSize(WKDictionaryRef);
     WKRetainPtr<WKTypeRef> handleAXSearchPredicate(WKDictionaryRef);
+    WKRetainPtr<WKTypeRef> handleAXElementAtPosition(WKDictionaryRef);
     void handleAXPerformAction(WKDictionaryRef);
+    WKRetainPtr<WKTypeRef> handleAXAddNotificationListener();
+    void handleAXRemoveNotificationListener();
+    bool observeAXApplicationForElement(CFTypeRef);
+    bool observeAXApplication(CFTypeRef);
+    WKRetainPtr<WKTypeRef> axValueToWK(CFTypeRef value, CFTypeRef textElement);
 #endif
 
     // WKContextClient
@@ -786,6 +798,7 @@ private:
     HashSet<String> m_notificationOriginsToDenyOnPrompt;
 
     HashSet<String> m_geolocationPermissionQueryOrigins;
+    HashMap<String, bool> m_localNetworkAccessPermissions;
 
     std::unique_ptr<PlatformWebView> m_mainWebView;
     Vector<UniqueRef<PlatformWebView>> m_auxiliaryWebViews;
@@ -817,6 +830,7 @@ private:
 
     bool m_useWaitToDumpWatchdogTimer { true };
     bool m_forceNoTimeout { false };
+    std::string m_ipAddressSpaceOverrides;
 
     bool m_didPrintWebProcessCrashedMessage { false };
     bool m_shouldExitWhenAuxiliaryProcessCrashes { true };
@@ -883,6 +897,7 @@ private:
     struct AbandonedDocumentInfo {
         String testURL;
         String abandonedDocumentURL;
+        bool hasBeenReported { false };
 
         AbandonedDocumentInfo() = default;
         AbandonedDocumentInfo(String inTestURL, String inAbandonedDocumentURL)
@@ -957,7 +972,19 @@ private:
 #if PLATFORM(MAC)
     // Client accessibility testing support
     std::atomic<uint64_t> m_nextAXElementToken { 1 };
-    HashMap<uint64_t, RetainPtr<CFTypeRef>> m_axElementTokens;
+    // Client AX requests run on m_axRequestQueue (see handleAXAsyncRequest), so the token map is shared with it.
+    Lock m_axElementTokensLock;
+    HashMap<uint64_t, RetainPtr<CFTypeRef>> m_axElementTokens WTF_GUARDED_BY_LOCK(m_axElementTokensLock);
+    RetainPtr<CFTypeRef> m_axWebContentElement WTF_GUARDED_BY_LOCK(m_axElementTokensLock);
+    RefPtr<WorkQueue> m_axRequestQueue;
+    // One AXObserver per observed web content process, keyed by pid, with the application element it
+    // observes. Non-empty only while a client-mode test has a notification listener installed.
+    struct AXApplicationObserver {
+        RetainPtr<CFTypeRef> observer;
+        RetainPtr<CFTypeRef> application;
+    };
+    HashMap<pid_t, AXApplicationObserver> m_axObservers;
+    std::atomic<bool> m_isListeningForAXNotifications { false };
 #endif
 
 #if ENABLE(WPE_PLATFORM)

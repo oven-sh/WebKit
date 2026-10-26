@@ -70,13 +70,18 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #include <wtf/MainThread.h>
 #include <wtf/SetForScope.h>
 #include <wtf/SharedTask.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-static void NODELETE prepareConfiguration(webrtc::PeerConnectionInterface::RTCConfiguration& configuration)
+WTF_MAKE_TZONE_ALLOCATED_IMPL(LibWebRTCMediaEndpoint);
+
+static void LEGACY_NODELETE prepareConfiguration(webrtc::PeerConnectionInterface::RTCConfiguration& configuration)
 {
     configuration.sdp_semantics = webrtc::SdpSemantics::kUnifiedPlan;
     configuration.crypto_options.srtp.enable_gcm_crypto_suites = true;
+    // FIXME: We should turn that flag to true.
+    configuration.set_stats_timestamp_with_environment_clock(false);
 }
 
 RefPtr<LibWebRTCMediaEndpoint> LibWebRTCMediaEndpoint::create(RTCPeerConnection& peerConnection, LibWebRTCProvider& client, Document& document, webrtc::PeerConnectionInterface::RTCConfiguration&& configuration, bool shouldEnableServiceClass)
@@ -180,7 +185,7 @@ bool LibWebRTCMediaEndpoint::isNegotiationNeeded(uint32_t eventId) const
     return !m_isStopped ? m_backend->ShouldFireNegotiationNeededEvent(eventId) : false;
 }
 
-static inline webrtc::SdpType NODELETE sessionDescriptionType(RTCSdpType sdpType)
+static inline webrtc::SdpType LEGACY_NODELETE sessionDescriptionType(RTCSdpType sdpType)
 {
     switch (sdpType) {
     case RTCSdpType::Offer:
@@ -206,7 +211,7 @@ void LibWebRTCMediaEndpoint::doSetLocalDescription(const RTCSessionDescription* 
     }
 
     webrtc::SdpParseError error;
-    auto sessionDescription = webrtc::CreateSessionDescription(sessionDescriptionType(description->type()), description->sdp().utf8().legacyCStringPointer(), &error);
+    auto sessionDescription = webrtc::CreateSessionDescription(sessionDescriptionType(description->type()), std::string_view { byteCast<char>(description->sdp().utf8().span()) }, &error);
 
     if (!sessionDescription) {
         protect(m_peerConnectionBackend)->setLocalDescriptionFailed(Exception { ExceptionCode::OperationError, fromStdString(error.description) });
@@ -227,7 +232,7 @@ void LibWebRTCMediaEndpoint::doSetRemoteDescription(const RTCSessionDescription&
     ASSERT(!m_isStopped);
 
     webrtc::SdpParseError error;
-    auto sessionDescription = webrtc::CreateSessionDescription(sessionDescriptionType(description.type()), description.sdp().utf8().legacyCStringPointer(), &error);
+    auto sessionDescription = webrtc::CreateSessionDescription(sessionDescriptionType(description.type()), std::string_view { byteCast<char>(description.sdp().utf8().span()) }, &error);
     if (!sessionDescription) {
         protect(m_peerConnectionBackend)->setRemoteDescriptionFailed(Exception { ExceptionCode::SyntaxError, fromStdString(error.description) });
         return;
@@ -254,7 +259,7 @@ bool LibWebRTCMediaEndpoint::addTrack(LibWebRTCRtpSenderBackend& sender, MediaSt
 
     std::vector<std::string> ids;
     for (auto& id : mediaStreamIds)
-        ids.push_back(id.utf8().legacyCStringPointer());
+        ids.push_back(id.utf8().toStdString());
 
     auto newRTPSender = m_backend->AddTrack(WTF::move(rtcTrack), WTF::move(ids));
     if (!newRTPSender.ok())
@@ -299,7 +304,7 @@ webrtc::scoped_refptr<LibWebRTCStatsCollector> LibWebRTCMediaEndpoint::createSta
         if (protectedThis->isStopped())
             return;
 
-        ActiveDOMObject::queueTaskKeepingObjectAlive(protectedThis->m_peerConnectionBackend->connection(), TaskSource::Networking, [promise = WTF::move(promise), rtcReport = WTF::move(rtcReport), trackIds = protectedThis->m_peerConnectionBackend->trackIds()](auto&) mutable {
+        ActiveDOMObject::queueTaskKeepingObjectAlive(protect(protectedThis->m_peerConnectionBackend->connection()).get(), TaskSource::Networking, [promise = WTF::move(promise), rtcReport = WTF::move(rtcReport), trackIds = protectedThis->m_peerConnectionBackend->trackIds()](auto&) mutable {
             promise->resolve<IDLInterface<RTCStatsReport>>(LibWebRTCStatsCollector::createReport(WTF::move(rtcReport), WTF::move(trackIds)));
         });
     });
@@ -414,7 +419,7 @@ std::pair<LibWebRTCRtpSenderBackend::Source, webrtc::scoped_refptr<webrtc::Media
     switch (track.privateTrack().type()) {
     case RealtimeMediaSource::Type::Audio: {
         Ref audioSource = RealtimeOutgoingAudioSource::create(track.privateTrack());
-        rtcTrack = m_peerConnectionFactory->CreateAudioTrack(track.id().utf8().legacyCStringPointer(), audioSource.ptr());
+        rtcTrack = m_peerConnectionFactory->CreateAudioTrack(track.id().utf8().toStdString(), audioSource.ptr());
         source = WTF::move(audioSource);
         break;
     }
@@ -425,7 +430,7 @@ std::pair<LibWebRTCRtpSenderBackend::Source, webrtc::scoped_refptr<webrtc::Media
         if (context && context->settingsValues().peerConnectionVideoScalingAdaptationDisabled)
             videoSource->disableVideoScaling();
 
-        auto rtcVideoTrack = m_peerConnectionFactory->CreateVideoTrack(webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface> (videoSource.ptr()), track.id().utf8().legacyCStringPointer());
+        auto rtcVideoTrack = m_peerConnectionFactory->CreateVideoTrack(webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface> (videoSource.ptr()), std::string_view { byteCast<char>(track.id().utf8().span()) });
         rtcVideoTrack->set_content_hint(toWebRTCContentHint(track.privateTrack().contentHint()));
         rtcTrack = WTF::move(rtcVideoTrack);
         source = WTF::move(videoSource);
@@ -466,7 +471,7 @@ std::unique_ptr<RTCDataChannelHandler> LibWebRTCMediaEndpoint::createDataChannel
 {
     auto init = LibWebRTCDataChannelHandler::fromRTCDataChannelInit(options);
     // FIXME: Forward or log error  if there is one.
-    auto channel = m_backend->CreateDataChannelOrError(label.utf8().legacyCStringPointer(), &init);
+    auto channel = m_backend->CreateDataChannelOrError(label.utf8().toStdString(), &init);
     return channel.ok() ? makeUnique<LibWebRTCDataChannelHandler>(channel.MoveValue()) : nullptr;
 }
 
@@ -514,7 +519,7 @@ void LibWebRTCMediaEndpoint::OnNegotiationNeededEvent(uint32_t eventId)
     });
 }
 
-static inline RTCIceConnectionState NODELETE toRTCIceConnectionState(webrtc::PeerConnectionInterface::IceConnectionState state)
+static inline RTCIceConnectionState LEGACY_NODELETE toRTCIceConnectionState(webrtc::PeerConnectionInterface::IceConnectionState state)
 {
     switch (state) {
     case webrtc::PeerConnectionInterface::kIceConnectionNew:
@@ -550,7 +555,7 @@ void LibWebRTCMediaEndpoint::OnStandardizedIceConnectionChange(webrtc::PeerConne
     });
 }
 
-static inline RTCIceGatheringState NODELETE toRTCIceGatheringState(webrtc::PeerConnectionInterface::IceGatheringState state)
+static inline RTCIceGatheringState LEGACY_NODELETE toRTCIceGatheringState(webrtc::PeerConnectionInterface::IceGatheringState state)
 {
     switch (state) {
     case webrtc::PeerConnectionInterface::IceGatheringState::kIceGatheringNew:
@@ -584,7 +589,7 @@ static inline RTCSdpType fromSessionDescriptionType(const webrtc::SessionDescrip
     return RTCSdpType::Pranswer;
 }
 
-static RTCSignalingState NODELETE toRTCSignalingState(webrtc::PeerConnectionInterface::SignalingState state)
+static RTCSignalingState LEGACY_NODELETE toRTCSignalingState(webrtc::PeerConnectionInterface::SignalingState state)
 {
     switch (state) {
     case webrtc::PeerConnectionInterface::kStable:
@@ -723,7 +728,7 @@ std::unique_ptr<LibWebRTCSctpTransportBackend> SctpTransportState::createBackend
     return makeUnique<LibWebRTCSctpTransportBackend>(m_transport.releaseNonNull(), toRef(m_information.dtls_transport()));
 }
 
-std::optional<double> NODELETE SctpTransportState::maxMessageSize() const
+std::optional<double> LEGACY_NODELETE SctpTransportState::maxMessageSize() const
 {
     return m_information.MaxMessageSize() ? std::make_optional(*m_information.MaxMessageSize()) : std::nullopt;
 }
@@ -957,7 +962,8 @@ template <>
 struct LogArgument<WebCore::RTCStatsLogger> {
     static String toString(const WebCore::RTCStatsLogger& logger)
     {
-        return String(logger.toJSONString());
+        // FIXME: Remove suppression once rdar://189998444 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST return String(logger.toJSONString());
     }
 };
 

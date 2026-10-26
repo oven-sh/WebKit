@@ -93,13 +93,13 @@ private:
     const WTF::Logger& logger() const { return m_logger; }
     uint64_t logIdentifier() const { return m_logIdentifier; }
     ASCIILiteral logClassName() const { return "RemoteMediaSessionCoordinatorProxy"_s; }
-    WTFLogChannel& NODELETE logChannel() const;
+    WTFLogChannel& LEGACY_NODELETE logChannel() const;
 #endif
 
     WeakRef<WebPageProxy> m_webPageProxy;
     const Ref<MediaSessionCoordinatorProxyPrivate> m_privateCoordinator;
 #if !RELEASE_LOG_DISABLED
-    Ref<const WTF::Logger> m_logger;
+    const Ref<const WTF::Logger> m_logger;
     const uint64_t m_logIdentifier;
 #endif
 };

@@ -34,6 +34,7 @@
 #include "SVGNames.h"
 #include "SVGPathUtilities.h"
 #include "SVGPoint.h"
+#include "SVGTextPathElement.h"
 #include "Settings.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StylePropertiesInlines.h"
@@ -46,7 +47,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGPathElement);
 
 class PathCache {
 public:
-    static PathCache& NODELETE singleton();
+    static PathCache& LEGACY_NODELETE singleton();
 
     std::optional<DataRef<SVGPathByteStream::Data>> get(const AtomString& attributeValue) const;
     void add(const AtomString& attributeValue, DataRef<SVGPathByteStream::Data>);
@@ -98,7 +99,7 @@ void PathCache::clear()
 }
 
 inline SVGPathElement::SVGPathElement(const QualifiedName& tagName, Document& document)
-    : SVGGeometryElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this))
+    : SVGGeometryElement(tagName, document, PropertyRegistry::singleton())
 {
     ASSERT(hasTagName(SVGNames::pathTag));
 
@@ -142,7 +143,7 @@ void SVGPathElement::svgAttributeChanged(const QualifiedName& attrName)
     if (PropertyRegistry::isKnownAttribute(attrName)) {
         ASSERT(attrName == SVGNames::dAttr);
         InstanceInvalidationGuard guard(*this);
-        invalidateMPathDependencies();
+        invalidatePathDependencies();
 
         if (auto* path = dynamicDowncast<RenderSVGPath>(renderer()))
             path->setNeedsShapeUpdate();
@@ -160,27 +161,29 @@ void SVGPathElement::svgAttributeChanged(const QualifiedName& attrName)
     SVGGeometryElement::svgAttributeChanged(attrName);
 }
 
-void SVGPathElement::invalidateMPathDependencies()
+void SVGPathElement::invalidatePathDependencies()
 {
-    // <mpath> can only reference <path> but this dependency is not handled in
-    // markForLayoutAndParentResourceInvalidation so we update any mpath dependencies manually.
+    // <mpath> and <textPath> dependencies are not handled in markForLayoutAndParentResourceInvalidation
+    // when this <path> has no renderer, so we update them manually.
     for (auto& element : referencingElements()) {
         if (RefPtr mpathElement = dynamicDowncast<SVGMPathElement>(element.get()))
             mpathElement->targetPathChanged();
+        else if (RefPtr textPathElement = dynamicDowncast<SVGTextPathElement>(element.get()))
+            textPathElement->updateSVGRendererForElementChange();
     }
 }
 
 Node::NeedsPostConnectionSteps SVGPathElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
 {
     auto result = SVGGeometryElement::insertionSteps(insertionType, parentOfInsertedTree);
-    invalidateMPathDependencies();
+    invalidatePathDependencies();
     return result;
 }
 
 void SVGPathElement::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
 {
     SVGGeometryElement::removingSteps(removalType, oldParentOfRemovedTree);
-    invalidateMPathDependencies();
+    invalidatePathDependencies();
 }
 
 float SVGPathElement::getTotalLength() const
@@ -246,7 +249,8 @@ const SVGPathByteStream& SVGPathElement::pathByteStream() const
             return SVGPathByteStream::empty();
         }
 
-        if (CheckedPtr style = const_cast<SVGPathElement&>(*this).computedStyle()) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST if (CheckedPtr style = const_cast<SVGPathElement&>(*this).computedStyle()) {
             if (auto& pathFunction = style->d().tryPath())
                 return pathFunction->parameters.data.byteStream;
             return SVGPathByteStream::empty();
@@ -282,7 +286,7 @@ void SVGPathElement::collectExtraStyleForPresentationalHints(MutableStylePropert
 {
     if (!document().settings().cssDPropertyEnabled())
         return;
-    if (!style.hasProperty(CSSPropertyD))
+    if (!style.hasProperty(CSSPropertyID::D))
         collectDPresentationalHint(style);
 }
 
@@ -299,7 +303,7 @@ void SVGPathElement::collectDPresentationalHint(MutableStyleProperties& style)
 
 void SVGPathElement::pathDidChange()
 {
-    invalidateMPathDependencies();
+    invalidatePathDependencies();
 }
 
 }

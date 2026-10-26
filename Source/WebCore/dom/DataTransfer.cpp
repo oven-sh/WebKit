@@ -31,6 +31,7 @@
 #include "CommonAtomStrings.h"
 #include "DataTransferItem.h"
 #include "DataTransferItemList.h"
+#include "DefaultSizing.h"
 #include "DeprecatedGlobalSettings.h"
 #include "DocumentFragment.h"
 #include "DocumentPage.h"
@@ -46,6 +47,7 @@
 #include "Image.h"
 #include "LocalFrame.h"
 #include "LocalFrameView.h"
+#include "NativeImage.h"
 #include "NodeDocument.h"
 #include "Page.h"
 #include "PagePasteboardContext.h"
@@ -67,10 +69,10 @@ class DragImageLoader final : public CachedImageClient, public RefCounted<DragIm
     WTF_MAKE_TZONE_ALLOCATED(DragImageLoader);
     WTF_MAKE_NONCOPYABLE(DragImageLoader);
 public:
-    static Ref<DragImageLoader> create(DataTransfer&, const Document&);
+    static Ref<DragImageLoader> LEGACY_NODELETE create(DataTransfer&, const Document&);
     void startLoading(CachedResourceHandle<CachedImage>&);
     void stopLoading(CachedResourceHandle<CachedImage>&);
-    void NODELETE moveToDataTransfer(DataTransfer&);
+    void LEGACY_NODELETE moveToDataTransfer(DataTransfer&);
 
     // CachedResourceClient.
     void ref() const final { RefCounted::ref(); }
@@ -93,9 +95,9 @@ DataTransfer::DataTransfer(StoreMode mode, std::unique_ptr<Pasteboard> pasteboar
     : m_storeMode(mode)
     , m_pasteboard(WTF::move(pasteboard))
 #if ENABLE(DRAG_SUPPORT)
-    , m_type(type)
     , m_dropEffect("uninitialized"_s)
     , m_effectAllowed(WTF::move(effectAllowed))
+    , m_type(type)
     , m_shouldUpdateDragImage(false)
 #endif
 {
@@ -146,7 +148,7 @@ static String normalizeType(const String& type)
         return type;
 
     auto lowercaseType = type.trim(isASCIIWhitespace).convertToASCIILowercase();
-    if (lowercaseType == "text"_s || lowercaseType.startsWith(textPlainContentTypeAtom()))
+    if (lowercaseType == "text"_s || lowercaseType == textPlainContentTypeAtom() || lowercaseType.startsWith("text/plain;"_s))
         return textPlainContentTypeAtom();
     if (lowercaseType == "url"_s || lowercaseType.startsWith("text/uri-list;"_s))
         return "text/uri-list"_s;
@@ -184,7 +186,7 @@ void DataTransfer::clearData(const String& type)
         m_itemList->didClearStringData(normalizedType);
 }
 
-static String readURLsFromPasteboardAsString(Page* page, Pasteboard& pasteboard, Function<bool(const String&)>&& shouldIncludeURL)
+static String readURLsFromPasteboardAsString(Page* page, Pasteboard& pasteboard, NOESCAPE const Function<bool(const String&)>& shouldIncludeURL)
 {
     StringBuilder urlList;
     auto urlStrings = pasteboard.readAllStrings("text/uri-list"_s);
@@ -283,6 +285,20 @@ bool DataTransfer::shouldSuppressGetAndSetDataToAvoidExposingFilePaths() const
     if (!forFileDrag() && !DeprecatedGlobalSettings::customPasteboardDataEnabled())
         return false;
     return m_pasteboard->fileContentState() == Pasteboard::FileContentState::MayContainFilePaths;
+}
+
+bool DataTransfer::allowsFileAccess() const
+{
+#if PLATFORM(COCOA)
+    return !forDrag() || forFileDrag();
+#elif PLATFORM(GTK) || PLATFORM(WPE)
+    // File drag access is disabled until https://webkit.org/b/271957 is resolved for GTK/WPE ports.
+    // In-memory image paste does not access files on disk, so it is safe to allow.
+    return !forDrag() && m_pasteboard && m_pasteboard->fileContentState() == Pasteboard::FileContentState::InMemoryImage;
+#else
+    // Check https://webkit.org/b/271957 before allowing file access for your port.
+    return false;
+#endif
 }
 
 void DataTransfer::setData(Document& document, const String& type, const String& data)
@@ -583,8 +599,11 @@ void DataTransfer::setDragImage(Ref<Element>&& element, int x, int y)
         return;
 
     CachedResourceHandle<CachedImage> image;
-    if (auto* imageElement = dynamicDowncast<HTMLImageElement>(element.get()); imageElement && !imageElement->isConnected())
+    float density = 1;
+    if (RefPtr imageElement = dynamicDowncast<HTMLImageElement>(element); imageElement && !imageElement->isConnected()) {
         image = imageElement->cachedImage();
+        density = imageElement->currentPixelDensity();
+    }
 
     m_dragLocation = IntPoint(x, y);
 
@@ -592,6 +611,7 @@ void DataTransfer::setDragImage(Ref<Element>&& element, int x, int y)
     if (RefPtr dragImageLoader = m_dragImageLoader; dragImageLoader && m_dragImage)
         dragImageLoader->stopLoading(m_dragImage);
     m_dragImage = image;
+    m_dragImageDensity = density;
     if (m_dragImage) {
         if (!m_dragImageLoader)
             m_dragImageLoader = DragImageLoader::create(*this, document);
@@ -626,28 +646,37 @@ RefPtr<Element> DataTransfer::dragImageElement() const
     return m_dragImageElement;
 }
 
-#if !PLATFORM(MAC)
-
 DragImageRef DataTransfer::createDragImage(const Document* document, IntPoint& location) const
 {
-    location = m_dragLocation;
-
     if (m_dragImage) {
-        HostWindow* hostWindow = document && document->view() ? protect(document->view())->hostWindow() : nullptr;
-        auto deviceScaleFactor = document ? document->deviceScaleFactor() : 1.f;
-        return createDragImageFromImage(protect(protect(m_dragImage)->image()).get(), ImageOrientation::Orientation::None, hostWindow, deviceScaleFactor);
+        // FIXME; Sizing images for DataTransfer is not fully specified. See https://github.com/whatwg/html/issues/13099.
+
+        Ref image = *protect(m_dragImage)->image();
+        RefPtr nativeImage = image->currentNativeImage(DefaultSizing { std::nullopt, m_dragImageDensity }.resolve(image->naturalDimensions()));
+        if (!nativeImage)
+            return nullptr;
+
+        DragImageRef result = createDragImageFromImage(*nativeImage, document && document->view() ? protect(document->view())->hostWindow() : nullptr, document ? document->deviceScaleFactor() : 1.0f);
+        location = platformAdjustDragImageHotSpot(m_dragLocation, dragImageSize(result));
+        return result;
     }
 
     if (m_dragImageElement) {
-        if (RefPtr frame = m_dragImageElement->document().frame())
-            return createDragImageForNode(*frame, dragImageElement().releaseNonNull());
+        RefPtr frame = m_dragImageElement->document().frame();
+        if (!frame)
+            return nullptr;
+
+        IntRect imageRect;
+        IntRect elementRect;
+        DragImageRef result = createDragImageForImage(*frame, dragImageElement().releaseNonNull(), imageRect, elementRect);
+        location = platformAdjustDragImageHotSpot(m_dragLocation + (elementRect.location() - imageRect.location()), imageRect.size());
+        return result;
     }
 
     // We do not have enough information to create a drag image, use the default icon.
+    location = m_dragLocation;
     return nullptr;
 }
-
-#endif
 
 Ref<DragImageLoader> DragImageLoader::create(DataTransfer& dataTransfer, const Document& document)
 {

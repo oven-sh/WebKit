@@ -39,7 +39,7 @@ class MediaDeviceInfo : public RefCounted<MediaDeviceInfo>, public ScriptWrappab
 public:
     enum class Kind { Audioinput, Audiooutput, Videoinput };
 
-    static Ref<MediaDeviceInfo> create(const String&, const String&, const String&, Kind);
+    static Ref<MediaDeviceInfo> LEGACY_NODELETE create(const String&, const String&, const String&, Kind);
     virtual ~MediaDeviceInfo() = default;
 
     const String& label() const LIFETIME_BOUND { return m_label; }
@@ -59,7 +59,7 @@ private:
     const Kind m_kind;
 };
 
-MediaDeviceInfo::Kind NODELETE toMediaDeviceInfoKind(CaptureDevice::DeviceType);
+MediaDeviceInfo::Kind LEGACY_NODELETE toMediaDeviceInfoKind(CaptureDevice::DeviceType);
 
 } // namespace WebCore
 

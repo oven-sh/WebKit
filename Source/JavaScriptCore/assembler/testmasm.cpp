@@ -48,7 +48,7 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 // We don't have a NO_RETURN_DUE_TO_EXIT, nor should we. That's ridiculous.
-static bool NODELETE hiddenTruthBecauseNoReturnIsStupid() { return true; }
+static bool LEGACY_NODELETE hiddenTruthBecauseNoReturnIsStupid() { return true; }
 
 static void usage()
 {
@@ -190,7 +190,7 @@ Lock crashLock;
 
 typedef WTF::Function<void(CCallHelpers&)> Generator;
 
-template<typename T> T NODELETE nextID(T id) { return static_cast<T>(id + 1); }
+template<typename T> T LEGACY_NODELETE nextID(T id) { return static_cast<T>(id + 1); }
 
 #define TESTWORD64 0x0c0defefebeef000
 #define TESTWORD32 0x0beef000
@@ -219,23 +219,23 @@ template<typename T> T NODELETE nextID(T id) { return static_cast<T>(id + 1); }
         CRASH();                                                        \
     } while (false)
 
-bool NODELETE isPC(MacroAssembler::RegisterID id)
+bool LEGACY_NODELETE isPC(MacroAssembler::RegisterID id)
 {
     UNUSED_PARAM(id);
     return false;
 }
 
-bool NODELETE isSP(MacroAssembler::RegisterID id)
+bool LEGACY_NODELETE isSP(MacroAssembler::RegisterID id)
 {
     return id == MacroAssembler::stackPointerRegister;
 }
 
-bool NODELETE isFP(MacroAssembler::RegisterID id)
+bool LEGACY_NODELETE isFP(MacroAssembler::RegisterID id)
 {
     return id == MacroAssembler::framePointerRegister;
 }
 
-bool NODELETE isSpecialGPR(MacroAssembler::RegisterID id)
+bool LEGACY_NODELETE isSpecialGPR(MacroAssembler::RegisterID id)
 {
     if (isPC(id) || isSP(id) || isFP(id))
         return true;
@@ -975,6 +975,21 @@ void testStore64Imm64AddressPointer()
     doTest(0xAAAA432198765555);
 }
 
+void testLoad64ExtendedAddress()
+{
+    static constexpr std::array<uint64_t, 5> table { 0x0123456789abcdefULL, 0xfedcba9876543210ULL, 0xffffffffffffffffULL, 0, 0x8000000000000001ULL };
+
+    auto test = compile([=](CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        jit.load64(CCallHelpers::ExtendedAddress(GPRInfo::argumentGPR0, std::bit_cast<intptr_t>(table.data())), GPRInfo::returnValueGPR);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+
+    for (size_t i = 0; i < table.size(); ++i)
+        CHECK_EQ(invoke<uint64_t>(test, i), table[i]);
+}
+
 void testAdd32Imm()
 {
     for (auto immediate : int32Operands()) {
@@ -1330,6 +1345,346 @@ void testCompareDoubleSameArg(MacroAssembler::DoubleCondition condition)
         CHECK_EQ(invoke<int>(compareDoubleGeneric), expectedResult(a));
     }
 }
+
+#if CPU(X86_64) || CPU(ARM64)
+static Vector<int64_t> int64ImmediateOperands()
+{
+    return Vector<int64_t> {
+        0, -1, 1, 42, -42, 0xff, 0xffff, 0x7fffffff, 0x80000000LL, 0xfffffffeLL, 0xffffffffLL,
+        std::numeric_limits<int32_t>::min(), 0x100000000LL, static_cast<int64_t>(0xffffffff00000000ULL),
+        0x123456789abcdef0LL, static_cast<int64_t>(0xfffe000000000000ULL), std::numeric_limits<int64_t>::min(),
+    };
+}
+
+static Vector<uint64_t> int64InputOperands()
+{
+    return Vector<uint64_t> {
+        0, ~0ULL, 42, 0xffffffffULL, 0xffffffff00000000ULL, 0x8000000080000000ULL, 0x123456789abcdef0ULL,
+    };
+}
+
+// Checks emit(jit, src, dest) for every aliasing of src and dest, with garbage in the upper half of the
+// destination so that a missing zero extension of a 32-bit result is caught.
+template<typename Emit, typename Expected>
+static void checkRegisterImmediateOp(Emit emit, Expected expected)
+{
+    enum class Aliasing { Distinct, SameArgument0, SameArgument2 };
+    for (auto aliasing : { Aliasing::Distinct, Aliasing::SameArgument0, Aliasing::SameArgument2 }) {
+        auto code = compile([=](CCallHelpers& jit) {
+            emitFunctionPrologue(jit);
+            switch (aliasing) {
+            case Aliasing::Distinct:
+                jit.move(CCallHelpers::TrustedImm64(0x5a5a5a5a5a5a5a5aLL), GPRInfo::argumentGPR1);
+                emit(jit, GPRInfo::argumentGPR0, GPRInfo::argumentGPR1);
+                jit.move(GPRInfo::argumentGPR1, GPRInfo::returnValueGPR);
+                break;
+            case Aliasing::SameArgument0:
+                emit(jit, GPRInfo::argumentGPR0, GPRInfo::argumentGPR0);
+                jit.move(GPRInfo::argumentGPR0, GPRInfo::returnValueGPR);
+                break;
+            case Aliasing::SameArgument2:
+                jit.move(GPRInfo::argumentGPR0, GPRInfo::argumentGPR2);
+                emit(jit, GPRInfo::argumentGPR2, GPRInfo::argumentGPR2);
+                jit.move(GPRInfo::argumentGPR2, GPRInfo::returnValueGPR);
+                break;
+            }
+            emitFunctionEpilogue(jit);
+            jit.ret();
+        });
+        for (auto value : int64InputOperands())
+            CHECK_EQ(invoke<uint64_t>(code, value), static_cast<uint64_t>(expected(value)));
+    }
+}
+
+template<typename Emit, typename Expected>
+static void checkSrcDestImmediateOp(Emit emit, Expected expected)
+{
+    checkRegisterImmediateOp([=](CCallHelpers& jit, CCallHelpers::RegisterID src, CCallHelpers::RegisterID dest) {
+        jit.move(src, dest);
+        emit(jit, dest);
+    }, expected);
+}
+
+enum class BranchArith { Add32, Sub32, Add64, Sub64 };
+
+static bool expectedBranchArithTaken(BranchArith op, MacroAssembler::ResultCondition cond, uint64_t value, int32_t imm)
+{
+    bool is32 = op == BranchArith::Add32 || op == BranchArith::Sub32;
+    bool isAdd = op == BranchArith::Add32 || op == BranchArith::Add64;
+    bool carry = false;
+    bool overflow = false;
+    int64_t result = 0;
+    if (is32) {
+        int32_t lhs = static_cast<int32_t>(value);
+        int32_t result32 = 0;
+        overflow = isAdd ? __builtin_add_overflow(lhs, imm, &result32) : __builtin_sub_overflow(lhs, imm, &result32);
+        uint32_t unsignedResult = 0;
+        carry = __builtin_add_overflow(static_cast<uint32_t>(lhs), static_cast<uint32_t>(imm), &unsignedResult);
+        result = result32;
+    } else {
+        int64_t lhs = static_cast<int64_t>(value);
+        overflow = isAdd ? __builtin_add_overflow(lhs, static_cast<int64_t>(imm), &result) : __builtin_sub_overflow(lhs, static_cast<int64_t>(imm), &result);
+        uint64_t unsignedResult = 0;
+        carry = __builtin_add_overflow(static_cast<uint64_t>(lhs), static_cast<uint64_t>(static_cast<int64_t>(imm)), &unsignedResult);
+    }
+    switch (cond) {
+    case MacroAssembler::Carry:
+        RELEASE_ASSERT(isAdd);
+        return carry;
+    case MacroAssembler::Overflow:
+        return overflow;
+    case MacroAssembler::Signed:
+        return result < 0;
+    case MacroAssembler::PositiveOrZero:
+        return result >= 0;
+    case MacroAssembler::Zero:
+        return !result;
+    case MacroAssembler::NonZero:
+        return !!result;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static void checkBranchArithImmediate(BranchArith op, int32_t imm, MacroAssembler::ResultCondition cond, int32_t flagsPreset)
+{
+    auto code = compile([=](CCallHelpers& jit) {
+        emitFunctionPrologue(jit);
+        // The two presets leave opposite Z, N, and C flags behind, so a branch that does not
+        // recompute them reads a stale value under one of the two.
+        jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::argumentGPR1);
+        jit.compare32(MacroAssembler::Equal, GPRInfo::argumentGPR1, CCallHelpers::TrustedImm32(flagsPreset), GPRInfo::argumentGPR1);
+        CCallHelpers::Jump taken;
+        switch (op) {
+        case BranchArith::Add32:
+            taken = jit.branchAdd32(cond, CCallHelpers::TrustedImm32(imm), GPRInfo::argumentGPR0);
+            break;
+        case BranchArith::Sub32:
+            taken = jit.branchSub32(cond, CCallHelpers::TrustedImm32(imm), GPRInfo::argumentGPR0);
+            break;
+        case BranchArith::Add64:
+            taken = jit.branchAdd64(cond, CCallHelpers::TrustedImm32(imm), GPRInfo::argumentGPR0);
+            break;
+        case BranchArith::Sub64:
+            taken = jit.branchSub64(cond, CCallHelpers::TrustedImm32(imm), GPRInfo::argumentGPR0);
+            break;
+        }
+        jit.move(CCallHelpers::TrustedImm32(0), GPRInfo::returnValueGPR);
+        auto done = jit.jump();
+        taken.link(&jit);
+        jit.move(CCallHelpers::TrustedImm32(1), GPRInfo::returnValueGPR);
+        done.link(&jit);
+        emitFunctionEpilogue(jit);
+        jit.ret();
+    });
+
+    const uint64_t values[] = { 0, 1, ~0ULL, 0xffffffffULL, 0x7fffffffULL, 0x80000000ULL, 0x7fffffffffffffffULL, 0x8000000000000000ULL, 0x123456789abcdef0ULL };
+    for (uint64_t value : values)
+        CHECK_EQ(invoke<int>(code, value), static_cast<int>(expectedBranchArithTaken(op, cond, value, imm)));
+}
+
+void testBranchAddSubImmediateSetsFlags()
+{
+    // Carry after a subtraction means "no borrow" on ARM64 but "borrow" on x86, so it is only checked for additions.
+    const MacroAssembler::ResultCondition addConditions[] = { MacroAssembler::Carry, MacroAssembler::Overflow, MacroAssembler::Signed, MacroAssembler::PositiveOrZero, MacroAssembler::Zero, MacroAssembler::NonZero };
+    const MacroAssembler::ResultCondition subConditions[] = { MacroAssembler::Overflow, MacroAssembler::Signed, MacroAssembler::PositiveOrZero, MacroAssembler::Zero, MacroAssembler::NonZero };
+
+    for (auto op : { BranchArith::Add32, BranchArith::Sub32, BranchArith::Add64, BranchArith::Sub64 }) {
+        bool isAdd = op == BranchArith::Add32 || op == BranchArith::Add64;
+        auto conditions = isAdd ? std::span<const MacroAssembler::ResultCondition> { addConditions } : std::span<const MacroAssembler::ResultCondition> { subConditions };
+        for (int32_t imm : { 0, 1, -1 }) {
+            for (auto cond : conditions) {
+                for (int32_t flagsPreset : { 0, 1 })
+                    checkBranchArithImmediate(op, imm, cond, flagsPreset);
+            }
+        }
+    }
+}
+
+void testLogicalAndShiftImmediates()
+{
+    using Reg = CCallHelpers::RegisterID;
+    using Imm32 = CCallHelpers::TrustedImm32;
+    using Imm64 = CCallHelpers::TrustedImm64;
+
+    for (int64_t imm64 : int64ImmediateOperands()) {
+        uint64_t mask64 = static_cast<uint64_t>(imm64);
+        int32_t imm32 = static_cast<int32_t>(imm64);
+        uint32_t mask32 = static_cast<uint32_t>(imm32);
+        uint64_t signExtendedMask32 = static_cast<uint64_t>(static_cast<int64_t>(imm32));
+
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg src, Reg dest) {
+            jit.and32(Imm32(imm32), src, dest);
+        }, [=](uint64_t v) {
+            return static_cast<uint32_t>(v) & mask32;
+        });
+        checkSrcDestImmediateOp([=](CCallHelpers& jit, Reg srcDest) {
+            jit.and32(Imm32(imm32), srcDest);
+        }, [=](uint64_t v) {
+            return static_cast<uint32_t>(v) & mask32;
+        });
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg src, Reg dest) {
+            jit.or32(Imm32(imm32), src, dest);
+        }, [=](uint64_t v) {
+            return static_cast<uint32_t>(v) | mask32;
+        });
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg src, Reg dest) {
+            jit.xor32(Imm32(imm32), src, dest);
+        }, [=](uint64_t v) {
+            return static_cast<uint32_t>(v) ^ mask32;
+        });
+
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg src, Reg dest) {
+            jit.and64(Imm32(imm32), src, dest);
+        }, [=](uint64_t v) {
+            return v & signExtendedMask32;
+        });
+        checkSrcDestImmediateOp([=](CCallHelpers& jit, Reg srcDest) {
+            jit.and64(Imm32(imm32), srcDest);
+        }, [=](uint64_t v) {
+            return v & signExtendedMask32;
+        });
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg src, Reg dest) {
+            jit.or64(Imm32(imm32), src, dest);
+        }, [=](uint64_t v) {
+            return v | signExtendedMask32;
+        });
+        checkSrcDestImmediateOp([=](CCallHelpers& jit, Reg srcDest) {
+            jit.or64(Imm32(imm32), srcDest);
+        }, [=](uint64_t v) {
+            return v | signExtendedMask32;
+        });
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg src, Reg dest) {
+            jit.xor64(Imm32(imm32), src, dest);
+        }, [=](uint64_t v) {
+            return v ^ signExtendedMask32;
+        });
+        checkSrcDestImmediateOp([=](CCallHelpers& jit, Reg srcDest) {
+            jit.xor64(Imm32(imm32), srcDest);
+        }, [=](uint64_t v) {
+            return v ^ signExtendedMask32;
+        });
+
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg src, Reg dest) {
+            jit.and64(Imm64(imm64), src, dest);
+        }, [=](uint64_t v) {
+            return v & mask64;
+        });
+        checkSrcDestImmediateOp([=](CCallHelpers& jit, Reg srcDest) {
+            jit.and64(Imm64(imm64), srcDest);
+        }, [=](uint64_t v) {
+            return v & mask64;
+        });
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg src, Reg dest) {
+            jit.or64(Imm64(imm64), src, dest);
+        }, [=](uint64_t v) {
+            return v | mask64;
+        });
+        checkSrcDestImmediateOp([=](CCallHelpers& jit, Reg srcDest) {
+            jit.or64(Imm64(imm64), srcDest);
+        }, [=](uint64_t v) {
+            return v | mask64;
+        });
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg src, Reg dest) {
+            jit.xor64(Imm64(imm64), src, dest);
+        }, [=](uint64_t v) {
+            return v ^ mask64;
+        });
+        checkSrcDestImmediateOp([=](CCallHelpers& jit, Reg srcDest) {
+            jit.add64(Imm64(imm64), srcDest);
+        }, [=](uint64_t v) {
+            return v + mask64;
+        });
+        checkSrcDestImmediateOp([=](CCallHelpers& jit, Reg srcDest) {
+            jit.sub64(Imm64(imm64), srcDest);
+        }, [=](uint64_t v) {
+            return v - mask64;
+        });
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg, Reg dest) {
+            jit.move(Imm64(imm64), dest);
+        }, [=](uint64_t) {
+            return mask64;
+        });
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg, Reg dest) {
+            jit.move(CCallHelpers::TrustedImmPtr(std::bit_cast<void*>(static_cast<intptr_t>(imm64))), dest);
+        }, [=](uint64_t) {
+            return mask64;
+        });
+    }
+
+    for (int32_t amount : { 0, 1, 7, 31, 32, 33, 63, 64 }) {
+        unsigned amount32 = amount & 31;
+        unsigned amount64 = amount & 63;
+        auto rotateRight32 = [=](uint32_t v) -> uint32_t {
+            return amount32 ? (v >> amount32) | (v << (32 - amount32)) : v;
+        };
+        auto rotateRight64 = [=](uint64_t v) -> uint64_t {
+            return amount64 ? (v >> amount64) | (v << (64 - amount64)) : v;
+        };
+
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg src, Reg dest) {
+            jit.lshift32(src, Imm32(amount), dest);
+        }, [=](uint64_t v) {
+            return static_cast<uint32_t>(static_cast<uint32_t>(v) << amount32);
+        });
+        checkSrcDestImmediateOp([=](CCallHelpers& jit, Reg srcDest) {
+            jit.lshift32(Imm32(amount), srcDest);
+        }, [=](uint64_t v) {
+            return static_cast<uint32_t>(static_cast<uint32_t>(v) << amount32);
+        });
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg src, Reg dest) {
+            jit.rshift32(src, Imm32(amount), dest);
+        }, [=](uint64_t v) {
+            return static_cast<uint32_t>(static_cast<int32_t>(v) >> amount32);
+        });
+        checkSrcDestImmediateOp([=](CCallHelpers& jit, Reg srcDest) {
+            jit.rshift32(Imm32(amount), srcDest);
+        }, [=](uint64_t v) {
+            return static_cast<uint32_t>(static_cast<int32_t>(v) >> amount32);
+        });
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg src, Reg dest) {
+            jit.urshift32(src, Imm32(amount), dest);
+        }, [=](uint64_t v) {
+            return static_cast<uint32_t>(v) >> amount32;
+        });
+        checkSrcDestImmediateOp([=](CCallHelpers& jit, Reg srcDest) {
+            jit.urshift32(Imm32(amount), srcDest);
+        }, [=](uint64_t v) {
+            return static_cast<uint32_t>(v) >> amount32;
+        });
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg src, Reg dest) {
+            jit.rotateRight32(src, Imm32(amount), dest);
+        }, [=](uint64_t v) {
+            return rotateRight32(static_cast<uint32_t>(v));
+        });
+        checkSrcDestImmediateOp([=](CCallHelpers& jit, Reg srcDest) {
+            jit.rotateRight32(Imm32(amount), srcDest);
+        }, [=](uint64_t v) {
+            return rotateRight32(static_cast<uint32_t>(v));
+        });
+
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg src, Reg dest) {
+            jit.lshift64(src, Imm32(amount), dest);
+        }, [=](uint64_t v) {
+            return v << amount64;
+        });
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg src, Reg dest) {
+            jit.rshift64(src, Imm32(amount), dest);
+        }, [=](uint64_t v) {
+            return static_cast<uint64_t>(static_cast<int64_t>(v) >> amount64);
+        });
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg src, Reg dest) {
+            jit.urshift64(src, Imm32(amount), dest);
+        }, [=](uint64_t v) {
+            return v >> amount64;
+        });
+        checkRegisterImmediateOp([=](CCallHelpers& jit, Reg src, Reg dest) {
+            jit.rotateRight64(src, Imm32(amount), dest);
+        }, [=](uint64_t v) {
+            return rotateRight64(v);
+        });
+    }
+}
+#endif
 
 void testMul32WithImmediates()
 {
@@ -5451,7 +5806,7 @@ void testProbeWritesArgumentRegisters()
     CHECK_EQ(probeCallCount, 2);
 }
 
-static NEVER_INLINE NOT_TAIL_CALLED int NODELETE testFunctionToTrashGPRs(int a, int b, int c, int d, int e, int f, int g, int h, int i, int j)
+static NEVER_INLINE NOT_TAIL_CALLED int LEGACY_NODELETE testFunctionToTrashGPRs(int a, int b, int c, int d, int e, int f, int g, int h, int i, int j)
 {
     if (j > 0)
         return testFunctionToTrashGPRs(a + 1, b + a, c + b, d + 5, e - a, f * 1.5, g ^ a, h - b, i, j - 1);
@@ -6095,7 +6450,7 @@ void testMoveDoubleConditionally64()
 
 #if CPU(X86_64) || CPU(ARM64)
 template<typename SelectionType>
-static SelectionType NODELETE expectedResultForRelationalCondition(MacroAssembler::RelationalCondition cond, int32_t a, int32_t b, SelectionType thenValue, SelectionType elseValue)
+static SelectionType LEGACY_NODELETE expectedResultForRelationalCondition(MacroAssembler::RelationalCondition cond, int32_t a, int32_t b, SelectionType thenValue, SelectionType elseValue)
 {
     switch (cond) {
     case MacroAssembler::Equal:
@@ -6123,7 +6478,7 @@ static SelectionType NODELETE expectedResultForRelationalCondition(MacroAssemble
 }
 
 template<typename SelectionType>
-static SelectionType NODELETE expectedResultForResultCondition(MacroAssembler::ResultCondition cond, int32_t testValue, int32_t mask, SelectionType thenValue, SelectionType elseValue)
+static SelectionType LEGACY_NODELETE expectedResultForResultCondition(MacroAssembler::ResultCondition cond, int32_t testValue, int32_t mask, SelectionType thenValue, SelectionType elseValue)
 {
     int32_t result = testValue & mask;
     switch (cond) {
@@ -8529,7 +8884,10 @@ void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     RUN(testCountTrailingZeros64());
     RUN(testCountTrailingZeros64WithoutNullCheck());
     RUN(testShiftAndAdd());
+    RUN(testLogicalAndShiftImmediates());
+    RUN(testBranchAddSubImmediateSetsFlags());
     RUN(testStore64Imm64AddressPointer());
+    RUN(testLoad64ExtendedAddress());
 
     RUN(testAdd32Imm());
     RUN(testAdd32ArgImm());

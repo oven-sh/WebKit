@@ -139,6 +139,19 @@ ALWAYS_INLINE static bool isEvalOrArgumentsIdentifier(const VM& vm, const Identi
 {
     return isEval(vm, ident) || isArguments(vm, ident);
 }
+ALWAYS_INLINE static bool isStrictModeReservedWord(const VM& vm, const Identifier* ident)
+{
+    auto& propertyNames = *vm.propertyNames;
+    return propertyNames.implementsKeyword == *ident
+        || propertyNames.interfaceKeyword == *ident
+        || propertyNames.letKeyword == *ident
+        || propertyNames.packageKeyword == *ident
+        || propertyNames.privateKeyword == *ident
+        || propertyNames.protectedKeyword == *ident
+        || propertyNames.publicKeyword == *ident
+        || propertyNames.staticKeyword == *ident
+        || propertyNames.yieldKeyword == *ident;
+}
 ALWAYS_INLINE static bool isIdentifierOrKeyword(const JSToken& token)
 {
     return token.m_type == IDENT || token.m_type & KeywordTokenFlag;
@@ -183,6 +196,7 @@ public:
 
     void startSwitch() { m_switchDepth++; }
     void endSwitch() { m_switchDepth--; }
+    bool isSwitchBlockScope() const { return !!m_switchDepth; }
     void startLoop() { m_loopDepth++; }
     void endLoop() { ASSERT(m_loopDepth); m_loopDepth--; }
     bool inLoop() { return !!m_loopDepth; }
@@ -611,7 +625,7 @@ public:
         bool isArgumentsIdent = isArguments(m_vm, ident);
         auto addResult = m_declaredVariables.add(ident->impl());
         bool isDuplicateParameter = !addResult.isNewEntry && addResult.iterator->value.isParameter();
-        bool isValidStrictMode = !isDuplicateParameter && m_vm.propertyNames->eval != *ident && !isArgumentsIdent;
+        bool isValidStrictMode = !isDuplicateParameter && m_vm.propertyNames->eval != *ident && !isArgumentsIdent && !isStrictModeReservedWord(m_vm, ident);
         addResult.iterator->value.clearIsVar();
         addResult.iterator->value.setIsParameter();
         m_isValidStrictMode = m_isValidStrictMode && isValidStrictMode;
@@ -635,7 +649,7 @@ public:
         return false;
     }
     template <typename Func>
-    void forEachUsedVariable(const Func& func)
+    void forEachUsedVariable(NOESCAPE const Func& func)
     {
         for (const UniquedStringImplPtrSet& set : m_usedVariables) {
             for (UniquedStringImpl* impl : set) {
@@ -676,6 +690,19 @@ public:
     void revertToPreviousUsedVariables(size_t size)
     {
         m_usedVariables.resize(size);
+        m_lastAddedUsedVariable = nullptr;
+    }
+    void mergeIntoPreviousUsedVariables(size_t size)
+    {
+        ASSERT(size);
+        if (m_usedVariables.size() <= size)
+            return;
+        UniquedStringImplPtrSet& destinationSet = m_usedVariables[size - 1];
+        for (size_t index = size; index < m_usedVariables.size(); ++index) {
+            for (UniquedStringImpl* impl : m_usedVariables[index])
+                destinationSet.add(impl);
+        }
+        m_usedVariables.shrink(size);
         m_lastAddedUsedVariable = nullptr;
     }
 
@@ -1532,7 +1559,7 @@ private:
         VariableEnvironment varDeclarations;
         VariableEnvironment lexicalVariables;
         CodeFeatures features;
-        int numConstants;
+        unsigned usedPrivateNameCount;
     };
     std::expected<ParseInnerResult, String> parseInner(const Identifier&, ParsingContext, std::optional<int> functionConstructorParametersEndPosition, const FixedVector<UnlinkedFunctionExecutable::ClassElementDefinition>*, const PrivateNameEnvironment* parentScopePrivateNames);
 
@@ -1811,6 +1838,8 @@ private:
     template <class TreeBuilder> ALWAYS_INLINE TreeExpression tryParseArgumentsDotLengthForFastPath(TreeBuilder&);
     template <class TreeBuilder> ALWAYS_INLINE TreeExpression parsePrimaryExpression(TreeBuilder&);
     template <class TreeBuilder> ALWAYS_INLINE TreeExpression parseArrayLiteral(TreeBuilder&);
+    template <class TreeBuilder> ALWAYS_INLINE TreeExpression parseArrayElement(TreeBuilder&);
+    template <class TreeBuilder> ALWAYS_INLINE void parseSimpleArrayElementsAfterComma(TreeBuilder&, typename TreeBuilder::ElementList& tail);
     template <class TreeBuilder> ALWAYS_INLINE TreeExpression parseObjectLiteral(TreeBuilder&);
     template <class TreeBuilder> ALWAYS_INLINE TreeClassExpression parseClassExpression(TreeBuilder&);
     template <class TreeBuilder> ALWAYS_INLINE TreeExpression parseFunctionExpression(TreeBuilder&);
@@ -1823,7 +1852,7 @@ private:
     template <class TreeBuilder> ALWAYS_INLINE TreeFunctionBody parseFunctionBody(TreeBuilder&, SyntaxChecker&, const JSTokenLocation&, unsigned functionStart, int functionNameStart, int parametersStart, ConstructorKind, SuperBinding, FunctionBodyType, unsigned);
     template <class TreeBuilder> ALWAYS_INLINE bool parseFormalParameters(TreeBuilder&, TreeFormalParameterList, bool isArrowFunction, bool isMethod, unsigned&);
     enum VarDeclarationListContext { ForLoopContext, VarDeclarationContext };
-    template <class TreeBuilder> TreeExpression parseVariableDeclarationList(TreeBuilder&, int& declarations, TreeDestructuringPattern& lastPattern, TreeExpression& lastInitializer, JSTextPosition& identStart, JSTextPosition& initStart, JSTextPosition& initEnd, VarDeclarationListContext, DeclarationType, ExportType, bool& forLoopConstDoesNotHaveInitializer);
+    template <class TreeBuilder> TreeExpression parseVariableDeclarationList(TreeBuilder&, int& declarations, TreeDestructuringPattern& lastPattern, TreeExpression& lastInitializer, JSTextPosition& identStart, JSTextPosition& initStart, JSTextPosition& initEnd, VarDeclarationListContext, DeclarationType, ExportType, bool& forLoopConstDoesNotHaveInitializer, bool isLetKeywordConsumed);
     template <class TreeBuilder> TreeSourceElements parseArrowFunctionSingleExpressionBodySourceElements(TreeBuilder&);
     template <class TreeBuilder> TreeExpression parseArrowFunctionExpression(TreeBuilder&, bool isAsync, const JSTokenLocation&);
     template <class TreeBuilder> NEVER_INLINE TreeDestructuringPattern createBindingPattern(TreeBuilder&, DestructuringKind, ExportType, const Identifier&, const JSToken&, AssignmentContext, const Identifier** duplicateIdentifier);
@@ -1864,8 +1893,8 @@ private:
 
     template <class TreeBuilder> ALWAYS_INLINE bool isSimpleAssignmentTarget(TreeBuilder&, TreeExpression, bool ignoreStrictCheck = false);
 
-    ALWAYS_INLINE int NODELETE isBinaryOperator(JSTokenType);
-    bool NODELETE allowAutomaticSemicolon();
+    ALWAYS_INLINE int LEGACY_NODELETE isBinaryOperator(JSTokenType);
+    bool LEGACY_NODELETE allowAutomaticSemicolon();
     
     bool autoSemiColon()
     {
@@ -2112,7 +2141,6 @@ private:
     int m_statementDepth;
     FunctionMode m_functionMode;
     bool m_immediateParentAllowsFunctionDeclarationInStatement;
-    bool m_insideSwitchCaseBody { false };
     bool m_parsingBuiltin;
     bool m_isEvalContext;
     // offset 128
@@ -2123,7 +2151,7 @@ private:
     ConstructorKind m_constructorKindForTopLevelFunctionExpressions { ConstructorKind::None };
     bool m_isInsideOrdinaryFunction;
     bool m_seenTaggedTemplateInNonReparsingFunctionMode { false };
-    bool m_seenPrivateNameUseInNonReparsingFunctionMode { false };
+    bool m_seenPrivateNameUse { false };
     bool m_seenArgumentsDotLength { false };
     // offset 192; too rarely touched for grouping to pay.
     ParserArena m_parserArena;
@@ -2208,10 +2236,10 @@ std::unique_ptr<ParsedNode> Parser<LexerType>::parse(ParserError& error, const I
                                     parseResult.value().features,
                                     currentScope()->lexicallyScopedFeatures(),
                                     currentScope()->innerArrowFunctionFeatures(),
-                                    parseResult.value().numConstants,
                                     WTF::move(m_moduleScopeData));
         result->setStartOffset(m_lexer->currentOffset());
         result->setEndOffset(m_lexer->currentOffset());
+        result->setUsedPrivateNameCount(parseResult.value().usedPrivateNameCount);
 
         if (!isFunctionParseMode(parseMode)) {
             m_source->provider()->setSourceURLDirective(m_lexer->sourceURLDirective());

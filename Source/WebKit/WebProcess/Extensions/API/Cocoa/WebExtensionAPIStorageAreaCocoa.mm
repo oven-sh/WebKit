@@ -43,6 +43,8 @@
 #import "WebExtensionStorageAccessLevel.h"
 #import "WebExtensionUtilities.h"
 #import "WebProcess.h"
+#import <wtf/Borrow.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
 
@@ -72,7 +74,7 @@ void WebExtensionAPIStorageArea::get(WebPageProxyIdentifier webPageProxyIdentifi
     if (!items)
         items = NSNull.null;
 
-    if (!validateObject(items, @"items", [NSOrderedSet orderedSetWithObjects:NSDictionary.class, NSString.class, @[ NSString.class ], NSNull.class, nil], outExceptionString))
+    if (!validateObject(dynamic_objc_cast<NSObject>(items), @"items", [NSOrderedSet orderedSetWithObjects:NSDictionary.class, NSString.class, @[ NSString.class ], NSNull.class, nil], outExceptionString))
         return;
 
     Vector<String> keysVector;
@@ -106,7 +108,7 @@ void WebExtensionAPIStorageArea::get(WebPageProxyIdentifier webPageProxyIdentifi
         }
 
         auto *deserializedData = [NSDictionary dictionary];
-        for (auto& serializedJSON : result.value()) {
+        for (auto& serializedJSON : borrow(result.value())) {
             NSDictionary *data = parseJSON(serializedJSON.createNSString().get());
             NSDictionary<NSString *, id> *parsedJSON = mapObjects(data, ^id(NSString *key, NSString *jsonString) {
                 return parseJSON(jsonString, JSONOptions::FragmentsAllowed);
@@ -139,7 +141,7 @@ void WebExtensionAPIStorageArea::getBytesInUse(WebPageProxyIdentifier webPagePro
     if (!keys)
         keys = NSNull.null;
 
-    if (keys && !validateObject(keys, @"keys", [NSOrderedSet orderedSetWithObjects:NSString.class, @[ NSString.class ], NSNull.class, nil], outExceptionString))
+    if (keys && !validateObject(dynamic_objc_cast<NSObject>(keys), @"keys", [NSOrderedSet orderedSetWithObjects:NSString.class, @[ NSString.class ], NSNull.class, nil], outExceptionString))
         return;
 
     Vector<String> keysVector;
@@ -195,7 +197,7 @@ void WebExtensionAPIStorageArea::set(WebPageProxyIdentifier webPageProxyIdentifi
         return;
     }
 
-    if (storageSizeOf(serializedData) > webExtensionStorageAreaMaximumBytesPerCall) {
+    if (storageSizeOf(serializedData) > storageMaximumBytesPerCall(extensionContext().inTestingMode())) {
         *outExceptionString = toErrorString(nullString(), nullString(), @"it exceeded maximum data size allowed per call").createNSString().autorelease();
         return;
     }
@@ -212,10 +214,10 @@ void WebExtensionAPIStorageArea::remove(WebPageProxyIdentifier webPageProxyIdent
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/storage/StorageArea/remove
 
-    if (!validateObject(keys, @"keys", [NSOrderedSet orderedSetWithObjects:NSString.class, @[ NSString.class ], nil], outExceptionString))
+    if (!validateObject(dynamic_objc_cast<NSObject>(keys), @"keys", [NSOrderedSet orderedSetWithObjects:NSString.class, @[ NSString.class ], nil], outExceptionString))
         return;
 
-    Vector<String> keysVector = [keys isKindOfClass:NSArray.class] ? makeVector<String>((NSArray *)keys) : Vector<String> { keys };
+    Vector<String> keysVector = [keys isKindOfClass:NSArray.class] ? makeVector<String>((NSArray *)keys) : Vector<String> { checked_objc_cast<NSString>(keys) };
 
     WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::StorageRemove(webPageProxyIdentifier, m_type, keysVector), [protectedThis = Ref { *this }, callback = WTF::move(callback)](std::expected<void, WebExtensionError>&& result) {
         if (!result)
@@ -269,7 +271,7 @@ WebExtensionAPIEvent& WebExtensionAPIStorageArea::onChanged()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/storage/StorageArea/onChanged
 
     if (!m_onChanged)
-        m_onChanged = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::StorageOnChanged);
+        lazyInitialize(m_onChanged, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::StorageOnChanged));
 
     return *m_onChanged;
 }

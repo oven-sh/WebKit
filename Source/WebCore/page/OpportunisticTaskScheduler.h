@@ -67,7 +67,7 @@ public:
     void rescheduleIfNeeded(MonotonicTime deadline);
     bool hasImminentlyScheduledWork() const { return m_imminentlyScheduledWorkCount; }
 
-    [[nodiscard]] Ref<ImminentlyScheduledWorkScope> NODELETE makeScheduledWorkScope();
+    [[nodiscard]] Ref<ImminentlyScheduledWorkScope> LEGACY_NODELETE makeScheduledWorkScope();
 
     class FullGCActivityCallback final : public JSC::FullGCActivityCallback {
     public:
@@ -82,6 +82,8 @@ public:
 
     private:
         FullGCActivityCallback(JSC::Heap&);
+
+        UniqueRef<RunLoopObserver> createRunLoopObserver();
 
         JSC::VM& m_vm;
         const UniqueRef<RunLoopObserver> m_runLoopObserver;
@@ -102,6 +104,8 @@ public:
 
     private:
         EdenGCActivityCallback(JSC::Heap&);
+
+        UniqueRef<RunLoopObserver> createRunLoopObserver();
 
         JSC::VM& m_vm;
         const UniqueRef<RunLoopObserver> m_runLoopObserver;

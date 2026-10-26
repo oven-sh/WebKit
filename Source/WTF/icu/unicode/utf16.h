@@ -34,6 +34,9 @@
 #ifndef __UTF16_H__
 #define __UTF16_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 #include <stdbool.h>
 #include "unicode/umachine.h"
 #ifndef __UTF_H__

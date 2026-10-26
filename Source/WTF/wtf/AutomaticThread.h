@@ -73,7 +73,7 @@ class AutomaticThread;
 
 class AutomaticThreadCondition : public ThreadSafeRefCounted<AutomaticThreadCondition> {
 public:
-    static WTF_EXPORT_PRIVATE Ref<AutomaticThreadCondition> NODELETE create();
+    static WTF_EXPORT_PRIVATE Ref<AutomaticThreadCondition> LEGACY_NODELETE create();
 
     WTF_EXPORT_PRIVATE ~AutomaticThreadCondition();
     
@@ -124,9 +124,9 @@ public:
     // running. Returns true if the thread has been stopped. A good idiom for stopping your automatic
     // thread is to first try this, and if that doesn't work, to tell the thread using your own
     // mechanism (set some flag and then notify the condition).
-    bool NODELETE tryStop(const AbstractLocker&);
+    bool LEGACY_NODELETE tryStop(const AbstractLocker&);
 
-    bool NODELETE isWaiting(const AbstractLocker&);
+    bool LEGACY_NODELETE isWaiting(const AbstractLocker&);
 
     bool notify(const AbstractLocker&);
 
@@ -203,6 +203,7 @@ protected:
     ThreadQOS m_qos { defaultThreadQOS };
     bool m_isRunning { true };
     bool m_isWaiting { false };
+    bool m_isReleasingFreeMemory { false };
     bool m_hasUnderlyingThread { false };
     Condition m_waitCondition;
     Condition m_isRunningCondition;

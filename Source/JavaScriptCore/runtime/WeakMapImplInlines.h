@@ -167,7 +167,9 @@ void WeakMapImpl<WeakMapBucket>::rehash(RehashMode mode)
 
     // rehash() only runs once a real buffer has been allocated, so the shared empty buffer is never freed here.
     ASSERT(oldBuffer != emptyBuffer());
-    WeakMapBufferType::destroy(oldBuffer);
+    ASSERT(oldBuffer != m_buffer);
+    if (oldBuffer != inlineBuffer())
+        WeakMapBufferType::destroy(oldBuffer);
 }
 
 template<typename WeakMapBucket>

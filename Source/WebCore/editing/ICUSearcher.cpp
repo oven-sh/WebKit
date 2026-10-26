@@ -35,6 +35,7 @@
 #include <wtf/text/ParsingUtilities.h>
 #include <wtf/text/TextBreakIterator.h>
 #include <wtf/text/TextBreakIteratorInternalICU.h>
+#include <wtf/text/icu/UnicodeExtras.h>
 #include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {
@@ -48,14 +49,14 @@ static UStringSearch* createSearcher()
     // without setting both the pattern and the text.
     UErrorCode status = U_ZERO_ERROR;
     auto searchCollatorName = makeString(unsafeSpan(currentSearchLocaleID()), "@collation=search"_s);
-    SUPPRESS_FORWARD_DECL_ARG UStringSearch* searcher = usearch_open(&newlineCharacter, 1, &newlineCharacter, 1, searchCollatorName.utf8().legacyCStringPointer(), 0, &status);
+    UStringSearch* searcher = usearchOpen(&newlineCharacter, 1, &newlineCharacter, 1, searchCollatorName.utf8(), 0, &status);
     ASSERT(U_SUCCESS(status) || status == U_USING_FALLBACK_WARNING || status == U_USING_DEFAULT_WARNING);
     return searcher;
 }
 
 static UStringSearch* globalSearcher()
 {
-    SUPPRESS_FORWARD_DECL_ARG static UStringSearch* searcher = createSearcher();
+    static UStringSearch* searcher = createSearcher();
     return searcher;
 }
 
@@ -105,9 +106,9 @@ void ICUSearcher::reset()
 {
     // Leave the static object pointing to a valid string.
     UErrorCode status = U_ZERO_ERROR;
-    SUPPRESS_FORWARD_DECL_ARG usearch_setPattern(globalSearcher(), &newlineCharacter, 1, &status);
+    usearch_setPattern(globalSearcher(), &newlineCharacter, 1, &status);
     ASSERT(U_SUCCESS(status));
-    SUPPRESS_FORWARD_DECL_ARG usearch_setText(globalSearcher(), &newlineCharacter, 1, &status);
+    usearch_setText(globalSearcher(), &newlineCharacter, 1, &status);
     ASSERT(U_SUCCESS(status));
 }
 
@@ -118,46 +119,46 @@ UStringSearch* ICUSearcher::searcher()
 
 void ICUSearcher::setCollationStrength(UCollationStrength strength)
 {
-    SUPPRESS_FORWARD_DECL_ARG auto* s = searcher();
-    SUPPRESS_FORWARD_DECL_ARG auto* collator = usearch_getCollator(s);
+    auto* s = searcher();
+    auto* collator = usearch_getCollator(s);
     if (ucol_getStrength(collator) != strength) {
         ucol_setStrength(collator, strength);
-        SUPPRESS_FORWARD_DECL_ARG usearch_reset(s);
+        usearch_reset(s);
     }
 }
 
 void ICUSearcher::setAttribute(USearchAttribute attribute, USearchAttributeValue value)
 {
     UErrorCode status = U_ZERO_ERROR;
-    SUPPRESS_FORWARD_DECL_ARG usearch_setAttribute(searcher(), attribute, value, &status);
+    usearch_setAttribute(searcher(), attribute, value, &status);
     ASSERT(U_SUCCESS(status));
 }
 
 void ICUSearcher::setPattern(std::span<const char16_t> pattern)
 {
     UErrorCode status = U_ZERO_ERROR;
-    SUPPRESS_FORWARD_DECL_ARG usearch_setPattern(searcher(), pattern.data(), static_cast<int32_t>(pattern.size()), &status);
+    usearch_setPattern(searcher(), pattern.data(), static_cast<int32_t>(pattern.size()), &status);
     ASSERT(U_SUCCESS(status));
 }
 
 void ICUSearcher::setText(std::span<const char16_t> text)
 {
     UErrorCode status = U_ZERO_ERROR;
-    SUPPRESS_FORWARD_DECL_ARG usearch_setText(searcher(), text.data(), static_cast<int32_t>(text.size()), &status);
+    usearch_setText(searcher(), text.data(), static_cast<int32_t>(text.size()), &status);
     ASSERT(U_SUCCESS(status));
 }
 
 void ICUSearcher::setOffset(size_t offset)
 {
     UErrorCode status = U_ZERO_ERROR;
-    SUPPRESS_FORWARD_DECL_ARG usearch_setOffset(searcher(), static_cast<int32_t>(offset), &status);
+    usearch_setOffset(searcher(), static_cast<int32_t>(offset), &status);
     ASSERT(U_SUCCESS(status));
 }
 
 std::optional<size_t> ICUSearcher::next()
 {
     UErrorCode status = U_ZERO_ERROR;
-    SUPPRESS_FORWARD_DECL_ARG int32_t result = usearch_next(searcher(), &status);
+    int32_t result = usearch_next(searcher(), &status);
     ASSERT(U_SUCCESS(status));
     if (result == USEARCH_DONE)
         return std::nullopt;
@@ -168,7 +169,7 @@ std::optional<size_t> ICUSearcher::next()
 std::optional<size_t> ICUSearcher::previous()
 {
     UErrorCode status = U_ZERO_ERROR;
-    SUPPRESS_FORWARD_DECL_ARG int32_t result = usearch_previous(searcher(), &status);
+    int32_t result = usearch_previous(searcher(), &status);
     ASSERT(U_SUCCESS(status));
     if (result == USEARCH_DONE)
         return std::nullopt;
@@ -178,7 +179,7 @@ std::optional<size_t> ICUSearcher::previous()
 
 size_t ICUSearcher::matchedLength()
 {
-    SUPPRESS_FORWARD_DECL_ARG int32_t result = usearch_getMatchedLength(searcher());
+    int32_t result = usearch_getMatchedLength(searcher());
     return static_cast<size_t>(result);
 }
 
@@ -294,7 +295,7 @@ static std::pair<std::span<const char16_t>, size_t> extractSubspanIncludingConte
     return { buffer.subspan(contextStart, contextEnd - contextStart), contextStart };
 }
 
-static std::pair<std::span<const char16_t>, size_t> boundedWordContextForNonComplexText(std::span<const char16_t> buffer, size_t start, size_t length)
+static std::pair<std::span<const char16_t>, size_t> LEGACY_NODELETE boundedWordContextForNonComplexText(std::span<const char16_t> buffer, size_t start, size_t length)
 {
     size_t windowStart = start;
     while (windowStart && !isASCIIWhitespace(buffer[windowStart - 1]))
@@ -409,7 +410,7 @@ void normalizeCharacters(const char16_t* characters, unsigned length, Vector<cha
     ASSERT(U_SUCCESS(status));
 }
 
-char16_t NODELETE foldQuoteMarkAndReplaceNoBreakSpace(char16_t c)
+char16_t LEGACY_NODELETE foldQuoteMarkAndReplaceNoBreakSpace(char16_t c)
 {
     switch (c) {
     case hebrewPunctuationGershayim:
@@ -478,7 +479,7 @@ bool isSeparator(char32_t character)
     return isNonLatin1Separator(character);
 }
 
-bool NODELETE containsKanaLetters(const String& pattern)
+bool LEGACY_NODELETE containsKanaLetters(const String& pattern)
 {
     if (pattern.is8Bit())
         return false;
@@ -538,7 +539,7 @@ String foldQuoteMarks(const String& stringToFold)
 
 // We refer to the above technique as the "kana workaround". The next few
 // functions are helper functinos for the kana workaround.
-static bool NODELETE isKanaLetter(char16_t character)
+static bool LEGACY_NODELETE isKanaLetter(char16_t character)
 {
     // Hiragana letters.
     if (character >= 0x3041 && character <= 0x3096)
@@ -557,7 +558,7 @@ static bool NODELETE isKanaLetter(char16_t character)
     return false;
 }
 
-static bool NODELETE isSmallKanaLetter(char16_t character)
+static bool LEGACY_NODELETE isSmallKanaLetter(char16_t character)
 {
     ASSERT(isKanaLetter(character));
 
@@ -616,7 +617,7 @@ static bool NODELETE isSmallKanaLetter(char16_t character)
     return false;
 }
 
-static VoicedSoundMarkType NODELETE composedVoicedSoundMark(char16_t character)
+static VoicedSoundMarkType LEGACY_NODELETE composedVoicedSoundMark(char16_t character)
 {
     ASSERT(isKanaLetter(character));
 
@@ -683,7 +684,7 @@ static VoicedSoundMarkType NODELETE composedVoicedSoundMark(char16_t character)
     return VoicedSoundMarkType::NoVoicedSoundMark;
 }
 
-static bool NODELETE isCombiningVoicedSoundMark(char16_t character)
+static bool LEGACY_NODELETE isCombiningVoicedSoundMark(char16_t character)
 {
     switch (character) {
     case 0x3099: // COMBINING KATAKANA-HIRAGANA VOICED SOUND MARK

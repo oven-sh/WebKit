@@ -5,7 +5,7 @@ SECTIONS
     *(.text)
     *(.text.unlikely.*)
     /* C++ `inline` symbols are normally placed in their own sections to be
-     * deduplicated. Undo this. */
+     * deduplicated. Undo this. See also .group handling above. */
     *(.text.*)
     PROVIDE_HIDDEN(BORINGSSL_bcm_text_end = .);
   }
@@ -47,5 +47,10 @@ SECTIONS
     *(.rel.ro)
     *(.rela.ro)
     *(*.data.*)
+    /* Drop section groups. C++ `inline` symbols go in dedicated sections in
+     * COMDAT section groups. When we merge these sections above, drop the
+     * COMDAT grouping. Otherwise the linker seems to place .text in the group.
+     * See b/537726817. */
+    *(.group)
   }
 }

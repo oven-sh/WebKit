@@ -111,12 +111,6 @@ void WebChromeClient::didEndOverflowScroll()
         page->send(Messages::WebPageProxy::ScrollingNodeScrollDidEndScroll(std::nullopt));
 }
 
-bool WebChromeClient::hasStablePageScaleFactor() const
-{
-    RefPtr page = m_page.get();
-    return page && page->hasStablePageScaleFactor();
-}
-
 void WebChromeClient::suppressFormNotifications()
 {
     notImplemented();
@@ -213,6 +207,12 @@ void WebChromeClient::relayLiveRegionNotification(WebCore::LiveRegionAnnouncemen
 {
     if (RefPtr page = m_page.get())
         page->relayLiveRegionNotification(WTF::move(notificationData));
+}
+
+void WebChromeClient::didDisplayCaptions(Vector<String>&& captions) const
+{
+    if (RefPtr page = m_page.get())
+        page->didDisplayCaptions(WTF::move(captions));
 }
 
 } // namespace WebKit

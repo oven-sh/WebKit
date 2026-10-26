@@ -59,7 +59,7 @@ public:
 
     Ref<API::Data> data();
 
-    WebCore::LegacyWebArchive* NODELETE coreLegacyWebArchive();
+    WebCore::LegacyWebArchive* LEGACY_NODELETE coreLegacyWebArchive();
 
 private:
     WebArchive(WebArchiveResource* mainResource, RefPtr<API::Array>&& subresources, RefPtr<API::Array>&& subframeArchives);
@@ -67,7 +67,7 @@ private:
     WebArchive(RefPtr<WebCore::LegacyWebArchive>&&);
 
     const RefPtr<WebCore::LegacyWebArchive> m_legacyWebArchive;
-    RefPtr<WebArchiveResource> m_cachedMainResource;
+    const RefPtr<WebArchiveResource> m_cachedMainResource;
     const RefPtr<API::Array> m_cachedSubresources;
     const RefPtr<API::Array> m_cachedSubframeArchives;
 };

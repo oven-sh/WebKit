@@ -37,6 +37,7 @@
 #import <atomic>
 #import <limits>
 #import <optional>
+#import <wtf/Deque.h>
 #import <wtf/HashSet.h>
 #import <wtf/MemoryFootprint.h>
 #import <wtf/StdLibExtras.h>
@@ -71,6 +72,21 @@ public:
         return context;
     }
     RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate() final { return nullptr; }
+
+    using GraphicsContextGLCocoa::maxSpareDrawingBuffers;
+
+    size_t spareDrawingBufferCount() const { return m_spareDrawingBuffers.size(); }
+    // As the kernel has it, rather than as WebCore::IOSurface last set it.
+    size_t volatileSpareDrawingBufferCount() const
+    {
+        size_t count = 0;
+        for (auto& spare : m_spareDrawingBuffers) {
+            uint32_t state = 0;
+            IOSurfaceSetPurgeable(spare.surface->surface(), kIOSurfacePurgeableKeepCurrent, &state);
+            count += state == kIOSurfacePurgeableVolatile || state == kIOSurfacePurgeableEmpty;
+        }
+        return count;
+    }
 private:
     TestedGraphicsContextGLCocoa(GraphicsContextGLAttributes attributes)
         : GraphicsContextGLCocoa(WTF::move(attributes), { })
@@ -98,12 +114,10 @@ private:
 // apply to a context without alpha, so there are three cases and not four.
 enum class AlphaMode : uint8_t { NoAlpha, Unpremultiplied, Premultiplied };
 
-class AnyContextAttributeTest : public testing::TestWithParam<std::tuple<bool, bool, bool, AlphaMode>> {
+class AnyContextAttributeTest : public testing::TestWithParam<std::tuple<bool, AlphaMode>> {
 protected:
-    bool antialias() const { return std::get<0>(GetParam()); }
-    bool preserveDrawingBuffer() const { return std::get<1>(GetParam()); }
-    bool isWebGL2() const { return std::get<2>(GetParam()); }
-    AlphaMode alphaMode() const { return std::get<3>(GetParam()); }
+    bool isWebGL2() const { return std::get<0>(GetParam()); }
+    AlphaMode alphaMode() const { return std::get<1>(GetParam()); }
     bool hasAlpha() const { return alphaMode() != AlphaMode::NoAlpha; }
     // How the contents of the drawing buffer describe their alpha. Without alpha the
     // contents are opaque, so premultiplication does not apply to them.
@@ -128,12 +142,8 @@ GraphicsContextGLAttributes AnyContextAttributeTest::attributes()
 {
     GraphicsContextGLAttributes attributes;
     attributes.isWebGL2 = isWebGL2();
-    attributes.antialias = antialias();
-    attributes.depth = false;
-    attributes.stencil = false;
     attributes.alpha = hasAlpha();
     attributes.premultipliedAlpha = alphaMode() != AlphaMode::Unpremultiplied;
-    attributes.preserveDrawingBuffer = preserveDrawingBuffer();
     return attributes;
 }
 
@@ -328,8 +338,6 @@ TEST_F(GraphicsContextGLCocoaTest, ClearBufferIncorrectSizes)
     using GL = GraphicsContextGL;
     GraphicsContextGLAttributes attributes;
     attributes.isWebGL2 = true;
-    attributes.depth = true;
-    attributes.stencil = true;
     auto gl = TestedGraphicsContextGLCocoa::create(WTF::move(attributes));
     gl->reshape(1, 1);
 
@@ -415,8 +423,6 @@ TEST_F(GraphicsContextGLCocoaTest, DestroyWithoutMakingCurrent)
 {
     GraphicsContextGLAttributes attributes;
     attributes.isWebGL2 = true;
-    attributes.depth = true;
-    attributes.stencil = true;
     RefPtr gl1 = TestedGraphicsContextGLCocoa::create(WTF::move(attributes));
     gl1->reshape(1, 1);
     RefPtr gl2 = TestedGraphicsContextGLCocoa::create(WTF::move(attributes));
@@ -470,7 +476,7 @@ TEST_F(GraphicsContextGLCocoaTest, CopyNativeImageAfterReshape)
     EXPECT_NE(drawingImage, nullptr);
     EXPECT_EQ(displayImage, nullptr);
     EXPECT_EQ(drawingImage->size(), FloatSize(10, 10));
-    EXPECT_TRUE(imagePixelIs(Color::transparentBlack, *drawingImage, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::transparentBlack, *drawingImage, FloatPoint(5, 5)));
 }
 
 static void clearBottomHalf(GraphicsContextGL& gl, IntSize size, Color color, AlphaPremultiplication contentsAlpha)
@@ -528,8 +534,8 @@ TEST_P(AnyContextAttributeTest, CopyNativeImage)
         // unpremultiplied context must not be described as premultiplied, or the colors
         // would be wrong wherever the contents are not opaque.
         EXPECT_EQ(CGImageGetAlphaInfo(image->platformImage().get()), expectedAlphaInfo);
-        EXPECT_TRUE(imagePixelIs(expectedFill, *image, FloatPoint(5, 8)));
-        EXPECT_TRUE(imagePixelIs(expectedRest, *image, FloatPoint(5, 1)));
+        EXPECT_TRUE(nativeImagePixelsIs(expectedFill, *image, FloatPoint(5, 8)));
+        EXPECT_TRUE(nativeImagePixelsIs(expectedRest, *image, FloatPoint(5, 1)));
     }
 }
 
@@ -542,30 +548,67 @@ TEST_F(GraphicsContextGLCocoaTest, CopyImageAndMutateDrawingBuffer)
     gl->reshape(10, 10);
     RefPtr drawingImage0 = gl->copyNativeImage(GL::SurfaceBuffer::DrawingBuffer);
     ASSERT_NE(drawingImage0, nullptr);
-    EXPECT_TRUE(imagePixelIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
     gl->clearColor(0.f, 1.f, 0.f, 1.f);
     gl->clear(GL::COLOR_BUFFER_BIT);
     RefPtr drawingImage1 = gl->copyNativeImage(GL::SurfaceBuffer::DrawingBuffer);
     ASSERT_NE(drawingImage1, nullptr);
-    EXPECT_TRUE(imagePixelIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
-    EXPECT_TRUE(imagePixelIs(Color::green, *drawingImage1, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::green, *drawingImage1, FloatPoint(5, 5)));
 
     gl->clearColor(0.f, 0.f, 1.f, 1.f);
     gl->clear(GL::COLOR_BUFFER_BIT);
-    EXPECT_TRUE(imagePixelIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
-    EXPECT_TRUE(imagePixelIs(Color::green, *drawingImage1, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::green, *drawingImage1, FloatPoint(5, 5)));
     RefPtr drawingImage2 = gl->copyNativeImage(GL::SurfaceBuffer::DrawingBuffer);
     ASSERT_NE(drawingImage2, nullptr);
-    EXPECT_TRUE(imagePixelIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
-    EXPECT_TRUE(imagePixelIs(Color::green, *drawingImage1, FloatPoint(5, 5)));
-    EXPECT_TRUE(imagePixelIs(Color::blue, *drawingImage2, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::green, *drawingImage1, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::blue, *drawingImage2, FloatPoint(5, 5)));
     gl->prepareForDisplay();
     RefPtr displayImage = gl->copyNativeImage(GL::SurfaceBuffer::DisplayBuffer);
     ASSERT_NE(displayImage, nullptr);
-    EXPECT_TRUE(imagePixelIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
-    EXPECT_TRUE(imagePixelIs(Color::green, *drawingImage1, FloatPoint(5, 5)));
-    EXPECT_TRUE(imagePixelIs(Color::blue, *drawingImage2, FloatPoint(5, 5)));
-    EXPECT_TRUE(imagePixelIs(Color::blue, *displayImage, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::green, *drawingImage1, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::blue, *drawingImage2, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::blue, *displayImage, FloatPoint(5, 5)));
+}
+
+// Verify that the internal readbacks are not affected by content setting glReadBuffer(GL_NONE)
+// on the emulated default framebuffer in WebGL2, for either buffer. GraphicsContextGLANGLE::copyNativeImage()
+// is the GL readback path, which GraphicsContextGLCocoa overrides with a surface copy.
+TEST_F(GraphicsContextGLCocoaTest, CopyNativeImageWithReadBufferNoneWebGL2)
+{
+    using GL = GraphicsContextGL;
+    GraphicsContextGLAttributes attributes;
+    attributes.isWebGL2 = true;
+    attributes.alpha = true;
+    auto gl = TestedGraphicsContextGLCocoa::create(WTF::move(attributes));
+    ASSERT_NE(gl, nullptr);
+    gl->reshape(10, 10);
+    gl->clearColor(0.f, 1.f, 0.f, 1.f);
+    gl->clear(GL::COLOR_BUFFER_BIT);
+
+    gl->bindFramebuffer(GL::FRAMEBUFFER, 0);
+    gl->readBuffer(GL::NONE);
+    EXPECT_TRUE(gl->getErrors().isEmpty());
+
+    for (auto buffer : { GL::SurfaceBuffer::DrawingBuffer, GL::SurfaceBuffer::DisplayBuffer }) {
+        if (buffer == GL::SurfaceBuffer::DisplayBuffer)
+            gl->prepareForDisplay();
+        SCOPED_TRACE(buffer == GL::SurfaceBuffer::DrawingBuffer ? "drawing buffer" : "display buffer");
+        RefPtr image = gl->copyNativeImage(buffer);
+        ASSERT_NE(image, nullptr);
+        EXPECT_EQ(image->size(), IntSize(10, 10));
+        EXPECT_TRUE(nativeImagePixelsIs(Color::green, *image, FloatPoint(5, 5)));
+        EXPECT_TRUE(gl->getErrors().isEmpty());
+
+        RefPtr readbackImage = gl->GraphicsContextGLANGLE::copyNativeImage(buffer);
+        ASSERT_NE(readbackImage, nullptr);
+        EXPECT_EQ(readbackImage->size(), IntSize(10, 10));
+        EXPECT_TRUE(nativeImagePixelsIs(Color::green, *readbackImage, FloatPoint(5, 5)));
+        EXPECT_TRUE(gl->getErrors().isEmpty());
+    }
 }
 
 TEST_P(AnyContextAttributeTest, DisplayBuffersAreRecycled)
@@ -608,8 +651,103 @@ TEST_P(AnyContextAttributeTest, DisplayBuffersAreNotRecycledWhedInUse)
         seenSurfaceRefs.add(surfaceRef);
 
         IOSurfaceIncrementUseCount(surfaceRef);
+        EXPECT_LE(context->spareDrawingBufferCount(), TestedGraphicsContextGLCocoa::maxSpareDrawingBuffers);
     }
     ASSERT_EQ(seenSurfaceRefs.size(), 50u);
+}
+
+TEST_P(AnyContextAttributeTest, DisplayBuffersInUseAreReusedOnceReleased)
+{
+    auto context = createTestContext({ 20, 20 });
+    ASSERT_NE(context, nullptr);
+    constexpr size_t framesHeld = 4;
+    constexpr IntPoint samplePoint { 10, 10 };
+    Deque<RetainPtr<IOSurfaceRef>> heldSurfaceRefs;
+    HashSet<RetainPtr<IOSurfaceRef>> seenSurfaceRefs;
+    size_t surfacesSeenHalfway = 0;
+    for (int i = 0; i < 50; ++i) {
+        EXPECT_TRUE(changeContextContents(*context, i));
+        context->prepareForDisplay();
+        auto* surface = context->displayBufferSurface();
+        ASSERT_NE(surface, nullptr);
+        RefPtr image = context->copyNativeImage(GraphicsContextGL::SurfaceBuffer::DisplayBuffer);
+        ASSERT_NE(image, nullptr);
+        EXPECT_TRUE(nativeImagePixelsIs(i % 2 ? Color::green : Color::yellow, *image, samplePoint)) << "frame " << i;
+
+        RetainPtr surfaceRef = surface->surface();
+        seenSurfaceRefs.add(surfaceRef);
+        IOSurfaceIncrementUseCount(surfaceRef.get());
+        heldSurfaceRefs.append(WTF::move(surfaceRef));
+        if (heldSurfaceRefs.size() > framesHeld)
+            IOSurfaceDecrementUseCount(heldSurfaceRefs.takeFirst().get());
+        if (i == 24)
+            surfacesSeenHalfway = seenSurfaceRefs.size();
+    }
+    for (auto& surfaceRef : heldSurfaceRefs)
+        IOSurfaceDecrementUseCount(surfaceRef.get());
+
+    EXPECT_EQ(seenSurfaceRefs.size(), surfacesSeenHalfway);
+    EXPECT_LE(seenSurfaceRefs.size(), expectedDisplayBufferPoolSize + TestedGraphicsContextGLCocoa::maxSpareDrawingBuffers);
+}
+
+static void displayFramesKeepingBuffersInUse(TestedGraphicsContextGLCocoa& context, int frames, Vector<RetainPtr<IOSurfaceRef>>& heldSurfaceRefs)
+{
+    for (int i = 0; i < frames; ++i) {
+        EXPECT_TRUE(changeContextContents(context, i));
+        context.prepareForDisplay();
+        auto* surface = context.displayBufferSurface();
+        ASSERT_NE(surface, nullptr);
+        RetainPtr surfaceRef = surface->surface();
+        IOSurfaceIncrementUseCount(surfaceRef.get());
+        heldSurfaceRefs.append(WTF::move(surfaceRef));
+    }
+}
+
+static void releaseBuffers(Vector<RetainPtr<IOSurfaceRef>>& heldSurfaceRefs)
+{
+    for (auto& surfaceRef : heldSurfaceRefs)
+        IOSurfaceDecrementUseCount(surfaceRef.get());
+    heldSurfaceRefs.clear();
+}
+
+TEST_P(AnyContextAttributeTest, IdleSpareDrawingBuffersAreReleased)
+{
+    auto context = createTestContext({ 20, 20 });
+    ASSERT_NE(context, nullptr);
+    Vector<RetainPtr<IOSurfaceRef>> heldSurfaceRefs;
+    displayFramesKeepingBuffersInUse(*context, 6, heldSurfaceRefs);
+    auto sparesInUse = context->spareDrawingBufferCount();
+    EXPECT_GT(sparesInUse, 1u);
+    EXPECT_TRUE(context->hasSpareDrawingBuffersInUse());
+    EXPECT_EQ(context->volatileSpareDrawingBufferCount(), 0u);
+
+    // The spares are the earliest frames' buffers. Release the first one, and keep the others in use.
+    IOSurfaceDecrementUseCount(heldSurfaceRefs[0].get());
+    context->releaseIdleSpareDrawingBuffers();
+    EXPECT_EQ(context->spareDrawingBufferCount(), 1u);
+    EXPECT_EQ(context->volatileSpareDrawingBufferCount(), 1u);
+    EXPECT_FALSE(context->hasSpareDrawingBuffersInUse());
+
+    heldSurfaceRefs.removeAt(0);
+    releaseBuffers(heldSurfaceRefs);
+}
+
+TEST_P(AnyContextAttributeTest, SpareDrawingBuffersAreDroppedOnReshapeAndColorSpaceChange)
+{
+    auto context = createTestContext({ 20, 20 });
+    ASSERT_NE(context, nullptr);
+    Vector<RetainPtr<IOSurfaceRef>> heldSurfaceRefs;
+    displayFramesKeepingBuffersInUse(*context, 6, heldSurfaceRefs);
+    EXPECT_GT(context->spareDrawingBufferCount(), 0u);
+    context->reshape(30, 30);
+    EXPECT_EQ(context->spareDrawingBufferCount(), 0u);
+    releaseBuffers(heldSurfaceRefs);
+
+    displayFramesKeepingBuffersInUse(*context, 6, heldSurfaceRefs);
+    EXPECT_GT(context->spareDrawingBufferCount(), 0u);
+    context->setDrawingBufferColorSpace(ColorSpace::DisplayP3());
+    EXPECT_EQ(context->spareDrawingBufferCount(), 0u);
+    releaseBuffers(heldSurfaceRefs);
 }
 
 // Test that drawing to GraphicsContextGL and marking the display buffer in use does not leak big
@@ -622,12 +760,15 @@ TEST_P(AnyContextAttributeTest, UnrecycledDisplayBuffersNoLeaks)
 #endif
 {
     // The test detects the leak by observing memory footprint. However, some of the freed IOSurface
-    // memory (130mb) stays resident, presumably by intention of IOKit. The test would originally leak
-    // 2.7gb so the intended bug would be detected with 150mb error range.
-    size_t footprintError = 150 * 1024 * 1024;
-    size_t footprintChange = 0;
+    // memory stays resident, presumably by intention of IOKit, and the amount varies between machines.
+    // The test would originally leak 2.7gb, so the intended bug is still detected with a 500mb error
+    // range. If this starts failing with a change far below 2.7gb, it is most likely noise and the test
+    // should be disabled rather than the error range raised further.
+    size_t footprintError = 500 * 1024 * 1024;
+    constexpr IntSize size { 2048, 2048 };
+    size_t footprintChange = TestedGraphicsContextGLCocoa::maxSpareDrawingBuffers * size.width() * size.height() * 4;
 
-    auto context = createTestContext({ 2048, 2048 });
+    auto context = createTestContext(size);
     ASSERT_NE(context, nullptr);
 
     WTF::releaseFastMallocFreeMemory();
@@ -664,22 +805,11 @@ TEST_P(AnyContextAttributeTest, PrepareFailureWorks)
     // For documentation purposes how the context behaves afterwards.
     // For WebGL this is not relevant, as the context is marked as lost, and each new WebGL call will
     // check for the context loss flag and does not let the call proceed.
-    auto attrs = context->contextAttributes();
-    if (attrs.preserveDrawingBuffer && !attrs.antialias) {
-        ASSERT_TRUE(changeContextContents(*context, 1));
-        EXPECT_TRUE(context->getErrors().isEmpty());
-    } else if (attrs.preserveDrawingBuffer || attrs.antialias) {
-        ASSERT_FALSE(changeContextContents(*context, 1));
-        auto errors = context->getErrors();
-        EXPECT_TRUE(errors.containsAny({ GCGLErrorCode::InvalidFramebufferOperation, GCGLErrorCode::InvalidOperation }));
-        EXPECT_TRUE(errors.containsOnly({ GCGLErrorCode::InvalidFramebufferOperation, GCGLErrorCode::InvalidOperation }));
-    } else {
-        ASSERT_FALSE(changeContextContents(*context, 1));
-        uint32_t gotValue = 0;
-        context->readPixels({ 0, 0, 1, 1 }, GraphicsContextGL::RGBA, GraphicsContextGL::UNSIGNED_BYTE, { reinterpret_cast<uint8_t*>(&gotValue), 4 }, 4, 0, false);
-        EXPECT_EQ(0u, gotValue);
-        EXPECT_EQ(GCGLErrorCode::InvalidFramebufferOperation, context->getErrors());
-    }
+    ASSERT_FALSE(changeContextContents(*context, 1));
+    uint32_t gotValue = 0;
+    context->readPixels({ 0, 0, 1, 1 }, GraphicsContextGL::RGBA, GraphicsContextGL::UNSIGNED_BYTE, { reinterpret_cast<uint8_t*>(&gotValue), 4 }, 4, 0, false);
+    EXPECT_EQ(0u, gotValue);
+    EXPECT_EQ(GCGLErrorCode::InvalidFramebufferOperation, context->getErrors());
     context->prepareForDisplay();
     context->prepareForDisplay();
     EXPECT_EQ(1, client.contextLostCalls());
@@ -704,6 +834,353 @@ TEST_P(AnyContextAttributeTest, FinishIsSignaled)
         sleep(.1_s);
     EXPECT_TRUE(signalled);
     EXPECT_NE(Thread::currentSingleton().uid(), signalThreadUID);
+}
+
+// Tests that WebGL 1 and WebGL 2 contexts report GPU resets.
+TEST_F(GraphicsContextGLCocoaTest, ContextsLoseContextOnReset)
+{
+    constexpr GCGLenum resetNotificationStrategy = 0x8256; // GL_RESET_NOTIFICATION_STRATEGY_EXT
+    constexpr GCGLenum loseContextOnReset = 0x8252; // GL_LOSE_CONTEXT_ON_RESET_EXT
+    for (bool isWebGL2 : { false, true }) {
+        GraphicsContextGLAttributes attributes;
+        attributes.isWebGL2 = isWebGL2;
+        RefPtr context = TestedGraphicsContextGLCocoa::create(WTF::move(attributes));
+        ASSERT_NE(context, nullptr);
+        GCGLint strategy = 0;
+        context->getIntegerv(resetNotificationStrategy, singleElementSpan(strategy));
+        EXPECT_EQ(static_cast<GCGLint>(loseContextOnReset), strategy);
+        EXPECT_TRUE(context->getErrors().isEmpty());
+    }
+}
+
+// Tests that the contexts created after a GPU reset use a new display, and that the display of the
+// reset context is terminated when its last context is destroyed. Contexts share resources only
+// through native objects, such as IOSurfaces, so a display buffer of the terminated display is used
+// in a context of the new display.
+TEST_F(GraphicsContextGLCocoaTest, GPUResetCreatesNewDisplay)
+{
+    using GL = GraphicsContextGL;
+    GraphicsContextGLAttributes attributes;
+    attributes.isWebGL2 = true;
+    MockGraphicsContextGLClient client;
+    RefPtr resetContext = TestedGraphicsContextGLCocoa::create(GraphicsContextGLAttributes { attributes });
+    ASSERT_NE(resetContext, nullptr);
+    resetContext->setClient(&client);
+    resetContext->reshape(4, 4);
+    RefPtr otherContext = TestedGraphicsContextGLCocoa::create(GraphicsContextGLAttributes { attributes });
+    ASSERT_NE(otherContext, nullptr);
+    otherContext->reshape(4, 4);
+    GCGLDisplay resetDisplay = resetContext->platformDisplay();
+    EXPECT_EQ(resetDisplay, otherContext->platformDisplay());
+
+    resetContext->clearColor(0.f, 1.f, 0.f, 1.f);
+    resetContext->clear(GL::COLOR_BUFFER_BIT);
+    std::atomic<bool> signalled = false;
+    resetContext->prepareForDisplayWithFinishedSignal([&signalled] {
+        signalled = true;
+    });
+    while (!signalled)
+        sleep(.1_s);
+    ASSERT_NE(resetContext->displayBufferSurface(), nullptr);
+    RetainPtr<IOSurfaceRef> resetDisplaySurface = resetContext->displayBufferSurface()->surface();
+
+    resetContext->simulateEventForTesting(GraphicsContextGLSimulatedEventForTesting::GPUStatusFailure);
+    resetContext->clear(GL::COLOR_BUFFER_BIT);
+    EXPECT_EQ(1, client.contextLostCalls());
+
+    RefPtr newContext = TestedGraphicsContextGLCocoa::create(GraphicsContextGLAttributes { attributes });
+    ASSERT_NE(newContext, nullptr);
+    newContext->reshape(4, 4);
+    EXPECT_NE(resetDisplay, newContext->platformDisplay());
+    EXPECT_TRUE(changeContextContents(*newContext, 0));
+
+    // The context that was not reset keeps the display of the reset context in use.
+    resetContext = nullptr;
+    EXPECT_TRUE(GraphicsContextGLCocoa::isDisplayInitializedForTesting(resetDisplay));
+    EXPECT_TRUE(changeContextContents(*otherContext, 0));
+    otherContext = nullptr;
+    EXPECT_FALSE(GraphicsContextGLCocoa::isDisplayInitializedForTesting(resetDisplay));
+    EXPECT_TRUE(GraphicsContextGLCocoa::isDisplayInitializedForTesting(newContext->platformDisplay()));
+
+    auto texture = newContext->createTexture();
+    newContext->bindTexture(GL::TEXTURE_2D, texture);
+    void* pbuffer = newContext->createPbufferAndAttachIOSurface(GL::TEXTURE_2D, GraphicsContextGLCocoa::PbufferAttachmentUsage::Read, GL::BGRA_EXT, 4, 4, GL::UNSIGNED_BYTE, resetDisplaySurface.get(), 0);
+    ASSERT_NE(pbuffer, nullptr);
+    auto framebuffer = newContext->createFramebuffer();
+    newContext->bindFramebuffer(GL::FRAMEBUFFER, framebuffer);
+    newContext->framebufferTexture2D(GL::FRAMEBUFFER, GL::COLOR_ATTACHMENT0, GL::TEXTURE_2D, texture, 0);
+    EXPECT_EQ(GL::FRAMEBUFFER_COMPLETE, newContext->checkFramebufferStatus(GL::FRAMEBUFFER));
+    EXPECT_TRUE(checkReadPixel(*newContext, { 1, 1 }, Color::green));
+    newContext->destroyPbufferAndDetachIOSurface(pbuffer);
+    EXPECT_TRUE(newContext->getErrors().isEmpty());
+}
+
+static RefPtr<TestedGraphicsContextGLCocoa> createGPUResetTestContext(MockGraphicsContextGLClient* client = nullptr)
+{
+    GraphicsContextGLAttributes attributes;
+    attributes.isWebGL2 = true;
+    RefPtr context = TestedGraphicsContextGLCocoa::create(WTF::move(attributes));
+    if (!context)
+        return nullptr;
+    if (client)
+        context->setClient(client);
+    context->reshape(4, 4);
+    return context;
+}
+
+// Draws with a vertex shader that does not complete in a reasonable time, so that the GPU stops the draw
+// and the display of the context is lost. Returns after the GPU stopped the draw, before the context
+// noticed the reset.
+static void drawUntilGPUReset(GraphicsContextGL& context)
+{
+    using GL = GraphicsContextGL;
+    auto vertexShader = context.createShader(GL::VERTEX_SHADER);
+    // The loop count is a vertex attribute, so the shader compiler cannot remove or bound the loops.
+    context.shaderSource(vertexShader,
+        "#version 300 es\n"
+        "in float count;\n"
+        "void main() {\n"
+        "    int n = int(count);\n"
+        "    float value = 0.5;\n"
+        "    for (int i = 0; i < n; ++i) {\n"
+        "        for (int j = 0; j < n; ++j)\n"
+        "            value = fract(sin(value + float(i) * 0.001 + float(j)) * 43758.5453);\n"
+        "    }\n"
+        "    gl_Position = vec4(value * 0.0001, 0.0, 0.0, 1.0);\n"
+        "    gl_PointSize = 1.0;\n"
+        "}\n"_s);
+    context.compileShader(vertexShader);
+    auto fragmentShader = context.createShader(GL::FRAGMENT_SHADER);
+    context.shaderSource(fragmentShader,
+        "#version 300 es\n"
+        "precision mediump float;\n"
+        "out vec4 color;\n"
+        "void main() {\n"
+        "    color = vec4(1.0, 0.0, 0.0, 1.0);\n"
+        "}\n"_s);
+    context.compileShader(fragmentShader);
+    auto program = context.createProgram();
+    context.attachShader(program, vertexShader);
+    context.attachShader(program, fragmentShader);
+    context.bindAttribLocation(program, 0, "count"_s);
+    context.linkProgram(program);
+    context.useProgram(program);
+    context.vertexAttrib1f(0, 1000000000.f);
+    context.drawArrays(GL::POINTS, 0, 10000);
+    // Reading the pixels waits until the GPU stopped the draw.
+    uint8_t pixel[4] = { };
+    context.readPixels({ 0, 0, 1, 1 }, GL::RGBA, GL::UNSIGNED_BYTE, pixel, 1, 0, false);
+}
+
+// The tests below cause a real GPU failure, so they are disabled. Run them manually with run-api-tests --force.
+
+// Tests that a context can be created right after a GPU reset, before any context noticed the reset.
+TEST_F(GraphicsContextGLCocoaTest, DISABLED_GPUResetThenCreateContext)
+{
+    MockGraphicsContextGLClient client;
+    RefPtr resetContext = createGPUResetTestContext(&client);
+    ASSERT_NE(resetContext, nullptr);
+    GCGLDisplay resetDisplay = resetContext->platformDisplay();
+    drawUntilGPUReset(*resetContext);
+    EXPECT_EQ(0, client.contextLostCalls());
+
+    RefPtr newContext = createGPUResetTestContext();
+    ASSERT_NE(newContext, nullptr);
+    EXPECT_NE(resetDisplay, newContext->platformDisplay());
+    EXPECT_TRUE(changeContextContents(*newContext, 0));
+    // The contexts created after the first one use the same new display.
+    RefPtr secondNewContext = createGPUResetTestContext();
+    ASSERT_NE(secondNewContext, nullptr);
+    EXPECT_EQ(newContext->platformDisplay(), secondNewContext->platformDisplay());
+    EXPECT_TRUE(changeContextContents(*secondNewContext, 0));
+
+    // The reset context notices the reset when it next draws.
+    resetContext->clear(GraphicsContextGL::COLOR_BUFFER_BIT);
+    EXPECT_EQ(1, client.contextLostCalls());
+    resetContext = nullptr;
+    EXPECT_FALSE(GraphicsContextGLCocoa::isDisplayInitializedForTesting(resetDisplay));
+}
+
+// Tests that a context that is destroyed before it noticed a GPU reset does not leave the lost display
+// to the contexts created after it.
+TEST_F(GraphicsContextGLCocoaTest, DISABLED_GPUResetThenDestroyContext)
+{
+    RefPtr resetContext = createGPUResetTestContext();
+    ASSERT_NE(resetContext, nullptr);
+    GCGLDisplay resetDisplay = resetContext->platformDisplay();
+    drawUntilGPUReset(*resetContext);
+    resetContext = nullptr;
+    EXPECT_FALSE(GraphicsContextGLCocoa::isDisplayInitializedForTesting(resetDisplay));
+
+    RefPtr newContext = createGPUResetTestContext();
+    ASSERT_NE(newContext, nullptr);
+    EXPECT_NE(resetDisplay, newContext->platformDisplay());
+    EXPECT_TRUE(changeContextContents(*newContext, 0));
+}
+
+// Tests that a context that is displayed after a GPU reset is lost, and that a context can be created after it.
+TEST_F(GraphicsContextGLCocoaTest, DISABLED_GPUResetThenPrepareForDisplay)
+{
+    MockGraphicsContextGLClient client;
+    RefPtr resetContext = createGPUResetTestContext(&client);
+    ASSERT_NE(resetContext, nullptr);
+    GCGLDisplay resetDisplay = resetContext->platformDisplay();
+    drawUntilGPUReset(*resetContext);
+
+    resetContext->prepareForDisplay();
+    EXPECT_EQ(1, client.contextLostCalls());
+
+    RefPtr newContext = createGPUResetTestContext();
+    ASSERT_NE(newContext, nullptr);
+    EXPECT_NE(resetDisplay, newContext->platformDisplay());
+    EXPECT_TRUE(changeContextContents(*newContext, 0));
+}
+
+// Tests that a context can be created after a GPU reset when the reset context is lost without checking
+// for the reset. Resizing allocates a drawing buffer, which fails on the lost display.
+TEST_F(GraphicsContextGLCocoaTest, DISABLED_GPUResetThenReshape)
+{
+    MockGraphicsContextGLClient client;
+    RefPtr resetContext = createGPUResetTestContext(&client);
+    ASSERT_NE(resetContext, nullptr);
+    GCGLDisplay resetDisplay = resetContext->platformDisplay();
+    drawUntilGPUReset(*resetContext);
+
+    resetContext->reshape(8, 8);
+    EXPECT_EQ(1, client.contextLostCalls());
+
+    RefPtr newContext = createGPUResetTestContext();
+    ASSERT_NE(newContext, nullptr);
+    EXPECT_NE(resetDisplay, newContext->platformDisplay());
+    EXPECT_TRUE(changeContextContents(*newContext, 0));
+}
+
+// Tests that a GPU reset loses all the contexts of the display, and that the display is terminated after
+// its last context is destroyed.
+TEST_F(GraphicsContextGLCocoaTest, DISABLED_GPUResetLosesOtherContexts)
+{
+    MockGraphicsContextGLClient resetClient;
+    RefPtr resetContext = createGPUResetTestContext(&resetClient);
+    ASSERT_NE(resetContext, nullptr);
+    MockGraphicsContextGLClient otherClient;
+    RefPtr otherContext = createGPUResetTestContext(&otherClient);
+    ASSERT_NE(otherContext, nullptr);
+    GCGLDisplay resetDisplay = resetContext->platformDisplay();
+    EXPECT_EQ(resetDisplay, otherContext->platformDisplay());
+    drawUntilGPUReset(*resetContext);
+
+    resetContext->clear(GraphicsContextGL::COLOR_BUFFER_BIT);
+    EXPECT_EQ(1, resetClient.contextLostCalls());
+    otherContext->clear(GraphicsContextGL::COLOR_BUFFER_BIT);
+    EXPECT_EQ(1, otherClient.contextLostCalls());
+
+    RefPtr newContext = createGPUResetTestContext();
+    ASSERT_NE(newContext, nullptr);
+    EXPECT_NE(resetDisplay, newContext->platformDisplay());
+    EXPECT_TRUE(changeContextContents(*newContext, 0));
+
+    resetContext = nullptr;
+    EXPECT_TRUE(GraphicsContextGLCocoa::isDisplayInitializedForTesting(resetDisplay));
+    otherContext = nullptr;
+    EXPECT_FALSE(GraphicsContextGLCocoa::isDisplayInitializedForTesting(resetDisplay));
+}
+
+// The tests below simulate the GPU failure of the tests above. The simulated failure loses only the
+// context, not the display or the other contexts of the display.
+
+static void simulateGPUReset(GraphicsContextGL& context)
+{
+    context.simulateEventForTesting(GraphicsContextGLSimulatedEventForTesting::GPUStatusFailure);
+}
+
+TEST_F(GraphicsContextGLCocoaTest, SimulatedGPUResetThenCreateContext)
+{
+    MockGraphicsContextGLClient client;
+    RefPtr resetContext = createGPUResetTestContext(&client);
+    ASSERT_NE(resetContext, nullptr);
+    GCGLDisplay resetDisplay = resetContext->platformDisplay();
+    simulateGPUReset(*resetContext);
+    EXPECT_EQ(0, client.contextLostCalls());
+
+    // The display is not lost, so the contexts created before the reset context notices the failure use it.
+    RefPtr newContext = createGPUResetTestContext();
+    ASSERT_NE(newContext, nullptr);
+    EXPECT_EQ(resetDisplay, newContext->platformDisplay());
+    EXPECT_TRUE(changeContextContents(*newContext, 0));
+
+    resetContext->clear(GraphicsContextGL::COLOR_BUFFER_BIT);
+    EXPECT_EQ(1, client.contextLostCalls());
+    RefPtr secondNewContext = createGPUResetTestContext();
+    ASSERT_NE(secondNewContext, nullptr);
+    EXPECT_NE(resetDisplay, secondNewContext->platformDisplay());
+    EXPECT_TRUE(changeContextContents(*secondNewContext, 0));
+
+    // The context that was created on the display before the reset context noticed the failure keeps working.
+    EXPECT_TRUE(changeContextContents(*newContext, 1));
+
+    // Destroying the reset context, which still reports the reset, does not replace the new display again.
+    resetContext = nullptr;
+    EXPECT_TRUE(GraphicsContextGLCocoa::isDisplayInitializedForTesting(resetDisplay));
+    RefPtr thirdNewContext = createGPUResetTestContext();
+    ASSERT_NE(thirdNewContext, nullptr);
+    EXPECT_EQ(secondNewContext->platformDisplay(), thirdNewContext->platformDisplay());
+
+    newContext = nullptr;
+    EXPECT_FALSE(GraphicsContextGLCocoa::isDisplayInitializedForTesting(resetDisplay));
+}
+
+TEST_F(GraphicsContextGLCocoaTest, SimulatedGPUResetThenDestroyContext)
+{
+    RefPtr resetContext = createGPUResetTestContext();
+    ASSERT_NE(resetContext, nullptr);
+    GCGLDisplay resetDisplay = resetContext->platformDisplay();
+    simulateGPUReset(*resetContext);
+    resetContext = nullptr;
+    EXPECT_FALSE(GraphicsContextGLCocoa::isDisplayInitializedForTesting(resetDisplay));
+
+    RefPtr newContext = createGPUResetTestContext();
+    ASSERT_NE(newContext, nullptr);
+    GCGLDisplay newDisplay = newContext->platformDisplay();
+    EXPECT_NE(resetDisplay, newDisplay);
+    EXPECT_TRUE(changeContextContents(*newContext, 0));
+
+    // The display of the current key is not terminated when its last context is destroyed.
+    newContext = nullptr;
+    EXPECT_TRUE(GraphicsContextGLCocoa::isDisplayInitializedForTesting(newDisplay));
+}
+
+TEST_F(GraphicsContextGLCocoaTest, SimulatedGPUResetThenPrepareForDisplay)
+{
+    MockGraphicsContextGLClient client;
+    RefPtr resetContext = createGPUResetTestContext(&client);
+    ASSERT_NE(resetContext, nullptr);
+    GCGLDisplay resetDisplay = resetContext->platformDisplay();
+    simulateGPUReset(*resetContext);
+
+    resetContext->prepareForDisplay();
+    EXPECT_EQ(1, client.contextLostCalls());
+
+    RefPtr newContext = createGPUResetTestContext();
+    ASSERT_NE(newContext, nullptr);
+    EXPECT_NE(resetDisplay, newContext->platformDisplay());
+    EXPECT_TRUE(changeContextContents(*newContext, 0));
+}
+
+TEST_F(GraphicsContextGLCocoaTest, SimulatedGPUResetThenReshape)
+{
+    MockGraphicsContextGLClient client;
+    RefPtr resetContext = createGPUResetTestContext(&client);
+    ASSERT_NE(resetContext, nullptr);
+    GCGLDisplay resetDisplay = resetContext->platformDisplay();
+    simulateGPUReset(*resetContext);
+
+    // Resizing the lost context fails, but the display is not lost, so it is not replaced.
+    resetContext->reshape(8, 8);
+    EXPECT_EQ(1, client.contextLostCalls());
+    RefPtr newContext = createGPUResetTestContext();
+    ASSERT_NE(newContext, nullptr);
+    EXPECT_EQ(resetDisplay, newContext->platformDisplay());
+    EXPECT_TRUE(changeContextContents(*newContext, 0));
 }
 
 #if ENABLE(WEBXR)
@@ -812,12 +1289,8 @@ TEST_P(AnyContextAttributeTest, WebXRBlitTest)
 
 static std::string anyContextAttributeTestName(const testing::TestParamInfo<AnyContextAttributeTest::ParamType>& info)
 {
-    auto [antialias, preserveDrawingBuffer, isWebGL2, alphaMode] = info.param;
+    auto [isWebGL2, alphaMode] = info.param;
     std::string name = isWebGL2 ? "WebGL2" : "WebGL1";
-    if (antialias)
-        name += "_Antialias";
-    if (preserveDrawingBuffer)
-        name += "_PreserveDrawingBuffer";
     switch (alphaMode) {
     case AlphaMode::NoAlpha:
         name += "_NoAlpha";
@@ -835,8 +1308,6 @@ static std::string anyContextAttributeTestName(const testing::TestParamInfo<AnyC
 INSTANTIATE_TEST_SUITE_P(GraphicsContextGLCocoaTest,
     AnyContextAttributeTest,
     testing::Combine(
-        testing::Values(true, false),
-        testing::Values(true, false),
         testing::Values(true, false),
         testing::Values(AlphaMode::NoAlpha, AlphaMode::Unpremultiplied, AlphaMode::Premultiplied)),
     anyContextAttributeTestName);

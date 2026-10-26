@@ -27,6 +27,10 @@
 #include "RenderReplaced.h"
 #include "SVGBoundingBoxComputation.h"
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/AXCustomColorSVGClassifier.h>
+#endif
+
 namespace WebCore {
 
 class RenderSVGViewportContainer;
@@ -39,11 +43,11 @@ public:
     RenderSVGRoot(SVGSVGElement&, Style::ComputedStyle&&);
     virtual ~RenderSVGRoot();
 
-    SVGSVGElement& NODELETE svgSVGElement() const;
+    SVGSVGElement& LEGACY_NODELETE svgSVGElement() const;
     FloatSize computeViewportSize() const;
 
     bool isEmbeddedThroughSVGImage() const;
-    bool isEmbeddedThroughFrameContainingSVGDocument() const;
+    bool LEGACY_NODELETE isEmbeddedThroughFrameContainingSVGDocument() const;
 
     FloatSize computeIntrinsicSize() const;
     FloatSize preferredAspectRatioAsSize() const final;
@@ -56,9 +60,9 @@ public:
     IntSize containerSize() const { return m_containerSize; }
     void setContainerSize(const IntSize& containerSize) { m_containerSize = containerSize; }
 
-    bool NODELETE hasRelativeDimensions() const final;
+    bool LEGACY_NODELETE hasRelativeDimensions() const final;
 
-    bool NODELETE shouldApplyViewportClip() const;
+    bool LEGACY_NODELETE shouldApplyViewportClip() const;
 
     FloatRect objectBoundingBox() const final
     {
@@ -81,19 +85,27 @@ public:
 
     void invalidateCachedVisualOverflowRect() final { m_cachedVisualOverflowRect = std::nullopt; }
 
-    RenderSVGViewportContainer* viewportContainer() const;
+    RenderSVGViewportContainer* LEGACY_NODELETE viewportContainer() const;
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    AXCustomColorSVGClassifier::Characteristics axCustomColorModeCharacteristics() const { return m_axCustomColorModeCharacteristics; }
+    void setAXCustomColorModeCharacteristics(const AXCustomColorSVGClassifier::Characteristics& characteristics) { m_axCustomColorModeCharacteristics = characteristics; }
+#endif
 
 private:
     void element() const = delete;
 
     ASCIILiteral renderName() const final { return "RenderSVGRoot"_s; }
+
+    NaturalDimensions zoomedNaturalDimensions() const final;
+
     bool requiresLayer() const final { return true; }
 
     bool updateLayoutSizeIfNeeded();
     bool paintingAffectedByExternalOffset() const;
 
     // To prevent certain legacy code paths to hit assertions in debug builds, when switching off LBSE (during the teardown of the LBSE tree).
-    std::optional<FloatRect> NODELETE computeFloatVisibleRectInContainer(const FloatRect&, const RenderLayerModelObject*, const VisibleRectContext&, VisibleRectState) const final;
+    std::optional<FloatRect> LEGACY_NODELETE computeFloatVisibleRectInContainer(const FloatRect&, const RenderLayerModelObject*, const VisibleRectContext&, VisibleRectState) const final;
 
     LayoutUnit computeReplacedLogicalWidth(IsComputingIntrinsicSize  = IsComputingIntrinsicSize::No) const final;
     LayoutUnit computeReplacedLogicalHeight(std::optional<LayoutUnit> estimatedUsedWidth = std::nullopt) const final;
@@ -134,6 +146,9 @@ private:
     FloatRect m_objectBoundingBoxWithoutTransformations;
     mutable Markable<FloatRect> m_strokeBoundingBox;
     mutable std::optional<LayoutRect> m_cachedVisualOverflowRect;
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    AXCustomColorSVGClassifier::Characteristics m_axCustomColorModeCharacteristics;
+#endif
 };
 
 } // namespace WebCore

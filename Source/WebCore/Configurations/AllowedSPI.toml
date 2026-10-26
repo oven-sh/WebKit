@@ -107,6 +107,13 @@ symbols = [
 ]
 requires-sdk = ["iOS <= 26.4"]
 
+[[staging]]
+cleanup = "rdar://188823158"
+selectors = [
+    { name = "issuingRegionCode", class = "PKPaymentMethod" },
+]
+requires = ["HAVE_PASSKIT_ISSUING_REGION_CODE"]
+
 [[temporary-usage]]
 request = "rdar://168834967"
 cleanup = "rdar://168834815"
@@ -176,6 +183,15 @@ selectors = [
 requires = ["HAVE_WEBCONTENTRESTRICTIONS_TRANSITIVE_TRUST"]
 
 [[temporary-usage]]
+request = "rdar://168696619"
+cleanup = "rdar://169487203"
+classes = ["WCRBrowserEngineClient"]
+selectors = [
+    { name = "askToBrowseURL:referrerURL:withCompletion:", class = "WCRBrowserEngineClient" },
+]
+requires = ["HAVE_WEBCONTENTRESTRICTIONS_ASK_TO", "WTF_PLATFORM_MAC"]
+
+[[temporary-usage]]
 requires = [ "HAVE_CGPATTERN_CREATE_WITH_IMAGE_TRANSFORM_STEP" ]
 request = "rdar://170092229"
 cleanup = "rdar://170092414"
@@ -189,4 +205,11 @@ request = "rdar://168960112"
 cleanup = "rdar://170480216"
 symbols = [
     "CTFontHasComplexColorFormatForGlyph",
+]
+
+[[temporary-usage]]
+request = "rdar://190546075"
+cleanup = "rdar://190550227"
+symbols = [
+    "CABackingStoreCollectBlocking",
 ]

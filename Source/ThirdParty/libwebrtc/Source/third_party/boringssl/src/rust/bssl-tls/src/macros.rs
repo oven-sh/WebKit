@@ -93,15 +93,12 @@ macro_rules! crypto_buffer_wrapper {
                         ::bssl_sys::CRYPTO_BUFFER_len(self.ptr()),
                     )
                 };
-                if data.is_null() || len == 0 || len > isize::MAX as usize {
-                    &[]
-                } else {
-                    unsafe {
-                        // Safety:
-                        // - `data` is 1-size and 1-align and `len` is valid by BoringSSL invariant.
-                        // - `len` is sanitised to be within bound.
-                        ::core::slice::from_raw_parts(data, len)
-                    }
+                unsafe {
+                    // Safety:
+                    // - `data` is 1-size and 1-align and `len` is valid by BoringSSL invariant.
+                    // - `len` is sanitised to be within bound.
+                    // - `data` is sourced from BoringSSL.
+                    ::bssl_crypto::FromFfiSlice::from_ffi_ptr(data, len)
                 }
             }
         }
@@ -154,7 +151,7 @@ macro_rules! call_slice_getter {
         #[allow(unused_unsafe)]
         unsafe {
             // Safety: data and len are returned by BoringSSL and are valid.
-            $crate::ffi::sanitize_slice(data, len)
+            ::bssl_crypto::FromFfiSlice::from_ffi_ptr(data, len)
         }
     }};
 }

@@ -37,6 +37,7 @@
 #include "WebExtensionStorageAccessLevel.h"
 #include "WebExtensionStorageSQLiteStore.h"
 #include "WebExtensionUtilities.h"
+#include <wtf/Borrow.h>
 #include <wtf/text/MakeString.h>
 
 namespace WebKit {
@@ -57,7 +58,7 @@ void WebExtensionContext::storageGet(WebPageProxyIdentifier webPageProxyIdentifi
     auto callingAPIName = makeString("browser.storage."_s, toAPIString(dataType), ".get()"_s);
 
     Ref storage = storageForType(dataType);
-    storage->getValuesForKeys(keys, [callingAPIName, dataType, completionHandler = WTF::move(completionHandler)](HashMap<String, String> values, const String& errorMessage) mutable {
+    storage->getValuesForKeys(keys, [callingAPIName, dataType, maximumBytesPerCall = storageMaximumBytesPerCall(inTestingMode()), completionHandler = WTF::move(completionHandler)](HashMap<String, String> values, const String& errorMessage) mutable {
         if (!errorMessage.isEmpty())
             completionHandler(toWebExtensionError(callingAPIName, nullString(), errorMessage));
         else {
@@ -72,7 +73,7 @@ void WebExtensionContext::storageGet(WebPageProxyIdentifier webPageProxyIdentifi
                 serializedJSONStrings.append(WTF::move(jsonChunk));
             });
 
-            if (size > webExtensionStorageAreaMaximumBytesPerCall) {
+            if (size > maximumBytesPerCall) {
                 ASSERT_UNUSED(dataType, dataType == WebExtensionDataType::Local);
                 completionHandler(toWebExtensionError(callingAPIName, nullString(), "it exceeded maximum data size allowed per call"_s));
                 return;
@@ -116,7 +117,7 @@ void WebExtensionContext::storageSet(WebPageProxyIdentifier webPageProxyIdentifi
     HashMap<String, String> data = { };
     if (RefPtr json = JSON::Value::parseJSON(dataJSON)) {
         if (RefPtr object = json->asObject()) {
-            for (const auto& key : object->keys())
+            for (const auto& key : borrow(object->keys()))
                 data.set(key, object->getString(key));
         }
     }

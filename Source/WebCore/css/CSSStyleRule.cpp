@@ -34,6 +34,7 @@
 #include "MutableStyleProperties.h"
 #include "RuleSet.h"
 #include "StyleProperties.h"
+#include "StylePropertiesInlines.h"
 #include "StyleRule.h"
 #include "StyleSheetContents.h"
 #include <wtf/NeverDestroyed.h>
@@ -42,7 +43,7 @@
 namespace WebCore {
 
 typedef HashMap<const CSSStyleRule*, String> SelectorTextCache;
-static SelectorTextCache& NODELETE selectorTextCache()
+static SelectorTextCache& LEGACY_NODELETE selectorTextCache()
 {
     static NeverDestroyed<SelectorTextCache> cache;
     return cache;
@@ -78,7 +79,7 @@ CSSStyleRule::~CSSStyleRule()
 CSSStyleProperties& CSSStyleRule::style()
 {
     if (!m_propertiesCSSOMWrapper)
-        m_propertiesCSSOMWrapper = StyleRuleCSSStyleProperties::create(protect(protect(m_styleRule)->mutableProperties()), protect(*this));
+        lazyInitialize(m_propertiesCSSOMWrapper, StyleRuleCSSStyleProperties::create(protect(protect(m_styleRule)->mutableProperties()), protect(*this)));
     return *m_propertiesCSSOMWrapper;
 }
 
@@ -149,7 +150,7 @@ Vector<Ref<StyleRuleBase>> CSSStyleRule::nestedRules() const
 // https://w3c.github.io/csswg-drafts/cssom-1/#serialize-a-css-rule
 String CSSStyleRule::cssText() const
 {
-    auto declarationsString = protect(m_styleRule)->properties().asText(CSS::defaultSerializationContext());
+    auto declarationsString = protect(protect(m_styleRule)->properties())->asText(CSS::defaultSerializationContext());
     StringBuilder declarations;
     StringBuilder rules;
     declarations.append(declarationsString);
@@ -172,7 +173,7 @@ String CSSStyleRule::cssText(const CSS::SerializationContext& context) const
     StringBuilder declarations;
     StringBuilder rules;
 
-    auto declarationsString = protect(m_styleRule)->properties().asText(context);
+    auto declarationsString = protect(protect(m_styleRule)->properties())->asText(context);
     declarations.append(declarationsString);
 
     cssTextForRulesWithReplacementURLs(rules, context);
@@ -226,7 +227,7 @@ void CSSStyleRule::reattach(StyleRuleBase& rule)
         m_styleRule = downcast<StyleRule>(rule);
         
     if (m_propertiesCSSOMWrapper)
-        protect(m_propertiesCSSOMWrapper)->reattach(protect(protect(m_styleRule)->mutableProperties()));
+        m_propertiesCSSOMWrapper->reattach(protect(protect(m_styleRule)->mutableProperties()));
 }
 
 ExceptionOr<unsigned> CSSStyleRule::insertRule(const String& ruleString, unsigned index)
@@ -301,16 +302,20 @@ CSSRule* CSSStyleRule::item(unsigned index) const
     ASSERT(m_childRuleCSSOMWrappers.size() == nestedRules().size());
 
     auto& rule = m_childRuleCSSOMWrappers[index];
-    if (!rule)
-        rule = protect(nestedRules()[index])->createCSSOMWrapper(const_cast<CSSStyleRule&>(*this));
+    if (!rule) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST rule = protect(nestedRules()[index])->createCSSOMWrapper(const_cast<CSSStyleRule&>(*this));
+    }
 
     return rule.get();
 }
 
 CSSRuleList& CSSStyleRule::cssRules() const
 {
-    if (!m_ruleListCSSOMWrapper)
-        lazyInitialize(m_ruleListCSSOMWrapper, makeUniqueWithoutRefCountedCheck<LiveCSSRuleList<CSSStyleRule>>(const_cast<CSSStyleRule&>(*this)));
+    if (!m_ruleListCSSOMWrapper) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST lazyInitialize(m_ruleListCSSOMWrapper, makeUniqueWithoutRefCountedCheck<LiveCSSRuleList<CSSStyleRule>>(const_cast<CSSStyleRule&>(*this)));
+    }
 
     return *m_ruleListCSSOMWrapper;
 }

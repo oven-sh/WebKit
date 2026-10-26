@@ -159,7 +159,6 @@ static bool isPure(const Insn& insn)
     case op_is_undefined_or_null:
     case op_is_boolean:
     case op_is_number:
-    case op_is_big_int:
     case op_is_object:
     case op_is_callable:
     case op_is_constructor:
@@ -1923,7 +1922,6 @@ struct BytecodeOptimizerAccess::Mapper {
     BytecodeOptimizerAccess& optimizer;
     Insn* insn { nullptr };
     unsigned targetCursor { 0 };
-    bool finalPass { false };
 
     VirtualRegister logical(BytecodeOperandName name, VirtualRegister r)
     {
@@ -1958,13 +1956,12 @@ struct BytecodeOptimizerAccess::Mapper {
         RELEASE_ASSERT(target != noTarget);
         target = optimizer.nextLiveInsn(target);
         auto& targetInsn = optimizer.m_insns[target];
+        RELEASE_ASSERT(&targetInsn != insn); // A zero delta means "out of line", so a jump to itself has no encoding.
         int from = static_cast<int>(insn->newOffset);
         int to = static_cast<int>(targetInsn.newOffset == UINT_MAX ? targetInsn.oldOffset : targetInsn.newOffset);
         int delta = to - from;
-        if (finalPass)
-            RELEASE_ASSERT(delta);
-        else if (!delta)
-            delta = 1; // Placeholder; never zero, which would mean "out of line".
+        if (!delta)
+            delta = 1; // Placeholder: a forward target's offset is stale while offsets move, and emit() discards such a pass.
         return BoundLabel(delta);
     }
 
@@ -2002,9 +1999,10 @@ struct BytecodeOptimizerAccess::Mapper {
 void BytecodeOptimizerAccess::emit()
 {
     // Relaxation: instruction sizes depend on jump distances which depend on sizes. Sizes only grow across
-    // iterations (minimumSize ratchets), so this terminates.
+    // iterations (minimumSize ratchets), so this terminates. When a pass repeats the previous pass's offsets, every
+    // jump in it was computed from final offsets (a forward target has the previous pass's offset, a backward
+    // target this pass's), so its stream is the result.
     JSInstructionStreamWriter newWriter;
-    bool finalPass = false;
     for (unsigned iteration = 0; ; ++iteration) {
         if (iteration == 16) {
             // Each pass can widen as little as one branch; rather than iterate once per branch on a pathological
@@ -2027,7 +2025,7 @@ void BytecodeOptimizerAccess::emit()
                 if (insn.newOffset != offset)
                     offsetsChanged = true;
                 insn.newOffset = offset;
-                Mapper mapper { *this, &insn, 0, finalPass };
+                Mapper mapper { *this, &insn };
                 switch (insn.kind) {
                 case Insn::Original:
                     reemitInstruction(insn.instruction, &m_generator, insn.minimumSize, mapper);
@@ -2071,13 +2069,10 @@ void BytecodeOptimizerAccess::emit()
                 }
             }
         });
-        if (finalPass) {
-            RELEASE_ASSERT(!offsetsChanged);
+        if (!offsetsChanged) {
             newWriter.swap(writer);
             break;
         }
-        if (!offsetsChanged)
-            finalPass = true; // One more pass with exact deltas (and assertions) now that the layout is stable.
     }
     unsigned newSize = newWriter.size();
 

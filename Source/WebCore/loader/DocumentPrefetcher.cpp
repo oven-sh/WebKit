@@ -31,6 +31,7 @@
 #include "CachedResourceLoader.h"
 #include "CachedResourceRequest.h"
 #include "Document.h"
+#include "DocumentIsolationPolicy.h"
 #include "DocumentLoader.h"
 #include "DocumentResourceLoader.h"
 #include "Frame.h"
@@ -43,6 +44,7 @@
 #include "ResourceRequest.h"
 #include "SecurityOrigin.h"
 #include "SecurityPolicy.h"
+#include "Settings.h"
 
 namespace WebCore {
 
@@ -138,7 +140,7 @@ void DocumentPrefetcher::prefetch(const URL& url, const Vector<String>& tags, st
     if (url.hasFragmentIdentifier() && equalIgnoringFragmentIdentifier(url, document->url()))
         return;
 
-    ResourceRequest request = makePrefetchRequest(URL { url }, tags, referrerPolicy, m_frame->loader().outgoingReferrerURL(), *document);
+    ResourceRequest request = makePrefetchRequest(URL { url }, tags, referrerPolicy, protect(m_frame->loader())->outgoingReferrerURL(), *document);
 
     ResourceLoaderOptions prefetchOptions(
         SendCallbackPolicy::SendCallbacks,
@@ -168,12 +170,36 @@ void DocumentPrefetcher::prefetch(const URL& url, const Vector<String>& tags, st
     prefetchedResource->addClient(*this);
 }
 
-void DocumentPrefetcher::redirectReceived(CachedResource&, ResourceRequest&& request, const ResourceResponse&, CompletionHandler<void(ResourceRequest&&)>&& completionHandler)
+void DocumentPrefetcher::redirectReceived(CachedResource& resource, ResourceRequest&& request, const ResourceResponse&, CompletionHandler<void(ResourceRequest&&)>&& completionHandler)
 {
     RefPtr document = m_frame ? m_frame->document() : nullptr;
-    if (!document || !isPassingSecurityChecks(request.url(), *document))
-        return completionHandler({ });
-    completionHandler(WTF::move(request));
+    if (document && isPassingSecurityChecks(request.url(), *document))
+        return completionHandler(WTF::move(request));
+
+    // If a navigation has joined this in-flight prefetch, abandon the prefetch but let the navigation decide whether to follow the redirect.
+    if (resource.numberOfClients() > 1) {
+        m_prefetchedData.removeIf([&](auto& entry) {
+            return entry.value.resource.get() == &resource;
+        });
+        if (resource.hasClient(*this))
+            resource.removeClient(*this);
+        MemoryCache::singleton().remove(resource);
+        return completionHandler(WTF::move(request));
+    }
+
+    completionHandler({ });
+}
+
+bool DocumentPrefetcher::canServeNavigations(const ResourceResponse& response) const
+{
+    if (!response.isSuccessful())
+        return false;
+    // A navigation served from a prefetch stays in this process, so its Document-Isolation-Policy has to match this document's.
+    RefPtr document = m_frame ? m_frame->document() : nullptr;
+    if (!document || !document->settings().documentIsolationPolicyEnabled() || !document->settings().siteIsolationEnabled())
+        return true;
+    auto documentIsolationPolicy = obtainDocumentIsolationPolicy(response, document->isSecureContext() ? IsSecureContext::Yes : IsSecureContext::No);
+    return documentIsolationPolicy.value == document->documentIsolationPolicy().value;
 }
 
 void DocumentPrefetcher::responseReceived(const CachedResource& resource, const ResourceResponse& response, CompletionHandler<void()>&& completionHandler)
@@ -184,7 +210,7 @@ void DocumentPrefetcher::responseReceived(const CachedResource& resource, const 
     // error) response that is still in the cache while the body loads.
     // We only remove from the memory cache here (not the client registration),
     // since the load is still in progress. Full cleanup happens in notifyFinished.
-    if (!response.isSuccessful())
+    if (!canServeNavigations(response))
         MemoryCache::singleton().remove(const_cast<CachedResource&>(resource));
     if (completionHandler)
         completionHandler();
@@ -197,7 +223,7 @@ void DocumentPrefetcher::notifyFinished(CachedResource& resource, const NetworkL
     if (it != m_prefetchedData.end())
         it->value.metrics = Box<NetworkLoadMetrics>::create(metrics);
 
-    if (!resource.response().isSuccessful()) {
+    if (!canServeNavigations(resource.response())) {
         if (resource.hasClient(*this))
             resource.removeClient(*this);
         m_prefetchedData.remove(resourceURL);
@@ -210,6 +236,9 @@ void DocumentPrefetcher::notifyFinished(CachedResource& resource, const NetworkL
 
 void DocumentPrefetcher::removePrefetch(const URL& url)
 {
+    if (url.isNull())
+        return;
+
     auto it = m_prefetchedData.find(url);
     if (it == m_prefetchedData.end())
         return;
@@ -225,11 +254,16 @@ void DocumentPrefetcher::removePrefetch(const URL& url)
 
 bool DocumentPrefetcher::wasPrefetched(const URL& url) const
 {
+    if (url.isNull())
+        return false;
     return m_prefetchedData.contains(url);
 }
 
 Box<NetworkLoadMetrics> DocumentPrefetcher::takePrefetchedResourceMetrics(const URL& url)
 {
+    if (url.isNull())
+        return { };
+
     auto it = m_prefetchedData.find(url);
     if (it != m_prefetchedData.end() && it->value.metrics) {
         auto metrics = WTF::move(it->value.metrics);

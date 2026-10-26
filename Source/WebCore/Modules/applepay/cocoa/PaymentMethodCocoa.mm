@@ -45,7 +45,7 @@ static void finishConverting(PKPaymentMethod *paymentMethod, ApplePayPaymentMeth
 #endif
 }
 
-static ApplePayPaymentPass::ActivationState NODELETE convert(PKPaymentPassActivationState paymentPassActivationState)
+static ApplePayPaymentPass::ActivationState LEGACY_NODELETE convert(PKPaymentPassActivationState paymentPassActivationState)
 {
     switch (paymentPassActivationState) {
     case PKPaymentPassActivationStateActivated:
@@ -81,7 +81,7 @@ static std::optional<ApplePayPaymentPass> convert(PKPaymentPass *paymentPass)
     return result;
 }
 
-static std::optional<ApplePayPaymentMethod::Type> NODELETE convert(PKPaymentMethodType paymentMethodType)
+static std::optional<ApplePayPaymentMethod::Type> LEGACY_NODELETE convert(PKPaymentMethodType paymentMethodType)
 {
     switch (paymentMethodType) {
     case PKPaymentMethodTypeDebit:
@@ -144,6 +144,13 @@ static ApplePayPaymentMethod convert(PKPaymentMethod *paymentMethod)
         result.displayName = displayName.get();
     if (RetainPtr<NSString> network = paymentMethod.network)
         result.network = network.get();
+#if HAVE(PASSKIT_ISSUING_REGION_CODE)
+    // FIXME: <rdar://188823158> (Remove PKPaymentMethod issuingRegionCode staging code from WebKit)
+    if ([paymentMethod respondsToSelector:@selector(issuingRegionCode)]) {
+        if (RetainPtr<NSString> issuingRegionCode = paymentMethod.issuingRegionCode)
+            result.issuingRegionCode = issuingRegionCode.get();
+    }
+#endif
     result.billingContact = convert(retainPtr(paymentMethod.billingAddress).get());
     result.type = convert(paymentMethod.type);
     result.paymentPass = convert(retainPtr(paymentMethod.paymentPass).get());
@@ -167,7 +174,7 @@ ApplePayPaymentMethod PaymentMethod::toApplePayPaymentMethod() const
     return convert(m_pkPaymentMethod.get());
 }
 
-PKPaymentMethod *NODELETE PaymentMethod::pkPaymentMethod() const
+PKPaymentMethod *LEGACY_NODELETE PaymentMethod::pkPaymentMethod() const
 {
     return m_pkPaymentMethod.get();
 }

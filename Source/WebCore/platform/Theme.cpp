@@ -89,4 +89,9 @@ void Theme::drawNamedImage(const String& name, GraphicsContext& context, const F
     context.fillPath(outline);
 }
 
+String Theme::invertedNamedImage(const String& name) const
+{
+    return name;
+}
+
 }

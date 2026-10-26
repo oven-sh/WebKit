@@ -58,8 +58,8 @@ private:
     void constructBlockContent(LineBox&);
     void adjustIdeographicBaselineIfApplicable(LineBox&);
     void adjustOutsideListMarkersPosition(LineBox&);
-    void stretchRootInlineBoxForExcludedMarkers(LineBox&) const;
-    void NODELETE expandAboveRootInlineBox(LineBox&, InlineLayoutUnit) const;
+    void LEGACY_NODELETE stretchRootInlineBoxForExcludedMarkers(LineBox&) const;
+    void LEGACY_NODELETE expandAboveRootInlineBox(LineBox&, InlineLayoutUnit) const;
 
     bool isFirstFormattedLine() const { return lineLayoutResult().isFirstLast.isFirstFormattedLine == IsFirstFormattedLine::Yes; }
     bool isLastLine() const { return lineLayoutResult().isFirstLast.isLastLineWithInlineContent; }

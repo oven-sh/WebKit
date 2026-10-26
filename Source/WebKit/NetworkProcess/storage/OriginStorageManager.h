@@ -69,7 +69,7 @@ public:
     void connectionClosed(IPC::Connection::UniqueID);
     WebCore::StorageEstimate estimate();
     const String& path() const LIFETIME_BOUND { return m_path; }
-    OriginQuotaManager& NODELETE quotaManager();
+    OriginQuotaManager& LEGACY_NODELETE quotaManager();
     FileSystemStorageManager& fileSystemStorageManager(FileSystemStorageHandleRegistry&, const WebCore::ClientOrigin&);
     FileSystemStorageManager* existingFileSystemStorageManager();
     LocalStorageManager& localStorageManager(StorageAreaRegistry&) LIFETIME_BOUND;
@@ -106,12 +106,12 @@ private:
     class StorageBucket;
     StorageBucket& defaultBucket() LIFETIME_BOUND;
 
-    std::unique_ptr<StorageBucket> m_defaultBucket;
+    const std::unique_ptr<StorageBucket> m_defaultBucket;
     String m_path;
     String m_customLocalStoragePath;
     String m_customIDBStoragePath;
     String m_customCacheStoragePath;
-    Ref<OriginQuotaManager> m_quotaManager;
+    const Ref<OriginQuotaManager> m_quotaManager;
     UnifiedOriginStorageLevel m_level;
     Markable<WallTime> m_originFileCreationTimestamp;
 #if PLATFORM(IOS_FAMILY)

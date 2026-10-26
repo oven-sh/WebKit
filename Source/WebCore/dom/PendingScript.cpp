@@ -66,6 +66,7 @@ PendingScript::~PendingScript()
 void PendingScript::notifyClientFinished()
 {
     Ref<PendingScript> protectedThis(*this);
+    // FIXME: We cannot use a CheckedPtr local here since the client may get destroyed during notifyFinished().
     if (m_client)
         m_client->notifyFinished(*this);
 }
@@ -77,12 +78,12 @@ void PendingScript::notifyFinished(LoadableScript&)
 
 bool PendingScript::isLoaded() const
 {
-    return m_loadableScript && protect(m_loadableScript)->isLoaded();
+    return m_loadableScript && m_loadableScript->isLoaded();
 }
 
 bool PendingScript::hasError() const
 {
-    return m_loadableScript && protect(m_loadableScript)->hasError();
+    return m_loadableScript && m_loadableScript->hasError();
 }
 
 void PendingScript::setClient(PendingScriptClient& client)

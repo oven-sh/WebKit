@@ -45,7 +45,7 @@ public:
     std::unique_ptr<AudioDSPKernel> createKernel() final;
 
     // Get the magnitude and phase response of the filter at the given set of frequencies (in Hz). The phase response is in radians.
-    void getFrequencyResponse(unsigned length, std::span<const float> frequencyHz, std::span<float> magResponse, std::span<float> phaseResponse);
+    void getFrequencyResponse(std::span<const float> frequencyHz, std::span<float> magResponse, std::span<float> phaseResponse);
 
     const Vector<double>& feedforward() const LIFETIME_BOUND { return m_feedforward; }
     const Vector<double>& feedback() const LIFETIME_BOUND { return m_feedback; }
@@ -58,7 +58,7 @@ private:
     Vector<double> m_feedback;
     bool m_isFilterStable;
 
-    std::unique_ptr<IIRDSPKernel> m_responseKernel;
+    const std::unique_ptr<IIRDSPKernel> m_responseKernel;
 };
 
 } // namespace WebCore

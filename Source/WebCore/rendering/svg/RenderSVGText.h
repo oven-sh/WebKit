@@ -26,19 +26,12 @@
 #include "RenderSVGBlock.h"
 #include "SVGBoundingBoxComputation.h"
 #include "SVGPaintServerCache.h"
-#include "SVGTextChunk.h"
 #include "SVGTextLayoutAttributesBuilder.h"
 
 namespace WebCore {
 
-namespace InlineIterator {
-class InlineBoxIterator;
-}
-
 class RenderSVGInlineText;
-class SVGRootInlineBox;
 class SVGTextElement;
-class SVGTextLayoutEngine;
 
 class RenderSVGText final : public RenderSVGBlock {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGText);
@@ -47,20 +40,20 @@ public:
     RenderSVGText(SVGTextElement&, Style::ComputedStyle&&);
     virtual ~RenderSVGText();
 
-    SVGTextElement& NODELETE textElement() const;
+    SVGTextElement& LEGACY_NODELETE textElement() const;
 
     bool isChildAllowed(const RenderObject&, const Style::ComputedStyle&) const override;
 
     void setNeedsPositioningValuesUpdate() { m_needsPositioningValuesUpdate = true; }
     void setNeedsTextMetricsUpdate() { m_needsTextMetricsUpdate = true; }
+    bool LEGACY_NODELETE usesSVGTextLayoutAlgorithm() const;
 
     // FIXME: [LBSE] Only needed for legacy SVG engine.
     void setNeedsTransformUpdate() override { m_needsTransformUpdate = true; }
 
-    static RenderSVGText* NODELETE locateRenderSVGTextAncestor(RenderObject&);
-    static const RenderSVGText* NODELETE locateRenderSVGTextAncestor(const RenderObject&);
+    static RenderSVGText* LEGACY_NODELETE locateRenderSVGTextAncestor(RenderObject&);
+    static const RenderSVGText* LEGACY_NODELETE locateRenderSVGTextAncestor(const RenderObject&);
 
-    bool needsReordering() const { return m_needsReordering; }
     Vector<SVGTextLayoutAttributes*>& layoutAttributes() LIFETIME_BOUND { return m_layoutAttributes; }
 
     void subtreeChildWasAdded(RenderObject*);
@@ -77,15 +70,15 @@ public:
     LayoutRect visualOverflowRectEquivalent() const
     {
         if (!m_cachedVisualOverflowRect)
-            m_cachedVisualOverflowRect = SVGBoundingBoxComputation::computeVisualOverflowRect(*this);
+            updateCachedVisualOverflowRect();
         return *m_cachedVisualOverflowRect;
     }
 
+    void updateCachedVisualOverflowRect() const { m_cachedVisualOverflowRect = SVGBoundingBoxComputation::computeVisualOverflowRect(*this); }
     void invalidateCachedVisualOverflowRect() final { m_cachedVisualOverflowRect = std::nullopt; }
+    void invalidateNonScalingStrokeCaches();
 
     void updatePositionAndOverflow(const FloatRect&);
-
-    SVGRootInlineBox* legacyRootBox() const;
 
     void updateLocalTransform();
     AffineTransform computeLocalTransform() const;
@@ -108,14 +101,12 @@ private:
     bool requiresLayer() const override;
     void layout() override;
 
+    bool layoutInlineChildrenWithoutLineLayout();
     void computePerCharacterLayoutInformation();
-    void layoutCharactersInTextBoxes(const InlineIterator::InlineBoxIterator&, SVGTextLayoutEngine&);
-    FloatRect layoutChildBoxes(LegacyInlineFlowBox*, SVGTextFragmentMap&);
-    void layoutRootBox(const FloatRect&);
-    void reorderValueListsToLogicalOrder();
 
     void willBeDestroyed() override;
 
+    void updateFromStyle() final;
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) final;
 
     // FIXME: [LBSE] Begin code only needed for legacy SVG engine.
@@ -123,11 +114,13 @@ private:
     const AffineTransform& localToParentTransform() const LIFETIME_BOUND override { return m_localTransform; }
     // FIXME: [LBSE] End code only needed for legacy SVG engine.
 
-    bool NODELETE shouldHandleSubtreeMutations() const;
+    bool LEGACY_NODELETE shouldHandleSubtreeMutations() const;
+
+    float strokeInflation(float strokeWidth) const;
+    void updateVisualOverflow();
 
     SVGPaintServerCache* svgPaintServerCache() const final { return &m_svgPaintServerCache; }
 
-    bool m_needsReordering : 1 { false };
     bool m_needsPositioningValuesUpdate : 1 { false };
     bool m_needsTransformUpdate : 1 { true }; // FIXME: [LBSE] Only needed for legacy SVG engine.
     bool m_needsTextMetricsUpdate : 1 { false };

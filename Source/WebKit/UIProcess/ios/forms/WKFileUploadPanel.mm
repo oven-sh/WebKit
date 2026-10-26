@@ -515,11 +515,11 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
     Ref<API::Array> acceptMimeTypes = parameters->acceptMIMETypes();
     NSMutableArray *mimeTypes = [NSMutableArray arrayWithCapacity:acceptMimeTypes->size()];
-    for (auto mimeType : acceptMimeTypes->elementsOfType<API::String>())
+    for (RefPtr mimeType : acceptMimeTypes->elementsOfType<API::String>())
         [mimeTypes addObject:mimeType->string().createNSString().get()];
 
     Ref<API::Array> acceptFileExtensions = parameters->acceptFileExtensions();
-    for (auto extension : acceptFileExtensions->elementsOfType<API::String>()) {
+    for (RefPtr extension : acceptFileExtensions->elementsOfType<API::String>()) {
         String mimeType = WebCore::MIMETypeRegistry::mimeTypeForExtension(extension->stringView().substring(1));
         if (!mimeType.isEmpty())
             [mimeTypes addObject:mimeType.createNSString().get()];

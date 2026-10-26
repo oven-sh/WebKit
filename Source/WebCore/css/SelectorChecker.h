@@ -94,7 +94,7 @@ public:
         const SelectorChecker::Mode resolvingMode;
 
         void setRequestedPseudoElement(Style::PseudoElementIdentifier);
-        std::optional<Style::PseudoElementIdentifier> NODELETE requestedPseudoElement() const;
+        std::optional<Style::PseudoElementIdentifier> LEGACY_NODELETE requestedPseudoElement() const;
 
     private:
         friend class SelectorCompiler::SelectorCodeGenerator;
@@ -108,7 +108,7 @@ public:
         std::optional<StyleScrollbarState> scrollbarState;
         Vector<AtomString> classList;
         RefPtr<const ContainerNode> scope;
-        const Element* hasScope { nullptr };
+        CheckedPtr<const Element> hasScope;
         bool matchesAllHasScopes { false };
         bool isEvaluatingScopingRoot { false };
         Style::ScopeOrdinal styleScopeOrdinal { Style::ScopeOrdinal::Element };
@@ -131,7 +131,7 @@ public:
     static void clearCompiledHasArgumentSelectors();
 
     // Takes the first simple selector of the compound. https://drafts.csswg.org/selectors-4/#featureless
-    static bool isCompoundSelectorAllowedToMatchFeaturelessShadowHost(const CSSSelector&);
+    static bool LEGACY_NODELETE isCompoundSelectorAllowedToMatchFeaturelessShadowHost(const CSSSelector&);
 
     enum LinkMatchMask { MatchDefault = 0, MatchLink = 1, MatchVisited = 2, MatchAll = MatchLink | MatchVisited };
     static unsigned determineLinkMatchType(const CSSSelector&, const StyleRuleScope* = nullptr);
@@ -145,8 +145,8 @@ private:
     bool matchHasPseudoClass(CheckingContext&, const Element&, const CSSSelectorList&, bool matchingHost) const;
     bool matchHasArgumentSelector(CheckingContext&, const Element&, const CSSSelector&, CompiledSelector*, bool matchingHost) const;
 
-    bool NODELETE checkScrollbarPseudoClass(const CheckingContext&, const Element&, const CSSSelector&) const;
-    bool NODELETE checkViewTransitionPseudoClass(const CheckingContext&, const Element&, const CSSSelector&) const;
+    bool LEGACY_NODELETE checkScrollbarPseudoClass(const CheckingContext&, const Element&, const CSSSelector&) const;
+    bool LEGACY_NODELETE checkViewTransitionPseudoClass(const CheckingContext&, const Element&, const CSSSelector&) const;
 
     bool m_strictParsing;
     bool m_documentIsHTML;

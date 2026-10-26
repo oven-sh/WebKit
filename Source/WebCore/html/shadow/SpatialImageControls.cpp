@@ -160,13 +160,13 @@ void ensureSpatialControls(HTMLImageElement& imageElement)
         controlLayer->setIdAttribute(spatialImageControlsElementIdentifier());
         controlLayer->setAttributeWithoutSynchronization(HTMLNames::contenteditableAttr, falseAtom());
         controlLayer->setAttributeWithoutSynchronization(HTMLNames::dirAttr, isRTL ? "rtl"_s : "ltr"_s);
-        controlLayer->setInlineStyleProperty(CSSPropertyDisplay, "flex"_s);
-        controlLayer->setInlineStyleProperty(CSSPropertyFlexDirection, "column"_s);
-        controlLayer->setInlineStyleProperty(CSSPropertyJustifyContent, "space-between"_s);
-        controlLayer->setInlineStyleProperty(CSSPropertyPosition, "relative"_s);
-        controlLayer->setInlineStyleProperty(CSSPropertyBoxSizing, "border-box"_s);
-        controlLayer->setInlineStyleProperty(CSSPropertyBorderRadius, "inherit"_s);
-        controlLayer->setInlineStyleProperty(CSSPropertyPadding, paddingValue, CSSUnitType::Px);
+        controlLayer->setInlineStyleProperty(CSSPropertyID::Display, "flex"_s);
+        controlLayer->setInlineStyleProperty(CSSPropertyID::FlexDirection, "column"_s);
+        controlLayer->setInlineStyleProperty(CSSPropertyID::JustifyContent, "space-between"_s);
+        controlLayer->setInlineStyleProperty(CSSPropertyID::Position, "relative"_s);
+        controlLayer->setInlineStyleProperty(CSSPropertyID::BoxSizing, "border-box"_s);
+        controlLayer->setInlineStyleProperty(CSSPropertyID::BorderRadius, "inherit"_s);
+        controlLayer->setInlineStyleProperty(CSSPropertyID::Padding, paddingValue, CSSUnitType::Px);
         shadowRoot->appendChild(controlLayer);
 
         static MainThreadNeverDestroyed<const String> shadowStyle(StringImpl::createWithoutCopying(spatialImageControlsUserAgentStyleSheet));

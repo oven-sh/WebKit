@@ -109,7 +109,7 @@ public:
         return m_depth;
     }
 
-    bool NODELETE wasValidWalk() const
+    bool LEGACY_NODELETE wasValidWalk() const
     {
         return !m_bailingOut;
     }
@@ -172,7 +172,7 @@ protected:
         m_callFrame = m_callFrame->unsafeCallerFrame(m_entryFrame);
     }
 
-    bool NODELETE isAtTop() const
+    bool LEGACY_NODELETE isAtTop() const
     {
         return !m_callFrame;
     }
@@ -203,7 +203,7 @@ protected:
         }
     }
 
-    bool NODELETE isValidFramePointer(void* callFrame)
+    bool LEGACY_NODELETE isValidFramePointer(void* callFrame)
     {
         uint8_t* fpCast = std::bit_cast<uint8_t*>(callFrame);
         for (auto& thread : m_vm.heap.machineThreads().threads(m_machineThreadsLocker)) {
@@ -282,7 +282,7 @@ public:
 
 private:
 
-    bool NODELETE isCFrame()
+    bool LEGACY_NODELETE isCFrame()
     {
         return frame()->callerFrame != m_callFrame;
     }
@@ -306,7 +306,7 @@ private:
         Base::resetAtMachineFrame();
     }
 
-    CallerFrameAndPC* NODELETE frame()
+    CallerFrameAndPC* LEGACY_NODELETE frame()
     {
         return reinterpret_cast<CallerFrameAndPC*>(m_machineFrame);
     }
@@ -474,7 +474,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
     }
 }
 
-static ALWAYS_INLINE BytecodeIndex NODELETE tryGetBytecodeIndex(unsigned llintPC, CodeBlock* codeBlock)
+static ALWAYS_INLINE BytecodeIndex LEGACY_NODELETE tryGetBytecodeIndex(unsigned llintPC, CodeBlock* codeBlock)
 {
 #if ENABLE(DFG_JIT)
     RELEASE_ASSERT(!codeBlock->hasCodeOrigins());
@@ -488,7 +488,6 @@ static ALWAYS_INLINE BytecodeIndex NODELETE tryGetBytecodeIndex(unsigned llintPC
 
 void SamplingProfiler::processUnverifiedStackTraces()
 {
-    // This function needs to be called from the JSC execution thread.
     RELEASE_ASSERT(m_lock.isLocked());
 
     TinyBloomFilter<uintptr_t> filter = m_vm.heap.objectSpace().blocks().filter();
@@ -1221,7 +1220,7 @@ void SamplingProfiler::reportDataToOptionFile()
         StringPrintStream pathOut;
         pathOut.print(path, "/");
         pathOut.print("JSCSampilingProfile-", reinterpret_cast<uintptr_t>(this), ".txt");
-        auto out = FilePrintStream::open(pathOut.toUTF8CString().legacyCStringPointer(), "w");
+        auto out = FilePrintStream::open(pathOut.toUTF8CString(), "w"_s);
         reportTopFunctions(*out);
         reportTopBytecodes(*out);
     }

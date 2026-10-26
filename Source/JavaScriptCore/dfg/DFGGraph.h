@@ -49,6 +49,7 @@
 #include <wtf/StackCheck.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
+#include <wtf/text/UTF8CStringView.h>
 
 namespace WTF {
 template <typename T> class SingleRootGraph;
@@ -128,7 +129,7 @@ using SSANaturalLoops = NaturalLoops<SSACFG>;
         if (!!(assertion))                                              \
             break;                                                      \
         (graph).logAssertionFailure(                                    \
-            (node), __FILE__, __LINE__, WTF_PRETTY_FUNCTION, #assertion); \
+            (node), __FILE__, __LINE__, WTF_PRETTY_FUNCTION, #assertion ""_s); \
         CRASH_WITH_SECURITY_IMPLICATION_AND_INFO(__VA_ARGS__);          \
     } while (false)
 
@@ -274,7 +275,7 @@ public:
     void packNodeIndices();
     void clearAbstractValues();
 
-    void NODELETE dethread();
+    void LEGACY_NODELETE dethread();
     
     FrozenValue* freeze(JSValue); // We use weak freezing by default.
     FrozenValue* freezeStrong(JSValue); // Shorthand for freeze(value)->strengthenTo(StrongValue).
@@ -314,7 +315,7 @@ public:
 
     void dump(PrintStream&, DumpContext*);
 
-    bool NODELETE terminalsAreValid();
+    bool LEGACY_NODELETE terminalsAreValid();
     
     enum PhiNodeDumpMode { DumpLivePhisOnly, DumpAllPhis };
     void dumpBlockHeader(PrintStream&, const char* prefix, BasicBlock*, PhiNodeDumpMode, DumpContext*);
@@ -356,6 +357,99 @@ public:
             pass);
     }
     
+    // Tests if the absolute value is strictly less than the power of two.
+    template<int power>
+    bool isWithinPowerOfTwoForConstant(Node* node)
+    {
+        JSValue immediateValue = node->asJSValue();
+        if (!immediateValue.isNumber())
+            return false;
+        double immediate = immediateValue.asNumber();
+        return isInteger(immediate) && immediate > -(static_cast<int64_t>(1) << power) && immediate < (static_cast<int64_t>(1) << power);
+    }
+
+    template<int power>
+    bool isWithinPowerOfTwo(Node* node)
+    {
+        switch (node->op()) {
+        case DoubleConstant:
+        case JSConstant:
+        case Int52Constant: {
+            return isWithinPowerOfTwoForConstant<power>(node);
+        }
+
+        // Fixup wraps operands in these representation changes, which preserve the value.
+        case Identity:
+        case ValueRep:
+        case DoubleRep:
+        case Int52Rep:
+            return isWithinPowerOfTwo<power>(node->child1());
+
+        case GetByVal: {
+            // Before fixup the array mode is only a guess, which fixup can widen into a generic access.
+            if (!afterFixup())
+                return false;
+            ArrayMode arrayMode = node->arrayMode();
+            if (!arrayMode.isInBounds())
+                return false;
+            TypedArrayType arrayType = arrayMode.typedArrayType();
+            return isInt(arrayType) && elementSize(arrayType) * 8 <= power;
+        }
+
+        case ValueBitAnd:
+        case ArithBitAnd: {
+            if (power > 31)
+                return true;
+
+            // (x & mask) is only bounded by |mask| when mask is non-negative; a negative
+            // mask preserves the sign bit and the result can span the full int32 range.
+            auto isNonNegativeMaskWithinPower = [](Node* operand) {
+                if (!operand->isNumberConstant())
+                    return false;
+                double immediate = operand->asNumber();
+                return immediate >= 0 && immediate < (static_cast<int64_t>(1) << power);
+            };
+            return isNonNegativeMaskWithinPower(node->child1().node())
+                || isNonNegativeMaskWithinPower(node->child2().node());
+        }
+
+        case ArithBitOr:
+        case ArithBitXor:
+        case ValueBitOr:
+        case ValueBitXor:
+        case ValueBitLShift:
+        case ArithBitLShift: {
+            return power > 31;
+        }
+
+        case ArithBitRShift:
+        case ValueBitRShift:
+        case ArithBitURShift:
+        case ValueBitURShift: {
+            if (power > 31)
+                return true;
+
+            Node* shiftAmount = node->child2().node();
+            if (!shiftAmount->isNumberConstant())
+                return false;
+            JSValue immediateValue = shiftAmount->asJSValue();
+            if (!immediateValue.isInt32())
+                return false;
+            // Shifting right by k = (count & 31) leaves |result| < 2^(32 - k), for both >> and >>>.
+            return (immediateValue.asInt32() & 31) > 31 - power;
+        }
+
+        default:
+            return false;
+        }
+    }
+
+    template<int power>
+    bool isWithinPowerOfTwo(Edge edge)
+    {
+        return isWithinPowerOfTwo<power>(edge.node());
+    }
+
     AddSpeculationMode arithAddSpeculationMode(Node* add, PredictionPass pass)
     {
         return addSpeculationMode(
@@ -454,7 +548,20 @@ public:
         return Node::shouldSpeculateInt32OrBooleanForArithmetic(left, right)
             && node->canSpeculateInt32(node->sourceFor(pass));
     }
-    
+
+    // A wrapping int32 multiply matches ToInt32 of the double product only when that product is exact.
+    bool mulProductIsExact(Node* node)
+    {
+        return isWithinPowerOfTwo<22>(node->child1()) || isWithinPowerOfTwo<22>(node->child2());
+    }
+
+    bool mulShouldSpeculateInt32(Node* node, PredictionPass pass)
+    {
+        if (!binaryArithShouldSpeculateInt32(node, pass))
+            return false;
+        return !nodeMayOverflowInt32(node->arithNodeFlags(), node->sourceFor(pass)) || mulProductIsExact(node);
+    }
+
     bool binaryArithShouldSpeculateInt52(Node* node, PredictionPass pass)
     {
         Node* left = node->child1().node();
@@ -477,26 +584,6 @@ public:
             && node->canSpeculateInt52(pass)
             && !hasExitSite(node, Int52Overflow);
     }
-
-#if USE(BIGINT32)
-    bool binaryArithShouldSpeculateBigInt32(Node* node, PredictionPass pass)
-    {
-        if (!node->canSpeculateBigInt32(pass))
-            return false;
-        if (hasExitSite(node, BigInt32Overflow))
-            return false;
-        return Node::shouldSpeculateBigInt32(node->child1().node(), node->child2().node());
-    }
-
-    bool unaryArithShouldSpeculateBigInt32(Node* node, PredictionPass pass)
-    {
-        if (!node->canSpeculateBigInt32(pass))
-            return false;
-        if (hasExitSite(node, BigInt32Overflow))
-            return false;
-        return node->child1()->shouldSpeculateBigInt32();
-    }
-#endif
 
     bool binaryArithShouldSpeculateHeapBigInt(Node* node)
     {
@@ -554,7 +641,7 @@ public:
         return arithRound->canSpeculateInt32(pass) && !hasExitSite(arithRound->origin.semantic, Overflow) && !hasExitSite(arithRound->origin.semantic, NegativeZero);
     }
     
-    static ASCIILiteral NODELETE opName(NodeType);
+    static ASCIILiteral LEGACY_NODELETE opName(NodeType);
     
     RegisteredStructureSet* addStructureSet(const StructureSet& structureSet)
     {
@@ -759,19 +846,19 @@ public:
     // any GetLocals in the basic block.
     // FIXME: it may be appropriate, in the future, to generalize this to handle GetLocals
     // introduced anywhere in the basic block.
-    void NODELETE substituteGetLocal(BasicBlock& block, unsigned startIndexInBlock, VariableAccessData* variableAccessData, Node* newGetLocal);
+    void LEGACY_NODELETE substituteGetLocal(BasicBlock& block, unsigned startIndexInBlock, VariableAccessData* variableAccessData, Node* newGetLocal);
     
     void invalidateCFG();
     void invalidateNodeLiveness();
     
-    void NODELETE clearFlagsOnAllNodes(NodeFlags);
+    void LEGACY_NODELETE clearFlagsOnAllNodes(NodeFlags);
     
-    void NODELETE clearReplacements();
-    void NODELETE clearEpochs();
-    void NODELETE initializeNodeOwners();
+    void LEGACY_NODELETE clearReplacements();
+    void LEGACY_NODELETE clearEpochs();
+    void LEGACY_NODELETE initializeNodeOwners();
     
     BlockList blocksInPreOrder();
-    BlockList blocksInPostOrder(bool isSafeToValidate = true);
+    BlockList blocksInPostOrder();
     
     class NaturalBlockIterable {
     public:
@@ -865,19 +952,19 @@ public:
     };
 
     template<typename ChildFunctor>
-    ALWAYS_INLINE void doToChildren(Node* node, const ChildFunctor& functor)
+    ALWAYS_INLINE void doToChildren(Node* node, NOESCAPE const ChildFunctor& functor)
     {
         DFG_NODE_DO_TO_CHILDREN(*this, node, (ForwardingFunc<ChildFunctor>(functor)));
     }
     
     template<typename ChildFunctor>
-    ALWAYS_INLINE void doToAllChildren(Node* node, const ChildFunctor& functor)
+    ALWAYS_INLINE void doToAllChildren(Node* node, NOESCAPE const ChildFunctor& functor)
     {
         DFG_NODE_DO_TO_ALL_CHILDREN_COMMON(*this, node, (ForwardingFunc<ChildFunctor>(functor)), APPLY_THING_TO_DO);
     }
 
     template<typename ChildFunctor>
-    ALWAYS_INLINE void doToChildrenBreakOnDone(Node* node, const ChildFunctor& functor)
+    ALWAYS_INLINE void doToChildrenBreakOnDone(Node* node, NOESCAPE const ChildFunctor& functor)
     {
         DFG_NODE_DO_TO_CHILDREN_BREAK_ON_DONE(*this, node, (ForwardingFunc<ChildFunctor>(functor)));
     }
@@ -1120,7 +1207,7 @@ public:
     // any arguments because those are all presumed live. You can call forAllLiveInBytecode() to
     // also get the arguments. This is much faster than calling isLiveInBytecode() for each local.
     template<typename Functor>
-    void forAllLocalsAndTmpsLiveInBytecode(CodeOrigin codeOrigin, const Functor& functor)
+    void forAllLocalsAndTmpsLiveInBytecode(CodeOrigin codeOrigin, NOESCAPE const Functor& functor)
     {
         // Support for not redundantly reporting arguments. Necessary because in case of a varargs
         // call, only the callee knows that arguments are live while in the case of a non-varargs
@@ -1224,7 +1311,7 @@ public:
     // Tells you all of the operands live at the given CodeOrigin. This is a small
     // extension to forAllLocalsOrTmpsLiveInBytecode(), since all arguments are always presumed live.
     template<typename Functor>
-    void forAllLiveInBytecode(CodeOrigin codeOrigin, const Functor& functor)
+    void forAllLiveInBytecode(CodeOrigin codeOrigin, NOESCAPE const Functor& functor)
     {
         forAllLocalsAndTmpsLiveInBytecode(codeOrigin, functor);
         
@@ -1233,7 +1320,7 @@ public:
             functor(virtualRegisterForArgumentIncludingThis(argument));
     }
 
-    static unsigned NODELETE parameterSlotsForArgCount(unsigned);
+    static unsigned LEGACY_NODELETE parameterSlotsForArgCount(unsigned);
     
     unsigned frameRegisterCount();
     unsigned stackPointerOffset();
@@ -1272,13 +1359,13 @@ public:
 
     void logAssertionFailure(
         std::nullptr_t, const char* file, int line, const char* function,
-        const char* assertion);
+        UTF8CStringView assertion);
     void logAssertionFailure(
         Node*, const char* file, int line, const char* function,
-        const char* assertion);
+        UTF8CStringView assertion);
     void logAssertionFailure(
         BasicBlock*, const char* file, int line, const char* function,
-        const char* assertion);
+        UTF8CStringView assertion);
 
     bool hasDebuggerEnabled() const { return m_hasDebuggerEnabled; }
 

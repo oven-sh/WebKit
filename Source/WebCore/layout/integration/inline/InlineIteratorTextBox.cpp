@@ -28,18 +28,50 @@
 
 #include "InlineIteratorBoxInlines.h"
 #include "InlineIteratorLineBox.h"
-#include "InlineIteratorTextBoxInlines.h"
 #include "LayoutIntegrationLineLayout.h"
+#include "RenderBoxInlines.h"
 #include "RenderCombineText.h"
-#include "SVGInlineTextBox.h"
 #include "StyleComputedStyle+GettersInlines.h"
+#include "StyleTabSize.h"
 
 namespace WebCore {
 namespace InlineIterator {
 
+static_assert(std::ranges::bidirectional_range<TextBoxRange> && std::ranges::common_range<TextBoxRange> && std::ranges::view<TextBoxRange> && std::ranges::borrowed_range<TextBoxRange>);
+
+TextRun TextBox::textRun(TextRunMode mode) const
+{
+    CheckedRef style = displayBox().style();
+    auto expansion = displayBox().expansion();
+    auto logicalLeft = [&] {
+        // Offset from the formatting context's content box, with the text-align offset removed.
+        // text-align shifts the root inline box within the line (contentLogicalLeft), but tab stops
+        // are measured from the containing block's content box edge regardless of alignment.
+        //
+        //   containing block's content box
+        //   |                                                  |
+        //   |               text-align: center                 |
+        //   |               |<- content ->|                    |
+        //   |               |X         X  |                    |
+        //   |                                                  |
+        //   logicalLeft = 0 (not the visual position)
+        CheckedRef root = formattingContextRoot();
+        auto positionRelativeToContentBox = [&] {
+            if (style->writingMode().isBidiLTR())
+                return visualRectIgnoringBlockDirection().x() - root->borderAndPaddingStart();
+            return root->contentBoxWidth() - visualRectIgnoringBlockDirection().maxX();
+        }();
+        return positionRelativeToContentBox - line().contentLogicalLeft();
+    };
+    auto characterScanForCodePath = isText() && !renderer().canUseSimpleFontCodePath();
+    auto textRun = TextRun { mode == TextRunMode::Editing ? originalText() : displayBox().text().renderedContent(), logicalLeft(), expansion.horizontalExpansion, expansion.behavior, direction(), style->rtlOrdering() == Order::Visual, characterScanForCodePath };
+    textRun.setTabSize(!style->collapseWhiteSpace(), Style::toPlatform(style->tabSize(), style->usedZoomForLength()));
+    return textRun;
+}
+
 TextBoxIterator TextBox::nextTextBox() const
 {
-    return TextBoxIterator(*this).traverseNextTextBox();
+    return std::ranges::next(TextBoxIterator { *this });
 }
 
 const FontCascade& TextBox::fontCascade() const
@@ -50,53 +82,27 @@ const FontCascade& TextBox::fontCascade() const
     return style()->fontCascade();
 }
 
-TextBoxIterator::TextBoxIterator(Box::PathVariant&& pathVariant)
-    : LeafBoxIterator(WTF::move(pathVariant))
-{
-}
-
-TextBoxIterator::TextBoxIterator(const Box& box)
-    : LeafBoxIterator(box)
-{
-}
-
-TextBoxIterator& TextBoxIterator::traverseNextTextBox()
-{
-    WTF::switchOn(m_box.m_pathVariant, [](auto& path) {
-        path.traverseNextTextBox();
-    });
-    return *this;
-}
-
 TextBoxIterator lineLeftmostTextBoxFor(const RenderText& text)
 {
     if (CheckedPtr lineLayout = LayoutIntegration::LineLayout::containing(text))
         return lineLayout->textBoxesFor(text);
 
-    if (CheckedPtr svgText = dynamicDowncast<RenderSVGInlineText>(text))
-        return { BoxLegacyPath { svgText->firstLegacyTextBox() } };
-
     // During teardown we may hit this codepath _after_ the display content is destroyed (e.g. calling repaint on RenderText).
-    return { BoxLegacyPath { nullptr } };
+    return { };
 }
 
-TextBoxIterator textBoxFor(const LegacyInlineTextBox* legacyInlineTextBox)
-{
-    return { BoxLegacyPath { legacyInlineTextBox } };
-}
-
-TextBoxIterator textBoxFor(const LayoutIntegration::InlineContent& content, const InlineDisplay::Box& box)
+TextBox textBoxFor(const LayoutIntegration::InlineContent& content, const InlineDisplay::Box& box)
 {
     return textBoxFor(content, content.indexForBox(box));
 }
 
-TextBoxIterator textBoxFor(const LayoutIntegration::InlineContent& content, size_t boxIndex)
+TextBox textBoxFor(const LayoutIntegration::InlineContent& content, size_t boxIndex)
 {
     ASSERT(content.displayContent().boxes[boxIndex].isTextOrSoftLineBreak());
-    return { BoxModernPath { content, boxIndex } };
+    return { content, boxIndex };
 }
 
-BoxRange<TextBoxIterator> textBoxesFor(const RenderText& text)
+TextBoxRange textBoxesFor(const RenderText& text)
 {
     return { lineLeftmostTextBoxFor(text) };
 }

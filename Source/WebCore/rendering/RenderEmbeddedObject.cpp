@@ -39,10 +39,13 @@
 #include "HTMLParamElement.h"
 #include "HTMLPlugInElement.h"
 #include "HitTestResult.h"
+#include "LegacyRenderSVGRoot.h"
 #include "LocalFrame.h"
 #include "LocalFrameLoaderClient.h"
+#include "LocalFrameView.h"
 #include "LocalizedStrings.h"
 #include "MouseEvent.h"
+#include "NaturalDimensions.h"
 #include "Page.h"
 #include "PaintInfo.h"
 #include "Path.h"
@@ -50,9 +53,11 @@
 #include "RenderBoxInlines.h"
 #include "RenderLayoutState.h"
 #include "RenderObjectInlines.h"
+#include "RenderSVGRoot.h"
 #include "RenderTheme.h"
 #include "RenderView.h"
 #include "RenderWidgetInlines.h"
+#include "SVGSVGElement.h"
 #include "Settings.h"
 #include "SystemFontDatabase.h"
 #include "Text.h"
@@ -105,6 +110,28 @@ bool RenderEmbeddedObject::requiresAcceleratedCompositing() const
     if (!pluginViewBase)
         return false;
     return pluginViewBase->layerHostingStrategy() != PluginLayerHostingStrategy::None;
+}
+
+static RefPtr<SVGSVGElement> embeddedSVGElement(const RenderWidget& renderer)
+{
+    RefPtr frameView = dynamicDowncast<LocalFrameView>(renderer.widget());
+    if (!frameView)
+        return nullptr;
+    CheckedPtr svgRoot = frameView->embeddedSVGRoot();
+    if (!svgRoot)
+        return nullptr;
+    if (CheckedPtr modernRoot = dynamicDowncast<RenderSVGRoot>(svgRoot.get()))
+        return &modernRoot->svgSVGElement();
+    if (CheckedPtr legacyRoot = dynamicDowncast<LegacyRenderSVGRoot>(svgRoot.get()))
+        return &legacyRoot->svgSVGElement();
+    return nullptr;
+}
+
+NaturalDimensions RenderEmbeddedObject::zoomedNaturalDimensions() const
+{
+    if (RefPtr element = embeddedSVGElement(*this))
+        return element->naturalDimensions().zoomed(style().usedZoom());
+    return RenderWidget::zoomedNaturalDimensions();
 }
 
 ScrollableArea* RenderEmbeddedObject::scrollableArea() const
@@ -320,10 +347,12 @@ void RenderEmbeddedObject::getReplacementTextGeometry(const LayoutPoint& accumul
     fontDescription.setOneFamily(SystemFontDatabase::singleton().systemFontShorthandFamily(SystemFontDatabase::FontShorthand::WebkitSmallControl));
     fontDescription.setWeight(boldWeightValue());
     fontDescription.setUsedSize(12);
-    font = FontCascade(WTF::move(fontDescription));
+    FontCascade newFont(WTF::move(fontDescription));
+    font = WTF::move(newFont);
     font.update(nullptr);
 
-    run = TextRun(m_unavailablePluginReplacementText);
+    TextRun newRun(m_unavailablePluginReplacementText);
+    run = WTF::move(newRun);
     textWidth = font.width(run);
 
     replacementTextRect.setSize(FloatSize(textWidth + replacementTextRoundedRectLeftTextMargin + (includesArrow ? replacementTextRoundedRectRightTextMarginWithArrow : replacementTextRoundedRectRightTextMargin), replacementTextRoundedRectHeight));
@@ -428,7 +457,7 @@ void RenderEmbeddedObject::handleUnavailablePluginIndicatorEvent(Event* event)
     if (mouseEvent->type() == eventNames().mousedownEvent && mouseEvent->button() == MouseButton::Left) {
         m_mouseDownWasInUnavailablePluginIndicator = isInUnavailablePluginIndicator(*mouseEvent);
         if (m_mouseDownWasInUnavailablePluginIndicator) {
-            frame().eventHandler().setCapturingMouseEventsElement(element.copyRef());
+            protect(frame().eventHandler())->setCapturingMouseEventsElement(element.copyRef());
             element->setIsCapturingMouseEvents(true);
             setUnavailablePluginIndicatorIsPressed(true);
         }
@@ -436,7 +465,7 @@ void RenderEmbeddedObject::handleUnavailablePluginIndicatorEvent(Event* event)
     }
     if (mouseEvent->type() == eventNames().mouseupEvent && mouseEvent->button() == MouseButton::Left) {
         if (m_unavailablePluginIndicatorIsPressed) {
-            frame().eventHandler().setCapturingMouseEventsElement(nullptr);
+            protect(frame().eventHandler())->setCapturingMouseEventsElement(nullptr);
             element->setIsCapturingMouseEvents(false);
             setUnavailablePluginIndicatorIsPressed(false);
         }

@@ -473,7 +473,7 @@ Ref<EditCommandComposition> CompositeEditCommand::ensureComposition()
     while (RefPtr parent = command->parent())
         command = parent.releaseNonNull();
     if (!command->m_composition)
-        command->m_composition = EditCommandComposition::create(document(), startingSelection(), endingSelection(), editingAction());
+        lazyInitialize(command->m_composition, EditCommandComposition::create(document(), startingSelection(), endingSelection(), editingAction()));
     return *command->m_composition;
 }
 
@@ -513,7 +513,7 @@ void CompositeEditCommand::applyCommandToComposite(Ref<EditCommand>&& command)
 {
     command->setParent(this);
     command->doApply();
-    if (auto* simpleCommand = dynamicDowncast<SimpleEditCommand>(command.get())) {
+    if (RefPtr simpleCommand = dynamicDowncast<SimpleEditCommand>(command)) {
         command->setParent(nullptr);
         ensureComposition()->append(*simpleCommand);
     }
@@ -875,7 +875,7 @@ void CompositeEditCommand::insertNodeAtTabSpanPosition(Ref<Node>&& node, const P
     insertNodeAt(WTF::move(node), positionOutsideTabSpan(pos));
 }
 
-static EditAction NODELETE deleteSelectionEditingActionForEditingAction(EditAction editingAction)
+static EditAction LEGACY_NODELETE deleteSelectionEditingActionForEditingAction(EditAction editingAction)
 {
     switch (editingAction) {
     case EditAction::Cut:
@@ -907,7 +907,7 @@ void CompositeEditCommand::setNodeAttribute(Element& element, const QualifiedNam
     applyCommandToComposite(SetNodeAttributeCommand::create(element, attribute, value));
 }
 
-static inline bool NODELETE containsOnlyDeprecatedEditingWhitespace(const String& text)
+static inline bool LEGACY_NODELETE containsOnlyDeprecatedEditingWhitespace(const String& text)
 {
     for (unsigned i = 0; i < text.length(); ++i) {
         if (!deprecatedIsEditingWhitespace(text[i]))
@@ -960,7 +960,7 @@ void CompositeEditCommand::rebalanceWhitespaceAt(const Position& position)
     rebalanceWhitespaceOnTextSubstring(*textNode, position.offsetInContainerNode(), position.offsetInContainerNode());
 }
 
-static bool NODELETE isWhitespaceForRebalance(Text& textNode, char16_t character)
+static bool LEGACY_NODELETE isWhitespaceForRebalance(Text& textNode, char16_t character)
 {
     return deprecatedIsEditingWhitespace(character) && (character != '\n' || !textNode.renderer() || !textNode.renderer()->style().preserveNewline());
 }
@@ -1319,7 +1319,7 @@ void CompositeEditCommand::cloneParagraphUnderNewElement(const Position& start, 
     if (outerNode->isRootEditableElement()) {
         lastNode = blockElement;
     } else {
-        lastNode = outerNode->cloneNode(isRenderedTable(outerNode.get()));
+        lastNode = outerNode->cloneNode(isRenderedTable(outerNode.get()) ? CloneSubtree::Yes : CloneSubtree::No);
         appendNode(*lastNode, *blockElement);
     }
 
@@ -1334,7 +1334,7 @@ void CompositeEditCommand::cloneParagraphUnderNewElement(const Position& start, 
 
         for (size_t i = ancestors.size(); i != 0; --i) {
             auto item = std::exchange(ancestors[i - 1], nullptr);
-            auto child = item->cloneNode(isRenderedTable(item.get()));
+            auto child = item->cloneNode(isRenderedTable(item.get()) ? CloneSubtree::Yes : CloneSubtree::No);
             appendNode(child.copyRef(), downcast<Element>(*lastNode));
             lastNode = WTF::move(child);
         }
@@ -1363,7 +1363,7 @@ void CompositeEditCommand::cloneParagraphUnderNewElement(const Position& start, 
                 lastNode = lastNode->parentNode();
             }
 
-            auto clonedNode = node->cloneNode(true);
+            auto clonedNode = node->cloneNode(CloneSubtree::Yes);
             insertNodeAfter(clonedNode.copyRef(), *lastNode);
             lastNode = WTF::move(clonedNode);
             if (node == end.deprecatedNode() || end.deprecatedNode()->isDescendantOf(*node))

@@ -170,6 +170,7 @@ private:
     };
     void computeOverlapRegions(ComputeOverlapRegionData&, const TransformationMatrix&, bool includesReplica = true);
     Vector<IntRect, 1> computeConsolidatedOverlapRegionRects(TextureMapperPaintOptions&);
+    IntRect filterSourceClipBounds(const IntRect&, TextureMapperPaintOptions&) const;
 
     void paintRecursive(TextureMapperPaintOptions&);
     void paintFlattened(TextureMapperPaintOptions&);
@@ -194,7 +195,7 @@ private:
     void collectDamageSelfChildrenReplicaFilterAndMask(TextureMapperPaintOptions&, Damage&);
     void collectDamageSelfChildrenFilterAndMask(TextureMapperPaintOptions&, Damage&);
     void collectDamageFromLayerAboutToBeRemoved(TextureMapperLayer&);
-    ALWAYS_INLINE Damage& NODELETE ensureDamageInLayerCoordinateSpace();
+    ALWAYS_INLINE Damage& LEGACY_NODELETE ensureDamageInLayerCoordinateSpace();
     inline void damageWholeLayer();
     void damageWholeLayerIncludingItsRectFromPreviousFrame();
 #endif

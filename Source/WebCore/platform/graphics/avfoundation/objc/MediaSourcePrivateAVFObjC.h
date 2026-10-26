@@ -70,6 +70,7 @@ public:
 
     RefPtr<MediaPlayerPrivateInterface> player() const final;
     void setPlayer(MediaPlayerPrivateInterface*) final;
+    void willShutdown() final;
 
     AddStatus addSourceBuffer(const ContentType&, const MediaSourceConfiguration&, RefPtr<SourceBufferPrivate>&) final;
     void durationChanged(const MediaTime&) final;
@@ -109,7 +110,7 @@ private:
     friend class SourceBufferPrivateAVFObjC;
 
     MediaSourcePrivateAVFObjC(MediaPlayerPrivateMediaSourceAVFObjC&, MediaSourcePrivateClient&);
-    RefPtr<MediaPlayerPrivateMediaSourceAVFObjC> NODELETE platformPlayer() const;
+    RefPtr<MediaPlayerPrivateMediaSourceAVFObjC> LEGACY_NODELETE platformPlayer() const;
     void callOnMainThreadWithPlayer(Function<void(MediaPlayerPrivateMediaSourceAVFObjC&)>&&);
 
     void notifyActiveSourceBuffersChanged() final;

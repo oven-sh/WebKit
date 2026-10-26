@@ -56,6 +56,74 @@ TEST(CryptoTest, ByteSwap) {
             CRYPTO_bswap8(UINT64_C(0x0102030405060708)));
 }
 
+TEST(CryptoTest, BitWidth) {
+  EXPECT_EQ(CRYPTO_bit_width(0), 0);
+  EXPECT_EQ(CRYPTO_bit_width(1), 1);
+  EXPECT_EQ(CRYPTO_bit_width(2), 2);
+  EXPECT_EQ(CRYPTO_bit_width(3), 2);
+  EXPECT_EQ(CRYPTO_bit_width(4), 3);
+  EXPECT_EQ(CRYPTO_bit_width(5), 3);
+  EXPECT_EQ(CRYPTO_bit_width(6), 3);
+  EXPECT_EQ(CRYPTO_bit_width(7), 3);
+  EXPECT_EQ(CRYPTO_bit_width(8), 4);
+  EXPECT_EQ(CRYPTO_bit_width(~uint64_t{0}), 64);
+  EXPECT_EQ(CRYPTO_bit_width(~uint64_t{0} - 1), 64);
+}
+
+TEST(CryptoTest, Popcount) {
+  EXPECT_EQ(CRYPTO_popcount(0), 0);
+  EXPECT_EQ(CRYPTO_popcount(1), 1);
+  EXPECT_EQ(CRYPTO_popcount(2), 1);
+  EXPECT_EQ(CRYPTO_popcount(3), 2);
+  EXPECT_EQ(CRYPTO_popcount(4), 1);
+  EXPECT_EQ(CRYPTO_popcount(5), 2);
+  EXPECT_EQ(CRYPTO_popcount(6), 2);
+  EXPECT_EQ(CRYPTO_popcount(7), 3);
+  EXPECT_EQ(CRYPTO_popcount(8), 1);
+  EXPECT_EQ(CRYPTO_popcount(~uint64_t{0}), 64);
+  EXPECT_EQ(CRYPTO_popcount(~uint64_t{0} - 1), 63);
+}
+
+TEST(CryptoTest, BitCeil) {
+  EXPECT_EQ(CRYPTO_bit_ceil(0), 1u);
+  EXPECT_EQ(CRYPTO_bit_ceil(1), 1u);
+  EXPECT_EQ(CRYPTO_bit_ceil(2), 2u);
+  EXPECT_EQ(CRYPTO_bit_ceil(3), 4u);
+  EXPECT_EQ(CRYPTO_bit_ceil(4), 4u);
+  EXPECT_EQ(CRYPTO_bit_ceil(5), 8u);
+  EXPECT_EQ(CRYPTO_bit_ceil(6), 8u);
+  EXPECT_EQ(CRYPTO_bit_ceil(7), 8u);
+  EXPECT_EQ(CRYPTO_bit_ceil(8), 8u);
+  EXPECT_EQ(CRYPTO_bit_ceil(9), 16u);
+}
+
+TEST(CryptoTest, BitFloor) {
+  EXPECT_EQ(CRYPTO_bit_floor(0), 0u);
+  EXPECT_EQ(CRYPTO_bit_floor(1), 1u);
+  EXPECT_EQ(CRYPTO_bit_floor(2), 2u);
+  EXPECT_EQ(CRYPTO_bit_floor(3), 2u);
+  EXPECT_EQ(CRYPTO_bit_floor(4), 4u);
+  EXPECT_EQ(CRYPTO_bit_floor(5), 4u);
+  EXPECT_EQ(CRYPTO_bit_floor(6), 4u);
+  EXPECT_EQ(CRYPTO_bit_floor(7), 4u);
+  EXPECT_EQ(CRYPTO_bit_floor(8), 8u);
+  EXPECT_EQ(CRYPTO_bit_floor(9), 8u);
+}
+
+TEST(CryptoTest, HasSingleBit) {
+  EXPECT_FALSE(CRYPTO_has_single_bit(0));
+  EXPECT_TRUE(CRYPTO_has_single_bit(1));
+  EXPECT_TRUE(CRYPTO_has_single_bit(2));
+  EXPECT_FALSE(CRYPTO_has_single_bit(3));
+  EXPECT_TRUE(CRYPTO_has_single_bit(4));
+  EXPECT_FALSE(CRYPTO_has_single_bit(5));
+  EXPECT_FALSE(CRYPTO_has_single_bit(6));
+  EXPECT_FALSE(CRYPTO_has_single_bit(7));
+  EXPECT_TRUE(CRYPTO_has_single_bit(8));
+  EXPECT_FALSE(CRYPTO_has_single_bit(~uint64_t{0}));
+  EXPECT_TRUE(CRYPTO_has_single_bit(uint64_t{1} << 63));
+}
+
 #if defined(BORINGSSL_FIPS_COUNTERS)
 using CounterArray = size_t[fips_counter_max + 1];
 

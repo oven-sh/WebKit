@@ -46,6 +46,10 @@
 
 #include "CoreVideoSoftLink.h"
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/ImageInversionClassifier.h>
+#endif
+
 namespace WebCore {
 
 RefPtr<NativeImage> NativeImage::create(PlatformImagePtr&& image, std::optional<GainMap>&& gainMap)
@@ -187,12 +191,12 @@ RefPtr<NativeImage> NativeImage::create(RetainPtr<CVPixelBufferRef> pixelBuffer,
     return NativeImage::create(WTF::move(image));
 }
 
-static CGImageAlphaInfo alphaInfoForAlphaLast(bool isPremultiplied)
+static CGImageAlphaInfo LEGACY_NODELETE alphaInfoForAlphaLast(bool isPremultiplied)
 {
     return isPremultiplied ? kCGImageAlphaPremultipliedLast : kCGImageAlphaLast;
 }
 
-static CGImageAlphaInfo alphaInfoForAlphaFirst(bool isPremultiplied)
+static CGImageAlphaInfo LEGACY_NODELETE alphaInfoForAlphaFirst(bool isPremultiplied)
 {
     return isPremultiplied ? kCGImageAlphaPremultipliedFirst : kCGImageAlphaFirst;
 }
@@ -284,6 +288,26 @@ size_t NativeImage::sizeInBytes() const
         sizeInBytes += CVPixelBufferGetDataSize(m_gainMap->gainMapPixelBuffer);
     return sizeInBytes;
 }
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+ImagePaintTimeTransformation NativeImage::paintTimeTransformation() const
+{
+    RetainPtr<CGImageRef> image;
+    {
+        Locker locker { m_lock };
+        if (m_paintTimeTransformation)
+            return *m_paintTimeTransformation;
+        image = m_platformImage;
+    }
+
+    // Classify without holding the lock; a racing duplicate classification yields the same result.
+    auto paintTimeTransformation = ImageInversionClassifier::classify(image.get());
+
+    Locker locker { m_lock };
+    m_paintTimeTransformation = paintTimeTransformation;
+    return paintTimeTransformation;
+}
+#endif
 
 ColorSpace NativeImage::colorSpace() const
 {

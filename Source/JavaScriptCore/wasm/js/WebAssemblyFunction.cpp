@@ -64,7 +64,7 @@ JSC_DEFINE_HOST_FUNCTION(callWebAssemblyFunction, (JSGlobalObject* globalObject,
     VM& vm = globalObject->vm();
     WebAssemblyFunction* wasmFunction = uncheckedDowncast<WebAssemblyFunction>(callFrame->jsCallee());
 
-    if (wasmFunction->instance()->taintedness() >= SourceTaintedOrigin::IndirectlyTainted)
+    if (wasmFunction->instance()->taintedness().isTainted())
         vm.setMightBeExecutingTaintedCode();
 
     // Note: we specifically use the WebAssemblyFunction as the callee to begin with in the ProtoCallFrame.

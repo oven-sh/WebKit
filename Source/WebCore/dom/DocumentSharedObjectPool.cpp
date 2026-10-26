@@ -37,7 +37,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DocumentSharedObjectPool);
 
-static HashMap<SecurityOriginData, size_t>& NODELETE peakSizeInPast()
+static HashMap<SecurityOriginData, size_t>& LEGACY_NODELETE peakSizeInPast()
 {
     static MainThreadNeverDestroyed<HashMap<SecurityOriginData, size_t>> map;
     return map;
@@ -58,11 +58,11 @@ DocumentSharedObjectPool::~DocumentSharedObjectPool()
 }
 
 struct DocumentSharedObjectPool::ShareableElementDataHash {
-    static unsigned NODELETE hash(const Ref<ShareableElementData>& data)
+    static unsigned LEGACY_NODELETE hash(const Ref<ShareableElementData>& data)
     {
         return computeHash(data->attributes());
     }
-    static bool equal(const Ref<ShareableElementData>& a, const Ref<ShareableElementData>& b)
+    static bool LEGACY_NODELETE equal(const Ref<ShareableElementData>& a, const Ref<ShareableElementData>& b)
     {
         // We need to disable type checking because std::has_unique_object_representations_v<Attribute>
         // return false. Attribute contains pointers but memcmp() is safe because those pointers were
@@ -73,12 +73,12 @@ struct DocumentSharedObjectPool::ShareableElementDataHash {
 };
 
 struct AttributeSpanTranslator {
-    static unsigned NODELETE hash(std::span<const Attribute> attributes)
+    static unsigned LEGACY_NODELETE hash(std::span<const Attribute> attributes)
     {
         return computeHash(attributes);
     }
 
-    static bool equal(const Ref<ShareableElementData>& a, std::span<const Attribute> b)
+    static bool LEGACY_NODELETE equal(const Ref<ShareableElementData>& a, std::span<const Attribute> b)
     {
         // We need to disable type checking because std::has_unique_object_representations_v<Attribute>
         // return false. Attribute contains pointers but memcmp() is safe because those pointers were

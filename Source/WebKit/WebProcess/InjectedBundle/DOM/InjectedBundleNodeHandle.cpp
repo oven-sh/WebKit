@@ -70,7 +70,7 @@ using namespace HTMLNames;
 
 using DOMNodeHandleCache = WeakHashMap<Node, WeakRef<InjectedBundleNodeHandle>, WeakPtrImplWithEventTargetData>;
 
-static DOMNodeHandleCache& NODELETE domNodeHandleCache()
+static DOMNodeHandleCache& LEGACY_NODELETE domNodeHandleCache()
 {
     static NeverDestroyed<DOMNodeHandleCache> cache;
     return cache;
@@ -243,24 +243,6 @@ RefPtr<InjectedBundleRangeHandle> InjectedBundleNodeHandle::visibleRange()
     return createHandle(makeSimpleRange(start, end));
 }
 
-void InjectedBundleNodeHandle::setHTMLInputElementValueForUser(const String& value)
-{
-    RefPtr input = dynamicDowncast<HTMLInputElement>(m_node);
-    if (!input)
-        return;
-
-    input->setValueForUser(value);
-}
-
-void InjectedBundleNodeHandle::setHTMLInputElementSpellcheckEnabled(bool enabled)
-{
-    RefPtr input = dynamicDowncast<HTMLInputElement>(m_node);
-    if (!input)
-        return;
-
-    input->setSpellcheckDisabledExceptTextReplacement(!enabled);
-}
-
 bool InjectedBundleNodeHandle::isHTMLInputElementAutoFilled() const
 {
     RefPtr input = dynamicDowncast<HTMLInputElement>(m_node);
@@ -358,15 +340,6 @@ bool InjectedBundleNodeHandle::isAutoFillAvailable() const
         return false;
 
     return input->autofillAvailable();
-}
-
-void InjectedBundleNodeHandle::setAutoFillAvailable(bool autoFillAvailable)
-{
-    RefPtr input = dynamicDowncast<HTMLInputElement>(m_node);
-    if (!input)
-        return;
-
-    input->setAutofillAvailable(autoFillAvailable);
 }
 
 IntRect InjectedBundleNodeHandle::htmlInputElementAutoFillButtonBounds()

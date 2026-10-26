@@ -72,7 +72,7 @@ ScheduledAction::ScheduledAction(DOMWrapperWorld& isolatedWorld, String&& code)
     : m_isolatedWorld(isolatedWorld)
     , m_function(isolatedWorld.vm())
     , m_code(WTF::move(code))
-    , m_sourceTaintedOrigin(JSC::computeNewSourceTaintedOriginFromStack(isolatedWorld.vm(), isolatedWorld.vm().topCallFrame))
+    , m_sourceTaintedOrigin(JSC::computeNewSourceTaintednessFromStack(isolatedWorld.vm(), isolatedWorld.vm().topCallFrame))
 {
 }
 
@@ -140,13 +140,16 @@ void ScheduledAction::execute(Document& document)
         return;
 
     RefPtr frame = dynamicDowncast<LocalFrame>(window->wrapped().frame());
-    if (!frame || !frame->script().canExecuteScripts(ReasonForCallingCanExecuteScripts::AboutToExecuteScript))
+    if (!frame)
+        return;
+    CheckedRef script = frame->script();
+    if (!script->canExecuteScripts(ReasonForCallingCanExecuteScripts::AboutToExecuteScript))
         return;
 
     if (m_function)
         executeFunctionInContext(window, &window->proxy(), document);
     else
-        frame->script().executeScriptInWorldIgnoringException(m_isolatedWorld, m_code, m_sourceTaintedOrigin);
+        script->executeScriptInWorldIgnoringException(m_isolatedWorld, m_code, m_sourceTaintedOrigin);
 }
 
 void ScheduledAction::execute(WorkerGlobalScope& workerGlobalScope)

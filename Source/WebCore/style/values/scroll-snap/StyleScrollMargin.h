@@ -49,7 +49,7 @@ struct ScrollMarginEdge {
     ALWAYS_INLINE bool isPositive() const { return m_value.isPositive(); }
     ALWAYS_INLINE bool isNegative() const { return m_value.isNegative(); }
 
-    template<typename... F> decltype(auto) switchOn(F&&... f) const
+    template<typename... F> decltype(auto) switchOn(NOESCAPE F&&... f) const
     {
         auto visitor = WTF::makeVisitor(std::forward<F>(f)...);
 
@@ -76,17 +76,17 @@ template<> struct CSSValueConversion<ScrollMarginEdge> { ScrollMarginEdge operat
 // MARK: - Evaluation
 
 template<> struct Evaluation<ScrollMarginEdge, LayoutUnit> {
-    LayoutUnit NODELETE operator()(const ScrollMarginEdge&, LayoutUnit referenceLength, ZoomFactor);
-    LayoutUnit NODELETE operator()(const ScrollMarginEdge&, ZoomFactor);
+    LayoutUnit LEGACY_NODELETE operator()(const ScrollMarginEdge&, LayoutUnit referenceLength, ZoomFactor);
+    LayoutUnit LEGACY_NODELETE operator()(const ScrollMarginEdge&, ZoomFactor);
 };
 template<> struct Evaluation<ScrollMarginEdge, float> {
-    float NODELETE operator()(const ScrollMarginEdge&, float referenceLength, ZoomFactor);
-    float NODELETE operator()(const ScrollMarginEdge&, ZoomFactor);
+    float LEGACY_NODELETE operator()(const ScrollMarginEdge&, float referenceLength, ZoomFactor);
+    float LEGACY_NODELETE operator()(const ScrollMarginEdge&, ZoomFactor);
 };
 
 // MARK: - Extent
 
-LayoutBoxExtent NODELETE extentForRect(const ScrollMarginBox&, const LayoutRect&, ZoomFactor);
+LayoutBoxExtent LEGACY_NODELETE extentForRect(const ScrollMarginBox&, const LayoutRect&, ZoomFactor);
 
 } // namespace Style
 } // namespace WebCore

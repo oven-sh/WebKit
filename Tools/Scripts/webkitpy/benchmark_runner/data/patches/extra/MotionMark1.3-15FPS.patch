@@ -44,3 +44,48 @@ index c82e047..45d7771 100644
      text: {
          testName: "Test Name",
          score: "Score",
+diff --git a/tests/resources/main.js b/tests/resources/main.js
+index ca7f2a9..f77f6d9 100644
+--- a/tests/resources/main.js
++++ b/tests/resources/main.js
+@@ -885,6 +885,8 @@ Benchmark = Utilities.createClass(
+     function(stage, options)
+     {
+         this._animateLoop = this._animateLoop.bind(this);
++        this._animateLoopProxy = this._animateLoopProxy.bind(this);
++        this._callbackCount = 0;
+         this._warmupLength = options["warmup-length"];
+         this._frameCount = 0;
+         this._warmupFrameCount = options["warmup-frame-count"];
+@@ -960,6 +962,15 @@ Benchmark = Utilities.createClass(
+         return promise;
+     },
+ 
++    _animateLoopProxy: function(timestamp)
++    {
++        this._callbackCount++;
++        if (this._callbackCount % 2 == 0) // Ensure 15 FPS on a 30 Hz display, only dispatch every 2nd callback.
++            this._animateLoop(timestamp);
++        else
++            requestAnimationFrame(this._animateLoopProxy);
++    },
++
+     _animateLoop: function(timestamp)
+     {
+         timestamp = (this._getTimestamp && this._getTimestamp()) || timestamp;
+@@ -986,13 +997,13 @@ Benchmark = Utilities.createClass(
+ 
+             this._stage.animate(0);
+             ++this._frameCount;
+-            requestAnimationFrame(this._animateLoop);
++            requestAnimationFrame(this._animateLoopProxy);
+             return;
+         }
+ 
+         this._controller.update(timestamp, this._stage);
+         this._stage.animate(timestamp - this._previousTimestamp);
+         this._previousTimestamp = timestamp;
+-        requestAnimationFrame(this._animateLoop);
++        requestAnimationFrame(this._animateLoopProxy);
+     }
+ });

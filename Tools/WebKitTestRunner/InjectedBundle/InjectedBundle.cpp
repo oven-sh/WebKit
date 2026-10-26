@@ -105,6 +105,7 @@ void InjectedBundle::initialize(WKBundleRef bundle, WKTypeRef initializationUser
     };
     WKBundleSetClient(m_bundle.get(), &client.base);
     WKBundleSetServiceWorkerProxyCreationCallback(m_bundle.get(), WebCoreTestSupport::setupNewlyCreatedServiceWorker);
+    WebCoreTestSupport::setupWorkerInternals();
     platformInitialize(initializationUserData);
     WebCoreTestSupport::populateJITOperations();
 
@@ -318,6 +319,22 @@ void InjectedBundle::didReceiveMessageToPage(WKBundlePageRef page, WKStringRef m
         return;
     }
 
+#if PLATFORM(MAC)
+    if (WKStringIsEqualToUTF8CString(messageName, "AXAsyncReply")) {
+        auto messageBodyDictionary = dictionaryValue(messageBody);
+        if (m_accessibilityController)
+            m_accessibilityController->clientAccessibilityReplyReceived(uint64Value(messageBodyDictionary, "requestID"), value(messageBodyDictionary, "result"));
+        return;
+    }
+
+    if (WKStringIsEqualToUTF8CString(messageName, "AXClientNotification")) {
+        auto messageBodyDictionary = dictionaryValue(messageBody);
+        if (m_accessibilityController)
+            m_accessibilityController->clientNotificationReceived(uint64Value(messageBodyDictionary, "elementToken"), toJS(stringValue(messageBodyDictionary, "notificationName")).get(), value(messageBodyDictionary, "userInfo"));
+        return;
+    }
+#endif
+
     postPageMessage("Error", "Unknown");
 }
 
@@ -442,7 +459,7 @@ void InjectedBundle::outputText(StringView output, IsFinalTestOutput isFinalTest
     // is done via asynchronous IPC, even if the connection is in fully synchronous mode due to a WKBundlePagePostSynchronousMessageForTesting()
     // call. Otherwise, messages logged via sync and async IPC may end up out of order and cause flakiness.
     auto messageName = isFinalTestOutput == IsFinalTestOutput::Yes ? toWK("FinalTextOutput") : toWK("TextOutput");
-    WKBundlePagePostMessageIgnoringFullySynchronousMode(page()->page(), messageName.get(), toWK(string ? string->legacyCStringPointer() : "Out of memory\n").get());
+    WKBundlePagePostMessageIgnoringFullySynchronousMode(page()->page(), messageName.get(), (string ? toWK(*string) : toWK("Out of memory\n")).get());
 }
 
 void InjectedBundle::postNewBeforeUnloadReturnValue(bool value)

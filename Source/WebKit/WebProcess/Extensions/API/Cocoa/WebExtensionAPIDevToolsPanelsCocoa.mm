@@ -83,7 +83,7 @@ WebExtensionAPIEvent& WebExtensionAPIDevToolsPanels::onThemeChanged()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/devtools/panels/onThemeChanged
 
     if (!m_onThemeChanged)
-        m_onThemeChanged = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::DevToolsPanelsOnThemeChanged);
+        lazyInitialize(m_onThemeChanged, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::DevToolsPanelsOnThemeChanged));
 
     return *m_onThemeChanged;
 }
@@ -95,8 +95,8 @@ void WebExtensionContextProxy::dispatchDevToolsPanelsThemeChangedEvent(Inspector
     setInspectorAppearance(appearance);
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        auto& panels = namespaceObject.devtools().panels();
-        panels.onThemeChanged().invokeListenersWithArgument(panels.themeName());
+        Ref panels = protect(namespaceObject.devtools())->panels();
+        protect(panels->onThemeChanged())->invokeListenersWithArgument(panels->themeName());
     });
 }
 

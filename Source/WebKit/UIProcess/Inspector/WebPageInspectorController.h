@@ -49,6 +49,7 @@ class ProxyingPageAgent;
 
 namespace WebKit {
 
+class DebuggerPauseCoordinator;
 class InspectorBrowserAgent;
 class ProvisionalPageProxy;
 struct WebPageAgentContext;
@@ -64,6 +65,12 @@ public:
     void pageClosed();
 
     bool hasLocalFrontend() const;
+    bool hasFrontends() const;
+
+    void frameDidPauseForDebugger(WebProcessProxy&, WebCore::FrameIdentifier);
+    void frameDidContinueForDebugger(WebProcessProxy&, WebCore::FrameIdentifier);
+    void frameDidChangeProcess(WebCore::FrameIdentifier, WebCore::ProcessIdentifier newProcessID);
+    void processDidTerminate(WebProcessProxy&);
 
     void connectFrontend(Inspector::FrontendChannel&, bool isAutomaticInspection = false, bool immediatelyPause = false);
     void disconnectFrontend(Inspector::FrontendChannel&);
@@ -91,7 +98,7 @@ public:
     void willDestroyProvisionalFrame(const ProvisionalFrameProxy&);
     void didCommitProvisionalFrame(WebFrameProxy&, WebCore::ProcessIdentifier oldProcessID, std::optional<WebCore::PageIdentifier> oldPageID, WebCore::ProcessIdentifier newProcessID);
 
-    InspectorBrowserAgent* NODELETE enabledBrowserAgent() const;
+    InspectorBrowserAgent* LEGACY_NODELETE enabledBrowserAgent() const;
     void setEnabledBrowserAgent(InspectorBrowserAgent*);
 
     void browserExtensionsEnabled(HashMap<String, String>&&);
@@ -105,7 +112,7 @@ public:
     void disconnectFrameTargetForTesting(WebCore::FrameIdentifier);
 
 private:
-    WebPageAgentContext NODELETE webPageAgentContext();
+    WebPageAgentContext LEGACY_NODELETE webPageAgentContext();
     void createLazyAgents();
 
     void addTarget(std::unique_ptr<InspectorTargetProxy>&&);
@@ -123,10 +130,11 @@ private:
     HashMap<String, std::unique_ptr<InspectorTargetProxy>> m_targets;
 
     CheckedPtr<InspectorBrowserAgent> m_enabledBrowserAgent;
-    RefPtr<Inspector::ProxyingNetworkAgent> m_networkAgent;
-    RefPtr<Inspector::ProxyingPageAgent> m_pageAgent;
+    const RefPtr<Inspector::ProxyingNetworkAgent> m_networkAgent;
+    const RefPtr<Inspector::ProxyingPageAgent> m_pageAgent;
 
     bool m_didCreateLazyAgents { false };
+    std::unique_ptr<DebuggerPauseCoordinator> m_debuggerPauseCoordinator;
 };
 
 } // namespace WebKit

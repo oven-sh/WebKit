@@ -57,7 +57,8 @@ void getScreenTimeURLs(std::optional<WTF::UUID> identifier, CompletionHandler<vo
             }
 
             HashSet<URL> result;
-            for (NSURL *site in urls.get()) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL NSURL *site in urls.get()) {
                 URL url { site };
                 if (url.isValid())
                     result.add(WTF::move(url));
@@ -93,8 +94,10 @@ void removeScreenTimeData(const HashSet<URL>& websitesToRemove, const WebsiteDat
 
     [webHistory fetchAllHistoryWithCompletionHandler:makeBlockPtr([webHistory, websitesToRemoveDomains, completionHandler = WTF::move(completionHandler)](NSSet<NSURL *> *urls, NSError *error) mutable {
         if (!error) {
-            for (NSURL *url in urls) {
-                for (NSString *domainString in websitesToRemoveDomains.get()) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL NSURL *url in urls) {
+                // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+                for (SUPPRESS_UNRETAINED_LOCAL NSString *domainString in websitesToRemoveDomains.get()) {
                     if (hostIsInDomain([url host], domainString)) {
                         [webHistory deleteHistoryForURL:url];
                         break;

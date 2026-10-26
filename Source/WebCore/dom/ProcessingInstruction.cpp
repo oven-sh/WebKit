@@ -51,13 +51,13 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ProcessingInstruction);
 
-inline ProcessingInstruction::ProcessingInstruction(Document& document, String&& target, String&& data)
+inline ProcessingInstruction::ProcessingInstruction(Document& document, AtomString target, String data)
     : CharacterData(document, WTF::move(data), NodeType::ProcessingInstruction)
-    , m_target(WTF::move(target))
+    , m_target(target.releaseString())
 {
 }
 
-Ref<ProcessingInstruction> ProcessingInstruction::create(Document& document, String&& target, String&& data)
+Ref<ProcessingInstruction> ProcessingInstruction::create(Document& document, AtomString target, String data)
 {
     return adoptRef(*new ProcessingInstruction(document, WTF::move(target), WTF::move(data)));
 }
@@ -71,7 +71,15 @@ ProcessingInstruction::~ProcessingInstruction()
         cachedSheet->removeClient(*this);
 
     if (isConnected())
-        document().styleScope().removeStyleSheetCandidateNode(*this);
+        protect(document().styleScope())->removeStyleSheetCandidateNode(*this);
+}
+
+void ProcessingInstruction::setSheet(RefPtr<StyleSheet>&& sheet)
+{
+    ASSERT(!sheet || sheet->ownerNode() == this);
+    RefPtr oldSheet = std::exchange(m_sheet, WTF::move(sheet));
+    if (oldSheet && oldSheet != m_sheet)
+        oldSheet->clearOwnerNode();
 }
 
 String ProcessingInstruction::nodeName() const
@@ -83,7 +91,7 @@ Ref<Node> ProcessingInstruction::cloneNodeInternal(Document& document, CloningOp
 {
     // FIXME: Is it a problem that this does not copy m_localHref?
     // What about other data members?
-    return create(document, String { m_target }, String { data() });
+    return create(document, AtomString { m_target }, String { data() });
 }
 
 SerializedNode ProcessingInstruction::serializeNode(CloningOperation) const
@@ -129,7 +137,7 @@ void ProcessingInstruction::checkStyleSheet()
             // to kick off import/include loads that can hang off some parent sheet.
             if (m_isXSL) {
                 URL finalURL({ }, m_localHref);
-                m_sheet = XSLStyleSheet::createEmbedded(*this, finalURL);
+                setSheet(XSLStyleSheet::createEmbedded(*this, finalURL));
                 m_loading = false;
                 document->scheduleToApplyXSLTransforms();
             }
@@ -183,7 +191,9 @@ bool ProcessingInstruction::isLoading() const
 {
     if (m_loading)
         return true;
-    return m_sheet && m_sheet->isLoading();
+    if (RefPtr sheet = m_sheet)
+        return sheet->isLoading();
+    return false;
 }
 
 bool ProcessingInstruction::sheetLoaded()
@@ -217,7 +227,7 @@ void ProcessingInstruction::setCSSStyleSheet(const String& href, const URL& base
     cssSheet->setTitle(m_title);
     cssSheet->setMediaQueries(MQ::MediaQueryParser::parse(m_media, document->cssParserContext()));
 
-    m_sheet = WTF::move(cssSheet);
+    setSheet(WTF::move(cssSheet));
 
     // We don't need the cross-origin security check here because we are
     // getting the sheet text in "strict" mode. This enforces a valid CSS MIME
@@ -229,7 +239,7 @@ void ProcessingInstruction::setCSSStyleSheet(const String& href, const URL& base
 void ProcessingInstruction::setXSLStyleSheet(const String& href, const URL& baseURL, const String& sheet)
 {
     ASSERT(m_isXSL);
-    m_sheet = XSLStyleSheet::create(*this, href, baseURL);
+    setSheet(XSLStyleSheet::create(*this, href, baseURL));
     Ref protectedDocument { document() };
     parseStyleSheet(sheet);
 }
@@ -271,7 +281,7 @@ Node::NeedsPostConnectionSteps ProcessingInstruction::insertionSteps(InsertionTy
     CharacterData::insertionSteps(insertionType, parentOfInsertedTree);
     if (!insertionType.connectedToDocument)
         return NeedsPostConnectionSteps::No;
-    document().styleScope().addStyleSheetCandidateNode(*this, m_createdByParser);
+    protect(document().styleScope())->addStyleSheetCandidateNode(*this, m_createdByParser);
     return NeedsPostConnectionSteps::Yes;
 }
 
@@ -289,10 +299,7 @@ void ProcessingInstruction::removingSteps(RemovalType removalType, ContainerNode
     CheckedRef styleScope = document().styleScope();
     styleScope->removeStyleSheetCandidateNode(*this);
 
-    if (RefPtr sheet = std::exchange(m_sheet, nullptr)) {
-        ASSERT(sheet->ownerNode() == this);
-        sheet->clearOwnerNode();
-    }
+    setSheet(nullptr);
 
     if (m_loading) {
         m_loading = false;

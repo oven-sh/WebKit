@@ -38,6 +38,7 @@
 #include <WebCore/FilterOperations.h>
 #include <WebCore/TransformOperationData.h>
 #include <WebCore/TransformOperations.h>
+#include <WebCore/WebAnimationTypes.h>
 
 namespace WebCore {
 
@@ -71,7 +72,7 @@ struct AcceleratedEffectValues {
 
     AcceleratedEffectValues() = default;
     // FIXME: It is a layering violation to use `StyleComputedStyle` and `RenderLayerModelObject` here, as they are defined in the rendering directory.
-    AcceleratedEffectValues(const Style::ComputedStyle&, const IntRect&, const RenderLayerModelObject*);
+    AcceleratedEffectValues(const Style::ComputedStyle&, const IntRect&, const RenderLayerModelObject*, OptionSet<AcceleratedEffectProperty> = { });
     AcceleratedEffectValues(AcceleratedEffectOpacity opacity, std::optional<TransformOperationData>&& transformOperationData, AcceleratedEffectTransformOrigin transformOrigin, AcceleratedEffectTransformBox transformBox, TransformOperations&& transform, RefPtr<TransformOperation>&& translate, RefPtr<TransformOperation>&& scale, RefPtr<TransformOperation>&& rotate, AcceleratedEffectOffsetPath&& offsetPath, AcceleratedEffectOffsetDistance offsetDistance, AcceleratedEffectOffsetPosition offsetPosition, AcceleratedEffectOffsetAnchor offsetAnchor, AcceleratedEffectOffsetRotate offsetRotate, FilterOperations&& filter, FilterOperations&& backdropFilter)
         : opacity(opacity)
         , transformOperationData(WTF::move(transformOperationData))
@@ -93,6 +94,8 @@ struct AcceleratedEffectValues {
 
     WEBCORE_EXPORT AcceleratedEffectValues clone() const;
     WEBCORE_EXPORT TransformationMatrix computedTransformationMatrix(const FloatRect&) const;
+
+    String dumpProperty(AcceleratedEffectProperty) const;
 };
 
 } // namespace WebCore

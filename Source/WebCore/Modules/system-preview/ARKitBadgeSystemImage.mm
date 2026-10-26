@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2022-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -58,10 +58,10 @@ static NSBundle *arKitBundle()
 
 static RetainPtr<CGPDFPageRef> loadARKitPDFPage(NSString *imageName)
 {
-    NSURL *url = [arKitBundle() URLForResource:imageName withExtension:@"pdf"];
+    RetainPtr url = [protect(arKitBundle()) URLForResource:imageName withExtension:@"pdf"];
     if (!url)
         return nullptr;
-    auto document = adoptCF(CGPDFDocumentCreateWithURL((CFURLRef)url));
+    RetainPtr document = adoptCF(CGPDFDocumentCreateWithURL((CFURLRef)url.get()));
     if (!document)
         return nullptr;
     if (!CGPDFDocumentGetNumberOfPages(document.get()))
@@ -77,21 +77,19 @@ static RetainPtr<CGPDFPageRef> systemPreviewLogo()
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ARKitBadgeSystemImage);
 
-Ref<ARKitBadgeSystemImage> ARKitBadgeSystemImage::createWithoutImage()
+Ref<ARKitBadgeSystemImage> ARKitBadgeSystemImage::create(Image& image)
 {
-    return adoptRef(*new ARKitBadgeSystemImage(std::nullopt, { }));
+    return create(image.nativeImage(ConcreteObjectSize::fixed(image.size())));
 }
 
-std::optional<RenderingResourceIdentifier> ARKitBadgeSystemImage::imageIdentifier() const
+Ref<ARKitBadgeSystemImage> ARKitBadgeSystemImage::createWithoutImage()
 {
-    if (m_image) {
-        if (RefPtr nativeImage = protect(m_image)->nativeImage())
-            return nativeImage->renderingResourceIdentifier();
-        return std::nullopt;
-    }
-    if (m_renderingResourceIdentifier)
-        return *m_renderingResourceIdentifier;
-    return std::nullopt;
+    return adoptRef(*new ARKitBadgeSystemImage(nullptr));
+}
+
+Ref<ARKitBadgeSystemImage> ARKitBadgeSystemImage::create(RefPtr<NativeImage>&& nativeImage)
+{
+    return adoptRef(*new ARKitBadgeSystemImage(WTF::move(nativeImage)));
 }
 
 void ARKitBadgeSystemImage::draw(GraphicsContext& graphicsContext, const FloatRect& rect) const
@@ -112,9 +110,6 @@ void ARKitBadgeSystemImage::draw(GraphicsContext& graphicsContext, const FloatRe
     CGRect insetBadgeRect = CGRectMake(rect.width() - badgeDimension - badgeOffset, badgeOffset, badgeDimension, badgeDimension);
     CGRect badgeRect = CGRectMake(0, 0, badgeDimension, badgeDimension);
 
-    RefPtr nativeImage = m_image ? protect(m_image)->nativeImage() : nullptr;
-    bool hasBackdropImage = !!nativeImage;
-
     // Create a circle to be used for the clipping path in the badge, as well as the drop shadow.
     RetainPtr<CGPathRef> circle = adoptCF(CGPathCreateWithRoundedRect(absoluteBadgeRect, badgeDimension / 2, badgeDimension / 2, nullptr));
 
@@ -123,7 +118,7 @@ void ARKitBadgeSystemImage::draw(GraphicsContext& graphicsContext, const FloatRe
 
     GraphicsContextStateSaver stateSaver(graphicsContext);
 
-    CGContextRef ctx = graphicsContext.platformContext();
+    RetainPtr ctx = graphicsContext.platformContext();
     if (!ctx)
         return;
 
@@ -159,45 +154,46 @@ void ARKitBadgeSystemImage::draw(GraphicsContext& graphicsContext, const FloatRe
     CGContextRestoreGState(ctx);
 
     RetainPtr<CGImageRef> cgImage;
-    if (hasBackdropImage) {
-        CIImage *inputImage = [CIImage imageWithCGImage:nativeImage->platformImage().get()];
+    if (RefPtr nativeImage = m_nativeImage) {
+        RetainPtr inputImage = [CIImage imageWithCGImage:nativeImage->platformImage().get()];
+        FloatSize imageSize = nativeImage->size();
 
         // Draw the blurred backdrop. Scale from intrinsic size to render size.
         CGAffineTransform transform = CGAffineTransformIdentity;
-        transform = CGAffineTransformScale(transform, rect.width() / m_imageSize.width(), rect.height() / m_imageSize.height());
-        CIImage *scaledImage = [inputImage imageByApplyingTransform:transform];
+        transform = CGAffineTransformScale(transform, rect.width() / imageSize.width(), rect.height() / imageSize.height());
+        RetainPtr scaledImage = [inputImage imageByApplyingTransform:transform];
 
         // CoreImage coordinates are y-up, so we need to flip the badge rectangle within the image frame.
         CGRect flippedInsetBadgeRect = CGRectMake(insetBadgeRect.origin.x, rect.height() - insetBadgeRect.origin.y - insetBadgeRect.size.height, badgeDimension, badgeDimension);
 
         // Create a cropped region with pixel values extending outwards.
-        CIImage *clampedImage = [scaledImage imageByClampingToRect:flippedInsetBadgeRect];
+        RetainPtr clampedImage = [scaledImage imageByClampingToRect:flippedInsetBadgeRect];
 
         // Blur.
-        CIImage *blurredImage = [clampedImage imageByApplyingGaussianBlurWithSigma:10];
+        RetainPtr blurredImage = [clampedImage imageByApplyingGaussianBlurWithSigma:10];
 
         // Saturate.
-        CIFilter *saturationFilter = [CIFilter filterWithName:@"CIColorControls"];
+        RetainPtr saturationFilter = [CIFilter filterWithName:@"CIColorControls"];
         [saturationFilter setValue:blurredImage forKey:kCIInputImageKey];
         [saturationFilter setValue:@1.8 forKey:kCIInputSaturationKey];
 
         // Tint.
-        CIFilter *tintFilter1 = [CIFilter filterWithName:@"CIConstantColorGenerator"];
-        CIColor *tintColor1 = [CIColor colorWithRed:1 green:1 blue:1 alpha:0.18];
+        RetainPtr tintFilter1 = [CIFilter filterWithName:@"CIConstantColorGenerator"];
+        RetainPtr tintColor1 = [CIColor colorWithRed:1 green:1 blue:1 alpha:0.18];
         [tintFilter1 setValue:tintColor1 forKey:kCIInputColorKey];
 
         // Blend the tint with the saturated output.
-        CIFilter *sourceOverFilter = [CIFilter filterWithName:@"CISourceOverCompositing"];
-        [sourceOverFilter setValue:tintFilter1.outputImage forKey:kCIInputImageKey];
-        [sourceOverFilter setValue:saturationFilter.outputImage forKey:kCIInputBackgroundImageKey];
+        RetainPtr sourceOverFilter = [CIFilter filterWithName:@"CISourceOverCompositing"];
+        [sourceOverFilter setValue:[tintFilter1 outputImage] forKey:kCIInputImageKey];
+        [sourceOverFilter setValue:[saturationFilter outputImage] forKey:kCIInputBackgroundImageKey];
 
         RetainPtr<CIContext> ciContext = [CIContext context];
 
 #if HAVE(IOSURFACE_COREIMAGE_SUPPORT)
         if (isInGPUProcess()) {
             // Crop the result to the badge location.
-            CIImage *croppedImage = [sourceOverFilter.outputImage imageByCroppingToRect:flippedInsetBadgeRect];
-            CIImage *translatedImage = [croppedImage imageByApplyingTransform:CGAffineTransformMakeTranslation(-flippedInsetBadgeRect.origin.x, -flippedInsetBadgeRect.origin.y)];
+            RetainPtr croppedImage = [[sourceOverFilter outputImage] imageByCroppingToRect:flippedInsetBadgeRect];
+            RetainPtr translatedImage = [croppedImage imageByApplyingTransform:CGAffineTransformMakeTranslation(-flippedInsetBadgeRect.origin.x, -flippedInsetBadgeRect.origin.y)];
 
             auto surfaceDimension = useSmallBadge ? BadgeMetrics::smallDimension : BadgeMetrics::largeDimension;
             std::unique_ptr<IOSurface> badgeSurface = IOSurface::create(&IOSurfacePool::sharedPoolSingleton(), { surfaceDimension, surfaceDimension }, ColorSpace::SRGB());
@@ -207,7 +203,7 @@ void ARKitBadgeSystemImage::draw(GraphicsContext& graphicsContext, const FloatRe
             cgImage = badgeSurface->createImage(surfaceContext.get());
         } else
 #endif
-        cgImage = adoptCF([ciContext createCGImage:sourceOverFilter.outputImage fromRect:flippedInsetBadgeRect]);
+        cgImage = adoptCF([ciContext createCGImage:[sourceOverFilter outputImage] fromRect:flippedInsetBadgeRect]);
     }
 
     // Before we render the result, we should clip to a circle around the badge rectangle.

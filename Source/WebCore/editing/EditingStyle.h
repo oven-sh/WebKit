@@ -114,7 +114,7 @@ public:
     MutableStyleProperties* style() const { return m_mutableStyle.get(); }
     Ref<MutableStyleProperties> styleWithResolvedTextDecorations() const;
     std::optional<WritingDirection> textDirection() const;
-    bool NODELETE isEmpty() const;
+    bool LEGACY_NODELETE isEmpty() const;
     void setStyle(RefPtr<MutableStyleProperties>&&);
     void overrideWithStyle(const StyleProperties&);
     void overrideTypingStyleAt(const EditingStyle&, const Position&);
@@ -172,7 +172,7 @@ public:
     WEBCORE_EXPORT bool webkitTextDecorationsInEffectIsUnderline();
     WEBCORE_EXPORT static RefPtr<EditingStyle> styleAtSelectionStart(const VisibleSelection&, bool shouldUseBackgroundColorInEffect = false, PropertiesToInclude = PropertiesToInclude::AllProperties);
     static WritingDirection textDirectionForSelection(const VisibleSelection&, EditingStyle* typingStyle, bool& hasNestedOrMultipleEmbeddings);
-    static bool isEmbedOrIsolate(CSSValueID unicodeBidi) { return unicodeBidi == CSSValueID::CSSValueIsolate || unicodeBidi == CSSValueID::CSSValueWebkitIsolate || unicodeBidi == CSSValueID::CSSValueEmbed; }
+    static bool isEmbedOrIsolate(CSSValueID unicodeBidi) { return unicodeBidi == CSSValueID::Isolate || unicodeBidi == CSSValueID::WebkitIsolate || unicodeBidi == CSSValueID::Embed; }
 
     Ref<EditingStyle> inverseTransformColorIfNeeded(Element&);
 

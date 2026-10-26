@@ -33,6 +33,7 @@
 #include "RenderProgress.h"
 #include "ScriptDisallowedScope.h"
 #include "ShadowRoot.h"
+#include "StyleAppearance.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "UserAgentParts.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -54,6 +55,11 @@ Ref<HTMLProgressElement> HTMLProgressElement::create(const QualifiedName& tagNam
     Ref progress = adoptRef(*new HTMLProgressElement(tagName, document));
     progress->ensureUserAgentShadowRoot();
     return progress;
+}
+
+bool HTMLProgressElement::supportsBaseAppearance(StyleAppearance appearance) const
+{
+    return appearance == StyleAppearance::Base;
 }
 
 RenderPtr<RenderElement> HTMLProgressElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
@@ -136,10 +142,10 @@ void HTMLProgressElement::didChangeElementValue()
     double percentageValue = std::max(0.0, position() * 100);
 
     if (RefPtr valueElement = m_valueElement)
-        valueElement->setInlineStyleProperty(CSSPropertyInlineSize, percentageValue, CSSUnitType::Percentage);
+        valueElement->setInlineStyleProperty(CSSPropertyID::InlineSize, percentageValue, CSSUnitType::Percentage);
 
     if (RefPtr fillElement = m_fillElement) {
-        fillElement->setInlineStyleProperty(CSSPropertyTransform, makeString("translate(-"_s, 100 - percentageValue, "%, 0)"_s));
+        fillElement->setInlineStyleProperty(CSSPropertyID::Transform, makeString("translate(-"_s, 100 - percentageValue, "%, 0)"_s));
         fillElement->invalidateStyle();
     }
 
@@ -159,8 +165,8 @@ void HTMLProgressElement::appendShadowTreeForAutoAppearance(ShadowRoot& root)
     Ref innerElement = HTMLDivElement::create(document);
     ScriptDisallowedScope::EventAllowedScope innerScope { innerElement };
     innerElement->setUserAgentPart(UserAgentParts::webkitProgressInnerElement());
-    innerElement->setInlineStyleProperty(CSSPropertyAppearance, "inherit"_s);
-    innerElement->setInlineStyleProperty(CSSPropertyDisplay, "-internal-auto-base(inline-block, none)"_s, IsImportant::Yes);
+    innerElement->setInlineStyleProperty(CSSPropertyID::Appearance, "inherit"_s);
+    innerElement->setInlineStyleProperty(CSSPropertyID::Display, "-internal-auto-base(inline-block, none)"_s, IsImportant::Yes);
     ScriptDisallowedScope::EventAllowedScope rootScope { root };
     root.appendChild(innerElement);
 
@@ -185,8 +191,8 @@ void HTMLProgressElement::appendShadowTreeForBaseAppearance(ShadowRoot& root)
     Ref trackElement = HTMLDivElement::create(document);
     ScriptDisallowedScope::EventAllowedScope trackScope { trackElement };
     trackElement->setUserAgentPart(UserAgentParts::sliderTrack());
-    trackElement->setInlineStyleProperty(CSSPropertyAppearance, "inherit"_s);
-    trackElement->setInlineStyleProperty(CSSPropertyDisplay, "-internal-auto-base(none, inline-block)"_s, IsImportant::Yes);
+    trackElement->setInlineStyleProperty(CSSPropertyID::Appearance, "inherit"_s);
+    trackElement->setInlineStyleProperty(CSSPropertyID::Display, "-internal-auto-base(none, inline-block)"_s, IsImportant::Yes);
     ScriptDisallowedScope::EventAllowedScope rootScope { root };
     root.appendChild(trackElement);
 

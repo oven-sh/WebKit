@@ -566,23 +566,34 @@ void main() {
 
 )";
     const char kShaderSuffix[] = "}\n";
-    const char *kTests[]{"int i = 101; for (; i < 10; i++) { }",
-                         "int i = 101; for (; i < 10; i+=1) { }",
-                         "int i = 101; for (; i < 10; i-=1) { }",
-                         "for (int i = 0; i < 10; i++) { }",
-                         "for (int i = 0; i < a; i++) { }",
-                         "for (int i = 0; i < 100000/2; ++i) { }",
-                         "for (uint i = 0u; i < 10u; i++) { }",
-                         "for (uint i = 0u; i < b; i++) { }",
-                         "for (uint i = 0u; i < 100000u/2u; ++i) { }",
-                         "for (uint i = 0u; i < 4294967295u; ++i) { }",
-                         "for (uint i = 10u; i > 1u+3u ; --i) { }",
-                         "const int z = 7; for (int i = 0; i < z; i++) { }",
-                         "for (int i = 0; i < 10; i++) { for (int j = 0; j < 1000; ++j) { }}",
-                         "for (uint i = 10u; i >= 1u; --i) { }",
-                         "for (uint i = 0u; i <= 10u; ++i) { }",
-                         "for (int i = 0; i <= 2147483646; ++i) { }",
-                         "for (int i = 0; i >= -2147483647; --i) { }"};
+    const char *kTests[]{
+        "int i = 101; for (; i < 10; i++) { }",
+        "int i = 101; for (; i < 10; i+=1) { }",
+        "int i = 101; for (; i < 10; i-=1) { }",
+        "for (int i = 0; i < 10; i++) { }",
+        "for (int i = 0; i < a; i++) { }",
+        "for (int i = 0; i < 100000/2; ++i) { }",
+        "for (uint i = 0u; i < 10u; i++) { }",
+        "for (uint i = 0u; i < b; i++) { }",
+        "for (uint i = 0u; i < 100000u/2u; ++i) { }",
+        "for (uint i = 0u; i < 4294967295u; ++i) { }",
+        "for (uint i = 10u; i > 1u+3u ; --i) { }",
+        "const int z = 7; for (int i = 0; i < z; i++) { }",
+        "for (int i = 0; i < 10; i++) { for (int j = 0; j < 1000; ++j) { }}",
+        // Finite because |int| is implemented with |uint| such that wraparound has
+        // well-defined behavior, and eventually the values wrap around to make the
+        // condition false.
+        "for (int i = 0; i >= 0; ++i) { }",
+        "for (int i = 1; i >= 0; ++i) { }",
+        "for (int i = 1; i > 0; ++i) { }",
+        "for (int i = 0; i < 10; i -= 1) { }",
+        // Finite because of eventual wrap around to zero.
+        "for (uint i = 1u; i > 0u; ++i) { }",
+        "for (uint i = 10u; i >= 1u; --i) { }",
+        "for (uint i = 0u; i <= 10u; ++i) { }",
+        "for (int i = 0; i <= 2147483646; ++i) { }",
+        "for (int i = 0; i >= -2147483647; --i) { }",
+    };
 
     for (const char *test : kTests)
     {
@@ -627,6 +638,13 @@ void main() {
         "for (int i = 0; i < 10; a == 0 ? i++ : i = 0) { }",
         "for (ivec2 i = ivec2(0); i != ivec2(10, 20); i++) { }",
         "for (ivec2 i = ivec2(0); i != ivec2(10, 10); i += ivec2(1, 2)) { }",
+        // Infinite loop because the condition is always true
+        "for (int i = 0; i == 0; i += 0) { }",
+        "for (uint i = 0u; i >= 0u; ++i) { }",
+        // Infinite loop because the |b| might be zero
+        "for (uint i = 10u; i >= b; ++i) { }",
+        // Infinite loop because the condition is always true as |i| never changes.
+        "for (uint i = 0u; i == 0u; i += 0u) { }",
         "for (uint i = 0u; i >= 0u; i--) { }",
         "for (uint i = 0u; i >= 0u; i++) { }",
         "for (uint i = 0u; i <= 4294967295u; i++) { }",
@@ -683,6 +701,232 @@ TEST_P(WebGLGLSLOutputGLSLTest, ComplexExpression)
     verifyIsInTranslation(GL_FRAGMENT_SHADER, "vec4(383.0, 383.0, 383.0, 383.0)));");
     verifyIsInTranslation(GL_FRAGMENT_SHADER, "vec4(511.0, 511.0, 511.0, 511.0)));");
     verifyIsInTranslation(GL_FRAGMENT_SHADER, "vec4(599.0, 599.0, 599.0, 599.0)));");
+}
+
+// Test that a constant switch with matching case is folded away in the translated shader.
+TEST_P(GLSLOutputGLSLTest_ES3, BasicConstantSwitch)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+out vec4 color;
+void main()
+{
+    float f = 0.0;
+    switch (0)
+    {
+        case 156: f = 1234.0; break;
+        case 0:   f = 2.0; break;
+        default:  f = 3.0; break;
+    }
+    color = f == 2.0 ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1);
+})";
+    compileShader(GL_FRAGMENT_SHADER, kFS);
+    verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "switch");
+}
+
+// Test that a constant switch without matching case is completely pruned in the translated shader.
+TEST_P(GLSLOutputGLSLTest_ES3, BasicConstantSwitchPruned)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+out vec4 color;
+void main()
+{
+    float f = 0.0;
+    switch (10)
+    {
+        case 156: f = 1234.0; break;
+        case 0:   f = 567.0; break;
+    }
+    color = f == 0.0 ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1);
+})";
+    compileShader(GL_FRAGMENT_SHADER, kFS);
+    verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "switch");
+}
+
+// Test that nested constant switch statements (https://crbug.com/548066294) are folded away.
+TEST_P(GLSLOutputGLSLTest_ES3, NestedConstantSwitch)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+out vec4 color;
+void main()
+{
+    int result = 0;
+    switch (0)
+    {
+        case 0:
+            result += 1;
+            switch (1)
+            {
+                case 0:
+                    result += 10;
+                    break;
+                case 1:
+                    result += 20;
+                    switch (2)
+                    {
+                        case 2:
+                            result += 300;
+                            break;
+                        default:
+                            result += 400;
+                            break;
+                    }
+                    break;
+                default:
+                    result += 50;
+                    break;
+            }
+            break;
+        case 1:
+            result += 1000;
+            break;
+        default:
+            result += 2000;
+            break;
+    }
+    color = result == 321 ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1);
+})";
+    compileShader(GL_FRAGMENT_SHADER, kFS);
+    verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "switch");
+}
+
+// Test that fall-through across cases in a constant switch is folded away.
+TEST_P(GLSLOutputGLSLTest_ES3, FallThrough)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+out vec4 color;
+void main()
+{
+    float f = 0.0;
+    switch (1)
+    {
+        case 1: f += 5.0;
+        case 2: f += 2.0; break;
+        case 3: f += 4.0; break;
+    }
+    color = f == 7.0 ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1);
+})";
+    compileShader(GL_FRAGMENT_SHADER, kFS);
+    verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "switch");
+}
+
+// Test that conditional break inside folded switch statements emits a do-while loop wrapper.
+TEST_P(GLSLOutputGLSLTest_ES3, ConditionalBreak)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+uniform int u_zero;
+out vec4 color;
+void main()
+{
+    float f = 0.0;
+    switch (0)
+    {
+        case 0:
+            if (u_zero != 0) { break; }
+            f = 2.0;
+            break;
+        default:
+            f = 5.0;
+            break;
+    }
+    color = f == 2.0 ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1);
+})";
+    compileShader(GL_FRAGMENT_SHADER, kFS);
+    verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "switch");
+}
+
+// Test that continue targeting an enclosing loop is preserved when folding switch statements.
+TEST_P(GLSLOutputGLSLTest_ES3, ContinueInEnclosingLoop)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+uniform int u_zero;
+out vec4 color;
+void main()
+{
+    int count = 0;
+    for (int i = 0; i < 4; ++i)
+    {
+        switch (0)
+        {
+            case 0:
+                if (u_zero != 0) { break; }
+                if (i == 2) { continue; }
+                count += 1;
+                break;
+            default:
+                count += 100;
+                break;
+        }
+        count += 10;
+    }
+    color = count == 33 ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1);
+})";
+    compileShader(GL_FRAGMENT_SHADER, kFS);
+    verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "switch");
+}
+
+// Test that declarations in skipped cases are preserved without initializers in translation.
+TEST_P(GLSLOutputGLSLTest_ES3, SkippedDeclaration)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+uniform int u;
+out vec4 color;
+void main()
+{
+    float res = 0.0;
+    switch (u, 1)
+    {
+        case 0:
+            float d = 4.0;
+            break;
+        case 2:
+            float e = 5.0;
+            break;
+        case 1:
+            d = 2.0;
+            res = d;
+            break;
+    }
+    color = res == 2.0 ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1);
+})";
+    compileShader(GL_FRAGMENT_SHADER, kFS);
+    verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "switch");
+}
+
+// Test that case blocks with compound statements are truncated at break and subsequent cases
+// are not emitted in translated output.
+TEST_P(GLSLOutputGLSLTest_ES3, CaseWithCompoundStatementBlock)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+uniform int u;
+out vec4 color;
+void main()
+{
+    float f = 0.0;
+    switch (true ? 0 : u)
+    {
+        case 0:
+        {
+            f = 2.0;
+            break;
+        }
+        case 1:
+        {
+            f = 5.0;
+            break;
+        }
+    }
+    color = f == 2.0 ? vec4(0, 1, 0, 1) : vec4(1, 0, 0, 1);
+})";
+    compileShader(GL_FRAGMENT_SHADER, kFS);
+    verifyIsNotInTranslation(GL_FRAGMENT_SHADER, "switch");
 }
 }  // namespace
 

@@ -16,7 +16,7 @@ function test()
             async function awaitCapturingState(capturingState) {
                 return new Promise((resolve, reject) => {
                     let listener = WI.timelineManager.addEventListener(WI.TimelineManager.Event.CapturingStateChanged, (event) => {
-                        if (event.data.capturingState !== capturingState)
+                        if (WI.timelineManager.capturingState !== capturingState)
                             return;
 
                         WI.timelineManager.removeEventListener(WI.TimelineManager.Event.CapturingStateChanged, listener);
@@ -112,6 +112,12 @@ function test()
             InspectorTest.expectThat(!isNaN(recording.startTime), "TimelineRecording should have a startTime.");
             InspectorTest.expectThat(!isNaN(recording.endTime), "TimelineRecording should have a endTime.");
             InspectorTest.expectEqual(recording.identifier, identifier, `TimelineRecording identifier should be ${identifier}.`);
+
+            await Promise.delay(0);
+            let markerCount = jsonData.markers.length;
+            InspectorTest.expectEqual(recording.exportData().markers.length, markerCount, "Import should preserve the saved event markers.");
+            recording.addEventMarker(new WI.TimelineMarker(recording.endTime + 1, WI.TimelineMarker.Type.LoadEvent));
+            InspectorTest.expectEqual(recording.exportData().markers.length, markerCount, "A readonly recording should not store live page event markers.");
 
             InspectorTest.log("Display Name:");
             InspectorTest.log(recording.displayName);

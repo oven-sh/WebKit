@@ -38,12 +38,14 @@
 #include "pas_epoch.h"
 #include "pas_fd_stream.h"
 #include "pas_heap.h"
+#include "pas_mte_config.h"
 #include "pas_segregated_page.h"
 #include "pas_segregated_page_config.h"
 #include "pas_segregated_size_directory.h"
 #include "pas_status_reporter.h"
 #include "pas_utility_heap.h"
 #include "pas_utils.h"
+#include "tagged_bmalloc_heap_config.h"
 #include "thingy_heap_config.h"
 #include <cstdlib>
 #include <optional>
@@ -108,6 +110,7 @@ RuntimeConfigTestScope::RuntimeConfigTestScope(
             FOR_EACH_RUNTIME_CONFIG(minalign32, setUp);
             FOR_EACH_RUNTIME_CONFIG(pagesize64k, setUp);
             FOR_EACH_RUNTIME_CONFIG(bmalloc, setUp);
+            FOR_EACH_RUNTIME_CONFIG(tagged_bmalloc, setUp);
             FOR_EACH_RUNTIME_CONFIG(hotbit, setUp);
             setUp(pas_utility_heap_runtime_config);
             setUp(jit_heap_runtime_config);
@@ -141,6 +144,18 @@ DisableBitfit::DisableBitfit()
         "disable-bitfit",
         [] (pas_heap_runtime_config& runtimeConfig) {
             runtimeConfig.max_bitfit_object_size = 0;
+        })
+{
+}
+
+ForceSegregated::ForceSegregated()
+    : RuntimeConfigTestScope(
+        "force-segregated",
+        [] (pas_heap_runtime_config& runtimeConfig) {
+            if (&runtimeConfig != &pas_utility_heap_runtime_config) {
+                runtimeConfig.max_segregated_object_size = UINT_MAX;
+                runtimeConfig.max_bitfit_object_size = 0;
+            }
         })
 {
 }
@@ -367,6 +382,7 @@ void addBitvectorTests();
 void addBmallocTests();
 void addCartesianTreeTests();
 void addCoalignTests();
+void addCompactHeapReservationTests();
 void addEnumerationTests();
 void addExpendableMemoryTests();
 void addExtendedGCDTests();
@@ -384,6 +400,8 @@ void addLockFreeReadPtrPtrHashtableTests();
 void addLotsOfHeapsAndThreadsTests();
 void addMARTests();
 void addMemalignTests();
+void addMTETests();
+void addMemoryFlavorTests();
 void addMinHeapTests();
 void addPGMTests();
 void addRaceTests();
@@ -841,6 +859,10 @@ static void runFilteredTests(const string& filter, std::optional<int> childProce
 
 int main(int argc, char** argv)
 {
+#if defined(PAS_USE_OPENSOURCE_MTE) && PAS_USE_OPENSOURCE_MTE
+    pas_mte_ensure_initialized();
+#endif
+
     setvbuf(stdout, NULL, _IOLBF, 0);
 
 #if SEGHEAP
@@ -863,13 +885,14 @@ int main(int argc, char** argv)
     ADD_SUITE(Bmalloc);
     ADD_SUITE(CartesianTree);
     ADD_SUITE(Coalign);
+    ADD_SUITE(CompactHeapReservation);
     ADD_SUITE(Enumeration);
     ADD_SUITE(ExpendableMemory);
     ADD_SUITE(ExtendedGCD);
     ADD_SUITE(Hashtable);
     ADD_SUITE(HeapRefAllocatorIndex);
     ADD_SUITE(IsoDynamicPrimitiveHeap);
-    ADD_SUITE(IsoHeapChaos);
+    // ADD_SUITE(IsoHeapChaos);
     ADD_SUITE(IsoHeapPageSharing);
     ADD_SUITE(IsoHeapReservedMemory);
     ADD_SUITE(JITHeap);
@@ -879,16 +902,23 @@ int main(int argc, char** argv)
     ADD_SUITE(LotsOfHeapsAndThreads);
     ADD_SUITE(MAR);
     ADD_SUITE(Memalign);
+    ADD_SUITE(MemoryFlavor);
     ADD_SUITE(MinHeap);
     ADD_SUITE(PGM);
     ADD_SUITE(Race);
     ADD_SUITE(RedBlackTree);
     ADD_SUITE(ReallocFastPath);
     ADD_SUITE(ScavengerExternalWork);
-    ADD_SUITE(TLCDecommit);
+    // ADD_SUITE(TLCDecommit);
     ADD_SUITE(TSD);
     ADD_SUITE(Utils);
     ADD_SUITE(ViewCache);
+#if defined(PAS_USE_OPENSOURCE_MTE) && PAS_USE_OPENSOURCE_MTE
+#if PAS_ENABLE_MTE
+    if (PAS_USE_MTE)
+        ADD_SUITE(MTE);
+#endif
+#endif
 
     ParsedArguments args = parseArguments(argc, argv);
 

@@ -25,26 +25,26 @@
 
 #pragma once
 
-#include "Heap.h"
+#include "Collector.h"
 #include "VerifierSlotVisitor.h"
 
 namespace JSC {
 
 class VerifierSlotVisitorScope {
 public:
-    VerifierSlotVisitorScope(JSC::Heap& heap)
-        : m_heap(heap)
+    VerifierSlotVisitorScope(Collector& collector)
+        : m_collector(collector)
     {
-        m_heap.setKeepVerifierSlotVisitor();
+        m_collector.setKeepVerifierSlotVisitor();
     }
 
     ~VerifierSlotVisitorScope()
     {
-        m_heap.clearVerifierSlotVisitor();
+        m_collector.clearVerifierSlotVisitor();
     }
 
 private:
-    JSC::Heap& m_heap;
+    Collector& m_collector;
 };
 
 } // namespace JSC

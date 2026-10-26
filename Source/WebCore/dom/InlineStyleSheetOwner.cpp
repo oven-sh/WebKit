@@ -56,8 +56,10 @@ InlineStyleSheetOwner::InlineStyleSheetOwner(Document& document, bool createdByP
     , m_loading(false)
     , m_startTextPosition()
 {
-    if (createdByParser && protect(document)->scriptableDocumentParser() && !document.isInDocumentWrite())
-        m_startTextPosition = document.scriptableDocumentParser()->textPosition();
+    if (!createdByParser)
+        return;
+    if (RefPtr parser = document.scriptableDocumentParser(); parser && !document.isInDocumentWrite())
+        m_startTextPosition = parser->textPosition();
 }
 
 InlineStyleSheetOwner::~InlineStyleSheetOwner()
@@ -69,7 +71,7 @@ InlineStyleSheetOwner::~InlineStyleSheetOwner()
 void InlineStyleSheetOwner::insertedIntoDocument(Element& element)
 {
     m_styleScope = Style::Scope::forNode(element);
-    m_styleScope->addStyleSheetCandidateNode(element, m_isParsingChildren);
+    protect(m_styleScope)->addStyleSheetCandidateNode(element, m_isParsingChildren);
 
     if (m_isParsingChildren)
         return;
@@ -114,7 +116,7 @@ void InlineStyleSheetOwner::finishParsingChildren(Element& element)
 
 void InlineStyleSheetOwner::createSheetFromTextContents(Element& element)
 {
-    createSheet(element, TextNodeTraversal::contentsAsString(element));
+    createSheet(element, TextNodeTraversal::childTextContent(element));
 }
 
 void InlineStyleSheetOwner::clearSheet()

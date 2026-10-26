@@ -148,17 +148,17 @@ public:
         ASSERT(!isEmpty() && !isMaterialized() && b3Value() == value);
     }
 
-    bool NODELETE isEmpty() const
+    bool LEGACY_NODELETE isEmpty() const
     {
         return !m_storage;
     }
 
-    bool NODELETE isMaterialized() const
+    bool LEGACY_NODELETE isMaterialized() const
     {
         return m_storage & isMaterializedMask;
     }
 
-    void NODELETE setMaterialized(B3::Variable* var)
+    void LEGACY_NODELETE setMaterialized(B3::Variable* var)
     {
         ASSERT(!isMaterialized());
         m_storage = reinterpret_cast<uintptr_t>(var) | isMaterializedMask;
@@ -166,20 +166,20 @@ public:
     }
 
     // Not named value() to disambiguate with TypedExpression::value()
-    B3::Value* NODELETE b3Value() const
+    B3::Value* LEGACY_NODELETE b3Value() const
     {
         ASSERT(!isMaterialized());
         // No need to mask in this common case since the isMaterialized bit will be 0
         return reinterpret_cast<B3::Value*>(m_storage);
     }
 
-    B3::Variable* NODELETE b3Variable() const
+    B3::Variable* LEGACY_NODELETE b3Variable() const
     {
         ASSERT(isMaterialized());
         return reinterpret_cast<B3::Variable*>(m_storage & ~isMaterializedMask);
     }
 
-    B3::Type NODELETE type() const
+    B3::Type LEGACY_NODELETE type() const
     {
         if (isMaterialized()) [[unlikely]]
             return b3Variable()->type();
@@ -208,7 +208,7 @@ public:
     using WasmConstRefValue = Const64Value;
 
     static constexpr bool shouldFuseBranchCompare = false;
-    static constexpr bool NODELETE tierSupportsSIMD() { return true; }
+    static constexpr bool LEGACY_NODELETE tierSupportsSIMD() { return true; }
     static constexpr bool validateFunctionBodySize = true;
 
     struct ControlData {
@@ -246,15 +246,15 @@ public:
         {
         }
 
-        static bool NODELETE isIf(const ControlData& control) { return control.blockType() == BlockType::If; }
-        static bool NODELETE isElse(const ControlData& control) { return control.blockType() == BlockType::Else; }
-        static bool NODELETE isTry(const ControlData& control) { return control.blockType() == BlockType::Try; }
-        static bool NODELETE isTryTable(const ControlData& control) { return control.blockType() == BlockType::TryTable; }
-        static bool NODELETE isAnyCatch(const ControlData& control) { return control.blockType() == BlockType::Catch; }
-        static bool NODELETE isTopLevel(const ControlData& control) { return control.blockType() == BlockType::TopLevel; }
-        static bool NODELETE isLoop(const ControlData& control) { return control.blockType() == BlockType::Loop; }
-        static bool NODELETE isBlock(const ControlData& control) { return control.blockType() == BlockType::Block; }
-        static bool NODELETE isCatch(const ControlData& control)
+        static bool LEGACY_NODELETE isIf(const ControlData& control) { return control.blockType() == BlockType::If; }
+        static bool LEGACY_NODELETE isElse(const ControlData& control) { return control.blockType() == BlockType::Else; }
+        static bool LEGACY_NODELETE isTry(const ControlData& control) { return control.blockType() == BlockType::Try; }
+        static bool LEGACY_NODELETE isTryTable(const ControlData& control) { return control.blockType() == BlockType::TryTable; }
+        static bool LEGACY_NODELETE isAnyCatch(const ControlData& control) { return control.blockType() == BlockType::Catch; }
+        static bool LEGACY_NODELETE isTopLevel(const ControlData& control) { return control.blockType() == BlockType::TopLevel; }
+        static bool LEGACY_NODELETE isLoop(const ControlData& control) { return control.blockType() == BlockType::Loop; }
+        static bool LEGACY_NODELETE isBlock(const ControlData& control) { return control.blockType() == BlockType::Block; }
+        static bool LEGACY_NODELETE isCatch(const ControlData& control)
         {
             if (control.blockType() != BlockType::Catch)
                 return false;
@@ -296,27 +296,27 @@ public:
                 out.print("None");
         }
 
-        BlockType NODELETE blockType() const { return controlBlockType; }
+        BlockType LEGACY_NODELETE blockType() const { return controlBlockType; }
 
-        const BlockSignature& NODELETE signature() const { return m_signature; }
+        const BlockSignature& LEGACY_NODELETE signature() const { return m_signature; }
 
         bool hasNonVoidresult() const { return m_signature.returnCount() > 0; }
 
-        BasicBlock* NODELETE targetBlockForBranch()
+        BasicBlock* LEGACY_NODELETE targetBlockForBranch()
         {
             if (blockType() == BlockType::Loop)
                 return special;
             return continuation;
         }
 
-        void NODELETE convertIfToBlock()
+        void LEGACY_NODELETE convertIfToBlock()
         {
             ASSERT(blockType() == BlockType::If);
             controlBlockType = BlockType::Block;
             special = nullptr;
         }
 
-        void NODELETE convertTryToCatch(unsigned tryEndCallSiteIndex, Variable* exception)
+        void LEGACY_NODELETE convertTryToCatch(unsigned tryEndCallSiteIndex, Variable* exception)
         {
             ASSERT(blockType() == BlockType::Try);
             controlBlockType = BlockType::Catch;
@@ -325,7 +325,7 @@ public:
             m_exception = exception;
         }
 
-        void NODELETE convertTryToCatchAll(unsigned tryEndCallSiteIndex, Variable* exception)
+        void LEGACY_NODELETE convertTryToCatchAll(unsigned tryEndCallSiteIndex, Variable* exception)
         {
             ASSERT(blockType() == BlockType::Try);
             controlBlockType = BlockType::Catch;
@@ -347,7 +347,7 @@ public:
             m_tryTableTargets = WTF::move(targets);
         }
 
-        void NODELETE endTryTable(unsigned tryEndCallSiteIndex)
+        void LEGACY_NODELETE endTryTable(unsigned tryEndCallSiteIndex)
         {
             ASSERT(blockType() == BlockType::TryTable);
             m_tryEnd = tryEndCallSiteIndex;
@@ -368,31 +368,31 @@ public:
             return m_signature.returnType(i);
         }
 
-        unsigned NODELETE tryStart() const
+        unsigned LEGACY_NODELETE tryStart() const
         {
             ASSERT(controlBlockType == BlockType::Try || controlBlockType == BlockType::TryTable || controlBlockType == BlockType::Catch);
             return m_tryStart;
         }
 
-        unsigned NODELETE tryEnd() const
+        unsigned LEGACY_NODELETE tryEnd() const
         {
             ASSERT(controlBlockType == BlockType::Catch || controlBlockType == BlockType::TryTable);
             return m_tryEnd;
         }
 
-        unsigned NODELETE tryDepth() const
+        unsigned LEGACY_NODELETE tryDepth() const
         {
             ASSERT(controlBlockType == BlockType::Try || controlBlockType == BlockType::TryTable || controlBlockType == BlockType::Catch);
             return m_tryCatchDepth;
         }
 
-        CatchKind NODELETE catchKind() const
+        CatchKind LEGACY_NODELETE catchKind() const
         {
             ASSERT(controlBlockType == BlockType::Catch);
             return m_catchKind;
         }
 
-        Variable* NODELETE exception() const
+        Variable* LEGACY_NODELETE exception() const
         {
             ASSERT(controlBlockType == BlockType::Catch || controlBlockType == BlockType::TryTable);
             return m_exception;
@@ -432,7 +432,7 @@ public:
     typedef std::expected<std::unique_ptr<InternalFunction>, ErrorType> Result;
     typedef std::expected<void, ErrorType> PartialResult;
 
-    static ExpressionType NODELETE emptyExpression() { return { }; };
+    static ExpressionType LEGACY_NODELETE emptyExpression() { return { }; };
 
     enum class CastKind { Cast, Test };
 
@@ -447,14 +447,14 @@ public:
             return fail(__VA_ARGS__);             \
     } while (0)
 
-    unsigned NODELETE advanceCallSiteIndex()
+    unsigned LEGACY_NODELETE advanceCallSiteIndex()
     {
         if (m_inlineParent)
             return m_inlineRoot->advanceCallSiteIndex();
         return ++m_callSiteIndex;
     }
 
-    unsigned NODELETE callSiteIndex() const
+    unsigned LEGACY_NODELETE callSiteIndex() const
     {
         if (m_inlineParent)
             return m_inlineRoot->callSiteIndex();
@@ -466,12 +466,12 @@ public:
 
     void computeStackCheckSize(bool& needsOverflowCheck, int32_t& checkSize);
 
-    Value* NODELETE wasmRefOfCell(Value* cell)
+    Value* LEGACY_NODELETE wasmRefOfCell(Value* cell)
     {
         return cell;
     }
 
-    Value* NODELETE pointerOfWasmRef(Value* ref)
+    Value* LEGACY_NODELETE pointerOfWasmRef(Value* ref)
     {
         return ref;
     }
@@ -497,8 +497,8 @@ public:
     }
 
     // SIMD
-    bool NODELETE usesSIMD() const { return m_info.usesSIMD(m_functionIndex); }
-    void NODELETE notifyFunctionUsesSIMD()
+    bool LEGACY_NODELETE usesSIMD() const { return m_info.usesSIMD(m_functionIndex); }
+    void LEGACY_NODELETE notifyFunctionUsesSIMD()
     {
         ASSERT(m_info.usesSIMD(m_functionIndex));
         m_proc.setUsesSIMD();
@@ -862,10 +862,10 @@ public:
     [[nodiscard]] PartialResult endTopLevel(std::span<const TypedExpression>) { return { }; }
 
     // Fused comparison stubs (B3 will do this for us later).
-    [[nodiscard]] PartialResult NODELETE addFusedBranchCompare(OpType, ControlType&, ExpressionType, std::span<const TypedExpression>) { RELEASE_ASSERT_NOT_REACHED(); }
-    [[nodiscard]] PartialResult NODELETE addFusedBranchCompare(OpType, ControlType&, ExpressionType, ExpressionType, std::span<const TypedExpression>) { RELEASE_ASSERT_NOT_REACHED(); }
-    [[nodiscard]] PartialResult NODELETE addFusedIfCompare(OpType, ExpressionType, BlockSignature&&, std::span<TypedExpression>, ControlType&) { RELEASE_ASSERT_NOT_REACHED(); }
-    [[nodiscard]] PartialResult NODELETE addFusedIfCompare(OpType, ExpressionType, ExpressionType, BlockSignature&&, std::span<TypedExpression>, ControlType&) { RELEASE_ASSERT_NOT_REACHED(); }
+    [[nodiscard]] PartialResult LEGACY_NODELETE addFusedBranchCompare(OpType, ControlType&, ExpressionType, std::span<const TypedExpression>) { RELEASE_ASSERT_NOT_REACHED(); }
+    [[nodiscard]] PartialResult LEGACY_NODELETE addFusedBranchCompare(OpType, ControlType&, ExpressionType, ExpressionType, std::span<const TypedExpression>) { RELEASE_ASSERT_NOT_REACHED(); }
+    [[nodiscard]] PartialResult LEGACY_NODELETE addFusedIfCompare(OpType, ExpressionType, BlockSignature&&, std::span<TypedExpression>, ControlType&) { RELEASE_ASSERT_NOT_REACHED(); }
+    [[nodiscard]] PartialResult LEGACY_NODELETE addFusedIfCompare(OpType, ExpressionType, ExpressionType, BlockSignature&&, std::span<TypedExpression>, ControlType&) { RELEASE_ASSERT_NOT_REACHED(); }
 
     // Calls
     [[nodiscard]] PartialResult addCall(unsigned, FunctionSpaceIndex functionIndexSpace, const RTT&, ArgumentList& args, ResultList& results, CallType = CallType::Call);
@@ -887,11 +887,11 @@ public:
     [[nodiscard]] PartialResult emitInlineDirectCall(InliningNode*, FunctionCodeIndex calleeIndex, const RTT&, const ArgumentList& args, ValueResults&);
 
     void dump(const ControlStack&, const Stack* expressionStack);
-    void NODELETE setParser(FunctionParser<OMGIRGenerator>* parser) { m_parser = parser; };
+    void LEGACY_NODELETE setParser(FunctionParser<OMGIRGenerator>* parser) { m_parser = parser; };
     ALWAYS_INLINE void willParseOpcode() { }
     ALWAYS_INLINE void willParseExtendedOpcode() { }
     ALWAYS_INLINE void didParseOpcode() { }
-    void NODELETE didFinishParsingLocals() { }
+    void LEGACY_NODELETE didFinishParsingLocals() { }
     void didPopValueFromStack(ExpressionType expr, ASCIILiteral message)
     {
         TRACE_VALUE(Wasm::Types::Void, get(expr), "pop at height: ", m_parser->expressionStack().size() + 1, " site: [", message, "], ", expr);
@@ -917,20 +917,20 @@ public:
         m_stackmaps.add(CallSiteIndex(callSiteIndex), WTF::move(stackmap));
     }
 
-    StackMaps&& NODELETE takeStackmaps()
+    StackMaps&& LEGACY_NODELETE takeStackmaps()
     {
         RELEASE_ASSERT(m_inlineRoot == this);
         return WTF::move(m_stackmaps);
     }
 
-    Vector<UnlinkedHandlerInfo>&& NODELETE takeExceptionHandlers()
+    Vector<UnlinkedHandlerInfo>&& LEGACY_NODELETE takeExceptionHandlers()
     {
         RELEASE_ASSERT(m_inlineRoot == this);
         return WTF::move(m_exceptionHandlers);
     }
 
 private:
-    void NODELETE emitPrepareWasmOperation(BasicBlock*)
+    void LEGACY_NODELETE emitPrepareWasmOperation(BasicBlock*)
     {
     }
 
@@ -1105,7 +1105,7 @@ private:
         return set(m_currentBlock, dst, src);
     }
 
-    bool NODELETE useSignalingMemory0() const
+    bool LEGACY_NODELETE useSignalingMemory0() const
     {
         return m_mode == MemoryMode::Signaling;
     }
@@ -1144,6 +1144,9 @@ private:
     Vector<Value*> m_inlinedResultPhis;
 
     Vector<Variable*> m_locals;
+    // A local keeps its initial constant until the first write to it or the first loop, since a
+    // write can only reach an earlier read through a loop back edge.
+    Vector<Value*> m_localConstants;
 
     Vector<UnlinkedWasmToWasmCall>& m_unlinkedWasmToWasmCalls; // List each call site and the function index whose address it should be patched with.
     FixedBitVector& m_directCallees; // Note this includes call targets from functions we inline.
@@ -1166,22 +1169,22 @@ private:
     Value* m_baseMemoryValue { nullptr };
     Value* m_boundsCheckingSizeValue { nullptr };
 
-    Value* NODELETE instanceValue()
+    Value* LEGACY_NODELETE instanceValue()
     {
         return m_instanceValue;
     }
 
-    Value* NODELETE vmValue()
+    Value* LEGACY_NODELETE vmValue()
     {
         return m_vmValue;
     }
 
-    Value* NODELETE baseMemoryValue()
+    Value* LEGACY_NODELETE baseMemoryValue()
     {
         return m_baseMemoryValue;
     }
 
-    Value* NODELETE boundsCheckingSizeValue()
+    Value* LEGACY_NODELETE boundsCheckingSizeValue()
     {
         return m_boundsCheckingSizeValue;
     }
@@ -1389,7 +1392,7 @@ OMGIRGenerator::OMGIRGenerator(AbstractHeapRepository& heaps, CompilationContext
         }
     }
 
-    m_prologueGenerator = createSharedTask<B3::Air::PrologueGeneratorFunction>([=, this] (CCallHelpers& jit, B3::Air::Code& code) {
+    m_prologueGenerator = createSharedTask<B3::Air::PrologueGeneratorFunction>([=, this](CCallHelpers& jit, B3::Air::Code& code, B3::Air::GenerationContext& context) {
         RELEASE_ASSERT(m_callee);
         AllowMacroScratchRegisterUsage allowScratch(jit);
 
@@ -1400,7 +1403,7 @@ OMGIRGenerator::OMGIRGenerator(AbstractHeapRepository& heaps, CompilationContext
             });
         }
 
-        code.emitDefaultPrologue(jit);
+        code.emitDefaultPrologue(jit, context);
         GPRReg scratchGPR = wasmCallingConvention().prologueScratchGPRs[0];
         jit.move(CCallHelpers::TrustedImmPtr(CalleeBits::boxNativeCallee(m_callee)), scratchGPR);
         static_assert(CallFrameSlot::codeBlock + 1 == CallFrameSlot::callee);
@@ -1550,7 +1553,7 @@ void OMGIRGenerator::insertEntrySwitch()
 {
     m_proc.setNumEntrypoints(m_rootBlocks.size());
 
-    Ref<B3::Air::PrologueGenerator> catchPrologueGenerator = createSharedTask<B3::Air::PrologueGeneratorFunction>([] (CCallHelpers& jit, B3::Air::Code& code) {
+    Ref<B3::Air::PrologueGenerator> catchPrologueGenerator = createSharedTask<B3::Air::PrologueGeneratorFunction>([](CCallHelpers& jit, B3::Air::Code& code, B3::Air::GenerationContext&) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.addPtr(CCallHelpers::TrustedImm32(-code.frameSize()), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
         jit.probe(tagCFunction<JITProbePtrTag>(buildEntryBufferForCatch), nullptr);
@@ -1604,12 +1607,13 @@ auto OMGIRGenerator::addLocal(Type type, uint32_t count) -> PartialResult
 
     m_locals.appendUsingFunctor(count, [&](size_t) {
         Variable* local = m_proc.addVariable(toB3Type(type));
+        Value* initialValue;
         if (type.isV128())
-            m_currentBlock->appendNew<VariableValue>(m_proc, Set, Origin(), local, constant(toB3Type(type), v128_t { }, Origin()));
-        else {
-            auto val = isRefType(type) ? JSValue::encode(jsNull()) : 0;
-            m_currentBlock->appendNew<VariableValue>(m_proc, Set, Origin(), local, constant(toB3Type(type), val, Origin()));
-        }
+            initialValue = constant(toB3Type(type), v128_t { }, Origin());
+        else
+            initialValue = constant(toB3Type(type), isRefType(type) ? JSValue::encode(jsNull()) : 0, Origin());
+        m_currentBlock->appendNew<VariableValue>(m_proc, Set, Origin(), local, initialValue);
+        m_localConstants.append(initialValue);
         return local;
     });
     return { };
@@ -1632,6 +1636,7 @@ auto OMGIRGenerator::addInlinedArguments(const RTT& functionSignature) -> Partia
 
         Variable* argumentVariable = m_proc.addVariable(type);
         m_locals[i] = argumentVariable;
+        m_localConstants[i] = value->isConstant() ? value : nullptr;
         m_currentBlock->appendNew<VariableValue>(m_proc, Set, Origin(), argumentVariable, value);
     }
 
@@ -1645,6 +1650,7 @@ auto OMGIRGenerator::addArguments(const RTT& signature) -> PartialResult
     WASM_COMPILE_FAIL_IF(!m_locals.tryReserveCapacity(functionSignature->argumentCount()), "can't allocate memory for "_s, functionSignature->argumentCount(), " arguments"_s);
 
     m_locals.grow(functionSignature->argumentCount());
+    m_localConstants.fill(nullptr, functionSignature->argumentCount());
 
     if (m_inlineParent)
         return addInlinedArguments(signature);
@@ -1706,9 +1712,7 @@ auto OMGIRGenerator::addArguments(const RTT& signature) -> PartialResult
                 argument = m_currentBlock->appendNew<B3::Value>(m_proc, B3::Trunc, Origin(), argument);
         } else {
             ASSERT(rep.location.isStack());
-            B3::Value* address = m_currentBlock->appendNew<B3::Value>(m_proc, B3::Add, Origin(), framePointer(),
-                m_currentBlock->appendNew<B3::ConstPtrValue>(m_proc, Origin(), rep.location.offsetFromFP()));
-            argument = m_currentBlock->appendNew<B3::MemoryValue>(m_proc, B3::Load, type, Origin(), address);
+            argument = m_currentBlock->appendNew<B3::MemoryValue>(m_proc, B3::Load, type, Origin(), framePointer(), safeCast<int32_t>(rep.location.offsetFromFP()));
         }
 
         Variable* argumentVariable = m_proc.addVariable(argument->type());
@@ -1772,17 +1776,15 @@ auto OMGIRGenerator::addTableGet(unsigned tableIndex, ExpressionType index, Expr
         auto* phi = continuation->appendNew<Value>(m_proc, Phi, wasmRefType(), origin());
 
         m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), loaded, phi);
-        m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(), loaded,
-            FrequentedBlock(continuation), FrequentedBlock(slowPath, FrequencyClass::Rare));
-        slowPath->addPredecessor(m_currentBlock);
-        continuation->addPredecessor(m_currentBlock);
+        m_currentBlock->setSuccessors(FrequentedBlock(continuation), FrequentedBlock(slowPath, FrequencyClass::Rare));
+        m_currentBlock->appendNew<Value>(m_proc, B3::Branch, origin(), loaded);
 
         m_currentBlock = slowPath;
         auto* called = callWasmOperation(m_currentBlock, wasmRefType(), operationGetWasmTableElement,
             instanceValue(), constant(Int32, tableIndex), indexValue);
         m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), called, phi);
-        m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), continuation);
-        continuation->addPredecessor(m_currentBlock);
+        m_currentBlock->setSuccessors(continuation);
+        m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
 
         m_currentBlock = continuation;
         result = push(phi);
@@ -1820,17 +1822,15 @@ auto OMGIRGenerator::addRefFunc(FunctionSpaceIndex index, ExpressionType& result
     auto* phi = continuation->appendNew<Value>(m_proc, Phi, wasmRefType(), origin());
 
     m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), loaded, phi);
-    m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(), loaded,
-        FrequentedBlock(continuation), FrequentedBlock(slowPath, FrequencyClass::Rare));
-    slowPath->addPredecessor(m_currentBlock);
-    continuation->addPredecessor(m_currentBlock);
+    m_currentBlock->setSuccessors(FrequentedBlock(continuation), FrequentedBlock(slowPath, FrequencyClass::Rare));
+    m_currentBlock->appendNew<Value>(m_proc, B3::Branch, origin(), loaded);
 
     m_currentBlock = slowPath;
     auto* called = callWasmOperation(m_currentBlock, wasmRefType(), operationWasmRefFunc,
         instanceValue(), constant(Int32, index));
     m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), called, phi);
-    m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), continuation);
-    continuation->addPredecessor(m_currentBlock);
+    m_currentBlock->setSuccessors(continuation);
+    m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
 
     m_currentBlock = continuation;
     result = push(phi);
@@ -1950,6 +1950,10 @@ auto OMGIRGenerator::addTableCopy(unsigned dstTableIndex, unsigned srcTableIndex
 auto OMGIRGenerator::getLocal(uint32_t index, ExpressionType& result) -> PartialResult
 {
     ASSERT(m_locals[index]);
+    if (Value* knownConstant = m_localConstants[index]) {
+        result = push(knownConstant);
+        return { };
+    }
     result = push(m_currentBlock->appendNew<VariableValue>(m_proc, B3::Get, origin(), m_locals[index]));
     TRACE_VALUE(m_parser->typeOfLocal(index), get(result), "get_local ", index);
     return { };
@@ -2116,8 +2120,8 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
 
         Value* isSameContextInstance = m_currentBlock->appendNew<Value>(m_proc, Equal, origin(),
             calleeInstance, instanceValue());
-        m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(),
-            isSameContextInstance, FrequentedBlock(continuation), FrequentedBlock(doContextSwitch));
+        m_currentBlock->setSuccessors(FrequentedBlock(continuation), FrequentedBlock(doContextSwitch));
+        m_currentBlock->appendNew<Value>(m_proc, B3::Branch, origin(), isSameContextInstance);
 
         PatchpointValue* patchpoint = doContextSwitch->appendNew<PatchpointValue>(m_proc, B3::Void, origin());
         patchpoint->effects.writesPinned = true;
@@ -2141,7 +2145,8 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
             jit.loadPairPtr(calleeInstance, CCallHelpers::TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister);
             jit.cageConditionally(Gigacage::Primitive, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister, scratch);
         });
-        doContextSwitch->appendNewControlValue(m_proc, Jump, origin(), continuation);
+        doContextSwitch->setSuccessors(continuation);
+        doContextSwitch->appendNew<Value>(m_proc, Jump, origin());
 
         m_currentBlock = continuation;
     }
@@ -2307,7 +2312,7 @@ void OMGIRGenerator::emitMemoryCopy(Value* dstAddressValue, Value* srcAddressVal
         }
 
         m_currentBlock->appendNew<BulkMemoryValue>(
-            m_proc, MemoryCopy, origin(),
+            m_proc, MemoryMove, origin(),
             m_currentBlock->appendNew<WasmAddressValue>(m_proc, origin(), dstAddressValue, GPRInfo::wasmBaseMemoryPointer),
             m_currentBlock->appendNew<WasmAddressValue>(m_proc, origin(), srcAddressValue, GPRInfo::wasmBaseMemoryPointer),
             countValue);
@@ -2421,6 +2426,7 @@ void OMGIRGenerator::traceCF(Args&&... info)
 auto OMGIRGenerator::setLocal(uint32_t index, ExpressionType value) -> PartialResult
 {
     ASSERT(m_locals[index]);
+    m_localConstants[index] = nullptr;
     m_currentBlock->appendNew<VariableValue>(m_proc, B3::Set, origin(), m_locals[index], get(value));
     TRACE_VALUE(m_parser->typeOfLocal(index), get(value), "set_local ", index);
     return { };
@@ -2429,6 +2435,7 @@ auto OMGIRGenerator::setLocal(uint32_t index, ExpressionType value) -> PartialRe
 auto OMGIRGenerator::teeLocal(uint32_t index, ExpressionType value, ExpressionType& result) -> PartialResult
 {
     ASSERT(m_locals[index]);
+    m_localConstants[index] = nullptr;
     Value* input = get(value);
     m_currentBlock->appendNew<VariableValue>(m_proc, B3::Set, origin(), m_locals[index], input);
     result = push(input);
@@ -2563,11 +2570,8 @@ inline void OMGIRGenerator::emitWriteBarrier(Value* cell)
     BasicBlock* doSlowPath = m_proc.addBlock();
     BasicBlock* continuation = m_proc.addBlock();
 
-    m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(),
-        m_currentBlock->appendNew<Value>(m_proc, Above, origin(), cellState, threshold),
-        FrequentedBlock(continuation), FrequentedBlock(recheckPath, FrequencyClass::Rare));
-    recheckPath->addPredecessor(m_currentBlock);
-    continuation->addPredecessor(m_currentBlock);
+    m_currentBlock->setSuccessors(FrequentedBlock(continuation), FrequentedBlock(recheckPath, FrequencyClass::Rare));
+    m_currentBlock->appendNew<Value>(m_proc, B3::Branch, origin(), m_currentBlock->appendNew<Value>(m_proc, Above, origin(), cellState, threshold));
     m_currentBlock = recheckPath;
 
     auto* fence = m_currentBlock->appendNew<FenceValue>(m_proc, origin());
@@ -2577,19 +2581,16 @@ inline void OMGIRGenerator::emitWriteBarrier(Value* cell)
     Value* cellStateLoadAfterFence = m_currentBlock->appendNew<MemoryValue>(m_proc, Load8Z, Int32, origin(), cell, safeCast<int32_t>(JSCell::cellStateOffset()));
     m_heaps.decorateMemory(&m_heaps.JSCell_cellState, cellStateLoadAfterFence);
 
-    m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(),
-        m_currentBlock->appendNew<Value>(m_proc, Above, origin(), cellStateLoadAfterFence, constant(Int32, blackThreshold)),
-        FrequentedBlock(continuation), FrequentedBlock(doSlowPath, FrequencyClass::Rare));
-    doSlowPath->addPredecessor(m_currentBlock);
-    continuation->addPredecessor(m_currentBlock);
+    m_currentBlock->setSuccessors(FrequentedBlock(continuation), FrequentedBlock(doSlowPath, FrequencyClass::Rare));
+    m_currentBlock->appendNew<Value>(m_proc, B3::Branch, origin(), m_currentBlock->appendNew<Value>(m_proc, Above, origin(), cellStateLoadAfterFence, constant(Int32, blackThreshold)));
     m_currentBlock = doSlowPath;
 
     Value* call = callWasmOperation(m_currentBlock, B3::Void, operationWasmWriteBarrierSlowPath, cell, vm);
     m_heaps.decorateCCallRead(&m_heaps.root, call);
     m_heaps.decorateCCallWrite(&m_heaps.JSCell_cellState, call);
-    m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), continuation);
+    m_currentBlock->setSuccessors(continuation);
+    m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
 
-    continuation->addPredecessor(m_currentBlock);
     m_currentBlock = continuation;
 }
 
@@ -2996,25 +2997,30 @@ inline Value* OMGIRGenerator::emitAtomicLoadOp(ExtAtomicOpType op, Type valueTyp
 {
     pointer = fixupPointerPlusOffsetForAtomicOps(op, pointer, uoffset);
 
-    Value* value = nullptr;
+    MemoryValue* atomic = nullptr;
     switch (accessWidth(op)) {
     case Width8:
+        atomic = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load8Z, memoryIndex), origin(), pointer);
+        break;
     case Width16:
+        atomic = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load16Z, memoryIndex), origin(), pointer);
+        break;
     case Width32:
-        value = constant(Int32, 0);
+        atomic = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load, memoryIndex), Int32, origin(), pointer);
         break;
     case Width64:
-        value = constant(Int64, 0);
+        atomic = m_currentBlock->appendNew<MemoryValue>(m_proc, memoryKind(Load, memoryIndex), Int64, origin(), pointer);
         break;
     case Width128:
         RELEASE_ASSERT_NOT_REACHED();
         break;
     }
 
-    auto* atomic = m_currentBlock->appendNew<AtomicValue>(m_proc, memoryKind(AtomicXchgAdd, memoryIndex), origin(), accessWidth(op), value, pointer);
     m_heaps.decorateMemory(&m_heaps.WebAssemblyMemory, atomic);
     m_heaps.decorateFencedAccess(&m_heaps.WebAssemblyMemory, atomic);
-    return sanitizeAtomicResult(op, valueType, atomic);
+    if (valueType.isI64() && accessWidth(op) != Width64)
+        return m_currentBlock->appendNew<Value>(m_proc, ZExt32, origin(), atomic);
+    return atomic;
 }
 
 auto OMGIRGenerator::atomicLoad(ExtAtomicOpType op, Type valueType, ExpressionType pointer, ExpressionType& result, uint64_t offset, uint8_t memoryIndex) -> PartialResult
@@ -3254,15 +3260,19 @@ Value* OMGIRGenerator::emitAtomicCompareExchange(ExtAtomicOpType op, Type valueT
 [[nodiscard]] bool OMGIRGenerator::emitStructSet(bool canTrap, Value* structValue, uint32_t fieldIndex, const RTT& rtt, Value* argument)
 {
     structValue = pointerOfWasmRef(structValue);
-    auto fieldType = rtt.field(fieldIndex).type;
+    auto field = rtt.field(fieldIndex);
+    auto fieldType = field.type;
 
     const RTT& definingRTT = rtt.definingRTTForField(fieldIndex);
     uint64_t fieldHeapKey = definingRTT.fieldHeapKey(fieldIndex);
 
+    B3::Mutability mutability = field.mutability == Wasm::Mutability::Mutable ? B3::Mutability::Mutable : B3::Mutability::Immutable;
+
     B3::Kind kind = canTrap ? trapping(WasmStructSet) : WasmStructSet;
-    Value* storeValue = m_currentBlock->appendNew<WasmStructSetValue>(m_proc, kind, origin(), structValue, argument, Ref { rtt }, fieldIndex, fieldHeapKey);
+    Value* storeValue = m_currentBlock->appendNew<WasmStructSetValue>(m_proc, kind, origin(), structValue, argument, Ref { rtt }, fieldIndex, fieldHeapKey, mutability);
 
     m_heaps.decorateWasmStructSet(structFieldHeap(definingRTT, fieldIndex), storeValue);
+    m_proc.setUsesWasmGCAccesses();
 
     if (!fieldType.is<Type>() || !isRefType(fieldType.unpacked()))
         return false;
@@ -3923,6 +3933,7 @@ auto OMGIRGenerator::addArrayGet(ExtGCOpType arrayGetKind, TypeSignatureIndex ty
     Value* loadValue = m_currentBlock->appendNew<WasmArrayGetValue>(m_proc, WasmArrayGet, origin(),
         toB3Type(resultType), arrayValue, indexValue, arrayType.copyRef(), b3Mutability);
     m_heaps.decorateWasmArrayGet(arrayElementHeap(elementType, indexValue), loadValue);
+    m_proc.setUsesWasmGCAccesses();
 
     Value* postProcess = loadValue;
     if (elementType.is<PackedType>()) {
@@ -3978,9 +3989,13 @@ bool OMGIRGenerator::emitArraySetUncheckedWithoutWriteBarrier(TypeSignatureIndex
     StorageType elementType;
     getArrayElementType(typeIndex, elementType);
 
+    Ref<const RTT> arrayType = m_info.rtt(typeIndex);
+    B3::Mutability mutability = arrayType->elementType().mutability == Wasm::Mutability::Mutable ? B3::Mutability::Mutable : B3::Mutability::Immutable;
+
     auto* storeNode = m_currentBlock->appendNew<WasmArraySetValue>(m_proc, WasmArraySet, origin(),
-        arrayref, indexValue, setValue, Ref { m_info.rtt(typeIndex) });
+        arrayref, indexValue, setValue, WTF::move(arrayType), mutability);
     m_heaps.decorateWasmArraySet(arrayElementHeap(elementType, indexValue), storeNode);
+    m_proc.setUsesWasmGCAccesses();
 
     if (!isRefType(elementType.unpacked()))
         return false;
@@ -4119,15 +4134,13 @@ auto OMGIRGenerator::addArrayFill(TypeSignatureIndex typeIndex, TypedExpression 
     auto* fillPath = m_proc.addBlock();
     auto* continuation = m_proc.addBlock();
 
-    m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(), sizeValue,
-        FrequentedBlock(fillPath), FrequentedBlock(continuation));
-    fillPath->addPredecessor(m_currentBlock);
-    continuation->addPredecessor(m_currentBlock);
+    m_currentBlock->setSuccessors(FrequentedBlock(fillPath), FrequentedBlock(continuation));
+    m_currentBlock->appendNew<Value>(m_proc, B3::Branch, origin(), sizeValue);
 
     m_currentBlock = fillPath;
     emitArrayFillRange(elementType, arrayValue, offsetValue, valueValue, sizeValue);
-    m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), continuation);
-    continuation->addPredecessor(m_currentBlock);
+    m_currentBlock->setSuccessors(continuation);
+    m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
 
     m_currentBlock = continuation;
 
@@ -4160,10 +4173,8 @@ auto OMGIRGenerator::addArrayCopy(TypeSignatureIndex dstTypeIndex, TypedExpressi
     auto* copyPath = m_proc.addBlock();
     auto* continuation = m_proc.addBlock();
 
-    m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(), sizeValue,
-        FrequentedBlock(copyPath), FrequentedBlock(continuation));
-    copyPath->addPredecessor(m_currentBlock);
-    continuation->addPredecessor(m_currentBlock);
+    m_currentBlock->setSuccessors(FrequentedBlock(copyPath), FrequentedBlock(continuation));
+    m_currentBlock->appendNew<Value>(m_proc, B3::Branch, origin(), sizeValue);
 
     m_currentBlock = copyPath;
     {
@@ -4172,14 +4183,13 @@ auto OMGIRGenerator::addArrayCopy(TypeSignatureIndex dstTypeIndex, TypedExpressi
         Value* byteCount = m_currentBlock->appendNew<Value>(m_proc, Mul, origin(), pointerOfInt32(sizeValue),
             m_currentBlock->appendNew<ConstPtrValue>(m_proc, origin(), elementSize));
 
-        if (isRefType(elementType.unpacked())) {
-            callWasmOperation(m_currentBlock, B3::Void, operationWasmArrayCopyRefs, dstAddress, srcAddress, byteCount);
+        bool isRef = isRefType(elementType.unpacked());
+        m_currentBlock->appendNew<BulkMemoryValue>(m_proc, MemoryMove, origin(), dstAddress, srcAddress, byteCount, isRef);
+        if (isRef)
             emitWriteBarrier(pointerOfWasmRef(dstValue));
-        } else
-            m_currentBlock->appendNew<BulkMemoryValue>(m_proc, MemoryCopy, origin(), dstAddress, srcAddress, byteCount);
     }
-    m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), continuation);
-    continuation->addPredecessor(m_currentBlock);
+    m_currentBlock->setSuccessors(continuation);
+    m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
 
     m_currentBlock = continuation;
 
@@ -4317,6 +4327,7 @@ auto OMGIRGenerator::addStructGet(ExtGCOpType structGetKind, TypedExpression str
     Value* loadValue = m_currentBlock->appendNew<WasmStructGetValue>(m_proc, kind, origin(), toB3Type(resultType), structValue, Ref { rtt }, fieldIndex, fieldHeapKey, mutability);
 
     m_heaps.decorateWasmStructGet(structFieldHeap(definingRTT, fieldIndex), loadValue);
+    m_proc.setUsesWasmGCAccesses();
 
     // For StructGetS (signed extension of packed types), apply sign extension as post-process.
     Value* postProcess = loadValue;
@@ -4416,14 +4427,13 @@ void OMGIRGenerator::mutatorFence()
     Value* shouldFence = m_currentBlock->appendNew<MemoryValue>(m_proc, Load8Z, Int32, origin(), vm, safeCast<int32_t>(VM::offsetOfHeapMutatorShouldBeFenced()));
     m_heaps.decorateMemory(&m_heaps.VM_heap_mutatorShouldBeFenced, shouldFence);
 
-    m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(), shouldFence, FrequentedBlock(slowPath, FrequencyClass::Rare), FrequentedBlock(continuation));
-    slowPath->addPredecessor(m_currentBlock);
-    continuation->addPredecessor(m_currentBlock);
+    m_currentBlock->setSuccessors(FrequentedBlock(slowPath, FrequencyClass::Rare), FrequentedBlock(continuation));
+    m_currentBlock->appendNew<Value>(m_proc, B3::Branch, origin(), shouldFence);
 
     m_currentBlock = slowPath;
     m_currentBlock->appendNew<FenceValue>(m_proc, origin());
-    m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), continuation);
-    continuation->addPredecessor(m_currentBlock);
+    m_currentBlock->setSuccessors(continuation);
+    m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
 
     m_currentBlock = continuation;
 }
@@ -4441,16 +4451,14 @@ auto OMGIRGenerator::addAnyConvertExtern(ExpressionType reference, ExpressionTyp
     auto* phi = continuation->appendNew<Value>(m_proc, Phi, toB3Type(anyrefType()), origin());
 
     m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), bits, phi);
-    m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(), isDouble,
-        FrequentedBlock(slowPath, FrequencyClass::Rare), FrequentedBlock(continuation));
-    slowPath->addPredecessor(m_currentBlock);
-    continuation->addPredecessor(m_currentBlock);
+    m_currentBlock->setSuccessors(FrequentedBlock(slowPath, FrequencyClass::Rare), FrequentedBlock(continuation));
+    m_currentBlock->appendNew<Value>(m_proc, B3::Branch, origin(), isDouble);
 
     m_currentBlock = slowPath;
     auto* called = callWasmOperation(m_currentBlock, toB3Type(anyrefType()), operationWasmAnyConvertExtern, bits);
     m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), called, phi);
-    m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), continuation);
-    continuation->addPredecessor(m_currentBlock);
+    m_currentBlock->setSuccessors(continuation);
+    m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
 
     m_currentBlock = continuation;
     result = push(phi);
@@ -4465,7 +4473,12 @@ auto OMGIRGenerator::addExternConvertAny(ExpressionType reference, ExpressionTyp
 
 auto OMGIRGenerator::addSelect(ExpressionType condition, ExpressionType nonZero, ExpressionType zero, ExpressionType& result) -> PartialResult
 {
-    result = push(m_currentBlock->appendNew<Value>(m_proc, B3::Select, origin(), get(condition), get(nonZero), get(zero)));
+    Value* conditionValue = get(condition);
+    if (conditionValue->hasInt()) {
+        result = push(get(conditionValue->asInt() ? nonZero : zero));
+        return { };
+    }
+    result = push(m_currentBlock->appendNew<Value>(m_proc, B3::Select, origin(), conditionValue, get(nonZero), get(zero)));
     return { };
 }
 
@@ -4882,9 +4895,8 @@ void OMGIRGenerator::emitByteLoopIdiom(const ByteLoopIdiom& idiom, ControlType& 
     }
 
     BasicBlock* bulkPath = m_proc.addBlock();
-    m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(), guard, FrequentedBlock(bulkPath), FrequentedBlock(body, FrequencyClass::Rare));
-    bulkPath->addPredecessor(m_currentBlock);
-    body->addPredecessor(m_currentBlock);
+    m_currentBlock->setSuccessors(FrequentedBlock(bulkPath), FrequentedBlock(body, FrequencyClass::Rare));
+    m_currentBlock->appendNew<Value>(m_proc, B3::Branch, origin(), guard);
 
     m_currentBlock = bulkPath;
     auto* startOfDestination = isBackward ? binary(Sub, destination, count) : destination;
@@ -4901,14 +4913,15 @@ void OMGIRGenerator::emitByteLoopIdiom(const ByteLoopIdiom& idiom, ControlType& 
     if (!isFill)
         set(m_locals[idiom.operandLocal], binary(advance, operand, count));
     set(m_locals[idiom.countLocal], constant(Int32, 0));
-    m_currentBlock->appendNewControlValue(m_proc, B3::Jump, origin(), loop.continuation);
-    loop.continuation->addPredecessor(m_currentBlock);
+    m_currentBlock->setSuccessors(loop.continuation);
+    m_currentBlock->appendNew<Value>(m_proc, B3::Jump, origin());
 }
 
 auto OMGIRGenerator::addLoop(BlockSignature&& signature, std::span<TypedExpression> args, ControlType& block, uint32_t loopIndex) -> PartialResult
 {
     auto enclosingStack = m_parser->expressionStack();
     TRACE_CF("LOOP: entering loop index: ", loopIndex, " signature: ", signature);
+    m_localConstants.fill(nullptr);
     BasicBlock* body = m_proc.addBlock();
     BasicBlock* continuation = m_proc.addBlock();
 
@@ -4930,7 +4943,8 @@ auto OMGIRGenerator::addLoop(BlockSignature&& signature, std::span<TypedExpressi
         args[i] = TypedExpression(block.signature().argumentType(i), phi);
     }
 
-    m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), entry);
+    m_currentBlock->setSuccessors(entry);
+    m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
     if (loopIndex == m_loopIndexForOSREntry) {
         // This must be kept in sync with BBQJIT::makeStackMap.
         dataLogLnIf(WasmOMGIRGeneratorInternal::verbose, "Setting up for OSR entry");
@@ -4970,8 +4984,8 @@ auto OMGIRGenerator::addLoop(BlockSignature&& signature, std::span<TypedExpressi
 
         ASSERT(!m_proc.usesSIMD() || m_compilationMode == CompilationMode::OMGForOSREntryMode);
         *m_osrEntryScratchBufferSize = indexInBuffer;
-        m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), entry);
-        entry->addPredecessor(m_currentBlock);
+        m_currentBlock->setSuccessors(entry);
+        m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
     }
 
     if (idiom) {
@@ -5024,10 +5038,15 @@ auto OMGIRGenerator::addIf(ExpressionType condition, BlockSignature&& signature,
         break;
     }
 
-    m_currentBlock->appendNew<Value>(m_proc, B3::Branch, origin(), get(condition));
-    m_currentBlock->setSuccessors(FrequentedBlock(taken, takenFrequency), FrequentedBlock(notTaken, notTakenFrequency));
-    taken->addPredecessor(m_currentBlock);
-    notTaken->addPredecessor(m_currentBlock);
+    Value* conditionValue = get(condition);
+    if (conditionValue->hasInt()) {
+        BasicBlock* target = conditionValue->asInt() ? taken : notTaken;
+        m_currentBlock->setSuccessors(FrequentedBlock(target));
+        m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
+    } else {
+        m_currentBlock->appendNew<Value>(m_proc, B3::Branch, origin(), conditionValue);
+        m_currentBlock->setSuccessors(FrequentedBlock(taken, takenFrequency), FrequentedBlock(notTaken, notTakenFrequency));
+    }
 
     m_currentBlock = taken;
     TRACE_CF("IF");
@@ -5038,7 +5057,8 @@ auto OMGIRGenerator::addIf(ExpressionType condition, BlockSignature&& signature,
 auto OMGIRGenerator::addElse(ControlData& data, std::span<const TypedExpression> currentStack) -> PartialResult
 {
     unifyValuesWithBlock(currentStack, data);
-    m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), data.continuation);
+    m_currentBlock->setSuccessors(data.continuation);
+    m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
     return addElseToUnreachable(data);
 }
 
@@ -5092,7 +5112,8 @@ auto OMGIRGenerator::addCatch(unsigned exceptionIndex, const RTT& signature, std
 {
     TRACE_CF("CATCH: ", signature);
     unifyValuesWithBlock(currentStack, data);
-    m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), data.continuation);
+    m_currentBlock->setSuccessors(data.continuation);
+    m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
     return addCatchToUnreachable(exceptionIndex, signature, data, results);
 }
 
@@ -5280,7 +5301,8 @@ auto OMGIRGenerator::addCatchAll(std::span<const TypedExpression> currentStack, 
 {
     unifyValuesWithBlock(currentStack, data);
     TRACE_CF("CATCH_ALL");
-    m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), data.continuation);
+    m_currentBlock->setSuccessors(data.continuation);
+    m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
     return addCatchAllToUnreachable(data);
 }
 
@@ -5372,8 +5394,8 @@ auto OMGIRGenerator::emitCatchTableImpl(ControlData& data, const ControlData::Tr
     auto& targetControl = m_parser->resolveControlRef(target.target).controlData;
     unifyValuesWithBlock(resultStack, targetControl);
 
-    m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), FrequentedBlock(targetControl.targetBlockForBranch(), FrequencyClass::Normal));
-    targetControl.targetBlockForBranch()->addPredecessor(block);
+    m_currentBlock->setSuccessors(FrequentedBlock(targetControl.targetBlockForBranch(), FrequencyClass::Normal));
+    m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
 
     m_currentBlock = oldBlock;
 }
@@ -5488,7 +5510,8 @@ auto OMGIRGenerator::addInlinedReturn(const auto& returnValues) -> PartialResult
     for (unsigned i = 0; i < wasmCallInfo.results.size(); ++i)
         m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), get(returnValues[offset + i]), m_inlinedResultPhis[i]);
 
-    m_currentBlock->appendNewControlValue(m_proc, B3::Jump, origin(), FrequentedBlock(m_returnContinuation));
+    m_currentBlock->setSuccessors(FrequentedBlock(m_returnContinuation));
+    m_currentBlock->appendNew<Value>(m_proc, B3::Jump, origin());
     return { };
 }
 
@@ -5515,8 +5538,7 @@ auto OMGIRGenerator::addReturn(const ControlData&, std::span<const TypedExpressi
     for (unsigned i = 0; i < wasmCallInfo.results.size(); ++i) {
         B3::ValueRep rep = wasmCallInfo.results[i].location;
         if (rep.isStack()) {
-            B3::Value* address = m_currentBlock->appendNew<B3::Value>(m_proc, B3::Add, Origin(), framePointer(), constant(pointerType(), rep.offsetFromFP()));
-            m_currentBlock->appendNew<B3::MemoryValue>(m_proc, B3::Store, Origin(), get(returnValues[offset + i]), address);
+            m_currentBlock->appendNew<B3::MemoryValue>(m_proc, B3::Store, Origin(), get(returnValues[offset + i]), framePointer(), safeCast<int32_t>(rep.offsetFromFP()));
         } else {
             ASSERT(rep.isReg());
             patch->append(get(returnValues[offset + i]), rep);
@@ -5531,6 +5553,10 @@ auto OMGIRGenerator::addReturn(const ControlData&, std::span<const TypedExpressi
 
 auto OMGIRGenerator::addBranch(ControlData& data, ExpressionType condition, std::span<const TypedExpression> returnValues) -> PartialResult
 {
+    Value* conditionValue = condition.isEmpty() ? nullptr : get(condition);
+    if (conditionValue && conditionValue->hasInt() && !conditionValue->asInt())
+        return { };
+
     unifyValuesWithBlock(returnValues, data);
 
     BasicBlock* target = data.targetBlockForBranch();
@@ -5551,16 +5577,19 @@ auto OMGIRGenerator::addBranch(ControlData& data, ExpressionType condition, std:
 
     TRACE_CF("BRANCH to ", *target);
 
-    if (!condition.isEmpty()) {
-        BasicBlock* continuation = m_proc.addBlock();
-        m_currentBlock->appendNew<Value>(m_proc, B3::Branch, origin(), get(condition));
-        m_currentBlock->setSuccessors(FrequentedBlock(target, targetFrequency), FrequentedBlock(continuation, continuationFrequency));
-        target->addPredecessor(m_currentBlock);
-        continuation->addPredecessor(m_currentBlock);
-        m_currentBlock = continuation;
+    if (!conditionValue) {
+        m_currentBlock->setSuccessors(FrequentedBlock(target, targetFrequency));
+        m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
+    } else if (conditionValue->hasInt()) {
+        // The parser still treats the fall-through as reachable, so keep lowering it into a block with no predecessors.
+        m_currentBlock->setSuccessors(FrequentedBlock(target));
+        m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
+        m_currentBlock = m_proc.addBlock();
     } else {
-        m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), FrequentedBlock(target, targetFrequency));
-        target->addPredecessor(m_currentBlock);
+        BasicBlock* continuation = m_proc.addBlock();
+        m_currentBlock->appendNew<Value>(m_proc, B3::Branch, origin(), conditionValue);
+        m_currentBlock->setSuccessors(FrequentedBlock(target, targetFrequency), FrequentedBlock(continuation, continuationFrequency));
+        m_currentBlock = continuation;
     }
 
     return { };
@@ -5592,11 +5621,21 @@ auto OMGIRGenerator::addSwitch(ExpressionType condition, const Vector<ControlDat
 {
     TRACE_CF("SWITCH");
     UNUSED_PARAM(expressionStack);
+    Value* conditionValue = get(condition);
+    if (conditionValue->hasInt()) {
+        uint32_t index = static_cast<uint32_t>(conditionValue->asInt());
+        ControlData& target = index < targets.size() ? *targets[index] : defaultTarget;
+        unifyValuesWithBlock(expressionStack, target);
+        m_currentBlock->setSuccessors(FrequentedBlock(target.targetBlockForBranch()));
+        m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
+        return { };
+    }
+
     for (size_t i = 0; i < targets.size(); ++i)
         unifyValuesWithBlock(expressionStack, *targets[i]);
     unifyValuesWithBlock(expressionStack, defaultTarget);
 
-    SwitchValue* switchValue = m_currentBlock->appendNew<SwitchValue>(m_proc, origin(), get(condition));
+    SwitchValue* switchValue = m_currentBlock->appendNew<SwitchValue>(m_proc, origin(), conditionValue);
     switchValue->setFallThrough(FrequentedBlock(defaultTarget.targetBlockForBranch()));
     for (size_t i = 0; i < targets.size(); ++i)
         switchValue->appendCase(SwitchCase(i, FrequentedBlock(targets[i]->targetBlockForBranch())));
@@ -5616,14 +5655,14 @@ auto OMGIRGenerator::endBlock(ControlEntry& entry, std::span<TypedExpression> en
     if (data.blockType() != BlockType::Loop)
         unifyValuesWithBlock(blockResults, data);
 
-    m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), data.continuation);
-    data.continuation->addPredecessor(m_currentBlock);
+    m_currentBlock->setSuccessors(data.continuation);
+    m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
 
     m_currentBlock = data.continuation;
 
     if (data.blockType() == BlockType::If) {
-        data.special->appendNewControlValue(m_proc, Jump, origin(), m_currentBlock);
-        m_currentBlock->addPredecessor(data.special);
+        data.special->setSuccessors(m_currentBlock);
+        data.special->appendNew<Value>(m_proc, Jump, origin());
     } else if (data.blockType() == BlockType::Try || data.blockType() == BlockType::Catch)
         --m_tryCatchDepth;
     else if (data.blockType() == BlockType::TryTable) {
@@ -5662,8 +5701,8 @@ auto OMGIRGenerator::addEndToUnreachable(ControlEntry& entry, std::span<TypedExp
     m_currentBlock = data.continuation;
 
     if (data.blockType() == BlockType::If) {
-        data.special->appendNewControlValue(m_proc, Jump, origin(), m_currentBlock);
-        m_currentBlock->addPredecessor(data.special);
+        data.special->setSuccessors(m_currentBlock);
+        data.special->appendNew<Value>(m_proc, Jump, origin());
     } else if (data.blockType() == BlockType::Try || data.blockType() == BlockType::Catch)
         --m_tryCatchDepth;
     else if (data.blockType() == BlockType::TryTable) {
@@ -6438,12 +6477,14 @@ auto OMGIRGenerator::emitInlineDirectCall(InliningNode* inlining, FunctionCodeIn
         m_hasExceptionHandlers = true;
     RELEASE_ASSERT(!irGenerator.m_callSiteIndex);
 
-    irGenerator.m_topLevelBlock->appendNewControlValue(m_proc, B3::Jump, origin(), FrequentedBlock(irGenerator.m_rootBlocks[0]));
+    irGenerator.m_topLevelBlock->setSuccessors(FrequentedBlock(irGenerator.m_rootBlocks[0]));
+    irGenerator.m_topLevelBlock->appendNew<Value>(m_proc, B3::Jump, origin());
     m_makesCalls |= irGenerator.m_makesCalls;
     ASSERT(&irGenerator.m_proc == &m_proc);
 
     dataLogLnIf(WasmOMGIRGeneratorInternal::verboseInlining, "Block ", *m_currentBlock, " is going to do an inline call to block ", *irGenerator.m_topLevelBlock, " then continue at ", *continuation);
-    m_currentBlock->appendNewControlValue(m_proc, B3::Jump, origin(), FrequentedBlock(irGenerator.m_topLevelBlock));
+    m_currentBlock->setSuccessors(FrequentedBlock(irGenerator.m_topLevelBlock));
+    m_currentBlock->appendNew<Value>(m_proc, B3::Jump, origin());
     m_currentBlock = continuation;
 
     results = WTF::move(irGenerator.m_inlinedResultPhis);
@@ -6656,9 +6697,8 @@ auto OMGIRGenerator::tryInliningPolymorphicCalls(unsigned callProfileIndex, Valu
     BasicBlock* calleeCheck = m_proc.addBlock();
 
     Value* isSameContextInstance = m_currentBlock->appendNew<Value>(m_proc, Equal, origin(), calleeInstance, instanceValue());
-    m_currentBlock->appendNewControlValue(m_proc, Branch, origin(), isSameContextInstance, FrequentedBlock(calleeCheck), FrequentedBlock(slowCase, FrequencyClass::Rare));
-    calleeCheck->addPredecessor(m_currentBlock);
-    slowCase->addPredecessor(m_currentBlock);
+    m_currentBlock->setSuccessors(FrequentedBlock(calleeCheck), FrequentedBlock(slowCase, FrequencyClass::Rare));
+    m_currentBlock->appendNew<Value>(m_proc, Branch, origin(), isSameContextInstance);
 
     for (unsigned i = 0; i < callSite.size(); ++i) {
         auto* inlining = callSite[i];
@@ -6672,9 +6712,10 @@ auto OMGIRGenerator::tryInliningPolymorphicCalls(unsigned callProfileIndex, Valu
         m_currentBlock = calleeCheck;
         ValueResults fastValues;
         Value* isSameCallee = m_currentBlock->appendNew<Value>(m_proc, Equal, origin(), calleeCallee, constant(pointerType(), std::bit_cast<uintptr_t>(CalleeBits::boxNativeCallee(&const_cast<IPIntCallee&>(callee)))));
-        m_currentBlock->appendNewControlValue(m_proc, Branch, origin(), isSameCallee, FrequentedBlock(directCall), FrequentedBlock(nextCase, nextCase == slowCase ? FrequencyClass::Rare : FrequencyClass::Normal));
-        directCall->addPredecessor(m_currentBlock);
-        nextCase->addPredecessor(m_currentBlock);
+        m_currentBlock->setSuccessors(
+            FrequentedBlock(directCall),
+            FrequentedBlock(nextCase, nextCase == slowCase ? FrequencyClass::Rare : FrequencyClass::Normal));
+        m_currentBlock->appendNew<Value>(m_proc, Branch, origin(), isSameCallee);
 
         m_currentBlock = directCall;
         auto result = emitDirectCall(callProfileIndex, callee.index(), signature, args, fastValues, callType);
@@ -6686,8 +6727,8 @@ auto OMGIRGenerator::tryInliningPolymorphicCalls(unsigned callProfileIndex, Valu
                 auto* input = value;
                 value = m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), input);
             }
-            m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), continuation);
-            continuation->addPredecessor(m_currentBlock);
+            m_currentBlock->setSuccessors(continuation);
+            m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
         }
 
         calleeCheck = nextCase;
@@ -6824,9 +6865,8 @@ auto OMGIRGenerator::addCallIndirect(unsigned callProfileIndex, unsigned tableIn
         BasicBlock* moreChecks = m_proc.addBlock();
 
         Value* hasEqualSignatures = m_currentBlock->appendNew<Value>(m_proc, Equal, origin(), calleeRTT, expectedRTT);
-        m_currentBlock->appendNewControlValue(m_proc, B3::Branch, origin(), hasEqualSignatures, FrequentedBlock(checkDone), FrequentedBlock(moreChecks, FrequencyClass::Rare));
-        moreChecks->addPredecessor(m_currentBlock);
-        checkDone->addPredecessor(m_currentBlock);
+        m_currentBlock->setSuccessors(FrequentedBlock(checkDone), FrequentedBlock(moreChecks, FrequencyClass::Rare));
+        m_currentBlock->appendNew<Value>(m_proc, B3::Branch, origin(), hasEqualSignatures);
 
         m_currentBlock = moreChecks;
         CheckValue* checkNull = m_currentBlock->appendNew<CheckValue>(m_proc, Check, origin(), m_currentBlock->appendNew<Value>(m_proc, Equal, origin(), calleeRTT, constant(pointerType(), 0)));
@@ -6852,8 +6892,8 @@ auto OMGIRGenerator::addCallIndirect(unsigned callProfileIndex, unsigned tableIn
             this->emitExceptionCheck(jit, origin, ExceptionType::BadSignature);
         });
 
-        m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), checkDone);
-        checkDone->addPredecessor(m_currentBlock);
+        m_currentBlock->setSuccessors(checkDone);
+        m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
 
         m_currentBlock = checkDone;
     }
@@ -6871,8 +6911,8 @@ auto OMGIRGenerator::addCallIndirect(unsigned callProfileIndex, unsigned tableIn
             auto* input = value;
             value = m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), input);
         }
-        m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), continuation);
-        continuation->addPredecessor(m_currentBlock);
+        m_currentBlock->setSuccessors(continuation);
+        m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
 
         m_currentBlock = continuation;
         for (unsigned i = 0; i < slowValues.size(); ++i) {
@@ -6953,8 +6993,8 @@ auto OMGIRGenerator::addCallRef(unsigned callProfileIndex, const RTT& signature,
             auto* input = value;
             value = m_currentBlock->appendNew<UpsilonValue>(m_proc, origin(), input);
         }
-        m_currentBlock->appendNewControlValue(m_proc, Jump, origin(), continuation);
-        continuation->addPredecessor(m_currentBlock);
+        m_currentBlock->setSuccessors(continuation);
+        m_currentBlock->appendNew<Value>(m_proc, Jump, origin());
 
         m_currentBlock = continuation;
         for (unsigned i = 0; i < slowValues.size(); ++i) {
@@ -7117,7 +7157,7 @@ std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Comp
 
     procedure.resetReachability();
     if (ASSERT_ENABLED)
-        validate(procedure, "After parsing:\n");
+        validate(procedure, "After parsing:\n"_s);
 
     estimateStaticExecutionCounts(procedure);
 

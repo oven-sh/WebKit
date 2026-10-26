@@ -25,6 +25,7 @@
 #include "config.h"
 #include "HTMLFormElement.h"
 
+#include "AXObjectCache.h"
 #include "CommonAtomStrings.h"
 #include "DOMFormData.h"
 #include "DOMTokenList.h"
@@ -128,7 +129,7 @@ HTMLFormElement::~HTMLFormElement()
         listedElement->formWillBeDestroyed();
     }
     for (auto& imageElement : m_imageElements)
-        imageElement->formWillBeDestroyed();
+        protect(imageElement)->formWillBeDestroyed();
 }
 
 Node::NeedsPostConnectionSteps HTMLFormElement::insertionSteps(InsertionType insertionType, ContainerNode& parentOfInsertedTree)
@@ -266,6 +267,8 @@ void HTMLFormElement::submitIfPossible(Event* event, HTMLFormControlElement* sub
             shouldValidate = false;
     }
 
+    notifyAccessibilityOfSubmissionWithoutNavigation(RefPtr { submitter ? submitter : findSubmitter(event) }.get());
+
     // Interactive validation must be done before dispatching the submit event.
     if (shouldValidate && !validateInteractively()) {
         m_isSubmittingOrPreparingForSubmission = false;
@@ -290,13 +293,39 @@ void HTMLFormElement::submitIfPossible(Event* event, HTMLFormControlElement* sub
 
     m_isSubmittingOrPreparingForSubmission = false;
 
-    if (!m_shouldSubmit)
+    if (!m_shouldSubmit) {
+        // The page cancelled its own submit event, so nothing will navigate. It may be about to
+        // report a validation error, so don't cancel our form tracking via notifyAccessibilityThatSubmissionWillNavigate().
         return;
+    }
+
+    notifyAccessibilityThatSubmissionWillNavigate();
 
     if (auto plannedFormSubmission = std::exchange(m_plannedFormSubmission, nullptr))
         plannedFormSubmission->cancel();
 
     submit(event, !submitter, trigger, submitter);
+}
+
+void HTMLFormElement::notifyAccessibilityOfSubmissionWithoutNavigation(HTMLFormControlElement* submitter)
+{
+#if PLATFORM(COCOA)
+
+    Ref document = this->document();
+    if (CheckedPtr cache = document->existingAXObjectCache())
+        cache->onFormSubmissionAttemptWithoutNavigation(Ref { *this }, RefPtr { submitter }.get());
+#else
+    UNUSED_PARAM(submitter);
+#endif
+}
+
+void HTMLFormElement::notifyAccessibilityThatSubmissionWillNavigate()
+{
+#if PLATFORM(COCOA)
+    Ref document = this->document();
+    if (CheckedPtr cache = document->existingAXObjectCache())
+        cache->onFormSubmissionWillNavigate(Ref { *this });
+#endif
 }
 
 void HTMLFormElement::submit()
@@ -579,7 +608,7 @@ void HTMLFormElement::registerFormListedElement(FormListedElement& element)
 {
     m_listedElements.insert(formElementIndex(element), protect(element.asHTMLElement()));
 
-    auto* control = dynamicDowncast<HTMLFormControlElement>(element);
+    RefPtr control = dynamicDowncast<HTMLFormControlElement>(element);
     if (!control || !control->isSuccessfulSubmitButton())
         return;
 
@@ -766,7 +795,7 @@ void HTMLFormElement::resetDefaultButton()
     defaultButton();
     if (m_defaultButton != oldDefault) {
         if (oldDefault)
-            oldDefault->invalidateStyleForSubtree();
+            protect(oldDefault)->invalidateStyleForSubtree();
         if (m_defaultButton)
             protect(m_defaultButton)->invalidateStyleForSubtree();
     }
@@ -928,9 +957,8 @@ Vector<Ref<FormListedElement>> HTMLFormElement::copyListedElementsVector() const
     return WTF::map(m_listedElements, [] (auto& weakElement) {
         RefPtr element { weakElement.get() };
         ASSERT(element);
-        auto* formListedElement = element->asFormListedElement();
-        ASSERT(formListedElement);
-        return Ref<FormListedElement>(*formListedElement);
+        RefPtr formListedElement = element->asFormListedElement();
+        return formListedElement.releaseNonNull();
     });
 }
 
@@ -943,7 +971,8 @@ Vector<Ref<ValidatedFormListedElement>> HTMLFormElement::copyValidatedListedElem
 
 HTMLFormElement* HTMLFormElement::findClosestFormAncestor(const Element& startElement)
 {
-    return const_cast<HTMLFormElement*>(ancestorsOfType<HTMLFormElement>(startElement).first());
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<HTMLFormElement*>(ancestorsOfType<HTMLFormElement>(startElement).first());
 }
 
 const AtomString& HTMLFormElement::autocomplete() const

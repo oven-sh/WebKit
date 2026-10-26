@@ -155,8 +155,8 @@ public:
         return IterationStatus::Done;
     }
 
-    CodeBlock* NODELETE codeBlock() const { return m_codeBlock; }
-    BytecodeIndex NODELETE bytecodeIndex() const { return m_bytecodeIndex; }
+    CodeBlock* LEGACY_NODELETE codeBlock() const { return m_codeBlock; }
+    BytecodeIndex LEGACY_NODELETE bytecodeIndex() const { return m_bytecodeIndex; }
 
 private:
     CallFrame* m_startCallFrame;
@@ -267,14 +267,19 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
         if (!sourceURL.isEmpty()) {
             errorInstance->setSourceURL(sourceURL);
         }
+
+        if (hostComputes) {
+            // The host's formatter can run user code (Error.prepareStackTrace), so it can throw. The caller made this
+            // error to throw it, or to hand it to someone who does, and expects no exception from here: what the
+            // formatter threw is dropped, short of a termination.
+            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            errorInstance->materializeErrorInfoIfNeeded(vm);
+            catchScope.clearExceptionExceptTermination();
+            return errorInstance;
+        }
 #endif
 
         errorInstance->materializeErrorInfoIfNeeded(vm);
-
-#if USE(BUN_JSC_ADDITIONS)
-        if (hostComputes)
-            return errorInstance;
-#endif
     }
 
     // Without such a host, materializing takes line and sourceURL from the top frame of the stack (the caller of eval or
@@ -325,16 +330,14 @@ JSObject* createTypeErrorCopy(JSGlobalObject* globalObject, JSValue error)
     return createTypeError(globalObject, errorString);
 }
 
-String makeDOMAttributeGetterTypeErrorMessage(const char* interfaceName, const String& attributeName)
+String makeDOMAttributeGetterTypeErrorMessage(StringView interfaceName, const String& attributeName)
 {
-    auto interfaceNameSpan = unsafeSpan(interfaceName);
-    return makeString("The "_s, interfaceNameSpan, '.', attributeName, " getter can only be used on instances of "_s, interfaceNameSpan);
+    return makeString("The "_s, interfaceName, '.', attributeName, " getter can only be used on instances of "_s, interfaceName);
 }
 
-String makeDOMAttributeSetterTypeErrorMessage(const char* interfaceName, const String& attributeName)
+String makeDOMAttributeSetterTypeErrorMessage(StringView interfaceName, const String& attributeName)
 {
-    auto interfaceNameSpan = unsafeSpan(interfaceName);
-    return makeString("The "_s, interfaceNameSpan, '.', attributeName, " setter can only be used on instances of "_s, interfaceNameSpan);
+    return makeString("The "_s, interfaceName, '.', attributeName, " setter can only be used on instances of "_s, interfaceName);
 }
 
 Exception* throwConstructorCannotBeCalledAsFunctionTypeError(JSGlobalObject* globalObject, ThrowScope& scope, ASCIILiteral constructorName)

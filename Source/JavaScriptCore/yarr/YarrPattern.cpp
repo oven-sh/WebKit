@@ -75,7 +75,7 @@ public:
         m_characterWidths = CharacterClassWidths::Unknown;
     }
 
-    void NODELETE combiningSetOp(CharacterClassSetOp setOp)
+    void LEGACY_NODELETE combiningSetOp(CharacterClassSetOp setOp)
     {
         ASSERT(m_setOp == CharacterClassSetOp::Default || m_setOp == setOp);
         m_setOp = setOp;
@@ -445,12 +445,12 @@ public:
         nonLatin1OpSorted(rhsSortedMatches32, rhsRanges32);
     }
 
-    bool NODELETE hasInvertedStrings()
+    bool LEGACY_NODELETE hasInvertedStrings()
     {
         return m_invertedStrings;
     }
 
-    static ALWAYS_INLINE int NODELETE compareUTF32Strings(const Vector<char32_t>& a, const Vector<char32_t>& b)
+    static ALWAYS_INLINE int LEGACY_NODELETE compareUTF32Strings(const Vector<char32_t>& a, const Vector<char32_t>& b)
     {
         // Longer strings before shorter.
         if (a.size() > b.size())
@@ -500,7 +500,7 @@ public:
         return characterClass;
     }
 
-    void NODELETE setIsCaseInsensitive(bool ignoreCase)
+    void LEGACY_NODELETE setIsCaseInsensitive(bool ignoreCase)
     {
         m_isCaseInsensitive = ignoreCase;
     }
@@ -1144,7 +1144,7 @@ private:
         return m_characterWidths & CharacterClassWidths::HasNonBMPChars;
     }
 
-    CharacterClassWidths NODELETE characterWidths()
+    CharacterClassWidths LEGACY_NODELETE characterWidths()
     {
         return m_characterWidths;
     }
@@ -1165,12 +1165,12 @@ private:
         return widths;
     }
 
-    bool NODELETE anyCharacter()
+    bool LEGACY_NODELETE anyCharacter()
     {
         return m_anyCharacter;
     }
 
-    bool NODELETE isUnionSetOp() { return m_setOp == CharacterClassSetOp::Default || m_setOp == CharacterClassSetOp::Union; }
+    bool LEGACY_NODELETE isUnionSetOp() { return m_setOp == CharacterClassSetOp::Default || m_setOp == CharacterClassSetOp::Union; }
 
     bool m_isCaseInsensitive : 1;
     bool m_anyCharacter : 1;
@@ -1215,12 +1215,12 @@ class YarrPatternConstructor {
         PatternAlternative* alternative() const { return m_alternative; }
         unsigned termIndex() const { return m_termIndex; }
 
-        bool NODELETE hasNamedGroup()
+        bool LEGACY_NODELETE hasNamedGroup()
         {
             return !m_namedGroup.isNull();
         }
 
-        const String NODELETE namedGroup()
+        const String LEGACY_NODELETE namedGroup()
         {
             return m_namedGroup;
         }
@@ -1584,7 +1584,7 @@ public:
         }
     }
 
-    void NODELETE atomCharacterClassBegin(bool invert = false)
+    void LEGACY_NODELETE atomCharacterClassBegin(bool invert = false)
     {
         m_invertCharacterClass = invert;
 
@@ -1644,7 +1644,7 @@ public:
         m_currentCharacterClassConstructor->atomClassStringDisjunction(utf32Strings);
     }
 
-    void NODELETE atomCharacterClassSetOp(CharacterClassSetOp setOp)
+    void LEGACY_NODELETE atomCharacterClassSetOp(CharacterClassSetOp setOp)
     {
         m_currentCharacterClassConstructor->combiningSetOp(setOp);
     }
@@ -2171,12 +2171,12 @@ public:
         m_alternative = m_alternative->m_parent->addNewAlternative(m_pattern.m_numSubpatterns, parenthesisMatchDirection());
     }
 
-    inline bool NODELETE abortedDueToError() const
+    inline bool LEGACY_NODELETE abortedDueToError() const
     {
         return hasError(m_error);
     }
 
-    inline ErrorCode NODELETE abortErrorCode() const
+    inline ErrorCode LEGACY_NODELETE abortErrorCode() const
     {
         return m_error;
     }
@@ -3631,6 +3631,42 @@ public:
             return false;
         };
 
+        auto tryExtractOptionalCRThenLF = [&] -> bool {
+            // Detect patterns: \r?\n
+            // These patterns match LF (\n) and CRLF (\r\n)
+
+            auto& alternatives = m_pattern.m_body->m_alternatives;
+            if (alternatives.size() != 1)
+                return false;
+
+            auto* alternative = alternatives[0].get();
+            if (alternative->m_terms.size() != 2)
+                return false;
+
+            auto& term0 = alternative->m_terms[0];
+            if (term0.type != PatternTerm::Type::PatternCharacter)
+                return false;
+            if (term0.patternCharacter != '\r')
+                return false;
+            if (term0.quantityType != QuantifierType::Greedy)
+                return false;
+            if (term0.quantityMinCount || term0.quantityMaxCount != 1)
+                return false;
+
+            auto& term1 = alternative->m_terms[1];
+            if (term1.type != PatternTerm::Type::PatternCharacter)
+                return false;
+            if (term1.patternCharacter != '\n')
+                return false;
+            if (term1.quantityType != QuantifierType::FixedCount)
+                return false;
+            if (term1.quantityMinCount != 1 || term1.quantityMaxCount != 1)
+                return false;
+
+            m_pattern.m_specificPattern = SpecificPattern::OptionalCRThenLF;
+            return true;
+        };
+
         if (tryExtractAtom())
             return;
 
@@ -3642,9 +3678,12 @@ public:
 
         if (tryExtractNewlines())
             return;
+
+        if (tryExtractOptionalCRThenLF())
+            return;
     }
 
-    ErrorCode NODELETE error() { return m_error; }
+    ErrorCode LEGACY_NODELETE error() { return m_error; }
 
 private:
     class ParenthesisContext {
@@ -3660,7 +3699,7 @@ private:
             {
             }
 
-            void NODELETE restore(bool& isModifier, bool& invert, MatchDirection& matchDirection, bool& insideLookbehind, OptionSet<Flags>& flags)
+            void LEGACY_NODELETE restore(bool& isModifier, bool& invert, MatchDirection& matchDirection, bool& insideLookbehind, OptionSet<Flags>& flags)
             {
                 isModifier = m_isModifier;
                 invert = m_invert;
@@ -3694,7 +3733,7 @@ private:
             m_isModifier = false;
         }
 
-        void NODELETE pop()
+        void LEGACY_NODELETE pop()
         {
             ASSERT(m_stackDepth > 0);
 
@@ -3710,17 +3749,17 @@ private:
             }
         }
 
-        void NODELETE setModifier(bool isMod)
+        void LEGACY_NODELETE setModifier(bool isMod)
         {
             m_isModifier = isMod;
         }
 
-        bool NODELETE isModifier() const
+        bool LEGACY_NODELETE isModifier() const
         {
             return m_isModifier;
         }
 
-        void NODELETE setInvert(bool invert)
+        void LEGACY_NODELETE setInvert(bool invert)
         {
             m_invert = invert;
         }
@@ -3747,17 +3786,17 @@ private:
         // True inside a lookbehind at ANY nesting depth (including within a lookahead
         // nested in a lookbehind), unlike matchDirection(), which is only the innermost
         // assertion's own direction.
-        bool NODELETE insideLookbehind() const
+        bool LEGACY_NODELETE insideLookbehind() const
         {
             return m_insideLookbehind;
         }
 
-        void NODELETE setFlags(OptionSet<Flags> flags)
+        void LEGACY_NODELETE setFlags(OptionSet<Flags> flags)
         {
             m_flags = flags;
         }
 
-        OptionSet<Flags> NODELETE flags() const
+        OptionSet<Flags> LEGACY_NODELETE flags() const
         {
             return m_flags;
         }
@@ -3789,34 +3828,34 @@ private:
         m_parenthesisContext.push();
     }
 
-    void NODELETE popParenthesisContext()
+    void LEGACY_NODELETE popParenthesisContext()
     {
         m_parenthesisContext.pop();
     }
 
-    void NODELETE setParenthesisInvert(bool invert)
+    void LEGACY_NODELETE setParenthesisInvert(bool invert)
     {
         m_parenthesisContext.setInvert(invert);
     }
 
-    bool NODELETE parenthesisInvert() const
+    bool LEGACY_NODELETE parenthesisInvert() const
     {
         return m_parenthesisContext.invert();
     }
 
-    void NODELETE setParenthesisMatchDirection(MatchDirection matchDirection)
+    void LEGACY_NODELETE setParenthesisMatchDirection(MatchDirection matchDirection)
     {
         m_parenthesisContext.setMatchDirection(matchDirection);
     }
 
-    MatchDirection NODELETE parenthesisMatchDirection() const
+    MatchDirection LEGACY_NODELETE parenthesisMatchDirection() const
     {
         return m_parenthesisContext.matchDirection();
     }
 
     // Inside a lookbehind at any nesting depth (a lookahead nested within a
     // lookbehind still counts).
-    bool NODELETE insideLookbehind() const
+    bool LEGACY_NODELETE insideLookbehind() const
     {
         return m_parenthesisContext.insideLookbehind();
     }
@@ -4343,6 +4382,57 @@ std::optional<char16_t> CharacterClass::hasSharedLeadSurrogate() const
     }
 
     return commonLeadSurrogate;
+}
+
+CharacterClassBitTable::CharacterClassBitTable(const CharacterClass& characterClass)
+{
+    constexpr unsigned bitsPerWord = 1 << wordShift;
+    static_assert(!(maxLimit % bitsPerWord));
+    static_assert((maxLimit >> wordShift) <= std::numeric_limits<uint16_t>::max());
+
+    Vector<uint64_t> bits(FillWith { }, maxLimit >> wordShift, 0);
+    auto addRange = [&](char32_t begin, char32_t end) {
+        if (begin >= maxLimit)
+            return;
+        end = std::min<char32_t>(end, maxLimit - 1);
+        unsigned firstWord = begin >> wordShift;
+        unsigned lastWord = end >> wordShift;
+        for (unsigned word = firstWord; word <= lastWord; ++word) {
+            uint64_t mask = ~0ULL;
+            if (word == firstWord)
+                mask &= ~0ULL << (begin % bitsPerWord);
+            if (word == lastWord)
+                mask &= ~0ULL >> (bitsPerWord - 1 - end % bitsPerWord);
+            bits[word] |= mask;
+        }
+    };
+    for (auto character : characterClass.m_matches8)
+        addRange(character, character);
+    for (auto range : characterClass.m_ranges8)
+        addRange(range.begin, range.end);
+    for (auto character : characterClass.m_matches32)
+        addRange(character, character);
+    for (auto range : characterClass.m_ranges32)
+        addRange(range.begin, range.end);
+    while (!bits.isEmpty() && !bits.last())
+        bits.removeLast();
+
+    Vector<uint64_t> uniqueWords;
+    uniqueWords.reserveInitialCapacity(bits.size());
+    for (size_t i = 0; i < bits.size(); ++i) {
+        if (!i || bits[i] != bits[i - 1])
+            uniqueWords.append(bits[i]);
+    }
+    std::ranges::sort(uniqueWords);
+    removeRepeatedElements(uniqueWords);
+
+    uint16_t wordIndex = 0;
+    m_wordIndices = FixedVector<uint16_t>::createWithSizeFromGenerator(bits.size(), [&](size_t i) {
+        if (!i || bits[i] != bits[i - 1])
+            wordIndex = std::ranges::lower_bound(uniqueWords, bits[i]) - uniqueWords.begin();
+        return wordIndex;
+    });
+    m_words = FixedVector<uint64_t>(WTF::move(uniqueWords));
 }
 
 class FirstCharacterBitmapBuilder {

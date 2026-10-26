@@ -27,6 +27,7 @@
 
 #if ENABLE(VIDEO) && USE(AVFOUNDATION)
 
+#include <wtf/CancellableTask.h>
 #include <wtf/Forward.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Noncopyable.h>
@@ -54,7 +55,7 @@ class WebCoreAVFResourceLoader : public ThreadSafeRefCountedAndCanMakeThreadSafe
     WTF_MAKE_TZONE_ALLOCATED(WebCoreAVFResourceLoader);
     WTF_MAKE_NONCOPYABLE(WebCoreAVFResourceLoader);
 public:
-    static Ref<WebCoreAVFResourceLoader> create(MediaPlayerPrivateAVFoundationObjC* parent, AVAssetResourceLoadingRequest*, Ref<PlatformMediaResourceLoader>&&, GuaranteedSerialFunctionDispatcher&);
+    static Ref<WebCoreAVFResourceLoader> LEGACY_NODELETE create(MediaPlayerPrivateAVFoundationObjC* parent, AVAssetResourceLoadingRequest*, Ref<PlatformMediaResourceLoader>&&, GuaranteedSerialFunctionDispatcher&);
     virtual ~WebCoreAVFResourceLoader();
 
     void startLoading();
@@ -80,10 +81,14 @@ private:
     void loadFailed(const ResourceError&);
     void loadFinished();
 
+    void startLoadingTimer();
+    void LEGACY_NODELETE stopLoadingTimer();
+    void loadTimedOut();
+
 #if !RELEASE_LOG_DISABLED
     const Logger& logger() const { return m_logger.get(); }
     ASCIILiteral logClassName() const { return "WebCoreAVFResourceLoader"_s; }
-    WTFLogChannel& NODELETE logChannel() const;
+    WTFLogChannel& LEGACY_NODELETE logChannel() const;
 #endif
 
     ThreadSafeWeakPtr<MediaPlayerPrivateAVFoundationObjC> m_parent;
@@ -91,7 +96,6 @@ private:
     RefPtr<DataURLResourceMediaLoader> m_dataURLMediaLoader;
     RefPtr<PlatformResourceMediaLoader> m_resourceMediaLoader;
     const Ref<PlatformMediaResourceLoader> m_platformMediaLoader;
-    bool m_isBlob { false };
     size_t m_responseOffset { 0 };
     int64_t m_requestedLength { 0 };
     int64_t m_requestedOffset { 0 };
@@ -99,6 +103,8 @@ private:
 
     const Ref<GuaranteedSerialFunctionDispatcher> m_targetDispatcher;
     std::optional<MonotonicTime> m_loadStartTime;
+
+    std::optional<TaskCancellationGroup> m_loadingTimerCancellationGroup;
 
 #if !RELEASE_LOG_DISABLED
     const Ref<const Logger> m_logger;

@@ -30,12 +30,18 @@
 #include "EventDispatcher.h"
 #include "IdentifierTypes.h"
 #include "NetworkProcessConnection.h"
+#include "RemoteSnapshotIdentifier.h"
 #include "ScriptTrackingPrivacyFilter.h"
 #include "SharedPreferencesForWebProcess.h"
 #include "StorageAreaMapIdentifier.h"
 #include "TextCheckerState.h"
 #include "WebInspectorInterruptDispatcher.h"
 #include "WebPageProxyIdentifier.h"
+#if ENABLE(OFFSCREEN_CANVAS) && ENABLE(GPU_PROCESS)
+#include <WebCore/ImageBuffer.h>
+#include <WebCore/PlaceholderFrameIdentifier.h>
+#include <WebCore/PlaceholderRenderingContextIdentifier.h>
+#endif
 #include "WebSocketChannelManager.h"
 #include <WebCore/ActivityState.h>
 #include <WebCore/BackForwardFrameItemIdentifier.h>
@@ -45,6 +51,7 @@
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/ProcessIdentity.h>
 #include <WebCore/RegistrableDomain.h>
+#include <WebCore/RenderingMode.h>
 #include <WebCore/ServiceWorkerTypes.h>
 #include <WebCore/ThirdPartyCookieBlockingMode.h>
 #include <WebCore/Timer.h>
@@ -82,7 +89,7 @@ OBJC_CLASS NSMutableDictionary;
 #include "RendererBufferTransportMode.h"
 #endif
 
-#if PLATFORM(IOS_FAMILY)
+#if ENABLE(UI_SIDE_COMPOSITING)
 #include "ViewUpdateDispatcher.h"
 #endif
 
@@ -243,7 +250,7 @@ public:
     void createWebPage(WebCore::PageIdentifier, WebPageCreationParameters&&);
     Awaitable<unsigned> countWebPagesForTesting();
     void removeWebPage(WebCore::PageIdentifier);
-    WebPage* NODELETE focusedWebPage() const;
+    WebPage* LEGACY_NODELETE focusedWebPage() const;
     bool hasEverHadAnyWebPages() const { return m_hasEverHadAnyWebPages; }
     bool isBroadcastChannelEnabled() const { return m_isBroadcastChannelEnabled; }
 
@@ -256,6 +263,12 @@ public:
     bool fullKeyboardAccessEnabled() const { return m_fullKeyboardAccessEnabled; }
 
     void contentWorldDestroyed(ContentWorldIdentifier);
+#if ENABLE(OFFSCREEN_CANVAS) && ENABLE(GPU_PROCESS)
+    void commitOffscreenCanvasPlaceholderFrame(WebCore::PlaceholderRenderingContextIdentifier, WebCore::ImageBufferTransferHandle&&, WebCore::PlaceholderFrameIdentifier, bool originClean, bool opaque, CompletionHandler<void(bool)>&&);
+    // For a transferred buffer this process owns but has no use for; it is otherwise kept until this
+    // process exits.
+    void releaseTransferredImageBuffer(WebCore::ImageBufferTransferIdentifier);
+#endif
 
 #if HAVE(MOUSE_DEVICE_OBSERVATION)
     bool hasMouseDevice() const { return m_hasMouseDevice; }
@@ -269,7 +282,7 @@ public:
 
     void updateStorageAccessUserAgentStringQuirks(HashMap<WebCore::RegistrableDomain, String>&&);
 
-    WebFrame* NODELETE webFrame(std::optional<WebCore::FrameIdentifier>) const;
+    WebFrame* LEGACY_NODELETE webFrame(std::optional<WebCore::FrameIdentifier>) const;
     void addWebFrame(WebCore::FrameIdentifier, WebFrame*);
     void removeWebFrame(WebCore::FrameIdentifier, WebPage*);
 
@@ -287,7 +300,7 @@ public:
 
     void networkProcessConnectionClosed(NetworkProcessConnection*);
     NetworkProcessConnection* existingNetworkProcessConnection() { return m_networkProcessConnection.get(); }
-    WebLoaderStrategy& NODELETE webLoaderStrategy() LIFETIME_BOUND;
+    WebLoaderStrategy& LEGACY_NODELETE webLoaderStrategy() LIFETIME_BOUND;
     WebFileSystemStorageConnection& fileSystemStorageConnection();
 
     RefPtr<WebTransportSession> webTransportSession(WebTransportSessionIdentifier);
@@ -300,9 +313,13 @@ public:
 
 #if ENABLE(GPU_PROCESS)
     GPUProcessConnection& ensureGPUProcessConnection();
+    // Resolves a frame of a snapshot that will not be recorded, so that the snapshot does not wait for it.
+    void abandonSnapshotFrame(RemoteSnapshotIdentifier, WebCore::FrameIdentifier);
+    // Fails a snapshot whose root will not be recorded, so that nothing waits for it.
+    void failSnapshot(RemoteSnapshotIdentifier);
     GPUProcessConnection* existingGPUProcessConnection() { return m_gpuProcessConnection.get(); }
     // Returns timeout duration for GPU process connections. Thread-safe.
-    Seconds NODELETE gpuProcessTimeoutDuration() const;
+    Seconds LEGACY_NODELETE gpuProcessTimeoutDuration() const;
     void gpuProcessConnectionClosed();
     void gpuProcessConnectionDidBecomeUnresponsive();
 
@@ -344,7 +361,7 @@ public:
 
     void registerStorageAreaMap(StorageAreaMap&);
     void unregisterStorageAreaMap(StorageAreaMap&);
-    WeakPtr<StorageAreaMap> NODELETE storageAreaMap(StorageAreaMapIdentifier) const;
+    WeakPtr<StorageAreaMap> LEGACY_NODELETE storageAreaMap(StorageAreaMapIdentifier) const;
 
 #if PLATFORM(COCOA)
     RetainPtr<CFDataRef> sourceApplicationAuditData() const;
@@ -418,7 +435,7 @@ public:
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
     static void setAllowAXAuthenticationForTesting(bool);
 #endif
-    void NODELETE powerSourceDidChange(bool);
+    void LEGACY_NODELETE powerSourceDidChange(bool);
 #endif
 
 #if PLATFORM(MAC)
@@ -455,19 +472,31 @@ public:
     void disableURLSchemeCheckInDataDetectors() const;
 
 #if PLATFORM(MAC)
-    void NODELETE updatePageScreenProperties();
+    void LEGACY_NODELETE updatePageScreenProperties();
 #endif
 
-    void NODELETE setChildProcessDebuggabilityEnabled(bool);
+    void LEGACY_NODELETE setChildProcessDebuggabilityEnabled(bool);
+
+    void updateProcessPreferences(const WebPreferencesStore&);
+    void updateRemoteWorkerPreferences(const WebPreferencesStore&);
+
+#if PLATFORM(COCOA)
+    // Blocks IOKit in the sandbox. The process cannot use IOKit after this, so call this only when the
+    // rendering and the media use the GPU process.
+    void blockIOKit();
+#endif
 
 #if ENABLE(GPU_PROCESS)
-    void NODELETE setUseGPUProcessForCanvasRendering(bool);
-    void NODELETE setUseGPUProcessForDOMRendering(bool);
+    // Sets the GPU process use for canvas, media and WebGL from the preferences. The pages call this when
+    // they are created, so changing the preferences later does not change the use for the existing pages.
+    void setUseGPUProcessFromPreferences(const WebPreferencesStore&);
+    void LEGACY_NODELETE setUseGPUProcessForCanvasRendering(bool);
+    void LEGACY_NODELETE setUseGPUProcessForDOMRendering(bool);
     void setUseGPUProcessForMedia(bool);
-    bool NODELETE shouldUseRemoteRenderingFor(WebCore::RenderingPurpose);
+    bool LEGACY_NODELETE shouldUseRemoteRenderingFor(WebCore::RenderingPurpose);
 #if ENABLE(WEBGL)
-    void NODELETE setUseGPUProcessForWebGL(bool);
-    bool NODELETE shouldUseRemoteRenderingForWebGL() const;
+    void LEGACY_NODELETE setUseGPUProcessForWebGL(bool);
+    bool LEGACY_NODELETE shouldUseRemoteRenderingForWebGL() const;
 #endif
 #endif
 
@@ -543,8 +572,6 @@ public:
     void remoteAudioSessionConfigurationChanged(const RemoteAudioSessionConfiguration&);
 #endif
 
-    void registerURLSchemeAsCORSEnabled(const String&);
-
 private:
     WebProcess();
     ~WebProcess();
@@ -573,7 +600,7 @@ private:
 
     void platformTerminate();
 
-    void NODELETE setHasSuspendedPageProxy(bool);
+    void LEGACY_NODELETE setHasSuspendedPageProxy(bool);
     void setIsInProcessCache(bool, CompletionHandler<void()>&&);
     void markIsNoLongerPrewarmed();
 
@@ -586,6 +613,7 @@ private:
     void registerURLSchemeAsNoAccess(const String&) const;
 #endif
     void registerURLSchemeAsDisplayIsolated(const String&) const;
+    void registerURLSchemeAsCORSEnabled(const String&);
     void registerURLSchemeAsAlwaysRevalidated(const String&) const;
     void registerURLSchemeAsCachePartitioned(const String&) const;
     void registerURLSchemeAsCanDisplayOnlyIfCanRequest(const String&) const;
@@ -594,24 +622,28 @@ private:
     void registerURLSchemeAsWebExtension(const String&) const;
 #endif
 
-    void NODELETE setDefaultRequestTimeoutInterval(double);
-    void NODELETE setAlwaysUsesComplexTextCodePath(bool);
-    void NODELETE setDisableFontSubpixelAntialiasingForTesting(bool);
+    void LEGACY_NODELETE setDefaultRequestTimeoutInterval(double);
+    void LEGACY_NODELETE setAlwaysUsesComplexTextCodePath(bool);
+    void LEGACY_NODELETE setDisableFontSubpixelAntialiasingForTesting(bool);
     void setTrackingPreventionEnabled(bool);
     void clearResourceLoadStatistics();
     void flushResourceLoadStatistics();
     void seedResourceLoadStatisticsForTesting(const WebCore::RegistrableDomain& firstPartyDomain, const WebCore::RegistrableDomain& thirdPartyDomain, bool shouldScheduleNotification, CompletionHandler<void()>&&);
     void userPreferredLanguagesChanged(const Vector<String>&) const;
-    void NODELETE fullKeyboardAccessModeChanged(bool fullKeyboardAccessEnabled);
+    void LEGACY_NODELETE fullKeyboardAccessModeChanged(bool fullKeyboardAccessEnabled);
 #if ENABLE(OPT_IN_PARTITIONED_COOKIES)
     void setOptInCookiePartitioningEnabled(bool);
 #endif
 
-    void NODELETE platformSetCacheModel(CacheModel);
+    void LEGACY_NODELETE platformSetCacheModel(CacheModel);
 
     void setEnhancedAccessibility(bool);
     void setAccessibilityMode(WebCore::AccessibilityMode);
     void bindAccessibilityFrameWithData(WebCore::FrameIdentifier, std::span<const uint8_t>);
+
+#if ENABLE(GPU_PROCESS)
+    void drawFrameToSnapshot(WebCore::FrameIdentifier, const WebCore::IntRect&, RemoteSnapshotIdentifier, WebCore::RenderingMode);
+#endif
 
     void startMemorySampler(SandboxExtension::Handle&&, const String&, const double);
     void stopMemorySampler();
@@ -642,20 +674,20 @@ private:
     void clearCachedPage(WebCore::BackForwardFrameItemIdentifier, CompletionHandler<void()>&&);
 
 #if ENABLE(SERVICE_CONTROLS)
-    void NODELETE setEnabledServices(bool hasImageServices, bool hasSelectionServices, bool hasRichContentServices);
+    void LEGACY_NODELETE setEnabledServices(bool hasImageServices, bool hasSelectionServices, bool hasRichContentServices);
 #endif
 
     void handleInjectedBundleMessage(const String& messageName, const UserData& messageBody);
     void setInjectedBundleParameter(const String& key, std::span<const uint8_t>);
     void setInjectedBundleParameters(std::span<const uint8_t>);
 
-    bool NODELETE areAllPagesSuspended() const;
+    bool LEGACY_NODELETE areAllPagesSuspended() const;
 
     void ensureAutomationSessionProxy(const String& sessionIdentifier);
     void destroyAutomationSessionProxy();
 
     void logDiagnosticMessageForNetworkProcessCrash();
-    bool NODELETE hasVisibleWebPage() const;
+    bool LEGACY_NODELETE hasVisibleWebPage() const;
     void updateCPULimit();
     enum class CPUMonitorUpdateReason { LimitHasChanged, VisibilityHasChanged };
     void updateCPUMonitorState(CPUMonitorUpdateReason);
@@ -756,7 +788,7 @@ private:
     void resumeAllMediaBuffering();
 #endif
 
-    void NODELETE clearCurrentModifierStateForTesting();
+    void LEGACY_NODELETE clearCurrentModifierStateForTesting();
 
 #if PLATFORM(GTK) || PLATFORM(WPE)
     void sendMessageToWebProcessExtension(UserMessage&&);
@@ -779,7 +811,7 @@ private:
 #endif
 #endif
 
-    bool NODELETE isProcessBeingCachedForPerformance();
+    bool LEGACY_NODELETE isProcessBeingCachedForPerformance();
 
     HashMap<WebCore::PageIdentifier, Ref<WebPage>> m_pageMap;
     HashMap<PageGroupIdentifier, Ref<WebPageGroupProxy>> m_pageGroupMap;
@@ -788,7 +820,7 @@ private:
     Seconds m_hiddenPageDOMTimerThrottlingIncreaseLimit;
 
     EventDispatcher m_eventDispatcher;
-#if PLATFORM(IOS_FAMILY)
+#if ENABLE(UI_SIDE_COMPOSITING)
     ViewUpdateDispatcher m_viewUpdateDispatcher;
 #endif
     WebInspectorInterruptDispatcher m_webInspectorInterruptDispatcher;
@@ -824,13 +856,13 @@ private:
 #if ENABLE(GPU_PROCESS)
     RefPtr<GPUProcessConnection> m_gpuProcessConnection;
 #if PLATFORM(COCOA) && USE(LIBWEBRTC)
-    RefPtr<LibWebRTCCodecs> m_libWebRTCCodecs;
+    const RefPtr<LibWebRTCCodecs> m_libWebRTCCodecs;
 #if ENABLE(WEB_CODECS)
     RemoteVideoCodecFactory m_remoteVideoCodecFactory;
 #endif
 #endif
 #if ENABLE(MEDIA_STREAM) && PLATFORM(COCOA)
-    std::unique_ptr<AudioMediaStreamTrackRendererInternalUnitManager> m_audioMediaStreamTrackRendererInternalUnitManager;
+    const std::unique_ptr<AudioMediaStreamTrackRendererInternalUnitManager> m_audioMediaStreamTrackRendererInternalUnitManager;
 #endif
 #endif
 
@@ -880,7 +912,7 @@ private:
     bool m_loggedProcessLimitCriticalMemoryStatistics { false };
     bool m_wasVisibleSinceLastProcessSuspensionEvent { false };
 #if PLATFORM(MAC)
-    std::unique_ptr<WebCore::CPUMonitor> m_cpuMonitor;
+    const std::unique_ptr<WebCore::CPUMonitor> m_cpuMonitor;
     std::optional<double> m_cpuLimit;
 
     String m_uiProcessName;
@@ -900,6 +932,7 @@ private:
 #if PLATFORM(GTK) || PLATFORM(WPE)
     OptionSet<RendererBufferTransportMode> m_rendererBufferTransportMode;
     OptionSet<AvailableInputDevices> m_availableInputDevices;
+    bool m_isStoppingRunLoop { false };
 #endif
 
     bool m_hasSuspendedPageProxy { false };
@@ -921,7 +954,7 @@ private:
 
     HashMap<StorageAreaMapIdentifier, WeakPtr<StorageAreaMap>> m_storageAreaMaps;
 
-    void NODELETE updateIsBroadcastChannelEnabled();
+    void LEGACY_NODELETE updateIsBroadcastChannelEnabled();
     
     // Prewarmed WebProcesses do not have an associated sessionID yet, which is why this is an optional.
     // By the time the WebProcess gets a WebPage, it is guaranteed to have a sessionID.
@@ -934,7 +967,7 @@ private:
 #if PLATFORM(COCOA)
     HashCountedSet<String> m_pendingPasteboardWriteCounts;
     std::optional<audit_token_t> m_auditTokenForSelf;
-    RetainPtr<NSMutableDictionary> m_accessibilityRemoteFrameTokenCache;
+    const RetainPtr<NSMutableDictionary> m_accessibilityRemoteFrameTokenCache;
 #endif
 
     bool m_childProcessDebuggabilityEnabled { false };

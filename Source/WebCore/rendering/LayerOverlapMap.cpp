@@ -69,7 +69,7 @@ struct RectList {
             append(rect);
     }
 
-    bool intersects(const LayoutRect& rect) const
+    bool LEGACY_NODELETE intersects(const LayoutRect& rect) const
     {
         if (!rects.size() || !rect.intersects(boundingRect))
             return false;
@@ -104,14 +104,15 @@ public:
 
     // Layers are added in z-order, lazily creating clipping scopes as necessary.
     void add(const RenderLayer&, const LayoutRect& bounds, const LayerOverlapMap::LayerAndBoundsVector& enclosingClippingLayers);
-    bool overlapsLayers(const RenderLayer&, const LayoutRect& bounds, const LayerOverlapMap::LayerAndBoundsVector& enclosingClippingLayers) const;
+    bool LEGACY_NODELETE overlapsLayers(const RenderLayer&, const LayoutRect& bounds, const LayerOverlapMap::LayerAndBoundsVector& enclosingClippingLayers) const;
+    bool isCoveredByRecentRects(const LayoutRect& bounds, const LayerOverlapMap::LayerAndBoundsVector& enclosingClippingLayers) const;
     void append(std::unique_ptr<OverlapMapContainer>&&);
 
     bool isEmpty() const;
     
     String dump(unsigned) const;
 
-    const RenderLayer& NODELETE scopeLayer() const { return m_scopeLayer.get(); }
+    const RenderLayer& LEGACY_NODELETE scopeLayer() const { return m_scopeLayer.get(); }
 
 private:
     struct ClippingScope {
@@ -126,7 +127,7 @@ private:
         {
         }
 
-        ClippingScope* NODELETE childWithLayer(const RenderLayer& layer) const
+        ClippingScope* LEGACY_NODELETE childWithLayer(const RenderLayer& layer) const
         {
             for (auto& child : children) {
                 if (&child.layer.get() == &layer)
@@ -159,7 +160,7 @@ private:
         RectList rectList;
     };
 
-    static ClippingScope* NODELETE clippingScopeContainingLayerChildRecursive(const ClippingScope& currNode, const RenderLayer& layer)
+    static ClippingScope* LEGACY_NODELETE clippingScopeContainingLayerChildRecursive(const ClippingScope& currNode, const RenderLayer& layer)
     {
         for (auto& child : currNode.children) {
             if (&layer == &child.layer.get())
@@ -172,7 +173,7 @@ private:
         return nullptr;
     }
 
-    ClippingScope* NODELETE scopeContainingLayer(const RenderLayer& layer) const
+    ClippingScope* LEGACY_NODELETE scopeContainingLayer(const RenderLayer& layer) const
     {
         return clippingScopeContainingLayerChildRecursive(m_rootScope, layer);
     }
@@ -184,14 +185,14 @@ private:
 
     void recursiveOutputToStream(TextStream&, const ClippingScope&, unsigned depth) const;
 
-    const ClippingScope& NODELETE rootScope() const { return m_rootScope; }
-    ClippingScope& NODELETE rootScope() { return m_rootScope; }
+    const ClippingScope& LEGACY_NODELETE rootScope() const { return m_rootScope; }
+    ClippingScope& LEGACY_NODELETE rootScope() { return m_rootScope; }
 
     ClippingScope m_rootScope;
     const CheckedRef<const RenderLayer> m_scopeLayer;
 };
 
-bool NODELETE OverlapMapContainer::isEmpty() const
+bool LEGACY_NODELETE OverlapMapContainer::isEmpty() const
 {
     return m_rootScope.rectList.rects.isEmpty() && m_rootScope.children.isEmpty();
 }
@@ -252,10 +253,8 @@ OverlapMapContainer::ClippingScope* OverlapMapContainer::ensureClippingScopeForL
     for (unsigned i = 1; i < enclosingClippingLayers.size(); ++i) {
         auto& scopeLayerAndBounds = enclosingClippingLayers[i];
         auto* childScope = currScope->childWithLayer(scopeLayerAndBounds.layer.get());
-        if (!childScope) {
-            currScope = currScope->addChildWithLayerAndBounds(scopeLayerAndBounds);
-            break;
-        }
+        if (!childScope)
+            childScope = currScope->addChildWithLayerAndBounds(scopeLayerAndBounds);
 
         currScope = childScope;
     }
@@ -263,7 +262,16 @@ OverlapMapContainer::ClippingScope* OverlapMapContainer::ensureClippingScopeForL
     return const_cast<ClippingScope*>(currScope);
 }
 
-OverlapMapContainer::ClippingScope* NODELETE OverlapMapContainer::findClippingScopeForLayers(const LayerOverlapMap::LayerAndBoundsVector& enclosingClippingLayers) const
+bool OverlapMapContainer::isCoveredByRecentRects(const LayoutRect& bounds, const LayerOverlapMap::LayerAndBoundsVector& enclosingClippingLayers) const
+{
+    auto* clippingScope = findClippingScopeForLayers(enclosingClippingLayers);
+    if (!clippingScope)
+        return false;
+
+    return clippingScope->rectList.isAlreadyCovered(bounds);
+}
+
+OverlapMapContainer::ClippingScope* LEGACY_NODELETE OverlapMapContainer::findClippingScopeForLayers(const LayerOverlapMap::LayerAndBoundsVector& enclosingClippingLayers) const
 {
     ASSERT(enclosingClippingLayers.size());
     ASSERT(enclosingClippingLayers[0].layer->isRenderViewLayer());
@@ -311,6 +319,21 @@ LayerOverlapMap::LayerOverlapMap(const RenderLayer& rootLayer)
 }
 
 LayerOverlapMap::~LayerOverlapMap() = default;
+
+bool LayerOverlapMap::isCoveredByRecentRects(const LayoutRect& bounds, const LayerAndBoundsVector& enclosingClippingLayers) const
+{
+    if (m_overlapStack.size() < 2)
+        return false;
+
+    if (!m_overlapStack[m_overlapStack.size() - 2]->isCoveredByRecentRects(bounds, enclosingClippingLayers))
+        return false;
+
+    if (m_speculativeOverlapStack.size() >= 2
+        && !m_speculativeOverlapStack[m_speculativeOverlapStack.size() - 2]->isCoveredByRecentRects(bounds, enclosingClippingLayers))
+        return false;
+
+    return true;
+}
 
 void LayerOverlapMap::add(const RenderLayer& layer, const LayoutRect& bounds, const LayerAndBoundsVector& enclosingClippingLayers)
 {

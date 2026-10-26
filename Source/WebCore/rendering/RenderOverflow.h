@@ -28,7 +28,7 @@
 namespace WebCore
 {
 // RenderOverflow is a class for tracking content that spills out of a box.
-// This class is used by RenderBox and LegacyInlineFlowBox.
+// This class is used by RenderBox.
 //
 // There are three types of overflow:
 // * layout overflow (which is expected to be reachable via scrolling mechanisms)

@@ -30,6 +30,7 @@
 #include "WebCoreJSClientData.h"
 #include "WebCoreOpaqueRoot.h"
 #include "WebCoreOpaqueRootInlines.h"
+#include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/Lookup.h>
 #include <wtf/RuntimeApplicationChecks.h>

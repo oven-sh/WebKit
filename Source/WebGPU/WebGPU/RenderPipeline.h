@@ -28,18 +28,18 @@
 #import "Pipeline.h"
 #import "PipelineLayout.h"
 
+#import <WebGPU/WebGPUCpp.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/HashMap.h>
 #import <wtf/HashTraits.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCountedAndCanMakeWeakPtr.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/WeakPtr.h>
 
 struct WGPURenderPipelineImpl {
 };
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 class BindGroupLayout;
 class Device;
@@ -47,19 +47,19 @@ class TextureOrTextureView;
 class TextureView;
 
 // https://gpuweb.github.io/gpuweb/#gpurenderpipeline
-class RenderPipeline : public RefCountedAndCanMakeWeakPtr<RenderPipeline>, public WGPURenderPipelineImpl {
+class RenderPipeline final : public WebGPU::RenderPipeline, public WGPURenderPipelineImpl {
     WTF_MAKE_TZONE_ALLOCATED(RenderPipeline);
 public:
     struct BufferData {
         uint64_t stride { 0 };
         uint64_t lastStride { 0 };
-        WGPUVertexStepMode stepMode { WGPUVertexStepMode_Vertex };
+        WebGPU::VertexStepMode stepMode { WebGPU::VertexStepMode::Vertex };
     };
     using RequiredBufferIndicesContainer = HashMap<uint32_t, BufferData, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
 
-    static Ref<RenderPipeline> create(MTLPrimitiveType primitiveType, std::optional<MTLIndexType> indexType, MTLWinding frontFace, MTLCullMode cullMode, MTLDepthClipMode depthClipMode, MTLDepthStencilDescriptor *depthStencilDescriptor, Ref<PipelineLayout>&& pipelineLayout, float depthBias, float depthBiasSlopeScale, float depthBiasClamp, uint32_t sampleMask, MTLRenderPipelineDescriptor* renderPipelineDescriptor, uint32_t colorAttachmentCount, const WGPURenderPipelineDescriptor& descriptor, RequiredBufferIndicesContainer&& requiredBufferIndices, BufferBindingSizesForPipeline&& minimumBufferSizes, uint64_t uniqueId, uint32_t vertexShaderBindingCount, Device& device)
+    static Ref<RenderPipeline> create(MTLPrimitiveType primitiveType, std::optional<MTLIndexType> indexType, MTLWinding frontFace, MTLCullMode cullMode, MTLDepthClipMode depthClipMode, MTLDepthStencilDescriptor *depthStencilDescriptor, Ref<PipelineLayout>&& pipelineLayout, float depthBias, float depthBiasSlopeScale, float depthBiasClamp, uint32_t sampleMask, MTLRenderPipelineDescriptor* renderPipelineDescriptor, uint32_t colorAttachmentCount, WebGPU::PrimitiveTopology primitiveTopology, std::optional<WebGPU::IndexFormat> stripIndexFormat, uint32_t sampleCount, bool hasFragment, Vector<std::optional<WebGPU::TextureFormat>>&& colorTargetFormats, std::optional<WebGPU::TextureFormat> depthStencilFormat, bool writesStencil, RequiredBufferIndicesContainer&& requiredBufferIndices, BufferBindingSizesForPipeline&& minimumBufferSizes, uint64_t uniqueId, uint32_t vertexShaderBindingCount, Device& device)
     {
-        return adoptRef(*new RenderPipeline(primitiveType, indexType, frontFace, cullMode, depthClipMode, depthStencilDescriptor, WTF::move(pipelineLayout), depthBias, depthBiasSlopeScale, depthBiasClamp, sampleMask, renderPipelineDescriptor, colorAttachmentCount, descriptor, WTF::move(requiredBufferIndices), WTF::move(minimumBufferSizes), uniqueId, vertexShaderBindingCount, device));
+        return adoptRef(*new RenderPipeline(primitiveType, indexType, frontFace, cullMode, depthClipMode, depthStencilDescriptor, WTF::move(pipelineLayout), depthBias, depthBiasSlopeScale, depthBiasClamp, sampleMask, renderPipelineDescriptor, colorAttachmentCount, primitiveTopology, stripIndexFormat, sampleCount, hasFragment, WTF::move(colorTargetFormats), depthStencilFormat, writesStencil, WTF::move(requiredBufferIndices), WTF::move(minimumBufferSizes), uniqueId, vertexShaderBindingCount, device));
     }
 
     static Ref<RenderPipeline> createInvalid(Device& device)
@@ -69,10 +69,10 @@ public:
 
     ~RenderPipeline();
 
-    Ref<BindGroupLayout> getBindGroupLayout(uint32_t groupIndex);
-    void NODELETE setLabel(String&&);
+    Ref<WebGPU::BindGroupLayout> getBindGroupLayout(uint32_t groupIndex) final;
+    void LEGACY_NODELETE setLabel(String&&) final;
 
-    bool isValid() const { return m_renderPipelineDescriptor && m_pipelineLayout->isValid(); }
+    bool isValid() const final { return m_renderPipelineDescriptor && m_pipelineLayout->isValid(); }
 
     MTLRenderPipelineDescriptor* renderPipelineDescriptor() const { return m_renderPipelineDescriptor; }
     id<MTLRenderPipelineState> renderPipelineState() const;
@@ -80,7 +80,7 @@ public:
 
     void setPrecompiledRenderPipelineState(id<MTLRenderPipelineState>);
 
-    id<MTLDepthStencilState> NODELETE depthStencilState() const;
+    id<MTLDepthStencilState> LEGACY_NODELETE depthStencilState() const;
     bool validateDepthStencilState(bool depthReadOnly, bool stencilReadOnly) const;
     MTLPrimitiveType primitiveType() const { return m_primitiveType; }
     MTLWinding frontFace() const { return m_frontFace; }
@@ -94,23 +94,25 @@ public:
 
     Device& device() const { return m_device; }
     PipelineLayout& pipelineLayout() const { return m_pipelineLayout; }
-    NSString* errorValidatingColorDepthStencilTargets(const WGPURenderPassDescriptor&, const Vector<TextureOrTextureView>&, const std::optional<TextureOrTextureView>&) const;
-    bool validateRenderBundle(const WGPURenderBundleEncoderDescriptor&) const;
+    NSString* errorValidatingColorDepthStencilTargets(const Vector<TextureOrTextureView>&, const std::optional<TextureOrTextureView>&) const;
+    bool validateRenderBundle(bool depthReadOnly, bool stencilReadOnly, uint32_t sampleCount, std::span<const std::optional<WebGPU::TextureFormat>> colorFormats, std::optional<WebGPU::TextureFormat> depthStencilFormat) const;
     bool writesDepth() const;
-    bool NODELETE writesStencil() const;
+    bool LEGACY_NODELETE writesStencil() const;
 
     const RequiredBufferIndicesContainer& requiredBufferIndices() const LIFETIME_BOUND { return m_requiredBufferIndices; }
-    WGPUPrimitiveTopology primitiveTopology() const { return m_descriptor.primitive.topology; }
+    WebGPU::PrimitiveTopology primitiveTopology() const { return m_primitiveTopology; }
 
-    MTLIndexType stripIndexFormat() const { return m_descriptor.primitive.stripIndexFormat == WGPUIndexFormat_Uint16 ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32; }
+    // Nullopt when the pipeline did not specify a stripIndexFormat, which no index buffer format
+    // can ever match.
+    std::optional<MTLIndexType> stripIndexFormat() const { return m_indexType; }
 
-    const BufferBindingSizesForBindGroup* NODELETE minimumBufferSizes(uint32_t) const;
+    const BufferBindingSizesForBindGroup* LEGACY_NODELETE minimumBufferSizes(uint32_t) const;
     RefPtr<RenderPipeline> recomputeLastStrideAsStride() const;
     uint64_t uniqueId() const { return m_uniqueId; }
     uint32_t vertexShaderBindingCount() const { return m_vertexShaderBindingCount; }
 
 private:
-    RenderPipeline(MTLPrimitiveType, std::optional<MTLIndexType>, MTLWinding, MTLCullMode, MTLDepthClipMode, MTLDepthStencilDescriptor *, Ref<PipelineLayout>&&, float depthBias, float depthBiasSlopeScale, float depthBiasClamp, uint32_t sampleMask, MTLRenderPipelineDescriptor*, uint32_t colorAttachmentCount, const WGPURenderPipelineDescriptor&, RequiredBufferIndicesContainer&&, BufferBindingSizesForPipeline&&, uint64_t uniqueId, uint32_t vertexShaderBindingCount, Device&);
+    RenderPipeline(MTLPrimitiveType, std::optional<MTLIndexType>, MTLWinding, MTLCullMode, MTLDepthClipMode, MTLDepthStencilDescriptor *, Ref<PipelineLayout>&&, float depthBias, float depthBiasSlopeScale, float depthBiasClamp, uint32_t sampleMask, MTLRenderPipelineDescriptor*, uint32_t colorAttachmentCount, WebGPU::PrimitiveTopology, std::optional<WebGPU::IndexFormat> stripIndexFormat, uint32_t sampleCount, bool hasFragment, Vector<std::optional<WebGPU::TextureFormat>>&& colorTargetFormats, std::optional<WebGPU::TextureFormat> depthStencilFormat, bool writesStencil, RequiredBufferIndicesContainer&&, BufferBindingSizesForPipeline&&, uint64_t uniqueId, uint32_t vertexShaderBindingCount, Device&);
     RenderPipeline(Device&);
     bool colorTargetsMatch(MTLRenderPassDescriptor*, uint32_t) const;
     bool depthAttachmentMatches(MTLRenderPassDepthAttachmentDescriptor*) const;
@@ -135,14 +137,16 @@ private:
     RequiredBufferIndicesContainer m_requiredBufferIndices;
     const Ref<PipelineLayout> m_pipelineLayout;
     mutable RefPtr<RenderPipeline> m_lastStrideAsStridePipeline;
-    WGPURenderPipelineDescriptor m_descriptor;
-    WGPUDepthStencilState m_descriptorDepthStencil;
-    WGPUFragmentState m_descriptorFragment;
-    Vector<WGPUColorTargetState> m_descriptorTargets;
+    const WebGPU::PrimitiveTopology m_primitiveTopology { WebGPU::PrimitiveTopology::TriangleList };
+    const std::optional<WebGPU::IndexFormat> m_stripIndexFormat;
+    const uint32_t m_sampleCount { 0 };
+    const bool m_hasFragment { false };
+    const Vector<std::optional<WebGPU::TextureFormat>> m_colorTargetFormats;
+    const std::optional<WebGPU::TextureFormat> m_depthStencilFormat;
     const BufferBindingSizesForPipeline m_minimumBufferSizes;
     const uint64_t m_uniqueId { 0 };
     const uint32_t m_vertexShaderBindingCount { 0 };
-    bool m_writesStencil { false };
+    const bool m_writesStencil { false };
 };
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal

@@ -89,7 +89,7 @@ public:
     WEBCORE_EXPORT static Ref<DataSegment> create(Vector<uint8_t>&&);
 
 #if USE(CF)
-    WEBCORE_EXPORT static Ref<DataSegment> create(RetainPtr<CFDataRef>&&);
+    WEBCORE_EXPORT static Ref<DataSegment> LEGACY_NODELETE create(RetainPtr<CFDataRef>&&);
 #endif
 #if USE(GLIB)
     WEBCORE_EXPORT static Ref<DataSegment> create(GRefPtr<GBytes>&&);
@@ -100,20 +100,20 @@ public:
 #if USE(SKIA)
     WEBCORE_EXPORT static Ref<DataSegment> create(sk_sp<SkData>&&);
 #endif
-    WEBCORE_EXPORT static Ref<DataSegment> create(FileSystem::MappedFileData&&);
+    WEBCORE_EXPORT static Ref<DataSegment> LEGACY_NODELETE create(FileSystem::MappedFileData&&);
 
     struct Provider {
         Function<std::span<const uint8_t>()> span;
     };
-    WEBCORE_EXPORT static Ref<DataSegment> create(Provider&&);
+    WEBCORE_EXPORT static Ref<DataSegment> LEGACY_NODELETE create(Provider&&);
 
-    WEBCORE_EXPORT static Ref<DataSegment> create(std::unique_ptr<JSC::ArrayBufferContents>&&);
+    WEBCORE_EXPORT static Ref<DataSegment> LEGACY_NODELETE create(std::unique_ptr<JSC::ArrayBufferContents>&&);
 
 #if USE(FOUNDATION)
     WEBCORE_EXPORT RetainPtr<NSData> createNSData() const;
 #endif
 
-    WEBCORE_EXPORT bool NODELETE containsMappedFileData() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE containsMappedFileData() const;
 
 private:
     void iterate(NOESCAPE const Function<void(std::span<const uint8_t>)>& apply) const;
@@ -300,7 +300,8 @@ public:
     WEBCORE_EXPORT sk_sp<SkData> createSkData() const;
 #endif
 
-    Ref<FragmentedSharedBuffer> asFragmentedSharedBuffer() const { return const_cast<SharedBuffer&>(*this); }
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    Ref<FragmentedSharedBuffer> asFragmentedSharedBuffer() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<SharedBuffer&>(*this); }
 
     template<typename T>
     bool isSpanWithinBounds(std::span<T> otherSpan) const;

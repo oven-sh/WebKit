@@ -102,9 +102,9 @@ void HTMLOptGroupElement::updateUserAgentShadowTree()
         labelContainer->setTextContent(WTF::move(label));
 
     if (showLabel)
-        labelContainer->removeInlineStyleProperty(CSSPropertyDisplay);
+        labelContainer->removeInlineStyleProperty(CSSPropertyID::Display);
     else
-        labelContainer->setInlineStyleProperty(CSSPropertyDisplay, CSSValueNone);
+        labelContainer->setInlineStyleProperty(CSSPropertyID::Display, CSSValueID::None);
 }
 
 void HTMLOptGroupElement::didAddUserAgentShadowRoot(ShadowRoot& root)
@@ -163,6 +163,31 @@ void HTMLOptGroupElement::removingSteps(RemovalType removalType, ContainerNode& 
     }
 }
 
+void HTMLOptGroupElement::movingSteps(MovingType movingType, ContainerNode& oldParent)
+{
+    HTMLElement::movingSteps(movingType, oldParent);
+
+    if (!document().settings().htmlEnhancedSelectParsingEnabled())
+        return;
+
+    RefPtr oldSelect = m_ownerSelect;
+    RefPtr newSelect = HTMLSelectElement::findOwnerSelect(parentNode(), HTMLSelectElement::ExcludeOptGroup::Yes);
+    if (oldSelect == newSelect) {
+        if (newSelect)
+            newSelect->setRecalcListItems();
+        return;
+    }
+
+    m_ownerSelect = newSelect.get();
+
+    if (oldSelect)
+        oldSelect->setRecalcListItems();
+    if (newSelect)
+        newSelect->setRecalcListItems();
+
+    invalidateShadowTree();
+}
+
 bool HTMLOptGroupElement::isDisabledFormControl() const
 {
     return m_isDisabled;
@@ -179,7 +204,7 @@ bool HTMLOptGroupElement::isActuallyDisabled() const
 bool HTMLOptGroupElement::isFocusable() const
 {
     RefPtr select = ownerSelectElement();
-    if (select && select->isDropdownBox())
+    if (select && select->isDropdownBox() && !select->usesBaseAppearancePicker())
         return false;
     return HTMLElement::isFocusable();
 }
@@ -193,8 +218,12 @@ const AtomString& HTMLOptGroupElement::formControlType() const
 void HTMLOptGroupElement::childrenChanged(const ChildChange& change)
 {
     if (document().settings().htmlEnhancedSelectParsingEnabled()) {
-        if (change.affectsElements != ChildChange::AffectsElements::No)
-            invalidateShadowTree();
+        if (change.affectsElements != ChildChange::AffectsElements::No) {
+            if (RefPtr legend = legendElement(); m_legendElement != legend) {
+                m_legendElement = legend;
+                legendElementChanged();
+            }
+        }
         HTMLElement::childrenChanged(change);
         return;
     }
@@ -215,21 +244,45 @@ void HTMLOptGroupElement::childrenChanged(const ChildChange& change)
 void HTMLOptGroupElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
     HTMLElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
-    recalcSelectOptions();
 
     if (name == disabledAttr) {
-        bool newDisabled = !newValue.isNull();
-        if (m_isDisabled != newDisabled) {
-            Style::PseudoClassChangeInvalidation disabledInvalidation(*this, { { CSSSelector::PseudoClass::Disabled, newDisabled }, { CSSSelector::PseudoClass::Enabled, !newDisabled } });
+        parseDisabledAttribute(newValue);
+        return;
+    }
 
-            Vector<Style::PseudoClassChangeInvalidation> optionInvalidation;
-            for (Ref descendant : descendantsOfType<HTMLOptionElement>(*this))
-                optionInvalidation.append({ descendant, { { CSSSelector::PseudoClass::Disabled, newDisabled }, { CSSSelector::PseudoClass::Enabled, !newDisabled } } });
+    recalcSelectOptions();
 
-            m_isDisabled = newDisabled;
-        }
-    } else if (name == labelAttr)
+    if (name == labelAttr)
         invalidateShadowTree();
+}
+
+void HTMLOptGroupElement::legendElementChanged()
+{
+    recalcSelectOptions();
+    invalidateShadowTree();
+}
+
+void HTMLOptGroupElement::parseDisabledAttribute(const AtomString& value)
+{
+    bool newDisabled = !value.isNull();
+    if (m_isDisabled == newDisabled)
+        return;
+
+    RefPtr select = ownerSelectElement();
+    RefPtr oldSelectedOption = select ? select->selectedOptionForSelectedContent() : nullptr;
+    {
+        Style::PseudoClassChangeInvalidation disabledInvalidation(*this, { { CSSSelector::PseudoClass::Disabled, newDisabled }, { CSSSelector::PseudoClass::Enabled, !newDisabled } });
+
+        Vector<Style::PseudoClassChangeInvalidation> optionInvalidation;
+        for (Ref descendant : descendantsOfType<HTMLOptionElement>(*this))
+            optionInvalidation.append({ descendant, { { CSSSelector::PseudoClass::Disabled, newDisabled }, { CSSSelector::PseudoClass::Enabled, !newDisabled } } });
+
+        m_isDisabled = newDisabled;
+    }
+
+    recalcSelectOptions();
+    if (select)
+        select->resetSelectedness(oldSelectedOption.get());
 }
 
 void HTMLOptGroupElement::recalcSelectOptions()
@@ -253,6 +306,15 @@ String HTMLOptGroupElement::groupLabelText() const
         return htmlAwareTextContent(*legend, IncludeAltText::Yes);
 
     return protect(document())->displayStringModifiedByEncoding(attributeWithoutSynchronization(labelAttr)).simplifyWhiteSpace(deprecatedIsSpaceOrNewline);
+}
+
+HTMLOptGroupElement* HTMLOptGroupElement::optGroupForLabel(const Element& element)
+{
+    if (auto* optGroup = dynamicDowncast<HTMLOptGroupElement>(element.shadowHost()); optGroup && optGroup->m_labelContainer == &element)
+        return optGroup;
+    if (auto* optGroup = dynamicDowncast<HTMLOptGroupElement>(element.parentElement()); optGroup && optGroup->legendElement() == &element)
+        return optGroup;
+    return nullptr;
 }
 
 HTMLSelectElement* HTMLOptGroupElement::ownerSelectElement() const

@@ -31,6 +31,7 @@
 #include "WebCookieJar.h"
 #include "WebProcess.h"
 #include <WebCore/Cookie.h>
+#include <wtf/Borrow.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace WebKit {
@@ -51,7 +52,7 @@ bool WebCookieCache::isSupported()
 static String cookiesToString(const Vector<WebCore::Cookie>& cookies)
 {
     StringBuilder cookiesBuilder;
-    for (auto& cookie : cookies) {
+    for (auto& cookie : borrow(cookies)) {
         if (cookie.name.isEmpty())
             continue;
         ASSERT(!cookie.httpOnly);
@@ -59,9 +60,9 @@ static String cookiesToString(const Vector<WebCore::Cookie>& cookies)
             continue;
         if (!cookiesBuilder.isEmpty())
             cookiesBuilder.append("; "_s);
-        cookiesBuilder.append(cookie.name);
+        cookiesBuilder.append(WebCore::CookieUtil::cookieStringForScript(cookie.name));
         cookiesBuilder.append('=');
-        cookiesBuilder.append(cookie.value);
+        cookiesBuilder.append(WebCore::CookieUtil::cookieStringForScript(cookie.value));
     }
     return cookiesBuilder.toString();
 }
@@ -79,7 +80,10 @@ String WebCookieCache::cookiesForDOM(const URL& firstParty, const SameSiteInfo& 
         if (!sendResult.succeeded())
             return { };
 
-        auto& [cookies] = sendResult.reply();
+        auto& [optionalCookies] = sendResult.reply();
+        if (!optionalCookies)
+            return { };
+        auto& cookies = *optionalCookies;
 
         if (hasCacheForHost)
             return cookiesToString(cookies);
@@ -88,7 +92,7 @@ String WebCookieCache::cookiesForDOM(const URL& firstParty, const SameSiteInfo& 
         m_hostsWithInMemoryStorage.add(WTF::move(host));
 
         CheckedRef inMemoryStorageSession = this->inMemoryStorageSession();
-        for (auto& cookie : cookies)
+        for (auto& cookie : borrow(cookies))
             inMemoryStorageSession->setCookie(cookie);
     }
     return protect(inMemoryStorageSession())->cookiesForDOM(firstParty, sameSiteInfo, url, frameID, webPageProxyID, includeSecureCookies, ApplyTrackingPrevention::No, ShouldRelaxThirdPartyCookieBlocking::No, IsKnownCrossSiteTracker::No).first;
@@ -117,7 +121,7 @@ void WebCookieCache::cookiesAdded(const String& host, const Vector<WebCore::Cook
         return;
 
     CheckedRef inMemoryStorageSession = this->inMemoryStorageSession();
-    for (auto& cookie : cookies)
+    for (auto& cookie : borrow(cookies))
         inMemoryStorageSession->setCookie(cookie);
 }
 
@@ -127,7 +131,7 @@ void WebCookieCache::cookiesDeleted(const String& host, const Vector<WebCore::Co
         return;
 
     CheckedRef inMemoryStorageSession = this->inMemoryStorageSession();
-    for (auto& cookie : cookies)
+    for (auto& cookie : borrow(cookies))
         inMemoryStorageSession->deleteCookie(cookie, [] { });
 }
 

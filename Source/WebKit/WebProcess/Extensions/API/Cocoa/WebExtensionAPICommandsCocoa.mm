@@ -45,6 +45,7 @@
 #import "WebFrame.h"
 #import "WebProcess.h"
 #import <WebCore/LocalFrameInlines.h>
+#import <wtf/Borrow.h>
 
 namespace WebKit {
 
@@ -62,7 +63,7 @@ static inline NSArray *toAPI(const Vector<WebExtensionCommandParameters>& comman
 {
     NSMutableArray *result = [NSMutableArray arrayWithCapacity:commands.size()];
 
-    for (auto& command : commands)
+    for (auto& command : borrow(commands))
         [result addObject:toAPI(command)];
 
     return [result copy];
@@ -82,7 +83,7 @@ WebExtensionAPIEvent& WebExtensionAPICommands::onCommand()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/commands/onCommand
 
     if (!m_onCommand)
-        m_onCommand = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::CommandsOnCommand);
+        lazyInitialize(m_onCommand, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::CommandsOnCommand));
 
     return *m_onCommand;
 }
@@ -92,7 +93,7 @@ WebExtensionAPIEvent& WebExtensionAPICommands::onChanged()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/commands/onChanged
 
     if (!m_onChanged)
-        m_onChanged = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::CommandsOnChanged);
+        lazyInitialize(m_onChanged, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::CommandsOnChanged));
 
     return *m_onChanged;
 }
@@ -107,7 +108,7 @@ void WebExtensionContextProxy::dispatchCommandsCommandEvent(const String& identi
     enumerateFramesAndNamespaceObjects([&](auto& frame, auto& namespaceObject) {
         RefPtr coreFrame = frame.coreLocalFrame();
         WebCore::UserGestureIndicator gestureIndicator(WebCore::IsProcessingUserGesture::Yes, protect(coreFrame ? coreFrame->document() : nullptr));
-        namespaceObject.commands().onCommand().invokeListenersWithArgument(nsIdentifier.get(), tab);
+        protect(protect(namespaceObject.commands())->onCommand())->invokeListenersWithArgument(nsIdentifier.get(), tab);
     });
 }
 
@@ -121,7 +122,7 @@ void WebExtensionContextProxy::dispatchCommandsChangedEvent(const String& identi
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
         // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/commands/onChanged
-        namespaceObject.commands().onChanged().invokeListenersWithArgument(changeInfo);
+        protect(protect(namespaceObject.commands())->onChanged())->invokeListenersWithArgument(changeInfo);
     });
 }
 

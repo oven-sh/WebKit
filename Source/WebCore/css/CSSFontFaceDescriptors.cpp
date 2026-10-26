@@ -50,144 +50,144 @@ StyleRuleType CSSFontFaceDescriptors::ruleType() const
 // @font-face 'src'
 String CSSFontFaceDescriptors::src() const
 {
-    return getPropertyValueInternal(CSSPropertySrc);
+    return getPropertyValueInternal(CSSPropertyID::Src);
 }
 
 ExceptionOr<void> CSSFontFaceDescriptors::setSrc(const String& value)
 {
-    return setPropertyInternal(CSSPropertySrc, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::Src, value, IsImportant::No);
 }
 
 // @font-face 'fontFamily'
 String CSSFontFaceDescriptors::fontFamily() const
 {
-    return getPropertyValueInternal(CSSPropertyFontFamily);
+    return getPropertyValueInternal(CSSPropertyID::FontFamily);
 }
 
 ExceptionOr<void> CSSFontFaceDescriptors::setFontFamily(const String& value)
 {
-    return setPropertyInternal(CSSPropertyFontFamily, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::FontFamily, value, IsImportant::No);
 }
 
 // @font-face 'font-style'
 String CSSFontFaceDescriptors::fontStyle() const
 {
-    return getPropertyValueInternal(CSSPropertyFontStyle);
+    return getPropertyValueInternal(CSSPropertyID::FontStyle);
 }
 
 ExceptionOr<void> CSSFontFaceDescriptors::setFontStyle(const String& value)
 {
-    return setPropertyInternal(CSSPropertyFontStyle, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::FontStyle, value, IsImportant::No);
 }
 
 // @font-face 'font-weight'
 String CSSFontFaceDescriptors::fontWeight() const
 {
-    return getPropertyValueInternal(CSSPropertyFontWeight);
+    return getPropertyValueInternal(CSSPropertyID::FontWeight);
 }
 
 ExceptionOr<void> CSSFontFaceDescriptors::setFontWeight(const String& value)
 {
-    return setPropertyInternal(CSSPropertyFontWeight, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::FontWeight, value, IsImportant::No);
 }
 
 // @font-face 'font-stretch'
 String CSSFontFaceDescriptors::fontStretch() const
 {
-    return getPropertyValueInternal(CSSPropertyFontWidth); // NOTE: 'font-stretch' is an alias for 'font-width'.
+    return getPropertyValueInternal(CSSPropertyID::FontWidth); // NOTE: 'font-stretch' is an alias for 'font-width'.
 }
 
 ExceptionOr<void> CSSFontFaceDescriptors::setFontStretch(const String& value)
 {
-    return setPropertyInternal(CSSPropertyFontWidth, value, IsImportant::No); // NOTE: 'font-stretch' is an alias for 'font-width'.
+    return setPropertyInternal(CSSPropertyID::FontWidth, value, IsImportant::No); // NOTE: 'font-stretch' is an alias for 'font-width'.
 }
 
 // @font-face 'font-width'
 String CSSFontFaceDescriptors::fontWidth() const
 {
-    return getPropertyValueInternal(CSSPropertyFontWidth);
+    return getPropertyValueInternal(CSSPropertyID::FontWidth);
 }
 
 ExceptionOr<void> CSSFontFaceDescriptors::setFontWidth(const String& value)
 {
-    return setPropertyInternal(CSSPropertyFontWidth, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::FontWidth, value, IsImportant::No);
 }
 
 // @font-face 'size-adjust'
 String CSSFontFaceDescriptors::sizeAdjust() const
 {
-    return getPropertyValueInternal(CSSPropertySizeAdjust);
+    return getPropertyValueInternal(CSSPropertyID::SizeAdjust);
 }
 
 ExceptionOr<void> CSSFontFaceDescriptors::setSizeAdjust(const String& value)
 {
-    return setPropertyInternal(CSSPropertySizeAdjust, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::SizeAdjust, value, IsImportant::No);
 }
 
 // @font-face 'unicode-range'
 String CSSFontFaceDescriptors::unicodeRange() const
 {
-    return getPropertyValueInternal(CSSPropertyUnicodeRange);
+    return getPropertyValueInternal(CSSPropertyID::UnicodeRange);
 }
 
 ExceptionOr<void> CSSFontFaceDescriptors::setUnicodeRange(const String& value)
 {
-    return setPropertyInternal(CSSPropertyUnicodeRange, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::UnicodeRange, value, IsImportant::No);
 }
 
 // @font-face 'font-feature-settings'
 String CSSFontFaceDescriptors::fontFeatureSettings() const
 {
-    return getPropertyValueInternal(CSSPropertyFontFeatureSettings);
+    return getPropertyValueInternal(CSSPropertyID::FontFeatureSettings);
 }
 
 ExceptionOr<void> CSSFontFaceDescriptors::setFontFeatureSettings(const String& value)
 {
-    return setPropertyInternal(CSSPropertyFontFeatureSettings, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::FontFeatureSettings, value, IsImportant::No);
 }
 
 // @font-face 'font-display'
 String CSSFontFaceDescriptors::fontDisplay() const
 {
-    return getPropertyValueInternal(CSSPropertyFontDisplay);
+    return getPropertyValueInternal(CSSPropertyID::FontDisplay);
 }
 
 ExceptionOr<void> CSSFontFaceDescriptors::setFontDisplay(const String& value)
 {
-    return setPropertyInternal(CSSPropertyFontDisplay, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::FontDisplay, value, IsImportant::No);
 }
 
 // @font-face 'ascent-override'
 String CSSFontFaceDescriptors::ascentOverride() const
 {
-    return getPropertyValueInternal(CSSPropertyAscentOverride);
+    return getPropertyValueInternal(CSSPropertyID::AscentOverride);
 }
 
 ExceptionOr<void> CSSFontFaceDescriptors::setAscentOverride(const String& value)
 {
-    return setPropertyInternal(CSSPropertyAscentOverride, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::AscentOverride, value, IsImportant::No);
 }
 
 // @font-face 'descent-override'
 String CSSFontFaceDescriptors::descentOverride() const
 {
-    return getPropertyValueInternal(CSSPropertyDescentOverride);
+    return getPropertyValueInternal(CSSPropertyID::DescentOverride);
 }
 
 ExceptionOr<void> CSSFontFaceDescriptors::setDescentOverride(const String& value)
 {
-    return setPropertyInternal(CSSPropertyDescentOverride, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::DescentOverride, value, IsImportant::No);
 }
 
 // @font-face 'line-gap-override'
 String CSSFontFaceDescriptors::lineGapOverride() const
 {
-    return getPropertyValueInternal(CSSPropertyLineGapOverride);
+    return getPropertyValueInternal(CSSPropertyID::LineGapOverride);
 }
 
 ExceptionOr<void> CSSFontFaceDescriptors::setLineGapOverride(const String& value)
 {
-    return setPropertyInternal(CSSPropertyLineGapOverride, value, IsImportant::No);
+    return setPropertyInternal(CSSPropertyID::LineGapOverride, value, IsImportant::No);
 }
 
 } // namespace WebCore

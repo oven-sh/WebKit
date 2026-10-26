@@ -127,7 +127,7 @@ unsigned CSSComputedStyleDeclaration::length() const
     if (m_isEmpty)
         return 0;
 
-    Style::Extractor::updateStyleIfNeededForProperty(m_element.get(), CSSPropertyCustom);
+    Style::Extractor::updateStyleIfNeededForProperty(m_element.get(), m_pseudoElementIdentifier, CSSPropertyID::Custom);
 
     CheckedPtr style = protect(element())->computedStyle(m_pseudoElementIdentifier);
     if (!style)
@@ -183,7 +183,7 @@ RefPtr<DeprecatedCSSOMValue> CSSComputedStyleDeclaration::getPropertyCSSValue(co
         return extractor().customPropertyValueDeprecatedCSSOMValue(AtomString { propertyName }, *this);
 
     auto propertyID = cssPropertyID(propertyName);
-    if (!propertyID)
+    if (propertyID == CSSPropertyID::Invalid)
         return nullptr;
 
     return extractor().propertyValueDeprecatedCSSOMValue(propertyID, *this);
@@ -198,7 +198,7 @@ String CSSComputedStyleDeclaration::getPropertyValue(const String& propertyName)
         return extractor().customPropertyValueSerialization(AtomString { propertyName }, CSS::defaultSerializationContext());
 
     auto propertyID = cssPropertyID(propertyName);
-    if (!propertyID)
+    if (propertyID == CSSPropertyID::Invalid)
         return String();
 
     return extractor().propertyValueSerialization(propertyID, CSS::defaultSerializationContext());

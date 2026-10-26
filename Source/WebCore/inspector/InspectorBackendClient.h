@@ -63,6 +63,10 @@ public:
     virtual void highlight() = 0;
     virtual void hideHighlight() = 0;
 
+    // Frame-scoped highlight overlays under Site Isolation; default to the page-wide versions.
+    virtual void highlightFrame(LocalFrame&) { highlight(); }
+    virtual void hideHighlightForFrame(LocalFrame&) { hideHighlight(); }
+
     virtual void showInspectorIndication() { }
     virtual void hideInspectorIndication() { }
 
@@ -75,6 +79,9 @@ public:
     // Tear down any per-frame paint-rect overlay owned by a local root frame that is going away, so
     // it isn't retained past the frame's lifetime. No-op for clients without per-frame overlays.
     virtual void willDestroyFrameOverlays(FrameIdentifier) { }
+
+    virtual void frameDebuggerDidPause(FrameIdentifier) { }
+    virtual void frameDebuggerDidContinue(FrameIdentifier) { }
     virtual unsigned paintRectCount() const { return 0; }
     virtual void didSetSearchingForNode(bool) { }
     virtual void elementSelectionChanged(bool) { }

@@ -141,12 +141,12 @@ public:
 #if ASSERT_ENABLED
     bool isRefCountedWrapper() const override { return true; }
 #endif
-    InternalSettings* NODELETE internalSettings() const { return m_internalSettings.get(); }
+    InternalSettings* LEGACY_NODELETE internalSettings() const { return m_internalSettings.get(); }
 
 private:
     bool isInternalSettingsWrapper() const final { return true; }
 
-    RefPtr<InternalSettings> m_internalSettings;
+    const RefPtr<InternalSettings> m_internalSettings;
 };
 
 ASCIILiteral InternalSettings::supplementName()
@@ -485,10 +485,11 @@ ExceptionOr<bool> InternalSettings::shouldDisplayTrackKind(TrackKind kind)
 
 ExceptionOr<void> InternalSettings::setEditableRegionEnabled(bool enabled)
 {
-    if (!m_page)
+    RefPtr page = m_page;
+    if (!page)
         return Exception { ExceptionCode::InvalidAccessError };
 #if ENABLE(EDITABLE_REGION)
-    m_page->setEditableRegionEnabled(enabled);
+    page->setEditableRegionEnabled(enabled);
 #else
     UNUSED_PARAM(enabled);
 #endif
@@ -583,7 +584,7 @@ ExceptionOr<void> InternalSettings::setAllowedMediaContainerTypes(const String& 
 {
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
-    m_page->settings().setAllowedMediaContainerTypes(types);
+    protect(m_page->settings())->setAllowedMediaContainerTypes(types);
     return { };
 }
 
@@ -591,7 +592,7 @@ ExceptionOr<void> InternalSettings::setAllowedMediaCodecTypes(const String& type
 {
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
-    m_page->settings().setAllowedMediaCodecTypes(types);
+    protect(m_page->settings())->setAllowedMediaCodecTypes(types);
     return { };
 }
 
@@ -599,7 +600,7 @@ ExceptionOr<void> InternalSettings::setAllowedMediaVideoCodecIDs(const String& t
 {
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
-    m_page->settings().setAllowedMediaVideoCodecIDs(types);
+    protect(m_page->settings())->setAllowedMediaVideoCodecIDs(types);
     return { };
 }
 
@@ -607,7 +608,7 @@ ExceptionOr<void> InternalSettings::setAllowedMediaAudioCodecIDs(const String& t
 {
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
-    m_page->settings().setAllowedMediaAudioCodecIDs(types);
+    protect(m_page->settings())->setAllowedMediaAudioCodecIDs(types);
     return { };
 }
 
@@ -615,7 +616,7 @@ ExceptionOr<void> InternalSettings::setAllowedMediaCaptionFormatTypes(const Stri
 {
     if (!m_page)
         return Exception { ExceptionCode::InvalidAccessError };
-    m_page->settings().setAllowedMediaCaptionFormatTypes(types);
+    protect(m_page->settings())->setAllowedMediaCaptionFormatTypes(types);
     return { };
 }
 

@@ -50,13 +50,13 @@
 #endif
 
 namespace WebCore {
+class CoordinatedTileManager;
 class Damage;
 class IntRect;
 class IntSize;
 class GraphicsLayer;
 class GraphicsLayerFactory;
 class NativeImage;
-class SkiaPaintingEngine;
 }
 
 namespace WebKit {
@@ -87,7 +87,7 @@ private:
     void requestCompositionForRenderingUpdate();
 
     // CoordinatedPlatformLayer::Client
-    WebCore::SkiaPaintingEngine& paintingEngine() const LIFETIME_BOUND override { return *m_skiaPaintingEngine.get(); }
+    WebCore::CoordinatedTileManager& tileManager() const LIFETIME_BOUND override { return *m_tileManager; }
     Ref<WebCore::CoordinatedImageBackingStore> imageBackingStore(Ref<WebCore::NativeImage>&&) override;
 
     void attachLayer(WebCore::CoordinatedPlatformLayer&) override;
@@ -125,7 +125,7 @@ private:
 #endif
 #if ENABLE(DAMAGE_TRACKING)
     void resetDamageHistoryForTesting() override;
-    void foreachRegionInDamageHistoryForTesting(Function<void(const WebCore::Region&)>&&) const override;
+    void foreachRegionInDamageHistoryForTesting(NOESCAPE const Function<void(const WebCore::Region&)>&) const override;
 #endif
 #if PLATFORM(GTK)
     void adjustTransientZoom(double, WebCore::FloatPoint, WebCore::FloatPoint) override;
@@ -150,8 +150,8 @@ private:
 #if ENABLE(SCROLLING_THREAD)
     bool m_compositionRequiredInScrollingThread { false };
 #endif
-    RefPtr<ThreadedCompositor> m_compositor;
-    std::unique_ptr<WebCore::SkiaPaintingEngine> m_skiaPaintingEngine;
+    const RefPtr<ThreadedCompositor> m_compositor;
+    std::unique_ptr<WebCore::CoordinatedTileManager> m_tileManager;
     HashMap<uint64_t, Ref<WebCore::CoordinatedImageBackingStore>> m_imageBackingStores;
 
 #if PLATFORM(GTK)

@@ -19,6 +19,9 @@
 #ifndef __UDATPG_H__
 #define __UDATPG_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 #include "unicode/utypes.h"
 #include "unicode/udat.h"
 #include "unicode/uenum.h"

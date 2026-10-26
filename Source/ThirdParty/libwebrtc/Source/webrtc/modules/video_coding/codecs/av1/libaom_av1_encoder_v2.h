@@ -22,17 +22,21 @@
 #include "api/video/resolution.h"
 #include "api/video/video_codec_constants.h"
 #include "api/video/video_frame_buffer.h"
-#include "api/video_codecs/video_codec.h"
 #include "api/video_codecs/video_encoder_factory_interface.h"
 #include "api/video_codecs/video_encoder_interface.h"
+#include "modules/video_coding/utility/reference_buffer_tracker.h"
+#include "modules/video_coding/utility/temporal_layer_rate_tracker.h"
 #include "third_party/libaom/source/libaom/aom/aom_codec.h"
 #include "third_party/libaom/source/libaom/aom/aom_encoder.h"
 #include "third_party/libaom/source/libaom/aom/aom_image.h"
+#include "third_party/libaom/source/libaom/aom/aomcx.h"
 
 namespace webrtc {
 
 class LibaomAv1EncoderV2 : public VideoEncoderInterface {
  public:
+  static VideoEncoderFactoryInterface::Capabilities GetCapabilities();
+
   LibaomAv1EncoderV2() = default;
   ~LibaomAv1EncoderV2() override;
 
@@ -45,16 +49,25 @@ class LibaomAv1EncoderV2 : public VideoEncoderInterface {
               std::vector<FrameEncodeSettings> frame_settings) override;
 
  private:
+  static constexpr int kNumBuffers = 8;
   using aom_img_ptr = std::unique_ptr<aom_image_t, decltype(&aom_img_free)>;
 
-  aom_img_ptr image_to_encode_ = aom_img_ptr(nullptr, aom_img_free);
-  aom_codec_ctx_t ctx_;
-  aom_codec_enc_cfg_t cfg_;
+  aom_svc_params_t GetSvcParams(
+      const VideoFrameBuffer& frame_buffer,
+      const std::vector<FrameEncodeSettings>& frame_settings) const;
 
-  std::optional<VideoCodecMode> current_content_type_;
-  std::array<std::optional<int>, kMaxSpatialLayers> current_effort_level_;
-  int max_number_of_threads_;
-  std::array<std::optional<Resolution>, 8> last_resolution_in_buffer_;
+  aom_img_ptr image_to_encode_ = aom_img_ptr(nullptr, aom_img_free);
+  aom_codec_ctx_t ctx_{};
+  aom_codec_enc_cfg_t cfg_{};
+
+  std::optional<ContentHint> content_type_;
+  std::array<std::optional<int>, kMaxSpatialLayers> effort_level_by_spatial_id_;
+  int max_number_of_threads_ = 0;
+  std::array<std::optional<Resolution>, kNumBuffers> last_resolution_in_buffer_;
+  ReferenceBufferTracker reference_buffer_tracker_{kNumBuffers};
+  // Recreated on every `InitEncode`, since what it has learned only describes
+  // the configuration it was fed.
+  std::unique_ptr<TemporalLayerRateTracker> rate_tracker_;
 };
 
 }  // namespace webrtc

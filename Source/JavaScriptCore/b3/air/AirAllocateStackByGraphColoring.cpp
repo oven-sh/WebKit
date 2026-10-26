@@ -267,7 +267,7 @@ public:
     StackSlot* indexToValue(unsigned index) const { return actions.code().stackSlots()[index]; }
 
     template<typename Func>
-    void forEachActionGroupDescending(BasicBlock* block, const Func& func) const
+    void forEachActionGroupDescending(BasicBlock* block, NOESCAPE const Func& func) const
     {
         auto blockActions = actions.actionsFor(block);
         while (!blockActions.empty()) {
@@ -277,7 +277,7 @@ public:
     }
 
     template<typename Func>
-    static void forEachUseInGroup(ActionGroup group, const Func& func)
+    static void forEachUseInGroup(ActionGroup group, NOESCAPE const Func& func)
     {
         for (const auto& action : group) {
             if (action.kind == StackSlotActions::UseAction)
@@ -286,7 +286,7 @@ public:
     }
 
     template<typename Func>
-    static void forEachDefInGroup(ActionGroup group, const Func& func)
+    static void forEachDefInGroup(ActionGroup group, NOESCAPE const Func& func)
     {
         for (const auto& action : group) {
             if (action.kind != StackSlotActions::UseAction)
@@ -295,7 +295,7 @@ public:
     }
 
     template<typename Func>
-    void forEachUseAtTail(BasicBlock* block, const Func& func) const
+    void forEachUseAtTail(BasicBlock* block, NOESCAPE const Func& func) const
     {
         auto blockActions = actions.actionsFor(block);
         if (blockActions.empty() || blockActions.back().boundary != block->size())
@@ -327,7 +327,7 @@ protected:
             m_remappedStackSlotIndices[i] = i;
     }
 
-    unsigned NODELETE remap(unsigned slotIndex) const
+    unsigned LEGACY_NODELETE remap(unsigned slotIndex) const
     {
         for (;;) {
             unsigned remappedSlotIndex = m_remappedStackSlotIndices[slotIndex];
@@ -337,12 +337,12 @@ protected:
         }
     }
 
-    StackSlot* NODELETE remapStackSlot(StackSlot* slot) const
+    StackSlot* LEGACY_NODELETE remapStackSlot(StackSlot* slot) const
     {
         return m_code.stackSlots()[remap(slot->index())];
     }
 
-    bool NODELETE isRemappedSlotIndex(unsigned slotIndex) const
+    bool LEGACY_NODELETE isRemappedSlotIndex(unsigned slotIndex) const
     {
         return m_remappedStackSlotIndices[slotIndex] != slotIndex;
     };

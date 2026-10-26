@@ -29,6 +29,7 @@
 #include "FontCascade.h"
 #include "FontCascadeCache.h"
 #include "FontCascadeFonts.h"
+#include "InlineFormattingContext.h"
 #include "InlineFormattingUtils.h"
 #include "FontCascadeInlines.h"
 #include "InlineSoftLineBreakItem.h"
@@ -88,7 +89,7 @@ static unsigned moveToNextBreakablePosition(unsigned startPosition, CachedLineBr
     return textLength - startPosition;
 }
 
-static inline bool NODELETE isTextOrLineBreak(const Box& layoutBox)
+static inline bool LEGACY_NODELETE isTextOrLineBreak(const Box& layoutBox)
 {
     return layoutBox.isInFlow() && (layoutBox.isInlineTextBox() || (layoutBox.isLineBreakBox() && !layoutBox.isWordBreakOpportunity()));
 }
@@ -175,7 +176,7 @@ void InlineItemsBuilder::build(InlineItemPosition startPosition)
 #endif
 }
 
-static bool isNonReplacedInlineBlock(const Box& layoutBox)
+static bool LEGACY_NODELETE isNonReplacedInlineBlock(const Box& layoutBox)
 {
     // inline-block (InlineFlowRoot) is the inline-level block container 'white-space-trim' applies to; it already
     // implies isAtomicInlineBox(). A replaced box or iframe may carry InlineFlowRoot display but is not a block container.
@@ -215,7 +216,7 @@ void InlineItemsBuilder::adjustInlineItemsForWhiteSpaceTrim(InlineItemList& inli
         for (auto candidate : discardBeforeCandidates)
             itemsToDiscard.quickSet(candidate);
         hasItemsToDiscard |= !discardBeforeCandidates.isEmpty();
-        discardBeforeCandidates.clear();
+        discardBeforeCandidates.shrink(0);
     };
 
     for (size_t index = 0; index < inlineItemList.size(); ++index) {
@@ -260,13 +261,13 @@ void InlineItemsBuilder::adjustInlineItemsForWhiteSpaceTrim(InlineItemList& inli
                     itemsToDiscard.quickSet(candidate);
                 hasItemsToDiscard |= !discardBeforeCandidates.isEmpty();
             }
-            discardBeforeCandidates.clear();
+            discardBeforeCandidates.shrink(0);
             discardAfterActive = whiteSpaceTrim.contains(Style::WhiteSpaceTrimValue::DiscardAfter);
             continue;
         }
         // Any other item is real content and ends both adjacencies.
         discardAfterActive = false;
-        discardBeforeCandidates.clear();
+        discardBeforeCandidates.shrink(0);
     }
     if (!hasItemsToDiscard)
         return;
@@ -314,7 +315,7 @@ void InlineItemsBuilder::computeInlineBoxBoundaryTextSpacings(const InlineItemLi
         auto start = inlineTextItem->start();
         auto length = inlineTextItem->length();
         CheckedRef inlineTextBox = inlineTextItem->inlineTextBox();
-        auto content = inlineTextBox->content().substring(start, length);
+        auto content = StringView { inlineTextBox->content() }.substring(start, length);
         if (!processInlineBoxBoundary || !lastCharacterFromPreviousRun) {
             lastCharacterFromPreviousRun = TextUtil::lastBaseCharacterFromText(content);
             lastCharacterDepth = currentCharacterDepth;
@@ -338,7 +339,7 @@ void InlineItemsBuilder::computeInlineBoxBoundaryTextSpacings(const InlineItemLi
         inlineContentCache().setInlineBoxBoundaryTextSpacings(WTF::move(spacings));
 }
 
-static bool NODELETE requiresVisualReordering(const Box& layoutBox)
+static bool LEGACY_NODELETE requiresVisualReordering(const Box& layoutBox)
 {
     if (auto* inlineTextBox = dynamicDowncast<InlineTextBox>(layoutBox))
         return inlineTextBox->hasStrongDirectionalityContent();
@@ -349,7 +350,7 @@ static bool NODELETE requiresVisualReordering(const Box& layoutBox)
     return false;
 }
 
-static inline bool NODELETE isInlineBoxWithInlineContent(const Box& layoutBox)
+static inline bool LEGACY_NODELETE isInlineBoxWithInlineContent(const Box& layoutBox)
 {
     return layoutBox.isInlineBox() && !layoutBox.isLineBreakBox() && !layoutBox.isOutOfFlowPositioned();
 }
@@ -471,7 +472,7 @@ void InlineItemsBuilder::collectInlineItems(InlineItemList& inlineItemList, Inli
             m_hasTextAndLineBreakOnlyContent &= (isInlineBoxWithInlineContent(layoutBox) || isTextOrLineBreak(layoutBox));
             if (layoutBox->isOutOfFlowPositioned())
                 inlineItemList.append({ layoutBox, InlineItem::Type::OutOfFlow });
-            else if (CheckedPtr inlineTextBox = dynamicDowncast<InlineTextBox>(layoutBox.get()))
+            else if (CheckedPtr inlineTextBox = dynamicDowncast<InlineTextBox>(layoutBox))
                 handleTextContent(*inlineTextBox, inlineItemList, partialContentOffset(*inlineTextBox));
             else if (layoutBox->isAtomicInlineBox() || layoutBox->isLineBreakBox())
                 handleInlineLevelBox(layoutBox, inlineItemList);
@@ -685,7 +686,7 @@ static inline void buildBidiParagraph(const Style::ComputedStyle& rootStyle, con
         if (isBidiParagraphSeparator())
             handleBidiParagraphStart(paragraphContentBuilder, inlineItemOffsetList, bidiContextStack);
         else if (inlineItem.isText() || inlineItem.isSoftLineBreak()) {
-            CheckedPtr inlineTextBox = dynamicDowncast<InlineTextBox>(layoutBox.get());
+            CheckedPtr inlineTextBox = dynamicDowncast<InlineTextBox>(layoutBox);
             auto mayAppendTextContentAsOneEntry = inlineTextBox && !TextUtil::shouldPreserveNewline(*inlineTextBox);
             if (mayAppendTextContentAsOneEntry) {
                 // Append the entire InlineTextBox content and keep track of individual inline item positions as we process them.

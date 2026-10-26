@@ -24,6 +24,7 @@
 #include "TestMain.h"
 #include <WebKitWebExtensionInternal.h>
 #include <wtf/HashMap.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringHash.h>
@@ -31,7 +32,12 @@
 
 static GRefPtr<GBytes> createGBytes(const gchar* string)
 {
-    return adoptGRef(g_bytes_new_static(string, strlen(string)));
+    return gBytesNewStatic(unsafeSpan(string));
+}
+
+static GRefPtr<GBytes> createGBytes(const UTF8CString& string)
+{
+    return gBytesNew(string.span());
 }
 
 static void testContentScriptsParsing(Test* test, gconstpointer)
@@ -39,7 +45,7 @@ static void testContentScriptsParsing(Test* test, gconstpointer)
     GUniqueOutPtr<GError> error;
     auto parseExtensionManifest = [&](const gchar* contentScripts) {
         auto manifestString = makeString("{ \"manifest_version\": 2, \"name\": \"Test\", \"description\": \"Test\", \"version\": \"1.0\", \"content_scripts\": "_s, String::fromUTF8(contentScripts), " }"_s);
-        GRefPtr extension = adoptGRef(webkitWebExtensionCreate({ { "manifest.json"_s, createGBytes(manifestString.utf8().legacyCStringPointer()) } }, &error.outPtr()));
+        GRefPtr extension = adoptGRef(webkitWebExtensionCreate({ { "manifest.json"_s, createGBytes(manifestString.utf8()) } }, &error.outPtr()));
         test->assertObjectIsDeletedWhenTestFinishes(G_OBJECT(extension.get()));
         return extension;
     };
@@ -309,12 +315,45 @@ static void testLoadBackgroundContentWithoutController(Test* test, gconstpointer
     g_main_loop_run(mainLoop.get());
 }
 
+static void testBaseURI(Test* test, gconstpointer)
+{
+    GUniqueOutPtr<GError> error;
+    auto parseExtensionManifest = [&](const gchar* manifestString) {
+        GRefPtr extension = adoptGRef(webkitWebExtensionCreate({ { "manifest.json"_s, createGBytes(manifestString) } }, &error.outPtr()));
+        test->assertObjectIsDeletedWhenTestFinishes(G_OBJECT(extension.get()));
+        return extension;
+    };
+
+    GRefPtr<WebKitWebExtension> extension = parseExtensionManifest("{ \"options_page\": \"options.html\", \"manifest_version\": 3, \"name\": \"Test\", \"description\": \"Test\", \"version\": \"1.0\", \"browser_url_overrides\": { \"newtab\": \"newtab.html\" } }");
+    g_assert_no_error(error.get());
+    GRefPtr<WebKitWebExtensionContext> context = adoptGRef(webkit_web_extension_context_new_for_extension(extension.get(), &error.outPtr()));
+    test->assertObjectIsDeletedWhenTestFinishes(G_OBJECT(context.get()));
+    g_assert_no_error(error.get());
+
+    GUniquePtr<char> optionsURI(g_strconcat(webkit_web_extension_context_get_base_uri(context.get()), "options.html", nullptr));
+    g_assert_cmpstr(webkit_web_extension_context_get_options_page_uri(context.get()), ==, optionsURI.get());
+
+    GUniquePtr<char> newTabPageURI(g_strconcat(webkit_web_extension_context_get_base_uri(context.get()), "newtab.html", nullptr));
+    g_assert_cmpstr(webkit_web_extension_context_get_override_new_tab_page_uri(context.get()), ==, newTabPageURI.get());
+
+    webkit_web_extension_match_pattern_register_custom_url_scheme("test-extension");
+    webkit_web_extension_context_set_base_uri(context.get(), "test-extension://aaabbbcccddd");
+    optionsURI.reset(g_strconcat(webkit_web_extension_context_get_base_uri(context.get()), "options.html", nullptr));
+    g_assert_cmpstr(optionsURI.get(), ==, "test-extension://aaabbbcccddd/options.html");
+    g_assert_cmpstr(webkit_web_extension_context_get_options_page_uri(context.get()), ==, optionsURI.get());
+
+    newTabPageURI.reset(g_strconcat(webkit_web_extension_context_get_base_uri(context.get()), "newtab.html", nullptr));
+    g_assert_cmpstr(newTabPageURI.get(), ==, "test-extension://aaabbbcccddd/newtab.html");
+    g_assert_cmpstr(webkit_web_extension_context_get_override_new_tab_page_uri(context.get()), ==, newTabPageURI.get());
+}
+
 void beforeAll()
 {
     Test::add("WebKitWebExtensionContext", "content-scripts-parsing", testContentScriptsParsing);
     Test::add("WebKitWebExtensionContext", "options-page-uri-parsing", testOptionsPageURIParsing);
     Test::add("WebKitWebExtensionContext", "uri-overrides-parsing", testURIOverridesParsing);
     Test::add("WebKitWebExtensionContext", "load-background-content-without-controller", testLoadBackgroundContentWithoutController);
+    Test::add("WebKitWebExtensionContext", "base-uri", testBaseURI);
 
     // Some code in WebExtensionContext increases the amount of time allotted to a particular process
     // when running in the Test Runner. Set a consistent Program Name (we can't set an Application ID since the Test Runner doesn't use GApplication)

@@ -86,7 +86,8 @@ EventTarget::~EventTarget()
 
 WebCoreOpaqueRoot EventTarget::opaqueRoot() const
 {
-    return WebCoreOpaqueRoot { const_cast<EventTarget*>(this) };
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return WebCoreOpaqueRoot { const_cast<EventTarget*>(this) };
 }
 
 bool EventTarget::isPaymentRequest() const
@@ -127,7 +128,7 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
     if (RefPtr signal = options.signal) {
         signal->addAlgorithm([weakThis = WeakPtr { *this }, eventType, listener = WeakPtr { listener }, capture = options.capture](JSC::JSValue) {
             if (weakThis && listener)
-                Ref { *weakThis }->removeEventListener(eventType, *listener, { .capture = capture });
+                Ref { *weakThis }->removeEventListener(eventType, *protect(listener), { .capture = capture });
         });
     }
 

@@ -30,9 +30,9 @@ StylePropertyShorthand transitionShorthandForParsing()
     // Similar to animations, we have property after timing-function and delay after
     // duration.
     static constexpr std::array transitionProperties = {
-        CSSPropertyTransitionDuration, CSSPropertyTransitionTimingFunction,
-        CSSPropertyTransitionDelay, CSSPropertyTransitionBehavior, CSSPropertyTransitionProperty };
-    return StylePropertyShorthand(CSSPropertyTransition, std::span { transitionProperties });
+        CSSPropertyID::TransitionDuration, CSSPropertyID::TransitionTimingFunction,
+        CSSPropertyID::TransitionDelay, CSSPropertyID::TransitionBehavior, CSSPropertyID::TransitionProperty };
+    return StylePropertyShorthand(CSSPropertyID::Transition, std::span { transitionProperties });
 }
 
 unsigned indexOfShorthandForLonghand(CSSPropertyID shorthandID, const StylePropertyShorthandVector& shorthands)

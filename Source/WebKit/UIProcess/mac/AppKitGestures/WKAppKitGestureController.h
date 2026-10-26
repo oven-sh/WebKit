@@ -37,9 +37,9 @@
 
 namespace WebCore {
 class Color;
+class CornerRadii;
 class FloatQuad;
 class IntPoint;
-class IntSize;
 }
 
 namespace WebKit {
@@ -64,20 +64,24 @@ NS_SWIFT_UI_ACTOR
 - (void)beginSuppressingSingleClickGestureForTextSelection;
 - (void)endSuppressingSingleClickGestureForTextSelection;
 - (NSGestureRecognizer *)activeDragGestureRecognizer;
+- (void)didReceiveDragStart;
 - (void)setGestureDraggingSession:(NSDraggingSession *)session;
 - (void)clearGestureDragState;
 - (void)setTextSelectionDragGesture:(NSGestureRecognizer *)gesture completionHandler:(void (^)(NSDraggingSession *))completionHandler;
 - (void)positionInformationDidChange:(const WebKit::InteractionInformationAtPosition&)info;
 - (void)didCommitLoadForMainFrame;
 - (void)didEndSyntheticMomentumScrolling;
+- (void)transformGestureWasNotHandledByContent;
 - (void)reset;
+
+@property (nonatomic, readonly) BOOL everMagnifiedDuringCurrentGesture;
 
 #if ENABLE(TWO_PHASE_CLICKS)
 
 @property (nonatomic, readonly, getter=isPotentialClickInProgress) BOOL potentialClickInProgress;
 
 #if !__has_feature(modules)
-- (void)didGetClickHighlightForRequest:(WebKit::ClickIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads topLeftRadius:(const WebCore::IntSize&)topLeftRadius topRightRadius:(const WebCore::IntSize&)topRightRadius bottomLeftRadius:(const WebCore::IntSize&)bottomLeftRadius bottomRightRadius:(const WebCore::IntSize&)bottomRightRadius nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling;
+- (void)didGetClickHighlightForRequest:(WebKit::ClickIdentifier)requestID color:(const WebCore::Color&)color quads:(const Vector<WebCore::FloatQuad>&)highlightedQuads cornerRadii:(WebCore::CornerRadii&&)cornerRadii nodeHasBuiltInClickHandling:(BOOL)nodeHasBuiltInClickHandling;
 - (void)disableDoubleClickGesturesDuringClickIfNecessary:(WebKit::ClickIdentifier)requestID;
 - (void)commitPotentialClickFailed;
 - (void)didCompleteSyntheticClick;
@@ -104,6 +108,7 @@ NS_SWIFT_UI_ACTOR
 - (void)setUpPanGestureRecognizer;
 - (void)setUpDOMDoubleClickGestureRecognizer;
 - (void)resetDOMDoubleClickGestureRecognizer;
+- (BOOL)takeCompletedDOMDoubleClick;
 - (WKDeferringGestureRecognizer *)makeImageAnalysisDeferringGestureRecognizerWithName:(NSString *)name;
 
 - (NSPoint)panVelocityInView:(nullable NSView *)view;

@@ -35,6 +35,7 @@
 #include "RenderBlockFlowInlines.h"
 #include "RenderStyleConstants.h"
 #include "RenderBoxInlines.h"
+#include "RenderElementInlines.h"
 #include "RenderLayoutState.h"
 #include "RenderObjectInlines.h"
 #include "TextBoxTrimmer.h"
@@ -91,6 +92,13 @@ void layoutWithFormattingContextForBox(const Layout::ElementBox& box, std::optio
     layoutRendererAndUpdateBoxGeometry(box, renderer.get(), overridingBorderBoxLogicalWidth, overridingBorderBoxLogicalHeight, containingBlockInlineSize, layoutState);
 }
 
+static void updateGridItemBoxGeometry(const Layout::ElementBox& box, LayoutUnit gridAreaInlineSize, Layout::LayoutState& layoutState)
+{
+    ASSERT(box.isGridItem());
+    auto updater = BoxGeometryUpdater { layoutState, rootLayoutBox(box) };
+    updater.updateBoxGeometryAfterIntegrationLayout(box, gridAreaInlineSize);
+}
+
 void layoutGridItemWithFormattingContext(const Layout::ElementBox& box, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight, LayoutUnit gridAreaInlineSize, Layout::LayoutState& layoutState)
 {
     ASSERT(box.isGridItem());
@@ -100,7 +108,8 @@ void layoutGridItemWithFormattingContext(const Layout::ElementBox& box, std::opt
     // descendants resolve percentage/calc sizes against it during layout, and resolve the item's own geometry
     // against it below rather than against the grid container's content box.
     renderer->setGridAreaContentLogicalWidth(gridAreaInlineSize);
-    layoutRendererAndUpdateBoxGeometry(box, renderer.get(), overridingBorderBoxLogicalWidth, overridingBorderBoxLogicalHeight, gridAreaInlineSize, layoutState);
+    layoutRendererWithOverridingBorderBoxSize(renderer.get(), overridingBorderBoxLogicalWidth, overridingBorderBoxLogicalHeight);
+    updateGridItemBoxGeometry(box, gridAreaInlineSize, layoutState);
     renderer->clearGridAreaContentSize();
 }
 
@@ -157,12 +166,22 @@ static inline void populateIFCWithNewlyPlacedFloats(auto& blockRenderer, auto& p
         auto shapeOutsideInfo = floatingObject->renderer()->shapeOutsideInfo();
         RefPtr shape = shapeOutsideInfo ? &shapeOutsideInfo->computedShape() : nullptr;
 
-        auto usedPosition = Style::ComputedStyle::usedFloat(*floatingObject->renderer()) == UsedFloat::Left ? Layout::PlacedFloats::Item::Position::Start : Layout::PlacedFloats::Item::Position::End;
+        auto usedPosition = floatingObject->renderer()->usedStyle().floating() == UsedFloat::Left ? Layout::PlacedFloats::Item::Position::Start : Layout::PlacedFloats::Item::Position::End;
         placedFloats.add({ usedPosition, boxGeometry, borderBoxTopLeft, WTF::move(shape) });
     }
 }
 
-static inline void NODELETE updateRenderTreeLineClampBeforeLayout(auto& inlineLayoutState, auto& renderTreeLayoutState)
+static inline size_t LEGACY_NODELETE remainingLinesForLineClamp(auto& inlineLayoutState)
+{
+    // The lines we have already put on the parent's own lines (and in its earlier nested blocks) are part of the clamp's
+    // budget, and the nested block has to lay out within what is left of it. A block level sibling gets this from
+    // LineClampUpdater, which drops each preceding sibling's line count from the budget as it goes.
+    auto maximumLines = inlineLayoutState.parentBlockLayoutState().lineClamp()->maximumLines;
+    auto lineCount = inlineLayoutState.lineCountWithInlineContentIncludingNestedBlocks();
+    return maximumLines > lineCount ? maximumLines - lineCount : 0;
+}
+
+static inline void updateRenderTreeLineClampBeforeLayout(auto& inlineLayoutState, auto& renderTreeLayoutState)
 {
     auto& parentBlockLayoutState = inlineLayoutState.parentBlockLayoutState();
 
@@ -178,16 +197,11 @@ static inline void NODELETE updateRenderTreeLineClampBeforeLayout(auto& inlineLa
         return;
     }
 
-    // The lines we have already put on the parent's own lines are part of the clamp's budget, and the nested block
-    // has to lay out within what is left of it. A block level sibling gets this from LineClampUpdater, which drops
-    // each preceding sibling's line count from the budget as it goes.
-    if (auto renderTreeLineClamp = renderTreeLayoutState.lineClamp()) {
-        auto maximumLines = renderTreeLineClamp->maximumLines;
-        renderTreeLayoutState.setLineClamp(RenderLayoutState::LineClamp { maximumLines - std::min(maximumLines, currentLineCount), renderTreeLineClamp->shouldDiscardOverflow });
-    }
+    if (auto renderTreeLineClamp = renderTreeLayoutState.lineClamp())
+        renderTreeLayoutState.setLineClamp(RenderLayoutState::LineClamp { remainingLinesForLineClamp(inlineLayoutState), renderTreeLineClamp->shouldDiscardOverflow, renderTreeLineClamp->clampAfterBox, renderTreeLineClamp->isStableTextWrap, renderTreeLineClamp->hasConstrainedTextWrapContent });
 }
 
-static inline void NODELETE updateIFCLineClampAfterLayout(auto& inlineLayoutState, auto& renderTreeLayoutState, const RenderBox& blockRenderer)
+static inline void LEGACY_NODELETE updateIFCLineClampAfterLayout(auto& inlineLayoutState, auto& renderTreeLayoutState)
 {
     auto& parentBlockLayoutState = inlineLayoutState.parentBlockLayoutState();
 
@@ -202,11 +216,12 @@ static inline void NODELETE updateIFCLineClampAfterLayout(auto& inlineLayoutStat
         return;
     }
 
-    // The lines the nested block just produced count towards the clamp for the lines that follow it, the way a block
-    // level sibling's do.
-    CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(blockRenderer);
-    if (blockFlow && blockFlow->childrenInline())
-        inlineLayoutState.setLineCountWithInlineContentIncludingNestedBlocks(currentLineCount + blockFlow->lineCount());
+    // The lines the nested block just produced (what it took off the budget it was given, including the lines of its own
+    // nested blocks) count towards the clamp for the lines that follow it, the way a block level sibling's do.
+    if (auto renderTreeLineClamp = renderTreeLayoutState.lineClamp()) {
+        auto remainingLines = remainingLinesForLineClamp(inlineLayoutState);
+        inlineLayoutState.setLineCountWithInlineContentIncludingNestedBlocks(currentLineCount + remainingLines - std::min(remainingLines, renderTreeLineClamp->maximumLines));
+    }
 }
 
 void layoutWithFormattingContextForBlockInInline(const Layout::ElementBox& block, LayoutPoint blockLineLogicalTopLeft, Layout::InlineLayoutState& inlineLayoutState, Layout::LayoutState& layoutState)
@@ -259,7 +274,7 @@ void layoutWithFormattingContextForBlockInInline(const Layout::ElementBox& block
         }
         blockGeometry.setTopLeft(LayoutPoint { blockGeometry.marginStart(), borderBoxTop });
 
-        updateIFCLineClampAfterLayout(inlineLayoutState, renderTreeLayoutState, blockRenderer.get());
+        updateIFCLineClampAfterLayout(inlineLayoutState, renderTreeLayoutState);
         // Floats are positioned relative to their containing block's border box, which sits at borderBoxTop within the line (see setTopLeft above) and not at the line's top left.
         populateIFCWithNewlyPlacedFloats(blockRenderer.get(), placedFloats, blockLineLogicalTopLeft + LayoutSize { blockGeometry.marginStart(), borderBoxTop });
         auto marginState = Layout::IntegrationUtils::toMarginState(positionAndMargin.marginInfo);
@@ -299,6 +314,7 @@ LayoutUnit formattingContextRootLogicalWidthForType(const Layout::ElementBox& bo
         return renderer->minContentLogicalWidthContribution();
     case LogicalWidthType::MaxContent:
     case LogicalWidthType::MinContent: {
+        auto intrinsicWidthComputationScope = IntrinsicLogicalWidthComputationScope { renderer->view().frameView().layoutContext(), renderer.get() };
         auto [minimunLogicalWidth, maximumLogicalWidth] = renderer->computeIntrinsicLogicalWidths();
         return logicalWidthType == LogicalWidthType::MaxContent ? maximumLogicalWidth : minimunLogicalWidth;
     }

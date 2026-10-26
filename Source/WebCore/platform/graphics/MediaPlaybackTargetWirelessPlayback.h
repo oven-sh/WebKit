@@ -46,7 +46,7 @@ public:
 
     WEBCORE_EXPORT std::optional<WTF::UUID> identifier() const;
 
-    MediaDeviceRoute* NODELETE route() const;
+    MediaDeviceRoute* LEGACY_NODELETE route() const;
 
 private:
     MediaPlaybackTargetWirelessPlayback(RefPtr<MediaDeviceRoute>&&, bool hasActiveRoute);
@@ -58,7 +58,7 @@ private:
     bool supportsRemoteVideoPlayback() const final { return hasActiveRoute(); }
     bool operator==(const MediaPlaybackTarget&) const final;
 
-    RefPtr<MediaDeviceRoute> m_route;
+    const RefPtr<MediaDeviceRoute> m_route;
     bool m_hasActiveRoute;
 };
 

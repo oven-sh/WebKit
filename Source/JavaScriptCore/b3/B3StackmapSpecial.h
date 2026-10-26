@@ -63,12 +63,12 @@ protected:
     void forEachArgImpl(
         unsigned numIgnoredB3Args, unsigned numIgnoredAirArgs,
         Air::Inst&, RoleMode, std::optional<unsigned> firstRecoverableIndex,
-        const ScopedLambda<Air::Inst::EachArgCallback>&, std::optional<Width> optionalDefArgWidth);
+        NOESCAPE const ScopedLambda<Air::Inst::EachArgCallback>&, std::optional<Width> optionalDefArgWidth);
 
     bool isValidImpl(
         unsigned numIgnoredB3Args, unsigned numIgnoredAirArgs,
         Air::Inst&);
-    bool NODELETE admitsStackImpl(
+    bool LEGACY_NODELETE admitsStackImpl(
         unsigned numIgnoredB3Args, unsigned numIgnoredAirArgs,
         Air::Inst&, unsigned argIndex);
 
@@ -77,7 +77,7 @@ protected:
         Air::GenerationContext&, unsigned numIgnoredB3Args, unsigned numIgnoredAirArgs, Air::Inst&);
 
     static bool isArgValidForType(const Air::Arg&, Type);
-    static bool NODELETE isArgValidForRep(Air::Code&, const Air::Arg&, const ValueRep&);
+    static bool LEGACY_NODELETE isArgValidForRep(Air::Code&, const Air::Arg&, const ValueRep&);
     static ValueRep repForArg(Air::Code&, const Air::Arg&);
 };
 

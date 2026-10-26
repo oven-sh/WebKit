@@ -27,11 +27,13 @@
 
 #if ENABLE(B3_JIT)
 
+#include <wtf/text/UTF8CStringView.h>
+
 namespace JSC { namespace B3 { namespace Air {
 
 class Code;
 
-JS_EXPORT_PRIVATE void validate(Code&, const char* dumpBefore = nullptr);
+JS_EXPORT_PRIVATE void validate(Code&, UTF8CStringView dumpBefore = { });
 
 } } } // namespace JSC::B3::Air
 

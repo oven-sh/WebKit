@@ -118,12 +118,12 @@ private:
     void finishBlobLoading();
 
     // ActiveDOMObject API
-    bool NODELETE virtualHasPendingActivity() const final;
+    bool LEGACY_NODELETE virtualHasPendingActivity() const final;
 
     class BlobLoader final : public RefCounted<BlobLoader>, public FetchLoaderClient {
         WTF_MAKE_TZONE_ALLOCATED(BlobLoader);
     public:
-        static Ref<BlobLoader> create(FetchBodyOwner&);
+        static Ref<BlobLoader> LEGACY_NODELETE create(FetchBodyOwner&);
         ~BlobLoader();
 
         // FetchLoaderClient API

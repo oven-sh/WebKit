@@ -1334,6 +1334,15 @@ TextStream& operator<<(TextStream& ts, Visibility visibility)
     return ts;
 }
 
+TextStream& operator<<(TextStream& ts, UsedVisibility visibility)
+{
+    switch (visibility) {
+    case UsedVisibility::Visible: ts << "visible"_s; break;
+    case UsedVisibility::Hidden: ts << "hidden"_s; break;
+    }
+    return ts;
+}
+
 TextStream& operator<<(TextStream& ts, WhiteSpace whiteSpace)
 {
     switch (whiteSpace) {
@@ -1402,11 +1411,14 @@ TextStream& operator<<(TextStream& ts, ContainIntrinsicSizeType containIntrinsic
 TextStream& operator<<(TextStream& ts, OverflowContinue overflowContinue)
 {
     switch (overflowContinue) {
-    case OverflowContinue::Auto:
-        ts << "auto"_s;
+    case OverflowContinue::Normal:
+        ts << "normal"_s;
         break;
     case OverflowContinue::Discard:
         ts << "discard"_s;
+        break;
+    case OverflowContinue::Collapse:
+        ts << "collapse"_s;
         break;
     case OverflowContinue::WebkitLegacy:
         ts << "-webkit-legacy"_s;

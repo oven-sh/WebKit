@@ -90,7 +90,7 @@ public:
         return tryCreateUninitializedRestricted(scope, nullptr, structure, initialLength);
     }
 
-    static void NODELETE eagerlyInitializeButterfly(ObjectInitializationScope&, JSArray*, unsigned initialLength);
+    static void LEGACY_NODELETE eagerlyInitializeButterfly(ObjectInitializationScope&, JSArray*, unsigned initialLength);
 
     JS_EXPORT_PRIVATE static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool throwException);
 
@@ -134,6 +134,8 @@ public:
 
     JSArray* fastToSpliced(JSGlobalObject*, CallFrame*, uint64_t length, uint64_t newLength, uint64_t start, uint64_t deleteCount, uint64_t insertCount);
 
+    bool fastSplice(JSGlobalObject*, uint64_t length, uint64_t start, uint64_t deleteCount, std::span<const EncodedJSValue> items);
+
     JSString* fastToString(JSGlobalObject*);
 
     JSArray* fastFlat(JSGlobalObject*, uint64_t depth, uint64_t length);
@@ -152,7 +154,7 @@ public:
     };
 
     template<ShiftCountMode shiftCountMode>
-    bool shiftCount(JSGlobalObject* globalObject, unsigned& startIndex, unsigned count)
+    bool shiftCount(JSGlobalObject* globalObject, unsigned startIndex, unsigned count)
     {
         if constexpr (shiftCountMode == ShiftCountForShift)
             return shiftCountWithAnyIndexingType(globalObject, startIndex, count, shiftThreshold);
@@ -171,7 +173,7 @@ public:
     JS_EXPORT_PRIVATE void copyToArguments(JSGlobalObject*, JSValue* firstElementDest, unsigned offset, unsigned length);
 
     JS_EXPORT_PRIVATE bool isIteratorProtocolFastAndNonObservable();
-    bool NODELETE isToPrimitiveFastAndNonObservable();
+    bool LEGACY_NODELETE isToPrimitiveFastAndNonObservable();
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue, IndexingType);
 
@@ -200,7 +202,7 @@ private:
         return !map || !map->lengthIsReadOnly();
     }
         
-    bool shiftCountWithAnyIndexingType(JSGlobalObject*, unsigned& startIndex, unsigned count, unsigned shiftArrayStorageThreshold);
+    bool shiftCountWithAnyIndexingType(JSGlobalObject*, unsigned startIndex, unsigned count, unsigned shiftArrayStorageThreshold);
     JS_EXPORT_PRIVATE bool shiftCountWithArrayStorage(VM&, unsigned startIndex, unsigned count, ArrayStorage*);
 
     bool unshiftCountWithAnyIndexingType(JSGlobalObject*, unsigned startIndex, unsigned count);
@@ -282,7 +284,7 @@ bool moveArrayElements(JSGlobalObject* globalObject, VM& vm, JSArray* target, un
 }
 
 template<typename T>
-void NODELETE clearElement(T& element)
+void LEGACY_NODELETE clearElement(T& element)
 {
     element.clear();
 }

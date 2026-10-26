@@ -34,6 +34,7 @@
 #include "PlatformWebView.h"
 #include "TestController.h"
 #include <JavaScriptCore/JSCTestRunnerUtils.h>
+#include <JavaScriptCore/JSRetainPtr.h>
 #include <JavaScriptCore/JSStringRefCPP.h>
 #include <WebCore/ResourceLoadObserver.h>
 #include <WebKit/WKBase.h>
@@ -41,7 +42,6 @@
 #include <WebKit/WKBundleBackForwardList.h>
 #include <WebKit/WKBundleFrame.h>
 #include <WebKit/WKBundleFramePrivate.h>
-#include <WebKit/WKBundleNodeHandlePrivate.h>
 #include <WebKit/WKBundlePage.h>
 #include <WebKit/WKBundlePagePrivate.h>
 #include <WebKit/WKBundlePrivate.h>
@@ -394,28 +394,28 @@ void TestRunner::setVirtualWalletBehavior(JSStringRef action, JSStringRef protoc
     }));
 }
 
-JSRetainPtr<JSStringRef>  TestRunner::lastAddedBackgroundFetchIdentifier() const
+RefPtr<OpaqueJSString> TestRunner::lastAddedBackgroundFetchIdentifier() const
 {
     auto identifier = InjectedBundle::singleton().lastAddedBackgroundFetchIdentifier();
-    return WKStringCopyJSString(identifier.get());
+    return adoptRef(WKStringCopyJSString(identifier.get()));
 }
 
-JSRetainPtr<JSStringRef>  TestRunner::lastRemovedBackgroundFetchIdentifier() const
+RefPtr<OpaqueJSString> TestRunner::lastRemovedBackgroundFetchIdentifier() const
 {
     auto identifier = InjectedBundle::singleton().lastRemovedBackgroundFetchIdentifier();
-    return WKStringCopyJSString(identifier.get());
+    return adoptRef(WKStringCopyJSString(identifier.get()));
 }
 
-JSRetainPtr<JSStringRef> TestRunner::lastUpdatedBackgroundFetchIdentifier() const
+RefPtr<OpaqueJSString> TestRunner::lastUpdatedBackgroundFetchIdentifier() const
 {
     auto identifier = InjectedBundle::singleton().lastUpdatedBackgroundFetchIdentifier();
-    return WKStringCopyJSString(identifier.get());
+    return adoptRef(WKStringCopyJSString(identifier.get()));
 }
 
-JSRetainPtr<JSStringRef> TestRunner::backgroundFetchState(JSStringRef identifier)
+RefPtr<OpaqueJSString> TestRunner::backgroundFetchState(JSStringRef identifier)
 {
     auto state = InjectedBundle::singleton().backgroundFetchState(toWK(identifier).get());
-    return WKStringCopyJSString(state.get());
+    return adoptRef(WKStringCopyJSString(state.get()));
 }
 
 void TestRunner::setShouldSwapToEphemeralSessionOnNextNavigation(bool shouldSwap)
@@ -443,14 +443,6 @@ bool TestRunner::isPageBoxVisible(JSContextRef context, int pageIndex)
     auto frame = WKBundleFrameForJavaScriptContext(context);
     auto& injectedBundle = InjectedBundle::singleton();
     return WKBundleIsPageBoxVisible(injectedBundle.bundle(), frame, pageIndex);
-}
-
-void TestRunner::setValueForUser(JSContextRef context, JSValueRef element, JSStringRef value)
-{
-    if (!element || !JSValueIsObject(context, element))
-        return;
-
-    WKBundleNodeHandleSetHTMLInputElementValueForUser(adoptWK(WKBundleNodeHandleCreate(context, const_cast<JSObjectRef>(element))).get(), toWK(value).get());
 }
 
 void TestRunner::setAudioResult(JSContextRef context, JSValueRef data)
@@ -557,10 +549,10 @@ void TestRunner::clearDidReceiveServerRedirectForProvisionalNavigation()
     postSynchronousPageMessage("ClearDidReceiveServerRedirectForProvisionalNavigation");
 }
 
-JSRetainPtr<JSStringRef> TestRunner::lastProvisionalNavigationFailureURL() const
+RefPtr<OpaqueJSString> TestRunner::lastProvisionalNavigationFailureURL() const
 {
     auto url = InjectedBundle::singleton().lastProvisionalNavigationFailureURL();
-    return WKStringCopyJSString(url.get());
+    return adoptRef(WKStringCopyJSString(url.get()));
 }
 
 void TestRunner::setPageVisibility(JSStringRef state)
@@ -746,10 +738,10 @@ void TestRunner::simulateWebNotificationClickForServiceWorkerNotifications()
     InjectedBundle::singleton().postSimulateWebNotificationClickForServiceWorkerNotifications();
 }
 
-JSRetainPtr<JSStringRef> TestRunner::getBackgroundFetchIdentifier()
+RefPtr<OpaqueJSString> TestRunner::getBackgroundFetchIdentifier()
 {
     auto identifier = InjectedBundle::singleton().getBackgroundFetchIdentifier();
-    return WKStringCopyJSString(identifier.get());
+    return adoptRef(WKStringCopyJSString(identifier.get()));
 }
 
 void TestRunner::abortBackgroundFetch(JSStringRef identifier)
@@ -1526,13 +1518,13 @@ void TestRunner::simulatePrivateClickMeasurementSessionRestart()
 void TestRunner::setPrivateClickMeasurementTokenPublicKeyURLForTesting(JSStringRef urlString)
 {
     postSynchronousPageMessage("SetPrivateClickMeasurementTokenPublicKeyURLForTesting",
-        adoptWK(WKURLCreateWithUTF8CString(toWTFString(urlString).utf8().legacyCStringPointer())));
+        toWKURL(toWTFString(urlString)));
 }
 
 void TestRunner::setPrivateClickMeasurementTokenSignatureURLForTesting(JSStringRef urlString)
 {
     postSynchronousPageMessage("SetPrivateClickMeasurementTokenSignatureURLForTesting",
-        adoptWK(WKURLCreateWithUTF8CString(toWTFString(urlString).utf8().legacyCStringPointer())));
+        toWKURL(toWTFString(urlString)));
 }
 
 void TestRunner::setPrivateClickMeasurementAttributionReportURLsForTesting(JSStringRef sourceURLString, JSStringRef destinationURLString)

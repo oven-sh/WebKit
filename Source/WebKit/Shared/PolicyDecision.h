@@ -31,8 +31,9 @@
 #include "SandboxExtension.h"
 #include "SessionState.h"
 #include "WebsitePoliciesData.h"
+#include <WebCore/AgentClusterAssignment.h>
 #include <WebCore/NavigationIdentifier.h>
-#include <WebCore/OriginKeyed.h>
+#include <WebCore/RegistrableDomain.h>
 
 namespace JSC {
 enum class MessageLevel : uint8_t;
@@ -57,7 +58,8 @@ struct PolicyDecision {
     std::optional<PolicyDecisionConsoleMessage> consoleMessage { std::nullopt };
     SafeBrowsingCheckOngoing isSafeBrowsingCheckOngoing { SafeBrowsingCheckOngoing::No };
     RefPtr<FrameState> backForwardFrameState { nullptr };
-    WebCore::OriginKeyed isOriginKeyed { WebCore::OriginKeyed::No };
+    WebCore::AgentClusterAssignment agentClusterAssignment { };
+    std::optional<WebCore::RegistrableDomain> unpartitionedStorageSite { std::nullopt };
 };
 
 } // namespace WebKit

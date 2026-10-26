@@ -58,21 +58,21 @@ typedef HashMap<IDBKeyData, ThreadSafeDataBuffer, DefaultHash<IDBKeyData>, IDBKe
 
 class MemoryObjectStore : public RefCountedAndCanMakeWeakPtr<MemoryObjectStore> {
 public:
-    static Ref<MemoryObjectStore> create(const IDBObjectStoreInfo&);
+    static Ref<MemoryObjectStore> LEGACY_NODELETE create(const IDBObjectStoreInfo&);
 
     ~MemoryObjectStore();
 
     void transactionFinished(MemoryBackingStoreTransaction&);
-    void NODELETE writeTransactionStarted(MemoryBackingStoreTransaction&);
+    void LEGACY_NODELETE writeTransactionStarted(MemoryBackingStoreTransaction&);
     void writeTransactionFinished(MemoryBackingStoreTransaction&);
     void transactionAborted(MemoryBackingStoreTransaction&);
-    MemoryBackingStoreTransaction* NODELETE writeTransaction();
+    MemoryBackingStoreTransaction* LEGACY_NODELETE writeTransaction();
 
     IDBError addIndex(MemoryBackingStoreTransaction&, const IDBIndexInfo&);
     void revertAddIndex(MemoryBackingStoreTransaction&, IDBIndexIdentifier);
     IDBError updateIndexRecordsWithIndexKey(MemoryBackingStoreTransaction&, const IDBIndexInfo&, const IDBKeyData&, const IndexKey&);
     IDBError deleteIndex(MemoryBackingStoreTransaction&, IDBIndexIdentifier);
-    void forEachRecord(Function<void(const IDBKeyData&, const IDBValue&)>&&);
+    void forEachRecord(NOESCAPE const Function<void(const IDBKeyData&, const IDBValue&)>&);
     void deleteAllIndexes(MemoryBackingStoreTransaction&);
     void registerIndex(Ref<MemoryIndex>&&);
 

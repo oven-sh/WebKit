@@ -34,6 +34,7 @@
 #include <gio/gio.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RunLoop.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 
 namespace Inspector {
@@ -74,7 +75,7 @@ void RemoteInspector::start()
             if (GRefPtr<GSocketConnection> connection = adoptGRef(g_socket_client_connect_to_host_finish(G_SOCKET_CLIENT(client), result, &error.outPtr())))
                 inspector->setupConnection(SocketConnection::create(WTF::move(connection), messageHandlers(), inspector));
             else if (!g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_CANCELLED))
-                g_warning("RemoteInspector failed to connect to inspector server at: %s: %s", s_inspectorServerAddress.legacyCStringPointer(), error->message);
+                SAFE_G_WARNING("RemoteInspector failed to connect to inspector server at: %s: %s", s_inspectorServerAddress, error->message);
         }, this);
 }
 
@@ -101,19 +102,19 @@ void RemoteInspector::stopInternal(StopSource)
 const SocketConnection::MessageHandlers& RemoteInspector::messageHandlers()
 {
     static NeverDestroyed<const SocketConnection::MessageHandlers> messageHandlers = SocketConnection::MessageHandlers({
-    { "DidClose", std::pair<CString, SocketConnection::MessageCallback> { { },
+    { "DidClose"_s, std::pair<ASCIICString, SocketConnection::MessageCallback> { { },
         [](SocketConnection&, GVariant*, gpointer userData) {
             auto& inspector = *static_cast<RemoteInspector*>(userData);
             inspector.stop();
         }}
     },
-    { "GetTargetList", std::pair<CString, SocketConnection::MessageCallback> { { },
+    { "GetTargetList"_s, std::pair<ASCIICString, SocketConnection::MessageCallback> { { },
         [](SocketConnection&, GVariant*, gpointer userData) {
             auto& inspector = *static_cast<RemoteInspector*>(userData);
             inspector.receivedGetTargetListMessage();
         }}
     },
-    { "Setup", std::pair<CString, SocketConnection::MessageCallback> { "(t)",
+    { "Setup"_s, std::pair<ASCIICString, SocketConnection::MessageCallback> { "(t)"_s,
         [](SocketConnection&, GVariant* parameters, gpointer userData) {
             auto& inspector = *static_cast<RemoteInspector*>(userData);
             guint64 targetID;
@@ -121,7 +122,7 @@ const SocketConnection::MessageHandlers& RemoteInspector::messageHandlers()
             inspector.receivedSetupMessage(targetID);
         }}
     },
-    { "SendMessageToTarget", std::pair<CString, SocketConnection::MessageCallback> { "(ts)",
+    { "SendMessageToTarget"_s, std::pair<ASCIICString, SocketConnection::MessageCallback> { "(ts)"_s,
         [](SocketConnection&, GVariant* parameters, gpointer userData) {
             auto& inspector = *static_cast<RemoteInspector*>(userData);
             guint64 targetID;
@@ -130,7 +131,7 @@ const SocketConnection::MessageHandlers& RemoteInspector::messageHandlers()
             inspector.receivedDataMessage(targetID, message);
         }}
     },
-    { "FrontendDidClose", std::pair<CString, SocketConnection::MessageCallback> { "(t)",
+    { "FrontendDidClose"_s, std::pair<ASCIICString, SocketConnection::MessageCallback> { "(t)"_s,
         [](SocketConnection&, GVariant* parameters, gpointer userData) {
             auto& inspector = *static_cast<RemoteInspector*>(userData);
             guint64 targetID;
@@ -175,16 +176,16 @@ TargetListing RemoteInspector::listingForInspectionTarget(const RemoteInspection
     if (!target.allowsInspectionByPolicy())
         return nullptr;
 
-    return g_variant_new("(tsssb)", static_cast<guint64>(target.targetIdentifier()),
-        targetDebuggableType(target.type()), target.name().utf8().legacyCStringPointer(),
-        target.type() == RemoteInspectionTarget::Type::JavaScript ? "null" : target.url().utf8().legacyCStringPointer(),
+    return gVariantNew("(tsssb)", static_cast<guint64>(target.targetIdentifier()),
+        targetDebuggableType(target.type()), target.name().utf8(),
+        target.type() == RemoteInspectionTarget::Type::JavaScript ? "null"_s : target.url().utf8(),
         target.hasLocalDebugger());
 }
 
 TargetListing RemoteInspector::listingForAutomationTarget(const RemoteAutomationTarget& target) const
 {
-    return g_variant_new("(tsssb)", static_cast<guint64>(target.targetIdentifier()),
-        "Automation", target.name().utf8().legacyCStringPointer(), "null", target.isPaired());
+    return gVariantNew("(tsssb)", static_cast<guint64>(target.targetIdentifier()),
+        "Automation", target.name().utf8(), "null", target.isPaired());
 }
 
 void RemoteInspector::pushListingsNow()
@@ -201,7 +202,7 @@ void RemoteInspector::pushListingsNow()
         g_variant_builder_add_value(&builder, listing.get());
     g_variant_builder_close(&builder);
     g_variant_builder_add(&builder, "b", m_clientCapabilities && m_clientCapabilities->remoteAutomationAllowed);
-    m_socketConnection->sendMessage("SetTargetList", g_variant_builder_end(&builder));
+    m_socketConnection->sendMessage("SetTargetList"_s, g_variant_builder_end(&builder));
 }
 
 void RemoteInspector::pushListingsSoon()
@@ -235,7 +236,7 @@ void RemoteInspector::sendMessageToRemote(TargetID targetIdentifier, const Strin
     if (!m_socketConnection)
         return;
 
-    m_socketConnection->sendMessage("SendMessageToFrontend", g_variant_new("(ts)", static_cast<guint64>(targetIdentifier), message.utf8().legacyCStringPointer()));
+    m_socketConnection->sendMessage("SendMessageToFrontend"_s, gVariantNew("(ts)", static_cast<guint64>(targetIdentifier), message.utf8()));
 }
 
 void RemoteInspector::receivedGetTargetListMessage()
@@ -283,6 +284,9 @@ void RemoteInspector::setup(TargetID targetIdentifier)
     RemoteControllableTarget* target;
     {
         Locker locker { m_mutex };
+        if (m_targetConnectionMap.contains(targetIdentifier))
+            return;
+
         target = m_targetMap.get(targetIdentifier);
         if (!target)
             return;

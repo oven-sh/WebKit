@@ -74,7 +74,7 @@ public:
     Output(State&);
     ~Output();
 
-    void NODELETE initialize(AbstractHeapRepository&);
+    void LEGACY_NODELETE initialize(AbstractHeapRepository&);
 
     void setFrequency(double value)
     {
@@ -93,7 +93,7 @@ public:
     void applyBlockOrder();
 
     void probeDebugPrint(const String& str, LValue value);
-    LBasicBlock NODELETE appendTo(LBasicBlock, LBasicBlock nextBlock);
+    LBasicBlock LEGACY_NODELETE appendTo(LBasicBlock, LBasicBlock nextBlock);
     void appendTo(LBasicBlock);
 
     void setOrigin(DFG::Node* node) { m_origin = node; }
@@ -103,7 +103,7 @@ public:
 
     B3::SlotBaseValue* lockedStackSlot(uint64_t bytes);
 
-    LValue NODELETE constBool(bool value);
+    LValue LEGACY_NODELETE constBool(bool value);
     LValue constInt32(int32_t value);
 
     LValue alreadyRegisteredWeakPointer(DFG::Graph& graph, JSCell* cell)
@@ -145,7 +145,7 @@ public:
     LValue phi(LType, ValueFromBlock, Params... theRest);
     template<typename VectorType>
     LValue phi(LType, const VectorType&);
-    void NODELETE addIncomingToPhi(LValue phi, ValueFromBlock);
+    void LEGACY_NODELETE addIncomingToPhi(LValue phi, ValueFromBlock);
     template<typename... Params>
     void addIncomingToPhi(LValue phi, ValueFromBlock, Params... theRest);
     template<typename... Params>
@@ -217,6 +217,7 @@ public:
     LValue load(TypedPointer, LType);
     LValue store(LValue, TypedPointer);
     B3::FenceValue* fence(const AbstractHeap* read, const AbstractHeap* write);
+    void memoryMove(LValue destination, LValue source, LValue byteCount, const AbstractHeap* read, const AbstractHeap* write);
 
     LValue load8SignExt32(TypedPointer);
     LValue load8ZeroExt32(TypedPointer);
@@ -405,7 +406,7 @@ public:
     requires (std::is_convertible_v<Args, LValue> && ...)
     LValue callWithoutSideEffects(B3::Type type, Function function, LValue arg1, Args... args)
     {
-        static_assert(!std::is_same<Function, LValue>::value);
+        static_assert(!std::same_as<Function, LValue>);
         return m_block->appendNew<B3::CCallValue>(m_proc, type, origin(), B3::Effects::none(),
             constIntPtr(tagCFunctionPtr<void*, OperationPtrTag>(function)), arg1, args...);
     }
@@ -433,6 +434,18 @@ public:
     template<typename VectorType>
     void switchInstruction(LValue value, const VectorType& cases, LBasicBlock fallThrough, Weight fallThroughWeight)
     {
+        if (value->hasInt()) {
+            LBasicBlock target = fallThrough;
+            for (const SwitchCase& switchCase : cases) {
+                if (switchCase.value()->asInt() == value->asInt()) {
+                    target = switchCase.target();
+                    break;
+                }
+            }
+            jump(target);
+            return;
+        }
+
         B3::SwitchValue* switchValue = m_block->appendNew<B3::SwitchValue>(m_proc, origin(), value);
         switchValue->setFallThrough(B3::FrequentedBlock(fallThrough));
         for (const SwitchCase& switchCase : cases) {

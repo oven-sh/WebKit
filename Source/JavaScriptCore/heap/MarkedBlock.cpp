@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2025 Apple Inc. All rights reserved.
+ * Copyright (C) 2011-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -117,21 +117,18 @@ MarkedBlock::Header::Header(VM& vm, Handle& handle)
 
 MarkedBlock::Header::~Header() = default;
 
-void MarkedBlock::Handle::unsweepWithNoNewlyAllocated()
-{
-    RELEASE_ASSERT(m_isFreeListed);
-    m_isFreeListed = false;
-    m_directory->didFinishUsingBlock(this);
-}
-
 void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatingMode mode)
 {
     Locker locker { blockHeader().m_lock };
     
     if (MarkedBlockInternal::verbose)
         dataLog(RawPointer(this), ": MarkedBlock::Handle::stopAllocating!\n");
-    m_directory->assertIsMutatorOrMutatorIsStopped();
-    ASSERT(!m_directory->isAllocated(this));
+#if ASSERT_ENABLED
+    {
+        Locker bitLocker { m_directory->bitvectorLock().mutate() };
+        ASSERT(!m_directory->isAllocated(this));
+    }
+#endif
 
     if (!isFreeListed()) {
         if (MarkedBlockInternal::verbose)
@@ -189,25 +186,25 @@ void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatin
 
 void MarkedBlock::Handle::lastChanceToFinalize()
 {
-    // Concurrent sweeper is shut down at this point.
-    m_directory->assertSweeperIsSuspended();
-    m_directory->setIsAllocated(this, false);
-    m_directory->setIsDestructible(this, true);
-    m_directory->setIsUnswept(this, true);
+    m_directory->assertIsMutatorOrMutatorIsStopped();
+    // Nothing else can be holding this block at shutdown.
+    m_directory->claimInUseOrCrash(index());
+    m_directory->setIsAllocated(index(), false);
+    m_directory->setIsDestructible(index(), true);
+    m_directory->setIsUnswept(index(), true);
     blockHeader().m_marks.clearAll();
     block().clearHasAnyMarked();
     blockHeader().m_markingVersion = heap()->objectSpace().markingVersion();
     m_weakSet.lastChanceToFinalize();
     blockHeader().m_newlyAllocated.clearAll();
     blockHeader().m_newlyAllocatedVersion = heap()->objectSpace().newlyAllocatedVersion();
-    m_directory->setIsInUse(this, true);
     sweep(nullptr);
 }
 
 void MarkedBlock::Handle::resumeAllocating(FreeList& freeList)
 {
     BlockDirectory* directory = this->directory();
-    directory->assertSweeperIsSuspended();
+    directory->assertIsMutatorOrMutatorIsStopped();
     {
         Locker locker { blockHeader().m_lock };
         
@@ -227,7 +224,7 @@ void MarkedBlock::Handle::resumeAllocating(FreeList& freeList)
         }
     }
 
-    directory->setIsInUse(this, true);
+    directory->claimInUseOrCrash(index());
 
     // Re-create our free list from before stopping allocation. Note that this may return an empty
     // freelist, in which case the block will still be Marked!
@@ -277,13 +274,16 @@ inline void MarkedBlock::setupTestForDumpInfoAndCrash() { }
 
 #endif // ENABLE(MARKEDBLOCK_TEST_DUMP_INFO)
 
-void MarkedBlock::aboutToMarkSlow(HeapVersion markingVersion, HeapCell* cell)
+// Called the first time a collection marks a cell in this block while its marks are stale.
+// Resets the marks for this collection without losing the survivors they may still record.
+void MarkedBlock::resetStaleMarks(HeapVersion markingVersion, HeapCell* cell)
 {
     ASSERT(vm().heap.objectSpace().isMarking());
     setupTestForDumpInfoAndCrash();
 
     Locker locker { header().m_lock };
-    
+
+    // Another marker may have reset them since aboutToMark() checked.
     if (!areMarksStale(markingVersion))
         return;
 
@@ -294,74 +294,78 @@ void MarkedBlock::aboutToMarkSlow(HeapVersion markingVersion, HeapCell* cell)
     BlockDirectory* directory = handle->directory();
     bool isAllocated;
     {
-        Locker bitLocker { directory->bitvectorLock() };
-        isAllocated = directory->isAllocated(handle);
+        // Read without claiming the block's inUse bit. That's fine because the only write to the allocated
+        // bit while marking is in didConsumeFreeList(), which holds header().m_lock too.
+        Locker bitLocker { directory->bitvectorLock().mutate() };
+        isAllocated = directory->isAllocated(handle->index());
     }
 
-    if (isAllocated || !marksConveyLivenessDuringMarking(markingVersion)) {
+    if (isAllocated || !staleMarksStillRecordSurvivors(markingVersion)) {
         if (MarkedBlockInternal::verbose)
             dataLog(RawPointer(this), ": Clearing marks without doing anything else.\n");
-        // We already know that the block is full and is already recognized as such, or that the
-        // block did not survive the previous GC. So, we can clear mark bits the old fashioned
-        // way. Note that it's possible for such a block to have newlyAllocated with an up-to-
-        // date version! If it does, then we want to leave the newlyAllocated alone, since that
-        // means that we had allocated in this previously empty block but did not fill it up, so
-        // we created a newlyAllocated.
+        // When the block is full, its directory's allocated bit says every cell is live
+        // until this collection's End, so the marks are not needed. Otherwise, the
+        // block's marking version indicated that nothing in it was marked as of the last
+        // collection's End, so it has no survivors and the old mark bits are leftovers.
+        // Either way, the marks can just be cleared. m_newlyAllocated is left alone: if
+        // it is current, it records the cells allocated since the last collection.
         header().m_marks.clearAll();
     } else {
+        // The stale marks record the survivors, which must stay live: make sure
+        // m_newlyAllocated holds them before the marks are cleared.
         if (MarkedBlockInternal::verbose)
             dataLog(RawPointer(this), ": Doing things.\n");
         HeapVersion newlyAllocatedVersion = space()->newlyAllocatedVersion();
         if (header().m_newlyAllocatedVersion == newlyAllocatedVersion) {
-            // When do we get here? The block could not have been filled up. The newlyAllocated bits would
-            // have had to be created since the end of the last collection. The only things that create
-            // them are aboutToMarkSlow, lastChanceToFinalize, and stopAllocating. If it had been
-            // aboutToMarkSlow, then we shouldn't be here since the marks wouldn't be stale anymore. It
-            // cannot be lastChanceToFinalize. So it must be stopAllocating. That means that we just
-            // computed the newlyAllocated bits just before the start of an increment. When we are in that
-            // mode, it seems as if newlyAllocated should subsume marks.
+            // stopAllocating() rebuilt m_newlyAllocated during this collection by setting
+            // every cell not on the free list. Survivors are never on a free list, so
+            // m_newlyAllocated already holds them.
             ASSERT(header().m_newlyAllocated.subsumes(header().m_marks));
             header().m_marks.clearAll();
         } else {
+            // m_newlyAllocated is stale, so stopAllocating() has not run on the block
+            // since the last collection's End. Either nothing has been allocated in it
+            // since, and the survivors are its only live cells, or the mutator is
+            // allocating from it right now, and the next stopAllocating() rebuilds
+            // m_newlyAllocated to include both the survivors and the cells allocated from
+            // the free list. Either way, move the survivors into m_newlyAllocated, which
+            // isLive() consults for the rest of this collection.
             header().m_newlyAllocated.setAndClear(header().m_marks);
             header().m_newlyAllocatedVersion = newlyAllocatedVersion;
         }
     }
     clearHasAnyMarked();
+    // Store the new version last, so that a racing reader never pairs it with the old bits.
     WTF::storeStoreFence();
     header().m_markingVersion = markingVersion;
-    
-    // Workaround for a clang regression <rdar://111818130>.
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wthread-safety-analysis"
-#endif
+
     // This means we're the first ones to mark any object in this block.
-    Locker bitLocker { directory->bitvectorLock() };
-    directory->setIsMarkingNotEmpty(handle, true);
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#endif
+    Locker bitLocker { directory->bitvectorLock().mutate() };
+    directory->setIsMarkingNotEmpty(handle->index(), true);
 }
 
-void MarkedBlock::resetAllocated()
+// Called when the heap's newly-allocated version is about to wrap, at a collection's End,
+// when these bits are retired anyway. Clears them and sets the version to nullVersion, so
+// they can never look current by accident.
+void MarkedBlock::resetNewlyAllocatedForVersionWrap()
 {
     header().m_newlyAllocated.clearAll();
     header().m_newlyAllocatedVersion = MarkedSpace::nullVersion;
 }
 
-void MarkedBlock::resetMarks()
+// Called when the heap's marking version is about to wrap, at a collection's Begin. Keeps the marks of the
+// survivors, those from the version about to be replaced, clears any older stale marks,
+// and sets the version to nullVersion, one behind initialVersion, the version this collection moves to.
+void MarkedBlock::resetMarksForVersionWrap()
 {
-    // We want aboutToMarkSlow() to see what the mark bits were after the last collection. It uses
-    // the version number to distinguish between the marks having already been stale before
-    // beginMarking(), or just stale now that beginMarking() bumped the version. If we have a version
-    // wraparound, then we will call this method before resetting the version to null. When the
-    // version is null, aboutToMarkSlow() will assume that the marks were not stale as of before
-    // beginMarking(). Hence the need to whip the marks into shape.
     if (areMarksStale())
         header().m_marks.clearAll();
     header().m_markingVersion = MarkedSpace::nullVersion;
 }
+
+// staleMarksStillRecordSurvivors() relies on this to find the survivors of the blocks resetMarksForVersionWrap()
+// leaves at nullVersion.
+static_assert(MarkedSpace::nextVersion(MarkedSpace::nullVersion) == MarkedSpace::initialVersion);
 
 #if ASSERT_ENABLED
 void MarkedBlock::assertMarksNotStale()
@@ -392,8 +396,9 @@ void MarkedBlock::Handle::didConsumeFreeList()
         dataLog(RawPointer(this), ": MarkedBlock::Handle::didConsumeFreeList!\n");
     ASSERT(isFreeListed());
     m_isFreeListed = false;
-    Locker bitLocker(m_directory->bitvectorLock());
-    m_directory->setIsAllocated(this, true);
+    Locker bitLocker { m_directory->bitvectorLock().mutate() };
+    m_directory->assertInUse(index());
+    m_directory->setIsAllocated(index(), true);
     m_directory->didFinishUsingBlock(bitLocker, this);
 }
 
@@ -410,8 +415,8 @@ void MarkedBlock::clearHasAnyMarked()
 void MarkedBlock::noteMarkedSlow()
 {
     BlockDirectory* directory = handle().directory();
-    Locker locker { directory->bitvectorLock() };
-    directory->setIsMarkingRetired(&handle(), true);
+    Locker locker { directory->bitvectorLock().mutate() };
+    directory->setIsMarkingRetired(handle().index(), true);
 }
 
 void MarkedBlock::Handle::removeFromDirectory()
@@ -480,7 +485,8 @@ void MarkedBlock::assertValidCell(VM& vm, HeapCell* cell) const
 void MarkedBlock::Handle::dumpState(PrintStream& out)
 {
     CommaPrinter comma;
-    Locker locker { directory()->bitvectorLock() };
+    // A diagnostic, so it may be reached from any thread.
+    Locker locker { directory()->bitvectorLock().mutate() };
     directory()->forEachBitVectorWithName(
         [&](auto vectorRef, const char* name) {
             out.print(comma, name, ":"_s, vectorRef[index()] ? "YES"_s : "no"_s);
@@ -521,7 +527,6 @@ void MarkedBlock::Handle::decommitUnusedPages(bool isFirstSweepSinceFullCollecti
     m_directory->assertIsMutatorOrMutatorIsStopped();
     if (m_directory->isMarkingRetired(this))
         return;
-    m_directory->releaseAssertAcquiredBitVectorLock();
     unsigned pageCount = blockSize / pageSize;
     size_t atomsPerPage = pageSize / atomSize;
     RELEASE_ASSERT(!m_isFreeListed && !isAllocated());
@@ -539,7 +544,7 @@ void MarkedBlock::Handle::decommitUnusedPages(bool isFirstSweepSinceFullCollecti
         const WTF::BitSet<atomsPerBlock>* live = nullptr;
         if (header.m_newlyAllocatedVersion == space.newlyAllocatedVersion())
             live = &header.m_newlyAllocated;
-        else if (!block().areMarksStale(space.markingVersion()) || (space.isMarking() && block().marksConveyLivenessDuringMarking(space.markingVersion())))
+        else if (!block().areMarksStale(space.markingVersion()) || (space.isMarking() && block().staleMarksStillRecordSurvivors(space.markingVersion())))
             live = &header.m_marks;
         if (live) {
             for (unsigned page = 0; page < pageCount; ++page) {
@@ -632,14 +637,20 @@ void MarkedBlock::Handle::recommitPages()
 
 void MarkedBlock::Handle::sweep(FreeList* freeList)
 {
-    m_directory->assertIsMutatorOrMutatorIsStopped();
-    ASSERT(m_directory->isInUse(this));
-
     SweepMode sweepMode = freeList ? SweepToFreeList : SweepOnly;
-    bool needsDestruction = m_attributes.destruction != DoesNotNeedDestruction && m_directory->isDestructible(this);
+    bool needsDestruction = false;
+    bool isUnswept = false;
+    if (sweepMode == SweepOnly || m_attributes.destruction != DoesNotNeedDestruction) {
+        // Not held across the sweep, which takes the mutate side again (e.g. in setBits()).
+        Locker locker { m_directory->bitvectorLock().mutate() };
+        m_directory->assertInUse(index());
+        needsDestruction = m_attributes.destruction != DoesNotNeedDestruction && m_directory->isDestructible(index());
+        isUnswept = m_directory->isUnswept(index());
+    }
+
     // Nothing has been allocated into a block that is still swept, so no weak handle into it can have
     // been created and died since; re-sweeping its weak set would find nothing.
-    if (sweepMode == SweepOnly && !needsDestruction && !m_directory->isUnswept(this))
+    if (sweepMode == SweepOnly && !needsDestruction && !isUnswept)
         return;
 
     // A sweep while a full collection is marking cannot go by that collection's marks yet (the version has moved on, the
@@ -650,18 +661,17 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
     if (!marksArePending)
         m_markingVersionAtLastSweep = space()->markingVersion();
 
+    heap()->assertIsMutatorOrMutatorIsStopped();
     SweepingScope sweepingScope(*heap());
 
     m_weakSet.sweep();
 
-    // If we don't "release" our read access without locking then the ThreadSafetyAnalysis code gets upset with the locker below.
-    m_directory->releaseAssertAcquiredBitVectorLock();
-
     if (sweepMode == SweepOnly && !needsDestruction) {
         if (!isEmpty())
             decommitUnusedPages(isFirstSweepSinceFullCollection);
-        Locker locker(m_directory->bitvectorLock());
-        m_directory->setIsUnswept(this, false);
+        Locker locker { m_directory->bitvectorLock().mutate() };
+        m_directory->assertInUse(index());
+        m_directory->setIsUnswept(index(), false);
         return;
     }
 

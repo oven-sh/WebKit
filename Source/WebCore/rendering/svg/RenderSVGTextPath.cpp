@@ -32,11 +32,9 @@
 #include "RenderSVGShape.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGGeometryElement.h"
-#include "SVGInlineTextBox.h"
 #include "SVGNames.h"
 #include "SVGPathElement.h"
 #include "SVGPathFromElement.h"
-#include "SVGRootInlineBox.h"
 #include "SVGTextPathElement.h"
 #include "Settings.h"
 #include "StyleTransformResolver.h"
@@ -105,6 +103,11 @@ Path RenderSVGTextPath::layoutPath() const
 const SVGLengthValue& RenderSVGTextPath::startOffset() const
 {
     return textPathElement().startOffset();
+}
+
+bool RenderSVGTextPath::isLayoutPathReversed() const
+{
+    return protect(textPathElement())->side() == SVGTextPathSideRight;
 }
 
 }

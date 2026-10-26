@@ -435,7 +435,7 @@ void GenerateAndAllocateRegisters::prepareForGeneration()
             auto flushToFreeList = [&] {
                 for (auto* stackSlot : toFree)
                     freeSlots.append(stackSlot);
-                toFree.clear();
+                toFree.shrink(0);
             };
 
             for (Tmp tmp : m_liveness->liveAtHead(block))
@@ -612,7 +612,7 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
             if (disassembler)
                 disassembler->startEntrypoint(*m_jit); 
 
-            m_code.prologueGeneratorForEntrypoint(*entrypointIndex)->run(*m_jit, m_code);
+            m_code.prologueGeneratorForEntrypoint(*entrypointIndex)->run(*m_jit, m_code, context);
 
             if (disassembler)
                 disassembler->endEntrypoint(*m_jit); 

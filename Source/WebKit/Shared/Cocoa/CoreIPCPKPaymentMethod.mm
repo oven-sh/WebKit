@@ -61,6 +61,9 @@ CoreIPCPKPaymentMethod::CoreIPCPKPaymentMethod(PKPaymentMethod *paymentMethod)
     if (RetainPtr network = dynamic_objc_cast<NSString>([dictionary.get() objectForKey:@"network"]))
         data.network = WTF::move(network);
 
+    if (RetainPtr issuingRegionCode = dynamic_objc_cast<NSString>([dictionary objectForKey:@"issuingRegionCode"]))
+        data.issuingRegionCode = WTF::move(issuingRegionCode);
+
     if (id paymentPass = [dictionary.get() objectForKey:@"paymentPass"]) {
         if ([paymentPass isKindOfClass:PAL::getPKSecureElementPassClassSingleton()])
             data.paymentPass = paymentPass;
@@ -93,7 +96,7 @@ RetainPtr<id> CoreIPCPKPaymentMethod::toID() const
     if (!m_data)
         return { };
 
-    RetainPtr dictionary = [NSMutableDictionary dictionaryWithCapacity:8];
+    RetainPtr dictionary = [NSMutableDictionary dictionaryWithCapacity:9];
 
     if (m_data->type)
         [dictionary setObject:[NSNumber numberWithUnsignedChar:static_cast<uint8_t>(*m_data->type)] forKey:@"type"];
@@ -101,6 +104,8 @@ RetainPtr<id> CoreIPCPKPaymentMethod::toID() const
         [dictionary setObject:m_data->displayName.get() forKey:@"displayName"];
     if (m_data->network)
         [dictionary setObject:m_data->network.get() forKey:@"network"];
+    if (m_data->issuingRegionCode)
+        [dictionary setObject:m_data->issuingRegionCode.get() forKey:@"issuingRegionCode"];
     if (m_data->paymentPass)
         [dictionary setObject:m_data->paymentPass.get() forKey:@"paymentPass"];
     if (m_data->peerPaymentQuoteIdentifier)

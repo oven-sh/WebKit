@@ -39,18 +39,18 @@
 namespace WebCore {
 namespace Layout {
 
-static inline InlineLayoutUnit NODELETE fullWidthAdvance(const Box& box)
+static inline InlineLayoutUnit LEGACY_NODELETE fullWidthAdvance(const Box& box)
 {
     // A fullwidth character (including fullwidth punctuation) advances one em.
     return box.style().usedFontSize();
 }
 
-static inline InlineLayoutUnit NODELETE halfOfAFullWidthCharacter(const Box& annotationBox)
+static inline InlineLayoutUnit LEGACY_NODELETE halfOfAFullWidthCharacter(const Box& annotationBox)
 {
     return fullWidthAdvance(annotationBox) / 2.f;
 }
 
-static inline size_t NODELETE baseContentIndex(size_t rubyBaseStart, std::span<InlineDisplay::Box> boxes)
+static inline size_t LEGACY_NODELETE baseContentIndex(size_t rubyBaseStart, std::span<InlineDisplay::Box> boxes)
 {
     auto baseContentIndex = rubyBaseStart + 1;
     if (boxes[baseContentIndex].layoutBox().isRubyAnnotationBox())
@@ -58,7 +58,7 @@ static inline size_t NODELETE baseContentIndex(size_t rubyBaseStart, std::span<I
     return baseContentIndex;
 }
 
-static RubyPosition NODELETE rubyPosition(const Box& rubyBaseLayoutBox)
+static RubyPosition LEGACY_NODELETE rubyPosition(const Box& rubyBaseLayoutBox)
 {
     ASSERT(rubyBaseLayoutBox.isRubyBase());
     auto computedRubyPosition = rubyBaseLayoutBox.style().rubyPosition();
@@ -81,7 +81,7 @@ static inline InlineRect annotationMarginBoxVisualRect(const Box& annotationBox,
     return InlineRect { visualTopLeft, marginBoxLogicalRect.size().transposedSize() };
 }
 
-static InlineLayoutUnit baseLogicalWidthFromRubyBaseEnd(const Box& rubyBaseLayoutBox, const Line::RunList& lineRuns, const InlineContentBreaker::ContinuousContent::RunList& candidateRuns)
+static InlineLayoutUnit LEGACY_NODELETE baseLogicalWidthFromRubyBaseEnd(const Box& rubyBaseLayoutBox, const Line::RunList& lineRuns, const InlineContentBreaker::ContinuousContent::RunList& candidateRuns)
 {
     ASSERT(rubyBaseLayoutBox.isRubyBase());
     // Candidate content is supposed to hold the base content and in case of soft wrap opportunities, line may have some base content too.
@@ -119,7 +119,7 @@ static bool annotationOverlapCheck(const InlineDisplay::Box& adjacentDisplayBox,
     CheckedRef adjacentLayoutBox = adjacentDisplayBox.layoutBox();
     // Adjacent ruby may have overlapping annotation.
     if (adjacentLayoutBox->isRubyBase() && adjacentLayoutBox->associatedRubyAnnotationBox())
-        return annotationMarginBoxVisualRect(*adjacentLayoutBox->associatedRubyAnnotationBox(), lineLogicalHeight, inlineFormattingContext).intersects(overhangingRect);
+        return annotationMarginBoxVisualRect(*protect(adjacentLayoutBox->associatedRubyAnnotationBox()), lineLogicalHeight, inlineFormattingContext).intersects(overhangingRect);
     return false;
 }
 
@@ -185,7 +185,7 @@ static InlineLayoutUnit overhangableSpaceAdvance(const InlineDisplay::Box& adjac
             ++end;
         return { displayText.start(), end };
     }();
-    return TextUtil::width(*adjacentTextBox, adjacentDisplayBox.style().fontCascade(), whitespaceStart, whitespaceEnd, { }, TextUtil::UseTrailingWhitespaceMeasuringOptimization::No);
+    return TextUtil::width(*adjacentTextBox, protect(adjacentDisplayBox.style().fontCascade()), whitespaceStart, whitespaceEnd, { }, TextUtil::UseTrailingWhitespaceMeasuringOptimization::No);
 }
 
 InlineLayoutUnit RubyFormattingContext::annotationBoxLogicalWidth(const Box& rubyBaseLayoutBox, InlineFormattingContext& inlineFormattingContext)
@@ -200,7 +200,7 @@ InlineLayoutUnit RubyFormattingContext::annotationBoxLogicalWidth(const Box& rub
     return inlineFormattingContext.geometryForBox(*annotationBox).marginBoxWidth();
 }
 
-InlineLayoutUnit RubyFormattingContext::baseEndAdditionalLogicalWidth(const Box& rubyBaseLayoutBox, const Line::RunList& lineRuns, const InlineContentBreaker::ContinuousContent::RunList& candidateRuns, InlineFormattingContext& inlineFormattingContext)
+InlineLayoutUnit RubyFormattingContext::baseEndAdditionalLogicalWidth(const Box& rubyBaseLayoutBox, const LineRunList& lineRuns, const InlineContentBreaker::ContinuousContent::RunList& candidateRuns, InlineFormattingContext& inlineFormattingContext)
 {
     ASSERT(rubyBaseLayoutBox.isRubyBase());
     if (hasInterlinearAnnotation(rubyBaseLayoutBox)) {
@@ -409,7 +409,7 @@ void RubyFormattingContext::adjustLayoutBoundsAndStretchAncestorRubyBase(LineBox
         auto extraSpaceForAnnotation = InlineLayoutUnit { };
         if (!isFirstFormattedLine) {
             // Note that annotation may leak into the half leading space (gap between lines).
-            auto lineGap = rubyBaseLayoutBox->style().metricsOfPrimaryFont().lineSpacing();
+            auto lineGap = protect(rubyBaseLayoutBox->style())->metricsOfPrimaryFont().lineSpacing();
             extraSpaceForAnnotation = std::max(0.f, (lineGap - (ascent + descent)) / 2);
         }
         auto ascentWithAnnotation = (ascent + over) - extraSpaceForAnnotation;
@@ -610,12 +610,12 @@ void RubyFormattingContext::applyRubyOverhang(InlineFormattingContext& parentFor
                 auto& displayBox = displayBoxes[index];
                 isHorizontalWritingMode ? displayBox.moveHorizontally(-shiftValue) : displayBox.moveVertically(-shiftValue);
 
-                auto& layoutBox = displayBox.layoutBox();
+                CheckedRef layoutBox = displayBox.layoutBox();
                 if (displayBox.isInlineLevelBox() && !displayBox.isRootInlineBox())
                     parentFormattingContext.geometryForBox(layoutBox).moveHorizontally(LayoutUnit { -shiftValue });
 
-                if (layoutBox.isRubyBase() && layoutBox.associatedRubyAnnotationBox())
-                    parentFormattingContext.geometryForBox(*layoutBox.associatedRubyAnnotationBox()).moveHorizontally(LayoutUnit { -shiftValue });
+                if (layoutBox->isRubyBase() && layoutBox->associatedRubyAnnotationBox())
+                    parentFormattingContext.geometryForBox(*layoutBox->associatedRubyAnnotationBox()).moveHorizontally(LayoutUnit { -shiftValue });
             }
         };
         auto hasJustifiedAdjacentAfterContent = [&] {

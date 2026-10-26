@@ -56,11 +56,13 @@ public:
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
     static SyntheticModuleRecord* create(JSGlobalObject*, VM&, Structure*, JSModuleLoader*, const Identifier& moduleKey, SourceProviderSourceType);
 
+    static SyntheticModuleRecord* tryCreateDefaultExportSyntheticModule(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, JSValue, SourceProviderSourceType);
+
     static SyntheticModuleRecord* parseJSONModule(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, SourceCode&&);
     static SyntheticModuleRecord* createTextModule(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, SourceCode&&);
 
     Synchronousness link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
-    JS_EXPORT_PRIVATE JSValue NODELETE evaluate(JSGlobalObject*);
+    JS_EXPORT_PRIVATE JSValue LEGACY_NODELETE evaluate(JSGlobalObject*);
 
 #if USE(BUN_JSC_ADDITIONS)
     // Creates a record (reported as a JavaScript module, SourceProviderSourceType::Module) exporting exportValues
@@ -91,7 +93,6 @@ public:
 private:
     SyntheticModuleRecord(VM&, Structure*, JSModuleLoader*, const Identifier& moduleKey, SourceProviderSourceType);
 
-    static SyntheticModuleRecord* tryCreateDefaultExportSyntheticModule(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, JSValue, SourceProviderSourceType);
     static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType);
 #if USE(BUN_JSC_ADDITIONS)
     static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType, JSObject* lazyExportsSource);

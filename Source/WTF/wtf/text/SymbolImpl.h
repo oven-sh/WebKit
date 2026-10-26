@@ -52,7 +52,7 @@ public:
 
     RegisteredSymbolImpl* asRegisteredSymbolImpl();
 
-    WTF_EXPORT_PRIVATE static Ref<SymbolImpl> createNullSymbol();
+    WTF_EXPORT_PRIVATE static Ref<SymbolImpl> LEGACY_NODELETE createNullSymbol();
     WTF_EXPORT_PRIVATE static Ref<SymbolImpl> create(StringImpl& rep);
 
     class StaticSymbolImpl final : private StringImplShape {
@@ -71,7 +71,7 @@ public:
     };
 
 protected:
-    WTF_EXPORT_PRIVATE static unsigned NODELETE nextHashForSymbol();
+    WTF_EXPORT_PRIVATE static unsigned LEGACY_NODELETE nextHashForSymbol();
 
     friend class StringImpl;
 
@@ -130,31 +130,43 @@ private:
     CheckedPtr<SymbolRegistry> m_symbolRegistry;
 };
 
+} // namespace WTF
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WTF::SymbolImpl)
+    static bool isType(const WTF::StringImpl& impl) { return impl.isSymbol(); }
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WTF::RegisteredSymbolImpl)
+    static bool isType(const WTF::SymbolImpl& symbol) { return symbol.isRegistered(); }
+SPECIALIZE_TYPE_TRAITS_END()
+
+namespace WTF {
+
 inline unsigned StringImpl::symbolAwareHash() const
 {
     if (isSymbol())
-        return static_cast<const SymbolImpl*>(this)->hashForSymbol();
+        return uncheckedDowncast<SymbolImpl>(this)->hashForSymbol();
     return hash();
 }
 
 inline unsigned StringImpl::existingSymbolAwareHash() const
 {
     if (isSymbol())
-        return static_cast<const SymbolImpl*>(this)->hashForSymbol();
+        return uncheckedDowncast<SymbolImpl>(this)->hashForSymbol();
     return existingHash();
 }
 
 inline SymbolRegistry* SymbolImpl::symbolRegistry() const
 {
     if (isRegistered())
-        return static_cast<const RegisteredSymbolImpl*>(this)->symbolRegistry();
+        return uncheckedDowncast<RegisteredSymbolImpl>(this)->symbolRegistry();
     return nullptr;
 }
 
 inline RegisteredSymbolImpl* SymbolImpl::asRegisteredSymbolImpl()
 {
     ASSERT(isRegistered());
-    return static_cast<RegisteredSymbolImpl*>(this);
+    return uncheckedDowncast<RegisteredSymbolImpl>(this);
 }
 
 #if ASSERT_ENABLED
@@ -175,10 +187,6 @@ ValueCheck<const SymbolImpl*> {
 #endif // ASSERT_ENABLED
 
 } // namespace WTF
-
-SPECIALIZE_TYPE_TRAITS_BEGIN(WTF::SymbolImpl)
-    static bool isType(const WTF::StringImpl& impl) { return impl.isSymbol(); }
-SPECIALIZE_TYPE_TRAITS_END()
 
 using WTF::SymbolImpl;
 using WTF::PrivateSymbolImpl;

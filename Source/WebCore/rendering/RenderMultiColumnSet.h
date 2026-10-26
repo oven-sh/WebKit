@@ -52,20 +52,20 @@ public:
     RenderBlockFlow* multiColumnBlockFlow() const { return downcast<RenderBlockFlow>(parent()); }
     RenderMultiColumnFlow* multiColumnFlow() const { return downcast<RenderMultiColumnFlow>(fragmentedFlow()); }
 
-    RenderMultiColumnSet* nextSiblingMultiColumnSet() const;
-    RenderMultiColumnSet* previousSiblingMultiColumnSet() const;
+    RenderMultiColumnSet* LEGACY_NODELETE nextSiblingMultiColumnSet() const;
+    RenderMultiColumnSet* LEGACY_NODELETE previousSiblingMultiColumnSet() const;
 
     // Return the first object in the flow thread that's rendered inside this set.
-    RenderObject* firstRendererInFragmentedFlow() const;
+    RenderObject* LEGACY_NODELETE firstRendererInFragmentedFlow() const;
     // Return the last object in the flow thread that's rendered inside this set.
     RenderObject* lastRendererInFragmentedFlow() const;
 
     // Return true if the specified renderer (descendant of the flow thread) is inside this column set.
     bool containsRendererInFragmentedFlow(const RenderObject&) const;
 
-    void NODELETE setLogicalTopInFragmentedFlow(LayoutUnit);
+    void LEGACY_NODELETE setLogicalTopInFragmentedFlow(LayoutUnit);
     LayoutUnit logicalTopInFragmentedFlow() const { return isHorizontalWritingMode() ? fragmentedFlowPortionRect().y() : fragmentedFlowPortionRect().x(); }
-    void setLogicalBottomInFragmentedFlow(LayoutUnit);
+    void LEGACY_NODELETE setLogicalBottomInFragmentedFlow(LayoutUnit);
     LayoutUnit logicalBottomInFragmentedFlow() const { return isHorizontalWritingMode() ? fragmentedFlowPortionRect().maxY() : fragmentedFlowPortionRect().maxX(); }
     LayoutUnit logicalHeightInFragmentedFlow() const { return isHorizontalWritingMode() ? fragmentedFlowPortionRect().height() : fragmentedFlowPortionRect().width(); }
 
@@ -109,7 +109,7 @@ public:
     // element from being moved to the next column) at a column break. The smallest amount of space
     // shortage we find is the amount with which we will stretch the column height, if it turns out
     // after layout that the columns weren't tall enough.
-    void NODELETE recordSpaceShortage(LayoutUnit spaceShortage);
+    void LEGACY_NODELETE recordSpaceShortage(LayoutUnit spaceShortage);
 
     void updateLogicalWidth() override;
 
@@ -123,7 +123,7 @@ public:
     // Has this set been flowed in this layout pass?
     bool hasBeenFlowed() const { return logicalBottomInFragmentedFlow() != RenderFragmentedFlow::maxLogicalHeight(); }
 
-    bool requiresBalancing() const;
+    bool LEGACY_NODELETE requiresBalancing() const;
 
     LayoutPoint columnTranslationForOffset(const LayoutUnit&) const;
     
@@ -138,7 +138,7 @@ public:
     void updateHitTestResult(HitTestResult&, const LayoutPoint&) const override;
     
     LayoutRect columnRectAt(unsigned index) const;
-    unsigned NODELETE columnCount() const;
+    unsigned LEGACY_NODELETE columnCount() const;
 
     LayoutUnit columnGap() const;
 
@@ -176,7 +176,7 @@ private:
     LayoutUnit columnLogicalLeft(unsigned) const;
     LayoutUnit columnLogicalTop(unsigned) const;
 
-    LayoutRect NODELETE fragmentedFlowPortionRectAt(unsigned index) const;
+    LayoutRect LEGACY_NODELETE fragmentedFlowPortionRectAt(unsigned index) const;
     LayoutRect fragmentedFlowPortionOverflowRect(const LayoutRect& fragmentedFlowPortion, unsigned index, unsigned colCount, LayoutUnit colGap) const;
 
     LayoutUnit initialBlockOffsetForPainting() const;
@@ -185,11 +185,11 @@ private:
         ClampToExistingColumns, // Stay within the range of already existing columns.
         AssumeNewColumns // Allow column indices outside the range of already existing columns.
     };
-    unsigned NODELETE columnIndexAtOffset(LayoutUnit, ColumnIndexCalculationMode = ClampToExistingColumns) const;
+    unsigned LEGACY_NODELETE columnIndexAtOffset(LayoutUnit, ColumnIndexCalculationMode = ClampToExistingColumns) const;
 
     std::pair<unsigned, unsigned> firstAndLastColumnsFromOffsets(LayoutUnit topOffset, LayoutUnit bottomOffset) const;
 
-    void NODELETE setAndConstrainColumnHeight(LayoutUnit);
+    void LEGACY_NODELETE setAndConstrainColumnHeight(LayoutUnit);
 
     // Return the index of the content run with the currently tallest columns, taking all implicit
     // breaks assumed so far into account.

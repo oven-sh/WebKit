@@ -45,9 +45,9 @@ public:
     virtual ~PaintRenderingContext2D();
 
     GraphicsContext* drawingContext() const;
-    AffineTransform NODELETE baseTransform() const;
+    AffineTransform LEGACY_NODELETE baseTransform() const;
 
-    CustomPaintCanvas& NODELETE canvas() const;
+    CustomPaintCanvas& LEGACY_NODELETE canvas() const;
     void replayDisplayList(GraphicsContext& target) const;
 
 protected:
@@ -55,7 +55,7 @@ protected:
 
 private:
     PaintRenderingContext2D(CustomPaintCanvas&);
-    mutable std::optional<DisplayList::RecorderImpl> m_recordingContext;
+    mutable RefPtr<DisplayList::RecorderImpl> m_recordingContext;
 };
 
 } // namespace WebCore

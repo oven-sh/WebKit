@@ -86,4 +86,17 @@ void ThemeCocoa::drawNamedImage(const String& name, GraphicsContext& context, co
     Theme::drawNamedImage(name, context, size);
 }
 
+String ThemeCocoa::invertedNamedImage(const String& name) const
+{
+#if ENABLE(APPLE_PAY)
+    if (name == "apple-pay-logo-black"_s)
+        return "apple-pay-logo-white"_s;
+
+    if (name == "apple-pay-logo-white"_s)
+        return "apple-pay-logo-black"_s;
+#endif
+
+    return name;
+}
+
 }

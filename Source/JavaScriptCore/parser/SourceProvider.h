@@ -38,11 +38,14 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <JavaScriptCore/LineColumn.h>
 #include <JavaScriptCore/SourceCharacters.h>
 #include <JavaScriptCore/SourceOrigin.h>
-#include <JavaScriptCore/SourceTaintedOrigin.h>
+#include <JavaScriptCore/SourceTaintedness.h>
+#include <optional>
 #include <span>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefCountedFixedVector.h>
+#include <wtf/ScopedLambda.h>
+#include <wtf/Threading.h>
 #include <wtf/Vector.h>
 #include <wtf/text/TextPosition.h>
 #include <wtf/text/WTFString.h>
@@ -55,6 +58,7 @@ namespace JSC {
 class SourceCode;
 class SourceCodeKey;
 class UnlinkedCodeBlock;
+class SourceProvider;
 class UnlinkedFunctionExecutable;
 class UnlinkedFunctionCodeBlock;
 class VM;
@@ -70,7 +74,18 @@ enum class JS_EXPORT_PRIVATE SourceProviderSourceType : uint8_t {
 #if USE(BUN_JSC_ADDITIONS)
     BunTranspiledModule,
 #endif
+    CSS,
 };
+
+#if USE(BUN_JSC_ADDITIONS)
+// Where a provider's text came from. Said when the provider is made, and never changed. For Options::disallowNonStaticCode().
+enum class SourceProvenance : bool {
+    // It was a JavaScript value, or nobody said that it was not.
+    GeneratedAtRuntime,
+    // Builtins, and what the embedder read from where the program is stored.
+    Static,
+};
+#endif
 
 using BytecodeCacheGenerator = Function<RefPtr<CachedBytecode>()>;
 
@@ -101,6 +116,7 @@ public:
     // Out-of-range input clamps rather than fails: a line past the end gives the end of the text,
     // and a column past the end of its line gives that line's end.
     JS_EXPORT_PRIVATE unsigned offsetForPosition(StringView text, unsigned line0Based, unsigned column0Based);
+    JS_EXPORT_PRIVATE LineColumn zeroBasedLineColumnForOffset(const SourceProvider&, unsigned offset);
 
     // The zero-based line and column of positionInfoForOffset(). Unlike it, this reads none of the text if isBuilt().
     JS_EXPORT_PRIVATE LineColumn lineColumnForOffset(StringView text, unsigned offset);
@@ -131,7 +147,11 @@ class JS_EXPORT_PRIVATE SourceProvider : public ThreadSafeRefCounted<SourceProvi
 public:
     static const intptr_t nullID = 1;
 
-    JS_EXPORT_PRIVATE SourceProvider(const SourceOrigin&, String&& sourceURL, String&& preRedirectURL, SourceTaintedOrigin, const TextPosition& startPosition, SourceProviderSourceType);
+    JS_EXPORT_PRIVATE SourceProvider(const SourceOrigin&, String&& sourceURL, String&& preRedirectURL, SourceTaintedness, const TextPosition& startPosition, SourceProviderSourceType);
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE SourceProvider(const SourceOrigin&, String&& sourceURL, String&& preRedirectURL, SourceTaintedness, const TextPosition& startPosition, SourceProviderSourceType, SourceProvenance);
+#endif
+
     JS_EXPORT_PRIVATE virtual ~SourceProvider();
 
     JS_EXPORT_PRIVATE virtual unsigned hash() const = 0;
@@ -143,6 +163,8 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE virtual size_t memoryCost() const { return 0; }
     JS_EXPORT_PRIVATE virtual void didGenerateUnlinkedCodeBlock(VM&, const SourceCodeKey&, UnlinkedCodeBlock*) const { }
+
+    SourceProvenance provenance() const { return m_provenance; }
 #endif
 
     StringView getRange(int start, int end) const LIFETIME_BOUND
@@ -167,6 +189,7 @@ public:
         case SourceProviderSourceType::Module:
         case SourceProviderSourceType::JSON:
         case SourceProviderSourceType::Text:
+        case SourceProviderSourceType::CSS:
 #if USE(BUN_JSC_ADDITIONS)
         case SourceProviderSourceType::BunTranspiledModule:
 #endif
@@ -185,14 +208,17 @@ public:
 
     void setSourceURLDirective(const String& sourceURLDirective) { m_sourceURLDirective = sourceURLDirective; }
     void setSourceMappingURLDirective(const String& sourceMappingURLDirective) { m_sourceMappingURLDirective = sourceMappingURLDirective; }
-    void setSourceTaintedOrigin(SourceTaintedOrigin taintedness) { m_taintedness = taintedness; }
+    void setSourceTaintedOrigin(SourceTaintKind kind, SourceTaintedOrigin taintedness) { m_taintedness[kind] = taintedness; }
 
-    SourceTaintedOrigin sourceTaintedOrigin() const { return m_taintedness; }
-    bool couldBeTainted() const { return m_taintedness != SourceTaintedOrigin::Untainted; }
+    SourceTaintedness taintedness() const { return m_taintedness; }
+    SourceTaintedOrigin sourceTaintedOrigin(SourceTaintKind kind) const { return m_taintedness[kind]; }
+    bool LEGACY_NODELETE couldBeTainted() const { return m_taintedness.couldBeTainted(); }
 
     JS_EXPORT_PRIVATE void lockUnderlyingBuffer();
     JS_EXPORT_PRIVATE void unlockUnderlyingBuffer();
-    JS_EXPORT_PRIVATE virtual CodeBlockHash codeBlockHashConcurrently(int startOffset, int endOffset, CodeSpecializationKind);
+    JS_EXPORT_PRIVATE CodeBlockHash codeBlockHashConcurrently(int startOffset, int endOffset, CodeSpecializationKind) const;
+    // Like source(), but safe on any thread. The text is valid only during the call.
+    JS_EXPORT_PRIVATE virtual void withSourceConcurrently(const ScopedLambda<void(StringView)>&) const;
 
     virtual bool isScriptBufferSourceProvider() const { return false; }
 
@@ -200,18 +226,21 @@ public:
 
     LineStartTable::PositionInfo positionInfoForOffset(unsigned offset)
     {
+        // Reads source(), which is unsafe on GC threads. documentLineColumnForOffset() is a thread-safe option.
+        ASSERT(Thread::currentSingleton().gcThreadType() == GCThreadType::None);
         return m_lineStartTable.positionInfoForOffset(source(), offset);
     }
 
     unsigned offsetForPosition(unsigned line0Based, unsigned column0Based)
     {
+        ASSERT(Thread::currentSingleton().gcThreadType() == GCThreadType::None);
         return m_lineStartTable.offsetForPosition(source(), line0Based, column0Based);
     }
 
-    // Zero-based, in the provider's own text.
+    // Zero-based, in the provider's own text. Safe on any thread, like withSourceConcurrently().
     virtual LineColumn lineColumnInTextForOffset(unsigned offset)
     {
-        return m_lineStartTable.lineColumnForOffset(source(), offset);
+        return m_lineStartTable.zeroBasedLineColumnForOffset(*this, offset);
     }
 
     // An inline <script> shifts every line of its document, but shifts the column only on its first
@@ -267,7 +296,7 @@ private:
     JS_EXPORT_PRIVATE virtual void lockUnderlyingBufferImpl();
     JS_EXPORT_PRIVATE virtual void unlockUnderlyingBufferImpl();
 
-    JS_EXPORT_PRIVATE void NODELETE getID();
+    JS_EXPORT_PRIVATE void LEGACY_NODELETE getID();
 
     std::atomic<unsigned> m_lockingCount { 0 };
     SourceProviderSourceType m_sourceType;
@@ -279,7 +308,10 @@ private:
     String m_sourceMappingURLDirective;
     TextPosition m_startPosition;
     SourceID m_id { 0 };
-    SourceTaintedOrigin m_taintedness;
+    SourceTaintedness m_taintedness;
+#if USE(BUN_JSC_ADDITIONS)
+    SourceProvenance m_provenance { SourceProvenance::GeneratedAtRuntime };
+#endif
 
     std::atomic<bool> m_sourceCodeDumped { false };
     Lock m_sourceCodeDumpLock;
@@ -292,10 +324,17 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(StringSourceProvider);
 class StringSourceProvider : public SourceProvider {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(StringSourceProvider, StringSourceProvider);
 public:
-    static Ref<StringSourceProvider> create(const String& source, const SourceOrigin& sourceOrigin, String sourceURL, SourceTaintedOrigin taintedness, const TextPosition& startPosition = TextPosition(), SourceProviderSourceType sourceType = SourceProviderSourceType::Program)
+    static Ref<StringSourceProvider> create(const String& source, const SourceOrigin& sourceOrigin, String sourceURL, SourceTaintedness taintedness, const TextPosition& startPosition = TextPosition(), SourceProviderSourceType sourceType = SourceProviderSourceType::Program)
     {
         return adoptRef(*new StringSourceProvider(source, sourceOrigin, taintedness, WTF::move(sourceURL), startPosition, sourceType));
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    static Ref<StringSourceProvider> create(const String& source, const SourceOrigin& sourceOrigin, String sourceURL, SourceTaintedness taintedness, const TextPosition& startPosition, SourceProviderSourceType sourceType, SourceProvenance provenance)
+    {
+        return adoptRef(*new StringSourceProvider(source, sourceOrigin, taintedness, WTF::move(sourceURL), startPosition, sourceType, provenance));
+    }
+#endif
 
     unsigned hash() const override
     {
@@ -308,11 +347,19 @@ public:
     }
 
 protected:
-    StringSourceProvider(const String& source, const SourceOrigin& sourceOrigin, SourceTaintedOrigin taintedness, String&& sourceURL, const TextPosition& startPosition, SourceProviderSourceType sourceType)
+    StringSourceProvider(const String& source, const SourceOrigin& sourceOrigin, SourceTaintedness taintedness, String&& sourceURL, const TextPosition& startPosition, SourceProviderSourceType sourceType)
         : SourceProvider(sourceOrigin, WTF::move(sourceURL), String(), taintedness, startPosition, sourceType)
         , m_source(source.isNull() ? *StringImpl::empty() : *source.impl())
     {
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    StringSourceProvider(const String& source, const SourceOrigin& sourceOrigin, SourceTaintedness taintedness, String&& sourceURL, const TextPosition& startPosition, SourceProviderSourceType sourceType, SourceProvenance provenance)
+        : SourceProvider(sourceOrigin, WTF::move(sourceURL), String(), taintedness, startPosition, sourceType, provenance)
+        , m_source(source.isNull() ? *StringImpl::empty() : *source.impl())
+    {
+    }
+#endif
 
 private:
     const Ref<StringImpl> m_source;
@@ -332,7 +379,11 @@ public:
 
 private:
     BuiltinsSourceProvider(const String& source, std::span<const unsigned> starts)
+#if USE(BUN_JSC_ADDITIONS)
+        : StringSourceProvider(source, { }, SourceTaintedOrigin::Untainted, String(), TextPosition(), SourceProviderSourceType::Program, SourceProvenance::Static)
+#else
         : StringSourceProvider(source, { }, SourceTaintedOrigin::Untainted, String(), TextPosition(), SourceProviderSourceType::Program)
+#endif
         , m_starts(starts)
     {
     }

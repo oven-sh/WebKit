@@ -76,7 +76,7 @@ public:
     CodePtr<JSEntryPtrTag> jsCallICEntrypoint()
     {
 #if ENABLE(JIT)
-        if (m_taintedness >= SourceTaintedOrigin::IndirectlyTainted)
+        if (m_taintedness.isTainted())
             return nullptr;
 
         // Prep the entrypoint for the slow path.
@@ -89,7 +89,7 @@ public:
 #endif
     }
 
-    SourceTaintedOrigin taintedness() const { return m_taintedness; }
+    SourceTaintedness taintedness() const { return m_taintedness; }
 
     static constexpr ptrdiff_t offsetOfBoxedJSToWasmCallee() { return OBJECT_OFFSETOF(WebAssemblyFunction, m_boxedJSToWasmCallee); }
     static constexpr ptrdiff_t offsetOfFrameSize() { return OBJECT_OFFSETOF(WebAssemblyFunction, m_frameSize); }
@@ -103,7 +103,7 @@ private:
     // ensureJSToWasmCallee, which create() invokes before the wrapper is exposed.
     RefPtr<Wasm::JSToWasmCallee, BoxedNativeCalleePtrTraits<Wasm::JSToWasmCallee>> m_boxedJSToWasmCallee;
     uint32_t m_frameSize { 0 };
-    SourceTaintedOrigin m_taintedness;
+    SourceTaintedness m_taintedness;
 
 #if ENABLE(JIT)
     CodePtr<JSEntryPtrTag> m_jsToWasmICJITCode;

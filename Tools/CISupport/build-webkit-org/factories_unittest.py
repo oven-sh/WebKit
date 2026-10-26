@@ -22,7 +22,6 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from . import loadConfig
-import json
 import os
 import unittest
 
@@ -299,6 +298,8 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'delete-WebKitBuild-directory',
             'delete-stale-build-files',
             'prune-coresymbolicationd-cache-if-too-large',
+            'install-cmake',
+            'install-ninja',
             'compile-webkit',
             'trigger'
         ],
@@ -1623,9 +1624,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
         # This is the complement of test_unique_platform_for_build_product_upload:
         # every bot that gets trigerred should share the same platform keys than the builder,
         # so the download URI for the built-product matches the builder upload.
-        cwd = os.path.dirname(os.path.abspath(__file__))
-        with open(os.path.join(cwd, 'config.json')) as config_json:
-            raw_config = json.load(config_json)
+        raw_config = loadConfig.render_config()
         triggerable_builders = {
             scheduler['name']: scheduler.get('builderNames', [])
             for scheduler in raw_config['schedulers']
@@ -1668,9 +1667,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
     def test_all_builders_are_reachable_by_a_scheduler(self):
         # Every builder must be able to run automatically: either it is attached to an
         # automatic scheduler or it is triggered by other bot.
-        cwd = os.path.dirname(os.path.abspath(__file__))
-        with open(os.path.join(cwd, 'config.json')) as config_json:
-            raw_config = json.load(config_json)
+        raw_config = loadConfig.render_config()
 
         root_scheduler_types = ('AnyBranchScheduler', 'Nightly', 'PlatformSpecificScheduler')
         directly_scheduled = set()

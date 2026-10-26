@@ -165,7 +165,7 @@ func addTrustAnchorTests() {
 			RequestTrustAnchors: [][]byte{id2},
 			Bugs: ProtocolBugs{
 				ExpectPeerAvailableTrustAnchors: [][]byte{id1, id2},
-				ExpectPeerMatchTrustAnchor:      ptrTo(true),
+				ExpectPeerMatchTrustAnchor:      new(true),
 			},
 		},
 		shimCredentials: []*Credential{
@@ -196,7 +196,7 @@ func addTrustAnchorTests() {
 			RequestTrustAnchors: [][]byte{id1},
 			Bugs: ProtocolBugs{
 				ExpectPeerAvailableTrustAnchors: [][]byte{id2, id3},
-				ExpectPeerMatchTrustAnchor:      ptrTo(false),
+				ExpectPeerMatchTrustAnchor:      new(false),
 			},
 		},
 		shimCredentials: []*Credential{
@@ -222,7 +222,7 @@ func addTrustAnchorTests() {
 			VerifySignatureAlgorithms: []signatureAlgorithm{signatureRSAPSSWithSHA256, signatureECDSAWithP256AndSHA256},
 			Bugs: ProtocolBugs{
 				ExpectPeerAvailableTrustAnchors: [][]byte{id2},
-				ExpectPeerMatchTrustAnchor:      ptrTo(false),
+				ExpectPeerMatchTrustAnchor:      new(false),
 			},
 		},
 		shimCredentials: []*Credential{
@@ -246,7 +246,7 @@ func addTrustAnchorTests() {
 			VerifySignatureAlgorithms: []signatureAlgorithm{signatureRSAPSSWithSHA256, signatureECDSAWithP256AndSHA256},
 			Bugs: ProtocolBugs{
 				ExpectPeerAvailableTrustAnchors: [][]byte{},
-				ExpectPeerMatchTrustAnchor:      ptrTo(false),
+				ExpectPeerMatchTrustAnchor:      new(false),
 			},
 		},
 		shimCredentials: []*Credential{
@@ -309,7 +309,7 @@ func addTrustAnchorTests() {
 			RequestTrustAnchors: [][]byte{},
 			Bugs: ProtocolBugs{
 				ExpectPeerAvailableTrustAnchors: [][]byte{id1, id2},
-				ExpectPeerMatchTrustAnchor:      ptrTo(false),
+				ExpectPeerMatchTrustAnchor:      new(false),
 			},
 		},
 		shimCredentials: []*Credential{
@@ -374,7 +374,7 @@ func addTrustAnchorTests() {
 			RequestTrustAnchors: [][]byte{group},
 			Bugs: ProtocolBugs{
 				ExpectPeerAvailableTrustAnchors: [][]byte{id1, id2},
-				ExpectPeerMatchTrustAnchor:      ptrTo(true),
+				ExpectPeerMatchTrustAnchor:      new(true),
 			},
 		},
 		shimCredentials: []*Credential{
@@ -407,7 +407,7 @@ func addTrustAnchorTests() {
 			RequestTrustAnchors: [][]byte{group},
 			Bugs: ProtocolBugs{
 				ExpectPeerAvailableTrustAnchors: [][]byte{id1, id2},
-				ExpectPeerMatchTrustAnchor:      ptrTo(true),
+				ExpectPeerMatchTrustAnchor:      new(true),
 			},
 		},
 		shimCredentials: []*Credential{

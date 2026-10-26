@@ -42,7 +42,7 @@
 #include <charconv>
 #include <wtf/MathExtras.h>
 #include <wtf/UnalignedAccess.h>
-#include <wtf/dragonbox/dragonbox_to_chars.h>
+#include <wtf/dtoa.h>
 #include <wtf/text/EscapedFormsForJSON.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/ParsingUtilities.h>
@@ -113,9 +113,9 @@ private:
         Holder(JSGlobalObject*, JSObject*, Structure*);
         Holder(RootHolderTag, JSObject*);
 
-        JSObject* NODELETE object() const { return m_object; }
-        bool NODELETE isArray() const { return m_isArray; }
-        bool NODELETE hasFastObjectProperties() const { return m_hasFastObjectProperties; }
+        JSObject* LEGACY_NODELETE object() const { return m_object; }
+        bool LEGACY_NODELETE isArray() const { return m_isArray; }
+        bool LEGACY_NODELETE hasFastObjectProperties() const { return m_hasFastObjectProperties; }
 
         bool appendNextProperty(Stringifier&, StringBuilder&);
 
@@ -144,7 +144,7 @@ private:
     void indent();
     void unindent();
     void startNewLine(StringBuilder&) const;
-    bool NODELETE isCallableReplacer() const { return m_replacerCallData.type != CallData::Type::None; }
+    bool LEGACY_NODELETE isCallableReplacer() const { return m_replacerCallData.type != CallData::Type::None; }
 
     JSGlobalObject* const m_globalObject;
     JSValue m_replacer;
@@ -474,7 +474,7 @@ Stringifier::StringifyResult Stringifier::appendStringifiedValue(StringBuilder& 
     return StringifySucceeded;
 }
 
-inline bool NODELETE Stringifier::willIndent() const
+inline bool LEGACY_NODELETE Stringifier::willIndent() const
 {
     return !m_gap.isEmpty();
 }
@@ -489,7 +489,7 @@ inline void Stringifier::indent()
     m_indent = StringView { m_repeatedGap }.left(newSize);
 }
 
-inline void NODELETE Stringifier::unindent()
+inline void LEGACY_NODELETE Stringifier::unindent()
 {
     ASSERT(m_indent.length() >= m_gap.length());
     m_indent = StringView { m_repeatedGap }.left(m_indent.length() - m_gap.length());
@@ -724,7 +724,7 @@ private:
     unsigned newLineAndIndentSize() const;
     void appendNewLineAndIndentUnchecked();
     template<typename T> void recordFailure(FailureReason, T&& reason);
-    template<typename T> void NODELETE recordFailure(T&& reason)
+    template<typename T> void LEGACY_NODELETE recordFailure(T&& reason)
     {
         recordFailure(FailureReason::Unknown, std::forward<T>(reason));
     }
@@ -1382,17 +1382,15 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             append('n', 'u', 'l', 'l');
             return;
         }
-        if (!hasRemainingCapacity(WTF::dragonbox::max_string_length<WTF::dragonbox::ieee754_binary64>())) [[unlikely]] {
+        if (!hasRemainingCapacity(numberToShortestStringBufferSize)) [[unlikely]] {
             recordBufferFull();
             return;
         }
-        if constexpr (sizeof(CharType) == 1) {
-            auto cursor = WTF::dragonbox::detail::to_chars_n<WTF::dragonbox::Mode::ToShortest>(number, byteCast<char>(bufferSpan().subspan(m_length)));
-            m_length = cursor.data() - reinterpret_cast<char*>(buffer());
-        } else {
-            std::array<char, WTF::dragonbox::max_string_length<WTF::dragonbox::ieee754_binary64>()> temporary;
-            auto cursor = WTF::dragonbox::detail::to_chars_n<WTF::dragonbox::Mode::ToShortest>(number, std::span { temporary });
-            size_t length = cursor.data() - temporary.data();
+        if constexpr (sizeof(CharType) == 1)
+            m_length += WTF::numberToShortestString(number, byteCast<char>(bufferSpan().subspan(m_length)).template first<numberToShortestStringBufferSize>());
+        else {
+            std::array<char, numberToShortestStringBufferSize> temporary;
+            size_t length = WTF::numberToShortestString(number, temporary);
             WTF::copyElements(spanReinterpretCast<uint16_t>(bufferSpan().subspan(m_length)), byteCast<uint8_t>(std::span { temporary }).first(length));
             m_length += length;
         }
@@ -1407,7 +1405,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
 
     switch (cell.type()) {
     case StringType: {
-        auto string = asString(&cell)->tryGetValue();
+        auto string = asString(&cell)->tryGetView();
         if (string.data.isNull()) [[unlikely]] {
             recordFailure("String::tryGetValue"_s);
             return;
@@ -1621,7 +1619,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             if constexpr (std::same_as<CharType, Latin1Character>) {
                 // Inlining String case here since it is too common.
                 if (value.isCell() && value.asCell()->type() == StringType) [[likely]] {
-                    auto valueString = asString(value.asCell())->tryGetValue();
+                    auto valueString = asString(value.asCell())->tryGetView();
                     if (!valueString.data.isNull() && valueString.data.is8Bit()) [[likely]] {
                         unsigned valueLength = valueString.data.length();
                         if (!hasRemainingCapacity(1 + valueLength + 1)) [[unlikely]] {
@@ -2118,7 +2116,8 @@ NEVER_INLINE JSValue Walker::walk(JSValue unfiltered)
                 else {
                     unsigned attributes;
                     PropertyOffset offset = object->getDirectOffset(vm, prop, attributes);
-                    if (offset != invalidOffset && attributes == static_cast<unsigned>(PropertyAttribute::None)) [[likely]] {
+                    // The reviver was handed this holder and may have made its properties immutable: only the checked path may write then.
+                    if (offset != invalidOffset && attributes == static_cast<unsigned>(PropertyAttribute::None) && !object->structure()->hasImmutableProperties()) [[likely]] {
                         object->putDirectOffset(vm, offset, filteredValue);
                         object->structure()->didReplaceProperty(offset);
                     } else {

@@ -45,6 +45,7 @@
 #import "WebFrame.h"
 #import "WebProcess.h"
 #import <WebCore/LocalFrameInlines.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 #if PLATFORM(IOS_FAMILY)
 #import <UIKit/UIKit.h>
@@ -59,8 +60,8 @@ namespace WebKit {
 std::expected<void, String> WebExtensionAPIAction::parseActionDetails(NSDictionary *details, std::optional<WebExtensionWindowIdentifier>& windowIdentifier, std::optional<WebExtensionTabIdentifier>& tabIdentifier)
 {
     static NSDictionary<NSString *, id> *types = @{
-        tabIdKey: NSNumber.class,
-        windowIdKey: NSNumber.class,
+        tabIdKey: [NSOrderedSet orderedSetWithObjects:NSNumber.class, NSNull.class, nil],
+        windowIdKey: [NSOrderedSet orderedSetWithObjects:NSNumber.class, NSNull.class, nil],
     };
 
     NSString *outExceptionString;
@@ -68,18 +69,21 @@ std::expected<void, String> WebExtensionAPIAction::parseActionDetails(NSDictiona
     if (!validateDictionary(details, @"details", nil, types, &outExceptionString))
         return makeUnexpected(String(outExceptionString));
 
-    if (details[tabIdKey] && details[windowIdKey]) {
+    auto *tabID = objectForKey<NSNumber>(details, tabIdKey);
+    auto *windowID = objectForKey<NSNumber>(details, windowIdKey);
+
+    if (tabID && windowID) {
         outExceptionString = toErrorString(nullString(), @"details", @"it cannot specify both 'tabId' and 'windowID'").createNSString().autorelease();
         return makeUnexpected(String(outExceptionString));
     }
 
-    if (NSNumber *tabID = details[tabIdKey]) {
+    if (tabID) {
         tabIdentifier = toWebExtensionTabIdentifier(tabID.doubleValue);
         if (!isValid(tabIdentifier, &outExceptionString))
             return makeUnexpected(String(outExceptionString));
     }
 
-    if (NSNumber *windowID = details[windowIdKey]) {
+    if (windowID) {
         windowIdentifier = toWebExtensionWindowIdentifier(windowID.doubleValue);
         if (!isValid(windowIdentifier, &outExceptionString))
             return makeUnexpected(String(outExceptionString));
@@ -105,8 +109,7 @@ void WebExtensionAPIAction::getTitle(NSDictionary *details, Ref<WebExtensionCall
             return;
         }
 
-        // This is a safer cpp false positive (rdar://163760990).
-        SUPPRESS_UNCOUNTED_ARG callback->call(JSValueMakeString(callback->globalContext(), toJSString(result.value()).get()));
+        callback->call(JSValueMakeString(callback->globalContext(), toJSString(result.value()).get()));
     }, extensionContext().identifier());
 }
 
@@ -165,8 +168,7 @@ void WebExtensionAPIAction::getBadgeText(NSDictionary *details, Ref<WebExtension
             return;
         }
 
-        // This is a safer cpp false positive (rdar://163760990).
-        SUPPRESS_UNCOUNTED_ARG callback->call(JSValueMakeString(callback->globalContext(), toJSString(result.value()).get()));
+        callback->call(JSValueMakeString(callback->globalContext(), toJSString(result.value()).get()));
     }, extensionContext().identifier());
 }
 
@@ -449,10 +451,10 @@ NSMutableDictionary *WebExtensionAPIAction::parseIconImageDataDictionary(NSDicti
         }
 
         id value = input[key];
-        if (!validateObject(value, adoptNS([[NSString alloc] initWithFormat:@"%@[%@]", inputKey, key]).get(), JSValue.class, outExceptionString))
+        if (!validateObject(dynamic_objc_cast<NSObject>(value), adoptNS([[NSString alloc] initWithFormat:@"%@[%@]", inputKey, key]).get(), JSValue.class, outExceptionString))
             return nil;
 
-        auto *dataURLString = dataURLFromImageData(value, nullptr, key, outExceptionString);
+        auto *dataURLString = dataURLFromImageData(checked_objc_cast<JSValue>(value), nullptr, key, outExceptionString);
         if (!dataURLString)
             return nil;
 
@@ -615,8 +617,7 @@ void WebExtensionAPIAction::getPopup(NSDictionary *details, Ref<WebExtensionCall
             return;
         }
 
-        // This is a safer cpp false positive (rdar://163760990).
-        SUPPRESS_UNCOUNTED_ARG callback->call(JSValueMakeString(callback->globalContext(), toJSString(result.value()).get()));
+        callback->call(JSValueMakeString(callback->globalContext(), toJSString(result.value()).get()));
     }, extensionContext().identifier());
 }
 
@@ -680,7 +681,7 @@ WebExtensionAPIEvent& WebExtensionAPIAction::onClicked()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/action/onClicked
 
     if (!m_onClicked)
-        m_onClicked = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::ActionOnClicked);
+        lazyInitialize(m_onClicked, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::ActionOnClicked));
 
     return *m_onClicked;
 }
@@ -694,7 +695,7 @@ void WebExtensionContextProxy::dispatchActionClickedEvent(const std::optional<We
     enumerateFramesAndNamespaceObjects([&](auto& frame, auto& namespaceObject) {
         RefPtr coreFrame = frame.coreLocalFrame();
         WebCore::UserGestureIndicator gestureIndicator(WebCore::IsProcessingUserGesture::Yes, protect(coreFrame ? coreFrame->document() : nullptr));
-        namespaceObject.action().onClicked().invokeListenersWithArgument(tab);
+        protect(protect(namespaceObject.action())->onClicked())->invokeListenersWithArgument(tab);
     });
 }
 

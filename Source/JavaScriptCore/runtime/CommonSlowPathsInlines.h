@@ -29,6 +29,7 @@
 #include "ClonedArguments.h"
 #include "CommonSlowPaths.h"
 #include "DirectArguments.h"
+#include "JSArrayBufferViewInlines.h"
 #include "JSGlobalLexicalEnvironment.h"
 #include "JSSetInlines.h"
 #include "ScopedArguments.h"
@@ -210,6 +211,15 @@ ALWAYS_INLINE JSCellButterfly* trySpreadFast(JSGlobalObject* globalObject, JSCel
             return JSCellButterfly::createFromSet(globalObject, set);
         return nullptr;
     }
+#define CASE_TYPED_ARRAY_TYPE(name) case name##ArrayType:
+    FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(CASE_TYPED_ARRAY_TYPE)
+#undef CASE_TYPED_ARRAY_TYPE
+    {
+        auto* view = uncheckedDowncast<JSArrayBufferView>(iterable);
+        if (!view->isOutOfBounds() && view->isIteratorProtocolFastAndNonObservable()) [[likely]]
+            return JSCellButterfly::createFromTypedArray(globalObject, view);
+        return nullptr;
+    }
     default:
         return nullptr;
     }
@@ -234,7 +244,7 @@ inline void opEnumeratorPutByVal(JSGlobalObject* globalObject, JSValue baseValue
         if (baseValue.isCell()) [[likely]] {
             auto* baseCell = baseValue.asCell();
             auto* structure = baseCell->structure();
-            if (structure->id() == enumerator->cachedStructureID() && !structure->isWatchingReplacement() && !structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto()) {
+            if (structure->id() == enumerator->cachedStructureID() && !structure->hasImmutableProperties() && !structure->isWatchingReplacement() && !structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto()) {
                 // We'll only match the structure ID if the base is an object.
                 ASSERT(index < enumerator->endStructurePropertyIndex());
                 scope.release();

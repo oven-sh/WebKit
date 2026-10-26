@@ -64,6 +64,7 @@ public:
 #if !PLATFORM(WIN)
     WEBCORE_EXPORT static void setSharedDisplay(std::unique_ptr<PlatformDisplay>&&);
     WEBCORE_EXPORT static PlatformDisplay* sharedDisplayIfExists();
+    WEBCORE_EXPORT static void destroySharedDisplay();
 #endif
     virtual ~PlatformDisplay();
 
@@ -118,6 +119,7 @@ public:
 
 #if USE(SKIA)
     GLContext* skiaGLContext();
+    static void makeSkiaGLContextCurrentIfExists();
     void setSkiaGLContextForCurrentThread(std::unique_ptr<GLContext>&&);
     GrDirectContext* skiaGrContext() const;
     unsigned msaaSampleCount() const;

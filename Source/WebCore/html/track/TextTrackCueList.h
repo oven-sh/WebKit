@@ -36,14 +36,14 @@ class Document;
 
 class TextTrackCueList : public RefCounted<TextTrackCueList> {
 public:
-    static Ref<TextTrackCueList> create();
+    static Ref<TextTrackCueList> LEGACY_NODELETE create();
 
     void didMoveToNewDocument(Document&);
 
     bool isSupportedPropertyIndex(unsigned index) const { return index < length(); }
     unsigned length() const;
-    TextTrackCue* NODELETE item(unsigned index) const;
-    TextTrackCue* NODELETE getCueById(const String&) const;
+    TextTrackCue* LEGACY_NODELETE item(unsigned index) const;
+    TextTrackCue* LEGACY_NODELETE getCueById(const String&) const;
 
     unsigned cueIndex(const TextTrackCue&) const;
 
@@ -59,7 +59,7 @@ private:
     TextTrackCueList() = default;
 
     Vector<Ref<TextTrackCue>> m_vector;
-    RefPtr<TextTrackCueList> m_activeCues;
+    const RefPtr<TextTrackCueList> m_activeCues;
 };
 
 inline unsigned TextTrackCueList::length() const

@@ -65,6 +65,7 @@
 #if ENABLE(WEB_AUTHN)
 #include "AuthenticatorCoordinatorClient.h"
 #include "CredentialRequestCoordinatorClient.h"
+#include "PhoneNumberPossessionCoordinatorClient.h"
 #endif
 #if ENABLE(APPLE_PAY)
 #include "PaymentCoordinatorClient.h"
@@ -76,7 +77,6 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(PageConfiguration);
 
 PageConfiguration::PageConfiguration(
     std::optional<PageIdentifier> identifier,
-    std::optional<BrowsingContextGroupIdentifier> browsingContextGroupIdentifier,
     PAL::SessionID sessionID,
     UniqueRef<EditorClient>&& editorClient,
     Ref<SocketProvider>&& socketProvider,
@@ -109,7 +109,6 @@ PageConfiguration::PageConfiguration(
 #endif
 )
     : identifier(identifier)
-    , browsingContextGroupIdentifier(browsingContextGroupIdentifier)
     , sessionID(sessionID)
     , chromeClient(WTF::move(chromeClient))
 #if ENABLE(CONTEXT_MENUS)
