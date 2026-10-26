@@ -1,5 +1,6 @@
 # A closure in a field of an environment that nothing reads holds what it captures. Where the environment names each captured object in a field of its own that stays,
 # is stored once and is filled in front of the closure, the closure holds nothing that the environment does not hold: the store goes, and the closure with it.
+# The same where the field is filled behind the closure in the same block and every operation in between completes: until then the function holds what it is about to store.
 # A suspension that lists such a closure holds it and does not look at it: it lists what the closure captured.
 # FORM: Prepared
 # RUN: pass RemoveUnreadFields
@@ -9,6 +10,7 @@ layout L0 kind=Environment name="scope" fields=[{key="x" declared={type=anything
 layout L1 kind=Environment name="scopeStoredTwice" fields=[{key="x" declared={type=anything} flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}, {key="unread" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
 layout L2 kind=Environment name="scopeOfUnreadNames" fields=[{key="n" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation}}}, {key="unread" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="alsoUnread" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
 layout L3 kind=Environment name="scopeFilledLate" fields=[{key="x" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation}}}, {key="unread" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
+layout L4 kind=Environment name="scopeFilledBehindACall" fields=[{key="x" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation}}}, {key="unread" declared={type=anything} flow={location={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
 
 function f0 name="namedAtBirth" parameters=[{type=object}] results=[{type=anything}] {
     v1 = NewObject -, v0 layout=L0 fields=[0]
@@ -38,8 +40,9 @@ function f2 name="namedBehindTheClosure" parameters=[{type=object}] results=[{ty
     PutEnvironmentField v1, v0 layout=L3 field=0
     v5 = NewClosure v1 function=f14
     Return v5
-# CHECK: = NewClosure v1, v0 function=f13
-# CHECK-NEXT: PutEnvironmentField v1, v2 layout=L3 field=1
+# CHECK: = NewObject layout=L3
+# CHECK-NEXT: PutEnvironmentField v1, v0 layout=L3
+# CHECK-NEXT: = NewClosure v1 function=f14
 }
 
 function f3 name="namedInAFieldThatIsStoredAgain" parameters=[{type=object}] results=[{type=anything}] {
@@ -113,5 +116,26 @@ function f13 name="readsScopeFilledLateAndObject" kind=Arrow captures=[{type=env
 function f14 name="readsScopeFilledLate" kind=Arrow captures=[{type=env L3}] results=[{type=anything}] {
   b0(v0: env L3):
     v1 = GetEnvironmentField v0 layout=L3 field=0
+    Return v1
+}
+
+function f15 name="namedBehindACallBehindTheClosure" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject layout=L4
+    v3 = NewClosure v2, v0 function=f16
+    PutEnvironmentField v2, v3 layout=L4 field=1
+    v5 = Call v1, -
+    PutEnvironmentField v2, v0 layout=L4 field=0
+    v7 = NewClosure v2 function=f17
+    Return v7
+# CHECK: = NewClosure v2, v0 function=f16
+# CHECK-NEXT: PutEnvironmentField v2, v3 layout=L4 field=1
+}
+function f16 name="readsScopeFilledBehindACallAndObject" kind=Arrow captures=[{type=env L4}, {type=object}] results=[{type=anything}] {
+  b0(v0: env L4, v1: object):
+    Return v1
+}
+function f17 name="readsScopeFilledBehindACall" kind=Arrow captures=[{type=env L4}] results=[{type=anything}] {
+  b0(v0: env L4):
+    v1 = GetEnvironmentField v0 layout=L4 field=0
     Return v1
 }

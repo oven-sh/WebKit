@@ -476,7 +476,8 @@ private:
         return answer;
     }
 
-    // What its holder names in a field of its own, stored once, lives as long as the holder: an environment wherever the store stands, anything else where the holder is an environment whose field stays and is filled in front of the closure.
+    // What its holder names in a field of its own, stored once, lives as long as the holder: an environment wherever the store stands, anything else where the holder is an environment whose field stays and is filled in front of the closure,
+    // or behind it in the same block where every operation in between completes: until the store runs, the function holds what it is about to store.
     bool isHeldBy(ValueID holder, ValueID held, ValueID closure)
     {
         if (!holder)
@@ -510,7 +511,27 @@ private:
             return true;
         ValueLocation store = useLists().locationOf(found->value);
         ValueLocation made = useLists().locationOf(closure);
-        return store.placement == ValuePlacement::InBlock && made.placement == ValuePlacement::InBlock && store.block == made.block && store.index < made.index;
+        if (store.placement != ValuePlacement::InBlock || made.placement != ValuePlacement::InBlock || store.block != made.block)
+            return false;
+        return store.index < made.index || numberOfExitsInFrontOf(found->value) == numberOfExitsInFrontOf(closure);
+    }
+
+    // How many of the operations that stand in front of a value in its block may leave the block.
+    uint32_t numberOfExitsInFrontOf(ValueID value)
+    {
+        if (m_numberOfExitsInFront.isEmpty()) {
+            m_numberOfExitsInFront.fill(0, m_function.values.size());
+            for (const Block& block : m_function.blocks) {
+                uint32_t numberOfExits = 0;
+                for (ValueID member : block.values) {
+                    m_numberOfExitsInFront[member.index()] = numberOfExits;
+                    Opcode opcode = m_function.at(member).opcode;
+                    Effects bound = declaredBoundOf(opcode);
+                    numberOfExits += !effectFactsOf(opcode).staysWithinDeclaredBound || bound.mayThrowByRule() || !bound.alwaysCompletes();
+                }
+            }
+        }
+        return m_numberOfExitsInFront[value.index()];
     }
 
     const BuildContext& m_build;
@@ -525,6 +546,7 @@ private:
     std::optional<CFG> m_cfg;
     std::optional<UseLists> m_useLists;
     std::optional<HashMap<uint64_t, ValueID, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> m_valuesHeld;
+    Vector<uint32_t> m_numberOfExitsInFront;
 };
 
 static bool mayHaveNamespaceObject(NamespaceUse use)

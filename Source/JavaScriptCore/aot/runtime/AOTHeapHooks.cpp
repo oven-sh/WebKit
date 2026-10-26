@@ -31,6 +31,7 @@
 #include "SlotVisitorInlines.h"
 #include "VM.h"
 #include <algorithm>
+#include <limits>
 #include <span>
 #include <type_traits>
 #include <wtf/DataLog.h>
@@ -42,6 +43,13 @@
 
 namespace JSC { namespace AOT {
 
+// What was called from there, or from below, has returned.
+static const void* stackPointerAtTop(VM& vm)
+{
+    CallFrame* top = vm.topCallFrame;
+    return top ? stackPointerOfCaller(top) : std::bit_cast<const void*>(std::numeric_limits<uintptr_t>::max());
+}
+
 template<RootVolatility volatility, typename Visitor>
 static void visitRootsOfCompiledCode(VM& vm, Visitor& visitor)
 {
@@ -50,7 +58,7 @@ static void visitRootsOfCompiledCode(VM& vm, Visitor& visitor)
     SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
     VMState& state = vm.aotState();
     if (state.functionTables)
-        state.functionTables->visitRecordedCallees(vm, visitor);
+        state.functionTables->visitRecordedCallees(visitor, stackPointerAtTop(vm));
     state.caches->visitRoots(visitor, volatility);
 
     Locker locker { state.instancesLock };
@@ -124,7 +132,7 @@ void finalize(VM& vm, CollectionScope scope)
     }
 
     if (state.functionTables)
-        state.functionTables->finalizeRecordedCallees(vm);
+        state.functionTables->finalizeRecordedCallees(vm, stackPointerAtTop(vm));
 
     CacheValidation validation = state.validatesRuntime ? CacheValidation::On : CacheValidation::Off;
     state.caches->finalize(vm, scope, validation);

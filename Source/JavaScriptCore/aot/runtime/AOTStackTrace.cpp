@@ -497,24 +497,22 @@ void recordCallee(VM& vm, JSObject* closure)
     FunctionTables::of(vm).recordCallee(vm, walk.callerStackPointer(), closure);
 }
 
-void forEachCallThatRecordsCallee(VM& vm, const void* outermost, const ScopedLambda<void(const void* stackPointerOfCaller)>& functor)
+// A built-in function that makes an error stands in one frame on top of the code that called it.
+static std::optional<RunStart> findRunBelowHostFunction(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& framesOnTop, size_t maxStackSize)
 {
-    const Image& image = *vm.aotState().image;
-    StackVisitor::visitWithCompiledFrames(vm.topCallFrame, vm, [&](auto& visitor) {
-        if constexpr (std::remove_reference_t<decltype(visitor)>::visitsCompiledFrames) {
-            if (visitor->isCompiledFrame()) {
-                for (CompiledFrameIterator& frames = visitor.compiledFrames(); !frames.isAtEnd(); frames.advanceToCallerMachineFrame()) {
-                    const void* stackPointerOfCaller = frames.callerStackPointer();
-                    if (stackPointerOfCaller > outermost)
-                        return IterationStatus::Done;
-                    if (FunctionTables::of(vm).framesAreNamedByCallee(image.rootFunctionOf(frames.callSite().code.index())))
-                        functor(stackPointerOfCaller);
-                }
-                return IterationStatus::Continue;
-            }
-        }
-        return static_cast<const void*>(visitor->callFrame()) > outermost ? IterationStatus::Done : IterationStatus::Continue;
-    }, false, StackVisitor::CompiledFrameVisit::EachRunOnce);
+    CallFrame* top = vm.topCallFrame;
+    if (maxStackSize < 2 || top->callerFrameOrEntryFrame() == vm.topEntryFrame || top->isZombieFrame() || top->isNativeCalleeFrame() || top->codeBlock() || vm.aotState().classCalledWithoutNew == top)
+        return std::nullopt;
+    JSCell* callee = top->callee().asCell();
+    auto* function = callee ? dynamicDowncast<JSFunction>(callee) : nullptr;
+    if (!function || function->executable()->implementationVisibility() != ImplementationVisibility::Public)
+        return std::nullopt;
+    const CallSiteCache::Entry* site = vm.aotState().callSiteCache->find(removeCodePtrTag(top->rawReturnPC()));
+    if (!site || !site->isStubReturnSite() || site->stubFrameKind != StubFrameKind::HostCall)
+        return std::nullopt;
+    framesOnTop.reserveInitialCapacity(1);
+    framesOnTop.append(StackFrame(vm, owner, callee));
+    return RunStart { stackPointerOfCaller(top), top->callerFrame(), top->rawReturnPC(), vm.topEntryFrame, false, true };
 }
 
 static NEVER_INLINE std::optional<RunStart> findRunBelowOtherFrames(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& framesOnTop, size_t maxStackSize)
@@ -566,7 +564,9 @@ ReturnAddressTrace* tryCaptureStackTrace(VM& vm, JSCell* owner, size_t maxStackS
     if (!start) {
         if (lastConstructorToSkip)
             return nullptr;
-        start = findRunBelowOtherFrames(vm, owner, results, maxStackSize);
+        start = findRunBelowHostFunction(vm, owner, results, maxStackSize);
+        if (!start)
+            start = findRunBelowOtherFrames(vm, owner, results, maxStackSize);
         if (!start)
             return nullptr;
         framesAbove = { results.size(), true };

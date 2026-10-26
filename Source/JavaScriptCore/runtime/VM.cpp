@@ -294,7 +294,7 @@ private:
         static unsigned hash(const Key& key)
         {
             const String& name = std::get<3>(key);
-            return pairIntHash(intHash(std::get<0>(key)), name.isNull() ? 0 : name.hash());
+            return pairIntHash(intHash(static_cast<uint64_t>(std::get<0>(key))), name.isNull() ? 0 : name.hash());
         }
         static bool equal(const Key& a, const Key& b) { return a == b; }
         static constexpr bool safeToCompareToEmptyOrDeleted = true;

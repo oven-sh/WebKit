@@ -1030,7 +1030,11 @@ struct ClosureWebs {
             if (block.terminator.kind != TerminatorKind::Branch)
                 return { };
             const Value& test = function.at(block.terminator.conditionOperand());
-            return test.opcode == Opcode::ToBoolean || test.opcode == Opcode::TypeTest ? test.operand(target.proofs[index - target.arguments.size()]) : ValueID();
+            if (test.opcode != Opcode::ToBoolean && test.opcode != Opcode::TypeTest)
+                return { };
+            // Among the closures of several functions the test picks one out, and what it proves is no name of them all.
+            ValueID asked = test.operand(target.proofs[index - target.arguments.size()]);
+            return candidateOf(asked) == noCandidate || program.typeOf(function, asked).singleFunction() ? asked : ValueID();
         };
         // From what is cast to the cast, and from what an edge gives to the block parameter.
         auto forEachLink = [&](const Invocable<void(ValueID, ValueID)> auto& functor) {

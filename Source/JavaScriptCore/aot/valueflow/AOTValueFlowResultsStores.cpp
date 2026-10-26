@@ -921,7 +921,7 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, LayoutID layout, const
     if (name.kind == ValueFlowNameKind::CopiedFrom) {
         std::span<const PropertyKeyID> leftOut;
         if (writes.copyLeavingOutKeys != noCopyLeavingOutKeys)
-            leftOut = m_inputs.program.at(FunctionID(writes.copyLeavingOutKeys >> 32)).at(ValueID(static_cast<uint32_t>(writes.copyLeavingOutKeys))).excludedKeys();
+            leftOut = m_inputs.program.at(FunctionID(static_cast<uint32_t>(writes.copyLeavingOutKeys >> 32))).at(ValueID(static_cast<uint32_t>(writes.copyLeavingOutKeys))).excludedKeys();
         if (!stores.keysLeftOutOfEveryCopy)
             stores.keysLeftOutOfEveryCopy.emplace(leftOut);
         else {

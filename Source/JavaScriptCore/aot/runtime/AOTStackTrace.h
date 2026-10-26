@@ -91,8 +91,6 @@ JS_EXPORT_PRIVATE ReturnAddressTrace* tryCaptureStackTrace(VM&, JSCell* owner, s
 JS_EXPORT_PRIVATE bool beginsAt(const ReturnAddressTrace&, const void* returnAddress);
 JS_EXPORT_PRIVATE void forEachShownFrame(const ReturnAddressTrace&, const ScopedLambda<void(const TraceFrame&)>&);
 JS_EXPORT_PRIVATE void forEachShownFrame(CompiledFunctionID, const CallSiteRecord&, ShownFrameFilter&, const ScopedLambda<void(const TraceFrame&)>&);
-// Of each frame on the stack whose function records its callee: what the stack pointer is once the frame has returned. From the top frame outward, no further than `outermost`.
-void forEachCallThatRecordsCallee(VM&, const void* outermost, const ScopedLambda<void(const void* stackPointerOfCaller)>&);
 JS_EXPORT_PRIVATE std::optional<TraceFrame> tryGetFrameOfClassCalledWithoutNew(VM&, CallFrame*);
 JS_EXPORT_PRIVATE std::optional<SourcePosition> positionOf(const TraceFrame&);
 JS_EXPORT_PRIVATE LineColumn obfuscatedPositionOf(const TraceFrame&);

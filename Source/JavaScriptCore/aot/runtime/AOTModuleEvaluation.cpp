@@ -950,8 +950,17 @@ bool Modules::planLevelsOfLoad(ModuleID root)
         ModuleRecord* record = isCommonJSFileOrFace(module) ? nullptr : recordIfExists(module);
         return record && record->status() == CyclicModuleRecord::Status::Unlinked;
     };
-    BitVector seen(m_table.size());
-    seen.quickSet(root.index());
+    // Most requests of a large graph lead to a module that the search has come to.
+    Vector<uint64_t> modulesSeen;
+    modulesSeen.fill(0, m_table.size() / 64 + 1);
+    auto wasSeen = [&](ModuleID module) ALWAYS_INLINE_LAMBDA {
+        uint64_t& word = modulesSeen[module.index() / 64];
+        uint64_t bit = 1ull << (module.index() % 64);
+        bool wasSeen = word & bit;
+        word |= bit;
+        return wasSeen;
+    };
+    wasSeen(root);
     // What is found is what lies below the root and is not loaded.
     m_modulesBelowWalkedRoots.ensureSize(m_table.size());
     m_modulesBelowWalkedRoots.quickSet(root.index());
@@ -966,14 +975,14 @@ bool Modules::planLevelsOfLoad(ModuleID root)
                 if (request.isHoisted || request.isRequire)
                     continue;
                 ModuleID target = request.targetModule();
-                if (seen.quickSet(target.index()))
+                if (wasSeen(target))
                     continue;
-                // Most requests of a large graph lead to an ES module without a record: it is loaded if it has a status, and no load has come to it if it has none.
+                // Most of the others have no record. Such an ES module of the program is loaded if it has a status, and no load has come to it if it has none. The loader takes no step for what is neither of the program nor data.
                 const ModuleData& targetData = data(target);
-                if (isLoadedModuleWithoutRecord(target))
-                    continue;
-                if (storedStatus(target) == StoredModuleStatus::Unlinked && targetData.kind == ModuleKind::SourceText && !targetData.isOfLibrary() && !targetData.isFaceOfFile()) {
-                    if (!isNotLoaded(target))
+                StoredModuleStatus stored = storedStatus(target);
+                bool isFileOrFace = targetData.kind == ModuleKind::CommonJs || targetData.isFaceOfFile();
+                if (stored != StoredModuleStatus::InRecord && !isFileOrFace && targetData.kind != ModuleKind::Data) {
+                    if (stored != StoredModuleStatus::Unlinked || targetData.kind != ModuleKind::SourceText || targetData.isOfLibrary() || !isNotLoaded(target))
                         continue;
                     if (!m_levelsOfLoads.isEmpty() && m_levelsOfLoads.contains(target))
                         return false;

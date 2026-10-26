@@ -281,6 +281,9 @@ auto Modules::ensureLoaded(ModuleID module) -> LoadedModule&
 
 Identifier Modules::moduleKey(ModuleID module)
 {
+    // Every importer of a module that the loader goes through asks for the key.
+    if (ModuleRecord* record = m_records.get(module))
+        return record->moduleKey();
     return Identifier::fromString(*m_instance.vm, m_table.pathText(module));
 }
 
@@ -950,8 +953,8 @@ ModuleRecord* Modules::exposeRecord(ModuleID module)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // The walk of the root has loaded what a module on the way down from it needs, and is kept for the link.
-    if ((status(module) == ModuleStatus::Unlinked || data(module).capturesExports()) && !m_levelsOfLoads.contains(module)) {
+    // The walk of the root has loaded what a module below it needs, and is kept for the link.
+    if ((status(module) == ModuleStatus::Unlinked || data(module).capturesExports()) && !m_isWalkingRequests && !m_levelsOfLoads.contains(module)) {
         std::unique_ptr<ModuleLinkWalk> linkWalk = takeLinkWalk(module);
         loadRuntimeModules(*linkWalk);
         RETURN_IF_EXCEPTION(scope, nullptr);

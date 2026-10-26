@@ -1677,7 +1677,9 @@ void EffectSummarizer::checkAgainstSummariesFromNothing(const EffectSummaries& s
 
 static bool covers(const OperandSummary& kept, const OperandSummary& fresh)
 {
-    if (!kept.uses.containsAll(fresh.uses))
+    // What lies in memory that nobody knows may be read out of it and returned. A body that read it out of an object of its own returns it as it is once the object is gone.
+    bool liesInUnknownMemory = kept.uses.contains(OperandUse::Retains) && kept.retainedIn == RetainedIn::UnknownMemory;
+    if (!kept.uses.containsAll(liesInUnknownMemory ? fresh.uses - OperandUse::Returns : fresh.uses))
         return false;
     if (!fresh.uses.contains(OperandUse::Retains) || kept.retainedIn == RetainedIn::UnknownMemory)
         return true;
