@@ -50,6 +50,7 @@
 #include "PureNaN.h"
 #include "AirAllocateRegistersByGreedy.h"
 #include "AirAllocateStackByGraphColoring.h"
+#include "AirEliminateDeadCode.h"
 #include "AirArgInlines.h"
 #include "AirBitMatrixLiveness.h"
 #include "AirBlockEntryClobberSpecial.h"
@@ -2577,6 +2578,49 @@ void testZDefOfSpillSlotWithOffsetNeedingToBeMaterializedInARegister()
     CHECK(result == (numberOfLiveTmps * (numberOfLiveTmps - 1)) / 2);
 }
 
+// Every tmp begins as a copy of one tmp that every block reads, and each block of a long chain changes one of them.
+void testManySpilledCopiesOfOneTmp()
+{
+    B3::Procedure proc;
+    Code& code = proc.code();
+    constexpr unsigned count = 4000;
+
+    BasicBlock* root = code.addBlock();
+    BasicBlock* done = code.addBlock();
+    BasicBlock* leave = code.addBlock();
+
+    Tmp seed = code.newTmp(GP);
+    root->append(Move, nullptr, Tmp(GPRInfo::argumentGPR0), seed);
+    Vector<Tmp> copies;
+    for (unsigned i = 0; i < count; ++i) {
+        copies.append(code.newTmp(GP));
+        root->append(Move, nullptr, seed, copies[i]);
+    }
+
+    BasicBlock* block = root;
+    for (unsigned i = 0; i < count; ++i) {
+        BasicBlock* next = code.addBlock();
+        block->append(BranchTest64, nullptr, Arg::resCond(MacroAssembler::NonZero), seed, seed);
+        block->setSuccessors(next, FrequentedBlock(leave, B3::FrequencyClass::Rare));
+        next->append(Add64, nullptr, seed, copies[i]);
+        block = next;
+    }
+    block->append(Jump, nullptr);
+    block->setSuccessors(done);
+
+    Tmp sum = code.newTmp(GP);
+    done->append(Move, nullptr, Arg::imm(0), sum);
+    for (Tmp copy : copies)
+        done->append(Add64, nullptr, copy, sum);
+    done->append(Move, nullptr, sum, Tmp(GPRInfo::returnValueGPR));
+    done->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+    leave->append(Move, nullptr, Arg::imm(0), Tmp(GPRInfo::returnValueGPR));
+    leave->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+    CHECK(compileAndRun<int64_t>(proc, static_cast<int64_t>(3)) == static_cast<int64_t>(count) * 6);
+}
+
 void testStackSlotSharingWithNonInterferingSlots()
 {
     // O0 uses a simple stack allocator that gives every slot a unique offset — no sharing.
@@ -3518,6 +3562,7 @@ void run(const char* filter)
 
     RUN(testZDefOfSpillSlotWithOffsetNeedingToBeMaterializedInARegister());
     RUN(testStackSlotSharingWithNonInterferingSlots());
+    RUN(testManySpilledCopiesOfOneTmp());
 
     RUN(testEarlyAndLateUseOfSameTmp());
     RUN(testEarlyClobberInterference());

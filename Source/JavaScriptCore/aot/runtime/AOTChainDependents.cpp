@@ -272,6 +272,12 @@ void RuntimeHooks::didFlattenStructure(VM& vm, Structure* structure)
     }
 }
 
+void RuntimeHooks::didStartWatchingReplacements(VM& vm)
+{
+    if (vm.aotState().propertyCaches)
+        vm.aotState().propertyCaches->didStartWatchingReplacements();
+}
+
 void RuntimeHooks::didChangeGlobalLexicalBindings(JSGlobalObject* realm)
 {
     didChangeChainObject(realm->vm(), realm, nullptr);
@@ -499,7 +505,7 @@ static StepResult lookUpExtraPropertyOfCompiledObject(const ChainWalkStart& star
 // Compiled code stores to a filled slot without a report, so the walk names the word of the slot and never its value.
 static StepResult lookUpInCompiledObject(const ChainWalkStart& start, UniquedStringImpl* uid, Object& object, ChainWalk& walk)
 {
-    if (object.isInFrame() || PropertyName(uid).isPrivateName())
+    if (object.isInFrame() || (PropertyName(uid).isPrivateName() && !PropertyName(uid).passesThroughProxies()))
         return stopAt(&object, walk);
     const FieldData* field = object.fieldNamed(object.state(), uid);
     if (field && field->isPrivate())

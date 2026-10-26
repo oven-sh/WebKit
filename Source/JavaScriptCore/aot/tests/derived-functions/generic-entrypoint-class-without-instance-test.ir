@@ -10,11 +10,11 @@ function f0 name="narrowed" flags=[HasThis] thisType={type=Object} parameters=[{
 }
 # CHECK: name="narrowed" module=m0 role=GenericEntrypoint
 # CHECK-NEXT: b0([[closure]]: f0, [[this]]: anything, [[error]]: anything, [[arguments]]: anything, [[function]]: anything, [[point]]: anything, [[testable]]: anything, [[map]]: anything):
-# CHECK-NEXT: [[thisProven]]: Object = AssumeType [[this]] castType=Object
-# CHECK-NEXT: [[errorProven]]: TypeError = AssumeType [[error]] castType=TypeError
-# CHECK-NEXT: [[argumentsProven]]: undefined|Arguments = AssumeType [[arguments]] castType=undefined|Arguments
-# CHECK-NEXT: [[functionProven]]: Function = AssumeType [[function]] castType=Function
-# CHECK-NEXT: [[pointProven]]: L0|Object = AssumeType [[point]] castType=L0|Object
-# CHECK-NEXT: [[testableProven]]: Error = AssumeType [[testable]] castType=Error
-# CHECK-NEXT: [[mapProven]]: undefined|Map = AssumeType [[map]] castType=undefined|Map
+# CHECK-NEXT: [[thisProven]]: Object = AssumeType [[this]] provenType=Object
+# CHECK-NEXT: [[errorProven]]: TypeError = AssumeType [[error]] provenType=TypeError
+# CHECK-NEXT: [[argumentsProven]]: undefined|Arguments = AssumeType [[arguments]] provenType=undefined|Arguments
+# CHECK-NEXT: [[functionProven]]: Function = AssumeType [[function]] provenType=Function
+# CHECK-NEXT: [[pointProven]]: L0|Object = AssumeType [[point]] provenType=L0|Object
+# CHECK-NEXT: [[testableProven]]: Error = AssumeType [[testable]] provenType=Error
+# CHECK-NEXT: [[mapProven]]: undefined|Map = AssumeType [[map]] provenType=undefined|Map
 # CHECK-NEXT: = CallDirect [[thisProven]], [[errorProven]], [[argumentsProven]], [[functionProven]], [[pointProven]], [[testableProven]], [[mapProven]] function=f0

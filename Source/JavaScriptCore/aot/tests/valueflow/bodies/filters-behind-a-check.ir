@@ -76,7 +76,7 @@
 module m0 path="main.js" displayPath="main.js"
 entry module=m0
 function f0 name="equalToText" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=string
+    v1 = Check v0 expectedType=string
     v2 = String string="a"
     v3 = StrictEq v1, v2
     Branch v3 -> taken b1(| 0), notTaken b2(| 0)
@@ -86,7 +86,7 @@ function f0 name="equalToText" parameters=[{type=anything}] results=[{type=anyth
     Return v5
 }
 function f1 name="equalToInteger" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     v2 = Integer integer=0
     v3 = StrictEq v1, v2
     Branch v3 -> taken b1(| 0), notTaken b2(| 0)
@@ -96,8 +96,8 @@ function f1 name="equalToInteger" parameters=[{type=anything}] results=[{type=an
     Return v5
 }
 function f2 name="equalToWhatIsBehindACheckToo" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v0 castType=string
-    v3 = Check v1 castType="a"
+    v2 = Check v0 expectedType=string
+    v3 = Check v1 expectedType="a"
     v4 = StrictEq v2, v3
     Branch v4 -> taken b1(| 0), notTaken b2(| 0)
   b1(v5):
@@ -106,7 +106,7 @@ function f2 name="equalToWhatIsBehindACheckToo" parameters=[{type=anything}, {ty
     Return v6
 }
 function f3 name="testedForItsType" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=string
+    v1 = Check v0 expectedType=string
     v2 = TypeTest v1 testedType="a"
     Branch v2 -> taken b1(| 0), notTaken b2(| 0)
   b1(v3):
@@ -115,7 +115,7 @@ function f3 name="testedForItsType" parameters=[{type=anything}] results=[{type=
     Return v4
 }
 function f4 name="whatIsBehindNoCheckEqualToWhatIs" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v1 castType="a"
+    v2 = Check v1 expectedType="a"
     v3 = StrictEq v0, v2
     Branch v3 -> taken b1(| 0), notTaken b2(| 0)
   b1(v4):

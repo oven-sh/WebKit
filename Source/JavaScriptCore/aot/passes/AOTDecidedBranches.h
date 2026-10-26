@@ -66,6 +66,8 @@ private:
     FunctionAnalyses& m_analyses;
     Vector<BranchOnTypeTest> m_branches;
     BitVector m_repeatsTest;
+    // By block, for the blocks of m_repeatsTest: the index of its branch in m_branches.
+    Vector<uint32_t> m_indexOfBranch;
     Vector<BlockID, 16> m_blocksThatBranchOnTypeTest;
     // The conditional branches by the values among their operands that several of them name, those on one value in reverse post order.
     Vector<BranchOnValue, 32> m_branchesByOperand;

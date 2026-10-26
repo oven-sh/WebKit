@@ -119,6 +119,35 @@ export interface RecordSyntax {
   readonly fields: readonly FieldSyntax[];
 }
 
+export interface PackedConditionSyntax {
+  readonly field: Name;
+  readonly column: Name | null;
+  readonly isNegated: boolean;
+}
+
+export interface PackedFieldSyntax {
+  readonly name: Name;
+  readonly kind: KindSyntax;
+}
+
+export interface PackedArmsSyntax {
+  readonly condition: Name;
+  readonly whenTrue: readonly PackedFieldSyntax[];
+  readonly whenFalse: readonly PackedFieldSyntax[];
+}
+
+export interface PackedWordSyntax {
+  readonly fields: readonly PackedFieldSyntax[];
+  readonly arms: PackedArmsSyntax | null;
+  readonly condition: PackedConditionSyntax | null;
+}
+
+export interface PackedSyntax {
+  readonly declares: "packed";
+  readonly name: Name;
+  readonly words: readonly PackedWordSyntax[];
+}
+
 export interface CaseSyntax {
   readonly name: Name;
   readonly fields: readonly FieldSyntax[];
@@ -213,6 +242,7 @@ export type ParameterSyntax =
       readonly form: "Payload";
       readonly name: Name;
       readonly kind: KindSyntax;
+      readonly heldAs: Name | null;
       readonly isOptional: boolean;
       readonly isVariadic: boolean;
       readonly isEngine: boolean;
@@ -332,6 +362,7 @@ export type Declaration =
   | EnumSyntax
   | ExtendSyntax
   | RecordSyntax
+  | PackedSyntax
   | VariantSyntax
   | ListSyntax
   | NaturalSyntax

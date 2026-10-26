@@ -38,7 +38,7 @@ function f1 name="calledInInnerLoop" module=m0 parameters=[{type=anything}] resu
 function f2 name="calledInOuterLoop" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
     Return v0
 }
-# CHECK: f2 b0 Balanced heat=11.00
+# CHECK: f2 b0 Balanced heat=110.00
 
 function f3 name="hasUnlikelyArm" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
     v1 = ToBoolean v0
@@ -50,5 +50,5 @@ function f3 name="hasUnlikelyArm" module=m0 parameters=[{type=anything}] results
     Return v0
 }
 # CHECK: f3 b0 Fast
-# CHECK-NEXT: f3 b1 Compact heat=5.
+# CHECK-NEXT: f3 b1 Compact heat=59.
 # CHECK-NEXT: f3 b2 Balanced

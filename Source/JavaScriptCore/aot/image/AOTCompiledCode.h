@@ -7,12 +7,14 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinIDTypes.h"
 #include "AOTCodeSites.h"
 #include "AOTCodeUnits.h"
 #include "AOTImageFormat.h"
 #include "AOTImageForward.h"
 #include "AOTRelocation.h"
 #include "AOTRuntimeTable.h"
+#include "AOTSchemaPackedRecords.h"
 #include "AOTStubCalls.h"
 #include "AOTStubKey.h"
 #include "HandlerInfo.h"
@@ -87,6 +89,8 @@ struct FrameDescription {
     bool hasFrameAt(uint32_t offset) const;
 
     unsigned frameSizeInBytes { 0 };
+    unsigned bytesAboveFrameRecord { 0 };
+    unsigned bytesDeadAtSuspensions { 0 };
     bool hasFrameRecord { true };
     bool spillsArgumentRegisters { false };
     RegisterAtOffsetList calleeSaveRegisters;
@@ -120,6 +124,9 @@ struct SitePosition {
     ModuleID source;
     uint32_t sourceOffset;
     uint32_t inlineFrame;
+    uint32_t constructionStartLine { 0 };
+    uint32_t constructionStartColumn { 0 };
+    bool startIsForCallers { false };
 };
 
 struct InlineFrame {
@@ -130,14 +137,10 @@ struct InlineFrame {
     bool isConstruct;
 };
 
-enum class SiteFlag : uint8_t {
-    Constructs = 1 << 0,
-    IsTailCall = 1 << 1,
-};
-
 struct FlaggedSite {
     uint32_t site;
-    OptionSet<SiteFlag> flags;
+    CallSiteKind kind;
+    BuiltinID calledBuiltin { };
 };
 
 struct SiteHandler {

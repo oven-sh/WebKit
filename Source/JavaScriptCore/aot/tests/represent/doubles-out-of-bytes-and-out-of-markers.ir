@@ -1,0 +1,47 @@
+# A double read out of a float view is kept as ImpureDouble, and so is what arithmetic makes of it and the block parameter that takes it. A store into a float view takes it as it is.
+# What an operator makes of an operand that may be undefined is kept as DoubleWithPayload. What it makes of numbers is a Double.
+# FORM: Placed
+# OPTIONS: check=validate-back-end
+# RUN: pass ChooseRepresentations
+# RUN(CODE): generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="scaleElement" parameters=[{type=Float64Array}, {type=i32}, {type=number}] results=[{type=number}] {
+    v3 = IsInsideView v0, v1 typedArrayType=10
+    TestAndBranch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4):
+    v5 = GetTypedArrayElement v0, v1, v4 typedArrayType=10 level=Proven [isInsideView]
+    v6 = Mul v5, v2 form=Numbers
+    PutTypedArrayElement v0, v1, v6, v4 typedArrayType=10 level=Proven [isInsideView]
+    Jump -> next b3(v6)
+  b2():
+    v8 = Add v2, v2 form=Numbers
+    Jump -> next b3(v8)
+  b3(v9: number):
+    v10 = Negate v9 form=Numbers
+    Return v10
+}
+# CHECK-LABEL: function f0 name="scaleElement"
+# CHECK: v5: number @ImpureDouble = GetTypedArrayElement
+# CHECK-NEXT: v6: number @ImpureDouble = Mul v5, v2 form=Numbers
+# CHECK: v8: number @Double = Add v2, v2 form=Numbers
+# CHECK: b3(v9: number @ImpureDouble):
+# CHECK-NEXT: v10: number @ImpureDouble = Negate v9 form=Numbers
+# CODE-LABEL: f0:
+# CODE-NOT: operation
+
+function f1 name="sumWithNumberOrUndefined" parameters=[{type=number}, {type=undefined|number}] results=[{type=number}] {
+    v2 = Add v0, v1 form=Numbers
+    v3 = Mul v2, v0 form=Numbers
+    Return v3
+}
+# CHECK-LABEL: function f1 name="sumWithNumberOrUndefined"
+# CHECK: v2: number @DoubleWithPayload = Add v0, v1 form=Numbers
+# CHECK-NEXT: v3: number @DoubleWithPayload = Mul v2, v0 form=Numbers
+
+function f2 name="quotientOfNumbers" parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+    v2 = Div v0, v1 form=Numbers
+    Return v2
+}
+# CHECK-LABEL: function f2 name="quotientOfNumbers"
+# CHECK: v2: number @Double = Div v0, v1 form=Numbers

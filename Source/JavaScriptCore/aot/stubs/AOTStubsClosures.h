@@ -16,7 +16,7 @@ namespace JSC { namespace AOT {
 constexpr StubKey newClosure(unsigned captures) { return StubKey(StubFamily::NewClosure).withCount(captures); }
 // The operand is the number of the function.
 constexpr StubKey newSlimClosure(unsigned slimClosureKind, unsigned captures) { return StubKey(StubFamily::NewSlimClosure).withForm(slimClosureKind).withCount(captures); }
-// The closure that the closure table holds for a function without captures, made at the first request. The operand is the number of the generic entrypoint, as for newSlimClosure().
+// The closure that the closure table holds for a function without captures, made at the first request. The immediate is the number of the generic entrypoint.
 constexpr StubKey closureOfTable() { return StubKey(StubFamily::ClosureOfTable); }
 constexpr StubKey initializeClosure(unsigned captures) { return StubKey(StubFamily::InitializeClosure).withCount(captures); }
 constexpr StubKey materializeEnvironment() { return StubKey(StubFamily::MaterializeEnvironment); }

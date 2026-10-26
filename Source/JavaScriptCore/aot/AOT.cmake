@@ -185,6 +185,7 @@ set(JavaScriptCore_AOT_SCHEMA_EXPORTED_HEADERS
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperandPositions.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperationColumns.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperations.h"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaPackedRecords.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaPayloadPositions.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRuntimeColumns.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaRuntimeOperations.h"
@@ -377,6 +378,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTRuntimeReporterTests.cpp
     aot/tests/AOTRuntimeTypeTests.cpp
     aot/tests/AOTSavedFrameTests.cpp
+    aot/tests/AOTScratchRegisterChecker.cpp
     aot/tests/AOTSelectionFormTestCommands.cpp
     aot/tests/AOTSelectionGroupTestCommands.cpp
     aot/tests/AOTSelectionTestCommands.cpp
@@ -386,6 +388,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTSlotAccessTests.cpp
     aot/tests/AOTSlotPlanDump.cpp
     aot/tests/AOTSlotPlanTestCommands.cpp
+    aot/tests/AOTSparseElementProgramTests.cpp
     aot/tests/AOTStackCheckTests.cpp
     aot/tests/AOTStackTraceTests.cpp
     aot/tests/AOTStartupTests.cpp
@@ -407,6 +410,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTStubPropertyStoreTests.cpp
     aot/tests/AOTStubRegExpTests.cpp
     aot/tests/AOTStubRuntimeTests.cpp
+    aot/tests/AOTStubScratchRegisterTests.cpp
     aot/tests/AOTStubStringTests.cpp
     aot/tests/AOTStubTests.cpp
     aot/tests/AOTStubValueTests.cpp

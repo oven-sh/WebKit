@@ -121,7 +121,7 @@ static bool isValueOfDeferringField(const TypingContext& context, const UseLists
     const Program& program = context.program;
     const Function& function = context.function;
     std::optional<Use> use = uses.singleUse(closure);
-    while (use && use->kind == Use::Kind::Operand && function.at(use->user).opcode == Opcode::Upcast)
+    while (use && use->kind == Use::Kind::Operand && isCastThatProvesNothing(function.at(use->user).opcode))
         use = uses.singleUse(use->user);
     if (!use || use->kind != Use::Kind::Operand)
         return false;

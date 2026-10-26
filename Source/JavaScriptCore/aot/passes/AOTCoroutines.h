@@ -41,7 +41,7 @@ bool willEnterAwaitedCalleeWithoutPromise(FunctionPassContext&, ValueID call);
 unsigned stepAwaitedAsyncGenerators(FunctionPassContext&);
 
 // For an unsplit async function or async generator, or the body of one. The results are those of StepAsyncGenerator.
-ValueID appendAsyncIteratorStep(IRBuilder&, ValueID iterator, ValueID sent);
+ValueID appendAsyncIteratorStep(IRBuilder&, ValueID iterator, ValueID sent, std::span<const ValueID> held);
 
 // What CreateIterResultObject makes.
 Value makeIteratorResultObject(const Program&, ValueID value, ValueID done, AllocationSiteID = { });

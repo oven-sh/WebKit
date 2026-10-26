@@ -174,8 +174,8 @@ static void testMembersOfLayout()
         AOT_TEST_CHECK(member.isOptional == isOptional[index]);
         AOT_TEST_CHECK(member.node == ResultNodeRef { expectationOf(field.declared) });
     }
-    AOT_TEST_CHECK(expectationOf(layout.fields[0].declared) == layout.fields[0].declared.type);
-    AOT_TEST_CHECK(layout.fields[4].declared.flags.contains(PositionFlags::IsExpected) && expectationOf(layout.fields[4].declared) == layout.fields[4].declared.type);
+    AOT_TEST_CHECK(expectationOf(layout.fields[0].declared) == layout.fields[0].declared.written());
+    AOT_TEST_CHECK(layout.fields[4].declared.isExpected() && expectationOf(layout.fields[4].declared) == layout.fields[4].declared.written());
     AOT_TEST_CHECK(describeNode(types.program(), object.members[2].node).layout == LayoutID(0u));
     AOT_TEST_CHECK(describeNode(types.program(), object.members[3].node).shape == ResultShape::Number);
 }

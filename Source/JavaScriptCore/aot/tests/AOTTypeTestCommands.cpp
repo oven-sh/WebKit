@@ -228,7 +228,7 @@ static std::optional<Vector<Type>> typesUnderTest(TestCommandContext& context)
         return std::nullopt;
     }
     return program.functions[0].parameters.map([&](const DeclaredType& parameter) {
-        return program.at(parameter.type);
+        return program.at(parameter.written());
     });
 }
 

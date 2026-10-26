@@ -27,5 +27,5 @@ function f2 name="called" kind=Arrow captures=[{type=number flags=[IsExpected]}]
     v1 = Add v0, v0
     Return v1
 # CHECK: [[read]]: anything ~ number = GetModuleVariable variable=g1
-# CHECK-NEXT: [[proven]]: number = AssumeType [[read]] castType=number
+# CHECK-NEXT: [[proven]]: number = AssumeType [[read]] provenType=number
 }

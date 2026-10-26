@@ -18,6 +18,7 @@ namespace JSC { namespace AOT {
 class JSONRuntime;
 
 inline constexpr size_t jsonSourcePadding = 64;
+inline constexpr int64_t stackReservedForJSONParsers = 64 * 1024;
 
 enum class JSONSourceEncoding : uint8_t {
     Latin1,
@@ -41,6 +42,9 @@ struct JSONWords {
         if (sourceOwnerStackPointer && std::bit_cast<uintptr_t>(sourceOwnerStackPointer) < std::bit_cast<uintptr_t>(handlerStackPointer)) [[unlikely]]
             dropSourcesBelow(handlerStackPointer);
     }
+
+    // Compiled code opens a source under its frame pointer.
+    ALWAYS_INLINE void didLeaveFramesUpTo(void* framePointer) { didUnwindTo(static_cast<char*>(framePointer) + 1); }
 
 private:
     void dropSourcesBelow(void* stackPointer);

@@ -197,7 +197,7 @@ function f7 name="memberThatNothingAllocates" parameters=[{type=L0|L1|L9}] resul
 
 # (A function without a check waits for no generic version: there the block is cut at such a narrowing. passes/inline-calls-narrowing-by-a-field-that-leaves-nothing.ir)
 function f8 name="noMemberIsLeft" parameters=[{type=anything}, {type=1}] results=[{type=undefined}] {
-    v2 = Check v0 castType=undefined|L1|L2
+    v2 = Check v0 expectedType=undefined|L1|L2
     v3 = NarrowByField v2, v1 key="kind"
     Return
 }

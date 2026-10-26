@@ -21,9 +21,9 @@ static TypeID findTypeToPromise(const Program& program, const CallingConventions
     if (!function.hasBody() || function.results.size() != 1 || !function.hasOrdinaryFrame() || function.role == FunctionRole::StubBody)
         return { };
     const DeclaredType& declared = function.results[0];
-    if (!declared.flags.contains(PositionFlags::IsExpected))
+    if (!declared.isExpected())
         return { };
-    const Type& type = program.at(declared.type);
+    const Type& type = program.at(declared.expected().predicted());
     if (!type.isJavaScriptValue() || type.isAnything() || type.isNever())
         return { };
     // A test can name it as it is.
@@ -31,7 +31,7 @@ static TypeID findTypeToPromise(const Program& program, const CallingConventions
         return { };
     if (conventions.resultRepresentation(program, id) != Representation::JSValue || conventions.of(program, id).spillsArgumentRegisters)
         return { };
-    return declared.type;
+    return declared.expected().predicted();
 }
 
 static void forEachTailCallee(const Function& function, NOESCAPE const Invocable<void(FunctionID)> auto& functor)
@@ -47,7 +47,7 @@ static void forEachTailCallee(const Function& function, NOESCAPE const Invocable
 // Its callers take the type of the result as a fact, so it has no misfits.
 static bool hasProvenResult(const Function& function)
 {
-    return function.results.size() == 1 && !function.results[0].flags.contains(PositionFlags::IsExpected);
+    return function.results.size() == 1 && !function.results[0].isExpected();
 }
 
 struct TailCall {
@@ -76,14 +76,14 @@ static bool keepsPromise(const Program& program, FunctionID callee, const Type& 
 {
     TypeID returnedByCallee = types[callee.index()];
     if (!returnedByCallee && hasProvenResult(program.at(callee)))
-        returnedByCallee = program.at(callee).results[0].type;
+        returnedByCallee = *program.at(callee).results[0].established();
     return returnedByCallee && program.at(returnedByCallee).isSubsetOf(promised, program);
 }
 
 // They have no code: the value is their operand under another type.
 static bool handsOnBoxedOperand(const Value& value)
 {
-    return (value.opcode == Opcode::AssumeType || value.opcode == Opcode::Upcast) && value.representation == Representation::JSValue;
+    return (value.opcode == Opcode::AssumeType || isCastThatProvesNothing(value.opcode)) && value.representation == Representation::JSValue;
 }
 
 static ValueID findCallWithTestedResult(const Function& function, const Block& block)

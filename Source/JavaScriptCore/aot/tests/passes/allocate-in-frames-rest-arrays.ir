@@ -62,7 +62,7 @@ function f7 name="endsInCallOfItself" flags=[HasRestParameter] parameters=[{type
 
 # CHECK-LABEL: name="readsRest" module=m0 role=GenericEntrypoint
 # CHECK: [[rest]]: Array = CreateRest firstArgument=1 storage=Frame
-# CHECK: CallDirect {{*}}, [[rest]] function=f1 [isDemotedTailCall]
+# CHECK: CallDirect {{*}}, [[rest]] function=f1 @0 tail
 # CHECK-NOT: ReturnCall
 # CHECK: Return
 # CHECK-LABEL: name="keepsRest" module=m0 role=GenericEntrypoint

@@ -417,7 +417,7 @@ private:
         const BitVector* behindChecks = m_inputs.bodies().valuesBehindChecks(id);
         if (!behindChecks) {
             if (std::exchange(walker.functionOfValuesBehindChecks, id) != id)
-                walker.valuesBehindChecks = findValuesBehindChecks(program(), function, CFG(function));
+                walker.valuesBehindChecks = valuesTypedBehindChecks(program(), function, CFG(function));
             behindChecks = &walker.valuesBehindChecks;
         }
         if (behindChecks->get(value.index()))
@@ -510,7 +510,7 @@ private:
                 if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::PropGet || function.at(statement.site).key() != lengthKey)
                     continue;
                 walker.lengthReads.append({ walker.analyses->identityOf(function.at(statement.site).operand(receiver)), statement.site });
-                if (sets().isSubset(m_heap.valueOf(walker.maker, m_inputs.bodies().operandsOf(statement)[receiver]), arraysOrUndefined))
+                if (sets().isSubset(m_heap.possibleValuesOf(walker.maker, m_inputs.bodies().operandsOf(statement)[receiver]), arraysOrUndefined))
                     walker.relations->assumeRange(statement.site, Range::uint32(), walker.analyses->useLists().blockOf(statement.site));
             }
         }
@@ -575,10 +575,10 @@ private:
         bool isCall = effectRuleOf(statement.opcode) == EffectRule::Call;
         for (uint32_t index = 0; index < operands.size(); ++index) {
             const ValueFlowOperand& operand = operands[index];
-            bool mayHoldArray = (operand.constant && walker.setsWithArrays.contains(operand.constant)) || (operand.node && walker.setsWithArrays.contains(m_inputs.solver().valueOf(operand.node)));
+            bool mayHoldArray = (operand.constant && walker.setsWithArrays.contains(operand.constant)) || (operand.node && walker.setsWithArrays.contains(m_inputs.solver().possibleValuesOf(operand.node)));
             if (!mayHoldArray)
                 continue;
-            ValueSetID value = m_heap.valueOf(walker.maker, operand);
+            ValueSetID value = m_heap.possibleValuesOf(walker.maker, operand);
             noteSetOfArrays(walker, value);
             if (statement.opcode == Opcode::ElemGet && index == OperandIndex::ElemGet::object)
                 walker.elementReads.append({ function, statement.site, value });
@@ -719,7 +719,7 @@ private:
     {
         const ParallelLoops& loops = m_inputs.loops();
         m_kindsOfBoundedNumbers = maker().of(std::array { ValueFlowUniverse::primitive(PrimitiveSet::Integer), ValueFlowUniverse::primitive(PrimitiveSet::WholeNumber), ValueFlowUniverse::primitive(PrimitiveSet::FractionalNumber) });
-        addToEachArray(maker(), m_inputs.solver().valueOf(m_inputs.bodies().nodes().ofHost(ValueFlowHostNode::PairsOfEntries)), ArrayWrites::IsCreatedDense | ArrayWrites::IsPairOfEntries);
+        addToEachArray(maker(), m_inputs.solver().possibleValuesOf(m_inputs.bodies().nodes().ofHost(ValueFlowHostNode::PairsOfEntries)), ArrayWrites::IsCreatedDense | ArrayWrites::IsPairOfEntries);
         forEachIndexInParallel(loops, m_containers.size(), [&](unsigned index) {
             ValueFlowObjectID object = m_containers[index].object;
             if (universe().kindOf(object) == ValueFlowObjectKind::RestArray)
@@ -844,7 +844,7 @@ private:
 
     Type typeOfContents(ValueFlowPositions& positions, uint32_t index, const BuiltinSlot& slot)
     {
-        ValueFlowPositionResult result = positions.resultAt(Type::anything(), m_containers[index].stored[*slot.indexInType]);
+        ValueFlowPositionResult result = positions.resultAmongAllValues(m_containers[index].stored[*slot.indexInType]);
         switch (result.proof) {
         case ValueFlowProof::NothingArrives:
             return Type::never();
@@ -940,7 +940,7 @@ private:
         forEachIndexInParallel(m_inputs.loops(), (numberOfNodes + nodesPerShare - 1) / nodesPerShare, [&](unsigned share, unsigned worker) {
             Walker& walker = walkerOf(worker);
             for (uint32_t index = share * nodesPerShare; index < std::min(numberOfNodes, (share + 1) * nodesPerShare); ++index) {
-                ValueSetID set = solver.valueOf(ValueFlowNodeID(index));
+                ValueSetID set = solver.possibleValuesOf(ValueFlowNodeID(index));
                 if (ValueFlowNodeID(index) != pairsOfEntries && ValueFlowNodeID(index) != pairsOfSteps && set != ValueSets::nothing && walker.setsWithArrays.contains(set))
                     noteSetOfArrays(walker, set);
             }
@@ -992,6 +992,7 @@ private:
                 m_facts[array].arrayStorageToldToCreator = storage == arrayStorageAtAllocation(type) ? ArrayStorage::Other : storage;
             }
         }
+        Vector<ValueFlowObjectID> arraysThatMustNotBeConverted;
         for (uint32_t index = 0; index < m_containers.size(); ++index) {
             if (!isArray(index))
                 continue;
@@ -1000,8 +1001,11 @@ private:
                 if (arrayStorageHolding(elements) == ArrayStorage::Contiguous && !mayGetDoubleStorage(ArrayStorage::Contiguous, elements))
                     m_facts[index].arrayStorage = ArrayStorage::Contiguous;
             }
+            if (m_facts[index].arrayStorage != ArrayStorage::Other && mayGetDoubleStorage(m_facts[index].arrayStorage, m_types.at(m_facts[index].contents[m_indexOfElements])))
+                arraysThatMustNotBeConverted.append(m_containers[index].object);
             m_results.set(m_containers[index].object, ValueFlowContainerFacts(m_facts[index]));
         }
+        m_results.arraysThatMustNotBeConverted = maker().of(arraysThatMustNotBeConverted.span());
     }
 
     bool isUnchangedHolder(BuiltinID holder) const

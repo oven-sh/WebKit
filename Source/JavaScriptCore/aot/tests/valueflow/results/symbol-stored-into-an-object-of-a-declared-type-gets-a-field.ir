@@ -5,12 +5,12 @@
 # RUN: valueflow-apply
 # CHECK: layout L0 name="Message" fields=[{key="a"
 # CHECK-NOT: key="other"
-# CHECK: {key=symbol("state")@m0:100 declared={type=int} flags=[IsAddedLate
+# CHECK: {key=symbol("state")@m0:100 declared={type=2} flags=[IsAddedLate
 # CHECK-NOT: key="other"
 # CHECK: layout L1 name="MessageType"
 # CHECK: layout L2 name="Untyped" fields=[{key="a"
-# CHECK: {key="other" declared={type=int} flags=[IsAddedLate
-# CHECK: {key=symbol("state")@m0:100 declared={type=int} flags=[IsAddedLate
+# CHECK: {key="other" declared={type=2} flags=[IsAddedLate
+# CHECK: {key=symbol("state")@m0:100 declared={type=2} flags=[IsAddedLate
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0

@@ -13,7 +13,7 @@ function f0 name="split-coroutine" role=CoroutineRamp flags=[IsAsync] parameters
     v3 @JSValue = Box v2
     v4 @JSValue = CallDirect v0, v1, v3 function=f1
     PutModuleVariable v1 variable=g0
-    v6 @JSValue = AssumeType v4 castType=Promise
+    v6 @JSValue = AssumeType v4 provenType=Promise
     Return v6
 }
 function f1 name="split-coroutine" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0 parameterMap=[{original=0}, {original=1}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=2} {

@@ -411,7 +411,7 @@ static BitVector findConstantsOnlyCompared(FunctionAnalyses& analyses, const Com
         for (ValueID value : function.at(comparison).operands()) {
             while (value != chain.subject && uses.useCount(value) == 1 && isRematerializableThroughUpcasts(function, value)) {
                 result.set(value.index());
-                if (function.at(value).opcode != Opcode::Upcast)
+                if (!isCastThatProvesNothing(function.at(value).opcode))
                     break;
                 value = function.at(value).operand(0);
             }

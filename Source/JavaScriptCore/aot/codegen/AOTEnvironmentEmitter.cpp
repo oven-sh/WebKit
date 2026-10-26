@@ -88,6 +88,34 @@ void EnvironmentEmitter::generateReleaseEnvironment(const ValueContext& value)
     m_out.appendTo(continuation);
 }
 
+void EnvironmentEmitter::generateRecordCallee(const ValueContext& value)
+{
+    CellPointer closure = in<CellPointer>(value->closureOperand());
+    ptrdiff_t bytesAboveFrameRecord = sizeof(CallerFrameAndPC) + (inputs().conventions.of(m_program, m_id).spillsArgumentRegisters ? sizeOfSpilledArgumentRegisters : 0);
+    LValue stackPointerOfCaller = m_out.add(m_out.framePointer(), m_out.constIntPtr(bytesAboveFrameRecord));
+    const B3::AbstractHeap& heap = m_heaps.collectorState;
+    LValue entries = m_out.loadPtr(instanceField(heap, AOT_INSTANCE_OFFSET(heap.recordedCallees)));
+
+    LBasicBlock write = newBlock();
+    LBasicBlock callRuntime = newBlock();
+    LBasicBlock continuation = newBlock();
+    constexpr ptrdiff_t offsetOfMask = OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller) - static_cast<ptrdiff_t>(sizeof(RecordedCallee));
+    LValue entry = m_out.add(entries, m_out.bitAnd(stackPointerOfCaller, m_out.loadPtr(m_out.address(heap, entries, offsetOfMask))));
+    // The call that was made from further out may not have returned.
+    m_out.branch(m_out.above(m_out.loadPtr(m_out.address(heap, entry, OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller))), stackPointerOfCaller), rareEdge(callRuntime), normalEdge(write));
+
+    m_out.appendTo(write);
+    m_out.storePtr(stackPointerOfCaller, m_out.address(heap, entry, OBJECT_OFFSETOF(RecordedCallee, stackPointerOfCaller)));
+    m_out.storePtr(closure.value(), m_out.address(heap, entry, OBJECT_OFFSETOF(RecordedCallee, closure)));
+    m_out.jump(continuation);
+
+    m_out.appendTo(callRuntime);
+    callVoidOperation(value, RuntimeOperation::RecordCallee, { closure }, { .isOnRarePath = true });
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

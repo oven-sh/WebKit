@@ -1,4 +1,4 @@
-# Estimated activations and the order of functions by heat without flow results
+# Estimated activations and the order of functions by heat without flow results: the host calls each function as often as a loop would, and its callers add theirs
 # FORM: Prepared
 # RUN: pass EstimateHeat
 
@@ -11,7 +11,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v1 = PropGet v0 key="input" [isFreeName]
     v2 = CallDirect v1 function=f2
     v3 = CallDirect v1 function=f3
-    v4 = Check v1 castType=function site=w0
+    v4 = Check v1 expectedType=function site=w0
     v5 = Call v4, -, v1 callees=[f4, f5]
     v6 = Call v4, -, v1 callees=[f6]
     v7 = NewClosure function=f8
@@ -81,18 +81,18 @@ function f10 name="recursive" parameters=[{type=anything}] results=[{type=anythi
 function f11 name="onlyInRareBlock" parameters=[{type=anything}] results=[{type=anything}] {
     Return v0
 }
-# CHECK: f0 Warm 20 1.67
-# CHECK-NEXT: f1 Hot 91 19.3
-# CHECK-NEXT: f2 Warm 82 4.33
-# CHECK-NEXT: f3 Warm 82 4.33
-# CHECK-NEXT: f4 Warm 14 3.5
-# CHECK-NEXT: f5 Warm 14 3.5
-# CHECK-NEXT: f6 Warm 82 4.33
-# CHECK-NEXT: f7 Warm 5 3.33
-# CHECK-NEXT: f8 Warm 5 3.33
-# CHECK-NEXT: f9 Warm 0 2.67
-# CHECK-NEXT: f10 Hot 94 43.3
-# CHECK-NEXT: f11 Warm 2 2.67
-# CHECK-NEXT: hottest: f10 f1 f2 f3 f6 f0 f4 f5 f7 f8 f11 f9
-# CHECK-NEXT: thresholds: cold=1 hot=15
+# CHECK: f0 Warm 28 10
+# CHECK-NEXT: f1 Hot 91 110
+# CHECK-NEXT: f2 Warm 14 20
+# CHECK-NEXT: f3 Warm 14 20
+# CHECK-NEXT: f4 Warm 8 15
+# CHECK-NEXT: f5 Warm 8 15
+# CHECK-NEXT: f6 Warm 14 20
+# CHECK-NEXT: f7 Warm 14 20
+# CHECK-NEXT: f8 Warm 0 10
+# CHECK-NEXT: f9 Warm 0 10
+# CHECK-NEXT: f10 Hot 94 200
+# CHECK-NEXT: f11 Warm 5 10
+# CHECK-NEXT: hottest: f10 f1 f0 f2 f3 f6 f7 f4 f5 f11 f8 f9
+# CHECK-NEXT: thresholds: cold=1 hot=9
 # CHECK-NEXT: outcome: Unchanged

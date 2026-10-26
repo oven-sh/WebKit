@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuildContext.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTKnownValue.h"
@@ -15,6 +16,7 @@
 #include "AOTStringArena.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
+#include <algorithm>
 #include <span>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -222,6 +224,58 @@ unsigned simplifyConcatenatingCalls(FunctionPassContext& context, const BuiltinC
         replaceKeepingType(context, concatenations[index].site.value, WTF::move(rewritten[index]));
     context.analyses.didChangeValues();
     return static_cast<unsigned>(concatenations.size());
+}
+
+static bool isReadByPositionAlone(FunctionPassContext& context, ValueID templateObject)
+{
+    const Function& function = context.function;
+    return std::ranges::all_of(context.analyses.useLists().usesOf(templateObject), [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand || use.operandIndex)
+            return false;
+        const Value& user = function.at(use.user);
+        if (user.opcode == Opcode::ElemGet)
+            return context.program.typeOf(function, user.propertyOperand()).isInteger();
+        if (user.opcode == Opcode::PropGet)
+            return user.key() == context.program.keyOf(BuiltinNames::length);
+        return isCastWithoutTest(user.opcode) && isReadByPositionAlone(context, use.user);
+    });
+}
+
+// Nobody can tell such an object from an array literal of its strings, which need not be built.
+unsigned replaceTemplateObjectsReadByPosition(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    Vector<ValueSite, 4> sites;
+    context.forEachSiteIn(SiteList::TemplateObjects, [&](const ValueSite& site) {
+        if (function.at(site.value).templateStrings().size() <= context.build.limit(LimitID::MaxVirtualArrayLength) && isReadByPositionAlone(context, site.value))
+            sites.append(site);
+    });
+    if (sites.isEmpty())
+        return 0;
+
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    Vector<Value> literals;
+    literals.reserveInitialCapacity(sites.size());
+    for (const ValueSite& site : sites) {
+        builder.setOrigin(function.at(site.value).origin());
+        TypeID contents = TypeTable::string;
+        Vector<ValueID, 8> elements;
+        for (const TemplateString& part : function.at(site.value).templateStrings()) {
+            if (!part.cooked)
+                contents = context.types.unionOf(contents, TypeTable::undefined);
+            elements.append(builder.insertBefore(site.point(), part.cooked ? makeStringConstant(part.cooked) : IRBuilder::make(Opcode::Undefined)));
+        }
+        Value literal = IRBuilder::make(Opcode::NewArray);
+        literal.setContents(contents);
+        literal.setElementsOperands(elements.span());
+        literals.append(WTF::move(literal));
+    }
+    builder.applyInsertions();
+
+    for (size_t index = 0; index < sites.size(); ++index)
+        replaceKeepingType(context, sites[index].value, WTF::move(literals[index]));
+    context.analyses.didChangeValues();
+    return static_cast<unsigned>(sites.size());
 }
 
 } } } // namespace JSC::AOT::Typed

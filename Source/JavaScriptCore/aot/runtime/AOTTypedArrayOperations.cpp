@@ -334,12 +334,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayPut, void, (Instance* in
     auto* view = cellArgument<JSArrayBufferView>(cell, Entry::operationAOTTypedArrayPut);
     JSType type = view->type();
     RELEASE_ASSERT(type != BigInt64ArrayType && type != BigUint64ArrayType);
-    JSValue value(JSValue::EncodeAsDouble, purifyNaN(number));
     switch (type) {
 #define AOT_PUT_ELEMENT(name) \
     case name ## ArrayType: \
-        uncheckedDowncast<JS ## name ## Array>(view)->setIndex(globalObject, index, value); \
-        scope.assertNoException(); \
+        if (auto* elements = uncheckedDowncast<JS ## name ## Array>(view); !elements->isDetached() && elements->inBounds(index)) \
+            elements->setIndexQuicklyToNativeValue(index, name ## Adaptor::toNativeFromDouble(number)); \
         return;
     FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(AOT_PUT_ELEMENT)
 #undef AOT_PUT_ELEMENT

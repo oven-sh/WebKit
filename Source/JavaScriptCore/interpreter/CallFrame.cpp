@@ -177,6 +177,13 @@ CallFrame* CallFrame::callerFrame(EntryFrame*& currEntryFrame) const
     return static_cast<CallFrame*>(callerFrameOrEntryFrame());
 }
 
+CallFrame* CallFrame::callerFrameUnlessCompiled(VM& vm, EntryFrame*& entryFrame) const
+{
+    if (vm.hasCompiledCode() && AOT::isCallerCompiled(vm, this, entryFrame)) [[unlikely]]
+        return nullptr;
+    return callerFrame(entryFrame);
+}
+
 SUPPRESS_ASAN CallFrame* CallFrame::unsafeCallerFrame(EntryFrame*& currEntryFrame) const
 {
     if (unsafeCallerFrameOrEntryFrame() == currEntryFrame) {

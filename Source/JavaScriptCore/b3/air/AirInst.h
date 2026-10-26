@@ -177,6 +177,7 @@ struct Inst {
 
     const uint8_t* fixedForms(unsigned& firstArgWithForm);
     JS_EXPORT_PRIVATE void fillForms();
+    JS_EXPORT_PRIVATE const uint8_t* formsKeptByCode();
     JS_EXPORT_PRIVATE bool hasCurrentForms();
 
     // Reports any additional registers clobbered by this operation. Note that for efficiency,
@@ -301,7 +302,7 @@ private:
     ALWAYS_INLINE const uint8_t* patchForms()
     {
         if (m_size > maxNumberOfForms + 1) [[unlikely]]
-            return nullptr;
+            return formsKeptByCode();
         if (formsState() == FormsState::NotComputed) [[unlikely]]
             fillForms();
         return formsState() == FormsState::NotFixed ? nullptr : formsAfterSpecial();

@@ -8,7 +8,7 @@ function f0 name="check" parameters=[{type=boolean}, {type=Array<string, proven>
     Jump -> next b1(v1)
   b1(v3):
     LoopHint
-    v5 = Check v3 castType=Array<int>
+    v5 = Check v3 expectedType=Array<int>
     v6 = Upcast v2 castType=Array
     Branch v0 -> taken b2(), notTaken b3()
   b2():
@@ -21,7 +21,7 @@ function f1 name="assumed" parameters=[{type=boolean}, {type=Array<string, prove
     Jump -> next b1(v1)
   b1(v3):
     LoopHint
-    v5 = AssumeType v3 castType=Array<int>
+    v5 = AssumeType v3 provenType=Array<int>
     v6 = Upcast v2 castType=object
     Branch v0 -> taken b2(), notTaken b3()
   b2():
@@ -47,7 +47,7 @@ function f3 name="contentsStayProven" parameters=[{type=boolean}, {type=Array<st
     Jump -> next b1(v1)
   b1(v3):
     LoopHint
-    v5 = Check v3 castType=Array<int>
+    v5 = Check v3 expectedType=Array<int>
     v6 = Upcast v2 castType=Array<int, proven>
     Branch v0 -> taken b2(), notTaken b3()
   b2():
@@ -60,7 +60,7 @@ function f4 name="usedByAnotherValue" parameters=[{type=boolean}, {type=Array<st
     Jump -> next b1(v1)
   b1(v3):
     LoopHint
-    v5 = Check v3 castType=Array<int>
+    v5 = Check v3 expectedType=Array<int>
     v6 = Upcast v2 castType=Array
     v7 = Integer
     v8 = ElemGet v5, v7

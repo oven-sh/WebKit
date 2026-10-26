@@ -23,6 +23,15 @@ Operand RepresentationEmitter::convert(const OperationContext& context, Opcode c
 {
     using enum Representation;
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    if (holdsAnyNaN(to)) {
+        Operand number = source.is<Number>() || source.is<NumberWithPayload>() ? source : convert(context, conversion, sourceID, source, type, Double);
+        return Operand(to, number.value);
+    }
+    if (holdsAnyNaN(source.representation) && to != JSValue) {
+        source = conversion == Opcode::NumberToInteger ? Number(source.value) : conversions.withoutBitsOfAnyNaN(source);
+        if (to == Double)
+            return source;
+    }
     const Representation from = source.representation;
 
     auto numberUnboxing = [&] {
@@ -36,7 +45,7 @@ Operand RepresentationEmitter::convert(const OperationContext& context, Opcode c
 
     switch (conversion) {
     case Opcode::Box:
-        if (to == JSValue && RepresentationSet { Void, Boolean, Int32, Int64, Double, OptionalInt64, OptionalDouble, Cell }.contains(from))
+        if (to == JSValue && RepresentationSet { Void, Boolean, Int32, Int64, Double, DoubleWithPayload, ImpureDouble, OptionalInt64, OptionalDouble, Cell }.contains(from))
             return conversions.box(context, source, type);
         if ((to == OptionalInt64 && RepresentationSet { Void, Int32, Int64 }.contains(from)) || (to == OptionalDouble && RepresentationSet { Void, Double, OptionalInt64 }.contains(from)))
             return conversions.toOptional(source, type, to);

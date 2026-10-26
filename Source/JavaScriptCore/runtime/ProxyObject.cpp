@@ -55,6 +55,16 @@ static JSC_DECLARE_HOST_FUNCTION(performProxyConstruct);
 
 static constexpr PropertyOffset emptyHandlerTrapCache = INT_MIN;
 
+// No trap sees a private name. One that passes through proxies is an ordinary property of the target that nothing lists; a proxy has no other private name.
+enum class Dispatch : uint8_t { ToHandler, ToTarget, Ignore };
+
+static ALWAYS_INLINE Dispatch dispatchFor(PropertyName propertyName)
+{
+    if (!propertyName.isPrivateName()) [[likely]]
+        return Dispatch::ToHandler;
+    return propertyName.passesThroughProxies() ? Dispatch::ToTarget : Dispatch::Ignore;
+}
+
 ProxyObject::ProxyObject(VM& vm, Structure* structure)
     : Base(vm, structure)
 {
@@ -189,6 +199,17 @@ JSObject* ProxyObject::getHandlerTrap(JSGlobalObject* globalObject, JSObject* ha
     return nullptr;
 }
 
+#if ENABLE(AOT)
+bool ProxyObject::isCachedTrapFieldEmpty(JSObject* handler, PropertyOffset cached)
+{
+    ASSERT(cached < invalidOffset);
+    if (cached == emptyHandlerTrapCache || handler->type() != CompiledObjectType)
+        return false;
+    AOT::Object* compiledHandler = uncheckedDowncast<AOT::Object>(handler);
+    return !compiledHandler->hasFlagsInOrderWord() && !compiledHandler->isInSlot(compiledHandler->layout().fields()[invalidOffset - 1 - cached]);
+}
+#endif
+
 void ProxyObject::clearHandlerTrapsOffsetsCache()
 {
     std::fill_n(m_handlerTrapsOffsetsCache, numberOfCachedHandlerTrapsOffsets, emptyHandlerTrapCache);
@@ -241,12 +262,16 @@ static JSValue performProxyGet(JSGlobalObject* globalObject, ProxyObject* proxyO
         return jsUndefined();
     };
 
-    if (propertyName.isPrivateName())
+    Dispatch dispatch = dispatchFor(propertyName);
+    if (dispatch == Dispatch::Ignore)
         return jsUndefined();
 
     JSValue handlerValue = proxyObject->handler();
     if (handlerValue.isNull())
         return throwTypeError(globalObject, scope, s_proxyAlreadyRevokedErrorMessage);
+
+    if (dispatch == Dispatch::ToTarget)
+        return performDefaultGet();
 
     JSObject* handler = uncheckedDowncast<JSObject>(handlerValue);
     CallData callData;
@@ -345,7 +370,8 @@ bool ProxyObject::performInternalMethodGetOwnProperty(JSGlobalObject* globalObje
         return target->methodTable()->getOwnPropertySlot(target, globalObject, propertyName, slot);
     };
 
-    if (propertyName.isPrivateName())
+    Dispatch dispatch = dispatchFor(propertyName);
+    if (dispatch == Dispatch::Ignore)
         return false;
 
     JSValue handlerValue = this->handler();
@@ -353,6 +379,9 @@ bool ProxyObject::performInternalMethodGetOwnProperty(JSGlobalObject* globalObje
         throwTypeError(globalObject, scope, s_proxyAlreadyRevokedErrorMessage);
         return false;
     }
+
+    if (dispatch == Dispatch::ToTarget)
+        RELEASE_AND_RETURN(scope, performDefaultGetOwnProperty());
 
     JSObject* handler = uncheckedDowncast<JSObject>(handlerValue);
     CallData callData;
@@ -452,7 +481,8 @@ bool ProxyObject::performHasProperty(JSGlobalObject* globalObject, PropertyName 
         return target->getPropertySlot(globalObject, propertyName, slot);
     };
 
-    if (propertyName.isPrivateName())
+    Dispatch dispatch = dispatchFor(propertyName);
+    if (dispatch == Dispatch::Ignore)
         return false;
 
     JSValue handlerValue = this->handler();
@@ -460,6 +490,9 @@ bool ProxyObject::performHasProperty(JSGlobalObject* globalObject, PropertyName 
         throwTypeError(globalObject, scope, s_proxyAlreadyRevokedErrorMessage);
         return false;
     }
+
+    if (dispatch == Dispatch::ToTarget)
+        RELEASE_AND_RETURN(scope, performDefaultHasProperty());
 
     JSObject* handler = uncheckedDowncast<JSObject>(handlerValue);
     CallData callData;
@@ -567,7 +600,8 @@ bool ProxyObject::performPut(JSGlobalObject* globalObject, JSValue putValue, JSV
         return false;
     }
 
-    if (propertyName.isPrivateName())
+    Dispatch dispatch = dispatchFor(propertyName);
+    if (dispatch == Dispatch::Ignore)
         return false;
 
     JSValue handlerValue = this->handler();
@@ -576,11 +610,16 @@ bool ProxyObject::performPut(JSGlobalObject* globalObject, JSValue putValue, JSV
         return false;
     }
 
+    JSObject* target = this->target();
+    if (dispatch == Dispatch::ToTarget) {
+        PutPropertySlot slot(thisValue == JSValue(this) ? JSValue(target) : thisValue, shouldThrow);
+        RELEASE_AND_RETURN(scope, target->methodTable()->put(target, globalObject, propertyName, putValue, slot));
+    }
+
     JSObject* handler = uncheckedDowncast<JSObject>(handlerValue);
     CallData callData;
     JSObject* setMethod = getHandlerTrap(globalObject, handler, callData, vm.propertyNames->set, HandlerTrap::Set);
     RETURN_IF_EXCEPTION(scope, false);
-    JSObject* target = this->target();
     if (!setMethod)
         RELEASE_AND_RETURN(scope, performDefaultPut());
 
@@ -786,7 +825,8 @@ bool ProxyObject::performDelete(JSGlobalObject* globalObject, PropertyName prope
         return false;
     }
 
-    if (propertyName.isPrivateName())
+    Dispatch dispatch = dispatchFor(propertyName);
+    if (dispatch == Dispatch::Ignore)
         return false;
 
     JSValue handlerValue = this->handler();
@@ -794,6 +834,9 @@ bool ProxyObject::performDelete(JSGlobalObject* globalObject, PropertyName prope
         throwTypeError(globalObject, scope, s_proxyAlreadyRevokedErrorMessage);
         return false;
     }
+
+    if (dispatch == Dispatch::ToTarget)
+        RELEASE_AND_RETURN(scope, performDefaultDelete());
 
     JSObject* handler = uncheckedDowncast<JSObject>(handlerValue);
     CallData callData;
@@ -986,7 +1029,8 @@ bool ProxyObject::performDefineOwnProperty(JSGlobalObject* globalObject, Propert
         RELEASE_AND_RETURN(scope, target->methodTable()->defineOwnProperty(target, globalObject, propertyName, descriptor, shouldThrow));
     };
 
-    if (propertyName.isPrivateName())
+    Dispatch dispatch = dispatchFor(propertyName);
+    if (dispatch == Dispatch::Ignore)
         return false;
 
     JSValue handlerValue = this->handler();
@@ -994,6 +1038,9 @@ bool ProxyObject::performDefineOwnProperty(JSGlobalObject* globalObject, Propert
         throwTypeError(globalObject, scope, s_proxyAlreadyRevokedErrorMessage);
         return false;
     }
+
+    if (dispatch == Dispatch::ToTarget)
+        return performDefaultDefineOwnProperty();
 
     JSObject* handler = uncheckedDowncast<JSObject>(handlerValue);
     CallData callData;
@@ -1098,6 +1145,29 @@ bool ProxyObject::forwardsGetOwnPropertyNamesToTarget(DontEnumPropertiesMode don
     return true;
 }
 
+// An 'ownKeys' trap cannot name them, so a caller that lists private names gets them from the object behind the proxies.
+static void addNamesThatPassThroughProxies(JSGlobalObject* globalObject, JSObject* target, PropertyNameArrayBuilder& propertyNames)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    while (auto* proxy = dynamicDowncast<ProxyObject>(target)) {
+        if (proxy->isRevoked()) {
+            throwTypeError(globalObject, scope, s_proxyAlreadyRevokedErrorMessage);
+            return;
+        }
+        target = proxy->target();
+    }
+
+    PropertyNameArrayBuilder targetNames(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Include);
+    target->methodTable()->getOwnPropertyNames(target, globalObject, targetNames, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, void());
+    for (const Identifier& name : targetNames) {
+        if (dispatchFor(name.impl()) == Dispatch::ToTarget)
+            propertyNames.add(name);
+    }
+}
+
 void ProxyObject::performGetOwnPropertyNames(JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames)
 {
     NO_TAIL_CALLS();
@@ -1155,6 +1225,11 @@ void ProxyObject::performGetOwnPropertyNames(JSGlobalObject* globalObject, Prope
         return true;
     });
     RETURN_IF_EXCEPTION(scope, void());
+
+    if (propertyNames.privateSymbolMode() == PrivateSymbolMode::Include) [[unlikely]] {
+        addNamesThatPassThroughProxies(globalObject, target, propertyNames);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 
     if (!target->structure()->isNonExtensibleOrHasNonConfigurableProperties())
         return;

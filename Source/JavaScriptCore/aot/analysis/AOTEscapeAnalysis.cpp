@@ -206,7 +206,7 @@ void EscapeAnalysis::rememberTypes()
         return;
     m_typesWhenAnswered = Vector<TypesOfValue>(m_function.values.size(), [&](size_t index) {
         const Value& value = m_function.values[index];
-        return TypesOfValue { value.type, value.expected() };
+        return TypesOfValue { value.type, value.expected().predicted() };
     });
 }
 
@@ -223,7 +223,7 @@ bool EscapeAnalysis::didRetypeValues()
     BitVector isRetyped(numberOfValues);
     for (size_t index = 0; index < numberOfValues; ++index) {
         const Value& value = m_function.values[index];
-        TypesOfValue types { value.type, value.expected() };
+        TypesOfValue types { value.type, value.expected().predicted() };
         if (m_typesWhenAnswered[index] == types)
             continue;
         m_typesWhenAnswered[index] = types;
@@ -681,17 +681,18 @@ bool EscapeAnalysis::isExactUse(ObjectID object, const Use& use) const
 {
     if (use.kind != Use::Kind::Operand)
         return false;
-    const Value& user = m_function.at(use.user);
-    if (singleObject(user.operand(use.operandIndex)) != object)
-        return false;
+    return singleObject(m_function.at(use.user).operand(use.operandIndex)) == object && isOnlyOperandHolding(object, use);
+}
 
-    bool isExact = true;
-    user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+bool EscapeAnalysis::isOnlyOperandHolding(ObjectID object, const Use& use) const
+{
+    bool isOnlyOne = true;
+    m_function.at(use.user).forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         if (operandIndex == use.operandIndex)
             return;
-        isExact &= !pointsTo(operand).objects.contains(object);
+        isOnlyOne &= !pointsTo(operand).objects.contains(object);
     });
-    return isExact;
+    return isOnlyOne;
 }
 
 EscapeAnalysis::AllocationSet EscapeAnalysis::allocationSetOf(ValueID value) const

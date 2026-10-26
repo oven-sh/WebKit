@@ -24,7 +24,7 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
 }
 function f1 name="takesString" module=m0 position=200 flags=[IsChecked] length=1 parameters=[{type=string site=w0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ string):
-    v1 = Check v0 castType=string site=w0
+    v1 = Check v0 expectedType=string site=w0
     v2 = PropGet v1 key="length"
     v3 = PropGet v1 key="first"
     v4 = PropGet v1 key="second"

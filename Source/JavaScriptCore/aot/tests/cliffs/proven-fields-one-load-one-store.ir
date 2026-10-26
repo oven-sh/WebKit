@@ -11,7 +11,7 @@
 # CHECK-LABEL: name="chain4" module=m0 thisType
 # CHECK: [[a]]: L0 @Cell = GetModuleVariable variable=g0
 # CHECK-NEXT: [[first]]: undefined|L0 {{*}} = GetSlot [[a]] key="next" receivers=[L0] level=Proven
-# CHECK-NEXT: = AssumeType [[first]] castType=L0
+# CHECK-NEXT: = AssumeType [[first]] provenType=L0
 # CHECK-NOT: Test
 # CHECK-NOT: IsSlotFilled
 # CHECK-NOT: RequireObjectCoercible

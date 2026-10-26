@@ -89,11 +89,11 @@ void replaceKeepingType(FunctionPassContext& context, ValueID original, Value&& 
     if (context.build.options().verifiesProgram)
         replaced.add({ context.program, context.inputs.effects }, function, value);
 
-    TypeID expected = value.expected();
+    TypeID expected = value.expected().predicted();
     rewritten.setOrigin(value.origin());
     value = WTF::move(rewritten);
     value.type = resultTypeOf(context.program, function, value, context.types);
-    value.setExpected(narrowExpectedType(context.program, context.types, expected, value.type));
+    value.setExpected(ExpectedType(narrowExpectedType(context.program, context.types, expected, value.type)));
     checkRewrite(context, ValueSite { block, 0, original }, replaced);
 }
 
@@ -247,6 +247,11 @@ static bool mayBeMadeByBuiltinConstructor(const Program& program, const Type& ty
     return std::ranges::any_of(program.at(type.layouts).members, [&](LayoutID layout) {
         return mayBeMadeByBuiltinConstructor(program, layout);
     });
+}
+
+static bool mayBeProxy(const Program& program, const Type& type)
+{
+    return type.anyObject || type.anyFunction || type.findClassPart(BuiltinClasses::Proxy) || hasMembersWithoutLayout(program, type);
 }
 
 static Type typeOfArraysAmong(FunctionPassContext& context, const Type& operand)
@@ -516,9 +521,8 @@ static std::optional<Value> simplifyPrimitiveCall(FunctionPassContext& context, 
     // Number(value) and ToNumber differ only for a BigInt.
     if (overload->builtin == Builtins::Number && !operand.isNever() && operand.isNumberLike())
         return IRBuilder::make(Opcode::ToNumber, { arguments[0] });
-    if (overload->builtin == Builtins::ArrayIsArray && !operand.anyObject && !operand.findClassPart(BuiltinClasses::Proxy) && !mayBeMadeByBuiltinConstructor(context.program, operand)) {
+    if (overload->builtin == Builtins::ArrayIsArray && !mayBeProxy(context.program, operand) && !mayBeMadeByBuiltinConstructor(context.program, operand))
         return makeTypeTest(arguments[0], context.types.intern(typeOfArraysAmong(context, operand)));
-    }
 
     KnownBoolean answer = evaluateNumberTest(overload->builtin, operand);
     if (answer == KnownBoolean::Unknown)
@@ -670,7 +674,7 @@ static BuiltinOverloadID findFormTakingParts(FunctionPassContext& context, const
             continue;
         if (!resultTypeOfBuiltinCall(typing, { .overload = overload, .operands = operands }, 0).isSubsetOf(context.types.at(call.type), context.program))
             return { };
-        if (!effectsOfOverload(effectContext, overload, nullptr, operands.arguments.span()).isSubsetOf(effectsOf(effectContext, context.function, call)))
+        if (!effectsOfOverload(effectContext, overload, TypeID(), operands.arguments.span()).isSubsetOf(effectsOf(effectContext, context.function, call)))
             return { };
         return overload;
     }
@@ -745,7 +749,6 @@ static unsigned takeLiteralArgumentsApart(FunctionPassContext& context, const Bu
     for (const CallWithLiteralParts& match : matches) {
         const Value& call = function.at(match.call.value);
         Value rewritten = makeBuiltinCall(match.form, BuiltinCallForm::Whole, { { }, match.arguments }, { call.expectedResult(), call.accessSite(), call.allocationSite() });
-        rewritten.setIsDemotedTailCall(call.isDemotedTailCall());
         replaceKeepingType(context, match.call.value, WTF::move(rewritten));
     }
     context.analyses.didChangeValues();
@@ -761,6 +764,8 @@ PassOutcome simplifyBuiltinCalls(FunctionPassContext& context)
     };
     if (hasSitesIn(SiteList::SimplifiedIntrinsics))
         rewrites += simplifyIntrinsics(context);
+    if (hasSitesIn(SiteList::TemplateObjects))
+        rewrites += replaceTemplateObjectsReadByPosition(context);
     if (context.hasConstantListSource() && hasSitesIn(SiteList::ConstantListSpreads))
         rewrites += takeConstantListsApart(context);
     if (context.hasConstantListSource() && hasSitesIn(SiteList::ConstantListCalls)) {

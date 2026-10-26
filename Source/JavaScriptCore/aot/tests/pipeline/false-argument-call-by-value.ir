@@ -31,7 +31,7 @@ function f1 name="double" parameters=[{type=undefined|null|number site=w0}] resu
 # CHECK-NEXT: }
 # CHECK-NEXT: function f1 name="double"
 # CHECK-NEXT: b0(v0: anything):
-# CHECK-NEXT: [[text]]: string = AssumeType v0 castType=string
+# CHECK-NEXT: [[text]]: string = AssumeType v0 provenType=string
 # CHECK-NOT: TypeTest
 # CHECK: [[answer]]: number = Mul [[text]], {{*}}form=NumberAndValue
 # CHECK-NEXT: Return [[answer]]

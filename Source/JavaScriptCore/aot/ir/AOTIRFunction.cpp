@@ -10,6 +10,7 @@
 
 #include "AOTCFG.h"
 #include "AOTDiagnostics.h"
+#include "AOTObservableOperations.h"
 #include "AOTProvisionalFunctions.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTStringArena.h"
@@ -46,6 +47,7 @@ void Function::releaseBody()
     RELEASE_ASSERT(bodyIsReleased && !blocks.isEmpty());
     editAllBlocks().clear();
     editAllValues().clear();
+    writtenPositions.clear();
 }
 
 bool Function::isModuleBody() const
@@ -117,6 +119,22 @@ Wire::SourceLocation Function::locationOf(Origin origin) const
         outermostFrame = parent;
     }
     return locationInModule(module, inlineFrames[outermostFrame].callPosition);
+}
+
+std::optional<uint32_t> Function::writtenPositionOf(ValueID id) const
+{
+    auto found = std::ranges::lower_bound(writtenPositions, id.index(), { }, [](const WrittenPosition& written) { return written.value.index(); });
+    if (found == writtenPositions.end() || found->value != id)
+        return std::nullopt;
+    return found->position;
+}
+
+Wire::SourceLocation Function::writtenLocationOf(ValueID id) const
+{
+    Wire::SourceLocation location = locationOf(id);
+    if (std::optional<uint32_t> written = writtenPositionOf(id))
+        location.position = *written;
+    return location;
 }
 
 Wire::SourceLocation Function::declarationLocation() const
@@ -247,6 +265,12 @@ OptionSet<FunctionCapabilities> initialCapabilitiesOf(const Function& function)
     return capabilities;
 }
 
+OptionSet<FunctionCapabilities> capabilitiesInPlaceOf(const Function& replacement, OptionSet<FunctionCapabilities> ofReplaced, OptionSet<FunctionCapabilities> alsoKept)
+{
+    OptionSet<FunctionCapabilities> kept = alsoKept | OptionSet<FunctionCapabilities> { FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost, FunctionCapabilities::ClosuresAreReadWithoutCode, FunctionCapabilities::NotesLooksForName };
+    return (initialCapabilitiesOf(replacement) - kept) | (ofReplaced & kept);
+}
+
 static bool hasEarlierPredecessors(const Function& function)
 {
     unsigned count = function.blocks.size();
@@ -372,6 +396,14 @@ static Vector<ValueID> renumberValues(Function& function, size_t numberOfListedV
         block.forEachChildOutsideValues(remapChild);
 
     formerValues = WTF::move(values);
+
+    if (!function.writtenPositions.isEmpty()) {
+        function.writtenPositions.removeAllMatching([&](WrittenPosition& written) {
+            written.value = written.value.index() < newID.size() ? newID[written.value.index()] : ValueID();
+            return !written.value;
+        });
+        std::ranges::sort(function.writtenPositions, { }, [](const WrittenPosition& written) { return written.value.index(); });
+    }
     return newID;
 }
 
@@ -407,6 +439,8 @@ bool compactFunction(Function& function, Renumbering* renumbering)
         return false;
 
     Vector<ValueID> movedValues = renumberValues(function, numberOfListedValues);
+    if (ReasonsForOperationsThatWent* listener = function.listenerForOperationsThatGo()) [[unlikely]]
+        listener->didRenumber(movedBlocks.span(), movedValues.span());
     if (renumbering)
         *renumbering = { WTF::move(movedBlocks), WTF::move(movedValues) };
     if (valuesAreTypedAsDefined)
@@ -468,7 +502,7 @@ size_t numberOfForeignIDs(const Function& constFunction, const TypeArena& types)
     ForeignIDCounter counter { types, count };
     forEachReference(static_cast<FunctionRecord&>(function), counter);
     for (Value& value : function.storageOfValues()) {
-        count += !types.owns(value.type) + !types.owns(value.expected());
+        count += !types.owns(value.type) + !types.owns(value.expected().predicted());
         forEachReference(value, counter);
     }
     for (Block& block : function.storageOfBlocks())
@@ -483,8 +517,8 @@ void adoptIDs(Function& function, TypeArena& types)
     forEachReference(static_cast<FunctionRecord&>(function), adopter);
     for (Value& value : function.editAllValues()) {
         value.type = types.adopt(value.type);
-        TypeID expected = types.adopt(value.expectedForTyping());
-        value.setExpected(expected == value.type ? TypeID() : expected);
+        TypeID expected = types.adopt(value.expectedForTyping().predicted());
+        value.setExpected(ExpectedType(expected == value.type ? TypeID() : expected));
         forEachReference(value, adopter);
     }
     for (Block& block : function.editAllBlocks())
@@ -503,8 +537,8 @@ void remapIDs(Function& function, const TypeRemap& types, const StringRemap& str
     forEachReference(static_cast<FunctionRecord&>(function), rewriter);
     for (Value& value : function.editAllValues()) {
         types.apply(value.type);
-        TypeID expected = types(value.expectedForTyping());
-        value.setExpected(expected == value.type ? TypeID() : expected);
+        TypeID expected = types(value.expectedForTyping().predicted());
+        value.setExpected(ExpectedType(expected == value.type ? TypeID() : expected));
         forEachReference(value, rewriter);
     }
     for (Block& block : function.editAllBlocks())

@@ -626,7 +626,7 @@ bool mayLeakCapture(const Program& program, const FlowResults* flow, const Value
     if (!flow)
         return true;
     OperandUses leakingUses = usesLeakingFramePointers;
-    if (holdsOnlyHeapValues(program, flow, program.at(closure.function()).captures[captureIndex].type))
+    if (holdsOnlyHeapValues(program, flow, program.provenTypeOf(program.at(closure.function()).captures[captureIndex])))
         leakingUses = leakingUses - usesLeakingContents;
     return flow->framePointerSummary(closure.function(), captureIndex).uses.containsAny(leakingUses);
 }

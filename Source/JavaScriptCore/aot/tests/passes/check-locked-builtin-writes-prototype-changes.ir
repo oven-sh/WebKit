@@ -1,0 +1,32 @@
+# Object.setPrototypeOf(Map, {})  Object.setPrototypeOf(Map.prototype, null)  Reflect.setPrototypeOf(Math, {})
+# Object.setPrototypeOf(Map.prototype, Object.prototype)  Reflect.setPrototypeOf(Map, Function.prototype)  Object.setPrototypeOf({}, {})
+# A call that gives a locked built-in another prototype is reported like a store to its `__proto__`: Object.setPrototypeOf throws, Reflect.setPrototypeOf answers false.
+# The prototype that the object has already is taken, and so is any prototype for an object of the program.
+# RUN: pipeline CheckLockedBuiltinWrites
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 2
+# DIAGNOSTIC: LockedBuiltinWriteIsIgnored 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Empty" fields=[]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectSetPrototypeOf
+    v2 = Builtin builtin=Reflect
+    v3 = Builtin builtin=ReflectSetPrototypeOf
+    v4 = Builtin builtin=Map
+    v5 = Builtin builtin=MapPrototype
+    v6 = Builtin builtin=Math
+    v7 = NewObject layout=L0 fields=[]
+    v8 = Null
+    v9 = Call v1, v0, v4, v7 @10
+    v10 = Call v1, v0, v5, v8 @20
+    v11 = Call v3, v2, v6, v7 @30
+    v12 = Builtin builtin=ObjectPrototype
+    v13 = Call v1, v0, v5, v12 @40
+    v14 = Builtin builtin=FunctionPrototype
+    v15 = Call v3, v2, v4, v14 @50
+    v16 = NewObject layout=L0 fields=[]
+    v17 = Call v1, v0, v16, v7 @60
+    Return
+}

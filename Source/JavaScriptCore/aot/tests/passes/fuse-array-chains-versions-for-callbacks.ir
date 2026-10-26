@@ -1,0 +1,84 @@
+# A call of filter() or map() that was not copied in names a version of the method for the callback that it hands over. The version takes the operands of the method, so the chain is one traversal all the same.
+# A list that nothing is known about stays with the two calls.
+# FORM: Prepared
+# RUN: pass FuseArrayChains
+# STATISTIC: ArrayChainsFused = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+runtimefunction id=33 function=f1
+runtimefunction id=65 function=f2
+runtimefunction id=131091 function=f0
+function f0 name="traverseArray" role=Library enclosingRuntimeFunction=131091 parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v6 = Undefined
+    Return v6
+}
+function f1 name="filter" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=33 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, -, v4, v3, v0
+    Return v5
+}
+function f2 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, -, v4, v3, v0
+    Return v5
+}
+
+function f3 name="isPositive" kind=Arrow parameters=[{type=number}] results=[{type=boolean}] {
+    v1 = Integer integer=0
+    v2 = Less v1, v0
+    Return v2
+}
+
+function f4 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}
+
+function f5 name="filter" role=CalleeVersion flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=33 thisType={type=anything} parameters=[{type=f3}] results=[{type=anything}] derivation={source=f1 parameter=1 node=3 parameterMap=[{original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f1} {
+  b0(v0: anything, v1: f3, v2: Array<anything>):
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, -, v4, v3, v0
+    Return v5
+}
+function f6 name="map" role=CalleeVersion flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=f4}] results=[{type=anything}] derivation={source=f2 parameter=1 node=4 parameterMap=[{original=0}, {original=1}, {original=2}]} creator=Version{provenVersion=f2} {
+  b0(v0: anything, v1: f4, v2: Array<anything>):
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, -, v4, v3, v0
+    Return v5
+}
+
+function f7 name="chain" parameters=[{type=Array<number, proven, pristine[Storage, Names]>}] results=[{type=anything}] {
+    v1 = NewClosure function=f3
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f5
+    v4 = AssumeType v3 provenType=Array<number>
+    v5 = NewClosure function=f4
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f6
+    v8 = AssumeType v7 provenType=Array<number>
+    Return v8
+# CHECK-NOT: function=f5
+# CHECK-NOT: function=f6
+# CHECK: = CallDirect {{*}} function=[[step]] {{*}}[isAlwaysInlined]
+}
+
+function f8 name="chainOfListNobodyKnows" parameters=[{type=Array<number>}] results=[{type=anything}] {
+    v1 = NewClosure function=f3
+    v2 = NewArray contents=anything
+    v3 = CallDirect v0, v1, v2 function=f5
+    v4 = AssumeType v3 provenType=Array<number>
+    v5 = NewClosure function=f4
+    v6 = NewArray contents=anything
+    v7 = CallDirect v4, v5, v6 function=f6
+    v8 = AssumeType v7 provenType=Array<number>
+    Return v8
+# CHECK: v3: anything = CallDirect v0, v1, {{*}} function=f5
+# CHECK: v7: anything = CallDirect v4, v5, {{*}} function=f6
+}

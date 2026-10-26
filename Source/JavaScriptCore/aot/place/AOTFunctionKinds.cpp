@@ -15,6 +15,7 @@
 #include "AOTCreateEntrypoints.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionDescription.h"
+#include "AOTIRProgram.h"
 #include "AOTPlacementSteps.h"
 #include "AOTRepresentation.h"
 #include "AOTThreads.h"
@@ -117,6 +118,9 @@ ClosureForm closureFormOf(const Program& program, const FlowResults& flow, Funct
         return ClosureForm::Full;
     if (function.captures.size() > ClosureRequest::maxSlimClosureCaptures)
         return ClosureForm::Full;
+    // A full closure has the property `name` from the first look for it on, which is what a stack frame asks a function object that has a displayName.
+    if (function.has(FunctionCapabilities::NotesLooksForName) && flow.closuresAreGivenDisplayName(id))
+        return ClosureForm::Full;
     return isExpectedToHaveNoProperties(program, flow, id) ? ClosureForm::Slim : ClosureForm::Full;
 }
 
@@ -146,7 +150,7 @@ Vector<ClosureForm> chooseClosureForms(const SlotPlanContext& context, const Slo
     return forms;
 }
 
-static DeclaredType declaredCapture(TypeID type) { return { .type = type }; }
+static DeclaredType declaredCapture(TypeID type) { return DeclaredType(Proven::byPosition(type)); }
 static const DeclaredType& declaredCapture(const DeclaredType& declared) { return declared; }
 
 template<typename Capture>
@@ -213,7 +217,7 @@ static const Function& describedFunctionOf(const Program& program, FunctionID id
     }
 }
 
-static_assert(static_cast<unsigned>(MethodKind::Getter) == 1 && static_cast<unsigned>(MethodKind::Setter) == 2);
+static_assert(!static_cast<unsigned>(MethodKind::Method) && static_cast<unsigned>(MethodKind::Getter) == 1 && static_cast<unsigned>(MethodKind::Setter) == 2 && numberOfEnumerators<MethodKind> == methodThatNotesLooksForName);
 
 static FunctionKindData kindDataOf(FunctionKind functionKind)
 {
@@ -251,13 +255,6 @@ static FunctionKindData kindDataOf(FunctionKind functionKind)
     return kind;
 }
 
-static unsigned closureStructureOf(FunctionKindData kind)
-{
-    if (kind.isConstructor)
-        return classObjectClosureStructure;
-    return kind.isAsync | kind.isGenerator << 1;
-}
-
 static bool takesNewTarget(const Function& function)
 {
     if (function.role != FunctionRole::GenericEntrypoint)
@@ -267,8 +264,11 @@ static bool takesNewTarget(const Function& function)
 }
 
 // A file of library functions is no runtime module, and a pass that replaces a function in place gives it another role.
+// What the bundler imports is evaluated as a file of the program is, so its functions are ordinary function objects.
 bool isInRuntimeModule(const Program& program, const Function& function)
 {
+    if (function.module && isBundlerHelperModule(program, program.at(function.module)))
+        return false;
     if (function.role == FunctionRole::Library || function.enclosingRuntimeFunction)
         return true;
     return function.module && program.at(function.module).kind == ModuleKind::RuntimeSource;
@@ -285,44 +285,12 @@ static FunctionKindData functionKindOf(const Program& program, const SlotPlan& s
     kind.isGenerator = described.has(FunctionFlags::IsGenerator);
     kind.takesNewTarget = takesNewTarget(program.at(id));
     kind.hasInferredName = !described.has(FunctionFlags::HasExplicitName);
+    if (described.has(FunctionCapabilities::NotesLooksForName) && kind.accessor() == MethodKind::Method)
+        kind.accessorKind = methodThatNotesLooksForName;
     kind.isInRuntimeModule = isInRuntimeModule(program, described);
     kind.isSlim = slots.closureFormOf(targetID) == ClosureForm::Slim;
-    kind.closureStructure = closureStructureOf(kind);
+    kind.closureStructure = kind.closureStructureOfKind();
     return kind;
-}
-
-static bool hasClosureWord(FunctionRole role)
-{
-    switch (role) {
-    case FunctionRole::GenericEntrypoint:
-        return true;
-    case FunctionRole::Source:
-    case FunctionRole::Library:
-    case FunctionRole::Model:
-    case FunctionRole::Signature:
-    case FunctionRole::TableEntrypoint:
-    case FunctionRole::TableLookup:
-    case FunctionRole::GenericVersion:
-    case FunctionRole::AllocatedThisVersion:
-    case FunctionRole::ConstructBody:
-    case FunctionRole::CallSiteVersion:
-    case FunctionRole::CalleeVersion:
-    case FunctionRole::CoroutineRamp:
-    case FunctionRole::CoroutineBody:
-    case FunctionRole::AsyncWorker:
-    case FunctionRole::BoundFunction:
-    case FunctionRole::ResultWrapper:
-    case FunctionRole::ResultWorker:
-    case FunctionRole::ParameterWrapper:
-    case FunctionRole::EntryChecks:
-    case FunctionRole::OutlinedBody:
-    case FunctionRole::Serializer:
-    case FunctionRole::Parser:
-    case FunctionRole::ChainStep:
-    case FunctionRole::StubBody:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static ClosureFunctionRange closureFunctionRangeOf(const Program& program)
@@ -330,7 +298,7 @@ static ClosureFunctionRange closureFunctionRangeOf(const Program& program)
     uint32_t firstClosureFunction = program.functions.size();
     uint32_t endOfClosureFunctions = program.functions.size();
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
-        if (!hasClosureWord(program.functions[index].role))
+        if (!hasClosureWordOf(program.functions[index].role))
             continue;
         firstClosureFunction = std::min(firstClosureFunction, index);
         endOfClosureFunctions = index + 1;
@@ -407,7 +375,7 @@ FunctionNumbering numberFunctions(const PlacementContext& context, const PlacedS
     return numbering;
 }
 
-static TraceVisibility visibilityOf(const Function& function)
+static TraceVisibility visibilityOf(const Function& function, bool implementsBuiltin)
 {
     switch (function.role) {
     case FunctionRole::OutlinedBody:
@@ -436,6 +404,9 @@ static TraceVisibility visibilityOf(const Function& function)
     case FunctionRole::ResultWorker:
     case FunctionRole::ParameterWrapper:
     case FunctionRole::EntryChecks:
+        // What the front end hides is a function of its own that no trace lists, unless it is a built-in that programs can call. What its role hides is a part of a function that traces list.
+        if (function.has(FunctionFlags::IsHiddenInStackTraces) && !implementsBuiltin)
+            return TraceVisibility::Hidden;
         return function.isHiddenInStackTraces() ? TraceVisibility::VisibleOnlyOnTop : TraceVisibility::Visible;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -454,9 +425,12 @@ bool rejectsOnThrow(const Program& program, const Function& function)
 // StackFrame gives an async frame of such a function no name. The frame of an async function keeps the name the function itself has, not one it takes from a variable or a property.
 static bool isNamedByOwner(const Function& function)
 {
-    if (function.role != FunctionRole::CoroutineBody && function.role != FunctionRole::AsyncWorker)
-        return false;
     bool hasExplicitName = function.has(FunctionFlags::HasExplicitName);
+    // The engine goes by the text. An `await` is written in the function, and the build has found that the function never reaches it.
+    if (function.role == FunctionRole::AsyncWorker)
+        return !hasExplicitName && function.hasWrittenAwait;
+    if (function.role != FunctionRole::CoroutineBody)
+        return false;
     switch (kindOfCoroutine(function)) {
     case CoroutineKind::AsyncFunction:
         return !hasExplicitName;
@@ -513,6 +487,11 @@ static bool isInsideBuiltinFunction(const BuiltinTable& builtins, const Function
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool isCompilerFunction(const BuiltinTable& builtins, const Function& source)
+{
+    return source.enclosingRuntimeFunction && builtins.at(source.enclosingRuntimeFunction).role == RuntimeFunctionRole::CompilerFunction;
+}
+
 static StackTraceBuiltinKind builtinKindOf(const BuiltinTable& builtins, const Function& source, std::optional<BuiltinID> builtin)
 {
     if (!builtin)
@@ -532,7 +511,7 @@ FunctionTraceRecord functionTraceOf(const Program& program, FunctionID id)
     record.sourceFunctionIndex = sourceID.index();
     record.implementedBuiltinPlusOne = builtin ? builtin->index() + 1 : 0;
     record.implementsBuiltin = builtin.has_value();
-    record.visibilityBits = static_cast<uint32_t>(visibilityOf(function));
+    record.visibilityBits = static_cast<uint32_t>(visibilityOf(function, builtin && !isCompilerFunction(program.builtins(), source)));
     record.builtinKindBits = static_cast<uint32_t>(builtinKindOf(program.builtins(), source, builtin));
     record.codeTypeBits = static_cast<uint32_t>(source.kind == FunctionKind::Module ? ModuleCode : FunctionCode);
     record.rejectsOnThrow = rejectsOnThrow(program, function);
@@ -541,7 +520,9 @@ FunctionTraceRecord functionTraceOf(const Program& program, FunctionID id)
     record.isAsync = source.has(FunctionFlags::IsAsync);
     record.isNamedByOwner = isNamedByOwner(function);
     record.isNakedConstructor = source.has(FunctionFlags::IsNakedConstructor);
-    record.isNamedBySymbol = source.has(FunctionFlags::IsNamedBySymbol);
+    record.isNamedByComputedKey = source.has(FunctionFlags::IsNamedByComputedKey);
+    record.recordsCalleeOnceRenamed = source.has(FunctionCapabilities::RecordsCalleeOnceRenamed);
+    record.recordsCallee = source.has(FunctionCapabilities::RecordsCallee) && !record.recordsCalleeOnceRenamed;
     return record;
 }
 

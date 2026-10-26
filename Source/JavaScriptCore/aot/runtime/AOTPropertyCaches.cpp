@@ -47,6 +47,7 @@
 #include <wtf/AlignedStorage.h>
 #include <wtf/Atomics.h>
 #include <wtf/PageBlock.h>
+#include <wtf/SIMDHelpers.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #if OS(LINUX)
@@ -65,21 +66,54 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(PropertyCaches);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(HashedSlotTable);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RowDisplacementTable);
 
-static constexpr size_t sizeOfCellsInPlane = RowDisplacementTable::cellsPerPlane * sizeof(PackedSlot);
-static constexpr size_t sizeOfPlane = roundUpToMultipleOf<16 * KB>(sizeOfCellsInPlane);
-static constexpr size_t sizeOfOccupied = RowDisplacementTable::cellsPerPlane / 8 + sizeof(uint64_t);
-static constexpr size_t offsetOfOccupied = numberOfSlotAccesses * sizeOfPlane;
-static constexpr size_t sizeOfTables = offsetOfOccupied + roundUpToMultipleOf<16 * KB>(sizeOfOccupied);
-static_assert(!(RowDisplacementTable::cellsPerPlane % 64));
+// The planes, and a bit for each cell of a plane. A cell is the base of a row plus a column.
+struct PagesOfPlanes {
+    explicit constexpr PagesOfPlanes(uint32_t numberOfBases)
+        : sizeOfCellsInPlane((static_cast<size_t>(numberOfBases) + RowDisplacementTable::numberOfColumns) * sizeof(PackedSlot))
+        , sizeOfPlane(roundUpToMultipleOf<16 * KB>(sizeOfCellsInPlane))
+        , sizeOfOccupied(roundUpToMultipleOf<16 * KB>(roundUpToMultipleOf<64>(sizeOfCellsInPlane / sizeof(PackedSlot)) / 8 + sizeof(uint64_t)))
+        , offsetOfOccupied(numberOfSlotAccesses * sizeOfPlane)
+        , size(offsetOfOccupied + sizeOfOccupied)
+    {
+    }
 
-static void* reservePagesOfTable(size_t size)
+    size_t sizeOfCellsInPlane;
+    size_t sizeOfPlane;
+    size_t sizeOfOccupied;
+    size_t offsetOfOccupied;
+    size_t size;
+};
+static_assert(!(RowDisplacementTable::numberOfColumns % 64) && !(RowDisplacementTable::initialNumberOfBases % 64));
+
+static void* tryReservePagesOfTable(size_t size)
 {
-    void* result = reserveGuardedPages(size);
+    void* result = tryReserveGuardedPages(size);
 #if OS(LINUX)
-    while (madvise(result, size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
+    while (result && madvise(result, size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
 #endif
     return result;
 }
+
+static void* reservePagesOfTable(size_t size)
+{
+    void* result = tryReservePagesOfTable(size);
+    RELEASE_ASSERT(result, size);
+    return result;
+}
+
+#if OS(LINUX) && !ENABLE(AOT_GUARDED_PAGES)
+static constexpr bool pagesOfTablesCanGrow = true;
+
+// What the pages held stays, what is added is zero. A refusal changes nothing.
+static void* tryGrowPagesOfTable(void* pages, size_t size, size_t newSize)
+{
+    void* result = mremap(pages, size, newSize, MREMAP_MAYMOVE);
+    return result == MAP_FAILED ? nullptr : result;
+}
+#else
+static constexpr bool pagesOfTablesCanGrow = false;
+static void* tryGrowPagesOfTable(void*, size_t, size_t) { return nullptr; }
+#endif
 
 StructureRows& StructureRows::singleton()
 {
@@ -108,21 +142,65 @@ RowDisplacementTable::RowDisplacementTable(VM& vm, CacheRegistry& registry, cons
     , m_structureRows(StructureRows::singleton())
     , m_cageBase(vm.heap.cage().base())
 {
-    auto* tables = static_cast<uint8_t*>(reservePagesOfTable(sizeOfTables));
-    for (unsigned i = 0; i < numberOfSlotAccesses; ++i) {
-        uint8_t* plane = tables + i * sizeOfPlane;
-        m_planes[i] = reinterpret_cast<RememberedSlot<PackedSlot>*>(plane);
-        m_writtenRegions[i] = makeUniqueWithoutFastMallocCheck<RememberedSlotSet>(std::span<const uint8_t> { plane, sizeOfCellsInPlane }, regionShift);
-    }
-    m_occupied = reinterpret_cast<uint64_t*>(tables + offsetOfOccupied);
     m_limitOfBases = static_cast<uint32_t>(std::clamp<uint64_t>(runtimeLimitValue(vm, LimitID::LookupTableBases), firstBase + 1, maxNumberOfBases));
+    m_capacityOfBases = pagesOfTablesCanGrow ? std::min(initialNumberOfBases, m_limitOfBases) : m_limitOfBases;
+    PagesOfPlanes layout(m_capacityOfBases);
+    auto* pages = static_cast<uint8_t*>(reservePagesOfTable(layout.size));
+    for (unsigned i = 0; i < numberOfSlotAccesses; ++i) {
+        uint8_t* plane = pages + i * layout.sizeOfPlane;
+        m_planes[i] = reinterpret_cast<RememberedSlot<PackedSlot>*>(plane);
+        m_writtenRegions[i] = makeUniqueWithoutFastMallocCheck<RememberedSlotSet>(std::span<const uint8_t> { plane, layout.sizeOfCellsInPlane }, regionShift);
+    }
+    m_occupied = reinterpret_cast<uint64_t*>(pages + layout.offsetOfOccupied);
+    m_numbersOfBasesWithPages.fill(m_capacityOfBases);
     registry.add(CacheKind::WeakByKey, "RowDisplacementTable"_s, *this);
 }
 
 RowDisplacementTable::~RowDisplacementTable()
 {
     clear();
-    releaseGuardedPages(m_planes[0], sizeOfTables);
+    if (!pagesOfTablesCanGrow) {
+        releaseGuardedPages(m_planes[0], PagesOfPlanes(m_capacityOfBases).size);
+        return;
+    }
+    for (unsigned i = 0; i < numberOfSlotAccesses; ++i)
+        releaseGuardedPages(m_planes[i], PagesOfPlanes(m_numbersOfBasesWithPages[i]).sizeOfPlane);
+    releaseGuardedPages(m_occupied, PagesOfPlanes(m_numbersOfBasesWithPages[numberOfSlotAccesses]).sizeOfOccupied);
+}
+
+// Where there is no room for more pages the table stays as large as it is, and rows give way to rows as they do at the limit.
+bool RowDisplacementTable::tryGrow()
+{
+    if (m_capacityOfBases >= m_limitOfBases)
+        return false;
+    uint32_t numberOfBases = static_cast<uint32_t>(std::min<uint64_t>(static_cast<uint64_t>(m_capacityOfBases) * 2, m_limitOfBases));
+    PagesOfPlanes to(numberOfBases);
+    auto tryGrowPart = [&](unsigned part, void* pages, size_t PagesOfPlanes::* size) -> void* {
+        if (m_numbersOfBasesWithPages[part] == numberOfBases)
+            return pages;
+        void* result = tryGrowPagesOfTable(pages, PagesOfPlanes(m_numbersOfBasesWithPages[part]).*size, to.*size);
+        if (result)
+            m_numbersOfBasesWithPages[part] = numberOfBases;
+        return result;
+    };
+    for (unsigned i = 0; i < numberOfSlotAccesses; ++i) {
+        void* plane = tryGrowPart(i, m_planes[i], &PagesOfPlanes::sizeOfPlane);
+        if (!plane) {
+            m_limitOfBases = m_capacityOfBases;
+            return false;
+        }
+        m_planes[i] = static_cast<RememberedSlot<PackedSlot>*>(plane);
+        m_writtenRegions[i]->didMoveAndGrowTable({ static_cast<const uint8_t*>(plane), to.sizeOfCellsInPlane });
+        m_didMovePlanes = true;
+    }
+    void* occupied = tryGrowPart(numberOfSlotAccesses, m_occupied, &PagesOfPlanes::sizeOfOccupied);
+    if (!occupied) {
+        m_limitOfBases = m_capacityOfBases;
+        return false;
+    }
+    m_occupied = static_cast<uint64_t*>(occupied);
+    m_capacityOfBases = numberOfBases;
+    return true;
 }
 
 void RowDisplacementTable::writeCell(SlotAccess access, uint32_t index, PackedSlot cell, bool dependsOnChain)
@@ -239,7 +317,7 @@ size_t RowDisplacementTable::removeDeadEntries(VM& vm, CollectionScope scope)
     if (scope == CollectionScope::Full && vm.heap.collectionScope() != CollectionScope::Eden) {
         compactBases();
         for (unsigned i = 0; i < numberOfSlotAccesses; ++i)
-            decommitEmptyPages({ reinterpret_cast<uint8_t*>(m_planes[i]), sizeOfCellsInPlane }, *m_writtenRegions[i]);
+            decommitEmptyPages({ reinterpret_cast<uint8_t*>(m_planes[i]), PagesOfPlanes(m_capacityOfBases).sizeOfCellsInPlane }, *m_writtenRegions[i]);
     }
     return numberRemoved;
 }
@@ -301,7 +379,7 @@ uint32_t RowDisplacementTable::firstFittingBase(uint32_t from, std::span<const u
     if (!fitting)
         return 0;
     uint32_t base = from + WTF::ctz(fitting);
-    return base < m_limitOfBases ? base : 0;
+    return base < m_capacityOfBases ? base : 0;
 }
 
 uint32_t RowDisplacementTable::findBase(std::span<const uint16_t> columns, uint32_t preferredBase)
@@ -321,12 +399,15 @@ uint32_t RowDisplacementTable::findBase(std::span<const uint16_t> columns, uint3
         }
     }
     m_nextBase = from < m_endOfBases ? from : firstBase;
-    for (from = m_endOfBases; from < m_limitOfBases; from += basesPerBatch) {
-        if (uint32_t base = firstFittingBase(from, columns)) {
-            m_endOfBases = base + 1;
-            return base;
+    from = m_endOfBases;
+    do {
+        for (; from < m_capacityOfBases; from += basesPerBatch) {
+            if (uint32_t base = firstFittingBase(from, columns)) {
+                m_endOfBases = base + 1;
+                return base;
+            }
         }
-    }
+    } while (tryGrow());
     return 0;
 }
 
@@ -334,9 +415,9 @@ uint32_t RowDisplacementTable::findBaseEvictingRows(std::span<const uint16_t> co
 {
     countLimitHit(m_vm, LimitID::LookupTableBases);
     Vector<uint32_t, 33> occupiedIndexes;
-    for (uint32_t basesLeft = m_limitOfBases - firstBase; basesLeft; --basesLeft) {
+    for (uint32_t basesLeft = m_capacityOfBases - firstBase; basesLeft; --basesLeft) {
         uint32_t base = m_evictionHand;
-        m_evictionHand = base + 1 < m_limitOfBases ? base + 1 : firstBase;
+        m_evictionHand = base + 1 < m_capacityOfBases ? base + 1 : firstBase;
         occupiedIndexes.shrink(0);
         bool overlapsKeep = false;
         auto collect = [&](uint32_t index) {
@@ -870,6 +951,13 @@ void VMPropertyCaches::didChangeObjectPrototype(JSObject* prototype, UniquedStri
     });
 }
 
+size_t VMPropertyCaches::maxSizeOfPagesAtStart(const Image& image)
+{
+    return sizeOfRecords(safeCast<uint32_t>(runtimeLimitValue(&image, LimitID::CustomAccessorRecords)))
+        + PagesOfPlanes(RowDisplacementTable::initialNumberOfBases).size
+        + sizeOfReservation(static_cast<uint32_t>(std::bit_floor(std::clamp<uint64_t>(runtimeLimitValue(&image, LimitID::HashedTableEntries), HashedSlotTable::initialNumberOfEntries, maxAddressableEntries))));
+}
+
 void VMPropertyCaches::publishWords(Instance& instance) const
 {
     PropertyCacheWords& words = instance.propertyCaches;
@@ -997,12 +1085,25 @@ void VMPropertyCaches::didChangeObjectOnSomeChain(JSObject* changed, UniquedStri
     }
 }
 
+void VMPropertyCaches::didStartWatchingReplacements()
+{
+    for (Instance* instance : m_vm.aotState().instances) {
+        if (std::exchange(instance->propertyCaches.placesTakeReplacementsAsUnwatched, 0))
+            zeroSpan(instance->keyedValuePlaces().last<KeyedValuePlace::numberOfPlacesPerAccess>());
+    }
+}
+
 void VMPropertyCaches::set(Structure* structure, const CachedName& name, SlotAccess access, const Slot& slot)
 {
     StructureID id = structure->id();
     ASSERT(slot.structureID == id);
-    if (std::optional<uint32_t> column = columnForNumber(name.identifierNumber)) {
-        if (m_front.trySet(structure, *column, access, slot)) {
+    if (std::optional<uint32_t> column = hasFrontCells(access) ? columnForNumber(name.identifierNumber) : std::nullopt) {
+        bool isSet = m_front.trySet(structure, *column, access, slot);
+        if (m_front.takeDidMovePlanes()) {
+            for (Instance* instance : m_vm.aotState().instances)
+                publishWords(*instance);
+        }
+        if (isSet) {
             if (slot.has(Slot::dependsOnChain)) {
                 auto result = m_columnsByNameAddress.add(name.uid, static_cast<uint16_t>(*column));
                 ASSERT(result.iterator->value == *column);
@@ -1022,7 +1123,7 @@ void VMPropertyCaches::set(Structure* structure, const CachedName& name, SlotAcc
 
 std::optional<Slot> VMPropertyCaches::find(StructureID id, const CachedName& name, SlotAccess access) const
 {
-    if (std::optional<uint32_t> column = columnForNumber(name.identifierNumber)) {
+    if (std::optional<uint32_t> column = hasFrontCells(access) ? columnForNumber(name.identifierNumber) : std::nullopt) {
         if (std::optional<Slot> slot = m_front.find(id, *column, access))
             return slot;
     }
@@ -1034,7 +1135,7 @@ std::optional<Slot> VMPropertyCaches::find(StructureID id, const CachedName& nam
 void VMPropertyCaches::remove(StructureID id, const CachedName& name, SlotAccess access)
 {
     const ProgramIdentifiers* identifiers = m_vm.aotState().identifiers.get();
-    if (std::optional<uint32_t> column = columnForNumber(name.identifierNumber || !identifiers ? name.identifierNumber : identifiers->numberOf(name.uid)))
+    if (std::optional<uint32_t> column = hasFrontCells(access) ? columnForNumber(name.identifierNumber || !identifiers ? name.identifierNumber : identifiers->numberOf(name.uid)) : std::nullopt)
         m_front.remove(id, *column, access);
     m_hashedTable.remove(id, name.uid, access);
 }
@@ -1074,7 +1175,7 @@ void initializePropertyCacheWords(Instance& instance)
         return;
     uint8_t* sharedCode = const_cast<uint8_t*>(image.sharedCodeCopy(0));
     std::span offsets = image.slotHandlerOffsets();
-    std::span handlers(&instance.slotHandlers()[0][0], numberOfSlotHandlerTables * numberOfSlotKinds);
+    std::span handlers(&instance.slotHandlers()[0][0], numberOfSlotHandlerTables * numberOfSlotKindsWithHandlers);
     RELEASE_ASSERT(offsets.size() == handlers.size());
     for (size_t index = 0; index < handlers.size(); ++index)
         handlers[index] = offsets[index] == offsetOfAbsentStub ? nullptr : sharedCode + offsets[index];
@@ -1337,12 +1438,41 @@ bool PropertyCaches::shouldMakeStructureForAdditionByKey(Structure* structure, U
 {
     if (structure->id() == m_structureMadeForAdditionByKey)
         return true;
-    // Zero stands for no pair.
-    uint32_t hash = WTF::pairIntHash(structure->id().bits(), WTF::PtrHash<UniquedStringImpl*>::hash(uid)) | 1;
-    uint32_t& first = m_firstAdditionsByKey[(hash >> 1) % numberOfFirstAdditionsByKey];
-    if (first == hash)
+    // A pair that came once has the highest bit set. One that came again has it clear: it is still found once nothing holds its Structure any more, until a newcomer takes its place. Zero stands for no pair.
+    constexpr uint32_t cameOnce = 1u << 31;
+    uint32_t hash = WTF::pairIntHash(structure->id().bits(), uid->existingSymbolAwareHash()) | cameOnce;
+    constexpr uint32_t numberOfSets = numberOfFirstAdditionsByKey / firstAdditionsByKeyPerSet;
+    static_assert(hasOneBitSet(numberOfSets) && !(firstAdditionsByKeyPerSet % SIMD::stride<uint32_t>));
+    uint32_t* set = &m_firstAdditionsByKey[hash % numberOfSets * firstAdditionsByKeyPerSet];
+    auto findInSet = [&](auto matches) -> uint32_t* {
+        for (uint32_t* places = set; places < set + firstAdditionsByKeyPerSet; places += SIMD::stride<uint32_t>) {
+            if (std::optional<uint8_t> index = SIMD::findFirstNonZeroIndex(matches(SIMD::load(places))))
+                return places + *index;
+        }
+        return nullptr;
+    };
+    auto holdsPair = [&](auto words) {
+        return SIMD::equal(SIMD::bitOr(words, SIMD::splat32(cameOnce)), SIMD::splat32(hash));
+    };
+    if (uint32_t* found = findInSet(holdsPair)) {
+        // Newcomers take the lowest place that they may, so it moves above the free ones.
+        *found = 0;
+        uint32_t* highestFree = set + firstAdditionsByKeyPerSet - 1;
+        while (*highestFree)
+            --highestFree;
+        *highestFree = hash & ~cameOnce;
         return true;
-    first = hash;
+    }
+    auto isForNewcomers = [&](auto words) {
+        return SIMD::lessThan(words, SIMD::splat32(cameOnce));
+    };
+    uint32_t* place = findInSet(isForNewcomers);
+    if (!place) {
+        // Each place of a full set is replaced half as often as the one before it, so a pair is remembered until it returns whether few or many others arrive in between.
+        m_evictionSeed = m_evictionSeed * 1664525 + 1013904223;
+        place = set + std::min<uint32_t>(std::countl_zero(m_evictionSeed), firstAdditionsByKeyPerSet - 1);
+    }
+    *place = hash;
     return false;
 }
 
@@ -1504,6 +1634,10 @@ bool slotAgreesWithStructures(VM&, const Slot& slot, SlotAccess access, UniquedS
         return found.outcome == StructureLookup::Absent;
     case Slot::Kind::Transition:
         return transitionSlotAgrees(slot, access, found, uid);
+    case Slot::Kind::Removal:
+        return found.outcome == StructureLookup::Own && found.offset == slot.offsetInStorage() && !(found.attributes & PropertyAttribute::DontDelete) && !isValidOffset(slot.removal.newStructureID.decode()->getConcurrently(uid));
+    case Slot::Kind::NothingToRemove:
+        return found.outcome != StructureLookup::Own;
     case Slot::Kind::Empty:
     case Slot::Kind::CustomGetter:
     case Slot::Kind::CustomSetter:
@@ -1519,6 +1653,8 @@ bool slotAgreesWithStructures(VM&, const Slot& slot, SlotAccess access, UniquedS
     case Slot::Kind::ExtraGetter:
     case Slot::Kind::ExtraSetter:
     case Slot::Kind::ExtraPropertyAddition:
+    case Slot::Kind::ExtraPropertyRemoval:
+    case Slot::Kind::FieldRemoval:
     case Slot::Kind::ArrayLength:
     case Slot::Kind::TypedArrayLength:
     case Slot::Kind::StringLength:
@@ -1859,9 +1995,12 @@ static void forEachStructureNamedBy(const Slot& slot, const Invocable<void(Struc
         return functor(slot.extraPropertyAddition.newStructureID);
     case SlotPayload::Transition:
         return functor(slot.transition.newStructureID);
+    case SlotPayload::Removal:
+        return functor(slot.removal.newStructureID);
     case SlotPayload::None:
     case SlotPayload::WordIndex:
     case SlotPayload::Field:
+    case SlotPayload::OrderWords:
     case SlotPayload::CustomAccessor:
     case SlotPayload::Holder:
     case SlotPayload::FieldAndHolder:

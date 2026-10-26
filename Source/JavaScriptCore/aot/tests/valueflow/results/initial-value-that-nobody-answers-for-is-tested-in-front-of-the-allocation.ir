@@ -7,7 +7,7 @@
 # CHECK: layout L2 name="Made" fields=[{key="flag" declared={type=boolean} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown storeNaming=
 # CHECK-LABEL: function f1 name="make"
 # CHECK: [[read]]: anything = ElemGet
-# CHECK-NEXT: [[tested]]: undefined|null|boolean = Check [[read]] castType=undefined|null|boolean cause=AddedByPass
+# CHECK-NEXT: [[tested]]: undefined|null|boolean = Check [[read]] expectedType=undefined|null|boolean cause=AddedByPass
 # CHECK-NEXT: = NewObject -, [[tested]] layout=L2
 
 module m0 path="main.js" displayPath="main.js" body=f0

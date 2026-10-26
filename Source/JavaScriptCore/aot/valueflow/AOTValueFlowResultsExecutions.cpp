@@ -60,21 +60,6 @@ static Vector<uint32_t> countEnteringOperations(const ValueFlowResultInputs& inp
     return counts;
 }
 
-static bool isEvaluatedAtMostOnce(ModuleKind kind)
-{
-    switch (kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::Data:
-    case ModuleKind::RuntimeSource:
-        return true;
-    case ModuleKind::Runtime:
-    case ModuleKind::External:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static bool isCalledByForwardingBuiltinItself(const ValueFlowResultInputs& inputs, const FlowApplication& application, ValueSetMaker& maker, const FlowIndirectCall& call)
 {
     if (!call.site)
@@ -105,7 +90,7 @@ static bool isCalledByForwardingBuiltinItself(const ValueFlowResultInputs& input
             size_t index = operand->isReceiver() ? OperandIndex::Call::thisValue : firstArgument + operand->argumentIndex();
             if (index >= operands.size())
                 return false;
-            called = maker.unite(called, inputs.valueOf(maker, operands[index]));
+            called = maker.unite(called, inputs.possibleValuesOf(maker, operands[index]));
         }
     }
 
@@ -143,7 +128,7 @@ void computeExecutionResults(const ValueFlowResultInputs& inputs, const ValueFlo
             continue;
         ValueFlowObjectID closure = inputs.universe().closureOf(body);
         bool onlyLoaderEnters = !numberOfEnteringOperations[body.index()] && !calls.functionsEnteredWithoutStamp.get(body.index()) && !inputs.hasEscaped(closure) && !inputs.isLost(closure);
-        if (onlyLoaderEnters && isEvaluatedAtMostOnce(module.kind))
+        if (onlyLoaderEnters && isEvaluatedAtMostOnceOf(module.kind))
             runsAtMostOnce(body);
     }
 

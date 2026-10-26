@@ -60,7 +60,8 @@ class ValueFlowSolution {
 public:
     enum class Witnesses : uint8_t { None, ForEveryEdge };
     enum class WaysOfValues : uint8_t { AreAskedFor, AreNotAskedFor };
-    ValueFlowSolution(Program&, BuildContext&, ValueFlowSolver::Rounds = ValueFlowSolver::Rounds::Due, Witnesses = Witnesses::None, uint32_t mostRounds = UINT32_MAX, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut = { }, WaysOfValues = WaysOfValues::AreAskedFor);
+    enum class CoveredMembers : uint8_t { StayListed, AreLeftOut };
+    ValueFlowSolution(Program&, BuildContext&, ValueFlowSolver::Rounds = ValueFlowSolver::Rounds::Due, Witnesses = Witnesses::None, uint32_t mostRounds = UINT32_MAX, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut = { }, WaysOfValues = WaysOfValues::AreAskedFor, CoveredMembers = CoveredMembers::StayListed);
     ~ValueFlowSolution();
 
     const Program& program() const { return m_program; }
@@ -69,7 +70,7 @@ public:
     const ValueFlowSolver& solver() const { return *m_solver; }
     ValueSetMakerPool& makerPool() const { return m_makerPool; }
     bool hasResult() const { return m_hasResult; }
-    ValueSetID valueOf(const ValueFlowOperand&);
+    ValueSetID possibleValuesOf(const ValueFlowOperand&);
 
 private:
     const Program& m_program;

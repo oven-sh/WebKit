@@ -58,6 +58,7 @@ static void checkTableOrder(const FlowResultTables& tables)
 
     RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.accessSiteLosses, tables.sites.accessSites));
     RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.callsOfBoundFunctions, tables.sites.accessSites));
+    RELEASE_ASSERT(isEmptyOrParallelTo(tables.sites.receiversThatMayHaveDecidedStorage, tables.sites.accessSites));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.sinkOperands));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.typedResultCalls));
     RELEASE_ASSERT(isStrictlyAscending(tables.sites.boundFunctionsAtSites));
@@ -171,10 +172,26 @@ std::optional<uint32_t> FlowResults::findDerivedParameter(FunctionID derived, ui
 const FunctionFlow& FlowResults::function(FunctionID id) const { return recordAt(m_tables.functions.functions, findAnalyzedFunction(id), m_unknown.function); }
 const ModuleFlow& FlowResults::module(ModuleID id) const { return recordAt(m_tables.wholeProgram.modules, id, m_unknown.module); }
 const AccessSite& FlowResults::at(AccessSiteID id) const { return recordAt(m_tables.sites.accessSites, id, m_unknown.accessSite); }
+
+Wire::SourceLocation FlowResults::writtenLocationOf(AccessSiteID id) const
+{
+    Wire::SourceLocation location = at(id).location;
+    const Vector<WrittenPositionOfSite>& written = m_tables.sites.writtenPositionsOfSites;
+    auto found = std::ranges::lower_bound(written, id.index(), { }, [](const WrittenPositionOfSite& entry) { return entry.site.index(); });
+    if (found != written.end() && found->site == id)
+        location.position = found->position;
+    return location;
+}
 const AllocationSite& FlowResults::at(AllocationSiteID id) const { return recordAt(m_tables.sites.allocationSites, id, m_unknown.allocationSite); }
 const AllocationClass& FlowResults::at(AllocationClassID id) const { return recordAt(m_tables.sites.allocationClasses, id, m_unknown.allocationClass); }
 const FlowSiteLoss& FlowResults::lossOf(AccessSiteID id) const { return recordAt(m_tables.sites.accessSiteLosses, id, m_unknown.loss); }
 bool FlowResults::mayCallBoundFunction(AccessSiteID call) const { return recordAt(m_tables.sites.callsOfBoundFunctions, call, false); }
+
+bool FlowResults::mayChangeStorageOfReceiver(AccessSiteID access) const
+{
+    const Vector<bool>& mayHaveDecidedStorage = m_tables.sites.receiversThatMayHaveDecidedStorage;
+    return mayHaveDecidedStorage.isEmpty() || (access && !recordAt(mayHaveDecidedStorage, access, true));
+}
 AllocationSiteID FlowResults::typedResultSite(LayoutID layout) const { return recordAt(m_tables.sites.typedResultSites, layout, AllocationSiteID()); }
 const BuiltinLocationFlow* FlowResults::findBuiltinLocation(BuiltinID holder, PropertyKeyID key) const { return findRecord(m_tables.builtins.locations, std::tuple(holder, key)); }
 
@@ -316,10 +333,55 @@ bool FlowResults::areClosuresAsCreated(FunctionID closureFunction, std::span<con
     });
 }
 
+bool FlowResults::closuresMayBeRenamed(FunctionID closureFunction) const
+{
+    FunctionID analyzed = findAnalyzedFunction(closureFunction);
+    return analyzed && m_tables.functions.functionsWhoseClosuresMayBeRenamed.get(analyzed.index());
+}
+
+bool FlowResults::closuresMayBeRenamedOnlyWhereNobodySees(FunctionID closureFunction) const
+{
+    FunctionID analyzed = findAnalyzedFunction(closureFunction);
+    return analyzed && m_tables.functions.functionsWhoseClosuresMayBeRenamedOnlyWhereNobodySees.get(analyzed.index());
+}
+
+bool FlowResults::closuresAreGivenDisplayName(FunctionID closureFunction) const
+{
+    FunctionID analyzed = findAnalyzedFunction(closureFunction);
+    return analyzed && m_tables.functions.functionsWhoseClosuresAreGivenDisplayName.get(analyzed.index());
+}
+
+bool FlowResults::closureIsMadeOnce(FunctionID closureFunction) const
+{
+    FunctionID analyzed = findAnalyzedFunction(closureFunction);
+    return analyzed && m_tables.functions.functionsWhoseClosuresAreMadeOnce.get(analyzed.index());
+}
+
+bool FlowResults::closuresGoUnnoticed(FunctionID closureFunction) const
+{
+    constexpr OptionSet<ObjectMutation> mutationsThatShowOrFill { ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript, ObjectMutation::RedefineProperty, ObjectMutation::AddProperty, ObjectMutation::ChangePrototype };
+    FunctionID analyzed = findAnalyzedFunction(closureFunction);
+    if (!analyzed || !closuresAreNeverCompared(analyzed))
+        return false;
+    if (function(analyzed).closureUse == ClosureUse::CalledOnly)
+        return true;
+    return holdsOfEveryClosureClass(m_tables.sites.allocationClasses, m_closureClassesByFunction, analyzed, [&](const AllocationClass& closures) {
+        return closures.impossibleMutations.containsAll(mutationsThatShowOrFill) && closures.addedKeysAreComplete && closures.addedKeys.isEmpty();
+    });
+}
+
 bool FlowResults::closuresInheritFromFunctionPrototype(FunctionID closureFunction, PropertyKeyID key) const
 {
     return holdsOfEveryClosureClass(m_tables.sites.allocationClasses, m_closureClassesByFunction, closureFunction, [&](const AllocationClass& closures) {
         return closures.inheritsFromListedFunctions && !closures.addedKeys.contains(key);
+    });
+}
+
+bool FlowResults::closuresAreStoredUnder(FunctionID closureFunction, PropertyKeyID key) const
+{
+    FunctionID analyzed = findAnalyzedFunction(closureFunction);
+    return analyzed && holdsOfEveryClosureClass(m_tables.sites.allocationClasses, m_closureClassesByFunction, analyzed, [&](const AllocationClass& closures) {
+        return closures.addedKeys.contains(key);
     });
 }
 

@@ -19,14 +19,14 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 function f1 name="keepsCheck" module=m0 position=100 flags=[IsChecked] length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     Jump -> next b1()
   b1():
-    v2 = Check v0 castType=string site=w0
+    v2 = Check v0 expectedType=string site=w0
     v3 = CallDirect v2 function=f2
-    v4 = Check v3 castType=number site=w1
+    v4 = Check v3 expectedType=number site=w1
     Return v4
 }
 function f2 name="takesString" module=m0 position=200 flags=[IsChecked] length=1 parameters=[{type=string site=w2 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ string):
-    v1 = Check v0 castType=string site=w2
+    v1 = Check v0 expectedType=string site=w2
     v2 = PropGet v1 key="length"
     Return v2
 }
@@ -37,5 +37,5 @@ function f2 name="takesString" module=m0 position=200 flags=[IsChecked] length=1
 # The typed bodies.
 # CHECK: name="keepsCheck" module=m0 position=100 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=string site=w0}, {type=anything}]
 # CHECK-NEXT: b0(v0: string, v1: anything):
-# CHECK: castType=number site=w1
+# CHECK: expectedType=number site=w1
 # CHECK: name="takesString" module=m0 position=200 flags=[IsChecked]

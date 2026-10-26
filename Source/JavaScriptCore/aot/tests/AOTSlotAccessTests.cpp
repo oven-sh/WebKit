@@ -95,7 +95,7 @@ static void testUnboxedWritesMatchBoxedWrites(LoadedProgram& program)
             });
         }
         for (double number : doubleSamples) {
-            checkUnboxedWrite(strings, representation, jsNumber(purifyNaN(number)), [&](void* slot) {
+            checkUnboxedWrite(strings, representation, jsNumber(withoutPayload(number)), [&](void* slot) {
                 return tryWriteDouble(representation, slot, number);
             });
         }

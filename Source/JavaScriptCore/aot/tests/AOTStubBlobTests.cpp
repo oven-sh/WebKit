@@ -327,7 +327,7 @@ static void testBodyEntries()
     checkEntries(catalog, enterClosure(), { enterClosure(), enterSlimClosure(), enterModuleBody() });
     checkEntries(catalog, runAsyncGeneratorStep(), { runAsyncGeneratorStep(), stepAsyncIteratorInEngine() });
     for (unsigned count = 0; count <= numberOfArgumentGPRs; ++count) {
-        checkEntries(catalog, callValue(count), { callValue(count), callValueWithoutThis(count), callValueCell(count), callValueNotClosure(count) });
+        checkEntries(catalog, callValue(count), { callValue(count), callValueWithoutThis(count), callValueCell(count), callValueCellWithoutThis(count), callValueNotClosure(count) });
         if (exists(callHostFunctionWithoutBoxedCall(count)))
             checkEntries(catalog, callHostFunction(count), { callHostFunction(count), callHostFunctionWithoutBoxedCall(count) });
         else
@@ -383,7 +383,7 @@ static void checkResumptionReferences(const StubCatalog& catalog)
 
 static void checkExceptionReferences(const StubCatalog& catalog)
 {
-    for (StubKey from : { throwStackOverflow(false), handleExceptionAtPrologue(), pollBeforeEntering() })
+    for (StubKey from : { throwStackOverflow(false), handleExceptionAtPrologue(), pollBeforeEntering(PollBeforeEnteringForm::Plain), pollBeforeEntering(PollBeforeEnteringForm::FunctionObject) })
         AOT_TEST_CHECK(refersToBody(catalog, from, bodyOf(handleException(false))));
 }
 

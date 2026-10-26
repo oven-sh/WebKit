@@ -12,16 +12,16 @@ function f0 name="every" role=Library flags=[HasThis] enclosingRuntimeFunction=3
 }
 function f1 name="marked" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=anything}] {
     v3 = PropGet v0 key="every"
-    v4 = Call v3, v0, v1, v2 calleeKey="every" [isDemotedTailCall]
+    v4 = Call v3, v0, v1, v2 calleeKey="every" @0 tail
     Return v4
-# CHECK: v4: boolean = CallDirect v0, v1, v2 function=f0 [isDemotedTailCall]
+# CHECK: v4: boolean = CallDirect v0, v1, v2 function=f0 @0 tail
 }
 
 function f2 name="tailCall" parameters=[{type=Array<anything, pristine[Storage, Names]>}, {type=function}, {type=anything}] results=[{type=anything}] {
     v3 = PropGet v0 key="every"
     v4 = Call v3, v0, v1, v2 calleeKey="every"
     ReturnCall v4 requirement=Allowed
-# CHECK: v4: boolean = CallDirect v0, v1, v2 function=f0 [isDemotedTailCall]
+# CHECK: v4: boolean = CallDirect v0, v1, v2 function=f0 @0 tail
 # CHECK-NEXT: Return v4
 }
 
@@ -29,7 +29,7 @@ function f3 name="ordinary" parameters=[{type=Array<anything, pristine[Storage, 
     v3 = PropGet v0 key="every"
     v4 = Call v3, v0, v1, v2 calleeKey="every"
     Return v4
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: @{{*}} tail
 # CHECK: v4: boolean = CallDirect v0, v1, v2 function=f0
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: @{{*}} tail
 }

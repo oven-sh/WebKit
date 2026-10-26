@@ -12,9 +12,11 @@
 #include "AOTEffects.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTHeldOperands.h"
 #include "AOTIR.h"
 #include "AOTRepresentation.h"
 #include "AOTResultRules.h"
+#include "AOTSavedFrameMap.h"
 #include "AOTSort.h"
 #include <algorithm>
 #include <wtf/PrintStream.h>
@@ -88,7 +90,7 @@ static SuspensionRoots collectRoots(const Program& program, const Function& func
 {
     const UseLists& useLists = analyses.useLists();
     SuspensionRoots roots { suspension, { }, { } };
-    liveAfterSuspension.forEachLive([&](ValueID live) {
+    auto addRoot = [&](ValueID live) {
         if (live == suspension || isDeferredClosure(function, live))
             return;
         const Value& value = function.at(live);
@@ -98,7 +100,13 @@ static SuspensionRoots collectRoots(const Program& program, const Function& func
         }
         if (std::optional<FrameSlotKind> kind = frameSlotKindOf(value.representation))
             roots.roots.append({ live, *kind });
-    });
+    };
+    liveAfterSuspension.forEachLive(addRoot);
+    BitVector held;
+    for (ValueID operand : heldOperandsOf(function.at(suspension))) {
+        if (!liveAfterSuspension.isLive(operand) && !held.set(operand.index()))
+            addRoot(operand);
+    }
 
     BuildContext& build = analyses.context().build;
     if (roots.size() > build.limit(LimitID::MaxFrameMapRoots))
@@ -143,7 +151,7 @@ FrameMaps computeFrameMaps(const Program& program, const Function& function, Fun
 
 uint32_t FrameMapRecords::addMap(std::span<const uint32_t> map)
 {
-    RELEASE_ASSERT(!map.empty() && map[0] == map.size() - 1);
+    RELEASE_ASSERT(SavedFrameMap::tryCreate(map, 0)->numberOfWords() == map.size());
     for (uint32_t offset : m_offsets) {
         if (spanHasPrefix(words.subspan(offset), map))
             return offset;

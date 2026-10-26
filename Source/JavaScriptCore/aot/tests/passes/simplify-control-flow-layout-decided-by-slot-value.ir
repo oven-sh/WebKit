@@ -46,7 +46,7 @@ function f0 name="casesOfSwitch" parameters=[{type=L0|L1|L2}] results=[{type=any
     Return v13
 # CHECK: Switch v1 cases=[1, 2]
 # CHECK-NOT: Branch
-# CHECK: [[round0]]: L0 = AssumeType v0 castType=L0
+# CHECK: [[round0]]: L0 = AssumeType v0 provenType=L0
 # CHECK-NEXT: [[radius0]]: number = GetSlot [[round0]] key="r"
 # CHECK-NEXT: Return [[radius0]]
 # CHECK-NOT: Branch
@@ -56,7 +56,7 @@ function f0 name="casesOfSwitch" parameters=[{type=L0|L1|L2}] results=[{type=any
 # CHECK-NEXT: Return [[nothing0]]
 # CHECK-NOT: Branch
 # CHECK-NOT: = Undefined
-# CHECK: [[high0]]: L2 = AssumeType v0 castType=L2
+# CHECK: [[high0]]: L2 = AssumeType v0 provenType=L2
 # CHECK-NEXT: [[height0]]: number = GetSlot [[high0]] key="h"
 # CHECK-NEXT: Return [[height0]]
 # CHECK-NOT: Branch
@@ -83,7 +83,7 @@ function f1 name="casesThatLeadToOneBlock" parameters=[{type=L0|L1|L3}] results=
     Return v9
 # CHECK: Switch v1 cases=[1, 4]
 # CHECK-NOT: Branch
-# CHECK: [[either1]]: L0|L3 = AssumeType v0 castType=L0|L3
+# CHECK: [[either1]]: L0|L3 = AssumeType v0 provenType=L0|L3
 # CHECK-NEXT: [[isRound1]]: boolean = TypeTest [[either1]] testedType=L0
 # CHECK-NEXT: Branch [[isRound1]] -> taken
 }
@@ -114,11 +114,11 @@ function f2 name="comparisonWithString" parameters=[{type=L5|L6}] results=[{type
 # CHECK: Branch v3 -> taken
 # CHECK-NOT: Branch
 # CHECK-NOT: = Undefined
-# CHECK: [[value2]]: L5 = AssumeType v0 castType=L5
+# CHECK: [[value2]]: L5 = AssumeType v0 provenType=L5
 # CHECK-NEXT: = GetSlot [[value2]] key="value"
 # CHECK-NOT: Branch
 # CHECK-NOT: = Undefined
-# CHECK: [[failure2]]: L6 = AssumeType v0 castType=L6
+# CHECK: [[failure2]]: L6 = AssumeType v0 provenType=L6
 # CHECK-NEXT: = GetSlot [[failure2]] key="error"
 # CHECK-NOT: Branch
 # CHECK-NOT: = Undefined
@@ -148,11 +148,11 @@ function f3 name="branchOnTheValueItself" parameters=[{type=L5|L6}] results=[{ty
 # CHECK: Branch v1 -> taken
 # CHECK-NOT: Branch
 # CHECK-NOT: = Undefined
-# CHECK: [[value3]]: L5 = AssumeType v0 castType=L5
+# CHECK: [[value3]]: L5 = AssumeType v0 provenType=L5
 # CHECK-NEXT: = GetSlot [[value3]] key="value"
 # CHECK-NOT: Branch
 # CHECK-NOT: = Undefined
-# CHECK: [[failure3]]: L6 = AssumeType v0 castType=L6
+# CHECK: [[failure3]]: L6 = AssumeType v0 provenType=L6
 # CHECK-NEXT: = GetSlot [[failure3]] key="error"
 # CHECK-NOT: Branch
 # CHECK-NOT: = Undefined
@@ -184,11 +184,11 @@ function f4 name="castOfTheObjectAndCallInBetween" parameters=[{type=L5|L6}, {ty
 # CHECK: SwitchString v2
 # CHECK-NOT: Branch
 # CHECK-NOT: = Undefined
-# CHECK: [[failure4]]: L6 = AssumeType v4 castType=L6
+# CHECK: [[failure4]]: L6 = AssumeType v4 provenType=L6
 # CHECK-NEXT: = GetSlot [[failure4]] key="error"
 # CHECK-NOT: Branch
 # CHECK-NOT: = Undefined
-# CHECK: [[value4]]: L5 = AssumeType v0 castType=L5
+# CHECK: [[value4]]: L5 = AssumeType v0 provenType=L5
 # CHECK-NEXT: = GetSlot [[value4]] key="value"
 # CHECK-NOT: Branch
 # CHECK-NOT: = Undefined
@@ -259,7 +259,7 @@ function f8 name="objectOfAnotherTurn" parameters=[{type=L0|L1}, {type=function}
     Switch v4 cases=[1] -> case b2(), otherwise b5()
   b2():
     v5 = Call v1, -, v2
-    v6 = AssumeType v5 castType=L0|L1
+    v6 = AssumeType v5 provenType=L0|L1
     v7 = TypeTest v6 testedType=L0
     Branch v7 -> taken b3(| 0), notTaken b4(| 0)
   b3(v8):

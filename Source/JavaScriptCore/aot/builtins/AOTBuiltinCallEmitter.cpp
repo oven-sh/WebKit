@@ -31,6 +31,7 @@
 #include "AOTStubsCallHost.h"
 #include "AOTVector.h"
 #include "CodeSpecializationKind.h"
+#include "FunctionRareData.h"
 #include "JSCJSValueInlines.h"
 #include "NativeExecutable.h"
 #include "PageCount.h"
@@ -148,13 +149,13 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
         }
         BuiltinID builtin = m_builtins.canonicalID(overload.builtin);
         if (builtin == Builtins::Number && overload.mode == BuiltinCallMode::Call && arguments.size() == 1) {
-            defineResult(callOperation<Boxed>(value, RuntimeOperation::NumberOfAnyValue, { boxedOperand(value, arguments[0]) }));
+            defineResult(callOperation<Boxed>(value, RuntimeOperation::NumberOfAnyValue, { boxedOperand(value, arguments[0]) }, { .calledBuiltin = builtin }));
             return;
         }
         if (builtin == Builtins::String && overload.mode == BuiltinCallMode::Call && arguments.size() == 1) {
             Boxed operand = boxedOperand(value, arguments[0]);
             auto convert = [&] {
-                return callOperation<Boxed>(value, RuntimeOperation::StringOfAnyValue, { operand });
+                return callOperation<Boxed>(value, RuntimeOperation::StringOfAnyValue, { operand }, { .calledBuiltin = builtin });
             };
             if (value.shape() == CodeShape::Compact) {
                 defineResult(convert());
@@ -596,12 +597,18 @@ Boxed BuiltinCallEmitter::callDirectFunction(const ValueContext& value, uint32_t
     DirectOperands operands = directOperandsOf(value, BuiltinBindings::directFunctionAt(number));
     const BuiltinOverload& overload = m_builtins.at(value->overload());
     // An error that the function makes lists the function in its stack, so the function needs a frame of its own.
-    bool hasFunctionObject = BuiltinCellKey::object(overload.builtin).hasCell(m_builtins) && !groupsFunctionsOfCompiledCode(m_builtins.at(overload.builtin).holder);
-    bool makesErrors = !generator().validates() && overload.throws() && !overload.onlyPropagatesErrors() && RuntimeCallEmitter::leavesRegistersForHostFrame(operands.words.span()) && hasFunctionObject;
+    bool makesErrors = overload.throws() && !overload.onlyPropagatesErrors() && !groupsFunctionsOfCompiledCode(m_builtins.at(overload.builtin).holder);
+    bool hasFunctionObject = BuiltinCellKey::object(overload.builtin).hasCell(m_builtins);
+    bool canMakeFrame = hasFunctionObject && !generator().validates() && RuntimeCallEmitter::leavesRegistersForHostFrame(operands.words.span());
     std::optional<RuntimeCallEmitter::HostFrameOfDirectCall> hostFrame;
-    if (operands.takesFrame || makesErrors)
+    if (operands.takesFrame || (makesErrors && canMakeFrame))
         hostFrame = RuntimeCallEmitter::HostFrameOfDirectCall { (value->receiverOperand() ? boxedOperand(value, value->receiverOperand()) : undefined()).value(), calleeOf(value, overload).value() };
-    return Boxed(emitter<RuntimeCallEmitter>().callDirectFunction(value, number, operands.words.span(), operands.keptAlive.span(), hostFrame));
+    // Where there is no such frame, the site says which function it calls.
+    BuiltinID callee = m_builtins.canonicalID(overload.builtin);
+    std::optional<BuiltinNativeFunction> nativeFunction = BuiltinBindings::nativeFunctionOf(callee);
+    bool hasNameInFrames = hasFunctionObject || (nativeFunction && !nativeFunction->name.isNull());
+    BuiltinID listedAtSite = makesErrors && !hostFrame && hasNameInFrames ? callee : BuiltinID();
+    return Boxed(emitter<RuntimeCallEmitter>().callDirectFunction(value, number, operands.words.span(), operands.keptAlive.span(), hostFrame, listedAtSite));
 }
 
 StubCallResult BuiltinCallEmitter::callDirectFunctionReturningFields(const ValueContext& value, uint32_t number)
@@ -706,20 +713,33 @@ void BuiltinCallEmitter::generateIsFunctionOfBuiltin(const ValueContext& value)
             return;
         }
         LBasicBlock isCellCase = newBlock();
+        LBasicBlock isFunction = newBlock();
+        LBasicBlock holdsExecutable = newBlock();
+        LBasicBlock holdsRareData = newBlock();
         LBasicBlock isHostFunction = newBlock();
-        LBasicBlock hasExecutable = newBlock();
         branch(isCell(operand), { normalEdge(isCellCase), targets.notTaken });
 
         m_out.appendTo(isCellCase);
         CellPointer function = unboxCell(operand);
-        branch(equal(loadStructureID(function), loadImmutable32(AOT_INSTANCE_OFFSET(realm.hostFunctionStructureID))), { normalEdge(isHostFunction), targets.notTaken });
+        branch(hasCellType(function, JSFunctionType), { normalEdge(isFunction), targets.notTaken });
+
+        // The edge not taken says that the value is another function, so the answer may not depend on the properties that the function has got since it was made.
+        m_out.appendTo(isFunction);
+        const B3::AbstractHeap& fixed = m_heaps.AOTInstance_fixedFields;
+        Pointer executableOrRareData = loadField<Pointer>(function, m_heaps.JSFunction_executableOrRareData);
+        OperandJoin executables(m_out, CellPointer::representation);
+        branch(Condition(m_out.testIsZeroPtr(executableOrRareData.value(), m_out.constIntPtr(JSFunction::rareDataTag))), { normalEdge(holdsExecutable), normalEdge(holdsRareData) });
+
+        m_out.appendTo(holdsExecutable);
+        executables.add(CellPointer(executableOrRareData.value()));
+
+        m_out.appendTo(holdsRareData);
+        executables.add(CellPointer(m_out.loadPtr(m_out.address(fixed, executableOrRareData.value(), FunctionRareData::offsetOfExecutable() - static_cast<ptrdiff_t>(JSFunction::rareDataTag)))));
+
+        CellPointer executable = executables.finish().as<CellPointer>();
+        branch(hasCellType(executable, NativeExecutableType), { normalEdge(isHostFunction), targets.notTaken });
 
         m_out.appendTo(isHostFunction);
-        Pointer executable = loadField<Pointer>(function, m_heaps.JSFunction_executableOrRareData);
-        branch(Condition(m_out.testIsZeroPtr(executable.value(), m_out.constIntPtr(JSFunction::rareDataTag))), { normalEdge(hasExecutable), targets.notTaken });
-
-        m_out.appendTo(hasExecutable);
-        const B3::AbstractHeap& fixed = m_heaps.AOTInstance_fixedFields;
         Pointer code(m_out.loadPtr(m_out.address(fixed, executable.value(), NativeExecutable::offsetOfNativeFunctionFor(CodeSpecializationKind::CodeForCall))));
         Pointer bindings = loadImmutablePointer(AOT_INSTANCE_OFFSET(builtinBindings.nativeFunctionsOfHost));
         ptrdiff_t offsetOfExpectedCode = *number * static_cast<ptrdiff_t>(sizeof(BuiltinNativeFunctionBinding)) + static_cast<ptrdiff_t>(OBJECT_OFFSETOF(BuiltinNativeFunctionBinding, function));
@@ -731,6 +751,11 @@ void BuiltinCallEmitter::generateIsFunctionOfBuiltin(const ValueContext& value)
 void BuiltinCallEmitter::generateGetBuiltinValue(const ValueContext& value)
 {
     defineAs(value, builtinValue(value, BuiltinCellKey::value(m_builtins.canonicalID(value->builtin()))), typeOf(value.id()));
+}
+
+void BuiltinCallEmitter::generateInitializeBuiltin(const ValueContext& value)
+{
+    emitter<ConstantEmitter>().builtinCell(value, m_builtins.canonicalID(value->builtin()));
 }
 
 } } } // namespace JSC::AOT::Typed

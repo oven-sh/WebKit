@@ -33,21 +33,21 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 function f1 name="fill" parameters=[{type=L1 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Check v0 castType=L1
+    v1 = Check v0 expectedType=L1
     v2 = String string="r"
     PropSet v1, v2 key="resolved" mode=Strict
     Return
 }
 function f2 name="fillMore" parameters=[{type=L2 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Check v0 castType=L2
+    v1 = Check v0 expectedType=L2
     v2 = String string="m"
     PropSet v1, v2 key="mapped" mode=Strict
     Return
 }
 function f3 name="fillAny" parameters=[{type=L1 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Check v0 castType=L1
+    v1 = Check v0 expectedType=L1
     v2 = String string="o"
     PropSet v1, v2 key="other" mode=Strict
     Return

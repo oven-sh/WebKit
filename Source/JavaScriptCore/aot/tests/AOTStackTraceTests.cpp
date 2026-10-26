@@ -51,7 +51,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="recurse" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v0 castType=i32
+    v2 = Check v0 expectedType=i32
     v3 = Integer integer=0
     v4 = StrictEq v2, v3
     Branch v4 -> taken b1(), notTaken b2()
@@ -104,7 +104,7 @@ function f8 name="reads" parameters=[{type=anything}] results=[{type=anything}] 
     Return v1
 }
 function f9 name="recurseAndRead" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v0 castType=i32
+    v2 = Check v0 expectedType=i32
     v3 = Integer integer=0
     v4 = StrictEq v2, v3
     Branch v4 -> taken b1(), notTaken b2()

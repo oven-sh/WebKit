@@ -51,6 +51,59 @@ static void runConvert(const ValueFlowStatement& statement, ValueFlowRuleContext
         context.add(statement.result, context.maker().intersect(unknownValue(context, ValueFlowUnknownSource::UncheckedConversionOfUntracked), context.universe().objects()));
 }
 
+// Every use of `this` stands behind `this instanceof` the function itself. Which method answers that test, what `prototype` of the function holds and what stands above the global object are up to the program.
+static void addWhatUndefinedBecomesBehindTestForOwnInstances(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    ClimbingSet closure = only(context, universe.closureOf(statement.function));
+    auto objectsFound = [&](ClimbingSet start, ValueFlowName name) {
+        return context.restrict(context.valueOf(context.lookup(start, name)), universe.objects());
+    };
+    PropertyKeyID hasInstance = context.program().keyOf(BuiltinNames::hasInstanceSymbol);
+    ValueSetID inheritedMethod = context.maker().of(universe.objectOf(Builtins::FunctionPrototypeSymbolHasInstance));
+    ClimbingSet methods = context.unite(context.restrict(objectsFound(closure, ValueFlowName::property(hasInstance)), ValueSets::complement(inheritedMethod)), objectsFound(closure, ValueFlowName::getter(hasInstance)));
+    ClimbingSet held = objectsFound(closure, ValueFlowName::property(context.program().keyOf(BuiltinNames::prototype)));
+    ClimbingSet above = objectsFound(only(context, universe.objectOf(Builtins::GlobalThis)), prototypeLinkName);
+    if (context.meet(methods, universe.knownObjects()) || context.meet(context.restrict(held, universe.knownObjects()), above))
+        context.add(statement.result, only(context, universe.objectOf(Builtins::GlobalThis)));
+    // A function that native code may call is handed every escaped object as `this`, itself too, so its own stores under keys nobody knows write all three with objects nobody knows.
+    // Those do not name the global object. They make `this` an object nobody knows, of which no layout is said, and a store through it is to the global object what a store by unseen code is.
+    if (context.meet(context.unite(methods, context.unite(held, above)), universe.placeholdersAlone()))
+        context.add(statement.result, only(context, ValueFlowUniverse::unknownObject()));
+}
+
+static void runConversionToObject(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    if (statement.thrown)
+        context.add(statement.thrown, only(context, ValueFlowUniverse::unknownObject()));
+    if (!statement.result)
+        return;
+
+    auto mayBe = [&](ClimbingSet value, uint16_t primitives) {
+        if ((primitives & Primitive::AnyString && context.meet(value, universe.strings())) || (primitives & Primitive::AnySymbol && context.meet(value, universe.symbols())))
+            return true;
+        for (uint16_t rest = primitives; rest; rest &= rest - 1) {
+            if (context.contains(value, ValueFlowUniverse::primitive(static_cast<PrimitiveSet>(rest & -rest))))
+                return true;
+        }
+        return false;
+    };
+    ClimbingSet value = context.valueOf(context.operandsOf(statement)[0]);
+    context.add(statement.result, context.restrict(value, universe.objects()));
+    for (uint32_t ordinal = 0; ordinal < std::size(wrappersOfPrimitives); ++ordinal) {
+        ValueFlowObjectID wrapper = universe.siteObject(statement, ordinal);
+        if (wrapper && mayBe(value, wrappersOfPrimitives[ordinal].first))
+            context.add(statement.result, only(context, wrapper));
+    }
+    if (statement.opcode != Opcode::ToThis || !mayBe(value, Primitive::Undefined | Primitive::Null))
+        return;
+    // Where every use stands behind a test that the global object fails, the uses never meet it. proveValuesOfOperations() says of the value itself that it may be the global object.
+    if (isUsedOnlyAsInstanceOfOwnFunction(context.program(), statement.function, statement.site))
+        return addWhatUndefinedBecomesBehindTestForOwnInstances(statement, context);
+    context.add(statement.result, only(context, universe.objectOf(Builtins::GlobalThis)));
+}
+
 static void runNewDictionary(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -87,6 +140,7 @@ void callInProtocol(ValueFlowRuleContext& context, const ValueFlowProtocolCall& 
         ValueFlowBuiltinCall application;
         application.kind = ValueFlowCallKind::CallByNativeCode;
         application.thisValue = context.operandHolding(call.thisValue);
+        application.isFoundOnReceiver = call.origin == ValueFlowCalleeOrigin::MemberFoundUnderName;
         application.arguments = arguments.span();
         application.otherArguments = { { }, call.otherArguments, ValueSets::anything };
         application.result = call.result;
@@ -133,17 +187,34 @@ static bool mayCodeOutsideImageRun(ValueFlowRuleContext& context)
     });
 }
 
+static ClimbingSet leaveHoldersOfExportsUnsearched(ValueFlowRuleContext& context, ClimbingSet objects)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    ClimbingSet holdersOfExports = context.restrict(objects, universe.objectsOfLibraryFoundByNameAlone());
+    if (!holdsSomething(context, holdersOfExports) || mayCodeOutsideImageRun(context))
+        return objects;
+    context.add(context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode), holdersOfExports);
+    context.add(context.nodes().ofHost(ValueFlowHostNode::HoldersOfExportsInEscapedObjects), holdersOfExports);
+    ClimbingSet prototypeObjects = context.restrict(holdersOfExports, universe.prototypeObjectsOfLibraryClasses());
+    ClimbingSet others = context.restrict(holdersOfExports, ValueSets::complement(universe.prototypeObjectsOfLibraryClasses()));
+    constexpr std::pair<ValueFlowNameKind, ValueFlowHostNode> membersUnderUnknownKey[] {
+        { ValueFlowNameKind::UnknownKey, ValueFlowHostNode::ValuesUnderUnknownKeyInHeldHoldersOfExports },
+        { ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowHostNode::GettersUnderUnknownKeyInHeldHoldersOfExports },
+        { ValueFlowNameKind::SetterUnderUnknownKey, ValueFlowHostNode::SettersUnderUnknownKeyInHeldHoldersOfExports },
+    };
+    for (auto [kind, node] : membersUnderUnknownKey) {
+        context.connect(context.read(others, ValueFlowName::of(kind)), context.nodes().ofHost(node));
+        context.connect(context.read(prototypeObjects, ValueFlowName::of(kind)), context.nodes().ofHost(ValueFlowHostNode::MembersUnderUnknownKeyInHeldPrototypeObjectsOfLibraryClasses));
+    }
+    return context.restrict(objects, ValueSets::complement(universe.objectsOfLibraryFoundByNameAlone()));
+}
+
 static void followWhatHasArrived(ValueFlowRuleContext& context, ClimbingSet arrived)
 {
     const ValueFlowUniverse& universe = context.universe();
     ValueFlowNodeID escapedNode = ValueFlowProgramNodes::escaped();
 
-    ClimbingSet holdersOfExports = context.restrict(arrived, universe.holdersOfLibraryExports());
-    if (holdsSomething(context, holdersOfExports) && !mayCodeOutsideImageRun(context)) {
-        context.add(context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode), holdersOfExports);
-        context.add(context.nodes().ofHost(ValueFlowHostNode::HoldersOfExportsInEscapedObjects), holdersOfExports);
-        arrived = context.restrict(arrived, ValueSets::complement(universe.holdersOfLibraryExports()));
-    }
+    arrived = leaveHoldersOfExportsUnsearched(context, arrived);
 
     Vector<ValueFlowObjectID, 64> instances;
     context.forEachMember(known(context, arrived), [&](ValueFlowObjectID object) {
@@ -153,9 +224,10 @@ static void followWhatHasArrived(ValueFlowRuleContext& context, ClimbingSet arri
     ClimbingSet others = context.restrict(arrived, ValueSets::complement(context.maker().of(instances.span())));
 
     for (ValueFlowNameKind kind : kindsOfMembers)
-        context.connect(context.read(arrived, { kind, 0 }), escapedNode);
+        carryOut(context, context.read(arrived, { kind, 0 }));
     context.connect(context.masked(context.read(arrived, { ValueFlowNameKind::CopiedFrom, 0 }), ValueSets::complement(universe.builtinTables().heap().objectsHoldingOnlyWhatWasWritten())), escapedNode);
     context.connect(context.masked(context.read(others, prototypeLinkName), ValueSets::complement(universe.builtinTables().heap().objectsThatLetInUnseenCode())), escapedNode);
+    context.connect(context.masked(context.read(others, prototypeLinkName), universe.builtinTables().heap().namespacesWhoseHoldersListThem()), context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues));
     context.add(escapedNode, objectsHeldFromCreation(context, others));
     for (const ValueFlowClassOfEntries& classOfEntries : universe.builtinTables().heap().classesOfEntries()) {
         if (context.meet(arrived, classOfEntries.entries))
@@ -202,11 +274,13 @@ static void lookUpThroughInstances(ValueFlowRuleContext& context, ValueFlowObjec
     ValueFlowNodeID constructorsNode = context.nodes().ofHost(ValueFlowHostNode::ConstructorsAboveEscapedInstances);
 
     ClimbingSet chain = context.valueOf(context.lookup(context.valueWithin(ClimbingSet(instances), escapedNode), prototypeLinkName));
+    context.add(context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues), context.restrict(chain, universe.builtinTables().heap().namespacesWhoseHoldersListThem()));
     if (mayBeUntrackedObject(context, chain))
         context.add(escapedNode, untrackedObject);
     ClimbingSet objectsOfProgram = context.restrict(known(context, chain), ValueSets::complement(universe.builtinObjects()));
     ClimbingSet above = context.restrict(objectsOfProgram, ValueSets::complement(instances));
     above = context.unite(above, context.restrict(context.valueOf(context.read(ClimbingSet(instances), prototypeLinkName)), instances));
+    above = leaveHoldersOfExportsUnsearched(context, above);
     if (!holdsSomething(context, above))
         return;
     if (unseenCodeRuns)
@@ -311,7 +385,7 @@ static void letUnseenCodeCreateRecords(ValueFlowRuleContext& context, ClimbingSe
         if (layout.kind != LayoutKind::Record || layout.constructor || layout.base || layout.flags.containsAny(flagsOfOtherLayouts) || layout.fields.isEmpty())
             return;
         bool holdsValuesAsTheyAre = std::ranges::all_of(layout.fields, [&](const Field& field) {
-            const Type& type = program.at(field.declared.type);
+            const Type& type = program.at(field.declared.expected().predicted());
             return field.key && (type.isAnything() || (!type.anyFunction && type.functions.isEmpty()));
         });
         if (holdsValuesAsTheyAre)
@@ -334,10 +408,16 @@ static void runEscape(const ValueFlowStatement&, ValueFlowRuleContext& context)
     bool writesSinceLastRun = isRaisedSinceLastRun(context, ValueFlowHostNode::UnknownCodeWrites);
     bool unseenCodeRunsSinceLastRun = isRaisedSinceLastRun(context, ValueFlowHostNode::UnseenCodeRuns);
     if (isRaisedSinceLastRun(context, ValueFlowHostNode::CodeOutsideImageIsLoaded))
-        arrived = context.unite(arrived, context.restrict(escaped, universe.holdersOfLibraryExports()));
+        arrived = context.unite(arrived, context.restrict(escaped, universe.objectsOfLibraryFoundByNameAlone()));
 
     if (holdsSomething(context, arrived))
         followWhatHasArrived(context, arrived);
+    if (ClimbingSet carriedOut = context.newSince(context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues)); holdsSomething(context, carriedOut)) {
+        if (ClimbingSet namespaces = context.restrict(carriedOut, universe.builtinTables().heap().namespacesWhoseHoldersListThem()); holdsSomething(context, namespaces))
+            connectEnumerableMembersOf(namespaces, escapedNode, context);
+        if (ClimbingSet holdersOfExports = context.restrict(carriedOut, universe.holdersOfLibraryExports()); holdsSomething(context, holdersOfExports))
+            context.connect(context.read(holdersOfExports, { ValueFlowNameKind::EveryGetter, 0 }), escapedNode);
+    }
 
     if (context.holdsAnyOf(known(context, escaped), ValueFlowProgramNodes::lost())) {
         ClimbingSet untrackedObject(universe.untrackedObjectAlone());
@@ -359,79 +439,52 @@ static void runEscape(const ValueFlowStatement&, ValueFlowRuleContext& context)
     lookUpThroughFamiliesOf(context, arrived);
 }
 
-#define FOR_EACH_OPERATION_WITH_RULE(v) \
-    v(Call, runCall) \
-    v(CallList, runCall) \
-    v(Construct, runCall) \
-    v(ConstructList, runCall) \
-    v(SuperConstruct, runCall) \
-    v(SuperConstructList, runCall) \
-    v(Convert, runConvert) \
-    v(NewDictionary, runNewDictionary) \
-    v(NewClass, runNewClass) \
-    v(DefineMethod, runDefineMethod) \
-    v(ResolveHeritage, runReadOfPrototypeProperty) \
-    v(GetClassPrototype, runReadOfPrototypeProperty) \
-    v(GetConstructPrototype, runReadOfPrototypeProperty) \
-    v(IteratorOpen, runIterationOperation) \
-    v(IteratorResume, runIterationOperation) \
-    v(IteratorClose, runIterationOperation) \
-    v(AppendSpread, runIterationOperation) \
-    v(StepArrayIterator, runStepOfLibrary) \
-    v(MapNext, runStepOfLibrary) \
-    v(SetNext, runStepOfLibrary) \
-    v(ResumeGenerator, runGeneratorOperation) \
-    v(StepGenerator, runGeneratorOperation) \
-    v(Await, runAwait) \
-    v(CreatePromise, runPromiseOperation) \
-    v(ResolvePromise, runPromiseOperation) \
-    v(RejectPromise, runPromiseOperation) \
-    v(InstanceOf, runInstanceOf) \
-    v(Add, runArithmetic) \
-    v(Sub, runArithmetic) \
-    v(Mul, runArithmetic) \
-    v(Div, runArithmetic) \
-    v(Mod, runArithmetic) \
-    v(Pow, runArithmetic) \
-    v(BitAnd, runArithmetic) \
-    v(BitOr, runArithmetic) \
-    v(BitXor, runArithmetic) \
-    v(LShift, runArithmetic) \
-    v(RShift, runArithmetic) \
-    v(Negate, runArithmetic) \
-    v(ToNumeric, runArithmetic) \
-    v(Increment, runArithmetic) \
-    v(Decrement, runArithmetic) \
-    v(BitNot, runArithmetic) \
-    v(ToPropertyKey, runToPropertyKey) \
-    v(TryPutDoubleIndex, runHeapOperation)
-
 bool hasRuleOfItsOwn(Opcode opcode)
 {
-    switch (opcode) {
-#define RETURN_TRUE(opcode, rule) case Opcode::opcode:
-    FOR_EACH_OPERATION_WITH_RULE(RETURN_TRUE)
-#undef RETURN_TRUE
-        return true;
-    default:
-        return isModuleOperation(opcode) || isHeapOperation(opcode);
-    }
+    return flowRuleOf(opcode) != FlowRule::General;
 }
 
 static void runOperation(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
-    switch (statement.opcode) {
-#define RUN_RULE(opcode, rule) \
-    case Opcode::opcode: \
-        return rule(statement, context);
-    FOR_EACH_OPERATION_WITH_RULE(RUN_RULE)
-#undef RUN_RULE
-    default:
-        if (isModuleOperation(statement.opcode))
-            return runModuleOperation(statement, context);
-        RELEASE_ASSERT(isHeapOperation(statement.opcode));
+    switch (flowRuleOf(statement.opcode)) {
+    case FlowRule::General:
+        break;
+    case FlowRule::Arithmetic:
+        return runArithmetic(statement, context);
+    case FlowRule::Await:
+        return runAwait(statement, context);
+    case FlowRule::Call:
+        return runCall(statement, context);
+    case FlowRule::ConversionToObject:
+        return runConversionToObject(statement, context);
+    case FlowRule::Convert:
+        return runConvert(statement, context);
+    case FlowRule::DefineMethod:
+        return runDefineMethod(statement, context);
+    case FlowRule::Generator:
+        return runGeneratorOperation(statement, context);
+    case FlowRule::Heap:
         return runHeapOperation(statement, context);
+    case FlowRule::InstanceOf:
+        return runInstanceOf(statement, context);
+    case FlowRule::Iteration:
+        return runIterationOperation(statement, context);
+    case FlowRule::Module:
+        return runModuleOperation(statement, context);
+    case FlowRule::NewClass:
+        return runNewClass(statement, context);
+    case FlowRule::NewDictionary:
+        return runNewDictionary(statement, context);
+    case FlowRule::Promise:
+        return runPromiseOperation(statement, context);
+    case FlowRule::ReadOfPrototypeProperty:
+        return runReadOfPrototypeProperty(statement, context);
+    case FlowRule::StepOfLibrary:
+        return runStepOfLibrary(statement, context);
+    case FlowRule::ToPropertyKey:
+        return runToPropertyKey(statement, context);
     }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static void runRuleOnNodesNamed(const ValueFlowStatement& statement, ValueFlowRuleContext& context)

@@ -18,7 +18,7 @@ function f0 name="Circle" kind=BaseConstructor flags=[HasNewTarget] parameters=[
   b1():
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = AssumeType v3 castType=L0
+    v4 = AssumeType v3 provenType=L0
     Return v4
 }
 function f1 name="Square" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=L1}] {
@@ -26,7 +26,7 @@ function f1 name="Square" kind=BaseConstructor flags=[HasNewTarget] parameters=[
   b1():
     v2 = GetConstructPrototype v0 layout=L1
     v3 = NewObject v2 layout=L1
-    v4 = AssumeType v3 castType=L1
+    v4 = AssumeType v3 provenType=L1
     Return v4
 }
 function f2 name="Legacy" flags=[HasThis] thisType={type=L2} parameters=[{type=anything}] results=[{type=undefined}] {
@@ -124,7 +124,7 @@ function f13 name="any-function" parameters=[{type=function}, {type=anything}] r
 }
 
 # CHECK: function [[legacyBody]] name="Legacy"{{*}}role=ConstructBody
-# CHECK: [[legacyClosure]]: f2 = AssumeType {{*}} castType=f2
+# CHECK: [[legacyClosure]]: f2 = AssumeType {{*}} provenType=f2
 # CHECK-NEXT: [[legacyPrototype]]: object = GetConstructPrototype [[legacyClosure]] layout=L2
 # CHECK-NEXT: [[legacyThis]]: L2 = NewObject [[legacyPrototype]] layout=L2
 # CHECK-NEXT: Return [[legacyThis]]

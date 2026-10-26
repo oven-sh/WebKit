@@ -21,7 +21,7 @@ function f4 name="receiver-is-a-widget" parameters=[{type=f2|f3}, {type=L0}] res
     v2 = Call v0, v1
     Return v2
 # CHECK: = CallDirect v1 function=f2
-# CHECK: [[never]]: never = {{*}} v1 castType=L1
+# CHECK: [[never]]: never = {{*}} v1 provenType=L1
 # CHECK-NEXT: Unreachable
 # CHECK-NOT: function=f3
 }

@@ -17,7 +17,7 @@ function f1 name="asynchronous" role=CoroutineBody flags=[IsAsync] parameters=[{
 function f2 name="arrow" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
     Return v0
 }
-# CHECK: name="asynchronous"{{*}}role=BoundFunction flags=[IsAsync] captures=[{type=function}] thisType={type=anything} parameters=[{type=number}] results=[{type=Promise}]
+# CHECK: name="asynchronous"{{*}}role=BoundFunction flags=[IsAsync] captures=[{type=f0}] thisType={type=anything} parameters=[{type=number}] results=[{type=Promise}]
 # CHECK: = CallDirect {{*}} function=f0
-# CHECK: name="arrow"{{*}}kind=Arrow role=BoundFunction captures=[{type=function}] thisType={type=anything} parameters=[{type=number}] results=[{type=number}]
+# CHECK: name="arrow"{{*}}kind=Arrow role=BoundFunction captures=[{type=f2}] thisType={type=anything} parameters=[{type=number}] results=[{type=number}]
 # CHECK: = CallDirect {{*}} function=f2

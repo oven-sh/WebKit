@@ -661,7 +661,7 @@ void AllocationPrefilter::classify(ValueID name, uint32_t object, const Use& use
         classifyAllocationOperand(name, object, use);
         return;
     case Interpretation::None:
-        if (familyOf(user.opcode) != OperationFamily::RuntimeValidation)
+        if (buildsOperand(m_program, user, use.operandIndex))
             materialize(object, use);
         return;
     }
@@ -1855,7 +1855,7 @@ bool AllocationSinking::isBuiltAtOnce(const Candidate& allocation) const
     const Value& user = m_function.at(firstUse->user);
     switch (interpretationOf(m_program, user)) {
     case Interpretation::None:
-        return buildsItsOperands(m_program, user);
+        return buildsOperand(m_program, user, firstUse->operandIndex);
     case Interpretation::Read:
     case Interpretation::Store: {
         ValueID accessed = sameObjectThroughCasts(m_function, user.operand(0));

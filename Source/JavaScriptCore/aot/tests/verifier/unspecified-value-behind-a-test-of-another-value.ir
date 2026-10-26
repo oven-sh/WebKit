@@ -155,7 +155,7 @@ function f9 name="goodReadBehindAnAssumptionThatTheFailedTestRulesOut" parameter
     v3 = Unspecified valueType=string
     Jump -> next b3(v3)
   b3(v4: string):
-    v5 = AssumeType v0 castType=string
+    v5 = AssumeType v0 provenType=string
     v6 = GetStringLength v4
     Return v6
 }
@@ -169,7 +169,7 @@ function f10 name="badReadInFrontOfTheAssumption" parameters=[{type=undefined|st
     Jump -> next b3(v3)
   b3(v4: string):
     v5 = GetStringLength v4
-    v6 = AssumeType v0 castType=string
+    v6 = AssumeType v0 provenType=string
     Return v5
 }
 function f11 name="goodReadBehindATestForTheBuiltinClassThatIsLeftOfIt" parameters=[{type=string|Array}] results=[{type=anything}] {
@@ -207,7 +207,7 @@ function f12 name="badReadBehindATestForTheLayoutThatIsLeftOfItAndThatTheObjectM
     Return
 }
 function f13 name="goodReadBehindARefusalOfANarrowedNameOfTheValue" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = AssumeType v0 castType=undefined|string
+    v1 = AssumeType v0 provenType=undefined|string
     v2 = TypeTest v1 testedType=string
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3: string):

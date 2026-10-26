@@ -709,7 +709,7 @@ static void testRunnerListsPasses()
     AOT_TEST_CHECK(outputs[0].line == 1);
 
     const String& listing = outputs[0].text;
-    AOT_TEST_CHECK(listing.startsWith("CopyClosureFactories Program Optional AsRead..AsRead\nAllocateTaggedLayouts Program Required AsRead..AsRead\nCheckTypesAtEntry Program Required AsRead..AsRead\nTypeValues Function Required AsRead..AsRead\n"_s));
+    AOT_TEST_CHECK(listing.startsWith("CopyClosureFactories Program Optional AsRead..AsRead\nAllocateTaggedLayouts Program Required AsRead..AsRead\nCheckTypesAtEntry Program Required AsRead..AsRead\nListLiveValuesAtSuspensions Function Required AsRead..AsRead\nTypeValues Function Required AsRead..AsRead\n"_s));
     AOT_TEST_CHECK(listing.contains("\nAnalyzeFlow Program Optional AsRead..AsRead\n"_s));
     AOT_TEST_CHECK(listing.contains("\nApplyFlowResults Program Required AsRead..AsRead -> Prepared\n"_s));
     AOT_TEST_CHECK(listing.contains("\nVerifyProgram Program Required AsRead..Placed\n"_s));

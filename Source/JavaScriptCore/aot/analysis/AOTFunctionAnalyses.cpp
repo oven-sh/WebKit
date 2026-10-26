@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCurrentWork.h"
+#include "AOTDiagnostics.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsDescription.h"
 #include "AOTEffectsOfOperands.h"
@@ -21,6 +23,7 @@
 #include <utility>
 #include <wtf/DataLog.h>
 #include <wtf/StringPrintStream.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -188,7 +191,7 @@ static bool addOperands(AnalysisWordHasher& hasher, const Function& function, co
         if (!operand)
             continue;
         const Value& definition = function.at(operand);
-        hasher.add(definition.type.index(), definition.expected().index());
+        hasher.add(definition.type.index(), definition.expected().predicted().index());
         if (inputs == EffectInputs::DefinitionsBehindCasts && !addDefinitionBehindCasts(hasher, function, operand))
             return false;
     }
@@ -217,7 +220,7 @@ static uint64_t stampOf(const Function& function, const Value& value, EffectInpu
     AnalysisWordHasher hasher;
     hasher.add(static_cast<uint32_t>(value.opcode));
     if (inputs != EffectInputs::Payload)
-        hasher.add(value.type.index(), value.expected().index());
+        hasher.add(value.type.index(), value.expected().predicted().index());
     return finishStamp(hasher, function, value, inputs);
 }
 
@@ -239,10 +242,10 @@ static uint32_t hashOf(const EffectsOnEdges& effectsOnEdges)
     return static_cast<uint32_t>(hasher.hash);
 }
 
-EffectsCache::EffectsCache(const EffectContext& context, const Function& function, bool verifiesAnswers)
+EffectsCache::EffectsCache(const EffectContext& context, const Function& function, Diagnostics* diagnosticsForOutdatedAnswers)
     : m_context(context)
     , m_function(function)
-    , m_verifiesAnswers(verifiesAnswers)
+    , m_diagnosticsForOutdatedAnswers(diagnosticsForOutdatedAnswers)
 {
 }
 
@@ -299,6 +302,31 @@ void EffectsCache::answerAgain(Answer& answer, EntryID& entryOfRow, const Carrie
     m_entryOfStamp.add(stamp, answer.entry);
 }
 
+// Whoever edits a function tells the analyses before it asks them again. The build goes on with the answer that a build without the check goes by.
+template<typename Carrier>
+void EffectsCache::reportIfOutdated(const Answer& answer, const Carrier& carrier, BlockID block, ValueID value)
+{
+    const EffectsOnEdges& kept = m_entries.at(answer.entry);
+    EffectsOnEdges fresh = Typed::effectsOf(m_context, m_function, carrier);
+    if (kept == fresh || m_didReportOutdatedAnswer)
+        return;
+    reportOutdatedAnswer(makeString("the pass asked for the effects of "_s, value ? makeString('v', value.index(), " ("_s, nameOf(m_function.at(value).opcode), ')') : makeString("the end of b"_s, block.index()), " after an edit that the analyses were not told of: they answered "_s, toString(kept), ", and the effects are "_s, toString(fresh)));
+}
+
+void EffectsCache::reportOutdatedAnswer(String&& detail) const
+{
+    if (std::exchange(m_didReportOutdatedAnswer, true))
+        return;
+    const CurrentWork& work = currentWork();
+    uint32_t functionPlusOne = work.functionPlusOne.load(std::memory_order_relaxed);
+    m_diagnosticsForOutdatedAnswers->add(InternalError {
+        .kind = InternalErrorKind::VerificationFailedAfterPass,
+        .function = functionPlusOne ? FunctionID(functionPlusOne - 1) : FunctionID(),
+        .pass = work.pass.load(std::memory_order_relaxed),
+        .detail = WTF::move(detail),
+    });
+}
+
 EffectsCache::EntryID EffectsCache::entryOf(ValueID id)
 {
     RELEASE_ASSERT(id.index() < m_values.size());
@@ -306,8 +334,8 @@ EffectsCache::EntryID EffectsCache::entryOf(ValueID id)
     if (answer.round != m_round) {
         const Value& value = m_function.at(id);
         answerAgain(answer, m_entryOfOpcode[static_cast<unsigned>(value.opcode)], value);
-    } else if (m_verifiesAnswers) [[unlikely]]
-        RELEASE_ASSERT(m_entries.at(answer.entry) == Typed::effectsOf(m_context, m_function, m_function.at(id)));
+    } else if (m_diagnosticsForOutdatedAnswers) [[unlikely]]
+        reportIfOutdated(answer, m_function.at(id), { }, id);
     return answer.entry;
 }
 
@@ -318,8 +346,8 @@ EffectsCache::EntryID EffectsCache::entryOfTerminator(BlockID block)
     if (answer.round != m_round) {
         const Terminator& terminator = m_function.at(block).terminator;
         answerAgain(answer, m_entryOfTerminatorKind[static_cast<unsigned>(terminator.kind)], terminator);
-    } else if (m_verifiesAnswers) [[unlikely]]
-        RELEASE_ASSERT(m_entries.at(answer.entry) == Typed::effectsOf(m_context, m_function, m_function.at(block).terminator));
+    } else if (m_diagnosticsForOutdatedAnswers) [[unlikely]]
+        reportIfOutdated(answer, m_function.at(block).terminator, block, { });
     return answer.entry;
 }
 
@@ -421,7 +449,7 @@ FunctionAnalyses::FunctionAnalyses(const AnalysisContext& context, const Functio
     : m_context(context)
     , m_function(function)
     , m_effectContext { context.program, context.effects ? *context.effects : m_unknownSummaries.emplace() }
-    , m_effects(m_effectContext, function, context.build.options().verifiesAfterEveryPass)
+    , m_effects(m_effectContext, function, context.build.options().verifiesAfterEveryPass ? &context.build.diagnostics() : nullptr)
     , m_countsBuilds(context.build.options().logging.logsPhaseTimes)
     , m_verifiesUpdates(context.build.options().verifiesAfterEveryPass)
 {

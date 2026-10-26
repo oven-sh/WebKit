@@ -5,7 +5,7 @@
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="checkMovesToEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+function f0 name="checkMovesToEdge" parameters=[{type=anything}, {type=boolean}] results=[{type=number flags=[IsExpected]}] {
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=1
@@ -13,19 +13,19 @@ function f0 name="checkMovesToEdge" parameters=[{type=anything}, {type=boolean}]
   b2():
     Jump -> next b3(v0)
   b3(v3):
-    v4 = Check v3 castType=number
+    v4 = Check v3 expectedType=number
     Return v4
 # CHECK: b1():
 # CHECK-NEXT: v2: 1 = Integer integer=1
 # CHECK-NEXT: Jump -> next b3(v2)
 # CHECK-NEXT: b2():
-# CHECK-NEXT: [[onEdge]]: number = Check v0 castType=number
+# CHECK-NEXT: [[onEdge]]: number = Check v0 expectedType=number
 # CHECK-NEXT: Jump -> next b3([[onEdge]])
 # CHECK-NEXT: b3(v3: number):
 # CHECK-NEXT: Return v3
 }
 
-function f1 name="sameHandlerOnEdgeAndMerge" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+function f1 name="sameHandlerOnEdgeAndMerge" parameters=[{type=anything}, {type=boolean}] results=[{type=number flags=[IsExpected]}] {
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=1
@@ -33,20 +33,20 @@ function f1 name="sameHandlerOnEdgeAndMerge" parameters=[{type=anything}, {type=
   b2() handler=b4(v1):
     Jump -> next b3(v0)
   b3(v3) handler=b4(v1):
-    v4 = Check v3 castType=number
+    v4 = Check v3 expectedType=number
     Return v4
   b4(v5) role=CatchHandler:
     v6 = CatchValue
     v7 = Integer integer=0
     Return v7
 # CHECK: b2() handler=b4(v1):
-# CHECK-NEXT: [[covered]]: number = Check v0 castType=number
+# CHECK-NEXT: [[covered]]: number = Check v0 expectedType=number
 # CHECK-NEXT: Jump -> next b3([[covered]])
 # CHECK-NEXT: b3(v3: number) handler=b4(v1):
 # CHECK-NEXT: Return v3
 }
 
-function f2 name="secondParameterIsChecked" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+function f2 name="secondParameterIsChecked" parameters=[{type=anything}, {type=boolean}] results=[{type=number flags=[IsExpected]}] {
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=1
@@ -54,18 +54,18 @@ function f2 name="secondParameterIsChecked" parameters=[{type=anything}, {type=b
   b2():
     Jump -> next b3(v0, v0)
   b3(v3, v4):
-    v5 = Check v4 castType=number
+    v5 = Check v4 expectedType=number
     v6 = TypeOf v3
     Return v5
 # CHECK: b2():
-# CHECK-NEXT: [[second]]: number = Check v0 castType=number
+# CHECK-NEXT: [[second]]: number = Check v0 expectedType=number
 # CHECK-NEXT: Jump -> next b3(v0, [[second]])
 # CHECK-NEXT: b3(v3: anything, v4: number):
 # CHECK-NOT: Check
 # CHECK: Return v4
 }
 
-function f3 name="twoEdgesNeedIt" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=number}] {
+function f3 name="twoEdgesNeedIt" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=number flags=[IsExpected]}] {
     Switch v2 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
   b1():
     v3 = Integer integer=1
@@ -75,18 +75,18 @@ function f3 name="twoEdgesNeedIt" parameters=[{type=anything}, {type=anything}, 
   b3():
     Jump -> next b4(v1)
   b4(v4):
-    v5 = Check v4 castType=number
+    v5 = Check v4 expectedType=number
     Return v5
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b4(v0)
 # CHECK-NEXT: b3():
 # CHECK-NEXT: Jump -> next b4(v1)
 # CHECK-NEXT: b4(v4: anything):
-# CHECK-NEXT: v5: number = Check v4 castType=number
+# CHECK-NEXT: v5: number = Check v4 expectedType=number
 # CHECK-NEXT: Return v5
 }
 
-function f4 name="checkIsNotFirstValue" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
+function f4 name="checkIsNotFirstValue" parameters=[{type=anything}, {type=boolean}] results=[{type=number flags=[IsExpected]}] {
     Branch v1 -> taken b1(), notTaken b2()
   b1():
     v2 = Integer integer=1
@@ -95,24 +95,24 @@ function f4 name="checkIsNotFirstValue" parameters=[{type=anything}, {type=boole
     Jump -> next b3(v0)
   b3(v3):
     v4 = Call v0
-    v5 = Check v3 castType=number
+    v5 = Check v3 expectedType=number
     Return v5
 # CHECK: b2():
 # CHECK-NEXT: Jump -> next b3(v0)
 # CHECK-NEXT: b3(v3: anything):
 # CHECK-NEXT: = Call v0
-# CHECK-NEXT: v5: number = Check v3 castType=number
+# CHECK-NEXT: v5: number = Check v3 expectedType=number
 # CHECK-NEXT: Return v5
 }
 
-function f5 name="everyEdgeNeedsIt" parameters=[{type=anything}] results=[{type=number}] {
+function f5 name="everyEdgeNeedsIt" parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
     Jump -> next b1(v0)
   b1(v1):
-    v2 = Check v1 castType=number
+    v2 = Check v1 expectedType=number
     Return v2
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: Jump -> next b1(v0)
 # CHECK-NEXT: b1(v1: anything):
-# CHECK-NEXT: v2: number = Check v1 castType=number
+# CHECK-NEXT: v2: number = Check v1 expectedType=number
 # CHECK-NEXT: Return v2
 }

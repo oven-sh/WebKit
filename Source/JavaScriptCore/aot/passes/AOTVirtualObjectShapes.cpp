@@ -572,9 +572,15 @@ static KnownBoolean evaluateBoundsTest(const ShapeContext& context, const Virtua
     if (!isArray(context.family.descriptionOf(shape)))
         return KnownBoolean::Unknown;
     KnownValue position = knownValueOf(context.objects.program, context.objects.function, test.positionOperand());
-    if (position.kind() != KnownValue::Kind::Integer)
+    if (position.kind() == KnownValue::Kind::Integer)
+        return knownBoolean(position.asInteger() >= 0 && position.asInteger() < static_cast<int64_t>(shape.length));
+    const Type& type = context.objects.program.typeOf(context.objects.function, test.positionOperand());
+    if (!type.isInteger())
         return KnownBoolean::Unknown;
-    return knownBoolean(position.asInteger() >= 0 && position.asInteger() < static_cast<int64_t>(shape.length));
+    Range positions { 0, static_cast<int64_t>(shape.length) - 1 };
+    if (type.integers.isSubsetOf(positions))
+        return KnownBoolean::True;
+    return type.integers.intersectWith(positions).isEmpty() ? KnownBoolean::False : KnownBoolean::Unknown;
 }
 
 static KnownBoolean evaluateBirthTest(const ShapeContext& context, const VirtualShape& shape)
@@ -695,13 +701,14 @@ CastOutcome evaluateCast(const ShapeContext& context, const VirtualShape& shape,
         return CastOutcome::Unknown;
     switch (cast.opcode) {
     case Opcode::Upcast:
+    case Opcode::Expect:
     case Opcode::NarrowByField:
     case Opcode::AssumeType:
     case Opcode::FinishObject:
     case Opcode::CheckInitialized:
         return CastOutcome::Passes;
     case Opcode::Check:
-        return evaluateTypeTestOfShape(context, shape, context.objects.program.at(cast.castType())) == KnownBoolean::True ? CastOutcome::Passes : CastOutcome::Unknown;
+        return evaluateTypeTestOfShape(context, shape, context.objects.program.at(cast.expectedType().predicted())) == KnownBoolean::True ? CastOutcome::Passes : CastOutcome::Unknown;
     case Opcode::RequireObjectCoercible:
         return isNullish(shape) ? CastOutcome::Throws : CastOutcome::Passes;
     case Opcode::RequireObject:

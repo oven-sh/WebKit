@@ -664,7 +664,7 @@ static void addToDictionary(StubAssembler& jit, const ObjectLookupRegisters& r, 
     jit.move(offset, r.structure);
 }
 
-void replaceOwnValueAndReturn(StubAssembler& jit, SlotOperation operation, const ObjectLookupRegisters& r, ObjectLookupName name, GPRReg value, JumpList& cannot, GPRReg spare)
+void replaceOwnValueAndReturn(StubAssembler& jit, SlotOperation operation, const ObjectLookupRegisters& r, ObjectLookupName name, GPRReg value, JumpList& cannot, GPRReg spare, const ScopedLambda<void()>* willReplaceValue)
 {
     constexpr uint32_t bitsThatForbid = Structure::s_hasImmutablePropertiesBits | Structure::s_hasListedImmutablePropertiesBits | Structure::s_isWatchingReplacementBits;
     // A definition gives the property the attributes of a plain one, so it replaces the value alone only where the property has them.
@@ -703,6 +703,8 @@ void replaceOwnValueAndReturn(StubAssembler& jit, SlotOperation operation, const
     EmptyWordsOfPropertyTable emptyWords;
     findInPropertyTable(jit, r, cannot, cannot, addsToDictionaries ? &emptyWords : nullptr);
     cannot.append(jit.branchTest32(CCallHelpers::NonZero, offset, TrustedImm32(attributesThatForbid)));
+    if (willReplaceValue)
+        (*willReplaceValue)();
     jit.urshift32(TrustedImm32(8), offset);
     Label storeAtOffset = jit.label();
     Jump isOutOfLine = jit.branch32(CCallHelpers::AboveOrEqual, offset, TrustedImm32(firstOutOfLineOffset));

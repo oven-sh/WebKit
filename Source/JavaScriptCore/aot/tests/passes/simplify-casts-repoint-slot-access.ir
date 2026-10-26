@@ -11,13 +11,13 @@ function f0 name="slotRead" parameters=[{type=object}] results=[{type=anything}]
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
-    v3 = Check v0 castType=L0
+    v3 = Check v0 expectedType=L0
     v4 = GetSlot v0, v2 key="x" receivers=[L0] level=Proven
     Return v4
   b2():
     v5 = Undefined
     Return v5
-# CHECK: = Check v0 castType=L0
+# CHECK: = Check v0 expectedType=L0
 # CHECK-NEXT: = GetSlot v0, v2 key="x"
 }
 
@@ -25,13 +25,13 @@ function f1 name="slotReadOrUndefined" parameters=[{type=object}] results=[{type
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
-    v3 = Check v0 castType=L0
+    v3 = Check v0 expectedType=L0
     v4 = GetSlotOrUndefined v0, v2 key="x" receivers=[L0] level=Proven
     Return v4
   b2():
     v5 = Undefined
     Return v5
-# CHECK: = Check v0 castType=L0
+# CHECK: = Check v0 expectedType=L0
 # CHECK-NEXT: = GetSlotOrUndefined v0, v2 key="x"
 }
 
@@ -39,13 +39,13 @@ function f2 name="slotStore" parameters=[{type=object}, {type=anything}] results
     v2 = ShapeTest v0 layouts=[L0]
     Branch v2 -> taken b1(| 0), notTaken b2()
   b1(v3):
-    v4 = Check v0 castType=L0
+    v4 = Check v0 expectedType=L0
     PutSlot v0, v3, v1 key="x" receivers=[L0] level=Proven
     Jump -> next b2()
   b2():
     v6 = Undefined
     Return v6
-# CHECK: = Check v0 castType=L0
+# CHECK: = Check v0 expectedType=L0
 # CHECK-NEXT: PutSlot v0, v3, v1 key="x"
 }
 
@@ -53,12 +53,12 @@ function f3 name="slotTest" parameters=[{type=object}] results=[{type=boolean}] 
     v1 = ShapeTest v0 layouts=[L0]
     Branch v1 -> taken b1(| 0), notTaken b2()
   b1(v2):
-    v3 = Check v0 castType=L0
+    v3 = Check v0 expectedType=L0
     v4 = IsSlotFilled v0, v2 key="x" receivers=[L0] level=Proven
     Return v4
   b2():
     v5 = Boolean boolean=false
     Return v5
-# CHECK: = Check v0 castType=L0
+# CHECK: = Check v0 expectedType=L0
 # CHECK-NEXT: = IsSlotFilled v0, v2 key="x"
 }

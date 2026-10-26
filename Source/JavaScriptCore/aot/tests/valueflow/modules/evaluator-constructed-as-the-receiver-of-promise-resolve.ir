@@ -1,0 +1,14 @@
+# Promise.resolve.call(Function, 1)
+# Promise.resolve constructs a receiver that is not Promise, with an executor of its own.
+# RUN: valueflow-solve unseen
+# CHECK: unseen-code yes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Function
+    v1 = Builtin builtin=PromiseResolve
+    v2 = Integer integer=1
+    v3 = Call v1, v0, v2
+    Return
+}

@@ -20,8 +20,20 @@ struct BuiltinIteration {
     ValueSetID containers { ValueSets::nothing };
 };
 
+// The unknown value stands for everything else that the unknown object holds.
+static ValueFlowNodeID bunStoredInUnknownObject(ValueFlowRuleContext& context, ValueFlowName name)
+{
+    return context.masked(context.read(ClimbingSet(context.universe().unknownObjectAlone()), name), context.maker().of(context.universe().objectOf(Builtins::Bun)));
+}
+
 struct StepTarget {
-    void take(ValueFlowNodeID values) const { context.connect(kind == IteratorKind::Async ? context.lookup(context.valueOf(values), awaitedValueName) : values, node); }
+    void take(ValueFlowNodeID values) const
+    {
+        if (kind == IteratorKind::Async)
+            connectAwaitedValue(context, { values, ValueSets::nothing, ValueSets::anything }, node);
+        else
+            context.connect(values, node);
+    }
 
     void take(ClimbingSet values) const
     {
@@ -49,8 +61,10 @@ struct StepTarget {
             if (followsSomething && context.holdsAnyOf(followed, ValueFlowProgramNodes::lost()))
                 take(context.read(untrackedObject, name));
         }
-        if (mayBeUnknownObject(context, objects))
+        if (mayBeUnknownObject(context, objects)) {
             context.add(node, unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject));
+            take(bunStoredInUnknownObject(context, name));
+        }
     }
 
     ValueFlowRuleContext& context;
@@ -254,6 +268,7 @@ static void stepIterators(ValueFlowRuleContext& context, ClimbingSet state, cons
     if (mayBeUnknownObject(context, state)) {
         context.add(values, unknownValue(context, ValueFlowUnknownSource::ResultOfUnknownCallee));
         context.lookup(ClimbingSet(context.universe().unknownObjectAlone()), iteratorResultsName(step.mode));
+        target.take(bunStoredInUnknownObject(context, elementsName));
     }
 
     ClimbingSet holders = context.restrict(without(context, state, ValueFlowUniverse::unknownObject()), universe.objects());
@@ -366,7 +381,7 @@ void runIterationOperation(const ValueFlowStatement& statement, ValueFlowRuleCon
         if (!operation.readsValueWhenDone() && operation.stepIndex() && !readsKeyOrValueOfPair(context, state, operation.stepIndex()))
             context.add(values, context.universe().undefinedValue());
         if (mode == ResumeMode::Return && operation.iteratorKind() == IteratorKind::Async)
-            context.connect(context.lookup(context.valueOf(operands[1]), awaitedValueName), values);
+            connectAwaitedValue(context, operands[1], values);
         else if (mode == ResumeMode::Return)
             context.connect(operands[1], values);
         if (mode == ResumeMode::Throw && statement.thrown)

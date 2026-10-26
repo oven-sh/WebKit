@@ -7101,6 +7101,9 @@ class YarrGenerator final : public YarrJITInfo {
 
                 // Store the current index for empty match detection.
                 storeToFrame(m_regs.index, parenthesesFrameLocation + BackTrackInfoParentheses::beginIndex());
+#else
+                if (!term->parentheses.disjunction->m_minimumSize)
+                    storeToFrame(m_regs.index, parenthesesFrameLocation + BackTrackInfoParentheses::beginIndex());
 #endif
                 break;
             }
@@ -7124,6 +7127,13 @@ class YarrGenerator final : public YarrJITInfo {
                 if (term->capture() && shouldRecordSubpatterns())
                     emitCaptureEnd(term, op.m_checkedOffset, m_regs.regT0);
 
+#if defined(YARR_FOR_IMAGE)
+                // The turn behind one that takes no input begins where that began, without captures as that did, and so ends as that ended: so does every turn that is left.
+                MacroAssembler::JumpList tookNoInput;
+                if (!term->parentheses.disjunction->m_minimumSize)
+                    tookNoInput.append(m_jit.branch32(MacroAssembler::Equal, m_regs.index, frameAddress().withOffset((parenthesesFrameLocation + BackTrackInfoParentheses::beginIndex()) * sizeof(void*))));
+
+#endif
                 // Increment the match count.
                 const MacroAssembler::RegisterID countTemporary = m_regs.regT0;
                 loadFromFrame(parenthesesFrameLocation + BackTrackInfoParentheses::matchAmountIndex(), countTemporary);
@@ -7132,6 +7142,9 @@ class YarrGenerator final : public YarrJITInfo {
 
                 // If we haven't matched enough times yet, loop back.
                 m_jit.branch32(MacroAssembler::Below, countTemporary, MacroAssembler::Imm32(term->quantityMaxCount)).linkTo(beginOp.m_reentry, &m_jit);
+#if defined(YARR_FOR_IMAGE)
+                tookNoInput.link(&m_jit);
+#endif
 
                 // We've matched the required number of times, continue to next opcode.
                 // Set the reentry point for backtracking to propagate failure upward.

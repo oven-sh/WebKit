@@ -44,26 +44,36 @@ const ModuleFailureData& ModuleTable::failure(ModuleFailureID id) const
     return failures[id.index()];
 }
 
+static std::atomic<uint32_t>& moduleFoundLast(unsigned hashOfPath)
+{
+    static std::array<std::atomic<uint32_t>, 256> modulesFoundLast;
+    return modulesFoundLast[hashOfPath % modulesFoundLast.size()];
+}
+
+void ModuleTable::willBeAskedForPath(ModuleID module, unsigned hashOfPath) const
+{
+    moduleFoundLast(hashOfPath).store(module.index(), std::memory_order_relaxed);
+}
+
 std::optional<ModuleID> ModuleTable::findByPath(StringView publicPath) const
 {
-    static std::array<std::atomic<uint32_t>, 256> placesFoundLast;
-    std::atomic<uint32_t>& placeFoundLast = placesFoundLast[publicPath.hash() % placesFoundLast.size()];
-    ModuleNumbers byPath = modulesByPath();
-    size_t place = placeFoundLast.load(std::memory_order_relaxed);
-    if (place >= byPath.size() || comparePath(ModuleID(byPath[place]), publicPath) != 0) {
+    std::atomic<uint32_t>& foundLast = moduleFoundLast(publicPath.hash());
+    uint32_t found = foundLast.load(std::memory_order_relaxed);
+    if (found >= size() || comparePath(ModuleID(found), publicPath) != 0) {
+        ModuleNumbers byPath = modulesByPath();
         auto places = std::views::iota(size_t(0), byPath.size());
-        place = static_cast<size_t>(std::ranges::partition_point(places, [&](size_t candidate) {
+        size_t place = static_cast<size_t>(std::ranges::partition_point(places, [&](size_t candidate) {
             return comparePath(ModuleID(byPath[candidate]), publicPath) < 0;
         }) - places.begin());
         if (place == byPath.size() || comparePath(ModuleID(byPath[place]), publicPath) != 0)
             return std::nullopt;
-        placeFoundLast.store(static_cast<uint32_t>(place), std::memory_order_relaxed);
+        found = byPath[place];
+        foundLast.store(found, std::memory_order_relaxed);
     }
-    ModuleID found(byPath[place]);
-    std::optional<uint32_t> registryID = data(found).registryID();
+    std::optional<uint32_t> registryID = data(ModuleID(found)).registryID();
     if (registryID && !BuiltinTable::singleton().at(RuntimeModuleID(*registryID)).flags.contains(RuntimeModuleFlag::IsPublic))
         return std::nullopt;
-    return found;
+    return ModuleID(found);
 }
 
 std::optional<ModuleID> ModuleTable::findRuntimeSource(uint32_t registryID) const
@@ -101,16 +111,40 @@ std::optional<unsigned> ModuleTable::findExport(ModuleID module, UniquedStringIm
     return std::nullopt;
 }
 
-std::optional<ModuleID> ModuleTable::fileBehindFace(ModuleID module) const
+static bool spellOneText(std::span<const StringView> first, std::span<const StringView> second)
 {
-    const ModuleData& face = data(module);
-    std::span<const ModuleRequestData> requestsOfFace = requests(module);
-    if (face.kind != ModuleKind::SourceText || requestsOfFace.empty() || !requestsOfFace.front().isRequire)
-        return std::nullopt;
-    ModuleID file = requestsOfFace.front().targetModule();
-    if (data(file).kind != ModuleKind::CommonJs || displayPathText(file) != displayPathText(module))
-        return std::nullopt;
-    return file;
+    StringView restOfFirst;
+    StringView restOfSecond;
+    while (true) {
+        while (restOfFirst.isEmpty() && !first.empty()) {
+            restOfFirst = first.front();
+            first = first.subspan(1);
+        }
+        while (restOfSecond.isEmpty() && !second.empty()) {
+            restOfSecond = second.front();
+            second = second.subspan(1);
+        }
+        if (restOfFirst.isEmpty() || restOfSecond.isEmpty())
+            return restOfFirst.isEmpty() && restOfSecond.isEmpty();
+        unsigned length = std::min(restOfFirst.length(), restOfSecond.length());
+        if (restOfFirst.left(length) != restOfSecond.left(length))
+            return false;
+        restOfFirst = restOfFirst.substring(length);
+        restOfSecond = restOfSecond.substring(length);
+    }
+}
+
+// The further modules of a file follow the file.
+std::optional<ModuleID> ModuleTable::faceOfFile(ModuleID file) const
+{
+    for (unsigned index = file.index() + 1; index < size(); ++index) {
+        ModuleID module(index);
+        if (fileBehindFace(module) == file)
+            return module;
+        if (!spellOneText(piecesOfDisplayPath(file), piecesOfDisplayPath(module)))
+            break;
+    }
+    return std::nullopt;
 }
 
 auto ModuleTable::linkPlanOfRoot(ModuleID module) const -> std::optional<LinkPlanOfRoot>
@@ -162,10 +196,36 @@ String ModuleTable::pathText(ModuleID module) const
 {
     if (data(module).directory == Number24::max)
         return ProgramStrings::text(*m_tables, StringID(data(module).publicPathOrName));
+    PiecesOfPath pieces = piecesOfPath(module);
+    unsigned length = 0;
+    for (StringView piece : pieces)
+        length += piece.length();
     StringBuilder path;
-    for (StringView piece : piecesOfPath(module))
+    path.reserveCapacity(length);
+    for (StringView piece : pieces)
         path.append(piece);
     return path.toString();
+}
+
+// The text that displayPathText() makes.
+ModuleTable::PiecesOfPath ModuleTable::piecesOfDisplayPath(ModuleID module) const
+{
+    unsigned charactersInFront = data(module).charactersInFrontOfDisplayPath;
+    if (charactersInFront == ModuleData::hasNoDisplayPath)
+        return { };
+    if (charactersInFront == ModuleData::displayPathIsListed) {
+        auto listed = std::ranges::lower_bound(m_tables->moduleDisplayPaths(), module.index(), { }, [](const ModuleDisplayPathData& entry) -> uint32_t { return entry.module; });
+        return { ProgramStrings::viewInImage(*m_tables, StringID(listed->path)) };
+    }
+    PiecesOfPath pieces = piecesOfPath(module);
+    for (StringView& piece : pieces) {
+        unsigned dropped = std::min(charactersInFront, piece.length());
+        piece = piece.substring(dropped);
+        charactersInFront -= dropped;
+        if (!charactersInFront)
+            break;
+    }
+    return pieces;
 }
 
 String ModuleTable::displayPathText(ModuleID module) const

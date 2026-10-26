@@ -498,6 +498,7 @@ export interface ModelNativeFunction {
   symbol: string;
   length: number;
   header: string | null;
+  name: string | null;
 }
 
 export interface ModelAttachments {
@@ -679,6 +680,7 @@ export type ModelIntrinsicMeaning =
         | "PrivateGlobal"
         | "ReplaceablePrivateGlobal"
         | "PrivateName"
+        | "ModulePrivateName"
         | "Erased"
         | "BundleError";
     };

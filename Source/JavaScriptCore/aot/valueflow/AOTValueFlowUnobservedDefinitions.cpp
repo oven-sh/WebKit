@@ -11,6 +11,7 @@
 #include "AOTAnalysisContext.h"
 #include "AOTBuildContext.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTPredictedValues.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSort.h"
 #include "AOTSortedSet.h"
@@ -45,6 +46,7 @@ struct InitializerCall {
     FunctionID initializer;
     LayoutID classLayout;
     std::optional<Keys> observedKeys;
+    Keys keysObservedWhereObjectRefusesDefinition { };
 };
 
 bool isNeverEntered(const Function& function, BlockID block)
@@ -350,10 +352,18 @@ bool returnsOnlyConstructedObject(const Program& program, BuildContext& build, F
             worklist.append(terminator.valueOperand());
     }
 
+    std::optional<PredictedValues> predicted;
+    auto isNeverObject = [&](ValueID value) {
+        if (program.typeOf(constructor, value).hasObjects())
+            return false;
+        if (!predicted)
+            predicted.emplace(constructor, analyses.cfg(), PredictedValues::Options { .programToReadComparisonsWith = &program });
+        return !predicted->isBehindCheck(value);
+    };
     BitVector isVisited(constructor.values.size());
     while (!worklist.isEmpty()) {
         ValueID returned = analyses.identityOf(worklist.takeLast());
-        if (isVisited.set(returned.index()) || returned == thisParameter || !program.typeOf(constructor, returned).hasObjects())
+        if (isVisited.set(returned.index()) || returned == thisParameter || isNeverObject(returned))
             continue;
         const Value& value = constructor.at(returned);
         if (value.opcode == Opcode::SuperConstruct || value.opcode == Opcode::SuperConstructList || (value.opcode == Opcode::NewObject && program.at(value.layout()).kind == LayoutKind::Instance))
@@ -519,7 +529,7 @@ InitializerCall analyzeCall(const Program& program, BuildContext& build, Functio
             return result.observedKeys->contains(key);
         });
         if (!isEveryEarlierKeyObserved && !takesEveryDefinitionBehindSuper(program, build, caller.constructedClass))
-            result.observedKeys->unite(summary.keysDefinedBeforeOthers);
+            result.keysObservedWhereObjectRefusesDefinition = summary.keysDefinedBeforeOthers;
     }
     for (const DefinitionOfUndefined& definition : summary.definitionsOfUndefined) {
         if (isDeclaredByBaseClass(program, caller.constructedClass, definition.key))
@@ -563,8 +573,12 @@ UnobservedFieldDefinitions::UnobservedFieldDefinitions(const Program& program, B
             bool isObserved = std::ranges::any_of(callsOfInitializer, [&](const InitializerCall& call) {
                 return call.observedKeys->contains(definition.key);
             });
-            if (!isObserved && program.at(classLayout).findField(definition.key))
-                m_definitions.append({ initializer, definition.definition, classLayout, definition.key });
+            if (isObserved || !program.at(classLayout).findField(definition.key))
+                continue;
+            bool isObservedWhereObjectRefusesDefinition = std::ranges::any_of(callsOfInitializer, [&](const InitializerCall& call) {
+                return call.keysObservedWhereObjectRefusesDefinition.contains(definition.key);
+            });
+            m_definitions.append({ initializer, definition.definition, classLayout, definition.key, isObservedWhereObjectRefusesDefinition });
         }
     }
     AOT::sort(m_definitions, { }, [](const UnobservedFieldDefinition& definition) {
@@ -572,11 +586,12 @@ UnobservedFieldDefinitions::UnobservedFieldDefinitions(const Program& program, B
     });
 }
 
-bool UnobservedFieldDefinitions::contains(FunctionID initializer, ValueID definition) const
+const UnobservedFieldDefinition* UnobservedFieldDefinitions::find(FunctionID initializer, ValueID definition) const
 {
-    return std::ranges::binary_search(m_definitions, std::pair { initializer, definition }, { }, [](const UnobservedFieldDefinition& entry) {
+    auto found = std::ranges::lower_bound(m_definitions, std::pair { initializer, definition }, { }, [](const UnobservedFieldDefinition& entry) {
         return std::pair { entry.initializer, entry.definition };
     });
+    return found != m_definitions.end() && found->initializer == initializer && found->definition == definition ? &*found : nullptr;
 }
 
 Vector<PropertyKeyID> keysDefinedRightAfterAllocation(const Program& program, FunctionID id, ValueID allocation)

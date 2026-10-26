@@ -20,10 +20,10 @@ function f1 name="method" kind=Method flags=[HasThis] thisType={type=L0 site=w2}
 # CHECK-NEXT: b0([[closure]]: f0, [[this]]: anything, [[first]]: anything, [[second]]: anything, [[third]]: anything):
 # CHECK-NEXT: [[firstCapture]]: number = GetCapture [[closure]] function=f0
 # CHECK-NEXT: [[secondCapture]]: string = GetCapture [[closure]] function=f0 index=1
-# CHECK-NEXT: [[integer]]: int = AssumeType [[third]] castType=int
+# CHECK-NEXT: [[integer]]: int = AssumeType [[third]] provenType=int
 # CHECK-NEXT: [[result]]: anything = CallDirect [[firstCapture]], [[secondCapture]], [[first]], [[second]], [[integer]] function=f0
 # CHECK-NEXT: ReturnCall [[result]] requirement=Allowed
 # CHECK: name="method" module=m0 kind=Method role=GenericEntrypoint flags=[HasThis] captures=[{type=f1}] thisType={type=anything} results=[{type=anything}]
 # CHECK-NEXT: b0([[methodClosure]]: f1, [[methodThis]]: anything):
-# CHECK-NEXT: [[receiver]]: L0 = AssumeType [[methodThis]] castType=L0
+# CHECK-NEXT: [[receiver]]: L0 = AssumeType [[methodThis]] provenType=L0
 # CHECK-NEXT: = CallDirect [[receiver]] function=f1

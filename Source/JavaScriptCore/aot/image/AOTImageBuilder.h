@@ -28,6 +28,7 @@ class StubCatalog;
 struct SideTables {
     Vector<uint8_t> bytes;
     Vector<uint32_t> offsets;
+    Vector<OptionSet<ImageFunctionFlag>> flags;
     Vector<uint8_t> positions;
     Vector<uint32_t> frameMapWords;
     Vector<ImageFrame> frames;

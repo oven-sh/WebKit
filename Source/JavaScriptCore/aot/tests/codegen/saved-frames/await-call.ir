@@ -7,7 +7,7 @@ module m0 path="main.js" displayPath="main.js"
 function f0 name="callee" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=1} {
     v1 = NewPromise
     v2 = CallDirect v0, v1 function=f3
-    v3 = AssumeType v2 castType=Promise
+    v3 = AssumeType v2 provenType=Promise
     Return v3
 }
 function f1 name="awaitsCall" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f4 entryWithoutPromise=f4 promiseType=Promise promiseParameter=1}

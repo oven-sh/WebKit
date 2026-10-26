@@ -5,7 +5,7 @@
 # RUN: valueflow-apply
 # CHECK: layout L0 name="Message" fields=[{key="a"
 # CHECK-NOT: key="other"
-# CHECK: {key=Symbol.for("state") declared={type=int} flags=[IsAddedLate
+# CHECK: {key=Symbol.for("state") declared={type=2} flags=[IsAddedLate
 # CHECK-NOT: key="other"
 # CHECK: layout L1 name="MessageType"
 

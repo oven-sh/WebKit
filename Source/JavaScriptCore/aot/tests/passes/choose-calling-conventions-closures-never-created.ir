@@ -20,7 +20,7 @@ function f3 name="hasClosure" parameters=[{type=number}] results=[{type=number}]
     Return v0
 }
 function f4 name="hasClosure" role=GenericEntrypoint flags=[HasThis] captures=[{type=f3}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers} {
-    v3 = AssumeType v2 castType=number
+    v3 = AssumeType v2 provenType=number
     v4 = CallDirect v3 function=f3
     Return v4
 }

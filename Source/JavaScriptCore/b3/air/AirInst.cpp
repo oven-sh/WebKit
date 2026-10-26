@@ -28,6 +28,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "AirCode.h"
 #include "AirFormTable.h"
 #include "AirInstInlines.h"
 #include <wtf/ListDump.h>
@@ -64,12 +65,46 @@ void Inst::fillForms()
     memcpy(formsAfterSpecial(), forms.data() + 1, m_size - 1);
 }
 
+const uint8_t* Inst::formsKeptByCode()
+{
+    ASSERT(kind.opcode == Patch && m_size > maxNumberOfForms + 1);
+    Special* special = args()[0].special();
+    if (!origin)
+        return nullptr;
+    Code::FormsOfPatch& kept = special->code().formsOfPatches().add(origin, Code::FormsOfPatch()).iterator->value;
+    if (kept.special == special && kept.formsAfterSpecial.size() == m_size - 1)
+        return kept.areFixed ? kept.formsAfterSpecial.span().data() : nullptr;
+    kept.special = special;
+    kept.areFixed = false;
+    kept.formsAfterSpecial.resize(m_size - 1);
+    if (!special->hasFixedForms(*this))
+        return nullptr;
+    unsigned next = 0;
+    bool isInOrder = true;
+    forEachArgCustom(
+        [&] (Arg& arg, Arg::Role role, Bank bank, Width width) {
+            if (next >= m_size || &arg != &args()[next]) {
+                isInOrder = false;
+                return;
+            }
+            uint8_t form = ENCODE_INST_FORM(role, bank, width);
+            if (next)
+                kept.formsAfterSpecial[next - 1] = form;
+            else
+                isInOrder = form == ENCODE_INST_FORM(Arg::Use, GP, pointerWidth());
+            ++next;
+        });
+    kept.areFixed = isInOrder && next == m_size;
+    return kept.areFixed ? kept.formsAfterSpecial.span().data() : nullptr;
+}
+
 bool Inst::hasCurrentForms()
 {
     ASSERT(kind.opcode == Patch && m_size);
-    if (m_size > maxNumberOfForms + 1 || formsState() != FormsState::Fixed)
+    const uint8_t* keptForms = m_size > maxNumberOfForms + 1 ? formsKeptByCode() : formsState() == FormsState::Fixed ? formsAfterSpecial() : nullptr;
+    if (!keptForms)
         return true;
-    std::span<const uint8_t> forms = unsafeMakeSpan(formsAfterSpecial(), m_size - 1);
+    std::span<const uint8_t> forms = unsafeMakeSpan(keptForms, m_size - 1);
     unsigned next = 0;
     bool isCurrent = true;
     forEachArgCustom(

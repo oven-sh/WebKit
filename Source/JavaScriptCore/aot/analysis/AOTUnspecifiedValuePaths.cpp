@@ -474,7 +474,7 @@ public:
             return false;
         if (value.opcode == Opcode::RequireObjectCoercible)
             return remaining->isUndefinedOrNull();
-        return !remaining->mayPass(m_program.at(value.castType()));
+        return !remaining->mayPass(m_program.at(value.provenType()));
     }
 
     Vector<BlockID> pathTo(const Vector<WalkState>& states, std::optional<uint32_t> stateIndex) const

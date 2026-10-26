@@ -14,6 +14,7 @@
 #include "AOTBuiltinUses.h"
 #include "AOTCodeShapes.h"
 #include "AOTIRBuilder.h"
+#include "AOTResolveAccesses.h"
 #include "AOTResultRules.h"
 #include "AOTSelectionContext.h"
 #include "AOTTypePropagation.h"
@@ -53,9 +54,9 @@ static PassOutcome clearExpectedTypes(Function& function)
 {
     PassOutcome outcome = PassOutcome::Unchanged;
     for (Value& value : function.editAllValues()) {
-        if (!value.expected())
+        if (!value.expected().predicted())
             continue;
-        value.setExpected(TypeID());
+        value.setExpected({ });
         outcome = PassOutcome::Changed;
     }
     return outcome;
@@ -71,7 +72,7 @@ static void assumeTypesOfParameters(FunctionPassContext& pass, IRBuilder& builde
         if (pass.types.at(pass.function.at(operand).type).isSubsetOf(accepted, pass.program))
             return operand;
         Value cast = IRBuilder::make(Opcode::AssumeType, { operand });
-        cast.setCastType(pass.types.intern(WTF::move(accepted)));
+        cast.setProvenType(Proven::byConstruction(pass.types.intern(WTF::move(accepted))));
         return builder.insertBefore(point, WTF::move(cast));
     };
     if (call.receiverOperand())
@@ -188,6 +189,7 @@ PassOutcome select(FunctionPassContext& pass)
     outcome |= callWithAnyReceiverWhereTypesAreLost(pass);
     outcome |= chooseCodeShapes(pass, ChosenShapes::ChooseAgain);
     outcome |= makeDescriptorLiteralsBehindJoins(pass);
+    outcome |= addCasesOfFieldsWithoutStorage(pass);
 
     SelectionContext context(pass);
     for (const SelectionRule& rule : selectionRules()) {

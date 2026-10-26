@@ -15,6 +15,7 @@
 #include "AOTKnownClosures.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -36,8 +37,8 @@ static bool capturesAtMostClassEnvironment(const Program& program, const Functio
         return true;
     if (function.captures.size() != 1 || constructor.captures.size() != 1)
         return false;
-    TypeID captured = function.captures[0].type;
-    return captured && captured == constructor.captures[0].type && program.at(captured).environment;
+    TypeID captured = function.captures[0].written();
+    return captured && captured == constructor.captures[0].written() && program.at(captured).environment;
 }
 
 static bool canClassRecordCreate(const Program& program, const Function& constructor, const ClassMember& member)
@@ -65,6 +66,20 @@ BuiltinID builtinParentNamedByClassRecord(const Program& program, const Layout& 
     const Builtin& builtin = builtins.at(constructor);
     bool isFoundAtAnyTime = builtin.origin == BuiltinOrigin::Engine && builtin.scope == BuiltinScope::Realm && BuiltinCellKey::object(constructor).hasCell(builtins);
     return isFoundAtAnyTime ? constructor : BuiltinID();
+}
+
+bool hasOnlyClassesAndBuiltins(const Program& program, const Type& type)
+{
+    if (type.anyObject || type.anyFunction || type.layouts || !type.classes.isEmpty() || (type.primitives & ~Primitive::Null) || !type.isJavaScriptValue())
+        return false;
+    bool hasOnlyConstructors = std::ranges::all_of(type.builtins, [&](BuiltinID id) {
+        const Builtin& builtin = program.builtins().at(id);
+        return builtin.kind == BuiltinKind::Constructor && builtin.instanceClass && program.builtins().at(builtin.instanceClass).prototype;
+    });
+    return hasOnlyConstructors && std::ranges::all_of(type.functions, [&](FunctionID id) {
+        FunctionKind kind = program.at(id).kind;
+        return kind == FunctionKind::BaseConstructor || kind == FunctionKind::DerivedConstructor;
+    });
 }
 
 static bool hasOnlyClassesAbove(const Program& program, LayoutID id)
@@ -129,7 +144,7 @@ std::optional<ClassDefinitionSite> findClassDefinitionSite(const Program& progra
 
     for (ValueID current = head.prototypeParentOperand(); current;) {
         const Value& value = function.at(current);
-        bool isCastThatDoesNothing = value.opcode == Opcode::AssumeType || value.opcode == Opcode::Upcast;
+        bool isCastThatDoesNothing = value.opcode == Opcode::AssumeType || isCastThatProvesNothing(value.opcode);
         if (value.opcode != Opcode::ResolveHeritage && !isCastThatDoesNothing)
             return std::nullopt;
         unsigned otherUses = 0;
@@ -141,22 +156,27 @@ std::optional<ClassDefinitionSite> findClassDefinitionSite(const Program& progra
         }
         if (otherUses != 1)
             return std::nullopt;
-        site.describedByRecord.append(current);
+        if (value.opcode == Opcode::ResolveHeritage)
+            site.heritageLook = current;
+        else
+            site.describedByRecord.append(current);
         current = isCastThatDoesNothing ? value.valueOperand() : ValueID();
     }
 
     const Vector<ClassMember>& members = layout.classFlow.members;
     BitVector isDefinedHere(members.size());
+    HashMap<FunctionID, size_t> firstPositionOfFunction;
+    for (size_t position = 0; position < members.size(); ++position)
+        firstPositionOfFunction.add(members[position].function, position);
     auto addDefinition = [&](ValueID id) {
         const Value& definition = function.at(id);
         const Value& closure = function.at(definition.functionOperand());
         if (definition.layout() != site.layout || !definition.key() || definition.computedKeyOperand() || closure.opcode != Opcode::NewClosure)
             return false;
-        size_t position = members.findIf([&](const ClassMember& member) {
-            return member.function == closure.function();
-        });
-        if (position == notFound)
+        auto found = firstPositionOfFunction.find(closure.function());
+        if (found == firstPositionOfFunction.end())
             return false;
+        size_t position = found->value;
         const ClassMember& member = members[position];
         bool isAsListed = member.key == definition.key() && member.side == definition.side() && member.kind == definition.methodKind();
         if (!isAsListed || isDefinedHere.quickSet(position) || !isOnlyClosureOperand(function, useLists, definition.functionOperand(), member.function))

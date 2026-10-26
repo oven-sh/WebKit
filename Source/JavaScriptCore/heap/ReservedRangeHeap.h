@@ -78,8 +78,9 @@ private:
     void* tryAllocateGranules(size_t);
     void freeGranules(void*);
     size_t granuleCountOfRun(size_t firstGranule) WTF_REQUIRES_LOCK(m_lock);
+    void setAccess(size_t firstGranule, size_t count, bool isAccessible) WTF_REQUIRES_LOCK(m_lock);
     static void commitGranules(void*, size_t);
-    static void decommitGranules(void*, size_t);
+    static void decommitGranules(void*, size_t, bool removesAccess);
 
     const uintptr_t m_start;
     const size_t m_size;
@@ -96,6 +97,7 @@ private:
     size_t m_segmentsEnd WTF_GUARDED_BY_LOCK(m_lock) { 0 };
     BitVector m_usedGranules WTF_GUARDED_BY_LOCK(m_lock);
     BitVector m_firstGranulesOfRuns WTF_GUARDED_BY_LOCK(m_lock);
+    BitVector m_accessibleGranules WTF_GUARDED_BY_LOCK(m_lock);
     size_t m_firstGranuleToSearch WTF_GUARDED_BY_LOCK(m_lock) { 0 };
 };
 

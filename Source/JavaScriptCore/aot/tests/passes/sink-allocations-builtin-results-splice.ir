@@ -63,7 +63,7 @@ function f6 name="elementReadAfterStorageTest" parameters=[{type=Array<number, p
     v2 = Integer integer=1
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
     v4 = Integer integer=0
-    v5 = AssumeType v3 castType=Array<number, proven, pristine[Storage, Names]>
+    v5 = AssumeType v3 provenType=Array<number, proven, pristine[Storage, Names]>
     v6 = HasArrayStorage v5 arrayStorage=Double
     Branch v6 -> taken b1(| 0), notTaken b2()
   b1(v7):
@@ -109,7 +109,7 @@ function f9 name="storageTestNarrowsElementType" parameters=[{type=Array<number|
     v2 = Integer integer=1
     v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeSplice/0
     v4 = Integer integer=0
-    v5 = AssumeType v3 castType=Array<number|null, proven, pristine[Storage, Names]>
+    v5 = AssumeType v3 provenType=Array<number|null, proven, pristine[Storage, Names]>
     v6 = HasArrayStorage v5 arrayStorage=Double
     Branch v6 -> taken b1(| 0), notTaken b2()
   b1(v7):

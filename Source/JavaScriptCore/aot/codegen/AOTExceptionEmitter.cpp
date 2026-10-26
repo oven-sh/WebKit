@@ -20,6 +20,7 @@
 #include "AllowMacroScratchRegisterUsage.h"
 #include "B3BasicBlockInlines.h"
 #include "B3PatchpointValue.h"
+#include "B3SlotBaseValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "B3VariableValue.h"
 #include "Exception.h"
@@ -30,17 +31,118 @@ ExceptionEmitter::ExceptionEmitter(CodeGenerator& generator)
     : OperationEmitter(generator)
     , m_landingPadsBySuccessor(Box<LandingPadsBySuccessor>::create())
 {
+    findValuesCaughtByCleanups();
     for (const Block& block : m_function.blocks) {
         if (!block.handler)
             continue;
         BlockID handler = block.handler->block;
         TerminatorKind kind = block.terminator.kind;
-        if (kind == TerminatorKind::Rethrow || (kind == TerminatorKind::Throw && handlerTypeOf(handler) != HandlerType::Finally))
+        if (kind == TerminatorKind::Rethrow || (kind == TerminatorKind::Throw && (handlerTypeOf(handler) != HandlerType::Finally || keepsException(handler))))
             m_handlersEnteredByJump.set(handler.index());
     }
 }
 
-HandlerType ExceptionEmitter::handlerTypeOf(BlockID handler) const
+// A cleanup that takes the value hands it from block to block, to the Throw at its end.
+void ExceptionEmitter::findValuesCaughtByCleanups()
+{
+    struct Caught {
+        ValueID value;
+        BlockID cleanup;
+    };
+    Vector<Caught, 4> worklist;
+    for (uint32_t index = 0; index < m_function.blocks.size(); ++index) {
+        BlockID id(index);
+        const Block& block = m_function.at(id);
+        if (!block.isHandlerBlock() || block.role == BlockRole::CatchHandler)
+            continue;
+        for (ValueID value : block.values) {
+            if (m_function.at(value).opcode == Opcode::CatchValue)
+                worklist.append({ value, id });
+        }
+    }
+    if (worklist.isEmpty())
+        return;
+
+    struct Edge {
+        ValueID argument;
+        ValueID parameter;
+    };
+    Vector<Edge> edges;
+    for (const Block& block : m_function.blocks) {
+        block.forEachTarget([&](const Target& target) {
+            const auto& parameters = m_function.at(target.block).parameters;
+            for (size_t i = 0; i < target.arguments.size() && i < parameters.size(); ++i)
+                edges.append({ target.arguments[i], parameters[i] });
+        });
+    }
+    AOT::sort(edges, { }, [](const Edge& edge) { return edge.argument.index(); });
+    while (!worklist.isEmpty()) {
+        Caught caught = worklist.takeLast();
+        auto added = m_valuesCaughtByCleanups.add(caught.value, caught.cleanup);
+        if (!added.isNewEntry) {
+            if (added.iterator->value == caught.cleanup || !added.iterator->value)
+                continue;
+            caught.cleanup = BlockID();
+            added.iterator->value = caught.cleanup;
+        }
+        auto first = std::ranges::lower_bound(edges, caught.value.index(), { }, [](const Edge& edge) { return edge.argument.index(); });
+        for (; first != edges.end() && first->argument == caught.value; ++first)
+            worklist.append({ first->parameter, caught.cleanup });
+    }
+    findCleanupsThatKeepException();
+}
+
+// Where the function itself ends what the cleanup throws on, nobody lists the frames of the throw. What a suspended frame holds beside its values is not kept alive.
+void ExceptionEmitter::findCleanupsThatKeepException()
+{
+    if (m_function.role == FunctionRole::CoroutineBody)
+        return;
+    struct ThrowOfCleanup {
+        BlockID cleanup;
+        BlockID handler;
+    };
+    BitVector throwsOn;
+    Vector<ThrowOfCleanup, 4> throws;
+    for (const Block& block : m_function.blocks) {
+        if (block.terminator.kind != TerminatorKind::Throw)
+            continue;
+        BlockID cleanup = m_valuesCaughtByCleanups.get(block.terminator.valueOperand());
+        if (!cleanup || handlerTypeByOperations(cleanup) != HandlerType::Catch)
+            continue;
+        throwsOn.set(cleanup.index());
+        throws.append({ cleanup, block.handler ? block.handler->block : BlockID() });
+    }
+
+    // What a cleanup throws on leaves the function, is ended by a handler of the function, or goes to another cleanup that throws it on.
+    Vector<BlockID, 4> worklist;
+    Vector<ThrowOfCleanup, 4> throwsIntoCleanups;
+    for (ThrowOfCleanup thrown : throws) {
+        for (BlockID handler = thrown.handler; ; handler = m_function.at(handler).handler ? m_function.at(handler).handler->block : BlockID()) {
+            if (!handler) {
+                if (!m_cleanupsThatKeepException.set(thrown.cleanup.index()))
+                    worklist.append(thrown.cleanup);
+                break;
+            }
+            if (throwsOn.get(handler.index())) {
+                throwsIntoCleanups.append({ thrown.cleanup, handler });
+                break;
+            }
+            if (handlerTypeByOperations(handler) != HandlerType::Finally)
+                break;
+        }
+    }
+    AOT::sort(throwsIntoCleanups, { }, [](const ThrowOfCleanup& thrown) { return thrown.handler.index(); });
+    while (!worklist.isEmpty()) {
+        BlockID outer = worklist.takeLast();
+        auto first = std::ranges::lower_bound(throwsIntoCleanups, outer.index(), { }, [](const ThrowOfCleanup& thrown) { return thrown.handler.index(); });
+        for (; first != throwsIntoCleanups.end() && first->handler == outer; ++first) {
+            if (!m_cleanupsThatKeepException.set(first->cleanup.index()))
+                worklist.append(first->cleanup);
+        }
+    }
+}
+
+HandlerType ExceptionEmitter::handlerTypeByOperations(BlockID handler) const
 {
     HandlerType type = HandlerType::SynthesizedCatch;
     for (ValueID id : m_function.at(handler).values) {
@@ -52,6 +154,11 @@ HandlerType ExceptionEmitter::handlerTypeOf(BlockID handler) const
         type = HandlerType::Catch;
     }
     return type;
+}
+
+HandlerType ExceptionEmitter::handlerTypeOf(BlockID handler) const
+{
+    return keepsException(handler) ? HandlerType::Finally : handlerTypeByOperations(handler);
 }
 
 static WTF::Vector<Box<CCallHelpers::Label>> emitSiteAndJumpToContinuation(CCallHelpers& jit, const B3::StackmapGenerationParams& params, B3::StackmapGenerator& siteGenerator, bool mayReturn)
@@ -194,6 +301,29 @@ void ExceptionEmitter::setCaughtVariable(BlockID handler, LValue caught)
     m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), caughtVariableFor(handler), caught);
 }
 
+// Only a throw writes the word, so that a way through the cleanup on which nothing was thrown pays nothing.
+TypedPointer ExceptionEmitter::wordKeptBy(BlockID cleanup)
+{
+    B3::Air::StackSlot* slot = m_keptWords.ensure(cleanup, [&] {
+        return m_proc.addStackSlot(sizeof(uint64_t));
+    }).iterator->value;
+    return m_out.address(m_heaps.frameSlots, m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), slot), 0);
+}
+
+void ExceptionEmitter::keep(BlockID cleanup, LValue kept)
+{
+    m_out.store64(kept, wordKeptBy(cleanup));
+}
+
+// Zero unless the value comes from one cleanup, which keeps something.
+LValue ExceptionEmitter::keptBy(ValueID thrown)
+{
+    BlockID cleanup = m_valuesCaughtByCleanups.get(thrown);
+    if (!cleanup || !keepsException(cleanup))
+        return m_out.int64Zero;
+    return m_out.load64(wordKeptBy(cleanup));
+}
+
 LValue ExceptionEmitter::caughtWord(const ValueContext& value)
 {
     BlockID handler = value.block();
@@ -202,7 +332,11 @@ LValue ExceptionEmitter::caughtWord(const ValueContext& value)
 
     RuntimeOperation operation = handlerTypeOf(handler) == HandlerType::Finally ? RuntimeOperation::CatchException : RuntimeOperation::Catch;
     auto takeFromRuntime = [&] {
-        return callOperation<Boxed>(value, operation, { }, { .followsThrow = true });
+        if (!keepsException(handler))
+            return callOperation<Boxed>(value, operation, { }, { .followsThrow = true });
+        StubCallResult caught = emitter<RuntimeCallEmitter>().callOperationReturningPair(value, RuntimeOperation::CatchValueAndException, { }, { .followsThrow = true });
+        keep(handler, caught.second);
+        return Boxed(caught.first);
     };
     auto takePassedOrFromRuntime = [&] {
         Boxed passed(m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), caughtVariableFor(handler)));
@@ -233,7 +367,7 @@ void ExceptionEmitter::generateCatchValue(const ValueContext& value)
         define(value, Boxed(caughtWord(value)));
         return;
     case HandlerType::Finally:
-        define(value, valueOfException(CellPointer(caughtWord(value))));
+        define(value, keepsException(value.block()) ? Boxed(caughtWord(value)) : valueOfException(CellPointer(caughtWord(value))));
         return;
     case HandlerType::SynthesizedCatch:
     case HandlerType::SynthesizedFinally:
@@ -244,7 +378,7 @@ void ExceptionEmitter::generateCatchValue(const ValueContext& value)
 
 void ExceptionEmitter::generateCatchException(const ValueContext& value)
 {
-    RELEASE_ASSERT(handlerTypeOf(value.block()) == HandlerType::Finally);
+    RELEASE_ASSERT(handlerTypeByOperations(value.block()) == HandlerType::Finally);
     define(value, Operand(value.representation(), caughtWord(value)));
 }
 
@@ -261,11 +395,21 @@ void ExceptionEmitter::throwByOperation(const TerminatorContext& terminator, Run
     m_out.unreachable();
 }
 
+void ExceptionEmitter::throwAfterCleanup(const TerminatorContext& terminator, Boxed thrown)
+{
+    callVoidOperation(terminator, RuntimeOperation::ThrowAfterCleanup, { thrown, Integer(keptBy(terminator->valueOperand())) });
+    m_out.unreachable();
+}
+
 void ExceptionEmitter::throwValue(const TerminatorContext& terminator, Boxed thrown)
 {
     const Target* handler = terminator.handler();
+    bool endsCleanup = m_valuesCaughtByCleanups.contains(terminator->valueOperand());
     if (!handler) {
-        throwByOperation(terminator, RuntimeOperation::Throw, thrown);
+        if (endsCleanup)
+            throwAfterCleanup(terminator, thrown);
+        else
+            throwByOperation(terminator, RuntimeOperation::Throw, thrown);
         return;
     }
     switch (handlerTypeOf(handler->block)) {
@@ -274,7 +418,13 @@ void ExceptionEmitter::throwValue(const TerminatorContext& terminator, Boxed thr
         jumpToHandler(*handler, thrown.value());
         return;
     case HandlerType::Finally:
-        throwByOperation(terminator, RuntimeOperation::ThrowToHandlerInFunction, thrown);
+        if (keepsException(handler->block)) {
+            keep(handler->block, endsCleanup ? keptBy(terminator->valueOperand()) : callOperation<Integer>(terminator, RuntimeOperation::AddressOfThrow, { }, { .capturesStackTrace = true }).value());
+            jumpToHandler(*handler, thrown.value());
+        } else if (endsCleanup)
+            throwAfterCleanup(terminator, thrown);
+        else
+            throwByOperation(terminator, RuntimeOperation::ThrowToHandlerInFunction, thrown);
         return;
     case HandlerType::SynthesizedFinally:
         break;
@@ -291,7 +441,11 @@ void ExceptionEmitter::rethrow(const TerminatorContext& terminator, CellPointer 
     }
     switch (handlerTypeOf(handler->block)) {
     case HandlerType::Finally:
-        jumpToHandler(*handler, exception.value());
+        if (keepsException(handler->block)) {
+            keep(handler->block, exception.value());
+            jumpToHandler(*handler, valueOfException(exception).value());
+        } else
+            jumpToHandler(*handler, exception.value());
         return;
     case HandlerType::Catch:
     case HandlerType::SynthesizedCatch:

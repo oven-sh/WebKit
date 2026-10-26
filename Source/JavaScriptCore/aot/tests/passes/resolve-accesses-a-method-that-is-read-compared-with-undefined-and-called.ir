@@ -1,0 +1,68 @@
+# A method of a class that is evaluated twice is read, compared with undefined and called on its object. Neither the comparison nor the call tells the closure from another closure of the method, so nothing is read by name
+# The host calls the functions and drops what they return
+# FORM: AsRead
+# RUN: pipeline Select
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="InFunction" constructor=f2 fields=[{key="x" declared={type=anything}}]
+variable g0 name="second" module=m0 declared={type=anything} initialization=Uninitialized
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f1
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Construct v0, -, v3
+    v5 = Construct v1, -, v3
+    PutModuleVariable v5 variable=g0
+    v7 = NewClosure function=f4
+    v8 = NewClosure function=f5
+    v9 = Builtin builtin=QueueMicrotask
+    v10 = Call v9, -, v7
+    v11 = Call v9, -, v8
+    Return
+}
+function f1 name="makeClass" results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f3
+    DefineMethod v1, v2 layout=L0 key="m"
+    v4 = FinishClass v1 layout=L0
+    Return v4
+}
+function f2 name="InFunction" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0 fields=[]
+    PropSet v3, v1 key="x" mode=Strict
+    Return v3
+}
+function f3 name="m" kind=Method flags=[HasThis] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+function f4 name="callWhatIsThere" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="m"
+    v2 = TypeTest v1 testedType=undefined
+    Branch v2 -> taken b1(), notTaken b2(| 0)
+  b1():
+    v3 = Undefined
+    Return v3
+  b2(v4):
+    v5 = Call v4, v0
+    Return v5
+# CHECK-NOT: PropGet
+# CHECK-NOT: = Call
+}
+function f5 name="keepWhatIsThere" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="m"
+    v2 = TypeTest v1 testedType=undefined
+    Branch v2 -> taken b1(), notTaken b2(| 0)
+  b1():
+    v3 = Undefined
+    Return v3
+  b2(v4):
+    Return v4
+# CHECK: = PropGet {{*}}key="m"
+}

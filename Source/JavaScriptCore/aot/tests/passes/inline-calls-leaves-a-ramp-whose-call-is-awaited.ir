@@ -10,7 +10,7 @@ module m0 path="main.js" displayPath="main.js"
 function f0 name="callee" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=1} {
     v1 = NewPromise
     v2 = CallDirect v0, v1 function=f1
-    v3 = AssumeType v2 castType=Promise
+    v3 = AssumeType v2 provenType=Promise
     Return v3
 }
 function f1 name="callee" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0 parameterMap=[{original=0}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=1} {
@@ -22,7 +22,7 @@ function f1 name="callee" role=CoroutineBody flags=[IsAsync] parameters=[{type=a
 function f2 name="awaitedAtOnce" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=1} {
     v1 = NewPromise
     v2 = CallDirect v0, v1 function=f3
-    v3 = AssumeType v2 castType=Promise
+    v3 = AssumeType v2 provenType=Promise
     Return v3
 }
 function f3 name="awaitedAtOnce" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f2 parameterMap=[{original=0}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=1} {
@@ -44,7 +44,7 @@ function f3 name="awaitedAtOnce" role=CoroutineBody flags=[IsAsync] parameters=[
 function f4 name="oneRampInEachArm" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 entryWithoutPromise=f5 promiseType=Promise promiseParameter=1} {
     v1 = NewPromise
     v2 = CallDirect v0, v1 function=f5
-    v3 = AssumeType v2 castType=Promise
+    v3 = AssumeType v2 provenType=Promise
     Return v3
 }
 function f5 name="oneRampInEachArm" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f4 parameterMap=[{original=0}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 entryWithoutPromise=f5 promiseType=Promise promiseParameter=1} {
@@ -73,7 +73,7 @@ function f5 name="oneRampInEachArm" role=CoroutineBody flags=[IsAsync] parameter
 function f6 name="promiseIsAlsoReturned" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f6 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=1} {
     v1 = NewPromise
     v2 = CallDirect v0, v1 function=f7
-    v3 = AssumeType v2 castType=Promise
+    v3 = AssumeType v2 provenType=Promise
     Return v3
 }
 function f7 name="promiseIsAlsoReturned" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f6 parameterMap=[{original=0}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f6 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=1} {

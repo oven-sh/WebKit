@@ -122,7 +122,7 @@ std::optional<Operand> ElementAccessEmitter::rawElementToStore(const ArrayStorag
         Number number(operand.value);
         if (operand.is<OptionalNumber>())
             branchUnless(equal(number, number), doesNotFit);
-        return Operand(emitter<ConversionEmitter>().boxNumber(number));
+        return Operand(emitter<ConversionEmitter>().boxNumber(operand.is<OptionalNumber>() ? Operand(number) : getInFormOfItsNaN(stored)));
     }
     case ElementConversion::BoxDoubleAsInt32:
         return Operand(boxInt32(emitter<ConversionEmitter>().toInt32(Number(operand.value))));
@@ -269,7 +269,7 @@ void ElementAccessEmitter::storeOutOfLine(const ValueContext& value, CellPointer
     const Type& storedType = typeOf(stored);
     bool isFast = value.shape() == CodeShape::Fast;
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
-    Boxed boxedValue = isFast ? conversions.box(value, get(stored), storedType) : conversions.boxInArm(value, get(stored), storedType);
+    Boxed boxedValue = isFast ? conversions.box(value, getInFormOfItsNaN(stored), storedType) : conversions.boxInArm(value, getInFormOfItsNaN(stored), storedType);
     if (value->mode() == ECMAMode::Sloppy) {
         emitter<AccessEmitter>().putByVal(value, boxCell(array), boxedPosition(position), boxedValue, AccessEmitter::putModeOf(ECMAMode::Sloppy));
         return;
@@ -330,6 +330,9 @@ Boxed ElementAccessEmitter::appendOutOfLine(const OperationContext& store, CellP
     Operand operand = get(element);
     if (operand.is<Number>() && typeOf(element).isInt32())
         operand = Operand(boxInt32(conversions.toInt32(operand.as<Number>())));
+    // The stub drops a payload and keeps the sign.
+    if (operand.is<Number>() && getInFormOfItsNaN(element).is<ImpureNumber>())
+        operand = conversions.purified(operand.as<Number>());
     if (operand.is<Number>())
         return Boxed(callStub(store, arrayPushDouble(), { array.value(), conversions.bitsOf(operand).value() }).first);
     return Boxed(callStub(store, arrayPush(), { array.value(), conversions.box(store, operand, typeOf(element)).value() }).first);
@@ -380,9 +383,6 @@ void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& va
         LBasicBlock holdsAnyValue = newBlock();
         LBasicBlock liesInFrame = newBlock();
         LBasicBlock isOnHeap = newBlock();
-        LBasicBlock mayHoldNumbers = newBlock();
-        LBasicBlock isYoung = newBlock();
-        LBasicBlock isShort = newBlock();
         branch(belowOrEqual(sub(shape, word32(UndecidedShape)), word32(Int32Shape - UndecidedShape)), { rareEdge(converts), normalEdge(isOfOtherKind) });
 
         m_out.appendTo(isOfOtherKind);
@@ -403,15 +403,6 @@ void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& va
         m_out.jump(continuation);
 
         m_out.appendTo(isOnHeap);
-        branch(below(loadMutable32(AOT_INSTANCE_OFFSET(arrays.elementsLookedAtInVain)), word32(ArrayWords::maxElementsLookedAtInVain)), { normalEdge(mayHoldNumbers), normalEdge(continuation) });
-
-        m_out.appendTo(mayHoldNumbers);
-        branch(equal(state, word32(static_cast<int32_t>(CellState::PossiblyBlack))), { rareEdge(converts), normalEdge(isYoung) });
-
-        m_out.appendTo(isYoung);
-        branch(below(publicLength(elementsOf(array)), integer(ArrayWords::minLengthThatPaysAtOnce)), { normalEdge(isShort), rareEdge(converts) });
-
-        m_out.appendTo(isShort);
         m_out.store32(word32(static_cast<int32_t>(numberOfPlace)).value(), mutableInstanceField(AOT_INSTANCE_OFFSET(arrays.placeThatConverts)));
         m_out.jump(converts);
     } else

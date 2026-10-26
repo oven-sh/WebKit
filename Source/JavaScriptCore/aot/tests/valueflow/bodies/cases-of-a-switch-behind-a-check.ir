@@ -53,7 +53,7 @@
 module m0 path="main.js" displayPath="main.js"
 entry module=m0
 function f0 name="caseOfTexts" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=string
+    v1 = Check v0 expectedType=string
     SwitchString v1 strings=["a", "b"] -> case b1(| 0), case b2(| 0), otherwise b3()
   b1(v2):
     Return v2
@@ -63,7 +63,7 @@ function f0 name="caseOfTexts" parameters=[{type=anything}] results=[{type=anyth
     Return v1
 }
 function f1 name="caseOfIntegers" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     Switch v1 cases=[0, 1] -> case b1(| 0), case b2(| 0), otherwise b3()
   b1(v2):
     Return v2
@@ -73,7 +73,7 @@ function f1 name="caseOfIntegers" parameters=[{type=anything}] results=[{type=an
     Return v1
 }
 function f2 name="caseOfATextThatTheCheckTurnsAway" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     SwitchString v1 strings=["c"] -> case b1(| 0), otherwise b2()
   b1(v2):
     Return v2

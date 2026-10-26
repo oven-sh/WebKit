@@ -70,11 +70,6 @@ struct FaultSiteWord {
 
 static_assert(sizeof(FaultTableHeader) == 24 && sizeof(FaultCheckpoint) == 12 && sizeof(FaultSiteWord) == 8);
 
-constexpr uint64_t framelessStepBit = 1 << 0;
-constexpr uint64_t loopPollStepBit = 1 << 1;
-constexpr unsigned stepDistanceShift = 2;
-constexpr uint64_t maxStepSize = sizeOfVarint(static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) << stepDistanceShift | loopPollStepBit | framelessStepBit);
-
 struct FaultTableLayout {
     FaultTableLayout(uint64_t numberOfSites, uint64_t numberOfNullChecks, uint64_t numberOfFirstWords, uint64_t numberOfSecondWords, uint64_t numberOfThirdWords)
         : numberOfCheckpoints((numberOfSites + faultSitesBetweenCheckpoints - 1) / faultSitesBetweenCheckpoints)
@@ -104,11 +99,12 @@ struct FaultTableLayout {
 };
 
 struct CollectedSite {
-    bool isNullCheck() const { return !(stepBits & loopPollStepBit); }
-    uint64_t stepFrom(uint32_t previousOffset) const { return static_cast<uint64_t>(offset - previousOffset) << stepDistanceShift | stepBits; }
+    bool isNullCheck() const { return !isLoopPoll; }
+    FaultStep stepFrom(uint32_t previousOffset) const { return { .isFrameless = isFrameless, .isLoopPoll = isLoopPoll, .distance = offset - previousOffset }; }
 
     uint32_t offset;
-    uint8_t stepBits;
+    bool isFrameless;
+    bool isLoopPoll;
     uint8_t numberOfWords;
     std::array<uint32_t, FaultSite::maxThrowSiteWords> words;
 };
@@ -122,10 +118,10 @@ void addFaultSites(Vector<CollectedSite>& sites, const CompiledCode& code, uint3
             frameRanges = frameRanges.subspan(1);
         return !frameRanges.empty() && frameRanges.front().begin <= ascendingOffset;
     };
-    auto add = [&](uint32_t offsetInBody, uint64_t stepBits, std::span<const uint32_t> words) {
+    auto add = [&](uint32_t offsetInBody, bool isFrameless, bool isLoopPoll, std::span<const uint32_t> words) {
         uint64_t offset = static_cast<uint64_t>(bodyStart) + offsetInBody;
         RELEASE_ASSERT(offset <= std::numeric_limits<uint32_t>::max() && words.size() <= FaultSite::maxThrowSiteWords);
-        sites.append(CollectedSite { static_cast<uint32_t>(offset), static_cast<uint8_t>(stepBits), static_cast<uint8_t>(words.size()), { } });
+        sites.append(CollectedSite { static_cast<uint32_t>(offset), isFrameless, isLoopPoll, static_cast<uint8_t>(words.size()), { } });
         std::ranges::copy(words, sites.last().words.begin());
     };
     std::span accesses = code.sites.faultingAccesses.span();
@@ -134,13 +130,13 @@ void addFaultSites(Vector<CollectedSite>& sites, const CompiledCode& code, uint3
         if (polls.empty() || (!accesses.empty() && accesses.front().codeOffset < polls.front().offset)) {
             const FaultingAccess& access = accesses.front();
             RELEASE_ASSERT(!access.throwSite.isEmpty());
-            add(access.codeOffset, hasFrameAt(access.codeOffset) ? 0 : framelessStepBit, access.throwSite.span());
+            add(access.codeOffset, !hasFrameAt(access.codeOffset), false, access.throwSite.span());
             accesses = accesses.subspan(1);
             continue;
         }
         const PollSite& poll = polls.front();
         RELEASE_ASSERT(poll.callerIsFrameless == !hasFrameAt(poll.offset));
-        add(poll.offset, loopPollStepBit | (poll.callerIsFrameless ? framelessStepBit : 0), { });
+        add(poll.offset, poll.callerIsFrameless, true, { });
         polls = polls.subspan(1);
     }
 }
@@ -177,10 +173,10 @@ Vector<uint8_t> encodeFaultTable(std::span<const CollectedSite> sites, const Par
         uint32_t previousOffset = block ? sites[block * faultSitesBetweenCheckpoints - 1].offset : 0;
         uint32_t offsetBeforeBlock = previousOffset;
         uint32_t nullChecksInBlock = 0;
-        steps[block].reserveInitialCapacity(sitesOf(block).size() * maxStepSize);
+        steps[block].reserveInitialCapacity(sitesOf(block).size() * FaultStep::maxSize);
         for (const CollectedSite& site : sitesOf(block)) {
             RELEASE_ASSERT(site.offset > previousOffset);
-            appendVarint(steps[block], site.stepFrom(previousOffset));
+            site.stepFrom(previousOffset).append(steps[block]);
             previousOffset = site.offset;
             nullChecksInBlock += site.isNullCheck();
         }
@@ -313,7 +309,7 @@ Vector<uint8_t> encodeFaultSites(const LinkedFunctions& functions, std::span<con
         return { };
 
     // Once a Vector can hold this many bytes, no list of the encoder overflows and every count fits 32 bits.
-    uint64_t maxSectionSize = FaultTableLayout(numberOfSites, numberOfNullChecks, numberOfNullChecks, numberOfNullChecks, numberOfNullChecks).sizeWithSteps(numberOfSites * maxStepSize);
+    uint64_t maxSectionSize = FaultTableLayout(numberOfSites, numberOfNullChecks, numberOfNullChecks, numberOfNullChecks, numberOfNullChecks).sizeWithSteps(numberOfSites * FaultStep::maxSize);
     if (!checkSectionSize(std::max<uint64_t>(maxSectionSize, numberOfSites * sizeof(CollectedSite)), context))
         return { };
 
@@ -345,17 +341,16 @@ std::optional<FaultSite> Image::faultSiteAt(const void* pc) const
     uint64_t currentOffset = checkpoint->previousSiteOffset;
     uint32_t nullCheck = checkpoint->firstNullCheck;
     for (uint32_t i = 0; i < numberOfSteps; ++i) {
-        uint64_t step = readVarint(cursor);
-        bool isLoopPoll = !!(step & loopPollStepBit);
-        currentOffset += step >> stepDistanceShift;
+        FaultStep step = FaultStep::read(cursor);
+        currentOffset += step.distance;
         if (currentOffset < offset) {
-            nullCheck += !isLoopPoll;
+            nullCheck += !step.isLoopPoll;
             continue;
         }
         if (currentOffset > offset)
             return std::nullopt;
-        bool hasFrame = !(step & framelessStepBit);
-        if (isLoopPoll)
+        bool hasFrame = !step.isFrameless;
+        if (step.isLoopPoll)
             return FaultSite { FaultSiteKind::LoopPoll, hasFrame, { } };
         return FaultSite { FaultSiteKind::NullCheck, hasFrame, table.throwSiteOf(nullCheck) };
     }

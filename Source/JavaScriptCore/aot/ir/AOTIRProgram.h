@@ -63,6 +63,7 @@ public:
     bool ownsBuffer() const { return !m_bytes.owned.isEmpty(); }
     std::span<const uint8_t> copyBorrowedBytes(std::span<const uint8_t>, const ParallelLoops&);
     void copyBorrowedLineStarts(const ParallelLoops&);
+    void collectConstructionStarts();
     void adoptBuffer(Vector<uint8_t>&&);
 
     StringTable strings;
@@ -95,13 +96,13 @@ public:
     const ExpectedResult& at(ExpectedResultID id) const { return expectedResults[id.index()]; }
     const Data& at(DataID id) const { return data[id.index()]; }
     const Type& at(TypeID id) const { return types.at(id); }
-    TypeID provenTypeOf(const DeclaredType& declared) const { return types.provenTypeOf(declared); }
+    ProvenInEveryVersion provenTypeOf(const DeclaredType& declared) const { return types.provenTypeOf(declared); }
     const LayoutSet& at(LayoutSetID id) const { return types.at(id); }
     const CalleeSet& at(CalleeSetID id) const { return types.at(id); }
     const PropertyKey& at(PropertyKeyID id) const { return types.at(id); }
 
     const Type& typeOf(const Function& function, ValueID value) const { return types.at(function.at(value).type); }
-    const Type& expectedOrTypeOf(const Function& function, ValueID value) const { return types.at(function.at(value).expectedOrType()); }
+    const Type& expectedOrTypeOf(const Function& function, ValueID value) const { return types.at(function.at(value).expectedOrType().predicted()); }
     const Function& sourceFunctionOf(const Function& function, Origin origin) const { return origin.inlineFrame ? at(function.inlineFrames[origin.inlineFrame].callee) : function; }
     const Function& sourceFunctionOf(const Function& function, const Instruction& instruction) const { return sourceFunctionOf(function, instruction.origin()); }
 
@@ -169,6 +170,8 @@ public:
 
     bool isEntry(FunctionID) const;
     LineColumn lineColumnFor(ModuleID, uint32_t position) const;
+    // A stack trace reports a construction at its callee. Call sites and the report of an uncaught error show where the expression starts.
+    const ConstructionStart* findConstructionReportedAt(ModuleID, uint32_t position) const;
     StringID pathForLineColumns(ModuleID) const;
 
 private:
@@ -213,6 +216,7 @@ private:
     const ProvisionalFunctions* m_provisionalFunctions { nullptr };
     Bytes m_bytes;
     CountsAsRead m_countsAsRead;
+    Vector<Vector<ConstructionStart>> m_constructionStartsOfModules;
     bool m_readerPreparedFunctionsForTyping { false };
     std::optional<BodiesAsRead> m_bodiesAsRead;
     DerivedTables m_derivedTables;
@@ -241,6 +245,8 @@ bool isBundlerHelperNamedByProgram(const Program&, ModuleID);
 ModuleID compiledModuleWithObject(const Program&, BuiltinID);
 ModuleID commonJsModuleCapturedBy(const Program&, const Module& face);
 bool namesWaysToModuleObjects(const Program&);
+// `require` hands the module to this function of the host, so a stack trace lists it between what the module runs and the code that called `require`.
+BuiltinID functionOfHostThatRequireCallsFor(const Module&);
 // From SplitCoroutines on.
 bool isBodyOfModuleEvaluatedByRequire(const Program&, const Function&);
 

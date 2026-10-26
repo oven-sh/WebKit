@@ -17,6 +17,7 @@ set(JavaScriptCore_AOT_SCHEMA_INPUTS
     aot/ir/schema/placed-operations.def
     aot/ir/schema/inline-builtins.def
     aot/ir/schema/runtime-records.def
+    aot/ir/schema/image-tables.def
     aot/ir/schema/runtime-operations.def
     aot/ir/schema/runtime-property-operations.def
     aot/ir/schema/runtime-builtin-operations.def
@@ -45,6 +46,7 @@ set(JavaScriptCore_AOT_SCHEMA_GENERATED_HEADERS
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperationDispatch.inc"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOperations.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaOptionWords.inc"
+    "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaPackedRecords.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaParser.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaPayloadPositions.h"
     "${JavaScriptCore_AOT_GENERATED_DIR}/AOTSchemaPayloadWords.h"

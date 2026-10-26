@@ -1,0 +1,17 @@
+# function main(count: number) { count + 1; count + "tail"; return 1 }
+# Neither addition throws or runs code for operands of these types, and nobody uses the results: EliminateDeadCode takes them out, and a build that verifies each pass has nothing to say.
+# FORM: Prepared
+# RUN: pass EliminateDeadCode
+# OPTIONS: check=VerifyEachPass
+# CHECK: outcome: Changed
+# CHECK-NOT: = Add
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="main" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    v3 = String string="tail"
+    v4 = Add v0, v3
+    Return v1
+}

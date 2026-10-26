@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTSlotRepresentation.h"
+#include "AOTStubFrontEnds.h"
 #include "AOTStubsPropertyProbes.h"
 #include <algorithm>
 #include <array>
@@ -176,6 +177,7 @@ void appendFieldToKeyOrder(StubAssembler&, const KeyOrderRegisters&, JumpList& h
 void listCreatedFieldAndReturn(StubAssembler&, const KeyOrderRegisters&, GPRReg value, std::optional<FieldOfLayout> known = std::nullopt);
 // Gives the field of slotData its granule, in the stub or by the run time, and goes on at findStorage. Writes address, representation and secondScratch.
 void createGranuleOfField(StubAssembler&, const FieldStoreRegisters&, const ScopedLambda<void()>& loadOffsetOfExtensionWord, Label findStorage);
+PreludeExit emitPrivateDefinePrelude(StubAssembler&);
 
 inline constexpr uint32_t offsetBitsWithoutSlotKey = SlotData::maxOffset & ~(outOfLineSlotKey - 1);
 

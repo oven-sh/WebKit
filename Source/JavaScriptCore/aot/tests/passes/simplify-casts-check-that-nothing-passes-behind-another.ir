@@ -3,16 +3,16 @@
 # Its type and the types behind it would be out of date, so it goes on reading the value it read
 # FORM: Prepared
 # RUN: pass SimplifyCasts VerifyProgram
-# CHECK: v1: L0|L1 = Check v0 castType=L0|L1
-# CHECK-NEXT: v2: L2 = Check v0 castType=undefined|L2
+# CHECK: v1: L0|L1 = Check v0 expectedType=L0|L1
+# CHECK-NEXT: v2: L2 = Check v0 expectedType=undefined|L2
 
 module m0 path="main.ts" displayPath="main.ts"
 layout L0 name="A"
 layout L1 name="B"
 layout L2 name="C"
 function f0 name="twoChecks" parameters=[{type=L0|L1|L2}] results=[{type=anything}] {
-    v1 = Check v0 castType=L0|L1
-    v2 = Check v0 castType=undefined|L2
+    v1 = Check v0 expectedType=L0|L1
+    v2 = Check v0 expectedType=undefined|L2
     v3 = NewArray v1, v2 contents=anything
     Return v3
 }

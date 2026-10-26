@@ -148,8 +148,9 @@ static void describeConversion(const BuiltinParameter& parameter, const Type& op
     description.addOwn(effects);
 }
 
-static void describeOperandsOf(const Program& program, const BuiltinOverload& overload, const Type* receiver, std::span<const TypeID> arguments, EffectDescription& description)
+static void describeOperandsOf(const Program& program, const BuiltinOverload& overload, TypeID receiverID, std::span<const TypeID> arguments, EffectDescription& description)
 {
+    const Type* receiver = receiverID ? &program.at(receiverID) : nullptr;
     for (const BuiltinParameter& parameter : overload.parameters) {
         size_t first = parameter.operand.argumentIndex();
         if (first >= arguments.size())
@@ -159,12 +160,12 @@ static void describeOperandsOf(const Program& program, const BuiltinOverload& ov
             describeConversion(parameter, program.at(argument), description);
     }
     if (receiver) {
-        describeOperandCode(program, *receiver, declaredBehaviorOf(overload, BuiltinOperand::receiver()), description);
+        describeOperandCode(program, receiverID, declaredBehaviorOf(overload, BuiltinOperand::receiver()), description);
         if (receiver->mayBeUndefinedOrNull())
             description.addThrow();
     }
     for (unsigned index = 0; index < arguments.size(); ++index)
-        describeOperandCode(program, program.at(arguments[index]), behaviorOfArgument(overload, index), description);
+        describeOperandCode(program, arguments[index], behaviorOfArgument(overload, index), description);
     if (overload.onlyPropagatesErrors() && mayFailOnOperands(program, overload, receiver, arguments))
         description.addThrow();
 }
@@ -187,9 +188,8 @@ static void describeUntypedCall(const Program& program, const BuiltinOverload& o
     case OperandCode::IsDeclaredByParameters:
         break;
     }
-    const Type& anything = program.at(TypeTable::anything);
-    describeOperandsOf(program, overload, overload.receiver ? &anything : nullptr, { }, description);
-    describeArgumentsOfType(program, overload, anything, description);
+    describeOperandsOf(program, overload, overload.receiver ? TypeTable::anything : TypeID(), { }, description);
+    describeArgumentsOfType(program, overload, program.at(TypeTable::anything), description);
 }
 
 void describeCallOf(const Program& program, BuiltinID builtin, BuiltinCallMode mode, EffectDescription& description)
@@ -206,12 +206,12 @@ void describeCallOf(const Program& program, BuiltinID builtin, BuiltinCallMode m
         description.addThrow();
 }
 
-void describeOverload(const Program& program, BuiltinOverloadID id, const Type* receiver, std::span<const TypeID> arguments, EffectDescription& description)
+void describeOverload(const Program& program, BuiltinOverloadID id, TypeID receiver, std::span<const TypeID> arguments, EffectDescription& description)
 {
     const BuiltinOverload& overload = program.builtins().at(id);
     switch (describeCodeOf(program, overload, description)) {
     case OperandCode::IsDescribed:
-        if (receiver && receiver->mayBeUndefinedOrNull())
+        if (receiver && program.at(receiver).mayBeUndefinedOrNull())
             description.addThrow();
         return;
     case OperandCode::IsDeclaredByParameters:
@@ -272,7 +272,7 @@ static bool isDeclaredByParameters(const BuiltinOverload& overload)
     return !overload.isUndeclared() && !overload.libraryFunction() && !isDescribedByModel(overload);
 }
 
-void describeOperandsOfCall(const Program& program, BuiltinID builtin, BuiltinCallMode mode, BuiltinCallForm form, const Type& receiver, std::span<const TypeID> arguments, EffectDescription& description)
+void describeOperandsOfCall(const Program& program, BuiltinID builtin, BuiltinCallMode mode, BuiltinCallForm form, TypeID receiver, std::span<const TypeID> arguments, EffectDescription& description)
 {
     RELEASE_ASSERT(form == BuiltinCallForm::Whole || form == BuiltinCallForm::List);
     const BuiltinTable& table = program.builtins();
@@ -282,11 +282,11 @@ void describeOperandsOfCall(const Program& program, BuiltinID builtin, BuiltinCa
         if (form == BuiltinCallForm::List)
             describeListElements(program, overload, arguments, description);
         else
-            describeOperandsOf(program, overload, overload.receiver ? &receiver : nullptr, arguments, description);
+            describeOperandsOf(program, overload, overload.receiver ? receiver : TypeID(), arguments, description);
     }
 }
 
-void describeOverload(const Program& program, BuiltinOverloadID id, BuiltinCallForm form, const Type* receiver, std::span<const TypeID> arguments, EffectDescription& description)
+void describeOverload(const Program& program, BuiltinOverloadID id, BuiltinCallForm form, TypeID receiver, std::span<const TypeID> arguments, EffectDescription& description)
 {
     const BuiltinOverload& overload = program.builtins().at(id);
     switch (form) {
@@ -297,7 +297,7 @@ void describeOverload(const Program& program, BuiltinOverloadID id, BuiltinCallF
         return;
     case BuiltinCallForm::AnyReceiver:
         describeCallOf(program, overload.builtin, overload.mode, description);
-        describeOperandsOfCall(program, overload.builtin, overload.mode, BuiltinCallForm::Whole, receiver ? *receiver : program.at(TypeTable::undefined), arguments, description);
+        describeOperandsOfCall(program, overload.builtin, overload.mode, BuiltinCallForm::Whole, receiver ? receiver : TypeTable::undefined, arguments, description);
         return;
     case BuiltinCallForm::List:
         describeListCall(program, overload, arguments, description);
@@ -315,11 +315,6 @@ static BuiltinOperandTypes provenOperandTypesOf(const Function& function, const 
     for (ValueID argument : call.arguments)
         types.arguments.append(function.at(argument).type);
     return types;
-}
-
-static const Type* receiverTypeOf(const Program& program, const BuiltinOperandTypes& types)
-{
-    return types.receiver ? &program.at(types.receiver) : nullptr;
 }
 
 static Effects dependencyReadsOf(const Program& program, Proof proof)
@@ -342,7 +337,7 @@ void describeBuiltinCall(const Program& program, const Function& function, const
 {
     BuiltinCall call = builtinCallOf(program, value);
     BuiltinOperandTypes types = provenOperandTypesOf(function, call);
-    describeOverload(program, call.overload, call.form, receiverTypeOf(program, types), types.arguments.span(), description);
+    describeOverload(program, call.overload, call.form, types.receiver, types.arguments.span(), description);
     if (value.needsPristineReceiver())
         description.addOwn(dependencyReadsOf(program, Proof::Pristine));
     describeTypedResult(program, call.overload, value.expectedResult(), description);
@@ -351,9 +346,8 @@ void describeBuiltinCall(const Program& program, const Function& function, const
 static void describeInline(const Program& program, const Function& function, const BuiltinCall& call, InlineBuiltin builtin, EffectDescription& description)
 {
     BuiltinOperandTypes types = provenOperandTypesOf(function, call);
-    const Type* receiver = receiverTypeOf(program, types);
     if (hasEffectsOfOverload(builtin)) {
-        describeOverload(program, call.overload, call.form, receiver, types.arguments.span(), description);
+        describeOverload(program, call.overload, call.form, types.receiver, types.arguments.span(), description);
         description.slowPathFunctions.clear();
         return;
     }
@@ -367,7 +361,7 @@ static void describeInline(const Program& program, const Function& function, con
     case BuiltinCallForm::Whole:
     case BuiltinCallForm::Fields:
     case BuiltinCallForm::Prefix:
-        describeOperandsOf(program, overload, receiver, types.arguments.span(), description);
+        describeOperandsOf(program, overload, types.receiver, types.arguments.span(), description);
         return;
     case BuiltinCallForm::AnyReceiver:
         description.addUnknownCode();

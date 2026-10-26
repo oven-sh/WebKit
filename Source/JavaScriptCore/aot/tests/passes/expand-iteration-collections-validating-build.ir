@@ -23,7 +23,7 @@ function f0 name="setOfNumbers" parameters=[{type=Set<number, proven, pristine[N
 # CHECK: Branch {{*}} -> taken [[found0]](), notTaken {{*}}()
 # CHECK: [[found0]]():
 # CHECK-NEXT: ValidateType [[element0]] validatedType=number
-# CHECK-NEXT: [[number0]]: number = AssumeType [[element0]] castType=number
+# CHECK-NEXT: [[number0]]: number = AssumeType [[element0]] provenType=number
 # CHECK-NEXT: = CollectionTable v0
 }
 
@@ -44,9 +44,9 @@ function f1 name="mapOfNumbers" parameters=[{type=Map<number, number, proven, pr
 # CHECK: Branch {{*}} -> taken [[found1]](), notTaken {{*}}()
 # CHECK: [[found1]]():
 # CHECK-NEXT: ValidateType [[key1]] validatedType=number
-# CHECK-NEXT: = AssumeType [[key1]] castType=number
+# CHECK-NEXT: = AssumeType [[key1]] provenType=number
 # CHECK-NEXT: ValidateType [[value1]] validatedType=number
-# CHECK-NEXT: = AssumeType [[value1]] castType=number
+# CHECK-NEXT: = AssumeType [[value1]] provenType=number
 # CHECK-NEXT: = CollectionTable v0
 }
 

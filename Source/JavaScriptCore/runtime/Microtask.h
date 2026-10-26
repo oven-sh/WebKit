@@ -73,6 +73,7 @@ enum class InternalMicrotask : uint8_t {
     CompiledModuleBodyResume,
     CompiledModuleImport,
     CompiledModuleImportSettled,
+    CompiledModuleImportStep,
 #endif
     ModuleRegistryFetchSettled,
     ModuleRegistryModuleSettled,

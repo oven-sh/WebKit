@@ -321,7 +321,7 @@ struct RangeMatcher {
         auto collect = [&](const StringRangeSource& source, Vector<ValueID, 4>&& worklist, Vector<ValueID, 4>& narrowedStrings) {
             while (!worklist.isEmpty()) {
                 for (const Use& use : useLists.usesOf(worklist.takeLast())) {
-                    if (use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::Upcast) {
+                    if (use.kind == Use::Kind::Operand && isCastThatProvesNothing(function.at(use.user).opcode)) {
                         result.upcasts.append(use.user);
                         worklist.append(use.user);
                         continue;

@@ -1,10 +1,10 @@
 # class A { m() { this.x } }  function run(o) { o.m() }  run(new A()); run(undefined); run(null); run(1)
-# The read of `m` throws on undefined and null, so neither arrives as `this`. A number does: no lookup says which function it answers, so every callee of the call gets it.
+# The read of `m` throws on undefined and null, so neither arrives as `this`. A number asks the prototype object of numbers, which holds no `m`: it arrives at no function either.
 # RUN: valueflow-why values=f3:v2 values=f2:v1
 # CHECK: values=f3:v2
 # CHECK: operand 1 {{*}} 4 members: primitive{{*}} primitive{{*}} primitive{{*}} [[a]]
 # CHECK: values=f2:v1
-# CHECK: operand 0 {{*}} 2 members: primitive{{*}} [[a]]
+# CHECK: operand 0 {{*}} 1 members: [[a]]
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

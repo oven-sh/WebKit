@@ -365,7 +365,7 @@ static LayoutSetID computeMembersWhoseFieldCannotHold(const Program& program, co
             continue;
         if (level == TypeLevel::Proven && (!staysFilled(program, *field) || (readType.mayBeUndefinedOrNull() && slotHoldsUndefinedAndNull(program, *field))))
             continue;
-        TypeID fieldType = level == TypeLevel::Proven ? slotTypeOf(program, fieldAt(program, *field)) : fieldAt(program, *field).declared.type;
+        TypeID fieldType = level == TypeLevel::Proven ? slotTypeOf(program, fieldAt(program, *field)) : fieldAt(program, *field).declared.expected().predicted();
         bool cannotHold = cannotHoldByFieldType.ensure(fieldType, [&] {
             return program.at(fieldType).intersectWith(readType, types).isNever();
         }).iterator->value;

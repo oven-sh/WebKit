@@ -2,7 +2,7 @@
 # The parser makes its objects with the layout of the literal and puts a number into the field, so the field of L0 holds values, and the getter of the literal stays an extra property.
 # The literal of L1 is the only birth of its layout: its getter lies in the slot.
 # FORM: AsRead
-# RUN: valueflow-apply
+# RUN: pipeline ApplyFlowResults
 # CHECK: layout L0 name="Sized"
 # CHECK-NOT: IsAccessor
 # CHECK: IsParsedByType

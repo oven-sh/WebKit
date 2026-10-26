@@ -269,7 +269,7 @@ bool ObjectBuilder::tryStoreDouble(unsigned index, double number)
 {
     const ObjectBuilderPlan::PlannedField& planned = m_plan.m_fields[index];
     if (!planned.acceptsEveryNumber || !tryWriteDouble(planned.field->slot.representation(), slotOf(*planned.field), number))
-        return tryStore(index, jsNumber(purifyNaN(number)));
+        return tryStore(index, jsNumber(withoutPayload(number)));
     m_granuleBits |= granuleBitsOf(*planned.field);
     didStore(index);
     return true;

@@ -75,8 +75,8 @@ AOT_THRESHOLD(unsigned, maxFollowedArrays, 32);
 bool mayPutSomeArrayInFrame(const Program&, const FlowResults&, const BuildContext&, const Function&);
 
 FramePlan planFrame(FunctionAnalyses&, const Heat&);
-// Of a closure or an object: planFrame() leaves it on the heap, whatever the analyses say of its uses, and records no more than that and whether the closure table holds it.
-bool staysOnHeapByForm(const Program&, const FlowResults&, const BuildContext&, const Value& allocation);
+// Of a closure or an object: whatever the analyses say of its uses, planFrame() leaves it on the heap and records no more than that and what isLikeEveryClosureOfItsFunction() says.
+bool staysOnHeapByForm(const Program&, const FlowResults&, const BuildContext&, const Function& maker, const Value& allocation);
 bool isLikeEveryClosureOfItsFunction(const Program&, const FlowResults*, const Function& maker, const Value& closure);
 
 // A closure of the frame in whose place this use is going to take a closure of the heap, which is made in front of it.

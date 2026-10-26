@@ -7,7 +7,7 @@ family FusedAccess Selected..Placed ; accessClass = ByName
 operation PropGetChain (object: Any/inspects, key: PropertyKey, secondKey: PropertyKey, readOrigin: Origin, with AccessStamp, secondAccessSite?: AccessSite) -> unknown ; unknownCode ; replaces = PropGet
 operation PropGetPair (object: Any/inspects, other?: Any/inspects, key: PropertyKey, secondKey: PropertyKey, readOrigin: Origin, with AccessStamp, secondAccessSite?: AccessSite) [readsFromFirstResult] -> results(unknown, unknown) ; unknownCode ; replaces = PropGet
 operation PropGetAndTest (object: Any/inspects, key: PropertyKey, comparedString?: String, with AccessStamp) -> natural(boolean) ; unknownCode ; replaces = PropGet, ToBoolean, StrictEq ; branches = Only
-operation CallMethod (receiver: Any/retains, arguments...: Any/retains, key: PropertyKey, calleeName?: String, readOrigin: Origin, with AccessStamp, callees?: CalleeSet, callAccessSite?: AccessSite) [isDemotedTailCall] -> unknown ; unknownCode ; replaces = PropGet, Call ; accessClass = IndirectCall ; siteCaches = 1
+operation CallMethod (receiver: Any/retains, arguments...: Any/retains, key: PropertyKey, calleeName?: String, readOrigin: Origin, with AccessStamp, callees?: CalleeSet, callAccessSite?: AccessSite) -> unknown ; unknownCode ; replaces = PropGet, Call ; accessClass = IndirectCall ; siteCaches = 1 ; runsBeforeCallee = true
 operation TryPutByIds (object: Object/inspects, keys: List<PropertyKey>, values...: Any/retains(object), from Placed request?: Request, from Placed siteCache?: SiteCache) [isDefinition] -> natural(boolean) ; Allocates reads(ShapeWords, OrderWords, NamedProperties, ObjectFields) writes(ShapeWords, MemberGuards, OrderWords, NamedProperties, ObjectFields, RuntimeState) ; replaces = PropSet, PropDefine ; runtime = TryPutProperties ; siteCaches = 1
 
 family SlotRun Selected..Placed ; accessClass = Slot
@@ -64,12 +64,12 @@ operation HasByKeyParts (collection: Object/inspects+readsContents, parts...: An
 
 family ResolvedCall Selected..Placed
 operation ResolveCallTarget (callee: Any/inspects, argumentCount: UInt32) -> natural(CodeAddress) ; none
-operation CallResolved (callee: Any/calls, target: CodeAddress/inspects, thisValue?: Any/retains, arguments...: Any/retains, calleeName?: String, with CallStamp) [isDemotedTailCall] -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; replaces = Call
+operation CallResolved (callee: Any/calls, target: CodeAddress/inspects, thisValue?: Any/retains, arguments...: Any/retains, calleeName?: String, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; replaces = Call ; runsBeforeCallee = true
 operation RegExpMatchLiteral (overload: BuiltinOverload, string: String/inspects, regExp?: Object/inspects, guard?: Guard/inspects, pattern: String, regExpFlags: RegExpFlags, matchForm: RegExpMatchForm, from Placed regExpRecord?: RegExpRecord) -> declared(overload) ; CreatesString reads(RegExpState) writes(RegExpState) ; relies = Pristine ; guarded = regExp ; replaces = CallBuiltin
 
 family InlineBuiltin Selected..Placed ; replaces = CallBuiltin
-operation CallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt32>, overload: BuiltinOverload, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, accessSite?: AccessSite, allocationSite?: AllocationSite) [isDemotedTailCall] -> declared(overload) ; unknownCode by Inline ; accessClass = DirectCall
+operation CallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt32>, overload: BuiltinOverload, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, accessSite?: AccessSite, allocationSite?: AllocationSite) -> declared(overload) ; unknownCode by Inline ; accessClass = DirectCall
 terminator TryCallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt32>, overload: BuiltinOverload, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, accessSite?: AccessSite, allocationSite?: AllocationSite) -> done(declared(overload)), miss ; unknownCode by Inline ; accessClass = DirectCall
 
 family Control Selected..Placed
-terminator TestAndBranch (condition: Boolean/inspects) -> taken(proof), notTaken(proof) ; none ; replaces = Branch
+terminator TestAndBranch (condition: Boolean/inspects) -> taken(proof), notTaken(proof) ; none ; replaces = Branch ; canStartRegion = true ; canEndInteriorBlock = true ; canEndBlockOfHead = true

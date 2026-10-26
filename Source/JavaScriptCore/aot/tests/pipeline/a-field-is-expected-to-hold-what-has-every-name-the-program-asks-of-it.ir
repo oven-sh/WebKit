@@ -53,7 +53,7 @@ function f3 name="Wrapper" kind=BaseConstructor flags=[HasNewTarget] parameters=
     v2 = GetConstructPrototype v0 layout=L2
     v3 = NewObject v2 layout=L2
     PropSet v3, v1 key="req" mode=Strict
-    PropSet v3, v1 key="one" mode=Strict
+    PropSet v3, v0 key="one" mode=Strict
     Return v3
 }
 function f4 name="method" parameters=[{type=L2 flags=[IsExpected]}] results=[{type=anything}] {

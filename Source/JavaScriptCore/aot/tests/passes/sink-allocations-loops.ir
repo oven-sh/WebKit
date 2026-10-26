@@ -216,7 +216,7 @@ function f8 name="literalsReplacedByCallResultInLoop" parameters=[{type=anything
     v15 = Add v9, v14
     Jump -> next b4(v13, v15)
   b6():
-    v16 = AssumeType v8 castType=L0
+    v16 = AssumeType v8 provenType=L0
     v17 = ToBoolean v0
     Branch v17 -> taken b7(), notTaken b8()
   b7():

@@ -85,7 +85,10 @@ void MemoryNumbering::beginWalk(Dominators& dominators)
     m_loadsToLog.shrink(0);
     m_storesToLog.clear();
     m_lastMemoryStateID = noID;
-    m_memoryStateAtTail.fill(MemoryState { }, m_proc.size());
+    m_memoryState = { };
+    m_stateNumberAtTail.fill(0, m_proc.size());
+    m_statesAtTails.shrink(0);
+    m_statesAtTails.append(MemoryState { });
     recordLoopWrites();
 }
 
@@ -97,10 +100,9 @@ void MemoryNumbering::enterBlock(BasicBlock* block)
     m_heapEpochs.startLayer();
 
     MemoryState& state = m_memoryState;
-    const MemoryState unvisitedBlockState { };
     bool isFirst = true;
     for (BasicBlock* predecessor : block->predecessors()) {
-        const MemoryState& atTail = predecessor->index() < m_memoryStateAtTail.size() ? m_memoryStateAtTail[predecessor->index()] : unvisitedBlockState;
+        const MemoryState& atTail = stateAtTail(predecessor);
         if (isFirst) {
             if (state.id != atTail.id || state.id == noID)
                 state = atTail;
@@ -140,8 +142,14 @@ MemoryNumbering::Result MemoryNumbering::numberValue(Value* current, Opcode opco
 
 void MemoryNumbering::didFinishBlock(BasicBlock* block)
 {
-    if (block->index() < m_memoryStateAtTail.size())
-        m_memoryStateAtTail[block->index()] = m_memoryState;
+    if (!hasStateAtTail(block))
+        return;
+    if (m_memoryState.keptID != m_memoryState.id) {
+        m_memoryState.keptID = m_memoryState.id;
+        m_memoryState.keptNumber = m_statesAtTails.size();
+        m_statesAtTails.append(m_memoryState);
+    }
+    m_stateNumberAtTail[block->index()] = m_memoryState.keptNumber;
 }
 
 void MemoryNumbering::leaveDominatorSubtree()
@@ -251,11 +259,11 @@ bool MemoryNumbering::inheritStateFromBeforeLoop(BasicBlock* header, MemoryState
         return false;
     const MemoryState* entryState = nullptr;
     for (BasicBlock* predecessor : header->predecessors()) {
-        if (predecessor->index() >= m_memoryStateAtTail.size())
+        if (!hasStateAtTail(predecessor))
             return false;
         if (m_loops->belongsTo(predecessor, *loop))
             continue;
-        const MemoryState& atTail = m_memoryStateAtTail[predecessor->index()];
+        const MemoryState& atTail = stateAtTail(predecessor);
         if (atTail.id == noID || (entryState && entryState->id != atTail.id))
             return false;
         entryState = &atTail;
@@ -298,9 +306,9 @@ bool MemoryNumbering::mergeSameEpochStates(BasicBlock* block, MemoryState& merge
         });
     };
     for (BasicBlock* predecessor : block->predecessors()) {
-        if (predecessor->index() >= m_memoryStateAtTail.size())
+        if (!hasStateAtTail(predecessor))
             return false;
-        const MemoryState& atTail = m_memoryStateAtTail[predecessor->index()];
+        const MemoryState& atTail = stateAtTail(predecessor);
         if (atTail.id == noID)
             return false;
         if (!numberOfPredecessors++) {

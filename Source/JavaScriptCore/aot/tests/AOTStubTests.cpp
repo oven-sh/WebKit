@@ -326,7 +326,7 @@ static void checkFrontEnds()
         AOT_TEST_CHECK(!rawOperations.testAndSet(indexOf(frontEnd.raw)));
         stubs.append(frontEnd.stub);
     }
-    AOT_TEST_CHECK(stubs.size() == 10);
+    AOT_TEST_CHECK(stubs.size() == 9);
     operations.filter(rawOperations);
     AOT_TEST_CHECK(operations.isEmpty());
     std::sort(stubs.begin(), stubs.end());
@@ -370,7 +370,7 @@ static void testHandlerTables()
     Vector<StubKey> allHandlers;
     for (SlotHandlerTable table : allSlotHandlerTables) {
         auto handlers = slotHandlerKeys(table);
-        for (Slot::Kind kind : allSlotKinds) {
+        for (Slot::Kind kind : slotKindsWithHandlers) {
             StubKey handler = handlers[static_cast<unsigned>(kind)];
             const StubDescriptor& descriptor = checkedHandlerDescriptor(handler);
             AOT_TEST_CHECK(descriptor.family == (isReadTable(table) ? StubFamily::ReadSlot : StubFamily::StoreSlot));

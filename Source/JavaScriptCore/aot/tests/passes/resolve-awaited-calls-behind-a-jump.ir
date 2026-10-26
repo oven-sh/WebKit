@@ -9,7 +9,7 @@ variable g0 name="count" module=m0 declared={type=anything} initialization=Undef
 function f0 name="callee" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=0} {
     v0 = NewPromise
     v1 = CallDirect v0 function=f1
-    v2 = AssumeType v1 castType=Promise
+    v2 = AssumeType v1 provenType=Promise
     Return v2
 }
 function f1 name="callee" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=0} {
@@ -21,7 +21,7 @@ function f1 name="callee" role=CoroutineBody flags=[IsAsync] parameters=[{type=u
 function f2 name="castsBehindTheJump" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=0} {
     v0 = NewPromise
     v1 = CallDirect v0 function=f3
-    v2 = AssumeType v1 castType=Promise
+    v2 = AssumeType v1 provenType=Promise
     Return v2
 }
 function f3 name="castsBehindTheJump" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f2} creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=0} {
@@ -41,7 +41,7 @@ function f3 name="castsBehindTheJump" role=CoroutineBody flags=[IsAsync] paramet
 function f4 name="twoJumpsAndAnEarlierAwait" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 entryWithoutPromise=f5 promiseType=Promise promiseParameter=0} {
     v0 = NewPromise
     v1 = CallDirect v0 function=f5
-    v2 = AssumeType v1 castType=Promise
+    v2 = AssumeType v1 provenType=Promise
     Return v2
 }
 function f5 name="twoJumpsAndAnEarlierAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f4} creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 entryWithoutPromise=f5 promiseType=Promise promiseParameter=0} {
@@ -68,7 +68,7 @@ function f5 name="twoJumpsAndAnEarlierAwait" role=CoroutineBody flags=[IsAsync] 
 function f6 name="storeBehindTheJump" role=CoroutineRamp flags=[IsAsync] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f6 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=0} {
     v0 = NewPromise
     v1 = CallDirect v0 function=f7
-    v2 = AssumeType v1 castType=Promise
+    v2 = AssumeType v1 provenType=Promise
     Return v2
 }
 function f7 name="storeBehindTheJump" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|Promise}] results=[{type=anything}] derivation={source=f6} creator=Coroutine{kind=AsyncFunction ramp=f6 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=0} {
@@ -88,7 +88,7 @@ function f7 name="storeBehindTheJump" role=CoroutineBody flags=[IsAsync] paramet
 function f8 name="blockEnteredTwice" role=CoroutineRamp flags=[IsAsync] parameters=[{type=boolean}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f8 body=f9 entryWithoutPromise=f9 promiseType=Promise promiseParameter=1} {
     v1 = NewPromise
     v2 = CallDirect v0, v1 function=f9
-    v3 = AssumeType v2 castType=Promise
+    v3 = AssumeType v2 provenType=Promise
     Return v3
 }
 function f9 name="blockEnteredTwice" role=CoroutineBody flags=[IsAsync] parameters=[{type=boolean}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f8 parameterMap=[{original=0}, {}]} creator=Coroutine{kind=AsyncFunction ramp=f8 body=f9 entryWithoutPromise=f9 promiseType=Promise promiseParameter=1} {

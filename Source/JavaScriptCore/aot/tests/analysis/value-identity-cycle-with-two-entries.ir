@@ -15,7 +15,7 @@ function f0 name="oneObject" parameters=[{type=object}, {type=boolean}] results=
     Jump -> next b3(v5)
   b3(v6: anything):
     LoopHint
-    v8 = AssumeType v6 castType=object
+    v8 = AssumeType v6 provenType=object
     Branch v1 -> taken b1(v8), notTaken b4()
   b4():
     Return
@@ -38,7 +38,7 @@ function f1 name="twoObjects" parameters=[{type=object}, {type=boolean}, {type=o
     Jump -> next b3(v6)
   b3(v7: anything):
     LoopHint
-    v9 = AssumeType v7 castType=object
+    v9 = AssumeType v7 provenType=object
     Branch v1 -> taken b1(v9), notTaken b4()
   b4():
     Return

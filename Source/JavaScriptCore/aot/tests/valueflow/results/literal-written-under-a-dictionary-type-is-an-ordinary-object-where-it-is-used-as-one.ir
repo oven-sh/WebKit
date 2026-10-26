@@ -16,7 +16,7 @@
 # CHECK: [[read]]: L0 = NewObject layout=L0
 # CHECK: L0 = FinishObject [[read]]
 # CHECK: [[grown]]: object = NewDictionary
-# CHECK-NEXT: [[grownObject]]: Object = AssumeType [[grown]] castType=Object
+# CHECK-NEXT: [[grownObject]]: Object = AssumeType [[grown]] provenType=Object
 # CHECK: PropDefine [[grownObject]], {{*}}key="a"
 # CHECK: PropDefine [[grownObject]], {{*}}key="b"
 # CHECK-NOT: FinishObject [[grownObject]]

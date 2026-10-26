@@ -10,6 +10,7 @@
 
 #include "AOTBodyIndex.h"
 #include "AOTBuiltinCalls.h"
+#include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFamilyTables.h"
 #include "AOTSort.h"
@@ -69,6 +70,36 @@ void Program::copyBorrowedLineStarts(const ParallelLoops& loops)
     });
 }
 
+void Program::collectConstructionStarts()
+{
+    m_constructionStartsOfModules.grow(modules.size());
+    for (Function& function : functions) {
+        if (function.constructionStarts.isEmpty())
+            continue;
+        if (function.module && function.module.index() < modules.size())
+            m_constructionStartsOfModules[function.module.index()].appendVector(function.constructionStarts);
+        function.constructionStarts = { };
+    }
+    for (Vector<ConstructionStart>& starts : m_constructionStartsOfModules) {
+        std::ranges::sort(starts, { }, [](const ConstructionStart& start) { return std::pair { start.reported, start.isForCallers }; });
+        // A site is looked up by where it is reported. Of two starts with one such place the construction's stays.
+        auto repeated = std::ranges::unique(starts, { }, &ConstructionStart::reported);
+        starts.shrink(starts.size() - repeated.size());
+        starts.shrinkToFit();
+    }
+}
+
+const ConstructionStart* Program::findConstructionReportedAt(ModuleID id, uint32_t position) const
+{
+    if (!id || id.index() >= m_constructionStartsOfModules.size())
+        return nullptr;
+    const Vector<ConstructionStart>& starts = m_constructionStartsOfModules[id.index()];
+    auto found = std::ranges::lower_bound(starts, position, { }, &ConstructionStart::reported);
+    if (found == starts.end() || found->reported != position)
+        return nullptr;
+    return &*found;
+}
+
 void Program::recordCountsAsRead()
 {
     m_countsAsRead = { static_cast<unsigned>(functions.size()), static_cast<unsigned>(layouts.size()) };
@@ -95,6 +126,7 @@ BuiltinName Program::builtinNameOf(PropertyKeyID id) const
         }
         return { };
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
     case PropertyKeyKind::CreatedSymbol:
         return { };
@@ -114,6 +146,7 @@ NameClass Program::nameClassOf(PropertyKeyID id) const
     case PropertyKeyKind::Text:
         return strings.nameClass(key.text);
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
     case PropertyKeyKind::WellKnownSymbol:
     case PropertyKeyKind::CreatedSymbol:
@@ -357,7 +390,7 @@ void Program::appendBuiltinLayouts()
             Field field;
             if (builtinField.name)
                 field.key = keyOf(builtinField.name);
-            field.declared.type = arena.intern(typeOfBuiltinLayoutField(*this, builtinField, arena));
+            field.declared.establish(Proven::byPosition(arena.intern(typeOfBuiltinLayoutField(*this, builtinField, arena))));
             if (!builtinField.isOptional)
                 field.flags.add(FieldFlags::IsRequired);
             layout.fields.append(WTF::move(field));
@@ -385,7 +418,7 @@ static TypeID typeOfExportedNamespace(const Program& program, const ModuleExport
 static DeclaredType declaredTypeOfExport(const Program& program, const ModuleExport& entry, TypeArena& arena)
 {
     DeclaredType declared;
-    declared.type = TypeTable::anything;
+    declared.establish(Proven::byPosition(TypeTable::anything));
     switch (entry.kind) {
     case ModuleExportKind::Variable:
         if (!entry.variable)
@@ -394,7 +427,7 @@ static DeclaredType declaredTypeOfExport(const Program& program, const ModuleExp
         declared.site = { };
         return declared;
     case ModuleExportKind::Namespace:
-        declared.type = typeOfExportedNamespace(program, entry, arena);
+        declared.establish(Proven::byPosition(typeOfExportedNamespace(program, entry, arena)));
         return declared;
     case ModuleExportKind::Indirect:
         return declared;
@@ -631,6 +664,23 @@ ModuleID commonJsModuleCapturedBy(const Program& program, const Module& face)
     return file.kind == ModuleKind::CommonJs && file.exportsVariable ? first.target : ModuleID();
 }
 
+BuiltinID functionOfHostThatRequireCallsFor(const Module& module)
+{
+    switch (module.kind) {
+    case ModuleKind::CommonJs:
+        return Builtins::PrivateGlobalsRequireCommonJS;
+    case ModuleKind::SourceText:
+        return Builtins::PrivateGlobalsEsmLoadSync;
+    case ModuleKind::RuntimeSource:
+        return Builtins::PrivateGlobalsCreateInternalModuleById;
+    case ModuleKind::Data:
+    case ModuleKind::Runtime:
+    case ModuleKind::External:
+        return { };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 bool namesWaysToModuleObjects(const Program& program)
 {
     return std::ranges::any_of(program.modules, [](const Module& module) {
@@ -758,6 +808,7 @@ void ProgramEditor::removeBody(FunctionID id)
     Function& function = at(id);
     function.editAllBlocks().clear();
     function.editAllValues().clear();
+    function.writtenPositions.clear();
     function.inlineFrames.clear();
 }
 

@@ -46,7 +46,7 @@ function f1 name="Worker" kind=BaseConstructor flags=[HasNewTarget] results=[{ty
     PropSet v2, v7 key="count" mode=Strict
     Return v2
 # CHECK: [[allocated]]: L0 = NewObject
-# CHECK: [[object]]: L0 = AssumeType [[allocated]] castType=L0
+# CHECK: [[object]]: L0 = AssumeType [[allocated]] provenType=L0
 # CHECK: = NewClosure [[object]] function=[[bound]]
 # CHECK-NOT: CallBuiltin
 }

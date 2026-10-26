@@ -1087,9 +1087,9 @@ static void internStringTagKeys(Program& program, const ParallelLoops& loops)
 {
     Vector<StringID> literals = collectInParallel<StringID>(loops, program.layouts.size(), [&](unsigned index, Vector<StringID>& found) {
         for (const Field& field : program.layouts[index].fields) {
-            if (!field.declared.type)
+            if (!field.declared.written())
                 continue;
-            for (StringID literal : program.at(field.declared.type).stringLiterals)
+            for (StringID literal : program.at(field.declared.written()).stringLiterals)
                 found.append(literal);
         }
     });

@@ -39,7 +39,7 @@ function f0 name="literalOrFalse" parameters=[{type=boolean}, {type=number}] res
 # CHECK-NEXT: Switch [[which0]] cases=[1] -> case [[defines0]](), otherwise [[skips0]]()
 # CHECK-NOT: CopyDataProperties
 # CHECK: [[defines0]]():
-# CHECK-NEXT: [[held0]]: number = AssumeType [[c0]] castType=number
+# CHECK-NEXT: [[held0]]: number = AssumeType [[c0]] provenType=number
 # CHECK-NEXT: PropDefine v6, [[held0]] key="c"
 }
 

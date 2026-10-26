@@ -1,0 +1,23 @@
+# let held: Wanted = 0.25 as any; return [held, held][0]
+# Flow has seen nothing but fractions stored in the literal and has proven storage for doubles. That claim is what flow holds, so it stays where the check of `held` goes.
+# A literal is born with the storage that fits the types of its elements, so flow gives each element the proven contents as its type, also where it is the very value that the check tests. That holds in every version too.
+# FORM: Prepared optimizing
+# RUN: pass AddGenericVersion VerifyProgram
+# CHECK: [[untested]]: {{*}} = Expect v0
+# CHECK: [[first]]: fractional = AssumeType [[untested]] provenType=fractional
+# CHECK: [[second]]: fractional = AssumeType [[untested]] provenType=fractional
+# CHECK: [[literal]]: {{*}} = NewArray [[first]], [[second]] contents=fractional
+# CHECK: = AssumeType [[literal]] provenType=Array<fractional, proven, Double>
+
+module m0 path="main.ts" displayPath="main.ts"
+
+function f0 name="run" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=undefined|null|object cause=MayFail
+    v2 = AssumeType v1 provenType=fractional
+    v3 = AssumeType v1 provenType=fractional
+    v4 = NewArray v2, v3 contents=fractional
+    v5 = AssumeType v4 provenType=Array<fractional, proven, Double>
+    v6 = Integer
+    v7 = ElemGet v5, v6
+    Return v7
+}

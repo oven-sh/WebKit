@@ -74,6 +74,9 @@ private:
 
 void boxDouble(StubAssembler&, PureDouble, GPRReg result);
 void boxDoubleBits(StubAssembler&, PureDoubleBits bitsAndResult);
+// A NaN keeps its sign and none of its other bits.
+void boxNaN(StubAssembler&, FPRReg nan, GPRReg result);
+void boxDoubleWithoutPayload(StubAssembler&, FPRReg number, GPRReg result);
 void boxInt32(StubAssembler&, GPRReg int32, GPRReg result);
 // The caller has proven that the value is a number.
 void toDouble(StubAssembler&, GPRReg boxedNumber, GPRReg scratch, FPRReg result);
@@ -110,6 +113,8 @@ void allocateCell(StubAssembler&, GPRReg result, GPRReg allocator, GPRReg scratc
 [[nodiscard]] AssemblyHelpers::FreeListRefill allocateCellWithLateRefill(StubAssembler&, GPRReg result, GPRReg allocator, GPRReg scratch, JumpList& slowPath, std::optional<unsigned> cellSize = std::nullopt, CountedUnder = CountedUnder::FamilyOfStub);
 // The upper 32 bits of allocation are zero.
 void countCellOfAllocation(StubAssembler&, GPRReg allocation, GPRReg scratch);
+// Behind an allocation with CountedUnder::Allocation, in a stub whose slow path calls an operation that is counted as making the cell.
+void countAllocatedCellOfStub(StubAssembler&, GPRReg scratch, unsigned cellSize);
 void emitLateRefill(StubAssembler&, const AssemblyHelpers::FreeListRefill&, JumpList& slowPath);
 void fenceAfterAllocation(StubAssembler&);
 

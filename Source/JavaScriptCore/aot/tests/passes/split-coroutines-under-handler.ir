@@ -51,7 +51,7 @@ function f2 name="startsUnderHandler" flags=[IsGenerator, TakesCallee] parameter
 
 # CHECK-LABEL: function f3 name="awaitsUnderHandler"
 # CHECK: b0(v0: anything, [[promise]]: undefined|Promise) handler=b2(v0):
-# CHECK-NEXT: v1: anything = AwaitBySavingFrame v0, [[promise]] @10
+# CHECK-NEXT: v1: anything = AwaitBySavingFrame v0, [[promise]], v0 @10
 # CHECK-NEXT: Jump -> next b1()
 # CHECK-NEXT: b1():
 # CHECK-NEXT: v2: anything = AwaitBySavingFrame v1, [[promise]] @11
@@ -59,9 +59,9 @@ function f2 name="startsUnderHandler" flags=[IsGenerator, TakesCallee] parameter
 # CHECK-LABEL: function f4 name="yieldsUnderHandler"
 # CHECK: b0(v0: function, v1: anything, [[generator]]: Generator):
 # CHECK: b1() handler=b6(v1):
-# CHECK-NEXT: = YieldBySavingFrame [[generator]], v1 @21
+# CHECK-NEXT: = YieldBySavingFrame [[generator]], v1, v0, v1 @21
 # CHECK: b4():
-# CHECK-NEXT: = YieldBySavingFrame [[generator]], v4 @22
+# CHECK-NEXT: = YieldBySavingFrame [[generator]], v4, v0 @22
 # CHECK: b7():
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: = YieldBySavingFrame [[generator]], {{*}} @20

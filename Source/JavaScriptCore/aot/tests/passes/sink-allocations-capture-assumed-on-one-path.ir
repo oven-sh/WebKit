@@ -14,7 +14,7 @@ function f1 name="closureMadeOnOnePath" parameters=[{type=anything}, {type=boole
     v4 = Null
     Branch v1 -> taken b1(), notTaken b2()
   b1():
-    v5 = AssumeType v3 castType=Array<anything, Contiguous, pristine[Storage]>
+    v5 = AssumeType v3 provenType=Array<anything, Contiguous, pristine[Storage]>
     v6 = NewClosure v5 function=f0
     Jump -> next b3(v6)
   b2():
@@ -28,6 +28,6 @@ function f1 name="closureMadeOnOnePath" parameters=[{type=anything}, {type=boole
     v9 = Undefined
     Return v9
 # CHECK: [[array]]:{{*}}= NewArray
-# CHECK: [[capture]]:{{*}}= AssumeType [[array]] castType=Array<anything, Contiguous, pristine[Storage]>
+# CHECK: [[capture]]:{{*}}= AssumeType [[array]] provenType=Array<anything, Contiguous, pristine[Storage]>
 # CHECK-NEXT: = NewClosure [[capture]] function=f0
 }

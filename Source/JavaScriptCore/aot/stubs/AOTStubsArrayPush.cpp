@@ -179,7 +179,7 @@ void generateArrayPushDouble(StubAssembler& jit)
     boxInt32(jit, integer, value);
     Jump isBoxed = jit.jump();
     notInt32.link(&jit);
-    boxDouble(jit, PureDouble::purify(jit, number, number), value);
+    boxDoubleWithoutPayload(jit, number, value);
     isBoxed.link(&jit);
     jit.restoreFPR(number, savedNumber);
     jit.jumpToStub(arrayPush());

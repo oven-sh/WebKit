@@ -69,7 +69,7 @@ function f3 name="chainLeavesTogether" parameters=[{type=anything}, {type=boolea
     Jump -> next b1()
   b1():
     LoopHint
-    v3 = AssumeType v0 castType=Array<anything>
+    v3 = AssumeType v0 provenType=Array<anything>
     v4 = PropGet v3 key="length"
     Branch v1 -> taken b1(), notTaken b2()
   b2():
@@ -86,7 +86,7 @@ function f4 name="indexStaysInside" parameters=[{type=anything}, {type=boolean}]
     Jump -> next b1(v2)
   b1(v3):
     LoopHint
-    v5 = AssumeType v0 castType=Array<anything>
+    v5 = AssumeType v0 provenType=Array<anything>
     v6 = ElemGet v5, v3
     v7 = Integer integer=1
     v8 = Add v3, v7
@@ -105,7 +105,7 @@ function f5 name="endedInsideLoop" parameters=[{type=anything}, {type=boolean}, 
     Jump -> next b1()
   b1():
     LoopHint
-    v4 = AssumeType v0 castType=Array<anything>
+    v4 = AssumeType v0 provenType=Array<anything>
     v5 = PropGet v4 key="length"
     AppendElement v2, v1
     Branch v1 -> taken b1(), notTaken b2()

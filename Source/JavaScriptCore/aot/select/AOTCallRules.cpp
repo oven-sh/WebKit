@@ -93,7 +93,6 @@ static void rewriteMethodCall(GroupRewriter& rewriter, const SelectedMethodCall&
     root.setReceivers(read.receivers());
     root.setCallees(call.callees());
     root.setCallAccessSite(call.accessSite());
-    root.setIsDemotedTailCall(call.isDemotedTailCall());
 }
 
 // CallMethod retains its operands. A call whose callees are all known may retain none of them, and then one may lie in the frame.
@@ -190,7 +189,6 @@ static void convertToCallResolved(Value& value, ValueID target)
     value.setCalleeName(call.calleeName());
     value.setAccessSite(call.accessSite());
     value.setCallees(call.callees());
-    value.setIsDemotedTailCall(call.isDemotedTailCall());
 }
 
 void selectResolvedCallTarget(SelectionContext& context)

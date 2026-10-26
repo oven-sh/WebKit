@@ -19,7 +19,7 @@ function f0 name="awaitsAtTopLevel" kind=Module flags=[IsAsync] results=[{type=a
 # CHECK-NEXT: b0():
 # CHECK-NEXT: [[promise]]: Promise = NewPromise
 # CHECK-NEXT: [[started]]: anything = CallDirect [[promise]] function=f2
-# CHECK-NEXT: [[returned]]: Promise = AssumeType [[started]] castType=Promise
+# CHECK-NEXT: [[returned]]: Promise = AssumeType [[started]] provenType=Promise
 # CHECK-NEXT: Return [[returned]]
 }
 function f1 name="awaitsNothing" module=m1 kind=Module results=[{type=anything}] {

@@ -52,13 +52,13 @@ function f5 name="widerFamily" parameters=[{type=L0 site=w1}] results=[{type=any
     v1 = Convert v0 declared={type=L1 site=w2} illTypedCause=Assertion
     Return v1
 # CHECK: b0(v0: L0|L1|L2):
-# CHECK-NEXT: v1: L1 = Check v0 castType=L1 site=w2
+# CHECK-NEXT: v1: L1 = Check v0 expectedType=L1 site=w2
 # CHECK-NEXT: Return v1
 }
 function f6 name="widerPrimitives" parameters=[{type=undefined|null|number site=w1}] results=[{type=anything}] {
     v1 = Convert v0 declared={type=number site=w2} illTypedCause=Assertion
     Return v1
 # CHECK: b0(v0: undefined|null|number):
-# CHECK-NEXT: v1: number = Check v0 castType=number site=w2
+# CHECK-NEXT: v1: number = Check v0 expectedType=number site=w2
 # CHECK-NEXT: Return v1
 }

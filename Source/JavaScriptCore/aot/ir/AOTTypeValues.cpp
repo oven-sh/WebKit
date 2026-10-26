@@ -44,8 +44,9 @@ static StatisticID statisticOf(CastResolution cast)
         return StatisticID::RequestsResolvedToUpcast;
     case CastResolution::Check:
         return StatisticID::RequestsResolvedToCheck;
-    case CastResolution::Unresolved:
     case CastResolution::Assume:
+        return StatisticID::RequestsResolvedToClaim;
+    case CastResolution::Unresolved:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -83,7 +84,7 @@ static void applyEdits(FunctionPassContext& context, RequestEdits& edits)
 
 static bool isResolvedByTypeValues(const Value& value)
 {
-    return value.opcode == Opcode::Convert && !value.declared().flags.contains(PositionFlags::IsInt32Promise);
+    return value.opcode == Opcode::Convert && !value.declared().has(PositionFlags::IsInt32Promise);
 }
 
 static Vector<ProgramPoint, 16> collectRequests(const Function& function)

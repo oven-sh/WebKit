@@ -13,6 +13,7 @@
 #include "AOTSavedFrameMap.h"
 #include "AOTStubRegisters.h"
 #include "AirCode.h"
+#include "AirLimits.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "GPRInfo.h"
@@ -22,6 +23,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 // A root lies in a word of the frame, or two narrow ones in one. Nothing else about a map depends on how many there are.
 static_assert(defaultLimitValue(LimitID::MaxFrameMapRoots, hostArchitecture()) == SavedFrame::maxNumberOfWords);
+static_assert(B3::AirLimits::maxWordsClearedAtFirstSuspension == SavedFrame::maxClearedWords);
 
 static RegisterSet registersClobberedBySuspension(const B3::Air::Code& code)
 {
@@ -46,6 +48,7 @@ FrameMapEmitter::Roots FrameMapEmitter::appendRoots(B3::PatchpointValue* patchpo
     for (const FrameResultRoot& root : roots.resultRoots)
         append(m_generator.resultAt(root.producer, root.index), root.kind);
     patchpoint->clobberLate(registersClobberedBySuspension(m_proc.code()));
+    patchpoint->setIsSuspension(true);
     m_records.frame.savesFrameOnSuspend = true;
     return result;
 }
@@ -155,10 +158,27 @@ std::optional<uint64_t> FrameMapEmitter::siteWordFor(FrameMapRecords& records, c
     std::optional<uint32_t> savedRegisters = savedRegistersWord(code);
     if (!promiseLocation || !savedRegisters)
         return std::nullopt;
-    // The area of outgoing arguments lies at the stack pointer, and what a call left in it is dead.
-    uint32_t deadWordsAtBottom = static_cast<uint32_t>(code.callArgAreaSizeInBytes() / sizeof(uint64_t));
+    uint32_t deadWordsAtBottom = static_cast<uint32_t>(code.frameLayout().bytesDeadAtSuspensions / sizeof(uint64_t));
     size_t numberOfWordsInFrame = code.bytesBelowFrameRecord() / sizeof(uint64_t);
-    return SavedFrame::siteWord(records.addMap(builder.finish().span()), *promiseLocation, *savedRegisters, deadWordsAtBottom, numberOfWordsInFrame);
+    if (const std::optional<BitVector>& deadWords = params.value()->frameWordsDeadAcrossSuspension()) {
+        builder.setListsEveryLiveWord();
+        uint32_t lastLocationKept = static_cast<uint32_t>(numberOfWordsInFrame) - SavedFrame::numberOfWordsSkippedFor(deadWordsAtBottom);
+        // Every restore writes the save area anew.
+        uint32_t numberOfSaves = static_cast<uint32_t>(code.calleeSaveRegisterAtOffsetList().registerCount());
+        RELEASE_ASSERT(numberOfSaves >= SavedFrame::skippedAtTopFor(*savedRegisters));
+        for (uint32_t location = numberOfSaves + 1; location <= lastLocationKept; ++location) {
+            bool holdsReference = builder.listsReferenceIn(location);
+            RELEASE_ASSERT(!holdsReference || !deadWords->get(location));
+            if (!holdsReference && !deadWords->get(location))
+                builder.addOtherLiveWord(location);
+        }
+        if constexpr (SavedFrame::preservedRegister != InvalidGPRReg) {
+            bool isLive = *promiseLocation == SavedFrame::locationInRegister || params.usedRegisters().contains(SavedFrame::preservedRegister, IgnoreVectors);
+            if (isLive && !builder.listsReferenceIn(SavedFrame::locationInRegister))
+                builder.addOtherLiveWord(SavedFrame::locationInRegister);
+        }
+    }
+    return SavedFrame::siteWord(records.addMap(builder.finish().span()), *promiseLocation, *savedRegisters, deadWordsAtBottom, numberOfWordsInFrame, params.value()->numberOfFrameWordsToClearAtFirstSuspension());
 }
 
 } } } // namespace JSC::AOT::Typed

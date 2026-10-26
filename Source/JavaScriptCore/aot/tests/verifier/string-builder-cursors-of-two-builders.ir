@@ -80,7 +80,7 @@ function f5 name="badUnknownCodeRuns" parameters=[{type=anything}] results=[{typ
     v1 = StringBuilderBegin
     v2 = StringBuilderBegin
     v3 = StringBuilderReserve v1 size=40
-    v4 = StringBuilderAppendJSON v2, v0, v0
+    v4 = StringBuilderAppendJSON v2, v0, v0, v0
     StringBuilderDiscard v2
     v6 = Integer integer=1
     v7 = JSONAppendInteger v1, v3, v6

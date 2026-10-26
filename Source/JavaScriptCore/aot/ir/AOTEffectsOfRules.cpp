@@ -59,7 +59,7 @@ EffectsOnEdges effectsOfCallees(const EffectContext& context, const CalleeList& 
     return resolveEffects(context, description);
 }
 
-EffectsOnEdges effectsOfOverload(const EffectContext& context, BuiltinOverloadID overload, const Type* receiver, std::span<const TypeID> arguments)
+EffectsOnEdges effectsOfOverload(const EffectContext& context, BuiltinOverloadID overload, TypeID receiver, std::span<const TypeID> arguments)
 {
     EffectDescription description;
     describeOverload(context.program, overload, receiver, arguments, description);
@@ -73,7 +73,7 @@ EffectsOnEdges effectsOfTypedResult(const EffectContext& context, BuiltinOverloa
     return resolveEffects(context, description);
 }
 
-EffectsOnEdges effectsOfOverload(const EffectContext& context, BuiltinOverloadID overload, BuiltinCallForm form, const Type* receiver, std::span<const TypeID> arguments)
+EffectsOnEdges effectsOfOverload(const EffectContext& context, BuiltinOverloadID overload, BuiltinCallForm form, TypeID receiver, std::span<const TypeID> arguments)
 {
     EffectDescription description;
     describeOverload(context.program, overload, form, receiver, arguments, description);

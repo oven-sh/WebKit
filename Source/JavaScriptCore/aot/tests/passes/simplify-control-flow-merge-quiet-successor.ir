@@ -131,7 +131,7 @@ function f8 name="successorChecks" parameters=[{type=function}] results=[{type=a
     v1 = Call v0
     Jump -> next b1()
   b1():
-    v2 = Check v1 castType=number
+    v2 = Check v1 expectedType=number
     Return v2
   b2() role=CatchHandler:
     v3 = CatchValue
@@ -139,6 +139,6 @@ function f8 name="successorChecks" parameters=[{type=function}] results=[{type=a
 # A check that fails throws nothing.
 # CHECK: b0(v0: function) handler=b2():
 # CHECK-NEXT: = Call v0
-# CHECK-NEXT: = Check v1 castType=number
+# CHECK-NEXT: = Check v1 expectedType=number
 # CHECK-NEXT: Return v2
 }

@@ -110,6 +110,7 @@ public:
     NaturalLoops& naturalLoops() LIFETIME_BOUND;
     const BlockCycles& blockCycles() LIFETIME_BOUND;
     const UseLists& useLists() LIFETIME_BOUND;
+    const UseLists* useListsIfUpToDate() const LIFETIME_BOUND { return m_values.useLists && m_values.useLists->isUpToDate() && !m_values.didDropBesideUseLists ? &*m_values.useLists : nullptr; }
     UseLists* updatingUseLists() LIFETIME_BOUND;
     void setEveryChangeIsReported(bool isReported) { m_everyChangeIsReported = isReported; }
     const ValueIdentities& identities() LIFETIME_BOUND;
@@ -174,7 +175,8 @@ public:
     void didChangeControlFlow(std::span<const BlockID> changedBlocks);
     void didRenumber(const Renumbering&);
 
-    void verifyCached();
+    // False: an answer that they hold is not what the function says, which has been reported.
+    bool verifyCached();
 
     void setRunningPass(PassID pass)
     {

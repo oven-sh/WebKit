@@ -9,7 +9,9 @@
 #if ENABLE(AOT)
 
 #include "AOTBlockCycles.h"
+#include "AOTBodyIndex.h"
 #include "AOTBuiltinIDs.h"
+#include "AOTNameCreatedSymbols.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSort.h"
@@ -83,12 +85,19 @@ static auto memberOrderOf(const ClassMember& member)
     return std::tuple { member.side, member.key, member.kind, member.function };
 }
 
-static ValueSetID valueOf(const ValueFlowResultInputs& inputs, const ValueFlowOperand& operand, ValueSetMaker& maker)
+static ValueSetID throughMaskOf(const ValueFlowResultInputs& inputs, const ValueFlowOperand& operand, ValueSetID valuesOfNode, ValueSetMaker& maker)
 {
-    ValueSetID value = operand.constant ? operand.constant : ValueSets::nothing;
-    if (operand.node)
-        value = maker.unite(value, inputs.solver().valueOf(operand.node));
-    return ValueFlowRuleContext::throughMaskOf(operand, value, inputs.solver(), maker);
+    return ValueFlowRuleContext::throughMaskOf(operand, operand.constant ? maker.unite(operand.constant, valuesOfNode) : valuesOfNode, inputs.solver(), maker);
+}
+
+static ValueSetID possibleValuesOf(const ValueFlowResultInputs& inputs, const ValueFlowOperand& operand, ValueSetMaker& maker)
+{
+    return throughMaskOf(inputs, operand, operand.node ? inputs.solver().possibleValuesOf(operand.node) : ValueSets::nothing, maker);
+}
+
+static ValueSetID seenValuesOf(const ValueFlowResultInputs& inputs, const ValueFlowOperand& operand, ValueSetMaker& maker)
+{
+    return throughMaskOf(inputs, operand, operand.node ? inputs.solver().seenValuesOf(operand.node) : ValueSets::nothing, maker);
 }
 
 static bool everyUseThroughCasts(const Function& function, const UseLists& useLists, ValueID value, bool mayBeUnused, NOESCAPE const Invocable<bool(const Use&, Opcode, OperandUses)> auto& admits)
@@ -110,6 +119,48 @@ static bool everyUseThroughCasts(const Function& function, const UseLists& useLi
         }
     }
     return true;
+}
+
+// The name that a computed key is whenever its member is defined: one text that names no element, or one symbol.
+static PropertyKeyID findOnlyNameAmong(const ValueFlowResultInputs& inputs, ValueSetID keys)
+{
+    ValueFlowObjectID only = inputs.sets().onlyMember(keys);
+    PropertyKeyID key = only ? inputs.universe().keyOf(only) : PropertyKeyID();
+    if (!key)
+        return { };
+    switch (inputs.program.at(key).kind) {
+    case PropertyKeyKind::Text:
+        return inputs.program.isIndexLike(key) ? PropertyKeyID() : key;
+    case PropertyKeyKind::WellKnownSymbol:
+    case PropertyKeyKind::RegisteredSymbol:
+        return key;
+    case PropertyKeyKind::CreatedSymbol:
+        return inputs.symbolsCreatedOnce && inputs.symbolsCreatedOnce->get(key.index()) ? key : PropertyKeyID();
+    case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
+    case PropertyKeyKind::PrivateName:
+        return { };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static Vector<FlowMemberKey> findKeysOfMembers(const ValueFlowResultInputs& inputs, FunctionID id, ValueSetMaker& maker)
+{
+    Vector<FlowMemberKey> keys;
+    if (!inputs.build.isEnabled(FlowResultKind::LiteralValues, id.index()))
+        return keys;
+    const Function& function = inputs.program.at(id);
+    for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(id.index())) {
+        if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::DefineMethod || function.at(statement.site).key())
+            continue;
+        PropertyKeyID key = findOnlyNameAmong(inputs, possibleValuesOf(inputs, inputs.bodies().operandsOf(statement)[OperandIndex::DefineMethod::computedKey], maker));
+        // The prototype property of a class cannot be redefined: that definition throws, and one with a written key never does.
+        if (!key || (function.at(statement.site).side() == ClassSide::Static && inputs.program.nameClassOf(key) == NameClass::Prototype))
+            continue;
+        keys.append({ statement.site, key });
+    }
+    AOT::sort(keys, { }, &FlowMemberKey::definition);
+    return keys;
 }
 
 static Vector<ClassDefinition> collectClassDefinitions(const ValueFlowResultInputs& inputs, const FlowResultTables& tables, ValueSetMaker& maker)
@@ -138,6 +189,8 @@ static Vector<ClassDefinition> collectClassDefinitions(const ValueFlowResultInpu
             continue;
         }
 
+        tables.application->bodies[index].keysOfMembers = findKeysOfMembers(inputs, FunctionID(index), maker);
+        const Vector<FlowMemberKey>& keysOfMembers = tables.application->bodies[index].keysOfMembers;
         CFG cfg(function);
         std::optional<UseLists> useLists;
         std::optional<BlockCycles> cycles;
@@ -160,25 +213,29 @@ static Vector<ClassDefinition> collectClassDefinitions(const ValueFlowResultInpu
                     continue;
                 }
                 FunctionID defined = function.at(closure).function();
-                if (!value.key())
+                const FlowMemberKey* found = value.key() ? nullptr : findByValue(keysOfMembers.span(), id, &FlowMemberKey::definition);
+                PropertyKeyID key = found ? found->key : value.key();
+                if (!key)
                     definition.mayHaveUnknownName[static_cast<unsigned>(value.side())] = true;
                 if (!useLists)
                     useLists.emplace(function, cfg);
                 bool goesOnlyIntoDefinitions = everyUseThroughCasts(function, *useLists, closure, true, [](const Use& use, Opcode user, OperandUses operandUses) {
                     if (user == Opcode::DefineMethod && use.operandIndex == OperandIndex::DefineMethod::function)
                         return true;
+                    if (user == Opcode::SetFunctionName && use.operandIndex == OperandIndex::SetFunctionName::function)
+                        return true;
                     return operandUses.containsOnly(OperandUse::Inspects) && protocolsOf(user, use.operandIndex).isEmpty();
                 });
                 if (!goesOnlyIntoDefinitions)
                     definition.functionsHandedOnAtDefinition.append(defined);
-                definition.definitions.append({ value.index(), ClassMember { .key = value.key(), .side = value.side(), .kind = value.methodKind(), .function = defined } });
+                definition.definitions.append({ value.index(), ClassMember { .key = key, .side = value.side(), .kind = value.methodKind(), .function = defined } });
             }
         }
         for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
             if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::NewClass || !function.at(statement.site).heritageOperand())
                 continue;
             ValueSetID& heritage = classes[function.at(statement.site).layout().index()].heritage;
-            heritage = maker.unite(heritage, valueOf(inputs, inputs.bodies().operandsOf(statement)[OperandIndex::NewClass::heritage], maker));
+            heritage = maker.unite(heritage, possibleValuesOf(inputs, inputs.bodies().operandsOf(statement)[OperandIndex::NewClass::heritage], maker));
         }
     }
     for (const Variable& variable : program.variables) {
@@ -324,7 +381,7 @@ static ValueSetID findClosuresTakenOutOfMembers(const ValueFlowResultInputs& inp
     ValueSetMakers makers(inputs);
     Vector<Carrier> carriers = collectWithMakers<Carrier>(inputs, makers, solver.graph().numberOfNodes() - firstMadeNode, [&](unsigned position, ValueSetMaker& makerOfThread, Vector<Carrier>& found) {
         const ValueFlowNodeKey* key = solver.keyOfMadeNode(ValueFlowNodeID(firstMadeNode + position));
-        ValueSetID value = solver.valueOf(ValueFlowNodeID(firstMadeNode + position));
+        ValueSetID value = solver.possibleValuesOf(ValueFlowNodeID(firstMadeNode + position));
         if ((kindsOfCarriers >> static_cast<unsigned>(key->kind) & 1) && inputs.sets().meet(value, closuresOfMembers))
             found.append({ solver.indexOfMadeNodes(*key), makerOfThread.intersect(value, closuresOfMembers) });
     });
@@ -346,7 +403,7 @@ static ValueSetID findClosuresTakenOutOfMembers(const ValueFlowResultInputs& inp
             return shapeOf(own).isValueOrAccessor() || own == ValueFlowNameKind::PrototypeLink;
         }
         case ValueFlowStatementKind::Operation: {
-            if (!isHeapOperation(statement.opcode))
+            if (flowRuleOf(statement.opcode) != FlowRule::Heap)
                 return false;
             if (shapeOf(read).isAccessor())
                 return true;
@@ -510,6 +567,14 @@ static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID 
     namedMembers.shrink(std::ranges::unique(namedMembers, { }, memberOrderOf).begin() - namedMembers.begin());
     if (listsEveryStoredName)
         listWhatIsStoredOverMembers(inputs, writes.of(id), namedMembers);
+    Vector<decltype(memberOrderOf(std::declval<const ClassMember&>())), 16> definedMembers(definition.definitions.size(), [&](size_t index) {
+        return memberOrderOf(definition.definitions[index].member);
+    });
+    AOT::sort(definedMembers);
+    Vector<FunctionID, 16> definedFunctions(definition.definitions.size(), [&](size_t index) {
+        return definition.definitions[index].member.function;
+    });
+    AOT::sort(definedFunctions);
     for (size_t first = 0, end = 0; first < namedMembers.size(); first = end) {
         while (end < namedMembers.size() && namedMembers[end].side == namedMembers[first].side && namedMembers[end].key == namedMembers[first].key)
             ++end;
@@ -519,17 +584,13 @@ static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID 
         bool isEveryValueData = group.back().kind == MethodKind::Method;
         bool hasOneDefinition = (isEveryValueData || group.front().kind != MethodKind::Method) && std::ranges::adjacent_find(group, { }, &ClassMember::kind) == group.end();
         bool isThereFromTheStart = std::ranges::all_of(group, [&](const ClassMember& member) {
-            return std::ranges::contains(definition.definitions, memberOrderOf(member), [](const ClassMemberDefinition& entry) {
-                return memberOrderOf(entry.member);
-            });
+            return std::ranges::binary_search(definedMembers, memberOrderOf(member));
         });
         for (ClassMember& member : group) {
             if (holdsWhatWasDefined && isThereFromTheStart && hasOneDefinition)
                 member.mutability = MemberMutability::Fixed;
             member.isWritableData = holdsWhatWasDefined && isEveryValueData && !mutations[side].contains(ObjectMutation::ChangeIntegrity);
-            bool isDefinedByClass = std::ranges::contains(definition.definitions, member.function, [](const ClassMemberDefinition& entry) {
-                return entry.member.function;
-            });
+            bool isDefinedByClass = std::ranges::binary_search(definedFunctions, member.function);
             if (followsUses && member.function && isDefinedByClass && isOnlyCalled(member.function))
                 member.closureUse = ClosureUse::CalledOnly;
         }
@@ -594,7 +655,7 @@ static HandedToObjectCreate collectWhatObjectCreateIsHanded(const ValueFlowResul
             for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(id.index())) {
                 if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::SetLiteralPrototype || function.at(statement.site).objectOperand() != site->value)
                     continue;
-                handed = maker.unite(handed, valueOf(inputs, inputs.bodies().operandsOf(statement)[OperandIndex::SetLiteralPrototype::prototype], maker));
+                handed = maker.unite(handed, seenValuesOf(inputs, inputs.bodies().operandsOf(statement)[OperandIndex::SetLiteralPrototype::prototype], maker));
                 isKnown = true;
             }
         });
@@ -632,10 +693,10 @@ static ClassesOfStoredPrototypeObjects collectStoredPrototypeObjects(const Value
         noteObjectsHanded(layout, handed);
     const ValueFlowHeapIndex::NodesWrittenUnderName* written = heapIndex.findNodesWrittenUnder(ValueFlowName::property(inputs.program.keyOf(BuiltinNames::prototype)));
     for (const ValueFlowHeapIndex::WrittenNode& node : written ? written->nodes.span() : std::span<const ValueFlowHeapIndex::WrittenNode>()) {
-        if (ValueSets::isComplement(node.objects) || ValueSets::isComplement(node.value))
+        if (ValueSets::isComplement(node.objects) || ValueSets::isComplement(node.seenValue))
             continue;
         sets.forEachMember(node.objects, [&](ValueFlowObjectID holder) {
-            noteObjectsHanded(findClassOfConstructorFunction(inputs, holder), node.value);
+            noteObjectsHanded(findClassOfConstructorFunction(inputs, holder), node.seenValue);
         });
     }
     return classes;
@@ -873,13 +934,13 @@ static Vector<LayoutID> collectBasesLinkedByProgram(const ValueFlowResultInputs&
     };
     BitVector hasSeveral(program.layouts.size());
     for (const ValueFlowHeapIndex::WrittenNode& node : written->nodes) {
-        if (ValueSets::isComplement(node.objects) || ValueSets::isComplement(node.value))
+        if (ValueSets::isComplement(node.objects) || ValueSets::isComplement(node.seenValue))
             continue;
         inputs.sets().forEachMember(node.objects, [&](ValueFlowObjectID holder) {
             LayoutID derived = classOfPrototypeObject(holder);
             if (!derived || !program.at(derived).has(LayoutFlags::IsConstructorFunction))
                 return;
-            inputs.sets().forEachMember(node.value, [&](ValueFlowObjectID linked) {
+            inputs.sets().forEachMember(node.seenValue, [&](ValueFlowObjectID linked) {
                 LayoutID base = classOfPrototypeObject(linked);
                 // A factory that is handed its own result links two functions of the same text.
                 if (!base || base == derived)
@@ -925,6 +986,33 @@ static void dropLinkedBasesInCycles(const Program& program, std::span<const Layo
     }
 }
 
+// A function whose objects take their name at one operation, from a computed key that is one key whenever it runs, has that name as if it were written.
+static void nameFunctionsUnderOneKey(const ValueFlowResultInputs& inputs, const FlowResultTables& tables, ValueSetMaker& maker)
+{
+    const Program& program = inputs.program;
+    const ValueFlowHeapTables& heapTables = inputs.universe().builtinTables().heap();
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        FunctionID id(index);
+        if (!mayHoldValueWith(program, id, { Opcode::SetFunctionName }) || !inputs.isReached(id))
+            continue;
+        const Function& function = program.at(id);
+        for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
+            if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::SetFunctionName)
+                continue;
+            const Value& closure = function.at(sameObjectThroughCasts(function, function.at(statement.site).operand(OperandIndex::SetFunctionName::function)));
+            if (closure.opcode != Opcode::NewClosure || !heapTables.isNamedAtOneOperation(closure.function()))
+                continue;
+            ValueFlowObjectID only = inputs.sets().onlyMember(possibleValuesOf(inputs, inputs.bodies().operandsOf(statement)[OperandIndex::SetFunctionName::computedKey], maker));
+            PropertyKeyID key = only ? inputs.universe().keyOf(only) : PropertyKeyID();
+            if (!key || !tellsNameOfFunction(program.at(key)))
+                continue;
+            tables.application->signatures[closure.function().index()].keyThatNamesFunction = key;
+            tables.application->bodies[index].namesTakenFromOneKey.append(statement.site);
+        }
+        AOT::sort(tables.application->bodies[index].namesTakenFromOneKey);
+    }
+}
+
 void computeClassResults(const ValueFlowResultInputs& inputs, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
@@ -932,6 +1020,7 @@ void computeClassResults(const ValueFlowResultInputs& inputs, FlowResultTables& 
     BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
     ValueSetMaker& maker = borrowedMaker.get();
     PhaseTimes times(inputs.build, PassID::AnalyzeFlow);
+    nameFunctionsUnderOneKey(inputs, tables, maker);
     Vector<ClassDefinition> classes = collectClassDefinitions(inputs, tables, maker);
     times.didFinish("classes: definitions"_s);
     computeBaseResults(inputs, classes.span(), application);

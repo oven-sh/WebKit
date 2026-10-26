@@ -1,0 +1,66 @@
+# The length that a push of several elements answers with has code in whichever form the parameter that takes it was given, also one with room for undefined
+# FORM: Selected
+# OPTIONS: check=validate-back-end
+# RUN: pass NumberAndEncode ChooseRepresentations
+# RUN(CODE): generate-code
+# CODE-COUNT-2: : size=
+# CODE-NOT: no code
+# CODE-NOT: diagnostic
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="lengthMeetsUndefinedAmongIntegers" parameters=[{type=Array<i32, pristine[Storage]>}, {type=i32}, {type=Array<undefined|number, pristine[Storage]>}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = Integer integer=7
+    v5 = Integer integer=0
+    Jump -> next b3(v5)
+  b2() frequency=Rare:
+    v6 = CallBuiltin v0, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b1(v6)
+  b3(v7: int[0, 3]):
+    v8 = Integer integer=3
+    v9 = Less v7, v8 form=Integers
+    TestAndBranch v9 -> taken b4(| 0), notTaken b6()
+  b4(v10: int[0, 2]):
+    v11 = Undefined
+    Switch v10 cases=[0, 1, 2] -> case b5(v3), case b5(v4), case b5(v3), otherwise b5(v11)
+  b5(v12):
+    v13 = Integer integer=1
+    v14 = Add v10, v13 form=Integers
+    v15 = Upcast v12 castType=anything
+    AppendElement v2, v15
+    LoopHint
+    Jump -> next b3(v14)
+  b6():
+    Return
+}
+# CHECK-LABEL: function f0 name="lengthMeetsUndefinedAmongIntegers"
+# CHECK: b1(v3: int[0, 4294967295] @OptionalInt64):
+
+function f1 name="lengthMeetsUndefinedAmongNumbers" parameters=[{type=Array<i32, pristine[Storage]>}, {type=i32}, {type=Array<undefined|number, pristine[Storage]>}, {type=number}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
+  b1(v4):
+    v5 = Integer integer=0
+    Jump -> next b3(v5)
+  b2() frequency=Rare:
+    v6 = CallBuiltin v0, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b1(v6)
+  b3(v7: int[0, 3]):
+    v8 = Integer integer=3
+    v9 = Less v7, v8 form=Integers
+    TestAndBranch v9 -> taken b4(| 0), notTaken b6()
+  b4(v10: int[0, 2]):
+    v11 = Undefined
+    Switch v10 cases=[0, 1, 2] -> case b5(v4), case b5(v3), case b5(v4), otherwise b5(v11)
+  b5(v12):
+    v13 = Integer integer=1
+    v14 = Add v10, v13 form=Integers
+    v15 = Upcast v12 castType=anything
+    AppendElement v2, v15
+    LoopHint
+    Jump -> next b3(v14)
+  b6():
+    Return
+}
+# CHECK-LABEL: function f1 name="lengthMeetsUndefinedAmongNumbers"
+# CHECK: b1(v4: int[0, 4294967295] @OptionalDouble):

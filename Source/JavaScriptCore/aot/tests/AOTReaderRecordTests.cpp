@@ -129,6 +129,7 @@ void addModuleListDamages(const ReaderFixture& fixture, RecordDamages& damages)
     damages.boolean("ModuleRequest.isDynamicStarExport"_s, request(offsetof(Wire::ModuleRequest, isDynamicStarExport)));
     damages.enumerator<ModuleRequestKind>("ModuleRequest.kind"_s, request(offsetof(Wire::ModuleRequest, kind)));
     damages.boolean("ModuleRequest.completes"_s, request(offsetof(Wire::ModuleRequest, completes)));
+    damages.boolean("ModuleRequest.isHoisted"_s, request(offsetof(Wire::ModuleRequest, isHoisted)));
 
     for (uint32_t index = 0; index < fixture.countOf(List::ModuleExports); ++index) {
         auto entry = offsetsOf<Wire::ModuleExport>(fixture, List::ModuleExports, index);

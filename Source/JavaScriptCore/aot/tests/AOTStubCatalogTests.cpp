@@ -269,6 +269,12 @@ static void checkPreservingCallSummaries(const StubCatalog& catalog)
         .withImmediate(offsetInRuntimeTable(Entry::operationAOTBarrierSlowPreservingRegisters));
     AOT_TEST_CHECK(catalog.hasRecordingOf(barrierCall));
     checkPreservingCallSummary(catalog, barrierCall);
+
+    for (OperationCall::Saves saves : { OperationCall::Saves::CallerSavedRegisters, OperationCall::Saves::CallerSavedGPRs }) {
+        StubKey copyCall = callOperationPreservingRegisters({ .returns = OperationCall::Returns::Void, .saves = saves }).withImmediate(offsetInRuntimeTable(Entry::operationAOTCopyDataProperties));
+        AOT_TEST_CHECK(catalog.hasRecordingOf(copyCall));
+        checkPreservingCallSummary(catalog, copyCall);
+    }
 }
 
 static void checkPreservingCallRegisters(const StubCatalog& catalog, OperationCall call)

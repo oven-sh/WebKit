@@ -7,13 +7,13 @@ entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
-    v2 = Builtin builtin=CompilerHelpersStringifyElement
+    v2 = Builtin builtin=CompilerHelpersFilledArray
     v3 = Builtin builtin=DateNow
     v4 = Call v1, -, v2, v3
     Return
 }
 
-# CHECK: builtinCell [[helper]] cell=CompilerHelpersStringifyElement
+# CHECK: builtinCell [[helper]] cell=CompilerHelpersFilledArray
 # CHECK: builtinCell [[now]] cell=DateNow
 # CHECK-NOT: eagerBuiltinCell
 # CHECK: eagerBuiltinCell [[now]] cell=DateNow

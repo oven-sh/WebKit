@@ -1642,10 +1642,11 @@ LLINT_SLOW_PATH_DECL(slow_path_put_private_name)
         }
 
         // Start out by clearing out the old cache.
+        // m_property stays: CodeBlock::propagateTransitions() reads this cache on marking threads, and assumes that
+        // m_property is set whenever both structure IDs are.
         metadata.m_oldStructureID = StructureID();
         metadata.m_offset = 0;
         metadata.m_newStructureID = StructureID();
-        metadata.m_property.clear();
         
         JSCell* baseCell = baseValue.asCell();
         Structure* newStructure = baseCell->structure();

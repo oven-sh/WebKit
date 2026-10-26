@@ -79,6 +79,8 @@ static FrameShape frameShapeOf(const FrameDescription& frame)
         RELEASE_ASSERT((offset < 0 || (!offset && !frame.hasFrameRecord)) && !(offset % static_cast<ptrdiff_t>(sizeof(CPURegister))) && -offset / static_cast<ptrdiff_t>(sizeof(CPURegister)) <= static_cast<ptrdiff_t>(ImageFrame::maxCalleeSavesStart));
         shape.calleeSavesStart = static_cast<uint16_t>(-offset / static_cast<ptrdiff_t>(sizeof(CPURegister)));
     }
+    RELEASE_ASSERT(!(frame.bytesAboveFrameRecord % stackAlignmentBytes()) && frame.bytesAboveFrameRecord / stackAlignmentBytes() <= ImageFrame::maxUnitsAboveFrameRecord && frame.bytesAboveFrameRecord <= frame.frameSizeInBytes);
+    shape.calleeSavesStart |= static_cast<uint16_t>(frame.bytesAboveFrameRecord / stackAlignmentBytes() << ImageFrame::unitsAboveFrameRecordShift);
     if (!frame.hasFrameRecord)
         shape.calleeSavesStart |= ImageFrame::hasNoFrameRecordBit;
     return shape;
@@ -117,11 +119,8 @@ static Vector<ImageFunction> encodeFunctions(const FunctionTableInputs& inputs, 
     forEachIndexInParallel(loops, inputs.functions.size(), [&](unsigned position) {
         const CompiledCode& code = inputs.functions[position];
         const SiteDescription& sites = code.sites;
-        OptionSet<ImageFunctionFlag> flags;
+        OptionSet<ImageFunctionFlag> flags = inputs.sideTableFlags[position];
         flags.set(ImageFunctionFlag::HasInlineFrames, sites.hasEncodedInlineFrames());
-        flags.set(ImageFunctionFlag::HasHandlers, !sites.handlers.isEmpty());
-        flags.set(ImageFunctionFlag::HasFrameMaps, !sites.frameMapWords.isEmpty());
-        flags.set(ImageFunctionFlag::HasCallSites, !inputs.callSites[position].isEmpty());
         flags.set(ImageFunctionFlag::HasPositions, inputs.hasPositions && !sites.positions.isEmpty());
         flags.set(ImageFunctionFlag::SpillsArgumentRegisters, code.frame.spillsArgumentRegisters);
         records[position] = ImageFunction::create(inputs.sideTableOffsets[position], code.function.index(), flags);
@@ -269,7 +268,7 @@ EncodedFunctionTables encodeFunctionTables(const FunctionTableInputs& inputs, Bu
     const CodeLayout& layout = inputs.layout;
     const ParallelLoops& loops = context.parallelLoops();
     RELEASE_ASSERT(layout.bodyStarts.size() == functions.size());
-    RELEASE_ASSERT(inputs.callSites.size() == functions.size() && inputs.sideTableOffsets.size() == functions.size());
+    RELEASE_ASSERT(inputs.sideTableFlags.size() == functions.size() && inputs.sideTableOffsets.size() == functions.size());
 
     if (!checkFunctionLimit(functions, inputs.aliases, context))
         return { };

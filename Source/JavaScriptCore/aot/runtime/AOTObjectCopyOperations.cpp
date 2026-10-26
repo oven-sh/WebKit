@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
+#include "AOTMappedCopyInlines.h"
 #include "AOTModuleHost.h"
 #include "AOTModuleNamespace.h"
 #include "AOTObject.h"
@@ -132,7 +133,7 @@ JSObject* withAllPropertiesInline(JSGlobalObject* globalObject, JSObject* object
 static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedKeys& excluded, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
 {
     if (isCompiledObject(source)) {
-        auto walkResult = PropertyWalk::forEachOwnPropertyInline(vm, source, PropertyWalk::Filter::StringsAndSymbols, [&](const PropertyWalk::OwnProperty& property) {
+        auto walkResult = PropertyWalk::forEachOwnPropertyAsCreatedInline(vm, source, [&](const PropertyWalk::OwnProperty& property) {
             if ((property.attributes & PropertyAttribute::DontEnum) || excluded.contains(property.name))
                 return IterationStatus::Continue;
             if (property.name == vm.propertyNames->underscoreProto.impl())
@@ -147,6 +148,9 @@ static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedKeys& e
     TypeInfo info = structure->typeInfo();
     if (source->hasNonReifiedStaticProperties() || info.overridesGetOwnPropertySlot() || info.overridesAnyFormOfGetOwnPropertyNames() || structure->hasUnderscoreProtoPropertyExcludingOriginalProto() || hasIndexedProperties(structure->indexingType()))
         return false;
+    // As in the engine's own copy, which takes the keys of such a source names first.
+    bool symbolsComeLast = !structure->canPerformFastPropertyEnumerationCommon();
+    Vector<std::pair<UniquedStringImpl*, PropertyOffset>, 4> symbols;
     bool everyPropertyIsPlain = true;
     structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
         if ((entry.attributes() & PropertyAttribute::DontEnum) || PropertyName(entry.key()).isPrivateName() || excluded.contains(entry.key()))
@@ -154,6 +158,10 @@ static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedKeys& e
         everyPropertyIsPlain = !(entry.attributes() & PropertyAttribute::AccessorOrCustomAccessorOrValue);
         if (!everyPropertyIsPlain)
             return false;
+        if (symbolsComeLast && entry.key()->isSymbol()) {
+            symbols.append({ entry.key(), entry.offset() });
+            return true;
+        }
         names.append(entry.key());
         values.appendWithCrashOnOverflow(source->getDirect(entry.offset()));
         return true;
@@ -161,8 +169,13 @@ static bool tryCollectProperties(VM& vm, JSObject* source, const ExcludedKeys& e
     if (!everyPropertyIsPlain) {
         names.clear();
         values.clear();
+        return false;
     }
-    return everyPropertyIsPlain;
+    for (auto [symbol, offset] : symbols) {
+        names.append(symbol);
+        values.appendWithCrashOnOverflow(source->getDirect(offset));
+    }
+    return true;
 }
 
 // What has been read out of a source of any kind is put into an ordinary object, which gets the same Structure each time the names are the same.
@@ -303,8 +316,7 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
 {
     constexpr ASCIILiteral threw = "threw"_s;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!hasOwnPropertiesToCopy(source))
-        return "nothing to copy"_s;
+    ASSERT(hasOwnPropertiesToCopy(source));
     JSObject* from = source.isObject() ? asObject(source) : source.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, threw);
     Object* record = compiledObjectOrNull(target);
@@ -337,7 +349,10 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
     }
     auto* ordinary = dynamicDowncast<JSFinalObject>(target);
     bool canPutDirectly = ordinary && ordinary->canPerformFastPutInlineExcludingProto() && ordinary->isStructureExtensible();
-    if (canPutDirectly && excluded.isEmpty()) {
+    // The engine's own copy takes the keys of a source that has elements names first.
+    JSObject* holderOfElements = isCompiledObject(from) ? PropertyWalk::objectHoldingIndexedProperties(from) : from;
+    bool hasElements = holderOfElements && hasIndexedProperties(holderOfElements->indexingType());
+    if (canPutDirectly && excluded.isEmpty() && !hasElements) {
         Vector<UniquedStringImpl*, 8> properties;
         MarkedArgumentBuffer propertyValues;
         bool isDone = objectAssignFast(globalObject, ordinary, from, properties, propertyValues);
@@ -404,8 +419,9 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
 
 static ALWAYS_INLINE void copyDataPropertiesExcluding(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSObject* target, JSValue source, const ExcludedKeys& excluded)
 {
-    AssignmentPlanCache& plans = instance->state->objects->caches->assignmentPlans;
-    plans.noteCopy(copyDataPropertiesByAnyWay(instance, globalObject, vm, target, source, excluded));
+    ASCIILiteral way = copyDataPropertiesByAnyWay(instance, globalObject, vm, target, source, excluded);
+    if (Options::aotCountsPath()) [[unlikely]]
+        instance->state->objects->caches->assignmentPlans.noteCopy(way);
 }
 
 static ExcludedRun excludedRunAt(Instance* instance, uint32_t numberPlusOne)
@@ -415,28 +431,56 @@ static ExcludedRun excludedRunAt(Instance* instance, uint32_t numberPlusOne)
     return { numberPlusOne, instance->tables().propertyRunRow(numberPlusOne - 1).subspan(1) };
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataProperties, void, (Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys))
+static ALWAYS_INLINE void copyDataPropertiesAsBeforeOrByAnyWay(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys)
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCopyDataProperties);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!hasOwnPropertiesToCopy(JSValue::decode(source)))
-        OPERATION_RETURN(scope);
+        return;
     JSObject* object = cellArgument<JSObject>(target, Entry::operationAOTCopyDataProperties);
-    AssignmentPlanCache& plans = instance->state->objects->caches->assignmentPlans;
     if (RepeatedCopy way = !count && isCompiledObject(object) ? tryRepeatAssignment(vm, *instance->state, object, JSValue::decode(source), excludedRun) : RepeatedCopy::IsNotDone; way != RepeatedCopy::IsNotDone) {
-        if (plans.countsCopies()) [[unlikely]] {
+        if (Options::aotCountsPath()) [[unlikely]] {
             constexpr std::array<ASCIILiteral, 5> names { ""_s, "fields by words or moves"_s, "by the map of two layouts"_s, "by the map of two layouts, the first of its kind"_s, "as the copy before"_s };
-            plans.noteCopy(names[static_cast<size_t>(way)]);
+            instance->state->objects->caches->assignmentPlans.noteCopy(names[static_cast<size_t>(way)]);
         }
-        OPERATION_RETURN(scope);
+        return;
     }
     ExcludedKeys excluded;
     if (excludedRun || count) {
         excluded.collect(instance, globalObject, excludedRunAt(instance, excludedRun), { excludedKeys, count });
-        OPERATION_RETURN_IF_EXCEPTION(scope);
+        RETURN_IF_EXCEPTION(scope, void());
     }
     scope.release();
     copyDataPropertiesExcluding(instance, globalObject, vm, object, JSValue::decode(source), excluded);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataProperties, void, (Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCopyDataProperties);
+    scope.release();
+    copyDataPropertiesAsBeforeOrByAnyWay(instance, globalObject, vm, target, source, excludedRun, count, excludedKeys);
     OPERATION_RETURN(scope);
+}
+
+#if !HAVE_MUST_TAIL_CALL
+static NEVER_INLINE NOT_TAIL_CALLED ExceptionOperationResult<void> copyDataPropertiesInFrame(CallerFrameAndPC* frameRecord, Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys)
+{
+    AOT_OPERATION_BEGIN_IN_FRAME(instance, frameRecord, Entry::operationAOTCopyDataProperties);
+    scope.release();
+    copyDataPropertiesAsBeforeOrByAnyWay(instance, globalObject, vm, target, source, excludedRun, count, excludedKeys);
+    OPERATION_RETURN(scope);
+}
+#endif
+
+// The stub in front calls it where a copy that takes no frame is kept at the place of this one.
+JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataPropertiesByFieldMap, void, (Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys))
+{
+    if (!count && tryCopyByFieldMapWithoutFrame(*instance, target, source, excludedRun)) [[likely]]
+        return { nullptr };
+#if HAVE_MUST_TAIL_CALL
+    MUST_TAIL_CALL return operationAOTCopyDataProperties(instance, target, source, excludedRun, count, excludedKeys);
+#else
+    return copyDataPropertiesInFrame(AOT_OPERATION_FRAME_RECORD(), instance, target, source, excludedRun, count, excludedKeys);
+#endif
 }
 
 static JSObject* tryCopyWithoutNames(Instance* instance, VM& vm, JSGlobalObject* globalObject, JSObject* source, ExcludedRun excluded)

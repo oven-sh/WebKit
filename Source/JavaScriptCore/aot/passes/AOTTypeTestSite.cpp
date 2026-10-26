@@ -13,6 +13,7 @@
 #include "AOTBodyIndex.h"
 #include "AOTCFG.h"
 #include "AOTDiagnostics.h"
+#include "AOTEdgeResults.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTGenericCopy.h"
 #include "AOTHeat.h"
@@ -108,7 +109,7 @@ Value TestConditions::canonicalize(const Value& test) const
             canonical.setOperand(operandIndex, m_identities.identityOf(operand));
     }
     canonical.type = TypeID();
-    canonical.setExpected(TypeID());
+    canonical.setExpected({ });
     canonical.representation = Representation::Unchosen;
     canonical.setOrigin({ Instruction::noPosition, 0 });
     return canonical;
@@ -187,7 +188,7 @@ TestSiteReporter::TestSiteReporter(FunctionPassContext& context)
 std::optional<Type> TestSiteReporter::expectedPartOf(ValueID operand, uint16_t droppedPrimitives) const
 {
     const Value& value = function().at(operand);
-    TypeID expectedType = value.expectedOrType();
+    TypeID expectedType = value.expectedOrType().predicted();
     if (expectedType == value.type)
         return std::nullopt;
 
@@ -226,10 +227,6 @@ bool TestSiteReporter::mayHaveFailedTestOf(ValueID value) const
 
 bool TestSiteReporter::takesAwaySitesInColdCode()
 {
-    if (!m_isColdFunction)
-        m_isColdFunction = isCold(m_context.inputs.heat.of(program(), m_context.id));
-    if (!*m_isColdFunction)
-        return false;
     if (m_blockOfHeatClass != m_point.block) {
         m_blockOfHeatClass = m_point.block;
         m_blockIsCold = heatClassOf(m_context, m_point.block) == HeatClass::Cold;
@@ -294,12 +291,44 @@ static bool asksForMoreThanLayoutsTell(const TestSiteReporter& reporter, const V
     });
 }
 
-void TestSiteReporter::report(std::span<const Value> tests, const Effects& effectsWhenPassed)
+// `node.self = node`: a use may name one value twice, a branch may have narrowed only one of the names, and each name may get a test of its own. What passes the tests takes the place of every name, so it has the types of all names and passes all tests of the value.
+static bool canPassWithOtherTests(const TestSiteReporter& reporter, std::span<const Value> tests, const Value& test)
+{
+    if (!provesForever(provesOf(test.opcode)))
+        return true;
+    const Value& use = reporter.useValue();
+    ValueID subject = reporter.analyses().identityOf(test.operand(testedOperandIndex));
+    auto isAboutSubject = [&](const Value& other) {
+        return provesForever(provesOf(other.opcode)) && reporter.analyses().identityOf(other.operand(testedOperandIndex)) == subject;
+    };
+    // The first test of a value answers for all of them.
+    if (&*std::ranges::find_if(tests, isAboutSubject) != &test)
+        return true;
+
+    ValueID tested = test.operand(testedOperandIndex);
+    Type type = reporter.typeOf(tested);
+    bool hasOtherName = false;
+    use.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+        if (!operand || operand == tested || use.operandKind(operandIndex) == OperandKind::Guard || reporter.analyses().identityOf(operand) != subject)
+            return;
+        hasOtherName = true;
+        type = type.intersectWith(reporter.typeOf(operand), reporter.types());
+    });
+    if (!hasOtherName && std::ranges::count_if(tests, isAboutSubject) == 1)
+        return true;
+    for (const Value& other : tests) {
+        if (isAboutSubject(other))
+            type = narrowTypeByTest({ reporter.program(), reporter.function(), reporter.types() }, type, other, testedOperandIndex, EdgeSide::Taken);
+    }
+    return !type.isNever();
+}
+
+void TestSiteReporter::report(std::span<const Value> tests, const Effects& effectsWhenPassed, TestOutcome outcome)
 {
     RELEASE_ASSERT(m_use && !m_didReport && !tests.empty());
     for (const Value& test : tests)
         RELEASE_ASSERT(placeabilityOf(analyses(), test) == TestPlaceability::CanBePlaced);
-    if (std::ranges::any_of(tests, [&](const Value& test) { return asksForMoreThanLayoutsTell(*this, test); }))
+    if (std::ranges::any_of(tests, [&](const Value& test) { return asksForMoreThanLayoutsTell(*this, test) || !canPassWithOtherTests(*this, tests, test); }))
         return;
 
     // A block that is marked is a slow path: a generic copy, the arm behind a failed test. A block that only the estimate of a branch calls unlikely is typed code like the rest, and the estimate may be wrong.
@@ -315,7 +344,7 @@ void TestSiteReporter::report(std::span<const Value> tests, const Effects& effec
     if (hasFailedTest(tests))
         return;
 
-    m_sites.sites.append(TestSite { m_rule, m_use, m_point, static_cast<uint32_t>(m_sites.tests.size()), static_cast<uint32_t>(tests.size()), effectsWhenPassed });
+    m_sites.sites.append(TestSite { m_rule, m_use, m_point, static_cast<uint32_t>(m_sites.tests.size()), static_cast<uint32_t>(tests.size()), effectsWhenPassed, outcome });
     m_sites.tests.append(tests);
     m_isClaimed.set(m_use.index());
     m_didReport = true;
@@ -388,7 +417,7 @@ static bool isDefinedOutsideLoop(TestSiteReporter& reporter, ValueID value, cons
 }
 
 // What stands behind the passing edge of the test does not run in the copy, where the test has failed.
-static bool holdsAccessOrCallWhereTestFails(TestSiteReporter& reporter, const NaturalLoop& loop)
+static bool holdsTestedUseWhereTestFails(TestSiteReporter& reporter, const NaturalLoop& loop)
 {
     const Function& function = reporter.function();
     FunctionAnalyses& analyses = reporter.analyses();
@@ -404,7 +433,7 @@ static bool holdsAccessOrCallWhereTestFails(TestSiteReporter& reporter, const Na
         if (accessClassOf(block.terminator.kind) != AccessClass::None)
             return true;
         for (ValueID value : block.values) {
-            if (accessClassOf(function.at(value).opcode) != AccessClass::None)
+            if (accessClassOf(function.at(value).opcode) != AccessClass::None || reporter.isClaimed(value))
                 return true;
         }
     }
@@ -441,7 +470,7 @@ static std::optional<Value> testInFrontOf(TestSiteReporter& reporter, const Valu
 // Behind a test that failed stands the copy of the failed tests, where nothing else is tested either.
 static bool isSurpriseWhereItFails(TestSiteReporter& reporter, const Value& testInFront)
 {
-    Type expected = reporter.types().at(reporter.function().at(testInFront.valueOperand()).expectedOrType()).withoutClassProofs();
+    Type expected = reporter.types().at(reporter.function().at(testInFront.valueOperand()).expectedOrType().predicted()).withoutClassProofs();
     return expected.isSubsetOf(reporter.types().at(testInFront.testedType()), reporter.program());
 }
 
@@ -469,9 +498,13 @@ void reportRepeatedTests(TestSiteReporter& reporter)
             return;
         RarerSide rarerSide = rarerSideOf(reporter);
         std::optional<Value> testInFront = testInFrontOf(reporter, test, rarerSide);
-        bool losesNothingInCopy = isInvariantInLoop && !holdsAccessOrCallWhereTestFails(reporter, *loop);
-        if (testInFront && (losesNothingInCopy || rarerSide != RarerSide::Neither || isSurpriseWhereItFails(reporter, *testInFront)))
+        bool losesNothingInCopy = isInvariantInLoop && !holdsTestedUseWhereTestFails(reporter, *loop);
+        if (!testInFront)
+            return;
+        if (rarerSide != RarerSide::Neither || isSurpriseWhereItFails(reporter, *testInFront))
             reporter.report({ *testInFront }, Effects::none());
+        else if (losesNothingInCopy)
+            reporter.report({ *testInFront }, Effects::none(), TestOutcome::IsUnpredictable);
     });
 }
 

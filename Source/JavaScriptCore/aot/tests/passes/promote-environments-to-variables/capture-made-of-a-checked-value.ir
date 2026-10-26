@@ -1,0 +1,31 @@
+# A captured value that an operation makes of a checked value: where the check fails, the generic version of the function stores what the operation makes of the value that the check
+# has turned away. Nothing says that this is a number, so the variable that takes the place of the capture is only expected. A read of it keeps what holds of the capture in both versions
+# FORM: AsRead
+# RUN: pipeline PromoteEnvironmentsToVariables
+# CHECK: variable g1 module=m0 declared={type=number flags=[IsExpected]}
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="sink" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName]
+    v2 = Convert v1 declared={type=number}
+    v3 = Add v2, v2
+    v4 = NewClosure v3 function=f1
+    PutModuleVariable v4 variable=g0
+    v6 = PropGet v0 key="keep" [isFreeName]
+    v7 = Call v6, -, v4
+    Return
+# CHECK: v2: number = Check v1 expectedType=number
+# CHECK-NEXT: v3: number = Add v2, v2
+# CHECK-NEXT: [[held]]: number = AssumeType v3 provenType=number|string|bigint
+# CHECK-NEXT: PutModuleVariable [[held]] variable=g1
+# CHECK-NEXT: = NewClosure function=f1
+}
+function f1 name="readsCapture" kind=Arrow captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+# CHECK: [[read]]: anything ~ number = GetModuleVariable variable=g1
+# CHECK-NEXT: [[proven]]: number|string|bigint = AssumeType [[read]] provenType=number|string|bigint
+# CHECK-NEXT: Return [[proven]]
+}

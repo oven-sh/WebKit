@@ -31,6 +31,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace AOT {
 
 class CustomAccessorTable;
+class Image;
 struct Instance;
 struct State;
 
@@ -218,6 +219,9 @@ public:
     RowDisplacementTable& front() { return m_front; }
     HashedSlotTable& hashedTable() { return m_hashedTable; }
 
+    // No VM that runs the image reserves more for its tables when it is created.
+    static size_t maxSizeOfPagesAtStart(const Image&);
+
     bool isSharedByInstances() const { return m_isSharedByInstances; }
     void didCreateInstance(Instance&);
     void publishWords(Instance&) const;
@@ -228,6 +232,7 @@ public:
 
     void fileAbsenceFilterForStores(JSGlobalObject*, JSObject*);
     void didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull);
+    void didStartWatchingReplacements();
     uint32_t absenceFilterGenerationForStores() const { return m_absenceFilterGenerationForStores; }
     bool wasChangedOnSomeChain(uint32_t identifierNumber) const { return m_namesChangedOnChains[identifierNumber / 64] >> identifierNumber % 64 & 1; }
     void didChangeObjectPrototype(JSObject* prototype, UniquedStringImpl* uidOrNull);
@@ -330,6 +335,7 @@ private:
     static constexpr uint32_t missesBeforeFiling = 2;
     static constexpr uint32_t storeMissesBeforeFiling = 1;
     static constexpr uint32_t numberOfFirstAdditionsByKey = 1 << 12;
+    static constexpr uint32_t firstAdditionsByKeyPerSet = 8;
 
     void ensureChangesAreReported(std::span<JSObject* const>);
     bool canCache(Structure*, const PropertyAnswer&) const;
@@ -345,6 +351,7 @@ private:
     Vector<Addition> m_additionsSinceCollection;
     std::array<uint8_t, numberOfMissCounters> m_missCounters { };
     std::array<uint32_t, numberOfFirstAdditionsByKey> m_firstAdditionsByKey { };
+    uint32_t m_evictionSeed { 0 };
     StructureID m_structureMadeForAdditionByKey;
     std::atomic<bool> m_shouldForgetMisses { false };
     std::unique_ptr<UncheckedKeyHashSet<uint64_t>> m_countedFilings;

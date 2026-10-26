@@ -1265,6 +1265,54 @@ void testLiveRangesAreNotSplitWithoutBorderToCross()
     }
 }
 
+// Each block of the row hands one value to the next, so there are as many Tmps as blocks, and `kept` lives through all of them.
+void testLiveRangeSplitInFunctionWithManyBlocksAndTmps()
+{
+    constexpr unsigned numberOfBlocksInRow = 9000;
+    static_assert(numberOfBlocksInRow * (numberOfBlocksInRow / 64) > B3::AirLimits::maxWordsPerLivenessMatrix);
+    for (bool runsEveryPhase : { false, true }) {
+        KeptValueGraph graph(frameSplittingPolicy());
+        Code& code = graph.code;
+        BasicBlock* caller = code.addBlock();
+        BasicBlock* join = code.addBlock();
+        appendBranchTest(graph.entry, graph.first, caller, join);
+        graph.appendCallAndReload(caller);
+        appendJump(caller, join);
+
+        BasicBlock* last = join;
+        Tmp sum = code.newTmp(GP);
+        last->append(Move, nullptr, Arg::imm(0), sum);
+        for (unsigned i = 0; i < numberOfBlocksInRow; ++i) {
+            BasicBlock* next = code.addBlock();
+            appendJump(last, next);
+            Tmp nextSum = code.newTmp(GP);
+            next->append(Move, nullptr, sum, nextSum);
+            next->append(Add64, nullptr, Arg::imm(1), nextSum);
+            sum = nextSum;
+            last = next;
+        }
+        last->append(Add64, nullptr, sum, graph.kept);
+        graph.appendReturnOfKept(last, 1);
+
+        if (runsEveryPhase) {
+            graph.prepareAndCheck({ .coverage = FrameCoverage::SomePaths, .sites = { 1, 1 }, .notSetUpAtHead = { graph.entry, join } });
+            graph.checkRun({ .first = 0, .second = 40, .result = 41 + numberOfBlocksInRow });
+            graph.checkRun({ .first = 1, .second = 40, .result = 41 + numberOfBlocksInRow, .numberOfCalls = 1 });
+            continue;
+        }
+        code.resetReachability();
+        unsigned numberOfTmps = code.numTmps(GP);
+        CHECK(splitLiveRangesAroundFrame(code));
+        CHECK(code.numTmps(GP) == numberOfTmps + 1);
+        CHECK(numberOfInsts(code, Shuffle) == 2);
+        Inst& entering = caller->at(0);
+        CHECK(entering.kind.opcode == Shuffle && entering.args().size() == 3 && entering.args()[0] == Arg(graph.kept));
+        Tmp inRegion = entering.args()[1].tmp();
+        Inst& leaving = caller->at(caller->size() - 2);
+        CHECK(leaving.kind.opcode == Shuffle && leaving.args().size() == 3 && leaving.args()[0] == Arg(inRegion) && leaving.args()[1] == Arg(graph.kept));
+    }
+}
+
 void testLiveRangeSplitPutsShufflesOnBorder()
 {
     KeptValueGraph graph(frameSplittingPolicy());
@@ -1311,6 +1359,7 @@ void testLiveRangeSplitPutsShufflesOnBorder()
         RUN(testValueKeptThroughCrowdedBlockLeavesOtherPathWithoutFrame()); \
         RUN(testValuesSurviveRandomFrameBorders()); \
         RUN(testLiveRangesAreNotSplitWithoutBorderToCross()); \
+        RUN(testLiveRangeSplitInFunctionWithManyBlocksAndTmps()); \
         RUN(testLiveRangeSplitPutsShufflesOnBorder()); \
         RUN(testRareCallRejoins()); \
         RUN(testTwoRareCalls()); \

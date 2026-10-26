@@ -105,7 +105,7 @@ static void rewriteKeyPartsLookup(GroupRewriter& rewriter, const KeyPartsMatch& 
 
     Value& root = rewriter.replaceRoot(Opcode::AssumeType);
     root.setValueOperand(lookupID);
-    root.setCastType(call.type);
+    root.setProvenType(Proven::byRulesWithoutChecks(call.type));
 }
 
 void selectKeyPartsLookup(SelectionContext& context)

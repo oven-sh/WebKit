@@ -107,6 +107,7 @@ struct BuiltinNativeFunctionBinding {
     BuiltinID builtin { };
     NativeFunction::Ptr function { nullptr };
     unsigned length { 0 };
+    ASCIILiteral name { };
 };
 
 struct BuiltinHostNumberBinding {
@@ -132,6 +133,7 @@ struct EngineNativeFunctionBinding {
     NamedBuiltin builtin;
     NativeFunction::Ptr function { nullptr };
     unsigned length { 0 };
+    ASCIILiteral name { };
 };
 
 struct EngineLinkTimeConstantBinding {
@@ -150,6 +152,8 @@ extern const EngineBindingSet engineBuiltinBindings;
 struct BuiltinNativeFunction {
     NativeFunction::Ptr function { nullptr };
     unsigned length { 0 };
+    // Of the function object. A stack trace lists the function under it, and lists none that has no name here.
+    ASCIILiteral name { };
 };
 
 class BuiltinBindings {

@@ -570,6 +570,40 @@ void growthKeepsEntriesAndPublishesWords()
     fixture.vm().aotState().instances.clear();
 }
 
+void frontGrowthKeepsRowsAndPublishesWords()
+{
+    constexpr unsigned numberOfStructures = 3 * RowDisplacementTable::initialNumberOfBases;
+    constexpr uint32_t columns[] = { 1, 977, RowDisplacementTable::maxColumn };
+    TableFixture fixture;
+    auto& front = fixture.front();
+    ZeroedInstance instance = createZeroedInstance();
+    fixture.vm().aotState().instances.append(instance.get());
+    fixture.caches().didCreateInstance(*instance);
+    AOT_TEST_CHECK(hasPublishedWords(fixture, *instance));
+
+    auto offsetFor = [](unsigned structure, uint32_t column) {
+        return static_cast<PropertyOffset>((structure + column) % 50);
+    };
+    Vector<Structure*> structures;
+    for (unsigned i = 0; i < numberOfStructures; ++i) {
+        structures.append(fixture.createStructure());
+        for (uint32_t column : columns)
+            fixture.caches().set(structures[i], fixture.name(column), SlotAccess::Read, ownValueSlot(structures[i], offsetFor(i, column)));
+        fixture.caches().set(structures[i], fixture.name(columns[0]), SlotAccess::Define, absentSlot(structures[i], 0));
+        AOT_TEST_CHECK(hasPublishedWords(fixture, *instance));
+    }
+    AOT_TEST_CHECK(!limitHitsOf(fixture.vm(), LimitID::LookupTableBases));
+    for (unsigned i = 0; i < numberOfStructures; ++i) {
+        for (uint32_t column : columns) {
+            AOT_TEST_CHECK(fixture.cellAt(structures[i], column, SlotAccess::Read).name == column);
+            AOT_TEST_CHECK(isSameSlot(front.find(structures[i]->id(), column, SlotAccess::Read), ownValueSlot(structures[i], offsetFor(i, column))));
+            AOT_TEST_CHECK(!front.find(structures[i]->id(), column, SlotAccess::Store));
+        }
+        AOT_TEST_CHECK(isSameSlot(front.find(structures[i]->id(), columns[0], SlotAccess::Define), absentSlot(structures[i], 0)));
+    }
+    fixture.vm().aotState().instances.clear();
+}
+
 void hashedEntryHoldsItsName()
 {
     TableFixture fixture;
@@ -1101,6 +1135,7 @@ std::span<const NativeTest> propertyLookupTableTests()
         { "property-lookup-table/hashed-accesses-coexist"_s, hashedAccessesCoexist },
         { "property-lookup-table/fifth-key-of-set-evicts"_s, fifthKeyOfSetEvicts },
         { "property-lookup-table/growth-keeps-entries-and-publishes-words"_s, growthKeepsEntriesAndPublishesWords },
+        { "property-lookup-table/front-growth-keeps-rows-and-publishes-words"_s, frontGrowthKeepsRowsAndPublishesWords },
         { "property-lookup-table/hashed-entry-holds-its-name"_s, hashedEntryHoldsItsName },
         { "property-lookup-table/fill-by-number-replaces-hashed-copy"_s, fillByNumberReplacesHashedCopy },
         { "property-lookup-table/remove-clears-both-levels"_s, removeClearsBothLevels },

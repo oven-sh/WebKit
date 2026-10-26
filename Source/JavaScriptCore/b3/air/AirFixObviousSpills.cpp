@@ -51,7 +51,8 @@ class FixObviousSpills {
 public:
     FixObviousSpills(Code& code)
         : m_code(code)
-        , m_atHead(code.size())
+        , m_atHead(code.size(), State(SlotAliases::levelsFor(code.stackSlots().size())))
+        , m_state(SlotAliases::levelsFor(code.stackSlots().size()))
     {
     }
 
@@ -128,7 +129,7 @@ private:
     {
         for (BasicBlock* block : m_code) {
             m_block = block;
-            m_state = m_atHead[block];
+            m_state.takeFrom(m_atHead[block]);
 
             for (m_instIndex = 0; m_instIndex < block->size(); ++m_instIndex) {
                 if (m_state.isEmpty()) {
@@ -537,120 +538,36 @@ private:
         int64_t constant { 0 };
     };
 
-    struct State {
-        bool LEGACY_NODELETE isEmpty() const { return constRegs.isEmpty() && slotConst.isEmpty() && regSlot.isEmpty(); }
+    // The aliases of some spill slots. Those of one slot are in the order in which getRegSlot() looks at them: sorted up to the
+    // end of the last block, then as they were added.
+    struct AliasLists {
+        bool isEmpty() const { return slotConst.isEmpty() && regSlot.isEmpty(); }
 
-        bool LEGACY_NODELETE hasNoSlotAlias() const { return slotConst.isEmpty() && regSlot.isEmpty(); }
-
-        bool LEGACY_NODELETE hasNoRegAlias() const { return constRegs.isEmpty() && regSlot.isEmpty(); }
-
-        void addAlias(const RegConst& newAlias)
+        ScalarRegisterSet regs() const
         {
-            constRegs.add(newAlias.reg);
-            constants[newAlias.reg.index()] = newAlias.constant;
-        }
-        void addAlias(const RegSlot& newAlias)
-        {
-            regSlot.append(newAlias);
-            regSlotRegs.add(newAlias.reg);
-#if ASSERT_ENABLED
-            m_isSorted = false;
-#endif
-        }
-        void addAlias(const SlotConst& newAlias)
-        {
-            slotConst.append(newAlias);
-#if ASSERT_ENABLED
-            m_isSorted = false;
-#endif
+            ScalarRegisterSet result;
+            for (const RegSlot& alias : regSlot)
+                result.add(alias.reg);
+            return result;
         }
 
-        bool contains(const RegConst& alias) const
+        // Returns whether an alias of a register went.
+        bool clobber(StackSlot* slot)
         {
-            return constantForReg(alias.reg) == alias.constant;
-        }
-        bool contains(const RegSlot& alias)
-        {
-            if (!regSlotRegs.contains(alias.reg))
-                return false;
-            return regSlot.contains(alias);
-        }
-        bool contains(const SlotConst& alias)
-        {
-            return slotConst.contains(alias);
-        }
-
-        std::optional<int64_t> LEGACY_NODELETE constantForReg(Reg reg) const
-        {
-            if (!constRegs.contains(reg))
-                return std::nullopt;
-            return constants[reg.index()];
-        }
-
-        const RegSlot* LEGACY_NODELETE getRegSlot(StackSlot* slot) const
-        {
-            for (const RegSlot& alias : regSlot) {
-                if (alias.slot == slot)
-                    return &alias;
-            }
-            return nullptr;
-        }
-
-        const SlotConst* LEGACY_NODELETE getSlotConst(StackSlot* slot) const
-        {
-            for (const SlotConst& alias : slotConst) {
-                if (alias.slot == slot)
-                    return &alias;
-            }
-            return nullptr;
-        }
-
-        std::optional<int64_t> LEGACY_NODELETE constantFor(const Arg& arg)
-        {
-            if (arg.isReg())
-                return constantForReg(arg.reg());
-            if (arg.isStack()) {
-                if (const SlotConst* alias = getSlotConst(arg.stackSlot()))
-                    return alias->constant;
-                return std::nullopt;
-            }
-            return std::nullopt;
+            slotConst.removeAllMatching([&](const SlotConst& alias) { return alias.slot == slot; });
+            return regSlot.removeAllMatching([&](const RegSlot& alias) { return alias.slot == slot; });
         }
 
         void clobber(Reg reg)
         {
-            constRegs.remove(reg);
-            if (!regSlotRegs.contains(reg))
-                return;
-            unsigned matchCount = regSlot.removeAllMatching(
-                [&] (const RegSlot& alias) -> bool {
-                    return alias.reg == reg;
-                });
-            ASSERT_UNUSED(matchCount, matchCount);
-            regSlotRegs.remove(reg);
-        }
-
-        void clobber(StackSlot* slot)
-        {
-            slotConst.removeAllMatching(
-                [&] (const SlotConst& alias) -> bool {
-                    return alias.slot == slot;
-                });
-            if (regSlot.removeAllMatching([&] (const RegSlot& alias) -> bool { return alias.slot == slot; }))
-                rebuildRegSlotRegs();
+            regSlot.removeAllMatching([&](const RegSlot& alias) { return alias.reg == reg; });
         }
 
         void sort()
         {
-            std::ranges::sort(slotConst, [](const auto& a, const auto& b) {
-                return a < b;
-            });
-            std::ranges::sort(regSlot, [](const auto& a, const auto& b) {
-                return a < b;
-            });
-#if ASSERT_ENABLED
-            m_isSorted = true;
-#endif
+            auto isLess = [](const auto& a, const auto& b) { return a < b; };
+            std::ranges::sort(slotConst, isLess);
+            std::ranges::sort(regSlot, isLess);
         }
 
         // Takes two sorted vectors, for each element in the first, it looks for the first element in the second which is not smaller.
@@ -673,10 +590,497 @@ private:
             });
         }
 
+        // Keeps what both have. Both are sorted. Returns whether anything changed.
+        bool merge(const AliasLists& other)
+        {
+            bool changed = false;
+            changed |= filterVectorAgainst(slotConst, other.slotConst, [](SlotConst& a, const SlotConst& b) { return a == b; });
+            changed |= filterVectorAgainst(regSlot, other.regSlot, [&](RegSlot& alias, const RegSlot& otherAlias) {
+                if (alias.reg != otherAlias.reg || alias.slot != otherAlias.slot)
+                    return false;
+                if (alias.mode != RegSlot::Match32 && alias.mode != otherAlias.mode) {
+                    alias.mode = RegSlot::Match32;
+                    changed = true;
+                }
+                return true;
+            });
+            return changed;
+        }
+
+        friend bool operator==(const AliasLists&, const AliasLists&) = default;
+
+        Vector<SlotConst> slotConst;
+        Vector<RegSlot> regSlot;
+    };
+
+    // The aliases of all spill slots. Where the code has few slots they are in one pair of lists. Otherwise they are in a tree by
+    // the index of the slot, whose leaves have the aliases of slotsPerLeaf slots. Copies share nodes and a change copies the nodes
+    // on the way to one leaf, so the states at the heads of all blocks together take room for what changes from block to block.
+    class SlotAliases {
+    public:
+        static constexpr unsigned bitsPerLevel = 4;
+        static constexpr unsigned fanOut = 1 << bitsPerLevel;
+        static constexpr unsigned slotsPerLeaf = fanOut;
+        static constexpr unsigned maxSlotsInOnePairOfLists = 256;
+
+        // 0 for one pair of lists.
+        static unsigned levelsFor(size_t numberOfSlots)
+        {
+            if (numberOfSlots <= maxSlotsInOnePairOfLists)
+                return 0;
+            unsigned levels = 1;
+            while (numberOfSlots > static_cast<size_t>(slotsPerLeaf) << levels * bitsPerLevel)
+                ++levels;
+            return levels;
+        }
+
+        explicit SlotAliases(unsigned levels)
+            : m_levels(levels)
+        {
+        }
+
+        SlotAliases(const SlotAliases&) = default;
+
+        // All the states of one run have the same number of levels, and what is copied is sorted.
+        SlotAliases& operator=(const SlotAliases& other)
+        {
+            ASSERT(m_levels == other.m_levels && other.m_isSorted);
+            m_regs = other.m_regs;
+            m_isEmpty = other.m_isEmpty;
+            m_isSorted = true;
+            if (m_levels) {
+                m_root = other.m_root;
+                m_unsortedSlots.shrink(0);
+            } else
+                m_lists = other.m_lists;
+            return *this;
+        }
+
+        // The other one is not looked at again.
+        void takeFrom(SlotAliases& other)
+        {
+            if (m_levels) {
+                m_root = nullptr;
+                *this = other;
+                other.m_root = nullptr;
+            } else
+                *this = other;
+        }
+
+        bool isEmpty() const { return m_isEmpty; }
+        bool hasAliasOf(Reg reg) const { return m_regs.contains(reg); }
+        bool hasAliasOfAnyReg() const { return !m_regs.isEmpty(); }
+
+        void add(const RegSlot& alias)
+        {
+            ownListsOf(alias.slot, alias.reg).regSlot.append(alias);
+            m_regs.add(alias.reg);
+            m_isEmpty = false;
+        }
+
+        void add(const SlotConst& alias)
+        {
+            ownListsOf(alias.slot, Reg()).slotConst.append(alias);
+            m_isEmpty = false;
+        }
+
+        bool contains(const RegSlot& alias) const
+        {
+            if (!hasAliasOf(alias.reg))
+                return false;
+            const AliasLists* lists = listsOf(alias.slot);
+            return lists && lists->regSlot.contains(alias);
+        }
+
+        bool contains(const SlotConst& alias) const
+        {
+            const AliasLists* lists = listsOf(alias.slot);
+            return lists && lists->slotConst.contains(alias);
+        }
+
+        const RegSlot* getRegSlot(StackSlot* slot) const
+        {
+            if (const AliasLists* lists = listsOf(slot)) {
+                for (const RegSlot& alias : lists->regSlot) {
+                    if (alias.slot == slot)
+                        return &alias;
+                }
+            }
+            return nullptr;
+        }
+
+        const SlotConst* getSlotConst(StackSlot* slot) const
+        {
+            if (const AliasLists* lists = listsOf(slot)) {
+                for (const SlotConst& alias : lists->slotConst) {
+                    if (alias.slot == slot)
+                        return &alias;
+                }
+            }
+            return nullptr;
+        }
+
+        void clobber(Reg reg)
+        {
+            if (!hasAliasOf(reg))
+                return;
+            if (m_levels)
+                clobber(m_root, m_levels, reg);
+            else
+                m_lists.clobber(reg);
+            m_regs.remove(reg);
+            updateIsEmpty();
+        }
+
+        void clobber(StackSlot* slot)
+        {
+            if (m_isEmpty)
+                return;
+            if (!m_levels) {
+                if (m_lists.clobber(slot))
+                    m_regs = m_lists.regs();
+                updateIsEmpty();
+                return;
+            }
+            const AliasLists* lists = listsOf(slot);
+            if (!lists)
+                return;
+            auto isOfSlot = [&](const auto& alias) { return alias.slot == slot; };
+            if (!lists->regSlot.containsIf(isOfSlot) && !lists->slotConst.containsIf(isOfSlot))
+                return;
+            clobber(m_root, m_levels, slot);
+            updateRegs();
+        }
+
+        void sort()
+        {
+            if (m_isSorted)
+                return;
+            m_isSorted = true;
+            if (!m_levels) {
+                m_lists.sort();
+                return;
+            }
+            for (StackSlot* slot : m_unsortedSlots) {
+                Leaf* leaf = leafOf(slot);
+                if (!leaf || leaf->isSorted)
+                    continue;
+                Leaf& ownLeaf = ownLeafOf(slot, Reg());
+                ownLeaf.lists.sort();
+                ownLeaf.isSorted = true;
+            }
+            m_unsortedSlots.shrink(0);
+        }
+
+        // Keeps what both have. Both are sorted. Returns whether anything changed.
+        bool merge(const SlotAliases& other)
+        {
+            ASSERT(m_isSorted && other.m_isSorted);
+            if (!(m_levels ? merge(m_root, other.m_root, m_levels) : m_lists.merge(other.m_lists)))
+                return false;
+            updateRegs();
+            return true;
+        }
+
+        void dump(PrintStream& out) const
+        {
+            CommaPrinter comma;
+            if (m_levels)
+                dump(out, comma, m_root.get(), m_levels);
+            else
+                dump(out, comma, m_lists);
+        }
+
+    private:
+        struct Node : public RefCounted<Node> {
+            WTF_DEPRECATED_MAKE_FAST_ALLOCATED(Node);
+        public:
+            Node() = default;
+            Node(const Node& other)
+                : RefCounted<Node>()
+                , regs(other.regs)
+            {
+            }
+            virtual ~Node() = default;
+
+            // The registers that the aliases below name.
+            ScalarRegisterSet regs;
+        };
+
+        struct Leaf final : public Node {
+            AliasLists lists;
+            bool isSorted { true };
+        };
+
+        struct Branch final : public Node {
+            std::array<RefPtr<Node>, fanOut> children;
+        };
+
+        // The root is at m_levels and a leaf at 0.
+        static Leaf& asLeaf(Node& node) { return static_cast<Leaf&>(node); }
+        static Branch& asBranch(Node& node) { return static_cast<Branch&>(node); }
+        static unsigned childIndex(StackSlot* slot, unsigned level) { return slot->index() >> level * bitsPerLevel & (fanOut - 1); }
+
+        void updateIsEmpty() { m_isEmpty = m_levels ? !m_root : m_lists.isEmpty(); }
+
+        void updateRegs()
+        {
+            updateIsEmpty();
+            if (m_levels)
+                m_regs = m_root ? m_root->regs : ScalarRegisterSet();
+            else
+                m_regs = m_lists.regs();
+        }
+
+        Leaf* leafOf(StackSlot* slot) const
+        {
+            Node* node = m_root.get();
+            for (unsigned level = m_levels; node && level; --level)
+                node = asBranch(*node).children[childIndex(slot, level)].get();
+            return static_cast<Leaf*>(node);
+        }
+
+        const AliasLists* listsOf(StackSlot* slot) const
+        {
+            if (!m_levels)
+                return &m_lists;
+            const Leaf* leaf = leafOf(slot);
+            return leaf ? &leaf->lists : nullptr;
+        }
+
+        // Afterwards nothing else sees a change to the node.
+        static void makeOwn(RefPtr<Node>& node, unsigned level)
+        {
+            if (node && node->hasOneRef())
+                return;
+            if (level)
+                node = node ? adoptRef(*new Branch(asBranch(*node))) : adoptRef(*new Branch);
+            else
+                node = node ? adoptRef(*new Leaf(asLeaf(*node))) : adoptRef(*new Leaf);
+        }
+
+        // After a removal.
+        static void didEdit(RefPtr<Node>& node, unsigned level)
+        {
+            bool isEmpty = true;
+            if (level) {
+                node->regs = { };
+                for (RefPtr<Node>& child : asBranch(*node).children) {
+                    if (!child)
+                        continue;
+                    isEmpty = false;
+                    node->regs.merge(child->regs);
+                }
+            } else {
+                isEmpty = asLeaf(*node).lists.isEmpty();
+                node->regs = asLeaf(*node).lists.regs();
+            }
+            if (isEmpty)
+                node = nullptr;
+        }
+
+        // For an addition. The alias to be added names the register, if one is given.
+        Leaf& ownLeafOf(StackSlot* slot, Reg reg)
+        {
+            RefPtr<Node>* node = &m_root;
+            for (unsigned level = m_levels;; --level) {
+                makeOwn(*node, level);
+                if (reg)
+                    (*node)->regs.add(reg);
+                if (!level)
+                    return asLeaf(**node);
+                node = &asBranch(**node).children[childIndex(slot, level)];
+            }
+        }
+
+        AliasLists& ownListsOf(StackSlot* slot, Reg reg)
+        {
+            m_isSorted = false;
+            if (!m_levels)
+                return m_lists;
+            Leaf& leaf = ownLeafOf(slot, reg);
+            if (std::exchange(leaf.isSorted, false))
+                m_unsortedSlots.append(slot);
+            return leaf.lists;
+        }
+
+        static void clobber(RefPtr<Node>& node, unsigned level, StackSlot* slot)
+        {
+            makeOwn(node, level);
+            if (level)
+                clobber(asBranch(*node).children[childIndex(slot, level)], level - 1, slot);
+            else
+                asLeaf(*node).lists.clobber(slot);
+            didEdit(node, level);
+        }
+
+        static void clobber(RefPtr<Node>& node, unsigned level, Reg reg)
+        {
+            makeOwn(node, level);
+            if (level) {
+                for (RefPtr<Node>& child : asBranch(*node).children) {
+                    if (child && child->regs.contains(reg))
+                        clobber(child, level - 1, reg);
+                }
+            } else
+                asLeaf(*node).lists.clobber(reg);
+            didEdit(node, level);
+        }
+
+        static bool merge(RefPtr<Node>& own, const RefPtr<Node>& other, unsigned level)
+        {
+            if (own == other || !own)
+                return false;
+            if (!other) {
+                own = nullptr;
+                return true;
+            }
+
+            bool changed = false;
+            if (level) {
+                const Branch& otherBranch = asBranch(*other);
+                bool isSame = true;
+                for (unsigned index = 0; index < fanOut; ++index) {
+                    if (asBranch(*own).children[index] == otherBranch.children[index])
+                        continue;
+                    makeOwn(own, level);
+                    RefPtr<Node>& child = asBranch(*own).children[index];
+                    changed |= merge(child, otherBranch.children[index], level - 1);
+                    isSame &= child == otherBranch.children[index];
+                }
+                if (isSame) {
+                    own = other;
+                    return changed;
+                }
+            } else {
+                if (asLeaf(*own).lists == asLeaf(*other).lists) {
+                    own = other;
+                    return false;
+                }
+                makeOwn(own, level);
+                changed = asLeaf(*own).lists.merge(asLeaf(*other).lists);
+            }
+            if (changed)
+                didEdit(own, level);
+            return changed;
+        }
+
+        static void dump(PrintStream& out, CommaPrinter& comma, const AliasLists& lists)
+        {
+            for (const SlotConst& alias : lists.slotConst)
+                out.print(comma, alias);
+            for (const RegSlot& alias : lists.regSlot)
+                out.print(comma, alias);
+        }
+
+        static void dump(PrintStream& out, CommaPrinter& comma, Node* node, unsigned level)
+        {
+            if (!node)
+                return;
+            if (!level) {
+                dump(out, comma, asLeaf(*node).lists);
+                return;
+            }
+            for (RefPtr<Node>& child : asBranch(*node).children)
+                dump(out, comma, child.get(), level - 1);
+        }
+
+        AliasLists m_lists;
+        RefPtr<Node> m_root;
+        // The registers that the aliases name.
+        ScalarRegisterSet m_regs;
+        // One of each leaf that is not sorted.
+        Vector<StackSlot*> m_unsortedSlots;
+        unsigned m_levels;
+        bool m_isEmpty { true };
+        bool m_isSorted { true };
+    };
+
+    struct State {
+        explicit State(unsigned levels)
+            : slotAliases(levels)
+        {
+        }
+
+        State(const State& other)
+            : constRegs(other.constRegs)
+            , slotAliases(other.slotAliases)
+        {
+            copyConstants(other);
+        }
+
+        State& operator=(const State& other)
+        {
+            constRegs = other.constRegs;
+            copyConstants(other);
+            slotAliases = other.slotAliases;
+            return *this;
+        }
+
+        // The other one is not looked at again.
+        void takeFrom(State& other)
+        {
+            constRegs = other.constRegs;
+            copyConstants(other);
+            slotAliases.takeFrom(other.slotAliases);
+        }
+
+        bool LEGACY_NODELETE isEmpty() const { return constRegs.isEmpty() && slotAliases.isEmpty(); }
+
+        bool LEGACY_NODELETE hasNoSlotAlias() const { return slotAliases.isEmpty(); }
+
+        bool LEGACY_NODELETE hasNoRegAlias() const { return constRegs.isEmpty() && !slotAliases.hasAliasOfAnyReg(); }
+
+        void addAlias(const RegConst& newAlias)
+        {
+            constRegs.add(newAlias.reg);
+            constants[newAlias.reg.index()] = newAlias.constant;
+        }
+        void addAlias(const RegSlot& newAlias) { slotAliases.add(newAlias); }
+        void addAlias(const SlotConst& newAlias) { slotAliases.add(newAlias); }
+
+        bool contains(const RegConst& alias) const
+        {
+            return constantForReg(alias.reg) == alias.constant;
+        }
+        bool contains(const RegSlot& alias) const { return slotAliases.contains(alias); }
+        bool contains(const SlotConst& alias) const { return slotAliases.contains(alias); }
+
+        std::optional<int64_t> LEGACY_NODELETE constantForReg(Reg reg) const
+        {
+            if (!constRegs.contains(reg))
+                return std::nullopt;
+            return constants[reg.index()];
+        }
+
+        const RegSlot* LEGACY_NODELETE getRegSlot(StackSlot* slot) const { return slotAliases.getRegSlot(slot); }
+
+        const SlotConst* LEGACY_NODELETE getSlotConst(StackSlot* slot) const { return slotAliases.getSlotConst(slot); }
+
+        std::optional<int64_t> LEGACY_NODELETE constantFor(const Arg& arg)
+        {
+            if (arg.isReg())
+                return constantForReg(arg.reg());
+            if (arg.isStack()) {
+                if (const SlotConst* alias = getSlotConst(arg.stackSlot()))
+                    return alias->constant;
+                return std::nullopt;
+            }
+            return std::nullopt;
+        }
+
+        void clobber(Reg reg)
+        {
+            constRegs.remove(reg);
+            slotAliases.clobber(reg);
+        }
+
+        void clobber(StackSlot* slot) { slotAliases.clobber(slot); }
+
+        void sort() { slotAliases.sort(); }
+
         bool merge(const State& other)
         {
-            ASSERT(m_isSorted);
-            ASSERT(other.m_isSorted);
             bool changed = false;
 
             ScalarRegisterSet survivingConstRegs;
@@ -689,28 +1093,8 @@ private:
                 changed = true;
             }
 
-            changed |= filterVectorAgainst(slotConst, other.slotConst, [](SlotConst& a, const SlotConst& b) { return a == b; });
-            changed |= filterVectorAgainst(regSlot, other.regSlot, [&](RegSlot& alias, const RegSlot& otherAlias) {
-                if (alias.reg != otherAlias.reg || alias.slot != otherAlias.slot)
-                    return false;
-                if (alias.mode != RegSlot::Match32 && alias.mode != otherAlias.mode) {
-                    alias.mode = RegSlot::Match32;
-                    changed = true;
-                }
-                return true;
-            });
-
-            if (changed)
-                rebuildRegSlotRegs();
-
+            changed |= slotAliases.merge(other.slotAliases);
             return changed;
-        }
-
-        void rebuildRegSlotRegs()
-        {
-            regSlotRegs = { };
-            for (const RegSlot& alias : regSlot)
-                regSlotRegs.add(alias.reg);
         }
 
         void dump(PrintStream& out) const
@@ -719,19 +1103,19 @@ private:
             CommaPrinter comma;
             for (Reg reg : constRegs)
                 out.print(comma, reg, "->", constants[reg.index()]);
-            out.print(
-                "], slotConst = [", listDump(slotConst),
-                "], regSlot = [", listDump(regSlot), "]}");
+            out.print("], aliases of slots = [", slotAliases, "]}");
+        }
+
+        void copyConstants(const State& other)
+        {
+            if (!other.constRegs.isEmpty())
+                constants = other.constants;
         }
 
         ScalarRegisterSet constRegs;
-        std::array<int64_t, Reg::maxIndex() + 1> constants { };
-        Vector<SlotConst> slotConst;
-        Vector<RegSlot> regSlot;
-        ScalarRegisterSet regSlotRegs;
-#if ASSERT_ENABLED
-        bool m_isSorted { true };
-#endif
+        // Only those of constRegs mean anything.
+        std::array<int64_t, Reg::maxIndex() + 1> constants;
+        SlotAliases slotAliases;
     };
 
     Code& m_code;

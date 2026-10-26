@@ -10,6 +10,7 @@
 #include "AOTForwardDataflow.h"
 #include "AOTFreshResults.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTHeldOperands.h"
 #include "AOTIRBuilder.h"
 #include "AOTLiveness.h"
 #include "AOTSinkAllocations.h"
@@ -84,8 +85,10 @@ struct ObjectState {
     Vector<TypeID, 1> assumedTypes;
     bool lacksFieldsOnSomeWay { false };
     bool isMissingOnSomeWay { false };
+    // The same of an object that is a cell on the other ways: what stands for the cell may be an Unspecified value.
+    bool isCellMissingOnSomeWay { false };
 
-    static ObjectState withShape(VirtualShapeID shape) { return { { ObjectVariant { std::nullopt, shape } }, { }, { }, { }, { }, false, false }; }
+    static ObjectState withShape(VirtualShapeID shape) { return { { ObjectVariant { std::nullopt, shape } }, { }, { }, { }, { }, false, false, false }; }
 
     bool hasCell() const;
     bool isCell() const { return variants.size() == 1 && variants[0].shape == cellShape; }
@@ -645,7 +648,7 @@ struct BytesOperands {
 std::optional<BytesOperands> findBytesOperands(const Program&, const Function&, const Value& call, BuiltinCallForm formOfCall);
 
 bool isFrameAllocatable(const AllocationSinking&, const Candidate&);
-bool buildsItsOperands(const Program&, const Value& user);
+bool buildsOperand(const Program&, const Value& user, uint32_t operandIndex);
 
 } } } // namespace JSC::AOT::Typed
 

@@ -20,8 +20,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v8 = Call v7, -, v5
     Return
 }
-function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=131085 thisType={type=anything} results=[{type=anything}] {
+function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=131086 thisType={type=anything} results=[{type=anything}] {
     v1 = PropGet v0 key="a"
     Return v1
 }
-runtimefunction id=131085 function=f1
+runtimefunction id=131086 function=f1

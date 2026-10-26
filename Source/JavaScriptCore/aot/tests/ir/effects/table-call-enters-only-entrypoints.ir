@@ -77,43 +77,43 @@ function f17 role=TableLookup flags=[HasThis] thisType={type=object} results=[{t
 }
 function f18 name="area" module=m0 kind=Method role=TableEntrypoint flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1 parameter=2147483648 node=1} creator=Entrypoint{target=f1 arguments=Registers} {
   b0(v0: object):
-    v1: L0 = AssumeType v0 castType=L0 @0
+    v1: L0 = AssumeType v0 provenType=L0 @0
     v2: number = CallDirect v1 function=f1 @0
     ReturnCall v2 requirement=Allowed @0
 }
 function f19 name="area" module=m0 kind=Method role=TableEntrypoint flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3 parameter=2147483648 node=1} creator=Entrypoint{target=f3 arguments=Registers} {
   b0(v0: object):
-    v1: L1 = AssumeType v0 castType=L1 @0
+    v1: L1 = AssumeType v0 provenType=L1 @0
     v2: number = CallDirect v1 function=f3 @0
     ReturnCall v2 requirement=Allowed @0
 }
 function f20 name="area" module=m0 kind=Method role=TableEntrypoint flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f5 parameter=2147483648 node=1} creator=Entrypoint{target=f5 arguments=Registers} {
   b0(v0: object):
-    v1: L2 = AssumeType v0 castType=L2 @0
+    v1: L2 = AssumeType v0 provenType=L2 @0
     v2: number = CallDirect v1 function=f5 @0
     ReturnCall v2 requirement=Allowed @0
 }
 function f21 name="area" module=m0 kind=Method role=TableEntrypoint flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f7 parameter=2147483648 node=1} creator=Entrypoint{target=f7 arguments=Registers} {
   b0(v0: object):
-    v1: L3 = AssumeType v0 castType=L3 @0
+    v1: L3 = AssumeType v0 provenType=L3 @0
     v2: number = CallDirect v1 function=f7 @0
     ReturnCall v2 requirement=Allowed @0
 }
 function f22 name="area" module=m0 kind=Method role=TableEntrypoint flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f9 parameter=2147483648 node=1} creator=Entrypoint{target=f9 arguments=Registers} {
   b0(v0: object):
-    v1: L4 = AssumeType v0 castType=L4 @0
+    v1: L4 = AssumeType v0 provenType=L4 @0
     v2: number = CallDirect v1 function=f9 @0
     ReturnCall v2 requirement=Allowed @0
 }
 function f23 name="size" module=m0 kind=Method role=TableEntrypoint flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f11 parameter=2147483648 node=2} creator=Entrypoint{target=f11 arguments=Registers} {
   b0(v0: object):
-    v1: L5 = AssumeType v0 castType=L5 @0
+    v1: L5 = AssumeType v0 provenType=L5 @0
     v2: number = CallDirect v1 function=f11 @0
     ReturnCall v2 requirement=Allowed @0
 }
 function f24 name="size" module=m0 kind=Method role=TableEntrypoint flags=[HasThis] thisType={type=object} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f13 parameter=2147483648 node=2} creator=Entrypoint{target=f13 arguments=Registers} {
   b0(v0: object):
-    v1: L6 = AssumeType v0 castType=L6 @0
+    v1: L6 = AssumeType v0 provenType=L6 @0
     v2: number = CallDirect v1 function=f13 @0
     ReturnCall v2 requirement=Allowed @0
 }

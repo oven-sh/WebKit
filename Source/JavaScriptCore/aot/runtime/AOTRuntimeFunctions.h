@@ -36,7 +36,9 @@ const PropertyRun* propertyRunAt(Instance*, uint32_t number);
 JS_EXPORT_PRIVATE JSObject* withAllPropertiesInline(JSGlobalObject*, JSObject*);
 
 void defineDataProperty(Instance*, JSObject*, PropertyName, JSValue, PutPropertySlot&);
-JSValue getWithoutCaches(Instance*, JSValue base, const Identifier&);
+// An accessor that is found gets the receiver for `this`.
+JSValue getWithoutCaches(Instance*, JSValue base, const Identifier&, JSValue receiver);
+inline JSValue getWithoutCaches(Instance* instance, JSValue base, const Identifier& identifier) { return getWithoutCaches(instance, base, identifier, base); }
 
 void throwNotAFunctionError(JSGlobalObject*, ThrowScope&, JSValue callee);
 

@@ -268,6 +268,47 @@ void VM::computeCanUseJIT()
 #endif
 }
 
+class VM::HostFunctionExecutables final : public WeakHandleOwner {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(HostFunctionExecutables);
+public:
+    using Key = std::tuple<uintptr_t, uintptr_t, uint64_t, String>;
+
+    static Key keyFor(TaggedNativeFunction function, TaggedNativeFunction constructor, ImplementationVisibility implementationVisibility, Intrinsic intrinsic, unsigned length, const String& name)
+    {
+        return { std::bit_cast<uintptr_t>(function), std::bit_cast<uintptr_t>(constructor), static_cast<uint64_t>(length) << 16 | static_cast<uint64_t>(intrinsic) << 8 | static_cast<uint64_t>(implementationVisibility), name };
+    }
+
+    NativeExecutable* get(const Key& key) const
+    {
+        auto found = m_executables.find(key);
+        return found == m_executables.end() ? nullptr : found->value.get();
+    }
+
+    void set(const Key& key, NativeExecutable* executable, Intrinsic intrinsic)
+    {
+        m_executables.set(key, Weak<NativeExecutable>(executable, this, reinterpret_cast<void*>(static_cast<uintptr_t>(intrinsic))));
+    }
+
+private:
+    struct KeyHash {
+        static unsigned hash(const Key& key)
+        {
+            const String& name = std::get<3>(key);
+            return pairIntHash(intHash(static_cast<uint64_t>(std::get<0>(key))), name.isNull() ? 0 : name.hash());
+        }
+        static bool equal(const Key& a, const Key& b) { return a == b; }
+        static constexpr bool safeToCompareToEmptyOrDeleted = true;
+    };
+
+    void finalize(Handle<Unknown> handle, void* context) final
+    {
+        auto& executable = *static_cast<NativeExecutable*>(handle.get().asCell());
+        m_executables.remove(keyFor(executable.function(), executable.constructor(), executable.implementationVisibility(), static_cast<Intrinsic>(reinterpret_cast<uintptr_t>(context)), executable.length(), executable.name()));
+    }
+
+    UncheckedKeyHashMap<Key, Weak<NativeExecutable>, KeyHash> m_executables;
+};
+
 static bool vmCreationShouldCrash = false;
 
 VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
@@ -654,6 +695,31 @@ void VM::updateHostObservesMicrotaskBoundaries()
     if (hasCompiledCode())
         AOT::RuntimeHooks::didChangeMicrotaskQueueing(*this);
 #endif
+}
+
+static void didOpenOrCloseSynchronousModuleQueue(VM& vm)
+{
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        AOT::RuntimeHooks::didChangeMicrotaskQueueing(vm);
+#else
+    UNUSED_PARAM(vm);
+#endif
+}
+
+VM::SynchronousModuleQueueScope::SynchronousModuleQueueScope(VM& vm)
+    : m_vm(vm)
+{
+    m_queue.prev = std::exchange(vm.m_synchronousModuleQueue, &m_queue);
+    if (!m_queue.prev)
+        didOpenOrCloseSynchronousModuleQueue(vm);
+}
+
+VM::SynchronousModuleQueueScope::~SynchronousModuleQueueScope()
+{
+    m_vm.m_synchronousModuleQueue = m_queue.prev;
+    if (!m_queue.prev)
+        didOpenOrCloseSynchronousModuleQueue(m_vm);
 }
 
 void VM::queueMicrotask(QueuedTask&& task)
@@ -1083,16 +1149,16 @@ NativeExecutable* VM::getHostFunction(NativeFunction function, ImplementationVis
     auto create = [&] {
         return NativeExecutable::create(*this, jitCodeForCallTrampoline(intrinsic), toTagged(function), jitCodeForConstructTrampoline(), toTagged(constructor), implementationVisibility, length, name);
     };
-    // A function without a name is one that the engine makes again and again, for a promise or an iterator: Promise.prototype.finally asks at every call. There are as many as there are functions in C++.
-    if (!name.isNull() || intrinsic != NoIntrinsic || length > 0xffff)
+    // A function without a name is one that the engine makes again and again, for a promise or an iterator: Promise.prototype.finally asks at every call. One with a name is made once for a realm.
+    if (!name.isNull() && m_numberOfRealmsInitialized < 2)
         return create();
-    std::tuple<uintptr_t, uintptr_t, unsigned> key { std::bit_cast<uintptr_t>(function), std::bit_cast<uintptr_t>(constructor), length << 8 | static_cast<unsigned>(implementationVisibility) };
-    if (auto found = m_executablesOfNamelessHostFunctions.find(key); found != m_executablesOfNamelessHostFunctions.end()) {
-        if (NativeExecutable* executable = found->value.get())
-            return executable;
-    }
+    if (!m_hostFunctionExecutables)
+        m_hostFunctionExecutables = makeUnique<HostFunctionExecutables>();
+    auto key = HostFunctionExecutables::keyFor(toTagged(function), toTagged(constructor), implementationVisibility, intrinsic, length, name);
+    if (NativeExecutable* executable = m_hostFunctionExecutables->get(key))
+        return executable;
     NativeExecutable* executable = create();
-    m_executablesOfNamelessHostFunctions.set(key, Weak<NativeExecutable>(executable));
+    m_hostFunctionExecutables->set(key, executable, intrinsic);
     return executable;
 }
 
@@ -1453,12 +1519,15 @@ NEVER_INLINE static Exception* createExceptionWithCompiledCode(VM& vm, JSGlobalO
     using Action = Exception::StackCaptureAction;
     if (globalObject->debugger())
         return Exception::create(vm, thrownValue, Action::CaptureStack);
-    AOT::Instance* instance = globalObject->aotInstance();
-    if (instance && vm.topCallFrame && AOT::nearestHandlerIgnoresValue(vm, *instance, vm.topCallFrame))
+    std::optional<HandlerType> nearest;
+    if (globalObject->aotInstance() && vm.topCallFrame)
+        nearest = AOT::findNearestHandler(vm, vm.topCallFrame);
+    // Nobody lists the frames of what a `catch` takes.
+    if (nearest == HandlerType::SynthesizedCatch || nearest == HandlerType::Catch)
         return Exception::create(vm, thrownValue, Action::DoNotCaptureStack);
-    if (Exception* exception = Exception::tryCreateWithStackOfError(vm, thrownValue))
+    if (Exception* exception = Exception::tryCreateWithStackOfErrorMadeHere(vm, thrownValue))
         return exception;
-    return Exception::create(vm, thrownValue, vm.interpreter.isExceptionCaughtByUserCatchClause() ? Action::DoNotCaptureStack : Action::CaptureStack);
+    return Exception::create(vm, thrownValue, vm.interpreter.isExceptionCaughtByUserCatchClause() ? Action::DoNotCaptureStack : Action::CaptureStackOfThrow);
 }
 #endif
 

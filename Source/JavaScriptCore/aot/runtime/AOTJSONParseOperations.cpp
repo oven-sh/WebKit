@@ -40,6 +40,7 @@
 #include <span>
 #include <wtf/FastFloat.h>
 #include <wtf/text/ASCIIFastPath.h>
+#include <wtf/unicode/UTF8Conversion.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -476,21 +477,38 @@ std::span<const char16_t> original16BitCharacters(const JSONWords& words, std::s
 
 static bool appendPlainCharacters(const JSONWords& words, StringBuilder& builder, std::span<const uint8_t> characters)
 {
-    if (isLatin1(words, characters)) {
+    switch (words.sourceEncoding) {
+    case JSONSourceEncoding::Latin1:
         builder.append(byteCast<Latin1Character>(characters));
         return true;
-    }
-    if (words.sourceEncoding == JSONSourceEncoding::UTF16) {
+    case JSONSourceEncoding::UTF16:
         builder.append(original16BitCharacters(words, characters));
         return true;
+    case JSONSourceEncoding::UTF8:
+        break;
     }
     if (!StringImpl::isValidLength<char16_t>(characters.size()))
         return false;
-    String decoded = String::fromUTF8(characters);
-    if (decoded.isNull())
+    Vector<char16_t, JSONCache::maxLongStringLength> decoded;
+    if (!decoded.tryGrow(characters.size()))
         return false;
-    builder.append(decoded);
+    auto result = WTF::Unicode::convert(byteCast<char8_t>(characters), decoded.mutableSpan());
+    if (result.code != WTF::Unicode::ConversionResultCode::Success)
+        return false;
+    builder.append(result.buffer);
     return true;
+}
+
+// JSON.parse() keeps a string of over JSONCache's atomized length in the width of its source.
+static JSString* tryMakeJSONStringOfWideSource(const JSONWords& words, VM& vm, std::span<const uint8_t> latin1)
+{
+    if (words.sourceEncoding == JSONSourceEncoding::UTF16)
+        return vm.jsonCache().tryMakeJSString(vm, original16BitCharacters(words, latin1));
+    Vector<char16_t, JSONCache::maxLongStringLength> wide;
+    if (!StringImpl::isValidLength<char16_t>(latin1.size()) || !wide.tryGrow(latin1.size()))
+        return nullptr;
+    WTF::copyElements(wide.mutableSpan(), byteCast<Latin1Character>(latin1));
+    return vm.jsonCache().tryMakeJSString(vm, wide.span());
 }
 
 const uint8_t* decodeJSONString(const JSONWords& words, const uint8_t* start, const uint8_t* cursor, StringBuilder& builder)
@@ -560,6 +578,10 @@ NEVER_INLINE ParsedJSONString makeUncachedJSONString(Instance& instance, VM& vm,
             return { jsEmptyString(vm) };
         memcpy(copy.data(), characters.data(), characters.size_bytes());
         return { jsString(vm, String { impl.releaseNonNull() }), cursor + 1 };
+    }
+    if (words.sourceEncoding != JSONSourceEncoding::Latin1 && static_cast<size_t>(cursor - start) > maxLengthOfJSONStringOfEitherWidth) [[unlikely]] {
+        JSString* string = tryMakeJSONStringOfWideSource(words, vm, { start, cursor });
+        return string ? ParsedJSONString { string, cursor + 1 } : ParsedJSONString { jsEmptyString(vm) };
     }
     JSString* string = vm.jsonCache().tryMakeJSString(vm, std::span<const Latin1Character> { byteCast<Latin1Character>(start), byteCast<Latin1Character>(cursor) });
     if (!string) [[unlikely]]

@@ -215,7 +215,7 @@ function f10 name="numberBound" parameters=[{type=number}] results=[{type=undefi
   b2():
     v5 = Integer integer=1
     v6 = Add v2, v5
-    v7 = AssumeType v6 castType=int[0, 100]
+    v7 = AssumeType v6 provenType=int[0, 100]
     Jump -> next b1(v7)
   b3():
     Return
@@ -262,7 +262,7 @@ function f12 name="integerBoundAndAssumedCounter" parameters=[{type=int[0, 100]}
   b2():
     v5 = Integer integer=1
     v6 = Add v2, v5
-    v7 = AssumeType v6 castType=int[0, 100]
+    v7 = AssumeType v6 provenType=int[0, 100]
     Jump -> next b1(v7)
   b3():
     Return

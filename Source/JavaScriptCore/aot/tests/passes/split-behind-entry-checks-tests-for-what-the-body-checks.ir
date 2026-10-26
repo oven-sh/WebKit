@@ -34,21 +34,21 @@ function f1 name="handsOn" module=m0 position=100 flags=[IsChecked] length=2 par
     v2 = ToBoolean v1
     Branch v2 -> taken b1(), notTaken b2()
   b1():
-    v3 = Check v0 castType=string site=w1
+    v3 = Check v0 expectedType=string site=w1
     v4 = CallDirect v3 function=f7
     Return v4
   b2():
-    v5 = Check v0 castType=string site=w2
+    v5 = Check v0 expectedType=string site=w2
     v6 = CallDirect v5 function=f7
     Return v6
 }
 function f2 name="narrows" module=m0 position=200 flags=[IsChecked] length=1 parameters=[{type=number|string site=w0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ number|string):
-    v1 = Check v0 castType=number|string site=w0
+    v1 = Check v0 expectedType=number|string site=w0
     Jump -> next b1()
   b1():
     v2 = Upcast v1 castType=anything
-    v3 = Check v2 castType=string site=w1
+    v3 = Check v2 expectedType=string site=w1
     v4 = CallDirect v3 function=f7
     Return v4
 }
@@ -56,7 +56,7 @@ function f3 name="alsoUses" module=m0 position=300 flags=[IsChecked] length=1 pa
     v1 = ToBoolean v0
     Branch v1 -> taken b1(), notTaken b2()
   b1():
-    v2 = Check v0 castType=string site=w1
+    v2 = Check v0 expectedType=string site=w1
     v3 = CallDirect v2 function=f7
     Return v3
   b2():
@@ -66,17 +66,17 @@ function f4 name="twoTypes" module=m0 position=400 flags=[IsChecked] length=2 pa
     v2 = ToBoolean v1
     Branch v2 -> taken b1(), notTaken b2()
   b1():
-    v3 = Check v0 castType=string site=w1
+    v3 = Check v0 expectedType=string site=w1
     v4 = CallDirect v3 function=f7
     Return v4
   b2():
-    v5 = Check v0 castType=number site=w2
+    v5 = Check v0 expectedType=number site=w2
     Return v5
 }
 function f5 name="otherMemberArrives" module=m0 position=500 flags=[IsChecked] length=1 parameters=[{type=anything}] results=[{type=anything}] {
     Jump -> next b1()
   b1():
-    v1 = Check v0 castType=string site=w1
+    v1 = Check v0 expectedType=string site=w1
     v2 = CallDirect v1 function=f7
     Return v2
 }
@@ -88,13 +88,13 @@ function f6 name="reassigned" module=m0 position=600 flags=[IsChecked] length=2 
   b2():
     Jump -> next b3(v1)
   b3(v3: anything):
-    v4 = Check v3 castType=string site=w1
+    v4 = Check v3 expectedType=string site=w1
     v5 = CallDirect v4 function=f7
     Return v5
 }
 function f7 name="takesString" module=m0 position=700 flags=[IsChecked] length=1 parameters=[{type=string site=w3 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ string):
-    v1 = Check v0 castType=string site=w3
+    v1 = Check v0 expectedType=string site=w3
     v2 = PropGet v1 key="length"
     Return v2
 }
@@ -105,14 +105,14 @@ function f7 name="takesString" module=m0 position=700 flags=[IsChecked] length=1
 # CHECK: = TypeTest v0 testedType=string
 # CHECK-NOT: TypeTest
 # CHECK-LABEL: function f3 name="alsoUses" module=m0 position=300 flags=[IsChecked]
-# CHECK: = Check v0 castType=string
+# CHECK: = Check v0 expectedType=string
 # CHECK-LABEL: function f4 name="twoTypes" module=m0 position=400 flags=[IsChecked]
-# CHECK: = Check v0 castType=string
-# CHECK: = Check v0 castType=number
+# CHECK: = Check v0 expectedType=string
+# CHECK: = Check v0 expectedType=number
 # CHECK-LABEL: function f5 name="otherMemberArrives" module=m0 position=500 flags=[IsChecked]
-# CHECK: = Check v0 castType=string
+# CHECK: = Check v0 expectedType=string
 # CHECK-LABEL: function f6 name="reassigned" module=m0 position=600 flags=[IsChecked]
-# CHECK: = Check v3 castType=string
+# CHECK: = Check v3 expectedType=string
 # CHECK-LABEL: function f7 name="takesString" module=m0 position=700 role=EntryChecks
 # The typed bodies.
 # CHECK: name="handsOn" module=m0 position=100 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=string site=w1}, {type=anything}]

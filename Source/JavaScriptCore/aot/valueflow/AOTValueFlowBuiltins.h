@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFlowPrototypes.h"
 #include "AOTValueFlowBuiltinTables.h"
 #include "AOTValueFlowRuleContext.h"
 
@@ -24,6 +25,7 @@ struct ValueFlowBuiltinCall {
     ValueFlowObjectID resultObject;
     ValueFlowObjectID contentsObject;
     const ValueFlowStatement* operation { nullptr };
+    bool isFoundOnReceiver { false };
     bool saysOnlyWhatIsCalled { false };
     bool readsOnlySpecies { false };
 };
@@ -63,6 +65,9 @@ void holdContentsIteratedByResult(BuiltinID, const ValueFlowBuiltinCall&, ValueF
 bool applyConstructionOfPromise(BuiltinID, const ValueFlowBuiltinCall&, ValueFlowRuleContext&);
 void settlePromisesThrough(ClimbingSet functions, const ValueFlowBuiltinCall&, ValueFlowRuleContext&);
 void adoptRejectionOf(ValueFlowRuleContext&, ClimbingSet values, ValueFlowNodeID reason);
+ValueFlowNodeID findNodeOfListedBun(ValueFlowRuleContext&, const ValueFlowOperand&);
+ValueSetID promisesAllocatedByBuiltins(ValueFlowRuleContext&, ClimbingSet values);
+void connectAwaitedValue(ValueFlowRuleContext&, const ValueFlowOperand&, ValueFlowNodeID target);
 void applyBuiltin(BuiltinID, ValueFlowCallKind, const ValueFlowStatement& call, ValueFlowRuleContext&, ValueSetID receivers = ValueSets::anything);
 void applyBuiltinFoundThroughUnknownObject(BuiltinID, const ValueFlowStatement& call, ValueFlowRuleContext&);
 void readSpeciesOfUnknownObject(BuiltinID, ValueFlowRuleContext&);
@@ -71,6 +76,9 @@ void applyEntryDescribing(ValueFlowObjectID closure, ValueFlowCallKind, const Va
 void applyEntryDescribing(ValueFlowObjectID closure, ValueFlowCallKind, const ValueFlowCallGroup&, ValueFlowRuleContext&);
 void enterCodeThatEntryDescribes(ValueFlowObjectID closure, ValueFlowRuleContext&);
 void noteCallOfBuiltin(BuiltinID, ValueFlowCallKind, ValueFlowRuleContext&);
+void connectEnumerableMembersOf(ClimbingSet hostObjects, ValueFlowNodeID to, ValueFlowRuleContext&);
+void carryOut(ValueFlowRuleContext&, ValueFlowNodeID values);
+void carryOut(ValueFlowRuleContext&, const ValueFlowOperand& values);
 bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext&, BuiltinName);
 bool isCodeBehindDeclaredEntries(const Program&, FunctionID);
 void callOtherCallables(ClimbingSet callees, ValueFlowCallKind, const ValueFlowStatement& call, ValueFlowRuleContext&);
@@ -86,14 +94,6 @@ inline BuiltinClassID classAbovePrototypeProperty(const Function& function)
     if (!function.has(FunctionFlags::IsGenerator))
         return BuiltinClasses::Object;
     return function.has(FunctionFlags::IsAsync) ? BuiltinClasses::AsyncGenerator : BuiltinClasses::Generator;
-}
-
-inline BuiltinClassID classOfFunctionObject(const Function& function)
-{
-    bool isAsync = function.has(FunctionFlags::IsAsync);
-    if (function.has(FunctionFlags::IsGenerator))
-        return isAsync ? BuiltinClasses::AsyncGeneratorFunction : BuiltinClasses::GeneratorFunction;
-    return isAsync ? BuiltinClasses::AsyncFunction : BuiltinClasses::Function;
 }
 
 inline bool mayReturnUnknownObject(const BuiltinType& type)

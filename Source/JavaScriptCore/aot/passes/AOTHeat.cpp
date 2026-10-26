@@ -186,6 +186,10 @@ HeatClass Heat::classOf(const Program& program, FunctionID id, double activation
         return HeatClass::Hot;
     double heat = activations * frequencyInFunction;
     HeatClass heatClass = classOf(heat);
+    if (m_hotIsByRank && !m_classOfEverything && !isCold(heatClass)) {
+        heat = m_entries.of(program, id).rank * frequencyInFunction;
+        heatClass = heat >= m_thresholds->hot ? HeatClass::Hot : HeatClass::Warm;
+    }
     if (!isHot(heatClass) || heat >= frequencyConstants.iterationsPerLoop || frequencyInFunction >= HeatModel::minWeightOfCallInLoop)
         return heatClass;
     return m_entries.of(program, id).isCalledInLoop && !leadsToBody(program.at(id)) ? heatClass : HeatClass::Warm;
@@ -197,13 +201,9 @@ HeatClass Heat::classOf(double heat) const
         return *m_classOfEverything;
     if (!m_thresholds)
         return HeatClass::Unknown;
-    if (!(heat > 0))
+    if (!(heat > 0) || heat < m_thresholds->cold)
         return HeatClass::Cold;
-    if (heat >= m_thresholds->hot)
-        return HeatClass::Hot;
-    if (heat < m_thresholds->cold)
-        return HeatClass::Cold;
-    return HeatClass::Warm;
+    return heat >= m_thresholds->hot ? HeatClass::Hot : HeatClass::Warm;
 }
 
 static void printWithThreeDigits(PrintStream& out, double number)
@@ -548,8 +548,12 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
     if (!summariesFromFlow)
         summariesFromFlow = &ownSummaries.emplace(createSummariesFromFlow(program, flow, build));
     times.didFinish("createSummariesFromFlow"_s);
-    HeatGraph graph = buildHeatGraph(program, callGraph, flow, *summariesFromFlow, build, references, keptWeights, madeWeights);
+    HeatGraph graphOfClasses;
+    HeatGraph graph = buildHeatGraph(program, callGraph, flow, *summariesFromFlow, build, references, keptWeights, madeWeights, &graphOfClasses);
     times.didFinish("buildHeatGraph"_s);
+    const bool estimatesTwice = graphOfClasses.numberOfFunctions();
+    Vector<double> ranks;
+    Vector<double> placesInOrder;
 
     unsigned count = graph.numberOfFunctions();
     Heat heat;
@@ -563,7 +567,7 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
         totalSize += graph.sizeOf(FunctionID(i));
     // Most of a very large program never runs, and which part does is not in the estimate: its products along paths of calls pass every bound, and a call that nobody follows spreads evenly over all that it may reach.
     // The thresholds of a very large program are fixed, and no class in it comes from a threshold.
-    const bool isVeryLargeProgram = totalSize > HeatModel::warmCodeLimitsInVeryLargeProgram * build.limit(LimitID::MaxWarmCodeValues);
+    const bool isVeryLargeProgram = totalSize > maxValuesOfOrdinaryProgram(build);
     heat.m_hasWeights = heatFor == HeatFor::Everything || !isVeryLargeProgram;
     Vector<uint8_t> isCalledInLoop;
     Vector<uint8_t> runsInLoop;
@@ -574,7 +578,11 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
     runTasksInParallel(loops, {
         [&] {
             if (heat.m_hasWeights)
-                activations = estimateActivations(graph);
+                activations = estimateActivations(estimatesTwice ? graphOfClasses : graph);
+        },
+        [&] {
+            if (heat.m_hasWeights && estimatesTwice)
+                ranks = estimateActivations(graph);
         },
         [&] {
             if (!isVeryLargeProgram)
@@ -604,12 +612,58 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
     if (functionsWithBody.isEmpty())
         return Heat();
 
+    Vector<uint8_t> runsWithEveryEvent;
+    if (estimatesTwice && heat.m_hasWeights) {
+        for (unsigned index = 0; index < count; ++index)
+            activations[index] = std::max(activations[index], graphOfClasses.entriesPerEventOf(FunctionID(index)));
+        placesInOrder = ranks;
+        runsWithEveryEvent = followNearlyCertainCalls(graph, isCalledPerEvent);
+        // A rank says which of two functions runs more often, not that either runs often: what comes with events has one only where it is entered as often for each event as a loop in a loop would enter it.
+        // The streams, emitters and sockets of the library call each other in cycles that are no loops: of the library, only what a loop calls has one.
+        // What a handler of the application calls nearly every time runs as often as the handler, and keeps its rank.
+        for (unsigned index = 0; index < count; ++index) {
+            if (graphOfClasses.entriesPerEventOf(FunctionID(index)) < 1)
+                continue;
+            bool isOfLibrary = isLibraryCode(program, program.functions[index]);
+            if (runsWithEveryEvent[index] && !isOfLibrary)
+                continue;
+            if (activations[index] <= HeatModel::minEntriesPerEventOfHotCode * HeatModel::eventsPerRun || (isOfLibrary && !isCalledInLoop[index]))
+                ranks[index] = 0;
+        }
+    }
+    if (heat.m_hasWeights && !isVeryLargeProgram) {
+        std::optional<HeatThresholds> thresholdsOfRanks;
+        if (estimatesTwice)
+            thresholdsOfRanks = computeThresholds(loops, applicationBlocks, ranks, build.limit(LimitID::MaxHotCodeValues), build.limit(LimitID::MaxWarmCodeValues));
+        heat.m_thresholds = computeThresholds(loops, WTF::move(applicationBlocks), activations, build.limit(LimitID::MaxHotCodeValues), build.limit(LimitID::MaxWarmCodeValues));
+        if (thresholdsOfRanks) {
+            // Most of the library runs in no one program: its code is hot only where both estimates put it beside the application's hot code.
+            if (std::isfinite(thresholdsOfRanks->hot)) {
+                double ranksPerActivation = thresholdsOfRanks->hot / heat.m_thresholds->hot;
+                for (uint32_t index : functionsWithBody) {
+                    if (isLibraryCode(program, program.functions[index]))
+                        ranks[index] = std::min(ranks[index], activations[index] * ranksPerActivation);
+                }
+            }
+            heat.m_thresholds->hot = thresholdsOfRanks->hot;
+            heat.m_hotIsByRank = true;
+        }
+    }
     Vector<uint8_t> percentiles;
+    if (estimatesTwice && heat.m_hasWeights) {
+        // A helper of the library that is entered from many places keeps its place among the functions: whoever calls it takes it in.
+        for (unsigned index = 0; index < count; ++index) {
+            bool isBusyHelper = graph.sizeOf(FunctionID(index)) <= HeatModel::maxSizeOfHelper && activations[index] > HeatModel::minEntriesPerEventOfHotCode * HeatModel::eventsPerRun && isLibraryCode(program, program.functions[index]);
+            if (!isBusyHelper)
+                placesInOrder[index] = ranks[index];
+        }
+    }
+    const Vector<double>& ranksOrActivations = estimatesTwice ? placesInOrder : activations;
     if (heat.m_hasWeights) {
         heat.m_allocationsOfLayouts.fill(0, program.layouts.size());
         for (const AllocationSite& site : flow.allocationSites()) {
             if (site.layout && site.function && site.layout.index() < program.layouts.size() && site.function.index() < activations.size()) {
-                heat.m_allocationsOfLayouts[site.layout.index()] += activations[site.function.index()];
+                heat.m_allocationsOfLayouts[site.layout.index()] += ranksOrActivations[site.function.index()];
                 if (ModuleID module = program.at(site.function).module)
                     heat.m_modulesThatAllocate.append(packedKeyOf(site.layout, module));
             }
@@ -617,18 +671,10 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
         AOT::sort(heat.m_modulesThatAllocate);
         removeRepeatedElements(heat.m_modulesThatAllocate);
 
-        runTasksInParallel(loops, {
-            [&] {
-                if (!isVeryLargeProgram)
-                    heat.m_thresholds = computeThresholds(loops, WTF::move(applicationBlocks), activations, build.limit(LimitID::MaxHotCodeValues), build.limit(LimitID::MaxWarmCodeValues));
-            },
-            [&] {
-                Vector<FunctionDensity> order = sortByDensity(loops, graph, functionsWithBody, activations);
-                percentiles = computePercentiles(graph, order, totalSize);
-                heat.m_hottestFirst = Vector<FunctionID>(order.size(), [&](size_t k) {
-                    return order[k].function;
-                });
-            },
+        Vector<FunctionDensity> order = sortByDensity(loops, graph, functionsWithBody, ranksOrActivations);
+        percentiles = computePercentiles(graph, order, totalSize);
+        heat.m_hottestFirst = Vector<FunctionID>(order.size(), [&](size_t k) {
+            return order[k].function;
         });
     }
     times.didFinish("computeThresholds"_s);
@@ -637,11 +683,24 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
         FunctionID id(i);
         // Without weights: classifyByCallers gives the entry its activations and its percentile.
         heat.m_entries[id] = heat.m_hasWeights ? Heat::Entry { activations[i], HeatClass::RunsOnce, percentiles[i], activations[i] } : Heat::Entry { 1, HeatClass::RunsOnce };
+        if (heat.m_hotIsByRank)
+            heat.m_entries[id].rank = ranks[i];
         heat.m_entries[id].isCalledInLoop = runsInLoop[i];
         heat.m_entries[id].isCalledPerEvent = !isVeryLargeProgram && isCalledPerEvent[i] && !isLibraryCode(program, program.functions[i]);
         if (!flow.runsAtMostOnce(program, id))
             heat.m_entries[id].heatClass = heat.classOf(program, id, 1);
     });
+    if (estimatesTwice) {
+        for (uint32_t i : functionsWithBody) {
+            Heat::Entry& entry = heat.m_entries[FunctionID(i)];
+            entry.isCompact = !(activations[i] > 0) && entry.heatClass == HeatClass::Cold && graph.sizeOf(FunctionID(i)) > HeatModel::maxSizeOfSmallFunction;
+        }
+        // A call of a built-in enters the function that stands behind it, and no edge of the graph says so.
+        for (const RuntimeFunctionEntry& behindBuiltin : program.runtimeFunctions) {
+            if (behindBuiltin.function)
+                heat.m_entries[behindBuiltin.function].isCompact = false;
+        }
+    }
     times.didFinish("classifyFunctions"_s);
     if (isVeryLargeProgram) {
         forEachIndexInParallel(loops, functionsWithBody.size(), [&](unsigned k) {
@@ -672,6 +731,7 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
     case HeatOverride::OnlyLoopsAreHot:
         for (uint32_t i : functionsWithBody)
             heat.m_entries[FunctionID(i)] = Heat::Entry { 1, HeatClass::Warm, 50 };
+        heat.m_hotIsByRank = false;
         heat.m_valuesInCompactFunctions = 0;
         heat.m_valuesInAllFunctions = 0;
         heat.m_thresholds = HeatThresholds { .cold = frequencyConstants.unlikelyEdgeShare, .hot = frequencyConstants.iterationsPerLoop };
@@ -735,7 +795,12 @@ HeatClass heatClassOf(const Heat& heat, FunctionAnalyses& analyses, BlockID bloc
     case HeatOverride::NothingIsHottest:
         break;
     }
-    return analyses.executionCountOf(block) == ExecutionCount::AtMostOnce ? HeatClass::RunsOnce : heatClass;
+    if (analyses.executionCountOf(block) == ExecutionCount::AtMostOnce)
+        return HeatClass::RunsOnce;
+    // The throw costs more than all that leads up to it, however often the function is entered.
+    if (heatClass > HeatClass::Cold && analyses.blockFrequencies().alwaysEndsInThrow(block))
+        return HeatClass::Cold;
+    return heatClass;
 }
 
 bool isInColderPartOfProgram(const Heat& heat, const Program& program, FunctionID id)
@@ -756,8 +821,43 @@ HeatClass heatClassOf(FunctionPassContext& context, BlockID block)
     return heatClassOf(context.inputs.heat, context.analyses, block);
 }
 
+// A loop runs as often as what it calls and as what was inlined into it. What counts as hot was settled while the cycle through a generic version still counted as a loop around the loop, so a loop may stand under a threshold that it set itself. The thresholds of a very large program are constants.
+static bool runsCodeOfHotFunction(FunctionPassContext& context, const NaturalLoop& loop)
+{
+    const Heat& heat = context.inputs.heat;
+    if (heat.isOfVeryLargeProgram())
+        return false;
+    const Function& function = context.function;
+    for (unsigned index = 0; index < loop.size(); ++index) {
+        const Block& block = function.at(loop.at(index));
+        if (block.frequency != BlockFrequency::Normal)
+            continue;
+        for (ValueID id : block.values) {
+            const Value& value = function.at(id);
+            if (value.opcode == Opcode::CallDirect && isHot(heat.of(context.program, value.function())))
+                return true;
+            if (!value.inlineFrame)
+                continue;
+            FunctionID callee = function.inlineFrames[value.inlineFrame].callee;
+            if (isHot(heat.of(context.program, callee)))
+                return true;
+            // The loop itself came out of a function, where it ran as often.
+            if (value.opcode == Opcode::LoopHint && loop.at(index) == loop.header() && isHot(heat.classOf(context.program, callee, frequencyConstants.iterationsPerLoop)))
+                return true;
+        }
+    }
+    return false;
+}
+
+bool isHotLoop(FunctionPassContext& context, const NaturalLoop& loop)
+{
+    return context.analyses.blockFrequencies().classOf(loop.header()) == BlockFrequency::Normal && (isHot(heatClassOf(context, loop.header())) || runsCodeOfHotFunction(context, loop));
+}
+
 static constexpr uint64_t outlinedBodyOverheadBytes = 48;
 static constexpr size_t sitesInLongHashRun = 1024;
+
+constexpr OpcodeSet callOpcodes = builtinCallOpcodes | OpcodeSet { Opcode::Call, Opcode::CallList, Opcode::CallDirect, Opcode::CallForwardVarargs, Opcode::CallMethod, Opcode::CallResolved, Opcode::AwaitCallBySavingFrame };
 
 struct OutliningSite {
     bool isRegion() const { return !!exitBlock; }
@@ -770,6 +870,10 @@ struct OutliningSite {
     BlockID exitBlock { };
     std::optional<uint32_t> exitArgument { };
     ValueID root { };
+    // Whether the operations that a stack trace can show stand for a call in tail position: all of them do or none does.
+    std::optional<bool> isTailCall { };
+    // The built-in function that those operations run steps of, if all of them run steps of the same one or of none. The call of the body names it.
+    std::optional<BuiltinID> calledBuiltin { };
     bool rootIsUsed { false };
     bool canPayOff { false };
     uint32_t orderOfEntryBlock { 0 };
@@ -797,20 +901,22 @@ static void forEachValueListAndTerminator(const Function& function, const Outlin
     }
 }
 
-static void forEachPayloadWordWithoutAccessSite(const Value& value, const Invocable<void(uint32_t)> auto& functor)
+static void forEachPayloadWordThatBodiesShare(const Value& value, const OutliningSite& site, const Invocable<void(uint32_t)> auto& functor)
 {
-    uint64_t wordsOfAccessSites = 0;
+    uint64_t omittedWords = 0;
     for (const PayloadFieldInfo& field : payloadFieldsOf(value.opcode)) {
         if (field.kind != PayloadKind::AccessSite)
             continue;
         RELEASE_ASSERT(field.firstWord < 64);
-        wordsOfAccessSites |= uint64_t { 1 } << field.firstWord;
+        omittedWords |= uint64_t { 1 } << field.firstWord;
     }
+    if (std::optional<unsigned> word = PayloadWord::calledBuiltin(value.opcode); word && site.calledBuiltin)
+        omittedWords |= uint64_t { 1 } << *word;
     unsigned position = 0;
     auto visit = [&](uint32_t word) {
-        bool isAccessSite = position < 64 && (wordsOfAccessSites >> position & 1);
+        bool isOmitted = position < 64 && (omittedWords >> position & 1);
         ++position;
-        functor(isAccessSite ? absentPayloadWord : word);
+        functor(isOmitted ? absentPayloadWord : word);
     };
     functor(static_cast<uint16_t>(value.flags));
     for (uint32_t word : value.inlinePayload())
@@ -953,7 +1059,7 @@ struct OutliningNormalForm {
         for (uint32_t word : words)
             add(hasher, word);
         for (const Value* payload : payloads) {
-            forEachPayloadWordWithoutAccessSite(*payload, [&](uint32_t word) {
+            forEachPayloadWordThatBodiesShare(*payload, site, [&](uint32_t word) {
                 add(hasher, word);
             });
         }
@@ -964,7 +1070,7 @@ struct OutliningNormalForm {
     {
         Vector<uint32_t, 128> result;
         for (const Value* payload : payloads) {
-            forEachPayloadWordWithoutAccessSite(*payload, [&](uint32_t word) {
+            forEachPayloadWordThatBodiesShare(*payload, site, [&](uint32_t word) {
                 result.append(word);
             });
         }
@@ -1081,48 +1187,6 @@ struct OutliningSiteFinder::State {
     ParallelArray<OutliningSites> functions = ParallelArray<OutliningSites>(build.parallelLoops(), program.functions.size(), [](unsigned) { return OutliningSites(); });
     Vector<uint8_t> hasSites = Vector<uint8_t>(FillWith { }, program.functions.size(), static_cast<uint8_t>(0));
 };
-
-static bool canStartRegion(TerminatorKind kind)
-{
-    switch (kind) {
-    case TerminatorKind::Branch:
-    case TerminatorKind::TestAndBranch:
-    case TerminatorKind::Switch:
-    case TerminatorKind::SwitchString:
-    case TerminatorKind::SwitchOnShape:
-        return true;
-    case TerminatorKind::Jump:
-    case TerminatorKind::Return:
-    case TerminatorKind::ReturnCall:
-    case TerminatorKind::Throw:
-    case TerminatorKind::Rethrow:
-    case TerminatorKind::TryCallInline:
-    case TerminatorKind::Unreachable:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static bool canEndInteriorBlock(TerminatorKind kind)
-{
-    switch (kind) {
-    case TerminatorKind::Jump:
-    case TerminatorKind::Branch:
-    case TerminatorKind::TestAndBranch:
-    case TerminatorKind::Switch:
-    case TerminatorKind::SwitchString:
-    case TerminatorKind::SwitchOnShape:
-    case TerminatorKind::Throw:
-    case TerminatorKind::Unreachable:
-        return true;
-    case TerminatorKind::Return:
-    case TerminatorKind::ReturnCall:
-    case TerminatorKind::Rethrow:
-    case TerminatorKind::TryCallInline:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
 
 namespace {
 
@@ -1342,8 +1406,8 @@ struct OutliningScan {
         const Terminator& terminator = function.at(useLists.blockOf(id)).terminator;
         if (terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == id)
             return false;
-        // The mark hides the frame that makes the call, which in an outlined body is not the frame of the source function.
-        if (FlagMask::isDemotedTailCall(value.opcode) && value.isDemotedTailCall())
+        // A call in tail position that returns here has one frame more than the program wrote. A body would add another.
+        if (value.isTailCall && callOpcodes.contains(value.opcode))
             return false;
         bool dependsOnInlineFrame = std::ranges::any_of(payloadFieldsOf(value.opcode), [&](const PayloadFieldInfo& field) {
             return field.kind == PayloadKind::Origin && value.payloadWordAt(field.firstWord + 1);
@@ -1518,7 +1582,7 @@ struct OutliningScan {
         const Block& block = function.at(blockID);
         if (block.isHandlerBlock() || block.handler != function.at(region.entryBlock).handler)
             return false;
-        return canEndInteriorBlock(block.terminator.kind);
+        return canEndInteriorBlockOf(block.terminator.kind);
     }
 
     bool addPendingTargets(const OutliningSite& region, const Terminator& terminator, Vector<uint32_t, 8>& pending)
@@ -1542,10 +1606,35 @@ struct OutliningScan {
         return site.root ? function.at(site.root).origin() : function.at(site.entryBlock).terminator.origin();
     }
 
-    bool isShownAt(ValueID id, Origin origin)
+    bool isShownAt(OutliningSite& site, ValueID id, Origin origin)
     {
         const Value& value = function.at(id);
-        return value.inlineFrame == origin.inlineFrame && (value.position == origin.position || !(analyses.mayThrow(id) || analyses.mayCallUnknownCode(id)));
+        if (value.inlineFrame != origin.inlineFrame)
+            return false;
+        if (!analyses.mayThrow(id) && !analyses.mayCallUnknownCode(id))
+            return true;
+        if (!site.isTailCall)
+            site.isTailCall = site.root ? origin.isTailCall : !!value.isTailCall;
+        return value.position == origin.position && value.isTailCall == *site.isTailCall;
+    }
+
+    std::optional<BuiltinID> findCalledBuiltin(const OutliningSite& site)
+    {
+        std::optional<BuiltinID> found;
+        bool allAgree = true;
+        forEachValueListAndTerminator(function, site, [&](std::span<const ValueID> values) {
+            for (ValueID id : values) {
+                if (!analyses.mayThrow(id) && !analyses.mayCallUnknownCode(id))
+                    continue;
+                const Value& value = function.at(id);
+                BuiltinID builtin = Value::opcodesWithCalledBuiltin.contains(value.opcode) ? value.calledBuiltin() : BuiltinID();
+                allAgree &= !found || *found == builtin;
+                found = builtin;
+            }
+        }, [](const Terminator&) { });
+        if (!allAgree)
+            return std::nullopt;
+        return found.value_or(BuiltinID());
     }
 
     bool findRegionBlocks(OutliningSite& region, uint32_t& numberOfValues)
@@ -1568,7 +1657,7 @@ struct OutliningScan {
             if (block.terminator.inlineFrame != origin.inlineFrame)
                 return false;
             for (ValueID id : block.values) {
-                if (!isRematerializable(function.at(id)) && (!isMovable(id) || !isShownAt(id, origin)))
+                if (!isRematerializable(function.at(id)) && (!isMovable(id) || !isShownAt(region, id, origin)))
                     return false;
             }
 
@@ -1593,7 +1682,7 @@ struct OutliningScan {
             bool isConstant = isRematerializable(function.at(id));
             if (valuesInSites.quickGet(id.index()))
                 break;
-            if (!isConstant && (extension == BackwardExtension::ConstantsOnly || !isMovable(id) || !isShownAt(id, origin)))
+            if (!isConstant && (extension == BackwardExtension::ConstantsOnly || !isMovable(id) || !isShownAt(site, id, origin)))
                 break;
             if (extension == BackwardExtension::UsedValues && !useLists.useCount(id))
                 break;
@@ -1756,6 +1845,7 @@ struct OutliningScan {
                 return false;
         }
 
+        site.calledBuiltin = findCalledBuiltin(site);
         OutliningNormalForm form(function, site, build.limit(LimitID::MaxOutlinedOperands));
         if (form.hasRequiredDefinitionOutside)
             return false;
@@ -1799,7 +1889,7 @@ struct OutliningScan {
     std::optional<OutliningSite> tryCreateRegion(BlockID blockID)
     {
         const Block& block = function.at(blockID);
-        if (blocksInSites.quickGet(blockID.index()) || !canStartRegion(block.terminator.kind))
+        if (blocksInSites.quickGet(blockID.index()) || !canStartRegionOf(block.terminator.kind))
             return std::nullopt;
 
         OutliningSite region { .function = id, .entryBlock = blockID, .firstIndex = static_cast<uint32_t>(block.values.size()), .orderOfEntryBlock = cfg.reversePostOrderIndex(blockID) };
@@ -2007,12 +2097,21 @@ OutliningSiteFinder::OutliningSiteFinder(const Program& program, const Optimizat
 
 OutliningSiteFinder::~OutliningSiteFinder() = default;
 
+AnalysisContext OutliningSiteFinder::contextOf(FunctionID id) const
+{
+    return { m_state->build, m_state->program, &m_state->inputs.flow, &m_state->inputs.effects, id };
+}
+
 bool OutliningSiteFinder::findIn(FunctionID id)
 {
-    const Function& function = m_state->program.at(id);
-    if (!function.hasBody() || !m_state->build.isEnabled(PassID::OutlineColdOperations, id))
+    FunctionAnalyses analyses(contextOf(id), m_state->program.at(id));
+    return findIn(id, analyses);
+}
+
+bool OutliningSiteFinder::findIn(FunctionID id, FunctionAnalyses& analyses)
+{
+    if (!analyses.function().hasBody() || !m_state->build.isEnabled(PassID::OutlineColdOperations, id))
         return false;
-    FunctionAnalyses analyses({ m_state->build, m_state->program, &m_state->inputs.flow, &m_state->inputs.effects, id }, function);
     BitVector coldBlocks = findColdBlocks(*m_state, analyses);
     if (coldBlocks.isEmpty())
         return false;
@@ -2179,10 +2278,10 @@ static Function createBodyHead(const Program& program, const OutliningSite& site
     created.kind = FunctionKind::Plain;
     created.role = FunctionRole::OutlinedBody;
     created.length = static_cast<uint32_t>(site.liveIns.size());
-    created.thisType = DeclaredType { .type = TypeTable::anything };
+    created.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
     for (ValueID liveIn : site.liveIns)
-        created.parameters.append(DeclaredType { .type = function.at(liveIn).type });
-    created.results.append(DeclaredType { .type = site.resultType });
+        created.parameters.append(DeclaredType(Proven::byRulesWithoutChecks(function.at(liveIn).type)));
+    created.results.append(DeclaredType(Proven::byRulesWithoutChecks(site.resultType)));
     created.capabilities = initialCapabilitiesOf(created);
     return created;
 }
@@ -2225,6 +2324,8 @@ static void buildOutlinedBody(const AnalysisContext& context, const Function& so
         copy.forEachOperand([&](ValueID& operand, uint32_t) {
             operand = copyOf(valueCopies, operand);
         });
+        if (site.calledBuiltin && Value::opcodesWithCalledBuiltin.contains(copy.opcode))
+            copy.setCalledBuiltin({ });
         ValueID copyID = builder.append(WTF::move(copy));
         ASSERT(body.at(copyID).type == source.at(id).type);
         valueCopies.append({ id, copyID });
@@ -2310,6 +2411,7 @@ static void convertToCall(Value& value, const OutliningSite& site, FunctionID ca
     value.type = site.resultType;
     value.setExpected({ });
     value.setFunction(callee);
+    value.setCalledBuiltin(site.calledBuiltin.value_or(BuiltinID()));
     value.setArgumentsOperands(site.liveIns.span());
 }
 
@@ -2335,7 +2437,9 @@ static void replaceRegion(IRBuilder& builder, const OutliningSite& site, Functio
             constantPositions.append(position);
     }
 
-    builder.setOrigin(function.at(site.entryBlock).terminator.origin());
+    Origin origin = function.at(site.entryBlock).terminator.origin();
+    origin.isTailCall = site.isTailCall.value_or(origin.isTailCall);
+    builder.setOrigin(origin);
     builder.splitBlock({ site.entryBlock, site.firstIndex });
     ProgramPoint point { site.entryBlock, site.firstIndex };
     for (uint32_t position : constantPositions) {

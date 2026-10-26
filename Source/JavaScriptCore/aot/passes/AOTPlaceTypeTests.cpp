@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTCodeShapes.h"
+#include "AOTCodeSizeEstimate.h"
 #include "AOTExpectedTypesByUse.h"
 #include "AOTFlowApply.h"
 #include "AOTFlowResults.h"
@@ -21,6 +22,7 @@
 #include "AOTPropertyAccess.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessElements.h"
+#include "AOTRepresentation.h"
 #include "AOTResolveAccesses.h"
 #include "AOTResultRules.h"
 #include "AOTSSARepair.h"
@@ -329,6 +331,35 @@ static BitVector findReceiversAskedOnlyForNamesDefinedWithoutLayout(FunctionPass
     return receivers;
 }
 
+bool paysToTestMembersUnderSymbolsOfProgram(FunctionPassContext& context, BlockID block)
+{
+    HeatClass heatClass = heatClassOf(context, block);
+    return isHot(heatClass) || heatClass == HeatClass::Unknown || context.analyses.blockFrequencies().frequencyOf(block) >= HeatModel::minWeightOfCallInLoop;
+}
+
+static bool holdsMemberUnderSymbolOfProgram(const Program& program, std::span<const Value> tests)
+{
+    return std::ranges::any_of(tests, [&](const Value& test) {
+        return test.opcode == Opcode::AreMembersUnchanged && holdMemberUnderSymbolOfProgram(program, test.conditions());
+    });
+}
+
+// One of the objects that may arrive finds such a member under the name that is read.
+static bool readsMemberUnderSymbolOfProgram(FunctionPassContext& context, const Value& use)
+{
+    if (use.opcode != Opcode::PropGet || !isSymbolOfProgram(context.program.at(use.key()).kind))
+        return false;
+    const Program& program = context.program;
+    ReceiverCandidates candidates = receiverCandidates(program, context.function, use.objectOperand(), use.receivers());
+    for (const LayoutList* layouts : { &candidates.proven, &candidates.predicted }) {
+        for (LayoutID layout : *layouts) {
+            if (findMemberOfClass(program, layout, ClassSide::Prototype, use.key()))
+                return true;
+        }
+    }
+    return false;
+}
+
 static TestSites collectTestSites(FunctionPassContext& context)
 {
     if (!context.build.recordedOptions().usesExpectedTypes())
@@ -350,7 +381,6 @@ static TestSites collectTestSites(FunctionPassContext& context)
     for (const TestSite& site : sites.sites)
         RELEASE_ASSERT(testSiteOpcodes.contains(context.function.at(site.use).opcode));
     // A test buys a fast path and costs a copy of what stands behind it.
-    bool isColdFunction = isCold(context.inputs.heat.of(context.program, context.id));
     BitVector receiversThatMayHaveNoLayout = findReceiversAskedOnlyForNamesDefinedWithoutLayout(context, sites);
     sites.sites.removeAllMatching([&](const TestSite& site) {
         if (ValueID receiver = receiversThatMayHaveNoLayout.isEmpty() ? ValueID() : findReceiverWithGuessedLayout(context, sites, site); receiver && receiversThatMayHaveNoLayout.quickGet(receiver.index()))
@@ -359,10 +389,13 @@ static TestSites collectTestSites(FunctionPassContext& context)
         const Value& use = context.function.at(site.use);
         if (PayloadWord::accessSite(use.opcode) && use.accessSite() && context.inputs.flow.lossOf(use.accessSite()).seesConstructedObject && asksOnlyForLayouts(context, sites, site))
             return true;
+        // Tests that say nothing of the member pass for the objects that lack it alone, and whoever reads a name expects an object that has it.
+        if (holdsMemberUnderSymbolOfProgram(context.program, sites.testsOf(site)) ? !paysToTestMembersUnderSymbolsOfProgram(context, site.point.block) : readsMemberUnderSymbolOfProgram(context, use))
+            return true;
         HeatClass heatClass = heatClassOf(context, site.point.block);
-        // What a test buys in the cold code of a cold function, against the copy that it costs. The general form of these is one call.
+        // What a test buys in cold code, against the copy that it costs. The general form of these is one call.
         bool paysInColdCode = site.rule != TestSiteRuleID::ElementAccess && site.rule != TestSiteRuleID::Operator;
-        return heatClass == HeatClass::RunsOnce || (isColdFunction && heatClass == HeatClass::Cold && (isCompactFunction || !paysInColdCode));
+        return heatClass == HeatClass::RunsOnce || (heatClass == HeatClass::Cold && (isCompactFunction || !paysInColdCode));
     });
     const CFG& cfg = context.analyses.cfg();
     AOT::sort(sites.sites, { }, [&](const TestSite& site) { return std::pair { cfg.reversePostOrderIndex(site.point.block), site.point.index }; });
@@ -751,6 +784,154 @@ static BitVector findTestsRepeatedInVain(const TestPlacementPlan& plan, const Te
     return sites;
 }
 
+// The copy runs again what stands between its entry and the test, so the first tests in code that can run twice keep their own entries. The entry of the last of them serves every later test.
+AOT_THRESHOLD(uint32_t, maxEntriesInRepeatableCode, 8);
+
+// A failing test hands over to the generic copy what its stretch has made so far and the copy still reads. The tested code holds a number in a register of its own kind and the copy holds it as any value, so each is converted on the way.
+// Tests that follow each other while the numbers made between them stay alive convert values by the square of their number. In a function where that is much code, a stretch ends in front of a test once its conversions outweigh its own code and what it costs to let the copy come back. The tests behind hand over only what is made from there on.
+static Vector<ProgramPoint> findPointsToSplitStretchesAt(FunctionPassContext& context, const TestPlacementPlan& plan, const TestCoverage& coverage, const TestStretches& stretches)
+{
+    AOT_THRESHOLD(uint64_t, minBytesOfConversionsInFunction, 16 * KB);
+    AOT_THRESHOLD(uint64_t, bytesToConvertValue, 16);
+    // Behind the join the value is tested again where it is used.
+    AOT_THRESHOLD(uint64_t, bytesToJoinValue, 128);
+
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    auto isConverted = [&](ValueID id) {
+        const Value& value = function.at(id);
+        return value.type && value.expected().predicted() && defaultRepresentationOf(context.types.at(value.type)) != defaultRepresentationOf(context.types.at(value.expected().predicted()));
+    };
+    uint64_t numberOfTests = 0;
+    for (uint32_t index = 0; index < plan.requirements.size(); ++index)
+        numberOfTests += coverage.of(index) == RequirementCoverage::NeedsTest;
+    uint64_t numberOfConvertedValues = 0;
+    for (const StretchRange& range : stretches.ranges()) {
+        for (uint32_t index = range.begin; range.isCloned && index < range.end; ++index)
+            numberOfConvertedValues += isConverted(function.at(range.block).values[index]);
+    }
+    if (numberOfTests * numberOfConvertedValues * bytesToConvertValue <= minBytesOfConversionsInFunction)
+        return { };
+
+    struct Piece {
+        uint64_t bytesOfStretch { 0 };
+        uint64_t bytesOfConversions { 0 };
+        uint32_t alive { 0 };
+        uint32_t entriesInRepeatableCode { 0 };
+    };
+    constexpr uint32_t none = std::numeric_limits<uint32_t>::max();
+    size_t numberOfValues = function.values.size();
+    Vector<uint32_t> stretchOf(FillWith { }, numberOfValues, none);
+    unsigned numberOfStretches = 0;
+    for (const StretchRange& range : stretches.ranges()) {
+        numberOfStretches = std::max(numberOfStretches, range.stretch + 1);
+        for (uint32_t index = range.begin; range.isCloned && index < range.end; ++index)
+            stretchOf[function.at(range.block).values[index].index()] = range.stretch;
+    }
+    Vector<uint32_t> testsInFront(FillWith { }, numberOfValues, 0u);
+    Vector<uint64_t> testsLeftIn(FillWith { }, numberOfStretches, 0u);
+    BitVector hasOwnEntry(numberOfValues);
+    Vector<const TestSite*> siteOf(FillWith { }, numberOfValues, nullptr);
+    for (uint32_t index = 0; index < plan.requirements.size(); ++index) {
+        const TestRequirement& requirement = plan.requirements[index];
+        const TestSite& site = plan.sites.sites[requirement.site];
+        if (coverage.of(index) != RequirementCoverage::Unknown)
+            siteOf[site.use.index()] = &site;
+        if (coverage.of(index) != RequirementCoverage::NeedsTest)
+            continue;
+        ++testsInFront[site.use.index()];
+        if (uint32_t stretch = stretchOf[site.use.index()]; stretch != none)
+            ++testsLeftIn[stretch];
+        if (!plan.conditions->at(requirement.condition).lastsForStretch())
+            hasOwnEntry.quickSet(site.use.index());
+    }
+
+    const CFG& cfg = analyses.cfg();
+    const UseLists& useLists = analyses.useLists();
+    Vector<uint32_t> positionOf(FillWith { }, numberOfValues, 0u);
+    Vector<uint32_t> positionOfEnd(FillWith { }, function.blocks.size(), 0u);
+    uint32_t position = 0;
+    for (BlockID block : cfg.reversePostOrder()) {
+        for (ValueID value : function.at(block).values)
+            positionOf[value.index()] = position++;
+        positionOfEnd[block.index()] = position++;
+    }
+    auto positionOfLastUse = [&](ValueID value) {
+        uint32_t last = 0;
+        for (const Use& use : useLists.usesOf(value))
+            last = std::max(last, use.kind == Use::Kind::Operand ? positionOf[use.user.index()] : positionOfEnd[use.block.index()]);
+        return last;
+    };
+    auto canRunTwice = [&](ValueID value) {
+        auto isUnseen = [](const Effects& effects) { return effects.writes.containsOnly(heapsWhoseWritesNobodySees) && !effects.mayRunOtherCode(); };
+        if (const TestSite* site = siteOf[value.index()])
+            return isUnseen(site->effectsWhenPassed);
+        const EffectsOnEdges& effects = analyses.effectsOf(value);
+        return isUnseen(effects.normal) && isUnseen(effects.handler);
+    };
+
+    Vector<Piece> pieces;
+    Vector<uint32_t> currentPieceOf(FillWith { }, numberOfStretches, none);
+    Vector<uint32_t> pieceOf(FillWith { }, numberOfValues, none);
+    Vector<uint32_t> lastUseOf(FillWith { }, numberOfValues, 0u);
+    auto release = [&](ValueID value, uint32_t at) {
+        if (value && pieceOf[value.index()] != none && lastUseOf[value.index()] == at)
+            --pieces[std::exchange(pieceOf[value.index()], none)].alive;
+    };
+    uint64_t bytesOfConversionsInFunction = 0;
+
+    Vector<ProgramPoint> points;
+    for (BlockID block : cfg.reversePostOrder()) {
+        const Block& contents = function.at(block);
+        bool isReachedOnOneEdge = cfg.incomingEdges(block).size() == 1;
+        for (uint32_t index = 0; index < contents.values.size(); ++index) {
+            ValueID value = contents.values[index];
+            uint32_t stretch = stretchOf[value.index()];
+            if (stretch != none) {
+                uint32_t& current = currentPieceOf[stretch];
+                auto startPiece = [&] {
+                    current = pieces.size();
+                    pieces.append(Piece { });
+                };
+                if (current == none)
+                    startPiece();
+                if (!index && !isReachedOnOneEdge)
+                    pieces[current].entriesInRepeatableCode = 0;
+                if (uint32_t tests = testsInFront[value.index()]) {
+                    const Piece& piece = pieces[current];
+                    bool repaysJoin = testsLeftIn[stretch] * bytesToConvertValue > bytesToJoinValue;
+                    if (index && repaysJoin && bytesOfConversionsInFunction > minBytesOfConversionsInFunction && piece.bytesOfConversions > std::max(piece.bytesOfStretch, bytesToJoinValue * piece.alive)) {
+                        points.append({ block, index });
+                        startPiece();
+                    }
+                    testsLeftIn[stretch] -= tests;
+                    Piece& entered = pieces[current];
+                    if (hasOwnEntry.quickGet(value.index()) || ++entered.entriesInRepeatableCode <= maxEntriesInRepeatableCode) {
+                        entered.bytesOfConversions += tests * bytesToConvertValue * entered.alive;
+                        bytesOfConversionsInFunction += tests * bytesToConvertValue * entered.alive;
+                    }
+                }
+            }
+            function.at(value).forEachOperand([&](ValueID operand, uint32_t) { release(operand, positionOf[value.index()]); });
+            if (stretch == none)
+                continue;
+            Piece& piece = pieces[currentPieceOf[stretch]];
+            piece.bytesOfStretch += estimatedCodeBytes(context.program, function, function.at(value));
+            if (!canRunTwice(value))
+                piece.entriesInRepeatableCode = 0;
+            if (!isConverted(value))
+                continue;
+            if (uint32_t last = positionOfLastUse(value); last > positionOf[value.index()]) {
+                lastUseOf[value.index()] = last;
+                pieceOf[value.index()] = currentPieceOf[stretch];
+                ++piece.alive;
+            }
+        }
+        contents.forEachChildOutsideValues([&](ValueID child) { release(child, positionOfEnd[block.index()]); });
+    }
+    return points;
+}
+
 // The blocks of the ranges that the functor picks, and every block that is reached from one of them.
 static BitVector findBlocksBehindRanges(const Function& function, std::span<const StretchRange> ranges, NOESCAPE const Invocable<bool(const StretchRange&)> auto& picks)
 {
@@ -784,7 +965,7 @@ static bool expectedTypeTellsResultOf(FunctionPassContext& context, const TestSi
         break;
     }
     const Value& use = context.function.at(site.use);
-    if (!use.type || use.expected())
+    if (!use.type || use.expected().predicted())
         return true;
     TypeID expectedNow = expectedTypeOf(context.program, context.function, use, context.types, &context.typingMemo);
     return !expectedNow || expectedNow == use.type;
@@ -844,7 +1025,7 @@ static BitVector findPointsWhereNothingIsKnownBetter(const Function& function, B
 }
 
 // Where the tested code wants none of the proofs of this plan, the generic copy may come back.
-static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& context, const TestStretches& stretches, WantedProofs& wanted)
+static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& context, const TestStretches& stretches, WantedProofs& wanted, std::span<const ProgramPoint> splitPoints)
 {
     FunctionAnalyses& analyses = context.analyses;
     const Function& function = context.function;
@@ -875,6 +1056,12 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
     auto orderOf = [&](ProgramPoint point) { return std::pair { cfg.reversePostOrderIndex(point.block), point.index }; };
     AOT::sort(plan.rejoinPoints, { }, orderOf);
     removeRepeatedElements(plan.rejoinPoints);
+    for (ProgramPoint point : splitPoints) {
+        if (mayRejoinAt(point))
+            plan.splitPoints.append(point);
+    }
+    auto isSplitPoint = [&](ProgramPoint point) { return std::ranges::binary_search(plan.splitPoints, orderOf(point), { }, orderOf); };
+    plan.rejoinPoints.removeAllMatching(isSplitPoint);
 
     std::span<const StretchRange> ranges = stretches.ranges();
     BitVector isBehindCopiedRange = findBlocksBehindRanges(function, ranges, [](const StretchRange& range) { return range.isCloned; });
@@ -930,7 +1117,7 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
 
     AOT::sort(plan.rejoinPointsWithoutTests, { }, orderOf);
     removeRepeatedElements(plan.rejoinPointsWithoutTests);
-    plan.rejoinPointsWithoutTests.removeAllMatching([&](ProgramPoint point) { return std::ranges::binary_search(plan.rejoinPoints, orderOf(point), { }, orderOf); });
+    plan.rejoinPointsWithoutTests.removeAllMatching([&](ProgramPoint point) { return isSplitPoint(point) || std::ranges::binary_search(plan.rejoinPoints, orderOf(point), { }, orderOf); });
 }
 
 // A test whose proof lasts forever, about values made in front of the loop, fails at every turn once it has failed. Where only such tests lead into the copy, it would come back in vain.
@@ -1015,7 +1202,14 @@ TestPlacementPlan planTestPlacement(FunctionPassContext& context)
     return planTestPlacement(context, collectTestSites(context));
 }
 
+static TestPlacementPlan planTestPlacement(FunctionPassContext&, TestSites&&, std::optional<Vector<ProgramPoint>>&& splitPoints);
+
 TestPlacementPlan planTestPlacement(FunctionPassContext& context, TestSites&& sites)
+{
+    return planTestPlacement(context, WTF::move(sites), std::nullopt);
+}
+
+static TestPlacementPlan planTestPlacement(FunctionPassContext& context, TestSites&& sites, std::optional<Vector<ProgramPoint>>&& splitPoints)
 {
     TestPlacementPlan plan;
     plan.sites = WTF::move(sites);
@@ -1035,7 +1229,12 @@ TestPlacementPlan planTestPlacement(FunctionPassContext& context, TestSites&& si
 
     Vector<ExistingProof> proofs = findExistingProofs(context, *plan.conditions);
     Vector<HoistedTest> hoistedTests = findHoistedTests(context, plan.sites, *plan.conditions, plan.requirements.span());
-    TestEvents events(TestEventInputs { context.analyses, *plan.conditions, plan.sites.sites.span(), plan.requirements.span(), proofs.span(), hoistedTests.span() });
+    BitVector valuesThatStartNewStretch;
+    if (splitPoints) {
+        for (ProgramPoint point : *splitPoints)
+            valuesThatStartNewStretch.set(context.function.at(point.block).values[point.index].index());
+    }
+    TestEvents events(TestEventInputs { context.analyses, *plan.conditions, plan.sites.sites.span(), plan.requirements.span(), proofs.span(), hoistedTests.span(), true, &valuesThatStartNewStretch });
     // The generic copy goes on behind a stretch, so it holds the code of a gap whether a proof bridges the gap or not.
     uint32_t widestGap = static_cast<uint32_t>(std::min<uint64_t>(context.limit(LimitID::MaxClonedBytesPerStretch), UINT32_MAX));
     TestCoverage coverage(TestCoverageInputs { events, GapBudget { widestGap, widestGap }, nullptr, SlowPaths::MayLeave });
@@ -1046,7 +1245,12 @@ TestPlacementPlan planTestPlacement(FunctionPassContext& context, TestSites&& si
     if (!repeatedInVain.isEmpty()) {
         uint32_t index = 0;
         plan.sites.sites.removeAllMatching([&](const TestSite&) { return repeatedInVain.get(index++); });
-        return planTestPlacement(context, WTF::move(plan.sites));
+        return planTestPlacement(context, WTF::move(plan.sites), WTF::move(splitPoints));
+    }
+    if (!splitPoints) {
+        splitPoints = findPointsToSplitStretchesAt(context, plan, coverage, stretches);
+        if (!splitPoints->isEmpty())
+            return planTestPlacement(context, WTF::move(plan.sites), WTF::move(splitPoints));
     }
 
     const Function& function = context.function;
@@ -1083,7 +1287,7 @@ TestPlacementPlan planTestPlacement(FunctionPassContext& context, TestSites&& si
     }
     AOT::sort(plan.slowPaths, { }, [&](const PlannedSlowPath& slowPath) { return std::pair { cfg.reversePostOrderIndex(slowPath.edge.from), slowPath.edge.targetIndex }; });
 
-    appendRejoinPoints(plan, context, stretches, wanted);
+    appendRejoinPoints(plan, context, stretches, wanted, splitPoints->span());
     appendWaysBackIntoLoops(plan, context, coverage, stretches.ranges(), wanted);
     for (uint32_t index = 0; index < proofs.size(); ++index) {
         if (wanted.isProofWanted(index))
@@ -1150,7 +1354,7 @@ static bool tellsLayoutsApart(const Program& program, PropertyKeyID key)
     PropertyKeyKind kind = program.at(key).kind;
     if (kind == PropertyKeyKind::Text)
         return isOrdinaryText(program, key) && !program.builtinNameOf(key) && !program.isDefinedOnObjectsWithoutKnownLayout(key);
-    return kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::CreatedSymbol;
+    return kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::CreatedSymbol || kind == PropertyKeyKind::ModulePrivateName;
 }
 
 static std::optional<std::pair<ValueID, PropertyKeyID>> propertyReadBy(const Program& program, const Value& value)
@@ -1315,7 +1519,7 @@ static Vector<NamedUse> collectNamedUsesOfUnknownObjects(FunctionPassContext& co
             if (*isColdBlock && program.at(key).kind != PropertyKeyKind::PrivateName && (tellsLayoutsApart(program, key) || !callsBuiltinMethod(context, id, key)))
                 continue;
             // `Promise.resolve` through a variable that is expected to hold the constructor: flow has followed the one object, and it answers.
-            if (TypeID expected = function.at(receiver).expected(); expected && !context.types.at(expected).builtins.isEmpty())
+            if (TypeID expected = function.at(receiver).expected().predicted(); expected && !context.types.at(expected).builtins.isEmpty())
                 continue;
             bool tellsLayouts = tellsLayoutsApart(program, key);
             bool isBuiltinMethodCall = !tellsLayouts && callsBuiltinMethod(context, id, key);
@@ -1410,7 +1614,7 @@ static void findUsesOnEveryPath(FunctionPassContext& context, std::span<NamedUse
 static bool isExpectedToFindMember(const Program& program, const Function& function, const NamedUse& use)
 {
     LayoutSetID stamp = use.stamp && program.at(use.stamp).isComplete ? use.stamp : LayoutSetID();
-    if (!function.at(use.receiver).expected() && !stamp)
+    if (!function.at(use.receiver).expected().predicted() && !stamp)
         return false;
     std::span<const LayoutID> holders = program.layoutsWithName(use.key);
     return std::ranges::any_of(receiverCandidates(program, function, use.receiver, stamp).predicted, [&](LayoutID layout) { return std::ranges::binary_search(holders, layout); });
@@ -1525,9 +1729,10 @@ static bool resolvesSomeUse(FunctionPassContext& context, std::span<const NamedU
         query->receivers.level = KnowledgeLevel::Expected;
         query->receivers.predicted = layouts;
         PropertyAccessPlan plan = planPropertyAccess({ context.program, &context.inputs.flow }, *query);
-        // `events.removeListener === undefined`, `if (value.then)`: whoever reads a name and does not call what he got asks whether it is there.
-        bool readsMethodAsValue = plan.form == AccessForm::Method && !query->isOnlyCalled;
-        return plan.isResolved() && !readsMethodAsValue;
+        // `events.removeListener === undefined`, `if (value.then)`: whoever reads a name and does not call what he got asks whether it is there, as `"then" in value` and `Object.hasOwn(value, "then")` do. `target.get.apply(..)` does not ask.
+        bool asksWhetherMethodIsThere = plan.form == AccessForm::Method && !query->isOnlyCalled && use.demand != NameDemand::Required;
+        bool asksWhetherNameIsThere = query->access == Access::Has && !query->isPrivate;
+        return plan.isResolved() && !asksWhetherMethodIsThere && !asksWhetherNameIsThere;
     });
 }
 
@@ -1656,7 +1861,7 @@ static bool expectReceiversOfBuiltinMethods(FunctionPassContext& context, std::s
 static LayoutList layoutsMetThatAnswer(FunctionPassContext& context, std::span<const NamedUse> uses, const LayoutList& layoutsMet)
 {
     bool isExpectedToBeSomeObject = std::ranges::any_of(uses, [&](const NamedUse& use) {
-        TypeID expected = context.function.at(use.receiver).expected();
+        TypeID expected = context.function.at(use.receiver).expected().predicted();
         return expected && !context.types.at(expected).withOnlyObjects().isNever();
     });
     LayoutList layouts;
@@ -1665,6 +1870,26 @@ static LayoutList layoutsMetThatAnswer(FunctionPassContext& context, std::span<c
     for (LayoutID layout : layoutsMet) {
         if (std::ranges::all_of(uses, [&](const NamedUse& use) { return std::ranges::binary_search(context.program.layoutsWithName(use.key), layout); }))
             layouts.add(layout);
+    }
+    return layouts;
+}
+
+// `this.response.status`: the layouts that the program stores under `response` and that answer `status`.
+static LayoutList findLayoutsStoredUnderNameOfSubject(FunctionPassContext& context, std::span<const NamedUse> uses, size_t maxLayouts)
+{
+    const Program& program = context.program;
+    auto read = propertyReadBy(program, context.function.at(context.analyses.identityOf(uses[0].receiver)));
+    if (!read || !read->second || context.function.at(uses[0].receiver).expected().predicted())
+        return { };
+    LayoutList layouts;
+    for (LayoutID layout : program.layoutsWithName(uses[0].key)) {
+        if (!context.inputs.heat.isStoredUnder(layout, read->second))
+            continue;
+        if (!std::ranges::all_of(uses, [&](const NamedUse& use) { return hasMemberToFindUnder(program, layout, use.key); }))
+            continue;
+        layouts.add(layout);
+        if (layouts.size() > maxLayouts)
+            return { };
     }
     return layouts;
 }
@@ -1679,7 +1904,7 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
     bool isFollowed = std::ranges::any_of(usesOfSubject, [&](const NamedUse& use) { return isExpectedToFindMember(context.program, function, use); });
     // In a checked function what is expected of a value is what the checker says of it. Where that lists layouts the names have nothing to add: a name that none of them holds is found above them.
     bool typeListsLayouts = function.has(FunctionFlags::IsChecked) && std::ranges::any_of(usesOfSubject, [&](const NamedUse& use) {
-        TypeID expected = function.at(use.receiver).expected();
+        TypeID expected = function.at(use.receiver).expected().predicted();
         return expected && context.types.at(expected).layouts;
     });
     if (isFollowed || typeListsLayouts || isAllocatedHere(context, usesOfSubject[0].receiver))
@@ -1694,13 +1919,21 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
             return true;
         if (waitsForOtherSubjects)
             return false;
-        LayoutList layouts = layoutsMetThatAnswer(context, uses, layoutsMet);
+        LayoutList layouts = findLayoutsStoredUnderNameOfSubject(context, uses, context.limit(LimitID::MaxDeclarationsPredictedFromNames));
+        if (layouts.isEmpty())
+            layouts = layoutsMetThatAnswer(context, uses, layoutsMet);
         if (!layouts.isEmpty())
             expectLayouts(uses, layouts);
         return true;
     }
 
     size_t maxDeclarations = context.limit(LimitID::MaxDeclarationsPredictedFromNames);
+    LayoutList layoutsStoredUnderName = findLayoutsStoredUnderNameOfSubject(context, uses, maxDeclarations);
+    if (!layoutsStoredUnderName.isEmpty() && resolvesSomeUse(context, uses, layoutsStoredUnderName)) {
+        layoutsMet.unite(layoutsStoredUnderName);
+        expectLayouts(uses, layoutsStoredUnderName);
+        return true;
+    }
     LayoutsToTest chosen = findLayoutsToTestFor(context, uses, maxDeclarations, context.limit(LimitID::MaxAccessPlanMembers), layoutsMet);
     if (chosen.layouts.isEmpty())
         return true;
@@ -1743,7 +1976,7 @@ static DeclaredType* findUncheckedEntryParameter(Function& function, ValueID val
     if (parameter == parameters.end())
         return nullptr;
     DeclaredType* declared = function.declaredEntryParameter(static_cast<unsigned>(parameter - parameters.begin()));
-    bool isUnchecked = declared && (declared->flags.contains(PositionFlags::IsExpected) || declared->type == TypeTable::anything);
+    bool isUnchecked = declared && (declared->isExpected() || declared->written() == TypeTable::anything);
     return isUnchecked ? declared : nullptr;
 }
 
@@ -1754,7 +1987,7 @@ static bool expectValues(FunctionPassContext& context, const ExpectedValues& exp
     auto narrowedTypeOf = [&](ValueID id, TypeID expected) {
         const Value& value = function.at(id);
         TypeID narrowed = context.types.intersectionOf(value.type, expected);
-        TypeID expectedAlready = value.expected() ? context.types.intersectionOf(narrowed, value.expected()) : TypeTable::never;
+        TypeID expectedAlready = value.expected().predicted() ? context.types.intersectionOf(narrowed, value.expected().predicted()) : TypeTable::never;
         if (expectedAlready != TypeTable::never)
             narrowed = expectedAlready;
         return narrowed == TypeTable::never || narrowed == value.type ? TypeID() : narrowed;
@@ -1766,9 +1999,8 @@ static bool expectValues(FunctionPassContext& context, const ExpectedValues& exp
         DeclaredType* declared = narrowed ? findUncheckedEntryParameter(function, value) : nullptr;
         if (!declared)
             continue;
-        if (declared->type != narrowed || !declared->flags.contains(PositionFlags::IsExpected)) {
-            declared->type = narrowed;
-            declared->flags.add(PositionFlags::IsExpected);
+        if (declared->written() != narrowed || !declared->isExpected()) {
+            declared->expect(ExpectedType(narrowed));
             changedParameters.append(value);
         }
         if (context.types.at(narrowed).layouts)
@@ -1780,7 +2012,7 @@ static bool expectValues(FunctionPassContext& context, const ExpectedValues& exp
 
     for (auto [value, expected] : expectedValues) {
         TypeID narrowed = narrowedTypeOf(value, expected);
-        if (narrowed && narrowed != function.at(value).expected()) {
+        if (narrowed && narrowed != function.at(value).expected().predicted()) {
             expectations.expect(value, narrowed);
             if (context.types.at(narrowed).layouts)
                 expectations.didGuessFromNames(value);
@@ -1925,7 +2157,7 @@ bool expectsReceiverOfCalledMethod(FunctionPassContext& context, BlockID block, 
         return false;
     ValueID receiver = callee.objectOperand();
     const Type& type = context.program.typeOf(function, receiver);
-    if (!type.anyObject || type.layouts || function.at(receiver).expected() || isAllocatedHere(context, receiver))
+    if (!type.anyObject || type.layouts || function.at(receiver).expected().predicted() || isAllocatedHere(context, receiver))
         return false;
     return !!receiversWithMethod(context, key);
 }
@@ -2026,6 +2258,7 @@ struct TestPlacer {
     TypeArena& types { context.types };
     IRBuilder builder { analyses.context(), function, types, &analyses };
     bool expectsCheckedTypes { function.has(FunctionFlags::IsChecked) && !isLibraryCode(context.program, function) };
+    bool everyTestIsUnpredictable { false };
     std::optional<GenericCopy> copy { };
     GenericCopy::Extent extentOfCopy { GenericCopy::Extent::NotCopied };
     BitVector unclonableStretches { };
@@ -2040,6 +2273,8 @@ struct TestPlacer {
     BitVector isRejoinBlock { };
     Vector<ProgramPoint> rejoinPointsWithoutTests { };
     BitVector isRejoinBlockWithoutTests { };
+    Vector<ProgramPoint> splitPoints { };
+    BitVector isSplitBlock { };
     Vector<SubjectOperand> subjectOperands { };
     Vector<Definitions> definitions = Vector<Definitions>(plan.conditions->size());
     BitVector isDefinition { };
@@ -2067,6 +2302,7 @@ struct TestPlacer {
         splitBlocks();
         findRejoinBlocks(rejoinPoints.span(), isRejoinBlock);
         findRejoinBlocks(rejoinPointsWithoutTests.span(), isRejoinBlockWithoutTests);
+        findRejoinBlocks(splitPoints.span(), isSplitBlock);
         checkStretches();
         if (!numberOfGuardedStretches()) {
             // Left split, the function would be simplified, planned, split and rejected again in every round of the fixpoint.
@@ -2082,6 +2318,7 @@ struct TestPlacer {
         rewriteUses();
         if (copy)
             copy->addWaysBack(changedValues.span(), GenericCopy::TypesTestedOnWayBack::Expected);
+        enterCopyBeforeRepeatableCode();
         repairProofs();
         replaceDominatedUses();
         narrowValueTypes(TypePropagationInputs { context.program, context.id, function, analyses, types, context.build, &context.typingMemo }, changedValues.span());
@@ -2161,7 +2398,7 @@ struct TestPlacer {
             ValueID tested = !test.operands.isEmpty() ? test.operands[testedOperandIndex] : written.numberOfOperands() ? written.operand(testedOperandIndex) : ValueID();
             bool isGuess = tested && expectations.isGuessedFromNames(tested);
             if (tested && !expectsCheckedTypes) {
-                TypeID expected = function.at(tested).expected();
+                TypeID expected = function.at(tested).expected().predicted();
                 isGuess |= expected && types.at(expected).layouts;
             }
             (isGuess ? stretchesThatGuessLayouts : stretchesWithOtherTests).quickSet(test.stretch);
@@ -2285,6 +2522,7 @@ struct TestPlacer {
         };
         keepRejoinPoints(plan.rejoinPoints, rejoinPoints);
         keepRejoinPoints(plan.rejoinPointsWithoutTests, rejoinPointsWithoutTests);
+        keepRejoinPoints(plan.splitPoints, splitPoints);
 
         AOT::sort(cuts, { }, &Cut::key);
         removeRepeatedElements(cuts, [](const Cut& a, const Cut& b) { return a.point == b.point; });
@@ -2519,6 +2757,8 @@ struct TestPlacer {
             if (isPlaced(use.stretch))
                 copy->addValueToBeNarrowed(plan.sites.sites[use.site].use);
         }
+        for (size_t index : isSplitBlock)
+            copy->addRequiredRejoinBlock(BlockID(index));
         // A copy that holds its stretches alone leaves where they end: it looks for no place to come back at.
         if (!goesOnBehindStretches)
             return copy->plan(context.limit(LimitID::MaxBlocksCopiedBehindStretches), liveness);
@@ -2544,8 +2784,15 @@ struct TestPlacer {
     {
         if (!copy)
             return;
-        // In a checked function of the program the type that a test expects is what the checker says. Elsewhere it is a guess, and the copy runs.
-        copy->clone(expectsCheckedTypes ? +[](BlockFrequency) { return BlockFrequency::Rare; } : frequencyOfGenericCopy);
+        // In a checked function of the program the type that a test expects is what the checker says. Elsewhere, and where the checker names no layout, it is a guess, and the copy runs.
+        bool expectsWhatCheckerSays = expectsCheckedTypes && std::ranges::none_of(clonedRanges(), [&](const StretchRange& range) { return stretchesThatGuessLayouts.quickGet(range.stretch); });
+        everyTestIsUnpredictable = std::ranges::all_of(plan.uses, [&](const PlannedUse& use) {
+            return !isPlaced(use.stretch) || plan.sites.sites[use.site].outcome == TestOutcome::IsUnpredictable;
+        });
+        if (everyTestIsUnpredictable)
+            copy->clone(+[](BlockFrequency original) { return original; });
+        else
+            copy->clone(expectsWhatCheckerSays ? +[](BlockFrequency) { return BlockFrequency::Rare; } : frequencyOfGenericCopy);
 
         RELEASE_ASSERT(extentOfCopy != GenericCopy::Extent::NotCopied);
         if (extentOfCopy == GenericCopy::Extent::ToWaysBack)
@@ -2731,7 +2978,7 @@ struct TestPlacer {
                 targets.enteredOnlyWhenTaken = passedTarget.block;
             if (provesNothingWhenFailed)
                 targets.whenNotTaken = failedTarget;
-            IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, testedOperandIndex, frequency, frequencyOfGenericCopy(frequency), WTF::move(targets));
+            IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, testedOperandIndex, frequency, everyTestIsUnpredictable ? frequency : frequencyOfGenericCopy(frequency), WTF::move(targets));
             if (!provesNothingWhenFailed) {
                 builder.moveToEndOf(branch.notTaken);
                 builder.emitJump(failedTarget.block, Arguments(failedTarget.arguments));
@@ -2757,7 +3004,7 @@ struct TestPlacer {
                 return;
             }
             if (std::optional<TypeID> castType = findTypeOfOperand(test, *prerequisite.narrowedOperand, proof))
-                proof = emit(makeAssumeType(proof, *castType));
+                proof = emit(makeAssumeType(proof, Proven::byRulesWithoutChecks(*castType)));
             test.setOperand(*prerequisite.narrowedOperand, proof);
         });
 
@@ -2928,7 +3175,7 @@ struct TestPlacer {
     {
         if (context.build.validates())
             builder.insertBefore(point, makeValidateType(value, castType));
-        return builder.insertBefore(point, makeAssumeType(value, castType));
+        return builder.insertBefore(point, makeAssumeType(value, Proven::byRulesWithoutChecks(castType)));
     }
 
     // While the uses are rewritten, a representative has the type of the join that it stands for.
@@ -3012,11 +3259,121 @@ struct TestPlacer {
 
         // Until SSA is repaired a site behind the join names the value of the fast copy. Its rule has to see the type the site was planned with, which is the type of the join.
         TypeID type = function.at(site.use).type;
-        TypeID expected = function.at(site.use).expected();
+        TypeID expected = function.at(site.use).expected().predicted();
         ruleOf(site.rule).rewrite(rewriter);
         Value& use = function.edit(site.use, ValueEdit::Type);
         use.type = type;
-        use.setExpected(expected);
+        use.setExpected(ExpectedType(expected));
+    }
+
+    // Nobody can tell that it ran, so nobody can tell that the copy runs it again.
+    bool canRunTwice(BlockID block)
+    {
+        auto canRunTwice = [](const EffectsOnEdges& effects) {
+            auto isUnseen = [](const Effects& effects) { return effects.writes.containsOnly(heapsWhoseWritesNobodySees) && !effects.mayRunOtherCode(); };
+            return isUnseen(effects.normal) && isUnseen(effects.handler);
+        };
+        return canRunTwice(analyses.effectsOfTerminator(block)) && std::ranges::all_of(function.at(block).values, [&](ValueID value) { return canRunTwice(analyses.effectsOf(value)); });
+    }
+
+    std::optional<Target> findEntryOfCopyAt(BlockID block)
+    {
+        BlockID copyOfBlock = copy->copyOf(block);
+        if (!copyOfBlock)
+            return std::nullopt;
+        const auto& parameters = function.at(block).parameters;
+        const auto& parametersOfCopy = function.at(copyOfBlock).parameters;
+        if (parameters.size() < parametersOfCopy.size())
+            return std::nullopt;
+        Target entry { copyOfBlock, { }, { } };
+        for (uint32_t index = 0; index < parametersOfCopy.size(); ++index) {
+            if (copy->copyOf(parameters[index]) != parametersOfCopy[index])
+                return std::nullopt;
+            entry.arguments.append(parameters[index]);
+        }
+        return entry;
+    }
+
+    // A failing test enters the copy behind the test, and hands over every value that the tested code has made and the copy still reads.
+    // Where the code in front of the test can run twice, the copy can start in front of that code instead and make those values itself. Many tests that follow each other then share one entry.
+    void enterCopyBeforeRepeatableCode()
+    {
+        if (!copy || emittedTests.isEmpty())
+            return;
+
+        size_t numberOfBlocks = function.blocks.size();
+        Vector<uint32_t> numberOfIncomingEdges(FillWith { }, numberOfBlocks, 0u);
+        Vector<BlockID> predecessors(numberOfBlocks);
+        for (size_t index = 0; index < numberOfBlocks; ++index) {
+            function.at(BlockID(index)).forEachTarget([&](const Target& target) {
+                ++numberOfIncomingEdges[target.block.index()];
+                predecessors[target.block.index()] = BlockID(index);
+            });
+        }
+
+        BitVector isCopy(numberOfBlocks);
+        Vector<BlockID> originals(numberOfBlocks);
+        for (BlockID block : copy->plannedBlocks()) {
+            isCopy.quickSet(copy->copyOf(block).index());
+            originals[copy->copyOf(block).index()] = block;
+        }
+        // No block of the copy becomes an entry that is none. What fails a test of a type is known by that in the copy, so such a test keeps its entry to itself.
+        BitVector hasEntry(numberOfBlocks);
+        for (const EmittedTest& test : emittedTests) {
+            if (isCopy.quickGet(test.failed.index()))
+                hasEntry.quickSet(originals[test.failed.index()].index());
+        }
+
+        struct EntriesAbove {
+            uint32_t count { 0 };
+            BlockID shared;
+        };
+        BitVector isKnown(numberOfBlocks);
+        Vector<EntriesAbove> entriesAbove(numberOfBlocks);
+        Vector<BlockID, 16> path;
+        auto sharedEntryAbove = [&](BlockID last) {
+            path.shrink(0);
+            BlockID block = last;
+            for (; !isKnown.quickGet(block.index()); block = predecessors[block.index()]) {
+                if (!canRunTwice(block) || function.at(block).isHandlerBlock()) {
+                    isKnown.quickSet(block.index());
+                    break;
+                }
+                path.append(block);
+                if (numberOfIncomingEdges[block.index()] != 1)
+                    break;
+            }
+            EntriesAbove entries = isKnown.quickGet(block.index()) ? entriesAbove[block.index()] : EntriesAbove { };
+            while (!path.isEmpty()) {
+                block = path.takeLast();
+                if (hasEntry.quickGet(block.index()) && findEntryOfCopyAt(block) && ++entries.count == maxEntriesInRepeatableCode)
+                    entries.shared = block;
+                isKnown.quickSet(block.index());
+                entriesAbove[block.index()] = entries;
+            }
+            return entriesAbove[last.index()].shared;
+        };
+
+        // What the entry takes is written once, however many tests lead there.
+        Vector<BlockID> blocksInFrontOfEntries(numberOfBlocks);
+        builder.setHandler(std::nullopt);
+        for (const EmittedTest& test : emittedTests) {
+            if (!isCopy.quickGet(test.failed.index()))
+                continue;
+            Edge failingEdge { test.block, 1 };
+            BlockID first = sharedEntryAbove(test.block);
+            if (!first)
+                continue;
+            BlockID& target = blocksInFrontOfEntries[first.index()];
+            if (!target) {
+                Target entry = *findEntryOfCopyAt(first);
+                builder.setOrigin(function.at(test.block).terminator.origin());
+                target = builder.addBlock(function.at(entry.block).frequency);
+                builder.moveToEndOf(target);
+                builder.emitJump(entry.block, WTF::move(entry.arguments));
+            }
+            builder.redirectEdge(failingEdge, Target { target, { }, { } });
+        }
     }
 
     void repairProofs()
@@ -3197,7 +3554,7 @@ struct TestPlacer {
                 ProgramPoint head { target, indexAfterCaughtValues(function, function.at(target)) };
                 if (context.build.validates())
                     builder.insertBefore(head, makeValidateType(proven, planned.castType));
-                castsOfProvenValue.append({ planned.castType, builder.insertBefore(head, makeAssumeType(proven, planned.castType)) });
+                castsOfProvenValue.append({ planned.castType, builder.insertBefore(head, makeAssumeType(proven, Proven::byRulesWithoutChecks(planned.castType))) });
             }
             replace(*planned.use, castsOfProvenValue[found].second);
         }
@@ -3286,7 +3643,7 @@ static void settleExpectedTypesByUses(FunctionPassContext& context, ExpectedType
     };
     const Function& function = context.function;
     auto settle = [&](std::span<const ValueID> values) {
-        TypeID expected = function.at(values[0]).expected();
+        TypeID expected = function.at(values[0]).expected().predicted();
         TypeID settled = expected ? narrowExpectedTypeByUses(context, values, expected) : expectArrayByUses(context, values);
         if (settled == expected)
             return;
@@ -3298,10 +3655,10 @@ static void settleExpectedTypesByUses(FunctionPassContext& context, ExpectedType
     for (uint32_t index = 0; index < function.values.size(); ++index) {
         ValueID id(index);
         const Value& value = function.at(id);
-        if (value.expected() == value.type || (!value.expected() && !context.types.at(value.type).anyObject) || !context.analyses.useLists().useCount(id))
+        if (value.expected().predicted() == value.type || (!value.expected().predicted() && !context.types.at(value.type).anyObject) || !context.analyses.useLists().useCount(id))
             continue;
         if (value.opcode == Opcode::PropGet)
-            reads.append(PropertyRead { { value.objectOperand(), value.key(), value.expected() }, id });
+            reads.append(PropertyRead { { value.objectOperand(), value.key(), value.expected().predicted() }, id });
         else
             settle(singleElementSpan(id));
     }

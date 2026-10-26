@@ -449,6 +449,9 @@ bool describeByRole(const Program& program, const Function& function, EffectDesc
         description.addOwn(declaredBoundOf(Opcode::NewArray));
         return true;
     case FunctionRole::BoundFunction:
+        // One whose target records its callee calls the closure by value.
+        if (program.at(function.creator.as<CreatorRecord::BoundFunction>().target).capabilities.contains(FunctionCapabilities::RecordsCallee))
+            return false;
         description.addFunction(function.creator.as<CreatorRecord::BoundFunction>().target);
         return true;
     case FunctionRole::AllocatedThisVersion:
@@ -498,6 +501,11 @@ static FunctionSummary summarizeByRole(const EffectContext& context, const Funct
 CalleeSummary::CalleeSummary(const EffectContext& context, FunctionID id)
     : m_computed(context.summaries.of(id))
 {
+    // A callee version is the body of its source with the same parameters, given fewer values.
+    while (id && !context.summaries.contains(id) && context.program.at(id).role == FunctionRole::CalleeVersion) {
+        id = context.program.at(id).derivation.source;
+        m_computed = context.summaries.of(id);
+    }
     if (!id || context.summaries.contains(id))
         return;
     const Function& function = context.program.at(id);

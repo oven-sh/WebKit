@@ -25,6 +25,9 @@ namespace JSC { namespace AOT {
 
 static constexpr ASCIILiteral programText = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
+layout L0 name="Copy"
+layout L1 name="Rest"
+layout L2 name="CopyInHandler"
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="registry" [isFreeName]
@@ -60,6 +63,18 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     PropSet v1, v30 key="ignoresDirectCallees"
     v32 = NewClosure function=f17
     PropSet v1, v32 key="catchesDirectCallees"
+    v34 = NewClosure function=f18
+    PropSet v1, v34 key="copiesSource"
+    v36 = NewClosure function=f19
+    PropSet v1, v36 key="takesRestOfSource"
+    v38 = NewClosure function=f20
+    PropSet v1, v38 key="catchesOwnCopy"
+    v40 = NewClosure function=f22
+    PropSet v1, v40 key="copiesTwoFramesDown"
+    v42 = NewClosure function=f23
+    PropSet v1, v42 key="assignsSource"
+    v44 = NewClosure function=f21
+    PropSet v1, v44 key="copiesOneFrameDown"
     Return
 }
 function f1 name="catchesOwn" parameters=[{type=anything}] results=[{type=anything}] {
@@ -100,7 +115,7 @@ function f4 name="passes" parameters=[{type=anything}] results=[{type=anything}]
     Return v1
 }
 function f5 name="keepsValues" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v1 castType=number
+    v2 = Check v1 expectedType=number
     v3 = Integer integer=1
     v4 = Add v2, v3
     v5 = Add v4, v3
@@ -268,12 +283,90 @@ function f17 name="catchesDirectCallees" results=[{type=anything}] {
     v7 = Call v5, -, v6, v3
     Return v7
 }
+function f18 name="copiesSource" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="source" [isFreeName]
+    v2 = NewObject layout=L0
+    CopyDataProperties v2, v1 @200
+    v4 = FinishObject v2
+    v5 = PropGet v0 key="describeCopy" [isFreeName]
+    v6 = Call v5, -, v4 @205
+    Return v6
+}
+function f19 name="takesRestOfSource" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="source" [isFreeName]
+    v2 = NewObject layout=L1
+    CopyDataProperties v2, v1 excludedKeys=["left"] @210
+    v4 = FinishObject v2
+    v5 = PropGet v0 key="describeCopy" [isFreeName]
+    v6 = Call v5, -, v4 @215
+    Return v6
+}
+function f20 name="catchesOwnCopy" results=[{type=anything}] {
+  b0() handler=b2():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="source" [isFreeName]
+    v2 = NewObject layout=L2
+    CopyDataProperties v2, v1 @220
+    v4 = FinishObject v2
+    v5 = PropGet v0 key="describeCopy" [isFreeName]
+    v6 = Call v5, -, v4 @225
+    Jump -> next b1(v6)
+  b1(v7):
+    Return v7
+  b2() role=CatchHandler:
+    v8 = CatchValue
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="describe" [isFreeName]
+    v11 = String string="caught in the frame that copies: "
+    v12 = Call v10, -, v11, v8
+    Return v12
+}
+function f21 name="copiesOneFrameDown" results=[{type=anything}] {
+    v0 = CallDirect function=f18 @230
+    v1 = String string=", one frame down"
+    v2 = Add v0, v1
+    Return v2
+}
+function f22 name="copiesTwoFramesDown" results=[{type=anything}] {
+    v0 = CallDirect function=f21 @240
+    v1 = String string=", two frames down"
+    v2 = Add v0, v1
+    Return v2
+}
+function f23 name="assignsSource" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="source" [isFreeName]
+    v2 = NewObject layout=L0
+    v3 = FinishObject v2
+    v4 = Builtin builtin=ObjectAssign
+    v5 = Call v4, -, v3, v1 @250
+    v6 = PropGet v0 key="describeCopy" [isFreeName]
+    v7 = Call v6, -, v5 @255
+    Return v7
+}
 )IR"_s;
 
 static constexpr ASCIILiteral scriptStart = R"js(
 globalThis.registry = { };
 globalThis.thrown = "the value";
 globalThis.describe = function describe(label, value) { return label + (value instanceof Error ? value.constructor.name : value); };
+globalThis.describeCopy = function describeCopy(copy) {
+    let keys = "copied";
+    for (let key in copy)
+        keys += " " + key;
+    return keys;
+};
+globalThis.namesInStack = function namesInStack(error) {
+    let names = "";
+    for (let line of error.stack.split("\n")) {
+        let name = line.split("@")[0];
+        if (name in registry)
+            names += (names ? " < " : "") + name;
+    }
+    return names;
+};
 globalThis.errorsNotCreated = function errorsNotCreated() { return Number(/(\d+)\tcounter:ThrownErrorsNotCreated/.exec(aotRuntimeCounters())[1]); };
 globalThis.printWithErrorsNotCreated = function printWithErrorsNotCreated(work) {
     // The first throw at a site puts its frames into the call site cache, which is all that a later throw looks at.
@@ -523,6 +616,97 @@ rejected with: RangeError: made to be thrown; errors not created: 0
 )"_s);
 }
 
+// What copies properties calls back into compiled code, which throws. The error lists the frames on both sides of the copy, and the handler lies beyond it.
+static void testThrowBelowACopyOfProperties()
+{
+    constexpr ASCIILiteral statements = R"js(
+    let sources = {
+        "a getter": Object.defineProperty({ first: 1, left: 2 }, "broken", { get: registry.throwsNewError, enumerable: true }),
+        "a trap for the keys": new Proxy({ first: 1 }, { ownKeys: registry.throwsNewError }),
+        "a trap for a descriptor": new Proxy({ first: 1 }, { getOwnPropertyDescriptor: registry.throwsNewError }),
+        "a trap for a read": new Proxy({ first: 1 }, { get: registry.throwsNewError }),
+        "a getter in interpreted code": { first: 1, get broken() { return registry.passes(registry.throwsNewError); } },
+        "nothing": { first: 1, left: 2, last: 3 },
+    };
+    for (let name in sources) {
+        print(name + ":");
+        source = sources[name];
+        for (let copies of [registry.copiesSource, registry.takesRestOfSource, registry.assignsSource, registry.copiesTwoFramesDown]) {
+            print(registry.catchesCallee(copies));
+            try {
+                print(copies());
+            } catch (error) {
+                print("caught in interpreted code: " + namesInStack(error));
+            }
+        }
+        print(registry.catchesOwnCopy());
+    }
+)js"_s;
+    constexpr ASCIILiteral expectedOutput = R"(a getter:
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < copiesSource
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < takesRestOfSource
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < assignsSource
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < copiesSource < copiesOneFrameDown < copiesTwoFramesDown
+caught in the frame that copies: RangeError
+a trap for the keys:
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < copiesSource
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < takesRestOfSource
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < assignsSource
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < copiesSource < copiesOneFrameDown < copiesTwoFramesDown
+caught in the frame that copies: RangeError
+a trap for a descriptor:
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < copiesSource
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < takesRestOfSource
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < assignsSource
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < copiesSource < copiesOneFrameDown < copiesTwoFramesDown
+caught in the frame that copies: RangeError
+a trap for a read:
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < copiesSource
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < takesRestOfSource
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < assignsSource
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < copiesSource < copiesOneFrameDown < copiesTwoFramesDown
+caught in the frame that copies: RangeError
+a getter in interpreted code:
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < passes < copiesSource
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < passes < takesRestOfSource
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < passes < assignsSource
+caught in a caller: RangeError
+caught in interpreted code: throwsNewError < passes < copiesSource < copiesOneFrameDown < copiesTwoFramesDown
+caught in the frame that copies: RangeError
+nothing:
+copied first left last
+copied first left last
+copied first last
+copied first last
+copied first left last
+copied first left last
+copied first left last, one frame down, two frames down
+copied first left last, one frame down, two frames down
+copied first left last
+)"_s;
+    checkShellOutput(statements, expectedOutput, Validation::On);
+    checkShellOutput(statements, expectedOutput, Validation::Off);
+}
+
 static void testValuesLiveAcrossTheCallAreRestored()
 {
     checkShellOutput(R"js(
@@ -592,6 +776,7 @@ std::span<const NativeTest> unwindingTests()
         { "unwinding/throw-in-async-function-rejects-its-promise"_s, testThrowInAsyncFunctionRejectsItsPromise },
         { "unwinding/ignored-error-is-not-created"_s, testIgnoredErrorIsNotCreated },
         { "unwinding/observable-error-is-created"_s, testObservableErrorIsCreated },
+        { "unwinding/throw-below-a-copy-of-properties"_s, testThrowBelowACopyOfProperties },
         { "unwinding/values-live-across-the-call-are-restored"_s, testValuesLiveAcrossTheCallAreRestored },
         { "unwinding/termination-passes-every-handler"_s, testTerminationPassesEveryHandler },
         { "unwinding/termination-of-loop-without-calls"_s, testTerminationOfLoopWithoutCalls },

@@ -403,17 +403,9 @@ const SlotAgreement& SlotPlan::agreementOf(const Program& program, PropertyKeyID
 
 MemberCreation SlotPlan::creationOf(const Program& program, LayoutID classLayout, FunctionID member) const
 {
-    const Vector<ClassMember>& members = program.at(classLayout).classFlow.members;
-    const Vector<MemberCreation>& creations = classCreation(classLayout).members;
-    MemberCreation creation = MemberCreation::AtDefinition;
-    for (size_t index = 0; index < members.size(); ++index) {
-        if (members[index].function != member)
-            continue;
-        if (index >= creations.size() || creations[index] == MemberCreation::AtDefinition)
-            return MemberCreation::AtDefinition;
-        creation = MemberCreation::ByClassRecord;
-    }
-    return creation;
+    UNUSED_PARAM(program);
+    bool isCreatedByClassRecord = std::ranges::binary_search(classCreation(classLayout).functionsCreatedByClassRecord, member.index(), { }, &FunctionID::index);
+    return isCreatedByClassRecord ? MemberCreation::ByClassRecord : MemberCreation::AtDefinition;
 }
 
 static LayoutID provenBaseOf(const Layout& layout)
@@ -655,7 +647,7 @@ bool isDescribedToRunTime(const Program& program, const FlowResults& flow, Modul
         case NamespaceUse::Unknown:
             return true;
         case NamespaceUse::NamedReadsOnly:
-            return program.at(moduleExport.variable).flow.reads != ReadState::NeverRead;
+            return std::ranges::binary_search(flow.module(exporter).exportsReadByName, moduleExport.variable);
         case NamespaceUse::NeverCreated:
             return program.at(moduleExport.variable).flow.reads == ReadState::Unknown;
         }
@@ -898,8 +890,8 @@ static bool capturesNothingButClassEnvironment(const Program& program, const Fun
         return true;
     if (function.captures.size() != 1 || constructor.captures.size() != 1)
         return false;
-    TypeID captured = function.captures[0].type;
-    return captured && captured == constructor.captures[0].type && program.at(captured).environment;
+    TypeID captured = function.captures[0].written();
+    return captured && captured == constructor.captures[0].written() && program.at(captured).environment;
 }
 
 static bool canBeCreatedByClassRecord(const Program& program, const Function& constructor, const ClassMember& member)
@@ -927,6 +919,14 @@ static ClassCreationPlan planClass(const Program& program, const Layout& layout,
         if (recordCreatesNextMember)
             plan.members[index] = MemberCreation::ByClassRecord;
     }
+    Vector<FunctionID> functionsCreatedAtDefinition;
+    for (size_t index = 0; index < members.size(); ++index)
+        (plan.members[index] == MemberCreation::ByClassRecord ? plan.functionsCreatedByClassRecord : functionsCreatedAtDefinition).append(members[index].function);
+    AOT::sort(plan.functionsCreatedByClassRecord, { }, &FunctionID::index);
+    AOT::sort(functionsCreatedAtDefinition, { }, &FunctionID::index);
+    plan.functionsCreatedByClassRecord.removeAllMatching([&](FunctionID& function) {
+        return std::ranges::binary_search(functionsCreatedAtDefinition, function.index(), { }, &FunctionID::index);
+    });
 
     bool recordCreatesPrototypeSide = recordCreatesSide[static_cast<unsigned>(ClassSide::Prototype)];
     bool recordCreatesStaticSide = recordCreatesSide[static_cast<unsigned>(ClassSide::Static)];

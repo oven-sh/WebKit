@@ -1,0 +1,40 @@
+# The counter starts at a number that is only expected to be an integer, so its type settles within the rounds and what it is expected to be does not. When typing gives up there, each value
+# expects what it expected before, the types stay, and no value keeps an expected type from the middle of the solve
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass limit=MaxTypeValuesRounds:2
+# RUN: pass RetypeValues
+# LOSS: MaxTypeValuesRounds
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="counterThatExpectedNothing" parameters=[{type=boolean}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything ~ i32):
+    v2 = Integer integer=1
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Add v3, v2
+    Jump -> next b1(v5)
+  b3():
+    Return v3
+# CHECK: b1(v3: anything):
+# CHECK: v5: number|string|bigint = Add v3, v2
+# CHECK: Return v3
+}
+
+function f1 name="counterThatExpectedANumber" parameters=[{type=boolean}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: boolean, v1: anything ~ i32):
+    v2 = Integer integer=1
+    Jump -> next b1(v1)
+  b1(v3: anything ~ number):
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Add v3, v2
+    Jump -> next b1(v5)
+  b3():
+    Return v3
+# CHECK: b1(v3: anything ~ number):
+# CHECK: Return v3
+}

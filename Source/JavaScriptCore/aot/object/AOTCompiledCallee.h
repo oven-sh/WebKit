@@ -34,12 +34,15 @@ JS_EXPORT_PRIVATE bool isCompiledCallee(const JSCell*);
 
 JS_EXPORT_PRIVATE String name(JSObject* callee);
 JS_EXPORT_PRIVATE unsigned length(JSObject* callee);
+// Of a slim closure. It looks for neither property.
+JS_EXPORT_PRIVATE bool canAssumeNameAndLengthAreOriginal(VM&, JSObject* callee);
 JS_EXPORT_PRIVATE JSValue sourceText(JSGlobalObject*, JSObject* callee);
 JS_EXPORT_PRIVATE FunctionKind kind(JSObject* callee);
 JS_EXPORT_PRIVATE bool isBoundFunction(JSObject* callee);
 
 JS_EXPORT_PRIVATE void setPrototypeProperty(VM&, JSObject* callee, JSObject* prototype, unsigned attributes);
 JS_EXPORT_PRIVATE void setNameProperty(JSGlobalObject*, JSObject* callee, JSString* name, unsigned attributes);
+JS_EXPORT_PRIVATE void showNameUntilLookedFor(VM&, JSObject* callee, const String& name);
 
 JS_EXPORT_PRIVATE String displayName(JSObject*);
 JS_EXPORT_PRIVATE bool reifyProperties(VM&, JSObject*);

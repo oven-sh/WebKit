@@ -72,15 +72,13 @@ layout L2 name="OnlyRequired" fields=[{key="a" declared={type=number} flow={stab
 # CHECK-NEXT: [[k1]]: "any" = String string="any"
 # CHECK-NEXT: [[k2]]: "z" = String string="z"
 # CHECK-NEXT: [[keys]]: Array<string> = NewArray [[k0]], [[k1]], [[k2]] contents=string
-# CHECK-NEXT: [[isFirst]]: true = Boolean boolean=true
-# CHECK-NEXT: [[rest]]: string = CallBuiltin -, v0, [[keys]], [[from]], [[isFirst]] overload=CompilerHelpersStringifyProperties/0
-# CHECK-NEXT: [[restLength]]:{{*}}= GetStringLength [[rest]]
-# CHECK: = JSONAppendToken v1, {{*}} jsonToken=CloseObjectOverComma
-# CHECK: Jump -> next [[parsed0]]()
-# CHECK: StringBuilderAppend v1, [[rest]]
-# CHECK-NEXT: [[brace]]: "}" = String string="}"
+# CHECK-NEXT: [[hasRest]]: boolean = StringBuilderAppendJSONMembers v1, v0, [[keys]], [[from]], v0
+# CHECK-NEXT: Branch [[hasRest]] -> taken
+# CHECK: [[brace]]: "}" = String string="}"
 # CHECK-NEXT: StringBuilderAppend v1, [[brace]]
 # CHECK-NEXT: Jump -> next [[parsed0]]()
+# CHECK: = JSONAppendToken v1, {{*}} jsonToken=CloseObjectOverComma
+# CHECK: Jump -> next [[parsed0]]()
 
 # CHECK: function {{*}}creator=Serializer{layout=L1}
 # CHECK: = ShapeTest v0 layouts=[L1]
@@ -89,22 +87,22 @@ layout L2 name="OnlyRequired" fields=[{key="a" declared={type=number} flow={stab
 # CHECK-NOT: ShapeTest
 # CHECK-NOT: HasKeyOrder
 # CHECK-NOT: HasNoExtraProperties
-# CHECK-NOT: CompilerHelpersStringifyProperties
+# CHECK-NOT: StringBuilderAppendJSONMembers
 # CHECK: = JSONAppendValue v1, {{*}} jsonPosition=Element
 # CHECK-NOT: ShapeTest
 # CHECK-NOT: HasKeyOrder
 # CHECK-NOT: HasNoExtraProperties
-# CHECK-NOT: CompilerHelpersStringifyProperties
+# CHECK-NOT: StringBuilderAppendJSONMembers
 # CHECK: = StringBuilderAppendJSON v1,
 # CHECK-NOT: ShapeTest
 # CHECK-NOT: HasKeyOrder
 # CHECK-NOT: HasNoExtraProperties
-# CHECK-NOT: CompilerHelpersStringifyProperties
+# CHECK-NOT: StringBuilderAppendJSONMembers
 # CHECK: = JSONAppendToken v1, {{*}} jsonToken=CloseObjectOverComma
 # CHECK-NOT: ShapeTest
 # CHECK-NOT: HasKeyOrder
 # CHECK-NOT: HasNoExtraProperties
-# CHECK-NOT: CompilerHelpersStringifyProperties
+# CHECK-NOT: StringBuilderAppendJSONMembers
 
 # CHECK: function {{*}}creator=Serializer{layout=L2}
 # CHECK-NOT: JSONAppendToken

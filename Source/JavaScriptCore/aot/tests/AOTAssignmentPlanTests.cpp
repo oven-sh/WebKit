@@ -10,6 +10,7 @@
 #include "AOTAssignmentPlans.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
+#include "AOTMappedCopyInlines.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationCallScope.h"
@@ -22,6 +23,7 @@
 #include "PropertyDescriptor.h"
 #include "PropertyNameArray.h"
 #include <array>
+#include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT {
 
@@ -31,6 +33,7 @@ static constexpr ASCIILiteral programText = R"IR(layout L0 name="Point" fields=[
 layout L1 name="Copy"
 layout L2 name="Tail" fields=[{key="z" declared={type=anything}}]
 layout L3 name="Pair" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+layout L4 name="Labeled" fields=[{key="label" declared={type=anything} flags=[IsRequired]}, {key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
 module m0 path="/main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -41,7 +44,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v4 = NewClosure function=f3
     v5 = NewClosure function=f4
     v6 = NewClosure function=f5
-    v7 = Call v1, -, v2, v3, v4, v5, v6
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
     Return
 }
 function f1 name="makePoint" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
@@ -68,6 +72,11 @@ function f5 name="makePair" results=[{type=anything}] {
     v0 = NewObject layout=L3 fields=[]
     v1 = FinishObject v0
     Return v1
+}
+function f6 name="makeLabeled" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L4 fields=[0]
+    v2 = FinishObject v1
+    Return v2
 }
 )IR"_s;
 
@@ -575,6 +584,122 @@ static void testClonedStructuresAreForgottenAtEachCollection(LoadedProgram& prog
     }
 }
 
+static void testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollection(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Instance& instance = program.instance();
+    SetForScope withoutValidation(vm.aotState().validatesRuntime, false);
+    auto tryCopy = [&](Object* target, Object* source) {
+        return tryCopyByFieldMapWithoutFrame(instance, target, JSValue::encode(source), 0);
+    };
+    for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
+        Object* source = createPoint(program, 1, 2);
+        Object* first = allocate(program, "Pair"_s);
+        const MappedCopy*& place = instance.allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(first->orderAndShapeWords(), source->orderAndShapeWords(), 0)];
+        AOT_TEST_CHECK(!place && !tryCopy(first, source) && enumerableKeysOf(program, first).isEmpty());
+        RepeatedCopy way = tryRepeatAssignment(vm, program.state(), first, source, 0);
+        AOT_TEST_CHECK(way == RepeatedCopy::ByMap || way == RepeatedCopy::ByMapForTheFirstTime);
+        AOT_TEST_CHECK(hasKeys(program, first, { "x"_s, "y"_s }) && holdsPropertiesOf(program, first, source));
+        if (way == RepeatedCopy::ByMapForTheFirstTime) {
+            AOT_TEST_CHECK(!place && !tryCopy(allocate(program, "Pair"_s), source));
+            AOT_TEST_CHECK(tryRepeatAssignment(vm, program.state(), allocate(program, "Pair"_s), source, 0) == RepeatedCopy::ByMap);
+        }
+        AOT_TEST_CHECK(place && place->takesNoFrame);
+
+        Object* second = allocate(program, "Pair"_s);
+        AOT_TEST_CHECK(tryCopy(second, createPoint(program, 3, 4)) && hasKeys(program, second, { "x"_s, "y"_s }));
+        AOT_TEST_CHECK(second->orderWord() == first->orderWord() && holdsPropertiesOf(program, second, createPoint(program, 3, 4)));
+
+        AOT_TEST_CHECK(!tryCopy(second, source) && holdsPropertiesOf(program, second, createPoint(program, 3, 4)));
+        Object* withOneField = allocate(program, "Pair"_s);
+        put(program, withOneField, "y"_s, 5);
+        AOT_TEST_CHECK(!tryCopy(withOneField, source) && hasKeys(program, withOneField, { "y"_s }));
+        Object* frozenSource = createPoint(program, 6, 7);
+        objectConstructorFreeze(program.realm(), frozenSource);
+        AOT_TEST_CHECK(!tryCopy(allocate(program, "Pair"_s), frozenSource));
+        AOT_TEST_CHECK(!tryCopy(allocate(program, "Tail"_s), source) && !tryCopyByFieldMapWithoutFrame(instance, allocate(program, "Pair"_s), JSValue::encode(source), 1));
+        AOT_TEST_CHECK(!tryCopyByFieldMapWithoutFrame(instance, allocate(program, "Pair"_s), JSValue::encode(jsNumber(1)), 0) && !tryCopyByFieldMapWithoutFrame(instance, allocate(program, "Pair"_s), JSValue::encode(constructEmptyObject(program.realm())), 0));
+
+        vm.heap.collectSync(scope);
+        AOT_TEST_CHECK(!place);
+    }
+
+    Object* source = createPoint(program, 1, 2);
+    AOT_TEST_CHECK(tryRepeatAssignment(vm, program.state(), allocate(program, "Pair"_s), source, 0) == RepeatedCopy::ByMap);
+    Object* prototype = allocate(program, "Pair"_s);
+    AOT_TEST_CHECK(tryCopy(allocate(program, "Pair"_s), source));
+    prototype->didBecomePrototype(vm);
+    AOT_TEST_CHECK(!tryCopy(prototype, source) && enumerableKeysOf(program, prototype).isEmpty());
+}
+
+// Where a later move fails, a field that the target lists keeps what the copy has stored there, which whoever copies in another way stores again.
+static void testCopiesWithoutFrameOverwriteFieldsThatTheTargetLists(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Instance& instance = program.instance();
+    SetForScope withoutValidation(vm.aotState().validatesRuntime, false);
+    auto createWithFirstField = [&](ASCIILiteral layoutName) {
+        Object* target = allocate(program, layoutName);
+        AOT_TEST_CHECK(target->store(vm, target->layout().fields()[0], AcceptedValue::provenAtBuildTime(jsNumber(5))));
+        return target;
+    };
+    auto copyAfterTwoCopiesInFrame = [&](ASCIILiteral layoutName, Object* source) {
+        AOT_TEST_CHECK(tryRepeatAssignment(vm, program.state(), createWithFirstField(layoutName), source, 0) == RepeatedCopy::ByMapForTheFirstTime);
+        AOT_TEST_CHECK(tryRepeatAssignment(vm, program.state(), createWithFirstField(layoutName), source, 0) == RepeatedCopy::ByMap);
+        Object* target = createWithFirstField(layoutName);
+        bool didCopy = tryCopyByFieldMapWithoutFrame(instance, target, JSValue::encode(source), 0);
+        return std::pair { target, didCopy };
+    };
+
+    auto [labeled, didCopyBesideLabel] = copyAfterTwoCopiesInFrame("Labeled"_s, createPoint(program, 1, 2));
+    AOT_TEST_CHECK(didCopyBesideLabel && hasKeys(program, labeled, { "label"_s, "x"_s, "y"_s }));
+    AOT_TEST_CHECK(labeled->get(program.realm(), Identifier::fromString(vm, "label"_s)) == jsNumber(5) && labeled->get(program.realm(), Identifier::fromString(vm, "x"_s)) == jsNumber(1) && labeled->get(program.realm(), Identifier::fromString(vm, "y"_s)) == jsNumber(2));
+
+    auto createPair = [&](ASCIILiteral first, ASCIILiteral second) {
+        Object* pair = allocate(program, "Pair"_s);
+        put(program, pair, first, 3);
+        put(program, pair, second, 4);
+        return pair;
+    };
+    auto valueOf = [&](Object* object, ASCIILiteral name) {
+        return object->get(program.realm(), Identifier::fromString(vm, name));
+    };
+    for (auto [first, second] : { std::pair { "x"_s, "y"_s }, std::pair { "y"_s, "x"_s } }) {
+        auto [point, didCopy] = copyAfterTwoCopiesInFrame("Point"_s, createPair(first, second));
+        AOT_TEST_CHECK(didCopy && hasKeys(program, point, { "x"_s, "y"_s }) && valueOf(point, first) == jsNumber(3) && valueOf(point, second) == jsNumber(4));
+
+        Object* pairWithoutSecond = createPair(first, second);
+        pairWithoutSecond->clear(*pairWithoutSecond->fieldNamed(program.state(), Identifier::fromString(vm, second).impl()));
+        Object* target = createWithFirstField("Point"_s);
+        AOT_TEST_CHECK(!tryCopyByFieldMapWithoutFrame(instance, target, JSValue::encode(pairWithoutSecond), 0));
+        AOT_TEST_CHECK(valueOf(target, first) == jsNumber(3) && valueOf(target, "x"_s) == jsNumber(first == "x"_s ? 3 : 5));
+    }
+}
+
+static void testIntegersMoveIntoSlotsThatMayHoldNone()
+{
+    MappedCopy::Move move { };
+    move.kind = moveKindFor(SlotRepresentation::Int32, SlotRepresentation::OptionalInt32, false);
+    AOT_TEST_CHECK(move.kind == MappedCopy::MoveKind::Int32AsOptionalInt32);
+    auto moves = [&](int32_t integer) {
+        uint64_t stored = 0;
+        bool isLeftToOtherWay = false;
+        bool didMove = tryMove(0, move, reinterpret_cast<const uint8_t*>(&integer), [&](auto bits) {
+            static_assert(sizeof(bits) <= sizeof(uint64_t));
+            stored = bits;
+        }, [&] {
+            isLeftToOtherWay = true;
+            return false;
+        });
+        AOT_TEST_CHECK(didMove != isLeftToOtherWay && (!didMove || stored == static_cast<uint32_t>(integer)));
+        return didMove;
+    };
+    for (int32_t integer : { minInlineInt32, -1, 0, 1, INT32_MAX })
+        AOT_TEST_CHECK(moves(integer));
+    for (int32_t integer : { INT32_MIN, absentInt32, minInlineInt32 - 1 })
+        AOT_TEST_CHECK(!moves(integer));
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withPoints)() = runNativeTestWithLoadedProgram<assignmentPlanTests, programText, body>;
 
@@ -597,6 +722,9 @@ std::span<const NativeTest> assignmentPlanTests()
         { "assignment-plans/kinds-of-pairs-that-find-no-place-leave-the-plans-of-others"_s, withPoints<testKindsOfPairsThatComeInTurnsKeepTheirPlans<60, 60>> },
         { "assignment-plans/plans-outlive-collections-while-their-structures-live"_s, withPoints<testPlansOutliveCollectionsWhileTheirStructuresLive> },
         { "assignment-plans/cloned-structures-are-forgotten-at-each-collection"_s, withPoints<testClonedStructuresAreForgottenAtEachCollection> },
+        { "assignment-plans/copies-without-frame-fill-empty-objects-and-are-forgotten-at-each-collection"_s, withPoints<testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollection> },
+        { "assignment-plans/copies-without-frame-overwrite-fields-that-the-target-lists"_s, withPoints<testCopiesWithoutFrameOverwriteFieldsThatTheTargetLists> },
+        { "assignment-plans/integers-move-into-slots-that-may-hold-none"_s, testIntegersMoveIntoSlotsThatMayHoldNone },
     };
     return tests;
 }

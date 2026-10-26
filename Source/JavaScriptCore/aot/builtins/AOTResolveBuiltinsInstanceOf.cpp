@@ -214,7 +214,7 @@ static void becomeAnswer(FunctionPassContext& context, ValueID id, bool answer)
     value.become(Opcode::Boolean);
     value.setBoolean(answer);
     value.type = resultTypeOf(context.program, context.function, value, context.types);
-    value.setExpected(TypeID());
+    value.setExpected({ });
 }
 
 static void finishArmWithWalk(SiteExpansion& expansion, BuiltinClassID builtinClass, ValueID subject)

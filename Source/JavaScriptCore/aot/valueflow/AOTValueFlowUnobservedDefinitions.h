@@ -24,6 +24,8 @@ struct UnobservedFieldDefinition {
     ValueID definition;
     LayoutID classLayout;
     PropertyKeyID key;
+    // Somebody may hold the object, and sees the value where a definition that follows throws.
+    bool isObservedWhereObjectRefusesDefinition { false };
 };
 
 class UnobservedFieldDefinitions {
@@ -31,7 +33,7 @@ public:
     UnobservedFieldDefinitions() = default;
     UnobservedFieldDefinitions(const Program&, BuildContext&, NOESCAPE const ScopedLambda<bool(FunctionID)>& mayHoldDirectCall);
 
-    bool contains(FunctionID initializer, ValueID definition) const;
+    const UnobservedFieldDefinition* find(FunctionID initializer, ValueID definition) const LIFETIME_BOUND;
     std::span<const UnobservedFieldDefinition> all() const LIFETIME_BOUND { return m_definitions.span(); }
 
 private:

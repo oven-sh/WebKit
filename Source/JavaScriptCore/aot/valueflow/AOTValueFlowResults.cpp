@@ -340,7 +340,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     ReportSet reports = build.options().reports;
     bool showsCauses = setsOutsideTypes || hasFlag(reports, ReportSet::Flow) || hasFlag(reports, ReportSet::Functions) || hasFlag(reports, ReportSet::Arrivals);
     auto solution = makeUnique<ValueFlowSolution>(program, build, runsEveryRuleOnceMore ? ValueFlowSolver::Rounds::Due : ValueFlowSolver::Rounds::DueWithoutCheck, ValueFlowSolution::Witnesses::None, UINT32_MAX, EnumSet<ValueFlowUnknownSource> { },
-        showsCauses ? ValueFlowSolution::WaysOfValues::AreAskedFor : ValueFlowSolution::WaysOfValues::AreNotAskedFor);
+        showsCauses ? ValueFlowSolution::WaysOfValues::AreAskedFor : ValueFlowSolution::WaysOfValues::AreNotAskedFor, ValueFlowSolution::CoveredMembers::AreLeftOut);
     times.didFinish("solve"_s);
     RELEASE_ASSERT(solution->hasResult());
     if (build.options().checksFlowFixpoint)
@@ -467,8 +467,10 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     auto closuresNeverCompared = add("closures never compared"_s, { storesListed }, [&](PhaseTimes&) {
         ValueFlowHeapView heap(inputs);
         computeClosuresNeverCompared(inputs, heap, tables);
+        computeLayoutsNeverHeldWeakly(inputs, heap, *usesOfHeap, tables);
     }, TaskPriority::Background);
     auto fields = add("fields"_s, { numbers, objects, constructionOrders, classes, storesListed, builtins }, [&](PhaseTimes&) {
+        findHoldersWithListedKeys(inputs, *usesOfHeap, tables.builtins);
         fieldContents = computeFieldResults(inputs, *usesOfHeap, constructions, tables);
         kindsOfKeys = Vector<PropertyKeyKind>(program.types.numberOfPropertyKeys(), [&](size_t index) {
             return program.at(PropertyKeyID(static_cast<uint32_t>(index))).kind;

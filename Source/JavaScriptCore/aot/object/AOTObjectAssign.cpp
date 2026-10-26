@@ -10,10 +10,13 @@
 
 #include "AOTAssignmentPlans.h"
 #include "AOTKeyOrderTable.h"
+#include "AOTMappedCopyInlines.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTObjectModelCaches.h"
+#include "AOTPropertyWalk.h"
 #include "AOTProgramStrings.h"
+#include "AOTRuntimeValidation.h"
 #include "AOTState.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
@@ -545,7 +548,7 @@ bool FieldStoreRun::tryRunListingOnce(const AssignmentSource& source)
         size_t index = number & ~AssignmentPlan::isExtraPropertyStore;
         if (number & AssignmentPlan::isExtraPropertyStore) {
             const AssignmentPlan::ExtraPropertyStore& store = m_plan.extraPropertyStores[index];
-            numberOfExtraKeysAdded += store.addsName && m_target.hasPositionAmongKeys(store.name);
+            numberOfExtraKeysAdded += store.addsName && !PropertyName(store.name).isPrivateName();
             continue;
         }
         uint16_t key = layout.indexOf(*m_plan.fieldStores[index].to);
@@ -654,10 +657,14 @@ MappedCopy::MoveKind moveKindFor(SlotRepresentation from, SlotRepresentation to,
             return Kind::HalfWordUnlessZero;
         if (isNarrowReference(from) && (to == SlotRepresentation::JSValue || to == SlotRepresentation::Cell))
             return Kind::WideNarrowReference;
+        if ((from == SlotRepresentation::JSValue || from == SlotRepresentation::Cell) && isNarrowReference(to))
+            return Kind::NarrowWideReference;
         if (from == SlotRepresentation::OptionalInt32 && to == SlotRepresentation::JSValue)
             return Kind::BoxedOptionalInt32;
         if (from == SlotRepresentation::Int32 && to == SlotRepresentation::JSValue)
             return Kind::BoxedInt32;
+        if (from == SlotRepresentation::Int32 && to == SlotRepresentation::OptionalInt32)
+            return Kind::Int32AsOptionalInt32;
         if (from == SlotRepresentation::OptionalInt32 && to == SlotRepresentation::OptionalDouble)
             return Kind::OptionalInt32AsDouble;
         if (from == SlotRepresentation::Int32 && isDouble(to))
@@ -707,6 +714,132 @@ MappedCopy::MoveKind moveKindFor(SlotRepresentation from, SlotRepresentation to,
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static const MappedCopy*& placeOfCopyWithoutFrame(State& state, const MappedCopy& copy)
+{
+    return state.instance.allocation.copiesWithoutFrame[AllocationWords::placeOfCopyWithoutFrame(copy.targetWords, copy.sourceWords, copy.excludedRunNumberPlusOne)];
+}
+
+static bool tryDescribeForStub(MappedCopy::Move& move)
+{
+    using Kind = MappedCopy::MoveKind;
+    using Run = MappedCopy::RunOfStub;
+    auto isMadeIn = [&](Run run, uint64_t firstBitsRefused, uint64_t numberOfBitsRefused) {
+        move.runOfStub = run;
+        move.firstBitsRefusedByStub = firstBitsRefused;
+        move.numberOfBitsRefusedByStub = numberOfBitsRefused;
+        return true;
+    };
+    switch (move.kind) {
+    case Kind::HalfWord:
+        return isMadeIn(Run::HalfWords, 0, 0);
+    case Kind::HalfWordUnlessZero:
+        return isMadeIn(Run::HalfWords, 0, 1);
+    case Kind::OptionalInt32:
+        return isMadeIn(Run::HalfWords, traitsOf(SlotRepresentation::OptionalInt32).absentBits, 1);
+    case Kind::Int32AsOptionalInt32:
+        return isMadeIn(Run::HalfWords, static_cast<uint32_t>(INT32_MIN), static_cast<int64_t>(minInlineInt32) - INT32_MIN);
+    case Kind::NarrowWideReference:
+        return isMadeIn(Run::NarrowedReferences, 0, 0);
+    case Kind::Word:
+        return isMadeIn(Run::Words, 0, 0);
+    case Kind::WordUnlessZero:
+        return isMadeIn(Run::Words, 0, 1);
+    case Kind::OptionalInt64:
+        return isMadeIn(Run::Words, traitsOf(SlotRepresentation::OptionalInt64).absentBits, 1);
+    case Kind::OptionalDouble:
+        return isMadeIn(Run::Words, traitsOf(SlotRepresentation::OptionalDouble).absentBits, 1);
+    case Kind::Byte:
+        return isMadeIn(Run::Bytes, 0, 0);
+    case Kind::ByteUnlessZero:
+        return isMadeIn(Run::Bytes, 0, 1);
+    case Kind::OptionalInt32AsDouble:
+        return isMadeIn(Run::Int32sAsDoubles, static_cast<uint32_t>(INT32_MIN), static_cast<int64_t>(minInlineInt32) - INT32_MIN);
+    case Kind::Int32AsDouble:
+        return isMadeIn(Run::Int32sAsDoubles, 0, 0);
+    case Kind::BoxedOptionalInt32:
+        return isMadeIn(Run::BoxedInt32s, static_cast<uint32_t>(INT32_MIN), static_cast<int64_t>(minInlineInt32) - INT32_MIN);
+    case Kind::BoxedInt32:
+        return isMadeIn(Run::BoxedInt32s, 0, 0);
+    case Kind::WideNarrowReference:
+        return isMadeIn(Run::WidenedReferences, 0, 1);
+    case Kind::QuarterWord:
+    case Kind::OtherForm:
+    case Kind::Tested:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void describeMovesForStub(MappedCopy& copy)
+{
+    if (copy.granuleBitsOfSource || copy.granuleBitsFilled)
+        return;
+    for (MappedCopy::Move& move : copy.moves) {
+        if (!tryDescribeForStub(move))
+            return;
+    }
+    std::ranges::stable_sort(copy.moves.mutableSpan(), { }, &MappedCopy::Move::runOfStub);
+    for (const MappedCopy::Move& move : copy.moves) {
+        MappedCopy::Run& run = copy.runsOfStub[static_cast<size_t>(move.runOfStub)];
+        run.end = &move + 1;
+        run.negativeSize -= sizeof(MappedCopy::Move);
+    }
+    auto hasMovesBehind = [&](MappedCopy::RunOfStub run) {
+        return std::ranges::any_of(std::span { copy.runsOfStub }.subspan(static_cast<size_t>(run) + 1), &MappedCopy::Run::negativeSize);
+    };
+    copy.hasRunsBehindSecondForStub = hasMovesBehind(MappedCopy::RunOfStub::NarrowedReferences);
+    copy.hasRunsBehindFourthForStub = hasMovesBehind(MappedCopy::RunOfStub::Bytes);
+    copy.structureOfSourceForStub = copy.structureOfSource;
+}
+
+static bool takesNoFrame(VM& vm, State& state, MappedCopy& copy, const Object& target, const Object& source)
+{
+    if (state.objects->caches->assignmentPlans.countsCopies() || validatesRuntime(vm))
+        return false;
+    for (const MappedCopy::Move& move : copy.moves) {
+        if (move.kind == MappedCopy::MoveKind::OtherForm || move.kind == MappedCopy::MoveKind::Tested)
+            return false;
+    }
+    if (copy.granuleBitsOfSource) {
+        SlotData word = *source.compiledStructure().extensionSlot();
+        copy.offsetOfExtensionWordInSource = word.offset;
+        copy.extensionWordOfSourceIsWide = word.representation() == SlotRepresentation::Cell;
+    }
+    if (copy.granuleBitsFilled) {
+        SlotData word = *target.compiledStructure().extensionSlot();
+        copy.offsetOfExtensionWordInTarget = word.offset;
+        copy.extensionWordOfTargetIsWide = word.representation() == SlotRepresentation::Cell;
+        Allocator allocator = vm.heap.cagedAuxiliarySpace<SubspaceAccess::OnMainThread>()->allocatorFor(extensionCellSizeFor(std::popcount(copy.granuleBitsFilled)), AllocatorForMode::EnsureAllocator);
+        if (!allocator)
+            return false;
+        copy.allocatorOfNewExtension = allocator.localAllocator();
+        copy.sizeOfNewExtension = copy.allocatorOfNewExtension->cellSize();
+    }
+    copy.structureOfTarget = target.structureID();
+    copy.structureOfSource = source.structureID();
+    describeMovesForStub(copy);
+    return true;
+}
+
+static NEVER_INLINE void offerCopyWithoutFrame(VM& vm, State& state, MappedCopy& copy, const Object& target, const Object& source)
+{
+    if (copy.mayTakeNoFrame) {
+        copy.mayTakeNoFrame = false;
+        copy.takesNoFrame = takesNoFrame(vm, state, copy, target, source);
+    }
+    if (copy.takesNoFrame)
+        placeOfCopyWithoutFrame(state, copy) = &copy;
+}
+
+bool clearFieldsMovedInVain(const MappedCopy& copy, const MappedCopy::Move* end, JSCell* target)
+{
+    for (const MappedCopy::Move* move = copy.moves.begin(); move != end; ++move) {
+        if (!move->writesExtension && !move->overwritesField)
+            clearSlot(move->representationOfTarget, reinterpret_cast<uint8_t*>(target) + move->to);
+    }
+    return false;
+}
+
 static NEVER_INLINE bool tryDescribeMappedCopy(VM& vm, State& state, MappedCopy& copy, const Object& target, const Object& source, uint32_t excludedRunNumberPlusOne)
 {
     AssignmentPlanCache& plans = state.objects->caches->assignmentPlans;
@@ -715,6 +848,8 @@ static NEVER_INLINE bool tryDescribeMappedCopy(VM& vm, State& state, MappedCopy&
     FieldMap* map = plans.fieldMapFor(targetLayout, sourceLayout, excludedRunNumberPlusOne);
     if (!map)
         return false;
+    if (const MappedCopy*& place = placeOfCopyWithoutFrame(state, copy); place == &copy)
+        place = nullptr;
     copy = { };
     copy.targetWords = target.orderAndShapeWords();
     copy.sourceWords = source.orderAndShapeWords();
@@ -738,6 +873,8 @@ static NEVER_INLINE bool tryDescribeMappedCopy(VM& vm, State& state, MappedCopy&
     }
     copy.granuleBitsOfSource = sourceLayout.hasExtension() ? granuleBitsOf(source.extension()) : 0;
     copy.granuleBitsOfTargetBefore = targetLayout.hasExtension() ? granuleBitsOf(target.extension()) : 0;
+    // Where nobody lists the keys, the order word says nothing of what the target holds.
+    bool mayHoldFieldsUnknownHere = !listsKeys && target.orderWord() != unorderedOrderWord;
     Vector<MappedCopy::Move> moves;
     moves.reserveInitialCapacity(entries.size());
     for (uint16_t index : entries) {
@@ -762,7 +899,8 @@ static NEVER_INLINE bool tryDescribeMappedCopy(VM& vm, State& state, MappedCopy&
         copy.mayStoreCells |= traitsOf(to.slot.representation()).holdsCell;
         if (to.isOutOfLine())
             copy.granuleBitsFilled |= granuleBitOf(to.slot.offset);
-        if (listsKeys && !isListed.set(key))
+        moves.last().overwritesField = listsKeys && isListed.set(key);
+        if (listsKeys && !moves.last().overwritesField)
             keysAfter.append(key);
     }
     for (MappedCopy::Move& move : moves) {
@@ -780,6 +918,7 @@ static NEVER_INLINE bool tryDescribeMappedCopy(VM& vm, State& state, MappedCopy&
     }
     copy.moves = WTF::move(moves);
     copy.state = MappedCopy::State::IsServed;
+    copy.mayTakeNoFrame = !mayHoldFieldsUnknownHere && !copy.granuleBitsOfTargetBefore;
     return true;
 }
 
@@ -803,82 +942,6 @@ static NEVER_INLINE bool tryReadTested(State& state, const MappedCopy::Move& mov
     }
     bits = 0;
     return tryWriteSlot(*state.strings, move.representationOfTarget, &bits, value);
-}
-
-static ALWAYS_INLINE bool tryReadMove(State& state, const MappedCopy::Move& move, std::span<const FieldData> fieldsOfTarget, const uint8_t* slot, uint64_t& bits)
-{
-    using Kind = MappedCopy::MoveKind;
-    auto load = [&]<typename T>(T) ALWAYS_INLINE_LAMBDA {
-        return *reinterpret_cast<const T*>(slot);
-    };
-    switch (move.kind) {
-    case Kind::WordUnlessZero:
-        bits = load(uint64_t());
-        return bits;
-    case Kind::HalfWordUnlessZero:
-        bits = load(uint32_t());
-        return bits;
-    case Kind::ByteUnlessZero:
-        bits = load(uint8_t());
-        return bits;
-    case Kind::OptionalInt32:
-        bits = load(uint32_t());
-        return bits != traitsOf(SlotRepresentation::OptionalInt32).absentBits;
-    case Kind::OptionalInt64:
-        bits = load(uint64_t());
-        return bits != traitsOf(SlotRepresentation::OptionalInt64).absentBits;
-    case Kind::OptionalDouble:
-        bits = load(uint64_t());
-        return bits != traitsOf(SlotRepresentation::OptionalDouble).absentBits;
-    case Kind::Word:
-        bits = load(uint64_t());
-        return true;
-    case Kind::HalfWord:
-        bits = load(uint32_t());
-        return true;
-    case Kind::QuarterWord:
-        bits = load(uint16_t());
-        return true;
-    case Kind::Byte:
-        bits = load(uint8_t());
-        return true;
-    case Kind::BoxedOptionalInt32:
-    case Kind::OptionalInt32AsDouble: {
-        int32_t integer = load(int32_t());
-        if (integer < minInlineInt32) [[unlikely]]
-            return integer != absentInt32 && tryReadInOtherForm(state, move, slot, bits);
-        bits = move.kind == Kind::BoxedOptionalInt32 ? JSValue::encode(jsNumber(integer)) : std::bit_cast<uint64_t>(static_cast<double>(integer));
-        return true;
-    }
-    case Kind::BoxedInt32:
-        bits = JSValue::encode(jsNumber(load(int32_t())));
-        return true;
-    case Kind::Int32AsDouble:
-        bits = std::bit_cast<uint64_t>(static_cast<double>(load(int32_t())));
-        return true;
-    case Kind::WideNarrowReference:
-        bits = load(uint32_t());
-        if (bits > undefinedCell32) [[likely]]
-            bits = std::bit_cast<uint64_t>(MarkedBlockCage::decode(state.instance.cellCageBase, static_cast<uint32_t>(bits)));
-        return bits;
-    case Kind::OtherForm:
-        return !slotHoldsAbsent(move.representationOfSource, slot) && tryReadInOtherForm(state, move, slot, bits);
-    case Kind::Tested:
-        return !slotHoldsAbsent(move.representationOfSource, slot) && tryReadTested(state, move, fieldsOfTarget[move.fieldOfTarget], slot, bits);
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static ALWAYS_INLINE void storeBitsOfWidth(unsigned width, uint8_t* slot, uint64_t bits)
-{
-    if (width == sizeof(uint64_t))
-        *reinterpret_cast<uint64_t*>(slot) = bits;
-    else if (width == sizeof(uint32_t))
-        *reinterpret_cast<uint32_t*>(slot) = static_cast<uint32_t>(bits);
-    else if (width == sizeof(uint8_t))
-        *slot = static_cast<uint8_t>(bits);
-    else
-        *reinterpret_cast<uint16_t*>(slot) = static_cast<uint16_t>(bits);
 }
 
 static ALWAYS_INLINE RepeatedCopy tryCopyByFieldMap(VM& vm, State& state, Object& target, const Object& source, uint32_t excludedRunNumberPlusOne)
@@ -922,7 +985,13 @@ static ALWAYS_INLINE RepeatedCopy tryCopyByFieldMap(VM& vm, State& state, Object
     std::span<const FieldData> fieldsOfTarget = target.layout().fields();
     for (const MappedCopy::Move& move : copy.moves) {
         const uint8_t* slot = (move.readsExtension ? reinterpret_cast<const uint8_t*>(extensionOfSource) : cellOfSource) + move.from;
-        if (!tryReadMove(state, move, fieldsOfTarget, slot, *value++))
+        uint64_t& bits = *value++;
+        bool didRead = tryMove(state.instance.cellCageBase, move, slot, [&](uint64_t read) ALWAYS_INLINE_LAMBDA {
+            bits = read;
+        }, [&]() ALWAYS_INLINE_LAMBDA {
+            return move.kind == MappedCopy::MoveKind::Tested ? tryReadTested(state, move, fieldsOfTarget[move.fieldOfTarget], slot, bits) : tryReadInOtherForm(state, move, slot, bits);
+        });
+        if (!didRead)
             return RepeatedCopy::IsNotDone;
     }
 
@@ -943,6 +1012,8 @@ static ALWAYS_INLINE RepeatedCopy tryCopyByFieldMap(VM& vm, State& state, Object
     if (copy.mayStoreCells)
         vm.writeBarrier(&target);
     didChangeOwnProperties(vm, target, VM::StructureChainIntegrityEvent::Add, nullptr);
+    if ((copy.takesNoFrame || copy.mayTakeNoFrame) && !isFirstCopy) [[unlikely]]
+        offerCopyWithoutFrame(vm, state, copy, target, source);
     return isFirstCopy ? RepeatedCopy::ByMapForTheFirstTime : RepeatedCopy::ByMap;
 }
 
@@ -1023,7 +1094,16 @@ static bool isPutAmongExtraProperties(VM& vm, State& state, Object& target, Uniq
     return !isValidOffset(extra->structure()->get(vm, name, attributes)) || !attributes;
 }
 
-bool definePropertiesInOrder(VM& vm, Object& target, std::span<UniquedStringImpl*> names, std::span<const EncodedJSValue> values)
+static unsigned attributesOfOwnProperty(VM& vm, Object& target, UniquedStringImpl* name)
+{
+    unsigned attributes = 0;
+    return target.getDirectFromNativeCode(vm, name, &attributes) ? attributes : 0;
+}
+
+enum class ExistingAttributes : bool { AreReset, AreKept };
+
+template<ExistingAttributes existingAttributes>
+static bool putPropertiesInOrder(VM& vm, Object& target, std::span<UniquedStringImpl*> names, std::span<const EncodedJSValue> values)
 {
     ASSERT(names.size() == values.size() && !(target.orderWord() & orderWordIntegrityBits));
     State& state = target.state();
@@ -1034,7 +1114,8 @@ bool definePropertiesInOrder(VM& vm, Object& target, std::span<UniquedStringImpl
         if (end - index < minNumberOfNamesPutTogether) {
             end = std::max(end, index + 1);
             for (; index < end; ++index) {
-                if (!target.putDirectFromNativeCode(vm, names[index], JSValue::decode(values[index]), 0))
+                unsigned attributes = existingAttributes == ExistingAttributes::AreKept ? attributesOfOwnProperty(vm, target, names[index]) : 0;
+                if (!target.putDirectFromNativeCode(vm, names[index], JSValue::decode(values[index]), attributes))
                     return false;
             }
             continue;
@@ -1053,6 +1134,16 @@ bool definePropertiesInOrder(VM& vm, Object& target, std::span<UniquedStringImpl
     return true;
 }
 
+bool definePropertiesInOrder(VM& vm, Object& target, std::span<UniquedStringImpl*> names, std::span<const EncodedJSValue> values)
+{
+    return putPropertiesInOrder<ExistingAttributes::AreReset>(vm, target, names, values);
+}
+
+bool storePropertiesInOrder(VM& vm, Object& target, std::span<UniquedStringImpl*> names, std::span<const EncodedJSValue> values)
+{
+    return putPropertiesInOrder<ExistingAttributes::AreKept>(vm, target, names, values);
+}
+
 static bool tryAssignOrDefinePropertiesOf(VM& vm, Object& target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames, bool defines)
 {
     if (target.orderWord() & orderWordIntegrityBits || source == &target)
@@ -1063,7 +1154,15 @@ static bool tryAssignOrDefinePropertiesOf(VM& vm, Object& target, JSObject* sour
     DeferGC deferGC(vm);
     JSObject* extra = target.extraProperties();
     State& state = target.state();
-    AssignmentPlan* plan = state.objects->caches->assignmentPlans.planFor(vm, &target, extra, *assignmentSource);
+    AssignmentPlanCache& plans = state.objects->caches->assignmentPlans;
+    AssignmentPlan* plan = plans.planFor(vm, &target, extra, *assignmentSource);
+    if (!defines && plan->isUsable && plan->storesNameBehindSymbol) {
+        // Stores that go one by one through the objects above take the names first, then the symbols.
+        if (!PropertyWalk::wouldPerformFastPut(vm, &target))
+            return false;
+        // The question may have changed an object above, and with it the plan.
+        plan = plans.planFor(vm, &target, extra, *assignmentSource);
+    }
     if (!plan->isUsable)
         return false;
     assignByPlan(vm, target, state, *plan, extra, *assignmentSource);

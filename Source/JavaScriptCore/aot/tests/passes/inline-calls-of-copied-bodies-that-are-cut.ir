@@ -21,7 +21,7 @@ function f1 name="middle" parameters=[{type=number}, {type=undefined|number}] re
     v4 = CallDirect v0 function=f0
     Return v4
   b2():
-    v5 = AssumeType v1 castType=number
+    v5 = AssumeType v1 provenType=number
     Return v5
 }
 function f2 name="caller" parameters=[{type=number}] results=[{type=number}] {

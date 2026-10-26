@@ -1,0 +1,53 @@
+# In a validating build the tests that a proof stands for are made again in front of the read and their answers are compared. They change nothing, so an element that is no number
+# may still leave where an absent one does: the reads behind the test for Double storage are copied for storage that holds any value, as in every other build, and the copy asks again for that storage
+# FORM: Prepared
+# OPTIONS: validate
+# RUN: pass PlanArrayCapacities
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="sum" parameters=[{type=Array<number>}] results=[{type=anything}] {
+    v1 = Integer
+    v2 = Double number=0.5
+    Jump -> next b1(v2, v1)
+  b1(v3: number, v4: int[0, 4294967295]):
+    LoopHint
+    v6 = CallBuiltin v0 overload=ArrayPrototypeLength/0
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b6()
+  b2(v8):
+    v9 = HasArrayStorage v0 arrayStorage=Double
+    Branch v9 -> taken b3(| 0), notTaken b5()
+  b3(v10):
+    v11 = IsElementPresent v0, v8, v10 arrayStorage=Double [keyIsIntegral]
+    Branch v11 -> taken b4(| 0), notTaken b5()
+  b4(v12):
+    v13 = AllGuards v10, v12
+    v14 = HasArrayStorage v0 arrayStorage=Double
+    v15 = Boolean boolean=true
+    ValidateSameValue v14, v15
+    v17 = IsElementPresent v0, v8, v10 arrayStorage=Double [keyIsIntegral]
+    v18 = Boolean boolean=true
+    ValidateSameValue v17, v18
+    v20 = GetArrayElement v0, v8, v13 arrayStorage=Double level=Expected [keyIsIntegral, isPresent]
+    ValidateType v20 validatedType=number
+    v22 = Add v3, v20
+    v23 = Increment v8
+    Jump -> next b1(v22, v23)
+  b5() frequency=Rare:
+    v24 = ElemGet v0, v8 [keyIsIntegral]
+    Return v24
+  b6():
+    Return v3
+# CHECK: HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK: IsElementPresent v0, v8, {{*}} arrayStorage=Contiguous [keyIsIntegral]
+# CHECK: AllGuards
+# CHECK-NEXT: HasArrayStorage v0 arrayStorage=Contiguous
+# CHECK-NEXT: Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue
+# CHECK-NEXT: IsElementPresent v0, v8, {{*}} arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Boolean boolean=true
+# CHECK-NEXT: ValidateSameValue
+# CHECK-NEXT: [[element]]: anything ~ number = GetArrayElement v0, v8, {{*}} arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+# CHECK-NEXT: TypeTest [[element]] testedType=number
+}

@@ -1,6 +1,8 @@
-# A function that unknown code may call is called once by the host and gets its share of the calls of unknown code
+# A call of a value does not say which function stands there. Where functions are ranked it hands nothing on, and the host calls each function that unknown code may call once.
+# Where classes are estimated the host calls each of them as often as a loop would
 # FORM: Prepared
 # RUN: heat-graph
+# RUN(CLASSES): heat-graph classes
 
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="handler" module=m0 declared={type=anything} initialization=Undefined
@@ -41,10 +43,19 @@ function f4 name="onlyCalledDirectly" role=OutlinedBody results=[{type=undefined
 # CHECK-NEXT: f3 size 12 mass 39.000000: f4*1.000000 unknown*10.000000
 # CHECK-NEXT: f4 size 1 mass 1.000000:
 # CHECK-NEXT: host: f0*1.000000 f1*1.000000 f2*1.000000
-# CHECK-NEXT: unknown: f0*0.333333 f1*0.333333 f2*0.333333
+# CHECK-NEXT: unknown:
 # CHECK-NEXT: activations:
-# CHECK-NEXT: f0 10.000000
-# CHECK-NEXT: f1 34.333333
-# CHECK-NEXT: f2 34.333333
-# CHECK-NEXT: f3 10.000000
-# CHECK-NEXT: f4 10.000000
+# CHECK-NEXT: f0 1.000000
+# CHECK-NEXT: f1 1.000000
+# CHECK-NEXT: f2 1.000000
+# CHECK-NEXT: f3 1.000000
+# CHECK-NEXT: f4 1.000000
+# CLASSES: f3 size 12: f4*1.000000 unknown*10.000000
+# CLASSES: host: f0*10.000000 f1*10.000000 f2*10.000000
+# CLASSES-NEXT: unknown:
+# CLASSES-NEXT: activations:
+# CLASSES-NEXT: f0 10.000000
+# CLASSES-NEXT: f1 10.000000
+# CLASSES-NEXT: f2 10.000000
+# CLASSES-NEXT: f3 10.000000
+# CLASSES-NEXT: f4 10.000000

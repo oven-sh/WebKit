@@ -106,7 +106,7 @@ function f5 name="readsWithoutCall" parameters=[{type=function}] results=[{type=
 # PLACED-NEXT: Return [[read5]]
 }
 
-function f6 name="callOnAsyncFunction" parameters=[{type=AsyncFunction}, {type=anything}] results=[{type=anything}] {
+function f6 name="callOnGeneratorFunction" parameters=[{type=GeneratorFunction}, {type=anything}] results=[{type=anything}] {
     v2 = PropGet v0 key="call"
     v3 = Call v2, v0, v1 calleeKey="call"
     Return v3
@@ -117,8 +117,8 @@ function f6 name="callOnAsyncFunction" parameters=[{type=AsyncFunction}, {type=a
 # PLACED-NOT: IsPristine
 # PLACED: anything = CallBuiltin v0, v1 overload=FunctionPrototypeCall/0
 # PLACED-NOT: IsPristine
-# PLACED: [[isCallOfAsync]]: boolean = TypeTest v2 testedType=builtin(FunctionPrototypeCall)
-# PLACED-NEXT: Branch [[isCallOfAsync]] -> taken
+# PLACED: [[isCallOfGenerator]]: boolean = TypeTest v2 testedType=builtin(FunctionPrototypeCall)
+# PLACED-NEXT: Branch [[isCallOfGenerator]] -> taken
 # PLACED-NEXT: frequency=Unlikely
 # PLACED-NEXT: anything = Call v2, v0, v1 calleeKey="call"
 # PLACED-NOT: IsPristine

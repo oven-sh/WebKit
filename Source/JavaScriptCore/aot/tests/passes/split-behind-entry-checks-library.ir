@@ -20,28 +20,28 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v2 = NewClosure function=f3
     Return
 }
-function f1 name="ofTheProgram" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=number site=w0 flags=[IsExpected]}] results=[{type=number}] {
+function f1 name="ofTheProgram" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=number site=w0 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
   b0(v0: anything ~ number):
-    v1 = Check v0 castType=number site=w0
+    v1 = Check v0 expectedType=number site=w0
     v2 = Negate v1
     Return v2
 }
 # CHECK-LABEL: function f1 name="ofTheProgram" module=m0 position=5 role=EntryChecks
-function f2 name="ofTheLibrary" module=m1 position=5 role=Library flags=[IsChecked] length=1 parameters=[{type=number site=w1 flags=[IsExpected]}] results=[{type=number}] {
+function f2 name="ofTheLibrary" module=m1 position=5 role=Library flags=[IsChecked] length=1 parameters=[{type=number site=w1 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
   b0(v0: anything ~ number):
-    v1 = Check v0 castType=number site=w1
+    v1 = Check v0 expectedType=number site=w1
     v2 = Negate v1
     Return v2
 }
 # CHECK-LABEL: function f2 name="ofTheLibrary" module=m1 position=5 role=Library
-# CHECK: = Check v0 castType=number site=w1
-function f3 name="checksInTheMiddle" module=m0 position=35 flags=[IsChecked] length=1 parameters=[{type=number site=w2 flags=[IsExpected]}] results=[{type=number}] {
+# CHECK: = Check v0 expectedType=number site=w1
+function f3 name="checksInTheMiddle" module=m0 position=35 flags=[IsChecked] length=1 parameters=[{type=number site=w2 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
   b0(v0: anything ~ number):
-    v1 = Check v0 castType=number site=w2
+    v1 = Check v0 expectedType=number site=w2
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="source" [isFreeName]
     v4 = Call v3, -, v1
-    v5 = Check v4 castType=number site=w3
+    v5 = Check v4 expectedType=number site=w3
     v6 = Add v1, v5
     Return v6
 }
@@ -51,4 +51,4 @@ function f3 name="checksInTheMiddle" module=m0 position=35 flags=[IsChecked] len
 # CHECK: function [[middleBody]] name="checksInTheMiddle" module=m0 position=35 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number site=w2}]
 # CHECK: b0(v0: number):
 # CHECK-NOT: Check v0
-# CHECK: = Check v4 castType=number site=w3
+# CHECK: = Check v4 expectedType=number site=w3

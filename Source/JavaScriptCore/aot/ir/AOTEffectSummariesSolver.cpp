@@ -260,8 +260,8 @@ public:
 
     void add(const DeclaredType& declared)
     {
-        add(static_cast<uint64_t>(declared.type.index()) << 32 | declared.site.index());
-        add(declared.flags.toRaw());
+        add(static_cast<uint64_t>(declared.written().index()) << 32 | declared.site.index());
+        add(declared.writtenFlags().toRaw());
     }
 
     void add(const Vector<DeclaredType>& types)
@@ -302,11 +302,14 @@ uint64_t stampOfRecord(const Function& function)
     return stamp.value();
 }
 
+// The whole record, less what only a pass that is about to rewrite the function itself asks for.
 uint64_t stampOfRecordForCallers(const Function& function)
 {
+    constexpr OptionSet<FunctionCapabilities> askedOnlyToRewriteFunction { FunctionCapabilities::MayChangeSignature, FunctionCapabilities::MayBeCloned };
     FunctionRole role = function.role == FunctionRole::EntryChecks ? FunctionRole::Source : function.role;
     Stamp stamp;
     stamp.add(static_cast<uint64_t>(function.kind) << 32 | static_cast<uint64_t>(role) << 16 | static_cast<uint64_t>(function.isUnsplitCoroutine()) << 1 | function.hasBody());
+    stamp.add((function.capabilities - askedOnlyToRewriteFunction).toRaw());
     addPartsBesideRole(stamp, function);
     return stamp.value();
 }
@@ -1674,7 +1677,9 @@ void EffectSummarizer::checkAgainstSummariesFromNothing(const EffectSummaries& s
 
 static bool covers(const OperandSummary& kept, const OperandSummary& fresh)
 {
-    if (!kept.uses.containsAll(fresh.uses))
+    // What lies in memory that nobody knows may be read out of it and returned. A body that read it out of an object of its own returns it as it is once the object is gone.
+    bool liesInUnknownMemory = kept.uses.contains(OperandUse::Retains) && kept.retainedIn == RetainedIn::UnknownMemory;
+    if (!kept.uses.containsAll(liesInUnknownMemory ? fresh.uses - OperandUse::Returns : fresh.uses))
         return false;
     if (!fresh.uses.contains(OperandUse::Retains) || kept.retainedIn == RetainedIn::UnknownMemory)
         return true;

@@ -10,7 +10,7 @@ function f0 name="callOnString" parameters=[{type=string}] results=[{type=anythi
     v1 = String string=","
     v2 = PropGet v0 key="split"
     v3 = Call v2, v0, v1 calleeKey="split"
-    v4 = AssumeType v3 castType=Array<string, proven, pristine[Storage, Names]>
+    v4 = AssumeType v3 provenType=Array<string, proven, pristine[Storage, Names]>
     v5 = IteratorOpen v4
     v6 = Integer integer=0
     Jump -> next b1(v6)
@@ -36,7 +36,7 @@ function f0 name="callOnString" parameters=[{type=string}] results=[{type=anythi
 function f1 name="callOnAnObject" parameters=[{type=object}] results=[{type=anything}] {
     v1 = PropGet v0 key="items"
     v2 = Call v1, v0 calleeKey="items"
-    v3 = AssumeType v2 castType=Array<string, proven, pristine[Storage, Names]>
+    v3 = AssumeType v2 provenType=Array<string, proven, pristine[Storage, Names]>
     v4 = IteratorOpen v3
     v5 = Integer integer=0
     Jump -> next b1(v5)
@@ -59,7 +59,7 @@ function f2 name="arrayIsUsedAgain" parameters=[{type=string}] results=[{type=an
     v1 = String string=","
     v2 = PropGet v0 key="split"
     v3 = Call v2, v0, v1 calleeKey="split"
-    v4 = AssumeType v3 castType=Array<string, proven, pristine[Storage, Names]>
+    v4 = AssumeType v3 provenType=Array<string, proven, pristine[Storage, Names]>
     v5 = IteratorOpen v4
     Jump -> next b1()
   b1():

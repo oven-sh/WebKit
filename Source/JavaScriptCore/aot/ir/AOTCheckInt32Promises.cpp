@@ -39,7 +39,7 @@ struct Flow {
 
 static bool isPromise(const DeclaredType& declared)
 {
-    return declared.flags.contains(PositionFlags::IsInt32Promise);
+    return declared.has(PositionFlags::IsInt32Promise);
 }
 
 static bool hasOnlyInt32sAmongNumbers(const Type& type)
@@ -72,7 +72,7 @@ static void reportUnprovenFlow(FunctionPassContext& context, const Flow& flow, c
 {
     bool isSingleInteger = bounds.kind == BoundsKind::Integers && bounds.range.isSingleValue();
     UserDiagnosticKind kind = flow.isConstant || isSingleInteger ? UserDiagnosticKind::ConstantNotInt32 : UserDiagnosticKind::UnprovenInt32;
-    if (flow.position.flags.contains(PositionFlags::IsDeclaredByDependency))
+    if (flow.position.has(PositionFlags::IsDeclaredByDependency))
         kind = UserDiagnosticKind::Int32OfDependencyNotProven;
     UserDiagnostic diagnostic {
         .kind = kind,

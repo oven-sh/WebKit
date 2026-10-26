@@ -1,0 +1,97 @@
+# A field that nothing reads loses the store of what a direct call returns where the callee returns only new records that it alone has seen and that hold no object.
+# The store stays where the callee may return an object it was given, hands the record to other code first, or fills it with what may be an object, and where the caller uses the answer elsewhere too.
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="HoldsNewRecord" fields=[{key="gone" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="HoldsRecordThroughTailCall" fields=[{key="gone" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="HoldsRecordOfObject" fields=[{key="kept" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="HoldsRecordSeenElsewhere" fields=[{key="kept" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="HoldsAnswerUsedTwice" fields=[{key="kept" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="HoldsGivenObject" fields=[{key="kept" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L6 name="HoldsRecordFilledByKey" fields=[{key="gone" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L7 name="Pair" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L8 kind=Container name="Names" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="holdsNewRecord" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f7
+    v3 = NewObject -, v2, v0 layout=L0 fields=[0, 1]
+    Return v3
+# CHECK: = NewObject -, v0 layout=L0 fields=[1]
+}
+
+function f1 name="holdsRecordThroughTailCall" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f8
+    v3 = NewObject -, v2, v0 layout=L1 fields=[0, 1]
+    Return v3
+# CHECK: = NewObject -, v0 layout=L1 fields=[1]
+}
+
+function f2 name="holdsRecordOfObject" parameters=[{type=number}, {type=object}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f9
+    v3 = NewObject -, v2, v0 layout=L2 fields=[0, 1]
+    Return v3
+# CHECK: = NewObject -, v2, v0 layout=L2 fields=[0, 1]
+}
+
+function f3 name="holdsRecordSeenElsewhere" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f10
+    v3 = NewObject -, v2, v0 layout=L3 fields=[0, 1]
+    Return v3
+# CHECK: = NewObject -, v2, v0 layout=L3 fields=[0, 1]
+}
+
+function f4 name="holdsAnswerUsedTwice" parameters=[{type=number}, {type=string}, {type=anything}] results=[{type=anything}] {
+    v3 = CallDirect v0, v1 function=f7
+    v4 = Call v2, -, v3
+    v5 = NewObject -, v3, v0 layout=L4 fields=[0, 1]
+    Return v5
+# CHECK: = NewObject -, v3, v0 layout=L4 fields=[0, 1]
+}
+
+function f5 name="holdsGivenObject" parameters=[{type=number}, {type=object}] results=[{type=anything}] {
+    v2 = CallDirect v1 function=f11
+    v3 = NewObject -, v2, v0 layout=L5 fields=[0, 1]
+    Return v3
+# CHECK: = NewObject -, v2, v0 layout=L5 fields=[0, 1]
+}
+
+function f6 name="holdsRecordFilledByKey" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L8 fields=[0]
+    ElemDefine v2, v0, v1 receivers=[L8]
+    v4 = FinishObject v2
+    v5 = NewObject -, v4, v0 layout=L6 fields=[0, 1]
+    Return v5
+# CHECK: = NewObject -, v0 layout=L6 fields=[1]
+}
+
+function f7 name="makePair" parameters=[{type=number}, {type=string}] results=[{type=L7}] {
+    v2 = NewObject -, v0, v1 layout=L7 fields=[0, 1]
+    PropSet v2, v0 key="b"
+    v4 = FinishObject v2
+    Return v4
+}
+
+function f8 name="makePairElsewhere" parameters=[{type=number}, {type=string}] results=[{type=L7}] {
+    v2 = CallDirect v0, v1 function=f7
+    ReturnCall v2
+}
+
+function f9 name="makePairOfObject" parameters=[{type=number}, {type=object}] results=[{type=L7}] {
+    v2 = NewObject -, v0, v1 layout=L7 fields=[0, 1]
+    v3 = FinishObject v2
+    Return v3
+}
+
+function f10 name="makePairAndShowIt" parameters=[{type=number}, {type=anything}] results=[{type=L7}] {
+    v2 = NewObject -, v0, v0 layout=L7 fields=[0, 1]
+    v3 = FinishObject v2
+    v4 = Call v1, -, v3
+    Return v3
+}
+
+function f11 name="returnGiven" parameters=[{type=object}] results=[{type=object}] {
+    Return v0
+}

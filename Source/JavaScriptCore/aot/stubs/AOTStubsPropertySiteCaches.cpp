@@ -22,6 +22,8 @@ static_assert(!Slot::offsetOfStructureID() && Slot::offsetOfPayload() == sizeof(
 static_assert(operationArgumentGPR(4) == gprOf(StubRegister::A4) && operationArgumentGPR(5) == gprOf(StubRegister::A5));
 
 static constexpr unsigned isOutOfLineBitInHeader = Slot::flagsShiftInHeader + std::countr_zero(Slot::isOutOfLine);
+static_assert(Slot::offsetOfFlags() == Slot::offsetOfKind() + 1 && sizeof(Slot::Kind) == 1);
+static constexpr int32_t kindAndFlagsOfOwnInlineValue = static_cast<int32_t>(Slot::Kind::Value) | Slot::isOwn << 8;
 
 enum class SiteReceiver : bool { IsCell, MayBePrimitive };
 
@@ -147,6 +149,13 @@ void generateGetByIdAtSite(StubAssembler& jit)
     // Each word is compared where it lies.
     jit.load64(Address(registers.site, Slot::offsetOfStructureID()), registers.header);
     Jump hasOtherStructure = jit.branch32(CCallHelpers::NotEqual, registers.header, Address(registers.receiver, JSCell::structureIDOffset()));
+    // The address of an own inline value needs the receiver and the site alone.
+    Jump isNotOwnInlineValue = jit.branch16(CCallHelpers::NotEqual, Address(registers.site, Slot::offsetOfKind()), TrustedImm32(kindAndFlagsOfOwnInlineValue));
+    jit.urshift64(TrustedImm32(Slot::locationShiftInHeader), registers.header);
+    jit.load64(BaseIndex(registers.receiver, registers.header, CCallHelpers::TimesEight), jit.result());
+    jit.returnToCaller();
+
+    isNotOwnInlineValue.link(&jit);
     jit.load64(Address(registers.site, Slot::offsetOfPayload()), registers.payload);
     Jump isNotValue = jit.branch8(CCallHelpers::NotEqual, Address(registers.site, Slot::offsetOfKind()), TrustedImm32(static_cast<int32_t>(Slot::Kind::Value)));
 #else
@@ -154,7 +163,14 @@ void generateGetByIdAtSite(StubAssembler& jit)
     jit.loadPair64(registers.site, registers.header, registers.payload);
     jit.load32(Address(registers.receiver, JSCell::structureIDOffset()), registers.structureID);
     Jump hasOtherStructure = jit.branch32(CCallHelpers::NotEqual, registers.header, registers.structureID);
-    loadKindOfSlotAtSite(jit, registers, registers.scratch);
+    jit.extractUnsignedBitfield64(registers.header, TrustedImm32(Slot::kindShiftInHeader), TrustedImm32(16), registers.scratch);
+    Jump isNotOwnInlineValue = jit.branch32(CCallHelpers::NotEqual, registers.scratch, TrustedImm32(kindAndFlagsOfOwnInlineValue));
+    jit.urshift64(registers.header, TrustedImm32(Slot::locationShiftInHeader), registers.scratch);
+    jit.load64(BaseIndex(registers.receiver, registers.scratch, CCallHelpers::TimesEight), jit.result());
+    jit.returnToCaller();
+
+    isNotOwnInlineValue.link(&jit);
+    jit.and32(TrustedImm32(0xff), registers.scratch);
     Jump isNotValue = jit.branch32(CCallHelpers::NotEqual, registers.scratch, TrustedImm32(static_cast<int32_t>(Slot::Kind::Value)));
 #endif
     loadFromValueSlot(jit, registers, jit.result());
@@ -179,26 +195,48 @@ void generateGetByIdAtSite(StubAssembler& jit)
     hasOtherStructure.link(&jit);
     JumpList isDue;
     Jump isEmpty = jit.branchTest64(CCallHelpers::Zero, registers.header);
-    countSiteCacheMiss(jit, registers.site, registers.scratch, isDue);
-    Label probeTables = jit.label();
-    jit.linkToStub(jit.branch32(CCallHelpers::Above, registers.identifierNumber, TrustedImm32(RowDisplacementTable::maxColumn)), tableStubs.hashed);
     // Objects of several Structures come to this place. What the front table holds for this one is answered from here: the table of fields, which answers at an empty site, has its turn behind it.
     JumpList isNotInFront;
-    jit.load32(Address(registers.receiver, JSCell::structureIDOffset()), registers.structureID);
+    Jump hasNoColumn = jit.branch32(CCallHelpers::Above, registers.identifierNumber, TrustedImm32(RowDisplacementTable::maxColumn));
 #if CPU(X86_64)
+    jit.load32(Address(registers.receiver, JSCell::structureIDOffset()), registers.structureID);
     locateFrontCell(jit, SlotAccess::Read, registers.structureID, registers.identifierNumber, registers.scratch);
+    // Structures often keep a name at one place. The front cell then only confirms the place that the site names, so the value does not wait for the tables, and the site stays as it is.
+    jit.urshift64(TrustedImm32(Slot::locationShiftInHeader), registers.header);
+    jit.move(registers.identifierNumber, registers.payload);
+    jit.lshift64(TrustedImm32(8 * PackedSlot::offsetOfName()), registers.payload);
+    jit.or64(registers.header, registers.payload);
+    Jump liesElsewhere = jit.branch64(CCallHelpers::NotEqual, BaseIndex(registers.scratch, registers.structureID, CCallHelpers::TimesEight), registers.payload);
+    jit.load64(BaseIndex(registers.receiver, registers.header, CCallHelpers::TimesEight), jit.result());
+    jit.returnToCaller();
+
+    liesElsewhere.link(&jit);
+    countSiteCacheMiss(jit, registers.site, registers.header, isDue);
     returnByFrontCell(jit, registers.receiver, registers.identifierNumber, registers.scratch, registers.structureID, registers.header, isNotInFront);
     jumpToSlotHandler(jit, slotHandlerTable(SlotOperation::Read, SlotOrigin::ById, SlotForm::PackedSlot), registers.header, registers.scratch);
 #else
     loadFrontCell(jit, SlotAccess::Read, { registers.structureID, registers.identifierNumber, registers.payload, registers.header, registers.scratch });
-    Jump isNotOwnInlineValue = branchUnlessOwnInlineValue(jit, registers.identifierNumber, registers.header, registers.scratch);
+    jit.load16(Address(registers.site, Slot::offsetOfLocation()), registers.payload);
+    jit.lshift64(registers.identifierNumber, TrustedImm32(8 * PackedSlot::offsetOfName()), registers.scratch);
+    jit.or64(registers.payload, registers.scratch);
+    Jump liesElsewhere = jit.branch64(CCallHelpers::NotEqual, registers.header, registers.scratch);
+    jit.load64(BaseIndex(registers.receiver, registers.payload, CCallHelpers::TimesEight), jit.result());
+    jit.returnToCaller();
+
+    liesElsewhere.link(&jit);
+    countSiteCacheMiss(jit, registers.site, registers.scratch, isDue);
+    Jump isNotOwnInlineInFront = branchUnlessOwnInlineValue(jit, registers.identifierNumber, registers.header, registers.scratch);
     loadOwnInlineValue(jit, registers.receiver, registers.header, jit.result());
     jit.returnToCaller();
 
-    isNotOwnInlineValue.link(&jit);
+    isNotOwnInlineInFront.link(&jit);
     isNotInFront.append(branchIfCellNameDiffers(jit, registers.identifierNumber, registers.header, registers.scratch));
     jit.jumpToStub(getByIdAfterFrontProbe());
 #endif
+    hasNoColumn.link(&jit);
+    countSiteCacheMiss(jit, registers.site, registers.scratch, isDue);
+    jit.jumpToStub(tableStubs.hashed);
+
     isNotInFront.link(&jit);
     jit.jumpToStub(tableStubs.front);
 
@@ -212,7 +250,8 @@ void generateGetByIdAtSite(StubAssembler& jit)
 
     isDue.link(&jit);
     refillSiteCache(jit, registers.receiver, registers.identifierNumber, registers.site, SlotAccess::Read);
-    jit.jump().linkTo(probeTables, &jit);
+    jit.linkToStub(jit.branch32(CCallHelpers::Above, registers.identifierNumber, TrustedImm32(RowDisplacementTable::maxColumn)), tableStubs.hashed);
+    jit.jumpToStub(tableStubs.front);
 
     jit.addOutOfLinePart([isNotCell, registers](StubAssembler& jit) {
         JumpList hasNoStructure;

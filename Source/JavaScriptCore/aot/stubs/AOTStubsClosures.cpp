@@ -10,6 +10,7 @@
 
 #include "AOTCellFormat.h"
 #include "AOTClosure.h"
+#include "AOTClosureTable.h"
 #include "AOTClosureWord.h"
 #include "AOTConvention.h"
 #include "AOTInstance.h"
@@ -23,6 +24,7 @@
 #include "AOTStubsValues.h"
 #include "CellState.h"
 #include "JSFunction.h"
+#include "RememberedSlot.h"
 #include <optional>
 
 namespace JSC { namespace AOT {
@@ -160,42 +162,121 @@ void generateNewSlimClosure(StubAssembler& jit)
     createClosureInOperation(jit, function, restOfRequest, allocator);
 }
 
+// The caller loses the registers that a call of the operation which keeps registers would cost it.
 StubSignature signatureOfClosureOfTable(StubKey)
 {
-    return closureRequestSignature(0);
+    StubSignature signature = StubSignature::withGPRResult({ });
+    signature.immediate = operationArgumentGPR(1);
+    return signature;
+}
+
+// The number of the cell that the closure table has for the function. The two registers may hold anything.
+static void loadNumberOfClosureCell(StubAssembler& jit, GPRReg function, GPRReg number, GPRReg scratch)
+{
+    static_assert(sizeof(Number24) == 3 && std::endian::native == std::endian::little);
+    ASSERT(noOverlap(function, number, scratch));
+    const GPRReg tables = scratch;
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
+    jit.move(function, number);
+    jit.sub32(Address(tables, OBJECT_OFFSETOF(ProgramTables, closureFunctions) + OBJECT_OFFSETOF(ClosureFunctionRangeData, first)), number);
+    jit.getEffectiveAddress(BaseIndex(number, number, CCallHelpers::TimesTwo), number);
+    jit.add32(Address(tables, offsetOfProgramTableRange(ProgramTableIndex::closureCellNumbers) + OBJECT_OFFSETOF(TableRange, offset)), number);
+    jit.addPtr(tables, number);
+    const GPRReg lowBytes = scratch;
+    jit.load16(Address(number), lowBytes);
+    jit.load8(Address(number, 2), number);
+    jit.lshift32(TrustedImm32(16), number);
+    jit.or32(lowBytes, number);
+}
+
+// ClosureTable::closure(), for a slim closure: two words, the cell of the table, and the card that has the collector visit that region of the table.
+static void emitCreateSlimClosureOfTable(StubAssembler& jit, const ClosureRegisters& registers, GPRReg number, JumpList& slow, JumpList& isCreated)
+{
+    const auto [cell, function, first, second] = registers;
+    ASSERT(noOverlap(cell, function, first, second, number));
+    static_assert(offsetOfSlimClosureWord == sizeof(uint64_t) && numberOfSlimClosureKinds == 2);
+    static_assert(sizeof(RememberedSlot<uint32_t>) == 1u << CCallHelpers::TimesFour);
+    constexpr unsigned cellsOfRegionShift = ClosureTable::regionShift - CCallHelpers::TimesFour;
+
+    const GPRReg cards = cell;
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closureTable.cards)), cards);
+    slow.append(jit.branchTestPtr(CCallHelpers::Zero, cards));
+    slow.append(jit.branchTest32(CCallHelpers::Zero, number));
+    const GPRReg kind = first;
+    loadKindOfClosureFunction(jit, function, kind);
+    slow.append(jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(slimFunctionKindBit())));
+    jit.urshift32(TrustedImm32(cellsOfRegionShift), number);
+    jit.store8(TrustedImm32(RememberedSlotSet::writtenCard), BaseIndex(cards, number, CCallHelpers::TimesOne));
+
+    const GPRReg allocator = first;
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.slimClosureAllocators)), allocator);
+    AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, cell, allocator, second, slow, MarkedSpace::sizeStep, CountedUnder::Allocation);
+    countAllocatedCellOfStub(jit, first, MarkedSpace::sizeStep);
+    const GPRReg header = first;
+    const GPRReg word = second;
+    loadKindOfClosureFunction(jit, function, header);
+    Jump isAsync = jit.branchTest32(CCallHelpers::NonZero, header, TrustedImm32(asyncFunctionKindBit()));
+    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders)), header);
+    Jump hasHeader = jit.jump();
+    isAsync.link(&jit);
+    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders) + sizeof(uint64_t)), header);
+    hasHeader.link(&jit);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), word);
+    jit.load64(BaseIndex(word, function, CCallHelpers::TimesEight), word);
+    jit.storePair64(header, word, Address(cell));
+    fenceAfterAllocation(jit);
+
+    const GPRReg slot = first;
+    loadNumberOfClosureCell(jit, function, second, first);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closureCells)), slot);
+    jit.getEffectiveAddress(BaseIndex(slot, second, CCallHelpers::TimesFour), slot);
+    encodeCell32(jit, cell, second);
+    jit.sub32(TrustedImm32(1), second);
+    jit.store32(second, Address(slot));
+    isCreated.append(jit.jump());
+
+    emitLateRefill(jit, refill, slow);
 }
 
 void generateClosureOfTable(StubAssembler& jit)
 {
-    static_assert(sizeof(Number24) == 3 && std::endian::native == std::endian::little);
-    const auto [cell, function, tables, numbers] = allocateClosureRegisters(jit);
-    const GPRReg number = cell;
-    const GPRReg cells = tables;
+    const GPRReg cell = jit.result();
+    const GPRReg function = jit.immediate();
+    const GPRReg cells = cell;
+#if CPU(X86_64)
+    constexpr GPRReg number = CCallHelpers::s_scratchRegister;
+#else
+    const GPRReg number = jit.allocateScratch(StubRegister::T9);
+#endif
 
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
-    loadProgramTable(jit, tables, ProgramTableIndex::closureCellNumbers, numbers);
-    jit.move(function, number);
-    jit.sub32(Address(tables, OBJECT_OFFSETOF(ProgramTables, closureFunctions) + OBJECT_OFFSETOF(ClosureFunctionRangeData, first)), number);
-    jit.getEffectiveAddress(BaseIndex(number, number, CCallHelpers::TimesTwo), number);
-    const GPRReg lowBytes = tables;
-    jit.load16(BaseIndex(numbers, number, CCallHelpers::TimesOne), lowBytes);
-    jit.load8(BaseIndex(numbers, number, CCallHelpers::TimesOne, 2), number);
-    jit.lshift32(TrustedImm32(16), number);
-    jit.or32(lowBytes, number);
+    loadNumberOfClosureCell(jit, function, number, cells);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closureCells)), cells);
-    Jump isNotCreated;
+    JumpList slow;
     if (jit.options().useWideReferences) {
         jit.load64(BaseIndex(cells, number, CCallHelpers::TimesEight), cell);
-        isNotCreated = jit.branchTest64(CCallHelpers::Zero, cell);
+        slow.append(jit.branchTest64(CCallHelpers::Zero, cell));
+        jit.returnToCaller();
     } else {
         jit.load32(BaseIndex(cells, number, CCallHelpers::TimesFour), cell);
-        isNotCreated = jit.branchTest32(CCallHelpers::Zero, cell);
+        Jump isNotCreated = jit.branchTest32(CCallHelpers::Zero, cell);
         jit.add32(TrustedImm32(1), cell);
         decodeCell32(jit, cell, cell);
-    }
-    jit.returnToCaller();
+        jit.returnToCaller();
 
-    isNotCreated.link(&jit);
+        isNotCreated.link(&jit);
+        jit.preserving({ gprOf(StubRegister::T12), gprOf(StubRegister::T13) }, [&] {
+            JumpList cannot;
+            JumpList isCreated;
+            emitCreateSlimClosureOfTable(jit, { cell, function, jit.allocateScratch(StubRegister::T12), jit.allocateScratch(StubRegister::T13) }, number, cannot, isCreated);
+            cannot.link(&jit);
+            jit.move(TrustedImm32(0), cell);
+            isCreated.link(&jit);
+        });
+        slow.append(jit.branchTest64(CCallHelpers::Zero, cell));
+        jit.returnToCaller();
+    }
+
+    slow.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTSingletonClosure, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = function });
 }
 

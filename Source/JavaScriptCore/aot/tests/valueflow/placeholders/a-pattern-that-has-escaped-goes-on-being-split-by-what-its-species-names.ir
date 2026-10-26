@@ -1,0 +1,41 @@
+# class Mine extends RegExp { static get [Symbol.species]() { return Other } }; function Other() { }; "a,b".split(new Mine(","))
+# split asks the pattern for Symbol.split. What that answers comes back to where the pattern stands, so an object nobody knows stands beside the pattern, and the pattern, which is kept, has escaped.
+# RegExp.prototype[Symbol.split] still reads `constructor` from the pattern and Symbol.species from that, however late either is found, and constructs the answer.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+# CHECK-NOT: unreached f3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Mine" constructor=f1 flags=[HasHeritage]
+variable g0 name="Other" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f3
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=RegExp
+    v3 = NewClosure function=f1
+    v4 = ResolveHeritage v2
+    v5 = NewClass v3, v2, v4 layout=L0
+    v6 = NewClosure function=f2
+    DefineMethod v5, v6 layout=L0 side=Static methodKind=Getter key=@@species
+    v8 = FinishClass v5 layout=L0
+    v9 = String string=","
+    v10 = Construct v8, -, v9
+    v11 = String string="a,b"
+    v12 = Builtin builtin=StringPrototypeSplit
+    v13 = Call v12, v11, v10
+    Return
+}
+function f1 name="Mine" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L0
+    Return v3
+}
+function f2 name="species" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g0
+    Return v1
+}
+function f3 name="Other" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}

@@ -111,9 +111,9 @@ RemapSites findRemapSites(const Function& function)
         const Value& value = function.values[index];
         ProvisionalIDFinder finder;
         finder(value.type);
-        finder(value.expected());
+        finder(value.expected().predicted());
         forEachReference(value, finder);
-        if (finder.found || (value.expected() && value.expected() == value.type))
+        if (finder.found || (value.expected().predicted() && value.expected().predicted() == value.type))
             sites.values.append(index);
     }
     for (uint32_t index = 0; index < function.blocks.size(); ++index) {
@@ -139,8 +139,8 @@ void applyRemaps(const BodyRemaps& remaps, Function& function, const RemapSites&
         for (uint32_t index : sites.values) {
             Value& value = values[index];
             remaps.types.apply(value.type);
-            TypeID expected = remaps.types(value.expectedForTyping());
-            value.setExpected(expected == value.type ? TypeID() : expected);
+            TypeID expected = remaps.types(value.expectedForTyping().predicted());
+            value.setExpected(ExpectedType(expected == value.type ? TypeID() : expected));
             forEachReference(value, rewriter);
         }
     }

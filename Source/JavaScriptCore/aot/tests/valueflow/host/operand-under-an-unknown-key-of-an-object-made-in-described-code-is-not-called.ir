@@ -1,5 +1,5 @@
-# JSON.stringify({}), with the library's stringifyProperty(value, key) { return JSON.stringify({ [key]: value }) }
-# stringifyProperty (runtimefunction 131111) stands behind a helper that the records describe, and a row brings it into the image with JSON.stringify, with operands nobody knows.
+# [].slice(), with the library's traverseArray(array, start) { return JSON.stringify({ [start]: array }) }
+# traverseArray (runtimefunction 131091) stands behind a helper that the records describe, and a row brings it into the image with Array.prototype.slice, with operands nobody knows.
 # The object that it makes holds one of them under a key nobody knows, which may be "toJSON". What the call that the helper stands in for does with its operand the records say where that call is,
 # so native code calls nothing here that nobody knows: no code that nobody compiles writes anything.
 # An object of the program: unknown-value-under-an-unknown-key-of-an-object-of-the-program-is-called.ir
@@ -10,15 +10,14 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=131111 function=f1
-layout L0 name="Empty" fields=[]
+runtimefunction id=131091 function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = NewObject layout=L0 fields=[]
-    v1 = Builtin builtin=JSONStringify
-    v2 = Call v1, -, v0
+    v0 = NewArray
+    v1 = Builtin builtin=ArrayPrototypeSlice
+    v2 = Call v1, v0
     Return
 }
-function f1 name="stringifyProperty" role=Library enclosingRuntimeFunction=131111 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="traverseArray" role=Library enclosingRuntimeFunction=131091 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v2 = Builtin builtin=JSONStringify
     v3 = NewDictionary
     v4 = ToPropertyKey v1

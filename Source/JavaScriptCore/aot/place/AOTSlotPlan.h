@@ -159,6 +159,8 @@ struct ClassCreationPlan {
     bool createsClassObjectOnMutation { false };
     bool guardsHoldWhileClear { false };
     Vector<MemberCreation> members;
+    // Sorted. A function that is several members is listed if the record creates all of them.
+    Vector<FunctionID> functionsCreatedByClassRecord;
 };
 
 struct SlotPlanInputs {

@@ -184,8 +184,12 @@ TypeTestBranches::TypeTestBranches(FunctionAnalyses& analyses)
     AOT::stableSort(m_branchesByOperand, { }, &BranchOnValue::operand);
     keepRepeated(m_branchesByOperand, &BranchOnValue::operand);
     keepRepeatedTests(analyses, m_branches);
-    for (const BranchOnTypeTest& branch : m_branches)
-        m_repeatsTest.set(branch.block.index());
+    if (!m_branches.isEmpty())
+        m_indexOfBranch.fill(0, analyses.function().blocks.size());
+    for (uint32_t index = 0; index < m_branches.size(); ++index) {
+        m_repeatsTest.set(m_branches[index].block.index());
+        m_indexOfBranch[m_branches[index].block.index()] = index;
+    }
 }
 
 static Vector<KnownBoolean> outcomesOfFrequentTests(FunctionAnalyses& analyses, std::span<const BranchOnTypeTest> branches)
@@ -237,6 +241,11 @@ KnownBoolean TypeTestBranches::outcomeOnEveryWay(BlockID block) const
     if (branchesOnTest.size() < 3)
         return KnownBoolean::Unknown;
 
+    const size_t firstBranchOnTest = branchesOnTest.begin() - m_branches.begin();
+    auto branchesOnSameTest = [&](BlockID from) {
+        return m_repeatsTest.get(from.index()) && m_indexOfBranch[from.index()] - firstBranchOnTest < branchesOnTest.size();
+    };
+
     const CFG& cfg = m_analyses.cfg();
     KnownBoolean outcome = KnownBoolean::Unknown;
     Vector<BlockID, maxBlocksOnTheWays> seen { block };
@@ -245,7 +254,7 @@ KnownBoolean TypeTestBranches::outcomeOnEveryWay(BlockID block) const
         if (incomingEdges.empty())
             return KnownBoolean::Unknown;
         for (Edge edge : incomingEdges) {
-            if (std::ranges::contains(branchesOnTest, edge.from, &BranchOnTypeTest::block)) {
+            if (branchesOnSameTest(edge.from)) {
                 KnownBoolean onEdge = outcomeOnEdge(edge);
                 if (onEdge == KnownBoolean::Unknown || (outcome != KnownBoolean::Unknown && outcome != onEdge))
                     return KnownBoolean::Unknown;
@@ -302,7 +311,7 @@ static bool declareSameType(const Program& program, std::span<const LayoutID> la
         std::optional<FieldReference> field = findField(program, layout, key, BaseChain::Proven);
         if (!field)
             continue;
-        TypeID type = fieldAt(program, *field).declared.type;
+        TypeID type = fieldAt(program, *field).declared.written();
         if (common && common != type)
             return false;
         common = type;
@@ -574,7 +583,7 @@ void castArgumentsToParameters(IRBuilder& builder, BlockID block, bool validates
         TypeID narrowed = function.at(parameter).type;
         if (validates)
             builder.insertBefore(pointBeforeTerminatorOf(function, block), makeValidateType(argument, narrowed));
-        target.arguments[index] = builder.insertBefore(pointBeforeTerminatorOf(function, block), makeAssumeType(argument, narrowed));
+        target.arguments[index] = builder.insertBefore(pointBeforeTerminatorOf(function, block), makeAssumeType(argument, Proven::byRulesWithoutChecks(narrowed)));
     }
 }
 

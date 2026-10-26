@@ -17,11 +17,13 @@
 #include "AOTIRParser.h"
 #include "AOTImage.h"
 #include "AOTLoadedProgramTestSupport.h"
+#include "AOTModuleHost.h"
 #include "AOTNativeTest.h"
 #include "AOTProgramFile.h"
 #include "AOTSavedFrame.h"
 #include "AOTSavedFrameMap.h"
 #include "AOTShellProcess.h"
+#include "AOTStubFrames.h"
 #include "AOTStubsCoroutines.h"
 #include "AOTTemporaryFile.h"
 #include "AOTThreads.h"
@@ -31,6 +33,7 @@
 #include "JSCInlines.h"
 #include "MarkedSpaceInlines.h"
 #include "ObjectConstructor.h"
+#include "TopExceptionScope.h"
 #include <stdlib.h>
 #include <wtf/DataLog.h>
 #include <wtf/SetForScope.h>
@@ -60,6 +63,29 @@ function f1 name="waitFor" flags=[IsAsync] parameters=[{type=anything}, {type=an
 }
 )IR"_s;
 
+static constexpr ASCIILiteral programWithTwoAwaitsText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="waitTwice" flags=[IsAsync] parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0
+    v3 = Call v0
+    v4 = Call v0
+    v5 = Call v0
+    v6 = Call v0
+    v7 = Await v1
+    v8 = Call v0, -, v2, v3, v4, v5
+    v9 = Await v1
+    v10 = NewArray v6, v9 contents=anything
+    Return v10
+}
+)IR"_s;
+
 static Vector<uint32_t> valuesOf(const SavedFrameMap& map)
 {
     Vector<uint32_t> locations;
@@ -80,13 +106,40 @@ static Vector<uint32_t> narrowReferencesOf(const SavedFrameMap& map)
     return locations;
 }
 
-static void checkLists(const SavedFrameMap& map, const Vector<uint32_t>& values, const Vector<uint32_t>& narrowReferences)
+static Vector<uint32_t> otherLiveWordsOf(const SavedFrameMap& map)
+{
+    Vector<uint32_t> locations;
+    AOT_TEST_CHECK(map.forEachOtherLiveWord([&](uint32_t location) {
+        locations.append(location);
+        return true;
+    }));
+    return locations;
+}
+
+static Vector<uint32_t> deadWordsOf(const SavedFrameMap& map, bool hasLocationZero, uint32_t first, uint32_t last)
+{
+    Vector<uint32_t> locations;
+    AOT_TEST_CHECK(map.forEachDeadWord(hasLocationZero, first, last, [&](uint32_t location) {
+        locations.append(location);
+        return true;
+    }));
+    return locations;
+}
+
+static bool listsAsLive(const SavedFrameMap& map, uint32_t location)
+{
+    return map.listsValue(location) || map.listsOtherLiveWord(location) || map.listsNarrowReference(2 * location) || (location && map.listsNarrowReference(2 * location - 1));
+}
+
+static void checkLists(const SavedFrameMap& map, const Vector<uint32_t>& values, const Vector<uint32_t>& narrowReferences, const Vector<uint32_t>& otherLiveWords = { })
 {
     AOT_TEST_CHECK(valuesOf(map) == values);
     AOT_TEST_CHECK(narrowReferencesOf(map) == narrowReferences);
+    AOT_TEST_CHECK(otherLiveWordsOf(map) == otherLiveWords);
     for (uint32_t location = 0; location < 200; ++location) {
         AOT_TEST_CHECK(map.listsValue(location) == values.contains(location));
         AOT_TEST_CHECK(map.listsNarrowReference(location) == narrowReferences.contains(location));
+        AOT_TEST_CHECK(map.listsOtherLiveWord(location) == otherLiveWords.contains(location));
     }
 }
 
@@ -101,8 +154,8 @@ static void testMapRoundTrip()
         builder.addNarrowReference(location);
 
     Vector<uint32_t, 8> words = builder.finish();
-    AOT_TEST_CHECK(words.size() == 2 + 3 + 3);
-    AOT_TEST_CHECK(words[0] == words.size() - 1 && words[1] == 3);
+    AOT_TEST_CHECK(words.size() == 1 + 3 + 3);
+    AOT_TEST_CHECK(words[0] == (3 | 3 << 8));
 
     std::optional<SavedFrameMap> map = SavedFrameMap::tryCreate(words.span(), 0);
     AOT_TEST_CHECK(map);
@@ -128,20 +181,85 @@ static void testMapWithOnePlane()
     SavedFrameMapBuilder valuesOnly;
     valuesOnly.addValue(33);
     Vector<uint32_t, 8> valueWords = valuesOnly.finish();
-    AOT_TEST_CHECK((valueWords == Vector<uint32_t, 8> { 3, 2, 0, 2 }));
+    AOT_TEST_CHECK((valueWords == Vector<uint32_t, 8> { 2, 0, 2 }));
     checkLists(*SavedFrameMap::tryCreate(valueWords.span(), 0), { 33 }, { });
 
     SavedFrameMapBuilder narrowReferencesOnly;
     narrowReferencesOnly.addNarrowReference(33);
     Vector<uint32_t, 8> narrowWords = narrowReferencesOnly.finish();
-    AOT_TEST_CHECK((narrowWords == Vector<uint32_t, 8> { 3, 0, 0, 2 }));
+    AOT_TEST_CHECK((narrowWords == Vector<uint32_t, 8> { 2 << 8, 0, 2 }));
     checkLists(*SavedFrameMap::tryCreate(narrowWords.span(), 0), { }, { 33 });
+}
+
+static void testMapThatListsEveryLiveWord()
+{
+    SavedFrameMapBuilder builder;
+    for (uint32_t location : { 1u, 40u })
+        builder.addValue(location);
+    builder.addNarrowReference(70);
+    for (uint32_t location : { 66u, 0u, 2u, 39u })
+        builder.addOtherLiveWord(location);
+    AOT_TEST_CHECK(builder.listsReferenceIn(1) && builder.listsReferenceIn(40) && builder.listsReferenceIn(35) && !builder.listsReferenceIn(0) && !builder.listsReferenceIn(2) && !builder.listsReferenceIn(34) && !builder.listsReferenceIn(36));
+
+    Vector<uint32_t, 8> words = builder.finish();
+    AOT_TEST_CHECK((words == Vector<uint32_t, 8> { 2 | 3 << 8 | 3 << 16, 1u << 1, 1u << 8, 0, 0, 1u << 6, 1u << 0 | 1u << 2, 1u << 7, 1u << 2 }));
+    SavedFrameMap incomplete = *SavedFrameMap::tryCreate(words.span(), 0);
+    checkLists(incomplete, { 1, 40 }, { 70 }, { 0, 2, 39, 66 });
+    AOT_TEST_CHECK(!incomplete.listsEveryLiveWord() && deadWordsOf(incomplete, true, 1, 199).isEmpty());
+
+    builder.setListsEveryLiveWord();
+    words = builder.finish();
+    AOT_TEST_CHECK(words[0] == (2 | 3 << 8 | 3 << 16 | SavedFrameMap::listsEveryLiveWordBit));
+    SavedFrameMap map = *SavedFrameMap::tryCreate(words.span(), 0);
+    checkLists(map, { 1, 40 }, { 70 }, { 0, 2, 39, 66 });
+    AOT_TEST_CHECK(map.listsEveryLiveWord() && map.firstWord() == words.span().data());
+    checkLists(SavedFrameMap::fromFirstWord(map.firstWord()), { 1, 40 }, { 70 }, { 0, 2, 39, 66 });
+
+    for (bool hasLocationZero : { false, true }) {
+        for (uint32_t first : { 1u, 2u, 3u, 31u, 32u, 33u, 64u, 70u }) {
+            for (uint32_t last : { 0u, 1u, 2u, 30u, 31u, 32u, 63u, 64u, 65u, 95u, 96u, 130u }) {
+                Vector<uint32_t> expected;
+                for (uint32_t location = first; location <= last; ++location) {
+                    if (!listsAsLive(map, location))
+                        expected.append(location);
+                }
+                AOT_TEST_CHECK(deadWordsOf(map, hasLocationZero, first, last) == expected);
+            }
+        }
+    }
+
+    SavedFrameMapBuilder halves;
+    halves.setListsEveryLiveWord();
+    for (uint32_t narrowLocation : { 0u, 3u, 6u, 63u, 64u, 127u, 130u })
+        halves.addNarrowReference(narrowLocation);
+    Vector<uint32_t, 8> halfWords = halves.finish();
+    AOT_TEST_CHECK((deadWordsOf(*SavedFrameMap::tryCreate(halfWords.span(), 0), true, 1, 66) == [] {
+        Vector<uint32_t> locations;
+        for (uint32_t location = 1; location <= 66; ++location) {
+            if (location != 2 && location != 3 && location != 32 && location != 64 && location != 65)
+                locations.append(location);
+        }
+        return locations;
+    }()));
+
+    SavedFrameMapBuilder nothingLive;
+    nothingLive.setListsEveryLiveWord();
+    Vector<uint32_t, 8> emptyWords = nothingLive.finish();
+    AOT_TEST_CHECK((emptyWords == Vector<uint32_t, 8> { SavedFrameMap::listsEveryLiveWordBit }));
+    AOT_TEST_CHECK((deadWordsOf(*SavedFrameMap::tryCreate(emptyWords.span(), 0), true, 3, 5) == Vector<uint32_t> { 0, 3, 4, 5 }));
+
+    Vector<uint32_t> visited;
+    AOT_TEST_CHECK(!SavedFrameMap::tryCreate(emptyWords.span(), 0)->forEachDeadWord(false, 1, 100, [&](uint32_t location) {
+        visited.append(location);
+        return location != 2;
+    }));
+    AOT_TEST_CHECK((visited == Vector<uint32_t> { 1, 2 }));
 }
 
 static void testEmptyMap()
 {
     Vector<uint32_t, 8> words = SavedFrameMapBuilder().finish();
-    AOT_TEST_CHECK((words == Vector<uint32_t, 8> { 1, 0 }));
+    AOT_TEST_CHECK((words == Vector<uint32_t, 8> { 0 }));
     std::optional<SavedFrameMap> map = SavedFrameMap::tryCreate(words.span(), 0);
     AOT_TEST_CHECK(map);
     checkLists(*map, { }, { });
@@ -181,36 +299,63 @@ static bool isRejected(std::initializer_list<uint32_t> words, uint32_t offset)
 
 static void testMapRejectsBadOffsets()
 {
-    AOT_TEST_CHECK(!isRejected({ 3, 1, 2, 4 }, 0));
-    AOT_TEST_CHECK(!isRejected({ 9, 9, 3, 1, 2, 4 }, 2));
-    AOT_TEST_CHECK(!isRejected({ 3, 2, 2, 4 }, 0));
-    AOT_TEST_CHECK(!isRejected({ 3, 1, 2, 4, 1, 0 }, 4));
+    constexpr uint32_t oneOfEach = 1 | 1 << 8;
+    AOT_TEST_CHECK(!isRejected({ oneOfEach, 2, 4 }, 0));
+    AOT_TEST_CHECK(!isRejected({ 9, 9, oneOfEach, 2, 4 }, 2));
+    AOT_TEST_CHECK(!isRejected({ 2, 2, 4 }, 0));
+    AOT_TEST_CHECK(!isRejected({ 2 << 16, 2, 4 }, 0));
+    AOT_TEST_CHECK(!isRejected({ 1 | 1 << 16 | SavedFrameMap::listsEveryLiveWordBit, 2, 4 }, 0));
+    AOT_TEST_CHECK(!isRejected({ oneOfEach, 2, 4, 0 }, 3));
 
-    AOT_TEST_CHECK(isRejected({ 3, 1, 2, 4 }, 4));
-    AOT_TEST_CHECK(isRejected({ 3, 1, 2, 4 }, 5));
-    AOT_TEST_CHECK(isRejected({ 3, 1, 2, 4 }, UINT32_MAX));
+    AOT_TEST_CHECK(isRejected({ oneOfEach, 2, 4 }, 3));
+    AOT_TEST_CHECK(isRejected({ oneOfEach, 2, 4 }, 4));
+    AOT_TEST_CHECK(isRejected({ oneOfEach, 2, 4 }, UINT32_MAX));
     AOT_TEST_CHECK(isRejected({ }, 0));
-    AOT_TEST_CHECK(isRejected({ 3, 1, 2, 1 }, 3));
+    AOT_TEST_CHECK(isRejected({ oneOfEach, 2, 1 }, 2));
 
-    AOT_TEST_CHECK(isRejected({ 4, 1, 2, 4 }, 0));
-    AOT_TEST_CHECK(isRejected({ UINT32_MAX, 1, 2, 4 }, 0));
-    AOT_TEST_CHECK(isRejected({ 3, 1, 2, 4, 2, 0 }, 4));
+    AOT_TEST_CHECK(isRejected({ 3, 2, 4 }, 0));
+    AOT_TEST_CHECK(isRejected({ 1 | 2 << 8, 2, 4 }, 0));
+    AOT_TEST_CHECK(isRejected({ oneOfEach | 1 << 16, 2, 4 }, 0));
+    AOT_TEST_CHECK(isRejected({ 3 << 16, 2, 4 }, 0));
+    AOT_TEST_CHECK(isRejected({ 1 }, 0));
+    AOT_TEST_CHECK(isRejected({ 1u << 26, 2, 4 }, 0));
+    AOT_TEST_CHECK(isRejected({ UINT32_MAX, 2, 4 }, 0));
 
-    AOT_TEST_CHECK(isRejected({ 3, 3, 2, 4 }, 0));
-    AOT_TEST_CHECK(isRejected({ 3, UINT32_MAX, 2, 4 }, 0));
-    AOT_TEST_CHECK(isRejected({ 1, 1 }, 0));
+    constexpr uint32_t longHeader = SavedFrameMap::hasLongHeaderBit;
+    AOT_TEST_CHECK(!isRejected({ longHeader, 1, 1, 0, 2, 4 }, 0));
+    AOT_TEST_CHECK(!isRejected({ longHeader | SavedFrameMap::listsEveryLiveWordBit, 0, 0, 2, 2, 4 }, 0));
+    AOT_TEST_CHECK(!isRejected({ longHeader, 0, 0, 0 }, 0));
+    AOT_TEST_CHECK(isRejected({ longHeader, 0, 0 }, 0));
+    AOT_TEST_CHECK(isRejected({ longHeader | 1, 1, 1, 0, 2, 4 }, 0));
+    AOT_TEST_CHECK(isRejected({ longHeader, 3, 0, 0, 2, 4 }, 0));
+    AOT_TEST_CHECK(isRejected({ longHeader, 1, 1, 1, 2, 4 }, 0));
+    AOT_TEST_CHECK(isRejected({ longHeader, UINT32_MAX, UINT32_MAX, 2, 2, 4 }, 0));
+}
 
-    AOT_TEST_CHECK(isRejected({ 0, 0 }, 0));
-    AOT_TEST_CHECK(isRejected({ 0, 0, 0, 0 }, 0));
+static void testMapWithLongHeader()
+{
+    SavedFrameMapBuilder builder;
+    builder.addValue(3);
+    builder.addNarrowReference(32 * 256 + 1);
+    builder.addOtherLiveWord(40);
+    builder.setListsEveryLiveWord();
+    Vector<uint32_t, 8> words = builder.finish();
+    AOT_TEST_CHECK(words.size() == 4 + 1 + 257 + 2);
+    AOT_TEST_CHECK(words[0] == (SavedFrameMap::hasLongHeaderBit | SavedFrameMap::listsEveryLiveWordBit) && words[1] == 1 && words[2] == 257 && words[3] == 2);
+    SavedFrameMap map = *SavedFrameMap::tryCreate(words.span(), 0);
+    AOT_TEST_CHECK(map.numberOfWords() == words.size() && map.listsEveryLiveWord());
+    AOT_TEST_CHECK((valuesOf(map) == Vector<uint32_t> { 3 }) && (narrowReferencesOf(map) == Vector<uint32_t> { 32 * 256 + 1 }) && (otherLiveWordsOf(map) == Vector<uint32_t> { 40 }));
+    AOT_TEST_CHECK((deadWordsOf(map, false, 16 * 256 - 1, 16 * 256 + 2) == Vector<uint32_t> { 16 * 256 - 1, 16 * 256, 16 * 256 + 2 }));
 }
 
 static void testSiteWord()
 {
     constexpr uint32_t maxOffset = (1u << SavedFrame::liveSlotMapOffsetBits) - 1;
+    constexpr uint32_t maxLocation = SavedFrame::maxNumberOfWords;
     static_assert(SavedFrame::liveSlotMapOffsetBits == 18 && SavedFrame::savedRegisterBits == 2);
 
     for (uint32_t offset : { 0u, 1u, 4097u, maxOffset }) {
-        for (uint32_t promiseLocation : { 0u, 1u, 77u, 1u << 20, UINT32_MAX }) {
+        for (uint32_t promiseLocation : { 0u, 1u, 77u, 1u << 12, maxLocation }) {
             for (uint32_t savedRegisters : { 0u, 1u, 2u, 3u }) {
                 std::optional<uint64_t> word = SavedFrame::siteWord(offset, promiseLocation, savedRegisters);
                 AOT_TEST_CHECK(word);
@@ -226,6 +371,8 @@ static void testSiteWord()
     AOT_TEST_CHECK(!SavedFrame::siteWord(UINT32_MAX, 0, 0));
     AOT_TEST_CHECK(!SavedFrame::siteWord(0, 0, 4));
     AOT_TEST_CHECK(!SavedFrame::siteWord(0, 0, UINT32_MAX));
+    AOT_TEST_CHECK(!SavedFrame::siteWord(0, maxLocation + 1, 0));
+    AOT_TEST_CHECK(!SavedFrame::siteWord(0, UINT32_MAX, 0));
 
     AOT_TEST_CHECK(SavedFrame::savedRegistersOrPairsOf(SavedFrame::functionSavesPreservedRegister) == 1);
     AOT_TEST_CHECK(SavedFrame::savedRegistersOrPairsOf(SavedFrame::functionSavesR15) == 2);
@@ -234,20 +381,25 @@ static void testSiteWord()
 static void testSkippedWordsInSiteWord()
 {
     constexpr uint32_t maxOffset = (1u << SavedFrame::liveSlotMapOffsetBits) - 1;
+    constexpr uint32_t maxLocation = SavedFrame::maxNumberOfWords;
     struct Case {
         uint32_t deadWordsAtBottom;
         uint32_t skippedAtBottom;
     };
-    // The number of words kept stays even, and what does not fit the field is kept.
-    static constexpr Case cases[] = { { 0, 0 }, { 1, 0 }, { 2, 2 }, { 5, 4 }, { 254, 254 }, { 255, 254 }, { 256, 254 }, { UINT32_MAX, 254 } };
+    // The number of words kept stays even.
+    static constexpr Case cases[] = { { 0, 0 }, { 1, 0 }, { 2, 2 }, { 5, 4 }, { 28, 28 }, { 29, 28 }, { 30, 30 }, { 31, 30 }, { 32, 32 }, { 126, 126 }, { 127, 126 }, { 128, 128 }, { 252, 252 }, { 253, 252 }, { 254, 254 }, { 255, 254 }, { 256, 256 }, { 4098, 4098 }, { maxLocation, maxLocation - 1 } };
     for (const Case& testCase : cases) {
-        uint64_t word = *SavedFrame::siteWord(maxOffset, UINT32_MAX, 3, testCase.deadWordsAtBottom);
-        AOT_TEST_CHECK(SavedFrame::skippedAtBottomOf(word) == testCase.skippedAtBottom);
-        AOT_TEST_CHECK(SavedFrame::liveSlotMapOffsetOf(word) == maxOffset && SavedFrame::promiseLocationOf(word) == UINT32_MAX && SavedFrame::savedRegistersOrPairsOf(word) == 3);
+        for (uint32_t promiseLocation : { 0u, 1u, maxLocation }) {
+            uint64_t word = *SavedFrame::siteWord(maxOffset, promiseLocation, 3, testCase.deadWordsAtBottom);
+            AOT_TEST_CHECK(SavedFrame::skippedAtBottomOf(word) == testCase.skippedAtBottom);
+            AOT_TEST_CHECK(SavedFrame::liveSlotMapOffsetOf(word) == maxOffset && SavedFrame::promiseLocationOf(word) == promiseLocation && SavedFrame::savedRegistersOrPairsOf(word) == 3);
+        }
     }
+    AOT_TEST_CHECK(!SavedFrame::siteWord(0, 0, 0, maxLocation + 1));
+    AOT_TEST_CHECK(!(*SavedFrame::siteWord(maxOffset, 15, 3, 28, 0, SavedFrame::maxClearedWords) >> 32) && *SavedFrame::siteWord(maxOffset, 15, 3, 30) >> 32 && *SavedFrame::siteWord(maxOffset, 16, 3, 28) >> 32);
 
     for (uint32_t savedRegistersOrPairs : { 0u, 1u, 2u, 3u }) {
-        uint32_t skippedAtTop = SavedFrame::skippedAtTopOf(*SavedFrame::siteWord(maxOffset, UINT32_MAX, savedRegistersOrPairs, 254));
+        uint32_t skippedAtTop = SavedFrame::skippedAtTopOf(*SavedFrame::siteWord(maxOffset, maxLocation, savedRegistersOrPairs, 126));
 #if CPU(X86_64)
         AOT_TEST_CHECK(skippedAtTop == (savedRegistersOrPairs == 3 ? 2u : 0u));
 #else
@@ -257,6 +409,22 @@ static void testSkippedWordsInSiteWord()
 
     AOT_TEST_CHECK(SavedFrame::siteWord(0, 0, 0, 0, SavedFrame::maxNumberOfWords));
     AOT_TEST_CHECK(!SavedFrame::siteWord(0, 0, 0, 0, SavedFrame::maxNumberOfWords + 1));
+}
+
+static void testClearedWordsInSiteWord()
+{
+    constexpr uint32_t maxOffset = (1u << SavedFrame::liveSlotMapOffsetBits) - 1;
+    constexpr uint32_t maxLocation = SavedFrame::maxNumberOfWords;
+    for (uint32_t clearedWords : { 0u, 1u, 6u, SavedFrame::maxClearedWords }) {
+        for (uint32_t deadWordsAtBottom : { 0u, 30u, 32u, maxLocation - 1 }) {
+            for (uint32_t promiseLocation : { 0u, 15u, maxLocation }) {
+                uint64_t word = *SavedFrame::siteWord(maxOffset, promiseLocation, 3, deadWordsAtBottom, 0, clearedWords);
+                AOT_TEST_CHECK(SavedFrame::clearedWordsOf(word) == clearedWords && SavedFrame::skippedAtBottomOf(word) == deadWordsAtBottom);
+                AOT_TEST_CHECK(SavedFrame::liveSlotMapOffsetOf(word) == maxOffset && SavedFrame::promiseLocationOf(word) == promiseLocation && SavedFrame::savedRegistersOrPairsOf(word) == 3);
+            }
+        }
+    }
+    AOT_TEST_CHECK(!SavedFrame::siteWord(0, 0, 0, 0, 0, SavedFrame::maxClearedWords + 1));
 }
 
 static void testNarrowLocations()
@@ -364,9 +532,11 @@ static FunctionWithMap findFunctionWithMap(const Image& image)
     AOT_TEST_CHECK(found);
 
     std::span<const uint32_t> words = image.frameMapWords(*found);
-    AOT_TEST_CHECK(words[0] == words.size() - 1);
+    AOT_TEST_CHECK(SavedFrameMap::tryCreate(words, 0)->numberOfWords() == words.size());
+    // The frames are made up, and the map of the compiled function does not list what is live in them.
+    overwriteWordInImage(words[0], words[0] & ~SavedFrameMap::listsEveryLiveWordBit);
     std::optional<SavedFrameMap> map = SavedFrameMap::tryCreate(words, 0);
-    AOT_TEST_CHECK(map && narrowReferencesOf(*map).isEmpty());
+    AOT_TEST_CHECK(map && narrowReferencesOf(*map).isEmpty() && !map->listsEveryLiveWord());
     return { *found, valuesOf(*map) };
 }
 
@@ -461,7 +631,7 @@ static void checkUnlistedDeadWordIsPoisoned(LoadedProgram& program)
 static void listValuesInMapOf(uint32_t function, const Vector<uint32_t>& locations)
 {
     std::span<const uint32_t> words = Image::current()->frameMapWords(function);
-    uint32_t numberOfValueWords = words[1];
+    uint32_t numberOfValueWords = words[0] & 0xff;
     AOT_TEST_CHECK(numberOfValueWords && locations.last() < 32 * numberOfValueWords);
     for (uint32_t index = 0; index < numberOfValueWords; ++index) {
         uint32_t bits = 0;
@@ -469,7 +639,7 @@ static void listValuesInMapOf(uint32_t function, const Vector<uint32_t>& locatio
             if (location / 32 == index)
                 bits |= 1u << location % 32;
         }
-        overwriteWordInImage(words[2 + index], bits);
+        overwriteWordInImage(words[1 + index], bits);
     }
     AOT_TEST_CHECK(valuesOf(*SavedFrameMap::tryCreate(words, 0)) == locations);
 }
@@ -479,7 +649,7 @@ static void checkSkippedWords(LoadedProgram& program)
     VM& vm = program.vm();
     uint32_t function = findFunctionWithMap(*Image::current()).function;
     for (uint32_t savedRegistersOrPairs : { 0u, 1u, 3u }) {
-        for (uint32_t skippedAtBottom : { 0u, 4u }) {
+        for (uint32_t skippedAtBottom : { 0u, 4u, 252u, 254u, 600u }) {
             uint64_t siteWord = *SavedFrame::siteWord(0, 1, savedRegistersOrPairs, skippedAtBottom);
             uint32_t skippedAtTop = SavedFrame::skippedAtTopOf(siteWord);
             AOT_TEST_CHECK(SavedFrame::skippedAtBottomOf(siteWord) == skippedAtBottom);
@@ -506,6 +676,28 @@ static void checkSkippedWords(LoadedProgram& program)
     }
 }
 
+static void checkLowestWordsAreClearedAtTheFirstSave(LoadedProgram& program)
+{
+    uint32_t function = findFunctionWithMap(*Image::current()).function;
+    for (uint32_t skippedAtBottom : { 0u, 4u, 40u }) {
+        for (uint32_t clearedWords : { 0u, 1u, 3u, SavedFrame::maxClearedWords }) {
+            uint64_t siteWord = *SavedFrame::siteWord(0, 1, 0, skippedAtBottom, 0, clearedWords);
+            Vector<uint32_t> listedLocations { 1, 2 };
+            listValuesInMapOf(function, listedLocations);
+            HandMadeFrame frame = fillFrameWithUnreferencedObjects(program, listedLocations, siteWord);
+            Vector<uint64_t> stackBefore = frame.stack;
+            SavedFrame* saved = saveHandMadeFrame(program, frame, function);
+            for (uint32_t location = 1; location <= frame.numberOfWords; ++location) {
+                bool isCleared = location <= frame.lastKeptLocation() && location + clearedWords > frame.lastKeptLocation();
+                AOT_TEST_CHECK(frame.wordAt(location) == (isCleared ? 0 : stackBefore[frame.numberOfWords - location]));
+                if (location <= frame.lastKeptLocation())
+                    AOT_TEST_CHECK(saved->wordAt(location) == frame.wordAt(location));
+            }
+            saved->willBeRestoredToStack();
+        }
+    }
+}
+
 static void checkFrameOnTheStackIsLeftAlone(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -526,6 +718,81 @@ static void checkFrameOnTheStackIsLeftAlone(LoadedProgram& program)
             numberOfDeadCells += !hasSurvivedCollection(vm, std::bit_cast<JSCell*>(frame.wordAt(location)));
     }
     AOT_TEST_CHECK(numberOfDeadCells);
+}
+
+static NEVER_INLINE Vector<uint64_t> makeStackOfUnreferencedObjects(LoadedProgram& program, uint32_t numberOfWords)
+{
+    Vector<uint64_t> stack;
+    for (uint32_t index = 0; index < numberOfWords + 2; ++index)
+        stack.append(std::bit_cast<uint64_t>(constructEmptyObject(program.realm())));
+    return stack;
+}
+
+static void checkDeadWordsAreOverwrittenAtACollection(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    const Image& image = *Image::current();
+    std::optional<uint32_t> function;
+    for (uint32_t candidate = 0; candidate < image.header().counts.functions; ++candidate) {
+        if (image.frameMapWords(candidate).empty())
+            continue;
+        AOT_TEST_CHECK(!function);
+        function = candidate;
+    }
+    AOT_TEST_CHECK(function);
+
+    std::span<const uint32_t> words = image.frameMapWords(*function);
+    Vector<unsigned> numbersOfLiveWords;
+    for (uint32_t offset = 0, nextOffset = 0; offset < words.size(); offset = nextOffset) {
+        SavedFrameMap map = *SavedFrameMap::tryCreate(words, offset);
+        nextOffset = offset + map.numberOfWords();
+        AOT_TEST_CHECK(map.listsEveryLiveWord());
+        Vector<uint32_t> values = valuesOf(map);
+        Vector<uint32_t> otherLiveWords = otherLiveWordsOf(map);
+        numbersOfLiveWords.append(values.size() + otherLiveWords.size());
+
+        const uint32_t numberOfWords = WTF::roundUpToMultipleOf<2>(std::max(values.isEmpty() ? 0u : values.last(), otherLiveWords.isEmpty() ? 0u : otherLiveWords.last()) + 3);
+        Vector<uint64_t> stack = makeStackOfUnreferencedObjects(program, numberOfWords);
+        auto wordOnStack = [&](uint32_t location) { return stack[numberOfWords - location]; };
+        SuspensionWords suspensionWords { *SavedFrame::siteWord(offset, 1, 0), stack[numberOfWords + 1] };
+        SuspendedMachineFrame machineFrame {
+            stack.mutableSpan().data() + numberOfWords,
+            stack.span().data(),
+            const_cast<uint8_t*>(image.codeOf(*function)) + 1,
+            &suspensionWords,
+        };
+        auto checkWords = [&](const SavedFrame& saved, bool areDeadWordsOverwritten) {
+            for (uint32_t location = 1; location <= numberOfWords; ++location)
+                AOT_TEST_CHECK(saved.wordAt(location) == (areDeadWordsOverwritten && !listsAsLive(map, location) ? 0 : wordOnStack(location)));
+            if constexpr (SavedFrame::preservedRegister != InvalidGPRReg)
+                AOT_TEST_CHECK(saved.wordAt(SavedFrame::locationInRegister) == (areDeadWordsOverwritten && !listsAsLive(map, SavedFrame::locationInRegister) ? 0 : suspensionWords.preservedRegister));
+        };
+
+        SavedFrame* saved = SavedFrame::create(vm, program.instance(), CoroutineKind::AsyncFunction, machineFrame);
+        for (CollectionScope scope : { CollectionScope::Full, CollectionScope::Eden, CollectionScope::Full }) {
+            saved->save(vm, machineFrame, SuspensionKind::Await);
+            checkWords(*saved, false);
+            // An Eden collection marks nothing where nothing was allocated since the last collection.
+            constructEmptyObject(program.realm());
+            vm.heap.collectSync(scope);
+            AOT_TEST_CHECK(vm.heap.isMarked(saved) && !saved->isOnStack());
+            checkWords(*saved, true);
+            for (uint32_t location : values) {
+                if (location != SavedFrame::locationInRegister)
+                    AOT_TEST_CHECK(vm.heap.isMarked(std::bit_cast<JSCell*>(wordOnStack(location))));
+            }
+            vm.heap.collectSync(CollectionScope::Full);
+            checkWords(*saved, true);
+            saved->willBeRestoredToStack();
+        }
+
+        saved->save(vm, machineFrame, SuspensionKind::Await);
+        saved->willBeRestoredToStack();
+        vm.heap.collectSync(CollectionScope::Full);
+        checkWords(*saved, false);
+    }
+    // Four values are last read between the two awaits.
+    AOT_TEST_CHECK(numbersOfLiveWords.size() == 2 && numbersOfLiveWords[0] >= numbersOfLiveWords[1] + 4);
 }
 
 static std::unique_ptr<CompileOutput> compileWithValidation(Wire::ReferenceWidth referenceWidth)
@@ -638,16 +905,73 @@ static void testRootLimit()
     AOT_TEST_CHECK(rootLimitHitsWith(limit + 1) == 1);
 }
 
+static constexpr uint64_t wordOfDeadStack = 0x5ca1ab1e5ca1ab1eULL;
+static unsigned numberOfSaveAreasRead;
+static const Instance* instanceOfSaveArea;
+
+static NEVER_INLINE void fillDeadStack()
+{
+    volatile uint64_t words[2048];
+    for (volatile uint64_t& word : words)
+        word = wordOfDeadStack;
+}
+
+static JSC_DECLARE_HOST_FUNCTION(readSaveAreaAboveResumedCaller);
+JSC_DEFINE_HOST_FUNCTION(readSaveAreaAboveResumedCaller, (JSGlobalObject*, CallFrame* callFrame))
+{
+    // The call behind the first await is the one with arguments.
+    if (!callFrame->argumentCount())
+        return JSValue::encode(jsNumber(1));
+    // The adapter's is the first frame above that holds the instance in its place.
+    constexpr ptrdiff_t instanceWord = AdapterFrame::offsetOfInstance / static_cast<ptrdiff_t>(sizeof(uint64_t));
+    auto* frameOfAdapter = reinterpret_cast<const uint64_t*>(callFrame);
+    unsigned numberOfFrames = 0;
+    do {
+        frameOfAdapter = *reinterpret_cast<const uint64_t* const*>(frameOfAdapter);
+        AOT_TEST_CHECK(++numberOfFrames < 6);
+    } while (frameOfAdapter[instanceWord] != std::bit_cast<uintptr_t>(instanceOfSaveArea));
+    for (ptrdiff_t word = 1; word <= static_cast<ptrdiff_t>(AdapterFrame::saveAreaSize / sizeof(uint64_t)); ++word)
+        AOT_TEST_CHECK(frameOfAdapter[-word] != wordOfDeadStack);
+    ++numberOfSaveAreasRead;
+    return JSValue::encode(jsNumber(2));
+}
+
+static void checkAdapterAboveResumedFrameWritesItsSaveArea(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    program.realms().evaluate(realm, "globalThis.register = waitTwice => { globalThis.waitTwice = waitTwice; };"_s);
+    std::optional<ModuleID> module = findModule("main.js"_s);
+    AOT_TEST_CHECK(module);
+    evaluateModuleSynchronously(realm, *module);
+    AOT_TEST_CHECK(!scope.exception());
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(JSFunction::create(vm, realm, 0, "readSaveArea"_s, readSaveAreaAboveResumedCaller, ImplementationVisibility::Public));
+    arguments.append(program.realms().evaluate(realm, "Promise.resolve(3)"_s));
+    numberOfSaveAreasRead = 0;
+    instanceOfSaveArea = &program.instance();
+    call(realm, program.realms().evaluate(realm, "waitTwice"_s), arguments, "waitTwice is a function"_s);
+    AOT_TEST_CHECK(!scope.exception() && !numberOfSaveAreasRead);
+    fillDeadStack();
+    vm.drainMicrotasks();
+    AOT_TEST_CHECK(!scope.exception() && numberOfSaveAreasRead == 1);
+}
+
 std::span<const NativeTest> savedFrameTests()
 {
     static constexpr NativeTest tests[] = {
         { "saved-frame/map-round-trip"_s, testMapRoundTrip },
         { "saved-frame/map-with-one-plane"_s, testMapWithOnePlane },
+        { "saved-frame/map-that-lists-every-live-word"_s, testMapThatListsEveryLiveWord },
         { "saved-frame/empty-map"_s, testEmptyMap },
         { "saved-frame/walk-stops-when-the-functor-does"_s, testWalkStopsWhenTheFunctorDoes },
         { "saved-frame/map-rejects-bad-offsets"_s, testMapRejectsBadOffsets },
+        { "saved-frame/map-with-long-header"_s, testMapWithLongHeader },
         { "saved-frame/site-word"_s, testSiteWord },
         { "saved-frame/skipped-words-in-site-word"_s, testSkippedWordsInSiteWord },
+        { "saved-frame/cleared-words-in-site-word"_s, testClearedWordsInSiteWord },
         { "saved-frame/narrow-locations"_s, testNarrowLocations },
         { "saved-frame/resume-modes"_s, testResumeModes },
         { "saved-frame/root-limit"_s, testRootLimit },
@@ -655,6 +979,9 @@ std::span<const NativeTest> savedFrameTests()
         { "saved-frame/unlisted-dead-word-is-poisoned"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkUnlistedDeadWordIsPoisoned> },
         { "saved-frame/frame-on-the-stack-is-left-alone"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkFrameOnTheStackIsLeftAlone> },
         { "saved-frame/skipped-words"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkSkippedWords> },
+        { "saved-frame/lowest-words-are-cleared-at-the-first-save"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkLowestWordsAreClearedAtTheFirstSave> },
+        { "saved-frame/dead-words-are-overwritten-at-a-collection"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkDeadWordsAreOverwrittenAtACollection> },
+        { "saved-frame/adapter-above-a-resumed-frame-writes-its-save-area"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkAdapterAboveResumedFrameWritesItsSaveArea> },
         { "saved-frame/listed-words-survive-a-collection"_s, testListedWordsSurviveACollection },
     };
     return tests;

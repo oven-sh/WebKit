@@ -144,6 +144,9 @@ private:
     void verifyLoopMarks();
 
     void verifyGuards();
+    void verifyProofs();
+    void verifyOperandKindsWithoutChecks();
+    void verifyStoredTypesWithoutChecks();
     void verifyGuardOperand(BlockID, ValueID user, const Value&, ProofSet neededFromGuard, ValueID guard);
 
     void verifyUnspecifiedValues();

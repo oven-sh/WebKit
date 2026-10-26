@@ -22,7 +22,7 @@ function f1 name="wide" role=BoundFunction captures=[{type=function}] parameters
     ReturnCall v2 requirement=Allowed
 }
 function f2 name="narrow" role=GenericEntrypoint flags=[HasThis] captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
-    v3 = AssumeType v2 castType=number
+    v3 = AssumeType v2 provenType=number
     v4 = CallDirect v3, v3, v3, v3, v3, v3, v3, v3, v3, v3 function=f0
     ReturnCall v4 requirement=Allowed
 }

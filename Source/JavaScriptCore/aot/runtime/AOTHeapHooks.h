@@ -17,8 +17,10 @@
 
 namespace JSC {
 
+class AbstractSlotVisitor;
 class JSCell;
 class MarkingConstraint;
+class SlotVisitor;
 class Structure;
 class VM;
 
@@ -28,7 +30,11 @@ struct Instance;
 
 namespace HeapHooks {
 
-void finalize(VM&, CollectionScope);
+// The phase is a number that changes with every change of the phase of the collector.
+void finalize(VM&, CollectionScope, uint64_t phase);
+// The function objects that name frames of compiled code. They come and go as frames do, so the collector visits them where it scans the stack.
+void visitCalleesOfFrames(VM&, SlotVisitor&, uint64_t phase);
+void visitCalleesOfFrames(VM&, AbstractSlotVisitor&, uint64_t phase);
 // For a thread of the collector, before it does anything for the heap of the VM: what it asks of the image it asks of the image of that VM.
 void willWorkOnThisThread(VM&);
 void didChangeBarrierThreshold(VM&, unsigned threshold, bool mutatorShouldBeFenced);

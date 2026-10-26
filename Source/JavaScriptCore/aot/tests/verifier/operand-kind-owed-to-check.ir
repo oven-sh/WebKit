@@ -1,0 +1,52 @@
+# An operation that takes one kind of value has no form for any other, and the check of a type that the program declares may go. So such an operand is of its kind without that check:
+# by what makes it, by a test of the program, or by the word of the front end. A check without a place in the program is the compiler's own
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: OperandKindOwedToCheck 3
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Assertion
+function f0 name="badCheckedValue" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=boolean site=w0
+    v2 = LogicalNot v1
+    Return v2
+}
+function f1 name="badJoinOfCheckedValue" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = Check v0 expectedType=string site=w0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = String string="text"
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v2)
+  b3(v4: string):
+    v5 = GetStringLength v4
+    Return v5
+}
+function f2 name="good" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v0 expectedType=undefined|boolean site=w0
+    v3 = TypeTest v2 testedType=boolean
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4: boolean):
+    v5 = LogicalNot v4
+    Return v5
+  b2(v6: undefined):
+    v7 = ToBoolean v2
+    v8 = LogicalNot v7
+    v9 = Check v1 expectedType=boolean
+    v10 = LogicalNot v9
+    Return v10
+}
+function f3 name="badTypeAssumedBehindTheCheck" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = Check v0 expectedType=undefined|object site=w0
+    v2 = AssumeType v1 provenType=object [isBehindChecks]
+    PropDefine v2, v0 key="a"
+    Return
+}
+function f4 name="goodClaimOfTheFrontEnd" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = Check v0 expectedType=undefined|object site=w0
+    v2 = AssumeType v1 provenType=object [isWordOfFrontEnd]
+    PropDefine v2, v0 key="a"
+    Return
+}

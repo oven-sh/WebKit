@@ -66,6 +66,9 @@ public:
         m_isKnown[position] = 1;
     }
 
+    // The arrays whose kind of storage is decided and would not be what it is behind a conversion to the storage of numbers.
+    ValueSetID arraysThatMustNotBeConverted { ValueSets::nothing };
+
 private:
     Vector<uint32_t> m_positionOfObject;
     Vector<ValueFlowContainerFacts> m_facts;
@@ -119,6 +122,7 @@ struct ValueFlowVariablesOnObjects {
     BitVector deletedStaticFields;
     BitVector redefinedStaticFields;
     BitVector staticFieldsStoredOtherTypes;
+    BitVector staticFieldsStoredIntegersBehindChecks;
     BitVector staticFieldsStoredByBuiltins;
     BitVector classObjectsStoredUnderStaticFieldsAlone;
 };
@@ -213,9 +217,9 @@ struct ValueFlowResultInputs {
     void forEachMadeNodeAskedForBy(ValueFlowStatementID, ValueFlowKindsOfMadeNodes, bool alsoWithStatement, NOESCAPE const auto& functor) const;
     void forEachIndexOfMadeNodesAskedForBy(ValueFlowStatementID, ValueFlowKindsOfMadeNodes, bool alsoWithStatement, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const;
     void prefetchMadeNodesAskedForBy(uint32_t statement, ValueFlowKindsOfMadeNodes, bool alsoWithStatement) const;
-    bool hasEscaped(ValueFlowObjectID object) const { return sets().contains(solver().valueOf(ValueFlowProgramNodes::escaped()), object); }
-    bool isLost(ValueFlowObjectID object) const { return sets().contains(solver().valueOf(ValueFlowProgramNodes::lost()), object); }
-    bool isHeldByNativeCode(ValueFlowObjectID object) const { return sets().contains(solver().valueOf(bodies().nodes().ofHost(ValueFlowHostNode::HeldByNativeCode)), object); }
+    bool hasEscaped(ValueFlowObjectID object) const { return sets().contains(solver().possibleValuesOf(ValueFlowProgramNodes::escaped()), object); }
+    bool isLost(ValueFlowObjectID object) const { return sets().contains(solver().possibleValuesOf(ValueFlowProgramNodes::lost()), object); }
+    bool isHeldByNativeCode(ValueFlowObjectID object) const { return sets().contains(solver().possibleValuesOf(bodies().nodes().ofHost(ValueFlowHostNode::HeldByNativeCode)), object); }
 
     bool isLayoutOfDictionaries(LayoutID layout) const { return layoutsOfDictionaries && layout && layoutsOfDictionaries->get(layout.index()); }
     bool isDictionary(ValueFlowObjectID object) const { return layoutsOfDictionaries && isLayoutOfDictionaries(universe().layoutOf(object)); }
@@ -231,11 +235,19 @@ struct ValueFlowResultInputs {
 
     static constexpr bool isPlaceholder(ValueFlowObjectID object) { return object == ValueFlowUniverse::unknownObject() || object == ValueFlowUniverse::untrackedObject(); }
 
-    ValueSetID valueOf(ValueSetMaker& maker, const ValueFlowOperand& operand) const
+    ValueSetID possibleValuesOf(ValueSetMaker& maker, const ValueFlowOperand& operand) const { return throughMaskOf(maker, operand, operand.node ? solver().possibleValuesOf(operand.node) : ValueSets::nothing); }
+    ValueSetID seenValuesOf(ValueSetMaker& maker, const ValueFlowOperand& operand) const { return throughMaskOf(maker, operand, operand.node ? solver().seenValuesOf(operand.node) : ValueSets::nothing); }
+    bool isSeenAt(ValueSetMaker& maker, const ValueFlowOperand& operand, ValueFlowObjectID object) const { return sets().contains(seenValuesOf(maker, operand), object); }
+
+    ValueSetID seenBuiltinObjectsAt(ValueSetMaker& maker, const ValueFlowOperand& operand) const
     {
-        ValueSetID held = operand.constant ? operand.constant : ValueSets::nothing;
-        if (operand.node)
-            held = maker.unite(held, solver().valueOf(operand.node));
+        ValueSetID seen = seenValuesOf(maker, operand);
+        return ValueSets::isComplement(seen) ? ValueSets::nothing : maker.intersect(seen, universe().builtinObjects());
+    }
+
+    ValueSetID throughMaskOf(ValueSetMaker& maker, const ValueFlowOperand& operand, ValueSetID valuesOfNode) const
+    {
+        ValueSetID held = operand.constant ? maker.unite(operand.constant, valuesOfNode) : valuesOfNode;
         if (!operand.mask)
             return held;
         switch (operand.maskKind) {
@@ -336,22 +348,7 @@ inline bool isLookupOfCalleeByCall(const ValueFlowResultInputs& inputs, const Va
     return calleeKey && key.name() == ValueFlowName::property(calleeKey) && inputs.sets().onlyMember(key.set);
 }
 
-inline bool hasObjectsThatCodeAlters(LayoutKind kind)
-{
-    switch (kind) {
-    case LayoutKind::Record:
-    case LayoutKind::Instance:
-    case LayoutKind::Container:
-        return true;
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
-    case LayoutKind::BuiltinResult:
-    case LayoutKind::ModuleNamespace:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
+inline bool hasObjectsThatCodeAlters(LayoutKind kind) { return hasObjectsThatCodeAltersOf(kind); }
 
 inline bool isSiteOfTypedResultThatNothingAllocates(const ValueFlowResultInputs& inputs, ValueFlowObjectID object)
 {
@@ -373,7 +370,7 @@ ValueFlowMembers forEachMemberOf(const ValueFlowResultInputs& inputs, const Valu
     bool cuts = operand.mask && operand.maskKind != ValueFlowMaskKind::Declared && operand.maskKind != ValueFlowMaskKind::Expected;
     ValueSetID mask = cuts ? operand.mask : ValueSets::anything;
     bool letsPlaceholdersPass = cuts && operand.maskKind == ValueFlowMaskKind::Checked;
-    ValueSetID held[] { operand.constant ? operand.constant : ValueSets::nothing, operand.node ? inputs.solver().valueOf(operand.node) : ValueSets::nothing };
+    ValueSetID held[] { operand.constant ? operand.constant : ValueSets::nothing, operand.node ? inputs.solver().possibleValuesOf(operand.node) : ValueSets::nothing };
     for (ValueSetID set : held) {
         if (ValueSets::isComplement(set) && ValueSets::isComplement(mask))
             return ValueFlowMembers::AlmostEverything;
@@ -461,6 +458,7 @@ struct ValueFlowFieldContents {
     Vector<Vector<ValueSetID>> stored;
     Vector<Vector<ValueFlowNumbers>> storedNumbers;
     Vector<Vector<ValueSetID>> storedInAppendedFields;
+    Vector<Vector<ValueFlowNumbers>> numbersStoredInAppendedFields;
 };
 
 class ValueFlowNodesAskedFor {
@@ -580,6 +578,7 @@ public:
     struct WrittenNode {
         ValueSetID objects;
         ValueSetID value;
+        ValueSetID seenValue;
     };
 
     struct NodeOfMember {
@@ -681,7 +680,7 @@ public:
     ValueSetMaker& maker() { return m_maker; }
     ValueSetID escaped() const { return m_escaped; }
     ValueSetID lost() const { return m_lost; }
-    ValueSetID valueOf(const ValueFlowOperand&);
+    ValueSetID possibleValuesOf(const ValueFlowOperand&);
     ValueSetID expand(ValueSetID);
     bool reaches(ValueSetID writtenThrough, ValueSetID objects) const;
     ValueSetID writtenUnder(ValueSetID objects, ValueFlowName);
@@ -689,7 +688,7 @@ public:
     ValueSetID chainOf(ValueSetID objects);
     ValueSetID chainBuiltByProgram(ValueSetID objects);
 
-    ValueSetID valueOf(ValueSetMaker&, const ValueFlowOperand&) const;
+    ValueSetID possibleValuesOf(ValueSetMaker&, const ValueFlowOperand&) const;
     ValueSetID expand(ValueSetMaker&, ValueSetID) const;
     ValueSetID expandAmong(ValueSetMaker&, ValueSetID, ValueSetID among) const;
     ValueSetID writtenUnder(ValueSetMaker&, ValueSetID objects, ValueFlowName) const;
@@ -703,6 +702,15 @@ public:
             return;
         for (const WrittenNode& node : nodes->nodes)
             functor(node.objects, node.value);
+    }
+
+    void forEachSeenValueWrittenUnder(ValueFlowName name, NOESCAPE const Invocable<void(ValueSetID seenValue)> auto& functor) const
+    {
+        const NodesWrittenUnderName* nodes = m_index.findNodesWrittenUnder(name);
+        if (!nodes)
+            return;
+        for (const WrittenNode& node : nodes->nodes)
+            functor(node.seenValue);
     }
 
 private:
@@ -775,6 +783,7 @@ struct ValueFlowBuiltinApplication {
     ValueFlowCallKind kind { ValueFlowCallKind::Call };
     FunctionID function;
     ValueID site;
+    const ValueFlowStatement* statement { nullptr };
     ValueSetID thisValue { ValueSets::nothing };
     Vector<ValueSetID, numberOfGroupedArguments> arguments;
     ValueSetID otherArguments { ValueSets::nothing };
@@ -807,12 +816,16 @@ struct ValueFlowUsesOfHeapDeleter {
 };
 std::unique_ptr<ValueFlowUsesOfHeap, ValueFlowUsesOfHeapDeleter> computeUsesOfHeap(const ValueFlowResultInputs&);
 void listStoresByLayout(const ValueFlowResultInputs&, ValueFlowUsesOfHeap&, const FlowResultTables&);
+void computeLayoutsNeverHeldWeakly(const ValueFlowResultInputs&, ValueFlowHeapView&, const ValueFlowUsesOfHeap&, FlowResultTables&);
 ValueFlowHeapView& heapViewOf(ValueFlowUsesOfHeap&);
 ValueSetID objectsThatMayBeEnumerated(const ValueFlowUsesOfHeap&);
+ValueSetID objectsWithAllKeysShown(const ValueFlowUsesOfHeap&);
+ValueSetID objectsWithEnumerableKeysShown(const ValueFlowUsesOfHeap&);
 
 struct ValueFlowConstructions {
     struct OfLayout {
         bool isFollowed { false };
+        bool isNewTargetOfOtherFunctions { false };
         bool createsFieldsOnlyInListedOrders { false };
         Vector<PropertyKeyID> keysStoredBeforeObjectLeaks;
         Vector<FieldReference> fieldsStoredBeforeObjectLeaks;
@@ -824,6 +837,7 @@ struct ValueFlowConstructions {
     };
 
     bool isFollowed(LayoutID layout) const { return layouts[layout.index()].isFollowed; }
+    bool isNewTargetOfOtherFunctions(LayoutID layout) const { return layouts[layout.index()].isNewTargetOfOtherFunctions; }
     bool createsFieldsOnlyInListedOrders(LayoutID layout) const { return layouts[layout.index()].createsFieldsOnlyInListedOrders; }
     const Vector<FieldOrder>& ordersOf(LayoutID layout) const LIFETIME_BOUND { return layouts[layout.index()].orders; }
     bool isStoredBeforeObjectLeaks(LayoutID layout, PropertyKeyID key, FieldReference declaration) const
@@ -853,6 +867,8 @@ struct ValueFlowConstructions {
 
 ValueFlowConstructions computeConstructions(const ValueFlowResultInputs&, ValueFlowHeapView&, const FlowResultTables&);
 void computeLiteralKeyOrders(const ValueFlowResultInputs&, ValueFlowHeapView&, Vector<PropertyKeyKind>&& kindsOfKeys, FlowResultTables&);
+// Whether the operation gives properties to the literal, between its NewObject and its FinishObject.
+bool isPieceOfLiteral(const Value& operation, ValueID literal);
 
 struct ValueFlowWriteUnderNewName {
     BuiltinID holder;
@@ -861,6 +877,7 @@ struct ValueFlowWriteUnderNewName {
 };
 
 Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultInputs&, FlowResultTables&);
+void findHoldersWithListedKeys(const ValueFlowResultInputs&, const ValueFlowUsesOfHeap&, FlowBuiltinTables&);
 void recordLockedWritesUnderNewNames(const Program&, TypeTable&, std::span<const ValueFlowWriteUnderNewName>, FlowResultTables&);
 ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowResultInputs&);
 ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs&, TypeTable&, FlowResultTables&);

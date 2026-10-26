@@ -42,22 +42,33 @@ struct DirectEvalStructures {
     Structure* bindings { nullptr };
     Structure* scope { nullptr };
     Structure* variableScope { nullptr };
+    Structure* derivedConstructorStandIn { nullptr };
 };
 
-// How the getters of an object literal came to lie in the slots of one new object.
-struct GetterDefinitionPlan {
-    struct Entry {
+// How the getters and setters of an object literal came to lie in the slots of one new object.
+struct AccessorDefinitionPlan {
+    static constexpr uint8_t noDefinition = UINT8_MAX;
+
+    struct Definition {
         UniquedStringImpl* name;
+        FunctionID function;
+    };
+    // `getter` and `setter` index the definitions. The half that none of them gives is that of the accessor in the slot.
+    struct FilledSlot {
         const FieldData* field;
-        FunctionID getter;
+        uint8_t getter;
+        uint8_t setter;
+        bool isFilledBefore;
     };
 
     const LayoutData* layout { nullptr };
     uint32_t structureBits { 0 };
     uint32_t orderWordBefore { 0 };
     uint32_t orderWordAfter { 0 };
+    uint32_t getters { 0 };
     uint32_t enumerable { 0 };
-    Vector<Entry> entries;
+    Vector<Definition> definitions;
+    Vector<FilledSlot> slots;
 };
 
 struct ObjectModelCaches {
@@ -67,10 +78,10 @@ struct ObjectModelCaches {
     explicit ObjectModelCaches(State&);
     ~ObjectModelCaches();
 
-    static constexpr unsigned numberOfGetterDefinitionPlans = 64;
+    static constexpr unsigned numberOfAccessorDefinitionPlans = 64;
 
     FieldMovePlanCache movePlans;
-    std::array<GetterDefinitionPlan, numberOfGetterDefinitionPlans> getterDefinitionPlans;
+    std::array<AccessorDefinitionPlan, numberOfAccessorDefinitionPlans> accessorDefinitionPlans;
     AssignmentPlanCache assignmentPlans;
     PropertyListCache propertyLists;
     ClassStructureCache classStructures;

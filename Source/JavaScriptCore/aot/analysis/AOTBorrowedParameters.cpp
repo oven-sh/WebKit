@@ -18,10 +18,12 @@
 #include "AOTFrameAllocationPointers.h"
 #include "AOTIR.h"
 #include "AOTLargeVectors.h"
+#include "AOTLiveness.h"
 #include "AOTResultRules.h"
 #include "AOTSchemaRuntimeColumns.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTUseLists.h"
 #include <algorithm>
 #include <atomic>
 #include <optional>
@@ -75,11 +77,14 @@ static void forEachLostPart(uint64_t bits, const Invocable<void(uint32_t entryPa
     }
 }
 
+// A function that saves its frame where it waits runs on the stack of its caller until then, and the saved frame keeps only what is live and what the suspension lists.
+static constexpr OpcodeSet suspensionsThatKeepOnlyLiveValues { Opcode::AwaitBySavingFrame, Opcode::AwaitCallBySavingFrame };
+
 static OpcodeSet opcodesOfFunctionsThatBorrowNothing()
 {
     OpcodeSet opcodes { Opcode::GetArgument, Opcode::GetMyArgumentByVal, Opcode::CreateRest, Opcode::CallForwardVarargs, Opcode::ConstructSuperForwardVarargs };
     for (Opcode opcode : allMembersOf<Opcode>) {
-        if (maySuspend(opcode))
+        if (maySuspend(opcode) && !suspensionsThatKeepOnlyLiveValues.contains(opcode))
             opcodes.add(opcode);
     }
     return opcodes;
@@ -98,7 +103,8 @@ static bool hasReferenceAmongTrackedParameters(const Program& program, const Fun
 
 static bool mayBorrow(const Program& program, const Function& function, const OpcodeSet& opcodesThatBorrowNothing)
 {
-    if (!function.hasBody() || !function.hasOrdinaryFrame() || function.isUnsplitCoroutine())
+    bool savesFrameWhereItWaits = function.role == FunctionRole::CoroutineBody && function.creator.as<CreatorRecord::Coroutine>().kind == CoroutineKind::AsyncFunction;
+    if (!function.hasBody() || (!function.hasOrdinaryFrame() && !savesFrameWhereItWaits) || function.isUnsplitCoroutine())
         return false;
     if (!hasReferenceAmongTrackedParameters(program, function))
         return false;
@@ -307,6 +313,43 @@ static BorrowingBody scanBorrowingBody(const Program& program, const Function& f
             lose(contentsOf(carried.references) | carried.held);
     };
 
+    // The caller's frame is gone when the function goes on.
+    auto loseWhatIsLiveAtSuspensions = [&] {
+        auto isSuspension = [&](ValueID id) { return suspensionsThatKeepOnlyLiveValues.contains(function.at(id).opcode); };
+        Vector<BlockID, 4> suspendingBlocks;
+        for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+            if (std::ranges::any_of(function.blocks[blockIndex].values, isSuspension))
+                suspendingBlocks.append(BlockID(blockIndex));
+        }
+        if (suspendingBlocks.isEmpty())
+            return;
+
+        BitVector carriers(function.values.size());
+        for (uint32_t index = 0; index < function.values.size(); ++index) {
+            if (mayBe[index] || (!mayHold.isEmpty() && mayHold[index]))
+                carriers.quickSet(index);
+        }
+        CFG cfg(function);
+        UseLists useLists(function, cfg);
+        Liveness liveness(function, cfg, useLists, { .trackedValues = &carriers });
+        for (BlockID block : suspendingBlocks) {
+            if (!cfg.isReachable(block))
+                continue;
+            Liveness::LocalCalc liveBeforeValue(liveness, block);
+            const BlockValues& values = function.at(block).values;
+            for (uint32_t index = values.size(); index--;) {
+                liveBeforeValue.execute(index);
+                if (!isSuspension(values[index]))
+                    continue;
+                currentUser = values[index];
+                liveBeforeValue.forEachLive([&](ValueID live) {
+                    lose(referencesIn(live) | heldReferencesIn(live));
+                });
+            }
+        }
+        currentUser = { };
+    };
+
     const CompactList<ValueID>& entryParameters = function.at(entryBlock).parameters;
     uint32_t numberOfTrackedParameters = std::min<uint32_t>(entryParameters.size(), maxBorrowedParameters);
     for (uint32_t entryParameter = 0; entryParameter < numberOfTrackedParameters; ++entryParameter) {
@@ -350,6 +393,8 @@ static BorrowingBody scanBorrowingBody(const Program& program, const Function& f
             });
         }
     }
+
+    loseWhatIsLiveAtSuspensions();
 
     for (const Block& block : function.blocks) {
         for (ValueID id : block.values) {

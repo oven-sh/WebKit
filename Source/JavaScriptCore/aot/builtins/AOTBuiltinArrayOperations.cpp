@@ -153,6 +153,15 @@ static RefPtr<StringImpl> joinStrings(const WriteBarrier<Unknown>* elements, uns
     return joined;
 }
 
+static bool holdsOnlyHoles(JSArray* array)
+{
+    Butterfly& butterfly = *array->butterfly();
+    unsigned length = butterfly.publicLength();
+    if (hasDouble(array->indexingType()))
+        return std::ranges::all_of(std::span { butterfly.contiguousDouble().data(), length }, [](double element) { return isHole(element); });
+    return std::ranges::all_of(std::span { butterfly.contiguous().data(), length }, [](const WriteBarrier<Unknown>& element) { return !element; });
+}
+
 static JSString* tryJoin(JSGlobalObject* globalObject, JSArray* array, JSString* separatorOrNull)
 {
     VM& vm = globalObject->vm();
@@ -166,6 +175,11 @@ static JSString* tryJoin(JSGlobalObject* globalObject, JSArray* array, JSString*
         return nullptr;
     Butterfly& butterfly = *array->butterfly();
     unsigned length = butterfly.publicLength();
+    if (length && holdsOnlyHoles(array)) {
+        if (holesMustForwardToPrototype(array))
+            return nullptr;
+        RELEASE_AND_RETURN(scope, repeatSeparator(globalObject, view, length - 1));
+    }
     switch (array->indexingType()) {
     case ALL_INT32_INDEXING_TYPES:
         RELEASE_AND_RETURN(scope, joiner.tryJoin<Int32Shape>(globalObject, butterfly.contiguous().data(), length));

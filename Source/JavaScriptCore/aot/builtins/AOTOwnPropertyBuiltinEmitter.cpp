@@ -173,7 +173,7 @@ void OwnPropertyBuiltinEmitter::generateOwnPropertyKeys(const InlineCall& call)
     results.add(ArrayAllocationEmitter(generator()).allocateArrayCell(header, offsetBy(list, JSCellButterfly::offsetOfData()), outOfLine));
 
     m_out.appendTo(outOfLine);
-    results.add(callOperation<CellPointer>(call.context(), RuntimeOperation::OwnPropertyKeys, { boxCell(object), word32(static_cast<int32_t>(kind)) }, { .isOnRarePath = true }));
+    results.add(callOperation<CellPointer>(call.context(), RuntimeOperation::OwnPropertyKeys, { boxCell(object), word32(static_cast<int32_t>(kind)) }, { .calledBuiltin = functionOf(call.overload()), .isOnRarePath = true }));
 
     finish(call, results.finish());
 }

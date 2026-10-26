@@ -189,7 +189,7 @@ static bool canCreateClosuresAtDefinition(SelectionContext& context, const Descr
         const Function& callee = program.at(function.at(closure).function());
         if (callee.captures.isEmpty())
             return true;
-        if (!match.closureEnvironment || !program.at(callee.captures[0].type).environment)
+        if (!match.closureEnvironment || !program.at(callee.captures[0].written()).environment)
             return false;
         FunctionAnalyses& analyses = context.analyses();
         return analyses.dominates(match.closureEnvironment, analyses.useLists().pointOf(closure));
@@ -431,17 +431,27 @@ static bool canJoinAccessorGroup(SelectionContext& context, ValueID id)
     return definition.key() && isOrdinaryKey(context.program(), definition.key());
 }
 
+static bool tryClaimAccessorGroup(SelectionContext& context, std::span<const ValueID> list, Vector<AccessorMatch>& matches)
+{
+    AccessorMatch match;
+    match.group.root = list.back();
+    for (ValueID definition : list)
+        match.group.members.append(GroupMember { definition });
+    if (context.tryClaim(SelectionRuleID::AccessorGroup, match.group) != ClaimResult::Claimed)
+        return false;
+    matches.append(WTF::move(match));
+    return true;
+}
+
+// Another member of the literal between two definitions keeps them apart. The list falls into the longest groups that end at its last definition, at the last one in front of that group, and so on.
 static void closeAccessorList(SelectionContext& context, std::span<const ValueID> list, Vector<AccessorMatch>& matches)
 {
-    for (; list.size() >= minMembersInAccessorGroup; list = list.subspan(1)) {
-        AccessorMatch match;
-        match.group.root = list.back();
-        for (ValueID definition : list)
-            match.group.members.append(GroupMember { definition });
-        if (context.tryClaim(SelectionRuleID::AccessorGroup, match.group) == ClaimResult::Claimed) {
-            matches.append(WTF::move(match));
-            return;
-        }
+    while (list.size() >= minMembersInAccessorGroup) {
+        size_t first = 0;
+        size_t lastStart = list.size() - minMembersInAccessorGroup;
+        while (first <= lastStart && !tryClaimAccessorGroup(context, list.subspan(first), matches))
+            ++first;
+        list = list.first(first <= lastStart ? first : list.size() - 1);
     }
 }
 

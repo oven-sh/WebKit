@@ -1,0 +1,168 @@
+# A closure that another closure captures, or that a call hands on, only to be taken apart there is not made for that: the environment that it is stored in goes in its place, and the function that gets it reads there what the closure would have captured. A function that gets it may capture it in a function of its own scope. Where one function that gets it hands it out, it is an object for all of them and everything stays.
+# FORM: Prepared
+# RUN: pass ReadCapturesFromEnvironments RemoveUnreadFields
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="takenApart" fields=[{key="first" declared={type=f1}}, {key="second" declared={type=f2}}]
+layout L1 kind=Environment name="handedOut" fields=[{key="first" declared={type=f6}}, {key="second" declared={type=f7}}]
+layout L2 kind=Environment name="givesAway" fields=[{key="first" declared={type=f11}}]
+layout L3 kind=Environment name="capturesWhatItIsGiven" fields=[{key="inner" declared={type=f13}}]
+
+function f0 name="takenApart" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject layout=L0
+    v2 = NewClosure v1, v0 function=f1
+    PutEnvironmentField v1, v2 layout=L0 field=0
+    v4 = NewClosure v1, v2 function=f2
+    PutEnvironmentField v1, v4 layout=L0 field=1
+    v6 = CallDirect v1 function=f3
+    v7 = CallDirect v2, v0 function=f4
+    v8 = Add v6, v7
+    Return v8
+# CHECK-NOT: NewClosure
+# CHECK: [[scope]]: env L0 = NewObject layout=L0
+# CHECK-NEXT: PutEnvironmentField [[scope]], v0 layout=L0
+# CHECK-NEXT: = CallDirect [[scope]] function=f3
+# CHECK-NEXT: = CallDirect [[scope]], v0 function=f4
+}
+
+function f1 name="first" captures=[{type=env L0}, {type=number}] results=[{type=anything}] {
+  b0(v0: env L0, v1: number):
+    v2 = Add v1, v1
+    Return v2
+}
+
+function f2 name="second" captures=[{type=env L0}, {type=f1}] results=[{type=anything}] {
+  b0(v0: env L0, v1: f1):
+    v2 = GetCapture v1 function=f1
+    v3 = GetCapture v1 function=f1 index=1
+    v4 = CallDirect v2, v3 function=f1
+    v5 = CallDirect v1, v3 function=f4
+    v6 = Add v4, v5
+    Return v6
+# CHECK-NOT: GetCapture
+# CHECK: b0(v0: env L0, v1: env L0):
+# CHECK-NEXT: [[captured]]: number = GetEnvironmentField v1 layout=L0
+# CHECK-NEXT: = CallDirect v1, [[captured]] function=f1
+# CHECK-NEXT: = CallDirect v1, [[captured]] function=f4
+}
+
+function f3 name="callsSecond" captures=[{type=env L0}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0 field=1
+    v2 = GetCapture v1 function=f2
+    v3 = GetCapture v1 function=f2 index=1
+    v4 = CallDirect v2, v3 function=f2
+    Return v4
+# CHECK-NOT: GetCapture
+# CHECK-NOT: GetEnvironmentField
+# CHECK: = CallDirect v0, v0 function=f2
+}
+
+function f4 name="callsWhatItIsGiven" parameters=[{type=f1}, {type=number}] results=[{type=anything}] {
+  b0(v0: f1, v1: number):
+    v2 = GetCapture v0 function=f1
+    v3 = CallDirect v2, v1 function=f1
+    Return v3
+# CHECK-NOT: GetCapture
+# CHECK: b0(v0: env L0, v1: number):
+# CHECK-NEXT: = CallDirect v0, v1 function=f1
+}
+
+function f5 name="handedOut" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject layout=L1
+    v2 = NewClosure v1, v0 function=f6
+    PutEnvironmentField v1, v2 layout=L1 field=0
+    v4 = NewClosure v1, v2 function=f7
+    PutEnvironmentField v1, v4 layout=L1 field=1
+    v6 = CallDirect v1 function=f8
+    v7 = CallDirect v2 function=f9
+    v8 = Add v6, v7
+    Return v8
+# CHECK: [[other]]: env L1 = NewObject layout=L1
+# CHECK: [[first]]: f6 = NewClosure [[other]], v0 function=f6
+# CHECK: = CallDirect [[first]] function=f9
+}
+
+function f6 name="first" captures=[{type=env L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: env L1, v1: number):
+    v2 = Add v1, v1
+    Return v2
+}
+
+function f7 name="second" captures=[{type=env L1}, {type=f6}] results=[{type=anything}] {
+  b0(v0: env L1, v1: f6):
+    v2 = CallDirect v1 function=f9
+    Return v2
+# CHECK: b0(v0: env L1, v1: f6):
+# CHECK-NEXT: = CallDirect v1 function=f9
+}
+
+function f8 name="callsSecond" captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=1
+    v2 = GetCapture v1 function=f7
+    v3 = GetCapture v1 function=f7 index=1
+    v4 = CallDirect v2, v3 function=f7
+    Return v4
+# CHECK: [[read]]: f6 = GetEnvironmentField v0 layout=L1
+# CHECK: = CallDirect v0, [[read]] function=f7
+}
+
+function f9 name="handsOutWhatItIsGiven" parameters=[{type=f6}] results=[{type=anything}] {
+  b0(v0: f6):
+    Return v0
+# CHECK: b0(v0: f6):
+}
+
+function f10 name="givesAway" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject layout=L2
+    v2 = NewClosure v1, v0 function=f11
+    PutEnvironmentField v1, v2 layout=L2 field=0
+    v4 = CallDirect v2 function=f12
+    Return v4
+# CHECK-NOT: NewClosure
+# CHECK: [[given]]: env L2 = NewObject layout=L2
+# CHECK: = CallDirect [[given]] function=f12
+}
+
+function f11 name="first" captures=[{type=env L2}, {type=number}] results=[{type=anything}] {
+  b0(v0: env L2, v1: number):
+    v2 = Add v1, v1
+    Return v2
+}
+
+function f12 name="capturesWhatItIsGiven" parameters=[{type=f11}] results=[{type=anything}] {
+  b0(v0: f11):
+    v1 = NewObject layout=L3
+    v2 = NewClosure v0 function=f13
+    PutEnvironmentField v1, v2 layout=L3 field=0
+    v4 = CallDirect v1 function=f14
+    Return v4
+# CHECK: b0(v0: env L2):
+# CHECK-NEXT: [[own]]: env L3 = NewObject layout=L3
+# CHECK: PutEnvironmentField [[own]], v0 layout=L3 field=1
+# CHECK-NEXT: = CallDirect [[own]] function=f14
+}
+
+function f13 name="inner" captures=[{type=f11}] results=[{type=anything}] {
+  b0(v0: f11):
+    v1 = GetCapture v0 function=f11
+    v2 = GetCapture v0 function=f11 index=1
+    v3 = CallDirect v1, v2 function=f11
+    Return v3
+# CHECK-NOT: GetCapture
+# CHECK: b0(v0: env L2):
+# CHECK-NEXT: [[number]]: number = GetEnvironmentField v0 layout=L2
+# CHECK-NEXT: = CallDirect v0, [[number]] function=f11
+}
+
+function f14 name="callsInner" captures=[{type=env L3}] results=[{type=anything}] {
+  b0(v0: env L3):
+    v1 = GetEnvironmentField v0 layout=L3 field=0
+    v2 = GetCapture v1 function=f13
+    v3 = CallDirect v2 function=f13
+    Return v3
+# CHECK-NOT: GetCapture
+# CHECK: [[handedOn]]: env L2 = GetEnvironmentField v0 layout=L3
+# CHECK-NEXT: = CallDirect [[handedOn]] function=f13
+}

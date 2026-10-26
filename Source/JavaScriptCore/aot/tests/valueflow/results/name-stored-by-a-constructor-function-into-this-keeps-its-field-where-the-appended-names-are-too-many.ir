@@ -29,14 +29,14 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 function f1 name="Emitter" flags=[HasThis] thisType={type=L0|L1|L2 flags=[IsExpected]} results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Check v0 castType=L0|L1|L2
+    v1 = Check v0 expectedType=L0|L1|L2
     v2 = Boolean boolean=false
     PropSet v1, v2 key="capture" mode=Strict
     Return
 }
 function f2 name="mark" parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Check v0 castType=L0|L1
+    v1 = Check v0 expectedType=L0|L1
     v2 = Integer integer=1
     v3 = Integer integer=2
     PropSet v1, v2 key="first" mode=Strict

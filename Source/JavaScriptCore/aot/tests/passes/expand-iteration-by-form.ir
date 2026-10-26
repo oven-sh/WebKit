@@ -126,7 +126,7 @@ function f1 name="oneForm" parameters=[{type=Array<number, pristine[Names]>}, {t
 function f2 name="coroutine" role=CoroutineRamp flags=[IsAsync] parameters=[{type=undefined|null|Array<number>}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=1} {
     v1 = NewPromise
     v2 = CallDirect v0, v1 function=f3
-    v3 = AssumeType v2 castType=Promise
+    v3 = AssumeType v2 provenType=Promise
     Return v3
 }
 # CHECK-LABEL: function f2 name="coroutine"

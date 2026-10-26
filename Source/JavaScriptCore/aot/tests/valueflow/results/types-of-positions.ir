@@ -8,7 +8,7 @@
 # CHECK: variable g3 name="list" {{*}}declared={type=Array{{*}}}
 # CHECK: variable g4 name="mode" {{*}}declared={type="fast"|"slow"}
 # CHECK: [[result]]: true = Call v2 {{*}}callees=[f1]
-# CHECK: true = AssumeType [[result]] castType=true
+# CHECK: true = AssumeType [[result]] provenType=true
 # CHECK: function f1 name="handler" {{*}}results=[{type=true}]
 
 module m0 path="main.js" displayPath="main.js" body=f0

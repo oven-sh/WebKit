@@ -21,7 +21,7 @@ function f0 name="breakOuter" parameters=[{type=object}, {type=anything}] result
   b2():
     Jump -> next b3()
   b3() handler=b11():
-    v7 = Check v6 castType=object
+    v7 = Check v6 expectedType=object
     v8 = IteratorOpen v7
     Jump -> next b4()
   b4() handler=b11():
@@ -59,7 +59,7 @@ function f0 name="breakOuter" parameters=[{type=object}, {type=anything}] result
 # CHECK-NEXT: [[outerIsArray0]]: boolean = TypeTest v0 testedType=Array
 # CHECK-NEXT: Branch [[outerIsArray0]] -> taken {{*}}, notTaken [[outerIsOther0]](| 0)
 # CHECK: b3():
-# CHECK-NEXT: v7: object = Check v6 castType=object
+# CHECK-NEXT: v7: object = Check v6 expectedType=object
 # CHECK-NEXT: = TypeTest v7 testedType=Array
 # CHECK: b6():
 # CHECK-NEXT: v13: anything = Call v1, -, v12
@@ -78,7 +78,7 @@ function f0 name="breakOuter" parameters=[{type=object}, {type=anything}] result
 # CHECK: LoopHint
 # CHECK-NEXT: = Call [[outerNext0]], [[outerIterator0]]
 # CHECK: frequency=Unlikely handler=[[outerLanding0]]():
-# CHECK-NEXT: [[innerObject0]]: object = Check {{*}} castType=object
+# CHECK-NEXT: [[innerObject0]]: object = Check {{*}} expectedType=object
 # CHECK-NEXT: = TypeTest [[innerObject0]] testedType=Array
 # CHECK: = Results [[arrayDone0]], [[arrayValue0]]
 # CHECK: Branch [[arrayDone0]] -> taken {{*}}, notTaken [[beforeArrayBody0]]()
@@ -138,7 +138,7 @@ function f1 name="largeOuterBody" parameters=[{type=object}, {type=anything}, {t
     v11 = Call v2, -, v10
     v12 = Call v2, -, v11
     v13 = Call v2, -, v12
-    v14 = Check v13 castType=object
+    v14 = Check v13 expectedType=object
     v15 = IteratorOpen v14
     Jump -> next b4()
   b4() handler=b11():

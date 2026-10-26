@@ -144,6 +144,7 @@ ALWAYS_INLINE void ModuleLinkWalk::append(ModuleID module, StepKind kind, bool r
 
 ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
     : m_root(root)
+    , m_linkEpoch(modules.linkEpoch())
 {
     struct Frame {
         uint32_t enter;
@@ -167,8 +168,6 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
     Vector<Frame, 64> path;
     auto record = [&](ModuleID module) ALWAYS_INLINE_LAMBDA {
         const ModuleData& moduleData = table.data(module);
-        if (!moduleData.needsLink())
-            return;
         if (linkFollowsRequestsOf(moduleData) && modules.status(module) == ModuleStatus::Unlinked) {
             path.append(Frame { static_cast<uint32_t>(m_steps.size()), moduleData.firstLinkRequest, table.endOfLinkRequests(module) });
             append(module, StepKind::Enter);
@@ -180,25 +179,45 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
             append(module, StepKind::IsUncompiled);
     };
 
+    if (modules.isSettledForLinks(root))
+        return;
     record(root);
     if (path.isEmpty())
         return;
 
     ModuleNumbers requests = table.allLinkRequests();
-    BitVector seen(table.size());
-    seen.quickSet(root.index());
+    // What was found to be settled when the walk began, and what the walk has come to: several modules of a graph request the same module.
+    Vector<uint64_t> passedOver;
+    std::span<const uint64_t> modulesPassedOver = modules.modulesSettledForLinks();
+    auto passOverFromNowOn = [&](ModuleID module) ALWAYS_INLINE_LAMBDA {
+        passedOver[module.index() / 64] |= 1ull << (module.index() % 64);
+    };
     while (!path.isEmpty()) {
         Frame& frame = path.last();
         uint32_t next = frame.nextRequest;
         uint32_t end = frame.endOfRequests;
         size_t depth = path.size();
-        while (next != end && path.size() == depth) {
+        while (true) {
+            // Most of what a root of a large program reaches was linked with an earlier graph.
+            next = static_cast<uint32_t>(requests.findFirstOutside(modulesPassedOver, next, end));
+            if (next == end)
+                break;
             ModuleID target(requests[next++]);
-            if (seen.quickSet(target.index()))
+            if (passedOver.isEmpty()) {
+                passedOver = modulesPassedOver;
+                modulesPassedOver = passedOver.span();
+                passOverFromNowOn(root);
+                if (target == root)
+                    continue;
+            }
+            passOverFromNowOn(target);
+            if (modules.isSettledForLinks(target))
                 continue;
             // record() may move the frames.
             path[depth - 1].nextRequest = next;
             record(target);
+            if (path.size() != depth)
+                break;
         }
         if (path.size() != depth)
             continue;
@@ -209,6 +228,50 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root)
         append(module, StepKind::Leave, !table.data(module).capturesExports() && (!table.requiredNames(module).empty() || !table.syntheticExports(module).empty()));
         path.removeLast();
     }
+}
+
+// What has no work left by now has a step that does nothing. A replay goes past a module that another link has linked since, or that has run since, and past all that the walk found below it: a walk made now
+// would find none of that if all of it is settled too.
+bool ModuleLinkWalk::bringUpToDate(const Modules& modules)
+{
+    if (m_linkEpoch != modules.linkEpoch())
+        return false;
+    if (hasPlan())
+        return modules.status(m_root) == ModuleStatus::Unlinked && (!m_memberOfCycle || modules.status(*m_memberOfCycle) == ModuleStatus::Unlinked);
+    std::span<Step> steps = m_steps.mutableSpan();
+    for (size_t index = 0; index < steps.size(); ++index) {
+        const Step& enter = steps[index];
+        if (static_cast<StepKind>(enter.kind) != StepKind::Enter || modules.status(ModuleID(enter.module)) == ModuleStatus::Unlinked)
+            continue;
+        if (!index)
+            return false;
+        size_t leave = enter.leave;
+        bool isFollowedByOwnCapture = static_cast<StepKind>(steps[index + 1].kind) == StepKind::CapturesExports && steps[index + 1].module == enter.module;
+        size_t firstBelow = index + 1 + isFollowedByOwnCapture;
+        for (const Step& below : steps.subspan(firstBelow, leave - firstBelow)) {
+            if (static_cast<StepKind>(below.kind) != StepKind::Leave && !modules.isSettledForLinks(ModuleID(below.module)))
+                return false;
+        }
+        if (isFollowedByOwnCapture)
+            std::swap(steps[index], steps[index + 1]);
+        index = leave;
+    }
+    return true;
+}
+
+// A module that follows requests is never unlinked again. One that captures exports has work until it is evaluated and its importers read what was captured last.
+bool Modules::checkIsSettledForLinks(ModuleID module) const
+{
+    const ModuleData& moduleData = data(module);
+    bool isSettled = !moduleData.needsLink();
+    if (!isSettled && moduleData.capturesExports()) {
+        LoadedModule* loaded = status(module) == ModuleStatus::Evaluated ? loadedIfExists(module) : nullptr;
+        isSettled = loaded && (loaded->capturedExports || loaded->capturedFields) && !loaded->bindsEarlierCapture;
+    } else if (!isSettled)
+        isSettled = !moduleData.isUncompiledCode() && status(module) != ModuleStatus::Unlinked;
+    if (isSettled)
+        m_modulesSettledForLinks[module.index() / 64] |= 1ull << (module.index() % 64);
+    return isSettled;
 }
 
 // JavaScriptCore's loader creates a module of the run time when it fetches it, in an earlier job than the one that links and evaluates the importing graph.
@@ -263,7 +326,11 @@ void Modules::link(const ModuleLinkWalk& walk)
 
 void Modules::captureSyntheticExports(ModuleID root, VisitedModuleRecords& visited)
 {
-    captureSyntheticExports(ModuleLinkWalk(*this, root), visited);
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    std::unique_ptr<ModuleLinkWalk> walk = takeLinkWalk(root);
+    captureSyntheticExports(*walk, visited);
+    RETURN_IF_EXCEPTION(scope, void());
+    keepLinkWalk(WTF::move(walk));
 }
 
 void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleRecords& visited)
@@ -295,6 +362,10 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
         return true;
     }, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
+            if (module != walk.root()) {
+                bindLatestCapture(module);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
             if (data(module).capturesExportsBehindEvaluation() && !resolvesNames)
                 captureExportsBehindEvaluation(module);
             else
@@ -322,7 +393,7 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
 
 void Modules::finishLink(ModuleID root, LinkContext& context)
 {
-    finishLink(ModuleLinkWalk(*this, root), context);
+    finishLink(*takeLinkWalk(root), context);
 }
 
 void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
@@ -334,18 +405,12 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
         return status(module) == ModuleStatus::Unlinked;
     };
 
-    std::optional<std::pair<ModuleID, uint32_t>> firstAbsentExport;
     Vector<ModuleID, 16> modulesThatResolveNames;
     bool didEnterRoot = walk.replay(scope, isUnlinked, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
             // Every CommonJS file of a graph runs before the graph fails for a name that one of them lacks: a module of the graph checks the names behind them.
-            if (data(module).capturesExportsBehindEvaluation())
-                return;
-            captureExports(module);
-            RETURN_IF_EXCEPTION(scope, void());
-            std::optional<uint32_t> absentName = ensureLoaded(module).firstAbsentExport;
-            if (absentName && !firstAbsentExport)
-                firstAbsentExport = std::pair { module, *absentName };
+            if (!data(module).capturesExportsBehindEvaluation())
+                captureExports(module);
             return;
         }
         AbstractModuleRecord* record = uncompiledRecord(module);
@@ -365,9 +430,6 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
     RETURN_IF_EXCEPTION(scope, void());
     if (!didEnterRoot)
         return;
-
-    if (firstAbsentExport)
-        RELEASE_AND_RETURN(scope, throwExportNotFound(firstAbsentExport->first, firstAbsentExport->second));
 
     checkRequiredNames(modulesThatResolveNames.span());
     RETURN_IF_EXCEPTION(scope, void());
@@ -490,6 +552,47 @@ void Modules::captureExports(ModuleID module)
     RELEASE_AND_RETURN(scope, fillCapturedExports(module));
 }
 
+// `bun run` makes a record of a file each time its loader comes to the file, with what the file exports at that moment, and the registry has the last one. The modules that are linked keep the bindings they have.
+void Modules::captureExportsAgain(ModuleID fileOrFace)
+{
+    ModuleID module = m_table.faceOfFile(fileOrFace).value_or(fileOrFace);
+    if (!isCommonJSFileOrFace(module) || !didCaptureExports(module))
+        return;
+    LoadedModule& loaded = ensureLoaded(module);
+    loaded.capturedExports.set(*this, nullptr);
+    loaded.deferredExportsSource.set(*this, nullptr);
+    loaded.capturedFields.set(*this, nullptr);
+    loaded.capturedStars.set(*this, nullptr);
+    loaded.sourceOfCapturedFields.set(*this, nullptr);
+    loaded.bindsEarlierCapture = true;
+    m_modulesSettledForLinks[module.index() / 64] &= ~(1ull << (module.index() % 64));
+    ++m_linkEpoch;
+    if (namespaceIfCreated(module, ModulePhase::Evaluation)) {
+        if (data(module).holdsNamespaceInValue())
+            m_modulesWithEarlierNamespaceInValue.set(module.index());
+        loaded.namespaceObject.set(*this, nullptr);
+    }
+    captureExports(module);
+}
+
+// All importers of a file read one variable for a name. A module that is linked now finds what the registry has.
+void Modules::bindLatestCapture(ModuleID module)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    LoadedModule* loaded = loadedIfExists(module);
+    if (!loaded || !loaded->bindsEarlierCapture) [[likely]]
+        return;
+    loaded->bindsEarlierCapture = false;
+    if (m_modulesWithEarlierNamespaceInValue.get(module.index())) {
+        JSObject* namespaceObject = moduleNamespace(module, ModulePhase::Evaluation);
+        RETURN_IF_EXCEPTION(scope, void());
+        m_modulesWithEarlierNamespaceInValue.clear(module.index());
+        setNamespace(module, ModulePhase::Evaluation, namespaceObject);
+        loaded->namespaceObject.set(*this, nullptr);
+    }
+    RELEASE_AND_RETURN(scope, fillCapturedExports(module));
+}
+
 // The host lists the own properties of what a CommonJS module exports and reads each of them: Bun's populateESMExports().
 bool Modules::tryCaptureFields(ModuleID module, JSValue value)
 {
@@ -601,36 +704,25 @@ void Modules::makeTableOfCapturedFields(LoadedModule& loaded)
     loaded.capturedExports.set(*this, captured);
 }
 
+// A name that the module turns out to lack fails the link of each module that binds it, and of no other: it stands among the names that such a module requires, or the module checks it behind the file.
 void Modules::fillCapturedExports(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     LoadedModule& loaded = ensureLoaded(module);
+    if (loaded.bindsEarlierCapture) [[unlikely]]
+        return;
 
     for (const SyntheticExportData& syntheticExport : m_table.syntheticExports(module)) {
-        const Identifier& name = identifier(syntheticExport.name);
         // Only a variable binds the name. Without one, a deferred export stays unread.
-        if (syntheticExport.hasVariable) {
-            if (syntheticExport.isBoundByRequiredName && isDeferredExport(loaded, name))
-                continue;
-            JSValue found = capturedValue(module, name);
-            RETURN_IF_EXCEPTION(scope, void());
-            if (found) {
-                ProgramStatics::writeVariable(m_instance, syntheticExport.variable, found);
-                continue;
-            }
-        } else {
-            bool hasExport = hasCapturedExport(module, name);
-            RETURN_IF_EXCEPTION(scope, void());
-            if (hasExport)
-                continue;
-        }
-        if (syntheticExport.absentIsUndefined) {
-            if (syntheticExport.hasVariable)
-                ProgramStatics::writeVariable(m_instance, syntheticExport.variable, jsUndefined());
+        if (!syntheticExport.hasVariable)
             continue;
-        }
-        if (!loaded.firstAbsentExport)
-            loaded.firstAbsentExport = static_cast<uint32_t>(syntheticExport.name);
+        const Identifier& name = identifier(syntheticExport.name);
+        if (syntheticExport.isBoundByRequiredName && isDeferredExport(loaded, name))
+            continue;
+        JSValue found = capturedValue(module, name);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (found || syntheticExport.absentIsUndefined)
+            ProgramStatics::writeVariable(m_instance, syntheticExport.variable, found ? found : jsUndefined());
     }
 }
 

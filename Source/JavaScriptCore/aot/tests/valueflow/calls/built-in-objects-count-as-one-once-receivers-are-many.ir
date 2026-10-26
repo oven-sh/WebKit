@@ -1,0 +1,44 @@
+# class B { toString() { this.x } }  function run(o) { o.toString() }  run(Math); run(JSON); run(Reflect); run(new B())
+# Four objects at the call where the analysis tells two apart: three objects of the table of built-ins and an instance. The objects of the table count as one and the instance is looked at by itself,
+# so nothing is lost: the method of the class sees the instance alone.
+# OPTIONS: limit=MaxValueFlowMembersToldApart:2
+# RUN: valueflow-why values=f3:v2 values=f2:v1
+# CHECK: values=f3:v2
+# CHECK: operand 1 {{*}} 4 members:
+# CHECK: values=f2:v1
+# CHECK: operand 0 {{*}} 1 members: [[b]]@f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="B" constructor=f1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="toString"
+    v4 = FinishClass v1 layout=L0
+    v5 = NewClosure function=f3
+    v6 = Builtin builtin=Math
+    v7 = Call v5, -, v6
+    v8 = Builtin builtin=JSON
+    v9 = Call v5, -, v8
+    v10 = Builtin builtin=Reflect
+    v11 = Call v5, -, v10
+    v12 = Construct v4
+    v13 = Call v5, -, v12
+    Return
+}
+function f1 name="B" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="toString" module=m0 kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return
+}
+function f3 name="run" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="toString"
+    v2 = Call v1, v0 calleeKey="toString"
+    Return
+}

@@ -741,7 +741,7 @@ void Heap::reconcileWeakReferencesAtGCEnd()
 
 #if ENABLE(AOT)
     if (vm().hasCompiledCode())
-        AOT::HeapHooks::finalize(vm(), collectionScope);
+        AOT::HeapHooks::finalize(vm(), collectionScope, m_collector->m_phaseVersion);
 #endif
 
     {
@@ -3202,9 +3202,17 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
 
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::ConservativeScan);
                 visitor.append(conservativeRoots);
+#if ENABLE(AOT)
+                if (vm().hasCompiledCode())
+                    AOT::HeapHooks::visitCalleesOfFrames(vm(), visitor, m_collector->m_phaseVersion);
+#endif
                 if (auto* verifierVisitor = m_collector->m_verifierSlotVisitor.get()) [[unlikely]] {
                     SetRootMarkReasonScope rootScope(*verifierVisitor, RootMarkReason::ConservativeScan);
                     verifierVisitor->append(conservativeRoots);
+#if ENABLE(AOT)
+                    if (vm().hasCompiledCode())
+                        AOT::HeapHooks::visitCalleesOfFrames(vm(), static_cast<AbstractSlotVisitor&>(*verifierVisitor), m_collector->m_phaseVersion);
+#endif
                 }
             }
 

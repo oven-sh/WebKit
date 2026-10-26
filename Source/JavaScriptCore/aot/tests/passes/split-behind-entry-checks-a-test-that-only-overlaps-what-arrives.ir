@@ -25,4 +25,4 @@ function f1 name="probe" module=m0 position=5 flags=[IsChecked] length=1 paramet
 # CHECK-LABEL: function f1 name="probe" module=m0 position=5 role=EntryChecks
 # CHECK: = TypeTest v0 testedType=i32
 # CHECK: name="probe" module=m0 position=5 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=i32 site=w0}]
-# CHECK: : int[1, 2147483647] = AssumeType v0 castType=int[1, 2147483647]
+# CHECK: : int[1, 2147483647] = AssumeType v0 provenType=int[1, 2147483647]

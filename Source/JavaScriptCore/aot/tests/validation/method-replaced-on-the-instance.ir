@@ -9,7 +9,7 @@
 # RUN: run-in-shell globalThis.register = (greetingOf, greeter) => { greeter.greet = () => "replaced"; print(greetingOf(greeter)); };
 # RUN(OTHER): run-in-shell globalThis.register = (greetingOf, greeter) => { greeter.other = () => "replaced"; print(greetingOf(greeter)); };
 # RUN(SAME): run-in-shell globalThis.register = (greetingOf, greeter) => { print(greetingOf(greeter)); };
-# OPTIONS: validate drop-guard=AreMembersUnchanged:0
+# OPTIONS: validate drop-guard=AreMembersUnchanged:0 heat=OnlyLoopsAreHot
 # IR: ValidateLookup [[receiver]], {{*}} key="greet"
 # IR: = CallDirect [[receiver]] function=f2
 # CHECK: AOT validation: LookupDiffers f

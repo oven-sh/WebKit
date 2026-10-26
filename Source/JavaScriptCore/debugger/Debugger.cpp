@@ -22,6 +22,7 @@
 #include "config.h"
 #include "Debugger.h"
 
+#include "AOTCompiledCaller.h"
 #include "AOTRemovableFeature.h"
 #include "CodeBlock.h"
 #include "DebuggerCallFrame.h"
@@ -926,7 +927,7 @@ void Debugger::breakProgram(RefPtr<Breakpoint>&& specialBreakpoint)
     if (m_isPaused || isPauseBlockedByAnotherDebugger())
         return;
 
-    if (!m_vm.topCallFrame)
+    if (!m_vm.topCallFrame || AOT::isTopFrameCompiled(m_vm))
         return;
 
     if (specialBreakpoint) {
@@ -989,7 +990,7 @@ void Debugger::stepOutOfFunction()
         return;
 
     EntryFrame* topEntryFrame = m_vm.topEntryFrame;
-    m_pauseOnCallFrame = m_currentCallFrame ? m_currentCallFrame->callerFrame(topEntryFrame) : nullptr;
+    m_pauseOnCallFrame = m_currentCallFrame ? m_currentCallFrame->callerFrameUnlessCompiled(m_vm, topEntryFrame) : nullptr;
     m_pauseOnStepOut = true;
     setSteppingMode(SteppingModeEnabled);
     m_doneProcessingDebuggerEvents = true;
@@ -1395,7 +1396,7 @@ NEVER_INLINE void Debugger::returnEvent(CallFrame* callFrame)
         return;
 
     EntryFrame* topEntryFrame = m_vm.topEntryFrame;
-    CallFrame* callerFrame = m_currentCallFrame->callerFrame(topEntryFrame);
+    CallFrame* callerFrame = m_currentCallFrame->callerFrameUnlessCompiled(m_vm, topEntryFrame);
 
     // Returning from a call, there was at least one expression on the statement we are returning to.
     m_pastFirstExpressionInStatement = true;
@@ -1421,7 +1422,7 @@ NEVER_INLINE void Debugger::unwindEvent(CallFrame* callFrame)
         return;
 
     EntryFrame* topEntryFrame = m_vm.topEntryFrame;
-    CallFrame* callerFrame = m_currentCallFrame->callerFrame(topEntryFrame);
+    CallFrame* callerFrame = m_currentCallFrame->callerFrameUnlessCompiled(m_vm, topEntryFrame);
 
     // Treat stepping over an exception location like a step-out.
     if (m_currentCallFrame == m_pauseOnCallFrame)
@@ -1453,7 +1454,7 @@ NEVER_INLINE void Debugger::didExecuteProgram(CallFrame* callFrame)
         return;
 
     EntryFrame* topEntryFrame = m_vm.topEntryFrame;
-    CallFrame* callerFrame = m_currentCallFrame->callerFrame(topEntryFrame);
+    CallFrame* callerFrame = m_currentCallFrame->callerFrameUnlessCompiled(m_vm, topEntryFrame);
 
     // Returning from a program, could be eval(), there was at least one expression on the statement we are returning to.
     m_pastFirstExpressionInStatement = true;

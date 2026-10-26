@@ -120,8 +120,12 @@ uint64_t limitHitsOf(VM& vm, LimitID limit)
 
 uint64_t runtimeLimitValue(VM& vm, LimitID limit)
 {
+    return runtimeLimitValue(vm.aotState().image, limit);
+}
+
+uint64_t runtimeLimitValue(const Image* image, LimitID limit)
+{
     uint64_t usual = defaultLimitValue(limit, hostArchitecture());
-    const Image* image = vm.aotState().image;
     return image ? valueWhenLowered(limit, usual, image->header().options.loweredLimit, image->header().options.loweredLimitValue) : usual;
 }
 
@@ -296,7 +300,7 @@ static String countedAsWord(StringView text)
 static std::optional<CompiledFrame> findAllocatingFrame(VM& vm, FunctionID constructor)
 {
     std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreateAtTop(vm);
-    if (!frames && vm.topCallFrame && isCallerCompiled(vm, vm.topCallFrame))
+    if (!frames && vm.topCallFrame && isCallerCompiled(vm, vm.topCallFrame, vm.topEntryFrame))
         frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, vm.topCallFrame, vm.topEntryFrame);
     if (!frames || frames->isAtEnd())
         return std::nullopt;

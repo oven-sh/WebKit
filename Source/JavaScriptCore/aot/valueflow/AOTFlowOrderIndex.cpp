@@ -153,28 +153,13 @@ static void collectAccesses(FlowScopeIndex& index)
     parallelSort(loops, index.moduleValueReads.mutableSpan(), std::less<FlowModuleValueRead>());
 }
 
-static bool canOwnVariables(ModuleKind kind)
-{
-    switch (kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::Data:
-    case ModuleKind::RuntimeSource:
-        return true;
-    case ModuleKind::Runtime:
-    case ModuleKind::External:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static FunctionID moduleBodyOwnerOf(const FlowScopeIndex& index, ModuleID moduleID)
 {
     const Program& program = index.program();
     if (!moduleID || moduleID.index() >= program.modules.size() || !index.inputs.evaluatedModules.get(moduleID.index()))
         return { };
     const Module& module = program.at(moduleID);
-    if (!canOwnVariables(module.kind) || !module.body || !index.bodies.quickGet(module.body.index()))
+    if (!canOwnVariablesOf(module.kind) || !module.body || !index.bodies.quickGet(module.body.index()))
         return { };
     ModuleID file = program.at(module.body).module;
     if (index.modulesOfFunctionsEnteredWithoutMention.quickGet(moduleID.index()) || (file && index.modulesOfFunctionsEnteredWithoutMention.quickGet(file.index())))

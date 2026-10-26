@@ -21,7 +21,7 @@ function f2 name="caller" parameters=[{type=anything}, {type=anything}] results=
 }
 
 function f3 name="markedSite" parameters=[{type=number}] results=[{type=number}] {
-    v1 = CallDirect v0 function=f0 [isDemotedTailCall] @9
+    v1 = CallDirect v0 function=f0 @9 tail
     Return v1
 # CHECK: inlineFrames=[{}, {callee=f0 callPosition=9 isTailCall=true module=m0}] {
 # CHECK-NOT: CallDirect
@@ -41,7 +41,7 @@ function f5 name="tailCallOfCopiedBody" parameters=[{type=anything}, {type=anyth
     Return v3
 # CHECK: inlineFrames=[{}, {callee=f1 callPosition=10 module=m0}] {
 # CHECK-NOT: ReturnCall
-# CHECK: anything = Call v0, -, v1 [isDemotedTailCall] @5:1
+# CHECK: anything = Call v0, -, v1 @5:1 tail
 # CHECK-NOT: ReturnCall
 }
 
@@ -49,16 +49,16 @@ function f6 name="ordinaryCallOfCopiedBody" parameters=[{type=anything}, {type=a
     v2 = CallDirect v0, v1 function=f2 @10
     v3 = Add v2, v2 @11
     Return v3
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: = {{*}}@{{*}} tail
 # CHECK: anything = Call v0, -, v1 @6:1
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: = {{*}}@{{*}} tail
 }
 
 function f7 name="tailCallOfBodyCopiedToTailSite" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v2 = CallDirect v0, v1 function=f1 @10
     ReturnCall v2
 # CHECK: inlineFrames=[{}, {callee=f1 callPosition=10 isTailCall=true module=m0}] {
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: = {{*}}@{{*}} tail
 # CHECK: [[tail7]]: anything = Call v0, -, v1 @5:1
 # CHECK-NEXT: ReturnCall [[tail7]]
 }

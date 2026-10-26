@@ -38,3 +38,31 @@ function f4 name="proxy" parameters=[{type=Proxy|Array}] results=[{type=boolean}
 # CHECK-NOT: TypeTest
 # CHECK: = CallBuiltin -, v0 overload=ArrayIsArray/0
 }
+
+function f5 name="anyFunction" parameters=[{type=function}] results=[{type=boolean}] {
+    v1 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    Return v1
+# CHECK-NOT: TypeTest
+# CHECK: = CallBuiltin -, v0 overload=ArrayIsArray/0
+}
+
+function f6 name="anyFunctionOrList" parameters=[{type=function|Array}] results=[{type=boolean}] {
+    v1 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    Return v1
+# CHECK-NOT: TypeTest
+# CHECK: = CallBuiltin -, v0 overload=ArrayIsArray/0
+}
+
+function f7 name="functionOfTheProgramOrList" parameters=[{type=Array|f0}] results=[{type=boolean}] {
+    v1 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    Return v1
+# CHECK-NOT: CallBuiltin
+# CHECK: = TypeTest v0 testedType=Array
+}
+
+function f8 name="memberWithoutLayout" parameters=[{type=string|nolayout}] results=[{type=boolean}] {
+    v1 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    Return v1
+# CHECK-NOT: TypeTest
+# CHECK: = CallBuiltin -, v0 overload=ArrayIsArray/0
+}

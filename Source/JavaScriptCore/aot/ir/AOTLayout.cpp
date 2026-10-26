@@ -122,7 +122,7 @@ bool slotTakesEveryValue(const Program& program, const Field& field)
 {
     if (field.form.contains(FieldForm::IsAccessor) || field.flags.contains(FieldFlags::IsEnforced) || field.flow.location.deferral != ClosureDeferral::Unknown)
         return false;
-    return field.declared.flags.contains(PositionFlags::IsExpected) && slotTypeOf(program, field) == TypeTable::anything;
+    return field.declared.isExpected() && slotTypeOf(program, field) == TypeTable::anything;
 }
 
 bool staysInSlot(const Program& program, FieldReference reference)
@@ -391,7 +391,7 @@ public:
     void collect();
 
 private:
-    bool namesLayouts(const DeclaredType& declared) const { return m_typesWithLayouts.quickGet(declared.type.index()); }
+    bool namesLayouts(const DeclaredType& declared) const { return m_typesWithLayouts.quickGet(declared.written().index()); }
     bool isResultOfCall(ValueID) const;
     void addConversionOfResult(const DeclaredType&);
     void addTailCasts(const Terminator&);
@@ -421,7 +421,7 @@ void LayoutUsesOfBody::addConversionOfResult(const DeclaredType& declared)
 {
     bool isResultTypeOfCallee = declared.site && m_program.at(declared.site).kind == TypeSiteKind::CallResult;
     if (!isResultTypeOfCallee)
-        m_uses.typesOfConvertedResults.quickSet(declared.type.index());
+        m_uses.typesOfConvertedResults.quickSet(declared.written().index());
 }
 
 void LayoutUsesOfBody::addTailCasts(const Terminator& terminator)
@@ -540,7 +540,7 @@ static void nameLayoutsOfConvertedResults(const Program& program, const BitVecto
                 continue;
             uses.name(member);
             for (const Field& field : layout.fields)
-                visit(field.declared.type);
+                visit(field.declared.written());
         }
     }
 }

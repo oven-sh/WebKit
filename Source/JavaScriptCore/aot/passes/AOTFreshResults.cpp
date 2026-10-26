@@ -37,47 +37,13 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(defaultLimitValue(LimitID::MaxVirtualObjectVariants, Architecture::ARM64) <= maxTagBitsInInt32);
 static_assert(defaultLimitValue(LimitID::MaxVirtualObjectVariants, Architecture::X86_64) <= maxTagBitsInInt32);
 
-static bool isWrapperOrWorker(FunctionRole role)
-{
-    switch (role) {
-    case FunctionRole::AsyncWorker:
-    case FunctionRole::ResultWrapper:
-    case FunctionRole::ResultWorker:
-    case FunctionRole::ParameterWrapper:
-    case FunctionRole::EntryChecks:
-        return true;
-    case FunctionRole::Source:
-    case FunctionRole::Library:
-    case FunctionRole::Model:
-    case FunctionRole::Signature:
-    case FunctionRole::GenericEntrypoint:
-    case FunctionRole::TableEntrypoint:
-    case FunctionRole::TableLookup:
-    case FunctionRole::GenericVersion:
-    case FunctionRole::AllocatedThisVersion:
-    case FunctionRole::ConstructBody:
-    case FunctionRole::CallSiteVersion:
-    case FunctionRole::CalleeVersion:
-    case FunctionRole::CoroutineRamp:
-    case FunctionRole::CoroutineBody:
-    case FunctionRole::BoundFunction:
-    case FunctionRole::OutlinedBody:
-    case FunctionRole::Serializer:
-    case FunctionRole::Parser:
-    case FunctionRole::ChainStep:
-    case FunctionRole::StubBody:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static bool canReturnParts(const Function& function)
 {
     if (!function.hasBody() || !function.mayChangeSignature() || !function.mayBeCloned() || !function.hasOrdinaryFrame())
         return false;
     if (function.results.size() != 1 || function.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest }))
         return false;
-    if (isWrapperOrWorker(function.role))
+    if (isWrapperOrWorkerOf(function.role))
         return false;
     // A construction by value names the function itself, and is resolved only while that is no wrapper. The body that a resolved construction calls is split like any other.
     if (function.role == FunctionRole::Source && function.constructedClass)
@@ -322,6 +288,7 @@ bool FreshResultVariant::buildsSameValueAs(const FreshResultVariant& other) cons
     return kind == other.kind
         && constant == other.constant
         && description.kind == other.description.kind
+        && description.elementType == other.description.elementType
         && prototype.opcode == other.prototype.opcode
         && haveSamePayloadButForPlace(prototype, other.prototype)
         && length == other.length
@@ -416,9 +383,12 @@ void ObjectInterpreter::returnVariant(uint32_t resultVariant, VirtualObjectID ob
 
     auto returnFields = [&](std::span<const FreshResultField> entries) {
         for (const FreshResultField& entry : entries) {
-            std::optional<uint32_t> field = m_sinking.familyOf(object).findField(entry.field);
+            const VirtualFamily& family = m_sinking.familyOf(object);
+            std::optional<uint32_t> field = family.findField(entry.field);
             RELEASE_ASSERT(field && shape && hasStored(*shape, *field));
-            operands[resultShape.resultOfPart(entry.part)] = valueOfField(object, *field);
+            // Where lists meet, an element is carried with a type that takes in the elements of all of them. The list that is made of the parts is born with the storage that fits their types.
+            bool isElement = entry.field.kind == VirtualFieldKind::Element;
+            operands[resultShape.resultOfPart(entry.part)] = isElement ? valueOfField(object, *field, typeOfField(m_sinking.objectContext(), family.descriptionOf(*shape), entry.field)) : valueOfField(object, *field);
         }
     };
     returnFields(variant.properties.span());
@@ -483,7 +453,7 @@ static void refinePartTypes(Function& worker, FreshResultShape& shape, TypeArena
             operand.type = refined;
         }
         shape.partTypes[part] = refined;
-        worker.results[result].type = refined;
+        worker.results[result].changeType(Proven::byConstruction(refined));
     }
 }
 
@@ -507,12 +477,12 @@ static std::optional<FreshResultShape> tryReturnParts(const AnalysisContext& con
 
         worker.results.clear();
         if (shape.hasTag())
-            worker.results.append(DeclaredType { .type = TypeTable::int32 });
+            worker.results.append(DeclaredType(Proven::byPosition(TypeTable::int32)));
         for (TypeID type : shape.partTypes)
-            worker.results.append(DeclaredType { .type = type });
+            worker.results.append(DeclaredType(Proven::byPosition(type)));
         // A function has at least one result. The worker of an aggregate without parts, such as {}, returns undefined.
         if (worker.results.isEmpty())
-            worker.results.append(DeclaredType { .type = TypeTable::undefined });
+            worker.results.append(DeclaredType(Proven::byPosition(TypeTable::undefined)));
 
         sinking.rewrite(builder, &shape);
         sinking.countStatistics();
@@ -557,7 +527,7 @@ static ValueID assumeDeclaredType(IRBuilder& builder, ValueID value, TypeID decl
         return value;
     if (builder.context().build.validates())
         builder.append(makeValidateType(value, declared));
-    return builder.append(makeAssumeType(value, declared));
+    return builder.append(makeAssumeType(value, Proven::byPosition(declared)));
 }
 
 static ValueID appendRebuiltVariant(IRBuilder& builder, const FreshResultShape& shape, const FreshResultVariant& variant, std::span<const ValueID> results)
@@ -646,7 +616,6 @@ static ValueID appendRebuiltResult(IRBuilder& builder, const FreshResultShape& s
 
 static Function createResultWrapper(const AnalysisContext& context, FunctionID worker, const Function& original, const FreshResultShape& shape, TypeArena& types)
 {
-    constexpr OptionSet<FunctionCapabilities> capabilitiesWorkersInherit { FunctionCapabilities::HasOnlyDirectCallers, FunctionCapabilities::IsNeverCalledByHost };
     RELEASE_ASSERT(canReturnParts(original));
 
     bool mayBeUndefined = false;
@@ -669,7 +638,7 @@ static Function createResultWrapper(const AnalysisContext& context, FunctionID w
     wrapper.inlineFrames.clear();
     wrapper.role = FunctionRole::ResultWrapper;
     wrapper.creator = CreatorRecord::ResultWrapper { .worker = worker, .nullish = nullish, .layout = numberOfVariantsWithLayout == 1 ? layout : LayoutID() };
-    wrapper.capabilities = (initialCapabilitiesOf(wrapper) - capabilitiesWorkersInherit) | (original.capabilities & capabilitiesWorkersInherit);
+    wrapper.capabilities = capabilitiesInPlaceOf(wrapper, original.capabilities, { FunctionCapabilities::RecordsCallee, FunctionCapabilities::RecordsCalleeOnceRenamed });
 
     IRBuilder builder(context, wrapper, types);
     builder.setOrigin({ original.position, 0 });

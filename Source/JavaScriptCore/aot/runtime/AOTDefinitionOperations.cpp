@@ -13,6 +13,7 @@
 #include "AOTClosure.h"
 #include "AOTCompiledCallee.h"
 #include "AOTFunctionNames.h"
+#include "AOTFunctionTables.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
@@ -364,7 +365,13 @@ static void defineAccessor(JSGlobalObject* globalObject, JSObject* object, Prope
 
 static void defineAccessor(JSGlobalObject* globalObject, JSObject* object, JSValue key, JSValue function, uint32_t accessorFlags)
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (Object* compiled = compiledObjectOrNull(object)) {
+        std::array<EncodedJSValue, 2> keyAndFunction { JSValue::encode(key), JSValue::encode(function) };
+        if (compiled->tryDefineAccessorsOfLiteral(vm, globalObject, keyAndFunction, !!(accessorFlags & accessorIsGetter), !!(accessorFlags & accessorIsEnumerable)))
+            return;
+    }
     auto property = key.toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
     scope.release();
@@ -390,7 +397,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineAccessors, void, (Instance* instance,
         crashOnWrongOperand(entry);
     auto accessors = spanReinterpretCast<const DefinedAccessor>(unsafeMakeSpan(keysAndFunctions, count * wordsPerAccessor));
     Object* compiledObject = compiledObjectOrNull(object);
-    if (compiledObject && getters == (count == maskWidth ? UINT32_MAX : (1u << count) - 1) && compiledObject->tryDefineGettersOfLiteral(vm, globalObject, unsafeMakeSpan(keysAndFunctions, count * wordsPerAccessor), enumerable))
+    if (compiledObject && compiledObject->tryDefineAccessorsOfLiteral(vm, globalObject, unsafeMakeSpan(keysAndFunctions, count * wordsPerAccessor), getters, enumerable))
         OPERATION_RETURN(scope);
     for (uint32_t index = 0; index < count; ++index) {
         const DefinedAccessor& accessor = accessors[index];
@@ -646,6 +653,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryReExportFields, size_t, (Instan
     if (!target.isObject() || !source.isObject())
         OPERATION_RETURN(scope, 0);
     OPERATION_RETURN(scope, static_cast<size_t>(tryReExportFields(instance, asObject(target), asObject(source), FunctionID(getter), rule)));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRecordCallee, void, (Instance* instance, JSCell* closure))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTRecordCallee);
+    recordCallee(vm, asObject(closure));
+    instance->heap.recordedCallees = FunctionTables::recordedCalleesOf(&FunctionTables::of(vm));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSetFunctionName, void, (Instance* instance, JSCell* cell, EncodedJSValue encodedName, uint32_t methodKind))

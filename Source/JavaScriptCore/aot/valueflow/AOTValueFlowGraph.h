@@ -48,6 +48,7 @@ public:
     size_t numberOfEdges() const { return m_numberOfEdges; }
     std::span<const ValueSetID> values() const LIFETIME_BOUND { return m_value.first(m_numberOfNodes); }
     ValueSetID valueOf(ValueFlowNodeID node) const { return m_value[node.index()]; }
+    void replaceValueAfterSolving(ValueFlowNodeID node, ValueSetID value) { m_value[node.index()] = value; }
     ValueSetID maskOf(ValueFlowNodeID node) const { return m_masks[m_gates[node.index()].mask].admitted; }
     ValueFlowMaskKind maskKindOf(ValueFlowNodeID node) const { return m_masks[m_gates[node.index()].mask].kind; }
     ValueSetID familyObjectsOf(ValueFlowNodeID node) const { return m_masks[m_gates[node.index()].mask].familyObjects; }
@@ -76,6 +77,8 @@ public:
     void setPlaceholders(const ValueFlowPlaceholders& placeholders) { m_placeholders = placeholders; }
     void retireNodesCoveredBy(ValueFlowObjectID placeholder, ValueFlowNodeID covered, ValueSetID whole, ValueSetID coverable);
     using IsMadeForPlaceholder = bool (*)(const void* context, ValueFlowNodeID);
+    // A retired node lists no more of what arrives at it. `taking` gets what is carried to it whether that arrives before a node on the way is retired or after: all but what comes out of a covered node or a node made for a placeholder.
+    void handOnWhatArrivesAtRetiredNodesTo(ValueFlowNodeID taking, IsMadeForPlaceholder, const void* context);
     void keepOutOfNodesMadeForPlaceholders(ValueSetID keptOut, ValueFlowNodeID covered, IsMadeForPlaceholder, const void* context);
     bool isRetired(ValueFlowNodeID node) const { return node.index() < m_numberOfNodes && (m_gates[node.index()].flags & IsRetired); }
     struct StoppedPlaceholder {
@@ -170,10 +173,12 @@ public:
 
     enum class Predecessors : bool { AreReleased, AreKept };
     void releaseSolvingState(Predecessors);
+    void removeFromEveryNode(std::initializer_list<ValueFlowObjectID> lowMembers);
     void releaseRows();
 
     const Counters& counters() const { return m_counters; }
-    size_t memoryInBytes() const;
+    void addBytesTo(ValueFlowBytesByTable&) const;
+    void giveBackMostRoomOfListsOfOneRound();
 
 private:
     class Team;
@@ -260,6 +265,7 @@ private:
         bool add(ValueFlowEdge);
         bool contains(ValueFlowEdge) const;
         void prefetch(ValueFlowEdge) const;
+        size_t bytesInUse() const { return m_size * sizeof(uint64_t); }
         size_t memoryInBytes() const { return m_slots.sizeInBytes(); }
 
     private:
@@ -282,6 +288,10 @@ private:
 
     struct Covering {
         ValueFlowObjectID placeholder;
+        bool isFirstOfPlaceholder { true };
+        bool retiresNoNodeByItself { false };
+        IsMadeForPlaceholder isMadeForPlaceholder { nullptr };
+        const void* contextOfIsMadeForPlaceholder { nullptr };
         uint32_t covered { 0 };
         uint64_t lowMembersOfWhole { 0 };
         ValueSetID listedMembersOfWhole;
@@ -353,6 +363,7 @@ private:
     void evaluateAll(Arrivals&, Worker&, NOESCAPE const Invocable<void(const Message&)> auto& leave);
     void runWave(Team&);
     void giveBackLargeBuffers();
+    static void forEachListOfOneRound(auto& graph, NOESCAPE const auto& functor);
 
     ALWAYS_INLINE void willUse(uint32_t node) const
     {
@@ -380,6 +391,8 @@ private:
     bool retiredNodeTakesAnyOf(uint32_t node, uint64_t low, uint32_t set) const;
     void connectPredecessorsOfRetiredNodes(Team&);
     void connectStraightToCoveredNode(Covering&, uint32_t node);
+    bool isRetiredUnderNearerCovering(const Covering&, uint32_t node) const;
+    bool isFollowedBackThrough(const Covering& covering, uint32_t node) const { return !covering.retiresNoNodeByItself || (!(m_gates[node].flags & IsCoveredNode) && !covering.isMadeForPlaceholder(covering.contextOfIsMadeForPlaceholder, ValueFlowNodeID(node))); }
     void markNodesFlowingIntoCoveredNodes(Team*, std::span<const ValueFlowEdge> added);
     void findIndices(Team*, size_t count, Vector<uint32_t>& found, NOESCAPE const Invocable<bool(size_t)> auto& matches);
 
@@ -437,7 +450,6 @@ private:
     bool m_hasSolved { false };
     bool m_hasReleasedSolvingState { false };
     bool m_keepsPredecessors { false };
-    size_t m_memoryInBytesBeforeRelease { 0 };
 
     Vector<std::unique_ptr<Worker>> m_workers;
     Vector<Vector<uint32_t>> m_foundInShare;

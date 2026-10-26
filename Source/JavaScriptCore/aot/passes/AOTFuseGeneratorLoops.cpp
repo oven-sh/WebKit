@@ -267,8 +267,13 @@ static GeneratorFusionDeclineReason findMergeObstacle(FunctionPassContext& pass,
             return GeneratorFusionDeclineReason::Unknown;
     }
     Origin origin = originOfSteps(pass.program, pass.function, candidate);
+    // A step that returns runs code of the body only where a yield stands in a try statement.
+    const Function& body = bodyAnalyses.function();
+    bool returnStepRunsBody = std::ranges::any_of(bodyAnalyses.cfg().reversePostOrder(), [&](BlockID block) {
+        return body.at(block).handler && std::ranges::any_of(body.at(block).values, [&](ValueID id) { return isYield(body, id); });
+    });
     bool isRunFromOnePlace = std::ranges::all_of(candidate.sites.subspan(startSite + 1), [&](const GeneratorStepSite& site) {
-        return site.mode == ResumeMode::Return || visibleOriginOf(pass.program, pass.function, site.step) == origin;
+        return (site.mode == ResumeMode::Return && !returnStepRunsBody) || visibleOriginOf(pass.program, pass.function, site.step) == origin;
     });
     if (!isRunFromOnePlace && mayHaveItsCallersListed(bodyAnalyses, candidate))
         return GeneratorFusionDeclineReason::Unknown;

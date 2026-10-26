@@ -53,7 +53,7 @@ function f5 name="noElement" parameters=[{type=string}] results=[{type=string}] 
 
 function f6 name="throughAssumedType" parameters=[{type=string}, {type=string}] results=[{type=string}] {
     v2 = NewArray v0, v0 contents=string
-    v3 = AssumeType v2 castType=Array<string, proven, pristine[Storage, Names]>
+    v3 = AssumeType v2 provenType=Array<string, proven, pristine[Storage, Names]>
     v4 = CallBuiltin v3, v1 overload=ArrayPrototypeJoin/0
     Return v4
 # CHECK: v4: string = Strcat v0, v1, v0

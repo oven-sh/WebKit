@@ -63,7 +63,7 @@ struct WasmFrameData {
 #if ENABLE(AOT)
 struct CompiledFrameData {
     AOT::TraceFrame frame;
-    bool isAsyncFrame { false };
+    WriteBarrier<JSCell> callee;
 };
 static_assert(sizeof(CompiledFrameData) <= sizeof(JSFrameData) && std::is_trivially_copyable_v<CompiledFrameData>);
 #endif
@@ -89,9 +89,11 @@ public:
 
 #if ENABLE(AOT)
     explicit StackFrame(const AOT::TraceFrame& frame, bool isAsyncFrame = false)
-        : m_frameData(CompiledFrameData { frame, isAsyncFrame })
+        : m_frameData(CompiledFrameData { frame, { } })
     {
+        std::get<CompiledFrameData>(m_frameData).frame.isAsyncFrame = isAsyncFrame;
     }
+    StackFrame(VM&, JSCell* owner, const AOT::TraceFrame&, JSCell* callee);
     static void appendCompiledFrames(const AOT::ReturnAddressTrace&, Vector<StackFrame>&);
     const AOT::TraceFrame& compiledFrame() const { return std::get<CompiledFrameData>(m_frameData).frame; }
     JS_EXPORT_PRIVATE std::optional<AOT::SourcePosition> compiledPosition() const;
@@ -124,6 +126,10 @@ public:
     {
         if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
             return jsFrame->callee.get();
+#if ENABLE(AOT)
+        if (auto* compiledFrame = std::get_if<CompiledFrameData>(&m_frameData))
+            return compiledFrame->callee.get();
+#endif
         return nullptr;
     }
 
@@ -145,7 +151,7 @@ public:
             return jsFrame->m_isAsyncFrame;
 #if ENABLE(AOT)
         if (auto* compiledFrame = std::get_if<CompiledFrameData>(&m_frameData))
-            return compiledFrame->isAsyncFrame;
+            return compiledFrame->frame.isAsyncFrame;
 #endif
         return false;
     }
@@ -157,7 +163,7 @@ public:
             return jsFrame->m_isAsyncFrame && !codeBlock();
 #if ENABLE(AOT)
         if (auto* compiledFrame = std::get_if<CompiledFrameData>(&m_frameData))
-            return compiledFrame->isAsyncFrame && representsHostFunction();
+            return compiledFrame->frame.isAsyncFrame && representsHostFunction();
 #endif
         return false;
     }
@@ -168,6 +174,7 @@ public:
     JS_EXPORT_PRIVATE String sourceURL(VM&, AllowURLOverride = AllowURLOverride::Yes) const;
     String sourceURLStripped(VM&) const;
     String toString(VM&) const;
+    void appendTo(VM&, StringBuilder&) const;
 
     bool hasBytecodeIndex() const;
     BytecodeIndex bytecodeIndex() const;
@@ -178,6 +185,8 @@ public:
     bool isMarked(VM&) const;
 
 private:
+    template<typename Functor> auto withPartsOfString(VM&, const Functor&) const;
+
     FrameData m_frameData { JSFrameData {} };
 };
 static_assert(sizeof(StackFrame) == 32);

@@ -156,7 +156,8 @@ void IRPrinter::print(PropertyKeyID id)
         print(key.text);
         return;
     case PropertyKeyKind::EnginePrivateName:
-        m_out.print("@"_s);
+    case PropertyKeyKind::ModulePrivateName:
+        m_out.print(key.kind == PropertyKeyKind::ModulePrivateName ? "@#"_s : "@"_s);
         print(key.text);
         return;
     case PropertyKeyKind::PrivateName:

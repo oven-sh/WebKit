@@ -226,8 +226,11 @@ static void forEachDescribedSite(const Program& program, const Value& value, con
         return;
     }
     AccessSiteID stampedSite = PayloadWord::accessSite(value.opcode) ? value.accessSite() : AccessSiteID();
+    AccessSiteID secondSite = PayloadWord::secondAccessSite(value.opcode) ? value.secondAccessSite() : AccessSiteID();
     forEachAccessSite(value, [&](AccessSiteID site) {
-        functor(site, site == stampedSite ? access : AccessDescription { .accessClass = access.accessClass });
+        if (site == stampedSite)
+            return functor(site, access);
+        functor(site, AccessDescription { .accessClass = access.accessClass, .key = secondSite && site == secondSite ? value.secondKey() : PropertyKeyID() });
     });
 }
 
@@ -615,7 +618,7 @@ static FlowSiteLoss lossBelowProven(const Program& program, const FlowResults& f
     if (hasFunction(loss.witness) && !hasModule(loss.witness.location))
         loss.witness.location = program.at(FunctionID(loss.witness.function)).declarationLocation();
     if (!hasFunction(loss.witness) || !hasModule(loss.witness.location))
-        loss.witness = { flow.at(site).function.index(), Wire::none, flow.at(site).location };
+        loss.witness = { flow.at(site).function.index(), Wire::none, flow.writtenLocationOf(site) };
     loss.witness.function = findFunctionAsRead(&program, FunctionID(loss.witness.function)).index();
     return loss;
 }
@@ -754,6 +757,7 @@ Vector<Wire::AccessRecord> buildAccessRecords(const Program& program, const Flow
 {
     struct SiteRecord {
         Wire::AccessRecord record;
+        PropertyKeyID key;
         bool isInGenericVersion { false };
     };
     const ParallelLoops& loops = build.parallelLoops();
@@ -767,7 +771,7 @@ Vector<Wire::AccessRecord> buildAccessRecords(const Program& program, const Flow
         if (!isCall && !level.copies)
             return;
         found.append(SiteRecord { {
-            .location = access.location,
+            .location = flow.writtenLocationOf(site),
             .kind = access.kind,
             .level = level.level,
             .layout = findLayoutAsRead(&program, level.layout).index(),
@@ -776,25 +780,29 @@ Vector<Wire::AccessRecord> buildAccessRecords(const Program& program, const Flow
             .function = findFunctionAsRead(&program, access.function).index(),
             .cost = level.cost,
             .heat = level.heat,
-        }, program.at(access.function).role == FunctionRole::GenericVersion });
+        }, level.key, program.at(access.function).role == FunctionRole::GenericVersion });
         fillLoss(found.last().record, level.level != KnowledgeLevel::Proven || level.cost != AccessCost::Free ? lossBelowProven(program, flow, build, site, level) : FlowSiteLoss { });
     });
 
-    auto orderKey = [](const Wire::AccessRecord& record) {
+    auto orderKey = [](const SiteRecord& site) {
+        const Wire::AccessRecord& record = site.record;
         return std::tuple {
-            record.location.module, record.location.position, record.kind, rankOf(record.level), record.cause,
+            record.location.module, record.location.position, record.kind, !site.key, site.key.index(), rankOf(record.level), record.cause,
             record.witness.function, record.witness.value, record.function, record.layout, record.limit, record.illTypedCause,
         };
     };
     parallelSort(loops, sites.mutableSpan(), [&](const SiteRecord& a, const SiteRecord& b) {
-        return orderKey(a.record) < orderKey(b.record);
+        return orderKey(a) < orderKey(b);
     });
 
+    // One place may hold accesses to several names.
     Vector<Wire::AccessRecord> records;
+    PropertyKeyID keyOfLastRecord;
     bool costIsOfGenericVersion = false;
     for (const SiteRecord& site : sites) {
-        if (records.isEmpty() || records.last().location != site.record.location || records.last().kind != site.record.kind) {
+        if (records.isEmpty() || records.last().location != site.record.location || records.last().kind != site.record.kind || keyOfLastRecord != site.key) {
             records.append(site.record);
+            keyOfLastRecord = site.key;
             costIsOfGenericVersion = site.isInGenericVersion;
             continue;
         }

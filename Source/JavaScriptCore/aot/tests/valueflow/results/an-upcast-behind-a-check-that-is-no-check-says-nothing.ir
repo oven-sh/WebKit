@@ -6,12 +6,12 @@
 # An Upcast tests nothing. One that is typed from such a check, through the edge of a branch or through a join, says nothing any more: what goes in comes out.
 # RUN: valueflow-apply
 # CHECK-LABEL: function f1 name="alone"
-# CHECK: = AssumeType v0 castType=undefined|null|Object
+# CHECK: = AssumeType v0 provenType=undefined|null|Object
 # CHECK: b2([[there]]: undefined|Object):
 # CHECK-NEXT: [[alone]]: undefined|Object = Upcast [[there]] castType=anything|absent
 # CHECK-NEXT: = PropGet [[alone]] key="missing"
 # CHECK-LABEL: function f2 name="either"
-# CHECK: = AssumeType v1 castType=undefined|null|Object
+# CHECK: = AssumeType v1 provenType=undefined|null|Object
 # CHECK: b5([[one]]: undefined|L1|Object {{*}}):
 # CHECK-NEXT: [[either]]: undefined|L1|Object {{*}}= Upcast [[one]] castType=anything|absent
 # CHECK-NEXT: = PropGet [[either]] key="x"
@@ -37,7 +37,7 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
 }
 function f1 name="alone" module=m0 results=[{type=anything}] {
     v0 = GetModuleVariable variable=g0
-    v1 = Check v0 castType=null|L0
+    v1 = Check v0 expectedType=null|L0
     v2 = TypeTest v1 testedType=null
     Branch v2 -> taken b1(| 0), notTaken b2(| 0)
   b1(v3):
@@ -51,7 +51,7 @@ function f1 name="alone" module=m0 results=[{type=anything}] {
 function f2 name="either" module=m0 parameters=[{type=boolean}] results=[{type=anything}] {
   b0(v0):
     v1 = GetModuleVariable variable=g0
-    v2 = Check v1 castType=null|L0
+    v2 = Check v1 expectedType=null|L0
     v3 = TypeTest v2 testedType=null
     Branch v3 -> taken b1(| 0), notTaken b2(| 0)
   b1(v4):

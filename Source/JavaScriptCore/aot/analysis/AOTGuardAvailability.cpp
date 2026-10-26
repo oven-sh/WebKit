@@ -77,6 +77,7 @@ struct WrittenLocations {
     WriteExtent extent { WriteExtent::None };
     EdgeKind edge { EdgeKind::Normal };
     LocationMasks written;
+    bool isLeftByPropertiesBesideFields { false };
     std::optional<bool> mayWriteBeyondOperands;
     std::optional<Vector<ValueID, 4>> operandsWrittenThrough;
 };
@@ -99,6 +100,7 @@ public:
     {
         WrittenLocations result;
         result.edge = edge;
+        result.isLeftByPropertiesBesideFields = depended.isLeftByPropertiesBesideFields;
 
         const Effects& effects = effectsOn(m_effects, edge);
         if (effects.maySuspend) {
@@ -140,6 +142,8 @@ public:
             return true;
 
         if (!reachesObjects(written))
+            return false;
+        if (written.isLeftByPropertiesBesideFields && m_writer && definesPropertyBesideFields(m_analyses.program(), m_function.at(m_writer), effectsOn(m_effects, written.edge), m_function.at(subject)))
             return false;
 
         std::optional<bool> mayEndProof = mayEndProofJudgedByDefinitions(subject, written);
@@ -406,6 +410,7 @@ std::optional<GuardDependencies> dependenciesOfGuardOf(FunctionAnalyses& analyse
     const Program& program = analyses.program();
     GuardDependencies dependencies(program, locationsReadBy(test));
     dependencies.slotState = slotStateTestedBy(test);
+    dependencies.isLeftByPropertiesBesideFields = proofsLeftByPropertiesBesideFields.contains(provesOf(test.opcode));
     if (test.numberOfOperands() && test.operand(subjectOperandIndex) && testReadsOnlySubject(program, analyses.function(), test))
         dependencies.subject = analyses.identityOf(test.operand(subjectOperandIndex));
     return dependencies;
@@ -561,10 +566,11 @@ void GuardAvailability::numberComponents()
     m_numberOfKillClassesOfNamedGuards = 0;
 
     HashedIndex locationsIndex;
-    auto internLocations = [&](const Vector<MemoryLocation, 2>& locations, TestedSlotState slotState) -> uint32_t {
-        uint32_t hash = computeHash(hashOf(locations.span()), slotState);
+    auto internLocations = [&](const Vector<MemoryLocation, 2>& locations, TestedSlotState slotState, bool isLeftByPropertiesBesideFields) -> uint32_t {
+        uint32_t hash = computeHash(hashOf(locations.span()), slotState, isLeftByPropertiesBesideFields);
         std::optional<uint32_t> existing = locationsIndex.find(hash, [&](uint32_t position) {
-            return m_dependedLocations[position].locations == locations && m_dependedLocations[position].slotState == slotState;
+            const DependedLocations& known = m_dependedLocations[position];
+            return known.locations == locations && known.slotState == slotState && known.isLeftByPropertiesBesideFields == isLeftByPropertiesBesideFields;
         });
         if (existing)
             return *existing;
@@ -572,13 +578,14 @@ void GuardAvailability::numberComponents()
         uint32_t position = m_dependedLocations.size();
         m_dependedLocations.append(DependedLocations(m_analyses.program(), Vector<MemoryLocation, 2>(locations)));
         m_dependedLocations.last().slotState = slotState;
+        m_dependedLocations.last().isLeftByPropertiesBesideFields = isLeftByPropertiesBesideFields;
         locationsIndex.add(hash, position);
         return position;
     };
 
     HashedIndex killClassIndex;
     auto internKillClassWith = [&](const GuardFact& fact, TestedSlotState slotState) -> uint32_t {
-        uint32_t locations = internLocations(fact.dependsOn, slotState);
+        uint32_t locations = internLocations(fact.dependsOn, slotState, areLeftByPropertiesBesideFields(fact.proofs));
         ValueID subject = exclusiveSubjectOf(m_analyses, fact);
         uint32_t hash = computeHash(locations, subject);
         std::optional<uint32_t> existing = killClassIndex.find(hash, [&](uint32_t position) {

@@ -200,6 +200,7 @@ struct ResultRules {
     Type unknown(const Instruction&);
     Type unknown(const Value&);
     Type cast(const Value&, uint32_t operandIndex, TypeID castType);
+    Type cast(const Value&, uint32_t operandIndex, ExpectedType);
     Type cast(const Value&, uint32_t operandIndex);
     Type resultOperand(const Value&, uint32_t resultIndex);
 

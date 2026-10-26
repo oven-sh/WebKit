@@ -20,6 +20,7 @@
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
+#include "AOTHeat.h"
 #include "AOTIR.h"
 #include "AOTIRBuilder.h"
 #include "AOTNarrowFieldTypes.h"
@@ -69,6 +70,8 @@ struct FieldState {
     FunctionID function;
     uint32_t numberOfInitializingAllocations { 0 };
     bool isRejected { false };
+    // Some store that gives the closure only expects the layout of its object.
+    bool isGivenWhereLayoutIsExpected { false };
 };
 
 struct ValueReference {
@@ -88,6 +91,7 @@ struct ClosureStore {
     LayoutID layout;
     uint32_t field { 0 };
     FunctionID closureFunction;
+    KnowledgeLevel level { KnowledgeLevel::Proven };
 };
 
 struct FieldInitializer {
@@ -222,7 +226,7 @@ static bool canBeCreatedOnDemand(const Program& program, const Value& closure)
     if (isConstructorOfClass || callee.captures.size() > 1 || namesClosureOfTable(program, closure))
         return false;
     if (!callee.captures.isEmpty()) {
-        const Type& captured = program.at(callee.captures[0].type);
+        const Type& captured = program.at(callee.captures[0].written());
         if (captured.environment && captured.primitives)
             return false;
     }
@@ -234,7 +238,7 @@ static ClosureDeferral deferralFor(const Program& program, FunctionID function)
     const Function& callee = program.at(function);
     if (callee.captures.isEmpty())
         return ClosureDeferral::CapturesNothing;
-    return program.at(callee.captures[0].type).environment ? ClosureDeferral::CapturesEnvironment : ClosureDeferral::CapturesObject;
+    return program.at(callee.captures[0].written()).environment ? ClosureDeferral::CapturesEnvironment : ClosureDeferral::CapturesObject;
 }
 
 static bool createsValueWithoutRunningCode(const Value& value)
@@ -519,8 +523,7 @@ struct WindowScanner {
 
     void describeStore(BlockID block, ValueID id, const Value& store, Vector<ClosureStore>& found)
     {
-        // Code that only expects the layout of its objects reads their members by name as well, and a read by name makes the closure in the run time, which costs as much as forty closures made beside the allocation.
-        if (!isClosure(store.valueOperand()) || store.level() != KnowledgeLevel::Proven)
+        if (!isClosure(store.valueOperand()))
             return;
         const LayoutSet& receivers = m_program.at(store.receivers());
         if (!receivers.isComplete || receivers.members.isEmpty())
@@ -538,7 +541,7 @@ struct WindowScanner {
         if (!m_layouts.all.quickGet(declaration->layout.index()) || !canDeferClosure(m_program, *declaration))
             return;
         if (ValueID closure = findDeferrableClosure(block, store.valueOperand(), store.objectOperand()))
-            found.append({ m_id, block, id, closure, declaration->layout, declaration->field, m_function.at(closure).function() });
+            found.append({ m_id, block, id, closure, declaration->layout, declaration->field, m_function.at(closure).function(), store.level() });
     }
 
     void addInitializer(ClosureFieldFreshObject& object, ValueID listedEnvironment, uint32_t field, ValueID store, ValueID value)
@@ -849,6 +852,8 @@ struct DeferralAnalysis {
             state.isRejected |= numberOfFunctions > 1;
         }
         AOT::sort(candidatesByKey);
+        for (const ClosureStore& store : closureStores)
+            states[rowOf({ store.layout, store.field })].isGivenWhereLayoutIsExpected |= store.level != KnowledgeLevel::Proven;
 
         for (size_t index = 0; index < program.layouts.size(); ++index) {
             for (uint32_t field = 0; field < program.layouts[index].fields.size(); ++field) {
@@ -1226,6 +1231,21 @@ struct DeferralAnalysis {
     }
 
     // A read takes an empty slot for an absent property behind a test that no field of the object lies outside its slot, or without one where the property stays in its slot.
+    // The first read makes the closure in the run time, which costs as much as forty closures made beside the allocation. Where the layout is proven the reads are few. Code that only expects it makes an object for whoever comes, so the closure waits only where no code that is expected to run often asks for it.
+    void rejectFieldsOfExpectedLayoutsReadByWarmCode()
+    {
+        for (AccessKind kind : { SlotRead, NamedAccess }) {
+            for (ValueReference reference : accesses[kind]) {
+                if (storedOf(valueAt(reference).opcode) || isCold(heat.of(program, reference.function)))
+                    continue;
+                forEachCandidateOf(reference, [&](FieldReference, uint32_t row) {
+                    if (states[row].isGivenWhereLayoutIsExpected)
+                        reject(row);
+                });
+            }
+        }
+    }
+
     void rejectFieldsReadWhereTheyMayHaveLeftTheSlot()
     {
         for (AccessKind kind : { SlotRead, PresenceTest }) {
@@ -1284,13 +1304,13 @@ struct DeferralAnalysis {
             const Layout& layout = program.layouts[index];
             TypeID type;
             if (layout.flow.closureEnvironmentField)
-                type = layout.fields[*layout.flow.closureEnvironmentField].declared.type;
+                type = layout.fields[*layout.flow.closureEnvironmentField].declared.written();
             bool hasSeveralTypes = false;
             for (uint32_t field = 0; field < layout.fields.size(); ++field) {
                 const FieldState& state = stateOf({ LayoutID(index), field });
                 if (!defersOverEnvironment(state))
                     continue;
-                TypeID captured = program.at(state.function).captures[0].type;
+                TypeID captured = program.at(state.function).captures[0].written();
                 hasSeveralTypes |= type && type != captured;
                 type = captured;
             }
@@ -1314,7 +1334,7 @@ struct DeferralAnalysis {
                 continue;
             const Layout& layout = program.at(candidate.layout);
             std::optional<uint32_t> existingField = layout.flow.closureEnvironmentField;
-            environmentFields.append({ candidate.layout, existingField.value_or(static_cast<uint32_t>(layout.fields.size())), program.at(state.function).captures[0].type, !existingField });
+            environmentFields.append({ candidate.layout, existingField.value_or(static_cast<uint32_t>(layout.fields.size())), program.at(state.function).captures[0].written(), !existingField });
         }
         AOT::sort(environmentFields, { }, &ClosureEnvironmentField::layout);
         removeRepeatedElements(environmentFields, [](const ClosureEnvironmentField& a, const ClosureEnvironmentField& b) {
@@ -1383,6 +1403,7 @@ struct DeferralAnalysis {
         findAccesses();
         findCalleeStores();
         rejectFieldsByWhatComesIntoThem();
+        rejectFieldsOfExpectedLayoutsReadByWarmCode();
         for (uint64_t numberOfChangesBefore = numberOfChanges + 1; numberOfChangesBefore != numberOfChanges;) {
             numberOfChangesBefore = numberOfChanges;
             countFolds();
@@ -1393,6 +1414,7 @@ struct DeferralAnalysis {
     }
 
     const Program& program;
+    const Heat& heat;
     BuildContext& build;
     Vector<uint32_t> functionsBySize = largeFunctions(program, build.parallelLoops());
     // A class and the classes below it have one row for a field: that of the class that declares it.
@@ -1499,7 +1521,7 @@ static void rewriteClosureFields(const AnalysisContext& context, const DeferralA
         if (!mayFindSlotEmpty)
             read.setHoldsDeclaredType(previous.opcode == Opcode::GetSlot && previous.holdsDeclaredType());
         setResultType(id, read, previous.type);
-        read.setExpected(expectedTypeOf(program, function, read, types));
+        read.setExpected(ExpectedType(expectedTypeOf(program, function, read, types)));
     };
 
     auto hoist = [&](auto& self, ValueID id) -> void {
@@ -1729,7 +1751,7 @@ static void applyDeferrals(ProgramEditor& editor, BuildContext& build, const Def
         if (!entry.isNew)
             continue;
         Field field;
-        field.declared = DeclaredType { .type = entry.type, .flags = { PositionFlags::IsFromCompiler } };
+        field.declared = DeclaredType(Proven::byPosition(entry.type)).with(PositionFlags::IsFromCompiler);
         field.flags = { FieldFlags::IsRequired, FieldFlags::IsHidden, FieldFlags::IsAddedLate };
         field.flow.location.initialization = InitializationState::SetAtCreation;
         field.flow.occupancy = Occupancy::AlwaysFilled;
@@ -1849,7 +1871,7 @@ static void joinClosuresOfArms(const AnalysisContext& context, Function& functio
     compactFunction(function);
 }
 
-void deferClosuresInFields(ProgramEditor& editor, BuildContext& build)
+void deferClosuresInFields(ProgramEditor& editor, const Heat& heat, BuildContext& build)
 {
     if (build.recordedOptions().useWideReferences())
         return;
@@ -1867,7 +1889,7 @@ void deferClosuresInFields(ProgramEditor& editor, BuildContext& build)
         });
     }
 
-    DeferralAnalysis analysis { program, build };
+    DeferralAnalysis analysis { program, heat, build };
     analysis.run();
     if (analysis.numberOfDeferringFields)
         applyDeferrals(editor, build, analysis);

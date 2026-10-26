@@ -35,6 +35,7 @@ public:
     void generateIsBuiltinLocationUnchanged(const ValueContext&);
     void generateIsFunctionOfBuiltin(const ValueContext&);
     void generateGetBuiltinValue(const ValueContext&);
+    void generateInitializeBuiltin(const ValueContext&);
 
     Boxed callBuiltinFunction(const OperationContext&, BuiltinOverloadID, std::optional<Boxed> receiver, std::span<const Boxed> arguments);
     CellPointer builtinCell(const OperationContext&, BuiltinCellKey);

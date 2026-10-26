@@ -134,6 +134,10 @@ static void describeEntrypoint(const Function& callee, BuiltinCallMode mode, Eff
         description.addThrow();
     if (callee.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest }))
         description.addOwn(declaredBoundOf(Opcode::CreateRest));
+    if (callee.has(FunctionCapabilities::RecordsCallee))
+        description.addOwn(declaredBoundOf(Opcode::RecordCallee));
+    if (callee.has(FunctionCapabilities::RecordsCalleeOnceRenamed))
+        description.addOwn(declaredBoundOf(Opcode::AreFunctionNamesUnchanged));
 }
 
 static bool takesThisFromConstruction(const Function& callee)
@@ -244,7 +248,7 @@ static void describeOperandsGivenToBuiltins(const Program& program, const Functi
 
     Vector<TypeID, 4> arguments = typesOfArguments(function, call, *form);
     ValueID receiver = receiverOf(call);
-    const Type& receiverType = receiver ? program.typeOf(function, receiver) : program.at(TypeTable::undefined);
+    TypeID receiverType = receiver ? function.at(receiver).type : TypeTable::undefined;
     for (BuiltinID callee : callees.builtins)
         describeOperandsOfCall(program, callee, mode, *form, receiverType, arguments.span(), description);
 }

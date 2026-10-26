@@ -275,6 +275,8 @@ macro readField(instance, address, representation, result, isAbsent, cannot, don
     bieq representation, constexpr AOT::SlotRepresentation::LiteralString, .boxed
     bieq representation, constexpr AOT::SlotRepresentation::OptionalBoolean, .optionalBoolean
     bieq representation, constexpr AOT::SlotRepresentation::DeferredClosure, .deferredClosure
+    bieq representation, constexpr AOT::SlotRepresentation::OptionalInt64, .integer
+    bieq representation, constexpr AOT::SlotRepresentation::Int64, .integer
     jmp cannot
 
     # Only the object makes the closure that its slot still defers.
@@ -314,6 +316,26 @@ macro readField(instance, address, representation, result, isAbsent, cannot, don
 .int32:
     loadi [address], result
     orq numberTag, result
+    jmp done
+
+    # The markers of an integer are above every integer that a slot holds.
+.integer:
+    loadq [address], result
+    sxi2q result, representation
+    bqneq result, representation, .exceedsInt32
+    zxi2q result, result
+    orq numberTag, result
+    jmp done
+.exceedsInt32:
+    move constexpr AOT::undefinedInteger, representation
+    bqeq result, representation, .undefined
+    move constexpr AOT::absentInteger, representation
+    bqeq result, representation, isAbsent
+    move constexpr AOT::nullInteger, representation
+    bqeq result, representation, .null
+    cq2ds result, ft0
+    fd2q ft0, result
+    subq numberTag, result
     jmp done
 
 .double:
@@ -366,7 +388,14 @@ macro branchOnFieldPresence(address, representation, scratch, isPresent, isAbsen
     bieq representation, constexpr AOT::SlotRepresentation::Int32, isPresent
     bieq representation, constexpr AOT::SlotRepresentation::Cell, .boxed
     bieq representation, constexpr AOT::SlotRepresentation::LiteralString, .boxed
-    bineq representation, constexpr AOT::SlotRepresentation::OptionalBoolean, cannot
+    bieq representation, constexpr AOT::SlotRepresentation::OptionalBoolean, .optionalBoolean
+    bieq representation, constexpr AOT::SlotRepresentation::Int64, isPresent
+    bineq representation, constexpr AOT::SlotRepresentation::OptionalInt64, cannot
+    move constexpr AOT::absentInteger, scratch
+    bqeq [address], scratch, isAbsent
+    jmp isPresent
+
+.optionalBoolean:
     btbz [address], isAbsent
     jmp isPresent
 
@@ -1261,6 +1290,13 @@ aotOp(op_mov, OpMov, macro (size, get, dispatch, metadata, return)
 .sourceIsConstant:
     loadConstant(size, t1, t0)
     return(t0)
+end)
+
+# No JIT waits for the count of returns.
+aotOp(op_ret, OpRet, macro (size, get, dispatch, metadata, return)
+    get(m_value, t2)
+    loadConstantOrVariable(size, t2, r0)
+    doReturn()
 end)
 
 # AOT::generateNewPromise().
@@ -2276,6 +2312,7 @@ entry(llint_aot, macro ()
     setEntryAddresses(OpNstricteq, op_nstricteq)
     setEntryAddresses(OpPutById, op_put_by_id)
     setEntryAddresses(OpResolveScope, op_resolve_scope)
+    setEntryAddresses(OpRet, op_ret)
     setEntryAddresses(OpStricteq, op_stricteq)
     setEntryAddresses(OpToThis, op_to_this)
     setEntryAddresses(OpTypeofIsFunction, op_typeof_is_function)

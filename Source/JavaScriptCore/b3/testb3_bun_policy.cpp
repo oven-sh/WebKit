@@ -1013,6 +1013,27 @@ static void testDisabledHoistingLeavesValuesInLoops()
     }
 }
 
+static void testSquareRootThatIsNoNumberIsNotFolded()
+{
+    Procedure proc;
+    CHECK(!proc.add<ConstDoubleValue>(Origin(), -1.0)->sqrtConstant(proc));
+    CHECK(!proc.add<ConstDoubleValue>(Origin(), -std::numeric_limits<double>::infinity())->sqrtConstant(proc));
+    CHECK(!proc.add<ConstDoubleValue>(Origin(), PNaN)->sqrtConstant(proc));
+    CHECK(!proc.add<ConstFloatValue>(Origin(), -1.0f)->sqrtConstant(proc));
+    CHECK(proc.add<ConstDoubleValue>(Origin(), 4.0)->sqrtConstant(proc)->isEqualToDouble(2.0));
+    CHECK(proc.add<ConstDoubleValue>(Origin(), -0.0)->sqrtConstant(proc)->isNegativeZero());
+    CHECK(proc.add<ConstFloatValue>(Origin(), 4.0f)->sqrtConstant(proc)->asFloat() == 2.0f);
+
+    Procedure folded;
+    BasicBlock* root = folded.addBlock();
+    root->appendNew<Value>(folded, Return, Origin(), root->appendNew<Value>(folded, Sqrt, Origin(), root->appendNew<ConstDoubleValue>(folded, Origin(), -1.0)));
+    Procedure computed;
+    root = computed.addBlock();
+    auto arguments = cCallArgumentValues<double>(computed, root);
+    root->appendNew<Value>(computed, Return, Origin(), root->appendNew<Value>(computed, Sqrt, Origin(), arguments[0]));
+    CHECK(isIdentical(compileAndRun<double>(folded), compileAndRun<double>(computed, -1.0)));
+}
+
 void addBunPolicyTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testPolicySwitchNamesAreDistinct());
@@ -1042,6 +1063,7 @@ void addBunPolicyTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testOpcodeSetIsValidated());
     RUN(testStrengthReductionSwitchesRestoreUpstream());
     RUN(testDisabledHoistingLeavesValuesInLoops());
+    RUN(testSquareRootThatIsNoNumberIsNotFolded());
     addPipelineTests(config, tasks);
 }
 

@@ -669,6 +669,8 @@ function parseEntry(entry: Entry): string[] {
       statements.push(
         ...(parameter.isEngine ? parseEnginePayload(entry, parameter) : parseStreamPayload(entry, parameter)),
       );
+    } else if (parameter.isEngine && parameter.isVariadic) {
+      continue;
     } else if (parameter.isEngine) {
       statements.push(
         ...guarded(parameter.name, [`patchOperand(parser, target, ${parameter.index}, parser.parseValueUseWord());`]),
@@ -682,7 +684,7 @@ function parseEntry(entry: Entry): string[] {
       position += 1;
     }
   }
-  if (entry.variadicOperand === null)
+  if (entry.variadicOperand === null || entry.variadicOperand.isEngine)
     statements.push(...conditional(`operands.size() > ${position}`, ["parser.fail();"]));
   return [...statements, "break;"];
 }

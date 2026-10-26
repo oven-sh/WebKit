@@ -49,7 +49,7 @@ function f1 name="operandIsVirtualObject" parameters=[{type=boolean}, {type=anyt
 function f2 name="operandIsReadOfVirtualObject" parameters=[{type=boolean}, {type=object}] results=[{type=anything}] {
     v2 = NewObject -, v1 layout=L2 fields=[0]
     v3 = PropGet v2 key="x" receivers=[L2]
-    v4 = AssumeType v3 castType=object
+    v4 = AssumeType v3 provenType=object
     v5 = NewObject v4 layout=L0
     Branch v0 -> taken b1(), notTaken b2()
   b1():

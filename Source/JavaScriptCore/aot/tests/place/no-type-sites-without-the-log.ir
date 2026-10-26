@@ -30,7 +30,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v8 = FinishObject v7
     PutModuleVariable v8 variable=g2
     v10 = GetModuleVariable variable=g2
-    v11 = Check v1 castType=L2 site=w1
+    v11 = Check v1 expectedType=L2 site=w1
     v12 = PropGet v11 key="z"
     v13 = NewObject -, v4 layout=L3 fields=[0]
     v14 = FinishObject v13

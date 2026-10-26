@@ -10,7 +10,7 @@
 module m0 path="main.js" displayPath="main.js"
 function f0 name="overTheLimit" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
     v2 = Call v0
-    v3 = Check v2 castType=number
+    v3 = Check v2 expectedType=number
     v4 = Add v3, v1
     Return v4
 # CHECK-NEXT: b0(v0: anything, v1: number):
@@ -36,7 +36,7 @@ function f1 name="nothingIsChecked" parameters=[{type=number}] results=[{type=nu
 # What flow has stamped on an operation was read off a run in which every check had passed. With a guard at each use the operation also runs with what the check would have turned away,
 # so the stamp of a call of what rests on the check no longer names every callee. It still names those that flow has seen: they are entered by this call, through their entrypoints. The other call keeps its stamp
 function f2 name="stampOnWhatRestsOnTheCheckIsOpen" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v0 castType=function
+    v2 = Check v0 expectedType=function
     v3 = Call v2 callees=[f1]
     v4 = Call v1 callees=[f1]
     v5 = Add v3, v4

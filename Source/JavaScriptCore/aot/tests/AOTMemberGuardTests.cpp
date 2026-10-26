@@ -363,7 +363,7 @@ function f3 name="step" kind=Method flags=[HasThis] results=[{type=anything}] {
 }
 function f4 name="callStep" parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Check v0 castType=L0|L1
+    v1 = Check v0 expectedType=L0|L1
     v2 = PropGet v1 key="step"
     v3 = Call v2, v1 calleeKey="step"
     Return v3
@@ -415,7 +415,7 @@ function f3 name="make" results=[{type=anything}] {
 }
 function f4 name="callStep" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Check v0 castType=L0
+    v1 = Check v0 expectedType=L0
     v2 = PropGet v1 key="step"
     v3 = Call v2, v1 calleeKey="step"
     Return v3

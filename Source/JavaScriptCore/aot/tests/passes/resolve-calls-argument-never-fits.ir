@@ -24,7 +24,7 @@ function f4 name="first-argument-never-fits" parameters=[{type=f0}, {type=number
     v3 = Call v0, -, v1, v2
     Return v3
 # CHECK-NEXT: b0(v0: f0, v1: number, v2: anything):
-# CHECK-NEXT: : never = AssumeType v1 castType=string
+# CHECK-NEXT: : never = AssumeType v1 provenType=string
 # CHECK-NEXT: Unreachable
 # CHECK-NOT: AssumeType
 # CHECK-NOT: CallDirect
@@ -33,8 +33,8 @@ function f5 name="second-argument-never-fits" parameters=[{type=f0}, {type=anyth
     v3 = Call v0, -, v1, v2
     Return v3
 # CHECK-NEXT: b0(v0: f0, v1: anything, v2: string):
-# CHECK-NEXT: : string = AssumeType v1 castType=string
-# CHECK-NEXT: : never = AssumeType v2 castType=number
+# CHECK-NEXT: : string = AssumeType v1 provenType=string
+# CHECK-NEXT: : never = AssumeType v2 provenType=number
 # CHECK-NEXT: Unreachable
 # CHECK-NOT: CallDirect
 }
@@ -43,7 +43,7 @@ function f6 name="missing-argument-never-fits" parameters=[{type=f0}, {type=stri
     Return v2
 # CHECK-NEXT: b0(v0: f0, v1: string):
 # CHECK-NEXT: [[missing]]: undefined = Undefined
-# CHECK-NEXT: : never = AssumeType [[missing]] castType=number
+# CHECK-NEXT: : never = AssumeType [[missing]] provenType=number
 # CHECK-NEXT: Unreachable
 # CHECK-NOT: CallDirect
 }
@@ -51,14 +51,14 @@ function f7 name="arguments-may-fit" parameters=[{type=f0}, {type=anything}, {ty
     v3 = Call v0, -, v1, v2
     Return v3
 # CHECK-NEXT: b0(v0: f0, v1: anything, v2: anything):
-# CHECK-NEXT: [[first]]: string = AssumeType v1 castType=string
-# CHECK-NEXT: [[second]]: number = AssumeType v2 castType=number
+# CHECK-NEXT: [[first]]: string = AssumeType v1 provenType=string
+# CHECK-NEXT: [[second]]: number = AssumeType v2 provenType=number
 # CHECK-NEXT: = CallDirect [[first]], [[second]] function=f0
 }
 function f8 name="fits-one-of-two-callees" parameters=[{type=f0|f1}, {type=number}, {type=number}] results=[{type=anything}] {
     v3 = Call v0, -, v1, v2
     Return v3
-# CHECK: : never = AssumeType v1 castType=string
+# CHECK: : never = AssumeType v1 provenType=string
 # CHECK-NEXT: Unreachable
 # CHECK-NOT: function=f0
 # CHECK: = CallDirect v1, v2 function=f1
@@ -68,7 +68,7 @@ function f9 name="async-callee" parameters=[{type=f2}, {type=string}] results=[{
     v2 = Call v0, -, v1
     Return v2
 # CHECK-NEXT: b0(v0: f2, v1: string):
-# CHECK-NEXT: : never = AssumeType v1 castType=number
+# CHECK-NEXT: : never = AssumeType v1 provenType=number
 # CHECK-NEXT: Unreachable
 # CHECK-NOT: function=f2
 # CHECK-NOT: RejectPromise

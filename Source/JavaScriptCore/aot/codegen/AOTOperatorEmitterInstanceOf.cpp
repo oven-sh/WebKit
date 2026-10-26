@@ -19,7 +19,10 @@ void OperatorEmitter::generateInstanceOf(const ValueContext& value)
 {
     Boxed object = in<Boxed>(value->valueOperand());
     Boxed constructor = in<Boxed>(value->constructorOperand());
-    defineTest(value, Condition(m_out.castToInt32(callStub(value, AOT::instanceOf(InstanceOfOperand::Constructor), { object.value(), constructor.value() }).first)));
+    std::optional<ThrowSite> siteThatQuotesExpression;
+    if (value->writtenExpression())
+        siteThatQuotesExpression = ThrowSite { ThrowKind::NotAFunction, value->writtenExpression().index(), std::nullopt };
+    defineTest(value, Condition(m_out.castToInt32(callStub(value, AOT::instanceOf(InstanceOfOperand::Constructor), { object.value(), constructor.value() }, { .throwSite = siteThatQuotesExpression }).first)));
 }
 
 // What is no cell has no prototype chain: that is answered in line, and the prototype of a built-in class that only this walk asks for is fetched behind that answer.

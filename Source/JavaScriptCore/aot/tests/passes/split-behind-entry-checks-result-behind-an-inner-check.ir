@@ -18,12 +18,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 function f1 name="shorten" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=string site=w0 flags=[IsExpected]}] results=[{type=string site=w1 flags=[IsExpected]}] {
   b0(v0: anything ~ string):
-    v1 = Check v0 castType=string site=w0
+    v1 = Check v0 expectedType=string site=w0
     v2 = Builtin builtin=GlobalThis
     v3 = PropGet v2 key="pick" [isFreeName]
     v4 = Call v3, -, v1
-    v5 = Check v4 castType=string site=w2
-    v6 = Check v5 castType=string site=w1
+    v5 = Check v4 expectedType=string site=w2
+    v6 = Check v5 expectedType=string site=w1
     Return v6
 }
 # CHECK-LABEL: function f1 name="shorten" module=m0 position=5 role=EntryChecks

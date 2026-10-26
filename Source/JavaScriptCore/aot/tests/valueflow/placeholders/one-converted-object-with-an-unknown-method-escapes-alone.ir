@@ -1,7 +1,7 @@
 # `${onlyConverted}`; plain = { held }; plain + 1; odd = { valueOf: somethingNoTableLists, given }; odd + 1
 # Whatever an operation converts to a primitive lies in one hub, and the conversion calls what it finds on an object with that object as `this`. On one of the three a function nobody knows is found:
 # that object is handed to it, so it escapes and what it holds is entered. Nothing of the kind is found on the other two: they stay in the program, and nobody enters the closure or what the plain object holds.
-# converted-objects-past-those-told-apart-escape-together.ir has the same program with a limit that the hub passes.
+# converted-objects-past-those-told-apart-are-handed-to-what-each-of-them-finds.ir has the same program with a limit that the hub passes, and the same answer.
 # RUN: valueflow-solve unreached
 # CHECK: unreached f1
 # CHECK-NEXT: unreached f2
@@ -16,4 +16,4 @@
 # ESCAPED: escaped-layout=L0
 # ESCAPED-NEXT: escaped-layout=L1
 # ESCAPED: n0 escaped
-# PROGRAM-OF: converted-objects-past-those-told-apart-escape-together.ir
+# PROGRAM-OF: converted-objects-past-those-told-apart-are-handed-to-what-each-of-them-finds.ir

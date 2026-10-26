@@ -1,0 +1,170 @@
+# A handler that reads the string as it was before the append, without taking it as an argument, goes on with the same builder
+# FORM: Prepared
+# RUN: pass CreateStringBuilders
+# STATISTIC: StringBuildersCreated = 4
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="appendsInTryAndCatch" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b5()
+  b2() handler=b3():
+    v8 = Add v4, v0
+    Jump -> next b4(v8)
+  b3() role=CatchHandler:
+    v9 = String string="T"
+    v10 = Add v4, v9
+    Jump -> next b4(v10)
+  b4(v11):
+    v12 = Integer integer=1
+    v13 = Add v5, v12
+    Jump -> next b1(v11, v13)
+  b5():
+    Return v4
+}
+# CHECK-LABEL: name="appendsInTryAndCatch"
+# CHECK: [[h0]]: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: Jump -> next b1([[h0]], v3)
+# CHECK: b1(v4: stringbuilder, v5: int|whole):
+# CHECK: b2() handler=b3():
+# CHECK-NEXT: StringBuilderAppend v4, v0
+# CHECK-NEXT: Jump -> next b4(v4)
+# CHECK: b3() role=CatchHandler:
+# CHECK-NEXT: v9: "T" = String string="T"
+# CHECK-NEXT: StringBuilderAppend v4, v9
+# CHECK-NEXT: Jump -> next b4(v4)
+# CHECK: b4(v11: stringbuilder):
+# CHECK: [[r0]]: string = StringBuilderFinish v4
+# CHECK-NEXT: Return [[r0]]
+# CHECK-NOT: StringBuilderBegin
+# CHECK-NOT: StringBuilderToString
+
+function f1 name="appendsInTryAndFinally" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b7()
+  b2() handler=b3():
+    v8 = Add v4, v0
+    v9 = Integer integer=0
+    v10 = Undefined
+    Jump -> next b4(v9, v10, v8)
+  b3() role=CleanupHandler:
+    v11 = CatchValue
+    v12 = Integer integer=1
+    Jump -> next b4(v12, v11, v4)
+  b4(v13, v14, v15):
+    v16 = String string="F"
+    v17 = Add v15, v16
+    Switch v13 cases=[0] -> case b5(), otherwise b6()
+  b5():
+    v18 = Integer integer=1
+    v19 = Add v5, v18
+    Jump -> next b1(v17, v19)
+  b6():
+    Throw v14
+  b7():
+    Return v4
+}
+# CHECK-LABEL: name="appendsInTryAndFinally"
+# CHECK: [[h1]]: stringbuilder = StringBuilderBegin
+# CHECK-NEXT: Jump -> next b1([[h1]], v3)
+# CHECK: b2() handler=b3():
+# CHECK-NEXT: StringBuilderAppend v4, v0
+# CHECK: Jump -> next b4(v9, v10, v4)
+# CHECK: b3() role=CleanupHandler:
+# CHECK: Jump -> next b4(v12, v11, v4)
+# CHECK: b4(v13: int[0, 1], v14: anything, v15: stringbuilder):
+# CHECK: StringBuilderAppend v15, v16
+# CHECK-NOT: StringBuilderBegin
+# CHECK-NOT: StringBuilderToString
+
+function f2 name="handlerReadsLength" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b4()
+  b2() handler=b3():
+    v8 = Add v4, v0
+    v9 = Integer integer=1
+    v10 = Add v5, v9
+    Jump -> next b1(v8, v10)
+  b3() role=CatchHandler:
+    v11 = GetStringLength v4
+    Return v11
+  b4():
+    Return v4
+}
+# CHECK-LABEL: name="handlerReadsLength"
+# CHECK: b2() handler=b3():
+# CHECK-NEXT: StringBuilderAppend v4, v0
+# CHECK: b3() role=CatchHandler:
+# CHECK-NEXT: v11: int[0, 2147483647] = StringBuilderLength v4
+# CHECK-NEXT: StringBuilderDiscard v4
+# CHECK-NEXT: Return v11
+
+function f3 name="throwsBehindTheAppend" parameters=[{type=string}, {type=number}, {type=anything}] results=[{type=string}] {
+    v3 = String string=""
+    v4 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Less v6, v1
+    Branch v8 -> taken b2(), notTaken b5()
+  b2() handler=b3():
+    v9 = Add v5, v0
+    v10 = Call v2, -
+    Jump -> next b4(v9)
+  b3() role=CatchHandler:
+    v11 = String string="T"
+    v12 = Add v5, v11
+    Jump -> next b4(v12)
+  b4(v13):
+    v14 = Integer integer=1
+    v15 = Add v6, v14
+    Jump -> next b1(v13, v15)
+  b5():
+    Return v5
+}
+# The call may throw when the append is done, and then the handler wants the text without it.
+# CHECK-LABEL: name="throwsBehindTheAppend"
+# CHECK-NOT: StringBuilder
+# CHECK: v9: string = Add v5, v0
+# CHECK: v12: string = Add v5, v11
+# CHECK-NOT: StringBuilder
+
+function f4 name="handlerReturnsOldState" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b4()
+  b2() handler=b3():
+    v8 = Add v4, v0
+    v9 = Integer integer=1
+    v10 = Add v5, v9
+    Jump -> next b1(v8, v10)
+  b3() role=CatchHandler:
+    Return v4
+  b4():
+    Return v4
+}
+# CHECK-LABEL: name="handlerReturnsOldState"
+# CHECK: b2() handler=b3():
+# CHECK-NEXT: StringBuilderAppend v4, v0
+# CHECK: b3() role=CatchHandler:
+# CHECK-NEXT: [[s4]]: string = StringBuilderFinish v4
+# CHECK-NEXT: Return [[s4]]

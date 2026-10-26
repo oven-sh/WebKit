@@ -9,7 +9,7 @@ const realmPromise = b.builtin("Promise");
 const newPromiseHolding = (contents: Contents) => b.instance("Promise").holding(contents).fresh;
 // No primitive is a thenable, so nothing rejects the promise.
 const fulfilledWithPrimitive = newPromiseHolding({ value: b.operand("value"), reason: b.never });
-const otherConstructor = b.otherwiseBy(b.hostCall);
+const otherConstructor = b.otherwiseConstructs(0, b.hostCall);
 
 const keptByIterator = b.storedIn(b.resultSlot("iterated"));
 

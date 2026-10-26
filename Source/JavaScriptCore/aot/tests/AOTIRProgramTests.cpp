@@ -24,9 +24,7 @@ namespace {
 
 DeclaredType createDeclaredType(TypeID type)
 {
-    DeclaredType declared;
-    declared.type = type;
-    return declared;
+    return DeclaredType(Proven::byPosition(type));
 }
 
 CreatorRecord::Coroutine createCoroutineRecord(CoroutineKind kind, TypeID promiseType = { })
@@ -160,7 +158,7 @@ static void editorRemoveBodyKeepsSignature()
     editor.removeBody(id);
     const Function& removed = editor.program().at(id);
     AOT_TEST_CHECK(!removed.hasBody() && removed.values.isEmpty() && removed.inlineFrames.isEmpty());
-    AOT_TEST_CHECK(removed.parameters[0].type == TypeTable::number && removed.result().type == TypeTable::string);
+    AOT_TEST_CHECK(removed.parameters[0].written() == TypeTable::number && removed.result().written() == TypeTable::string);
     AOT_TEST_CHECK(removed.role == FunctionRole::GenericVersion && removed.creator.as<CreatorRecord::Version>().provenVersion == FunctionID(5u));
     AOT_TEST_CHECK(hasElements(editor.changedFunctions(), { id }));
 }
@@ -197,7 +195,7 @@ static void expectedTypeOfValueWinsOverItsType()
     ValueID value = addValue(function, addBlock(function), Opcode::Undefined);
     function.edit(value).type = TypeTable::number;
     AOT_TEST_CHECK(&test.program.typeOf(function, value) == &test.program.at(TypeTable::number) && &test.program.expectedOrTypeOf(function, value) == &test.program.at(TypeTable::number));
-    function.edit(value).setExpected(TypeTable::int32);
+    function.edit(value).setExpected(ExpectedType(TypeTable::int32));
     AOT_TEST_CHECK(&test.program.typeOf(function, value) == &test.program.at(TypeTable::number) && &test.program.expectedOrTypeOf(function, value) == &test.program.at(TypeTable::int32));
 }
 
@@ -311,7 +309,7 @@ static void builtinLayoutsAppendedOnce()
             const BuiltinLayoutField& expected = expectedFields[position];
             const Field& field = layout.fields[position];
             AOT_TEST_CHECK(field.key == (expected.name ? test.program.keyOf(expected.name) : PropertyKeyID()));
-            AOT_TEST_CHECK(field.declared.type && field.declared.type == arena.intern(typeOfBuiltinLayoutField(test.program, expected, arena)));
+            AOT_TEST_CHECK(field.declared.written() && field.declared.written() == arena.intern(typeOfBuiltinLayoutField(test.program, expected, arena)));
             AOT_TEST_CHECK(field.flags.contains(FieldFlags::IsRequired) == !expected.isOptional);
         }
     }

@@ -21,6 +21,8 @@ enum class CallableKind : uint8_t { Plain, Arrow, Method, Bound };
 static constexpr unsigned classObjectClosureStructure = 4;
 static constexpr unsigned numberOfClosureStructures = classObjectClosureStructure + 1;
 static constexpr unsigned numberOfSlimClosureKinds = 2;
+// In FunctionKindData::accessorKind, beside the members of MethodKind: no accessor, and a stack frame shows another name once something has looked for the property `name` of the function object.
+static constexpr unsigned methodThatNotesLooksForName = 3;
 
 struct FunctionKindData {
     uint16_t closureStructure : 3;
@@ -36,10 +38,14 @@ struct FunctionKindData {
     uint16_t isDerivedConstructor : 1;
     uint16_t hasInferredName : 1;
 
+    constexpr unsigned closureStructureOfKind() const { return isConstructor ? classObjectClosureStructure : isAsync | isGenerator << 1; }
     constexpr unsigned slimClosureKind() const { return isAsync; }
     constexpr CallableKind callable() const { return static_cast<CallableKind>(callableKind); }
-    constexpr MethodKind accessor() const { return static_cast<MethodKind>(accessorKind); }
+    constexpr MethodKind accessor() const { return accessorKind == methodThatNotesLooksForName ? MethodKind::Method : static_cast<MethodKind>(accessorKind); }
+    constexpr bool notesLooksForName() const { return accessorKind != static_cast<unsigned>(MethodKind::Method); }
     constexpr bool isBound() const { return callable() == CallableKind::Bound; }
+    // The function object stays as it is: the name that the look brings into its frames is the one that the tables have.
+    constexpr bool notesLooksForNameInCell() const { return accessorKind == methodThatNotesLooksForName && !isBound(); }
     constexpr bool hasInitialNamePrefix() const { return isBound() || accessor() != MethodKind::Method; }
 };
 static_assert(sizeof(FunctionKindData) == 2 && isImageRecord<FunctionKindData>);
@@ -57,8 +63,11 @@ struct FunctionTraceData {
     uint16_t isNakedConstructor : 1;
     uint16_t implementsBuiltin : 1;
     // `{ [Symbol.dispose]() { } }`: the written name is what the property `name` holds. The engine gives such a function that property when the literal is evaluated, and the console goes on showing it without a name.
-    uint16_t isNamedBySymbol : 1;
-    uint16_t unused : 2;
+    uint16_t isNamedByComputedKey : 1;
+    // Its frames are named by the function object that runs in them.
+    uint16_t recordsCallee : 1;
+    // They are from the first time on that the run time sees a function object of the function get a displayName.
+    uint16_t recordsCalleeOnceRenamed : 1;
 
     TraceVisibility visibility() const { return static_cast<TraceVisibility>(visibilityBits); }
     StackTraceBuiltinKind builtinKind() const { return static_cast<StackTraceBuiltinKind>(builtinKindBits); }

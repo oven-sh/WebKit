@@ -1,5 +1,6 @@
 # The field definitions of instances that reach unknown JavaScript are stores like any other: the caller allocates, the initializer and the constructor are inlined, and the definitions become the field list
-# of the allocation. Not where `this` has leaked before a definition, and not where the object is not the caller's own allocation. Only unknown JavaScript calls the three functions, so their bodies stand in their entrypoints
+# of the allocation. Not where `this` has leaked before a definition, and not where the object is not the caller's own allocation. Only unknown JavaScript calls the three functions, so their bodies stand in their entrypoints.
+# A loop hands them over: what is handed over once is expected to run once
 # FORM: AsRead
 # RUN: pipeline Select
 
@@ -34,13 +35,19 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v17 = FinishClass v16 layout=L2
     PutModuleVariable v17 variable=g3
     v19 = NewClosure function=f4
-    v20 = Call v11, -, v19
-    v21 = NewClosure function=f7
-    v22 = Call v11, -, v21
-    v23 = NewClosure function=f10
-    v24 = Call v11, -, v23
-    v25 = PropGet v10 key="eval" [isFreeName]
-    v26 = Call v25, -, v24
+    v20 = NewClosure function=f7
+    v21 = NewClosure function=f10
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v23 = Call v11, -, v19
+    v24 = Call v11, -, v20
+    v25 = Call v11, -, v21
+    v26 = ToBoolean v25
+    Branch v26 -> taken b1(), notTaken b2()
+  b2():
+    v27 = PropGet v10 key="eval" [isFreeName]
+    v28 = Call v27, -, v25
     Return
 }
 function f1 name="Context" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {

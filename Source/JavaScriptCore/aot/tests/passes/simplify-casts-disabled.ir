@@ -6,19 +6,19 @@
 # CHECK: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="repeatedBelow" parameters=[{type=anything}, {type=boolean}] results=[{type=number}] {
-    v2 = Check v0 castType=number
+function f0 name="repeatedBelow" parameters=[{type=anything}, {type=boolean}] results=[{type=number flags=[IsExpected]}] {
+    v2 = Check v0 expectedType=number
     Branch v1 -> taken b1(), notTaken b2()
   b1():
-    v3 = Check v0 castType=number
+    v3 = Check v0 expectedType=number
     Return v3
   b2():
     Return v2
 # CHECK-NEXT: b0(v0: anything, v1: boolean):
-# CHECK-NEXT: v2: number = Check v0 castType=number
+# CHECK-NEXT: v2: number = Check v0 expectedType=number
 # CHECK-NEXT: Branch v1 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v3: number = Check v0 castType=number
+# CHECK-NEXT: v3: number = Check v0 expectedType=number
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: b2():
 # CHECK-NEXT: Return v2

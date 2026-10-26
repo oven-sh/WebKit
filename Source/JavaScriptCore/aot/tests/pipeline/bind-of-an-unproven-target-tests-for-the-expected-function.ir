@@ -1,9 +1,10 @@
-# function add(n) { return n + 1 }   let kept = add   function bindAgain() { kept = kept.bind(null) }   function run(n) { return kept(n) }
+# function add(n) { return n + 1 + n - n + n - n }   let kept = add   function bindAgain() { kept = kept.bind(null) }   function run(n) { return kept(n) }
 # function putAdd() { kept = add }
 # The variable holds the function and then the result of binding it, like the field in `this.add = this.add.bind(this)`. The target of the bind is not proven, but flow saw closures of only
 # one function arrive: the bind tests for one and creates a closure of the bound function, and the engine binds anything else.
 # Flow saw the result of that bind reach the call in `run`: the call tests for such a closure and enters the function directly. Anything else in the variable is called as a value.
 # The call of `bind` itself creates such a closure and does not receive one, so it expects none as its callee.
+# Two calls hand the functions over: what is handed over once is expected to run once, and code that runs once tests for no expected function. `add` is too long to be copied into `run`.
 # FORM: AsRead
 # RUN(IR): pipeline Select
 # RUN(RESULTS): valueflow-results
@@ -41,13 +42,23 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v7 = Builtin builtin=GlobalThis
     v8 = PropGet v7 key="register" [isFreeName]
     v9 = Call v8, -, v3, v4, v5, v6
+    v10 = ToBoolean v9
+    Branch v10 -> taken b1(), notTaken b2()
+  b1():
+    v11 = Call v8, -, v3, v4, v5, v6
+    Jump -> next b2()
+  b2():
     Return
 }
 function f1 name="add" length=1 parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
     v1 = Integer integer=1
     v2 = Add v0, v1
-    Return v2
+    v3 = Add v2, v0
+    v4 = Sub v3, v0
+    v5 = Add v4, v0
+    v6 = Sub v5, v0
+    Return v6
 }
 function f2 name="run" length=1 parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

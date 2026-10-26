@@ -5,12 +5,12 @@
 # RUN: valueflow-apply
 # CHECK-LABEL: function f1 name="Registry"
 # CHECK: = SuperConstruct
-# CHECK-NEXT: : L0 = Check v3 castType=L0
+# CHECK-NEXT: : L0 = Check v3 expectedType=L0
 # CHECK-LABEL: function f3 name="look"
-# CHECK: : L0|L1 = Check {{*}} castType=L0|L1
+# CHECK: : L0|L1 = Check {{*}} expectedType=L0|L1
 # CHECK-LABEL: function f4 name="only"
 # CHECK-NOT: = Check
-# CHECK: : L1 = AssumeType {{*}} castType=L1
+# CHECK: : L1 = AssumeType {{*}} provenType=L1
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -37,7 +37,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 function f1 name="Registry" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
     v2 = GetSuperBase v0
     v3 = SuperConstruct v2, v1 layout=L0
-    v4 = Check v3 castType=L0
+    v4 = Check v3 expectedType=L0
     Return v4
 }
 function f2 name="Plain" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
@@ -47,11 +47,11 @@ function f2 name="Plain" kind=BaseConstructor flags=[HasNewTarget] results=[{typ
 }
 function f3 name="look" parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Check v0 castType=L0|L1
+    v1 = Check v0 expectedType=L0|L1
     Return v1
 }
 function f4 name="only" parameters=[{type=L1 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Check v0 castType=L1
+    v1 = Check v0 expectedType=L1
     Return v1
 }

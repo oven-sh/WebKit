@@ -1,5 +1,6 @@
 # An operator on numbers does nothing, on other primitives it has its declared set, and an object operand adds the lookups of its conversion and the code they can reach.
-# What only makes a text of primitives that are no symbols (text + 1, String(1)) throws for lack of memory alone, so it goes away with its unused result; a BigInt added to a BigInt may be too large by the language's rule
+# What only makes a text of primitives that are no symbols and that fit in one string by their types ("a" + 1, String(1)) throws for lack of memory alone, so it goes away with its unused result;
+# a text joined with any string may be longer than a string may be, and a BigInt added to a BigInt may be too large by the language's rule
 # FORM: Prepared
 # RUN: effects summaries f0 f1 f2 f3
 
@@ -12,15 +13,18 @@ function f0 name="add" parameters=[{type=number}, {type=string}, {type=bigint}, 
     v7 = Add v2, v2
     v8 = Add v0, v3
     v9 = Add v0, v4
+    v10 = String string="a"
+    v11 = Add v0, v10
     Return
 }
 # CHECK-LABEL: function f0
 # CHECK-NEXT: v5 Add: none
-# CHECK-NEXT: v6 Add: reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
+# CHECK-NEXT: v6 Add: reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
 # CHECK-NEXT: v7 Add: reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
 # CHECK-NEXT: v8 Add: reads(all) {{*}}callsUnknownCode
 # CHECK-NEXT: v9 Add: reads(ObjectFields, PrototypeLinks, NamedProperties, StringStorage, AllocatorState) writes(ModuleVariables/1, StringStorage, AllocatorState, RuntimeState) throws collects
 # CHECK-NOT: callsUnknownCode
+# CHECK: v11 Add: reads(StringStorage, AllocatorState) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
 function f1 name="less" parameters=[{type=number}, {type=string}] results=[{type=undefined}] {
     v2 = Less v0, v0
     v3 = Less v1, v1

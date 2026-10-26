@@ -18,8 +18,14 @@ struct TraceFrame {
     CompiledFunctionID code;
     FunctionID function;
     CallSiteIndex callSite;
-    bool isInlined;
-    bool isConstructCall;
+    bool isInlined : 1;
+    bool isConstructCall : 1;
+    bool isClassCalledWithoutNew : 1 { false };
+    bool isAsyncFrame : 1 { false };
+    // What the site called was entered.
+    bool isCaller : 1 { false };
+    // CompiledFrameIterator::recordedCallee() is null.
+    bool calleeLiesInFrame : 1 { false };
 
     static TraceFrame of(CompiledFrameIterator&);
 };

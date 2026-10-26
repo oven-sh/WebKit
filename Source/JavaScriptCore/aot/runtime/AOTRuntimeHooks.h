@@ -43,6 +43,8 @@ inline void didChangePrototypeChain(VM& vm, JSObject* changed, UniquedStringImpl
 // A cacheable dictionary becomes an ordinary object: every name finds what it found, at the offset where it lay, and the prototype stays.
 void didFlattenObjectOnPrototypeChain(VM&, JSObject* flattened);
 void didFlattenStructure(VM&, Structure*);
+// From now on a store that replaces a value of some Structure has somebody to tell.
+void didStartWatchingReplacements(VM&);
 void didChangeMicrotaskQueueing(VM&);
 void didChangeGlobalLexicalBindings(JSGlobalObject*);
 void setLoopPollsEnabled(VM&, bool);

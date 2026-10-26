@@ -8,11 +8,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinModules.h"
 #include "AOTBuiltinTableBindings.h"
 #include "AOTClosure.h"
 #include "AOTErrorMessages.h"
 #include "AOTGenerator.h"
 #include "AOTInstance.h"
+#include "BuiltinExecutables.h"
 #include "ImmutablePropertyNames.h"
 #include "JSCInlines.h"
 #include "MicrotaskQueueInlines.h"
@@ -74,10 +76,11 @@ void didCreateRealm(JSGlobalObject* realm)
 {
     refuseEvaluationUnlessAdmitted(realm);
     Instance* instance = Instance::of(realm);
-    if (!instance) {
+    // The engine's text of next(), return() and throw() takes the engine's own generators alone. A host brings the three compiled.
+    if (!instance || (!BuiltinBindings::hasHost() && !hasBuiltinFunction(realm->vm(), static_cast<uint32_t>(BuiltinCodeIndex::generatorPrototypeNextCode))))
         installGeneratorMethodsForCompiledGenerators(realm);
+    if (!instance)
         return;
-    }
 
     makeBuiltinsImmutable(*instance);
     Instance::create(realm);
@@ -90,7 +93,7 @@ void didChangeMicrotaskQueueing(VM& vm)
 {
     for (Instance* instance : vm.aotState().instances) {
         instance->realm.microtaskQueue = &instance->globalObject->microtaskQueue();
-        instance->awaitMustSuspend = !instance->globalObject->canFastQueueMicrotask() || vm.hostObservesMicrotaskBoundaries();
+        instance->awaitMustSuspend = !instance->globalObject->canFastQueueMicrotask() || vm.hostObservesMicrotaskBoundaries() || vm.m_synchronousModuleQueue;
         if (instance->awaitMustSuspend)
             instance->coroutines.frameThatMayContinue = nullptr;
     }

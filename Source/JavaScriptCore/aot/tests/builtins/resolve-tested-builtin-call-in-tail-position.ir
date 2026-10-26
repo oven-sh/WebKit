@@ -13,7 +13,7 @@ function f0 name="receiverNeedsPristineTest" parameters=[{type=Array}, {type=num
 # CHECK-LABEL: function f0 name="receiverNeedsPristineTest"
 # CHECK-NOT: ReturnCall
 # CHECK: IsPristine v0 builtinClass=Array aspects=[Storage]
-# CHECK: = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/0 [{{*}}isDemotedTailCall
+# CHECK: = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/0 {{*}} tail
 # CHECK-NOT: ReturnCall
 
 function f1 name="argumentNeedsTypeTest" parameters=[{type=string}, {type=undefined|null|string}] results=[{type=anything}] {
@@ -26,7 +26,7 @@ function f1 name="argumentNeedsTypeTest" parameters=[{type=string}, {type=undefi
 # CHECK-NOT: ReturnCall
 # CHECK: TypeTest v1 testedType=string
 # CHECK: ([[separator1]]: string):
-# CHECK: = CallBuiltin v0, [[separator1]] overload=StringPrototypeSplit/0 [isDemotedTailCall]
+# CHECK: = CallBuiltin v0, [[separator1]] overload=StringPrototypeSplit/0 @0 tail
 # CHECK-NOT: ReturnCall
 
 function f2 name="unknownCallee" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {

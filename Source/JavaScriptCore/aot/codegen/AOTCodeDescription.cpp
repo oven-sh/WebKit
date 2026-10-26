@@ -103,6 +103,10 @@ using ShownFunctions = Vector<ShownFunction, 4>;
 static constexpr LineColumn hostFunctionPosition { 0, 0 };
 static constexpr LineColumn startOfBuiltinFunction { 1, 11 };
 static_assert(sizeof("function (") == startOfBuiltinFunction.column, "JSC reports every frame of a built-in written in JavaScript at the start of its parameters");
+static constexpr LineColumn superCallOfDefaultConstructor { 1, 28 };
+static_assert(sizeof("(function (...args) { super") == superCallOfDefaultConstructor.column, "JSC makes a default constructor from a text of its own");
+static constexpr LineColumn startOfSuperCallOfDefaultConstructor { 1, 23 };
+static_assert(sizeof("(function (...args) { ") == startOfSuperCallOfDefaultConstructor.column);
 
 static void reportUndeclaredTrap(const DescribedFunction& described, ValueID value)
 {
@@ -188,7 +192,7 @@ static Vector<RecordedSite> renumberSites(const CodeRecords& records, LinkBuffer
         uint32_t recordedNumber = *reference.site;
         const RecordedSite& record = recordOf(recordedNumber);
         const SiteLandingPad* landingPad = landingPads.takeNext(recordedNumber);
-        bool saysOnlyWhereItIs = !reference.isFirstRead && !record.constructs && !record.isTailCall;
+        bool saysOnlyWhereItIs = !reference.isFirstRead && record.kind == CallSiteKind::Plain;
         if (saysOnlyWhereItIs && last.record && *last.record == record && leadToSameHandler(last.landingPad, landingPad)) {
             *reference.site = result.size();
             continue;
@@ -217,9 +221,19 @@ static std::optional<LineColumn> positionOfImplementedBuiltin(StackTraceBuiltinK
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// The front end gives a constructor that no class member writes the position of its class.
+static bool isDefaultConstructor(const Program& program, const Function& function)
+{
+    if (function.kind != FunctionKind::BaseConstructor && function.kind != FunctionKind::DerivedConstructor)
+        return false;
+    return function.constructedClass && program.at(function.constructedClass).position == function.position;
+}
+
 static std::optional<LineColumn> positionInBuiltin(const Program& program, FunctionID shown)
 {
     const Function& owner = program.at(shown);
+    if (isDefaultConstructor(program, owner))
+        return owner.kind == FunctionKind::DerivedConstructor ? superCallOfDefaultConstructor : startOfBuiltinFunction;
     if (!owner.enclosingRuntimeFunction)
         return std::nullopt;
     switch (program.builtins().at(owner.enclosingRuntimeFunction).role) {
@@ -250,11 +264,7 @@ static SitePosition positionIn(const Program& program, const ShownFunction& show
     if (position == Instruction::noPosition)
         position = 0;
     LineColumn lineColumn = program.lineColumnFor(owner.module, position);
-    // The lines of a text that the program evaluates are counted in the text. The file is the one that evaluates it.
-    ModuleID shownModule = owner.module;
-    if (shownModule && program.at(shownModule).kind == ModuleKind::CommonJs && program.at(shownModule).referrer)
-        shownModule = program.at(shownModule).referrer;
-    return { lineColumn.line, lineColumn.column, shownModule, position, frame };
+    return { lineColumn.line, lineColumn.column, owner.module, position, frame };
 }
 
 static ShownFunctions findShownFunctions(const DescribedFunction& described)
@@ -269,15 +279,42 @@ static ShownFunctions findShownFunctions(const DescribedFunction& described)
     return shownFunctions;
 }
 
+static void describeConstructionStart(const Program& program, const ShownFunction& shown, const RecordedSite& site, SitePosition& position)
+{
+    if (!site.origin.isPartOfConstruction && !isConstructOf(site.kind))
+        return;
+    const Function& owner = program.at(shown.id);
+    if (owner.kind == FunctionKind::DerivedConstructor && isDefaultConstructor(program, owner)) {
+        position.constructionStartLine = startOfSuperCallOfDefaultConstructor.line;
+        position.constructionStartColumn = startOfSuperCallOfDefaultConstructor.column;
+        return;
+    }
+    if (shown.positionInBuiltin)
+        return;
+    ModuleID module = program.at(shown.id).module;
+    const ConstructionStart* construction = program.findConstructionReportedAt(module, position.sourceOffset);
+    if (!construction || (construction->isWrittenAsCall && !isConstructOf(site.kind)))
+        return;
+    LineColumn lineColumn = program.lineColumnFor(module, construction->start);
+    position.constructionStartLine = lineColumn.line;
+    position.constructionStartColumn = lineColumn.column;
+    position.startIsForCallers = construction->isForCallers;
+}
+
 static Vector<SitePosition> describePositions(const DescribedFunction& described, const Vector<RecordedSite>& renumbered)
 {
     const Program& program = described.program;
     ShownFunctions shownFunctions = findShownFunctions(described);
     Vector<SitePosition> positions;
     positions.reserveInitialCapacity(renumbered.size() + 1);
-    positions.append(positionIn(program, shownFunctions[0], program.at(shownFunctions[0].id).position, 0));
-    for (const RecordedSite& site : renumbered)
+    const Function& outermost = program.at(shownFunctions[0].id);
+    positions.append(positionIn(program, shownFunctions[0], outermost.position, 0));
+    if (isDefaultConstructor(program, outermost))
+        positions[0].column = startOfBuiltinFunction.column;
+    for (const RecordedSite& site : renumbered) {
         positions.append(positionIn(program, shownFunctions[site.origin.inlineFrame], site.origin.position, site.origin.inlineFrame));
+        describeConstructionStart(program, shownFunctions[site.origin.inlineFrame], site, positions.last());
+    }
     return positions;
 }
 
@@ -285,13 +322,8 @@ static Vector<FlaggedSite> collectFlaggedSites(const Vector<RecordedSite>& renum
 {
     Vector<FlaggedSite> flaggedSites;
     for (uint32_t i = numberOfSitesWithoutCode; i < renumbered.size(); ++i) {
-        OptionSet<SiteFlag> flags;
-        if (renumbered[i].constructs)
-            flags.add(SiteFlag::Constructs);
-        if (renumbered[i].isTailCall)
-            flags.add(SiteFlag::IsTailCall);
-        if (!flags.isEmpty())
-            flaggedSites.append({ i + 1, flags });
+        if (renumbered[i].kind != CallSiteKind::Plain)
+            flaggedSites.append({ i + 1, renumbered[i].kind, renumbered[i].calledBuiltin });
     }
     return flaggedSites;
 }
@@ -445,6 +477,8 @@ static FrameDescription describeFrame(const CodeRecords& records, EmittedCode& e
     const B3::Procedure& procedure = *emitted.procedure;
     const B3::Air::Code& code = procedure.code();
     frame.frameSizeInBytes = procedure.frameSize();
+    frame.bytesAboveFrameRecord = code.frameLayout().bytesAboveFrameRecord;
+    frame.bytesDeadAtSuspensions = code.frameLayout().bytesDeadAtSuspensions;
     frame.hasFrameRecord = !code.frameLayout().hasFrame || code.frameLayout().hasFrameRecord;
     frame.calleeSaveRegisters = registersRestoredByUnwinding(procedure, function);
     frame.frameRanges = describeFrameRanges(code, linkBuffer);

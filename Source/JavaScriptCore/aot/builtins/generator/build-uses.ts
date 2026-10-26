@@ -93,6 +93,7 @@ export interface OperandState {
   hasEveryMember: boolean;
   callsEveryMember: boolean;
   readsPrototypeLink: boolean;
+  readsOwnValuesByKey: boolean;
   readonly reads: ContentsAccess;
   readonly writes: ContentsAccess;
 }
@@ -258,6 +259,7 @@ function createOperandState(parameter: ModelParameter): OperandState {
     hasEveryMember: false,
     callsEveryMember: false,
     readsPrototypeLink: false,
+    readsOwnValuesByKey: false,
     reads: createContentsAccess(),
     writes: createContentsAccess(),
   };
@@ -266,6 +268,12 @@ function createOperandState(parameter: ModelParameter): OperandState {
 // One word says on which objects all protocols of an operand run.
 function finishParameter(state: OperandState): ModelParameter {
   const uses = new Set(state.uses);
+  if (state.readsOwnValuesByKey) {
+    // The records of the overload say under which keys. Nothing else of the operand is read.
+    const walksOwnValues = state.protocols.has("OwnValues") || state.protocolsOfContents.has("OwnValues");
+    if (!walksOwnValues) state.roles.add("OwnValuesAreReadByKeyOnly");
+    state.protocols.add("OwnValues");
+  }
   if (state.protocolsOfContents.size > 0) {
     const runsOnOperand = state.protocols.size > 0 || uses.has("AppliesTransitively");
     uses.add(runsOnOperand ? "AppliesTransitively" : "AppliesToContents");
@@ -686,8 +694,9 @@ function applyReadByKey(context: OverloadContext, object: ModelOperand, use: Use
   recordRead(context, object, "Properties");
   recordTarget(context, value);
   if (value.place !== "NativeMemory") addUses(context, object, "RetainsContents");
+  const state = context.stateOf(object);
   if (key.key === "Names") addNamedMembers(context, object, key.names);
-  else addProtocols(context, object, "OwnValues");
+  else if (state !== undefined) state.readsOwnValuesByKey = true;
   context.propertyActions.push({ action: "ReadsByKey", object, key, value, integrityLevel: null });
 }
 
@@ -1008,11 +1017,29 @@ export function applyUses(context: OverloadContext, operand: ModelOperand, uses:
   for (const use of uses) applyUse(context, state, use);
 }
 
+const constructionWithAnyArguments: UseOf<"Calls"> = {
+  use: "Calls",
+  times: "Once",
+  afterwards: "TouchesOnlyWhatRowNames",
+  constructs: true,
+  spreadArguments: { place: "NewValue", value: { type: "Anything" } },
+  result: "Escapes",
+};
+
 export function applyWrittenUses(context: OverloadContext): void {
-  const { uses = {}, isUndeclared } = context.signature;
+  const { uses = {}, isUndeclared, mode, constructs } = context.signature;
+  if (constructs !== undefined) {
+    const constructed = constructs === "this" ? receiverOperand : ({ operand: "Argument", index: constructs } as const);
+    applyCallback(context, constructed, constructionWithAnyArguments);
+  }
+  // A getter or a setter names its class and its attribute, and nothing of the receiver.
+  const namesNoReceiver = mode !== "Call";
   for (const name of Object.keys(uses)) context.operandOf(name, context.source);
-  for (const { parameter } of context.states) {
-    const { name, operand, accepted, converted } = parameter;
+  for (const state of context.states) {
+    const { name, operand, accepted, converted } = state.parameter;
+    // The host describes an argument or a receiver that it refuses in the message of the error.
+    const isDescribed = !accepted.isAnything && !(namesNoReceiver && operand.operand === "Receiver");
+    if (context.source.origin === "Host" && !isUndeclared && isDescribed) state.roles.add("DescribedWhenRefused");
     const isWritten = !isUndeclared && Object.hasOwn(uses, name);
     if (isWritten) {
       applyUses(context, operand, uses[name]!);
