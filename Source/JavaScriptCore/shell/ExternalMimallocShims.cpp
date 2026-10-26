@@ -37,3 +37,10 @@ extern "C" void mi_on_thread_idle(void) noexcept
 {
     mi_theap_collect(mi_theap_get_default(), /* force */ false);
 }
+
+// Whether the call above held back memory in pages of this thread, for another call. The collect
+// of the vendored mimalloc holds nothing back.
+extern "C" bool mi_on_thread_idle_pending_own(void) noexcept
+{
+    return false;
+}

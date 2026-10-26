@@ -39,8 +39,9 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(AutomaticThread);
 static constexpr bool verbose = false;
 
 #if USE(MIMALLOC)
-// How long a thread waits for more work before it releases its allocator's free memory.
-static constexpr Seconds idleReleaseDelay = 100_ms;
+// How long a thread waits for more work before it releases its allocator's free memory, and
+// before it releases again.
+static constexpr Seconds idleReleaseDelay = Seconds::fromMilliseconds(IdleFreeMemoryRelease::intervalInMilliseconds);
 #endif
 
 Ref<AutomaticThreadCondition> AutomaticThreadCondition::create()
@@ -232,8 +233,8 @@ void AutomaticThread::start(const AbstractLocker&)
             };
             
 #if USE(MIMALLOC)
-            // Whether this thread released its allocator's free memory since it last worked.
-            bool didReleaseFreeMemory = false;
+            // The releases of this thread's free memory since it last worked.
+            IdleFreeMemoryRelease idleRelease;
 #endif
 
             for (;;) {
@@ -261,22 +262,27 @@ void AutomaticThread::start(const AbstractLocker&)
                         // waiting state through the release, and polls again only if a notify
                         // arrived meanwhile (notify() clears m_isWaiting, which is checked under the
                         // lock, so a notify during the release is not lost).
+                        //
+                        // One release does not return the large blocks that the thread used a moment
+                        // ago, so the thread waits as long again and releases again while one is due
+                        // (IdleFreeMemoryRelease). Every such wait counts towards its timeout.
                         Seconds timeout = m_timeout;
-                        if (!didReleaseFreeMemory && m_timeout > idleReleaseDelay) {
+                        while (idleRelease.isDue() && timeout > idleReleaseDelay) {
                             m_waitCondition.waitFor(*m_lock, idleReleaseDelay);
                             if (!m_isWaiting)
-                                continue;
-                            didReleaseFreeMemory = true;
+                                break;
+                            timeout -= idleReleaseDelay;
                             m_isReleasingFreeMemory = true;
                             {
                                 DropLockForScope dropLock { locker };
-                                releaseFastMallocFreeMemoryForIdleThread();
+                                idleRelease.release();
                             }
                             m_isReleasingFreeMemory = false;
                             if (!m_isWaiting)
-                                continue;
-                            timeout -= idleReleaseDelay;
+                                break;
                         }
+                        if (!m_isWaiting)
+                            continue;
 #else
                         Seconds timeout = m_timeout;
 #endif
@@ -297,7 +303,7 @@ void AutomaticThread::start(const AbstractLocker&)
                 }
                 
 #if USE(MIMALLOC)
-                didReleaseFreeMemory = false;
+                idleRelease.reset();
 #endif
                 WorkResult result = work();
                 if (result == WorkResult::Stop) {

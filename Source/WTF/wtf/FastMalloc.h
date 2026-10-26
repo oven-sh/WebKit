@@ -177,8 +177,28 @@ WTF_EXPORT_PRIVATE size_t fastMallocGoodSize(size_t);
 
 WTF_EXPORT_PRIVATE void releaseFastMallocFreeMemory();
 WTF_EXPORT_PRIVATE void releaseFastMallocFreeMemoryForThisThread();
-// For a thread that is idle and about to block for a while. See bmalloc::api::scavengeThisThreadOnIdle.
-WTF_EXPORT_PRIVATE void releaseFastMallocFreeMemoryForIdleThread();
+
+// What a thread does with its allocator's free memory while it has nothing to do. Only the owning
+// thread can return the memory that its thread-local heap holds, so a thread that is about to
+// block for a while releases it: once it has been idle for the interval, and again an interval
+// after each release that held memory back, maxReleases times in all. One release does not return
+// the large blocks that the thread used a moment ago (bmalloc::api::scavengeThisThreadOnIdle).
+// A thread that blocks after one release keeps them for as long as it blocks.
+class IdleFreeMemoryRelease {
+public:
+    // In milliseconds, because Seconds.h includes this header.
+    static constexpr unsigned intervalInMilliseconds = 100;
+
+    // Whether the thread is to call release() when it has been idle for one more interval.
+    bool isDue() const { return m_releasesLeft; }
+    WTF_EXPORT_PRIVATE void release();
+    // The thread has worked, so it has memory to release again.
+    void reset() { m_releasesLeft = maxReleases; }
+
+private:
+    static constexpr unsigned maxReleases = 4;
+    unsigned m_releasesLeft { maxReleases };
+};
 
 WTF_EXPORT_PRIVATE void fastCommitAlignedMemory(void*, size_t);
 WTF_EXPORT_PRIVATE void fastDecommitAlignedMemory(void*, size_t);
