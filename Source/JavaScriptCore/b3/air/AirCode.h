@@ -340,6 +340,13 @@ public:
     const SparseCollection<Special>& specials() const LIFETIME_BOUND { return m_specials; }
     SparseCollection<Special>& specials() LIFETIME_BOUND { return m_specials; }
 
+    struct FormsOfPatch {
+        Special* special { nullptr };
+        Vector<uint8_t> formsAfterSpecial;
+        bool areFixed { false };
+    };
+    UncheckedKeyHashMap<Value*, FormsOfPatch>& formsOfPatches() LIFETIME_BOUND { return m_formsOfPatches; }
+
     JS_EXPORT_PRIVATE void addFastTmp(Tmp);
 
     template<typename Functor>
@@ -454,6 +461,7 @@ private:
     SparseCollection<StackSlot> m_stackSlots;
     Vector<std::unique_ptr<BasicBlock>> m_blocks;
     SparseCollection<Special> m_specials;
+    UncheckedKeyHashMap<Value*, FormsOfPatch> m_formsOfPatches;
     std::unique_ptr<CFG> m_cfg;
     SmallSet<Tmp, DefaultHash<Tmp>, HashTraits<Tmp>, 2> m_fastTmps;
     CCallSpecial* m_cCallSpecial { nullptr };

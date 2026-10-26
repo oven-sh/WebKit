@@ -335,18 +335,18 @@ static void internKeysOfDeclaredStringLiterals(Program& program, const ParallelL
     };
     visitAll(collectInParallel<TypeID>(loops, program.layouts.size(), [&](unsigned index, Vector<TypeID>& found) {
         for (const Field& field : program.layouts[index].fields)
-            found.append(field.declared.type);
+            found.append(field.declared.written());
     }));
     for (const Variable& variable : program.variables)
-        visit(variable.declared.type);
+        visit(variable.declared.written());
     visitAll(collectInParallel<TypeID>(loops, program.functions.size(), [&](unsigned functionIndex, Vector<TypeID>& found) {
         const Function& function = program.functions[functionIndex];
         for (uint32_t index = 0; index < function.numberOfEntryParameters(); ++index) {
             if (const DeclaredType* declared = function.declaredEntryParameter(index))
-                found.append(declared->type);
+                found.append(declared->written());
         }
         for (const DeclaredType& result : function.results)
-            found.append(result.type);
+            found.append(result.written());
     }));
     while (!worklist.isEmpty()) {
         const Type& type = program.types.at(worklist.takeLast());
@@ -440,7 +440,7 @@ ValueFlowInstancedFunctions::ValueFlowInstancedFunctions(const Program& program,
     }
 }
 
-ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues)
+ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, ValueFlowSolver::Rounds rounds, Witnesses witnesses, uint32_t mostRounds, EnumSet<ValueFlowUnknownSource> unknownSourcesLeftOut, WaysOfValues waysOfValues, CoveredMembers coveredMembers)
     : m_program(program)
     , m_bodies(reduceBodiesBehindKeys(program, build, m_positionOfKey))
     , m_maker(m_bodies.sets())
@@ -468,6 +468,7 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
         .mostEdgesLogged = build.limit(LimitID::MaxValueFlowEdgesLogged),
         .remembersWhoLoggedEachEdge = witnesses == Witnesses::ForEveryEdge || hasFlag(build.options().reports, ReportSet::Flow),
         .isAskedHowValuesCame = waysOfValues == WaysOfValues::AreAskedFor,
+        .leavesOutWhatIsCovered = coveredMembers == CoveredMembers::AreLeftOut,
         .mostRounds = mostRounds,
         .unknownSourcesLeftOut = unknownSourcesLeftOut,
         .refusedCode = { .evaluatedText = build.options().excludesEvaluatedText(), .codeOutsideImage = build.options().excludesCodeOutsideImage() },
@@ -482,6 +483,11 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
     times.didFinish("solve: the solver made"_s);
     m_hasResult = m_solver->solve();
     times.didFinish("solve: rounds"_s);
+    if (build.options().logging.logsPhaseTimes) {
+        ValueFlowBytesByTable bytes;
+        m_bodies.addBytesTo(bytes);
+        bytes.dump("all of the bodies"_s);
+    }
     for (const std::unique_ptr<ValueSetMaker>& maker : m_solver->makersIdleAfterSolve())
         m_makerPool.giveBack(*maker);
 }
@@ -508,11 +514,11 @@ void ValueSetMakerPool::giveBack(ValueSetMaker& maker)
     m_idleMakers.append(&maker);
 }
 
-ValueSetID ValueFlowSolution::valueOf(const ValueFlowOperand& operand)
+ValueSetID ValueFlowSolution::possibleValuesOf(const ValueFlowOperand& operand)
 {
     ValueSetID value = operand.constant ? operand.constant : ValueSets::nothing;
     if (operand.node)
-        value = m_maker.unite(value, m_solver->valueOf(operand.node));
+        value = m_maker.unite(value, m_solver->possibleValuesOf(operand.node));
     return ValueFlowRuleContext::throughMaskOf(operand, value, *m_solver, m_maker);
 }
 

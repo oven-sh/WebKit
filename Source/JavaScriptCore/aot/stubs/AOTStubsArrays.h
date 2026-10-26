@@ -106,6 +106,19 @@ ptrdiff_t offsetOfArrayWithStorageAllocator(unsigned vectorLength, unsigned prop
 void emitEmptyArrayOfHoles(StubAssembler&, EmptyArray);
 void emitElementBarrierAndReturn(StubAssembler&, GPRReg array, GPRReg value);
 
+struct SparseElementSearch {
+    // Has an ArrayStorage. Preserved.
+    GPRReg owner;
+    // Below 2^32. Preserved.
+    GPRReg index;
+    // On x86-64 rax and rdx.
+    GPRReg entry;
+    GPRReg probe;
+    GPRReg table;
+};
+// Falls through with the address of the SparseArrayEntry where the map of the storage has the index.
+void emitFindSparseElement(StubAssembler&, const SparseElementSearch&, JumpList& isAbsent);
+
 static_assert(exists(arrayLiteral(0)) && exists(arrayLiteral(maxArrayElementsInRegisters)) && !exists(arrayLiteral(maxArrayElementsInRegisters).withCount(maxArrayElementsInRegisters + 1)));
 static_assert(exists(arrayLiteralWithDouble(1)) && !exists(arrayLiteralWithDouble(1).withCount(0)) && exists(arrayLiteralWithDoubleSlow()));
 static_assert(exists(newEmptyArray(EmptyArray::ContiguousCapacity3OwnStorage)) && !exists(newEmptyArray(EmptyArray::Int32DefaultCapacity).withForm(8)));

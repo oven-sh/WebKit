@@ -1,0 +1,44 @@
+# function define(object, name) { object[name] = function () { return name; }; }   for (const name of ["a", "b"]) define(object, name);
+# A turn has a version for each written name, and the call in each version has a copy of the function to itself, though it stands in a loop.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[a]]{{*}} = String string="a"
+# CHECK: [[b]]{{*}} = String string="b"
+# CHECK: [[first]]{{*}} = NewClosure function=f4
+# CHECK-NEXT: Call [[first]], -, v1, [[a]]
+# CHECK: [[second]]{{*}} = NewClosure function=f6
+# CHECK-NEXT: Call [[second]], -, v1, [[b]]
+# CHECK: Call v0, -, v1,
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[]
+data d0 root=Array{contents=string elements=[String{value="a"}, String{value="b"}]} module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewObject layout=L0
+    v2 = Data data=d0
+    v3 = IteratorOpen v2
+    Jump -> next b1()
+  b1():
+    v4 = IteratorResume v3
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b3(), notTaken b2()
+  b2():
+    v7 = Call v0, -, v1, v6
+    Jump -> next b1()
+  b3():
+    Return
+}
+function f1 name="define" module=m0 position=10 length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure v1 function=f2
+    ElemSet v0, v1, v2
+    Return
+}
+function f2 name="member" module=m0 position=20 captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

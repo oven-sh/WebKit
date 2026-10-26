@@ -17,6 +17,7 @@ public:
     JS_EXPORT_PRIVATE explicit CellSizeClasses(double progression);
 
     JS_EXPORT_PRIVATE size_t cellSizeFor(size_t bytes) const;
+    size_t largestCellSizeWithin(size_t bytes) const;
 
 private:
     Vector<size_t> m_sizes;

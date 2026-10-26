@@ -66,7 +66,8 @@ static void emitLargeFrameCheck(CCallHelpers& jit, PendingStackCheck& check, con
     GPRReg base = check.bytesAllocatedBelowReturnAddress ? CCallHelpers::stackPointerRegister : GPRInfo::callFrameRegister;
     jit.subPtr(base, CCallHelpers::TrustedImm32(check.bytesAllocatedBelowReturnAddress ? site.bytesLeftToAllocate : check.bytesBelowFrameRecord), newStackPointer);
     check.limit = StackLimit::Soft;
-    check.doesNotFit.append(jit.branchPtr(CCallHelpers::Above, newStackPointer, base));
+    // The stack pointer is the left operand: ARM64 compares it only there, and copies it into the scratch register otherwise.
+    check.doesNotFit.append(jit.branchPtr(CCallHelpers::Below, base, newStackPointer));
     check.doesNotFit.append(jit.branchPtr(CCallHelpers::Below, newStackPointer, CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit())));
 }
 

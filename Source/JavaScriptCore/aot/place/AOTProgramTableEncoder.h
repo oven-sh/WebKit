@@ -27,6 +27,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/MathExtras.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/ASCIILiteral.h>
 
@@ -154,6 +155,15 @@ struct EncodedProgramTables {
 
 JS_EXPORT_PRIVATE EncodedProgramTables encodeProgramTables(const ProgramTableInputs&, BuildContext&);
 
+// What the tables refer to by the number of an identifier. The numbers are given out before the tables are written.
+struct NamesInProgramTables {
+    BitVector keys;
+    BitVector texts;
+};
+
+// Runs the encoder for what it asks for and drops the bytes, so nothing else has to know which rows the tables have.
+JS_EXPORT_PRIVATE NamesInProgramTables findNamesInProgramTables(const PipelineOutput&, const BodyFactsForTables&, BuildContext&);
+
 #define FOR_EACH_AOT_PROGRAM_TABLE_RULE(v) \
     v(TableOutOfBounds) \
     v(TableNotWritten) \
@@ -184,6 +194,32 @@ enum class ProgramTableRule : uint32_t {
 
 JS_EXPORT_PRIVATE ASCIILiteral nameOf(ProgramTableRule);
 
+// The record that a row of a table is written for.
+struct RowOwner {
+    RowOwner() = default;
+    RowOwner(FunctionID id)
+        : function(id)
+    {
+    }
+    RowOwner(LayoutID id)
+        : layout(id)
+    {
+    }
+    RowOwner(VariableID id)
+        : variable(id)
+    {
+    }
+    RowOwner(ModuleID id)
+        : module(id)
+    {
+    }
+
+    FunctionID function;
+    LayoutID layout;
+    VariableID variable;
+    ModuleID module;
+};
+
 constexpr size_t elementSizeOf(ProgramTableIndex index)
 {
     switch (index) {
@@ -198,20 +234,29 @@ constexpr size_t elementSizeOf(ProgramTableIndex index)
 
 struct TableEncoder {
     TableEncoder(const ProgramTableInputs&, BuildContext&);
+    TableEncoder(const ProgramTableInputs&, const IdentifierNumbering&, NamesInProgramTables* namesToFind, BuildContext&);
 
     uint32_t stringNumber(StringID);
     uint32_t shownStringNumber(StringID);
     // Of a function, a class, a type: an obfuscated build has the empty string in its place.
     uint32_t shownNameNumber(StringID id) { return shownStringNumber(obfuscates() ? StringID() : id); }
     uint32_t stringConstantNumber(StringID);
-    uint32_t identifierNumber(PropertyKeyID key) const { return numberOrFail(identifiers.numberOf(key), ProgramTableRule::NameWithoutIdentifier); }
-    uint32_t identifierNumberOfText(StringID text) const { return numberOrFail(identifiers.numberOfText(text), ProgramTableRule::NameWithoutIdentifier); }
+    // The message of a failure reads: the name is <use> <owner>.
+    uint32_t identifierNumber(PropertyKeyID, ASCIILiteral use, RowOwner = { }) const;
+    uint32_t identifierNumberOfText(StringID, ASCIILiteral use, RowOwner = { }) const;
     uint32_t typeOffset(TypeID) const;
     uint32_t dataNodeOf(DataID) const;
     FunctionID findEntrypoint(FunctionID) const;
-    uint32_t entrypointOf(FunctionID) const;
+    // The message of a failure reads: the function is <use> <owner>.
+    uint32_t entrypointOf(FunctionID, ASCIILiteral use, RowOwner = { }) const;
     uint32_t checkedOffset(uint32_t offset) const;
     bool obfuscates() const { return build.options().obfuscates(); }
+    bool writesTables() const { return !namesToFind; }
+    void count(StatisticID statistic, uint64_t amount = 1) const
+    {
+        if (writesTables())
+            build.statistics().count(statistic, amount);
+    }
 
     uint32_t numberOrFail(std::optional<uint32_t> number, ProgramTableRule rule) const
     {
@@ -248,7 +293,7 @@ struct TableEncoder {
         writtenTables.set(static_cast<unsigned>(index));
     }
 
-    void fail(ProgramTableRule, LayoutID = { }, FunctionID = { }) const;
+    void fail(ProgramTableRule, LayoutID = { }, FunctionID = { }, const String& circumstances = { }) const;
 
     const ProgramTableInputs& inputs;
     const Program& program;
@@ -256,6 +301,9 @@ struct TableEncoder {
     const SlotPlan& slots;
     const Placement& placement;
     const IdentifierNumbering& identifiers;
+    NamesInProgramTables* namesToFind;
+    // Whether the run that finds the names goes through the group of tables that is being written.
+    bool mayNameIdentifiers { true };
     BuildContext& build;
     TableWriter writer;
     ProgramTables header { };
@@ -267,6 +315,24 @@ struct TableEncoder {
     Vector<std::optional<uint32_t>> tablesInImage;
     // By the index of a class: the classes whose assumed base it is, ascending.
     Vector<Vector<uint32_t>> subclasses;
+    // By the index of a set of guards: where the list of its members lies, once it is written.
+    Vector<uint32_t> memberListsOfGuardSets;
+};
+
+// A part of the tables that names no identifier: the run that finds the names leaves it out.
+class PartWithoutNames {
+public:
+    explicit PartWithoutNames(TableEncoder& encoder)
+        : m_isWritten(encoder.writesTables())
+        , m_mayNameIdentifiers(encoder.mayNameIdentifiers, false)
+    {
+    }
+
+    bool isWritten() const { return m_isWritten; }
+
+private:
+    bool m_isWritten;
+    SetForScope<bool> m_mayNameIdentifiers;
 };
 
 // Every table but the header, in the order in which they lie in the image. Ends behind the first group that reports an error.

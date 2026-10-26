@@ -19,6 +19,7 @@
 #include "AOTFunctionTables.h"
 #include "AOTInstance.h"
 #include "AOTPlacement.h"
+#include "AOTRuntimeCallEmitter.h"
 #include "AOTSlimClosure.h"
 #include "AOTStubsClosures.h"
 #include "AOTVector.h"
@@ -78,16 +79,14 @@ CellPointer ConstantEmitter::singletonClosure(const OperationContext& context, F
         return failWithoutCell(context, InternalErrorKind::OpcodeWithoutCode);
     if (!m_placement.closureCellNumber(entrypoint))
         return failWithoutCell(context, InternalErrorKind::PlacedPayloadMissing);
-    if (context.shape() != CodeShape::Fast) {
-        LValue operands[] = { integer(static_cast<int64_t>(entrypoint.index())).value() };
-        return CellPointer(callStub(context, closureOfTable(), operands).first);
-    }
+    if (context.shape() != CodeShape::Fast)
+        return CellPointer(callStub(context, closureOfTable(), { }, { .immediate = entrypoint.index() }).first);
     CellPointer created = emitter<ClosureTestEmitter>().closureIfCreated(entrypoint);
     return either<CellPointer>(isNotEmpty(boxCell(created)), [&] {
         return created;
     }, [&] {
         // The operation that takes the closure declares no write, so a call with its effects would let B3 reuse the empty word of the closure table.
-        return callWithoutSite<CellPointer>(RuntimeOperation::SingletonClosure, { word32(static_cast<int32_t>(entrypoint.index())) }, { .isOnRarePath = true });
+        return CellPointer(emitter<RuntimeCallEmitter>().callStubWithoutSite(closureOfTable(), std::span<const LValue>(), { .immediate = entrypoint.index(), .isOnRarePath = true, .convertsNoCells = m_placement.functionKind(entrypoint).isSlim }).first);
     });
 }
 

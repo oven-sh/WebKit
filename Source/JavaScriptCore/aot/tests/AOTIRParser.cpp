@@ -698,7 +698,7 @@ void TextParser::applyValueEngineFields(const PatchContext& context) const
         if (fields.typeWord != Wire::none)
             value.type = context.type(fields.typeWord);
         if (fields.expectedWord != Wire::none)
-            value.setExpected(context.type(fields.expectedWord));
+            value.setExpected(ExpectedType(context.type(fields.expectedWord)));
         if (fields.representation) {
             value.representation = *fields.representation;
             function.representationsAreChosen = true;

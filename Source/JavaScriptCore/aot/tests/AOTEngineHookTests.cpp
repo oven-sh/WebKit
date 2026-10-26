@@ -305,6 +305,104 @@ static void testFunctionTypes()
         AOT_TEST_CHECK(cell->type() == type && !isFunctionType(type) && cell->isCallable() == isCallable);
 }
 
+static SymbolImpl::StaticSymbolImpl nameThatPassesThroughProxies { "passes"_s, SymbolImpl::s_flagIsPrivate | SymbolImpl::s_flagPassesThroughProxies };
+static SymbolImpl::StaticSymbolImpl otherPrivateName { "other"_s, SymbolImpl::s_flagIsPrivate };
+
+static void testProxiesHandPrivateNamesToTheirTarget()
+{
+    Realms realms;
+    VM& vm = realms.vm();
+    JSGlobalObject* realm = realms.plain();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    PropertyName passes { &static_cast<SymbolImpl&>(nameThatPassesThroughProxies) };
+    PropertyName other { &static_cast<SymbolImpl&>(otherPrivateName) };
+    Identifier targetName = Identifier::fromString(vm, "target"_s);
+
+    auto makeTarget = [&] {
+        JSObject* target = realms.object(realm, "({ listed: 0 })"_s);
+        target->putDirect(vm, passes, jsNumber(1));
+        target->putDirect(vm, other, jsNumber(2));
+        realm->putDirect(vm, targetName, target);
+        return target;
+    };
+    auto attributesOf = [&](JSObject* object, PropertyName name) {
+        unsigned attributes = 0;
+        AOT_TEST_CHECK(object->getDirect(vm, name, attributes));
+        return attributes;
+    };
+    auto put = [&](JSObject* object, PropertyName name, JSValue value) {
+        PutPropertySlot slot(object, false);
+        return object->methodTable()->put(object, realm, name, value, slot);
+    };
+    auto describe = [&](JSObject* object, PropertyName name) {
+        PropertyDescriptor descriptor;
+        return object->getOwnPropertyDescriptor(realm, name, descriptor) ? descriptor.value() : JSValue();
+    };
+    auto makeReadOnly = [&](JSObject* object, PropertyName name) {
+        PropertyDescriptor descriptor;
+        descriptor.setWritable(false);
+        return object->methodTable()->defineOwnProperty(object, realm, name, descriptor, false);
+    };
+
+    // The last handler throws as soon as any trap is looked for.
+    ASCIILiteral proxies[] = {
+        "new Proxy(target, {})"_s,
+        "new Proxy(new Proxy(target, {}), {})"_s,
+        "new Proxy(target, new Proxy({}, { get() { throw new Error; } }))"_s,
+    };
+    for (ASCIILiteral source : proxies) {
+        JSObject* target = makeTarget();
+        JSObject* proxy = realms.object(realm, source);
+
+        AOT_TEST_CHECK(proxy->get(realm, passes) == jsNumber(1) && proxy->get(realm, other).isUndefined());
+        AOT_TEST_CHECK(proxy->hasProperty(realm, passes) && !proxy->hasProperty(realm, other));
+        AOT_TEST_CHECK(describe(proxy, passes) == jsNumber(1) && !describe(proxy, other));
+        AOT_TEST_CHECK(put(proxy, passes, jsNumber(3)) && !put(proxy, other, jsNumber(4)));
+        AOT_TEST_CHECK(target->getDirect(vm, passes) == jsNumber(3) && target->getDirect(vm, other) == jsNumber(2));
+        AOT_TEST_CHECK(makeReadOnly(proxy, passes) && !makeReadOnly(proxy, other));
+        AOT_TEST_CHECK(attributesOf(target, passes) == static_cast<unsigned>(PropertyAttribute::ReadOnly) && !attributesOf(target, other));
+        AOT_TEST_CHECK(!put(proxy, passes, jsNumber(5)) && target->getDirect(vm, passes) == jsNumber(3));
+        AOT_TEST_CHECK(JSCell::deleteProperty(proxy, realm, passes) && !JSCell::deleteProperty(proxy, realm, other));
+        AOT_TEST_CHECK(!target->getDirect(vm, passes) && target->getDirect(vm, other) == jsNumber(2));
+        AOT_TEST_CHECK(!scope.exception());
+    }
+
+    ASCIILiteral proxiesThatCanBeClosed[] = {
+        "new Proxy(target, {})"_s,
+        "new Proxy(new Proxy(target, {}), {})"_s,
+        "new Proxy(target, { ownKeys: Reflect.ownKeys })"_s,
+        "new Proxy(new Proxy(target, { ownKeys: Reflect.ownKeys }), { ownKeys: Reflect.ownKeys })"_s,
+        "new Proxy(target, { ownKeys: Reflect.ownKeys, getOwnPropertyDescriptor: Reflect.getOwnPropertyDescriptor, defineProperty: Reflect.defineProperty, preventExtensions: Reflect.preventExtensions })"_s,
+    };
+    for (ASCIILiteral source : proxiesThatCanBeClosed) {
+        JSObject* sealed = makeTarget();
+        AOT_TEST_CHECK(objectConstructorSeal(realm, realms.object(realm, source)) && !scope.exception());
+        AOT_TEST_CHECK(attributesOf(sealed, passes) == static_cast<unsigned>(PropertyAttribute::DontDelete) && !attributesOf(sealed, other));
+
+        JSObject* frozen = makeTarget();
+        AOT_TEST_CHECK(objectConstructorFreeze(realm, realms.object(realm, source)) && !scope.exception());
+        AOT_TEST_CHECK(attributesOf(frozen, passes) == (PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly) && !attributesOf(frozen, other));
+    }
+
+    auto throwsOnce = [&](auto&& operation) {
+        operation();
+        bool hasThrown = scope.exception();
+        scope.clearException();
+        return hasThrown;
+    };
+    JSObject* target = makeTarget();
+    JSObject* revoked = realms.object(realm, "(() => { let { proxy, revoke } = Proxy.revocable(target, {}); revoke(); return proxy; })()"_s);
+    for (auto [name, throws] : { std::pair { passes, true }, std::pair { other, false } }) {
+        AOT_TEST_CHECK(throwsOnce([&] { revoked->get(realm, name); }) == throws);
+        AOT_TEST_CHECK(throwsOnce([&] { revoked->hasProperty(realm, name); }) == throws);
+        AOT_TEST_CHECK(throwsOnce([&] { describe(revoked, name); }) == throws);
+        AOT_TEST_CHECK(throwsOnce([&] { put(revoked, name, jsNumber(6)); }) == throws);
+        AOT_TEST_CHECK(throwsOnce([&] { makeReadOnly(revoked, name); }) == throws);
+        AOT_TEST_CHECK(throwsOnce([&] { JSCell::deleteProperty(revoked, realm, name); }) == throws);
+    }
+    AOT_TEST_CHECK(target->getDirect(vm, passes) == jsNumber(1) && !attributesOf(target, passes));
+}
+
 static void testOnlyRealmWithModuleHostHasInstance(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -498,6 +596,7 @@ std::span<const NativeTest> engineHookTests()
         { "engine-hooks/array-storage-to-contiguous"_s, testArrayStorageToContiguous },
         { "engine-hooks/promise-all-generic-path"_s, testPromiseAllGenericPath },
         { "engine-hooks/function-types"_s, testFunctionTypes },
+        { "engine-hooks/proxies-hand-private-names-to-their-target"_s, testProxiesHandPrivateNamesToTheirTarget },
         { "engine-hooks/only-realm-with-module-host-has-instance"_s, withProgram<testOnlyRealmWithModuleHostHasInstance> },
         { "engine-hooks/image-is-attached-to-vm"_s, withProgram<testImageIsAttachedToVM> },
         { "engine-hooks/deliver-step-to-driver"_s, withProgram<testDeliverStepToDriver> },

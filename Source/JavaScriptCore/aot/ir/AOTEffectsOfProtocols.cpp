@@ -96,7 +96,7 @@ static bool mayReadFromField(const Program& program, const Type& operand, Proper
         if (!field)
             return program.at(member).kind == LayoutKind::ModuleNamespace;
         const DeclaredType& declared = fieldAt(program, *field).declared;
-        return !declared.type || declared.flags.contains(PositionFlags::IsExpected) || predicate(program.at(slotTypeOf(program, fieldAt(program, *field))));
+        return !declared.written() || declared.isExpected() || predicate(program.at(slotTypeOf(program, fieldAt(program, *field))));
     });
 }
 

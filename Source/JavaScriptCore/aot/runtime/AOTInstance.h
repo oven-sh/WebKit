@@ -68,8 +68,30 @@ private:
     alignas(T) uint8_t m_bytes[sizeof(T)];
 };
 
+// A function that writes an object whose type may hold itself compares its frame with this limit. It is the limit of the stack, or lies above every frame while a string builder watches which objects are written inside which.
+struct JSONLevelWords {
+    ZeroedStorage<StackManager::Mirror> limit;
+};
+
+// A stub that is about to jump into the code of a function object compares the stack pointer with this limit. It is the limit of the stack, or lies above every frame from the time on that such calls record their callees.
+struct CallByValueWords {
+    ZeroedStorage<StackManager::Mirror> limit;
+    // FunctionTables::isRenamedAtRunTime.
+    const uint8_t* isRenamedAtRunTime;
+};
+
+// For the stub that reads the closure table and makes the function object that is not there yet.
+struct ClosureTableWords {
+    // RememberedSlotSet::cards() of the table. Null until the static variables of the program are filled in.
+    uint8_t* cards;
+};
+
 // On x86-64 an operand within 128 bytes below the instance takes a one-byte displacement, and one farther away takes four bytes. What compiled code names most lies within.
 struct InstancePrefix {
+    int64_t minIntegerAddedTo;
+    int64_t maxIntegerAddedTo;
+    int64_t distanceOfIntegersAddedToFromZero;
+    int64_t spanOfIntegersAddedTo;
     int64_t minInt64;
     uint64_t newCopyOnWriteArrayWithContiguousHeader;
     uint64_t stringHeader;
@@ -177,11 +199,18 @@ struct ClonedStructure {
     uint64_t cellSize;
 };
 
+struct MappedCopy;
+
 struct AllocationWords {
     static constexpr unsigned numberOfTypedArrayAllocations = 16;
     static constexpr unsigned numberOfClonedStructures = 16;
     static constexpr unsigned clonedStructureShift = 4;
     static constexpr unsigned placeOfClonedStructure(uint32_t structureID) { return structureID >> clonedStructureShift & (numberOfClonedStructures - 1); }
+    static constexpr unsigned numberOfCopiesWithoutFrame = 64;
+    static constexpr unsigned placeOfCopyWithoutFrame(uint64_t targetWords, uint64_t sourceWords, uint32_t excludedRunNumberPlusOne)
+    {
+        return static_cast<uint32_t>(sourceWords + (sourceWords >> 32) + 2 * (targetWords >> 32) + excludedRunNumberPlusOne) & (numberOfCopiesWithoutFrame - 1);
+    }
 
     void* auxiliarySpace;
     void* cagedAuxiliarySpace;
@@ -196,6 +225,7 @@ struct AllocationWords {
     // CompactTable::growthPlans(). Null until an operation has added to a Map or Set.
     const uint64_t* compactTableGrowthPlans;
     ClonedStructure clonedStructures[numberOfClonedStructures];
+    const MappedCopy* copiesWithoutFrame[numberOfCopiesWithoutFrame];
 };
 
 // Most objects that have extra properties have one or two.
@@ -227,10 +257,19 @@ struct RealmWords {
     uint32_t builtinLayoutOfStructure;
 };
 
+// A function object, and what the stack pointer is once its call has returned.
+struct RecordedCallee {
+    uintptr_t stackPointerOfCaller;
+    JSObject* closure;
+};
+
 struct HeapWords {
     StoredCellLog* storedCellLog;
     MarkStackArray* mutatorMarkStack;
     uintptr_t* barriersExecuted;
+    // The stack pointer of an entry says where the entry lies. A call writes over the entry of a call that was made from no further out, which has returned.
+    // In front of the first entry lies one that holds, in place of a stack pointer, the mask that leaves of a stack pointer the offset of its entry.
+    const RecordedCallee* recordedCallees;
 };
 
 struct IterationWords {
@@ -263,10 +302,13 @@ struct NumberWords {
     v(iteration, IterationWords) \
     v(json, JSONWords) \
     v(stringBuilder, StringBuilderWords) \
+    v(jsonLevels, JSONLevelWords) \
     writtenOnce(stubs, StubWords) \
     v(scratch, CodegenScratchWords) \
     v(constructWords, ConstructWordCache) \
-    v(lazyStrings, LazyStringWords)
+    v(lazyStrings, LazyStringWords) \
+    v(callsByValue, CallByValueWords) \
+    v(closureTable, ClosureTableWords)
 #define FOR_EACH_AOT_INSTANCE_PART(v) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(v, v)
 
 struct Instance : InstanceHeader {
@@ -382,7 +424,7 @@ constexpr ptrdiff_t Instance::offsetOfSlotHandlers(SlotHandlerTable table)
 #else
     constexpr ptrdiff_t offsetOfHandlers = AOT_INSTANCE_OFFSET(propertyCaches.handlers);
 #endif
-    return offsetOfHandlers + static_cast<ptrdiff_t>(static_cast<unsigned>(table) * numberOfSlotKinds * sizeof(void*));
+    return offsetOfHandlers + static_cast<ptrdiff_t>(static_cast<unsigned>(table) * numberOfSlotKindsWithHandlers * sizeof(void*));
 }
 
 constexpr ptrdiff_t Instance::offsetOfBoxedCalls()
@@ -421,6 +463,8 @@ static_assert(sizeof(TypedArrayAllocation) == 32);
 static_assert(sizeof(UniquedStringImpl) == 24, "The image holds a header of this size per identifier, and a stub scales an identifier number by it.");
 
 JS_EXPORT_PRIVATE JSCell* livenessToken(Instance*);
+// From now on every stub that is about to jump into the code of a function object polls first.
+void makeCallsByValuePoll(Instance&, const uint8_t* isRenamedAtRunTime);
 
 } } // namespace JSC::AOT
 

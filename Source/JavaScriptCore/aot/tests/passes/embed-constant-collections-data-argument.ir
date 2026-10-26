@@ -111,7 +111,7 @@ function f7 name="arraysSharedByTheSetsOfTheLoop" parameters=[{type=anything}, {
 
 function f8 name="recordThroughProofOfFlow" results=[{type=Set<string>}] {
     v0 = Data data=d8
-    v1 = AssumeType v0 castType=Array<string, proven, pristine[Storage, Names]>
+    v1 = AssumeType v0 provenType=Array<string, proven, pristine[Storage, Names]>
     v2 = CallBuiltin -, v1 overload=Set/2 builtinCallForm=Whole
     Return v2
 # CHECK-NOT: = Data

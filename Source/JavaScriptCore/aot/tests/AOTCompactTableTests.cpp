@@ -918,9 +918,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     Return
 }
 function f1 name="countPresent" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
-    v3 = Check v0 castType=i32
-    v4 = Check v1 castType=i32
-    v5 = Check v2 castType=i32
+    v3 = Check v0 expectedType=i32
+    v4 = Check v1 expectedType=i32
+    v5 = Check v2 expectedType=i32
     v6 = Builtin builtin=GlobalThis
     v7 = PropGet v6 key="Set"
     v8 = Construct v7, -

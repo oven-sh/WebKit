@@ -31,7 +31,7 @@ void CastEmitter::generateReportMismatch(const ValueContext& value)
 {
     ValueID source = value->valueOperand();
     Operand operand = get(source);
-    const TypeTestPlan& plan = planFor(source, value->expectedType());
+    const TypeTestPlan& plan = planFor(source, value->expectedType().predicted());
     if (plan.verdict == TypeTestVerdict::AlwaysPasses)
         return;
     LBasicBlock mismatch = newBlock();

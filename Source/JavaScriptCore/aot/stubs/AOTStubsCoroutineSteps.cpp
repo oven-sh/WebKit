@@ -212,6 +212,16 @@ static void emitGiveBackRightToContinue(StubAssembler& jit, GPRReg consumer, GPR
     jit.storePtr(stored, Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.frameThatMayContinue)));
 }
 
+// A step that ends while its consumer is on the stack is an await that the consumer has passed there. Whoever stepped a consumer that is a generator's body waits from here on.
+static void emitNoteAwaitPassedOnStack(StubAssembler& jit, GPRReg consumer, GPRReg scratch)
+{
+    Jump isAsyncFunction = jit.branchTest32(CCallHelpers::Zero, consumer, TrustedImm32(consumerIsAsyncGenerator));
+    jit.load64(Address(fp, StepFrame::offsetOfDriver), scratch);
+    jit.load64(fieldOf(scratch, Field::Frame), scratch);
+    jit.store8(TrustedImm32(SavedFrame::hasPassedAwaitOnStackFlag), Address(scratch, SavedFrame::offsetOfFlags()));
+    isAsyncFunction.link(&jit);
+}
+
 void generateRunAsyncGeneratorStep(StubAssembler& jit)
 {
     const GPRReg firstOperand = jit.clobberOperand(0);
@@ -230,7 +240,7 @@ void generateRunAsyncGeneratorStep(StubAssembler& jit)
     RELEASE_ASSERT(noOverlap(firstOperand, secondOperand, sent, saved, consumer, siteWord, word, other, instanceGPR));
     RELEASE_ASSERT(noOverlap(result, generator, sent, saved, consumer, siteWord, word, other) && status == siteWord);
 
-    // What willEnterAsyncGeneratorBody does: the consumer suspends as soon as the generator does, so the body may continue if the consumer may. The body is suspended at a yield.
+    // The consumer suspends as soon as the generator does, so the body may continue if the consumer may. The body is suspended at a yield.
     jit.and32(TrustedImm32(consumerMayContinue), consumer, word);
     jit.or32(TrustedImm32(SavedFrame::isSuspendedAtYieldFlag), word);
     jit.store8(word, Address(saved, SavedFrame::offsetOfFlags()));
@@ -258,6 +268,7 @@ void generateRunAsyncGeneratorStep(StubAssembler& jit)
     finishesInEngine.append(jit.branchTestPtr(CCallHelpers::Zero, word));
     emitBranchUnlessYieldEndsStep(jit, generator, result, word, other, finishesInEngine);
     emitFinishOnlyRequestAtYield(jit, generator, word);
+    emitNoteAwaitPassedOnStack(jit, consumer, word);
     jit.move(TrustedImm32(static_cast<int32_t>(AsyncGeneratorStepStatus::Yielded)), status);
     jit.emitFunctionEpilogue();
     jit.returnToCaller();
@@ -281,6 +292,7 @@ void generateRunAsyncGeneratorStep(StubAssembler& jit)
     jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.stepStatus)), status);
     static_assert(!static_cast<int32_t>(AsyncGeneratorStepStatus::Result));
     suspendsConsumer.append(jit.branchTest32(CCallHelpers::Zero, status));
+    emitNoteAwaitPassedOnStack(jit, consumer, word);
     jit.emitFunctionEpilogue();
     jit.returnToCaller();
 

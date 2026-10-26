@@ -16,6 +16,7 @@
 
 namespace JSC {
 
+class DeletePropertySlot;
 class PropertySlot;
 class PutPropertySlot;
 
@@ -41,6 +42,10 @@ enum class PropertyAnswerKind : uint8_t {
     ExtraAccessor,
     ExtraPropertyAddition,
     Addition,
+    Removal,
+    ExtraPropertyRemoval,
+    FieldRemoval,
+    NothingToRemove,
     ArrayLength,
     TypedArrayLength,
     StringLength,
@@ -96,8 +101,19 @@ struct StoreQuery {
     PutMode mode;
 };
 
+// The deletion has been made and has succeeded.
+struct DeletionQuery {
+    JSGlobalObject* globalObject;
+    JSObject* base;
+    Structure* structureBefore;
+    uint32_t orderWordBefore;
+    UniquedStringImpl* uid;
+    const DeletePropertySlot& slot;
+};
+
 PropertyAnswer classifyRead(const ReadQuery&);
 PropertyAnswer classifyStore(const StoreQuery&);
+PropertyAnswer classifyDeletion(const DeletionQuery&);
 PropertyAnswer classifyCompiledObjectStore(const StoreQuery&, Object&);
 PropertyAnswer classifyNamespaceRead(const ReadQuery&);
 PropertyAnswer classifyGlobalProxyRead(const ReadQuery&);
@@ -127,6 +143,8 @@ bool isHostObjectOverridingPut(Structure*);
 bool flattenOnce(VM&, JSObject*);
 bool flattenForListing(VM&, JSObject*);
 bool isLastAdditionOfRun(Structure* before, Structure* after, UniquedStringImpl*);
+// For an addition that leads from one Structure to the next. Zero: the storage out of line stays. Nothing: no stub makes the addition.
+std::optional<uint32_t> capacityOfStorageGrownByStub(VM&, Structure* before, Structure* after, PropertyOffset);
 bool slotAgreesWithStructures(VM&, const Slot&, SlotAccess, UniquedStringImpl*);
 
 } } // namespace JSC::AOT

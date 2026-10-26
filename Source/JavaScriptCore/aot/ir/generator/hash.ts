@@ -103,6 +103,7 @@ function typeLines(type: SchemaType): string[] {
     ...(record.isCustomEngine ? ["customEngine"] : []),
     ...(record.isCustomText ? ["customText"] : []),
     ...(record.isExtendedEngine ? ["extendedEngine"] : []),
+    ...(record.isHandwrittenStruct ? ["handwrittenStruct"] : []),
     ...(record.isWireOnly ? ["wireOnly"] : []),
   ];
   return [["record", record.name, record.form, ...marks].join(" "), ...record.wireFields.map(fieldLine)];

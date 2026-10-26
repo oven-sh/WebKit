@@ -6,10 +6,10 @@
 # RUN: valueflow-apply
 # CHECK-LABEL: function f1 name="readsMade"
 # CHECK: v0: {{*}} = GetModuleVariable variable=g0
-# CHECK-NEXT: [[made]]: undefined|Object {{*}}= AssumeType v0 castType=undefined|Object
+# CHECK-NEXT: [[made]]: undefined|Object {{*}}= AssumeType v0 provenType=undefined|Object
 # CHECK-NEXT: = PropGet [[made]] key="level"
 # CHECK-LABEL: function f2 name="readsEither"
-# CHECK: = Check v0 castType=undefined|null|L0
+# CHECK: = Check v0 expectedType=undefined|null|L0
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -32,13 +32,13 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
 }
 function f1 name="readsMade" module=m0 results=[{type=anything}] {
     v0 = GetModuleVariable variable=g0
-    v1 = Check v0 castType=undefined|null|L0
+    v1 = Check v0 expectedType=undefined|null|L0
     v2 = PropGet v1 key="level"
     Return v2
 }
 function f2 name="readsEither" module=m0 results=[{type=anything}] {
     v0 = GetModuleVariable variable=g1
-    v1 = Check v0 castType=undefined|null|L0
+    v1 = Check v0 expectedType=undefined|null|L0
     v2 = PropGet v1 key="level"
     Return v2
 }

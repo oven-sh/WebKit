@@ -47,11 +47,12 @@ static FieldArmState computeStateOfFieldArm(const Program& program, std::span<co
         state.hasSlotNowhere &= !isPrivate && isNeverStored(program, *reference) && !program.at(layout).flow.observedUses.contains(ObservedUse::ReachesTypedParse);
         state.isRequired &= field.flags.contains(FieldFlags::IsRequired);
         state.isAddedLate &= field.flags.contains(FieldFlags::IsAddedLate);
+        state.isFilledByCreator &= field.flags.contains(FieldFlags::IsFilledByCreator);
         state.isAddedLateInSomeMember |= field.flags.contains(FieldFlags::IsAddedLate);
         state.isLeftOutAtConstruction |= reference->layout == layout && std::ranges::any_of(program.at(layout).flow.constructorOrders, [&](const FieldOrder& order) {
             return !order.fields.contains(reference->field);
         });
-        state.admitsUndefined |= !!(program.at(field.declared.type).primitives & Primitive::Undefined);
+        state.admitsUndefined |= !!(program.at(program.provenTypeOf(field.declared)).primitives & Primitive::Undefined);
         state.hasConstructor |= !!program.at(declaredLayoutOf(program, layout)).constructor;
         state.isInContainer |= program.at(layout).kind == LayoutKind::Container;
         state.cannotMoveOut &= staysInSlot(program, *reference);
@@ -178,7 +179,7 @@ static bool mayFindSlotEmpty(const PropertyAccessContext& context, const Propert
 {
     if (!state.isAlwaysFilled)
         return true;
-    if (!state.hasConstructor || query.isListedByAllocation)
+    if ((!state.hasConstructor && !state.isLeftOutAtConstruction) || query.isListedByAllocation)
         return false;
     return mayStoreIntoUnfinishedObject(context, query);
 }
@@ -263,6 +264,7 @@ std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const Pro
             continue;
         layoutsWithEmptySlots.add(layout);
         hasOption |= kinds.contains(OptionKind::LazilyInitializedField) && isLazilyInitialized(state);
+        hasOption |= kinds.contains(OptionKind::FieldWithoutStorage);
         if (kinds.contains(OptionKind::RecordOption)) {
             hasOption |= !state.isRequired && state.isLeftOutAtConstruction && !state.hasConstructor;
             hasOption |= isStoredLateOrNever(state);
@@ -381,7 +383,7 @@ static void planFieldRead(const PropertyAccessContext& context, const PropertyAc
     }
     bool holdsUnfinishedObjects = !state.isInContainer && isInCodeThatHoldsUnfinishedObjects(context, query);
     bool isOptionAmongMany = query.expectsEmptySlot && !state.isRequired && state.isLeftOutAtConstruction && !state.hasConstructor && !state.isInContainer;
-    bool isOftenEmpty = (state.isAddedLate && state.admitsUndefined && !state.isRequired) || holdsUnfinishedObjects || isOptionAmongMany;
+    bool isOftenEmpty = (state.isAddedLate && state.admitsUndefined && !state.isRequired && !state.isFilledByCreator) || holdsUnfinishedObjects || isOptionAmongMany;
     bool mayNeedNoTest = state.isAddedLate || state.cannotMoveOut;
     if ((isOftenEmpty || mayNeedNoTest) && !state.isAlwaysFilled && !query.isPrivate && state.form.isEmpty()) {
         std::optional<TestsOfEmptySlot> tests = testsOfEmptySlotFor(context, query, arm, state, Access::Read);
@@ -465,7 +467,8 @@ static void planFieldDefinition(const PropertyAccessContext& context, const Prop
         return;
     plan.storedValueFits = storedValueFits(context.program, query, state);
     requireStoresAllowed(query, state, plan);
-    if (!query.isPrivate && !query.isLeftOutByUnfinishedAllocation && !mayFindSlotEmpty(context, query, state)) {
+    bool mayBeFirstToFillSlot = query.isLeftOutByUnfinishedAllocation || (state.isLeftOutAtConstruction && !query.isListedByAllocation);
+    if (!query.isPrivate && !mayBeFirstToFillSlot && !mayFindSlotEmpty(context, query, state)) {
         setSlotOperation(plan, Opcode::PutSlot);
         return;
     }
@@ -541,7 +544,7 @@ void planVariableArm(const PropertyAccessContext& context, const PropertyAccessQ
         return;
     case Access::Store:
     case Access::Define: {
-        bool valueFits = query.stored && (variable.declared.flags.contains(PositionFlags::IsExpected) || query.stored->isSubsetOf(program.at(variable.declared.type), program));
+        bool valueFits = query.stored && (variable.declared.isExpected() || query.stored->isSubsetOf(program.at(*variable.declared.established()), program));
         if (!isStaticField || variable.flags.contains(VariableFlags::IsImmutable) || !valueFits)
             return;
         plan.form = AccessForm::Variable;

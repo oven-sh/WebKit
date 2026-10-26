@@ -188,12 +188,12 @@ function f7 name="thrownObjectIsChangedThroughTheCaughtValue" parameters=[{type=
     Throw v2
   b2() role=CatchHandler:
     v4 = CatchValue
-    v5 = Check v4 castType=object
+    v5 = Check v4 expectedType=object
     DefineGetter v5, v0 key="z"
     Return v3
 }
 # CHECK-LABEL: function f7
-# CHECK: b2 available at head: [v2.0 v2.1 v2.2 v2.3]
+# CHECK: b2 available at head: [v2.0 v2.1 v2.2 v2.3 v2.4 v2.5]
 # CHECK: b2:0 available: [v2]
 # CHECK-NEXT: b2:1 available: [v2]
 # CHECK-NEXT: b2:2 available: [v2]

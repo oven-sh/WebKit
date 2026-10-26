@@ -60,7 +60,7 @@ static bool isGuardUse(const Function& function, const Use& use)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static constexpr OpcodeSet castsWithoutTest { Opcode::Upcast, Opcode::AssumeType };
+static constexpr OpcodeSet castsWithoutTest = castsThatProveNothing | OpcodeSet { Opcode::AssumeType };
 
 static bool canBeDefinedByName(const Field& field)
 {
@@ -182,7 +182,7 @@ static bool canHandOverRest(const Function& function, const ValueSite& superCall
         return false;
     const DeclaredType& given = function.parameters.last();
     const DeclaredType& taken = parent.parameters.last();
-    if (given.type != taken.type || given.flags != taken.flags)
+    if (given.written() != taken.written() || given.writtenFlags() != taken.writtenFlags())
         return false;
 
     CFG cfg(function);
@@ -285,15 +285,15 @@ static DeclaredType computeThisType(const Program& program, const Function& orig
     }
 
     if (program.at(replacedType).layouts)
-        return { .type = replacedType };
+        return DeclaredType(Proven::byConstruction(replacedType));
     Type declared = Type::forLayoutSet(program.declaredMembersOf(original.constructedClass));
-    return { .type = types.intern(declared.unionWith(Type::forLayouts(program.layoutsBelow(original.constructedClass), types), types)) };
+    return DeclaredType(Proven::byConstruction(types.intern(declared.unionWith(Type::forLayouts(program.layoutsBelow(original.constructedClass), types), types))));
 }
 
 static ValueID addThisParameter(IRBuilder& builder)
 {
     Function& version = builder.function();
-    ValueID thisParameter = builder.addParameter(entryBlock, version.thisType.type);
+    ValueID thisParameter = builder.addParameter(entryBlock, *version.thisType.established());
 
     auto& parameters = version.edit(entryBlock, BlockEdit::Parameters).parameters;
     RELEASE_ASSERT(parameters.last() == thisParameter);
@@ -338,7 +338,7 @@ static ValueID appendParentVersionCall(IRBuilder& builder, DerivedFunctionInputs
     FunctionID parentVersion = inputs.derivedFunctions.ensure(derivedFunctionKey(FunctionRole::AllocatedThisVersion, parent));
     ValueID calleeValue;
     if (inputs.program.at(parentVersion).has(FunctionFlags::TakesCallee))
-        calleeValue = convertTo(builder, superCall.parentOperand(), DeclaredType { .type = TypeTable::function });
+        calleeValue = convertTo(builder, superCall.parentOperand(), DeclaredType(Proven::byPosition(TypeTable::function)));
 
     Vector<ValueID, 8> arguments;
     ValueID restArray;
@@ -393,7 +393,9 @@ static void returnWhatSourceConstructs(IRBuilder& builder, ValueID thisParameter
     call.setFunction(source);
     call.setArgumentsOperands(arguments.span());
     call.setIsConstruction(true);
-    builder.emitReturn(builder.append(WTF::move(call)));
+    Terminator terminator = IRBuilder::makeTerminator(TerminatorKind::ReturnCall, { builder.append(WTF::move(call)) });
+    terminator.setRequirement(tailCallRequirementOf(builder.context().program.at(source)));
+    builder.emitTerminator(WTF::move(terminator));
 }
 
 static void passThisToSuperCall(IRBuilder& builder, DerivedFunctionInputs& inputs, const ValueSite& site, ValueID thisParameter)
@@ -409,7 +411,7 @@ static void passThisToSuperCall(IRBuilder& builder, DerivedFunctionInputs& input
     IRBuilder::Expansion expansion = builder.beginExpansion(site.point());
     Vector<BlockID, 3> continuationPredecessors;
     auto finishArm = [&](ValueID result) {
-        ValueID converted = convertTo(builder, result, DeclaredType { .type = original.type });
+        ValueID converted = convertTo(builder, result, DeclaredType(Proven::byPosition(original.type)));
         if (version.at(converted).type != TypeTable::never)
             continuationPredecessors.append(builder.currentBlock());
         builder.endExpansion(expansion, converted);
@@ -533,9 +535,9 @@ Function buildAllocatedThisVersion(const DerivedFunctionKey& key, DerivedFunctio
 
     DeclaredType& result = version.results[0];
     if (returnsOnlyUndefinedForThis(builder, thisParameter))
-        result = DeclaredType { .type = TypeTable::undefined };
+        result = DeclaredType(Proven::byPosition(TypeTable::undefined));
     else
-        result.type = inputs.types.unionOf(result.type, TypeTable::undefined);
+        result.changeType(Proven::byPosition(inputs.types.unionOf(result.written(), TypeTable::undefined)));
     return version;
 }
 

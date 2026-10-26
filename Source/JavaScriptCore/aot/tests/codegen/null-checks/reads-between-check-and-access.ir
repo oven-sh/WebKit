@@ -1,13 +1,9 @@
 # Between a null check and the access that faults for it may stand a read through a pointer that may be read anywhere: a parameter, the result of a call. One of several results of a call is zero when the returned variant does not have that part, and a pointer that was itself read from memory holds only behind its guards: a read through either may fault, so the check stays in front of it
 # FORM: Selected
 # OPTIONS: heat=everything-is-hot check=validate-back-end
-# ARM64 has no address of a base, a scaled index and an offset: where the check and the access then name other registers, the check keeps its load.
-# RUN(X64): generate-code NullChecksFoldedIntoAccesses
-# REQUIRES(X64): x86_64 unsanitized-code
-# X64: statistic NullChecksFoldedIntoAccesses 2
-# RUN(ARM64): generate-code NullChecksFoldedIntoAccesses
-# REQUIRES(ARM64): arm64 unsanitized-code
-# ARM64: statistic NullChecksFoldedIntoAccesses 0
+# RUN: generate-code NullChecksFoldedIntoAccesses
+# REQUIRES: unsanitized-code
+# CHECK: statistic NullChecksFoldedIntoAccesses 2
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Node" fields=[{key="next" declared={type=null|L0} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="value" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="count" declared={type=i32} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}

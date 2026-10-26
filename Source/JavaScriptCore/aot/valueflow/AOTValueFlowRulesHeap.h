@@ -15,7 +15,6 @@ struct BuiltinPropertyAction;
 
 namespace Typed {
 
-bool isHeapOperation(Opcode);
 void runHeapOperation(const ValueFlowStatement&, ValueFlowRuleContext&);
 
 void runLookup(const ValueFlowStatement&, ValueFlowRuleContext&);

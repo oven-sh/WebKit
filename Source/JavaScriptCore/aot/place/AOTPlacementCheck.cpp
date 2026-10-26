@@ -452,8 +452,8 @@ static bool capturesOnlyClassEnvironment(const Program& program, const Function&
         return true;
     if (method.captures.size() != 1 || constructor.captures.size() != 1)
         return false;
-    TypeID captured = method.captures[0].type;
-    return captured && captured == constructor.captures[0].type && program.at(captured).environment;
+    TypeID captured = method.captures[0].written();
+    return captured && captured == constructor.captures[0].written() && program.at(captured).environment;
 }
 
 static bool hasKnownBaseChain(const Program& program, LayoutID id)
@@ -525,29 +525,10 @@ static void checkDefinedMethods(const PlacementCheckContext& context, FunctionID
     }
 }
 
-static bool isClassConstructor(FunctionKind kind)
-{
-    switch (kind) {
-    case FunctionKind::BaseConstructor:
-    case FunctionKind::DerivedConstructor:
-        return true;
-    case FunctionKind::Plain:
-    case FunctionKind::Arrow:
-    case FunctionKind::Method:
-    case FunctionKind::Getter:
-    case FunctionKind::Setter:
-    case FunctionKind::Initializer:
-    case FunctionKind::Module:
-    case FunctionKind::CommonJsModule:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static void checkClosureForm(const PlacementCheckContext& context, FunctionID id)
 {
     const Function& function = context.program.at(id);
-    bool canHaveSlimForm = !function.hasAny({ FunctionFlags::IsGenerator, FunctionFlags::HasNewTarget, FunctionFlags::TakesCallee }) && !isClassConstructor(function.kind);
+    bool canHaveSlimForm = !function.hasAny({ FunctionFlags::IsGenerator, FunctionFlags::HasNewTarget, FunctionFlags::TakesCallee }) && !isClassConstructorOf(function.kind);
     context.expect(context.slots.closureFormOf(id) != ClosureForm::Slim || canHaveSlimForm, PlacementRule::ClosureFormNotProven, { }, id);
     bool targetIsSlim = context.slots.closureFormOf(closureTargetOf(context.program, id)) == ClosureForm::Slim;
     context.expect(static_cast<bool>(context.placement.functionKind(id).isSlim) == targetIsSlim, PlacementRule::ClosureFormNotProven, { }, id);

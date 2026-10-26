@@ -212,7 +212,7 @@ static B3::Value* findNumberThatLeavesWhereItIsNaN(B3::BasicBlock* block, unsign
 static bool isTruncationOf(B3::Value* value, B3::Value* number)
 {
     auto* patchpoint = value->as<B3::PatchpointValue>();
-    return patchpoint && patchpoint->pureFunction == Typed::pureFunction(Typed::PureOperation::TruncateToInt64, 0, true) && patchpoint->child(0) == number;
+    return patchpoint && patchpoint->pureFunction == Typed::truncationToInt64(0) && patchpoint->child(0) == number;
 }
 
 static bool isNonNegative(B3::Procedure& proc, B3::Value* value)

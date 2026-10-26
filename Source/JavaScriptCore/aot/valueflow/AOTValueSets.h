@@ -20,8 +20,39 @@
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/text/ASCIILiteral.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+class ValueFlowBytesByTable {
+public:
+    void add(ASCIILiteral table, size_t bytesInUse, size_t bytesHeld);
+    void add(ASCIILiteral table, size_t bytes) { add(table, bytes, bytes); }
+    void addList(ASCIILiteral table, const auto& list) { add(table, list.size() * sizeof(list[0]), list.capacity() * sizeof(list[0])); }
+    void addLists(ASCIILiteral table, const auto& lists)
+    {
+        for (const auto& list : lists)
+            addList(table, list);
+    }
+    template<typename Map>
+    void addMap(ASCIILiteral table, const Map& map) { add(table, map.size() * sizeof(typename Map::KeyValuePairType), map.capacity() * sizeof(typename Map::KeyValuePairType)); }
+    void addBits(ASCIILiteral table, const auto& bits) { add(table, bits.size() / 8); }
+    void dump(ASCIILiteral nameOfSum) const;
+
+private:
+    struct Row {
+        ASCIILiteral table;
+        size_t bytesInUse { 0 };
+        size_t bytesHeld { 0 };
+    };
+    Vector<Row> m_rows;
+};
+
+// The list keeps what it holds and at most a quarter of its room.
+void giveBackMostRoomOf(auto& list)
+{
+    list.shrinkCapacity(std::max<size_t>(list.size(), list.capacity() / 4));
+}
 
 class ValueSets {
     WTF_MAKE_NONCOPYABLE(ValueSets);
@@ -271,7 +302,7 @@ public:
     size_t numberOfStoredSets() const { return m_lists.size(); }
     static constexpr uint32_t indexInTableBySet(ValueSetID set) { return (set.index() >> 2) * 2 + (set.index() & 1); }
     uint32_t endOfTableBySet() const { return m_lists.endOfNumbers() + 2; }
-    size_t memoryInBytes() const { return m_lists.memoryInBytes() + m_groups.memoryInBytes() + m_blocks.memoryInBytes() + (sizeof(RememberedByAll) << m_bitsOfRememberedByAll); }
+    void addBytesTo(ValueFlowBytesByTable&) const;
     void freeOutgrownTables()
     {
         m_lists.freeOutgrownTables();
@@ -317,7 +348,7 @@ private:
 
         size_t size() const;
         uint32_t endOfNumbers() const { return m_endOfNumbers.load(std::memory_order_relaxed); }
-        size_t memoryInBytes() const;
+        void addBytesTo(ValueFlowBytesByTable&, ASCIILiteral runs, ASCIILiteral index) const;
 
     private:
         static constexpr unsigned numberOfShards = 64;
@@ -644,6 +675,7 @@ public:
     ValueSetID pass(ValueSetID value, ValueSetID mask, ValueSetID familyObjects, ValueFlowMaskKind, const ValueFlowPlaceholders&, const ValueFlowCoveredObjects& = { });
     ValueSetID uniteAll(std::span<const ValueSetID>);
     void appendParts(ValueSetID, Vector<ValueSetID>&);
+    void addBytesTo(ValueFlowBytesByTable&) const;
 
 private:
     enum class Operation : uint8_t { Unite, Intersect, Subtract };

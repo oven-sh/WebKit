@@ -161,7 +161,7 @@ static void printTypeAndExpectedType(PrintStream& out, const TypingContext& typi
     const Value& value = typing.function.at(id);
     out.print("v"_s, id.index(), ": "_s);
     printType(out, typing.program, value.type);
-    if (TypeID expected = value.expected()) {
+    if (TypeID expected = value.expected().predicted()) {
         out.print(" ~ "_s);
         printType(out, typing.program, expected);
     }
@@ -244,7 +244,7 @@ static void printInt32BoundsOfFunction(TestCommandContext& context, FunctionID i
     for (const Block& block : function.blocks) {
         for (ValueID value : block.values) {
             const Value& request = function.at(value);
-            if (request.opcode != Opcode::Convert || !request.declared().flags.contains(PositionFlags::IsInt32Promise))
+            if (request.opcode != Opcode::Convert || !request.declared().has(PositionFlags::IsInt32Promise))
                 continue;
             context.out.print("v"_s, value.index(), ": "_s);
             printBounds(context.out, prover.boundsOf(request.valueOperand()));

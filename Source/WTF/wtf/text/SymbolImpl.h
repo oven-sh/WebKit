@@ -42,11 +42,14 @@ public:
     static constexpr Flags s_flagIsNullSymbol = 0b001u;
     static constexpr Flags s_flagIsRegistered = 0b010u;
     static constexpr Flags s_flagIsPrivate = 0b100u;
+    // A private name that a Proxy reads from and writes to its target, without calling a trap.
+    static constexpr Flags s_flagPassesThroughProxies = 0b1000u;
 
     unsigned hashForSymbol() const { return m_hashForSymbolShiftedWithFlagCount >> s_flagCount; }
     bool isNullSymbol() const { return m_flags & s_flagIsNullSymbol; }
     bool isRegistered() const { return m_flags & s_flagIsRegistered; }
     bool isPrivate() const { return m_flags & s_flagIsPrivate; }
+    bool passesThroughProxies() const { return m_flags & s_flagPassesThroughProxies; }
 
     SymbolRegistry* symbolRegistry() const;
 

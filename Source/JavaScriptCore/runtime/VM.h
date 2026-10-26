@@ -671,7 +671,9 @@ public:
     Weak<NativeExecutable> m_fastRemoteFunctionExecutable;
     Weak<NativeExecutable> m_slowRemoteFunctionExecutable;
     // getHostFunction() without the JIT. With it JITThunks remembers them.
-    UncheckedKeyHashMap<std::tuple<uintptr_t, uintptr_t, unsigned>, Weak<NativeExecutable>> m_executablesOfNamelessHostFunctions;
+    class HostFunctionExecutables;
+    std::unique_ptr<HostFunctionExecutables> m_hostFunctionExecutables;
+    unsigned m_numberOfRealmsInitialized { 0 };
 
     const Ref<DeferredWorkTimer> deferredWorkTimer;
 
@@ -1549,6 +1551,17 @@ public:
         SynchronousModuleQueue* prev { nullptr };
     };
     SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
+
+    class SynchronousModuleQueueScope {
+        WTF_MAKE_NONCOPYABLE(SynchronousModuleQueueScope);
+    public:
+        JS_EXPORT_PRIVATE explicit SynchronousModuleQueueScope(VM&);
+        JS_EXPORT_PRIVATE ~SynchronousModuleQueueScope();
+
+    private:
+        VM& m_vm;
+        SynchronousModuleQueue m_queue;
+    };
 private:
 #endif
 

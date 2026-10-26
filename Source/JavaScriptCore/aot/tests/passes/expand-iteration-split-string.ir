@@ -51,7 +51,7 @@ function f0 name="constantSeparator" parameters=[{type=string}, {type=anything}]
 function f1 name="throughCasts" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
     v2 = String string=", "
     v3 = CallBuiltin v0, v2 overload=StringPrototypeSplit/0
-    v4 = AssumeType v3 castType=Array<string, proven>
+    v4 = AssumeType v3 provenType=Array<string, proven>
     v5 = Integer integer=1
     v6 = Upcast v4 castType=Array<string>
     v7 = IteratorOpen v6
@@ -321,7 +321,7 @@ function f13 name="nestedLoops" parameters=[{type=string}, {type=anything}] resu
     v9 = ResultAt v7 index=1
     Branch v8 -> taken b5(), notTaken b2()
   b2():
-    v10 = Check v9 castType=string
+    v10 = Check v9 expectedType=string
     v11 = CallBuiltin v10, v3 overload=StringPrototypeSplit/0
     v12 = IteratorOpen v11
     Jump -> next b3()

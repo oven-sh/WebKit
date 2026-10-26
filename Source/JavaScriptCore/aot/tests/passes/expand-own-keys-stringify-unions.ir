@@ -38,12 +38,17 @@ function f1 name="expectedUnion" parameters=[{type=undefined|number|string|L0|Ar
 # CHECK: [[builder1]]: stringbuilder = StringBuilderBegin
 # CHECK: = CallBuiltin -, v0, v1 overload=JSONStringify/0
 # CHECK: StringBuilderDiscard [[builder1]]
+# CHECK: [[threw1]]() role=CleanupHandler frequency=Rare:
+# CHECK-NEXT: [[exception1]]: exception = CatchException
+# CHECK-NEXT: JSONResetHolders [[builder1]]
+# CHECK-NEXT: Rethrow [[exception1]]
 # CHECK: [[isArray1]]: boolean = TypeTest {{*}} testedType=Array<L1>
 # CHECK-NEXT: Branch [[isArray1]] -> taken [[array1]](| 0), notTaken [[others1]](| 0)
-# CHECK: [[array1]]([[narrowed1]]: Array<L1>):
+# CHECK: [[array1]]([[narrowed1]]: Array<L1>) handler=[[threw1]]():
 # CHECK-NEXT: = IsPristine [[narrowed1]] builtinClass=Array aspects=[Storage, Names]
 # CHECK: [[others1]]([[remaining1]]:
 # CHECK-NEXT: = TypeTest [[remaining1]] testedType=object
+# CHECK: = JSONEnterHolder [[builder1]], [[narrowed1]]
 # CHECK: = ShapeTest [[element1]] layouts=[L1]
 # CHECK: = CallDirect [[element1]], [[builder1]] function=[[serializerOfOther]]
 # CHECK: = ShapeTest [[object1]] layouts=[L0]

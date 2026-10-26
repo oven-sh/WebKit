@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTClosureTable.h"
+#include "AOTFunctionDescription.h"
 #include "AOTFunctionNames.h"
 #include "AOTFunctionTables.h"
 #include "AOTLoadedProgramTestSupport.h"
@@ -372,12 +373,6 @@ static void testPut(LoadedProgram& program)
     AOT_TEST_CHECK(isReifiedClosureOf(closure, function));
     AOT_TEST_CHECK(closure->getDirect(vm, label) == jsNumber(7));
 
-    JSObject* closureWithReadOnlyName = createSlimClosure(program, function);
-    PutPropertySlot sloppySlot(closureWithReadOnlyName, false);
-    AOT_TEST_CHECK(!put(program, closureWithReadOnlyName, vm.propertyNames->name, jsNumber(7), sloppySlot));
-    AOT_TEST_CHECK(isReifiedClosureOf(closureWithReadOnlyName, function));
-    AOT_TEST_CHECK(hasOwnStringProperty(program, closureWithReadOnlyName, vm.propertyNames->name, "arrow"_s, readOnlyDontEnum));
-
     JSObject* closureWithElement = createSlimClosure(program, function);
     AOT_TEST_CHECK(closureWithElement->methodTable()->putByIndex(closureWithElement, program.realm(), 3, jsNumber(9), true));
     AOT_TEST_CHECK(isReifiedClosureOf(closureWithElement, function));
@@ -388,9 +383,16 @@ static void testPut(LoadedProgram& program)
     PutPropertySlot displayNameSlot(closureWithDisplayName, true);
     AOT_TEST_CHECK(put(program, closureWithDisplayName, vm.propertyNames->displayName, jsNontrivialString(vm, "shown"_s), displayNameSlot));
     AOT_TEST_CHECK(!displayNameSlot.isCacheablePut());
-    // A function that captures has many function objects, and a frame does not say which of them runs in it: nothing is written down.
-    AOT_TEST_CHECK(captureCountsOf(function).captures && !FunctionTables::of(vm).hasDisplayNames.load());
-    AOT_TEST_CHECK(functionName(vm, function, NameForm::InFrames) == "arrow"_s);
+    // The frames of this function do not record the function object that runs in them: the name stands for all of them.
+    AOT_TEST_CHECK(captureCountsOf(function).captures && FunctionTables::of(vm).hasDisplayNames.load());
+    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::InFrames) == "shown"_s);
+
+    // A store to `name` looks for it, also one that is refused.
+    JSObject* closureWithReadOnlyName = createSlimClosure(program, function);
+    PutPropertySlot sloppySlot(closureWithReadOnlyName, false);
+    AOT_TEST_CHECK(!put(program, closureWithReadOnlyName, vm.propertyNames->name, jsNumber(7), sloppySlot));
+    AOT_TEST_CHECK(isReifiedClosureOf(closureWithReadOnlyName, function));
+    AOT_TEST_CHECK(hasOwnStringProperty(program, closureWithReadOnlyName, vm.propertyNames->name, "arrow"_s, readOnlyDontEnum));
 }
 
 static void storeDisplayName(LoadedProgram& program, JSObject* closure, ASCIILiteral displayName)
@@ -408,21 +410,21 @@ static void testDisplayNameInFrames(LoadedProgram& program)
     ClosureTable& closures = program.state().objects->closures;
 
     JSObject* closure = closures.createClosure(vm, function, { }, 0);
-    AOT_TEST_CHECK(functionName(vm, function, NameForm::InFrames) == "callAll"_s);
+    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::InFrames) == "callAll"_s);
     storeDisplayName(program, closure, "shown"_s);
-    AOT_TEST_CHECK(functionName(vm, function, NameForm::InFrames) == "shown"_s);
-    AOT_TEST_CHECK(functionName(vm, function, NameForm::AsWritten) == "callAll"_s);
+    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::InFrames) == "shown"_s);
+    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::AsWritten) == "callAll"_s);
     storeDisplayName(program, closure, "shown later"_s);
-    AOT_TEST_CHECK(functionName(vm, function, NameForm::InFrames) == "shown later"_s);
+    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::InFrames) == "shown later"_s);
     DeletePropertySlot deletion;
     AOT_TEST_CHECK(closure->methodTable()->deleteProperty(closure, program.realm(), vm.propertyNames->displayName, deletion));
-    AOT_TEST_CHECK(functionName(vm, function, NameForm::InFrames) == "callAll"_s);
+    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::InFrames) == "callAll"_s);
     storeDisplayName(program, closure, "shown again"_s);
-    AOT_TEST_CHECK(functionName(vm, function, NameForm::InFrames) == "shown again"_s);
+    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::InFrames) == "shown again"_s);
 
     JSObject* otherClosure = closures.createClosure(vm, function, { }, 0);
     storeDisplayName(program, otherClosure, "other"_s);
-    AOT_TEST_CHECK(functionName(vm, function, NameForm::InFrames) == "callAll"_s);
+    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::InFrames) == "callAll"_s);
     ensureStillAliveHere(closure);
 }
 
@@ -475,14 +477,14 @@ static void testDefineOwnProperty(LoadedProgram& program)
     AOT_TEST_CHECK(isReifiedClosureOf(closure, function));
     AOT_TEST_CHECK(hasOwnDataProperty(program, closure, label, jsNumber(7), static_cast<unsigned>(PropertyAttribute::DontEnum)));
 
-    AOT_TEST_CHECK(functionName(vm, function, NameForm::InFrames) == "plain"_s);
+    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::InFrames) == "plain"_s);
     JSObject* renamed = createSlimClosure(program, function);
     PropertyDescriptor nameDescriptor;
     nameDescriptor.setValue(jsNontrivialString(vm, "renamed"_s));
     AOT_TEST_CHECK(renamed->methodTable()->defineOwnProperty(renamed, realm, vm.propertyNames->name, nameDescriptor, true));
     AOT_TEST_CHECK(isReifiedClosureOf(renamed, function));
     AOT_TEST_CHECK(hasOwnStringProperty(program, renamed, vm.propertyNames->name, "renamed"_s, readOnlyDontEnum));
-    AOT_TEST_CHECK(functionName(vm, function, NameForm::InFrames) == "renamed"_s);
+    AOT_TEST_CHECK(functionName(vm, FunctionDescription(function), NameForm::InFrames) == "renamed"_s);
 }
 
 static void testDeleteProperty(LoadedProgram& program)

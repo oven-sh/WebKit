@@ -83,7 +83,8 @@ layout L3 name="Item" fields=[{key="x" declared={type=number}}] flow={constructo
 # CHECK: [[isPrimitive2]]:{{*}}= TypeTest {{*}} testedType=null|boolean|number|string
 # CHECK-NEXT: Branch [[isPrimitive2]] -> taken [[primitive2]](| 0), notTaken [[cell2]](| 0)
 # CHECK: [[gaveUp2]]() frequency=Rare:
-# CHECK-NEXT: = StringBuilderAppendJSON v1, [[object2]], [[i2]]
+# CHECK-NEXT: [[isListed2]]: undefined = Undefined
+# CHECK-NEXT: = StringBuilderAppendJSON v1, [[object2]], [[i2]], [[isListed2]]
 # CHECK: ([[object2]]: object ~ L3):
 # CHECK-NEXT: [[shape2]]: boolean = ShapeTest [[object2]] layouts=[L3]
 # CHECK: [[outcome2]]:{{*}}= CallDirect [[object2]], v1 function=[[serializerOfItem]]
@@ -100,7 +101,8 @@ layout L3 name="Item" fields=[{key="x" declared={type=number}}] flow={constructo
 # CHECK: [[primitive2]]([[narrowed2]]:{{*}}) frequency=Rare:
 # CHECK: = JSONAppendValue v1, {{*}}, [[narrowed2]] jsonPosition=Element
 # CHECK: [[cell2]]([[other2]]:{{*}}) frequency=Rare:
-# CHECK-NEXT: = StringBuilderAppendJSON v1, [[other2]], [[i2]]
+# CHECK-NEXT: [[isListedToo2]]: undefined = Undefined
+# CHECK-NEXT: = StringBuilderAppendJSON v1, [[other2]], [[i2]], [[isListedToo2]]
 # CHECK: [[goOnAfterPlain2]]([[nextIndexAfterPlain2]]:{{*}}):
 # CHECK-NEXT: [[commaAfterPlain2]]: buildercursor = JSONAppendToken v1, [[cursorAfterPlain2]] jsonToken=Comma
 # CHECK-NEXT: Jump -> next [[loop2]]([[nextIndexAfterPlain2]], [[commaAfterPlain2]], [[g2]])

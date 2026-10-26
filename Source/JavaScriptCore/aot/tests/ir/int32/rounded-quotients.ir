@@ -173,3 +173,19 @@ function f10 name="belowHalf" parameters=[{type=i32 site=w0 flags=[IsInt32Promis
 }
 # CHECK-LABEL: function f10
 # CHECK: v9: integers [-2147483647, 1073741824]
+function f11 name="halfOfElement" parameters=[{type=anything}, {type=anything}] results=[{type=i32 site=w1 flags=[IsInt32Promise]}] {
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Math" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(Math) flags=[IsExpected]}
+    v5 = PropGet v4 key="floor"
+    v6 = Convert v5 declared={type=builtin(MathFloor) flags=[IsExpected]}
+    v7 = ElemGet v0, v1
+    v8 = Check v7 expectedType=i32
+    v9 = Integer integer=2
+    v10 = Div v8, v9
+    v11 = Call v6, v4, v10
+    v12 = Convert v11 declared={type=i32 site=w1 flags=[IsInt32Promise]}
+    Return v12
+}
+# CHECK-LABEL: function f11
+# CHECK-NEXT: v12: integers [-1073741824, 1073741824]

@@ -9,11 +9,11 @@
 # CHECK-NEXT: ValidateCallee [[proven]] validatedType=builtin(ObjectPrototypeToLocaleString)
 # CHECK-NEXT: [[result]]: anything = Call [[proven]],
 # CHECK-NEXT: ValidateType [[result]] validatedType=int
-# CHECK-NEXT: : int = AssumeType [[result]] castType=int
+# CHECK-NEXT: : int = AssumeType [[result]] provenType=int
 # CHECK-LABEL: function f2 name="callsByValue"
 # CHECK: [[byValue]]: 1 = Call {{*}}callees=[f3]
 # CHECK-NEXT: ValidateType [[byValue]] validatedType=1
-# CHECK-NEXT: : 1 = AssumeType [[byValue]] castType=1
+# CHECK-NEXT: : 1 = AssumeType [[byValue]] provenType=1
 # The call becomes direct, its result has the type of the callee's result, and the cast goes.
 # END-LABEL: function f2 name="callsByValue"
 # END-NOT: AssumeType
@@ -39,7 +39,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v9 = Call v7, -, v5, v8
     Return
 }
-function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=131085 thisType={type=anything} results=[{type=anything}] {
+function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=131086 thisType={type=anything} results=[{type=anything}] {
     v1 = PropGet v0 key="a"
     Return v1
 }
@@ -54,4 +54,4 @@ function f3 name="one" results=[{type=anything}] {
     v0 = Integer integer=1
     Return v0
 }
-runtimefunction id=131085 function=f1
+runtimefunction id=131086 function=f1

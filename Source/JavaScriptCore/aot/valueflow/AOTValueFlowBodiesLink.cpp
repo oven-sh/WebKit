@@ -11,6 +11,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
+#include "AOTEffectsOfOperands.h"
 #include "AOTPhaseTimes.h"
 #include "AOTResultRules.h"
 #include "AOTSort.h"
@@ -503,10 +504,13 @@ FunctionID ValueFlowProgramNodes::functionOf(ValueFlowNodeID node) const
     return FunctionID(static_cast<uint32_t>(next - m_firstNodeOfFunction.begin()) - 1);
 }
 
-ValueFlowNodeID ValueFlowProgramNodes::valueOfUnobservedDefinitions(FunctionID initializer) const
+ValueFlowNodeID ValueFlowProgramNodes::valueOf(const UnobservedFieldDefinition& definition) const
 {
-    auto found = std::ranges::lower_bound(m_unobservedDefinitionsByInitializer, initializer, { }, &UnobservedDefinitions::initializer);
-    return found != m_unobservedDefinitionsByInitializer.end() && found->initializer == initializer ? found->value : ValueFlowNodeID();
+    for (const UnobservedDefinitions& entry : std::ranges::equal_range(m_unobservedDefinitionsByInitializer, definition.initializer, { }, &UnobservedDefinitions::initializer)) {
+        if (entry.areObservedWhereObjectRefusesDefinition == definition.isObservedWhereObjectRefusesDefinition)
+            return entry.value;
+    }
+    return { };
 }
 
 std::span<const ValueFlowProgramNodes::UnobservedDefinitions> ValueFlowProgramNodes::unobservedDefinitionsBehindSuperOf(LayoutID classCallingSuper) const
@@ -536,14 +540,14 @@ public:
                 continue;
             bool takesRecord = false;
             for (const DeclaredType& parameter : function.parameters) {
-                take(parameter.type);
-                takesRecord |= parameter.type && !membersOf(m_program, m_program.at(parameter.type)).empty();
+                take(parameter.written());
+                takesRecord |= parameter.written() && !membersOf(m_program, m_program.at(parameter.written())).empty();
             }
             if (!takesRecord)
                 continue;
             for (const Value& value : function.values) {
                 if (value.opcode == Opcode::Check)
-                    take(value.castType());
+                    take(value.expectedType().predicted());
             }
         }
         while (!types.isEmpty()) {
@@ -557,7 +561,7 @@ public:
                     continue;
                 layouts.append(member);
                 for (const Field& field : m_program.at(member).fields)
-                    take(field.declared.type);
+                    take(field.declared.written());
             }
         }
 
@@ -571,7 +575,7 @@ public:
                 if (!field.flags.contains(FieldFlags::IsRequired))
                     continue;
                 requiresField = true;
-                const Type& type = m_program.at(field.declared.type);
+                const Type& type = m_program.at(field.declared.expected().predicted());
                 bool admitsData = type.primitives & (Primitive::Defined & ~Primitive::Undefined) || type.anyObject || type.layouts || !type.classes.isEmpty() || !type.stringLiterals.isEmpty();
                 if (field.flags.contains(FieldFlags::IsMethod) || !admitsData)
                     return true;
@@ -755,7 +759,7 @@ private:
         }
         AOT::sort(universe.m_modulesWithBodies);
 
-        universe.m_firstBuiltin = ValueFlowUniverse::untrackedObject().index() + 1;
+        universe.m_firstBuiltin = ValueFlowUniverse::markOfLoadedBun().index() + 1;
         universe.m_firstModuleBuiltin = universe.m_firstBuiltin + m_program.builtins().builtinCount();
         universe.m_firstNamespace = universe.m_firstModuleBuiltin + universe.m_moduleBuiltins.size();
         universe.m_firstLayoutObject = universe.m_firstNamespace + m_program.modules.size();
@@ -873,15 +877,14 @@ private:
         nodes.m_resultSummaries.grow(m_bodies.size());
 
         for (const UnobservedFieldDefinition& definition : m_result.m_unobservedDefinitions.all()) {
-            uint32_t value = m_bodies[definition.initializer.index()].valueOfUnobservedDefinitions;
-            bool isListed = !nodes.m_unobservedDefinitionsByInitializer.isEmpty() && nodes.m_unobservedDefinitionsByInitializer.last().initializer == definition.initializer;
-            if (value == Body::none || isListed)
+            uint32_t value = m_bodies[definition.initializer.index()].valueOfUnobservedDefinitions[definition.isObservedWhereObjectRefusesDefinition];
+            if (value == Body::none || nodes.valueOf(definition))
                 continue;
             ValueFlowNodeID node(nodes.m_firstNodeOfFunction[definition.initializer.index()] + value);
-            nodes.m_unobservedDefinitionsByInitializer.append({ definition.classLayout, definition.initializer, node });
+            nodes.m_unobservedDefinitionsByInitializer.append({ definition.classLayout, definition.initializer, node, definition.isObservedWhereObjectRefusesDefinition });
             LayoutID current = definition.classLayout;
             for (size_t steps = 0; current && m_program.at(current).has(LayoutFlags::HasHeritage) && steps < m_program.layouts.size(); ++steps) {
-                nodes.m_unobservedDefinitionsByClass.append({ current, definition.initializer, node });
+                nodes.m_unobservedDefinitionsByClass.append({ current, definition.initializer, node, definition.isObservedWhereObjectRefusesDefinition && current == definition.classLayout });
                 current = predictedHeritageOf(m_program.at(current));
             }
         }
@@ -1021,9 +1024,10 @@ private:
         universe.m_untrackedObjectAlone = maker.of(ValueFlowUniverse::untrackedObject());
         universe.m_placeholdersAlone = maker.unite(universe.m_unknownObjectAlone, universe.m_untrackedObjectAlone);
         universe.m_objects = ValueSets::complement(universe.m_primitives);
-        universe.m_knownObjects = maker.intersect(universe.m_objects, ValueSets::complement(universe.m_placeholdersAlone));
+        universe.m_knownObjects = maker.intersect(universe.m_objects, ValueSets::complement(maker.unite(universe.m_placeholdersAlone, maker.unite(maker.of(ValueFlowUniverse::markOfNamedBun()), maker.unite(maker.of(ValueFlowUniverse::markOfMemberLeftOut()), maker.of(ValueFlowUniverse::markOfLoadedBun()))))));
         universe.m_constructedObjects = rangeOf(universe.m_firstConstructedObject, universe.m_firstSite);
         universe.m_builtinObjects = rangeOf(universe.m_firstBuiltin, universe.m_firstNamespace);
+        universe.m_namespaces = rangeOf(universe.m_firstNamespace, universe.m_firstLayoutObject);
         universe.m_closures = rangeOf(universe.m_firstClosure, universe.m_firstCoroutineResult);
 
         Vector<ValueFlowObjectID> symbolKeys;
@@ -1068,6 +1072,14 @@ private:
                 return (overload.receiver && readsSpecies(*overload.receiver)) || std::ranges::any_of(overload.parameters, readsSpecies);
             });
         });
+        constexpr OperandUses usesChangingObject = operandWritingUses | OperandUses { OperandUse::DefinesName, OperandUse::TakesDescriptor, OperandUse::ChangesPrototype, OperandUse::BecomesPrototype };
+        universe.m_builtinFunctionsThatActOnReceiver = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
+            return isCallableBuiltin(builtins, builtin) && std::ranges::any_of(builtins.overloadsOf(builtins.canonicalID(builtin)), [&](const BuiltinOverload& overload) {
+                if (overload.mode != BuiltinCallMode::Call || !overload.receiver || overload.code.model || !doRecordsDescribe(builtins, overload))
+                    return false;
+                return readsSpecies(*overload.receiver) || overload.receiver->uses.containsAny(usesChangingObject);
+            });
+        });
 
         universe.m_isCanonicalEntryOfCallableBuiltin = BitVector(builtins.builtinCount());
         for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
@@ -1094,9 +1106,21 @@ private:
         universe.m_objectsWithLockedPrototypeLink = builtinObjectsWhere(OfModules::No, [&](BuiltinID builtin) {
             return builtins.hasLockedPrototypeLink(builtin);
         });
+        for (uint32_t index = 0; index < m_program.modules.size(); ++index)
+            list.append(universe.namespaceOf(ModuleID(index)));
+        universe.m_objectsBornWithoutPrototype = builtinObjectsWhere(OfModules::Yes, [&](BuiltinID builtin) {
+            return builtins.at(builtin).prototypeLink != BuiltinPrototypeLink::Builtin && builtins.canonicalID(builtin) != Builtins::ObjectPrototype;
+        });
 
+        for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
+            const Layout& layout = m_program.layouts[index];
+            if (layoutIsDefinedByClass(layout) && layout.module && m_program.at(layout.module).kind == ModuleKind::RuntimeSource)
+                list.append(universe.prototypeOf(LayoutID(index)));
+        }
+        universe.m_prototypeObjectsOfLibraryClasses = take();
         appendHoldersOfLibraryExports(list);
         universe.m_holdersOfLibraryExports = take();
+        universe.m_objectsOfLibraryFoundByNameAlone = maker.unite(universe.m_holdersOfLibraryExports, universe.m_prototypeObjectsOfLibraryClasses);
 
         list.append(ValueFlowUniverse::primitive(PrimitiveSet::String));
         universe.m_strings = maker.unite(take(), universe.m_textKeys);
@@ -1464,6 +1488,28 @@ ValueFlowBodies::ValueFlowBodies() = default;
 ValueFlowBodies::ValueFlowBodies(ValueFlowBodies&&) = default;
 ValueFlowBodies& ValueFlowBodies::operator=(ValueFlowBodies&&) = default;
 ValueFlowBodies::~ValueFlowBodies() = default;
+
+void ValueFlowBodies::addBytesTo(ValueFlowBytesByTable& bytes) const
+{
+    bytes.add("bodies: statements"_s, m_statements.sizeInBytes());
+    bytes.add("bodies: operands"_s, m_operands.sizeInBytes());
+    bytes.addList("bodies: edges"_s, m_edges);
+    bytes.addList("bodies: edges once reached"_s, m_edgesOnceReached);
+    bytes.addList("bodies: masks"_s, m_masks);
+    auto addRest = [&](const auto&... lists) {
+        (bytes.addList("bodies: the rest"_s, lists), ...);
+    };
+    addRest(m_seedsOnceReached, m_functionsEnteredOnceReached, m_observedValues, m_comparedValues, m_valuesAliveForComparisonsOnly, m_notedOperations, m_knowsValuesBehindChecks, m_ranges);
+    addRest(m_nodes.m_firstFieldOfLayout, m_nodes.m_firstNodeOfFunction, m_nodes.m_firstResultOfFunction, m_nodes.m_thrownOfFunction, m_nodes.m_resultSummaries);
+    bytes.addList("bodies: values behind checks"_s, m_valuesBehindChecks);
+    for (const BitVector& values : m_valuesBehindChecks)
+        bytes.add("bodies: values behind checks"_s, values.size() > 63 ? values.size() / 8 : 0);
+    bytes.addList("universe: sites"_s, m_universe.m_sites);
+    auto addObjects = [&](const auto&... lists) {
+        (bytes.addList("universe: objects of sites, functions, layouts"_s, lists), ...);
+    };
+    addObjects(m_universe.m_firstSiteOfFunction, m_universe.m_objectOfSite, m_universe.m_siteOfObject, m_universe.m_functionOfSiteObject, m_universe.m_classOfCoroutineResult, m_universe.m_objectsOfLayout);
+}
 
 ValueFlowNotedOperations notedOperationsOf(const Function& function)
 {

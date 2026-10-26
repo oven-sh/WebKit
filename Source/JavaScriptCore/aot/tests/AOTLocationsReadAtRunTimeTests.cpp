@@ -121,12 +121,12 @@ function f1 name="toString" flags=[HasThis] thisType={type=anything} results=[{t
     v1 = String string="label"
     Return v1
 }
-function f2 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=131085 thisType={type=anything} results=[{type=anything}] {
+function f2 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=131086 thisType={type=anything} results=[{type=anything}] {
     v1 = PropGet v0 key="toString"
     v2 = Call v1, v0 calleeKey="toString"
     ReturnCall v2
 }
-runtimefunction id=131085 function=f2
+runtimefunction id=131086 function=f2
 )IR"_s;
 
 // const parent = { listed: 1 }; for (const key in Object.create(Object.create(parent))) print(key)

@@ -29,17 +29,17 @@
 #if ENABLE(B3_JIT)
 
 #include "B3BreakCriticalEdges.h"
+#include "B3Dominators.h"
 #include "B3InsertionSetInlines.h"
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
-#include "B3SSACalculator.h"
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
 #include "B3Variable.h"
-#include "B3VariableLiveness.h"
 #include "B3VariableValue.h"
 #include "CompilerTimingScope.h"
 #include <wtf/CommaPrinter.h>
+#include <wtf/IndexMap.h>
 #include <wtf/IndexSet.h>
 #include <wtf/IndexSparseSet.h>
 
@@ -103,55 +103,399 @@ bool fixSSALocally(Procedure& proc, IndexSet<Value*>& valuesToDelete)
     return false;
 }
 
+// Answers which joins are in the dominance frontier of a block from a list of the edges into joins, in space proportional
+// to the edges. A list of joins per block takes blocks x joins entries where each block of a long chain in the dominator
+// tree has an edge to a join of its own that the head of the chain does not dominate.
+class FrontierEdges {
+public:
+    // Blocks are named by their numbers in a preorder walk of the dominator tree, from 1 on. The join is in the frontier
+    // of a block that dominates `from` and has a number above `bound`: the number of the join's immediate dominator, or
+    // that of the edge before this one into the same join, which then answers in place of this one.
+    struct Edge {
+        unsigned from;
+        unsigned bound;
+        unsigned previousIntoJoin;
+        BasicBlock* join;
+    };
+
+    static constexpr unsigned noEdge = UINT_MAX;
+
+    void clear() { m_edges.shrink(0); }
+    unsigned size() const { return m_edges.size(); }
+    const Edge& at(unsigned position) const LIFETIME_BOUND { return m_edges[position]; }
+
+    // In ascending order of `from`.
+    void append(const Edge& edge) { m_edges.append(edge); }
+
+    void finish()
+    {
+        m_leafCount = std::bit_ceil(std::max<unsigned>(m_edges.size(), 1));
+        m_leastBound.fill(UINT_MAX, 2 * m_leafCount);
+        for (unsigned position = 0; position < m_edges.size(); ++position)
+            m_leastBound[m_leafCount + position] = m_edges[position].bound;
+        for (unsigned node = m_leafCount; --node;)
+            m_leastBound[node] = std::min(m_leastBound[2 * node], m_leastBound[2 * node + 1]);
+    }
+
+    void remove(unsigned position)
+    {
+        unsigned node = m_leafCount + position;
+        m_leastBound[node] = UINT_MAX;
+        while (node >>= 1)
+            m_leastBound[node] = std::min(m_leastBound[2 * node], m_leastBound[2 * node + 1]);
+    }
+
+    // Calls functor(position) once for each join in the frontier of the block that dominates the numbers first to last,
+    // until it returns false. The functor may remove the edge that it is given.
+    template<typename Functor>
+    bool forEachJoinInFrontier(unsigned first, unsigned last, NOESCAPE const Functor& functor)
+    {
+        unsigned begin = std::ranges::lower_bound(m_edges, first, { }, &Edge::from) - m_edges.begin();
+        unsigned end = std::ranges::upper_bound(m_edges, last, { }, &Edge::from) - m_edges.begin();
+        return visit(1, 0, m_leafCount, begin, end, first, functor);
+    }
+
+private:
+    template<typename Functor>
+    bool visit(unsigned node, unsigned nodeBegin, unsigned nodeEnd, unsigned begin, unsigned end, unsigned limit, NOESCAPE const Functor& functor)
+    {
+        if (end <= nodeBegin || nodeEnd <= begin || m_leastBound[node] >= limit)
+            return true;
+        if (nodeEnd - nodeBegin == 1)
+            return functor(nodeBegin);
+        unsigned middle = nodeBegin + (nodeEnd - nodeBegin) / 2;
+        return visit(2 * node, nodeBegin, middle, begin, end, limit, functor)
+            && visit(2 * node + 1, middle, nodeEnd, begin, end, limit, functor);
+    }
+
+    Vector<Edge> m_edges;
+    // A binary tree over the edges: node n has the children 2 n and 2 n + 1, and the edges are its last m_leafCount nodes.
+    Vector<unsigned> m_leastBound;
+    unsigned m_leafCount { 1 };
+};
+
+// Finds the blocks where a variable needs a Phi and the blocks whose last Set is read, one variable at a time. It keeps
+// no live set per block, so a variable that stays live across a large procedure costs as much as its Sets, Gets and Phis.
+class LivePhiFinder {
+public:
+    using BlockList = Vector<BasicBlock*, 2>;
+
+    LivePhiFinder(Procedure& proc)
+        : m_setBlocks(proc.variables().size())
+        , m_getBlocks(proc.variables().size())
+        , m_firstDominated(proc.size(), UINT_MAX)
+        , m_lastDominated(proc.size(), UINT_MAX)
+        , m_hasSet(proc.size(), 0)
+        , m_isSetRead(proc.size(), 0)
+        , m_isCandidate(proc.size(), 0)
+        , m_isPhiRead(proc.size(), 0)
+        , m_isLiveAtHead(proc.size(), 0)
+        , m_isVisited(proc.size(), 0)
+        , m_lastEdgeInto(proc.size(), FrontierEdges::noEdge)
+    {
+        for (BasicBlock* block : proc) {
+            for (Value* value : *block) {
+                if (value->opcode() != Get && value->opcode() != Set)
+                    continue;
+                auto& blocksByVariable = value->opcode() == Set ? m_setBlocks : m_getBlocks;
+                BlockList& blocks = blocksByVariable[value->as<VariableValue>()->variable()->index()];
+                if (blocks.isEmpty() || blocks.last() != block)
+                    blocks.append(block);
+            }
+        }
+
+        auto& dominators = proc.dominators();
+        unsigned nextNumber = 1;
+        dominators.forAllBlocksInDominatorTreePreOrder(
+            [&](BasicBlock* block) {
+                unsigned number = nextNumber++;
+                m_firstDominated[block] = number;
+                for (BasicBlock* join : block->successorBlocks()) {
+                    if (join->numPredecessors() < 2)
+                        continue;
+                    BasicBlock* idom = dominators.idom(join);
+                    unsigned bound = idom ? m_firstDominated[idom] : 0;
+                    unsigned previous = std::exchange(m_lastEdgeInto[join], m_frontiers.size());
+                    if (previous != FrontierEdges::noEdge)
+                        bound = std::max(bound, m_frontiers.at(previous).from);
+                    m_frontiers.append({ number, bound, previous, join });
+                }
+            },
+            [&](BasicBlock* block) { m_lastDominated[block] = nextNumber - 1; });
+        m_frontiers.finish();
+    }
+
+    // Calls functor(block) for each block where the variable needs a Phi.
+    template<typename Functor>
+    void forEachPhiBlock(Variable* variable, NOESCAPE const Functor& functor)
+    {
+        analyze(variable);
+        FrontierEdges& frontiers = m_isLivenessComplete ? m_liveFrontiers : m_frontiers;
+        if (m_isLivenessComplete && !collectLiveFrontiers())
+            return;
+
+        // Each Set creates work for us, so leave out the ones nothing reads.
+        m_frontierWorklist.shrink(0);
+        for (BasicBlock* block : m_setBlocks[variable->index()]) {
+            if (m_isSetRead[block] == m_epoch)
+                m_frontierWorklist.append(block);
+        }
+        while (!m_frontierWorklist.isEmpty()) {
+            BasicBlock* block = m_frontierWorklist.takeLast();
+            m_phiBlocks.shrink(0);
+            frontiers.forEachJoinInFrontier(m_firstDominated[block], m_lastDominated[block], [&](unsigned position) {
+                BasicBlock* join = frontiers.at(position).join;
+                if (m_isLivenessComplete)
+                    frontiers.remove(position);
+                if (std::exchange(m_isVisited[join], m_epoch) != m_epoch && m_isLiveAtHead[join] == m_epoch)
+                    m_phiBlocks.append(join);
+                return true;
+            });
+            std::ranges::sort(m_phiBlocks, { }, &BasicBlock::index);
+            for (BasicBlock* join : m_phiBlocks) {
+                functor(join);
+                m_frontierWorklist.append(join);
+            }
+        }
+    }
+
+private:
+    static constexpr unsigned noSite = UINT_MAX;
+
+    // Afterwards m_isSetRead is right for the blocks with a Set, and m_isLiveAtHead for the blocks in the iterated
+    // dominance frontier of the Sets.
+    void analyze(Variable* variable)
+    {
+        ++m_epoch;
+        const BlockList& setBlocks = m_setBlocks[variable->index()];
+        const BlockList& getBlocks = m_getBlocks[variable->index()];
+
+        m_candidates.shrink(0);
+        m_frontierWorklist.shrink(0);
+        for (BasicBlock* block : setBlocks) {
+            m_hasSet[block] = m_epoch;
+            m_frontierWorklist.append(block);
+        }
+        m_liveWorklist.shrink(0);
+        m_liveBlocks.shrink(0);
+        for (BasicBlock* block : getBlocks) {
+            m_isLiveAtHead[block] = m_epoch;
+            m_liveWorklist.append(block);
+            m_liveBlocks.append(block);
+        }
+
+        // Either search answers alone. The first is short when the variable is live in few blocks, the second when few
+        // joins follow the Sets, so they take turns and the cost stays within a constant factor of the shorter one.
+        for (unsigned budget = 64;; budget *= 2) {
+            m_isLivenessComplete = findLiveBlocks(budget);
+            if (m_isLivenessComplete)
+                return;
+            if (findCandidates(budget)) {
+                findReadCandidates(setBlocks, getBlocks);
+                return;
+            }
+        }
+    }
+
+    // Leaves in m_liveFrontiers the edges into the joins where the variable is live. Returns false if there are none.
+    bool collectLiveFrontiers()
+    {
+        m_livePositions.shrink(0);
+        for (BasicBlock* block : m_liveBlocks) {
+            for (unsigned position = m_lastEdgeInto[block]; position != FrontierEdges::noEdge; position = m_frontiers.at(position).previousIntoJoin)
+                m_livePositions.append(position);
+        }
+        if (m_livePositions.isEmpty())
+            return false;
+        std::ranges::sort(m_livePositions);
+        m_liveFrontiers.clear();
+        for (unsigned position : m_livePositions)
+            m_liveFrontiers.append(m_frontiers.at(position));
+        m_liveFrontiers.finish();
+        return true;
+    }
+
+    // A block that defines the variable, by a Set or by a candidate Phi.
+    struct Site {
+        BasicBlock* block;
+        unsigned parent; // The nearest site that dominates this one.
+    };
+
+    // From this dominator tree number up to the next boundary, `site` is the nearest dominating site.
+    struct Boundary {
+        unsigned number;
+        unsigned site;
+    };
+
+    bool findCandidates(unsigned budget)
+    {
+        while (!m_frontierWorklist.isEmpty()) {
+            if (!budget)
+                return false;
+            --budget;
+            BasicBlock* block = m_frontierWorklist.takeLast();
+            bool isFinished = m_frontiers.forEachJoinInFrontier(m_firstDominated[block], m_lastDominated[block], [&](unsigned position) {
+                if (!budget)
+                    return false;
+                --budget;
+                BasicBlock* join = m_frontiers.at(position).join;
+                if (std::exchange(m_isCandidate[join], m_epoch) != m_epoch) {
+                    m_candidates.append(join);
+                    m_frontierWorklist.append(join);
+                }
+                return true;
+            });
+            if (!isFinished) {
+                m_frontierWorklist.append(block);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool findLiveBlocks(unsigned budget)
+    {
+        while (!m_liveWorklist.isEmpty()) {
+            if (!budget)
+                return false;
+            BasicBlock* block = m_liveWorklist.takeLast();
+            for (BasicBlock* predecessor : block->predecessors()) {
+                if (m_hasSet[predecessor] == m_epoch) {
+                    m_isSetRead[predecessor] = m_epoch;
+                    continue;
+                }
+                if (m_isLiveAtHead[predecessor] == m_epoch)
+                    continue;
+                m_isLiveAtHead[predecessor] = m_epoch;
+                m_liveWorklist.append(predecessor);
+                m_liveBlocks.append(predecessor);
+            }
+            budget -= std::min<unsigned>(budget, block->numPredecessors() + 1);
+        }
+        return true;
+    }
+
+    // Follows each Get to the definition that reaches it, and each Phi found that way to the definitions that reach the
+    // ends of its predecessors.
+    void findReadCandidates(const BlockList& setBlocks, const BlockList& getBlocks)
+    {
+        m_sites.shrink(0);
+        for (BasicBlock* block : setBlocks)
+            m_sites.append({ block, noSite });
+        for (BasicBlock* block : m_candidates) {
+            if (m_hasSet[block] != m_epoch)
+                m_sites.append({ block, noSite });
+        }
+        std::ranges::sort(m_sites, { }, [&](const Site& site) { return m_firstDominated[site.block]; });
+
+        m_boundaries.shrink(0);
+        auto closeSitesBefore = [&](unsigned number) {
+            while (!m_openSites.isEmpty() && m_lastDominated[m_sites[m_openSites.last()].block] < number) {
+                const Site& closed = m_sites[m_openSites.takeLast()];
+                m_boundaries.append({ m_lastDominated[closed.block] + 1, closed.parent });
+            }
+        };
+        for (unsigned index = 0; index < m_sites.size(); ++index) {
+            unsigned number = m_firstDominated[m_sites[index].block];
+            closeSitesBefore(number);
+            if (!m_openSites.isEmpty())
+                m_sites[index].parent = m_openSites.last();
+            m_openSites.append(index);
+            m_boundaries.append({ number, index });
+        }
+        closeSitesBefore(UINT_MAX);
+
+        for (BasicBlock* block : getBlocks)
+            readAtHead(block);
+        while (!m_readPhis.isEmpty()) {
+            for (BasicBlock* predecessor : m_readPhis.takeLast()->predecessors())
+                readAtTail(findNearestSite(predecessor));
+        }
+    }
+
+    unsigned findNearestSite(BasicBlock* block) const
+    {
+        auto boundary = std::ranges::upper_bound(m_boundaries, m_firstDominated[block], { }, &Boundary::number);
+        return boundary == m_boundaries.begin() ? noSite : (boundary - 1)->site;
+    }
+
+    void readAtHead(BasicBlock* block)
+    {
+        if (m_isCandidate[block] == m_epoch) {
+            readPhi(block);
+            return;
+        }
+        unsigned site = findNearestSite(block);
+        if (site != noSite && m_sites[site].block == block)
+            site = m_sites[site].parent;
+        readAtTail(site);
+    }
+
+    void readAtTail(unsigned site)
+    {
+        if (site == noSite)
+            return;
+        BasicBlock* block = m_sites[site].block;
+        if (m_hasSet[block] == m_epoch)
+            m_isSetRead[block] = m_epoch;
+        else
+            readPhi(block);
+    }
+
+    void readPhi(BasicBlock* block)
+    {
+        if (m_isPhiRead[block] == m_epoch)
+            return;
+        m_isPhiRead[block] = m_epoch;
+        m_isLiveAtHead[block] = m_epoch;
+        m_readPhis.append(block);
+    }
+
+    FrontierEdges m_frontiers;
+    Vector<BlockList> m_setBlocks;
+    Vector<BlockList> m_getBlocks;
+    IndexMap<BasicBlock*, unsigned> m_firstDominated;
+    IndexMap<BasicBlock*, unsigned> m_lastDominated;
+
+    // A block has the property for the current variable when its entry equals m_epoch.
+    unsigned m_epoch { 0 };
+    IndexMap<BasicBlock*, unsigned> m_hasSet;
+    IndexMap<BasicBlock*, unsigned> m_isSetRead;
+    IndexMap<BasicBlock*, unsigned> m_isCandidate;
+    IndexMap<BasicBlock*, unsigned> m_isPhiRead;
+    IndexMap<BasicBlock*, unsigned> m_isLiveAtHead;
+    IndexMap<BasicBlock*, unsigned> m_isVisited;
+    bool m_isLivenessComplete { false };
+
+    IndexMap<BasicBlock*, unsigned> m_lastEdgeInto;
+    FrontierEdges m_liveFrontiers;
+    Vector<unsigned, 16> m_livePositions;
+    Vector<BasicBlock*, 16> m_liveBlocks;
+    Vector<BasicBlock*, 16> m_phiBlocks;
+
+    Vector<BasicBlock*, 16> m_frontierWorklist;
+    Vector<BasicBlock*, 16> m_liveWorklist;
+    Vector<BasicBlock*, 16> m_candidates;
+    Vector<BasicBlock*, 16> m_readPhis;
+    Vector<Site, 16> m_sites;
+    Vector<unsigned, 16> m_openSites;
+    Vector<Boundary, 32> m_boundaries;
+};
+
 void fixSSAGlobally(Procedure& proc, IndexSet<Value*>& valuesToDelete)
 {
-    VariableLiveness liveness(proc);
-    
-    // Kill any dead Set's. Each Set creates work for us, so this is profitable.
-    for (BasicBlock* block : proc) {
-        VariableLiveness::LocalCalc localCalc(liveness, block);
-        for (unsigned valueIndex = block->size(); valueIndex--;) {
-            Value* value = block->at(valueIndex);
-            if (value->opcode() == Set && !localCalc.isLive(value->as<VariableValue>()->variable()))
-                value->replaceWithNop();
-            localCalc.execute(valueIndex);
-        }
-    }
-    
-    VariableLiveness::LiveAtHead liveAtHead = liveness.liveAtHead();
-    
-    SSACalculator ssa(proc);
-
-    // Create a SSACalculator::Variable ("calcVar") for every variable.
-    Vector<Variable*> calcVarToVariable;
-    IndexMap<Variable*, SSACalculator::Variable*> variableToCalcVar(proc.variables().size());
-
-    for (Variable* variable : proc.variables()) {
-        SSACalculator::Variable* calcVar = ssa.newVariable();
-        RELEASE_ASSERT(calcVar->index() == calcVarToVariable.size());
-        calcVarToVariable.append(variable);
-        variableToCalcVar[variable] = calcVar;
-    }
-
-    for (BasicBlock* block : proc) {
-        for (Value* value : *block) {
-            if (value->opcode() != Set)
-                continue;
-
-            Variable* variable = value->as<VariableValue>()->variable();
-            ssa.newDefBlock(variableToCalcVar[variable], block);
-        }
-    }
+    struct PhiOfVariable {
+        Variable* variable;
+        Value* phi;
+    };
+    IndexMap<BasicBlock*, Vector<PhiOfVariable>> phisAtHead(proc.size());
 
     // Decide where Phis are to be inserted. This creates them but does not insert them.
     {
         CompilerTimingScope timingScope("B3"_s, "fixSSA: computePhis"_s);
-        ssa.computePhis(
-            [&](SSACalculator::Variable* calcVar, BasicBlock* block) -> Value* {
-                Variable* variable = calcVarToVariable[calcVar->index()];
-                if (!liveAtHead.isLiveAtHead(block, variable))
-                    return nullptr;
-                
+        LivePhiFinder livePhiFinder(proc);
+        for (Variable* variable : proc.variables()) {
+            livePhiFinder.forEachPhiBlock(variable, [&](BasicBlock* block) {
                 Value* phi = proc.add<Value>(Phi, variable->type(), block->at(0)->origin());
                 if (proc.knownInductions().hasDemoted()) [[unlikely]]
                     proc.knownInductions().didCreatePhi(variable, block, phi);
@@ -161,8 +505,9 @@ void fixSSAGlobally(Procedure& proc, IndexSet<Value*>& valuesToDelete)
                         "Adding Phi for ", pointerDump(variable), " at ", *block, ": ",
                         deepDump(proc, phi), "\n");
                 }
-                return phi;
+                phisAtHead[block].append({ variable, phi });
             });
+        }
     }
 
     // Now perform the conversion.
@@ -189,11 +534,9 @@ void fixSSAGlobally(Procedure& proc, IndexSet<Value*>& valuesToDelete)
                 return bottom;
             };
 
-            for (SSACalculator::Def* phiDef : ssa.phisForBlock(block)) {
-                Variable* variable = calcVarToVariable[phiDef->variable()->index()];
-
-                insertionSet.insertValue(0, phiDef->value());
-                setReachingDef(variable, phiDef->value());
+            for (auto [variable, phi] : phisAtHead[block]) {
+                insertionSet.insertValue(0, phi);
+                setReachingDef(variable, phi);
             }
 
             for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
@@ -223,10 +566,7 @@ void fixSSAGlobally(Procedure& proc, IndexSet<Value*>& valuesToDelete)
             unsigned upsilonInsertionPoint = block->size() - 1;
             Origin upsilonOrigin = block->last()->origin();
             for (BasicBlock* successorBlock : block->successorBlocks()) {
-                for (SSACalculator::Def* phiDef : ssa.phisForBlock(successorBlock)) {
-                    Value* phi = phiDef->value();
-                    Variable* variable = calcVarToVariable[phiDef->variable()->index()];
-
+                for (auto [variable, phi] : phisAtHead[successorBlock]) {
                     Value* mappedValue = reachingDef(variable, upsilonInsertionPoint, upsilonOrigin);
                     if (B3FixSSAInternal::verbose) {
                         dataLog(

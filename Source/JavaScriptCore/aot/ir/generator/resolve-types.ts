@@ -67,7 +67,7 @@ interface SizeComputation {
   readonly finished: Set<SchemaRecord | Variant>;
 }
 
-const recordMarks = ["wireOnly", "customEngine", "customText", "extendedEngine"] as const;
+const recordMarks = ["wireOnly", "customEngine", "customText", "extendedEngine", "handwrittenStruct"] as const;
 const variantForms = ["wire", "engine"] as const;
 const externalForms = ["id", "enum"] as const;
 const scalarColumnKinds = ["Bool", "UInt32", "UInt64", "Text", "Name", "Type"] as const;
@@ -194,6 +194,7 @@ function declareRecord(scope: Scope, syntax: RecordSyntax, file: ParsedFile): vo
     isCustomEngine: hasMark("customEngine"),
     isCustomText: hasMark("customText"),
     isExtendedEngine: hasMark("extendedEngine"),
+    isHandwrittenStruct: hasMark("handwrittenStruct"),
     fields: [],
     wireFields: [],
     wireWords: 0,
@@ -252,6 +253,7 @@ export function declareTypes(scope: Scope, declarations: readonly DeclarationInF
         break;
       case "include":
       case "word":
+      case "packed":
       case "heap":
       case "effects":
       case "uses":

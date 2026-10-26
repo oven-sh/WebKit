@@ -93,12 +93,12 @@ function f5 name="mixed" flags=[IsChecked] parameters=[{type=number site=w4}] re
     Return v2
 }
 # CHECK-LABEL: function f5 name="mixed" {{*}}parameters=[{type=number site=w4 flags=[IsExpected]}]
-# CHECK: = Check {{*}}castType=number site=w4
+# CHECK: = Check {{*}}expectedType=number site=w4
 function f6 name="after" flags=[IsChecked] parameters=[{type=number site=w5}] results=[{type=anything}] {
     Return v0
 }
 # CHECK-LABEL: function f6 name="after" {{*}}parameters=[{type=number site=w5 flags=[IsExpected]}]
-# CHECK: = Check {{*}}castType=number site=w5
+# CHECK: = Check {{*}}expectedType=number site=w5
 function f7 name="each" flags=[IsChecked] parameters=[{type=number site=w6}] results=[{type=anything}] {
     Return v0
 }

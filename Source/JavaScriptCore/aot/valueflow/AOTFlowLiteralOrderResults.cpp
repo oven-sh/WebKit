@@ -24,6 +24,11 @@ static_assert(OperandIndex::PropDefine::object == literalOperandOfPiece && Opera
 static_assert(OperandIndex::DefineGetter::object == literalOperandOfPiece && OperandIndex::DefineSetter::object == literalOperandOfPiece);
 static_assert(OperandIndex::CopyDataProperties::target == literalOperandOfPiece);
 
+bool isPieceOfLiteral(const Value& operation, ValueID literal)
+{
+    return literalPieceOperations.contains(operation.opcode) && operation.operand(literalOperandOfPiece) == literal;
+}
+
 namespace {
 
 using KeyOrder = Vector<PropertyKeyID>;
@@ -154,7 +159,7 @@ struct LiteralOrderSolver {
             return copied;
         }
 
-        ValueSetID sources = heap.valueOf(inputs.bodies().operandsOf(*statement)[OperandIndex::CopyDataProperties::source]);
+        ValueSetID sources = inputs.seenValuesOf(heap.maker(), inputs.bodies().operandsOf(*statement)[OperandIndex::CopyDataProperties::source]);
         if (ValueSets::isComplement(sources))
             return copied;
         bool holdsPlaceholder = inputs.sets().meet(sources, universe.placeholdersAlone());
@@ -289,11 +294,8 @@ struct LiteralOrderSolver {
                 for (const KeyOrder& order : orders) {
                     KeyOrder extended = order;
                     for (PropertyKeyID key : sourceOrder) {
-                        if (kindOfKey[key.index()] == PropertyKeyKind::Text && isCopied(source, key, copy))
-                            appendIfAbsent(extended, key);
-                    }
-                    for (PropertyKeyID key : sourceOrder) {
-                        if (isSymbolKind(kindOfKey[key.index()]) && isCopied(source, key, copy))
+                        PropertyKeyKind kind = kindOfKey[key.index()];
+                        if ((kind == PropertyKeyKind::Text || isSymbolKind(kind)) && isCopied(source, key, copy))
                             appendIfAbsent(extended, key);
                     }
                     appendIfAbsent(result, WTF::move(extended));

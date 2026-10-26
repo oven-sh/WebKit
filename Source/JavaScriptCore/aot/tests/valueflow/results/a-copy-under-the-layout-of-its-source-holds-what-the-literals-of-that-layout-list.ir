@@ -1,0 +1,59 @@
+# const state = { count: 1, label: "a" }   const relabeled = { ...state, label: "b" }   const again = { ...relabeled, label: "c" }
+# The copies have the layout of what they copy. A source is born before its copy, so a name that every literal of the layout lists is in every copy too:
+# both fields are always filled, the one that the copies define and the one that only the copying brings.
+# Not so: a layout one of whose copies is made of a source that may be undefined, and a layout that another allocation leaves empty.
+# RUN: valueflow-apply
+# CHECK: layout L0 name="State" fields=[{key="count"{{*}}initialization=SetAtCreation{{*}}occupancy=AlwaysFilled{{*}}{key="label"{{*}}occupancy=AlwaysFilled
+# CHECK: layout L1 name="OfWhatMayBeUndefined" fields=[{key="count"
+# CHECK-NOT: occupancy=AlwaysFilled{{*}}{key="label"
+# CHECK: layout L2 name="AlsoLeftEmpty" fields=[{key="count"
+# CHECK-NOT: occupancy=AlwaysFilled
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="State" fields=[{key="count" declared={type=anything} flags=[IsRequired]}, {key="label" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="OfWhatMayBeUndefined" fields=[{key="count" declared={type=anything} flags=[IsRequired]}, {key="label" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="AlsoLeftEmpty" fields=[{key="count" declared={type=anything} flags=[IsRequired]}, {key="label" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = NewObject layout=L0
+    CopyDataProperties v2, v1
+    PropDefine v2, v0 key="label"
+    v5 = FinishObject v2
+    v6 = NewObject layout=L0
+    CopyDataProperties v6, v5
+    PropDefine v6, v0 key="label"
+    v9 = FinishObject v6
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="input" [isFreeName]
+    v12 = ToBoolean v11
+    v13 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    Branch v12 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v13)
+  b2():
+    v14 = Undefined
+    Jump -> next b3(v14)
+  b3(v15: anything):
+    v16 = NewObject layout=L1
+    CopyDataProperties v16, v15
+    PropDefine v16, v0 key="label"
+    v19 = FinishObject v16
+    v20 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
+    v21 = NewObject layout=L2
+    CopyDataProperties v21, v20
+    PropDefine v21, v0 key="label"
+    v24 = FinishObject v21
+    v25 = NewObject layout=L2
+    v26 = FinishObject v25
+    v27 = PropGet v5 key="count"
+    v28 = PropGet v9 key="count"
+    v29 = PropGet v19 key="count"
+    v30 = PropGet v24 key="count"
+    v31 = PropGet v26 key="count"
+    Return
+}

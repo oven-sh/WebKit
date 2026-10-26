@@ -696,7 +696,7 @@ static void checkValueWrittenByHost(DetachedInstance& fixture, JSValue value, JS
     bool isAppended;
     {
         OperationCallScope scope(fixture.vm());
-        auto appended = operationAOTStringBuilderAppendJSON(&fixture.instance(), builder, JSValue::encode(value), JSValue::encode(property));
+        auto appended = operationAOTStringBuilderAppendJSON(&fixture.instance(), builder, JSValue::encode(value), JSValue::encode(property), JSValue::encode(jsUndefined()));
         AOT_TEST_CHECK(!appended.exception);
         isAppended = appended.value;
     }

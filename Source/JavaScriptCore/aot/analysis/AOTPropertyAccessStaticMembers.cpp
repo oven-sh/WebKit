@@ -111,6 +111,9 @@ static MemberAnswer findFromClassObject(const PropertyAccessContext& context, co
         }
         if (member.isListedWithoutDefinition())
             return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
+        // A name that the program is seen to store on the function is there from then on: a guess that it is missing would fail at every read behind the store.
+        if (query.access == Access::Read && context.flow && context.flow->closuresAreStoredUnder(layout.constructor, query.key))
+            return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
         if (!classFlow.staticNamesAreComplete)
             addConditionWithCause(walked, createMemberUnchangedCondition(query), UnprovenCause::UnknownKeyStore);
         if (query.isOwnLookup) {
@@ -167,6 +170,7 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
     case PropertyKeyKind::RegisteredSymbol:
         return createProvenAnswer(MemberKind::Absent);
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
         return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
     case PropertyKeyKind::Text:

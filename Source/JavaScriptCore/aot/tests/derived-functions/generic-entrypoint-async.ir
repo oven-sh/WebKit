@@ -18,7 +18,7 @@ function f1 name="asynchronous" role=CoroutineBody flags=[IsAsync] parameters=[{
 }
 # CHECK: name="asynchronous" module=m0 role=GenericEntrypoint
 # CHECK-NEXT: b0([[closure]]: f0, [[this]]: anything, [[argument]]: anything):
-# CHECK-NEXT: [[number]]: number = AssumeType [[argument]] castType=number
+# CHECK-NEXT: [[number]]: number = AssumeType [[argument]] provenType=number
 # CHECK-NEXT: [[promise]]: Promise = CallDirect [[number]] function=f0
 # CHECK-NEXT: ReturnCall [[promise]] requirement=Allowed
 # QUIET-LABEL: name="asynchronous" module=m0 role=GenericEntrypoint

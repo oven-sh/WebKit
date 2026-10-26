@@ -55,6 +55,7 @@ static constexpr unsigned barrenCollectionsUntilProcessEnds = 16;
 // Creating the error, collections and the frame of a signal reach this far below where the error is thrown, at most.
 static constexpr size_t stackBelowErrorToClear = 64 * KB;
 
+static_assert(smallestUsableSize == smallestCellRangeSize);
 static_assert(!(randomPrefixGranule % MarkedBlock::blockSize));
 static_assert(smallestUsableSize / randomPrefixDivisor >= randomPrefixGranule);
 static_assert(unusedPrefixSize + (MarkedBlockCage::maxSize >> maxHalvingsOfFirstRange) / randomPrefixDivisor < smallestUsableSize);
@@ -97,7 +98,8 @@ static ReservedRangeHeap* tryCreateRange(size_t size, size_t minSize, size_t ran
     RELEASE_ASSERT(minSize >= smallestUsableSize && minSize <= size, minSize, size);
     RELEASE_ASSERT(randomPrefixRange >= randomPrefixGranule && unusedPrefixSize + randomPrefixRange < minSize, randomPrefixRange, minSize);
 
-    size_t remaining = remainingAddressSpace();
+    // The first range gets the smallest size whatever its share is: without it nothing runs.
+    size_t remaining = s_firstRange ? remainingAddressSpace() : std::max(remainingAddressSpace(), minSize);
     if (minSize > remaining)
         return nullptr;
 
@@ -147,6 +149,8 @@ std::expected<void, MarkedBlockCage::Error> MarkedBlockCage::initialize()
         }
         size_t randomPrefixRange = std::max(size >> maxHalvingsOfFirstRange, smallestUsableSize) / randomPrefixDivisor;
         if (hasAddressSpaceLimit())
+            shareCLibraryHeapBetweenThreads();
+        if (hasAddressSpaceLimit())
             s_firstRange = tryCreateRange(std::clamp(availableAddressSpace() / MB * MB, smallestUsableSize, size), smallestUsableSize, randomPrefixRange, initialCageSegmentSize(smallestUsableSize));
         else
             s_firstRange = tryCreateRange(size, smallestUsableSize, randomPrefixRange);
@@ -164,6 +168,43 @@ std::expected<void, MarkedBlockCage::Error> MarkedBlockCage::initialize()
     return { };
 }
 
+bool MarkedBlockCage::tryEnsureRoomForNewVMs(unsigned count)
+{
+    struct Pieces {
+        size_t size;
+        unsigned count;
+    };
+    // The range keeps pieces of different sizes in pages of different sizes, and a thread shares no page with another thread.
+    // These fill the pages that a VM takes until the first statement of a small program runs: 2 of 512 KB for blocks, 12 of 64 KB for cells outside blocks.
+    static constexpr Pieces piecesOfVM[] = { { std::max<size_t>(MarkedBlock::blockSize, 64 * KB), 14 }, { 8 * KB, 84 } };
+    ReservedRangeHeap* range;
+    {
+        Locker locker { s_poolLock };
+        if (!s_firstRange || !s_isGrowable)
+            return true;
+        range = s_firstRange;
+    }
+    struct Piece {
+        Piece* next;
+    };
+    Piece* taken = nullptr;
+    bool hasRoom = true;
+    for (unsigned i = 0; i < count; ++i) {
+        for (auto [size, countOfSize] : piecesOfVM) {
+            for (unsigned j = 0; hasRoom && j < countOfSize; ++j) {
+                void* piece = range->tryAllocate(size);
+                hasRoom = !!piece;
+                if (hasRoom)
+                    taken = new (NotNull, piece) Piece { taken };
+            }
+        }
+    }
+    while (taken)
+        range->free(std::exchange(taken, taken->next));
+    range->releaseFreeMemory();
+    return hasRoom;
+}
+
 MarkedBlockCage::MarkedBlockCage()
 {
     if (!isEnabled())
@@ -173,11 +214,10 @@ MarkedBlockCage::MarkedBlockCage()
     if (!s_firstRange)
         return;
 
+    // A range that takes address space as it needs it serves every thread: what one of them gives back, another can take.
     if (!s_freeRanges->isEmpty())
         m_range = s_freeRanges->takeLast();
-    else if (s_isGrowable)
-        m_range = tryCreateRange(g_jscConfig.markedBlockCageSize, smallestUsableSize, smallestUsableSize / randomPrefixDivisor, smallestUsableSize);
-    else
+    else if (!s_isGrowable)
         m_range = tryCreateRange(g_jscConfig.markedBlockCageSize, g_jscConfig.markedBlockCageSize, g_jscConfig.markedBlockCageSize / randomPrefixDivisor);
     if (!m_range) {
         m_range = s_firstRange;

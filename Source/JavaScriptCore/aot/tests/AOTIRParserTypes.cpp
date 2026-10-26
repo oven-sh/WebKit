@@ -173,7 +173,7 @@ Wire::PropertyKey TextParser::parsePropertyKeyValue()
         return key;
     }
     if (accept(TokenKind::At)) {
-        key.kind = static_cast<uint32_t>(PropertyKeyKind::EnginePrivateName);
+        key.kind = static_cast<uint32_t>(accept(TokenKind::NumberSign) ? PropertyKeyKind::ModulePrivateName : PropertyKeyKind::EnginePrivateName);
         key.text = parseStringWordOrMinus(*this);
         return key;
     }

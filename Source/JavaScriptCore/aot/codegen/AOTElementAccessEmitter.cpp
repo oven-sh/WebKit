@@ -280,6 +280,8 @@ Operand ElementAccessEmitter::absentElement(const OperationContext& context, Rep
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::Cell:
     case Representation::RawWord:
         break;
@@ -296,6 +298,8 @@ Integer ElementAccessEmitter::indexOrElse(ValueID position, bool keyIsIntegral, 
         return signExtended(operand.as<Word32>());
     case Representation::Int64:
         return operand.as<Integer>();
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::Double: {
         Number number = operand.as<Number>();
         if (std::optional<Integer> whole = emitter<OperatorEmitter>().wholeRemainderAsIndex(position, isNotAnIndex))
@@ -334,7 +338,9 @@ Boxed ElementAccessEmitter::boxedPosition(ValueID position)
     case Representation::Int64:
         return emitter<ConversionEmitter>().boxInteger(operand.as<Integer>(), typeOf(position).integers);
     case Representation::Double:
-        return emitter<ConversionEmitter>().boxNumber(operand.as<Number>());
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
+        return emitter<ConversionEmitter>().boxNumber(getInFormOfItsNaN(position));
     case Representation::Unchosen:
     case Representation::Void:
     case Representation::Boolean:

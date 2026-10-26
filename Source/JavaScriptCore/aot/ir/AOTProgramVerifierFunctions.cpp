@@ -26,6 +26,10 @@ constexpr OptionSet<FunctionCapabilities> capabilitiesAddedByPasses {
     FunctionCapabilities::HasOnlyDirectCallers,
     FunctionCapabilities::IsNeverCalledByHost,
     FunctionCapabilities::IsHiddenInStackTraces,
+    FunctionCapabilities::ClosuresAreReadWithoutCode,
+    FunctionCapabilities::RecordsCallee,
+    FunctionCapabilities::RecordsCalleeOnceRenamed,
+    FunctionCapabilities::NotesLooksForName,
 };
 
 bool isSentByFrontEnd(FunctionRole role)
@@ -35,7 +39,7 @@ bool isSentByFrontEnd(FunctionRole role)
 
 bool isUntypedPosition(const DeclaredType& declared)
 {
-    return declared == DeclaredType { .type = TypeTable::anything };
+    return declared == DeclaredType(Proven::byPosition(TypeTable::anything));
 }
 
 bool createsGenerators(const Function& function)
@@ -55,7 +59,7 @@ bool hasValidSignature(const Function& function)
 
 bool canCrossCalls(const Program& program, const DeclaredType& declared)
 {
-    std::optional<OpaqueKind> opaque = program.at(declared.type).opaque;
+    std::optional<OpaqueKind> opaque = program.at(declared.written()).opaque;
     return !opaque || !isFunctionLocal(*opaque);
 }
 
@@ -259,6 +263,11 @@ void ProgramVerifier::verifyFunctionBodies()
             const Function& function = m_program.functions[index];
             if (!function.hasBody())
                 return;
+#if ENABLE(FUZZILLI)
+            // It is the same in every build, and a fuzzer makes millions of builds.
+            if (m_form == IRForm::AsRead && isLibraryCode(m_program, function))
+                return;
+#endif
             FunctionVerifier verifier(m_program, id, function, m_form, m_build, m_inputs);
             verifier.shareAnswers(slotsInReceivers);
             if (!verifier.run())

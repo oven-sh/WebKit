@@ -43,6 +43,8 @@ constexpr Typed::Effects effectsOf(Entry entry)
     }
     if (entry == Entry::operationAOTBytesAllocatedAtPrologueCheck)
         return Typed::Effects::none();
+    if (entry == Entry::operationAOTCopyDataPropertiesByFieldMap)
+        return Typed::declaredBoundOf(RuntimeOperation::CopyDataProperties);
     return Typed::Effects::unknownCode();
 }
 

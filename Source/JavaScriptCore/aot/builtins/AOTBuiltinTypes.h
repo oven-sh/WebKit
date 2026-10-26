@@ -41,6 +41,7 @@ uint16_t primitivesOfBuiltinType(const BuiltinType&);
 Range computeResultRange(BuiltinRangeRule, std::span<const Range> operandRanges);
 
 OperandFit fitOf(const TypingContext&, TypeID operandOrNotPassed, BuiltinTypeID tested);
+bool fitsIfPristine(const TypingContext&, TypeID operandOrNotPassed, BuiltinTypeID tested);
 PristineRequirement pristineRequirementOf(const BuiltinTable&, const Type& operand, BuiltinTypeID tested);
 PristineAspectSet pristineAspectsProvenBy(const Type&, BuiltinClassID);
 

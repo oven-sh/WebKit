@@ -55,11 +55,14 @@ public:
     const ModuleFailureData& failure(ModuleFailureID) const;
 
     std::optional<ModuleID> findByPath(StringView publicPath) const;
+    // The next search for the path of the module finds it at once.
+    void willBeAskedForPath(ModuleID, unsigned hashOfPath) const;
     std::span<const uint32_t> modulesOfUncompiledCode() const { return m_tables->modulesOfUncompiledCode(); }
     std::optional<ModuleID> findRuntimeSource(uint32_t registryID) const;
     std::optional<unsigned> findExport(ModuleID, UniquedStringImpl* name) const;
     // ES modules import a CommonJS file through a module that evaluates the file first of all and then takes copies of what it exports. Answers the file for such a module.
-    std::optional<ModuleID> fileBehindFace(ModuleID) const;
+    std::optional<ModuleID> fileBehindFace(ModuleID module) const { return data(module).isFaceOfFile() ? std::optional(requests(module).front().targetModule()) : std::nullopt; }
+    std::optional<ModuleID> faceOfFile(ModuleID) const;
     const CompiledRuntimeFunctionData* findRuntimeFunction(uint32_t id) const;
     // Walks the table: for what happens rarely.
     bool isRuntimeFunction(FunctionID) const;
@@ -76,6 +79,7 @@ private:
 
     size_t checkedIndex(ModuleID) const;
     PiecesOfPath piecesOfPath(ModuleID) const;
+    PiecesOfPath piecesOfDisplayPath(ModuleID) const;
     std::strong_ordering comparePath(ModuleID, StringView) const;
     ModuleNumbers modulesByPath() const { return { m_tables->modulesByPath(), m_modules.size() }; }
     template<typename List> List listOf(List, ModuleID, Number24 ModuleData::* first) const;

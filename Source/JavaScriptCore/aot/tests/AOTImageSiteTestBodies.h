@@ -23,6 +23,8 @@ struct ExpectedSite {
     bool isConstruct { false };
     bool isTailCall { false };
     std::optional<uint32_t> firstReadSite { };
+    bool isInsideCallee { false };
+    BuiltinID calledBuiltin { };
 };
 
 struct SiteBody {

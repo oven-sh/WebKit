@@ -24,6 +24,9 @@ inline constexpr unsigned estimatedBytesPerInst = 4;
 #endif
 
 inline constexpr size_t maxWordsPerLivenessMatrix = 1 << 20;
+// Each slice pays for every block it visits, however narrow it is.
+inline constexpr size_t minWordsPerLivenessSlice = 16;
+inline constexpr size_t minWordsPerLivenessSliceWithoutTails = 64;
 inline constexpr size_t maxWordsOfLivenessAtTails = 1 << 24;
 inline constexpr unsigned minBlocksToSolveLivenessInPostOrder = 256;
 
@@ -47,6 +50,7 @@ inline constexpr unsigned maxBytesBelowFrameRecord = 240;
 inline constexpr unsigned maxFrameSizeWithPushedRegisters = 496;
 inline constexpr unsigned maxInstsScannedForSpillsAtFrameSetup = 16;
 inline constexpr unsigned maxRegistersPushedAtFrameSetup = 6;
+inline constexpr unsigned maxWordsClearedAtFirstSuspension = 15;
 
 inline constexpr unsigned maxBytesFromGuardToRareBlock = 24 * estimatedBytesPerInst;
 inline constexpr unsigned maxBytesOfRareBlockNearGuard = 16 * estimatedBytesPerInst;

@@ -19,11 +19,13 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v8 = Integer integer=8
     v9 = Construct v7, -, v8
     v10 = PropGet v9 key="byteLength"
+    PropSet v0, v5 key="symbol"
+    PropSet v0, v6 key="method"
     Jump -> next b2()
   b2():
     Return
   b3() role=CatchHandler:
-    v11 = CatchValue
+    v13 = CatchValue
     Return
 }
 

@@ -52,7 +52,7 @@ record FunctionFlow engine {
     reachability: FunctionReachability callers: CallerState executions: ExecutionCount closureUse: ClosureUse
     cause: UnprovenCause witness: Witness
 }
-record ModuleFlow engine { namespaceUse: NamespaceUse }
+record ModuleFlow engine { namespaceUse: NamespaceUse exportsReadByName: List<Variable> }
 record BuiltinLocationFlow engine { holder: Builtin key: PropertyKey state: BuiltinLocationState witness: Witness }
 
 record LayoutSet engine { members: List<Layout> isComplete: Bool hasMembersWithoutLayout: Bool }

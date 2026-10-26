@@ -37,15 +37,19 @@ struct AsyncGeneratorBodyEntry {
     JSCell* outerFrame { nullptr };
     JSCell* outerAsyncGenerator { nullptr };
     JSCell* outerPromiseOfHandler { nullptr };
-    bool outerAsyncContextIsPutBack { false };
+    // A whole word, so that a frame that holds an entry writes all of it.
+    uintptr_t outerAsyncContextIsPutBack { false };
 };
+static_assert(sizeof(AsyncGeneratorBodyEntry) == 5 * sizeof(void*));
 // The job loop enters a body as the last thing it does in a job.
 JS_EXPORT_PRIVATE AsyncGeneratorBodyEntry willEnterAsyncGeneratorBody(JSAsyncGenerator*, bool isEnteredByJobLoop);
 // The adapter may have gone on to the consumers of the body and to the jobs that follow. Returns the generator whose body returned last, or null if something else did: that is finished here.
 JS_EXPORT_PRIVATE JSAsyncGenerator* didReturnFromAsyncGeneratorBody(const AsyncGeneratorBodyEntry&, JSAsyncGenerator* entered, JSValue returned, JSValue error, bool isTerminated);
+// Zeroes the stack where the frames of what the caller calls next will lie. A collection reads every word of a frame, and the way into compiled code does not write all of them.
+JS_EXPORT_PRIVATE void clearStackBelowCaller();
 // A PromiseReactionJob whose handler is compiled code and gets the argument alone, under the async context that is in place. False: nothing is done.
 JS_EXPORT_PRIVATE bool tryRunHandlerOfJob(JSGlobalObject*, VM&, JSValue promiseOrCapability, JSValue handler, JSValue argument, bool endsJob);
-// A BunPerformMicrotaskJob whose function is compiled code and gets no argument. What it throws is reported before this returns. The caller has no AsyncContextSwapScope yet.
+// A BunPerformMicrotaskJob whose function is compiled code and gets no argument, where no async context is in place. What it throws is reported before this returns.
 JS_EXPORT_PRIVATE bool tryRunFunctionOfJob(JSGlobalObject*, VM&, JSValue function, bool endsJob);
 // For the job that resumes a driver.
 JS_EXPORT_PRIVATE JSValue deliverStepToDriver(JSObject* driver, JSValue resolution, bool isRejected);
@@ -59,6 +63,7 @@ void resumeSavedAsyncFunction(JSGlobalObject*, VM&, Instance&, SavedFrame*, Type
 void settlePromiseOfHandler(VM&, JSCell* promise, JSValue returned, JSValue error);
 
 JS_EXPORT_PRIVATE bool isSuspendedAsyncFunction(JSCell*);
+JS_EXPORT_PRIVATE bool isSuspendedModuleBody(VM&, JSValue coroutine);
 JS_EXPORT_PRIVATE JSPromise* asyncFunctionPromise(JSCell* coroutine);
 JS_EXPORT_PRIVATE Vector<JSPromise*, 4> promisesSettledBy(JSCell* coroutine);
 JS_EXPORT_PRIVATE void appendSuspendedAsyncFunction(VM&, JSCell* owner, WTF::Vector<StackFrame>&, JSCell* coroutine);

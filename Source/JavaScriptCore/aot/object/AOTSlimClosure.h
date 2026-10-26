@@ -73,6 +73,8 @@ public:
     std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOf(function()).captures }; }
     unsigned numberOfReferences() const { return captureCountsOf(function()).references; }
     State& state() const;
+    bool nameWasLookedFor() const { return TypeInfo::perCellBit(inlineTypeFlags()); }
+    void noteLookForName() { setPerCellBit(true); }
     enum class PrototypeObject : bool { MadeAtFirstRead, MadeNow };
     ReifiedSlimClosure* reify(VM&, PrototypeObject = PrototypeObject::MadeAtFirstRead);
     ReifiedSlimClosure* reifyWithAddedProperty(VM&, Structure* structureWithProperty, PropertyOffset, JSValue);
@@ -113,13 +115,16 @@ class ReifiedSlimClosure final : public JSObjectWithButterfly {
 public:
     using Base = JSObjectWithButterfly;
     enum class Variant : uint8_t { Ordinary, Bound };
+    // A stack frame shows the property `name` of a function object from the first look for it on, in front of a displayName.
+    enum class NameProperty : bool { HeldFromTheStart, TakenAtFirstLook };
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetCallData | OverridesPut | ImplementsHasInstance | ImplementsDefaultHasInstance;
+    static constexpr unsigned flagsThatSeeLooksForName = OverridesGetOwnPropertySlot | OverridesGetOwnSpecialPropertyNames;
     static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
 
     template<typename CellType, SubspaceAccess mode>
     static CompleteSubspace* subspaceFor(VM& vm) { return vm.heap.aotClosureSpace<mode>(); }
 
-    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype, Variant);
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype, Variant, NameProperty);
 
     static constexpr ptrdiff_t offsetOfFunctionIndexInButterfly() { return offsetInButterfly(firstOutOfLineOffset) * static_cast<ptrdiff_t>(sizeof(EncodedJSValue)); }
 
@@ -130,6 +135,8 @@ public:
     static CallData getCallData(JSCell*);
     static CallData getConstructData(JSCell*);
 
+    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
+    static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
     static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
@@ -144,12 +151,14 @@ public:
     std::span<const uint64_t> captures() const { return { reinterpret_cast<const uint64_t*>(this + 1), captureCountsOf(function()).captures }; }
     unsigned numberOfReferences() const { return captureCountsOf(function()).references; }
     State& state() const;
+    JSValue lookForNameProperty(VM&);
 
 private:
     ReifiedSlimClosure() = delete;
 };
 
 JSC_DECLARE_CUSTOM_GETTER(createPrototypeProperty);
+JSC_DECLARE_CUSTOM_GETTER(takeNameProperty);
 
 static_assert(SlimClosure::offsetOfWord() == offsetOfSlimClosureWord);
 static_assert(sizeof(SlimClosure) == offsetOfSlimClosureCaptures);

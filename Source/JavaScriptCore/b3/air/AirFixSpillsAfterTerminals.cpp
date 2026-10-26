@@ -32,9 +32,9 @@
 #include "AirCode.h"
 #include "AirInsertionSet.h"
 #include "AirInstInlines.h"
-#include "AirLiveness.h"
-#include "AirTmpMap.h"
+#include "AirTmpBoundaryRows.h"
 #include <wtf/BitVector.h>
+#include <wtf/IndexMap.h>
 
 namespace JSC { namespace B3 { namespace Air {
 
@@ -43,94 +43,8 @@ namespace {
 struct InstsAfterTerminal {
     BasicBlock* block { nullptr };
     Vector<Tmp, 2> definedTmps;
+    Vector<BasicBlock*, 2> successorsWhereDefinedTmpsAreLive;
     bool hasNonTmpEffects { false };
-};
-
-// At the heads of which blocks a few Tmps are live. It answers as the liveness of all Tmps does.
-class LivenessOfFewTmps {
-public:
-    explicit LivenessOfFewTmps(Code& code)
-        : m_code(code)
-        , m_numberPlusOne(code)
-    {
-    }
-
-    // False: ask the liveness of all Tmps.
-    bool compute(const Vector<InstsAfterTerminal, 4>& instsAfterTerminals)
-    {
-        constexpr size_t maxBits = 1 << 22;
-        unsigned numberOfTmps = 0;
-        for (const InstsAfterTerminal& insts : instsAfterTerminals) {
-            if (insts.hasNonTmpEffects)
-                continue;
-            for (Tmp tmp : insts.definedTmps) {
-                if (tmp.isReg())
-                    return false;
-                if (!m_numberPlusOne[tmp])
-                    m_numberPlusOne[tmp] = ++numberOfTmps;
-            }
-        }
-        if (static_cast<size_t>(numberOfTmps) * m_code.size() > maxBits)
-            return false;
-
-        m_isLiveAtHead.resize(numberOfTmps);
-        Vector<BitVector> isDefinedIn(numberOfTmps);
-        Vector<unsigned> lastBlockThatDefinedPlusOne(FillWith { }, numberOfTmps, 0u);
-        Vector<std::pair<unsigned, BasicBlock*>, 32> worklist;
-        Vector<unsigned, 4> defined;
-        bool timingMatters = false;
-        for (BasicBlock* block : m_code) {
-            for (Inst& inst : *block) {
-                defined.shrink(0);
-                inst.forEachTmp([&](Tmp& tmp, Arg::Role role, Bank, Width) {
-                    if (tmp.isReg())
-                        return;
-                    unsigned numberPlusOne = m_numberPlusOne[tmp];
-                    if (!numberPlusOne)
-                        return;
-                    unsigned number = numberPlusOne - 1;
-                    switch (role) {
-                    case Arg::Use:
-                    case Arg::ColdUse:
-                        if (lastBlockThatDefinedPlusOne[number] != block->index() + 1 && !m_isLiveAtHead[number].set(block->index()))
-                            worklist.append({ number, block });
-                        return;
-                    case Arg::Def:
-                    case Arg::ZDef:
-                        defined.append(number);
-                        return;
-                    default:
-                        timingMatters = true;
-                        return;
-                    }
-                });
-                // What an instruction uses it uses before it defines anything.
-                for (unsigned number : defined) {
-                    lastBlockThatDefinedPlusOne[number] = block->index() + 1;
-                    isDefinedIn[number].set(block->index());
-                }
-            }
-        }
-        if (timingMatters)
-            return false;
-
-        while (!worklist.isEmpty()) {
-            auto [number, block] = worklist.takeLast();
-            for (BasicBlock* predecessor : block->predecessors()) {
-                if (isDefinedIn[number].get(predecessor->index()) || m_isLiveAtHead[number].set(predecessor->index()))
-                    continue;
-                worklist.append({ number, predecessor });
-            }
-        }
-        return true;
-    }
-
-    bool isLiveAtHead(BasicBlock* block, Tmp tmp) const { return m_isLiveAtHead[m_numberPlusOne[tmp] - 1].get(block->index()); }
-
-private:
-    Code& m_code;
-    TmpMap<unsigned> m_numberPlusOne;
-    Vector<BitVector> m_isLiveAtHead;
 };
 
 } // anonymous namespace
@@ -191,6 +105,35 @@ static Vector<InstsAfterTerminal, 4> collectInstsAfterTerminals(Code& code)
     return result;
 }
 
+static void findSuccessorsWhereDefinedTmpsAreLive(Code& code, Vector<InstsAfterTerminal, 4>& instsAfterTerminals)
+{
+    BitVector isDefined(Tmp::linearIndexEnd(code));
+    IndexMap<BasicBlock*, InstsAfterTerminal*> instsOfBlock(code.size(), nullptr);
+    for (InstsAfterTerminal& insts : instsAfterTerminals) {
+        if (insts.hasNonTmpEffects)
+            continue;
+        instsOfBlock[insts.block] = &insts;
+        for (Tmp tmp : insts.definedTmps)
+            isDefined.quickSet(tmp.linearlyIndexed(code).index());
+    }
+    if (isDefined.isEmpty())
+        return;
+
+    UsesAndDefsByBlock usesAndDefs(code, [&](Tmp tmp) { return isDefined.quickGet(tmp.linearlyIndexed(code).index()); });
+    BitMatrixLiveness<TmpBoundaryRows> liveness(code, usesAndDefs.facts());
+    liveness.compute();
+    RELEASE_ASSERT(liveness.status() == BitMatrixLivenessStatus::Solved);
+
+    BitVector isLive(Tmp::linearIndexEnd(code));
+    forEachBlockBackwards(code, liveness, usesAndDefs, [&](unsigned index, bool value) { isLive.quickSet(index, value); }, [](BasicBlock*) { }, [&](BasicBlock* block) {
+        for (BasicBlock* predecessor : block->predecessors()) {
+            InstsAfterTerminal* insts = instsOfBlock[predecessor];
+            if (insts && insts->definedTmps.containsIf([&](Tmp tmp) { return isLive.quickGet(tmp.linearlyIndexed(code).index()); }))
+                insts->successorsWhereDefinedTmpsAreLive.append(block);
+        }
+    });
+}
+
 bool fixSpillsAfterTerminals(Code& code)
 {
     // Because there may be terminals that produce values, IRC may
@@ -207,10 +150,7 @@ bool fixSpillsAfterTerminals(Code& code)
     Vector<InstsAfterTerminal, 4> instsAfterTerminals = collectInstsAfterTerminals(code);
 
     // Liveness walks successor edges, so it is computed before any edge leads to a block that is not in the block list yet.
-    std::optional<UnifiedTmpLiveness> liveness;
-    LivenessOfFewTmps livenessOfDefinedTmps(code);
-    if (instsAfterTerminals.containsIf([] (const InstsAfterTerminal& insts) { return !insts.hasNonTmpEffects; }) && !livenessOfDefinedTmps.compute(instsAfterTerminals))
-        liveness.emplace(code);
+    findSuccessorsWhereDefinedTmpsAreLive(code, instsAfterTerminals);
 
     BlockInsertionSet blockInsertionSet(code);
     InsertionSet insertionSet(code);
@@ -232,13 +172,8 @@ bool fixSpillsAfterTerminals(Code& code)
 
         for (FrequentedBlock& frequentedSuccessor : block->successors()) {
             BasicBlock* successor = frequentedSuccessor.block();
-            if (!insts.hasNonTmpEffects) {
-                bool isWanted = insts.definedTmps.containsIf([&] (Tmp tmp) {
-                    return liveness ? liveness->liveAtHead(successor).contains(tmp) : livenessOfDefinedTmps.isLiveAtHead(successor, tmp);
-                });
-                if (!isWanted)
-                    continue;
-            }
+            if (!insts.hasNonTmpEffects && !insts.successorsWhereDefinedTmpsAreLive.contains(successor))
+                continue;
             // If successor's only predecessor is block, we can plant the spill inside
             // the successor. Otherwise, we must split the critical edge and create
             // a new block for the spill.

@@ -487,7 +487,7 @@ static bool isEncodingOf(const TableCheck& check, const RuntimeCellTest& encoded
     case CellTestKind::IsClosureOf:
         return encoded.function() == check.encoder.findEntrypoint(test.function);
     case CellTestKind::IsSymbol:
-        return encoded.symbolKeyNumber() == check.encoder.identifierNumber(test.symbol);
+        return encoded.symbolKeyNumber() == check.encoder.identifierNumber(test.symbol, "the symbol that a type test compares with"_s);
     case CellTestKind::SharingModeIs:
         return encoded.operand == static_cast<uint32_t>(test.sharingMode);
     case CellTestKind::IsNamespaceOf:

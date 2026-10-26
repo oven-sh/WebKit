@@ -32,6 +32,11 @@ constexpr B3::PureFunction pureFunction(PureOperation operation, uint32_t payloa
     return { static_cast<uint64_t>(operation) << 32 | payload, dependsOnChildren };
 }
 
+constexpr B3::PureFunction truncationToInt64(uint32_t payload)
+{
+    return { static_cast<uint64_t>(PureOperation::TruncateToInt64) << 32 | payload, true, true };
+}
+
 constexpr B3::PureFunction remainderAsNumber(bool is32Bit, bool mayBeNaN)
 {
     return pureFunction(PureOperation::RemainderAsNumber, is32Bit << 1 | mayBeNaN, true);

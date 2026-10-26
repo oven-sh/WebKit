@@ -141,7 +141,7 @@ void encodeGlobalBindingTable(TableEncoder& encoder)
     auto& bindings = encoder.placement.globalBindings().bindings;
     encoder.setTable(ProgramTableIndex::globalBindings, Vector<uint32_t>(bindings.size(), [&](size_t index) {
         const PlacedGlobalBinding& binding = bindings[index];
-        uint32_t word = encoder.identifierNumber(binding.key.key);
+        uint32_t word = encoder.identifierNumber(binding.key.key, "a global name with a binding record"_s);
         if (binding.key.seesScriptBindings)
             word |= GlobalBindingTable::seesScriptBindingsFlag;
         if (binding.isStoredByName)

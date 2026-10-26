@@ -47,6 +47,7 @@ layout L4 name="Inner" fields=[{key="x" declared={type=number}}] flow={construct
 # CHECK: function {{*}}creator=Serializer{layout=L3}
 # CHECK: = HasKeyOrder v0, {{*}} layout=L3 fields=[0, 1, 2, 3, 4]
 # CHECK: ([[guard3]]: guard, [[members3]]: i32):
+# CHECK-NEXT: = JSONEnterHolder v1, v0
 # CHECK-NEXT: = GetSlot v0, [[guard3]] key="inner" receivers=[L3] level=Expected
 # CHECK: = HasKeyOrder v0, {{*}} layout=L3 fields=[0, 1, 2, 3]
 # CHECK: = ShapeTest v0 layouts=[L3]

@@ -62,12 +62,12 @@ void computeSinkOperandResults(const ValueFlowResultInputs& inputs, const ValueF
             if (statement.kind != ValueFlowStatementKind::Operation || (statement.opcode != Opcode::Call && statement.opcode != Opcode::Construct))
                 continue;
             const ValueFlowOperand& callee = inputs.bodies().operandsOf(statement)[0];
-            bool mayCallOne = (callee.constant && sets.meet(callee.constant, callees)) || (callee.node && sets.meet(inputs.solver().valueOf(callee.node), callees));
+            bool mayCallOne = (callee.constant && sets.meet(callee.constant, callees)) || (callee.node && sets.meet(inputs.solver().possibleValuesOf(callee.node), callees));
             if (!mayCallOne)
                 continue;
 
             Vector<uint32_t, 2> arguments;
-            ValueSetID held = inputs.valueOf(maker, callee);
+            ValueSetID held = inputs.possibleValuesOf(maker, callee);
             if (!ValueSets::isComplement(held)) {
                 sets.forEachMember(maker.intersect(held, callees), [&](ValueFlowObjectID member) {
                     for (uint32_t argument : argumentsOfBuiltin[universe.builtinOf(member).index()])

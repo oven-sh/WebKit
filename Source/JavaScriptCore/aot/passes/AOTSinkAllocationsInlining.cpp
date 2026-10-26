@@ -51,6 +51,8 @@ static CallResultUse classifyCallResultUse(const Program& program, const Functio
     }
 
     const Value& user = function.at(use.user);
+    if (isHeldOperand(user, use.operandIndex))
+        return { CallResultUseKind::Interpreted, { } };
     switch (interpretationOf(program, user)) {
     case Interpretation::Cast:
         return { CallResultUseKind::Alias, use.user };
@@ -123,7 +125,7 @@ static bool needsCell(const Program& program, const Function& function, const Ob
 {
     switch (objectUse.use.kind) {
     case Use::Kind::Operand:
-        return takesCells(program, function.at(objectUse.use.user));
+        return !isHeldOperand(function.at(objectUse.use.user), objectUse.use.operandIndex) && takesCells(program, function.at(objectUse.use.user));
     case Use::Kind::TerminatorOperand:
         return true;
     case Use::Kind::EdgeArgument:

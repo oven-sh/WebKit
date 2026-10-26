@@ -62,13 +62,11 @@ static constexpr bool looksUpKeysByName(Operation operation)
 
 static bool hasStringsForMessagesOnly(Typed::Opcode opcode)
 {
+    // An indirect call names its callee for the message of an error.
+    if (accessClassOf(opcode) == Typed::AccessClass::IndirectCall)
+        return true;
     switch (opcode) {
-    case Typed::Opcode::Call:
-    case Typed::Opcode::CallList:
-    case Typed::Opcode::CallMethod:
-    case Typed::Opcode::CallResolved:
-    case Typed::Opcode::Construct:
-    case Typed::Opcode::ConstructList:
+    case Typed::Opcode::InstanceOf:
     case Typed::Opcode::CheckInitialized:
     case Typed::Opcode::RequireObjectCoercible:
     case Typed::Opcode::ToObject:
@@ -273,89 +271,6 @@ static Vector<uint32_t> sortFunctionsBySourcePosition(const Typed::Program& prog
     });
 }
 
-static void collectNamesInTables(const Typed::Program& program, const Typed::FlowResults& flow, const Typed::Placement& placement, KeyUses& keys)
-{
-    keys.keysNamedByTables.ensureSize(program.types.numberOfPropertyKeys());
-    keys.stringsNamedAsKeysByTables.ensureSize(program.strings.size());
-    auto nameKey = [&](PropertyKeyID key) {
-        if (key)
-            keys.keysNamedByTables.quickSet(key.index());
-    };
-    auto nameText = [&](StringID text) {
-        if (text)
-            keys.stringsNamedAsKeysByTables.quickSet(text.index());
-    };
-
-    for (unsigned index = 0; index < program.layouts.size(); ++index) {
-        const Typed::Layout& layout = program.layouts[index];
-        if (layout.isEnvironment())
-            continue;
-        // The tables describe the classes and the layouts that have a shape, where they are in use: see encodeLayoutRecords().
-        if (!placement.isInUse(Typed::LayoutID(index)))
-            continue;
-        if (layout.kind != Typed::LayoutKind::Instance && placement.shapes().shapesOf(Typed::LayoutID(index)).isEmpty())
-            continue;
-        // The record of a compiled object lists the fields that have storage. A parse by type finds every declared member by its name, and a validating build the fields it took away.
-        bool listsFieldsWithStorageOnly = placement.slots().storageOf(Typed::LayoutID(index)) == Typed::LayoutStorage::CompiledObject && !layout.flow.observedUses.contains(Typed::ObservedUse::IsParsedByType);
-        for (Typed::FieldIndex field = 0; field < layout.fields.size(); ++field) {
-            if (!listsFieldsWithStorageOnly || placement.slot(Typed::LayoutID(index), field).indexInLayoutRecord || layout.fields[field].flags.contains(Typed::FieldFlags::IsRemovedAsUnread))
-                nameKey(layout.fields[field].key);
-        }
-        for (const Typed::StaticField& field : layout.staticFields)
-            nameKey(field.key);
-        for (const Typed::ClassMember& member : layout.classFlow.members)
-            nameKey(member.key);
-    }
-    for (size_t type : placement.typesWithCells()) {
-        for (PropertyKeyID symbol : program.at(Typed::TypeID(type)).symbolLiterals)
-            nameKey(symbol);
-    }
-    for (const Typed::PlacedPropertyRun& run : placement.propertyRuns().runs()) {
-        for (PropertyKeyID key : run.keys)
-            nameKey(key);
-    }
-    for (const Typed::PlacedGuardBit& guardBit : placement.guardBits().bits)
-        nameKey(guardBit.key);
-    for (PropertyKeyID key : placement.keyCells())
-        nameKey(key);
-    for (const Typed::RequestRecord& record : placement.requests().records()) {
-        Typed::DataID data = WTF::switchOn(record,
-            [](const Typed::DataRecord& request) { return request.data; },
-            [](const Typed::CollectionDataRecord& request) { return request.data; },
-            [](const auto&) { return Typed::DataID(); });
-        if (!data)
-            continue;
-        forEachDataNodeInPreorder(program.at(data).root, [&](uint32_t, const Typed::DataNode& node) {
-            const Typed::DataNode::Object* object = node.tryAs<Typed::DataNode::Object>();
-            if (!object)
-                return;
-            const Typed::Layout* layout = object->layout ? &program.at(object->layout) : nullptr;
-            for (const Typed::DataMember& member : object->members) {
-                if (!layout || !layout->findField(member.key))
-                    nameKey(member.key);
-            }
-        });
-    }
-
-    for (unsigned index = 0; index < program.modules.size(); ++index) {
-        const Typed::Module& module = program.modules[index];
-        for (const Typed::ModuleExport& moduleExport : module.exports) {
-            if (!isDescribedToRunTime(program, flow, ModuleID(index), moduleExport))
-                continue;
-            nameText(moduleExport.name);
-            nameText(moduleExport.importName);
-        }
-        for (const Typed::SyntheticExport& syntheticExport : module.syntheticExports)
-            nameText(syntheticExport.name);
-        for (const Typed::RequiredName& requiredName : module.requiredNames)
-            nameText(requiredName.name);
-    }
-    for (const Typed::EvalScope& scope : program.evalScopes) {
-        for (const Typed::EvalBinding& binding : scope.bindings)
-            nameText(binding.name);
-    }
-}
-
 ProgramUses collectProgramUses(const Typed::PipelineOutput& pipeline, const BitVector& bodiesWithoutCode, BuildContext& context)
 {
     const Typed::Program& program = *pipeline.program;
@@ -399,7 +314,6 @@ ProgramUses collectProgramUses(const Typed::PipelineOutput& pipeline, const BitV
     strings.functionsInSourceOrder = sortFunctionsBySourcePosition(program, loops);
 
     uses.keys.byKey = WTF::move(shared.keys);
-    collectNamesInTables(program, *pipeline.flow, *pipeline.placement, uses.keys);
     return uses;
 }
 
@@ -433,6 +347,7 @@ static bool isEngineSymbol(PropertyKeyKind kind)
     case PropertyKeyKind::WellKnownSymbol:
     case PropertyKeyKind::RegisteredSymbol:
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
         return true;
     case PropertyKeyKind::Text:
     case PropertyKeyKind::PrivateName:

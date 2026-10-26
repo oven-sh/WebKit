@@ -644,19 +644,55 @@ struct EdgeThreader : Rewrite {
         if (!hasCandidates)
             return PassOutcome::Unchanged;
 
-        Vector<Edge, 8> decidedEdges;
+        // An edge into a candidate is decided where it comes from a block that lies below one of the two edges of another test like the candidate's.
+        struct IncomingEdge {
+            Edge edge;
+            uint32_t position;
+            uint32_t nextFromSameBlockPlusOne;
+        };
+        Vector<IncomingEdge> edgesIntoCandidates;
+        IndexMap<BlockID, uint32_t> firstEdgePlusOneFromBlock(function.blocks.size());
         for (BlockID candidate : candidates) {
-            auto testsLikeIt = std::ranges::equal_range(tests, tests[positionPlusOneOfBlock[candidate] - 1].test(), { }, &BranchOnTypeTest::test);
             for (Edge edge : incomingEdges[candidate]) {
-                bool isDecided = std::ranges::any_of(testsLikeIt, [&](const BranchOnTypeTest& earlier) {
-                    if (earlier.block == candidate)
-                        return false;
-                    return analyses.dominates(Edge { earlier.block, 0 }, edge.from) || analyses.dominates(Edge { earlier.block, 1 }, edge.from);
-                });
-                if (isDecided)
-                    decidedEdges.append(edge);
+                edgesIntoCandidates.append({ edge, positionPlusOneOfBlock[candidate] - 1, firstEdgePlusOneFromBlock[edge.from] });
+                firstEdgePlusOneFromBlock[edge.from] = edgesIntoCandidates.size();
             }
         }
+        Vector<uint32_t> firstTestLike(tests.size());
+        IndexMap<BlockID, uint32_t> positionPlusOneOfTestAbove(function.blocks.size());
+        CFG& cfg = analyses.cfg();
+        for (uint32_t position = 0; position < tests.size(); ++position) {
+            firstTestLike[position] = position && tests[position - 1].test() == tests[position].test() ? firstTestLike[position - 1] : position;
+            for (uint32_t targetIndex : { 0u, 1u }) {
+                Edge edge { tests[position].block, targetIndex };
+                BlockID target = targetOf(function, edge).block;
+                if (cfg.isReachable(edge.from) && cfg.singleIncomingEdge(target) == edge)
+                    positionPlusOneOfTestAbove[target] = position + 1;
+            }
+        }
+        Vector<uint32_t> numberOfEdgesAboveOfTest(FillWith { }, tests.size(), 0u);
+        Vector<uint32_t> numberOfEdgesAboveOfTestsLike(FillWith { }, tests.size(), 0u);
+        BitVector isDecided(edgesIntoCandidates.size());
+        analyses.dominators().walkTree([&](BlockID block) {
+            if (uint32_t positionPlusOne = positionPlusOneOfTestAbove[block]) {
+                ++numberOfEdgesAboveOfTest[positionPlusOne - 1];
+                ++numberOfEdgesAboveOfTestsLike[firstTestLike[positionPlusOne - 1]];
+            }
+            for (uint32_t indexPlusOne = firstEdgePlusOneFromBlock[block]; indexPlusOne; indexPlusOne = edgesIntoCandidates[indexPlusOne - 1].nextFromSameBlockPlusOne) {
+                uint32_t position = edgesIntoCandidates[indexPlusOne - 1].position;
+                if (numberOfEdgesAboveOfTestsLike[firstTestLike[position]] > numberOfEdgesAboveOfTest[position])
+                    isDecided.quickSet(indexPlusOne - 1);
+            }
+        }, [&](BlockID block) {
+            if (uint32_t positionPlusOne = positionPlusOneOfTestAbove[block]) {
+                --numberOfEdgesAboveOfTest[positionPlusOne - 1];
+                --numberOfEdgesAboveOfTestsLike[firstTestLike[positionPlusOne - 1]];
+            }
+        });
+
+        Vector<Edge, 8> decidedEdges;
+        for (size_t index : isDecided)
+            decidedEdges.append(edgesIntoCandidates[index].edge);
         return giveCopiesTo(decidedEdges.span());
     }
 

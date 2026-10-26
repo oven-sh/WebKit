@@ -421,7 +421,7 @@ ElementAccessPlan planElementAccess(const Program& program, const ElementAccessQ
 
 static const Type* findExpectedType(const Program& program, const Value& value)
 {
-    return value.expected() ? &program.at(value.expected()) : nullptr;
+    return value.expected().predicted() ? &program.at(value.expected().predicted()) : nullptr;
 }
 
 std::optional<ElementAccessPlan> planElementAccessOf(const Program& program, const Function& function, const Value& access)

@@ -61,7 +61,7 @@ function f9 name="closure-not-deferred" parameters=[{type=L2}] results=[{type=an
 # CHECK: v1: f0 = GetSlot v0 key="eager" receivers=[L2] level=Proven
 }
 function f10 name="checked-receiver" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=L0
+    v1 = Check v0 expectedType=L0
     v2 = PropGet v1 key="x"
     Return v2
 # CHECK: v2: number = GetSlot v1 key="x" receivers=[L0] level=Proven

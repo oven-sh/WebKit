@@ -12,6 +12,7 @@ import {
   parseExternal,
   parseList,
   parseNatural,
+  parsePacked,
   parseRecord,
   parseVariant,
   takeName,
@@ -155,6 +156,8 @@ function parseAfterKeyword(cursor: Cursor, keyword: Token, isEngine: boolean): D
       return parseEnum(cursor, "flags");
     case "record":
       return parseRecord(cursor);
+    case "packed":
+      return parsePacked(cursor);
     case "variant":
       return parseVariant(cursor);
     case "list":

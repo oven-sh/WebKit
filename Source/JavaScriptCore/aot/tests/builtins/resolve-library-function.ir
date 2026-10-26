@@ -110,7 +110,7 @@ function f14 name="argumentOutsideDeclaredParameter" parameters=[{type=Array<any
     v3 = Builtin builtin=ArrayPrototypeForEach
     v4 = Call v3, v0, v1, v2
     Return v4
-# CHECK: [[assumed14]]: number = AssumeType v2 castType=number
+# CHECK: [[assumed14]]: number = AssumeType v2 provenType=number
 # CHECK-NEXT: undefined = CallDirect v0, v1, [[assumed14]] function=f2
 }
 

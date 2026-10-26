@@ -1,6 +1,6 @@
 # What a function inherits is looked up on Function.prototype for as long as the function is a closure as it was created: it has gained no property and kept its prototype.
 # A receiver that is only expected to be a function is tested for being one, then for the Structure that a plain function is created with, and the read is a constant behind both tests.
-# The closure of a coroutine inherits from another prototype and has no such test, and the length and the name of a function that nobody knows stay reads by name.
+# The closure of a generator function inherits from another prototype and has no such test, and the length and the name of a function that nobody knows stay reads by name.
 # A constructor function is looked up like a class object, but it inherits from no class object: its parent is where its prototype object inherits from
 # FORM: Prepared
 # RUN: pass PlaceTypeTests
@@ -91,25 +91,25 @@ function f3 name="provenFunction" parameters=[{type=function}, {type=anything}] 
 # CHECK: anything = PropGet v0 key="call"
 # CHECK: anything = Call {{*}}, v0, v1 calleeKey="call"
 
-function f4 name="closureOfCoroutine" parameters=[{type=AsyncFunction}] results=[{type=anything}] {
+function f4 name="closureOfGeneratorFunction" parameters=[{type=GeneratorFunction}] results=[{type=anything}] {
     v1 = PropGet v0 key="call"
     Return v1
 }
 # PLAN: function f4
 # PLAN-NEXT: function f5
-# CHECK-LABEL: function f4 name="closureOfCoroutine"
-# CHECK-NEXT: b0(v0: AsyncFunction):
+# CHECK-LABEL: function f4 name="closureOfGeneratorFunction"
+# CHECK-NEXT: b0(v0: GeneratorFunction):
 # CHECK-NEXT: v1: anything = PropGet v0 key="call"
 # CHECK-NEXT: Return v1
 
-function f5 name="expectedClosureOfCoroutine" parameters=[{type=AsyncFunction flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: anything ~ AsyncFunction):
+function f5 name="expectedClosureOfGeneratorFunction" parameters=[{type=GeneratorFunction flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ GeneratorFunction):
     v1 = PropGet v0 key="call"
     Return v1
 }
 # PLAN-NEXT: function f6
-# CHECK-LABEL: function f5 name="expectedClosureOfCoroutine"
-# CHECK-NEXT: b0(v0: anything ~ AsyncFunction):
+# CHECK-LABEL: function f5 name="expectedClosureOfGeneratorFunction"
+# CHECK-NEXT: b0(v0: anything ~ GeneratorFunction):
 # CHECK-NEXT: v1: anything = PropGet v0 key="call"
 # CHECK-NEXT: Return v1
 

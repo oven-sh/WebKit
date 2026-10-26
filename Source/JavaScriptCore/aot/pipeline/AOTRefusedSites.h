@@ -29,7 +29,7 @@ public:
         const Value& site = function.at(id);
         auto mix = [&](uint64_t hash, const Value& value) {
             hash = (hash ^ value.hashOfWords() ^ static_cast<uint64_t>(value.opcode) << 48) * multiplier;
-            hash = (hash ^ hash >> 29 ^ (static_cast<uint64_t>(value.type.index()) << 32 | value.expected().index())) * multiplier;
+            hash = (hash ^ hash >> 29 ^ (static_cast<uint64_t>(value.type.index()) << 32 | value.expected().predicted().index())) * multiplier;
             return hash ^ hash >> 32;
         };
         uint64_t hash = mix(0x243f6a8885a308d3ull, site);

@@ -440,6 +440,7 @@ private:
         case Typed::Opcode::GetModuleVariable:
             return valuesOf(value.variable());
         case Typed::Opcode::Upcast:
+        case Typed::Opcode::Expect:
         case Typed::Opcode::AssumeType:
         case Typed::Opcode::CheckInitialized:
         case Typed::Opcode::FlattenString:
@@ -632,7 +633,7 @@ private:
 
     static ValueID throughCasts(const Typed::Function& function, ValueID id)
     {
-        while (function.at(id).opcode == Typed::Opcode::Upcast || function.at(id).opcode == Typed::Opcode::AssumeType)
+        while (Typed::isCastThatProvesNothing(function.at(id).opcode) || function.at(id).opcode == Typed::Opcode::AssumeType)
             id = function.at(id).valueOperand();
         return id;
     }
@@ -1081,6 +1082,7 @@ private:
         const Typed::Value& value = function.at(environment);
         switch (value.opcode) {
         case Typed::Opcode::Upcast:
+        case Typed::Opcode::Expect:
         case Typed::Opcode::AssumeType:
         case Typed::Opcode::CheckInitialized:
         case Typed::Opcode::RequireObjectCoercible:

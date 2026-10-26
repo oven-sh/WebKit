@@ -21,6 +21,7 @@
 #include <wtf/MathExtras.h>
 #include <wtf/SIMDHelpers.h>
 #include <wtf/UnalignedAccess.h>
+#include <wtf/text/ASCIIFastPath.h>
 #include <wtf/text/EscapedFormsForJSON.h>
 #include <wtf/text/StringBuilderJSON.h>
 
@@ -182,7 +183,10 @@ static Latin1Character* appendQuotedJSONString(JSGlobalObject* globalObject, Str
 
     if (!string.is8Bit()) [[unlikely]] {
         builder.commit(cursor);
-        RELEASE_AND_RETURN(scope, appendQuoted16Bit(globalObject, builder, string.span16()));
+        if (!WTF::charactersAreAllLatin1(string.span16()))
+            RELEASE_AND_RETURN(scope, appendQuoted16Bit(globalObject, builder, string.span16()));
+        String narrow = String::make8Bit(string.span16());
+        RELEASE_AND_RETURN(scope, appendQuotedWithEscapes(globalObject, builder, narrow.span8()));
     }
 
     auto characters = string.span8();
@@ -381,7 +385,7 @@ static JSString* quoteString(JSGlobalObject* globalObject, JSString* string)
                 if (JSString* text = quoteStringWithEscapes(vm, characters)) [[likely]]
                     return text;
             }
-        } else if (!view->is8Bit() && view->length() <= maxLengthOfStringEscapedHere) {
+        } else if (!view->is8Bit() && view->length() <= maxLengthOfStringEscapedHere && !WTF::charactersAreAllLatin1(view->span16())) {
             if (JSString* text = quoteWideString(vm, view->span16())) [[likely]]
                 return text;
         }

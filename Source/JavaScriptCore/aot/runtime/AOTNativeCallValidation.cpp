@@ -723,9 +723,10 @@ private:
                 return true;
             // The capability is that of the function behind the conversions of its operands.
             bool runsOnlyConversions = overload->effects.capability != BuiltinCapability::JS;
+            constexpr OperandUses usesRunningSettersAndTraps { OperandUse::StoresByKey, OperandUse::AssignsFrom, OperandUse::DeletesByKey, OperandUse::TakesDescriptor };
             auto mayRunCodeThrough = [&](const BuiltinParameter& parameter, JSValue operand) {
                 if (operand.isObject())
-                    return !parameter.protocols.isEmpty() || parameter.conversion != BuiltinConversion::None;
+                    return !parameter.protocols.isEmpty() || parameter.conversion != BuiltinConversion::None || parameter.uses.containsAny(usesRunningSettersAndTraps) || parameter.roles.contains(BuiltinOperandRole::DescribedWhenRefused);
                 return !runsOnlyConversions && !operand.isUndefinedOrNull() && !parameter.protocols.isEmpty();
             };
             if (anyParameterWithOperand(*overload, mayRunCodeThrough))

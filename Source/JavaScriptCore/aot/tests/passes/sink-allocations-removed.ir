@@ -40,7 +40,7 @@ function f2 name="environmentDies" parameters=[{type=anything}] results=[{type=a
 
 function f3 name="arrayDies" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v2 = NewArray v0, v1 contents=anything
-    v3 = AssumeType v2 castType=Array<anything, proven>
+    v3 = AssumeType v2 provenType=Array<anything, proven>
     v4 = Integer integer=1
     v5 = ElemGet v3, v4
     Return v5

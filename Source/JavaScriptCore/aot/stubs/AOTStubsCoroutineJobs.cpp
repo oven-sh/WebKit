@@ -36,7 +36,7 @@ static void emitLoadAddressOfJob(StubAssembler& jit, GPRReg queue, GPRReg indexA
     jit.getEffectiveAddress(BaseIndex(scratch, indexAndResult, CCallHelpers::TimesEight), indexAndResult);
 }
 
-// awaitMustSuspend is set unless JSGlobalObject::queueMicrotask goes straight to MicrotaskQueue::enqueue: it stands for !canFastQueueMicrotask() and for a cross-task token.
+// awaitMustSuspend is set unless JSGlobalObject::queueMicrotask goes straight to MicrotaskQueue::enqueue: it stands for !canFastQueueMicrotask(), for a cross-task token and for a synchronous module load, whose own queue takes some of the jobs.
 void emitReserveJob(StubAssembler& jit, const JobRegisters& registers, JumpList& needsOperation)
 {
     const auto [queue, slot, next, scratch] = registers;

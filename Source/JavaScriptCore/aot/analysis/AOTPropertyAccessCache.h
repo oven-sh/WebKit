@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinMembers.h"
+#include "AOTEffectsDescription.h"
 #include "AOTEffectsOfAccesses.h"
 #include "AOTPropertyAccessInternal.h"
 #include "AOTRefusedContents.h"
@@ -101,6 +102,26 @@ public:
 
     using ProvenNamedAccess = Answer<ProvenAccessKey, ProvenAccess>;
 
+    struct InheritedMemberKey {
+        LayoutID declaredClass;
+        BuiltinClassID builtinClass;
+        bool isOfInstances { false };
+        PropertyKeyID key;
+        Access access { Access::Read };
+        const FlowResults* flow { nullptr };
+
+        friend bool operator==(const InheritedMemberKey&, const InheritedMemberKey&) = default;
+    };
+
+    using InheritedMember = Answer<InheritedMemberKey, MemberAnswer>;
+
+    struct CodeOfOperand {
+        TypeID operand;
+        OperandBehavior behavior;
+        bool calledUnknownCode { false };
+        EffectDescription added;
+    };
+
     struct MethodsOfName {
         BuiltinName name;
         Vector<MemberOfClasses, 4> methods;
@@ -117,6 +138,8 @@ public:
     SharedMemo<Optionality> optionalities;
     SharedMemo<ProvenNamedAccess> provenAccesses;
     SharedMemo<MethodsOfName> methodsByName;
+    SharedMemo<CodeOfOperand> codeOfOperands;
+    SharedMemo<InheritedMember> inheritedMembers;
     RefusedContents refusedContents;
     bool checksAnswers { false };
 };

@@ -76,10 +76,10 @@ static void printAppliedRecords(PrintStream& out, const Program& program, const 
         return !update.isEmpty() || update.cause != UnprovenCause::Unknown;
     };
     auto printPosition = [&](const DeclaredType& declared, const FlowPositionUpdate& update) {
-        printer.field("type"_s, declared.type);
+        printer.field("type"_s, declared.written());
         if (update.isProven)
             out.print(" proven"_s);
-        else if (declared.flags.contains(PositionFlags::IsExpected))
+        else if (declared.isExpected())
             out.print(" expected"_s);
         if (update.cause != UnprovenCause::Unknown)
             printer.field("cause"_s, update.cause);

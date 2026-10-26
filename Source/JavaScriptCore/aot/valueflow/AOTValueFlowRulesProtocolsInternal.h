@@ -52,7 +52,7 @@ void forEachNodeOfSlotWrittenThrough(ValueFlowRuleContext& context, ClimbingSet 
     functor(ValueFlowProgramNodes::escaped());
 }
 
-void resolvePromises(ValueFlowRuleContext&, ClimbingSet promises, ClimbingSet values);
+void resolvePromises(ValueFlowRuleContext&, ClimbingSet promises, const ValueFlowOperand& values);
 void rejectPromises(ValueFlowRuleContext&, ClimbingSet promises, const ValueFlowOperand& reasons);
 
 void letNativeCodeStepIterators(ValueFlowRuleContext&, ClimbingSet escaped);

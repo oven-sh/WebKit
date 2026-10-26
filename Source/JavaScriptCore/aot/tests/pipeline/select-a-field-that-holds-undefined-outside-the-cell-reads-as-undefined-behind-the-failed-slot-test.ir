@@ -1,0 +1,81 @@
+# class Socket { upgrade5: Request | undefined = undefined; .. } with more fields than its cell has room for. Outside the cell a field takes no room while it holds undefined, so the test of
+# its slot finds nothing there. Behind the tests under which an empty slot reads as undefined the function goes on, and only an object that fails one of them is asked by name.
+# A field that no store gives undefined has room wherever it exists: its empty slot says that the object lacks it, and its read stays as it was
+# OPTIONS: references=narrow testing=NoLayoutIsMadeSeldom
+# RUN: pipeline Select
+
+module m0 path="/application.js" displayPath="application.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Socket" module=m0 constructor=f1 fields=[{key="a0" declared={type=number} flags=[IsRequired]}, {key="a1" declared={type=number} flags=[IsRequired]}, {key="a2" declared={type=number} flags=[IsRequired]}, {key="a3" declared={type=number} flags=[IsRequired]}, {key="a4" declared={type=number} flags=[IsRequired]}, {key="a5" declared={type=number} flags=[IsRequired]}, {key="a6" declared={type=number} flags=[IsRequired]}, {key="a7" declared={type=number} flags=[IsRequired]}, {key="a8" declared={type=number} flags=[IsRequired]}, {key="a9" declared={type=number} flags=[IsRequired]}, {key="a10" declared={type=number} flags=[IsRequired]}, {key="a11" declared={type=number} flags=[IsRequired]}, {key="s0" declared={type=string} flags=[IsRequired]}, {key="s1" declared={type=string} flags=[IsRequired]}, {key="request" declared={type=undefined|L1} flags=[IsRequired]}, {key="upgrade0" declared={type=undefined|L1} flags=[IsRequired]}, {key="upgrade1" declared={type=undefined|L1} flags=[IsRequired]}, {key="upgrade2" declared={type=undefined|L1} flags=[IsRequired]}, {key="upgrade3" declared={type=undefined|L1} flags=[IsRequired]}, {key="upgrade4" declared={type=undefined|L1} flags=[IsRequired]}, {key="upgrade5" declared={type=undefined|L1} flags=[IsRequired]}]
+layout L1 name="Request" module=m0 fields=[{key="url" declared={type=string} flags=[IsRequired]}]
+
+function f0 name="" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4, v4
+    v6 = NewClosure function=f2
+    v7 = NewClosure function=f3
+    v8 = Call v1, -, v5, v6, v7
+    Return v8
+}
+function f1 name="Socket" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0 {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Undefined
+    v4 = Builtin builtin=MathRandom
+    v5 = Call v4
+    v6 = ToNumber v5
+    v7 = String string="text"
+# REPEAT: i = 0..11
+    PropDefine v2, v6 key="a%(i)"
+# END REPEAT
+    PropDefine v2, v7 key="s0"
+    PropDefine v2, v7 key="s1"
+    v22 = ToBoolean v5
+    Branch v22 -> taken b1(), notTaken b2()
+  b1():
+    v23 = NewObject -, v7 layout=L1 fields=[0]
+    PropDefine v2, v23 key="request"
+# REPEAT: i = 0..5
+    PropDefine v2, v3 key="upgrade%(i)"
+# END REPEAT
+    Jump -> next b2()
+  b2():
+    Return v2
+}
+
+function f2 name="upgradeOf" module=m0 parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="upgrade5"
+    Return v1
+}
+function f3 name="requestOf" module=m0 parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="request"
+    Return v1
+}
+
+# CHECK-LABEL: name="upgradeOf" {{*}} role=GenericEntrypoint
+# CHECK: [[filled]]: boolean = IsSlotFilled [[object]] key="upgrade5"
+# CHECK-NEXT: TestAndBranch [[filled]] -> taken [[read]](| 0), notTaken [[empty]]()
+# CHECK: [[value]]: undefined|L1 = GetSlot [[object]], {{*}} key="upgrade5"
+# CHECK-NEXT: Jump -> next [[behind]]([[value]])
+# CHECK: [[byName]]() frequency=Unlikely:
+# CHECK-NEXT: = PropGet {{*}} key="upgrade5"
+# CHECK: [[empty]]():
+# CHECK-NEXT: [[inheritsNothing]]: boolean = HasLayoutPrototype [[object]]
+# CHECK-NEXT: TestAndBranch [[inheritsNothing]] -> taken [[next]](), notTaken [[byName]]()
+# CHECK: [[isInSlot]]: boolean = HasNoFieldOutsideSlot [[object]]
+# CHECK-NEXT: TestAndBranch [[isInSlot]] -> taken [[last]](), notTaken [[byName]]()
+# CHECK: [[nothing]]: undefined = Undefined
+# CHECK-NEXT: Jump -> next [[behind]]([[nothing]])
+
+# CHECK-LABEL: name="requestOf" {{*}} role=GenericEntrypoint
+# CHECK: [[filled]]: boolean = IsSlotFilled [[object]] key="request"
+# CHECK-NEXT: TestAndBranch [[filled]] -> taken [[read]](| 0), notTaken [[byName]]()
+# CHECK: [[byName]]() frequency=Unlikely:
+# CHECK-NEXT: = PropGet {{*}} key="request"
+# CHECK-NOT: = Undefined

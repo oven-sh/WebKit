@@ -35,22 +35,7 @@ struct SlotData {
 };
 static_assert(sizeof(SlotData) == 4 && isImageRecord<SlotData>);
 
-constexpr bool isObjectLayout(LayoutKind kind)
-{
-    switch (kind) {
-    case LayoutKind::Record:
-    case LayoutKind::Instance:
-    case LayoutKind::Container:
-    case LayoutKind::BuiltinResult:
-        return true;
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
-    case LayoutKind::ModuleNamespace:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-}
+constexpr bool isObjectLayout(LayoutKind kind) { return isObjectLayoutOf(kind); }
 
 static constexpr int64_t maxSlotInteger = (1ll << 62) - 1;
 static constexpr int64_t undefinedInteger = 0x4000ll << 48;
@@ -61,10 +46,24 @@ static constexpr uint64_t nullDouble = 0x7ffbull << 48;
 static constexpr uint64_t absentDouble = 0x7ffcull << 48;
 static_assert(maxSlotInteger < undefinedInteger);
 
+// A NaN keeps the sign that arithmetic gave it and none of its other bits: it is no marker, and boxed it is a number.
+constexpr uint64_t quietNaNWithSignOf(uint64_t bits) { return (bits >> 51 | 1) << 51; }
+ALWAYS_INLINE double withoutPayload(double number)
+{
+    if (number == number) [[likely]]
+        return number;
+    return std::bit_cast<double>(quietNaNWithSignOf(std::bit_cast<uint64_t>(number)));
+}
+static_assert(quietNaNWithSignOf(absentDouble) == PNaNAsBits && quietNaNWithSignOf(UINT64_MAX) == (PNaNAsBits | 1ull << 63));
+
 static constexpr int32_t absentInt32 = INT32_MIN + 1;
 static constexpr int32_t undefinedInt32 = INT32_MIN + 2;
 static constexpr int32_t nullInt32 = INT32_MIN + 3;
 static constexpr int32_t minInlineInt32 = INT32_MIN + 5;
+
+// What a field holds that is added to. The sum of two of them is exact. A sum that leaves them carries out of its low word or borrows from the high one.
+static constexpr int64_t maxIntegerAddedTo = (1ll << 52) - 1;
+static constexpr int64_t minIntegerAddedTo = -maxIntegerAddedTo - 1;
 
 static constexpr unsigned cell32Shift = MarkedBlockCage::shift;
 static constexpr uint32_t minCell32 = MarkedBlockCage::minIndex;

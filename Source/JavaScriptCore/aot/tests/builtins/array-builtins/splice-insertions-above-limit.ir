@@ -24,8 +24,8 @@ function f1 name="insertsTwo" parameters=[{type=Array<number>}, {type=number}] r
 }
 # Only its entrypoint enters the function, so the body is there
 # SELECTED-LABEL: name="insertsTwo" module=m0 role=GenericEntrypoint
-# SELECTED: [[array]]: Array<number> = AssumeType v2 castType=Array<number>
-# SELECTED: [[number]]: number = AssumeType v3 castType=number
+# SELECTED: [[array]]: Array<number> = AssumeType v2 provenType=Array<number>
+# SELECTED: [[number]]: number = AssumeType v3 provenType=number
 # SELECTED-NOT: inlineBuiltin=ArraySplice
 # SELECTED: = CallBuiltin [[array]], {{*}}, [[number]], [[number]] overload=ArrayPrototypeSplice/
 # SELECTED-NOT: inlineBuiltin=ArraySplice

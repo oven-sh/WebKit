@@ -500,9 +500,11 @@ TypeID typeOfField(const VirtualObjectContext& context, const VirtualObjectDescr
         return program.types.find(Type::integer(Range::uint32())).value_or(TypeTable::integer);
     case VirtualFieldKind::Capacity:
     case VirtualFieldKind::ArgumentCount:
+        return TypeTable::integer;
     case VirtualFieldKind::RangeStart:
     case VirtualFieldKind::RangeEnd:
-        return TypeTable::integer;
+        // One type for the bounds of nearly every range, so that the variants of a result share their parts.
+        return program.at(typeOfInitialValue(context, description, field)).isSubsetOf(program.at(TypeTable::length), program) ? TypeTable::length : TypeTable::integer;
     case VirtualFieldKind::Prototype:
     case VirtualFieldKind::RestList:
     case VirtualFieldKind::Callee:
@@ -518,6 +520,7 @@ static bool namesPrivateMember(const Program& program, PropertyKeyID key)
     switch (program.at(key).kind) {
     case PropertyKeyKind::PrivateName:
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
         return true;
     case PropertyKeyKind::Text:
     case PropertyKeyKind::WellKnownSymbol:

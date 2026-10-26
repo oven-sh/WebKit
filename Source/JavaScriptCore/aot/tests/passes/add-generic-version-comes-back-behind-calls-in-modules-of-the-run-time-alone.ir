@@ -9,7 +9,7 @@ module m0 path="main.js" displayPath="main.js"
 module m1 path="library" displayPath="library" flags=[IsLibrary]
 
 function f0 name="ofTheProgram" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v0 castType=object
+    v2 = Check v0 expectedType=object
     v3: anything ~ number = PropGet v2 key="size"
     v4 = Call v1
     v5 = Add v3, v3
@@ -22,7 +22,7 @@ function f0 name="ofTheProgram" module=m0 parameters=[{type=anything}, {type=any
 }
 
 function f1 name="ofTheProgramWithLoop" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v0 castType=number
+    v2 = Check v0 expectedType=number
     v3 = Mul v2, v2
     v4 = Call v1
     Jump -> next b1()
@@ -42,7 +42,7 @@ function f1 name="ofTheProgramWithLoop" module=m0 parameters=[{type=anything}, {
 }
 
 function f2 name="ofTheRunTime" module=m1 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v0 castType=object
+    v2 = Check v0 expectedType=object
     v3: anything ~ number = PropGet v2 key="size"
     v4 = Call v1
     v5 = Add v3, v3

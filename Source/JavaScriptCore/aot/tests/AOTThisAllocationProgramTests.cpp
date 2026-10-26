@@ -107,18 +107,20 @@ function f4 name="getP" kind=Method flags=[HasThis] thisType={type=L0|L1 flags=[
     Return v2
 }
 function f5 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0|L1} results=[{type=anything}] {
-    v1 = GetModuleVariable variable=g1
-    PrivateDefine v0, v1, v1 layout=L0
-    v3 = Integer integer=7
-    v4 = GetModuleVariable variable=g1
-    PrivateDefine v0, v4, v3 layout=L0 field=1
-    v6 = Undefined
-    Return v6
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = GetModuleVariable variable=g1
+    PrivateDefine v1, v2, v2 layout=L0
+    v4 = Integer integer=7
+    v5 = GetModuleVariable variable=g1
+    PrivateDefine v1, v5, v4 layout=L0 field=1
+    v7 = Undefined
+    Return v7
 }
 function f6 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] captures=[{type=anything}] thisType={type=L1} results=[{type=anything}] {
-    PropDefine v1, v0 key="tag"
-    v3 = Undefined
-    Return v3
+    v2 = Convert v1 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    PropDefine v2, v0 key="tag"
+    v4 = Undefined
+    Return v4
 }
 function f7 name="has" kind=Method length=1 parameters=[{type=anything}] results=[{type=anything}] {
     v1 = GetModuleVariable variable=g1
@@ -191,10 +193,11 @@ function f4 name="init" kind=Method flags=[HasThis] thisType={type=L1 flags=[IsE
     Return v3
 }
 function f5 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] {
-    v1 = Integer integer=5
-    PropDefine v0, v1 key="q"
-    v3 = Undefined
-    Return v3
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Integer integer=5
+    PropDefine v1, v2 key="q"
+    v4 = Undefined
+    Return v4
 }
 )IR"_s;
 
@@ -255,16 +258,18 @@ function f2 name="Wider" kind=DerivedConstructor flags=[HasRestParameter, HasNew
     Return v4
 }
 function f3 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0|L1} results=[{type=anything}] {
-    v1 = Data data=d0
-    PropDefine v0, v1 key="env"
-    v3 = Undefined
-    Return v3
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Data data=d0
+    PropDefine v1, v2 key="env"
+    v4 = Undefined
+    Return v4
 }
 function f4 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] {
-    v1 = Data data=d1
-    PropDefine v0, v1 key="extra"
-    v3 = Undefined
-    Return v3
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Data data=d1
+    PropDefine v1, v2 key="extra"
+    v4 = Undefined
+    Return v4
 }
 )IR"_s;
 
@@ -561,16 +566,17 @@ function f9 name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={typ
     Return v1
 }
 function f10 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L3} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
-    v1 = GetModuleVariable variable=g4
-    PrivateDefine v0, v1, v1 layout=L3
-    v3 = Integer integer=6
-    v4 = Convert v3 declared={type=number flags=[IsExpected]}
-    v5 = GetModuleVariable variable=g4
-    PrivateDefine v0, v5, v4 layout=L3 field=1
-    v7 = Undefined
-    Return v7
+    v2 = GetModuleVariable variable=g4
+    PrivateDefine v1, v2, v2 layout=L3
+    v4 = Integer integer=6
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    v6 = GetModuleVariable variable=g4
+    PrivateDefine v1, v6, v5 layout=L3 field=1
+    v8 = Undefined
+    Return v8
 }
 data d0 root=Array{contents=anything} module=m0
 entry module=m0
@@ -732,30 +738,32 @@ function f3 name="m" module=m0 kind=Method flags=[HasExplicitName] thisType={typ
     Return v1
 }
 function f4 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
-    v1 = Integer integer=1
-    v2 = Convert v1 declared={type=number flags=[IsExpected]}
-    PropDefine v0, v2 key="x"
-    v4 = Integer integer=2
-    v5 = Convert v4 declared={type=number flags=[IsExpected]}
-    PropDefine v0, v5 key="y"
-    v7 = Undefined
-    Return v7
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    PropDefine v1, v3 key="x"
+    v5 = Integer integer=2
+    v6 = Convert v5 declared={type=number flags=[IsExpected]}
+    PropDefine v1, v6 key="y"
+    v8 = Undefined
+    Return v8
 }
 function f5 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
-    v1 = Integer integer=20
-    v2 = Convert v1 declared={type=number flags=[IsExpected]}
-    PropDefine v0, v2 key="y"
-    v4 = Undefined
-    PropDefine v0, v4 key="z"
-    v6 = Integer integer=10
-    v7 = Convert v6 declared={type=number flags=[IsExpected]}
-    PropDefine v0, v7 key="x"
-    v9 = Undefined
-    Return v9
+    v2 = Integer integer=20
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    PropDefine v1, v3 key="y"
+    v5 = Undefined
+    PropDefine v1, v5 key="z"
+    v7 = Integer integer=10
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    PropDefine v1, v8 key="x"
+    v10 = Undefined
+    Return v10
 }
 data d0 root=Array{contents=anything} module=m0
 entry module=m0
@@ -942,22 +950,24 @@ function f2 name="Heir" module=m0 kind=DerivedConstructor flags=[HasRestParamete
     Return v4
 }
 function f3 module=m0 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
-    v1 = Integer
-    v2 = Convert v1 declared={type=number flags=[IsExpected]}
-    PropSet v0, v2 key="n"
-    v4 = Undefined
-    Return v4
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    PropSet v1, v3 key="n"
+    v5 = Undefined
+    Return v5
 }
 function f4 module=m0 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
-    v1 = Integer integer=1
-    v2 = Convert v1 declared={type=number flags=[IsExpected]}
-    PropSet v0, v2 key="z"
-    v4 = Undefined
-    Return v4
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    PropSet v1, v3 key="z"
+    v5 = Undefined
+    Return v5
 }
 entry module=m0
 )IR"_s;
@@ -1091,13 +1101,14 @@ function f4 name="DefinesOverSetter" module=m0 kind=DerivedConstructor flags=[Ha
     Return v4
 }
 function f5 module=m0 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
     Jump -> next b1()
   b1():
-    v1 = String string="defined"
-    v2 = Convert v1 declared={type=string flags=[IsExpected]}
-    PropDefine v0, v2 key="guarded"
-    v4 = Undefined
-    Return v4
+    v2 = String string="defined"
+    v3 = Convert v2 declared={type=string flags=[IsExpected]}
+    PropDefine v1, v3 key="guarded"
+    v5 = Undefined
+    Return v5
 }
 entry module=m0
 )IR"_s;

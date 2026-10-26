@@ -17,7 +17,7 @@ layout L5 name="AddedBySlot" fields=[{key="n" declared={type=anything} flags=[Is
 # CHECK: layout L4 name="StoredBySlot" fields=[{key="id"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
 # CHECK: layout L5 name="AddedBySlot"{{*}}{key="id"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}]
 
-function f0 name="storedByName" parameters=[{type=anything}] results=[{type=anything}] {
+function f0 name="storedByName" parameters=[{type=number}] results=[{type=anything}] {
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
     PropSet v1, v0 key="id" mode=Strict receivers=[L0]
     Return v1
@@ -25,7 +25,7 @@ function f0 name="storedByName" parameters=[{type=anything}] results=[{type=anyt
 # CHECK-NEXT: PropSet v1, v0 key="id"
 }
 
-function f1 name="definedByName" parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="definedByName" parameters=[{type=number}] results=[{type=anything}] {
     v1 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
     PropDefine v1, v0 key="id" receivers=[L1]
     Return v1
@@ -33,7 +33,7 @@ function f1 name="definedByName" parameters=[{type=anything}] results=[{type=any
 # CHECK-NEXT: PropDefine v1, v0 key="id"
 }
 
-function f2 name="definedWithoutStamp" parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="definedWithoutStamp" parameters=[{type=number}] results=[{type=anything}] {
     v1 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
     PropDefine v1, v0 key="id"
     Return v1
@@ -41,7 +41,7 @@ function f2 name="definedWithoutStamp" parameters=[{type=anything}] results=[{ty
 # CHECK-NEXT: PropDefine v1, v0 key="id"
 }
 
-function f3 name="definedByBuiltin" parameters=[{type=anything}, {type=string}, {type=object}] results=[{type=anything}] {
+function f3 name="definedByBuiltin" parameters=[{type=number}, {type=string}, {type=object}] results=[{type=anything}] {
     v3 = NewObject -, v0, v0 layout=L3 fields=[0, 1]
     v4 = CallBuiltin -, v3, v1, v2 overload=ObjectDefineProperty/0
     Return v3
@@ -49,7 +49,7 @@ function f3 name="definedByBuiltin" parameters=[{type=anything}, {type=string}, 
 # CHECK-NEXT: = CallBuiltin
 }
 
-function f4 name="storedBySlot" parameters=[{type=anything}] results=[{type=anything}] {
+function f4 name="storedBySlot" parameters=[{type=number}] results=[{type=anything}] {
     v1 = NewObject -, v0, v0 layout=L4 fields=[0, 1]
     PutSlot v1, v1, v0 key="id" receivers=[L4] level=Proven
     Return v1
@@ -57,7 +57,7 @@ function f4 name="storedBySlot" parameters=[{type=anything}] results=[{type=anyt
 # CHECK-NEXT: Return
 }
 
-function f5 name="addedBySlot" parameters=[{type=anything}] results=[{type=anything}] {
+function f5 name="addedBySlot" parameters=[{type=number}] results=[{type=anything}] {
     v1 = NewObject -, v0 layout=L5 fields=[0]
     PutSlotOrAdd v1, v1, v0 key="id" receivers=[L5] level=Proven
     Return v1

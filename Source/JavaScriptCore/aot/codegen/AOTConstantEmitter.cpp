@@ -68,6 +68,7 @@ static bool hasKeyCell(PropertyKeyKind kind)
     case PropertyKeyKind::RegisteredSymbol:
         return true;
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:
         return false;
     }
@@ -364,8 +365,10 @@ Operand ConstantEmitter::constantOf(JSValue value, Representation representation
     case Representation::Int64:
         return integer(trackedIntegerOf(value));
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
         RELEASE_ASSERT(value.isNumber());
-        return number(value.asNumber());
+        return Operand(representation, number(value.asNumber()).value());
     case Representation::OptionalInt64:
         return Operand(representation, m_out.constInt64(marker ? static_cast<int64_t>(markerBits()) : trackedIntegerOf(value)));
     case Representation::OptionalDouble:
@@ -389,6 +392,8 @@ Operand ConstantEmitter::zeroOf(Representation representation)
     case Representation::Void:
         return { };
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalDouble:
         return Operand(representation, m_out.constDouble(0));
     case Representation::Boolean:
@@ -423,6 +428,8 @@ void ConstantEmitter::defineCell(const ValueContext& value, CellPointer cell)
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell32:

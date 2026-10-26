@@ -209,6 +209,11 @@ static void checkNestingAnswers()
     AOT_TEST_CHECK(!Yarr::checkSyntax(prefixChain, OptionSet<Yarr::Flags> { }).maxParenthesesDepth);
     AOT_TEST_CHECK(isDeclined(compile({ prefixChain, { } }, &context), Form::NoMetadata, RegExpDeclineReason::NestedTooDeep));
     AOT_TEST_CHECK(compile({ makePrefixChain(8), { } }, &context).form == Form::Code);
+
+    RegExpSummary deep = summarizeRegExp(makeNestedGroups(limit + 1), { });
+    AOT_TEST_CHECK(deep.isValid() && !deep.canBeCreated() && !Yarr::hasError(deep.constructionError));
+    RegExpSummary tooLong = summarizeRegExp("a{4294967295}a"_s, { });
+    AOT_TEST_CHECK(tooLong.isValid() && !tooLong.canBeCreated() && tooLong.constructionError == Yarr::ErrorCode::OffsetTooLarge);
 }
 
 static void runOnThreadWithStack(size_t stackSize, Function<void()>&& function)

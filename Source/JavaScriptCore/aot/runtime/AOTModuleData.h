@@ -83,7 +83,11 @@ struct ModuleData {
     Number24 firstRequiredName;
     Number24 firstLinkRequest;
     Number24 firstEvaluationRequest;
-    uint8_t hasInstalledPositions;
+    uint8_t hasInstalledPositions : 1;
+    uint8_t loadedByLoader : 1;
+    uint8_t faceOfFile : 1;
+    uint8_t importedByModule : 1;
+    uint8_t unusedBits : 4;
 
     bool has(Flag flag) const { return OptionSet<Flag>::fromRaw(flags).contains(flag); }
     void add(Flag flag) { flags |= static_cast<uint16_t>(flag); }
@@ -102,6 +106,11 @@ struct ModuleData {
     bool isLinkedWithEntryPoint() const { return has(Flag::IsLinkedWithEntryPoint); }
     // Its body evaluates what the module requests, runs the code of the module and stores the status, all of it once.
     bool evaluatesItself() const { return has(Flag::EvaluatesItself); }
+    bool isLoadedByLoader() const { return loadedByLoader; }
+    // Its first request is the CommonJS file that it stands for where ES modules import the file.
+    bool isFaceOfFile() const { return faceOfFile; }
+    // Some module requests it with what it writes, and not by a require(): a graph of imports can come to it from above.
+    bool isImportedByModule() const { return importedByModule; }
     // The helpers of the bundler, which have the form of a file of the program and answer to their name like a module of the library.
     bool isLibraryCodeWithFilePath() const { return has(Flag::IsLibraryCodeWithFilePath); }
     // Code of the host, whatever its form.
@@ -119,7 +128,9 @@ struct ModuleData {
 
     std::optional<FunctionID> bodyFunction() const { return optionalIDInImage<FunctionID>(body); }
     std::optional<ModuleID> referrerModule() const { return kind == ModuleKind::External ? optionalIDInImage<ModuleID>(referrerOrRuntimeModule) : std::nullopt; }
-    std::optional<uint32_t> registryID() const { return kind == ModuleKind::External ? std::nullopt : optionalIDInImage<uint32_t>(referrerOrRuntimeModule); }
+    // Of a text that the program evaluates: the file that evaluates it.
+    std::optional<ModuleID> evaluatorModule() const { return kind == ModuleKind::CommonJs ? optionalIDInImage<ModuleID>(referrerOrRuntimeModule) : std::nullopt; }
+    std::optional<uint32_t> registryID() const { return kind == ModuleKind::External || kind == ModuleKind::CommonJs ? std::nullopt : optionalIDInImage<uint32_t>(referrerOrRuntimeModule); }
 };
 
 inline bool ModuleData::hasExportTable() const
@@ -168,19 +179,21 @@ struct ModuleDisplayPathData {
 };
 
 struct ModuleRequestData {
-    static constexpr uint32_t maxTarget = (1u << 21) - 1;
+    static constexpr uint32_t maxTarget = (1u << 20) - 1;
 
     uint8_t targetBytes[2];
-    uint8_t highBitsOfTarget : 5;
+    uint8_t highBitsOfTarget : 4;
+    // The build put the request in front of those that the module writes: something below the module asks for the target, which runs while the graph is loaded.
+    uint8_t isHoisted : 1;
     uint8_t isDeferred : 1;
     uint8_t isDynamicStarExport : 1;
     // A require() that the code of the requesting module answers by itself: it evaluates the target where it stands, so no walk of an evaluation follows it.
     uint8_t isRequire : 1;
 
-    static constexpr ModuleRequestData create(uint32_t target, bool isDeferred, bool isDynamicStarExport, bool isRequire = false)
+    static constexpr ModuleRequestData create(uint32_t target, bool isDeferred, bool isDynamicStarExport, bool isRequire = false, bool isHoisted = false)
     {
         RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(target <= maxTarget);
-        return { { static_cast<uint8_t>(target), static_cast<uint8_t>(target >> 8) }, static_cast<uint8_t>(target >> 16), isDeferred, isDynamicStarExport, isRequire };
+        return { { static_cast<uint8_t>(target), static_cast<uint8_t>(target >> 8) }, static_cast<uint8_t>(target >> 16), isHoisted, isDeferred, isDynamicStarExport, isRequire };
     }
     constexpr uint32_t target() const { return targetBytes[0] | targetBytes[1] << 8 | highBitsOfTarget << 16; }
     ModuleID targetModule() const { return ModuleID(target()); }
@@ -243,6 +256,24 @@ public:
                 return true;
         }
         return false;
+    }
+    // The place of the first number from `start` on that has no bit in the set, or `end`.
+    size_t findFirstOutside(std::span<const uint64_t> set, size_t start, size_t end) const
+    {
+        auto isOutside = [&](uint32_t number) ALWAYS_INLINE_LAMBDA {
+            return !(set[number / 64] >> (number % 64) & 1);
+        };
+        if (m_hasTwoWords) [[unlikely]] {
+            while (start != end && !isOutside((*this)[start]))
+                ++start;
+            return start;
+        }
+        for (uint16_t number : m_words.subspan(start, end - start)) {
+            if (isOutside(number))
+                break;
+            ++start;
+        }
+        return start;
     }
     constexpr Iterator begin() const LIFETIME_BOUND { return { this, 0 }; }
     constexpr Iterator end() const LIFETIME_BOUND { return { this, size() }; }
@@ -336,7 +367,7 @@ struct CompiledRuntimeFunctionData {
 static_assert(sizeof(ModuleData) == 40 && isImageRecord<ModuleData>);
 static_assert(sizeof(ModuleDirectoryData) == 6 && isImageRecord<ModuleDirectoryData> && sizeof(ModuleDisplayPathData) == 6 && isImageRecord<ModuleDisplayPathData>);
 static_assert(sizeof(ModuleRequestData) == 3 && alignof(ModuleRequestData) == 1 && isImageRecord<ModuleRequestData>);
-static_assert(ModuleRequestData::create(0x1bcdef, true, false, true).target() == 0x1bcdef);
+static_assert(ModuleRequestData::create(0xbcdef, true, false, true).target() == 0xbcdef);
 static_assert(sizeof(LinkPlanStepData) == 4 && isImageRecord<LinkPlanStepData>);
 static_assert(sizeof(LinkPlanRootData) == 12 && isImageRecord<LinkPlanRootData>);
 static_assert(sizeof(ModuleExportData) == 8 && isImageRecord<ModuleExportData>);

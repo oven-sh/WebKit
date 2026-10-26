@@ -65,6 +65,9 @@ public:
     bool isLazyClassObject() const;
     // Nothing was ever stored in, defined on or deleted from a closure that has the Structure it was made with, so its name and its length are those of its function.
     bool hasStructureOfNewClosure(VM&) const;
+    // A look that found the Structure of a new closure left it there. The note stays when the Structure changes.
+    bool nameWasLookedFor() const { return TypeInfo::perCellBit(inlineTypeFlags()); }
+    void noteLookForName() { setPerCellBit(true); }
     bool hasOrdinaryDefineOwnProperty(VM&, PropertyName) const;
     static bool isNameThatBuiltinFunctionsRefuse(VM&, UniquedStringImpl*);
     bool refusesOwnProperty(VM&, PropertyName) const;

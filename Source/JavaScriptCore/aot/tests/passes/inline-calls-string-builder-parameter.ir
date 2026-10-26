@@ -6,9 +6,9 @@
 # RUN(COPY): pipeline InlineCalls
 # COPY-LABEL: function f0 name="main"
 # COPY: [[builder]]: stringbuilder = StringBuilderBegin
-# COPY-NOT: castType=stringbuilder
+# COPY-NOT: Type=stringbuilder
 # COPY: = JSONAppendKey [[builder]], {{*}} string="a"
-# COPY-NOT: castType=stringbuilder
+# COPY-NOT: Type=stringbuilder
 # COPY: function f1
 
 module m0 path="main.js" displayPath="main.js" body=f0

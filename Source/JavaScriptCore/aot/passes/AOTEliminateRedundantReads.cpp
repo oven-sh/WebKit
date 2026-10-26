@@ -23,6 +23,7 @@
 #include "AOTNaturalLoops.h"
 #include "AOTProgramPasses.h"
 #include "AOTRegionCloner.h"
+#include "AOTRepresentation.h"
 #include "AOTSSARepair.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
@@ -30,6 +31,7 @@
 #include "AOTUseEffectHistory.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include "AOTVirtualObject.h"
 #include <algorithm>
 #include <bit>
 #include <limits>
@@ -78,6 +80,8 @@ struct IndexRange {
 };
 
 struct RedundantReadElimination {
+    static constexpr uint32_t maxBitsOfClassSolvedTwice = 16384;
+
     struct Access {
         MemoryLocation location;
         ValueID base { };
@@ -116,6 +120,18 @@ struct RedundantReadElimination {
         // Found when it is first asked for.
         ObjectID allocation;
         bool hasLookedForAllocation;
+        // Behind the bits of the last class of the section with the same location.
+        uint32_t endOfBitsAtLocation { 0 };
+        // Behind the bits of the last of the classes that follow one another in the same heap, and with the same base.
+        uint32_t endOfBitsInHeap { 0 };
+        uint32_t endOfBitsWithBase { 0 };
+    };
+
+    enum class Survival : uint8_t { None, OneClass, EveryClassWithBase };
+
+    struct PositionRange {
+        uint32_t first { std::numeric_limits<uint32_t>::max() };
+        uint32_t last { 0 };
     };
 
     struct Action {
@@ -169,9 +185,19 @@ struct RedundantReadElimination {
     Vector<AccessClass> m_classes { };
     uint32_t m_firstClobberableBit { 0 };
     Vector<uint32_t> m_lastPositionOfClass { };
+    // For each word of a row of the group: the least and the greatest of those positions among the classes with a bit in the word.
+    Vector<PositionRange> m_lastPositionsInWord { };
     // By position in the reverse postorder: a position that no block that the block may reach stands in front of. Empty where nothing leads back.
     Vector<uint32_t> m_firstPositionReachedFrom { };
     IndexRange m_group { };
+    // A class with more bits than a group may hold is solved in parts, from its first bits on: the group is one part, and these are all the bits of the class. Empty otherwise.
+    IndexRange m_bitsOfClassInParts { };
+    // A read that was replaced by a value looks no more and defines no more: whatever its bit would reach, the bit of that value reaches, it comes first, and its type is as narrow.
+    BitVector m_isReplacedByValue { };
+    BitVector m_isReplacedByUndefined { };
+    Vector<uint32_t> m_bitsReplacedByValue { };
+    // By the bit of a read of the class that is solved in parts: the value found for each edge into its block so far.
+    UncheckedKeyHashMap<uint32_t, Vector<ValueID, 4>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_valuesOnEdges { };
     uint32_t m_numberOfWords { 0 };
     Vector<StateOfBlock> m_states { };
     Vector<BlockID, 16> m_visitedBlocks { };
@@ -381,6 +407,15 @@ struct RedundantReadElimination {
                     m_firstClobberableBit = m_bits.size();
             });
         }
+        for (size_t index = m_classes.size(); index--;) {
+            AccessClass& accessClass = m_classes[index];
+            bool isFollowedAtLocation = index + 1 < m_classes.size() && m_classes[index + 1].isFixed == accessClass.isFixed && m_classes[index + 1].location == accessClass.location;
+            accessClass.endOfBitsAtLocation = isFollowedAtLocation ? m_classes[index + 1].endOfBitsAtLocation : accessClass.bits.end;
+            bool isFollowedInHeap = index + 1 < m_classes.size() && m_classes[index + 1].isFixed == accessClass.isFixed && m_classes[index + 1].location.heap() == accessClass.location.heap();
+            accessClass.endOfBitsInHeap = isFollowedInHeap ? m_classes[index + 1].endOfBitsInHeap : accessClass.bits.end;
+            bool isFollowedWithBase = index + 1 < m_classes.size() && m_classes[index + 1].isFixed == accessClass.isFixed && m_classes[index + 1].base == accessClass.base;
+            accessClass.endOfBitsWithBase = isFollowedWithBase ? m_classes[index + 1].endOfBitsWithBase : accessClass.bits.end;
+        }
     }
 
     IndexRange bitsOfClassesAt(bool isFixed, const MemoryLocation& location) const
@@ -571,15 +606,29 @@ struct RedundantReadElimination {
         }
     }
 
-    void appendClearsOfWrites(const EffectsOnEdges& effects, std::span<const Word> row, ActionList& actions, NOESCAPE const Invocable<bool(AccessClass&)> auto& survives)
+    void appendClearsOfWrites(const EffectsOnEdges& effects, std::span<const Word> row, ActionList& actions, NOESCAPE const Invocable<Survival(AccessClass&)> auto& survives)
     {
         if (!effects.normal.writes.containsAny(accessedHeapSet) && !effects.handler.writes.containsAny(accessedHeapSet))
             return;
         LocationMasks writes = effects.onAnyEdge().writes;
-        forEachClassWithBitIn(row, { m_firstClobberableBit, static_cast<uint32_t>(m_bits.size()) }, [&](AccessClass& accessClass) {
-            if (writes.overlaps(accessClass.location.heap(), accessClass.mask) && !survives(accessClass) && !m_context.build.isSabotaged(Sabotage::RememberedReadsOutlastWrites))
+        IndexRange bits = IndexRange { m_firstClobberableBit, static_cast<uint32_t>(m_bits.size()) }.clippedTo(m_group);
+        if (bits.isEmpty())
+            return;
+        // The classes of one location have one mask, so a location that is not written is passed over with all its classes, and so is a heap.
+        size_t end = bits.end - m_group.first;
+        for (size_t bit = findBit(row, bits.first - m_group.first); bit < end;) {
+            AccessClass& accessClass = m_classes[m_bits[m_group.first + bit].accessClass];
+            if (!writes.overlaps(accessClass.location.heap(), accessClass.mask)) {
+                uint32_t endOfUnwrittenBits = writes.contains(accessClass.location.heap()) ? accessClass.endOfBitsAtLocation : accessClass.endOfBitsInHeap;
+                bit = findBit(row, endOfUnwrittenBits - m_group.first);
+                continue;
+            }
+            Survival survival = survives(accessClass);
+            if (survival == Survival::None && !m_context.build.isSabotaged(Sabotage::RememberedReadsOutlastWrites))
                 appendClear(actions, accessClass.bits);
-        });
+            uint32_t endOfSettledBits = survival == Survival::EveryClassWithBase ? accessClass.endOfBitsWithBase : accessClass.bits.end;
+            bit = findBit(row, endOfSettledBits - m_group.first);
+        }
     }
 
     void appendClearsOfEffects(ProgramPoint point, std::span<const Word> row, ActionList& actions)
@@ -608,7 +657,22 @@ struct RedundantReadElimination {
                     writesThroughOperands->append({ operand, writes });
             });
         };
-        appendClearsOfWrites(effects, row, actions, [&](AccessClass& accessClass) {
+        // Whatever the value writes: nobody else holds the object yet, and no operand that is written through is the object.
+        auto isOutOfReach = [&](AccessClass& accessClass) {
+            if (!mayDefineAllocation(accessClass.base))
+                return false;
+            const EscapeAnalysis& escape = m_analyses.escape();
+            if (escape.gaveUp())
+                return false;
+            ObjectID allocation = allocationOf(accessClass);
+            if (!allocation || !isUncapturedBefore(allocation, after))
+                return false;
+            findWritesThroughOperands();
+            return std::ranges::none_of(*writesThroughOperands, [&](const auto& written) {
+                return escape.mayAlias(written.first, accessClass.base) && escape.pointsTo(written.first).objects.contains(allocation);
+            });
+        };
+        auto survives = [&](AccessClass& accessClass) {
             if (!accessClass.base)
                 return false;
             auto overlapsClass = [&](const LocationMasks& writes) {
@@ -646,6 +710,11 @@ struct RedundantReadElimination {
                 bool mayBeAllocation = !allocation || escape.pointsTo(written.first).objects.contains(allocation);
                 return mayBeAllocation || !isUncapturedBefore(allocation, after);
             });
+        };
+        appendClearsOfWrites(effects, row, actions, [&](AccessClass& accessClass) {
+            if (accessClass.base && accessClass.endOfBitsWithBase > accessClass.bits.end && isOutOfReach(accessClass))
+                return Survival::EveryClassWithBase;
+            return survives(accessClass) ? Survival::OneClass : Survival::None;
         });
     }
 
@@ -685,8 +754,12 @@ struct RedundantReadElimination {
             else if (const Access& access = accessesOfValue.front(); access.stored && access.isOperationOnMemory())
                 appendClearsOfStore(access, live, actions);
             for (const Access& access : accessesOfValue) {
-                if (access.bit && m_group.contains(*access.bit))
+                if (!access.bit || m_isReplacedByValue.quickGet(*access.bit))
+                    continue;
+                if (m_group.contains(*access.bit))
                     actions.append(Action { access.mayPrecedeStore ? Action::Kind::Looks : Action::Kind::Defines, { *access.bit, *access.bit + 1 } });
+                else if (m_bitsOfClassInParts.contains(*access.bit) && access.isRead())
+                    actions.append(Action { Action::Kind::Looks, { *access.bit, *access.bit + 1 } });
             }
             if (watchesThrows && m_analyses.effectsOf(id).mayThrow())
                 functor(Action { Action::Kind::MayThrow, { 0, static_cast<uint32_t>(std::ranges::count(actions, Action::Kind::Clears, &Action::kind)) } });
@@ -724,7 +797,7 @@ struct RedundantReadElimination {
             if (!isEmpty(walked.span())) {
                 ActionList actions;
                 appendClearsOfWrites(m_analyses.effectsOfTerminator(block), walked.span(), actions, [](AccessClass&) {
-                    return false;
+                    return Survival::None;
                 });
                 for (const Action& action : actions)
                     carryOut(action, walked.mutableSpan());
@@ -791,6 +864,8 @@ struct RedundantReadElimination {
             m_firstPositionReachedFrom[position] = m_firstPositionReachedFrom[m_firstPositionReachedFrom[position]];
     }
 
+    bool isPartOfClass() const { return !m_bitsOfClassInParts.isEmpty(); }
+
     void markAsPending(BlockID block) { m_isPending.quickSet(m_cfg.reversePostOrderIndex(block)); }
 
     // A block that was not visited has empty rows. In the first sweep a block that comes later may still be visited, so an edge back from it is left out until the sweep is over.
@@ -825,6 +900,24 @@ struct RedundantReadElimination {
         }
     }
 
+    void clearClassesLastAccessedBefore(uint32_t position, Row& row)
+    {
+        for (uint32_t wordIndex = 0; wordIndex < m_numberOfWords; ++wordIndex) {
+            PositionRange lastPositions = m_lastPositionsInWord[wordIndex];
+            if (!row[wordIndex] || lastPositions.first >= position)
+                continue;
+            if (lastPositions.last < position) {
+                row[wordIndex] = 0;
+                continue;
+            }
+            IndexRange bitsOfWord { m_group.first + wordIndex * 64, m_group.first + (wordIndex + 1) * 64 };
+            forEachClassWithBitIn(row.span(), bitsOfWord, [&](AccessClass& accessClass) {
+                if (m_lastPositionOfClass[&accessClass - m_classes.span().data()] < position)
+                    carryOut(Action { Action::Kind::Clears, accessClass.bits }, row.mutableSpan());
+            });
+        }
+    }
+
     void visit(BlockID block, uint32_t position)
     {
         StateOfBlock& state = m_states[block.index()];
@@ -844,10 +937,7 @@ struct RedundantReadElimination {
         std::ranges::copy(row, headOf(state).begin());
 
         uint32_t firstPositionReached = m_firstPositionReachedFrom.isEmpty() ? position : m_firstPositionReachedFrom[position];
-        forEachClassWithBitIn(row.span(), m_group, [&](AccessClass& accessClass) {
-            if (m_lastPositionOfClass[&accessClass - m_classes.span().data()] < firstPositionReached)
-                clear(row.mutableSpan(), accessClass.bits.first - m_group.first, accessClass.bits.end - m_group.first);
-        });
+        clearClassesLastAccessedBefore(firstPositionReached, row);
         Row rowForHandler = row;
         carryThrough(block, state, isFirstVisit, row, rowForHandler);
         if (!isFirstVisit && std::ranges::equal(row, tailOf(state)) && std::ranges::equal(rowForHandler, rowForHandlerOf(state)))
@@ -863,7 +953,7 @@ struct RedundantReadElimination {
         });
     }
 
-    void solve(IndexRange group)
+    void solve(IndexRange group, IndexRange bitsOfClassInParts = { })
     {
         for (BlockID block : m_visitedBlocks)
             m_states[block.index()].isVisited = false;
@@ -872,10 +962,18 @@ struct RedundantReadElimination {
         m_actions.shrink(0);
         m_rows.shrink(0);
         m_group = group;
+        m_bitsOfClassInParts = bitsOfClassInParts;
         m_numberOfWords = (group.size() + 63) / 64;
 
-        for (uint32_t bit = group.first; bit < group.end; ++bit)
-            markAsPending(accessOf(bit).point.block);
+        m_lastPositionsInWord.fill(PositionRange { }, m_numberOfWords);
+        for (uint32_t bit = group.first; bit < group.end; ++bit) {
+            PositionRange& lastPositions = m_lastPositionsInWord[(bit - group.first) / 64];
+            uint32_t lastPosition = m_lastPositionOfClass[m_bits[bit].accessClass];
+            lastPositions.first = std::min(lastPositions.first, lastPosition);
+            lastPositions.last = std::max(lastPositions.last, lastPosition);
+            if (!m_isReplacedByValue.quickGet(bit))
+                markAsPending(accessOf(bit).point.block);
+        }
 
         std::span<const BlockID> order = m_cfg.reversePostOrder();
         m_isFirstSweep = true;
@@ -890,6 +988,57 @@ struct RedundantReadElimination {
             }
         }
         findReplacements();
+        for (uint32_t bit : m_bitsReplacedByValue)
+            m_isReplacedByValue.quickSet(bit);
+        m_bitsReplacedByValue.shrink(0);
+    }
+
+    // The parts are solved in the order of the bits, and a read takes the first suitable bit, so what an earlier part has found stands.
+    void solveInParts(IndexRange bitsOfClass, uint32_t maxBitsPerPart)
+    {
+        size_t firstReplacement = m_replacements.size();
+        for (IndexRange part { bitsOfClass.first, bitsOfClass.first }; part.end < bitsOfClass.end; part.first = part.end) {
+            part.end = static_cast<uint32_t>(std::min<uint64_t>(uint64_t { part.first } + maxBitsPerPart, bitsOfClass.end));
+            solve(part, bitsOfClass);
+        }
+        std::span<Replacement> replacementsOfClass = m_replacements.mutableSpan().subspan(firstReplacement);
+        AOT::sort(replacementsOfClass, { }, [&](const Replacement& replacement) {
+            return std::pair { m_cfg.reversePostOrderIndex(replacement.point.block), replacement.point.index };
+        });
+
+        Vector<uint32_t> readsToMerge;
+        for (const auto& [bit, values] : m_valuesOnEdges) {
+            if (!m_isReplacedByValue.quickGet(bit) && !m_isReplacedByUndefined.quickGet(bit) && !values.contains(ValueID()))
+                readsToMerge.append(bit);
+        }
+        AOT::sort(readsToMerge);
+        for (uint32_t bit : readsToMerge) {
+            const Access& read = accessOf(bit);
+            std::span<const Edge> edges = m_cfg.incomingEdges(read.point.block);
+            const Vector<ValueID, 4>& values = m_valuesOnEdges.find(bit)->value;
+            Merge merge { read.id, read.point, { } };
+            for (size_t index = 0; index < edges.size(); ++index)
+                merge.incoming.append({ edges[index], values[index] });
+            m_merges.append(WTF::move(merge));
+        }
+        m_valuesOnEdges.clear();
+    }
+
+    void checkAgainstSolveOfWholeClass(IndexRange bitsOfClass, size_t firstReplacement, size_t firstMerge)
+    {
+        Vector<Replacement> replacements(m_replacements.span().subspan(firstReplacement));
+        Vector<Merge> merges(m_merges.span().subspan(firstMerge));
+        m_replacements.shrink(firstReplacement);
+        m_merges.shrink(firstMerge);
+        m_isReplacedByValue.clearAll();
+        m_isReplacedByUndefined.clearAll();
+        solve(bitsOfClass);
+        RELEASE_ASSERT(std::ranges::equal(m_replacements.span().subspan(firstReplacement), replacements, [](const Replacement& a, const Replacement& b) {
+            return a.read == b.read && a.value == b.value;
+        }));
+        RELEASE_ASSERT(std::ranges::equal(m_merges.span().subspan(firstMerge), merges, [](const Merge& a, const Merge& b) {
+            return a.read == b.read && std::ranges::equal(a.incoming, b.incoming, { }, &std::pair<Edge, ValueID>::second, &std::pair<Edge, ValueID>::second);
+        }));
     }
 
     bool canForward(const Access& source, const Type& readType) const
@@ -899,7 +1048,7 @@ struct RedundantReadElimination {
 
     const Access* findAvailableAccess(uint32_t readBit, std::span<const Word> available, NOESCAPE const Invocable<bool(const Access&)> auto& isSuitable) const
     {
-        IndexRange bits = m_classes[m_bits[readBit].accessClass].bits;
+        IndexRange bits = m_classes[m_bits[readBit].accessClass].bits.clippedTo(m_group);
         for (size_t bit = m_group.first + findBit(available, bits.first - m_group.first); bit < bits.end; bit = m_group.first + findBit(available, bit + 1 - m_group.first)) {
             if (bit != readBit && isSuitable(accessOf(bit)))
                 return &accessOf(bit);
@@ -938,11 +1087,26 @@ struct RedundantReadElimination {
             bitsOfReads = bitsOfReads.subspan(1);
             const Access& read = accessOf(action.bits.first);
             const Type& readType = typeOf(read.id);
-            Merge merge { read.id, read.point, { } };
-            for (size_t index = 0; index < edges.size(); ++index) {
-                const Access* source = findAvailableAccess(action.bits.first, available[index].span(), [&](const Access& access) {
+            auto findSourceOn = [&](size_t index) {
+                return findAvailableAccess(action.bits.first, available[index].span(), [&](const Access& access) {
                     return !access.isAbsent && canForward(access, readType);
                 });
+            };
+            if (isPartOfClass()) {
+                Vector<ValueID, 4>& values = m_valuesOnEdges.ensure(action.bits.first, [&] {
+                    return Vector<ValueID, 4>(FillWith { }, edges.size(), ValueID());
+                }).iterator->value;
+                for (size_t index = 0; index < edges.size(); ++index) {
+                    if (values[index])
+                        continue;
+                    if (const Access* source = findSourceOn(index))
+                        values[index] = source->valueAfter();
+                }
+                return;
+            }
+            Merge merge { read.id, read.point, { } };
+            for (size_t index = 0; index < edges.size(); ++index) {
+                const Access* source = findSourceOn(index);
                 if (!source)
                     return;
                 merge.incoming.append({ edges[index], source->valueAfter() });
@@ -969,16 +1133,22 @@ struct RedundantReadElimination {
             readsToMerge.shrink(0);
             for (uint32_t actionIndex = state.actions.first; actionIndex < state.endOfActionsOfValues; ++actionIndex) {
                 const Action& action = m_actions[actionIndex];
-                if (action.standsAtAccess() && accessOf(action.bits.first).isRead()) {
+                if (action.standsAtAccess() && accessOf(action.bits.first).isRead() && !m_isReplacedByUndefined.quickGet(action.bits.first)) {
                     const Access& read = accessOf(action.bits.first);
                     const Type& readType = typeOf(read.id);
                     bool readsAbsentAsUndefined = m_function.at(read.id).opcode == Opcode::GetSlotOrUndefined && (readType.primitives & Primitive::Undefined);
                     const Access* source = findAvailableAccess(action.bits.first, available.span(), [&](const Access& access) {
                         return access.isAbsent ? readsAbsentAsUndefined : canForward(access, readType);
                     });
-                    if (source)
+                    if (source) {
                         m_replacements.append({ read.id, source->isAbsent ? ValueID() : source->valueAfter(), read.point });
-                    else if (readType.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull))
+                        if (isPartOfClass()) {
+                            if (source->isAbsent)
+                                m_isReplacedByUndefined.quickSet(action.bits.first);
+                            else
+                                m_bitsReplacedByValue.append(action.bits.first);
+                        }
+                    } else if (readType.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull))
                         readsToMerge.append(action.bits.first);
                 }
                 carryOut(action, available.mutableSpan());
@@ -1037,16 +1207,29 @@ struct RedundantReadElimination {
             return PassOutcome::Unchanged;
         prepareToSolve();
 
-        uint64_t maxBitsPerGroup = m_context.limit(LimitID::MaxReadsPerSolve);
+        m_isReplacedByValue.ensureSize(m_bits.size());
+        m_isReplacedByUndefined.ensureSize(m_bits.size());
+        uint64_t maxBitsPerGroup = std::max<uint64_t>(m_context.limit(LimitID::MaxReadsPerSolve), 1);
+        auto solveGroup = [&](IndexRange group) {
+            if (group.size() <= maxBitsPerGroup) {
+                solve(group);
+                return;
+            }
+            size_t firstReplacement = m_replacements.size();
+            size_t firstMerge = m_merges.size();
+            solveInParts(group, static_cast<uint32_t>(maxBitsPerGroup));
+            if (m_checksScreens && group.size() <= maxBitsOfClassSolvedTwice) [[unlikely]]
+                checkAgainstSolveOfWholeClass(group, firstReplacement, firstMerge);
+        };
         IndexRange group;
         for (const AccessClass& accessClass : m_classes) {
             if (!group.isEmpty() && accessClass.bits.end - group.first > maxBitsPerGroup) {
-                solve(group);
+                solveGroup(group);
                 group.first = accessClass.bits.first;
             }
             group.end = accessClass.bits.end;
         }
-        solve(group);
+        solveGroup(group);
         bool hasSeveralGroups = group.first;
         if (hasSeveralGroups)
             m_context.gaveUp(LimitID::MaxReadsPerSolve);
@@ -1126,7 +1309,9 @@ static PassOutcome dropRepeatedMapSets(FunctionPassContext& context)
 
 PassOutcome eliminateRedundantReads(FunctionPassContext& context)
 {
-    PassOutcome outcome = RedundantReadElimination { context }.run();
+    PassOutcome outcome = PassOutcome::Unchanged;
+    if (context.analyses.opcodesOfValues().intersects(opcodesReadingAccessedHeaps))
+        outcome = RedundantReadElimination { context }.run();
     return outcome | dropRepeatedMapSets(context);
 }
 
@@ -1881,6 +2066,9 @@ struct LoopPathSeparator : LoopEditor {
     BitVector m_isSeparatedHeader { };
     Vector<VariableOfLoop> m_variablesWithStores { };
     bool m_likelyPathCannotLeave { false };
+    bool m_pathThatOnlyComputesLeaves { false };
+
+    enum class PathsThatOnlyCompute : uint8_t { LeaveWhereTheyWidenParameters, Stay };
 
     PassOutcome run()
     {
@@ -1890,10 +2078,18 @@ struct LoopPathSeparator : LoopEditor {
                 if (m_isFinishedHeader.set(header.index()))
                     continue;
                 const NaturalLoop& loop = *m_analyses.naturalLoops().headerOf(header);
-                m_likelyPathCannotLeave = false;
-                std::optional<SeparationPlan> plan = planFor(loop, true);
-                if (!plan && m_likelyPathCannotLeave)
-                    plan = planFor(loop, false);
+                auto planWith = [&](PathsThatOnlyCompute pathsThatOnlyCompute) {
+                    m_likelyPathCannotLeave = false;
+                    std::optional<SeparationPlan> plan = planFor(loop, true, pathsThatOnlyCompute);
+                    if (!plan && m_likelyPathCannotLeave)
+                        plan = planFor(loop, false, pathsThatOnlyCompute);
+                    return plan;
+                };
+                m_pathThatOnlyComputesLeaves = false;
+                std::optional<SeparationPlan> plan = planWith(PathsThatOnlyCompute::LeaveWhereTheyWidenParameters);
+                // Where the loop cannot be copied with an entry on such a path, the paths that run code or write still leave.
+                if (!plan && m_pathThatOnlyComputesLeaves)
+                    plan = planWith(PathsThatOnlyCompute::Stay);
                 if (plan)
                     return plan;
             }
@@ -1944,29 +2140,35 @@ struct LoopPathSeparator : LoopEditor {
         m_analyses.didChangeValues();
     }
 
-    // An unlikely block leaves with every unlikely block that leads to it or follows it: a path is in one copy from the edge that enters it to the edge that joins the likely path.
-    BitVector findLeavingBlocks(const NaturalLoop& loop, const BitVector& isInLoop)
+    BitVector findUnlikelyBlocks(const NaturalLoop& loop)
     {
         const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
         BlockFrequency frequencyOfLoop = frequencies.classOf(loop.header());
-        // What may run out of memory calls into the run time, which is no computation, though it goes away with an unused result.
-        auto onlyComputes = [&](const Block& block) {
-            bool valuesOnlyCompute = std::ranges::all_of(block.values, [&](ValueID value) {
-                return m_analyses.effectsOf(value).onAnyEdge().isUnobservable();
-            });
-            return valuesOnlyCompute && effectsOf(m_analyses.effectContext(), m_function, block.terminator).onAnyEdge().isUnobservable();
-        };
-
         BitVector isUnlikely(m_function.blocks.size());
+        for (unsigned index = 0; index < loop.size(); ++index) {
+            if (frequencies.classOf(loop.at(index)) > frequencyOfLoop)
+                isUnlikely.set(loop.at(index).index());
+        }
+        return isUnlikely;
+    }
+
+    // What may run out of memory calls into the run time, which is no computation, though it goes away with an unused result.
+    bool onlyComputes(const Block& block)
+    {
+        bool valuesOnlyCompute = std::ranges::all_of(block.values, [&](ValueID value) {
+            return m_analyses.effectsOf(value).onAnyEdge().isUnobservable();
+        });
+        return valuesOnlyCompute && effectsOf(m_analyses.effectContext(), m_function, block.terminator).onAnyEdge().isUnobservable();
+    }
+
+    // An unlikely block leaves with every unlikely block that leads to it or follows it: a path is in one copy from the edge that enters it to the edge that joins the likely path.
+    BitVector findLeavingBlocks(const BitVector& isInLoop, const BitVector& isUnlikely, NOESCAPE const Invocable<bool(BlockID)> auto& leavesByItself)
+    {
         BitVector leaves(m_function.blocks.size());
         Vector<BlockID, 16> worklist;
-        for (unsigned index = 0; index < loop.size(); ++index) {
-            BlockID block = loop.at(index);
-            if (frequencies.classOf(block) <= frequencyOfLoop)
-                continue;
-            isUnlikely.set(block.index());
-            if (!onlyComputes(m_function.at(block)) && !leaves.set(block.index()))
-                worklist.append(block);
+        for (size_t index : isUnlikely) {
+            if (leavesByItself(BlockID(index)) && !leaves.set(index))
+                worklist.append(BlockID(index));
         }
 
         auto visit = [&](BlockID neighbor) {
@@ -1983,8 +2185,8 @@ struct LoopPathSeparator : LoopEditor {
         return leaves;
     }
 
-    // The copy pays where an operation reads a parameter that is wider only for what a leaving path passes.
-    bool narrowsParameter(const BitVector& isInLoop, const BitVector& leaves)
+    // The types that the parameters of the staying blocks have once the leaving paths pass them nothing.
+    Vector<std::optional<Type>> typeParametersWithout(const BitVector& isInLoop, const BitVector& leaves)
     {
         Vector<BlockID, 16> blocksWithParameters;
         Vector<std::optional<Type>> typeWithoutLeavingPaths(m_function.values.size());
@@ -2021,42 +2223,235 @@ struct LoopPathSeparator : LoopEditor {
                 }
             }
         }
-
-        const UseLists& uses = m_analyses.useLists();
-        return std::ranges::any_of(blocksWithParameters, [&](BlockID block) {
-            return std::ranges::any_of(m_function.at(block).parameters, [&](ValueID parameter) {
-                return !typeOf(parameter).isSubsetOf(*typeWithoutLeavingPaths[parameter.index()], m_program) && std::ranges::any_of(uses.usesOf(parameter), [](const Use& use) {
-                    return use.kind != Use::Kind::EdgeArgument;
-                });
-            });
-        });
+        return typeWithoutLeavingPaths;
     }
 
-    // A loop runs as often as what it calls and as what was inlined into it. What counts as hot was settled while the cycle through a generic version still counted as a loop around the loop, so a loop may stand under a threshold that it set itself. The thresholds of a very large program are constants.
-    bool runsCodeOfHotFunction(const NaturalLoop& loop)
+    // Whether the parameter is one object that the likely paths make but for what a leaving path passes: by itself the object need not be made.
+    bool isAllocationButForLeavingPaths(BlockID block, size_t position, const BitVector& leaves)
     {
-        const Heat& heat = m_context.inputs.heat;
-        if (heat.isOfVeryLargeProgram())
-            return false;
-        for (unsigned index = 0; index < loop.size(); ++index) {
-            const Block& block = m_function.at(loop.at(index));
-            if (block.frequency != BlockFrequency::Normal)
+        constexpr OpcodeSet allocations = opcodesInterpretedAs(Interpretation::Allocation);
+        ValueID passedOnLikelyPaths;
+        bool isPassedByLeavingPath = false;
+        for (Edge edge : m_analyses.cfg().incomingEdges(block)) {
+            const Arguments& arguments = targetOf(m_function, edge).arguments;
+            if (edge.isHandlerEdge() || position >= arguments.size())
+                return false;
+            if (leaves.get(edge.from.index())) {
+                isPassedByLeavingPath = true;
                 continue;
-            for (ValueID id : block.values) {
-                const Value& value = m_function.at(id);
-                if (value.opcode == Opcode::CallDirect && isHot(heat.of(m_program, value.function())))
-                    return true;
-                if (value.inlineFrame && isHot(heat.of(m_program, m_function.inlineFrames[value.inlineFrame].callee)))
+            }
+            if (passedOnLikelyPaths && passedOnLikelyPaths != arguments[position])
+                return false;
+            passedOnLikelyPaths = arguments[position];
+        }
+        return isPassedByLeavingPath && passedOnLikelyPaths && allocations.contains(m_function.at(passedOnLikelyPaths).opcode);
+    }
+
+    bool leavesAllocationAlone(const BitVector& isInLoop, const BitVector& leaves)
+    {
+        for (size_t index : isInLoop) {
+            if (leaves.get(index))
+                continue;
+            for (size_t position = 0; position < m_function.blocks[index].parameters.size(); ++position) {
+                if (isAllocationButForLeavingPaths(BlockID(index), position, leaves))
                     return true;
             }
         }
         return false;
     }
 
-    std::optional<SeparationPlan> planFor(const NaturalLoop& loop, bool mayCarryVariables)
+    // The copy pays where an operation reads a parameter that is wider only for what a leaving path passes.
+    bool narrowsParameter(const BitVector& isInLoop, const BitVector& leaves)
+    {
+        Vector<std::optional<Type>> typeWithoutLeavingPaths = typeParametersWithout(isInLoop, leaves);
+        const UseLists& uses = m_analyses.useLists();
+        for (size_t index = 0; index < typeWithoutLeavingPaths.size(); ++index) {
+            if (!typeWithoutLeavingPaths[index] || typeOf(ValueID(index)).isSubsetOf(*typeWithoutLeavingPaths[index], m_program))
+                continue;
+            bool isRead = std::ranges::any_of(uses.usesOf(ValueID(index)), [](const Use& use) {
+                return use.kind != Use::Kind::EdgeArgument;
+            });
+            if (isRead)
+                return true;
+        }
+        return false;
+    }
+
+    // A test of every turn that asks about what was there ahead of the loop has one answer once nothing that stays in the loop writes what it reads. The back end asks it ahead of the loop where the failing path does not come back into the loop.
+    bool leavesTestWithOneAnswer(const BitVector& isInLoop, const BitVector& leaves)
+    {
+        auto stays = [&](BlockID block) {
+            return isInLoop.get(block.index()) && !leaves.get(block.index());
+        };
+        LocationMasks writes;
+        bool runsOtherCode = false;
+        auto add = [&](const Effects& effects) {
+            runsOtherCode |= effects.mayRunOtherCode();
+            writes.merge(effects.writes);
+        };
+        for (size_t index : isInLoop) {
+            if (leaves.get(index))
+                continue;
+            for (ValueID value : m_function.blocks[index].values)
+                add(m_analyses.effectsOf(value).onAnyEdge());
+            add(m_analyses.effectsOfTerminator(BlockID(index)).onAnyEdge());
+        }
+        if (runsOtherCode)
+            return false;
+
+        BitVector changesBetweenTurns(m_function.values.size());
+        for (BlockID block : m_analyses.cfg().reversePostOrder()) {
+            if (!stays(block))
+                continue;
+            const Block& contents = m_function.at(block);
+            for (ValueID parameter : contents.parameters)
+                changesBetweenTurns.set(parameter.index());
+            for (ValueID id : contents.values) {
+                Effects effects = m_analyses.effectsOf(id).onAnyEdge();
+                bool changes = !effects.isUnobservable() || effects.reads.overlaps(writes);
+                m_function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
+                    changes |= changesBetweenTurns.get(operand.index());
+                });
+                if (changes)
+                    changesBetweenTurns.set(id.index());
+            }
+            const Terminator& terminator = contents.terminator;
+            if (terminator.kind != TerminatorKind::Branch || !contents.values.contains(terminator.conditionOperand()) || changesBetweenTurns.get(terminator.conditionOperand().index()))
+                continue;
+            if (m_analyses.effectsOf(terminator.conditionOperand()).onAnyEdge().reads.isEmpty())
+                continue;
+            if (std::ranges::any_of(terminator.targets, [&](const Target& target) { return leaves.get(target.block.index()); }))
+                return true;
+        }
+        return false;
+    }
+
+    // A loop that is only expected to run earns its copy when a number gets another representation on the likely paths and a value that is computed from itself in every iteration depends on it: the next iteration waits for that arithmetic. An integer costs the same in either width.
+    bool changesRepresentationOfLoopCarriedNumber(BlockID header, const BitVector& isInLoop, const BitVector& leaves)
+    {
+        const UseLists& uses = m_analyses.useLists();
+        auto stays = [&](BlockID block) {
+            return isInLoop.get(block.index()) && !leaves.get(block.index());
+        };
+        auto findDependents = [&](ValueID value) {
+            BitVector dependents(m_function.values.size());
+            Vector<ValueID, 16> worklist { value };
+            auto visit = [&](ValueID dependent) {
+                if (!dependents.set(dependent.index()))
+                    worklist.append(dependent);
+            };
+            while (!worklist.isEmpty()) {
+                for (const Use& use : uses.usesOf(worklist.takeLast())) {
+                    if (!stays(use.block))
+                        continue;
+                    if (use.kind == Use::Kind::Operand)
+                        visit(use.user);
+                    else if (use.kind == Use::Kind::EdgeArgument && stays(targetOf(m_function, use.edge()).block))
+                        visit(m_function.at(targetOf(m_function, use.edge()).block).parameters[use.operandIndex]);
+                    else if (use.kind == Use::Kind::TerminatorOperand) {
+                        // What a test proves about its operand is that operand.
+                        const Terminator& terminator = m_function.at(use.block).terminator;
+                        for (uint32_t targetIndex = 0; targetIndex < terminator.targets.size(); ++targetIndex) {
+                            if (!stays(terminator.targets[targetIndex].block))
+                                continue;
+                            for (ValueID result : m_function.at(terminator.targets[targetIndex].block).parameters.span().last(numberOfEdgeResults(m_function, use.block, targetIndex)))
+                                visit(result);
+                        }
+                    }
+                }
+            }
+            return dependents;
+        };
+
+        BitVector isComputedFromItself(m_function.values.size());
+        for (ValueID carried : m_function.at(header).parameters) {
+            if (findDependents(carried).get(carried.index()))
+                isComputedFromItself.set(carried.index());
+        }
+        if (isComputedFromItself.isEmpty())
+            return false;
+        Vector<std::optional<Type>> typeWithoutLeavingPaths = typeParametersWithout(isInLoop, leaves);
+        for (size_t index = 0; index < typeWithoutLeavingPaths.size(); ++index) {
+            const std::optional<Type>& narrowed = typeWithoutLeavingPaths[index];
+            const Type& type = typeOf(ValueID(index));
+            if (!narrowed || !narrowed->isNumber() || type.isInteger() || defaultRepresentationOf(type) == defaultRepresentationOf(*narrowed))
+                continue;
+            BitVector dependents = findDependents(ValueID(index));
+            dependents.filter(isComputedFromItself);
+            if (!dependents.isEmpty())
+                return true;
+        }
+        return false;
+    }
+
+    // What the likely paths make of a parameter that gets narrower may get narrower with it.
+    BitVector findValuesMadeOfNarrowedParameters(const BitVector& isInLoop, const BitVector& leaves, const Vector<std::optional<Type>>& typeWithoutLeavingPaths)
+    {
+        BitVector isMadeOfNarrowedParameter(m_function.values.size());
+        Vector<ValueID, 16> worklist;
+        for (size_t index = 0; index < typeWithoutLeavingPaths.size(); ++index) {
+            if (typeWithoutLeavingPaths[index] && !typeOf(ValueID(index)).isSubsetOf(*typeWithoutLeavingPaths[index], m_program))
+                worklist.append(ValueID(index));
+        }
+        auto stays = [&](BlockID block) {
+            return isInLoop.get(block.index()) && !leaves.get(block.index());
+        };
+        const UseLists& uses = m_analyses.useLists();
+        while (!worklist.isEmpty()) {
+            for (const Use& use : uses.usesOf(worklist.takeLast())) {
+                if (!stays(use.block))
+                    continue;
+                ValueID made;
+                if (use.kind == Use::Kind::Operand)
+                    made = use.user;
+                else if (use.kind == Use::Kind::EdgeArgument && stays(targetOf(m_function, use.edge()).block))
+                    made = m_function.at(targetOf(m_function, use.edge()).block).parameters[use.operandIndex];
+                if (made && !isMadeOfNarrowedParameter.set(made.index()))
+                    worklist.append(made);
+            }
+        }
+        return isMadeOfNarrowedParameter;
+    }
+
+    // A path that only computes leaves too where a parameter of the likely paths is wider for what it passes, or is an object of theirs but for that.
+    BitVector findLeavingBlocks(const NaturalLoop& loop, const BitVector& isInLoop, PathsThatOnlyCompute pathsThatOnlyCompute)
+    {
+        BitVector isUnlikely = findUnlikelyBlocks(loop);
+        BitVector leaves = findLeavingBlocks(isInLoop, isUnlikely, [&](BlockID block) {
+            return !onlyComputes(m_function.at(block));
+        });
+        if (pathsThatOnlyCompute == PathsThatOnlyCompute::Stay || leaves == isUnlikely)
+            return leaves;
+        Vector<std::optional<Type>> typeOnLikelyPaths = typeParametersWithout(isInLoop, isUnlikely);
+        BitVector mayGetNarrower = findValuesMadeOfNarrowedParameters(isInLoop, isUnlikely, typeOnLikelyPaths);
+        BitVector leavesWithPathsThatOnlyCompute = findLeavingBlocks(isInLoop, isUnlikely, [&](BlockID block) {
+            if (leaves.get(block.index()))
+                return true;
+            return std::ranges::any_of(m_function.at(block).terminator.targets, [&](const Target& target) {
+                const CompactList<ValueID>& parameters = m_function.at(target.block).parameters;
+                for (size_t position = 0; position < target.arguments.size(); ++position) {
+                    const std::optional<Type>& likely = typeOnLikelyPaths[parameters[position].index()];
+                    if (!likely)
+                        continue;
+                    const std::optional<Type>& passed = typeOnLikelyPaths[target.arguments[position].index()];
+                    if (mayGetNarrower.get(parameters[position].index()) || !(passed ? *passed : typeOf(target.arguments[position])).isSubsetOf(*likely, m_program))
+                        return true;
+                    if (isAllocationButForLeavingPaths(target.block, position, isUnlikely))
+                        return true;
+                }
+                return false;
+            });
+        });
+        m_pathThatOnlyComputesLeaves = leavesWithPathsThatOnlyCompute != leaves;
+        return leavesWithPathsThatOnlyCompute;
+    }
+
+    std::optional<SeparationPlan> planFor(const NaturalLoop& loop, bool mayCarryVariables, PathsThatOnlyCompute pathsThatOnlyCompute)
     {
         BlockID header = loop.header();
-        if (m_analyses.blockFrequencies().classOf(header) != BlockFrequency::Normal || (!isHot(heatClassOf(m_context, header)) && !runsCodeOfHotFunction(loop)))
+        // What is hot is a share of the program, so other code decides it. A loop that is expected to run is copied too when it is small and the copy shortens its loop-carried arithmetic.
+        bool isHot = isHotLoop(m_context, loop);
+        if (!isHot && (m_analyses.blockFrequencies().classOf(header) != BlockFrequency::Normal || isCold(heatClassOf(m_context, header))))
             return std::nullopt;
         if (!isHeaderOfLoopOfProgram(header))
             return std::nullopt;
@@ -2067,17 +2462,25 @@ struct LoopPathSeparator : LoopEditor {
             plan.typesOfCarriedValues.append(m_function.at(parameter).type);
         BitVector isInLoop(m_function.blocks.size());
         uint64_t bytes = 0;
+        uint64_t bytesOfLikelyPaths = 0;
         for (unsigned index = 0; index < loop.size(); ++index) {
             BlockID block = loop.at(index);
             if (m_isSeparatedHeader.get(block.index()))
                 return std::nullopt;
             isInLoop.set(block.index());
             plan.region.append(block);
-            bytes += estimatedCodeBytes(m_program, m_function, m_function.at(block));
+            uint64_t bytesOfBlock = estimatedCodeBytes(m_program, m_function, m_function.at(block));
+            bytes += bytesOfBlock;
+            if (m_analyses.blockFrequencies().classOf(block) == BlockFrequency::Normal)
+                bytesOfLikelyPaths += bytesOfBlock;
         }
+        // The likely paths end up in the program twice, and the longer an iteration is, the less of it waits for one number.
+        bool isShort = bytesOfLikelyPaths <= m_context.limit(LimitID::MaxBytesOfSeparatedLoop) / 8;
+        if (!isHot && !isShort)
+            return std::nullopt;
 
-        BitVector leaves = findLeavingBlocks(loop, isInLoop);
-        plan.letsVariablesBeCarried = mayCarryVariables && VariableCarrier { { m_context }, false }.letWritersOfVariablesLeave(loop, leaves);
+        BitVector leaves = findLeavingBlocks(loop, isInLoop, pathsThatOnlyCompute);
+        plan.letsVariablesBeCarried = isHot && mayCarryVariables && VariableCarrier { { m_context }, false }.letWritersOfVariablesLeave(loop, leaves);
         if (leaves.isEmpty() || leaves.get(header.index()))
             return std::nullopt;
         UnspecifiedValues unspecifiedValues(m_analyses);
@@ -2086,10 +2489,10 @@ struct LoopPathSeparator : LoopEditor {
             if (unspecifiedValues.mayContain(parameters[index]))
                 plan.carriedValuesThatMayBeUnspecified.set(index);
         }
-        bool movesTest = std::ranges::any_of(findTestsOfEveryTurn(loop, leaves, plan.carriedValuesThatMayBeUnspecified), [](TypeID tested) {
+        bool movesTest = isHot && std::ranges::any_of(findTestsOfEveryTurn(loop, leaves, plan.carriedValuesThatMayBeUnspecified), [](TypeID tested) {
             return !!tested;
         });
-        if (!movesTest && !plan.letsVariablesBeCarried && !narrowsParameter(isInLoop, leaves))
+        if (!movesTest && !plan.letsVariablesBeCarried && !(isHot ? narrowsParameter(isInLoop, leaves) || (isShort && (leavesAllocationAlone(isInLoop, leaves) || leavesTestWithOneAnswer(isInLoop, leaves))) : changesRepresentationOfLoopCarriedNumber(header, isInLoop, leaves)))
             return std::nullopt;
 
         BitVector isEntryOfCopy(m_function.blocks.size());
@@ -2220,7 +2623,7 @@ struct LoopPathSeparator : LoopEditor {
                     if (use.kind != Use::Kind::Operand || !loops.belongsTo(use.block, loop) || leavesLoop.get(use.block.index()))
                         continue;
                     const Value& user = m_function.at(use.user);
-                    if (user.opcode == Opcode::Upcast || user.opcode == Opcode::AssumeType) {
+                    if (isCastThatProvesNothing(user.opcode) || user.opcode == Opcode::AssumeType) {
                         sameValues.append(use.user);
                         continue;
                     }

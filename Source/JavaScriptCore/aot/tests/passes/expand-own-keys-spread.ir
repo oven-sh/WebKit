@@ -1,4 +1,4 @@
-# A spread into an object literal reads every slot of the source, then defines by name, and the copy by the run time stays on the rare path
+# A spread into an object literal reads every slot of the source, then defines by name, names and symbols in the order of the source, and the copy by the run time stays on the rare path
 # FORM: Prepared optimizing
 # OPTIONS: heat=EverythingIsHot
 # RUN: pass ExpandOwnKeys
@@ -27,12 +27,12 @@ function f0 name="expected" parameters=[{type=object}, {type=number}] results=[{
 # CHECK: = HasNoExtraProperties v0,
 # CHECK-NOT: PropDefine
 # CHECK: [[allA]]: guard = AllGuards
+# CHECK-NEXT: [[iteratorA]]: anything = GetSlot v0, [[allA]] key=@@iterator receivers=[L1] level=Expected
 # CHECK-NEXT: [[aA]]: undefined|null|number ~ number = GetSlot v0, [[allA]] key="a" receivers=[L1] level=Expected
 # CHECK-NEXT: [[bA]]: string = GetSlot v0, [[allA]] key="b" receivers=[L1] level=Expected
-# CHECK-NEXT: [[iteratorA]]: anything = GetSlot v0, [[allA]] key=@@iterator receivers=[L1] level=Expected
+# CHECK-NEXT: PropDefine v2, [[iteratorA]] key=@@iterator
 # CHECK-NEXT: PropDefine v2, [[aA]] key="a"
 # CHECK-NEXT: PropDefine v2, [[bA]] key="b"
-# CHECK-NEXT: PropDefine v2, [[iteratorA]] key=@@iterator
 # CHECK-NEXT: Jump -> next [[done0]]()
 # CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[3, 2, 1]
 # CHECK: [[allB]]: guard = AllGuards

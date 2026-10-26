@@ -25,7 +25,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 function f1 name="typed" parameters=[{type=string flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0):
-    v1 = Check v0 castType=string @100
+    v1 = Check v0 expectedType=string @100
     v2 = PropGet v1 key="length" @110
     v3 = Integer
     v4 = PropGet v1 key="charCodeAt" @120

@@ -8,7 +8,7 @@
 # CHECK: v3: object ~ L2 = NewObject v2 layout=L2
 # CHECK-LABEL: name="provenByFlow"
 # CHECK: v3: object ~ L0|L1 = NewObject v2 layout=L0
-# CHECK-NEXT: v4: L0 = AssumeType v3 castType=L0
+# CHECK-NEXT: v4: L0 = AssumeType v3 provenType=L0
 # CHECK-LABEL: name="withoutPrototype"
 # CHECK: v2: L0 = NewObject layout=L0
 
@@ -32,7 +32,7 @@ function f4 name="classWithoutSubclass" parameters=[{type=anything}, {type=anyth
 function f5 name="provenByFlow" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v2 = GetConstructPrototype v0 layout=L0
     v3 = NewObject v2 layout=L0
-    v4 = AssumeType v3 castType=L0
+    v4 = AssumeType v3 provenType=L0
     Return v4
 }
 function f6 name="withoutPrototype" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {

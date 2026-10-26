@@ -300,7 +300,7 @@ void ObjectInterpreter::executeCast(ValueID id)
     }
 
     if (function().at(id).opcode == Opcode::AssumeType)
-        stateOf(object)->assume(function().at(id).castType());
+        stateOf(object)->assume(function().at(id).provenType());
     if (!m_sinking.decisions().holdsCells(id)) {
         bind(id, object);
         return;
@@ -372,7 +372,65 @@ void ObjectInterpreter::executeOther(ValueID id)
 {
     requireCellsOfOperands(id);
     forgetFieldsWrittenBy(id);
+    if (isRewriting() && numberOfHeldOperandsOf(function().at(id)))
+        holdMembersOfUnbuiltObjects(id);
     keep(id);
+}
+
+// A suspended function holds an object as an object holds a field. Of an object that is not built here it holds what the object would hold.
+void ObjectInterpreter::holdMembersOfUnbuiltObjects(ValueID suspension)
+{
+    auto isUnbuilt = [&](VirtualObjectID object) {
+        return object && !stateOf(object)->isCell();
+    };
+    Vector<ValueID, 8> held;
+    Vector<VirtualObjectID, 4> unbuilt;
+    BitVector isBuilt;
+    for (ValueID operand : heldOperandsOf(function().at(suspension))) {
+        VirtualObjectID object = objectOf(operand);
+        if (isUnbuilt(object)) {
+            unbuilt.append(object);
+            continue;
+        }
+        held.append(operand);
+        if (object)
+            isBuilt.set(object.index());
+    }
+    if (unbuilt.isEmpty())
+        return;
+
+    BitVector isReached;
+    while (!unbuilt.isEmpty()) {
+        VirtualObjectID object = unbuilt.takeLast();
+        if (!isReached.add(object.index()))
+            continue;
+        if (const ObjectState* state = m_state.find(object)) {
+            for (const HeldObject& member : state->heldObjects)
+                unbuilt.append(member.object);
+        }
+    }
+
+    Function& rewritten = cursor().builder().function();
+    BitVector isListed;
+    for (ValueID operand : held)
+        isListed.set(operand.index());
+    auto hold = [&](ValueID member) {
+        if (member && !isUnbuilt(objectOf(member)) && mayHoldObject(program().typeOf(rewritten, member)) && !isListed.set(member.index()))
+            held.append(member);
+    };
+    for (const ObjectEntry& entry : m_state.objects) {
+        if (isBuilt.get(entry.object.index()) || !isReached.get(entry.object.index()))
+            continue;
+        const ObjectValues* members = values().find(entry.object);
+        if (!members)
+            continue;
+        if (entry.state.hasCell())
+            hold(members->cell);
+        // A member that is built holds its own members.
+        if (!entry.state.isCell())
+            std::ranges::for_each(members->fields, hold);
+    }
+    setHeldOperands(rewritten.edit(suspension), held.span());
 }
 
 void ObjectInterpreter::executeOnCell(ValueID id, uint32_t operandIndex)
@@ -517,6 +575,8 @@ void ObjectInterpreter::requireCellsOfOperands(ValueID id, BuiltinCallForm formO
     bool passesRange = false;
     Opcode opcode = function().at(id).opcode;
     for (auto [operand, index] : indexedOperandsOf(function().at(id))) {
+        if (isHeldOperand(function().at(id), index))
+            continue;
         bool isGuard = operandKindOf(opcode, index) == OperandKind::Guard;
         if (VirtualObjectID range = bytes && bytes->operandIndexes.contains(index) ? objectOf(operand) : VirtualObjectID(); range && isRangeOfView(range)) {
             requireCellOfHeldObject(range, *m_sinking.familyOf(range).findField(VirtualField::operand(OperandIndex::TypedArrayRange::view)), causeOf(id, index));
@@ -1064,8 +1124,24 @@ void ObjectInterpreter::assumeTypeOfAlias(VirtualObjectID object, TypeID type)
 void ObjectInterpreter::executeDynamicElementRead(ValueID read, VirtualObjectID object, ValueID index)
 {
     TypeID type = function().at(read).type;
+    // A position that by its type lies inside a list without holes finds an element.
+    auto findsElementAtEveryPosition = [&] {
+        uint32_t length = singleShapeOf(object).length;
+        const Type& position = program().typeOf(function(), index);
+        if (!position.isInteger() || !position.integers.isSubsetOf(Range { 0, static_cast<int64_t>(length) - 1 }))
+            return false;
+        for (uint32_t listed = 0; listed < length; ++listed) {
+            if (!findListedElement(object, listed))
+                return false;
+        }
+        return true;
+    };
+    bool findsElement = false;
     auto takesEveryElement = [&] {
-        if (!hasListedElements(object) || !mayBeUndefined(program().at(type)))
+        if (!hasListedElements(object))
+            return false;
+        findsElement = findsElementAtEveryPosition();
+        if (!findsElement && !mayBeUndefined(program().at(type)))
             return false;
         const VirtualShape& shape = shapeOf(object, stateOf(object)->variants[0]);
         return isWithin(program(), m_sinking.familyOf(object).descriptionOf(shape).elementType, type);
@@ -1077,10 +1153,11 @@ void ObjectInterpreter::executeDynamicElementRead(ValueID read, VirtualObjectID 
     if (!isRewriting())
         return;
 
-    ValueID none = emitUndefined();
+    ValueID none = findsElement ? ValueID() : emitUndefined();
     Vector<ValueID, 8> elements = listedElementsOf(object);
+    ValueID otherwise = findsElement ? elements.takeLast() : none;
     if (elements.isEmpty()) {
-        replaceRead(read, none);
+        replaceRead(read, otherwise);
         return;
     }
 
@@ -1091,7 +1168,7 @@ void ObjectInterpreter::executeDynamicElementRead(ValueID read, VirtualObjectID 
     cases.reserveInitialCapacity(elements.size());
     for (size_t position = 0; position < elements.size(); ++position)
         cases.append({ static_cast<int64_t>(position), Target { continuation, { elements[position] }, { } } });
-    builder.emitSwitch(resolve(index), WTF::move(cases), Target { continuation, { none }, { } });
+    builder.emitSwitch(resolve(index), WTF::move(cases), Target { continuation, { otherwise }, { } });
     cursor().moveTo(continuation);
     replaceRead(read, result);
 }
@@ -1329,7 +1406,7 @@ ValueID ObjectInterpreter::valueOfField(VirtualObjectID object, uint32_t field, 
     ValueID value = valueOfField(object, field);
     if (isWithin(program(), function().at(value).type, typeInVariants))
         return value;
-    return cursor().emit(makeAssumeType(value, typeInVariants));
+    return cursor().emit(makeAssumeType(value, Proven::byConstruction(typeInVariants)));
 }
 
 ValueID ObjectInterpreter::emitUndefined()
@@ -1822,7 +1899,6 @@ void convertListCall(Value& call, std::span<const ValueID> elements)
         call.setCalleeKey(listCall.calleeKey());
         call.setCalleeName(listCall.calleeName());
         call.setExpectedResult(listCall.expectedResult());
-        call.setIsDemotedTailCall(listCall.isDemotedTailCall());
         break;
     case Opcode::ConstructList:
         call.become(Opcode::Construct);
@@ -2596,7 +2672,8 @@ void ObjectInterpreter::buildByTag(VirtualObjectID object, Vector<LateFieldStore
     };
 
     IRBuilder& builder = cursor().builder();
-    const ObjectState& state = *stateOf(object);
+    // An arm that builds a member by its own tag takes that member's members out of the state, which moves the entries behind them.
+    const ObjectState state = *stateOf(object);
     Vector<HeldObject, 2> heldObjectsOfArms;
     Vector<MemberOfArms, 2> membersOfArms;
     for (const HeldObject& held : state.heldObjects) {
@@ -2642,7 +2719,10 @@ void ObjectInterpreter::buildByTag(VirtualObjectID object, Vector<LateFieldStore
         const ObjectVariant& variant = state.variants[index];
         cursor().moveTo(arms[index]);
         for (const MemberOfArms& member : membersOfArms) {
-            *stateOf(member.member) = member.state;
+            if (ObjectState* stateOfMember = stateOf(member.member))
+                *stateOfMember = member.state;
+            else
+                m_state.add(member.member, ObjectState(member.state));
             values().ensure(member.member) = member.values;
         }
         for (const HeldObject& held : heldObjectsOfArms) {
@@ -2754,7 +2834,7 @@ ValueID ObjectInterpreter::resolve(ValueID value)
     TypeID type = function().at(value).type;
     if (!type || function().at(cell).type == type || program().typeOf(function(), cell).isSubsetOf(program().at(type), program()))
         return cell;
-    return cursor().emit(makeAssumeType(cell, type));
+    return cursor().emit(makeAssumeType(cell, Proven::byConstruction(type)));
 }
 
 ValueID ObjectInterpreter::cellOf(VirtualObjectID object)
@@ -2776,7 +2856,7 @@ ValueID ObjectInterpreter::cellOf(VirtualObjectID object)
             continue;
         if (m_sinking.context().build.validates() && function().at(cell).opcode != Opcode::Parameter)
             cursor().emit(makeValidateType(cell, assumedType));
-        cell = cursor().emit(makeAssumeType(cell, assumedType));
+        cell = cursor().emit(makeAssumeType(cell, Proven::byConstruction(assumedType)));
     }
     return cell;
 }

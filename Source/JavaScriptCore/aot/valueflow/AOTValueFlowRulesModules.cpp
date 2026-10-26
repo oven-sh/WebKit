@@ -144,21 +144,6 @@ static bool isEvaluatedWithImporter(ValueFlowRuleContext& context, const ModuleR
     return context.isReached(program.at(request.target).body) || exportsUsedNameAgain(context, request.target);
 }
 
-static bool hasExportTable(ModuleKind kind)
-{
-    switch (kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::Data:
-        return true;
-    case ModuleKind::CommonJs:
-    case ModuleKind::RuntimeSource:
-    case ModuleKind::Runtime:
-    case ModuleKind::External:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static bool mayHaveExportsNobodyLists(const Module& module)
 {
     if (module.kind != ModuleKind::SourceText || module.exportRule != SyntheticExportRule::None)
@@ -284,7 +269,7 @@ static ValueFlowSources defaultExportOf(ValueFlowRuleContext& context, ModuleID 
 {
     const Program& program = context.program();
     const Module& module = program.at(id);
-    if (!hasExportTable(module.kind))
+    if (!hasExportTableOf(module.kind))
         return moduleExportsValueOf(context, id);
     if (const ModuleExport* entry = findExport(module, program.stringOf(BuiltinNames::defaultKeyword)))
         return exportedValueOf(context, *entry);
@@ -679,31 +664,15 @@ void runModuleEvaluation(const ValueFlowStatement& statement, ValueFlowRuleConte
     }
 }
 
-bool isModuleOperation(Opcode opcode)
-{
-    switch (opcode) {
-    case Opcode::Builtin:
-    case Opcode::ModuleNamespace:
-    case Opcode::ImportModule:
-    case Opcode::RequireModule:
-    case Opcode::EvaluateModule:
-    case Opcode::ImportDynamic:
-    case Opcode::RequireDynamic:
-    case Opcode::RequireBuiltinModule:
-    case Opcode::ResolveDynamic:
-    case Opcode::DirectEval:
-    case Opcode::NativeBinding:
-        return true;
-    default:
-        return false;
-    }
-}
-
 static void requireModule(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ModuleID module)
 {
     noteRequest(context, statement.function, module);
     evaluateModule(context, module);
     connect(context, requiredValueOf(context, module), statement.result);
+    const BuiltinTable& builtins = context.program().builtins();
+    RuntimeModuleID runtimeModule = context.program().at(module).runtimeModule;
+    if (BuiltinID object = runtimeModule ? builtins.namespaceOf(runtimeModule) : BuiltinID(); object && statement.result && builtins.canonicalID(object) == Builtins::Bun)
+        context.add(statement.result, only(context, ValueFlowUniverse::markOfLoadedBun()));
     connect(context, evaluationErrorsOf(context, module), statement.thrown ? statement.thrown : ValueFlowProgramNodes::escaped());
 }
 
@@ -789,7 +758,12 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
 
     switch (statement.opcode) {
     case Opcode::Builtin:
-        requireModule(statement, context, compiledModuleWithObject(program, program.builtins().canonicalID(operation.builtin())));
+        if (ModuleID module = compiledModuleWithObject(program, program.builtins().canonicalID(operation.builtin())))
+            requireModule(statement, context, module);
+        else if (statement.result) {
+            context.add(statement.result, only(context, context.universe().objectOf(operation.builtin())));
+            context.add(statement.result, only(context, ValueFlowUniverse::markOfLoadedBun()));
+        }
         return;
     case Opcode::ModuleNamespace:
         noteRequest(context, statement.function, operation.module());
@@ -798,6 +772,7 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
         connect(context, evaluationErrorsOf(context, operation.module()), statement.thrown ? statement.thrown : ValueFlowProgramNodes::escaped());
         return;
     case Opcode::ImportModule:
+        escapeOperands(statement, context);
         noteRequest(context, statement.function, operation.module());
         evaluateModule(context, operation.module());
         context.connect(context.lookup(valueOf(context, namespaceOf(context, operation.module())), awaitedValueName), settledValueOfPromiseAt(statement, context));

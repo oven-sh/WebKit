@@ -41,13 +41,13 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     PutModuleVariable v14 variable=g4
     Return
 # CHECK: [[call]]: anything ~ boolean = CallDirect v11 function=f1
-# CHECK-NEXT: [[tested]]: boolean = Check [[call]] castType=boolean site=w0 cause=AddedByPass
+# CHECK-NEXT: [[tested]]: boolean = Check [[call]] expectedType=boolean site=w0 cause=AddedByPass
 # CHECK-NEXT: PutModuleVariable [[tested]] variable=g4
 # CHECK-NEXT: [[otherCall]]: anything ~ boolean = CallDirect v11 function=f3
-# CHECK-NEXT: [[otherTested]]: boolean = Check [[otherCall]] castType=boolean site=w2 cause=AddedByPass
+# CHECK-NEXT: [[otherTested]]: boolean = Check [[otherCall]] expectedType=boolean site=w2 cause=AddedByPass
 # CHECK-NEXT: PutModuleVariable [[otherTested]] variable=g4
 # APPLIED: : anything ~ boolean = CallDirect v11 function=f1
-# APPLIED-NEXT: = Check {{*}}castType=boolean site=w0
+# APPLIED-NEXT: = Check {{*}}expectedType=boolean site=w0
 # APPLIED: : boolean = CallDirect v11 function=f3
 }
 function f1 name="even" flags=[IsChecked] parameters=[{type=number}] results=[{type=boolean site=w0}] {

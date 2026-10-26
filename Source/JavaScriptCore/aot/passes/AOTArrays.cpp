@@ -24,6 +24,7 @@
 #include "AOTIRProgram.h"
 #include "AOTInlineBuiltinForms.h"
 #include "AOTIntegerRelations.h"
+#include "AOTPlaceTypeTestsPlan.h"
 #include "AOTProgramPasses.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTResolveAccesses.h"
@@ -190,7 +191,10 @@ const ChainMethod* findChainMethod(BuiltinID id)
 static std::optional<ArrayMethodCall> libraryMethodCallOf(const Program& program, const Function& function, ValueID id)
 {
     const BuiltinTable& table = program.builtins();
+    // A version of the method for the callback that it is handed takes the operands of the method.
     FunctionID callee = function.at(id).function();
+    while (program.at(callee).role == FunctionRole::CalleeVersion)
+        callee = program.at(callee).derivation.source;
     const Function& target = program.at(callee);
     const RuntimeFunctionEntry* entry = findRuntimeFunction(program, target.enclosingRuntimeFunction);
     if (!entry || entry->function != callee)
@@ -267,8 +271,8 @@ Function buildChainStep(const DerivedFunctionKey& key, DerivedFunctionInputs& in
     step.kind = traversal.kind;
     step.role = FunctionRole::ChainStep;
     step.flags = traversal.flags & FunctionFlags::IsHiddenInStackTraces;
-    step.thisType = DeclaredType { .type = TypeTable::anything };
-    step.results.append(DeclaredType { .type = TypeTable::anything });
+    step.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
+    step.results.append(DeclaredType(Proven::byPosition(TypeTable::anything)));
     step.capabilities = initialCapabilitiesOf(step);
     step.creator = CreatorRecord::ChainStep { };
 
@@ -276,7 +280,7 @@ Function buildChainStep(const DerivedFunctionKey& key, DerivedFunctionInputs& in
     builder.setOrigin({ traversal.position, 0 });
     BlockID block = builder.addBlock();
     auto addParameter = [&] {
-        step.parameters.append(DeclaredType { .type = TypeTable::anything });
+        step.parameters.append(DeclaredType(Proven::byPosition(TypeTable::anything)));
         return builder.addParameter(block, TypeTable::anything);
     };
     ValueID array = addParameter();
@@ -355,7 +359,7 @@ Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector
             break;
         }
         FunctionID callee = call.arguments.isEmpty() ? FunctionID() : calleeOf(call.arguments[0]);
-        return callee && program.at(callee).results.size() == 1 && arrayStorageAtAllocation(program.at(program.at(callee).results[0].type)) != ArrayStorage::Contiguous;
+        return callee && program.at(callee).results.size() == 1 && arrayStorageAtAllocation(program.at(program.at(callee).results[0].expected().predicted())) != ArrayStorage::Contiguous;
     };
     auto takeEnd = [&](ArrayChain& chain, const ArrayMethodCall& last) {
         switch (last.method->end) {
@@ -440,7 +444,19 @@ Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector
             }
         }
     };
+    // No copy of the traversal goes into a copy of the traversal. A traversal that is called costs more than the methods that it stands for, and a trace names none of them.
+    FunctionID traversal = findChainTraversal(program);
+    auto standsInTraversal = [&](ValueID call) {
+        for (uint32_t frame = function.at(call).inlineFrame; frame; frame = function.inlineFrames[frame].parent) {
+            if (function.inlineFrames[frame].callee == traversal)
+                return true;
+        }
+        return false;
+    };
+
     auto tryChain = [&](BlockID block, const ArrayMethodCall& last) {
+        if (standsInTraversal(last.call))
+            return;
         ArrayChain chain;
         chain.block = block;
         chain.lastCall = last.call;
@@ -566,8 +582,8 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
     }
     if (chain.shape.end == ChainEndKind::FlatMap) {
         FunctionID mapper = chain.callbacks.last().callee;
-        bool hasProvenResult = mapper && program.at(mapper).results.size() == 1 && !program.at(mapper).result().flags.contains(PositionFlags::IsExpected);
-        const Type* parts = hasProvenResult ? &program.at(program.at(mapper).result().type) : nullptr;
+        bool hasProvenResult = mapper && program.at(mapper).results.size() == 1 && !program.at(mapper).result().isExpected();
+        const Type* parts = hasProvenResult ? &program.at(*program.at(mapper).result().established()) : nullptr;
         if (!parts || (parts->hasObjects() && !pristineAspectsProvenBy(*parts, BuiltinClasses::Array).contains(PristineAspects::Storage)))
             effects.last().merge(context.inputs.effects.unknownCode());
     }
@@ -678,18 +694,39 @@ static void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, 
     }
     ProgramPoint point { chain.block, indexInBlock(chain.lastCall) };
 
-    // The traversal stands for one call of a built-in that is written in JavaScript: a trace that is taken in the callback names the built-in between the callback and the caller, as it does where the text of the built-in takes the place of the call.
+    // The traversal stands for calls of built-ins that are written in JavaScript: a trace that is taken in a callback names the built-in between the callback and the caller, at the place of its own call, as it does where the text of the built-in takes the place of the call.
     // `flatMap` ends in a tail call of the helper that calls the callback, and a trace names neither.
-    std::optional<Origin> originInBuiltin;
-    if (const Value& onlyCall = function.at(chain.lastCall); chain.firstCall() == chain.lastCall && shape.end == ChainEndKind::Array && onlyCall.opcode == Opcode::CallDirect) {
-        const Function& builtin = context.program.at(onlyCall.function());
-        Vector<InlineFrame>& frames = function.inlineFrames;
+    Vector<InlineFrame>& frames = function.inlineFrames;
+    auto appendFrame = [&](const InlineFrame& frame) {
         if (frames.isEmpty())
             frames.append(InlineFrame { });
-        frames.append(InlineFrame { .callee = onlyCall.function(), .callPosition = onlyCall.position, .parent = onlyCall.inlineFrame, .isTailCall = onlyCall.isDemotedTailCall(), .module = builtin.module });
-        originInBuiltin = Origin { builtin.position, static_cast<uint32_t>(frames.size() - 1) };
+        frames.append(frame);
+        return static_cast<uint32_t>(frames.size() - 1);
+    };
+    auto appendFrameOfBuiltin = [&](ValueID id) -> std::optional<Origin> {
+        const Value& call = function.at(id);
+        if (call.opcode != Opcode::CallDirect)
+            return std::nullopt;
+        const Function& builtin = context.program.at(call.function());
+        return Origin { builtin.position, appendFrame({ .callee = call.function(), .callPosition = call.position, .parent = call.inlineFrame, .isTailCall = !!call.isTailCall, .module = builtin.module }) };
+    };
+    Origin origin = function.at(chain.lastCall).origin();
+    if (shape.end != ChainEndKind::FlatMap)
+        origin = appendFrameOfBuiltin(chain.lastCall).value_or(origin);
+    std::span<const ChainCallback> links = chain.callbacks.span().first(shape.numberOfLinks());
+    bool linksHavePlacesOfTheirOwn = std::ranges::any_of(links, [&](const ChainCallback& link) {
+        return link.call != chain.lastCall;
+    });
+    bool linksAreWrittenInJavaScript = std::ranges::all_of(links, [&](const ChainCallback& link) {
+        return function.at(link.call).opcode == Opcode::CallDirect;
+    });
+    if (linksHavePlacesOfTheirOwn && linksAreWrittenInJavaScript) {
+        // The frames of the links stand in a row in front of the frame of the site, which is where the copy of the traversal looks for them.
+        for (const ChainCallback& link : links)
+            appendFrameOfBuiltin(link.call);
+        const Function& traversal = context.program.at(findChainTraversal(context.program));
+        origin = Origin { traversal.position, appendFrame({ .callee = step, .callPosition = origin.position, .parent = origin.inlineFrame, .isTailCall = origin.isTailCall, .module = traversal.module }) };
     }
-    Origin origin = originInBuiltin ? *originInBuiltin : function.at(chain.lastCall).origin();
     TypeID resultType = function.at(chain.lastCall).type;
     size_t numberOfValuesBeforeInsertions = function.at(chain.block).values.size();
 
@@ -728,12 +765,10 @@ static void rewriteArrayChain(FunctionPassContext& context, IRBuilder& builder, 
     }
 
     Value call = makeDirectCall(insertion, { .callee = step, .arguments = arguments.span() });
-    const Value& lastCall = function.at(chain.lastCall);
-    call.setIsDemotedTailCall(!originInBuiltin && FlagMask::isDemotedTailCall(lastCall.opcode) && lastCall.isDemotedTailCall());
     // A step that is called calls each callback by value, and costs more than the methods that it stands for.
     call.setIsAlwaysInlined(true);
     ValueID fused = insert(WTF::move(call));
-    ValueID converted = convertTo(insertion, fused, DeclaredType { .type = resultType });
+    ValueID converted = convertTo(insertion, fused, DeclaredType(Proven::byPosition(resultType)));
     builder.applyInsertions();
 
     ValueSubstitution substitution(function);
@@ -768,6 +803,27 @@ static bool endsGuardInUse(FunctionAnalyses& analyses)
     return false;
 }
 
+// The proof of a test that nobody has relied on is no value, and whoever asks what is proven at a place asks about values.
+static bool takeProofsOfPristineTests(FunctionPassContext& context, ValueID array)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    ValueID subject = analyses.identityOf(array);
+    Vector<Edge, 2> passingEdges;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (!terminator.isConditionalBranch() || !terminator.taken().proofs.isEmpty())
+            continue;
+        const Value& test = function.at(terminator.conditionOperand());
+        if (test.opcode == Opcode::IsPristine && analyses.identityOf(test.operand(0)) == subject)
+            passingEdges.append(Edge { block, 0 });
+    }
+    IRBuilder builder(analyses.context(), function, context.types, &analyses);
+    for (Edge edge : passingEdges)
+        ensureEdgeResult(builder, analyses, edge, 0);
+    return !passingEdges.isEmpty();
+}
+
 PassOutcome fuseArrayMethodsTakenAlone(FunctionPassContext& context, const BitVector& calls)
 {
     if (context.function.role == FunctionRole::ChainStep || context.function.enclosingRuntimeFunction)
@@ -777,19 +833,25 @@ PassOutcome fuseArrayMethodsTakenAlone(FunctionPassContext& context, const BitVe
         return PassOutcome::Unchanged;
 
     Vector<ArrayChain> accepted;
+    PassOutcome outcomeWithoutChain = PassOutcome::Unchanged;
     for (ArrayChain& chain : findArrayChains(context, &calls)) {
         ArrayChainDeclineReason obstacle = checkInterleaving(context, chain);
+        // Only for a call that is copied in if it stays: a chain that stays as it is would take the proofs again in every round, behind whoever drops what nobody uses.
+        if (obstacle == ArrayChainDeclineReason::SourceIsNotPristine && calls.get(chain.lastCall.index()) && takeProofsOfPristineTests(context, chain.source)) {
+            outcomeWithoutChain = PassOutcome::Changed;
+            obstacle = checkInterleaving(context, chain);
+        }
         if (obstacle == ArrayChainDeclineReason::None)
             accepted.append(WTF::move(chain));
         else
             context.addDecline(Wire::DeclineKind::ArrayChainNotFused, chain.lastCall, obstacle);
     }
     if (accepted.isEmpty())
-        return PassOutcome::Unchanged;
+        return outcomeWithoutChain;
     auto declineAll = [&] {
         for (const ArrayChain& chain : accepted)
             context.addDecline(Wire::DeclineKind::ArrayChainNotFused, chain.lastCall, ArrayChainDeclineReason::Unknown);
-        return PassOutcome::Unchanged;
+        return outcomeWithoutChain;
     };
     // The traversal is library code.
     const EffectContext& effects = context.analyses.effectContext();
@@ -853,6 +915,8 @@ struct LiteralPlan {
     Vector<ElementStore> stores { };
     ValueID array { };
     ValueID lengthOfArray { };
+    // The elements are appended in their order to an empty array of the literal's type. A store without an element appends a hole.
+    bool appendsElements { false };
 };
 
 struct DominatorChain {
@@ -870,8 +934,15 @@ struct DominatorChain {
 PassOutcome expandLongArrayLiterals(FunctionPassContext& context)
 {
     Function& function = context.function;
-    auto isComputedElement = [&](ValueID element) {
-        return !isRematerializable(function.at(element)) && !context.program.typeOf(function, element).isNumber();
+    // The code generator makes a constant that is no number where it is defined, so the constants of a very long literal are stored one by one too.
+    AOT_THRESHOLD(size_t, maxConstantsMadeBeforeAllocation, 4095);
+    auto isStoredWhenMade = [&](const Value& literal, ValueID element) {
+        bool countsConstants = literal.elementsOperands().size() > maxConstantsMadeBeforeAllocation;
+        return (countsConstants || !isRematerializable(function.at(element))) && !context.program.typeOf(function, element).isNumber();
+    };
+    // Numbers decide the form of the array that holds them, so a very long list of computed numbers is appended to an array that starts in the form of the literal.
+    auto isComputed = [&](ValueID element) {
+        return !isRematerializable(function.at(element));
     };
     Vector<LiteralPlan> plans;
     for (size_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
@@ -880,9 +951,16 @@ PassOutcome expandLongArrayLiterals(FunctionPassContext& context)
             const Value& value = function.at(values[index]);
             if (value.opcode != Opcode::NewArray)
                 continue;
-            uint64_t numberOfComputedElements = std::ranges::count_if(value.elementsOperands(), isComputedElement);
-            if (context.exceeds(LimitID::MaxArrayLiteralBatch, numberOfComputedElements, values[index]))
+            uint64_t numberOfComputedElements = std::ranges::count_if(value.elementsOperands(), [&](ValueID element) {
+                return isStoredWhenMade(value, element);
+            });
+            bool storesElements = context.exceeds(LimitID::MaxArrayLiteralBatch, numberOfComputedElements, values[index]);
+            bool appendsElements = !storesElements && !value.capacityOperand() && value.literalStorage() == ArrayLiteralStorage::Fresh && value.storage() == AllocationStorage::Heap
+                && static_cast<size_t>(std::ranges::count_if(value.elementsOperands(), isComputed)) > maxConstantsMadeBeforeAllocation;
+            if (storesElements || appendsElements) {
                 plans.append({ values[index], static_cast<uint32_t>(value.elementsOperands().size() + value.holes().size()), { BlockID(blockIndex), index } });
+                plans.last().appendsElements = appendsElements;
+            }
         }
     }
     if (plans.isEmpty())
@@ -965,7 +1043,7 @@ PassOutcome expandLongArrayLiterals(FunctionPassContext& context)
         if (cfg.isReachable(point.block)) {
             Vector<ChainPoint, 8> ownAvailabilities;
             for (ValueID element : literal.elementsOperands()) {
-                bool isOwnElement = !visitedElements.quickSet(element.index()) && isComputedElement(element) && std::ranges::all_of(useLists.usesOf(element), [&](const Use& use) {
+                bool isOwnElement = !visitedElements.quickSet(element.index()) && (plan.appendsElements ? isComputed(element) : isStoredWhenMade(literal, element)) && std::ranges::all_of(useLists.usesOf(element), [&](const Use& use) {
                     return use.kind == Use::Kind::Operand && use.user == plan.literal;
                 });
                 if (isOwnElement)
@@ -985,11 +1063,27 @@ PassOutcome expandLongArrayLiterals(FunctionPassContext& context)
 
         std::span<const uint32_t> holes = literal.holes();
         uint32_t arrayIndex = 0;
+        ChainPoint lastAppend = allocation;
+        auto programPointOf = [&](ChainPoint storePoint) {
+            return allocation.isEarlierThan(storePoint) ? chain->programPointOf(storePoint) : plan.allocation;
+        };
         for (ValueID element : literal.elementsOperands()) {
-            for (; !holes.empty() && holes.front() == arrayIndex; holes = holes.subspan(1))
+            for (; !holes.empty() && holes.front() == arrayIndex; holes = holes.subspan(1)) {
+                if (plan.appendsElements)
+                    plan.stores.append({ programPointOf(lastAppend), arrayIndex, ValueID() });
                 ++arrayIndex;
+            }
             ChainPoint availability = chain ? chain->moveToUsableBlock(availabilityOf(element)) : allocation;
-            plan.stores.append({ allocation.isEarlierThan(availability) ? chain->programPointOf(availability) : plan.allocation, arrayIndex++, element });
+            if (plan.appendsElements) {
+                if (lastAppend.isEarlierThan(availability))
+                    lastAppend = availability;
+                availability = lastAppend;
+            }
+            plan.stores.append({ programPointOf(availability), arrayIndex++, element });
+        }
+        if (plan.appendsElements) {
+            for (; !holes.empty(); holes = holes.subspan(1))
+                plan.stores.append({ programPointOf(lastAppend), arrayIndex++, ValueID() });
         }
     }
 
@@ -997,14 +1091,25 @@ PassOutcome expandLongArrayLiterals(FunctionPassContext& context)
     auto insertStores = [&](const LiteralPlan& plan, bool standBehindAllocation) {
         builder.setOrigin(function.at(plan.literal).origin());
         for (const ElementStore& store : plan.stores) {
-            if ((store.point == plan.allocation) == standBehindAllocation)
+            if ((store.point == plan.allocation) != standBehindAllocation)
+                continue;
+            if (!plan.appendsElements)
                 builder.insertBefore(store.point, IRBuilder::make(Opcode::PutContiguousIndex, { plan.array, builder.insertBefore(store.point, makeInteger(store.arrayIndex)), store.element }));
+            else if (store.element)
+                builder.insertBefore(store.point, IRBuilder::make(Opcode::AppendElement, { plan.array, store.element }));
+            else
+                builder.insertBefore(store.point, IRBuilder::make(Opcode::AppendHole, { plan.array }));
         }
     };
     for (LiteralPlan& plan : plans) {
         builder.setOrigin(function.at(plan.literal).origin());
         plan.lengthOfArray = builder.insertBefore(plan.allocation, makeInteger(plan.length));
-        Value allocation = IRBuilder::make(Opcode::NewContiguousArray, { plan.lengthOfArray });
+        Value allocation = plan.appendsElements ? IRBuilder::make(Opcode::NewArray) : IRBuilder::make(Opcode::NewContiguousArray, { plan.lengthOfArray });
+        if (plan.appendsElements) {
+            allocation.setContents(function.at(plan.literal).contents());
+            allocation.setArrayStorage(function.at(plan.literal).arrayStorage());
+            allocation.setCapacityOperand(plan.lengthOfArray);
+        }
         allocation.setAllocationSite(function.at(plan.literal).allocationSite());
         plan.array = builder.insertBefore(plan.allocation, WTF::move(allocation));
         insertStores(plan, true);
@@ -1280,7 +1385,7 @@ static TypeID testedTypeOfKey(const TestSiteReporter& reporter, ValueID key)
 {
     if (TypeID tested = testedTypeOfPrimitive(reporter, key))
         return tested;
-    bool mayBeIndex = !reporter.function().at(key).expected() && reporter.typeOf(key).overlaps(reporter.types().at(TypeTable::int32), reporter.program());
+    bool mayBeIndex = !reporter.function().at(key).expected().predicted() && reporter.typeOf(key).overlaps(reporter.types().at(TypeTable::int32), reporter.program());
     return mayBeIndex ? TypeTable::int32 : TypeID();
 }
 

@@ -32,7 +32,7 @@ function f0 name="besideALayoutThatIsNeverAllocated" parameters=[{type=L0|L1|L2}
 # CHECK: Branch v3 -> taken
 # CHECK-NOT: Branch
 # CHECK-NOT: = Undefined
-# CHECK: [[round0]]: L0 = AssumeType v0 castType=L0
+# CHECK: [[round0]]: L0 = AssumeType v0 provenType=L0
 # CHECK-NEXT: = GetSlot [[round0]] key="r"
 # CHECK-NOT: Branch
 # CHECK-NOT: = Undefined

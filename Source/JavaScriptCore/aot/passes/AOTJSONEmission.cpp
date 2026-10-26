@@ -99,13 +99,13 @@ DerivedFunctionHead createDerivedFunction(const EmissionInputs& inputs, Function
     function.capabilities = capabilitiesOf(role);
     function.creator = WTF::move(creator);
     function.length = static_cast<uint32_t>(signature.parameters.size());
-    function.thisType = DeclaredType { .type = TypeTable::anything };
+    function.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
     for (TypeID type : signature.parameters) {
-        function.parameters.append(DeclaredType { .type = type });
+        function.parameters.append(DeclaredType(Proven::byPosition(type)));
         function.derivation.parameterMap.append(ParameterOrigin { });
     }
     for (TypeID type : signature.results)
-        function.results.append(DeclaredType { .type = type });
+        function.results.append(DeclaredType(Proven::byPosition(type)));
 
     IRBuilder builder(inputs.analysisContext(), function, inputs.types);
     head.entry = builder.addBlock();
@@ -248,7 +248,7 @@ ValueID Emission::emitRequireFieldType(ValueID value, TypeID fieldType, BlockID 
         return tested;
     if (m_inputs.build.validates())
         m_builder.append(makeValidateType(tested, fieldType));
-    return m_builder.append(makeAssumeType(tested, fieldType));
+    return m_builder.append(makeAssumeType(tested, Proven::byConstruction(fieldType)));
 }
 
 void Emission::emitBranchOnOutcome(ValueID outcome, BlockID parsed, BlockID rejected, BlockID unknown)

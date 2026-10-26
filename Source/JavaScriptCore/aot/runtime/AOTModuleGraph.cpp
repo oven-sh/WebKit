@@ -138,6 +138,8 @@ void computeModuleFlags(std::span<ModuleData> modulesAndEndRecord, std::span<con
                 graph[module].add(ModuleData::Flag::HasDynamicStarExport);
             if (request.isDeferred)
                 graph[module].add(ModuleData::Flag::HasDeferredRequest);
+            if (!request.isRequire && !request.isHoisted)
+                graph[request.target()].importedByModule = true;
         }
     }
 

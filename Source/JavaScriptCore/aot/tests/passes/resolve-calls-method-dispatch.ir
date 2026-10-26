@@ -145,7 +145,7 @@ function f19 name="nullable-receiver" parameters=[{type=undefined|L0|L1}, {type=
 }
 function f20 name="casts-are-copied-into-the-rest" parameters=[{type=L0|L3}, {type=anything}] results=[{type=anything}] {
     v2 = PropGet v0 key="run"
-    v3 = Check v2 castType=function site=w0
+    v3 = Check v2 expectedType=function site=w0
     v4 = Call v3, v0, v1 calleeKey="run"
     Return v4
 # CHECK-NEXT: b0(v0: L0|L3, v1: anything):
@@ -155,7 +155,7 @@ function f20 name="casts-are-copied-into-the-rest" parameters=[{type=L0|L3}, {ty
 # CHECK: = CallDirect {{*}}, v1 function=f1
 # CHECK: ([[otherPlugin]]: L3) frequency=Unlikely:
 # CHECK-NEXT: [[uncheckedMethod]]: anything = PropGet [[otherPlugin]] key="run" receivers=[L3]
-# CHECK-NEXT: [[checkedMethod]]: function = Check [[uncheckedMethod]] castType=function site=w0
+# CHECK-NEXT: [[checkedMethod]]: function = Check [[uncheckedMethod]] expectedType=function site=w0
 # CHECK-NEXT: = Call [[checkedMethod]], [[otherPlugin]], v1 calleeKey="run"
 }
 function f21 name="read-from-another-object" parameters=[{type=L0}, {type=L0}] results=[{type=anything}] {

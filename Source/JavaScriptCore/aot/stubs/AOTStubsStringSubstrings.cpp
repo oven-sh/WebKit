@@ -25,12 +25,14 @@ AssemblyHelpers::FreeListRefill makeSubstringOfFlatString(StubAssembler& jit, co
     const auto [string, start, length, result, firstScratch, secondScratch] = registers;
     RELEASE_ASSERT(noOverlap(string, start, length, result, firstScratch, secondScratch, instanceGPR));
 
-    Jump isAtMostOne = jit.branch32(CCallHelpers::BelowOrEqual, length, TrustedImm32(1));
+    Jump isAtMostTwo = jit.branch32(CCallHelpers::BelowOrEqual, length, TrustedImm32(2));
+    Label isLong = jit.label();
     jit.loadPtr(Address(string, JSString::offsetOfValue()), firstScratch);
     Jump isWhole = jit.branch32(CCallHelpers::Equal, length, Address(firstScratch, StringImpl::lengthMemoryOffset()));
 
     Label makesRope = jit.label();
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(ropeStringAllocator)), firstScratch);
+    Label hasAllocator = jit.label();
     fails.append(jit.branchTestPtr(CCallHelpers::Zero, firstScratch));
     AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, result, firstScratch, secondScratch, fails);
     jit.loadPtr(Address(string, JSString::offsetOfValue()), firstScratch);
@@ -44,11 +46,19 @@ AssemblyHelpers::FreeListRefill makeSubstringOfFlatString(StubAssembler& jit, co
     jit.storePair64(secondScratch, firstScratch, result, TrustedImm32(2 * sizeof(EncodedJSValue)));
     Label isMade = jit.label();
 
-    jit.addOutOfLinePart([registers, isAtMostOne, isWhole, makesRope, isMade](StubAssembler& part) {
+    jit.addOutOfLinePart([registers, isAtMostTwo, isLong, isWhole, makesRope, hasAllocator, isMade](StubAssembler& part) {
         const auto [string, start, length, result, characters, codeUnit] = registers;
         isWhole.link(&part);
         part.move(string, result);
         part.jump().linkTo(isMade, &part);
+
+        isAtMostTwo.link(&part);
+        Jump isAtMostOne = part.branch32(CCallHelpers::BelowOrEqual, length, TrustedImm32(1));
+        // Two units of a 16-bit string make an 8-bit string if both are ASCII. The operation looks at them.
+        part.loadPtr(Address(string, JSString::offsetOfValue()), characters);
+        part.branchTest32(CCallHelpers::NonZero, Address(characters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())).linkTo(isLong, &part);
+        part.move(TrustedImm32(0), characters);
+        part.jump().linkTo(hasAllocator, &part);
 
         isAtMostOne.link(&part);
         part.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(emptyString)), result);
@@ -98,7 +108,8 @@ void generateSubstring(StubAssembler& jit)
     JumpList fails;
     JumpList isWhole;
     jit.sub64(to, from, span);
-    Jump isAtMostOne = jit.branch64(CCallHelpers::LessThanOrEqual, span, TrustedImm32(1));
+    Jump isAtMostTwo = jit.branch64(CCallHelpers::LessThanOrEqual, span, TrustedImm32(2));
+    Label isLong = jit.label();
     jit.loadPtr(Address(string, JSString::offsetOfValue()), fiber);
     Jump isRope = jit.branchIfRopeStringImpl(fiber);
     isWhole.append(jit.branch32(CCallHelpers::Equal, span, Address(fiber, StringImpl::lengthMemoryOffset())));
@@ -133,10 +144,21 @@ void generateSubstring(StubAssembler& jit)
     isWhole.link(&jit);
     returnResult(jit, string);
 
-    isAtMostOne.link(&jit);
+    isAtMostTwo.link(&jit);
+    Jump isTwo = jit.branch64(CCallHelpers::Equal, span, TrustedImm32(2));
     Jump isOne = jit.branch64(CCallHelpers::Equal, span, TrustedImm32(1));
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(emptyString)), result);
     jit.returnToCaller();
+
+    // Two units of a 16-bit string make an 8-bit string if both are ASCII. The operation looks at them.
+    isTwo.link(&jit);
+    jit.loadPtr(Address(string, JSString::offsetOfValue()), fiber);
+    Jump twoOfRope = jit.branchIfRopeStringImpl(fiber);
+    jit.branchTest32(CCallHelpers::NonZero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())).linkTo(isLong, &jit);
+    fails.append(jit.jump());
+    twoOfRope.link(&jit);
+    jit.branchTestPtr(CCallHelpers::NonZero, fiber, TrustedImm32(JSRopeString::is8BitInPointer)).linkTo(isLong, &jit);
+    fails.append(jit.jump());
 
     isOne.link(&jit);
     jit.loadPtr(Address(string, JSString::offsetOfValue()), fiber);

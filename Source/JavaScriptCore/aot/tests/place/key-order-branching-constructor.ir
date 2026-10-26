@@ -44,13 +44,11 @@ function f2 name="Branching" kind=BaseConstructor flags=[HasNewTarget] parameter
     Return v3
 }
 # CHECK: allocation {{*}} L0 fields=[] order=0 count=0
-# The arm for an object without keys answers an empty array. No finished object takes it, because the order word of each says which keys it has.
+# The one order that flow lists is that of the allocation, without keys. Both fields are always filled, so no finished object has it and the walk gets no arm for it.
 # CHECK-LABEL: function f1 name="valuesOfObject"
-# CHECK: [[hasNoKeys]]: boolean = HasKeyOrder v0 layout=L0 orderWord=0
-# CHECK-NEXT: TestAndBranch [[hasNoKeys]] -> taken [[empty]](| 0), notTaken
-# CHECK: [[empty]](
-# CHECK-NEXT: = NewArray contents=anything
+# CHECK-NOT: HasKeyOrder
 # CHECK: = CallInline -, v0 inlineBuiltin=ObjectValues overload=ObjectValues/0
+# CHECK-NOT: HasKeyOrder
 # CHECK-LABEL: function f2 name="Branching"
 # CHECK: PutSlots [[object]], -, v1, v1 placedKeys=[{key="y" {{*}}mayAdd=true}, {key="x" {{*}}mayAdd=true}]
 # CHECK: PutSlots [[object]], -, v1, v1 placedKeys=[{key="x" {{*}}mayAdd=true}, {key="y" {{*}}mayAdd=true}]

@@ -9,7 +9,7 @@ layout L0 name="Node" fields=[{key="next" declared={type=anything}}]
 
 function f0 name="comparedWithAnObject" parameters=[{type=null|L0}, {type=anything}] results=[{type=boolean}] {
     v2 = PropGet v1 key="current"
-    v3 = Check v2 castType=null|L0
+    v3 = Check v2 expectedType=null|L0
     v4 = StrictEq v0, v3
     Return v4
 # CHECK-NOT: TypeTest
@@ -19,7 +19,7 @@ function f0 name="comparedWithAnObject" parameters=[{type=null|L0}, {type=anythi
 
 function f1 name="comparedWithWhatMayBeANumber" parameters=[{type=number|L0}, {type=anything}] results=[{type=boolean}] {
     v2 = PropGet v1 key="current"
-    v3 = Check v2 castType=null|L0
+    v3 = Check v2 expectedType=null|L0
     v4 = StrictEq v0, v3
     Return v4
 # CHECK: = TypeTest v2 testedType=null|L0
@@ -27,9 +27,9 @@ function f1 name="comparedWithWhatMayBeANumber" parameters=[{type=number|L0}, {t
 
 function f2 name="bothSidesChecked" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
     v2 = PropGet v0 key="current"
-    v3 = Check v2 castType=null|L0
+    v3 = Check v2 expectedType=null|L0
     v4 = PropGet v1 key="current"
-    v5 = Check v4 castType=null|L0
+    v5 = Check v4 expectedType=null|L0
     v6 = StrictEq v3, v5
     Return v6
 # CHECK: = TypeTest v2 testedType=null|L0
@@ -38,9 +38,45 @@ function f2 name="bothSidesChecked" parameters=[{type=anything}, {type=anything}
 
 function f3 name="alsoRead" parameters=[{type=null|L0}, {type=anything}] results=[{type=anything}] {
     v2 = PropGet v1 key="current"
-    v3 = Check v2 castType=L0
+    v3 = Check v2 expectedType=L0
     v4 = StrictEq v0, v3
     v5 = PropGet v3 key="next"
     Return v5
 # CHECK: = TypeTest v2 testedType=L0
+}
+
+# What a comparison has left of the value goes on as a parameter of the block behind it. The check goes here too, and with it what the cast behind the comparison says: the read takes a value that is only expected to be a Node.
+function f4 name="readBehindTheComparison" parameters=[{type=null|L0}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v1 key="current"
+    v3 = Check v2 expectedType=L0
+    v4 = StrictEq v3, v0
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5: L0):
+    Jump -> next b3(v5)
+  b2(v6: L0):
+    Jump -> next b3(v6)
+  b3(v7: L0):
+    v8 = Upcast v7 castType=L0
+    v9 = PropGet v8 key="next"
+    Return v9
+# CHECK-NOT: TypeTest
+# CHECK-NOT: castType=L0
+# CHECK: [[node]]: anything ~ L0 = Expect v7 expectedType=L0
+# CHECK: = PropGet [[node]] key="next"
+}
+
+function f5 name="comparedAgainBehindTheComparison" parameters=[{type=null|L0}, {type=anything}, {type=null|L0}] results=[{type=boolean}] {
+    v3 = PropGet v1 key="current"
+    v4 = Check v3 expectedType=L0
+    v5 = StrictEq v4, v0
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v6: L0):
+    Jump -> next b3(v6)
+  b2(v7: L0):
+    Jump -> next b3(v7)
+  b3(v8: L0):
+    v9 = StrictEq v8, v2
+    Return v9
+# CHECK-NOT: TypeTest
+# CHECK: = StrictEq v8, v2
 }

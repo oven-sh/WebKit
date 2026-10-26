@@ -1,7 +1,7 @@
 # typeof ShadowRealm === "undefined" ? typeof WeakRef === "undefined" : 0
 # An option of the engine takes ShadowRealm away, so the table marks it MayBeAbsent: the read may pass the global object by and answer undefined, and the test stays. Nothing takes WeakRef away, so undefined is none of its answers.
 # RUN: valueflow-apply
-# CHECK: = AssumeType v1 castType=undefined|builtin(ShadowRealm)
+# CHECK: = AssumeType v1 provenType=undefined|builtin(ShadowRealm)
 # CHECK-NEXT: : boolean = TypeTest
 # CHECK-NOT: undefined|builtin(WeakRef)
 

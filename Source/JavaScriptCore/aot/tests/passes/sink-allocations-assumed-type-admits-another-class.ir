@@ -8,7 +8,7 @@ module m0 path="main.js" displayPath="main.js"
 # A default value of a parameter that also takes an iterator, as inlining leaves it: the test for an array is answered while the literal is virtual.
 function f0 name="builtOnOneWay" parameters=[{type=fractional}, {type=boolean}] results=[{type=anything}] {
     v2 = NewArray v0 contents=fractional holes=[1]
-    v3 = AssumeType v2 castType=Array<fractional, proven, pristine[Storage, Names]>|ArrayIterator<pristine[Storage, Names]>
+    v3 = AssumeType v2 provenType=Array<fractional, proven, pristine[Storage, Names]>|ArrayIterator<pristine[Storage, Names]>
     v4 = TypeTest v3 testedType=Array<fractional>
     Branch v4 -> taken b1(| 0), notTaken b5()
   b1(v5):
@@ -33,7 +33,7 @@ function f0 name="builtOnOneWay" parameters=[{type=fractional}, {type=boolean}] 
 # The cell goes around a loop in a parameter of its own.
 function f1 name="carriedIntoALoop" parameters=[{type=fractional}, {type=boolean}, {type=i32}] results=[{type=anything}] {
     v3 = NewArray v0 contents=fractional holes=[1]
-    v4 = AssumeType v3 castType=Array<fractional, proven, pristine[Storage, Names]>|ArrayIterator<pristine[Storage, Names]>
+    v4 = AssumeType v3 provenType=Array<fractional, proven, pristine[Storage, Names]>|ArrayIterator<pristine[Storage, Names]>
     v5 = TypeTest v4 testedType=Array<fractional>
     Branch v5 -> taken b1(| 0), notTaken b7()
   b1(v6):

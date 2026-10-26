@@ -15,19 +15,17 @@ layout L2 kind=Instance name="Widget" constructor=f15 flow={baseState=None}
 function f0 name="readsAtEntry" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
     v2 = PropGet v0 key="a" receivers=[L0]
     v3 = PropGet v0 key="b" receivers=[L0]
-    v4 = Check v3 castType=number site=w0
-    v5 = Builtin builtin=GlobalThis
-    v6 = PropGet v5 key="sink" [isFreeName]
-    v7 = Call v6, -, v2, v4, v1
-    Return v7
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = Call v5, -, v2, v3, v1
+    Return v6
 }
 # CHECK-LABEL: function f0 name="readsAtEntry"
 # CHECK: role=ParameterWrapper {{*}}creator=ParameterWrapper{body=[[entryBody]]}
 # CHECK: = PropGet v0 key="a"
-# CHECK: = PropGet v0 key="b"
-# CHECK: [[checked]]: number = Check
+# CHECK: [[second]]: anything = PropGet v0 key="b"
 # CHECK-NOT: key="sink"
-# CHECK: = CallDirect {{*}}, [[checked]] function=[[entryBody]]
+# CHECK: = CallDirect {{*}}, [[second]] function=[[entryBody]]
 
 function f1 name="passesLiteral" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
@@ -152,7 +150,7 @@ function f9 name="sevenFieldsRead" parameters=[{type=L1}] results=[{type=anythin
 function f10 name="neverPassedLiteral" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
     v2 = PropGet v0 key="a" receivers=[L0]
     v3 = PropGet v0 key="b" receivers=[L0]
-    v4 = Check v3 castType=number site=w0
+    v4 = Check v3 expectedType=number site=w0
     v5 = Builtin builtin=GlobalThis
     v6 = PropGet v5 key="sink" [isFreeName]
     v7 = Call v6, -, v2, v4, v1
@@ -164,7 +162,7 @@ function f10 name="neverPassedLiteral" parameters=[{type=L0}, {type=anything}] r
 function f11 name="sloppy" flags=[IsSloppy] parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
     v2 = PropGet v0 key="a" receivers=[L0]
     v3 = PropGet v0 key="b" receivers=[L0]
-    v4 = Check v3 castType=number site=w0
+    v4 = Check v3 expectedType=number site=w0
     v5 = Builtin builtin=GlobalThis
     v6 = PropGet v5 key="sink" [isFreeName]
     v7 = Call v6, -, v2, v4, v1
@@ -245,7 +243,27 @@ function f17 name="aggregateAtPosition40" parameters=[{type=anything}, {type=any
 # CHECK: [[read]]: anything = PropGet v40 key="a"
 # CHECK-NOT: key="sink"
 # CHECK: = CallDirect {{*}}[[read]] function=[[lastBody]]
-# CHECK: function [[entryBody]] name="readsAtEntry" {{*}}parameters=[{type=anything}, {type=anything}, {type=number}] results=[{type=anything}] {{*}}derivation={source=f0 parameterMap=[{original=1}, {}, {}]}
+
+# A parameter outlives the checks of whoever calls the body, so what stands behind a check is not handed on as a parameter
+function f18 name="checkedAtEntry" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="a" receivers=[L0]
+    v3 = PropGet v0 key="b" receivers=[L0]
+    v4 = Check v3 expectedType=number site=w0
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="sink" [isFreeName]
+    v7 = Call v6, -, v2, v4, v1
+    Return v7
+}
+# CHECK-LABEL: function f18 name="checkedAtEntry"
+# CHECK-NOT: role=ParameterWrapper
+
+function f19 name="passesLiteralToChecked" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v2 = CallDirect v1, v0 function=f18
+    Return v2
+}
+# CHECK-LABEL: function f19 name="passesLiteralToChecked"
+# CHECK: function [[entryBody]] name="readsAtEntry" {{*}}parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {{*}}derivation={source=f0 parameterMap=[{original=1}, {}, {}]}
 # CHECK-NOT: key="a"
 # CHECK: = PropGet {{*}}key="sink"
 # CHECK: function [[defaultBody]] name="defaultBetweenReads" {{*}}parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {{*}}derivation={source=f2 parameterMap=[{}, {}]}

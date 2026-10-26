@@ -60,7 +60,7 @@ function f7 name="calleeAlsoReturns" parameters=[{type=number}, {type=boolean}, 
 # CHECK-LABEL: name="calleeAlsoReturns"
 # CHECK-NOT: function=f3
 # CHECK: [[after7]](v3: number|string):
-# CHECK-NEXT: [[cast7]]: number = AssumeType v3 castType=number
+# CHECK-NEXT: [[cast7]]: number = AssumeType v3 provenType=number
 # CHECK-NEXT: Return [[cast7]]
 # CHECK: [[call7]]: anything = CallDirect v0 function=f0
 # CHECK-NEXT: ReturnCall [[call7]] casts=[{declared={type=number|string} resolution=Assume}, {declared={type=number} resolution=Assume}]

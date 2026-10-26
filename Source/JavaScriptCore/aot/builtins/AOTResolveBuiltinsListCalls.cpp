@@ -21,7 +21,6 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr PristineAspectSet aspectsOfIndexedRead { PristineAspects::Storage, PristineAspects::Names };
-static constexpr OpcodeSet listCallOpcodes { Opcode::CallList, Opcode::ConstructList, Opcode::SuperConstructList };
 
 static_assert(OperandIndex::CallList::list == OperandIndex::ConstructList::list);
 static_assert(OperandIndex::CallList::list == OperandIndex::SuperConstructList::list);
@@ -132,7 +131,6 @@ Vector<ListCallSite> planListCalls(FunctionPassContext& context)
     BuiltinUseInputs inputs { context.program, function, context.types, context.inputs.flow, analyses.effectContext(), &analyses, { } };
 
     Vector<ListCallSite> listCalls;
-    static_assert(listCallOpcodes == callsWithList);
     for (const ValueSite& site : context.sitesIn(SiteList::CallsWithList)) {
         std::optional<ListCallSite> listCall = planCallOfSpreadArray(context, inputs, site);
         if (!listCall)
@@ -179,12 +177,10 @@ static void rewriteProvenListCall(FunctionPassContext& context, const ListCallSi
     }
 
     bool isPristineByType = pristineAspectsProvenBy(program.typeOf(function, listCall.array), BuiltinClasses::Array).containsAll(aspectsOfIndexedRead);
-    bool isDemotedTailCall = call.isDemotedTailCall();
     becomeBuiltinCall(call, plan.call.overload, BuiltinCallForm::List, plan.operands, plan.stamps);
     call.setNeedsPristineReceiver(!isPristineByType);
-    call.setIsDemotedTailCall(isDemotedTailCall);
     call.type = resultTypeOf(program, function, call, context.types);
-    call.setExpected(expectedTypeOf(program, function, call, context.types));
+    call.setExpected(ExpectedType(expectedTypeOf(program, function, call, context.types)));
     checkRewrite(context, listCall.site, replaced);
 }
 
@@ -242,7 +238,7 @@ static void expandTestedListCall(SiteExpansion& expansion, const ListCallSite& l
     if (plan) {
         Value call = makeBuiltinCall(plan.call.overload, BuiltinCallForm::List, { { }, { iterable } }, plan.stamps);
         call.setNeedsPristineReceiver(true);
-        call.setIsDemotedTailCall(expansion.isTailCall());
+        call.isTailCall = expansion.isTailCall();
         expansion.finishArm(expansion.append(WTF::move(call)));
     } else
         expansion.finishArm(expansion.appendOriginal({ OperandIndex::CallList::list, iterable, { }, { } }));

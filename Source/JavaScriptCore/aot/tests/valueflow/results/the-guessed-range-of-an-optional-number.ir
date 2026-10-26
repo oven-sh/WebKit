@@ -21,6 +21,6 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 }
 function f1 name="guessed" parameters=[{type=undefined|i32 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0):
-    v1 = Check v0 castType=undefined|i32
+    v1 = Check v0 expectedType=undefined|i32
     Return v1
 }

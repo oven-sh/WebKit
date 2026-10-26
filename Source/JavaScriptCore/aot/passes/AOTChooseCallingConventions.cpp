@@ -111,7 +111,7 @@ struct EntryRequest {
 
 struct ConventionResultNode : WTF::UnionFind<ConventionResultNode> { };
 
-enum class CalledCode : uint8_t { Unknown, None, FunctionWithStackCheck };
+enum class CalledCodeKind : uint8_t { Unknown, None, FunctionWithStackCheck };
 
 } // anonymous namespace
 
@@ -162,8 +162,8 @@ EntryConvention entryConventionOf(const Function& callee)
 
 Representation declaredRepresentationOf(const Program& program, const DeclaredType& declared)
 {
-    const Type& type = program.at(declared.type);
-    if (declared.flags.contains(PositionFlags::IsExpected) && type.isJavaScriptValue())
+    const Type& type = program.at(declared.written());
+    if (declared.isExpected() && type.isJavaScriptValue())
         return Representation::JSValue;
     Representation representation = defaultRepresentationOf(type);
     if (representation != Representation::Void)
@@ -223,8 +223,8 @@ static ArgumentLocation singleResultLocation(const Program& program, const Funct
         return { .kind = ArgumentLocation::Kind::GPR, .reg = GPRInfo::returnValueGPR, .representation = Representation::JSValue };
 
     const DeclaredType& declared = callee.result();
-    const Type& type = program.at(declared.type);
-    bool isProven = !declared.flags.contains(PositionFlags::IsExpected);
+    const Type& type = program.at(declared.written());
+    bool isProven = !declared.isExpected();
     if (isProven && (type.isNever() || type.hasOnlyPrimitives(Primitive::Undefined)))
         return { .kind = ArgumentLocation::Kind::None, .representation = Representation::JSValue };
 
@@ -883,15 +883,15 @@ static bool isEntranceThatLeavesByTailCallsAlone(const Function& function)
     });
 }
 
-static CalledCode classifyCalledCode(const EffectContext& context, const Function& function, const Value& value, const BitVector& isCandidate)
+static CalledCodeKind classifyCalledCode(const EffectContext& context, const Function& function, const Value& value, const BitVector& isCandidate)
 {
     Effects effects = effectsOf(context, function, value).onAnyEdge();
     if (effects.maySuspend)
-        return CalledCode::Unknown;
+        return CalledCodeKind::Unknown;
     if (!effects.mayCallUnknownCode)
-        return CalledCode::None;
+        return CalledCodeKind::None;
     if (effectRuleOf(value.opcode) != EffectRule::Call)
-        return CalledCode::Unknown;
+        return CalledCodeKind::Unknown;
 
     bool hasCallee = false;
     bool hasUncheckedCallee = false;
@@ -904,7 +904,7 @@ static CalledCode classifyCalledCode(const EffectContext& context, const Functio
         auto& callee = context.program.at(target);
         hasUncheckedCallee |= !callee.hasBody() || isCandidate.get(target.index()) || callee.creator.is<CreatorRecord::Entrypoint>();
     });
-    return hasCallee && !hasUncheckedCallee ? CalledCode::FunctionWithStackCheck : CalledCode::Unknown;
+    return hasCallee && !hasUncheckedCallee ? CalledCodeKind::FunctionWithStackCheck : CalledCodeKind::Unknown;
 }
 
 static bool canDeferStackCheck(const EffectContext& context, const Function& function, const BitVector& isCandidate)
@@ -913,11 +913,11 @@ static bool canDeferStackCheck(const EffectContext& context, const Function& fun
     for (auto& block : function.blocks) {
         for (ValueID id : block.values) {
             switch (classifyCalledCode(context, function, function.at(id), isCandidate)) {
-            case CalledCode::Unknown:
+            case CalledCodeKind::Unknown:
                 return false;
-            case CalledCode::None:
+            case CalledCodeKind::None:
                 break;
-            case CalledCode::FunctionWithStackCheck:
+            case CalledCodeKind::FunctionWithStackCheck:
                 hasDirectCall = true;
                 break;
             }

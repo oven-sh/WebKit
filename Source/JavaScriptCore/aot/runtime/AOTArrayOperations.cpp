@@ -232,8 +232,13 @@ static void convertStorageOfNumbers(Instance* instance, JSGlobalObject* globalOb
     constexpr uint32_t worthOfConversion = 64;
     uint32_t& lookedAtInVain = instance->arrays.elementsLookedAtInVain;
     // The place has said which it is.
+    uint8_t& shortYoungArraysConverted = instance->arrays.shortYoungArraysConverted[instance->arrays.placeThatConverts % ArrayWords::numberOfCounts];
+    if (lookedAtInVain >= ArrayWords::maxElementsLookedAtInVain) {
+        shortYoungArraysConverted = ArrayWords::maxShortYoungArraysConverted;
+        return;
+    }
     if (array->cellState() != CellState::PossiblyBlack && array->butterfly()->publicLength() < ArrayWords::minLengthThatPaysAtOnce)
-        ++instance->arrays.shortYoungArraysConverted[instance->arrays.placeThatConverts % ArrayWords::numberOfCounts];
+        ++shortYoungArraysConverted;
 
     Structure* structure = array->structure();
     bool isPlainArray = structure == globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous) && !isCopyOnWrite(array->indexingMode()) && !structure->outOfLineCapacity();
@@ -455,7 +460,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayPushNumber, EncodedJSValue, (Instance*
     double number = std::bit_cast<double>(numberBits);
     if (number == number)
         array->tryMakeWritableDouble(vm);
-    OPERATION_RETURN(scope, pushToArray(instance, array, jsNumber(purifyNaN(number))));
+    OPERATION_RETURN(scope, pushToArray(instance, array, jsNumber(withoutPayload(number))));
 }
 
 static JSArray* tryFastSlice(VM& vm, JSGlobalObject* globalObject, JSArray* array, int64_t from, int64_t to)

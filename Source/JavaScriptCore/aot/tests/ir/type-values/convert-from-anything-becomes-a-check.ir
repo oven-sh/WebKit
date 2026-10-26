@@ -19,13 +19,13 @@ function f0 name="intoPrimitives" parameters=[{type=anything}] results=[{type=an
     v2 = Integer integer=2
     v3 = Add v1, v2
     Return v3
-# CHECK: v1: undefined|null|number = Check v0 castType=undefined|null|number site=w0
+# CHECK: v1: undefined|null|number = Check v0 expectedType=undefined|null|number site=w0
 # CHECK: v3: number = Add v1, v2
 }
 function f1 name="intoFamily" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = Convert v0 declared={type=undefined|null|L0 site=w1} illTypedCause=FromLooseType
     Return v1
-# CHECK: v1: undefined|null|L0|L1 = Check v0 castType=undefined|null|L0|L1 site=w1
+# CHECK: v1: undefined|null|L0|L1 = Check v0 expectedType=undefined|null|L0|L1 site=w1
 # CHECK-NEXT: Return v1
 }
 function f2 name="resultOfCallByValue" parameters=[{type=anything}] results=[{type=anything}] {
@@ -33,13 +33,13 @@ function f2 name="resultOfCallByValue" parameters=[{type=anything}] results=[{ty
     v2 = Convert v1 declared={type=string site=w2} illTypedCause=UnprovenCallee
     Return v2
 # CHECK: v1: anything = Call v0
-# CHECK-NEXT: v2: string = Check v1 castType=string site=w2
+# CHECK-NEXT: v2: string = Check v1 expectedType=string site=w2
 # CHECK-NEXT: Return v2
 }
 function f3 name="fromOverlappingType" parameters=[{type=number|string}] results=[{type=anything}] {
     v1 = Convert v0 declared={type=undefined|null|number site=w0} illTypedCause=Assertion
     Return v1
-# CHECK: v1: number = Check v0 castType=undefined|null|number site=w0
+# CHECK: v1: number = Check v0 expectedType=undefined|null|number site=w0
 # CHECK-NEXT: Return v1
 }
 function f4 name="tailCall" parameters=[{type=anything}] results=[{type=undefined|null|number site=w3}] {

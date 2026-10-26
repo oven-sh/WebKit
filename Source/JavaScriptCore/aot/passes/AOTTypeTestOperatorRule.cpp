@@ -69,7 +69,7 @@ static constexpr OpcodeSet operatorsThatTakeNullish { Opcode::ToBoolean, Opcode:
 static TypeID admitExpectedNullish(TestSiteReporter& reporter, ValueID operand, TypeID tested)
 {
     TypeArena& types = reporter.types();
-    if (!(types.at(reporter.function().at(operand).expectedOrType()).primitives & Primitive::UndefinedOrNull))
+    if (!(types.at(reporter.function().at(operand).expectedOrType().predicted()).primitives & Primitive::UndefinedOrNull))
         return tested;
     return types.intern(types.at(tested).withPrimitives(Primitive::UndefinedOrNull));
 }
@@ -147,7 +147,13 @@ static OperatorChoice chooseFormUnderTests(TestSiteReporter& reporter, const Ope
     Vector<Type, 2> operandTypes;
     for (uint32_t operandIndex = 0; operandIndex < value.numberOfOperands(); ++operandIndex) {
         const Type& type = reporter.typeOf(value.operand(operandIndex));
-        operandTypes.append(isTested[operandIndex] ? type.intersectWith(types.at(tested[operandIndex]), types) : type);
+        if (isTested[operandIndex]) {
+            operandTypes.append(type.intersectWith(types.at(tested[operandIndex]), types));
+            continue;
+        }
+        // A number that only unlikely paths make other than an integer is one again once those paths have left: SeparateUnlikelyLoopPaths.
+        std::optional<Type> expected = type.isNumber() ? reporter.expectedPartOf(value.operand(operandIndex)) : std::nullopt;
+        operandTypes.append(expected && expected->isInteger() ? *expected : type);
     }
     return chooseOperatorFormFor(site, value.opcode, operandTypes.span());
 }

@@ -1,5 +1,6 @@
 # The copy a failed test enters is one class rarer, is open to tests of other conditions, and never repeats the test that failed on the way in
 # FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
 # RUN: pass PlaceTypeTests
 # RUN(AGAIN): pass PlaceTypeTests PlaceTypeTests
 

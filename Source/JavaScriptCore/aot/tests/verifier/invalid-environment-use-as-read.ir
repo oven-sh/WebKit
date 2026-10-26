@@ -1,7 +1,7 @@
 # in a program as read an environment is no JavaScript value, and GetEnvironmentField and PutEnvironmentField reach only environments
 # FORM: AsRead
 # RUN: verify
-# DIAGNOSTIC: InvalidEnvironmentUse 4
+# DIAGNOSTIC: InvalidEnvironmentUse 5
 
 module m0 path="main.js" displayPath="main.js"
 entry module=m0
@@ -33,3 +33,8 @@ function f4 name="good" captures=[{type=env L0}] parameters=[{type=number}] resu
     Return
 }
 function f5 name="closure" captures=[{type=env L0}] results=[{type=undefined}]
+function f6 name="badQuestionWhetherItIsThere" captures=[{type=absent|env L0}] results=[{type=undefined}] {
+  b0(v0: absent|env L0):
+    v1 = TypeTest v0 testedType=env L0
+    Return
+}

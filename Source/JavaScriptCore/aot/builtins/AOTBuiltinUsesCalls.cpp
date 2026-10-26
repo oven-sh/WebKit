@@ -74,7 +74,7 @@ static BuiltinID builtinHeldBy(const BuiltinTable& table, BuiltinID member)
 
 static BuiltinCalleeAnswer findExpectedCallee(const BuiltinUseInputs& inputs, const Value& call)
 {
-    TypeID expectedType = inputs.function.at(call.calleeOperand()).expected();
+    TypeID expectedType = inputs.function.at(call.calleeOperand()).expected().predicted();
     if (!expectedType)
         return { };
     BuiltinID expected = singleBuiltinOf(inputs.types.at(expectedType));
@@ -100,7 +100,7 @@ static BuiltinCalleeAnswer findMethodCallee(const BuiltinUseInputs& inputs, cons
     BuiltinReceiver start = builtinReceiverOf(program, receiverType);
     bool isExpected = !start;
     if (isExpected) {
-        TypeID expected = inputs.function.at(receiver).expected();
+        TypeID expected = inputs.function.at(receiver).expected().predicted();
         if (!expected)
             return { };
         receiverType = inputs.types.at(expected).intersectWith(receiverType, inputs.types).withoutNullish();
@@ -199,7 +199,7 @@ static bool hasReceiverOfBuiltinClass(const BuiltinUseInputs& inputs, const Valu
     Type present = inputs.program.typeOf(inputs.function, receiver).withoutNullish();
     if (builtinReceiverOf(inputs.program, present))
         return true;
-    TypeID expected = inputs.function.at(receiver).expected();
+    TypeID expected = inputs.function.at(receiver).expected().predicted();
     return expected && builtinReceiverOf(inputs.program, inputs.types.at(expected).intersectWith(present, inputs.types).withoutNullish());
 }
 
@@ -486,7 +486,7 @@ static ArrayMatch matchArray(const BuiltinUseInputs& inputs, ValueID value)
         return { BuiltinMatchState::Proven, { } };
 
     if (!isArray(tested)) {
-        TypeID expected = inputs.function.at(value).expected();
+        TypeID expected = inputs.function.at(value).expected().predicted();
         if (!expected)
             return { };
         tested = inputs.types.at(expected).intersectWith(tested, inputs.types).withoutNullish();

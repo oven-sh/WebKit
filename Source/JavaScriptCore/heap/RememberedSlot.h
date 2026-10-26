@@ -42,6 +42,8 @@ public:
     }
 
     JS_EXPORT_PRIVATE void didMoveTable(std::span<const uint8_t> table);
+    // What the table held lies at the same offsets as before, and the rest of it was never written.
+    JS_EXPORT_PRIVATE void didMoveAndGrowTable(std::span<const uint8_t> table);
     JS_EXPORT_PRIVATE void recordAll();
 
     ALWAYS_INLINE void record(const void* slot)

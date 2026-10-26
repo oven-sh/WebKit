@@ -98,7 +98,7 @@ function f7 name="readRatio" results=[{type=anything}] {
 # CODE-LABEL: name="readFilled" module=m0 role=GenericEntrypoint
 # CODE: [[filled]]: L0 @Cell = GetModuleVariable variable=g0
 # CODE-NEXT: [[next]]: undefined|L0 @JSValue = GetSlot [[filled]] key="next"
-# CODE-NEXT: L0 @JSValue = AssumeType [[next]] castType=L0
+# CODE-NEXT: L0 @JSValue = AssumeType [[next]] provenType=L0
 # CODE-NOT: TypeTest
 # CODE: [[count]]: i32 @Int32 = GetSlot {{*}} key="count"
 # CODE-NOT: TypeTest

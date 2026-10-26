@@ -51,6 +51,7 @@ import {
 const allocatorHeap = "AllocatorState";
 const promiseClassToken = "Promise";
 const functionClassToken = "Function";
+const classesOfTestedClosures = [functionClassToken, "AsyncFunction"];
 const engineFileExtension = ".ts";
 const cppIdentifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const maximumOwnSlotOffset = 0xff;
@@ -394,9 +395,11 @@ function extendsClass(builtinClass: ModelClass, ancestor: ModelClass): boolean {
   return current !== null;
 }
 
-// The test compares with the Structures that closures are created with, which inherit from Function.prototype.
+// The test compares with the Structures that closures are created with, which inherit from the prototype of one of these classes.
 function checkPristineTests(model: TableModel, problems: Problems): void {
-  const functionClass = model.classes.find(builtinClass => builtinClass.token === functionClassToken);
+  const prototypesOfClosures = model.classes
+    .filter(builtinClass => classesOfTestedClosures.includes(builtinClass.token))
+    .map(builtinClass => builtinClass.prototype);
   for (const { pristineTest, isNeverPristine, prototype, token, instanceStructureCppExpression } of model.classes) {
     if (pristineTest === "Mark") continue;
     if (!isNeverPristine) {
@@ -414,10 +417,10 @@ function checkPristineTests(model: TableModel, problems: Problems): void {
       }
       continue;
     }
-    if (prototype === null || prototype !== functionClass?.prototype) {
+    if (prototype === null || !prototypesOfClosures.includes(prototype)) {
       problems.add(
         null,
-        `the class ${token} has the test ${pristineTest}, and its prototype is not that of ${functionClassToken}`,
+        `the class ${token} has the test ${pristineTest}, and its prototype is that of none of ${classesOfTestedClosures.join(", ")}`,
       );
     }
   }
@@ -579,9 +582,10 @@ const isRestOperand = (place: ModelPlace): boolean =>
 
 function checkCallback(overload: ModelOverload, callback: ModelCallback, problems: Problems): void {
   const callee = parameterAt(overload, callback.callee);
-  if (callee === null) {
+  const takesEveryReceiver = overload.flags.includes("IsUndeclared") && callback.callee.operand === "Receiver";
+  if (callee === null && !takesEveryReceiver) {
     report(problems, overload, `it calls ${describeOperand(callback.callee)}, which it does not have`);
-  } else if (!admits(callee.accepted, "Function") && !admits(callee.converted, "Function")) {
+  } else if (callee !== null && !admits(callee.accepted, "Function") && !admits(callee.converted, "Function")) {
     report(problems, overload, `it calls ${describeOperand(callback.callee)}, which is never a function`);
   }
   if ((callback.resultUse === "Stored") !== (callback.resultTo.place !== "None")) {
@@ -611,7 +615,19 @@ function checkHandlerCall(
   if (times === "PerElement") report(problems, overload, "a handler is not called per element");
   if (callee.place !== "Member") return;
   if (!isCalledAfterReturn(times)) {
-    report(problems, overload, "a member that is called before the call returns is written with b.calls");
+    if (callee.path.at(-1) !== null) {
+      report(
+        problems,
+        overload,
+        "a member under a name that is called before the call returns is written with b.calls",
+      );
+    } else if (overload.flags.includes("RunsOnlyOperandCode")) {
+      report(
+        problems,
+        overload,
+        "the effects of runsOnlyOperandCode follow no call of every own value before the call returns",
+      );
+    }
   }
   const holder = parameterAt(overload, callee.operand);
   if (callee.path.length > 1 && holder !== null && !holder.uses.includes("AppliesTransitively")) {
@@ -669,11 +685,14 @@ function needsText(role: OperandRole): boolean {
     case "ReplacesContents":
     case "MembersAreOnlyInspected":
     case "KeysAreNotListed":
+    case "OwnValuesAreReadByKeyOnly":
     case "MembersAreOfObjectsOnly":
     case "FunctionsAreConvertedUnderNamesOnly":
+    case "OnlyBoxedPrimitivesAreConverted":
     case "BecomesLengthOfReceiver":
     case "CopiesHolesToResult":
     case "WorkerEntryPath":
+    case "DescribedWhenRefused":
       return false;
   }
 }

@@ -9,7 +9,7 @@
 # RUN: run-in-shell globalThis.register = (greetingOf, greeter) => { Object.getPrototypeOf(greeter).greet = () => "replaced"; print(greetingOf(greeter)); };
 # RUN(OTHER): run-in-shell globalThis.register = (greetingOf, greeter) => { Object.getPrototypeOf(greeter).other = () => "replaced"; print(greetingOf(greeter)); };
 # RUN(SAME): run-in-shell globalThis.register = (greetingOf, greeter) => { print(greetingOf(greeter)); };
-# OPTIONS: validate drop-guard=AreMembersUnchanged:0
+# OPTIONS: validate drop-guard=AreMembersUnchanged:0 heat=OnlyLoopsAreHot
 # CHECK: AOT validation: LookupDiffers f
 # CHECK: crashed with
 # OTHER-NOT: AOT validation

@@ -129,8 +129,8 @@ function f14 name="laterStoreIsUnlikely" parameters=[{type=L2}, {type=anything},
 # CHECK-NEXT: f4: size=52 frame=none entries=1 sites=0
 # CHECK-NEXT: f5: size=52 frame=none entries=1 sites=0
 # Two fields of one object share the hidden word and the bits. Two objects have nothing to share.
-# CHECK-NEXT: f6: size=106
-# CHECK-NEXT: f7: size=118
+# CHECK-NEXT: f6: size=113
+# CHECK-NEXT: f7: size=125
 
 # The key of the field is listed, and undefined is stored only where the granule is there already. The same store of a value makes an Extension for one granule: 16 bytes.
 # CALLS-LABEL: f11: size=

@@ -36,6 +36,8 @@ void SelectedOperatorEmitter::generateIntegerBound(const ValueContext& value)
     case Representation::Boolean:
     case Representation::Int32:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:

@@ -212,7 +212,7 @@ function f5 name="testedBehindMerge" parameters=[{type=Map<string, number>}, {ty
   b2():
     Jump -> next b3(v2)
   b3(v4):
-    v5 = Check v4 castType=object cause=MayFail
+    v5 = Check v4 expectedType=object cause=MayFail
     v6 = IteratorOpen v5
     Jump -> next b4()
   b4():
@@ -226,7 +226,7 @@ function f5 name="testedBehindMerge" parameters=[{type=Map<string, number>}, {ty
 # The test runs whichever block control came from, so it has to find the iterator.
 # CHECK: v3: MapIterator = CallBuiltin v0 overload=MapPrototypeValues/0
 # CHECK: Jump -> next b3(v3,
-# CHECK: v5: object = Check v4 castType=object cause=MayFail
+# CHECK: v5: object = Check v4 expectedType=object cause=MayFail
 # CHECK-NEXT: Switch
 # CHECK: = MapNext
 # ABSENT-NOT: Unspecified valueType=MapIterator

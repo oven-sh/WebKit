@@ -1,5 +1,5 @@
 # [3, 1].sort(compare), where the library's sort falls back on `this.sort(comparator)`
-# The code behind Array.prototype.sort (runtimefunction 131088) is entered with operands nobody knows and calls a member of one of them by name. What a call of sort reads from its operand and calls on it
+# The code behind Array.prototype.sort (runtimefunction 131089) is entered with operands nobody knows and calls a member of one of them by name. What a call of sort reads from its operand and calls on it
 # the records say where the call is. Here the read hands out no member of the table, so the methods of other classes under the same name are neither used nor applied to an operand nobody knows:
 # the image has no code for the sort of typed arrays, and no code that nobody compiles writes anything.
 # Under a symbol: member-under-a-symbol-of-an-unknown-operand-in-the-code-behind-a-described-built-in-is-not-used.ir
@@ -16,7 +16,7 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=131088 function=f1
+runtimefunction id=131089 function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Integer integer=3
     v1 = NewArray v0 contents=anything
@@ -25,7 +25,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v4 = Call v3, v1, v2 calleeKey="sort"
     Return
 }
-function f1 name="sort" role=Library flags=[HasThis] enclosingRuntimeFunction=131088 parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="sort" role=Library flags=[HasThis] enclosingRuntimeFunction=131089 parameters=[{type=anything}] results=[{type=anything}] {
     v2 = PropGet v0 key="sort"
     v3 = Call v2, v0, v1 calleeKey="sort"
     Return v3

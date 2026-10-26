@@ -151,11 +151,14 @@ export const operandRoles = [
   "ReplacesContents",
   "MembersAreOnlyInspected",
   "KeysAreNotListed",
+  "OwnValuesAreReadByKeyOnly",
   "MembersAreOfObjectsOnly",
   "FunctionsAreConvertedUnderNamesOnly",
+  "OnlyBoxedPrimitivesAreConverted",
   "BecomesLengthOfReceiver",
   "CopiesHolesToResult",
   "WorkerEntryPath",
+  "DescribedWhenRefused",
 ] as const;
 export type OperandRole = (typeof operandRoles)[number];
 
@@ -238,6 +241,8 @@ export type ClassName = string;
 export type LayoutName = string;
 export type SlotName = string;
 export type OperandName = "this" | (string & {});
+// An operand of a signature that names none: the receiver, or the argument at an index.
+export type ConstructedOperand = "this" | number;
 
 export interface CheckedNumber {
   value: number;
@@ -447,6 +452,8 @@ export interface NativeCodeRef {
   symbol: string;
   /** Declares it. Without one, a name with a namespace is declared in that namespace and any other is a C function. */
   header?: string;
+  /** The name of the function object, under which a stack trace lists the function. Without one no stack trace lists it. */
+  name?: string;
 }
 
 export type ConditionSpec =
@@ -570,6 +577,8 @@ export const builtinMarks = [
   "IsSpy",
   // Whoever goes over the enumerable properties of its holder passes it by: Object.keys, values, entries and assign, a spread, JSON.stringify.
   "IsNotEnumerable",
+  // An accessor of the host stands under its name. The getter answers what the entry says. The setter puts the value that it is given in the accessor's place, on the holder, whatever its receiver is.
+  "IsReplacedBySetter",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 
@@ -732,6 +741,7 @@ export type IntrinsicSpec =
         | "PrivateGlobal"
         | "ReplaceablePrivateGlobal"
         | "PrivateName"
+        | "ModulePrivateName"
         | "LinkedFunction"
         | "Erased"
         | "BundleError";

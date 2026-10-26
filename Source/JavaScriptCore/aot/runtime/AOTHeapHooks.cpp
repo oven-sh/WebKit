@@ -9,7 +9,9 @@
 #if ENABLE(AOT)
 
 #include "AOTCompiledCallee.h"
+#include "AOTCompiledFrame.h"
 #include "AOTEmptyPages.h"
+#include "AOTFunctionTables.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
@@ -91,6 +93,7 @@ void initializeCollectorWords(VM& vm, Instance& instance)
     instance.heap.storedCellLog = &vm.heap.storedCellLog();
     instance.heap.mutatorMarkStack = &HeapUtil::mutatorMarkStack(vm.heap);
     instance.heap.barriersExecuted = &HeapUtil::barriersExecuted(vm.heap);
+    instance.heap.recordedCallees = FunctionTables::recordedCalleesOf(vm.aotState().functionTables.get());
     auto* headSegmentWord = std::bit_cast<MutatorMarkStackLayout::Segment**>(std::bit_cast<uint8_t*>(instance.heap.mutatorMarkStack) + MutatorMarkStackLayout::offsetOfHeadSegment());
     RELEASE_ASSERT(*headSegmentWord == MutatorMarkStackLayout::headSegmentOf(*instance.heap.mutatorMarkStack));
 }
@@ -104,7 +107,19 @@ void validateFunctionCellIsNotInFrame(VM& vm, const JSCell* cell)
 
 namespace HeapHooks {
 
-void finalize(VM& vm, CollectionScope scope)
+void visitCalleesOfFrames(VM& vm, SlotVisitor& visitor, uint64_t phase)
+{
+    if (auto& tables = vm.aotState().functionTables)
+        tables->visitRecordedCallees(vm, visitor, phase);
+}
+
+void visitCalleesOfFrames(VM& vm, AbstractSlotVisitor& visitor, uint64_t phase)
+{
+    if (auto& tables = vm.aotState().functionTables)
+        tables->visitRecordedCallees(vm, visitor, phase);
+}
+
+void finalize(VM& vm, CollectionScope scope, uint64_t phase)
 {
     VMState& state = vm.aotState();
     {
@@ -115,7 +130,11 @@ void finalize(VM& vm, CollectionScope scope)
             state.instancesToDestroy.append(instance);
             return true;
         });
+        state.didChangeInstances();
     }
+
+    if (state.functionTables)
+        state.functionTables->finalizeRecordedCallees(vm, phase);
 
     CacheValidation validation = state.validatesRuntime ? CacheValidation::On : CacheValidation::Off;
     state.caches->finalize(vm, scope, validation);

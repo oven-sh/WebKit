@@ -1,0 +1,34 @@
+# A spread into a new literal of the source's own layout copies the slots at once where somebody keeps the literal. Where nobody does, it reads and defines field by field, as a literal that lists its members does, so that the object need not be made
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass ExpandOwnKeys
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="State" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled}}, {key="b" declared={type=number} flow={occupancy=AlwaysFilled}}, {key="c" declared={type=number} flow={occupancy=AlwaysFilled}}] flow={constructorOrders=[{}, {fields=[0, 1, 2]}]}
+
+function f0 name="readAndDropped" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: number):
+    v2 = NewObject layout=L0
+    CopyDataProperties v2, v0
+    PropDefine v2, v1 key="b"
+    v5 = FinishObject v2
+    v6 = GetSlot v5 key="a" receivers=[L0] level=Proven
+    Return v6
+# CHECK-NOT: TryCopyFields
+# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 1, 2]
+# CHECK: [[a]]:{{*}}= GetSlot v0, {{*}} key="a"
+# CHECK: PropDefine v2, [[a]] key="a"
+# CHECK-NOT: TryCopyFields
+}
+
+function f1 name="returned" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: object ~ L0, v1: number):
+    v2 = NewObject layout=L0
+    CopyDataProperties v2, v0
+    PropDefine v2, v1 key="b"
+    v5 = FinishObject v2
+    Return v5
+# CHECK: v2:{{*}}= NewObject layout=L0
+# CHECK-NEXT: = TryCopyFields v2, v0 layout=L0
+# CHECK-NOT: HasKeyOrder
+}

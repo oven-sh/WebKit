@@ -47,8 +47,16 @@ static JSCell* tryNewSetFromSideEffectFreeIterable(JSGlobalObject* globalObject,
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!iterable.isCell() || iterable.asCell()->type() == JSSetType)
         return nullptr;
-    JSCellButterfly* walked = CommonSlowPaths::trySpreadFast(globalObject, iterable.asCell());
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSCellButterfly* walked = nullptr;
+    {
+        // What is too long for one list is walked step by step.
+        auto listScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        walked = CommonSlowPaths::trySpreadFast(globalObject, iterable.asCell());
+        if (listScope.exception()) [[unlikely]] {
+            listScope.clearExceptionExceptTermination();
+            return nullptr;
+        }
+    }
     if (!walked)
         return nullptr;
     JSSet* set = JSSet::create(vm, structure);

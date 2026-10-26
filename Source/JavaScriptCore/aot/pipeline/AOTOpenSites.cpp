@@ -47,6 +47,8 @@ static constexpr OpcodeSet opcodesOf(SiteList list)
         return constantListSpreadOpcodes;
     case SiteList::ConstantListCalls:
         return constantListCallOpcodes;
+    case SiteList::TemplateObjects:
+        return { Opcode::NewTemplateObject };
     case SiteList::GlobalNames:
         return bindableAccesses;
     case SiteList::CallSites:

@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTID.h"
+#include "AOTNaturalLoops.h"
 #include "AOTPerFunction.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
@@ -54,7 +55,6 @@ inline constexpr unsigned callersOfFunctionThatRunsOften = 4;
 inline constexpr double activationsOfFunctionThatRunsOften = 100;
 inline constexpr uint8_t percentileOfFunctionThatRunsOften = 90;
 inline constexpr uint8_t percentileOfOtherFunctions = 10;
-AOT_THRESHOLD(unsigned, warmCodeLimitsInVeryLargeProgram, 4);
 AOT_THRESHOLD(double, minWeightOfCallToFollow, 0.01);
 AOT_THRESHOLD(double, minWeightOfCallNearBusyCode, 0.25);
 // Behind two branches in a loop a call weighs 2.25 or more. Two calls in a row weigh 2.
@@ -63,6 +63,8 @@ AOT_THRESHOLD(double, minWeightOfNearlyCertainCall, 0.5);
 AOT_THRESHOLD(unsigned, maxCallersOfCompactFunction, 1);
 AOT_THRESHOLD(unsigned, minMassPerValueWithHeavyLoop, 3);
 AOT_THRESHOLD(uint32_t, maxSizeOfSmallFunction, 32);
+// About what the call and the return of a function cost.
+AOT_THRESHOLD(uint32_t, maxSizeOfHelper, 16);
 
 } // namespace HeatModel
 
@@ -99,7 +101,7 @@ public:
     HeatClass of(const Program&, FunctionID) const;
     // The third class of function, beside hot and cold: a cold function of which nothing in the structure of the program says that it may run.
     bool isCompact(const Program& program, FunctionID id) const { return !m_classOfEverything && m_entries.of(program, id).isCompact; }
-    // There the classes are read off the structure of the program, and only there are functions compact.
+    // There the classes are read off the structure of the program.
     bool isOfVeryLargeProgram() const { return m_valuesInAllFunctions; }
     // False where HeatFor::Preparation has left something out.
     bool hasWeights() const { return m_hasWeights; }
@@ -132,10 +134,12 @@ private:
         bool isCompact { false };
         bool isCalledInLoop { false };
         bool isCalledPerEvent { false };
+        double rank { 0 };
     };
 
     PerFunction<Entry> m_entries;
     bool m_hasWeights { true };
+    bool m_hotIsByRank { false };
     std::optional<HeatThresholds> m_thresholds;
     std::optional<HeatClass> m_classOfEverything;
     uint64_t m_valuesInCompactFunctions { 0 };
@@ -156,6 +160,7 @@ HeatClass heatClassOf(const Heat&, FunctionAnalyses&, BlockID);
 // By how often the code of the function is taken to run for its size.
 bool isInColderPartOfProgram(const Heat&, const Program&, FunctionID);
 HeatClass heatClassOf(FunctionPassContext&, BlockID);
+bool isHotLoop(FunctionPassContext&, const NaturalLoop&);
 
 } } } // namespace JSC::AOT::Typed
 

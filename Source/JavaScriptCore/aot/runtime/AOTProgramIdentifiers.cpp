@@ -142,6 +142,7 @@ Identifier ProgramIdentifiers::create(uint32_t number) const
         RELEASE_ASSERT(text.view(string).isEmpty());
         return Identifier(Identifier::EmptyIdentifierFlag::EmptyIdentifier);
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
         return enginePrivateName(m_vm, text.createString(string));
     case PropertyKeyKind::PrivateName:
         return Identifier::fromUid(PrivateSymbolImpl::create(*text.createString(string).impl()).get());

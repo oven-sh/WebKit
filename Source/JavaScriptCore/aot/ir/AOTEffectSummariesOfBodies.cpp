@@ -14,6 +14,7 @@
 #include "AOTEffectsDescription.h"
 #include "AOTExactBuffer.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTHeldOperands.h"
 #include "AOTIR.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
@@ -171,6 +172,8 @@ static std::optional<uint32_t> mappedEntryParameter(const Function& callee, cons
 {
     if (Value::opcodesWithCallees.contains(call.opcode))
         return entryParameterOf(callee, call, operandIndex);
+    if (isHeldOperand(call, operandIndex))
+        return std::nullopt;
     return call.variadicOperandIndex(operandIndex);
 }
 
@@ -546,7 +549,7 @@ private:
         m_summary.followsFieldsOfOperands |= description.followsFieldsOfOperands;
         if (m_references)
             m_references->read(value, description);
-        if (value.opcode == Opcode::Check && !program.typeOf(m_function, value.valueOperand()).isSubsetOf(program.at(value.castType()), program))
+        if (value.opcode == Opcode::Check && !program.typeOf(m_function, value.valueOperand()).isSubsetOf(program.at(value.expectedType().predicted()), program))
             description.callsUnknownCode = true;
         AOT_THRESHOLD(size_t, mostFunctionsFollowed, 64);
         if (description.functions.size() > mostFunctionsFollowed) {

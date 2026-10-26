@@ -1,7 +1,7 @@
 # An array holds cells, whatever the type of its elements. The word of a cell is found by a search for its text, which costs more than a comparison with a written text or a switch over
 # a few: both take the element as it is.
 # FORM: Placed
-# OPTIONS: check=validate-back-end
+# OPTIONS: check=validate-back-end heat=OnlyLoopsAreHot
 # RUN: pass ChooseRepresentations
 # RUN(CODE): generate-code calls
 

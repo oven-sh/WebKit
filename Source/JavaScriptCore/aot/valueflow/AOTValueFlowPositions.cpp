@@ -71,7 +71,7 @@ ValueFlowLayoutsOfSites findLayoutsOfSites(const ValueFlowResultInputs& inputs)
         if (statement->opcode != Opcode::NewClass)
             continue;
         ValueSetID& heritage = heritageOfClass[layoutAt(*statement).index()];
-        heritage = maker.unite(heritage, maker.intersect(inputs.valueOf(maker, bodies.operandsOf(*statement)[OperandIndex::NewClass::heritage]), heritagesOfClasses));
+        heritage = maker.unite(heritage, maker.intersect(inputs.possibleValuesOf(maker, bodies.operandsOf(*statement)[OperandIndex::NewClass::heritage]), heritagesOfClasses));
     }
     auto layoutAbove = [&](LayoutID layout) {
         ValueFlowObjectID heritage = sets.onlyMember(heritageOfClass[layout.index()]);
@@ -95,7 +95,7 @@ ValueFlowLayoutsOfSites findLayoutsOfSites(const ValueFlowResultInputs& inputs)
         if (statement->opcode != Opcode::NewObject)
             continue;
         ValueFlowObjectID allocation = universe.siteObject(*statement);
-        ValueSetID prototypes = inputs.valueOf(maker, bodies.operandsOf(*statement)[OperandIndex::NewObject::prototype]);
+        ValueSetID prototypes = inputs.possibleValuesOf(maker, bodies.operandsOf(*statement)[OperandIndex::NewObject::prototype]);
         ValueFlowLayoutsOfSite picked { { layoutAt(*statement) }, ValueSets::isComplement(prototypes) || sets.meet(prototypes, universe.placeholdersAlone()) };
         LayoutID ownClass = declaredLayoutOf(program, layoutAt(*statement));
         sets.forEachMember(ValueSets::isComplement(prototypes) ? ValueSets::nothing : prototypes, [&](ValueFlowObjectID prototype) {
@@ -114,20 +114,21 @@ ValueFlowLayoutsOfSites findLayoutsOfSites(const ValueFlowResultInputs& inputs)
 
     auto closuresIn = [&](ValueSetID set) {
         if (ValueSets::isComplement(set) || sets.contains(set, ValueFlowUniverse::untrackedObject()))
-            set = maker.unite(set, solver.valueOf(ValueFlowProgramNodes::lost()));
+            set = maker.unite(set, solver.possibleValuesOf(ValueFlowProgramNodes::lost()));
         return maker.intersect(set, universe.closures());
     };
+    ValueSetID heritagesOutsideProgram = maker.unite(universe.builtinObjects(), maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Null)));
     auto getsOwnLayoutFromEach = [&](LayoutID newTarget, std::span<const LayoutID> sortedConstructorFunctions) {
         size_t numberOnChain = 0;
         for (size_t steps = 0; newTarget && steps <= program.layouts.size(); ++steps, newTarget = layoutAbove(newTarget)) {
             numberOnChain += std::ranges::binary_search(sortedConstructorFunctions, newTarget);
-            if (!program.at(newTarget).has(LayoutFlags::HasHeritage))
+            if (!program.at(newTarget).has(LayoutFlags::HasHeritage) || sets.isSubset(heritageOfClass[newTarget.index()], heritagesOutsideProgram))
                 return numberOnChain == sortedConstructorFunctions.size();
         }
         return true;
     };
 
-    ValueSetID newTargetsFromOperands = closuresIn(solver.valueOf(bodies.nodes().ofHost(ValueFlowHostNode::NewTargetsFromOperands)));
+    ValueSetID newTargetsFromOperands = closuresIn(solver.possibleValuesOf(bodies.nodes().ofHost(ValueFlowHostNode::NewTargetsFromOperands)));
     if (sets.isEmpty(newTargetsFromOperands))
         return found;
     uint32_t firstMadeNode = solver.input().numberOfNodes;
@@ -153,7 +154,7 @@ ValueFlowLayoutsOfSites findLayoutsOfSites(const ValueFlowResultInputs& inputs)
         AOT::sort(constructorFunctions);
         constructorFunctions.shrink(constructorFunctions.size() - std::ranges::unique(constructorFunctions).size());
 
-        sets.forEachMember(maker.intersect(closuresIn(solver.valueOf(callGroupAt(node).newTarget)), newTargetsFromOperands), [&](ValueFlowObjectID newTarget) {
+        sets.forEachMember(maker.intersect(closuresIn(solver.possibleValuesOf(callGroupAt(node).newTarget)), newTargetsFromOperands), [&](ValueFlowObjectID newTarget) {
             LayoutID layout = program.at(universe.closureFunction(newTarget)).constructedClass;
             if (!layout || (!constructsFunctionWithoutLayout && getsOwnLayoutFromEach(layout, constructorFunctions.span())))
                 return;
@@ -513,7 +514,7 @@ Type ValueFlowPositions::withinLimits(Type&& type)
     return WTF::move(type);
 }
 
-ValueFlowObjectID ValueFlowPositions::findStranger(ValueSetID set, const Type& family, Trust trust)
+ValueFlowObjectID ValueFlowPositions::findStranger(ValueSetID set, const Type& family)
 {
     const Program& program = m_inputs.program;
     const ValueFlowUniverse& universe = m_inputs.universe();
@@ -529,7 +530,7 @@ ValueFlowObjectID ValueFlowPositions::findStranger(ValueSetID set, const Type& f
         const ValueFlowSite* site = universe.siteOf(member);
         return site && site->origin == ValueFlowSiteOrigin::BuiltinResult ? LayoutID() : layout;
     };
-    m_inputs.sets().anyMember(trust >= Trust::Primitives ? maker().intersect(set, universe.objects()) : set, [&](ValueFlowObjectID member) {
+    m_inputs.sets().anyMember(set, [&](ValueFlowObjectID member) {
         LayoutID sureLayout = sureLayoutOf(member);
         if (member == ValueFlowUniverse::untrackedObject() || (sureLayout && layoutsInside.get(sureLayout.index())))
             return false;
@@ -579,9 +580,17 @@ std::optional<Type> ValueFlowPositions::familyBehindDictionaries(const Type& fam
     return typeBehindDictionaries(m_inputs.program, *m_inputs.layoutsOfDictionaries, m_inputs.typesBehindDictionaries, family, m_types);
 }
 
-ValueFlowPositionResult ValueFlowPositions::decide(const Type& familyAsRead, ValueSetID set, DeadZone deadZone, Trust trust, const ValueFlowNumbers* numbers, ValueFlowNodeID node)
+template<typename KindOfType>
+ValueFlowPositionResult ValueFlowPositions::decide(KindOfType kindOfFamily, ValueSetID set, DeadZone deadZone, const ValueFlowNumbers* numbers, ValueFlowNodeID node)
 {
+    constexpr bool isProven = std::is_same_v<KindOfType, ProvenType>;
+    static_assert(isProven || std::is_same_v<KindOfType, ExpectedType>);
+    // A layout that is picked later is picked inside the type of a position, which every store is held to.
+    bool holdsInEveryVersion = false;
+    if constexpr (isProven)
+        holdsInEveryVersion = kindOfFamily.scope() == ProofScope::EveryVersion;
     const Program& program = m_inputs.program;
+    const Type& familyAsRead = program.at(kindOfFamily.payload());
     std::optional<Type> familyBehind = familyBehindDictionaries(familyAsRead);
     const Type& family = familyBehind ? *familyBehind : familyAsRead;
     if (!family.isJavaScriptValue() || m_inputs.sets().isEmpty(set))
@@ -595,7 +604,7 @@ ValueFlowPositionResult ValueFlowPositions::decide(const Type& familyAsRead, Val
         return { .proof = ValueFlowProof::Proven, .narrowed = family.withoutPrimitives(Primitive::Absent) };
     if (holdsUnknownValue)
         return { .proof = ValueFlowProof::IllTyped };
-    if (holdsUntrackedObject && (trust == Trust::Nothing || !m_inputs.universe().namesProgramObjectsAlone(program, family)))
+    if (holdsUntrackedObject && (!isProven || !m_inputs.universe().namesProgramObjectsAlone(program, family)))
         return { .proof = ValueFlowProof::Untracked };
 
     Type held = typeOf(set);
@@ -612,7 +621,8 @@ ValueFlowPositionResult ValueFlowPositions::decide(const Type& familyAsRead, Val
     if (!isEnabled(FlowResultKind::Initialization))
         held.primitives |= family.primitives & Primitive::Absent;
 
-    bool isInside = trust == Trust::PassedTest || (trust >= Trust::Primitives ? holdsOnlyObjectsOf(held, family, program) : held.isSubsetOf(family, program));
+    bool hasPassedTest = holdsInEveryVersion && node && m_inputs.solver().graph().maskKindOf(node) == ValueFlowMaskKind::Checked;
+    bool isInside = hasPassedTest || (isProven ? holdsOnlyObjectsOf(held, family, program) : held.isSubsetOf(family, program));
     auto liesOutsideGuessedRangeAlone = [&] {
         if (held.isInteger() && family.isNumber())
             return true;
@@ -622,10 +632,10 @@ ValueFlowPositionResult ValueFlowPositions::decide(const Type& familyAsRead, Val
         withinGuessedRange.integers = family.integers;
         return withinGuessedRange.isSubsetOf(family, program);
     };
-    if (!isInside && trust == Trust::Nothing && liesOutsideGuessedRangeAlone())
+    if (!isInside && !isProven && liesOutsideGuessedRangeAlone())
         return { .proof = ValueFlowProof::Proven, .narrowed = WTF::move(held) };
     if (!isInside) {
-        ValueFlowObjectID stranger = findStranger(set, family, trust);
+        ValueFlowObjectID stranger = findStranger(isProven ? maker().intersect(set, m_inputs.universe().objects()) : set, family);
         bool isUndecided = stranger && findLayoutsPickedBy(stranger) && typeOfObject(stranger).overlaps(family, program);
         if (!isUndecided) {
             m_counts.setsOutsideFamilies.fetch_add(1, std::memory_order_relaxed);
@@ -635,26 +645,35 @@ ValueFlowPositionResult ValueFlowPositions::decide(const Type& familyAsRead, Val
             }
             return { .proof = ValueFlowProof::OutsideFamily, .stranger = stranger };
         }
-        if (trust < Trust::Position)
+        if (!holdsInEveryVersion)
             return { .proof = ValueFlowProof::UndecidedLayout, .stranger = stranger };
     }
 
     if (holdsUntrackedObject)
         held = held.unionWith(family.withOnlyObjects(), m_types);
-    Type narrowed = withinLimits(WTF::move(held)).intersectWith(family, m_types);
+    held = withinLimits(WTF::move(held));
+    Type narrowed = held.intersectWith(family, m_types);
     if (narrowed.isNever() || (narrowed == family && !familyBehind))
         return { .proof = ValueFlowProof::Proven };
-    return { .proof = ValueFlowProof::Proven, .narrowed = WTF::move(narrowed) };
+    bool isWhatFlowHolds = !holdsUntrackedObject && narrowed == held;
+    return { .proof = ValueFlowProof::Proven, .narrowed = WTF::move(narrowed), .isWhatFlowHolds = isWhatFlowHolds };
 }
 
-ValueFlowPositionResult ValueFlowPositions::resultAt(const Type& family, ValueSetID set, DeadZone deadZone, const ValueFlowNumbers* numbers)
+ValueFlowPositionResult ValueFlowPositions::resultAt(ProvenType family, ValueSetID set, DeadZone deadZone, const ValueFlowNumbers* numbers)
 {
-    return decide(family, set, deadZone, Trust::Primitives, numbers);
+    return decide(family, set, deadZone, numbers);
+}
+
+ValueFlowPositionResult ValueFlowPositions::resultAt(ExpectedType family, ValueSetID set, DeadZone deadZone)
+{
+    return decide(family, set, deadZone, nullptr);
 }
 
 ValueFlowPositionResult ValueFlowPositions::resultAt(const DeclaredType& declared, ValueSetID set, DeadZone deadZone)
 {
-    return decide(m_inputs.program.at(declared.type), set, deadZone, declared.flags.contains(PositionFlags::IsExpected) ? Trust::Nothing : Trust::Position, nullptr);
+    if (std::optional<ProvenInEveryVersion> established = declared.established())
+        return resultAt(*established, set, deadZone);
+    return resultAt(declared.expected(), set, deadZone);
 }
 
 FlowPositionUpdate ValueFlowPositions::updateFrom(const ValueFlowPositionResult& result, const Type& family)
@@ -673,18 +692,17 @@ FlowPositionUpdate ValueFlowPositions::updateFrom(const ValueFlowPositionResult&
 FlowPositionUpdate ValueFlowPositions::updateFor(const DeclaredType& declared, ValueFlowNodeID node, DeadZone deadZone, const ValueFlowNumbers* numbers)
 {
     const ValueFlowSolver& solver = m_inputs.solver();
-    const Type& family = m_inputs.program.at(declared.type);
-    Trust trust = declared.flags.contains(PositionFlags::IsExpected) ? Trust::Nothing : Trust::Position;
-    if (trust == Trust::Position && solver.graph().maskKindOf(node) == ValueFlowMaskKind::Checked)
-        trust = Trust::PassedTest;
-    ValueFlowPositionResult result = decide(family, solver.valueOf(node), deadZone, trust, numbers, node);
+    const Type& family = m_inputs.program.at(declared.written());
+    std::optional<ProvenInEveryVersion> established = declared.established();
+    ValueSetID possible = solver.possibleValuesOf(node);
+    ValueFlowPositionResult result = established ? decide<ProvenType>(*established, possible, deadZone, numbers, node) : decide(declared.expected(), possible, deadZone, numbers, node);
     if (result.proof == ValueFlowProof::Proven && solver.holdsObjectOutsideFamily(node))
         result = { .proof = ValueFlowProof::OutsideFamily };
 
     FlowPositionUpdate update = updateFrom(result, family);
     if (update.isProven)
         return update;
-    if (result.proof != ValueFlowProof::NothingArrives && result.proof != ValueFlowProof::Disabled && numbers && trust != Trust::Nothing) {
+    if (result.proof != ValueFlowProof::NothingArrives && result.proof != ValueFlowProof::Disabled && numbers && established) {
         Type narrowed = family;
         numbers->narrow(narrowed);
         if (narrowed != family) {
@@ -704,12 +722,10 @@ FlowPositionUpdate ValueFlowPositions::updateFor(const DeclaredType& declared, V
 
 void ValueFlowPositions::takeWhatArrives(const DeclaredType& declared, ValueFlowNodeID node, FlowPositionUpdate& update)
 {
-    const Type& expected = m_inputs.program.at(declared.type);
-    if (update.isProven || declared.site || !declared.flags.contains(PositionFlags::IsExpected) || !expected.layouts)
+    const Type& expected = m_inputs.program.at(declared.expected().predicted());
+    if (update.isProven || declared.site || !declared.isExpected() || !expected.layouts)
         return;
-    DeclaredType anything { .type = TypeTable::anything };
-    anything.flags.add(PositionFlags::IsExpected);
-    ValueFlowPositionResult arriving = resultAt(anything, m_inputs.solver().valueOf(node));
+    ValueFlowPositionResult arriving = resultAt(ExpectedType(TypeTable::anything), m_inputs.solver().possibleValuesOf(node));
     if (arriving.proof != ValueFlowProof::Proven || !arriving.narrowed || arriving.narrowed->anyObject || arriving.narrowed->primitives & ~expected.primitives)
         return;
     update.type = m_types.intern(*arriving.narrowed);
@@ -742,23 +758,29 @@ ValueSetID ValueFlowPositions::withoutWhatPlaceholdersCover(ValueSetID set)
     const ValueFlowUniverse& universe = m_inputs.universe();
     auto leaveOut = [&](ValueFlowObjectID placeholder, ValueSetID placeholderAlone, ValueFlowNodeID covered) {
         if (holds(set, placeholder))
-            set = maker().unite(maker().intersect(set, ValueSets::complement(m_inputs.solver().valueOf(covered))), placeholderAlone);
+            set = maker().unite(maker().intersect(set, ValueSets::complement(m_inputs.solver().possibleValuesOf(covered))), placeholderAlone);
     };
     leaveOut(ValueFlowUniverse::unknownObject(), universe.unknownObjectAlone(), ValueFlowProgramNodes::escaped());
     leaveOut(ValueFlowUniverse::untrackedObject(), universe.untrackedObjectAlone(), ValueFlowProgramNodes::lost());
     return set;
 }
 
-std::optional<CalleeSet> ValueFlowPositions::calleesAt(const Type& family, ValueSetID set, const ValueFlowOperand* calleeOfConstruction)
+std::optional<CalleeSet> ValueFlowPositions::calleesAt(const Type& family, ValueSetID possible, ValueSetID seen, const ValueFlowOperand* calleeOfConstruction)
 {
-    if (ValueSets::isComplement(set))
+    if (ValueSets::isComplement(possible) || ValueSets::isComplement(seen))
         return std::nullopt;
 
     const Program& program = m_inputs.program;
     const ValueFlowUniverse& universe = m_inputs.universe();
-    ValueSetID arriving = set;
-    if (holds(set, ValueFlowUniverse::untrackedObject()) && universe.namesProgramObjectsAlone(program, family))
-        arriving = maker().unite(maker().intersect(set, ValueSets::complement(universe.untrackedObjectAlone())), universe.familyObjectsOf(maker(), program, family));
+    auto withFamilyInPlaceOfUntrackedObject = [&](ValueSetID set) {
+        if (!holds(set, ValueFlowUniverse::untrackedObject()) || !universe.namesProgramObjectsAlone(program, family))
+            return set;
+        return maker().unite(maker().intersect(set, ValueSets::complement(universe.untrackedObjectAlone())), universe.familyObjectsOf(maker(), program, family));
+    };
+    ValueSetID arriving = withFamilyInPlaceOfUntrackedObject(possible);
+    bool mayBeAnyCallee = m_inputs.sets().meet(arriving, universe.placeholdersAlone());
+    if (mayBeAnyCallee)
+        arriving = withFamilyInPlaceOfUntrackedObject(seen);
     ValueSetID listed = withoutWhatPlaceholdersCover(arriving);
     bool isConstruction = !!calleeOfConstruction;
     if (isConstruction && listed != arriving) {
@@ -770,7 +792,7 @@ std::optional<CalleeSet> ValueFlowPositions::calleesAt(const Type& family, Value
     }
 
     CalleeSet callees;
-    callees.isComplete = true;
+    callees.isComplete = !mayBeAnyCallee;
     m_inputs.sets().forEachMember(listed, [&](ValueFlowObjectID member) {
         if (!universe.isObject(member))
             return;
@@ -792,6 +814,8 @@ bool isDataFromOutside(const ValueFlowResultInputs& inputs, ValueFlowObjectID ob
 {
     const ValueFlowUniverse& universe = inputs.universe();
     const BuiltinTable& builtins = inputs.program.builtins();
+    if (object == universe.resultOf(Builtins::JSONParse, 0) || object == universe.resultOf(Builtins::JSONParse, 1))
+        return true;
     const ValueFlowSite* site = universe.isObject(object) ? universe.siteOf(object) : nullptr;
     FunctionID function = site ? universe.functionOf(object) : FunctionID();
     if (!function || site->origin != ValueFlowSiteOrigin::BuiltinResult || !site->value)
@@ -801,7 +825,7 @@ bool isDataFromOutside(const ValueFlowResultInputs& inputs, ValueFlowObjectID ob
         if (statement.kind != ValueFlowStatementKind::Operation || statement.site != site->value)
             continue;
         std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
-        ValueSetID callees = !operands.empty() && operands[0].node ? inputs.solver().valueOf(operands[0].node) : ValueSets::nothing;
+        ValueSetID callees = !operands.empty() && operands[0].node ? inputs.solver().possibleValuesOf(operands[0].node) : ValueSets::nothing;
         inputs.sets().forEachMember(ValueSets::isComplement(callees) ? ValueSets::nothing : callees, [&](ValueFlowObjectID callee) {
             BuiltinID builtin = universe.isObject(callee) ? universe.builtinOf(callee) : BuiltinID();
             if (!builtin)

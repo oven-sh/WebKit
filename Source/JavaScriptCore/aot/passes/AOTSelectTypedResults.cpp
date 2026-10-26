@@ -385,7 +385,7 @@ struct TypedResultExpander final : Emission {
 
     void endExpansion(const IRBuilder::Expansion& expansion, ValueID result)
     {
-        DeclaredType replacedType { .type = function().at(expansion.results[0]).type };
+        DeclaredType replacedType(Proven::byPosition(function().at(expansion.results[0]).type));
         builder().endExpansion(expansion, convertTo(builder(), result, replacedType));
     }
 
@@ -453,7 +453,7 @@ struct TypedResultExpander final : Emission {
         function.edit(site.call) = WTF::move(*bytesCall);
         Value& call = function.edit(site.call);
         call.type = resultTypeOf(program(), function, call, inputs().types);
-        call.setExpected(expectedTypeOf(program(), function, call, inputs().types));
+        call.setExpected(ExpectedType(expectedTypeOf(program(), function, call, inputs().types)));
         removeCastsOfAwaitedPromise(function, site);
         pass.analyses.didChangeValues();
         builder().setOrigin(originalCall.origin());

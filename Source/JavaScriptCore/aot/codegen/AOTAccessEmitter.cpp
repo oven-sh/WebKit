@@ -378,7 +378,11 @@ void AccessEmitter::generatePropDelete(const ValueContext& value)
         define(value, callOperation<Condition>(value, RuntimeOperation::DeleteFreeName, { key }));
         return;
     }
-    define(value, callOperation<Condition>(value, forMode(value->mode(), RuntimeOperation::DeleteById, RuntimeOperation::DeleteByIdSloppy), { in<Boxed>(value->objectOperand()), key }));
+    if (!typeOf(value->objectOperand()).hasObjects()) {
+        define(value, callOperation<Condition>(value, forMode(value->mode(), RuntimeOperation::DeleteById, RuntimeOperation::DeleteByIdSloppy), { in<Boxed>(value->objectOperand()), key }));
+        return;
+    }
+    define(value, Condition(m_out.castToInt32(callStub(value, deleteByIdCached(putModeOf(value->mode())), { in<Boxed>(value->objectOperand()).value(), key.value() }).first)));
 }
 
 static StubKey cachedStoreStubFor(PutMode mode)
@@ -437,6 +441,8 @@ std::optional<AccessEmitter::ElementKey> AccessEmitter::elementKeyOf(const Value
     case Representation::Void:
     case Representation::Boolean:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:
@@ -493,7 +499,11 @@ void AccessEmitter::generateElemDelete(const ValueContext& value)
 {
     Boxed object = in<Boxed>(value->objectOperand());
     Boxed key = in<Boxed>(value->propertyOperand());
-    define(value, callOperation<Condition>(value, forMode(value->mode(), RuntimeOperation::DeleteByVal, RuntimeOperation::DeleteByValSloppy), { object, key }));
+    if (!typeOf(value->objectOperand()).hasObjects()) {
+        define(value, callOperation<Condition>(value, forMode(value->mode(), RuntimeOperation::DeleteByVal, RuntimeOperation::DeleteByValSloppy), { object, key }));
+        return;
+    }
+    define(value, Condition(m_out.castToInt32(callStub(value, deleteByValCached(putModeOf(value->mode())), { object.value(), key.value() }).first)));
 }
 
 void AccessEmitter::generateElemDefine(const ValueContext& value)

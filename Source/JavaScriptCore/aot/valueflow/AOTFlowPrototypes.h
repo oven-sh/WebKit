@@ -12,6 +12,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+BuiltinClassID classOfFunctionObject(const Function&);
 BuiltinID prototypeOfFunctionObject(const Function&);
 
 } } } // namespace JSC::AOT::Typed

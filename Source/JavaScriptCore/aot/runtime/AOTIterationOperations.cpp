@@ -199,6 +199,34 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowNotIterable, void, (Instance* instance
     OPERATION_RETURN(scope);
 }
 
+// What the engine's spread lists in one piece: a text, or a view whose iteration nothing has replaced. A text of 16-bit units makes one element of a surrogate pair.
+JSC_DEFINE_JIT_OPERATION(operationAOTThrowIfTooLongForList, void, (Instance* instance, JSCell* source))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowIfTooLongForList);
+    size_t count = 0;
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(source)) {
+        if (!view->isOutOfBounds() && view->isIteratorProtocolFastAndNonObservable())
+            count = view->length();
+    } else if (globalObject->isStringPrototypeIteratorProtocolFastAndNonObservable()) {
+        JSString* string = asString(source);
+        count = string->length();
+        if (count > IndexingHeader::maximumLength && !string->is8Bit()) {
+            auto text = string->view(globalObject);
+            OPERATION_RETURN_IF_EXCEPTION(scope);
+            std::span<const char16_t> units = text->span16();
+            for (size_t i = 0; i + 1 < units.size(); ++i) {
+                if (U16_IS_LEAD(units[i]) && U16_IS_TRAIL(units[i + 1])) {
+                    --count;
+                    ++i;
+                }
+            }
+        }
+    }
+    if (count > IndexingHeader::maximumLength)
+        throwOutOfMemoryError(globalObject, scope);
+    OPERATION_RETURN(scope);
+}
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

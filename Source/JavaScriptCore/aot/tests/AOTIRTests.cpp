@@ -51,10 +51,7 @@ Terminator createTerminator(TerminatorKind kind, unsigned numberOfTargets)
 
 DeclaredType createDeclaredType(TypeID type, OptionSet<PositionFlags> flags = { })
 {
-    DeclaredType declared;
-    declared.type = type;
-    declared.flags = flags;
-    return declared;
+    return flags.contains(PositionFlags::IsExpected) ? DeclaredType(ExpectedType(type)) : DeclaredType(Proven::byPosition(type));
 }
 
 CreatorRecord::Coroutine createCoroutineRecord(CoroutineKind kind, TypeID promiseType = { })
@@ -341,6 +338,18 @@ static void parseEnumRejectsUnknownNames()
     AOT_TEST_CHECK(parseEnum<TerminatorKind>("Jump"_s) == TerminatorKind::Jump && !parseEnum<TerminatorKind>("Call"_s));
 }
 
+static void positionsThatManyOperationsDeclareAreReadFromOneTable()
+{
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        AOT_TEST_CHECK(PayloadWord::key(opcode) == PayloadWord::keyAsDeclared(opcode));
+        AOT_TEST_CHECK(PayloadWord::layout(opcode) == PayloadWord::layoutAsDeclared(opcode));
+        AOT_TEST_CHECK(OperandPosition::value(opcode) == OperandPosition::valueAsDeclared(opcode));
+    }
+    AOT_TEST_CHECK(PayloadWord::key(Opcode::PropGet) == 0u && PayloadWord::key(Opcode::DefineMethod) == 4u && !PayloadWord::key(Opcode::Undefined));
+    for (unsigned noMember : { numberOfEnumerators<Opcode>, unsigned { UINT16_MAX } })
+        AOT_TEST_CHECK(!PayloadWord::key(static_cast<Opcode>(noMember)) && !OperandPosition::value(static_cast<Opcode>(noMember)));
+}
+
 static void valueOperandsOfCall()
 {
     Value call(Opcode::Call);
@@ -427,7 +436,7 @@ static void valueBecomeKeepsTypesOriginAndRepresentation()
 {
     Value value(Opcode::NewArray);
     value.type = TypeTable::object;
-    value.setExpected(TypeTable::function);
+    value.setExpected(ExpectedType(TypeTable::function));
     value.setOrigin({ 40, 2 });
     value.representation = Representation::Cell;
     value.flags = UINT8_MAX;
@@ -440,7 +449,7 @@ static void valueBecomeKeepsTypesOriginAndRepresentation()
     AOT_TEST_CHECK(value.opcode == Opcode::Integer && !value.flags);
     AOT_TEST_CHECK(!value.numberOfOperands() && value.operands().empty() && !value.child(0));
     AOT_TEST_CHECK(value.outOfLinePayload().empty() && !value.integer());
-    AOT_TEST_CHECK(value.type == TypeTable::object && value.expected() == TypeTable::function);
+    AOT_TEST_CHECK(value.type == TypeTable::object && value.expected().predicted() == TypeTable::function);
     AOT_TEST_CHECK(value.position == 40 && value.inlineFrame == 2 && value.representation == Representation::Cell);
 }
 
@@ -448,27 +457,27 @@ static void valueWithoutExpectedTypeFallsBackToItsType()
 {
     Value value(Opcode::Undefined);
     value.type = TypeTable::anything;
-    AOT_TEST_CHECK(!value.expected() && value.expectedOrType() == TypeTable::anything);
+    AOT_TEST_CHECK(!value.expected().predicted() && value.expectedOrType().predicted() == TypeTable::anything);
     value.type = TypeTable::object;
-    AOT_TEST_CHECK(!value.expected() && value.expectedOrType() == TypeTable::object);
-    value.setExpected(TypeTable::function);
-    AOT_TEST_CHECK(value.type == TypeTable::object && value.expected() == TypeTable::function && value.expectedOrType() == TypeTable::function);
+    AOT_TEST_CHECK(!value.expected().predicted() && value.expectedOrType().predicted() == TypeTable::object);
+    value.setExpected(ExpectedType(TypeTable::function));
+    AOT_TEST_CHECK(value.type == TypeTable::object && value.expected().predicted() == TypeTable::function && value.expectedOrType().predicted() == TypeTable::function);
     value.setExpected({ });
-    AOT_TEST_CHECK(!value.expected() && value.expectedOrType() == TypeTable::object);
+    AOT_TEST_CHECK(!value.expected().predicted() && value.expectedOrType().predicted() == TypeTable::object);
 }
 
 static void valueExpectedTypeSurvivesRelayout()
 {
     Value call(Opcode::Call);
     call.setOperand(0, ValueID(10u));
-    call.setExpected(TypeTable::function);
+    call.setExpected(ExpectedType(TypeTable::function));
     call.appendVariadicOperand(ValueID(12u));
-    AOT_TEST_CHECK(call.expected() == TypeTable::function && call.operand(0) == ValueID(10u) && call.operand(2) == ValueID(12u));
+    AOT_TEST_CHECK(call.expected().predicted() == TypeTable::function && call.operand(0) == ValueID(10u) && call.operand(2) == ValueID(12u));
     Value copy = call;
     Value moved = WTF::move(call);
-    AOT_TEST_CHECK(copy.expected() == TypeTable::function && moved.expected() == TypeTable::function && moved.operand(2) == ValueID(12u));
+    AOT_TEST_CHECK(copy.expected().predicted() == TypeTable::function && moved.expected().predicted() == TypeTable::function && moved.operand(2) == ValueID(12u));
     copy.become(Opcode::Undefined);
-    AOT_TEST_CHECK(copy.expected() == TypeTable::function && !copy.numberOfOperands());
+    AOT_TEST_CHECK(copy.expected().predicted() == TypeTable::function && !copy.numberOfOperands());
 
     for (Opcode opcode : allMembersOf<Opcode>) {
         Value value(opcode);
@@ -479,8 +488,8 @@ static void valueExpectedTypeSurvivesRelayout()
         for (unsigned word = 0; word < numberOfWords; ++word)
             value.setPayloadWordAt(word, 100 + word);
         for (TypeID expected : { TypeTable::object, TypeID(), TypeTable::function }) {
-            value.setExpected(expected);
-            AOT_TEST_CHECK(value.expected() == expected && value.numberOfOperands() == numberOfOperands);
+            value.setExpected(ExpectedType(expected));
+            AOT_TEST_CHECK(value.expected().predicted() == expected && value.numberOfOperands() == numberOfOperands);
             for (uint32_t index = 0; index < numberOfOperands; ++index)
                 AOT_TEST_CHECK(value.operand(index) == ValueID(20 + index));
             for (unsigned word = 0; word < numberOfWords; ++word)
@@ -606,7 +615,7 @@ static void valueForEachReferenceSkipsNull()
     AOT_TEST_CHECK(!numberOfCalls);
 
     test.type = TypeTable::anything;
-    test.setExpected(TypeTable::boolean);
+    test.setExpected(ExpectedType(TypeTable::boolean));
     test.setTestedType(TypeTable::string);
     forEachReference(test, [&]<typename Reference>(Reference& reference) {
         ++numberOfCalls;
@@ -617,7 +626,7 @@ static void valueForEachReferenceSkipsNull()
             AOT_TEST_CHECK(false);
     });
     AOT_TEST_CHECK(numberOfCalls == 1 && test.testedType() == TypeTable::function);
-    AOT_TEST_CHECK(test.type == TypeTable::anything && test.expected() == TypeTable::boolean);
+    AOT_TEST_CHECK(test.type == TypeTable::anything && test.expected().predicted() == TypeTable::boolean);
 
     Vector<TypeID> visited;
     forEachType(test, [&](TypeID id) { visited.append(id); });
@@ -1052,7 +1061,7 @@ static void forEachTypeVisitsEveryPosition()
     v(compactListAppendInsertRemove) v(compactListAppendOwnSpan) v(compactListCopyAndMove) v(compactListRemoveAtEnd) v(compactListEmptyOperationsLeaveSharedHeader) \
     v(compactListStoresSingleElementInline) v(inlineListSpillsAndShrinksToFit) v(inlineListCopiesElementsInPlace) v(inlineListMovesAndDestroysElements) v(outOfLineOptionalMatchesStdOptional) \
     v(effectsDumpUsesSchemaGrammar) v(effectsDumpCountsLocationsOfPartialHeap) v(effectsOnEdgesDumpShowsHandlerThatDiffers) v(abstractHeapSetIterationAscends) \
-    v(parseEnumFindsEveryOpcode) v(parseEnumRejectsUnknownNames) \
+    v(parseEnumFindsEveryOpcode) v(parseEnumRejectsUnknownNames) v(positionsThatManyOperationsDeclareAreReadFromOneTable) \
     v(valueOperandsOfCall) v(valueAbsentOperandKeepsIndex) v(valueFourNamedOperands) v(valueVariadicOperandsFollowFiveNamedOperands) \
     v(valueRemoveVariadicOperandKeepsNamedOperands) v(valueBecomeKeepsTypesOriginAndRepresentation) v(valueWithoutExpectedTypeFallsBackToItsType) \
     v(valueExpectedTypeSurvivesRelayout) v(flagsAndInlineFrameFitBitFields) v(valueSpansSurviveMove) \

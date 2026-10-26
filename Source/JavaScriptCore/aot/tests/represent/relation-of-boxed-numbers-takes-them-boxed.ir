@@ -7,8 +7,8 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="twoTestedNumbers" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
-    v2 = AssumeType v0 castType=number
-    v3 = AssumeType v1 castType=undefined|number
+    v2 = AssumeType v0 provenType=number
+    v3 = AssumeType v1 provenType=undefined|number
     v4 = Less v2, v3 form=Numbers
     Return v4
 # CHECK-NOT: Unbox
@@ -31,7 +31,7 @@ function f1 name="branchOnBoxedNumberAndInt32" parameters=[{type=anything}, {typ
 }
 
 function f2 name="doubleStaysDouble" parameters=[{type=number}, {type=anything}] results=[{type=boolean}] {
-    v2 = AssumeType v1 castType=number
+    v2 = AssumeType v1 provenType=number
     v3 = Mul v0, v0 form=Numbers
     v4 = LessEq v3, v2 form=Numbers
     Return v4

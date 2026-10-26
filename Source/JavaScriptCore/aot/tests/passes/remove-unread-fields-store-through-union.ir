@@ -17,7 +17,7 @@ layout L5 name="Called" fields=[{key="tag" declared={type=anything} flags=[IsReq
 # CHECK: layout L4 name="UnreadBesideCalled" fields=[{key="tag"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="r"
 # CHECK: layout L5 name="Called" fields=[{key="tag"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled}
 
-function f0 name="bothUnread" parameters=[{type=L0|L1}, {type=anything}] results=[{type=anything}] {
+function f0 name="bothUnread" parameters=[{type=L0|L1}, {type=number}] results=[{type=anything}] {
     PutSlot v0, -, v1 key="tag" receivers=[L0, L1] level=Proven
     v3 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
     v4 = NewObject -, v1, v1 layout=L1 fields=[0, 1]
@@ -28,7 +28,7 @@ function f0 name="bothUnread" parameters=[{type=L0|L1}, {type=anything}] results
 # CHECK-NEXT: = NewObject -, v1 layout=L1 fields=[1]
 }
 
-function f1 name="oneRead" parameters=[{type=L2|L3}, {type=anything}] results=[{type=anything}] {
+function f1 name="oneRead" parameters=[{type=L2|L3}, {type=number}] results=[{type=anything}] {
     PutSlot v0, -, v1 key="tag" receivers=[L2, L3] level=Proven
     v3 = NewObject -, v1, v1 layout=L2 fields=[0, 1]
     v4 = NewObject -, v1, v1 layout=L3 fields=[0, 1]
@@ -39,7 +39,7 @@ function f1 name="oneRead" parameters=[{type=L2|L3}, {type=anything}] results=[{
 # CHECK-NEXT: = NewObject -, v1, v1 layout=L3 fields=[0, 1]
 }
 
-function f2 name="oneStillCalled" parameters=[{type=L4|L5}, {type=anything}] results=[{type=anything}] {
+function f2 name="oneStillCalled" parameters=[{type=L4|L5}, {type=number}] results=[{type=anything}] {
     PutSlot v0, -, v1 key="tag" receivers=[L4, L5] level=Proven
     v3 = NewObject -, v1, v1 layout=L4 fields=[0, 1]
     v4 = NewObject -, v1, v1 layout=L5 fields=[0, 1]

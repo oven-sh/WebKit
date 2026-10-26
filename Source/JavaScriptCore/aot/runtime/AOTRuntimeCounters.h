@@ -29,6 +29,7 @@ class VM;
 namespace AOT {
 
 enum class Entry : uint16_t;
+class Image;
 struct Instance;
 
 struct RuntimeCounters {
@@ -45,6 +46,7 @@ JS_EXPORT_PRIVATE void countLimitHit(VM&, LimitID);
 JS_EXPORT_PRIVATE uint64_t valueOf(VM&, RuntimeCounterID);
 JS_EXPORT_PRIVATE uint64_t limitHitsOf(VM&, LimitID);
 JS_EXPORT_PRIVATE uint64_t runtimeLimitValue(VM&, LimitID);
+uint64_t runtimeLimitValue(const Image*, LimitID);
 
 constexpr RuntimeCounterID counterFor(CodeType codeType)
 {

@@ -313,7 +313,7 @@ Condition TypeTestEmitter::isPristine(CellPointer cell, BuiltinClassID classID, 
         }
         return emitter<ElementAccessEmitter>().isPristineInstance(cell, aspects);
     case PristineTest::ClosureAsCreated:
-        return emitter<GuardEmitter>().isClosureAsCreated(cell);
+        return emitter<GuardEmitter>().isClosureAsCreated(cell, classID, aspects);
     case PristineTest::InstanceStructure: {
         if (aspects.contains(PristineAspects::Storage))
             return boolean(false);

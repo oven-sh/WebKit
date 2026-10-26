@@ -20,9 +20,9 @@ function f9 name="resultIsTested" role=CoroutineRamp flags=[IsAsync] parameters=
 function f10 name="readsBoth" role=CoroutineBody flags=[IsAsync] parameters=[{type=AsyncGenerator}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncFunction ramp=f0 body=f10 entryWithoutPromise=f10 promiseType=Promise promiseParameter=1} {
     v2 = Integer integer=7
     v3 = CallBuiltin v0, v2 overload=AsyncGeneratorPrototypeNext/0 @10
-    v4 = AssumeType v3 castType=Promise<object>
+    v4 = AssumeType v3 provenType=Promise<object>
     v5 = AwaitBySavingFrame v4, v1 @11
-    v6 = AssumeType v5 castType=object
+    v6 = AssumeType v5 provenType=object
     v7 = PropGet v6 key="value"
     v8 = PropGet v6 key="done"
     v9 = ToBoolean v8
@@ -35,10 +35,10 @@ function f10 name="readsBoth" role=CoroutineBody flags=[IsAsync] parameters=[{ty
     Return v11
 # CHECK-NOT: CallBuiltin
 # CHECK-NOT: AwaitBySavingFrame
-# CHECK-NOT: castType=object
+# CHECK-NOT: Type=object
 # The step names no driver: by that it is told from a step of a loop, which goes on under the async context that is active where the step is finished. An await goes on under its own.
 # CHECK: [[noDriver10]]: absent = Absent @10
-# CHECK-NEXT: [[step10]]: undefined = StepAsyncGenerator v0, v2, [[noDriver10]] @10
+# CHECK-NEXT: [[step10]]: undefined = StepAsyncGenerator v0, v2, [[noDriver10]] calledBuiltin=AsyncGeneratorPrototypeNext @10
 # CHECK-NEXT: [[stepped10]]: anything = ResultAt [[step10]]
 # CHECK-NEXT: [[status10]]: int[0, 2] = ResultAt [[step10]] index=1
 # CHECK: Branch [[isResult10]] -> taken [[made10]](), notTaken [[answered10]]()
@@ -59,7 +59,7 @@ function f11 name="sendsNothing" role=CoroutineBody flags=[IsAsync] parameters=[
     v2 = Undefined
     v3 = CallBuiltin v0, v2 overload=AsyncGeneratorPrototypeNext/0
     v4 = AwaitBySavingFrame v3, v1
-    v5 = AssumeType v4 castType=object
+    v5 = AssumeType v4 provenType=object
     v6 = PropGet v5 key="value"
     v7 = ReturnAsyncResult v1, v6
     Return v7
@@ -72,7 +72,7 @@ function f12 name="underHandler" role=CoroutineBody flags=[IsAsync] parameters=[
     v2 = Undefined
     v3 = CallBuiltin v0, v2 overload=AsyncGeneratorPrototypeNext/0
     v4 = AwaitBySavingFrame v3, v1
-    v5 = AssumeType v4 castType=object
+    v5 = AssumeType v4 provenType=object
     v6 = PropGet v5 key="done"
     v7 = ReturnAsyncResult v1, v6
     Return v7
@@ -90,11 +90,11 @@ function f13 name="twoInOneBlock" role=CoroutineBody flags=[IsAsync] parameters=
     v2 = Undefined
     v3 = CallBuiltin v0, v2 overload=AsyncGeneratorPrototypeNext/0
     v4 = AwaitBySavingFrame v3, v1
-    v5 = AssumeType v4 castType=object
+    v5 = AssumeType v4 provenType=object
     v6 = PropGet v5 key="value"
     v7 = CallBuiltin v0, v6 overload=AsyncGeneratorPrototypeNext/0
     v8 = AwaitBySavingFrame v7, v1
-    v9 = AssumeType v8 castType=object
+    v9 = AssumeType v8 provenType=object
     v10 = PropGet v9 key="value"
     v11 = ReturnAsyncResult v1, v10
     Return v11
@@ -107,7 +107,7 @@ function f14 name="resultIsReturned" role=CoroutineBody flags=[IsAsync] paramete
     v2 = Undefined
     v3 = CallBuiltin v0, v2 overload=AsyncGeneratorPrototypeNext/0
     v4 = AwaitBySavingFrame v3, v1
-    v5 = AssumeType v4 castType=object
+    v5 = AssumeType v4 provenType=object
     v6 = PropGet v5 key="value"
     v7 = ReturnAsyncResult v1, v5
     Return v7
@@ -127,7 +127,7 @@ function f15 name="readsAnotherName" role=CoroutineBody flags=[IsAsync] paramete
     v2 = Undefined
     v3 = CallBuiltin v0, v2 overload=AsyncGeneratorPrototypeNext/0
     v4 = AwaitBySavingFrame v3, v1
-    v5 = AssumeType v4 castType=object
+    v5 = AssumeType v4 provenType=object
     v6 = PropGet v5 key="toString"
     v7 = ReturnAsyncResult v1, v6
     Return v7
@@ -147,7 +147,7 @@ function f16 name="promiseHasSecondUse" role=CoroutineBody flags=[IsAsync] param
     v2 = Undefined
     v3 = CallBuiltin v0, v2 overload=AsyncGeneratorPrototypeNext/0
     v4 = AwaitBySavingFrame v3, v1
-    v5 = AssumeType v4 castType=object
+    v5 = AssumeType v4 provenType=object
     v6 = PropGet v5 key="value"
     v7 = ReturnAsyncResult v1, v3
     Return v7
@@ -159,7 +159,7 @@ function f17 name="receiverMayBeAnything" role=CoroutineBody flags=[IsAsync] par
     v2 = Undefined
     v3 = CallBuiltin v0, v2 overload=AsyncGeneratorPrototypeNext/0 builtinCallForm=AnyReceiver
     v4 = AwaitBySavingFrame v3, v1
-    v5 = AssumeType v4 castType=object
+    v5 = AssumeType v4 provenType=object
     v6 = PropGet v5 key="value"
     v7 = ReturnAsyncResult v1, v6
     Return v7
@@ -173,7 +173,7 @@ function f18 name="codeRunsInBetween" role=CoroutineBody flags=[IsAsync] paramet
     v5 = Undefined
     v6 = Call v1, v5
     v7 = AwaitBySavingFrame v4, v2
-    v8 = AssumeType v7 castType=object
+    v8 = AssumeType v7 provenType=object
     v9 = PropGet v8 key="value"
     v10 = ReturnAsyncResult v2, v9
     Return v10
@@ -185,7 +185,7 @@ function f19 name="resultIsTested" role=CoroutineBody flags=[IsAsync] parameters
     v2 = Undefined
     v3 = CallBuiltin v0, v2 overload=AsyncGeneratorPrototypeNext/0
     v4 = AwaitBySavingFrame v3, v1
-    v5 = AssumeType v4 castType=object
+    v5 = AssumeType v4 provenType=object
     v6 = TypeTest v5 testedType=Array<anything>
     v7 = ReturnAsyncResult v1, v6
     Return v7
@@ -212,7 +212,7 @@ function f21 name="testsForPrimitives" role=CoroutineBody flags=[IsAsync] parame
   b1():
     Unreachable
   b2():
-    v6 = AssumeType v4 castType=object
+    v6 = AssumeType v4 provenType=object
     v7 = PropGet v6 key="value"
     v8 = ReturnAsyncResult v1, v7
     Return v8
@@ -233,7 +233,7 @@ function f23 name="behindAJoin" role=CoroutineBody flags=[IsAsync] parameters=[{
     Jump -> next b3(v1)
   b3(v6: Promise):
     v7 = AwaitBySavingFrame v6, v3
-    v8 = AssumeType v7 castType=object
+    v8 = AssumeType v7 provenType=object
     v9 = PropGet v8 key="value"
     v10 = ReturnAsyncResult v3, v9
     Return v10

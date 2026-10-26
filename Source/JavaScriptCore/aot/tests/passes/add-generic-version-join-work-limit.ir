@@ -10,7 +10,7 @@
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="overTheLimit" parameters=[{type=anything}, {type=number}, {type=boolean}] results=[{type=anything}] {
-    v3 = Check v0 castType=number
+    v3 = Check v0 expectedType=number
     v4 = Add v3, v1
     Branch v2 -> taken b1(), notTaken b2()
   b1():
@@ -26,7 +26,7 @@ function f0 name="overTheLimit" parameters=[{type=anything}, {type=number}, {typ
 }
 
 function f1 name="underTheLimit" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
-    v2 = Check v0 castType=number
+    v2 = Check v0 expectedType=number
     v3 = Add v2, v1
     Return v3
 # CHECK: = TypeTest v0 testedType=number

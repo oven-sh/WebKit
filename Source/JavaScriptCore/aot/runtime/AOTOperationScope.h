@@ -13,9 +13,11 @@
 #include "AOTProgramIdentifiers.h"
 #include "AOTRuntimeTable.h"
 #include "AOTRuntimeValidation.h"
+#include "DeferGC.h"
 #include "FrameTracers.h"
 #include "JSCInlines.h"
 #include <bit>
+#include <optional>
 
 namespace JSC { namespace AOT {
 
@@ -26,6 +28,10 @@ public:
     ALWAYS_INLINE OperationValidationScope(VM& vm, Entry entry)
         : m_vm(vm)
     {
+#if ASSERT_ENABLED
+        if (!permissionsOf(entry).mayCollect)
+            m_assertNoGC.emplace();
+#endif
         if (validatesRuntime(vm)) [[unlikely]]
             open(entry);
     }
@@ -47,6 +53,9 @@ private:
     bool m_mayNotCollect { false };
     bool m_didEnterVMBefore { false };
     bool m_isOpen { false };
+#if ASSERT_ENABLED
+    std::optional<AssertNoGC> m_assertNoGC;
+#endif
 };
 
 #if OS(WINDOWS) && CPU(X86_64)

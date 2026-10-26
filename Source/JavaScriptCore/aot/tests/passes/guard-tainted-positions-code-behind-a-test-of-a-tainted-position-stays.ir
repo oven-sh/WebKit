@@ -6,13 +6,13 @@
 # STATISTIC: TaintedPositions = 2
 # STATISTIC: ChecksOnTaintedPositions = 2
 # CHECK-LABEL: function f1 name="testsCapture"
-# CHECK: [[checked]]: string = Check v0 castType=string cause=AddedByPass
+# CHECK: [[checked]]: string = Check v0 expectedType=string cause=AddedByPass
 # CHECK: = TypeTest [[checked]] testedType=number
 # CHECK: b1([[narrowed]]: never):
 # CHECK-NEXT: [[one]]: 1 = Integer integer=1
 # CHECK-NEXT: Return [[one]]
 # CHECK-LABEL: function f2 name="testsVariable"
-# CHECK: [[checked]]: string = Check [[read]] castType=string cause=AddedByPass
+# CHECK: [[checked]]: string = Check [[read]] expectedType=string cause=AddedByPass
 # CHECK: b1([[narrowed]]: never):
 # CHECK-NEXT: [[one]]: 1 = Integer integer=1
 # CHECK-NEXT: Return [[one]]

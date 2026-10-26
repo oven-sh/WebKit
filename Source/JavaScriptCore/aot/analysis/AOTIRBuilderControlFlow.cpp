@@ -24,13 +24,6 @@ static bool hasContents(const Block& block)
         || block.handler || block.role != BlockRole::Ordinary || block.subject || block.frequency != BlockFrequency::Normal;
 }
 
-static Value makeCast(Opcode opcode, ValueID operand, TypeID castType)
-{
-    Value cast = IRBuilder::make(opcode, { operand });
-    cast.setCastType(castType);
-    return cast;
-}
-
 static TypeID partInside(const Program& program, TypeArena& types, TypeID narrower, TypeID type)
 {
     if (!narrower)
@@ -49,11 +42,12 @@ static ValueID appendExpectation(IRBuilder& builder, ValueID result, const Decla
     const Value& value = builder.function().at(result);
     TypeID converted = types.intern(typeOfConvert(expecting, expecting.typeOf(result), types.at(value.type), declared));
     TypeID expected = partInside(program, types, converted, value.type);
-    if (!expected || expected == value.expected())
+    if (!expected || expected == value.expected().predicted())
         return result;
 
-    Value cast = makeCast(Opcode::Upcast, result, value.type);
-    cast.setExpected(expected);
+    Value cast = IRBuilder::make(Opcode::Upcast, { result });
+    cast.setCastType(value.type);
+    cast.setExpected(ExpectedType(expected));
     return builder.append(WTF::move(cast));
 }
 
@@ -76,7 +70,8 @@ static ValueID appendResolvedTailCast(IRBuilder& builder, ValueID result, const 
 
     switch (cast.resolution) {
     case CastResolution::Check: {
-        Value check = makeCast(Opcode::Check, result, resolution.castType);
+        Value check = IRBuilder::make(Opcode::Check, { result });
+        check.setExpectedType(ExpectedType(resolution.castType));
         check.setSite(cast.declared.site);
         return builder.append(WTF::move(check));
     }
@@ -87,7 +82,10 @@ static ValueID appendResolvedTailCast(IRBuilder& builder, ValueID result, const 
             test.setValidatedType(assumed);
             builder.append(WTF::move(test));
         }
-        return builder.append(makeCast(Opcode::AssumeType, result, assumed));
+        // The cast of a tail call goes with the checks in front of the call, so what is left of it holds in every version.
+        Value claim;
+        claim.becomeAssumeType(result, Proven::byPosition(assumed));
+        return builder.append(WTF::move(claim));
     }
     case CastResolution::Unresolved:
     case CastResolution::Nothing:
@@ -119,7 +117,7 @@ BlockID IRBuilder::splitEdge(Edge edge)
         const Value& result = m_function.at(m_function.at(original.block).parameters[firstResult + resultIndex]);
         Value parameter(Opcode::Parameter);
         parameter.type = typeOnEdge(program, m_function, { edge.from, edge.targetIndex, resultIndex }, m_types);
-        parameter.setExpected(partInside(program, m_types, result.expected(), parameter.type));
+        parameter.setExpected(ExpectedType(partInside(program, m_types, result.expected().predicted(), parameter.type)));
         parameter.setOrigin(origin);
         ValueID id = addValue(WTF::move(parameter));
         m_function.edit(added, BlockEdit::Parameters).parameters.append(id);
@@ -238,8 +236,9 @@ void IRBuilder::demoteReturnCall(BlockID block)
     RELEASE_ASSERT(terminator.kind == TerminatorKind::ReturnCall && block != m_block && m_insertions.isEmpty());
 
     ValueID result = terminator.callOperand();
-    if (FlagMask::isDemotedTailCall(m_function.at(result).opcode))
-        m_function.edit(result, ValueEdit::Definition).setIsDemotedTailCall(true);
+    Value& call = m_function.edit(result, ValueEdit::Definition);
+    // What is written Reflect.construct(..) constructs, and a construction is no tail call.
+    call.isTailCall = !(FlagMask::isReflectConstructSyntax(call.opcode) && call.isReflectConstructSyntax());
     Vector<TailCast, 2> casts;
     for (TailCast cast : terminator.casts())
         casts.append(cast);
@@ -260,7 +259,7 @@ void IRBuilder::demoteReturnCall(BlockID block)
         }
         if (cast.resolution != CastResolution::Nothing)
             result = appendResolvedTailCast(*this, result, cast);
-        if (keepsExpectedTypes && cast.declared.flags.contains(PositionFlags::IsExpected))
+        if (keepsExpectedTypes && cast.declared.isExpected())
             result = appendExpectation(*this, result, cast.declared);
     }
     emitReturn(result);

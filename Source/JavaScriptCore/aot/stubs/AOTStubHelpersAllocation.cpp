@@ -25,6 +25,16 @@ static void countCellOfStub(StubAssembler& jit, GPRReg allocator, GPRReg counts,
     jit.add64(cellSize, Address(counts, static_cast<int32_t>(ExactAllocationCounts::offsetOfBytes(kind))));
 }
 
+void countAllocatedCellOfStub(StubAssembler& jit, GPRReg scratch, unsigned cellSize)
+{
+    if (!jit.options().countsAllocations)
+        return;
+    size_t kind = static_cast<size_t>(jit.key().family());
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.counters.allocationCounts)), scratch);
+    jit.add64(TrustedImm32(1), Address(scratch, static_cast<int32_t>(ExactAllocationCounts::offsetOfCells(kind))));
+    jit.add64(TrustedImm32(static_cast<int32_t>(cellSize)), Address(scratch, static_cast<int32_t>(ExactAllocationCounts::offsetOfBytes(kind))));
+}
+
 void countCellOfAllocation(StubAssembler& jit, GPRReg allocation, GPRReg scratch)
 {
     if (!jit.options().countsAllocations)

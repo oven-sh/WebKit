@@ -44,10 +44,10 @@ function f2 name="handle" kind=Method flags=[HasThis] parameters=[{type=anything
 # CHECK-NOT: IsSlotFilled
 # CHECK: [[inherits]]: boolean = HasLayoutPrototype v0
 # CHECK-NEXT: Branch [[inherits]] -> taken [[creates]](| 0), notTaken [[byName]]()
+# CHECK: [[byName]]():
+# CHECK-NEXT: PropSet v0, v1 key="route"
 # CHECK: [[creates]]([[guard]]: guard):
 # CHECK-NEXT: PutSlot v0, [[guard]], v1 key="route" receivers=[L0] level=Expected
-# CHECK: [[byName]]() frequency=Unlikely:
-# CHECK-NEXT: PropSet v0, v1 key="route"
 # CHECK-NOT: HasLayoutPrototype
 # CHECK-NOT: IsSlotFilled
 }

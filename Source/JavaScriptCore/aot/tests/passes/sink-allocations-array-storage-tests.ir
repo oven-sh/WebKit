@@ -216,7 +216,7 @@ function f11 name="guardOfNumbersMeetsTheGuardOfAnArrayFromOutside" parameters=[
     Branch v3 -> taken b1(), notTaken b3()
   b1():
     v5 = NewArray v0, v1 contents=number
-    v6 = AssumeType v5 castType=Array<number, proven, pristine[Storage, Names]>
+    v6 = AssumeType v5 provenType=Array<number, proven, pristine[Storage, Names]>
     v7 = HasArrayStorage v6 arrayStorage=Double
     Branch v7 -> taken b2(| 0), notTaken b6()
   b2(v8):
@@ -238,7 +238,7 @@ function f11 name="guardOfNumbersMeetsTheGuardOfAnArrayFromOutside" parameters=[
 
 function f12 name="guardOfNumbersIsPutTogetherWithOneOfTheBuiltArray" parameters=[{type=number}, {type=number}, {type=i32}, {type=boolean}] results=[{type=anything}] {
     v4 = NewArray v0, v1 contents=number
-    v5 = AssumeType v4 castType=Array<number, proven, pristine[Storage, Names, Dense]>
+    v5 = AssumeType v4 provenType=Array<number, proven, pristine[Storage, Names, Dense]>
     v6 = HasArrayStorage v5 arrayStorage=Double
     Branch v6 -> taken b1(| 0), notTaken b5()
   b1(v7):

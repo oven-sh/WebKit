@@ -48,7 +48,6 @@ export default b.declarations(
     "runValueInitializers",
     "setDecoratorMetadata",
   ),
-  b.frontEndFunctions("prelude/json", "stringifyElement", "stringifyProperties", "stringifyProperty"),
   b.frontEndFunctions(
     "prelude/written-lists",
     "arrayFromLength",

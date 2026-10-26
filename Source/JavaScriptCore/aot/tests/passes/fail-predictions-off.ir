@@ -6,7 +6,7 @@
 module m0 path="main.js" displayPath="main.js" flags=[IsLibrary]
 function f0 name="checked" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
     v2 = Call v0
-    v3 = Check v2 castType=number
+    v3 = Check v2 expectedType=number
     v4 = Add v3, v1
     Return v4
 }

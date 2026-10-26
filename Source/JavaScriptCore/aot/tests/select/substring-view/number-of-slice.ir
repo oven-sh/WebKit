@@ -27,7 +27,7 @@ function f1 name="numberOfSlice" parameters=[{type=string}, {type=number}, {type
 # CHECK-LABEL: name="numberOfSlice" module=m0 role=GenericEntrypoint
 # CHECK-NOT: = Substring
 # CHECK-NOT: overload=Number
-# CHECK: [[text1]]: string = AssumeType v2 castType=string
+# CHECK: [[text1]]: string = AssumeType v2 provenType=string
 # CHECK-NOT: = Substring
 # CHECK-NOT: overload=Number
 # CHECK: [[number1]]: number = StringRangeToNumber [[text1]],
@@ -43,7 +43,7 @@ function f2 name="numberOfSliceThatIsKept" parameters=[{type=string}, {type=numb
     Return v8
 }
 # CHECK-LABEL: name="numberOfSliceThatIsKept" module=m0 role=GenericEntrypoint
-# CHECK: [[text2]]: string = AssumeType v2 castType=string
+# CHECK: [[text2]]: string = AssumeType v2 provenType=string
 # CHECK-NOT: FlattenString
 # CHECK: [[kept2]]: string = Substring [[text2]],
 # CHECK-NOT: FlattenString

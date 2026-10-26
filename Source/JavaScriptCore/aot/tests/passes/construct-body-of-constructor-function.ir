@@ -143,7 +143,7 @@ function f15 name="plain-call" parameters=[{type=f0}, {type=anything}, {type=any
 # new.target is a closure of the function here, which is what ties its prototype property to the layout
 # CHECK: function [[scopedBody]] name="Scoped"{{*}}role=ConstructBody flags=[HasNewTarget, AllocatesOwnThis] captures=[{type=number}]{{*}}results=[{type=L1}]{{*}}derivation={source=f1 parameterMap=[{original=0}, {}, {original=2}]} creator=Version{provenVersion=f1} constructedClass=L1 {
 # CHECK-NEXT: b0([[captured]]: number, [[newTargetOfScoped]]: anything, [[unused]]: anything):
-# CHECK-NEXT: [[closureOfScoped]]: f1 = AssumeType [[newTargetOfScoped]] castType=f1
+# CHECK-NEXT: [[closureOfScoped]]: f1 = AssumeType [[newTargetOfScoped]] provenType=f1
 # CHECK-NEXT: [[prototypeOfScoped]]: object = GetConstructPrototype [[closureOfScoped]] layout=L1
 # CHECK-NEXT: [[scoped]]: L1 = NewObject [[prototypeOfScoped]] layout=L1
 # CHECK-NEXT: PropSet [[scoped]], [[captured]] key="step"
@@ -152,7 +152,7 @@ function f15 name="plain-call" parameters=[{type=f0}, {type=anything}, {type=any
 
 # CHECK: function [[observedBody]] name="Observed"{{*}}role=ConstructBody flags=[HasNewTarget, AllocatesOwnThis]{{*}}results=[{type=L2}]{{*}}derivation={source=f2 parameterMap=[{original=1}]} creator=Version{provenVersion=f2} constructedClass=L2 {
 # CHECK-NEXT: b0([[newTargetOfObserved]]: anything):
-# CHECK-NEXT: [[closureOfObserved]]: f2 = AssumeType [[newTargetOfObserved]] castType=f2
+# CHECK-NEXT: [[closureOfObserved]]: f2 = AssumeType [[newTargetOfObserved]] provenType=f2
 # CHECK-NEXT: [[observed]]: L2 = NewObject layout=L2
 # CHECK-NEXT: PropSet [[observed]], [[closureOfObserved]] key="made"
 # CHECK-NEXT: Return [[observed]]

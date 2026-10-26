@@ -37,7 +37,7 @@ function f0 name="builtInTwoBranches" parameters=[{type=anything}, {type=boolean
 # CHECK-NEXT: [[second0]]: Array = NewArray
 # CHECK: Jump -> next b7([[second0]])
 # CHECK: b7([[cell0]]: undefined|Array):
-# CHECK-NEXT: [[narrowed0]]: Array = AssumeType [[cell0]] castType=Array
+# CHECK-NEXT: [[narrowed0]]: Array = AssumeType [[cell0]] provenType=Array
 # CHECK-NEXT: = CallBuiltin [[narrowed0]] overload=ArrayPrototypeLength/0
 }
 
@@ -103,10 +103,10 @@ function f2 name="builtBeforeLoop" parameters=[{type=anything}, {type=boolean}] 
 # CHECK-NEXT: Jump -> next b5(v7, [[built2]])
 # CHECK: b5(v8:{{*}}, [[cell2]]: undefined|Array):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: [[narrowed2]]: Array = AssumeType [[cell2]] castType=Array
+# CHECK-NEXT: [[narrowed2]]: Array = AssumeType [[cell2]] provenType=Array
 # CHECK-NEXT: = CallBuiltin [[narrowed2]] overload=ArrayPrototypeLength/0
 # CHECK: b6([[inBody2]]: undefined|Array, v12:
-# CHECK-NEXT: [[argument2]]: Array = AssumeType [[inBody2]] castType=Array
+# CHECK-NEXT: [[argument2]]: Array = AssumeType [[inBody2]] provenType=Array
 # CHECK-NEXT: = Call v0, -, [[argument2]]
 }
 
@@ -134,7 +134,7 @@ function f3 name="usedInHandler" parameters=[{type=anything}, {type=boolean}] re
     Return v0
 # CHECK: role=CatchHandler:
 # CHECK-NEXT: = CatchValue
-# CHECK: [[narrowed3]]: Array = AssumeType {{*}} castType=Array
+# CHECK: [[narrowed3]]: Array = AssumeType {{*}} provenType=Array
 # CHECK-NEXT: = CallBuiltin [[narrowed3]] overload=ArrayPrototypeLength/0
 }
 
@@ -163,7 +163,7 @@ function f4 name="narrowedByCast" parameters=[{type=anything}, {type=boolean}, {
   b8():
     Return v0
 # CHECK: b7([[cell4]]: undefined|Array):
-# CHECK-NEXT: [[narrowed4]]: Array = AssumeType [[cell4]] castType=Array
+# CHECK-NEXT: [[narrowed4]]: Array = AssumeType [[cell4]] provenType=Array
 # CHECK-NEXT: = CallBuiltin [[narrowed4]] overload=ArrayPrototypeLength/0
 # CHECK: [[missing4]]: undefined = Undefined
 # CHECK-NEXT: = RequireObjectCoercible [[missing4]]
@@ -223,6 +223,6 @@ function f6 name="builtInOneBranch" parameters=[{type=anything}, {type=boolean}]
 # CHECK: b7([[tag6]]: i32, [[carried6]]: undefined|Array,
 # CHECK-NEXT: Switch [[tag6]]
 # CHECK: ([[cell6]]: undefined|Array):
-# CHECK-NEXT: [[narrowed6]]: Array = AssumeType [[cell6]] castType=Array
+# CHECK-NEXT: [[narrowed6]]: Array = AssumeType [[cell6]] provenType=Array
 # CHECK-NEXT: = CallBuiltin [[narrowed6]] overload=ArrayPrototypeLength/0
 }

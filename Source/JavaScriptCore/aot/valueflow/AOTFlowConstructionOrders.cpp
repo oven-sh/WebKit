@@ -32,6 +32,7 @@
 #include <utility>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -154,7 +155,7 @@ bool isDirectOrIndirectCall(Opcode opcode)
 bool isPrivateKey(const Program& program, PropertyKeyID key)
 {
     PropertyKeyKind kind = program.at(key).kind;
-    return kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::EnginePrivateName;
+    return kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::EnginePrivateName || kind == PropertyKeyKind::ModulePrivateName;
 }
 
 std::optional<ConstructionEventKind> accessEventOf(Opcode opcode, uint32_t operandIndex)
@@ -211,16 +212,16 @@ Vector<ValueID, 2> constructorRootsOf(const Program& program, const Function& fu
     return roots;
 }
 
-bool isConstructedObject(const Program& program, FunctionAnalyses& analyses, std::span<const ValueID> constructorRoots, ValueID result)
+bool isConstructedObject(const Program& program, FunctionAnalyses& analyses, const BitVector& valuesBehindChecks, std::span<const ValueID> constructorRoots, ValueID result)
 {
     const Function& constructor = analyses.function();
     BitVector isVisited(constructor.values.size());
     Vector<ValueID, 4> valuesToVisit { result };
     while (!valuesToVisit.isEmpty()) {
         ValueID value = valuesToVisit.takeLast();
-        if (isVisited.set(value.index()) || !program.typeOf(constructor, value).hasObjects())
+        if (isVisited.set(value.index()) || (!valuesBehindChecks.get(value.index()) && !program.typeOf(constructor, value).hasObjects()))
             continue;
-        ValueID object = sameObjectThroughCasts(constructor, value);
+        ValueID object = sameObjectThroughConversionsToObject(constructor, value);
         if (std::ranges::contains(constructorRoots, object))
             continue;
 
@@ -237,13 +238,13 @@ bool isConstructedObject(const Program& program, FunctionAnalyses& analyses, std
     return true;
 }
 
-bool returnsOnlyConstructedObject(const Program& program, FunctionAnalyses& analyses, std::span<const ValueID> constructorRoots)
+bool returnsOnlyConstructedObject(const Program& program, FunctionAnalyses& analyses, const BitVector& valuesBehindChecks, std::span<const ValueID> constructorRoots)
 {
     return std::ranges::all_of(analyses.cfg().reversePostOrder(), [&](BlockID block) {
         const Terminator& terminator = analyses.function().at(block).terminator;
         if (terminator.kind != TerminatorKind::Return)
             return terminator.kind != TerminatorKind::ReturnCall;
-        return !terminator.valueOperand() || isConstructedObject(program, analyses, constructorRoots, terminator.valueOperand());
+        return !terminator.valueOperand() || isConstructedObject(program, analyses, valuesBehindChecks, constructorRoots, terminator.valueOperand());
     });
 }
 
@@ -294,6 +295,8 @@ struct ConstructionEventCollector {
     }
 
     bool mayBeValue(ValueID stored) const { return !program.typeOf(function, stored).isUndefinedOrNull(); }
+
+    bool isObject(ValueID value) const { return escape.singleObject(value) == object || sameObjectThroughConversionsToObject(function, value) == root; }
 
     ConstructionEvent eventAt(ConstructionEventKind kind, const Use& use) const
     {
@@ -354,7 +357,7 @@ struct ConstructionEventCollector {
         const Use& use = objectUse.use;
         if (use.kind != Use::Kind::Operand || storedOf(function.at(use.user).opcode) != use.operandIndex)
             return false;
-        return objectUse.retainedBy && objectUse.uses.containsOnly(namedStoreUses) && escape.singleObject(objectUse.retainedBy) == object;
+        return objectUse.retainedBy && objectUse.uses.containsOnly(namedStoreUses) && isObject(objectUse.retainedBy);
     }
 
     bool isStoredUnderNameOfObject(const Use& use) const
@@ -365,13 +368,13 @@ struct ConstructionEventCollector {
         std::optional<uint32_t> receiver = receiverOf(user.opcode);
         if (storedOf(user.opcode) != use.operandIndex || !receiver || accessEventOf(user.opcode, *receiver) != ConstructionEventKind::Store)
             return false;
-        return escape.singleObject(user.operand(*receiver)) == object;
+        return isObject(user.operand(*receiver));
     }
 
     bool isReadUnderNameOfObject(ValueID value) const
     {
         const Value& definition = function.at(sameObjectThroughCasts(function, value));
-        return accessOf(definition.opcode) == Access::Read && escape.singleObject(definition.operand(*receiverOf(definition.opcode))) == object;
+        return accessOf(definition.opcode) == Access::Read && isObject(definition.operand(*receiverOf(definition.opcode)));
     }
 
     bool mayHoldObject(ValueID value) const
@@ -390,7 +393,7 @@ struct ConstructionEventCollector {
         const Value& access = function.at(use.user);
         ConstructionEvent event = eventAt(kind, use);
         event.name = Value::opcodesWithField.contains(access.opcode) ? fieldName(program, { access.layout(), access.field() }) : ConstructionName { access.key(), { } };
-        event.isExact = escape.singleObject(event.operand) == object || isObjectWhereverItIsAllocated(event.operand);
+        event.isExact = isObject(event.operand) || isObjectWhereverItIsAllocated(event.operand);
         if (kind == ConstructionEventKind::Store) {
             ValueID stored = access.operand(*storedOf(access.opcode));
             event.storesValue = mayBeValue(stored);
@@ -447,7 +450,7 @@ struct ConstructionEventCollector {
         }
         if (isDirectOrIndirectCall(opcode)) {
             ConstructionEvent event = eventAt(ConstructionEventKind::Call, use);
-            event.isExact = escape.isExactUse(object, use);
+            event.isExact = isObject(event.operand) && escape.isOnlyOperandHolding(object, use);
             events.append(event);
             return;
         }
@@ -532,7 +535,8 @@ std::unique_ptr<FunctionConstruction> buildFunctionConstruction(const ValueFlowR
         return result;
 
     Vector<ValueID, 2> roots = constructorRootsOf(program, function);
-    result->returnsOnlyConstructedObject = returnsOnlyConstructedObject(program, *result->analyses, roots.span());
+    const BitVector* valuesBehindChecks = inputs.bodies().valuesBehindChecks(id);
+    result->returnsOnlyConstructedObject = returnsOnlyConstructedObject(program, *result->analyses, valuesBehindChecks ? *valuesBehindChecks : valuesTypedBehindChecks(program, function, result->analyses->cfg()), roots.span());
     for (ValueID parameter : function.at(entryBlock).parameters) {
         if (mayBeReference(program.typeOf(function, parameter)) && !roots.contains(parameter))
             roots.append(parameter);
@@ -679,7 +683,7 @@ struct ConstructionGraphBuilder {
         Vector<ValueSetID, 4> values;
         if (const ValueFlowStatement* statement = construction.findStatement(site)) {
             for (const ValueFlowOperand& operand : inputs.bodies().operandsOf(*statement))
-                values.append(heap.valueOf(operand));
+                values.append(heap.possibleValuesOf(operand));
         }
         return values;
     }
@@ -824,7 +828,7 @@ struct ConstructionGraphBuilder {
             return std::nullopt;
         for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(function.index())) {
             if (statement.kind == ValueFlowStatementKind::Operation && statement.site == site.value)
-                return heap.valueOf(inputs.bodies().operandsOf(statement)[OperandIndex::NewObject::prototype]);
+                return heap.possibleValuesOf(inputs.bodies().operandsOf(statement)[OperandIndex::NewObject::prototype]);
         }
         return std::nullopt;
     }
@@ -1151,8 +1155,11 @@ struct StoredNamesProblem {
             return;
         case ConstructionEventKind::Store:
             applyCallees(state, stateBeforeOperation, resolved, false);
-            if (!resolved.storesOnlyData())
+            if (!resolved.storesOnlyData()) {
+                if (!stateBeforeOperation.stored.contains(*event.name))
+                    solved.readBeforeStore.add(*event.name);
                 return;
+            }
             if (event.isExact) {
                 state.stored.add(*event.name);
                 if (event.storesValue)
@@ -1449,6 +1456,25 @@ ValueSetID findNewTargetsOfOtherFunctions(const ValueFlowResultInputs& inputs, V
             current = predictedHeritageOf(program.at(current));
         return current;
     };
+    // Where the written chain of bases ends at an expression, the class objects that are found above it say who allocates.
+    MapByNumber<uint32_t, ValueSetID> chainsAboveClasses;
+    auto chainAbove = [&](LayoutID classBelowExpression) {
+        return chainsAboveClasses.ensure(classBelowExpression.index(), [&] {
+            return heap.chainOf(heap.prototypesOf(maker.of(universe.closureOf(program.at(classBelowExpression).constructor))));
+        }).iterator->value;
+    };
+    MapByNumber<uint32_t, Vector<LayoutID>> allocatingClassesInChains;
+    auto allocatingClassesIn = [&](ValueSetID chain) -> const Vector<LayoutID>& {
+        return allocatingClassesInChains.ensure(chain.index(), [&] {
+            Vector<LayoutID> found;
+            inputs.sets().forEachMember(maker.intersect(chain, universe.closures()), [&](ValueFlowObjectID parent) {
+                LayoutID constructed = program.at(universe.closureFunction(parent)).constructedClass;
+                if (constructed && !program.at(constructed).has(LayoutFlags::HasHeritage))
+                    found.append(constructed);
+            });
+            return found;
+        }).iterator->value;
+    };
     auto withWhatOtherCallablesConstruct = [&](ValueSetID callees) {
         callees = heap.expand(callees);
         if (inputs.sets().meet(callees, universe.otherCallables()))
@@ -1461,23 +1487,58 @@ ValueSetID findNewTargetsOfOtherFunctions(const ValueFlowResultInputs& inputs, V
         }
         return callees;
     };
+    HashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> pairsAdded;
     auto add = [&](ValueSetID callees, ValueSetID newTargets) {
+        if (!pairsAdded.add(static_cast<uint64_t>(callees.index()) << 32 | newTargets.index()).isNewEntry)
+            return;
         constexpr uint32_t severalCallees = UINT32_MAX;
+        constexpr uint32_t noCallee = UINT32_MAX - 1;
         MapByNumber<uint32_t, uint32_t> calleeByAllocatingClass;
-        inputs.sets().forEachMember(maker.intersect(withWhatOtherCallablesConstruct(callees), universe.closures()), [&](ValueFlowObjectID callee) {
-            LayoutID allocatingClass = allocatingClassOf(callee);
-            if (allocatingClass && !calleeByAllocatingClass.add(allocatingClass.index(), callee.index()).isNewEntry)
-                calleeByAllocatingClass.set(allocatingClass.index(), severalCallees);
-        });
+        Vector<std::pair<ValueFlowObjectID, LayoutID>, 8> newTargetsBelowWrittenClasses;
         inputs.sets().forEachMember(maker.intersect(heap.expand(newTargets), universe.closures()), [&](ValueFlowObjectID newTarget) {
             LayoutID allocatingClass = allocatingClassOf(newTarget);
-            auto callee = allocatingClass ? calleeByAllocatingClass.find(allocatingClass.index()) : calleeByAllocatingClass.end();
-            if (!allocatingClass || (callee != calleeByAllocatingClass.end() && callee->value != newTarget.index()))
+            if (!allocatingClass) {
                 newTargetsFound.append(newTarget);
+                return;
+            }
+            calleeByAllocatingClass.add(allocatingClass.index(), noCallee);
+            newTargetsBelowWrittenClasses.append({ newTarget, allocatingClass });
         });
+        if (newTargetsBelowWrittenClasses.isEmpty())
+            return;
+        auto allocates = [&](LayoutID allocatingClass, uint32_t callee) {
+            auto entry = calleeByAllocatingClass.find(allocatingClass.index());
+            if (entry != calleeByAllocatingClass.end())
+                entry->value = entry->value == noCallee ? callee : severalCallees;
+        };
+        Vector<ValueFlowObjectID, 8> constructed;
+        inputs.sets().forEachMember(maker.intersect(withWhatOtherCallablesConstruct(callees), universe.closures()), [&](ValueFlowObjectID callee) {
+            constructed.append(callee);
+        });
+        MapByNumber<uint32_t, uint32_t> calleeByChainAbove;
+        for (ValueFlowObjectID callee : constructed) {
+            LayoutID current = program.at(universe.closureFunction(callee)).constructedClass;
+            for (size_t steps = 0; current && predictedHeritageOf(program.at(current)) && steps < program.layouts.size(); ++steps)
+                current = predictedHeritageOf(program.at(current));
+            if (!current)
+                continue;
+            if (!program.at(current).has(LayoutFlags::HasHeritage))
+                allocates(current, callee.index());
+            else if (auto entry = calleeByChainAbove.add(chainAbove(current).index(), callee.index()); !entry.isNewEntry)
+                entry.iterator->value = severalCallees;
+        }
+        for (auto [chain, callee] : calleeByChainAbove) {
+            for (LayoutID allocatingClass : allocatingClassesIn(ValueSetID(chain)))
+                allocates(allocatingClass, callee);
+        }
+        for (auto [newTarget, allocatingClass] : newTargetsBelowWrittenClasses) {
+            uint32_t callee = calleeByAllocatingClass.get(allocatingClass.index());
+            if (callee != noCallee && callee != newTarget.index())
+                newTargetsFound.append(newTarget);
+        }
     };
     if (unseenCodeCanRun(inputs.solution)) {
-        ValueSetID reached = maker.unite(universe.unknownObjectAlone(), inputs.solver().valueOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ConstructorsAboveEscapedInstances)));
+        ValueSetID reached = maker.unite(universe.unknownObjectAlone(), inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ConstructorsAboveEscapedInstances)));
         add(reached, reached);
     }
     Vector<const ValueFlowStatement*> constructions = collectInParallel<const ValueFlowStatement*>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<const ValueFlowStatement*>& found) {
@@ -1494,7 +1555,7 @@ ValueSetID findNewTargetsOfOtherFunctions(const ValueFlowResultInputs& inputs, V
     });
     for (const ValueFlowStatement* statement : constructions) {
         std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(*statement);
-        add(heap.valueOf(operands[0]), heap.valueOf(operands[*OperandPosition::newTarget(statement->opcode)]));
+        add(heap.possibleValuesOf(operands[0]), heap.possibleValuesOf(operands[*OperandPosition::newTarget(statement->opcode)]));
     }
     auto constructsWithNewTarget = [](const BuiltinCallback& callback) {
         return callback.constructs && callback.newTarget.kind != BuiltinPlaceKind::None;
@@ -1670,6 +1731,10 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
     result.functionsSeeingOnlyFinishedObjects = findFunctionsSeeingOnlyFinishedObjects(program, inputs.loops(), graph);
 
     ValueSetID newTargetsOfOtherFunctions = findNewTargetsOfOtherFunctions(inputs, heap);
+    inputs.sets().forEachMember(newTargetsOfOtherFunctions, [&](ValueFlowObjectID newTarget) {
+        if (LayoutID constructed = program.at(inputs.universe().closureFunction(newTarget)).constructedClass)
+            result.layouts[constructed.index()].isNewTargetOfOtherFunctions = true;
+    });
     BitVector isAllocatedElsewhere = findLayoutsAllocatedElsewhere(inputs, tables);
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         const Layout& layout = program.layouts[index];
@@ -1731,6 +1796,7 @@ ValueFlowConstructions computeConstructions(const ValueFlowResultInputs& inputs,
         for (const TaggedLayout& member : family.members) {
             ValueFlowConstructions::OfLayout& construction = result.layouts[member.layout.index()];
             construction.isFollowed = maker.isFollowed;
+            construction.isNewTargetOfOtherFunctions = maker.isNewTargetOfOtherFunctions;
             construction.keysStoredBeforeObjectLeaks = maker.keysStoredBeforeObjectLeaks;
             construction.fieldsStoredBeforeObjectLeaks = maker.fieldsStoredBeforeObjectLeaks;
             construction.keysStoredAtBirth = maker.keysStoredAtBirth;

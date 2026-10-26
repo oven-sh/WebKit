@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAsyncAwaitConditions.h"
 #include "AOTModuleWords.h"
 #include "AOTPlacement.h"
 #include "AOTStaticsEmitter.h"
@@ -78,16 +79,18 @@ void ModuleEmitter::generateModuleNamespace(const ValueContext& value)
 
 void ModuleEmitter::generateImportModule(const ValueContext& value)
 {
-    define(value, unboxCell(callOperation<Boxed>(value, RuntimeOperation::ImportModule, { moduleIndex(value->module()), moduleIndex(value->referrer()) })));
+    Boxed options = inOptional<Boxed>(value->optionsOperand()).value_or(undefined());
+    define(value, unboxCell(callOperation<Boxed>(value, RuntimeOperation::ImportModule, { moduleIndex(value->module()), options, moduleIndex(value->referrer()) })));
 }
 
 void ModuleEmitter::generateRequireModule(const ValueContext& value)
 {
     ModuleID module = value->module();
-    auto requireInSlowPath = [&](const CallOptions& options) {
+    const Module& target = m_program.at(module);
+    auto requireInSlowPath = [&](CallOptions options) {
+        options.calledBuiltin = functionOfHostThatRequireCallsFor(target);
         return callOperation<Boxed>(value, RuntimeOperation::RequireModule, { moduleIndex(module), moduleIndex(value->referrer()) }, options);
     };
-    const Module& target = m_program.at(module);
     bool isAnsweredByValueWord = (target.kind == ModuleKind::RuntimeSource || target.kind == ModuleKind::Runtime) && !target.exportsVariable && m_placement.hasModuleValue(module);
     if (!isAnsweredByValueWord || value.shape() == CodeShape::Compact) {
         define(value, requireInSlowPath({ }));
@@ -165,6 +168,36 @@ void ModuleEmitter::generateBeginModuleEvaluation(const ValueContext& value)
 void ModuleEmitter::generateFinishModuleEvaluation(const ValueContext& value)
 {
     m_out.store32As8(m_out.constInt32(static_cast<int32_t>(StoredModuleStatus::Evaluated)), statusOf(value->module()));
+}
+
+// Whatever queues a job calls the run time, so the words of the queue are run-time state.
+void ModuleEmitter::generateStopLoadingBehindFile(const ValueContext& value)
+{
+    const B3::AbstractHeap& queueWords = m_heaps.entire(AbstractHeap::RuntimeState);
+    LValue queue = m_out.loadPtr(mutableInstanceField(offsetOfMicrotaskQueue));
+    Integer start(m_out.load64(m_out.address(queueWords, queue, MicrotaskQueue::offsetOfStart())));
+    Integer end(m_out.load64(m_out.address(queueWords, queue, MicrotaskQueue::offsetOfEnd())));
+    defineTest(value, either<Condition>(equal(start, end), [&] {
+        return boolean(false);
+    }, [&] {
+        return callOperation<Condition>(value, RuntimeOperation::StopLoadingBehindFile, { moduleIndex(value->module()) }, { .isOnRarePath = true });
+    }));
+}
+
+void ModuleEmitter::generateEvaluateRequiredModule(const ValueContext& value)
+{
+    ModuleID module = value->module();
+    auto askRunTime = [&](const CallOptions& options) {
+        callOperation<Boxed>(value, RuntimeOperation::RequireModule, { moduleIndex(module), moduleIndex(value->referrer()) }, options);
+    };
+    if (value.shape() == CodeShape::Compact) {
+        askRunTime({ });
+        return;
+    }
+    Word32 status(m_out.load8ZeroExt32(statusOf(module)));
+    ifElse(equal(status, word32(static_cast<int32_t>(StoredModuleStatus::Evaluated))), [] { }, [&] {
+        askRunTime({ .isOnRarePath = true });
+    });
 }
 
 void ModuleEmitter::generateAbandonModuleEvaluation(const ValueContext& value)

@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinUses.h"
+#include "AOTPropertyAccess.h"
 #include "AOTTypeTestStretches.h"
 #include "AOTVector.h"
 #include <memory>
@@ -18,9 +19,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 // The operations that the rules report as sites: accesses by name and by key, element accesses whose position is not tested yet, calls and what they rest on, operators, tests of a type.
-inline constexpr OpcodeSet testSiteOpcodes = builtinUseOpcodes | Value::opcodesWithForm | OpcodeSet {
-    Opcode::PropGet, Opcode::PropSet, Opcode::PropDefine, Opcode::PropHas, Opcode::PropHasOwn,
-    Opcode::PrivateGet, Opcode::PrivateSet, Opcode::PrivateDefine, Opcode::PrivateHas,
+inline constexpr OpcodeSet testSiteOpcodes = builtinUseOpcodes | Value::opcodesWithForm | namedAccesses | OpcodeSet {
     Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemHas,
     Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement,
     Opcode::Call, Opcode::Construct, Opcode::SuperConstruct, Opcode::SuperGet, Opcode::SuperSet, Opcode::CallBuiltin,
@@ -75,6 +74,8 @@ struct TestPlacementPlan {
     Vector<StretchRange> ranges;
     Vector<ProgramPoint> rejoinPoints;
     Vector<ProgramPoint> rejoinPointsWithoutTests;
+    // A long stretch ends here and the next one begins. The generic copy comes back, whatever the tested code knows better.
+    Vector<ProgramPoint> splitPoints;
     Vector<PlannedWayBackIntoLoop> waysBackIntoLoops;
 
     bool isGuarded(unsigned stretch) const { return stretches[stretch].outcome == StretchOutcome::Guarded; }

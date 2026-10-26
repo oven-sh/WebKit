@@ -25,6 +25,7 @@ enum class StubFrameKind : uint8_t {
     GeneratorBody,
     AsyncGeneratorBody,
     ArgumentList,
+    // The caller's site has two positions, and the stub is at the first: the first of two reads, or the making of an Error that it then throws.
     FirstOfTwoReads,
     // As Plain, in a frame whose stub has spilled the argument registers.
     BelowSpilledArguments,

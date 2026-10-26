@@ -866,13 +866,13 @@ static void testElementsOfList(IRBuilder& builder, const Program& program, Funct
     Value listOfNumbers = list;
     listOfNumbers.setContents(builder.types().intern(program.at(list.contents()).intersectWith(numbers, builder.types())));
     listOfNumbers.setElementsOperands(elements.span());
-    builder.endExpansion(expansion, builder.append(makeAssumeType(builder.append(WTF::move(listOfNumbers)), typeOfList)));
+    builder.endExpansion(expansion, builder.append(makeAssumeType(builder.append(WTF::move(listOfNumbers)), Proven::byConstruction(typeOfList))));
 
     if (!holdsOtherValue)
         return;
     builder.moveToEndOf(holdsOtherValue);
     list.setContents(TypeTable::anything);
-    builder.emitJump(expansion.continuation, { builder.append(makeAssumeType(builder.append(WTF::move(list)), typeOfList)) });
+    builder.emitJump(expansion.continuation, { builder.append(makeAssumeType(builder.append(WTF::move(list)), Proven::byConstruction(typeOfList))) });
 }
 
 bool AllocationSinking::testElementsOfLists(IRBuilder& builder)
@@ -888,6 +888,13 @@ bool AllocationSinking::testElementsOfLists(IRBuilder& builder)
         if (list.opcode != Opcode::NewArray || location.placement != ValuePlacement::InBlock)
             continue;
         if (list.elementsOperands().empty() || !list.holes().empty() || list.capacityOperand())
+            continue;
+        // Nothing is left to ask where every element is such a number and the list says so: the same list would be written again.
+        Type numbers = typeOfNumbersIn(arrayStorageAtAllocation(m_program, m_program.at(list.type)));
+        bool isListOfNumbersAlready = m_program.at(list.contents()).isSubsetOf(numbers, m_program) && std::ranges::all_of(list.elementsOperands(), [&](ValueID element) {
+            return m_program.typeOf(m_function, element).isSubsetOf(numbers, m_program);
+        });
+        if (isListOfNumbersAlready)
             continue;
         // Only an allocation is a guard of what it makes.
         bool isGuard = std::ranges::any_of(m_analyses.useLists().usesOf(literal), [&](const Use& use) {

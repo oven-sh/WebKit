@@ -38,6 +38,7 @@ enum class LimitPurpose : uint8_t {
     macro(MaxThreadedTestCopyCost, 8, CodeSize, "the threaded path ends at the block"_s) \
     macro(MaxThreadedPathCost, 16, CodeSize, "the threaded path ends at the block"_s) \
     macro(MaxBlocksOnThreadedPath, 8, CodeSize, "the threaded path ends at the block"_s) \
+    macro(MaxTailsCrossedByCopiedValues, 128, CodeSize, "the block is not copied"_s) \
     macro(MaxThreadedTestDepth, 8, CompileTime, "the test is undecided"_s) \
     macro(MaxPredecessorsForConditionQueries, 8, CompileTime, "the test is undecided"_s) \
     macro(MaxConditionQueriesPerBlock, 32, CompileTime, "the remaining dominating conditions are not asked"_s) \
@@ -50,6 +51,7 @@ enum class LimitPurpose : uint8_t {
     macro(MaxRecordedWritesPerMemoryState, 256, CompileTime, "the state starts a new epoch"_s) \
     macro(MaxLivenessStepsPerBlock, 48, CompileTime, "the dense liveness runs, with the same result"_s) \
     macro(MaxLinearDominatorSteps, 32, CompileTime, "jump pointers are built, with the same result"_s) \
+    macro(MaxPathConstantsScanned, 32, CompileTime, "an index is built, with the same result"_s) \
     macro(MaxBlocksPerPlacedConstant, 8192, CompileTime, "each stretch of blocks gets a copy of the constant"_s) \
     macro(MaxRangeAnalysisDepth, 5, CompileTime, "the range is top"_s) \
     macro(MaxLeavesToRebalance, 32, CompileTime, "the expression tree is not rebalanced"_s) \

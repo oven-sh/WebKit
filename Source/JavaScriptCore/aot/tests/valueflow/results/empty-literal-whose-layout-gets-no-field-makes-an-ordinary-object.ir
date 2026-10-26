@@ -7,12 +7,12 @@
 # CHECK: layout L2 {{*}}key="a"
 # CHECK: function f1
 # CHECK: v1: object = NewDictionary
-# CHECK-NEXT: Object = AssumeType v1 castType=Object
+# CHECK-NEXT: Object = AssumeType v1 provenType=Object
 # CHECK: object = NewDictionary
-# CHECK-NEXT: Object = AssumeType {{*}} castType=Object
+# CHECK-NEXT: Object = AssumeType {{*}} provenType=Object
 # CHECK: L2 = NewObject layout=L2
 # CHECK: object = NewDictionary
-# CHECK-NEXT: Object = AssumeType {{*}} castType=Object
+# CHECK-NEXT: Object = AssumeType {{*}} provenType=Object
 # CHECK: L4 = NewObject {{*}} layout=L4
 # CHECK: L6 = Data data=d1
 # CHECK: L5 = {{*}}

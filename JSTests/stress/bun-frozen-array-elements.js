@@ -317,6 +317,20 @@ function testMoveToSparseMap() {
     }
 }
 
+function testDefinitionByNativeCode() {
+    forEachFrozenArray((array, original) => {
+        Error.captureStackTrace(array);
+        shouldBe(typeof array.stack, "string");
+        shouldBe(isInPlace(array), false);
+        shouldBe(Object.isExtensible(array), false);
+        checkElements(array, original);
+        shouldThrowTypeError(() => { "use strict"; array[0] = 9; });
+        shouldThrowTypeError(() => { "use strict"; array.length = 0; });
+        shouldThrowTypeError(() => array.push(9));
+        checkElements(array, original);
+    });
+}
+
 function testImmutableProperties() {
     forEachFrozenArray((array, original) => {
         shouldBe($vm.makePropertiesImmutable(array), array);
@@ -395,7 +409,7 @@ function testBadTime() {
         check(arrays[i], expected[i]);
 }
 
-for (const test of [testInPlace, testNotInPlace, testRejected, testAllowed, testStaysInPlace, testMoveToSparseMap, testImmutableProperties, testTiers]) {
+for (const test of [testInPlace, testNotInPlace, testRejected, testAllowed, testStaysInPlace, testMoveToSparseMap, testDefinitionByNativeCode, testImmutableProperties, testTiers]) {
     test();
     shouldBe($vm.isHavingABadTime(), !canFreezeInPlace);
 }

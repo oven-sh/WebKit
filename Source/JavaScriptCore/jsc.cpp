@@ -1362,6 +1362,12 @@ Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, JSMod
     if (key.isSymbol())
         return key;
 
+#if ENABLE(AOT)
+    // Bun: the loader asks for a module of an image by its key.
+    if (AOT::Shell::isKeyOfCompiledModule(key.string()))
+        return key;
+#endif
+
     auto resolvePath = [&] (const URL& directoryURL) -> Identifier {
         String specifier = key.impl();
         auto filePrefix = "file://"_s;
@@ -1720,6 +1726,16 @@ JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModul
 
     String moduleKey = key.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
+
+#if ENABLE(AOT)
+    // Bun: an image has the modules that it names.
+    if (!attributes) {
+        JSPromise* compiled = AOT::Shell::fetchCompiledModule(globalObject, moduleKey);
+        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
+        if (compiled)
+            return compiled;
+    }
+#endif
 
     URL moduleURL({ }, moduleKey);
     ASSERT(moduleURL.protocolIsFile());

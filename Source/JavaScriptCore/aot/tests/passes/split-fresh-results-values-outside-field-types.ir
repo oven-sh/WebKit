@@ -1,6 +1,7 @@
 # A part of a fresh result may be a value that the slot of its field does not admit: the worker returns it as it is, and a rare arm of the wrapper stores it by name behind the allocation
+# `caller` read its parameter out of the object and returns it as it is now. Its effect summary is kept: with VerifyEachPass it is compared with a fresh one
 # FORM: Prepared
-# OPTIONS: heat=EverythingIsHot
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass
 # RUN: pass SplitFreshResults VerifyProgram
 # STATISTIC: FreshResultsSplit = 2
 # CHECK: outcome: Changed

@@ -37,6 +37,7 @@
 #include <limits>
 #include <memory>
 #include <ranges>
+#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -68,6 +69,15 @@ ExpectedKeyOrders expectedKeyOrdersOf(const Program& program, LayoutID id, KeyOr
         return std::ranges::any_of(order, [&](uint32_t field) {
             return layout.fields[field].form.contains(FieldForm::IsAccessor);
         });
+    };
+    // No object is seen without a field that is always filled, so an order that leaves one out is the order of none.
+    BitVector isInEveryOrder(layout.fields.size());
+    for (uint32_t field = 0; field < layout.fields.size(); ++field) {
+        if (isEnumerableStringField(program, layout.fields[field]) && flowOf(program, { id, field }).occupancy == Occupancy::AlwaysFilled)
+            isInEveryOrder.quickSet(field);
+    }
+    auto isOrderOfNoObject = [&, numberOfFieldsInEveryOrder = isInEveryOrder.bitCount()](const KeyOrderFields& order) {
+        return static_cast<size_t>(std::ranges::count_if(order, [&](uint32_t field) { return isInEveryOrder.quickGet(field); })) < numberOfFieldsInEveryOrder;
     };
     uint64_t numberOfOrdersLeftOut = 0;
     bool isComplete = true;
@@ -104,7 +114,7 @@ ExpectedKeyOrders expectedKeyOrdersOf(const Program& program, LayoutID id, KeyOr
                     if (!order.contains(field))
                         extended.append(field);
                 }
-                if (extendedOrders.contains(extended))
+                if (extendedOrders.contains(extended) || (declaringLayout == id && isOrderOfNoObject(extended)))
                     continue;
                 if (extended.size() > limits.maxFields || extendedOrders.size() == limits.maxOrders || listsAccessor(extended))
                     ++numberOfOrdersLeftOut;
@@ -412,22 +422,7 @@ static constexpr bool copiesNothingFromNullish(OwnKeyWalk walk)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-static bool hasOrdinaryOwnKeys(LayoutKind kind)
-{
-    switch (kind) {
-    case LayoutKind::Record:
-    case LayoutKind::Instance:
-        return true;
-    case LayoutKind::Container:
-    case LayoutKind::Environment:
-    case LayoutKind::Closure:
-    case LayoutKind::CoroutineFrame:
-    case LayoutKind::BuiltinResult:
-    case LayoutKind::ModuleNamespace:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
+static bool hasOrdinaryOwnKeys(LayoutKind kind) { return hasOrdinaryOwnKeysOf(kind); }
 
 static bool isUnchangedLiteral(FunctionPassContext& context, const UnchangedAllocations& unchanged, ValueID value, ProgramPoint point)
 {
@@ -450,7 +445,7 @@ static bool isUnderPrivateName(const Program& program, const Field& field)
     if (!field.key)
         return false;
     PropertyKeyKind kind = program.at(field.key).kind;
-    return kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::EnginePrivateName;
+    return kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::EnginePrivateName || kind == PropertyKeyKind::ModulePrivateName;
 }
 
 static bool isOrdinaryDataField(const Program& program, FieldReference reference)
@@ -469,7 +464,15 @@ static std::pair<bool, std::span<const LayoutID>> walkedLayoutsOf(FunctionPassCo
     return { areProven, membersOf(program, areProven ? type : program.expectedOrTypeOf(context.function, site.source)) };
 }
 
-// The layout of a literal that has no property yet when a spread without excluded keys fills it.
+// Once its fields are stored one by one, such an object need not be made.
+static bool isKeptByNobody(FunctionPassContext& context, ValueID object)
+{
+    const EscapeAnalysis& escape = context.analyses.escape();
+    std::optional<ObjectID> tracked = escape.gaveUp() ? std::nullopt : escape.objectDefinedBy(object);
+    return tracked && std::ranges::none_of(escape.usesOf(*tracked), &ObjectUse::isEscape);
+}
+
+// The layout of a literal that somebody keeps, and that has no property yet when a spread without excluded keys fills it.
 static LayoutID layoutOfEmptyTarget(FunctionPassContext& context, const UnchangedAllocations& unchanged, const OwnKeyWalkSite& site)
 {
     if (site.walk != OwnKeyWalk::Spread || !context.function.at(site.value).excludedKeys().empty())
@@ -486,7 +489,7 @@ static LayoutID layoutOfEmptyTarget(FunctionPassContext& context, const Unchange
         if (!hasPlainSlot)
             return { };
     }
-    if (!isUnchangedLiteral(context, unchanged, site.target, { site.block, site.index }))
+    if (!isUnchangedLiteral(context, unchanged, site.target, { site.block, site.index }) || isKeptByNobody(context, site.target))
         return { };
     return layout;
 }
@@ -689,11 +692,35 @@ static bool isListThatLivesOn(FunctionPassContext& context, const OwnKeyWalkSite
     return !list || std::ranges::any_of(escape.usesOf(*list), &ObjectUse::isEscape);
 }
 
+// `{ ...source, ..`: the first thing that a new object without a property gets.
+static bool fillsEmptyLiteral(const Function& function, const OwnKeyWalkSite& site)
+{
+    if (site.walk != OwnKeyWalk::Spread)
+        return false;
+    const Value& target = function.at(site.target);
+    if (target.opcode != Opcode::NewObject || !target.fields().empty())
+        return false;
+    const BlockValues& values = function.at(site.block).values;
+    for (uint32_t index = site.index; index--;) {
+        if (values[index] == site.target)
+            return true;
+        if (std::ranges::contains(function.at(values[index]).operands(), site.target))
+            return false;
+    }
+    return false;
+}
+
+static bool walksWithoutTests(const OwnKeyWalkPlan& plan)
+{
+    return plan.arms.size() == 1 && !plan.needsShapeTest && !plan.needsKeyOrderTest && !plan.needsOriginalCall;
+}
+
 // The sites are listed last first: an expansion moves only the values after its point.
 static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
 {
     const Function& function = context.function;
     Vector<OwnKeyWalkSite, 4> sites;
+    Vector<ValueID, 4> fillingLiteralsOutsideHotCode;
     for (BlockID block : context.analyses.cfg().reversePostOrder() | std::views::reverse) {
         if (function.at(block).frequency == BlockFrequency::Rare)
             continue;
@@ -703,8 +730,11 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
                 continue;
             HeatClass heat = heatClassOf(context, block);
             // The operation copies a record by its words. What the arms add to that, the layout of the copy and no call, is worth their bytes in hot code.
-            if (!isCold(heat) && (site->walk != OwnKeyWalk::Copy || isHot(heat)) && !isListThatLivesOn(context, *site))
+            if (!isCold(heat) && (site->walk != OwnKeyWalk::Copy || isHot(heat)) && !isListThatLivesOn(context, *site)) {
+                if (!isHot(heat) && fillsEmptyLiteral(function, *site))
+                    fillingLiteralsOutsideHotCode.append(site->value);
                 sites.append(WTF::move(*site));
+            }
         }
     }
     UnchangedAllocations unchanged(context, sites.span());
@@ -718,6 +748,9 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
         } else if (isExpandedByPlan(walk.site.walk)) {
             std::optional<OwnKeyWalkPlan> plan = planOwnKeyWalk(context, unchanged, walk.site);
             if (!plan)
+                continue;
+            // A load and a store for each field take the place of the call. Arms behind tests, with the call behind them, are worth their bytes in hot code, or where they leave no object to make.
+            if (fillingLiteralsOutsideHotCode.contains(walk.site.value) && !walksWithoutTests(*plan) && !isKeptByNobody(context, walk.site.target))
                 continue;
             walk.walkedSources.append(WalkedSource { walk.site.source, WTF::move(*plan), function.at(walk.site.value) });
         }
@@ -811,19 +844,16 @@ static ValueID emitWalk(Emission& emission, const OwnKeyWalkSite& site, const Va
     bool isAssign = site.walk == OwnKeyWalk::Assign;
     std::span<const PropertyKeyID> excludedKeys = site.walk == OwnKeyWalk::Spread ? original.excludedKeys() : std::span<const PropertyKeyID>();
 
+    // A copy gets its properties in the order in which the source got them, names and symbols alike.
     Vector<uint32_t, 8> walkedFields;
-    Vector<uint32_t, 8> fieldsWithSymbolKeys;
     for (uint32_t index : arm.order) {
         const Field& field = fields[index];
         RELEASE_ASSERT(!field.computedKey);
         if (std::ranges::contains(excludedKeys, field.key))
             continue;
-        if (isEnumerableStringField(program, field))
+        if (isEnumerableStringField(program, field) || (visitsSymbolKeys(site.walk) && field.key && isSymbolKind(program.at(field.key).kind)))
             walkedFields.append(index);
-        else if (visitsSymbolKeys(site.walk) && field.key && isSymbolKind(program.at(field.key).kind))
-            fieldsWithSymbolKeys.append(index);
     }
-    walkedFields.appendVector(fieldsWithSymbolKeys);
 
     auto appendName = [&](uint32_t field) {
         return emission.appendString(program.at(fields[field].key).text);
@@ -997,11 +1027,42 @@ static PassOutcome expandStringify(FunctionPassContext& context, Emission& emiss
     BlockID noText = builder.addBlock(BlockFrequency::Rare);
 
     ValueID stringBuilder = builder.append(Opcode::StringBuilderBegin, { });
-    JSONSerializerBuilder serializer(builder, emission.inputs(), stringBuilder);
+    JSONSerializerBuilder serializer(builder, emission.inputs(), stringBuilder, calledBuiltinOf(context.program.builtins(), original));
+
+    bool listsHolders = serializer.mayListHolders(site.source);
+    bool isCovered = listsHolders || (!serializer.writingRunsCode(site.source) && serializer.mayHoldItself(site.source));
+    BlockFrequency frequency = builder.function().at(builder.currentBlock()).frequency;
+    std::optional<Target> outerHandler = builder.handler();
+    BlockID threw;
+    if (isCovered) {
+        threw = builder.addHandlerBlock(listsHolders ? BlockRole::CleanupHandler : BlockRole::CatchHandler, ValueID());
+        builder.setHandler(Target { threw, { }, { } });
+        BlockID covered = builder.addBlock(frequency);
+        builder.emitJump(covered);
+        builder.moveToEndOf(covered);
+    }
+
     serializer.appendRoot(site.source, noText);
     serializer.commit();
 
     ValueID result = builder.append(Opcode::StringBuilderFinish, { stringBuilder });
+    if (isCovered) {
+        builder.setHandler(WTF::move(outerHandler));
+        BlockID finished = builder.addBlock(frequency);
+        builder.emitJump(finished);
+
+        builder.moveToEndOf(threw);
+        if (listsHolders) {
+            ValueID exception = builder.append(Opcode::CatchException, { });
+            builder.append(Opcode::JSONResetHolders, { stringBuilder });
+            builder.emitRethrow(exception);
+        } else {
+            // No code of the program has run, so the call as written starts from the beginning. It finds the cycle, or that the text is too long.
+            builder.append(Opcode::CatchValue, { });
+            builder.emitJump(noText);
+        }
+        builder.moveToEndOf(finished);
+    }
     if (textFormCall) {
         BuiltinCallOperands operands { original.receiverOperand(), Vector<ValueID, 4>(original.argumentsOperands()) };
         operands.arguments[site.sourceArgument] = result;
@@ -1011,7 +1072,7 @@ static PassOutcome expandStringify(FunctionPassContext& context, Emission& emiss
         BuiltinCallStamps stamps { original.expectedResult(), original.accessSite(), original.allocationSite() };
         result = builder.append(makeBuiltinCall(textFormCall->overload, BuiltinCallForm::Whole, passedOperands, stamps));
     }
-    builder.endExpansion(expansion, convertTo(builder, result, DeclaredType { .type = original.type }));
+    builder.endExpansion(expansion, convertTo(builder, result, DeclaredType(Proven::byPosition(original.type))));
 
     builder.moveToEndOf(noText);
     builder.append(Opcode::StringBuilderDiscard, { stringBuilder });
@@ -1228,6 +1289,16 @@ static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emiss
             auto cloner = makeUniqueWithoutFastMallocCheck<RegionCloner>(builder, function);
             cloner->cloneBlocks(region.span(), [](ValueID, Value&) { });
             Turn turn { cloner->cloneOf(header), cloner->cloneOf(step), arm.names[position], position };
+
+            // A turn is on no cycle of its own.
+            BitVector loopHints;
+            const BlockValues& values = function.at(turn.header).values;
+            for (uint32_t index = 0; values[index] != turn.step; ++index) {
+                if (function.at(values[index]).opcode == Opcode::LoopHint)
+                    loopHints.set(index);
+            }
+            builder.eraseValues(turn.header, loopHints);
+
             size_t positionIndex = function.at(turn.header).parameters.find(function.at(turn.step).positionOperand());
             for (BlockID block : cloner->clonedBlocks()) {
                 for (Target& target : function.edit(block, editsOfTargets).terminator.targets) {
@@ -1265,22 +1336,17 @@ static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emiss
 
     // While the object is as the enumerator found it, the step answers with the name at its position. Otherwise the turn is taken by the loop as written, from the same position on.
     for (const Turn& turn : turns) {
+        // The repair splits a block that has a handler after each value that other blocks read, so the step may have left the header. A turn that no edge enters has no place.
+        ValueLocation placeOfStep = context.analyses.useLists().locationOf(turn.step);
+        if (placeOfStep.placement != ValuePlacement::InBlock)
+            continue;
+
         Arguments carriedValues(function.at(turn.header).parameters);
-
-        // A turn is on no cycle of its own.
-        BitVector loopHints;
-        const BlockValues& values = function.at(turn.header).values;
-        for (uint32_t index = 0; values[index] != turn.step; ++index) {
-            if (function.at(values[index]).opcode == Opcode::LoopHint)
-                loopHints.set(index);
-        }
-        builder.eraseValues(turn.header, loopHints);
-
         ValueID enumerator = function.at(turn.step).enumeratorOperand();
         ValueID object = function.at(turn.step).objectOperand();
         BlockFrequency frequency = function.at(turn.header).frequency;
         builder.setOrigin(function.at(turn.step).origin());
-        IRBuilder::Expansion expansion = builder.beginExpansion({ turn.header, static_cast<uint32_t>(function.at(turn.header).values.find(turn.step)) });
+        IRBuilder::Expansion expansion = builder.beginExpansion({ placeOfStep.block, placeOfStep.index });
         builder.emitFailureOfPredictions(Target { header, Arguments(carriedValues), { } });
         ValueID position = builder.appendInteger(turn.position);
         ValueID isCurrent = builder.append(Opcode::IsEnumeratorCurrent, { enumerator, object, position });
@@ -1533,7 +1599,7 @@ static PassOutcome defineFieldsOfMergedLiterals(FunctionPassContext& context, IR
     for (size_t index = 0; index < literals.size(); ++index) {
         builder.moveToEndOf(arms[index]);
         for (size_t field = 0; field < literals[index]->properties.size(); ++field, ++passed) {
-            ValueID held = builder.append(makeAssumeType(passed->first, passed->second));
+            ValueID held = builder.append(makeAssumeType(passed->first, Proven::byConstruction(passed->second)));
             builder.append(makeDefinitionOfProperty(target, literals[index]->properties[field].first, held));
         }
         endArm();
@@ -1811,7 +1877,7 @@ static void expandDataAt(Rewrite& rewrite, ProgramPoint point)
                 }
                 // The field that takes an array may have been narrowed to what flow has proven of that very array.
                 ValueID made = insert(WTF::move(aggregate));
-                addChild(rewrite, openNodes.last(), stamp.type ? insert(makeAssumeType(made, stamp.type)) : made, stampOf, insert);
+                addChild(rewrite, openNodes.last(), stamp.type ? insert(makeAssumeType(made, Proven::byConstruction(stamp.type))) : made, stampOf, insert);
             }
         });
     }
@@ -1819,7 +1885,7 @@ static void expandDataAt(Rewrite& rewrite, ProgramPoint point)
 
     replacement.setOrigin(origin);
     replacement.type = resultTypeOf(rewrite.program, rewrite.function, replacement, rewrite.context.types);
-    replacement.setExpected(expectedTypeOf(rewrite.program, rewrite.function, replacement, rewrite.context.types));
+    replacement.setExpected(ExpectedType(expectedTypeOf(rewrite.program, rewrite.function, replacement, rewrite.context.types)));
     rewrite.edit(id) = WTF::move(replacement);
 }
 

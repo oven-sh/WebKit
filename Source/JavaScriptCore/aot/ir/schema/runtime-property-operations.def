@@ -1,6 +1,7 @@
 runtime GetById : EncodedJSValue (EncodedJSValue base, uint32_t key) ; unknownCode
 runtime PutById, PutByIdSloppy : void (EncodedJSValue base, uint32_t key, EncodedJSValue value) ; unknownCode
 runtime DeleteById, DeleteByIdSloppy : size_t (EncodedJSValue base, uint32_t key) ; unknownCode
+runtime DeleteByName, DeleteByNameSloppy : size_t (JSCell* base, UniquedStringImpl* uid) ; unknownCode
 runtime InByIdAndCache, HasOwnByIdAndCache : size_t (EncodedJSValue base, uint32_t key) ; unknownCode
 runtime GetByIdAndCache : EncodedJSValue (EncodedJSValue base, uint32_t key, SiteCache cache) ; unknownCode
 runtime PutByIdAndCache : void (EncodedJSValue base, EncodedJSValue value, uint32_t key, SiteCache cache, uint32_t putMode) ; unknownCode
@@ -23,7 +24,6 @@ runtime GetOwnProperty : EncodedJSValue (EncodedJSValue object, uint32_t key) ; 
 
 runtime GetGeneric : EncodedJSValue (JSCell* base, UniquedStringImpl* uid) ; reads(all) writes(RuntimeState)
 runtime GetByValGeneric : EncodedJSValue (JSCell* base, JSCell* property) ; reads(all) writes(StringStorage, RuntimeState)
-runtime GetSparseElement : EncodedJSValue (JSCell* base, EncodedJSValue index) ; reads(all)
 runtime InByValGeneric : size_t (JSCell* base, JSCell* property) ; reads(all) writes(StringStorage, RuntimeState)
 runtime PutByValGeneric : size_t (JSCell* base, JSCell* property, EncodedJSValue value) ; reads(all) writes(ObjectFields, OrderWords, NamedProperties, StringStorage, RuntimeState)
 

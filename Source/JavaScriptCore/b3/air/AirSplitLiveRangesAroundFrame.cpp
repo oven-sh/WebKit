@@ -14,11 +14,11 @@
 #include "AirEmitShuffle.h"
 #include "AirInsertionSet.h"
 #include "AirInstInlines.h"
-#include "AirLiveness.h"
 #include "AirPhaseScope.h"
 #include "AirShrinkWrapFrame.h"
+#include "AirTmpBoundaryRows.h"
+#include "AirTmpInlines.h"
 #include "AirTmpMap.h"
-#include "AirTmpSet.h"
 #include "B3Procedure.h"
 #include <wtf/BitVector.h>
 #include <wtf/IndexMap.h>
@@ -52,11 +52,15 @@ class LiveRangeSplitter {
 public:
     explicit LiveRangeSplitter(Code& code)
         : m_code(code)
-        , m_liveness(code)
+        , m_usesAndDefs(code, [](Tmp tmp) { return !tmp.isReg(); })
+        , m_liveness(code, m_usesAndDefs.facts())
+        , m_firstIndexOfFP(Tmp::absoluteIndexEnd(code, GP))
         , m_tmpInRegion(code)
         , m_blockInsertionSet(code)
         , m_insertionSet(code)
     {
+        m_liveness.compute();
+        RELEASE_ASSERT(m_liveness.status() == BitMatrixLivenessStatus::Solved);
     }
 
     bool run(BitVector&& regionForCalls, const CountByBank& numberOfRegisters)
@@ -99,6 +103,28 @@ private:
         }
     }
 
+    Bank bankOf(unsigned index) const { return index < m_firstIndexOfFP ? GP : FP; }
+
+    void setIsLive(unsigned index, bool isLive)
+    {
+        if (m_isLive.quickGet(index) == isLive)
+            return;
+        m_isLive.quickSet(index, isLive);
+        if (isLive)
+            ++m_numberLive[bankOf(index)];
+        else
+            --m_numberLive[bankOf(index)];
+    }
+
+    // Goes from the last block to the first. m_isLive and m_numberLive describe the block's tail in atTail(block) and its head in atHead(block).
+    void forEachBlockBackwards(NOESCAPE const Invocable<void(BasicBlock*)> auto& atTail, NOESCAPE const Invocable<void(BasicBlock*)> auto& atHead)
+    {
+        m_isLive.clearAll();
+        m_isLive.ensureSize(m_usesAndDefs.crossesBoundary.size());
+        m_numberLive = { };
+        Air::forEachBlockBackwards(m_code, m_liveness, m_usesAndDefs, [&](unsigned index, bool isLive) { setIsLive(index, isLive); }, atTail, atHead);
+    }
+
     // A block that holds more values than that takes a callee-save or a spill slot.
     BitVector findCrowdedBlocks(const CountByBank& numberOfRegisters)
     {
@@ -106,38 +132,37 @@ private:
         if (!hasMoreTmpsThan(m_code, numberOfRegisters))
             return result;
 
-        TmpSet live;
-        Vector<Tmp, 32> added;
-        for (BasicBlock* block : m_code) {
-            CountByBank numberLive { };
+        Vector<unsigned, 32> changed;
+        forEachBlockBackwards([&](BasicBlock* block) {
             auto exceedsRegisters = [&] {
-                return numberLive[GP] > numberOfRegisters[GP] || numberLive[FP] > numberOfRegisters[FP];
+                return m_numberLive[GP] > numberOfRegisters[GP] || m_numberLive[FP] > numberOfRegisters[FP];
             };
-            auto add = [&](Tmp tmp) {
-                if (tmp.isReg() || !live.add(tmp))
+            auto change = [&](Tmp tmp, bool isLive) {
+                if (tmp.isReg())
                     return;
-                ++numberLive[tmp.bank()];
-                added.append(tmp);
+                unsigned index = tmp.linearlyIndexed(m_code).index();
+                if (m_isLive.quickGet(index) == isLive)
+                    return;
+                setIsLive(index, isLive);
+                changed.append(index);
             };
-            for (Tmp tmp : m_liveness.liveAtTail(block))
-                add(tmp);
             for (unsigned index = block->size(); index-- && !exceedsRegisters();) {
                 Inst& inst = block->at(index);
                 inst.forEachTmp([&](Tmp& tmp, Arg::Role role, Bank, Width) {
-                    if (Arg::isAnyDef(role) && !tmp.isReg() && live.remove(tmp))
-                        --numberLive[tmp.bank()];
+                    if (Arg::isAnyDef(role))
+                        change(tmp, false);
                 });
                 inst.forEachTmp([&](Tmp& tmp, Arg::Role role, Bank, Width) {
                     if (Arg::isAnyUse(role))
-                        add(tmp);
+                        change(tmp, true);
                 });
             }
             if (exceedsRegisters())
                 result.quickSet(block->index());
-            for (Tmp tmp : added)
-                live.remove(tmp);
-            added.shrink(0);
-        }
+            for (unsigned index : changed)
+                setIsLive(index, !m_isLive.quickGet(index));
+            changed.shrink(0);
+        }, [](BasicBlock*) { });
         return result;
     }
 
@@ -167,13 +192,13 @@ private:
         m_tmpsLiveAtHead.resize(m_code.size());
         BitVector isTarget(m_code.size());
         forEachBorderEdge([&](BasicBlock*, FrequentedBlock& edge) {
-            BasicBlock* target = edge.block();
-            if (isTarget.quickSet(target->index()))
+            isTarget.quickSet(edge.block()->index());
+        });
+        forEachBlockBackwards([](BasicBlock*) { }, [&](BasicBlock* block) {
+            if (!isTarget.quickGet(block->index()))
                 return;
-            for (Tmp tmp : m_liveness.liveAtHead(target)) {
-                if (!tmp.isReg())
-                    m_tmpsLiveAtHead[target].append(tmp);
-            }
+            for (size_t index : m_isLive)
+                m_tmpsLiveAtHead[block].append(Tmp::tmpForLinearIndex(m_code, index));
         });
         for (size_t blockIndex : isTarget) {
             for (Tmp tmp : m_tmpsLiveAtHead[m_code[blockIndex]]) {
@@ -271,7 +296,11 @@ private:
 
     Code& m_code;
     BitVector m_isInRegion;
-    UnifiedTmpLiveness m_liveness;
+    UsesAndDefsByBlock m_usesAndDefs;
+    BitMatrixLiveness<TmpBoundaryRows> m_liveness;
+    const unsigned m_firstIndexOfFP;
+    BitVector m_isLive;
+    CountByBank m_numberLive { };
     IndexMap<BasicBlock*, Vector<Tmp>> m_tmpsLiveAtHead;
     TmpMap<Tmp> m_tmpInRegion;
     BlockInsertionSet m_blockInsertionSet;

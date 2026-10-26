@@ -12,8 +12,13 @@
 
 namespace JSC { namespace AOT {
 
+namespace Typed {
+class Program;
+struct Function;
+}
+
 JS_EXPORT_PRIVATE bool updateIntegersInMemory(B3::Procedure&);
-B3::ClientPhase updateIntegersInMemoryAfterOptimization();
+B3::ClientPhase updateIntegersInMemoryAfterOptimization(const Typed::Program&, const Typed::Function&);
 
 } } // namespace JSC::AOT
 

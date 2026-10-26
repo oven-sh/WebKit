@@ -24,7 +24,7 @@ operation IsInsideView (view: Object/inspects, position: Number/inspects, typedA
 operation IsNotThenable (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, ObjectFields, PrototypeLinks) ; proves = NotThenable ; replaces = ReturnAsyncResult, ResolvePromise
 operation AreMembersUnchanged (conditions: List<MemberConditionRecord>, from Placed guardBit?: GuardBit) -> natural(boolean) ; reads(MemberGuards[conditions]) ; proves = MemberUnchanged
 operation HasKeyOrder (object: Layout/inspects, guard?: Guard/inspects, layout: Layout, fields: List<Field>, from Placed orderWord?: OrderWord) -> natural(boolean) ; reads(OrderWords) ; proves = KeyOrder ; relies = Shape ; guarded = object
-operation IsClosureOf (function: Function(Dispatch), value: Any/inspects) -> natural(boolean) ; none ; AsRead..Placed ; proves = ExactFunction ; flow = TableProves
+operation IsClosureOf (function: Function(Dispatch), value: Any/inspects) -> natural(boolean) ; none ; AsRead..Placed ; proves = ExactFunction ; flow = TableProves ; hasOwnFoldingRule = true
 operation IsEnumeratorCurrent (enumerator: Enumerator/inspects, object: Any/inspects, position: Integer/inspects) -> natural(boolean) ; reads(ShapeWords, OrderWords, NamedProperties) ; proves = EnumeratorCurrent
 
 family GuardValue Prepared..Placed
@@ -54,7 +54,7 @@ operation SetGlobalBinding (key: PropertyKey, mode: ECMAMode, value: Any/retains
 
 family ElementAccess Prepared..Placed
 operation GetArrayLength (array: Array/inspects, guard?: Guard/inspects) -> natural(uint32) ; reads(ArrayStorage) ; relies = Pristine, ArrayStorage ; guarded = array ; interpreted = Read
-operation GetArrayElement (array: Array/inspects+readsContents, position: Number/inspects, guard?: Guard/inspects, arrayStorage: ArrayStorage, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInBounds isPresent readsHoleAsNaN] -> unknown => declared(array) ; CreatesString reads(ArrayStorage, Elements[Array], NamedProperties) ; relies = Pristine, ArrayStorage, InBounds ; guarded = array ; interpreted = Read ; replaces = ElemGet ; accessClass = Slot
+operation GetArrayElement (array: Array/inspects+readsContents, position: Number/inspects, guard?: Guard/inspects, arrayStorage: ArrayStorage, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInBounds isPresent readsHoleAsNaN | engine storageIsUndecided] -> unknown => declared(array) ; CreatesString reads(ArrayStorage, Elements[Array], NamedProperties) ; relies = Pristine, ArrayStorage, InBounds ; guarded = array ; interpreted = Read ; replaces = ElemGet ; accessClass = Slot
 operation PutArrayElement (array: Array/inspects+writesContents, position: Number/inspects, value: Any/retains(array), guard?: Guard/inspects, arrayStorage: ArrayStorage, mode: ECMAMode, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInBounds] -> none ; GrowsArray writes(NamedProperties) ; relies = Pristine, ArrayStorage, InBounds ; guarded = array ; interpreted = Store ; replaces = ElemSet, ElemDefine ; accessClass = Slot ; runtime = ArrayPutAtIndex ; runsOwnerBarrier = true
 operation HasArrayElement (array: Array/inspects, position: Number/inspects, guard?: Guard/inspects, arrayStorage: ArrayStorage, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral] -> natural(boolean) ; CreatesString reads(ArrayStorage, Elements[Array], NamedProperties) ; relies = Pristine, ArrayStorage ; guarded = array ; interpreted = Test ; replaces = ElemHas ; accessClass = Slot ; branches = May
 operation AppendElements (array: Array/inspects+writesContents, source: Array/Listed, guard?: Guard/inspects) -> none ; GrowsArray ; relies = Pristine, ArrayStorage ; guarded = source ; interpreted = List ; replaces = AppendSpread ; runtime = AppendElements
@@ -66,7 +66,7 @@ operation GetTypedArrayElement (view: Object/inspects, position: Number/inspects
 operation PutTypedArrayElement (view: Object/inspects+writesContents, position: Number/inspects, value: Any/inspects, guard?: Guard/inspects, typedArrayType: TypedArrayType, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInsideView] -> none ; reads(TypedArrayStorage) writes(TypedArrayElements) ; relies = InBounds ; guarded = view ; replaces = ElemSet ; accessClass = Slot
 operation HasFixedBytes (view: Object/inspects) -> natural(boolean) ; reads(TypedArrayStorage)
 operation TypedArrayRange (view: Object/retains(result), start: Integer/inspects, end: Integer/inspects, valueType: Type, allocationSite?: AllocationSite) -> declared(valueType) ; Allocates reads(TypedArrayStorage) writes(TypedArrayStorage) throws ; interpreted = Allocation ; runtime = TypedArrayRange
-operation GetStringLength (string: String/inspects) -> natural(int[0, 2147483647]) ; none ; interpreted = Read
+operation GetStringLength (string: String/inspects) -> natural(int[0, 2147483647]) ; none ; interpreted = Read ; hasKnownValueRule = true
 operation GetStringCodeUnit (string: String/inspects, position: Integer/inspects) -> natural(int[0, 65535]) ; ResolvesRopes ; interpreted = Read
 
 family Arguments Prepared..Placed ; boundTo = Frame
@@ -74,7 +74,7 @@ operation GetArgument (argumentIndex: UInt32) -> unknown ; none
 operation GetRestLength (firstArgument: UInt32) -> natural(int[0, 2147483647]) ; none
 operation CreateRest (firstArgument: UInt32, allocationSite?: AllocationSite, storage: AllocationStorage) -> allocation(Array) ; Allocates ; interpreted = Allocation ; allocatesInline = true ; runtime = NewArray
 operation GetMyArgumentByVal (property: Any/Converted, firstArgument: UInt32) [readsArgumentsObject] -> unknown ; CreatesString reads(NamedProperties) ; runtime = GetFromArguments
-operation CallForwardVarargs (callee: Any/calls, thisValue: Any/retains, firstArgument: UInt32, with CallStamp) [isDemotedTailCall] -> unknown ; unknownCode by Call ; accessClass = IndirectCall
+operation CallForwardVarargs (callee: Any/calls, thisValue: Any/retains, firstArgument: UInt32, with CallStamp) -> unknown ; unknownCode by Call ; accessClass = IndirectCall ; runsBeforeCallee = true
 operation ConstructSuperForwardVarargs (layout: Layout, parent: Any/calls, newTarget: Any/retains, firstArgument: UInt32, with CallStamp) -> declared(layout) ; unknownCode by Call ; accessClass = IndirectCall
 
 family Environment Prepared..Placed
@@ -82,9 +82,11 @@ operation GetCapture (function: Function(Dispatch), index: UInt32, closure: Call
 operation MaterializeEnvironment (environment: Environment/inspects+returns, layout: Layout, from Placed allocation?: Allocation) -> natural(same(environment)) ; Allocates reads(EnvironmentFields) ; runtime = MaterializeEnvironment ; allocatesInline = true ; boundTo = Frame
 operation MarkEnvironmentEscaped (environment: Environment/inspects) -> none ; writes(RuntimeState) ; boundTo = Frame
 operation ReleaseEnvironment (environment: Environment/inspects) -> none ; reads(RuntimeState) writes(EnvironmentFields, AllocatorState, RuntimeState) ; boundTo = Frame
+operation RecordCallee (closure: Callable/retains) -> none ; writes(ExternalState, RuntimeState) ; runtime = RecordCallee ; boundTo = Frame
+operation AreFunctionNamesUnchanged () -> natural(boolean) ; reads(RuntimeState) ; proves = MemberUnchanged ; branches = May
 
 family BuiltinCall Prepared..Placed
-operation CallBuiltin (overload: BuiltinOverload, builtinCallForm: BuiltinCallForm, prefixLength?: UInt32, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, expectedResult?: ExpectedResult, accessSite?: AccessSite, allocationSite?: AllocationSite, from Selected literalSeparator?: String) [needsPristineReceiver isDemotedTailCall] -> declared(overload) ; unknownCode by Builtin ; accessClass = DirectCall ; interpreted = Allocation ; replaces = Call, Construct, PropGet, PropSet, CallList, CallBuiltin, NewArray, AppendSpread
+operation CallBuiltin (overload: BuiltinOverload, builtinCallForm: BuiltinCallForm, prefixLength?: UInt32, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, expectedResult?: ExpectedResult, accessSite?: AccessSite, allocationSite?: AllocationSite, from Selected literalSeparator?: String) [needsPristineReceiver isReflectConstructSyntax] -> declared(overload) ; unknownCode by Builtin ; accessClass = DirectCall ; interpreted = Allocation ; replaces = Call, Construct, PropGet, PropSet, CallList, CallBuiltin, NewArray, AppendSpread ; hasOwnFoldingRule = true
 operation DivideIntegers (dividend: Integer/inspects, divisor: Integer/inspects, rounding: QuotientRounding) -> natural(integer) ; none
 operation ToInt32 (value: Number/inspects) -> natural(int32) ; none ; runtime = ToInt32
 operation ToUint32 (value: Number/inspects) -> natural(uint32) ; none ; runtime = ToInt32
@@ -96,11 +98,13 @@ operation SharedRegExpLiteral (pattern: String, regExpFlags: RegExpFlags, from P
 operation IsBuiltinLocationUnchanged (member: Builtin) -> natural(boolean) ; reads(NamedProperties) ; proves = MemberUnchanged ; branches = May ; interpreted = Test ; runtime = ArmBuiltinLocation
 operation IsFunctionOfBuiltin (value: Any/inspects, member: Builtin) -> natural(boolean) ; none ; proves = ExactFunction ; branches = May
 operation GetBuiltinValue (builtin: Builtin, overload: BuiltinOverload) -> declared(overload) ; unknownCode ; runtime = FillBuiltinValue ; replaces = PropGet
+operation InitializeBuiltin (builtin: Builtin) -> none ; CreatesConstant reads(ExternalState) writes(ExternalState) ; runtime = BuiltinCell ; replaces = PropGet
 
 family ExpandedIteration Prepared..Placed
 operation DestructureIterable (iterable: Any/Iterated, count: UInt32) -> results(unknown, ..) ; Allocates throws ; interpreted = List ; runtime = DestructureIterable ; replaces = IteratorOpen, IteratorResume, IteratorClose
 operation EnumeratorGetByVal (object: Any/inspects, property: Any/inspects, enumerator: Enumerator/inspects, position: Integer/inspects, guard: Guard/inspects) -> unknown ; Allocates UsesRuntime reads(NamedProperties, ObjectFields) ; receiver = object ; accessClass = Slot ; replaces = ElemGet ; runtime = EnumeratorGetByVal ; relies = EnumeratorCurrent ; guarded = enumerator
 operation RequireAttachedTypedArray (view: Object/inspects) -> none ; reads(TypedArrayStorage) throws ; runtime = ThrowIfTypedArrayIsDetached
+operation RequireLengthFitsList (source: Any/inspects, length?: Integer/inspects) -> none ; CreatesString reads(TypedArrayStorage) ; runtime = ThrowIfTooLongForList
 operation CreateAsyncFromSyncIterator (iterator: Object/retains(result), next: Any/retains(result)) -> natural(object) ; Allocates ; runtime = CreateAsyncFromSyncIterator
 operation ThrowNotIterable (iterable: Any/inspects) [isSpread] -> natural(never) ; Allocates UsesRuntime throws ; runtime = ThrowNotIterable
 
@@ -117,27 +121,30 @@ operation IsGeneratorRunning (generator: Object/inspects) -> natural(boolean) ; 
 operation MarkGeneratorRunning (generator: Object/inspects) -> none ; writes(InternalFields) ; replaces = StepGenerator
 operation TakeGeneratorStepStatus (generator: Object/inspects) -> natural(GeneratorStepStatus) ; reads(InternalFields) writes(InternalFields) ; replaces = StepGenerator
 operation IsUnmodifiedAsyncGenerator (value: Object/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; proves = UnmodifiedGenerator ; branches = May
-operation StepAsyncGenerator (generator: Object/inspects+calls, value: Any/retains, driver: Any/inspects) -> results(StepGeneratorResult: unknown, natural(AsyncGeneratorStepStatus)) ; unknownCode suspends ; runtime = AsyncIteratorStep ; boundTo = Frame
+operation StepAsyncGenerator (generator: Object/inspects+calls, value: Any/retains, driver: Any/inspects, held...: Convertible/retains, calledBuiltin?: Builtin) -> results(StepGeneratorResult: unknown, natural(AsyncGeneratorStepStatus)) ; unknownCode suspends ; runtime = AsyncIteratorStep ; boundTo = Frame
 operation AwaitMayContinue () -> natural(boolean) ; reads(RuntimeState, PromiseState) ; boundTo = Frame ; branches = May ; replaces = AwaitBySavingFrame
-operation AwaitBySavingFrame (awaited: Any/retains+runs(Thenable), promise: Any/inspects) [takesExtraTurn] -> unknown => declared(awaited) ; unknownCode suspends ; runtime = SaveFrameAndAwait ; boundTo = Frame ; replaces = Await
-operation AwaitCallBySavingFrame (function: Function(Call), promise: Any/inspects, arguments...: Declared/retains, accessSite?: AccessSite) [isDemotedTailCall] -> unknown ; unknownCode suspends by Call ; accessClass = DirectCall ; runtime = SaveFrameAndAwaitCall ; boundTo = Frame ; replaces = AwaitBySavingFrame, CallDirect
-operation YieldBySavingFrame (generator: Object/inspects, value: Any/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Yield, InitialYield
-operation AsyncGeneratorYield (generator: Object/inspects, value: Any/retains+runs(Thenable)) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Await, Yield
+operation AwaitBySavingFrame (awaited: Any/retains+runs(Thenable), promise: Any/inspects, held...: Convertible/retains) [takesExtraTurn] -> unknown => declared(awaited) ; unknownCode suspends ; runtime = SaveFrameAndAwait ; boundTo = Frame ; replaces = Await
+operation AwaitCallBySavingFrame (function: Function(Call), promise: Any/inspects, numberOfHeld?: UInt32, arguments...: Declared/retains, accessSite?: AccessSite) -> unknown ; unknownCode suspends by Call ; accessClass = DirectCall ; runtime = SaveFrameAndAwaitCall ; boundTo = Frame ; replaces = AwaitBySavingFrame, CallDirect ; runsBeforeCallee = true
+operation YieldBySavingFrame (generator: Object/inspects, value: Any/retains, held...: Convertible/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Yield, InitialYield
+operation AsyncGeneratorYield (generator: Object/inspects, value: Any/retains+runs(Thenable), held...: Convertible/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Await, Yield
 operation ReturnAsyncResult (promise: Any/inspects+returns+writesContents, value: Any/retains+returns+runs(Thenable)) -> unknown ; Allocates UsesRuntime reads(PromiseState, NamedProperties, ObjectFields, PrototypeLinks) writes(PromiseState) ; runtime = ResolvePromiseOrReturnResult ; boundTo = Frame
 operation PromiseAllOfElements (contents: Type, directCalls: UInt32, elements...: Any/retains+runs(Thenable)) -> allocation(Promise<contents>) ; Allocates UsesRuntime reads(PromiseState) writes(PromiseState) ; runtime = PromiseAll ; replaces = CallBuiltin
 
 family Operator Prepared..Placed
-operation HasInPrototypeChain (value: Any/inspects+runs(PrototypeChain), prototype: Object/inspects) -> natural(boolean) ; Allocates reads(PrototypeLinks) throws ; runtime = DefaultHasInstance ; branches = May ; replaces = InstanceOf
+operation HasInPrototypeChain (value: Any/inspects+runs(PrototypeChain), prototype: Object/inspects) -> natural(boolean) ; Allocates reads(PrototypeLinks) throws ; runtime = DefaultHasInstance ; branches = May ; replaces = InstanceOf ; hasOwnFoldingRule = true
 
 family Module Prepared..Placed
 operation BeginModuleEvaluation (module: Module(Target)) -> natural(boolean) ; unknownCode ; runtime = BeginModuleEvaluation ; branches = May
 operation FinishModuleEvaluation (module: Module(Target)) -> none ; writes(ExternalState)
+operation StopLoadingBehindFile (module: Module(Target)) -> natural(boolean) ; unknownCode ; runtime = StopLoadingBehindFile ; branches = May
+operation EvaluateRequiredModule (module: Module(Target), referrer: Module(Referrer), specifier: String, calledBuiltin?: Builtin) -> none ; unknownCode ; runtime = RequireModule
 operation AbandonModuleEvaluation (module: Module(Target), exception: Exception/inspects) -> none ; Allocates UsesRuntime reads(ExternalState) writes(ExternalState) ; runtime = AbandonModuleEvaluation
 
 family StringBuilder Prepared..Placed
 operation StringBuilderBegin () -> natural(StringBuilder) ; Allocates UsesRuntime writes(StringBuilderContents) ; runtime = StringBuilderBegin
 operation StringBuilderAppend (builder: StringBuilder/inspects, parts...: Any/inspects) -> none ; AppendsToBuilder ; Prepared..Prepared ; runtime = StringBuilderAppend
-operation StringBuilderAppendJSON (builder: StringBuilder/inspects, value: Any/retains, property: Any/inspects) -> natural(boolean) ; unknownCode ; runtime = StringBuilderAppendJSON
+operation StringBuilderAppendJSON (builder: StringBuilder/inspects, value: Any/retains, property: Any/inspects, holder: Any/inspects, calledBuiltin?: Builtin) -> natural(boolean) ; unknownCode ; runtime = StringBuilderAppendJSON
+operation StringBuilderAppendJSONMembers (builder: StringBuilder/inspects, object: Any/retains, names: Any/inspects, start: Integer/inspects, holder: Any/inspects, calledBuiltin?: Builtin) -> natural(boolean) ; unknownCode ; runtime = StringBuilderAppendJSONMembers
 operation StringBuilderLength (builder: StringBuilder/inspects) -> natural(int[0, 2147483647]) ; reads(StringBuilderContents)
 operation StringBuilderToString (builder: StringBuilder/inspects) -> natural(string) ; AppendsToBuilder ; runtime = StringBuilderToString
 operation StringBuilderFinish (builder: StringBuilder/inspects) [isLikelyKey] -> natural(string) ; AppendsToBuilder ; runtime = StringBuilderFinish
@@ -154,4 +161,4 @@ operation ValidateSameValue (kept: Any/inspects, replacement: Any/inspects) -> n
 operation ShouldFailPrediction () -> natural(boolean) ; reads(RuntimeState) writes(RuntimeState)
 
 family Control Prepared..Placed
-terminator SwitchOnShape (subject: Object/inspects, layoutSets: List<LayoutSet>) -> case...(proof), otherwise ; reads(ShapeWords) ; proves = Shape
+terminator SwitchOnShape (subject: Object/inspects, layoutSets: List<LayoutSet>) -> case...(proof), otherwise ; reads(ShapeWords) ; proves = Shape ; canStartRegion = true ; canEndInteriorBlock = true

@@ -78,14 +78,18 @@ function f5 name="arrayOfLayout" parameters=[{type=Array<object>}] results=[{typ
     v2 = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
     Return v2
 # CHECK: [[builder5]]: stringbuilder = StringBuilderBegin
-# CHECK: = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
 # CHECK: = CallBuiltin -, v0, v1, v1 overload=JSONStringify/0
 # CHECK: StringBuilderDiscard [[builder5]]
+# CHECK: role=CleanupHandler
+# CHECK: JSONResetHolders [[builder5]]
+# CHECK: = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+# CHECK: [[holders5]]: jsonholders = JSONEnterHolder [[builder5]], v0
 # CHECK: = JSONAppendToken [[builder5]], {{*}} jsonToken=OpenArray
 # CHECK: LoopHint
 # CHECK: = ShapeTest [[element5]] layouts=[L0]
 # CHECK: = CallDirect [[element5]], [[builder5]] function=[[serializerOfPoint]]
 # CHECK: = JSONAppendToken [[builder5]], {{*}} jsonToken=CloseArray
+# CHECK-NEXT: JSONLeaveHolder [[builder5]], [[holders5]]
 # CHECK: = StringBuilderFinish [[builder5]]
 }
 

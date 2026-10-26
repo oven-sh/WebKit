@@ -7,7 +7,7 @@
 # STATISTIC: TypesCheckedAtEntry = 1
 # CHECK: outcome: Changed
 # CHECK: function f1 name="double"
-# CHECK: Check v0 castType=undefined|null|number
+# CHECK: Check v0 expectedType=undefined|null|number
 # CHECK: function f2 name="withoutSite"
 # CHECK: b0(v0: undefined|null|number):
 # CHECK-NEXT: : number = Add v0, v0

@@ -58,6 +58,8 @@ struct ThrowSiteCode {
     Representation representation;
     unsigned registerNumberWithoutOperand;
     uint32_t callSite;
+    // The stub makes an Error at one position and throws it at another, as a stub that reads twice reads at two.
+    OptionalIndex siteOfNewError { };
 };
 
 } // anonymous namespace
@@ -111,10 +113,10 @@ static void emitThrowSiteCode(CCallHelpers& jit, CodeRecords& records, const Thr
     if (source == ThrowSiteSource::WordInRegister) {
         ArgumentMoves moves;
         appendArgumentMove(moves, throwWordGPR, ArgumentSource::Constant, words[0]);
-        records.stubCalls.call(jit, key, std::nullopt, OptionalIndex { code.callSite }, moves);
+        records.stubCalls.call(jit, key, std::nullopt, OptionalIndex { code.callSite }, moves, code.siteOfNewError);
         return;
     }
-    records.stubCalls.call(jit, key, OptionalIndex { code.callSite });
+    records.stubCalls.callForTwoReads(jit, key, code.siteOfNewError, OptionalIndex { code.callSite });
     CCallHelpers::Label begin = jit.labelIgnoringWatchpoints();
     for (uint32_t word : words) {
 #if CPU(X86_64)
@@ -132,33 +134,11 @@ static RefPtr<B3::StackmapGenerator> generatorOf(CodeRecords& records, const Thr
     });
 }
 
-static bool canBeNamedByThrowWords(Representation representation)
-{
-    switch (representation) {
-    case Representation::JSValue:
-    case Representation::Int64:
-    case Representation::Double:
-    case Representation::OptionalInt64:
-    case Representation::OptionalDouble:
-    case Representation::Cell:
-        return true;
-    case Representation::Boolean:
-    case Representation::Int32:
-    case Representation::Cell32:
-    case Representation::LiteralString:
-    case Representation::Void:
-    case Representation::RawWord:
-    case Representation::Unchosen:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static Representation representationInThrowWords(const std::optional<Operand>& operand)
 {
     if (!operand)
         return Representation::Void;
-    RELEASE_ASSERT(canBeNamedByThrowWords(operand->representation));
+    RELEASE_ASSERT(canBeNamedByThrowWordsOf(operand->representation));
     return operand->representation == Representation::Cell ? Representation::JSValue : operand->representation;
 }
 
@@ -210,6 +190,8 @@ Operand ThrowEmitter::inFormNamedByThrowWords(const OperationContext& context, O
     case Representation::JSValue:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:
@@ -223,11 +205,16 @@ Operand ThrowEmitter::inFormNamedByThrowWords(const OperationContext& context, O
     return undefined();
 }
 
-void ThrowEmitter::throwAt(const OperationContext& context, const ThrowSite& site, std::optional<Operand> operand, std::optional<ErrorKind> errorKind)
+void ThrowEmitter::throwAt(const OperationContext& context, const ThrowSite& site, std::optional<Operand> operand)
+{
+    throwAt(context, site, operand, std::nullopt);
+}
+
+void ThrowEmitter::throwAt(const OperationContext& context, const ThrowSite& site, std::optional<Operand> operand, std::optional<NewError> newError)
 {
     RELEASE_ASSERT(!generator().isInitializingCell());
     operand = withoutUndefinedConstant(operand);
-    if (operand && !canBeNamedByThrowWords(operand->representation))
+    if (operand && !canBeNamedByThrowWordsOf(operand->representation))
         operand = inFormNamedByThrowWords(context, *operand);
 
     build().statistics().count(StatisticID::ThrowSites);
@@ -247,7 +234,14 @@ void ThrowEmitter::throwAt(const OperationContext& context, const ThrowSite& sit
     LBasicBlock siteBlock = m_out.m_block;
     if (operand)
         patchpoint->append(B3::ConstrainedValue(operand->value, B3::ValueRep::SomeRegister));
-    ThrowSiteCode code { checkedThrowSite(site), representationInThrowWords(operand), errorKind ? static_cast<unsigned>(*errorKind) : 0, calls.addSite(context) };
+    ThrowSiteCode code { checkedThrowSite(site), representationInThrowWords(operand), newError ? static_cast<unsigned>(newError->kind) : 0, 0 };
+    if (newError && newError->throwPosition) {
+        Origin throwOrigin = context.origin();
+        throwOrigin.position = *newError->throwPosition;
+        code.siteOfNewError = { calls.addSite(context) };
+        code.callSite = calls.addSite(context, { .origin = throwOrigin });
+    } else
+        code.callSite = calls.addSite(context);
     patchpoint->setGenerator(generatorOf(m_records, code));
     calls.finishCallPatchpoint(context, patchpoint, code.callSite, request);
     if (m_out.m_block == siteBlock)
@@ -260,7 +254,7 @@ void ThrowEmitter::requireOrThrow(const OperationContext& context, Condition mus
     if (mustHold.value()->isInt32(1))
         return;
     operand = withoutUndefinedConstant(operand);
-    bool operandNeedsConversion = operand && !canBeNamedByThrowWords(operand->representation);
+    bool operandNeedsConversion = operand && !canBeNamedByThrowWordsOf(operand->representation);
     if (operandNeedsConversion || emitter<ExceptionEmitter>().unwindsWithinFunction(context)) {
         LBasicBlock fails = newBlock();
         LBasicBlock continuation = newBlock();
@@ -298,9 +292,9 @@ RefPtr<B3::StackmapGenerator> ThrowEmitter::generatorOfCheckedThrowSite(const Op
     return generator;
 }
 
-void ThrowEmitter::throwError(const OperationContext& context, ErrorKind kind, StringID message)
+void ThrowEmitter::throwError(const OperationContext& context, ErrorKind kind, StringID message, std::optional<uint32_t> throwPosition)
 {
-    throwAt(context, { ThrowKind::ErrorWithMessage, message.index(), std::nullopt }, std::nullopt, kind);
+    throwAt(context, { ThrowKind::ErrorWithMessage, message.index(), std::nullopt }, std::nullopt, NewError { kind, throwPosition });
 }
 
 void ThrowEmitter::requireNotNullish(const OperationContext& context, Operand operand, const Type& type, NullishAccess access, StringID name)
@@ -344,6 +338,8 @@ void ThrowEmitter::requireNotNullish(const OperationContext& context, Operand op
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::Boolean:
         return;
     case Representation::Void:

@@ -1,9 +1,9 @@
-# A program that makes no weak reference cannot tell when an object is let go, so every store into a variable nobody reads goes, whatever it stores.
+# A store into a variable nobody reads stays where it may store an object, also in a program that makes no weak reference: an object of the host may release what it holds when it goes.
 # A call goes with its store only where it is annotated as pure and the store was the only use of its answer. With a weak reference: remove-unread-exports-pure-call.ir
 # FORM: AsRead
 # RUN: pipeline RemoveUnreadExports
 # OPTIONS: only-passes=RemoveUnreadExports
-# STATISTIC: UnreadVariableStoresRemoved = 3
+# STATISTIC: UnreadVariableStoresRemoved = 1
 
 module m0 path="/main.ts" displayPath="main.ts" body=f0 requests=[{target=m1 completes=true}]
 module m1 path="/maps.ts" displayPath="maps.ts" body=f1 exports=[{name="annotated" variable=g0}, {name="plain" variable=g1}, {name="used" variable=g2}]
@@ -32,7 +32,9 @@ function f1 name="maps" module=m1 kind=Module results=[{type=anything}] {
     Return
 # CHECK: v1: anything = PropGet v0 key="make"
 # CHECK-NEXT: v7: anything = Call v1 accessSite
+# CHECK-NEXT: PutModuleVariable v7 variable=g1
 # CHECK-NEXT: v9: anything = Call v1 {{*}}[isAnnotatedPure]
+# CHECK-NEXT: PutModuleVariable v9 variable=g2
 # CHECK-NEXT: v11: anything = Call v1, -, v9
 # CHECK-NEXT: Return
 }

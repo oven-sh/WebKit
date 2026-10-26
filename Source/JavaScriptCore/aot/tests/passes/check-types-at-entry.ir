@@ -41,8 +41,8 @@ function f1 name="describe" module=m0 position=5 flags=[IsChecked] length=3 para
 # CHECK-LABEL: function f1 name="describe" module=m0 position=5 flags=[IsChecked] length=3 thisType={type=anything} parameters=[{type=undefined|null|string site=w0 flags=[IsExpected]}, {type=anything}, {type=undefined|null|number site=w1 flags=[IsExpected]}] results=[{type=undefined|null|string site=w2}]
 # CHECK-NOT: derivation=
 # CHECK: b0(v0: anything ~ undefined|null|string, v1: anything, v2: anything ~ undefined|null|number):
-# CHECK-NEXT: [[text]]: undefined|null|string = Check v0 castType=undefined|null|string site=w0 @10
-# CHECK-NEXT: [[count]]: undefined|null|number = Check v2 castType=undefined|null|number site=w1 @20
+# CHECK-NEXT: [[text]]: undefined|null|string = Check v0 expectedType=undefined|null|string site=w0 @10
+# CHECK-NEXT: [[count]]: undefined|null|number = Check v2 expectedType=undefined|null|number site=w1 @20
 # CHECK-NEXT: = PropGet [[text]] key="length"
 # CHECK: = Add {{*}}, [[count]]
 # CHECK-NEXT: = Add [[text]],
@@ -58,8 +58,8 @@ function f2 name="add" module=m0 position=60 kind=Method flags=[HasThis, IsCheck
 }
 # CHECK-LABEL: function f2 name="add" module=m0 position=60 kind=Method flags=[HasThis, IsChecked] length=1 thisType={type=L0 site=w4 flags=[IsExpected]} parameters=[{type=undefined|null|number site=w5 flags=[IsExpected]}]
 # CHECK: b0(v0: anything ~ L0, v1: anything ~ undefined|null|number):
-# CHECK-NEXT: [[meter]]: L0 = Check v0 castType=L0 site=w4 @60
-# CHECK-NEXT: [[amount]]: undefined|null|number = Check v1 castType=undefined|null|number site=w5 @65
+# CHECK-NEXT: [[meter]]: L0 = Check v0 expectedType=L0 site=w4 @60
+# CHECK-NEXT: [[amount]]: undefined|null|number = Check v1 expectedType=undefined|null|number site=w5 @65
 # CHECK-NEXT: = PropGet [[meter]] key="total"
 # CHECK: PropSet [[meter]],
 
@@ -68,7 +68,7 @@ function f3 name="scale" module=m0 position=80 kind=Method flags=[HasThis, IsChe
     v2 = Mul v1, v1
     Return v2
 # CHECK: b0(v0: anything ~ function, v1: anything ~ undefined|null|number):
-# CHECK-NEXT: [[factor]]: undefined|null|number = Check v1 castType=undefined|null|number site=w8 @85
+# CHECK-NEXT: [[factor]]: undefined|null|number = Check v1 expectedType=undefined|null|number site=w8 @85
 # CHECK-NEXT: = Mul [[factor]], [[factor]]
 }
 

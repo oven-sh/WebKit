@@ -97,21 +97,6 @@ static std::optional<LockedWrite> findWrite(const FlowResults& results, const Fu
     return builtinCall;
 }
 
-static bool isProgramModule(ModuleKind kind)
-{
-    switch (kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::Data:
-        return true;
-    case ModuleKind::RuntimeSource:
-    case ModuleKind::Runtime:
-    case ModuleKind::External:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static bool alwaysRuns(const Program& program, const BitVector& alwaysEvaluatedModules, FunctionAnalyses& analyses, BlockID block)
 {
     const Function& function = analyses.function();
@@ -119,7 +104,7 @@ static bool alwaysRuns(const Program& program, const BitVector& alwaysEvaluatedM
         return false;
 
     const Module& module = program.at(function.module);
-    if (module.body != analyses.context().id || !isProgramModule(module.kind) || module.flags.contains(ModuleFlags::IsLibrary))
+    if (module.body != analyses.context().id || !isProgramModuleOf(module.kind) || module.flags.contains(ModuleFlags::IsLibrary))
         return false;
     if (!alwaysEvaluatedModules.get(function.module.index()) || function.at(block).handler)
         return false;
@@ -263,7 +248,7 @@ static bool mayLeaveMemberAsItIs(const Program& program, const Function& functio
         if (!index)
             return nullptr;
         const Field& field = program.at(layout).fields[*index];
-        return field.flags.containsAll({ FieldFlags::IsRequired, FieldFlags::IsEnforced }) ? &program.at(field.declared.type) : nullptr;
+        return field.flags.containsAll({ FieldFlags::IsRequired, FieldFlags::IsEnforced }) ? &program.at(field.declared.expected().predicted()) : nullptr;
     };
     bool hasAccessorFunction = typeUnder(BuiltinNames::get) || typeUnder(BuiltinNames::set);
     const Type* value = typeUnder(BuiltinNames::value);
@@ -284,6 +269,18 @@ static bool mayLeaveMemberAsItIs(const Program& program, const Function& functio
         return !hasAccessorFunction && (!value || mayStore(*value, member));
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool keepsPrototype(const Program& program, const Function& function, const Value& write, BuiltinID callee, BuiltinID holder)
+{
+    if (write.opcode != Opcode::Call || (callee != Builtins::ObjectSetPrototypeOf && callee != Builtins::ReflectSetPrototypeOf))
+        return false;
+    const BuiltinTable& table = program.builtins();
+    std::span<const ValueID> arguments = write.argumentsOperands();
+    if (arguments.size() < 2 || table.at(holder).prototypeLink != BuiltinPrototypeLink::Builtin)
+        return false;
+    const Type& prototype = program.typeOf(function, arguments[1]);
+    return !prototype.primitives && prototype.singleBuiltin() == table.canonicalID(table.at(holder).inheritsFrom);
 }
 
 static void reportWrite(const Program& program, const FlowResults& results, BuildContext& build, const BitVector& alwaysEvaluatedModules, const BuiltinLocationFlow& location)
@@ -311,7 +308,7 @@ static void reportWrite(const Program& program, const FlowResults& results, Buil
     const Type* stored = member && value.opcode == Opcode::PropSet ? &program.typeOf(function, value.operand(*storedOf(value.opcode))) : nullptr;
     if (stored && !stored->primitives && stored->singleBuiltin() == member)
         return;
-    if (mayLeaveMemberAsItIs(program, function, analyses.cfg(), write->value, callee, member))
+    if (mayLeaveMemberAsItIs(program, function, analyses.cfg(), write->value, callee, member) || keepsPrototype(program, function, value, callee, location.holder))
         return;
 
     bool isInSloppyCode = Value::opcodesWithMode.contains(value.opcode) && value.mode() == ECMAMode::Sloppy;
@@ -336,16 +333,21 @@ static void reportWrite(const Program& program, const FlowResults& results, Buil
 
 void checkLockedBuiltinWrites(const Program& program, const FlowResults& results, BuildContext& build)
 {
-    auto isLockedWrite = [](const BuiltinLocationFlow& record) {
-        return isWritten(record) && record.state == BuiltinLocationState::Constant;
+    PropertyKeyID keyOfPrototypeLink = program.keyOf(BuiltinNames::__proto__);
+    auto isLockedWrite = [&](const BuiltinLocationFlow& write) {
+        // A native function keeps its prototype, and may get an own property of that name.
+        if (write.key == keyOfPrototypeLink && program.builtins().isNativeFunction(write.holder))
+            return write.state == BuiltinLocationState::Constant;
+        const BuiltinLocationFlow* location = results.findBuiltinLocation(write.holder, write.key);
+        return location && location->state == BuiltinLocationState::Constant;
     };
-    if (std::ranges::none_of(results.builtinLocations(), isLockedWrite))
+    if (std::ranges::none_of(results.writesOfBuiltinLocations(), isLockedWrite))
         return;
 
     BitVector alwaysEvaluatedModules = findAlwaysEvaluatedModules(program);
-    for (const BuiltinLocationFlow& record : results.builtinLocations()) {
-        if (isLockedWrite(record))
-            reportWrite(program, results, build, alwaysEvaluatedModules, record);
+    for (const BuiltinLocationFlow& write : results.writesOfBuiltinLocations()) {
+        if (isLockedWrite(write))
+            reportWrite(program, results, build, alwaysEvaluatedModules, write);
     }
 }
 

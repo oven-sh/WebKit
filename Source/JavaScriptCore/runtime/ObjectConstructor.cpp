@@ -346,6 +346,10 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
     // https://bugs.webkit.org/show_bug.cgi?id=185358
     JSFinalObject* targetObject = dynamicDowncast<JSFinalObject>(target);
     bool targetCanPerformFastPut = targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible();
+#if ENABLE(AOT)
+    if (targetObject && !targetCanPerformFastPut)
+        targetCanPerformFastPut = AOT::PropertyWalk::wouldPerformFastPut(vm, targetObject);
+#endif
     unsigned argsCount = callFrame->argumentCount();
 
     // argsCount == 2 case does not need to use arguments' batching.
@@ -1177,14 +1181,16 @@ bool setIntegrityLevel(JSGlobalObject* globalObject, VM& vm, JSObject* object)
     if (!success) [[unlikely]]
         return false;
 
-    PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
     object->methodTable()->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, false);
 
     PropertyNameArrayBuilder::const_iterator end = properties.end();
     for (PropertyNameArrayBuilder::const_iterator iter = properties.begin(); iter != end; ++iter) {
         auto& propertyName = *iter;
-        ASSERT(!propertyName.isPrivateName());
+        // As in PropertyTable::freeze().
+        if (propertyName.isPrivateName() && !PropertyName(propertyName).passesThroughProxies())
+            continue;
 
         PropertyDescriptor desc;
         if (level == IntegrityLevel::Sealed)

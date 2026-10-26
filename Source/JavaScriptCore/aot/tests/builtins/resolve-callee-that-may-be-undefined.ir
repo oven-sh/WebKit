@@ -7,7 +7,7 @@
 module m0 path="main.js" displayPath="main.js"
 function f0 name="mayBeUndefined" parameters=[{type=anything}, {type=number}, {type=number}] results=[{type=anything}] {
     v3 = Builtin builtin=Math
-    v4 = AssumeType v0 castType=undefined|builtin(MathMax)
+    v4 = AssumeType v0 provenType=undefined|builtin(MathMax)
     v5 = Call v4, v3, v1, v2 calleeKey="max" callees=[builtin(MathMax)]
     Return v5
 # CHECK-NOT: CallBuiltin
@@ -20,7 +20,7 @@ function f0 name="mayBeUndefined" parameters=[{type=anything}, {type=number}, {t
 
 function f1 name="isTheBuiltin" parameters=[{type=anything}, {type=number}, {type=number}] results=[{type=anything}] {
     v3 = Builtin builtin=Math
-    v4 = AssumeType v0 castType=builtin(MathMax)
+    v4 = AssumeType v0 provenType=builtin(MathMax)
     v5 = Call v4, v3, v1, v2 calleeKey="max" callees=[builtin(MathMax)]
     Return v5
 # CHECK: v5: number = CallBuiltin -, v1, v2 overload=MathMax/
@@ -30,7 +30,7 @@ function f1 name="isTheBuiltin" parameters=[{type=anything}, {type=number}, {typ
 
 # The same for a call by value, as of a `var` that holds a built-in and may be read before its statement has run: the built-in is the only object among the values of the callee.
 function f2 name="variableMayBeUndefined" parameters=[{type=anything}, {type=number}, {type=number}] results=[{type=anything}] {
-    v3 = AssumeType v0 castType=undefined|builtin(MathMax)
+    v3 = AssumeType v0 provenType=undefined|builtin(MathMax)
     v4 = Call v3, -, v1, v2 callees=[builtin(MathMax)]
     Return v4
 # CHECK-NOT: CallBuiltin
@@ -42,7 +42,7 @@ function f2 name="variableMayBeUndefined" parameters=[{type=anything}, {type=num
 }
 
 function f3 name="oneOfTwoBuiltins" parameters=[{type=anything}, {type=number}, {type=number}] results=[{type=anything}] {
-    v3 = AssumeType v0 castType=undefined|builtin(MathMax)|builtin(MathMin)
+    v3 = AssumeType v0 provenType=undefined|builtin(MathMax)|builtin(MathMin)
     v4 = Call v3, -, v1, v2 callees=[builtin(MathMax), builtin(MathMin)]
     Return v4
 # CHECK-NOT: CallBuiltin
@@ -50,7 +50,7 @@ function f3 name="oneOfTwoBuiltins" parameters=[{type=anything}, {type=number}, 
 }
 
 function f4 name="builtinOrAnyFunction" parameters=[{type=anything}, {type=number}, {type=number}] results=[{type=anything}] {
-    v3 = AssumeType v0 castType=function|builtin(MathMax)
+    v3 = AssumeType v0 provenType=function|builtin(MathMax)
     v4 = Call v3, -, v1, v2
     Return v4
 # CHECK-NOT: CallBuiltin

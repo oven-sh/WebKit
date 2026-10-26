@@ -1,7 +1,7 @@
-# The function that makes the closure may call it as well, through the closure itself and through block parameters that it reaches. There too the closure stands for the environment it is stored in, and it is not made. Where that function hands the closure on, it is an object and is made as before.
+# The function that makes the closure may call it as well, through the closure itself and through block parameters that it reaches. There too the closure stands for the environment it is stored in, and it is not made. Where that function hands the closure on, it is an object and is made as before, and the environment goes on holding it.
 # FORM: Prepared
 # RUN: pass ReadCapturesFromEnvironments RemoveUnreadFields
-# STATISTIC: UnreadFieldsRemoved = 2
+# STATISTIC: UnreadFieldsRemoved = 1
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 kind=Environment name="calledWhereItIsMade" fields=[{key="inner" declared={type=f1}}]
@@ -57,6 +57,7 @@ function f2 name="handedOnWhereItIsMade" parameters=[{type=number}] results=[{ty
     Return v2
 # CHECK: [[scope]]: env L1 = NewObject layout=L1
 # CHECK: [[closure]]: f3 = NewClosure [[scope]], v0 function=f3
+# CHECK: PutEnvironmentField [[scope]], [[closure]] layout=L1
 # CHECK: Return [[closure]]
 }
 

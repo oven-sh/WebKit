@@ -1,0 +1,27 @@
+# object = { @slot: kept, open: kept }; object[key] = value; object.@slot(); object.open()
+# Neither the key nor the value is known. A computed key is a text or a symbol, so the store hits no property under a private name: that read finds what was stored by name alone.
+# RUN: valueflow-why values=f0:v6 values=f0:v7
+# CHECK: values=f0:v6
+# CHECK: result {{*}} 1 members: f1
+# CHECK: values=f0:v7
+# CHECK: result {{*}} unknown
+
+layout L0 fields=[{key=@"slot" declared={type=anything}}, {key="open" declared={type=anything}}] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="key" [isFreeName]
+    v2 = PropGet v0 key="value" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = NewObject -, v3, v3 layout=L0 fields=[0, 1]
+    ElemSet v4, v1, v2
+    v6 = PropGet v4 key=@"slot"
+    v7 = PropGet v4 key="open"
+    v8 = Call v6, -
+    v9 = Call v7, -
+    Return
+}
+function f1 name="kept" module=m0 results=[{type=anything}] {
+    Return
+}

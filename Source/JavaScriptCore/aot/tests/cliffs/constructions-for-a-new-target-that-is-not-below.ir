@@ -4,12 +4,12 @@
 # CHECK-LABEL: function f1 name="Made"
 # CHECK: [[made]]: object ~ L0 = NewObject
 # CHECK-NOT: = Check
-# CHECK: : L0 = AssumeType [[made]] castType=L0
+# CHECK: : L0 = AssumeType [[made]] provenType=L0
 # CHECK: PropSet
 # CHECK-LABEL: function f2 name="Given"
 # CHECK: [[given]]: object ~ L1 = NewObject
 # CHECK-NOT: = AssumeType [[given]]
-# CHECK: : L1 = Check [[given]] castType=L1
+# CHECK: : L1 = Check [[given]] expectedType=L1
 # CHECK: PropSet
 
 layout L0 kind=Instance name="Made" module=m0 constructor=f1 fields=[{key="x" declared={type=anything}}]

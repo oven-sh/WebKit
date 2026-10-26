@@ -120,7 +120,8 @@
 # CHECK-NEXT:     v0: guard = Unspecified valueType=guard
 # CHECK-NEXT:     v1: flatstring = Unspecified valueType=flatstring
 # CHECK-NEXT:     v2: codeaddress = Unspecified valueType=codeaddress
-# CHECK-NEXT:     v3: buildercursor = Unspecified valueType=buildercursor
+# CHECK-NEXT:     v3: jsonholders = Unspecified valueType=jsonholders
+# CHECK-NEXT:     v4: buildercursor = Unspecified valueType=buildercursor
 # CHECK-NEXT:     Return
 # CHECK-NEXT: }
 # CHECK-NEXT: round trip: same
@@ -243,6 +244,7 @@ function f2 name="local" module=m0 thisType={type=anything} results=[{type=undef
     v0 = Unspecified valueType=guard
     v1 = Unspecified valueType=flatstring
     v2 = Unspecified valueType=codeaddress
-    v3 = Unspecified valueType=buildercursor
+    v3 = Unspecified valueType=jsonholders
+    v4 = Unspecified valueType=buildercursor
     Return
 }

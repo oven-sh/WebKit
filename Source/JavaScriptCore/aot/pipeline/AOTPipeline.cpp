@@ -178,7 +178,7 @@ constexpr std::array rows {
     programPass(CallModules, Required, { Prepared, Prepared }, { Flow }, { }, resultsAboutBodies | Results { Heat }),
     countingOwnChanges(programPass(CreateEntrypoints, Required, { Prepared, Prepared }, { Flow }, { }, resultsAboutBodies)),
     addingOnly({ }, countingOwnChanges(programPass(ChooseCallingConventions, Optional, { Prepared, Prepared }, simplifyInputs | Results { CallGraph }, { CallingConventions }, resultsAboutBodies))),
-    addingOnly({ Opcode::GetDeferredClosureSlot, Opcode::GetDeferredClosureSlotOrUndefined }, programPass(DeferClosuresInFields, Optional, { Prepared, Prepared }, { }, { }, resultsAboutBodies)),
+    addingOnly({ Opcode::GetDeferredClosureSlot, Opcode::GetDeferredClosureSlotOrUndefined }, programPass(DeferClosuresInFields, Optional, { Prepared, Prepared }, { Heat }, { }, resultsAboutBodies)),
     addingOnly({ Opcode::MaterializeEnvironment, Opcode::EmptyArgumentList }, programPass(AllocateInFrames, Optional, { Prepared, Prepared }, { Flow, CallGraph, Heat, EffectSummaries }, { FrameAllocation }, { EffectSummaries })),
     addingOnly({ Opcode::ReleaseEnvironment, Opcode::MarkEnvironmentEscaped }, programPass(ReuseEnvironments, Optional, { Prepared, Prepared }, { Flow, FrameAllocation }, { EnvironmentReuse }, { EffectSummaries })),
     programPass(NumberLiteralStrings, Required, { Prepared, Placed }, { }, { LiteralStrings }, { }),
@@ -193,9 +193,10 @@ constexpr std::array rows {
     programPass(CheckPlacement, Required, { Placed, Placed }, placementInputs | Results { Placement, SiteCaches }, { }, { }),
     programPass(GenerateCode, Required, { Placed, Placed }, codeGenerationInputs, { }, { }),
 
+    verifiedAfterNextPass(functionPass(ListLiveValuesAtSuspensions, listLiveValuesAtSuspensions, Required, AsRead, { }, values)),
     verifiedAfterNextPass(functionPass(TypeValues, typeValues, Required, AsRead, { }, everything)),
     verifiedAfterNextPass(functionPass(CheckInt32Promises, checkInt32Promises, Required, AsRead, { }, values)),
-    verifiedAfterNextPass(functionPass(CheckRegExpLiterals, checkRegExpLiterals, Required, AsRead, { }, nothing)),
+    verifiedAfterNextPass(functionPass(CheckRegExpLiterals, checkRegExpLiterals, Required, AsRead, { }, everything)),
 
     functionPass(AddGenericVersion, addGenericVersion, Required, Prepared, { Flow, Heat, EffectSummaries }, everything),
     functionPass(ResolveBuiltins, resolveBuiltins, Required, Prepared, { Flow, EffectSummaries }, everything),
@@ -218,6 +219,7 @@ constexpr std::array rows {
     functionPass(SeparateUnlikelyLoopPaths, separateUnlikelyLoopPaths, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
     functionPass(ConvertCountersToIntegers, convertCountersToIntegers, Optional, Prepared, { }, everything),
     functionPass(RemoveDeadCountedLoops, removeDeadCountedLoops, Optional, Prepared, { EffectSummaries }, everything),
+    functionPass(UnrollShortLoops, unrollShortLoops, Optional, Prepared, { Heat }, everything),
     derivingFunctions(functionPass(FuseArrayChains, fuseArrayChains, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything)),
     readingOtherBodies(functionPass(FuseGeneratorLoops, fuseGeneratorLoops, Optional, Prepared, { Flow, EffectSummaries }, everything)),
     readingOtherBodies(functionPass(StartGeneratorsAtFirstStep, startGeneratorsAtFirstStep, Optional, Prepared, { Flow, EffectSummaries }, everything)),
@@ -234,10 +236,10 @@ constexpr std::array rows {
     functionPass(EliminateDeadCode, eliminateDeadCode, Optional, Prepared, { Flow, EffectSummaries }, values),
     functionPass(CompactBlocks, compactBlocks, Required, Prepared, { }, everything),
     functionPass(RemoveRedundantHandlers, removeRedundantHandlers, Optional, Prepared, { EffectSummaries }, everything),
-    functionPass(HoistLoopInvariantReads, hoistLoopInvariantReads, Optional, Prepared, { Flow, EffectSummaries }, values),
+    functionPass(HoistLoopInvariantReads, hoistLoopInvariantReads, Optional, Prepared, { Flow, EffectSummaries }, everything),
     functionPass(SimplifyBuiltinCalls, simplifyBuiltinCalls, Optional, Prepared, { EffectSummaries }, everything),
     functionPass(ReduceIntegerDivisions, reduceIntegerDivisions, Optional, Prepared, { }, values),
-    functionPass(PlanArrayCapacities, planArrayCapacities, Optional, Prepared, { Flow, EffectSummaries }, everything),
+    functionPass(PlanArrayCapacities, planArrayCapacities, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
     functionPass(PlanCollectionCapacities, planCollectionCapacities, Optional, Prepared, { Flow, EffectSummaries }, everything),
     functionPass(FoldConstantRegExps, foldConstantRegExps, Optional, Prepared, { Flow }, everything),
     functionPass(ShareRegExpLiterals, shareRegExpLiterals, Optional, Prepared, { Flow }, values),
@@ -255,6 +257,7 @@ constexpr std::array rows {
 };
 
 constexpr std::array typeSteps {
+    ScheduleStep::run(ListLiveValuesAtSuspensions),
     ScheduleStep::run(TypeValues),
     ScheduleStep::run(CheckInt32Promises),
     ScheduleStep::run(CheckRegExpLiterals),
@@ -321,11 +324,15 @@ constexpr std::array optimizeSteps {
         ScheduleStep::run(RemoveRedundantHandlers),
         ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
         ScheduleStep::run(SinkAllocations),
+        ScheduleStep::run(UnrollShortLoops),
     ScheduleStep::endFixpoint(),
     ScheduleStep::run(ExpandIteration),
     ScheduleStep::run(SelectTypedResults),
     // What SelectTypedResults has put in calls helpers of the compiler, which are in no realm. Where the rounds above have ended, as they do after one for a generic version, nobody else makes direct calls of them.
     ScheduleStep::run(ResolveBuiltins),
+    ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
+    ScheduleStep::run(RestartInGenericVersion),
+    // Where generic code has gone, what it joined stands in one block with the test behind it.
     ScheduleStep::includeWithoutCompacting(FunctionSchedule::Simplify),
     ScheduleStep::run(RestartInGenericVersion),
     ScheduleStep::run(StartGeneratorsAtFirstStep),
@@ -1317,7 +1324,7 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         edit(id, markResultsUsedAsKeys, m_build);
         return m_runner.lastProgramPassOutcome();
     case PassID::DeferClosuresInFields:
-        edit(id, deferClosuresInFields, m_build);
+        edit(id, deferClosuresInFields, inputsFor(id).heat, m_build);
         return m_runner.lastProgramPassOutcome();
     case PassID::ReadCapturesFromEnvironments:
         edit(id, readCapturesFromEnvironments, flow(), m_build);
@@ -1588,20 +1595,17 @@ void Pipeline::runSelectStage()
         auto observe = [&](FunctionID id) {
             observer.observe(id);
         };
-        auto findOutliningSites = [&](FunctionID id) {
+        auto findOutliningSitesOrReadFinishedFunction = [&](FunctionID id) {
+            FunctionAnalyses analyses(finder.contextOf(id), std::as_const(m_program).at(id));
             if (findsOutliningSites)
-                finder.findIn(id);
+                finder.findIn(id, analyses);
+            if (hasOutliningSites[id.index()])
+                return;
+            facts.readReferences(id);
+            facts.scansForPlacement().scan(id, &analyses);
         };
-        auto readReferences = [&](FunctionID id) {
-            if (!hasOutliningSites[id.index()])
-                facts.readReferences(id);
-        };
-        auto scanForPlacement = [&](FunctionID id) {
-            if (!hasOutliningSites[id.index()])
-                facts.scansForPlacement().scan(id);
-        };
-        ReaderOfScheduledFunction readers1[] = { observe, findOutliningSites, readReferences, scanForPlacement };
-        const ReaderOfScheduledFunction* readersOfSelectedFunction[] = { &readers1[0], &readers1[1], &readers1[2], &readers1[3] };
+        ReaderOfScheduledFunction readers1[] = { observe, findOutliningSitesOrReadFinishedFunction };
+        const ReaderOfScheduledFunction* readersOfSelectedFunction[] = { &readers1[0], &readers1[1] };
         stage.run(FunctionSchedule::Select, { .behind = readersOfSelectedFunction });
         advanceTo(IRForm::Selected, wasRunning);
         if (!m_runner.isStopped())

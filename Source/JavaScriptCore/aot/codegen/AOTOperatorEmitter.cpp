@@ -168,6 +168,8 @@ Operand OperatorEmitter::withIntegerOperand(const ValueContext& value, const Fun
     case Representation::Void:
     case Representation::Boolean:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::Cell:
@@ -292,7 +294,7 @@ Operand OperatorEmitter::convertedToNumber(const ValueContext& value, const Func
     case OperatorForm::Numbers:
         if (representationOf(operand) == Representation::Double)
             return get(operand);
-        return emitter<ConversionEmitter>().purified(asNumericOperand(operand));
+        return emitter<ConversionEmitter>().withoutPayload(asNumericOperand(operand));
     case OperatorForm::NullableNumber:
         return asNumberLikeOperand(operand);
     case OperatorForm::Booleans:

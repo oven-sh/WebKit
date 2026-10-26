@@ -385,18 +385,18 @@ NativeCallExpectation CallEmitter::expectationOf(const OperationContext& context
 }
 
 // countOperand lives as long as the call does.
-void CallEmitter::chooseStubThatCallsValue(ConventionCall& call, LValue& countOperand)
+void CallEmitter::chooseStubThatCallsValue(ConventionCall& call, LValue& countOperand, bool calleeIsCell)
 {
     unsigned count = static_cast<unsigned>(call.arguments.size());
     if (count > numberOfArgumentGPRs) {
         countOperand = m_out.constInt64(count);
-        call.stub = callValueWithCount();
+        call.stub = calleeIsCell ? callCellWithCount() : callValueWithCount();
         call.stubOperands = singleElementSpan(countOperand);
     } else if (isUndefinedConstant(call.thisValue)) {
-        call.stub = callValueWithoutThis(count);
+        call.stub = calleeIsCell ? callValueCellWithoutThis(count) : callValueWithoutThis(count);
         call.thisValue = nullptr;
     } else
-        call.stub = AOT::callValue(count);
+        call.stub = calleeIsCell ? callValueCell(count) : AOT::callValue(count);
 }
 
 Boxed CallEmitter::callValue(const OperationContext& context, const ValueCall& call, const CallOptions& options)
@@ -412,7 +412,7 @@ Boxed CallEmitter::callValue(const OperationContext& context, const ValueCall& c
         RELEASE_ASSERT(count <= numberOfArgumentGPRs && !(call.lentArguments >> count));
         conventionCall.stub = callValueLending(count, call.lentArguments);
     } else
-        chooseStubThatCallsValue(conventionCall, countOperand);
+        chooseStubThatCallsValue(conventionCall, countOperand, call.calleeIsCell);
     return callByConvention(context, conventionCall, options);
 }
 
@@ -433,11 +433,12 @@ void CallEmitter::generateCall(const ValueContext& value)
     emitter<AccessEmitter>().recordArrival(value, in<Boxed>(callee));
     ValueCall call { in<Boxed>(callee), thisOrUndefined(value->thisValueOperand()), arguments.span() };
     call.lentArguments = argumentsLentBy(m_function, value.value());
+    call.calleeIsCell = typeOf(callee).isObject();
     if (value.returnCall()) {
         tailCallValue(value, call);
         return;
     }
-    define(value, callValue(value, call, { .throwSite = siteThatNamesCallee(value), .isTailCall = value->isDemotedTailCall() }));
+    define(value, callValue(value, call, { .throwSite = siteThatNamesCallee(value) }));
 }
 
 } } } // namespace JSC::AOT::Typed

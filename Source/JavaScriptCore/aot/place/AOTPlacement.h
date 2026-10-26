@@ -118,16 +118,24 @@ struct PlacedFieldCreation {
 inline constexpr OpcodeSet storesThatMayAdd { Opcode::PutSlotOrAdd, Opcode::PutSlots };
 inline bool remembersKeyOrderStep(const Block& block, const Value& value) { return block.shape == CodeShape::Fast && storesThatMayAdd.contains(value.opcode); }
 
+// The number of a store that may add a field says which entries of the table of remembered steps are the store's. An entry holds the words of an object,
+// so two stores meet in one only over an object of a layout that comes to both.
+struct PlaceOfStoreThatMayAdd {
+    uint32_t number { 0 };
+    bool meetsOtherStores { false };
+};
+
 struct KeyOrders {
     std::span<const Vector<FieldIndex>> of(LayoutID layout) const { return layout.index() < ofLayout.size() ? ofLayout[layout.index()].span() : std::span<const Vector<FieldIndex>> { }; }
     JS_EXPORT_PRIVATE std::optional<uint32_t> findOrderWord(LayoutID, std::span<const FieldIndex> fields) const;
     JS_EXPORT_PRIVATE std::span<const KeyOrderContinuation> continuationsCreating(LayoutID, std::span<const FieldIndex> fields) const;
-    // The number, among those of the whole program, of a store that may add a field: the one that this many such stores of the function stand in front of, blocks and values in their sequence.
-    JS_EXPORT_PRIVATE std::optional<uint32_t> numberOfStoreThatMayAdd(FunctionID, uint32_t storesInFront) const;
+    // Of the store that may add a field that this many such stores of the function stand in front of, blocks and values in their sequence.
+    JS_EXPORT_PRIVATE std::optional<PlaceOfStoreThatMayAdd> placeOfStoreThatMayAdd(FunctionID, uint32_t storesInFront) const;
 
     Vector<Vector<Vector<FieldIndex>>> ofLayout;
     Vector<PlacedFieldCreation> fieldCreations;
     Vector<uint32_t> firstStoreThatMayAdd;
+    Vector<PlaceOfStoreThatMayAdd> placesOfStoresThatMayAdd;
 };
 
 enum class StaticsRegion : uint8_t {
@@ -440,8 +448,8 @@ public:
     BodyScansForPlacement(const Program&, const PlacementInputs&, BuildContext&);
     ~BodyScansForPlacement();
 
-    // From any thread, no two for one function at a time. A later scan of a function replaces an earlier one.
-    void scan(FunctionID);
+    // From any thread, no two for one function at a time. A later scan of a function replaces an earlier one. With analyses: of the function as it is now.
+    void scan(FunctionID, FunctionAnalyses* = nullptr);
     // By one thread, while nobody scans: the program has got functions.
     void didAddFunctions();
     // In the functions that had a body when the sites were taken: no more site caches are asked for than that.

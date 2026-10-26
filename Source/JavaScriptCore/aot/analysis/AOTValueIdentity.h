@@ -40,14 +40,19 @@ inline constexpr OpcodeSet castsAndConversions = [] {
 
 constexpr bool isCastOrConversion(Opcode opcode) { return castsAndConversions.contains(opcode); }
 
+// Each answers with its operand where that is an object, and with another object where it is not.
+inline constexpr OpcodeSet conversionsToObject { Opcode::ToObject, Opcode::ToThis };
+
 ValueID sameObjectThroughCasts(const Function&, ValueID);
+// For a question about an object: where the value found is that object, so is the given one.
+ValueID sameObjectThroughConversionsToObject(const Function&, ValueID);
 ValueID definitionThroughUpcasts(const Function&, ValueID);
 
 inline bool leavesDeadZoneBehind(const Program& program, const Function& function, const Value& value)
 {
     if (value.opcode == Opcode::CheckInitialized)
         return true;
-    return value.opcode == Opcode::AssumeType && !(program.at(value.castType()).primitives & Primitive::Absent) && program.typeOf(function, value.valueOperand()).primitives & Primitive::Absent;
+    return value.opcode == Opcode::AssumeType && !(program.at(value.provenType()).primitives & Primitive::Absent) && program.typeOf(function, value.valueOperand()).primitives & Primitive::Absent;
 }
 
 class CastChain {
@@ -137,6 +142,18 @@ private:
     struct PassedValues;
     class MergingParameters;
 
+    // Shared by all blocks. Each entry names the block that wrote it.
+    struct MergingParameterChains {
+        struct Chain {
+            uint32_t block { 0 };
+            uint32_t first { UINT32_MAX };
+            uint32_t last { UINT32_MAX };
+        };
+
+        uint32_t block { 0 };
+        Vector<Chain> chainOfFirstValue;
+    };
+
     enum class Expectation : uint8_t {
         IsPassedOneValue,
         ReceivesWhatEarlierParameterReceives,
@@ -190,6 +207,7 @@ private:
     Vector<ValueID> m_passedValues;
     Vector<uint32_t> m_firstPassedValue;
     Vector<ValueID> m_operandsOfCasts;
+    MergingParameterChains m_mergingParameterChains;
 };
 
 Vector<ValueID, 2> findSingleUseCastChain(const Function&, const UseLists&, ValueID user);

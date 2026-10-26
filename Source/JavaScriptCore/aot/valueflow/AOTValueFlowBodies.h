@@ -7,11 +7,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTPredictedValues.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlow.h"
 #include "AOTValueFlowBuiltinTables.h"
 #include "AOTValueFlowUnobservedDefinitions.h"
 #include "AOTVector.h"
+#include <array>
 #include <memory>
 #include <span>
 #include <utility>
@@ -89,6 +91,12 @@ public:
 
     static constexpr ValueFlowObjectID unknownObject() { return ValueFlowObjectID(numberOfPrimitiveKinds); }
     static constexpr ValueFlowObjectID untrackedObject() { return ValueFlowObjectID(numberOfPrimitiveKinds + 1); }
+    // Goes beside Bun from a read of Bun under its name, along every edge but those through properties of the unknown object. Rules and results never see it in a value.
+    static constexpr ValueFlowObjectID markOfNamedBun() { return ValueFlowObjectID(numberOfPrimitiveKinds + 2); }
+    // Goes with the answer of a read under a key nobody knows of what a built-in module answers, where the read left out a member that lets in unseen code, along the same edges. A read that names the member finds it where its answer holds the mark, or its receiver: a proxy whose get trap answers with the mark holds it.
+    static constexpr ValueFlowObjectID markOfMemberLeftOut() { return ValueFlowObjectID(numberOfPrimitiveKinds + 3); }
+    // Goes beside Bun from a load of "bun" under a constant name, and with the answer of a read under a key nobody knows of a Bun that was so loaded or named, along the same edges. So do the values of a copy of such a Bun, and a descriptor of one of them. A read that names a member of Bun finds it where its answer holds the mark, or its receiver: a proxy whose get trap answers with the mark holds it.
+    static constexpr ValueFlowObjectID markOfLoadedBun() { return ValueFlowObjectID(numberOfPrimitiveKinds + 4); }
     ValueFlowObjectID objectOf(BuiltinID builtin) const { return ValueFlowObjectID(m_firstBuiltin + m_builtins->canonicalID(builtin).index()); }
     ValueFlowObjectID objectOf(BuiltinID, ModuleID) const;
     void appendObjectsOf(BuiltinID, Vector<ValueFlowObjectID, 32>&) const;
@@ -131,15 +139,21 @@ public:
     ValueSetID objects() const { return m_objects; }
     ValueSetID knownObjects() const { return m_knownObjects; }
     ValueSetID builtinObjects() const { return m_builtinObjects; }
+    ValueSetID namespaces() const { return m_namespaces; }
     ValueSetID objectsOfRealm() const { return m_objectsOfRealm; }
     ValueSetID lockedObjects() const { return m_lockedObjects; }
     ValueSetID objectsWithLockedPrototypeLink() const { return m_objectsWithLockedPrototypeLink; }
+    ValueSetID objectsBornWithoutPrototype() const { return m_objectsBornWithoutPrototype; }
     ValueSetID holdersOfLibraryExports() const { return m_holdersOfLibraryExports; }
+    ValueSetID prototypeObjectsOfLibraryClasses() const { return m_prototypeObjectsOfLibraryClasses; }
+    ValueSetID objectsOfLibraryFoundByNameAlone() const { return m_objectsOfLibraryFoundByNameAlone; }
     ValueSetID callables() const { return m_callables; }
     ValueSetID closures() const { return m_closures; }
     ValueSetID builtinFunctions() const { return m_builtinFunctions; }
     ValueSetID builtinFunctionsOfProtocols() const { return m_builtinFunctionsOfProtocols; }
     ValueSetID builtinFunctionsThatReadSpecies() const { return m_builtinFunctionsThatReadSpecies; }
+    // They store into their receiver, change it, or construct what its `constructor` names. None of that happens to an object because it has escaped.
+    ValueSetID builtinFunctionsThatActOnReceiver() const { return m_builtinFunctionsThatActOnReceiver; }
     ValueSetID otherCallables() const { return m_otherCallables; }
     std::atomic<uint64_t>& rememberedBoundFunctionsBindingNoArgument() const { return m_boundFunctionsBindingNoArgument[0]; }
     ValueSetID arrays() const { return m_arrays; }
@@ -172,6 +186,7 @@ public:
     const ValueFlowBuiltinTables& builtinTables() const LIFETIME_BOUND { return *m_builtinTables; }
 
 private:
+    friend class ValueFlowBodies;
     friend class ValueFlowLinker;
 
     struct ModuleBuiltin {
@@ -227,6 +242,7 @@ private:
     ValueSetID m_builtinFunctions;
     ValueSetID m_builtinFunctionsOfProtocols;
     ValueSetID m_builtinFunctionsThatReadSpecies;
+    ValueSetID m_builtinFunctionsThatActOnReceiver;
     ValueSetID m_builtinsThatMayBeAnyLibraryClosure;
     uint32_t m_numberOfRememberedLayoutSets { 0 };
     std::unique_ptr<std::atomic<uint32_t>[]> m_objectsSurelyWithLayoutIn;
@@ -246,10 +262,14 @@ private:
     ValueSetID m_embeddedFilePaths;
     ValueSetID m_knownObjects;
     ValueSetID m_builtinObjects;
+    ValueSetID m_namespaces;
     ValueSetID m_objectsOfRealm;
     ValueSetID m_lockedObjects;
     ValueSetID m_objectsWithLockedPrototypeLink;
+    ValueSetID m_objectsBornWithoutPrototype;
     ValueSetID m_holdersOfLibraryExports;
+    ValueSetID m_prototypeObjectsOfLibraryClasses;
+    ValueSetID m_objectsOfLibraryFoundByNameAlone;
     ValueSetID m_primitives;
     ValueSetID m_anyPrimitive;
     ValueSetID m_undefinedValue;
@@ -308,9 +328,22 @@ enum class ValueFlowHostNode : uint8_t {
     ParentsOfModuleObjects,
     PairsOfSteps,
     CodeOutsideImageIsLoaded,
+    NamespacesCarriedOutAsValues,
+    ValuesCarriedOut,
+    CopiesOfObjectsNobodyKnows,
+    ObjectsHoldingSymbolsUsedOnlyAsKeys,
+    ClosuresThatStatementsMayRename,
+    ClosuresThatStatementsName,
+    ClosuresThatStatementsGiveDisplayName,
+    ValuesUnderUnknownKeyInHeldHoldersOfExports,
+    GettersUnderUnknownKeyInHeldHoldersOfExports,
+    SettersUnderUnknownKeyInHeldHoldersOfExports,
+    MembersUnderUnknownKeyInHeldPrototypeObjectsOfLibraryClasses,
+    SourcesOfCopiesIntoUnknownObject,
+    SourcesOfCopiesIntoUntrackedObject,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 39;
+inline constexpr unsigned numberOfValueFlowHostNodes = 52;
 
 class ValueFlowProgramNodes {
 public:
@@ -331,13 +364,15 @@ public:
     ValueFlowNodeID hub(ValueFlowBehaviorID behavior) const { return ValueFlowNodeID(m_thrownOfFunction.last() + 1 + numberOfValueFlowHostNodes + behavior.index()); }
     ValueFlowBehaviorID behaviorOf(ValueFlowNodeID hub) const { return ValueFlowBehaviorID(hub.index() - m_thrownOfFunction.last() - 1 - numberOfValueFlowHostNodes); }
 
-    // What the unobserved definitions of an initializer define. It holds nothing until super() may call a constructor that the class does not name.
+    // What the unobserved definitions of an initializer define. It holds nothing until super() may call a constructor that the class does not name,
+    // or, where the definitions ask for it, may answer an object that refuses a definition.
     struct UnobservedDefinitions {
         LayoutID classCallingSuper;
         FunctionID initializer;
         ValueFlowNodeID value;
+        bool areObservedWhereObjectRefusesDefinition { false };
     };
-    ValueFlowNodeID valueOfUnobservedDefinitions(FunctionID initializer) const;
+    ValueFlowNodeID valueOf(const UnobservedFieldDefinition&) const;
     std::span<const UnobservedDefinitions> unobservedDefinitionsBehindSuperOf(LayoutID classCallingSuper) const LIFETIME_BOUND;
 
     struct PassedParameter {
@@ -361,6 +396,7 @@ public:
     FunctionID functionOf(ValueFlowNodeID) const;
 
 private:
+    friend class ValueFlowBodies;
     friend class ValueFlowLinker;
 
     uint32_t m_firstVariable { 2 };
@@ -486,7 +522,7 @@ struct ValueFlowBody {
     uint32_t numberOfResults { 0 };
     bool hasYieldedAndSent { false };
     uint32_t ownResult { none };
-    uint32_t valueOfUnobservedDefinitions { none };
+    std::array<uint32_t, 2> valueOfUnobservedDefinitions { none, none };
     Vector<PassedParameter> passedParameters;
     bool answersOnlyWhatItConstructs { false };
     Vector<Node> nodes;
@@ -520,6 +556,16 @@ struct ValueFlowBody {
 ValueFlowBody reduceBody(const Program&, const ValueFlowBuiltinTables&, FunctionID, const UnobservedFieldDefinitions* = nullptr);
 ValueFlowBody makeHostBody(const Program&, const ValueFlowBuiltinTables&, std::span<const uint64_t> notedOperations = { });
 bool startsWithoutValueInSolve(const Program&, const Variable&);
+
+// In the order of the sites of a conversion to an object.
+inline constexpr std::pair<uint16_t, NamedBuiltinClass> wrappersOfPrimitives[] {
+    { Primitive::AnyString, BuiltinClasses::String },
+    { Primitive::Number, BuiltinClasses::Number },
+    { Primitive::Boolean, BuiltinClasses::Boolean },
+    { Primitive::AnySymbol, BuiltinClasses::Symbol },
+    { Primitive::BigInt, BuiltinClasses::BigInt },
+};
+bool isUsedOnlyAsInstanceOfOwnFunction(const Program&, FunctionID, ValueID thisValue);
 
 struct ValueFlowObservedValue {
     FunctionID function;
@@ -626,6 +672,7 @@ public:
     const ValueFlowBodiesTimes& times() const { return m_times; }
     const BitVector* valuesBehindChecks(FunctionID function) const LIFETIME_BOUND { return m_knowsValuesBehindChecks[function.index()] ? &m_valuesBehindChecks[function.index()] : nullptr; }
     bool holdsAnyOf(FunctionID function, ValueFlowNotedOperations operations) const { return m_notedOperations[function.index()] & operations; }
+    void addBytesTo(ValueFlowBytesByTable&) const;
 
     uint32_t numberOfBodies() const { return m_ranges.size() - 1; }
     uint32_t hostBody() const { return numberOfBodies() - 1; }
@@ -658,7 +705,11 @@ private:
     Vector<ValueFlowBodyRange> m_ranges;
 };
 
-BitVector findValuesBehindChecks(const Program&, const Function&, const CFG&, const BitVector* checksThatTestNothing = nullptr);
+// The values whose types as read may be owed to a check.
+inline BitVector valuesTypedBehindChecks(const Program& program, const Function& function, const CFG& cfg, const BitVector* checksThatTestNothing = nullptr)
+{
+    return PredictedValues(function, cfg, { .programToReadComparisonsWith = &program, .checksToLeaveOut = checksThatTestNothing }).valuesBehindChecks();
+}
 
 struct ValueFlowInstancedFunction {
     FunctionID function;

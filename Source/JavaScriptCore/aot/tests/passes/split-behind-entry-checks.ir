@@ -29,8 +29,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # Flow has proven the second parameter, so there is one test. The sum of two numbers is a number whatever the callers do, so the result of the body is proven again
 function f1 name="add" module=m0 position=5 flags=[IsChecked] length=2 parameters=[{type=number site=w0 flags=[IsExpected]}, {type=number site=w1}] results=[{type=number site=w2 flags=[IsExpected]}] {
   b0(v0: anything ~ number, v1: number):
-    v2 = Check v0 castType=number site=w0
-    v3 = Check v1 castType=number site=w1
+    v2 = Check v0 expectedType=number site=w0
+    v3 = Check v1 expectedType=number site=w1
     v4 = Add v2, v3
     Return v4
 }
@@ -48,7 +48,7 @@ function f1 name="add" module=m0 position=5 flags=[IsChecked] length=2 parameter
 # `this` of a method is a parameter like any other
 function f2 name="read" module=m0 position=55 kind=Method flags=[HasThis, IsChecked] thisType={type=L0 site=w3 flags=[IsExpected]} results=[{type=anything}] {
   b0(v0: anything ~ L0):
-    v1 = Check v0 castType=L0 site=w3
+    v1 = Check v0 expectedType=L0 site=w3
     v2 = PropGet v1 key="total"
     Return v2
 }
@@ -57,17 +57,17 @@ function f2 name="read" module=m0 position=55 kind=Method flags=[HasThis, IsChec
 
 # Every check folds: the function stays as it is
 function f3 name="proven" module=m0 position=85 flags=[IsChecked] length=1 parameters=[{type=number site=w5}] results=[{type=anything}] {
-    v1 = Check v0 castType=number site=w5
+    v1 = Check v0 expectedType=number site=w5
     Return v1
 }
 # CHECK-LABEL: function f3 name="proven" module=m0 position=85 flags=[IsChecked]
 # CHECK-NOT: role=
-# CHECK: = Check v0 castType=number site=w5
+# CHECK: = Check v0 expectedType=number site=w5
 
 # Nobody uses what the check lets through, so nothing is tested
 function f4 name="ignores" module=m0 position=105 flags=[IsChecked] length=1 parameters=[{type=number site=w6 flags=[IsExpected]}] results=[{type=anything}] {
   b0(v0: anything ~ number):
-    v1 = Check v0 castType=number site=w6
+    v1 = Check v0 expectedType=number site=w6
     Return
 }
 # CHECK-LABEL: function f4 name="ignores" module=m0 position=105 flags=[IsChecked]
@@ -77,14 +77,14 @@ function f4 name="ignores" module=m0 position=105 flags=[IsChecked] length=1 par
 # A constructor and a coroutine stay whole
 function f5 name="Meter" module=m0 position=125 kind=BaseConstructor flags=[HasNewTarget, IsChecked] length=1 parameters=[{type=number site=w7 flags=[IsExpected]}] results=[{type=object flags=[IsFromCompiler]}] {
   b0(v0: anything, v1: anything ~ number):
-    v2 = Check v1 castType=number site=w7
+    v2 = Check v1 expectedType=number site=w7
     v3 = GetConstructPrototype v0 layout=L0
     v4 = NewObject v3 layout=L0
     PropSet v4, v2 key="total"
     Return v4
 }
 # CHECK-LABEL: function f5 name="Meter" module=m0 position=125 kind=BaseConstructor flags=[HasNewTarget, IsChecked]
-# CHECK: = Check v1 castType=number site=w7
+# CHECK: = Check v1 expectedType=number site=w7
 
 # The body as it was, under a new id. Only callers that have proven its types enter it
 # CHECK: function [[addBody]] name="add" module=m0 position=5 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number site=w0}, {type=number site=w1}] results=[{type=number site=w2}]{{*}}HasOnlyDirectCallers{{*}}derivation={source=f1 parameterMap=[{original=0}, {original=1}]}
@@ -96,4 +96,4 @@ function f5 name="Meter" module=m0 position=125 kind=BaseConstructor flags=[HasN
 # The generic version keeps its checks until AddGenericVersion makes guards of them
 # CHECK: function [[addFallback]] name="add" module=m0 position=5 role=GenericVersion flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=number site=w0 flags=[IsExpected]}, {type=number site=w1}] results=[{type=number site=w2 flags=[IsExpected]}]{{*}}creator=Version{provenVersion=[[addBody]]}
 # CHECK: b0(v0: anything ~ number, v1: number) frequency=Unlikely:
-# CHECK-NEXT: = Check v0 castType=number site=w0
+# CHECK-NEXT: = Check v0 expectedType=number site=w0

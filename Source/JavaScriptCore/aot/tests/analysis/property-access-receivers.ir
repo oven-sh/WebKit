@@ -101,20 +101,20 @@ function f15 name="expected-member-never-allocated" parameters=[{type=object}] r
 }
 # CHECK: F15 v1: proof=Unknown level=Expected predicted=[L0] otherParts
 function f16 name="check-brought-the-layouts" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=L0
+    v1 = Check v0 expectedType=L0
     v2 = PropGet v1 key="x"
     Return v2
 }
 # CHECK-NEXT: F16 v2: proof=Type level=Proven proven=[L0]
 function f17 name="check-through-upcast" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=L0
+    v1 = Check v0 expectedType=L0
     v2 = Upcast v1 castType=L0|L1
     v3 = PropGet v2 key="x"
     Return v3
 }
 # CHECK-NEXT: F17 v3: proof=Type level=Proven proven=[L0]
 function f18 name="check-of-a-proven-set" parameters=[{type=L0|L1}] results=[{type=anything}] {
-    v1 = Check v0 castType=L0
+    v1 = Check v0 expectedType=L0
     v2 = PropGet v1 key="x"
     Return v2
 }

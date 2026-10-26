@@ -285,7 +285,7 @@ void RecordChecker::requireAscendingStrings(StringID previous, StringID next)
 
 void RecordChecker::didRead(DeclaredType& declared)
 {
-    require(!declared.flags.containsAll({ PositionFlags::IsExpected, PositionFlags::IsInt32Promise }), InternalErrorKind::InvalidDeclaredType);
+    require(!declared.isExpected() || !declared.has(PositionFlags::IsInt32Promise), InternalErrorKind::InvalidDeclaredType);
 }
 
 void RecordChecker::didRead(PropertyKey& key)
@@ -319,6 +319,7 @@ static std::unique_ptr<Program> readProgram(std::span<const uint8_t> bytes, cons
     if (!reader.run())
         return nullptr;
     program->copyBorrowedLineStarts(build.parallelLoops());
+    program->collectConstructionStarts();
     program->borrowBuffer({ });
     return program;
 }

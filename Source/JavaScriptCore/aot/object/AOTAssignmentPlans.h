@@ -9,6 +9,7 @@
 
 #include "AOTChainDependents.h"
 #include "AOTFieldMoves.h"
+#include "AOTMappedCopy.h"
 #include "AOTObject.h"
 #include "AOTSlotAccess.h"
 #include "AOTThreshold.h"
@@ -162,6 +163,7 @@ struct AssignmentPlan {
     Vector<uint16_t> storesInSourceOrder;
     bool servesDefinitionsOnly { false };
     bool addsExtraProperties { false };
+    bool storesNameBehindSymbol { false };
     // Every store copies a field to a field whose type always accepts it.
     bool storesOnlyFieldsThatFit { false };
     bool mayStoreCells { false };
@@ -216,55 +218,6 @@ struct FieldMap {
 
     uint32_t excludedRunNumberPlusOne { 0 };
     Vector<uint16_t> entries;
-};
-
-struct MappedCopy {
-    enum class MoveKind : uint8_t {
-        WordUnlessZero,
-        HalfWordUnlessZero,
-        ByteUnlessZero,
-        OptionalInt32,
-        OptionalInt64,
-        OptionalDouble,
-        Word,
-        HalfWord,
-        QuarterWord,
-        Byte,
-        BoxedOptionalInt32,
-        BoxedInt32,
-        OptionalInt32AsDouble,
-        Int32AsDouble,
-        WideNarrowReference,
-        OtherForm,
-        Tested,
-    };
-    // An offset counts from the cell, or from the Extension with the granules that it has in such a copy.
-    struct Move {
-        uint32_t from;
-        uint32_t to;
-        MoveKind kind;
-        uint8_t widthInTarget;
-        bool readsExtension;
-        bool writesExtension;
-        SlotRepresentation representationOfSource;
-        SlotRepresentation representationOfTarget;
-        uint8_t acceptedKinds;
-        uint16_t fieldOfTarget;
-    };
-    enum class State : uint8_t { IsUnknown, IsServed, IsNotServed };
-
-    bool isFor(uint64_t target, uint64_t source, uint32_t excludedRun) const { return state != State::IsUnknown && targetWords == target && sourceWords == source && excludedRunNumberPlusOne == excludedRun; }
-
-    uint64_t targetWords { 0 };
-    uint64_t sourceWords { 0 };
-    uint64_t granuleBitsOfSource { 0 };
-    uint64_t granuleBitsOfTargetBefore { 0 };
-    uint64_t granuleBitsFilled { 0 };
-    uint32_t excludedRunNumberPlusOne { 0 };
-    uint32_t orderWordAfter { 0 };
-    State state { State::IsUnknown };
-    bool mayStoreCells { false };
-    Vector<Move> moves;
 };
 
 class AssignmentPlanCache final : public ChainDependentOwner {
@@ -429,8 +382,13 @@ ALWAYS_INLINE void AssignmentPlanCache::didRunAsBefore(AssignmentPlan& plan)
 enum class RepeatedCopy : uint8_t { IsNotDone, ByWordsOrMoves, ByMap, ByMapForTheFirstTime, AsThePlanDidBefore };
 RepeatedCopy tryRepeatAssignment(VM&, State&, JSObject* target, JSValue source, uint32_t excludedRunNumberPlusOne);
 MappedCopy::MoveKind moveKindFor(SlotRepresentation from, SlotRepresentation to, bool isTested);
+// For a copy that takes no frame, whose Structures are known.
+void describeMovesForStub(MappedCopy&);
+bool clearFieldsMovedInVain(const MappedCopy&, const MappedCopy::Move* end, JSCell* target);
 // Defines plain properties one behind the other on an object without an integrity level, under any names but indexes: the way of a copy that has no plan.
 bool definePropertiesInOrder(VM&, Object& target, std::span<UniquedStringImpl*> names, std::span<const EncodedJSValue> values);
+// The same for stores to an object on which every store writes or creates an own data property: a property that exists keeps its attributes.
+bool storePropertiesInOrder(VM&, Object& target, std::span<UniquedStringImpl*> names, std::span<const EncodedJSValue> values);
 bool tryDefinePropertiesOf(VM&, Object& target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames);
 bool tryDefinePropertiesOnOrdinaryObject(VM&, State&, JSObject* target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames);
 // The whole of `{ ...first, ...second }` by a plan, which runs no code of the program. Null, with nothing done that anybody sees, where the two have to be copied one behind the other.

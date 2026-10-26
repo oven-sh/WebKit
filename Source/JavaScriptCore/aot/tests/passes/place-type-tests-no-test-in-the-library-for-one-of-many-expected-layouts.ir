@@ -1,0 +1,36 @@
+# `sink.write`, where the sink is expected to be one of six records and one of them has the name. A function of the library is handed the objects of all its callers:
+# a test for the one would fail for the five others, which go by name behind it, so none is placed. With four records the library tests for the one. A function of the program tests as ever
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+module m1 path="library.js" displayPath="library.js" flags=[IsLibrary]
+layout L0 name="Sink" module=m0 fields=[{key="write" declared={type=number} flags=[IsRequired]}]
+layout L1 name="First" module=m0 fields=[{key="first" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Second" module=m0 fields=[{key="second" declared={type=number} flags=[IsRequired]}]
+layout L3 name="Third" module=m0 fields=[{key="third" declared={type=number} flags=[IsRequired]}]
+layout L4 name="Fourth" module=m0 fields=[{key="fourth" declared={type=number} flags=[IsRequired]}]
+layout L5 name="Fifth" module=m0 fields=[{key="fifth" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="oneOfSixInLibrary" module=m1 parameters=[{type=L0|L1|L2|L3|L4|L5 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1|L2|L3|L4|L5):
+    v1 = PropGet v0 key="write"
+    Return v1
+# CHECK-NOT: TypeTest v0
+# CHECK: = PropGet v0 key="write"
+}
+
+function f1 name="oneOfFourInLibrary" module=m1 parameters=[{type=L0|L1|L2|L3 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1|L2|L3):
+    v1 = PropGet v0 key="write"
+    Return v1
+# CHECK: = TypeTest v0 testedType=L0
+}
+
+function f2 name="oneOfSixInProgram" module=m0 parameters=[{type=L0|L1|L2|L3|L4|L5 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1|L2|L3|L4|L5):
+    v1 = PropGet v0 key="write"
+    Return v1
+# CHECK: = TypeTest v0 testedType=L0
+}

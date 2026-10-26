@@ -30,6 +30,6 @@ function f2 name="once" parameters=[{type=anything}] results=[{type=anything}] {
     Return v0
 }
 # CHECK: f0 Cold 8 10
-# CHECK-NEXT: f1 Cold 91 104
-# CHECK-NEXT: f2 Cold 0 14.3
+# CHECK-NEXT: f1 Cold 91 110
+# CHECK-NEXT: f2 Cold 0 20
 # CHECK-NEXT: hottest: f1 f0 f2

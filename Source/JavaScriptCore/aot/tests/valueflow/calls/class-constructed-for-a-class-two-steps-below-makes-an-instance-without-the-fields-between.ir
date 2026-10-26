@@ -1,0 +1,70 @@
+# class Base {}  class Middle extends Base { count = 0 }  class Leaf extends Middle {}  Reflect.construct(Base, [], Leaf).count = 1  new OtherLeaf().size = 1
+# new.target selects the layout, and only Base has run: the constructor of Middle, which makes `count`, has not. The store makes the field.
+# Nobody constructs another function for OtherLeaf: its `size` is there from creation.
+# RUN: valueflow-apply
+# CHECK-NOT: name="Middle" {{*}} initialization=SetAtCreation
+# CHECK: name="OtherMiddle" {{*}} initialization=SetAtCreation
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Base" constructor=f1
+layout L1 kind=Instance name="Middle" base=L0 constructor=f2 fields=[{key="count" declared={type=anything} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L2 kind=Instance name="Leaf" base=L1 constructor=f3 supertypes=[L1] flags=[HasHeritage]
+layout L3 kind=Instance name="OtherMiddle" base=L0 constructor=f4 fields=[{key="size" declared={type=anything} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+layout L4 kind=Instance name="OtherLeaf" base=L3 constructor=f5 supertypes=[L3] flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = ResolveHeritage v2
+    v4 = NewClosure function=f2
+    v5 = NewClass v4, v2, v3 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = ResolveHeritage v6
+    v8 = NewClosure function=f3
+    v9 = NewClass v8, v6, v7 layout=L2
+    v10 = FinishClass v9 layout=L2
+    v11 = Construct v2, v10
+    v12 = Integer integer=1
+    PropSet v11, v12 key="count"
+    v14 = ResolveHeritage v2
+    v15 = NewClosure function=f4
+    v16 = NewClass v15, v2, v14 layout=L3
+    v17 = FinishClass v16 layout=L3
+    v18 = ResolveHeritage v17
+    v19 = NewClosure function=f5
+    v20 = NewClass v19, v17, v18 layout=L4
+    v21 = FinishClass v20 layout=L4
+    v22 = Construct v21
+    PropSet v22, v12 key="size"
+    Return v12
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="Middle" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L1
+    v5 = Integer integer=0
+    PropDefine v4, v5 key="count"
+    Return v4
+}
+function f3 name="Leaf" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L2
+    Return v4
+}
+function f4 name="OtherMiddle" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L3
+    v5 = Integer integer=0
+    PropDefine v4, v5 key="size"
+    Return v4
+}
+function f5 name="OtherLeaf" kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
+    v3 = GetSuperBase v0
+    v4 = SuperConstructList v3, v1, v2 layout=L4
+    Return v4
+}

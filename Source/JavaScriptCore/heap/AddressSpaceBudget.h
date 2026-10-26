@@ -11,33 +11,47 @@
 #include <wtf/StdLibExtras.h>
 
 #if OS(LINUX)
-#include <stdio.h>
+#include <fcntl.h>
 #include <sys/resource.h>
+#include <unistd.h>
+#endif
+
+#if defined(__GLIBC__)
+#include <malloc.h>
+#include <stdlib.h>
+#include <string.h>
 #endif
 
 namespace JSC {
 
-// Returns SIZE_MAX when there is no limit, and on every system but Linux.
-inline size_t availableAddressSpace()
+// Returns SIZE_MAX when there is no limit, and on every system but Linux. Allocates nothing.
+inline size_t addressSpaceLeft()
 {
 #if OS(LINUX)
-    static const size_t result = []() -> size_t {
-        struct rlimit limit;
-        if (getrlimit(RLIMIT_AS, &limit) || limit.rlim_cur == RLIM_INFINITY)
-            return std::numeric_limits<size_t>::max();
-        size_t mappedPages = 0;
-        if (FILE* file = fopen("/proc/self/statm", "r")) {
-            if (fscanf(file, "%zu", &mappedPages) != 1)
-                mappedPages = 0;
-            fclose(file);
-        }
-        size_t mapped = mappedPages * pageSize();
-        return limit.rlim_cur > mapped ? limit.rlim_cur - mapped : 0;
-    }();
-    return result;
+    struct rlimit limit;
+    if (getrlimit(RLIMIT_AS, &limit) || limit.rlim_cur == RLIM_INFINITY)
+        return std::numeric_limits<size_t>::max();
+    size_t mappedPages = 0;
+    int file = open("/proc/self/statm", O_RDONLY | O_CLOEXEC);
+    if (file >= 0) {
+        char text[32];
+        ssize_t length = read(file, text, sizeof(text));
+        for (ssize_t i = 0; i < length && text[i] >= '0' && text[i] <= '9'; ++i)
+            mappedPages = mappedPages * 10 + (text[i] - '0');
+        close(file);
+    }
+    size_t mapped = mappedPages * pageSize();
+    return limit.rlim_cur > mapped ? limit.rlim_cur - mapped : 0;
 #else
     return std::numeric_limits<size_t>::max();
 #endif
+}
+
+// What was left when it was first asked.
+inline size_t availableAddressSpace()
+{
+    static const size_t result = addressSpaceLeft();
+    return result;
 }
 
 inline bool hasAddressSpaceLimit()
@@ -54,6 +68,17 @@ inline size_t addressSpaceToReserve()
     if (!hasAddressSpaceLimit())
         return available;
     return available - available / unreservedAddressSpaceDivisor;
+}
+
+// glibc reserves 64 MB for the malloc of each thread that has a heap of its own.
+inline void shareCLibraryHeapBetweenThreads()
+{
+#if defined(__GLIBC__)
+    const char* tunables = getenv("GLIBC_TUNABLES");
+    if (getenv("MALLOC_ARENA_MAX") || (tunables && strstr(tunables, "glibc.malloc.arena_max")))
+        return;
+    mallopt(M_ARENA_MAX, 1);
+#endif
 }
 
 // The structure heap gets 1/N of addressSpaceToReserve().
@@ -91,6 +116,36 @@ inline size_t structureHeapSizeWithinBudget(size_t preferredSize)
     while (size > budget && size > smallestStructureHeapSize)
         size /= 2;
     return size;
+}
+
+// What a compiled image maps from its first instruction to the first statement of its program.
+static constexpr size_t smallestCellRangeSize = 64 * MB;
+#if ENABLE(AOT_GUARDED_PAGES)
+static constexpr size_t sizeOfTablesOfFirstThread = 64 * MB;
+#else
+static constexpr size_t sizeOfTablesOfFirstThread = 12 * MB;
+#endif
+// The stack of the first thread as it grows, and what the host maps for itself.
+static constexpr size_t sizeOfStackAndMapsOfHost = 16 * MB;
+// malloc takes this much whatever the program is, and this many times the size of the program.
+static constexpr size_t sizeOfAllocationsAtStart = 32 * MB;
+static constexpr unsigned allocationsAtStartPerByteOfProgram = 2;
+
+// The structure heap takes its share of whatever is free.
+inline size_t withShareOfStructureHeap(size_t size)
+{
+    constexpr unsigned divisor = unreservedAddressSpaceDivisor * addressSpaceDivisorForStructures;
+    return size + size / (divisor - 1) + smallestStructureHeapSize;
+}
+
+inline size_t addressSpaceToStartBesideAllocations()
+{
+    return withShareOfStructureHeap(smallestCellRangeSize + sizeOfTablesOfFirstThread + sizeOfStackAndMapsOfHost);
+}
+
+inline size_t addressSpaceToStart(size_t sizeOfProgram)
+{
+    return withShareOfStructureHeap(smallestCellRangeSize + sizeOfTablesOfFirstThread + sizeOfStackAndMapsOfHost + sizeOfAllocationsAtStart + allocationsAtStartPerByteOfProgram * sizeOfProgram);
 }
 
 } // namespace JSC

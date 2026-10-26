@@ -7,9 +7,9 @@
 module m0 path="main.js" displayPath="main.js"
 function f0 name="marked-method-call" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v2 = PropGet v0 key="m" @10
-    v3 = Call v2, v0, v1 calleeKey="m" [isDemotedTailCall] @12
+    v3 = Call v2, v0, v1 calleeKey="m" @12 tail
     Return v3
-# CHECK: [[marked0]]: anything = CallMethod v0, v1 key="m" readOrigin={position=10} [isDemotedTailCall] @12
+# CHECK: [[marked0]]: anything = CallMethod v0, v1 key="m" readOrigin={position=10} @12 tail
 # CHECK-NEXT: Return [[marked0]]
 }
 
@@ -17,9 +17,9 @@ function f1 name="method-call" parameters=[{type=anything}, {type=anything}] res
     v2 = PropGet v0 key="m"
     v3 = Call v2, v0, v1 calleeKey="m"
     Return v3
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: @{{*}} tail
 # CHECK: [[plain1]]: anything = CallMethod v0, v1 key="m"
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: @{{*}} tail
 # CHECK: Return [[plain1]]
 }
 
@@ -27,12 +27,12 @@ function f2 name="marked-call-in-loop" parameters=[{type=anything}, {type=boolea
     Jump -> next b1()
   b1():
     LoopHint
-    v4 = Call v0, -, v2 [isDemotedTailCall]
+    v4 = Call v0, -, v2 @0 tail
     Branch v1 -> taken b1(), notTaken b2()
   b2():
     Return
 # CHECK: [[target2]]: codeaddress = ResolveCallTarget v0 argumentCount=1
-# CHECK: anything = CallResolved v0, [[target2]], -, v2 [isDemotedTailCall]
+# CHECK: anything = CallResolved v0, [[target2]], -, v2 @0 tail
 }
 
 function f3 name="call-in-loop" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
@@ -43,7 +43,7 @@ function f3 name="call-in-loop" parameters=[{type=anything}, {type=boolean}, {ty
     Branch v1 -> taken b1(), notTaken b2()
   b2():
     Return
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: @{{*}} tail
 # CHECK: anything = CallResolved v0,
-# CHECK-NOT: isDemotedTailCall
+# CHECK-NOT: @{{*}} tail
 }

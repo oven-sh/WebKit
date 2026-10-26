@@ -32,9 +32,14 @@ ValueID sameObjectThroughCasts(const Function& function, ValueID value)
     return stripCasts(function, value, [](Opcode opcode) { return isCastOrConversion(opcode); });
 }
 
+ValueID sameObjectThroughConversionsToObject(const Function& function, ValueID value)
+{
+    return stripCasts(function, value, [](Opcode opcode) { return isCastOrConversion(opcode) || opcode == Opcode::Convert || conversionsToObject.contains(opcode); });
+}
+
 ValueID definitionThroughUpcasts(const Function& function, ValueID value)
 {
-    return stripCasts(function, value, [](Opcode opcode) { return opcode == Opcode::Upcast; });
+    return stripCasts(function, value, [](Opcode opcode) { return isCastThatProvesNothing(opcode); });
 }
 
 Vector<ValueID, 2> findSingleUseCastChain(const Function& function, const UseLists& useLists, ValueID user)
@@ -129,8 +134,10 @@ private:
 
 class ValueIdentities::MergingParameters {
 public:
-    explicit MergingParameters(size_t numberOfValues)
+    MergingParameters(size_t numberOfValues, MergingParameterChains& chains)
         : m_numberOfValues(numberOfValues)
+        , m_block(chains.block)
+        , m_chainOfFirstValue(chains.chainOfFirstValue)
     {
     }
 
@@ -181,11 +188,7 @@ private:
         uint32_t next;
     };
 
-    struct Chain {
-        uint32_t block { 0 };
-        uint32_t first { noPosition };
-        uint32_t last { noPosition };
-    };
+    using Chain = MergingParameterChains::Chain;
 
     void appendToChain(uint32_t position)
     {
@@ -199,9 +202,9 @@ private:
     }
 
     size_t m_numberOfValues;
-    uint32_t m_block { 0 };
+    uint32_t& m_block;
     Vector<Entry, maxSearchedParameters + 1> m_parameters;
-    Vector<Chain> m_chainOfFirstValue;
+    Vector<Chain>& m_chainOfFirstValue;
 };
 
 ValueIdentities::ValueIdentities(const Function& function, const CFG& cfg, RepeatedWalks repeatedWalks, const OpcodeSet* opcodesOfValues, Evaluation evaluation)
@@ -262,6 +265,7 @@ void ValueIdentities::computeAll()
     m_passedValues.clear();
     m_firstPassedValue.clear();
     m_operandsOfCasts.clear();
+    m_mergingParameterChains.chainOfFirstValue.clear();
 
     for (size_t index = 0; index < m_identities.size(); ++index) {
         if (!m_identities[index])
@@ -309,7 +313,7 @@ auto ValueIdentities::passedValuesInto(const Function& function, const CFG& cfg,
 
 void ValueIdentities::walk(const Function& function, const CFG& cfg, uint32_t firstOrderIndex)
 {
-    MergingParameters mergingParameters(function.values.size());
+    MergingParameters mergingParameters(function.values.size(), m_mergingParameterChains);
     if (m_firstBlockThatReadUnknownIdentity && *m_firstBlockThatReadUnknownIdentity >= firstOrderIndex)
         m_firstBlockThatReadUnknownIdentity = std::nullopt;
     std::span<const BlockID> order = cfg.reversePostOrder();
@@ -440,12 +444,14 @@ std::optional<uint32_t> ValueIdentities::expectLessOfParametersThatDoNotHold(con
 {
     std::optional<uint32_t> firstChangedBlock;
     std::span<const BlockID> order = cfg.reversePostOrder();
+    Vector<uint32_t> indexInParameters;
     for (uint32_t orderIndex = 0; orderIndex < order.size(); ++orderIndex) {
         BlockID block = order[orderIndex];
         auto& parameters = function.at(block).parameters;
         if (m_takesShortcuts && cfg.incomingEdges(block).size() == 1)
             continue;
         std::optional<PassedValues> passedValues;
+        bool didIndexParameters = false;
         for (uint32_t parameterIndex = 0; parameterIndex < parameters.size(); ++parameterIndex) {
             ValueID parameter = parameters[parameterIndex];
             ValueID identity = m_identities[parameter.index()];
@@ -461,10 +467,14 @@ std::optional<uint32_t> ValueIdentities::expectLessOfParametersThatDoNotHold(con
             if (isPassedOneValue)
                 continue;
 
-            uint32_t earlierIndex = 0;
-            while (earlierIndex < parameterIndex && parameters[earlierIndex] != identity)
-                ++earlierIndex;
-            bool followsEarlierParameter = earlierIndex < parameterIndex;
+            if (!std::exchange(didIndexParameters, true)) {
+                if (indexInParameters.isEmpty())
+                    indexInParameters.fill(0, function.values.size());
+                for (uint32_t index = 0; index < parameters.size(); ++index)
+                    indexInParameters[parameters[index].index()] = index;
+            }
+            uint32_t earlierIndex = indexInParameters[identity.index()];
+            bool followsEarlierParameter = earlierIndex < parameterIndex && parameters[earlierIndex] == identity;
             if (followsEarlierParameter && receiveSameValues(*passedValues, earlierIndex, parameterIndex))
                 continue;
 
@@ -614,7 +624,7 @@ ValueID ValueIdentities::tryResolveParametersInOrder(const PassedValues& passedV
         if (passed && !tryResolve(passed, blockingParameter))
             return { };
     }
-    MergingParameters mergingParameters(m_numberOfValues);
+    MergingParameters mergingParameters(m_numberOfValues, m_mergingParameterChains);
     mergingParameters.clear();
     size_t numberOfParameters = passedValueList.size() / passedValues.numberOfEdges;
     for (uint32_t parameterIndex = 0; parameterIndex < numberOfParameters; ++parameterIndex)

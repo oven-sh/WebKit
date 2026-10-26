@@ -2,7 +2,7 @@
 # More objects in the hub of what has its values listed than the analysis tells apart: it tells one apart here, the plain object, which has the first layout. The two others come together.
 # Object.values runs the getters of its operand with the operand as `this`. The getter nobody knows lies on the odd object, so that one is handed to it and escapes with what it holds.
 # That says nothing about the object that came together with it: each is asked by itself whether such a getter lies on it. It stays in the program, and nobody enters what it holds.
-# converted-objects-past-those-told-apart-escape-together.ir has the loss that remains, for a method that is found under a name.
+# converted-objects-past-those-told-apart-are-handed-to-what-each-of-them-finds.ir has the same for a method that is found under a name.
 # OPTIONS: limit=MaxValueFlowMembersToldApart:1
 # LOSS: MaxValueFlowMembersToldApart
 # RUN: valueflow-solve unreached

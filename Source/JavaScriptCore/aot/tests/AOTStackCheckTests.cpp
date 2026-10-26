@@ -49,15 +49,24 @@ using TrustedImm32 = CCallHelpers::TrustedImm32;
 using TrustedImm64 = CCallHelpers::TrustedImm64;
 
 enum class ReadsMacroScratchRegister : bool { No, Yes };
+enum class FrameRecord : bool { ChosenByCost, OmittedWherePossible };
 
 struct StackCheckFixture {
-    StackCheckFixture()
+    explicit StackCheckFixture(FrameRecord frameRecord)
         : recorder(jit, context.assemblerPolicy())
         , lowering(ImageRelocationLowering::instanceRuntimeTable(), recorder)
-        , proc(b3PolicyFor(context, FunctionBackEndTraits { .function = Typed::FunctionID(0u) }, lowering), &scratch)
+        , proc(policyFor(frameRecord), &scratch)
     {
         Typed::pinRegisters(proc);
         Typed::setStackCheckGenerator(proc, Typed::StackCheck::Required, frame, state);
+    }
+
+    B3::Policy policyFor(FrameRecord frameRecord)
+    {
+        B3::Policy policy = b3PolicyFor(context, FunctionBackEndTraits { .function = Typed::FunctionID(0u) }, lowering);
+        if (frameRecord == FrameRecord::OmittedWherePossible)
+            policy.air.frame.maxBytesAddedWithoutFrameRecord = 1 * MB;
+        return policy;
     }
 
     BuildContext context { ImageTests::wireOptions() };
@@ -74,6 +83,7 @@ struct CompiledProcedure {
     Vector<uint8_t> bytes;
     Vector<StackLimit, 1> limits;
     unsigned frameSize { 0 };
+    bool hasFrameRecord { true };
 };
 
 struct StackLimits {
@@ -180,9 +190,9 @@ static void appendBody(B3::Procedure& proc, unsigned slotSize, ReadsMacroScratch
     root->appendNew<B3::Value>(proc, B3::Return, B3::Origin(), root->appendNew<B3::Const64Value>(proc, B3::Origin(), didRun));
 }
 
-static CompiledProcedure compile(unsigned slotSize, ReadsMacroScratchRegister readsMacroScratchRegister)
+static CompiledProcedure compile(unsigned slotSize, ReadsMacroScratchRegister readsMacroScratchRegister, FrameRecord frameRecord = FrameRecord::ChosenByCost)
 {
-    StackCheckFixture fixture;
+    StackCheckFixture fixture(frameRecord);
     B3::Procedure& proc = fixture.proc;
     appendBody(proc, slotSize, readsMacroScratchRegister);
     B3::prepareForGeneration(proc);
@@ -196,11 +206,18 @@ static CompiledProcedure compile(unsigned slotSize, ReadsMacroScratchRegister re
 
     CompiledProcedure compiled;
     compiled.frameSize = proc.code().frameSize();
+    compiled.hasFrameRecord = proc.code().frameLayout().hasFrameRecord;
+    unsigned bytesAllocatedBelowReturnAddress = 0;
     for (PendingStackCheck& check : fixture.state.pending) {
         compiled.limits.append(check.limit);
         check.doesNotFit.link(&jit);
+        AOT_TEST_CHECK(check.bytesAllocatedBelowReturnAddress.has_value() == !compiled.hasFrameRecord);
+        bytesAllocatedBelowReturnAddress = check.bytesAllocatedBelowReturnAddress.value_or(0);
     }
-    jit.emitFunctionEpilogue();
+    if (compiled.hasFrameRecord)
+        jit.emitFunctionEpilogue();
+    else
+        jit.addPtr(TrustedImm32(bytesAllocatedBelowReturnAddress), CCallHelpers::stackPointerRegister);
     jit.move(TrustedImm64(didNotFit), GPRInfo::returnValueGPR);
     jit.ret();
 
@@ -242,9 +259,10 @@ static void checkReceivedNothing(const PassedWords& received)
         AOT_TEST_CHECK(!word);
 }
 
-static CompiledProcedure compileWithLargeFrame()
+static CompiledProcedure compileWithLargeFrame(FrameRecord frameRecord = FrameRecord::ChosenByCost)
 {
-    CompiledProcedure compiled = compile(largeSlotSize, ReadsMacroScratchRegister::No);
+    CompiledProcedure compiled = compile(largeSlotSize, ReadsMacroScratchRegister::No, frameRecord);
+    AOT_TEST_CHECK(frameRecord == FrameRecord::ChosenByCost || compiled.hasFrameRecord == !isX86_64());
     AOT_TEST_CHECK(compiled.frameSize > maxBytesOfSmallFrame);
     AOT_TEST_CHECK(compiled.limits.size() == 1 && compiled.limits[0] == StackLimit::Soft);
     return compiled;
@@ -272,6 +290,19 @@ static void testLargeFrameIsCheckedBeforeItIsAllocated()
     CompiledProcedure compiled = compileWithLargeFrame();
     uintptr_t limitBetweenStackPointerAndFrameEnd = std::bit_cast<uintptr_t>(currentStackPointer()) - largeSlotSize / 2;
     PassedWords received;
+    AOT_TEST_CHECK(run(compiled, { limitBetweenStackPointerAndFrameEnd, everyFrameFits }, received) == didNotFit);
+    checkReceivedNothing(received);
+}
+
+static void testLargeFrameWithoutFrameRecord()
+{
+    CompiledProcedure compiled = compileWithLargeFrame(FrameRecord::OmittedWherePossible);
+    PassedWords received;
+    AOT_TEST_CHECK(run(compiled, { everyFrameFits, noFrameFits }, received) == didRun);
+    checkReceivedArguments(received);
+    if (framesAreThoseOfAddressSanitizer)
+        return;
+    uintptr_t limitBetweenStackPointerAndFrameEnd = std::bit_cast<uintptr_t>(currentStackPointer()) - largeSlotSize / 2;
     AOT_TEST_CHECK(run(compiled, { limitBetweenStackPointerAndFrameEnd, everyFrameFits }, received) == didNotFit);
     checkReceivedNothing(received);
 }
@@ -307,6 +338,7 @@ std::span<const NativeTest> stackCheckTests()
     static constexpr NativeTest tests[] = {
         { "codegen/stack-check/large-frame-keeps-arguments"_s, ImageTests::whenExecutable<testLargeFrameKeepsArguments> },
         { "codegen/stack-check/large-frame-is-checked-before-it-is-allocated"_s, ImageTests::whenExecutable<testLargeFrameIsCheckedBeforeItIsAllocated> },
+        { "codegen/stack-check/large-frame-without-frame-record"_s, ImageTests::whenExecutable<testLargeFrameWithoutFrameRecord> },
         { "codegen/stack-check/small-frame-keeps-arguments"_s, ImageTests::whenExecutable<testSmallFrameKeepsArguments> },
         { "codegen/stack-check/small-frame-does-not-fit"_s, ImageTests::whenExecutable<testSmallFrameDoesNotFit> },
 #if CPU(X86_64)

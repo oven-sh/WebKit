@@ -1,0 +1,29 @@
+# new String("abc").length    ({ __proto__: String.prototype }).length    ({ __proto__: Error.prototype }).message
+# The table declares the length of a string for strings and the message of an error for errors. Both are data properties: whatever object finds one reads its value, and nothing throws.
+# RUN: valueflow-apply
+# CHECK: variable g0 name="lengthOfTextObject" module=m0 declared={type=number}
+# CHECK: variable g1 name="lengthOfHeir" module=m0 declared={type=undefined|number}
+# CHECK: variable g2 name="messageOfHeir" module=m0 declared={type=undefined|string}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="x" declared={type=anything}}]
+variable g0 name="lengthOfTextObject" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="lengthOfHeir" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="messageOfHeir" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=String
+    v1 = String string="abc"
+    v2 = Construct v0, -, v1
+    v3 = PropGet v2 key="length"
+    PutModuleVariable v3 variable=g0
+    v5 = Builtin builtin=StringPrototype
+    v6 = NewObject v5 layout=L0 fields=[]
+    v7 = PropGet v6 key="length"
+    PutModuleVariable v7 variable=g1
+    v9 = Builtin builtin=ErrorPrototype
+    v10 = NewObject v9 layout=L0 fields=[]
+    v11 = PropGet v10 key="message"
+    PutModuleVariable v11 variable=g2
+    Return
+}

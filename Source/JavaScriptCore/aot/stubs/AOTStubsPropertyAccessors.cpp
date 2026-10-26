@@ -69,7 +69,7 @@ void callGetterFunctionAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg get
     jit.load32(Address(getter, offsetOfClosureEntry), scratch);
 
     hasOffsetOfCode.link(&jit);
-    jit.checkStackBeforeEntering();
+    isNotCommonCase.append(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::limitOfCallsByValue()));
     jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = true, .checksException = true }, [&] {
         RELEASE_ASSERT(noOverlap(scratch, thisGPR, calleeGPR, countGPR));
         jit.shuffleRegisters<GPRReg, 2>({ receiver, getter }, { thisGPR, calleeGPR });
@@ -99,7 +99,7 @@ void callGetterFunctionAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg get
     isNotCommonCase.append(jit.branch64(CCallHelpers::LessThan, scratch, minWord));
 
     hasWord.link(&jit);
-    jit.checkStackBeforeEntering();
+    isNotCommonCase.append(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::limitOfCallsByValue()));
     jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = true, .checksException = true }, [&] {
         RELEASE_ASSERT(noOverlap(scratch, thisGPR, calleeGPR, countGPR));
         jit.shuffleRegisters<GPRReg, 2>({ receiver, getter }, { thisGPR, calleeGPR });
@@ -193,8 +193,8 @@ void callCustomSetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg value
     callRecordedAccessorAndReturn(jit, receiver, record, uid, value);
 }
 
-// functionNames has no "get ", "set " or "bound ".
-static void branchIfNameHasPrefix(StubAssembler& jit, GPRReg function, GPRReg kind, JumpList& hasPrefix)
+// functionNames has no "get ", "set " or "bound ". A look that stack frames tell of is noted in the function object.
+static void noteLookForNameReadFromTable(StubAssembler& jit, GPRReg closure, GPRReg function, GPRReg kind, JumpList& isLeftToRunTime)
 {
     constexpr CallableKind callableKinds[] = { CallableKind::Plain, CallableKind::Arrow, CallableKind::Method, CallableKind::Bound };
     auto encode = [](unsigned accessorKind, unsigned callableKind) -> uint32_t {
@@ -205,25 +205,41 @@ static void branchIfNameHasPrefix(StubAssembler& jit, GPRReg function, GPRReg ki
     };
     const uint32_t methodAccessorKind = encode(static_cast<unsigned>(MethodKind::Method), 0);
     const uint32_t boundCallableKind = encode(0, static_cast<unsigned>(CallableKind::Bound));
-    uint32_t accessorKindMask = 0;
+    const uint32_t flipped = methodAccessorKind | boundCallableKind;
+    const uint32_t accessorKindMask = encode(methodThatNotesLooksForName, 0);
     uint32_t callableKindMask = 0;
-    for (MethodKind accessorKind : allMembersOf<MethodKind>)
-        accessorKindMask |= encode(static_cast<unsigned>(accessorKind), 0);
     for (CallableKind callableKind : callableKinds)
         callableKindMask |= encode(0, static_cast<unsigned>(callableKind));
-    RELEASE_ASSERT(!(accessorKindMask & callableKindMask));
-    for (MethodKind accessorKind : allMembersOf<MethodKind>) {
+    RELEASE_ASSERT(!(accessorKindMask & callableKindMask) && !(accessorKindMask & flipped));
+    for (MethodKind accessorKind : allMembersOf<MethodKind>)
+        RELEASE_ASSERT(!(encode(static_cast<unsigned>(accessorKind), 0) & ~accessorKindMask));
+    for (unsigned accessorKind = 0; accessorKind <= methodThatNotesLooksForName; ++accessorKind) {
         for (CallableKind callableKind : callableKinds) {
-            const uint32_t functionKind = encode(static_cast<unsigned>(accessorKind), static_cast<unsigned>(callableKind));
-            const bool testFindsPrefix = (functionKind & accessorKindMask) != methodAccessorKind || (functionKind & callableKindMask) == boundCallableKind;
-            RELEASE_ASSERT(testFindsPrefix == std::bit_cast<FunctionKindData>(static_cast<uint16_t>(functionKind)).hasInitialNamePrefix());
+            const uint32_t tested = encode(accessorKind, static_cast<unsigned>(callableKind)) ^ flipped;
+            const bool needsNoNote = !(tested & accessorKindMask);
+            const bool isNotedHere = (tested & accessorKindMask) == accessorKindMask;
+            const bool leaves = !(tested & callableKindMask) || (!needsNoNote && !isNotedHere);
+            const FunctionKindData data = std::bit_cast<FunctionKindData>(static_cast<uint16_t>(tested ^ flipped));
+            RELEASE_ASSERT(leaves == data.hasInitialNamePrefix());
+            RELEASE_ASSERT(leaves || (needsNoNote == !data.notesLooksForName() && isNotedHere == data.notesLooksForNameInCell()));
         }
     }
 
     loadKindOfClosureFunction(jit, function, kind);
-    jit.xor32(TrustedImm32(methodAccessorKind | boundCallableKind), kind);
-    hasPrefix.append(jit.branchTest32(CCallHelpers::NonZero, kind, TrustedImm32(accessorKindMask)));
-    hasPrefix.append(jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(callableKindMask)));
+    jit.xor32(TrustedImm32(flipped), kind);
+    isLeftToRunTime.append(jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(callableKindMask)));
+    Jump needsNoNote = jit.branchTest32(CCallHelpers::Zero, kind, TrustedImm32(accessorKindMask));
+    jit.and32(TrustedImm32(accessorKindMask), kind);
+    isLeftToRunTime.append(jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(accessorKindMask)));
+    const Address flags(closure, JSCell::typeInfoFlagsOffset());
+#if CPU(X86_64)
+    jit.or8(TrustedImm32(TypeInfoPerCellBit), flags);
+#else
+    jit.load8(flags, kind);
+    jit.or32(TrustedImm32(TypeInfoPerCellBit), kind);
+    jit.store8(kind, flags);
+#endif
+    needsNoNote.link(&jit);
 }
 
 static void loadClosureFunction(StubAssembler& jit, GPRReg value, GPRReg function, JumpList& isNotClosure)
@@ -283,7 +299,7 @@ void readClosureNameAndReturn(StubAssembler& jit, GPRReg closure, JumpList& miss
     }
     loadClosureFunction(jit, closure, function, miss);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.tables)), tables);
-    branchIfNameHasPrefix(jit, function, scratch, miss);
+    noteLookForNameReadFromTable(jit, closure, function, scratch, miss);
     // ProgramTables::nameOfFunction(): functionSources begins at the first form of another function, and the groups of names end there.
     auto loadNumberOfFunctionsInFrontOfForms = [&] {
         jit.load32(programTableCount(tables, ProgramTableIndex::functionRecordNumbers), scratch);

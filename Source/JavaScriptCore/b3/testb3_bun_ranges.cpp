@@ -437,6 +437,50 @@ static void testExtensionOfTruncationFoldsByRange()
     }
 }
 
+static void checkSumOfIntegersBehindDoubles(B3::Opcode opcode, IntRange range, bool isExact, bool reducesWithRanges)
+{
+    Procedure proc(rangeReductionPolicy(reducesWithRanges));
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t*, int32_t>(proc, root);
+    Value* wide = graph.load(root, Int64, arguments[0], 0, firstHeap);
+    proc.setKnownRange(wide, range);
+    Value* sum = graph.make(root, opcode, graph.make(root, IToD, wide), graph.make(root, IToD, arguments[1]));
+    PatchpointValue* truncated = root->appendNew<PatchpointValue>(proc, Int64, Origin());
+    truncated->append(sum, ValueRep::SomeRegister);
+    truncated->effects = Effects::none();
+    truncated->pureFunction = PureFunction { 1, true, true };
+    truncated->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
+    });
+    graph.ret(root, truncated);
+
+    reduceStrengthOnce(proc);
+    reduceStrengthOnce(proc);
+    bool isReduced = isExact && reducesWithRanges;
+    CHECK_EQ(numberOfValues(proc, Patchpoint), isReduced ? 0u : 1u);
+
+    auto code = compileProc(proc);
+    for (int64_t left : { range.min(), static_cast<int64_t>(0), range.max() }) {
+        for (int32_t right : { std::numeric_limits<int32_t>::min(), -1, 0, 7, std::numeric_limits<int32_t>::max() }) {
+            double expected = opcode == Add ? static_cast<double>(left) + right : static_cast<double>(left) - right;
+            CHECK_EQ(invoke<int64_t>(*code, &left, right), static_cast<int64_t>(expected));
+        }
+    }
+}
+
+static void testSumOfIntegersBehindDoublesIsAddedInIntegers()
+{
+    constexpr int64_t limit = 1ll << 52;
+    for (bool reducesWithRanges : { true, false }) {
+        for (B3::Opcode opcode : { Add, Sub }) {
+            checkSumOfIntegersBehindDoubles(opcode, IntRange(-limit, limit), true, reducesWithRanges);
+            checkSumOfIntegersBehindDoubles(opcode, IntRange(-limit, limit + 1), false, reducesWithRanges);
+            checkSumOfIntegersBehindDoubles(opcode, IntRange(-limit - 1, limit), false, reducesWithRanges);
+        }
+    }
+}
+
 static void checkSignExtension(IntRange range, bool becomesZeroExtension, bool reducesWithRanges)
 {
     Procedure proc(rangeReductionPolicy(reducesWithRanges));
@@ -672,6 +716,7 @@ void addBunRangeTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testComparisonsFoldedByIntegerRange());
     RUN(testBoxedInt32ComparisonsFoldByRange());
     RUN(testExtensionOfTruncationFoldsByRange());
+    RUN(testSumOfIntegersBehindDoublesIsAddedInIntegers());
     RUN(testSignExtensionOfNonNegativeIsZeroExtension());
     RUN(testComparisonOfExtensionsIsNarrow());
     RUN(testMaskFoldsByRange());

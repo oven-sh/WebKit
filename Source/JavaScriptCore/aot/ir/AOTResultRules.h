@@ -101,7 +101,7 @@ struct TypingContext {
     {
         if (level == TypeLevel::Proven)
             return value.type;
-        return seesValuesExpectedNever ? value.expectedOrTypeForTyping() : value.expectedOrType();
+        return seesValuesExpectedNever ? value.expectedOrTypeForTyping().predicted() : value.expectedOrType().predicted();
     }
     TypeID typeIDOf(ValueID id) const { return typeIDOf(function.at(id)); }
     const Type& typeOf(ValueID id) const { return types.at(typeIDOf(id)); }

@@ -149,6 +149,7 @@ function formatIntrinsic(meaning: ModelIntrinsicMeaning): string {
     case "PrivateGlobal":
     case "ReplaceablePrivateGlobal":
     case "PrivateName":
+    case "ModulePrivateName":
     case "Erased":
     case "BundleError":
       return `Intrinsic::${meaning.intrinsic}`;

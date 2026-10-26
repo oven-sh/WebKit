@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSPromise.h"
 
+#include "AOTAsyncResumption.h"
 #include "AOTPropertyWalk.h"
 
 #include "BuiltinNames.h"
@@ -52,6 +53,21 @@
 namespace JSC {
 
 const ClassInfo JSPromise::s_info = { "Promise"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPromise) };
+
+#if USE(BUN_JSC_ADDITIONS)
+static ALWAYS_INLINE bool runsInSynchronousModuleQueue(VM& vm, InternalMicrotask task, JSValue context)
+{
+    if (!vm.m_synchronousModuleQueue) [[likely]]
+        return false;
+#if ENABLE(AOT)
+    if (task == InternalMicrotask::CompiledAsyncFunctionResume)
+        return AOT::isSuspendedModuleBody(vm, context);
+#else
+    UNUSED_PARAM(context);
+#endif
+    return isModuleLoaderInternalMicrotask(task);
+}
+#endif
 
 JSPromise* JSPromise::create(VM& vm, Structure* structure)
 {
@@ -557,7 +573,7 @@ void JSPromise::performPromiseThenWithInternalMicrotask(VM& vm, InternalMicrotas
         if (!isHandled())
             globalObject->globalObjectMethodTable()->promiseRejectionTracker(globalObject, this, JSPromiseRejectionOperation::Handle);
 #if USE(BUN_JSC_ADDITIONS)
-        if (vm.m_synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
+        if (runsInSynchronousModuleQueue(vm, task, context)) [[unlikely]] {
             markAsHandled();
             vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(Status::Rejected), cellValue, settled, context, asyncContext });
             break;
@@ -573,7 +589,7 @@ void JSPromise::performPromiseThenWithInternalMicrotask(VM& vm, InternalMicrotas
         JSGlobalObject* globalObject = realm();
         JSValue settled = settlementValue();
 #if USE(BUN_JSC_ADDITIONS)
-        if (vm.m_synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
+        if (runsInSynchronousModuleQueue(vm, task, context)) [[unlikely]] {
             vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(Status::Fulfilled), cellValue, settled, context, asyncContext });
             break;
         }
@@ -724,7 +740,7 @@ ALWAYS_INLINE void JSPromise::settleInlineInternalMicrotask(VM& vm, JSGlobalObje
     setSlot(vm, argument);
     setPackedCell(vm, settledFlags, nullptr);
 #if USE(BUN_JSC_ADDITIONS)
-    if (vm.m_synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
+    if (runsInSynchronousModuleQueue(vm, task, context)) [[unlikely]] {
         vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(newStatus), cellValue, argument, context, asyncContext });
         return;
     }
@@ -1079,14 +1095,14 @@ void JSPromise::triggerPromiseReactions(VM& vm, JSGlobalObject* globalObject, St
 #if USE(BUN_JSC_ADDITIONS)
                 if (slimReaction->promiseSlotIsAsyncContext()) {
                     // `promise` is the captured async context; the task takes no cell.
-                    if (vm.m_synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
+                    if (runsInSynchronousModuleQueue(vm, task, arg)) [[unlikely]] {
                         vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(status), jsUndefined(), handler, arg, promise });
                         return;
                     }
                     globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(status), jsUndefined(), handler, arg, promise);
                     return;
                 }
-                if (vm.m_synchronousModuleQueue && isModuleLoaderInternalMicrotask(task)) [[unlikely]] {
+                if (runsInSynchronousModuleQueue(vm, task, arg)) [[unlikely]] {
                     vm.m_synchronousModuleQueue->tasks.append({ task, static_cast<uint8_t>(status), promise, handler, arg });
                     return;
                 }

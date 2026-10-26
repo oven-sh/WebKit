@@ -10,7 +10,7 @@ function f0 name="castAddsProofs" parameters=[{type=anything}, {type=boolean}] r
     Jump -> next b1()
   b1():
     LoopHint
-    v3 = AssumeType v0 castType=undefined|Array<number, proven, pristine[Storage, Names]>
+    v3 = AssumeType v0 provenType=undefined|Array<number, proven, pristine[Storage, Names]>
     v4 = TypeTest v3 testedType=Array
     Branch v4 -> taken b2(| 0), notTaken b3()
   b2(v5):
@@ -20,8 +20,8 @@ function f0 name="castAddsProofs" parameters=[{type=anything}, {type=boolean}] r
   b3():
     Return
 # CHECK: LoopHint
-# CHECK-NEXT: v3: Array<number, proven, pristine[Storage, Names]> = AssumeType {{*}} castType=undefined|Array<number, proven, pristine[Storage, Names]>
-# CHECK-NEXT: [[narrowed0]]: Array<number, proven, pristine[Storage, Names]> = AssumeType {{*}} castType=Array<number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v3: Array<number, proven, pristine[Storage, Names]> = AssumeType {{*}} provenType=undefined|Array<number, proven, pristine[Storage, Names]>
+# CHECK-NEXT: [[narrowed0]]: Array<number, proven, pristine[Storage, Names]> = AssumeType {{*}} provenType=Array<number, proven, pristine[Storage, Names]>
 # CHECK-NEXT: v4: true = TypeTest [[narrowed0]] testedType=Array
 # CHECK: (v5: Array<number, proven, pristine[Storage, Names]>):
 # CHECK: = GetArrayElement v5, v6{{*}} level=Proven
@@ -29,12 +29,12 @@ function f0 name="castAddsProofs" parameters=[{type=anything}, {type=boolean}] r
 # SIMPLE: = TypeTest v0 testedType=Array
 # SIMPLE: LoopHint
 # SIMPLE-NOT: TypeTest
-# SIMPLE: frequency=Unlikely:
-# SIMPLE-NEXT: LoopHint
+# SIMPLE-NOT: frequency=
+# SIMPLE: LoopHint
 }
 
 function f1 name="castOutsideTheLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-    v2 = AssumeType v0 castType=undefined|Array<number, proven, pristine[Storage, Names]>
+    v2 = AssumeType v0 provenType=undefined|Array<number, proven, pristine[Storage, Names]>
     Jump -> next b1()
   b1():
     LoopHint
@@ -64,7 +64,7 @@ function f1 name="castOutsideTheLoop" parameters=[{type=anything}, {type=boolean
 # SIMPLE-LABEL: function f2 name="checkedCast"
 
 function f2 name="checkedCast" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
-    v2 = Check v0 castType=number|string cause=AddedByPass
+    v2 = Check v0 expectedType=number|string cause=AddedByPass
     Jump -> next b1()
   b1():
     LoopHint
@@ -107,6 +107,6 @@ function f3 name="castAddsNothing" parameters=[{type=anything}, {type=boolean}] 
 # CHECK: LoopHint
 # CHECK-NEXT: v3: true = TypeTest [[narrowed3]] testedType=Array
 # CHECK: = TypeTest v0 testedType=Array
-# CHECK: ({{*}}: Array):
+# CHECK: b7({{*}}: Array):
 # CHECK-NEXT: Jump -> next b1(
 }

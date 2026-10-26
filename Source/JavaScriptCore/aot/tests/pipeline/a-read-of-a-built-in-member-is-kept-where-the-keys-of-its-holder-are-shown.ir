@@ -1,0 +1,31 @@
+# The first read of a member may add it to its holder, so it decides where the member stands among the holder's keys. The read stays an operation only where the program gets to see those keys:
+# Object.getOwnPropertyNames(JSON) shows them. Object.keys(Reflect), a spread of Math and a for-in over an object of the program show enumerable keys alone, and no member of those holders is enumerable.
+# FORM: AsRead
+# RUN: pipeline ResolveAccesses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="stringify"
+    v3 = Call v2, v1, v0
+    v4 = Builtin builtin=Object
+    v5 = PropGet v4 key="getOwnPropertyNames"
+    v6 = Call v5, v4, v1
+    v7 = Builtin builtin=Reflect
+    v8 = PropGet v7 key="has"
+    v9 = PropGet v4 key="keys"
+    v10 = Call v9, v4, v7
+    v11 = Builtin builtin=Math
+    v12 = PropGet v11 key="hypot"
+    v13 = CopyObject v11
+    Return v8
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: InitializeBuiltin builtin=JSONStringify
+# CHECK-NOT: InitializeBuiltin builtin=Object
+# CHECK-NOT: InitializeBuiltin builtin=Reflect
+# CHECK-NOT: InitializeBuiltin builtin=Math

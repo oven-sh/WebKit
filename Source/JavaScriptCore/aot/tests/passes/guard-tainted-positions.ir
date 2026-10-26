@@ -34,10 +34,10 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v11 = CallDirect v1 function=f4
     PutModuleVariable v11 variable=g3
     Return
-# CHECK: v2: number = Check v1 castType=number
+# CHECK: v2: number = Check v1 expectedType=number
 # CHECK-NEXT: PutModuleVariable v2 variable=g0
 # CHECK: [[result]]: anything ~ number = CallDirect v1 function=f4
-# CHECK-NEXT: [[checkedResult]]: number = Check [[result]] castType=number cause=AddedByPass
+# CHECK-NEXT: [[checkedResult]]: number = Check [[result]] expectedType=number cause=AddedByPass
 # CHECK-NEXT: PutModuleVariable [[checkedResult]] variable=g3
 }
 
@@ -48,7 +48,7 @@ function f1 name="readsVariables" results=[{type=number}] {
     Return v2
 # CHECK: results=[{type=number flags=[IsExpected]}]
 # CHECK: [[read]]: anything{{*}}~ number{{*}} = GetModuleVariable variable=g0
-# CHECK-NEXT: [[checkedRead]]: number = Check [[read]] castType=number cause=AddedByPass
+# CHECK-NEXT: [[checkedRead]]: number = Check [[read]] expectedType=number cause=AddedByPass
 # CHECK-NEXT: [[other]]: number = GetModuleVariable variable=g2
 # CHECK-NEXT: = Add [[checkedRead]], [[other]]
 }
@@ -59,7 +59,7 @@ function f2 name="readsEnvironmentField" kind=Arrow captures=[{type=env L0}] res
     Return v1
 # CHECK: results=[{type=number flags=[IsExpected]}]
 # CHECK: [[field]]: anything{{*}}~ number{{*}} = GetEnvironmentField v0 layout=L0
-# CHECK-NEXT: [[checkedField]]: number = Check [[field]] castType=number cause=AddedByPass
+# CHECK-NEXT: [[checkedField]]: number = Check [[field]] expectedType=number cause=AddedByPass
 # CHECK-NEXT: Return [[checkedField]]
 }
 
@@ -67,7 +67,7 @@ function f3 name="readsCapture" kind=Arrow captures=[{type=number}] results=[{ty
     Return v0
 # CHECK: captures=[{type=number flags=[IsExpected]}]
 # CHECK: b0(v0: anything ~ number):
-# CHECK-NEXT: [[checkedCapture]]: number = Check v0 castType=number cause=AddedByPass
+# CHECK-NEXT: [[checkedCapture]]: number = Check v0 expectedType=number cause=AddedByPass
 # CHECK-NEXT: Return [[checkedCapture]]
 }
 
@@ -75,6 +75,6 @@ function f4 name="returnsCheckedValue" parameters=[{type=anything}] results=[{ty
     v1 = Convert v0 declared={type=number}
     Return v1
 # CHECK: results=[{type=number flags=[IsExpected]}]
-# CHECK: v1: number = Check v0 castType=number
+# CHECK: v1: number = Check v0 expectedType=number
 # CHECK-NEXT: Return v1
 }

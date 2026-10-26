@@ -45,6 +45,7 @@ bool isOnlyCalled(FunctionAnalyses&, ValueID read);
 AccessOperands operandsOfNamedAccess(const Value& access);
 SlotStamp createSlotStamp(FunctionPassContext&, const Value& access, const PropertyAccessPlan&);
 PassOutcome addEmptySlotCases(FunctionPassContext&);
+PassOutcome addCasesOfFieldsWithoutStorage(FunctionPassContext&);
 Effects effectsAfterRewrite(FunctionPassContext&, const PropertyAccessPlan&, const SlotStamp&);
 Effects effectsAfterRewrite(const ElementAccessPlan&, const Type& key);
 

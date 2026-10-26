@@ -196,7 +196,7 @@ function checkParameters(entry: Entry, errors: ErrorList): void {
     errors.add(variadic.location, `the variadic operand of ${entry.name} is not its last operand`);
   }
   for (const operand of operands) {
-    if (!operand.isEngine || operand.isOptional) continue;
+    if (!operand.isEngine || operand.isOptional || operand.isVariadic) continue;
     errors.add(operand.location, `engine operand ${operand.name} of ${entry.name} is not optional`);
   }
   if (entry.payload.filter(field => field.kind.tag === "List").length > 1) {

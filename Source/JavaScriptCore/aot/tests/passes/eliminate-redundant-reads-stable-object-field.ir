@@ -53,14 +53,14 @@ function f3 name="oneReceiverIsStoredAgain" parameters=[{type=L0|L1}, {type=anyt
 function f4 name="oneObjectReadAsEitherReceiver" parameters=[{type=L0|L1}, {type=anything}, {type=boolean}] results=[{type=number}] {
     Branch v2 -> taken b1(), notTaken b2()
   b1():
-    v3 = Check v0 castType=L0
+    v3 = Check v0 expectedType=L0
     v4 = GetSlot v3 key="rate" receivers=[L0] level=Proven
     v5 = Call v1
     v6 = GetSlot v3 key="rate" receivers=[L0] level=Proven
     v7 = Add v4, v6
     Return v7
   b2():
-    v8 = Check v0 castType=L1
+    v8 = Check v0 expectedType=L1
     v9 = GetSlot v8 key="rate" receivers=[L1] level=Proven
     v10 = Call v1
     v11 = GetSlot v8 key="rate" receivers=[L1] level=Proven

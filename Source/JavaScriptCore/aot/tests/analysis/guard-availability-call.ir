@@ -67,12 +67,12 @@ function f3 name="calleeWritesFreshArgument" parameters=[{type=L0}, {type=anythi
     Return
 }
 # CHECK-LABEL: function f3
-# CHECK: b1 available at head: [v2.0 v2.1 v2.2 v2.3 v5.0]
-# CHECK-NEXT: b2 available at head: [v2.0 v2.1 v2.2 v5.0]
+# CHECK: b1 available at head: [v2.0 v2.1 v2.2 v2.3 v2.4 v2.5 v5.0]
+# CHECK-NEXT: b2 available at head: [v2.0 v2.1 v2.2 v2.3 v2.4 v5.0]
 # CHECK: b1:0 available: [v2 v5]
 # CHECK-NEXT: b1:1 available: [v5]
 # PLAIN-LABEL: function f3
-# PLAIN: b1 available at head: [v2.0 v2.1 v2.2 v2.3 v5.0]
+# PLAIN: b1 available at head: [v2.0 v2.1 v2.2 v2.3 v2.4 v2.5 v5.0]
 # PLAIN-NEXT: b2 available at head: [v2.0]
 # PLAIN: b1:0 available: [v2 v5]
 # PLAIN-NEXT: b1:1 available: []

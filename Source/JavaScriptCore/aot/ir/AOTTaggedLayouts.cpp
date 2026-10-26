@@ -28,11 +28,13 @@ void appendTaggedLayouts(Program& program, std::span<const TaggedFamily> familie
 
 static void admitDeclaredType(TypeArena& types, DeclaredType& present, const DeclaredType& declared)
 {
-    present.type = types.unionOf(present.type, declared.type);
-    if (declared.flags.contains(PositionFlags::IsExpected))
-        present.flags.add(PositionFlags::IsExpected);
-    if (!declared.flags.contains(PositionFlags::IsInt32Promise) || present.flags.contains(PositionFlags::IsExpected))
-        present.flags.remove(PositionFlags::IsInt32Promise);
+    TypeID admitted = types.unionOf(present.written(), declared.written());
+    if (present.isExpected() || declared.isExpected())
+        present.expect(ExpectedType(admitted));
+    else
+        present.establish(Proven::byPosition(admitted));
+    if (!declared.has(PositionFlags::IsInt32Promise) || present.isExpected())
+        present.remove(PositionFlags::IsInt32Promise);
 }
 
 static void appendFieldsOf(Program& program, TypeArena& types, LayoutID member, LayoutID declaringType)

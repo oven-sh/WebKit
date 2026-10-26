@@ -445,12 +445,12 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
         const Program& program = m_analyses.context().program;
         const Value& first = function.at(data.values.first());
         data.type = first.type;
-        TypeID expected = first.expectedOrType();
+        TypeID expected = first.expectedOrType().predicted();
         for (ValueID id : data.values) {
             const Value& value = function.at(id);
             RELEASE_ASSERT(!numberOfResultsOf(program, function, value));
             data.type = m_builder.m_types.unionOf(data.type, value.type);
-            expected = m_builder.m_types.unionOf(expected, value.expectedOrType());
+            expected = m_builder.m_types.unionOf(expected, value.expectedOrType().predicted());
         }
         data.expected = expected == data.type ? TypeID() : expected;
     };
@@ -470,7 +470,7 @@ void SSARepair::insertParameters(std::span<const Variable> variables)
 
         m_builder.setOrigin(function.at(data.values.first()).origin());
         ValueID parameter = m_builder.addParameter(block, data.type, numberOfParametersForEdgeResults(block));
-        function.edit(parameter, ValueEdit::Type).setExpected(data.expected);
+        function.edit(parameter, ValueEdit::Type).setExpected(ExpectedType(data.expected));
         data.definitions.append(Definition { block, headOrder, parameter });
         return parameter;
     });

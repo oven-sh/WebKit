@@ -50,9 +50,12 @@ struct TypePropagationOutcome {
     bool waitsToCutCode { false };
     bool didLookForCodeToCut { false };
     bool gaveUpOnRounds { false };
+    bool keptRangesOfNarrowedParameters { false };
+    bool leftTypesAboveTheirRules { false };
 
     bool didChange() const { return retypedValues || changedExpectedTypes || cutBlocks; }
     bool didChangeControlFlow() const { return cutBlocks; }
+    bool dependsOnTypesBefore() const { return gaveUpOnRounds || keptRangesOfNarrowedParameters; }
 
     TypePropagationOutcome& operator+=(const TypePropagationOutcome& other)
     {
@@ -61,6 +64,8 @@ struct TypePropagationOutcome {
         cutBlocks += other.cutBlocks;
         replacedUpcasts += other.replacedUpcasts;
         gaveUpOnRounds |= other.gaveUpOnRounds;
+        keptRangesOfNarrowedParameters |= other.keptRangesOfNarrowedParameters;
+        leftTypesAboveTheirRules |= other.leftTypesAboveTheirRules;
         if (other.didLookForCodeToCut) {
             didLookForCodeToCut = true;
             waitsToCutCode = other.waitsToCutCode;
@@ -91,12 +96,10 @@ public:
 
     void restartAllValues();
     void restartDependentsOf(std::span<const ValueID>);
-    void restartListedValues(std::span<const ValueID>);
-
-    TypeID provenTypeByRule(ValueID id) { return computeValue(typingContext(TypeLevel::Proven), id); }
-    TypeID provenTypeOfParameterByRule(ValueID id, BlockID block, uint32_t index) { return computeParameter(typingContext(TypeLevel::Proven), id, block, index); }
-    void forEachSourceOf(ValueID id, NOESCAPE const Invocable<void(ValueID)> auto& functor) const { forEachSourceOf(m_inputs.function.at(id), functor); }
-    void forEachSourceOfParameter(BlockID, uint32_t index, NOESCAPE const Invocable<void(ValueID)> auto&) const;
+    // Among the listed values: the given ones and whatever they are typed from. Nothing else is typed.
+    void restartSourcesOf(std::span<const ValueID>, const BitVector& listed);
+    const BitVector& restartedValues() const LIFETIME_BOUND { return m_isRestarted; }
+    void restoreTypes();
 
     void solveTypes() { solve(TypeLevel::Proven); }
     void solveExpectedTypes();
@@ -109,9 +112,11 @@ private:
 
     struct StateBeforeRestart {
         TypeID type;
-        TypeID expected;
+        TypeID expectedForTyping;
         TypeID expectedOrType;
         uint32_t numberOfUpdates { 0 };
+
+        TypeID expected() const { return expectedForTyping.index() ? expectedForTyping : TypeID(); }
     };
 
     enum class SweepFlag : uint8_t {
@@ -127,6 +132,8 @@ private:
         uint32_t index;
     };
 
+    void forEachSourceOf(ValueID id, NOESCAPE const Invocable<void(ValueID)> auto& functor) const { forEachSourceOf(m_inputs.function.at(id), functor); }
+    void forEachSourceOfParameter(BlockID, uint32_t index, NOESCAPE const Invocable<void(ValueID)> auto&) const;
     void forEachSourceOf(const Instruction&, NOESCAPE const Invocable<void(ValueID)> auto&) const;
     bool isEveryValueTypedBehindItsSources() const;
     void sweep(TypeLevel);
@@ -141,7 +148,10 @@ private:
     void typeComponent(uint32_t component);
 
     void willTypeValues();
+    void willMarkRestartedValues();
     void willRestartValues();
+    const UseLists& uses();
+    ValueLocation locationForRule(ValueID) const;
     void rememberState(ValueID);
     bool isRemembered(ValueID id) const { return !m_rememberedValues.isEmpty() && m_isRemembered.quickGet(id.index()); }
     ALWAYS_INLINE Value& editTypeOf(ValueID id)
@@ -172,6 +182,7 @@ private:
     TypeID meetWithPreviousExpectation(ValueID, TypeID computed);
     TypeID joinIntoParameter(const TypingContext&, ValueID parameter, TypeID current, TypeID incoming);
     TypeID widenGrownParameter(ValueID parameter, TypeID old, TypeID grown);
+    TypeID keepRangeOfNarrowedParameter(ValueID parameter, TypeID old, TypeID narrowed);
     bool update(TypeLevel, Direction, ValueID, TypeID computed);
     void giveUpOnRounds(TypeLevel, Direction);
 
@@ -206,6 +217,7 @@ private:
     BitVector m_isRestarted;
     Vector<ValueID, 64> m_restartedValuesFromLastToFirst;
 
+    bool m_marksRestartedValues { false };
     bool m_didListRestartedValues { false };
     bool m_didMarkSourcesOfUnreachableValues { false };
     bool m_everyOtherValueIsAsTyped { false };
@@ -263,7 +275,9 @@ class PendingTyping {
 public:
     bool isEverythingPending(const ChangeLog& log) const { return m_isEverythingPending || log.hasForgottenSince(m_seen); }
     bool waitsToCutCode() const { return m_waitsToCutCode; }
+    bool holdsTypesLeftWhenRoundsRanOut() const { return m_holdsTypesLeftWhenRoundsRanOut; }
     void setWaitsToCutCode(bool waits) { m_waitsToCutCode = waits; }
+    void setHoldsTypesLeftWhenRoundsRanOut(bool holds) { m_holdsTypesLeftWhenRoundsRanOut = holds; }
     bool isEmpty(const ChangeLog& log) const { return !isEverythingPending(log) && !log.hasChangesSince(m_seen) && m_values.isEmpty() && m_blocks.isEmpty() && !m_valuesTypedFromRecordsArePending; }
 
     void didTypeEverything(const ChangeLog& log) { didTypeEverythingBefore(log.end()); }
@@ -287,6 +301,7 @@ private:
     bool m_isEverythingPending { true };
     bool m_valuesTypedFromRecordsArePending { false };
     bool m_waitsToCutCode { false };
+    bool m_holdsTypesLeftWhenRoundsRanOut { false };
 };
 
 TypePropagationOutcome typeChangedValues(const TypePropagationInputs&);

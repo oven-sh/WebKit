@@ -1,4 +1,5 @@
 # An ordinary object that nobody uses is not created: a built-in that only allocates, uses the run time and may resolve ropes leaves nothing behind. With a map of descriptors Object.create runs code of the program
+# An object of the program that is handed to Object.create is a prototype from then on, so that call stays. A prototype object of the language is one from the start
 # FORM: Prepared
 # RUN: pass EliminateDeadCode
 
@@ -7,7 +8,7 @@ layout L0 name="Holder" fields=[{key="a" declared={type=anything}}]
 function f0 name="underObjectPrototype" results=[{type=undefined}] {
     v0 = Builtin builtin=ObjectPrototype
     v1 = CallBuiltin -, v0 overload=ObjectCreate/0
-    v2 = AssumeType v1 castType=object
+    v2 = AssumeType v1 provenType=object
     Return
 # CHECK-NOT: ObjectCreate
 }
@@ -22,7 +23,7 @@ function f1 name="underNull" results=[{type=undefined}] {
 function f2 name="underAnotherObject" parameters=[{type=L0}] results=[{type=undefined}] {
     v1 = CallBuiltin -, v0 overload=ObjectCreate/0
     Return
-# CHECK-NOT: ObjectCreate
+# CHECK: = CallBuiltin -, v0 overload=ObjectCreate/0
 }
 
 function f3 name="used" results=[{type=anything}] {
@@ -37,4 +38,10 @@ function f4 name="withDescriptors" parameters=[{type=L0}] results=[{type=undefin
     v2 = CallBuiltin -, v1, v0 overload=ObjectCreate/1
     Return
 # CHECK: = CallBuiltin -, v1, v0 overload=ObjectCreate/1
+}
+
+function f5 name="underAnObjectOrNull" parameters=[{type=null|object}] results=[{type=undefined}] {
+    v1 = CallBuiltin -, v0 overload=ObjectCreate/0
+    Return
+# CHECK: = CallBuiltin -, v0 overload=ObjectCreate/0
 }

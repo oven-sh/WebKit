@@ -181,6 +181,8 @@ struct SiteLists {
 struct PlacedSites : SiteLists {
     // By function: how many stores that may add a field the functions in front of it have. One entry more than there are functions.
     Vector<uint32_t> firstStoreThatMayAdd;
+    // By store that may add a field, the functions in their sequence.
+    Vector<PlaceOfStoreThatMayAdd> placesOfStoresThatMayAdd;
     BitVector variablesNamedByCode;
     // Of a type that code hands to the run time the tables hold a record. A type that code only tests needs the cells and the names that its test compares with.
     BitVector typesInRunTimePayloads;

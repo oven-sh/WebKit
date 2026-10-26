@@ -96,7 +96,7 @@ function f7 name="NeverEnumerated" kind=BaseConstructor flags=[HasNewTarget] par
 # CHECK-NEXT: PutSlot [[finished]], -, v1 key="c"
 # CHECK-LABEL: function f6 name="Listed"
 # CHECK: v3:{{*}}= NewObject v2, v1 layout=L1 fields=[0]
-# CHECK-NEXT: [[listed]]: L1 = AssumeType v3 castType=L1
+# CHECK-NEXT: [[listed]]: L1 = AssumeType v3 provenType=L1
 # CHECK-NEXT: PutSlot [[listed]], -, v1 key="x"
 # CHECK-NEXT: PutSlotOrAdd [[listed]], -, v1 key="y"
 # CHECK-LABEL: function f7 name="NeverEnumerated"

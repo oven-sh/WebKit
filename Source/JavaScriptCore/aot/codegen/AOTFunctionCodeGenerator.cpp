@@ -50,6 +50,7 @@ namespace JSC { namespace AOT { namespace Typed {
 static_assert(defaultLimitValue(LimitID::MaxFrameSizeInBytes, hostArchitecture()) == std::numeric_limits<decltype(ImageFrame::frameSizeInUnits)>::max() * stackAlignmentBytes());
 static_assert(B3::AirLimits::maxFrameSizeWithPushedRegisters / sizeof(CPURegister) <= ImageFrame::maxCalleeSavesStart);
 static_assert(B3::AirLimits::maxBytesBelowFrameRecord / sizeof(CPURegister) <= ImageFrame::maxCalleeSavesStart);
+static_assert(B3::AirLimits::maxBytesAboveFrameRecord / stackAlignmentBytes() <= ImageFrame::maxUnitsAboveFrameRecord);
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FunctionCodeGenerator);
 
@@ -192,7 +193,7 @@ static void appendClientPhases(B3::Policy& policy, const Program& program, const
 {
     policy.clientPhases.append(mergeImpliedBranchesAfterOptimization(program, function));
     policy.clientPhases.append(narrowTruncatedPhisAfterOptimization());
-    policy.clientPhases.append(updateIntegersInMemoryAfterOptimization());
+    policy.clientPhases.append(updateIntegersInMemoryAfterOptimization(program, function));
     if (traits.savesFrameOnSuspend)
         policy.clientPhases.append(materializeSlotBasesLate());
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE

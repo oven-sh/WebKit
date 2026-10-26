@@ -151,7 +151,7 @@ Vector<FunctionID> findFunctionsSeeing(const Program& program, const ChangedReco
         Mark mark = 0;
         if (value.type)
             mark |= markAt(nodes.of(value.type));
-        if (TypeID expected = value.expected())
+        if (TypeID expected = value.expected().predicted())
             mark |= markAt(nodes.of(expected));
         return mark;
     };

@@ -18,6 +18,12 @@ public:
 
     void generateStringBuilderReserve(const ValueContext& value) { define(value, builders().reserve(value, builderOf(value), word32(value->size()))); }
     void generateStringBuilderCommit(const ValueContext& value) { builders().commit(builderOf(value), cursorOf(value)); }
+    void generateJSONResetHolders(const ValueContext&);
+    void generateJSONEnterHolder(const ValueContext&);
+    void generateJSONLeaveHolder(const ValueContext&);
+    void generateJSONListedHolders(const ValueContext&);
+    void generateJSONRestoreHolders(const ValueContext&);
+    void generateJSONEnterWatchedLevel(const ValueContext&);
     void generateJSONAppendKey(const ValueContext&);
     void generateJSONAppendToken(const ValueContext&);
     void generateJSONAppendBoolean(const ValueContext&);
@@ -31,6 +37,8 @@ private:
     StringBuilderEmitter& builders() { return emitter<StringBuilderEmitter>(); }
     CellPointer builderOf(const ValueContext& value) const { return in<CellPointer>(value->builderOperand()); }
     Pointer cursorOf(const ValueContext& value) const { return in<Pointer>(value->cursorOperand()); }
+    Pointer holdersOf(const ValueContext& value) const { return in<Pointer>(value->holdersOperand()); }
+    TypedPointer listedHoldersOf(const ValueContext&);
     void appendNumber(const ValueContext&, bool isInteger);
 };
 

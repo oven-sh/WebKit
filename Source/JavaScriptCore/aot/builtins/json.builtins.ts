@@ -1,8 +1,8 @@
 import * as b from "bun-builtins-table";
 
-const serialized = b.runsTransitively("OwnKeys", "OwnValues", "ToJSON", "ToPrimitive");
-// It refuses a BigInt and an object that holds itself.
-const treeWithoutBigInt = b.union(b.plainData, b.null, b.bool, b.f64, b.string, b.symbol);
+const serialized = [b.runsTransitively("OwnKeys", "OwnValues", "ToJSON", "ToPrimitive"), b.onlyBoxedPrimitivesConverted];
+// It refuses a BigInt, an object that holds itself and a text longer than a string may be: what is admitted reaches no string but those that the program spells out.
+const dataWithTextThatFitsInString = b.union(b.plainData, b.null, b.bool, b.f64, b.symbol);
 
 export default b.declarations(
   b.namespace(
@@ -42,12 +42,12 @@ export default b.declarations(
       ],
       stringify: [
         {
-          args: { value: b.any.admitting(treeWithoutBigInt), replacer: b.null, space: b.any.optional },
+          args: { value: b.any.admitting(dataWithTextThatFitsInString), replacer: b.null, space: b.any.optional },
           returns: b.union(b.string, b.undefined),
           capability: "js",
           throws: b.propagated,
           runsOnlyOperandCode: true,
-          uses: { value: [serialized], space: [b.runs("ToPrimitive")] },
+          uses: { value: serialized, space: [b.runs("ToPrimitive")] },
           boxedCallStub: "JSONStringify",
           implementation: b.hostCall,
         },
@@ -58,7 +58,7 @@ export default b.declarations(
           throws: true,
           runsOnlyOperandCode: true,
           uses: {
-            value: [serialized, b.retained, b.reachableValuesStoredIn(b.nativeMemory)],
+            value: [...serialized, b.retained, b.reachableValuesStoredIn(b.nativeMemory)],
             replacer: [b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", this: b.object, args: [b.string, b.any], result: "Escapes" })],
             space: [b.runs("ToPrimitive")],
           },
@@ -71,7 +71,7 @@ export default b.declarations(
           throws: true,
           runsOnlyOperandCode: true,
           uses: {
-            value: [serialized, b.readByKey(b.keysIn("replacer"), b.nativeMemory)],
+            value: [...serialized, b.readByKey(b.keysIn("replacer"), b.nativeMemory)],
             replacer: [b.runsTransitively("OwnValues", "ToPrimitive", b.named("length"))],
             space: [b.runs("ToPrimitive")],
           },

@@ -1,0 +1,74 @@
+# One location with more accesses than the limit is solved a few accesses at a time, and every read gets the value it gets when they are solved together
+# FORM: Prepared
+# OPTIONS: limit=MaxReadsPerSolve:1
+# RUN: pass EliminateRedundantReads
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="n" module=m0 declared={type=undefined|number} initialization=Undefined
+layout L0 name="Counter" fields=[{key="count" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[DeleteField, RedefineProperty, ChangeIntegrity]}
+
+function f0 name="readsInARow" results=[{type=boolean}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g0
+    v2 = GetModuleVariable variable=g0
+    v3 = GetModuleVariable variable=g0
+    v4 = StrictEq v1, v2
+    v5 = StrictEq v3, v4
+    Return v5
+# CHECK: v1: undefined|number = Upcast v0
+# CHECK-NEXT: v2: undefined|number = Upcast v0
+# CHECK-NEXT: v3: undefined|number = Upcast v0
+}
+
+function f1 name="storeBetweenReads" parameters=[{type=number}] results=[{type=boolean}] {
+    v1 = GetModuleVariable variable=g0
+    PutModuleVariable v0 variable=g0
+    v3 = GetModuleVariable variable=g0
+    v4 = GetModuleVariable variable=g0
+    v5 = StrictEq v3, v4
+    v6 = StrictEq v1, v5
+    Return v6
+# CHECK: v3: number = Upcast v0
+# CHECK-NEXT: v4: number = Upcast v0
+}
+
+function f2 name="storeInEachArm" parameters=[{type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    PutModuleVariable v0 variable=g0
+    Jump -> next b3()
+  b2():
+    PutModuleVariable v1 variable=g0
+    Jump -> next b3()
+  b3():
+    v5 = GetModuleVariable variable=g0
+    v6 = GetModuleVariable variable=g0
+    v7 = StrictEq v5, v6
+    Return v7
+# CHECK: Jump -> next b3(v0)
+# CHECK: Jump -> next b3(v1)
+# CHECK: b3([[merged2]]: number):
+# CHECK-NEXT: v5: number = Upcast [[merged2]]
+# CHECK-NEXT: v6: number = Upcast v5
+# CHECK-NOT: GetModuleVariable
+}
+
+function f3 name="edgeFromTheLoopItself" parameters=[{type=L0}, {type=boolean}] results=[{type=number}] {
+    v2 = GetSlot v0 key="count" receivers=[L0] level=Proven
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = GetSlot v0 key="count" receivers=[L0] level=Proven
+    v5 = Integer integer=1
+    v6 = Add v4, v5
+    PutSlot v0, -, v6 key="count" receivers=[L0] level=Proven
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return v6
+# CHECK: Jump -> next b1(v2)
+# CHECK-NEXT: b1([[merged3]]: number):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v4: number = Upcast [[merged3]]
+# CHECK: Branch v1 -> taken b1(v6), notTaken b2()
+}

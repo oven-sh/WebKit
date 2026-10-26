@@ -10,6 +10,8 @@
 
 #include "AOTEffectsDeclared.h"
 #include "AOTIR.h"
+#include "JSString.h"
+#include <wtf/dtoa.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -21,6 +23,32 @@ static bool mayBeString(const Type& type)
 bool hasTextByItself(const Type& type)
 {
     return !type.isNever() && type.hasOnlyPrimitives(Primitive::NumberLike | Primitive::AnyString | Primitive::BigInt);
+}
+
+// A string of the program is held in no fewer bytes than it has characters.
+uint64_t longestTextOf(const Program& program, const Type& type)
+{
+    constexpr uint64_t longestTextOfNumberLike = std::tuple_size_v<NumberToStringBuffer>;
+    static_assert(longestTextOfNumberLike >= "undefined"_s.length());
+
+    if (type.primitives & (Primitive::String | Primitive::BigInt))
+        return JSString::MaxLength;
+    uint64_t longest = type.primitives & Primitive::NumberLike ? longestTextOfNumberLike : 0;
+    for (StringID literal : type.stringLiterals)
+        longest = std::max<uint64_t>(longest, program.strings[literal].size());
+    return longest;
+}
+
+void JoinedTexts::add(const Program& program, const Type& type)
+{
+    m_haveAllTextByThemselves &= hasTextByItself(type);
+    if (m_haveAllTextByThemselves)
+        m_longest += longestTextOf(program, type);
+}
+
+bool JoinedTexts::fitInString() const
+{
+    return m_haveAllTextByThemselves && m_longest <= JSString::MaxLength;
 }
 
 // IsLooselyEqual converts an object only to compare it with a boolean, number, string, symbol or BigInt.
@@ -36,23 +64,23 @@ struct OperandClasses {
     bool areAllInert { true };
     bool mayAllBeStrings { true };
     bool hasProtocol { false };
-    bool haveAllTextByThemselves { true };
     bool hasString { false };
+    JoinedTexts texts;
 
-    void add(const Type& type, const OperandBehavior& behavior)
+    void add(const Program& program, const Type& type, const OperandBehavior& behavior)
     {
         bool runsProtocol = !behavior.protocols.isEmpty();
         convertsObjects |= runsProtocol && type.hasObjects();
         areAllInert &= runsProtocol ? type.isNumberLike() : type.withoutObjects().isNumberLike();
         mayAllBeStrings &= mayBeString(type);
         hasProtocol |= runsProtocol;
-        haveAllTextByThemselves &= hasTextByItself(type);
         hasString |= type.isAnyString();
+        texts.add(program, type);
     }
 
-    bool onlyMakesText(Opcode opcode) const
+    bool makesTextThatFitsInString(Opcode opcode) const
     {
-        return haveAllTextByThemselves && (opcode == Opcode::ToString || (opcode == Opcode::Add && hasString));
+        return texts.fitInString() && (opcode == Opcode::ToString || (opcode == Opcode::Add && hasString));
     }
 };
 
@@ -76,7 +104,7 @@ static void describeOperatorOn(const Program& program, Opcode opcode, const Type
 
     OperandClasses classes;
     forEachOperandType([&](const Type& type, uint32_t operandIndex) {
-        classes.add(type, behaviorOf(operandIndex));
+        classes.add(program, type, behaviorOf(operandIndex));
     });
 
     if (classes.areAllInert && result && !result->hasCells())
@@ -86,7 +114,7 @@ static void describeOperatorOn(const Program& program, Opcode opcode, const Type
 
     Effects own = declared;
     bool onlyComparesTexts = provesOf(opcode) == Proof::Equality && !classes.hasProtocol;
-    if (own.mayThrow && (classes.onlyMakesText(opcode) || onlyComparesTexts))
+    if (own.mayThrow && (classes.makesTextThatFitsInString(opcode) || onlyComparesTexts))
         own.mayThrow = ThrowEffect::onlyForLackOfMemory();
     description.addOwn(own);
     if (!classes.convertsObjects)

@@ -55,7 +55,7 @@ static std::optional<TypeID> parseTypeUnderTest(const Program& program, StringVi
     std::optional<uint32_t> index = parseTestNumber<uint32_t>(text.substring(1));
     if (!index || *index >= program.variables.size())
         return std::nullopt;
-    return program.at(VariableID(*index)).declared.type;
+    return program.at(VariableID(*index)).declared.written();
 }
 
 static bool printRequestedPlan(TestCommandContext& context, std::span<const String> words)

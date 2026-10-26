@@ -144,7 +144,7 @@ void removeEntryParameters(Function& function, const BitVector& removed)
             break;
         case EntryParameter::This:
             function.flags.remove(FunctionFlags::HasThis);
-            function.thisType = DeclaredType { .type = TypeTable::anything };
+            function.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
             break;
         case EntryParameter::Parameter: {
             unsigned parameter = index - firstParameter;
@@ -570,7 +570,7 @@ void removeUnusedResults(ProgramEditor& editor, const OptimizationInputs& inputs
                     continue;
                 }
                 auto& call = caller.edit(read.resultsOperand());
-                if (!call.expected())
+                if (!call.expected().predicted())
                     call.setExpected(read.expected());
                 if (!substitution)
                     substitution.emplace(caller);

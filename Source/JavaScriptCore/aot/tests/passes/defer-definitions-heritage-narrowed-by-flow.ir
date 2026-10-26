@@ -31,14 +31,14 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     PutModuleVariable v2 variable=g0
     v4 = GetModuleVariable variable=g0
     v5 = ResolveHeritage v4
-    v6 = AssumeType v5 castType=object
+    v6 = AssumeType v5 provenType=object
     v7 = NewClosure function=f2
     v8 = NewClass v7, v4, v6 layout=L1
     v9 = FinishClass v8 layout=L1
     PutModuleVariable v9 variable=g1
     v11 = GetModuleVariable variable=g0
     v12 = ResolveHeritage v11
-    v13 = Check v12 castType=object
+    v13 = Check v12 expectedType=object
     v14 = NewClosure function=f3
     v15 = NewClass v14, v11, v13 layout=L2
     v16 = FinishClass v15 layout=L2

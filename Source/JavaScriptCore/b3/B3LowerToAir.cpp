@@ -729,6 +729,65 @@ private:
         return false;
     }
 
+    // A word in memory is added to or subtracted from, and the branch asks whether that carried or borrowed.
+    bool tryAppendBranchOnCarryInMemory()
+    {
+        if (!isX86() || !m_procedure.policy().selection.extendsInstructionSelection)
+            return false;
+        Value* comparison = m_value->child(0);
+        if (comparison->opcode() != Below || comparison->child(1)->type() != Int32)
+            return false;
+        Value* compared = comparison->child(0);
+        Value* amount = comparison->child(1);
+        bool adds = compared->opcode() == Add;
+        auto* load = (adds ? compared->child(0) : compared)->as<MemoryValue>();
+        if (!load || load->opcode() != Load || load->hasFence() || load->traps() || load->owner != m_block)
+            return false;
+        auto isChangedWord = [&] (Value* value) {
+            if (value->opcode() != (adds ? Add : Sub) || value->child(0) != load || value->owner != m_block || (adds && value != compared))
+                return false;
+            return value->child(1) == amount || (amount->hasInt32() && value->child(1)->isInt32(amount->asInt32()));
+        };
+
+        MemoryValue* store = nullptr;
+        bool canMoveAccesses = false;
+        for (unsigned index = m_index; index--;) {
+            Value* value = m_block->at(index);
+            if (value == load) {
+                canMoveAccesses = true;
+                break;
+            }
+            auto* memory = value->as<MemoryValue>();
+            if (!store && memory && memory->opcode() == Store && isChangedWord(memory->child(0))) {
+                store = memory;
+                continue;
+            }
+            Effects effects = value->effects();
+            if (effects.writes || effects.fence || effects.exitsSideways || effects.reads.overlaps(load->range()))
+                break;
+        }
+        if (!canMoveAccesses || !store || store->hasFence() || store->traps() || store->lastChild() != load->lastChild() || store->offset() != load->offset())
+            return false;
+        Value* changedWord = store->child(0);
+        auto isUsedOnlyHere = [&] (Value* value, unsigned numberOfUses) {
+            return m_useCounts.numUses(value) == numberOfUses && !m_valueToTmp[value] && !m_locked.contains(value);
+        };
+        if (m_locked.contains(store) || !isUsedOnlyHere(changedWord, adds ? 2 : 1) || !isUsedOnlyHere(load, adds ? 1 : 2))
+            return false;
+
+        Air::Opcode opcode = adds ? Air::BranchAdd32 : Air::BranchSub32;
+        Arg address = addr(store);
+        bool amountIsConstant = amount->hasInt32() && isSelectedAsImmediate(comparison, amount);
+        if (!isValidForm(opcode, Arg::ResCond, amountIsConstant ? Arg::Imm : Arg::Tmp, address.kind()))
+            return false;
+        append(opcode, Arg::resCond(MacroAssembler::Carry), amountIsConstant ? Arg::imm(amount->asInt32()) : Arg(tmp(amount)), address);
+        commitInternal(comparison);
+        commitInternal(changedWord);
+        commitInternal(load);
+        commitInternal(store);
+        return true;
+    }
+
     bool crossesInterference(Value* value)
     {
         // If it's in a foreign block, then be conservative. We could handle this if we were
@@ -738,18 +797,196 @@ private:
         if (value->owner != m_value->owner)
             return true;
 
+        if (m_blockWithNextInterference == m_block) {
+            bool result = m_nextInterference[value] < m_index;
+            if (shouldValidateIRAtEachPhase(m_procedure)) [[unlikely]]
+                RELEASE_ASSERT(result == findsInterferenceBefore(value));
+            return result;
+        }
+
+        if (m_blockWithInterferenceSearches != m_block) {
+            m_blockWithInterferenceSearches = m_block;
+            m_valuesVisitedByInterferenceSearches = 0;
+        }
+        bool result = findsInterferenceBefore(value);
+        if (m_valuesVisitedByInterferenceSearches / 16 > m_block->size())
+            computeNextInterference();
+        return result;
+    }
+
+    bool findsInterferenceBefore(Value* value)
+    {
         Effects effects = value->effects();
+        const HeapRange& heapInFrontOfWhichLoadsStay = m_procedure.heapThatLoadsStayInFrontOf();
+        bool staysInFront = heapInFrontOfWhichLoadsStay && effects.reads;
 
         for (unsigned i = m_index; i--;) {
             Value* otherValue = m_block->at(i);
             if (otherValue == value)
                 return false;
-            if (effects.interferes(otherValue->effects()))
+            ++m_valuesVisitedByInterferenceSearches;
+            Effects otherEffects = otherValue->effects();
+            if (effects.interferes(otherEffects) || (staysInFront && otherEffects.writes.overlaps(heapInFrontOfWhichLoadsStay)))
                 return true;
         }
 
         ASSERT_NOT_REACHED();
         return true;
+    }
+
+    // Maps ranges of leaves to the lowest index added for any range that overlaps them.
+    class LowestOverlappingIndex {
+    public:
+        static constexpr unsigned none = UINT_MAX;
+
+        explicit LowestOverlappingIndex(unsigned numberOfLeaves)
+            : m_numberOfLeaves(roundUpToPowerOfTwo(std::max(numberOfLeaves, 1u)))
+            , m_coversNode(FillWith { }, 2 * m_numberOfLeaves, none)
+            , m_touchesNode(FillWith { }, 2 * m_numberOfLeaves, none)
+        {
+        }
+
+        void add(unsigned begin, unsigned end, unsigned index)
+        {
+            if (begin >= end)
+                return;
+            forEachAncestor(begin, end, [&](unsigned node) {
+                m_touchesNode[node] = std::min(m_touchesNode[node], index);
+            });
+            forEachCoveredNode(begin, end, [&](unsigned node) {
+                m_coversNode[node] = std::min(m_coversNode[node], index);
+                m_touchesNode[node] = std::min(m_touchesNode[node], index);
+            });
+        }
+
+        unsigned find(unsigned begin, unsigned end) const
+        {
+            unsigned result = none;
+            if (begin >= end)
+                return result;
+            forEachAncestor(begin, end, [&](unsigned node) {
+                result = std::min(result, m_coversNode[node]);
+            });
+            forEachCoveredNode(begin, end, [&](unsigned node) {
+                result = std::min(result, m_touchesNode[node]);
+            });
+            return result;
+        }
+
+    private:
+        template<typename Func>
+        void forEachAncestor(unsigned begin, unsigned end, const Func& func) const
+        {
+            for (unsigned node = begin + m_numberOfLeaves; node; node >>= 1)
+                func(node);
+            for (unsigned node = end - 1 + m_numberOfLeaves; node; node >>= 1)
+                func(node);
+        }
+
+        template<typename Func>
+        void forEachCoveredNode(unsigned begin, unsigned end, const Func& func) const
+        {
+            for (unsigned left = begin + m_numberOfLeaves, right = end + m_numberOfLeaves; left < right; left >>= 1, right >>= 1) {
+                if (left & 1)
+                    func(left++);
+                if (right & 1)
+                    func(--right);
+            }
+        }
+
+        unsigned m_numberOfLeaves;
+        Vector<unsigned> m_coversNode;
+        Vector<unsigned> m_touchesNode;
+    };
+
+    // For each value of m_block: the index of the first later value whose effects interfere with its own.
+    void computeNextInterference()
+    {
+        constexpr unsigned none = LowestOverlappingIndex::none;
+        unsigned size = m_block->size();
+        Vector<Effects> effectsAtIndex(size, [&](size_t index) { return m_block->at(index)->effects(); });
+
+        Vector<unsigned> boundaries;
+        for (const Effects& effects : effectsAtIndex) {
+            for (const HeapSet* set : { &effects.reads, &effects.writes }) {
+                for (const HeapRange& range : set->ranges()) {
+                    boundaries.append(range.begin());
+                    boundaries.append(range.end());
+                }
+            }
+        }
+        std::ranges::sort(boundaries);
+        boundaries.shrink(std::ranges::unique(boundaries).begin() - boundaries.begin());
+        auto leafAt = [&](unsigned boundary) -> unsigned {
+            return std::ranges::lower_bound(boundaries, boundary) - boundaries.begin();
+        };
+
+        LowestOverlappingIndex reads(boundaries.size());
+        LowestOverlappingIndex writes(boundaries.size());
+        auto addTo = [&](LowestOverlappingIndex& indexes, const HeapSet& set, unsigned index) {
+            for (const HeapRange& range : set.ranges())
+                indexes.add(leafAt(range.begin()), leafAt(range.end()), index);
+        };
+        auto findIn = [&](const LowestOverlappingIndex& indexes, const HeapSet& set) {
+            unsigned result = none;
+            for (const HeapRange& range : set.ranges())
+                result = std::min(result, indexes.find(leafAt(range.begin()), leafAt(range.end())));
+            return result;
+        };
+
+        unsigned nextTerminal = none;
+        unsigned nextExitsSideways = none;
+        unsigned nextControlDependent = none;
+        unsigned nextWritesLocalState = none;
+        unsigned nextReadsLocalState = none;
+        unsigned nextWritesPinned = none;
+        unsigned nextReadsPinned = none;
+        unsigned nextFence = none;
+        unsigned nextWrites = none;
+        unsigned nextWriteThatLoadsStayInFrontOf = none;
+        const HeapRange& heapInFrontOfWhichLoadsStay = m_procedure.heapThatLoadsStayInFrontOf();
+
+        m_nextInterference.resize(m_procedure.values().size());
+        for (unsigned index = size; index--;) {
+            const Effects& effects = effectsAtIndex[index];
+            bool isOrderedWithExits = effects.controlDependent || effects.writes || effects.writesPinned;
+
+            unsigned next = none;
+            auto considerIf = [&](bool applies, unsigned other) {
+                if (applies)
+                    next = std::min(next, other);
+            };
+            considerIf(effects.terminal, std::min({ nextTerminal, nextControlDependent, nextWritesLocalState, nextWrites, nextWritesPinned }));
+            considerIf(effects.terminal || effects.writesLocalState || isOrderedWithExits, nextTerminal);
+            considerIf(effects.exitsSideways, std::min({ nextControlDependent, nextWrites, nextWritesPinned }));
+            considerIf(isOrderedWithExits, nextExitsSideways);
+            considerIf(effects.writesLocalState, std::min(nextWritesLocalState, nextReadsLocalState));
+            considerIf(effects.readsLocalState, nextWritesLocalState);
+            considerIf(effects.writesPinned, std::min(nextWritesPinned, nextReadsPinned));
+            considerIf(effects.readsPinned, nextWritesPinned);
+            considerIf(effects.fence, nextFence);
+            considerIf(!!effects.reads, nextWriteThatLoadsStayInFrontOf);
+            next = std::min({ next, findIn(writes, effects.writes), findIn(reads, effects.writes), findIn(writes, effects.reads) });
+            m_nextInterference[m_block->at(index)] = next;
+
+            auto noteIf = [&](bool applies, unsigned& nearest) {
+                if (applies)
+                    nearest = index;
+            };
+            noteIf(effects.terminal, nextTerminal);
+            noteIf(effects.exitsSideways, nextExitsSideways);
+            noteIf(effects.controlDependent, nextControlDependent);
+            noteIf(effects.writesLocalState, nextWritesLocalState);
+            noteIf(effects.readsLocalState, nextReadsLocalState);
+            noteIf(effects.writesPinned, nextWritesPinned);
+            noteIf(effects.readsPinned, nextReadsPinned);
+            noteIf(effects.fence, nextFence);
+            noteIf(!!effects.writes, nextWrites);
+            noteIf(heapInFrontOfWhichLoadsStay && effects.writes.overlaps(heapInFrontOfWhichLoadsStay), nextWriteThatLoadsStayInFrontOf);
+            addTo(reads, effects.reads, index);
+            addTo(writes, effects.writes, index);
+        }
+        m_blockWithNextInterference = m_block;
     }
 
     bool LEGACY_NODELETE isMergeableValue(Value* v, B3::Opcode b3Opcode)
@@ -1976,7 +2213,7 @@ private:
         // Now append the instructions. m_insts contains them in reverse order, so we process
         // it in reverse.
         Air::BasicBlock::InstList& list = target->insts();
-        list.reserveCapacity(std::max<size_t>(list.size() + m_insts.insts.size(), 16));
+        list.reserveCapacity(list.size() + m_insts.insts.size());
         unsigned end = m_insts.insts.size();
         for (unsigned i = m_insts.starts.size(); i--;) {
             unsigned start = m_insts.starts[i];
@@ -6958,6 +7195,8 @@ private:
             if (canBeInternal(m_value->child(0))) {
                 if (tryAppendBranchOnInt32OverflowInMemory())
                     return;
+                if (tryAppendBranchOnCarryInMemory())
+                    return;
                 if (tryAppendBranchOnInt32Overflow())
                     return;
 #if CPU(ARM64)
@@ -7292,6 +7531,11 @@ private:
     bool m_isRare;
     unsigned m_index;
     Value* m_value;
+
+    B3::BasicBlock* m_blockWithInterferenceSearches { nullptr };
+    size_t m_valuesVisitedByInterferenceSearches { 0 };
+    B3::BasicBlock* m_blockWithNextInterference { nullptr };
+    IndexMap<Value*, unsigned> m_nextInterference;
 
     PatchpointSpecial* m_patchpointSpecial { nullptr };
     UncheckedKeyHashMap<CheckSpecial::Key, CheckSpecial*> m_checkSpecials;

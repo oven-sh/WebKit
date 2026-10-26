@@ -33,7 +33,7 @@ function f2 name="keyThroughCasts" parameters=[{type=anything}, {type=string}, {
     v3 = String string=","
     v4 = Strcat v1, v3, v2
     v5 = Upcast v4 castType=anything
-    v6 = Check v5 castType=string
+    v6 = Check v5 expectedType=string
     v7 = ElemGet v0, v6
     Return v7
 }

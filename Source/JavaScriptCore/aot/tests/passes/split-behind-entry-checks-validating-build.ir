@@ -1,0 +1,36 @@
+# A validating build tests what is claimed of a parameter in front of the claim. The function is split behind its checks as it is in every other build, and both copies keep the test
+# FORM: Prepared
+# OPTIONS: validate
+# RUN: pass SplitBehindEntryChecks VerifyProgram
+# STATISTIC: FunctionsSplitBehindEntryChecks = 1
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Parameter
+typesite w2 module=m0 position=30 kind=Result
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    Return
+}
+
+function f1 name="add" module=m0 position=5 flags=[IsChecked] length=2 parameters=[{type=number site=w0 flags=[IsExpected]}, {type=int[0, 1999] site=w1}] results=[{type=number site=w2 flags=[IsExpected]}] {
+  b0(v0: anything ~ number, v1: int[0, 1999]):
+    ValidateType v1 validatedType=int
+    v3 = AssumeType v1 provenType=int
+    v4 = Check v0 expectedType=number site=w0
+    v5 = Check v3 expectedType=number site=w1
+    v6 = Add v4, v5
+    v7 = NewArray v0 contents=anything
+    Return v6
+}
+# CHECK-LABEL: function f1 name="add" module=m0 position=5 role=EntryChecks
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: = CallDirect {{*}}, v1 function=[[body]]
+# CHECK: = CallDirect v0, v1 function=[[fallback]]
+# CHECK: function [[body]] name="add"
+# CHECK: b0(v0: number, v1: int[0, 1999]):
+# CHECK: ValidateType v1 validatedType=int
+# CHECK: function [[fallback]] name="add" {{*}}role=GenericVersion
+# CHECK: ValidateType v1 validatedType=int

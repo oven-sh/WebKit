@@ -204,6 +204,22 @@ static Type typeFromOperand(const BuiltinTypeInputs& inputs, BuiltinOperand oper
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static Type typeFromReceiverClasses(const BuiltinTypeInputs& inputs, NOESCAPE const Invocable<BuiltinClassID(BuiltinClassID)> auto& resultClassOf)
+{
+    return typeFromOperand(inputs, BuiltinOperand::receiver(), Type::object(), [&](const Type& receiver) {
+        if (receiver.primitives & ~Primitive::UndefinedOrNull || !receiver.hasOnlyClassObjects())
+            return Type::object();
+        Type result = Type::never();
+        for (const ClassPart& part : receiver.classes) {
+            BuiltinClassID resultClass = resultClassOf(part.builtinClass);
+            if (!resultClass)
+                return Type::object();
+            result = result.unionWith(Type::builtinClass(resultClass), inputs.context.types);
+        }
+        return result;
+    });
+}
+
 static Type typeOfIteratedValues(const TypingContext& context, const Type& iterable)
 {
     if (iterable.isAnyString())
@@ -232,15 +248,12 @@ Type typeOfBuiltinTypePart(const BuiltinTypeInputs& inputs, const BuiltinTypePar
         return instance;
     }
     case BuiltinTypePartKind::InstanceOfReceiverClass:
-        return typeFromOperand(inputs, BuiltinOperand::receiver(), Type::object(), [](const Type& receiver) {
-            const ClassPart* receiverClass = receiver.singleBuiltinClass();
-            return receiverClass ? Type::builtinClass(receiverClass->builtinClass) : Type::object();
+        return typeFromReceiverClasses(inputs, [](BuiltinClassID receiverClass) {
+            return receiverClass;
         });
     case BuiltinTypePartKind::TypedArrayOfReceiverElementType:
-        return typeFromOperand(inputs, BuiltinOperand::receiver(), Type::object(), [&](const Type& receiver) {
-            const ClassPart* receiverClass = receiver.singleBuiltinClass();
-            BuiltinClassID typedArrayClass = receiverClass ? table.typedArrayClassOf(receiverClass->builtinClass) : BuiltinClassID();
-            return typedArrayClass ? Type::builtinClass(typedArrayClass) : Type::object();
+        return typeFromReceiverClasses(inputs, [&](BuiltinClassID receiverClass) {
+            return table.typedArrayClassOf(receiverClass);
         });
     case BuiltinTypePartKind::Layout:
         return typeOfBuiltinLayout(context, part.layout);
@@ -308,7 +321,7 @@ Type typeOfBuiltinLayoutField(const Program& program, const BuiltinLayoutField& 
 
 PristineAspectSet pristineAspectsProvenBy(const Type& type, BuiltinClassID builtinClass)
 {
-    if (type.anyObject || type.anyFunction || type.layouts || !type.functions.isEmpty() || !type.builtins.isEmpty() || type.classes.size() != 1)
+    if (!type.hasOnlyClassObjects() || type.classes.size() != 1)
         return { };
     const ClassPart* part = type.findClassPart(builtinClass);
     return part ? part->provenPristine : PristineAspectSet();
@@ -393,6 +406,11 @@ private:
     bool m_isInside { true };
     bool m_isOutside { true };
     bool m_needsPristineProof { false };
+};
+
+struct FitWithoutProofs {
+    TypeFit fit { TypeFit::Unknown };
+    bool needsPristineProof { false };
 };
 
 } // anonymous namespace
@@ -593,33 +611,45 @@ TypeFit FitWalk::fitOfClassPart(const ClassPart& part)
     }));
 }
 
-OperandFit fitOf(const TypingContext& context, TypeID operandOrNotPassed, BuiltinTypeID testedID)
+static FitWithoutProofs fitWithoutProofs(const TypingContext& context, TypeID operandOrNotPassed, BuiltinTypeID testedID)
 {
     const BuiltinTable& table = context.program.builtins();
     if (!testedID || table.at(testedID).isAnything())
-        return { TypeFit::Inside, { } };
+        return { TypeFit::Inside, false };
 
     const BuiltinType& tested = table.at(testedID);
     if (std::ranges::any_of(tested.parts, isRelativeToOperands))
-        return { TypeFit::Unknown, { } };
+        return { TypeFit::Unknown, false };
     if (!operandOrNotPassed) {
         bool takesOmittedOperand = tested.primitives.containsAny({ BuiltinPrimitive::NotPassed, BuiltinPrimitive::Undefined });
-        return { takesOmittedOperand ? TypeFit::Inside : TypeFit::Outside, { } };
+        return { takesOmittedOperand ? TypeFit::Inside : TypeFit::Outside, false };
     }
 
     const Type& operand = context.types.at(operandOrNotPassed);
     if (operand.isNever())
-        return { TypeFit::Inside, { } };
+        return { TypeFit::Inside, false };
     if (!operand.isJavaScriptValue())
-        return { TypeFit::Unknown, { } };
+        return { TypeFit::Unknown, false };
 
     FitWalk walk(context, operand, tested);
     TypeFit fit = walk.run();
-    if (fit != TypeFit::Inside || !walk.needsPristineProof())
-        return { fit, { } };
+    return { fit, fit == TypeFit::Inside && walk.needsPristineProof() };
+}
+
+OperandFit fitOf(const TypingContext& context, TypeID operandOrNotPassed, BuiltinTypeID tested)
+{
+    FitWithoutProofs unproven = fitWithoutProofs(context, operandOrNotPassed, tested);
+    if (!unproven.needsPristineProof)
+        return { unproven.fit, { } };
+    const Type& operand = context.types.at(operandOrNotPassed);
     if (!operand.singleBuiltinClass())
         return { TypeFit::Unknown, { } };
-    return { TypeFit::Inside, pristineRequirementOf(table, operand, testedID) };
+    return { TypeFit::Inside, pristineRequirementOf(context.program.builtins(), operand, tested) };
+}
+
+bool fitsIfPristine(const TypingContext& context, TypeID operandOrNotPassed, BuiltinTypeID tested)
+{
+    return fitWithoutProofs(context, operandOrNotPassed, tested).fit == TypeFit::Inside;
 }
 
 Type typeOfBuiltinConstant(const BuiltinTable& table, BuiltinID id)

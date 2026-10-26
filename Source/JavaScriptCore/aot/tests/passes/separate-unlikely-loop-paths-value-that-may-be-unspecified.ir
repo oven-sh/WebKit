@@ -125,7 +125,7 @@ function f2 name="testOfEveryTurnStaysBehindTheTag" parameters=[{type=anything},
     Jump -> next b7(v11)
   b6() frequency=Unlikely:
     v12 = Call v0, -
-    v13 = AssumeType v12 castType=null|string|L0
+    v13 = AssumeType v12 provenType=null|string|L0
     Jump -> next b7(v13)
   b7(v14):
     Branch v1 -> taken b3(v7, v14), notTaken b8()

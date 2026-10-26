@@ -581,7 +581,7 @@ static void printFunctionTraces(const TablesContext& context)
             .field("implements"_s, implemented).field("visibility"_s, nameOf(trace.visibility())).field("builtinKind"_s, nameOf(trace.builtinKind()))
             .word(trace.codeType() == ModuleCode ? "module"_s : "function"_s).word(trace.isStrict ? "strict"_s : "sloppy"_s).flag("constructor"_s, trace.isConstructor)
             .flag("async"_s, trace.isAsync).flag("rejectsOnThrow"_s, trace.rejectsOnThrow).flag("namedByOwner"_s, trace.isNamedByOwner)
-            .flag("nakedConstructor"_s, trace.isNakedConstructor).flag("namedBySymbol"_s, trace.isNamedBySymbol);
+            .flag("nakedConstructor"_s, trace.isNakedConstructor).flag("namedByComputedKey"_s, trace.isNamedByComputedKey);
     }
 }
 
@@ -658,7 +658,7 @@ static void printModules(const TablesContext& context)
     printModuleRecords(context);
     auto requests = tables.moduleRequests();
     for (uint32_t index = 0; index < requests.size(); ++index)
-        RecordLine(context, "request"_s, index).field("target"_s, requests[index].targetModule()).flag("deferred"_s, requests[index].isDeferred).flag("dynamicStarExport"_s, requests[index].isDynamicStarExport);
+        RecordLine(context, "request"_s, index).field("target"_s, requests[index].targetModule()).flag("deferred"_s, requests[index].isDeferred).flag("dynamicStarExport"_s, requests[index].isDynamicStarExport).flag("hoisted"_s, requests[index].isHoisted);
     ModuleNumbers linkRequests(tables.linkRequests(), tables.modules().size());
     for (uint32_t index = 0; index < linkRequests.size(); ++index)
         RecordLine(context, "linkRequest"_s, index).field("target"_s, ModuleID(linkRequests[index]));

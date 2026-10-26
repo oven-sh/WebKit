@@ -11,11 +11,11 @@ module m0 path="main.js" displayPath="main.js" body=f5
 entry module=m0
 function f0 name="oneOfTwoMethods" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = Call v0
-    v4 = Check v3 castType=number
+    v4 = Check v3 expectedType=number
     v5 = PropGet v2 key="scaled"
-    v6 = AssumeType v5 castType=undefined|f2|f3
+    v6 = AssumeType v5 provenType=undefined|f2|f3
     v7 = Call v1
-    v8 = Check v7 castType=number
+    v8 = Check v7 expectedType=number
     v9 = Call v6, v2, v8 calleeKey="scaled"
     v10 = Add v9, v4
     Return v10
@@ -26,10 +26,10 @@ function f0 name="oneOfTwoMethods" parameters=[{type=anything}, {type=anything},
 
 function f1 name="methodNobodyKnows" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
     v3 = Call v0
-    v4 = Check v3 castType=number
+    v4 = Check v3 expectedType=number
     v5 = PropGet v2 key="scaled"
     v6 = Call v1
-    v7 = Check v6 castType=number
+    v7 = Check v6 expectedType=number
     v8 = Call v5, v2, v7 calleeKey="scaled"
     v9 = Add v8, v4
     Return v9

@@ -23,6 +23,7 @@ struct PropertyAccessQuery {
     const Type* stored { nullptr };
     uint64_t maxMembers { defaultLimitValue(LimitID::MaxAccessPlanMembers, hostArchitecture()) };
     bool isOwnLookup { false };
+    bool asksForDeclaredMember { false };
     bool isPrivate { false };
     bool isOnlyCalled { false };
     mutable bool planFollowsFromIsOnlyCalled { false };
@@ -90,6 +91,19 @@ struct PropertyAccessPlan {
 PropertyAccessPlan planPropertyAccess(const PropertyAccessContext&, const PropertyAccessQuery&);
 LimitID limitOfPropertyAccessPlan(const Program&, const PropertyAccessQuery&);
 
+// The operations that look a written name up: those to which the schema gives an access and no slot.
+constexpr OpcodeSet findNamedAccesses()
+{
+    OpcodeSet found;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (accessOf(opcode) != Access::None && accessClassOf(opcode) != AccessClass::Slot)
+            found.add(opcode);
+    }
+    return found;
+}
+
+inline constexpr OpcodeSet namedAccesses = findNamedAccesses();
+
 bool isNamedAccess(Opcode);
 PropertyKeyID keyOfNamedAccess(const Program&, const Value& access);
 
@@ -111,6 +125,7 @@ struct TestsOfEmptySlot {
 enum class OptionKind : uint8_t {
     RecordOption = 1 << 0,
     LazilyInitializedField = 1 << 1,
+    FieldWithoutStorage = 1 << 2,
 };
 std::optional<TestsOfEmptySlot> testsThatOptionLeftOutReadsAsUndefined(const PropertyAccessContext&, std::span<const LayoutID> receivers, PropertyKeyID, OptionSet<OptionKind>);
 

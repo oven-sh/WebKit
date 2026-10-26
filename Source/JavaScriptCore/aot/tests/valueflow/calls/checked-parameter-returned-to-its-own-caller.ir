@@ -16,7 +16,7 @@ function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     Return v5
 }
 function f1 name="keep" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Check v0 castType=number|string
+    v1 = Check v0 expectedType=number|string
     v2 = PropGet v1 key="length"
     Return v1
 }

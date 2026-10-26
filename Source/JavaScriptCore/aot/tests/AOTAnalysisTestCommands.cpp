@@ -279,7 +279,7 @@ static Function outlineRegion(Session& session, const Vector<BlockID>& region, c
     outlined.kind = origin.kind;
     outlined.role = FunctionRole::OutlinedBody;
     outlined.flags = origin.flags & OptionSet<FunctionFlags> { FunctionFlags::IsSloppy, FunctionFlags::IsChecked, FunctionFlags::IsHiddenInStackTraces };
-    outlined.thisType = DeclaredType { .type = TypeTable::anything };
+    outlined.thisType = DeclaredType(Proven::byPosition(TypeTable::anything));
     outlined.results = origin.results;
     outlined.capabilities = initialCapabilitiesOf(outlined);
     outlined.inlineFrames = origin.inlineFrames;
@@ -289,7 +289,7 @@ static Function outlineRegion(Session& session, const Vector<BlockID>& region, c
     BlockID entry = builder.addBlock();
     auto addEntryParameterLike = [&](ValueID inOrigin) {
         const Value& value = origin.at(inOrigin);
-        outlined.parameters.append(DeclaredType { .type = value.type });
+        outlined.parameters.append(DeclaredType(Proven::byPosition(value.type)));
         ValueID parameter = builder.addParameter(entry, value.type);
         outlined.edit(parameter).setExpected(value.expected());
         return parameter;
@@ -571,6 +571,7 @@ static void runHeatGraph(TestCommandContext& context)
     Program& program = *context.program;
     CommandWords words(context);
     FlowPreparation preparation = prepareFlow(context, words);
+    bool printsClasses = words.parseFlag("classes"_s);
     if (!words.finish())
         return;
 
@@ -580,13 +581,22 @@ static void runHeatGraph(TestCommandContext& context)
     const EffectSummaries& effects = preparation.effects ? *preparation.effects : unknownEffects;
 
     CallGraph callGraph = buildCallGraph(program, flow, context.build);
-    HeatGraph graph = buildHeatGraph(program, callGraph, flow, effects, context.build);
+    HeatGraph graphOfClasses;
+    HeatGraph graphOfRanks = buildHeatGraph(program, callGraph, flow, effects, context.build, nullptr, nullptr, nullptr, printsClasses ? &graphOfClasses : nullptr);
+    HeatGraph& graph = printsClasses ? graphOfClasses : graphOfRanks;
     graph.dump(context.out);
     Vector<double> activations = estimateActivations(graph);
     context.out.println("activations:");
     for (unsigned index = 0; index < program.functions.size(); ++index) {
         if (program.functions[index].hasBody())
             context.out.printf("f%u %.6f\n", index, activations[index]);
+    }
+    if (!printsClasses)
+        return;
+    context.out.println("entries per event:");
+    for (unsigned index = 0; index < program.functions.size(); ++index) {
+        if (double entries = graph.entriesPerEventOf(FunctionID(index)))
+            context.out.printf("f%u %.6f\n", index, entries);
     }
 }
 

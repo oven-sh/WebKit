@@ -289,10 +289,11 @@ static BitVector findFieldsCreatedByStores(const SlotPlanContext& context, const
             if (uses.rows[context.rows.rowOf(id, field)].privateDefinitionsByName)
                 rows.append(declaringRowOf(context, { id, field }));
         }
-        if (!context.isCompiledObject(id) || !layout.constructor || keysAreNeverEnumerated(program, context.inputs.flow, id))
+        bool isLiteral = layout.kind == LayoutKind::Record && !layout.constructor;
+        if (!context.isCompiledObject(id) || (!layout.constructor && !isLiteral) || keysAreNeverEnumerated(program, context.inputs.flow, id))
             return;
 
-        bool isAllocatedByRunTime = program.at(layout.constructor).kind != FunctionKind::BaseConstructor;
+        bool isAllocatedByRunTime = !isLiteral && program.at(layout.constructor).kind != FunctionKind::BaseConstructor;
         uint32_t allocationSites = uses.layouts[index].allocationSites;
         for (FieldIndex field = 0; field < layout.fields.size(); ++field) {
             if (isAllocatedByRunTime || uses.rows[context.rows.rowOf(id, field)].initializingSitesOfOwnLayout != allocationSites)

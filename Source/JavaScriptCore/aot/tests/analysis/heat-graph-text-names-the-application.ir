@@ -1,0 +1,31 @@
+# Text that is made at run time may name what the application has put under a name. A function of the library under a name that nothing reads or calls is not reached
+# FORM: AsRead
+# RUN: heat-graph flow classes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="library.js" displayPath="library.js" flags=[IsLibrary]
+entry module=m0
+layout L0 name="Methods" fields=[{key="ofApplication" declared={type=anything} flags=[IsRequired]}, {key="ofLibrary" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f2
+    v3 = NewObject -, v1, v2 layout=L0 fields=[0, 1]
+    PropSet v0, v3 key="methods" mode=Strict
+    v5 = PropGet v0 key="text" [isFreeName]
+    v6 = PropGet v0 key="eval" [isFreeName]
+    v7 = Call v6, -, v5
+    Return
+}
+function f1 name="ofApplication" results=[{type=anything}] {
+    Return
+}
+function f2 name="ofLibrary" module=m1 results=[{type=anything}] {
+    Return
+}
+# CHECK: host: f0*1.000000 f1*10.000000
+# CHECK: activations:
+# CHECK-NEXT: f0 1.000000
+# CHECK-NEXT: f1 10.000000
+# CHECK-NEXT: f2 0.000000

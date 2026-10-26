@@ -40,7 +40,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="publish" [isFreeName]
     v2 = PropGet v0 key="input" [isFreeName]
-    v3 = Check v2 castType=number
+    v3 = Check v2 expectedType=number
     v4 = NewObject -, v3 layout=L0 fields=[0]
     v5 = NewObject -, v3 layout=L1 fields=[0]
     v6 = NewObject -, v3, v3, v3, v3, v4, v5 layout=L2 fields=[0, 1, 2, 3, 4, 5]

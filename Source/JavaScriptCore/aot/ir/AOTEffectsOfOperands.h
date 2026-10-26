@@ -37,6 +37,11 @@ struct OperandBehavior {
     bool membersAreOfObjectsOnly { false };
     bool functionsAreConvertedUnderNamesOnly { false };
     std::span<const BuiltinName> convertedMembers { };
+    bool isDescribedWhenRefused { false };
+    BuiltinTypeID accepted { };
+    bool onlyBoxedPrimitivesAreConverted { false };
+
+    bool saysTheSameFromTheSameLists(const OperandBehavior&) const;
 };
 
 struct OperandSummary {
@@ -93,12 +98,14 @@ inline constexpr Effects listReadEffects = [] {
 OperandBehavior declaredBehaviorOf(Opcode, uint32_t operandIndex);
 OperandBehavior declaredBehaviorOf(TerminatorKind, uint32_t operandIndex);
 OperandBehavior declaredBehaviorOf(const BuiltinOverload&, BuiltinOperand);
+// How the host describes a value in the message of an error. Null where the table has no host.
+const BuiltinParameter* findParameterDescribedInMessages(const BuiltinTable&);
 bool mayFailOnOperand(const Program&, const BuiltinParameter&, const Type& operand);
 bool isDescribedByModel(const BuiltinOverload&);
 Vector<BuiltinName> namesReadFromOperands(const BuiltinTable&);
 
 void addOperandCode(const EffectContext&, const Type& operand, const OperandBehavior&, EffectsOnEdges&);
-void describeOverload(const Program&, BuiltinOverloadID, BuiltinCallForm, const Type* receiver, std::span<const TypeID> arguments, EffectDescription&);
+void describeOverload(const Program&, BuiltinOverloadID, BuiltinCallForm, TypeID receiver, std::span<const TypeID> arguments, EffectDescription&);
 
 enum class UsesAskedFor : uint8_t { All, AllButPassesToUserCode };
 

@@ -33,6 +33,7 @@ unsigned simplifyPrimitiveCalls(FunctionPassContext&, const BuiltinCallSites&);
 unsigned simplifyInt32Conversions(FunctionPassContext&);
 unsigned simplifyStringReads(FunctionPassContext&, const BuiltinCallSites&);
 unsigned simplifyConcatenatingCalls(FunctionPassContext&, const BuiltinCallSites&);
+unsigned replaceTemplateObjectsReadByPosition(FunctionPassContext&);
 unsigned simplifyMatches(FunctionPassContext&, const BuiltinCallSites&);
 unsigned simplifyLastPiecesOfSplits(FunctionPassContext&, const BuiltinCallSites&);
 unsigned leaveURLsUnbuilt(FunctionPassContext&);

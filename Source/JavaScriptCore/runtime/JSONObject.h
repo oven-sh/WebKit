@@ -59,8 +59,7 @@ private:
 };
 
 JS_EXPORT_PRIVATE JSValue JSONParse(JSGlobalObject*, StringView);
-// No string is made of the bytes as a whole. An invalid sequence stands for U+FFFD. Empty without an exception also for values
-// nested so deeply that only JSONParse() of a string parses them.
+// Bytes that are all ASCII are parsed where they are. Empty without an exception for any other bytes: they are parsed as a string.
 JS_EXPORT_PRIVATE JSValue JSONParse(JSGlobalObject*, std::span<const char8_t> utf8);
 enum class CompiledJSONParser : bool { Try, Skip };
 JSValue JSONParseWithException(JSGlobalObject*, StringView, CompiledJSONParser = CompiledJSONParser::Try);
@@ -70,7 +69,7 @@ JS_EXPORT_PRIVATE String JSONStringify(JSGlobalObject*, JSValue, unsigned indent
 #if USE(BUN_JSC_ADDITIONS)
 struct StreamingJSONParseResult {
     size_t charactersConsumed;
-    // NeedsText: nothing was parsed, and the bytes are to be parsed as a string.
+    // NeedsText: the bytes are not all ASCII. Nothing was parsed, and they are to be parsed as a string.
     enum class Status : uint8_t { Complete, NeedMoreData, Error, NeedsText } status;
 };
 

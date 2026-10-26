@@ -118,6 +118,8 @@ struct FunctionPassContext {
     bool isBehindRounds { false };
     bool hasUsesAwaitingExpansion { false };
     bool hasCountersConvertedSinceTestsWerePlaced { false };
+    // The opcodes of the values in the blocks where the run of a pass begins, for a pass that the runner starts by what the body holds.
+    const OpcodeSet* opcodesWhereRunBegins { nullptr };
     // Set by a pass in a run that changes the function: the analyses that describe the function as it is behind the run. The runner empties it in front of every run and drops what the row of the pass names, less these.
     AnalysisSet keptAnalyses { };
     Vector<uint64_t> tracesOfAllocationsNotWorthSinking;
@@ -161,6 +163,7 @@ struct FunctionPassContext {
 using FunctionPass = PassOutcome (*)(FunctionPassContext&);
 
 #define FOR_EACH_AOT_FUNCTION_PASS(v) \
+    v(ListLiveValuesAtSuspensions, listLiveValuesAtSuspensions) \
     v(TypeValues, typeValues) \
     v(CheckInt32Promises, checkInt32Promises) \
     v(CheckRegExpLiterals, checkRegExpLiterals) \
@@ -185,6 +188,7 @@ using FunctionPass = PassOutcome (*)(FunctionPassContext&);
     v(SeparateUnlikelyLoopPaths, separateUnlikelyLoopPaths) \
     v(ConvertCountersToIntegers, convertCountersToIntegers) \
     v(RemoveDeadCountedLoops, removeDeadCountedLoops) \
+    v(UnrollShortLoops, unrollShortLoops) \
     v(FuseArrayChains, fuseArrayChains) \
     v(FuseGeneratorLoops, fuseGeneratorLoops) \
     v(StartGeneratorsAtFirstStep, startGeneratorsAtFirstStep) \

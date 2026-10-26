@@ -99,7 +99,7 @@ function findContentsProblems({ value }: DirectParameterSpec, parameter: ModelPa
       return holdsOnlyViews(accepted) ? [] : [`${name}: ${value} is for typed arrays and DataViews, and for nothing else`];
     }
     case "Characters":
-      if (uses.some(use => use !== "Inspects") || !runsNoCodeOf(parameter) || roles.join() !== "ReadAsCharacters")
+      if (uses.some(use => use !== "Inspects") || !runsNoCodeOf(parameter) || roles.filter(role => role !== "DescribedWhenRefused").join() !== "ReadAsCharacters")
         return [`${name}: Characters is for a string that is read as characters, and for nothing else`];
       return holdsOnlyPrimitive({ ...accepted, stringLiterals: [] }, "String") ? [] : [`${name}: Characters is for strings`];
     default:

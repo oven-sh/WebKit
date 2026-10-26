@@ -37,7 +37,7 @@ function f0 name="theLoopAloneHasTheList" parameters=[{type=object}, {type=anyth
 
 function f1 name="throughACastThatTestsNothing" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
     v2 = CallBuiltin -, v0 overload=ObjectEntries/0
-    v3 = AssumeType v2 castType=Array<object>
+    v3 = AssumeType v2 provenType=Array<object>
     v4 = IteratorOpen v3
     Jump -> next b1()
   b1():

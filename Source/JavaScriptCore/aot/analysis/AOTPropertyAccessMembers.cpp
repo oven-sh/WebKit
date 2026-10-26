@@ -11,6 +11,7 @@
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFlowResults.h"
+#include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessInternal.h"
 #include <algorithm>
 #include <utility>
@@ -152,6 +153,7 @@ static bool isPrivateName(const Program& program, PropertyKeyID key)
     case PropertyKeyKind::PrivateName:
     case PropertyKeyKind::EnginePrivateName:
         return true;
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::Text:
     case PropertyKeyKind::WellKnownSymbol:
     case PropertyKeyKind::CreatedSymbol:
@@ -342,23 +344,40 @@ MemberAnswer findBuiltinObjectMember(const PropertyAccessContext& context, Built
     }
 }
 
+static MemberAnswer findOnce(const PropertyAccessContext& context, const PropertyAccessCache::InheritedMemberKey& key, NOESCAPE const Invocable<MemberAnswer()> auto& find)
+{
+    PropertyAccessCache* cache = context.program.propertyAccessCache();
+    if (!cache || TypeTable::isProvisional(key.key) || TypeTable::isProvisional(key.declaredClass))
+        return find();
+
+    const MemberAnswer& kept = findOrCompute(cache->inheritedMembers, key, computeHash(key.declaredClass, key.builtinClass, key.isOfInstances, key.key, key.access, key.flow), [&] {
+        return PropertyAccessCache::InheritedMember { key, find() };
+    }).value;
+    RELEASE_ASSERT(!cache->checksAnswers || kept == find());
+    return kept;
+}
+
 static MemberAnswer findMemberFromPrototypeOf(const PropertyAccessContext& context, BuiltinClassID builtinClass, PropertyKeyID key, Access access)
 {
     if (!builtinClass)
         return MemberAnswer::unknown(UnprovenCause::UnknownBase);
     if (keyLookupOf(context.program, key) != KeyLookup::Ordinary)
         return MemberAnswer::unknown(UnprovenCause::Unknown);
-    return findBuiltinObjectMember(context, context.program.builtins().at(builtinClass).prototype, key, access);
+    return findOnce(context, { { }, builtinClass, false, key, access, context.flow }, [&] {
+        return findBuiltinObjectMember(context, context.program.builtins().at(builtinClass).prototype, key, access);
+    });
 }
 
 MemberAnswer findBuiltinInstanceMember(const PropertyAccessContext& context, BuiltinClassID builtinClass, PropertyKeyID key, Access access)
 {
     if (!builtinClass)
         return MemberAnswer::unknown(UnprovenCause::UnknownBase);
-    BuiltinMemberName name = builtinMemberNameOf(context.program, key);
-    if (name && context.program.builtins().isRedefinedBelow(builtinClass, name.name))
-        return MemberAnswer::unknown(UnprovenCause::UnknownBase);
-    return findMemberFromPrototypeOf(context, builtinClass, key, access);
+    return findOnce(context, { { }, builtinClass, true, key, access, context.flow }, [&] {
+        BuiltinMemberName name = builtinMemberNameOf(context.program, key);
+        if (name && context.program.builtins().isRedefinedBelow(builtinClass, name.name))
+            return MemberAnswer::unknown(UnprovenCause::UnknownBase);
+        return findMemberFromPrototypeOf(context, builtinClass, key, access);
+    });
 }
 
 MemberAnswer finishAtChainEnd(MemberAnswer&& walked, MemberAnswer&& chainEnd)
@@ -465,8 +484,12 @@ static bool isTupleLayout(const Program& program, LayoutID id)
 static MemberAnswer findInheritedMember(const PropertyAccessContext& context, const MemberQuery& query)
 {
     switch (context.program.at(query.layout).kind) {
-    case LayoutKind::Instance:
-        return findPrototypeMember(context, { MemberStart::ClassPrototype, declaredLayoutOf(context.program, query.layout), query.key, query.access, false });
+    case LayoutKind::Instance: {
+        LayoutID declaredClass = declaredLayoutOf(context.program, query.layout);
+        return findOnce(context, { declaredClass, { }, false, query.key, query.access, context.flow }, [&] {
+            return findPrototypeMember(context, { MemberStart::ClassPrototype, declaredClass, query.key, query.access, false });
+        });
+    }
     case LayoutKind::Record:
     case LayoutKind::Container:
         return findMemberFromPrototypeOf(context, BuiltinClasses::Object, query.key, query.access);
@@ -546,7 +569,9 @@ MemberAnswer findInstanceMember(const PropertyAccessContext& context, const Memb
     bool mayGainOwnProperty = ownPropertyGainOf(program, query.layout, key) != OwnPropertyGain::Impossible;
     MemberAnswer walked;
     if (query.isOwnLookup || query.access == Access::Define || keyKind == PropertyKeyKind::PrivateName) {
-        if (mayGainOwnProperty)
+        if (mayGainOwnProperty && query.isOwnLookup)
+            requireLookupPastObject(program, walked, findInheritedMember(context, query), query, Proof::NoExtraProperties, UnprovenCause::OwnPropertyHidesMember);
+        else if (mayGainOwnProperty)
             addReceiverProof(walked, Proof::NoExtraProperties, UnprovenCause::OwnPropertyHidesMember);
         walked.kind = MemberKind::Absent;
         setLevel(walked);

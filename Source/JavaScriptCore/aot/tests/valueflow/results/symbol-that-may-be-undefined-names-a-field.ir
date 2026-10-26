@@ -4,7 +4,7 @@
 # RUN: valueflow-apply
 # CHECK: layout L0 name="Holder" fields=[{key="a"
 # CHECK-NOT: key="undefined"
-# CHECK: {key=symbol("state")@m1:100 declared={type=int} flags=[IsAddedLate
+# CHECK: {key=symbol("state")@m1:100 declared={type=1} flags=[IsAddedLate
 # CHECK-NOT: key="undefined"
 # CHECK: layout L1
 # CHECK: ElemSet {{*}}, [[key]],

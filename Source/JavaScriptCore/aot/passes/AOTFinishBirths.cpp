@@ -260,8 +260,8 @@ private:
             return { };
         LayoutSetID layouts = m_program.typeOf(m_function, m_function.at(entryBlock).parameters[*thisParameter]).layouts;
         // Where the check of `this` has become a test at its uses.
-        if (!layouts && isInitializer && m_function.thisType.type)
-            layouts = m_context.types.at(m_function.thisType.type).layouts;
+        if (!layouts && isInitializer && m_function.thisType.written())
+            layouts = m_context.types.at(m_function.thisType.expected().predicted()).layouts;
         if (!layouts)
             return { };
         Layouts result;
@@ -275,7 +275,7 @@ private:
     // The constructor of the parent class has run in front of the initializer of a derived class.
     bool initializerMayMeetObjectSeenByOthers() const
     {
-        LayoutSetID layouts = m_function.thisType.type ? m_context.types.at(m_function.thisType.type).layouts : LayoutSetID();
+        LayoutSetID layouts = m_function.thisType.written() ? m_context.types.at(m_function.thisType.expected().predicted()).layouts : LayoutSetID();
         return !layouts || std::ranges::none_of(m_program.at(layouts).members, [&](LayoutID layout) {
             return !m_program.at(declaredLayoutOf(m_program, layout)).has(LayoutFlags::HasHeritage);
         });

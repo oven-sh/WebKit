@@ -29,6 +29,12 @@ public:
     JS_EXPORT_PRIVATE explicit RegionCloner(Procedure&);
 
     JS_EXPORT_PRIVATE void addBlock(BasicBlock*);
+    void withdrawBlock(BasicBlock* block)
+    {
+        RELEASE_ASSERT(m_step == Step::Declaring);
+        m_sources.remove(block);
+        m_declaredBlocks.remove(block);
+    }
     bool contains(BasicBlock* block) const { return m_sources.contains(block); }
     bool isEmpty() const { return m_sources.isEmpty(); }
 

@@ -950,8 +950,11 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
     size_t asyncStackTraceInsertPos = 0;
     EntryFrame* previousEntryFrame = start.entryFrameOfFramesAbove;
     size_t previousEntryFrameStackTraceInsertPos = results.size();
+    EntryFrame* entryFrameWhoseContextWaits = nullptr;
     auto updateAsyncStackTraceOriginGenerator = [&]() -> void {
         ASSERT(Options::useAsyncStackTrace());
+        if (previousEntryFrame == entryFrameWhoseContextWaits)
+            return;
         if (JSCell* awaiter = asyncFunctionIn(vmEntryRecord(previousEntryFrame)->m_context)) {
             asyncStackTraceOriginGenerator = awaiter;
             asyncStackTraceInsertPos = previousEntryFrameStackTraceInsertPos;
@@ -986,6 +989,12 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
                 start.compiledFramesBelow->emplace(visitor.compiledFrames());
             return IterationStatus::Done;
         }
+        if (auto classFrame = AOT::tryGetFrameOfClassCalledWithoutNew(vm, visitor->callFrame())) [[unlikely]] {
+            results.append(StackFrame(*classFrame));
+            previousEntryFrame = currentEntryFrame;
+            previousEntryFrameStackTraceInsertPos = results.size();
+            return IterationStatus::Continue;
+        }
 #endif
 
         if (!visitor->isImplementationVisibilityPrivate()) {
@@ -1003,7 +1012,14 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
 #if ENABLE(AOT)
             } else if (visitor->isCompiledFrame()) {
                 const AOT::CompiledFrame& frame = visitor->compiledFrame();
-                results.append(StackFrame(AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall() }));
+                if (visitor->isOfBuiltinCalledByCompiledFrame())
+                    results.append(StackFrame(AOT::TraceFrame { frame.code, AOT::functionInFramesOf(frame.calledBuiltin), frame.callSite, !!frame.inlineFrame, false }));
+                else {
+                    std::optional<JSObject*> callee = visitor.compiledFrames().recordedCallee();
+                    results.append(StackFrame(vm, owner, AOT::TraceFrame { frame.code, frame.function, frame.callSite, !!frame.inlineFrame, visitor->isConstructCall(), false, false, visitor.compiledFrames().calleeWasEntered(), callee && !*callee }, callee.value_or(nullptr)));
+                }
+                if (Options::useAsyncStackTrace() && !frame.inlineFrame && AOT::FunctionDescription(frame.function).isAsync() && visitor.compiledFrames().isAboveFramesThatWait())
+                    entryFrameWhoseContextWaits = currentEntryFrame;
 #endif
 #if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
             } else if (!!visitor->codeBlock())
@@ -1021,9 +1037,9 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
     };
 #if ENABLE(AOT)
     if (start.compiledFrameExit)
-        StackVisitor::visitFrom(vm, *start.compiledFrameExit, appendFrame);
+        StackVisitor::visitFrom(vm, *start.compiledFrameExit, appendFrame, StackVisitor::CompiledFrameVisit::ShownFramesAndCalledBuiltins);
     else
-        StackVisitor::visitWithCompiledFrames(start.callFrame, vm, appendFrame);
+        StackVisitor::visitWithCompiledFrames(start.callFrame, vm, appendFrame, false, StackVisitor::CompiledFrameVisit::ShownFramesAndCalledBuiltins);
 #else
     StackVisitor::visit(start.callFrame, vm, appendFrame);
 #endif
@@ -1059,9 +1075,11 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
 String Interpreter::stackTraceAsString(VM& vm, const Vector<StackFrame>& stackTrace)
 {
     // FIXME: JSStringJoiner could be more efficient than StringBuilder here.
+    static constexpr unsigned expectedLengthOfFrame = 96;
     StringBuilder builder;
+    builder.reserveCapacity(std::min<size_t>(stackTrace.size() * expectedLengthOfFrame, String::MaxLength));
     for (unsigned i = 0; i < stackTrace.size(); i++) {
-        builder.append(String(stackTrace[i].toString(vm)));
+        stackTrace[i].appendTo(vm, builder);
         if (i != stackTrace.size() - 1)
             builder.append('\n');
     }
@@ -1253,7 +1271,7 @@ public:
 #endif
 
 #if ENABLE(AOT)
-    NEVER_INLINE IterationStatus unwindCompiledFrames(AOT::CompiledFrameIterator& frames) const
+    NEVER_INLINE IterationStatus unwindCompiledFrames(const AOT::CompiledFrameIterator& frames) const
     {
         m_codeBlock = nullptr;
         AOT::CompiledUnwindResult result = AOT::unwindCompiledFrames(m_vm, frames, *m_vmEntryRecord, m_isTermination);
@@ -1263,7 +1281,7 @@ public:
             m_handler = CatchInfo(result.handler);
             break;
         case AOT::CompiledUnwindStatus::LeftCompiledCode:
-            m_exitFromCompiledCode = frames.exit();
+            m_exitFromCompiledCode = result.exit;
             break;
         case AOT::CompiledUnwindStatus::ReachedEntryFrame:
             break;

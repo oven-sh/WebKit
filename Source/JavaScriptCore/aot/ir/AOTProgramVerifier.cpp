@@ -180,17 +180,17 @@ std::optional<InternalError> findTypeError(const Program& program, TypeID id, Re
 
 bool isValidPosition(const Program& program, const DeclaredType& declared)
 {
-    if (!declared.type)
+    if (!declared.written())
         return false;
-    if (!declared.flags.contains(PositionFlags::IsInt32Promise))
+    if (!declared.has(PositionFlags::IsInt32Promise))
         return true;
-    const Type& type = program.at(declared.type);
-    return !declared.flags.contains(PositionFlags::IsExpected) && !(type.primitives & Primitive::Double) && type.integers.isSubsetOf(Range::int32());
+    const Type& type = program.at(declared.written());
+    return !declared.isExpected() && !(type.primitives & Primitive::Double) && type.integers.isSubsetOf(Range::int32());
 }
 
 bool canOutliveActivation(const Program& program, const DeclaredType& declared)
 {
-    std::optional<OpaqueKind> opaque = program.at(declared.type).opaque;
+    std::optional<OpaqueKind> opaque = program.at(declared.written()).opaque;
     return !opaque || !isFunctionLocal(*opaque);
 }
 
@@ -369,20 +369,7 @@ std::optional<LayoutID> findCyclicLayoutChain(const Program& program, const Step
 
 } // anonymous namespace
 
-bool hoistsFunctionsIntoVariables(ModuleKind kind)
-{
-    switch (kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::RuntimeSource:
-        return true;
-    case ModuleKind::Data:
-    case ModuleKind::Runtime:
-    case ModuleKind::External:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
+bool hoistsFunctionsIntoVariables(ModuleKind kind) { return hoistsFunctionsIntoVariablesOf(kind); }
 
 bool isValidPropertyKey(const PropertyKey& key)
 {
@@ -390,6 +377,7 @@ bool isValidPropertyKey(const PropertyKey& key)
     switch (key.kind) {
     case PropertyKeyKind::Text:
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::RegisteredSymbol:
         return key.text && !key.owner && !key.symbol && !hasCreationSite;
     case PropertyKeyKind::PrivateName:

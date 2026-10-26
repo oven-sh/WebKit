@@ -191,7 +191,7 @@ struct FrontWords {
     const PackedSlot* plane;
 };
 
-using SlotHandlers = void*[numberOfSlotHandlerTables][numberOfSlotKinds];
+using SlotHandlers = void*[numberOfSlotHandlerTables][numberOfSlotKindsWithHandlers];
 
 struct PropertyCacheWords {
     FrontWords front[numberOfSlotAccesses];
@@ -205,6 +205,8 @@ struct PropertyCacheWords {
     const NameOfText* namesOfTexts;
     uint8_t missIsDueForFiling;
     uint8_t placesSayAbsence;
+    // A place for stores was filled while nobody watched the Structure for replacements. Such a place holds until somebody does.
+    uint8_t placesTakeReplacementsAsUnwatched;
     const void* infoOfClassPrototypes;
     SiteCacheState* siteCacheStates;
     uint8_t missesOfEmptySites;
@@ -226,7 +228,7 @@ struct PropertyCacheWords {
 static_assert(sizeof(HashedSlot) == 1u << HashedSlot::sizeShift && alignof(HashedSlot) == sizeof(HashedSlot));
 static_assert(OBJECT_OFFSETOF(HashedSlot, slot) == HashedSlot::offsetOfSlot() && OBJECT_OFFSETOF(HashedSlot, key) == HashedSlot::offsetOfKey());
 static_assert(std::is_trivially_copyable_v<HashedSlot> && std::is_aggregate_v<HashedSlot>);
-static_assert(numberOfSlotAccesses <= HashedSlot::accessMask + 1 && alignof(UniquedStringImpl) > HashedSlot::accessMask);
+static_assert(static_cast<unsigned>(SlotAccess::Delete) <= HashedSlot::accessMask && alignof(UniquedStringImpl) > HashedSlot::accessMask);
 static_assert(hasOneBitSet(HashedSlot::ways));
 static_assert(sizeof(FrontWords) == 2 * sizeof(void*) && OBJECT_OFFSETOF(FrontWords, plane) == sizeof(void*));
 static_assert(1u << StructureRowWords::wordShift == sizeof(uint32_t));

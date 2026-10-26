@@ -22,7 +22,9 @@
 #include "AOTGuardAvailability.h"
 #include "AOTIRBuilder.h"
 #include "AOTInt32Conversions.h"
+#include "AOTKnownClosures.h"
 #include "AOTKnownValue.h"
+#include "AOTObservableOperations.h"
 #include "AOTProgramPasses.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTPropertyAccessReceivers.h"
@@ -30,6 +32,7 @@
 #include "AOTResultRules.h"
 #include "AOTRewrite.h"
 #include "AOTRuleSupport.h"
+#include "AOTSchemaOperandIndexes.h"
 #include "AOTScratchRealm.h"
 #include "AOTSort.h"
 #include "AOTStringArena.h"
@@ -37,7 +40,6 @@
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreshold.h"
 #include "AOTTypePropagation.h"
-#include "AOTValueFlowHeapTables.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
@@ -441,7 +443,7 @@ static std::optional<int64_t> distanceAddedTo(const Program& program, const Func
 
 KnownValue evaluateOperation(const Program& program, const Function& function, const Value& value, std::array<KnownValue, 2> operands)
 {
-    RELEASE_ASSERT(opcodesWithKnownValueRules.contains(value.opcode));
+    RELEASE_ASSERT(hasKnownValueRuleOf(value.opcode));
     auto [left, right] = operands;
     bool areNumbers = left.isNumber() && right.isNumber();
     switch (value.opcode) {
@@ -453,12 +455,13 @@ KnownValue evaluateOperation(const Program& program, const Function& function, c
     case Opcode::String:
         return evaluateConstant(value);
     case Opcode::Upcast:
+    case Opcode::Expect:
     case Opcode::NarrowByField:
     case Opcode::AssumeType:
     case Opcode::CheckInitialized:
         return left;
     case Opcode::Check:
-        return evaluateTypeTest(program, left, program.at(value.castType())) == KnownBoolean::True ? left : KnownValue();
+        return evaluateTypeTest(program, left, program.at(value.expectedType().predicted())) == KnownBoolean::True ? left : KnownValue();
     case Opcode::RequireObjectCoercible:
         return left.isNullish() ? KnownValue() : left;
     case Opcode::RequireObject:
@@ -489,13 +492,13 @@ KnownValue evaluateOperation(const Program& program, const Function& function, c
             return { };
         if (hasInt32Magnitude(left) && hasInt32Magnitude(right))
             return KnownValue::integer(left.asInteger() - right.asInteger());
-        return KnownValue::number(left.asNumber() - right.asNumber());
+        return KnownValue::computedNumber(left.asNumber() - right.asNumber());
     case Opcode::Add:
         if (!areNumbers)
             return { };
         if (hasInt32Magnitude(left) && hasInt32Magnitude(right))
             return KnownValue::integer(left.asInteger() + right.asInteger());
-        return KnownValue::number(left.asNumber() + right.asNumber());
+        return KnownValue::computedNumber(left.asNumber() + right.asNumber());
     case Opcode::BitAnd:
         if (areNumbers)
             return KnownValue::integer(toInt32(left.asNumber()) & toInt32(right.asNumber()));
@@ -718,6 +721,7 @@ struct DeadCodeEliminator {
     BitVector isActive { };
     bool tookProofsFromEdges { false };
     bool madeEdgesAlikeOrBlocksEmpty { false };
+    bool tookArgumentsFromEmptyBlocks { false };
     const bool checksRules { context.build.options().verifiesAfterEveryPass };
 
     void mark(ValueID id)
@@ -778,10 +782,6 @@ struct DeadCodeEliminator {
 
     bool staysUnused(ValueID id, const Value& value, const OpcodeRules& rules, Position position)
     {
-        // The host makes such a member when it is first read, with code of the library, and what that code does can be seen.
-        if (value.opcode == Opcode::Builtin && isMadeWithCodeOfLibrary(context.program.builtins(), value.builtin()))
-            return true;
-
         switch (rules.unusedValue) {
         case UnusedValueRule::IsRemoved:
             return false;
@@ -969,6 +969,11 @@ struct DeadCodeEliminator {
         return deadEntries;
     }
 
+    static bool isEmptyBlockThatJumps(const Block& block)
+    {
+        return block.values.isEmpty() && block.parameters.isEmpty() && block.terminator.kind == TerminatorKind::Jump;
+    }
+
     bool sweep()
     {
         // Whatever is dead at the end was left behind as dead by the walk, or found dead by an edge.
@@ -993,13 +998,14 @@ struct DeadCodeEliminator {
                         continue;
                     tookProofsFromEdges |= !!numberOfEdgeResults(function, edges[index].from, edges[index].targetIndex);
                     madeEdgesAlikeOrBlocksEmpty |= index && edges[index - 1].from == edges[index].from;
+                    tookArgumentsFromEmptyBlocks |= isEmptyBlockThatJumps(function.at(edges[index].from));
                 }
                 builder.removeParameters(id, deadParameters);
             }
             if (deadValues.isEmpty() && deadParameters.isEmpty())
                 continue;
             changed = true;
-            madeEdgesAlikeOrBlocksEmpty |= block.values.isEmpty() && block.parameters.isEmpty() && block.terminator.kind == TerminatorKind::Jump;
+            madeEdgesAlikeOrBlocksEmpty |= isEmptyBlockThatJumps(block);
         }
         RELEASE_ASSERT(changed);
         return true;
@@ -1024,7 +1030,7 @@ PassOutcome eliminateDeadCode(FunctionPassContext& context)
     context.keptAnalyses = allAnalyses;
     // With fewer objects left, the escape analysis may prove more on a second run.
     context.reachedFixpoint = !usedEscapeAnalysis;
-    bool mayHaveGivenControlFlowWork = eliminator.madeEdgesAlikeOrBlocksEmpty || eliminator.cfg.hasHandlers();
+    bool mayHaveGivenControlFlowWork = eliminator.madeEdgesAlikeOrBlocksEmpty || eliminator.tookArgumentsFromEmptyBlocks || eliminator.cfg.hasHandlers();
     context.passesLeftIdle = { };
     if (!eliminator.tookProofsFromEdges) {
         context.passesLeftIdle.add(PassID::PropagateBranchConditions);
@@ -1105,19 +1111,13 @@ enum class FoldingRule : uint8_t {
 
 using FoldingRules = OptionSet<FoldingRule>;
 
-constexpr OpcodeSet opcodesWithOwnFoldingRule {
-    Opcode::TypeTest, Opcode::IsClosureOf, Opcode::StrictEq, Opcode::Eq, Opcode::ToBoolean, Opcode::ToString, Opcode::ToPropertyKey,
-    Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas, Opcode::ElemDelete, Opcode::ElemDefine, Opcode::SuperGet, Opcode::SuperSet,
-    Opcode::CopyDataProperties, Opcode::CallBuiltin, Opcode::HasInPrototypeChain,
-};
-
 constexpr std::array<FoldingRules, numberOfOpcodes> foldingRulesOfOpcodes = [] {
     std::array<FoldingRules, numberOfOpcodes> result { };
     for (Opcode opcode : allMembersOf<Opcode>) {
         FoldingRules& rules = result[static_cast<unsigned>(opcode)];
         if (!foldableOpcodes.contains(opcode))
             continue;
-        if (opcodesWithKnownValueRules.contains(opcode))
+        if (hasKnownValueRuleOf(opcode))
             rules.add(FoldingRule::KnownOperands);
         if (isCastOrConversion(opcode))
             rules.add(FoldingRule::SingleValueBehindCasts);
@@ -1125,7 +1125,7 @@ constexpr std::array<FoldingRules, numberOfOpcodes> foldingRulesOfOpcodes = [] {
             rules.add(FoldingRule::SingleValueType);
         if (opcodesCreatingKnownStrings.contains(opcode))
             rules.add(FoldingRule::KnownString);
-        if (opcodesWithOwnFoldingRule.contains(opcode))
+        if (hasOwnFoldingRuleOf(opcode))
             rules.add(FoldingRule::OwnRule);
         if (rules.isEmpty())
             continue;
@@ -1214,6 +1214,8 @@ struct ConstantFolder {
             if (conditionsWithProofs->get(id.index()))
                 return false;
         }
+        if (rules.contains(FoldingRule::KnownString) && joinsNarrowAndWideParts(value))
+            return false;
         if (rules.contains(FoldingRule::KnownOperands)) {
             KnownValue result = evaluateWithKnownOperands(program, function, value, [&](ValueID operand) { return knownValueOf(operand); });
             if (isPrimitive(result) && becomeConstant(id, result))
@@ -1319,6 +1321,26 @@ struct ConstantFolder {
         return false;
     }
 
+    // A piece of such a text that lies in an 8-bit part is an 8-bit string. A piece of a 16-bit literal is not.
+    bool joinsNarrowAndWideParts(const Value& value)
+    {
+        bool hasNarrowPart = false;
+        bool hasWidePart = false;
+        for (uint32_t index = 0; index < value.numberOfOperands(); ++index) {
+            KnownValue operand = knownValueOf(value.operand(index));
+            if (operand.kind() != KnownValue::Kind::String) {
+                hasNarrowPart |= isPrimitive(operand);
+                continue;
+            }
+            std::span<const uint8_t> text = program.string(operand.asString());
+            // In UTF-8 a larger byte begins a character outside Latin-1.
+            bool isWide = std::ranges::any_of(text, [](uint8_t byte) { return byte > 0xc3; });
+            hasWidePart |= isWide;
+            hasNarrowPart |= !isWide && !text.empty();
+        }
+        return hasNarrowPart && hasWidePart;
+    }
+
     bool foldKnownString(ValueID id, const Value& value)
     {
         if (!opcodesCreatingKnownStrings.contains(value.opcode))
@@ -1386,7 +1408,7 @@ struct ConstantFolder {
             const Value& user = function.at(use.user);
             if (isPatternOfCreatedRegExp(user, text))
                 return true;
-            bool makesTextOfOperands = user.opcode == Opcode::Upcast || opcodesCreatingKnownStrings.contains(user.opcode) || calledStringFunctionOf(user);
+            bool makesTextOfOperands = isCastThatProvesNothing(user.opcode) || opcodesCreatingKnownStrings.contains(user.opcode) || calledStringFunctionOf(user);
             return makesTextOfOperands && operationsLeft && feedsOnlyRegExpPatterns(use.user, operationsLeft - 1);
         });
     }
@@ -1409,7 +1431,7 @@ struct ConstantFolder {
             const Value& definition = function.at(regExp);
             if (definition.opcode == Opcode::NewRegExp)
                 return RegExpLiteralInType { definition.pattern(), definition.regExpFlags().toRaw() };
-            if (definition.opcode != Opcode::Upcast && definition.opcode != Opcode::AssumeType)
+            if (!isCastThatProvesNothing(definition.opcode) && definition.opcode != Opcode::AssumeType)
                 return std::nullopt;
             user = regExp;
             regExp = definition.valueOperand();
@@ -1472,7 +1494,7 @@ struct ConstantFolder {
         }
 
         EffectDescription description;
-        describeOverload(program, value.overload(), &typeOf(receiverOperand), argumentTypes.span(), description);
+        describeOverload(program, value.overload(), function.at(receiverOperand).type, argumentTypes.span(), description);
         if (description.callsUnknownCode || !description.functions.isEmpty())
             return false;
         static constexpr AbstractHeapSet heapsNobodyObserves = bookkeepingHeaps | AbstractHeapSet { AbstractHeap::StringStorage };
@@ -1493,7 +1515,7 @@ struct ConstantFolder {
         }
 
         std::optional<ScratchRealm::Answer> answer = context.build.scratchRealms().ofCurrentThread().call(program, callee, receiver, arguments.span());
-        if (!answer)
+        if (!answer || !answer->isStoredLikeLiteral)
             return false;
         if (answer->text.isNull())
             return becomeConstant(id, answer->primitive);
@@ -1526,15 +1548,36 @@ struct ConstantFolder {
             return false;
 
         TypeArena& types = context.types;
-        TypeID expected = value.expectedOrType();
+        TypeID expected = value.expectedOrType().predicted();
         Value& access = function.edit(id);
         becomeNamedAccess(access, key);
         access.type = resultTypeOf(program, function, access, types);
         TypeID narrowed = types.intersectionOf(access.type, expected);
         // An intersection may keep a part of one side that the subset test does not find in the other.
         bool saysMoreThanType = narrowed != TypeTable::never && narrowed != access.type && types.at(narrowed).isSubsetOf(types.at(access.type), program);
-        access.setExpected(saysMoreThanType ? narrowed : TypeID());
+        access.setExpected(ExpectedType(saysMoreThanType ? narrowed : TypeID()));
+        if (access.opcode == Opcode::PropGet)
+            nameCalleeOfMemberCalls(id, key);
         return true;
+    }
+
+    // A call of what was read under a name, on the object that it was read from, is a call of the member of that name.
+    void nameCalleeOfMemberCalls(ValueID read, PropertyKeyID key)
+    {
+        ValueID object = definitionThroughSameValues(function, function.at(read).objectOperand());
+        Vector<ValueID, 4> worklist { read };
+        while (!worklist.isEmpty()) {
+            ValueID callee = worklist.takeLast();
+            for (const Use& use : useLists().usesOf(callee)) {
+                if (use.kind != Use::Kind::Operand)
+                    continue;
+                const Value& user = function.at(use.user);
+                if (sameValueOperandOf(user) == callee)
+                    worklist.append(use.user);
+                else if (user.opcode == Opcode::Call && use.operandIndex == OperandIndex::Call::callee && !user.calleeKey() && user.thisValueOperand() && definitionThroughSameValues(function, user.thisValueOperand()) == object)
+                    function.edit(use.user).setCalleeKey(key);
+            }
+        }
     }
 };
 
@@ -1580,7 +1623,7 @@ static bool canReplaceParameter(const Function& function, ValueID argument, Valu
 {
     const Value& replacement = function.at(argument);
     const Value& replaced = function.at(parameter);
-    return replacement.type == replaced.type && replacement.expected() == replaced.expected();
+    return replacement.type == replaced.type && replacement.expected().predicted() == replaced.expected().predicted();
 }
 
 static bool isCastOf(const Function& function, const ValueSubstitution& substitution, ValueID value, ValueID of)
@@ -1769,7 +1812,7 @@ struct TrivialParameterRemover {
             if (canReplace)
                 replacements.replace(parameter, argument);
             else
-                upcasts.append({ parameter, argument, function.at(parameter).type, function.at(parameter).expected() });
+                upcasts.append({ parameter, argument, function.at(parameter).type, function.at(parameter).expected().predicted() });
         }
         builder.removeParameters(id, removedIndexes);
         if (constants.isEmpty() && upcasts.isEmpty())
@@ -1785,7 +1828,7 @@ struct TrivialParameterRemover {
         for (const PendingUpcast& upcast : upcasts) {
             Value& value = function.edit(upcast.parameter, ValueEdit::Type);
             value.type = upcast.type;
-            value.setExpected(upcast.expected);
+            value.setExpected(ExpectedType(upcast.expected));
             becomeUpcast(function, upcast.parameter, upcast.argument);
             values.insert(index++, upcast.parameter);
             // The subject is named at the head of the block, above the Upcast.
@@ -1860,6 +1903,7 @@ struct ControlFlowSimplifier {
     bool onlyJoinedBlocks { !analyses.cfg().hasHandlers() };
     bool replacedParameterByKnownValue { false };
     bool mayFindMoreAtOnce { false };
+    bool movedArgumentsToOtherEdges { false };
 
     bool leadsTo(BlockID from, BlockID place, unsigned mostSteps) const
     {
@@ -2055,8 +2099,11 @@ struct ControlFlowSimplifier {
                 bypassedThrows.append({ block, findDeadValuesBeforeThrow(block) });
         }
         for (const auto& [block, deadValues] : bypassedThrows) {
-            if (bypassHandler(block) && !deadValues.isEmpty())
-                builder.eraseValues(block, deadValues);
+            if (!bypassHandler(block) || deadValues.isEmpty())
+                continue;
+            for (size_t index : deadValues)
+                explainOperationThatGoes(function, function.at(block).values[index], InPlaceOfOperation::NothingBecauseNobodySeesHowItEnds);
+            builder.eraseValues(block, deadValues);
         }
         for (size_t index = 0; index < handlerBodies.size(); ++index)
             bypassHandler(handlerBodies[index].second);
@@ -2158,6 +2205,11 @@ struct ControlFlowSimplifier {
     {
         const Block& block = function.at(id);
         if (!block.parameters.isEmpty() || !block.values.isEmpty() || block.isHandlerBlock() || block.terminator.kind != TerminatorKind::Jump)
+            return false;
+        // The block writes its arguments once. Led past it, every edge would write them.
+        size_t numberOfArguments = block.terminator.next().arguments.size();
+        size_t numberOfIncomingEdges = analyses.cfg().incomingEdges(id).size();
+        if (numberOfIncomingEdges * numberOfArguments > numberOfIncomingEdges + numberOfArguments)
             return false;
         BlockID target = block.terminator.next().block;
         BlockFrequency targetFrequency = function.at(target).frequency;
@@ -2305,6 +2357,7 @@ struct ControlFlowSimplifier {
         for (size_t index = 0; index < forwardedEdges.size(); ++index) {
             Edge edge = forwardedEdges[index];
             const Target& next = function.at(lastEmptyBlocks[index]).terminator.next();
+            movedArgumentsToOtherEdges |= !next.arguments.isEmpty();
             builder.redirectEdge(edge, next.block, Arguments(next.arguments));
             if (sources.isEmpty() || sources.last() != edge.from)
                 sources.append(edge.from);
@@ -2464,7 +2517,9 @@ PassOutcome simplifyControlFlow(FunctionPassContext& context)
         context.passesThatCanWait.add(PassID::FoldConstants);
     if (!simplifier.onlyJoinedBlocks)
         return PassOutcome::Changed;
-    context.passesLeftIdle = { PassID::RemoveTrivialParameters, PassID::PropagateBranchConditions, PassID::EliminateDeadCode };
+    context.passesLeftIdle = { PassID::RemoveTrivialParameters, PassID::EliminateDeadCode };
+    if (!simplifier.movedArgumentsToOtherEdges)
+        context.passesLeftIdle.add(PassID::PropagateBranchConditions);
     if (!context.foldingAskedForUses)
         context.passesLeftIdle.add(PassID::FoldConstants);
     context.reachedFixpoint = !simplifier.mayFindMoreAtOnce;
@@ -2974,13 +3029,24 @@ static void removeUnusedHandler(Rewrite& rewrite, BlockID id, const Block& block
     rewrite.later([&rewrite, id] { rewrite.builder().removeHandler(id); });
 }
 
+static bool takesValueAlone(const Function& function, const Block& handler)
+{
+    return handler.role == BlockRole::CatchHandler && std::ranges::none_of(handler.values.span().first(indexAfterCaughtValues(function, handler)), [&](ValueID value) {
+        return function.at(value).opcode == Opcode::CatchException;
+    });
+}
+
 static bool onlyRethrows(Rewrite& rewrite, BlockID id, const Block& block)
 {
     if (!block.isHandlerBlock() || !block.parameters.isEmpty() || block.values.isEmpty())
         return false;
     ValueID caught = block.values[0];
     const Terminator& terminator = block.terminator;
-    bool rethrowsCaughtValue = (rewrite.at(caught).opcode == Opcode::CatchValue && terminator.kind == TerminatorKind::Throw && terminator.valueOperand() == caught)
+    // A `catch` of the program that throws the value again begins another throw, which has frames of its own. Nobody lists them where a `catch` of the function takes the value and ends that throw.
+    auto beginsThrowWhoseFramesMayBeListed = [&] {
+        return block.role == BlockRole::CatchHandler && !(block.handler && takesValueAlone(rewrite.function, rewrite.at(block.handler->block)));
+    };
+    bool rethrowsCaughtValue = (rewrite.at(caught).opcode == Opcode::CatchValue && terminator.kind == TerminatorKind::Throw && terminator.valueOperand() == caught && !beginsThrowWhoseFramesMayBeListed())
         || (rewrite.at(caught).opcode == Opcode::CatchException && terminator.kind == TerminatorKind::Rethrow && terminator.exceptionOperand() == caught);
     if (!rethrowsCaughtValue || !std::ranges::all_of(block.values.span().subspan(1), [&](ValueID value) { return rewrite.analyses.isRemovableWhenUnused(value); }))
         return false;

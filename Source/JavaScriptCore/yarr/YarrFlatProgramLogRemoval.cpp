@@ -121,6 +121,8 @@ static bool propagateStackState(const FlatProgram& program, unsigned index, Stac
     case Kind::CaptureEmpty:
     case Kind::ClearCaptures:
     case Kind::SavePosition:
+    case Kind::SetRegister:
+    case Kind::Increment:
     case Kind::FailIfEmpty:
     case Kind::NeedsInput:
     case Kind::StepBack:
@@ -155,32 +157,39 @@ static StackStates computeStackStates(const FlatProgram& program)
     return states;
 }
 
-static constexpr std::array<std::pair<Kind, Kind>, 7> formsOnEmptyStack { {
+static constexpr std::array<std::pair<Kind, Kind>, 9> formsWithoutLog { {
     { Kind::LoggedCaptureStart, Kind::CaptureStart },
     { Kind::LoggedCaptureEnd, Kind::CaptureEnd },
     { Kind::LoggedCaptureEmpty, Kind::CaptureEmpty },
     { Kind::LoggedCapturedRun, Kind::CapturedRun },
     { Kind::LoggedClearCaptures, Kind::ClearCaptures },
     { Kind::LoggedSavePosition, Kind::SavePosition },
+    { Kind::LoggedSetRegister, Kind::SetRegister },
+    { Kind::LoggedIncrement, Kind::Increment },
     { Kind::LookaheadEndKeepingCaptures, Kind::LookaheadEnd },
 } };
+
+void removeLogging(std::span<FlatOp> ops)
+{
+    for (FlatOp& op : ops) {
+        for (auto [kind, kindWithoutLog] : formsWithoutLog) {
+            if (op.kind == kind) {
+                op.kind = kindWithoutLog;
+                break;
+            }
+        }
+    }
+}
 
 // A logged op pushes its undo frame only on a stack that holds a frame, so on a stack proven empty the unlogged op does the same.
 void removeUnneededLogging(FlatProgram& program)
 {
     StackStates states = computeStackStates(program);
-    auto& ops = program.ops;
+    auto ops = program.ops.mutableSpan();
     for (unsigned index = 0; index < ops.size(); ++index) {
-        FlatOp& op = ops[index];
-        StackState state = op.kind == Kind::LookaheadEndKeepingCaptures ? states.atLookaheadBegin[op.registerIndex] : states.atOp[index];
-        if (state != StackState::Empty)
-            continue;
-        for (auto [kind, kindOnEmptyStack] : formsOnEmptyStack) {
-            if (op.kind == kind) {
-                op.kind = kindOnEmptyStack;
-                break;
-            }
-        }
+        StackState state = ops[index].kind == Kind::LookaheadEndKeepingCaptures ? states.atLookaheadBegin[ops[index].registerIndex] : states.atOp[index];
+        if (state == StackState::Empty)
+            removeLogging(ops.subspan(index, 1));
     }
 }
 

@@ -329,8 +329,6 @@ BuiltinUsePlan planKnownBuiltinCall(const BuiltinUseInputs& inputs, const KnownB
     const BuiltinTable& table = inputs.program.builtins();
     if (isCalledOnlyDirectly(table, known.callee) && !hasDirectFunction(table, known.callee))
         return { };
-    if (inputs.program.mayBeTrimmed(known.callee))
-        return { };
     CallQueryStorage storage(inputs, known.callee, known.mode, known.operands, known.nullishReceiver);
 
     BuiltinUsePlan plan;
@@ -341,6 +339,9 @@ BuiltinUsePlan planKnownBuiltinCall(const BuiltinUseInputs& inputs, const KnownB
     if (!plan.call.overload)
         return { };
     if (staysGenericOperation(table.at(plan.call.overload)))
+        return { };
+    // The message of a construction that is refused quotes the callee as it is written, which only a Construct holds.
+    if (known.mode == BuiltinCallMode::Construct && table.at(table.at(plan.call.overload).result.type).isNever())
         return { };
     if (plan.call.state == BuiltinMatchState::Unknown) {
         if (isCalledOnlyDirectly(table, known.callee))
@@ -466,7 +467,10 @@ Effects effectsWhenApplied(const BuiltinUseInputs& inputs, const BuiltinUsePlan&
     case BuiltinUseKind::None:
         return Effects();
     case BuiltinUseKind::Constant: {
-        Effects effects = declaredBoundOf(makeConstant(inputs.program, plan).opcode);
+        Value constant = makeConstant(inputs.program, plan);
+        Effects effects = declaredBoundOf(constant.opcode);
+        if (tryMakeInitializeBuiltin(inputs.program.builtins(), inputs.flow, constant))
+            effects.merge(declaredBoundOf(Opcode::InitializeBuiltin));
         effects.merge(nullishCheckEffects);
         return effects;
     }
@@ -541,7 +545,7 @@ static void finish(const BuiltinUseRewrite& rewrite, const ReplacedEffects& repl
     FunctionPassContext& context = rewrite.context;
     Value& value = context.function.edit(rewrite.use);
     value.type = resultTypeOf(context.program, context.function, value, context.types, &context.typingMemo);
-    value.setExpected(expectedTypeOf(context.program, context.function, value, context.types, &context.typingMemo));
+    value.setExpected(ExpectedType(expectedTypeOf(context.program, context.function, value, context.types, &context.typingMemo)));
     checkRewrite(context, ValueSite { rewrite.block, 0, rewrite.use }, replaced);
 }
 
@@ -573,10 +577,10 @@ static bool reliesOnPristineOperand(const BuiltinCallPlan& call)
 
 static void becomePlannedCall(Value& value, const BuiltinUsePlan& plan, const BuiltinCallOperands& operands)
 {
-    bool isDemotedTailCall = FlagMask::isDemotedTailCall(value.opcode) && value.isDemotedTailCall();
+    bool isReflectConstructSyntax = FlagMask::isReflectConstructSyntax(value.opcode) && value.isReflectConstructSyntax();
     becomeBuiltinCall(value, plan.call.overload, plan.form, operands, plan.stamps);
     value.setNeedsPristineReceiver(reliesOnPristineOperand(plan.call));
-    value.setIsDemotedTailCall(isDemotedTailCall);
+    value.setIsReflectConstructSyntax(isReflectConstructSyntax);
 }
 
 static ValueID insertNewTarget(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& plan, Origin origin)
@@ -607,7 +611,6 @@ static Value makeLibraryCall(const BuiltinUseRewrite& rewrite, const BuiltinUseP
         .accessSite = plan.stamps.accessSite,
         .isConstruction = isConstruction,
         .isNeverInlined = plan.isNeverInlined,
-        .isDemotedTailCall = FlagMask::isDemotedTailCall(use.opcode) && use.isDemotedTailCall(),
     };
     return makeDirectCall(ValueInsertion { context.analyses.context(), context.function, context.types, origin, rewrite.insert }, request);
 }
@@ -634,10 +637,14 @@ void applyBuiltinUse(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& pla
     switch (plan.kind) {
     case BuiltinUseKind::None:
         RELEASE_ASSERT_NOT_REACHED();
-    case BuiltinUseKind::Constant:
+    case BuiltinUseKind::Constant: {
         insertReceiverCheck(context, function.at(rewrite.use).objectOperand(), plan.nullishCheck, insert);
-        replaceKeepingOrigin(function.edit(rewrite.use), makeConstant(context.program, plan));
+        Value constant = makeConstant(context.program, plan);
+        if (std::optional<Value> initialization = tryMakeInitializeBuiltin(context.program.builtins(), context.inputs.flow, constant))
+            insert(WTF::move(*initialization));
+        replaceKeepingOrigin(function.edit(rewrite.use), WTF::move(constant));
         break;
+    }
     case BuiltinUseKind::Undefined:
         replaceKeepingOrigin(function.edit(rewrite.use), IRBuilder::make(Opcode::Undefined));
         break;
@@ -664,7 +671,7 @@ void applyBuiltinUse(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& pla
             ValueID result = insert(WTF::move(call));
             if (context.build.validates())
                 insert(makeValidateType(result, plan.assumedResult));
-            call = makeAssumeType(result, plan.assumedResult);
+            call = makeAssumeType(result, Proven::byConstruction(plan.assumedResult));
         }
         replaceKeepingOrigin(function.edit(rewrite.use), WTF::move(call));
         break;

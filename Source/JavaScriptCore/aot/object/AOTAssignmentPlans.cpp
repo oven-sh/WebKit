@@ -293,6 +293,7 @@ static Structure* structureWithAddedNames(VM& vm, Structure* structure, std::spa
 void AssignmentPlanCache::growMappedCopies()
 {
     Vector<std::unique_ptr<MappedCopy>> before = std::exchange(m_mappedCopies, { });
+    zeroSpan(std::span { m_state.instance.allocation.copiesWithoutFrame });
     size_t size = before.isEmpty() ? minNumberOfPlacesForMappedCopies : before.size() * 2;
     m_mappedCopies.grow(size);
     m_shiftForMappedCopies = 64 - WTF::fastLog2(static_cast<unsigned>(size));
@@ -359,7 +360,7 @@ uint16_t AssignmentPlanCache::describeMappedField(VM& vm, const LayoutData& targ
     const FieldData* to = layouts.field(vm, target, name);
     if (!to || to->flags & (fieldIsStoredOnce | fieldAttributeFlags | fieldMayExistWithoutStorage))
         return FieldMap::isNotServed;
-    if (to->holdsRawValueFromBirth || from.holdsRawValueFromBirth)
+    if (to->holdsRawValueFromBirth)
         return FieldMap::isNotServed;
     SlotRepresentation representation = to->slot.representation();
     if (from.slot.representation() == SlotRepresentation::DeferredClosure || representation == SlotRepresentation::DeferredClosure)
@@ -519,7 +520,10 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
         fieldStores.reserveInitialCapacity(properties->size());
         storesInSourceOrder.reserveInitialCapacity(properties->size());
     }
+    bool hasStoredSymbol = false;
     for (auto& property : *properties) {
+        plan.storesNameBehindSymbol |= hasStoredSymbol && !property.name->isSymbol();
+        hasStoredSymbol |= property.name->isSymbol();
         const FieldData* field = record ? layouts.field(vm, *layout, property.name) : nullptr;
         if (!field) {
             if (record && !layout->extraPropertiesSlot())

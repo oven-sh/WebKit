@@ -76,7 +76,6 @@ public:
 
     bool hasSymbolKey(const FieldData&) const;
     bool hasStringKey(const FieldData&) const;
-    bool hasPositionAmongKeys(const LayoutData&, UniquedStringImpl*) const;
     bool mayBeAbsent(const FieldData&) const;
     bool everyObjectHadRemovedField(const LayoutData&) const;
     // What an object of the layout holds behind its header when Object::create() has made it and nothing is stored yet: the same bytes every time. Kept for whoever makes such objects again and again.

@@ -1,0 +1,23 @@
+# crypto.subtle; found = handedIn.constructor; found[globalThis.name] = null
+# `handedIn` may be the object that `crypto.subtle` answers, so `found` may be SubtleCrypto. As every holder of members that is found through the unknown object, it is not listed beside
+# the unknown object: it counts as handed out, and the unknown object stands for it. What the read lists does not hang on which of the two arrives first.
+# OPTIONS: testing=DelayFlowRules
+# RUN: valueflow-why values=f0:v6 escaped-builtin=SubtleCrypto
+# CHECK: values=f0:v6
+# CHECK-NOT: SubtleCrypto
+# CHECK: escaped-builtin=SubtleCrypto
+# CHECK-NOT: not held
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = PropGet v0 key="handedIn" [isFreeName]
+    v3 = PropGet v0 key="crypto" [isFreeName]
+    v4 = PropGet v3 key="subtle"
+    v5 = Null
+    v6 = PropGet v2 key="constructor"
+    ElemSet v6, v1, v5
+    Return
+}

@@ -20,6 +20,8 @@ export interface SyntaxUses {
   names: ReadonlyMap<string, ReadonlySet<IntrinsicPosition>>;
   prefixedGlobals: readonly string[];
   privateNames: readonly string[];
+  /** Among privateNames: those that native code never reads or writes. */
+  modulePrivateNames: readonly string[];
   errorCodes: readonly { name: string; number: number }[];
   inheritableClasses: readonly { name: string; number: number }[];
 }
@@ -163,9 +165,10 @@ function addCalleesAndMacros(table: SyntaxTable): void {
 
 function addPrivateNames(table: SyntaxTable, uses: SyntaxUses): void {
   const privateNames = new Set(uses.privateNames);
+  const modulePrivateNames = new Set(uses.modulePrivateNames);
   for (const [name, positions] of uses.names) {
     if (!positions.has("Member") || !privateNames.has(name) || table.find(name, "Member") !== undefined) continue;
-    table.addGenerated(name, "Member", { intrinsic: "PrivateName" });
+    table.addGenerated(name, "Member", { intrinsic: modulePrivateNames.has(name) ? "ModulePrivateName" : "PrivateName" });
   }
 }
 
@@ -281,6 +284,7 @@ function resolveMeaning(builder: ModelBuilder, line: SyntaxLine): ModelIntrinsic
     case "PrivateGlobal":
     case "ReplaceablePrivateGlobal":
     case "PrivateName":
+    case "ModulePrivateName":
     case "Erased":
     case "BundleError":
       return spec as ModelIntrinsicMeaning;

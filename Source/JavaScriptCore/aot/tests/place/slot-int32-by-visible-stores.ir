@@ -1,6 +1,7 @@
 # A field that is declared to hold numbers, or anything, takes 4 bytes where every store that the program shows puts an int32 into it: a constant, the result of a bit operation, a sum of int32s, or what comes from
 # another such field, a variable, a parameter or a result that holds nothing else. The int32s become the type of the field in front of flow, so none of its results is needed.
 # One store of another number, or of a value that only unseen code makes, and the field holds numbers. So does a field that nothing stores
+# A field that is counted up holds integers too. Nothing bounds them, so it takes the bytes that the cell leaves unused
 # FORM: AsRead
 # OPTIONS: references=narrow only-passes=NarrowFieldTypes disable=flow-results
 # RUN: plan-slots
@@ -59,7 +60,7 @@ function f2 name="mask" parameters=[{type=anything}] results=[{type=anything}] {
 # TYPES: layout L0 name="Shown"
 # TYPES: key="bits" declared={type=int[-2147483643, 2147483647]
 # TYPES: key="mirrored" declared={type=int[-2147483643, 2147483647]
-# TYPES: key="counter" declared={type=int[-2147483643, 2147483647]
+# TYPES: key="counter" declared={type=int[-4503599627370496, 4503599627370495]
 # TYPES: key="passed" declared={type=int[-2147483643, 2147483647]
 # TYPES: key="returned" declared={type=int[-2147483643, 2147483647]
 # TYPES: key="untyped" declared={type=int[-2147483643, 2147483647]
@@ -67,17 +68,17 @@ function f2 name="mask" parameters=[{type=anything}] results=[{type=anything}] {
 # TYPES: key="given" declared={type=undefined|null|number
 # TYPES: layout L1 name="NeverStored"
 # TYPES: key="never" declared={type=undefined|null|number
-# The allocation lists every field of L0, so all of them lie in the cell: the two numbers from 16 on, the six int32s from 32 on, the word for extra properties at 56.
-# The 4 bytes that are left widen no slot.
+# The allocation lists every field of L0, so all of them lie in the cell: the counter and the two numbers from 16 on, the five int32s from 40 on, the word for extra properties at 60.
+# With six int32s 4 bytes would be left: the counter has them.
 # CHECK: L0 CompiledObject size=64
-# CHECK-NEXT: "bits" OptionalInt32 @32
-# CHECK-NEXT: "mirrored" OptionalInt32 @36
-# CHECK-NEXT: "counter" OptionalInt32 @40
-# CHECK-NEXT: "passed" OptionalInt32 @44
-# CHECK-NEXT: "returned" OptionalInt32 @48
-# CHECK-NEXT: "untyped" OptionalInt32 @52
-# CHECK-NEXT: "ratio" OptionalDouble @16
-# CHECK-NEXT: "given" OptionalDouble @24
-# CHECK-NEXT: extra Cell32 @56
+# CHECK-NEXT: "bits" OptionalInt32 @40
+# CHECK-NEXT: "mirrored" OptionalInt32 @44
+# CHECK-NEXT: "counter" OptionalInt64 @16
+# CHECK-NEXT: "passed" OptionalInt32 @48
+# CHECK-NEXT: "returned" OptionalInt32 @52
+# CHECK-NEXT: "untyped" OptionalInt32 @56
+# CHECK-NEXT: "ratio" OptionalDouble @24
+# CHECK-NEXT: "given" OptionalDouble @32
+# CHECK-NEXT: extra Cell32 @60
 # CHECK: L1 CompiledObject
 # CHECK-NOT: "never" OptionalInt

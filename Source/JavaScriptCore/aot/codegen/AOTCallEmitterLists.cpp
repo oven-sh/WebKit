@@ -35,7 +35,7 @@ void CallEmitter::generateCallList(const ValueContext& value)
         .thisValue = thisValue.value(),
     };
     if (!value.returnCall()) {
-        define(value, callByConvention(value, call, { .throwSite = siteThatNamesCallee(value), .isTailCall = value->isDemotedTailCall() }));
+        define(value, callByConvention(value, call, { .throwSite = siteThatNamesCallee(value) }));
         return;
     }
 

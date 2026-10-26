@@ -40,7 +40,7 @@ public:
     Condition holds(GuardBitID);
     Condition belongsToInstance(CellPointer cell) { return hasInstanceRealm(loadStructure(cell)); }
     // Whether the cell is a compiled closure that inherits from the realm's Function.prototype and has only the properties it was created with.
-    Condition isClosureAsCreated(CellPointer);
+    Condition isClosureAsCreated(CellPointer, BuiltinClassID, OptionSet<PristineAspects>);
     Condition isNotThenable(const OperationContext&, Boxed, const Type&);
 
 private:

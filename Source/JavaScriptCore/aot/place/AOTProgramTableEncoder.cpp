@@ -19,6 +19,7 @@
 #include "AOTFlowBuiltinLocations.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionKinds.h"
+#include "AOTIDPrefix.h"
 #include "AOTIdentifierTable.h"
 #include "AOTLayoutData.h"
 #include "AOTLiteralStringDigest.h"
@@ -54,6 +55,9 @@
 #include <wtf/ASCIICType.h>
 #include <wtf/FastBitVector.h>
 #include <wtf/Hasher.h>
+#include <wtf/SetForScope.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -69,12 +73,18 @@ static uint32_t indexOrNone(ID id)
 }
 
 TableEncoder::TableEncoder(const ProgramTableInputs& inputs, BuildContext& build)
+    : TableEncoder(inputs, build.identifierNumbering(), nullptr, build)
+{
+}
+
+TableEncoder::TableEncoder(const ProgramTableInputs& inputs, const IdentifierNumbering& identifiers, NamesInProgramTables* namesToFind, BuildContext& build)
     : inputs(inputs)
     , program(*inputs.pipeline.program)
     , flow(*inputs.pipeline.flow)
     , slots(*inputs.pipeline.slots)
     , placement(*inputs.pipeline.placement)
-    , identifiers(build.identifierNumbering())
+    , identifiers(identifiers)
+    , namesToFind(namesToFind)
     , build(build)
     , writer(build)
 {
@@ -103,6 +113,8 @@ uint32_t TableEncoder::shownStringNumber(StringID id)
 uint32_t TableEncoder::stringConstantNumber(StringID id)
 {
     stringNumber(id);
+    if (!writesTables())
+        return 0;
     return numberOrFail(inputs.stringConstants.numberOf(id), ProgramTableRule::StringWithoutConstantNumber);
 }
 
@@ -129,12 +141,73 @@ FunctionID TableEncoder::findEntrypoint(FunctionID function) const
     return inputs.pipeline.derivedFunctions->find(derivedFunctionKey(FunctionRole::GenericEntrypoint, function));
 }
 
-uint32_t TableEncoder::entrypointOf(FunctionID function) const
+static String describe(const Program& program, RowOwner owner)
+{
+    auto describeRecord = [&](const auto& record, IDPrefix prefix, uint32_t index, ModuleID module, ASCIILiteral role = { }) {
+        StringBuilder builder;
+        if (record.name)
+            builder.append('\'', String::fromUTF8ReplacingInvalidSequences(program.string(record.name)), "' "_s);
+        builder.append(letterOf(prefix), index);
+        if (!role.isNull())
+            builder.append(" ("_s, role, ')');
+        if (module)
+            builder.append(" of "_s, String::fromUTF8ReplacingInvalidSequences(program.string(program.at(module).displayPath)));
+        return builder.toString();
+    };
+    if (owner.function) {
+        const Function& function = program.at(owner.function);
+        return describeRecord(function, IDPrefix::Function, owner.function.index(), function.module, nameOf(function.role));
+    }
+    if (owner.layout) {
+        const Layout& layout = program.at(owner.layout);
+        return describeRecord(layout, IDPrefix::Layout, owner.layout.index(), layout.module);
+    }
+    if (owner.variable) {
+        const Variable& variable = program.at(owner.variable);
+        return describeRecord(variable, IDPrefix::Variable, owner.variable.index(), variable.module);
+    }
+    if (owner.module)
+        return makeString(letterOf(IDPrefix::Module), owner.module.index(), ", "_s, String::fromUTF8ReplacingInvalidSequences(program.string(program.at(owner.module).displayPath)));
+    return { };
+}
+
+uint32_t TableEncoder::entrypointOf(FunctionID function, ASCIILiteral use, RowOwner owner) const
 {
     FunctionID entrypoint = findEntrypoint(function);
     if (function && !entrypoint)
-        fail(ProgramTableRule::FunctionWithoutEntrypoint, { }, function);
+        fail(ProgramTableRule::FunctionWithoutEntrypoint, { }, function, makeString("the function is "_s, use, ' ', describe(program, owner)));
     return indexOrNone(entrypoint);
+}
+
+static String describeNameWithoutIdentifier(const Program& program, StringID text, ASCIILiteral use, RowOwner owner)
+{
+    return makeString('\'', text ? String::fromUTF8ReplacingInvalidSequences(program.string(text)) : String(), "': the name is "_s, use, ' ', describe(program, owner));
+}
+
+uint32_t TableEncoder::identifierNumber(PropertyKeyID key, ASCIILiteral use, RowOwner owner) const
+{
+    if (namesToFind) {
+        namesToFind->keys.quickSet(key.index());
+        return 0;
+    }
+    RELEASE_ASSERT(mayNameIdentifiers);
+    std::optional<uint32_t> number = identifiers.numberOf(key);
+    if (!number)
+        fail(ProgramTableRule::NameWithoutIdentifier, owner.layout, owner.function, describeNameWithoutIdentifier(program, key ? program.at(key).text : StringID(), use, owner));
+    return number.value_or(0);
+}
+
+uint32_t TableEncoder::identifierNumberOfText(StringID text, ASCIILiteral use, RowOwner owner) const
+{
+    if (namesToFind) {
+        namesToFind->texts.quickSet(text.index());
+        return 0;
+    }
+    RELEASE_ASSERT(mayNameIdentifiers);
+    std::optional<uint32_t> number = identifiers.numberOfText(text);
+    if (!number)
+        fail(ProgramTableRule::NameWithoutIdentifier, owner.layout, owner.function, describeNameWithoutIdentifier(program, text, use, owner));
+    return number.value_or(0);
 }
 
 uint32_t TableEncoder::checkedOffset(uint32_t offset) const
@@ -145,9 +218,10 @@ uint32_t TableEncoder::checkedOffset(uint32_t offset) const
     return 0;
 }
 
-void TableEncoder::fail(ProgramTableRule rule, LayoutID layout, FunctionID function) const
+void TableEncoder::fail(ProgramTableRule rule, LayoutID layout, FunctionID function, const String& circumstances) const
 {
-    build.diagnostics().add(InternalError { .kind = InternalErrorKind::ProgramTableCheckFailed, .function = function, .layout = layout, .count = static_cast<uint32_t>(rule) });
+    String detail = circumstances.isNull() ? String(nameOf(rule)) : makeString(nameOf(rule), ": "_s, circumstances);
+    build.diagnostics().add(InternalError { .kind = InternalErrorKind::ProgramTableCheckFailed, .function = function, .layout = layout, .count = static_cast<uint32_t>(rule), .detail = WTF::move(detail) });
 }
 
 ASCIILiteral nameOf(ProgramTableRule rule)
@@ -169,7 +243,7 @@ SlotData placedVariableSlot(const TableEncoder& encoder, VariableID id)
     if (placed.storage == VariableStorage::Statics)
         return SlotData::create(encoder.checkedOffset(placed.offset), placed.representation);
     RELEASE_ASSERT(placed.storage == VariableStorage::ClosureTable);
-    uint32_t entrypoint = encoder.entrypointOf(placed.function);
+    uint32_t entrypoint = encoder.entrypointOf(placed.function, "what a table reads from the variable"_s, id);
     return entrypoint == UINT32_MAX ? SlotData { } : SlotData::create(encoder.checkedOffset(entrypoint), SlotRepresentation::DeferredClosure);
 }
 
@@ -291,7 +365,7 @@ static std::optional<RuntimeCellTest> encodeCellTest(TableEncoder& encoder, cons
             return RuntimeCellTest::isClosureOf(entrypoint);
         return std::nullopt;
     case CellTestKind::IsSymbol:
-        return RuntimeCellTest::isSymbol(encoder.identifierNumber(test.symbol));
+        return RuntimeCellTest::isSymbol(encoder.identifierNumber(test.symbol, "the symbol that a type test compares with"_s));
     case CellTestKind::SharingModeIs:
         return RuntimeCellTest::sharingModeIs(test.sharingMode);
     case CellTestKind::IsNamespaceOf:
@@ -409,7 +483,7 @@ static void encodeTypes(TableEncoder& encoder, const LayoutSetRecords& records)
     }
     uint32_t numberOfTypes = program.types.size();
     Vector<uint32_t> index { numberOfTypes };
-    encoder.build.statistics().count(StatisticID::TypeRecordsEmitted, appendGroupsAndOffsets(index, ProgramTables::numberOfTypeGroupWords(numberOfTypes), encoder.typeOffsets));
+    encoder.count(StatisticID::TypeRecordsEmitted, appendGroupsAndOffsets(index, ProgramTables::numberOfTypeGroupWords(numberOfTypes), encoder.typeOffsets));
     encoder.setTable(ProgramTableIndex::types, index);
 }
 
@@ -440,6 +514,9 @@ void encodeTypeTables(TableEncoder& encoder)
 {
     encodeTypes(encoder, encodeLayoutSets(encoder));
 
+    PartWithoutNames rest(encoder);
+    if (!rest.isWritten())
+        return;
     Vector<TypeSiteData> sites;
     if (describesTypes(encoder)) {
         sites.reserveInitialCapacity(encoder.inputs.bodyFacts.usedTypeSites.bitCount());
@@ -455,7 +532,7 @@ void encodeTypeTables(TableEncoder& encoder)
                 if (uint32_t text = encoder.shownStringNumber(site.text); text < TypeSiteData::noText)
                     data.text = text;
                 else
-                    encoder.build.statistics().count(StatisticID::TypeSiteTextsLeftOut);
+                    encoder.count(StatisticID::TypeSiteTextsLeftOut);
             }
             sites.append(data);
         });
@@ -496,7 +573,7 @@ static uint64_t encodeDataWord(TableEncoder& encoder, const DataNode& leaf)
     case DataNode::Kind::Boolean:
         return DataWord::encodeImmediate(jsBoolean(leaf.as<DataNode::Boolean>().value));
     case DataNode::Kind::Number:
-        return DataWord::encodeImmediate(jsNumber(purifyNaN(leaf.as<DataNode::Number>().value)));
+        return DataWord::encodeImmediate(jsNumber(withoutPayload(leaf.as<DataNode::Number>().value)));
     case DataNode::Kind::String:
         return DataWord::encodeStringConstant(encoder.stringConstantNumber(leaf.as<DataNode::String>().value));
     case DataNode::Kind::BigInt:
@@ -620,7 +697,7 @@ private:
         for (size_t index = 0; index < fieldOfEachMember.size(); ++index) {
             FieldIndex field = fieldOfEachMember[index];
             if (field == noFieldIndex) {
-                otherKeys.append(m_encoder.identifierNumber(object.members[index].key));
+                otherKeys.append(m_encoder.identifierNumber(object.members[index].key, "a member of constant data outside the fields of"_s, layout));
                 otherValues.append(contents[nextWord++]);
                 continue;
             }
@@ -906,7 +983,10 @@ static Vector<FieldData> collectFields(TableEncoder& encoder, LayoutID id, Vecto
         const Field& declaration = fieldAt(program, declarationOf(program, reference));
 
         FieldData& data = fields[*slot.indexInLayoutRecord];
-        data.name = declaration.key ? encoder.identifierNumber(declaration.key) : 0;
+        data.name = declaration.key ? encoder.identifierNumber(declaration.key, "a field in the record of"_s, id) : 0;
+        PartWithoutNames rest(encoder);
+        if (!rest.isWritten())
+            continue;
         data.isFilledAtBirth = isFilledAtBirth(program, reference);
         data.holdsRawValueFromBirth = holdsRawValueFromBirth(program, reference);
         data.keepsStateOfBirth = keepsStateOfBirth(program, reference);
@@ -938,6 +1018,9 @@ static uint32_t appendReferences(TableEncoder& encoder, LayoutID id)
 {
     enum { WideValues, WideCells, Narrow, WideOutOfLine, NarrowOutOfLine, NumberOfLists };
     static_assert(numberOfInlineReferenceCounts == WideOutOfLine && numberOfExtensionHeaderWords == 7);
+    PartWithoutNames part(encoder);
+    if (!part.isWritten())
+        return 0;
     const PlannedLayout& planned = encoder.slots.layout(id);
     Vector<uint32_t> offsets[NumberOfLists];
     for (FieldIndex row = 0; row < planned.slots.size(); ++row) {
@@ -980,6 +1063,9 @@ static int32_t distanceFromRecord(uint32_t recordOffset, uint32_t targetOffset)
 
 static uint32_t appendKeyOrders(TableEncoder& encoder, LayoutID id)
 {
+    PartWithoutNames part(encoder);
+    if (!part.isWritten())
+        return 0;
     Vector<uint32_t> orders;
     for (const Vector<FieldIndex>& order : encoder.placement.keyOrders().of(id)) {
         Vector<uint16_t> list { static_cast<uint16_t>(order.size()) };
@@ -997,6 +1083,9 @@ static uint32_t appendKeyOrders(TableEncoder& encoder, LayoutID id)
 
 static uint32_t appendEnvironment(TableEncoder& encoder, LayoutID id, uint32_t shape)
 {
+    PartWithoutNames part(encoder);
+    if (!part.isWritten())
+        return 0;
     const Layout& layout = encoder.program.at(id);
     const PlannedLayout& planned = encoder.slots.layout(id);
     RELEASE_ASSERT(layout.isEnvironment());
@@ -1030,24 +1119,31 @@ static uint32_t appendEnvironment(TableEncoder& encoder, LayoutID id, uint32_t s
 // A list says how many members the set has, then their numbers. The writer keeps one copy of equal lists, so every member names the same one.
 static MemberGuardAggregates appendAggregatesOf(TableEncoder& encoder, GuardBitID guard)
 {
+    PartWithoutNames part(encoder);
     const GuardBitTable& table = encoder.placement.guardBits();
     std::span<const GuardBitID> sets = table.setsContaining(guard);
-    if (sets.empty())
+    if (sets.empty() || !part.isWritten())
         return { 0, 0 };
     Vector<uint32_t, 8> words;
     for (GuardBitID set : sets) {
         const PlacedGuardBit& placed = encoder.placement.guardBit(set);
         words.append(numberInStaticsOf(placed) | (placed.holdsWhileClear ? MemberGuardAggregates::holdsWhileClear : 0));
     }
+    if (encoder.memberListsOfGuardSets.isEmpty())
+        encoder.memberListsOfGuardSets.fill(0, table.bits.size());
     for (GuardBitID set : sets) {
-        Vector<uint32_t, 8> list { static_cast<uint32_t>(table.membersOf(set).size()) };
-        for (GuardBitID member : table.membersOf(set)) {
-            const PlacedGuardBit& placed = encoder.placement.guardBit(member);
-            uint32_t number = numberInStaticsOf(placed);
-            RELEASE_ASSERT(MemberGuardAggregates::numberInListEntry(number) == number);
-            list.append(number | (isAwaitedBeforeClassExists(encoder.program, placed) ? MemberGuardAggregates::isAwaitedBeforeClassExists : 0) | (placed.holdsWhileClear ? MemberGuardAggregates::holdsWhileClear : 0));
+        uint32_t& listOffset = encoder.memberListsOfGuardSets[set.index()];
+        if (!listOffset) {
+            Vector<uint32_t, 8> list { static_cast<uint32_t>(table.membersOf(set).size()) };
+            for (GuardBitID member : table.membersOf(set)) {
+                const PlacedGuardBit& placed = encoder.placement.guardBit(member);
+                uint32_t number = numberInStaticsOf(placed);
+                RELEASE_ASSERT(MemberGuardAggregates::numberInListEntry(number) == number);
+                list.append(number | (isAwaitedBeforeClassExists(encoder.program, placed) ? MemberGuardAggregates::isAwaitedBeforeClassExists : 0) | (placed.holdsWhileClear ? MemberGuardAggregates::holdsWhileClear : 0));
+            }
+            listOffset = encoder.writer.append(list);
         }
-        words.append(encoder.writer.append(list));
+        words.append(listOffset);
     }
     return { encoder.writer.append(words), static_cast<uint32_t>(sets.size()) };
 }
@@ -1082,10 +1178,13 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
                 continue;
             MemberCreation memberCreation = index < creation.members.size() ? creation.members[index] : MemberCreation::AtDefinition;
             MethodData method { };
-            method.name = member.key ? encoder.identifierNumber(member.key) : 0;
+            method.name = member.key ? encoder.identifierNumber(member.key, "a member in the record of the class"_s, id) : 0;
+            PartWithoutNames rest(encoder);
+            if (!rest.isWritten())
+                continue;
             method.kindBits = static_cast<uint32_t>(member.kind);
             method.flags = (member.key ? 0 : methodHasComputedName) | (program.at(member.function).captures.isEmpty() ? 0 : methodTakesEnvironment) | (memberCreation == MemberCreation::AtDefinition ? methodIsCreatedAtDefinition : 0);
-            method.function = memberCreation == MemberCreation::ByClassRecord ? encoder.entrypointOf(member.function) : indexOrNone(encoder.findEntrypoint(member.function));
+            method.function = memberCreation == MemberCreation::ByClassRecord ? encoder.entrypointOf(member.function, "a member that the run time creates for the class"_s, id) : indexOrNone(encoder.findEntrypoint(member.function));
             parts.methods.append(method);
             ++(side == ClassSide::Static ? data.numberOfStaticMethods : data.numberOfMethods);
         }
@@ -1095,7 +1194,7 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
         if (!field.key || encoder.placement.variable(field.variable).storage == VariableStorage::None)
             continue;
         parts.staticFields.append(FieldData {
-            .name = encoder.identifierNumber(field.key),
+            .name = encoder.identifierNumber(field.key, "a static field in the record of the class"_s, id),
             .flags = 0,
             .operandIndex = 0,
             .slot = placedVariableSlot(encoder, field.variable),
@@ -1107,13 +1206,16 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
     Vector<std::pair<MemberGuardData, MemberGuardAggregates>> guards;
     for (const PlacedGuardBit& placed : table.ofClass(id)) {
         MemberGuardData guard { };
-        guard.name = placed.key ? encoder.identifierNumber(placed.key) : 0;
+        guard.name = placed.key ? encoder.identifierNumber(placed.key, "a guarded member of the class"_s, id) : 0;
         guard.kindBits = static_cast<uint32_t>(placed.kind);
         guard.sideBits = static_cast<uint32_t>(placed.side);
         guard.bit = placed.bit;
         guards.append({ guard, appendAggregatesOf(encoder, GuardBitID(static_cast<size_t>(&placed - table.bits.begin()))) });
         data.guardWordsOffset[static_cast<unsigned>(placed.side)] = placed.wordOffset - placed.bit / MemberGuardData::bitsPerWord * static_cast<uint32_t>(sizeof(uint64_t));
     }
+    PartWithoutNames rest(encoder);
+    if (!rest.isWritten())
+        return parts;
     AOT::sort(guards, { }, [](const auto& entry) {
         const MemberGuardData& guard = entry.first;
         return std::tuple<uint32_t, uint32_t, uint32_t> { guard.sideBits, guard.kindBits, guard.name };
@@ -1130,8 +1232,8 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
     LayoutID environment;
     if (layout.constructor) {
         const Vector<DeclaredType>& captures = program.at(layout.constructor).captures;
-        if (captures.size() == 1 && captures[0].type)
-            environment = program.at(captures[0].type).environment;
+        if (captures.size() == 1 && captures[0].written())
+            environment = program.at(captures[0].written()).environment;
     }
     static_assert(LayoutData::noBase == UINT32_MAX);
     bool hasProvenBase = layout.flow.baseState == BaseState::Layout;
@@ -1173,10 +1275,31 @@ static bool isUntyped(const Program& program, const Layout& layout)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// These have a number though the record has no row for them.
+static void findNamesOutsideRecord(const TableEncoder& encoder, LayoutID id)
+{
+    const Layout& layout = encoder.program.at(id);
+    auto find = [&](PropertyKeyID key) {
+        if (key)
+            encoder.identifierNumber(key, "a name of"_s, id);
+    };
+    bool hasEveryField = encoder.placement.slots().storageOf(id) != LayoutStorage::CompiledObject || layout.flow.observedUses.contains(ObservedUse::IsParsedByType);
+    for (const Field& field : layout.fields) {
+        if (hasEveryField || field.flags.contains(FieldFlags::IsRemovedAsUnread))
+            find(field.key);
+    }
+    for (const StaticField& field : layout.staticFields)
+        find(field.key);
+    for (const ClassMember& member : layout.classFlow.members)
+        find(member.key);
+}
+
 static uint32_t appendObjectLayout(TableEncoder& encoder, LayoutID id, uint32_t shapeNumber)
 {
     const Program& program = encoder.program;
     const Layout& layout = program.at(id);
+    if (!encoder.writesTables())
+        findNamesOutsideRecord(encoder, id);
     const PlannedLayout& planned = encoder.slots.layout(id);
     const ClassCreationPlan& creation = encoder.slots.classCreation(id);
     RELEASE_ASSERT(isObjectLayout(layout.kind));
@@ -1197,6 +1320,9 @@ static uint32_t appendObjectLayout(TableEncoder& encoder, LayoutID id, uint32_t 
         const Layout& classLayout = layout.isDerived() ? program.at(declaredLayoutOf(program, layout.flow.base)) : layout;
         data.evaluationBits = static_cast<uint32_t>(isEvaluatedOnce(program, classLayout) ? EvaluationState::ProvenOnce : EvaluationState::PredictedOnce);
     }
+    PartWithoutNames rest(encoder);
+    if (!rest.isWritten())
+        return 0;
     data.kindBits = static_cast<uint32_t>(layout.kind);
     data.isDerived = layout.isDerived();
     data.impossibleMutationsRaw = shape.impossibleMutations.toRaw();
@@ -1263,8 +1389,8 @@ static void encodeLayoutRecords(TableEncoder& encoder)
     auto isClassInUse = [&](uint32_t index) {
         return program.layouts[index].kind == LayoutKind::Instance && encoder.placement.isInUse(LayoutID(index));
     };
-    encoder.subclasses = Vector<Vector<uint32_t>>(program.layouts.size());
-    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+    encoder.subclasses = Vector<Vector<uint32_t>>(encoder.writesTables() ? program.layouts.size() : 0);
+    for (uint32_t index = 0; index < encoder.subclasses.size(); ++index) {
         LayoutID assumedBase = isClassInUse(index) ? expectedBaseOf(program.layouts[index]) : LayoutID();
         if (assumedBase && program.at(assumedBase).kind == LayoutKind::Instance)
             encoder.subclasses[assumedBase.index()].append(index);
@@ -1284,7 +1410,10 @@ static void encodeLayoutRecords(TableEncoder& encoder)
         if (isClassInUse(index))
             classes[index] = shapes.shapesOf(id).isEmpty() ? appendObjectLayout(encoder, id, 0) : layouts[shapes.generalShapeOf(id)];
     }
-    encoder.build.statistics().count(StatisticID::LayoutRecordsEmitted, std::ranges::count_if(layouts, std::identity { }));
+    PartWithoutNames rest(encoder);
+    if (!rest.isWritten())
+        return;
+    encoder.count(StatisticID::LayoutRecordsEmitted, std::ranges::count_if(layouts, std::identity { }));
     encoder.setTable(ProgramTableIndex::layouts, layouts);
 
     encoder.header.numberOfLayoutIndices = static_cast<uint32_t>(classes.size());
@@ -1311,7 +1440,7 @@ static void encodeAllocations(TableEncoder& encoder)
     allocations.reserveInitialCapacity(encoder.placement.numberOfAllocations());
     for (const PlacedAllocation& allocation : encoder.placement.allocations().allocations) {
         if (allocation.constructedBy)
-            constructedAllocations.append({ Number24(allocations.size()), Number24(encoder.entrypointOf(allocation.constructedBy)) });
+            constructedAllocations.append({ Number24(allocations.size()), Number24(encoder.entrypointOf(allocation.constructedBy, "the constructor of an allocation"_s)) });
         allocations.append(AllocationData::create(allocation.shape, allocation.orderWord, allocation.size, leavesFieldOfBirthEmpty(encoder.program, allocation), !!allocation.constructedBy));
     }
     encoder.setTable(ProgramTableIndex::allocations, allocations);
@@ -1477,7 +1606,8 @@ static void encodeBoundFunctions(TableEncoder& encoder)
             encoder.fail(ProgramTableRule::TableOutOfBounds, { }, id);
         BoundFunctionData data { };
         data.function = entrypoint.index();
-        data.target = encoder.entrypointOf(record.target);
+        // The run time makes a closure of the target from this number only where the bound function holds none. One that is held may be of a function that no code creates a closure of.
+        data.target = record.capturesTargetClosure ? indexOrNone(encoder.findEntrypoint(record.target)) : encoder.entrypointOf(record.target, "the target of the bound function"_s, id);
         data.numberOfBoundArguments = record.numberOfBoundArguments;
         if (record.capturesTargetClosure) {
             if (!function.captures.isEmpty() && declaredRepresentationOf(program, function.captures.last()) == Representation::Cell)
@@ -1487,7 +1617,7 @@ static void encodeBoundFunctions(TableEncoder& encoder)
         }
         const Function& target = program.at(record.target);
         if (target.constructorForm() != ConstructorForm::NotConstructor) {
-            unsigned firstArgument = static_cast<unsigned>(target.captures.size()) + target.has(FunctionFlags::HasThis);
+            unsigned firstArgument = (record.capturesTargetClosure ? 0 : static_cast<unsigned>(target.captures.size())) + target.has(FunctionFlags::HasThis);
             data.constructs = true;
             data.numberOfCapturedArguments = record.numberOfCapturedArguments;
             data.firstArgumentSlot = record.numberOfCapturedArguments ? closureCaptureSlotOf(program, function, firstArgument) : 0;
@@ -1505,6 +1635,9 @@ static void encodeBoundFunctions(TableEncoder& encoder)
 void encodeLayoutTables(TableEncoder& encoder)
 {
     encodeLayoutRecords(encoder);
+    PartWithoutNames rest(encoder);
+    if (!rest.isWritten())
+        return;
     encodeRemovedFields(encoder);
     encodeAddedNames(encoder);
     encodeClassPrototypeNames(encoder);
@@ -1773,9 +1906,12 @@ static void appendFunctionNames(TableEncoder& encoder, std::span<const FunctionT
     for (size_t index : encoder.inputs.bodyFacts.functionsWithFrames)
         isShown.quickSet(traces[index].sourceFunctionIndex);
     auto nameOf = [&](size_t index) {
-        StringID name = isShown.quickGet(index) ? program.functions[index].name : StringID();
+        const Function& function = program.functions[index];
+        StringID name = isShown.quickGet(index) ? function.name : StringID();
         std::optional<BuiltinID> builtin = traces[index].implements();
-        if (builtin && name && program.builtins().at(*builtin).kind != BuiltinKind::Accessor) {
+        // A function of the compiler stands for what the program wrote, and its own name says what that is.
+        bool isCompilerFunction = function.enclosingRuntimeFunction && program.builtins().at(function.enclosingRuntimeFunction).role == RuntimeFunctionRole::CompilerFunction;
+        if (builtin && name && !isCompilerFunction && program.builtins().at(*builtin).kind != BuiltinKind::Accessor) {
             BuiltinName builtinName = program.builtins().at(*builtin).name;
             if (StringID nameOfBuiltin = builtinName ? program.stringOf(builtinName) : StringID())
                 name = nameOfBuiltin;
@@ -1909,45 +2045,14 @@ static void appendClosureFunctionTables(TableEncoder& encoder)
     encoder.header.numberOfClosureCells = countClosureCells(encoder, range);
 }
 
-static bool showsSourceText(FunctionRole role)
-{
-    switch (role) {
-    case FunctionRole::Source:
-    case FunctionRole::CoroutineRamp:
-    case FunctionRole::ResultWrapper:
-    case FunctionRole::ParameterWrapper:
-    case FunctionRole::EntryChecks:
-        return true;
-    case FunctionRole::Library:
-    case FunctionRole::Model:
-    case FunctionRole::Signature:
-    case FunctionRole::GenericEntrypoint:
-    case FunctionRole::TableEntrypoint:
-    case FunctionRole::TableLookup:
-    case FunctionRole::GenericVersion:
-    case FunctionRole::AllocatedThisVersion:
-    case FunctionRole::ConstructBody:
-    case FunctionRole::CallSiteVersion:
-    case FunctionRole::CalleeVersion:
-    case FunctionRole::CoroutineBody:
-    case FunctionRole::AsyncWorker:
-    case FunctionRole::BoundFunction:
-    case FunctionRole::ResultWorker:
-    case FunctionRole::OutlinedBody:
-    case FunctionRole::Serializer:
-    case FunctionRole::Parser:
-    case FunctionRole::ChainStep:
-    case FunctionRole::StubBody:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static bool hasFunctionText(const Program& program, const Function& function)
 {
     if (!function.module || function.text.start >= function.text.end)
         return false;
-    return showsSourceText(function.role) && !function.enclosingRuntimeFunction && program.at(function.module).kind != ModuleKind::RuntimeSource;
+    const Module& module = program.at(function.module);
+    if (isBundlerHelperModule(program, module))
+        return true;
+    return showsSourceTextOf(function.role) && !function.enclosingRuntimeFunction && module.kind != ModuleKind::RuntimeSource;
 }
 
 static void appendFunctionTexts(TableEncoder& encoder)
@@ -2138,7 +2243,7 @@ static bool isSourceTextOrCommonJs(const Module& module)
 static uint32_t bodyEntrypointOf(const TableEncoder& encoder, const Module& module)
 {
     bool doesNothing = module.body && isSourceTextOrCommonJs(module) && encoder.inputs.bodyFacts.functionsThatOnlyReturn.get(module.body.index());
-    return hasCompiledBody(encoder.program, module) && !doesNothing ? encoder.entrypointOf(module.body) : UINT32_MAX;
+    return hasCompiledBody(encoder.program, module) && !doesNothing ? encoder.entrypointOf(module.body, "the body of the module"_s, encoder.program.at(module.body).module) : UINT32_MAX;
 }
 
 static bool mayHavePathInPieces(const Module& module)
@@ -2223,13 +2328,14 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
     ModuleData entry { };
     setDisplayPath(encoder, id, module, lists, entry);
     entry.hasInstalledPositions = module.flags.contains(ModuleFlags::HasInstalledPositions);
+    entry.loadedByLoader = module.flags.contains(ModuleFlags::IsLoadedByLoader);
     entry.kind = module.kind;
     entry.externalKind = module.externalKind;
     entry.exportRule = module.exportRule;
     entry.requireResult = module.requireResult;
     entry.body = optionalNumber24(bodyEntrypointOf(encoder, module));
-    RELEASE_ASSERT(module.kind != ModuleKind::External || !module.runtimeModule);
-    entry.referrerOrRuntimeModule = optionalNumber24(module.kind == ModuleKind::External ? indexOrNone(module.referrer) : indexOrNone(module.runtimeModule));
+    RELEASE_ASSERT(!module.referrer || !module.runtimeModule);
+    entry.referrerOrRuntimeModule = optionalNumber24(module.referrer ? indexOrNone(module.referrer) : indexOrNone(module.runtimeModule));
     if (module.exportsVariable)
         entry.value = placedVariableSlot(encoder, module.exportsVariable);
     else if (encoder.placement.hasModuleValue(id))
@@ -2314,7 +2420,7 @@ static void appendExports(TableEncoder& encoder, ModuleID id, const Module& modu
         if (!isDescribedToRunTime(encoder.program, encoder.flow, id, moduleExport))
             continue;
         ModuleExportData entry { };
-        entry.name = encoder.identifierNumberOfText(moduleExport.name);
+        entry.name = encoder.identifierNumberOfText(moduleExport.name, "an export of"_s, id);
         entry.kindBits = static_cast<uint32_t>(moduleExport.kind);
         entry.isDeferred = moduleExport.phase == ImportPhase::Defer;
         entry.isFromStarExport = moduleExport.isFromStarExport;
@@ -2327,7 +2433,7 @@ static void appendExports(TableEncoder& encoder, ModuleID id, const Module& modu
             break;
         case ModuleExportKind::Indirect:
             entry.indirectExport = static_cast<uint32_t>(lists.indirectExports.size());
-            lists.indirectExports.append({ moduleExport.module.index(), encoder.identifierNumberOfText(moduleExport.importName) });
+            lists.indirectExports.append({ moduleExport.module.index(), encoder.identifierNumberOfText(moduleExport.importName, "what another module exports under a name of"_s, id) });
             break;
         }
         lists.exports.append(entry);
@@ -2350,12 +2456,12 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
             bool isRequire = request.kind == ModuleRequestKind::Require;
             if (isRequire && !isAnsweredByCode(encoder, id, request))
                 continue;
-            lists.requests.append(ModuleRequestData::create(request.target.index(), request.phase == ImportPhase::Defer, request.isDynamicStarExport, isRequire));
+            lists.requests.append(ModuleRequestData::create(request.target.index(), request.phase == ImportPhase::Defer, request.isDynamicStarExport, isRequire, request.isHoisted));
         }
         appendExports(encoder, id, module, lists);
         for (const SyntheticExport& syntheticExport : module.syntheticExports) {
             SyntheticExportData entry { };
-            entry.name = encoder.identifierNumberOfText(syntheticExport.name);
+            entry.name = encoder.identifierNumberOfText(syntheticExport.name, "an export that the run time fills for"_s, id);
             entry.absentIsUndefined = syntheticExport.isKnownMember;
             entry.hasVariable = !!syntheticExport.variable;
             entry.variable = syntheticExport.variable ? placedVariableSlot(encoder, syntheticExport.variable) : SlotData { };
@@ -2363,7 +2469,7 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
         }
         for (const RequiredName& requiredName : module.requiredNames) {
             if (!isNeverEvaluated(program, module))
-                lists.requiredNames.append({ requiredName.module.index(), requiredName.mayBeAbsent, encoder.identifierNumberOfText(requiredName.name) });
+                lists.requiredNames.append({ requiredName.module.index(), requiredName.mayBeAbsent, encoder.identifierNumberOfText(requiredName.name, "what another module must export for"_s, id) });
         }
     }
     for (const Entry& entry : program.entries)
@@ -2399,21 +2505,6 @@ static Vector<uint16_t> encodeModuleNumbers(const TableEncoder& encoder, const V
     return words;
 }
 
-static bool isFoundByPath(ModuleKind kind)
-{
-    switch (kind) {
-    case ModuleKind::SourceText:
-    case ModuleKind::CommonJs:
-    case ModuleKind::Data:
-    case ModuleKind::RuntimeSource:
-        return true;
-    case ModuleKind::Runtime:
-    case ModuleKind::External:
-        return false;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static void appendTablesOfCompiledModules(TableEncoder& encoder)
 {
     const Program& program = encoder.program;
@@ -2421,7 +2512,7 @@ static void appendTablesOfCompiledModules(TableEncoder& encoder)
     Vector<CompiledRuntimeModuleData> runtimeModules;
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         const Module& module = program.modules[index];
-        if (!isFoundByPath(module.kind) || (module.kind == ModuleKind::RuntimeSource && !hasCompiledBody(program, module)))
+        if (!isFoundByPathOf(module.kind) || (module.kind == ModuleKind::RuntimeSource && !hasCompiledBody(program, module)))
             continue;
         if (module.kind == ModuleKind::RuntimeSource && module.runtimeModule)
             runtimeModules.append({ module.runtimeModule.index(), index });
@@ -2438,9 +2529,26 @@ static void appendTablesOfCompiledModules(TableEncoder& encoder)
     Vector<CompiledRuntimeFunctionData> runtimeFunctions;
     for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
         if (entry.function && isCalledByHost.get(entry.function.index()) && program.at(entry.function).hasBody())
-            runtimeFunctions.append({ entry.id.index(), encoder.entrypointOf(entry.function), static_cast<uint32_t>(entry.visibility) });
+            runtimeFunctions.append({ entry.id.index(), encoder.entrypointOf(entry.function, "a function of the run time that the host calls"_s), static_cast<uint32_t>(entry.visibility) });
     }
     encoder.setTable(ProgramTableIndex::compiledRuntimeFunctions, runtimeFunctions);
+}
+
+// A face has the display path of its file.
+static void markFacesOfFiles(const TableEncoder& encoder, ModuleLists& lists)
+{
+    const Program& program = encoder.program;
+    auto shownPath = [&](const Module& module) {
+        return module.displayPath && !encoder.obfuscates() ? program.string(module.displayPath) : std::span<const uint8_t>();
+    };
+    for (size_t index = 0; index < program.modules.size(); ++index) {
+        ModuleData& face = lists.modules[index];
+        uint32_t firstRequest = face.firstRequest;
+        if (face.kind != ModuleKind::SourceText || firstRequest == lists.modules[index + 1].firstRequest || !lists.requests[firstRequest].isRequire)
+            continue;
+        uint32_t file = lists.requests[firstRequest].target();
+        face.faceOfFile = lists.modules[file].kind == ModuleKind::CommonJs && std::ranges::equal(shownPath(program.modules[index]), shownPath(program.modules[file]));
+    }
 }
 
 static ContractedModuleRequests contractRequestLists(TableEncoder& encoder, ModuleLists& lists)
@@ -2455,8 +2563,10 @@ static ContractedModuleRequests contractRequestLists(TableEncoder& encoder, Modu
 
     uint32_t maxContractedRequests = static_cast<uint32_t>(std::min<uint64_t>(encoder.build.limit(LimitID::MaxContractedModuleRequests), UINT32_MAX));
     ContractedModuleRequests contracted = contractModuleRequests(lists.modules.mutableSpan(), lists.requests.span(), modulesNamedByRequire, maxContractedRequests);
-    for (uint32_t module : contracted.modulesOverLimit)
-        encoder.build.gaveUp(LimitID::MaxContractedModuleRequests, { .function = encoder.program.modules[module].body });
+    for (uint32_t module : contracted.modulesOverLimit) {
+        if (encoder.writesTables())
+            encoder.build.gaveUp(LimitID::MaxContractedModuleRequests, { .function = encoder.program.modules[module].body });
+    }
     return contracted;
 }
 
@@ -2482,6 +2592,10 @@ void encodeModuleTables(TableEncoder& encoder)
 {
     const Program& program = encoder.program;
     ModuleLists lists = collectModuleLists(encoder);
+    PartWithoutNames rest(encoder);
+    if (!rest.isWritten())
+        return;
+    markFacesOfFiles(encoder, lists);
     computeModuleFlags(lists.modules.mutableSpan(), lists.requests.span());
     for (size_t index = 0; index < program.modules.size(); ++index)
         setPublicPath(encoder, program.modules[index], lists, lists.modules[index]);
@@ -2576,6 +2690,7 @@ static bool isEngineSymbol(PropertyKeyKind kind)
     case PropertyKeyKind::WellKnownSymbol:
     case PropertyKeyKind::RegisteredSymbol:
     case PropertyKeyKind::EnginePrivateName:
+    case PropertyKeyKind::ModulePrivateName:
         return true;
     case PropertyKeyKind::Text:
     case PropertyKeyKind::PrivateName:
@@ -2607,17 +2722,28 @@ static void encodeIdentifierTables(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::identifiersOfEngineSymbols, engineSymbols);
 }
 
-void encodeConstantTables(TableEncoder& encoder)
+static void encodeBuiltinAndBigIntTables(TableEncoder& encoder)
 {
+    PartWithoutNames part(encoder);
+    if (!part.isWritten())
+        return;
     encoder.setTableFrom<uint32_t>(ProgramTableIndex::builtinCells, encoder.placement.builtinCells(), &BuiltinCellKey::encoded);
     encoder.setTable(ProgramTableIndex::eagerBuiltinCells, encoder.placement.eagerBuiltinCells());
     encoder.setTableFrom<uint32_t>(ProgramTableIndex::constantBuiltinMembers, constantBuiltinMembersToLock(encoder.program, encoder.flow), &BuiltinID::index);
     encoder.setTableFrom<uint32_t>(ProgramTableIndex::bigIntConstants, encoder.placement.bigIntConstants(), [&](StringID digits) {
         return encoder.stringNumber(digits);
     });
+}
+
+void encodeConstantTables(TableEncoder& encoder)
+{
+    encodeBuiltinAndBigIntTables(encoder);
     encoder.setTableFrom<uint32_t>(ProgramTableIndex::keyCellIdentifiers, encoder.placement.keyCells(), [&](PropertyKeyID key) {
-        return encoder.identifierNumber(key);
+        return encoder.identifierNumber(key, "a key that code holds as a cell"_s);
     });
+    PartWithoutNames rest(encoder);
+    if (!rest.isWritten())
+        return;
     encodeLiteralStrings(encoder);
     encodeIdentifierTables(encoder);
     encoder.setTableFrom<uint32_t>(ProgramTableIndex::entryPoints, encoder.program.entries, [](const Entry& entry) {
@@ -2651,33 +2777,50 @@ void encodeTables(TableEncoder& encoder)
     struct TableGroup {
         void (*encode)(TableEncoder&);
         StatisticID statistic;
+        bool namesIdentifiers;
     };
     static constexpr TableGroup groups[] = {
-        { encodeTypeTables, StatisticID::ProgramTableBytesTypes },
-        { encodeDataTable, StatisticID::ProgramTableBytesData },
-        { encodeLayoutTables, StatisticID::ProgramTableBytesLayouts },
-        { encodePropertyRunTable, StatisticID::ProgramTableBytesLayouts },
-        { encodeFieldTable, StatisticID::ProgramTableBytesFieldTable },
-        { encodeMethodTable, StatisticID::ProgramTableBytesOther },
-        { encodeStaticsTables, StatisticID::ProgramTableBytesStatics },
-        { encodeFunctionTables, StatisticID::ProgramTableBytesFunctions },
-        { encodeModuleTables, StatisticID::ProgramTableBytesModules },
-        { encodeRequestTable, StatisticID::ProgramTableBytesRequests },
-        { encodeConstantTables, StatisticID::ProgramTableBytesOther },
-        { encodeGlobalBindingTable, StatisticID::ProgramTableBytesOther },
+        { encodeTypeTables, StatisticID::ProgramTableBytesTypes, true },
+        { encodeDataTable, StatisticID::ProgramTableBytesData, true },
+        { encodeLayoutTables, StatisticID::ProgramTableBytesLayouts, true },
+        { encodePropertyRunTable, StatisticID::ProgramTableBytesLayouts, true },
+        { encodeFieldTable, StatisticID::ProgramTableBytesFieldTable, false },
+        { encodeMethodTable, StatisticID::ProgramTableBytesOther, false },
+        { encodeStaticsTables, StatisticID::ProgramTableBytesStatics, false },
+        { encodeFunctionTables, StatisticID::ProgramTableBytesFunctions, false },
+        { encodeModuleTables, StatisticID::ProgramTableBytesModules, true },
+        { encodeRequestTable, StatisticID::ProgramTableBytesRequests, true },
+        { encodeConstantTables, StatisticID::ProgramTableBytesOther, true },
+        { encodeGlobalBindingTable, StatisticID::ProgramTableBytesOther, true },
         // The last: the image builder takes it off the tables and puts it in front of the constants of the code.
-        { encodeShapeSetBits, StatisticID::ProgramTableBytesLayouts },
+        { encodeShapeSetBits, StatisticID::ProgramTableBytesLayouts, false },
     };
 
     BuildContext& build = encoder.build;
-    build.statistics().count(StatisticID::ProgramTableBytesOther, encoder.writer.size());
+    encoder.count(StatisticID::ProgramTableBytesOther, encoder.writer.size());
     for (auto& group : groups) {
+        if (!encoder.writesTables() && !group.namesIdentifiers)
+            continue;
+        SetForScope mayNameIdentifiers(encoder.mayNameIdentifiers, group.namesIdentifiers);
         size_t sizeBefore = encoder.writer.size();
         group.encode(encoder);
         if (build.diagnostics().hasErrors())
             return;
-        build.statistics().count(group.statistic, encoder.writer.size() - sizeBefore);
+        encoder.count(group.statistic, encoder.writer.size() - sizeBefore);
     }
+}
+
+NamesInProgramTables findNamesInProgramTables(const PipelineOutput& pipeline, const BodyFactsForTables& bodyFacts, BuildContext& build)
+{
+    NamesInProgramTables names;
+    names.keys.ensureSize(pipeline.program->types.numberOfPropertyKeys());
+    names.texts.ensureSize(pipeline.program->strings.size());
+    IdentifierNumbering noIdentifiers;
+    StringConstantNumbering noStringConstants;
+    ProgramTableInputs inputs { pipeline, { }, noStringConstants, bodyFacts };
+    TableEncoder encoder(inputs, noIdentifiers, &names, build);
+    encodeTables(encoder);
+    return names;
 }
 
 EncodedProgramTables encodeProgramTables(const ProgramTableInputs& inputs, BuildContext& build)

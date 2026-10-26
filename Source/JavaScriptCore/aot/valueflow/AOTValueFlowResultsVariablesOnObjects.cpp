@@ -24,6 +24,14 @@ using ObjectAccessKind = ValueFlowAccessThroughObjectKind;
 static constexpr EnumSet<ValueFlowNameKind> namesOfValues { ValueFlowNameKind::Property, ValueFlowNameKind::Elements, ValueFlowNameKind::UnknownKey, ValueFlowNameKind::EveryProperty };
 static constexpr EnumSet<ValueFlowNameKind> namesOfValuesAndAccessors = namesOfValues | EnumSet<ValueFlowNameKind> { ValueFlowNameKind::Getter, ValueFlowNameKind::Setter, ValueFlowNameKind::GetterUnderUnknownKey, ValueFlowNameKind::SetterUnderUnknownKey };
 
+static constexpr EnumSet<ValueFlowNameKind> namesOfRemovalsAndRedefinitions { ValueFlowNameKind::DeletedMember, ValueFlowNameKind::DeletedMemberUnderUnknownKey, ValueFlowNameKind::RedefinedMember, ValueFlowNameKind::RedefinedMemberUnderUnknownKey };
+
+static ValueFlowName propertyChangedUnder(ValueFlowName written)
+{
+    bool namesProperty = written.kind == ValueFlowNameKind::DeletedMember || written.kind == ValueFlowNameKind::RedefinedMember;
+    return namesProperty ? ValueFlowName { ValueFlowNameKind::Property, written.payload } : everyPropertyName;
+}
+
 static bool testsProperty(const BuiltinPropertyAction& action)
 {
     return action.kind == BuiltinPropertyActionKind::TestsByKey || action.kind == BuiltinPropertyActionKind::ReadsGetter || action.kind == BuiltinPropertyActionKind::ReadsSetter;
@@ -132,18 +140,32 @@ struct ValueFlowAccessesThroughObjects {
             lookupReachesFollowedObject[index] = 1;
     }
 
+    void noteLookInto(ValueFlowObjectID object, ValueFlowName name, ObjectAccess access, Vector<ObjectAccess>& found)
+    {
+        if (isNamespace(object) && name.kind != ValueFlowNameKind::Property) {
+            setFlag(isNamespaceReadUnderUnknownName, inputs.universe().moduleOf(object).index());
+            return;
+        }
+        for (const VariableOnObject& variable : variablesOn(object)) {
+            access.variable = variable.variable;
+            if (variable.mayBeNamedBy(name))
+                found.append(access);
+        }
+    }
+
     void noteLook(ValueSetID lookedInto, ValueFlowName name, ObjectAccess access, Vector<ObjectAccess>& found)
     {
         forEachObjectIn(lookedInto, [&](ValueFlowObjectID object) {
-            if (isNamespace(object) && name.kind != ValueFlowNameKind::Property) {
-                setFlag(isNamespaceReadUnderUnknownName, inputs.universe().moduleOf(object).index());
-                return;
-            }
-            for (const VariableOnObject& variable : variablesOn(object)) {
-                access.variable = variable.variable;
-                if (variable.mayBeNamedBy(name))
-                    found.append(access);
-            }
+            noteLookInto(object, name, access, found);
+        });
+    }
+
+    // A namespace never changes. Whether it accepts a removal or a definition depends on the export of that name and on its value.
+    void noteChangeAskedOfNamespaces(ValueSetID asked, ValueFlowName written, ObjectAccess access, Vector<ObjectAccess>& found)
+    {
+        forEachObjectIn(asked, [&](ValueFlowObjectID object) {
+            if (isNamespace(object))
+                noteLookInto(object, propertyChangedUnder(written), access, found);
         });
     }
 
@@ -160,26 +182,38 @@ struct ValueFlowAccessesThroughObjects {
 
     bool holdsFewMembers(const ValueFlowOperand& operand) const
     {
-        ValueSetID held = operand.node ? solver.valueOf(operand.node) : ValueSets::nothing;
+        ValueSetID held = operand.node ? solver.possibleValuesOf(operand.node) : ValueSets::nothing;
         return !ValueSets::isComplement(held) && sets.size(held) <= inputs.build.limit(LimitID::MaxValueFlowMembersToldApart);
     }
 
-    bool storesValueInside(const ValueFlowStatement& statement, VariableID variable) const
+    // The type of a value behind a check holds only where the check passes, and the generic version stores the value all the same.
+    bool storesValueInside(const ValueFlowStatement& statement, VariableID variable)
     {
         const DeclaredType& declared = inputs.program.at(variable).declared;
-        if (declared.flags.contains(PositionFlags::IsExpected) || inputs.program.at(declared.type).isAnything())
+        if (declared.isExpected() || inputs.program.at(declared.written()).isAnything())
             return true;
         std::optional<uint32_t> index = indexOfValueStoredIntoProperty(statement.opcode);
         if (!index || !holdsFewMembers(inputs.bodies().operandsOf(statement)[*index]))
             return false;
         const Function& function = inputs.program.at(statement.function);
-        const Type& type = inputs.program.at(declared.type);
-        bool storesIntegersInside = type.primitives & Primitive::Integer && inputs.program.typeOf(function, function.at(statement.site).operand(*index)).integers.isSubsetOf(type.integers);
+        const Type& type = inputs.program.at(*declared.established());
+        ValueID stored = function.at(statement.site).operand(*index);
+        const BitVector* valuesBehindChecks = inputs.bodies().valuesBehindChecks(statement.function);
+        bool isBehindCheck = !valuesBehindChecks || valuesBehindChecks->get(stored.index());
+        bool acceptsIntegers = type.primitives & Primitive::Integer && (isBehindCheck || inputs.program.typeOf(function, stored).integers.isSubsetOf(type.integers));
         bool isInside = true;
+        bool storesIntegers = false;
         ValueFlowMembers members = forEachMemberOf(inputs, inputs.bodies().operandsOf(statement)[*index], [&](ValueFlowObjectID member) {
-            isInside &= sets.contains(valuesInsideType[variable.index()], member) || (storesIntegersInside && member == ValueFlowUniverse::primitive(PrimitiveSet::Integer));
+            if (sets.contains(valuesInsideType[variable.index()], member))
+                return;
+            storesIntegers |= member == ValueFlowUniverse::primitive(PrimitiveSet::Integer);
+            isInside &= acceptsIntegers && member == ValueFlowUniverse::primitive(PrimitiveSet::Integer);
         });
-        return isInside && members == ValueFlowMembers::Listed;
+        if (!isInside || members != ValueFlowMembers::Listed)
+            return false;
+        if (storesIntegers && isBehindCheck)
+            setFlag(isStoredIntegersBehindChecks, variable.index());
+        return true;
     }
 
     void noteStore(const ValueFlowStatement* statement, ValueSetID storedThrough, ValueFlowName name, ObjectAccess access, Vector<ObjectAccess>& found)
@@ -245,11 +279,13 @@ struct ValueFlowAccessesThroughObjects {
                 noteLook(key.set, key.name(), accessOf(ObjectAccessKind::Observation), found);
             if (key.kind == ValueFlowMadeNodeKind::Written && namesOfValuesAndAccessors.contains(kind))
                 noteStore(isOperation ? &statement : nullptr, key.set, key.name(), accessOf(ObjectAccessKind::Store), found);
+            if (key.kind == ValueFlowMadeNodeKind::Written && namesOfRemovalsAndRedefinitions.contains(kind))
+                noteChangeAskedOfNamespaces(key.set, key.name(), accessOf(ObjectAccessKind::Observation), found);
             if (key.kind != ValueFlowMadeNodeKind::Lookup || !made || isLookupOfCalleeByCall(inputs, statement, key))
                 return;
             if (kind == ValueFlowNameKind::PrototypeLink) {
                 if (isOperation)
-                    noteTestBy(statement, solver.valueOf(solver.statementAt(made).result), accessOf(ObjectAccessKind::Observation), found);
+                    noteTestBy(statement, solver.possibleValuesOf(solver.statementAt(made).result), accessOf(ObjectAccessKind::Observation), found);
             } else if (isSharedLookup(made) && reachesFollowedObject(made))
                 noteLooksOf(made, accessOf(answersWhatItReads ? ObjectAccessKind::Read : ObjectAccessKind::Observation), found);
         });
@@ -316,7 +352,7 @@ struct ValueFlowAccessesThroughObjects {
     {
         const Program& program = inputs.program;
         bool modulesAreNamedAtRunTime = unseenCodeCanRun(inputs.solution) || modulesAreLoadedByName(inputs.solution);
-        ValueSetID created = solver.valueOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::CreatedNamespaces));
+        ValueSetID created = solver.possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::CreatedNamespaces));
         if (sets.meet(created, inputs.universe().placeholdersAlone()))
             return;
         for (uint32_t index = 0; index < program.modules.size(); ++index) {
@@ -332,7 +368,11 @@ struct ValueFlowAccessesThroughObjects {
             }
             bool isInUnknownHands = inputs.hasEscaped(namespaceObject) || inputs.isLost(namespaceObject) || inputs.isHeldByNativeCode(namespaceObject)
                 || markedMutationsOf(inputs, namespaceObject).containsAny({ ObjectMutation::ReachNativeCode, ObjectMutation::ReachUnknownJavaScript });
-            if (isInUnknownHands || commonJsModuleCapturedBy(program, module))
+            // What is asked under an index names no export.
+            bool hasExportUnderIndex = std::ranges::any_of(module.exports, [&](const ModuleExport& entry) {
+                return mayBeElementKey(program.strings.nameClass(entry.name));
+            });
+            if (isInUnknownHands || hasExportUnderIndex || commonJsModuleCapturedBy(program, module))
                 continue;
             objects.append(namespaceObject);
             for (uint32_t position = 0; position < module.exports.size(); ++position) {
@@ -380,7 +420,7 @@ struct ValueFlowAccessesThroughObjects {
     {
         const Program& program = inputs.program;
         results.namespaceUses.fill(NamespaceUse::Unknown, program.modules.size());
-        for (BitVector* ofVariables : { &results.staticFieldsInUnknownHands, &results.staticFieldsOfEscapedClassObjects, &results.deletedStaticFields, &results.redefinedStaticFields, &results.staticFieldsStoredOtherTypes, &results.staticFieldsStoredByBuiltins })
+        for (BitVector* ofVariables : { &results.staticFieldsInUnknownHands, &results.staticFieldsOfEscapedClassObjects, &results.deletedStaticFields, &results.redefinedStaticFields, &results.staticFieldsStoredOtherTypes, &results.staticFieldsStoredIntegersBehindChecks, &results.staticFieldsStoredByBuiltins })
             ofVariables->ensureSize(program.variables.size());
         results.classObjectsStoredUnderStaticFieldsAlone.ensureSize(program.layouts.size());
 
@@ -397,13 +437,14 @@ struct ValueFlowAccessesThroughObjects {
         lookupReachesFollowedObject.fill(0, solver.numberOfStatements() - solver.input().statements.size());
         isNamespaceReadUnderUnknownName.fill(0, program.modules.size());
         isStoredOtherType.fill(0, program.variables.size());
+        isStoredIntegersBehindChecks.fill(0, program.variables.size());
         isStoredByBuiltin.fill(0, program.variables.size());
         isClassObjectStoredUnderOtherName.fill(0, program.functions.size());
         valuesInsideType.fill(ValueSets::nothing, program.variables.size());
         for (const VariableOnObject& variable : variables) {
             const DeclaredType& declared = program.at(variable.variable).declared;
-            if (!isNamespace(variable.object) && !declared.flags.contains(PositionFlags::IsExpected))
-                valuesInsideType[variable.variable.index()] = inputs.universe().membersSurelyInside(heap.maker(), program, declared.type);
+            if (!isNamespace(variable.object) && !declared.isExpected())
+                valuesInsideType[variable.variable.index()] = inputs.universe().membersSurelyInside(heap.maker(), program, *declared.established());
         }
         findLookupsReachingFollowedObjects();
 
@@ -434,6 +475,7 @@ struct ValueFlowAccessesThroughObjects {
     Vector<uint8_t> lookupReachesFollowedObject;
     Vector<uint8_t> isNamespaceReadUnderUnknownName;
     Vector<uint8_t> isStoredOtherType;
+    Vector<uint8_t> isStoredIntegersBehindChecks;
     Vector<uint8_t> isStoredByBuiltin;
     Vector<uint8_t> isClassObjectStoredUnderOtherName;
     Vector<ValueSetID> valuesInsideType;
@@ -461,6 +503,7 @@ ValueFlowVariablesOnObjects computeVariablesOnObjects(const ValueFlowResultInput
     });
     for (uint32_t index = 0; index < inputs.program.variables.size(); ++index) {
         results.staticFieldsStoredOtherTypes.quickSet(index, collected.isStoredOtherType[index]);
+        results.staticFieldsStoredIntegersBehindChecks.quickSet(index, collected.isStoredIntegersBehindChecks[index]);
         results.staticFieldsStoredByBuiltins.quickSet(index, collected.isStoredByBuiltin[index]);
     }
     for (ValueFlowObjectID object : collected.objects) {

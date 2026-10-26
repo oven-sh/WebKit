@@ -176,7 +176,7 @@ void SlotRunEmitter::listMissingFields(const ValueContext& value, CellPointer ce
         return;
 
     SlotAccessEmitter& slotAccess = emitter<SlotAccessEmitter>();
-    auto listFieldsIfAnyIsMissing = [&] {
+    auto listFieldsIfAnyIsMissing = [&](const std::optional<RememberedKeyOrderStep>& stepThatDoesNotApply) {
         LBasicBlock creates = newBlock();
         LBasicBlock continuation = newBlock();
         for (const Entry& entry : run.entries) {
@@ -189,7 +189,7 @@ void SlotRunEmitter::listMissingFields(const ValueContext& value, CellPointer ce
         m_out.jump(continuation);
 
         m_out.appendTo(creates);
-        slotAccess.takeRememberedKeyOrderStepOr(value, cell, [&](std::optional<uint32_t> placePlusOne) {
+        slotAccess.takeRememberedKeyOrderStepOr(value, cell, stepThatDoesNotApply, [&](std::optional<uint32_t> placePlusOne) {
             return listFieldsInRuntime(value, cell, run, placePlusOne);
         });
         m_out.jump(continuation);

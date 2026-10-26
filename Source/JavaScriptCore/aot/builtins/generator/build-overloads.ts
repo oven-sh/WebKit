@@ -2,6 +2,7 @@ import { resolveOwnSlot, type ModelBuilder, type MutableBuiltin, type WrittenSig
 import type { TypeInterner } from "./build-types.ts";
 import { applyWrittenUses, deriveHeaps, deriveUsesOfResult, OverloadContext, type EntryContext } from "./build-uses.ts";
 import type { SignatureDeclaration, Source } from "./declarations.ts";
+import { parameterAt } from "./dispatch.ts";
 import * as b from "./lib.ts";
 import { addFlag } from "./model-builder.ts";
 import {
@@ -61,11 +62,14 @@ const entryFlagsByRole: Readonly<Record<OperandRole, BuiltinFlag | null>> = {
   ReplacesContents: null,
   MembersAreOnlyInspected: null,
   KeysAreNotListed: null,
+  OwnValuesAreReadByKeyOnly: null,
   MembersAreOfObjectsOnly: null,
   FunctionsAreConvertedUnderNamesOnly: null,
+  OnlyBoxedPrimitivesAreConverted: null,
   BecomesLengthOfReceiver: null,
   CopiesHolesToResult: null,
   WorkerEntryPath: null,
+  DescribedWhenRefused: null,
 };
 
 const engineEnumerators: ReadonlyMap<string, readonly string[]> = new Map<string, readonly string[]>([
@@ -672,6 +676,28 @@ function entryFlagsOf(overloads: readonly ModelOverload[]): Set<BuiltinFlag> {
   return flags;
 }
 
+// A function refuses only what none of its overloads takes: an overload that takes anything in one place, and in every other place all that this one takes.
+function describeOnlyWhatEveryOverloadRefuses(overloads: readonly ModelOverload[]): void {
+  const takesAllOf = (wide: ModelParameter | null, narrow: ModelParameter | null) =>
+    wide === null || narrow === null || wide.accepted.isAnything || wide.accepted.key === narrow.accepted.key;
+  for (const overload of overloads) {
+    const isTakenByAnother = ({ operand }: ModelParameter) =>
+      overloads.some(
+        other =>
+          other !== overload &&
+          other.mode === overload.mode &&
+          parameterAt(other, operand)?.accepted.isAnything &&
+          takesAllOf(other.receiver, overload.receiver) &&
+          overload.parameters.every(parameter => takesAllOf(parameterAt(other, parameter.operand), parameter)),
+      );
+    overload.parameters = overload.parameters.map(parameter =>
+      isTakenByAnother(parameter)
+        ? { ...parameter, roles: parameter.roles.filter(role => role !== "DescribedWhenRefused") }
+        : parameter,
+    );
+  }
+}
+
 function buildOverloadsOf(builder: ModelBuilder, types: TypeInterner, builtin: MutableBuiltin): void {
   const signatures = collectSignatures(builder, builtin);
   const libraryFunction = findLibraryFunction(builder, builtin, signatures);
@@ -683,6 +709,7 @@ function buildOverloadsOf(builder: ModelBuilder, types: TypeInterner, builtin: M
     return overload;
   });
   if (builtin.constant !== null) overloads.push(buildConstantOverload(entry, builtin.constant));
+  describeOnlyWhatEveryOverloadRefuses(overloads);
   builtin.overloads = overloads;
   for (const flag of entryFlagsOf(overloads)) addFlag(builtin, flag);
 }

@@ -35,11 +35,7 @@ void forEachValueSite(FunctionAnalyses& analyses, const Function& function, cons
 }
 
 // The operations for which isNamedAccess() or elementAccessOf() answers. SplitUnions looks at no other.
-inline constexpr OpcodeSet accessesByNameOrKey {
-    Opcode::PropGet, Opcode::PropSet, Opcode::PropDefine, Opcode::PropHas, Opcode::PropHasOwn,
-    Opcode::PrivateGet, Opcode::PrivateSet, Opcode::PrivateDefine, Opcode::PrivateHas,
-    Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemHas,
-};
+inline constexpr OpcodeSet accessesByNameOrKey = namedAccesses | OpcodeSet { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemHas };
 
 void checkRewrite(FunctionPassContext&, const ValueSite&, const ReplacedEffects&);
 
@@ -71,7 +67,7 @@ public:
     Function& function() { return m_builder.function(); }
     const Value& original() const LIFETIME_BOUND { return m_original; }
     BlockFrequency frequency() const { return m_frequency; }
-    bool isTailCall() const { return m_tailCall || (FlagMask::isDemotedTailCall(m_original.opcode) && m_original.isDemotedTailCall()); }
+    bool isTailCall() const { return m_tailCall || m_original.isTailCall; }
     bool isRequiredTailCall() const { return m_tailCall && m_tailCall->requirement() == TailCallRequirement::Required; }
 
     void addReplaced(const Value&);

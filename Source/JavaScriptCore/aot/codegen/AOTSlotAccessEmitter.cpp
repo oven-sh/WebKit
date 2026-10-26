@@ -82,6 +82,8 @@ Operand SlotAccessEmitter::undefinedResult(const ValueContext& value)
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::Cell:
     case Representation::RawWord:
         break;
@@ -371,6 +373,8 @@ Operand SlotAccessEmitter::decodeWordOfDeferringSlot(const ValueContext& value, 
     case Representation::Int32:
     case Representation::Int64:
     case Representation::Double:
+    case Representation::DoubleWithPayload:
+    case Representation::ImpureDouble:
     case Representation::OptionalInt64:
     case Representation::OptionalDouble:
     case Representation::LiteralString:
@@ -462,7 +466,7 @@ void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
         return;
     }
 
-    auto listFieldIfMissing = [&] {
+    auto listFieldIfMissing = [&](const std::optional<RememberedKeyOrderStep>& stepThatDoesNotApply) {
         LBasicBlock creates = newBlock();
         LBasicBlock done = newBlock();
         // A field without storage may be listed already. The run time passes over a key that the object lists.
@@ -472,7 +476,7 @@ void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
             : logicalNot(slots.holdsValue(base, access.slot, location, extensionWordOf(access)));
         branch(isMissing, { unlikelyEdge(creates), normalEdge(done) });
         m_out.appendTo(creates);
-        takeRememberedKeyOrderStepOr(value, cell, [&](std::optional<uint32_t> placePlusOne) {
+        takeRememberedKeyOrderStepOr(value, cell, stepThatDoesNotApply, [&](std::optional<uint32_t> placePlusOne) {
             return didCreateField(value, cell, access, needsStorage, placePlusOne);
         });
         m_out.jump(done);
@@ -778,7 +782,7 @@ std::optional<KeyOrderStep> SlotAccessEmitter::testLikeliestKeyOrderStep(CellPoi
     return step;
 }
 
-std::optional<uint32_t> SlotAccessEmitter::numberOfStoreThatMayAdd(ValueID store)
+std::optional<PlaceOfStoreThatMayAdd> SlotAccessEmitter::placeOfStoreThatMayAdd(ValueID store)
 {
     if (m_storesThatMayAddInFront.isEmpty()) {
         m_storesThatMayAddInFront.fill(0, m_function.values.size());
@@ -790,22 +794,23 @@ std::optional<uint32_t> SlotAccessEmitter::numberOfStoreThatMayAdd(ValueID store
             }
         }
     }
-    return m_placement.keyOrders().numberOfStoreThatMayAdd(m_id, m_storesThatMayAddInFront[store.index()]);
+    return m_placement.keyOrders().placeOfStoreThatMayAdd(m_id, m_storesThatMayAddInFront[store.index()]);
 }
 
 std::optional<RememberedKeyOrderStep> SlotAccessEmitter::testRememberedKeyOrderStep(const ValueContext& value, CellPointer cell)
 {
     if (value.shape() != CodeShape::Fast)
         return std::nullopt;
-    std::optional<uint32_t> number = numberOfStoreThatMayAdd(value.id());
-    if (!number || *number >= maxPlacesWithKeyOrderStepCache)
+    std::optional<PlaceOfStoreThatMayAdd> place = placeOfStoreThatMayAdd(value.id());
+    if (!place || place->number >= maxPlacesWithKeyOrderStepCache)
         return std::nullopt;
+    uint32_t number = place->number;
 
     static_assert(offsetOfShapeWord == offsetOfOrderWord + sizeof(uint32_t) && !(offsetOfOrderWord % sizeof(uint64_t)));
     static_assert(!OBJECT_OFFSETOF(KeyOrderStepCache, orderWordBefore) && OBJECT_OFFSETOF(KeyOrderStepCache, shapeWord) == sizeof(uint32_t));
     const B3::AbstractHeap& heap = m_heaps.entire(AbstractHeap::RuntimeState);
     RememberedKeyOrderStep remembered;
-    remembered.placePlusOne = *number + 1;
+    remembered.placePlusOne = number + 1;
     // The shape word of an object never changes, so the two words together change when the order word does.
     remembered.orderAndShapeWordsBefore = Integer(m_out.load64(m_out.address(m_heaps.AOTObject_orderWord, cell.value(), offsetOfOrderWord)));
     auto& members = m_program.at(value->opcode == Opcode::PutSlots ? value->receivers() : m_placement.fieldAccess(value->fieldAccess()).membersWithField).members;
@@ -813,21 +818,21 @@ std::optional<RememberedKeyOrderStep> SlotAccessEmitter::testRememberedKeyOrderS
     LValue entry = m_instance;
     ptrdiff_t offsetOfEntry = InstanceLayout::offsetOfKeyOrderSteps;
     if (members.size() == 1 && shapes.shapesOf(members[0]).count == 1)
-        offsetOfEntry += indexOfKeyOrderStepCache(*number, static_cast<uint64_t>(AOT::shapeWordOf(shapes.generalShapeOf(members[0]))) << 32) * sizeof(KeyOrderStepCache);
+        offsetOfEntry += indexOfKeyOrderStepCache(number, static_cast<uint64_t>(AOT::shapeWordOf(shapes.generalShapeOf(members[0]))) << 32) * sizeof(KeyOrderStepCache);
     else {
         static_assert(sizeof(KeyOrderStepCache) == 1 << 4);
-        LValue scaledIndex = m_out.add(m_out.lShr(remembered.orderAndShapeWordsBefore.value(), m_out.constInt32(keyOrderStepCacheShift - 4)), m_out.constInt64(static_cast<int64_t>(*number) << 4));
+        LValue scaledIndex = m_out.add(m_out.lShr(remembered.orderAndShapeWordsBefore.value(), m_out.constInt32(keyOrderStepCacheShift - 4)), m_out.constInt64(static_cast<int64_t>(number) << 4));
         entry = m_out.add(entry, m_out.bitAnd(scaledIndex, m_out.constInt64((numberOfKeyOrderStepCaches - 1) << 4)));
     }
     auto entryField = [&](ptrdiff_t offset) { return m_out.address(heap, entry, offsetOfEntry + offset); };
     Integer rememberedWords(m_out.load64(entryField(OBJECT_OFFSETOF(KeyOrderStepCache, orderWordBefore))));
     // No object has zero for its shape word, so an entry that remembers nothing matches nothing.
     remembered.step.applies = equal(remembered.orderAndShapeWordsBefore, rememberedWords);
-    // Where there are no more places than entries, each place has an entry of its own.
-    if (m_placement.keyOrders().firstStoreThatMayAdd.last() > numberOfKeyOrderStepCaches) {
+    // What an entry holds of an object that comes here is this place's own where no other place meets it.
+    if (place->meetsOtherStores) {
         static_assert(std::endian::native == std::endian::little);
         Word32 rememberedTurn(m_out.load8ZeroExt32(entryField(OBJECT_OFFSETOF(KeyOrderStepCache, turnPlusOne))));
-        remembered.step.applies = logicalAnd(remembered.step.applies, equal(rememberedTurn, word32(static_cast<int32_t>(*number / numberOfKeyOrderStepCaches + 1))));
+        remembered.step.applies = logicalAnd(remembered.step.applies, equal(rememberedTurn, word32(static_cast<int32_t>(number / numberOfKeyOrderStepCaches + 1))));
     }
     remembered.step.orderWordAfter = Word32(m_out.load32(entryField(OBJECT_OFFSETOF(KeyOrderStepCache, orderWordAfter))));
     return remembered;

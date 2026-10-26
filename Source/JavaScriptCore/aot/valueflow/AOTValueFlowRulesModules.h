@@ -16,7 +16,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 void describeHost(const Program&, ValueFlowBody&);
 
-bool isModuleOperation(Opcode);
 void runModuleOperation(const ValueFlowStatement&, ValueFlowRuleContext&);
 void runModuleEvaluation(const ValueFlowStatement&, ValueFlowRuleContext&);
 

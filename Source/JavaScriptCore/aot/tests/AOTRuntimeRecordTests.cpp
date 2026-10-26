@@ -124,6 +124,10 @@ static Slot createSlotOfKind(const Cells& cells, Slot::Kind kind, uint8_t flags)
         uint32_t capacity = flags & Slot::growsStorage ? Slot::storageCapacityAfterAdding(Slot::wordIndexFor(offset)) : 0;
         return *Slot::tryCreateTransition(cells.id(), flags & ~(Slot::isOutOfLine | Slot::growsStorage), cells.otherID(), offset, capacity);
     }
+    case SlotPayload::Removal:
+        return *Slot::tryCreateRemoval(cells.id(), kind, flags & ~Slot::isOutOfLine, cells.otherID(), flags & Slot::isOutOfLine ? firstOutOfLineOffset + 4 : 2, 9);
+    case SlotPayload::OrderWords:
+        return Slot::createFieldRemoval(cells.id(), flags, AbsentPattern::ZeroInEightBytes, 24, 9, 10);
     case SlotPayload::CustomAccessor:
         return Slot::createCustomAccessor(cells.id(), kind, flags, 5);
     case SlotPayload::Constant:
@@ -149,6 +153,10 @@ static bool isLegalFlagSet(Slot::Kind kind, uint8_t flags)
         if ((flags & Slot::growsStorage) && !(flags & Slot::isOutOfLine))
             return false;
         return flags & Slot::isOwn;
+    case SlotPayload::Removal:
+        return flags & Slot::isOwn;
+    case SlotPayload::OrderWords:
+        return (flags & Slot::isOwn) && !(flags & Slot::isOutOfLine);
     case SlotPayload::None:
     case SlotPayload::CustomAccessor:
     case SlotPayload::Constant:
@@ -243,6 +251,13 @@ static void testEveryKindReadsBack()
             AOT_TEST_CHECK(slot.transition.newStructureID == cells.otherID());
             AOT_TEST_CHECK(slot.offsetInStorage() == (isOutOfLine ? firstOutOfLineOffset + 4 : 2));
             AOT_TEST_CHECK(slot.transition.newStorageCapacity == (flags & Slot::growsStorage ? 8u : 0u));
+            break;
+        case SlotPayload::Removal:
+            AOT_TEST_CHECK(slot.removal.newStructureID == cells.otherID() && slot.removal.orderWord == 9);
+            AOT_TEST_CHECK(slot.offsetInStorage() == (isOutOfLine ? firstOutOfLineOffset + 4 : 2));
+            break;
+        case SlotPayload::OrderWords:
+            AOT_TEST_CHECK(slot.orderWords.before == 9 && slot.orderWords.after == 10 && slot.hiddenWordOffset() == 24);
             break;
         case SlotPayload::CustomAccessor:
             AOT_TEST_CHECK(slot.customAccessor.index == 5 && slot.payloadBits() == 5);
@@ -360,7 +375,7 @@ static void testFarIndexDegrades()
 
 static bool alwaysStaysOutsideTheFront(Slot::Kind kind)
 {
-    return Slot::payloadOf(kind) == SlotPayload::FieldAndHolder || Slot::payloadOf(kind) == SlotPayload::ExtraPropertyAddition || Slot::payloadOf(kind) == SlotPayload::Constant;
+    return Slot::payloadOf(kind) == SlotPayload::FieldAndHolder || Slot::payloadOf(kind) == SlotPayload::ExtraPropertyAddition || Slot::payloadOf(kind) == SlotPayload::Removal || Slot::payloadOf(kind) == SlotPayload::OrderWords || Slot::payloadOf(kind) == SlotPayload::Constant;
 }
 
 static void testPackedSlotRoundTrip()

@@ -10,11 +10,11 @@ layout L1 name="B" fields=[{key="y" declared={type=number}}]
 variable g0 name="early" declared={type=number|absent} initialization=Uninitialized
 variable g1 name="late" declared={type=number} initialization=Undefined
 function f0 name="check" parameters=[{type=number}, {type=anything}, {type=i32}, {type=undefined|number}] results=[{type=undefined}] {
-    v4 = Check v0 castType=number
-    v5 = Check v2 castType=number
-    v6 = Check v1 castType=number
-    v7 = Check v3 castType=number
-    v8 = Check v0 castType=i32
+    v4 = Check v0 expectedType=number
+    v5 = Check v2 expectedType=number
+    v6 = Check v1 expectedType=number
+    v7 = Check v3 expectedType=number
+    v8 = Check v0 expectedType=i32
     Return
 }
 # CHECK-LABEL: function f0
@@ -24,7 +24,7 @@ function f0 name="check" parameters=[{type=number}, {type=anything}, {type=i32},
 # CHECK-NEXT: v7 Check: none
 # CHECK-NEXT: v8 Check: none
 function f1 name="checkNeverPasses" parameters=[{type=string}] results=[{type=undefined}] {
-    v1 = Check v0 castType=number
+    v1 = Check v0 expectedType=number
     Return
 }
 # CHECK-LABEL: function f1
@@ -72,7 +72,7 @@ function f4 name="requireObject" parameters=[{type=object}, {type=L0}, {type=Arr
 function f5 name="castsWithoutCheck" parameters=[{type=number}, {type=anything}] results=[{type=undefined}] {
     v2 = Upcast v0 castType=anything
     v3 = Upcast v0 castType=number
-    v4 = AssumeType v1 castType=number
+    v4 = AssumeType v1 provenType=number
     Return
 }
 # CHECK-LABEL: function f5

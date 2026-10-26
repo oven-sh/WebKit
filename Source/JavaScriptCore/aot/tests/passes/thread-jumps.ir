@@ -356,7 +356,7 @@ function f19 name="skippedCheckIsUnused" parameters=[{type=number}, {type=anythi
   b2():
     Jump -> next b3(v0)
   b3(v4):
-    v5 = Check v1 castType=number
+    v5 = Check v1 expectedType=number
     v6 = ToBoolean v4
     Branch v6 -> taken b4(), notTaken b5()
   b4():

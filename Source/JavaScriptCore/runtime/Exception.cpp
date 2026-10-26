@@ -27,6 +27,7 @@
 #include "Exception.h"
 
 #include "AOTStackTrace.h"
+#include "AOTUnwinding.h"
 #include "CallFrameInlines.h"
 #include "DeferGCInlines.h"
 #include "ErrorInstance.h"
@@ -118,7 +119,7 @@ void Exception::retainReturnAddresses(VM& vm, AOT::ReturnAddressTrace* returnAdd
     vm.heap.reportExtraMemoryAllocated(this, m_stack.sizeInBytes());
 }
 
-// Two readers tell the stack of the Error from the stack of the throw: an inspector lists the frames, and node:vm marks the throw in the source text of the bytecode on top.
+// Two readers tell the stack of an Error that was made on the spot from the stack of the throw: an inspector lists the frames, and node:vm marks the throw in the source text of the bytecode on top.
 ErrorInstance* Exception::errorToTakeStackFrom(VM& vm, JSValue thrownValue)
 {
     auto* error = dynamicDowncast<ErrorInstance>(thrownValue);
@@ -136,10 +137,10 @@ void Exception::takeStackFrom(VM& vm, ErrorInstance& error)
     retainReturnAddresses(vm, error.returnAddresses(), otherFrames ? Vector<StackFrame>(*otherFrames) : Vector<StackFrame>());
 }
 
-Exception* Exception::tryCreateWithStackOfError(VM& vm, JSValue thrownValue)
+Exception* Exception::tryCreateWithStackOfErrorMadeHere(VM& vm, JSValue thrownValue)
 {
     ErrorInstance* error = errorToTakeStackFrom(vm, thrownValue);
-    if (!error)
+    if (!error || !AOT::beginsInTopCompiledFrame(vm, *error->returnAddresses()))
         return nullptr;
     // The end of a collection may turn the stack of the Error into text.
     DeferGC deferGC(vm);
@@ -149,9 +150,9 @@ Exception* Exception::tryCreateWithStackOfError(VM& vm, JSValue thrownValue)
     return result;
 }
 
-NEVER_INLINE bool Exception::tryRetainReturnAddresses(VM& vm)
+NEVER_INLINE bool Exception::tryRetainReturnAddresses(VM& vm, StackCaptureAction action)
 {
-    if (ErrorInstance* error = errorToTakeStackFrom(vm, value())) {
+    if (ErrorInstance* error = action == StackCaptureAction::CaptureStack ? errorToTakeStackFrom(vm, value()) : nullptr) {
         takeStackFrom(vm, *error);
         return true;
     }
@@ -169,11 +170,11 @@ void Exception::finishCreation(VM& vm, StackCaptureAction action)
     Base::finishCreation(vm);
 
 #if ENABLE(AOT)
-    if (action == StackCaptureAction::CaptureStack && vm.hasCompiledCode() && tryRetainReturnAddresses(vm))
+    if (action != StackCaptureAction::DoNotCaptureStack && vm.hasCompiledCode() && tryRetainReturnAddresses(vm, action))
         return;
 #endif
     Vector<StackFrame> stackTrace;
-    if (action == StackCaptureAction::CaptureStack)
+    if (action != StackCaptureAction::DoNotCaptureStack)
         vm.interpreter.getStackTrace(this, stackTrace, 0, Options::exceptionStackTraceLimit());
 
     m_stack = WTF::move(stackTrace);

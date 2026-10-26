@@ -470,6 +470,10 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(HashTable);
         size_t byteSize() const { return metadataSize + tableSize() * sizeof(ValueType); }
         bool isEmpty() const { return !keyCount(); }
 
+        // For generated code. The mask is found from the first bucket.
+        static constexpr ptrdiff_t offsetOfTable() { return OBJECT_OFFSETOF(HashTable, m_table); }
+        static constexpr ptrdiff_t offsetOfTableSizeMask() { return tableSizeMaskOffset * static_cast<ptrdiff_t>(sizeof(unsigned)); }
+
         // Grow now, once, if holding `keyCount` keys in total would otherwise rehash along the way.
         void reserveCapacity(unsigned keyCount)
         {

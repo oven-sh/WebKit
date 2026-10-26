@@ -32,6 +32,7 @@
 #include "JSCellInlines.h"
 #include "JSFunctionInlines.h"
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 #include "AOTFunctionDescription.h"
 #include "AOTStackTrace.h"
@@ -76,6 +77,11 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, CodeBlock* codeBlock, BytecodeInde
 }
 
 #if ENABLE(AOT)
+StackFrame::StackFrame(VM& vm, JSCell* owner, const AOT::TraceFrame& frame, JSCell* callee)
+    : m_frameData(CompiledFrameData { frame, callee ? WriteBarrier<JSCell>(vm, owner, callee) : WriteBarrier<JSCell>() })
+{
+}
+
 void StackFrame::appendCompiledFrames(const AOT::ReturnAddressTrace& trace, Vector<StackFrame>& results)
 {
     results.reserveCapacity(results.size() + std::min<uint32_t>(trace.limit, trace.numberOfReturnAddresses));
@@ -91,16 +97,15 @@ std::optional<AOT::SourcePosition> StackFrame::compiledPosition() const
 
 static String compiledSourceURL(const std::optional<AOT::SourcePosition>& position)
 {
-    return position && position->source ? AOT::sourceURLOf(position->source) : emptyString();
+    return position ? AOT::sourceProviderURLOf(position->source) : emptyString();
 }
 
-static String compiledFunctionName(VM& vm, const CompiledFrameData& compiledFrame)
+static String compiledFunctionName(VM& vm, const CompiledFrameData& compiledFrame, const AOT::FunctionDescription& description)
 {
-    AOT::FunctionDescription description(compiledFrame.frame.function);
     if (description.codeType() == ModuleCode)
         return "module code"_s;
-    if (!compiledFrame.isAsyncFrame)
-        return description.nameInFrames(vm);
+    if (!compiledFrame.frame.isAsyncFrame)
+        return description.calculatedDisplayName(vm, compiledFrame.callee.get(), compiledFrame.frame.calleeLiesInFrame);
     String name = description.name(vm);
     if (name.isEmpty() || description.isNamedByOwner())
         return emptyString();
@@ -128,6 +133,8 @@ bool StackFrame::isConstructor() const
 #if ENABLE(AOT)
     if (isCompiledFrame()) {
         auto& frame = compiledFrame();
+        if (frame.isClassCalledWithoutNew)
+            return false;
         AOT::FunctionDescription description(frame.function);
         return frame.isConstructCall || description.isConstructor() || description.builtinKind() == AOT::StackTraceBuiltinKind::JSBuiltinConstructor;
     }
@@ -198,7 +205,10 @@ void StackFrame::visitAggregate(Visitor& visitor)
         },
         [](const WasmFrameData&) { }
 #if ENABLE(AOT)
-        , [](const CompiledFrameData&) { }
+        , [&visitor](const CompiledFrameData& compiledFrame) {
+            if (compiledFrame.callee)
+                visitor.append(compiledFrame.callee);
+        }
 #endif
     );
 }
@@ -213,7 +223,9 @@ bool StackFrame::isMarked(VM& vm) const
         },
         [](const WasmFrameData&) { return true; }
 #if ENABLE(AOT)
-        , [](const CompiledFrameData&) { return true; }
+        , [&vm](const CompiledFrameData& compiledFrame) {
+            return !compiledFrame.callee || vm.heap.isMarked(compiledFrame.callee.get());
+        }
 #endif
     );
 }
@@ -264,7 +276,7 @@ String StackFrame::sourceURL(VM& vm, AllowURLOverride allowOverride) const
         }
 #if ENABLE(AOT)
         , [this](const CompiledFrameData&) -> String {
-            return compiledSourceURL(compiledPosition());
+            return representsHostFunction() ? "[native code]"_s : compiledSourceURL(compiledPosition());
         }
 #endif
     );
@@ -293,7 +305,7 @@ String StackFrame::sourceURLStripped(VM& vm) const
         }
 #if ENABLE(AOT)
         , [this](const CompiledFrameData&) -> String {
-            return compiledSourceURL(compiledPosition());
+            return representsHostFunction() ? "[native code]"_s : compiledSourceURL(compiledPosition());
         }
 #endif
     );
@@ -340,7 +352,7 @@ String StackFrame::functionName(VM& vm) const
         }
 #if ENABLE(AOT)
         , [&vm](const CompiledFrameData& compiledFrame) -> String {
-            return compiledFunctionName(vm, compiledFrame);
+            return compiledFunctionName(vm, compiledFrame, AOT::FunctionDescription(compiledFrame.frame.function));
         }
 #endif
     );
@@ -387,20 +399,53 @@ static StringView truncateLongDataURL(StringView sourceURL)
     return sourceURL.left(length);
 }
 
-String StackFrame::toString(VM& vm) const
+template<typename Functor>
+ALWAYS_INLINE auto StackFrame::withPartsOfString(VM& vm, const Functor& functor) const
 {
-    String functionName = this->functionName(vm);
+    String functionName;
     // sourceURL points into fullSourceURL, so keep fullSourceURL around.
-    String fullSourceURL = this->sourceURLStripped(vm);
+    String fullSourceURL;
+    LineColumn lineColumn;
+    bool hasLineAndColumnInfo;
+#if ENABLE(AOT)
+    if (auto* compiledFrame = std::get_if<CompiledFrameData>(&m_frameData)) {
+        AOT::FunctionDescription description(compiledFrame->frame.function);
+        functionName = compiledFunctionName(vm, *compiledFrame, description);
+        if (description.builtinKind() == AOT::StackTraceBuiltinKind::HostFunction)
+            return functor(functionName, "@[native code]"_s);
+        auto position = AOT::positionOf(compiledFrame->frame);
+        fullSourceURL = compiledSourceURL(position);
+        hasLineAndColumnInfo = true;
+        if (position)
+            lineColumn = position->lineColumn;
+    } else
+#endif
+    {
+        functionName = this->functionName(vm);
+        fullSourceURL = this->sourceURLStripped(vm);
+        hasLineAndColumnInfo = this->hasLineAndColumnInfo();
+        if (hasLineAndColumnInfo && !fullSourceURL.isEmpty())
+            lineColumn = computeLineAndColumn();
+    }
     auto sourceURL = truncateLongDataURL(fullSourceURL);
 
-    if (sourceURL.isEmpty() && representsHostFunction())
-        return makeString(functionName, "@[native code]"_s);
-    if (sourceURL.isEmpty() || !hasLineAndColumnInfo())
-        return makeString(functionName, '@', sourceURL);
+    if (sourceURL.isEmpty() || !hasLineAndColumnInfo)
+        return functor(functionName, '@', sourceURL);
+    return functor(functionName, '@', sourceURL, ':', lineColumn.line, ':', lineColumn.column);
+}
 
-    auto lineColumn = computeLineAndColumn();
-    return makeString(functionName, '@', sourceURL, ':', lineColumn.line, ':', lineColumn.column);
+String StackFrame::toString(VM& vm) const
+{
+    return withPartsOfString(vm, [](const auto&... parts) {
+        return makeString(parts...);
+    });
+}
+
+void StackFrame::appendTo(VM& vm, StringBuilder& builder) const
+{
+    withPartsOfString(vm, [&](const auto&... parts) {
+        builder.append(parts...);
+    });
 }
 
 } // namespace JSC

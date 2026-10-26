@@ -1,7 +1,7 @@
-# A block that cannot throw loses its handler, and a handler that only throws what it caught again is skipped
+# A block that cannot throw loses its handler, and a cleanup that only throws on what it caught is skipped. A `catch` that throws the value again stays: that is another throw. It is skipped where a `catch` of the function takes that throw
 # FORM: Prepared
 # RUN: pass RemoveRedundantHandlers
-# STATISTIC: RemoveRedundantHandlersChanges = 13
+# STATISTIC: RemoveRedundantHandlersChanges = 14
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
@@ -100,13 +100,13 @@ function f6 name="rethrowsException" parameters=[{type=anything}] results=[{type
 # CHECK-NOT: CatchException
 }
 
-function f7 name="throwsCaughtValue" parameters=[{type=anything}] results=[{type=anything}] {
+function f7 name="cleanupThrowsCaughtValue" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything) handler=b2():
     v1 = Call v0
     Jump -> next b1()
   b1():
     Return v1
-  b2() role=CatchHandler:
+  b2() role=CleanupHandler:
     v2 = CatchValue
     Throw v2
 # CHECK: b0(v0: anything):
@@ -290,4 +290,74 @@ function f21 name="doubles" parameters=[{type=number}] results=[{type=number}] {
 function f22 name="callsItsArgument" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = Call v0
     Return v1
+}
+
+function f23 name="catchThrowsCaughtValueAgain" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b2():
+    v1 = Call v0
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Throw v2
+# CHECK: b0(v0: anything) handler=b2():
+# CHECK: = CatchValue
+# CHECK-NEXT: Throw v2
+}
+
+function f24 name="catchThrowsCaughtValueAgainIntoCatch" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b2():
+    v1 = Call v0
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler handler=b3():
+    v2 = CatchValue
+    Throw v2
+  b3() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+# CHECK: b0(v0: anything) handler=[[outer]]():
+# CHECK-NOT: Throw
+# CHECK: [[outer]]() role=CatchHandler:
+# CHECK-NEXT: = CatchValue
+}
+
+function f25 name="catchThrowsCaughtValueAgainIntoCleanup" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b2():
+    v1 = Call v0
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler handler=b3():
+    v2 = CatchValue
+    Throw v2
+  b3() role=CleanupHandler:
+    v3 = CatchValue
+    v4 = Call v0
+    Throw v3
+# CHECK: b0(v0: anything) handler=b2():
+# CHECK: b2() role=CatchHandler handler=b3():
+# CHECK-NEXT: = CatchValue
+# CHECK-NEXT: Throw v2
+}
+
+function f26 name="catchThrowsCaughtValueAgainIntoHandlerThatTakesException" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything) handler=b2():
+    v1 = Call v0
+    Jump -> next b1()
+  b1():
+    Return v1
+  b2() role=CatchHandler handler=b3():
+    v2 = CatchValue
+    Throw v2
+  b3() role=CatchHandler:
+    v3 = CatchException
+    v4 = Call v0
+    Rethrow v3
+# CHECK: b0(v0: anything) handler=b2():
+# CHECK: b2() role=CatchHandler handler=b3():
+# CHECK-NEXT: = CatchValue
+# CHECK-NEXT: Throw v2
 }

@@ -160,6 +160,7 @@ public:
 
     NarrowReferenceFindings validate()
     {
+        proc.resetReachability();
         NarrowReferenceFindings findings;
         findNarrowReferenceViolations(proc, heapsOfCollection, origins(), findings);
         return findings;
@@ -372,6 +373,97 @@ static void testSafepointInLoop()
             graph.block = exit;
             graph.store(graph.loadThrough(graph.decode(reference)));
         });
+        graph.finish();
+    });
+}
+
+static void testLoopBehindLastUse()
+{
+    checkEveryMutationIsFound([](Graph& graph, Mutation mutation) {
+        B3::BasicBlock* middle = graph.proc.addBlock();
+        B3::BasicBlock* last = graph.proc.addBlock();
+        B3::BasicBlock* loop = graph.proc.addBlock();
+        B3::BasicBlock* exit = graph.proc.addBlock();
+        B3::Value* reference = graph.loadReference();
+        guard(graph, reference, mutation, [&] {
+            graph.jumpTo(middle);
+            graph.safepoint();
+            graph.jumpTo(last);
+            graph.store(graph.loadThrough(graph.decode(reference)));
+        });
+        graph.jumpTo(loop);
+        graph.branchTo(graph.loadReference(otherOrigin, 48), loop, exit);
+        graph.block = exit;
+        graph.finish();
+    });
+}
+
+static void testUseInFrontOfSafepointInLoop()
+{
+    checkEveryMutationIsFound([](Graph& graph, Mutation mutation) {
+        B3::BasicBlock* header = graph.proc.addBlock();
+        B3::BasicBlock* body = graph.proc.addBlock();
+        B3::BasicBlock* latch = graph.proc.addBlock();
+        B3::BasicBlock* exit = graph.proc.addBlock();
+        B3::Value* reference = graph.loadReference();
+        guard(graph, reference, mutation, [&] {
+            graph.jumpTo(header);
+            graph.block = body;
+            graph.safepoint();
+            graph.jumpTo(latch);
+            graph.branchTo(graph.loadReference(otherOrigin, 48), header, exit);
+            graph.block = header;
+            graph.store(graph.loadThrough(graph.decode(reference)));
+        });
+        graph.jumpTo(body);
+        graph.block = exit;
+        graph.finish();
+    });
+}
+
+static void testSafepointInInnerLoopAndUseInOuterLoop()
+{
+    checkEveryMutationIsFound([](Graph& graph, Mutation mutation) {
+        B3::BasicBlock* outer = graph.proc.addBlock();
+        B3::BasicBlock* inner = graph.proc.addBlock();
+        B3::BasicBlock* innerLatch = graph.proc.addBlock();
+        B3::BasicBlock* outerLatch = graph.proc.addBlock();
+        B3::BasicBlock* exit = graph.proc.addBlock();
+        B3::Value* reference = graph.loadReference();
+        guard(graph, reference, mutation, [&] {
+            graph.jumpTo(outer);
+            graph.block = inner;
+            graph.safepoint();
+            graph.jumpTo(innerLatch);
+            graph.branchTo(graph.loadReference(otherOrigin, 48), inner, outerLatch);
+            graph.block = outerLatch;
+            graph.branchTo(graph.loadReference(otherOrigin, 56), outer, exit);
+            graph.block = outer;
+            graph.store(graph.loadThrough(graph.decode(reference)));
+        });
+        graph.jumpTo(inner);
+        graph.block = exit;
+        graph.finish();
+    });
+}
+
+static void testCycleWithTwoEntries()
+{
+    checkEveryMutationIsFound([](Graph& graph, Mutation mutation) {
+        B3::BasicBlock* user = graph.proc.addBlock();
+        B3::BasicBlock* collector = graph.proc.addBlock();
+        B3::BasicBlock* exit = graph.proc.addBlock();
+        B3::Value* reference = graph.loadReference();
+        guard(graph, reference, mutation, [&] {
+            graph.branchTo(graph.loadReference(otherOrigin, 48), user, collector);
+            graph.block = collector;
+            graph.safepoint();
+            graph.branchTo(graph.loadReference(otherOrigin, 56), user, exit);
+            graph.block = user;
+            graph.store(graph.loadThrough(graph.decode(reference)));
+        });
+        graph.jumpTo(collector);
+        graph.block = exit;
         graph.finish();
     });
 }
@@ -667,6 +759,10 @@ std::span<const NativeTest> narrowReferenceValidationTests()
         { "narrow-reference-safepoint-in-other-block"_s, testSafepointInOtherBlock },
         { "narrow-reference-safepoint-on-one-path"_s, testSafepointOnOnePath },
         { "narrow-reference-safepoint-in-loop"_s, testSafepointInLoop },
+        { "narrow-reference-loop-behind-last-use"_s, testLoopBehindLastUse },
+        { "narrow-reference-use-in-front-of-safepoint-in-loop"_s, testUseInFrontOfSafepointInLoop },
+        { "narrow-reference-safepoint-in-inner-loop-and-use-in-outer-loop"_s, testSafepointInInnerLoopAndUseInOuterLoop },
+        { "narrow-reference-cycle-with-two-entries"_s, testCycleWithTwoEntries },
         { "narrow-reference-compressed-pointer"_s, testCompressedPointer },
         { "narrow-reference-pointer-held-only-by-dead-code"_s, testPointerHeldOnlyByDeadCode },
         { "narrow-reference-displaced-only-by-dead-code"_s, testReferenceDisplacedOnlyByDeadCode },

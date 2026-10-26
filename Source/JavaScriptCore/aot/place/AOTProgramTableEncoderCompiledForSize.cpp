@@ -181,14 +181,24 @@ static void setDirectEvalFlag(DirectEvalRequest& request, EvalScopeFlags flag)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void encodeEvalBinding(const TableEncoder& encoder, const EvalBinding& binding, EvalBindingData& data)
+// The key of the field of an instance that a private name stands for.
+static PropertyKeyID privateKeyOf(const Program& program, const EvalBinding& binding)
+{
+    if (binding.variable || !binding.layout || binding.kind == EvalBindingKind::MappedArgument || program.at(binding.layout).isEnvironment())
+        return { };
+    return fieldAt(program, declarationOf(program, { binding.layout, *binding.field })).key;
+}
+
+static void encodeEvalBinding(const TableEncoder& encoder, const EvalBinding& binding, ModuleID module, EvalBindingData& data)
 {
     constexpr uint32_t operandsBeforeEnvironments = 2;
     const Program& program = encoder.program;
     auto operandOf = [](std::optional<uint32_t> environmentOperand) {
         return environmentOperand ? operandsBeforeEnvironments + *environmentOperand : EvalBindingData::noOperand;
     };
-    data.name = binding.name ? encoder.identifierNumberOfText(binding.name) : 0;
+    PropertyKeyID privateKey = privateKeyOf(program, binding);
+    data.name = binding.name ? encoder.identifierNumberOfText(binding.name, "what a direct eval sees in"_s, module) : 0;
+    data.privateKey = privateKey ? encoder.identifierNumber(privateKey, "the key of a private name that a direct eval sees in"_s, module) : 0;
     data.kind = static_cast<uint32_t>(binding.kind);
     data.depth = binding.depth;
     data.operand = EvalBindingData::noOperand;
@@ -198,7 +208,7 @@ static void encodeEvalBinding(const TableEncoder& encoder, const EvalBinding& bi
     TypeID type;
     if (binding.variable) {
         data.slot = placedVariableSlot(encoder, binding.variable);
-        type = program.at(binding.variable).declared.type;
+        type = program.at(binding.variable).declared.written();
     } else {
         RELEASE_ASSERT(binding.operand);
         data.operand = operandOf(binding.operand);
@@ -209,11 +219,9 @@ static void encodeEvalBinding(const TableEncoder& encoder, const EvalBinding& bi
             FieldReference field { binding.layout, *binding.field };
             const Field& declaration = fieldAt(program, declarationOf(program, field));
             const PlacedSlot& slot = encoder.slots.slot(field);
-            bool isVariable = program.at(binding.layout).isEnvironment();
-            RELEASE_ASSERT(!isVariable || slot.hasStorage());
+            RELEASE_ASSERT(!program.at(binding.layout).isEnvironment() || slot.hasStorage());
             data.slot = slot.data();
-            data.privateKey = isVariable ? 0 : encoder.identifierNumber(declaration.key);
-            type = declaration.declared.type;
+            type = declaration.declared.written();
         }
     }
     data.type = encoder.typeOffset(type);
@@ -231,7 +239,7 @@ static void encodeRequest(TableEncoder& encoder, const DirectEvalRecord& record,
     Vector<uint32_t> names;
     for (const EvalBinding& binding : scope.bindings) {
         auto& data = consumeAndReinterpretCastTo<EvalBindingData>(bytes);
-        encodeEvalBinding(encoder, binding, data);
+        encodeEvalBinding(encoder, binding, record.module, data);
         names.append(data.name);
     }
     Vector<uint32_t> bindingsByName(names.size(), [](size_t index) {
@@ -297,7 +305,7 @@ void encodePropertyRunTable(TableEncoder& encoder)
         RELEASE_ASSERT(header.count == run.keys.size());
         words.append(header.encoded());
         for (PropertyKeyID key : run.keys)
-            words.append(encoder.identifierNumber(key));
+            words.append(encoder.identifierNumber(key, "in a run of properties stored together"_s));
     }
     RELEASE_ASSERT(words.size() == numberOfWords);
     encoder.setTable(ProgramTableIndex::propertyRuns, words);
@@ -350,13 +358,14 @@ void encodeStaticsTables(TableEncoder& encoder)
     Vector<InitialWord> parts;
     Vector<uint32_t> narrowRoots;
     Vector<FunctionVariableData> functionVariables;
-    for (const PlacedVariable& placed : statics.variables) {
+    for (unsigned index = 0; index < statics.variables.size(); ++index) {
+        const PlacedVariable& placed = statics.variables[index];
         if (!placed.hasWordInStatics())
             continue;
         if (traitsOf(placed.representation).isNarrowReference)
             narrowRoots.append(placed.offset);
         if (placed.encoding == VariableEncoding::FunctionAsZero)
-            functionVariables.append({ placed.offset, encoder.entrypointOf(placed.function) });
+            functionVariables.append({ placed.offset, encoder.entrypointOf(placed.function, "what the first read makes of the variable"_s, VariableID(index)) });
         if (!placed.initialWord)
             continue;
         unsigned width = widthOf(placed.representation);

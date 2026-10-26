@@ -78,7 +78,7 @@ function f4 name="underHandler" parameters=[{type=number}] results=[{type=number
 
 function f5 name="checked" parameters=[{type=number}] results=[{type=number}] {
     v1 = CallDirect v0 function=f5
-    v2 = Check v1 castType=i32 site=w0
+    v2 = Check v1 expectedType=i32 site=w0
     Return v2
 # CHECK-NOT: LoopHint
 # CHECK: = CallDirect

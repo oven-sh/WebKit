@@ -56,7 +56,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithIndexingType, JSCell*, (Instanc
             return jsNull();
         if (bits == undefinedDouble || bits == absentDouble)
             return jsUndefined();
-        return jsNumber(purifyNaN(std::bit_cast<double>(bits)));
+        return jsNumber(withoutPayload(std::bit_cast<double>(bits)));
     };
     OPERATION_RETURN(scope, createArrayFromValues(globalObject, scope, count, indexingType, valueAt));
 }
@@ -85,7 +85,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayFromDoubles, JSCell*, (Instance* in
     auto valueAt = [&](uint32_t i) {
         uint64_t bits = std::bit_cast<uint64_t>(elements[i]);
         bool isNumber = countAndNumberMask >> (arrayLiteralWithDoubleIsNumberMaskShift + i) & 1;
-        return !isNumber && bits == nullDouble ? jsNull() : !isNumber && (bits == undefinedDouble || bits == absentDouble) ? jsUndefined() : jsNumber(purifyNaN(elements[i]));
+        return !isNumber && bits == nullDouble ? jsNull() : !isNumber && (bits == undefinedDouble || bits == absentDouble) ? jsUndefined() : jsNumber(withoutPayload(elements[i]));
     };
     OPERATION_RETURN(scope, createArrayFromValues(globalObject, scope, count, ArrayWithDouble, valueAt));
 }

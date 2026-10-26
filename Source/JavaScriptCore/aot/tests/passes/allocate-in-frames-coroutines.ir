@@ -40,7 +40,7 @@ function f2 name="closureLiveAcrossAwait" flags=[IsAsync] parameters=[{type=anyt
     Return v4
 }
 # PLAN-LABEL: function f2
-# PLAN-NEXT: v1: Heap HeldByHeapCell by v2(0)
+# PLAN-NEXT: v1: Heap Escapes by v3(1)
 # PLAN-NEXT: v2: Heap LiveAcrossSuspension by v3(0)
 
 function f3 name="environmentLiveAcrossAwait" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
@@ -52,7 +52,7 @@ function f3 name="environmentLiveAcrossAwait" flags=[IsAsync] parameters=[{type=
     Return v5
 }
 # PLAN-LABEL: function f3
-# PLAN-NEXT: v1: Heap LiveAcrossSuspension by v4(0)
+# PLAN-NEXT: v1: Heap Escapes by v4(1)
 # PLAN-NEXT: v2: Frame
 
 function f4 name="createdAfterAwait" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {

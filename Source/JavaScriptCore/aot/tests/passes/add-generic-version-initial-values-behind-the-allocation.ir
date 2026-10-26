@@ -21,6 +21,23 @@ layout L2 name="SymbolBehindMethod" fields=[{key="tag" declared={type=symbol} fl
 
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="more" [isFreeName]
+    v2 = ToBoolean v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = CallDirect function=f2
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+
+function f1 name="run" results=[{type=anything}] {
+    Return
+}
+
+function f2 name="makesObjects" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="given" [isFreeName]
     v2 = Convert v1 declared={type=symbol}
     v3 = NewClosure function=f1
@@ -35,9 +52,5 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v12 = NewObject -, v3, v2 layout=L2 fields=[1, 0]
     v13 = FinishObject v12
     PropSet v0, v13 key="third" mode=Strict
-    Return
-}
-
-function f1 name="run" results=[{type=anything}] {
     Return
 }

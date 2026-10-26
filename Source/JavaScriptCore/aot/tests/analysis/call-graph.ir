@@ -8,7 +8,7 @@ layout L0 kind=Instance name="Holder" constructor=f8 flow={baseState=None member
 variable g0 name="hoisted" declared={type=anything} initialization=Function function=f3
 variable g1 name="stored" declared={type=anything}
 runtimefunction id=65 function=f17
-runtimefunction id=131088 function=f20
+runtimefunction id=131089 function=f20
 
 function f0 name="" kind=Module results=[{type=anything}] {
     v0 = CallDirect function=f1
@@ -98,7 +98,7 @@ function f19 name="storedAndCallsUnknownCode" results=[{type=anything}] {
     v2 = Call v1
     Return v2
 }
-function f20 name="sort" role=Library enclosingRuntimeFunction=131088 parameters=[{type=anything}] results=[{type=anything}] {
+function f20 name="sort" role=Library enclosingRuntimeFunction=131089 parameters=[{type=anything}] results=[{type=anything}] {
     Return v0
 }
 function f21 name="sortsArray" parameters=[{type=anything}] results=[{type=anything}] {
