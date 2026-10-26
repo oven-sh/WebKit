@@ -22,7 +22,7 @@ class FunctionAnalyses;
 class Liveness;
 class SSARepair;
 
-enum class CloneCheck : uint8_t { Unknown, OperandMustBeDefinition, FunctionMayNotBeCloned, BoundToFrame, HandlerOutsideRegion, CanClone };
+enum class CloneCheck : uint8_t { Unknown, OperandMustBeDefinition, FunctionMayNotBeCloned, BoundToFrame, UniqueInFunction, HandlerOutsideRegion, CanClone };
 
 class RegionCloner {
     WTF_MAKE_NONCOPYABLE(RegionCloner);

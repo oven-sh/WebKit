@@ -72,6 +72,7 @@ static bool canCopyInsideFunction(CloneCheck check)
     case CloneCheck::Unknown:
     case CloneCheck::OperandMustBeDefinition:
     case CloneCheck::BoundToFrame:
+    case CloneCheck::UniqueInFunction:
     case CloneCheck::HandlerOutsideRegion:
         return false;
     }

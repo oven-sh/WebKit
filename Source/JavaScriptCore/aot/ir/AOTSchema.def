@@ -132,6 +132,7 @@ column flow : ValueFlowEdgeClass
 column flowRule : FlowRule
 column flowsWithoutRule : Bool
 column boundTo : BoundTo
+column isUniqueInFunction : Bool
 column proves : Proof
 column relies : Proofs
 column guarded : Operand

@@ -284,6 +284,8 @@ public:
                 return CloneCheck::OperandMustBeDefinition;
         }
         for (ValueID value : block.values) {
+            if (!m_separatesFunctions && isUniqueInFunctionOf(m_function.at(value).opcode))
+                return CloneCheck::UniqueInFunction;
             if (!canBeSeparatedFromUses(value))
                 return CloneCheck::OperandMustBeDefinition;
         }

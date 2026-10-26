@@ -32,7 +32,7 @@ operation ForInStep (enumerator: Enumerator/inspects, object: Any/inspects+runs(
 family Coroutine AsRead..Prepared
 operation Await (value: Any/retains+runs(Thenable), held...: Convertible/retains) [takesExtraTurn] -> unknown => declared(value) ; unknownCode suspends ; requires = IsAsync ; boundTo = Frame ; flow = Copies ; flowRule = Await
 operation Yield (value: Any/retains, held...: Convertible/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; requires = IsGenerator ; boundTo = Frame ; flow = Copies ; flowsWithoutRule = true
-operation InitialYield (held...: Convertible/retains) -> none ; unknownCode suspends ; requires = IsGenerator ; boundTo = Frame ; flow = Copies ; flowsWithoutRule = true
+operation InitialYield (held...: Convertible/retains) -> none ; unknownCode suspends ; requires = IsGenerator ; boundTo = Frame ; isUniqueInFunction = true ; flow = Copies ; flowsWithoutRule = true
 operation ReadScope (values...: Convertible/inspects) -> none ; none ; AsRead..AsRead ; removedBy = ListLiveValuesAtSuspensions ; flow = Copies ; flowsWithoutRule = true
 
 family Module AsRead..Placed

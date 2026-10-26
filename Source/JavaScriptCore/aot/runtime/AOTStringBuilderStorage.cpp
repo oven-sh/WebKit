@@ -252,7 +252,8 @@ void StringBuilderStorage::returnToPool(Instance& instance)
     StringBuilderWords& words = instance.stringBuilder;
     StringBuilderStorage* head = words.freeStorage;
     ASSERT(head != this);
-    unsigned depth = head ? head->m_poolDepth + 1 : 1;
+    // Compiled code lays a builder into the empty pool by one store, which writes no depth: the builder that has none below it is the first, whatever it says.
+    unsigned depth = !head ? 1 : head->m_nextFree ? head->m_poolDepth + 1 : 2;
     if (depth > m_limits.maxPooledBuilders) [[unlikely]] {
         countLimitHit(vm, LimitID::MaxPooledStringBuilders);
         dropBuffer();

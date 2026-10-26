@@ -935,6 +935,67 @@ static void testPoolDepth(LoadedProgram& program)
         AOT_TEST_CHECK(fresh != builder->storage());
 }
 
+// As compiled code discards a builder without text while the pool is empty: by one store.
+static void layIntoEmptyPool(LoadedProgram& program, Builder& builder)
+{
+    StringBuilderStorage*& pool = program.instance().stringBuilder.freeStorage;
+    AOT_TEST_CHECK(!pool && !builder->length() && !builder.nextFree());
+    pool = builder.storage();
+}
+
+static void testPoolDepthAboveBuilderLaidIntoEmptyPool(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Instance& instance = program.instance();
+    uint32_t maxPooled = limitValue(program, LimitID::MaxPooledStringBuilders);
+    AOT_TEST_CHECK(maxPooled >= 2);
+
+    Vector<std::unique_ptr<Builder>> builders;
+    for (uint32_t i = 0; i <= maxPooled; ++i)
+        builders.append(makeUniqueWithoutFastMallocCheck<Builder>(program));
+    auto fillPoolAbove = [&](uint32_t bottom) {
+        uint64_t hitsBefore = limitHitsOf(vm, LimitID::MaxPooledStringBuilders);
+        layIntoEmptyPool(program, *builders[bottom]);
+        uint32_t numberPooled = 1;
+        for (uint32_t i = 0; i <= maxPooled; ++i) {
+            if (i == bottom)
+                continue;
+            StringBuilderStorage* head = instance.stringBuilder.freeStorage;
+            builders[i]->append("content"_s);
+            (*builders[i])->release(instance);
+            if (numberPooled < maxPooled) {
+                ++numberPooled;
+                AOT_TEST_CHECK(instance.stringBuilder.freeStorage == builders[i]->storage() && builders[i]->nextFree() == head && builders[i]->characters());
+                AOT_TEST_CHECK(limitHitsOf(vm, LimitID::MaxPooledStringBuilders) == hitsBefore);
+            } else {
+                AOT_TEST_CHECK(instance.stringBuilder.freeStorage == head && !builders[i]->nextFree() && !builders[i]->characters());
+                AOT_TEST_CHECK(limitHitsOf(vm, LimitID::MaxPooledStringBuilders) == hitsBefore + 1);
+            }
+        }
+        while (instance.stringBuilder.freeStorage)
+            StringBuilderStorage::acquire(instance);
+    };
+    // None has been in the pool. Then the one that lay on top of the full pool is at the bottom, then one from the middle.
+    fillPoolAbove(0);
+    fillPoolAbove(maxPooled - 1);
+    fillPoolAbove(maxPooled / 2);
+
+    // Two are open at once, and the one that was taken first goes back first.
+    uint64_t hitsBefore = limitHitsOf(vm, LimitID::MaxPooledStringBuilders);
+    layIntoEmptyPool(program, *builders[0]);
+    (*builders[1])->release(instance);
+    for (uint32_t turn = 0; turn < 3 * maxPooled; ++turn) {
+        Builder first(program);
+        Builder second(program);
+        AOT_TEST_CHECK((first.storage() == builders[0]->storage() && second.storage() == builders[1]->storage()) || (first.storage() == builders[1]->storage() && second.storage() == builders[0]->storage()));
+        second.append("content"_s);
+        layIntoEmptyPool(program, first);
+        second->release(instance);
+        AOT_TEST_CHECK(instance.stringBuilder.freeStorage == second.storage() && second.nextFree() == first.storage() && second.characters());
+    }
+    AOT_TEST_CHECK(limitHitsOf(vm, LimitID::MaxPooledStringBuilders) == hitsBefore);
+}
+
 static void testPoolClearedByCollection(LoadedProgram& program)
 {
     Instance& instance = program.instance();
@@ -1400,6 +1461,7 @@ std::span<const NativeTest> stringBuilderStorageTests()
         { "string-builder-storage/reserve-commit"_s, withInstance<testReserveCommit> },
         { "string-builder-storage/length-limit"_s, withInstance<testLengthLimit> },
         { "string-builder-storage/pool-depth"_s, withInstance<testPoolDepth> },
+        { "string-builder-storage/pool-depth-above-a-builder-laid-into-the-empty-pool"_s, withInstance<testPoolDepthAboveBuilderLaidIntoEmptyPool> },
         { "string-builder-storage/pool-cleared-by-collection"_s, withInstance<testPoolClearedByCollection> },
         { "string-builder-storage/keys-that-are-integers"_s, withInstance<testKeysThatAreIntegers> },
         { "string-builder-storage/parse-index"_s, testParseIndex },
