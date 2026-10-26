@@ -66,5 +66,15 @@ shouldBeTooLarge("a|".repeat(limit / 2) + "a");
 shouldBeTooLarge("[a]".repeat(limit + 1));
 shouldBeTooLarge("[" + "[a]".repeat(limit) + "]", "v");
 
+// A property escape is a large set, however short it is written. A class with one counts in full.
+shouldBeTooLarge("[\\p{L}a]".repeat(limit / 8 + 1), "u");
+shouldBeTooLarge("[\\P{L}a]".repeat(limit / 8 + 1), "u");
+shouldBeTooLarge("[a[\\p{L}]]".repeat(limit / 10 + 1), "v");
+shouldBeTooLarge(`[\\p{L}${filler}]`, "u");
+shouldBeTooLarge(`[${filler}\\p{L}]`, "u");
+shouldBeTooLarge(`[${filler}\\p{L}`, "u");
+shouldBe(new RegExp(`^[${filler}]\\p{L}[${filler}]$`, "u").test("aba"), true);
+shouldBe(new RegExp(`^[\\p{L}${filler}]$`).test("{"), true);
+
 shouldBe(new RegExp("[" + "a".repeat(limitWithCharacterClasses - 2) + "]").test("a"), true);
 shouldBeTooLarge("[" + "a".repeat(limitWithCharacterClasses - 1) + "]");

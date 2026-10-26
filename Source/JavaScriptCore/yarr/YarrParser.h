@@ -2224,11 +2224,15 @@ private:
 
     // However long a character class is written, it ends up as one set of characters, which is one term.
     // A class counts as one character here. The strings of a \q{...} become alternatives, so they count in full.
+    // So does a class with a property escape, which is short to write and a large set.
     unsigned sizeOutsideCharacterClasses() const
     {
         unsigned size = 0;
         unsigned classDepth = 0;
+        unsigned classStart = 0;
+        unsigned sizeBeforeClass = 0;
         bool inClassStrings = false;
+        bool hasPropertyEscape = false;
         for (unsigned index = 0; index < m_size; ++index) {
             char32_t ch = m_data[index];
             if (ch == '\\') {
@@ -2237,6 +2241,8 @@ private:
                     index += 2;
                     continue;
                 }
+                if (classDepth && isEitherUnicodeCompilation() && index + 1 < m_size && (m_data[index + 1] == 'p' || m_data[index + 1] == 'P'))
+                    hasPropertyEscape = true;
                 ++index;
                 if (!classDepth || inClassStrings)
                     size += 2;
@@ -2250,18 +2256,25 @@ private:
                 continue;
             }
             if (!classDepth) {
-                ++size;
-                if (ch == '[')
+                if (ch == '[') {
                     classDepth = 1;
+                    classStart = index;
+                    sizeBeforeClass = size;
+                    hasPropertyEscape = false;
+                }
+                ++size;
                 continue;
             }
-            if (ch == ']')
-                --classDepth;
-            else if (ch == '[' && isUnicodeSetsCompilation()) {
+            if (ch == ']') {
+                if (!--classDepth && hasPropertyEscape)
+                    size = sizeBeforeClass + index + 1 - classStart;
+            } else if (ch == '[' && isUnicodeSetsCompilation()) {
                 ++classDepth;
                 ++size;
             }
         }
+        if (classDepth && hasPropertyEscape)
+            size = sizeBeforeClass + m_size - classStart;
         return size;
     }
 
